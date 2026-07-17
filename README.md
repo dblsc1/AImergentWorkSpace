@@ -1,16 +1,25 @@
-# aimergent starter — 框架与思路
+# sample-workspace
 
-可迁移的 web 开发框架 DNA（**框架 + 思路，不含任何项目特定架构**）。clone 下来即可起新模块 / 新项目。
+这里保存新模块 / 新项目的空白脚手架。`module_template/` 是唯一事实源；不要在已生成的副本里反向维护模板。
 
-## 内容
-- `module_template/` —— 新模块骨架**唯一事实源**（`{{MODULE_NAME}}` 占位）。
-- `新模块与新项目开设指南.md` —— 该知会 agent 哪些资料 + 7 条验收清单 + 轻量/重量模式。
+## 创建
 
-## 配套 DNA（当前在母仓 `0/`，迁移 starter 时一并纳入，见指南）
-`0/AGENTS.md`（铁律/思路）、`0/docs/manual`（文档地图）、`0/docs/1 structure`（设计说明）、`0/roles/`（四角色基线）、`0/ci/`（门禁工具）、`0/CFO_agent/*/AGENTS.md`（监管角色卡）。
-
-## 用法
+```bash
+/srv/aimergent/0/ci/new_module.sh <相对 /srv/aimergent 的目标路径>
 ```
-0/ci/new_module.sh <相对 /srv/aimergent 的路径>   # 复制骨架+填名+git init
+
+例如：
+
+```bash
+/srv/aimergent/0/ci/new_module.sh 0/functions/foo
+/srv/aimergent/0/ci/new_module.sh dev/my_idea
 ```
-> 每个项目的**具体架构不同**，starter 只给骨架与方法，不给某个项目的实现。
+
+脚本会复制 `module_template/`、替换 `{{MODULE_NAME}}`，并以 `main` 分支初始化 Git。
+
+## 选择工作模式
+
+- 轻量模式：适合突发想法、单人开发、没有外部消费方的项目。保留 Git、`.gitignore` 和 `code/`，一个 agent 直接实现并自检；需要被其他模块调用时再补真实 `contract.md`。
+- 完整治理模式：适合 `0/` 内正式模块或多人 / 多模块项目。填写契约和规则，安装 CI，按 arbiter → worker → reviewagent → merge 流程交付。
+
+完整说明与验收清单见 [新模块与新项目开设指南.md](新模块与新项目开设指南.md)。

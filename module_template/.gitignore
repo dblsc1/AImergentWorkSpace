@@ -1,0 +1,16 @@
+# CI / 本地生成物（install-ci.sh 仅在模块缺少根 .gitignore 时安装）
+**/node_modules/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.coverage
+**/coverage/
+**/dist/
+**/build/
+**/.venv/
+**/venv/
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.*.example
+!code/frontend/.env.production
