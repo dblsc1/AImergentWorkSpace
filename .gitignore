@@ -1,0 +1,13 @@
+# 框架仓（starter）只跟踪「模板 + 指南」这套可迁移 DNA。
+# Codex 在本目录下创建的工作空间实例（各自 git init 的项目）一律不纳入。
+/*
+!/.gitignore
+!/README.md
+!/module_template/
+!/新模块与新项目开设指南.md
+
+# 通用排除
+**/node_modules/
+**/.env
+**/*.secret
+**/secrets.env
