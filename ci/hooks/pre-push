@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# 推送门禁 —— 覆盖该仓内所有工具/agent，不只某个 CLI：
+#   1. main/master 只经 merge-to-main.sh 的一次性 merge-gate 握手合并。
+#   2. 其余 ref 只经 ci/arbiter-push.sh 的一次性 push-lease 握手推送（arbiter-only）。
+# 装入每个模块仓的 .git/hooks/pre-push（install-ci.sh 负责）。
+lease_consume=""
+while read -r localref localsha remoteref remotesha; do
+  case "$remoteref" in
+    refs/heads/main|refs/heads/master)
+      gate_ok=0
+      if [ "${AIMERGENT_MERGE_GATE:-0}" = 1 ]; then
+        common_dir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+        token=${AIMERGENT_MERGE_GATE_TOKEN_FILE:-}
+        case "$token" in
+          "$common_dir"/aimergent-merge-gate.*)
+            if [ -f "$token" ] && [ "$(stat -c '%a' "$token" 2>/dev/null || true)" = 600 ] &&
+               [ "$(cat "$token" 2>/dev/null || true)" = "${AIMERGENT_MERGE_GATE_NONCE:-}" ] &&
+               [ -n "${AIMERGENT_MERGE_GATE_NONCE:-}" ]; then
+              gate_ok=1
+              rm -f -- "$token"
+            fi
+            ;;
+        esac
+      fi
+      if [ "$gate_ok" -eq 1 ]; then continue; fi
+      echo "❌ 禁止直推 $remoteref。" >&2
+      echo "   main 只能经 PR（CI 绿 + reviewagent approved）合并。" >&2
+      echo "   请推 feat/fix/chore 分支并开 PR；合并走框架根 ci/merge-to-main.sh。" >&2
+      [ "${AIMERGENT_MERGE_GATE:-0}" != 1 ] || echo "   单设 AIMERGENT_MERGE_GATE 无效：缺少脚本的一次性握手。" >&2
+      exit 1 ;;
+    *)
+      lease_ok=0
+      if [ "${AIMERGENT_PUSH_LEASE:-0}" = 1 ]; then
+        common_dir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+        token=${AIMERGENT_PUSH_LEASE_TOKEN_FILE:-}
+        case "$token" in
+          "$common_dir"/aimergent-push-lease.*)
+            if [ -f "$token" ] && [ "$(stat -c '%a' "$token" 2>/dev/null || true)" = 600 ] &&
+               [ "$(cat "$token" 2>/dev/null || true)" = "${AIMERGENT_PUSH_LEASE_NONCE:-}" ] &&
+               [ -n "${AIMERGENT_PUSH_LEASE_NONCE:-}" ]; then
+              lease_ok=1
+              lease_consume="$token"   # 延后消费：同一 push 的多个 ref 复用同一 lease，循环后统一 rm
+            fi
+            ;;
+        esac
+      fi
+      if [ "$lease_ok" -eq 1 ]; then continue; fi
+      echo "❌ 非 arbiter 推送被拒: $remoteref（任何非 main ref 都需 push-lease）" >&2
+      echo "   本阶段仅 arbiter 可推远端（能力收回，铁律15）。" >&2
+      echo "   请让该仓 arbiter 经 ci/arbiter-push.sh 推送；worker/reviewer 子代理不得直接 push。" >&2
+      [ "${AIMERGENT_PUSH_LEASE:-0}" != 1 ] || echo "   单设 AIMERGENT_PUSH_LEASE 无效：缺少 arbiter-push.sh 的一次性握手。" >&2
+      exit 1 ;;
+  esac
+done
+[ -n "$lease_consume" ] && rm -f -- "$lease_consume"
+exit 0

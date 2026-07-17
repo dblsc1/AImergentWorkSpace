@@ -12,7 +12,7 @@ provides:
     summary: （一句话说明提供什么）
 consumes:
   - id: （平台契约 ID；无依赖则写 []）
-    contract: （例如 0/auth_services/module_docs/contract.md）
+    contract: （例如 {{FRAMEWORK_ROOT}}/modules/shared_service/module_docs/contract.md）
     purpose: （用途）
 ```
 
@@ -35,7 +35,7 @@ consumes:
 
 ## 数据与存储
 
-（本模块拥有哪些数据、落在 `/srv/aimergent/runtime/data/<模块名>/` 何处、备份与清理策略。新增数据文件必须声明属主/备份/清理三件事。）
+（本模块拥有哪些数据、如何通过 env 指定 Git 外的 data root、备份与清理策略。新增数据文件必须声明属主/备份/清理三件事。）
 
 ## 配置与密钥
 

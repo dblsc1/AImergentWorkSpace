@@ -1,9 +1,15 @@
-# 框架仓（starter）只跟踪「模板 + 指南」这套可迁移 DNA。
-# Codex 在本目录下创建的工作空间实例（各自 git init 的项目）一律不纳入。
+# 框架仓（starter）只跟踪可迁移的规范、文档、角色、CI 与模板 DNA。
+# 在本目录下用 new_module.sh 创建的实例是独立 Git 仓，默认不纳入 starter。
 /*
 !/.gitignore
+!/.github/
+!/AGENTS.md
 !/README.md
+!/CFO_agent/
+!/ci/
+!/docs/
 !/module_template/
+!/roles/
 !/新模块与新项目开设指南.md
 
 # 通用排除

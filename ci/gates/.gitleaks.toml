@@ -1,0 +1,5 @@
+# 通用 gitleaks 配置；不携带任何原项目凭据指纹或真值。
+title = "starter secret scan"
+
+[extend]
+useDefault = true

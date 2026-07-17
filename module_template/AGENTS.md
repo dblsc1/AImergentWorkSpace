@@ -1,6 +1,6 @@
 # {{MODULE_NAME}} · 模块规范
 
-> 级联：位于 `/srv/aimergent/0/` 的正式模块必须先读 `/srv/aimergent/0/AGENTS.md`（项目级，不可覆盖），本文件只能加严。独立项目在 `module_docs/rules.md` 声明采用轻量或完整治理模式。角色专属规范在 `codeagent/<角色>/AGENTS.md`。
+> 级联：框架根为 `{{FRAMEWORK_ROOT}}`。完整治理模式必须先读 `{{FRAMEWORK_ROOT}}/AGENTS.md`（项目级，不可覆盖），本文件只能加严。本模块在 `module_docs/rules.md` 声明采用轻量或完整治理模式。角色专属规范在 `codeagent/<角色>/AGENTS.md`。
 
 ## 文档地图（每处的位置与作用；改动即同步，见项目铁律 11）
 
@@ -13,7 +13,7 @@
 | 冷启动交接 | `module_docs/handoff.md` | 面向未来接手者的启动、接口与避坑信息 | arbiter 独占 |
 | 工作留痕 | `codeagent/<角色>/docs/worklog/` | 每任务一文件：做了什么/为什么/踩坑 | 各角色 |
 | 交接报告 | `codeagent/<角色>/docs/report.json` | 一次任务终态与升级面；canonical path | 各角色 |
-| 事件流水 | `codeagent/<角色>/docs/diary/*.jsonl` | normal/hard 任务由 `0/ci/log_event.sh` append-only 生成 | 机器 |
+| 事件流水 | `codeagent/<角色>/docs/diary/*.jsonl` | normal/hard 任务由 `{{FRAMEWORK_ROOT}}/ci/log_event.sh` append-only 生成 | 机器 |
 | 踩坑指南 | `codeagent/<角色>/docs/踩坑指南.md` | 精编教训（与流水 worklog 分开） | 各角色 |
 | 审核脚本 | `review/reviewcode/` | 检测脚本，目录镜像 code/ | reviewagent |
 | 审核详报 | `review/reviewreport/` | 人类可读详报/镜像，不替代 canonical report | reviewagent |
@@ -43,7 +43,7 @@
 
 ### 完整治理模式
 
-`0/` 内模块必须使用本模式；多人、多模块或需要独立审核的项目也应使用：
+项目根声明为完整治理的模块必须使用本模式；多人、多模块或需要独立审核的项目也应使用：
 
 1. arbiter 开单 → 写入执行角色的 `codeagent/<角色>/docs/worklog/YYYY-MM-DD-<角色>-<任务>.md`
 2. 角色实现+自测+跑 `review/reviewcode/` 全部脚本（= Stage A 自检，持写入位、不阻断提交）+ worklog 留痕

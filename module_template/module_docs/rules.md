@@ -1,10 +1,10 @@
 # {{MODULE_NAME}} · 模块专属规则
 
-> `0/` 内正式模块的项目级铁律见 `/srv/aimergent/0/AGENTS.md`，此处只能加严。独立项目可按《新模块与新项目开设指南》选择轻量模式。完整治理时由 arbiter 执笔维护。
+> 框架根为 `{{FRAMEWORK_ROOT}}`；项目级铁律见 `{{FRAMEWORK_ROOT}}/AGENTS.md`。完整治理时此处只能加严，并由 arbiter 执笔维护；独立实验可按《新模块与新项目开设指南》选择轻量模式。
 
 ## 工作模式
 
-- 模式：`lightweight | governed`（创建后二选一；`0/` 内模块必须为 `governed`）
+- 模式：`lightweight | governed`（创建后二选一；已被项目根声明为完整治理的模块必须为 `governed`）
 - 升级条件：（例如出现外部消费方、多人并发或审核要求）
 
 ## 技术与目录

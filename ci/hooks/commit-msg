@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# 每个新 commit 必须携带且只能携带一个可解析的 agent 归属 trailer。
+# 安装到 .git/hooks/commit-msg；CI 也直接用本文件验证 feature commit 消息。
+set -uo pipefail
+
+die() {
+  printf '❌ commit 归属无效：%s\n' "$*" >&2
+  printf '   必须且只能有一行：Agent-Attribution: <role>@<module>+<task_id>\n' >&2
+  printf '   role/module/task_id 使用小写 slug；module 可用 / 分层。\n' >&2
+  exit 1
+}
+
+[ $# -eq 1 ] || die "commit-msg hook 需要消息文件参数"
+message_file=$1
+[ -r "$message_file" ] || die "消息文件不可读: $message_file"
+
+parsed=$(git interpret-trailers --parse "$message_file") || die "无法解析 trailer"
+attribution_count=0
+exact_key_count=0
+attribution=''
+
+while IFS= read -r trailer; do
+  [ -n "$trailer" ] || continue
+  key=${trailer%%:*}
+  compact_key=${key//[[:space:]]/}
+  if [ "${compact_key,,}" = agent-attribution ]; then
+    attribution_count=$((attribution_count + 1))
+    if [ "$key" = Agent-Attribution ]; then
+      exact_key_count=$((exact_key_count + 1))
+      attribution=${trailer#*:}
+      attribution=${attribution# }
+    fi
+  fi
+done <<<"$parsed"
+
+[ "$attribution_count" -eq 1 ] || die "检测到 $attribution_count 个 Agent-Attribution trailer"
+[ "$exact_key_count" -eq 1 ] || die "trailer key 必须精确为 Agent-Attribution"
+
+slug='[a-z0-9]+([._-][a-z0-9]+)*'
+pattern="^${slug}@${slug}(/${slug})*\\+${slug}$"
+[[ "$attribution" =~ $pattern ]] || die "值不符合 <role>@<module>+<task_id>: $attribution"
+
+exit 0
