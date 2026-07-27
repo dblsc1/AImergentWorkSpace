@@ -1,14 +1,22 @@
 # 框架仓（starter）只跟踪可迁移的规范、文档、角色、CI 与模板 DNA。
 # 在本目录下用 new_module.sh 创建的实例是独立 Git 仓，默认不纳入 starter。
+#
+# ⚠️ 这是**白名单**（`/*` 先全忽略，再逐条放行）。它会**静默吞掉**任何未登记的
+#    新增根级文件——不报错、不提示；`git add -A` 之后你以为加上了，其实没有。
+#    框架 V1 丢失项目级骨架的物理机制之一就是这条。
+#    **新增任何根级文件/目录，必须同时在下面加一行 `!/<名字>`，
+#      并用 `git ls-files <路径>` 确认它真被跟踪。**
 /*
 !/.gitignore
 !/.github/
 !/AGENTS.md
+!/CONSTITUTION.template.md
 !/README.md
 !/CFO_agent/
 !/ci/
 !/docs/
 !/module_template/
+!/review/
 !/roles/
 !/新模块与新项目开设指南.md
 

@@ -9,8 +9,12 @@
 ```bash
 git clone <your-repository-url> AImergent-workspace
 cd AImergent-workspace
+./ci/install-ci.sh .                 # ① 先给根仓自己装门禁 —— 别跳过
+git checkout -b feat/<你的第一个主题>  # ② 根仓工作也走分支，main 只经合并门更新
 ./ci/new_module.sh modules/example_module
 ```
+
+> **①②不是可选步骤。** 框架根是受治理仓（`AGENTS.md` 铁律 20），不是配置目录。跳过 ① 则 hooks/CI 全程不生效；跳过 ② 会让报告门禁在空区间上假绿。完整清单见[根仓开工](新模块与新项目开设指南.md#根仓开工clone-之后动任何业务之前)。
 
 `new_module.sh` 会：
 
@@ -47,6 +51,7 @@ cd AImergent-workspace
 ## 文档入口
 
 - [项目级规范](AGENTS.md)
+- [项目宪法模板（加严条款 + 裁决台账）](CONSTITUTION.template.md)
 - [文档地图](docs/manual/文档地图.md)
 - [架构与约定](docs/1%20structure/README.md)
 - [角色与报告协议](roles/)

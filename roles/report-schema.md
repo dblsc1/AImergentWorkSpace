@@ -37,8 +37,11 @@
 | L1 arbiter | `codeagent/arbiter/docs/report.json` |
 | CFO arbiter | `CFO_agent/arbiter/docs/report.json` |
 | CFO consulter | `CFO_agent/consulter/docs/findings/report.json` |
+| **临时执行者**（CFO/arbiter 直派、不属上述固定角色的一次性 implementer / reviewer / 归档工等） | `<派活方>/docs/subreports/<YYYY-MM-DD>-<task-id>-<role>.md` |
 
-框架根 `ci/gates/check-report-schema.sh` 只检查当前任务相对 PR/main merge-base 新增、修改或删除的 canonical reports，不扫描未变的历史报告。若本任务变更 `review/reviewreport/*` 却没有同步变更 `codeagent/reviewagent/docs/report.json`，gate 直接拒绝 mirror-only 交付。
+**临时执行者落点是硬要求，不是建议。** 固定六角色覆盖不了的一次性活（迁仓、归档、写契约、专项审核……）**同样必须把报告落进仓内**：由派活方在自己 `docs/subreports/` 下收编并**随本任务一起 commit**。派活方 `report.json` 的 `sub_reports[].path` **必须是仓根相对路径**；填 `/tmp/...`、会话工作目录或任何仓外绝对路径，该子报告按**未产出**计（铁律 12 / 18）。临时执行者不必单独出 `report.json`——它的报告由派活方收编进 `sub_reports`，但**文件本身必须可被后来者 `git show` 出来**。
+
+框架根 `ci/gates/check-report-schema.sh` 只检查当前任务相对 PR/main merge-base 新增、修改或删除的 canonical reports，不扫描未变的历史报告。**当 merge-base == head（例如直接在 `main` 上提交）时区间为空，门禁不会退化为绿灯而是响亮失败**——空区间意味着"无法确定任务区间"，不等于"验过了"。若本任务变更 `review/reviewreport/*` 却没有同步变更 `codeagent/reviewagent/docs/report.json`，gate 直接拒绝 mirror-only 交付。
 
 ## reviewagent 的标准 `review_target`
 

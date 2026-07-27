@@ -1,0 +1,42 @@
+# 模块 CI 模板：install-ci.sh 安装到目标模块仓。无业务密钥。
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: ['feat/**', 'fix/**', 'chore/**']
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  gates:
+    name: gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: ci/gates/.gitleaks.toml
+      - name: deterministic gates
+        run: bash ci/gates/run-gates.sh
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: module tests and builds
+        run: bash ci/gates/run-tests.sh

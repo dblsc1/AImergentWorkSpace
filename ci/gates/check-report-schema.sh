@@ -33,6 +33,17 @@ if [ -z "$merge_base" ]; then
   exit 1
 fi
 
+# 空区间 = 假绿灯陷阱：直接在 main（或与 base 同点的分支）上工作时，
+# merge-base 就是 head 本身，diff 为空 → 一份 report 都不验却退 0。
+# 这种情况下门禁不是"验过了"，而是"无法确定任务区间"，必须响亮失败。
+if [ "$(git rev-parse "$merge_base")" = "$(git rev-parse "$report_head^{commit}")" ]; then
+  bad "任务区间为空（merge-base == head）——本次运行不会核验任何 canonical report。"
+  bad "  成因通常是直接在 main 上提交（未走 feat/ 分支），或 base 与 head 同点。"
+  bad "  正解：在 feat/ 分支上工作并以 main 为 base；确需在同分支核验时显式指定："
+  bad "  AIMERGENT_REPORT_BASE=<任务起点40位sha> $0"
+  exit 1
+fi
+
 validate_common() {
   local path=$1 expected_role=$2 blob report_commit report_base changed diff_names
   local review_base review_head actual_files claimed_files mismatch
@@ -161,6 +172,8 @@ while IFS= read -r path; do
     codeagent/arbiter/docs/report.json) validate_common "$path" arbiter ;;
     CFO_agent/arbiter/docs/report.json) validate_common "$path" arbiter ;;
     CFO_agent/consulter/docs/findings/report.json) validate_common "$path" consulter ;;
+    # 骨架占位不是审核产物，不触发 mirror-only 检查
+    review/reviewreport/.gitkeep|review/reviewreport/*/.gitkeep) ;;
     review/reviewreport/*) review_artifact_changed=1 ;;
   esac
 done < <(git -c core.quotePath=false diff --name-only --diff-filter=ACMRD \
