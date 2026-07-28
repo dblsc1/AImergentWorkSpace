@@ -2,6 +2,7 @@
 # 将无外部密钥的 CI 和本地 Git hooks 安装到一个独立仓。
 # 用法: install-ci.sh [--hook-only] <相对 AIMERGENT_WORKSPACE_ROOT 的仓路径|.>
 set -euo pipefail
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || true
 
 die() { printf '❌ %s\n' "$*" >&2; exit 1; }
 
@@ -102,6 +103,11 @@ for hook in pre-push commit-msg pre-commit; do
 done
 
 origin=$(git -C "$mod_real" remote get-url origin 2>/dev/null || true)
+# 控制台服务（零依赖，失败不阻断安装）
+if [ -x "$PROJECT_ROOT/control-panel/install.sh" ]; then
+  "$PROJECT_ROOT/control-panel/install.sh" "${AIMERGENT_PANEL_INSTALL_ARGS:-}" 2>&1 | sed 's/^/   /' || true
+fi
+
 printf '✅ CI/Git 本地治理已安装入 %s\n' "$repo_arg"
 if [ -n "$origin" ]; then
   printf '   origin: %s\n' "$origin"

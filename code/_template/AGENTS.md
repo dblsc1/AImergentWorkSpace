@@ -29,12 +29,15 @@
 
 ## 4. 流程
 
-1. arbiter 开单 → 写进执行角色的 `codeagent/<角色>/docs/worklog/`
+1. arbiter 开单 → `scripts/mission_start.sh <角色> <任务单> <写区>` **发路签**（写区重叠即拒派）
 2. programmer 实现 + 自测 + 跑 `review/reviewcode/run_all.sh`
-3. 自检通过 → commit + push 形成远端 candidate
-4. `programmer_reviewer` 对该 candidate 审代码；`module_reviewer` 审 arbiter 的规范面
-5. approved 才经 `scripts/merge-to-main.sh` 合 main（**审核门在 merge，不在 commit**）
-6. rejected 在分支返修，上限 2 次，超限升级 CFO
+3. `scripts/mission_complete.sh` 全绿 → **本地 commit**（不推）
+4. `scripts/review_start.sh programmer_reviewer <commit>` → reviewer 审**本地 commit**
+   → `scripts/review_complete.sh ... approved|rejected`
+5. rejected → `scripts/run_agent.sh programmer --resume` **续用同一个 agent 返修**，上限 2 次
+6. approved → `scripts/arbiter-push.sh` 推远端（**先审后推：被打回的活不上远端**）
+7. 交 CFO 前由 `module_reviewer` 审规范面
+8. `scripts/merge-to-integration.sh` 合入 `dev`；**dev → main 由人在用户测试通过后推**
 
 ## 5. 对外接口
 

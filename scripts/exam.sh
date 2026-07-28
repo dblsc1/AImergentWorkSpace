@@ -7,6 +7,7 @@
 #
 # 不通过的处置：退回 arbiter 重新派单，并附带错在哪。走既有打回循环，不铸令牌。
 set -uo pipefail
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || true
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "❌ 不在 Git 仓内" >&2; exit 2; }
 cd "$root"
@@ -86,9 +87,18 @@ grade() {
   printf '   %s\n' "${msgs[@]}" >&2
   cat >&2 <<EOF
 
-→ 退回 arbiter：本 subagent 不放行接任务。
-  请用 scripts/dispatch.sh <角色> <任务单> 重新派单，
-  并在任务单里针对上列错项重点强调。
+→ 退回派活方：本 subagent 不放行接任务。
+
+【派单完整性自查表 —— 派活方先自查，再判是不是 agent 的问题】
+  □ 是否用 scripts/dispatch.sh 生成提示词（而不是手写）？
+  □ 首行是否指明了角色卡路径？
+  □ 是否嵌入了 mission_complete.sh --list 的判据（开卷）？
+  □ 是否用 scripts/new_agent.sh 生成过该角色（写边界已填实）？
+  □ 任务单四小节是否齐全（目标/验收/可触碰目录/自检门）？
+  □ 是否声明并申领了写区路签（mission_start.sh）？
+
+  上面任一项没做 → **是派单漏了，不是 agent 没读**。补齐后重新派。
+  全做了仍答错 → agent 确实没读，重新派并在任务单强调上列错项。
 EOF
   return 1
 }

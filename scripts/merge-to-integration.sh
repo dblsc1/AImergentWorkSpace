@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# main 唯一合法合并通道：审批绑定、门禁/测试、PR checks 均通过才 squash。
+# 唯一合法合并通道：审批绑定、门禁/测试、PR checks 均通过才 squash。
+#
+# 目标分支 = $AIMERGENT_INTEGRATION_BRANCH（默认 dev），**不是 main**。
+#   模块 feature → dev   ← arbiter 权限，走本脚本
+#   dev         → main  ← 只有用户测试通过才推，人的动作，agent 不得代劳
+# 直接以 main 为目标会被本脚本拒绝。
 set -euo pipefail
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || true
 
 die() { printf '❌ %s\n' "$*" >&2; exit 1; }
 ok() { printf '✅ %s\n' "$*"; }
@@ -219,9 +225,15 @@ verify_main_reports() {
       "$PROJECT_ROOT/scripts/gates/check-report-schema.sh")
 }
 
-main_sha=$(git -C "$repo" rev-parse main)
-remote_main=$(git -C "$repo" rev-parse origin/main)
-[ "$main_sha" = "$remote_main" ] || die "本地 main 与 origin/main 不同步"
+TARGET=${AIMERGENT_INTEGRATION_BRANCH:-dev}
+case "$TARGET" in
+  main|master) die "禁止用本脚本合入 $TARGET。$TARGET 只由人在用户测试通过后推进；agent 合入目标是 dev。" ;;
+esac
+git -C "$repo" rev-parse --verify --quiet "$TARGET" >/dev/null ||
+  die "集成分支不存在: $TARGET（先建：git branch $TARGET）"
+main_sha=$(git -C "$repo" rev-parse "$TARGET")
+remote_main=$(git -C "$repo" rev-parse "origin/$TARGET" 2>/dev/null || echo "$main_sha")
+[ "$main_sha" = "$remote_main" ] || die "本地 $TARGET 与 origin/$TARGET 不同步"
 git -C "$repo" merge-base --is-ancestor "$main_sha" "$candidate" || die "任务分支不是当前 main 的后代"
 
 reviewed=''
@@ -349,8 +361,8 @@ if [ -n "$pr" ]; then
   post_merge_fail() {
     die "PR #$pr 已确认 MERGED；后续仅本地终态复验失败，禁止回滚或重试合并: $*"
   }
-  fetch_origin_refs main || post_merge_fail "无法刷新 origin/main"
-  merged_sha=$(git -C "$repo" rev-parse origin/main) || post_merge_fail "无法解析 origin/main"
+  fetch_origin_refs "$TARGET" || post_merge_fail "无法刷新 origin/$TARGET"
+  merged_sha=$(git -C "$repo" rev-parse "origin/$TARGET") || post_merge_fail "无法解析 origin/$TARGET"
   verify_squash_attribution "$merged_sha" || \
     post_merge_fail "远端 squash commit 未生成预期 Agent-Attribution"
   verify_main_reports "$main_sha" "$merged_sha" || \

@@ -9,6 +9,7 @@
 # 「我的规范拦得住我自己犯过的每一个错」—— 这份脚本就是那句话的证据。
 # 它必须进 CI 每次跑，否则半年后这些闸门会在无人察觉中失效（V1 假绿门禁就是这么来的）。
 set -uo pipefail
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || true
 
 repo=${1:-$(git rev-parse --show-toplevel 2>/dev/null || true)}
 [ -n "$repo" ] && [ -e "$repo/.git" ] || { echo "❌ 不是 git 仓: ${repo:-<空>}" >&2; exit 2; }
@@ -149,7 +150,8 @@ fi
 
 # 14 ── 重组把唯一合法合并通道改坏了却没人知道
 printf '14. 合并通道路径是否完好\n'
-mm=$S/merge-to-main.sh
+mm=$S/merge-to-integration.sh
+[ -x "$mm" ] || mm=$S/merge-to-main.sh
 if [ ! -x "$mm" ]; then
   F "缺少 merge-to-main.sh —— main 没有唯一合法合并通道"
 elif grep -qE '(^|[^A-Za-z0-9_])ci/gates/' "$mm" 2>/dev/null ||
@@ -157,6 +159,22 @@ elif grep -qE '(^|[^A-Za-z0-9_])ci/gates/' "$mm" 2>/dev/null ||
   F "merge-to-main.sh 仍引用重组前的路径/角色 —— 合并通道实际跑不起来"
 else
   P "merge-to-main.sh 引用的路径与当前结构一致"
+fi
+
+# 15 ── 未受控双写：同一仓同一分支两个写入者
+printf '15. 写区互斥是否可核验\n'
+if [ -x "$S/mission_start.sh" ] && [ -x "$S/checks/_common/05-write-lease.sh" ]; then
+  P "路签：mission_start 发签、checks/05 验签，越区提交被拒"
+else
+  F "没有写区互斥机制 —— 两个 programmer 可以同时改同一片代码"
+fi
+
+# 16 ── 新功能没测试，旧功能只能靠肉眼守
+printf '16. 新功能是否强制带测试\n'
+if [ -n "$(find "$S/checks" -name '83-test-required.sh' 2>/dev/null)" ]; then
+  P "新增功能代码必须同批带测试或回归用例"
+else
+  F "新功能可以不带测试 —— 旧功能迟早只能靠肉眼守"
 fi
 
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"

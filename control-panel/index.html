@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>任务控制台</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --fg:#16191d; --dim:#6b7280; --line:#e2e5ea; --card:#fff;
+    --ok:#0f7b4a; --bad:#b3261e; --warn:#8a5a00; --live:#0f7b4a;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{--bg:#121418; --fg:#e6e8eb; --dim:#98a0aa; --line:#282c33; --card:#191c21;
+          --ok:#4ade80; --bad:#f87171; --warn:#fbbf24; --live:#4ade80;}
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:22px;background:var(--bg);color:var(--fg);
+       font:14px/1.55 ui-sans-serif,-apple-system,"Segoe UI",Roboto,"Noto Sans CJK SC",sans-serif}
+  header{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:4px}
+  h1{font-size:19px;margin:0;letter-spacing:-.01em}
+  .live{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--dim)}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--live);
+       animation:pulse 1.8s ease-in-out infinite}
+  .dot.off{background:var(--dim);animation:none}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  .sub{color:var(--dim);font-size:12.5px;margin-bottom:18px}
+  .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));margin-bottom:20px}
+  .tile{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .tile .n{font-size:24px;font-weight:640;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  .tile .l{color:var(--dim);font-size:11.5px;margin-top:2px}
+  .tile.alert .n{color:var(--bad)} .tile.warn .n{color:var(--warn)}
+  section{background:var(--card);border:1px solid var(--line);border-radius:10px;
+          padding:14px 16px;margin-bottom:14px}
+  section h2{font-size:12.5px;margin:0 0 10px;color:var(--dim);font-weight:620;
+             text-transform:uppercase;letter-spacing:.06em}
+  .scroll{overflow-x:auto;max-height:52vh;overflow-y:auto}
+  table{border-collapse:collapse;width:100%;font-size:13px;min-width:520px}
+  th,td{text-align:left;padding:6px 9px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em;
+     position:sticky;top:0;background:var(--card)}
+  tr:last-child td{border-bottom:none}
+  code{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dim)}
+  .pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11.5px;font-weight:600}
+  .s-approved{background:color-mix(in srgb,var(--ok) 16%,transparent);color:var(--ok)}
+  .s-rejected,.s-fail{background:color-mix(in srgb,var(--bad) 16%,transparent);color:var(--bad)}
+  .s-pending,.s-blocked,.s-escalate{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}
+  .flag{color:var(--bad);font-weight:640}
+  .ts{color:var(--dim);font-size:12px;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .empty{color:var(--dim);padding:12px 0;font-size:13px}
+  tr.new{animation:flash 1.4s ease-out}
+  @keyframes flash{from{background:color-mix(in srgb,var(--live) 22%,transparent)}to{background:transparent}}
+  footer{color:var(--dim);font-size:12px;margin-top:16px;border-top:1px solid var(--line);padding-top:10px}
+</style>
+</head>
+<body>
+<header>
+  <h1>任务控制台</h1>
+  <span class="live"><span class="dot off" id="dot"></span><span id="livetxt">连接中…</span></span>
+</header>
+<div class="sub" id="meta">加载中…</div>
+<div class="grid" id="tiles"></div>
+
+<section><h2>脚本活动 · 实时</h2><div class="scroll"><table id="events"></table></div></section>
+<section><h2>报告流</h2><div class="scroll"><table id="reports"></table></div></section>
+
+<footer>
+数据源：<code>logs/diary.jsonl</code> 与各角色 <code>report.json</code>。
+每个脚本 source 了 <code>scripts/lib/emit.sh</code>，激活与退出自动上报，所以这里看到的是一举一动。<br>
+本面板只读，不写任何东西 —— 它不是第二个事实源。
+</footer>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const short = s => s ? String(s).replace('T',' ').replace(/(:\d\d)(\.\d+)?(Z|[+-]\d\d:?\d\d)$/,'') : '—';
+let events = [], reports = [], metrics = {};
+
+function tiles(){
+  const spec = [
+    ['脚本运行', metrics.scripts_run, ''],
+    ['脚本失败', metrics.failures, metrics.failures ? 'alert' : ''],
+    ['报告总数', metrics.reports_total, ''],
+    ['打回', metrics.rejected, metrics.rejected ? 'warn' : ''],
+    ['升级', metrics.escalated, metrics.escalated ? 'warn' : ''],
+    ['考试未过', metrics.exam_fail, metrics.exam_fail ? 'alert' : ''],
+    ['提交被拒', metrics.blocked, metrics.blocked ? 'alert' : ''],
+    ['逃生口使用', metrics.override, metrics.override ? 'alert' : ''],
+  ];
+  $('#tiles').innerHTML = spec.map(([l,n,c]) =>
+    `<div class="tile ${c}"><div class="n">${n ?? 0}</div><div class="l">${l}</div></div>`).join('');
+}
+
+function evRow(e, isNew){
+  let what = esc(e.script || e.event), detail = '', cls = '';
+  if(e.event === 'script_start'){ detail = e.note ? `启动 ${esc(e.note)}` : '启动'; }
+  else if(e.event === 'script_end'){
+    detail = (e.rc === 0 ? '完成 · ' : '退出码 ' + e.rc + ' · ') + esc(e.note || '');
+    if(e.rc !== 0) cls = 'flag';
+  }
+  else if(e.event === 'exam'){ what = 'exam'; detail = `${esc(e.role)} ${e.score}/5`; if(e.pass === false) cls='flag'; }
+  else if(e.event === 'mission_override'){ what = '逃生口'; detail = `绕过：${esc(e.reason)}`; cls='flag'; }
+  else if(e.event === 'mission_blocked'){ what = '提交被拒'; detail = `失败 ${esc(e.failed||'')}`; cls='flag'; }
+  else if(e.event === 'mission_complete'){ what = '完工通过'; detail = `${e.pass} 项`; }
+  else { detail = esc(JSON.stringify(e).slice(0,120)); }
+  return `<tr class="${isNew?'new':''}"><td class="ts">${short(e.ts)}</td>
+    <td><code>${what}</code></td><td>${esc(e.actor || e.role || '—')}</td>
+    <td class="${cls}">${detail}</td></tr>`;
+}
+
+function renderEvents(newest){
+  const t = $('#events');
+  if(!events.length){ t.innerHTML = '<tr><td class="empty">还没有脚本活动。跑任意一个 scripts/*.sh 就会出现。</td></tr>'; return; }
+  t.innerHTML = '<thead><tr><th>时间</th><th>脚本/事件</th><th>激活者</th><th>详情</th></tr></thead><tbody>'
+    + events.slice(0, 200).map((e,i) => evRow(e, newest && i === 0)).join('') + '</tbody>';
+}
+
+function renderReports(){
+  const t = $('#reports');
+  if(!reports.length){ t.innerHTML = '<tr><td class="empty">还没有 report.json。</td></tr>'; return; }
+  t.innerHTML = '<thead><tr><th>时间</th><th>角色 @ 模块</th><th>任务</th><th>状态</th><th>审核</th><th>升级面</th></tr></thead><tbody>'
+    + reports.map(r => {
+      const flags = [r.escalated?'升级':'', r.contract_touched?'碰契约':''].filter(Boolean).join(' · ');
+      return `<tr><td class="ts">${short(r.ts)}</td>
+        <td><b>${esc(r.role)}</b> @ ${esc(r.module)}<br><code>${esc(r.path)}</code></td>
+        <td>${esc(r.task)}</td>
+        <td><span class="pill s-${esc(r.status)}">${esc(r.status)}</span></td>
+        <td><span class="pill s-${esc(r.reviewer)}">${esc(r.reviewer)}</span></td>
+        <td class="${flags?'flag':''}">${flags || '—'}</td></tr>`;
+    }).join('') + '</tbody>';
+}
+
+function load(){
+  return fetch('/api/snapshot', {cache:'no-store'}).then(r => r.json()).then(d => {
+    events = d.events || []; reports = d.reports || []; metrics = d.metrics || {};
+    $('#meta').textContent = `分支 ${d.branch} · ${d.root} · 快照 ${short(d.generated)}`;
+    tiles(); renderEvents(false); renderReports();
+  });
+}
+
+function stream(){
+  const es = new EventSource('/api/stream');
+  es.onopen = () => { $('#dot').classList.remove('off'); $('#livetxt').textContent = '实时'; };
+  es.onerror = () => { $('#dot').classList.add('off'); $('#livetxt').textContent = '已断开，重连中…'; };
+  es.onmessage = ev => {
+    try {
+      const e = JSON.parse(ev.data);
+      events.unshift(e);
+      if(e.event === 'script_start') metrics.scripts_run = (metrics.scripts_run||0)+1;
+      if(e.event === 'script_end' && e.rc !== 0) metrics.failures = (metrics.failures||0)+1;
+      if(e.event === 'mission_blocked') metrics.blocked = (metrics.blocked||0)+1;
+      if(e.event === 'mission_override') metrics.override = (metrics.override||0)+1;
+      tiles(); renderEvents(true);
+    } catch(_) {}
+  };
+}
+
+load().then(stream).catch(() => {
+  $('#meta').innerHTML = '读不到 <code>/api/snapshot</code>。先跑 <code>python3 control-panel/server.py</code>。';
+});
+setInterval(load, 30000);   // 报告流靠定时快照刷新；脚本活动走 SSE 即时
+</script>
+</body>
+</html>

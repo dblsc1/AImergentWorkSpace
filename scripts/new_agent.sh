@@ -16,6 +16,7 @@
 # 「创建时考试」在 harness 上做不到（agent 还不存在时没人能答题），
 # 「出生第一句话就是答卷」做得到，而且更靠前。
 set -euo pipefail
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || true
 die() { printf '❌ %s\n' "$*" >&2; exit 1; }
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || die "不在 Git 仓内"

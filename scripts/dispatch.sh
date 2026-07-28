@@ -7,6 +7,7 @@
 # 靠人手写「第一行：先读你的角色卡」= 忘写就等于角色卡不存在，且无人察觉。
 # 本脚本把那一行变成机器生成的，并附上角色卡的 git 短哈希，供事后核对版本。
 set -uo pipefail
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || true
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "❌ 不在 Git 仓内" >&2; exit 2; }
 cd "$root"

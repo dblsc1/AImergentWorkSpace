@@ -13,15 +13,19 @@
 | `install-gates.sh` | 装门禁、hooks、checks 到目标仓；传 `.` 给根仓自己装 | **clone 后第一件事** |
 | `new_module.sh <名字>` | 一个参数建模块：骨架 → 清占位 → 装门禁 → 建三个角色 → 初始 commit → 开 `feat/init` | 开新模块 |
 | `new_agent.sh <角色> [模块]` | 建角色实例：复制角色卡 → 填实可读可写 → 写 `.claude/agents/<角色>.md`（内联角色卡 + 出生考卷）→ 建 `checks/` 扩展点 | 建模块时自动调；单独加角色时手动 |
-| `selftest.sh [仓路径]` | **14 条闸门有效性断言**：把真实踩过的坑做成测试 | 改门禁后 / CI |
+| `selftest.sh [仓路径]` | **16 条闸门有效性断言**：把真实踩过的坑做成测试 | 改门禁后 / CI |
 
 ## ② 派活与执行
 
 | 脚本 | 干什么 |
 |---|---|
+| `mission_start.sh <角色> <任务单> <写区...>` | **开工**：校验任务单四小节 → 申领写区路签（前缀重叠即拒） → 出提示词 |
 | `dispatch.sh <角色> <任务单>` | 生成派单提示词：角色卡首行 + 版本哈希 + **开卷判据**（嵌 `mission_complete --list`）+ 任务单原文 |
 | `run_agent.sh <角色> <任务单> [模块] [--resume]` | **起独立 Claude 进程执行角色任务**（`claude -p --agent`），不受子代理嵌套限制；`--resume` 按记录的 session id 续用 |
-| `exam.sh <角色> [--submit 答案]` | 开工考试（五道通用流程题）。不过 → 退回 arbiter 重派，**不铸令牌** |
+| `exam.sh <角色> [--submit 答案]` | 开工考试（五道通用流程题）。不过 → 打印**派单完整性自查表** + 退回重派，**不铸令牌** |
+| `review_start.sh <reviewer> <commit> [留言]` | **起审**：固定被审区间（绑本地 commit，不必先 push），转发报告与 arbiter 留言 |
+| `review_complete.sh <reviewer> <base> <head> <verdict>` | **收审**：规范检查 + 生成含 `review_target` 的 report.json |
+| `new_check.sh <层> <编号-名字>` | **加闸门脚手**：生成骨架、校验 `--describe` 契约、空跑自检 |
 
 ## ③ 完工与留痕
 
@@ -50,17 +54,18 @@ codeagent/<角色>/checks/       本模块给该角色追加的
 
 | 层 | 检查 |
 |---|---|
-| `_common` | 10 worklog · 20 report 已提交 · 40 分支纪律 · 60 路径可解析 · 70 审核意见 |
+| `_common` | **05 写区路签** · 10 worklog · 20 report 已提交 · 40 分支纪律 · 60 路径可解析 · 70 审核意见 · **90 依赖漂移** |
 | `arbiter` | 30 子报告落点 · 50 契约同步 · 80 任务单四小节 |
-| `programmer` | 81 写边界（不得改 `review/` 与 `module_docs/`） |
+| `programmer` | 81 写边界（不得改 `review/` 与 `module_docs/`） · **83 新功能必须带测试** |
 | `programmer_reviewer` / `module_reviewer` | 82 审核区间（`review_target` 必须 exact） |
 
 ## ④ Git 闸门（唯一合法路径）
 
 | 脚本 | 干什么 |
 |---|---|
-| `arbiter-push.sh <push参数>` | **唯一合法的 push 路径**：铸一次性 lease → fetch-then-push |
-| `merge-to-main.sh` | **唯一合法的合 main 路径**：审批与 candidate 精确绑定 → 本地 gates/tests → PR checks → squash |
+| `arbiter-push.sh <push参数>` | **唯一合法的 push 路径**：**先校验有 approved 审核** → 铸一次性 lease → fetch-then-push |
+| `merge-to-integration.sh` | **唯一合法的合并通道**，目标 = `$AIMERGENT_INTEGRATION_BRANCH`（默认 `dev`）。**以 main 为目标会被拒绝** |
+| `lib/emit.sh` | 被所有脚本 source：激活/退出自动写进 diary，控制面板据此实时显示 |
 | `hooks/pre-commit` | 调 `mission_complete.sh`，不过拒绝提交 |
 | `hooks/pre-push` | 拦直推 main、拦无 lease 的 push |
 | `hooks/commit-msg` | 拦缺失/重复/畸形的 `Agent-Attribution` |
@@ -69,13 +74,35 @@ codeagent/<角色>/checks/       本模块给该角色追加的
 | `gates/check-report-schema.sh` | 报告协议核验（含空区间假绿修复） |
 | `gates/run-tests.sh` | 跑模块测试与构建 |
 
+### 完整流程（2026-07-28 定）
+
+```
+CFO   new_module.sh → dispatch.sh arbiter → 开 arbiter session
+arbiter
+  ├─ 出生答卷 → exam.sh 判卷（不过：先自查派单完整性）
+  ├─ mission_start.sh programmer <任务单> <写区>   发路签，重叠即拒
+  ├─ run_agent.sh programmer <任务单>              可并发，写区不重合即可
+  │    programmer: 实现 → 自检门 → mission_complete.sh → git commit（本地）
+  ├─ review_start.sh programmer_reviewer <commit>  ★审的是本地 commit
+  │    reviewer: 写 reviewcode 脚本 → review_complete.sh approved|rejected
+  ├─ rejected → run_agent.sh programmer --resume（续用，不重开）
+  ├─ approved → arbiter-push.sh                    ★先审后推：脏东西不上远端
+  ├─ module_reviewer 审规范面（交 CFO 前必过）
+  └─ merge-to-integration.sh                       → dev
+人   dev → main（用户测试通过后，agent 不得代劳）
+```
+
+★ 两处顺序是有意的：**审绑本地 commit，先审后推**。本地 commit 已是不可变、有 SHA 的
+真实对象，绑它足够；先审后推让被打回的活永远不上远端，返修不需要 force-push。
+代价：review 时拿不到 CI 结果 —— 由本地 `run-gates.sh` + `run-tests.sh` 先顶，CI 作为推之后的第二道网。
+
 ### 三层闸门，别搞混
 
 | 层 | 谁拦 | 拦什么 |
 |---|---|---|
 | **派单层** | `exam.sh` | 没读规范的 agent 不放行接任务（退回重派，无令牌） |
 | **提交层** | `pre-commit` → `mission_complete.sh` | 留痕不全、越界、无审核意见 → 拒绝提交 |
-| **合并层** | `pre-push` + `merge-to-main.sh` | 无 approved 审核、门禁不绿 → 拒绝进 main |
+| **合并层** | `pre-push` + `merge-to-integration.sh` | 无 approved 审核、门禁不绿 → 拒绝进 dev；main 只由人推 |
 
 **「审核门在 merge 不在 commit」**：提交层只要求 `reviewer_opinion` 字段**存在**
 （`verdict` 可以是 `pending`），合并层才要求 `approved`。

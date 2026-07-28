@@ -10,6 +10,7 @@
 # --resume：按记录的 session id 续用同一个进程的会话（铁律「续用 > 重开」终于可机械执行）。
 # 打回-修复循环必须用它——重开等于把上下文全丢了重读一遍。
 set -uo pipefail
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || true
 die() { printf '❌ %s\n' "$*" >&2; exit 1; }
 
 command -v claude >/dev/null || die "找不到 claude CLI"

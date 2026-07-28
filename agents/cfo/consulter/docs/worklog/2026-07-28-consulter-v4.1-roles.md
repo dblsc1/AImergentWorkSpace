@@ -99,3 +99,33 @@ codeagent/<角色>/checks/       本模块追加
 这些脚本是真被执行和安装的，不是样例；而每个 agent 各带一份通用检查会立刻产生
 「同一个检查被实现 N 遍、逐渐漂移」——那正是模块 reviewcode 已经踩过的坑。
 模块级扩展点保留了（`codeagent/<角色>/checks/`），但只用来**追加**，不复制通用项。
+
+## V4.1 第二批：路签 / 先审后推 / 控制台（补记）
+
+人类全批准八条，另加控制面板。要点与理由：
+
+**① 路签（火车那套）**：`mission_start.sh` 发签、`checks/_common/05` 验签、
+`mission_complete` 通过后还签。重叠判据是**路径前缀互含**（父/子文件夹都算）。
+「无法绕过」落在验签——不跑发签就没有签，一提交即被 pre-commit 拦死。
+**发签自愿，验签强制。** 因此 `run_agent` 不必串行，写区不重合即可并发。
+
+**② 先审后推（人类提出，我改主意）**：原设计要求先 push 再审，多余。
+本地 commit 已是不可变、有 SHA 的真实对象，绑它足够；reviewer 与 arbiter 同机同仓，本地 SHA 直接可验。
+先审后推两个实打实的好处：**被打回的活永远不上远端**（time_management 那两个含 Critical
+的中间态就是先推后审留下的）、**返修不需要 force-push**。
+代价：review 时没有 CI 结果 —— 本地 gates/tests 先顶，CI 作为推之后的第二道网。
+
+**③ 合并目标改 dev**：`merge-to-main.sh` → `merge-to-integration.sh`，
+目标 `$AIMERGENT_INTEGRATION_BRANCH`（默认 dev），**以 main 为目标直接拒绝**。
+dev→main 是人的动作，agent 不得代劳。
+
+**④ 控制台**：`control-panel/` 零依赖 Python 标准库服务 + SSE。
+所有脚本 source `scripts/lib/emit.sh`，激活/退出自动上报——
+**「每激活一个 sh 面板就看得到」是自动的，不需要各脚本各写一遍上报代码**。
+
+**⑤ 两个新闸门**：`90-dependency-drift`（依赖是最容易悄悄劣化又最难事后看出的东西）、
+`83-test-required`（新功能必须带测试 —— 这是「把 token 花在新功能上」的前提：
+旧功能被回归套件锁住，module_reviewer 才敢不去肉眼看老代码）。
+配套把 `review/regression/`（永久回归）与 `review/reviewcode/`（本轮一次性核验）分家。
+
+自测扩到 16 条，全绿。
