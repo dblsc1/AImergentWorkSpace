@@ -310,7 +310,7 @@ git -C "$repo" worktree add --detach "$test_tree" "$candidate" >/dev/null
 if [ "$level" = project ]; then
   while IFS= read -r -d '' shell_file; do
     bash -n "$shell_file"
-  done < <(find "$test_tree/ci" -type f -name '*.sh' -print0)
+  done < <(find "$test_tree/scripts" -type f -name '*.sh' -print0)
   while IFS= read -r -d '' json_file; do
     jq empty "$json_file"
   done < <(find "$test_tree" -path "$test_tree/.git" -prune -o -type f -name '*.json' -print0)

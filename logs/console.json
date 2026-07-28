@@ -1,0 +1,35 @@
+{
+  "generated": "2026-07-28T07:14:00Z",
+  "branch": "dev/v4",
+  "reports": [],
+  "events": [
+    {
+      "ts": "2026-07-28T07:14:00Z",
+      "event": "mission_complete",
+      "branch": "dev/v4",
+      "pass": 6,
+      "fail": 0,
+      "failed": "",
+      "reason": null
+    },
+    {
+      "ts": "2026-07-28T07:13:32Z",
+      "event": "mission_blocked",
+      "branch": "dev/v4",
+      "pass": 5,
+      "fail": 1,
+      "failed": "60-doc-paths-exist",
+      "reason": null
+    }
+  ],
+  "metrics": {
+    "reports_total": 0,
+    "rejected": 0,
+    "escalated": 0,
+    "objections": 0,
+    "resumed": 0,
+    "exam_fail": 0,
+    "blocked": 1,
+    "override": 0
+  }
+}

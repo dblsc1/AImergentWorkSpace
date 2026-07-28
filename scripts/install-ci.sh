@@ -74,20 +74,20 @@ copy_file() {
 }
 
 if [ "$hook_only" -eq 0 ]; then
-  mkdir -p "$mod_real/.github/workflows" "$mod_real/ci/gates" "$mod_real/ci/hooks"
+  mkdir -p "$mod_real/.github/workflows" "$mod_real/scripts/gates" "$mod_real/scripts/hooks"
   copy_file "$CI/workflows/ci.yml" "$mod_real/.github/workflows/ci.yml"
   for gate in run-gates.sh run-tests.sh check-report-schema.sh .gitleaks.toml \
     legacy-path-exempt.txt remote-test-exempt.txt agent-attribution-activation; do
-    copy_file "$CI/gates/$gate" "$mod_real/ci/gates/$gate"
+    copy_file "$CI/gates/$gate" "$mod_real/scripts/gates/$gate"
   done
   for hook in pre-push commit-msg cc-push-guard.sh; do
-    copy_file "$CI/hooks/$hook" "$mod_real/ci/hooks/$hook"
+    copy_file "$CI/hooks/$hook" "$mod_real/scripts/hooks/$hook"
   done
-  copy_file "$CI/arbiter-push.sh" "$mod_real/ci/arbiter-push.sh"
-  chmod +x "$mod_real/ci/gates/run-gates.sh" "$mod_real/ci/gates/run-tests.sh" \
-    "$mod_real/ci/gates/check-report-schema.sh" "$mod_real/ci/hooks/pre-push" \
-    "$mod_real/ci/hooks/commit-msg" "$mod_real/ci/hooks/cc-push-guard.sh" \
-    "$mod_real/ci/arbiter-push.sh"
+  copy_file "$CI/arbiter-push.sh" "$mod_real/scripts/arbiter-push.sh"
+  chmod +x "$mod_real/scripts/gates/run-gates.sh" "$mod_real/scripts/gates/run-tests.sh" \
+    "$mod_real/scripts/gates/check-report-schema.sh" "$mod_real/scripts/hooks/pre-push" \
+    "$mod_real/scripts/hooks/commit-msg" "$mod_real/scripts/hooks/cc-push-guard.sh" \
+    "$mod_real/scripts/arbiter-push.sh"
   if [ ! -f "$mod_real/.gitignore" ]; then
     copy_file "$CI/module.gitignore" "$mod_real/.gitignore"
   fi

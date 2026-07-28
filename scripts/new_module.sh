@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 从当前 starter 的 module_template 创建独立模块仓。
+# 从当前 starter 的 code/_template 创建模块。
 # 用法: new_module.sh <相对 AIMERGENT_WORKSPACE_ROOT 的目标路径>
 set -euo pipefail
 
@@ -11,7 +11,7 @@ PROJECT_ROOT=${AIMERGENT_PROJECT_ROOT:-$(git -C "$SCRIPT_DIR/.." rev-parse --sho
 PROJECT_ROOT=$(cd -- "$PROJECT_ROOT" && pwd -P)
 
 WORKSPACE_ROOT=${AIMERGENT_WORKSPACE_ROOT:-$PROJECT_ROOT}
-TEMPLATE=${AIMERGENT_TEMPLATE_ROOT:-$PROJECT_ROOT/module_template}
+TEMPLATE=${AIMERGENT_TEMPLATE_ROOT:-$PROJECT_ROOT/code/_template}
 [ -d "$WORKSPACE_ROOT" ] || die "目标工作区根不存在: $WORKSPACE_ROOT"
 [ -d "$TEMPLATE" ] || die "模板不存在: $TEMPLATE"
 WORKSPACE_ROOT=$(cd -- "$WORKSPACE_ROOT" && pwd -P)
@@ -70,6 +70,9 @@ description: $name 模块的 $r。派活时用 subagent_type=$r，角色卡即�
 @codeagent/$r/AGENTS.md
 AGENT
 done
+
+# 记下框架根的相对位置，供 dispatch.sh 解析角色卡（不硬编码绝对路径）
+printf '%s\n' "$framework_ref" > "$dest/.aimergent-framework"
 
 # ── Git：初始 commit，让模块交付时就处于「可直接跑门禁」状态 ──
 # 不做初始 commit 会让新模块首次跑 check-report-schema.sh 撞一个语义对不上的红。

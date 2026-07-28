@@ -17,8 +17,13 @@ role=${1:-}; card_task=${2:-}
   exit 2
 }
 
-# 角色卡路径：优先 env 注入的框架根，其次本仓
-framework=${AIMERGENT_FRAMEWORK_ROOT:-$root}
+# 角色卡路径解析（env 注入优先，绝不硬编码绝对路径）：
+#   ① AIMERGENT_FRAMEWORK_ROOT   ② 模块脚手时写下的 .aimergent-framework   ③ 本仓自己
+framework=${AIMERGENT_FRAMEWORK_ROOT:-}
+if [ -z "$framework" ] && [ -f "$root/.aimergent-framework" ]; then
+  framework=$(cd "$root" && cd "$(cat .aimergent-framework)" && pwd -P)
+fi
+[ -n "$framework" ] || framework=$root
 card="$framework/agents/roles/$role.md"
 [ -f "$card" ] || { echo "❌ 找不到角色卡: $card（可设 AIMERGENT_FRAMEWORK_ROOT）" >&2; exit 2; }
 [ -f "$card_task" ] || { echo "❌ 找不到任务单: $card_task" >&2; exit 2; }

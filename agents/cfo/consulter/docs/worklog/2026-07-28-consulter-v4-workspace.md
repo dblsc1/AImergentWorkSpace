@@ -38,3 +38,24 @@
 - `code/_template` 内的模块布局仍是 `codeagent/ + module_docs/ + code/ + review/`，
   未跟随根仓做四分区——模块布局属 CFO 职责范围，未擅动。
 - copycat 仍带 V1 的假绿门禁在跑，需另行同步。
+
+## 冒烟抓出的三处（2026-07-28 补记）
+
+空仓 clone 冒烟一次抓出三个真 bug，都是重组的连带伤：
+
+1. `new_module.sh` 的 `TEMPLATE` 默认值仍指 `module_template` —— 我的路径替换只覆盖了
+   带斜杠的写法，不带斜杠的漏网。
+2. `install-ci.sh` 仍把门禁装进模块的 `ci/`，而 `run-gates.sh` 内部已改引 `scripts/`，
+   两边对不上 → 新模块门禁根本跑不起来。
+3. `dispatch.sh` 在模块内解析不到框架根。改为 **env 优先 + `.aimergent-framework` 回退**，
+   不硬编码绝对路径（正是 copycat 那条 `@/srv/aimergent/0/...` 的病）。
+
+**教训**：字符串替换类重组，必须靠一次真实的空仓走查兜底——静态 grep 看不出「两边对不上」。
+这也是验收清单第 8 条（框架自身走得通）存在的理由。
+
+## 门禁两次当场拦住我自己
+
+- 第一次拦 `60-doc-paths-exist`：它把「按任务产出、此刻尚不存在的 report.json」判成了错。
+  据此把判据从「文件必须存在」改成 **「文件所在目录必须存在」**——目录不存在才是真问题
+  （agent 不会往不存在的地方写），文件没产出是正常状态。
+- 第二次拦 `10-worklog-changed`：我提交冒烟修复时没写 worklog。规矩对我一样生效。
