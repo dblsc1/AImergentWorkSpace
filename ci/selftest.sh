@@ -26,7 +26,7 @@ printf '1. 空区间假绿灯\n'
 if [ ! -x "$schema" ]; then
   F "无 check-report-schema.sh（留痕铁律没有机械执行者）"
 elif head=$(git -C "$repo" rev-parse HEAD 2>/dev/null) &&
-     AIMERGENT_REPORT_BASE="$head" "$schema" >/dev/null 2>&1; then
+     (cd "$repo" && AIMERGENT_REPORT_BASE="$head" "$schema" >/dev/null 2>&1); then
   F "base==head 时仍退 0 —— 一份报告都没验却报绿"
 else
   P "base==head 时响亮失败，不退化为绿灯"
