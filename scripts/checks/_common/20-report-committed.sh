@@ -5,6 +5,9 @@ set -uo pipefail
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh"
 fail=0
 while IFS= read -r -d '' f; do
+  # 边界：嵌套模块仓的文件归模块自己的门禁管，不归本仓（A3 跨仓误伤）
+  own=$(git -C "$(dirname "$f")" rev-parse --show-toplevel 2>/dev/null)
+  [ "$own" = "$(git rev-parse --show-toplevel)" ] || continue
   [ -n "$f" ] || continue
   if ! git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
     echo "report 未被 Git 跟踪：$f（未跟踪 = 未产出）" >&2; fail=1; continue

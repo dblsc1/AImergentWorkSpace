@@ -6,6 +6,9 @@ set -uo pipefail
 command -v jq >/dev/null || { echo "缺少 jq，无法校验 sub_reports 落点" >&2; exit 1; }
 fail=0
 while IFS= read -r -d '' f; do
+  # 边界：嵌套模块仓的文件归模块自己的门禁管，不归本仓（A3 跨仓误伤）
+  own=$(git -C "$(dirname "$f")" rev-parse --show-toplevel 2>/dev/null)
+  [ "$own" = "$(git rev-parse --show-toplevel)" ] || continue
   [ -n "$f" ] || continue
   while IFS= read -r p; do
     [ -n "$p" ] || continue

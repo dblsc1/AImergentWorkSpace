@@ -234,5 +234,13 @@ else
   F "报告可以写进被 gitignore 吞掉的路径并照常报成功 —— 审核证据蒸发"
 fi
 
+# 19 ── 检查越过嵌套仓边界（A3 类）：根仓的 find 把模块仓文件当自己的判 → 误伤拒绝提交
+printf '19. 检查是否尊重嵌套仓边界\n'
+if grep -q 'show-toplevel' "$S/checks/_common/20-report-committed.sh" 2>/dev/null; then
+  P "report 类检查跳过嵌套模块仓的文件（归模块自己的门禁管）"
+else
+  F "根仓检查会把嵌套模块仓的 report.json 判成未跟踪 —— 模块一存在根仓就永远提交不了"
+fi
+
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
 [ "$fail" -eq 0 ]
