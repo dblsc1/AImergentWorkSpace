@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # 判据：改了东西，提到它的文档要么同批改，要么在报告里声明「已读·无需改 + 理由」。
 #
-# 关系不手维护，从文档里反查：某份 .md 用反引号写了 `scripts/foo.sh`，
-# 它就依赖 foo.sh。改 foo.sh 时自动查出「谁提到了我」。
-# **手维护的映射表本身会腐烂，而且新文件忘登记就是静默漏掉** —— 又回到老问题。
+# 关系有两个来源，**主干是人维护的治理关系，不是自动反查**：
+#   ① scripts/gates/doc-map.tsv —— 长期文档治理哪片代码区域（项目级，CFO 维护）
+#   ② 约定推导 —— code/<模块>/code/** → 该模块的 contract.md 与 AGENTS.md（模块级，不用登记）
+# 为什么主干必须是人维护的：`contract.md` 治理 `code/backend/**`，
+# **哪怕它正文里一个路径都没写** —— 靠「文档提到了谁」反查永远抓不到这条，
+# 而它恰恰是最该抓的。关系是语义的。
+#
+#   ③ 反引号反查 —— 只作**提示**，不硬拦：它抓到的多是偶然提及，粒度太细。
 #
 # 与 gates/check-references.sh 的分工，别搞混：
 #   · check-references 管「引用的东西还在不在」（改名/删除留下的死链，机器能判）
@@ -71,47 +76,49 @@ if command -v jq >/dev/null; then
   done < <(find . -path ./.git -prune -o -name report.json -print0 2>/dev/null | sed -z 's|^\./||')
 fi
 
-# 可选补充表：自动推不出来的语义关联（文档讲某功能但没写路径）
-deps_table=scripts/gates/doc-deps.txt
+doc_map=scripts/gates/doc-map.tsv
 
 declare -A reported=()
+need() {   # need <文档> <因为改了什么>
+  local doc=$1 why=$2
+  [ -e "$doc" ] || return 0
+  [ -n "${staged_all[$doc]:-}" ] && return 0
+  [ -n "${declared[$doc]:-}" ] && return 0
+  [ -n "${reported[$doc]:-}" ] && return 0
+  reported["$doc"]=1
+  echo "改了 $why，它由长期文档 $doc 治理 —— 该文档既没同批改、也没在 report.json 声明" >&2
+  fail=1
+}
+
 for c in "${changed[@]}"; do
-  # ① 从文档反查：谁用反引号提到了我
+  # ① 治理关系表（项目级，人维护）
+  if [ -f "$doc_map" ]; then
+    while IFS=$'\t' read -r area doc; do
+      case "$area" in ''|'#'*) continue ;; esac
+      [ -n "$doc" ] || continue
+      # shellcheck disable=SC2053
+      [[ "$c" == $area ]] && need "$doc" "$c"
+    done < "$doc_map"
+  fi
+  # ② 模块级按约定推导，不用登记
+  case "$c" in
+    code/*/code/*)
+      mod=${c%%/code/*}; mod=${mod#code/}; mod="code/$mod"
+      need "$mod/module_docs/contract.md" "$c"
+      need "$mod/AGENTS.md" "$c" ;;
+  esac
+  # ③ 反引号反查 —— 只提示，不计入 fail（偶然提及，粒度太细）
   while IFS= read -r -d '' doc; do
     case "$doc" in *.md) ;; *) continue ;; esac
     case "$doc" in */docs/worklog/*|*/docs/findings/*|*/docs/decisions/*) continue ;; esac
     grep -qF -- "\`$c\`" "$doc" 2>/dev/null || continue
-    [ -n "${staged_docs[$doc]:-}" ] && continue
+    [ -n "${staged_all[$doc]:-}" ] && continue
     [ -n "${declared[$doc]:-}" ] && continue
     [ -n "${reported[$doc]:-}" ] && continue
     reported["$doc"]=1
-    echo "改了 $c，但提到它的 $doc 既没同批改、也没在 report.json 声明" >&2
-    fail=1
+    echo "  ℹ 提示：$doc 里提到了 $c（偶然提及，不硬拦；确有影响就一并改）" >&2
   done < <(git ls-files -z '*.md')
-  # ② 补充表里的语义关联
-  if [ -f "$deps_table" ]; then
-    while read -r pat doc; do
-      case "$pat" in ''|'#'*) continue ;; esac
-      [ -n "$doc" ] || continue
-      # shellcheck disable=SC2053
-      [[ "$c" == $pat ]] || continue
-      [ -n "${staged_docs[$doc]:-}" ] && continue
-      [ -n "${declared[$doc]:-}" ] && continue
-      [ -n "${reported[$doc]:-}" ] && continue
-      reported["$doc"]=1
-      echo "改了 $c（匹配 $pat），但 $doc 既没同批改、也没声明" >&2
-      fail=1
-    done < "$deps_table"
-  fi
 done
-
-# 归属提示：波及框架层 → CFO 审；只在模块内 → 模块 arbiter 审
-scope=模块
-for c in "${changed[@]}"; do
-  case "$c" in scripts/*|agents/roles/*|agents/protocol/*|agents/AGENTS.md) scope=框架 ; break ;; esac
-done
-[ "$scope" = 框架 ] &&
-  echo "  ℹ 本次波及框架层（scripts/ 或 agents/ 规范），docs_reviewed 的表态应由 **CFO** 审，不是模块 arbiter" >&2
 
 if [ "$fail" -ne 0 ]; then
   cat >&2 <<'HINT'

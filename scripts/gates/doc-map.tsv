@@ -1,0 +1,21 @@
+# 长期文档 ↔ 代码区域 的治理关系（项目级）。制表符分隔：<代码区域 glob>	<长期文档>
+#
+# 这张表是**主干**，不是补充。理由：`contract.md` 治理 `code/backend/**`，
+# 哪怕它正文里一个路径都没写 —— 靠「文档提到了谁」反查永远抓不到这条，
+# 而它恰恰是最该抓的。**关系是语义的，只能人维护。**
+#
+# 维护责任：本表（项目级/跨模块）归 CFO；模块级关系不写这里，由约定自动推导：
+#   code/<模块>/code/**  →  code/<模块>/module_docs/contract.md + code/<模块>/AGENTS.md
+#
+# 表越长越难读；增删由 CFO 上报、人裁决（文档是给人读的，不能太繁杂也不能太集中）。
+
+scripts/*.sh	scripts/README.md
+scripts/checks/*	scripts/README.md
+scripts/gates/*	scripts/README.md
+scripts/hooks/*	scripts/README.md
+agents/roles/*	agents/AGENTS.md
+agents/protocol/*	agents/AGENTS.md
+agents/roles/*	agents/reference/manual/文档地图.md
+scripts/*.sh	agents/reference/manual/文档地图.md
+control-panel/*	control-panel/README.md
+code/_template/*	agents/reference/新模块与新项目开设指南.md

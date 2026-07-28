@@ -54,7 +54,7 @@ codeagent/<角色>/checks/       本模块给该角色追加的
 
 | 层 | 检查 |
 |---|---|
-| `_common` | **05 写区路签** · 10 worklog · **11 文档同步** · 20 report 已提交 · 40 分支纪律 · 60 路径可解析 · 70 审核意见 · **90 依赖漂移** |
+| `_common` | **05 写区路签** · 10 worklog · **11 文档同步（治理关系表）** · **12 长期文档体检** · 20 report 已提交 · 40 分支纪律 · 60 路径可解析 · 70 审核意见 · **90 依赖漂移** |
 | `arbiter` | 30 子报告落点 · 50 契约同步 · 80 任务单四小节 |
 | `programmer` | 81 写边界（不得改 `review/` 与 `module_docs/`） |
 | `programmer_reviewer` / `module_reviewer` | 82 审核区间（`review_target` 必须 exact） |
