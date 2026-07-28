@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>项目任务贡献圆环</title>
+  <style>
+    :root {
+      --bg: #040914;
+      --text: #e9fbff;
+      --muted: #96b2c7;
+      --track: rgba(151, 185, 205, .17);
+      --project: #35c9eb;
+      --task: #ffe81b;
+      --task-hot: #ff3b30;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 28px 18px;
+      color: var(--text);
+      font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at 50% 48%, rgba(34, 118, 162, .22), transparent 38%),
+        linear-gradient(rgba(53, 201, 235, .05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(53, 201, 235, .05) 1px, transparent 1px),
+        var(--bg);
+      background-size: auto, 30px 30px, 30px 30px, auto;
+    }
+
+    .panel { width: min(100%, 660px); text-align: center; }
+    .eyebrow { margin: 0; color: var(--project); font: .74rem Consolas, monospace; letter-spacing: .16em; }
+    h1 { margin: 8px 0 26px; font-size: clamp(1.35rem, 4vw, 2rem); font-weight: 500; letter-spacing: .05em; }
+    .ring-wrap { width: min(100%, 540px); margin: 0 auto; }
+    .ring { display: block; width: 100%; overflow: visible; }
+
+    .track { fill: none; stroke: var(--track); stroke-width: 13; }
+    .project-arc, .task-arc { fill: none; stroke-width: 13; stroke-linecap: round; transform: rotate(-90deg); transform-origin: 230px 165px; }
+    .project-arc { stroke: var(--project); filter: drop-shadow(0 0 5px rgba(53, 201, 235, .55)); }
+    .task-arc { stroke: url(#task-gradient); filter: drop-shadow(0 0 7px rgba(255, 232, 27, .92)); }
+    .inner-ring { fill: rgba(7, 23, 43, .72); stroke: rgba(151, 185, 205, .2); stroke-width: 1; }
+    .ticks { stroke: rgba(233, 251, 255, .22); stroke-width: 1; }
+    .tick-major { stroke: rgba(233, 251, 255, .5); stroke-width: 1.5; }
+    .center-label { fill: var(--muted); font-size: 10px; letter-spacing: 1.8px; }
+    .center-project { fill: var(--text); font-size: 18px; font-weight: 500; }
+    .center-time { fill: var(--text); font: 15px Consolas, monospace; letter-spacing: 1px; }
+    .callout-line { fill: none; stroke: var(--task); stroke-width: 1.5; marker-end: url(#arrowhead); filter: drop-shadow(0 0 3px rgba(255, 232, 27, .9)); }
+    .task-label { fill: var(--text); font-size: 13px; font-weight: 500; }
+    .task-time { fill: var(--task); font: 10px Consolas, monospace; letter-spacing: 1px; }
+    .summary { margin: 3px 0 0; color: var(--muted); font-size: .88rem; }
+
+    @keyframes task-pulse {
+      0% { filter: drop-shadow(0 0 2px rgba(255, 232, 27, .35)); }
+      65% { filter: drop-shadow(0 0 13px rgba(255, 70, 38, 1)); }
+      100% { filter: drop-shadow(0 0 7px rgba(255, 232, 27, .92)); }
+    }
+
+    .task-arc.is-growing { animation: task-pulse 950ms ease-out both; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .task-arc.is-growing { animation: none; }
+    }
+
+    @media (max-width: 420px) {
+      .center-project { font-size: 15px; }
+      .center-time { font-size: 12px; }
+      .task-label { font-size: 11px; }
+      .task-subtitle { font-size: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="panel">
+    <p class="eyebrow">PROJECT PULSE // CURRENT CONTRIBUTION</p>
+    <h1>当前任务对项目的贡献</h1>
+    <div class="ring-wrap">
+      <svg class="ring" viewBox="0 0 460 330" role="img" aria-labelledby="ring-title ring-description">
+        <title id="ring-title">项目与当前任务贡献圆环</title>
+        <desc id="ring-description">青色弧线表示项目在总计划中的范围，亮黄至亮红弧线表示当前任务在该项目中的贡献。</desc>
+        <defs>
+          <linearGradient id="task-gradient" x1="110" y1="75" x2="350" y2="250" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#fff81f"></stop>
+            <stop offset="52%" stop-color="#ffd21f"></stop>
+            <stop offset="100%" stop-color="#ff3b30"></stop>
+          </linearGradient>
+          <marker id="arrowhead" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#ffe81b"></path>
+          </marker>
+        </defs>
+        <circle class="track" cx="230" cy="165" r="91"></circle>
+        <circle class="project-arc" id="project-arc" cx="230" cy="165" r="91"></circle>
+        <circle class="task-arc" id="task-arc" cx="230" cy="165" r="91"></circle>
+        <g class="ticks" id="ticks"></g>
+        <circle class="inner-ring" cx="230" cy="165" r="67"></circle>
+        <text class="center-label" x="230" y="146" text-anchor="middle">CURRENT PROJECT</text>
+        <text class="center-project" id="project-name" x="230" y="171" text-anchor="middle"></text>
+        <text class="center-time" id="project-time" x="230" y="193" text-anchor="middle"></text>
+        <path class="callout-line" id="callout-line"></path>
+        <text class="task-label" id="task-name"></text>
+        <text class="task-time" id="task-time"></text>
+      </svg>
+    </div>
+    <p class="summary">青色：项目范围　·　亮黄至亮红：当前任务带来的增加值</p>
+  </main>
+
+  <script>
+    const radius = 91;
+    const circumference = 2 * Math.PI * radius;
+    let animationFrame;
+
+    function randomInt(min, max) {
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+
+    // 演示数据：每次打开会随机生成数值。实际接入时调用 window.renderContributionRing(后端JSON)。
+    const demoData = {
+      "项目": "英语学习",
+      "当前任务": "英语单词学习",
+      "项目占总计划": randomInt(32, 68),
+      "当前任务占项目": randomInt(16, 48),
+      "项目累计时长秒": randomInt(8 * 3600, 28 * 3600),
+      "任务累计时长秒": randomInt(20 * 60, 7 * 3600)
+    };
+
+    function formatDuration(seconds) {
+      const value = Math.max(0, Math.floor(Number(seconds) || 0));
+      const hours = Math.floor(value / 3600).toString().padStart(2, "0");
+      const minutes = Math.floor((value % 3600) / 60).toString().padStart(2, "0");
+      const secs = (value % 60).toString().padStart(2, "0");
+      return `${hours}:${minutes}:${secs}`;
+    }
+
+    function pointAt(angleDegrees, distance) {
+      const radians = angleDegrees * Math.PI / 180;
+      return { x: 230 + Math.cos(radians) * distance, y: 165 + Math.sin(radians) * distance };
+    }
+
+    function setArc(id, startPercent, lengthPercent) {
+      const circle = document.getElementById(id);
+      const length = circumference * lengthPercent / 100;
+      const offset = circumference * startPercent / 100;
+      circle.style.strokeDasharray = `${length} ${circumference - length}`;
+      circle.style.strokeDashoffset = -offset;
+    }
+
+    function addTicks() {
+      const group = document.getElementById("ticks");
+      group.textContent = "";
+      for (let index = 0; index < 60; index += 1) {
+        const angle = index * 6 - 90;
+        const outer = 74;
+        const inner = index % 5 === 0 ? 68 : 71;
+        const a = pointAt(angle, inner);
+        const b = pointAt(angle, outer);
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute("x1", a.x.toFixed(2));
+        line.setAttribute("y1", a.y.toFixed(2));
+        line.setAttribute("x2", b.x.toFixed(2));
+        line.setAttribute("y2", b.y.toFixed(2));
+        if (index % 5 === 0) line.classList.add("tick-major");
+        group.appendChild(line);
+      }
+    }
+
+    function validate(data) {
+      const projectShare = Number(data["项目占总计划"]);
+      const taskShare = Number(data["当前任务占项目"]);
+      if (!data.项目 || !data.当前任务 || !Number.isFinite(projectShare) || !Number.isFinite(taskShare) || projectShare < 0 || projectShare > 100 || taskShare < 0 || taskShare > 100) {
+        throw new Error("数据格式错误：项目、当前任务不能为空，且两个占比均必须是 0 到 100 的数字。");
+      }
+    }
+
+    function positionCallout(taskMiddleAngle) {
+      const target = pointAt(taskMiddleAngle, 98);
+      const outside = pointAt(taskMiddleAngle, 116);
+      const onRight = outside.x >= 230;
+      const textX = onRight ? 368 : 92;
+      const textAnchor = onRight ? "start" : "end";
+      const lineStartX = onRight ? 356 : 104;
+      const textY = Math.max(34, Math.min(292, outside.y - 4));
+      const lineY = textY + 5;
+      document.getElementById("callout-line").setAttribute("d", `M ${lineStartX} ${lineY.toFixed(1)} L ${outside.x.toFixed(1)} ${outside.y.toFixed(1)} L ${target.x.toFixed(1)} ${target.y.toFixed(1)}`);
+
+      const taskName = document.getElementById("task-name");
+      taskName.setAttribute("x", textX);
+      taskName.setAttribute("y", textY.toFixed(1));
+      taskName.setAttribute("text-anchor", textAnchor);
+      const taskTime = document.getElementById("task-time");
+      taskTime.setAttribute("x", textX);
+      taskTime.setAttribute("y", (textY + 17).toFixed(1));
+      taskTime.setAttribute("text-anchor", textAnchor);
+    }
+
+    function drawTaskContribution(projectBase, contribution) {
+      setArc("task-arc", projectBase, contribution);
+      positionCallout(-90 + (projectBase + contribution / 2) * 3.6);
+    }
+
+    function renderContributionRing(data) {
+      validate(data);
+      cancelAnimationFrame(animationFrame);
+      const projectShare = Number(data["项目占总计划"]);
+      const taskShare = Number(data["当前任务占项目"]);
+      const contribution = projectShare * taskShare / 100;
+      const projectBase = projectShare - contribution;
+
+      // 项目基础弧线与任务高亮弧线连续排列，合起来正好等于项目在总计划中的范围。
+      setArc("project-arc", 0, projectBase);
+      setArc("task-arc", projectBase, contribution);
+
+      document.getElementById("project-name").textContent = data.项目;
+      document.getElementById("project-time").textContent = formatDuration(data["项目累计时长秒"]);
+      document.getElementById("task-name").textContent = data.当前任务;
+      document.getElementById("task-time").textContent = formatDuration(data["任务累计时长秒"]);
+
+      const taskArc = document.getElementById("task-arc");
+      taskArc.classList.remove("is-growing");
+      drawTaskContribution(projectBase, 0);
+
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches || contribution === 0) {
+        drawTaskContribution(projectBase, contribution);
+        return;
+      }
+
+      // 增量弧段、箭头和任务标注同步从零增长到后端提供的最终值。
+      const startedAt = performance.now();
+      const duration = 900;
+      taskArc.classList.add("is-growing");
+      const animate = now => {
+        const progress = Math.min(1, (now - startedAt) / duration);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        drawTaskContribution(projectBase, contribution * eased);
+        if (progress < 1) {
+          animationFrame = requestAnimationFrame(animate);
+        } else {
+          taskArc.classList.remove("is-growing");
+        }
+      };
+      animationFrame = requestAnimationFrame(animate);
+    }
+
+    addTicks();
+    window.renderContributionRing = renderContributionRing;
+    renderContributionRing(demoData);
+  </script>
+</body>
+</html>

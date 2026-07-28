@@ -1,0 +1,1280 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080b12">
+  <title>NEXUS // 项目控制台</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #080b12;
+      --panel: #0e131d;
+      --panel-2: #121925;
+      --line: #263140;
+      --line-bright: #3c4b5f;
+      --text: #f2f6f8;
+      --muted: #7e8c9c;
+      --acid: #d8ff3e;
+      --cyan: #58e8e3;
+      --orange: #ff9d45;
+      --violet: #a985ff;
+      --danger: #ff6578;
+      --shadow: 0 22px 60px rgba(0, 0, 0, .38);
+      --mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+      --sans: Inter, "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { min-width: 320px; background: var(--bg); }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      font-family: var(--sans);
+      background:
+        radial-gradient(circle at 90% 8%, rgba(88, 232, 227, .09), transparent 25rem),
+        radial-gradient(circle at 10% 85%, rgba(216, 255, 62, .055), transparent 28rem),
+        var(--bg);
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(255,255,255,.018) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.018) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: linear-gradient(to bottom, black, transparent 90%);
+    }
+
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+
+    .app {
+      width: min(1740px, 100%);
+      margin: 0 auto;
+      padding: 22px 28px 34px;
+    }
+
+    .topbar {
+      min-height: 76px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand { display: flex; align-items: center; gap: 15px; }
+
+    .brand-mark {
+      position: relative;
+      width: 43px;
+      height: 43px;
+      display: grid;
+      place-items: center;
+      border: 1px solid #4a5a69;
+      background: #0b1018;
+      clip-path: polygon(15% 0, 100% 0, 100% 72%, 76% 100%, 0 100%, 0 15%);
+    }
+
+    .brand-mark::before {
+      content: "";
+      width: 17px;
+      height: 17px;
+      border: 3px solid var(--acid);
+      border-left-color: transparent;
+      transform: rotate(45deg);
+      filter: drop-shadow(0 0 7px rgba(216,255,62,.4));
+    }
+
+    .brand-title {
+      margin: 0;
+      font-size: clamp(18px, 2vw, 27px);
+      line-height: 1;
+      letter-spacing: -.045em;
+    }
+
+    .brand-title span { color: var(--acid); }
+
+    .eyebrow {
+      margin-top: 7px;
+      color: var(--muted);
+      font: 10px/1 var(--mono);
+      letter-spacing: .18em;
+    }
+
+    .top-actions { display: flex; align-items: center; gap: 9px; }
+
+    .system-time {
+      padding-right: 12px;
+      text-align: right;
+      color: var(--muted);
+      font: 10px/1.5 var(--mono);
+    }
+
+    .system-time b { display: block; color: #dce4e9; font-size: 13px; }
+
+    .btn {
+      min-height: 38px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border: 1px solid var(--line-bright);
+      border-radius: 2px;
+      padding: 0 14px;
+      color: #c8d0d7;
+      background: #101721;
+      font-size: 12px;
+      font-weight: 750;
+      transition: .18s ease;
+    }
+
+    .btn:hover { color: white; border-color: #6b7b8c; background: #151e2a; }
+    .btn.primary { color: #0b0e10; border-color: var(--acid); background: var(--acid); }
+    .btn.primary:hover { background: #e4ff73; box-shadow: 0 0 24px rgba(216,255,62,.18); }
+    .btn.danger { color: var(--danger); border-color: rgba(255,101,120,.45); }
+    .btn.icon { width: 38px; padding: 0; }
+    .plus { font: 20px/1 var(--mono); }
+
+    .hud {
+      display: grid;
+      grid-template-columns: minmax(300px, 1.5fr) repeat(3, minmax(145px, .55fr));
+      gap: 10px;
+      padding: 18px 0 14px;
+    }
+
+    .briefing, .metric {
+      position: relative;
+      min-height: 84px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      background: linear-gradient(145deg, rgba(20,27,39,.92), rgba(11,16,24,.92));
+    }
+
+    .briefing {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 18px 20px;
+      clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 0 100%);
+    }
+
+    .briefing::after {
+      content: "SYSTEM / ONLINE";
+      position: absolute;
+      right: 17px;
+      top: 8px;
+      color: rgba(216,255,62,.58);
+      font: 8px/1 var(--mono);
+      letter-spacing: .12em;
+    }
+
+    .briefing h2 { margin: 0 0 6px; font-size: 16px; }
+    .briefing p { margin: 0; color: var(--muted); font-size: 11px; }
+
+    .pulse-line {
+      width: 120px;
+      height: 30px;
+      flex: none;
+      opacity: .72;
+      background:
+        linear-gradient(135deg, transparent 0 32%, var(--acid) 33% 35%, transparent 36% 48%, var(--acid) 49% 52%, transparent 53% 61%, var(--acid) 62% 65%, transparent 66%) center / 100% 2px no-repeat;
+    }
+
+    .metric { padding: 14px 16px; }
+    .metric::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: var(--metric-tone, var(--cyan));
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font: 9px/1.2 var(--mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .metric-value {
+      margin-top: 8px;
+      font: 700 25px/1 var(--mono);
+    }
+
+    .metric-value small { color: var(--muted); font-size: 10px; font-weight: 500; }
+
+    .board-shell {
+      position: relative;
+      border: 1px solid var(--line);
+      background: rgba(10, 14, 21, .82);
+      box-shadow: var(--shadow);
+    }
+
+    .board-shell::before, .board-shell::after {
+      content: "";
+      position: absolute;
+      width: 12px;
+      height: 12px;
+      pointer-events: none;
+    }
+
+    .board-shell::before { left: -1px; top: -1px; border-left: 2px solid var(--acid); border-top: 2px solid var(--acid); }
+    .board-shell::after { right: -1px; bottom: -1px; border-right: 2px solid var(--cyan); border-bottom: 2px solid var(--cyan); }
+
+    .board-head {
+      min-height: 58px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 10px 15px 10px 20px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .board-title { display: flex; align-items: center; gap: 12px; font-weight: 800; font-size: 13px; }
+
+    .board-title::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      background: var(--acid);
+      box-shadow: 0 0 12px rgba(216,255,62,.55);
+    }
+
+    .board-title small { color: var(--muted); font: 9px/1 var(--mono); letter-spacing: .12em; }
+
+    .pager { display: flex; align-items: center; gap: 8px; }
+
+    .page-btn {
+      width: 34px;
+      height: 32px;
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      color: #abb6c1;
+      background: #111823;
+      font-family: var(--mono);
+    }
+
+    .page-btn:hover:not(:disabled) { color: var(--acid); border-color: var(--acid); }
+    .page-btn:disabled { cursor: not-allowed; opacity: .3; }
+
+    .page-label {
+      min-width: 70px;
+      text-align: center;
+      color: var(--muted);
+      font: 10px/1 var(--mono);
+    }
+
+    .zones {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      min-height: 615px;
+    }
+
+    .zone {
+      min-width: 0;
+      padding: 17px;
+      border-right: 1px solid var(--line);
+      background:
+        linear-gradient(to bottom, color-mix(in srgb, var(--zone) 5%, transparent), transparent 10rem),
+        rgba(9,13,19,.5);
+    }
+
+    .zone:last-child { border-right: 0; }
+
+    .zone-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding-bottom: 14px;
+    }
+
+    .zone-ident { display: flex; align-items: center; gap: 11px; min-width: 0; }
+
+    .zone-index {
+      width: 31px;
+      height: 31px;
+      display: grid;
+      place-items: center;
+      flex: none;
+      color: var(--zone);
+      border: 1px solid color-mix(in srgb, var(--zone) 50%, #24303d);
+      font: 10px/1 var(--mono);
+      clip-path: polygon(0 0, 100% 0, 100% 74%, 76% 100%, 0 100%);
+    }
+
+    .zone-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 820; }
+    .zone-meta { margin-top: 4px; color: var(--muted); font: 8px/1 var(--mono); letter-spacing: .11em; }
+
+    .zone-menu {
+      width: 29px;
+      height: 29px;
+      flex: none;
+      border: 0;
+      color: var(--muted);
+      background: transparent;
+      font: 16px/1 var(--mono);
+    }
+
+    .zone-menu:hover { color: var(--zone); }
+
+    .project-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-auto-flow: dense;
+      gap: 10px;
+      align-items: start;
+    }
+
+    .project {
+      position: relative;
+      min-width: 0;
+      min-height: 168px;
+      padding: 13px;
+      overflow: hidden;
+      border: 1px solid #26313e;
+      background: linear-gradient(145deg, #141b26, #0e141e);
+      transition: border-color .2s, transform .2s, box-shadow .2s;
+    }
+
+    .project::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 38px;
+      height: 2px;
+      background: var(--project);
+      box-shadow: 0 0 12px color-mix(in srgb, var(--project) 45%, transparent);
+    }
+
+    .project:hover {
+      z-index: 2;
+      transform: translateY(-2px);
+      border-color: color-mix(in srgb, var(--project) 45%, #26313e);
+      box-shadow: 0 12px 30px rgba(0,0,0,.24);
+    }
+
+    .project.wide { grid-column: span 2; }
+    .project.tall { min-height: 228px; }
+
+    .project-top { display: flex; align-items: flex-start; gap: 9px; }
+
+    .project-icon {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      flex: none;
+      color: var(--project);
+      border: 1px solid color-mix(in srgb, var(--project) 28%, #283444);
+      background: color-mix(in srgb, var(--project) 7%, #101620);
+      font: 12px/1 var(--mono);
+    }
+
+    .project-copy { min-width: 0; flex: 1; }
+    .project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 820; }
+    .project-date { margin-top: 5px; color: var(--muted); font: 8px/1.3 var(--mono); }
+
+    .project-edit {
+      border: 0;
+      padding: 0 2px;
+      color: #687787;
+      background: transparent;
+      font: 14px/1 var(--mono);
+    }
+
+    .project-edit:hover { color: var(--project); }
+
+    .progress-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 13px 0 11px;
+    }
+
+    .progress-track {
+      height: 4px;
+      flex: 1;
+      overflow: hidden;
+      background: #222d39;
+    }
+
+    .progress-track span {
+      display: block;
+      height: 100%;
+      background: var(--project);
+      box-shadow: 0 0 8px color-mix(in srgb, var(--project) 50%, transparent);
+      transition: width .3s ease;
+    }
+
+    .progress-number { color: var(--project); font: 9px/1 var(--mono); }
+
+    .tasks { display: flex; flex-wrap: wrap; gap: 5px; align-content: flex-start; }
+
+    .task {
+      min-width: 0;
+      max-width: 100%;
+      border: 1px solid #2b3744;
+      border-radius: 2px;
+      padding: 5px 7px;
+      color: #aeb8c1;
+      background: #151d28;
+      font-size: 9px;
+      line-height: 1.3;
+      text-align: left;
+      transition: .16s ease;
+    }
+
+    .task:hover { color: white; border-color: var(--project); }
+
+    .task.done {
+      color: #697582;
+      border-color: #232e39;
+      text-decoration: line-through;
+      background: #0f151e;
+    }
+
+    .task.done::before { content: "✓ "; color: var(--project); text-decoration: none; }
+
+    .add-task {
+      width: 25px;
+      height: 25px;
+      border: 1px dashed #3b4856;
+      border-radius: 2px;
+      color: #778592;
+      background: transparent;
+      font: 15px/1 var(--mono);
+    }
+
+    .add-task:hover { color: var(--project); border-color: var(--project); }
+
+    .empty-zone {
+      grid-column: 1 / -1;
+      min-height: 125px;
+      display: grid;
+      place-items: center;
+      border: 1px dashed #26323e;
+      color: #536170;
+      font: 9px/1.8 var(--mono);
+      text-align: center;
+    }
+
+    .zone-add {
+      width: 100%;
+      height: 37px;
+      margin-top: 10px;
+      border: 1px dashed #31404e;
+      border-radius: 2px;
+      color: #7b8996;
+      background: rgba(15,21,30,.68);
+      font-size: 10px;
+      font-weight: 750;
+    }
+
+    .zone-add:hover { color: var(--zone); border-color: var(--zone); }
+
+    dialog {
+      width: min(520px, calc(100% - 28px));
+      max-height: calc(100vh - 28px);
+      padding: 0;
+      overflow: auto;
+      color: var(--text);
+      border: 1px solid #3a4856;
+      border-radius: 2px;
+      background: #0d131c;
+      box-shadow: 0 30px 90px rgba(0,0,0,.7);
+    }
+
+    dialog::backdrop { background: rgba(2,5,9,.78); backdrop-filter: blur(7px); }
+
+    .modal { padding: 22px; }
+
+    .modal-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding-bottom: 16px;
+      margin-bottom: 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .modal-head h2 { margin: 0; font-size: 16px; }
+    .modal-head h2 span { margin-left: 8px; color: var(--muted); font: 8px/1 var(--mono); letter-spacing: .12em; }
+
+    .close {
+      width: 31px;
+      height: 31px;
+      border: 1px solid var(--line);
+      color: #8b98a5;
+      background: #121925;
+      font: 16px/1 var(--mono);
+    }
+
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .field { display: grid; gap: 7px; }
+    .field.full { grid-column: 1 / -1; }
+    .field label { color: #8996a3; font: 9px/1 var(--mono); letter-spacing: .08em; }
+
+    .field input, .field select {
+      width: 100%;
+      min-height: 40px;
+      border: 1px solid #2f3b49;
+      border-radius: 2px;
+      outline: none;
+      padding: 0 11px;
+      color: #e8edf0;
+      background: #111923;
+      font-size: 12px;
+    }
+
+    .field input:focus, .field select:focus { border-color: var(--acid); box-shadow: 0 0 0 2px rgba(216,255,62,.06); }
+
+    .range-wrap { display: grid; grid-template-columns: 1fr 56px; gap: 8px; align-items: center; }
+    .range-wrap input[type="range"] { height: 40px; padding: 0; accent-color: var(--acid); }
+
+    .icon-picks, .color-picks { display: flex; flex-wrap: wrap; gap: 7px; }
+
+    .icon-pick {
+      width: 36px;
+      height: 36px;
+      border: 1px solid #2f3c49;
+      color: #9eabb6;
+      background: #111923;
+      font: 11px/1 var(--mono);
+    }
+
+    .icon-pick.selected { color: var(--acid); border-color: var(--acid); }
+
+    .color-pick {
+      width: 26px;
+      height: 26px;
+      border: 4px solid #0d131c;
+      outline: 1px solid #33414f;
+      background: var(--pick);
+    }
+
+    .color-pick.selected { outline: 2px solid var(--pick); }
+
+    .modal-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      padding-top: 20px;
+      margin-top: 20px;
+      border-top: 1px solid var(--line);
+    }
+
+    .modal-actions .danger { margin-right: auto; }
+
+    .category-list { display: grid; gap: 8px; margin-bottom: 15px; }
+
+    .category-row {
+      display: grid;
+      grid-template-columns: 32px 1fr 38px;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .category-swatch { width: 30px; height: 40px; border-left: 3px solid var(--swatch); background: color-mix(in srgb, var(--swatch) 7%, #111923); }
+
+    .mini-delete {
+      height: 40px;
+      border: 1px solid #2f3b49;
+      color: #73808d;
+      background: #111923;
+    }
+
+    .mini-delete:hover { color: var(--danger); border-color: var(--danger); }
+
+    .toast {
+      position: fixed;
+      z-index: 30;
+      right: 24px;
+      bottom: 24px;
+      max-width: min(360px, calc(100% - 48px));
+      padding: 12px 15px;
+      border: 1px solid #42505f;
+      border-left: 3px solid var(--acid);
+      color: #eaf0f2;
+      background: #111923;
+      box-shadow: 0 18px 48px rgba(0,0,0,.45);
+      font-size: 11px;
+      transform: translateY(90px);
+      opacity: 0;
+      transition: .22s ease;
+    }
+
+    .toast.show { transform: translateY(0); opacity: 1; }
+
+    @media (max-width: 1100px) {
+      .hud { grid-template-columns: 1fr repeat(3, 145px); }
+      .briefing .pulse-line { display: none; }
+      .project-grid { grid-template-columns: 1fr; }
+      .project.wide { grid-column: span 1; }
+      .project.tall { min-height: 168px; }
+    }
+
+    @media (max-width: 860px) {
+      .app { padding: 16px; }
+      .system-time { display: none; }
+      .hud { grid-template-columns: repeat(3, 1fr); }
+      .briefing { grid-column: 1 / -1; }
+      .zones { grid-template-columns: 1fr; min-height: 0; }
+      .zone { border-right: 0; border-bottom: 1px solid var(--line); }
+      .zone:last-child { border-bottom: 0; }
+      .project-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .project.wide { grid-column: span 2; }
+    }
+
+    @media (max-width: 560px) {
+      .app { padding: 10px; }
+      .topbar { flex-direction: column; align-items: stretch; gap: 13px; padding: 9px 0 15px; }
+      .brand-mark { display: none; }
+      .brand-title { font-size: 20px; }
+      .top-actions { justify-content: flex-start; }
+      .top-actions .btn:not(.primary) { display: none; }
+      .btn.primary { padding: 0 10px; }
+      .hud { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+      .metric { min-width: 0; padding: 13px 12px; }
+      .metric-label { font-size: 8px; }
+      .briefing { display: none; }
+      .metric:last-child { grid-column: 1 / -1; }
+      .board-head { gap: 6px; padding-left: 13px; }
+      .board-title small { display: none; }
+      .pager { gap: 4px; }
+      .page-label { min-width: 48px; }
+      .zone { padding: 13px; }
+      .project-grid { grid-template-columns: 1fr; }
+      .project.wide { grid-column: span 1; }
+      .form-grid { grid-template-columns: 1fr; }
+      .field.full { grid-column: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"></div>
+        <div>
+          <h1 class="brand-title">NEXUS <span>//</span> 项目控制台</h1>
+          <div class="eyebrow">PERSONAL OPERATIONS MATRIX · V2.6</div>
+        </div>
+      </div>
+      <div class="top-actions">
+        <div class="system-time"><b id="clock">--:--:--</b><span id="today">----</span></div>
+        <button class="btn" id="manageZones">编辑分区</button>
+        <button class="btn primary" id="newProject"><span class="plus">＋</span> 新建项目</button>
+      </div>
+    </header>
+
+    <section class="hud" aria-label="项目概览">
+      <article class="briefing">
+        <div>
+          <h2 id="greeting">早上好，指挥官。</h2>
+          <p>保持系统在线，将复杂目标拆解为清晰行动。</p>
+        </div>
+        <div class="pulse-line" aria-hidden="true"></div>
+      </article>
+      <article class="metric" style="--metric-tone: var(--cyan)">
+        <div class="metric-label">Active Projects</div>
+        <div class="metric-value" id="projectCount">0 <small>项</small></div>
+      </article>
+      <article class="metric" style="--metric-tone: var(--acid)">
+        <div class="metric-label">Task Complete</div>
+        <div class="metric-value" id="taskRatio">0/0</div>
+      </article>
+      <article class="metric" style="--metric-tone: var(--violet)">
+        <div class="metric-label">Total Progress</div>
+        <div class="metric-value" id="averageProgress">0%</div>
+      </article>
+    </section>
+
+    <section class="board-shell">
+      <header class="board-head">
+        <div class="board-title">行动分区 <small id="pageMeta">SECTOR PAGE 01</small></div>
+        <nav class="pager" aria-label="分区分页">
+          <button class="page-btn" id="previousPage" aria-label="上一页">←</button>
+          <span class="page-label" id="pageLabel">01 / 01</span>
+          <button class="page-btn" id="nextPage" aria-label="下一页">→</button>
+        </nav>
+      </header>
+      <div class="zones" id="zoneGrid"></div>
+    </section>
+  </main>
+
+  <dialog id="projectDialog">
+    <form class="modal" id="projectForm">
+      <div class="modal-head">
+        <h2 id="projectModalTitle">新建项目 <span>PROJECT CONFIG</span></h2>
+        <button class="close" type="button" data-close="projectDialog" aria-label="关闭">×</button>
+      </div>
+      <input type="hidden" id="projectId">
+      <div class="form-grid">
+        <div class="field full">
+          <label for="projectName">项目名称 / NAME</label>
+          <input id="projectName" maxlength="40" placeholder="例如：编程训练计划" required>
+        </div>
+        <div class="field">
+          <label for="projectZone">所属分区 / SECTOR</label>
+          <select id="projectZone" required></select>
+        </div>
+        <div class="field">
+          <label for="projectDeadline">日期与时间 / DEADLINE</label>
+          <input id="projectDeadline" type="datetime-local" required>
+        </div>
+        <div class="field full">
+          <label for="projectProgress">项目进度 / PROGRESS</label>
+          <div class="range-wrap">
+            <input id="projectProgress" type="range" min="0" max="100" step="1" value="0">
+            <input id="projectProgressNumber" type="number" min="0" max="100" value="0" aria-label="项目进度百分比">
+          </div>
+        </div>
+        <div class="field full">
+          <label>识别代号 / ICON</label>
+          <div class="icon-picks" id="iconPicks"></div>
+        </div>
+        <div class="field full">
+          <label>强调色 / SIGNAL COLOR</label>
+          <div class="color-picks" id="colorPicks"></div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn danger" type="button" id="deleteProject">删除项目</button>
+        <button class="btn" type="button" data-close="projectDialog">取消</button>
+        <button class="btn primary" type="submit">保存项目</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="taskDialog">
+    <form class="modal" id="taskForm">
+      <div class="modal-head">
+        <h2>添加任务 <span>TASK NODE</span></h2>
+        <button class="close" type="button" data-close="taskDialog" aria-label="关闭">×</button>
+      </div>
+      <input type="hidden" id="taskProjectId">
+      <div class="field">
+        <label for="taskName">任务名称 / TASK NAME</label>
+        <input id="taskName" maxlength="50" placeholder="输入一个可执行任务" required>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" type="button" data-close="taskDialog">取消</button>
+        <button class="btn primary" type="submit">加入项目</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="zoneDialog">
+    <form class="modal" id="zoneForm">
+      <div class="modal-head">
+        <h2>编辑分区 <span>SECTOR MATRIX</span></h2>
+        <button class="close" type="button" data-close="zoneDialog" aria-label="关闭">×</button>
+      </div>
+      <div class="category-list" id="categoryList"></div>
+      <div class="form-grid">
+        <div class="field">
+          <label for="newZoneName">新增分区名称 / NEW SECTOR</label>
+          <input id="newZoneName" maxlength="16" placeholder="例如：灵感区">
+        </div>
+        <div class="field">
+          <label for="newZoneColor">分区颜色 / COLOR</label>
+          <input id="newZoneColor" type="color" value="#58e8e3">
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" type="button" id="resetBoard">恢复演示数据</button>
+        <button class="btn" type="button" data-close="zoneDialog">取消</button>
+        <button class="btn primary" type="submit">保存分区</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    (function () {
+      "use strict";
+
+      var STORAGE_KEY = "nexus-project-console-v1";
+      var colors = ["#d8ff3e", "#58e8e3", "#ff9d45", "#a985ff", "#ff6578", "#5f8cff"];
+      var icons = ["01", "02", "03", "04", "05", "06"];
+      var pageSize = 3;
+      var toastTimer;
+      var chosenColor = colors[0];
+      var chosenIcon = icons[0];
+
+      function futureDate(days, hour) {
+        var date = new Date();
+        date.setDate(date.getDate() + days);
+        date.setHours(hour, 0, 0, 0);
+        var offset = date.getTimezoneOffset();
+        return new Date(date.getTime() - offset * 60000).toISOString().slice(0, 16);
+      }
+
+      function initialState() {
+        return {
+          page: 0,
+          zones: [
+            { id: "life", name: "生活区", color: "#ff9d45" },
+            { id: "study", name: "学习区", color: "#58e8e3" },
+            { id: "play", name: "娱乐区", color: "#a985ff" },
+            { id: "work", name: "工作区", color: "#d8ff3e" }
+          ],
+          projects: [
+            {
+              id: "p-life-1", zoneId: "life", name: "体能重启", progress: 72,
+              deadline: futureDate(2, 7), color: "#ff9d45", icon: "04",
+              tasks: [
+                { id: "t-l-1", name: "晨跑 3 公里", done: true },
+                { id: "t-l-2", name: "肩颈拉伸", done: false },
+                { id: "t-l-3", name: "记录心率", done: false }
+              ]
+            },
+            {
+              id: "p-life-2", zoneId: "life", name: "房间升级", progress: 35,
+              deadline: futureDate(6, 18), color: "#5f8cff", icon: "06",
+              tasks: [
+                { id: "t-l2-1", name: "整理桌面", done: true },
+                { id: "t-l2-2", name: "布置灯带", done: false }
+              ]
+            },
+            {
+              id: "p-study-1", zoneId: "study", name: "编程 · JavaScript", progress: 48,
+              deadline: futureDate(4, 21), color: "#58e8e3", icon: "01",
+              tasks: [
+                { id: "t-s-1", name: "异步编程", done: true },
+                { id: "t-s-2", name: "完成练习", done: false },
+                { id: "t-s-3", name: "整理笔记", done: false },
+                { id: "t-s-4", name: "提交 Demo", done: false }
+              ]
+            },
+            {
+              id: "p-study-2", zoneId: "study", name: "交互设计课程", progress: 60,
+              deadline: futureDate(8, 20), color: "#d8ff3e", icon: "03",
+              tasks: [
+                { id: "t-s2-1", name: "观看第 6 章", done: true },
+                { id: "t-s2-2", name: "界面临摹", done: false }
+              ]
+            },
+            {
+              id: "p-play-1", zoneId: "play", name: "游戏 · 赛博档案", progress: 26,
+              deadline: futureDate(1, 22), color: "#a985ff", icon: "05",
+              tasks: [
+                { id: "t-p-1", name: "主线任务", done: false },
+                { id: "t-p-2", name: "周末联机", done: false }
+              ]
+            },
+            {
+              id: "p-play-2", zoneId: "play", name: "电影清单", progress: 50,
+              deadline: futureDate(10, 21), color: "#ff6578", icon: "02",
+              tasks: [
+                { id: "t-p2-1", name: "银翼杀手", done: true },
+                { id: "t-p2-2", name: "沙丘", done: false },
+                { id: "t-p2-3", name: "攻壳机动队", done: false }
+              ]
+            },
+            {
+              id: "p-work-1", zoneId: "work", name: "产品发布计划", progress: 64,
+              deadline: futureDate(12, 10), color: "#d8ff3e", icon: "03",
+              tasks: [
+                { id: "t-w-1", name: "确认需求", done: true },
+                { id: "t-w-2", name: "交付原型", done: true },
+                { id: "t-w-3", name: "内部评审", done: false },
+                { id: "t-w-4", name: "发布检查", done: false },
+                { id: "t-w-5", name: "数据回收", done: false }
+              ]
+            }
+          ]
+        };
+      }
+
+      function loadState() {
+        try {
+          var stored = JSON.parse(localStorage.getItem(STORAGE_KEY));
+          if (stored && Array.isArray(stored.zones) && Array.isArray(stored.projects)) {
+            stored.page = Number(stored.page) || 0;
+            return stored;
+          }
+        } catch (error) {
+          console.warn("读取本地数据失败", error);
+        }
+        return initialState();
+      }
+
+      var state = loadState();
+      var $ = function (selector) { return document.querySelector(selector); };
+
+      function uid(prefix) {
+        return prefix + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 7);
+      }
+
+      function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, function (char) {
+          return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[char];
+        });
+      }
+
+      function saveState() {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      }
+
+      function showToast(message) {
+        var toast = $("#toast");
+        toast.textContent = message;
+        toast.classList.add("show");
+        window.clearTimeout(toastTimer);
+        toastTimer = window.setTimeout(function () { toast.classList.remove("show"); }, 2200);
+      }
+
+      function formatDate(value) {
+        if (!value) return "未设定时间";
+        var date = new Date(value);
+        if (Number.isNaN(date.getTime())) return "未设定时间";
+        return new Intl.DateTimeFormat("zh-CN", {
+          month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+          hour12: false
+        }).format(date).replace(/\//g, ".");
+      }
+
+      function projectSize(project) {
+        var count = (project.tasks || []).length;
+        if (count >= 5) return "wide tall";
+        if (count >= 3) return "wide";
+        return "";
+      }
+
+      function getPages() {
+        var pages = [];
+        for (var i = 0; i < state.zones.length; i += pageSize) {
+          pages.push(state.zones.slice(i, i + pageSize));
+        }
+        return pages.length ? pages : [[]];
+      }
+
+      function renderProject(project) {
+        var tasks = project.tasks || [];
+        var taskHtml = tasks.map(function (task) {
+          return '<button class="task ' + (task.done ? "done" : "") + '" data-task-id="' +
+            escapeHtml(task.id) + '" data-project-id="' + escapeHtml(project.id) +
+            '" title="点击切换任务状态">' + escapeHtml(task.name) + "</button>";
+        }).join("");
+
+        return '<article class="project ' + projectSize(project) + '" style="--project:' +
+          escapeHtml(project.color || colors[0]) + '">' +
+          '<div class="project-top">' +
+            '<div class="project-icon">' + escapeHtml(project.icon || "01") + "</div>" +
+            '<div class="project-copy">' +
+              '<div class="project-name" title="' + escapeHtml(project.name) + '">' + escapeHtml(project.name) + "</div>" +
+              '<div class="project-date">DUE // ' + escapeHtml(formatDate(project.deadline)) + "</div>" +
+            "</div>" +
+            '<button class="project-edit" data-edit-project="' + escapeHtml(project.id) + '" aria-label="编辑项目">···</button>' +
+          "</div>" +
+          '<div class="progress-row">' +
+            '<div class="progress-track"><span style="width:' + Number(project.progress || 0) + '%"></span></div>' +
+            '<span class="progress-number">' + Number(project.progress || 0) + "%</span>" +
+          "</div>" +
+          '<div class="tasks">' + taskHtml +
+            '<button class="add-task" data-add-task="' + escapeHtml(project.id) + '" aria-label="添加任务">＋</button>' +
+          "</div>" +
+        "</article>";
+      }
+
+      function renderZone(zone, absoluteIndex) {
+        var projects = state.projects.filter(function (project) { return project.zoneId === zone.id; });
+        var cards = projects.length ? projects.map(renderProject).join("") :
+          '<div class="empty-zone">NO PROJECT SIGNAL<br>点击下方按钮建立项目</div>';
+
+        return '<section class="zone" style="--zone:' + escapeHtml(zone.color) + '">' +
+          '<div class="zone-head">' +
+            '<div class="zone-ident">' +
+              '<div class="zone-index">' + String(absoluteIndex + 1).padStart(2, "0") + "</div>" +
+              '<div><div class="zone-name">' + escapeHtml(zone.name) + '</div><div class="zone-meta">' +
+                String(projects.length).padStart(2, "0") + " PROJECT NODES</div></div>" +
+            "</div>" +
+            '<button class="zone-menu" data-edit-zone="' + escapeHtml(zone.id) + '" aria-label="编辑分区">⌁</button>' +
+          "</div>" +
+          '<div class="project-grid">' + cards + "</div>" +
+          '<button class="zone-add" data-zone-project="' + escapeHtml(zone.id) + '">＋ 在' + escapeHtml(zone.name) + "新建项目</button>" +
+        "</section>";
+      }
+
+      function render() {
+        var pages = getPages();
+        state.page = Math.max(0, Math.min(state.page, pages.length - 1));
+        var visible = pages[state.page];
+        var offset = state.page * pageSize;
+        $("#zoneGrid").innerHTML = visible.map(function (zone, index) {
+          return renderZone(zone, offset + index);
+        }).join("");
+
+        var tasks = state.projects.reduce(function (all, project) {
+          return all.concat(project.tasks || []);
+        }, []);
+        var completed = tasks.filter(function (task) { return task.done; }).length;
+        var average = state.projects.length ? Math.round(state.projects.reduce(function (total, project) {
+          return total + Number(project.progress || 0);
+        }, 0) / state.projects.length) : 0;
+
+        $("#projectCount").innerHTML = state.projects.length + " <small>项</small>";
+        $("#taskRatio").textContent = completed + "/" + tasks.length;
+        $("#averageProgress").textContent = average + "%";
+        $("#pageLabel").textContent = String(state.page + 1).padStart(2, "0") + " / " + String(pages.length).padStart(2, "0");
+        $("#pageMeta").textContent = "SECTOR PAGE " + String(state.page + 1).padStart(2, "0");
+        $("#previousPage").disabled = state.page === 0;
+        $("#nextPage").disabled = state.page >= pages.length - 1;
+        saveState();
+      }
+
+      function renderProjectOptions(selectedId) {
+        $("#projectZone").innerHTML = state.zones.map(function (zone) {
+          return '<option value="' + escapeHtml(zone.id) + '"' + (zone.id === selectedId ? " selected" : "") + ">" +
+            escapeHtml(zone.name) + "</option>";
+        }).join("");
+      }
+
+      function renderPicks() {
+        $("#iconPicks").innerHTML = icons.map(function (icon) {
+          return '<button type="button" class="icon-pick ' + (chosenIcon === icon ? "selected" : "") +
+            '" data-icon-pick="' + icon + '">' + icon + "</button>";
+        }).join("");
+        $("#colorPicks").innerHTML = colors.map(function (color) {
+          return '<button type="button" class="color-pick ' + (chosenColor === color ? "selected" : "") +
+            '" style="--pick:' + color + '" data-color-pick="' + color + '" aria-label="选择颜色 ' + color + '"></button>';
+        }).join("");
+      }
+
+      function openProject(project, zoneId) {
+        $("#projectForm").reset();
+        $("#projectId").value = project ? project.id : "";
+        $("#projectName").value = project ? project.name : "";
+        $("#projectDeadline").value = project ? project.deadline : futureDate(7, 18);
+        $("#projectProgress").value = project ? project.progress : 0;
+        $("#projectProgressNumber").value = project ? project.progress : 0;
+        chosenColor = project ? project.color : colors[0];
+        chosenIcon = project ? project.icon : icons[0];
+        renderProjectOptions(project ? project.zoneId : (zoneId || (state.zones[0] && state.zones[0].id)));
+        renderPicks();
+        $("#projectModalTitle").innerHTML = (project ? "编辑项目" : "新建项目") + " <span>PROJECT CONFIG</span>";
+        $("#deleteProject").style.display = project ? "inline-flex" : "none";
+        $("#projectDialog").showModal();
+        window.setTimeout(function () { $("#projectName").focus(); }, 50);
+      }
+
+      function renderCategoryEditor(focusZoneId) {
+        $("#categoryList").innerHTML = state.zones.map(function (zone) {
+          return '<div class="category-row" data-category-row="' + escapeHtml(zone.id) + '">' +
+            '<div class="category-swatch" style="--swatch:' + escapeHtml(zone.color) + '"></div>' +
+            '<div class="field"><input value="' + escapeHtml(zone.name) + '" maxlength="16" data-zone-name="' +
+              escapeHtml(zone.id) + '" aria-label="分区名称"></div>' +
+            '<button type="button" class="mini-delete" data-delete-zone="' + escapeHtml(zone.id) + '" aria-label="删除分区">×</button>' +
+          "</div>";
+        }).join("");
+        if (!$("#zoneDialog").open) $("#zoneDialog").showModal();
+        if (focusZoneId) {
+          window.setTimeout(function () {
+            var input = document.querySelector('[data-zone-name="' + CSS.escape(focusZoneId) + '"]');
+            if (input) { input.focus(); input.select(); }
+          }, 50);
+        }
+      }
+
+      function updateClock() {
+        var now = new Date();
+        $("#clock").textContent = now.toLocaleTimeString("zh-CN", { hour12: false });
+        $("#today").textContent = now.toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", weekday: "short" });
+        var hour = now.getHours();
+        $("#greeting").textContent = (hour < 11 ? "早上好" : hour < 14 ? "中午好" : hour < 18 ? "下午好" : "晚上好") + "，指挥官。";
+      }
+
+      $("#newProject").addEventListener("click", function () { openProject(null, null); });
+      $("#manageZones").addEventListener("click", function () { renderCategoryEditor(); });
+      $("#previousPage").addEventListener("click", function () { state.page -= 1; render(); });
+      $("#nextPage").addEventListener("click", function () { state.page += 1; render(); });
+
+      $("#projectProgress").addEventListener("input", function (event) {
+        $("#projectProgressNumber").value = event.target.value;
+      });
+
+      $("#projectProgressNumber").addEventListener("input", function (event) {
+        var value = Math.max(0, Math.min(100, Number(event.target.value) || 0));
+        $("#projectProgress").value = value;
+      });
+
+      document.addEventListener("click", function (event) {
+        var close = event.target.closest("[data-close]");
+        if (close) {
+          document.getElementById(close.dataset.close).close();
+          return;
+        }
+
+        var addProject = event.target.closest("[data-zone-project]");
+        if (addProject) {
+          openProject(null, addProject.dataset.zoneProject);
+          return;
+        }
+
+        var editProject = event.target.closest("[data-edit-project]");
+        if (editProject) {
+          openProject(state.projects.find(function (project) { return project.id === editProject.dataset.editProject; }), null);
+          return;
+        }
+
+        var addTask = event.target.closest("[data-add-task]");
+        if (addTask) {
+          $("#taskProjectId").value = addTask.dataset.addTask;
+          $("#taskName").value = "";
+          $("#taskDialog").showModal();
+          window.setTimeout(function () { $("#taskName").focus(); }, 50);
+          return;
+        }
+
+        var taskButton = event.target.closest("[data-task-id]");
+        if (taskButton) {
+          var project = state.projects.find(function (item) { return item.id === taskButton.dataset.projectId; });
+          var task = project && project.tasks.find(function (item) { return item.id === taskButton.dataset.taskId; });
+          if (task) {
+            task.done = !task.done;
+            render();
+            showToast(task.done ? "任务节点已标记完成" : "任务节点已恢复为进行中");
+          }
+          return;
+        }
+
+        var iconPick = event.target.closest("[data-icon-pick]");
+        if (iconPick) {
+          chosenIcon = iconPick.dataset.iconPick;
+          renderPicks();
+          return;
+        }
+
+        var colorPick = event.target.closest("[data-color-pick]");
+        if (colorPick) {
+          chosenColor = colorPick.dataset.colorPick;
+          renderPicks();
+          return;
+        }
+
+        var editZone = event.target.closest("[data-edit-zone]");
+        if (editZone) {
+          renderCategoryEditor(editZone.dataset.editZone);
+          return;
+        }
+
+        var deleteZone = event.target.closest("[data-delete-zone]");
+        if (deleteZone) {
+          if (state.zones.length <= 1) {
+            showToast("至少需要保留一个分区");
+            return;
+          }
+          var hasProjects = state.projects.some(function (project) { return project.zoneId === deleteZone.dataset.deleteZone; });
+          if (hasProjects) {
+            showToast("请先移动或删除该分区中的项目");
+            return;
+          }
+          state.zones = state.zones.filter(function (zone) { return zone.id !== deleteZone.dataset.deleteZone; });
+          saveState();
+          renderCategoryEditor();
+          showToast("空分区已删除");
+        }
+      });
+
+      $("#projectForm").addEventListener("submit", function (event) {
+        event.preventDefault();
+        var id = $("#projectId").value;
+        var existing = state.projects.find(function (project) { return project.id === id; });
+        var projectData = {
+          id: id || uid("project"),
+          zoneId: $("#projectZone").value,
+          name: $("#projectName").value.trim(),
+          deadline: $("#projectDeadline").value,
+          progress: Math.max(0, Math.min(100, Number($("#projectProgressNumber").value) || 0)),
+          color: chosenColor,
+          icon: chosenIcon,
+          tasks: existing ? existing.tasks : []
+        };
+        if (existing) Object.assign(existing, projectData);
+        else state.projects.push(projectData);
+        $("#projectDialog").close();
+        render();
+        showToast(existing ? "项目参数已更新" : "新项目已接入控制台");
+      });
+
+      $("#deleteProject").addEventListener("click", function () {
+        var id = $("#projectId").value;
+        if (!id) return;
+        state.projects = state.projects.filter(function (project) { return project.id !== id; });
+        $("#projectDialog").close();
+        render();
+        showToast("项目已从控制台移除");
+      });
+
+      $("#taskForm").addEventListener("submit", function (event) {
+        event.preventDefault();
+        var project = state.projects.find(function (item) { return item.id === $("#taskProjectId").value; });
+        var name = $("#taskName").value.trim();
+        if (!project || !name) return;
+        project.tasks.push({ id: uid("task"), name: name, done: false });
+        $("#taskDialog").close();
+        render();
+        showToast("任务节点已添加，点击即可切换状态");
+      });
+
+      $("#zoneForm").addEventListener("submit", function (event) {
+        event.preventDefault();
+        document.querySelectorAll("[data-zone-name]").forEach(function (input) {
+          var zone = state.zones.find(function (item) { return item.id === input.dataset.zoneName; });
+          if (zone && input.value.trim()) zone.name = input.value.trim();
+        });
+
+        var newName = $("#newZoneName").value.trim();
+        if (newName) {
+          state.zones.push({ id: uid("zone"), name: newName, color: $("#newZoneColor").value });
+          state.page = Math.floor((state.zones.length - 1) / pageSize);
+        }
+        $("#zoneDialog").close();
+        render();
+        showToast(newName ? "新分区已创建并切换到对应页面" : "分区名称已保存");
+      });
+
+      $("#resetBoard").addEventListener("click", function () {
+        state = initialState();
+        $("#zoneDialog").close();
+        render();
+        showToast("演示数据已恢复");
+      });
+
+      [$("#projectDialog"), $("#taskDialog"), $("#zoneDialog")].forEach(function (dialog) {
+        dialog.addEventListener("click", function (event) {
+          if (event.target === dialog) dialog.close();
+        });
+      });
+
+      updateClock();
+      window.setInterval(updateClock, 1000);
+      render();
+    }());
+  </script>
+</body>
+</html>

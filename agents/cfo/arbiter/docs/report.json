@@ -1,0 +1,43 @@
+{
+  "schema_version": 2,
+  "module": "root",
+  "role": "arbiter",
+  "task": "上游前端原件入仓固化（铁律 22）",
+  "tier": "normal",
+  "status": "approved",
+  "summary": "两份本机唯一、不可再生的上游前端原件已固化进根仓 agents/reference/upstream/ 并留 SHA256 指纹，与源文件逐字节一致；index.html 1280 行超限已登记技术债，根仓行数门禁实跑绿；部署方案因模块划分未拍板而挂起。",
+  "git": {
+    "protocol": "embedded-self-v2",
+    "branch": "chore/upstream-vault",
+    "base": "211bdec5559ab4ab798a464272cde5dc27f64740",
+    "head": "SELF",
+    "diff_mode": "contains",
+    "changed_files": [
+      "agents/reference/upstream/index.html",
+      "agents/reference/upstream/project-task-contribution-ring.html",
+      "agents/reference/upstream/SHA256SUMS",
+      "agents/reference/upstream/README.md",
+      "agents/reference/manual/文档地图.md",
+      "agents/cfo/arbiter/docs/worklog/2026-07-28-任务单-upstream-vault.md",
+      "agents/cfo/arbiter/docs/worklog/2026-07-28-cfo-arbiter-upstream-vault.md",
+      "agents/cfo/arbiter/docs/decisions/2026-07-28-index-html-行数豁免-技术债.md",
+      "agents/cfo/arbiter/docs/report.json"
+    ]
+  },
+
+  "contract": { "touched": false, "which": [], "consumes": [] },
+  "cross_module_impact": [],
+  "sub_reports": [],
+
+  "escalation": {
+    "reason": "规则冲突",
+    "detail": "仅剩一项待人类裁决：(D1) 模块划分口径不一致——HANDOFF §4 把四个前端列为四条并列静态路由，§9.2 的 arbiter 编制却只列六个后端模块、前端一个未列，无法自行判定两份前端进一个模块还是两个。部署因此挂起。已闭环：(D2) new_module.sh 调用不存在的 install-ci.sh 致静默产出无门禁模块、(D3,P0) 九个 check 里四个对非 ASCII 路径行为不正确（05 假阳性 + 60/80/81 静默假阴性）——人类裁决全修，由 CFO consulter 落在 794c641（新增 scripts/lib/paths.sh 统一 -z 取路径；check 60 恢复严格后全仓扫出 28 条死链并清完）。本报告所属交付已在修复后的门禁上重跑 mission_complete.sh，7 项全绿且未使用任何逃生口。遗留同形隐患：new_module.sh 调用点仍为 if [ -x ]，脚本再次改名/丢失仍会静默跳过并打印“门禁已安装”，已登记待裁量。"
+  },
+
+  "reviewer_opinion": {
+    "reviewer": "module_reviewer",
+    "verdict": "pending",
+    "path": "agents/cfo/arbiter/docs/worklog/2026-07-28-cfo-arbiter-upstream-vault.md",
+    "round": 1
+  }
+}
