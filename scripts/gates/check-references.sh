@@ -18,7 +18,7 @@ bad() { printf '  ❌ %s\n' "$*" >&2; fail=1; }
 
 is_exempt() { grep -qxF -- "$1" "$exempt" 2>/dev/null; }
 # 占位/通配/模板记法不是真实路径
-is_literal() { case "$1" in *'<'*|*'{'*|*'*'*|*'$'*|*' '*|*'…'*) return 1 ;; esac; return 0; }
+is_literal() { case "$1" in *'}'*|*'<'*|*'{'*|*'*'*|*'$'*|*' '*|*'…'*) return 1 ;; esac; return 0; }
 
 printf '── 引用完整性 ──\n'
 
