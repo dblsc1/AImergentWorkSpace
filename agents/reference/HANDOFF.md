@@ -12,7 +12,7 @@
 
 > 本手册面向接手开发的编程 AI（arbiter / backend / reviewer 体系）。
 > 内容为产品目标与全部已定架构决策的完整移交，含决策理由。
-> 契约类章节（事件标准、集合、API、铁律）为**规范性内容**，实现不得偏离；
+> 契约类章节（事件标准、集合、API、技术约定）为**规范性内容**，实现不得偏离；
 > 其余为背景与理由，供判断时参考。
 
 ---
@@ -369,7 +369,7 @@ POST /ai/classify    # 自由文本 → tier2/tier3/项目（DeepSeek 提取器�
 
 ### 9.2 arbiter 编制
 
-模块 arbiter 六个：events、timer、planner、views、projector、ai-gateway；另设**总 arbiter 持有四份契约**——契约改动必须总 arbiter 批准并广播全体（多 agent 协作最易腐坏处，制度钉死）。reviewer 验收底线 = 金链路测试绿 + 九条铁律对照。
+模块 arbiter 六个：events、timer、planner、views、projector、ai-gateway；另设**总 arbiter 持有四份契约**——契约改动必须总 arbiter 批准并广播全体（多 agent 协作最易腐坏处，制度钉死）。reviewer 验收底线 = 金链路测试绿 + 第 8 节技术约定对照。
 
 ### 9.3 人类介入点（仅三处）
 
