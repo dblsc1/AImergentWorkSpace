@@ -54,7 +54,10 @@ if [ ! -f "$card_task" ]; then
   exit 2
 fi
 
-card_rel=${card#"$root"/}
+# 角色卡在框架根、任务单在模块仓时，$card 不在 $root 之下，前缀剥离不生效，
+# 会把**绝对路径**写进提示词 —— 那正是 copycat 的 `@/srv/aimergent/0/…` 病：换台机器就废。
+# 一律算相对当前仓根的路径。
+card_rel=$(realpath --relative-to="$root" "$card" 2>/dev/null || printf '%s' "${card#"$root"/}")
 card_hash=$(git -C "$framework" log -1 --format=%h -- "${card#"$framework"/}" 2>/dev/null || echo unknown)
 
 cat <<EOF

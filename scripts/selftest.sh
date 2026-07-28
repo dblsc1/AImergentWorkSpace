@@ -258,5 +258,13 @@ else
   F "只报「找不到任务单」—— 人会去找文件，真问题是站错了仓"
 fi
 
+# 26 ── 派单提示词里混进绝对路径（copycat 的 @/srv/… 病）
+printf '26. 派单提示词是否只含相对路径\n'
+if [ -x "$S/dispatch.sh" ] && grep -q 'realpath --relative-to' "$S/dispatch.sh" 2>/dev/null; then
+  P "角色卡路径按当前仓根取相对，跨仓派单不会写死绝对路径"
+else
+  F "跨仓派单会把绝对路径写进提示词 —— 换台机器即废"
+fi
+
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
 [ "$fail" -eq 0 ]
