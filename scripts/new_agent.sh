@@ -76,8 +76,13 @@ cat > "$mod/.claude/agents/$role.md" <<AGENT
 name: $role
 description: $mod_name 模块的 $role。派活时用 subagent_type=$role。
 ---
-@codeagent/$role/AGENTS.md
-@AGENTS.md
+# 你的角色卡（正文内联，不用 @import —— 该语法在 agent 定义里是否展开未验证）
+
+$(cat "$dest_dir/AGENTS.md")
+
+# 模块规范
+
+模块级规范在 \`AGENTS.md\`（模块根），含技术栈、自检门、流程与**已知坑**，开工先读。
 
 # 你的第一条输出（不可跳过）
 

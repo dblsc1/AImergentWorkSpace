@@ -22,6 +22,13 @@
    ```
    `.claude/agents/<角色>.md` 是该子代理的 system prompt，**角色卡必被加载，且它出生的第一条输出必须是考卷**。
    考卷不通过 → 不给任务单，重新派。
+
+   **你自己是子代理、开不了子代理时，用 shell 派**（起独立进程，不受嵌套限制）：
+   ```bash
+   scripts/run_agent.sh programmer <任务单>            # 新开
+   scripts/run_agent.sh programmer <任务单> --resume   # 打回-修复循环用这个，绝不重开
+   ```
+   session id 自动记在 `logs/sessions/`，`--resume` 即续用。**「续用 > 重开」从此是机械动作，不靠记性。**
    - 机制：使用当前 harness 提供的子代理/任务能力。派单提示词**首行**指定角色卡：`先读 codeagent/<programmer|programmer_reviewer>/AGENTS.md，你是<角色>，执行 <worklog 任务单>`。
    - 子代理**共享本模块工作目录**，靠各自 `scope.json` 写权限域区分（不是靠不同 cwd）。你收子代理结果后审查、裁决、合并。
    - **禁止**开指向其他模块/其他工作目录的子代理——跨爆炸半径必须走 CR → CFO，不许自己伸手。
@@ -39,7 +46,9 @@
 
 ## 报告（你既收子代理的 report.json，也向 CFO 出 report.json）
 - **收**：读 `programmer` / `programmer_reviewer` 的 report.json 做路由裁决（看 status/issues/escalation）。
-- **被审**：你自己的产出（任务单、裁决、报告）由 `module_reviewer` 审规范面——
+- **交付 CFO 前必过 module_reviewer**：每完成一件 CFO 派下的任务，**必须先由 `module_reviewer` 审规范面**，
+  它的结论随你的报告一起上交。跳过它 = 你自己越权跳过审核门。
+- **被审范围**：你的产出（任务单、裁决、报告）由 `module_reviewer` 审规范面——
   文档规范、有无越权、大任务报告是否合规。它不评技术方案，那是 consulter 与人类的事。
 - **出**（模块 → CFO 的汇总）：三部分拼成 report.json——
   1. 项目级通用：框架根 `agents/protocol/report-schema.md`

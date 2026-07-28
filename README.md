@@ -39,6 +39,17 @@ scripts/  脚本区：脚手、门禁、hooks、检查项
 | `programmer_reviewer` | arbiter | 审代码 |
 | `module_reviewer` | CFO | **审 arbiter 的规范面**：文档规范、有无越权、大任务报告是否合规 |
 
+**派活两种方式**：
+
+```bash
+# ① 父 agent 在自己 session 内开子代理（两层，最省）
+scripts/dispatch.sh programmer <任务单>          # 生成提示词，用 Agent 工具派
+
+# ② 起独立进程（arbiter 自己是子代理、开不了子代理时用这个）
+scripts/run_agent.sh programmer <任务单>         # claude -p --agent，不受嵌套限制
+scripts/run_agent.sh programmer <任务单> --resume  # 打回-修复循环用这个，绝不重开
+```
+
 建角色一律走脚本，不手写：`scripts/new_agent.sh <角色>` —— 它填实写边界，
 并生成 `.claude/agents/<角色>.md`（该子代理的 system prompt），**其中写死了"出生第一条输出必须是考卷"**。
 

@@ -135,5 +135,13 @@ else
   F "逃生口缺失或静默 —— 要么卡死无解，要么绕过无痕"
 fi
 
+# 13 ── 「续用 > 重开」只是句口号：执行率取决于 agent 记不记得
+printf '13. 续用是否可机械执行\n'
+if [ -x "$S/run_agent.sh" ] && grep -q 'resume' "$S/run_agent.sh" 2>/dev/null; then
+  P "run_agent.sh 记录 session id 并支持 --resume，续用是动作不是态度"
+else
+  F "没有续用机制 —— 打回-修复循环只能靠 agent 自觉不重开"
+fi
+
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
 [ "$fail" -eq 0 ]

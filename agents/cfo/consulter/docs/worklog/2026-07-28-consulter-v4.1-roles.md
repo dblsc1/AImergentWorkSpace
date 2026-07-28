@@ -33,3 +33,22 @@ Claude Code 的子代理由模型在运行时开，不经 shell，脚本拦不�
 而且 agent 不存在时没人能答题。**替代品：把考题写进 `.claude/agents/<角色>.md`
 （该子代理的 system prompt），要求出生第一条输出就是答卷。**
 比"创建时考试"更靠前，且派活方一眼看得到。判卷仍走 `scripts/exam.sh`，不过则重派。
+
+## shell 派活：嵌套限制的解法（补记）
+
+CLI 实测 `claude -p --agent <角色>` 起的是**全新进程**，整个 session 以该角色身份跑，
+**不走子代理那条路，因此不受嵌套层数限制**。arbiter 即使自己是子代理也能派 programmer。
+落成 `scripts/run_agent.sh`。
+
+附带一个意外收获：`-r/--resume <session_id>` 让「续用 > 重开」**第一次成为机械动作**——
+session id 自动记在 `logs/sessions/`，打回时 `--resume` 即续用。
+此前这条规范执行率取决于 agent 记不记得（实测重开一次可占整轮子代理消耗三成）。
+
+代价如实记：独立进程不共享父 session 的上下文与缓存，结果靠 stdout 解析。
+
+## 两个 harness 事实（此前我用了但没验证）
+
+- `.claude/agents/*.md` 按**工作目录/项目根**发现（项目级 `.claude/agents/` 或用户级 `~/.claude/agents/`）。
+  生成在 `<模块>/.claude/agents/` 只在 Claude 以该模块为工作目录时生效 —— shell 派活必须先 cd 进模块。
+- **agent 定义里 `@path` import 是否展开，我没验证**。已改为把角色卡正文**直接内联**进
+  `.claude/agents/<角色>.md`，不依赖该语法。宁可文件长一点，不赌未验证的行为。
