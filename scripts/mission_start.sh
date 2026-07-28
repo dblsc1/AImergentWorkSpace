@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 开工 —— 发路签、划写区、出提示词。
 #
-#   scripts/mission_start.sh <角色> <任务单> <写区前缀...>
+#   scripts/mission_start.sh <角色> <任务单> <写区前缀...> [--docs <update|create>:<文档路径> ...]
 #   scripts/mission_start.sh --release <角色>        提前还签
 #   scripts/mission_start.sh --list                  看当前所有签
 #
@@ -35,13 +35,32 @@ fi
 
 if [ "${1:-}" = --release ]; then
   r=${2:?用法: --release <角色>}
-  rm -f "$lease_dir/$r.lease" && echo "✅ 已还签：$r"
+  rm -f "$lease_dir/$r.lease" "$lease_dir/$r.docs" && echo "✅ 已还签：$r"
   emit_event lease_release "$r"
   exit 0
 fi
 
 role=${1:-}; task=${2:-}; shift 2 2>/dev/null || true
-[ -n "$role" ] && [ -n "$task" ] || die "用法: mission_start.sh <角色> <任务单> <写区前缀...>"
+[ -n "$role" ] && [ -n "$task" ] || die "用法: mission_start.sh <角色> <任务单> <写区...> [--docs <update|create>:<路径> ...]"
+
+# ── 预期文档变更：arbiter 派单时就声明，完工时机器逐条核对 ──
+# 这一步把「铁律 11 靠自觉」变成「派单即承诺，交付即核对」。
+declare -a docs=() prefixes=()
+mode=write
+for a in "$@"; do
+  case "$a" in
+    --docs) mode=docs; continue ;;
+  esac
+  case "$mode" in
+    write) prefixes+=("$a") ;;
+    docs)
+      case "$a" in
+        update:*|create:*) docs+=("${a%%:*}	${a#*:}") ;;
+        *) die "--docs 项格式须为 update:<路径> 或 create:<路径>，收到: $a" ;;
+      esac ;;
+  esac
+done
+set -- "${prefixes[@]}"
 [ -f "$task" ] || die "找不到任务单: $task"
 [ $# -ge 1 ] || die "必须显式声明写区，例: code/<模块>/backend/orders/"
 
@@ -72,6 +91,13 @@ done
 shopt -u nullglob
 
 printf '%s\n' "${want[@]}" > "$lease_dir/$role.lease"
+if [ "${#docs[@]}" -gt 0 ]; then
+  printf '%s\n' "${docs[@]}" > "$lease_dir/$role.docs"
+  printf '📄 预期文档变更（完工时机器逐条核对）：\n' >&2
+  printf '   %s\n' "${docs[@]}" >&2
+else
+  rm -f "$lease_dir/$role.docs"
+fi
 emit_event lease_grant "$role: ${want[*]}"
 
 # ── ③ 出提示词 ────────────────────────────────────────────

@@ -21,6 +21,33 @@ set -uo pipefail
 mapfile -t -d '' staged < <(staged_paths ACMRD)
 [ "${#staged[@]}" -gt 0 ] || exit 0
 
+fail=0
+declare -A staged_all=()
+for f in "${staged[@]}"; do staged_all["$f"]=1; done
+
+# ── ① 派单时声明的预期文档变更：逐条机械核对 ──────────────
+# 机器只判机械事实：声明 create 的文件在不在、声明 update 的有没有出现在本次改动里。
+# 理由的成色不归机器管，归 arbiter（模块内）/ CFO（跨模块）。
+role_now=${AIMERGENT_ROLE:-}
+lease_dir=$(git rev-parse --path-format=absolute --git-common-dir)/aimergent-leases
+docs_file="$lease_dir/${role_now}.docs"
+if [ -n "$role_now" ] && [ -f "$docs_file" ]; then
+  while IFS=$'\t' read -r act path; do
+    [ -n "$path" ] || continue
+    case "$act" in
+      create)
+        if [ ! -e "$path" ]; then
+          echo "派单声明要新建 $path —— 但它不存在" >&2; fail=1
+        elif [ -z "${staged_all[$path]:-}" ]; then
+          echo "派单声明要新建 $path —— 存在但没进本次提交" >&2; fail=1
+        fi ;;
+      update)
+        [ -n "${staged_all[$path]:-}" ] ||
+          { echo "派单声明要更新 $path —— 但本次改动里没有它" >&2; fail=1; } ;;
+    esac
+  done < "$docs_file"
+fi
+
 # 本次改了哪些「非文档」文件
 changed=()
 for f in "${staged[@]}"; do
@@ -47,7 +74,6 @@ fi
 # 可选补充表：自动推不出来的语义关联（文档讲某功能但没写路径）
 deps_table=scripts/gates/doc-deps.txt
 
-fail=0
 declare -A reported=()
 for c in "${changed[@]}"; do
   # ① 从文档反查：谁用反引号提到了我
