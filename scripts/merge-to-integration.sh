@@ -250,7 +250,7 @@ verify_report() {
     (if $role == "consulter" | not then
        any(.git.changed_files[]; startswith("codeagent/" + $role + "/docs/worklog/"))
      else
-       any(.git.changed_files[]; startswith("agents/cfo/consulter/docs/worklog/"))
+       any(.git.changed_files[]; startswith("agents/consulter/docs/worklog/"))
      end) and
     .review_target.branch == $branch and
     (.review_target.head | type == "string" and test("^[0-9a-f]{40}$"))
@@ -280,7 +280,7 @@ verify_report() {
       esac
     else
       case "$changed" in
-        agents/cfo/consulter/docs/*|agents/cfo/arbiter/docs/*) ;;
+        agents/consulter/docs/*|agents/cfo/docs/*) ;;
         *) printf '  未经审核的后续路径: %s\n' "$changed" >&2; bad=1 ;;
       esac
     fi
@@ -298,7 +298,7 @@ if [ "$level" = module ]; then
     fi
   done
 else
-  if verify_report agents/cfo/consulter/docs/findings/report.json consulter; then
+  if verify_report agents/consulter/docs/findings/report.json consulter; then
     approved=1
   elif [ -n "$pr" ]; then
     author=$(jq -r .author.login <<<"$pr_json")

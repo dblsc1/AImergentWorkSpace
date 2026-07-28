@@ -25,13 +25,14 @@ if [ -z "$framework" ] && [ -f "$root/.aimergent-framework" ]; then
   framework=$(cd "$root" && cd "$(cat .aimergent-framework)" && pwd -P)
 fi
 [ -n "$framework" ] || framework=$root
-# 角色卡两处：模块四角色在 agents/roles/，CFO 两角色在 agents/cfo/<角色>/AGENTS.md
+# 角色卡两处：模块级四角色在 agents/roles/；
+# 项目级 CFO 与 consulter 各自成目录（agents/cfo/、agents/consulter/），二者**平级**。
 card="$framework/agents/roles/$role.md"
-[ -f "$card" ] || card="$framework/agents/cfo/$role/AGENTS.md"
+[ -f "$card" ] || card="$framework/agents/$role/AGENTS.md"
 [ -f "$card" ] || {
   echo "❌ 找不到角色卡: $role" >&2
   echo "   模块角色: arbiter | programmer | programmer_reviewer | module_reviewer" >&2
-  echo "   项目角色: cfo 下的 arbiter | consulter（可设 AIMERGENT_FRAMEWORK_ROOT）" >&2
+  echo "   项目角色: cfo | consulter（二者平级，可设 AIMERGENT_FRAMEWORK_ROOT）" >&2
   exit 2; }
 if [ ! -f "$card_task" ]; then
   echo "❌ 找不到任务单: $card_task" >&2

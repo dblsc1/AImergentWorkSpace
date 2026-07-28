@@ -7,8 +7,8 @@ codeagent/arbiter/docs/report.json
 codeagent/programmer/docs/report.json
 codeagent/programmer_reviewer/docs/report.json
 codeagent/module_reviewer/docs/report.json
-agents/cfo/arbiter/docs/report.json
-agents/cfo/consulter/docs/findings/report.json
+agents/cfo/docs/report.json
+agents/consulter/docs/findings/report.json
 # 模块内相对路径（在框架根不存在，生成模块后才有）：
 code/backend
 code/frontend

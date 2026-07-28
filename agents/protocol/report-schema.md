@@ -48,8 +48,8 @@
 | programmer | `codeagent/programmer/docs/report.json` |
 | programmer_reviewer | `codeagent/programmer_reviewer/docs/report.json` |
 | module_reviewer | `codeagent/module_reviewer/docs/report.json` |
-| CFO arbiter | `agents/cfo/arbiter/docs/report.json` |
-| CFO consulter | `agents/cfo/consulter/docs/findings/report.json` |
+| CFO（项目 arbiter） | `agents/cfo/docs/report.json` |
+| consulter（**与 CFO 平级**，不隶属于它） | `agents/consulter/docs/findings/report.json` |
 | **临时执行者**（CFO/arbiter 直派、不属上述固定角色的一次性 implementer / reviewer / 归档工等） | `<派活方>/docs/subreports/<YYYY-MM-DD>-<task-id>-<role>.md` |
 
 **临时执行者落点是硬要求，不是建议。** 固定六角色覆盖不了的一次性活（迁仓、归档、写契约、专项审核……）**同样必须把报告落进仓内**：由派活方在自己 `docs/subreports/` 下收编并**随本任务一起 commit**。派活方 `report.json` 的 `sub_reports[].path` **必须是仓根相对路径**；填 `/tmp/...`、会话工作目录或任何仓外绝对路径，该子报告按**未产出**计（铁律 12 / 18）。临时执行者不必单独出 `report.json`——它的报告由派活方收编进 `sub_reports`，但**文件本身必须可被后来者 `git show` 出来**。

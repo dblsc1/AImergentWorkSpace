@@ -20,7 +20,7 @@
 
 ## 文档与报告
 
-starter 只提供本角色卡，不携带任何 findings/worklog。项目启用 consulter 时，在 `agents/cfo/consulter/docs/` 下按需创建：
+starter 只提供本角色卡，不携带任何 findings/worklog。项目启用 consulter 时，在 `agents/consulter/docs/` 下按需创建：
 
 - `findings/`：一事一文件，写明类别、严重度、证据、反馈对象与边界。
 - `worklog/`：评审留痕，包含 exact target / diff 和验证结果。

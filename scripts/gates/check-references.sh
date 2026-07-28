@@ -53,8 +53,9 @@ fi
 # ③ 脚本里提到的角色，必须有对应角色卡
 for r in $(grep -rhoE '\b(arbiter|programmer|programmer_reviewer|module_reviewer|consulter)\b' \
             scripts/*.sh scripts/checks/*/*.sh 2>/dev/null | sort -u); do
-  [ -f "agents/roles/$r.md" ] || [ -f "agents/cfo/$r/AGENTS.md" ] ||
-    bad "脚本引用角色 $r，但既无 agents/roles/$r.md 也无 agents/cfo/$r/AGENTS.md"
+  # 角色卡两处：模块级在 agents/roles/；项目级 CFO 与 consulter 各自成目录（二者平级）
+  [ -f "agents/roles/$r.md" ] || [ -f "agents/$r/AGENTS.md" ] ||
+    bad "脚本引用角色 $r，但既无 agents/roles/$r.md 也无 agents/$r/AGENTS.md"
 done
 
 # ④ checks 目录里的每个脚本都必须满足 --describe 契约且可执行

@@ -15,7 +15,7 @@ summary=${5:-}
 case "$verdict" in approved|rejected) ;; *) die "verdict 只能是 approved|rejected" ;; esac
 case "$r" in
   programmer_reviewer|module_reviewer) out="codeagent/$r/docs/report.json" ;;
-  consulter) out="agents/cfo/consulter/docs/findings/report.json" ;;   # 根仓 L0 独立审核
+  consulter) out="agents/consulter/docs/findings/report.json" ;;   # 根仓 L0 独立审核
   *) die "不是审核角色: $r（programmer_reviewer|module_reviewer|consulter）" ;;
 esac
 

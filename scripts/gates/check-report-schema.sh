@@ -175,8 +175,8 @@ while IFS= read -r path; do
       validate_common "$path" module_reviewer
       ;;
     codeagent/arbiter/docs/report.json) validate_common "$path" arbiter ;;
-    agents/cfo/arbiter/docs/report.json) validate_common "$path" arbiter ;;
-    agents/cfo/consulter/docs/findings/report.json) validate_common "$path" consulter ;;
+    agents/cfo/docs/report.json) validate_common "$path" arbiter ;;
+    agents/consulter/docs/findings/report.json) validate_common "$path" consulter ;;
     # 骨架占位不是审核产物，不触发 mirror-only 检查
     review/reviewreport/.gitkeep|review/reviewreport/*/.gitkeep) ;;
     review/reviewreport/*) review_artifact_changed=1 ;;

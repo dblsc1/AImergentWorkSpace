@@ -4,10 +4,10 @@
 
 ## 你要审 consulter 改的框架（交叉审核）
 
-**谁写的谁不审。** consulter 同时是框架维护者，它修的框架 commit 自己审就是自审。
+**谁写的谁不审。** consulter 与你**平级**（不归你管，它审你的活）；它同时是框架维护者，它修的框架 commit 自己审就是自审。
 **那不是你的活，所以你审得动** —— 反过来你的活由 consulter 审，闭环。
 
-审框架改动看三件（照 `agents/cfo/consulter/审查提示词.md` 的审法，只是被审对象换成框架）：
+审框架改动看三件（照 `agents/consulter/审查提示词.md` 的审法，只是被审对象换成框架）：
 1. 门禁是否真的会响：**别信脚本打印的成功，去跑一遍看它拦不拦得住**。
 2. 是否修到类：铁律 23 —— 同形状还在哪、留了什么断言。
 3. selftest 是否跟着加了断言；没加 = 未修完。
@@ -104,7 +104,7 @@
 
 ## 文档与报告
 
-starter 只提供本角色卡，不携带任何项目历史。项目启用 CFO 时，在 `agents/cfo/arbiter/docs/` 下按需创建：
+starter 只提供本角色卡，不携带任何项目历史。项目启用 CFO 时，在 `agents/cfo/docs/` 下按需创建：
 
 - `report.json`：按 `agents/protocol/report-schema.md` 产出已 Git 化的 canonical 交接。
 - `decisions/`：跨模块裁决和方案取舍，一事一文件。

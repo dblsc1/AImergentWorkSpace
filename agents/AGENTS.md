@@ -17,8 +17,9 @@
 ├── README.md                 # clone 后入口
 │
 ├── agents/                   # ① AI 工作区
-│   ├── roles/                #   六份项目级角色卡
-│   ├── cfo/                  #   CFO arbiter / consulter：角色卡 + 各自 docs/
+│   ├── roles/                #   模块级四角色卡
+│   ├── cfo/                  #   项目 arbiter（CFO）：角色卡 + docs/
+│   ├── consulter/            #   独立审核与架构顾问，**与 CFO 平级，不隶属于它**
 │   ├── review/               #   项目级 reviewcode / reviewreport
 │   └── reference/            #   开设指南、文档地图、架构说明、经验教训
 │
@@ -87,7 +88,11 @@
 | programmer_reviewer | `review/`、自己 docs | `code/` 只读；禁修业务代码 |
 | module_reviewer | `review/reviewreport/`、自己 docs | 全模块只读；**只审规范面，不替 arbiter 做技术判断** |
 | CFO arbiter | 项目规范、跨模块契约关系、协调台账 | 禁亲写模块业务代码 |
-| CFO consulter | 自己的评审留痕、必要的规范纠错 | 禁执行业务实现或代替 CFO 裁决 |
+| consulter（**与 CFO 平级**） | 自己的评审留痕、必要的规范纠错、框架维护 | 禁执行业务实现、禁代替 CFO 裁决、**禁自审自己改的框架** |
+
+**为什么 consulter 不放在 `agents/cfo/` 下面**：它审 CFO 的活。
+挂在 CFO 名下等于结构上说它归 CFO 管，与「谁写的谁不审」直接打架。
+三个项目级角色是**并列**的：CFO 分派、consulter 独立审、人类裁决。
 
 ## 协作流程（完整治理）
 

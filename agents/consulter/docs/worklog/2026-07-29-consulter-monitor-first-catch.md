@@ -47,3 +47,28 @@ selftest 补第 25 条。
 - 「落点被 gitignore 吞掉」→ 真问题是角色用错层级
 - 「找不到任务单」→ 真问题是站错了仓
 只报现象会把人引向错误的修法（去改 .gitignore、去找文件），而那两条路都是死的。
+
+## consulter 提到与 CFO 平级（人类指出的结构错误）
+
+原结构 `agents/cfo/{arbiter,consulter}/` 把 consulter 挂在 CFO 名下 ——
+**结构上等于说它归 CFO 管，而它的职责恰恰是审 CFO 的活。**
+这与刚定的「谁写的谁不审」直接打架：一个隶属于被审者的审核者不是独立审核。
+
+改后：
+```
+agents/cfo/          项目 arbiter（CFO）—— 去掉多余的 arbiter/ 层，项目级它就是 arbiter 本身
+agents/consulter/    独立审核与架构顾问 —— 与 CFO 平级
+agents/roles/        模块级四角色
+```
+三个项目级角色是**并列**的：CFO 分派、consulter 独立审、人类裁决。
+
+canonical 路径随之变：
+- `agents/cfo/arbiter/docs/report.json` → `agents/cfo/docs/report.json`
+- `agents/cfo/consulter/docs/findings/report.json` → `agents/consulter/docs/findings/report.json`
+
+**这是一次典型的改名重构** —— 正是本轮反复留下悬空引用的那类。
+这回有 `check-references` 守着：改完首跑就抓出「脚本引用角色 consulter，
+但既无 agents/roles/consulter.md 也无 agents/cfo/consulter/AGENTS.md」——
+检查器自己的角色解析也按旧结构写着，一并修了。**穷举扫引用在这次的价值直接兑现。**
+
+历史叙事类（worklog/findings/decisions）的路径引用**不改** —— 它们记录的是当时的结构。
