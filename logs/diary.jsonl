@@ -1,0 +1,7 @@
+{"ts":"2026-07-28T12:13:50Z","event":"script_start","script":"mission_complete.sh","actor":"consulter","note":"","rc":0,"branch":"v5"}
+{"ts":"2026-07-28T12:13:50Z","event":"mission_override","role":"consulter","branch":"v5","pass":5,"fail":2,"failed":"05-write-lease 10-worklog-changed","reason":"starter 不该携带开发期事件流水"}
+{"ts":"2026-07-28T12:13:50Z","event":"script_start","script":"reindex.sh","actor":"consulter","note":"","rc":0,"branch":"v5"}
+{"ts":"2026-07-28T12:13:50Z","event":"script_end","script":"reindex.sh","actor":"consulter","note":"耗时 0s","rc":0,"branch":"v5"}
+{"ts":"2026-07-28T12:13:50Z","event":"script_start","script":"console.sh","actor":"consulter","note":"","rc":0,"branch":"v5"}
+{"ts":"2026-07-28T12:13:50Z","event":"script_end","script":"console.sh","actor":"consulter","note":"耗时 0s","rc":0,"branch":"v5"}
+{"ts":"2026-07-28T12:13:50Z","event":"script_end","script":"mission_complete.sh","actor":"consulter","note":"耗时 0s","rc":0,"branch":"v5"}
