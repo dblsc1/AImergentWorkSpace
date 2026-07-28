@@ -71,8 +71,8 @@ printf '%s\n' "$framework_ref" > "$dest/.aimergent-framework"
 # ── Git：初始 commit，让模块交付时就处于「可直接跑门禁」状态 ──
 # 不做初始 commit 会让新模块首次跑 check-report-schema.sh 撞一个语义对不上的红。
 git -C "$dest" init -q -b main
-if [ -x "$PROJECT_ROOT/scripts/install-ci.sh" ]; then
-  AIMERGENT_WORKSPACE_ROOT="$WORKSPACE_ROOT" "$PROJECT_ROOT/scripts/install-ci.sh" "$target_arg" >/dev/null ||
+if [ -x "$PROJECT_ROOT/scripts/install-gates.sh" ]; then
+  AIMERGENT_WORKSPACE_ROOT="$WORKSPACE_ROOT" "$PROJECT_ROOT/scripts/install-gates.sh" "$target_arg" >/dev/null ||
     die "门禁安装失败: $dest"
 fi
 git -C "$dest" add -A

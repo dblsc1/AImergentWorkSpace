@@ -61,10 +61,10 @@
 | **提交时** | 字段存在且格式正确，`verdict` 可以是 `pending` | 否则 programmer 永远无法先提交形成 candidate，审核就无从谈起 |
 | **合并时** | `verdict` 必须是 `approved` | **这才是审核门** |
 
-`scripts/checks/70-reviewer-opinion.sh` 管提交时那一格。
+`scripts/checks/_common/70-reviewer-opinion.sh` 管提交时那一格。
 它拦的是**「根本没人审、也没打算让人审」的交付**，不是拦未审完的中间状态。
 
-> ⚠️ **合并时的 approved 强制目前只写在规范里，尚未接进 `scripts/merge-to-main.sh`。**
+> ⚠️ **合并时的 approved 强制目前只写在规范里，尚未接进 `scripts/merge-to-integration.sh`。**
 > 在接进去之前，这一格靠人和 reviewer 守，不要当成已有机械保证。
 
 ## `sub_reports` 的两个可观测字段（arbiter 必填）

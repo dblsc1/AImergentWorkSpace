@@ -8,9 +8,10 @@
 # 本检查管的是前者：**不许出现"根本没人审、也没打算让人审"的交付**。
 [ "${1:-}" = --describe ] && { echo "70 审核意见：report.json 必须带 reviewer_opinion{reviewer,verdict,path}；提交可 pending，合并须 approved"; exit 0; }
 set -uo pipefail
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh"
 command -v jq >/dev/null || { echo "缺少 jq，无法校验 reviewer_opinion" >&2; exit 1; }
 fail=0
-while IFS= read -r f; do
+while IFS= read -r -d '' f; do
   [ -n "$f" ] || continue
   if ! jq -e '
       (.reviewer_opinion | type == "object") and
@@ -28,5 +29,5 @@ while IFS= read -r f; do
   esac
   v=$(jq -r '.reviewer_opinion.verdict' "$f")
   [ "$v" = pending ] && echo "  ℹ $f: 审核意见仍为 pending —— 可以提交，但合并门会拦" >&2
-done < <(find . -path ./.git -prune -o -name report.json -print 2>/dev/null | sed 's|^\./||')
+done < <(find . -path ./.git -prune -o -name report.json -print0 2>/dev/null | sed -z 's|^\./||')
 exit $fail

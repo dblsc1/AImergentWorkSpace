@@ -10,6 +10,7 @@ set -uo pipefail
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "❌ 不在 Git 仓内" >&2; exit 1; }
 port=${AIMERGENT_PANEL_PORT:-8787}
+host=${AIMERGENT_PANEL_HOST:-127.0.0.1}
 command -v python3 >/dev/null || { echo "⚠️  没有 python3，跳过面板安装" >&2; exit 0; }
 python3 -c "import http.server" 2>/dev/null || { echo "⚠️  python3 标准库不完整，跳过" >&2; exit 0; }
 
@@ -29,6 +30,7 @@ Description=AImergent 任务控制台 ($root)
 Type=simple
 WorkingDirectory=$root
 Environment=AIMERGENT_PANEL_PORT=$port
+Environment=AIMERGENT_PANEL_HOST=$host
 ExecStart=$(command -v python3) $root/control-panel/server.py
 Restart=on-failure
 RestartSec=3
@@ -39,7 +41,11 @@ UNIT
 
 if systemctl --user daemon-reload 2>/dev/null &&
    systemctl --user enable --now "$unit" 2>/dev/null; then
-  printf '✅ 控制台服务已启动: %s\n   地址: http://127.0.0.1:%s\n   停止: systemctl --user stop %s\n' "$unit" "$port" "$unit"
+  shown=$host
+  [ "$host" = tailscale ] && shown=$(tailscale ip -4 2>/dev/null | head -1 || echo 127.0.0.1)
+  printf '✅ 控制台服务已启动: %s\n   地址: http://%s:%s\n   停止: systemctl --user stop %s\n' "$unit" "$shown" "$port" "$unit"
+  [ "$host" != 127.0.0.1 ] && printf '   ⚠️  面板无鉴权：凡能访问该地址的设备都能读全部留痕与报告。\n'
+  true
 else
   printf '⚠️  systemd --user 不可用（无 session bus？）。unit 已写入 %s\n' "$unit_dir/$unit"
   printf '   手动启动: python3 %s/control-panel/server.py\n' "$root"

@@ -60,7 +60,7 @@ scripts/run_agent.sh programmer <任务单> --resume  # 打回-修复循环用�
 - **提交层**：`scripts/mission_complete.sh` 挂 pre-commit，六条检查任一不过拒绝提交。
   判据用 `--list` 可枚举，`dispatch.sh` 会把它嵌进派单提示词 —— **开卷，不让人猜**。
   逃生口 `AIMERGENT_MISSION_OVERRIDE="<理由>"`：放行但强制记账，绕过在台账上可见。
-- **推送层**：`scripts/arbiter-push.sh` / `scripts/merge-to-main.sh` 一次性握手，绕不过去。
+- **推送层**：`scripts/arbiter-push.sh` / `scripts/merge-to-integration.sh` 一次性握手，绕不过去。
 
 ## 控制台（每个 sh 的一举一动）
 

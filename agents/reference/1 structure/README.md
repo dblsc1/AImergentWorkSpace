@@ -66,7 +66,7 @@
 1. session 内由 CFO / arbiter 派活，worker 产出代码、测试、worklog 和 canonical report。
 2. Git 层由 hooks + gates + CI 检查归属、报告证据、密钥、文件大小与项目测试；独立 approved 后才 squash 到 `main`。
 
-`report.json` 的 Git 证据使用 `embedded-self-v2`：`head="SELF"` 由接收方解析为最后修改该报告的 commit；`base` 取任务目标分支起点；reviewagent 另用 exact `review_target` 绑定被审差异。详细协议见 `agents/roles/report-schema.md`。
+`report.json` 的 Git 证据使用 `embedded-self-v2`：`head="SELF"` 由接收方解析为最后修改该报告的 commit；`base` 取任务目标分支起点；reviewagent 另用 exact `review_target` 绑定被审差异。详细协议见 `agents/protocol/report-schema.md`。
 
 ## 7. 路径、密钥与数据
 
@@ -80,6 +80,6 @@
 
 1. 把 `contract.md` 与 `rules.md` 填成真实事实。
 2. 激活模块角色卡，建立 canonical reports 和 worklog。
-3. 运行 `scripts/install-ci.sh <module-path>` 安装 hooks、gates 和 workflow。
-4. 引入独立 reviewagent、exact review target 和 `scripts/merge-to-main.sh`。
+3. 运行 `scripts/install-gates.sh <module-path>` 安装 hooks、gates 和 workflow。
+4. 引入独立 reviewagent、exact review target 和 `scripts/merge-to-integration.sh`。
 5. 如有多模块契约，建立项目级依赖索引与变更请求台账。

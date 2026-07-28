@@ -195,7 +195,7 @@ done
 if [ ${#missing_hooks[@]} -eq 0 ]; then
   ok "pre-push / commit-msg / pre-commit 均已安装"
 else
-  bad "hook 未安装: ${missing_hooks[*]} —— 本仓处于零保护状态，跑 scripts/install-ci.sh ."
+  bad "hook 未安装: ${missing_hooks[*]} —— 本仓处于零保护状态，跑 scripts/install-gates.sh ."
 fi
 
 say "── gate: 模块 reviewcode ──"

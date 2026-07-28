@@ -3,6 +3,7 @@
 # 没跑 mission_start.sh = 没有签 = 一提交就被拦 —— 这就是「无法绕过」的落点。
 [ "${1:-}" = --describe ] && { echo "05 写区路签：暂存文件必须落在本角色 mission_start.sh 申领的写区内（防未受控双写）"; exit 0; }
 set -uo pipefail
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh"
 role=${AIMERGENT_ROLE:-}
 lease_dir=$(git rev-parse --path-format=absolute --git-common-dir)/aimergent-leases
 [ -n "$role" ] || exit 0                      # 角色未知时不拦（由 10/40 等条兜底）
@@ -13,7 +14,7 @@ if [ ! -f "$f" ]; then
 fi
 mapfile -t leases < "$f"
 bad=0
-while IFS= read -r p; do
+while IFS= read -r -d '' p; do
   [ -n "$p" ] || continue
   case "$p" in
     codeagent/"$role"/*|logs/*|review/reviewreport/*) continue ;;   # 自己的留痕区永远允许
@@ -21,5 +22,5 @@ while IFS= read -r p; do
   ok=0
   for l in "${leases[@]}"; do [ -n "$l" ] && case "$p" in "$l"*) ok=1; break ;; esac; done
   [ "$ok" -eq 1 ] || { echo "越出写区路签：$p（持有 ${leases[*]}）" >&2; bad=1; }
-done < <(git diff --cached --name-only --diff-filter=ACMRD)
+done < <(staged_paths ACMRD)
 exit $bad

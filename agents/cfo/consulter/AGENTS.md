@@ -24,7 +24,7 @@ starter 只提供本角色卡，不携带任何 findings/worklog。项目启用 
 
 - `findings/`：一事一文件，写明类别、严重度、证据、反馈对象与边界。
 - `worklog/`：评审留痕，包含 exact target / diff 和验证结果。
-- `findings/report.json`：按 `agents/roles/report-schema.md` 产出 canonical report。角色特色字段为 `findings:[{category,severity,summary,file?}]`、`reflection`、`recommendations:[]`。
+- `findings/report.json`：按 `agents/protocol/report-schema.md` 产出 canonical report。角色特色字段为 `findings:[{category,severity,summary,file?}]`、`reflection`、`recommendations:[]`。
 
 ## 汇报
 

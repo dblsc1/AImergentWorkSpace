@@ -5,7 +5,7 @@ set -uo pipefail
 b=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 case "$b" in
   main|master)
-    echo "当前在 $b 上提交。铁律 1：main 只经 scripts/merge-to-main.sh 更新" >&2
+    echo "当前在 $b 上提交。铁律 1：main 只经 scripts/merge-to-integration.sh 更新" >&2
     echo "  正解：git checkout -b feat/<主题>" >&2
     exit 1 ;;
 esac

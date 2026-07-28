@@ -24,7 +24,30 @@ ROOT = Path(
 )
 DIARY = ROOT / "logs" / "diary.jsonl"
 PORT = int(os.environ.get("AIMERGENT_PANEL_PORT", "8787"))
-HOST = os.environ.get("AIMERGENT_PANEL_HOST", "127.0.0.1")
+
+
+def _resolve_host():
+    """AIMERGENT_PANEL_HOST 支持三种值：
+       · 未设 / 127.0.0.1  只本机（默认，最安全）
+       · tailscale         自动解析本机 tailnet 地址 —— 只有 tailnet 内设备够得着
+       · 具体 IP           照绑
+    面板**没有任何鉴权**，所以不要绑 0.0.0.0：这台机器还有局域网与 docker 网卡。
+    """
+    h = os.environ.get("AIMERGENT_PANEL_HOST", "127.0.0.1")
+    if h != "tailscale":
+        return h
+    try:
+        out = subprocess.run(["tailscale", "ip", "-4"], capture_output=True,
+                             text=True, timeout=5).stdout.strip().splitlines()
+        if out and out[0].strip():
+            return out[0].strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    print("⚠️  取不到 tailscale 地址，退回 127.0.0.1（只本机可见）")
+    return "127.0.0.1"
+
+
+HOST = _resolve_host()
 
 
 def read_events(limit=300):
@@ -161,6 +184,8 @@ def main():
     DIARY.parent.mkdir(parents=True, exist_ok=True)
     srv = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"任务控制台  http://{HOST}:{PORT}   仓根 {ROOT}")
+    if HOST not in ("127.0.0.1", "localhost"):
+        print("⚠️  面板无鉴权：凡能访问该地址的设备都能读全部留痕与报告。")
     print("（只读留痕，不写任何东西。Ctrl-C 停止）")
     try:
         srv.serve_forever()

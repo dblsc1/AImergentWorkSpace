@@ -177,5 +177,14 @@ else
   F "新增功能没测试时无人提醒 —— 旧功能迟早只能靠肉眼守"
 fi
 
+# 17 ── 中文留痕撞上 C 转义：三个 check 静默假阴性，门禁照样报绿
+printf '17. 门禁对非 ASCII 路径是否正确\n'
+if [ -f "$S/lib/paths.sh" ] &&
+   ! grep -rl 'diff --cached --name-only' "$S/checks" 2>/dev/null | grep -q .; then
+  P "checks 一律经 lib/paths.sh 取 NUL 分隔路径，中文留痕不会被静默跳过"
+else
+  F "仍有 check 直接用 --name-only —— 非 ASCII 路径会被 C 转义，该拦的静默漏过"
+fi
+
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
 [ "$fail" -eq 0 ]
