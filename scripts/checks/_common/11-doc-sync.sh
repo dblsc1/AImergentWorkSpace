@@ -79,6 +79,14 @@ for c in "${changed[@]}"; do
   fi
 done
 
+# 归属提示：波及框架层 → CFO 审；只在模块内 → 模块 arbiter 审
+scope=模块
+for c in "${changed[@]}"; do
+  case "$c" in scripts/*|agents/roles/*|agents/protocol/*|agents/AGENTS.md) scope=框架 ; break ;; esac
+done
+[ "$scope" = 框架 ] &&
+  echo "  ℹ 本次波及框架层（scripts/ 或 agents/ 规范），docs_reviewed 的表态应由 **CFO** 审，不是模块 arbiter" >&2
+
 if [ "$fail" -ne 0 ]; then
   cat >&2 <<'HINT'
   → 两条路，选一条：
