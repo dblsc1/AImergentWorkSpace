@@ -112,7 +112,8 @@ validate_common() {
     fi
   done < <(jq -r '.git.changed_files[]' <<<"$blob")
 
-  if { [ "$expected_role" = reviewagent ] || [ "$expected_role" = consulter ]; } &&
+  if { [ "$expected_role" = programmer_reviewer ] || [ "$expected_role" = module_reviewer ] ||
+       [ "$expected_role" = consulter ]; } &&
      ! jq -e '
        (has("target") | not) and
        (.review_target | type == "object") and
@@ -126,7 +127,8 @@ validate_common() {
     bad "独立 reviewer 必须使用标准 review_target（exact），禁止 target 等别名: $path"
     return
   fi
-  if [ "$expected_role" = reviewagent ] || [ "$expected_role" = consulter ]; then
+  if [ "$expected_role" = programmer_reviewer ] || [ "$expected_role" = module_reviewer ] ||
+     [ "$expected_role" = consulter ]; then
     review_base=$(jq -r .review_target.base <<<"$blob")
     review_head=$(jq -r .review_target.head <<<"$blob")
     if ! git rev-parse --verify --quiet "$review_base^{commit}" >/dev/null ||
@@ -163,11 +165,14 @@ canonical_review_changed=0
 while IFS= read -r path; do
   [ -n "$path" ] || continue
   case "$path" in
-    codeagent/backend/docs/report.json) validate_common "$path" backend ;;
-    codeagent/frontend/docs/report.json) validate_common "$path" frontend ;;
-    codeagent/reviewagent/docs/report.json)
+    codeagent/programmer/docs/report.json) validate_common "$path" programmer ;;
+    codeagent/programmer_reviewer/docs/report.json)
       canonical_review_changed=1
-      validate_common "$path" reviewagent
+      validate_common "$path" programmer_reviewer
+      ;;
+    codeagent/module_reviewer/docs/report.json)
+      canonical_review_changed=1
+      validate_common "$path" module_reviewer
       ;;
     codeagent/arbiter/docs/report.json) validate_common "$path" arbiter ;;
     agents/cfo/arbiter/docs/report.json) validate_common "$path" arbiter ;;
@@ -180,7 +185,7 @@ done < <(git -c core.quotePath=false diff --name-only --diff-filter=ACMRD \
   "$merge_base..$report_head")
 
 if [ "$review_artifact_changed" -eq 1 ] && [ "$canonical_review_changed" -ne 1 ]; then
-  bad "review/reviewreport/* 有变更，但本任务未同步 canonical codeagent/reviewagent/docs/report.json"
+  bad "review/reviewreport/* 有变更，但本任务未同步 canonical codeagent/programmer_reviewer/docs/report.json"
 fi
 
 [ "$fail" -eq 0 ] || exit 1

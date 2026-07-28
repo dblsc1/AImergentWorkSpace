@@ -108,10 +108,11 @@ fi
 
 # 10 ── 角色卡不硬性读取：忘写「先读角色卡」= 角色卡等于不存在
 printf '10. 角色卡是否强制加载\n'
-if [ -x "$S/dispatch.sh" ] && grep -q 'claude/agents' "$S/new_module.sh" 2>/dev/null; then
-  P "dispatch.sh 生成固定首行 + 脚手生成 .claude/agents/（双保险）"
+if [ -x "$S/dispatch.sh" ] && [ -x "$S/new_agent.sh" ] &&
+   grep -q 'claude/agents' "$S/new_agent.sh" 2>/dev/null; then
+  P "dispatch.sh 生成固定首行 + new_agent.sh 生成 .claude/agents/（含出生考卷）"
 elif [ -x "$S/dispatch.sh" ]; then
-  F "有 dispatch.sh 但脚手不生成 .claude/agents/ —— 仍只靠提示词首行"
+  F "有 dispatch.sh 但不生成 .claude/agents/ —— 仍只靠提示词首行"
 else
   F "派单提示词全靠手写，忘写=角色卡不生效且无人察觉"
 fi

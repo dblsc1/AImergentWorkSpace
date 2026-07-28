@@ -15,11 +15,11 @@ role=${1:-}
 diary=logs/diary.jsonl
 
 case "$role" in
-  backend)     writable="code/backend/" ;;
-  frontend)    writable="code/frontend/" ;;
-  reviewagent) writable="review/" ;;
-  arbiter)     writable="module_docs/" ;;
-  *)           writable="" ;;
+  programmer)          writable="code/" ;;
+  programmer_reviewer) writable="review/" ;;
+  module_reviewer)     writable="review/reviewreport/" ;;
+  arbiter)             writable="module_docs/" ;;
+  *)                   writable="" ;;
 esac
 
 questions() {
@@ -52,7 +52,7 @@ grade() {
   if [ -n "$writable" ] && [[ "$body" != *"$(tr -d ' ' <<<"$writable")"* ]]; then
     msgs+=("Q2 写边界：未答出自己的可写区 $writable")
     wrong=$((wrong+1))
-  elif [ "$role" != reviewagent ] && [[ "$body" == *"可写review/"* || "$body" == *"能写review/"* ]]; then
+  elif [ "$role" = programmer ] && [[ "$body" == *"可写review/"* || "$body" == *"能写review/"* ]]; then
     msgs+=("Q2 写边界：声称可写 review/ —— 错，review/ 是 reviewagent 专属")
     wrong=$((wrong+1))
   fi

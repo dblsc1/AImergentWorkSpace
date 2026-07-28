@@ -12,6 +12,8 @@
 !/AGENTS.md
 !/CONSTITUTION.md
 !/README.md
+!/CLAUDE.md
+!/.env.example
 !/agents/
 !/code/
 !/logs/

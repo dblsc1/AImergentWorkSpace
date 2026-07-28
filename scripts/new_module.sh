@@ -57,19 +57,12 @@ if grep -rIl -F -- '{{MODULE_NAME}}' "$dest" 2>/dev/null | grep -q . ||
   die "骨架占位符替换不完整: $dest"
 fi
 
-# ── .claude/agents/：让 Claude Code 派子代理时角色卡作为 system prompt 强制加载 ──
-# agents/roles/ 仍是唯一事实源，这里只做薄引用，禁止两边各写一份。
-mkdir -p "$dest/.claude/agents"
-for r in arbiter backend frontend reviewagent; do
-  cat > "$dest/.claude/agents/$r.md" <<AGENT
----
-name: $r
-description: $name 模块的 $r。派活时用 subagent_type=$r，角色卡即被强制加载。
----
-@$framework_ref/agents/roles/$r.md
-@codeagent/$r/AGENTS.md
-AGENT
+# ── 角色实例：交给 new_agent.sh 统一生成（角色卡填实 + system prompt + 出生考卷）──
+for r in arbiter programmer programmer_reviewer; do
+  AIMERGENT_FRAMEWORK_ROOT="$PROJECT_ROOT" "$PROJECT_ROOT/scripts/new_agent.sh" "$r" "$dest" >/dev/null ||
+    die "角色生成失败: $r"
 done
+
 
 # 记下框架根的相对位置，供 dispatch.sh 解析角色卡（不硬编码绝对路径）
 printf '%s\n' "$framework_ref" > "$dest/.aimergent-framework"
@@ -91,7 +84,7 @@ printf '✅ 模块 %s 已就绪: %s\n' "$name" "$dest"
 printf '   framework : %s\n' "$framework_ref"
 printf '   Git       : main 已有脚手 commit，当前在 feat/init 分支\n'
 printf '   门禁      : 已安装（scripts/gates + hooks + pre-commit）\n'
-printf '   角色卡    : .claude/agents/{arbiter,backend,frontend,reviewagent}.md 已生成\n'
+printf '   角色      : arbiter / programmer / programmer_reviewer 已生成（含 .claude/agents 与出生考卷）\n'
 printf '   下一步    : ① 填 module_docs/{contract,rules}.md（此前 reviewcode 会红，那是待办不是故障）\n'
 printf '               ② scripts/dispatch.sh <角色> <任务单>\n'
 printf '   模板改动只回到 %s\n' "$TEMPLATE"

@@ -31,10 +31,10 @@
 
 | 层级 / 角色 | canonical path |
 |---|---|
-| L1 backend | `codeagent/backend/docs/report.json` |
-| L1 frontend | `codeagent/frontend/docs/report.json` |
-| L1 reviewagent | `codeagent/reviewagent/docs/report.json` |
-| L1 arbiter | `codeagent/arbiter/docs/report.json` |
+| 模块 arbiter | `codeagent/arbiter/docs/report.json` |
+| programmer | `codeagent/programmer/docs/report.json` |
+| programmer_reviewer | `codeagent/programmer_reviewer/docs/report.json` |
+| module_reviewer | `codeagent/module_reviewer/docs/report.json` |
 | CFO arbiter | `agents/cfo/arbiter/docs/report.json` |
 | CFO consulter | `agents/cfo/consulter/docs/findings/report.json` |
 | **临时执行者**（CFO/arbiter 直派、不属上述固定角色的一次性 implementer / reviewer / 归档工等） | `<派活方>/docs/subreports/<YYYY-MM-DD>-<task-id>-<role>.md` |

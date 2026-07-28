@@ -8,7 +8,7 @@
 
 ```bash
 git clone <your-repository-url> workspace && cd workspace
-./scripts/install-ci.sh .              # ① 先给根仓自己装门禁 —— 别跳过
+./scripts/install-gates.sh .              # ① 先给根仓自己装门禁 —— 别跳过
 git checkout -b feat/<你的第一个主题>    # ② 根仓工作也走分支，main 只经合并门更新
 ./scripts/selftest.sh                  # ③ 确认 12 条闸门全绿
 ./scripts/new_module.sh my_module      # ④ 一个参数建模块，建完即可开工
@@ -21,13 +21,26 @@ git checkout -b feat/<你的第一个主题>    # ② 根仓工作也走分支�
 ## 顶层四分区
 
 ```
-agents/   AI 工作区：角色卡、CFO、项目级审核、参考文档
+agents/   AI 工作区：规范正文 · 四份角色卡 · 两份协议 · CFO · 参考文档
 code/     代码区：模块骨架 + 各模块
 logs/     日志区：INDEX.md、diary.jsonl、console.html
 scripts/  脚本区：脚手、门禁、hooks、检查项
 ```
 
-根目录只有三份文件：`AGENTS.md`、`CONSTITUTION.md`、`README.md`。
+根目录只有 `README.md` + 两个**一行指针**（`AGENTS.md` 给 Codex、`CLAUDE.md` 给 Claude Code，
+都指向 `agents/AGENTS.md`）。指针必须留在根上——那是两个 harness 的自动发现点，移走等于开工不加载规范。
+
+## 四个角色
+
+| 角色 | 谁建 | 干什么 |
+|---|---|---|
+| `arbiter` | CFO | 模块仲裁：拆单、派活、维护契约，不写代码 |
+| `programmer` | arbiter | 实现，边界由脚手按分区填实 |
+| `programmer_reviewer` | arbiter | 审代码 |
+| `module_reviewer` | CFO | **审 arbiter 的规范面**：文档规范、有无越权、大任务报告是否合规 |
+
+建角色一律走脚本，不手写：`scripts/new_agent.sh <角色>` —— 它填实写边界，
+并生成 `.claude/agents/<角色>.md`（该子代理的 system prompt），**其中写死了"出生第一条输出必须是考卷"**。
 
 ## 闸门长什么样
 
