@@ -2,42 +2,43 @@
   "schema_version": 2,
   "module": "root",
   "role": "arbiter",
-  "task": "上游前端原件入仓固化（铁律 22）",
+  "task": "建 ring / table 前端视图模块 + 新增模块配方",
   "tier": "normal",
   "status": "approved",
-  "summary": "两份本机唯一、不可再生的上游前端原件已固化进根仓 agents/reference/upstream/ 并留 SHA256 指纹，与源文件逐字节一致；index.html 1280 行超限已登记技术债，根仓行数门禁实跑绿；部署方案因模块划分未拍板而挂起。",
+  "summary": "按人类裁决建 code/ring 与 code/table 两个独立模块骨架（门禁经实测确认真实安装，非采信打印），并把「新增前端视图模块」固化成八步可重复配方 + 项目级依赖索引（含反向索引）。两模块均无远端，已如实登记为「本地模式·未验证」而非豁免；供给侧 nexus-core 契约尚不存在，consumes 保持待定不指向 HANDOFF 充数。",
   "git": {
     "protocol": "embedded-self-v2",
-    "branch": "chore/upstream-vault",
+    "branch": "feat/frontend-view-modules",
     "base": "211bdec5559ab4ab798a464272cde5dc27f64740",
     "head": "SELF",
     "diff_mode": "contains",
     "changed_files": [
-      "agents/reference/upstream/index.html",
-      "agents/reference/upstream/project-task-contribution-ring.html",
-      "agents/reference/upstream/SHA256SUMS",
-      "agents/reference/upstream/README.md",
+      "agents/reference/新增前端视图模块.md",
+      "agents/cfo/arbiter/docs/依赖索引.md",
       "agents/reference/manual/文档地图.md",
-      "agents/cfo/arbiter/docs/worklog/2026-07-28-任务单-upstream-vault.md",
-      "agents/cfo/arbiter/docs/worklog/2026-07-28-cfo-arbiter-upstream-vault.md",
-      "agents/cfo/arbiter/docs/decisions/2026-07-28-index-html-行数豁免-技术债.md",
+      "agents/cfo/arbiter/docs/worklog/2026-07-28-任务单-frontend-view-modules.md",
+      "agents/cfo/arbiter/docs/worklog/2026-07-28-cfo-arbiter-frontend-view-modules.md",
       "agents/cfo/arbiter/docs/report.json"
     ]
   },
-
-  "contract": { "touched": false, "which": [], "consumes": [] },
-  "cross_module_impact": [],
+  "contract": {
+    "touched": false,
+    "which": [],
+    "consumes": []
+  },
+  "cross_module_impact": [
+    "code/ring",
+    "code/table"
+  ],
   "sub_reports": [],
-
   "escalation": {
     "reason": "规则冲突",
-    "detail": "仅剩一项待人类裁决：(D1) 模块划分口径不一致——HANDOFF §4 把四个前端列为四条并列静态路由，§9.2 的 arbiter 编制却只列六个后端模块、前端一个未列，无法自行判定两份前端进一个模块还是两个。部署因此挂起。已闭环：(D2) new_module.sh 调用不存在的 install-ci.sh 致静默产出无门禁模块、(D3,P0) 九个 check 里四个对非 ASCII 路径行为不正确（05 假阳性 + 60/80/81 静默假阴性）——人类裁决全修，由 CFO consulter 落在 794c641（新增 scripts/lib/paths.sh 统一 -z 取路径；check 60 恢复严格后全仓扫出 28 条死链并清完）。本报告所属交付已在修复后的门禁上重跑 mission_complete.sh，7 项全绿且未使用任何逃生口。遗留同形隐患：new_module.sh 调用点仍为 if [ -x ]，脚本再次改名/丢失仍会静默跳过并打印“门禁已安装”，已登记待裁量。"
+    "detail": "两项需人类裁决：(D4) code/ring 与 code/table 均无 origin。按 agents/reference/新模块与新项目开设指南.md 第 71 行，未配置远端不等于该项豁免——pre-push hook 一次都不会触发，铁律 15 从未被检验却以为已生效。拓扑不需发明（HANDOFF §2.3 已定「每个可部署单元自己一个仓库」＝每模块一个远端），需要人类给的是授权与落点；建远端是对外动作，CFO 不自行执行。已在依赖索引把远端列如实标为「本地模式·未验证」。(D5) 供给侧契约不存在：两个前端模块要消费 nexus-core 的 /api/core/views/current 与 /views/tree，但 nexus-core 尚未建模块、无 contract.md。HANDOFF §7.1 虽写了响应模型，但 HANDOFF 自身定性为指导性可改的项目总目标、不是契约，令 consumes 指向它等于把契约建在流沙上。处置：nexus-core 的 contract.md 落地前，两模块 contract.consumes 如实写待定，不指向不存在的契约文件充数。遗留同形隐患（承上一任务）：new_module.sh 调用点仍为 if [ -x ]，脚本再次改名/丢失仍会静默跳过并打印「门禁 已安装」。"
   },
-
   "reviewer_opinion": {
     "reviewer": "module_reviewer",
     "verdict": "pending",
-    "path": "agents/cfo/arbiter/docs/worklog/2026-07-28-cfo-arbiter-upstream-vault.md",
+    "path": "agents/cfo/arbiter/docs/worklog/2026-07-28-cfo-arbiter-frontend-view-modules.md",
     "round": 1
   }
 }
