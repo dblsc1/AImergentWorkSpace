@@ -33,7 +33,25 @@ card="$framework/agents/roles/$role.md"
   echo "   模块角色: arbiter | programmer | programmer_reviewer | module_reviewer" >&2
   echo "   项目角色: cfo 下的 arbiter | consulter（可设 AIMERGENT_FRAMEWORK_ROOT）" >&2
   exit 2; }
-[ -f "$card_task" ] || { echo "❌ 找不到任务单: $card_task" >&2; exit 2; }
+if [ ! -f "$card_task" ]; then
+  echo "❌ 找不到任务单: $card_task" >&2
+  # 反复撞到的同一类错：模块相对路径在框架根跑。
+  # 只说"找不到"会让人去找文件；真问题是**站错了仓**。
+  case "$card_task" in
+    codeagent/*|module_docs/*|code/*|review/*)
+      if [ ! -d codeagent ] && [ -d code ]; then
+        echo "   这是**模块内相对路径**，而你现在在框架根（$root）。" >&2
+        echo "   派模块级角色（arbiter / programmer / programmer_reviewer / module_reviewer）" >&2
+        echo "   必须先进模块仓再派：" >&2
+        for m in code/*/; do
+          m=${m%/}; [ -d "$m/codeagent" ] || continue
+          [ -f "$m/$card_task" ] && echo "     cd $m && ../../scripts/dispatch.sh $role $card_task   ← 任务单在这个模块里" >&2
+        done
+        echo "   （根仓的角色只有 CFO arbiter 与 consulter）" >&2
+      fi ;;
+  esac
+  exit 2
+fi
 
 card_rel=${card#"$root"/}
 card_hash=$(git -C "$framework" log -1 --format=%h -- "${card#"$framework"/}" 2>/dev/null || echo unknown)

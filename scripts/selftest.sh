@@ -250,5 +250,13 @@ else
   F "角色层级错配只会报 gitignore 落点被吞 —— 人看不出真正的问题是角色用错了"
 fi
 
+# 25 ── 模块内相对路径在根仓跑：只说"找不到文件"，不说"你站错了仓"
+printf '25. 站错仓时是否可诊断\n'
+if [ -x "$S/dispatch.sh" ] && grep -q '模块内相对路径' "$S/dispatch.sh" 2>/dev/null; then
+  P "任务单是模块相对路径而人在根仓时，直指该 cd 进哪个模块"
+else
+  F "只报「找不到任务单」—— 人会去找文件，真问题是站错了仓"
+fi
+
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
 [ "$fail" -eq 0 ]
