@@ -50,7 +50,8 @@ mod_top=$(git -C "$mod_real" rev-parse --show-toplevel 2>/dev/null || true)
   die "不是独立 Git 工作树: $mod"
 
 required=(
-  hooks/pre-push hooks/commit-msg hooks/cc-push-guard.sh arbiter-push.sh
+  hooks/pre-push hooks/commit-msg hooks/pre-commit hooks/cc-push-guard.sh
+  arbiter-push.sh mission_complete.sh exam.sh dispatch.sh reindex.sh console.sh
 )
 if [ "$hook_only" -eq 0 ]; then
   required+=(
@@ -94,7 +95,7 @@ fi
 
 hooks_dir=$(git -C "$mod_real" rev-parse --path-format=absolute --git-path hooks)
 mkdir -p "$hooks_dir"
-for hook in pre-push commit-msg; do
+for hook in pre-push commit-msg pre-commit; do
   copy_file "$CI/hooks/$hook" "$hooks_dir/$hook"
   chmod +x "$hooks_dir/$hook"
   cmp -s "$CI/hooks/$hook" "$hooks_dir/$hook" || die "$hook 安装核验失败"
@@ -107,7 +108,7 @@ if [ -n "$origin" ]; then
 else
   printf '   origin: 未配置（本地模式，安装仍成功）\n'
 fi
-printf '   pre-push + commit-msg: 字节一致且可执行\n'
+printf '   pre-push + commit-msg + pre-commit: 字节一致且可执行\n'
 if [ "$hook_only" -eq 0 ]; then
   printf '   tracked CI: gates + test + attribution marker\n'
 else

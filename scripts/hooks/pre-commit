@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# 提交层硬闸门：完工检测不过不许提交。
+# 逃生口 AIMERGENT_MISSION_OVERRIDE="<理由>"（放行但强制记账）。
+root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+[ -x "$root/scripts/mission_complete.sh" ] || exit 0
+"$root/scripts/mission_complete.sh"

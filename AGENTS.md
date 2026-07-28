@@ -11,20 +11,34 @@
 ## 顶层结构
 
 ```text
-<framework-root>/
-├── AGENTS.md                     # 项目级规范根
-├── README.md                      # clone 后入口
-├── CONSTITUTION.template.md       # 项目加严条款 + 裁决台账模板（按需改名启用）
-├── docs/                          # 文档地图与架构说明
-├── agents/roles/                         # 六份项目级角色/协议基线
-├── agents/cfo/                     # 项目 arbiter 与 consulter：角色卡 + 各自 docs/ 留痕骨架
-│   ├── arbiter/{AGENTS.md, docs/{worklog/,subreports/}}
-│   └── consulter/{AGENTS.md, docs/{worklog/,findings/}}
-├── review/                        # 项目级审核：reviewcode/ 脚本、reviewreport/ 详报
-├── scripts/                            # 脚手、hooks、gates 与 workflow 模板
-├── code/_template/               # 新模块骨架唯一事实源
-└── <modules>/                     # 用脚手生成的独立 Git 仓，路径由项目自定
+<项目根>/
+├── AGENTS.md                 # 规范根（唯一必读）
+├── CONSTITUTION.md           # 项目加严条款 + 裁决台账（填实即启用）
+├── README.md                 # clone 后入口
+│
+├── agents/                   # ① AI 工作区
+│   ├── roles/                #   六份项目级角色卡
+│   ├── cfo/                  #   CFO arbiter / consulter：角色卡 + 各自 docs/
+│   ├── review/               #   项目级 reviewcode / reviewreport
+│   └── reference/            #   开设指南、文档地图、架构说明、经验教训
+│
+├── code/                     # ② 代码区
+│   ├── _template/            #   模块骨架唯一事实源
+│   └── <模块>/               #   scripts/new_module.sh 生成
+│
+├── logs/                     # ③ 日志区
+│   ├── INDEX.md              #   全量留痕索引（脚本生成，留痕本身仍分散在各角色目录）
+│   ├── diary.jsonl           #   机器事件流水
+│   └── console.html          #   任务控制台原型
+│
+└── scripts/                  # ④ 脚本区
+    ├── checks/               #   完工检测的可增删改查检查项
+    ├── gates/ hooks/ workflows/
+    └── dispatch.sh exam.sh mission_complete.sh new_module.sh …
 ```
+
+**四分区口径**：`agents/`＝AI 的规范与留痕；`code/`＝代码；`logs/`＝日志与面板；`scripts/`＝一切可执行。
+根目录只允许三份文件，新增根级文件必须同时登记进 `.gitignore` 白名单（它会静默吞掉未登记的新文件）。
 
 运行数据、备份和密钥目录由项目通过 env 明确指定，一律位于 Git 工作树之外或已忽略的 `.runtime/` 中。
 
@@ -103,6 +117,9 @@
 18. **留痕强制 · 落点必须在仓内**：每个任务一条 worklog（`docs/worklog/YYYY-MM-DD-<角色>-<任务>.md`），每次审核一份 reviewreport。**无留痕 = 审核直接打回。** 留痕的落点由 `agents/roles/report-schema.md` 的 canonical path 表规定；**临时目录、`/tmp`、会话工作目录不是留痕**——会话结束即蒸发的东西不能当证据。派活方在 `sub_reports[].path` 里引用的路径必须是**仓内相对路径**，引用仓外绝对路径 = 该子报告按未产出计。
 19. **审核可稀疏，自核必须可重放**：审核轮次不必每轮都开——由 arbiter 或人类按边际收益裁量，**减少审核轮次是被允许的**。但**每一轮免掉的审核，必须以确定性脚本自核顶上**：脚本落 `review/reviewcode/` 并 commit，报告里给出脚本路径与真实输出。"我跑了几条命令核过了"而命令没入仓 = 等于没核。**稀疏化换的是 reviewer 的时间，不是证据强度。**
 20. **框架根仓自身也受治理**：clone 下来的框架根不是"配置目录"，它是一个真实的受治理 Git 仓。根仓的任何工作同样适用铁律 1（走 `feat/`/`fix/`/`chore/` 分支，`main` 只经合并门更新）、14（Agent-Attribution）、18（留痕）。**clone 后第一件事是 `./ci/install-ci.sh .` 给根仓自己装门禁**，否则根仓处于"有规范、无门禁"的裸奔状态。
+
+21. **归档与迁移必须走脚本，且归档窗口内禁止回写源仓**：退役任何仓/目录，必须先产出可验证存档（bundle + 校验 + 冒烟还原 + 指纹），再改名留墓碑。**存档生成后到源仓退役前，禁止回写源仓**；确需回写，回写后必须重新生成受影响存档。（已实证事故：归档窗口内回写导致 bundle 少一个 commit，"删除前唯一的保险"是假的。）
+22. **不可再生的上游输入必须在第一次被引用时即入仓固化**：铁律 2/7 管的是「不该进仓的东西别进」，本条管的是**「必须进仓的东西别丢」**——上游手册、无法重新生成的资产、迁移源指纹，只要本机只有一份且不可再生，第一次引用时就入仓并留 SHA256。登记为技术债而不入仓 = 违规。
 
 ## 文档体系（完整治理）
 

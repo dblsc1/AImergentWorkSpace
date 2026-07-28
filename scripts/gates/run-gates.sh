@@ -133,6 +133,7 @@ fi
 say "── gate: 禁默认值 ──"
 weak_hit=0
 for f in "${tracked[@]}"; do
+  case "$f" in *.example|*.example.*) continue ;; esac
   case "$f" in *.py|*.js|*.mjs|*.cjs|*.ts|*.tsx|*.json) ;; *) continue ;; esac
   [ -f "$f" ] || continue
   if grep -qiE '(change[-_]?me|replace[-_]?me|example[-_]?(secret|password)|dev[-_]?(secret|password))' "$f"; then
@@ -167,7 +168,7 @@ say "── gate: 单文件行数 ──"
 size_hit=0
 size_exempt=review/reviewcode/size_exempt.txt
 for f in "${tracked[@]}"; do
-  case "$f" in *.py|*.js|*.mjs|*.cjs|*.ts|*.tsx) ;; *) continue ;; esac
+  case "$f" in *.py|*.js|*.mjs|*.cjs|*.ts|*.tsx|*.html|*.css|*.vue|*.svelte) ;; *) continue ;; esac
   [ -f "$f" ] || continue
   is_exempt "$size_exempt" "$f" && continue
   n=$(wc -l < "$f")
@@ -183,6 +184,18 @@ if [ "${RUN_GITLEAKS_LOCAL:-0}" = 1 ] && command -v gitleaks >/dev/null 2>&1; th
   gitleaks detect --no-banner --config "$(dirname "$0")/.gitleaks.toml" || bad "gitleaks 命中"
 else
   say "（GitHub Actions 由独立 action 扫新增变更；本地全历史扫描需 RUN_GITLEAKS_LOCAL=1）"
+fi
+
+say "── gate: hook 安装状态 ──"
+hooks_dir=$(git rev-parse --path-format=absolute --git-path hooks 2>/dev/null || true)
+missing_hooks=()
+for h in pre-push commit-msg pre-commit; do
+  [ -x "$hooks_dir/$h" ] || missing_hooks+=("$h")
+done
+if [ ${#missing_hooks[@]} -eq 0 ]; then
+  ok "pre-push / commit-msg / pre-commit 均已安装"
+else
+  bad "hook 未安装: ${missing_hooks[*]} —— 本仓处于零保护状态，跑 scripts/install-ci.sh ."
 fi
 
 say "── gate: 模块 reviewcode ──"

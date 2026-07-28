@@ -43,6 +43,21 @@
 
 框架根 `scripts/gates/check-report-schema.sh` 只检查当前任务相对 PR/main merge-base 新增、修改或删除的 canonical reports，不扫描未变的历史报告。**当 merge-base == head（例如直接在 `main` 上提交）时区间为空，门禁不会退化为绿灯而是响亮失败**——空区间意味着"无法确定任务区间"，不等于"验过了"。若本任务变更 `review/reviewreport/*` 却没有同步变更 `codeagent/reviewagent/docs/report.json`，gate 直接拒绝 mirror-only 交付。
 
+## `sub_reports` 的两个可观测字段（arbiter 必填）
+
+派活方在 `sub_reports[]` 每一项里除 `role/status/path/agent/task` 外，还必须填：
+
+- **`resumed`**（布尔）：该子代理是**续用**已开 session（`true`）还是**新开**（`false`）。
+  重开＝冷启动重读全部上下文，实测一次修复轮重开可占整轮子代理消耗三成以上。
+  记下来，「重开率」才成为可看的数字。
+- **`objections`**（字符串数组）：该执行者**对指令本身提出的异议**（指出任务单/裁决单里的错误、
+  不可执行的命令、范围过宽的断言……）。为空写 `[]`。
+
+`objections` 这条的用意要说清楚：**框架里没有任何角色审「指令」**——执行者的产出有 reviewer 看，
+编排者的产出没人看，错误只能靠执行者顺手撞见。与其增设一道审指令的闸门（贵、慢），
+不如把**已经发生的纠正变成数据**：「某个 arbiter 的指令异议率」一旦可见，
+模式级问题会自己浮出来，不需要有人去审每一单。代价已经付过了，别让信息蒸发。
+
 ## reviewagent 的标准 `review_target`
 
 reviewagent（以及承担 L0 独立审核的 CFO consulter）的公共 `.git` 只描述自己的审核产物；被审范围必须使用顶层 `review_target`，禁止用 `target`、`review`、`range` 等别名替代：
