@@ -31,3 +31,13 @@ _emit_exit() {
 }
 emit_event script_start "$*"
 trap _emit_exit EXIT
+
+# 类规则：凡写「将来要被 commit 的产物」，写前必须验落点不被 .gitignore 吞。
+# 被吞时脚本照常打印 ✅ = 撒谎式成功（A2 事故；与 install-gates 假装装好同类）。
+assert_trackable() {  # assert_trackable <仓内相对路径> [仓根]
+  local repo=${2:-.}
+  git -C "$repo" check-ignore -q -- "$1" 2>/dev/null || return 0
+  printf '❌ 落点被 .gitignore 吞掉: %s\n' "$1" >&2
+  printf '   写进去也不会被跟踪 = 按铁律12「未产出」。修 .gitignore 白名单或换落点。\n' >&2
+  return 1
+}

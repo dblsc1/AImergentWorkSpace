@@ -212,5 +212,27 @@ else
   F "推送不校验门禁 —— 门禁红了照样能推上去"
 fi
 
+# 17 ── 模板检查被占位符替换自毁（A1 类）：模板 *.sh 含连续 token 字面量，
+#        replace_token 会把「查占位符」改成「查模块名」，正确的模块恰因替换成功而永远红
+printf '17. 模板脚本是否会被占位符替换自毁\n'
+tokm='{{'"MODULE_NAME"'}}'; tokf='{{'"FRAMEWORK_ROOT"'}}'
+tpl=$repo/code/_template
+if [ ! -d "$tpl" ]; then
+  N "本仓无模块模板"
+elif find "$tpl" -name '*.sh' -exec grep -lIF -e "$tokm" -e "$tokf" {} + 2>/dev/null | grep -q .; then
+  F "模板 *.sh 含连续占位符字面量 —— 生成模块后该脚本自毁（改查模块名字面量）"
+else
+  P "模板脚本的 token 全部拆分书写，替换后检查仍指向占位符"
+fi
+
+# 18 ── 撒谎式成功（A2 类）：写「将来要 commit 的产物」前不验落点是否被 gitignore 吞
+printf '18. 写产物的脚本是否验落点可跟踪\n'
+if grep -q 'assert_trackable' "$S/lib/emit.sh" 2>/dev/null &&
+   grep -q 'assert_trackable' "$S/review_complete.sh" 2>/dev/null; then
+  P "review_complete 写报告前验 check-ignore；被吞即响亮失败而非打印✅"
+else
+  F "报告可以写进被 gitignore 吞掉的路径并照常报成功 —— 审核证据蒸发"
+fi
+
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
 [ "$fail" -eq 0 ]

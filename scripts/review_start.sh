@@ -14,10 +14,14 @@ root=$(git rev-parse --show-toplevel) || die "不在 Git 仓内"; cd "$root"
 reviewer=${1:?用法: review_start.sh <reviewer角色> <被审commit> [留言]}
 head_sha=$(git rev-parse --verify "${2:?缺被审 commit}^{commit}" 2>/dev/null) || die "无法解析被审 commit: $2"
 note=${3:-}
-base_sha=$(git merge-base "$head_sha" "${AIMERGENT_INTEGRATION_BRANCH:-dev}" 2>/dev/null ||
-           git merge-base "$head_sha" main 2>/dev/null) || die "无法确定被审区间起点"
+ib=${AIMERGENT_INTEGRATION_BRANCH:-dev}
+base_sha=$(git merge-base "$head_sha" "$ib" 2>/dev/null ||
+           git merge-base "$head_sha" main 2>/dev/null ||
+           git merge-base "$head_sha" "origin/$ib" 2>/dev/null ||
+           git merge-base "$head_sha" origin/main 2>/dev/null) ||
+  die "无法确定被审区间起点（本地/远端均无 $ib 或 main；可设 AIMERGENT_INTEGRATION_BRANCH）"
 
-case "$reviewer" in programmer_reviewer|module_reviewer) ;; *) die "不是审核角色: $reviewer" ;; esac
+case "$reviewer" in programmer_reviewer|module_reviewer|consulter) ;; *) die "不是审核角色: $reviewer（含根仓的 consulter）" ;; esac
 
 cat <<EOF
 你是 $reviewer。被审区间已固定，**只审这个区间，不审当前工作区**。

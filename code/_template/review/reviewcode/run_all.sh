@@ -9,7 +9,11 @@ ok(){ printf '  ✅ %s\n' "$*"; }; bad(){ printf '  ❌ %s\n' "$*"; fail=1; }
 
 echo "── reviewcode: 通用四检查 ──"
 # 1. 占位符清零
-if grep -rIl -F -e '{{MODULE_NAME}}' -e '{{FRAMEWORK_ROOT}}' . 2>/dev/null | grep -qv '^./.git'; then
+# 占位符字面量必须拆开写：new_module 的 replace_token 会替换全仓的连续 token；
+# 本脚本若含连续字面量，生成后它会变成「查模块名」——正确的模块恰因替换成功而永远红（A1 事故）。
+tok_m='{{'"MODULE_NAME"'}}'
+tok_f='{{'"FRAMEWORK_ROOT"'}}'
+if grep -rIl -F -e "$tok_m" -e "$tok_f" . 2>/dev/null | grep -qv '^./.git'; then
   bad "仍有未替换的占位符"; else ok "占位符已清零"; fi
 # 2. 无作者机器绝对路径
 if git grep -nI -E '/(srv|home|Users)/[a-z]' -- . ':!*reviewcode*' 2>/dev/null | grep -q .; then

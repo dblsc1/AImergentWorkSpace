@@ -13,6 +13,13 @@ head=$(git rev-parse --verify "${3:?}^{commit}") || die "head 不可解析"
 verdict=${4:?verdict 必须是 approved 或 rejected}
 summary=${5:-}
 case "$verdict" in approved|rejected) ;; *) die "verdict 只能是 approved|rejected" ;; esac
+case "$r" in
+  programmer_reviewer|module_reviewer) out="codeagent/$r/docs/report.json" ;;
+  consulter) out="agents/cfo/consulter/docs/findings/report.json" ;;   # 根仓 L0 独立审核
+  *) die "不是审核角色: $r（programmer_reviewer|module_reviewer|consulter）" ;;
+esac
+# 写前验落点（A2 类修复）：被 gitignore 吞 = 撒谎式成功，宁可现在响亮失败
+assert_trackable "$out" || exit 1
 git merge-base --is-ancestor "$base" "$head" || die "base 不是 head 的祖先"
 
 # 规范性检查：代码化优先。approved 却一个检测脚本都没写 = 违反铁律 17
@@ -23,7 +30,6 @@ if [ "$verdict" = approved ] && [ "${scripts_n:-0}" -eq 0 ]; then
 fi
 
 files=$(git diff --name-only --no-renames "$base..$head" | jq -R . | jq -s -c .)
-out="codeagent/$r/docs/report.json"
 mkdir -p "$(dirname "$out")"
 jq -n --arg role "$r" --arg v "$verdict" --arg s "$summary" \
       --arg b "$base" --arg h "$head" --arg br "$(git rev-parse --abbrev-ref HEAD)" \
