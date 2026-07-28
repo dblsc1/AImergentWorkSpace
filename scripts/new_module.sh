@@ -92,5 +92,6 @@ printf '   framework : %s\n' "$framework_ref"
 printf '   Git       : main 已有脚手 commit，当前在 feat/init 分支\n'
 printf '   门禁      : 已安装（scripts/gates + hooks + pre-commit）\n'
 printf '   角色卡    : .claude/agents/{arbiter,backend,frontend,reviewagent}.md 已生成\n'
-printf '   下一步    : scripts/dispatch.sh <角色> <任务单>\n'
+printf '   下一步    : ① 填 module_docs/{contract,rules}.md（此前 reviewcode 会红，那是待办不是故障）\n'
+printf '               ② scripts/dispatch.sh <角色> <任务单>\n'
 printf '   模板改动只回到 %s\n' "$TEMPLATE"
