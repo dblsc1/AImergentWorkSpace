@@ -213,10 +213,10 @@ verify_squash_attribution() {
 
 verify_main_reports() {
   local old_main=$1 new_main=$2
-  [ -x "$PROJECT_ROOT/ci/gates/check-report-schema.sh" ] || return 1
+  [ -x "$PROJECT_ROOT/scripts/gates/check-report-schema.sh" ] || return 1
   (cd "$repo" &&
     AIMERGENT_REPORT_BASE="$old_main" AIMERGENT_REPORT_HEAD="$new_main" \
-      "$PROJECT_ROOT/ci/gates/check-report-schema.sh")
+      "$PROJECT_ROOT/scripts/gates/check-report-schema.sh")
 }
 
 main_sha=$(git -C "$repo" rev-parse main)
@@ -235,8 +235,8 @@ verify_report() {
     .git.diff_mode == "contains" and
     (.git.base | type == "string" and test("^[0-9a-f]{40}$")) and
     (.git.changed_files | type == "array" and index($path) != null) and
-    (if $role == "reviewagent" then
-       any(.git.changed_files[]; startswith("codeagent/reviewagent/docs/worklog/"))
+    (if $role == "consulter" | not then
+       any(.git.changed_files[]; startswith("codeagent/" + $role + "/docs/worklog/"))
      else
        any(.git.changed_files[]; startswith("agents/cfo/consulter/docs/worklog/"))
      end) and
@@ -261,9 +261,9 @@ verify_report() {
   bad=0
   while IFS= read -r changed; do
     [ -n "$changed" ] || continue
-    if [ "$expected_role" = reviewagent ]; then
+    if [ "$expected_role" != consulter ]; then
       case "$changed" in
-        codeagent/reviewagent/docs/*|codeagent/arbiter/docs/*|review/*|module_docs/reviewlog.md) ;;
+        codeagent/*/docs/*|review/*|module_docs/reviewlog.md) ;;
         *) printf '  未经审核的后续路径: %s\n' "$changed" >&2; bad=1 ;;
       esac
     else
@@ -278,9 +278,13 @@ verify_report() {
 
 approved=0
 if [ "$level" = module ]; then
-  if verify_report codeagent/reviewagent/docs/report.json reviewagent; then
-    approved=1
-  fi
+  # 代码类交付由 programmer_reviewer 审；arbiter 交付 CFO 的任务由 module_reviewer 审规范面。
+  # 任一份精确绑定 candidate 的 approved 报告即可放行。
+  for _r in programmer_reviewer module_reviewer; do
+    if verify_report "codeagent/$_r/docs/report.json" "$_r"; then
+      approved=1; break
+    fi
+  done
 else
   if verify_report agents/cfo/consulter/docs/findings/report.json consulter; then
     approved=1
@@ -303,10 +307,10 @@ rmdir "$test_tree"
 cleanup_test() { git -C "$repo" worktree remove --force "$test_tree" >/dev/null 2>&1 || true; }
 trap cleanup_test EXIT
 git -C "$repo" worktree add --detach "$test_tree" "$candidate" >/dev/null
-[ -x "$test_tree/ci/gates/run-gates.sh" ] || die "缺少可执行 run-gates.sh"
-[ -x "$test_tree/ci/gates/run-tests.sh" ] || die "缺少可执行 run-tests.sh"
-(cd "$test_tree" && ./ci/gates/run-gates.sh)
-(cd "$test_tree" && ./ci/gates/run-tests.sh)
+[ -x "$test_tree/scripts/gates/run-gates.sh" ] || die "缺少可执行 run-gates.sh"
+[ -x "$test_tree/scripts/gates/run-tests.sh" ] || die "缺少可执行 run-tests.sh"
+(cd "$test_tree" && ./scripts/gates/run-gates.sh)
+(cd "$test_tree" && ./scripts/gates/run-tests.sh)
 if [ "$level" = project ]; then
   while IFS= read -r -d '' shell_file; do
     bash -n "$shell_file"

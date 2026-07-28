@@ -37,7 +37,8 @@ fi
 
 # 2 ── 直提 main 无提示：10 个 commit 全直提 main，全程零提示
 printf '2. 直提 main 是否会被察觉\n'
-if [ -x "$S/checks/40-branch-discipline.sh" ] || grep -qE 'abbrev-ref' "$S/gates/run-gates.sh" 2>/dev/null; then
+if [ -n "$(find "$S/checks" -name '40-branch-discipline.sh' 2>/dev/null)" ] ||
+   grep -qE 'abbrev-ref' "$S/gates/run-gates.sh" 2>/dev/null; then
   P "存在分支纪律检查"
 else
   F "无任何机制检测'正在往 main 上直接提交'（铁律 1 无执行者）"
@@ -45,7 +46,7 @@ fi
 
 # 3 ── 报告落点在仓外：9 条 sub_reports 全指向 /tmp，会话结束即蒸发
 printf '3. sub_reports 落点是否被校验\n'
-if [ -x "$S/checks/30-subreport-in-repo.sh" ]; then
+if [ -n "$(find "$S/checks" -name '30-subreport-in-repo.sh' 2>/dev/null)" ]; then
   P "有独立检查项校验 sub_reports 落点在仓内"
 else
   F "无机制校验 sub_reports[].path 是否在仓内（仍靠自觉）"
@@ -99,9 +100,12 @@ fi
 
 # 9 ── 检查项不可增删改查：改一条要动主脚本
 printf '9. 检查项是否可增删改查\n'
-n=$(ls "$S"/checks/*.sh 2>/dev/null | wc -l)
-if [ "$n" -ge 1 ]; then
-  P "$n 条检查各自独立成文件，增删改查=加删改文件"
+n=$(find "$S/checks" -name '*.sh' 2>/dev/null | wc -l)
+if [ "$n" -ge 1 ] && [ -d "$S/checks/_common" ] &&
+   grep -q 'codeagent/\$role/checks' "$S/mission_complete.sh" 2>/dev/null; then
+  P "$n 条检查独立成文件，且按 _common/<角色>/模块 三层级联"
+elif [ "$n" -ge 1 ]; then
+  F "检查项虽独立成文件，但不分角色 —— 所有角色被同一套判据卡住"
 else
   F "检查项硬编码在主脚本里，改一条要动主脚本"
 fi
@@ -119,7 +123,7 @@ fi
 
 # 11 ── 文档路径腐烂：路径表点名的目录根本不存在
 printf '11. 文档引用的路径是否被核验\n'
-if [ -x "$S/checks/60-doc-paths-exist.sh" ]; then
+if [ -n "$(find "$S/checks" -name '60-doc-paths-exist.sh' 2>/dev/null)" ]; then
   P "有检查项核验文档中引用的仓内路径真实存在"
 else
   F "文档可引用不存在的路径 —— 路径表点名而目录不存在正是无留痕的物理原因"
@@ -141,6 +145,18 @@ if [ -x "$S/run_agent.sh" ] && grep -q 'resume' "$S/run_agent.sh" 2>/dev/null; t
   P "run_agent.sh 记录 session id 并支持 --resume，续用是动作不是态度"
 else
   F "没有续用机制 —— 打回-修复循环只能靠 agent 自觉不重开"
+fi
+
+# 14 ── 重组把唯一合法合并通道改坏了却没人知道
+printf '14. 合并通道路径是否完好\n'
+mm=$S/merge-to-main.sh
+if [ ! -x "$mm" ]; then
+  F "缺少 merge-to-main.sh —— main 没有唯一合法合并通道"
+elif grep -qE '(^|[^A-Za-z0-9_])ci/gates/' "$mm" 2>/dev/null ||
+     grep -q 'codeagent/reviewagent' "$mm" 2>/dev/null; then
+  F "merge-to-main.sh 仍引用重组前的路径/角色 —— 合并通道实际跑不起来"
+else
+  P "merge-to-main.sh 引用的路径与当前结构一致"
 fi
 
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"

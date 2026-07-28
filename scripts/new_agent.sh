@@ -58,13 +58,24 @@ forbidden=${AIMERGENT_FORBIDDEN:-$f_def}
 
 # ── ① 落地填实后的角色卡 ─────────────────────────────────────
 dest_dir="$mod/codeagent/$role"
-mkdir -p "$dest_dir/docs/worklog" "$dest_dir/docs/WorkIterationDiary"
+mkdir -p "$dest_dir/docs/worklog" "$dest_dir/docs/WorkIterationDiary" "$dest_dir/checks"
 touch "$dest_dir/docs/WorkIterationDiary/.gitkeep"
 sed -e "s|{{WRITABLE}}|$writable|g" \
     -e "s|{{READONLY}}|$readonly_|g" \
     -e "s|{{FORBIDDEN}}|$forbidden|g" \
     "$card" > "$dest_dir/AGENTS.md"
 printf '@AGENTS.md\n' > "$dest_dir/CLAUDE.md"
+cat > "$dest_dir/checks/README.md" <<'CHK'
+# 本模块给该角色追加的完工检查
+
+放在这里的 `*.sh` 会由 `scripts/mission_complete.sh` **在通用层与角色层之后**执行。
+
+- 一条检查 = 一个可执行文件；`--describe` 打印判据，无参运行时 0=通过、非 0=失败。
+- **只能加严**：这里只能新增检查，不能移除上层（`scripts/checks/_common/`、
+  `scripts/checks/<角色>/`）的任何一条——与「模块只能加严项目规范」是同一条原则。
+- 新增的判据会自动出现在 `mission_complete.sh --list` 里，
+  因而也会自动进入派单提示词（开卷），不用另行告知执行者。
+CHK
 grep -q '{{' "$dest_dir/AGENTS.md" && die "角色卡仍有未替换占位符: $dest_dir/AGENTS.md"
 
 # ── ② 写 .claude/agents/<角色>.md：system prompt + 出生即答卷 ──

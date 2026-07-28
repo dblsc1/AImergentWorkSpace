@@ -1,53 +1,93 @@
-# CI / Git 治理
+# scripts/ —— 全部脚本一览
 
-本目录只包含可迁移的确定性脚本、hooks、gates 和模块 workflow 模板。它不携带项目历史测试 fixture、部署实例或外部 AI 密钥工作流。
+> 这里的脚本**不是样例，是真正被执行和被安装的东西**。`install-gates.sh` 会把
+> `gates/` `hooks/` `checks/` 复制进目标仓；其余在框架根就地运行。
+>
+> 设计原则：**能被脚本执行的规矩才是真规矩，只能被阅读的规矩都是成本。**
+> 要加一条规矩，先问能不能变成 `checks/` 里的一个文件；变不成的才写进铁律。
 
-## 组成
+## ① 人 / CFO 直接跑
 
-- `new_module.sh`：从框架根 `code/_template/` 创建模块，替换模块名/框架相对路径并 `git init -b main`。
-- `install-ci.sh`：安装 tracked workflow/gates/hooks 与本地 Git hooks；支持 `--hook-only`，不要求已配置 remote。
-- `gates/run-gates.sh`：检查 agent 归属、canonical report、弱默认值、项目指定的禁止路径、文件行数和模块 reviewcode。
-- `gates/check-report-schema.sh`：以 PR/main merge-base 为任务边界，检查 embedded-self-v2 与 exact `review_target`。
-- `gates/run-tests.sh`：递归发现 `code/` 中的 Node/Python 测试、lint 和 build 入口。
-- `hooks/commit-msg`：要求唯一 `Agent-Attribution: <role>@<module>+<task_id>` trailer。
-- `hooks/pre-push`：拒绝绕过 merge gate 直推 main，并要求其他 ref 使用 push lease。
-- `arbiter-push.sh`：铸造一次性 push lease，执行 fetch-then-push，退出时清理。
-- `merge-to-main.sh`：绑定独立 approved 证据、本地 gates/tests 和 PR checks 后 squash 合并。
-- `log_event.sh` / `new_task_id.sh`：生成 append-only diary 事件与稳定任务 ID。
-- `workflows/ci.yml`：安装到模块 `.github/workflows/ci.yml`，产生 `gates` / `test` 两个 check。
-- `module.gitignore`：只在目标模块缺少 `.gitignore` 时安装，不覆盖已有规则。
+| 脚本 | 干什么 | 什么时候 |
+|---|---|---|
+| `install-gates.sh` | 装门禁、hooks、checks 到目标仓；传 `.` 给根仓自己装 | **clone 后第一件事** |
+| `new_module.sh <名字>` | 一个参数建模块：骨架 → 清占位 → 装门禁 → 建三个角色 → 初始 commit → 开 `feat/init` | 开新模块 |
+| `new_agent.sh <角色> [模块]` | 建角色实例：复制角色卡 → 填实可读可写 → 写 `.claude/agents/<角色>.md`（内联角色卡 + 出生考卷）→ 建 `checks/` 扩展点 | 建模块时自动调；单独加角色时手动 |
+| `selftest.sh [仓路径]` | **14 条闸门有效性断言**：把真实踩过的坑做成测试 | 改门禁后 / CI |
 
-## 路径参数
+## ② 派活与执行
 
-脚本默认从自身所在 Git 顶层定位，可用下列 env 显式覆盖：
-
-| env | 作用 |
+| 脚本 | 干什么 |
 |---|---|
-| `AIMERGENT_PROJECT_ROOT` | starter / 治理框架顶层 |
-| `AIMERGENT_WORKSPACE_ROOT` | 目标模块路径的相对根 |
-| `AIMERGENT_TEMPLATE_ROOT` | `new_module.sh` 的模板源 |
-| `AIMERGENT_CI_SOURCE` | `install-ci.sh` 的 CI 源 |
+| `dispatch.sh <角色> <任务单>` | 生成派单提示词：角色卡首行 + 版本哈希 + **开卷判据**（嵌 `mission_complete --list`）+ 任务单原文 |
+| `run_agent.sh <角色> <任务单> [模块] [--resume]` | **起独立 Claude 进程执行角色任务**（`claude -p --agent`），不受子代理嵌套限制；`--resume` 按记录的 session id 续用 |
+| `exam.sh <角色> [--submit 答案]` | 开工考试（五道通用流程题）。不过 → 退回 arbiter 重派，**不铸令牌** |
 
-目标参数只接受 `.` 或由小写 slug 组成的相对路径；绝对路径、`..`、symlink escape 和普通子目录冒充 Git 顶层都会被拒绝。
+## ③ 完工与留痕
 
-## 用法
+| 脚本 | 干什么 |
+|---|---|
+| `mission_complete.sh` | **完工检测总入口**，挂 pre-commit；`--list` 输出判据（开卷用） |
+| `checks/` | 检查项，**三层级联**，见下节 |
+| `log_event.sh <文件> <json>` | 往 diary.jsonl 追加事件（只加不改） |
+| `reindex.sh` | 生成 `logs/INDEX.md` 留痕索引 |
+| `console.sh [--standalone]` | 生成 `logs/console.json`；`--standalone` 出可传阅的 HTML 快照 |
+| `new_task_id.sh` | 生成任务号 |
 
-```bash
-./ci/new_module.sh modules/example_module
-./ci/install-ci.sh modules/example_module
-./ci/install-ci.sh --hook-only modules/example_module
-./ci/merge-to-main.sh modules/example_module feat/example-task
+### checks 的三层级联
+
+```
+scripts/checks/_common/       所有角色都跑
+scripts/checks/<角色>/         该角色专属
+codeagent/<角色>/checks/       本模块给该角色追加的
 ```
 
-如模块位于另一工作区：
+**依次全跑，下层只能加严**（只能新增，不能删掉上层的）——与「模块只能加严项目规范」
+是同一条原则，闸门不该有例外。增删改查一条检查 = 加/删/改对应层里的一个文件，
+`mission_complete.sh` 永远不用动。
 
-```bash
-AIMERGENT_WORKSPACE_ROOT=/path/to/workspace ./ci/new_module.sh modules/example_module
-AIMERGENT_WORKSPACE_ROOT=/path/to/workspace ./ci/install-ci.sh modules/example_module
-```
+角色解析：`AIMERGENT_ROLE` → 从暂存的 worklog 路径推断 → 只跑 `_common`。
 
-## 边界
+| 层 | 检查 |
+|---|---|
+| `_common` | 10 worklog · 20 report 已提交 · 40 分支纪律 · 60 路径可解析 · 70 审核意见 |
+| `arbiter` | 30 子报告落点 · 50 契约同步 · 80 任务单四小节 |
+| `programmer` | 81 写边界（不得改 `review/` 与 `module_docs/`） |
+| `programmer_reviewer` / `module_reviewer` | 82 审核区间（`review_target` 必须 exact） |
 
-- workflow 只使用 GitHub 自带的短期仓读取凭据，不需要业务密钥。
-- 安装了 hooks/CI 不等于已启用远端 branch protection；服务端硬保护必须单独核实。
-- `merge-to-main.sh` 会发生远端写入，只在用户已授权、remote 与审核证据都已配置时运行。
+## ④ Git 闸门（唯一合法路径）
+
+| 脚本 | 干什么 |
+|---|---|
+| `arbiter-push.sh <push参数>` | **唯一合法的 push 路径**：铸一次性 lease → fetch-then-push |
+| `merge-to-main.sh` | **唯一合法的合 main 路径**：审批与 candidate 精确绑定 → 本地 gates/tests → PR checks → squash |
+| `hooks/pre-commit` | 调 `mission_complete.sh`，不过拒绝提交 |
+| `hooks/pre-push` | 拦直推 main、拦无 lease 的 push |
+| `hooks/commit-msg` | 拦缺失/重复/畸形的 `Agent-Attribution` |
+| `hooks/cc-push-guard.sh` | 推送拦截的辅助日志 |
+| `gates/run-gates.sh` | 确定性门禁总入口：归属 / 报告 / 密钥 / 行数 / hook 安装 / reviewcode |
+| `gates/check-report-schema.sh` | 报告协议核验（含空区间假绿修复） |
+| `gates/run-tests.sh` | 跑模块测试与构建 |
+
+### 三层闸门，别搞混
+
+| 层 | 谁拦 | 拦什么 |
+|---|---|---|
+| **派单层** | `exam.sh` | 没读规范的 agent 不放行接任务（退回重派，无令牌） |
+| **提交层** | `pre-commit` → `mission_complete.sh` | 留痕不全、越界、无审核意见 → 拒绝提交 |
+| **合并层** | `pre-push` + `merge-to-main.sh` | 无 approved 审核、门禁不绿 → 拒绝进 main |
+
+**「审核门在 merge 不在 commit」**：提交层只要求 `reviewer_opinion` 字段**存在**
+（`verdict` 可以是 `pending`），合并层才要求 `approved`。
+否则实现者永远无法先提交形成 candidate，审核就无从开始。
+
+## 非脚本文件
+
+| 文件 | 作用 |
+|---|---|
+| `gates/.gitleaks.toml` | 密钥扫描规则 |
+| `gates/legacy-path-exempt.txt` / `remote-test-exempt.txt` | 豁免名单 |
+| `gates/agent-attribution-activation` | 归属检查的启用标记 |
+| `module.gitignore` | 模块默认忽略规则 |
+| `workflows/ci.yml` | GitHub Actions 模板，由 `install-gates.sh` 装到 `.github/workflows/` |
+| `reviewcode/` | 项目级检测脚本落点（模块级在 `<模块>/review/reviewcode/`） |

@@ -66,3 +66,36 @@ session id 自动记在 `logs/sessions/`，打回时 `--resume` 即续用。
 
 ⚠️ **合并那格目前只写在规范里,没接进 `merge-to-main.sh`**（397 行,我没吃透,不敢盲改）。
 在接进去之前那一格靠人守,**不要当成已有机械保证**——这正是本轮反复强调的那类"写了规范却没有执行者"。
+
+## merge-to-main.sh 复核（补记，含一条我说错的更正）
+
+**更正**：我上一轮说「合并时 approved 没有执行者」是**错的**。
+`merge-to-main.sh:228-298` 早就在强制——它要求 reviewer 那份 report.json
+`.status == "approved"` 且 `review_target` 与 candidate 精确绑定，不通过直接 die。
+合并门一直有执行者，只是通过 reviewer 的报告 status，不是通过 `reviewer_opinion` 字段。
+
+**但读完发现更严重的问题：它在 V4 上是坏的。** 重组时三处路径没跟着改：
+`ci/gates/check-report-schema.sh`、`ci/gates/run-{gates,tests}.sh`、`codeagent/reviewagent/`。
+**唯一合法的合并通道在 V4 上根本跑不起来**，而 selftest 没有任何断言覆盖它。
+
+已修，并补 selftest 第 14 条专门盯这件事。教训与上次同源：
+**字符串替换式重组，静态 grep 看不出「引用的东西已经不存在」——必须有断言守着。**
+
+## 闸门适配多角色：级联
+
+人类问「mission_complete 对每个角色不尽相同怎么办」。
+方案是**把级联原则用到闸门上**，与规范同一套：
+
+```
+scripts/checks/_common/       所有角色
+scripts/checks/<角色>/         角色专属
+codeagent/<角色>/checks/       本模块追加
+```
+
+三层依次全跑，**下层只能加严**。增删改查一条检查 = 加/删/改一个文件，主脚本永不用动。
+角色解析：`AIMERGENT_ROLE` → 从暂存 worklog 路径推断 → 只跑 `_common`。
+
+**没有采纳「scripts 改名 script_samples + 每个 agent 各带一份闸门」**，理由：
+这些脚本是真被执行和安装的，不是样例；而每个 agent 各带一份通用检查会立刻产生
+「同一个检查被实现 N 遍、逐渐漂移」——那正是模块 reviewcode 已经踩过的坑。
+模块级扩展点保留了（`codeagent/<角色>/checks/`），但只用来**追加**，不复制通用项。
