@@ -14,11 +14,11 @@ git checkout -b feat/<你的第一个主题>  # ② 根仓工作也走分支，m
 ./ci/new_module.sh modules/example_module
 ```
 
-> **①②不是可选步骤。** 框架根是受治理仓（`AGENTS.md` 铁律 20），不是配置目录。跳过 ① 则 hooks/CI 全程不生效；跳过 ② 会让报告门禁在空区间上假绿。完整清单见[根仓开工](新模块与新项目开设指南.md#根仓开工clone-之后动任何业务之前)。
+> **①②不是可选步骤。** 框架根是受治理仓（`AGENTS.md` 铁律 20），不是配置目录。跳过 ① 则 hooks/CI 全程不生效；跳过 ② 会让报告门禁在空区间上假绿。完整清单见[根仓开工](agents/reference/新模块与新项目开设指南.md#根仓开工clone-之后动任何业务之前)。
 
 `new_module.sh` 会：
 
-1. 从本仓 `module_template/` 复制骨架。
+1. 从本仓 `code/_template/` 复制骨架。
 2. 替换 `{{MODULE_NAME}}` 和 `{{FRAMEWORK_ROOT}}`，使角色卡继续相对引用本框架。
 3. 以 `main` 分支初始化模块自己的 Git 仓。
 
@@ -29,7 +29,7 @@ git checkout -b feat/<你的第一个主题>  # ② 根仓工作也走分支，m
 - **轻量模式**：单人、无外部消费方。在模块 `module_docs/rules.md` 选 `lightweight`，填真实启动/测试命令后直接在 `code/` 工作。
 - **完整治理模式**：多人、多模块、有消费方或需要独立审计。选 `governed`，填契约和规则，安装 CI，走 arbiter → worker → reviewagent → merge 流程。
 
-完整说明见 [新模块与新项目开设指南.md](新模块与新项目开设指南.md)。
+完整说明见 [agents/reference/新模块与新项目开设指南.md](agents/reference/新模块与新项目开设指南.md)。
 
 ## 安装确定性 CI
 
@@ -42,7 +42,7 @@ git checkout -b feat/<你的第一个主题>  # ② 根仓工作也走分支，m
 `install-ci.sh` 会安装：
 
 - `.github/workflows/ci.yml`
-- `ci/gates/` 与 tracked `ci/hooks/commit-msg`
+- `scripts/gates/` 与 tracked `scripts/hooks/commit-msg`
 - 本地 `.git/hooks/{commit-msg,pre-push}`
 - 模块缺少 `.gitignore` 时安装通用版
 
@@ -52,10 +52,10 @@ git checkout -b feat/<你的第一个主题>  # ② 根仓工作也走分支，m
 
 - [项目级规范](AGENTS.md)
 - [项目宪法模板（加严条款 + 裁决台账）](CONSTITUTION.template.md)
-- [文档地图](docs/manual/文档地图.md)
+- [文档地图](agents/reference/manual/文档地图.md)
 - [架构与约定](docs/1%20structure/README.md)
-- [角色与报告协议](roles/)
-- [CI / Git 治理](ci/README.md)
+- [角色与报告协议](agents/roles/)
+- [CI / Git 治理](scripts/README.md)
 
 ## 迁移安全边界
 

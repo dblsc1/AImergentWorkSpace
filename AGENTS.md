@@ -6,7 +6,7 @@
 
 本仓是 clone 即用的项目框架，提供模块骨架、分层角色卡、契约文档协议和无密钥确定性 CI。它不包含任何具体业务模块、平台实现、运行数据或环境密钥。
 
-`module_template/` 是新模块结构的唯一事实源；用 `ci/new_module.sh <相对路径>` 生成实例，不在已生成副本里反向维护模板。
+`code/_template/` 是新模块结构的唯一事实源；用 `scripts/new_module.sh <相对路径>` 生成实例，不在已生成副本里反向维护模板。
 
 ## 顶层结构
 
@@ -16,13 +16,13 @@
 ├── README.md                      # clone 后入口
 ├── CONSTITUTION.template.md       # 项目加严条款 + 裁决台账模板（按需改名启用）
 ├── docs/                          # 文档地图与架构说明
-├── roles/                         # 六份项目级角色/协议基线
-├── CFO_agent/                     # 项目 arbiter 与 consulter：角色卡 + 各自 docs/ 留痕骨架
+├── agents/roles/                         # 六份项目级角色/协议基线
+├── agents/cfo/                     # 项目 arbiter 与 consulter：角色卡 + 各自 docs/ 留痕骨架
 │   ├── arbiter/{AGENTS.md, docs/{worklog/,subreports/}}
 │   └── consulter/{AGENTS.md, docs/{worklog/,findings/}}
 ├── review/                        # 项目级审核：reviewcode/ 脚本、reviewreport/ 详报
-├── ci/                            # 脚手、hooks、gates 与 workflow 模板
-├── module_template/               # 新模块骨架唯一事实源
+├── scripts/                            # 脚手、hooks、gates 与 workflow 模板
+├── code/_template/               # 新模块骨架唯一事实源
 └── <modules>/                     # 用脚手生成的独立 Git 仓，路径由项目自定
 ```
 
@@ -77,7 +77,7 @@
 
 ## 协作流程（完整治理）
 
-模块 arbiter 开单 → worker 实现、自测、跑 `reviewcode` → commit 并形成固定 candidate → reviewagent 对 exact target 独立审核 → approved 后才由 `ci/merge-to-main.sh` 合并。同一任务最多打回 2 次，超限升级项目 arbiter。
+模块 arbiter 开单 → worker 实现、自测、跑 `reviewcode` → commit 并形成固定 candidate → reviewagent 对 exact target 独立审核 → approved 后才由 `scripts/merge-to-main.sh` 合并。同一任务最多打回 2 次，超限升级项目 arbiter。
 
 跨模块、跨契约或越出当前写边界的变更必须停下，交项目 arbiter 裁决并留变更记录；不得顺手跨界。
 
@@ -94,13 +94,13 @@
 9. **单文件默认 ≤ 500 行**：超限则拆分；遗留例外必须有精确豁免和技术债。
 10. **提示词唯一事实**：`AGENTS.md` 是规范源；如需 Claude Code 兼容，同目录 `CLAUDE.md` 只保留 `@AGENTS.md`。
 11. **改动即同步文档**：架构、目录、接口或配置变化必须在同一逻辑变更中更新直接文档和所有导航/索引，不得只改一处。
-12. **canonical report（完整治理）**：每个 agent 在 `roles/report-schema.md` 指定的路径产出已提交、可重放的 `report.json`；人类详报不替代 canonical report。**未被 Git 跟踪、工作区脏、或落在仓外/临时目录的 report 一律按「未产出」处理。** 派活方（CFO / arbiter）回收子代理时**必须用 Git 核验**（文件在仓内、已 commit、内容与交接一致），**不接受口头「已写报告」**，也不接受指向仓外路径的报告引用。
+12. **canonical report（完整治理）**：每个 agent 在 `agents/roles/report-schema.md` 指定的路径产出已提交、可重放的 `report.json`；人类详报不替代 canonical report。**未被 Git 跟踪、工作区脏、或落在仓外/临时目录的 report 一律按「未产出」处理。** 派活方（CFO / arbiter）回收子代理时**必须用 Git 核验**（文件在仓内、已 commit、内容与交接一致），**不接受口头「已写报告」**，也不接受指向仓外路径的报告引用。
 13. **文档四件套（完整治理）**：worklog / report.json / diary / handoff 分别表达过去叙事、当下交接、机器事件和未来接手，各一写属主，不重复。
 14. **commit 唯一归属（完整治理）**：每个新 commit 有且只有一个 `Agent-Attribution: <role>@<module>+<task_id>` trailer，三段使用可解析的小写 slug。
 15. **一分支一活跃写者（完整治理）**：派活前基于已验证的远端 tip；交接前确认 candidate 真实落地；push 采用 fetch-then-push，非 fast-forward 拒绝是最后兜底。
 16. **P0 隐患必须绑定 fix owner**：安全、数据、未受控写入或破坏回滚级问题，必须指定属主并阻断受影响工作，直到修复或有效止血；归档不等于缓解。
 17. **审核代码化优先（完整治理）**：可机械核验的事实一律脚本化，肉眼只审判断题。reviewer 第一职责（永久）＝写审核检测脚本（`review/reviewcode/`）并运行、分析输出下判；要肉眼审必在报告写出「为何不能代码化」的具体理由。arbiter 开单时主动标出「应代码化的验收项」交 reviewer，审后发现该代码化却肉眼看的记进 worklog，下一轮任务单把补脚本列为硬验收项。
-18. **留痕强制 · 落点必须在仓内**：每个任务一条 worklog（`docs/worklog/YYYY-MM-DD-<角色>-<任务>.md`），每次审核一份 reviewreport。**无留痕 = 审核直接打回。** 留痕的落点由 `roles/report-schema.md` 的 canonical path 表规定；**临时目录、`/tmp`、会话工作目录不是留痕**——会话结束即蒸发的东西不能当证据。派活方在 `sub_reports[].path` 里引用的路径必须是**仓内相对路径**，引用仓外绝对路径 = 该子报告按未产出计。
+18. **留痕强制 · 落点必须在仓内**：每个任务一条 worklog（`docs/worklog/YYYY-MM-DD-<角色>-<任务>.md`），每次审核一份 reviewreport。**无留痕 = 审核直接打回。** 留痕的落点由 `agents/roles/report-schema.md` 的 canonical path 表规定；**临时目录、`/tmp`、会话工作目录不是留痕**——会话结束即蒸发的东西不能当证据。派活方在 `sub_reports[].path` 里引用的路径必须是**仓内相对路径**，引用仓外绝对路径 = 该子报告按未产出计。
 19. **审核可稀疏，自核必须可重放**：审核轮次不必每轮都开——由 arbiter 或人类按边际收益裁量，**减少审核轮次是被允许的**。但**每一轮免掉的审核，必须以确定性脚本自核顶上**：脚本落 `review/reviewcode/` 并 commit，报告里给出脚本路径与真实输出。"我跑了几条命令核过了"而命令没入仓 = 等于没核。**稀疏化换的是 reviewer 的时间，不是证据强度。**
 20. **框架根仓自身也受治理**：clone 下来的框架根不是"配置目录"，它是一个真实的受治理 Git 仓。根仓的任何工作同样适用铁律 1（走 `feat/`/`fix/`/`chore/` 分支，`main` 只经合并门更新）、14（Agent-Attribution）、18（留痕）。**clone 后第一件事是 `./ci/install-ci.sh .` 给根仓自己装门禁**，否则根仓处于"有规范、无门禁"的裸奔状态。
 
@@ -110,11 +110,11 @@
 |---|---|---|
 | worklog | 回顾过去：做了什么、为什么 | 各角色写自己 `docs/worklog/` |
 | report.json | 当下交接：任务终态与升级面 | 各角色写自己 canonical path |
-| diary / jsonl | 机器事件流水 | `ci/log_event.sh` append-only |
+| diary / jsonl | 机器事件流水 | `scripts/log_event.sh` append-only |
 | handoff | 面向未来接手者 | 模块 arbiter 独占 `module_docs/handoff.md` |
 
 arbiter 在接单时设定 `tier`：`simple` 只需 report + commit；`normal` 加 diary；`hard` 再检查 handoff。
 
 ## 级联读取顺序
 
-完整治理的读取顺序：框架根 `AGENTS.md` → 模块 `AGENTS.md` → `roles/<角色>.md` → 模块 `codeagent/<角色>/AGENTS.md`。角色卡通常不会被 harness 自动加载，任务单首行必须显式要求先读对应角色卡。
+完整治理的读取顺序：框架根 `AGENTS.md` → 模块 `AGENTS.md` → `agents/roles/<角色>.md` → 模块 `codeagent/<角色>/AGENTS.md`。角色卡通常不会被 harness 自动加载，任务单首行必须显式要求先读对应角色卡。
