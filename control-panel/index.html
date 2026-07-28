@@ -85,6 +85,7 @@ function tiles(){
     ['考试未过', metrics.exam_fail, metrics.exam_fail ? 'alert' : ''],
     ['提交被拒', metrics.blocked, metrics.blocked ? 'alert' : ''],
     ['逃生口使用', metrics.override, metrics.override ? 'alert' : ''],
+    ['文档声明无需改', metrics.docs_skipped, metrics.docs_skipped ? 'warn' : ''],
   ];
   $('#tiles').innerHTML = spec.map(([l,n,c]) =>
     `<div class="tile ${c}"><div class="n">${n ?? 0}</div><div class="l">${l}</div></div>`).join('');

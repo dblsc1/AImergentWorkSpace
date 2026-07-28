@@ -23,6 +23,12 @@
   "cross_module_impact": [],
   "escalation": null,                // 或 {"reason":"打回上限|规则冲突|架构缺陷","detail":"…"}
 
+  "docs_reviewed": [                 // 改动波及的文档，逐条表态（铁律 11 的机械落点）
+    {"path": "scripts/README.md", "action": "updated"},
+    {"path": "agents/AGENTS.md", "action": "no-change-needed",
+     "reason": "只改内部实现，该文档只描述接口"}
+  ],
+
   "reviewer_opinion": {              // 每份报告必填，任何角色都不例外
     "reviewer": "programmer_reviewer",   // 谁审的（arbiter 的报告写 module_reviewer）
     "verdict": "pending",                // pending | approved | rejected
@@ -49,6 +55,20 @@
 **临时执行者落点是硬要求，不是建议。** 固定六角色覆盖不了的一次性活（迁仓、归档、写契约、专项审核……）**同样必须把报告落进仓内**：由派活方在自己 `docs/subreports/` 下收编并**随本任务一起 commit**。派活方 `report.json` 的 `sub_reports[].path` **必须是仓根相对路径**；填 `/tmp/...`、会话工作目录或任何仓外绝对路径，该子报告按**未产出**计（铁律 12 / 18）。临时执行者不必单独出 `report.json`——它的报告由派活方收编进 `sub_reports`，但**文件本身必须可被后来者 `git show` 出来**。
 
 框架根 `scripts/gates/check-report-schema.sh` 只检查当前任务相对 PR/main merge-base 新增、修改或删除的 canonical reports，不扫描未变的历史报告。**当 merge-base == head（例如直接在 `main` 上提交）时区间为空，门禁不会退化为绿灯而是响亮失败**——空区间意味着"无法确定任务区间"，不等于"验过了"。若本任务变更 `review/reviewreport/*` 却没有同步变更 `codeagent/reviewagent/docs/report.json`，gate 直接拒绝 mirror-only 交付。
+
+## `docs_reviewed`：改了东西，提到它的文档要表态
+
+铁律 11 说「改动即同步文档 + 关联文档全同步」，但它一直**没有机械执行者**——
+本字段就是那个执行者的落点，由 `scripts/checks/_common/11-doc-sync.sh` 核验。
+
+**关系不手维护**：某份 `.md` 用反引号写了 `` `scripts/foo.sh` ``，它就依赖 foo.sh；
+改 foo.sh 时自动反查「谁提到了我」。手维护的映射表本身会腐烂，
+而且新文件忘登记就是静默漏掉 —— 又绕回老问题。
+自动推不出来的语义关联（文档讲了某功能却没写路径）才登记进 `scripts/gates/doc-deps.txt`，
+**那张表越短越好：越长说明文档越没把自己依赖的路径写清楚。**
+
+`action` 只有两个值：`updated`（同批改了）/ `no-change-needed`（**必须写 `reason`**）。
+写「无需改」是完全可以的，**写不出理由才是问题**。
 
 ## `reviewer_opinion`：谁审的，写在报告里
 

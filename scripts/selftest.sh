@@ -196,5 +196,13 @@ else
   F "引用完整性只有手写抽样断言 —— 下一次重构照样留悬空引用"
 fi
 
+# 19 ── 铁律 11「改动即同步文档」一直没有执行者
+printf '19. 文档同步是否有机械执行者\n'
+if [ -n "$(find "$S/checks" -name '11-doc-sync.sh' 2>/dev/null)" ]; then
+  P "改动波及的文档须同批更新或在 report.json 声明（关系从文档反查，不手维护表）"
+else
+  F "铁律 11 无执行者 —— 文档滞后只能靠人发现"
+fi
+
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
 [ "$fail" -eq 0 ]

@@ -94,6 +94,9 @@ def read_reports():
             "contract_touched": (d.get("contract") or {}).get("touched", False),
             "reviewer": (d.get("reviewer_opinion") or {}).get("verdict", "—"),
             "sub_reports": len(d.get("sub_reports") or []),
+            "docs_reviewed": len(d.get("docs_reviewed") or []),
+            "docs_skipped": sum(1 for x in (d.get("docs_reviewed") or [])
+                                if x.get("action") == "no-change-needed"),
         })
     reports.sort(key=lambda r: r.get("ts") or "", reverse=True)
     return reports
@@ -120,6 +123,7 @@ def snapshot():
             "blocked": count(lambda e: e.get("event") == "mission_blocked"),
             "override": count(lambda e: e.get("event") == "mission_override"),
             "failures": count(lambda e: e.get("event") == "script_end" and e.get("rc", 0) != 0),
+            "docs_skipped": sum(r.get("docs_skipped", 0) for r in reports),
         },
     }
 
