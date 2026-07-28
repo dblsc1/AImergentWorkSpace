@@ -4,6 +4,8 @@
 set -uo pipefail
 root=$(git rev-parse --show-toplevel) || exit 2
 cd "$root"
+# --standalone：把数据内联进 HTML，产出一份可单独传阅的快照（不依赖 fetch）
+standalone=0; [ "${1:-}" = --standalone ] && standalone=1
 command -v jq >/dev/null || { echo '{"error":"jq not found"}'; exit 0; }
 
 reports=$(git ls-files -z | tr '\0' '\n' | grep '/report\.json$' || true)
@@ -29,6 +31,7 @@ fi
 events_json='[]'
 [ -f logs/diary.jsonl ] && events_json=$(jq -s 'sort_by(.ts)|reverse|.[0:100]' logs/diary.jsonl 2>/dev/null || echo '[]')
 
+emit() {
 jq -n --argjson reports "$reports_json" --argjson events "$events_json" \
       --arg generated "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       --arg branch "$(git rev-parse --abbrev-ref HEAD)" '{
@@ -45,3 +48,14 @@ jq -n --argjson reports "$reports_json" --argjson events "$events_json" \
     override:([$events[]|select(.event=="mission_override")]|length)
   }
 }'
+}
+
+if [ "$standalone" -eq 1 ]; then
+  data=$(emit)
+  awk -v d="$data" '
+    /<script>/ && !done { print "<script id=\"inline-data\" type=\"application/json\">" ; print d ; print "</script>" ; done=1 }
+    { print }
+  ' logs/console.html
+else
+  emit
+fi

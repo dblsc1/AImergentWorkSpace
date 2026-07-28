@@ -114,8 +114,10 @@ function events(es){
     }).join('') + '</tbody>';
 }
 
-fetch('console.json', {cache:'no-store'})
-  .then(r => r.ok ? r.json() : Promise.reject(r.status))
+const inline = document.getElementById('inline-data');
+const load = inline ? Promise.resolve(JSON.parse(inline.textContent))
+                    : fetch('console.json', {cache:'no-store'}).then(r => r.ok ? r.json() : Promise.reject(r.status));
+load
   .then(d => {
     $('#meta').textContent = `分支 ${d.branch} · 生成于 ${short(d.generated)}`;
     tiles(d.metrics || {}); reports(d.reports || []); events(d.events || []);

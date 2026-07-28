@@ -2,3 +2,5 @@
 {"ts":"2026-07-28T07:14:00Z","event":"mission_complete","branch":"dev/v4","pass":6,"fail":0,"failed":"","reason":null}
 {"ts":"2026-07-28T07:15:38Z","event":"mission_blocked","branch":"dev/v4","pass":5,"fail":1,"failed":"10-worklog-changed","reason":null}
 {"ts":"2026-07-28T07:16:04Z","event":"mission_complete","branch":"dev/v4","pass":6,"fail":0,"failed":"","reason":null}
+{"ts":"2026-07-28T07:16:40Z","event":"mission_complete","branch":"dev/v4","pass":6,"fail":0,"failed":"","reason":null}
+{"ts":"2026-07-28T07:17:09Z","event":"exam","role":"backend","score":5,"pass":true}

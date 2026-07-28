@@ -68,3 +68,10 @@
 
 区分「未完成」和「坏了」很重要：把待办报成故障，人第一反应是去查工具，
 而不是去干那件该干的事。
+
+## 控制台与生成物（补记）
+
+`scripts/console.sh` 支持 `--standalone`：把数据内联进 HTML，产出可单独传阅的快照。
+`logs/INDEX.md` 与 `logs/console.json` 是**生成物，不入仓**——
+它们由 `mission_complete.sh` 在检查通过后自动刷新，入仓会让每次提交后工作树永远脏。
+`logs/console.html` 入仓（它是程序，不是数据）。
