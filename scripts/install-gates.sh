@@ -104,8 +104,13 @@ done
 
 origin=$(git -C "$mod_real" remote get-url origin 2>/dev/null || true)
 # 控制台服务（零依赖，失败不阻断安装）
+# 面板是可选件：可以跳过，但**必须明说跳过了**。
+# 通则（铁律 23 的一个具体形状）：关键路径缺文件必须 die；可选件缺失必须打印"已跳过"。
+# 唯一不许的是**静默跳过后照常报成功**。
 if [ -x "$PROJECT_ROOT/control-panel/install.sh" ]; then
   "$PROJECT_ROOT/control-panel/install.sh" "${AIMERGENT_PANEL_INSTALL_ARGS:-}" 2>&1 | sed 's/^/   /' || true
+else
+  printf '   ⏭  控制台未安装（缺 control-panel/install.sh，可选件）\n'
 fi
 
 printf '✅ CI/Git 本地治理已安装入 %s\n' "$repo_arg"

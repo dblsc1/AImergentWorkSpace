@@ -71,10 +71,20 @@ printf '%s\n' "$framework_ref" > "$dest/.aimergent-framework"
 # ── Git：初始 commit，让模块交付时就处于「可直接跑门禁」状态 ──
 # 不做初始 commit 会让新模块首次跑 check-report-schema.sh 撞一个语义对不上的红。
 git -C "$dest" init -q -b main
-if [ -x "$PROJECT_ROOT/scripts/install-gates.sh" ]; then
-  AIMERGENT_WORKSPACE_ROOT="$WORKSPACE_ROOT" "$PROJECT_ROOT/scripts/install-gates.sh" "$target_arg" >/dev/null ||
-    die "门禁安装失败: $dest"
-fi
+# 关键路径：缺文件必须 die，不许静默跳过。
+# 形状教训（2026-07-28，同一个坑第二次）：原先是 `if [ -x … ]`，
+# 脚本改名或丢失就**静默跳过，然后照样打印「门禁 已安装」——它在撒谎**。
+# 比崩溃更糟：崩溃会停下，撒谎会让人以为装好了。
+[ -x "$PROJECT_ROOT/scripts/install-gates.sh" ] ||
+  die "缺少 scripts/install-gates.sh —— 无法给新模块装门禁，拒绝交付一个裸奔的模块"
+AIMERGENT_WORKSPACE_ROOT="$WORKSPACE_ROOT" "$PROJECT_ROOT/scripts/install-gates.sh" "$target_arg" >/dev/null ||
+  die "门禁安装失败: $dest"
+# 装完回验：不信退出码，看东西是否真的在
+_hooks=$(git -C "$dest" rev-parse --path-format=absolute --git-path hooks)
+for _h in pre-commit pre-push commit-msg; do
+  [ -x "$_hooks/$_h" ] || die "门禁回验失败：$dest 的 $_h hook 不存在（安装报成功但东西没落地）"
+done
+[ -x "$dest/scripts/gates/run-gates.sh" ] || die "门禁回验失败：$dest/scripts/gates/run-gates.sh 不存在"
 git -C "$dest" add -A
 git -C "$dest" -c core.hooksPath=/dev/null commit -q -m "chore: 脚手生成 $name 模块骨架
 

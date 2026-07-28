@@ -63,7 +63,7 @@ codeagent/<角色>/checks/       本模块给该角色追加的
 
 | 脚本 | 干什么 |
 |---|---|
-| `arbiter-push.sh <push参数>` | **唯一合法的 push 路径**：**先校验有 approved 审核** → 铸一次性 lease → fetch-then-push |
+| `arbiter-push.sh <push参数>` | **唯一合法的 push 路径**：**先跑 run-gates + 校验有 approved 审核** → 铸一次性 lease → fetch-then-push |
 | `merge-to-integration.sh` | **唯一合法的合并通道**，目标 = `$AIMERGENT_INTEGRATION_BRANCH`（默认 `dev`）。**以 main 为目标会被拒绝** |
 | `lib/emit.sh` | 被所有脚本 source：激活/退出自动写进 diary，控制面板据此实时显示 |
 | `hooks/pre-commit` | 调 `mission_complete.sh`，不过拒绝提交 |

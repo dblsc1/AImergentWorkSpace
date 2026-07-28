@@ -204,5 +204,13 @@ else
   F "铁律 11 无执行者 —— 文档滞后只能靠人发现"
 fi
 
+# 20 ── 门禁红了照样能推上去（我自己干过一次）
+printf '20. 推送前是否强制跑门禁\n'
+if [ -x "$S/arbiter-push.sh" ] && grep -q 'run-gates.sh' "$S/arbiter-push.sh" 2>/dev/null; then
+  P "arbiter-push 推之前跑 run-gates，不绿不推（逃生口记账）"
+else
+  F "推送不校验门禁 —— 门禁红了照样能推上去"
+fi
+
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
 [ "$fail" -eq 0 ]
