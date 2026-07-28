@@ -31,6 +31,19 @@ review_target:
 被审文件（$(git diff --name-only --no-renames "$base_sha..$head_sha" | wc -l) 个）：
 $(git diff --name-only --no-renames "$base_sha..$head_sha" | sed 's/^/  /')
 
+$(
+  new_code=$(git diff --name-only --diff-filter=A --no-renames "$base_sha..$head_sha" -- 'code/*' 2>/dev/null |
+             grep -E '\.(py|js|mjs|cjs|ts|tsx|vue|svelte|go|rs)$' | grep -vE '(test|spec|__tests__)' || true)
+  tests=$(git diff --name-only --no-renames "$base_sha..$head_sha" 2>/dev/null |
+          grep -E '(test|spec|__tests__|review/regression/|review/reviewcode/)' || true)
+  if [ -n "$new_code" ] && [ -z "$tests" ]; then
+    printf '⚠️  本区间新增了功能文件，但没有配套测试/回归用例：\n'
+    sed 's/^/     /' <<<"$new_code"
+    printf '     → **不是硬性拦截**。有些改动确实不需要新增测试。\n'
+    printf '     → 但你必须在报告里给出结论：需要补 / 不需要补 + 理由。\n'
+  fi
+)
+
 arbiter 留言：${note:-（无）}
 
 要求：

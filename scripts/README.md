@@ -23,7 +23,7 @@
 | `dispatch.sh <角色> <任务单>` | 生成派单提示词：角色卡首行 + 版本哈希 + **开卷判据**（嵌 `mission_complete --list`）+ 任务单原文 |
 | `run_agent.sh <角色> <任务单> [模块] [--resume]` | **起独立 Claude 进程执行角色任务**（`claude -p --agent`），不受子代理嵌套限制；`--resume` 按记录的 session id 续用 |
 | `exam.sh <角色> [--submit 答案]` | 开工考试（五道通用流程题）。不过 → 打印**派单完整性自查表** + 退回重派，**不铸令牌** |
-| `review_start.sh <reviewer> <commit> [留言]` | **起审**：固定被审区间（绑本地 commit，不必先 push），转发报告与 arbiter 留言 |
+| `review_start.sh <reviewer> <commit> [留言]` | **起审**：固定被审区间（绑本地 commit，不必先 push），转发报告与 arbiter 留言；**新功能缺测试时提示 reviewer 记录结论**（不硬拦） |
 | `review_complete.sh <reviewer> <base> <head> <verdict>` | **收审**：规范检查 + 生成含 `review_target` 的 report.json |
 | `new_check.sh <层> <编号-名字>` | **加闸门脚手**：生成骨架、校验 `--describe` 契约、空跑自检 |
 
@@ -56,7 +56,7 @@ codeagent/<角色>/checks/       本模块给该角色追加的
 |---|---|
 | `_common` | **05 写区路签** · 10 worklog · 20 report 已提交 · 40 分支纪律 · 60 路径可解析 · 70 审核意见 · **90 依赖漂移** |
 | `arbiter` | 30 子报告落点 · 50 契约同步 · 80 任务单四小节 |
-| `programmer` | 81 写边界（不得改 `review/` 与 `module_docs/`） · **83 新功能必须带测试** |
+| `programmer` | 81 写边界（不得改 `review/` 与 `module_docs/`） |
 | `programmer_reviewer` / `module_reviewer` | 82 审核区间（`review_target` 必须 exact） |
 
 ## ④ Git 闸门（唯一合法路径）

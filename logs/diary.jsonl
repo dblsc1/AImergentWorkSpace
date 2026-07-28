@@ -32,3 +32,8 @@
 {"ts":"2026-07-28T12:01:59Z","event":"script_end","script":"selftest.sh","actor":"xia","note":"耗时 0s","rc":0,"branch":"feat/v4.1"}
 {"ts":"2026-07-28T12:02:40Z","event":"script_start","script":"mission_complete.sh","actor":"xia","note":"--list","rc":0,"branch":"feat/v4.1"}
 {"ts":"2026-07-28T12:02:40Z","event":"script_end","script":"mission_complete.sh","actor":"xia","note":"耗时 0s","rc":0,"branch":"feat/v4.1"}
+{"ts":"2026-07-28T12:03:33Z","event":"script_start","script":"arbiter-push.sh","actor":"xia","note":"origin feat/v4.1","rc":0,"branch":"feat/v4.1"}
+{"ts":"2026-07-28T12:12:01Z","event":"script_start","script":"selftest.sh","actor":"xia","note":"","rc":0,"branch":"feat/v4.1"}
+{"ts":"2026-07-28T12:12:01Z","event":"script_start","script":"mission_complete.sh","actor":"xia","note":"--list","rc":0,"branch":"feat/v4.1"}
+{"ts":"2026-07-28T12:12:02Z","event":"script_end","script":"mission_complete.sh","actor":"xia","note":"耗时 1s","rc":0,"branch":"feat/v4.1"}
+{"ts":"2026-07-28T12:12:02Z","event":"script_end","script":"selftest.sh","actor":"xia","note":"耗时 1s","rc":0,"branch":"feat/v4.1"}

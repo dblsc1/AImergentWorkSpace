@@ -170,11 +170,11 @@ else
 fi
 
 # 16 ── 新功能没测试，旧功能只能靠肉眼守
-printf '16. 新功能是否强制带测试\n'
-if [ -n "$(find "$S/checks" -name '83-test-required.sh' 2>/dev/null)" ]; then
-  P "新增功能代码必须同批带测试或回归用例"
+printf '16. 缺测试是否会被审核看见\n'
+if [ -x "$S/review_start.sh" ] && grep -q '没有配套测试' "$S/review_start.sh" 2>/dev/null; then
+  P "起审时自动提示缺测试，reviewer 必须在报告写出补/不补的结论（不硬拦）"
 else
-  F "新功能可以不带测试 —— 旧功能迟早只能靠肉眼守"
+  F "新增功能没测试时无人提醒 —— 旧功能迟早只能靠肉眼守"
 fi
 
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
