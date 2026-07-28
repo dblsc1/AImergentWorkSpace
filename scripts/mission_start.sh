@@ -43,7 +43,7 @@ fi
 role=${1:-}; task=${2:-}; shift 2 2>/dev/null || true
 [ -n "$role" ] && [ -n "$task" ] || die "用法: mission_start.sh <角色> <任务单> <写区前缀...>"
 [ -f "$task" ] || die "找不到任务单: $task"
-[ $# -ge 1 ] || die "必须显式声明写区，例: code/backend/orders/"
+[ $# -ge 1 ] || die "必须显式声明写区，例: code/<模块>/backend/orders/"
 
 # ── ① 任务单开工前检查 ─────────────────────────────────────
 miss=()

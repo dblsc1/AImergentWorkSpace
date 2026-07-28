@@ -186,6 +186,13 @@ else
   say "（GitHub Actions 由独立 action 扫新增变更；本地全历史扫描需 RUN_GITLEAKS_LOCAL=1）"
 fi
 
+say "── gate: 引用完整性 ──"
+if [ -x scripts/gates/check-references.sh ]; then
+  scripts/gates/check-references.sh || bad "引用完整性未通过（改名/搬家留下了悬空引用）"
+else
+  bad "缺少 scripts/gates/check-references.sh"
+fi
+
 say "── gate: hook 安装状态 ──"
 hooks_dir=$(git rev-parse --path-format=absolute --git-path hooks 2>/dev/null || true)
 missing_hooks=()

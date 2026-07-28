@@ -25,7 +25,7 @@ while read -r localref localsha remoteref remotesha; do
       if [ "$gate_ok" -eq 1 ]; then continue; fi
       echo "❌ 禁止直推 $remoteref。" >&2
       echo "   main 只能经 PR（CI 绿 + reviewagent approved）合并。" >&2
-      echo "   请推 feat/fix/chore 分支并开 PR；合并走框架根 scripts/merge-to-main.sh。" >&2
+      echo "   请推 feat/fix/chore 分支并开 PR；合并走框架根 scripts/merge-to-integration.sh。" >&2
       [ "${AIMERGENT_MERGE_GATE:-0}" != 1 ] || echo "   单设 AIMERGENT_MERGE_GATE 无效：缺少脚本的一次性握手。" >&2
       exit 1 ;;
     *)

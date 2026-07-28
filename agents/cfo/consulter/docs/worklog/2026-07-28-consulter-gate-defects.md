@@ -55,3 +55,29 @@ CFO 拒绝自己修门禁，理由是「撞上门禁的人在同一个 commit �
 正是自己给自己开门的形状」。**这个判断完全正确。**
 它改走记账逃生口，并把理由与九个路径的人工核验写进 worklog 和 diary ——
 **这是逃生口的正确用法**，不追究。
+
+## 防复发：从「抽样断言」升级成「穷举性质」
+
+人类的要求是**保证下一次 git pull 不会拉出同样的问题**。逐条修完不够——
+本轮所有问题是同一个形状：**改名/搬家留下悬空引用，而它们只在运行时炸**。
+六次重组（ci→scripts、roles→agents/roles、module_template→code/_template、
+merge-to-main→merge-to-integration、install-ci→install-gates、backend/frontend→programmer）
+每次都留下引用，每次都没人查。
+
+原有防御是**抽样**的：`selftest` 那 17 条，每条都是「我被烧过的地方」，不是「所有可能烧的地方」；
+严格版 60 只查 `.md`，**`.sh` 里的引用完全没人查** —— `install-ci.sh` 就是这么活下来的。
+
+三条改动：
+
+1. **`scripts/gates/check-references.sh`（穷举）**：扫全仓 `.sh` 与 hooks 里的仓内路径引用、
+   报告协议点名的 canonical 目录、脚本提到的角色是否有角色卡、每个 check 是否满足 `--describe` 契约。
+   **首次运行就抓出 `scripts/hooks/pre-push` 仍指着 `merge-to-main.sh`** —— 一个活着的 hook 里的死引用。
+2. **挂进 `run-gates.sh`**：不自动跑的检查会腐烂，**这正是 V1 假绿门禁的成因**。
+3. **铁律 23**：修缺陷必须一般化到类并留下断言。**没有断言的修复不算修复，只算这次没炸。**
+
+调试中两个假阳性也记下来，都是「像路径但不是引用」：
+- `reviewcode/run_all.sh` 被正则切成 `code/run_all.sh` → 前缀必须落在词边界上
+- `scripts/tests/test-*.sh` 的 glob 被截成碎片 → 把 glob 字符一并吃进来再整体判掉
+- 错误提示里的例子 `code/backend/orders/` → 改成 `code/<模块>/backend/orders/`，占位形式天然被跳过
+
+原则：**注释与占位不是引用，代码里的路径才是引用。**

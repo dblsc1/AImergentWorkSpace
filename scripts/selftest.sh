@@ -151,12 +151,11 @@ fi
 # 14 ── 重组把唯一合法合并通道改坏了却没人知道
 printf '14. 合并通道路径是否完好\n'
 mm=$S/merge-to-integration.sh
-[ -x "$mm" ] || mm=$S/merge-to-main.sh
 if [ ! -x "$mm" ]; then
-  F "缺少 merge-to-main.sh —— main 没有唯一合法合并通道"
+  F "缺少 merge-to-integration.sh —— 没有唯一合法合并通道"
 elif grep -qE '(^|[^A-Za-z0-9_])ci/gates/' "$mm" 2>/dev/null ||
      grep -q 'codeagent/reviewagent' "$mm" 2>/dev/null; then
-  F "merge-to-main.sh 仍引用重组前的路径/角色 —— 合并通道实际跑不起来"
+  F "合并通道仍引用重组前的路径/角色 —— 实际跑不起来"
 else
   P "merge-to-main.sh 引用的路径与当前结构一致"
 fi
@@ -184,6 +183,17 @@ if [ -f "$S/lib/paths.sh" ] &&
   P "checks 一律经 lib/paths.sh 取 NUL 分隔路径，中文留痕不会被静默跳过"
 else
   F "仍有 check 直接用 --name-only —— 非 ASCII 路径会被 C 转义，该拦的静默漏过"
+fi
+
+# 18 ── 改名/搬家留下悬空引用，只在运行时炸（本轮六次重组，每次都留）
+printf '18. 引用完整性是否被穷举核验\n'
+if [ -x "$S/gates/check-references.sh" ] &&
+   grep -q 'check-references' "$S/gates/run-gates.sh" 2>/dev/null; then
+  P "check-references 穷举扫全仓引用，且已挂进 run-gates（不挂就会腐烂）"
+elif [ -x "$S/gates/check-references.sh" ]; then
+  F "有 check-references 但没挂进 run-gates —— 不会自动跑的检查等于没有"
+else
+  F "引用完整性只有手写抽样断言 —— 下一次重构照样留悬空引用"
 fi
 
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
