@@ -18,6 +18,19 @@ case "$r" in
   consulter) out="agents/cfo/consulter/docs/findings/report.json" ;;   # 根仓 L0 独立审核
   *) die "不是审核角色: $r（programmer_reviewer|module_reviewer|consulter）" ;;
 esac
+
+# 角色与仓层级要对得上：模块级审核角色只在模块仓内有落点。
+# 在框架根跑它们，落点 codeagent/… 会被根仓白名单 .gitignore 吞掉，
+# 而"被 gitignore 吞了"这个报错**没告诉人真正的问题是角色用错了层级**。
+case "$r" in
+  programmer_reviewer|module_reviewer)
+    if [ ! -d codeagent ] && git check-ignore -q -- "$out" 2>/dev/null; then
+      die "$r 是**模块级**审核角色，只在模块仓内运行（落点 $out 在本仓不被跟踪）。
+   根仓（L0）的独立审核角色是 **consulter**：
+     scripts/review_complete.sh consulter <base> <head> <verdict> \"结论\"
+   分工：consulter 审 CFO / arbiter / programmer 的活；CFO 审 consulter 改的框架。"
+    fi ;;
+esac
 # 写前验落点（A2 类修复）：被 gitignore 吞 = 撒谎式成功，宁可现在响亮失败
 assert_trackable "$out" || exit 1
 git merge-base --is-ancestor "$base" "$head" || die "base 不是 head 的祖先"

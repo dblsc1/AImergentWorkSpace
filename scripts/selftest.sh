@@ -242,5 +242,13 @@ else
   F "根仓检查会把嵌套模块仓的 report.json 判成未跟踪 —— 模块一存在根仓就永远提交不了"
 fi
 
+# 24 ── 角色用错层级时，报错说的是 gitignore，不是"你用错角色了"
+printf '24. 审核角色与仓层级错配是否可诊断\n'
+if [ -x "$S/review_complete.sh" ] && grep -q '模块级.*审核角色' "$S/review_complete.sh" 2>/dev/null; then
+  P "根仓跑模块级审核角色时，直指「该用 consulter」而非只报 gitignore"
+else
+  F "角色层级错配只会报 gitignore 落点被吞 —— 人看不出真正的问题是角色用错了"
+fi
+
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
 [ "$fail" -eq 0 ]
