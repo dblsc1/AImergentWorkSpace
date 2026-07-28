@@ -52,3 +52,17 @@ session id 自动记在 `logs/sessions/`，打回时 `--resume` 即续用。
   生成在 `<模块>/.claude/agents/` 只在 Claude 以该模块为工作目录时生效 —— shell 派活必须先 cd 进模块。
 - **agent 定义里 `@path` import 是否展开，我没验证**。已改为把角色卡正文**直接内联**进
   `.claude/agents/<角色>.md`，不依赖该语法。宁可文件长一点，不赌未验证的行为。
+
+## reviewer_opinion（补记）
+
+人类要求：**任何 agent 的 mission_complete 都要有 reviewer_opinion**。落成 `checks/70`。
+
+实现时撞到一个真冲突,记下来:**「每份报告都要有审核意见」与既有铁律「审核门在 merge 不在 commit」直接打架**——
+若提交时就要求 approved,programmer 永远无法先提交形成 candidate,审核根本无从开始。
+
+解法是把它拆成两格:
+- **提交时**:字段必须存在且格式正确,`verdict` 允许 `pending`。拦的是「根本没人审、也没打算让人审」。
+- **合并时**:`verdict` 必须 `approved`。这才是审核门。
+
+⚠️ **合并那格目前只写在规范里,没接进 `merge-to-main.sh`**（397 行,我没吃透,不敢盲改）。
+在接进去之前那一格靠人守,**不要当成已有机械保证**——这正是本轮反复强调的那类"写了规范却没有执行者"。

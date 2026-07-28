@@ -21,7 +21,14 @@
 
   "contract": { "touched": false, "which": [], "consumes": ["shared.capability.v1"] },
   "cross_module_impact": [],
-  "escalation": null                 // 或 {"reason":"打回上限|规则冲突|架构缺陷","detail":"…"}
+  "escalation": null,                // 或 {"reason":"打回上限|规则冲突|架构缺陷","detail":"…"}
+
+  "reviewer_opinion": {              // 每份报告必填，任何角色都不例外
+    "reviewer": "programmer_reviewer",   // 谁审的（arbiter 的报告写 module_reviewer）
+    "verdict": "pending",                // pending | approved | rejected
+    "path": "review/reviewreport/2026-07-28-x.md",  // 详报，仓内相对路径
+    "round": 1
+  }
 }
 ```
 
@@ -42,6 +49,23 @@
 **临时执行者落点是硬要求，不是建议。** 固定六角色覆盖不了的一次性活（迁仓、归档、写契约、专项审核……）**同样必须把报告落进仓内**：由派活方在自己 `docs/subreports/` 下收编并**随本任务一起 commit**。派活方 `report.json` 的 `sub_reports[].path` **必须是仓根相对路径**；填 `/tmp/...`、会话工作目录或任何仓外绝对路径，该子报告按**未产出**计（铁律 12 / 18）。临时执行者不必单独出 `report.json`——它的报告由派活方收编进 `sub_reports`，但**文件本身必须可被后来者 `git show` 出来**。
 
 框架根 `scripts/gates/check-report-schema.sh` 只检查当前任务相对 PR/main merge-base 新增、修改或删除的 canonical reports，不扫描未变的历史报告。**当 merge-base == head（例如直接在 `main` 上提交）时区间为空，门禁不会退化为绿灯而是响亮失败**——空区间意味着"无法确定任务区间"，不等于"验过了"。若本任务变更 `review/reviewreport/*` 却没有同步变更 `codeagent/reviewagent/docs/report.json`，gate 直接拒绝 mirror-only 交付。
+
+## `reviewer_opinion`：谁审的，写在报告里
+
+**每份 `report.json` 都必须带**，没有例外——包括 arbiter 自己那份（它的审核者是 `module_reviewer`）。
+
+与「审核门在 merge 不在 commit」的关系**别搞反**：
+
+| 时机 | 要求 | 为什么 |
+|---|---|---|
+| **提交时** | 字段存在且格式正确，`verdict` 可以是 `pending` | 否则 programmer 永远无法先提交形成 candidate，审核就无从谈起 |
+| **合并时** | `verdict` 必须是 `approved` | **这才是审核门** |
+
+`scripts/checks/70-reviewer-opinion.sh` 管提交时那一格。
+它拦的是**「根本没人审、也没打算让人审」的交付**，不是拦未审完的中间状态。
+
+> ⚠️ **合并时的 approved 强制目前只写在规范里，尚未接进 `scripts/merge-to-main.sh`。**
+> 在接进去之前，这一格靠人和 reviewer 守，不要当成已有机械保证。
 
 ## `sub_reports` 的两个可观测字段（arbiter 必填）
 
