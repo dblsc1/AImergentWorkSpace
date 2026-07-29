@@ -161,11 +161,11 @@
 | D3 | 2026-07-28 | 每模块一个 GitHub 远端，`dblsc1/cockpit-*`，private | 人类 | 已落地（4 个仓，闸门已实证） |
 | D4 | 2026-07-28 | 排序走 C：契约先行，但只先行 `views/current` 与 `views/tree` 两条读端 | 人类 | 已落地（contract v0.1） |
 | D5 | 2026-07-29 | nginx 与容器化独立成模块 `code/nginx-docker`；**任务暂由 CFO 直管**，第一次真挂上去之后连同部署面独立成归属，不再挂 CFO 名下 | 人类 | 部分落地（模块已建） |
-| D6 | 2026-07-29 | 跨模块契约落仓根 `contracts/`（方案 A） | 人类 | **未落地** |
-| D7 | 2026-07-29 | 防重按 `dedupeKey`，与 `id` 是两个不同的东西 | 人类 | **未落地** |
-| D8 | 2026-07-29 | 双时间：`time`（发生，客户端给，给用户看）+ `recordedAt`（收到，服务端盖章，重放排序用） | 人类 | **未落地** |
-| D9 | 2026-07-29 | `subject` 分层：`tier2`/`tier3` 是受控分类词表且必填（公开契约），`project`/`task` 是内部 ID 且永远选填 | CFO 提请、人类采纳 | **未落地** |
-| D10 | 2026-07-29 | `flags` 暂行任何来源可贴（含学生脚本）；标记为暂行，收紧不需改信封 | 人类 | **未落地** |
+| D6 | 2026-07-29 | 跨模块契约落仓根 `contracts/`（方案 A） | 人类 | 已落地（`contracts/yq-event-v1.md`） |
+| D7 | 2026-07-29 | 防重按 `dedupeKey`，与 `id` 是两个不同的东西 | 人类 | 已落地（`contracts/yq-event-v1.md`） |
+| D8 | 2026-07-29 | 双时间：`time`（发生，客户端给，给用户看）+ `recordedAt`（收到，服务端盖章，重放排序用） | 人类 | 已落地（`contracts/yq-event-v1.md`） |
+| D9 | 2026-07-29 | `subject` 分层：`tier2`/`tier3` 是受控分类词表且必填（公开契约），`project`/`task` 是内部 ID 且永远选填 | CFO 提请、人类采纳 | 已落地（`contracts/yq-event-v1.md`） |
+| D10 | 2026-07-29 | `flags` 暂行任何来源可贴（含学生脚本）；标记为暂行，收紧不需改信封 | 人类 | 已落地（`contracts/yq-event-v1.md`） |
 | D11 | 2026-07-29 | 暂不推进 mock 假后端；先定事件标准再开工实现 | 人类 | **已撤销**（2026-07-29 人类改判：mock 既已做出就验收并推上去看效果） |
 | D12 | 2026-07-29 | 单文件行数改为分档：建议 ≤500；>500 须在 report 记一笔；>1000 必须分拆 | 人类 | 已落地（本文件 C1） |
 | D13 | 2026-07-29 | 框架根 `CONSTITUTION.md` 删除，`agents/CONSTITUTION.md` 是唯一宪法；HANDOFF 降级为讨论草稿 | 人类 | 已落地 |
@@ -187,13 +187,10 @@
 
 | 裁决编号 | 批准日期 | 已批准的新行为 | 契约当前仍写着的旧行为 | 待改文件清单 |
 |---|---|---|---|---|
-| D6 | 2026-07-29 | 跨模块契约落仓根 `contracts/` | 该目录尚不存在；`.gitignore` 是白名单，未登记的根级目录会被**静默吞掉** | ① 新建 `contracts/`　② `.gitignore` 加 `!/contracts/`　③ `agents/AGENTS.md` 顶层结构补一格　④ `agents/reference/manual/文档地图.md` 补一行 |
-| D7 | 2026-07-29 | 防重键是 `dedupeKey`，与 `id` 不同 | HANDOFF §3.1 写「`id` + `source` 构成防重键」，与 §6 的 `(user,source,dedupeKey)` **自相矛盾** | ① `contracts/yq-event-v1.md`（待建）写死　② HANDOFF §3.1 改写或标注以本宪法为准 |
-| D8 | 2026-07-29 | 双时间 `time` + `recordedAt` | HANDOFF §3.1 信封**只有 `time` 一个字段**，且未定义它是发生时间还是记录时间 | ① `contracts/yq-event-v1.md`（待建）　② HANDOFF §3.1 信封示例 |
-| D9 | 2026-07-29 | `tier2`/`tier3` 是受控分类词表；`project`/`task` 永远选填 | HANDOFF §3.1 把 `subject` 四个字段并列，未区分必填/选填，也未说明 tier 是分类而非显示名；§6 写「分区 ≈ Tier2，项目 ≈ Tier3」的"≈"含义未定 | ① `contracts/yq-event-v1.md`（待建）　② HANDOFF §3.1 与 §6 的分类映射段 |
-| D10 | 2026-07-29 | `flags` 任何来源可贴（暂行） | HANDOFF §5.5 写「人或 AI 皆可」，未覆盖**外部学生脚本**这一来源 | ① `contracts/yq-event-v1.md`（待建）明确写"暂行：任何 source 均可贴" |
+| — | — | — | — | — |
 
-**本节非空 —— 下一轮的第一件事是清空它，不得先做新功能。**
+（**本节为空 = 契约与裁决一致，可以正常推进。**
+D6–D10 已于 2026-07-29 全部落进 `contracts/yq-event-v1.md`，移回 §4 标「已落地」。）
 
-（J2–J5 已于 2026-07-29 当日落地并清出本节，落地明细见
+（J2–J5 同日落地并清出本节，落地明细见
 `agents/consulter/docs/worklog/2026-07-29-consulter-j2j5-迁移落地.md`。）

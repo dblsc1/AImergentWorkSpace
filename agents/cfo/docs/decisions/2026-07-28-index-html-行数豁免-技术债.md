@@ -50,4 +50,4 @@
 ## 未决（需人类裁决，不在本裁决范围内）
 
 模块层豁免的具体落点取决于模块划分方案，而模块划分尚未拍板。见
-`agents/cfo/arbiter/docs/worklog/2026-07-28-cfo-arbiter-upstream-vault.md` 的「待裁决」节。
+`agents/cfo/docs/worklog/2026-07-28-cfo-arbiter-upstream-vault.md` 的「待裁决」节。

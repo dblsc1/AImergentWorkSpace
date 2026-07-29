@@ -5,7 +5,7 @@
 - 任务号：`root-upstream-vault-260728-204450-674`
 - 分支：`chore/upstream-vault`
 - tier：`normal`
-- 任务单：`agents/cfo/arbiter/docs/worklog/2026-07-28-任务单-upstream-vault.md`
+- 任务单：`agents/cfo/docs/worklog/2026-07-28-任务单-upstream-vault.md`
 
 ## 做了什么
 
@@ -48,7 +48,7 @@
 已实跑确认 🟢，不是靠豁免文件压下去的。
 
 超限的处置（登记技术债、模块层才需要精确豁免、偿还条件绑在"谁第一个动它谁负责拆"）
-见裁决单 `agents/cfo/arbiter/docs/decisions/2026-07-28-index-html-行数豁免-技术债.md`。
+见裁决单 `agents/cfo/docs/decisions/2026-07-28-index-html-行数豁免-技术债.md`。
 
 ## 依赖漂移说明（检查项 90）
 
@@ -90,8 +90,8 @@ D2 属于框架根规范与脚本，在 CFO 写边界内，但**改脚本行为�
 `git diff --cached --name-only` 对含非 ASCII 字节的路径会做 C 转义并**加上双引号**：
 
 ```
-"agents/cfo/arbiter/docs/worklog/2026-07-28-\344\273\273\345\212\241\345\215\225-upstream-vault.md"
-agents/cfo/arbiter/docs/report.json          ← 纯 ASCII 才是裸路径
+"agents/cfo/docs/worklog/2026-07-28-\344\273\273\345\212\241\345\215\225-upstream-vault.md"
+agents/cfo/docs/report.json          ← 纯 ASCII 才是裸路径
 ```
 
 本框架的留痕命名规约（`docs/worklog/YYYY-MM-DD-<角色>-<任务>.md`、任务单、裁决单）

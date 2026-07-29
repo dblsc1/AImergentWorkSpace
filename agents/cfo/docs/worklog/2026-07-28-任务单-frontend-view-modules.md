@@ -38,7 +38,7 @@
 | B2 | 门禁真装上 | `ls code/ring/.git/hooks/` 含 pre-commit/commit-msg/pre-push |
 | B3 | 门禁红在正确的地方 | `cd code/ring && ./scripts/gates/run-gates.sh` 报 contract.md 未填实 |
 | B4 | 配方文件存在且被导航收录 | 文档地图含 `agents/reference/新增前端视图模块.md` 一行 |
-| B5 | 依赖索引含反向索引 | `agents/cfo/arbiter/docs/依赖索引.md` 有「改这个契约要通知谁」表 |
+| B5 | 依赖索引含反向索引 | `agents/cfo/docs/依赖索引.md` 有「改这个契约要通知谁」表 |
 | B6 | 远端状态如实登记 | 依赖索引两个模块的远端列为「本地模式·未验证」，非空白、非豁免 |
 
 ## 升级条件

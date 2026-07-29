@@ -34,7 +34,7 @@
 | A1 | 两份原件已被 Git 跟踪 | `git ls-files agents/reference/upstream/` 列出 4 个文件 |
 | A2 | 指纹自洽 | `cd agents/reference/upstream && sha256sum -c SHA256SUMS` → 2×OK |
 | A3 | 与上游源逐字节相同 | 仓内 sha256 == `/home/xia/Downloads/` 侧 sha256 |
-| A4 | 行数超限已登记技术债 | `agents/cfo/arbiter/docs/decisions/` 下有对应裁决单 |
+| A4 | 行数超限已登记技术债 | `agents/cfo/docs/decisions/` 下有对应裁决单 |
 | A5 | 导航同步（铁律 11） | `agents/reference/manual/文档地图.md` 含 upstream 一行 |
 | A6 | 门禁绿 | `scripts/gates/run-gates.sh` 输出 🟢 |
 

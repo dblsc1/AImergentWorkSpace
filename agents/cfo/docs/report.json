@@ -2,10 +2,10 @@
   "schema_version": 2,
   "module": "root",
   "role": "cfo",
-  "task": "宪法定性修正 + mock 验收 + 行数分档裁决",
+  "task": "清空宪法 §4.1：事件标准固化成 contracts/yq-event-v1.md",
   "tier": "normal",
   "status": "approved",
-  "summary": "宪法改为本项目唯一权威（框架根那份已删），HANDOFF 降级为讨论草稿并加顶部标注。C1 行数改为分档（≤500 建议 / >500 记 report / >1000 分拆），存量导入按 D2 例外。独立验收 nexus-core mock：起真服务打真请求，占比 0-100、空闲态 null、默认过滤 ephemeral、无弱默认值、非法参数 422 全部实测通过。",
+  "summary": "建 contracts/（含 .gitignore 白名单，否则新根级目录被静默吞掉），把宪法 §2.1–§2.5 固化成对外唯一事实 contracts/yq-event-v1.md，含 10 条可直接变成测试的边界样例。宪法 §4.1 已清空，D6–D10 移回 §4 标已落地。HANDOFF §3/§6 标注为已过时（照它实现会实现错）。",
   "git": {
     "protocol": "embedded-self-v2",
     "branch": "feat/frontend-view-modules",
@@ -13,16 +13,20 @@
     "head": "SELF",
     "diff_mode": "contains",
     "changed_files": [
+      "contracts/yq-event-v1.md",
+      ".gitignore",
       "agents/CONSTITUTION.md",
+      "agents/AGENTS.md",
       "agents/reference/HANDOFF.md",
-      "agents/cfo/docs/worklog/2026-07-29-cfo-constitution-architecture.md",
+      "agents/reference/manual/文档地图.md",
+      "agents/cfo/docs/worklog/2026-07-29-cfo-contracts-yq-event-v1.md",
       "agents/cfo/docs/report.json"
     ]
   },
   "contract": {
     "touched": true,
     "which": [
-      "yq-event/v1（信封语义，尚未固化成 contracts/ 文件）"
+      "yq-event/v1"
     ],
     "consumes": []
   },
@@ -32,7 +36,7 @@
   "sub_reports": [],
   "escalation": {
     "reason": "规则冲突",
-    "detail": "宪法 C1 现写「>1000 行必须分拆」，但框架门禁 scripts/gates/run-gates.sh:175 仍是「>500 行硬失败」。两者不一致：宪法允许 500–1000 记一笔即可，门禁会直接拒。目前无实际文件落在 500–1000 区间，所以还没咬人，但一旦有就会出现「宪法说可以、门禁说不行」的死结。修法归框架侧（consulter）：门禁应改为 >500 警告并要求 report 说明、>1000 才 bad。另：宪法 §4.1 仍有 5 条未落地裁决（contracts/ 未建、yq-event-v1.md 未写），按该节规矩下一轮第一件事是清空它。"
+    "detail": "宪法 C1 说「>500 行须在 report 记一笔、>1000 才必须分拆」，但框架门禁 scripts/gates/run-gates.sh:175 仍是「>500 行硬失败」。两者不一致：宪法允许的区间会被门禁直接拒。目前无实际文件落在 500–1000 区间所以还没咬人，一旦有就是「宪法说可以、门禁说不行」的死结。修法归框架侧：>500 应改为警告并要求 report 说明，>1000 才 bad。"
   },
   "reviewer_opinion": {
     "reviewer": "consulter",
@@ -43,17 +47,27 @@
   "docs_reviewed": [
     {
       "path": "agents/CONSTITUTION.md",
+      "action": "updated",
+      "reason": "§4.1 清空，D6–D10 移回 §4"
+    },
+    {
+      "path": "agents/AGENTS.md",
+      "action": "updated",
+      "reason": "顶层结构补 contracts/ 一格"
+    },
+    {
+      "path": "agents/reference/manual/文档地图.md",
       "action": "updated"
     },
     {
       "path": "agents/reference/HANDOFF.md",
       "action": "updated",
-      "reason": "降级为讨论草稿，顶部加权威声明"
+      "reason": "§3/§6 标注已过时，不删（讨论草稿有历史价值）但明写照它实现会错"
     },
     {
       "path": "scripts/gates/doc-map.tsv",
       "action": "no-change-needed",
-      "reason": "本次只改 agents/ 下的文档，未触碰表中登记的代码区域"
+      "reason": "contracts/ 是新的代码区域吗？不是——它本身就是长期文档，不需要被别的文档治理。且未触碰表中已登记的任何代码区域。是否要为 contracts/* 新增一行由人裁决，我的判断是不必：该文件正文写清了自己的权威链，反引号反查抓得到"
     }
   ]
 }

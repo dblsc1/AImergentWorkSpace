@@ -39,7 +39,7 @@ scripts/new_module.sh table
 
 ### ③ 建了项目级依赖索引
 
-`agents/cfo/arbiter/docs/依赖索引.md`（CFO 角色卡职责 5）。含**反向索引**
+`agents/cfo/docs/依赖索引.md`（CFO 角色卡职责 5）。含**反向索引**
 「改这个契约要通知谁」——这是它唯一的用途，不是文书工作。
 
 ## 待裁决 / 已如实登记为未验证的事
@@ -73,7 +73,7 @@ scripts/new_module.sh table
 ## 依赖漂移说明（检查项 90）
 
 本次未新增/删除任何包依赖。新增了两条**跨模块依赖声明**（`code/ring` 与 `code/table`
-各消费 nexus-core 一条 views 读路径），已全部登记进 `agents/cfo/arbiter/docs/依赖索引.md`
+各消费 nexus-core 一条 views 读路径），已全部登记进 `agents/cfo/docs/依赖索引.md`
 的正向表与反向索引。两个模块之间**零依赖**——HANDOFF §2.1 明确四个前端没有任何通信路径，
 这是架构决定，不是"还没来得及连"。
 
@@ -86,6 +86,6 @@ scripts/new_module.sh table
 | 两个模块骨架已建 | ✅ `code/ring` `code/table` |
 | 门禁真实安装（看而非信） | ✅ 三个 hook + gates 就位；红在 contract 待填上 |
 | 配方可复用 | ✅ `agents/reference/新增前端视图模块.md` |
-| 依赖索引含反向索引 | ✅ `agents/cfo/arbiter/docs/依赖索引.md` |
+| 依赖索引含反向索引 | ✅ `agents/cfo/docs/依赖索引.md` |
 | 导航同步（铁律 11） | ✅ 文档地图已加两行 |
 | 远端状态如实登记 | ✅ 标「本地模式·未验证」，未当作豁免 |
