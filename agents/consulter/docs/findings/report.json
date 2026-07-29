@@ -2,10 +2,10 @@
   "schema_version": 2,
   "module": "workspace",
   "role": "consulter",
-  "task": "J2–J5 迁移落地（清空 §4.1）",
+  "task": "CFO 实报缺陷按类修：单文件路签 + 仓型判据公共件",
   "tier": "normal",
   "status": "approved",
-  "summary": "四项裁决全部落地：J3 留痕迁代码旁（协议/模板/门禁三层同步+过渡期兼容）、J4 每 agent comm.jsonl、J2/J5 测试分层入卡入 run-tests；新增 new_instance.sh 实例模型+session 复用；checks/14 每改必核；selftest 40/40，新断言逐条红/绿（含一次红测抓住断言自身弱判据）",
+  "summary": "仓型感知/框架根解析抽为 lib/paths.sh 公共件（12/60 接入，仓型类第3/4例清账）；单文件路签双保险修复（norm 文件感知 + 05 精确匹配，兼容存量签）；selftest 43 条，#42/#43 红/绿点火；沙箱含真模块端到端红/绿",
   "git": {
     "protocol": "embedded-self-v2",
     "branch": "v5",
@@ -13,31 +13,14 @@
     "head": "SELF",
     "diff_mode": "contains",
     "changed_files": [
-      "agents/protocol/report-schema.md",
-      "agents/AGENTS.md",
-      "agents/CONSTITUTION.md",
-      "agents/roles/programmer.md",
-      "agents/roles/programmer_reviewer.md",
-      "agents/roles/arbiter.md",
-      "agents/reference/新模块与新项目开设指南.md",
-      "agents/reference/工作空间全景.md",
-      "agents/reference/用户目标口述-可复现工作机制.md",
-      "code/_template/AGENTS.md",
-      "code/_template/文档地图.md",
-      "code/_template/codeagent/arbiter/docs/README.md",
-      "code/_template/code/backend/handoff.md",
-      "code/_template/code/frontend/handoff.md",
-      "scripts/new_instance.sh",
-      "scripts/new_module.sh",
-      "scripts/aim",
-      "scripts/README.md",
-      "scripts/checks/_common/10-worklog-changed.sh",
-      "scripts/checks/_common/14-handoff-fresh.sh",
-      "scripts/gates/check-report-schema.sh",
-      "scripts/gates/check-references.sh",
-      "scripts/gates/run-tests.sh",
+      "scripts/lib/paths.sh",
+      "scripts/mission_start.sh",
+      "scripts/checks/_common/05-write-lease.sh",
+      "scripts/checks/_common/12-standing-docs.sh",
+      "scripts/checks/_common/60-doc-paths-exist.sh",
       "scripts/selftest.sh",
-      "agents/consulter/docs/worklog/2026-07-29-consulter-j2j5-迁移落地.md",
+      "agents/consulter/记忆.md",
+      "agents/consulter/docs/worklog/2026-07-29-consulter-cfo实报缺陷按类修.md",
       "agents/consulter/docs/findings/report.json"
     ]
   },
@@ -65,65 +48,49 @@
   "escalation": null,
   "docs_reviewed": [
     {
-      "path": "agents/reference/manual/文档地图.md",
-      "action": "no-change-needed",
-      "reason": "项目级地图不列模块内布局细节；模块级落点由模板内 code/_template/文档地图.md 承载，该文件已同批更新"
-    },
-    {
-      "path": "agents/reference/新模块与新项目开设指南.md",
-      "action": "updated"
-    },
-    {
-      "path": "agents/reference/工作空间全景.md",
+      "path": "agents/consulter/记忆.md",
       "action": "updated"
     },
     {
       "path": "scripts/README.md",
-      "action": "updated"
-    },
-    {
-      "path": "code/_template/文档地图.md",
-      "action": "updated"
-    },
-    {
-      "path": "agents/cfo/doc-map.tsv",
       "action": "no-change-needed",
-      "reason": "表只登记项目级/跨模块治理关系；模块内落点按约定自动推导，J3 改的是约定本身（已入 AGENTS.md 与 report-schema）"
+      "reason": "改的是检查内部判据与共享库函数，README 的脚本清单与职责描述不涉及这些内部细节"
     },
     {
-      "path": "code/_template/module_docs/contract.md",
+      "path": "agents/reference/manual/文档地图.md",
       "action": "no-change-needed",
-      "reason": "J3 改的是留痕落点与实例模型，不触碰对外行为；模板契约仍是占位骨架，语义不受影响"
-    },
-    {
-      "path": "code/_template/AGENTS.md",
-      "action": "updated"
+      "reason": "无新增/改名脚本（lib/paths.sh 扩函数不改地图条目）"
     }
   ],
   "findings": [
     {
-      "category": "process",
+      "category": "constant-answer",
+      "severity": "high",
+      "summary": "仓型类第3/4例（checks/12 找根仓文档、60 不解析框架根）在 CFO 模块仓实卡提交——已抽公共件按类修，selftest#43 断言防复发",
+      "file": "scripts/lib/paths.sh"
+    },
+    {
+      "category": "data-loss-path",
+      "severity": "high",
+      "summary": "单文件路签缺陷 × 白名单 gitignore ＝静默丢数据路径（CFO contracts/ 白名单行卡在工作区，clone 会缺）——双保险修复+#42 断言",
+      "file": "scripts/mission_start.sh"
+    },
+    {
+      "category": "pattern",
       "severity": "info",
-      "summary": "J2–J5 当日落地并清空 §4.1；存量模块走过渡期兼容（旧 canonical 路径仍被承认），迁移由 CFO 排期"
+      "summary": "模式观察：13 号新鲜度与孤儿树断言在 CFO 侧真实战场自行报账（含先 rebase 再装的顺序坑）——闸门体系首次替人记账而非人替闸门记账"
     },
     {
-      "category": "assertion-quality",
+      "category": "verifier-hazard",
       "severity": "low",
-      "summary": "selftest#40 首轮红测没红——grep 判据弱到命中文件名残留；红/绿点火当场抓住并收紧。佐证「只写断言不点火=没验过的烟雾报警器」",
-      "file": "scripts/selftest.sh"
-    },
-    {
-      "category": "lying-success",
-      "severity": "low",
-      "summary": "new_module.sh 尾部打印「三角色已生成」而实际只生成 arbiter——改单例模型时的残留撒谎输出，已修",
-      "file": "scripts/new_module.sh"
+      "summary": "红/绿扰动后用 git checkout 恢复，把未提交修复冲掉致绿测假红——已入判例库：扰动含未提交修复的文件只许用备份副本恢复",
+      "file": "agents/consulter/记忆.md"
     }
   ],
-  "reflection": "大迁移按契约优先顺序（协议→规范→模板→脚本→检查→断言）一次走完并逐层验证，避免了半做状态；过渡期兼容是为存量模块留的活口，不是偷懒——记得让 CFO 排真正迁移。",
+  "reflection": "CFO 的缺陷上报把根因、叠加后果、修法建议一次给全——按类修的判断也是它先提的。监督关系开始双向产出。",
   "recommendations": [
-    "CFO：pull 后四模块补装门禁+红测留痕；对 6cceec1..HEAD 全区间交叉审（含本次大迁移）",
-    "下轮接线：run_agent.sh 自动读写实例 session 文件（现靠手动 --resume）",
-    "存量四模块迁 J3 布局后，删除 check-report-schema 的过渡期兼容分支（留着会永久双轨）"
+    "CFO：pull 后重跑四模块 install-gates 刷新 checks 副本（13 号会提醒），contracts/ 白名单行即可落地；交叉审区间顺延至新 tip",
+    "模式级观察待验证：install-gates 的「先 rebase 再装」顺序坑是否值得做成硬序（装前核 tip 新鲜度），下轮评估"
   ],
   "reviewer_opinion": {
     "reviewer": "cfo",

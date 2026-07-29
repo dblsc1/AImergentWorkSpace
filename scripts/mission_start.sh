@@ -22,7 +22,11 @@ cd "$root"
 lease_dir=$(git rev-parse --path-format=absolute --git-common-dir)/aimergent-leases
 mkdir -p "$lease_dir"
 
-norm() { local p=${1#./}; p=${p%/}; printf '%s/' "$p"; }   # 统一成带尾斜杠的前缀
+# 目录 → 带尾斜杠的前缀；**已存在的普通文件 → 原样**（不加斜杠）。
+# 病根（CFO 2026-07-29 实报）：一律加斜杠让 .gitignore 变成 .gitignore/，
+# checks/05 前缀匹配永远不中 → 根级单文件无法合法进入任何提交；
+# 与白名单 .gitignore 叠加 = 静默丢数据路径（白名单行加不上 → 新目录被吞）。
+norm() { local p=${1#./}; p=${p%/}; if [ -f "$p" ] && [ ! -d "$p" ]; then printf '%s' "$p"; else printf '%s/' "$p"; fi }
 
 if [ "${1:-}" = --checklist ]; then
   cat <<'LIST'

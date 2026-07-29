@@ -20,7 +20,9 @@ while IFS= read -r -d '' f; do
     # 「目录存在即可」放过了 scripts/merge-to-integration.sh 这类重组后的死链接 —— 已实证漏检。
     # 有意的前向引用（如报告协议里点名、但按任务才产出的 report.json）必须**显式登记**，
     # 登记本身就是可审计的：没登记的死链一律红。
-    [ -e "$p" ] && continue
+    # 仓型类第 4 例：模块仓引用框架文档（agents/…、scripts/…）是级联的常态不是死链，
+    # 判据＝「本仓或框架根可解析」（同 check-references 的口径）。
+    resolves_here_or_framework "$p" && continue
     grep -qxF -- "$p" "$exempt" 2>/dev/null && continue
     echo "$f 引用了不存在的路径：$p" >&2
     echo "  → 若是有意的前向引用，登记进 $exempt；否则修正它" >&2

@@ -409,6 +409,25 @@ else
   N "非框架仓布局"
 fi
 
+# 42 ── 单文件申领不到写区路签（CFO 实报：.gitignore→.gitignore/ 永远匹配不上）
+printf '42. 单文件写区路签是否可用\n'
+if grep -q '\${l%/}' "$S/checks/_common/05-write-lease.sh" 2>/dev/null &&
+   grep -q 'if \[ -f "\$p" \]' "$S/mission_start.sh" 2>/dev/null; then
+  P "05 接受精确相等（含旧尾斜杠签），norm() 对已存在文件不加斜杠"
+else
+  F "根级单文件无法合法进入任何提交——与白名单 .gitignore 叠加成静默丢数据路径"
+fi
+
+# 43 ── 判据仓型不匹配（第 3/4 例：12、60 在模块仓跑根仓判据恒红）
+printf '43. 检查项是否仓型感知\n'
+if grep -q 'repo_is_module' "$S/lib/paths.sh" 2>/dev/null &&
+   grep -q 'repo_is_module' "$S/checks/_common/12-standing-docs.sh" 2>/dev/null &&
+   grep -q 'resolves_here_or_framework' "$S/checks/_common/60-doc-paths-exist.sh" 2>/dev/null; then
+  P "仓型/框架根解析是 lib/paths.sh 公共件，12/60 都在用"
+else
+  F "按框架仓写的判据装进模块仓恒红——恒定答案类，模块提交会被无关判据卡死"
+fi
+
 # 36 ── 「N 条铁律 / N 条断言」的 N 是化石：写下来的那天就开始漂
 #        （实证：同一仓里同时存在 12、22、23 三个数字，实际 35 条）
 printf '36. 文档是否硬编码了会漂移的条目计数\n'

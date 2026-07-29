@@ -20,7 +20,12 @@ while IFS= read -r -d '' p; do
     codeagent/"$role"/*|logs/*|review/reviewreport/*) continue ;;   # 自己的留痕区永远允许
   esac
   ok=0
-  for l in "${leases[@]}"; do [ -n "$l" ] && case "$p" in "$l"*) ok=1; break ;; esac; done
+  # 前缀命中（目录签）或精确相等（单文件签；也兼容旧签带尾斜杠的形态）
+  for l in "${leases[@]}"; do
+    [ -n "$l" ] || continue
+    case "$p" in "$l"*) ok=1; break ;; esac
+    [ "${l%/}" = "$p" ] && { ok=1; break; }
+  done
   [ "$ok" -eq 1 ] || { echo "越出写区路签：$p（持有 ${leases[*]}）" >&2; bad=1; }
 done < <(staged_paths ACMRD)
 exit $bad
