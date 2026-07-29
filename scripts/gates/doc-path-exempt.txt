@@ -24,3 +24,14 @@ logs/diary.jsonl
 logs/sessions
 agents/cfo/reviewer/session
 logs/STOPLINE
+
+# cfo_reviewer 详报里的跨仓引用：它审的是模块仓，报告落在框架仓。
+# 这些路径在模块仓内真实存在，框架仓内不存在——不是死链，是跨仓引用。
+# 根因见架构问题清单 A-12（历史叙事豁免名单未覆盖 reviewer 报告目录）。
+code/backend/
+code/backend/app/…
+code/backend/requirements.txt
+
+# 停线旗：按定义只在停线期间存在，平时不存在才是正常。
+# 文档引用它是必须的（要告诉人怎么置旗），所以是正当前向引用。
+logs/STOPLINE

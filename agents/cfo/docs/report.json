@@ -2,10 +2,10 @@
   "schema_version": 2,
   "module": "root",
   "role": "cfo",
-  "task": "修 reviewer 第 1 轮打回三条 + 门禁入仓 + Mongo 自决",
+  "task": "修 cfo_reviewer 第 2/3 轮打回 + changed_files 改为从 git 计算",
   "tier": "normal",
   "status": "approved",
-  "summary": "夜班第 1 项完成。修 reviewer 打回三条：报告重写（R1）、旧编号分两类处置（交接面改、叙事面加注记，R2）、§4.1 假警报撤下换真残留 supervision.md:33（R3）。另修它审出的两条实体问题：四模块门禁 17 文件已真正入仓并复验红测；根仓停线旗此前失效（pre-commit 旧版 306B），已重装 1445B 并红测置旗真能拦。自决记账：cockpit-mongo 容器绑 127.0.0.1:27117 避开 27017，docker rm 可回收。reviewer 第 2 轮打回四条已全修：四模块门禁刷到最新框架版并入仓（新鲜度 4/4 绿）、nexus-core report 解开假阻塞、切片 1 任务单入仓、本条 docs_reviewed 补记。下一步：唤醒 reviewer 第 3 轮 → 推送 → 发签派活。",
+  "summary": "夜班第 1–2 项完成。reviewer 三轮共打回 8 条，全部实修并经它逐条实跑复核（无一条靠自述过关）：四模块门禁刷到最新框架版并入仓（新鲜度 4/4 绿）、nexus-core report 解开假阻塞、切片 1 任务单入仓、docs_reviewed 补记改动审计方报告、changed_files 改为从 git 计算。reviewer 指出三轮同一形状：正文写得足、结构化字段落后于正文（R1 无 report → R2 漏 docs_reviewed → R3 漏 changed_files），已转 consulter 做机械修法。自决记账：cockpit-mongo 绑 127.0.0.1:27117，完整回收两条命令（rm 不删具名卷）。派活就绪度经 reviewer 按「冷启动 programmer 依次会撞到什么」逐项核过，九项全通、无拦路项。下一步：推送框架仓 15 笔 + 四模块仓 → 给 nexus-core 1 号 programmer 发签派活。",
   "git": {
     "protocol": "embedded-self-v2",
     "branch": "feat/frontend-view-modules",
@@ -13,12 +13,11 @@
     "head": "SELF",
     "diff_mode": "contains",
     "changed_files": [
-      "agents/CONSTITUTION.md",
       "agents/cfo/docs/report.json",
-      "agents/cfo/docs/worklog/2026-07-30-cfo-fix-review-rejections.md",
-      "agents/cfo/docs/worklog/2026-07-29-cfo-review-framework-6cceec1-4bf3dfd.md",
+      "agents/cfo/docs/worklog/2026-07-30-cfo-changed-files-discipline.md",
+      "agents/cfo/reviewer/docs/2026-07-30-round3.md",
       "agents/cfo/reviewer/docs/架构问题清单.md",
-      "agents/cfo/reviewer/docs/2026-07-30-round1.md"
+      "scripts/gates/doc-path-exempt.txt"
     ]
   },
   "contract": {
@@ -37,10 +36,15 @@
   "reviewer_opinion": {
     "reviewer": "cfo_reviewer",
     "verdict": "rejected",
-    "path": "agents/cfo/reviewer/docs/2026-07-30-round2.md",
-    "round": 2
+    "path": "agents/cfo/reviewer/docs/2026-07-30-round3.md",
+    "round": 3
   },
   "docs_reviewed": [
+    {
+      "path": "agents/cfo/reviewer/docs/2026-07-30-round3.md",
+      "action": "updated",
+      "reason": "reviewer 第 3 轮详报，由它自己写入；本条记的是它进入本笔 commit 这一事实。我未改其内容——上轮 N4 的教训：动审计方的文件必须在此留痕，无论改没改"
+    },
     {
       "path": "agents/cfo/reviewer/docs/2026-07-30-round1.md",
       "action": "updated",
