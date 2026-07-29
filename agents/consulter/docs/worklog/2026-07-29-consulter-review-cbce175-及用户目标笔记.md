@@ -43,6 +43,12 @@
 - **用户目标入卡**：`agents/consulter/AGENTS.md` 新增「目标」节，指向
   `agents/reference/用户目标口述-可复现工作机制.md`，并已进入重新生成的子代理 prompt。
 
+## 五、report 补 review_target（推送门第二层要求）
+
+check-report-schema 对 consulter 报告强制标准 `review_target`（exact 区间）——合理：
+consulter 报告必须锚定固定审查区间。补 `62c2f91..cbce175` exact + 逐文件清单
+（与 `git diff --name-only --no-renames` 完全相等），verdict=approved。
+
 ## 遗留
 
 - 三 commit（6c6d1ee/f3f9db9/62c2f91）+ 本 commit 仍待 CFO 交叉审（我不自批）。
