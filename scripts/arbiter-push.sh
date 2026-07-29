@@ -57,6 +57,19 @@ else
   emit_event push_skip_gates "$AIMERGENT_PUSH_SKIP_GATES" 2>/dev/null || true
 fi
 
+# ── 推送前按整段区间复核文档影响面 ──────────────────────────
+# 着陆检查只看**单次暂存**：一个 commit 里声明了，另一个 commit 改了别的却没声明，
+# 分支整体就有漏。推送是最后一次能廉价补救的时机。
+if [ "${AIMERGENT_PUSH_SKIP_GATES:-}" = "" ] && [ -x "$_r/scripts/doc_impact.sh" ]; then
+  _base=$(git merge-base HEAD "${AIMERGENT_INTEGRATION_BRANCH:-dev}" 2>/dev/null ||
+          git merge-base HEAD main 2>/dev/null || true)
+  if [ -n "$_base" ]; then
+    echo "▶ 整段区间的文档影响面（$(git rev-parse --short "$_base")..HEAD）：" >&2
+    (cd "$_r" && ./scripts/doc_impact.sh --range "$_base..HEAD" 2>&1 | sed 's/^/   /') >&2
+    echo "   ↑ arbiter 复核：上面每一份，本分支是否都已改到位或已在报告里声明。" >&2
+  fi
+fi
+
 # fetch-then-push（铁律15④）：不猜 remote，取默认/跟踪 remote；失败不致命，server 端非 ff 兜底仍在
 git fetch --quiet || true
 

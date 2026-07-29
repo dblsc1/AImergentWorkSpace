@@ -27,6 +27,7 @@
 
 | 脚本 | 干什么 |
 |---|---|
+| `doc_impact.sh [--staged\|--range A..B\|--scope 前缀…]` | **我改了这些 → 要连带看哪些长期文档**。算法在 `lib/docmap.sh`，起飞/随时/着陆/推送共用同一个答案来源 |
 | `mission_start.sh <角色> <任务单> <写区...> [--docs …]`（`--checklist` 看单子） | **起飞前检查单**（7 项）：校验任务单四小节 → 申领写区路签（前缀重叠即拒）→ **声明预期文档变更（完工时机器逐条核对）** → 出提示词 |
 | `dispatch.sh <角色> <任务单>` | 生成派单提示词：角色卡首行 + 版本哈希 + **开卷判据**（嵌 `mission_complete --list`）+ 任务单原文 |
 | `run_agent.sh <角色> <任务单> [模块] [--resume]` | **起独立 Claude 进程执行角色任务**（`claude -p --agent`），不受子代理嵌套限制；`--resume` 按记录的 session id 续用 |
@@ -63,7 +64,7 @@ codeagent/<角色>/checks/       本模块给该角色追加的
 
 | 层 | 检查 |
 |---|---|
-| `_common` | **05 写区路签** · 10 worklog · **11 文档同步（治理关系表）** · **12 长期文档体检** · 20 report 已提交 · 40 分支纪律 · 60 路径可解析 · 70 审核意见 · **90 依赖漂移** |
+| `_common` | **05 写区路签** · 10 worklog · **11 文档同步（治理关系表）** · **12 长期文档体检** · **13 门禁新鲜度** · 20 report 已提交 · 40 分支纪律 · 60 路径可解析 · 70 审核意见 · **90 依赖漂移** |
 | `arbiter` | 30 子报告落点 · 50 契约同步 · 80 任务单四小节 |
 | `programmer` | 81 写边界（不得改 `review/` 与 `module_docs/`） |
 | `programmer_reviewer` / `module_reviewer` | 82 审核区间（`review_target` 必须 exact） |

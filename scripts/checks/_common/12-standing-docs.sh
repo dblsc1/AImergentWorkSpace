@@ -18,7 +18,7 @@ done
 while IFS= read -r -d '' m; do
   mod=${m%/AGENTS.md}
   case "$mod" in code/_template) continue ;; esac
-  for d in module_docs/contract.md module_docs/rules.md module_docs/handoff.md; do
+  for d in module_docs/contract.md module_docs/rules.md module_docs/handoff.md 文档地图.md; do
     [ -f "$mod/$d" ] || bad "模块 $mod 缺长期文档: $d"
   done
 done < <(git ls-files -z 'code/*/AGENTS.md')

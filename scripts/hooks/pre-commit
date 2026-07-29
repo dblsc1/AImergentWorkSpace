@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 # 提交层硬闸门：完工检测不过不许提交。
 # 逃生口 AIMERGENT_MISSION_OVERRIDE="<理由>"（放行但强制记账）。
-root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
-[ -x "$root/scripts/mission_complete.sh" ] || exit 0
+# 缺文件**不许静默放行** —— 这道钩子存在的全部意义就是不让没检查的东西进来。
+# 实证：原先写的是 `[ -x … ] || exit 0`，而 install-gates 压根没把 mission_complete
+# 装进模块，于是三个模块的着陆检查一次都没跑过，提交全部畅通无阻。
+root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+  echo "❌ pre-commit: 解析不到仓根，拒绝提交" >&2; exit 1; }
+if [ ! -x "$root/scripts/mission_complete.sh" ]; then
+  echo "❌ pre-commit: 缺少 scripts/mission_complete.sh —— 着陆检查无法运行，拒绝提交。" >&2
+  echo "   → 跑：<框架根>/scripts/install-gates.sh <本仓相对路径>" >&2
+  echo "   （缺了就放行 = 这道闸门形同虚设，本轮已实证三个模块因此裸奔）" >&2
+  exit 1
+fi
 "$root/scripts/mission_complete.sh"

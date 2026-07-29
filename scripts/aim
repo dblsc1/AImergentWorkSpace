@@ -16,7 +16,7 @@ declare -A MAP=(
   [done]=mission_complete.sh [push]=arbiter-push.sh    [merge]=merge-to-integration.sh
   [new-module]=new_module.sh [new-agent]=new_agent.sh  [new-check]=new_check.sh
   [install]=install-gates.sh [selftest]=selftest.sh    [index]=reindex.sh
-  [console]=console.sh
+  [console]=console.sh        [docs]=doc_impact.sh
 )
 
 if [ $# -eq 0 ]; then
@@ -35,6 +35,7 @@ cat <<'FLOW'
 │            aim run      <角色> <任务单>     起独立进程执行（不受嵌套限制）
 │                                            打回续修加 --resume，别重开
 │  ③ 开工考   aim exam <角色>                 五道通用流程题，不过退回重派
+│  ★ 随时    aim docs                         我改了这些 → 要连带看哪些文档
 │  ④ 着陆    aim done                         着陆检查单，全绿才许提交
 │  ⑤ 起审    aim review <reviewer> <commit>   审的是本地 commit，不必先推
 │  ⑥ 收审    aim review-done <角色> <base> <head> <approved|rejected>

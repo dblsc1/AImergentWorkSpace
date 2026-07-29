@@ -139,6 +139,12 @@ $(cat "$dest_dir/AGENTS.md")
   本模块规范    \`AGENTS.md\`（含技术栈、自检门、**已知坑**）
   本模块契约    \`module_docs/contract.md\`（你只读；不够用上报 arbiter，不自己改）
 
+# 改代码前后各跑一次（这条最容易忘，但漏了必被着陆拦）
+
+  \`$fw_rel/scripts/doc_impact.sh\`   ← 我改了这些 → 必须连带看哪些长期文档
+  它会直接列出「文档 ← 因为改了哪个文件」。每份只有两种处置：改到位，或在
+  report.json 写 \`{"action":"no-change-needed","reason":"…"}\`。**写不出理由才是问题。**
+
 **遇事先查这张表，别猜。** 猜出来的路径会变成下一个人要修的死链。
 AGENT
 

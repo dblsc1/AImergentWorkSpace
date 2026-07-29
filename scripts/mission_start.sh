@@ -155,6 +155,18 @@ _stale=$(ls "$lease_dir"/*.lease 2>/dev/null | xargs -r -n1 basename 2>/dev/null
 if [ -z "$_stale" ]; then cl_ok 7 "无他人遗留路签"
 else cl_skip 7 "他人持签中：$_stale" "不冲突即可并发；确认已完工的用 --release <角色> 还签"; fi
 
+# 起飞预告：这片写区可能牵动哪些长期文档 —— 现在知道，好过着陆时被拦
+if [ -f "$root/scripts/lib/docmap.sh" ]; then
+  . "$root/scripts/lib/docmap.sh"
+  _pre=$(dm_impact "${want[@]}" 2>/dev/null | cut -f1 | sort -u)
+  if [ -n "$_pre" ]; then
+    cl_note "这片写区可能牵动的长期文档（着陆时会逐条核）："
+    while read -r _d; do [ -n "$_d" ] && cl_table_row "  " "$_d"; done <<<"$_pre"
+    cl_note "干活中随时可查：scripts/doc_impact.sh"
+    printf '│\n'
+  fi
+fi
+
 cl_footer "起飞检查通过，发签并出派单提示词" "起飞检查未通过，不发签" || exit 1
 
 printf '%s\n' "${want[@]}" > "$lease_dir/$role.lease"

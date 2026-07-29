@@ -52,7 +52,9 @@ mod_top=$(git -C "$mod_real" rev-parse --show-toplevel 2>/dev/null || true)
 
 required=(
   hooks/pre-push hooks/commit-msg hooks/pre-commit hooks/cc-push-guard.sh
-  arbiter-push.sh mission_complete.sh exam.sh dispatch.sh reindex.sh console.sh
+  arbiter-push.sh mission_complete.sh mission_start.sh exam.sh dispatch.sh
+  review_start.sh review_complete.sh doc_impact.sh reindex.sh console.sh
+  lib/emit.sh lib/paths.sh lib/checklist.sh lib/docmap.sh
 )
 if [ "$hook_only" -eq 0 ]; then
   required+=(
@@ -83,10 +85,30 @@ if [ "$hook_only" -eq 0 ]; then
     doc-path-exempt.txt; do
     copy_file "$CI/gates/$gate" "$mod_real/scripts/gates/$gate"
   done
-  for hook in pre-push commit-msg cc-push-guard.sh; do
+  for hook in pre-push pre-commit commit-msg cc-push-guard.sh; do
     copy_file "$CI/hooks/$hook" "$mod_real/scripts/hooks/$hook"
+    chmod +x "$mod_real/scripts/hooks/$hook"
   done
-  copy_file "$CI/arbiter-push.sh" "$mod_real/scripts/arbiter-push.sh"
+  # 流程脚本：不装这些，模块的提交闸门等于不存在。
+  # 实证（2026-07-29）：模块里只有 gates/ 与 3 个 hook，没有 pre-commit、
+  # 没有 mission_complete、没有 checks/ —— **每一次提交的着陆检查一次都没跑过**，
+  # 而 pre-commit 缺文件时还静默放行。三个模块就这么提交了一整天。
+  for s_ in arbiter-push.sh mission_complete.sh mission_start.sh exam.sh dispatch.sh \
+            review_start.sh review_complete.sh doc_impact.sh reindex.sh console.sh \
+            log_event.sh new_task_id.sh aim; do
+    [ -f "$CI/$s_" ] || continue
+    copy_file "$CI/$s_" "$mod_real/scripts/$s_"
+    chmod +x "$mod_real/scripts/$s_"
+  done
+  # 共享库与检查项：整棵子树
+  for sub in lib checks; do
+    while IFS= read -r f_; do
+      rel=${f_#"$CI"/}
+      mkdir -p "$mod_real/scripts/$(dirname "$rel")"
+      copy_file "$f_" "$mod_real/scripts/$rel"
+      chmod +x "$mod_real/scripts/$rel"
+    done < <(find "$CI/$sub" -type f 2>/dev/null)
+  done
   chmod +x "$mod_real/scripts/gates/run-gates.sh" "$mod_real/scripts/gates/run-tests.sh" \
     "$mod_real/scripts/gates/check-references.sh" \
     "$mod_real/scripts/gates/check-report-schema.sh" "$mod_real/scripts/hooks/pre-push" \
@@ -124,7 +146,12 @@ else
 fi
 printf '   pre-push + commit-msg + pre-commit: 字节一致且可执行\n'
 if [ "$hook_only" -eq 0 ]; then
-  printf '   tracked CI: gates + test + attribution marker\n'
+  printf '   tracked CI: gates + checks + lib + 流程脚本 + attribution marker\n'
+  # 装完回验：不信拷贝的退出码，看关键件是否真在
+  for must in scripts/mission_complete.sh scripts/hooks/pre-commit \
+              scripts/checks/_common/10-worklog-changed.sh scripts/lib/paths.sh; do
+    [ -f "$mod_real/$must" ] || die "安装回验失败：$mod_real/$must 不存在（拷贝报成功但东西没落地）"
+  done
 else
   printf '   --hook-only: 保留仓内已有 CI 文件\n'
 fi

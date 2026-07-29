@@ -311,5 +311,32 @@ else
   F "没有入口，或检查单只在派单提示词里出现一次（会滚走）"
 fi
 
+# 32 ── 模块的提交闸门从来没装上过，而且缺了不报错
+printf '32. 模块是否真的装到完整闸门\n'
+if grep -q 'mission_complete.sh mission_start.sh' "$S/install-gates.sh" 2>/dev/null &&
+   grep -q '拒绝提交' "$S/hooks/pre-commit" 2>/dev/null; then
+  P "install-gates 装齐流程脚本+checks+lib；pre-commit 缺件即拒绝，不静默放行"
+else
+  F "模块可能只装了 gates/ —— 着陆检查一次都不会跑，且缺件时静默放行"
+fi
+
+# 33 ── 「改了这个要看哪些文档」只在着陆算一次
+printf '33. 文档影响面是否五个时点都能算\n'
+if [ -x "$S/doc_impact.sh" ] && [ -f "$S/lib/docmap.sh" ] &&
+   grep -q 'doc_impact' "$S/arbiter-push.sh" 2>/dev/null &&
+   grep -q 'dm_impact' "$S/mission_start.sh" 2>/dev/null; then
+  P "算法抽成 lib/docmap.sh，起飞/随时/着陆/推送各调一次，同一个答案来源"
+else
+  F "影响面只在着陆算 —— 起飞不知道、干活中查不到、推送不再算"
+fi
+
+# 34 ── 模块副本会随框架演进静默过期
+printf '34. 模块门禁新鲜度是否被核\n'
+if [ -n "$(find "$S/checks" -name '13-gates-fresh.sh' 2>/dev/null)" ]; then
+  P "模块门禁副本与框架逐文件比对，过期或缺件即红"
+else
+  F "模块门禁停在装它那天的版本，在跑、在绿，但跑的是旧判据"
+fi
+
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
 [ "$fail" -eq 0 ]
