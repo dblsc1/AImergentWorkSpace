@@ -81,6 +81,10 @@
       "path": "agents/reference/manual/文档地图.md",
       "action": "no-change-needed",
       "reason": "前人成果对照是 reference 参考文献，非长期治理文档，地图不逐篇登记 reference 下的调研产物"
+    },
+    {
+      "path": "agents/consulter/记忆.md",
+      "action": "updated"
     }
   ],
   "findings": [
