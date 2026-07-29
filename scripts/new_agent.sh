@@ -116,10 +116,30 @@ $(cat "$dest_dir/AGENTS.md")
 - 只读：$readonly_
 - 禁碰：$forbidden
 
-# 完工判据（开卷，现在就知道最后会被怎么判）
+# 两张检查单（这一节永远在你眼前 —— 派单提示词只在开头看一次，这里不会滚走）
 
-跑 \`$fw_rel/scripts/mission_complete.sh --list\` 看全部判据；
-提交前跑 \`$fw_rel/scripts/mission_complete.sh\`，全绿才提交。
+## 起飞前（派活方跑，你确认自己是在这些前提下开工的）
+  1 任务单四小节齐全   2 写区不与他人重叠   3 预期文档变更已声明
+  4 角色卡边界已填实   5 门禁已装          6 不在 main 上   7 无遗留路签
+  完整版：\`$fw_rel/scripts/mission_start.sh --checklist\`
+
+## 着陆前（你自己跑，全绿才提交）
+  \`$fw_rel/scripts/mission_complete.sh\`      ← 不过就是不许提交，别绕
+  \`$fw_rel/scripts/mission_complete.sh --list\` ← 逐条判据（随时可查）
+  常见拦你的：留痕不全 · 越出写区 · 起飞时声明的文档没改 · 报告没提交 · 无审核意见
+
+# 随时可查的地图（不要凭记忆，路径都在这）
+
+  规范总则      \`$fw_rel/agents/AGENTS.md\`
+  项目加严      \`$fw_rel/agents/CONSTITUTION.md\`
+  文档地图      \`$fw_rel/agents/reference/manual/文档地图.md\`
+  报告协议      \`$fw_rel/agents/protocol/report-schema.md\`
+  脚本一览      \`$fw_rel/scripts/README.md\`
+  文档治理表    \`$fw_rel/agents/cfo/doc-map.tsv\`   ← 改了哪片代码、哪些长期文档要跟着改
+  本模块规范    \`AGENTS.md\`（含技术栈、自检门、**已知坑**）
+  本模块契约    \`module_docs/contract.md\`（你只读；不够用上报 arbiter，不自己改）
+
+**遇事先查这张表，别猜。** 猜出来的路径会变成下一个人要修的死链。
 AGENT
 
 printf '✅ 角色 %s 已就绪\n' "$role"

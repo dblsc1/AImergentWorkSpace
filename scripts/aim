@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# 单一入口 —— 不用记 18 个脚本名，只要记一个动作在生命周期的哪一步。
+#
+#   scripts/aim              看整条流程 + 我现在该跑哪个
+#   scripts/aim <动作> …     直接执行（等价于跑对应脚本）
+#
+# 为什么要这个：脚本数量本身不是问题，**"我现在该跑哪个"没有答案**才是问题。
+# 分目录只解决"东西放哪"，解决不了"下一步是什么"。
+set -uo pipefail
+root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "❌ 不在 Git 仓内" >&2; exit 2; }
+S="$root/scripts"
+
+declare -A MAP=(
+  [start]=mission_start.sh   [dispatch]=dispatch.sh    [run]=run_agent.sh
+  [exam]=exam.sh             [review]=review_start.sh  [review-done]=review_complete.sh
+  [done]=mission_complete.sh [push]=arbiter-push.sh    [merge]=merge-to-integration.sh
+  [new-module]=new_module.sh [new-agent]=new_agent.sh  [new-check]=new_check.sh
+  [install]=install-gates.sh [selftest]=selftest.sh    [index]=reindex.sh
+  [console]=console.sh
+)
+
+if [ $# -eq 0 ]; then
+cat <<'FLOW'
+
+┌─ 一次任务的生命周期（按顺序，括号里是 aim 的动作名）
+│
+│  建东西（一次性）
+│    aim new-module <名字>       建模块：骨架+门禁+三个角色+初始 commit
+│    aim new-agent  <角色>       建角色实例：填实写边界 + 生成 system prompt
+│    aim install    .            给本仓装门禁（clone 后第一件事）
+│
+│  ① 起飞    aim start <角色> <任务单> <写区…> [--docs update:<路径>]
+│                                7 项检查单 → 全过才发写区路签、才出提示词
+│  ② 派活    aim dispatch <角色> <任务单>     出提示词（自己开子代理时用）
+│            aim run      <角色> <任务单>     起独立进程执行（不受嵌套限制）
+│                                            打回续修加 --resume，别重开
+│  ③ 开工考   aim exam <角色>                 五道通用流程题，不过退回重派
+│  ④ 着陆    aim done                         着陆检查单，全绿才许提交
+│  ⑤ 起审    aim review <reviewer> <commit>   审的是本地 commit，不必先推
+│  ⑥ 收审    aim review-done <角色> <base> <head> <approved|rejected>
+│  ⑦ 推送    aim push origin <分支>           先跑门禁 + 校验有 approved 审核
+│  ⑧ 合并    aim merge <仓>                   目标 dev；main 只由人推
+│
+│  台账
+│    aim index      生成 logs/INDEX.md 留痕索引
+│    aim console    生成控制台数据
+│    aim selftest   门禁有效性自测（改了门禁就跑）
+│
+└─ 看单子：aim start --checklist（起飞） · aim done --list（着陆）
+
+FLOW
+  exit 0
+fi
+
+act=$1; shift
+target=${MAP[$act]:-}
+[ -n "$target" ] || { echo "❌ 不认识的动作: $act（跑 scripts/aim 看全部）" >&2; exit 2; }
+[ -x "$S/$target" ] || { echo "❌ 缺少 $S/$target" >&2; exit 2; }
+exec "$S/$target" "$@"

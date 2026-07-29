@@ -44,4 +44,21 @@ if [ -f "$map" ]; then
     bad "文档地图列出的 $p 不存在（导航与实际结构脱节）"
   done < <(grep -oE '`(agents|code|logs|scripts|control-panel)/[^`]+`' "$map" | tr -d '`' | sort -u)
 fi
+# ⑤ 孤儿留痕树：改名/迁移后旧目录还在，里面还有内容 ——
+# **旧树看起来是活的**，人打开它以为"没更新"，而新树其实一直在写。
+# 这比丢文件更坏：丢了会被发现，两棵并存不会。
+canon_docs="agents/cfo/docs agents/consulter/docs"
+while IFS= read -r -d '' d; do
+  case "$d" in */.git/*) continue ;; esac
+  d=${d%/}
+  # 只看 <角色目录>/docs 形状的
+  case "$d" in *"/docs") ;; *) continue ;; esac
+  case " $canon_docs " in *" $d "*) continue ;; esac
+  case "$d" in codeagent/*/docs|code/*/codeagent/*/docs) continue ;; esac   # 模块内是合法的
+  n=$(find "$d" -type f ! -name '.gitkeep' 2>/dev/null | wc -l)
+  [ "$n" -eq 0 ] && continue
+  bad "孤儿留痕树：$d 还有 $n 个文件，但 canonical 路径已不是它"
+  bad "   → 迁移没做完。搬到 canonical 路径后删掉旧目录；两棵并存时人会打开旧那棵，以为「没更新」"
+done < <(find agents -type d -name docs -print0 2>/dev/null)
+
 exit $fail

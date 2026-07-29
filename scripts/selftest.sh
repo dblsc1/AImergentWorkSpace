@@ -294,5 +294,22 @@ else
   F "还是 die-on-first —— 只报第一个问题，人要来回跑好几趟"
 fi
 
+# 30 ── 改名后旧留痕树还在，看起来是活的，人打开它以为"没更新"
+printf '30. 孤儿留痕树是否会被发现\n'
+if [ -n "$(find "$S/checks" -name '12-standing-docs.sh' 2>/dev/null)" ] &&
+   grep -q '孤儿留痕树' "$S/checks/_common/12-standing-docs.sh" 2>/dev/null; then
+  P "迁移留下的旧 docs 树会被点名（两棵并存时人会打开旧那棵）"
+else
+  F "改名后旧留痕树静默留着 —— 看起来是活的，实际早已停更"
+fi
+
+# 31 ── 18 个脚本平铺，"我现在该跑哪个"没有答案
+printf '31. 是否有单一入口与常驻检查单\n'
+if [ -x "$S/aim" ] && grep -q '两张检查单' "$S/new_agent.sh" 2>/dev/null; then
+  P "scripts/aim 给出生命周期入口；两张检查单与地图写进 agent 的 system prompt（常驻）"
+else
+  F "没有入口，或检查单只在派单提示词里出现一次（会滚走）"
+fi
+
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
 [ "$fail" -eq 0 ]
