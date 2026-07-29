@@ -30,6 +30,17 @@
   consulter 自己改的框架仍由 CFO 审，双方共同参与的仍交人类。
 - 登记见 `agents/CONSTITUTION.md` §4。
 
+## 跨 checkout 的交叉审怎么走（consulter 框架改动 → CFO 审）
+
+框架仓与项目仓是**同一个 GitHub 仓的不同 checkout**，CFO 只能通过远端看到 consulter 的
+commit——所以这条审必然**先推后审**，与「先审后推」判例不冲突：v5 是工作分支，不是 main。
+
+1. consulter 落 commit，`report.json` 的 `reviewer_opinion` 标 `pending`；
+2. 推 v5 用 `AIMERGENT_PUSH_UNREVIEWED=1 scripts/arbiter-push.sh origin v5`
+   （记账逃生口，diary 可查；这是本流程的**常规路径**，不是违规）；
+3. CFO 仓 `git pull` 后对固定区间 `<旧tip>..<新tip>` 审，verdict 经
+   `review_complete.sh` 落痕；rejected 的改动由 consulter 在框架仓返修再推。
+
 ## consulter 的长期定位（本矩阵的推论）
 
 - **看模式，不看单点**：从 canonical report、留痕与 diff 的**批量证据**里找系统性偏差

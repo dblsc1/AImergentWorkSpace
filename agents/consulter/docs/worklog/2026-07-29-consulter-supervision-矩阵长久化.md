@@ -32,6 +32,15 @@ session prompt 里——会话蒸发即消失。本任务把它固化进框架�
 - selftest 36/36 PASS（正向），#35/#36 各做红/绿反向验证，退出码直取。
 - check-references 全绿；文档地图新增 supervision.md 条目、协议数去计数化。
 
+## 补充（同日）：跨 checkout 交叉审流程入矩阵
+
+推送时撞上结构性鸡生蛋：推送门要 approved 审核，CFO 却只能从远端看到 commit。
+把「先推后审 + 记账逃生口 = 本流程常规路径」写进 supervision.md，v5 非 main，
+与「先审后推」判例不冲突。用户已裁决由其亲自跑逃生口推送。
+
+另：本轮第三次被 `cmd | tail; echo $?` 骗——这次门禁拒了 commit 而管道报 0，
+靠 `git log` 才识破。教训升级为「判 commit 成败只看 git log/rev-parse，不看回显」。
+
 ## 待 CFO 审
 
 本 commit 全部是 consulter 改的框架 → 按矩阵由 CFO 审，我不自批。
