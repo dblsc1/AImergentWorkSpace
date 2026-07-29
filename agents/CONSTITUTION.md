@@ -29,10 +29,10 @@
 | 编号 | 日期 | 裁决内容 | 提出者 | 状态 |
 |---|---|---|---|---|
 | J1 | 2026-07-29 | cfo_reviewer 职位**先搁置**；空缺期由 consulter 代任 CFO 产出的例行审查（代任=过渡态，职位设立即退出）。例行审查归 reviewer 层、consulter 长期只做模式监督——完整矩阵固化于 `agents/protocol/supervision.md`。 | 用户 | 生效 |
-| J2 | 2026-07-29 | 测试分层：programmer 写 pytest 级单元测试；reviewer 写整合级（跨整个代码文件）测试 + 规范性审核。两层都入 push 前测试。 | 用户 | 生效（条文未同步，见 §4.1） |
-| J3 | 2026-07-29 | 留痕迁到代码旁：worklog（简短）与 report.json 迁入代码目录旁；每模块一页纸说明，每改必核（落检查项）。 | 用户 | 生效（条文未同步，见 §4.1） |
-| J4 | 2026-07-29 | jsonl 沟通留痕改为每 agent 一份（发任务/报完成，append-only）。 | 用户 | 生效（条文未同步，见 §4.1） |
-| J5 | 2026-07-29 | arbiter push 前测试范围＝本模块全量 + 消费方契约测试；全仓跨模块全量归合入 dev/main 的 CI。 | 用户 | 生效（条文未同步，见 §4.1） |
+| J2 | 2026-07-29 | 测试分层：programmer 写 pytest 级单元测试；reviewer 写整合级（跨整个代码文件）测试 + 规范性审核。两层都入 push 前测试。 | 用户 | **已落地**（铁律 17、角色卡、run-tests 发现域） |
+| J3 | 2026-07-29 | 留痕迁到代码旁：worklog（简短）与 report.json 迁入代码目录旁；每模块一页纸说明，每改必核（落检查项）。 | 用户 | **已落地**（report-schema、模板、checks/10+14、check-report-schema；存量模块旧路径过渡期兼容） |
+| J4 | 2026-07-29 | jsonl 沟通留痕改为每 agent 一份（发任务/报完成，append-only）。 | 用户 | **已落地**（comm.jsonl 落点 + new_instance 生成；logs/diary.jsonl 保留为脚本事件账本） |
+| J5 | 2026-07-29 | arbiter push 前测试范围＝本模块全量 + 消费方契约测试；全仓跨模块全量归合入 dev/main 的 CI。 | 用户 | **已落地**（run-tests 扫 code+review/reviewcode，arbiter 卡入义务） |
 | GAP-1 | YYYY-MM-DD | <一句话结论> | <谁> | 已落地 / **未落地** |
 
 ## §4.1 已批准但尚未落进契约的裁决 ⚠️
@@ -49,9 +49,9 @@
 
 | 裁决编号 | 批准日期 | 已批准的新行为 | 契约当前仍写着的旧行为 | 待改文件清单 |
 |---|---|---|---|---|
-| J2 | 2026-07-29 | programmer 写单测；reviewer 写整合级测试+规范审核 | `agents/roles/programmer_reviewer.md` 等只写「审核脚本」，未提整合测试职责 | `agents/roles/programmer_reviewer.md`（补整合测试职责）、`agents/roles/programmer.md`（明确单测义务）、`agents/AGENTS.md` 铁律 17（reviewer 第一职责表述）、`scripts/gates/run-tests.sh`（两层测试入口） |
-| J3 | 2026-07-29 | worklog+report.json 放代码目录旁；一页纸说明每改必核 | `agents/protocol/report-schema.md` canonical path 表指 `codeagent/<角色>/docs/`；铁律 5/18 落点表述 | `agents/protocol/report-schema.md`（canonical 表）、`agents/AGENTS.md` 铁律 5/13/18、`code/_template/`（骨架）、`scripts/checks/_common/10-worklog-changed.sh`、`20-report-committed.sh`、`check-report-schema.sh`（路径判据）、新检查项：一页纸说明每改必核 |
-| J4 | 2026-07-29 | jsonl 每 agent 一份 | `agents/AGENTS.md` 文档四件套表写全仓 `logs/diary.jsonl` 单份 | `scripts/log_event.sh`（落点参数化）、`agents/AGENTS.md` 四件套表、`agents/protocol/orchestration.md`、`scripts/reindex.sh`/`console.sh`（读取端） |
-| J5 | 2026-07-29 | push 前＝本模块全量+契约测试 | `scripts/gates/run-tests.sh` 未定义分层范围 | `scripts/gates/run-tests.sh`、`agents/roles/arbiter.md`（push 前义务）、`scripts/arbiter-push.sh`（调用链） |
+| — | — | — | — | — |
+
+（J2–J5 已于 2026-07-29 当日落地并清出本节；落地明细见 §4 状态列与
+`agents/consulter/docs/worklog/2026-07-29-consulter-j2j5-迁移落地.md`。）
 
 （本节为空 = 契约与裁决一致，可以正常推进。）

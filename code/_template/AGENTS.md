@@ -27,17 +27,25 @@
 
 **没过自检门不许交审核。** 这条是给 programmer 的硬要求，也是 arbiter 开单时必须写进任务单的。
 
-## 4. 流程
+## 4. 流程（arbiter 长期存在；programmer/reviewer 是编号实例）
 
-1. arbiter 开单 → `scripts/mission_start.sh <角色> <任务单> <写区>` **发路签**（写区重叠即拒派）
-2. programmer 实现 + 自测 + 跑 `review/reviewcode/run_all.sh`
-3. `scripts/mission_complete.sh` 全绿 → **本地 commit**（不推）
-4. `scripts/review_start.sh programmer_reviewer <commit>` → reviewer 审**本地 commit**
+1. arbiter 需要人手 → `scripts/new_instance.sh <programmer|reviewer>` 开编号实例
+   （`codeagent/<容器>/<编号>/{agent.md, session, docs/comm.jsonl}`）。
+   **同一块代码复用同一实例**：实例 `session` 文件存 harness session id，
+   shell 调用带上它续用，不重开（重开＝冷启动重读全部上下文）。
+2. arbiter 开单 → `scripts/mission_start.sh <角色> <任务单> <写区>` **发路签**（写区重叠即拒派）；
+   发任务记入自己 `docs/arbiter.jsonl` 与实例 `comm.jsonl`（J4）
+3. programmer 实现 + **pytest 级单测（新增代码必须同批新增测试，J2）** + 跑 `review/reviewcode/run_all.sh`；
+   留痕落自己代码侧：`code/<子文件夹>/{worklog/, report.json, handoff.md}`（J3）
+4. `scripts/mission_complete.sh` 全绿 → **本地 commit**（不推）
+5. `scripts/review_start.sh programmer_reviewer <commit>` → reviewer 审**本地 commit**
+   + 维护整合级/契约测试（`review/reviewcode/tests/`，J2）
    → `scripts/review_complete.sh ... approved|rejected`
-5. rejected → `scripts/run_agent.sh programmer --resume` **续用同一个 agent 返修**，上限 2 次
-6. approved → `scripts/arbiter-push.sh` 推远端（**先审后推：被打回的活不上远端**）
-7. 交 CFO 前由 `module_reviewer` 审规范面
-8. `scripts/merge-to-integration.sh` 合入 `dev`；**dev → main 由人在用户测试通过后推**
+6. rejected → 用实例 `session` **续用同一个 agent 返修**，上限 2 次
+7. approved → arbiter 跑**本模块全量 + 契约测试**（`scripts/gates/run-tests.sh`，J5）
+   → `scripts/arbiter-push.sh` 推远端（**先审后推：被打回的活不上远端**）
+8. 交 CFO 前由 `module_reviewer` 审规范面
+9. `scripts/merge-to-integration.sh` 合入 `dev`；**dev → main 由人在用户测试通过后推**
 
 ## 5. 对外接口
 

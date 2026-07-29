@@ -58,11 +58,10 @@ if grep -rIl -F -- '{{MODULE_NAME}}' "$dest" 2>/dev/null | grep -q . ||
   die "骨架占位符替换不完整: $dest"
 fi
 
-# ── 角色实例：交给 new_agent.sh 统一生成（角色卡填实 + system prompt + 出生考卷）──
-for r in arbiter programmer programmer_reviewer; do
-  AIMERGENT_FRAMEWORK_ROOT="$PROJECT_ROOT" "$PROJECT_ROOT/scripts/new_agent.sh" "$r" "$dest" >/dev/null ||
-    die "角色生成失败: $r"
-done
+# ── 角色：arbiter 长期单例，由 new_agent.sh 生成；programmer/reviewer 是编号实例，
+#    由 arbiter 开工后按需用 scripts/new_instance.sh 创建（J3 布局）──
+AIMERGENT_FRAMEWORK_ROOT="$PROJECT_ROOT" "$PROJECT_ROOT/scripts/new_agent.sh" arbiter "$dest" >/dev/null ||
+  die "角色生成失败: arbiter"
 
 
 # 记下框架根的相对位置，供 dispatch.sh 解析角色卡（不硬编码绝对路径）
@@ -95,7 +94,8 @@ printf '✅ 模块 %s 已就绪: %s\n' "$name" "$dest"
 printf '   framework : %s\n' "$framework_ref"
 printf '   Git       : main 已有脚手 commit，当前在 feat/init 分支\n'
 printf '   门禁      : 已安装（scripts/gates + hooks + pre-commit）\n'
-printf '   角色      : arbiter / programmer / programmer_reviewer 已生成（含 .claude/agents 与出生考卷）\n'
+printf '   角色      : arbiter 已生成（长期单例）；programmer/reviewer 是编号实例，按需开\n'
 printf '   下一步    : ① 填 module_docs/{contract,rules}.md（此前 reviewcode 会红，那是待办不是故障）\n'
-printf '               ② scripts/dispatch.sh <角色> <任务单>\n'
+printf '               ② scripts/new_instance.sh <programmer|reviewer> <写区>  开实例\n'
+printf '               ③ scripts/dispatch.sh <角色> <任务单>\n'
 printf '   模板改动只回到 %s\n' "$TEMPLATE"

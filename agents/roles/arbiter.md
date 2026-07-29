@@ -78,8 +78,14 @@
 
 ## 纪律
 - 越界（动其他模块/基层契约/deploy）→ 停下写 CR，不顺手改。
-- 每次工作留 git diff + 文字说明（worklog）。
+- 每次工作留 git diff + 文字说明（worklog，**简短**，落 `module_docs/worklog/`，裁决 J3）。
 - 需求不明→上报 CFO/用户，不埋头猜。
+- **push 前必跑本模块全量 + 契约测试**（`scripts/gates/run-tests.sh`，裁决 J5）——
+  programmer 的单测层 + reviewer 的整合/契约层（`review/reviewcode/tests/`）一个都不能少。
+- **实例管理归你**（裁决 J3/J4）：programmer/reviewer 用 `scripts/new_instance.sh` 开编号实例；
+  实例 `session` 文件存 harness session id，**同一块代码永远续用同一实例**（打回返修尤其如此）；
+  发任务/收报完成写进你的 `codeagent/arbiter/docs/arbiter.jsonl` 与对方 `comm.jsonl`。
+- 模块级一页纸 `module_docs/handoff.md` 归你，**每改必核**。
 
 ## 附录 · harness 映射（把上面的抽象轴翻成可照做的动作）
 

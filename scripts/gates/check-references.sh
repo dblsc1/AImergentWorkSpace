@@ -70,7 +70,7 @@ if [ -f "$schema" ] && [ "$is_module" -eq 0 ]; then
   while read -r p; do
     [ -n "$p" ] || continue
     d=$(dirname "$p")
-    case "$d" in codeagent/*) continue ;; esac   # 模块内路径，建模块后才有
+    case "$d" in codeagent/*|module_docs|module_docs/*|review|review/*) continue ;; esac   # 模块内路径，建模块后才有（J3 后含 module_docs/ 与 review/）
     [ -d "$d" ] || bad "report-schema 点名的 canonical 路径，目录不存在: $d"
   done < <(grep -oE '`[a-zA-Z0-9._/-]+/report\.json`' "$schema" | tr -d '`' | sort -u)
 fi

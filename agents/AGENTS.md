@@ -53,39 +53,46 @@
 
 适用于多人、多模块、需要可审计交付或有外部消费方的项目。启用 CFO / 模块 arbiter / frontend / backend / reviewagent、报告协议、独立审核和 CI/合并门。下文带“完整治理”的要求只在本模式强制。
 
-## 模块统一模板
+## 模块统一模板（2026-07-29 裁决 J2–J5 后的布局）
 
 ```text
 <module>/
 ├── AGENTS.md  CLAUDE.md
+├── module_docs/              # 模块级文档系统，arbiter 写
+│   ├── contract.md           #   对外契约（铁律 4，不迁）
+│   ├── rules.md  reviewlog.md  report.md
+│   ├── handoff.md            #   一页纸说明，每改必核（checks/14）
+│   ├── worklog/              #   arbiter 简短日志
+│   └── report.json           #   模块级交接（arbiter canonical）
 ├── codeagent/
-│   ├── arbiter/     AGENTS.md CLAUDE.md docs/
-│   ├── frontend/    AGENTS.md CLAUDE.md docs/
-│   ├── backend/     AGENTS.md CLAUDE.md docs/
-│   └── reviewagent/ AGENTS.md CLAUDE.md docs/
-├── module_docs/
-│   ├── contract.md
-│   ├── rules.md
-│   ├── reviewlog.md
-│   ├── report.md
-│   └── handoff.md
+│   ├── arbiter/              #   长期存在：AGENTS.md + docs/arbiter.jsonl
+│   ├── programmer/<编号>/     #   arbiter 用 new_instance.sh 开：
+│   │                         #     agent.md（实例卡）+ session（一行 id，复用）+ docs/comm.jsonl
+│   └── reviewer/<编号>/       #   同构（实例化 programmer_reviewer 角色卡）
 ├── code/
-│   ├── backend/
-│   └── frontend/
+│   ├── backend/              #   可再拆 backend1/ backend2/ …
+│   │   ├── <源码>
+│   │   ├── handoff.md        #   代码侧一页纸，programmer 写，每改必核
+│   │   ├── worklog/          #   简短
+│   │   └── report.json       #   子文件夹交接任务书（programmer canonical）
+│   └── frontend/             #   同构
 └── review/
-    ├── reviewcode/
-    └── reviewreport/
+    ├── reviewcode/           #   审核脚本 + reviewer 的整合级/契约测试（tests/）
+    └── reviewreport/         #   审核详报 + report.json（reviewer canonical）
 ```
 
-核心原则：`codeagent/` 只放规范与文档，代码只在 `code/`，审核脚本和详报只在 `review/`。
+核心原则：`codeagent/` 只放规范与 agent 实例（卡、session、jsonl），业务代码只在 `code/`，
+审核脚本和详报只在 `review/`；代码侧留痕（worklog / report.json / handoff.md）与源码同目录（裁决 J3）。
+arbiter 长期存在；programmer / reviewer 是**编号实例**，由 arbiter 通过 shell + `session` 文件调用，
+**同一块代码复用同一实例的 session**（续用不重开）。
 
 ## 角色与写边界（完整治理）
 
 | 角色 | 可写 | 只读 / 禁止 |
 |---|---|---|
-| 模块 arbiter | `module_docs/`（`reviewlog.md` 除外）、任务单、自己 docs | 禁写 `code/`、`review/` |
-| programmer | `code/`、自己 docs | 契约只读；禁写 `review/` |
-| programmer_reviewer | `review/`、自己 docs | `code/` 只读；禁修业务代码 |
+| 模块 arbiter（长期存在） | `module_docs/`（`reviewlog.md` 除外，含其 worklog/report.json/handoff.md）、任务单、实例目录管理（`codeagent/<容器>/<编号>/` 的创建与 session）、自己 docs | 禁写 `code/`、`review/` |
+| programmer 实例 | 其负责的 `code/<子文件夹>/`（含其中 worklog/report.json/handoff.md）、自己实例 docs | 契约只读；禁写 `review/`、别人的子文件夹 |
+| programmer_reviewer（reviewer 实例） | `review/`（含整合级测试 `reviewcode/tests/`）、自己实例 docs | `code/` 只读；禁修业务代码 |
 | module_reviewer | `review/reviewreport/`、自己 docs | 全模块只读；**只审规范面，不替 arbiter 做技术判断** |
 | CFO arbiter | 项目规范、跨模块契约关系、协调台账 | 禁亲写模块业务代码 |
 | consulter（**与 CFO 平级**） | 自己的评审留痕、必要的规范纠错、框架维护 | 禁执行业务实现、禁代替 CFO 裁决、**禁自审自己改的框架** |
@@ -115,12 +122,12 @@
 10. **提示词唯一事实**：`AGENTS.md` 是规范源；如需 Claude Code 兼容，同目录 `CLAUDE.md` 只保留 `@AGENTS.md`。
 11. **改动即同步文档**：架构、目录、接口或配置变化必须在同一逻辑变更中更新直接文档和所有导航/索引，不得只改一处。
 12. **canonical report（完整治理）**：每个 agent 在 `agents/protocol/report-schema.md` 指定的路径产出已提交、可重放的 `report.json`；人类详报不替代 canonical report。**未被 Git 跟踪、工作区脏、或落在仓外/临时目录的 report 一律按「未产出」处理。** 派活方（CFO / arbiter）回收子代理时**必须用 Git 核验**（文件在仓内、已 commit、内容与交接一致），**不接受口头「已写报告」**，也不接受指向仓外路径的报告引用。
-13. **文档四件套（完整治理）**：worklog / report.json / diary / handoff 分别表达过去叙事、当下交接、机器事件和未来接手，各一写属主，不重复。
+13. **文档四件套（完整治理，落点见 report-schema）**：worklog（**简短**）/ report.json / comm.jsonl（**每 agent 一份**，裁决 J4）/ handoff.md（一页纸，**每改必核**）分别表达过去叙事、当下交接、agent 沟通和未来接手，各一写属主，不重复。全仓 `logs/diary.jsonl` 是脚本事件账本，不承担 agent 沟通。
 14. **commit 唯一归属（完整治理）**：每个新 commit 有且只有一个 `Agent-Attribution: <role>@<module>+<task_id>` trailer，三段使用可解析的小写 slug。
 15. **一分支一活跃写者（完整治理）**：派活前基于已验证的远端 tip；交接前确认 candidate 真实落地；push 采用 fetch-then-push，非 fast-forward 拒绝是最后兜底。
 16. **P0 隐患必须绑定 fix owner**：安全、数据、未受控写入或破坏回滚级问题，必须指定属主并阻断受影响工作，直到修复或有效止血；归档不等于缓解。
-17. **审核代码化优先（完整治理）**：可机械核验的事实一律脚本化，肉眼只审判断题。reviewer 第一职责（永久）＝写审核检测脚本（`review/reviewcode/`）并运行、分析输出下判；要肉眼审必在报告写出「为何不能代码化」的具体理由。arbiter 开单时主动标出「应代码化的验收项」交 reviewer，审后发现该代码化却肉眼看的记进 worklog，下一轮任务单把补脚本列为硬验收项。
-18. **留痕强制 · 落点必须在仓内**：每个任务一条 worklog（`docs/worklog/YYYY-MM-DD-<角色>-<任务>.md`），每次审核一份 reviewreport。**无留痕 = 审核直接打回。** 留痕的落点由 `agents/protocol/report-schema.md` 的 canonical path 表规定；**临时目录、`/tmp`、会话工作目录不是留痕**——会话结束即蒸发的东西不能当证据。派活方在 `sub_reports[].path` 里引用的路径必须是**仓内相对路径**，引用仓外绝对路径 = 该子报告按未产出计。
+17. **审核代码化优先 + 测试分层（完整治理，裁决 J2/J5）**：可机械核验的事实一律脚本化，肉眼只审判断题。**测试分层**：programmer 写 pytest 级单元测试（新增代码必须同批新增测试）；reviewer 写整合级测试（跨整个代码文件，落 `review/reviewcode/tests/`）+ 审核检测脚本（`review/reviewcode/`）+ 规范性审核。**arbiter push 前跑本模块全量 + 消费方契约测试**（`scripts/gates/run-tests.sh`）；全仓跨模块全量归合入 dev/main 的 CI（J5）。要肉眼审必在报告写出「为何不能代码化」的具体理由。arbiter 开单时主动标出「应代码化的验收项」交 reviewer，审后发现该代码化却肉眼看的记进 worklog，下一轮任务单把补脚本列为硬验收项。
+18. **留痕强制 · 落点必须在仓内**：每个任务一条 worklog（`<落点>/worklog/YYYY-MM-DD-<角色>-<任务>.md`，落点＝arbiter `module_docs/`、programmer `code/<子文件夹>/`、项目级角色自己 `docs/`），每次审核一份 reviewreport。**无留痕 = 审核直接打回。** 留痕的落点由 `agents/protocol/report-schema.md` 的 canonical path 表规定；**临时目录、`/tmp`、会话工作目录不是留痕**——会话结束即蒸发的东西不能当证据。派活方在 `sub_reports[].path` 里引用的路径必须是**仓内相对路径**，引用仓外绝对路径 = 该子报告按未产出计。
 19. **审核可稀疏，自核必须可重放**：审核轮次不必每轮都开——由 arbiter 或人类按边际收益裁量，**减少审核轮次是被允许的**。但**每一轮免掉的审核，必须以确定性脚本自核顶上**：脚本落 `review/reviewcode/` 并 commit，报告里给出脚本路径与真实输出。"我跑了几条命令核过了"而命令没入仓 = 等于没核。**稀疏化换的是 reviewer 的时间，不是证据强度。**
 20. **框架根仓自身也受治理**：clone 下来的框架根不是"配置目录"，它是一个真实的受治理 Git 仓。根仓的任何工作同样适用铁律 1（走 `feat/`/`fix/`/`chore/` 分支，`main` 只经合并门更新）、14（Agent-Attribution）、18（留痕）。**clone 后第一件事是 `./ci/install-ci.sh .` 给根仓自己装门禁**，否则根仓处于"有规范、无门禁"的裸奔状态。
 
@@ -143,12 +150,13 @@
 
 | 文档 | 时间维度 | 唯一写属主 |
 |---|---|---|
-| worklog | 回顾过去：做了什么、为什么 | 各角色写自己 `docs/worklog/` |
-| report.json | 当下交接：任务终态与升级面 | 各角色写自己 canonical path |
-| diary / jsonl | 机器事件流水 | `scripts/log_event.sh` append-only |
-| handoff | 面向未来接手者 | 模块 arbiter 独占 `module_docs/handoff.md` |
+| worklog（简短） | 回顾过去：做了什么、为什么 | arbiter → `module_docs/worklog/`；programmer → `code/<子文件夹>/worklog/`；项目级角色 → 自己 `docs/worklog/` |
+| report.json | 当下交接：任务终态与升级面（programmer 的＝工作任务书） | 各角色写自己 canonical path（见 report-schema） |
+| comm.jsonl | agent 间沟通：发任务/报完成，append-only，**每 agent 一份**（J4） | 实例 `codeagent/<容器>/<编号>/docs/comm.jsonl`；arbiter `codeagent/arbiter/docs/arbiter.jsonl` |
+| handoff.md（一页纸） | 面向未来接手者，**每改必核**（checks/14） | 模块级归 arbiter `module_docs/handoff.md`；代码侧归 programmer `code/<子文件夹>/handoff.md` |
 
-arbiter 在接单时设定 `tier`：`simple` 只需 report + commit；`normal` 加 diary；`hard` 再检查 handoff。
+全仓 `logs/diary.jsonl`＝脚本事件账本（override 记账、门禁事件），由 `scripts/log_event.sh` append-only，与上表的 agent 沟通 jsonl 是两回事。
+arbiter 在接单时设定 `tier`：`simple` 只需 report + commit；`normal` 加 comm.jsonl 沟通留痕；`hard` 再检查 handoff。
 
 ## 级联读取顺序
 

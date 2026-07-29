@@ -13,8 +13,10 @@ is_exempt() {
   [ -f "$remote_exempt" ] && grep -qxF -- "$path" "$remote_exempt"
 }
 
+# J2/J5 测试分层：code/ 是 programmer 的单测；review/reviewcode/ 是 reviewer 的
+# 整合级/契约测试（tests/）。push 前两层都跑 = 「本模块全量 + 契约测试」。
 all=()
-mapfile -d '' all < <(git ls-files -z -- code 2>/dev/null || true)
+mapfile -d '' all < <(git ls-files -z -- code review/reviewcode 2>/dev/null || true)
 
 # 项目若跟踪 scripts/tests/test-*.sh，在此作为可复现治理 fixture 运行。
 ci_shell_tests=()

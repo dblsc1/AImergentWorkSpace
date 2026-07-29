@@ -44,13 +44,24 @@
 
 | 层级 / 角色 | canonical path |
 |---|---|
-| 模块 arbiter | `codeagent/arbiter/docs/report.json` |
-| programmer | `codeagent/programmer/docs/report.json` |
-| programmer_reviewer | `codeagent/programmer_reviewer/docs/report.json` |
+| 模块 arbiter | `module_docs/report.json`（模块级交接，裁决 J3） |
+| programmer 实例 | `code/<子文件夹>/report.json`（其负责代码侧的交接任务书，裁决 J3） |
+| reviewer 实例（programmer_reviewer） | `review/reviewreport/report.json` |
 | module_reviewer | `codeagent/module_reviewer/docs/report.json` |
 | CFO（项目 arbiter） | `agents/cfo/docs/report.json` |
 | consulter（**与 CFO 平级**，不隶属于它） | `agents/consulter/docs/findings/report.json` |
 | **临时执行者**（CFO/arbiter 直派、不属上述固定角色的一次性 implementer / reviewer / 归档工等） | `<派活方>/docs/subreports/<YYYY-MM-DD>-<task-id>-<role>.md` |
+| *(过渡期兼容)* 旧模块布局 | `codeagent/<角色>/docs/report.json` 仍被门禁承认，仅限 J3 迁移前生成的存量模块；新模块一律新落点 |
+
+**J3/J4 配套落点（与 report.json 同为留痕硬要求）**：
+
+- **worklog（简短）**：arbiter 写 `module_docs/worklog/`；programmer 写 `code/<子文件夹>/worklog/`。
+- **handoff.md（一页纸说明，每改必核）**：模块级 `module_docs/handoff.md`；代码侧 `code/<子文件夹>/handoff.md`。
+  改了某侧代码，同一提交必须更新该侧 handoff.md 或在 report.json `docs_reviewed` 里给出站得住的
+  `no-change-needed` 理由——由 `checks/_common/14-handoff-fresh.sh` 机器核。
+- **comm.jsonl（每 agent 一份，裁决 J4）**：agent 间发任务/报完成的格式化沟通留痕，append-only。
+  实例：`codeagent/<programmer|reviewer>/<编号>/docs/comm.jsonl`；arbiter：`codeagent/arbiter/docs/arbiter.jsonl`。
+  全仓 `logs/diary.jsonl` 保留为**脚本事件账本**（override 记账、门禁事件），不承担 agent 沟通。
 
 **临时执行者落点是硬要求，不是建议。** 固定六角色覆盖不了的一次性活（迁仓、归档、写契约、专项审核……）**同样必须把报告落进仓内**：由派活方在自己 `docs/subreports/` 下收编并**随本任务一起 commit**。派活方 `report.json` 的 `sub_reports[].path` **必须是仓根相对路径**；填 `/tmp/...`、会话工作目录或任何仓外绝对路径，该子报告按**未产出**计（铁律 12 / 18）。临时执行者不必单独出 `report.json`——它的报告由派活方收编进 `sub_reports`，但**文件本身必须可被后来者 `git show` 出来**。
 

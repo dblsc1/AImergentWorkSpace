@@ -165,6 +165,14 @@ canonical_review_changed=0
 while IFS= read -r path; do
   [ -n "$path" ] || continue
   case "$path" in
+    # ── J3 新布局（2026-07-29 裁决）：留痕迁代码旁 ──
+    module_docs/report.json) validate_common "$path" arbiter ;;
+    code/*/report.json|code/*/*/report.json) validate_common "$path" programmer ;;
+    review/reviewreport/report.json)
+      canonical_review_changed=1
+      validate_common "$path" programmer_reviewer
+      ;;
+    # ── 旧布局（过渡期兼容，仅存量模块；新模块一律新落点）──
     codeagent/programmer/docs/report.json) validate_common "$path" programmer ;;
     codeagent/programmer_reviewer/docs/report.json)
       canonical_review_changed=1
@@ -185,7 +193,7 @@ done < <(git -c core.quotePath=false diff --name-only --diff-filter=ACMRD \
   "$merge_base..$report_head")
 
 if [ "$review_artifact_changed" -eq 1 ] && [ "$canonical_review_changed" -ne 1 ]; then
-  bad "review/reviewreport/* 有变更，但本任务未同步 canonical codeagent/programmer_reviewer/docs/report.json"
+  bad "review/reviewreport/* 有变更，但本任务未同步 canonical review report（review/reviewreport/report.json，或存量模块的 codeagent/*_reviewer/docs/report.json）"
 fi
 
 [ "$fail" -eq 0 ] || exit 1

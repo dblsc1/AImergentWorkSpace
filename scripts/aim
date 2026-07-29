@@ -14,7 +14,7 @@ declare -A MAP=(
   [start]=mission_start.sh   [dispatch]=dispatch.sh    [run]=run_agent.sh
   [exam]=exam.sh             [review]=review_start.sh  [review-done]=review_complete.sh
   [done]=mission_complete.sh [push]=arbiter-push.sh    [merge]=merge-to-integration.sh
-  [new-module]=new_module.sh [new-agent]=new_agent.sh  [new-check]=new_check.sh
+  [new-module]=new_module.sh [new-agent]=new_agent.sh  [new-check]=new_check.sh [new-instance]=new_instance.sh
   [install]=install-gates.sh [selftest]=selftest.sh    [index]=reindex.sh
   [console]=console.sh        [docs]=doc_impact.sh
 )
@@ -27,6 +27,7 @@ cat <<'FLOW'
 │  建东西（一次性）
 │    aim new-module <名字>       建模块：骨架+门禁+三个角色+初始 commit
 │    aim new-agent  <角色>       建角色实例：填实写边界 + 生成 system prompt
+│    aim new-instance <programmer|reviewer>  模块内开编号实例（agent.md+session+comm.jsonl）
 │    aim install    .            给本仓装门禁（clone 后第一件事）
 │
 │  ① 起飞    aim start <角色> <任务单> <写区…> [--docs update:<路径>]

@@ -2,10 +2,10 @@
   "schema_version": 2,
   "module": "workspace",
   "role": "consulter",
-  "task": "审前任撞车 commit cbce175 + 判例库沉淀 + 用户目标口述入仓",
+  "task": "J2–J5 迁移落地（清空 §4.1）",
   "tier": "normal",
   "status": "approved",
-  "summary": "cbce175 审核 approved（红/绿核实 mission_start#4 修复），修补编号撞车与全景旧表述并收编遗留改动；判例库新增红/绿硬要求与管道$?注脚；用户目标口述入仓（五处差异 D1-D5 待裁决）；四项用户裁决(J2-J5)入台账，§4.1 登记待改清单——下一轮首件事是清空它",
+  "summary": "四项裁决全部落地：J3 留痕迁代码旁（协议/模板/门禁三层同步+过渡期兼容）、J4 每 agent comm.jsonl、J2/J5 测试分层入卡入 run-tests；新增 new_instance.sh 实例模型+session 复用；checks/14 每改必核；selftest 40/40，新断言逐条红/绿（含一次红测抓住断言自身弱判据）",
   "git": {
     "protocol": "embedded-self-v2",
     "branch": "v5",
@@ -13,11 +13,31 @@
     "head": "SELF",
     "diff_mode": "contains",
     "changed_files": [
+      "agents/protocol/report-schema.md",
+      "agents/AGENTS.md",
+      "agents/CONSTITUTION.md",
+      "agents/roles/programmer.md",
+      "agents/roles/programmer_reviewer.md",
+      "agents/roles/arbiter.md",
+      "agents/reference/新模块与新项目开设指南.md",
       "agents/reference/工作空间全景.md",
       "agents/reference/用户目标口述-可复现工作机制.md",
-      "agents/consulter/记忆.md",
+      "code/_template/AGENTS.md",
+      "code/_template/文档地图.md",
+      "code/_template/codeagent/arbiter/docs/README.md",
+      "code/_template/code/backend/handoff.md",
+      "code/_template/code/frontend/handoff.md",
+      "scripts/new_instance.sh",
+      "scripts/new_module.sh",
+      "scripts/aim",
+      "scripts/README.md",
+      "scripts/checks/_common/10-worklog-changed.sh",
+      "scripts/checks/_common/14-handoff-fresh.sh",
+      "scripts/gates/check-report-schema.sh",
+      "scripts/gates/check-references.sh",
+      "scripts/gates/run-tests.sh",
       "scripts/selftest.sh",
-      "agents/consulter/docs/worklog/2026-07-29-consulter-review-cbce175-及用户目标笔记.md",
+      "agents/consulter/docs/worklog/2026-07-29-consulter-j2j5-迁移落地.md",
       "agents/consulter/docs/findings/report.json"
     ]
   },
@@ -45,55 +65,65 @@
   "escalation": null,
   "docs_reviewed": [
     {
-      "path": "agents/consulter/记忆.md",
+      "path": "agents/reference/manual/文档地图.md",
+      "action": "no-change-needed",
+      "reason": "项目级地图不列模块内布局细节；模块级落点由模板内 code/_template/文档地图.md 承载，该文件已同批更新"
+    },
+    {
+      "path": "agents/reference/新模块与新项目开设指南.md",
       "action": "updated"
     },
     {
-      "path": "agents/reference/manual/文档地图.md",
-      "action": "no-change-needed",
-      "reason": "全景与用户口述均为 agents/reference/ 下新增/修订，地图已在 cbce175 登记全景；口述属方向性输入，待裁决落条文时再入地图"
+      "path": "agents/reference/工作空间全景.md",
+      "action": "updated"
     },
     {
       "path": "scripts/README.md",
+      "action": "updated"
+    },
+    {
+      "path": "code/_template/文档地图.md",
+      "action": "updated"
+    },
+    {
+      "path": "agents/cfo/doc-map.tsv",
       "action": "no-change-needed",
-      "reason": "selftest 仅改断言编号与覆盖面，README 对 selftest 的描述已去计数化，无需随条目数变"
+      "reason": "表只登记项目级/跨模块治理关系；模块内落点按约定自动推导，J3 改的是约定本身（已入 AGENTS.md 与 report-schema）"
+    },
+    {
+      "path": "code/_template/module_docs/contract.md",
+      "action": "no-change-needed",
+      "reason": "J3 改的是留痕落点与实例模型，不触碰对外行为；模板契约仍是占位骨架，语义不受影响"
+    },
+    {
+      "path": "code/_template/AGENTS.md",
+      "action": "updated"
     }
   ],
   "findings": [
     {
-      "category": "review",
-      "severity": "info",
-      "summary": "cbce175（前任所写）approved：mission_start#4 修复红/绿核实为真，修到类"
-    },
-    {
       "category": "process",
-      "severity": "medium",
-      "summary": "并行会话在同一仓各自新增 selftest 断言导致编号撞车（两个35）；分布式编号无协调机制，已重编为37，长期宜改为无序号或按内容寻址"
+      "severity": "info",
+      "summary": "J2–J5 当日落地并清空 §4.1；存量模块走过渡期兼容（旧 canonical 路径仍被承认），迁移由 CFO 排期"
     },
     {
-      "category": "doc-drift",
+      "category": "assertion-quality",
       "severity": "low",
-      "summary": "全景文档并行写入已废弃的分工表述——矩阵断言#35 的担忧当日即实证，已把全景纳入断言覆盖(4/4)并红/绿重验",
-      "file": "agents/reference/工作空间全景.md"
+      "summary": "selftest#40 首轮红测没红——grep 判据弱到命中文件名残留；红/绿点火当场抓住并收紧。佐证「只写断言不点火=没验过的烟雾报警器」",
+      "file": "scripts/selftest.sh"
     },
     {
-      "category": "constant-answer",
-      "severity": "medium",
-      "summary": "check-report-schema 要求 git.base 是 main merge-base 的祖先，模型假设短 feat 分支；长期分支 v5 上任何任务级 base 恒红（推送实测）。本报告 base 暂按门禁模型填 divergence 点 211bdec，任务粒度见 worklog；长期方案待人类裁决",
-      "file": "scripts/gates/check-report-schema.sh"
-    },
-    {
-      "category": "generated-drift",
+      "category": "lying-success",
       "severity": "low",
-      "summary": ".claude/agents/consulter.md（生成的子代理 prompt）不随源文件再生，已漂移到旧版卡（旧标题/旧分工/22条）；本轮手工重生成，长期宜加新鲜度断言（同 13-gates-fresh 形状）",
-      "file": ".claude/agents/consulter.md"
+      "summary": "new_module.sh 尾部打印「三角色已生成」而实际只生成 arbiter——改单例模型时的残留撒谎输出，已修",
+      "file": "scripts/new_module.sh"
     }
   ],
-  "reflection": "同一天第三次被管道 $? 骗（连门禁拒绝 commit 都没看出），教训已入判例库为硬注脚。",
+  "reflection": "大迁移按契约优先顺序（协议→规范→模板→脚本→检查→断言）一次走完并逐层验证，避免了半做状态；过渡期兼容是为存量模块留的活口，不是偷懒——记得让 CFO 排真正迁移。",
   "recommendations": [
-    "CFO 审区间更新为 6cceec1..HEAD（四个 consulter commit + 前任 cbce175 已由我审）",
-    "J2-J5 已批未落条文（CONSTITUTION §4.1 有确切待改清单）：下一轮框架实现第一优先，不得先做新功能",
-    "selftest 断言长期改为内容寻址或登记制，避免并行编号撞车"
+    "CFO：pull 后四模块补装门禁+红测留痕；对 6cceec1..HEAD 全区间交叉审（含本次大迁移）",
+    "下轮接线：run_agent.sh 自动读写实例 session 文件（现靠手动 --resume）",
+    "存量四模块迁 J3 布局后，删除 check-report-schema 的过渡期兼容分支（留着会永久双轨）"
   ],
   "reviewer_opinion": {
     "reviewer": "cfo",

@@ -356,6 +356,41 @@ else
   N "非框架仓布局，无项目级角色卡"
 fi
 
+# 38 ── J3 布局：留痕迁代码旁后，模板/协议/门禁三层必须同时认新落点
+printf '38. J3 新留痕布局是否三层一致\n'
+if [ "$repo/scripts" = "$S" ] && [ -d "$repo/agents" ]; then
+  _t=$repo/code/_template
+  if [ -d "$_t/module_docs/worklog" ] && [ -f "$_t/code/backend/handoff.md" ] &&
+     [ -d "$_t/codeagent/programmer" ] && [ ! -d "$_t/codeagent/programmer/docs" ] &&
+     grep -q 'module_docs/report.json' "$repo/agents/protocol/report-schema.md" &&
+     grep -q 'module_docs/report.json' "$S/gates/check-report-schema.sh" &&
+     grep -q 'code/\*/report.json' "$S/gates/check-report-schema.sh"; then
+    P "模板骨架、report-schema、check-report-schema 三层都认 J3 落点"
+  else
+    F "某一层还在旧布局——agent 会按读到的那层写错地方"
+  fi
+else
+  N "非框架仓布局"
+fi
+
+# 39 ── 一页纸「每改必核」：检查项存在、可执行、满足 --describe 契约
+printf '39. handoff 每改必核检查是否在位\n'
+_c14=$S/checks/_common/14-handoff-fresh.sh
+if [ -x "$_c14" ] && "$_c14" --describe >/dev/null 2>&1; then
+  P "checks/14 在位且满足 --describe（mission_complete 自动发现）"
+else
+  F "J3 的「每改必核」没有机器落点——一页纸会静默过期"
+fi
+
+# 40 ── 实例模型：new_instance 存在且 session 复用有落点
+printf '40. 编号实例与 session 复用是否有落点\n'
+if [ -x "$S/new_instance.sh" ] && grep -q 'session' "$S/new_instance.sh" &&
+   grep -qF '[new-instance]=new_instance.sh' "$S/aim"; then
+  P "new_instance.sh 生成 agent.md+session+comm.jsonl，aim 有入口"
+else
+  F "实例模型只在文档里——arbiter 开不出编号实例，续用不重开落不了地"
+fi
+
 # 36 ── 「N 条铁律 / N 条断言」的 N 是化石：写下来的那天就开始漂
 #        （实证：同一仓里同时存在 12、22、23 三个数字，实际 35 条）
 printf '36. 文档是否硬编码了会漂移的条目计数\n'
