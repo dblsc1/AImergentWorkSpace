@@ -1,0 +1,60 @@
+{
+  "schema_version": 2,
+  "module": "root",
+  "role": "cfo",
+  "task": "CFO canonical 路径迁移 + 长期文档同步",
+  "tier": "simple",
+  "status": "approved",
+  "summary": "consulter 提到与 CFO 平级后，把 CFO 的 report.json / 依赖索引 / decisions 迁到 agents/cfo/docs/，并同步三处长期文档引用。worklog 按人类裁决不搬——历史叙事搬了等于改写历史。",
+  "git": {
+    "protocol": "embedded-self-v2",
+    "branch": "feat/frontend-view-modules",
+    "base": "211bdec5559ab4ab798a464272cde5dc27f64740",
+    "head": "SELF",
+    "diff_mode": "contains",
+    "changed_files": [
+      "agents/cfo/docs/report.json",
+      "agents/cfo/docs/依赖索引.md",
+      "agents/cfo/docs/worklog/2026-07-29-cfo-canonical-path-migration.md",
+      "agents/reference/manual/文档地图.md",
+      "agents/reference/upstream/README.md",
+      "agents/reference/新增前端视图模块.md"
+    ]
+  },
+  "contract": {
+    "touched": false,
+    "which": [],
+    "consumes": []
+  },
+  "cross_module_impact": [
+    "code/ring",
+    "code/table"
+  ],
+  "sub_reports": [],
+  "escalation": null,
+  "reviewer_opinion": {
+    "reviewer": "consulter",
+    "verdict": "pending",
+    "path": "agents/cfo/docs/worklog/2026-07-29-cfo-canonical-path-migration.md",
+    "round": 1
+  },
+  "docs_reviewed": [
+    {
+      "path": "agents/reference/manual/文档地图.md",
+      "action": "updated"
+    },
+    {
+      "path": "agents/reference/upstream/README.md",
+      "action": "updated"
+    },
+    {
+      "path": "agents/reference/新增前端视图模块.md",
+      "action": "updated"
+    },
+    {
+      "path": "scripts/gates/doc-map.tsv",
+      "action": "no-change-needed",
+      "reason": "本次是 agents/ 内的路径迁移，未触碰表中登记的任何代码区域（scripts/* · agents/roles/* · agents/protocol/* · control-panel/* · code/_template/*）；且 CFO docs 不是被治理的代码区域"
+    }
+  ]
+}

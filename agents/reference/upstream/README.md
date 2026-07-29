@@ -44,7 +44,7 @@ cd agents/reference/upstream && sha256sum -c SHA256SUMS
 也超 HANDOFF §8 第八条更严的 300 行。
 
 **处置：按存量导入登记技术债，不在保险柜里拆分。** 理由与偿还路径见
-`agents/cfo/arbiter/docs/decisions/`。保险柜的职责是"保住原件"，
+`agents/cfo/docs/decisions/`。保险柜的职责是"保住原件"，
 拆分是模块 `code/` 下的改造工作，两件事不能混在一个动作里——
 在保险柜里拆分会让 SHA256 与上游原件对不上，指纹立刻失去意义。
 
