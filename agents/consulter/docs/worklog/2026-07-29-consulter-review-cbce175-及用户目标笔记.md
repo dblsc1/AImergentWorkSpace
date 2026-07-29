@@ -49,6 +49,14 @@ check-report-schema 对 consulter 报告强制标准 `review_target`（exact 区
 consulter 报告必须锚定固定审查区间。补 `62c2f91..cbce175` exact + 逐文件清单
 （与 `git diff --name-only --no-renames` 完全相等），verdict=approved。
 
+## 六、四项用户裁决落台账（同日追加）
+
+问清了 D1–D5 + 全量测试范围，用户拍板：J2 测试分层（programmer 单测 / reviewer
+整合级测试+规范审核）、J3 留痕迁代码旁（含一页纸每改必核）、J4 jsonl 每 agent 一份、
+J5 push 前＝本模块全量+契约测试。已入 CONSTITUTION §4，并按 §4.1 规则登记
+**待改文件确切清单**（report-schema canonical 表、铁律 5/13/17/18、checks 10/20、
+run-tests、log_event、模板骨架……）。§4.1 非空 = 下一轮第一件事是清空它，不得先做新功能。
+
 ## 遗留
 
 - 三 commit（6c6d1ee/f3f9db9/62c2f91）+ 本 commit 仍待 CFO 交叉审（我不自批）。

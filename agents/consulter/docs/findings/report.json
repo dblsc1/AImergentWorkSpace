@@ -5,7 +5,7 @@
   "task": "审前任撞车 commit cbce175 + 判例库沉淀 + 用户目标口述入仓",
   "tier": "normal",
   "status": "approved",
-  "summary": "cbce175 审核 approved（红/绿核实 mission_start#4 修复），修补编号撞车与全景旧表述并收编遗留改动；判例库新增红/绿硬要求与管道$?注脚；用户目标口述入仓（五处差异 D1-D5 待裁决）",
+  "summary": "cbce175 审核 approved（红/绿核实 mission_start#4 修复），修补编号撞车与全景旧表述并收编遗留改动；判例库新增红/绿硬要求与管道$?注脚；用户目标口述入仓（五处差异 D1-D5 待裁决）；四项用户裁决(J2-J5)入台账，§4.1 登记待改清单——下一轮首件事是清空它",
   "git": {
     "protocol": "embedded-self-v2",
     "branch": "v5",
@@ -92,7 +92,7 @@
   "reflection": "同一天第三次被管道 $? 骗（连门禁拒绝 commit 都没看出），教训已入判例库为硬注脚。",
   "recommendations": [
     "CFO 审区间更新为 6cceec1..HEAD（四个 consulter commit + 前任 cbce175 已由我审）",
-    "用户口述 D1-D5 差异需人类裁决后才改条文；CFO 出分工文件时以口述为方向输入",
+    "J2-J5 已批未落条文（CONSTITUTION §4.1 有确切待改清单）：下一轮框架实现第一优先，不得先做新功能",
     "selftest 断言长期改为内容寻址或登记制，避免并行编号撞车"
   ],
   "reviewer_opinion": {
