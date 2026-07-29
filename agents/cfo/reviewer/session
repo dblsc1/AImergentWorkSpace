@@ -1,0 +1,25 @@
+# cfo_reviewer 续用句柄
+
+agent_id: adcd8dba801f21d80
+opened:   2026-07-30
+opened_by: CFO（子代理机制，非 claude -p）
+
+## 怎么唤醒同一个
+
+本实例是用**子代理机制**开的，拿到的是 agent 句柄，**不是 `claude -p` 的 session id**。
+续用方式：向上面这个 agent_id 发消息，它会带着完整上下文从 transcript 恢复。
+
+`scripts/run_agent.sh --resume` 那条路径读的是 `claude -p` 的 session id，
+对本实例**不适用** —— 卡里写「session id 存本文件」的默认前提是后者。
+两种开法都能实现「续用不重开」，但句柄形态不同，别混。
+
+## 为什么必须续用
+
+跨轮累积的记忆正是「看得出重复形状」的本钱。第 1 轮它审出的
+A-01（门禁没入仓）就是靠对照我自述与实际 git 状态发现的；
+重开会丢掉这些对照基线。
+
+## 轮次
+
+- 第 1 轮 2026-07-30：verdict `rejected`，三条打回 + 8 条清单（详报 docs/2026-07-30-round1.md）
+- 第 2 轮 2026-07-30：复审返修中
