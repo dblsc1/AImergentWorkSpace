@@ -127,9 +127,12 @@ else
 fi
 
 # 4 角色卡存在且边界已填实
+# 两处布局：模块级在 codeagent/<角色>/；项目级（cfo / consulter）在 agents/<角色>/。
+# 只认前者会让项目级角色永远过不了这一项 —— 判据必须匹配角色所在层级。
 _card="codeagent/$role/AGENTS.md"
+[ -f "$_card" ] || _card="agents/$role/AGENTS.md"
 if [ ! -f "$_card" ]; then
-  cl_bad 4 "角色卡" "$_card 不存在" "scripts/new_agent.sh $role"
+  cl_bad 4 "角色卡" "codeagent/$role/AGENTS.md 与 agents/$role/AGENTS.md 都不存在" "scripts/new_agent.sh $role"
 elif grep -q '{{' "$_card" 2>/dev/null; then
   cl_bad 4 "角色卡边界" "$_card 仍有未替换占位符" "重跑 scripts/new_agent.sh $role"
 else

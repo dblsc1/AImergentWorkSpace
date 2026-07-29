@@ -371,5 +371,13 @@ else
   N "非框架仓布局"
 fi
 
+# 35 ── 起飞单第 4 项只认模块级角色卡，项目级角色永远过不了
+printf '35. 角色卡判据是否匹配角色层级\n'
+if grep -q 'agents/\$role/AGENTS.md' "$S/mission_start.sh" 2>/dev/null; then
+  P "起飞单认两处布局：模块级 codeagent/ 与项目级 agents/"
+else
+  F "只认模块级布局 —— cfo / consulter 永远卡在第 4 项"
+fi
+
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
 [ "$fail" -eq 0 ]
