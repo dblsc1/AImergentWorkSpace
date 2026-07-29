@@ -14,6 +14,19 @@ host=${AIMERGENT_PANEL_HOST:-127.0.0.1}
 command -v python3 >/dev/null || { echo "⚠️  没有 python3，跳过面板安装" >&2; exit 0; }
 python3 -c "import http.server" 2>/dev/null || { echo "⚠️  python3 标准库不完整，跳过" >&2; exit 0; }
 
+# ── 别名冲突守卫 ─────────────────────────────────────────────
+# 实证：冒烟测试在临时 clone 里跑 install-gates.sh，面板被顺手装成服务并启动，
+# 那个进程一直占着 127.0.0.1:8787，服务的是一个早就废弃的目录 ——
+# 人打开面板看到的是**几小时前的死数据，而且毫无提示**。
+# 面板不同实例绑不同地址时不会端口冲突，所以必须显式查。
+others=$(ps -eo pid,args 2>/dev/null | grep '[c]ontrol-panel/server.py' |
+         grep -v -F "$root/control-panel/server.py" || true)
+if [ -n "$others" ]; then
+  printf '⚠️  已有别的面板实例在跑（服务的不是本仓）：\n' >&2
+  sed 's/^/     /' <<<"$others" >&2
+  printf '     面板不显示"我是哪个仓"就等于在骗人 —— 确认要留着它，或先 kill 掉。\n' >&2
+fi
+
 if [ "${1:-}" = --no-service ] || ! command -v systemctl >/dev/null; then
   printf '✅ 控制台就绪（未装服务）\n   手动启动: python3 %s/control-panel/server.py\n   地址: http://127.0.0.1:%s\n' "$root" "$port"
   exit 0

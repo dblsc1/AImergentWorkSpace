@@ -55,6 +55,7 @@
 <body>
 <header>
   <h1>任务控制台</h1>
+  <code id="rootline" style="font-size:12px">…</code>
   <span class="live"><span class="dot off" id="dot"></span><span id="livetxt">连接中…</span></span>
 </header>
 <div class="sub" id="meta">加载中…</div>
@@ -133,7 +134,8 @@ function renderReports(){
 function load(){
   return fetch('/api/snapshot', {cache:'no-store'}).then(r => r.json()).then(d => {
     events = d.events || []; reports = d.reports || []; metrics = d.metrics || {};
-    $('#meta').textContent = `分支 ${d.branch} · ${d.root} · 快照 ${short(d.generated)}`;
+    $('#rootline').textContent = d.root;
+    $('#meta').textContent = `分支 ${d.branch} · 快照 ${short(d.generated)}（超过 5 分钟未更新说明服务停了或你连错了实例）`;
     tiles(); renderEvents(false); renderReports();
   });
 }
