@@ -47,3 +47,10 @@ AIMERGENT_INSTALL_STALE_OK=<理由> 记账放行（emit install_stale_override �
 红测第一轮又栽在第三问（克隆拿远端旧脚本，守卫未提交）——注入后才测到真对象。
 selftest #47。架构问题处理协议对用户明确：阻塞→停线旗即时找 consulter；
 不阻塞→reviewer 清单攒批，consulter 定期清账。
+
+## 附2：两笔小修（用户「别急」，本轮只此两件）
+
+- 自决区判据措辞修正（CFO reviewer 纠正为准）：「一条命令可回收」不实——
+  docker rm -f 不删具名卷；改为「可完全回收且回收命令随记账写明，容器与卷各一条」。
+- 模型分档入 orchestration.md（用户裁定）：reviewer/arbiter 常规轮次（无打回）
+  一律 sonnet 档，不用 opus；升档仅限打回复审与架构级裁决分析。

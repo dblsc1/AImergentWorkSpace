@@ -57,6 +57,10 @@
       "path": "scripts/README.md",
       "action": "no-change-needed",
       "reason": "同上，检查行为语义（新鲜度/依赖漂移）未变，只是修正被测对象"
+    },
+    {
+      "path": "agents/protocol/orchestration.md",
+      "action": "updated"
     }
   ],
   "findings": [

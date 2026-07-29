@@ -8,6 +8,7 @@
 3. **让干活的 agent 活着**:一个子模块的 backend 从实现→被打回→修复,应是**同一个 agent 全程**,不是每轮新开。
 4. **在原 session 内**:子代理后台跑、完成通知父;整棵树在一个 session,结果回流父。
 5. **三层嵌套(CFO→arbiter→backend)= 未验证**:先用小任务验能不能、几层可靠,再全自动。不行就退化为"CFO 开扁平 per-module executor(两层)"。
+6. **模型分档（2026-07-30 用户裁定）**:reviewer 与 arbiter 的**常规轮次（无打回）一律用中档模型（Claude=sonnet），不用高档（opus）**。升档只在:打回后的复审、跨模块/架构级裁决分析。programmer 照 arbiter 卡的执行档轴选。省下的不是钱是延迟——常规审查用高档是浪费,不是审慎。
 
 ## 留痕（每层都留，缺一层=断链）
 - 每个 agent 出 `report.json`(三部分,见 report-schema.md)+ worklog。
