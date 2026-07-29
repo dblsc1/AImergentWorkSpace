@@ -6,7 +6,9 @@ set -uo pipefail
 mapfile -t -d '' staged_arr < <(staged_paths ACMRD)
 staged=$(printf '%s\n' "${staged_arr[@]}")
 [ -n "$staged" ] || exit 0
-fail=0; note=$(git diff --cached -- '*/docs/worklog/*.md' 2>/dev/null)
+# J3 后 worklog 落点多处（module_docs/worklog、code/<子文件夹>/worklog、各角色 docs/worklog）
+# ——取值范围必须跟着迁（实证：写死旧路径让新落点的说明「不可见」，恒判未说明）
+fail=0; note=$(git diff --cached -- '*worklog/*.md' 2>/dev/null)
 
 # ① 包依赖增删
 deps=$(grep -E 'package\.json|requirements\.txt|go\.mod|pyproject\.toml|Cargo\.toml' <<<"$staged" || true)

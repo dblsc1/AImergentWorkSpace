@@ -454,6 +454,16 @@ else
   F "停线缺入口——阻塞级架构问题发现了也停不下来，只能眼看它继续产出"
 fi
 
+# 46 ── 被测对象必须是仓里那份（两任同日各踩一次的形状）
+printf '46. 门禁新鲜度是否核「入仓」与「活钩子」\n'
+if grep -q 'ls-files --error-unmatch "\$rel"' "$S/checks/_common/13-gates-fresh.sh" 2>/dev/null &&
+   grep -q '活钩子' "$S/checks/_common/13-gates-fresh.sh" 2>/dev/null &&
+   grep -q "'\*worklog/\*.md'" "$S/checks/_common/90-dependency-drift.sh" 2>/dev/null; then
+  P "13 拒未入仓副本、活钩子自比（框架 checkout 不豁免）；90 的说明取值域随 J3 迁移"
+else
+  F "工作区副本能骗过新鲜度 / 活钩子停在装机那天 / 新落点的说明不可见——三个都是「被测对象错位」"
+fi
+
 # 36 ── 「N 条铁律 / N 条断言」的 N 是化石：写下来的那天就开始漂
 #        （实证：同一仓里同时存在 12、22、23 三个数字，实际 35 条）
 printf '36. 文档是否硬编码了会漂移的条目计数\n'

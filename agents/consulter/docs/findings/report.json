@@ -2,10 +2,10 @@
   "schema_version": 2,
   "module": "workspace",
   "role": "consulter",
-  "task": "阻塞判据 + 停线机制 + reviewer 常驻化 + J7 同步",
+  "task": "「被测对象错位」类修复：13 号活钩子自比+拒未入仓副本、90 号取值域随 J3",
   "tier": "normal",
   "status": "approved",
-  "summary": "阻塞判据入 supervision（挡主路径且无合法绕行=阻塞，三档分流，规避式绕行按阻塞计）；logs/STOPLINE 停线旗三入口实测；cfo_reviewer 常驻+实时架构问题清单；J7（consulter 框架改动人类审、CFO 举证）四处同步；80 号按文件名判修掉 worklog 硬套。selftest 45 条，#44 抓真回归一次",
+  "summary": "CFO reviewer 首轮打回暴露的类（红测对象是工作区副本/活钩子过期）按类修：13 两层加固（入仓+活钩子自比，框架 checkout 不豁免——正向即抓到本仓自己）、90 说明取值域迁 J3、判例库加「第三句：被测对象是哪一份」。selftest 46 条，全部红/绿点火，停线走真实提交路径复测",
   "git": {
     "protocol": "embedded-self-v2",
     "branch": "v5",
@@ -13,20 +13,11 @@
     "head": "SELF",
     "diff_mode": "contains",
     "changed_files": [
-      "agents/protocol/supervision.md",
-      "agents/cfo/AGENTS.md",
-      "agents/cfo/reviewer/agent.md",
-      "agents/cfo/reviewer/docs/架构问题清单.md",
-      "agents/consulter/审查提示词.md",
-      ".claude/agents/consulter.md",
-      "scripts/hooks/pre-commit",
-      "scripts/mission_start.sh",
-      "scripts/arbiter-push.sh",
-      ".gitignore",
-      "scripts/gates/doc-path-exempt.txt",
-      "scripts/checks/arbiter/80-taskcard-complete.sh",
+      "scripts/checks/_common/13-gates-fresh.sh",
+      "scripts/checks/_common/90-dependency-drift.sh",
       "scripts/selftest.sh",
-      "agents/consulter/docs/worklog/2026-07-30-consulter-停线机制与阻塞判据.md",
+      "agents/consulter/记忆.md",
+      "agents/consulter/docs/worklog/2026-07-30-consulter-被测对象错位类修复.md",
       "agents/consulter/docs/findings/report.json"
     ]
   },
@@ -54,68 +45,42 @@
   "escalation": null,
   "docs_reviewed": [
     {
-      "path": "agents/protocol/supervision.md",
+      "path": "agents/consulter/记忆.md",
       "action": "updated"
     },
     {
-      "path": "agents/CONSTITUTION.md",
+      "path": "agents/reference/manual/文档地图.md",
       "action": "no-change-needed",
-      "reason": "J7 让号由 CFO 在其 checkout 完成待推送；本轮同改会二次撞号，等它的 commit 合入"
-    },
-    {
-      "path": "agents/consulter/记忆.md",
-      "action": "no-change-needed",
-      "reason": "撞号是「分布式编号无协调」类第二例，类修法挂账清单而非判例库；停线属新机制非判例"
+      "reason": "仅改两条检查的内部判据与断言，无新脚本、无结构变化"
     },
     {
       "path": "scripts/README.md",
       "action": "no-change-needed",
-      "reason": "无新脚本；停线旗行为写在三个入口的报错与 supervision 判据节"
-    },
-    {
-      "path": "agents/reference/manual/文档地图.md",
-      "action": "no-change-needed",
-      "reason": "arbiter-push 仅在入口加停线旗检查，地图对它的登记（sanctioned push 路径）语义未变；停线机制的事实源是 supervision.md 判据节"
-    },
-    {
-      "path": "agents/reference/manual/文档地图.md",
-      "action": "no-change-needed",
-      "reason": "前人成果对照是 reference 参考文献，非长期治理文档，地图不逐篇登记 reference 下的调研产物"
-    },
-    {
-      "path": "agents/consulter/记忆.md",
-      "action": "updated"
+      "reason": "同上，检查行为语义（新鲜度/依赖漂移）未变，只是修正被测对象"
     }
   ],
   "findings": [
     {
-      "category": "governance",
-      "severity": "info",
-      "summary": "阻塞判据成文（consulter 起草待人类追认）+ 停线旗三入口实测红/绿——阻塞项从此停得下来"
-    },
-    {
-      "category": "numbering-collision",
-      "severity": "medium",
-      "summary": "裁决编号撞号（两条 J6）——分布式编号无协调第二例（首例 selftest#35 撞号）；CFO 让号处置正确；类修法（台账编号规则或内容寻址）挂架构问题清单"
-    },
-    {
-      "category": "assertion-quality",
-      "severity": "info",
-      "summary": "#44 在本轮改 CFO 卡时抓住真回归（实例卡路径被重写弄丢）——断言首次拦住 consulter 自己的文档回归"
+      "category": "pattern",
+      "severity": "high",
+      "summary": "「被测对象错位」类当日三例（CFO 未入仓副本红测、consulter 活钩子红测、13 号自身算工作区哈希）——红/绿方法论升级为三问：会恒过吗/会恒败吗/被测的是哪一份"
     },
     {
       "category": "governance",
+      "severity": "info",
+      "summary": "reviewer 常驻子代理首轮即抓住 CFO 漏报实体问题并堵住其解释路径——J6 机制被实战验证有效"
+    },
+    {
+      "category": "fixed",
       "severity": "medium",
-      "summary": "口述 2.2「什么时候必须叫人」两天未成文，实证代价=CFO 把本机容器决策上升到用户——已成文进 supervision.md（五类必叫/其余自决记账），细目待用户追认",
-      "file": "agents/protocol/supervision.md"
+      "summary": "pull 只更新仓内钩子副本、从不更新 .git/hooks 活钩子且此前无检查覆盖（框架 checkout 还被 13 豁免）——已加活钩子自比，对本仓正向即红一次（抓到自己）",
+      "file": "scripts/checks/_common/13-gates-fresh.sh"
     }
   ],
-  "reflection": "停线旗对 CFO 仓的置旗权限需要人类裁决 consulter 的唯一写例外，未授权前走上报路径——权限边界写进 worklog 待批。",
+  "reflection": "我昨晚的停线实测与 CFO 的门禁红测犯了同一形状错误——监督者与被监督者共享认知盲区，这正是断言比审查可靠的原因：#46 现在替两边盯着。",
   "recommendations": [
-    "CFO：pull 后重跑 install-gates（hook/检查有更新）；reviewer 常驻子代理按新卡开起来并接管实时清单",
-    "人类：①追认阻塞判据；②裁决是否授权 consulter 写 CFO 仓 logs/STOPLINE 单一路径",
-    "预研代理已重发，报告出来后单独呈报",
-    "前人成果对照已入仓：可直接抄 Devin Playbook 写法；量 pre-commit 耗时；lease vs worktree 对比论证开一单（攒批不阻塞）"
+    "CFO：pull 后 13 号会核四模块活钩子，过期重跑 install-gates；90 号平账，契约说明写新落点即可见",
+    "夜间自动运行期间：新问题按阻塞判据分流，不阻塞的进 reviewer 架构问题清单攒批，明早用户看清单即可"
   ],
   "reviewer_opinion": {
     "reviewer": "cfo",
