@@ -14,6 +14,7 @@
 # 发签是自愿的，验签是强制的。
 set -uo pipefail
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || true
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/checklist.sh"
 die() { printf '❌ %s\n' "$*" >&2; exit 1; }
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || die "不在 Git 仓内"
@@ -22,6 +23,29 @@ lease_dir=$(git rev-parse --path-format=absolute --git-common-dir)/aimergent-lea
 mkdir -p "$lease_dir"
 
 norm() { local p=${1#./}; p=${p%/}; printf '%s/' "$p"; }   # 统一成带尾斜杠的前缀
+
+if [ "${1:-}" = --checklist ]; then
+  cat <<'LIST'
+
+┌─ 起飞前检查单（scripts/mission_start.sh）
+│
+│  1  任务单四小节齐全      目标 / 可判定的验收标准 / 可触碰目录 / 自检门
+│                          缺任一项 → 补齐再派；含糊的任务单会污染它派出去的所有产出
+│  2  写区不与他人重叠      路径前缀互含即算重叠（父/子文件夹都算）
+│                          重叠 → 等对方还签，或把写区切细到不相交
+│  3  预期文档变更已声明    --docs update:<路径> create:<路径>
+│                          着陆时机器逐条核对；不声明 = 着陆时只能靠反查兜底
+│  4  角色卡存在且边界填实  scripts/new_agent.sh <角色> 生成，{{WRITABLE}} 已替换
+│  5  门禁已安装            pre-commit / pre-push / commit-msg 三个 hook 齐
+│                          缺 → scripts/install-gates.sh .
+│  6  不在 main 上          派活前先开 feat/ 分支
+│  7  无遗留路签            上一轮的签没还会挡住本轮；--release <角色> 还签
+│
+└─ 全过才发签、才出派单提示词
+
+LIST
+  exit 0
+fi
 
 if [ "${1:-}" = --list ]; then
   echo "当前持有的写区路签："
@@ -64,40 +88,78 @@ set -- "${prefixes[@]}"
 [ -f "$task" ] || die "找不到任务单: $task"
 [ $# -ge 1 ] || die "必须显式声明写区，例: code/<模块>/backend/orders/"
 
-# ── ① 任务单开工前检查 ─────────────────────────────────────
+cl_header "起飞前检查单 · $role" "任务单 $task"
+
+# 1 任务单四小节
 miss=()
 grep -q '目标' "$task" || miss+=("目标")
 grep -q '验收' "$task" || miss+=("验收标准")
 grep -qE '触碰|可写|边界' "$task" || miss+=("可触碰目录")
 grep -qE '自检门|自检' "$task" || miss+=("自检门")
-[ ${#miss[@]} -eq 0 ] || die "任务单缺小节 ${miss[*]} —— 一份含糊的任务单会污染它派出去的所有产出"
+if [ ${#miss[@]} -eq 0 ]; then cl_ok 1 "任务单四小节齐全"
+else cl_bad 1 "任务单四小节" "缺 ${miss[*]}" "补进 $task —— 含糊的任务单会污染它派出去的所有产出"; fi
 
-# ── ② 路签重叠检测（父/子文件夹都算重叠）──────────────────
+# 2 路签重叠（父/子文件夹都算）
 declare -a want=()
 for p in "$@"; do want+=("$(norm "$p")"); done
-
+clash=""
 shopt -s nullglob
 for f in "$lease_dir"/*.lease; do
-  holder=$(basename "$f" .lease)
-  [ "$holder" = "$role" ] && continue
+  holder=$(basename "$f" .lease); [ "$holder" = "$role" ] && continue
   while IFS= read -r held; do
     [ -n "$held" ] || continue
     for w in "${want[@]}"; do
-      case "$w" in "$held"*) die "写区与 $holder 的签重叠（被包含）：$w ⊂ $held" ;; esac
-      case "$held" in "$w"*) die "写区与 $holder 的签重叠（包含对方）：$w ⊃ $held" ;; esac
+      case "$w"  in "$held"*) clash="$w ⊂ $held（$holder 持有）" ;; esac
+      case "$held" in "$w"*)  clash="$w ⊃ $held（$holder 持有）" ;; esac
     done
   done < "$f"
 done
 shopt -u nullglob
+if [ -z "$clash" ]; then cl_ok 2 "写区不与他人重叠：${want[*]}"
+else cl_bad 2 "写区重叠" "$clash" "等对方 --release 还签，或把写区切细到不相交"; fi
+
+# 3 预期文档变更
+if [ "${#docs[@]}" -gt 0 ]; then
+  cl_ok 3 "预期文档变更已声明（${#docs[@]} 条，着陆时逐条核）"
+  while IFS=$'\t' read -r _a _p; do cl_table_row "  $_a" "$_p"; done < <(printf '%s\n' "${docs[@]}")
+else
+  cl_skip 3 "未声明预期文档变更" "着陆时只能靠「谁提到了我」反查兜底；建议 --docs update:<路径>"
+fi
+
+# 4 角色卡存在且边界已填实
+_card="codeagent/$role/AGENTS.md"
+if [ ! -f "$_card" ]; then
+  cl_bad 4 "角色卡" "$_card 不存在" "scripts/new_agent.sh $role"
+elif grep -q '{{' "$_card" 2>/dev/null; then
+  cl_bad 4 "角色卡边界" "$_card 仍有未替换占位符" "重跑 scripts/new_agent.sh $role"
+else
+  cl_ok 4 "角色卡就位且写边界已填实"
+fi
+
+# 5 门禁已安装
+_hooks=$(git rev-parse --path-format=absolute --git-path hooks)
+_missing=""
+for _h in pre-commit pre-push commit-msg; do [ -x "$_hooks/$_h" ] || _missing="$_missing $_h"; done
+if [ -z "$_missing" ]; then cl_ok 5 "门禁已装（pre-commit / pre-push / commit-msg）"
+else cl_bad 5 "门禁未装" "缺$_missing" "scripts/install-gates.sh ."; fi
+
+# 6 分支
+_br=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+case "$_br" in
+  main|master) cl_bad 6 "分支纪律" "当前在 $_br 上" "git checkout -b feat/<主题>" ;;
+  *) cl_ok 6 "在 $_br 上（非 main）" ;;
+esac
+
+# 7 遗留路签
+_stale=$(ls "$lease_dir"/*.lease 2>/dev/null | xargs -r -n1 basename 2>/dev/null | sed 's/\.lease$//' | grep -vx "$role" | tr '\n' ' ')
+if [ -z "$_stale" ]; then cl_ok 7 "无他人遗留路签"
+else cl_skip 7 "他人持签中：$_stale" "不冲突即可并发；确认已完工的用 --release <角色> 还签"; fi
+
+cl_footer "起飞检查通过，发签并出派单提示词" "起飞检查未通过，不发签" || exit 1
 
 printf '%s\n' "${want[@]}" > "$lease_dir/$role.lease"
-if [ "${#docs[@]}" -gt 0 ]; then
-  printf '%s\n' "${docs[@]}" > "$lease_dir/$role.docs"
-  printf '📄 预期文档变更（完工时机器逐条核对）：\n' >&2
-  printf '   %s\n' "${docs[@]}" >&2
-else
-  rm -f "$lease_dir/$role.docs"
-fi
+if [ "${#docs[@]}" -gt 0 ]; then printf '%s\n' "${docs[@]}" > "$lease_dir/$role.docs"
+else rm -f "$lease_dir/$role.docs"; fi
 emit_event lease_grant "$role: ${want[*]}"
 
 # ── ③ 出提示词 ────────────────────────────────────────────

@@ -284,5 +284,15 @@ else
   F "landed 会把脚本自己的 diary 写入算成「活落盘了」—— 恒真"
 fi
 
+# 29 ── die-on-first 只告诉你第一个问题，来回三四趟才修完
+printf '29. 起飞/着陆是否为可读检查单\n'
+if [ -f "$S/lib/checklist.sh" ] &&
+   grep -q 'checklist.sh' "$S/mission_start.sh" 2>/dev/null &&
+   grep -q 'checklist.sh' "$S/mission_complete.sh" 2>/dev/null; then
+  P "起飞单与着陆单共用同一套渲染，一次列全、每项带「怎么办」"
+else
+  F "还是 die-on-first —— 只报第一个问题，人要来回跑好几趟"
+fi
+
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
 [ "$fail" -eq 0 ]

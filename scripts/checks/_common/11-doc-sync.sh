@@ -86,7 +86,7 @@ need() {   # need <文档> <因为改了什么>
   [ -n "${declared[$doc]:-}" ] && return 0
   [ -n "${reported[$doc]:-}" ] && return 0
   reported["$doc"]=1
-  echo "改了 $why，它由长期文档 $doc 治理 —— 该文档既没同批改、也没在 report.json 声明" >&2
+  printf '  %-40s → %s\n' "$why" "$doc" >&2
   fail=1
 }
 
@@ -121,12 +121,16 @@ for c in "${changed[@]}"; do
 done
 
 if [ "$fail" -ne 0 ]; then
+  # 表头补在最前面（子 shell 里没法预知有没有条目，所以先打条目再补说明）
   cat >&2 <<'HINT'
+  ↑ 左边是本次改动，右边是治理它的长期文档；这些文档既没同批改、也没声明。
   → 两条路，选一条：
      ① 同批把文档改到位
      ② 在自己的 report.json 里声明已读：
         "docs_reviewed":[{"path":"<文档>","action":"no-change-needed","reason":"<为什么不用改>"}]
      声明是结构化的、可审计的、会进控制面板 —— 但必须写理由。
+     治理关系从哪来：scripts/gates/doc-map.tsv（项目级，CFO 维护）
+                     + 模块级约定（code/<模块>/code/** → 该模块 contract.md 与 AGENTS.md）
 HINT
 fi
 exit $fail

@@ -20,6 +20,7 @@
 # 逃生口：AIMERGENT_MISSION_OVERRIDE="<理由>" 放行，但强制记入 logs/diary.jsonl，绝不静默。
 set -uo pipefail
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || true
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/checklist.sh"
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "❌ 不在 Git 仓内" >&2; exit 2; }
 cd "$root"
@@ -60,18 +61,42 @@ if [ "${1:-}" = --list ]; then
   exit 0
 fi
 
+cl_header "着陆检查单 · $role" "分支 $(git rev-parse --abbrev-ref HEAD 2>/dev/null) · $(git diff --cached --name-only | wc -l) 个文件待提交"
+
+# 起飞时声明了什么 —— 对照表放在最前面，人一眼能看出「说要改的，改了没」
+lease_dir=$(git rev-parse --path-format=absolute --git-common-dir)/aimergent-leases
+if [ -n "$role" ] && [ -f "$lease_dir/$role.docs" ]; then
+  cl_note "起飞时声明的文档变更（本单第 11 项逐条核）："
+  while IFS=$'\t' read -r _a _p; do
+    [ -n "$_p" ] || continue
+    if git diff --cached --name-only -z | tr '\0' '\n' | grep -qxF -- "$_p"; then
+      cl_table_row "  ✓ $_a" "$_p"
+    else
+      cl_table_row "  ✗ $_a" "$_p   ← 说要改，没在本次提交里"
+    fi
+  done < "$lease_dir/$role.docs"
+  printf '│\n'
+fi
+if [ -f "$lease_dir/${role}.lease" ]; then
+  cl_note "持有写区：$(tr '\n' ' ' < "$lease_dir/$role.lease")"
+  printf '│\n'
+fi
+
 pass=0; fail=0; failed_names=()
-printf '── 完工检测（角色 = %s）──\n' "$role"
+n=0
 while IFS= read -r c; do
   [ -n "$c" ] || continue
-  name=$(basename "$c" .sh)
+  n=$((n+1))
+  name=$(basename "$c" .sh); name=${name#*-}
   layer=$(dirname "$c"); layer=${layer##*/}
+  [ "$layer" = "_common" ] && layer=通用
+  [ "$layer" = "checks" ] && layer=本模块
   if out=$("$c" 2>&1); then
-    printf '  ✅ %-26s [%s]\n' "$name" "$layer"
+    cl_ok "$n" "$name  [$layer]"
     pass=$((pass+1))
   else
-    printf '  ❌ %-26s [%s]\n' "$name" "$layer"
-    sed 's/^/       /' <<<"$out"
+    first=$(head -1 <<<"$out"); rest=$(sed -n '2,3p' <<<"$out" | tr '\n' ' ')
+    cl_bad "$n" "$name  [$layer]" "$first" "$rest"
     fail=$((fail+1)); failed_names+=("$name")
   fi
 done < <(collect)
@@ -92,21 +117,23 @@ refresh_console() {
 }
 
 if [ "$fail" -eq 0 ]; then
-  printf '🟢 完工检测通过（%d 项）\n' "$pass"
+  cl_footer "着陆检查通过，可以提交" "" >/dev/null
+  printf '│\n└─ 🟢 着陆检查通过（%d 项），可以提交\n\n' "$pass"
   log_event mission_complete
   refresh_console
   exit 0
 fi
 
 if [ -n "${AIMERGENT_MISSION_OVERRIDE:-}" ]; then
-  echo "⚠️  逃生口放行：$AIMERGENT_MISSION_OVERRIDE"
-  echo "    已强制记入 $diary —— 这次绕过在台账上是可见的。"
+  printf '│\n└─ ⚠️  逃生口放行：%s\n     已强制记入 %s —— 这次绕过在台账上是可见的。\n\n' \
+    "$AIMERGENT_MISSION_OVERRIDE" "$diary"
   log_event mission_override "\"$AIMERGENT_MISSION_OVERRIDE\""
   refresh_console
   exit 0
 fi
 
-printf '🔴 完工检测未通过（%d 项）——拒绝提交\n' "$fail" >&2
-echo "   确需绕过：AIMERGENT_MISSION_OVERRIDE=\"<理由>\" git commit ...（放行但记账）" >&2
+printf '│\n└─ 🔴 着陆检查未通过 —— 还差 %d 件，拒绝提交：\n' "$fail" >&2
+printf '     · %s\n' "${failed_names[@]}" >&2
+printf '\n   确需绕过：AIMERGENT_MISSION_OVERRIDE="<理由>" git commit ...（放行但记账）\n' >&2
 log_event mission_blocked
 exit 1
