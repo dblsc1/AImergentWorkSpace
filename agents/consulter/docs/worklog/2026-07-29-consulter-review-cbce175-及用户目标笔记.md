@@ -31,6 +31,18 @@
 `agents/reference/用户目标口述-可复现工作机制.md`：总目标 + 四大手段原始记录，
 标注中断缺口与现框架五处差异点（D1–D5，待人类裁决）。这是方向性输入，不是条文。
 
+## 四、推送门实测撞出的两个发现 + 用户目标入卡（同日追加）
+
+- **check-report-schema 分支模型不匹配**：要求 git.base 是 main merge-base 的祖先——
+  假设短 feat 分支；v5 是长期分支（divergence 点 211bdec），任务级 base **恒红**。
+  「恒定答案类」新实例。当下按门禁模型把 report base 改为 211bdec 解锁推送，
+  任务粒度由 worklog 承载；门禁长期方案（认长期分支 or 全走短分支）待人类裁决。
+- **生成物漂移**：`.claude/agents/consulter.md`（子代理 prompt，未跟踪）不随源再生，
+  已停在旧版卡。本轮由最新 AGENTS.md + 审查提示词重新拼接生成；长期宜加
+  新鲜度断言（13-gates-fresh 同形状）。
+- **用户目标入卡**：`agents/consulter/AGENTS.md` 新增「目标」节，指向
+  `agents/reference/用户目标口述-可复现工作机制.md`，并已进入重新生成的子代理 prompt。
+
 ## 遗留
 
 - 三 commit（6c6d1ee/f3f9db9/62c2f91）+ 本 commit 仍待 CFO 交叉审（我不自批）。

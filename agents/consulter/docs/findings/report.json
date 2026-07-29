@@ -9,7 +9,7 @@
   "git": {
     "protocol": "embedded-self-v2",
     "branch": "v5",
-    "base": "6c6d1ee26360ecff4b39604c5aded067a57ac0f9",
+    "base": "211bdec5559ab4ab798a464272cde5dc27f64740",
     "head": "SELF",
     "diff_mode": "contains",
     "changed_files": [
@@ -60,6 +60,18 @@
       "severity": "low",
       "summary": "全景文档并行写入已废弃的分工表述——矩阵断言#35 的担忧当日即实证，已把全景纳入断言覆盖(4/4)并红/绿重验",
       "file": "agents/reference/工作空间全景.md"
+    },
+    {
+      "category": "constant-answer",
+      "severity": "medium",
+      "summary": "check-report-schema 要求 git.base 是 main merge-base 的祖先，模型假设短 feat 分支；长期分支 v5 上任何任务级 base 恒红（推送实测）。本报告 base 暂按门禁模型填 divergence 点 211bdec，任务粒度见 worklog；长期方案待人类裁决",
+      "file": "scripts/gates/check-report-schema.sh"
+    },
+    {
+      "category": "generated-drift",
+      "severity": "low",
+      "summary": ".claude/agents/consulter.md（生成的子代理 prompt）不随源文件再生，已漂移到旧版卡（旧标题/旧分工/22条）；本轮手工重生成，长期宜加新鲜度断言（同 13-gates-fresh 形状）",
+      "file": ".claude/agents/consulter.md"
     }
   ],
   "reflection": "同一天第三次被管道 $? 骗（连门禁拒绝 commit 都没看出），教训已入判例库为硬注脚。",
