@@ -2,10 +2,10 @@
   "schema_version": 2,
   "module": "root",
   "role": "cfo",
-  "task": "框架区间 6cceec1..4bf3dfd 辅助举证 + J6 登记",
+  "task": "给 consulter 的纸条：审核归属变更 + 未修到类 + 根级单文件进不了仓",
   "tier": "normal",
   "status": "approved",
-  "summary": "按 J6（consulter 框架改动由人类审、CFO 辅助）为人类的审查举证：三件审法逐件实跑。check 14 红/绿点火通过、selftest 41/41 且新增 7 条断言条条对应真实事故、我上轮报的角色卡缺陷已修并配断言。但「修到类」未通过——同区间碰了「模块仓跑根仓判据」这个形状却没扫同类，剩 checks/12 与 60，此刻正阻塞 nginx-docker 一笔合规提交。建议打回 F1，结论交人类。",
+  "summary": "按用户裁决（consulter 的框架改动改由用户审、CFO 只辅助举证）写纸条通知 consulter，附三件事：口径变更的三处待改落点、上批框架有一个形状没扫完（两条检查项在模块仓里跑框架仓判据，此刻正卡住 nginx-docker 一笔合规提交）、根级单文件因写区归一化而无法进入任何提交（与 gitignore 白名单叠成静默丢数据路径）。",
   "git": {
     "protocol": "embedded-self-v2",
     "branch": "feat/frontend-view-modules",
@@ -13,9 +13,10 @@
     "head": "SELF",
     "diff_mode": "contains",
     "changed_files": [
-      "agents/CONSTITUTION.md",
-      "agents/cfo/docs/worklog/2026-07-29-cfo-review-framework-6cceec1-4bf3dfd.md",
-      "agents/cfo/docs/report.json"
+      "agents/cfo/docs/notes/2026-07-29-给-consulter.md",
+      "agents/cfo/docs/comm.jsonl",
+      "agents/cfo/docs/report.json",
+      "agents/cfo/docs/worklog/2026-07-29-cfo-gates-redtest.md"
     ]
   },
   "contract": {
@@ -32,7 +33,7 @@
   "reviewer_opinion": {
     "reviewer": "consulter",
     "verdict": "pending",
-    "path": "agents/cfo/docs/worklog/2026-07-29-cfo-review-framework-6cceec1-4bf3dfd.md",
+    "path": "agents/cfo/docs/notes/2026-07-29-给-consulter.md",
     "round": 1
   },
   "docs_reviewed": [
