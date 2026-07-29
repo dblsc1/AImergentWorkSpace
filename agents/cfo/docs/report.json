@@ -2,10 +2,10 @@
   "schema_version": 2,
   "module": "root",
   "role": "cfo",
-  "task": "给 consulter 的纸条：审核归属变更 + 未修到类 + 根级单文件进不了仓",
+  "task": "修 reviewer 第 1 轮打回三条 + 门禁入仓 + Mongo 自决",
   "tier": "normal",
   "status": "approved",
-  "summary": "按用户裁决（consulter 的框架改动改由用户审、CFO 只辅助举证）写纸条通知 consulter，附三件事：口径变更的三处待改落点、上批框架有一个形状没扫完（两条检查项在模块仓里跑框架仓判据，此刻正卡住 nginx-docker 一笔合规提交）、根级单文件因写区归一化而无法进入任何提交（与 gitignore 白名单叠成静默丢数据路径）。",
+  "summary": "夜班第 1 项完成。修 reviewer 打回三条：报告重写（R1）、旧编号分两类处置（交接面改、叙事面加注记，R2）、§4.1 假警报撤下换真残留 supervision.md:33（R3）。另修它审出的两条实体问题：四模块门禁 17 文件已真正入仓并复验红测；根仓停线旗此前失效（pre-commit 旧版 306B），已重装 1445B 并红测置旗真能拦。自决记账：cockpit-mongo 容器绑 127.0.0.1:27117 避开 27017，docker rm 可回收。下一步：唤醒同一 reviewer 复审 → 推送 → 给 nexus-core 1 号 programmer 发签派活。",
   "git": {
     "protocol": "embedded-self-v2",
     "branch": "feat/frontend-view-modules",
@@ -13,10 +13,12 @@
     "head": "SELF",
     "diff_mode": "contains",
     "changed_files": [
-      "agents/cfo/docs/notes/2026-07-29-给-consulter.md",
-      "agents/cfo/docs/comm.jsonl",
+      "agents/CONSTITUTION.md",
       "agents/cfo/docs/report.json",
-      "agents/cfo/docs/worklog/2026-07-29-cfo-gates-redtest.md"
+      "agents/cfo/docs/worklog/2026-07-30-cfo-fix-review-rejections.md",
+      "agents/cfo/docs/worklog/2026-07-29-cfo-review-framework-6cceec1-4bf3dfd.md",
+      "agents/cfo/reviewer/docs/架构问题清单.md",
+      "agents/cfo/reviewer/docs/2026-07-30-round1.md"
     ]
   },
   "contract": {
@@ -24,33 +26,45 @@
     "which": [],
     "consumes": []
   },
-  "cross_module_impact": [],
+  "cross_module_impact": [
+    "code/ring",
+    "code/table",
+    "code/nexus-core",
+    "code/nginx-docker"
+  ],
   "sub_reports": [],
-  "escalation": {
-    "reason": "规则冲突",
-    "detail": "J6（人类 2026-07-29）：consulter 的框架改动由人类审、CFO 只辅助举证不下 verdict。但 agents/protocol/supervision.md 第 21 行仍写「consulter（框架改动）→ CFO 交叉审／模式监督 = 人类」，与 J6 正好相反，而该文件自称「谁审谁的唯一事实源」。两处口径并存时读它的 agent 会照旧口径行事。已登记宪法 §4.1，待改清单：supervision.md 矩阵第 21 行、agents/cfo/AGENTS.md「你要审 consulter 改的框架」一节改为举证口径、consulter 审查提示词若引用旧口径同步改。另：本轮举证发现框架区间未修到类（checks/12 standing-docs 与 checks/60 doc-paths-exist 在模块仓内跑根仓判据），此刻阻塞 code/nginx-docker 一笔合规提交；详见 worklog F1。"
-  },
+  "escalation": null,
   "reviewer_opinion": {
-    "reviewer": "consulter",
+    "reviewer": "cfo_reviewer",
     "verdict": "pending",
-    "path": "agents/cfo/docs/notes/2026-07-29-给-consulter.md",
-    "round": 1
+    "path": "agents/cfo/reviewer/docs/2026-07-30-round1.md",
+    "round": 2
   },
   "docs_reviewed": [
     {
       "path": "agents/CONSTITUTION.md",
       "action": "updated",
-      "reason": "J6 入 §4 台账，并登记 §4.1 待改（supervision.md 第 21 行仍写旧口径）"
+      "reason": "§4.1 撤假警报挂真残留；§4 台账 J7 状态列改为「部分落地」"
+    },
+    {
+      "path": "agents/cfo/AGENTS.md",
+      "action": "no-change-needed",
+      "reason": "reviewer 指出上轮漏表态。逐行读过：本轮未改本卡，且 fc70c87 已把它的举证口径改对（第 5 行「你为 consulter 的框架改动举证（裁决 J7）」），与 J7 一致，无需再改"
+    },
+    {
+      "path": "agents/cfo/reviewer/agent.md",
+      "action": "no-change-needed",
+      "reason": "reviewer 指出上轮漏表态。本轮只按该卡开子代理、未改卡内容；卡已由框架侧改为常驻版，与实际用法一致"
     },
     {
       "path": "agents/protocol/supervision.md",
       "action": "no-change-needed",
-      "reason": "它在 agents/protocol/ 属框架区、归 consulter；J6 与它第 21 行正相反，但按「别顺手修框架」不代改，已登记进宪法 §4.1 待改清单由 consulter 落地"
+      "reason": "属框架区归 consulter，不代改。其 :33 与 :21 自相矛盾一事已挂进宪法 §4.1 待改清单，并已由 reviewer 记入架构问题清单 A-04"
     },
     {
       "path": "agents/cfo/doc-map.tsv",
       "action": "no-change-needed",
-      "reason": "本次只写宪法与自己的留痕，未触碰表中登记的代码区域"
+      "reason": "本轮改的是 agents/ 下的宪法与留痕，未触碰表中登记的任何代码区域"
     }
   ]
 }
