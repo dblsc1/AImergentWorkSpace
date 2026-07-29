@@ -46,3 +46,13 @@
 - run_agent.sh 尚未自动读写实例 `session` 文件（现靠 arbiter 手动 --resume）；下轮接线。
 - 存量模块（CFO 仓四个）迁新布局：待 CFO 排期，过渡期兼容兜底。
 - 本 commit 仍是 consulter 改框架 → 待 CFO 交叉审。
+
+## 七、pull 完整性（同日追加，用户指令）
+
+「落地」判据升级为**新克隆完整可复现**，职责写入角色卡「仓库职责」节并进系统提示词：
+- `.claude/` 曾被白名单 `/*` 静默吞掉——克隆里根本没有子代理 prompt。已放行 `!/.claude/`
+  并跟踪，selftest #41 断言生成物与源逐字节一致（红/绿已点火）。
+- `logs/diary.jsonl` 维持忽略是**有意设计**（入仓则每次提交后工作树永远脏，.gitignore 注明），
+  代价：override 记账只在本机可审——已知取舍，非疏漏。
+- 收尾动作固化：每轮 commit 后推 v5；新根级文件登记白名单 + `git ls-files` 验证；
+  大改后新克隆跑 selftest。

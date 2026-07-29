@@ -391,6 +391,24 @@ else
   F "实例模型只在文档里——arbiter 开不出编号实例，续用不重开落不了地"
 fi
 
+# 41 ── 生成的子代理 prompt 不随源再生就会漂（实证：曾漂到旧版卡整整一轮）
+printf '41. consulter 子代理 prompt 是否与源同步\n'
+_gen=$repo/.claude/agents/consulter.md
+if [ -f "$repo/agents/consulter/AGENTS.md" ]; then
+  if [ -f "$_gen" ] && {
+       printf -- '---\nname: consulter\ndescription: workspace v5 的架构顾问兼框架维护者 —— 与 CFO 平级，掌管框架仓的 git。\n---\n'
+       cat "$repo/agents/consulter/AGENTS.md"
+       printf -- '\n---\n\n'
+       cat "$repo/agents/consulter/审查提示词.md"
+     } | cmp -s - "$_gen"; then
+    P ".claude/agents/consulter.md 与角色卡+审查提示词逐字节一致"
+  else
+    F "生成物与源漂移（或缺失）——克隆下来的 consulter 会带着旧卡出生；重跑拼接再提交"
+  fi
+else
+  N "非框架仓布局"
+fi
+
 # 36 ── 「N 条铁律 / N 条断言」的 N 是化石：写下来的那天就开始漂
 #        （实证：同一仓里同时存在 12、22、23 三个数字，实际 35 条）
 printf '36. 文档是否硬编码了会漂移的条目计数\n'
