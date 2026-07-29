@@ -1,8 +1,8 @@
 {
   "schema_version": 2,
   "module": "root",
-  "role": "cfo",
-  "task": "落 reviewer 第 3 轮 approved + 豁免名单去重",
+  "role": "arbiter",
+  "task": "推送框架仓 + 记录两个拦路项",
   "tier": "normal",
   "status": "approved",
   "summary": "夜班第 1–2 项完成。reviewer 三轮共打回 8 条，全部实修并经它逐条实跑复核（无一条靠自述过关）：四模块门禁刷到最新框架版并入仓（新鲜度 4/4 绿）、nexus-core report 解开假阻塞、切片 1 任务单入仓、docs_reviewed 补记改动审计方报告、changed_files 改为从 git 计算。reviewer 指出三轮同一形状：正文写得足、结构化字段落后于正文（R1 无 report → R2 漏 docs_reviewed → R3 漏 changed_files），已转 consulter 做机械修法。自决记账：cockpit-mongo 绑 127.0.0.1:27117，完整回收两条命令（rm 不删具名卷）。派活就绪度经 reviewer 按「冷启动 programmer 依次会撞到什么」逐项核过，九项全通、无拦路项。下一步：推送框架仓 15 笔 + 四模块仓 → 给 nexus-core 1 号 programmer 发签派活。",
@@ -14,10 +14,7 @@
     "diff_mode": "contains",
     "changed_files": [
       "agents/cfo/docs/report.json",
-      "agents/cfo/docs/worklog/2026-07-30-cfo-round3-approved.md",
-      "agents/cfo/reviewer/docs/2026-07-30-round3.md",
-      "agents/cfo/reviewer/docs/架构问题清单.md",
-      "scripts/gates/doc-path-exempt.txt"
+      "agents/cfo/docs/worklog/2026-07-30-cfo-push-blockers.md"
     ]
   },
   "contract": {
