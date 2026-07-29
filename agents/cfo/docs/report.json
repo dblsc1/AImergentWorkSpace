@@ -2,10 +2,10 @@
   "schema_version": 2,
   "module": "root",
   "role": "cfo",
-  "task": "四模块补装门禁 + 裸提交红测 + 孤儿留痕树清理",
+  "task": "框架区间 6cceec1..4bf3dfd 辅助举证 + J6 登记",
   "tier": "normal",
   "status": "approved",
-  "summary": "四模块此前每次提交的着陆检查都被 pre-commit 静默跳过（install-gates 缺件）。补装后各做一次裸提交红测：rc=1 且 HEAD 未动，四个全被拦。退出码直取不走管道——管道后的 $? 是最后一段的，会把被拦报成成功。孤儿留痕树已清。",
+  "summary": "按 J6（consulter 框架改动由人类审、CFO 辅助）为人类的审查举证：三件审法逐件实跑。check 14 红/绿点火通过、selftest 41/41 且新增 7 条断言条条对应真实事故、我上轮报的角色卡缺陷已修并配断言。但「修到类」未通过——同区间碰了「模块仓跑根仓判据」这个形状却没扫同类，剩 checks/12 与 60，此刻正阻塞 nginx-docker 一笔合规提交。建议打回 F1，结论交人类。",
   "git": {
     "protocol": "embedded-self-v2",
     "branch": "feat/frontend-view-modules",
@@ -13,7 +13,8 @@
     "head": "SELF",
     "diff_mode": "contains",
     "changed_files": [
-      "agents/cfo/docs/worklog/2026-07-29-cfo-gates-redtest.md",
+      "agents/CONSTITUTION.md",
+      "agents/cfo/docs/worklog/2026-07-29-cfo-review-framework-6cceec1-4bf3dfd.md",
       "agents/cfo/docs/report.json"
     ]
   },
@@ -22,28 +23,33 @@
     "which": [],
     "consumes": []
   },
-  "cross_module_impact": [
-    "code/ring",
-    "code/table",
-    "code/nexus-core",
-    "code/nginx-docker"
-  ],
+  "cross_module_impact": [],
   "sub_reports": [],
   "escalation": {
     "reason": "规则冲突",
-    "detail": "mission_start.sh 的 norm() 给写区统一加尾斜杠，单文件写区 .gitignore 被归一成 .gitignore/；checks/_common/05 验签时拿 .gitignore 去匹配 .gitignore/* 永远失败。后果：根级单文件（.gitignore / README.md / 根 AGENTS.md）无法合法进入任何提交。本次 contracts/ 的 !/contracts/ 白名单因此没能随同一逻辑变更落地，而白名单不加则新根级目录会被 .gitignore 静默吞掉——两个缺陷叠在一起正好构成一个静默数据丢失路径。修法：norm() 对已存在的普通文件不加尾斜杠，或 05 的匹配同时接受精确相等。"
+    "detail": "J6（人类 2026-07-29）：consulter 的框架改动由人类审、CFO 只辅助举证不下 verdict。但 agents/protocol/supervision.md 第 21 行仍写「consulter（框架改动）→ CFO 交叉审／模式监督 = 人类」，与 J6 正好相反，而该文件自称「谁审谁的唯一事实源」。两处口径并存时读它的 agent 会照旧口径行事。已登记宪法 §4.1，待改清单：supervision.md 矩阵第 21 行、agents/cfo/AGENTS.md「你要审 consulter 改的框架」一节改为举证口径、consulter 审查提示词若引用旧口径同步改。另：本轮举证发现框架区间未修到类（checks/12 standing-docs 与 checks/60 doc-paths-exist 在模块仓内跑根仓判据），此刻阻塞 code/nginx-docker 一笔合规提交；详见 worklog F1。"
   },
   "reviewer_opinion": {
     "reviewer": "consulter",
     "verdict": "pending",
-    "path": "agents/cfo/docs/worklog/2026-07-29-cfo-gates-redtest.md",
+    "path": "agents/cfo/docs/worklog/2026-07-29-cfo-review-framework-6cceec1-4bf3dfd.md",
     "round": 1
   },
   "docs_reviewed": [
     {
+      "path": "agents/CONSTITUTION.md",
+      "action": "updated",
+      "reason": "J6 入 §4 台账，并登记 §4.1 待改（supervision.md 第 21 行仍写旧口径）"
+    },
+    {
+      "path": "agents/protocol/supervision.md",
+      "action": "no-change-needed",
+      "reason": "它在 agents/protocol/ 属框架区、归 consulter；J6 与它第 21 行正相反，但按「别顺手修框架」不代改，已登记进宪法 §4.1 待改清单由 consulter 落地"
+    },
+    {
       "path": "agents/cfo/doc-map.tsv",
       "action": "no-change-needed",
-      "reason": "本次只补装模块内门禁文件与写留痕，未触碰表中登记的任何代码区域"
+      "reason": "本次只写宪法与自己的留痕，未触碰表中登记的代码区域"
     }
   ]
 }
