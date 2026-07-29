@@ -1,0 +1,52 @@
+{
+  "schema_version": 2,
+  "module": "workspace",
+  "role": "consulter",
+  "task": "反向验证 6cceec1「pre-commit 从未装上」修复",
+  "tier": "normal",
+  "status": "approved",
+  "summary": "修复为真：pre-commit 缺件拒绝、install-gates 装齐且着陆检查真跑并拦截、selftest#32 断言层与 check-references 红/绿均按预期翻转（真实退出码+仓状态双重核实）",
+  "git": {
+    "protocol": "embedded-self-v2",
+    "branch": "v5",
+    "base": "6cceec160059ac1374bb0f9575b18d58b6604b27",
+    "head": "SELF",
+    "diff_mode": "contains",
+    "changed_files": [
+      "agents/consulter/docs/worklog/2026-07-29-consulter-verify-precommit-fix.md",
+      "agents/consulter/docs/findings/report.json"
+    ]
+  },
+  "contract": { "touched": false, "which": [], "consumes": [] },
+  "cross_module_impact": [],
+  "escalation": null,
+  "docs_reviewed": [
+    {"path": "agents/consulter/记忆.md", "action": "no-change-needed",
+     "reason": "本轮验证正是按「恒定答案类」条目执行；新教训（管道 $? 陷阱）拟与后续框架修改一并入库，避免碎提交"}
+  ],
+  "findings": [
+    {"category": "process", "severity": "info",
+     "summary": "6cceec1 修复经四组红/绿反向验证为真；CFO 仓四模块仍未补装、未补检，待其 git pull + install-gates 落实"},
+    {"category": "constant-answer", "severity": "medium",
+     "summary": "mission_start 第4项查 codeagent/<角色>/AGENTS.md（模块布局），项目级角色在框架仓恒不通过起飞单——判据仓型不匹配新实例",
+     "file": "scripts/mission_start.sh"},
+    {"category": "cosmetic", "severity": "low",
+     "summary": "面板服务名尾多连字符（aimergent-panel-<仓>-.service），疑 slug 拼接空段；现网三实例同形状",
+     "file": "scripts/install-gates.sh"},
+    {"category": "side-effect", "severity": "low",
+     "summary": "install-gates 安装时无条件拉起常驻 systemd 面板服务，沙箱/CI 场景留残留（本轮已手工清理）",
+     "file": "scripts/install-gates.sh"}
+  ],
+  "reflection": "验证者自身连踩两次管道退出码陷阱（cmd|tail 后取 $? 得到 tail 的码），险些误判：先把真修复看成无效，又把有效门禁看成恒绿。核退出码必须直取或用 PIPESTATUS。",
+  "recommendations": [
+    "CFO 仓：git pull 框架 v5 后对四模块重跑 install-gates，并以「裸提交被拦」做一次红测留痕",
+    "mission_start 第4项增加项目级角色路径（agents/<角色>/AGENTS.md）回退，并在 selftest 留断言",
+    "判例库「恒定答案类」追加管道 $? 注脚"
+  ],
+  "reviewer_opinion": {
+    "reviewer": "cfo",
+    "verdict": "pending",
+    "path": "agents/consulter/docs/worklog/2026-07-29-consulter-verify-precommit-fix.md",
+    "round": 1
+  }
+}
