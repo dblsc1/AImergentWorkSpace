@@ -428,6 +428,21 @@ else
   F "按框架仓写的判据装进模块仓恒红——恒定答案类，模块提交会被无关判据卡死"
 fi
 
+# 44 ── cfo_reviewer 子代理机制（J6）：卡存在、矩阵与 CFO 卡都指它、模块本地豁免可用
+printf '44. CFO 例行审查子代理机制是否落地\n'
+if [ "$repo/scripts" = "$S" ] && [ -d "$repo/agents" ]; then
+  if [ -f "$repo/agents/cfo/reviewer/agent.md" ] &&
+     grep -q 'agents/cfo/reviewer/agent.md' "$repo/agents/protocol/supervision.md" &&
+     grep -q 'agents/cfo/reviewer/agent.md' "$repo/agents/cfo/AGENTS.md" &&
+     grep -q '\.local\.txt' "$S/checks/_common/60-doc-paths-exist.sh"; then
+    P "J6 卡在位、矩阵与 CFO 卡指回；模块本地豁免名单（.local）可登记"
+  else
+    F "J6 机制缺件——CFO 开不出规范面审查子代理，或模块前向引用仍无处登记"
+  fi
+else
+  N "非框架仓布局"
+fi
+
 # 36 ── 「N 条铁律 / N 条断言」的 N 是化石：写下来的那天就开始漂
 #        （实证：同一仓里同时存在 12、22、23 三个数字，实际 35 条）
 printf '36. 文档是否硬编码了会漂移的条目计数\n'

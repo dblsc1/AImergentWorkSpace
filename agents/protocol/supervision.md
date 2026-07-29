@@ -17,18 +17,21 @@
 |---|---|---|
 | programmer | programmer_reviewer（模块内） | consulter |
 | 模块 arbiter | module_reviewer（交付面/规范面） | consulter |
-| CFO | **cfo_reviewer**（专职职位，暂缺——见下） | consulter |
+| CFO | **cfo_reviewer**——CFO 每轮开的子代理，固定卡 `agents/cfo/reviewer/agent.md`（裁决 J6） | consulter |
 | consulter（框架改动） | **CFO**（交叉审核：那不是它的活，它审得动） | 人类 |
 | 双方共同参与的改动 | ——不许互相签字 | 人类裁决 |
 
-## cfo_reviewer 职位状态（裁决 J1，2026-07-29）
+## cfo_reviewer 职位状态（裁决 J6，2026-07-29；取代 J1 的代任安排）
 
-用户裁决：**cfo_reviewer 职位先搁置**，空缺期由 consulter **代任**CFO 产出的例行审查。
+用户裁决：cfo_reviewer 落地为 **CFO 自己开的审查子代理**——每轮交付前，CFO 用固定实例卡
+`agents/cfo/reviewer/agent.md` 冷启动一个子代理审自己的**规范面**（不审裁决方向）。
 
-- 代任是**过渡状态**，不是新分工：职位设立后 consulter 即退出例行审查，只保留模式监督。
-- 代任期间「谁写的谁不审」不放松：consulter 代任审 CFO 的活，仍与被审产出无利害；
-  consulter 自己改的框架仍由 CFO 审，双方共同参与的仍交人类。
-- 登记见 `agents/CONSTITUTION.md` §4。
+- 无利害的来源：子代理冷启动、只拿卡，不继承 CFO 的对话上下文；卡里明写「打回它的活
+  是本卡存在的意义」。
+- **consulter 的代任解除**（J1 的过渡态结束）：consulter 只保留模式监督（看这一批，
+  不看这一单）。
+- 「谁写的谁不审」其余不变：consulter 改的框架仍由 CFO 审；双方共同参与的仍交人类。
+- 登记见 `agents/CONSTITUTION.md` §4（J1 历史保留，J6 现行）。
 
 ## 跨 checkout 的交叉审怎么走（consulter 框架改动 → CFO 审）
 

@@ -24,6 +24,7 @@ fi
 stale=(); missing=()
 while IFS= read -r rel; do
   [ -n "$rel" ] || continue
+  case "$rel" in *.local.*) continue ;; esac      # *.local.* 是模块自有件（如本地豁免名单），内容本该不同
   [ -f "$rel" ] || continue                       # 模块没装这个文件，跳过（只装子集是正常的）
   [ -f "$fw/$rel" ] || continue
   a=$(sha256sum "$rel" 2>/dev/null | cut -d' ' -f1)

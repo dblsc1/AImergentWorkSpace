@@ -49,6 +49,7 @@ if [ -f "$map" ]; then
     p=${p%/}
     resolves_here_or_framework "$p" && continue
     grep -qxF -- "$p" scripts/gates/doc-path-exempt.txt 2>/dev/null && continue
+    grep -qxF -- "$p" scripts/gates/doc-path-exempt.local.txt 2>/dev/null && continue
     bad "文档地图列出的 $p 不存在（本仓与框架根都没有——导航与实际结构脱节）"
   done < <(grep -oE '`(agents|code|logs|scripts|control-panel)/[^`]+`' "$map" | tr -d '`' | sort -u)
 fi

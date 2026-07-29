@@ -28,7 +28,8 @@
 
 | 编号 | 日期 | 裁决内容 | 提出者 | 状态 |
 |---|---|---|---|---|
-| J1 | 2026-07-29 | cfo_reviewer 职位**先搁置**；空缺期由 consulter 代任 CFO 产出的例行审查（代任=过渡态，职位设立即退出）。例行审查归 reviewer 层、consulter 长期只做模式监督——完整矩阵固化于 `agents/protocol/supervision.md`。 | 用户 | 生效 |
+| J1 | 2026-07-29 | cfo_reviewer 职位**先搁置**；空缺期由 consulter 代任 CFO 产出的例行审查（代任=过渡态，职位设立即退出）。例行审查归 reviewer 层、consulter 长期只做模式监督——完整矩阵固化于 `agents/protocol/supervision.md`。 | 用户 | **被 J6 取代**（代任已解除） |
+| J6 | 2026-07-29 | cfo_reviewer 落地为 **CFO 每轮开的审查子代理**，固定卡 `agents/cfo/reviewer/agent.md`（冷启动、只审规范面、只举证不修复）。consulter 代任解除，只做模式监督。 | 用户 | 生效已落地 |
 | J2 | 2026-07-29 | 测试分层：programmer 写 pytest 级单元测试；reviewer 写整合级（跨整个代码文件）测试 + 规范性审核。两层都入 push 前测试。 | 用户 | **已落地**（铁律 17、角色卡、run-tests 发现域） |
 | J3 | 2026-07-29 | 留痕迁到代码旁：worklog（简短）与 report.json 迁入代码目录旁；每模块一页纸说明，每改必核（落检查项）。 | 用户 | **已落地**（report-schema、模板、checks/10+14、check-report-schema；存量模块旧路径过渡期兼容） |
 | J4 | 2026-07-29 | jsonl 沟通留痕改为每 agent 一份（发任务/报完成，append-only）。 | 用户 | **已落地**（comm.jsonl 落点 + new_instance 生成；logs/diary.jsonl 保留为脚本事件账本） |

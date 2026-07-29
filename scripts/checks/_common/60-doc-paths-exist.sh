@@ -24,8 +24,11 @@ while IFS= read -r -d '' f; do
     # 判据＝「本仓或框架根可解析」（同 check-references 的口径）。
     resolves_here_or_framework "$p" && continue
     grep -qxF -- "$p" "$exempt" 2>/dev/null && continue
+    # 模块本地豁免（CFO 实报的缺口）：框架全局名单是拷贝副本，模块改它=制造漂移；
+    # 本地名单 .local 不在 install-gates 安装集，13 号新鲜度不比对它，模块可自由登记。
+    grep -qxF -- "$p" "${exempt%.txt}.local.txt" 2>/dev/null && continue
     echo "$f 引用了不存在的路径：$p" >&2
-    echo "  → 若是有意的前向引用，登记进 $exempt；否则修正它" >&2
+    echo "  → 有意的前向引用：框架仓登记 $exempt；模块仓登记 ${exempt%.txt}.local.txt（不随框架同步，不算漂移）" >&2
     fail=1
   done < <(grep -oE '`(agents|code|logs|scripts)/[^`]+`' "$f" | tr -d '`' | sort -u)
 done < <(staged_paths ACMR)
