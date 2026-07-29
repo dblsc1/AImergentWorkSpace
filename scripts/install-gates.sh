@@ -57,7 +57,8 @@ required=(
 if [ "$hook_only" -eq 0 ]; then
   required+=(
     workflows/ci.yml gates/run-gates.sh gates/run-tests.sh
-    gates/check-report-schema.sh gates/.gitleaks.toml
+    gates/check-report-schema.sh gates/check-references.sh gates/.gitleaks.toml
+    gates/doc-path-exempt.txt gates/doc-map.tsv
     gates/legacy-path-exempt.txt gates/remote-test-exempt.txt
     gates/agent-attribution-activation module.gitignore
   )
@@ -77,8 +78,9 @@ copy_file() {
 if [ "$hook_only" -eq 0 ]; then
   mkdir -p "$mod_real/.github/workflows" "$mod_real/scripts/gates" "$mod_real/scripts/hooks"
   copy_file "$CI/workflows/ci.yml" "$mod_real/.github/workflows/ci.yml"
-  for gate in run-gates.sh run-tests.sh check-report-schema.sh .gitleaks.toml \
-    legacy-path-exempt.txt remote-test-exempt.txt agent-attribution-activation; do
+  for gate in run-gates.sh run-tests.sh check-report-schema.sh check-references.sh .gitleaks.toml \
+    legacy-path-exempt.txt remote-test-exempt.txt agent-attribution-activation \
+    doc-path-exempt.txt doc-map.tsv; do
     copy_file "$CI/gates/$gate" "$mod_real/scripts/gates/$gate"
   done
   for hook in pre-push commit-msg cc-push-guard.sh; do
@@ -86,6 +88,7 @@ if [ "$hook_only" -eq 0 ]; then
   done
   copy_file "$CI/arbiter-push.sh" "$mod_real/scripts/arbiter-push.sh"
   chmod +x "$mod_real/scripts/gates/run-gates.sh" "$mod_real/scripts/gates/run-tests.sh" \
+    "$mod_real/scripts/gates/check-references.sh" \
     "$mod_real/scripts/gates/check-report-schema.sh" "$mod_real/scripts/hooks/pre-push" \
     "$mod_real/scripts/hooks/commit-msg" "$mod_real/scripts/hooks/cc-push-guard.sh" \
     "$mod_real/scripts/arbiter-push.sh"

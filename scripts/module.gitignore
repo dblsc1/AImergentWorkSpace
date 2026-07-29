@@ -13,3 +13,11 @@
 **/.env.*
 !**/.env.example
 !**/.env.*.example
+
+# 运行时产物（脚本生成，不入仓）——
+# 不忽略的话，只往 logs/ 写一行就会让 git status 变化，
+# run_agent 的 landed 检查会被自己的 diary 写入骗成恒真。
+logs/INDEX.md
+logs/console.json
+logs/diary.jsonl
+logs/sessions/

@@ -276,5 +276,13 @@ else
   F "派出去的 agent 可能一个字没落盘却报成功 —— 撒谎式成功在派活主干上"
 fi
 
+# 28 ── landed 被脚本自己的 diary 写入骗成恒真（检查永远给同一个答案）
+printf '28. landed 是否排除脚本自产物\n'
+if [ -x "$S/run_agent.sh" ] && grep -q "grep -vE '(^|\[ ?\])logs/'" "$S/run_agent.sh" 2>/dev/null; then
+  P "落盘快照排除 logs/，不会被自己的 diary 写入骗过"
+else
+  F "landed 会把脚本自己的 diary 写入算成「活落盘了」—— 恒真"
+fi
+
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
 [ "$fail" -eq 0 ]

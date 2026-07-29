@@ -14,13 +14,32 @@ root=$(git rev-parse --show-toplevel) || exit 2
 cd "$root"
 exempt=scripts/gates/doc-path-exempt.txt
 fail=0
+
+# ── 仓类型感知 ───────────────────────────────────────────────
+# 同一份脚本会被装进模块仓。模块里没有 agents/（那在框架仓），
+# 也只装了门禁子集（没有 install-gates / merge-to-integration）。
+# 判据应当是「这个引用能不能在**够得着的地方**解析」，
+# 而不是「一定在本仓」—— 否则装进模块就恒红，等于没有这道门。
+framework=${AIMERGENT_FRAMEWORK_ROOT:-}
+if [ -z "$framework" ] && [ -f .aimergent-framework ]; then
+  framework=$(cd "$(cat .aimergent-framework)" 2>/dev/null && pwd -P || true)
+fi
+is_module=0
+[ -d codeagent ] && [ -d module_docs ] && is_module=1
+
+# 引用可解析 = 本仓有 或 框架根有
+resolves() {
+  [ -e "$1" ] && return 0
+  [ -n "$framework" ] && [ -e "$framework/$1" ] && return 0
+  return 1
+}
 bad() { printf '  ❌ %s\n' "$*" >&2; fail=1; }
 
 is_exempt() { grep -qxF -- "$1" "$exempt" 2>/dev/null; }
 # 占位/通配/模板记法不是真实路径
 is_literal() { case "$1" in *'}'*|*'<'*|*'{'*|*'*'*|*'$'*|*' '*|*'…'*) return 1 ;; esac; return 0; }
 
-printf '── 引用完整性 ──\n'
+printf '── 引用完整性（%s）──\n' "$([ "$is_module" -eq 1 ] && echo 模块仓 || echo 框架仓)"
 
 # ① 脚本引用的仓内脚本/文件必须存在（install-ci.sh 就是死在这里）
 while IFS= read -r -d '' f; do
@@ -30,9 +49,13 @@ while IFS= read -r -d '' f; do
     [ -n "$p" ] || continue
     is_literal "$p" || continue
     p=${p%/}
-    [ -e "$p" ] && continue
+    resolves "$p" && continue
     is_exempt "$p" && continue
-    bad "$f 引用不存在的仓内路径: $p"
+    if [ "$is_module" -eq 1 ] && [ -z "$framework" ]; then
+      bad "$f 引用 $p，本仓没有且解析不到框架根（缺 .aimergent-framework 或 AIMERGENT_FRAMEWORK_ROOT）"
+    else
+      bad "$f 引用不存在的路径: $p（本仓与框架根都没有）"
+    fi
     # 注释行里的例子不是引用（文档性质的路径由 checks/60 在 .md 里查），
     # 且前缀必须落在词边界上 —— 否则 reviewcode/run_all.sh 会被误切成 code/run_all.sh
   done < <(grep -v '^[[:space:]]*#' "$f" |
@@ -41,21 +64,23 @@ while IFS= read -r -d '' f; do
 done < <(git ls-files -z)
 
 # ② 报告协议点名的 canonical 路径，其目录必须存在（目录不在 = agent 不会写）
-if [ -f agents/protocol/report-schema.md ]; then
+schema=agents/protocol/report-schema.md
+[ -f "$schema" ] || schema="${framework:-.}/agents/protocol/report-schema.md"
+if [ -f "$schema" ] && [ "$is_module" -eq 0 ]; then
   while read -r p; do
     [ -n "$p" ] || continue
     d=$(dirname "$p")
     case "$d" in codeagent/*) continue ;; esac   # 模块内路径，建模块后才有
     [ -d "$d" ] || bad "report-schema 点名的 canonical 路径，目录不存在: $d"
-  done < <(grep -oE '`[a-zA-Z0-9._/-]+/report\.json`' agents/protocol/report-schema.md | tr -d '`' | sort -u)
+  done < <(grep -oE '`[a-zA-Z0-9._/-]+/report\.json`' "$schema" | tr -d '`' | sort -u)
 fi
 
 # ③ 脚本里提到的角色，必须有对应角色卡
 for r in $(grep -rhoE '\b(arbiter|programmer|programmer_reviewer|module_reviewer|consulter)\b' \
             scripts/*.sh scripts/checks/*/*.sh 2>/dev/null | sort -u); do
   # 角色卡两处：模块级在 agents/roles/；项目级 CFO 与 consulter 各自成目录（二者平级）
-  [ -f "agents/roles/$r.md" ] || [ -f "agents/$r/AGENTS.md" ] ||
-    bad "脚本引用角色 $r，但既无 agents/roles/$r.md 也无 agents/$r/AGENTS.md"
+  resolves "agents/roles/$r.md" || resolves "agents/$r/AGENTS.md" ||
+    bad "脚本引用角色 $r，但 agents/roles/$r.md 与 agents/$r/AGENTS.md 在本仓与框架根都不存在"
 done
 
 # ④ checks 目录里的每个脚本都必须满足 --describe 契约且可执行

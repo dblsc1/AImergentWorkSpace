@@ -52,8 +52,13 @@ else
   printf '      先跑：scripts/mission_start.sh %s <任务单> <写区...>\n' "$role" >&2
 fi
 
-# 派活前的仓状态快照，用于事后核"活是不是真落了盘"
-_before=$(git status --porcelain 2>/dev/null | sort; git rev-parse HEAD 2>/dev/null)
+# 派活前的仓状态快照，用于事后核"活是不是真落了盘"。
+# **必须排除脚本自己的产物**：run_agent / emit.sh 会往 logs/ 追加事件，
+# 只写一行 diary 就会让 git status 变化 —— landed 于是恒真，
+# 又是一个"检查永远给同一个答案"（CFO 实证：agent 一个字没改，landed 判 true）。
+_snap() { { git status --porcelain 2>/dev/null | grep -vE '(^|[ ?])logs/'
+             git rev-parse HEAD 2>/dev/null; } | sort; }
+_before=$(_snap)
 if [ "$resume" -eq 1 ]; then
   [ -f "$sess_file" ] || die "没有可续用的 session 记录: $sess_file"
   args+=(--resume "$(cat "$sess_file")")
@@ -70,7 +75,7 @@ sid=$(jq -r '.session_id // empty' <<<"$out" 2>/dev/null || true)
 
 # ── ② 退出码 0 不等于干完了：核产出真落盘 ────────────────────────
 # 这是铁律 12「不接受口头已完成」的机械化：进程说成功，去看工作树认不认。
-_after=$(git status --porcelain 2>/dev/null | sort; git rev-parse HEAD 2>/dev/null)
+_after=$(_snap)
 landed=1
 [ "$_before" = "$_after" ] && landed=0
 if [ "$rc" -eq 0 ] && [ "$landed" -eq 0 ]; then
