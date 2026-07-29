@@ -102,6 +102,12 @@
       "category": "assertion-quality",
       "severity": "info",
       "summary": "#44 在本轮改 CFO 卡时抓住真回归（实例卡路径被重写弄丢）——断言首次拦住 consulter 自己的文档回归"
+    },
+    {
+      "category": "governance",
+      "severity": "medium",
+      "summary": "口述 2.2「什么时候必须叫人」两天未成文，实证代价=CFO 把本机容器决策上升到用户——已成文进 supervision.md（五类必叫/其余自决记账），细目待用户追认",
+      "file": "agents/protocol/supervision.md"
     }
   ],
   "reflection": "停线旗对 CFO 仓的置旗权限需要人类裁决 consulter 的唯一写例外，未授权前走上报路径——权限边界写进 worklog 待批。",
