@@ -10,7 +10,7 @@
 git clone <your-repository-url> workspace && cd workspace
 ./scripts/install-gates.sh .              # ① 先给根仓自己装门禁 —— 别跳过
 git checkout -b feat/<你的第一个主题>    # ② 根仓工作也走分支，main 只经合并门更新
-./scripts/selftest.sh                  # ③ 确认 12 条闸门全绿
+./scripts/selftest.sh                  # ③ 确认全部闸门断言绿
 ./scripts/new_module.sh my_module      # ④ 一个参数建模块，建完即可开工
 ./scripts/dispatch.sh backend code/my_module/codeagent/backend/docs/<任务单>.md
 ```

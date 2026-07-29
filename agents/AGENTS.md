@@ -90,9 +90,10 @@
 | CFO arbiter | 项目规范、跨模块契约关系、协调台账 | 禁亲写模块业务代码 |
 | consulter（**与 CFO 平级**） | 自己的评审留痕、必要的规范纠错、框架维护 | 禁执行业务实现、禁代替 CFO 裁决、**禁自审自己改的框架** |
 
-**为什么 consulter 不放在 `agents/cfo/` 下面**：它审 CFO 的活。
+**为什么 consulter 不放在 `agents/cfo/` 下面**：它监督 CFO 的产出（例行审查暂代任、
+长期做模式监督，矩阵见 `agents/protocol/supervision.md`）。
 挂在 CFO 名下等于结构上说它归 CFO 管，与「谁写的谁不审」直接打架。
-三个项目级角色是**并列**的：CFO 分派、consulter 独立审、人类裁决。
+三个项目级角色是**并列**的：CFO 分派、consulter 独立监督、人类裁决。
 
 ## 协作流程（完整治理）
 

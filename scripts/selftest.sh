@@ -338,5 +338,38 @@ else
   F "模块门禁停在装它那天的版本，在跑、在绿，但跑的是旧判据"
 fi
 
+# 35 ── 监督分工（谁审谁）曾散写在三处角色卡里，改一处漏两处
+printf '35. 监督分工是否单一事实源\n'
+if [ "$repo/scripts" = "$S" ] && [ -d "$repo/agents" ]; then
+  _sup=$repo/agents/protocol/supervision.md
+  _refs=0
+  for _card in agents/cfo/AGENTS.md agents/consulter/AGENTS.md agents/consulter/审查提示词.md; do
+    grep -q 'agents/protocol/supervision.md' "$repo/$_card" 2>/dev/null && _refs=$((_refs+1))
+  done
+  if [ -f "$_sup" ] && grep -q '监督矩阵' "$_sup" && [ "$_refs" -eq 3 ]; then
+    P "supervision.md 是唯一事实源，三份角色文档都指回它（$_refs/3）"
+  else
+    F "监督矩阵缺失或角色卡未指回（$_refs/3）—— 分工又要开始各写各的了"
+  fi
+else
+  N "非框架仓布局，无项目级角色卡"
+fi
+
+# 36 ── 「N 条铁律 / N 条断言」的 N 是化石：写下来的那天就开始漂
+#        （实证：同一仓里同时存在 12、22、23 三个数字，实际 35 条）
+printf '36. 文档是否硬编码了会漂移的条目计数\n'
+if [ -d "$repo/agents" ]; then
+  _drift=$(grep -rn '[0-9]\+ 条\(通用\)\?铁律\|[0-9]\+ 条闸门\|[0-9]\+ 条断言' \
+    --include='*.md' --include='*.sh' "$repo/agents" "$repo/scripts" "$repo/README.md" 2>/dev/null |
+    grep -v '/worklog/' | grep -v '/findings/' | grep -v '/subreports/' | grep -v 'selftest.sh')
+  if [ -z "$_drift" ]; then
+    P "长期文档不写死条目数，指向「全集/运行输出」"
+  else
+    F "硬编码计数会随条目增删静默过期：$(printf '%s' "$_drift" | head -3 | tr '\n' ' ')"
+  fi
+else
+  N "非框架仓布局"
+fi
+
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
 [ "$fail" -eq 0 ]

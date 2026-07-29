@@ -2,18 +2,29 @@
   "schema_version": 2,
   "module": "workspace",
   "role": "consulter",
-  "task": "反向验证 6cceec1「pre-commit 从未装上」修复",
+  "task": "监督分工长久化（裁决 J1）+ 计数化石清扫",
   "tier": "normal",
   "status": "approved",
-  "summary": "修复为真：pre-commit 缺件拒绝、install-gates 装齐且着陆检查真跑并拦截、selftest#32 断言层与 check-references 红/绿均按预期翻转（真实退出码+仓状态双重核实）",
+  "summary": "监督矩阵固化为 agents/protocol/supervision.md 唯一事实源并同步四处旧表述；J1 入宪法台账；清扫 9 处硬编码条目计数；selftest 新增 #35/#36 断言并各做红/绿反向验证",
   "git": {
     "protocol": "embedded-self-v2",
     "branch": "v5",
-    "base": "6cceec160059ac1374bb0f9575b18d58b6604b27",
+    "base": "6c6d1ee26360ecff4b39604c5aded067a57ac0f9",
     "head": "SELF",
     "diff_mode": "contains",
     "changed_files": [
-      "agents/consulter/docs/worklog/2026-07-29-consulter-verify-precommit-fix.md",
+      "agents/protocol/supervision.md",
+      "agents/AGENTS.md",
+      "agents/CONSTITUTION.md",
+      "agents/cfo/AGENTS.md",
+      "agents/consulter/AGENTS.md",
+      "agents/consulter/审查提示词.md",
+      "agents/reference/HANDOFF.md",
+      "agents/reference/manual/文档地图.md",
+      "scripts/README.md",
+      "README.md",
+      "scripts/selftest.sh",
+      "agents/consulter/docs/worklog/2026-07-29-consulter-supervision-矩阵长久化.md",
       "agents/consulter/docs/findings/report.json"
     ]
   },
@@ -21,32 +32,35 @@
   "cross_module_impact": [],
   "escalation": null,
   "docs_reviewed": [
+    {"path": "agents/reference/manual/文档地图.md", "action": "updated"},
+    {"path": "scripts/README.md", "action": "updated"},
+    {"path": "agents/cfo/doc-map.tsv", "action": "no-change-needed",
+     "reason": "该表登记「长期文档↔代码区域」治理关系；本次改动全在规范文档与 selftest 断言，未新增代码区域，supervision.md 与 scripts/ 的关系已由文档地图和 selftest#35 承接"},
     {"path": "agents/consulter/记忆.md", "action": "no-change-needed",
-     "reason": "本轮验证正是按「恒定答案类」条目执行；新教训（管道 $? 陷阱）拟与后续框架修改一并入库，避免碎提交"}
+     "reason": "计数化石属「恒定答案/字面量」既有类的实例，判例库已覆盖该形状；新增判例待 CFO 审毕一并沉淀，避免审前自写判例自证"}
   ],
   "findings": [
-    {"category": "process", "severity": "info",
-     "summary": "6cceec1 修复经四组红/绿反向验证为真；CFO 仓四模块仍未补装、未补检，待其 git pull + install-gates 落实"},
-    {"category": "constant-answer", "severity": "medium",
-     "summary": "mission_start 第4项查 codeagent/<角色>/AGENTS.md（模块布局），项目级角色在框架仓恒不通过起飞单——判据仓型不匹配新实例",
-     "file": "scripts/mission_start.sh"},
-    {"category": "cosmetic", "severity": "low",
-     "summary": "面板服务名尾多连字符（aimergent-panel-<仓>-.service），疑 slug 拼接空段；现网三实例同形状",
-     "file": "scripts/install-gates.sh"},
-    {"category": "side-effect", "severity": "low",
-     "summary": "install-gates 安装时无条件拉起常驻 systemd 面板服务，沙箱/CI 场景留残留（本轮已手工清理）",
-     "file": "scripts/install-gates.sh"}
+    {"category": "architecture", "severity": "medium",
+     "summary": "监督分工此前散写在 4 处角色文档且相互过期（CFO 卡仍写 consulter 逐单审），新分工只活在 session prompt——已固化为 supervision.md 唯一事实源 + selftest#35 断言"},
+    {"category": "constant-drift", "severity": "low",
+     "summary": "硬编码条目计数三代化石并存（12/22/23 条，实际铁律 23、断言 35）；已全部去数字化并加 selftest#36 禁止复活"},
+    {"category": "naming", "severity": "low",
+     "summary": "consulter 角色卡标题写「CFO agent · consulter」，结构上暗示隶属，与平级原则矛盾——已更正",
+     "file": "agents/consulter/AGENTS.md"},
+    {"category": "tooling", "severity": "low",
+     "summary": "doc_impact.sh 同一暂存文件打印两遍（「2 处改动」实为 1 个文件）——未修，待与 mission_start#4 仓型不匹配一并处理",
+     "file": "scripts/doc_impact.sh"}
   ],
-  "reflection": "验证者自身连踩两次管道退出码陷阱（cmd|tail 后取 $? 得到 tail 的码），险些误判：先把真修复看成无效，又把有效门禁看成恒绿。核退出码必须直取或用 PIPESTATUS。",
+  "reflection": "插 CONSTITUTION 台账行时自己把表格插出双分隔行——在同一轮里验证了「凡改表格必须回读渲染结构」；修正已含在本 commit。",
   "recommendations": [
-    "CFO 仓：git pull 框架 v5 后对四模块重跑 install-gates，并以「裸提交被拦」做一次红测留痕",
-    "mission_start 第4项增加项目级角色路径（agents/<角色>/AGENTS.md）回退，并在 selftest 留断言",
-    "判例库「恒定答案类」追加管道 $? 注脚"
+    "CFO 审本 commit（consulter 改的框架，按矩阵不自批）：重点核 supervision.md 与四处同步表述是否一致、#35/#36 断言是否真拦",
+    "cfo_reviewer 职位设立时：更新 supervision.md 状态节 + CONSTITUTION J1 状态，consulter 同步退出例行审查",
+    "下一轮框架单：mission_start#4 项目级角色路径回退 + doc_impact 去重 + 面板服务名尾连字符"
   ],
   "reviewer_opinion": {
     "reviewer": "cfo",
     "verdict": "pending",
-    "path": "agents/consulter/docs/worklog/2026-07-29-consulter-verify-precommit-fix.md",
+    "path": "agents/consulter/docs/worklog/2026-07-29-consulter-supervision-矩阵长久化.md",
     "round": 1
   }
 }
