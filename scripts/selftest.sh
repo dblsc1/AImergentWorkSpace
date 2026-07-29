@@ -473,6 +473,17 @@ else
   F "先 rebase 再装只是一句 worklog——已实证散文管不住一轮之后的自己"
 fi
 
+# 48 ── 过期便条（「等裁决」解了没销）曾一日三例——该自堵，不该巡逻
+printf '48. 障签机制是否在位（过期便条自堵）\n'
+_c15=$S/checks/_common/15-stale-blocker.sh
+if [ -x "$_c15" ] && "$_c15" --describe >/dev/null 2>&1 &&
+   grep -q '解除标志' "$_c15" && [ -d "$repo/blockers" ] &&
+   grep -q 'blockers/' "$repo/agents/protocol/report-schema.md" 2>/dev/null; then
+  P "blockers/ 一障一便条+解除标志；标志出现即红逼销障（路签同形，checks/15）"
+else
+  F "「等裁决」只活在报告散文里——解了没人销，冷启动 agent 停等已做完的决定"
+fi
+
 # 36 ── 「N 条铁律 / N 条断言」的 N 是化石：写下来的那天就开始漂
 #        （实证：同一仓里同时存在 12、22、23 三个数字，实际 35 条）
 printf '36. 文档是否硬编码了会漂移的条目计数\n'

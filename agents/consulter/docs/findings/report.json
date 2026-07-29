@@ -61,6 +61,10 @@
     {
       "path": "agents/protocol/orchestration.md",
       "action": "updated"
+    },
+    {
+      "path": "agents/protocol/report-schema.md",
+      "action": "updated"
     }
   ],
   "findings": [
@@ -85,6 +89,12 @@
       "severity": "medium",
       "summary": "N2 类修复：教训只活在散文里管不住一轮后的作者本人——install-gates 装前机械核源仓新鲜度（落后拒装+记账口），真克隆红/绿三路验证，selftest #47",
       "file": "scripts/install-gates.sh"
+    },
+    {
+      "category": "stale-note",
+      "severity": "medium",
+      "summary": "「留痕恒旧」类（一日三例：§4.1/nexus-core等裁决/阻塞标记）按用户设计修——障签 blockers/ 自堵机制（路签同形，解除标志出现即红逼销障），checks/15 + selftest #48",
+      "file": "scripts/checks/_common/15-stale-blocker.sh"
     }
   ],
   "reflection": "我昨晚的停线实测与 CFO 的门禁红测犯了同一形状错误——监督者与被监督者共享认知盲区，这正是断言比审查可靠的原因：#46 现在替两边盯着。",
