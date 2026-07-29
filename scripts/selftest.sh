@@ -443,6 +443,17 @@ else
   N "非框架仓布局"
 fi
 
+# 45 ── 停线旗：阻塞级问题必须能一键冻结提交/发签/推送（三个入口一个都不能少）
+printf '45. 停线机制是否三入口齐备\n'
+if grep -q 'STOPLINE' "$S/hooks/pre-commit" 2>/dev/null &&
+   grep -q 'STOPLINE' "$S/mission_start.sh" 2>/dev/null &&
+   grep -q 'STOPLINE' "$S/arbiter-push.sh" 2>/dev/null &&
+   grep -q '^/logs/STOPLINE$' "$repo/.gitignore" 2>/dev/null; then
+  P "logs/STOPLINE 旗被 pre-commit/mission_start/arbiter-push 三入口认，且本地不入仓"
+else
+  F "停线缺入口——阻塞级架构问题发现了也停不下来，只能眼看它继续产出"
+fi
+
 # 36 ── 「N 条铁律 / N 条断言」的 N 是化石：写下来的那天就开始漂
 #        （实证：同一仓里同时存在 12、22、23 三个数字，实际 35 条）
 printf '36. 文档是否硬编码了会漂移的条目计数\n'

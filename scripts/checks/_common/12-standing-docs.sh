@@ -56,7 +56,7 @@ fi
 # ⑤ 孤儿留痕树：改名/迁移后旧目录还在，里面还有内容 ——
 # **旧树看起来是活的**，人打开它以为"没更新"，而新树其实一直在写。
 # 这比丢文件更坏：丢了会被发现，两棵并存不会。
-canon_docs="agents/cfo/docs agents/consulter/docs"
+canon_docs="agents/cfo/docs agents/consulter/docs agents/cfo/reviewer/docs"
 while IFS= read -r -d '' d; do
   case "$d" in */.git/*) continue ;; esac
   d=${d%/}

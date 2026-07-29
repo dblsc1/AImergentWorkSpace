@@ -26,6 +26,7 @@
 /logs/console.json
 /logs/diary.jsonl
 /logs/sessions/
+/logs/STOPLINE
 
 # 通用排除
 **/node_modules/

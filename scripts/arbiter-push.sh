@@ -5,6 +5,12 @@ set -euo pipefail
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || true
 if [ "$#" -eq 0 ]; then echo "用法: arbiter-push.sh <git push 参数...>" >&2; exit 2; fi
 
+# 停线旗：旗在 = 冻结推送（同 pre-commit，判据见 agents/protocol/supervision.md）
+_sl_root=$(git rev-parse --show-toplevel 2>/dev/null || echo .)
+if [ -f "$_sl_root/logs/STOPLINE" ]; then
+  printf '🛑 停线中，拒绝推送。原因：\n' >&2; sed 's/^/   /' "$_sl_root/logs/STOPLINE" >&2; exit 1
+fi
+
 common_dir=$(git rev-parse --path-format=absolute --git-common-dir)
 nonce=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 umask 077

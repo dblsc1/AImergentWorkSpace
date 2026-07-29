@@ -19,6 +19,10 @@ die() { printf '❌ %s\n' "$*" >&2; exit 1; }
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || die "不在 Git 仓内"
 cd "$root"
+# 停线旗：旗在 = 不发新签（存量工作可收尾，新活不开；判据见 agents/protocol/supervision.md）
+if [ -f logs/STOPLINE ] && [ "${1:-}" != --release ] && [ "${1:-}" != --list ] && [ "${1:-}" != --checklist ]; then
+  printf '🛑 停线中，不发新写区路签。原因：\n' >&2; sed 's/^/   /' logs/STOPLINE >&2; exit 1
+fi
 lease_dir=$(git rev-parse --path-format=absolute --git-common-dir)/aimergent-leases
 mkdir -p "$lease_dir"
 

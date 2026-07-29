@@ -18,7 +18,7 @@
 | programmer | programmer_reviewer（模块内） | consulter |
 | 模块 arbiter | module_reviewer（交付面/规范面） | consulter |
 | CFO | **cfo_reviewer**——CFO 每轮开的子代理，固定卡 `agents/cfo/reviewer/agent.md`（裁决 J6） | consulter |
-| consulter（框架改动） | **CFO**（交叉审核：那不是它的活，它审得动） | 人类 |
+| consulter（框架改动） | **人类**（CFO 辅助举证：跑三件审法产出证据，**结论由人下**——裁决 J7） | 人类 |
 | 双方共同参与的改动 | ——不许互相签字 | 人类裁决 |
 
 ## cfo_reviewer 职位状态（裁决 J6，2026-07-29；取代 J1 的代任安排）
@@ -33,7 +33,7 @@
 - 「谁写的谁不审」其余不变：consulter 改的框架仍由 CFO 审；双方共同参与的仍交人类。
 - 登记见 `agents/CONSTITUTION.md` §4（J1 历史保留，J6 现行）。
 
-## 跨 checkout 的交叉审怎么走（consulter 框架改动 → CFO 审）
+## 跨 checkout 的举证审怎么走（consulter 框架改动 → 人类审，CFO 举证——裁决 J7）
 
 框架仓与项目仓是**同一个 GitHub 仓的不同 checkout**，CFO 只能通过远端看到 consulter 的
 commit——所以这条审必然**先推后审**，与「先审后推」判例不冲突：v5 是工作分支，不是 main。
@@ -41,8 +41,23 @@ commit——所以这条审必然**先推后审**，与「先审后推」判例�
 1. consulter 落 commit，`report.json` 的 `reviewer_opinion` 标 `pending`；
 2. 推 v5 用 `AIMERGENT_PUSH_UNREVIEWED=1 scripts/arbiter-push.sh origin v5`
    （记账逃生口，diary 可查；这是本流程的**常规路径**，不是违规）；
-3. CFO 仓 `git pull` 后对固定区间 `<旧tip>..<新tip>` 审，verdict 经
-   `review_complete.sh` 落痕；rejected 的改动由 consulter 在框架仓返修再推。
+3. CFO 仓 `git pull` 后对固定区间 `<旧tip>..<新tip>` **举证**（三件审法：门禁真会响 /
+   修到类 / 断言点过火），证据落痕；**verdict 由人类下**，rejected 的改动由
+   consulter 在框架仓返修再推。
+
+## 阻塞判据（2026-07-30 定，consulter 起草待人类追认；架构/框架问题按此分流）
+
+**一句话**：挡住主开发路径**且无合法绕行** = 阻塞；有合法绕行或只是摩擦 = 记账攒批。
+
+| 判定 | 情形 | 处置 |
+|---|---|---|
+| **阻塞** | ① 门禁把合法业务提交/推送拦死，且无语义正确的豁免或记账逃生口；② 数据丢失路径（留痕写丢、白名单静默吞、备份缺 commit）；③ 恒红已发生（某道门对本仓永远失败=流程卡死）；④ 流程死锁（按规范走完全部步骤仍无法前进）；⑤ 密钥/安全泄露路径 | **立即停线**：上报 CFO 停派活，转 consulter/人类；修复优先于一切业务任务 |
+| **高危不阻塞** | 恒绿（门失效但不卡人）、逃生口被滥用趋势 | 不停线，但限期（下一批清账必含） |
+| **不阻塞** | 有合法绕行的误报、摩擦性重复劳动（能过但别扭）、观感/命名、断言覆盖缺口、输出噪音 | 记进架构问题清单，攒批清账 |
+
+**红线**：绕行必须**合法且留痕**——需要变形文案、去引号、隐瞒信息才能通过的「绕行」
+不算绕行，一律按阻塞处理（判例：2026-07-29 前向引用被迫去反引号——那次规避掩盖了
+一个真缺口，缺口补上后写法已改回）。
 
 ## consulter 的长期定位（本矩阵的推论）
 

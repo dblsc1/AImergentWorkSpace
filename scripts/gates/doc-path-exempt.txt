@@ -22,3 +22,5 @@ logs/INDEX.md
 logs/console.json
 logs/diary.jsonl
 logs/sessions
+agents/cfo/reviewer/session
+logs/STOPLINE

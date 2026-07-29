@@ -2,10 +2,10 @@
   "schema_version": 2,
   "module": "workspace",
   "role": "consulter",
-  "task": "J6：CFO 例行审查子代理机制 + 模块本地豁免名单",
+  "task": "阻塞判据 + 停线机制 + reviewer 常驻化 + J7 同步",
   "tier": "normal",
   "status": "approved",
-  "summary": "cfo_reviewer 落地为 CFO 自开子代理（固定卡 agents/cfo/reviewer/agent.md，只审规范面、只举证），consulter 代任解除；六处表述同步；模块本地豁免名单 .local（60/12 读、13 排除）补上 CFO 实报缺口；selftest 44 条全绿，#44 与 13 号连带修复均红/绿点火",
+  "summary": "阻塞判据入 supervision（挡主路径且无合法绕行=阻塞，三档分流，规避式绕行按阻塞计）；logs/STOPLINE 停线旗三入口实测；cfo_reviewer 常驻+实时架构问题清单；J7（consulter 框架改动人类审、CFO 举证）四处同步；80 号按文件名判修掉 worklog 硬套。selftest 45 条，#44 抓真回归一次",
   "git": {
     "protocol": "embedded-self-v2",
     "branch": "v5",
@@ -13,20 +13,20 @@
     "head": "SELF",
     "diff_mode": "contains",
     "changed_files": [
-      "agents/cfo/reviewer/agent.md",
       "agents/protocol/supervision.md",
-      "agents/CONSTITUTION.md",
       "agents/cfo/AGENTS.md",
-      "agents/AGENTS.md",
-      "agents/consulter/AGENTS.md",
+      "agents/cfo/reviewer/agent.md",
+      "agents/cfo/reviewer/docs/架构问题清单.md",
       "agents/consulter/审查提示词.md",
       ".claude/agents/consulter.md",
-      "scripts/gates/doc-path-exempt.local.txt",
-      "scripts/checks/_common/60-doc-paths-exist.sh",
-      "scripts/checks/_common/12-standing-docs.sh",
-      "scripts/checks/_common/13-gates-fresh.sh",
+      "scripts/hooks/pre-commit",
+      "scripts/mission_start.sh",
+      "scripts/arbiter-push.sh",
+      ".gitignore",
+      "scripts/gates/doc-path-exempt.txt",
+      "scripts/checks/arbiter/80-taskcard-complete.sh",
       "scripts/selftest.sh",
-      "agents/consulter/docs/worklog/2026-07-29-consulter-j6-cfo审查子代理.md",
+      "agents/consulter/docs/worklog/2026-07-30-consulter-停线机制与阻塞判据.md",
       "agents/consulter/docs/findings/report.json"
     ]
   },
@@ -59,47 +59,47 @@
     },
     {
       "path": "agents/CONSTITUTION.md",
-      "action": "updated"
+      "action": "no-change-needed",
+      "reason": "J7 让号由 CFO 在其 checkout 完成待推送；本轮同改会二次撞号，等它的 commit 合入"
     },
     {
       "path": "agents/consulter/记忆.md",
       "action": "no-change-needed",
-      "reason": "J6 是分工调整非判例；13 号 .local 排除属「仓型/副本漂移」既有类的延伸，类条目已在"
+      "reason": "撞号是「分布式编号无协调」类第二例，类修法挂账清单而非判例库；停线属新机制非判例"
     },
     {
       "path": "scripts/README.md",
       "action": "no-change-needed",
-      "reason": "无新增脚本；.local 名单是数据文件，其用法说明在文件头与 60 的报错提示里"
+      "reason": "无新脚本；停线旗行为写在三个入口的报错与 supervision 判据节"
     },
     {
       "path": "agents/reference/manual/文档地图.md",
       "action": "no-change-needed",
-      "reason": "12 号只改判据实现（仓型分支与豁免读取），地图登记的是「检查体系存在于 scripts/checks/」这一层，粒度不及单条判据"
+      "reason": "arbiter-push 仅在入口加停线旗检查，地图对它的登记（sanctioned push 路径）语义未变；停线机制的事实源是 supervision.md 判据节"
     }
   ],
   "findings": [
     {
       "category": "governance",
       "severity": "info",
-      "summary": "J6 落地：CFO 规范面例行审查由其自开子代理承担（冷启动+固定卡=无利害），consulter 归位纯模式监督——监督矩阵自此无空缺无代任"
+      "summary": "阻塞判据成文（consulter 起草待人类追认）+ 停线旗三入口实测红/绿——阻塞项从此停得下来"
     },
     {
-      "category": "gap-fixed",
+      "category": "numbering-collision",
       "severity": "medium",
-      "summary": "模块级前向引用此前无处登记（全局名单改副本=漂移）——新增 .local 名单，60/12 读取、13 新鲜度排除 *.local.*；若不排除，模块一登记就恒红（CFO 撞过的形状）",
-      "file": "scripts/gates/doc-path-exempt.local.txt"
+      "summary": "裁决编号撞号（两条 J6）——分布式编号无协调第二例（首例 selftest#35 撞号）；CFO 让号处置正确；类修法（台账编号规则或内容寻址）挂架构问题清单"
     },
     {
       "category": "assertion-quality",
-      "severity": "low",
-      "summary": "#44 正向即红：断言 grep 字面串而实现是参数拼接——红/绿点火第三次抓住断言自身弱判据，佐证该硬要求",
-      "file": "scripts/selftest.sh"
+      "severity": "info",
+      "summary": "#44 在本轮改 CFO 卡时抓住真回归（实例卡路径被重写弄丢）——断言首次拦住 consulter 自己的文档回归"
     }
   ],
-  "reflection": "用户口述的落点名（cfo/consults）与既有角色名冲突，改用台账已有的 cfo_reviewer 并在 worklog 留改名成本说明——命名偏离用户原话时必须留痕并给回改路径。",
+  "reflection": "停线旗对 CFO 仓的置旗权限需要人类裁决 consulter 的唯一写例外，未授权前走上报路径——权限边界写进 worklog 待批。",
   "recommendations": [
-    "CFO：pull 后重跑 install-gates 刷新 12/13/60 副本；下一轮交付起按 J6 开 cfo_reviewer 子代理；nginx-docker 那个前向引用如需恢复反引号写法，登记进模块 .local 名单",
-    "交叉审区间顺延至新 tip（含本 commit——J6 机制本身也该被它审）"
+    "CFO：pull 后重跑 install-gates（hook/检查有更新）；reviewer 常驻子代理按新卡开起来并接管实时清单",
+    "人类：①追认阻塞判据；②裁决是否授权 consulter 写 CFO 仓 logs/STOPLINE 单一路径",
+    "预研代理已重发，报告出来后单独呈报"
   ],
   "reviewer_opinion": {
     "reviewer": "cfo",

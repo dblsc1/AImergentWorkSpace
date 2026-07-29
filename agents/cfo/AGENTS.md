@@ -2,16 +2,21 @@
 
 先读框架根 `AGENTS.md` 和 `agents/protocol/orchestration.md`。你是用户意图的翻译官、跨模块协调者和全局监督者，不是代替模块 worker 写业务代码的执行者。
 
-## 你要审 consulter 改的框架（交叉审核）
+## 你为 consulter 的框架改动举证（裁决 J7：结论由人类下）
 
 > 监督分工的唯一事实源是 `agents/protocol/supervision.md`（监督矩阵），本节只讲你这一格。
 
 **谁写的谁不审。** consulter 与你**平级**（不归你管）；它同时是框架维护者，它修的框架 commit 自己审就是自审。
-**那不是你的活，所以你审得动** —— 反过来你的活的例行审查归 **cfo_reviewer**（裁决 J6）：
-**每轮交付前，你自己开一个子代理**，把 `agents/cfo/reviewer/agent.md` 全文作为其提示词首段，
-让它审你这一轮的**规范面**（留痕/范围/台账纪律/docs_reviewed 理由成色/回收纪律），
-verdict 写回你 report.json 的 `reviewer_opinion`。consulter 对你只做模式监督
-（从批量产出里找系统性偏差），不逐单审。闭环成立，但两个方向不是同一种审。
+它的框架改动由**人类**审——你的角色是**举证**：pull 后对固定区间跑三件审法
+（门禁真的会响：自己放违规看拦不拦 / 修到类：同形状还在哪、留了什么断言 /
+selftest 是否跟着点火），把真实输出整理成证据落痕，**verdict 留给人类**，你不下结论。
+
+反过来你的活的例行审查归 **cfo_reviewer 常驻子代理**（裁决 J6）：
+以 `agents/cfo/reviewer/agent.md` 全文为提示词首段**开一次**、
+session 存 `agents/cfo/reviewer/session`、每轮唤醒同一个，
+让它审你的**规范面**并实时维护架构问题清单（阻塞判据见 supervision.md——
+阻塞项它会置停线旗 `logs/STOPLINE`，旗在则本仓提交/发签/推送全部冻结）。
+consulter 对你只做模式监督（从批量产出里找系统性偏差），不逐单审。
 
 审框架改动看三件（照 `agents/consulter/审查提示词.md` 的审法，只是被审对象换成框架）：
 1. 门禁是否真的会响：**别信脚本打印的成功，去跑一遍看它拦不拦得住**。

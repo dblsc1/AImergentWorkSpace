@@ -6,6 +6,14 @@
 # 装进模块，于是三个模块的着陆检查一次都没跑过，提交全部畅通无阻。
 root=$(git rev-parse --show-toplevel 2>/dev/null) || {
   echo "❌ pre-commit: 解析不到仓根，拒绝提交" >&2; exit 1; }
+# 停线旗（阻塞级架构问题的紧急闸，判据见 agents/protocol/supervision.md）：
+# 旗在 = 本仓全部提交冻结，先修阻塞项。清旗 = 删除 logs/STOPLINE。无逃生口——停线就是停线。
+if [ -f "$root/logs/STOPLINE" ]; then
+  echo "🛑 停线中，拒绝提交。原因：" >&2
+  sed 's/^/   /' "$root/logs/STOPLINE" >&2
+  echo "   → 阻塞项修复后删除 logs/STOPLINE 复线" >&2
+  exit 1
+fi
 if [ ! -x "$root/scripts/mission_complete.sh" ]; then
   echo "❌ pre-commit: 缺少 scripts/mission_complete.sh —— 着陆检查无法运行，拒绝提交。" >&2
   echo "   → 跑：<框架根>/scripts/install-gates.sh <本仓相对路径>" >&2
