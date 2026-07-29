@@ -75,12 +75,18 @@
       "severity": "medium",
       "summary": "pull 只更新仓内钩子副本、从不更新 .git/hooks 活钩子且此前无检查覆盖（框架 checkout 还被 13 豁免）——已加活钩子自比，对本仓正向即红一次（抓到自己）",
       "file": "scripts/checks/_common/13-gates-fresh.sh"
+    },
+    {
+      "category": "prose-to-assertion",
+      "severity": "medium",
+      "summary": "N2 类修复：教训只活在散文里管不住一轮后的作者本人——install-gates 装前机械核源仓新鲜度（落后拒装+记账口），真克隆红/绿三路验证，selftest #47",
+      "file": "scripts/install-gates.sh"
     }
   ],
   "reflection": "我昨晚的停线实测与 CFO 的门禁红测犯了同一形状错误——监督者与被监督者共享认知盲区，这正是断言比审查可靠的原因：#46 现在替两边盯着。",
   "recommendations": [
     "CFO：pull 后 13 号会核四模块活钩子，过期重跑 install-gates；90 号平账，契约说明写新落点即可见",
-    "夜间自动运行期间：新问题按阻塞判据分流，不阻塞的进 reviewer 架构问题清单攒批，明早用户看清单即可"
+    "CFO：pull 后 N2 平账——install-gates 自己会拒绝旧源安装，worklog 那条教训退役为注释"
   ],
   "reviewer_opinion": {
     "reviewer": "cfo",

@@ -19,6 +19,27 @@ CI=${AIMERGENT_CI_SOURCE:-$SCRIPT_DIR}
 WORKSPACE_ROOT=$(cd -- "$WORKSPACE_ROOT" && pwd -P)
 CI=$(cd -- "$CI" && pwd -P)
 
+# ── 先 rebase 再装，机械化（CFO 2026-07-30 实证：写进 worklog 的教训一轮后被作者
+#    自己原样违反——散文没有半衰期保证，断言有）。源仓落后上游 = 拷出去的全是旧判据，
+#    且 13 号事后才能抓；这里在装之前就拒。离线（fetch 不通）不阻断——比对用现有 ref。
+src_repo=$(git -C "$CI" rev-parse --show-toplevel 2>/dev/null || true)
+if [ -n "$src_repo" ]; then
+  timeout 10 git -C "$src_repo" fetch --quiet --no-tags 2>/dev/null || true
+  _up=$(git -C "$src_repo" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)
+  if [ -n "$_up" ]; then
+    _behind=$(git -C "$src_repo" rev-list --count "HEAD..$_up" 2>/dev/null || echo 0)
+    if [ "${_behind:-0}" -gt 0 ]; then
+      if [ -n "${AIMERGENT_INSTALL_STALE_OK:-}" ]; then
+        printf '⚠️  门禁源落后 %s %s 个 commit，按 AIMERGENT_INSTALL_STALE_OK 放行：%s\n' \
+          "$_up" "$_behind" "$AIMERGENT_INSTALL_STALE_OK" >&2
+        emit_event install_stale_override "behind=$_behind reason=$AIMERGENT_INSTALL_STALE_OK" 2>/dev/null || true
+      else
+        die "门禁源落后 $_up $_behind 个 commit——先 pull/rebase 源仓再装，否则拷出去的是旧判据。确需装旧版：AIMERGENT_INSTALL_STALE_OK=<理由>"
+      fi
+    fi
+  fi
+fi
+
 hook_only=0
 if [ "${1:-}" = --hook-only ]; then
   hook_only=1

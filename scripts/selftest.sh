@@ -464,6 +464,15 @@ else
   F "工作区副本能骗过新鲜度 / 活钩子停在装机那天 / 新落点的说明不可见——三个都是「被测对象错位」"
 fi
 
+# 47 ── 「先 rebase 再装」曾只活在散文里，作者本人一轮后原样再犯
+printf '47. 装门禁前是否机械核源仓新鲜度\n'
+if grep -q 'AIMERGENT_INSTALL_STALE_OK' "$S/install-gates.sh" 2>/dev/null &&
+   grep -q 'rev-list --count "HEAD..\$_up"' "$S/install-gates.sh" 2>/dev/null; then
+  P "源仓落后上游即拒装（记账逃生口可放行）——教训从散文变成断言"
+else
+  F "先 rebase 再装只是一句 worklog——已实证散文管不住一轮之后的自己"
+fi
+
 # 36 ── 「N 条铁律 / N 条断言」的 N 是化石：写下来的那天就开始漂
 #        （实证：同一仓里同时存在 12、22、23 三个数字，实际 35 条）
 printf '36. 文档是否硬编码了会漂移的条目计数\n'
