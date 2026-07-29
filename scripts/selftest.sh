@@ -478,10 +478,11 @@ printf '48. 障签机制是否在位（过期便条自堵）\n'
 _c15=$S/checks/_common/15-stale-blocker.sh
 if [ -x "$_c15" ] && "$_c15" --describe >/dev/null 2>&1 &&
    grep -q '解除标志' "$_c15" && [ -d "$repo/blockers" ] &&
-   grep -q 'blockers/' "$repo/agents/protocol/report-schema.md" 2>/dev/null; then
-  P "blockers/ 一障一便条+解除标志；标志出现即红逼销障（路签同形，checks/15）"
+   grep -q 'blockers/' "$repo/agents/protocol/report-schema.md" 2>/dev/null &&
+   grep -q '波及' "$S/mission_start.sh" 2>/dev/null; then
+  P "blockers/ 便条：着陆逼销障（checks/15）+ 发签拦压线写区（起飞单第 8 项）"
 else
-  F "「等裁决」只活在报告散文里——解了没人销，冷启动 agent 停等已做完的决定"
+  F "「等裁决」只活在报告散文里，或发签时刻不看便条——programmer 会被派进未决裁决压着的写区"
 fi
 
 # 36 ── 「N 条铁律 / N 条断言」的 N 是化石：写下来的那天就开始漂

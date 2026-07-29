@@ -23,7 +23,8 @@
   "cross_module_impact": [],
   "escalation": null,                // 或 {"reason":"打回上限|规则冲突|架构缺陷","detail":"…","blocker":"blockers/<id>.md"}
                                      // escalation != null 必须同批在 blockers/ 立障（一障一文件，
-                                     // 写明「解除标志：<仓内路径 或 文字@文件>」）。标志出现后
+                                     // 写明「解除标志：<仓内路径 或 文字@文件>」，可选「波及：<路径前缀>」——
+                                     // 带波及的便条会在 mission_start 硬拦压线写区的发签）。标志出现后
                                      // checks/15 会强制销障——过期便条自堵，不靠人巡逻。
 
   "docs_reviewed": [                 // 改动波及的文档，逐条表态（铁律 11 的机械落点）

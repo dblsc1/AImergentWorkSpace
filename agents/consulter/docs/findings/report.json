@@ -95,6 +95,12 @@
       "severity": "medium",
       "summary": "「留痕恒旧」类（一日三例：§4.1/nexus-core等裁决/阻塞标记）按用户设计修——障签 blockers/ 自堵机制（路签同形，解除标志出现即红逼销障），checks/15 + selftest #48",
       "file": "scripts/checks/_common/15-stale-blocker.sh"
+    },
+    {
+      "category": "gap-fixed",
+      "severity": "medium",
+      "summary": "障签原只在着陆销障，发签时刻不看便条（用户点破）——起飞单第8项：波及面压线即拒签，三路实测；#48 扩两时刻",
+      "file": "scripts/mission_start.sh"
     }
   ],
   "reflection": "我昨晚的停线实测与 CFO 的门禁红测犯了同一形状错误——监督者与被监督者共享认知盲区，这正是断言比审查可靠的原因：#46 现在替两边盯着。",

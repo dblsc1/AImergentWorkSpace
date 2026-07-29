@@ -48,6 +48,8 @@ if [ "${1:-}" = --checklist ]; then
 │                          缺 → scripts/install-gates.sh .
 │  6  不在 main 上          派活前先开 feat/ 分支
 │  7  无遗留路签            上一轮的签没还会挡住本轮；--release <角色> 还签
+│  8  障签                  blockers/ 便条：写区压着未决裁决 → 拒发签
+│                          （便条带「波及：<前缀>」才硬拦；其余仅列出提示）
 │
 └─ 全过才发签、才出派单提示词
 
@@ -165,6 +167,30 @@ esac
 _stale=$(ls "$lease_dir"/*.lease 2>/dev/null | xargs -r -n1 basename 2>/dev/null | sed 's/\.lease$//' | grep -vx "$role" | tr '\n' ' ')
 if [ -z "$_stale" ]; then cl_ok 7 "无他人遗留路签"
 else cl_skip 7 "他人持签中：$_stale" "不冲突即可并发；确认已完工的用 --release <角色> 还签"; fi
+
+# 8 障签（blockers/ 便条）：派活别派进未决裁决压着的写区（2026-07-30 用户点破：
+# 便条防的是执行者停等，那发签时刻就该看它，不是等着陆才撞）。
+# 便条带「波及：<前缀>」且与申领写区重叠 → 硬拒；其余在场便条 → 列出提示。
+_blk_hard=""; _blk_open=""
+while IFS= read -r -d '' _b; do
+  [ -f "$_b" ] || continue
+  _blk_open="$_blk_open ${_b#blockers/}"
+  while IFS= read -r _scope; do
+    _scope=$(sed 's/^波及：//; s/^[[:space:]]*//; s/[[:space:]]*$//' <<<"$_scope"); [ -n "$_scope" ] || continue
+    _scope_n=$(norm "$_scope")
+    for w in "${want[@]}"; do
+      case "$w" in "$_scope_n"*) _blk_hard="$w ⊂ 波及($_scope_n) ← ${_b}" ;; esac
+      case "$_scope_n" in "$w"*) _blk_hard="$w ⊃ 波及($_scope_n) ← ${_b}" ;; esac
+    done
+  done < <(grep '^波及：' "$_b" 2>/dev/null)
+done < <(git ls-files -z 'blockers/*.md' 2>/dev/null)
+if [ -n "$_blk_hard" ]; then
+  cl_bad 8 "障签" "写区压着未决裁决：$_blk_hard" "先解障销便条，或把写区切出波及面——别让 programmer 停等一个没做的决定"
+elif [ -n "$_blk_open" ]; then
+  cl_skip 8 "在场便条：$_blk_open" "与本写区无关可并行；相关的自觉停一停"
+else
+  cl_ok 8 "无在等的裁决便条"
+fi
 
 # 起飞预告：这片写区可能牵动哪些长期文档 —— 现在知道，好过着陆时被拦
 if [ -f "$root/scripts/lib/docmap.sh" ]; then

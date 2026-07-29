@@ -30,7 +30,7 @@
   是本卡存在的意义」。
 - **consulter 的代任解除**（J1 的过渡态结束）：consulter 只保留模式监督（看这一批，
   不看这一单）。
-- 「谁写的谁不审」其余不变：consulter 改的框架仍由 CFO 审；双方共同参与的仍交人类。
+- 「谁写的谁不审」其余不变：consulter 改的框架由**人类**审、CFO 举证（J7，见下节）；双方共同参与的仍交人类。
 - 登记见 `agents/CONSTITUTION.md` §4（J1 历史保留，J6 现行）。
 
 ## 跨 checkout 的举证审怎么走（consulter 框架改动 → 人类审，CFO 举证——裁决 J7）
