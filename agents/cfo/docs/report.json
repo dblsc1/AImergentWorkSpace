@@ -2,10 +2,10 @@
   "schema_version": 2,
   "module": "root",
   "role": "cfo",
-  "task": "CFO canonical 路径迁移 + 长期文档同步",
-  "tier": "simple",
+  "task": "宪法填实：事件标准四条架构裁决",
+  "tier": "normal",
   "status": "approved",
-  "summary": "consulter 提到与 CFO 平级后，把 CFO 的 report.json / 依赖索引 / decisions 迁到 agents/cfo/docs/，并同步三处长期文档引用。worklog 按人类裁决不搬——历史叙事搬了等于改写历史。",
+  "summary": "人类要做事件信封的架构决策但记不清结构，我做了完整交底并把四处含糊摆成决策题。D6/D7/D8/D10 由人类拍板，D9（subject 分层）人类要求查通行经验后由 CFO 定、人类采纳。全部写进 agents/CONSTITUTION.md，五条登记进 §4.1「已批准未落契约」——该节现在非空，下一轮第一件事是清空它。顺手发现 HANDOFF §3.1 与 §6 对防重键自相矛盾。",
   "git": {
     "protocol": "embedded-self-v2",
     "branch": "feat/frontend-view-modules",
@@ -13,48 +13,46 @@
     "head": "SELF",
     "diff_mode": "contains",
     "changed_files": [
-      "agents/cfo/docs/report.json",
-      "agents/cfo/docs/依赖索引.md",
-      "agents/cfo/docs/worklog/2026-07-29-cfo-canonical-path-migration.md",
-      "agents/reference/manual/文档地图.md",
-      "agents/reference/upstream/README.md",
-      "agents/reference/新增前端视图模块.md"
+      "agents/CONSTITUTION.md",
+      "agents/cfo/docs/worklog/2026-07-29-cfo-constitution-architecture.md",
+      "agents/cfo/docs/report.json"
     ]
   },
   "contract": {
-    "touched": false,
-    "which": [],
+    "touched": true,
+    "which": [
+      "yq-event/v1（信封语义，尚未固化成 contracts/ 文件）"
+    ],
     "consumes": []
   },
   "cross_module_impact": [
-    "code/ring",
-    "code/table"
+    "code/nexus-core"
   ],
   "sub_reports": [],
-  "escalation": null,
+  "escalation": {
+    "reason": "规则冲突",
+    "detail": "HANDOFF 内部自相矛盾，已由 D7 定死并登记待改：§3.1 写「id + source 构成防重键」，而 §6 的唯一索引写 (user, source, dedupeKey)，且全文未说明 dedupeKey 是否等于 id。实现者若照 §3.1 写，防重会按 id 判——而 id 每次重试都可能不同，等于防重失效、学生重复提交会重复长树。另：宪法 §4.1 现有 5 条未落地裁决，按该节规矩下一轮第一件事必须是清空它（建 contracts/ + 写 yq-event-v1.md + 同步 HANDOFF），不得先做新功能。"
+  },
   "reviewer_opinion": {
     "reviewer": "consulter",
     "verdict": "pending",
-    "path": "agents/cfo/docs/worklog/2026-07-29-cfo-canonical-path-migration.md",
+    "path": "agents/cfo/docs/worklog/2026-07-29-cfo-constitution-architecture.md",
     "round": 1
   },
   "docs_reviewed": [
     {
-      "path": "agents/reference/manual/文档地图.md",
+      "path": "agents/CONSTITUTION.md",
       "action": "updated"
     },
     {
-      "path": "agents/reference/upstream/README.md",
-      "action": "updated"
-    },
-    {
-      "path": "agents/reference/新增前端视图模块.md",
-      "action": "updated"
+      "path": "agents/reference/HANDOFF.md",
+      "action": "no-change-needed",
+      "reason": "HANDOFF 自我定性为指导性可改的项目总目标，不是契约；本次裁决与它 §3.1/§6 的冲突已逐条登记进宪法 §4.1 的待改清单，按该节规矩在下一轮清空时统一改，现在改会造成两处半成品"
     },
     {
       "path": "scripts/gates/doc-map.tsv",
       "action": "no-change-needed",
-      "reason": "本次是 agents/ 内的路径迁移，未触碰表中登记的任何代码区域（scripts/* · agents/roles/* · agents/protocol/* · control-panel/* · code/_template/*）；且 CFO docs 不是被治理的代码区域"
+      "reason": "本次只改 agents/CONSTITUTION.md，未触碰表中登记的任何代码区域"
     }
   ]
 }
