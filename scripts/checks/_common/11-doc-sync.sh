@@ -2,7 +2,7 @@
 # 判据：改了东西，提到它的文档要么同批改，要么在报告里声明「已读·无需改 + 理由」。
 #
 # 关系有两个来源，**主干是人维护的治理关系，不是自动反查**：
-#   ① scripts/gates/doc-map.tsv —— 长期文档治理哪片代码区域（项目级，CFO 维护）
+#   ① agents/cfo/doc-map.tsv —— 长期文档治理哪片代码区域（项目级，CFO 维护）
 #   ② 约定推导 —— code/<模块>/code/** → 该模块的 contract.md 与 AGENTS.md（模块级，不用登记）
 # 为什么主干必须是人维护的：`contract.md` 治理 `code/backend/**`，
 # **哪怕它正文里一个路径都没写** —— 靠「文档提到了谁」反查永远抓不到这条，
@@ -76,7 +76,14 @@ if command -v jq >/dev/null; then
   done < <(find . -path ./.git -prune -o -name report.json -print0 2>/dev/null | sed -z 's|^\./||')
 fi
 
-doc_map=scripts/gates/doc-map.tsv
+# 治理关系表归 CFO，放在它自己的目录下（结构说明归属）。
+# 模块仓没有 agents/，回落到它声明的框架根 —— 模块级关系本来就靠约定推导，不靠表。
+doc_map=agents/cfo/doc-map.tsv
+if [ ! -f "$doc_map" ]; then
+  _fw=${AIMERGENT_FRAMEWORK_ROOT:-}
+  [ -z "$_fw" ] && [ -f .aimergent-framework ] && _fw=$(cd "$(cat .aimergent-framework)" 2>/dev/null && pwd -P || true)
+  [ -n "$_fw" ] && [ -f "$_fw/agents/cfo/doc-map.tsv" ] && doc_map="$_fw/agents/cfo/doc-map.tsv"
+fi
 
 declare -A reported=()
 need() {   # need <文档> <因为改了什么>
@@ -129,7 +136,7 @@ if [ "$fail" -ne 0 ]; then
      ② 在自己的 report.json 里声明已读：
         "docs_reviewed":[{"path":"<文档>","action":"no-change-needed","reason":"<为什么不用改>"}]
      声明是结构化的、可审计的、会进控制面板 —— 但必须写理由。
-     治理关系从哪来：scripts/gates/doc-map.tsv（项目级，CFO 维护）
+     治理关系从哪来：agents/cfo/doc-map.tsv（项目级，CFO 维护）
                      + 模块级约定（code/<模块>/code/** → 该模块 contract.md 与 AGENTS.md）
 HINT
 fi

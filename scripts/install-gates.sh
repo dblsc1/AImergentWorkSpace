@@ -58,7 +58,7 @@ if [ "$hook_only" -eq 0 ]; then
   required+=(
     workflows/ci.yml gates/run-gates.sh gates/run-tests.sh
     gates/check-report-schema.sh gates/check-references.sh gates/.gitleaks.toml
-    gates/doc-path-exempt.txt gates/doc-map.tsv
+    gates/doc-path-exempt.txt
     gates/legacy-path-exempt.txt gates/remote-test-exempt.txt
     gates/agent-attribution-activation module.gitignore
   )
@@ -80,7 +80,7 @@ if [ "$hook_only" -eq 0 ]; then
   copy_file "$CI/workflows/ci.yml" "$mod_real/.github/workflows/ci.yml"
   for gate in run-gates.sh run-tests.sh check-report-schema.sh check-references.sh .gitleaks.toml \
     legacy-path-exempt.txt remote-test-exempt.txt agent-attribution-activation \
-    doc-path-exempt.txt doc-map.tsv; do
+    doc-path-exempt.txt; do
     copy_file "$CI/gates/$gate" "$mod_real/scripts/gates/$gate"
   done
   for hook in pre-push commit-msg cc-push-guard.sh; do

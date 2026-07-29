@@ -113,3 +113,24 @@ CFO 保到 `rescue/consulter-b96b0c2` 并把自己分支清干净了，处理得
 
 `--checklist` 可单独看单子，不跑任何检查 —— 派活前先读一遍，和 `mission_complete --list`
 一起构成「开卷」：agent 开工第一秒就知道起飞要过什么、着陆要过什么。
+
+## 治理关系表挪到 CFO 名下（人类问"这张表在哪"）
+
+原位置 `scripts/gates/doc-map.tsv` —— 人类找不到，**这本身就是位置错了的证据**。
+那个目录是机器管道（`.gitleaks.toml`、豁免名单、门禁脚本），
+而这张表是 **CFO 拥有、随项目不断变化、人要读**的活文件。
+
+挪到 `agents/cfo/doc-map.tsv`。理由与「consulter 提到与 CFO 平级」是同一条：
+**结构应该说明归属。** 放在门禁的机器配置堆里，等于说它是配置；
+放在 CFO 目录下，等于说改它是 CFO 的日常工作。
+
+模块仓没有 `agents/`，`11-doc-sync` 回落到 `.aimergent-framework` 声明的框架根去找；
+模块级关系本来就靠约定推导（`code/<模块>/code/**` → 该模块 contract.md + AGENTS.md），
+不依赖这张表，所以也不再随 `install-gates` 拷进模块。
+`文档地图.md` 加了指针，人从导航就能找到它。
+
+**过程中又撞一次静默编辑失败**：改路径时 `doc_map=` 那行改了，
+注释与 HINT 文案里的旧路径没跟着改 —— `check-references` 当场抓出
+「引用不存在的路径 scripts/gates/doc-map.tsv」，而在那之前
+`11-doc-sync` 因为读不到表**只出提示、不报违规**，看起来像"通过了"。
+**又一个恒定答案：表读不到时，这条检查等于不存在。** 已修并实测表真被读到。
