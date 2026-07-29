@@ -156,7 +156,7 @@
 | J3 | 2026-07-29 | 留痕迁到代码旁：worklog（简短）与 report.json 迁入代码目录旁；每模块一页纸说明，每改必核（落检查项）。 | 用户 | **已落地**（report-schema、模板、checks/10+14、check-report-schema；存量模块旧路径过渡期兼容） |
 | J4 | 2026-07-29 | jsonl 沟通留痕改为每 agent 一份（发任务/报完成，append-only）。 | 用户 | **已落地**（comm.jsonl 落点 + new_instance 生成；logs/diary.jsonl 保留为脚本事件账本） |
 | J5 | 2026-07-29 | arbiter push 前测试范围＝本模块全量 + 消费方契约测试；全仓跨模块全量归合入 dev/main 的 CI。 | 用户 | **已落地**（run-tests 扫 code+review/reviewcode，arbiter 卡入义务） |
-| J6 | 2026-07-29 | **consulter 的框架改动由人类审，CFO 辅助**（提供实跑证据与建议，不下 verdict）。取代此前「CFO 交叉审、人类做模式监督」的写法 | 用户 | **未落地**（`supervision.md` 仍写旧口径） |
+| J7 | 2026-07-29 | **consulter 的框架改动由人类审，CFO 辅助**（提供实跑证据与建议，不下 verdict）。取代此前「CFO 交叉审、人类做模式监督」的写法。<br>**编号说明**：本条原记为 J6，与 consulter 同日写入的另一条 J6（cfo_reviewer 落地为自开子代理）撞号。那条已被三处框架文件引用在先，故本条让号改为 J7。 | 用户 | **未落地**（`supervision.md` 监督矩阵末行仍写旧口径） |
 | D1 | 2026-07-28 | 前端按视图切模块：`ring` 与 `table` 各一个独立仓，不合并 | CFO 提请 | 已落地 |
 | D2 | 2026-07-28 | `index.html` 1280 行按存量导入登记技术债，不硬拆；偿还条件绑"谁第一个动它谁负责拆" | CFO | 已落地。**与 D12 的冲突由人类 2026-07-29 裁决：D2 保留**，在 C1 里写成存量导入例外；派生时须在文件顶部写「下次重构拆掉」 |
 | D3 | 2026-07-28 | 每模块一个 GitHub 远端，`dblsc1/cockpit-*`，private | 人类 | 已落地（4 个仓，闸门已实证） |
@@ -188,7 +188,7 @@
 
 | 裁决编号 | 批准日期 | 已批准的新行为 | 契约当前仍写着的旧行为 | 待改文件清单 |
 |---|---|---|---|---|
-| J6 | 2026-07-29 | consulter 的框架改动**由人类审**，CFO 只辅助（出实跑证据与建议，不下 verdict） | `agents/protocol/supervision.md` 第 21 行仍写「consulter（框架改动）→ **CFO**（交叉审核）／模式监督 = 人类」，与本裁决正好相反 | ① `agents/protocol/supervision.md` 监督矩阵第 21 行改为「例行审查 = **人类**；CFO = 辅助举证」<br>② `agents/cfo/AGENTS.md` 的「你要审 consulter 改的框架」一节改为「你为人类的审查**举证**：跑红/绿点火、查是否修到类、核 selftest 断言，**结论交人类下**」<br>③ `agents/consulter/审查提示词.md` 若引用旧口径同步改 |
+| J7 | 2026-07-29 | consulter 的框架改动**由人类审**，CFO 只辅助（出实跑证据与建议，不下 verdict） | `agents/protocol/supervision.md` 监督矩阵末行仍写「consulter（框架改动）→ **CFO**（交叉审核）／模式监督 = 人类」，与本裁决正好相反 | ① `agents/protocol/supervision.md` 监督矩阵第 21 行改为「例行审查 = **人类**；CFO = 辅助举证」<br>② `agents/cfo/AGENTS.md` 的「你要审 consulter 改的框架」一节改为「你为人类的审查**举证**：跑红/绿点火、查是否修到类、核 selftest 断言，**结论交人类下**」<br>③ `agents/consulter/审查提示词.md` 若引用旧口径同步改 |
 
 （**本节为空 = 契约与裁决一致，可以正常推进。**
 D6–D10 已于 2026-07-29 全部落进 `contracts/yq-event-v1.md`，移回 §4 标「已落地」。）
