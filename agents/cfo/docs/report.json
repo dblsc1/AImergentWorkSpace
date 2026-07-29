@@ -2,10 +2,10 @@
   "schema_version": 2,
   "module": "root",
   "role": "cfo",
-  "task": "宪法填实：事件标准四条架构裁决",
+  "task": "宪法定性修正 + mock 验收 + 行数分档裁决",
   "tier": "normal",
   "status": "approved",
-  "summary": "人类要做事件信封的架构决策但记不清结构，我做了完整交底并把四处含糊摆成决策题。D6/D7/D8/D10 由人类拍板，D9（subject 分层）人类要求查通行经验后由 CFO 定、人类采纳。全部写进 agents/CONSTITUTION.md，五条登记进 §4.1「已批准未落契约」——该节现在非空，下一轮第一件事是清空它。顺手发现 HANDOFF §3.1 与 §6 对防重键自相矛盾。",
+  "summary": "宪法改为本项目唯一权威（框架根那份已删），HANDOFF 降级为讨论草稿并加顶部标注。C1 行数改为分档（≤500 建议 / >500 记 report / >1000 分拆），存量导入按 D2 例外。独立验收 nexus-core mock：起真服务打真请求，占比 0-100、空闲态 null、默认过滤 ephemeral、无弱默认值、非法参数 422 全部实测通过。",
   "git": {
     "protocol": "embedded-self-v2",
     "branch": "feat/frontend-view-modules",
@@ -14,6 +14,7 @@
     "diff_mode": "contains",
     "changed_files": [
       "agents/CONSTITUTION.md",
+      "agents/reference/HANDOFF.md",
       "agents/cfo/docs/worklog/2026-07-29-cfo-constitution-architecture.md",
       "agents/cfo/docs/report.json"
     ]
@@ -31,7 +32,7 @@
   "sub_reports": [],
   "escalation": {
     "reason": "规则冲突",
-    "detail": "HANDOFF 内部自相矛盾，已由 D7 定死并登记待改：§3.1 写「id + source 构成防重键」，而 §6 的唯一索引写 (user, source, dedupeKey)，且全文未说明 dedupeKey 是否等于 id。实现者若照 §3.1 写，防重会按 id 判——而 id 每次重试都可能不同，等于防重失效、学生重复提交会重复长树。另：宪法 §4.1 现有 5 条未落地裁决，按该节规矩下一轮第一件事必须是清空它（建 contracts/ + 写 yq-event-v1.md + 同步 HANDOFF），不得先做新功能。"
+    "detail": "宪法 C1 现写「>1000 行必须分拆」，但框架门禁 scripts/gates/run-gates.sh:175 仍是「>500 行硬失败」。两者不一致：宪法允许 500–1000 记一笔即可，门禁会直接拒。目前无实际文件落在 500–1000 区间，所以还没咬人，但一旦有就会出现「宪法说可以、门禁说不行」的死结。修法归框架侧（consulter）：门禁应改为 >500 警告并要求 report 说明、>1000 才 bad。另：宪法 §4.1 仍有 5 条未落地裁决（contracts/ 未建、yq-event-v1.md 未写），按该节规矩下一轮第一件事是清空它。"
   },
   "reviewer_opinion": {
     "reviewer": "consulter",
@@ -46,13 +47,13 @@
     },
     {
       "path": "agents/reference/HANDOFF.md",
-      "action": "no-change-needed",
-      "reason": "HANDOFF 自我定性为指导性可改的项目总目标，不是契约；本次裁决与它 §3.1/§6 的冲突已逐条登记进宪法 §4.1 的待改清单，按该节规矩在下一轮清空时统一改，现在改会造成两处半成品"
+      "action": "updated",
+      "reason": "降级为讨论草稿，顶部加权威声明"
     },
     {
       "path": "scripts/gates/doc-map.tsv",
       "action": "no-change-needed",
-      "reason": "本次只改 agents/CONSTITUTION.md，未触碰表中登记的任何代码区域"
+      "reason": "本次只改 agents/ 下的文档，未触碰表中登记的代码区域"
     }
   ]
 }
