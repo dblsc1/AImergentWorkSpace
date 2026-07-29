@@ -34,7 +34,26 @@ prompt=$("$root/scripts/dispatch.sh" "$role" "$task" 2>/dev/null) ||
   prompt="先读 codeagent/$role/AGENTS.md，你是 $role，执行任务单 $task。"
 
 cd "$mod"
-args=(-p --agent "$role" --output-format json)
+
+# ── ① 写权限：不给权限的 agent 一个字都落不了盘，而进程照样退 0 ──────
+# 实证（CFO 报的 B1）：派出去的 agent 原话「写权限未授予，本次留痕为零」，
+# 而 diary 记的是 rc:0 —— **撒谎式成功躺在派活主干上，所有派出去的活都会这样"完成"**。
+#
+# 路径级的写边界不由 harness 管，由**路签 + checks/_common/05 在提交层**管
+# （harness 的权限模型没有"只许写这几个目录"这一档）。
+# 所以这里只负责把"能不能写"打开，"能写哪儿"仍归路签 —— 两者是同一件事的两半，缺一不可。
+perm=${AIMERGENT_AGENT_PERMISSION_MODE:-acceptEdits}
+args=(-p --agent "$role" --output-format json --permission-mode "$perm")
+lease_file=$(git rev-parse --path-format=absolute --git-common-dir)/aimergent-leases/$role.lease
+if [ -f "$lease_file" ]; then
+  printf '   写区路签：%s\n' "$(tr '\n' ' ' < "$lease_file")" >&2
+else
+  printf '   ⚠️  %s 没有写区路签 —— 它写出来的东西提交时会被 checks/05 拦下。\n' "$role" >&2
+  printf '      先跑：scripts/mission_start.sh %s <任务单> <写区...>\n' "$role" >&2
+fi
+
+# 派活前的仓状态快照，用于事后核"活是不是真落了盘"
+_before=$(git status --porcelain 2>/dev/null | sort; git rev-parse HEAD 2>/dev/null)
 if [ "$resume" -eq 1 ]; then
   [ -f "$sess_file" ] || die "没有可续用的 session 记录: $sess_file"
   args+=(--resume "$(cat "$sess_file")")
@@ -49,10 +68,32 @@ rc=$?
 sid=$(jq -r '.session_id // empty' <<<"$out" 2>/dev/null || true)
 [ -n "$sid" ] && printf '%s' "$sid" > "$sess_file"
 
+# ── ② 退出码 0 不等于干完了：核产出真落盘 ────────────────────────
+# 这是铁律 12「不接受口头已完成」的机械化：进程说成功，去看工作树认不认。
+_after=$(git status --porcelain 2>/dev/null | sort; git rev-parse HEAD 2>/dev/null)
+landed=1
+[ "$_before" = "$_after" ] && landed=0
+if [ "$rc" -eq 0 ] && [ "$landed" -eq 0 ]; then
+  rc=3
+  cat >&2 <<HINT
+❌ agent 退出码 0，但**工作树一个字节都没变** —— 按铁律 12 视为未完成。
+   最常见原因：写权限没授予（agent 会说「一个字都落不了盘」但进程照退 0）。
+   当前权限档：$perm
+   若 agent 说的是「不能执行命令」而不是「不能写文件」，多半是 Bash 仍被门控，换：
+     AIMERGENT_AGENT_PERMISSION_MODE=bypassPermissions scripts/run_agent.sh ...
+   （可选档：acceptEdits / auto / bypassPermissions / dontAsk。
+     范围仍由路签 + checks/05 在提交层兜底，harness 没有"只许写这几个目录"这一档。）
+   若这次确实只需只读产出（例如纯审阅、只出结论不改文件）：
+     AIMERGENT_ALLOW_NO_OUTPUT=1 scripts/run_agent.sh ...（放行但记账）
+HINT
+  [ -n "${AIMERGENT_ALLOW_NO_OUTPUT:-}" ] && { rc=0; echo "⚠️  已按只读任务放行（记账）" >&2; }
+fi
+
 # 记进 diary：新开还是续用，是「重开率」这个指标的原料
 ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-printf '{"ts":"%s","event":"run_agent","role":"%s","module":"%s","resumed":%s,"rc":%d}\n' \
-  "$ts" "$role" "$(basename "$mod")" "$([ "$resume" -eq 1 ] && echo true || echo false)" "$rc" \
+printf '{"ts":"%s","event":"run_agent","role":"%s","module":"%s","resumed":%s,"landed":%s,"perm":"%s","rc":%d}\n' \
+  "$ts" "$role" "$(basename "$mod")" "$([ "$resume" -eq 1 ] && echo true || echo false)" \
+  "$([ "$landed" -eq 1 ] && echo true || echo false)" "$perm" "$rc" \
   >> "$root/logs/diary.jsonl"
 
 jq -r '.result // .' <<<"$out" 2>/dev/null || printf '%s\n' "$out"

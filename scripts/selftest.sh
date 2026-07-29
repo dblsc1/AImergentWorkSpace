@@ -266,5 +266,15 @@ else
   F "跨仓派单会把绝对路径写进提示词 —— 换台机器即废"
 fi
 
+# 27 ── 派活主干上的撒谎式成功：agent 没写权限，一个字没落盘，进程照退 0
+printf '27. 派出去的活是否核实真落盘\n'
+if [ -x "$S/run_agent.sh" ] &&
+   grep -q 'permission-mode' "$S/run_agent.sh" 2>/dev/null &&
+   grep -q 'landed' "$S/run_agent.sh" 2>/dev/null; then
+  P "run_agent 授写权限 + 事后核工作树真变了（rc=0 且零改动 → 判未完成）"
+else
+  F "派出去的 agent 可能一个字没落盘却报成功 —— 撒谎式成功在派活主干上"
+fi
+
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
 [ "$fail" -eq 0 ]
