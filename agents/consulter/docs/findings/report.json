@@ -76,6 +76,11 @@
       "path": "agents/reference/manual/文档地图.md",
       "action": "no-change-needed",
       "reason": "arbiter-push 仅在入口加停线旗检查，地图对它的登记（sanctioned push 路径）语义未变；停线机制的事实源是 supervision.md 判据节"
+    },
+    {
+      "path": "agents/reference/manual/文档地图.md",
+      "action": "no-change-needed",
+      "reason": "前人成果对照是 reference 参考文献，非长期治理文档，地图不逐篇登记 reference 下的调研产物"
     }
   ],
   "findings": [
@@ -99,7 +104,8 @@
   "recommendations": [
     "CFO：pull 后重跑 install-gates（hook/检查有更新）；reviewer 常驻子代理按新卡开起来并接管实时清单",
     "人类：①追认阻塞判据；②裁决是否授权 consulter 写 CFO 仓 logs/STOPLINE 单一路径",
-    "预研代理已重发，报告出来后单独呈报"
+    "预研代理已重发，报告出来后单独呈报",
+    "前人成果对照已入仓：可直接抄 Devin Playbook 写法；量 pre-commit 耗时；lease vs worktree 对比论证开一单（攒批不阻塞）"
   ],
   "reviewer_opinion": {
     "reviewer": "cfo",
