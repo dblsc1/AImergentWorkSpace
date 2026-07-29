@@ -343,13 +343,14 @@ printf '35. 监督分工是否单一事实源\n'
 if [ "$repo/scripts" = "$S" ] && [ -d "$repo/agents" ]; then
   _sup=$repo/agents/protocol/supervision.md
   _refs=0
-  for _card in agents/cfo/AGENTS.md agents/consulter/AGENTS.md agents/consulter/审查提示词.md; do
+  for _card in agents/cfo/AGENTS.md agents/consulter/AGENTS.md agents/consulter/审查提示词.md \
+               agents/reference/工作空间全景.md; do
     grep -q 'agents/protocol/supervision.md' "$repo/$_card" 2>/dev/null && _refs=$((_refs+1))
   done
-  if [ -f "$_sup" ] && grep -q '监督矩阵' "$_sup" && [ "$_refs" -eq 3 ]; then
-    P "supervision.md 是唯一事实源，三份角色文档都指回它（$_refs/3）"
+  if [ -f "$_sup" ] && grep -q '监督矩阵' "$_sup" && [ "$_refs" -eq 4 ]; then
+    P "supervision.md 是唯一事实源，四份角色/地形文档都指回它（$_refs/4）"
   else
-    F "监督矩阵缺失或角色卡未指回（$_refs/3）—— 分工又要开始各写各的了"
+    F "监督矩阵缺失或文档未指回（$_refs/4）—— 分工又要开始各写各的了（实证：全景文档并行写入旧表述）"
   fi
 else
   N "非框架仓布局，无项目级角色卡"
@@ -371,8 +372,8 @@ else
   N "非框架仓布局"
 fi
 
-# 35 ── 起飞单第 4 项只认模块级角色卡，项目级角色永远过不了
-printf '35. 角色卡判据是否匹配角色层级\n'
+# 37 ── 起飞单第 4 项只认模块级角色卡，项目级角色永远过不了
+printf '37. 角色卡判据是否匹配角色层级\n'
 if grep -q 'agents/\$role/AGENTS.md' "$S/mission_start.sh" 2>/dev/null; then
   P "起飞单认两处布局：模块级 codeagent/ 与项目级 agents/"
 else
