@@ -34,3 +34,4 @@ code/backend/requirements.txt
 
 # 停线旗：按定义只在停线期间存在，平时不存在才是正常。
 # 文档引用它是必须的（要告诉人怎么置旗），所以是正当前向引用。
+code/nginx-docker

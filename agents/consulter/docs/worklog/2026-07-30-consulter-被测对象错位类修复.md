@@ -84,3 +84,11 @@ agents/reference/社区对照-提示词分层与报告协议.md：三子系统�
 ①级联裁决方向社区与我们相反（就近覆盖 vs 只能加严），无人做单调加严；
 ②git 锚定报告与 objections 字段为真独有；③闸门三层共识（PreToolUse→commit→CI），
 我们缺最早的 PreToolUse 层；④红/绿点火=手动 mutation testing，可脚本化。
+
+## 附7：J8 规则两轨制入台账 + 今日理顺的采纳清单
+
+用户裁决 J8：治理规则归 AGENTS.md 系列（只能加严），技术规则归 CONSTITUTION 系列
+（就近优先）；重复表述改指针；exam.sh 开卷保持。另采纳待落地（用户理顺后动手）：
+comm.jsonl 加因果链字段；PreToolUse 前移层（写范围 tool limit 由发任务 json 携带）；
+点火脚本化。report.json 定位与 worklog/jsonl 分工答复见会话（结论：report=机器核验
+的交接凭证不动，膨胀治法=证据外链，不是把详细内容搬进 jsonl）。
