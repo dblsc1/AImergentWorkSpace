@@ -105,3 +105,10 @@ comm.jsonl 加因果链字段；PreToolUse 前移层（写范围 tool limit 由�
 ②hub 可留——损耗在转述不在中转，arbiter 禁改写+逐字证据即可；③评审建议
 控制流/数据流分离：裁决经 arbiter、缺陷细节 programmer 直读 reviewreport 原文、
 机械反馈自取。第③条属治理规则调整，待用户拍板后落 orchestration/角色卡。
+
+## 附10：J9 沟通协议入台账（控制流/数据流分家 + 指令双轨）
+
+用户批准两条并裁定暂不改卡：①分家——裁决经 arbiter、缺陷细节直读 reviewreport
+原文、机械反馈自取、arbiter 禁摘要复述；②指令双轨——CFO 意图级指令逐字 passby
+（任务单+comm.jsonl 派单事件带原文字段），arbiter 读代码后细化四小节并行留痕，
+漂移可 diff。落地待用户理顺后实施+红/绿。
