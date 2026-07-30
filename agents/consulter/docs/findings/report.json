@@ -65,6 +65,11 @@
     {
       "path": "agents/protocol/report-schema.md",
       "action": "updated"
+    },
+    {
+      "path": "agents/reference/manual/文档地图.md",
+      "action": "no-change-needed",
+      "reason": "reference 调研产物不逐篇入地图（同前人成果对照的先例）"
     }
   ],
   "findings": [

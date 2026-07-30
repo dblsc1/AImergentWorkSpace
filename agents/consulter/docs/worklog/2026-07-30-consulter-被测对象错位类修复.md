@@ -77,3 +77,10 @@ report-schema：escalation != null 必须同批立障。红/绿四路（合法�
 rebase 零冲突。CFO 台账 J7 条目点名 supervision.md:33 仍写「consulter 改的框架
 仍由 CFO 审」旧口径（与 :21 自相矛盾）——它举证、我修正，J7 全落地。
 项目宪法现为唯一宪法（框架根版已由人类删除），22 条裁决俱在。
+
+## 附6：社区对照报告入仓（用户今日理顺工作的输入件）
+
+agents/reference/社区对照-提示词分层与报告协议.md：三子系统对照。核心发现——
+①级联裁决方向社区与我们相反（就近覆盖 vs 只能加严），无人做单调加严；
+②git 锚定报告与 objections 字段为真独有；③闸门三层共识（PreToolUse→commit→CI），
+我们缺最早的 PreToolUse 层；④红/绿点火=手动 mutation testing，可脚本化。
