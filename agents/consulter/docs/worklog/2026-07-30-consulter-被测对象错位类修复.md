@@ -118,3 +118,11 @@ comm.jsonl 加因果链字段；PreToolUse 前移层（写范围 tool limit 由�
 agents/reference/蓝图-2026-07-30-治理框架理顺.md：J8/J9、全JSON化、角色检查矩阵、
 scripts 两阶段、层级嵌套、社区对照浓缩、落地队列 8 项、两面分层新形态（治理面/
 交付面，红线=代码侧留痕不迁回）+ 三件冒烟测试计划。
+
+## 附12：X_structure 开仓（用户指令）
+
+github.com/dblsc1/X_structure（private，main）：两面分层骨架——治理面种子
+（governance/蓝图.md + 最小规范根 + blockers/ + 三行式白名单），交付面留空
+（模块仓后续独立挂入）。README 诚实声明 bootstrap 裸奔状态（门禁未移植前不进业务）
++ 三件冒烟计划。刻意不灌旧布局 scripts——移植是落地队列第一铲，避免新仓背旧路径。
+克隆回验：文件齐。
