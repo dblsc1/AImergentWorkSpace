@@ -126,3 +126,12 @@ github.com/dblsc1/X_structure（private，main）：两面分层骨架——治�
 （模块仓后续独立挂入）。README 诚实声明 bootstrap 裸奔状态（门禁未移植前不进业务）
 + 三件冒烟计划。刻意不灌旧布局 scripts——移植是落地队列第一铲，避免新仓背旧路径。
 克隆回验：文件齐。
+
+## 附13：X_structure 成果展示区落成（用户指令：确保新 agent 无阻碍）
+
+用户已手拷 sample-workspace 快照进 X_structure，核查发现两个连环吞文件坑：
+①白名单未登记 !/sample-workspace/（整目录被 /* 静默吞，0 文件跟踪）；
+②拷贝带入嵌套 .git → git 判为 gitlink 空壳（clone 即缺）。另快照落后 1eca013
+且缺四模块。处置：rsync --delete 全量镜像（排除 .git/.runtime 等）、嵌套 .git
+清零、白名单登记、README 注明展示区性质与刷新方法。克隆终验：642 文件、
+宪法 J 条目齐、含 CFO 最新 gates 修复、四模块在。CFO 的 1eca013 已在 v5，母仓拉平。
