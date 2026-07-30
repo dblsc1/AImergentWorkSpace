@@ -2,10 +2,10 @@
   "schema_version": 2,
   "module": "root",
   "role": "arbiter",
-  "task": "推翻 D9 立 J10 标识三分模型 + 三份契约同批改",
-  "tier": "hard",
+  "task": "模型分档未执行登记 + 返修任务单派发",
+  "tier": "simple",
   "status": "approved",
-  "summary": "实现撞出契约空白（timer 取 task[\"tier2\"] 崩 500），顺着查出旧模型把同一个关系存了两遍（tier2/tier3 字符串 + project id）。用户裁决推翻 D9，立 J10 标识三分：id 永不变且唯一约束压它、key 可重算不做唯一约束、name 用户原样输入；事件 subject 只存三个 opaque id。key 由「名字→号」登记表生成、不做音译（音译会塌陷：塔/她 同为 ta；且方案不止一种，换库标识全变）。三份契约同批改完：宪法 §2.1/§2.4、contracts/yq-event-v1.md 第 5 节、nexus-core 契约 v0.3。新增边界断言 B5b：subject 出现 tier2/tier3 一律拒绝——不拒绝就等于让两套模型并存。§4.1 登记后已清空。下一步：同实例续用返修实现。",
+  "summary": "J10 三份契约已全部落地（宪法 §2.1/§2.4、contracts/yq-event-v1.md 第 5 节、nexus-core 契约 v0.3），§4.1 已清空。切片 1 返修任务单已入仓并发签给 programmer/1（同实例续用，第 1 次打回，上限 2 次），两次因会话额度未跑成，6:50pm 重置后可直接执行。自报违规：编排规范第 6 条的模型分档我一次没照做，cfo_reviewer 三轮 55 万 token 全在高档，其中第 1 轮初审本该中档；是用户问起才发现，不是我发现的。根因是两处都没有传模型的入口（子代理默认继承派活方档；run_agent.sh 有权限档入口、无模型档入口），已立障签交框架侧，建议默认中档而非继承、并把 model 记进 diary 让高档占比可见。",
   "git": {
     "protocol": "embedded-self-v2",
     "branch": "feat/frontend-view-modules",
@@ -13,20 +13,13 @@
     "head": "SELF",
     "diff_mode": "contains",
     "changed_files": [
-      "agents/CONSTITUTION.md",
-      "agents/cfo/docs/worklog/2026-07-30-cfo-j10-identity-model.md",
-      "contracts/yq-event-v1.md"
+      "agents/cfo/docs/worklog/2026-07-30-cfo-model-tier.md",
+      "blockers/2026-07-30-model-tier-not-enforced.md"
     ]
   },
   "contract": {
-    "touched": true,
-    "which": [
-      "yq-event/v1",
-      "nexus-core.views.current.v1",
-      "nexus-core.views.tree.v1",
-      "nexus-core.events.ingest.v1",
-      "nexus-core.timer.v1"
-    ],
+    "touched": false,
+    "which": [],
     "consumes": []
   },
   "cross_module_impact": [
@@ -45,24 +38,14 @@
   },
   "docs_reviewed": [
     {
-      "path": "agents/CONSTITUTION.md",
-      "action": "updated",
-      "reason": "D9 加推翻指针、J10 入台账、§2.1 信封示例与 §2.4 整节按新模型重写、§4.1 登记后清空"
-    },
-    {
-      "path": "contracts/yq-event-v1.md",
-      "action": "updated",
-      "reason": "第 5 节重写；信封/样例/边界断言同批改，新增 B5b 拒绝旧字段"
-    },
-    {
-      "path": "agents/reference/HANDOFF.md",
+      "path": "agents/protocol/orchestration.md",
       "action": "no-change-needed",
-      "reason": "它已被标注为讨论草稿、非判据，且顶部已声明与宪法冲突以宪法为准；其 §3/§6 早已标过时。再逐条改它等于维护第二份事实源"
+      "reason": "第 6 条模型分档写得清楚，问题不在条文而在无机械执行点；属框架区归 consulter，已立障签不代改"
     },
     {
       "path": "agents/cfo/doc-map.tsv",
       "action": "no-change-needed",
-      "reason": "本轮改的是 agents/ 与 contracts/ 下的契约文档，未触碰表中登记的代码区域"
+      "reason": "本轮只写留痕与障签，未触碰表中登记的代码区域"
     }
   ]
 }
