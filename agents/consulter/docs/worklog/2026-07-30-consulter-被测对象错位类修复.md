@@ -98,3 +98,10 @@ comm.jsonl 加因果链字段；PreToolUse 前移层（写范围 tool limit 由�
 结论三条：①docs_reviewed 表态硬拦=Changesets 范式同构（独立收敛到社区最佳实践，
 多 reason 一层）；②doc-map 保鲜抄 CODEOWNERS validator 形状——glob 匹配数+路径存在+
 无主目录兜底，死条目 100% 可测；③policy-as-code 无自动生成，铁律 23 手工断言即社区同形。
+
+## 附9：团队拓扑与沟通对照入仓
+
+三结论：①颗粒度切法=主流（契约边界+可独立验证+上下文装得下，超限拆子文件夹不加人）；
+②hub 可留——损耗在转述不在中转，arbiter 禁改写+逐字证据即可；③评审建议
+控制流/数据流分离：裁决经 arbiter、缺陷细节 programmer 直读 reviewreport 原文、
+机械反馈自取。第③条属治理规则调整，待用户拍板后落 orchestration/角色卡。
