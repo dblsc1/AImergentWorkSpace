@@ -155,7 +155,10 @@ else
     for f in "${tracked[@]}"; do
       [ -f "$f" ] || continue
       is_exempt "$path_exempt" "$f" && continue
-      if grep -nF -- "$forbidden_prefix" "$f"; then
+      # 注释行豁免（CFO 2026-07-30 实报，字面量类）：判据防的是「用到的绝对路径
+      # 换台机器就废」——注释/文档行里**讲**这个坑的路径没有可执行伤害，
+      # 逼人改文案 = 判据不许人讨论问题本身。只扫非注释行。
+      if grep -nF -- "$forbidden_prefix" "$f" | grep -vE '^[0-9]+:[[:space:]]*(#|//)'; then
         printf '  at %s\n' "$f"
         path_hit=1
       fi
