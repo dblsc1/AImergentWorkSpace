@@ -13,8 +13,8 @@
     "head": "SELF",
     "diff_mode": "contains",
     "changed_files": [
-      "agents/cfo/docs/worklog/2026-07-30-cfo-model-tier.md",
-      "blockers/2026-07-30-model-tier-not-enforced.md"
+      "agents/cfo/docs/report.json",
+      "agents/cfo/docs/worklog/2026-07-30-cfo-report-self-ref.md"
     ]
   },
   "contract": {
