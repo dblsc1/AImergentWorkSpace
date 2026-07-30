@@ -92,3 +92,9 @@ agents/reference/社区对照-提示词分层与报告协议.md：三子系统�
 comm.jsonl 加因果链字段；PreToolUse 前移层（写范围 tool limit 由发任务 json 携带）；
 点火脚本化。report.json 定位与 worklog/jsonl 分工答复见会话（结论：report=机器核验
 的交接凭证不动，膨胀治法=证据外链，不是把详细内容搬进 jsonl）。
+
+## 附8：文档联动/映射表保鲜对照入仓
+
+结论三条：①docs_reviewed 表态硬拦=Changesets 范式同构（独立收敛到社区最佳实践，
+多 reason 一层）；②doc-map 保鲜抄 CODEOWNERS validator 形状——glob 匹配数+路径存在+
+无主目录兜底，死条目 100% 可测；③policy-as-code 无自动生成，铁律 23 手工断言即社区同形。
