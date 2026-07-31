@@ -20,6 +20,20 @@
       "agents/consulter/docs/findings/report.json"
     ]
   },
+  "review_target": {
+    "branch": "feat/frontend-view-modules",
+    "base": "e90c567aaca12b4fb13254ed3427fc22b96968fb",
+    "head": "d40d1d4b1e962e8bc852e9295872fff2134f0dc7",
+    "diff_mode": "exact",
+    "changed_files": [
+      "agents/consulter/docs/findings/report.json",
+      "agents/consulter/docs/worklog/2026-07-31-consulter-mission-complete-role-export.md",
+      "agents/consulter/记忆.md",
+      "blockers/2026-07-31-mission-complete-role-not-exported.md",
+      "scripts/mission_complete.sh",
+      "scripts/selftest.sh"
+    ]
+  },
   "contract": {
     "touched": false,
     "which": [],

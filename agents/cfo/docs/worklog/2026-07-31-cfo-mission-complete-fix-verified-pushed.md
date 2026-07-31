@@ -47,3 +47,22 @@ CFO 独立复核已完成，不再是待定状态）。
 不是偶然，值得作为框架摩擦记一笔——但不在本次动作范围内展开修复
 （check-report-schema.sh 要不要换个更符合"长期不合 main 的功能分支"场景的
 校验方式，是留给 consulter 判断的事，不是这次顺手改的）。
+
+## 补记2：role=consulter 的 report.json 结构性要求 review_target（exact）
+
+第三次门禁红：`独立 reviewer 必须使用标准 review_target（exact），禁止
+target 等别名`。查 `check-report-schema.sh`：只要 `role` 字段是
+`programmer_reviewer`/`module_reviewer`/`consulter` 三者之一，不论这份报告
+描述的是"审别人"还是"consulter 自己动手修框架"，schema 都强制要求一份
+`review_target`（branch/base/head 全 40 位 SHA、diff_mode 必须 exact、
+changed_files 与该精确区间的 diff 逐一相等）。
+
+复核过后判定：这不是 bug，是设计意图——J7/consulter 角色卡「禁自审自己改的
+框架」，这条 schema 约束正是把"consulter 的报告必须精确声明自己改了哪个
+commit 区间"焊死成机械可核验的形状，不允许用宽松的 contains 模式蒙混过去。
+本次是补齐这个结构（consulter 原报告只有 `git.contains`，没有
+`review_target`），不是在跟闸门较劲。`review_target` 的 base/head 我取的是
+本次改动实际落进本分支的那次提交自己的父子对（`e90c567`..`d40d1d4`，
+`d40d1d4` 是我 cherry-pick 后的等价提交，内容与 consulter 原始的 `e714f3a`
+逐字节相同），不是 consulter 自己分支上的原始 SHA——因为 `e714f3a`
+从没进过这条分支的祖先链，拿它做 review_target 在这个分支语境下没有意义。
