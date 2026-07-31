@@ -22,3 +22,7 @@ token 用量升（多 agent 比单 agent 3–10×），美元可由分档+结构
 
 - 文档入仓路径在 agents/reference/（已有白名单覆盖），`git ls-files` 确认跟踪。
 - 文档地图不逐篇收 reference 调研产物（同「前人成果对照」先例），report.json 已表态。
+
+## 补录
+
+- 推送门实测暴露 check-report-schema 两处长期分支模型缺口（main 基线假设、consulter 非审查轮硬要 review_target）；本轮按先例恢复最近审查区间入报告，缺口记落地队列。

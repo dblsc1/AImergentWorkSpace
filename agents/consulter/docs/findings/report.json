@@ -19,7 +19,21 @@
       "scripts/gates/doc-path-exempt.txt"
     ]
   },
-  "review_target": null,
+  "review_target": {
+    "branch": "v5",
+    "base": "62c2f917d0ca6950071f9fbb75c912435dec92ba",
+    "head": "cbce1754fb1267e2c565b10acb132925b8a929e0",
+    "diff_mode": "exact",
+    "verdict": "approved",
+    "changed_files": [
+      "agents/consulter/docs/worklog/2026-07-29-consulter-panorama.md",
+      "agents/consulter/docs/worklog/2026-07-29-任务单-全景文档.md",
+      "agents/reference/manual/文档地图.md",
+      "agents/reference/工作空间全景.md",
+      "scripts/mission_start.sh",
+      "scripts/selftest.sh"
+    ]
+  },
   "contract": {
     "touched": false,
     "which": [],
