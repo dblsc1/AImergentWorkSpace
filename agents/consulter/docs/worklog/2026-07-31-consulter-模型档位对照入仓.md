@@ -26,3 +26,7 @@ token 用量升（多 agent 比单 agent 3–10×），美元可由分档+结构
 ## 补录
 
 - 推送门实测暴露 check-report-schema 两处长期分支模型缺口（main 基线假设、consulter 非审查轮硬要 review_target）；本轮按先例恢复最近审查区间入报告，缺口记落地队列。
+
+## 补录2（用户裁定）
+
+- 三个门禁缺陷 sample-workspace 不再自修：连同 complexity 字段一起写入蓝图 §9.1，由 X_structure 侧落地（该 checkout 有活跃写者，未触碰）。
