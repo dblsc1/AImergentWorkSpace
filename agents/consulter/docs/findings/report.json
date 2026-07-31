@@ -2,97 +2,70 @@
   "schema_version": 2,
   "module": "workspace",
   "role": "consulter",
-  "task": "修障签：mission_complete.sh 角色推断后不 export，05 写区路签核验静默放行",
-  "tier": "normal",
+  "task": "模型档位与任务难度适配社区对照入仓（简化落法：派单 json complexity 字段，用户裁定）",
+  "tier": "simple",
   "status": "approved",
-  "summary": "role 定案后加一行 export AIMERGENT_ROLE（scripts/mission_complete.sh，2 行改动）；selftest.sh 新增第 50 条沙箱回归断言（mktemp 独立仓，不设 AIMERGENT_ROLE 只靠暂存路径推断，越区文件必须被 05 拦下）。同一份断言对 pre-fix commit 6619b35 红测 exit=0 静默放行，对修复后工作树绿测 exit=1 真拦住，退出码直取非管道回显。障签便条已删（解除标志已出现）。四模块（ring/table/nexus-core/nginx-docker）刷新未代劳，理由与操作步骤见 worklog——此刻代劳等于在无修复的源上空转 install-gates.sh，产生假象。本次是 consulter 自己改的框架代码，按裁决 J7 不自审自批，交人类复核。",
+  "summary": "用户观察 opus 忘委派 codex，三轮调研（高低搭配/定量适配/质量评估+闭环+报告提信息）汇总为 agents/reference/社区对照-模型档位与任务难度适配.md。用户裁定简化落法：只加 complexity 字段（simple<100行1-2文件无设计｜normal<500行单模块｜hard 其余）+一句提醒；完整级联闭环存档待排铲。成本账：token 升 3-10×，省人时与返工，小项目不回本大项目回本",
   "git": {
     "protocol": "embedded-self-v2",
-    "branch": "fix/mission-complete-role-export",
-    "base": "211bdec5559ab4ab798a464272cde5dc27f64740",
+    "branch": "v5",
+    "base": "d3ffac943848e592fc7ff463d94dbdbdc2ef2eb1",
     "head": "SELF",
     "diff_mode": "contains",
     "changed_files": [
-      "scripts/mission_complete.sh",
-      "scripts/selftest.sh",
-      "agents/consulter/记忆.md",
-      "agents/consulter/docs/worklog/2026-07-31-consulter-mission-complete-role-export.md",
-      "agents/consulter/docs/findings/report.json"
-    ]
-  },
-  "review_target": {
-    "branch": "feat/frontend-view-modules",
-    "base": "e90c567aaca12b4fb13254ed3427fc22b96968fb",
-    "head": "d40d1d4b1e962e8bc852e9295872fff2134f0dc7",
-    "diff_mode": "exact",
-    "changed_files": [
+      "agents/reference/社区对照-模型档位与任务难度适配.md",
+      "agents/consulter/docs/worklog/2026-07-31-consulter-模型档位对照入仓.md",
       "agents/consulter/docs/findings/report.json",
-      "agents/consulter/docs/worklog/2026-07-31-consulter-mission-complete-role-export.md",
-      "agents/consulter/记忆.md",
-      "blockers/2026-07-31-mission-complete-role-not-exported.md",
-      "scripts/mission_complete.sh",
-      "scripts/selftest.sh"
+      "scripts/gates/doc-path-exempt.txt"
     ]
   },
+  "review_target": null,
   "contract": {
     "touched": false,
     "which": [],
     "consumes": []
   },
-  "cross_module_impact": [
-    "code/ring", "code/table", "code/nexus-core", "code/nginx-docker"
-  ],
+  "cross_module_impact": [],
   "escalation": null,
   "docs_reviewed": [
     {
-      "path": "scripts/README.md",
-      "action": "no-change-needed",
-      "reason": "第64行只描述角色解析顺序（AIMERGENT_ROLE→暂存路径推断→_common），顺序本身未变，变的是推断结果有没有传给子进程——实现细节，非该文档描述的行为契约"
-    },
-    {
       "path": "agents/reference/manual/文档地图.md",
       "action": "no-change-needed",
-      "reason": "doc-map.tsv 声明 scripts/*.sh 受该文档治理；第61行只把 mission_complete.sh 描述为「完工检测硬闸门，--list 输出全部判据」，这个定性没变，selftest.sh 未在此文档单独出现过条目"
+      "reason": "reference 调研产物不逐篇入地图（同前人成果对照/社区对照系列先例）"
     },
     {
-      "path": "agents/reference/工作空间全景.md",
+      "path": "scripts/README.md",
       "action": "no-change-needed",
-      "reason": "同 scripts/README.md 第126行同一句描述，同理不需要改"
+      "reason": "doc-path-exempt.txt 只追加一条前向引用登记（数据行），豁免机制本身与 README 描述未变"
     },
     {
-      "path": "agents/consulter/记忆.md",
-      "action": "updated"
-    },
-    {
-      "path": "blockers/2026-07-30-abspath-second-copy.md",
+      "path": "agents/protocol/orchestration.md",
       "action": "no-change-needed",
-      "reason": "同目录另一份障签，与本次改动的文件、根因均无交集，未触碰"
+      "reason": "complexity 字段属派单 json 结构，落地时随「PreToolUse 前移层」一铲改 orchestration 与 report-schema；本轮仅调研入仓，未动协议——文档 §7 已把该联动列为落地队列第 1-3 项"
     }
   ],
   "findings": [
     {
-      "category": "security",
-      "severity": "high",
-      "summary": "mission_complete.sh 推断出 role 后未 export，05-write-lease.sh 读到空值命中「角色未知不拦」兜底——常规提交路径（不手动传 AIMERGENT_ROLE）下写区路签检查空转，静默放行任何越区写入，界面上和真验过完全一样",
-      "file": "scripts/mission_complete.sh"
+      "category": "research",
+      "severity": "info",
+      "summary": "社区共识：模型高低搭配靠声明式绑定（代理定义写死 model）+机器执法，提醒是最弱档——与 N2 判例（散文教训无半衰期）同形状；简化版 complexity 判据=行数×文件数×有无新设计决策",
+      "file": "agents/reference/社区对照-模型档位与任务难度适配.md"
     },
     {
-      "category": "pattern",
-      "severity": "medium",
-      "summary": "恒定答案类第五种形态：兜底分支本意覆盖「真不知道角色」，实际吞掉了「知道角色但没传给子进程」——与判例库「字面量类」同源：光grep源码里有没有export字样验不出来，必须沙箱内真实点火",
-      "file": "scripts/checks/_common/05-write-lease.sh"
+      "category": "pending-decision",
+      "severity": "info",
+      "summary": "完整级联闭环（25%盈亏线/三层裁判/尾采样/model-fit.sh）已设计存档但用户裁定暂不落地，只落 complexity 字段简化版——落地队列见文档 §7，待用户排铲"
     }
   ],
-  "reflection": "这是 consulter 自己改的框架代码（mission_complete.sh、selftest.sh），按角色卡「谁写的谁不审」与裁决J7，本次修复不由我自己签字放行，人类复核；已把红/绿证据和沙箱构造过程完整写进worklog，复核者可直接复现不必信口头结论。",
+  "reflection": "用户三问（质量评估/闭环自纠正/报告提信息）逼出的分层答案本质是一件事：把『难度预测』替换成『验证结果』，把『读报告』替换成『聚合+尾采样+三源对账』——都是本框架已有构件的计量化延伸，不需要新造轮子。",
   "recommendations": [
-    "CFO：本修复合入共享工作区/推到 origin/v5 后，对四个模块逐一重跑 scripts/install-gates.sh code/<模块>，并用 git -C code/<模块> diff -- scripts/mission_complete.sh 确认 export 那行真进了模块副本（不要只信 install-gates 退出码）",
-    "CFO：四模块刷新后各自需要一次干净提交固化拷贝结果，建议派对应模块 arbiter 各自留痕，不要跨模块代提交"
+    "CFO：派单 json 模板加 complexity 必填字段并附一句提醒（simple<100行1-2文件无设计→codex/haiku｜normal<500行单模块→sonnet｜hard 其余→opus；拿不准往上取）",
+    "落地队列候补（用户排铲）：model 字段+起飞单第9项、report.json 加 model_used/rounds、scripts/stats/model-fit.sh"
   ],
   "reviewer_opinion": {
-    "reviewer": "cfo",
-    "verdict": "approved",
-    "path": "agents/cfo/docs/worklog/2026-07-31-cfo-mission-complete-fix-verified-pushed.md",
-    "round": 1,
-    "note": "按 J7，CFO 独立核实（不采信本报告自述的红绿证据）代替第二审：detached worktree 独立复现 pre-fix 红（49/50，exit=0）与合入后绿（50/50，exit=1）。"
+    "reviewer": "human",
+    "verdict": "pending",
+    "path": "agents/consulter/docs/worklog/2026-07-31-consulter-模型档位对照入仓.md",
+    "round": 1
   }
 }

@@ -36,3 +36,5 @@ code/backend/requirements.txt
 # 文档引用它是必须的（要告诉人怎么置旗），所以是正当前向引用。
 code/nginx-docker
 agents/protocol/messages
+# 落地队列设计文档的前向引用（社区对照-模型档位）：脚本属待排铲项，落地时删本条
+scripts/stats/model-fit.sh
