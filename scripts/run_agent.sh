@@ -43,7 +43,15 @@ cd "$mod"
 # （harness 的权限模型没有"只许写这几个目录"这一档）。
 # 所以这里只负责把"能不能写"打开，"能写哪儿"仍归路签 —— 两者是同一件事的两半，缺一不可。
 perm=${AIMERGENT_AGENT_PERMISSION_MODE:-acceptEdits}
-args=(-p --agent "$role" --output-format json --permission-mode "$perm")
+# ── ①.5 模型档：默认中档（sonnet），不是"继承派活方的档" ──────────────
+# 实证（blockers/2026-07-30-model-tier-not-enforced.md）：orchestration.md 第 6 条
+# 规定"reviewer/arbiter 常规轮次一律中档，升档只在打回复审/架构级裁决"，但这里
+# 一直没有任何传模型的入口，规矩只能靠派活方每次记得——CFO 因此两次把 programmer
+# 跑在了 Opus 上（用户两次指出"usage limit 走得飞快"）。默认取中档而非留空
+#（留空由 claude CLI 自行决定，往往等于继承高档），让"省"成为默认、
+# "升档"成为需要显式写 AIMERGENT_AGENT_MODEL=opus 的动作——方向与此前正好相反。
+model=${AIMERGENT_AGENT_MODEL:-sonnet}
+args=(-p --agent "$role" --output-format json --permission-mode "$perm" --model "$model")
 lease_file=$(git rev-parse --path-format=absolute --git-common-dir)/aimergent-leases/$role.lease
 if [ -f "$lease_file" ]; then
   printf '   写区路签：%s\n' "$(tr '\n' ' ' < "$lease_file")" >&2
@@ -90,15 +98,17 @@ if [ "$rc" -eq 0 ] && [ "$landed" -eq 0 ]; then
      范围仍由路签 + checks/05 在提交层兜底，harness 没有"只许写这几个目录"这一档。）
    若这次确实只需只读产出（例如纯审阅、只出结论不改文件）：
      AIMERGENT_ALLOW_NO_OUTPUT=1 scripts/run_agent.sh ...（放行但记账）
+   当前模型档：$model（升档打回复审/架构级裁决用 AIMERGENT_AGENT_MODEL=opus）
 HINT
   [ -n "${AIMERGENT_ALLOW_NO_OUTPUT:-}" ] && { rc=0; echo "⚠️  已按只读任务放行（记账）" >&2; }
 fi
 
-# 记进 diary：新开还是续用，是「重开率」这个指标的原料
+# 记进 diary：新开还是续用，是「重开率」这个指标的原料；
+# model 与 perm 同理记下——不记就永远算不出"高档占比"这个数字（blockers/2026-07-30-model-tier-not-enforced.md）。
 ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-printf '{"ts":"%s","event":"run_agent","role":"%s","module":"%s","resumed":%s,"landed":%s,"perm":"%s","rc":%d}\n' \
+printf '{"ts":"%s","event":"run_agent","role":"%s","module":"%s","resumed":%s,"landed":%s,"perm":"%s","model":"%s","rc":%d}\n' \
   "$ts" "$role" "$(basename "$mod")" "$([ "$resume" -eq 1 ] && echo true || echo false)" \
-  "$([ "$landed" -eq 1 ] && echo true || echo false)" "$perm" "$rc" \
+  "$([ "$landed" -eq 1 ] && echo true || echo false)" "$perm" "$model" "$rc" \
   >> "$root/logs/diary.jsonl"
 
 jq -r '.result // .' <<<"$out" 2>/dev/null || printf '%s\n' "$out"

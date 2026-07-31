@@ -509,5 +509,16 @@ else
   F "只认模块级布局 —— cfo / consulter 永远卡在第 4 项"
 fi
 
+# 49 ── 模型分档规矩没有机械执行点（CFO 实证：两次把 programmer 跑上了 Opus）
+printf '49. 模型分档是否有机械执行点\n'
+if [ -x "$S/run_agent.sh" ] &&
+   grep -q 'AIMERGENT_AGENT_MODEL' "$S/run_agent.sh" 2>/dev/null &&
+   grep -qE -- '--model' "$S/run_agent.sh" 2>/dev/null &&
+   grep -qE 'AIMERGENT_AGENT_MODEL:-sonnet' "$S/run_agent.sh" 2>/dev/null; then
+  P "run_agent.sh 有 AIMERGENT_AGENT_MODEL 入口且默认中档（sonnet），不是继承"
+else
+  F "模型分档无执行点 —— 只能靠派活方每次记得（blockers/2026-07-30-model-tier-not-enforced.md 已实证两次跑上 Opus）"
+fi
+
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
 [ "$fail" -eq 0 ]
