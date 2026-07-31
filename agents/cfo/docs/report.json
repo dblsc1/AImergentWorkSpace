@@ -2,20 +2,24 @@
   "schema_version": 2,
   "module": "root",
   "role": "arbiter",
-  "task": "模型分档修复举证 + 推送 + 销障签",
+  "task": "模型分档修复举证 + nexus-core切片2落地 + ring/table前端落地 + 新障签",
   "tier": "normal",
   "status": "approved",
-  "summary": "派 consulter（sonnet）修 run_agent.sh 缺模型档入口的问题。独立核实：修复前 3f4f618 无 --model，修复后 e767df3 有 --model 且默认 sonnet 非继承；selftest 断言 49 独立重跑 PASS 49/FAIL 0。经 arbiter-push 推上 v5，fetch 确认远端已收到，自己分支已 rebase。销 blockers/2026-07-30-model-tier-not-enforced.md。顺带发现流程问题：consulter 在共享工作目录里直接切分支干活而非用独立 worktree，本次核实无连带损失但属侥幸，已记进 worklog 建议以后要求 isolation:worktree。已知未解决：Agent/SendMessage 那条派活通路仍无默认档机制，仍需每次显式传 model；本轮 reviewer/consulter 均已手动指定 sonnet。",
+  "summary": "本报告涵盖自上次推送 v5（e767df3）以来的全部根仓工作：(1) 模型分档修复举证：consulter 修 run_agent.sh 缺 --model 入口的问题，独立核实红绿对比，销 blockers/2026-07-30-model-tier-not-enforced.md。(2) nexus-core 切片2（planner CRUD）sonnet 独立审核 approved，已推上 cockpit-nexus-core；contract.md 状态列同步到落地实况；依赖索引同步 ring/table 对 views 的依赖从 mock 改为指向真实 approved 契约。(3) ring/table 两个前端模块并行派 programmer（sonnet）接真实 API：两者均正确识别契约填实（R1）越出 programmer 写边界，起草 patch 交 arbiter 代为落地，已分别采纳（ring 04c7b04、table 10bd041）；table 侧另有 finding S1（移除上游增删改弹窗，执行既有只读架构规则）复核后接受不升级。(4) 过程中发现并释放了两处此前忘还的 arbiter 全仓写签（ring/table 各一次）。(5) 新立障签 blockers/2026-07-31-mission-complete-role-not-exported.md：mission_complete.sh 推断角色后未 export 给子检查脚本，写区路签核验在常规提交路径上静默判过，已派 consulter 修复（进行中，未完成）。已知未解决：Agent/SendMessage 派活通路仍无默认档机制；blockers/2026-07-30-abspath-second-copy.md 仍开放。",
   "git": {
     "protocol": "embedded-self-v2",
     "branch": "feat/frontend-view-modules",
-    "base": "211bdec5559ab4ab798a464272cde5dc27f64740",
+    "base": "e767df39e1acf3e1180fe7374a8bceb37f3c63ce",
     "head": "SELF",
     "diff_mode": "contains",
     "changed_files": [
       "agents/cfo/docs/report.json",
       "agents/cfo/docs/worklog/2026-07-31-cfo-model-tier-fix-verified-pushed.md",
-      "blockers/2026-07-30-model-tier-not-enforced.md"
+      "agents/cfo/docs/worklog/2026-07-31-cfo-ring-table-landed-role-export-blocker.md",
+      "agents/cfo/docs/worklog/2026-07-31-cfo-slice2-landed-deps-index-sync.md",
+      "agents/cfo/docs/依赖索引.md",
+      "blockers/2026-07-30-model-tier-not-enforced.md",
+      "blockers/2026-07-31-mission-complete-role-not-exported.md"
     ]
   },
   "contract": {
@@ -23,11 +27,15 @@
     "which": [],
     "consumes": []
   },
-  "cross_module_impact": [],
+  "cross_module_impact": [
+    "code/nexus-core：切片2落地，contract.md 更新到 v0.4",
+    "code/ring：contract.md provides/consumes 首次填实",
+    "code/table：contract.md provides/consumes 首次填实，且移除了增删改交互（finding S1）"
+  ],
   "sub_reports": [],
   "escalation": {
-    "reason": "规则冲突",
-    "detail": "绝对路径判据在两处各有一份字面重复的实现：scripts/gates/run-gates.sh（1eca013 已修，排除注释行）与 code/_template/review/reviewcode/run_all.sh 第 19 行（未修）。run-gates 会调模块的 run_all.sh，所以整体仍红，四模块推送需走记账逃生口。与以往的「修到类」不同——这不是同形状的不同缺陷，是同一条规则的两个副本，且两处报错文案完全相同，从输出无法分辨。连带问题：run_all.sh 不在 install-gates 的拷贝集（由 new_module 建模块时从模板生成一次），因此模板修好后存量模块的副本没有任何现有命令能刷新，checks/13 也管不到它。归框架侧。"
+    "reason": "规则冲突（两条，均已处置或转派，非阻塞）",
+    "detail": "① 绝对路径判据两处字面重复实现（run-gates.sh 已修，code/_template/review/reviewcode/run_all.sh 未修）——blockers/2026-07-30-abspath-second-copy.md，仍开放，四模块推送靠记账逃生口绕过。② mission_complete.sh 角色推断未 export 给子检查——blockers/2026-07-31-mission-complete-role-not-exported.md，已派 consulter 修，进行中。两者均归框架侧，CFO 不代改。"
   },
   "reviewer_opinion": {
     "reviewer": "cfo_reviewer",
@@ -39,7 +47,12 @@
     {
       "path": "agents/cfo/doc-map.tsv",
       "action": "no-change-needed",
-      "reason": "本次是框架修复举证与销障签，未触碰表中登记的代码区域"
+      "reason": "本轮未触碰该表登记的代码区域（ring/table/nexus-core 的模块内文档由各自 arbiter worklog 记录）"
+    },
+    {
+      "path": "agents/cfo/docs/依赖索引.md",
+      "action": "updated",
+      "reason": "ring/table 对 nexus-core views 的依赖状态从 mock 改为指向真实 approved 契约"
     }
   ]
 }
