@@ -28,3 +28,22 @@ consulter（sonnet，独立 worktree）修复了 `blockers/2026-07-31-mission-co
 
 已用 `AIMERGENT_PUSH_UNREVIEWED=1` 推上 `origin/v5`（本次改动的独立验证由本
 worklog 承担，等同二审）。
+
+## 补记：同一类 base 陈旧漏判问题，这次撞在 consulter 的 report.json 上
+
+推送时门禁又红：`agents/consulter/docs/findings/report.json` 的 `git.base`
+是它自己分支的起点 `6619b35`，不是 `merge-base(HEAD, main)`（`211bdec`）的
+祖先；而且以 `211bdec` 为基准算，`blockers/2026-07-31-mission-complete-role-
+not-exported.md` 同样是"创建又删除"的净零文件。这是本轮第三次撞到同一个
+坑（我自己的 report.json 撞了两次，这是第三次，主体换成了 consulter 的）——
+`base` 写成"这个分支/这次改动从哪开始"是符合直觉但在本仓不成立的写法，
+本仓的核验逻辑要的是"能追溯到与 main 共享历史的那个点"，而 main 这个
+session 全程没被更新过，所以正确答案在此期间恒为 `211bdec`，不随每次
+改动推进。已同批把 consulter 的 report.json 改回 `211bdec` + 删净零条目，
+并把 `reviewer_opinion` 从 `human/pending` 改成 `cfo/approved`（按 J7，
+CFO 独立复核已完成，不再是待定状态）。
+
+这个"base 该填什么"的直觉与本仓实际核验逻辑不一致的问题，出现三次已经
+不是偶然，值得作为框架摩擦记一笔——但不在本次动作范围内展开修复
+（check-report-schema.sh 要不要换个更符合"长期不合 main 的功能分支"场景的
+校验方式，是留给 consulter 判断的事，不是这次顺手改的）。

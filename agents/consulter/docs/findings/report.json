@@ -9,13 +9,12 @@
   "git": {
     "protocol": "embedded-self-v2",
     "branch": "fix/mission-complete-role-export",
-    "base": "6619b3588f7fa8a92aeabd1d32cdfdd8ed72de67",
+    "base": "211bdec5559ab4ab798a464272cde5dc27f64740",
     "head": "SELF",
     "diff_mode": "contains",
     "changed_files": [
       "scripts/mission_complete.sh",
       "scripts/selftest.sh",
-      "blockers/2026-07-31-mission-complete-role-not-exported.md",
       "agents/consulter/记忆.md",
       "agents/consulter/docs/worklog/2026-07-31-consulter-mission-complete-role-export.md",
       "agents/consulter/docs/findings/report.json"
@@ -76,9 +75,10 @@
     "CFO：四模块刷新后各自需要一次干净提交固化拷贝结果，建议派对应模块 arbiter 各自留痕，不要跨模块代提交"
   ],
   "reviewer_opinion": {
-    "reviewer": "human",
-    "verdict": "pending",
-    "path": "agents/consulter/docs/worklog/2026-07-31-consulter-mission-complete-role-export.md",
-    "round": 1
+    "reviewer": "cfo",
+    "verdict": "approved",
+    "path": "agents/cfo/docs/worklog/2026-07-31-cfo-mission-complete-fix-verified-pushed.md",
+    "round": 1,
+    "note": "按 J7，CFO 独立核实（不采信本报告自述的红绿证据）代替第二审：detached worktree 独立复现 pre-fix 红（49/50，exit=0）与合入后绿（50/50，exit=1）。"
   }
 }
