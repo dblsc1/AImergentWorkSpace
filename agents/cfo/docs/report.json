@@ -9,7 +9,7 @@
   "git": {
     "protocol": "embedded-self-v2",
     "branch": "feat/frontend-view-modules",
-    "base": "e767df39e1acf3e1180fe7374a8bceb37f3c63ce",
+    "base": "211bdec5559ab4ab798a464272cde5dc27f64740",
     "head": "SELF",
     "diff_mode": "contains",
     "changed_files": [
@@ -17,8 +17,8 @@
       "agents/cfo/docs/worklog/2026-07-31-cfo-model-tier-fix-verified-pushed.md",
       "agents/cfo/docs/worklog/2026-07-31-cfo-ring-table-landed-role-export-blocker.md",
       "agents/cfo/docs/worklog/2026-07-31-cfo-slice2-landed-deps-index-sync.md",
+      "agents/cfo/docs/worklog/2026-07-31-cfo-report-json-stale-base-fix.md",
       "agents/cfo/docs/依赖索引.md",
-      "blockers/2026-07-30-model-tier-not-enforced.md",
       "blockers/2026-07-31-mission-complete-role-not-exported.md"
     ]
   },
