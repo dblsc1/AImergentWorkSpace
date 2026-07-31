@@ -2,10 +2,10 @@
   "schema_version": 2,
   "module": "root",
   "role": "arbiter",
-  "task": "模型分档未执行登记 + 返修任务单派发",
-  "tier": "simple",
+  "task": "模型分档修复举证 + 推送 + 销障签",
+  "tier": "normal",
   "status": "approved",
-  "summary": "J10 三份契约已全部落地（宪法 §2.1/§2.4、contracts/yq-event-v1.md 第 5 节、nexus-core 契约 v0.3），§4.1 已清空。切片 1 返修任务单已入仓并发签给 programmer/1（同实例续用，第 1 次打回，上限 2 次），两次因会话额度未跑成，6:50pm 重置后可直接执行。自报违规：编排规范第 6 条的模型分档我一次没照做，cfo_reviewer 三轮 55 万 token 全在高档，其中第 1 轮初审本该中档；是用户问起才发现，不是我发现的。根因是两处都没有传模型的入口（子代理默认继承派活方档；run_agent.sh 有权限档入口、无模型档入口），已立障签交框架侧，建议默认中档而非继承、并把 model 记进 diary 让高档占比可见。",
+  "summary": "派 consulter（sonnet）修 run_agent.sh 缺模型档入口的问题。独立核实：修复前 3f4f618 无 --model，修复后 e767df3 有 --model 且默认 sonnet 非继承；selftest 断言 49 独立重跑 PASS 49/FAIL 0。经 arbiter-push 推上 v5，fetch 确认远端已收到，自己分支已 rebase。销 blockers/2026-07-30-model-tier-not-enforced.md。顺带发现流程问题：consulter 在共享工作目录里直接切分支干活而非用独立 worktree，本次核实无连带损失但属侥幸，已记进 worklog 建议以后要求 isolation:worktree。已知未解决：Agent/SendMessage 那条派活通路仍无默认档机制，仍需每次显式传 model；本轮 reviewer/consulter 均已手动指定 sonnet。",
   "git": {
     "protocol": "embedded-self-v2",
     "branch": "feat/frontend-view-modules",
@@ -14,7 +14,8 @@
     "diff_mode": "contains",
     "changed_files": [
       "agents/cfo/docs/report.json",
-      "agents/cfo/docs/worklog/2026-07-30-cfo-report-self-ref.md"
+      "agents/cfo/docs/worklog/2026-07-31-cfo-model-tier-fix-verified-pushed.md",
+      "blockers/2026-07-30-model-tier-not-enforced.md"
     ]
   },
   "contract": {
@@ -22,9 +23,7 @@
     "which": [],
     "consumes": []
   },
-  "cross_module_impact": [
-    "code/nexus-core"
-  ],
+  "cross_module_impact": [],
   "sub_reports": [],
   "escalation": {
     "reason": "规则冲突",
@@ -38,14 +37,9 @@
   },
   "docs_reviewed": [
     {
-      "path": "agents/protocol/orchestration.md",
-      "action": "no-change-needed",
-      "reason": "第 6 条模型分档写得清楚，问题不在条文而在无机械执行点；属框架区归 consulter，已立障签不代改"
-    },
-    {
       "path": "agents/cfo/doc-map.tsv",
       "action": "no-change-needed",
-      "reason": "本轮只写留痕与障签，未触碰表中登记的代码区域"
+      "reason": "本次是框架修复举证与销障签，未触碰表中登记的代码区域"
     }
   ]
 }
