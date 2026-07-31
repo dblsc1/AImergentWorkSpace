@@ -520,5 +520,47 @@ else
   F "模型分档无执行点 —— 只能靠派活方每次记得（blockers/2026-07-30-model-tier-not-enforced.md 已实证两次跑上 Opus）"
 fi
 
+# 50 ── mission_complete.sh 推断出角色后不 export，05 写区路签核验静默放行
+#      （障签 2026-07-31：只靠"源码里有 export 字样"骗不过铁律 23，必须真的拦一次越区写入）
+printf '50. 角色自动推断时写区路签是否依然生效\n'
+_req50=("$S/mission_complete.sh" "$S/checks/_common/05-write-lease.sh" \
+        "$S/lib/paths.sh" "$S/lib/checklist.sh")
+_missing50=0
+for _f in "${_req50[@]}"; do [ -f "$_f" ] || _missing50=1; done
+if [ "$_missing50" -eq 1 ]; then
+  N "本仓没有 mission_complete.sh / 05-write-lease.sh 全套，不适用"
+else
+  _sbx=$(mktemp -d)
+  _build_role_export_sandbox() {   # _build_role_export_sandbox <待测 mission_complete.sh 路径>
+    rm -rf "$_sbx"; mkdir -p "$_sbx"
+    git -C "$_sbx" init -q
+    git -C "$_sbx" config user.email t@example.com
+    git -C "$_sbx" config user.name selftest
+    mkdir -p "$_sbx/scripts/lib" "$_sbx/scripts/checks/_common"
+    cp "$S/lib/emit.sh" "$_sbx/scripts/lib/" 2>/dev/null || true
+    cp "$S/lib/checklist.sh" "$S/lib/paths.sh" "$_sbx/scripts/lib/"
+    cp "$S/checks/_common/05-write-lease.sh" "$_sbx/scripts/checks/_common/"
+    cp "$1" "$_sbx/scripts/mission_complete.sh"
+    chmod +x "$_sbx/scripts/mission_complete.sh" "$_sbx/scripts/checks/_common/"*.sh
+    # programmer 只申领了一块不相干的目录 —— 越权目标不在其中
+    local _lease_dir; _lease_dir=$(git -C "$_sbx" rev-parse --path-format=absolute --git-common-dir)/aimergent-leases
+    mkdir -p "$_lease_dir"; printf 'nothing-real/\n' > "$_lease_dir/programmer.lease"
+    # 只靠"暂存路径落在 codeagent/<role>/docs/ 下"触发角色自动推断，不手动传 AIMERGENT_ROLE
+    mkdir -p "$_sbx/codeagent/programmer/docs/worklog" "$_sbx/secrets"
+    echo hi > "$_sbx/codeagent/programmer/docs/worklog/x.md"
+    echo leak > "$_sbx/secrets/out-of-lease.txt"      # 越出写区路签的文件
+    git -C "$_sbx" add codeagent secrets
+  }
+  _build_role_export_sandbox "$S/mission_complete.sh"
+  _rc=0
+  _out50=$(cd "$_sbx" && env -u AIMERGENT_ROLE bash scripts/mission_complete.sh 2>&1) || _rc=$?
+  rm -rf "$_sbx"
+  if [ "$_rc" -ne 0 ] && grep -q '越出写区路签' <<<"$_out50"; then
+    P "角色靠暂存路径自动推断、未显式传 AIMERGENT_ROLE 时，越区写入依然被拦（exit=$_rc）"
+  else
+    F "越区写入未被拦（exit=$_rc）—— role 推断出来后没 export 给子检查，05 写区路签静默放行（障签 2026-07-31）"
+  fi
+fi
+
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
 [ "$fail" -eq 0 ]

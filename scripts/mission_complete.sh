@@ -33,6 +33,8 @@ if [ -z "$role" ]; then
          sed -nE 's|^codeagent/([^/]+)/docs/.*|\1|p' | head -1)
 fi
 [ -n "$role" ] || role=unknown
+export AIMERGENT_ROLE="$role"   # 子检查脚本（05-write-lease.sh 等）靠环境变量读角色，
+                                 # 不 export 时子进程拿到空值，写区路签核验静默放行（障签 2026-07-31）。
 
 collect() {
   local d c
