@@ -2,21 +2,20 @@
   "schema_version": 2,
   "module": "workspace",
   "role": "consulter",
-  "task": "模型档位与任务难度适配社区对照入仓（简化落法：派单 json complexity 字段，用户裁定）",
+  "task": "科普定位与调研数据入仓（world model vs LLM / 路由评测 / 新手提效证据 + 可视化教学功能清单）",
   "tier": "simple",
   "status": "approved",
-  "summary": "用户观察 opus 忘委派 codex，三轮调研（高低搭配/定量适配/质量评估+闭环+报告提信息）汇总为 agents/reference/社区对照-模型档位与任务难度适配.md。用户裁定简化落法：只加 complexity 字段（simple<100行1-2文件无设计｜normal<500行单模块｜hard 其余）+一句提醒；完整级联闭环存档待排铲。成本账：token 升 3-10×，省人时与返工，小项目不回本大项目回本",
+  "summary": "用户拟做面向 vibecoding 新手的科普视频，项目定位「年轻人的第一个多 agent 架构」。三路并行调研（world model 时间线 / RouteLLM-Aider-Haiku 路由评测 / Cui-Anthropic-MAST-DORA 新手证据）汇总为 agents/reference/科普定位-新手第一个多agent架构.md：§0 新手三缺口对 MAST 79% 失败归因，§1 数据弹药库（每条带源+口播版），§2 功能清单 14 条（含用户种子 S1 抓谎现场 / S2 写区领地地图），§3 课程叙事线（判例库=剧本库），§4 落地优先级待用户排铲",
   "git": {
     "protocol": "embedded-self-v2",
     "branch": "v5",
-    "base": "d3ffac943848e592fc7ff463d94dbdbdc2ef2eb1",
+    "base": "4ab1b36e9d81feac74813d0c6ad8e5afd81fb2c8",
     "head": "SELF",
     "diff_mode": "contains",
     "changed_files": [
-      "agents/reference/社区对照-模型档位与任务难度适配.md",
-      "agents/consulter/docs/worklog/2026-07-31-consulter-模型档位对照入仓.md",
-      "agents/consulter/docs/findings/report.json",
-      "scripts/gates/doc-path-exempt.txt"
+      "agents/reference/科普定位-新手第一个多agent架构.md",
+      "agents/consulter/docs/worklog/2026-08-02-consulter-科普定位与调研数据入仓.md",
+      "agents/consulter/docs/findings/report.json"
     ]
   },
   "review_target": {
@@ -45,41 +44,32 @@
     {
       "path": "agents/reference/manual/文档地图.md",
       "action": "no-change-needed",
-      "reason": "reference 调研产物不逐篇入地图（同前人成果对照/社区对照系列先例）"
-    },
-    {
-      "path": "scripts/README.md",
-      "action": "no-change-needed",
-      "reason": "doc-path-exempt.txt 只追加一条前向引用登记（数据行），豁免机制本身与 README 描述未变"
-    },
-    {
-      "path": "agents/protocol/orchestration.md",
-      "action": "no-change-needed",
-      "reason": "complexity 字段属派单 json 结构，落地时随「PreToolUse 前移层」一铲改 orchestration 与 report-schema；本轮仅调研入仓，未动协议——文档 §7 已把该联动列为落地队列第 1-3 项"
+      "reason": "reference 调研产物不逐篇入地图（同社区对照系列先例）"
     }
   ],
   "findings": [
     {
       "category": "research",
       "severity": "info",
-      "summary": "社区共识：模型高低搭配靠声明式绑定（代理定义写死 model）+机器执法，提醒是最弱档——与 N2 判例（散文教训无半衰期）同形状；简化版 complexity 判据=行数×文件数×有无新设计决策",
-      "file": "agents/reference/社区对照-模型档位与任务难度适配.md"
+      "summary": "世界模型阵营应用清单无软件工程（编程域仅 CWM/Checksum 弱化变体）——本架构赛道可见期内不受威胁；便宜模型稳定在旗舰 64-95% 分、1/3-1/25 价，等能力价格年降中位 50×，complexity 分档判据不用改、档位边界自动下移",
+      "file": "agents/reference/科普定位-新手第一个多agent架构.md"
     },
     {
-      "category": "pending-decision",
+      "category": "research",
       "severity": "info",
-      "summary": "完整级联闭环（25%盈亏线/三层裁判/尾采样/model-fit.sh）已设计存档但用户裁定暂不落地，只落 complexity 字段简化版——落地队列见文档 §7，待用户排铲"
+      "summary": "「结构化治理让新手更快上手」尚无直接对照实验（2026-08 研究空白）；间接链条成立（MAST 79% 失败在规范/协调/验证层 + DORA 2025 平台调节效应）。X_structure 从 0 全程记录可成为第一个有数据的公开案例",
+      "file": "agents/reference/科普定位-新手第一个多agent架构.md"
     }
   ],
-  "reflection": "用户三问（质量评估/闭环自纠正/报告提信息）逼出的分层答案本质是一件事：把『难度预测』替换成『验证结果』，把『读报告』替换成『聚合+尾采样+三源对账』——都是本框架已有构件的计量化延伸，不需要新造轮子。",
+  "reflection": "教学产品与治理框架是同构的：单调加严级联=课程大纲，判例库=剧本库，mutation testing=一键搞破坏游戏——不需要为教学另造机制，只需要给已有机制加渲染层。Anthropic -17pp 技能税数据反过来约束产品设计：控制台必须逼理解（检查点），否则教出来的是更快的 vibecoder。",
   "recommendations": [
-    "CFO：派单 json 模板加 complexity 必填字段并附一句提醒（simple<100行1-2文件无设计→codex/haiku｜normal<500行单模块→sonnet｜hard 其余→opus；拿不准往上取）",
-    "落地队列候补（用户排铲）：model 字段+起飞单第9项、report.json 加 model_used/rounds、scripts/stats/model-fit.sh"
+    "落地优先级（待用户排铲）：①抓谎直播间（纯渲染层，三源数据已有）②写区领地地图（understand-anything 底图）③双屏对照实验（首发视频核心素材）④判例回放剧场（课程与功能一鱼两吃）",
+    "视频引用纪律：METR 19% 必须带 2026-02 自我推翻上下文；Triage 论文是提案无实测，不能写「省了 X%」"
   ],
   "reviewer_opinion": {
     "reviewer": "human",
     "verdict": "pending",
-    "path": "agents/consulter/docs/worklog/2026-07-31-consulter-模型档位对照入仓.md",
+    "path": "agents/consulter/docs/worklog/2026-08-02-consulter-科普定位与调研数据入仓.md",
     "round": 1
   }
 }
