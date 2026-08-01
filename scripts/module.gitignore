@@ -21,3 +21,12 @@ logs/INDEX.md
 logs/console.json
 logs/diary.jsonl
 logs/sessions/
+logs/STOPLINE
+
+# ⚠️ logs/ledger.jsonl **必须入仓**，故意不在上面那组里（2026-08-01 A-1 事故）。
+# 逃生口的全部合法性就是「绕了会被记下来」——账本不入仓 = 所有逃生口都是静默的。
+# 别改成 `logs/` 一刀切。checks/16 会机械兜底。
+#
+# ⚠️ 本文件与 code/_template/.gitignore 是**同一套规则的两份副本**，
+# 且实测已经漂过（模板缺整组 logs 规则，导致 auth 模块出生即把生成物入仓）。
+# **改一处必须同步另一处**。
