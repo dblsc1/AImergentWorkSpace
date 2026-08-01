@@ -16,7 +16,19 @@ tok_f='{{'"FRAMEWORK_ROOT"'}}'
 if grep -rIl -F -e "$tok_m" -e "$tok_f" . 2>/dev/null | grep -qv '^./.git'; then
   bad "仍有未替换的占位符"; else ok "占位符已清零"; fi
 # 2. 无作者机器绝对路径
-if git grep -nI -E '/(srv|home|Users)/[a-z]' -- . ':!*reviewcode*' 2>/dev/null | grep -q .; then
+# 注释行豁免（与 scripts/gates/run-gates.sh 同款，2026-08-01 补齐第二份副本）：
+# 判据防的是「**用到的**绝对路径换台机器就废」——注释/文档行里**讲**这个坑的路径
+# 没有可执行伤害，逼人改文案 = 判据不许人讨论问题本身。只扫非注释行。
+#
+# ⚠️ 这条规则在两个文件里各有一份实现（本文件 + scripts/gates/run-gates.sh），
+# 且两处报错文案一模一样、从输出分不出是哪份在拦。
+# **改一处必须同步另一处**（2026-07-30 障签 abspath-second-copy 的成因：
+# 只修了 run-gates.sh 那份，模块这份没动，于是整体仍红、四模块推送被迫走逃生口）。
+# 先落变量再判，不用 `producer | grep -q`——那在 pipefail 下有 SIGPIPE 竞态。
+abspath_hits=$(git grep -nI -E '/(srv|home|Users)/[a-z]' -- . \
+                 ':!*reviewcode*' ':!*/worklog/*' ':!review/reviewreport/*' 2>/dev/null \
+                 | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(#|//)' || true)
+if [ -n "$abspath_hits" ]; then
   bad "出现硬编码绝对路径（换台机器即废）"; else ok "无硬编码绝对路径"; fi
 # 3. 全类型行数（补 gate 的后缀盲区）
 over=$(git ls-files -z | xargs -0 -I{} sh -c '[ -f "{}" ] && [ "$(wc -l < "{}")" -gt 500 ] && echo "{}"' 2>/dev/null || true)
