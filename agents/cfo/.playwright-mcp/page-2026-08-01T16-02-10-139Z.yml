@@ -1,0 +1,7 @@
+- main [ref=f4e2]:
+  - paragraph [ref=f4e3]: PROJECT PULSE // CURRENT CONTRIBUTION
+  - heading "当前任务对项目的贡献" [level=1] [ref=f4e4]
+  - heading "Task Timer // 计时控制" [level=2] [ref=f4e6]
+  - img "项目与当前任务贡献圆环 青色弧线表示项目在总计划中的范围，亮黄至亮红弧线表示当前任务在该项目中的贡献。" [ref=f4e8]:
+    - generic [ref=f4e70]: CURRENT PROJECT
+  - paragraph [ref=f4e71]: 青色：项目范围 · 亮黄至亮红：当前任务带来的增加值

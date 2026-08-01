@@ -1,0 +1,103 @@
+- generic [active] [ref=f6e1]:
+  - main [ref=f6e2]:
+    - generic [ref=f6e3]:
+      - generic [ref=f6e6]:
+        - heading "NEXUS // 项目控制台" [level=1] [ref=f6e7]
+        - generic [ref=f6e8]: PERSONAL OPERATIONS MATRIX · V2.6
+      - generic [ref=f6e9]:
+        - generic [ref=f6e10]:
+          - generic [ref=f6e11]: 00:02:37
+          - text: 2026/08/02周日
+        - button "刷新" [ref=f6e12] [cursor=pointer]
+        - button "＋ 新建分区" [ref=f6e13] [cursor=pointer]
+    - region "项目概览" [ref=f6e14]:
+      - article [ref=f6e15]:
+        - generic [ref=f6e16]:
+          - heading "项目表 / 控制台" [level=2] [ref=f6e17]
+          - paragraph [ref=f6e18]: 数据来自 nexus-core；分区/项目/任务可在此增删改，写完成后自动重新拉取展示。
+      - article [ref=f6e19]:
+        - generic [ref=f6e20]: Active Projects
+        - generic [ref=f6e21]: 3 项
+      - article [ref=f6e22]:
+        - generic [ref=f6e23]: Task Complete
+        - generic [ref=f6e24]: 1/2
+      - article [ref=f6e25]:
+        - generic [ref=f6e26]: Average Progress
+        - generic [ref=f6e27]: 30%
+    - generic [ref=f6e28]:
+      - generic [ref=f6e29]:
+        - generic [ref=f6e30]:
+          - text: 行动分区
+          - generic [ref=f6e31]: SECTOR PAGE 01
+        - navigation "分区分页" [ref=f6e32]:
+          - button "上一页" [disabled] [ref=f6e33]: ←
+          - generic [ref=f6e34]: 01 / 01
+          - button "下一页" [disabled] [ref=f6e35]: →
+      - generic [ref=f6e36]:
+        - generic [ref=f6e37]:
+          - generic [ref=f6e38]:
+            - generic [ref=f6e39]:
+              - generic [ref=f6e40]: "01"
+              - generic [ref=f6e41]:
+                - generic [ref=f6e42]: 学习区
+                - generic [ref=f6e43]: 02 PROJECT NODES
+            - button "编辑分区" [ref=f6e44] [cursor=pointer]: ⌁
+          - generic [ref=f6e45]:
+            - article [ref=f6e46]:
+              - button "编辑项目" [ref=f6e47] [cursor=pointer]: ✎
+              - generic [ref=f6e48]:
+                - generic [ref=f6e49]: 英
+                - generic [ref=f6e50]:
+                  - generic "英语学习" [ref=f6e51]
+                  - generic [ref=f6e52]: DUE // 未设定
+              - generic [ref=f6e53]: 50%
+              - generic [ref=f6e57]:
+                - generic [ref=f6e58]:
+                  - checkbox "切换完成状态" [ref=f6e59]
+                  - generic [ref=f6e60]: 英语单词学习
+                  - button "编辑任务" [ref=f6e61] [cursor=pointer]: ✎
+                - generic [ref=f6e62]:
+                  - checkbox "切换完成状态" [checked] [ref=f6e63]
+                  - generic [ref=f6e64]: 口语练习
+                  - button "编辑任务" [ref=f6e65] [cursor=pointer]: ✎
+              - button "＋ 新建任务" [ref=f6e66] [cursor=pointer]
+            - article [ref=f6e67]:
+              - button "编辑项目" [ref=f6e68] [cursor=pointer]: ✎
+              - generic [ref=f6e69]:
+                - generic [ref=f6e70]: 读
+                - generic [ref=f6e71]:
+                  - generic "读书计划" [ref=f6e72]
+                  - generic [ref=f6e73]: DUE // 未设定
+              - generic [ref=f6e77]:
+                - text: 40%
+                - generic "人工覆盖值，后端原样返回不重算" [ref=f6e78]: 人工
+              - generic [ref=f6e79]: 暂无任务
+              - button "＋ 新建任务" [ref=f6e81] [cursor=pointer]
+          - button "＋ 在学习区新建项目" [ref=f6e82] [cursor=pointer]
+        - generic [ref=f6e83]:
+          - generic [ref=f6e84]:
+            - generic [ref=f6e85]:
+              - generic [ref=f6e86]: "02"
+              - generic [ref=f6e87]:
+                - generic [ref=f6e88]: 工作区
+                - generic [ref=f6e89]: 01 PROJECT NODES
+            - button "编辑分区" [ref=f6e90] [cursor=pointer]: ⌁
+          - article [ref=f6e92]:
+            - button "编辑项目" [ref=f6e93] [cursor=pointer]: ✎
+            - generic [ref=f6e94]:
+              - generic [ref=f6e95]: X
+              - generic [ref=f6e96]:
+                - generic "X-structure" [ref=f6e97]
+                - generic [ref=f6e98]: DUE // 未设定
+            - generic [ref=f6e99]: 0%
+            - generic [ref=f6e102]: 暂无任务
+            - button "＋ 新建任务" [ref=f6e104] [cursor=pointer]
+          - button "＋ 在工作区新建项目" [ref=f6e105] [cursor=pointer]
+    - region "计时档案" [ref=f6e106]:
+      - generic [ref=f6e108]:
+        - text: 计时档案
+        - generic [ref=f6e109]: TIMER ARCHIVE
+      - list [ref=f6e110]:
+        - listitem [ref=f6e111]: 2026年8月1日 23:51–23:51 · 英语学习 / 英语单词学习 · <1分钟
+        - listitem [ref=f6e112]: 2026年8月1日 21:15–21:15 · 英语学习 / 英语单词学习 · <1分钟
+  - status

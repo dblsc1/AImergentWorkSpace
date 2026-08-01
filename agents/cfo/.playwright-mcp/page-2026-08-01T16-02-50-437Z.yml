@@ -1,0 +1,12 @@
+- main [ref=f7e2]:
+  - paragraph [ref=f7e3]: PROJECT PULSE // CURRENT CONTRIBUTION
+  - heading "当前任务对项目的贡献" [level=1] [ref=f7e4]
+  - generic [ref=f7e5]:
+    - heading "Task Timer // 计时控制" [level=2] [ref=f7e6]
+    - generic [ref=f7e7]:
+      - combobox "选择任务" [ref=f7e8]:
+        - option "选择任务…" [selected]
+        - option "英语单词学习"
+        - option "口语练习"
+      - button "开始" [disabled] [ref=f7e9]
+  - paragraph [ref=f7e10]: 当前无任务运行。
