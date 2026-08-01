@@ -5,3 +5,4 @@
 {"ts":"2026-08-01T11:47:43Z","event":"override","hatch":"PUSH_UNREVIEWED","reason":"治理层简报与模板修复","script":"arbiter-push.sh","actor":"cfo","branch":"feat/frontend-view-modules","head":"723a0d6908ddad7e041a05b10eb98261d84fffb9"}
 {"ts":"2026-08-01T11:48:15Z","event":"override","hatch":"PUSH_UNREVIEWED","reason":"简报与模板修复","script":"arbiter-push.sh","actor":"cfo","branch":"feat/frontend-view-modules","head":"a707518e0e17493864108ee9711d99911837d00e"}
 {"ts":"2026-08-01T16:16:59Z","event":"override","hatch":"PUSH_UNREVIEWED","reason":"CFO 留痕","script":"arbiter-push.sh","actor":"cfo","branch":"feat/frontend-view-modules","head":"a707518e0e17493864108ee9711d99911837d00e"}
+{"ts":"2026-08-01T16:19:08Z","event":"override","hatch":"PUSH_UNREVIEWED","reason":"CFO 留痕","script":"arbiter-push.sh","actor":"cfo","branch":"feat/frontend-view-modules","head":"8b7ca391464c2733357cab96e23f4719157e23ea"}
