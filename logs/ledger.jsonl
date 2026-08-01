@@ -8,3 +8,4 @@
 {"ts":"2026-08-01T16:19:08Z","event":"override","hatch":"PUSH_UNREVIEWED","reason":"CFO 留痕","script":"arbiter-push.sh","actor":"cfo","branch":"feat/frontend-view-modules","head":"8b7ca391464c2733357cab96e23f4719157e23ea"}
 {"ts":"2026-08-01T16:19:44Z","event":"override","hatch":"MISSION_OVERRIDE","reason":"仅收敛逃生口账本增量，无其他改动","script":"mission_complete.sh","actor":"cfo","branch":"feat/frontend-view-modules","head":"8b7ca391464c2733357cab96e23f4719157e23ea"}
 {"ts":"2026-08-01T16:50:44Z","event":"override","hatch":"PUSH_UNREVIEWED","reason":"未给理由（建议设 AIMERGENT_PUSH_UNREVIEWED_REASON）","script":"arbiter-push.sh","actor":"xia","branch":"v5","head":"bcfe362f7a6c87642954cff2fd66c3b1ab50455b"}
+{"ts":"2026-08-01T16:52:49Z","event":"override","hatch":"PUSH_UNREVIEWED","reason":"consulter 调研文档入仓，人类 verdict pending（report.reviewer_opinion 已登记）","script":"arbiter-push.sh","actor":"consulter","branch":"v5","head":"40ffb85d91519c98d73336568df864cb81cea44e"}
