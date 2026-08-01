@@ -100,7 +100,13 @@ if [ "$rc" -eq 0 ] && [ "$landed" -eq 0 ]; then
      AIMERGENT_ALLOW_NO_OUTPUT=1 scripts/run_agent.sh ...（放行但记账）
    当前模型档：$model（升档打回复审/架构级裁决用 AIMERGENT_AGENT_MODEL=opus）
 HINT
-  [ -n "${AIMERGENT_ALLOW_NO_OUTPUT:-}" ] && { rc=0; echo "⚠️  已按只读任务放行（记账）" >&2; }
+  # 2026-08-01：这行此前打印「（记账）」但没有任何 emit 调用——**提示词字面撒谎**，
+  # 比不记账更糟（人读到「已记账」会以为可追）。补上真正的双写。
+  [ -n "${AIMERGENT_ALLOW_NO_OUTPUT:-}" ] && {
+    rc=0
+    emit_override ALLOW_NO_OUTPUT "只读任务放行：${role:-?} / ${card_task:-?}" 2>/dev/null || true
+    echo "⚠️  已按只读任务放行（已记账进 logs/ledger.jsonl）" >&2
+  }
 fi
 
 # 记进 diary：新开还是续用，是「重开率」这个指标的原料；

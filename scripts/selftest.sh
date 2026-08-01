@@ -562,5 +562,49 @@ else
   fi
 fi
 
+# 51 ── 逃生口是不是每一个都真的记账（A-1 事故：账本不入仓 = 逃生口全静默）
+#      两段验：① 静态扫全类（防新增逃生口时漏接）② 真点火（防「源码里有那个词」骗过去）
+printf '51. 逃生口是否全部接进问责账本\n'
+if [ ! -f "$S/lib/emit.sh" ]; then
+  N "本仓没有 lib/emit.sh，不适用"
+else
+  # ① 类扫描：凡出现逃生口 env 的脚本，必须也调 emit_override
+  _hatch_bad=""
+  while IFS= read -r _h; do
+    [ -n "$_h" ] || continue
+    while IFS= read -r _f; do
+      [ -n "$_f" ] || continue
+      case "$_f" in */lib/emit.sh|*/selftest.sh) continue ;; esac   # 定义处与本测试自身不算
+      grep -q 'emit_override' "$_f" 2>/dev/null || _hatch_bad="$_hatch_bad $(basename "$_f"):$_h"
+    done < <(grep -rlE "$_h" --include='*.sh' "$S" 2>/dev/null)
+  done < <(grep -rhoE 'AIMERGENT_[A-Z_]*(OVERRIDE|SKIP[A-Z_]*|UNREVIEWED|ALLOW_[A-Z_]*)' \
+             --include='*.sh' "$S" 2>/dev/null | sort -u)
+
+  # ② 真点火：造一个隔离沙箱仓，实调 emit_override，断言 ledger 真落一行且不被 gitignore 吞
+  _lsbx=$(mktemp -d)
+  git -C "$_lsbx" init -q 2>/dev/null
+  mkdir -p "$_lsbx/scripts/lib" "$_lsbx/logs"
+  cp "$S/lib/emit.sh" "$_lsbx/scripts/lib/" 2>/dev/null
+  _fire=$( cd "$_lsbx" && bash -c '
+      . scripts/lib/emit.sh 2>/dev/null
+      emit_override TESTHATCH "selftest 点火" 2>/dev/null
+      [ -s logs/ledger.jsonl ] && grep -q TESTHATCH logs/ledger.jsonl && echo FIRED
+  ' 2>/dev/null )
+  # 顺带验真仓的落点没被 .gitignore 吞（吞了 = 写了也不入仓 = 白写）
+  _swallowed=""
+  git -C "$repo" check-ignore -q -- logs/ledger.jsonl 2>/dev/null && _swallowed=1
+  rm -rf "$_lsbx"
+
+  if [ -n "$_hatch_bad" ]; then
+    F "有逃生口没接问责账本:$_hatch_bad —— 漏一个，那个逃生口就是静默的（铁律23 修到类）"
+  elif [ "$_fire" != FIRED ]; then
+    F "emit_override 没能真写出 ledger 条目 —— 函数在但不生效，比没有更糟"
+  elif [ -n "$_swallowed" ]; then
+    F "logs/ledger.jsonl 被 .gitignore 吞 —— 记了也不入仓，按铁律18 等于没记（正是 A-1 事故本体）"
+  else
+    P "四类逃生口全部接 emit_override；真点火写出 ledger 条目；落点未被 .gitignore 吞"
+  fi
+fi
+
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
 [ "$fail" -eq 0 ]

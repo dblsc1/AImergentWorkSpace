@@ -21,6 +21,11 @@ trap 'rm -f -- "$token"' EXIT
 # ── 先审后推（2026-07-28 改）──────────────────────────────
 # 本地 commit 已是不可变、有 SHA 的对象，审核绑它足够，不必先推。
 # 先审后推的好处：被打回的活永远不上远端，返修不用 force-push，远端历史干净。
+if [ "${AIMERGENT_PUSH_UNREVIEWED:-0}" = 1 ]; then
+  # 记账（2026-08-01 补）：此前这条分支**完全不记账**——本文件唯一的 emit 挂在
+  # PUSH_SKIP_GATES 上，UNREVIEWED 走过去悄无声息。实测当天用了约 10 次，零留痕。
+  emit_override PUSH_UNREVIEWED "${AIMERGENT_PUSH_UNREVIEWED_REASON:-未给理由（建议设 AIMERGENT_PUSH_UNREVIEWED_REASON）}" 2>/dev/null || true
+fi
 if [ "${AIMERGENT_PUSH_UNREVIEWED:-0}" != 1 ]; then
   _root=$(git rev-parse --show-toplevel 2>/dev/null || echo .)
   _ok=0
@@ -60,7 +65,7 @@ if [ "${AIMERGENT_PUSH_SKIP_GATES:-}" = "" ]; then
   fi
 else
   echo "⚠️  跳过推送前门禁：$AIMERGENT_PUSH_SKIP_GATES（已记账）" >&2
-  emit_event push_skip_gates "$AIMERGENT_PUSH_SKIP_GATES" 2>/dev/null || true
+  emit_override PUSH_SKIP_GATES "$AIMERGENT_PUSH_SKIP_GATES" 2>/dev/null || true
 fi
 
 # ── 推送前按整段区间复核文档影响面 ──────────────────────────

@@ -127,8 +127,11 @@ if [ "$fail" -eq 0 ]; then
 fi
 
 if [ -n "${AIMERGENT_MISSION_OVERRIDE:-}" ]; then
-  printf '│\n└─ ⚠️  逃生口放行：%s\n     已强制记入 %s —— 这次绕过在台账上是可见的。\n\n' \
-    "$AIMERGENT_MISSION_OVERRIDE" "$diary"
+  printf '│\n└─ ⚠️  逃生口放行：%s\n     已记入 logs/ledger.jsonl（入仓的证据）——这次绕过是可追的。\n\n' \
+    "$AIMERGENT_MISSION_OVERRIDE"
+  # 2026-08-01：原来只写 diary，而 diary 被 .gitignore 吞 = 证据不入仓 = 等于没记。
+  # 改走 emit_override（双写 ledger + diary），log_event 保留给 console 用。
+  emit_override MISSION_OVERRIDE "$AIMERGENT_MISSION_OVERRIDE" 2>/dev/null || true
   log_event mission_override "\"$AIMERGENT_MISSION_OVERRIDE\""
   refresh_console
   exit 0
