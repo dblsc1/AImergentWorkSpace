@@ -606,5 +606,34 @@ else
   fi
 fi
 
+# 52 ── 模块级 handoff（arbiter 侧）有没有机械检查
+#      A-2 事故：规范写「handoff 每改必核」，而 checks/14 只扫 code/ 那份、
+#      从不看 module_docs/。六个模块的 arbiter 级交接文档全是空模板、一次没红过。
+printf '52. 模块级 handoff 是否有机械检查\n'
+_c17="$S/checks/_common/17-module-handoff.sh"
+if [ ! -f "$_c17" ]; then
+  F "没有 checks/_common/17-module-handoff.sh —— module_docs/handoff.md 无人把关（A-2 事故本体）"
+else
+  _sbx=$(mktemp -d)
+  mkdir -p "$_sbx/codeagent" "$_sbx/module_docs" "$_sbx/scripts/lib" "$_sbx/scripts/checks/_common"
+  git -C "$_sbx" init -q
+  cp "$S/lib/paths.sh" "$_sbx/scripts/lib/" 2>/dev/null
+  cp "$_c17" "$_sbx/scripts/checks/_common/"
+  chmod +x "$_sbx/scripts/checks/_common/17-module-handoff.sh"
+  # 喂一份**未填实的模板**，必须变红
+  cp "$repo/code/_template/module_docs/handoff.md" "$_sbx/module_docs/handoff.md" 2>/dev/null
+  _rc_tpl=0; ( cd "$_sbx" && ./scripts/checks/_common/17-module-handoff.sh >/dev/null 2>&1 ) || _rc_tpl=$?
+  # 换成填实的，必须变绿
+  printf '# m · handoff\n\n## 一句话\n真内容\n\n## 怎么跑 / 怎么测\n真命令\n\n## 接口\n真接口\n\n## 避坑 / 冻结点 / 技术债\n真坑\n' \
+    > "$_sbx/module_docs/handoff.md"
+  _rc_real=0; ( cd "$_sbx" && ./scripts/checks/_common/17-module-handoff.sh >/dev/null 2>&1 ) || _rc_real=$?
+  rm -rf "$_sbx"
+  if [ "$_rc_tpl" -ne 0 ] && [ "$_rc_real" -eq 0 ]; then
+    P "空模板必红（exit=$_rc_tpl）、填实必绿（exit=$_rc_real）—— 判据认内容不认行数"
+  else
+    F "17-module-handoff 判据失灵：空模板 exit=$_rc_tpl（应非0）、填实 exit=$_rc_real（应0）"
+  fi
+fi
+
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
 [ "$fail" -eq 0 ]

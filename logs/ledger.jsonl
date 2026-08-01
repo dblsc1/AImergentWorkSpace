@@ -1,1 +1,2 @@
 {"ts":"2026-08-01T06:22:09Z","event":"override","hatch":"PUSH_UNREVIEWED","reason":"A-1修复本身：改的是记账机制，无独立reviewer；红绿举证在 selftest 第51条与 worklog","script":"arbiter-push.sh","actor":"cfo","branch":"feat/frontend-view-modules","head":"a9080ba3adb24ce0a15ec2b37d50af2fb8a4e0af"}
+{"ts":"2026-08-01T09:15:42Z","event":"override","hatch":"PUSH_UNREVIEWED","reason":"A-1 账本机制 + 排查表，CFO 自核","script":"arbiter-push.sh","actor":"cfo","branch":"feat/frontend-view-modules","head":"1ba0be2bf7774e3cc48af1752ca521ca5e0a2bf6"}
