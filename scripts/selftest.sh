@@ -1081,5 +1081,49 @@ JSON
   fi
 fi
 
+# 61 ── 铁律 2 有没有机械执行者（2026-08-02 P0：口令明文进了三个模块仓）
+#      此前唯一相关的 gate 是 gitleaks，而它 ① 配置是空壳零规则
+#      ② 被 RUN_GITLEAKS_LOCAL=1 挡着 ③ 本机没装二进制 —— 三重失效，
+#      铁律 2 写了一个多月，一次都没执行过。
+#      实弹：三种不同形状的明文凭据各喂一次（shell export / JSON / 裸 token），
+#      再喂七种合法写法确认不误伤。**判据本身不许含真实口令**，所以样本用假值。
+printf '61. 明文凭据是否有机械执行者（铁律 2）\n'
+_c18="$S/checks/_common/18-secret-literal.sh"
+if [ ! -f "$_c18" ]; then
+  F "没有 checks/_common/18-secret-literal.sh —— 铁律 2 零执行者（gitleaks 那条是空壳+被开关挡着+本机无二进制）"
+else
+  _sbx=$(mktemp -d); git -C "$_sbx" init -q
+  mkdir -p "$_sbx/scripts/checks/_common" "$_sbx/scripts/lib"
+  cp "$_c18" "$_sbx/scripts/checks/_common/"; chmod +x "$_sbx/scripts/checks/_common/18-secret-literal.sh"
+  cp "$S/lib/paths.sh" "$_sbx/scripts/lib/" 2>/dev/null
+  # 三种坏形状（全是假值）
+  printf 'export APP_TEST_PASSWORD=notarealpw\n'  > "$_sbx/bad1.md"
+  printf '{"password":"notarealpw"}\n'            > "$_sbx/bad2.json"
+  printf 'GITHUB_TOKEN=notarealtoken\n'           > "$_sbx/bad3.sh"
+  # 七种合法写法
+  {
+    printf '口令只从 APP_TEST_PASSWORD 读，缺了就响亮跳过。\n'
+    printf 'export APP_TEST_PASSWORD=$MY_PW\n'
+    printf 'APP_TEST_PASSWORD=${MY_PW}\n'
+    printf 'APP_TEST_PASSWORD=<你的口令>\n'
+    printf 'APP_TEST_PASSWORD=changeme\n'
+    printf 'pw = os.environ["APP_TEST_PASSWORD"]\n'
+    printf 'tok = os.getenv("GITHUB_TOKEN")\n'
+  } > "$_sbx/good.md"
+  git -C "$_sbx" add -A >/dev/null 2>&1
+  _out=$( cd "$_sbx" && bash scripts/checks/_common/18-secret-literal.sh 2>&1 )
+  _rc_bad=$( cd "$_sbx" && bash scripts/checks/_common/18-secret-literal.sh >/dev/null 2>&1; echo $? )
+  ( cd "$_sbx" && git rm -q --cached bad1.md bad2.json bad3.sh >/dev/null 2>&1; rm -f bad1.md bad2.json bad3.sh )
+  _rc_good=$( cd "$_sbx" && bash scripts/checks/_common/18-secret-literal.sh >/dev/null 2>&1; echo $? )
+  rm -rf "$_sbx"
+  _named=0
+  for _b in bad1.md bad2.json bad3.sh; do case "$_out" in *"$_b"*) _named=$((_named+1)) ;; esac; done
+  if [ "$_rc_bad" -ne 0 ] && [ "$_rc_good" -eq 0 ] && [ "$_named" -eq 3 ]; then
+    P "三种形状的明文凭据各自被点名（shell/JSON/裸 token），七种合法写法零误伤"
+  else
+    F "密钥判据失灵：坏样本 exit=$_rc_bad（应非0，点名 $_named/3）、合法写法 exit=$_rc_good（应0）"
+  fi
+fi
+
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
 [ "$fail" -eq 0 ]
