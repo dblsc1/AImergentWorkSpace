@@ -889,7 +889,31 @@ else
   elif ! grep -q 'never-exists-dangling' <<<"$_o57"; then
     F "没带标记的真悬空引用也没被抓 —— 豁免机制把整道门变哑了（比误报危险得多）"
   else
-    P "带标记的测试输入被放行、同一文件里没带标记的真悬空引用照样红（豁免是行级的，不是整文件）"
+    _md57=""
+    # 同一个约定必须在 **.md 一侧**也成立：判例库里「讲某个路径类缺陷」的条目会
+    # 逐字引用那些路径，于是讲缺陷的文档自己成了该缺陷的新实例（「字面量类」第四次复发）。
+    # 两个检查器共用一个词，不要各造一套 —— 否则下一个人得记两套规矩。
+    if [ -x "$S/checks/_common/60-doc-paths-exist.sh" ]; then
+      _sbx57b=$(mktemp -d); git -C "$_sbx57b" init -q
+      git -C "$_sbx57b" config user.email t@e.com; git -C "$_sbx57b" config user.name t
+      mkdir -p "$_sbx57b/scripts/gates" "$_sbx57b/scripts/checks/_common" "$_sbx57b/scripts/lib"
+      cp "$S/checks/_common/60-doc-paths-exist.sh" "$_sbx57b/scripts/checks/_common/"
+      cp "$S/lib/paths.sh" "$_sbx57b/scripts/lib/"
+      chmod +x "$_sbx57b/scripts/checks/_common/"*.sh
+      : > "$_sbx57b/scripts/gates/doc-path-exempt.txt"
+      printf '讲缺陷时逐字引用 `scripts/never-md-fixture.sh` 只是例子  <!-- ref-fixture -->\n真引用 `scripts/never-md-dangling.sh` 应该照红\n' \
+        > "$_sbx57b/note.md"
+      git -C "$_sbx57b" add -A >/dev/null 2>&1
+      _o57b=$( cd "$_sbx57b" && bash scripts/checks/_common/60-doc-paths-exist.sh 2>&1 )
+      rm -rf "$_sbx57b"
+      grep -q 'never-md-fixture' <<<"$_o57b" && _md57="checks/60 不认 ref-fixture 标记（两个检查器约定不一致，人得记两套规矩）"
+      grep -q 'never-md-dangling' <<<"$_o57b" || _md57="checks/60 连没带标记的真死链也不抓了 —— 标记把 .md 那道门也变哑了"
+    fi
+    if [ -n "$_md57" ]; then
+      F "$_md57"
+    else
+      P "同一个 ref-fixture 约定在 .sh（check-references）与 .md（checks/60）两侧都成立；两侧都验过没把门变哑"
+    fi
   fi
 fi
 

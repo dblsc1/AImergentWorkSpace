@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 判据：文档里用反引号写出的仓内路径必须真实存在（防链接腐烂）。
-[ "${1:-}" = --describe ] && { echo "60 路径可解析：文档中反引号内的仓内路径必须真实存在；有意的前向引用须登记 scripts/gates/doc-path-exempt.txt"; exit 0; }
+[ "${1:-}" = --describe ] && { echo "60 路径可解析：文档中反引号内的仓内路径必须真实存在；有意的前向引用须登记 scripts/gates/doc-path-exempt.txt；测试 fixture 在行尾写 ref-fixture"; exit 0; }
 set -uo pipefail
 exempt=scripts/gates/doc-path-exempt.txt
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh"
@@ -30,6 +30,12 @@ while IFS= read -r -d '' f; do
     echo "$f 引用了不存在的路径：$p" >&2
     echo "  → 有意的前向引用：框架仓登记 $exempt；模块仓登记 ${exempt%.txt}.local.txt（不随框架同步，不算漂移）" >&2
     fail=1
-  done < <(grep -oE '`(agents|code|logs|scripts)/[^`]+`' "$f" | tr -d '`' | sort -u)
+    # 与 gates/check-references.sh **同一个约定**（2026-08-02）：行尾写 ref-fixture
+    # 的那一行，其中的路径是喂给判据的合成输入，不是引用。
+    # 为什么 .md 也需要：判例库里「讲某个路径类缺陷」的条目会逐字引用那些路径，
+    # 于是**讲缺陷的文档自己成为该缺陷的新实例**（判例库「字面量类」，第四次复发）。
+    # 两个检查器共用一个词，不要各造一套——否则下一个人得记两套规矩。
+  done < <(grep -v 'ref-fixture' "$f" |
+           grep -oE '`(agents|code|logs|scripts)/[^`]+`' | tr -d '`' | sort -u)
 done < <(staged_paths ACMR)
 exit $fail
