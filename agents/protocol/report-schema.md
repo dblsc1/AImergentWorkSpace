@@ -145,7 +145,23 @@ reviewagent（以及承担 L0 独立审核的 CFO consulter）的公共 `.git` �
 }
 ```
 
-五个字段全部必填；`base` / `head` 均为 40 位小写 Git SHA且 `base` 必须是 `head` 的祖先，`diff_mode` 固定为 `exact`。`changed_files` 不得重复，必须与 `git diff --name-only --no-renames base..head` 的路径集合**完全相等**（缺项、多项、重复都拒绝），不能只把 `exact` 当字符串标签。它与 `.git.base` 不同：`.git.base` 必须来自 PR 目标分支，而 `review_target.base/head` 精确描述 feature 分支上的被审区间。
+五个字段全部必填；`base` / `head` 均为 40 位小写 Git SHA且 `base` 必须是 `head` 的祖先，`diff_mode` 固定为 `exact`。
+
+**consulter 的非审查轮次：写 `"review_target": null`，不要回填**（2026-08-02，F6）。
+consulter 的多数轮次（框架维护、架构裁决、调研入仓）不产生审查区间；
+此前 schema 与两个 reviewer 一视同仁、缺则判否，于是只能翻出一个旧区间填进去——
+**为满足门禁而回填的字段不再承载信息**，还会被合并门当成真的审核凭据。
+现在的判据是：**键必须在，值可以是 `null`；省略仍判否**。
+省略是疏忽，`null` 是决定，两者必须能区分开。
+`programmer_reviewer` / `module_reviewer` 不给这个口子——它们的每一轮按定义都产生审查区间。
+
+**合并门另有一条覆盖断言**（2026-08-02，F5）：`review_target.base` 必须是集成基线
+（`$AIMERGENT_INTEGRATION_BRANCH`，默认 `dev`）的祖先或就是它。
+此前 `merge-to-integration.sh` **只读 `.head`、从不读 `.base`**：前向那头有守
+（白名单卡 `reviewed..candidate`），后向那头完全没守，于是**审得越窄越容易过**——
+分支上有 C1..C10 而只审最后一个，`reviewed..candidate` 为空、白名单空转放行，
+前九个 commit 一次没被审就合进去了。判据落在 `scripts/lib/review.sh`
+（唯一实现，`merge-to-integration.sh` source 它），断言见 `scripts/selftest.sh` 第 59 项。`changed_files` 不得重复，必须与 `git diff --name-only --no-renames base..head` 的路径集合**完全相等**（缺项、多项、重复都拒绝），不能只把 `exact` 当字符串标签。它与 `.git.base` 不同：`.git.base` 必须来自 PR 目标分支，而 `review_target.base/head` 精确描述 feature 分支上的被审区间。
 
 squash 后的 main 终态复验必须显式传入“旧 main SHA”为 task base、“新 squash SHA”为 head；不得让 `main==origin/main==HEAD` 退化为空 diff。此时 `SELF` 解析为新 squash commit，feature-only `review_target` 对象须在即时复验期间仍可解析并按上述 exact 集合核实。
 

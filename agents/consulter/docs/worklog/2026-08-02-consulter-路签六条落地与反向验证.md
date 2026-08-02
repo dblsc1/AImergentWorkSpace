@@ -227,3 +227,93 @@ diary 不入仓，所以这是本机视角：新克隆上没有历史就不打�
 | C 签史略掉第一条 | `❌ FAIL 签史略掉了第一条 —— 只看最近几次看不出单调性` |
 
 恢复后 `PASS 58 · FAIL 0`。
+
+---
+
+## F5 · 合并门的审核覆盖断言（判据方向反了，不是不够严）
+
+**先更正我自己上一轮的措辞**：我写的是「只断言祖先不断言覆盖……审得越旧越容易过」。
+**前半对、后半不准**。前向那一头是有守的——`verify_report` 对
+`reviewed..candidate` 的每条路径走白名单（consulter 只准 `agents/consulter/docs/*`
+与 `agents/cfo/docs/*`），审得越旧反而越容易撞白名单。
+
+真正没守的是**后向**：`verify_report` **只读 `.review_target.head`，从不读 `.base`**
+（`grep -n review_target merge-to-integration.sh` 只有 head 那一行）。
+所以准确的说法是「**审得越窄越容易过**」：分支上 C1..C10，reviewer 只审最后一个
+（base=C9, head=C10），`reviewed..candidate` 为空 → 白名单循环空转放行 →
+**C1..C9 九个 commit 一次没被审就合进去了**。
+
+**修**：加一条与既有 `.git.base` 那条对称的断言 ——
+`review_target.base` 必须是集成基线的祖先或就是它。
+两头合起来才叫「审核覆盖了被合并的工作」。
+
+**同批把 `verify_report` 整个搬进 `scripts/lib/review.sh`**，这不是顺手重构：
+`merge-to-integration.sh` 从第一行就要 origin / PR 号 / dev 分支 / 工作区干净，
+沙箱里根本跑不到那个函数——**判据留在那里就只能靠肉眼读，而肉眼读不出方向反了，
+F5 就是这么躺了四天的**。搬出来之后 selftest 喂的是**那一份**，
+不是抄一份等价逻辑去测（判例库「被测对象是哪一份」）。
+`merge-to-integration.sh` 里不再有第二份定义，断言 #59 顺带盯着这一点（防漂移）。
+source 失败会 fail-closed：没有 `verify_report` → `approved` 恒 0 → 直接 die。
+
+**断言 #59** 造**真实 commit 链**（M→C1→C2→C3）：
+从分叉点起审 → 放行；起点落在分叉点之后 → 拒绝。
+
+**反向验证**：
+
+| 改坏 | 结果 |
+|---|---|
+| A 去掉覆盖断言（`if false`） | `❌ FAIL 审核区间不覆盖分支起点也照样放行 —— 审得越窄越容易过` |
+| B 判据方向写反（`base` 必须在基线之后） | `❌ FAIL` 同上 —— 反着写时两种输入**都放行**，正好演示「方向反了 = 恒真」 |
+
+---
+
+## F6 · consulter 非审查轮次不必回填 review_target
+
+**病**：schema 把 consulter 与两个 reviewer 一视同仁、缺 `review_target` 即判否，
+而 consulter 多数轮次（框架维护、架构裁决、调研入仓）不产生审查区间。
+commit `ee5806a` 的标题就是证据：「恢复 review_target 最近审查区间——推送门 schema 要求」。
+**为满足门禁而回填的字段不再承载信息**，更糟的是合并门会把它当成真的审核凭据。
+
+**修**：不是「可以不写」，是「**必须显式声明**」——写 `"review_target": null`。
+**省略仍判否**：省略是疏忽，`null` 是决定，两者必须能区分开。
+两个 reviewer 不给这个口子（它们每一轮按定义都产生审查区间）。
+
+**反向验证**：把 `has("review_target")` 判据改成 `if false` →
+`❌ FAIL 整个 review_target 键省略也放行 —— 省略与显式声明分不开了，疏忽会被当成决定`。
+
+---
+
+## F7 · 门禁绿灯里的 stderr 噪音 —— 并且我上一轮把成因判错了
+
+**病**：全绿时 stderr 吐三行 `comm: not in sorted order`。
+**修**：两处 `sort` 加 `LC_ALL=C`（`sort` 走 LC_COLLATE，`comm` 按字节比）。
+
+**成因我上一轮判错了，这次实测证伪**。我写的是「本仓路径大量含非 ASCII，
+sort 走 locale 排序」。实测：
+
+```
+byte  : agents/cfo/docs/worklog/2026-08-02-cfo-写区路签TTL.md
+locale: agents/cfo/docs/worklog/2026-08-02-cfo-写区路签TTL.md     ← 中文路径同序，不触发
+```
+
+真正触发的是 en_US.UTF-8 排序规则的**另外两条**：**忽略前导标点**、**不分大小写**。
+
+```
+byte  : .gitignore  code/x.md
+locale: code/x.md   .gitignore          ← 点被忽略
+byte  : scripts/README.md      scripts/gates/a.sh
+locale: scripts/gates/a.sh     scripts/README.md   ← 不分大小写
+```
+
+**这个错误诊断有直接后果**：我第一版断言的 fixture 用的是中文文件名，
+拿掉 `LC_ALL=C` 做红测时**它没变红**——断言在验一个不存在的机制。
+换成「点文件 + 大写文件名」后红测才真的红：
+
+```
+❌ FAIL  门禁 stderr 仍有 comm 排序噪音（F7）—— 绿灯里混红色输出会训练人忽略门禁
+```
+
+**这条要进判例库**：`LC_ALL=C` 的修复是对的，但**修对了不等于诊断对了**；
+诊断错会让下一个人以为「只有含中文路径的仓才中招」，
+实际上**任何有 dotfile 或大写文件名的仓都会中**。
+代码注释与 fixture 都已按实测更正。

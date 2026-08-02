@@ -50,7 +50,7 @@ fi
 validate_common() {
   local path=$1 expected_role=$2 blob report_commit report_base changed diff_names
   local review_base review_head actual_files claimed_files mismatch
-  local claimed_count unique_count
+  local claimed_count unique_count rt_none
   git cat-file -e "$report_head:$path" 2>/dev/null || {
     bad "canonical report 被删除或不可读: $path"
     return
@@ -124,7 +124,36 @@ validate_common() {
     fi
   done < <(jq -r '.git.changed_files[]' <<<"$blob")
 
-  if { [ "$expected_role" = programmer_reviewer ] || [ "$expected_role" = module_reviewer ] ||
+  # ── F6（2026-08-02）：consulter 的非审查轮次不必回填 review_target ──────
+  # 病根：schema 把 consulter 与 programmer_reviewer / module_reviewer 同等对待，
+  # 缺 review_target 即判否；而 consulter 的多数轮次（框架维护、架构裁决、调研入仓）
+  # 根本不产生审查区间。commit ee5806a 的标题就是证据：「恢复 review_target
+  # 最近审查区间——推送门 schema 要求」。**一个为满足门禁而回填的字段不再承载信息**，
+  # 更糟的是它会被合并门当成真的审核凭据用。
+  #
+  # 修法不是「可以不写」，是「**必须显式声明**」：写 "review_target": null。
+  # 省略仍然判否 —— **省略是疏忽，null 是决定，两者必须能区分开**。
+  # reviewer 两角色不给这个口子：它们的每一轮按定义都产生审查区间。
+  rt_none=0
+  case "$expected_role" in
+    programmer_reviewer|module_reviewer|consulter)
+      if ! jq -e 'has("review_target")' >/dev/null <<<"$blob"; then
+        bad "缺 review_target 键: $path"
+        [ "$expected_role" = consulter ] &&
+          bad "  非审查轮次也要显式写 review_target 为 null —— 省略是疏忽，null 是决定"
+        return
+      fi
+      if jq -e '.review_target == null' >/dev/null <<<"$blob"; then
+        if [ "$expected_role" != consulter ]; then
+          bad "review_target 不得为 null: $path（reviewer 的每一轮按定义都产生审查区间）"
+          return
+        fi
+        rt_none=1
+      fi ;;
+  esac
+
+  if [ "$rt_none" -eq 0 ] &&
+     { [ "$expected_role" = programmer_reviewer ] || [ "$expected_role" = module_reviewer ] ||
        [ "$expected_role" = consulter ]; } &&
      ! jq -e '
        (has("target") | not) and
@@ -139,8 +168,9 @@ validate_common() {
     bad "独立 reviewer 必须使用标准 review_target（exact），禁止 target 等别名: $path"
     return
   fi
-  if [ "$expected_role" = programmer_reviewer ] || [ "$expected_role" = module_reviewer ] ||
-     [ "$expected_role" = consulter ]; then
+  if [ "$rt_none" -eq 0 ] &&
+     { [ "$expected_role" = programmer_reviewer ] || [ "$expected_role" = module_reviewer ] ||
+       [ "$expected_role" = consulter ]; }; then
     review_base=$(jq -r .review_target.base <<<"$blob")
     review_head=$(jq -r .review_target.head <<<"$blob")
     if ! git rev-parse --verify --quiet "$review_base^{commit}" >/dev/null ||
@@ -161,9 +191,21 @@ validate_common() {
     actual_files=$(git -c core.quotePath=false diff --name-only --no-renames \
       "$review_base..$review_head")
     claimed_files=$(jq -r '.review_target.changed_files[]' <<<"$blob")
+    # F7：两边都用 LC_ALL=C 排序。sort 走 LC_COLLATE，comm 按字节比 —— 两者不一致
+    # 就会在**全绿时**往 stderr 吐三行 "comm: not in sorted order"。
+    #
+    # ⚠️ 成因不是非 ASCII（上一轮我判错了，实测证伪）。en_US.UTF-8 的排序规则
+    #    **忽略前导标点、且不分大小写**，所以触发它的是最普通的两类路径：
+    #      .gitignore  vs  code/x       —— 点被忽略 → locale 把 code/x 排前面
+    #      scripts/README.md vs scripts/gates/a.sh —— 不分大小写 → README 排后面
+    #    中文路径反而**不**触发（实测同序）。判成非 ASCII 会让人以为「本仓特有」，
+    #    实际上任何有 dotfile 或大写文件名的仓都会中。
+    #
+    # 反向验证过这是噪音不是漏判（五种输入全部检出差异），但**绿灯里混着红色
+    # stderr 会训练人忽略门禁输出**，而这道门恰恰是靠人读输出的。
     mismatch=$(comm -3 \
-      <(sed '/^$/d' <<<"$actual_files" | sort -u) \
-      <(sed '/^$/d' <<<"$claimed_files" | sort -u))
+      <(sed '/^$/d' <<<"$actual_files" | LC_ALL=C sort -u) \
+      <(sed '/^$/d' <<<"$claimed_files" | LC_ALL=C sort -u))
     if [ -n "$mismatch" ]; then
       bad "review_target.changed_files 与 base..head no-renames diff 不完全一致: $path"
       return

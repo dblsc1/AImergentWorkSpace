@@ -879,7 +879,7 @@ else
   {
     printf '#!/usr/bin/env bash\n'
     printf 'fixture="scripts/never-exists-fixture.sh"   # ref-fixture\n'
-    printf 'realref="scripts/never-exists-dangling.sh"\n'
+    printf 'realref="scripts/never-exists-dangling.sh"\n'   # ref-fixture
   } > "$_sbx57/scripts/probe.sh"
   git -C "$_sbx57" add -A >/dev/null 2>&1
   _o57=$( cd "$_sbx57" && bash scripts/gates/check-references.sh 2>&1 )
@@ -937,6 +937,123 @@ else
     F "申领的写区落在旧签里（收窄）却报了放宽 —— 误报会训练人忽略这条警告"
   else
     P "放宽被检出并指名道姓、只警告不拦（rc=$_rc58）、签史含第一条、收窄不误报"
+  fi
+fi
+
+# 59 ── 合并门的审核覆盖断言：审得越窄不许越容易过（F5）
+#      原来 verify_report **只读 .review_target.head，从不读 .base**。
+#      前向那头有守（白名单卡 reviewed..candidate），后向那头完全没守：
+#      分支上 C1..C3，reviewer 只审最后一段，前面几个 commit 一次没被审就合进去。
+#      这里造**真实 commit 链**喂 lib/review.sh 里的**那一份** verify_report，
+#      不是抄一份等价逻辑去测（判例库「被测对象是哪一份」）。
+printf '59. 合并门是否断言审核覆盖了被合并的工作\n'
+if [ ! -f "$S/lib/review.sh" ]; then
+  F "没有 lib/review.sh —— 审核绑定判据还留在 merge-to-integration.sh 里，沙箱够不着（那正是 F5 躺了四天的原因）"
+elif grep -q '^verify_report() {' "$S/merge-to-integration.sh" 2>/dev/null; then
+  F "merge-to-integration.sh 里还有第二份 verify_report 定义 —— 测的那份和跑的那份会漂移"
+else
+  _sbx59=$(mktemp -d); git -C "$_sbx59" init -q
+  git -C "$_sbx59" config user.email t@example.com; git -C "$_sbx59" config user.name selftest
+  mkdir -p "$_sbx59/agents/consulter/docs/findings" "$_sbx59/agents/consulter/docs/worklog" "$_sbx59/scripts"
+  _rp59=agents/consulter/docs/findings/report.json
+  _wl59=agents/consulter/docs/worklog/w.md   # ref-fixture
+  echo base > "$_sbx59/README.md"
+  git -C "$_sbx59" add -A >/dev/null; git -C "$_sbx59" commit -q --no-verify -m M
+  _M59=$(git -C "$_sbx59" rev-parse HEAD)                 # 集成基线 = 分叉点
+  echo work > "$_sbx59/scripts/thing.sh"                  # C1：一段真实工作
+  git -C "$_sbx59" add -A >/dev/null; git -C "$_sbx59" commit -q --no-verify -m C1
+  echo more >> "$_sbx59/README.md"
+  git -C "$_sbx59" add -A >/dev/null; git -C "$_sbx59" commit -q --no-verify -m C2
+  _C259=$(git -C "$_sbx59" rev-parse HEAD)                # 审核 head 固定在这里
+  _try59() {   # _try59 <review_target.base> → verify_report 的退出码
+    echo w > "$_sbx59/$_wl59"
+    cat > "$_sbx59/$_rp59" <<JSON
+{"schema_version":2,"module":"m","role":"consulter","task":"t","tier":"simple",
+ "status":"approved","summary":"s",
+ "git":{"protocol":"embedded-self-v2","branch":"feat/x","base":"$_M59","head":"SELF",
+        "diff_mode":"contains","changed_files":["$_rp59","$_wl59"]},
+ "review_target":{"branch":"feat/x","base":"$1","head":"$_C259",
+                  "diff_mode":"exact","changed_files":[]}}
+JSON
+    git -C "$_sbx59" add -A >/dev/null
+    git -C "$_sbx59" commit -q --no-verify -m C3 >/dev/null 2>&1 ||
+      git -C "$_sbx59" commit -q --no-verify --amend -m C3 >/dev/null 2>&1
+    ( repo=$_sbx59; candidate=$(git -C "$_sbx59" rev-parse HEAD); branch=feat/x; main_sha=$_M59
+      . "$S/lib/review.sh"; verify_report "$_rp59" consulter >/dev/null 2>&1; echo $? )
+  }
+  _wide59=$(_try59 "$_M59")     # 从分叉点起审 → 应放行
+  _narrow59=$(_try59 "$_C259")  # 只审最后一段（C1 没人看过）→ 应拒绝
+  rm -rf "$_sbx59"
+  if [ "$_wide59" != 0 ]; then
+    F "从分叉点起审的报告被合并门拒了（rc=$_wide59）—— 判据过严会逼人用逃生口"
+  elif [ "$_narrow59" = 0 ]; then
+    F "审核区间不覆盖分支起点也照样放行 —— 审得越窄越容易过（F5），前面的 commit 一次没被审就合进去"
+  else
+    P "审核区间从分叉点起→放行；起点落在分叉点之后（前面的 commit 没人看过）→拒绝（rc=$_narrow59）"
+  fi
+fi
+
+# 60 ── consulter 非审查轮次：显式 null 放行，省略仍判否（F6）+ 门禁输出无 locale 噪音（F7）
+#      F6 病根：schema 把 consulter 与两个 reviewer 同等对待，缺 review_target 即判否，
+#      而 consulter 多数轮次根本不产生审查区间 —— 于是只能回填。commit ee5806a 的标题
+#      就是证据：「恢复 review_target 最近审查区间——推送门 schema 要求」。
+#      **一个为满足门禁而回填的字段不再承载信息**，还会被合并门当成真审核凭据。
+#      修法不是「可以不写」，是「必须显式声明 null」：省略是疏忽，null 是决定。
+printf '60. consulter 非审查轮次可显式声明；省略仍判否；输出无 locale 噪音\n'
+if [ ! -x "$S/gates/check-report-schema.sh" ]; then
+  N "本仓没有 gates/check-report-schema.sh，不适用"
+else
+  _sbx60=$(mktemp -d); git -C "$_sbx60" init -q -b main
+  git -C "$_sbx60" config user.email t@example.com; git -C "$_sbx60" config user.name selftest
+  mkdir -p "$_sbx60/agents/consulter/docs/findings" "$_sbx60/agents/consulter/docs/worklog" \
+           "$_sbx60/scripts/gates"
+  cp "$S/gates/check-report-schema.sh" "$_sbx60/scripts/gates/"; chmod +x "$_sbx60/scripts/gates/"*.sh
+  echo base > "$_sbx60/README.md"
+  git -C "$_sbx60" add -A >/dev/null; git -C "$_sbx60" commit -q --no-verify -m base
+  _M60=$(git -C "$_sbx60" rev-parse HEAD)
+  git -C "$_sbx60" checkout -q -b feat/x
+  _rp60=agents/consulter/docs/findings/report.json
+  # F7 的 fixture：**点文件 + 大写文件名**。上一轮我把成因判成「非 ASCII」，
+  # 实测证伪——中文路径同序，真正触发 locale/字节序分歧的是
+  # 「前导标点被忽略」（.gitignore vs code/x）与「不分大小写」（README.md vs gates/）。
+  # 第一版断言用中文名，红测时**没能变红**，就是这个错误诊断的直接后果。
+  _wl60='agents/consulter/docs/worklog/工作日志.md'
+  _dot60='.gitignore'; _up60='scripts/README.md'
+  _run60() {   # _run60 <review_target 的 JSON 片段> → 退出码（stderr 落 err.txt）
+    echo w > "$_sbx60/$_wl60"; echo ig > "$_sbx60/$_dot60"; echo up > "$_sbx60/$_up60"
+    cat > "$_sbx60/$_rp60" <<JSON
+{"schema_version":2,"module":"m","role":"consulter","task":"t","tier":"simple",
+ "status":"approved","summary":"s",
+ "git":{"protocol":"embedded-self-v2","branch":"feat/x","base":"$_M60","head":"SELF",
+        "diff_mode":"contains","changed_files":["$_rp60","$_wl60","$_dot60","$_up60"]},
+ "contract":{"touched":false,"which":[],"consumes":[]},
+ "cross_module_impact":[],"escalation":null$1}
+JSON
+    git -C "$_sbx60" add -A >/dev/null
+    git -C "$_sbx60" commit -q --no-verify -m r >/dev/null 2>&1 ||
+      git -C "$_sbx60" commit -q --no-verify --amend -m r >/dev/null 2>&1
+    ( cd "$_sbx60" && AIMERGENT_REPORT_BASE=$_M60 bash scripts/gates/check-report-schema.sh \
+        >/dev/null 2>"$_sbx60/err.txt"; printf '%s' $? )
+  }
+  _null60=$(_run60 ',"review_target":null')          # 显式声明非审查轮次 → 应放行
+  _err_null=$(cat "$_sbx60/err.txt")
+  _omit60=$(_run60 '')                                # 整个键省略 → 仍应判否
+  _err_omit=$(cat "$_sbx60/err.txt")
+  # 真审查轮次：review_target 是对象，且 changed_files 必须与 diff 完全相等（含非 ASCII 路径）
+  _H60=$(git -C "$_sbx60" rev-parse HEAD)
+  _real60=$(_run60 ",\"review_target\":{\"branch\":\"feat/x\",\"base\":\"$_M60\",\"head\":\"$_H60\",\"diff_mode\":\"exact\",\"changed_files\":[\"$_rp60\",\"$_wl60\",\"$_dot60\",\"$_up60\"]}")
+  _err_real=$(cat "$_sbx60/err.txt")
+  rm -rf "$_sbx60"
+  if [ "$_null60" != 0 ]; then
+    F "consulter 显式写 review_target 为 null 仍被判否（rc=$_null60）—— 非审查轮次只能继续回填假区间（F6）"
+  elif [ "$_omit60" = 0 ]; then
+    F "整个 review_target 键省略也放行 —— 省略与显式声明分不开了，疏忽会被当成决定（F6）"
+  elif ! grep -q 'review_target' <<<"$_err_omit"; then
+    F "省略时判否了，但没说清缺的是 review_target —— 错误信息把人引向错的地方"
+  elif grep -q 'not in sorted order' <<<"$_err_null$_err_omit$_err_real"; then
+    F "门禁 stderr 仍有 comm 排序噪音（F7）—— 绿灯里混红色输出会训练人忽略门禁"
+  else
+    P "显式 null 放行、省略判否且说明原因、真审查轮次（含点文件/大写名/中文名）全绿且 stderr 干净"
   fi
 fi
 

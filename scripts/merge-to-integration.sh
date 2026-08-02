@@ -236,57 +236,10 @@ remote_main=$(git -C "$repo" rev-parse "origin/$TARGET" 2>/dev/null || echo "$ma
 [ "$main_sha" = "$remote_main" ] || die "本地 $TARGET 与 origin/$TARGET 不同步"
 git -C "$repo" merge-base --is-ancestor "$main_sha" "$candidate" || die "任务分支不是当前 main 的后代"
 
-reviewed=''
-verify_report() {
-  local path=$1 expected_role=$2 blob report_commit report_base changed bad diff_names current_blob committed_blob
-  blob=$(git -C "$repo" show "$candidate:$path" 2>/dev/null) || return 1
-  jq -e --arg role "$expected_role" --arg branch "$branch" --arg path "$path" '
-    .schema_version == 2 and .status == "approved" and .role == $role and
-    .git.protocol == "embedded-self-v2" and .git.head == "SELF" and
-    .git.branch == $branch and
-    .git.diff_mode == "contains" and
-    (.git.base | type == "string" and test("^[0-9a-f]{40}$")) and
-    (.git.changed_files | type == "array" and index($path) != null) and
-    (if $role == "consulter" | not then
-       any(.git.changed_files[]; startswith("codeagent/" + $role + "/docs/worklog/"))
-     else
-       any(.git.changed_files[]; startswith("agents/consulter/docs/worklog/"))
-     end) and
-    .review_target.branch == $branch and
-    (.review_target.head | type == "string" and test("^[0-9a-f]{40}$"))
-  ' >/dev/null <<<"$blob" || return 1
-  reviewed=$(jq -r .review_target.head <<<"$blob")
-  git -C "$repo" merge-base --is-ancestor "$reviewed" "$candidate" || return 1
-  report_commit=$(git -C "$repo" log -1 --format=%H "$candidate" -- "$path")
-  git -C "$repo" merge-base --is-ancestor "$reviewed" "$report_commit" || return 1
-  report_base=$(jq -r .git.base <<<"$blob")
-  git -C "$repo" merge-base --is-ancestor "$report_base" "$main_sha" || return 1
-  git -C "$repo" merge-base --is-ancestor "$report_base" "$report_commit" || return 1
-  diff_names=$(git -C "$repo" -c core.quotePath=false diff --name-only --no-renames "$report_base..$report_commit")
-  while IFS= read -r changed; do
-    [ -n "$changed" ] || continue
-    grep -Fqx -- "$changed" <<<"$diff_names" || return 1
-  done < <(jq -r '.git.changed_files[]' <<<"$blob")
-  current_blob=$(git -C "$repo" rev-parse "$candidate:$path")
-  committed_blob=$(git -C "$repo" rev-parse "$report_commit:$path")
-  [ "$current_blob" = "$committed_blob" ] || return 1
-  bad=0
-  while IFS= read -r changed; do
-    [ -n "$changed" ] || continue
-    if [ "$expected_role" != consulter ]; then
-      case "$changed" in
-        codeagent/*/docs/*|review/*|module_docs/reviewlog.md) ;;
-        *) printf '  未经审核的后续路径: %s\n' "$changed" >&2; bad=1 ;;
-      esac
-    else
-      case "$changed" in
-        agents/consulter/docs/*|agents/cfo/docs/*) ;;
-        *) printf '  未经审核的后续路径: %s\n' "$changed" >&2; bad=1 ;;
-      esac
-    fi
-  done < <(git -C "$repo" -c core.quotePath=false diff --name-only --no-renames "$reviewed..$candidate")
-  [ "$bad" -eq 0 ] || return 1
-}
+# 审核绑定判据（含 F5 的审核覆盖断言）搬进 lib/review.sh —— **这里不再有第二份实现**。
+# 关键路径缺文件必须 die：source 失败就没有 verify_report，approved 恒 0，
+# 下面直接 die「没有精确绑定的 approved 审核」——fail-closed，不会静默放行。
+. "$SCRIPT_DIR/lib/review.sh"
 
 approved=0
 if [ "$level" = module ]; then
