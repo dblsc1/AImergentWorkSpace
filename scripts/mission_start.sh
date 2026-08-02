@@ -142,6 +142,12 @@ else
   cl_bad 2 "写区重叠" \
     "$clash ← 持有者 $(lease_holder_detail "$clash_holder")" \
     "① 让持有者跑 scripts/mission_start.sh --release $clash_holder；② 把写区切细到不相交（多数重叠是粒度太粗，不是真冲突）；③ 签超过 TTL（${LEASE_TTL_SECONDS}s）会在下次 mission_start 时自动回收"
+  # 层②（2026-08-02 CFO 裁决）：**被挡住的这一刻**才是释放的关键路径。
+  # 把「能不能强收」的判据连同可粘贴的命令直接印给被卡方 —— 但不自动收
+  # （lib/lease.sh 的红线：静默回收会让双写安静地发生）。
+  _retry=$(printf 'scripts/mission_start.sh %q %q' "$role" "$task")
+  for _w in "${want[@]}"; do _retry="$_retry $(printf '%q' "$_w")"; done
+  while IFS= read -r _l; do cl_note "$_l"; done < <(lease_takeover_advice "$clash_holder" "$_retry")
 fi
 
 # 3 预期文档变更

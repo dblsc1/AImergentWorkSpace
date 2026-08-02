@@ -102,6 +102,72 @@ lease_release() {   # lease_release <角色>
   return 0
 }
 
+# ── 层②：「完工即自动还签」的落点 —— 拒发这一刻 ──────────────────
+# （2026-08-02 CFO 裁决；驳回的方案是挂在 dispatch.sh 上）
+#
+# 为什么落在**拒发**而不是派单或完工：这是唯一**有人真的正被挡住**的时刻。
+# 派单时没有任何人在等，把释放挂在那里依然是自愿动作，只是换了个触发器；
+# 完工（mission_complete）是 pre-commit 的主体，每次 commit 都跑，在那里还签
+# 等于每提交一次就把互斥关掉一次。
+#
+# **只给判据 + 可粘贴的命令，绝不自动强收。** 本文件顶上那条红线在这里同样成立：
+# 忘了还签会卡住人（吵闹），静默回收会让双写发生（安静）。判断「持有者是不是
+# 真的走了」需要的信息在人那儿，不在这个脚本里 —— 所以脚本只负责把判据摆出来。
+#
+# 三条判据（全过才建议强收）：
+#   A 持有者写区在工作树里干净 —— 有未提交改动 = 人还在里面干活，收了就是抢
+#   B 起飞时 --docs 声明的文档变更已全部落地（入仓 + 发签之后真被改过）
+#   C 签龄已知 —— 年龄未知的签判不出「走没走」，只能人看
+# 退 0 = 三条全过可强收；退 1 = 有条件不满足，别收。
+lease_takeover_advice() {   # lease_takeover_advice <持有者> [被卡方的重试命令]
+  local h=$1 retry=${2:-} d dirty="" nland="" age granted _a _p _t held
+  d=$(lease_dir_path)
+  if [ ! -f "$d/$h.lease" ]; then
+    printf '强收判据：%s 的签已经不在了，直接重试即可。\n' "$h"
+    return 0
+  fi
+
+  # A 写区干净？（--untracked-files=no：未跟踪文件不算「正在改」）
+  while IFS= read -r held; do
+    [ -n "$held" ] || continue
+    [ -n "$(git status --porcelain --untracked-files=no -- "$held" 2>/dev/null)" ] &&
+      dirty="${dirty:+$dirty }$held"
+  done < "$d/$h.lease"
+
+  # B 声明的文档变更落地了？
+  granted=$(lease_meta_get "$h" granted_at 2>/dev/null || true)
+  if [ -f "$d/$h.docs" ]; then
+    while IFS=$'\t' read -r _a _p; do
+      [ -n "$_p" ] || continue
+      if ! git ls-files --error-unmatch -- "$_p" >/dev/null 2>&1; then
+        nland="${nland:+$nland; }$_p（还没入仓）"; continue
+      fi
+      _t=$(git log -1 --format=%ct -- "$_p" 2>/dev/null)
+      if [ -n "$granted" ] && { [ -z "$_t" ] || [ "$_t" -lt "$granted" ] 2>/dev/null; }; then
+        nland="${nland:+$nland; }$_p（发签之后一次都没动过）"
+      fi
+    done < "$d/$h.docs"
+  fi
+
+  age=$(lease_age "$h")
+  printf '强收判据（三条全过才建议收；本脚本永远不自动收）：\n'
+  if [ -z "$dirty" ]; then printf '  ✓ A 持有者写区在工作树里干净\n'
+  else printf '  ✗ A 持有者写区有未提交改动：%s ← 人还在里面干活\n' "$dirty"; fi
+  if [ -z "$nland" ]; then printf '  ✓ B 起飞时声明的文档变更都已落地（或没声明）\n'
+  else printf '  ✗ B 声明了却没落地：%s\n' "$nland"; fi
+  if [ "$age" -ge 0 ] 2>/dev/null; then printf '  ✓ C 签龄已知：%s 分钟\n' "$(( age / 60 ))"
+  else printf '  ✗ C 签龄未知（无 meta，上一版留下的签）—— 判不出走没走，只能人看\n'; fi
+
+  if [ -z "$dirty" ] && [ -z "$nland" ] && [ "$age" -ge 0 ] 2>/dev/null; then
+    printf '结论：可强收。直接粘贴——\n'
+    printf '  scripts/mission_start.sh --release %s\n' "$h"
+    [ -n "$retry" ] && printf '  %s\n' "$retry"
+    return 0
+  fi
+  printf '结论：不建议强收（见上面打 ✗ 的那条）。先找 %s，或把自己的写区切细到不相交。\n' "$h"
+  return 1
+}
+
 # 被卡时的诊断。**拒发不许只说「重叠」**——要说清谁、多久、什么任务、怎么办。
 # 那次事故里被卡的一方看到的只有「写区重叠」，它无从知道该找谁、该等多久。
 lease_holder_detail() {   # lease_holder_detail <持有者>

@@ -717,6 +717,12 @@ _mk_lease_sandbox() {
   mkdir -p "$h"; local g
   for g in pre-commit pre-push commit-msg; do printf '#!/bin/sh\nexit 0\n' > "$h/$g"; chmod +x "$h/$g"; done
   printf '## 目标\nx\n## 验收标准\nx\n## 可触碰目录\nx\n## 自检门\nx\n' > "$sbx/task.md"   # 1 四小节
+  # 真做一次提交：没有 commit 的仓里「写区干净」是白捡的（未跟踪文件不算脏），
+  # 那样 55 项的判据 A 就成了恒真 —— 必须让干净/脏两种状态都是真实可造的。
+  git -C "$sbx" config user.email t@example.com
+  git -C "$sbx" config user.name selftest
+  git -C "$sbx" add -A >/dev/null 2>&1
+  git -C "$sbx" commit -q --no-verify -m 'selftest sandbox base' >/dev/null 2>&1
   local d="$sbx/.git/aimergent-leases"; mkdir -p "$d"
   printf '%s\n' "$held" > "$d/$holder.lease"
   printf 'granted_at=%s\nttl=7200\ntask=持有者的任务单\n' "$(date -u +%s)" > "$d/$holder.meta"
@@ -752,6 +758,42 @@ else
     F "不重叠的申领没能正常发签（rc=$_rc54b, lease_grant=$_granted）"
   else
     P "拒发落 lease_denied（rc=$_rc54）、正常发签只落 lease_grant 不误记拒发"
+  fi
+fi
+
+# 55 ── 拒发时给不给「能不能强收」的判据（层②，CFO 2026-08-02 裁决的落点）
+#      三件事一起验，缺一件这条机制就退化：
+#      ① 干净时要说「可强收」并给可粘贴命令 ② 脏时要说「不建议」并指出哪条不满足
+#      ③ **两种情况下签都必须还在** —— 自动强收会让双写安静地发生（lib/lease.sh 红线）
+printf '55. 路签拒发是否给出强收判据（且绝不自动强收）\n'
+if [ ! -f "$S/mission_start.sh" ] || [ ! -f "$S/lib/lease.sh" ]; then
+  N "本仓没有 mission_start.sh / lib/lease.sh，不适用"
+else
+  _sbx55=$(mktemp -d)
+  # ① 持有者写区干净 → 应判「可强收」
+  _mk_lease_sandbox "$_sbx55" arbiter 'scripts/'
+  ( cd "$_sbx55" && bash scripts/mission_start.sh consulter task.md scripts/lib/ ) \
+    >"$_sbx55/clean.txt" 2>&1
+  _left_clean=1; [ -f "$_sbx55/.git/aimergent-leases/arbiter.lease" ] || _left_clean=0
+  _c=$(cat "$_sbx55/clean.txt")            # 先取走：下一次造沙箱会 rm -rf 掉它
+  # ② 持有者写区有未提交改动 → 应判「不建议强收」
+  _mk_lease_sandbox "$_sbx55" arbiter 'scripts/'
+  printf '\n# 持有者还在改\n' >> "$_sbx55/scripts/dispatch.sh"
+  ( cd "$_sbx55" && bash scripts/mission_start.sh consulter task.md scripts/lib/ ) \
+    >"$_sbx55/dirty.txt" 2>&1
+  _left_dirty=1; [ -f "$_sbx55/.git/aimergent-leases/arbiter.lease" ] || _left_dirty=0
+  _d=$(cat "$_sbx55/dirty.txt")
+  rm -rf "$_sbx55"
+  if ! grep -q '强收判据' <<<"$_c"; then
+    F "拒发只说「重叠」，不给强收判据 —— 被卡方仍然无从判断该等还是该收（层②未落地）"
+  elif ! grep -q '结论：可强收' <<<"$_c" || ! grep -q -- '--release arbiter' <<<"$_c"; then
+    F "持有者写区干净时没判「可强收」或没给可粘贴命令（判据摆了却要人自己推）"
+  elif ! grep -q '结论：不建议强收' <<<"$_d" || ! grep -q '未提交改动' <<<"$_d"; then
+    F "持有者写区有未提交改动时仍建议强收 —— 判据恒真，等于没有判据"
+  elif [ "$_left_clean" -ne 1 ] || [ "$_left_dirty" -ne 1 ]; then
+    F "拒发时把别人的签自动收了（clean=$_left_clean dirty=$_left_dirty）—— 静默回收会让双写安静地发生"
+  else
+    P "干净判可强收+给可粘贴命令、脏判不建议并指出原因、两种情况下签都还在（没自动强收）"
   fi
 fi
 
