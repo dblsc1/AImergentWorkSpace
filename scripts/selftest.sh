@@ -893,5 +893,52 @@ else
   fi
 fi
 
+# 58 ── 写区粒度棘轮：放宽必须被看见，但**不许硬拦**（F2）
+#      五天 diary 的形状：05 拦下越区提交 → 持有者放宽自己的签 → 覆盖面越来越大，
+#      每次膨胀前 90 秒内都紧跟一条 failed:write-lease。棘轮没有反向齿。
+#      三件一起验：① 放宽要检出并说清哪一条 ② 不放宽不许误报
+#      ③ **必须只警告不拦**（判断题硬拦会逼人用逃生口，逃生口用滥闸门全废）
+#      ④ 警告必须带签史，且**永远含第一条** —— 只看最近几次看不出单调性
+printf '58. 写区放宽是否被看见（且只警告不硬拦、带签史）\n'
+if [ ! -f "$S/mission_start.sh" ] || ! grep -q 'lease_widening' "$S/lib/lease.sh" 2>/dev/null; then
+  F "lib/lease.sh 没有 lease_widening —— 写区棘轮无人看见（F2）"
+else
+  _sbx58=$(mktemp -d)
+  _mk_lease_sandbox "$_sbx58" someone_else 'unrelated-area/'
+  _ld58="$_sbx58/.git/aimergent-leases"
+  # 自己的旧签：docs/a/ —— 本轮申领 docs/ 是把它放宽
+  printf 'docs/a/\n' > "$_ld58/consulter.lease"
+  printf 'granted_at=%s\nttl=7200\ntask=上一轮\n' "$(date -u +%s)" > "$_ld58/consulter.meta"
+  # 造六条签史，验「中间略、但第一条永远在」
+  mkdir -p "$_sbx58/logs"
+  for _i in 1 2 3 4 5 6; do
+    printf '{"ts":"2026-07-0%sT01:02:03Z","event":"lease_grant","note":"consulter: docs/a/","rc":0}\n' "$_i"
+  done > "$_sbx58/logs/diary.jsonl"
+  _rc58=0
+  ( cd "$_sbx58" && bash scripts/mission_start.sh consulter task.md docs/ ) \
+    >"$_sbx58/wide.txt" 2>&1 || _rc58=$?
+  _w58=$(cat "$_sbx58/wide.txt")
+  # 收窄/不变的一侧：申领 docs/a/b/（落在旧签里）不该报放宽
+  printf 'docs/a/\n' > "$_ld58/consulter.lease"
+  printf 'granted_at=%s\nttl=7200\ntask=上一轮\n' "$(date -u +%s)" > "$_ld58/consulter.meta"
+  ( cd "$_sbx58" && bash scripts/mission_start.sh consulter task.md docs/a/b/ ) \
+    >"$_sbx58/narrow.txt" 2>&1
+  _n58=$(cat "$_sbx58/narrow.txt")
+  rm -rf "$_sbx58"
+  if ! grep -q '放宽：docs/a/ → docs/' <<<"$_w58"; then
+    F "写区从 docs/a/ 放宽到 docs/ 没被检出 —— 棘轮转了没人看见（F2）"
+  elif [ "$_rc58" -ne 0 ]; then
+    F "放宽被**硬拦**了（rc=$_rc58）—— 判断题不做硬闸门，硬拦会逼人改用逃生口"
+  elif ! grep -q '签史' <<<"$_w58" || ! grep -q '6 次发签' <<<"$_w58"; then
+    F "警告没带签史 —— 只说「你的签有点宽」没有信息量，要说「从几片涨到几片、从未收窄」"
+  elif ! grep -q '2026-07-01' <<<"$_w58"; then
+    F "签史略掉了第一条 —— 棘轮比的是起点和现在，只看最近几次看不出单调性"
+  elif grep -q '放宽：' <<<"$_n58"; then
+    F "申领的写区落在旧签里（收窄）却报了放宽 —— 误报会训练人忽略这条警告"
+  else
+    P "放宽被检出并指名道姓、只警告不拦（rc=$_rc58）、签史含第一条、收窄不误报"
+  fi
+fi
+
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
 [ "$fail" -eq 0 ]

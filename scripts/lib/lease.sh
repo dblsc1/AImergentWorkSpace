@@ -180,3 +180,60 @@ lease_holder_detail() {   # lease_holder_detail <持有者>
       "$(lease_meta_get "$h" task 2>/dev/null || echo '（未记）')"
   fi
 }
+
+# ── F2：写区粒度棘轮 ──────────────────────────────────────────────
+# 五天的 diary 是这样的：cfo 的签从 agents/ 一路涨到八片，且**每一次膨胀前
+# 90 秒内都紧跟一条 mission_blocked failed:write-lease** —— 即 05 拦下越区提交后，
+# 持有者的标准修法是放宽自己的签。这条棘轮没有反向齿，终点是一个角色持有整仓，
+# 那时路签不再是碰撞探测器，而是派活方持有的全局互斥锁。
+# 本文件开头写下的判据「一旦签开始串行化正常并发，说明写区划分错了或粒度太粗」
+# 已经触发；唯一一次收窄是 2026-08-02 07:49 人手做的。
+#
+# **只警告不硬拦**（判例库「判断题不做硬闸门」：硬拦会逼人用逃生口，
+# 逃生口用滥整套闸门就废）。「放宽到什么程度算粒度错了」没有客观阈值，是判断题。
+lease_widening() {   # lease_widening <角色> <新写区...> → 打印放宽项；退 0=检出放宽
+  local role=$1; shift
+  local d o n hit=1 covered old=()
+  d=$(lease_dir_path)
+  [ -f "$d/$role.lease" ] || return 1          # 没有旧签就没有棘轮可言
+  mapfile -t old < "$d/$role.lease"
+  [ "${#old[@]}" -gt 0 ] || return 1
+  for n in "$@"; do
+    covered=0
+    for o in "${old[@]}"; do
+      [ -n "$o" ] || continue
+      case "$n" in "$o"*) covered=1 ;; esac                     # 新的落在旧的里 = 没放宽
+      case "$o" in "$n"*)                                       # 旧的落在新的里 = 放宽了
+        [ "$o" = "$n" ] || { printf '  放宽：%s → %s\n' "$o" "$n"; hit=0; covered=1; } ;;
+      esac
+    done
+    [ "$covered" -eq 1 ] || { printf '  新增：%s\n' "$n"; hit=0; }
+  done
+  return $hit
+}
+
+# 该角色历次发签的实况。**光说「你的签有点宽」没有信息量**，
+# 「五天里从 4 片涨到 8 片、从未收窄」才是让人停一下的那句话。
+# 取自 logs/diary.jsonl 的 lease_grant —— diary 不入仓（每写一行就动 git status，
+# 入仓会把「活落盘了」类检查骗成恒真），所以这是**本机视角**的签史：
+# 新克隆上是空的，那时不打印，**不假装有历史**。
+lease_grant_history() {   # lease_grant_history <角色> [最多显示几条]
+  local role=$1 max=${2:-5} f cnt i start=0 ts note lines=()
+  f=$(git rev-parse --show-toplevel 2>/dev/null)/logs/diary.jsonl
+  [ -f "$f" ] || return 1
+  mapfile -t lines < <(grep -F '"event":"lease_grant"' "$f" 2>/dev/null |
+                       grep -F "\"note\":\"$role: ")
+  cnt=${#lines[@]}
+  [ "$cnt" -gt 0 ] || return 1
+  printf '本机记到的 %s 签史（%d 次发签；diary 不入仓，新克隆上没有）：\n' "$role" "$cnt"
+  [ "$cnt" -gt "$max" ] && start=$(( cnt - max ))
+  for i in $(seq 0 $(( cnt - 1 ))); do
+    # **永远带上第一条**：棘轮比的是起点和现在，只看最近几条看不出单调性
+    [ "$i" -eq 0 ] || [ "$i" -ge "$start" ] || continue
+    [ "$i" -eq "$start" ] && [ "$start" -gt 1 ] && printf '   …（中间 %d 次略）\n' "$(( start - 1 ))"
+    ts=$(sed -n 's/.*"ts":"\([^"]*\)".*/\1/p' <<<"${lines[$i]}")
+    note=$(sed -n 's/.*"note":"[^:]*: \([^"]*\)".*/\1/p' <<<"${lines[$i]}")
+    printf '   %s  %s 片  %s\n' "${ts:0:16}" "$(wc -w <<<"$note")" "$note"
+  done
+  return 0
+}
