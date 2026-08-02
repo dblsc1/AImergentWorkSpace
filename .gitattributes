@@ -1,0 +1,11 @@
+# 账本类 JSONL 是 **append-only**：两个角色各自在末尾追加，
+# 默认 merge 驱动会把它判成同一行的冲突，于是每次 rebase 都要人工解一次
+# ——而人工解的方式必然是「两边都要」。那就是 union 的定义，直接声明。
+#
+# 实证：2026-08-02 CFO 与 consulter 同日各推一次，root 的 ledger 撞车，
+# 冲突标记混进 JSONL（那一刻文件已不是合法 JSONL，任何读它的脚本都会炸）。
+#
+# ⚠️ union 只对**纯追加**的文件安全。它会保留两边所有行、不做去重、不管顺序。
+#    别把它用在有结构的文件上（JSON / YAML / 代码），那会得到语法上合法却语义错乱的结果。
+logs/ledger.jsonl  merge=union
+logs/diary.jsonl   merge=union

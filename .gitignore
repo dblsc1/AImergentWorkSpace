@@ -8,6 +8,7 @@
 #      并用 `git ls-files <路径>` 确认它真被跟踪。**
 /*
 !/.gitignore
+!/.gitattributes
 !/.github/
 !/AGENTS.md
 !/CONSTITUTION.md
