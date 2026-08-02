@@ -81,6 +81,26 @@ if [ -n "$role" ] && [ -f "$lease_dir/$role.docs" ]; then
 fi
 if [ -f "$lease_dir/${role}.lease" ]; then
   cl_note "持有写区：$(tr '\n' ' ' < "$lease_dir/$role.lease")"
+  # 把签的年龄摆在每次提交前的必经之路上（2026-08-02 事故的第三层）。
+  #
+  # ⚠️ **这里只提醒，不自动还签**，与上游 X_structure 的做法**有意不同**：
+  #    在 X 那边 mission_complete.sh 是一个独立的「我完工了」仪式；
+  #    在本仓它就是 pre-commit 钩子的主体（scripts/hooks/pre-commit 第 23 行），
+  #    **每次 commit 都会跑**。一个任务多次提交是常态，在这里还签
+  #    等于每提交一次就把互斥关掉一次 —— 那不是修复，是把闸门拆了。
+  #    「完工即自动还」在本仓需要另找落点，已挂给 consulter（见 worklog）。
+  #    本轮真正封死事故的是 TTL 自动回收（lib/lease.sh + mission_start.sh）。
+  if [ -f "$root/scripts/lib/lease.sh" ]; then
+    . "$root/scripts/lib/lease.sh"
+    _lage=$(lease_age "$role")
+    if [ "$_lage" -lt 0 ] 2>/dev/null; then
+      cl_note "  签龄未知（无 meta，上一版留下的）—— 完工后手动还：scripts/mission_start.sh --release $role"
+    elif [ "$_lage" -gt $(( LEASE_TTL_SECONDS / 2 )) ]; then
+      cl_note "  ⏰ 已持有 $(( _lage / 60 )) 分钟（TTL $(( LEASE_TTL_SECONDS / 60 )) 分钟）—— 若已完工请立刻还签，别人正在等：scripts/mission_start.sh --release $role"
+    else
+      cl_note "  签龄 $(( _lage / 60 )) 分钟；完工后还签：scripts/mission_start.sh --release $role"
+    fi
+  fi
   printf '│\n'
 fi
 

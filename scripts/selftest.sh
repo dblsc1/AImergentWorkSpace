@@ -635,5 +635,65 @@ else
   fi
 fi
 
+# 53 ── 写区路签会不会过期（2026-08-02 事故：同一天三次卡死子代理）
+#      派活方派完活走人，签永久有效，被卡方沉默重试。三次事后 worklog 都写
+#      「以后记得还签」然后又犯 —— 靠记性无效，必须靠 TTL。
+#      这里实弹打三发：① 过期签必须被回收 ② **无 meta 的签必须不被回收**
+#      （未知 ≠ 过期；静默回收判不出年龄的签 = 把互斥悄悄关掉）③ 回收必须打印回收了谁。
+printf '53. 写区路签是否会过期回收\n'
+_lease_lib="$S/lib/lease.sh"
+if [ ! -f "$_lease_lib" ]; then
+  F "没有 scripts/lib/lease.sh —— 路签无 TTL，忘了还签就永久卡住（2026-08-02 事故本体）"
+else
+  _sbx=$(mktemp -d); git -C "$_sbx" init -q
+  _out=$(
+    cd "$_sbx" || exit 9
+    # shellcheck disable=SC1090
+    . "$_lease_lib"
+    _d=$(lease_dir_path); mkdir -p "$_d"
+    # ① 过期签：granted_at 拨回 3 小时前，TTL 2 小时
+    echo 'some/area/' > "$_d/walked_away.lease"
+    printf 'granted_at=%s\nttl=7200\ntask=某任务单\n' "$(( $(date -u +%s) - 10800 ))" > "$_d/walked_away.meta"
+    # ② 无 meta 的签（上一版留下的）：必须**留着**
+    echo 'other/area/' > "$_d/no_meta.lease"
+    # ③ 未过期签：必须留着
+    echo 'fresh/area/' > "$_d/fresh.lease"
+    printf 'granted_at=%s\nttl=7200\ntask=新任务\n' "$(date -u +%s)" > "$_d/fresh.meta"
+    lease_reap 2>&1 >/dev/null
+    printf '|剩余:'
+    for f in "$_d"/*.lease; do printf '%s ' "$(basename "$f" .lease)"; done
+  )
+  rm -rf "$_sbx"
+  _left=${_out#*|剩余:}
+  _msg=${_out%%|剩余:*}
+  _ok=1
+  case "$_left" in *walked_away*) _ok=0; _why="过期签没被回收" ;; esac
+  case "$_left" in *no_meta*) ;; *) _ok=0; _why="无 meta 的签被回收了——未知不等于过期，静默回收会让双写发生" ;; esac
+  case "$_left" in *fresh*) ;; *) _ok=0; _why="未过期的签被误回收" ;; esac
+  case "$_msg" in *walked_away*) ;; *) _ok=0; _why="回收了但没打印回收了谁——静默回收比忘了还签更危险" ;; esac
+  if [ "$_ok" -ne 1 ]; then
+    F "路签 TTL 判据失灵：$_why（剩余：$_left）"
+  else
+    # ④ **库写了还得真接上**。原先这里写的是 `grep -q lease_reap mission_start.sh`——
+    #    那只证明字符串在文件里，注释掉、写成 `: lease_reap` 都照样绿。
+    #    本项目本轮的主线教训就是「判据只看形状不看后果」，这里必须实弹：
+    #    真跑一次 mission_start.sh，看过期签是不是真的没了。
+    #    （reap 在脚本最前面，`--list` 这条最轻的路径也会触发，不需要任务单/角色卡。）
+    _sbx2=$(mktemp -d); git -C "$_sbx2" init -q
+    mkdir -p "$_sbx2/scripts"; cp -r "$S/lib" "$S/mission_start.sh" "$_sbx2/scripts/" 2>/dev/null
+    _gd="$_sbx2/.git/aimergent-leases"; mkdir -p "$_gd"
+    echo 'some/area/' > "$_gd/walked_away.lease"
+    printf 'granted_at=%s\nttl=7200\ntask=某任务单\n' "$(( $(date -u +%s) - 10800 ))" > "$_gd/walked_away.meta"
+    ( cd "$_sbx2" && bash scripts/mission_start.sh --list >/dev/null 2>&1 )
+    _still=0; [ -f "$_gd/walked_away.lease" ] && _still=1
+    rm -rf "$_sbx2"
+    if [ "$_still" -eq 1 ]; then
+      F "lease.sh 的 TTL 判据本身没问题，但 mission_start.sh 跑完过期签还在 —— 库写了没接上，等于没有"
+    else
+      P "过期签被回收且打印了持有者；无 meta 与未过期的签都保留；mission_start 实跑确认真接上了"
+    fi
+  fi
+fi
+
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
 [ "$fail" -eq 0 ]

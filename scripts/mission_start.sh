@@ -15,10 +15,17 @@
 set -uo pipefail
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || true
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/checklist.sh"
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/lease.sh"
 die() { printf '❌ %s\n' "$*" >&2; exit 1; }
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || die "不在 Git 仓内"
 cd "$root"
+
+# **开工第一件事就是回收过期签**（2026-08-02 起）。实证：派活方派完活走人，
+# 签一直挂着，被卡的一方沉默地重试。一天内同一个错犯了三次，每次 worklog 都写
+# 「以后记得还签」——靠记性无效，只能靠过期。
+# 排除自己：本轮要发给谁，谁的旧签本来就会被覆盖。
+lease_reap "${1:-}" >/dev/null || true
 # 停线旗：旗在 = 不发新签（存量工作可收尾，新活不开；判据见 agents/protocol/supervision.md）
 if [ -f logs/STOPLINE ] && [ "${1:-}" != --release ] && [ "${1:-}" != --list ] && [ "${1:-}" != --checklist ]; then
   printf '🛑 停线中，不发新写区路签。原因：\n' >&2; sed 's/^/   /' logs/STOPLINE >&2; exit 1
@@ -61,7 +68,10 @@ if [ "${1:-}" = --list ]; then
   echo "当前持有的写区路签："
   shopt -s nullglob
   for f in "$lease_dir"/*.lease; do
-    printf '  %-22s %s\n' "$(basename "$f" .lease)" "$(tr '\n' ' ' < "$f")"
+    _h=$(basename "$f" .lease); _a=$(lease_age "$_h")
+    if [ "$_a" -lt 0 ] 2>/dev/null; then _ages='年龄未知(无 meta)'
+    else _ages="$(( _a / 60 ))分钟"; fi
+    printf '  %-22s %-12s %s\n' "$_h" "$_ages" "$(tr '\n' ' ' < "$f")"
   done
   shopt -u nullglob
   exit 0
@@ -69,7 +79,7 @@ fi
 
 if [ "${1:-}" = --release ]; then
   r=${2:?用法: --release <角色>}
-  rm -f "$lease_dir/$r.lease" "$lease_dir/$r.docs" && echo "✅ 已还签：$r"
+  if lease_release "$r"; then echo "✅ 已还签：$r"; else echo "ℹ️  $r 本来就没有签"; fi
   emit_event lease_release "$r"
   exit 0
 fi
@@ -112,21 +122,27 @@ else cl_bad 1 "任务单四小节" "缺 ${miss[*]}" "补进 $task —— 含糊�
 # 2 路签重叠（父/子文件夹都算）
 declare -a want=()
 for p in "$@"; do want+=("$(norm "$p")"); done
-clash=""
+clash=""; clash_holder=""
 shopt -s nullglob
 for f in "$lease_dir"/*.lease; do
   holder=$(basename "$f" .lease); [ "$holder" = "$role" ] && continue
   while IFS= read -r held; do
     [ -n "$held" ] || continue
     for w in "${want[@]}"; do
-      case "$w"  in "$held"*) clash="$w ⊂ $held（$holder 持有）" ;; esac
-      case "$held" in "$w"*)  clash="$w ⊃ $held（$holder 持有）" ;; esac
+      case "$w"  in "$held"*) clash="$w ⊂ $held"; clash_holder=$holder ;; esac
+      case "$held" in "$w"*)  clash="$w ⊃ $held"; clash_holder=$holder ;; esac
     done
   done < "$f"
 done
 shopt -u nullglob
 if [ -z "$clash" ]; then cl_ok 2 "写区不与他人重叠：${want[*]}"
-else cl_bad 2 "写区重叠" "$clash" "等对方 --release 还签，或把写区切细到不相交"; fi
+else
+  # **拒发不许只说「重叠」**：被卡方看到的必须是谁、多久、什么任务、三条出路。
+  # 原版只印一句「写区重叠」，被卡的子代理无从判断该等还是该上报，于是沉默重试。
+  cl_bad 2 "写区重叠" \
+    "$clash ← 持有者 $(lease_holder_detail "$clash_holder")" \
+    "① 让持有者跑 scripts/mission_start.sh --release $clash_holder；② 把写区切细到不相交（多数重叠是粒度太粗，不是真冲突）；③ 签超过 TTL（${LEASE_TTL_SECONDS}s）会在下次 mission_start 时自动回收"
+fi
 
 # 3 预期文档变更
 if [ "${#docs[@]}" -gt 0 ]; then
@@ -164,9 +180,17 @@ case "$_br" in
 esac
 
 # 7 遗留路签
-_stale=$(ls "$lease_dir"/*.lease 2>/dev/null | xargs -r -n1 basename 2>/dev/null | sed 's/\.lease$//' | grep -vx "$role" | tr '\n' ' ')
+# 列出他人持签时**带上年龄**：一个挂了 90 分钟的签和一个刚发 2 分钟的签，
+# 处置完全不同，只印名字看不出区别。
+_stale=""
+shopt -s nullglob
+for f in "$lease_dir"/*.lease; do
+  _h=$(basename "$f" .lease); [ "$_h" = "$role" ] && continue
+  _stale="${_stale:+$_stale；}$(lease_holder_detail "$_h")"
+done
+shopt -u nullglob
 if [ -z "$_stale" ]; then cl_ok 7 "无他人遗留路签"
-else cl_skip 7 "他人持签中：$_stale" "不冲突即可并发；确认已完工的用 --release <角色> 还签"; fi
+else cl_skip 7 "他人持签中：$_stale" "不冲突即可并发；确认已完工的用 --release <角色> 还签；超 TTL（${LEASE_TTL_SECONDS}s）下次 mission_start 自动回收"; fi
 
 # 8 障签（blockers/ 便条）：派活别派进未决裁决压着的写区（2026-07-30 用户点破：
 # 便条防的是执行者停等，那发签时刻就该看它，不是等着陆才撞）。
@@ -207,6 +231,7 @@ fi
 cl_footer "起飞检查通过，发签并出派单提示词" "起飞检查未通过，不发签" || exit 1
 
 printf '%s\n' "${want[@]}" > "$lease_dir/$role.lease"
+lease_write_meta "$role" "$task"    # 记发签时间/任务/TTL —— 没有它就判不了过期
 if [ "${#docs[@]}" -gt 0 ]; then printf '%s\n' "${docs[@]}" > "$lease_dir/$role.docs"
 else rm -f "$lease_dir/$role.docs"; fi
 emit_event lease_grant "$role: ${want[*]}"
