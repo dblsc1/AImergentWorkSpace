@@ -2,10 +2,10 @@
   "schema_version": 2,
   "module": "workspace",
   "role": "consulter",
-  "task": "落地 CFO 已裁决的六条路签/审核门缺陷（F4 → 层② → F3 → F2 → F5/F6 → F7），每条留断言并做红/绿反向验证",
+  "task": "① 独立审 CFO 的密钥判据（b6bb516，只报告不修）② 拆 selftest.sh（C1 执行，零行为改动）③ 给 C1 补机械执行者",
   "tier": "hard",
-  "status": "approved",
-  "summary": "六条全部落地，每条留下能重现拦住它的断言（selftest #54–#60，另扩测 #50），且每条都做过红/绿反向验证——把修好的改坏、看断言真变红、再从备份副本恢复复绿。F4 拒发补 lease_denied 记账；层② 拒发时印三条强收判据+可粘贴命令但绝不自动强收；F3 角色推断搬进 lib/paths.sh 覆盖 J3 全部 canonical 留痕路径（同层歧义返回空，不挑第一个）；F2 写区放宽当场警告并打印本角色签史（只警告不拦）；F5 合并门加审核覆盖断言、判据搬进 lib/review.sh 以便沙箱能真喂；F6 consulter 非审查轮次改为显式 review_target:null（省略仍判否）；F7 两处 sort 加 LC_ALL=C。另修一类：F3 的 fixture 路径顶红了引用完整性门，给 check-references 加行级 ref-fixture 标记（修类不修实例）。**两处更正我自己上一轮的判断**：F5 准确说法是「审得越窄越容易过」不是「越旧」（前向有白名单守着）；F7 成因不是非 ASCII（实测中文路径同序），是 en_US.UTF-8 忽略前导标点且不分大小写——错误诊断让我第一版断言用中文名 fixture，红测时没能变红。",
+  "status": "rejected",
+  "summary": "三件事全部落地。① 审 b6bb516：判据方向对、形状干净、判据里不含真实凭据（判例库「字面量类」首次没有复发），但 14 种明文凭据形状实弹只拦住 2 种；两条**行级**过滤器（行内任意 `$VAR` 或 `=example` 就整行放行）是可主动利用的绕过；名字清单大小写敏感且要求 `_` 前缀，PGPASSWORD / AWS_SECRET_ACCESS_KEY / 小写 api_key 全过。更要紧的两条：**S1（P0）** `lib/paths.sh` 一缺，十一条 check 里九条静默退 0、着陆检查单照打 ✅（含 secret-literal 本身，251 个文件零验证），正是铁律 23 亲自点名的形状；**S3** 立项诊断「.gitleaks.toml 是空壳零规则」不成立——它是 `useDefault=true`（继承上游一百多条规则），且 CI 里 gitleaks-action 一直在跑，错的成因会把下一步引向「往 18 塞更多正则」而非「本地装上 gitleaks」，而 18 漏掉的 AWS/PAT/PEM 恰好全在 gitleaks 默认规则里。verdict=rejected 是**要求补修**，不是判定判据无价值。② selftest.sh 1129 行 → 46 行入口 + 六个 ≤500 分片，整份输出逐字节相同、SHA256 相同、PASS 61 不变；装载器三层守卫各点一发反向验证（EXIT=2）。③ 更正 CFO 的诊断：C1 **有**执行者且一直在发绿灯——两个独立病根（tracked 用 `[ -d code ]` 判仓型，框架仓只扫 26 个模板文件；扩展名白名单不认 .sh/.md/.json）任一单独存在就足以让它全瞎。按 C1 原文实现三档并新增 selftest #62，正向五发 + 反向三发全部真实点火。",
   "git": {
     "protocol": "embedded-self-v2",
     "branch": "feat/frontend-view-modules",
@@ -14,11 +14,34 @@
     "diff_mode": "contains",
     "changed_files": [
       "agents/consulter/docs/findings/report.json",
-      "agents/consulter/docs/worklog/2026-08-02-consulter-report-base修正与路签裁决.md",
-      "agents/consulter/docs/worklog/2026-08-02-任务单-report-base修正与路签释放裁决.md"
+      "agents/consulter/docs/worklog/2026-08-02-consulter-审密钥判据.md",
+      "agents/consulter/docs/worklog/2026-08-02-consulter-拆selftest零行为改动.md",
+      "agents/consulter/docs/worklog/2026-08-02-consulter-C1机械执行者.md",
+      "agents/consulter/docs/worklog/2026-08-02-任务单-C1机械执行者与密钥判据审查.md",
+      "scripts/selftest.sh",
+      "scripts/selftest.d/10-false-green.sh",
+      "scripts/selftest.d/20-literals-and-boundary.sh",
+      "scripts/selftest.d/30-layout-and-instances.sh",
+      "scripts/selftest.d/40-roles-and-hatches.sh",
+      "scripts/selftest.d/50-lease-and-handoff.sh",
+      "scripts/selftest.d/60-inference-and-exempt.sh",
+      "scripts/gates/run-gates.sh",
+      "scripts/README.md",
+      "agents/protocol/report-schema.md"
     ]
   },
-  "review_target": null,
+  "review_target": {
+    "base": "575fb8a69eb9a9152158b2ff7465411270793061",
+    "head": "b6bb51687b1ffc1e07a9f32ac4352ac1a6954fea",
+    "diff_mode": "exact",
+    "changed_files": [
+      "\"agents/cfo/docs/worklog/2026-08-02-cfo-\\345\\257\\206\\351\\222\\245\\345\\210\\244\\346\\215\\256.md\"",
+      "\"agents/cfo/docs/worklog/2026-08-02-\\344\\273\\273\\345\\212\\241\\345\\215\\225-\\345\\257\\206\\351\\222\\245\\345\\210\\244\\346\\215\\256.md\"",
+      "logs/ledger.jsonl",
+      "scripts/checks/_common/18-secret-literal.sh",
+      "scripts/selftest.sh"
+    ]
+  },
   "contract": {
     "touched": false,
     "which": [],
@@ -28,83 +51,109 @@
   "escalation": null,
   "docs_reviewed": [
     {
-      "path": "scripts/README.md",
-      "action": "updated",
-      "reason": "mission_start 的起飞检查单从 8 项变 9 项、拒发行为改了（记账 + 强收判据），脚本速查表同批改到位"
-    },
-    {
       "path": "agents/protocol/report-schema.md",
       "action": "updated",
-      "reason": "F6 放开 consulter 非审查轮次的 review_target、F5 给合并门加审核覆盖断言，改的是共享协议本身，协议文档必须同批写明"
+      "reason": "C1 的 501–1000 档要求「在 report.json 记一笔」，schema 里没有承载它的字段；新增 oversize_files 节并写明由 run-gates 机械核验、断言在 selftest #62"
+    },
+    {
+      "path": "scripts/README.md",
+      "action": "updated",
+      "reason": "第 25 行 selftest 变成「入口 + selftest.d 分片」、第 84 行 run-gates 的「行数」语义改成 C1 三档且扫描范围按仓型分，两处都是逐字描述，铁律 11 要求同批改"
     },
     {
       "path": "agents/reference/manual/文档地图.md",
       "action": "no-change-needed",
-      "reason": "新增 scripts/lib/review.sh 属 lib/ 内部件，文档地图记的是顶层脚本「文件→用途」映射、不逐条列 lib/；且它对 selftest 条数刻意写「条数见运行输出」而非硬编码（硬编码 23 条被红测抓过一次后改的），断言从 53 增到 60 也不动它"
+      "reason": "它对 selftest 写的是「门禁有效性自测（断言全集，条数见运行输出）」——记的是用途不是结构，也刻意不写死条数；拆成 selftest.d 后入口路径没变，这句仍然准确。反过来说 agents/reference/工作空间全景.md:255 的「34 条闸门有效性断言」就不准确了（实际 62），但它不在本轮写区，已作为 S9 上报"
+    },
+    {
+      "path": "agents/CONSTITUTION.md",
+      "action": "no-change-needed",
+      "reason": "本轮是给 C1 补执行者，C1/D2/D14 的条文一个字没改；条文与实现的对应关系写在 report-schema 的 oversize_files 节里，不重复写进宪法"
     }
   ],
   "findings": [
     {
-      "category": "process",
-      "severity": "high",
-      "summary": "F4 已修：mission_start 拒发补 emit_event lease_denied（带失败项清单）。断言 selftest #54 两侧都验：重叠必记、不重叠必不误记。反向验证删掉 emit → FAIL 1，恢复 → PASS。",
-      "file": "scripts/mission_start.sh"
+      "category": "流程",
+      "severity": "P0",
+      "summary": "lib/paths.sh 缺失时十一条 check 里九条静默 exit 0、着陆检查单照打 ✅（含 secret-literal 本身，沙箱里 251 个文件零验证）。机制：只 set -uo pipefail 无 -e，source 失败不中止，staged_paths 未定义 → 数组空 → exit 0；mission_complete 在成功分支丢弃 stderr，一个字不显示。正是铁律 23 点名的「静默跳过后报成功」。fix owner=consulter，下一轮单独 commit；本轮只在自己动的 run-gates.sh 里加了守卫，其余九条未碰（审核轮不顺手修）",
+      "file": "scripts/checks/_common/18-secret-literal.sh:36"
     },
     {
-      "category": "process",
+      "category": "接口",
       "severity": "high",
-      "summary": "层② 已落地：拒发时打印三条强收判据（A 持有者写区干净 / B 声明的文档变更已落地 / C 签龄已知）+ 两行可粘贴命令，函数从不调用 lease_release。断言 #55 三件一起验，反向验证三发（拆掉调用 / 判据A恒真 / 顺手自动强收）各红在不同断言上。",
-      "file": "scripts/lib/lease.sh"
+      "summary": "14 种明文凭据形状实弹只拦住 2 种。两条**行级**过滤器是可主动利用的绕过：行内任意位置出现 $VAR 或 =example/:dummy 就整行放行（`DB_PASSWORD` + `=<值>   # 参考 $HOME` 实测放行）。名字清单大小写敏感且要求 `_` 前缀：PGPASSWORD、AWS_SECRET_ACCESS_KEY、小写 password= / api_key=、YAML 裸键 password:、连接串 mysql URL 里的 u:pw@h 全过。修法：过滤下沉到右值而非整行；名字清单换成词边界 + 忽略大小写",
+      "file": "scripts/checks/_common/18-secret-literal.sh:66"
     },
     {
-      "category": "process",
+      "category": "文档",
       "severity": "high",
-      "summary": "F3 已修：角色推断搬进 lib/paths.sh，两层优先级（显式角色目录 > 布局推导），同层两个角色判歧义返回空而不是 head -1 挑第一个；推不出来时说清为什么。断言 #56 逐条喂十条 canonical 路径 + 两条反面；#50 从「只喂旧布局那一条」扩成三种布局端到端。反向验证换回旧正则：#50 两条 J3 红而旧布局照样绿——旧断言在 bug 存在时是绿的，这是本条最要紧的证据。",
-      "file": "scripts/lib/paths.sh"
+      "summary": "立项诊断错一条：「.gitleaks.toml 是空壳（零规则）」不成立——全文是 `[extend] useDefault = true`，即继承 gitleaks 上游默认规则集；且 CI 里 gitleaks-action@v3 一直在跑（workflows/ci.yml:22）。真实失效只有本地两条（开关默认 0 + 本机没装二进制）。代价具体：按错诊断下一步是「往 18 塞更多正则」，按真诊断下一步是「本地装上 gitleaks 并翻开关」，而 18 漏掉的 AWS/PAT/PEM 恰好全在 gitleaks 默认规则里。判例库「修对了不等于诊断对了」当日第二次实证",
+      "file": "scripts/gates/.gitleaks.toml"
     },
     {
-      "category": "architecture",
-      "severity": "high",
-      "summary": "F2 已修（只警告不拦）：lease_widening 认「放宽」与「新增」两种形状，lease_grant_history 打印该角色历次发签的次数与片数且永远含第一条。落地后第一分钟就拦下作者自己的一次棘轮（申领 scripts/ agents/ → 报「放宽：agents/consulter/ → agents/」，改回窄签后转绿）。断言 #58 四件一起验，反向验证：恒不命中 / 改成硬拦 / 略掉第一条，各红。",
-      "file": "scripts/lib/lease.sh"
-    },
-    {
-      "category": "process",
+      "category": "文档",
       "severity": "medium",
-      "summary": "F5 已修，并更正上一轮措辞：不是「审得越旧越容易过」（前向有白名单守 reviewed..candidate），是「审得越窄越容易过」——verify_report 只读 .head 从不读 .base，C1..C10 只审最后一个则前九个一次没被审就合进去。加与 .git.base 对称的覆盖断言。同批把 verify_report 搬进 lib/review.sh：merge-to-integration.sh 从第一行就要 origin/PR/dev/干净工作区，沙箱跑不到那个函数，判据留在那儿只能靠肉眼读——F5 就是这么躺了四天的。断言 #59 用真实 commit 链喂那一份实现。",
-      "file": "scripts/lib/review.sh"
+      "summary": "「铁律 2 写了一个多月零执行」过头：本地零执行属实，CI 有 gitleaks-action。准确说法是「本地零执行者」。这份 worklog 会被当史料读，「当时什么都没有」和「当时只有 CI 那层」导出不同的补救顺序",
+      "file": "agents/cfo/docs/worklog/2026-08-02-cfo-密钥判据.md"
     },
     {
-      "category": "process",
-      "severity": "low",
-      "summary": "F6 已修：consulter 非审查轮次写 review_target:null，键必须在、省略仍判否（省略是疏忽，null 是决定）。两个 reviewer 不给这个口子。本报告自己就是第一个实例——本轮我在实现不在审查，所以 review_target 为 null 而不是回填一个旧区间。",
-      "file": "scripts/gates/check-report-schema.sh"
-    },
-    {
-      "category": "process",
-      "severity": "low",
-      "summary": "F7 已修（LC_ALL=C），但**成因我上一轮判错了**：不是非 ASCII（实测中文路径 byte 序与 locale 序相同，不触发），而是 en_US.UTF-8 忽略前导标点（.gitignore vs code/x）且不分大小写（scripts/README.md vs scripts/gates/a.sh）。直接后果：第一版断言 fixture 用中文文件名，拿掉 LC_ALL=C 做红测时没能变红——断言在验一个不存在的机制。换成点文件+大写名后红测才真红。修对了不等于诊断对了。",
-      "file": "scripts/gates/check-report-schema.sh"
-    },
-    {
-      "category": "process",
+      "category": "流程",
       "severity": "medium",
-      "summary": "新修一类（F3 落地时撞出来）：喂给路径判据的合成输入会被 check-references 全数误报成悬空引用。没按建议逐条登记 doc-path-exempt.txt（那只修实例，且登记表会长成一份混着「真的还没建」与「按定义永远不会建」的名单），改为行级 ref-fixture 标记。断言 #57 两侧都验：带标记的放行 + 同一文件里没带标记的真悬空引用照样红。反向验证第二发（改成整文件豁免）是关键——任何豁免机制都必须验它没顺手把门关掉。",
-      "file": "scripts/gates/check-references.sh"
+      "summary": "误报面实测 251 个文件只有 1 处，但落在最高频路径：code/_template/.env.staging.example:3 的 `# REQUIRED_SECRET` + `=inject-at-runtime`（注释行 + 明显占位）。_template 是新模块唯一事实源，new_module.sh 生成的每个模块首次提交都会撞上，撞上的人只能改模板（越权）或用逃生口——判例库「判断题不做硬闸门」的下场。两条有仓内先例的修法：skip_path 加 *.example（run-gates 禁默认值 gate 第 134 行已这么做）或跳过注释行（禁止路径 gate 有先例）",
+      "file": "code/_template/.env.staging.example:3"
+    },
+    {
+      "category": "架构",
+      "severity": "low",
+      "summary": "skip_path 复核结论：是明确列出的 case 分支、无 *) 兜底放行，**不是变相 catch-all**，CFO 这点做对了。两个小观察：①不打印跳过了多少（静默跳过+报成功的弱化版）②*/vendor/* 让 code/x/vendor/creds.txt 隐身，是判据里唯一「换个路径就隐身」的口子",
+      "file": "scripts/checks/_common/18-secret-literal.sh:43"
+    },
+    {
+      "category": "流程",
+      "severity": "low",
+      "summary": "正面记一笔：判例库「凡是报告一个关于字面量的缺陷的文档，都会成为那个缺陷的新实例」已实证三次，本轮**首次没有复发**——P0 报告第 45 行写成 `export …_PASSWORD` + `=<真值>` 已脱敏，单独喂给判据判绿；判据本身也不含任何真实凭据",
+      "file": "agents/cfo/docs/2026-08-02-P0-明文口令进模块仓.md:45"
+    },
+    {
+      "category": "流程",
+      "severity": "low",
+      "summary": "#51「分不出提到与实现」——建议**别改判据**，只改文案。统一逃生口由 mission_complete.sh 提供并记账，任何单条 check 里出现 MISSION_OVERRIDE 都是冗余（复述该删／自建第二出口更该拦），这一条上「提到」和「实现」恰好没有需要区分的合法情形。收紧反而引入「什么算实现」的形状之争。文案建议：「别在单条 check 里重复统一逃生口」",
+      "file": "scripts/selftest.d/40-roles-and-hatches.sh"
+    },
+    {
+      "category": "流程",
+      "severity": "low",
+      "summary": "顺手撞见：断言 #36 有结构性盲区。agents/reference/工作空间全景.md:255 写「34 条闸门有效性断言」（实际 62）是化石计数，而 #36 是绿的。原因不是正则不匹配（单喂那一行 grep -c → 1），是排除项 `| grep -v 'selftest.sh'` 作用在整串「路径:行号:正文」上——本意排除文件，实际把「正文里提到 selftest.sh 的行」一起排除了，而唯一那条关于 selftest 条数的化石计数正文里必然写着 selftest.sh，**结构上保证抓不到**。修法：排除按路径判 + 那句改成「条数见运行输出」。两处都不在本轮写区",
+      "file": "scripts/selftest.d/30-layout-and-instances.sh"
+    },
+    {
+      "category": "架构",
+      "severity": "medium",
+      "summary": "待人类裁决：C1 与铁律 9 都写「单文件」，没限定扩展名。本轮实现按字面对**所有文本文件**生效，.md 也算（今天全仓最长 .md 是 454 行，代价为零）。若人类本意是「只管源码、散文不算」，那是 C1 的修订，不是我能自行开的口子——已停在这里不动",
+      "file": "scripts/gates/run-gates.sh"
+    },
+    {
+      "category": "流程",
+      "severity": "medium",
+      "summary": "判例库「字面量类」第四次实证，载体是**审这条判据的审核报告本身**：本轮 findings/report.json 与审核 worklog 逐字引用样本，被 checks/18 当场拦下。已按判例库指定写法拆开（`NAME` + `=值`、shell 用 'A''=B' 相邻单引号），**未用逃生口**。两个副产物：①这是 S2 的反面证据——判据拦住的那一种恰是真实事故里出现的那一种，覆盖面不够 ≠ 没用；②S5「误报逼人用逃生口」在我身上跑了一遍，我选择改写法，前提是**改写法这条路存在且明确**；撞上模板误报的人没有第二条路（改 _template 越权），只剩逃生口，所以 S5 更该修",
+      "file": "agents/consulter/docs/worklog/2026-08-02-consulter-审密钥判据.md"
     }
   ],
-  "reflection": "本轮最该记的不是六条修完了，是**两次我自己的判断被实测推翻**。F5 我把「前向白名单」漏看了，说成「审得越旧越容易过」；F7 我把成因判成非 ASCII，而真正触发的是 dotfile 与大小写。第二条有直接后果：错误诊断让我写出一个恒绿的断言，拿掉修复也不红——如果不是硬要求「每条都反向验证」，它会作为一台没验过的烟雾报警器留在仓里。这正好是判例库那句「反向验证是唯一可信的证明，看代码不算」的第 N 次实证，只不过这次被验出来的是验证者自己。另一条：F2 的警告在落地第一分钟拦下了它作者的一次棘轮——说明这个形状不是别人粗心，是机制在诱导（05 拦下越区提交后，放宽自己的签是最省事的出路）。",
+  "reflection": "本轮最值得记的是**反向验证第三次验出验证者自己**。给 #62 写的子断言 `case $_o62a in *\"扫描 \"*` 是恒真的——sed 区间的末行是「── gate: gitleaks 密钥扫描 ──」，自带「扫描 」两个字，删掉被验的打印行照样绿。紧接着第二个：给 fixture 贴 `# ref-fixture` 时贴到了续行 `\\` 后面，反斜杠转义空格、注释吃掉换行，下一行 `> file` 变成只有重定向的命令把 report.json 截空，而 `bash -n` 报 OK。两个都只有点火才看得见。\n\n第二条：我原以为这轮是「C1 没有执行者，去补一个」，实测是「执行者一直在，一直发绿灯」。这是判例库「恒定答案类」的第六种形态，也是第二次以「✅ 无超限文件」的字面形式出现。**「缺一道门」和「有一道恒绿的门」在待办清单上长得一样，但后者更贵**——它让所有人相信这件事已经被管住了。审任何一条「我们有这个 gate」的说法，第一步不该是找脚本，该是问「它上次打印的被验对象是什么」。\n\n第三条给我自己：我这轮给 CFO 的判据挑出九条毛病，其中最重的 S1 是**框架的**毛病，18 只是踩进去的第十个实例。如果只报「18 有问题」，CFO 会去改 18，而九条 check 继续静默。看模式不看单点，具体到操作上就是：每挑出一条缺陷，先跑一遍「这个形状还出现在哪」，再决定这条 finding 挂在谁头上。",
   "recommendations": [
-    "F7 的教训建议进判例库（我已写入 agents/consulter/记忆.md）：**修对了不等于诊断对了**。诊断错会让下一个人以为「只有含中文路径的仓才中招」，而实际上任何有 dotfile 或大写文件名的仓都会中；更实际的伤害是照错误诊断写出的断言是恒绿的。",
-    "留给 CFO 排铲、本轮未做（都在 scripts/ 我的写区内，但不在本轮任务单里，不顺手做）：① mission_start --checklist 第 5 项写的 `scripts/install-gates.sh .` 在模块语境下是错的（CFO 实证：`.` 的语义是 AIMERGENT_WORKSPACE_ROOT，在模块目录里跑会装到框架根然后报成功）；② install-gates 从工作区拷而不是从 HEAD 拷，会把未提交的半成品装出去。这两条都是「静默装错目标然后报成功」的形状，与铁律 23 点名的 `if [ -x ]` 同类，值得各配一条断言。",
-    "铁律 2 目前零执行者（CFO 报：gitleaks 配置是空壳、本机无二进制，开发口令已被贴进三个模块的 worklog/reviewreport/handoff）。CFO 说已写好 18-secret-literal.sh 草稿但 scripts/ 是我的签所以没动手。**这条我建议由 CFO 直接写并自己签字**：写它的人不该是唯一审它的人，而这一条我如果既写又审就违反谁写的谁不审；由 CFO 写、我审是干净的分工。",
-    "AGENTS.md 的角色表写 module_reviewer 可写 `review/reviewreport/`，而 report-schema.md 的 canonical 表把 module_reviewer 的报告落在 `codeagent/module_reviewer/docs/report.json`、把 `review/reviewreport/report.json` 判给 programmer_reviewer。两份文档对同一块写区的说法不一致。本轮角色推断按 report-schema 的口径实现（层①优先，所以 module_reviewer 仍能被正确推断），但**文档冲突本身没解，属跨文档裁决，不归我单方面改**。",
-    "scripts/selftest.sh 现在 1000 行出头，已越过 CONSTITUTION C1 的「超 1000 行必须分拆」。本轮没拆是因为拆分会重排整个文件、和六条修复混在一个区间里没法审。**建议下一轮单独一个 commit 只做拆分**（按主题拆成 selftest.d/ 或按编号段拆），拆分那一轮不带任何行为改动，diff 才读得动。"
+    "【P0，下一轮，consulter，单独 commit】十一条 _common check 的 `. lib/paths.sh` 全部加 `|| exit 2`；配一条 selftest：沙箱删掉 lib/paths.sh，断言**每一条**用它的 check 退出码非 0。修类不修实例（铁律 23）",
+    "【高，CFO】18 的两条行级过滤器下沉到右值：`grep -oE` 取出赋值右侧再判 $VAR/占位符，而不是 `grep -v` 整行。当前形态可被一句 `# 见 $HOME` 主动绕过",
+    "【高，CFO】名字清单换成词边界 + 忽略大小写，并把 gitleaks 本地开关翻过来（装二进制 + 默认跑）。18 漏掉的 AWS 密钥/GitHub PAT/PEM 私钥全在 gitleaks 默认规则里，重写正则是重复造轮子（判例库「不重复造轮子」）。分工建议：gitleaks 管「像凭据的字符串」，18 管「本仓特有形状」——尤其是**扫留痕文档**，那正是 P0 那次口令真正进去的地方",
+    "【中，CFO】18 的 skip_path 加 `*.example|*.example.*`，并在末尾打印「扫了 N 个、跳过 M 个」。当前 code/_template/.env.staging.example 的误报会落到每一个新建模块头上",
+    "【中，待人类】C1 是否覆盖 .md：本轮按字面覆盖（今天代价为零）。要缩到「只管源码」需要修订 C1 条文",
+    "【低，consulter 下一轮】#36 的排除项按路径判而非按整行文本判；agents/reference/工作空间全景.md:255 的「34 条」改成「条数见运行输出」",
+    "【仍挂着，未做】装机两条：install-gates 的 `.` 语义是 workspace root、装机源取工作区而非 HEAD。本轮 CFO 排在优先级之后，未动"
   ],
   "reviewer_opinion": {
     "reviewer": "human",
     "verdict": "pending",
-    "path": "agents/consulter/docs/worklog/2026-08-02-consulter-路签六条落地与反向验证.md",
-    "round": 1
+    "path": "agents/consulter/docs/worklog/2026-08-02-consulter-审密钥判据.md",
+    "round": 1,
+    "note": "consulter 改的框架由人类审、CFO 只辅助举证（裁决 J7）：本轮 consulter 自己动了 selftest.sh/selftest.d/run-gates.sh/report-schema.md/README.md 五处，这五处不能由 consulter 自己签字。对 CFO 的 b6bb516 的审核结论（review_target 段）是干净分工，verdict=rejected 可直接采用"
   }
 }
