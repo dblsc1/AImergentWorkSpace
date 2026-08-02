@@ -31,12 +31,13 @@
     ]
   },
   "review_target": {
+    "branch": "feat/frontend-view-modules",
     "base": "575fb8a69eb9a9152158b2ff7465411270793061",
     "head": "b6bb51687b1ffc1e07a9f32ac4352ac1a6954fea",
     "diff_mode": "exact",
     "changed_files": [
-      "\"agents/cfo/docs/worklog/2026-08-02-cfo-\\345\\257\\206\\351\\222\\245\\345\\210\\244\\346\\215\\256.md\"",
-      "\"agents/cfo/docs/worklog/2026-08-02-\\344\\273\\273\\345\\212\\241\\345\\215\\225-\\345\\257\\206\\351\\222\\245\\345\\210\\244\\346\\215\\256.md\"",
+      "agents/cfo/docs/worklog/2026-08-02-cfo-密钥判据.md",
+      "agents/cfo/docs/worklog/2026-08-02-任务单-密钥判据.md",
       "logs/ledger.jsonl",
       "scripts/checks/_common/18-secret-literal.sh",
       "scripts/selftest.sh"
@@ -137,6 +138,12 @@
       "severity": "medium",
       "summary": "判例库「字面量类」第四次实证，载体是**审这条判据的审核报告本身**：本轮 findings/report.json 与审核 worklog 逐字引用样本，被 checks/18 当场拦下。已按判例库指定写法拆开（`NAME` + `=值`、shell 用 'A''=B' 相邻单引号），**未用逃生口**。两个副产物：①这是 S2 的反面证据——判据拦住的那一种恰是真实事故里出现的那一种，覆盖面不够 ≠ 没用；②S5「误报逼人用逃生口」在我身上跑了一遍，我选择改写法，前提是**改写法这条路存在且明确**；撞上模板误报的人没有第二条路（改 _template 越权），只剩逃生口，所以 S5 更该修",
       "file": "agents/consulter/docs/worklog/2026-08-02-consulter-审密钥判据.md"
+    },
+    {
+      "category": "流程",
+      "severity": "medium",
+      "summary": "顺手撞见（诊断质量）：我的 review_target 被 check-report-schema 拒了，报错是「独立 reviewer 必须使用标准 review_target（exact），禁止 target 等别名」——而我根本没用别名。真实原因有两个，报错一个都没说：①缺 review_target.branch 字段 ②changed_files 用了 C 转义的路径（`git diff --name-only` 对非 ASCII 会加引号转义），而 gate 内部比对时用的是 `git -c core.quotePath=false diff`。那条 jq 是一个七项的大 and，任何一项假都吐同一句话。这与 checks/05 注释里记的教训同源：「错误信息把人引向错的地方，判例库记过三次」。修法：把七项拆成逐项判、报出具体是哪一项不满足（尤其把「路径要用 quotePath=false 的形态」写进错误文案，那是非 ASCII 仓的必踩项）",
+      "file": "scripts/gates/check-report-schema.sh:158"
     }
   ],
   "reflection": "本轮最值得记的是**反向验证第三次验出验证者自己**。给 #62 写的子断言 `case $_o62a in *\"扫描 \"*` 是恒真的——sed 区间的末行是「── gate: gitleaks 密钥扫描 ──」，自带「扫描 」两个字，删掉被验的打印行照样绿。紧接着第二个：给 fixture 贴 `# ref-fixture` 时贴到了续行 `\\` 后面，反斜杠转义空格、注释吃掉换行，下一行 `> file` 变成只有重定向的命令把 report.json 截空，而 `bash -n` 报 OK。两个都只有点火才看得见。\n\n第二条：我原以为这轮是「C1 没有执行者，去补一个」，实测是「执行者一直在，一直发绿灯」。这是判例库「恒定答案类」的第六种形态，也是第二次以「✅ 无超限文件」的字面形式出现。**「缺一道门」和「有一道恒绿的门」在待办清单上长得一样，但后者更贵**——它让所有人相信这件事已经被管住了。审任何一条「我们有这个 gate」的说法，第一步不该是找脚本，该是问「它上次打印的被验对象是什么」。\n\n第三条给我自己：我这轮给 CFO 的判据挑出九条毛病，其中最重的 S1 是**框架的**毛病，18 只是踩进去的第十个实例。如果只报「18 有问题」，CFO 会去改 18，而九条 check 继续静默。看模式不看单点，具体到操作上就是：每挑出一条缺陷，先跑一遍「这个形状还出现在哪」，再决定这条 finding 挂在谁头上。",
@@ -146,6 +153,7 @@
     "【高，CFO】名字清单换成词边界 + 忽略大小写，并把 gitleaks 本地开关翻过来（装二进制 + 默认跑）。18 漏掉的 AWS 密钥/GitHub PAT/PEM 私钥全在 gitleaks 默认规则里，重写正则是重复造轮子（判例库「不重复造轮子」）。分工建议：gitleaks 管「像凭据的字符串」，18 管「本仓特有形状」——尤其是**扫留痕文档**，那正是 P0 那次口令真正进去的地方",
     "【中，CFO】18 的 skip_path 加 `*.example|*.example.*`，并在末尾打印「扫了 N 个、跳过 M 个」。当前 code/_template/.env.staging.example 的误报会落到每一个新建模块头上",
     "【中，待人类】C1 是否覆盖 .md：本轮按字面覆盖（今天代价为零）。要缩到「只管源码」需要修订 C1 条文",
+    "【中，consulter 下一轮】check-report-schema 的 review_target 七项大 and 拆成逐项判并报出具体缺哪项；错误文案要点明 changed_files 必须是 `core.quotePath=false` 形态——非 ASCII 仓必踩，而现在的报错说的是「禁止用别名」，指向完全错误的方向",
     "【低，consulter 下一轮】#36 的排除项按路径判而非按整行文本判；agents/reference/工作空间全景.md:255 的「34 条」改成「条数见运行输出」",
     "【仍挂着，未做】装机两条：install-gates 的 `.` 语义是 workspace root、装机源取工作区而非 HEAD。本轮 CFO 排在优先级之后，未动"
   ],
