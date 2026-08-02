@@ -269,47 +269,76 @@ JSON
   fi
 fi
 
-# 61 ── 铁律 2 有没有机械执行者（2026-08-02 P0：口令明文进了三个模块仓）
-#      此前唯一相关的 gate 是 gitleaks，而它 ① 配置是空壳零规则
-#      ② 被 RUN_GITLEAKS_LOCAL=1 挡着 ③ 本机没装二进制 —— 三重失效，
-#      铁律 2 写了一个多月，一次都没执行过。
-#      实弹：三种不同形状的明文凭据各喂一次（shell export / JSON / 裸 token），
-#      再喂七种合法写法确认不误伤。**判据本身不许含真实口令**，所以样本用假值。
-printf '61. 明文凭据是否有机械执行者（铁律 2）\n'
+# 61 ── 铁律 2 的提交时刻执行者（2026-08-02 P0：口令明文进了三个模块仓）
+#      定位要说准：`.gitleaks.toml` 是 `[extend] useDefault = true`，继承上游
+#      一百多条默认规则，**且 CI 里一直在跑**。真实缺口只有本地这一段
+#      （二进制没装 + 开关默认关），以及 gitleaks 天然抓不到的**项目自定义弱口令**。
+#      （立项时把它误判成「空壳零规则」——诊断错会把下一步引偏：
+#        按错的诊断该往判据里塞更多正则，按对的诊断该本地装 gitleaks。）
+#
+#      实弹十发坏形状 + 十三发合法写法。坏形状特意覆盖 v1 全漏、
+#      被 consulter 判 rejected 的那批：小写裸键、连接串、
+#      **同行别处出现 $VAR 的整行绕过**、JSON 引号键、PGPASSWORD/AWS_ 这类无下划线前缀。
+#      合法写法特意覆盖三类真实误报：`CL_PASS=0` 计数器、JS 的 `e.pass ===`、
+#      续行反斜杠结尾。**判据本身不含真实凭据**，样本全是假值。
+#      ⚠️ 样本值不许含 `notareal` / `dummy` / `example` 这类词 —— 那些是判据自己的
+#         占位符词表，用它们做「坏样本」会被判成占位符，断言当场从 10 中降到 1
+#         （本轮实测撞到）。**测判据的样本不能踩判据的白名单。**
+printf '61. 明文凭据是否有提交时刻的机械执行者（铁律 2）\n'
 _c18="$S/checks/_common/18-secret-literal.sh"
 if [ ! -f "$_c18" ]; then
-  F "没有 checks/_common/18-secret-literal.sh —— 铁律 2 零执行者（gitleaks 那条是空壳+被开关挡着+本机无二进制）"
+  F "没有 checks/_common/18-secret-literal.sh —— 提交时刻无密钥检查（gitleaks 本地没装且开关默认关，要推到 CI 才知道）"
 else
   _sbx=$(mktemp -d); git -C "$_sbx" init -q
   mkdir -p "$_sbx/scripts/checks/_common" "$_sbx/scripts/lib"
   cp "$_c18" "$_sbx/scripts/checks/_common/"; chmod +x "$_sbx/scripts/checks/_common/18-secret-literal.sh"
   cp "$S/lib/paths.sh" "$_sbx/scripts/lib/" 2>/dev/null
-  # 三种坏形状（全是假值）
-  printf 'export APP_TEST_PASSWORD=notarealpw\n'  > "$_sbx/bad1.md"
-  printf '{"password":"notarealpw"}\n'            > "$_sbx/bad2.json"
-  printf 'GITHUB_TOKEN=notarealtoken\n'           > "$_sbx/bad3.sh"
-  # 七种合法写法
+  # ⚠️ 坏样本**不能以完整形态写在本文件里** —— 本判据会扫暂存文件，
+  #    于是断言的 fixture 自己被判据拦下，提交不了（本轮实测撞到）。
+  #    用本仓既有的**拆分书写**惯例（同 selftest 对模板占位符的做法）：
+  #    键名拆成两段拼接，源文件里永远不出现完整的 `KEY=VALUE` 形态。
+  #    没有另造第二套豁免机制 —— consulter 的 `ref-fixture` 是行级标记，
+  #    但标记会随 heredoc 一起写进 fixture、让沙箱里的判据也跳过，等于把断言关掉。
+  _K=PASS; _S=SECRET; _T=TOKEN
   {
-    printf '口令只从 APP_TEST_PASSWORD 读，缺了就响亮跳过。\n'
-    printf 'export APP_TEST_PASSWORD=$MY_PW\n'
-    printf 'APP_TEST_PASSWORD=${MY_PW}\n'
-    printf 'APP_TEST_PASSWORD=<你的口令>\n'
-    printf 'APP_TEST_PASSWORD=changeme\n'
-    printf 'pw = os.environ["APP_TEST_PASSWORD"]\n'
-    printf 'tok = os.getenv("GITHUB_TOKEN")\n'
-  } > "$_sbx/good.md"
+    printf 'export APP_TEST_%sWORD=Zq7x1a\n'            "$_K"
+    printf '{"%sword":"Kd3m9b"}\n'                      'pass'
+    printf 'GITHUB_%s=Ap0q5z\n'                         "$_T"
+    printf 'PG%sWORD=Ry8w2c\n'                          "$_K"
+    printf 'AWS_%s_ACCESS_KEY=Tn5v4d\n'                 "$_S"
+    printf 'API_%s: Bh6j0e\n'                          'KEY'
+    printf '%sWORD: Fj4d8Qz\n'                          "$_K"
+    printf 'DATABASE_URL=mysql://root:%s@db:3306/x\n'    'Wg9r3h'
+    printf 'DB_%sWORD=Cv4t8j   # 同行别处出现 $HOME，v1 会整行放行\n' "$_K"
+    printf 'APP_%s=weakword2026\n'                      "$_S"
+  } > "$_sbx/bad.txt"
+  cat > "$_sbx/good.txt" <<'GOODEOF'
+口令只从 APP_TEST_PASSWORD 读，缺了就响亮跳过。
+export APP_TEST_PASSWORD=$MY_PW
+APP_TEST_PASSWORD=${MY_PW}
+APP_TEST_PASSWORD=<你的口令>
+APP_TEST_PASSWORD=changeme
+APP_TEST_PASSWORD=
+pw = os.environ["APP_TEST_PASSWORD"]
+API_KEY={{TOKEN}}
+# REQUIRED_SECRET=inject-at-runtime
+DB_PASSWORD=%DBPW%
+CL_PASS=0
+if (e.pass === false) { }
+NEXUS_TOKEN_FILE="$token" \\
+GOODEOF
   git -C "$_sbx" add -A >/dev/null 2>&1
   _out=$( cd "$_sbx" && bash scripts/checks/_common/18-secret-literal.sh 2>&1 )
-  _rc_bad=$( cd "$_sbx" && bash scripts/checks/_common/18-secret-literal.sh >/dev/null 2>&1; echo $? )
-  ( cd "$_sbx" && git rm -q --cached bad1.md bad2.json bad3.sh >/dev/null 2>&1; rm -f bad1.md bad2.json bad3.sh )
-  _rc_good=$( cd "$_sbx" && bash scripts/checks/_common/18-secret-literal.sh >/dev/null 2>&1; echo $? )
+  _nbad=$(printf '%s\n' "$_out" | grep -c '^  bad\.txt:')
+  _ngood=$(printf '%s\n' "$_out" | grep -c '^  good\.txt:')
+  # 判据缺了公共件必须响亮死（S1 类：静默退 0 会让界面显示「已验过」）
+  rm -f "$_sbx/scripts/lib/paths.sh"
+  _rc_nolib=$( cd "$_sbx" && bash scripts/checks/_common/18-secret-literal.sh >/dev/null 2>&1; echo $? )
   rm -rf "$_sbx"
-  _named=0
-  for _b in bad1.md bad2.json bad3.sh; do case "$_out" in *"$_b"*) _named=$((_named+1)) ;; esac; done
-  if [ "$_rc_bad" -ne 0 ] && [ "$_rc_good" -eq 0 ] && [ "$_named" -eq 3 ]; then
-    P "三种形状的明文凭据各自被点名（shell/JSON/裸 token），七种合法写法零误伤"
+  if [ "$_nbad" -eq 10 ] && [ "$_ngood" -eq 0 ] && [ "$_rc_nolib" -ne 0 ]; then
+    P "十种明文凭据形状全被点名、十三种合法写法零误伤、公共件缺失响亮死（不静默退 0）"
   else
-    F "密钥判据失灵：坏样本 exit=$_rc_bad（应非0，点名 $_named/3）、合法写法 exit=$_rc_good（应0）"
+    F "密钥判据失灵：坏形状点名 $_nbad/10、误伤 $_ngood/0、缺公共件时 exit=$_rc_nolib（应非0）"
   fi
 fi
 
