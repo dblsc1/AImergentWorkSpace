@@ -695,5 +695,65 @@ else
   fi
 fi
 
+# ── 路签沙箱：54/55/57 共用 ────────────────────────────────────────
+# 数事件条数。**不要写 `grep -c … || echo 0`** —— grep 无命中时自己已经印了 0，
+# 再 echo 一个 0 就变成两行 "0\n0"，喂给 [ ] 是语法错（本轮实测撞到）。
+_cnt() { local n; n=$(grep -c -- "$1" "$2" 2>/dev/null) || n=0; printf '%s' "${n:-0}"; }
+
+# 造一个只在「写区重叠」这一项上会失败的 mission_start 沙箱，其余七项全过。
+# 这样断言变红时，红的原因唯一 —— 不是被别的检查项顺带拖红的。
+# 用法：_mk_lease_sandbox <沙箱目录> <持有者> <持有区>
+_mk_lease_sandbox() {
+  local sbx=$1 holder=$2 held=$3
+  rm -rf "$sbx"; mkdir -p "$sbx/scripts/lib" "$sbx/agents/consulter" "$sbx/docs"
+  git -C "$sbx" init -q
+  git -C "$sbx" symbolic-ref HEAD refs/heads/feat/sandbox      # 6 分支纪律：不在 main 上
+  cp "$S"/lib/*.sh "$sbx/scripts/lib/" 2>/dev/null
+  cp "$S/mission_start.sh" "$sbx/scripts/"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$sbx/scripts/dispatch.sh"   # 发签成功后被 exec，桩掉
+  chmod +x "$sbx/scripts/mission_start.sh" "$sbx/scripts/dispatch.sh"
+  printf '# consulter\n可写：docs/\n' > "$sbx/agents/consulter/AGENTS.md"   # 4 角色卡，无占位符
+  local h; h=$(git -C "$sbx" rev-parse --path-format=absolute --git-path hooks)
+  mkdir -p "$h"; local g
+  for g in pre-commit pre-push commit-msg; do printf '#!/bin/sh\nexit 0\n' > "$h/$g"; chmod +x "$h/$g"; done
+  printf '## 目标\nx\n## 验收标准\nx\n## 可触碰目录\nx\n## 自检门\nx\n' > "$sbx/task.md"   # 1 四小节
+  local d="$sbx/.git/aimergent-leases"; mkdir -p "$d"
+  printf '%s\n' "$held" > "$d/$holder.lease"
+  printf 'granted_at=%s\nttl=7200\ntask=持有者的任务单\n' "$(date -u +%s)" > "$d/$holder.meta"
+}
+
+# 54 ── 路签拒发不记账（F4，2026-08-02 consulter 报、CFO 机械复核属实）
+#      账上 18 条发签、0 条拒发 —— 于是「今天卡了三次」查无实据，
+#      任何优化路签的方案都没有基线可比。两侧都验：拒发必记，正常发签必不误记。
+printf '54. 路签拒发是否记账\n'
+if [ ! -f "$S/mission_start.sh" ]; then
+  N "本仓没有 mission_start.sh，不适用"
+else
+  _sbx54=$(mktemp -d)
+  _mk_lease_sandbox "$_sbx54" arbiter 'scripts/'
+  _rc54=0
+  ( cd "$_sbx54" && bash scripts/mission_start.sh consulter task.md scripts/lib/ ) \
+    >"$_sbx54/out.txt" 2>&1 || _rc54=$?
+  _denied=$(_cnt '"event":"lease_denied"' "$_sbx54/logs/diary.jsonl")
+  # 另一侧：不重叠的申领必须正常发签，且**不能**误记一条拒发
+  rm -f "$_sbx54/logs/diary.jsonl"
+  _rc54b=0
+  ( cd "$_sbx54" && bash scripts/mission_start.sh consulter task.md docs/ ) >/dev/null 2>&1 || _rc54b=$?
+  _denied_ok=$(_cnt '"event":"lease_denied"' "$_sbx54/logs/diary.jsonl")
+  _granted=$(_cnt '"event":"lease_grant"' "$_sbx54/logs/diary.jsonl")
+  rm -rf "$_sbx54"
+  if [ "$_rc54" -eq 0 ]; then
+    F "写区重叠竟然发签成功了（rc=0）—— 沙箱没造对或重叠判据失效"
+  elif [ "$_denied" -lt 1 ]; then
+    F "拒发没有落 lease_denied 事件 —— 拒发次数不可数，路签优化没有基线可比（F4）"
+  elif [ "$_denied_ok" -ne 0 ]; then
+    F "不重叠的正常发签也记了 lease_denied（$_denied_ok 条）—— 恒真事件等于没有事件"
+  elif [ "$_granted" -lt 1 ] || [ "$_rc54b" -ne 0 ]; then
+    F "不重叠的申领没能正常发签（rc=$_rc54b, lease_grant=$_granted）"
+  else
+    P "拒发落 lease_denied（rc=$_rc54）、正常发签只落 lease_grant 不误记拒发"
+  fi
+fi
+
 printf '\n── 小结: PASS %d · FAIL %d · N/A %d ──\n\n' "$pass" "$fail" "$na"
 [ "$fail" -eq 0 ]

@@ -48,9 +48,14 @@
   "escalation": null,
   "docs_reviewed": [
     {
-      "path": "agents/consulter/记忆.md",
+      "path": "scripts/README.md",
+      "action": "updated",
+      "reason": "mission_start 的行为本轮真改了（拒发补记账），脚本速查表同批改到位"
+    },
+    {
+      "path": "agents/reference/manual/文档地图.md",
       "action": "no-change-needed",
-      "reason": "本轮五条 findings 全部处于「待裁决/待实现」状态，判例库只收已付过学费、已定案的坑；F2/F3 落地后再入库，现在入库等于把提案写成判例"
+      "reason": "本轮零新增/零改名/零删除脚本文件，文档地图记的是「文件→用途」映射；且它对 selftest 条数刻意写「条数见运行输出」而非硬编码数字（硬编码 23 条被红测抓过一次后改的），所以断言条数增长也不动它"
     }
   ],
   "findings": [

@@ -228,7 +228,17 @@ if [ -f "$root/scripts/lib/docmap.sh" ]; then
   fi
 fi
 
-cl_footer "起飞检查通过，发签并出派单提示词" "起飞检查未通过，不发签" || exit 1
+if ! cl_footer "起飞检查通过，发签并出派单提示词" "起飞检查未通过，不发签"; then
+  # ── F4（2026-08-02）：**拒发也要记账** ──────────────────────────
+  # 原来只有发签成功 emit lease_grant，拒发走 cl_bad 后直接 exit，全程零事件。
+  # 后果不是少一行日志，是**问题规模不可数**：CFO 报「今天为此卡了三次」，
+  # 而 logs/diary.jsonl 里 18 条发签、0 条拒发 —— 那句话查无实据。
+  # 更要命的是任何「优化路签」的方案都验不出效果：没有基线就没有前后对比。
+  # 铁律 19 的证据强度问题：先能数，再改。
+  emit_event lease_denied \
+    "$role: 申领 ${want[*]:-（未解析）} 被拒（${CL_FAILED_ITEMS[*]:-未记录}）" 1
+  exit 1
+fi
 
 printf '%s\n' "${want[@]}" > "$lease_dir/$role.lease"
 lease_write_meta "$role" "$task"    # 记发签时间/任务/TTL —— 没有它就判不了过期
