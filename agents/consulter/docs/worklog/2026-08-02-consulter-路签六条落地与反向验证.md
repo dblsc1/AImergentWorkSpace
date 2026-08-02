@@ -94,3 +94,58 @@ CFO 报的「今天为此卡了三次」查无实据，且任何优化路签的�
 | C 拒发时顺手 `lease_release` 自动强收 | `❌ FAIL 拒发时把别人的签自动收了（clean=0 dirty=0）` · PASS 54 FAIL 1 |
 
 三处从备份副本恢复后：`PASS 55 · FAIL 0 · N/A 0`。
+
+---
+
+## F3 · 角色自动推断对 J3 五条 canonical 路径全失效
+
+**病**：`mission_complete.sh:32` 只有一条正则 `s|^codeagent/([^/]+)/docs/.*|\1|p`，
+只认 J3 迁移**前**的旧布局。实测把 J3 之后的 canonical 留痕路径逐条喂进去：
+
+```
+agents/consulter/docs/worklog/x.md            -> [<空>]
+agents/cfo/docs/worklog/x.md                  -> [<空>]
+module_docs/worklog/x.md                      -> [<空>]
+code/backend/worklog/x.md                     -> [<空>]
+review/reviewreport/x.md                      -> [<空>]
+codeagent/programmer/docs/worklog/x.md        -> [programmer]     ← 唯一命中的
+```
+
+`role=unknown` 是非空字符串 → checks/05 去找 `unknown.lease` → 找不到判失败。
+**本轮开工时这个 bug 当场演示了一次**：`mission_start.sh` 出的派单提示词里嵌的
+`mission_complete --list` 打印的是「角色 = unknown」；我第一次 commit 也被
+「角色 unknown 没有写区路签」拦下，只能手动传 `AIMERGENT_ROLE=consulter`。
+
+**修**：判据搬进 `scripts/lib/paths.sh` 的 `role_from_trace_path` / `role_from_staged`
+（按判例库「一律用公共件，不再各自手写路径判断」），两层优先级：
+
+- **层① 显式角色目录**：`agents/<角色>/docs/…`、`codeagent/<角色>[/<编号>]/docs/…`
+- **层② 布局推导**：`module_docs/`→arbiter、`review/`→programmer_reviewer、
+  `code/<子文件夹>/`→programmer（**仅模块仓**，用 `repo_is_module` 判——框架根的
+  `code/` 装的是模块仓，不是代码侧）
+
+层①命中就不看层②：module_reviewer 的 canonical 报告在 `codeagent/module_reviewer/docs/`，
+而它同时会碰共写区 `review/reviewreport/`——平表会把它判成歧义、推成 unknown。
+
+**同层出现两个不同角色 = 返回空**，不许 `head -1` 挑第一个：静默给一个可能错的答案
+比说不知道更糟。推不出来时 `mission_complete` 现在**说清为什么**，
+而不是让人对着「角色 unknown 没有写区路签」去给 unknown 申领一块签。
+
+**断言两条**：
+- **#56** 纯判据逐条喂：十条 canonical 路径 + 两条反面（框架仓 `code/gantt/` 不许
+  推成 programmer；`agents/cfo/` 与 `agents/consulter/` 同批必须判歧义）。
+- **#50 扩测**：原来只喂旧布局那一条 —— **五条里唯一还能命中旧正则的那条**，
+  所以它长期恒绿而现实全是 unknown。现在**三种布局逐个端到端跑**
+  （旧布局 / J3 模块级 / J3 项目级），验的是「推断→export→05 真拦住」整条链。
+
+**反向验证**：
+
+| 改坏 | 结果 |
+|---|---|
+| A 把 `mission_complete.sh` 换回修复前的旧正则（历史复现） | #50 `❌ FAIL [J3模块级 …exit=1] [J3项目级 …exit=1]`，**旧布局那条照样绿** —— 正是「断言只覆盖粗心的一半」的现场 |
+| B 歧义时挑第一个 | #56 `❌ FAIL 同层出现 cfo 与 consulter 两个角色却给了「cfo」` · PASS 55 FAIL 1 |
+| C 删掉 J3 项目级规则 | #50 `❌ FAIL [J3项目级 …]` + #56 `❌ FAIL agents/consulter/… 实得「<空>」` · PASS 54 FAIL 2 |
+
+三处从备份副本恢复后：`PASS 56 · FAIL 0 · N/A 0`。
+
+**红测 A 是这条最要紧的证据**：它证明旧断言在 bug 存在时是绿的。

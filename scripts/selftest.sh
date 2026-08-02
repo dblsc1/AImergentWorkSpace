@@ -522,7 +522,13 @@ fi
 
 # 50 ── mission_complete.sh 推断出角色后不 export，05 写区路签核验静默放行
 #      （障签 2026-07-31：只靠"源码里有 export 字样"骗不过铁律 23，必须真的拦一次越区写入）
-printf '50. 角色自动推断时写区路签是否依然生效\n'
+#
+#      2026-08-02 扩测（F3）：本条原来只喂 codeagent/programmer/docs/worklog/x.md ——
+#      J3 五条 canonical 路径里**唯一还能命中旧正则的那条**。于是这条断言长期恒绿，
+#      而现实中的 J3 布局全部推成 unknown，谁都没被它拦下来过。
+#      现在**三种布局逐个端到端跑**：旧布局 / J3 模块级 / J3 项目级。
+#      （纯推断函数的十条逐条喂在 #56；这里验的是「推断→export→05 真拦住」整条链。）
+printf '50. 角色自动推断时写区路签是否依然生效（三种布局逐个端到端）\n'
 _req50=("$S/mission_complete.sh" "$S/checks/_common/05-write-lease.sh" \
         "$S/lib/paths.sh" "$S/lib/checklist.sh")
 _missing50=0
@@ -531,7 +537,9 @@ if [ "$_missing50" -eq 1 ]; then
   N "本仓没有 mission_complete.sh / 05-write-lease.sh 全套，不适用"
 else
   _sbx=$(mktemp -d)
-  _build_role_export_sandbox() {   # _build_role_export_sandbox <待测 mission_complete.sh 路径>
+  # _build_role_export_sandbox <mission_complete 路径> <留痕路径> <该留痕应推出的角色>
+  _build_role_export_sandbox() {
+    local _mc=$1 _trace=$2 _role=$3
     rm -rf "$_sbx"; mkdir -p "$_sbx"
     git -C "$_sbx" init -q
     git -C "$_sbx" config user.email t@example.com
@@ -540,25 +548,34 @@ else
     cp "$S/lib/emit.sh" "$_sbx/scripts/lib/" 2>/dev/null || true
     cp "$S/lib/checklist.sh" "$S/lib/paths.sh" "$_sbx/scripts/lib/"
     cp "$S/checks/_common/05-write-lease.sh" "$_sbx/scripts/checks/_common/"
-    cp "$1" "$_sbx/scripts/mission_complete.sh"
+    cp "$_mc" "$_sbx/scripts/mission_complete.sh"
     chmod +x "$_sbx/scripts/mission_complete.sh" "$_sbx/scripts/checks/_common/"*.sh
-    # programmer 只申领了一块不相干的目录 —— 越权目标不在其中
+    # 该角色只申领了一块不相干的目录 —— 越权目标不在其中
     local _lease_dir; _lease_dir=$(git -C "$_sbx" rev-parse --path-format=absolute --git-common-dir)/aimergent-leases
-    mkdir -p "$_lease_dir"; printf 'nothing-real/\n' > "$_lease_dir/programmer.lease"
-    # 只靠"暂存路径落在 codeagent/<role>/docs/ 下"触发角色自动推断，不手动传 AIMERGENT_ROLE
-    mkdir -p "$_sbx/codeagent/programmer/docs/worklog" "$_sbx/secrets"
-    echo hi > "$_sbx/codeagent/programmer/docs/worklog/x.md"
+    mkdir -p "$_lease_dir"; printf 'nothing-real/\n' > "$_lease_dir/$_role.lease"
+    # 只靠"暂存路径"触发角色自动推断，**不手动传 AIMERGENT_ROLE**
+    mkdir -p "$_sbx/$(dirname "$_trace")" "$_sbx/secrets"
+    echo hi > "$_sbx/$_trace"
     echo leak > "$_sbx/secrets/out-of-lease.txt"      # 越出写区路签的文件
-    git -C "$_sbx" add codeagent secrets
+    git -C "$_sbx" add -A
   }
-  _build_role_export_sandbox "$S/mission_complete.sh"
-  _rc=0
-  _out50=$(cd "$_sbx" && env -u AIMERGENT_ROLE bash scripts/mission_complete.sh 2>&1) || _rc=$?
+  _bad50=""
+  for _c50 in "codeagent/programmer/docs/worklog/x.md|programmer|旧布局" \
+              "module_docs/worklog/x.md|arbiter|J3模块级" \
+              "agents/consulter/docs/worklog/x.md|consulter|J3项目级"; do
+    _t50=${_c50%%|*}; _r50=${_c50#*|}; _lab50=${_r50#*|}; _r50=${_r50%%|*}
+    _build_role_export_sandbox "$S/mission_complete.sh" "$_t50" "$_r50"
+    _rc=0
+    _out50=$(cd "$_sbx" && env -u AIMERGENT_ROLE bash scripts/mission_complete.sh 2>&1) || _rc=$?
+    if [ "$_rc" -eq 0 ] || ! grep -q '越出写区路签' <<<"$_out50"; then
+      _bad50="$_bad50 [$_lab50 $_t50→$_r50 exit=$_rc]"
+    fi
+  done
   rm -rf "$_sbx"
-  if [ "$_rc" -ne 0 ] && grep -q '越出写区路签' <<<"$_out50"; then
-    P "角色靠暂存路径自动推断、未显式传 AIMERGENT_ROLE 时，越区写入依然被拦（exit=$_rc）"
+  if [ -n "$_bad50" ]; then
+    F "越区写入未被拦：$_bad50 —— 角色没推出来（F3）或推出来没 export 给子检查（障签 2026-07-31）"
   else
-    F "越区写入未被拦（exit=$_rc）—— role 推断出来后没 export 给子检查，05 写区路签静默放行（障签 2026-07-31）"
+    P "旧布局 / J3 模块级 / J3 项目级三种留痕路径，都能自动推出角色并真的拦住越区写入"
   fi
 fi
 
@@ -794,6 +811,52 @@ else
     F "拒发时把别人的签自动收了（clean=$_left_clean dirty=$_left_dirty）—— 静默回收会让双写安静地发生"
   else
     P "干净判可强收+给可粘贴命令、脏判不建议并指出原因、两种情况下签都还在（没自动强收）"
+  fi
+fi
+
+# 56 ── 角色自动推断是否覆盖 J3 之后的全部 canonical 留痕路径（F3）
+#      **这一条是为了不把 #50 的坑重挖一遍而存在的**：#50 的沙箱只喂
+#      codeagent/programmer/docs/worklog/x.md —— 五条里唯一还能命中旧正则的那条，
+#      于是断言恒绿而现实全是 unknown。这里逐条喂，缺一条就判不合格。
+printf '56. 角色推断是否覆盖 J3 canonical 留痕路径（逐条喂）\n'
+if [ ! -f "$S/lib/paths.sh" ] || ! grep -q 'role_from_trace_path' "$S/lib/paths.sh" 2>/dev/null; then
+  F "lib/paths.sh 里没有 role_from_trace_path —— 角色推断没有公共件，各处各写一套（F3）"
+else
+  # 逐条喂：<路径>|<期望角色>|<仓型>（m=模块仓 / f=框架仓；仓型影响 code/ 的判读）
+  _cases56=(
+    "agents/consulter/docs/worklog/x.md|consulter|f"
+    "agents/cfo/docs/worklog/x.md|cfo|f"
+    "module_docs/worklog/x.md|arbiter|m"
+    "code/backend/worklog/x.md|programmer|m"
+    "code/backend/orders/report.json|programmer|m"
+    "review/reviewreport/report.json|programmer_reviewer|m"
+    "review/reviewcode/tests/t.sh|programmer_reviewer|m"
+    "codeagent/programmer/docs/worklog/x.md|programmer|m"
+    "codeagent/programmer/01/docs/comm.jsonl|programmer|m"
+    "codeagent/module_reviewer/docs/report.json|module_reviewer|m"
+  )
+  _sbx56=$(mktemp -d); mkdir -p "$_sbx56/m/codeagent" "$_sbx56/m/module_docs" "$_sbx56/f"
+  _miss56=""
+  for _case in "${_cases56[@]}"; do
+    _p56=${_case%%|*}; _rest56=${_case#*|}; _want56=${_rest56%%|*}; _kind56=${_rest56#*|}
+    _got56=$( cd "$_sbx56/$_kind56" && . "$S/lib/paths.sh" && \
+              printf '%s\n' "$_p56" | role_from_staged )
+    [ "$_got56" = "$_want56" ] || _miss56="$_miss56
+       $_p56 → 期望 $_want56，实得「${_got56:-<空>}」"
+  done
+  # 反面两条：框架根的 code/ 装的是模块仓不是代码侧；同层两个角色必须判歧义
+  _fwc=$( cd "$_sbx56/f" && . "$S/lib/paths.sh" && printf 'code/gantt/x.md\n' | role_from_staged )
+  [ -z "$_fwc" ] || _miss56="$_miss56
+       框架仓的 code/gantt/x.md 被推成「$_fwc」—— 框架根的 code/ 装的是模块仓"
+  _amb56=$( cd "$_sbx56/f" && . "$S/lib/paths.sh" && \
+            printf 'agents/cfo/docs/a.md\nagents/consulter/docs/b.md\n' | role_from_staged )
+  [ -z "$_amb56" ] || _miss56="$_miss56
+       同层出现 cfo 与 consulter 两个角色却给了「$_amb56」—— 歧义必须返回空，不许挑第一个"
+  rm -rf "$_sbx56"
+  if [ -n "$_miss56" ]; then
+    F "角色推断没覆盖全部 canonical 路径（F3）：$_miss56"
+  else
+    P "十条 canonical 留痕路径逐条命中；框架仓 code/ 不误判；同层歧义返回空不静默挑第一个"
   fi
 fi
 

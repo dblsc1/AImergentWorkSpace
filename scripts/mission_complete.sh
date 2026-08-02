@@ -28,11 +28,26 @@ diary=logs/diary.jsonl
 
 # ── 解析角色 ─────────────────────────────────────────────────
 role=${AIMERGENT_ROLE:-}
+_role_why=""
 if [ -z "$role" ]; then
-  role=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null |
-         sed -nE 's|^codeagent/([^/]+)/docs/.*|\1|p' | head -1)
+  # F3（2026-08-02）：原来这里是一条只认旧布局的正则
+  # `s|^codeagent/([^/]+)/docs/.*|\1|p`，J3 之后的五条 canonical 留痕路径实测**全部**
+  # 推成空。判据已搬进 lib/paths.sh 的 role_from_trace_path / role_from_staged
+  # （两层优先级 + 同层歧义返回空，理由见那里）；selftest #56 逐条喂五条路径。
+  . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/paths.sh"
+  role=$(git diff --cached -z --name-only --diff-filter=ACMR 2>/dev/null |
+         tr '\0' '\n' | role_from_staged) || role=""
+  [ -n "$role" ] || _role_why="暂存路径里推断不出角色（或同层出现了两个不同角色）"
 fi
-[ -n "$role" ] || role=unknown
+if [ -z "$role" ]; then
+  role=unknown
+  # **说清楚为什么是 unknown**。原来这里静默变成 unknown，然后 checks/05 报
+  # 「角色 unknown 没有写区路签」—— 被拦住的人会以为是路签的问题，
+  # 甚至真的去给 unknown 申领一块签。错误信息把人引向错的地方，判例库记过三次。
+  printf '⚠️  角色未识别：%s\n' "$_role_why" >&2
+  printf '    只会跑【通用】检查；写区路签那一项会因为找不到 unknown.lease 而失败。\n' >&2
+  printf '    正解：AIMERGENT_ROLE=<角色> git commit …（角色名＝申领路签时用的那个）\n' >&2
+fi
 export AIMERGENT_ROLE="$role"   # 子检查脚本（05-write-lease.sh 等）靠环境变量读角色，
                                  # 不 export 时子进程拿到空值，写区路签核验静默放行（障签 2026-07-31）。
 

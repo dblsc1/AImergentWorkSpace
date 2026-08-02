@@ -44,6 +44,56 @@ framework_root() {
   printf '.'
 }
 
+# ── 从留痕路径推断角色（F3，2026-08-02）────────────────────────────
+# 病根：原判据只有一条正则 `s|^codeagent/([^/]+)/docs/.*|\1|p`，只认 J3 迁移**前**
+# 的旧布局。裁决 J3 之后的五条 canonical 留痕路径实测**全部**推成空 → role=unknown，
+# 而 unknown 是非空字符串，checks/05 于是去找 unknown.lease、找不到就判失败 ——
+# 常规提交路径（不手动传 AIMERGENT_ROLE）被一条与自己无关的理由拦住。
+#
+# 为什么上一轮的修复没抓到：selftest 的沙箱暂存的恰好是
+# `codeagent/programmer/docs/worklog/x.md` —— 五条里唯一还能命中旧正则的那条，
+# 所以断言恒绿而现实全是 unknown。判例库「被测对象是哪一份」第三次实证。
+#
+# **两层优先级，不是一张平表**：
+#   层① 显式角色目录  agents/<角色>/docs/…、codeagent/<角色>[/<编号>]/docs/…
+#   层② 布局推导      module_docs/→arbiter、code/<子文件夹>/→programmer（**仅模块仓**）、
+#                     review/→programmer_reviewer
+# 层①命中就不看层②。理由：module_reviewer 的 canonical 报告在
+# `codeagent/module_reviewer/docs/`，而它同时会碰 `review/reviewreport/`（共写区）——
+# 平表会判成「两个候选、歧义」，把一个本来说得清的角色推成 unknown。
+#
+# **同层出现两个不同角色 = 歧义，返回空**。不许 `head -1` 挑第一个：
+# 那是「静默给一个可能错的答案」，比说不知道更糟。
+role_from_trace_path() {   # role_from_trace_path <仓根相对路径> → "<层><TAB><角色>"，认不出则空
+  local p=${1#./}
+  if [[ $p =~ ^agents/([^/]+)/docs/ ]]; then printf '1\t%s' "${BASH_REMATCH[1]}"; return 0; fi
+  if [[ $p =~ ^codeagent/([^/]+)/([^/]+/)?docs/ ]]; then printf '1\t%s' "${BASH_REMATCH[1]}"; return 0; fi
+  case "$p" in
+    module_docs/*)          printf '2\tarbiter' ;;
+    review/reviewcode/*|review/reviewreport/*) printf '2\tprogrammer_reviewer' ;;
+    code/*)  repo_is_module && printf '2\tprogrammer' ;;   # 框架根的 code/ 装的是模块仓，不是代码侧
+  esac
+  return 0
+}
+
+# 从一批暂存路径定角色。歧义或认不出 → 退 1 且不输出（调用方负责响亮，不许静默放行）。
+role_from_staged() {   # role_from_staged < <(路径，一行一个)
+  local line lvl r t1="" t2="" amb=0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    IFS=$'\t' read -r lvl r < <(role_from_trace_path "$line")
+    [ -n "${r:-}" ] || continue
+    if [ "$lvl" = 1 ]; then
+      if [ -z "$t1" ]; then t1=$r; elif [ "$t1" != "$r" ]; then amb=1; fi
+    else
+      if [ -z "$t2" ]; then t2=$r; elif [ "$t2" != "$r" ]; then amb=2; fi
+    fi
+  done
+  if [ -n "$t1" ]; then [ "$amb" = 1 ] && return 1; printf '%s' "$t1"; return 0; fi
+  if [ -n "$t2" ]; then [ "$amb" = 2 ] && return 1; printf '%s' "$t2"; return 0; fi
+  return 1
+}
+
 # 路径可解析＝本仓有，或框架根有（模块仓引用框架文档/脚本是常态，不是死链）
 resolves_here_or_framework() {   # resolves_here_or_framework <仓内相对路径>
   [ -e "$1" ] && return 0
