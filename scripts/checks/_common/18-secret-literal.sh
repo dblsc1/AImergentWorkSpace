@@ -107,7 +107,10 @@ def value_is_literal(v: str) -> bool:
     v = v.strip()
     # 去掉尾部行内注释（# 或 // 开头，且前面有空白）
     v = re.sub(r"\s+(#|//).*$", "", v).strip()
-    v = v.rstrip("\\").rstrip(",;").strip()   # 续行反斜杠 / JSON 逗号
+    # 续行反斜杠 / JSON 逗号 / **容器闭合符**。
+    # 少剥一个 `}` 就会把 `json={"password": password},` 的右值算成 `password}`，
+    # 比占位符白名单差一个字符 —— 两个 agent 一小时内各自撞上这条（2026-08-03）。
+    v = v.rstrip("\\").rstrip(",;").rstrip("}])").strip()
     # 剥一层引号
     if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"\x27`":
         v = v[1:-1].strip()
@@ -118,6 +121,11 @@ def value_is_literal(v: str) -> bool:
     if v.startswith("{{") or v.startswith("<") or v.startswith("{") or v.startswith("("):
         return False                      # <你的口令> / {{TOKEN}} / (fill in)
     if ENVCALL.search(v):
+        return False
+    # **右值本身是个标识符** —— 真凭据不会是 SCREAMING_SNAKE_CASE。
+    # 实证：`PASSWORD_ENV_VAR = "COCKPIT_TEST_PASSWORD"` 存的是变量**名**不是值，
+    # 而判据把它当成了泄露。这一类的通则是「右值看起来像代码里的名字」。
+    if re.fullmatch(r"[A-Z][A-Z0-9_]{2,}", v):
         return False
     low = v.lower()
     if low in PLACEHOLDER_EXACT:
