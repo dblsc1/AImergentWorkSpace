@@ -191,13 +191,64 @@ lease_holder_detail() {   # lease_holder_detail <持有者>
 #
 # **只警告不硬拦**（判例库「判断题不做硬闸门」：硬拦会逼人用逃生口，
 # 逃生口用滥整套闸门就废）。「放宽到什么程度算粒度错了」没有客观阈值，是判断题。
+
+# ── 签史的读取口（**只此一处**，别在调用方各写各的 grep/sed）───────
+# 判例库「判据有两份实现 = 迟早分叉」已实证两次；签史的 note 格式一旦有两个
+# 解析器，改格式时必然只改一个。下面三个函数是签史的唯一入口。
+#
+# 落点是 logs/diary.jsonl（**不入仓**：每写一行就动 git status，入仓会把
+# 「活落盘了」类检查骗成恒真）。**代价要说清楚：新克隆上没有签史，
+# 那时棘轮没有跨轮基线** —— 不假装有，见 lease_baseline_kind 的 none。
+_lease_grant_lines() {   # <角色> → 该角色历次 lease_grant 的原始行（时间顺序）
+  local role=$1 f
+  f=$(git rev-parse --show-toplevel 2>/dev/null)/logs/diary.jsonl
+  [ -f "$f" ] || return 1
+  grep -F '"event":"lease_grant"' "$f" 2>/dev/null | grep -F "\"note\":\"$role: "
+}
+_lease_note_of() {   # 从一行 lease_grant 里取写区串
+  sed -n 's/.*"note":"[^:]*: \([^"]*\)".*/\1/p' <<<"$1"
+}
+
+lease_last_grant() {   # <角色> → 上次发签的写区，一行一个（无签史退 1）
+  local role=$1 last note
+  last=$(_lease_grant_lines "$role" | tail -1) || return 1
+  [ -n "$last" ] || return 1
+  note=$(_lease_note_of "$last")
+  [ -n "$note" ] || return 1
+  # shellcheck disable=SC2086  # 有意按空白拆词：note 里是空格分隔的写区前缀
+  printf '%s\n' $note
+}
+
+# 棘轮这次拿什么当基线 —— **必须能说出来**。
+# 「没放宽」和「没有基线可比」在界面上长得一样，就是判例库那条
+# 「恒绿的门比缺门更贵」：后者会让所有人以为这件事已经被管住了。
+lease_baseline_kind() {   # <角色> → current | history | none
+  local d; d=$(lease_dir_path)
+  if [ -s "$d/$1.lease" ]; then printf 'current'
+  elif lease_last_grant "$1" >/dev/null 2>&1; then printf 'history'
+  else printf 'none'; fi
+}
+
+#
+# ── 2026-08-03：这条棘轮原来只比得了「同一轮」，跨轮次是失忆的 ────────
+# 原判据拿**当前持有的签文件**当基线，而 `[ -f … ] || return 1` ——
+# **签一还，基线就没了**；而还签是 mission_complete 的常规要求。
+# 于是每一轮都从「没有基线」开始，第 9 项恒打 ✅。
+# 而立这条棘轮的那个事实（CFO 的签五天里从 4 片涨到 8 片）
+# **每一次膨胀都发生在不同轮次** —— 判据恰好对它设计要防的那个形状全瞎。
+# 实证：consulter 上一轮持 `scripts/checks/ … agents/consulter/`，
+# 本轮申领 `agents/ scripts/ code/_template/`（明显放宽），第 9 项照打 ✅。
+# 现在基线按优先级取：① 当前持有的签（同轮放宽）② 本机 diary 里该角色最近一次发签（跨轮）。
 lease_widening() {   # lease_widening <角色> <新写区...> → 打印放宽项；退 0=检出放宽
   local role=$1; shift
   local d o n hit=1 covered old=()
   d=$(lease_dir_path)
-  [ -f "$d/$role.lease" ] || return 1          # 没有旧签就没有棘轮可言
-  mapfile -t old < "$d/$role.lease"
-  [ "${#old[@]}" -gt 0 ] || return 1
+  if [ -f "$d/$role.lease" ]; then
+    mapfile -t old < "$d/$role.lease"
+  else
+    mapfile -t old < <(lease_last_grant "$role")   # 跨轮次基线
+  fi
+  [ "${#old[@]}" -gt 0 ] || return 1          # 真的一份基线都没有，才算没有棘轮可言
   for n in "$@"; do
     covered=0
     for o in "${old[@]}"; do
@@ -221,8 +272,7 @@ lease_grant_history() {   # lease_grant_history <角色> [最多显示几条]
   local role=$1 max=${2:-5} f cnt i start=0 ts note lines=()
   f=$(git rev-parse --show-toplevel 2>/dev/null)/logs/diary.jsonl
   [ -f "$f" ] || return 1
-  mapfile -t lines < <(grep -F '"event":"lease_grant"' "$f" 2>/dev/null |
-                       grep -F "\"note\":\"$role: ")
+  mapfile -t lines < <(_lease_grant_lines "$role")
   cnt=${#lines[@]}
   [ "$cnt" -gt 0 ] || return 1
   printf '本机记到的 %s 签史（%d 次发签；diary 不入仓，新克隆上没有）：\n' "$role" "$cnt"
@@ -232,7 +282,7 @@ lease_grant_history() {   # lease_grant_history <角色> [最多显示几条]
     [ "$i" -eq 0 ] || [ "$i" -ge "$start" ] || continue
     [ "$i" -eq "$start" ] && [ "$start" -gt 1 ] && printf '   …（中间 %d 次略）\n' "$(( start - 1 ))"
     ts=$(sed -n 's/.*"ts":"\([^"]*\)".*/\1/p' <<<"${lines[$i]}")
-    note=$(sed -n 's/.*"note":"[^:]*: \([^"]*\)".*/\1/p' <<<"${lines[$i]}")
+    note=$(_lease_note_of "${lines[$i]}")
     printf '   %s  %s 片  %s\n' "${ts:0:16}" "$(wc -w <<<"$note")" "$note"
   done
   return 0

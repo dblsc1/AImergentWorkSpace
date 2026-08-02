@@ -29,7 +29,7 @@
 | 脚本 | 干什么 |
 |---|---|
 | `doc_impact.sh [--staged\|--range A..B\|--scope 前缀…]` | **我改了这些 → 要连带看哪些长期文档**。算法在 `lib/docmap.sh`，起飞/随时/着陆/推送共用同一个答案来源 |
-| `mission_start.sh <角色> <任务单> <写区...> [--docs …]`（`--checklist` 看单子） | **起飞前检查单**（9 项）：校验任务单四小节 → 申领写区路签（前缀重叠即拒）→ **声明预期文档变更（完工时机器逐条核对）** → 出提示词。**发签与拒发都记账**：成功 `lease_grant`、被拒 `lease_denied`（带失败项）——只记成功那一半，问题规模就数不出来。**拒发时还印「能不能强收」的三条判据 + 可粘贴命令**（`lib/lease.sh` 的 `lease_takeover_advice`），但**永不自动强收** |
+| `mission_start.sh <角色> <任务单> <写区...> [--docs …]`（`--checklist` 看单子） | **起飞前检查单**（9 项）：校验任务单四小节 → 申领写区路签（前缀重叠即拒）→ **声明预期文档变更（完工时机器逐条核对）** → 出提示词。**发签与拒发都记账**：成功 `lease_grant`、被拒 `lease_denied`（带失败项）——只记成功那一半，问题规模就数不出来。**拒发时还印「能不能强收」的三条判据 + 可粘贴命令**（`lib/lease.sh` 的 `lease_takeover_advice`），但**永不自动强收**。第 9 项「写区没比上次放宽」**跨轮次比对**：基线优先取当前签，没有当前签时取本机 diary 里该角色最近一次 `lease_grant`（2026-08-03 前只认当前签，签一还基线就没了，而膨胀本来就发生在不同轮次）。**基线是什么会印出来**；本机既无当前签也无签史时如实报「无基线可比」，**不打 ✅** |
 | `dispatch.sh <角色> <任务单>` | 生成派单提示词：角色卡首行 + 版本哈希 + **开卷判据**（嵌 `mission_complete --list`）+ 任务单原文 |
 | `run_agent.sh <角色> <任务单> [模块] [--resume]` | **起独立 Claude 进程执行角色任务**（`claude -p --agent`），不受子代理嵌套限制；`--resume` 按记录的 session id 续用 |
 | `exam.sh <角色> [--submit 答案]` | 开工考试（五道通用流程题）。不过 → 打印**派单完整性自查表** + 退回重派，**不铸令牌** |
@@ -76,7 +76,7 @@ codeagent/<角色>/checks/       本模块给该角色追加的
 |---|---|
 | `arbiter-push.sh <push参数>` | **唯一合法的 push 路径**：**先跑 run-gates + 校验有 approved 审核** → 铸一次性 lease → fetch-then-push |
 | `merge-to-integration.sh` | **唯一合法的合并通道**，目标 = `$AIMERGENT_INTEGRATION_BRANCH`（默认 `dev`）。**以 main 为目标会被拒绝** |
-| `lib/emit.sh` | 被所有脚本 source：激活/退出自动写进 diary，控制面板据此实时显示 |
+| `lib/emit.sh` | 被所有脚本 source：激活/退出自动写进 diary，控制面板据此实时显示。**两种载入语义，别混（2026-08-03）**：**能放行逃生口的四个脚本**（`mission_complete` / `arbiter-push` / `run_agent` / `install-gates`）按**必需件**载入，缺了直接 `exit 2` —— `emit_override` 是逃生口的问责落点，没有它就是「放行但不记账」；其余脚本按**可选件**载入，但缺件必须打印「已跳过」（铁律 23：唯一不许的是静默跳过后报成功）。`emit_override` 现在是**事实题**：返回 0 ⟺ `logs/ledger.jsonl` 里真多了那一行（写完自验落点，且拒绝写进被 `.gitignore` 吞的落点）|
 | `hooks/pre-commit` | 调 `mission_complete.sh`，不过拒绝提交 |
 | `hooks/pre-push` | 拦直推 main、拦无 lease 的 push |
 | `hooks/commit-msg` | 拦缺失/重复/畸形的 `Agent-Attribution` |

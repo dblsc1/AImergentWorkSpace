@@ -96,9 +96,14 @@ _naked=""
 while IFS= read -r _f; do
   case "$_f" in "$S"/lib/*) continue ;; esac
   while IFS= read -r _ln; do
+    # ⚠️ 2026-08-03 收紧两处：
+    #   ① 去掉 `*emit.sh*` 的一刀切豁免 —— emit.sh 现在在能放行逃生口的脚本里是
+    #      **必需件**（断言 67 单独盯这一层），一刀切豁免会把裸 source 也放过去。
+    #   ② `|| true` 不算守卫。原来只看有没有 `||`，于是 `. lib/x.sh || true`
+    #      照样过 —— 那正是本条要防的形状本身，判据自己开了个洞。
     case "$_ln" in
-      *emit.sh*) continue ;;        # emit.sh 是声明过的可选件（自带 `|| true`）
-      *"||"*)    continue ;;        # 已有守卫
+      *"|| true"*) ;;               # 空守卫 = 没守卫，落到下面报出来
+      *"||"*)      continue ;;      # 有会说话/会中止的守卫
     esac
     _naked="$_naked $(basename "$_f")"
     # ⚠️ 原来这里还接了 `| grep '\.sh"'` —— 于是 `. "$_lease_lib"` 这种
@@ -106,7 +111,7 @@ while IFS= read -r _f; do
   done < <(grep -hE '^[[:space:]]*\.[[:space:]]+"' "$_f")
 done < <(find "$S" -name '*.sh' -type f 2>/dev/null | LC_ALL=C sort)
 if [ -n "$_naked" ]; then
-  F "source 公共件却没有失败守卫（缺件时会静默继续，然后以「什么都没验」的姿态退 0）：$_naked"
+  F "source 公共件却没有失败守卫（或守卫是空的 || true —— 缺件时会静默继续，然后以「什么都没验」的姿态退 0）：$_naked"
 else
-  P "scripts/ 下所有必需公共件的 source 点都带行尾守卫；emit.sh 作为可选件显式豁免"
+  P "scripts/ 下所有公共件 source 点都带非空守卫（含 emit.sh；|| true 不再算守卫）"
 fi

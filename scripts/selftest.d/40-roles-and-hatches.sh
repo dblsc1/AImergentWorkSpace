@@ -84,10 +84,14 @@ else
     [ -n "$_h" ] || continue
     while IFS= read -r _f; do
       [ -n "$_f" ] || continue
-      case "$_f" in */lib/emit.sh|*/selftest.sh) continue ;; esac   # 定义处与本测试自身不算
+      case "$_f" in */lib/emit.sh|*/selftest.sh|*/selftest.d/*) continue ;; esac   # 定义处与本测试自身不算
       grep -q 'emit_override' "$_f" 2>/dev/null || _hatch_bad="$_hatch_bad $(basename "$_f"):$_h"
     done < <(grep -rlE "$_h" --include='*.sh' "$S" 2>/dev/null)
-  done < <(grep -rhoE 'AIMERGENT_[A-Z_]*(OVERRIDE|SKIP[A-Z_]*|UNREVIEWED|ALLOW_[A-Z_]*)' \
+    # ⚠️ 名字是白名单，白名单必然有盲区（C1 那次同一形状）。`_OK` 是 2026-08-03 补的：
+    #    AIMERGENT_INSTALL_STALE_OK 把一个 die 变成放行，却因为名字不在表里躲过本条，
+    #    只写 diary（按设计不入仓）躺了整轮。**加名字只是止血**；
+    #    真正不靠名字的那条是断言 67（按「调不调 emit_override / 嘴上说不说记了账」判）。
+  done < <(grep -rhoE 'AIMERGENT_[A-Z_]*(OVERRIDE|SKIP[A-Z_]*|UNREVIEWED|ALLOW_[A-Z_]*|_OK)' \
              --include='*.sh' "$S" 2>/dev/null | sort -u)
 
   # ② 真点火：造一个隔离沙箱仓，实调 emit_override，断言 ledger 真落一行且不被 gitignore 吞

@@ -2,7 +2,7 @@
 # 将无外部密钥的 CI 和本地 Git hooks 安装到一个独立仓。
 # 用法: install-ci.sh [--hook-only] <相对 AIMERGENT_WORKSPACE_ROOT 的仓路径|.>
 set -euo pipefail
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || true
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" || { printf '❌ %s：载入 emit.sh 失败 —— 本脚本能放行逃生口，而记账全靠它；拒绝以「放行但不记账」的姿态运行\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
 
 die() { printf '❌ %s\n' "$*" >&2; exit 1; }
 
@@ -30,9 +30,16 @@ if [ -n "$src_repo" ]; then
     _behind=$(git -C "$src_repo" rev-list --count "HEAD..$_up" 2>/dev/null || echo 0)
     if [ "${_behind:-0}" -gt 0 ]; then
       if [ -n "${AIMERGENT_INSTALL_STALE_OK:-}" ]; then
-        printf '⚠️  门禁源落后 %s %s 个 commit，按 AIMERGENT_INSTALL_STALE_OK 放行：%s\n' \
+        # 2026-08-03：这条**是逃生口**（它把一个 die 变成放行），可它原来只调 emit_event ——
+        # 写进 logs/diary.jsonl，而 diary 按设计**不入仓**。按铁律 18 等于没记账，
+        # 正是 A-1 事故的本体换了个载体。
+        # 它能躲过 selftest 51 的类扫描，是因为那条判据按**名字**认逃生口，
+        # 而它以 `_OK` 结尾，不在 (OVERRIDE|SKIP*|UNREVIEWED|ALLOW_*) 里 ——
+        # 「白名单太窄 = 判据有盲区」，与 C1 那次是同一个形状。
+        emit_override INSTALL_STALE_OK "behind=$_behind reason=$AIMERGENT_INSTALL_STALE_OK" || {
+          printf '❌ 逃生口记账失败 —— 拒绝以「放行但不记账」的姿态装旧版判据\n' >&2; exit 1; }
+        printf '⚠️  门禁源落后 %s %s 个 commit，按 AIMERGENT_INSTALL_STALE_OK 放行：%s（已记账）\n' \
           "$_up" "$_behind" "$AIMERGENT_INSTALL_STALE_OK" >&2
-        emit_event install_stale_override "behind=$_behind reason=$AIMERGENT_INSTALL_STALE_OK" 2>/dev/null || true
       else
         die "门禁源落后 $_up $_behind 个 commit——先 pull/rebase 源仓再装，否则拷出去的是旧判据。确需装旧版：AIMERGENT_INSTALL_STALE_OK=<理由>"
       fi

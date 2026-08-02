@@ -9,7 +9,7 @@
 # 「我的规范拦得住我自己犯过的每一个错」—— 这份脚本就是那句话的证据。
 # 它必须进 CI 每次跑，否则半年后这些闸门会在无人察觉中失效（V1 假绿门禁就是这么来的）。
 set -uo pipefail
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || true
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || printf '⏭  已跳过事件上报（缺 scripts/lib/emit.sh；只影响控制台可见性，不影响本次结果）\n' >&2
 
 repo=${1:-$(git rev-parse --show-toplevel 2>/dev/null || true)}
 [ -n "$repo" ] && [ -e "$repo/.git" ] || { echo "❌ 不是 git 仓: ${repo:-<空>}" >&2; exit 2; }

@@ -19,7 +19,7 @@
 #
 # 逃生口：AIMERGENT_MISSION_OVERRIDE="<理由>" 放行，但强制记入 logs/diary.jsonl，绝不静默。
 set -uo pipefail
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || true
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" || { printf '❌ %s：载入 emit.sh 失败 —— 本脚本能放行逃生口，而记账全靠它；拒绝以「放行但不记账」的姿态运行\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/checklist.sh" || { printf '❌ %s：载入 checklist.sh 失败 —— 拒绝以「什么都没验」的姿态退 0\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "❌ 不在 Git 仓内" >&2; exit 2; }
@@ -189,11 +189,20 @@ if [ "$fail" -eq 0 ]; then
 fi
 
 if [ -n "${AIMERGENT_MISSION_OVERRIDE:-}" ]; then
-  printf '│\n└─ ⚠️  逃生口放行：%s\n     已记入 logs/ledger.jsonl（入仓的证据）——这次绕过是可追的。\n\n' \
-    "$AIMERGENT_MISSION_OVERRIDE"
   # 2026-08-01：原来只写 diary，而 diary 被 .gitignore 吞 = 证据不入仓 = 等于没记。
   # 改走 emit_override（双写 ledger + diary），log_event 保留给 console 用。
-  emit_override MISSION_OVERRIDE "$AIMERGENT_MISSION_OVERRIDE" 2>/dev/null || true
+  #
+  # 2026-08-03：**这两步的顺序不许反过来**。原版先无条件打印「已记入
+  # logs/ledger.jsonl（入仓的证据）」，再调 `emit_override … 2>/dev/null || true`。
+  # 实测删掉 lib/emit.sh：ledger 一行没长、退出码 0、那句「已记入」照打 ——
+  # 比静默更糟，人读到它会以为这次绕过可追。
+  # **记账是逃生口的对价：先记上账才有资格说这句话，记不上就不放行。**
+  emit_override MISSION_OVERRIDE "$AIMERGENT_MISSION_OVERRIDE" || {
+    printf '│\n└─ ❌ 逃生口记账失败 —— 拒绝以「放行但不记账」的姿态放行。\n     修好 logs/ledger.jsonl 的落点再来。\n\n' >&2
+    exit 1
+  }
+  printf '│\n└─ ⚠️  逃生口放行：%s\n     已记入 logs/ledger.jsonl（入仓的证据）——这次绕过是可追的。\n\n' \
+    "$AIMERGENT_MISSION_OVERRIDE"
   log_event mission_override "\"$AIMERGENT_MISSION_OVERRIDE\""
   refresh_console
   exit 0

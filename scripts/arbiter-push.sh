@@ -2,7 +2,7 @@
 # arbiter-only push：唯一 sanctioned 路径。铸一次性 push-lease → fetch-then-push → 清 lease。
 # 用法: scripts/arbiter-push.sh <git push 参数...>   例: scripts/arbiter-push.sh -u origin feat/x
 set -euo pipefail
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || true
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" || { printf '❌ %s：载入 emit.sh 失败 —— 本脚本能放行逃生口，而记账全靠它；拒绝以「放行但不记账」的姿态运行\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
 if [ "$#" -eq 0 ]; then echo "用法: arbiter-push.sh <git push 参数...>" >&2; exit 2; fi
 
 # 停线旗：旗在 = 冻结推送（同 pre-commit，判据见 agents/protocol/supervision.md）
@@ -24,7 +24,9 @@ trap 'rm -f -- "$token"' EXIT
 if [ "${AIMERGENT_PUSH_UNREVIEWED:-0}" = 1 ]; then
   # 记账（2026-08-01 补）：此前这条分支**完全不记账**——本文件唯一的 emit 挂在
   # PUSH_SKIP_GATES 上，UNREVIEWED 走过去悄无声息。实测当天用了约 10 次，零留痕。
-  emit_override PUSH_UNREVIEWED "${AIMERGENT_PUSH_UNREVIEWED_REASON:-未给理由（建议设 AIMERGENT_PUSH_UNREVIEWED_REASON）}" 2>/dev/null || true
+  # 2026-08-03：记账失败不再吞（原 `2>/dev/null || true`）——记不上账就别推。
+  emit_override PUSH_UNREVIEWED "${AIMERGENT_PUSH_UNREVIEWED_REASON:-未给理由（建议设 AIMERGENT_PUSH_UNREVIEWED_REASON）}" || {
+    printf '❌ 逃生口记账失败 —— 拒绝以「放行但不记账」的姿态推送未审代码\n' >&2; exit 1; }
 fi
 if [ "${AIMERGENT_PUSH_UNREVIEWED:-0}" != 1 ]; then
   _root=$(git rev-parse --show-toplevel 2>/dev/null || echo .)
@@ -64,8 +66,10 @@ if [ "${AIMERGENT_PUSH_SKIP_GATES:-}" = "" ]; then
     echo "  🟢 门禁通过" >&2
   fi
 else
+  # 顺序同 mission_complete：**先记上账，才有资格打印「已记账」**。
+  emit_override PUSH_SKIP_GATES "$AIMERGENT_PUSH_SKIP_GATES" || {
+    printf '❌ 逃生口记账失败 —— 拒绝以「放行但不记账」的姿态跳过推送前门禁\n' >&2; exit 1; }
   echo "⚠️  跳过推送前门禁：$AIMERGENT_PUSH_SKIP_GATES（已记账）" >&2
-  emit_override PUSH_SKIP_GATES "$AIMERGENT_PUSH_SKIP_GATES" 2>/dev/null || true
 fi
 
 # ── 推送前按整段区间复核文档影响面 ──────────────────────────

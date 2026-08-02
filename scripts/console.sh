@@ -2,7 +2,7 @@
 # 任务控制台数据源 → logs/console.json
 # 只读 Git 里已有的留痕，不引入新数据源（避免成为第二个事实源）。
 set -uo pipefail
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || true
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || printf '⏭  已跳过事件上报（缺 scripts/lib/emit.sh；只影响控制台可见性，不影响本次结果）\n' >&2
 root=$(git rev-parse --show-toplevel) || exit 2
 cd "$root"
 # --standalone：把数据内联进 HTML，产出一份可单独传阅的快照（不依赖 fetch）

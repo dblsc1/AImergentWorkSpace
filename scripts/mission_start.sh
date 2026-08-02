@@ -13,7 +13,7 @@
 # 「无法绕过」落在**验签**：你可以不跑本脚本，但那样你没有签，一提交就被 pre-commit 拦死。
 # 发签是自愿的，验签是强制的。
 set -uo pipefail
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || true
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || printf '⏭  已跳过事件上报（缺 scripts/lib/emit.sh；只影响控制台可见性，不影响本次结果）\n' >&2
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/checklist.sh" || { printf '❌ %s：载入 checklist.sh 失败 —— 拒绝以「什么都没验」的姿态退 0\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/lease.sh" || { printf '❌ %s：载入 lease.sh 失败 —— 拒绝以「什么都没验」的姿态退 0\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
 die() { printf '❌ %s\n' "$*" >&2; exit 1; }
@@ -230,14 +230,27 @@ fi
 # 棘轮没有反向齿，终点是一个角色持有整仓，那时路签就成了派活方持有的全局互斥锁。
 # 为什么不硬拦：「多宽算太宽」是判断题，硬拦会逼人用逃生口（判例库明文）。
 # 所以只把事实摆到申领者眼前 —— 包括**签史**，光说「有点宽」没有信息量。
+# 2026-08-03：**基线是什么必须印出来**。原来「没放宽」和「压根没有基线可比」
+# 打的是同一个 ✅ —— 判例库「恒绿的门比缺门更贵」：后者让所有人以为这事已被管住。
+# 还签之后基线转由 diary 签史提供（跨轮次比对）；新克隆上没有签史时如实说无基线。
+_base_kind=$(lease_baseline_kind "$role")
 _wide=$(lease_widening "$role" "${want[@]}")
-if [ -n "$_wide" ]; then
+case "$_base_kind" in
+  current) _base_desc="对比对象：当前持有的签" ;;
+  history) _base_desc="对比对象：本机 diary 记到的上次发签（签已还，跨轮次比对）" ;;
+  *)       _base_desc="无基线" ;;
+esac
+if [ "$_base_kind" = none ]; then
+  cl_skip 9 "无基线可比，本项没有结论（**不等于**没放宽）" \
+    "本机既没有 $role 的当前签，diary 里也没有它的发签记录（新克隆即如此）——棘轮这一轮不生效"
+elif [ -n "$_wide" ]; then
   cl_skip 9 "写区比上一次放宽了（只提醒，不拦）" \
     "放宽本身合法；但请在任务单里写清为什么——多数「必须放宽」其实是写区切得太粗"
+  cl_note "$_base_desc"
   while IFS= read -r _l; do [ -n "$_l" ] && cl_note "$_l"; done <<<"$_wide"
   while IFS= read -r _l; do [ -n "$_l" ] && cl_note "$_l"; done < <(lease_grant_history "$role")
 else
-  cl_ok 9 "写区没有比上一次放宽"
+  cl_ok 9 "写区没有比上一次放宽（$_base_desc）"
 fi
 
 # 起飞预告：这片写区可能牵动哪些长期文档 —— 现在知道，好过着陆时被拦

@@ -35,11 +35,25 @@ emit_event() {  # emit_event <event> <note> [rc]
 
 # 逃生口专用：**双写**。diary 给控制台看，ledger 是入仓的证据。
 # 每一个逃生口 env 都必须调它——漏一个，那个逃生口就是静默的。
-# selftest 扫这个类：凡 AIMERGENT_*_(OVERRIDE|SKIP*|UNREVIEWED|ALLOW_*) 出现处必须有 emit_override。
-emit_override() {  # emit_override <逃生口名> <理由>
-  local hatch=${1:-unknown} reason=${2:-} ts
+# selftest 扫这个类：凡 AIMERGENT_*_(OVERRIDE|SKIP*|UNREVIEWED|ALLOW_*|OK) 出现处必须有 emit_override。
+#
+# ── 记账是逃生口的对价：记不上账就退非 0，让调用方拒绝放行 ──────────
+# 原版每一条写路径都挂 `2>/dev/null || true`，且**无论写没写成都返回 0**。
+# 2026-08-03 实测（删掉本文件后跑 mission_complete + MISSION_OVERRIDE）：
+# ledger 一行没长，退出码 0，界面照样打印「已记入 logs/ledger.jsonl（入仓的证据）」。
+# 那不是静默，是撒谎式成功——判例库同名条说的正是这个形状。
+# **本函数从此是事实题**：返回 0 ⟺ ledger 里真多了这一行。
+emit_override() {  # emit_override <逃生口名> <理由> → 记账成功退 0；**记不上账退 1**
+  local hatch=${1:-unknown} reason=${2:-} ts before after
   ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  mkdir -p "$(dirname "$_emit_ledger")" 2>/dev/null || return 0
+  mkdir -p "$(dirname "$_emit_ledger")" 2>/dev/null || {
+    printf '❌ 逃生口记账失败：建不出 %s 所在目录\n' "$_emit_ledger" >&2; return 1; }
+  # 落点被 .gitignore 吞 = 写了也不入仓，按铁律 18 等于没记（A-1 事故本体）。
+  if git -C "$_emit_root" check-ignore -q -- logs/ledger.jsonl 2>/dev/null; then
+    printf '❌ 逃生口记账落点被 .gitignore 吞：logs/ledger.jsonl —— 写进去也不入仓\n' >&2
+    return 1
+  fi
+  before=$(wc -l < "$_emit_ledger" 2>/dev/null || echo 0)
   if command -v jq >/dev/null 2>&1; then
     jq -cn --arg ts "$ts" --arg hatch "$hatch" --arg reason "$reason" \
            --arg script "$_emit_script" --arg actor "${AIMERGENT_ROLE:-${USER:-unknown}}" \
@@ -53,7 +67,14 @@ emit_override() {  # emit_override <逃生口名> <理由>
     printf '{"ts":"%s","event":"override","hatch":"%s","reason":"%s","script":"%s","actor":"%s"}\n' \
       "$ts" "$hatch" "$r" "$_emit_script" "${AIMERGENT_ROLE:-unknown}" >> "$_emit_ledger" 2>/dev/null || true
   fi
+  # **写完必须真的看见自己那一行**（判例库「撒谎式成功」：脚本写产物不验落点）。
+  after=$(wc -l < "$_emit_ledger" 2>/dev/null || echo 0)
+  if [ "${after:-0}" -le "${before:-0}" ] || ! tail -1 "$_emit_ledger" 2>/dev/null | grep -qF -- "$hatch"; then
+    printf '❌ 逃生口记账失败：%s 没落进 %s\n' "$hatch" "$_emit_ledger" >&2
+    return 1
+  fi
   emit_event override "$hatch: $reason"
+  return 0
 }
 
 _emit_exit() {

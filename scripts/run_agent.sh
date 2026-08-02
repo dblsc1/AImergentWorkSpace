@@ -10,7 +10,7 @@
 # --resume：按记录的 session id 续用同一个进程的会话（铁律「续用 > 重开」终于可机械执行）。
 # 打回-修复循环必须用它——重开等于把上下文全丢了重读一遍。
 set -uo pipefail
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || true
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" || { printf '❌ %s：载入 emit.sh 失败 —— 本脚本能放行逃生口，而记账全靠它；拒绝以「放行但不记账」的姿态运行\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
 die() { printf '❌ %s\n' "$*" >&2; exit 1; }
 
 command -v claude >/dev/null || die "找不到 claude CLI"
@@ -102,9 +102,14 @@ if [ "$rc" -eq 0 ] && [ "$landed" -eq 0 ]; then
 HINT
   # 2026-08-01：这行此前打印「（记账）」但没有任何 emit 调用——**提示词字面撒谎**，
   # 比不记账更糟（人读到「已记账」会以为可追）。补上真正的双写。
+  # 2026-08-03：那次只修了一半 —— `2>/dev/null || true` 把记账失败又吞了回去，
+  # 于是缺 lib/emit.sh 时「已记账进 logs/ledger.jsonl」照样打印。
+  # **修一句谎话的补丁自己带着同一句谎话**，与判例库「字面量类」同源。
+  # 现在先记账、记不上就 die，那句话只在真记上之后才打印。
   [ -n "${AIMERGENT_ALLOW_NO_OUTPUT:-}" ] && {
+    emit_override ALLOW_NO_OUTPUT "只读任务放行：${role:-?} / ${card_task:-?}" || {
+      printf '❌ 逃生口记账失败 —— 拒绝以「放行但不记账」的姿态放行空产出\n' >&2; exit 1; }
     rc=0
-    emit_override ALLOW_NO_OUTPUT "只读任务放行：${role:-?} / ${card_task:-?}" 2>/dev/null || true
     echo "⚠️  已按只读任务放行（已记账进 logs/ledger.jsonl）" >&2
   }
 fi

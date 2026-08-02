@@ -193,3 +193,75 @@ else
   fi
 fi
 
+
+# 68 ── 写区粒度棘轮跨不跨得了轮次（F2 的原始场景就是跨轮次的）
+#      原判据拿**当前持有的签文件**当基线，`[ -f … ] || return 1`——
+#      **签一还基线就没了**，而还签是 mission_complete 的常规要求。
+#      于是它对自己要防的那个形状全瞎：CFO 的签五天 4 片涨到 8 片，
+#      **每一次膨胀都在不同轮次**。2026-08-03 实测 consulter 亲身撞上：
+#      上一轮 `scripts/checks/ … agents/consulter/` → 本轮 `agents/ scripts/ …`，
+#      第 9 项照打 ✅「写区没有比上一次放宽」。
+#
+#      ⚠️ fixture 刻意用 **cfo** 这个角色：这条判据管的是派活方自己，
+#      **判据不许只对别人生效**（棘轮的历史数据全是 cfo 的签）。
+printf '68. 写区放宽棘轮能不能跨还签比对（fixture 用 cfo 自己）\n'
+if [ ! -f "$S/mission_start.sh" ] || [ ! -f "$S/lib/lease.sh" ]; then
+  N "本仓没有 mission_start.sh 或 lib/lease.sh，不适用"
+else
+  _sb68=$(mktemp -d); git -C "$_sb68" init -q -b feat/probe
+  git -C "$_sb68" config user.email t@e.c >/dev/null 2>&1
+  cp -r "$S" "$_sb68/scripts"
+  mkdir -p "$_sb68/agents/cfo/docs/worklog" "$_sb68/logs"
+  # 角色卡（第 4 项要它存在且没有未替换占位符）
+  printf '# cfo\n写边界：agents/cfo/\n' > "$_sb68/agents/cfo/AGENTS.md"
+  # 任务单四小节（第 1 项）
+  _tc68="$_sb68/agents/cfo/docs/worklog/2026-08-03-任务单-探针.md"   # ref-fixture
+  printf '# 探针任务单\n## 目标\n验棘轮\n## 验收标准\n第9项能跨还签\n## 可触碰目录\nagents/cfo/\n## 自检门\nselftest\n' > "$_tc68"
+  # 三个 hook（第 5 项）——只要可执行即可，内容不重要
+  _hd68=$(git -C "$_sb68" rev-parse --path-format=absolute --git-path hooks)
+  mkdir -p "$_hd68"; for _h in pre-push commit-msg pre-commit; do
+    printf '#!/bin/sh\nexit 0\n' > "$_hd68/$_h"; chmod +x "$_hd68/$_h"; done
+  git -C "$_sb68" add -A >/dev/null 2>&1
+
+  _ms68() { ( cd "$_sb68" && bash scripts/mission_start.sh "$@" ) 2>&1; }
+  _item9() { sed -n 's/^│ *\(⏭\|✅\|❌\) *9 *//p' <<<"$1"; }
+
+  _o68_first=$(_ms68 cfo "${_tc68#"$_sb68"/}" agents/cfo/)      # ①首次发签：本机零签史
+  _ms68 --release cfo >/dev/null                                 # ②还签（常规要求）
+  _o68_wide=$(_ms68 cfo "${_tc68#"$_sb68"/}" agents/)            # ③跨轮次放宽
+
+  # 反向：把基线改回「只认当前签文件」，同一串操作必须变成 ✅（证明验的是这次修复）
+  _ms68 --release cfo >/dev/null
+  python3 - "$_sb68/scripts/lib/lease.sh" <<'PY' 2>/dev/null
+import sys
+p=sys.argv[1]; s=open(p,encoding="utf-8").read()
+a='''  if [ -f "$d/$role.lease" ]; then
+    mapfile -t old < "$d/$role.lease"
+  else
+    mapfile -t old < <(lease_last_grant "$role")   # 跨轮次基线
+  fi'''
+b='''  [ -f "$d/$role.lease" ] || return 1
+  mapfile -t old < "$d/$role.lease"'''
+open(p,"w",encoding="utf-8").write(s.replace(a,b,1))
+PY
+  _ms68 cfo "${_tc68#"$_sb68"/}" agents/cfo/ >/dev/null
+  _ms68 --release cfo >/dev/null
+  _o68_old=$(_ms68 cfo "${_tc68#"$_sb68"/}" agents/)             # 旧基线：应恒 ✅
+  rm -rf "$_sb68"
+
+  _v68=""
+  # ① 零签史时不许打 ✅ ——「没放宽」和「没有基线」不是一回事
+  case "$(_item9 "$_o68_first")" in *无基线可比*) ;; *) _v68="$_v68 [零签史却给了结论]" ;; esac
+  # ② 跨还签必须报出放宽，且点名到具体的前缀
+  case "$_o68_wide" in *"写区比上一次放宽"*) ;; *) _v68="$_v68 [跨还签的放宽没报出来]" ;; esac
+  case "$_o68_wide" in *"放宽：agents/cfo/ → agents/"*) ;; *) _v68="$_v68 [没点名是哪一片放宽]" ;; esac
+  # ③ 必须把签史摆出来（光说「有点宽」没有信息量，是立本条时的原话）
+  case "$_o68_wide" in *"签史"*) ;; *) _v68="$_v68 [报了放宽却不列签史]" ;; esac
+  # ④ 反向：旧基线下同一串操作恒 ✅ —— 证明这条断言验的是修复本身，不是旁因
+  case "$(_item9 "$_o68_old")" in *"没有比上一次放宽"*) ;; *) _v68="$_v68 [旧基线下也红：本断言不是在验这次修复]" ;; esac
+  if [ -z "$_v68" ]; then
+    P "cfo 发窄签→还签→发宽签：跨轮次报出「放宽：agents/cfo/ → agents/」并列签史；零签史时如实说无基线；换回旧基线同一串操作恒绿"
+  else
+    F "棘轮仍然失忆：$_v68"
+  fi
+fi

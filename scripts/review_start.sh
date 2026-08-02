@@ -7,7 +7,7 @@
 # 本地 commit 已是不可变、有 SHA 的真实对象，绑它足够；
 # 先审后推的好处：被打回的活永远不上远端，返修不需要 force-push。
 set -uo pipefail
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || true
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || printf '⏭  已跳过事件上报（缺 scripts/lib/emit.sh；只影响控制台可见性，不影响本次结果）\n' >&2
 die() { printf '❌ %s\n' "$*" >&2; exit 1; }
 root=$(git rev-parse --show-toplevel) || die "不在 Git 仓内"; cd "$root"
 

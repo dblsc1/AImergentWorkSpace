@@ -2,7 +2,7 @@
 # 生成全量留痕索引 → logs/INDEX.md
 # 留痕文件本身保持分散（人类 2026-07-28 裁决 2）；本脚本只做索引，不搬文件。
 set -uo pipefail
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || true
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || printf '⏭  已跳过事件上报（缺 scripts/lib/emit.sh；只影响控制台可见性，不影响本次结果）\n' >&2
 root=$(git rev-parse --show-toplevel) || exit 2
 cd "$root"
 
