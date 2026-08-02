@@ -27,6 +27,9 @@ if [ -z "$report_base" ]; then
   bad "无法解析 PR/main 基线"
   exit 1
 fi
+# 记下基线的**引用名**（origin/main 之类）。下面 check_one 会把 report_base 复用成
+# 「这份报告自己填的 base」，名字被覆盖后就没法在报错里告诉人该拿什么去算了。
+report_base_ref=$report_base
 merge_base=$(git merge-base "$report_head" "$report_base" 2>/dev/null || true)
 if [ -z "$merge_base" ]; then
   bad "无法计算 merge-base: $report_base"
@@ -100,7 +103,16 @@ validate_common() {
     return
   fi
   if ! git merge-base --is-ancestor "$report_base" "$merge_base"; then
+    # 本项目最高频的一个错：2026-08 一个月内四个不同角色犯了五次。
+    # 病根是**直觉与判据不一致**：人想的是「我这次改动是从哪个 commit 开始的」，
+    # 判据要的是「PR 目标基线」——在本仓 main 从不移动，那个值几乎恒定。
+    # 五次同一个错 = 判据没说清，不是五个人都笨。所以这里**直接把正确值印出来**，
+    # 把一道每次都要重新想的推理题变成一次复制粘贴。
     bad "git.base 不是 PR 目标 merge-base 的祖先（疑似 feature-only base）: $path"
+    bad "  你填的 $(git rev-parse --short "$report_base" 2>/dev/null) 在 feat 分支上，不是分叉点。"
+    bad "  判据要的不是「我的改动从哪开始」，是「这条分支从目标基线的哪一点分出去的」。"
+    bad "  本仓当前的正确值（直接抄）：$(git rev-parse "$merge_base")"
+    bad "  自己算：git merge-base HEAD $report_base_ref"
     return
   fi
   diff_names=$(git -c core.quotePath=false diff --name-only --no-renames "$report_base..$report_commit")

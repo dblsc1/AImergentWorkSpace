@@ -82,7 +82,7 @@ codeagent/<角色>/checks/       本模块给该角色追加的
 | `hooks/commit-msg` | 拦缺失/重复/畸形的 `Agent-Attribution` |
 | `hooks/cc-push-guard.sh` | 推送拦截的辅助日志 |
 | `gates/run-gates.sh` | 确定性门禁总入口：归属 / 报告 / 密钥 / 行数 / hook 安装 / reviewcode |
-| `gates/check-report-schema.sh` | 报告协议核验（含空区间假绿修复） |
+| `gates/check-report-schema.sh` | 报告协议核验（含空区间假绿修复；`git.base` 报错会直接印出可抄的正确值） |
 | `gates/run-tests.sh` | 跑模块测试与构建 |
 
 ### 完整流程（2026-07-28 定）
@@ -118,6 +118,20 @@ arbiter
 **「审核门在 merge 不在 commit」**：提交层只要求 `reviewer_opinion` 字段**存在**
 （`verdict` 可以是 `pending`），合并层才要求 `approved`。
 否则实现者永远无法先提交形成 candidate，审核就无从开始。
+
+### `report.json` 的 `git.base` 该填什么
+
+**本仓最高频的一个错**：2026-08 内四个角色犯了五次。
+
+直觉会填「我这次改动是从哪个 commit 开始的」——**判据要的不是那个**，
+是「这条分支从目标基线的哪一点分出去的」。本仓 `main` 从不移动，所以那个值几乎恒定：
+
+```bash
+git merge-base HEAD origin/main
+```
+
+填 feat 分支上的任何 commit 都会被拒（报错里会写「疑似 feature-only base」并直接给出正确值）。
+另一个常见坑：**「新建后又删掉」的净零文件不在 diff 里**，别写进 `files_changed`。
 
 ## 非脚本文件
 
