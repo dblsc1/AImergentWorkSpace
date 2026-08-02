@@ -2,33 +2,39 @@
   "schema_version": 2,
   "module": "workspace",
   "role": "consulter",
-  "task": "科普定位与调研数据入仓（world model vs LLM / 路由评测 / 新手提效证据 + 可视化教学功能清单）",
+  "task": "修正 report.json 的 git.base（卡住全仓推送门）+ 裁决「完工即自动还签」在本仓的落点",
   "tier": "simple",
   "status": "approved",
-  "summary": "用户拟做面向 vibecoding 新手的科普视频，项目定位「年轻人的第一个多 agent 架构」。三路并行调研（world model 时间线 / RouteLLM-Aider-Haiku 路由评测 / Cui-Anthropic-MAST-DORA 新手证据）汇总为 agents/reference/科普定位-新手第一个多agent架构.md：§0 新手三缺口对 MAST 79% 失败归因，§1 数据弹药库（每条带源+口播版），§2 功能清单 14 条（含用户种子 S1 抓谎现场 / S2 写区领地地图），§3 课程叙事线（判例库=剧本库），§4 落地优先级待用户排铲",
+  "summary": "① 元数据修正：git.base 由 4ab1b36（feat 分支中间 commit）改为 211bdec5559ab4ab798a464272cde5dc27f64740（merge-base HEAD origin/main），同批把 git.branch / review_target.branch 由 'v5' 改为实际分支名 feat/frontend-view-modules——merge-to-integration.sh 拿 .git.branch 与被合并分支做等值比较，填远端目标名会让合并门在真正合并时判否。run-gates.sh 退出码 0。② 裁决：驳回「dispatch.sh 出完提示词自动还派活方的签」，层②改落 mission_start.sh 的拒发分支（唯一有人真的正被挡住的时刻）。③ 顺带查出四处更靠上游的缺陷：角色推断对 J3 布局全失效、拒发不记账、合并门的审核新鲜度断言接近恒真、推送门全绿时吐 comm 排序警告（已反向验证非假绿）。",
   "git": {
     "protocol": "embedded-self-v2",
-    "branch": "v5",
-    "base": "4ab1b36e9d81feac74813d0c6ad8e5afd81fb2c8",
+    "branch": "feat/frontend-view-modules",
+    "base": "211bdec5559ab4ab798a464272cde5dc27f64740",
     "head": "SELF",
     "diff_mode": "contains",
     "changed_files": [
-      "agents/reference/科普定位-新手第一个多agent架构.md",
-      "agents/consulter/docs/worklog/2026-08-02-consulter-科普定位与调研数据入仓.md",
-      "agents/consulter/docs/findings/report.json"
+      "agents/consulter/docs/findings/report.json",
+      "agents/consulter/docs/worklog/2026-08-02-consulter-report-base修正与路签裁决.md",
+      "agents/consulter/docs/worklog/2026-08-02-任务单-report-base修正与路签释放裁决.md"
     ]
   },
   "review_target": {
-    "branch": "v5",
-    "base": "62c2f917d0ca6950071f9fbb75c912435dec92ba",
-    "head": "cbce1754fb1267e2c565b10acb132925b8a929e0",
+    "branch": "feat/frontend-view-modules",
+    "base": "06cf052452612f5d2f28e86e7f9e8da33713cdad",
+    "head": "a0ac81af61f33e3f3be5447dbbd54687f078929f",
     "diff_mode": "exact",
-    "verdict": "approved",
     "changed_files": [
-      "agents/consulter/docs/worklog/2026-07-29-consulter-panorama.md",
-      "agents/consulter/docs/worklog/2026-07-29-任务单-全景文档.md",
-      "agents/reference/manual/文档地图.md",
-      "agents/reference/工作空间全景.md",
+      ".gitattributes",
+      ".gitignore",
+      "agents/cfo/docs/worklog/2026-08-02-cfo-写区路签TTL.md",
+      "agents/cfo/docs/worklog/2026-08-02-任务单-账本union.md",
+      "agents/reference/manual/通用经验教训.md",
+      "code/_template/.gitattributes",
+      "logs/ledger.jsonl",
+      "scripts/README.md",
+      "scripts/gates/check-report-schema.sh",
+      "scripts/lib/lease.sh",
+      "scripts/mission_complete.sh",
       "scripts/mission_start.sh",
       "scripts/selftest.sh"
     ]
@@ -42,34 +48,66 @@
   "escalation": null,
   "docs_reviewed": [
     {
-      "path": "agents/reference/manual/文档地图.md",
+      "path": "agents/consulter/记忆.md",
       "action": "no-change-needed",
-      "reason": "reference 调研产物不逐篇入地图（同社区对照系列先例）"
+      "reason": "本轮五条 findings 全部处于「待裁决/待实现」状态，判例库只收已付过学费、已定案的坑；F2/F3 落地后再入库，现在入库等于把提案写成判例"
     }
   ],
   "findings": [
     {
-      "category": "research",
-      "severity": "info",
-      "summary": "世界模型阵营应用清单无软件工程（编程域仅 CWM/Checksum 弱化变体）——本架构赛道可见期内不受威胁；便宜模型稳定在旗舰 64-95% 分、1/3-1/25 价，等能力价格年降中位 50×，complexity 分档判据不用改、档位边界自动下移",
-      "file": "agents/reference/科普定位-新手第一个多agent架构.md"
+      "category": "process",
+      "severity": "high",
+      "summary": "F1 驳回「dispatch.sh 自动还派活方的签」作为层②落点。三条硬理由：(a) dispatch.sh 的 argv 是<接收方角色, 任务单>，mission_start.sh 用接收方 exec 它，脚本根本不知道派活方是谁——要实现必须新加 --as 或读 AIMERGENT_ROLE，而该值缺省时会「静默地什么都不还」，正是 2026-07-31 已实证过的同一形状（判例库「恒定答案类」第五条）；(b) 派活方的签常常不是闲置的——arbiter 的正常节奏就是「写任务单→派单→写下一张任务单」，dispatch 时还签会让它下一次提交撞上 05 号检查的「没有写区路签」，而错误文案不会说明是上一次派单还掉的；(c) 它答的不是层②那个问题——层②是「释放不在完工这条关键路径上」，而派单不是完工，落在那里依然是自愿动作，只是换了触发器。",
+      "file": "scripts/dispatch.sh"
     },
     {
-      "category": "research",
-      "severity": "info",
-      "summary": "「结构化治理让新手更快上手」尚无直接对照实验（2026-08 研究空白）；间接链条成立（MAST 79% 失败在规范/协调/验证层 + DORA 2025 平台调节效应）。X_structure 从 0 全程记录可成为第一个有数据的公开案例",
-      "file": "agents/reference/科普定位-新手第一个多agent架构.md"
+      "category": "architecture",
+      "severity": "high",
+      "summary": "F2 真正的病根是写区粒度棘轮，不是释放时机。logs/diary.jsonl 有五天连续证据：cfo 的签从 agents/ 单调膨胀到 scripts/ agents/ contracts/ blockers/ logs/ code/_template/ .gitignore .gitattributes，且每一次膨胀前 90 秒内都紧跟一条 mission_blocked failed:write-lease（13:51:07 发签 → 13:51:28 被拦 → 13:52:21 放宽 → 13:52:41 又被拦 → 13:52 再放宽）。即 05 号拦下越区提交后，持有者的标准修法是放宽自己的签。这条棘轮没有反向齿，终点是一个角色持有整仓——那时路签不再是碰撞探测器，而是派活方持有的全局互斥锁，CFO 今天卡子代理三次正是这个终点的症状。lib/lease.sh 自己写下的判据「一旦签开始串行化正常并发，说明写区划分错了或粒度太粗」已经触发。反向齿存在但靠人手：2026-08-02 07:49 CFO 手动把 agents/ 收窄成 agents/cfo/。",
+      "file": "logs/diary.jsonl"
+    },
+    {
+      "category": "process",
+      "severity": "high",
+      "summary": "F3 mission_complete.sh 的角色自动推断对 J3 布局的五条 canonical worklog 路径全部失效——正则只认已过渡的旧布局 codeagent/<角色>/docs/。实测把五条路径逐条喂给该正则：agents/consulter/docs/worklog/、agents/cfo/docs/worklog/、module_docs/worklog/、code/<子文件夹>/worklog/、review/reviewreport/ 全部推断为空 → role=unknown；只有 codeagent/programmer/docs/ 命中。role=unknown 是非空字符串，于是 05 号去找 unknown.lease、找不到就判失败——diary 里 role:unknown + failed:write-lease 的记录就是它。后果：常规提交路径必须手动传 AIMERGENT_ROLE，否则被一条与自己无关的理由拦住。为什么 2026-07-31 那次修复没抓到：selftest 第 50 项的沙箱暂存的正是 codeagent/programmer/docs/worklog/x.md（scripts/selftest.sh 第 550 行）——唯一还能命中正则的那条路径，所以断言恒绿而现实全是 unknown。判例库「被测对象是哪一份」第三次实证。",
+      "file": "scripts/mission_complete.sh"
+    },
+    {
+      "category": "process",
+      "severity": "medium",
+      "summary": "F4 发签成功记账、拒发不记账。mission_start.sh 只在发签成功后 emit_event lease_grant；写区重叠走 cl_bad 分支、cl_footer 直接 exit 1，全程不产生任何事件。后果：CFO 报「今天为此卡了子代理三次」在 logs/diary.jsonl 里查无实据，问题规模无法计数，也无法验证任何层②方案是否真的降低了拒发次数。这是铁律 19 的证据强度问题——先补 lease_denied 事件，再谈优化，否则改完只能靠感觉判断有没有变好。",
+      "file": "scripts/mission_start.sh"
+    },
+    {
+      "category": "process",
+      "severity": "medium",
+      "summary": "F5 合并门的审核新鲜度断言接近恒真。merge-to-integration.sh 取 .review_target.head 后只断言它是候选提交的祖先——审得越旧越容易过：任何落在本分支历史上的 head 都成立，唯一的失败方式是填一个别的分支上的 sha。它从不断言审核覆盖了候选。追问判例库那两句：「什么情况下永远通过？」答案是「几乎所有情况」。这正是一份 2026-07-29 的陈旧 review_target 能在本报告里躺四天、还被 commit ee5806a 专门恢复回来以满足推送门的原因。",
+      "file": "scripts/merge-to-integration.sh"
+    },
+    {
+      "category": "process",
+      "severity": "low",
+      "summary": "F6 schema 强制 consulter 每份报告都带 review_target，非审查轮次只能回填。check-report-schema.sh 把 consulter 与 programmer_reviewer / module_reviewer 同等对待，缺 review_target 即判否；而 consulter 的多数轮次（框架维护、架构裁决、调研入仓）不产生审查区间。commit ee5806a 的标题就是证据：恢复 review_target 最近审查区间——推送门 schema 要求。一个为满足门禁而回填的字段不再承载信息。本轮 review_target 填的是我确实读过的区间（CFO 的路签 TTL / gitattributes / 报错文案三个 commit），并刻意不带 verdict 键——对 CFO 逐单产出的例行裁决归 cfo_reviewer（裁决 J6），不归我。",
+      "file": "scripts/gates/check-report-schema.sh"
+    },
+    {
+      "category": "process",
+      "severity": "low",
+      "summary": "F7 推送门在全绿时往 stderr 吐三行 comm: not in sorted order。成因：check-report-schema.sh 的 review_target 逐条比对用 sort -u 排序后交给 comm，而本仓路径大量含非 ASCII，sort 走 locale 排序（LANG=en_US.UTF-8）与 comm 期望的排序不一致。已做反向验证（判例库要求的唯一可信证明）：造五种输入喂同一条比对逻辑——少一条非 ASCII 路径、少一条 ASCII 路径、多一条伪造路径、把非 ASCII 换成 C 转义形态、完全一致——前四种全部检出差异，第五种判一致，**未观察到假绿**。所以这是噪音不是漏判。但仍建议修：两处 sort 都加 LC_ALL=C（已验证警告随即消失），理由是「绿灯里混着红色 stderr」会训练人忽略门禁输出，而这道门恰恰是靠人读输出的。",
+      "file": "scripts/gates/check-report-schema.sh"
     }
   ],
-  "reflection": "教学产品与治理框架是同构的：单调加严级联=课程大纲，判例库=剧本库，mutation testing=一键搞破坏游戏——不需要为教学另造机制，只需要给已有机制加渲染层。Anthropic -17pp 技能税数据反过来约束产品设计：控制台必须逼理解（检查点），否则教出来的是更快的 vibecoder。",
+  "reflection": "CFO 把问题描述成「释放时机没落点」，证据说的是另一回事：五天的 diary 里被路签卡住的几乎全是持签者自己的提交（role 为 cfo 或 unknown、failed 为 write-lease），而不是别人在门口等签。真正的循环是「05 拦住越区提交 → 持有者放宽自己的签 → 签覆盖面越来越大 → 终于把子代理挡在门外」。在这个循环里加一个自动释放，等于在棘轮末端装缓冲垫，棘轮照转。更值得注意的是本轮三条缺陷（F3 角色推断失效、F4 拒发不记账、F5 新鲜度恒真）有同一个形状：机制的输入或输出有一段是黑的——推断不出角色、拒发不留痕、审得多旧都算数。层②的方案再好，装在一个看不见自己状态的机制上也验不出效果。所以实现顺序把 F4 排在层②之前：先能数，再改。",
   "recommendations": [
-    "落地优先级（待用户排铲）：①抓谎直播间（纯渲染层，三源数据已有）②写区领地地图（understand-anything 底图）③双屏对照实验（首发视频核心素材）④判例回放剧场（课程与功能一鱼两吃）",
-    "视频引用纪律：METR 19% 必须带 2026-02 自我推翻上下文；Triage 论文是提案无实测，不能写「省了 X%」"
+    "裁决（consulter，建议级，落地需 CFO 或人类拍板）：层②不落 dispatch.sh，落 mission_start.sh 的拒发分支（起飞检查单第 2 项 cl_bad 那一支）。理由是关键路径的定义——那一刻确实有人被这块签挡住、不解决就走不下去；dispatch 时刻没有任何人在等，落在那里仍是自愿动作。具体做法：拒发时若持有者的写区在工作树里干净、且其声明的文档变更已全部落地，就把判据连同一条可直接粘贴的强收命令一起印给被卡方。不做自动强收——lib/lease.sh 自己写了红线「静默回收会让双写发生（安静）」，那条红线对拒发路径同样成立。",
+    "实现顺序建议：F4 补 lease_denied 事件 → 层② 拒发分支给强收判据 → F3 角色推断补 J3 布局（同批把 selftest 第 50 项的沙箱路径从 codeagent/programmer/docs/ 换成五条 J3 路径逐条跑，否则断言仍然只证明旧布局）→ F2 给 mission_start 加「新签是旧签真超集」的警告（阈值需人类定）→ F5/F6 改 schema 与合并门判据（动的是共享协议，须 CFO 裁）。F4 排第一是因为它是唯一能验证后面几步有没有效果的度量。",
+    "F2 需要人类裁决的点：写区放宽到什么程度算「粒度错了」没有客观阈值，硬拦会逼人用逃生口（判例库「判断题不做硬闸门」）。我的建议是只警告不拦，并要求在任务单里写明放宽理由；但阈值与是否升格为硬闸门不由我定。",
+    "承接上一轮未结项（科普定位，deliverable 在 agents/reference/科普定位-新手第一个多agent架构.md，本轮未改动）：落地优先级仍待用户排铲——①抓谎直播间 ②写区领地地图 ③双屏对照实验 ④判例回放剧场；视频引用纪律不变：METR 19% 必须带 2026-02 自我推翻上下文，Triage 论文是提案无实测，不能写「省了 X%」。"
   ],
   "reviewer_opinion": {
     "reviewer": "human",
     "verdict": "pending",
-    "path": "agents/consulter/docs/worklog/2026-08-02-consulter-科普定位与调研数据入仓.md",
+    "path": "agents/consulter/docs/worklog/2026-08-02-consulter-report-base修正与路签裁决.md",
     "round": 1
   }
 }
