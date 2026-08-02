@@ -560,9 +560,9 @@ else
     git -C "$_sbx" add -A
   }
   _bad50=""
-  for _c50 in "codeagent/programmer/docs/worklog/x.md|programmer|旧布局" \
-              "module_docs/worklog/x.md|arbiter|J3模块级" \
-              "agents/consulter/docs/worklog/x.md|consulter|J3项目级"; do
+  for _c50 in "codeagent/programmer/docs/worklog/x.md|programmer|旧布局" `# ref-fixture` \
+              "module_docs/worklog/x.md|arbiter|J3模块级" `# ref-fixture` \
+              "agents/consulter/docs/worklog/x.md|consulter|J3项目级" `# ref-fixture`; do
     _t50=${_c50%%|*}; _r50=${_c50#*|}; _lab50=${_r50#*|}; _r50=${_r50%%|*}
     _build_role_export_sandbox "$S/mission_complete.sh" "$_t50" "$_r50"
     _rc=0
@@ -824,16 +824,16 @@ if [ ! -f "$S/lib/paths.sh" ] || ! grep -q 'role_from_trace_path' "$S/lib/paths.
 else
   # 逐条喂：<路径>|<期望角色>|<仓型>（m=模块仓 / f=框架仓；仓型影响 code/ 的判读）
   _cases56=(
-    "agents/consulter/docs/worklog/x.md|consulter|f"
-    "agents/cfo/docs/worklog/x.md|cfo|f"
-    "module_docs/worklog/x.md|arbiter|m"
-    "code/backend/worklog/x.md|programmer|m"
-    "code/backend/orders/report.json|programmer|m"
-    "review/reviewreport/report.json|programmer_reviewer|m"
-    "review/reviewcode/tests/t.sh|programmer_reviewer|m"
-    "codeagent/programmer/docs/worklog/x.md|programmer|m"
-    "codeagent/programmer/01/docs/comm.jsonl|programmer|m"
-    "codeagent/module_reviewer/docs/report.json|module_reviewer|m"
+    "agents/consulter/docs/worklog/x.md|consulter|f"          # ref-fixture
+    "agents/cfo/docs/worklog/x.md|cfo|f"                      # ref-fixture
+    "module_docs/worklog/x.md|arbiter|m"                      # ref-fixture
+    "code/backend/worklog/x.md|programmer|m"                  # ref-fixture
+    "code/backend/orders/report.json|programmer|m"            # ref-fixture
+    "review/reviewreport/report.json|programmer_reviewer|m"   # ref-fixture
+    "review/reviewcode/tests/t.sh|programmer_reviewer|m"      # ref-fixture
+    "codeagent/programmer/docs/worklog/x.md|programmer|m"     # ref-fixture
+    "codeagent/programmer/01/docs/comm.jsonl|programmer|m"    # ref-fixture
+    "codeagent/module_reviewer/docs/report.json|module_reviewer|m"  # ref-fixture
   )
   _sbx56=$(mktemp -d); mkdir -p "$_sbx56/m/codeagent" "$_sbx56/m/module_docs" "$_sbx56/f"
   _miss56=""
@@ -845,11 +845,11 @@ else
        $_p56 → 期望 $_want56，实得「${_got56:-<空>}」"
   done
   # 反面两条：框架根的 code/ 装的是模块仓不是代码侧；同层两个角色必须判歧义
-  _fwc=$( cd "$_sbx56/f" && . "$S/lib/paths.sh" && printf 'code/gantt/x.md\n' | role_from_staged )
+  _fwc=$( cd "$_sbx56/f" && . "$S/lib/paths.sh" && printf 'code/gantt/x.md\n' | role_from_staged )   # ref-fixture
   [ -z "$_fwc" ] || _miss56="$_miss56
-       框架仓的 code/gantt/x.md 被推成「$_fwc」—— 框架根的 code/ 装的是模块仓"
+       框架仓的 code/gantt/x.md 被推成「$_fwc」—— 框架根的 code/ 装的是模块仓"   # ref-fixture
   _amb56=$( cd "$_sbx56/f" && . "$S/lib/paths.sh" && \
-            printf 'agents/cfo/docs/a.md\nagents/consulter/docs/b.md\n' | role_from_staged )
+            printf 'agents/cfo/docs/a.md\nagents/consulter/docs/b.md\n' | role_from_staged )   # ref-fixture
   [ -z "$_amb56" ] || _miss56="$_miss56
        同层出现 cfo 与 consulter 两个角色却给了「$_amb56」—— 歧义必须返回空，不许挑第一个"
   rm -rf "$_sbx56"
@@ -857,6 +857,39 @@ else
     F "角色推断没覆盖全部 canonical 路径（F3）：$_miss56"
   else
     P "十条 canonical 留痕路径逐条命中；框架仓 code/ 不误判；同层歧义返回空不静默挑第一个"
+  fi
+fi
+
+# 57 ── ref-fixture 行级标记：既要能豁免测试输入，又**不许把这道门变哑**
+#      成因：F3 的断言必须把 J3 canonical 路径写成字面量喂进角色推断，
+#      而 check-references 把它们全判成悬空引用。逐条登记进 doc-path-exempt.txt
+#      只修实例——下一个写断言的人照样撞，且登记表会长成一张混着
+#      「真的还没建」与「永远不会建」的名单，再也分不开。
+#      行级标记修的是类；但**任何豁免机制都必须验它没顺手把门关掉**。
+printf '57. ref-fixture 标记豁免测试输入，但不许把引用完整性变哑\n'
+if [ ! -x "$S/gates/check-references.sh" ]; then
+  N "本仓没有 gates/check-references.sh，不适用"
+else
+  _sbx57=$(mktemp -d); git -C "$_sbx57" init -q
+  mkdir -p "$_sbx57/scripts/gates"
+  cp "$S/gates/check-references.sh" "$_sbx57/scripts/gates/"
+  chmod +x "$_sbx57/scripts/gates/check-references.sh"
+  : > "$_sbx57/scripts/gates/doc-path-exempt.txt"
+  # 一行带标记（应放行）、一行不带（应照红）。两条路径都真不存在。
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'fixture="scripts/never-exists-fixture.sh"   # ref-fixture\n'
+    printf 'realref="scripts/never-exists-dangling.sh"\n'
+  } > "$_sbx57/scripts/probe.sh"
+  git -C "$_sbx57" add -A >/dev/null 2>&1
+  _o57=$( cd "$_sbx57" && bash scripts/gates/check-references.sh 2>&1 )
+  rm -rf "$_sbx57"
+  if grep -q 'never-exists-fixture' <<<"$_o57"; then
+    F "带 ref-fixture 标记的测试输入仍被判成悬空引用 —— 类没修掉，下一个写断言的人还得逐条登记"
+  elif ! grep -q 'never-exists-dangling' <<<"$_o57"; then
+    F "没带标记的真悬空引用也没被抓 —— 豁免机制把整道门变哑了（比误报危险得多）"
+  else
+    P "带标记的测试输入被放行、同一文件里没带标记的真悬空引用照样红（豁免是行级的，不是整文件）"
   fi
 fi
 

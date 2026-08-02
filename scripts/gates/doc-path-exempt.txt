@@ -2,6 +2,13 @@
 # 判据严格化后（人类 2026-07-28 裁决），未登记的死链一律红。
 # 登记本身就是可审计的：谁加的、为什么，看 git blame。
 #
+# ⚠️ **测试 fixture 路径不要登记到这里**（2026-08-02）。
+#    喂给路径判据的合成输入（selftest 里那些 code/<子文件夹>/worklog/ 之类）
+#    按定义就不该存在——要它们真存在才能过，等于要求 selftest 往仓里种垃圾。
+#    它们与本文件收的「暂时还没建、将来会建」是两种东西，混在一起以后分不开。
+#    正确做法：在**那一行**的行尾注释里写 ref-fixture，
+#    由 gates/check-references.sh 行级放行（不是整文件放行，selftest #57 盯着）。
+#
 # 报告协议点名、但按任务才产出的 canonical report：
 codeagent/arbiter/docs/report.json
 codeagent/programmer/docs/report.json
