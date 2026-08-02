@@ -90,7 +90,7 @@
     "【CFO】装机两条：install-gates 的「.」语义是 workspace root、装机源取工作区而非 HEAD",
     "【consulter】check-report-schema 的 review_target 七项大 and 拆成逐项判；错误文案点明 changed_files 必须是 core.quotePath=false 形态",
     "【consulter】断言 36 的排除项按路径判而非按整行文本判；agents/reference/工作空间全景.md:255 的「34 条」改成「条数见运行输出」（现已 65 条，化石又漂了）",
-    "【待人类】C1 覆不覆盖 .md —— CFO 已明确不裁，挂人类",
+    "【已裁决 2026-08-02，台账 D16，原文保留不删】C1 覆不覆盖 .md —— 人类裁定：C1 只管源码，散文不算（500 行本意是逼你拆职责，那是代码的道理）。落地见 agents/consulter/docs/worklog/2026-08-02-consulter-C1只管源码.md",
     "【已完成，记账】本轮把 18-secret-literal.sh 的守卫措辞统一到全仓惯用法。动了 CFO 的文件，只动守卫那一行，理由：断言 63 靠守卫独有措辞分辨「守卫拦的」与「碰巧红的」，两套措辞会让断言要认两套规矩"
   ],
   "reviewer_opinion": {

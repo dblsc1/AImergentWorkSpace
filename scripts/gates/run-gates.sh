@@ -186,6 +186,9 @@ say "── gate: 单文件行数（C1 三档）──"
 #   ≤500          常态
 #   501–1000      **必须在 report.json 里记一笔**（不是警告——记不到就是红）
 #   >1000         没有说明余地，硬拦
+# **治理对象只有源码**（人类裁决 2026-08-02，台账 D16）：500 行的约束本意是逼你拆职责，
+# 那是代码的道理；长文档拆开反而伤可读性。散文与数据（.md/.txt/.jsonl…）不进这三档。
+# D12 定的是分档，D16 定的是适用范围，两条各管一维、不冲突。
 # D2/D14 保留唯一例外：**保险柜派生的存量导入文件**，顶部写明「下次重构拆掉」的
 # 只警告不拦（偿还条件＝谁第一个为功能需求实质修改它，谁负责拆）。
 #
@@ -202,7 +205,34 @@ say "── gate: 单文件行数（C1 三档）──"
 #   · D2 存量导入：由**文件自己顶部的标记**声明，改动的人一眼看得见
 # 旧的 review/reviewcode/size_exempt.txt 不再被读；若它还在且里面有上面两类都
 # 覆盖不到的条目，下面会逐条报红要求迁移——**不许静默作废别人的豁免**。
-size_hit=0; size_scanned=0; size_skipped=0; size_d2=0
+size_hit=0; size_scanned=0; size_skipped=0; size_d2=0; size_prose=0
+
+# ── C1 的源码扩展名白名单：**唯一事实源，就这一处** ─────────────────
+# 改判据 = 改这张表。别在别的脚本里另起一份——这条规矩是用两次事故买来的，方向相反：
+#   · 表太窄 → 门变哑：上一版只认 py/js/ts/html/css/vue/svelte，`.sh` 不在里面，
+#     1129 行的 scripts/selftest.sh 连着四天被打印成 ✅「无超限文件」。
+#     **`.sh` 必须留在表里**（selftest 那次拆分正是这条判据该管的）。
+#   · 表有两份 → 迟早分叉：模块模板 review/reviewcode/run_all.sh 原先另写一份
+#     「全类型 >500 一律硬拦」，与 C1 三档相反、也与 D16 相反；那份已在本轮删除
+#     （同一文件里就记着 abspath 判据两份副本分叉造成的 abspath-second-copy 事故）。
+c1_source_ext=(sh bash zsh py js mjs cjs jsx ts tsx vue svelte html css scss less
+               json yaml yml toml sql go rs rb java kt c h cc cpp hpp php)
+
+c1_is_source() {   # 源码 → 0；散文/数据 → 1
+  local f=$1 b ext e first=''
+  b=${f##*/}
+  case "$b" in
+    *.*)
+      ext=${b##*.}
+      for e in "${c1_source_ext[@]}"; do [ "$ext" = "$e" ] && return 0; done
+      return 1 ;;
+  esac
+  # 无扩展名但有 shebang 的可执行脚本同样是源码（scripts/aim、scripts/hooks/* 就是这样）。
+  # 不认它，等于亲手挖一个和「.sh 不在表里」一模一样形状的新盲区。
+  IFS= read -r first < "$f" 2>/dev/null || true
+  case "$first" in '#!'*) return 0 ;; esac
+  return 1
+}
 
 size_skip_reason() {   # 判据不适用 → 打印理由并返回 0
   local f=$1 d b
@@ -230,9 +260,19 @@ while IFS= read -r -d '' _rj; do
   done < <(jq -r '(.oversize_files // [])[]? | .path // empty' "$_rj" 2>/dev/null)
 done < <(git ls-files -z -- '*report.json')
 
-for f in "${tracked[@]}"; do
+# 行数 gate 的扫描集比 tracked 宽一点：模块仓里 review/reviewcode/ 的审核脚本与整合
+# 测试也是源码，C1 一样管（模板里那条「全类型 >500」删掉之后，这里是它唯一的接盘人）。
+# **不并进 tracked**：禁默认值/禁止路径两道 gate 扫 reviewcode 会把判据自己写的样例
+# 字符串当成命中——模板的 abspath 判据就显式排除了 *reviewcode*，是同一个道理。
+size_tracked=("${tracked[@]}")
+if repo_is_module; then
+  mapfile -d '' -O "${#size_tracked[@]}" size_tracked < <(git ls-files -z -- review)
+fi
+
+for f in "${size_tracked[@]}"; do
   [ -f "$f" ] || continue
   if _why=$(size_skip_reason "$f"); then size_skipped=$((size_skipped+1)); continue; fi
+  if ! c1_is_source "$f"; then size_prose=$((size_prose+1)); continue; fi
   size_scanned=$((size_scanned+1))
   n=$(wc -l < "$f")
   [ "$n" -gt 500 ] || continue
@@ -261,13 +301,16 @@ if [ -f "$size_exempt_legacy" ]; then
     case "$_p" in \#*) continue ;; esac
     [ -f "$_p" ] || continue
     size_skip_reason "$_p" >/dev/null && continue
+    c1_is_source "$_p" || { say "  ·  $_p 已不在 C1 治理范围（D16：只管源码），豁免自然作废"; continue; }
     bad "旧豁免名单里的 $_p 不属于「第三方产物/二进制/保险柜原件」——迁移前不许删名单：给它文件顶部加「下次重构拆掉」，或直接拆"
     size_hit=1
   done < "$size_exempt_legacy"
 fi
 
 # **必须打印被验对象**：只印一个 ✅ 而不说扫了什么，正是上一版能哑四天的原因。
-say "  扫描 $size_scanned 个文本文件（跳过 $size_skipped 个：二进制/第三方产物/保险柜原件），存量导入 $size_d2 个"
+# 白名单会**缩小**扫描集，所以被它挡下的数量必须和扫描数印在同一行——
+# 否则下次表写窄了，界面上和「全都验过」一模一样。
+say "  扫描 $size_scanned 个源码文件（跳过 $size_skipped 个：二进制/第三方产物/保险柜原件；$size_prose 个散文/数据按 D16 不在 C1 治理范围），存量导入 $size_d2 个"
 [ "$size_hit" -eq 0 ] && ok "无超限文件（C1 三档：≤500 / 501–1000 已记一笔 / >1000 无）"
 
 say "── gate: gitleaks 密钥扫描 ──"

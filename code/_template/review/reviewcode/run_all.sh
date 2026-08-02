@@ -7,7 +7,16 @@ cd "$(git rev-parse --show-toplevel)"
 fail=0
 ok(){ printf '  ✅ %s\n' "$*"; }; bad(){ printf '  ❌ %s\n' "$*"; fail=1; }
 
-echo "── reviewcode: 通用四检查 ──"
+echo "── reviewcode: 通用三检查 ──"
+#
+# ⚠️ 这里**没有行数检查，是故意的**（2026-08-02，人类裁决 D16）。
+# 原来第 3 条是「全类型 >500 一律硬拦」，写它的理由是「补 gate 的后缀盲区」——
+# 那个盲区已在 2026-08-02 修掉。留着它有两个坏处，都是判例库点过名的形状：
+#   · 它与 C1 三档（≤500 / 501–1000 记一笔 / >1000 拆）**规则不同**，且对 `.md`
+#     照拦，与 D16「C1 只管源码」直接相反；
+#   · 判据有两份实现 = 迟早分叉（本文件第 23–26 行记着 abspath 判据分叉的事故）。
+# 行数判据的**唯一实现**在 scripts/gates/run-gates.sh（模块 CI 同样跑它，
+# install-gates.sh 把它拷进本模块），扫描集含本模块 code/ 与 review/。
 # 1. 占位符清零
 # 占位符字面量必须拆开写：new_module 的 replace_token 会替换全仓的连续 token；
 # 本脚本若含连续字面量，生成后它会变成「查模块名」——正确的模块恰因替换成功而永远红（A1 事故）。
@@ -30,10 +39,7 @@ abspath_hits=$(git grep -nI -E '/(srv|home|Users)/[a-z]' -- . \
                  | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(#|//)' || true)
 if [ -n "$abspath_hits" ]; then
   bad "出现硬编码绝对路径（换台机器即废）"; else ok "无硬编码绝对路径"; fi
-# 3. 全类型行数（补 gate 的后缀盲区）
-over=$(git ls-files -z | xargs -0 -I{} sh -c '[ -f "{}" ] && [ "$(wc -l < "{}")" -gt 500 ] && echo "{}"' 2>/dev/null || true)
-[ -z "$over" ] && ok "无超 500 行文件" || bad "超 500 行: $(tr '\n' ' ' <<<"$over")"
-# 4. 语义占位符未清零（新脚手模块必红——这是待办清单，不是故障）
+# 3. 语义占位符未清零（新脚手模块必红——这是待办清单，不是故障）
 todo=$(git grep -lI -E '（迁移时填写|TODO：填|<一句话' -- module_docs/ 2>/dev/null || true)
 if [ -n "$todo" ]; then
   bad "module_docs/ 还没填实（新模块的第一件事）：$(tr '\n' ' ' <<<"$todo")"
