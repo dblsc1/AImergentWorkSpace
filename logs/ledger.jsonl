@@ -31,3 +31,4 @@
 {"ts":"2026-08-02T18:17:05Z","event":"override","hatch":"PUSH_UNREVIEWED","reason":"CFO 留痕，无判据改动","script":"arbiter-push.sh","actor":"xia","branch":"feat/frontend-view-modules","head":"8441feab10135f084dcec0ad21d30ce8c99e4ba9"}
 {"ts":"2026-08-02T18:31:04Z","event":"override","hatch":"PUSH_UNREVIEWED","reason":"考试教错落点，两个 agent 实证受害；selftest #69 反向三发","script":"arbiter-push.sh","actor":"xia","branch":"feat/frontend-view-modules","head":"bc3dbcfc96fab8aea0c58c4b668481a581f07613"}
 {"ts":"2026-08-02T18:37:40Z","event":"override","hatch":"PUSH_UNREVIEWED","reason":"CFO 留痕","script":"arbiter-push.sh","actor":"xia","branch":"feat/frontend-view-modules","head":"bc3dbcfc96fab8aea0c58c4b668481a581f07613"}
+{"ts":"2026-08-02T18:38:48Z","event":"override","hatch":"PUSH_UNREVIEWED","reason":"CFO 留痕","script":"arbiter-push.sh","actor":"xia","branch":"feat/frontend-view-modules","head":"858600f82d8ed721566b2d21028d83bfc706672b"}
