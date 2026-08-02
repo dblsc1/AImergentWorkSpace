@@ -13,7 +13,7 @@ ok()  { printf '✅ %s\n' "$*"; }
 # 「静默跳过后报成功」——下面每一道 gate 都靠 tracked，tracked 空就全体假绿。
 _pl="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../lib" 2>/dev/null && pwd -P)/paths.sh"
 [ -f "$_pl" ] || { printf '❌ 缺 scripts/lib/paths.sh —— 门禁没有仓型判断能力，拒绝以「什么都没扫」的姿态报绿\n' >&2; exit 2; }
-. "$_pl"
+. "$_pl" || { printf '❌ %s：载入 paths.sh 失败 —— 拒绝以「什么都没验」的姿态退 0\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
 
 # 扫描范围：**框架仓与模块仓不是同一件事**（2026-08-02 实证）。
 #   · 模块仓：业务代码在 code/，只扫它——codeagent/ 装的是留痕，不该按代码判。

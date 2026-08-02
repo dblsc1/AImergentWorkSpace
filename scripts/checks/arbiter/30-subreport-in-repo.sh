@@ -2,7 +2,7 @@
 # 判据：所有 report.json 的 sub_reports[].path 必须是仓内相对路径。
 [ "${1:-}" = --describe ] && { echo "30 子报告落点：sub_reports[].path 必须是仓内相对路径，禁止 /tmp 等仓外绝对路径"; exit 0; }
 set -uo pipefail
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh"
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh" || { printf '❌ %s：载入 paths.sh 失败 —— 拒绝以「什么都没验」的姿态退 0\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
 command -v jq >/dev/null || { echo "缺少 jq，无法校验 sub_reports 落点" >&2; exit 1; }
 fail=0
 while IFS= read -r -d '' f; do

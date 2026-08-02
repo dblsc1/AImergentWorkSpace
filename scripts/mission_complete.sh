@@ -20,7 +20,7 @@
 # 逃生口：AIMERGENT_MISSION_OVERRIDE="<理由>" 放行，但强制记入 logs/diary.jsonl，绝不静默。
 set -uo pipefail
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || true
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/checklist.sh"
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/checklist.sh" || { printf '❌ %s：载入 checklist.sh 失败 —— 拒绝以「什么都没验」的姿态退 0\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "❌ 不在 Git 仓内" >&2; exit 2; }
 cd "$root"
@@ -34,7 +34,7 @@ if [ -z "$role" ]; then
   # `s|^codeagent/([^/]+)/docs/.*|\1|p`，J3 之后的五条 canonical 留痕路径实测**全部**
   # 推成空。判据已搬进 lib/paths.sh 的 role_from_trace_path / role_from_staged
   # （两层优先级 + 同层歧义返回空，理由见那里）；selftest #56 逐条喂五条路径。
-  . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/paths.sh"
+  . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/paths.sh" || { printf '❌ %s：载入 paths.sh 失败 —— 拒绝以「什么都没验」的姿态退 0\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
   role=$(git diff --cached -z --name-only --diff-filter=ACMR 2>/dev/null |
          tr '\0' '\n' | role_from_staged) || role=""
   [ -n "$role" ] || _role_why="暂存路径里推断不出角色（或同层出现了两个不同角色）"
@@ -106,7 +106,7 @@ if [ -f "$lease_dir/${role}.lease" ]; then
   #    「完工即自动还」在本仓需要另找落点，已挂给 consulter（见 worklog）。
   #    本轮真正封死事故的是 TTL 自动回收（lib/lease.sh + mission_start.sh）。
   if [ -f "$root/scripts/lib/lease.sh" ]; then
-    . "$root/scripts/lib/lease.sh"
+    . "$root/scripts/lib/lease.sh" || { printf '❌ %s：载入 lease.sh 失败 —— 拒绝以「什么都没验」的姿态退 0\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
     _lage=$(lease_age "$role")
     if [ "$_lage" -lt 0 ] 2>/dev/null; then
       cl_note "  签龄未知（无 meta，上一版留下的）—— 完工后手动还：scripts/mission_start.sh --release $role"
@@ -119,6 +119,24 @@ if [ -f "$lease_dir/${role}.lease" ]; then
   printf '│\n'
 fi
 
+# ── 层②：主脚本不许吞掉「check 自己炸了却退 0」（S1，2026-08-02 P0）────────
+# 病根第三段：原来这里是 `if out=$("$c" 2>&1); then cl_ok`，
+# **成功分支把 $out 整个丢弃** —— 于是 `paths.sh: No such file or directory`
+# 和 `staged_paths: command not found` 一个字都不显示，检查单照打 ✅。
+# 实测：删掉 scripts/lib/paths.sh，十五条 _common 里十二条静默变绿。
+#
+# 为什么只给每条 check 加 `|| exit 2` 不够：那是修今天这十八处实例。
+# 明天新写的一条照样可能「函数没定义 → 数组空 → exit 0」，
+# 而**主脚本仍然会把它判成 pass**。两层各修各的病：
+#   层① check 自己 source 失败要死  ·  层② 主脚本不许信一个自相矛盾的成功
+#
+# 判据钉在 **bash 自己的诊断前缀** `<脚本>: line N: …` 上，不是裸关键词 ——
+# check 的正常业务输出里完全可能出现「找不到文件」这类字样，
+# 而 `: line N:` 只有解释器级错误才会带。
+interpreter_blew_up() {
+  grep -qE ': line [0-9]+: .*(command not found|No such file or directory|unbound variable|syntax error|Permission denied|bad substitution)' <<<"${1:-}"
+}
+
 pass=0; fail=0; failed_names=()
 n=0
 while IFS= read -r c; do
@@ -128,11 +146,20 @@ while IFS= read -r c; do
   layer=$(dirname "$c"); layer=${layer##*/}
   [ "$layer" = "_common" ] && layer=通用
   [ "$layer" = "checks" ] && layer=本模块
-  if out=$("$c" 2>&1); then
+  if out=$("$c" 2>&1) && ! interpreter_blew_up "$out"; then
     cl_ok "$n" "$name  [$layer]"
     pass=$((pass+1))
   else
-    first=$(head -1 <<<"$out"); rest=$(sed -n '2,3p' <<<"$out" | tr '\n' ' ')
+    if interpreter_blew_up "$out"; then
+      # **退 0 但解释器报了错 = 这条 check 自己炸了却报成功。**
+      # 这一层独立于每条 check 自己的守卫存在：即使今天十八处 source 全加了
+      # `|| exit 2`，明天新写的一条照样可能「函数没定义 → 数组空 → exit 0」。
+      # 主脚本不能只信退出码 —— 退出码正是被吞掉的那个东西。
+      first="check 自己炸了却退 0（解释器级错误）：$(grep -m1 -E ': line [0-9]+: ' <<<"$out")"
+      rest="→ 这条检查这次**什么都没验**。退 0 和真验过在界面上一模一样，所以这里按失败处理。"
+    else
+      first=$(head -1 <<<"$out"); rest=$(sed -n '2,3p' <<<"$out" | tr '\n' ' ')
+    fi
     cl_bad "$n" "$name  [$layer]" "$first" "$rest"
     fail=$((fail+1)); failed_names+=("$name")
   fi

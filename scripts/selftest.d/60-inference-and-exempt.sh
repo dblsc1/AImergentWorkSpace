@@ -191,7 +191,7 @@ JSON
     git -C "$_sbx59" commit -q --no-verify -m C3 >/dev/null 2>&1 ||
       git -C "$_sbx59" commit -q --no-verify --amend -m C3 >/dev/null 2>&1
     ( repo=$_sbx59; candidate=$(git -C "$_sbx59" rev-parse HEAD); branch=feat/x; main_sha=$_M59
-      . "$S/lib/review.sh"; verify_report "$_rp59" consulter >/dev/null 2>&1; echo $? )
+      . "$S/lib/review.sh" || exit 9; verify_report "$_rp59" consulter >/dev/null 2>&1; echo $? )
   }
   _wide59=$(_try59 "$_M59")     # 从分叉点起审 → 应放行
   _narrow59=$(_try59 "$_C259")  # 只审最后一段（C1 没人看过）→ 应拒绝

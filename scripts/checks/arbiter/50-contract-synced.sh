@@ -2,7 +2,7 @@
 # 判据：契约类文件有改动时，对应契约文档必须同一次改动内同步。
 [ "${1:-}" = --describe ] && { echo "50 契约同步：改 contracts/ 或 *openapi* 时，contract.md 须同批改动（无契约的仓自动跳过）"; exit 0; }
 set -uo pipefail
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh"
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh" || { printf '❌ %s：载入 paths.sh 失败 —— 拒绝以「什么都没验」的姿态退 0\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
 mapfile -t -d '' staged < <(staged_paths ACMRD)
 touched=$(filter_paths '^contracts/|openapi' "${staged[@]}")
 [ -n "$touched" ] || exit 0

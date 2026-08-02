@@ -2,7 +2,7 @@
 # 判据：仓内已存在的 canonical report.json 必须被 Git 跟踪且工作区干净。
 [ "${1:-}" = --describe ] && { echo "20 report：已存在的 canonical report.json 必须已跟踪且工作区干净"; exit 0; }
 set -uo pipefail
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh"
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh" || { printf '❌ %s：载入 paths.sh 失败 —— 拒绝以「什么都没验」的姿态退 0\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
 fail=0
 while IFS= read -r -d '' f; do
   # 边界：嵌套模块仓的文件归模块自己的门禁管，不归本仓（A3 跨仓误伤）

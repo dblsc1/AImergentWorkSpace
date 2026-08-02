@@ -14,7 +14,7 @@
 # 这是「不报错所以没人知道它没生效」的典型——闸门在撒谎。
 [ "${1:-}" = --describe ] && { echo "17 模块 handoff：module_docs/handoff.md 必须填实（非空模板）；契约变更时须同批更新或在 report.json 表态"; exit 0; }
 set -uo pipefail
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh"
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh" || { printf '❌ %s：载入 paths.sh 失败 —— 拒绝以「什么都没验」的姿态退 0\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
 
 [ -d codeagent ] && [ -d module_docs ] || exit 0   # 非模块仓（框架仓）不适用
 H=module_docs/handoff.md

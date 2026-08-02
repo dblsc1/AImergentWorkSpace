@@ -3,7 +3,7 @@
 [ "${1:-}" = --describe ] && { echo "60 路径可解析：文档中反引号内的仓内路径必须真实存在；有意的前向引用须登记 scripts/gates/doc-path-exempt.txt；测试 fixture 在行尾写 ref-fixture"; exit 0; }
 set -uo pipefail
 exempt=scripts/gates/doc-path-exempt.txt
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh"
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh" || { printf '❌ %s：载入 paths.sh 失败 —— 拒绝以「什么都没验」的姿态退 0\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
 fail=0
 while IFS= read -r -d '' f; do
   [ -n "$f" ] || continue

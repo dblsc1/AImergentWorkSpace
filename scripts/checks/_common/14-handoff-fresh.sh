@@ -7,7 +7,7 @@
 # 仓型感知：本仓没有模块布局（无 codeagent/+module_docs/）时跳过；code/_template 不算。
 [ "${1:-}" = --describe ] && { echo "14 handoff：改了 code/<子文件夹>/ 必须同批更新其 handoff.md 或在 report.json docs_reviewed 表态（J3 一页纸每改必核）"; exit 0; }
 set -uo pipefail
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh"
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh" || { printf '❌ %s：载入 paths.sh 失败 —— 拒绝以「什么都没验」的姿态退 0\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
 
 [ -d codeagent ] && [ -d module_docs ] || exit 0   # 非模块仓（如框架仓）不适用
 

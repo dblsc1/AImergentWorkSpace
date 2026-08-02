@@ -2,7 +2,7 @@
 # 判据：programmer 不得改 review/ 与 module_docs/（契约只读，改要上报 arbiter）。
 [ "${1:-}" = --describe ] && { echo "81 写边界：programmer 不得改 review/ 与 module_docs/（契约只读）"; exit 0; }
 set -uo pipefail
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh"
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh" || { printf '❌ %s：载入 paths.sh 失败 —— 拒绝以「什么都没验」的姿态退 0\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
 mapfile -t -d '' staged < <(staged_paths ACMRD)
 bad=$(filter_paths '^(review/|module_docs/)' "${staged[@]}")
 [ -z "$bad" ] && exit 0

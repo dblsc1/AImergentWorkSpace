@@ -86,7 +86,7 @@ _pl="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" 2>/dev/null && pwd -P
 | `password`+`: hunter2pw`（YAML 裸键） | **放行** | 只认带引号的 `"password"` / `'password'` |
 | `PASSWORD`+`: hunter2pw`（顶层无前缀） | **放行** | 同样要 `_PASSWORD` |
 | `{"password"`+`:` 换行 `"hunter2pw"}`（多行 JSON） | **放行** | 逐行匹配 |
-| `DATABASE_URL`+`=mysql://root:hunter2pw@db/app` | **放行** | 连接串里的口令不在赋值右侧首位 |
+| `DATABASE_URL`+`=mysql://root:<口令占位>@db/app` | **放行** | 连接串里的口令不在赋值右侧首位 |
 | `ghp_AbCdEf…`（裸 PAT） | 放行 | 设计外（判据只认赋值）——见 S3 |
 | `-----BEGIN RSA PRIVATE KEY-----` | 放行 | 同上 |
 | `DB_PASSWORD`+`="hunter2pw"`（.env） | 拦住 | ✓ |
@@ -248,7 +248,7 @@ probe PGPASSWORD        'export PGPASSWORD''=hunter2pw'
 probe AWS_SECRET        'AWS_SECRET_ACCESS_KEY''=hunter2pw'
 probe 小写              'password''=hunter2pw'
 probe YAML裸键          'password'': hunter2pw'
-probe 连接串            'DATABASE_URL''=mysql://root:hunter2pw@db/app'
+probe 连接串            'DATABASE_URL''=mysql://root:<口令占位>@db/app'
 
 # S1：删掉公共件，看有几条 check 静默退 0
 cp -r "$R/scripts" "$SBX2=$(mktemp -d)/" 2>/dev/null || true
@@ -301,3 +301,13 @@ cp -r "$R/scripts" "$SBX2=$(mktemp -d)/" 2>/dev/null || true
    前提是**改写法这条路存在且明确**。判例库写了那条路，所以我没绕。
    这反过来说明 S5 那个模板误报为什么更该修：撞上它的人**没有**第二条路
    （改 `code/_template/` 越权），只剩逃生口。
+
+## 补：本文的连接串举例已改成占位符（CFO 2026-08-02 指出）
+
+判据 v2 判右值之后，本文原来那两处 `mysql://root:` + 假口令 会被自己命中。
+按判据自己的规矩，**文档举例该用占位符**，已改成 `<口令占位>`。
+
+这是「字面量类」在同一份文档上的第二次收口：第一次是提交时被 v1 拦下，
+第二次是判据变强之后又露出来。**判据每强一次，讲这件事的文档就要再改一次** ——
+这不是麻烦，这正是该有的样子；真正该警惕的是「判据强了、文档没跟着改，
+于是用逃生口放行」。

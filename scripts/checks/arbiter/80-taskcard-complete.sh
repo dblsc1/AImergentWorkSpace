@@ -3,7 +3,7 @@
 # 任务单是一对多的——一份含糊的任务单污染它派出去的所有产出，所以它比一份烂代码杠杆大。
 [ "${1:-}" = --describe ] && { echo "80 任务单完整：新增/改动的任务单（文件名含「任务单」）必须含 目标/验收标准/可触碰目录/自检门 四节"; exit 0; }
 set -uo pipefail
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh"
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh" || { printf '❌ %s：载入 paths.sh 失败 —— 拒绝以「什么都没验」的姿态退 0\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
 fail=0
 while IFS= read -r -d '' f; do
   [ -f "$f" ] || continue

@@ -6,7 +6,7 @@
 # 只会照着过时的文档做出错的东西。所以要每次体检，不能等谁想起来。
 [ "${1:-}" = --describe ] && { echo "12 长期文档体检：项目级/模块级常驻文档必须存在、无占位残留、导航与实际结构一致"; exit 0; }
 set -uo pipefail
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh"
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh" || { printf '❌ %s：载入 paths.sh 失败 —— 拒绝以「什么都没验」的姿态退 0\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
 fail=0
 bad() { echo "$*" >&2; fail=1; }
 

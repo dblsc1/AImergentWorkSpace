@@ -8,7 +8,7 @@
 # 本检查管的是前者：**不许出现"根本没人审、也没打算让人审"的交付**。
 [ "${1:-}" = --describe ] && { echo "70 审核意见：report.json 必须带 reviewer_opinion{reviewer,verdict,path}；提交可 pending，合并须 approved"; exit 0; }
 set -uo pipefail
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh"
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh" || { printf '❌ %s：载入 paths.sh 失败 —— 拒绝以「什么都没验」的姿态退 0\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
 command -v jq >/dev/null || { echo "缺少 jq，无法校验 reviewer_opinion" >&2; exit 1; }
 fail=0
 while IFS= read -r -d '' f; do

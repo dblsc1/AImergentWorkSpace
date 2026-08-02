@@ -239,7 +239,7 @@ git -C "$repo" merge-base --is-ancestor "$main_sha" "$candidate" || die "任务�
 # 审核绑定判据（含 F5 的审核覆盖断言）搬进 lib/review.sh —— **这里不再有第二份实现**。
 # 关键路径缺文件必须 die：source 失败就没有 verify_report，approved 恒 0，
 # 下面直接 die「没有精确绑定的 approved 审核」——fail-closed，不会静默放行。
-. "$SCRIPT_DIR/lib/review.sh"
+. "$SCRIPT_DIR/lib/review.sh" || { printf '❌ %s：载入 review.sh 失败 —— 拒绝以「什么都没验」的姿态退 0\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
 
 approved=0
 if [ "$level" = module ]; then

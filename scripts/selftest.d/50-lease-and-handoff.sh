@@ -45,7 +45,7 @@ else
   _out=$(
     cd "$_sbx" || exit 9
     # shellcheck disable=SC1090
-    . "$_lease_lib"
+    . "$_lease_lib" || exit 9
     _d=$(lease_dir_path); mkdir -p "$_d"
     # ① 过期签：granted_at 拨回 3 小时前，TTL 2 小时
     echo 'some/area/' > "$_d/walked_away.lease"

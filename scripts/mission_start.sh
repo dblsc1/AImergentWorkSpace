@@ -14,8 +14,8 @@
 # 发签是自愿的，验签是强制的。
 set -uo pipefail
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/emit.sh" 2>/dev/null || true
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/checklist.sh"
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/lease.sh"
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/checklist.sh" || { printf '❌ %s：载入 checklist.sh 失败 —— 拒绝以「什么都没验」的姿态退 0\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/lease.sh" || { printf '❌ %s：载入 lease.sh 失败 —— 拒绝以「什么都没验」的姿态退 0\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
 die() { printf '❌ %s\n' "$*" >&2; exit 1; }
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || die "不在 Git 仓内"
@@ -242,7 +242,7 @@ fi
 
 # 起飞预告：这片写区可能牵动哪些长期文档 —— 现在知道，好过着陆时被拦
 if [ -f "$root/scripts/lib/docmap.sh" ]; then
-  . "$root/scripts/lib/docmap.sh"
+  . "$root/scripts/lib/docmap.sh" || { printf '❌ %s：载入 docmap.sh 失败 —— 拒绝以「什么都没验」的姿态退 0\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
   _pre=$(dm_impact "${want[@]}" 2>/dev/null | cut -f1 | sort -u)
   if [ -n "$_pre" ]; then
     cl_note "这片写区可能牵动的长期文档（着陆时会逐条核）："

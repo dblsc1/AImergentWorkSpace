@@ -3,7 +3,7 @@
 # 没跑 mission_start.sh = 没有签 = 一提交就被拦 —— 这就是「无法绕过」的落点。
 [ "${1:-}" = --describe ] && { echo "05 写区路签：暂存文件必须落在本角色 mission_start.sh 申领的写区内（防未受控双写）"; exit 0; }
 set -uo pipefail
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh"
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh" || { printf '❌ %s：载入 paths.sh 失败 —— 拒绝以「什么都没验」的姿态退 0\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
 role=${AIMERGENT_ROLE:-}
 lease_dir=$(git rev-parse --path-format=absolute --git-common-dir)/aimergent-leases
 [ -n "$role" ] || exit 0                      # 角色未知时不拦（由 10/40 等条兜底）

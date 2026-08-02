@@ -21,7 +21,7 @@
 #   ]
 [ "${1:-}" = --describe ] && { echo "11 文档同步：改动波及的文档须同批更新，或在 report.json 的 docs_reviewed 里声明「已读·无需改+理由」"; exit 0; }
 set -uo pipefail
-. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh"
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd -P)/paths.sh" || { printf '❌ %s：载入 paths.sh 失败 —— 拒绝以「什么都没验」的姿态退 0\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
 
 mapfile -t -d '' staged < <(staged_paths ACMRD)
 [ "${#staged[@]}" -gt 0 ] || exit 0

@@ -44,7 +44,7 @@ set -uo pipefail
 _here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 # 公共件缺失必须响亮死掉，不许静默退 0（S1 类：删掉 lib/paths.sh 会让
 # 十二条 check 全部静默变绿，界面与真验过一模一样）。
-. "$_here/../../lib/paths.sh" || { echo "❌ 18-secret-literal: 无法载入 lib/paths.sh" >&2; exit 2; }
+. "$_here/../../lib/paths.sh" || { printf '❌ %s：载入 paths.sh 失败 —— 拒绝以「什么都没验」的姿态退 0\n' "${BASH_SOURCE[0]}" >&2; exit 2; }
 command -v python3 >/dev/null 2>&1 || { echo "❌ 18-secret-literal: 需要 python3（判据要解析右值，不是行级 grep）" >&2; exit 2; }
 
 mapfile -t -d '' _files < <(staged_paths ACMR)
