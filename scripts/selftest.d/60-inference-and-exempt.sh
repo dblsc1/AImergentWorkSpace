@@ -312,3 +312,60 @@ else
     F "密钥判据失灵：坏样本 exit=$_rc_bad（应非0，点名 $_named/3）、合法写法 exit=$_rc_good（应0）"
   fi
 fi
+
+# 62 ── C1（单文件行数）有没有机械执行者
+#      C1 是人类 2026-07-29 的裁决（台账 D12），三档写得死死的，
+#      但从落地到 2026-08-02 一直是散文。**不是"没有 gate"，比那更糟：
+#      gate 一直在，而且一直打印 ✅「无超限文件」** —— 两个独立原因让它全瞎：
+#        ① tracked 用 `[ -d code ]` 判仓型，框架仓的 code/ 也存在，
+#           于是只扫 code/_template 下 26 个文件（scripts/ agents/ 全不在视野）
+#        ② 扩展名白名单只认 py/js/ts/html/css/vue/svelte —— .sh .md .json 都不看
+#      任一原因单独存在就足够让 1129 行的 selftest.sh 隐身。恒定答案 = 没有这道门。
+#
+#      **沙箱必须建出 code/ 目录**：那是原 bug 的触发条件。少了它，
+#      这条断言会在 bug 存在时照样绿 —— 又一台验不存在机制的烟雾报警器。
+printf '62. 单文件行数三档（C1）是否有机械执行者\n'
+_rg="$S/gates/run-gates.sh"
+if [ ! -f "$_rg" ]; then
+  F "没有 gates/run-gates.sh"
+elif ! command -v jq >/dev/null 2>&1; then
+  N "本机无 jq，无法核 501–1000 那一档的 report.json 记账"
+else
+  _sb62=$(mktemp -d); git -C "$_sb62" init -q
+  mkdir -p "$_sb62/scripts/gates" "$_sb62/scripts/lib" "$_sb62/code" "$_sb62/agents/x/docs"
+  cp "$_rg" "$_sb62/scripts/gates/"; cp "$S/lib/paths.sh" "$_sb62/scripts/lib/"
+  printf 'x\n' > "$_sb62/code/keep.txt"          # ← 触发旧 bug 的条件：code/ 存在
+  printf '{"schema_version":2}\n' > "$_sb62/agents/x/docs/report.json"
+  _seg62() { ( cd "$_sb62" && bash scripts/gates/run-gates.sh 2>&1 ) | sed -n '/单文件行数/,/gitleaks/p'; }
+  # 下面 scripts/big.sh、scripts/mid.sh 是喂给判据的合成输入，按定义不在本仓里存在。   # ref-fixture
+  _big62() { { printf '#!/bin/sh\n'; [ -n "${1:-}" ] && printf '# %s\n' "$1"; _i=0; while [ $_i -lt "$2" ]; do printf ':\n'; _i=$((_i+1)); done; } > "$_sb62/scripts/big.sh"; git -C "$_sb62" add -A >/dev/null 2>&1; }   # ref-fixture
+
+  _big62 '' 1200; _o62a=$(_seg62)                                   # >1000 硬拦
+  _big62 '存量导入：下次重构拆掉' 1200; _o62b=$(_seg62)              # D2 只警告
+  rm -f "$_sb62/scripts/big.sh"   # ref-fixture
+  { printf '#!/bin/sh\n'; _i=0; while [ $_i -lt 700 ]; do printf ':\n'; _i=$((_i+1)); done; } > "$_sb62/scripts/mid.sh"   # ref-fixture
+  git -C "$_sb62" add -A >/dev/null 2>&1; _o62c=$(_seg62)           # 501–1000 未记账
+  # ⚠️ 续行 `\` 后面不许再跟注释：反斜杠会把注释前那个空格转义成字面空格，
+  #    `#` 起的注释再吃掉换行，于是下一行 `> file` 变成一条**只有重定向**的命令，
+  #    把 report.json 截成空文件 —— 而 `bash -n` 照样报 OK。所以写成一行。
+  _rj62="$_sb62/agents/x/docs/report.json"
+  printf '{"schema_version":2,"oversize_files":[{"path":"scripts/mid.sh","lines":701,"why":"t","plan":"t"}]}\n' > "$_rj62"   # ref-fixture
+  git -C "$_sb62" add -A >/dev/null 2>&1; _o62d=$(_seg62)           # 记上那一笔 → 放行
+  rm -rf "$_sb62"
+
+  _v62=""
+  case "$_o62a" in *"❌"*"scripts/big.sh"*) ;; *) _v62="$_v62 [>1000未硬拦]" ;; esac   # ref-fixture
+  case "$_o62b" in *"❌"*) _v62="$_v62 [D2标记后仍硬拦]" ;; esac
+  case "$_o62b" in *"⚠️"*"scripts/big.sh"*) ;; *) _v62="$_v62 [D2标记未打印警告]" ;; esac   # ref-fixture
+  case "$_o62c" in *"❌"*"scripts/mid.sh"*) ;; *) _v62="$_v62 [501-1000未记账却放行]" ;; esac   # ref-fixture
+  case "$_o62d" in *"❌"*"scripts/mid.sh"*) _v62="$_v62 [记了账仍拦]" ;; esac   # ref-fixture
+  # ⚠️ 这条子断言早先写成 `*"扫描 "*` —— 恒真：sed 区间的**末行**是
+  #    「── gate: gitleaks 密钥扫描 ──」，自带「扫描 」。删掉打印行照样绿。
+  #    反向验证当场逮住（判例库：反向验证是唯一可信的证明，看代码不算）。
+  case "$_o62a" in *"个文本文件（跳过"*) ;; *) _v62="$_v62 [不打印被验对象]" ;; esac
+  if [ -z "$_v62" ]; then
+    P "三档齐全：>1000 硬拦、D2 顶部标记只警告、501–1000 记不到那一笔就红、记到就放行，且打印被验对象"
+  else
+    F "C1 判据失灵：$_v62"
+  fi
+fi

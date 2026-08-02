@@ -22,7 +22,7 @@
 | `new_module.sh <名字>` | 一个参数建模块：骨架 → 清占位 → 装门禁 → 建三个角色 → 初始 commit → 开 `feat/init` | 开新模块 |
 | `new_instance.sh <programmer|reviewer> [写区…]` | 模块内开编号 agent 实例（J3/J4）：`codeagent/<容器>/<编号>/{agent.md,session,docs/comm.jsonl}`；session 复用=续用不重开 | arbiter 需要人手时 |
 | `new_agent.sh <角色> [模块]` | 建角色实例：复制角色卡 → 填实可读可写 → 写 `.claude/agents/<角色>.md`（内联角色卡 + 出生考卷）→ 建 `checks/` 扩展点 | 建模块时自动调；单独加角色时手动 |
-| `selftest.sh [仓路径]` | **闸门有效性断言全集**：把真实踩过的坑做成测试;新增:17 模板token自毁/18 写产物验落点/19(后) 嵌套仓边界 | 改门禁后 / CI |
+| `selftest.sh [仓路径]` | **闸门有效性断言全集**：把真实踩过的坑做成测试。**唯一入口**；断言主体在 `scripts/selftest.d/*.sh`（按文件名顺序 source，只能 source 不能单独跑）。分片缺失/空/全体哑火都会 `exit 2` 响亮死，不退化成"零断言退 0" | 改门禁后 / CI |
 
 ## ② 派活与执行
 
@@ -81,7 +81,7 @@ codeagent/<角色>/checks/       本模块给该角色追加的
 | `hooks/pre-push` | 拦直推 main、拦无 lease 的 push |
 | `hooks/commit-msg` | 拦缺失/重复/畸形的 `Agent-Attribution` |
 | `hooks/cc-push-guard.sh` | 推送拦截的辅助日志 |
-| `gates/run-gates.sh` | 确定性门禁总入口：归属 / 报告 / 密钥 / 行数 / hook 安装 / reviewcode |
+| `gates/run-gates.sh` | 确定性门禁总入口：归属 / 报告 / 密钥 / **行数（C1 三档）** / hook 安装 / reviewcode。扫描范围按仓型分（模块仓只看 `code/`，框架仓看全仓）——2026-08-02 前用 `[ -d code ]` 判仓型，框架仓因此只扫 26 个模板文件、对 1129 行的 `selftest.sh` 连着四天报绿 |
 | `gates/check-report-schema.sh` | 报告协议核验（含空区间假绿修复；`git.base` 报错会直接印出可抄的正确值） |
 | `gates/run-tests.sh` | 跑模块测试与构建 |
 
