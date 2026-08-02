@@ -265,3 +265,41 @@ PY
     F "棘轮仍然失忆：$_v68"
   fi
 fi
+
+# 69 ── 开工考试教的落点，必须与 report-schema.md 是同一个（2026-08-03 实证）
+#      `exam.sh` 原来自己硬编码 `codeagent/<角色>/docs/report.json`，那是 J3 之前的旧布局。
+#      **考试是每个 agent 干活前的第一课** —— 一夜之间两个 reviewer 照着它教的
+#      把 canonical report 放错地方，直到推送门才拦下来。
+#      **教错的指引比没有指引更糟**：没有指引人会去查，教错了人会照做。
+#      判据：六个角色逐个比对「考试读到的」与「schema 表里写的」，任一不一致即红；
+#      再拆掉锚点验它**响亮失败而不是猜一个出来**。
+printf '69. 开工考试的报告落点是否与 report-schema 同源\n'
+_ex="$S/exam.sh"; _sch="$repo/agents/protocol/report-schema.md"
+if [ ! -f "$_ex" ] || [ ! -f "$_sch" ]; then
+  N "本仓无 exam.sh 或 report-schema.md"
+elif grep -vE '^[[:space:]]*#' "$_ex" | grep -qE 'codeagent/\$role/docs/report\.json' 2>/dev/null; then
+  # ⚠️ 必须先滤掉注释行 —— 本判据第一版没滤，被 exam.sh 里**解释这件事的注释**绊倒。
+  #    「讲某个字面量的文档会成为那个字面量的新实例」，今晚第四次。
+  F "exam.sh 仍硬编码 codeagent/\$role/docs/report.json —— 那是 J3 前的旧布局，考试会教错"
+else
+  _bad=""; _n=0
+  for _r in arbiter programmer programmer_reviewer module_reviewer cfo consulter; do
+    _want=$(grep -F "<!-- role:$_r -->" "$_sch" | head -1 |
+            sed -n 's/.*|[^|]*|[[:space:]]*`\([^`]*\)`.*/\1/p')
+    _got=$( cd "$repo" && bash -c "source <(sed -n '/^_canonical_path_for()/,/^}/p' '$_ex'); _canonical_path_for $_r" 2>/dev/null )
+    [ -n "$_want" ] || { _bad="$_bad [$_r schema 里没有锚点]"; continue; }
+    _n=$((_n+1))
+    [ "$_want" = "$_got" ] || _bad="$_bad [$_r want=$_want got=$_got]"
+  done
+  # 锚点被拆掉时必须**响亮失败**，不许猜一个路径出来
+  _sbx=$(mktemp -d); cp "$_sch" "$_sbx/s.md"; sed -i 's/<!-- role:cfo -->//' "$_sbx/s.md"
+  _blind=$( cd "$repo" && bash -c "source <(sed -n '/^_canonical_path_for()/,/^}/p' '$_ex'); _canonical_path_for cfo" 2>/dev/null )
+  rm -rf "$_sbx"
+  if [ -n "$_bad" ]; then
+    F "考试教的落点与 report-schema 不一致：$_bad"
+  elif [ "$_n" -lt 6 ]; then
+    F "只比对到 $_n/6 个角色 —— schema 表的机器锚点缺了"
+  else
+    P "六个角色的落点逐个与 report-schema 一致（考试不再自带第二份路径表）"
+  fi
+fi

@@ -38,6 +38,22 @@ Q5  报告写在仓外（/tmp、会话目录）算什么？
 EOF
 }
 
+
+# 从 report-schema.md 的 canonical path 表里读某个角色的落点。
+# 表里每行末尾有 `<!-- role:<slug> -->` 机器锚点，人看的表和机器读的是**同一行**。
+# 不做兜底猜测：查不到就返回空，由调用方响亮报错 —— 猜一个路径出来正是本函数要根治的病。
+_canonical_path_for() {   # _canonical_path_for <角色> → 仓内相对路径（查不到则空）
+  local role=$1 root schema line
+  root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+  schema="$root/agents/protocol/report-schema.md"
+  [ -f "$schema" ] || schema="$(_framework_root 2>/dev/null)/agents/protocol/report-schema.md"
+  [ -f "$schema" ] || return 0
+  line=$(grep -F "<!-- role:$role -->" "$schema" | head -1) || return 0
+  [ -n "$line" ] || return 0
+  # 取第二列，剥掉反引号与说明（第一个反引号包起来的就是路径）
+  printf '%s' "$line" | sed -n 's/.*|[^|]*|[[:space:]]*`\([^`]*\)`.*/\1/p'
+}
+
 grade() {
   local ans=$1 wrong=0
   local -a msgs=()
@@ -45,8 +61,17 @@ grade() {
   local body; body=$(norm)
 
   # Q1 报告落点
-  if [[ "$body" != *"codeagent/$role/docs/report.json"* && "$body" != *"docs/report.json"* ]]; then
-    msgs+=("Q1 报告落点：未答出 codeagent/$role/docs/report.json")
+  # **判据从 agents/protocol/report-schema.md 读，不在这里硬编码。**
+  # 病根（2026-08-03 实证）：这里原来写死 `codeagent/$role/docs/report.json`，
+  # 那是 J3 之前的旧布局。**考试是每个 agent 干活前的第一课**，于是一夜之间
+  # 两个 reviewer 照着它教的把 canonical report 放错了地方，推送门才拦下来。
+  # 教错的指引比没有指引更糟 —— 没有指引人会去查，教错了人会照做。
+  local canon; canon=$(_canonical_path_for "$role")
+  if [ -z "$canon" ]; then
+    msgs+=("Q1 报告落点：report-schema.md 里查不到角色 $role 的 canonical path —— 先补那张表的机器锚点，别改这里")
+    wrong=$((wrong+1))
+  elif [[ "$body" != *"$(tr 'A-Z' 'a-z' <<<"$canon" | tr -d ' ')"* ]]; then
+    msgs+=("Q1 报告落点：未答出 $canon（事实源：agents/protocol/report-schema.md）")
     wrong=$((wrong+1))
   fi
   # Q2 写边界：必须提到自己可写区；且非 reviewer 不得声称可写 review/

@@ -46,14 +46,20 @@
 
 新任务只承认下列 agent 间交接路径；`review/reviewreport/` 是人类详报/镜像区，不能代替 canonical `report.json`：
 
+> ⚠️ 每行末尾的 `<!-- role:<slug> -->` 是**机器锚点**，`scripts/exam.sh` 靠它读取落点。
+> 渲染时不可见。**改路径必须连锚点一起看** —— 加这个锚点的原因是：
+> 考试原来自己硬编码了一份路径，且停留在 J3 之前的旧布局，
+> 于是 2026-08-03 一夜之间两个 reviewer **照着考试教的**把 canonical report 放错了地方。
+> **考试是每个 agent 的第一课，它教错等于批量生产错的产物。**
+
 | 层级 / 角色 | canonical path |
 |---|---|
-| 模块 arbiter | `module_docs/report.json`（模块级交接，裁决 J3） |
-| programmer 实例 | `code/<子文件夹>/report.json`（其负责代码侧的交接任务书，裁决 J3） |
-| reviewer 实例（programmer_reviewer） | `review/reviewreport/report.json` |
-| module_reviewer | `codeagent/module_reviewer/docs/report.json` |
-| CFO（项目 arbiter） | `agents/cfo/docs/report.json` |
-| consulter（**与 CFO 平级**，不隶属于它） | `agents/consulter/docs/findings/report.json` |
+| 模块 arbiter | `module_docs/report.json`（模块级交接，裁决 J3） | <!-- role:arbiter -->
+| programmer 实例 | `code/<子文件夹>/report.json`（其负责代码侧的交接任务书，裁决 J3） | <!-- role:programmer -->
+| reviewer 实例（programmer_reviewer） | `review/reviewreport/report.json` | <!-- role:programmer_reviewer -->
+| module_reviewer | `codeagent/module_reviewer/docs/report.json` | <!-- role:module_reviewer -->
+| CFO（项目 arbiter） | `agents/cfo/docs/report.json` | <!-- role:cfo -->
+| consulter（**与 CFO 平级**，不隶属于它） | `agents/consulter/docs/findings/report.json` | <!-- role:consulter -->
 | **临时执行者**（CFO/arbiter 直派、不属上述固定角色的一次性 implementer / reviewer / 归档工等） | `<派活方>/docs/subreports/<YYYY-MM-DD>-<task-id>-<role>.md` |
 | *(过渡期兼容)* 旧模块布局 | `codeagent/<角色>/docs/report.json` 仍被门禁承认，仅限 J3 迁移前生成的存量模块；新模块一律新落点 |
 
