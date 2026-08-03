@@ -295,11 +295,28 @@ else
   _sbx=$(mktemp -d); cp "$_sch" "$_sbx/s.md"; sed -i 's/<!-- role:cfo -->//' "$_sbx/s.md"
   _blind=$( cd "$repo" && bash -c "source <(sed -n '/^_canonical_path_for()/,/^}/p' '$_ex'); _canonical_path_for cfo" 2>/dev/null )
   rm -rf "$_sbx"
+  # ⚠️ **模块是独立 Git 仓，仓内没有 agents/protocol/** —— 考试必须能回退到框架根。
+  #    v1 的断言只在框架根跑（第一个分支就命中），于是 2026-08-03 我修 exam.sh 时
+  #    引进的 `_framework_root`（全仓从未定义过）**在框架根测不出来**，
+  #    而每个模块里的考试都必错。是模块里的 programmer 报上来的，不是断言抓的。
+  #    「判据只覆盖了粗心的那一半」—— 我在写完这条教训的下一轮就自己犯了。
+  _mod=$(mktemp -d); git -C "$_mod" init -q
+  mkdir -p "$_mod/scripts" "$_mod/codeagent" "$_mod/module_docs" "$_mod/code/backend"
+  cp -r "$S/lib" "$S/exam.sh" "$_mod/scripts/" 2>/dev/null
+  printf '%s' "$repo" > "$_mod/.aimergent-framework"     # 模块靠这个标记找框架根
+  # ⚠️ 必须喂**真实存在的答案文件**：`--submit /dev/null` 会在「答案文件不存在」
+  #    那一步就退出，**根本走不到判卷**，于是断言在看一段永远不会产生的输出。
+  #    （本断言第一版就是这么写的，反向验证不变红才发现 —— 「断言根本没在看」。）
+  printf 'Q1: code/backend/report.json\n' > "$_mod/ans.txt"
+  _mod_got=$( cd "$_mod" && bash scripts/exam.sh programmer --submit ans.txt 2>&1 )
+  rm -rf "$_mod"
   if [ -n "$_bad" ]; then
     F "考试教的落点与 report-schema 不一致：$_bad"
   elif [ "$_n" -lt 6 ]; then
     F "只比对到 $_n/6 个角色 —— schema 表的机器锚点缺了"
+  elif printf '%s' "$_mod_got" | grep -q '无法判卷'; then
+    F "在**模块仓**里考试找不到 report-schema —— 回退到框架根的那条路断了（模块仓内没有 agents/protocol/）"
   else
-    P "六个角色的落点逐个与 report-schema 一致（考试不再自带第二份路径表）"
+    P "六个角色的落点与 report-schema 一致，且在**模块独立仓**里也能回退到框架根读到"
   fi
 fi

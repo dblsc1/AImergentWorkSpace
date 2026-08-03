@@ -43,11 +43,21 @@ EOF
 # 表里每行末尾有 `<!-- role:<slug> -->` 机器锚点，人看的表和机器读的是**同一行**。
 # 不做兜底猜测：查不到就返回空，由调用方响亮报错 —— 猜一个路径出来正是本函数要根治的病。
 _canonical_path_for() {   # _canonical_path_for <角色> → 仓内相对路径（查不到则空）
-  local role=$1 root schema line
+  local role=$1 root schema line fw
   root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
   schema="$root/agents/protocol/report-schema.md"
-  [ -f "$schema" ] || schema="$(_framework_root 2>/dev/null)/agents/protocol/report-schema.md"
-  [ -f "$schema" ] || return 0
+  # 模块是**独立 Git 仓**，仓内没有 agents/protocol/ —— 必须回退到框架根。
+  # ⚠️ v1 这里调了一个**全仓从未定义过**的 `_framework_root`，于是路径塌成
+  #    `/agents/protocol/report-schema.md`，**每个模块里的考试都必错**。
+  #    而我的断言只在框架根跑（第一个分支就命中），恰好是能工作的那一半 ——
+  #    「判据只覆盖了粗心的那一半」，我在写完这条教训的下一轮就自己犯了。
+  if [ ! -f "$schema" ]; then
+    . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/paths.sh" 2>/dev/null || true
+    if command -v framework_root >/dev/null 2>&1; then
+      fw=$(framework_root 2>/dev/null) && [ -n "$fw" ] && schema="$fw/agents/protocol/report-schema.md"
+    fi
+  fi
+  [ -f "$schema" ] || { printf '__SCHEMA_NOT_FOUND__'; return 0; }
   line=$(grep -F "<!-- role:$role -->" "$schema" | head -1) || return 0
   [ -n "$line" ] || return 0
   # 取第二列，剥掉反引号与说明（第一个反引号包起来的就是路径）
@@ -67,12 +77,29 @@ grade() {
   # 两个 reviewer 照着它教的把 canonical report 放错了地方，推送门才拦下来。
   # 教错的指引比没有指引更糟 —— 没有指引人会去查，教错了人会照做。
   local canon; canon=$(_canonical_path_for "$role")
-  if [ -z "$canon" ]; then
-    msgs+=("Q1 报告落点：report-schema.md 里查不到角色 $role 的 canonical path —— 先补那张表的机器锚点，别改这里")
+  if [ "$canon" = "__SCHEMA_NOT_FOUND__" ]; then
+    # **找不到事实源必须响亮死**，不许拿一个空判据去判卷 ——
+    # 那会把每个考生都判错，而错误信息还指向「补锚点」这个不相干的地方。
+    msgs+=("Q1 无法判卷：找不到 agents/protocol/report-schema.md（本仓与框架根都没有）。这是判卷器坏了，不是你答错了 —— 请报告给项目 arbiter，别改答案去迎合它。")
     wrong=$((wrong+1))
-  elif [[ "$body" != *"$(tr 'A-Z' 'a-z' <<<"$canon" | tr -d ' ')"* ]]; then
-    msgs+=("Q1 报告落点：未答出 $canon（事实源：agents/protocol/report-schema.md）")
+  elif [ -z "$canon" ]; then
+    msgs+=("Q1 报告落点：report-schema.md 里查不到角色 $role 的机器锚点 <!-- role:$role --> —— 先补那张表，别改这里")
     wrong=$((wrong+1))
+  else
+    # schema 表里写的可能是**模板形态**（如 `code/<子文件夹>/report.json`）。
+    # 答出模板原文算对；答出**真实的具体路径**（`code/backend/report.json`）**也算对** ——
+    # v1 只比模板字面量，于是答对具体路径反而判错，逼考生去背占位符。
+    local want head tail ok=0
+    want=$(tr 'A-Z' 'a-z' <<<"$canon" | tr -d ' ')
+    [[ "$body" == *"$want"* ]] && ok=1
+    if [ "$ok" -eq 0 ] && [[ "$want" == *"<"*">"* ]]; then
+      head=${want%%<*}; tail=${want##*>}
+      [ -n "$head" ] && [ -n "$tail" ] && [[ "$body" == *"$head"*"$tail"* ]] && ok=1
+    fi
+    if [ "$ok" -eq 0 ]; then
+      msgs+=("Q1 报告落点：未答出 $canon（事实源：agents/protocol/report-schema.md）")
+      wrong=$((wrong+1))
+    fi
   fi
   # Q2 写边界：必须提到自己可写区；且非 reviewer 不得声称可写 review/
   if [ -n "$writable" ] && [[ "$body" != *"$(tr -d ' ' <<<"$writable")"* ]]; then

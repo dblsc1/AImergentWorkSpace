@@ -1,0 +1,107 @@
+[     124ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gm.mmstat.com/fsp.1.1:0
+[     927ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/eg.js?t=1785720786663:0
+[    3634ms] [TIMEEND] constructPresetsSpecMap: 137.027099609375 ms @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/bundle.js:21
+[    3978ms] [WARNING] Could not find translation key for default value: "Create New Terminal And Toggle Agent Mode On Connected" @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:2
+[    4521ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[    4545ms] [WARNING] 2026-08-03T01:33:10.287Z root WARN jump the middleware about etag, because waiting timeout maxTimeout = 2000ms! @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[    4548ms] [WARNING] 2026-08-03T01:33:10.291Z root WARN 'cpp' language is remapped from 'source.cpp.embedded.macro' to 'source.cpp' scope @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[    4558ms] [WARNING] 2026-08-03T01:33:10.301Z root WARN 'php' language is remapped from 'source.php' to 'text.html.php' scope @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[    4589ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/v.gif?logtype=1&title=Aliyun%20Workbench&pre=https%3A%2F%2Fecs.console.aliyun.com%2F&scr=2560x1440&_p_url=https%3A%2F%2Fecs-workbench.aliyun.com%2F%3Ffrom%3Decs%26instanceType%3Decs%26regionId%3Dcn-hangzhou%26instanceId%3Di-bp1b9jfh0zv2ugcx51cm%26resourceGroupId%3D%26language%3Dzh-CN&spm-cnt=0.0.0.0.703a678a3zvOUB&aplus&sidx=aplusSidex&p=1&o=linux&b=chrome148&s=2560x1440&w=webkit&ism=other&cache=67beee9&lver=8.15.25&jsver=aplus_int&pver=0.7.12&tag=0&stag=-3&lstag=-1&_slog=0:0
+[    4708ms] [INFO] 2026-08-03T01:33:10.450Z root INFO Detected keyboard layout from browser API: US (PC) @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[    4708ms] [WARNING] 2026-08-03T01:33:10.451Z root WARN Could not register keybinding:
+  {"command":"open.ai.chat","keybinding":"ctrlcmd+ipppppppp"}
+Error: Unrecognized key ipppppppp in ctrlcmd+ipppppppp @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[    4709ms] [WARNING] 2026-08-03T01:33:10.451Z root WARN Frontend keybindings.onStart took longer than the expected maximum 100 milliseconds: 275.0 ms [Finished 5.804 s after frontend start] @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[    4749ms] [ERROR] 2026-08-03T01:33:10.491Z root ERROR Could not start contribution TypeError: t.registerToolbarItems is not a function
+    at m.onStart (https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:3:208581)
+    at https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/bundle.js:714:129688
+    at s.startAsync (https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:1:3975413)
+    at y.measure (https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:3:175000)
+    at y.startContributions (https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/bundle.js:714:129644)
+    at async s.startAsync (https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:1:3975407)
+    at async y.start (https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:3:170864)
+    at async y.start (https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/bundle.js:714:128795)
+    at async https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/bundle.js:1118:873715 @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[    5228ms] [WARNING] 2026-08-03T01:33:10.970Z root WARN Linked preference "workbench.colorCustomizations" not found. @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[    5457ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[    5727ms] [LOG] Mon Aug 03 2026 09:33:11 GMT+0800 (Singapore Standard Time) @ https://g.alicdn.com/AWSC/et/1.83.41/et_f.js:1
+[    5734ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/eg.js?t=1785720791305:0
+[    5847ms] [WARNING] 2026-08-03T01:33:11.590Z root WARN Frontend M.onStart took longer than the expected maximum 100 milliseconds: 1061.9 ms [Finished 6.974 s after frontend start] @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[    5930ms] [INFO] 2026-08-03T01:33:11.673Z root INFO Start frontend contributions: 1615.7 ms [Finished 6.976 s after frontend start] @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[    5930ms] [INFO] 2026-08-03T01:33:11.673Z root INFO Changed application state from 'init' to 'started_contributions'. @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[    6484ms] [INFO] 2026-08-03T01:33:12.227Z root INFO Changed application state from 'started_contributions' to 'attached_shell'. @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[    6485ms] [INFO] 2026-08-03T01:33:12.227Z root INFO >>> Restoring the layout state... @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[    6485ms] [INFO] 2026-08-03T01:33:12.227Z root INFO <<< Nothing to restore. @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[    6941ms] [WARNING] 2026-08-03T01:33:12.683Z root WARN Frontend p.initializeLayout took longer than the expected maximum 100 milliseconds: 392.6 ms [Finished 8.068 s after frontend start] @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[    6960ms] [INFO] 2026-08-03T01:33:12.703Z root INFO Initialize the workbench layout: 474.7 ms [Finished 8.086 s after frontend start] @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[    6961ms] [INFO] 2026-08-03T01:33:12.704Z root INFO Changed application state from 'attached_shell' to 'initialized_layout'. @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[    7957ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[    7957ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[    8055ms] [INFO] 2026-08-03T01:33:13.798Z root INFO Replace loading indicator with ready workbench UI (animation): 1034.3 ms [Finished 9.180 s after frontend start] @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[    8057ms] [INFO] 2026-08-03T01:33:13.800Z root INFO Changed application state from 'initialized_layout' to 'ready'. @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[    8363ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[    9029ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aliyun_com.homon.homon-module:0
+[    9300ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gm.mmstat.com/aisc-widgets.use.init?version=3.1.24&theme=dark&t=1785720795016&host=ecs-workbench.aliyun.com&chartinit=&uamobile=false&totalChart=0:0
+[   10279ms] [WARNING] 2026-08-03T01:33:16.021Z root WARN Widget was activated, but did not accept focus after 2000ms: getting.started.widget @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[   11850ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aliyun_com.homon.tracker-event:0
+[   16138ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   17767ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   18281ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   22956ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   23678ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   24264ms] [WARNING] 2026-08-03T01:33:30.007Z root WARN [getLinesContent perf] 2.00ms, scanned=1, end=38 @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[   24264ms] [INFO] 2026-08-03T01:33:30.007Z root INFO [PromptDetection] No pending update, skipping prompt update @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[   24264ms] [WARNING] 2026-08-03T01:33:30.007Z root WARN [getLinesContent perf] 10.30ms, scanned=38, end=37 @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[   24323ms] [INFO] 2026-08-03T01:33:30.065Z root INFO [PromptDetection] No pending update, skipping prompt update @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[   24323ms] [WARNING] 2026-08-03T01:33:30.065Z root WARN [getLinesContent perf] 10.20ms, scanned=38, end=37 @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[   24371ms] [WARNING] 2026-08-03T01:33:30.113Z root WARN [getLinesContent perf] 9.90ms, scanned=38, end=37 @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[   24374ms] [WARNING] 2026-08-03T01:33:30.117Z root WARN [getLinesContent perf] 0.60ms, scanned=1, end=38 @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[   24375ms] [INFO] 2026-08-03T01:33:30.117Z root INFO [PromptDetection] Prompt initialized: root@iZbp1b9jfh0zv2ugcx51cmZ:~# @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[   24375ms] [INFO] 2026-08-03T01:33:30.117Z root INFO [PromptDetection] Exact patterns: [/^root@iZbp1b9jfh0zv2ugcx51cmZ:~#\s*/, /root@iZbp1b9jfh0zv2ugcx51cmZ:~#\s*/] @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[   24399ms] [INFO] 2026-08-03T01:33:30.141Z root INFO Dynamic prompt pattern set: [/^\(.+?\)\s+\[[a-z][a-z0-9_-]{0,30}@iZbp1b9jfh0zv2ugcx51cmZ\s+[^\]]+\]\s*(#|\$)\s*/, /^\(.+?\)\s+[a-z][a-z0-9_-]{0,30}@iZbp1b9jfh0zv2ugcx51cmZ:[~\/][\w\/.-]*\s*(#|\$)\s*/, /^\[([a-z][a-z0-9_-]{0,30})@iZbp1b9jfh0zv2ugcx51cmZ\s+([^\]]+)\]\s*(#|\$)\s*/, /^([a-z][a-z0-9_-]{0,30})@iZbp1b9jfh0zv2ugcx51cmZ:([~\/][\w\/.-]*)\s*(#|\$)\s*/, /^(\[)?([a-z][a-z0-9_-]{2,30})@iZbp1b9jfh0zv2ugcx51cmZ(\s{0,1}|:\w+)(\w+)?\s(#|\$|~|>|\/)/] @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[   24537ms] [WARNING] 2026-08-03T01:33:30.280Z root WARN [getLinesContent perf] 10.20ms, scanned=38, end=37 @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[   26517ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   27990ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   28810ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   30687ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   31302ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   32319ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   35251ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   36591ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   38851ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aliyun_com.homon.tracker-event:0
+[   38852ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aliyun_com.homon.tracker-event:0
+[   40448ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   40953ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aliyun_com.homon.tracker-event:0
+[   51229ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   53037ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   53740ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   54315ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   54848ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   55843ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   56393ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   57857ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   58467ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   59282ms] [WARNING] 2026-08-03T01:34:05.025Z root WARN Could not find translation key for default value: "File Detail" @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[   59418ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   59910ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   60450ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   61172ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   62782ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   63953ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   74702ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   75299ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   75549ms] [WARNING] 2026-08-03T01:34:21.291Z root WARN Could not find translation key for default value: "File Detail" @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[   75721ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   75893ms] [WARNING] 2026-08-03T01:34:21.635Z root WARN [getLinesContent perf] 79.00ms, scanned=172, end=171 @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[   76321ms] [WARNING] 2026-08-03T01:34:22.063Z root WARN [getLinesContent perf] 77.80ms, scanned=175, end=174 @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[   76321ms] [WARNING] 2026-08-03T01:34:22.064Z root WARN [getLinesContent perf] 70.90ms, scanned=175, end=174 @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[   76321ms] [WARNING] 2026-08-03T01:34:22.064Z root WARN [getLinesContent perf] 70.80ms, scanned=174, end=173 @ https://g.alicdn.com/ecs-workbench/ecs-workbench-frontend/2.0.46/theia.js:0
+[   76353ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   76956ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[   86518ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[  116540ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[  146551ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[  176541ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[  206548ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[  236541ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0
+[  266544ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gj.mmstat.com/aes.1.1:0

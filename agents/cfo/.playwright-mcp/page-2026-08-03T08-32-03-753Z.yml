@@ -1,0 +1,28 @@
+- generic [active] [ref=f20e1]:
+  - navigation "驾驶舱导航" [ref=f20e2]:
+    - generic [ref=f20e3]:
+      - link "任务 意图" [ref=f20e4] [cursor=pointer]:
+        - /url: /table/
+        - generic [ref=f20e6]: 任务
+        - generic [ref=f20e7]: 意图
+      - link "计时 当下" [ref=f20e9] [cursor=pointer]:
+        - /url: /ring/
+        - generic [ref=f20e11]: 计时
+        - generic [ref=f20e12]: 当下
+      - link "甘特 记录" [ref=f20e14] [cursor=pointer]:
+        - /url: /gantt/
+        - generic [ref=f20e16]: 甘特
+        - generic [ref=f20e17]: 记录
+    - button "退出" [ref=f20e18] [cursor=pointer]
+  - main [ref=f20e19]:
+    - paragraph [ref=f20e20]: PROJECT PULSE // CURRENT CONTRIBUTION
+    - heading "当前任务对项目的贡献" [level=1] [ref=f20e21]
+    - generic [ref=f20e22]:
+      - heading "Task Timer // 计时控制" [level=2] [ref=f20e23]
+      - generic [ref=f20e24]:
+        - combobox "选择任务" [ref=f20e25]:
+          - option "选择任务…" [selected]
+          - option "英语单词学习"
+          - option "口语练习"
+        - button "开始" [disabled] [ref=f20e26]
+    - paragraph [ref=f20e27]: 当前无任务运行。

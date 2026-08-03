@@ -1,0 +1,146 @@
+[    1940ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[    2023ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[    2101ms] [WARNING] [APLUS] -- window.APLUS_CONFIG未配置或pid缺失 @ :9
+[    2108ms] [LOG] %c [APLUS] -- APLUS INIT SUCCESS background:#3B82FE; padding: 4px; padding-right: 8px; border-radius: 4px; color: #fff; @ :1
+[    2135ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[    2180ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[    2317ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gm.mmstat.com/aliyun_com.homon.homon-module:0
+[    2445ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[    2445ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/v.gif:0
+[    2445ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gm.mmstat.com/fsp.1.1:0
+[    2486ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[    2600ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[    3231ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[    3514ms] [WARNING] An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape its sandboxing. @ https://g.alicdn.com/aliyun-com/global-notification/0.1.1/index.js:40
+[    4112ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[    4112ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[    4113ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[    5682ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[    5727ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[    5877ms] [LOG] Mon Aug 03 2026 09:40:43 GMT+0800 (Singapore Standard Time) @ https://uaction.alicdn.com/AWSC/uab/1.140.0/collina.js:4
+[    5968ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[    5968ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[    5968ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[    6002ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[    6073ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[    6203ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[    6319ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.tracker-event:0
+[    6319ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.homon-module:0
+[    6376ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[    6440ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.tracker-scm:0
+[    6448ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[    6578ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[    6579ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[    6703ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.tracker-scm:0
+[    6762ms] [ERROR] Mixed Content: The page at 'https://www.aliyun.com/product/cbwp?spm=5176.ecscore_server-lite.0.0.67cc4df5YaXmrk' was loaded over HTTPS, but requested an insecure Beacon endpoint 'http://err.taobao.com/error2.html'. This request has been blocked; the content must be served over HTTPS. @ https://www.aliyun.com/product/cbwp?spm=5176.ecscore_server-lite.0.0.67cc4df5YaXmrk:0
+[    6771ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[    7374ms] [WARNING] [querySelector] head @ https://g.alicdn.com/dawn/fastbuy-aliyun-website/1.2.109/js/prefetch.js:3
+[    7465ms] [WARNING] [querySelector] meta[name="aes-config"] @ https://g.alicdn.com/dawn/fastbuy-aliyun-website/1.2.109/js/prefetch.js:3
+[    7466ms] [WARNING] [querySelector] title @ https://g.alicdn.com/dawn/fastbuy-aliyun-website/1.2.109/js/prefetch.js:3
+[    7494ms] [WARNING] [querySelectorAll] style[data-styled-widget-commonbuy-buy-core][data-styled-version="4.4.1"] @ https://g.alicdn.com/dawn/fastbuy-aliyun-website/1.2.109/js/prefetch.js:3
+[    7500ms] [WARNING] [getElementsByTagName] script @ https://g.alicdn.com/dawn/fastbuy-aliyun-website/1.2.109/js/prefetch.js:3
+[    7501ms] [WARNING] [getElementsByTagName] script @ https://g.alicdn.com/dawn/fastbuy-aliyun-website/1.2.109/js/prefetch.js:3
+[    7507ms] [WARNING] [getElementById] font_1256165_39hyv7290ha @ https://g.alicdn.com/dawn/fastbuy-aliyun-website/1.2.109/js/prefetch.js:3
+[    7872ms] [WARNING] [getElementsByTagName] script @ https://g.alicdn.com/dawn/fastbuy-aliyun-website/1.2.109/js/prefetch.js:3
+[    7872ms] [WARNING] [getElementsByTagName] script @ https://g.alicdn.com/dawn/fastbuy-aliyun-website/1.2.109/js/prefetch.js:3
+[    7882ms] [WARNING] [querySelectorAll] style[data-styled-widget-commonbuy-buy-core][data-styled-version="6.3.11"] @ https://g.alicdn.com/dawn/fastbuy-aliyun-website/1.2.109/js/prefetch.js:3
+[    7887ms] [WARNING] [getElementById] font_1256165_39hyv7290ha @ https://g.alicdn.com/dawn/fastbuy-aliyun-website/1.2.109/js/prefetch.js:3
+[    7899ms] [WARNING] [querySelector] meta[name="aes-config"] @ https://g.alicdn.com/dawn/fastbuy-aliyun-website/1.2.109/js/prefetch.js:3
+[    7900ms] [WARNING] [querySelector] title @ https://g.alicdn.com/dawn/fastbuy-aliyun-website/1.2.109/js/prefetch.js:3
+[    7901ms] [WARNING] [aes-autolog] pid(B7Cift) 已被载入，请勿重复载入 @ widget:///commonbuy-buy-core:19
+[    7967ms] [INFO] [APSecuritySdk] 1698809745203 @ widget:///commonbuy-buy-core:19
+[    7968ms] [INFO] [APDID-Core] loading apdid core @ widget:///commonbuy-buy-core:19
+[    8188ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.homon-module:0
+[    8564ms] [WARNING] [querySelectorAll] [data-autolog] @ https://g.alicdn.com/dawn/fastbuy-aliyun-website/1.2.109/js/prefetch.js:3
+[    8565ms] [WARNING] [querySelectorAll] [data-autolog-container] @ https://g.alicdn.com/dawn/fastbuy-aliyun-website/1.2.109/js/prefetch.js:3
+[    8571ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[    8609ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.homon-module:0
+[    8614ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[    8615ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.tracker-event:0
+[    8731ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[    8758ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.homon-module:0
+[    8933ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[    8960ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.homon-module:0
+[    9131ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[    9160ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.homon-module:0
+[    9330ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[    9358ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.homon-module:0
+[    9481ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[    9512ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[    9514ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[    9530ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[    9557ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.homon-module:0
+[    9731ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[    9760ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.homon-module:0
+[   10227ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://local.alipcsec.com:6691/umid/getumid?data=&_callback=_641_1785721243495:0
+[   10245ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gm.mmstat.com/fsp.1.1:0
+[   10248ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   10281ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[   10288ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   10354ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[   10798ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   10825ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.tracker-scm:0
+[   12635ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   12663ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[   12831ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   12859ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[   13034ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   13063ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[   15294ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   15337ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[   15789ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   15817ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[   17336ms] [WARNING] The ScriptProcessorNode is deprecated. Use AudioWorkletNode instead. (https://bit.ly/audio-worklet) @ https://uaction.alicdn.com/AWSC/uab/1.140.0/collina.js:8
+[   17538ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   17574ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.homon-module:0
+[   17626ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   17658ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.homon-module:0
+[   17964ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   17992ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.homon-module:0
+[   18105ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   18137ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.homon-module:0
+[   18359ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   18388ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[   18474ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   18500ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.homon-module:0
+[   18613ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   18640ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.homon-module:0
+[   18973ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   19004ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.homon-module:0
+[   19106ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   19135ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.homon-module:0
+[   19378ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   19424ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[   19654ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   19681ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.homon-module:0
+[   19862ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   19898ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[   20794ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   20822ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.tracker-scm:0
+[   21554ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   21581ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[   21660ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   21691ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.homon-module:0
+[   22050ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   22076ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[   26107ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   26147ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[   28365ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   28395ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[   30790ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   30820ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.tracker-scm:0
+[   31948ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   32002ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.tracker-event:0
+[   32005ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.tracker-event:0
+[   36340ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   36411ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[   39145ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   39173ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[   40859ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   40899ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aliyun_com.homon.tracker-scm:0
+[   46278ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   46313ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[   48375ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0
+[   48403ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://d-gm.mmstat.com/aes.1.1:0
+[   50194ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://gm.mmstat.com//fsp.1.3:0
+[   50268ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_CLOSED @ https://log.mmstat.com/eg.js:0

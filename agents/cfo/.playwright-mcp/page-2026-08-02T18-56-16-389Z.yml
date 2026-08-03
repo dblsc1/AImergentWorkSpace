@@ -1,0 +1,158 @@
+- generic [active] [ref=f6e1]:
+  - navigation "驾驶舱导航" [ref=f6e2]:
+    - generic [ref=f6e3]:
+      - link "任务" [ref=f6e4] [cursor=pointer]:
+        - /url: /table/
+      - link "计时" [ref=f6e8] [cursor=pointer]:
+        - /url: /ring/
+      - link "甘特" [ref=f6e12] [cursor=pointer]:
+        - /url: /gantt/
+    - button "退出" [ref=f6e15] [cursor=pointer]
+  - main [ref=f6e16]:
+    - generic [ref=f6e17]:
+      - generic [ref=f6e19]:
+        - heading "NEXUS // 项目控制台" [level=1] [ref=f6e20]
+        - generic [ref=f6e21]: PERSONAL OPERATIONS MATRIX · V2.6
+      - generic [ref=f6e22]:
+        - button "刷新" [ref=f6e23] [cursor=pointer]
+        - button "＋ 新建分区" [ref=f6e24] [cursor=pointer]
+    - region "项目概览" [ref=f6e25]:
+      - article [ref=f6e26]:
+        - generic [ref=f6e27]: Active Projects
+        - generic [ref=f6e28]: 3 项
+      - article [ref=f6e29]:
+        - generic [ref=f6e30]: Task Complete
+        - generic [ref=f6e31]: 1/2
+      - article [ref=f6e32]:
+        - generic [ref=f6e33]: Average Progress
+        - generic [ref=f6e34]: 30%
+    - generic [ref=f6e35]:
+      - generic [ref=f6e36]:
+        - generic [ref=f6e37]: 行动分区
+        - navigation "分区分页" [ref=f6e38]:
+          - button "上一页" [disabled] [ref=f6e39]: ←
+          - generic [ref=f6e40]: 01 / 01
+          - button "下一页" [disabled] [ref=f6e41]: →
+      - generic [ref=f6e42]:
+        - generic [ref=f6e43]:
+          - generic [ref=f6e44]:
+            - generic [ref=f6e45]:
+              - generic [ref=f6e46]: "01"
+              - generic [ref=f6e47]:
+                - generic [ref=f6e48]: 学习区
+                - generic [ref=f6e49]: 02 PROJECT NODES
+            - button "编辑分区" [ref=f6e50] [cursor=pointer]: ⌁
+          - generic [ref=f6e51]:
+            - article [ref=f6e52]:
+              - button "编辑项目" [ref=f6e53] [cursor=pointer]: ✎
+              - generic [ref=f6e54]:
+                - generic [ref=f6e55]: 英
+                - generic [ref=f6e56]:
+                  - generic "英语学习" [ref=f6e57]
+                  - generic [ref=f6e58]: DUE // 2026-08-06
+              - generic [ref=f6e59]: 50%
+              - generic [ref=f6e63]:
+                - generic [ref=f6e64]:
+                  - checkbox "切换完成状态" [ref=f6e65]
+                  - generic [ref=f6e66]: 英语单词学习
+                  - button "编辑任务" [ref=f6e67] [cursor=pointer]: ✎
+                - generic [ref=f6e68]:
+                  - checkbox "切换完成状态" [checked] [ref=f6e69]
+                  - generic [ref=f6e70]: 口语练习
+                  - button "编辑任务" [ref=f6e71] [cursor=pointer]: ✎
+              - button "＋ 新建任务" [ref=f6e72] [cursor=pointer]
+            - article [ref=f6e73]:
+              - button "编辑项目" [ref=f6e74] [cursor=pointer]: ✎
+              - generic [ref=f6e75]:
+                - generic [ref=f6e76]: 读
+                - generic [ref=f6e77]:
+                  - generic "读书计划" [ref=f6e78]
+                  - generic [ref=f6e79]: DUE // 未设定
+              - generic [ref=f6e83]:
+                - text: 40%
+                - generic "人工覆盖值，后端原样返回不重算" [ref=f6e84]: 人工
+              - generic [ref=f6e85]: 暂无任务
+              - button "＋ 新建任务" [ref=f6e87] [cursor=pointer]
+          - button "＋ 在学习区新建项目" [ref=f6e88] [cursor=pointer]
+        - generic [ref=f6e89]:
+          - generic [ref=f6e90]:
+            - generic [ref=f6e91]:
+              - generic [ref=f6e92]: "02"
+              - generic [ref=f6e93]:
+                - generic [ref=f6e94]: 工作区
+                - generic [ref=f6e95]: 01 PROJECT NODES
+            - button "编辑分区" [ref=f6e96] [cursor=pointer]: ⌁
+          - article [ref=f6e98]:
+            - button "编辑项目" [ref=f6e99] [cursor=pointer]: ✎
+            - generic [ref=f6e100]:
+              - generic [ref=f6e101]: X
+              - generic [ref=f6e102]:
+                - generic "X-structure" [ref=f6e103]
+                - generic [ref=f6e104]: DUE // 未设定
+            - generic [ref=f6e105]: 0%
+            - generic [ref=f6e108]: 暂无任务
+            - button "＋ 新建任务" [ref=f6e110] [cursor=pointer]
+          - button "＋ 在工作区新建项目" [ref=f6e111] [cursor=pointer]
+        - generic [ref=f6e112]:
+          - generic [ref=f6e113]:
+            - generic [ref=f6e114]:
+              - generic [ref=f6e115]: "03"
+              - generic [ref=f6e116]:
+                - generic [ref=f6e117]: CFO核实区
+                - generic [ref=f6e118]: 00 PROJECT NODES
+            - button "编辑分区" [ref=f6e119] [cursor=pointer]: ⌁
+          - generic [ref=f6e120]: NO PROJECT SIGNAL
+          - button "＋ 在CFO核实区新建项目" [ref=f6e122] [cursor=pointer]
+    - region "计时档案" [ref=f6e123]:
+      - list [ref=f6e126]:
+        - listitem [ref=f6e127]: 2026年8月3日 01:10–01:10 · p_e773d3（项目已删除） / t_dde782（任务已删除） · <1分钟
+        - listitem [ref=f6e128]: 2026年8月3日 01:10–01:10 · p_a97d4e（项目已删除） / t_d2d06e（任务已删除） · <1分钟
+        - listitem [ref=f6e129]: 2026年8月3日 01:10–01:10 · p_33255b（项目已删除） / t_e7ea9f（任务已删除） · <1分钟
+        - listitem [ref=f6e130]: 2026年8月3日 01:10–01:10 · p_48880d（项目已删除） / t_c2c9fe（任务已删除） · <1分钟
+        - listitem [ref=f6e131]: 2026年8月3日 01:09–01:09 · p_543959（项目已删除） / t_4c7e64（任务已删除） · <1分钟
+        - listitem [ref=f6e132]: 2026年8月3日 01:09–01:09 · p_04ac29（项目已删除） / t_a900cb（任务已删除） · <1分钟
+        - listitem [ref=f6e133]: 2026年8月3日 01:07–01:07 · p_dd990c（项目已删除） / t_42bb8d（任务已删除） · <1分钟
+        - listitem [ref=f6e134]: 2026年8月3日 01:07–01:07 · p_8be12c（项目已删除） / t_6f40f5（任务已删除） · <1分钟
+        - listitem [ref=f6e135]: 2026年8月2日 01:37–01:37 · p_a5ef8a（项目已删除） / t_c07ba6（任务已删除） · <1分钟
+        - listitem [ref=f6e136]: 2026年8月2日 01:37–01:37 · p_cfd6a4（项目已删除） / t_86a778（任务已删除） · <1分钟
+        - listitem [ref=f6e137]: 2026年8月2日 01:35–01:35 · p_e4fd3f（项目已删除） / t_381cd3（任务已删除） · <1分钟
+        - listitem [ref=f6e138]: 2026年8月2日 01:35–01:35 · p_fb7d54（项目已删除） / t_f421ae（任务已删除） · <1分钟
+        - listitem [ref=f6e139]: 2026年8月2日 01:34–01:34 · p_c495b3（项目已删除） / t_053784（任务已删除） · <1分钟
+        - listitem [ref=f6e140]: 2026年8月2日 01:34–01:34 · p_a6ba75（项目已删除） / t_c06fed（任务已删除） · <1分钟
+        - listitem [ref=f6e141]: 2026年8月2日 01:30–01:30 · p_e14d14（项目已删除） / t_e21e60（任务已删除） · <1分钟
+        - listitem [ref=f6e142]: 2026年8月2日 01:30–01:30 · p_6eedbb（项目已删除） / t_9f858b（任务已删除） · <1分钟
+        - listitem [ref=f6e143]: 2026年8月2日 01:29–01:29 · p_7fff33（项目已删除） / t_9fe33a（任务已删除） · <1分钟
+        - listitem [ref=f6e144]: 2026年8月2日 01:29–01:29 · p_c911ba（项目已删除） / t_e84653（任务已删除） · <1分钟
+        - listitem [ref=f6e145]: 2026年8月2日 01:28–01:28 · p_7eee93（项目已删除） / t_b558ab（任务已删除） · <1分钟
+        - listitem [ref=f6e146]: 2026年8月2日 01:28–01:28 · p_173be4（项目已删除） / t_749b14（任务已删除） · <1分钟
+        - listitem [ref=f6e147]: 2026年8月2日 01:28–01:28 · p_a97122（项目已删除） / t_b7e74e（任务已删除） · <1分钟
+        - listitem [ref=f6e148]: 2026年8月2日 01:28–01:28 · p_7ed6d9（项目已删除） / t_cfe757（任务已删除） · <1分钟
+        - listitem [ref=f6e149]: 2026年8月2日 01:26–01:26 · p_ad7619（项目已删除） / t_3e0486（任务已删除） · <1分钟
+        - listitem [ref=f6e150]: 2026年8月2日 01:26–01:26 · p_868dad（项目已删除） / t_6175d4（任务已删除） · <1分钟
+        - listitem [ref=f6e151]: 2026年8月2日 01:24–01:24 · 英语学习 / 英语单词学习 · <1分钟
+        - listitem [ref=f6e152]: 2026年8月2日 01:23–01:23 · p_7681eb（项目已删除） / t_cffc54（任务已删除） · <1分钟
+        - listitem [ref=f6e153]: 2026年8月2日 01:23–01:23 · p_787f38（项目已删除） / t_37d864（任务已删除） · <1分钟
+        - listitem [ref=f6e154]: 2026年8月2日 01:21–01:21 · p_5dd69c（项目已删除） / t_e9683e（任务已删除） · <1分钟
+        - listitem [ref=f6e155]: 2026年8月2日 01:21–01:21 · p_3f1a4e（项目已删除） / t_f6739b（任务已删除） · <1分钟
+        - listitem [ref=f6e156]: 2026年8月2日 01:11–01:11 · p_b78512（项目已删除） / t_873794（任务已删除） · <1分钟
+        - listitem [ref=f6e157]: 2026年8月2日 01:11–01:11 · p_f83466（项目已删除） / t_ca506f（任务已删除） · <1分钟
+        - listitem [ref=f6e158]: 2026年8月2日 01:05–01:05 · p_c1d4cb（项目已删除） / t_c48de3（任务已删除） · <1分钟
+        - listitem [ref=f6e159]: 2026年8月2日 01:05–01:05 · p_de59fe（项目已删除） / t_f1f624（任务已删除） · <1分钟
+        - listitem [ref=f6e160]: 2026年8月2日 01:04–01:04 · p_c952fc（项目已删除） / t_e2bac9（任务已删除） · <1分钟
+        - listitem [ref=f6e161]: 2026年8月2日 01:04–01:04 · p_791b2a（项目已删除） / t_fbbff3（任务已删除） · <1分钟
+        - listitem [ref=f6e162]: 2026年8月2日 01:04–01:04 · p_d12855（项目已删除） / t_7ed84e（任务已删除） · <1分钟
+        - listitem [ref=f6e163]: 2026年8月2日 01:04–01:04 · p_f40174（项目已删除） / t_6ff091（任务已删除） · <1分钟
+        - listitem [ref=f6e164]: 2026年8月2日 01:03–01:03 · p_9554d0（项目已删除） / t_6f7b7e（任务已删除） · <1分钟
+        - listitem [ref=f6e165]: 2026年8月2日 01:02–01:02 · p_223780（项目已删除） / t_76a61c（任务已删除） · <1分钟
+        - listitem [ref=f6e166]: 2026年8月2日 01:02–01:02 · p_012ba5（项目已删除） / t_d61d1a（任务已删除） · <1分钟
+        - listitem [ref=f6e167]: 2026年8月2日 01:02–01:02 · p_29b441（项目已删除） / t_c5696c（任务已删除） · <1分钟
+        - listitem [ref=f6e168]: 2026年8月2日 01:02–01:02 · p_c38f87（项目已删除） / t_bce187（任务已删除） · <1分钟
+        - listitem [ref=f6e169]: 2026年8月2日 00:55–00:55 · p_4c1cd2（项目已删除） / t_e5648d（任务已删除） · <1分钟
+        - listitem [ref=f6e170]: 2026年8月2日 00:54–00:54 · p_e169b3（项目已删除） / t_1bf1eb（任务已删除） · <1分钟
+        - listitem [ref=f6e171]: 2026年8月2日 00:49–00:49 · p_6758ef（项目已删除） / t_cc7731（任务已删除） · <1分钟
+        - listitem [ref=f6e172]: 2026年8月2日 00:15–00:15 · 英语学习 / 英语单词学习 · <1分钟
+        - listitem [ref=f6e173]: 2026年8月2日 00:05–00:07 · 英语学习 / 英语单词学习 · 2分钟
+        - listitem [ref=f6e174]: 2026年8月2日 00:03–00:05 · 英语学习 / 英语单词学习 · 2分钟
+        - listitem [ref=f6e175]: 2026年8月1日 23:51–23:51 · 英语学习 / 英语单词学习 · <1分钟
+        - listitem [ref=f6e176]: 2026年8月1日 21:15–21:15 · 英语学习 / 英语单词学习 · <1分钟
+  - status
