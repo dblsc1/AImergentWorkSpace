@@ -33,3 +33,5 @@
 {"ts":"2026-08-02T18:37:40Z","event":"override","hatch":"PUSH_UNREVIEWED","reason":"CFO 留痕","script":"arbiter-push.sh","actor":"xia","branch":"feat/frontend-view-modules","head":"bc3dbcfc96fab8aea0c58c4b668481a581f07613"}
 {"ts":"2026-08-02T18:38:48Z","event":"override","hatch":"PUSH_UNREVIEWED","reason":"CFO 留痕","script":"arbiter-push.sh","actor":"xia","branch":"feat/frontend-view-modules","head":"858600f82d8ed721566b2d21028d83bfc706672b"}
 {"ts":"2026-08-02T18:49:01Z","event":"override","hatch":"PUSH_UNREVIEWED","reason":"CFO 复盘留痕","script":"arbiter-push.sh","actor":"xia","branch":"feat/frontend-view-modules","head":"304f6a507963f88c5003ae3e5f97ab7c6905e154"}
+{"ts":"2026-08-03T09:10:37Z","event":"override","hatch":"PUSH_UNREVIEWED","reason":"修 exam.sh 回归，模块里实测 5/5","script":"arbiter-push.sh","actor":"xia","branch":"feat/frontend-view-modules","head":"0f6bf6758b795495d4f174efef190ab60e38f363"}
+{"ts":"2026-08-03T09:12:26Z","event":"override","hatch":"PUSH_UNREVIEWED","reason":"修 exam.sh 回归；模块里实测 5/5，selftest 69 绿，反向两发真变红","script":"arbiter-push.sh","actor":"xia","branch":"feat/frontend-view-modules","head":"0f6bf6758b795495d4f174efef190ab60e38f363"}

@@ -52,10 +52,21 @@ _canonical_path_for() {   # _canonical_path_for <角色> → 仓内相对路径�
   #    而我的断言只在框架根跑（第一个分支就命中），恰好是能工作的那一半 ——
   #    「判据只覆盖了粗心的那一半」，我在写完这条教训的下一轮就自己犯了。
   if [ ! -f "$schema" ]; then
-    . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/paths.sh" 2>/dev/null || true
-    if command -v framework_root >/dev/null 2>&1; then
-      fw=$(framework_root 2>/dev/null) && [ -n "$fw" ] && schema="$fw/agents/protocol/report-schema.md"
+    # 到这一步说明本仓内没有 schema（模块独立仓的常态），**必须**靠 paths.sh 回溯框架根。
+    # 所以在这条路径上 paths.sh 是**必需件不是可选件** —— 缺了不许静默继续
+    #（selftest #65：`. <公共件> … || true` 会在缺件时静默继续，然后以
+    # 「什么都没验」的姿态退 0。这一条正是 consulter 修 S1 时立的判据，
+    # 而我第一版就踩了它。）
+    local _lib; _lib="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/lib/paths.sh"
+    if [ ! -f "$_lib" ]; then
+      printf '❌ exam: 本仓内无 agents/protocol/report-schema.md，需靠 %s 回溯框架根，而它不存在。\n' "$_lib" >&2
+      printf '__SCHEMA_NOT_FOUND__'; return 0
     fi
+    . "$_lib" || {
+      printf '❌ exam: 载入 %s 失败 —— 无法定位框架根，拒绝以「什么都没验」的姿态判卷。\n' "$_lib" >&2
+      printf '__SCHEMA_NOT_FOUND__'; return 0
+    }
+    fw=$(framework_root 2>/dev/null) && [ -n "$fw" ] && schema="$fw/agents/protocol/report-schema.md"
   fi
   [ -f "$schema" ] || { printf '__SCHEMA_NOT_FOUND__'; return 0; }
   line=$(grep -F "<!-- role:$role -->" "$schema" | head -1) || return 0

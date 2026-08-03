@@ -307,7 +307,7 @@ else
   # ⚠️ 必须喂**真实存在的答案文件**：`--submit /dev/null` 会在「答案文件不存在」
   #    那一步就退出，**根本走不到判卷**，于是断言在看一段永远不会产生的输出。
   #    （本断言第一版就是这么写的，反向验证不变红才发现 —— 「断言根本没在看」。）
-  printf 'Q1: code/backend/report.json\n' > "$_mod/ans.txt"
+  printf 'Q1: code/backend/report.json\n' > "$_mod/ans.txt"   # ref-fixture：考卷样本，不是真引用
   _mod_got=$( cd "$_mod" && bash scripts/exam.sh programmer --submit ans.txt 2>&1 )
   rm -rf "$_mod"
   if [ -n "$_bad" ]; then
