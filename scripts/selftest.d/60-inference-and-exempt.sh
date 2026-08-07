@@ -417,3 +417,30 @@ else
     F "C1 判据失灵：$_v62"
   fi
 fi
+
+# ── 70 · CSS 注释配平（铁律 23 断言；实证 2026-08-08 auth）────────────────
+# 兜底 tokens 块注释里的 `--plan*/--fact*` 把注释提前闭合，整个 light 主题
+# :root 块被浏览器静默丢弃——无报错、页面照常渲染。类不是实例：四个前端仓
+# 都按同一契约写同款长注释兜底块。
+printf '70. CSS 注释配平是否有提交时刻的机械执行者\n'
+_c19="$S/checks/_common/19-css-comment-balance.sh"
+if [ ! -f "$_c19" ]; then
+  F "没有 checks/_common/19-css-comment-balance.sh —— 注释吞规则只能靠人眼盯颜色发现"
+else
+  _sbx=$(mktemp -d)
+  # 坏样本拆分书写：本文件自己会被各判据扫，别让 fixture 以完整形态出现
+  printf '/* ok */ .a{color:var(--x)}\n' > "$_sbx/ok.css"
+  { printf '/* 注释里引用 --plan'; printf '*/--fact* 后半截掉进选择器位 */ .b{}\n'; } > "$_sbx/bad.css"
+  _rc_ok=$(bash "$_c19" --files "$_sbx/ok.css" >/dev/null 2>&1; echo $?)
+  _out_bad=$(bash "$_c19" --files "$_sbx/bad.css" 2>&1); _rc_bad=$?
+  # S1 类：暂存模式缺 paths.sh 必须响亮死，不许静默退 0
+  mkdir -p "$_sbx/scripts/checks/_common"
+  cp "$_c19" "$_sbx/scripts/checks/_common/"
+  _rc_nolib=$(cd "$_sbx" && bash scripts/checks/_common/19-css-comment-balance.sh >/dev/null 2>&1; echo $?)
+  rm -rf "$_sbx"
+  if [ "$_rc_ok" -eq 0 ] && [ "$_rc_bad" -ne 0 ] && printf '%s' "$_out_bad" | grep -q 'bad\.css' && [ "$_rc_nolib" -ne 0 ]; then
+    P "配平样本放行、失衡样本被点名（含文件名）、缺公共件响亮死（不静默退 0）"
+  else
+    F "CSS 注释配平判据失灵：ok=$_rc_ok bad=$_rc_bad nolib=$_rc_nolib"
+  fi
+fi
