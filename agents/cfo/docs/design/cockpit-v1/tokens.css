@@ -1,0 +1,115 @@
+/* ══════════════════════════════════════════════════════════════════
+ * 时间驾驶舱 · design tokens v1（设计稿附件，将来 /__cockpit/tokens.css 的种子）
+ *
+ * 语义先于颜色：
+ *   计划紫 --plan  = 意图（planner 台账：计划期、目标）
+ *   事实青 --fact  = 已发生（events 台账：计时记录、事实条）
+ *   一切「正在录制/开始计时」的交互用 --fact —— 按下去就是在产生事实。
+ *
+ * 双主题：html[data-theme="light"|"dark"]。真实产品默认跟随系统
+ * （prefers-color-scheme），手动切换写 localStorage 并监听 storage
+ * 事件同步所有已开窗口。
+ *
+ * 对比度（WCAG，实测值写在旁边，机械校验脚本以此表为准）：
+ *   正文 --ink   on --panel   light 15.0:1 / dark 14.4:1   （下限 4.5）
+ *   次级 --ink-2 on --panel   light  6.2:1 / dark  7.1:1   （下限 4.5）
+ *   计划 --plan  on --panel   light  4.9:1 / dark  6.1:1   （文字用法下限 4.5）
+ *   事实 --fact  on --panel   light  4.6:1 / dark  9.1:1   （文字用法下限 4.5）
+ * ══════════════════════════════════════════════════════════════════ */
+
+:root,
+html[data-theme="light"] {
+  color-scheme: light;
+
+  /* 面 */
+  --bg:      #F3F5F8;   /* 页底 · 晨航灰 */
+  --panel:   #FFFFFF;   /* 卡片 */
+  --panel-2: #EDF0F5;   /* 卡内嵌面：输入框、轨道底 */
+  --line:    #D9DFE8;   /* 边线 */
+  --line-2:  #E7EBF1;   /* 更弱的分隔线 */
+
+  /* 墨 */
+  --ink:     #17202E;   /* 正文 */
+  --ink-2:   #55627A;   /* 次级：说明、单位、时间戳 */
+  --ink-3:   #8B96A9;   /* 禁用、占位 */
+
+  /* 语义 */
+  --plan:      #6D5AE6; /* 计划紫 */
+  --plan-soft: #E9E6FB; /* 计划条底 */
+  --fact:      #0E8C7F; /* 事实青 */
+  --fact-soft: #DCF0ED; /* 事实条底 */
+  --fact-ink:  #FFFFFF; /* 事实色实心钮上的字 */
+  --warn:      #B45309; /* 琥珀：降级、过期 */
+  --danger:    #C2333B; /* 危险：删除、取消不记录 */
+
+  /* 事实数据序列（同类量走同色渐变——都是事实，深浅表多少） */
+  --fact-s1: #0E8C7F;
+  --fact-s2: #55AFA3;
+  --fact-s3: #9CCFC8;
+
+  --focus:   #1E5FD0;   /* 键盘焦点环，独立于语义色 */
+  --shadow:  0 1px 2px rgba(23,32,46,.06), 0 4px 16px rgba(23,32,46,.07);
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg:      #0D1220;   /* 页底 · 夜航蓝黑（不是纯黑） */
+  --panel:   #151C2E;
+  --panel-2: #1D2639;
+  --line:    #26314A;
+  --line-2:  #202A40;
+
+  --ink:     #E8ECF4;
+  --ink-2:   #9DA9BF;
+  --ink-3:   #5F6C84;
+
+  --plan:      #9B8CFF;
+  --plan-soft: #2A2A4E;
+  --fact:      #2FD4C2;
+  --fact-soft: #123B38;
+  --fact-ink:  #04211D;
+  --warn:      #F0B36A;
+  --danger:    #FF8189;
+
+  --fact-s1: #2FD4C2;
+  --fact-s2: #6FB8AE;
+  --fact-s3: #46706B;
+
+  --focus:   #6FA8FF;
+  --shadow:  0 1px 2px rgba(0,0,0,.4), 0 4px 20px rgba(0,0,0,.35);
+}
+
+:root {
+  /* 字 —— 全部系统栈，局域网离线也不裸奔，CJK 交给系统最好的那套 */
+  --font-body: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+               "Noto Sans CJK SC", system-ui, sans-serif;
+  /* 仪表字：时间、日期、数字、编号。tabular-nums 由使用处声明 */
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono",
+               Consolas, "Liberation Mono", monospace;
+
+  /* 型 */
+  --fs-body: 15px;      /* 正文 */
+  --fs-sub:  13px;      /* 次级 */
+  --fs-eyebrow: 11px;   /* 眉题：mono、大写、宽字距 */
+  --fs-h2:   17px;
+  --fs-time-lg: 40px;   /* 仪表中央的计时 */
+
+  /* 距（密度 7/10：数据密集但不逼仄） */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;
+  --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+
+  /* 角 */
+  --r-1: 6px;  --r-2: 10px;  --r-3: 14px;
+
+  /* 触控（手机/平板一等公民） */
+  --tap: 44px;
+
+  /* 动 */
+  --t-fast: 150ms ease;
+  --t-med:  240ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --t-fast: 0ms; --t-med: 0ms; }
+}

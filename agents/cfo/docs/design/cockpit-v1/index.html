@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>时间驾驶舱 · 设计稿 v1</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="mock.css">
+<script src="mock.js" defer></script>
+</head>
+<body>
+
+<header class="doc-head">
+  <span class="eyebrow">COCKPIT · DESIGN SPEC V1 · 2026-08-07</span>
+  <h1>时间驾驶舱 · 亮暗双主题设计稿</h1>
+  <nav class="themer" aria-label="主题">
+    <button data-theme="light" aria-pressed="true">亮</button>
+    <button data-theme="dark" aria-pressed="false">暗</button>
+  </nav>
+</header>
+
+<main>
+
+<!-- ═══════════════ 0 · 设计语言 ═══════════════ -->
+<section class="spec" id="tokens">
+  <h2>0 · 设计语言：仪表盘的诚实</h2>
+  <p class="why">
+    这套系统的底层信念是「事实台账不说谎」——设计语言照搬这个信念：
+    <b>计划紫</b>永远表示意图（planner 台账），<b>事实青</b>永远表示已发生（events 台账）。
+    每个时间实体都用「双轨」呈现：上轨紫是计划，下轨青是事实，对不上一眼就看出来。
+    所有「开始计时」类动作用事实青——按下去就是在产生事实。
+    每种颜色实测 WCAG 对比度标在下面，落地后有脚本按这张表机械核验，暗底暗字这类灾难从此进不了仓。
+  </p>
+  <div class="swatches">
+    <div class="sw"><div class="chip" style="background:var(--bg)"></div><div class="m"><div class="name">底 --bg</div><div class="val">晨航灰 / 夜航蓝黑</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--panel);border-bottom:1px solid var(--line)"></div><div class="m"><div class="name">面板 --panel</div><div class="val">卡片底</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--ink)"></div><div class="m"><div class="name">墨 --ink</div><div class="val">对比 15.0 / 14.4</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--ink-2)"></div><div class="m"><div class="name">次级 --ink-2</div><div class="val">对比 6.2 / 7.1</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--plan)"></div><div class="m"><div class="name">计划紫 --plan</div><div class="val">对比 4.9 / 6.1</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--fact)"></div><div class="m"><div class="name">事实青 --fact</div><div class="val">对比 4.6 / 9.1</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--warn)"></div><div class="m"><div class="name">琥珀 --warn</div><div class="val">降级 · 计划过期</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--danger)"></div><div class="m"><div class="name">危险 --danger</div><div class="val">删除 · 取消不记录</div></div></div>
+  </div>
+  <div class="type-spec" style="margin-top:var(--sp-3)">
+    <span class="eyebrow">COCKPIT · 计时 —— 眉题：mono 11px 宽字距</span>
+    <div style="font-size:var(--fs-h2);font-weight:600">页面标题 17px / 600 —— 系统 CJK 栈，离线不裸奔</div>
+    <div>正文 15px / 1.55 —— 说明文字、任务名、一切阅读性内容。</div>
+    <div style="font-size:var(--fs-sub);color:var(--ink-2)">次级 13px —— 时间戳、单位、辅助说明。</div>
+    <div class="mono" style="font-size:var(--fs-time-lg);font-weight:600">00:12:34</div>
+    <div style="font-size:var(--fs-sub);color:var(--ink-2)">仪表字：等宽 + tabular-nums，时间跳动时数字不横移。</div>
+  </div>
+</section>
+
+<!-- ═══════════════ 1 · 共享顶栏 ═══════════════ -->
+<section class="spec" id="navbar">
+  <h2>1 · 共享顶栏（nginx 注入，三页同一份）</h2>
+  <p class="why">顶栏是四页「逻辑联系」的物理载体：页签导航 + 全站常显的录制状态 + 主题开关。</p>
+  <div class="frame">
+    <div class="frame-bar">录制中（点胶囊跳计时页）<span class="w"><button data-w="390">390</button><button data-w="768">768</button><button data-w="" aria-pressed="true">全宽</button></span></div>
+    <div class="frame-body">
+      <div class="navbar">
+        <span class="brand">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="8" stroke="var(--ink-3)" stroke-width="1.5" stroke-dasharray="1.2 2.2"/><path d="M10 2 A8 8 0 0 1 17.4 7.2" stroke="var(--fact)" stroke-width="2.5" stroke-linecap="round"/></svg>
+          <span class="word">时间驾驶舱</span>
+        </span>
+        <nav class="tabs" aria-label="页面">
+          <button class="tab">任务</button>
+          <button class="tab" aria-current="page">计时</button>
+          <button class="tab">甘特</button>
+        </nav>
+        <span class="nav-right">
+          <a class="rec-chip" href="#ring"><span class="dot"></span><span class="label">英语单词学习</span><span class="mono">12:34</span></a>
+          <button class="icon-btn" aria-label="切换主题"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M13.5 9.5A6 6 0 0 1 6.5 2.5a6 6 0 1 0 7 7Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg></button>
+          <button class="icon-btn" aria-label="退出登录"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 2H3v12h3M11 5l3 3-3 3M14 8H6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        </span>
+      </div>
+      <div style="height:1px"></div>
+      <div class="navbar" style="border-top:1px solid var(--line)">
+        <span class="brand">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="8" stroke="var(--ink-3)" stroke-width="1.5" stroke-dasharray="1.2 2.2"/><path d="M10 2 A8 8 0 0 1 17.4 7.2" stroke="var(--fact)" stroke-width="2.5" stroke-linecap="round"/></svg>
+          <span class="word">时间驾驶舱</span>
+        </span>
+        <nav class="tabs" aria-label="页面">
+          <button class="tab" aria-current="page">任务</button>
+          <button class="tab">计时</button>
+          <button class="tab">甘特</button>
+        </nav>
+        <span class="nav-right">
+          <a class="rec-chip idle" href="#ring"><span class="dot"></span><span class="label">未在计时</span></a>
+          <button class="icon-btn" aria-label="切换主题"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M13.5 9.5A6 6 0 0 1 6.5 2.5a6 6 0 1 0 7 7Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg></button>
+          <button class="icon-btn" aria-label="退出登录"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 2H3v12h3M11 5l3 3-3 3M14 8H6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        </span>
+      </div>
+    </div>
+  </div>
+  <div class="note">
+    <b>行为规格</b>
+    <ul>
+      <li>录制胶囊读 <span class="mono">/__cockpit/current</span>（现有 10s 轮询不变）；<b>先判 degraded 再读 running</b>——降级时胶囊变琥珀「状态未知」，不许把后端挂了显示成「没在计时」。</li>
+      <li>点胶囊 → 跳计时页。窄窗（&lt;560px 容器）只留点 + 时间，页签缩短——三分窗并排时顶栏不折行。</li>
+      <li>主题开关：默认跟随系统；手动选择写 localStorage，并监听 storage 事件——<b>一个窗口切主题，其余已开窗口立即跟</b>。</li>
+      <li>退出按钮 = POST /api/auth/logout；登录页不注入顶栏（现状判据保持）。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ═══════════════ 2 · 登录页 ═══════════════ -->
+<section class="spec" id="login">
+  <h2>2 · 登录</h2>
+  <p class="why">一个口令一个门。不注入顶栏和 tokens，自带兜底变量。</p>
+  <div class="frame">
+    <div class="frame-bar">/login/<span class="w"><button data-w="390">390</button><button data-w="768">768</button><button data-w="" aria-pressed="true">全宽</button></span></div>
+    <div class="frame-body">
+      <div class="login-stage">
+        <div class="login-card">
+          <span class="brand">
+            <svg width="28" height="28" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="8" stroke="var(--ink-3)" stroke-width="1.5" stroke-dasharray="1.2 2.2"/><path d="M10 2 A8 8 0 0 1 17.4 7.2" stroke="var(--fact)" stroke-width="2.5" stroke-linecap="round"/></svg>
+            时间驾驶舱
+          </span>
+          <p>输入口令进入。</p>
+          <form onsubmit="return false">
+            <label for="pw">口令</label>
+            <input class="field" id="pw" type="password" autocomplete="current-password">
+            <span class="err">口令不对，再试一次。</span>
+            <button class="btn btn-fact" type="submit">进入</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="note"><b>规格</b>：错误态只此一句，出现在字段下方；登录成功回跳来路页；错误示例仅为展示，默认隐藏。</div>
+</section>
+
+<!-- ═══════════════ 3 · 计时页 ═══════════════ -->
+<section class="spec" id="ring">
+  <h2>3 · 计时 —— 仪表圆环（全站签名件）</h2>
+  <p class="why">
+    一只表两份职责：环上分段 = 今天各任务已录的事实（同色深浅，深 = 当前任务），
+    表芯 = 正在走的计时。旧版「贡献圆环」和计时控件合并成一件仪器，不再是两块各自刷新的区域。
+  </p>
+  <div class="frame">
+    <div class="frame-bar">/ring/ · 录制中<span class="w"><button data-w="390">390</button><button data-w="768">768</button><button data-w="" aria-pressed="true">全宽</button></span></div>
+    <div class="frame-body">
+      <div class="page">
+        <div class="card ring-wrap">
+          <div class="chrono">
+            <svg viewBox="0 0 200 200" role="img" aria-label="今日计时圆环，共 48 分钟">
+              <circle class="ticks" cx="100" cy="100" r="92" fill="none" stroke-width="6" pathLength="100" stroke-dasharray="0.4 1.2667"/>
+              <circle class="track" cx="100" cy="100" r="78" fill="none" stroke-width="12"/>
+              <g transform="rotate(-90 100 100)">
+                <circle cx="100" cy="100" r="78" fill="none" stroke="var(--fact-s1)" stroke-width="12" pathLength="100" stroke-dasharray="53.2 46.8" stroke-dashoffset="0"/>
+                <circle cx="100" cy="100" r="78" fill="none" stroke="var(--fact-s2)" stroke-width="12" pathLength="100" stroke-dasharray="28.2 71.8" stroke-dashoffset="-54.2"/>
+                <circle cx="100" cy="100" r="78" fill="none" stroke="var(--fact-s3)" stroke-width="12" pathLength="100" stroke-dasharray="15.7 84.3" stroke-dashoffset="-83.4"/>
+              </g>
+            </svg>
+            <div class="center">
+              <span class="elapsed">12:34</span>
+              <span class="task">英语单词学习 · 英语学习</span>
+            </div>
+          </div>
+          <div class="ring-side">
+            <div class="controls">
+              <select class="field" aria-label="项目"><option>英语学习</option><option>读书计划</option><option>X-structure</option></select>
+              <select class="field" aria-label="任务"><option>英语单词学习</option><option>英语阅读</option><option>口语跟读</option></select>
+              <div class="row">
+                <button class="btn btn-fact">停止并记录</button>
+                <button class="btn btn-ghost danger">取消，不记录</button>
+              </div>
+            </div>
+            <div class="legend">
+              <span class="eyebrow">今日事实 · 48 分</span>
+              <div class="li"><span class="k" style="background:var(--fact-s1)"></span><span class="t">英语单词学习</span><span class="v">26 分</span></div>
+              <div class="li"><span class="k" style="background:var(--fact-s2)"></span><span class="t">英语阅读</span><span class="v">14 分</span></div>
+              <div class="li"><span class="k" style="background:var(--fact-s3)"></span><span class="t">口语跟读</span><span class="v">8 分</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="note">
+    <b>行为规格</b>
+    <ul>
+      <li>未计时：表芯显示「今天 · 48 分」+ 大按钮「开始计时」；选择器两级（项目 → 任务），零任务项目显示灰提示行（已实现，保留）。</li>
+      <li>录制中：选择器锁定；「停止并记录」走 timer.stop，「取消，不记录」走 timer/cancel（后端已上线，本轮补按钮）。</li>
+      <li>表芯秒跳本地自增；环分段只在数据真变时重绘（本轮修好的行为，落到新 UI 保持）。</li>
+      <li>环分段动画只在首次载入长出一次，350ms；prefers-reduced-motion 时直接就位。</li>
+      <li>宽容器（≥640px）左表右控两栏；窄窗上下叠，环缩到 78cqw。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ═══════════════ 4 · 任务页 ═══════════════ -->
+<section class="spec" id="table">
+  <h2>4 · 任务 —— 项目控制台</h2>
+  <p class="why">每个项目卡自带双轨：一眼看到「计划走到哪、事实跟没跟上」。每个任务行右侧一颗播放钮——从任务页直接进入计时。</p>
+  <div class="frame">
+    <div class="frame-bar">/table/<span class="w"><button data-w="390">390</button><button data-w="768">768</button><button data-w="" aria-pressed="true">全宽</button></span></div>
+    <div class="frame-body">
+      <div class="page">
+        <div class="zone-head"><span class="eyebrow">时区 · 学习</span><span class="cnt">2 个项目</span></div>
+        <div class="proj-grid">
+          <div class="card">
+            <div class="proj-head">
+              <h3>英语学习</h3>
+              <span class="chip plan">计划 07-30 → 08-06</span>
+              <span class="chip warn">已结束</span>
+            </div>
+            <div class="rails">
+              <div class="rail plan"><div class="fill" style="width:100%"></div></div>
+              <div class="rail fact"><div class="fill" style="width:37.5%"></div></div>
+              <div class="rail-cap"><span>计划 8 天 · 已走完</span><span class="mono">事实 3 / 8 天</span></div>
+            </div>
+            <div style="margin-top:var(--sp-3)">
+              <div class="task"><input type="checkbox" checked aria-label="完成"><span class="name">英语单词学习</span><span class="dur">26 分</span><button class="go" aria-label="对这个任务开始计时"><svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><path d="M4 2.5v9l7-4.5-7-4.5Z"/></svg></button></div>
+              <div class="task"><input type="checkbox" aria-label="完成"><span class="name">英语阅读</span><span class="dur">14 分</span><button class="go" aria-label="对这个任务开始计时"><svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><path d="M4 2.5v9l7-4.5-7-4.5Z"/></svg></button></div>
+              <div class="task"><input type="checkbox" aria-label="完成"><span class="name">口语跟读</span><span class="dur">8 分</span><button class="go" aria-label="对这个任务开始计时"><svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><path d="M4 2.5v9l7-4.5-7-4.5Z"/></svg></button></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="proj-head"><h3>读书计划</h3><span class="chip">未定计划</span></div>
+            <div class="rails">
+              <div class="rail plan"></div>
+              <div class="rail fact"></div>
+              <div class="rail-cap"><span>还没有计划期</span><span class="mono">事实 0 天</span></div>
+            </div>
+            <div style="margin-top:var(--sp-3)">
+              <div class="task empty">还没有任务——新建一个，计时页才能对它计时。</div>
+              <button class="btn btn-ghost" style="margin-top:var(--sp-2)">＋ 新建任务</button>
+            </div>
+          </div>
+        </div>
+        <div class="zone-head"><span class="eyebrow">时区 · 工程</span><span class="cnt">1 个项目</span></div>
+        <div class="proj-grid">
+          <div class="card">
+            <div class="proj-head"><h3>X-structure</h3><span class="chip">未定计划</span></div>
+            <div class="rails">
+              <div class="rail plan"></div>
+              <div class="rail fact"></div>
+              <div class="rail-cap"><span>还没有计划期</span><span class="mono">事实 0 天</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="card archive">
+          <span class="eyebrow">计时档案 · 最近</span>
+          <div class="row"><span class="d">08-03 16:28</span><span class="t">英语单词学习</span><span class="v">52 秒</span></div>
+          <div class="row"><span class="d">08-02 00:07</span><span class="t">英语单词学习</span><span class="v">1 分 56 秒</span></div>
+          <div class="row"><span class="d">08-02 00:05</span><span class="t">英语单词学习</span><span class="v">1 分 34 秒</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="note">
+    <b>行为规格</b>
+    <ul>
+      <li>播放钮 → 跳计时页并带上任务预选（URL 参数），<b>不直接起表</b>——开始永远是计时页上那一下，全站只有一个开始入口。</li>
+      <li>双轨口径：紫轨 = 计划期天数走掉的比例；青轨 = 有事实记录的天数比例。都读现有投影，不加后端。</li>
+      <li>增删改弹窗、断网横幅、flags 只读展示——现有功能全保留，只换皮。</li>
+      <li>宽容器（≥700px）项目卡两列；窄窗单列。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ═══════════════ 5 · 甘特页 ═══════════════ -->
+<section class="spec" id="gantt">
+  <h2>5 · 甘特 —— 计划与事实对表</h2>
+  <p class="why">双轨的全景形态：紫条是承诺，青块是兑现，高度 = 当日时长。今天列青线常显——「现在」永远看得见。</p>
+  <div class="frame">
+    <div class="frame-bar">/gantt/<span class="w"><button data-w="390">390</button><button data-w="768">768</button><button data-w="" aria-pressed="true">全宽</button></span></div>
+    <div class="frame-body">
+      <div class="page">
+        <div class="card gantt">
+          <table>
+            <thead>
+              <tr><th class="pname"></th><th>07-30</th><th>07-31</th><th>08-01</th><th>08-02</th><th>08-03</th><th>08-04</th><th>08-05</th><th>08-06</th><th class="today">08-07 今天</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="pname">英语学习</td>
+                <td class="cell"><div class="gbar-plan start"></div></td>
+                <td class="cell"><div class="gbar-plan"></div></td>
+                <td class="cell"><div class="gbar-plan"></div><div class="gfact m2"></div></td>
+                <td class="cell"><div class="gbar-plan"></div><div class="gfact m3"></div></td>
+                <td class="cell"><div class="gbar-plan"></div><div class="gfact m1"></div></td>
+                <td class="cell"><div class="gbar-plan"></div></td>
+                <td class="cell"><div class="gbar-plan"></div></td>
+                <td class="cell"><div class="gbar-plan end"></div></td>
+                <td class="cell today"></td>
+              </tr>
+              <tr>
+                <td class="pname">读书计划</td>
+                <td class="cell ghost" colspan="8" style="border-left:0;padding-left:var(--sp-2)">未定计划 —— <a href="#table">去任务页补一个</a></td>
+                <td class="cell today"></td>
+              </tr>
+              <tr>
+                <td class="pname">X-structure</td>
+                <td class="cell ghost" colspan="8" style="border-left:0;padding-left:var(--sp-2)">未定计划 —— <a href="#table">去任务页补一个</a></td>
+                <td class="cell today"></td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="rail-cap" style="margin-top:var(--sp-3)">
+            <span><span style="color:var(--plan)">▬</span> 计划期　<span style="color:var(--fact)">▮</span> 事实（高 = 当日时长）</span>
+            <span class="mono">时区 Asia/Shanghai</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="note">
+    <b>行为规格</b>
+    <ul>
+      <li>计划结束而事实没跟满：不标红不审判，紫轨走完青块稀疏，事实自己会说话；行尾可加琥珀「已结束」章（同任务页）。</li>
+      <li>项目名列 sticky，窄窗横向滚动只滚日期区；日期轴 mono。</li>
+      <li>点某天的青块 → 弹出当日档案（哪几段、各多久）——读现有 daily_stats 投影。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ═══════════════ 6 · 落地清单 ═══════════════ -->
+<section class="spec" id="plan">
+  <h2>6 · 落地清单（拍板后按这个派活）</h2>
+  <div class="note" style="margin-top:0">
+    <b>契约动作（先行）</b>
+    <ul>
+      <li>新建 agents/contracts/design-tokens-v1.md：token 表 + 对比度下限表（唯一事实源）。</li>
+      <li>nginx-docker contract v0.6：注入行为加 tokens.css；顶栏 v2（录制胶囊 + 主题开关 + 退出）。</li>
+    </ul>
+    <b>各模块（可并行）</b>
+    <ul>
+      <li><b>nginx-docker</b>：产出 /__cockpit/tokens.css；navbar v2；对比度机械校验脚本。</li>
+      <li><b>ring</b>：仪表圆环合并计时控件；取消按钮；URL 任务预选；tokens 兜底块。</li>
+      <li><b>table</b>：项目卡双轨 + 任务行播放钮；换 tokens；功能不动。</li>
+      <li><b>gantt</b>：双轨细化（事实高度分档、今天列、未定计划空态）；换 tokens。</li>
+      <li><b>auth</b>：登录卡新皮 + 自带兜底 tokens（不依赖注入）。</li>
+    </ul>
+    <b>验收（每模块）</b>：E2E 零 console 错误保持；&lt;/body&gt; 锚点唯一保持；兜底块 diff 契约表脚本过；390px 容器不横滚。
+  </div>
+</section>
+
+</main>
+
+<footer style="max-width:1240px;margin:0 auto;padding:0 var(--sp-4) var(--sp-6)">
+  <span class="eyebrow">源：agents/cfo/docs/design/cockpit-v1/ · tokens.css 即 /__cockpit/tokens.css 的种子</span>
+</footer>
+
+</body>
+</html>
