@@ -10,11 +10,12 @@
  * （prefers-color-scheme），手动切换写 localStorage 并监听 storage
  * 事件同步所有已开窗口。
  *
- * 对比度（WCAG，实测值写在旁边，机械校验脚本以此表为准）：
- *   正文 --ink   on --panel   light 15.0:1 / dark 14.4:1   （下限 4.5）
- *   次级 --ink-2 on --panel   light  6.2:1 / dark  7.1:1   （下限 4.5）
- *   计划 --plan  on --panel   light  4.9:1 / dark  6.1:1   （文字用法下限 4.5）
- *   事实 --fact  on --panel   light  4.6:1 / dark  9.1:1   （文字用法下限 4.5）
+ * 对比度：唯一事实源是 contracts/design-tokens-v1.md §3 的表（实测值 + 门限），
+ * 本文件不再复述数字——设计稿 v1 曾在这里写「事实青亮 4.6」，实算只有 4.14，
+ * 已按契约压暗为 #0B7A6F（5.21）。**估算不是判据，脚本才是。**
+ *
+ * 预设主题色（data-accent：teal 默认 / violet / amber）只换 --accent* 机身色族；
+ * --plan* / --fact* 是台账语义，不随预设变（契约 §2）。
  * ══════════════════════════════════════════════════════════════════ */
 
 :root,
@@ -36,16 +37,21 @@ html[data-theme="light"] {
   /* 语义 */
   --plan:      #6D5AE6; /* 计划紫 */
   --plan-soft: #E9E6FB; /* 计划条底 */
-  --fact:      #0E8C7F; /* 事实青 */
+  --fact:      #0B7A6F; /* 事实青（契约 v1.0 修正：#0E8C7F 实测 4.14 不达标） */
   --fact-soft: #DCF0ED; /* 事实条底 */
   --fact-ink:  #FFFFFF; /* 事实色实心钮上的字 */
   --warn:      #B45309; /* 琥珀：降级、过期 */
   --danger:    #C2333B; /* 危险：删除、取消不记录 */
 
   /* 事实数据序列（同类量走同色渐变——都是事实，深浅表多少） */
-  --fact-s1: #0E8C7F;
-  --fact-s2: #55AFA3;
+  --fact-s1: #0B7A6F;
+  --fact-s2: #37948A;
   --fact-s3: #9CCFC8;
+
+  /* 机身色（预设主题色换的就是这一族；默认 teal == 事实青族） */
+  --accent:      #0B7A6F;
+  --accent-ink:  #FFFFFF;
+  --accent-soft: #DCF0ED;
 
   --focus:   #1E5FD0;   /* 键盘焦点环，独立于语义色 */
   --shadow:  0 1px 2px rgba(23,32,46,.06), 0 4px 16px rgba(23,32,46,.07);
@@ -76,8 +82,26 @@ html[data-theme="dark"] {
   --fact-s2: #6FB8AE;
   --fact-s3: #46706B;
 
+  --accent:      #2FD4C2;
+  --accent-ink:  #04211D;
+  --accent-soft: #123B38;
+
   --focus:   #6FA8FF;
   --shadow:  0 1px 2px rgba(0,0,0,.4), 0 4px 20px rgba(0,0,0,.35);
+}
+
+/* ── 预设主题色（boot 脚本把 auto 解析成具体 light/dark 后再盖 accent） ── */
+html[data-accent="violet"] {
+  --accent: #6D5AE6; --accent-ink: #FFFFFF; --accent-soft: #E9E6FB;
+}
+html[data-theme="dark"][data-accent="violet"] {
+  --accent: #9B8CFF; --accent-ink: #14102E; --accent-soft: #2A2A4E;
+}
+html[data-accent="amber"] {
+  --accent: #9A5B00; --accent-ink: #FFFFFF; --accent-soft: #F5E8D5;
+}
+html[data-theme="dark"][data-accent="amber"] {
+  --accent: #F0B36A; --accent-ink: #2A1A04; --accent-soft: #3A2B12;
 }
 
 :root {

@@ -1,6 +1,6 @@
 # PRD · 时间驾驶舱前端升级（cockpit-v1）
 
-- 日期：2026-08-08 · 属主：CFO · 状态：**待用户批准**
+- 日期：2026-08-08 · 属主：CFO · 状态：**已批准**（用户 2026-08-08「行。批准，去做吧」，夜班授权：问题 CFO 自决）
 - 上游：`BRD.md`（目标与范围）、`index.html` 设计稿 v1（视觉与行为基线，已批）
 - 本文是**派活的唯一需求源**：任务单只引用本文条目编号，不复述需求。
 
@@ -48,7 +48,7 @@
 
 ## 3. 共享样式架构（F-TOKENS，方案 C，已批）
 
-- **F-TOKENS-1** 唯一事实源：`agents/contracts/design-tokens-v1.md` 的 token 表
+- **F-TOKENS-1** 唯一事实源：`contracts/design-tokens-v1.md` 的 token 表
   （含 3 预设 × 亮暗全部值 + 对比度下限表）。
 - **F-TOKENS-2** nginx-docker 按契约产出 `/__cockpit/tokens.css`，随顶栏注入
   ring/table/gantt 三页（`sub_filter` 现机制加一行）；login 不注入。
@@ -199,7 +199,10 @@
 
 - O1 任务级日投影具体形状（nexus-core arbiter 定，契约先行）。
 - O2 拖线手柄细节（长按时长、手柄大小；手势分离原则已定死在 F-GANTT-4）——gantt agent 出两案 CFO 择一。
-- O3 预设 violet/amber 的具体色值（CFO 出值，对比度矩阵说了算）。
+- ~~O3 预设 violet/amber 的具体色值~~ **已收口**：`contracts/design-tokens-v1.md` §3.3，
+  全组合实算过门限；期间抓到设计稿 v1 自身「事实青亮 4.14 < 4.5」并修正（契约 §3.2 修正记录）。
+  另一夜班裁决：**预设只换 `--accent*` 机身色族，`--plan*`/`--fact*` 台账语义色不随预设变**
+  （契约 §2 记档）——比「每套预设整块换」更收敛，语义零冲突。
 
 ## 14. grill-me 审查记录（2026-08-08，批准前）
 

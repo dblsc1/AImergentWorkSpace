@@ -45,5 +45,3 @@ code/nginx-docker
 agents/protocol/messages
 # 落地队列设计文档的前向引用（社区对照-模型档位）：脚本属待排铲项，落地时删本条
 scripts/stats/model-fit.sh
-# PRD 前向引用：驾驶舱 tokens 契约，用户批准 PRD 后由 CFO 创建（2026-08-08）
-agents/contracts/design-tokens-v1.md
