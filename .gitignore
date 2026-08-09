@@ -23,6 +23,7 @@
 !/blockers/
 !/.claude/
 !/contracts/
+!/deploy/
 
 # 生成物：由脚本产出，不入仓（入仓会让每次提交后工作树永远脏）
 /logs/INDEX.md

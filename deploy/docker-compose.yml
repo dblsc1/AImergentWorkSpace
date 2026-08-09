@@ -1,0 +1,133 @@
+# cockpit 全栈 · docker compose（mongo / nexus / auth / nginx）
+#
+# 起：  docker compose -f deploy/docker-compose.yml up -d
+# 停：  docker compose -f deploy/docker-compose.yml down
+# 日志：docker compose -f deploy/docker-compose.yml logs -f <服务>
+# 详见 deploy/README.md。
+#
+# 设计要点（都为了不误伤当前手动栈与生产数据）：
+#   · 显式 name: cockpit —— 不用目录名 deploy 当项目名，否则卷会被前缀成
+#     deploy_xxx，与本机已存在的 ecs 栈的 deploy_mongo_data 撞车。
+#   · mongo 卷 external: true —— 复用已有 named volume，且 `down -v` 永远删不掉它
+#     （external 卷不归 compose 生命周期管），生产数据不会被一条 down -v 抹掉。
+#   · 四个服务只有 nginx 映射宿主端口（10000）；nexus/auth/mongo 只在 bridge 网内，
+#     宿主/局域网都够不到，所以 auth 在容器内监听 0.0.0.0 不构成真实暴露。
+#   · restart: unless-stopped + docker 守护进程开机自启（systemctl is-enabled docker）
+#     = 机器重启后整栈自动回来。加强保证见 README 的 systemd unit 方案。
+
+name: cockpit
+
+networks:
+  cockpit-net:
+    driver: bridge
+
+volumes:
+  mongo_data:
+    external: true
+    # 复用同一个 named volume（默认＝生产卷 cockpit-mongo-data）。
+    # 验证时用 MONGO_VOLUME_NAME 指向独立测试卷，绝不碰生产数据。
+    name: ${MONGO_VOLUME_NAME:-cockpit-mongo-data}
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: cockpit-c-mongo
+    restart: unless-stopped
+    networks: [cockpit-net]
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  nexus:
+    build:
+      context: ../code/nexus-core/code/backend
+    image: cockpit-nexus:local
+    container_name: cockpit-c-nexus
+    restart: unless-stopped
+    networks: [cockpit-net]
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      NEXUS_MONGO_URI: mongodb://mongo:27017
+      NEXUS_DB_NAME: ${NEXUS_DB_NAME:?请在 deploy/.env 里设库名}
+      NEXUS_TZ: ${NEXUS_TZ:-Asia/Shanghai}
+    # 源码 bind mount（只读）：编辑即时生效，改了 docker restart cockpit-c-nexus 即可。
+    volumes:
+      - ../code/nexus-core/code/backend/app:/app/app:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/core/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  auth:
+    build:
+      context: ../code/auth/code/backend
+    image: cockpit-auth:local
+    container_name: cockpit-c-auth
+    restart: unless-stopped
+    networks: [cockpit-net]
+    # 密钥（AUTH_PASSWORD / AUTH_SECRET）从 env_file 注入，compose.yml 里绝不写真值（铁律 2）。
+    env_file:
+      - ./.env
+    environment:
+      AUTH_BIND: 0.0.0.0:8010
+      AUTH_ALLOW_PUBLIC_BIND: "1"   # 容器内需监听全网卡才能被 nginx 以 auth:8010 访问；不映射宿主端口，无真实暴露
+      AUTH_COOKIE_SECURE: "false"   # 入口是明文 HTTP（10000 无 TLS），Secure cookie 浏览器不会回传 => 登录形同失败
+    volumes:
+      - ../code/auth/code/backend/app:/app/app:ro
+    healthcheck:
+      # auth 无 200 健康端点（/api/auth/verify 未登录回 401）；用 TCP 连通性判进程是否起来。
+      test: ["CMD", "python", "-c", "import socket,sys; s=socket.socket(); s.settimeout(2); sys.exit(s.connect_ex(('127.0.0.1',8010)))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  nginx:
+    image: nginx:alpine
+    container_name: cockpit-c-nginx
+    restart: unless-stopped
+    networks: [cockpit-net]
+    depends_on:
+      nexus:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+    # 对外唯一入口。IP 已由路由器固定；改端口/IP 走 deploy/.env 的 NGINX_HOST_BIND。
+    ports:
+      - "${NGINX_HOST_BIND:-192.168.31.181:10000}:80"
+    environment:
+      # 官方镜像的 20-envsubst-on-templates.sh 用这些值渲染 cockpit.conf.template。
+      # 白名单只替换 NGINX_/NEXUS_/AUTH_ 前缀，别让 $host/$scheme 被吞成空串。
+      NGINX_ENVSUBST_FILTER: "^(NGINX_|NEXUS_|AUTH_)"
+      # bridge 模式：容器内监听全网卡 80，暴露面由上面的 ports 映射控制。
+      NGINX_BIND: "0.0.0.0"
+      NGINX_PORT: "80"
+      NGINX_LISTEN_LOOPBACK: ""       # 非回环地址不另加 loopback listen，否则 duplicate listen 起不来
+      NGINX_RESOLVER: "127.0.0.11"    # docker 内建 DNS，解析服务名 nexus / auth
+      # 上游改指服务名（不再 127.0.0.1）——这是进 compose 网络后唯一要变的业务参数。
+      NEXUS_CORE_UPSTREAM: "http://nexus:8000"
+      AUTH_UPSTREAM: "http://auth:8010"
+    volumes:
+      # nginx 业务配置与静态件全部复用 nginx-docker 模块的仓内产出，只读挂载，零改动。
+      - ../code/nginx-docker/code/backend/nginx/templates/cockpit.conf.template:/etc/nginx/templates/cockpit.conf.template:ro
+      - ../code/nginx-docker/code/backend/nginx/conf.d/default.conf.disabled:/etc/nginx/conf.d/default.conf:ro
+      - ../code/ring/code/frontend:/usr/share/nginx/html/ring:ro
+      - ../code/table/code/frontend:/usr/share/nginx/html/table:ro
+      - ../code/auth/code/frontend:/usr/share/nginx/html/login:ro
+      - ../code/gantt/code/frontend:/usr/share/nginx/html/gantt:ro
+      - ../code/nginx-docker/code/backend/nginx/static/cockpit:/usr/share/nginx/html/__cockpit:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
