@@ -43,3 +43,12 @@
 **/.env
 **/*.secret
 **/secrets.env
+
+# 数据护栏（开源前置，2026-08-08 裁决：代码可开源，真实时间安排数据不进仓）。
+# Playwright 调试残留会把真实页面（含计时明细「01:24 英语学习…」）落成 yml/png/log，
+# 一旦 tracked 就随开源泄露隐私。这类是临时产物，永不入仓。
+**/.playwright-mcp/
+# mongo dump / 导出快照：真实运行数据，只进独立的 cockpit-archived 备份仓，绝不进代码仓。
+**/*.archive
+**/cockpit-export-*.json
+**/dump/
