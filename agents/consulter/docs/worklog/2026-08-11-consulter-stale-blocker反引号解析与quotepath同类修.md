@@ -3,6 +3,12 @@
 任务来源：CFO 转来的波2 里程碑文档审计发现。工作树：`../v5-consulter-blockerfix`
 （独立 `git worktree`，全程未碰共享工作树 HEAD，遵守上一轮的教训）。
 
+**补记**：首次提交 `report.json` 的 `git.base` 填了 `merge-base(HEAD, origin/v5)`
+（0d17988，本任务在这条分支上实际的分叉点），被 `check-report-schema.sh` 响亮拒绝——
+判据要的是 `merge-base(HEAD, origin/main)`（PR 目标基线），不是「这条分支从哪分出去」。
+两者在本仓不是同一个点（`v5` 与 `main` 历史已分叉）。改用报错信息直接印出的正确值
+`211bdec5559ab4ab798a464272cde5dc27f64740` 后 `run-gates.sh` 通过。
+
 ## 病根
 
 `scripts/checks/_common/15-stale-blocker.sh` 用 `_file=${mark##*@}` 从「解除标志：」
