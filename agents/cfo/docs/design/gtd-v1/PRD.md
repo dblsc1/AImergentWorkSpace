@@ -48,6 +48,10 @@
   - **过期**：计划期 end < 今天且未完成（琥珀标）
   - **排序**：权重 `plannedWeight` 降序；计划期今天到期/过期置顶；同权重按 key 稳定序
   - 按 zone 分组（情境）
+  - **依赖环防御（grill 技术底线，必做）**：遍历 `dependsOn` 判「可做」时必须有**环检测 / 深度上限**。
+    禁环校验是 cockpit-v1 后加的，历史数据可能有环，读端撞环会**死循环崩服务**。撞环的任务
+    降级为「可做」并打警示标（不是崩），加一条 pytest 喂含环 fixture 断言不死循环。
+  - **无 plan 任务归类**：默认进「可做」（GTD：无 due 的 next action 照样可做）；O 开放，用户试用后调。
 - **F-TODO-2** 「今天」口径：日期用服务端归日（Asia/Shanghai），前端不 `new Date` 拼（本项目踩过的类）。
 - **F-TODO-3** 每行播放钮 → 计时页 `?task=<id>`（复用 L2）；完成打勾 → PATCH done，
   下游任务（依赖它的）自动从「等待」升「可做」（读端重算，前端刷新）。
@@ -58,8 +62,12 @@
 
 - **F-AI-1** 运行时：**宿主上一个 AI 规划小服务**（不进 compose 容器 —— codex 在宿主够不到容器），
   驱动 codex agent（`codex mcp-server` / `exec`，复用 `~/.codex/auth.json` ChatGPT 登录态，**免 API key**）。
-- **F-AI-2** 工具面：AI 的写操作**只走统一 planner CRUD**（`/api/core/planner/{type}` 的建/改/搬/排），
-  作为 codex 的工具（planner MCP 或受控 curl）。**events / timer 写路径不暴露给 AI**（红线）。
+- **F-AI-2** 工具面：**AI 不接触裸 codex shell** —— 包在一个**受控工具层**后面（白名单命令层，
+  可选叠加 codex sandbox 禁网/禁 shell 逃逸）。AI 只能调该层暴露的 planner 白名单命令
+  （建/改/搬/排），**events / timer / mongo 直连 / 凭据文件全不在白名单**。
+  **信任边界 = 受控层（我们写的，可信），不是 codex（通用 agent，不可信）**（grill 2026-08-10 修订）。
+  受控层形态（codex sandbox 禁 shell 只留工具 / MCP 工具白名单 / SDK function-calling）留 O2 实现轮定，
+  但「AI 只走受控白名单、不碰裸 shell」是**架构硬约束**，不是可选。
 - **F-AI-3** 输入：发**全量日程**（zone/project/task + 计划期/依赖/权重 + **计时明细**，用户已放开），
   转自然语言喂 LLM。**注**：这些数据出本机到 OpenAI；仍绝不进公开仓（数据护栏已在）。
 - **F-AI-4** 混合确认（用户裁决）：
@@ -75,9 +83,13 @@
 ## 4. 写者留痕（F-ACTOR，属主 nexus-core）
 
 - **F-ACTOR-1** planner 写入口（统一 CRUD）增 `actor` 维度：`human` / `ai`，随每次写记录。
-  客户端/AI 服务在请求里带 actor；缺省 `human`（不许 AI 伪装 human —— AI 服务必带 `ai`）。
+  **actor 由请求来源决定，不是自报字段**（grill 修订）：AI 的写全部经受控工具层（F-AI-2），
+  该层**注入** `actor=ai`，AI 无从伪装 human；人的写走前端正常路径，`actor=human`。
+  信任落在「谁的路径」不落在「谁说自己是谁」。
 - **F-ACTOR-2** 留痕落点：planner 对象加 `lastWriter` + 一条**审计流水**（append-only，形状由
   nexus-core arbiter 定；可复用 events 台账的 append-only 纪律但**独立集合**，不混进 yq-event 事实流）。
+  **兼任「中间态可追溯」**（grill 修订）：AI 批量写**不做事务/回滚**（用户裁决），一批操作崩在半路时，
+  审计流水记到「做到第几步」，靠它查 + 手动收拾。可查即可。
 - **F-ACTOR-3** 前端展示：AI 写过的对象可视化标记（小 🤖 角标），让你一眼看出哪些是 AI 动的。
 
 ## 5. AI 说明书（F-GUIDE，属主 CFO + nexus-core）
@@ -98,9 +110,10 @@
 - **F-API-1** `actor` 字段 + 审计流水（F-ACTOR）。
 - **F-API-2** 读端 `views/next-actions`（F-TODO-1）、`views/review`（F-REVIEW-1）—— **只读**，
   实时算（个人数据量小，不物化投影）。
-- **F-API-3** **AI 写的后端二次设防**（不只靠 AI 自觉）：统一 CRUD 收到 `actor=ai` 的**高风险操作**
-  （DELETE、改 projectId、改 plan）时，**要求带一个「已获人确认」令牌**（前端确认后签发），
-  无令牌则拒。这样即使 AI 说明书被忽略，后端仍拦住未确认的高风险 AI 写。
+- **F-API-3** **高风险确认的可信边界**（grill 修订）：高风险操作（DELETE、改 projectId、改 plan）的确认，
+  签发方必须与 AI 物理隔离 —— **受控工具层（F-AI-2）对高风险命令只产「提议」，自己不执行**；
+  提议经 UI 展示，**人点确认后由前端正常路径（actor=human）直接调 CRUD**。即 AI 根本没有执行高风险写的路径，
+  不是「AI 写了再靠令牌拦」。令牌机制若仍需要（O4），签发密钥**绝不落进受控层/codex 可及的文件系统**。
 - **F-API-4** `p_inbox` 禁删（F-INBOX-1）。
 - **F-API-5** events / timer / 投影核心 / 标识三分 **全不动**。契约 bump 一版收录 F-API-1..4。
 
@@ -126,7 +139,10 @@
 | A5 | AI 低风险写 actor=ai 落库 + 角标 | 集成测试 |
 | A6 | AI 高风险写无确认令牌 → 后端 401/403 拒 | nexus-core pytest（F-API-3 二次设防） |
 | A7 | AI 删除 → 必走确认流 | E2E |
-| A8 | AI 尝试写 events 路径 → 拒（工具面不暴露） | 契约测试 + AI 服务工具白名单 |
+| A8 | AI 只能调受控层白名单命令，events/mongo/凭据不在白名单；裸 shell 不可达 | 受控层工具白名单测试 |
+| A8b | AI 无执行高风险写的路径（删/搬/改期只产提议，执行走人的前端路径） | 集成测试：AI 直发高风险 CRUD 应无认证 |
+| A8c | actor 由受控层注入，AI 无法带 actor=human | 受控层测试 |
+| A8d | 待办区读端喂含环 fixture 不死循环 | pytest |
 | A9 | p_inbox 删除 → 409 | pytest |
 | A10 | 回顾读端聚合正确 | pytest |
 | A11 | AI 流式 UI 边生成边显示 | E2E |
@@ -159,3 +175,19 @@
 - task 模型**不动**，进了就 active（③）
 - 用户成熟经验：CRUD 统一（已有）+ 写者留痕（新增 actor）+ schema 统一（已有）+ AI 说明书（新写）
 - 红线（CFO 定，宪法级）：AI 只写 planner，events 事实台账绝不碰
+
+## 13. grill-me 技术审查修订（2026-08-10，批准前）
+
+挖出致命洞：**PRD 原把安全建在「信任 codex 守说明书」上，但 codex 是有 shell 的通用 agent，
+说明书对它是废纸** —— 它能 mongosh 改 events、curl 任何端点、伪造 actor、自签令牌。
+
+用户裁决的解法（已固化进上文）：
+- **①②③ 信任模型**：不给 codex 裸 shell，包进**受控工具层**（白名单 planner 命令，可选叠 sandbox），
+  信任边界=受控层（可信）而非 codex（不可信）。actor 由受控层注入（F-ACTOR-1 改）；
+  高风险写 AI 只产提议、执行走人的前端路径（F-API-3 改）；工具面硬约束（F-AI-2 改）。
+- **批量事务**：不做事务，审计流水兼中间态可追溯（F-ACTOR-2 改），可查即可。
+- **待办区环**：读端必须环检测/深度上限防死循环（F-TODO-1 加，技术底线，A8d）；
+  无 plan 任务默认「可做」，试用后调。
+- **codex 可用性**：用户评估较高，降级（F-AI-6）保留但非重点。
+
+验收补 A8/A8b/A8c/A8d 落实上述。**grill 通过**：解法有效且已成文，可派活。
