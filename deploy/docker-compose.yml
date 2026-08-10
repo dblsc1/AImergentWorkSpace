@@ -34,6 +34,12 @@ services:
     container_name: cockpit-c-mongo
     restart: unless-stopped
     networks: [cockpit-net]
+    # 发布到宿主回环：宿主工具（scripts/backup.sh、restore、pytest）连 127.0.0.1:27117
+    # 才够得到生产库。绑 127.0.0.1 不对 LAN 暴露 mongo。
+    # 教训（2026-08-10 P0）：compose 迁移只顾容器间服务名通信，漏了宿主工具仍依赖 27117，
+    # 结果 backup 连到 agent 遗留的测试容器、生产从没被备份。宿主有工具依赖某端口时，compose 必须显式发布。
+    ports:
+      - "127.0.0.1:27117:27017"
     volumes:
       - mongo_data:/data/db
     healthcheck:
