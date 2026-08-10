@@ -2,24 +2,22 @@
   "schema_version": 2,
   "module": "workspace",
   "role": "consulter",
-  "task": "S1（P0）：公共件缺失时半套门禁静默变绿 —— 两层防线 + 三条断言",
-  "tier": "hard",
+  "task": "框架维护单（CFO 转来的 objection，ai-planner programmer 波2-A）：修 18-secret-literal.sh 属性引用误报",
+  "tier": "normal",
   "status": "approved",
-  "summary": "S1 修完，两层各自验过。层① 18 处 source 加统一守卫（比 CFO 点的 12 条更宽：_common 10 + arbiter/programmer 4 + 四个顶层脚本 5 + run-gates 1；措辞全仓对齐，含把 CFO 在 18 里的不同措辞统一过来）。层② mission_complete 新增 interpreter_blew_up：check 退 0 但输出带 bash 诊断前缀「: line N:」时判失败，判据钉在该前缀而非裸关键词，常态十五条零误伤。新增 selftest.d/70-lib-bootstrap.sh 三条断言：#63 删掉 lib/paths.sh 后逐条跑所有 check（不抽样），凡用到它的都必须由守卫本身拦下；#64 主脚本对「退 0 + 解释器错误」判失败且正常 check 零误伤；#65 结构断言挡住下一个新写的 source 点。反向验证三发证明两层各自有效：只拆层① → 63/65 红而 64 绿；只拆层② → 64 红而 63/65 绿；只撤一条守卫 → 63/65 都点名它。第三发第一次是绿的——#63 原本只验退出码，而 05-write-lease 在沙箱里本来就因别的理由红（红对了但理由是错的）；改成还要看见守卫独有措辞后才真变红。另修自己断言的两个洞（变量形式 source 溜过、双引号里反引号变命令替换的噪音）。emit.sh 明确不纳入本类并写清理由（显式可选件），但它缺失时是静默的、与铁律 23 冲突，列为下一轮候选。",
+  "summary": "修完并已验证正反两侧。病根：value_is_literal() 认得裸标识符（SCREAMING_SNAKE / $VAR / os.environ 调用）是变量引用，但不认得未加引号的点号属性链（cfg.nexus_password / self.password / obj.attr.sub），落到末尾 return True 被当成硬编码字面量。新增 ATTR_REF 正则 + was_quoted 顺序守卫（先判断是否有引号再判断形状，防止 PASSWORD=\"cfg.nexus_password\" 这种真被引号包住的怪字面量被连坐放行）。铁律 23 同类扫描：grep scripts/checks + scripts/gates 里做『变量引用识别』的脚本，只命中本文件一处，无第二处需要同步修。断言扩了既有 selftest #61 而非新开一条：good.txt 新增 4 条正例（含事故复现行 json={\"password\": cfg.nexus_password}）、bad.txt 新增第 11 发反例（加引号的属性链伪装字面量，验证 was_quoted 守卫没被连坐放行）。全量 selftest 70 条全绿，对本次改动的两个文件本身跑 dogfood 也是 rc=0。",
   "git": {
     "protocol": "embedded-self-v2",
-    "branch": "feat/frontend-view-modules",
-    "base": "211bdec5559ab4ab798a464272cde5dc27f64740",
+    "branch": "fix/consulter-secret-literal-attr-ref",
+    "base": "ff4facad3c8881a5fb4fc012e00ccdad5775a55f",
     "head": "SELF",
     "diff_mode": "contains",
     "changed_files": [
-      "agents/consulter/docs/findings/report.json",
-      "agents/consulter/docs/worklog/2026-08-02-consulter-S1两层防线.md",
-      "agents/consulter/docs/worklog/2026-08-02-任务单-S1公共件静默塌.md",
-      "scripts/mission_complete.sh",
-      "scripts/selftest.d/70-lib-bootstrap.sh",
-      "scripts/checks/_common/05-write-lease.sh",
-      "scripts/gates/run-gates.sh"
+      "scripts/checks/_common/18-secret-literal.sh",
+      "scripts/selftest.d/60-inference-and-exempt.sh",
+      "agents/consulter/docs/worklog/2026-08-11-consulter-secret-literal属性引用误报.md",
+      "agents/consulter/docs/tasks/2026-08-11-secret-literal-attr-ref-任务单.md",
+      "agents/consulter/docs/findings/report.json"
     ]
   },
   "review_target": null,
@@ -28,75 +26,60 @@
     "which": [],
     "consumes": []
   },
-  "cross_module_impact": [],
+  "cross_module_impact": [
+    "所有模块的提交时刻密钥门禁（18-secret-literal.sh 是全仓公共件）：不再误报未加引号的属性/变量引用链；真实硬编码字面量（含加引号的属性链伪装）仍被拦。"
+  ],
   "escalation": null,
   "docs_reviewed": [
     {
+      "path": "scripts/checks/_common/18-secret-literal.sh",
+      "action": "updated",
+      "reason": "本文件顶部注释是判据自身的设计说明（判据形状、实证记录），已在文件内新增 ATTR_REF 的设计注释（为何要 was_quoted 顺序守卫、为何只认点号链不认裸标识符），未新增独立文档"
+    },
+    {
       "path": "scripts/README.md",
       "action": "no-change-needed",
-      "reason": "本轮改的是 check 与主脚本的失败行为（缺公共件时死掉而不是静默退 0），没有新增/改名/删除任何脚本，也没有改任何脚本的用法与参数。README 那张表记的是「文件→用途→什么时候跑」，三项都未变"
-    },
-    {
-      "path": "agents/protocol/report-schema.md",
-      "action": "no-change-needed",
-      "reason": "没有增删报告字段，也没有改任何字段的语义；本轮只碰门禁执行路径"
-    },
-    {
-      "path": "agents/AGENTS.md",
-      "action": "no-change-needed",
-      "reason": "铁律 23 已经写着「关键路径缺文件必须 die；可选件缺失必须打印已跳过；唯一不许的是静默跳过后报成功」——本轮是给这条铁律补执行者，不是改条文。铁律 23 举的例子是 if [ -x <脚本> ]，而本轮实证 . <公共件> 是同一形状，这条补充已进判例库（consulter 的 记忆.md），条文本身不动"
+      "reason": "doc-map.tsv 把 scripts/checks/* 登记为它治理的区域，所以必须表态。README 第 55 行只说『scripts/checks/_common/ 所有角色都跑』这一句目录级描述，没有列举单条 check 的判据细节。本轮只改了 18 号 check 内部识别右值是否为变量引用的逻辑，没有新增/删除/改名任何 check 文件，没有改它的调用方式（仍是所有角色都跑），这句描述改动前后都成立"
     },
     {
       "path": "agents/reference/manual/文档地图.md",
       "action": "no-change-needed",
-      "reason": "doc-map.tsv 把它登记为治理 scripts/checks/ 的长期文档，所以必须表态。逐字看过它写 checks 的两处：第 4 行说 60-doc-paths-exist.sh 会核验表里每个路径真实存在（本轮没碰 60 的职责，只给它的 source 行加了失败守卫）；第 62 行说「检查项三层级联（_common/角色/模块），一条一个文件，可增删改查」——本轮没有增删任何 check、没有改三层级联结构、也没有改「一条一个文件」的组织方式，只改了每条 check 在**公共件缺失时**的失败行为。两句描述在改动前后都成立，所以不改；若哪天新增或删除 check，那时才轮到它。"
+      "reason": "doc-map.tsv 把 scripts/*.sh 登记为它治理的区域。逐字看过它提到 checks 的那几行：讲的是 60-doc-paths-exist.sh 核验路径存在、以及 checks 三层级联结构（_common/角色/模块，一条一个文件，可增删改查）——都是结构性描述，没有涉及 18 号 check 内部对『字面量 vs 变量引用』的判断细节。本轮没有新增/删除 check、没有改三层级联结构、也没有改『一条一个文件』的组织方式，只改了 18 号 check 内部识别右值形状的正则，这两句描述改动前后都成立"
+    },
+    {
+      "path": "agents/consulter/记忆.md",
+      "action": "no-change-needed",
+      "reason": "本次是判例库里已有条目（『误报比没门禁更坏』『修 bug 要一般化到类』）的一次新实证，没有产生新的判例类别或推翻既有判例，暂不追加条目；若同类误报再复发第二次形状不同，那时才够格进判例库"
+    },
+    {
+      "path": "agents/AGENTS.md",
+      "action": "no-change-needed",
+      "reason": "本轮是给铁律 23（修到类 + 留断言）补一次实证，不改条文本身"
     }
   ],
   "findings": [
     {
-      "category": "流程",
-      "severity": "P0",
-      "file": "scripts/mission_complete.sh:122",
-      "summary": "已修：公共件缺失 → 十二条 check 静默 exit 0 且检查单照打绿。两层防线：层① 18 处 source 统一守卫；层② mission_complete 不许把「退 0 + 解释器级错误」判成 pass。三条断言（63 逐条不抽样 / 64 主脚本层 / 65 结构层挡住下一个）+ 三发反向验证证明两层各自有效。"
-    },
-    {
-      "category": "流程",
-      "severity": "medium",
-      "file": "scripts/selftest.d/70-lib-bootstrap.sh",
-      "summary": "断言写法的一条通则（本轮实证）：验一个守卫时，只断言「结果对不对」不够，要断言「是不是这个守卫造成的」。#63 原本只验退出码，而 05-write-lease 在沙箱里本来就因「角色没有路签」而红——红对了但理由是错的，于是撤掉它的守卫也照样绿。一个碰巧同向的旁因就能把断言变成恒绿。"
-    },
-    {
-      "category": "流程",
-      "severity": "medium",
-      "file": "scripts/lib/emit.sh",
-      "summary": "待下一轮：lib/emit.sh 的十五处「2>/dev/null || true」保持原样（显式可选件，不是遗漏），但按铁律 23 原话「可选件缺失必须打印已跳过」它现在是静默的。缺 emit.sh 时 emit_override 消失，逃生口记账会不会跟着静默停掉本轮未验——那是另一条断言、另一个区间，不在本 commit 里顺手改。"
-    },
-    {
-      "category": "文档",
-      "severity": "low",
-      "file": "agents/consulter/docs/worklog/2026-08-02-consulter-审密钥判据.md",
-      "summary": "审核 worklog 里两处 mysql 连接串举例会被 v2 判据命中，已改成占位符（CFO 指出）。这是「字面量类」在同一份文档上的第二次收口——判据每强一次，讲这件事的文档就要再改一次；真正该警惕的是判据强了、文档没跟着改于是用逃生口放行。"
+      "category": "接口",
+      "severity": "P1",
+      "file": "scripts/checks/_common/18-secret-literal.sh:106-139（修前行号）",
+      "summary": "已修：value_is_literal() 把未加引号的属性引用链（x.y / self.x / obj.attr.sub）误判成硬编码字面量。误报的门禁比没门禁更坏——它教 agent 改对的代码去迎合扫描器。修法：新增 ATTR_REF 正则识别点号标识符链，配合 was_quoted 顺序守卫防止真字面量被连坐放行。"
     },
     {
       "category": "流程",
       "severity": "low",
-      "file": "logs/ledger.jsonl",
-      "summary": "logs/ledger.jsonl 有一条 CFO 推送时写的 override 记录未入仓，checks/16 正确拦住本轮提交。按既有做法（commit aeb4bc3 同型）随本 commit 入仓——账本不入仓等于逃生口全是静默的。"
+      "file": "scripts/selftest.d/60-inference-and-exempt.sh",
+      "summary": "铁律 23 同类扫描：scripts/checks/ 与 scripts/gates/ 里做『变量引用识别』的脚本只有 18-secret-literal.sh 一处，未发现第二处同形状缺陷。断言扩充到 11 发坏形状 + 17 发合法写法，覆盖正反两侧。"
     }
   ],
-  "reflection": "CFO 把第 3 段病根（主脚本吞掉 stderr）判为最要害，这个判断是对的，而且它改变了修法的形状：十八处守卫是修今天在仓里的实例，主脚本那一层才是修「明天新写的那一条」。两层的分工是「已知的现在」和「未知的将来」，不是冗余。\n\n本轮真正的收获在第三发反向验证：#63 一开始只断言退出码非 0，而 05-write-lease 在沙箱里本来就会因「角色没有路签」而红——撤掉它的守卫，断言照样绿。我在 S1 的 findings 里明明写过那句「红了，但理由是『没有路签』，不是『我瞎了』」，却没有把它写进自己的断言。知道一个坑、和让机器认得这个坑，之间还差一整步；而只有点火才能发现这一步没走。\n\n第三条：这轮我自己的断言里又找出两个洞（变量形式的 source 溜过过滤器、双引号里的反引号变成命令替换）。三轮下来，每一轮都是反向验证抓出验证者自己的问题，没有一轮例外。「新增断言必须反向验证」这条硬要求的实际收益，已经不是偶尔抓到一个 bug，而是它每次都抓到。",
+  "reflection": "这次误报的形状和之前几次『字面量类』判例（判据把变量名当成值本身）是同一族，只是多了一层属性访问——说明识别『这是不是一个引用』这件事，判据一直是按『长得像哪种已知引用』穷举，而不是按『有没有被引号包着』这个更根本的信号来分岔。was_quoted 顺序守卫补的正是这个根本信号：先问『源代码里这层是不是字符串』，再问『不是字符串的话像不像变量名』。如果下一次还有新的引用形状（比如函数调用 get_password()、下标 cfg['pw']）被误报，正确的修法应该还是先接上 was_quoted 这道顺序，而不是又加一条新的形状正则——否则会重复『每次多认一种形状』的老路，穷举不完。",
   "recommendations": [
-    "【下一轮，consulter】emit.sh 的可选件语义按铁律 23 补「已跳过」打印；并先验一件事：缺 emit.sh 时逃生口记账是否静默停掉（如果是，它就不是可选件，得升到必需件）",
-    "【CFO】装机两条：install-gates 的「.」语义是 workspace root、装机源取工作区而非 HEAD",
-    "【consulter】check-report-schema 的 review_target 七项大 and 拆成逐项判；错误文案点明 changed_files 必须是 core.quotePath=false 形态",
-    "【consulter】断言 36 的排除项按路径判而非按整行文本判；agents/reference/工作空间全景.md:255 的「34 条」改成「条数见运行输出」（现已 65 条，化石又漂了）",
-    "【已裁决 2026-08-02，台账 D16，原文保留不删】C1 覆不覆盖 .md —— 人类裁定：C1 只管源码，散文不算（500 行本意是逼你拆职责，那是代码的道理）。落地见 agents/consulter/docs/worklog/2026-08-02-consulter-C1只管源码.md",
-    "【已完成，记账】本轮把 18-secret-literal.sh 的守卫措辞统一到全仓惯用法。动了 CFO 的文件，只动守卫那一行，理由：断言 63 靠守卫独有措辞分辨「守卫拦的」与「碰巧红的」，两套措辞会让断言要认两套规矩"
+    "【下一轮，若有需要】函数调用（cfg.get_password()）和下标访问（cfg[\"password\"]）目前仍会被 rstrip(\"}])\") 误伤成残缺表达式，本轮范围只覆盖任务单点名的属性引用（x.y/self.x/obj.attr.sub），未处理调用与下标——按 was_quoted 顺序守卫的同一思路可以扩，但需要新的复现样本再评估，不在本次顺手做",
+    "【人类 / CFO】本轮改的是框架门禁脚本本身，consulter 不能自审（裁决 J7）。请人类核准；CFO 可辅助跑三件审法举证但不下 approve/reject：① 跑 scripts/selftest.sh 确认 #61 与全量 70 条绿；② 对 scripts/checks/_common/18-secret-literal.sh 和 scripts/selftest.d/60-inference-and-exempt.sh 跑 dogfood（bash scripts/checks/_common/18-secret-literal.sh，staged 状态下应 rc=0）；③ 核对 diff 范围只有这两个脚本文件 + 本 worklog + 本 report.json，没有越界改业务代码"
   ],
   "reviewer_opinion": {
     "reviewer": "human",
     "verdict": "pending",
-    "path": "agents/consulter/docs/worklog/2026-08-02-consulter-S1两层防线.md",
+    "path": "agents/consulter/docs/worklog/2026-08-11-consulter-secret-literal属性引用误报.md",
     "round": 1,
     "note": "consulter 改的框架由人类审、CFO 只辅助举证（裁决 J7）。本轮全部是 consulter 自己的框架改动，无自审自批空间"
   }

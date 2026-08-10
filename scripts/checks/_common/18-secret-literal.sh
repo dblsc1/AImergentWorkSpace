@@ -91,6 +91,15 @@ CONN = re.compile(r"(?i)[a-z][a-z0-9+.-]*://[^\s:/@]+:(?P<val>[^\s@/]+)@")
 # 读 env 的调用出现在右值里 => 不是字面量
 ENVCALL = re.compile(r"(?i)(os\.environ|getenv|process\.env|ENV\[|System\.getenv|Deno\.env)")
 
+# 属性/变量引用 —— `cfg.nexus_password` / `self.password` / `obj.attr.sub`。
+# 只认**未加引号 + 点号分隔的标识符链**（每一段都得以字母/下划线开头，
+# 数字开头的段落——如 `192.168.1.1`——不算，防止版本号/IP 这类真字面量被误放）。
+# 引号包住的值不受影响：`"cfg.nexus_password"` 那种真被引号包住的怪值仍按字面量走，
+# 因为 `was_quoted` 会挡住它——**先判断是否有引号，再判断形状**，两步不可颠倒。
+# 实证（2026-08-10，ai-planner programmer 波2-A objection）：
+# `json={"password": cfg.nexus_password}` 是变量引用，被 v2 误判成硬编码字面量。
+ATTR_REF = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+$")
+
 # 占位符：必须**整体**像占位符，不是「行里出现过」。
 PLACEHOLDER_SUBSTR = (
     "changeme","change-me","placeholder","dummy","example","sample",
@@ -111,9 +120,12 @@ def value_is_literal(v: str) -> bool:
     # 少剥一个 `}` 就会把 `json={"password": password},` 的右值算成 `password}`，
     # 比占位符白名单差一个字符 —— 两个 agent 一小时内各自撞上这条（2026-08-03）。
     v = v.rstrip("\\").rstrip(",;").rstrip("}])").strip()
-    # 剥一层引号
+    # 剥一层引号 —— 记下**是否真的剥了**，下面判断属性引用要用这个信号：
+    # 引号包住的内容是字符串字面量，不该被「像属性链」的形状救走。
+    was_quoted = False
     if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"\x27`":
         v = v[1:-1].strip()
+        was_quoted = True
     if not v:
         return False                      # 空值不是泄露
     if v[0] in "$%":
@@ -126,6 +138,11 @@ def value_is_literal(v: str) -> bool:
     # 实证：`PASSWORD_ENV_VAR = "COCKPIT_TEST_PASSWORD"` 存的是变量**名**不是值，
     # 而判据把它当成了泄露。这一类的通则是「右值看起来像代码里的名字」。
     if re.fullmatch(r"[A-Z][A-Z0-9_]{2,}", v):
+        return False
+    # **右值是没加引号的属性/变量引用链** —— `cfg.nexus_password` / `self.password` /
+    # `obj.attr.sub`。跟上面 SCREAMING_SNAKE 判据同一个通则的延伸：都是「看起来像代码里
+    # 的名字，不像凭据」，只是这里多一层点号。`was_quoted` 时不适用——那是字符串字面量。
+    if not was_quoted and ATTR_REF.fullmatch(v):
         return False
     low = v.lower()
     if low in PLACEHOLDER_EXACT:

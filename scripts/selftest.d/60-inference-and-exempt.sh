@@ -276,11 +276,18 @@ fi
 #      （立项时把它误判成「空壳零规则」——诊断错会把下一步引偏：
 #        按错的诊断该往判据里塞更多正则，按对的诊断该本地装 gitleaks。）
 #
-#      实弹十发坏形状 + 十三发合法写法。坏形状特意覆盖 v1 全漏、
+#      实弹十一发坏形状 + 十七发合法写法。坏形状特意覆盖 v1 全漏、
 #      被 consulter 判 rejected 的那批：小写裸键、连接串、
-#      **同行别处出现 $VAR 的整行绕过**、JSON 引号键、PGPASSWORD/AWS_ 这类无下划线前缀。
+#      **同行别处出现 $VAR 的整行绕过**、JSON 引号键、PGPASSWORD/AWS_ 这类无下划线前缀，
+#      以及 v2 新增的**加引号的属性链形状**（第 11 发，2026-08-10 补：`was_quoted`
+#      守卫必须挡住「看起来像 x.y 但其实被引号包住」的真字面量，不能被下面新放行的
+#      属性引用规则连坐救走）。
 #      合法写法特意覆盖三类真实误报：`CL_PASS=0` 计数器、JS 的 `e.pass ===`、
-#      续行反斜杠结尾。**判据本身不含真实凭据**，样本全是假值。
+#      续行反斜杠结尾，以及 2026-08-10 objection 实证的**未加引号属性/变量引用链**
+#      （`cfg.nexus_password` / `self.password` / `obj.attr.sub`，含原始事故复现行
+#      `json={"password": cfg.nexus_password}`）——v2 曾把这类变量引用误判成硬编码字面量，
+#      教会 agent 去改对的代码迎合扫描器（consulter 记忆库「误报比没门禁更坏」）。
+#      **判据本身不含真实凭据**，样本全是假值。
 #      ⚠️ 样本值不许含 `notareal` / `dummy` / `example` 这类词 —— 那些是判据自己的
 #         占位符词表，用它们做「坏样本」会被判成占位符，断言当场从 10 中降到 1
 #         （本轮实测撞到）。**测判据的样本不能踩判据的白名单。**
@@ -311,6 +318,9 @@ else
     printf 'DATABASE_URL=mysql://root:%s@db:3306/x\n'    'Wg9r3h'
     printf 'DB_%sWORD=Cv4t8j   # 同行别处出现 $HOME，v1 会整行放行\n' "$_K"
     printf 'APP_%s=weakword2026\n'                      "$_S"
+    # 第 11 发（2026-08-10）：**加引号**的属性链形状字面量。`was_quoted` 守卫必须挡住它——
+    # 不能因为下面新放行了「未加引号的属性引用」，就连坐放行这个真被引号包住的字面量。
+    printf '%sWORD="cfg.nexus_%s"\n'                    "$_K" 'password'
   } > "$_sbx/bad.txt"
   cat > "$_sbx/good.txt" <<'GOODEOF'
 口令只从 APP_TEST_PASSWORD 读，缺了就响亮跳过。
@@ -326,6 +336,10 @@ DB_PASSWORD=%DBPW%
 CL_PASS=0
 if (e.pass === false) { }
 NEXUS_TOKEN_FILE="$token" \\
+PASSWORD = self.password
+API_KEY = obj.attr.sub
+SECRET = cfg.nexus_secret
+json={"password": cfg.nexus_password}
 GOODEOF
   git -C "$_sbx" add -A >/dev/null 2>&1
   _out=$( cd "$_sbx" && bash scripts/checks/_common/18-secret-literal.sh 2>&1 )
@@ -335,10 +349,10 @@ GOODEOF
   rm -f "$_sbx/scripts/lib/paths.sh"
   _rc_nolib=$( cd "$_sbx" && bash scripts/checks/_common/18-secret-literal.sh >/dev/null 2>&1; echo $? )
   rm -rf "$_sbx"
-  if [ "$_nbad" -eq 10 ] && [ "$_ngood" -eq 0 ] && [ "$_rc_nolib" -ne 0 ]; then
-    P "十种明文凭据形状全被点名、十三种合法写法零误伤、公共件缺失响亮死（不静默退 0）"
+  if [ "$_nbad" -eq 11 ] && [ "$_ngood" -eq 0 ] && [ "$_rc_nolib" -ne 0 ]; then
+    P "十一种明文凭据形状全被点名（含加引号的属性链伪装）、十七种合法写法零误伤（含未加引号的属性引用链）、公共件缺失响亮死（不静默退 0）"
   else
-    F "密钥判据失灵：坏形状点名 $_nbad/10、误伤 $_ngood/0、缺公共件时 exit=$_rc_nolib（应非0）"
+    F "密钥判据失灵：坏形状点名 $_nbad/11、误伤 $_ngood/0、缺公共件时 exit=$_rc_nolib（应非0）"
   fi
 fi
 
