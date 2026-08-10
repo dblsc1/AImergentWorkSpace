@@ -9,7 +9,7 @@
  "git": {
   "protocol": "embedded-self-v2",
   "branch": "feat/gtd-w2-cfo-prep",
-  "base": "e90c567aaca12b4fb13254ed3427fc22b96968fb",
+  "base": "211bdec5559ab4ab798a464272cde5dc27f64740",
   "head": "SELF",
   "diff_mode": "contains",
   "changed_files": [
@@ -112,8 +112,6 @@
    "agents/reference/科普定位-新手第一个多agent架构.md",
    "agents/reference/蓝图-2026-07-30-治理框架理顺.md",
    "agents/reference/蓝图-Godot公司模拟-治理事件流游戏化.md",
-   "blockers/2026-07-30-abspath-second-copy.md",
-   "blockers/2026-07-31-mission-complete-role-not-exported.md",
    "blockers/2026-08-02-e2e-defaults-to-prod.md",
    "blockers/2026-08-11-ai-planner-无远端.md",
    "code/_template/.gitattributes",
