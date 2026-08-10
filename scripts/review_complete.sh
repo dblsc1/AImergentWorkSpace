@@ -42,7 +42,13 @@ if [ "$verdict" = approved ] && [ "${scripts_n:-0}" -eq 0 ]; then
   echo "    铁律 17：可机械核验的一律脚本化；纯肉眼审必须在报告写明为何不能代码化。" >&2
 fi
 
-files=$(git diff --name-only --no-renames "$base..$head" | jq -R . | jq -s -c .)
+# -c core.quotePath=false：否则非 ASCII 文件名会被 C 转义成带引号的字面量
+# （`"code/\346\226\207....txt"`），写进 review_target.changed_files 后与
+# check-report-schema.sh 用同一 flag 取的「真实」diff 逐字比不上——
+# 合法报告会被判「changed_files 与 diff 不完全一致」而 rejected（同类 footgun，
+# 铁律 23 点过的非 ASCII 路径 C 转义坑，这里是它的第二个实例：check-report-schema.sh
+# 那边早就加了这个 flag，写报告的这一端却没跟着加，两边各转义了一次就对不上了）。
+files=$(git -c core.quotePath=false diff --name-only --no-renames "$base..$head" | jq -R . | jq -s -c .)
 mkdir -p "$(dirname "$out")"
 jq -n --arg role "$r" --arg v "$verdict" --arg s "$summary" \
       --arg b "$base" --arg h "$head" --arg br "$(git rev-parse --abbrev-ref HEAD)" \

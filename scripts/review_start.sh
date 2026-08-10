@@ -32,13 +32,13 @@ review_target:
   head   : $head_sha
   diff_mode: exact
 
-被审文件（$(git diff --name-only --no-renames "$base_sha..$head_sha" | wc -l) 个）：
-$(git diff --name-only --no-renames "$base_sha..$head_sha" | sed 's/^/  /')
+被审文件（$(git -c core.quotePath=false diff --name-only --no-renames "$base_sha..$head_sha" | wc -l) 个）：
+$(git -c core.quotePath=false diff --name-only --no-renames "$base_sha..$head_sha" | sed 's/^/  /')
 
 $(
-  new_code=$(git diff --name-only --diff-filter=A --no-renames "$base_sha..$head_sha" -- 'code/*' 2>/dev/null |
+  new_code=$(git -c core.quotePath=false diff --name-only --diff-filter=A --no-renames "$base_sha..$head_sha" -- 'code/*' 2>/dev/null |
              grep -E '\.(py|js|mjs|cjs|ts|tsx|vue|svelte|go|rs)$' | grep -vE '(test|spec|__tests__)' || true)
-  tests=$(git diff --name-only --no-renames "$base_sha..$head_sha" 2>/dev/null |
+  tests=$(git -c core.quotePath=false diff --name-only --no-renames "$base_sha..$head_sha" 2>/dev/null |
           grep -E '(test|spec|__tests__|review/regression/|review/reviewcode/)' || true)
   if [ -n "$new_code" ] && [ -z "$tests" ]; then
     printf '⚠️  本区间新增了功能文件，但没有配套测试/回归用例：\n'

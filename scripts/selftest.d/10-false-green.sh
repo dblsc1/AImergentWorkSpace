@@ -1,4 +1,5 @@
 # 断言 1–20 · 假绿灯 / 留痕落点 / 硬闸门是否存在
+# 断言 70–72（2026-08-11 补，P1 审计）· 障签解除标志解析 + quotepath 同类 footgun
 # 由 scripts/selftest.sh 按文件名顺序 source；共享 repo/S/P/F/N 与 pass/fail/na 计数。
 # 本文件不可单独执行（没有那些变量），入口永远是 scripts/selftest.sh。
 
@@ -187,5 +188,92 @@ if [ -x "$S/arbiter-push.sh" ] && grep -q 'run-gates.sh' "$S/arbiter-push.sh" 2>
   P "arbiter-push 推之前跑 run-gates，不绿不推（逃生口记账）"
 else
   F "推送不校验门禁 —— 门禁红了照样能推上去"
+fi
+
+# ── 70–72：15-stale-blocker.sh 建仓至今没点过火（P1，2026-08-11 审计实证）────
+# 病根：`_file=${mark##*@}` 切完，项目实际写法「`` `文字` @ `文件` ``」的反引号与
+# 前导空格原样留在 `$_file` 里，`[ -f "$_file" ]` 恒假 —— 障已解也永远判不出来。
+# 现场证据：blockers/2026-08-02-e2e-defaults-to-prod.md 改前用改前脚本仍 exit 0。
+# 正反两侧都要断言：只加「解除后必须红」会把「本来就该绿」的路也测瞎（判例库教训）。
+
+# 70 ── 反引号 `<文字>@<文件>` 格式：未解除必须绿，已解除必须红
+printf '70. 障签解除标志（反引号 `` `文字`@`文件` `` 格式）解析是否生效\n'
+if [ ! -f "$S/checks/_common/15-stale-blocker.sh" ]; then
+  N "本仓没有 15-stale-blocker.sh"
+else
+  _sb70=$(mktemp -d); git -C "$_sb70" init -q
+  mkdir -p "$_sb70/blockers" "$_sb70/t70"
+  printf '解除标志：`marker_70` @ `t70/target.txt`\n' > "$_sb70/blockers/x.md"
+  printf 'no marker here\n' > "$_sb70/t70/target.txt"
+  git -C "$_sb70" add -A >/dev/null 2>&1
+  ( cd "$_sb70" && bash "$S/checks/_common/15-stale-blocker.sh" ) >"$_sb70/out_unmet" 2>&1
+  _rc70u=$?
+  printf 'has marker_70 now\n' > "$_sb70/t70/target.txt"
+  ( cd "$_sb70" && bash "$S/checks/_common/15-stale-blocker.sh" ) >"$_sb70/out_met" 2>&1
+  _rc70m=$?
+  _v70=""
+  [ "$_rc70u" = 0 ] || _v70="$_v70 [未解除时应绿却 rc=$_rc70u：$(cat "$_sb70/out_unmet")]"
+  [ "$_rc70m" != 0 ] || _v70="$_v70 [已解除仍绿 rc=0 —— 反引号 @ 格式的解除标志判据失效，就是 P1 实证的那个坑]"
+  rm -rf "$_sb70"
+  if [ -z "$_v70" ]; then
+    P "反引号 @ 格式：未解除保持绿、已解除变红，两侧都对"
+  else
+    F "$_v70"
+  fi
+fi
+
+# 71 ── 不受支持的解除标志格式必须响亮失败，不能退化成「永远 met=0」的第二种静默假绿
+printf '71. 解除标志格式不受支持时是否会响亮失败（而不是永远判不出已解除）\n'
+if [ ! -f "$S/checks/_common/15-stale-blocker.sh" ]; then
+  N "本仓没有 15-stale-blocker.sh"
+else
+  _sb71=$(mktemp -d); git -C "$_sb71" init -q
+  mkdir -p "$_sb71/blockers"
+  # 既不是「仓内路径」也不是「文字@文件」——一句夹着反引号的自然语言描述
+  # （历史上 2026-08-02-nexus-core 便条真实用过这种写法，[ -e ] 对它恒假）
+  printf '解除标志：`curl` 的输出里出现 `"db"`\n' > "$_sb71/blockers/weird.md"
+  git -C "$_sb71" add -A >/dev/null 2>&1
+  ( cd "$_sb71" && bash "$S/checks/_common/15-stale-blocker.sh" ) >"$_sb71/out" 2>&1
+  _rc71=$?
+  _out71=$(cat "$_sb71/out")
+  rm -rf "$_sb71"
+  if [ "$_rc71" != 0 ] && grep -q '格式不受支持' <<<"$_out71"; then
+    P "格式不受支持的解除标志被响亮拦下（不会退化成永远判不出已解除的静默假绿）"
+  else
+    F "格式不受支持的解除标志被放过了 rc=$_rc71 —— 这种便条永远销不掉，等于把便条钉死却没人知道"
+  fi
+fi
+
+# 72 ── quotepath 同类 footgun：review_complete.sh 写进报告的 changed_files
+# 必须躲开 core.quotePath 的 C 转义，否则含非 ASCII 文件名的合法审核报告会被
+# check-report-schema.sh（那边已经加了 quotePath=false）判定「不完全一致」而拒绝——
+# 两边各转义一次就对不上，这是同一个坑的另一种发作方式（false-red 而非 false-green，
+# 但病根同源：拿 git 输出的路径去做机械比对，没管 core.quotePath）。
+printf '72. 审核报告的 changed_files 是否躲开 quotepath 的 C 转义\n'
+if [ ! -f "$S/review_complete.sh" ] || [ ! -f "$S/gates/check-report-schema.sh" ]; then
+  N "本仓没有 review_complete.sh 或 check-report-schema.sh"
+else
+  _sb72=$(mktemp -d); git -C "$_sb72" init -q -b main
+  git -C "$_sb72" config user.email t@e.c; git -C "$_sb72" config user.name t
+  mkdir -p "$_sb72/code" "$_sb72/agents/x/docs/worklog"
+  printf 'x\n' > "$_sb72/agents/x/docs/worklog/w.md"
+  git -C "$_sb72" add -A >/dev/null 2>&1; git -C "$_sb72" commit -q -m base
+  _base72=$(git -C "$_sb72" rev-parse HEAD)
+  printf 'y' > "$_sb72/code/中文文件名.txt"
+  git -C "$_sb72" add -A >/dev/null 2>&1; git -C "$_sb72" commit -q -m feat
+  _head72=$(git -C "$_sb72" rev-parse HEAD)
+  cp -r "$S" "$_sb72/scripts"
+  ( cd "$_sb72" && bash scripts/review_complete.sh consulter "$_base72" "$_head72" approved x ) >/dev/null 2>&1
+  git -C "$_sb72" add -A >/dev/null 2>&1; git -C "$_sb72" commit -q -m report
+  ( cd "$_sb72" && AIMERGENT_REPORT_BASE="$_base72" bash scripts/gates/check-report-schema.sh ) \
+    >"$_sb72/schema_out" 2>&1
+  _rc72=$?
+  _out72=$(cat "$_sb72/schema_out")
+  rm -rf "$_sb72"
+  if [ "$_rc72" = 0 ]; then
+    P "含中文文件名的合法审核报告通过 check-report-schema.sh（changed_files 未被 C 转义污染）"
+  else
+    F "含中文文件名的合法审核报告被 check-report-schema.sh 拒了：$_out72"
+  fi
 fi
 
