@@ -112,8 +112,11 @@ services:
       - "${NGINX_HOST_BIND:-192.168.31.181:10000}:80"
     environment:
       # 官方镜像的 20-envsubst-on-templates.sh 用这些值渲染 cockpit.conf.template。
-      # 白名单只替换 NGINX_/NEXUS_/AUTH_ 前缀，别让 $host/$scheme 被吞成空串。
-      NGINX_ENVSUBST_FILTER: "^(NGINX_|NEXUS_|AUTH_)"
+      # 白名单只替换 NGINX_/NEXUS_/AUTH_/AI_ 前缀，别让 $host/$scheme 被吞成空串。
+      # ⚠️ 加新变量必须同时加前缀进白名单：漏了的话 ${VAR} 不被替换，nginx 会把它
+      #    当成自己的变量语法去解析、因变量不存在而 **拒绝启动** —— 且报错指向
+      #    模板行号，与"compose 少写一个 env"这个真因隔着一层（v0.8 实例：AI_PLANNER_UPSTREAM）。
+      NGINX_ENVSUBST_FILTER: "^(NGINX_|NEXUS_|AUTH_|AI_)"
       # bridge 模式：容器内监听全网卡 80，暴露面由上面的 ports 映射控制。
       NGINX_BIND: "0.0.0.0"
       NGINX_PORT: "80"
@@ -122,6 +125,12 @@ services:
       # 上游改指服务名（不再 127.0.0.1）——这是进 compose 网络后唯一要变的业务参数。
       NEXUS_CORE_UPSTREAM: "http://nexus:8000"
       AUTH_UPSTREAM: "http://auth:8010"
+      # ai-planner 是**宿主进程，不在 compose 里**（codex/LLM 驱动在宿主，容器够不到）。
+      # 因此上游不能用服务名，得走 bridge 网关（＝宿主在这张网上的地址）。
+      # ⚠️ 172.24.0.1 是当前 cockpit-net 的网关，**网络重建会变**。变了就改这里：
+      #    docker network inspect cockpit_cockpit-net -f '{{(index .IPAM.Config 0).Gateway}}'
+      # ai-planner 未启动时这条路由返 502，其余路由不受影响（变量式 proxy_pass 不连坐）。
+      AI_PLANNER_UPSTREAM: "${AI_PLANNER_UPSTREAM:-http://172.24.0.1:8700}"
     volumes:
       # nginx 业务配置与静态件全部复用 nginx-docker 模块的仓内产出，只读挂载，零改动。
       - ../code/nginx-docker/code/backend/nginx/templates/cockpit.conf.template:/etc/nginx/templates/cockpit.conf.template:ro
