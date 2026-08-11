@@ -135,6 +135,28 @@ rc=1
    不再需要豁免，再删这一行——**这一步需要人或 nexus-core arbiter 验证，不是我这轮能替代的**
    （我没有权限触碰 `code/nexus-core/`，任务单也明确「可触碰目录」不含它）。
 
+## 提交花絮（记账追加）
+
+实际落地 commit：`96a94b72a19e72cfddb5110aa0846e588623f21f`（`fix/consulter-doc-paths-worklog`）。
+
+两点记录：
+
+1. **mission_start.sh 的走签路径没走通**：本地 worktree 拿不到 CFO 那份任务单的已提交版本
+   （它在共享工作树里还未 commit），所以先把内容原样拷进本 worktree（未 `git add`，只为满足
+   `mission_start.sh` 的 `[ -f "$task" ]` 前置检查）。拷贝后仍卡在「四小节」机械关键词检查——
+   任务单用「你要做的」+「自检门」表达了可判定的验收标准（含具体命令、断言要求），
+   但字面没出现「验收」二字，`grep -q '验收'` 判不过。任务单是 CFO 写区，不归我改，
+   用 `AIMERGENT_MISSION_OVERRIDE` 记账放行（`logs/ledger.jsonl` 三条 `MISSION_OVERRIDE`
+   记录，前两条是失败重试留下的账，第三条对应真正落地的那次提交——全部已入仓）。
+   **这本身是同一类问题的第三个例子**（判据只看字面字符串，不看语境／同义表达），
+   但这次判的是任务单措辞而非死链路径，不在本轮「修到类」范围内，留给 CFO 或后续任务判断
+   `mission_start.sh` 的四小节关键词是否要放宽成同义词组或改成结构性检查（是否存在对应小节标题）。
+2. **`git commit -m "$(cat <<'EOF' … EOF)"` 两次把 `Agent-Attribution` trailer 传丢**
+   （commit-msg hook 报「检测到 0 个 Agent-Attribution trailer」），而把同样内容写进临时文件后
+   `git interpret-trailers --parse` 能正确识别 3 条 trailer，改用 `git commit -F <file>` 一次成功。
+   没有进一步下钻是命令替换的换行/转义丢了什么，还是这次工具调用管道的问题——记在这里，
+   如果别的 agent 也撞到「trailer 传了但 hook 说 0 条」，先换 `-F` 试试，不必重新排查一遍。
+
 ## 谁来验（consulter 禁自审自己改的框架）
 
 本轮改动全在框架区（`scripts/lib/paths.sh`、四个 check/脚本、一个 selftest 断言文件），
