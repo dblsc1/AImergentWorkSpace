@@ -100,3 +100,32 @@ resolves_here_or_framework() {   # resolves_here_or_framework <仓内相对路�
   local fr; fr=$(framework_root 2>/dev/null) || return 1
   [ -n "$fr" ] && [ -e "$fr/$1" ]
 }
+
+# ── 历史叙事类文档判据（worklog / findings / decisions）—— **唯一实现** ──────
+# 判"这条仓内相对路径是不是记录过去状态的留痕文档"。强制叙事类文档指向现存
+# 路径 = 强制篡改历史，与「留痕不可篡改」直接冲突，所以多处判据要把它排除在外
+# （死链检查、文档同步反查、留痕索引……）。
+#
+# 病根（2026-08-11 CFO 实测）：这些地方原来各自写一份 `*/docs/worklog/*` 式的
+# case 猜测，锚定的是 J3 迁移**前**的旧布局（`codeagent/<角色>/docs/worklog/`）。
+# 裁决 J3 之后 canonical worklog 落点分裂成四种形状（`agents/protocol/report-schema.md`
+# canonical path 表 + J3/J4 配套落点唯一事实）：
+#   · module_docs/worklog/                  —— 模块 arbiter（J3，无 docs/ 中段）
+#   · code/<子文件夹>/worklog/                —— programmer（J3，无 docs/ 中段）
+#   · agents/<角色>/docs/{worklog,findings,decisions}/  —— 项目级角色（cfo/consulter）
+#   · codeagent/<角色>[/<编号>]/docs/{worklog,findings,decisions}/  —— 旧布局兼容 + reviewer 实例
+# 只排除 `*/docs/worklog/*` 只命中后两种；前两种没有 `docs/` 中段，
+# 于是「如实记录已删除路径」的 J3 落点 worklog 被判成引用了死链——
+# 惩罚的恰恰是准确留痕（已实证：nexus-core 模块 arbiter 只能靠模块本地
+# doc-path-exempt.local.txt 逃生口绕过，J3 之后的每个模块都会撞上同一个坑）。
+#
+# 新增落点只改这一处；不要在别的判据里重新长出一份 case 猜测。
+is_narrative_doc_path() {   # is_narrative_doc_path <仓根相对路径>
+  local p=${1#./}
+  case "$p" in
+    module_docs/worklog/*) return 0 ;;   # J3 模块级（无 docs/ 中段）
+    code/*/worklog/*) return 0 ;;        # J3 代码侧（code/<子文件夹>/worklog/，无 docs/ 中段）
+    */docs/worklog/*|*/docs/findings/*|*/docs/decisions/*) return 0 ;;  # 项目级角色 + 旧布局兼容
+  esac
+  return 1
+}

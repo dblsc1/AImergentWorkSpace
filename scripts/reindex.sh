@@ -20,9 +20,13 @@ emit() {
   printf '| %s | %s | %s | `%s` | %s |\n' "$d" "$type" "$who" "$path" "$c"
 }
 
+# worklog 落点 J3 之后分裂成四种形状（module_docs/worklog/、code/<子文件夹>/worklog/、
+# */docs/worklog/ 的项目级 + 旧布局兼容）——同一个坑在 60-doc-paths-exist.sh 撞过一次
+# （CFO 2026-08-11 实测），这里是同一形状的第二个实例：漏掉前两种会让 J3 落点的
+# worklog 静默不出现在索引里，不报错、只是「查不到」，比死链误判更隐蔽。
 git ls-files -z | tr '\0' '\n' | while IFS= read -r f; do
   case "$f" in
-    */docs/worklog/*.md)   emit worklog "$f" ;;
+    module_docs/worklog/*.md|code/*/worklog/*.md|*/docs/worklog/*.md) emit worklog "$f" ;;
     */report.json)         emit report "$f" ;;
     */reviewreport/*)      [ -f "$f" ] && emit reviewreport "$f" ;;
     */subreports/*)        [ -f "$f" ] && emit subreport "$f" ;;

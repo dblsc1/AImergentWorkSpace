@@ -2,24 +2,25 @@
   "schema_version": 2,
   "module": "workspace",
   "role": "consulter",
-  "task": "S1（P0）：公共件缺失时半套门禁静默变绿 —— 两层防线 + 三条断言",
-  "tier": "hard",
+  "task": "`60-doc-paths-exist.sh` 惩罚准确留痕 —— 历史叙事豁免补齐 J3 落点 + 铁律 23 修到类",
+  "tier": "normal",
   "status": "approved",
-  "summary": "S1 修完，两层各自验过。层① 18 处 source 加统一守卫（比 CFO 点的 12 条更宽：_common 10 + arbiter/programmer 4 + 四个顶层脚本 5 + run-gates 1；措辞全仓对齐，含把 CFO 在 18 里的不同措辞统一过来）。层② mission_complete 新增 interpreter_blew_up：check 退 0 但输出带 bash 诊断前缀「: line N:」时判失败，判据钉在该前缀而非裸关键词，常态十五条零误伤。新增 selftest.d/70-lib-bootstrap.sh 三条断言：#63 删掉 lib/paths.sh 后逐条跑所有 check（不抽样），凡用到它的都必须由守卫本身拦下；#64 主脚本对「退 0 + 解释器错误」判失败且正常 check 零误伤；#65 结构断言挡住下一个新写的 source 点。反向验证三发证明两层各自有效：只拆层① → 63/65 红而 64 绿；只拆层② → 64 红而 63/65 绿；只撤一条守卫 → 63/65 都点名它。第三发第一次是绿的——#63 原本只验退出码，而 05-write-lease 在沙箱里本来就因别的理由红（红对了但理由是错的）；改成还要看见守卫独有措辞后才真变红。另修自己断言的两个洞（变量形式 source 溜过、双引号里反引号变命令替换的噪音）。emit.sh 明确不纳入本类并写清理由（显式可选件），但它缺失时是静默的、与铁律 23 冲突，列为下一轮候选。",
+  "summary": "CFO 实测：60-doc-paths-exist.sh 的历史叙事豁免正则只认 J3 迁移前旧布局（*/docs/worklog/*），J3 之后 module_docs/worklog/、code/<子文件夹>/worklog/ 两种无 docs/ 中段的落点匹配不上，如实记录已删除路径的 worklog 被误判死链（nexus-core 实证）。修法：在 scripts/lib/paths.sh 抽出 is_narrative_doc_path() 作唯一实现，四种 canonical 落点全覆盖；全仓同形状扫描共 5 处（60-doc-paths-exist.sh、doc_impact.sh、11-doc-sync.sh 两处、reindex.sh 方向相反但同根因），全部改调公共件。新增 selftest #70，正例（J3 落点 worklog 引用已删除路径不该报）+ 反例（非叙事类 contract.md 里的真死链必须照红）都验；用未修复的旧脚本跑同一 fixture 反向验证，证明两条正例在修复前确实误判、修复后不再误判。scripts/selftest.sh 70/70、scripts/gates/run-gates.sh 全绿，真实输出见 worklog。",
   "git": {
     "protocol": "embedded-self-v2",
-    "branch": "feat/frontend-view-modules",
-    "base": "211bdec5559ab4ab798a464272cde5dc27f64740",
+    "branch": "fix/consulter-doc-paths-worklog",
+    "base": "0d1798814d26e22afae62241f15e31fd38971c18",
     "head": "SELF",
     "diff_mode": "contains",
     "changed_files": [
       "agents/consulter/docs/findings/report.json",
-      "agents/consulter/docs/worklog/2026-08-02-consulter-S1两层防线.md",
-      "agents/consulter/docs/worklog/2026-08-02-任务单-S1公共件静默塌.md",
-      "scripts/mission_complete.sh",
-      "scripts/selftest.d/70-lib-bootstrap.sh",
-      "scripts/checks/_common/05-write-lease.sh",
-      "scripts/gates/run-gates.sh"
+      "agents/consulter/docs/worklog/2026-08-11-consulter-doc-paths-worklog死链误判.md",
+      "scripts/lib/paths.sh",
+      "scripts/checks/_common/60-doc-paths-exist.sh",
+      "scripts/checks/_common/11-doc-sync.sh",
+      "scripts/doc_impact.sh",
+      "scripts/reindex.sh",
+      "scripts/selftest.d/60-inference-and-exempt.sh"
     ]
   },
   "review_target": null,
@@ -28,75 +29,62 @@
     "which": [],
     "consumes": []
   },
-  "cross_module_impact": [],
+  "cross_module_impact": [
+    "code/nexus-core：module_docs/worklog/2026-08-11-任务单-reviewlog退役.md 引发的 doc-path-exempt.local.txt 逃生口登记，理论上本修复后可撤，但需 nexus-core 先装新版门禁并实跑验证，本轮未代动（越权）"
+  ],
   "escalation": null,
   "docs_reviewed": [
     {
       "path": "scripts/README.md",
       "action": "no-change-needed",
-      "reason": "本轮改的是 check 与主脚本的失败行为（缺公共件时死掉而不是静默退 0），没有新增/改名/删除任何脚本，也没有改任何脚本的用法与参数。README 那张表记的是「文件→用途→什么时候跑」，三项都未变"
-    },
-    {
-      "path": "agents/protocol/report-schema.md",
-      "action": "no-change-needed",
-      "reason": "没有增删报告字段，也没有改任何字段的语义；本轮只碰门禁执行路径"
-    },
-    {
-      "path": "agents/AGENTS.md",
-      "action": "no-change-needed",
-      "reason": "铁律 23 已经写着「关键路径缺文件必须 die；可选件缺失必须打印已跳过；唯一不许的是静默跳过后报成功」——本轮是给这条铁律补执行者，不是改条文。铁律 23 举的例子是 if [ -x <脚本> ]，而本轮实证 . <公共件> 是同一形状，这条补充已进判例库（consulter 的 记忆.md），条文本身不动"
+      "reason": "doc-map.tsv 把 scripts/*.sh 与 scripts/checks/* 都登记指向本文件。本轮只改各脚本内部的历史叙事排除逻辑（换成调用公共函数 is_narrative_doc_path），没有新增/改名/删除脚本，也没有改任何脚本的用途、调用方式或参数——README 那张表的三项描述在改动前后都成立"
     },
     {
       "path": "agents/reference/manual/文档地图.md",
       "action": "no-change-needed",
-      "reason": "doc-map.tsv 把它登记为治理 scripts/checks/ 的长期文档，所以必须表态。逐字看过它写 checks 的两处：第 4 行说 60-doc-paths-exist.sh 会核验表里每个路径真实存在（本轮没碰 60 的职责，只给它的 source 行加了失败守卫）；第 62 行说「检查项三层级联（_common/角色/模块），一条一个文件，可增删改查」——本轮没有增删任何 check、没有改三层级联结构、也没有改「一条一个文件」的组织方式，只改了每条 check 在**公共件缺失时**的失败行为。两句描述在改动前后都成立，所以不改；若哪天新增或删除 check，那时才轮到它。"
+      "reason": "doc-map.tsv 把 scripts/*.sh 登记指向本文件。同上，本轮不涉及脚本增删或职责变化，只是把重复的排除模式收敛成一处公共实现"
+    },
+    {
+      "path": "agents/protocol/report-schema.md",
+      "action": "no-change-needed",
+      "reason": "本轮验证的正是本文件「J3/J4 配套落点」一节已经写明的四种 canonical worklog 落点，没有新增或改变任何落点定义；只是让 60-doc-paths-exist.sh 等判据的实现追上这份既有规范"
     }
   ],
   "findings": [
     {
       "category": "流程",
-      "severity": "P0",
-      "file": "scripts/mission_complete.sh:122",
-      "summary": "已修：公共件缺失 → 十二条 check 静默 exit 0 且检查单照打绿。两层防线：层① 18 处 source 统一守卫；层② mission_complete 不许把「退 0 + 解释器级错误」判成 pass。三条断言（63 逐条不抽样 / 64 主脚本层 / 65 结构层挡住下一个）+ 三发反向验证证明两层各自有效。"
+      "severity": "high",
+      "file": "scripts/checks/_common/60-doc-paths-exist.sh:13",
+      "summary": "已修：历史叙事豁免正则只覆盖 J3 迁移前旧布局，J3 之后 module_docs/worklog/、code/<子文件夹>/worklog/（无 docs/ 中段）匹配不上，如实留痕被判死链——直接惩罚准确记录。抽出 scripts/lib/paths.sh 的 is_narrative_doc_path() 作唯一实现修复。"
     },
     {
       "category": "流程",
       "severity": "medium",
-      "file": "scripts/selftest.d/70-lib-bootstrap.sh",
-      "summary": "断言写法的一条通则（本轮实证）：验一个守卫时，只断言「结果对不对」不够，要断言「是不是这个守卫造成的」。#63 原本只验退出码，而 05-write-lease 在沙箱里本来就因「角色没有路签」而红——红对了但理由是错的，于是撤掉它的守卫也照样绿。一个碰巧同向的旁因就能把断言变成恒绿。"
-    },
-    {
-      "category": "流程",
-      "severity": "medium",
-      "file": "scripts/lib/emit.sh",
-      "summary": "待下一轮：lib/emit.sh 的十五处「2>/dev/null || true」保持原样（显式可选件，不是遗漏），但按铁律 23 原话「可选件缺失必须打印已跳过」它现在是静默的。缺 emit.sh 时 emit_override 消失，逃生口记账会不会跟着静默停掉本轮未验——那是另一条断言、另一个区间，不在本 commit 里顺手改。"
-    },
-    {
-      "category": "文档",
-      "severity": "low",
-      "file": "agents/consulter/docs/worklog/2026-08-02-consulter-审密钥判据.md",
-      "summary": "审核 worklog 里两处 mysql 连接串举例会被 v2 判据命中，已改成占位符（CFO 指出）。这是「字面量类」在同一份文档上的第二次收口——判据每强一次，讲这件事的文档就要再改一次；真正该警惕的是判据强了、文档没跟着改于是用逃生口放行。"
+      "file": "scripts/checks/_common/11-doc-sync.sh:120",
+      "summary": "已修：反引号反查环节同一个排除正则漏了同样两种 J3 落点，后果与 60 号同型——J3 落点的 worklog 若提到某个改动路径，会被误判成『该文档需要同步声明』，是同一根因在文档同步判据上的第二个实例。"
     },
     {
       "category": "流程",
       "severity": "low",
-      "file": "logs/ledger.jsonl",
-      "summary": "logs/ledger.jsonl 有一条 CFO 推送时写的 override 记录未入仓，checks/16 正确拦住本轮提交。按既有做法（commit aeb4bc3 同型）随本 commit 入仓——账本不入仓等于逃生口全是静默的。"
+      "file": "scripts/reindex.sh:25",
+      "summary": "已修：同一形状但方向相反——用排除模式的反面（识别模式）判断是否收进 logs/INDEX.md，J3 落点漏判的后果是索引静默缺项（不报错，比死链误判更隐蔽，需要人巡逻才会发现）。"
+    },
+    {
+      "category": "流程",
+      "severity": "low",
+      "file": "code/nexus-core/scripts/gates/doc-path-exempt.local.txt",
+      "summary": "该模块本地逃生口登记的一条豁免正是本 bug 的实例。本修复落地并且该模块装上新版门禁后，理论上可以撤销该登记，但需要模块侧（arbiter 或 CFO）实跑验证——不归 consulter 越权代动，判断已写入 worklog。"
     }
   ],
-  "reflection": "CFO 把第 3 段病根（主脚本吞掉 stderr）判为最要害，这个判断是对的，而且它改变了修法的形状：十八处守卫是修今天在仓里的实例，主脚本那一层才是修「明天新写的那一条」。两层的分工是「已知的现在」和「未知的将来」，不是冗余。\n\n本轮真正的收获在第三发反向验证：#63 一开始只断言退出码非 0，而 05-write-lease 在沙箱里本来就会因「角色没有路签」而红——撤掉它的守卫，断言照样绿。我在 S1 的 findings 里明明写过那句「红了，但理由是『没有路签』，不是『我瞎了』」，却没有把它写进自己的断言。知道一个坑、和让机器认得这个坑，之间还差一整步；而只有点火才能发现这一步没走。\n\n第三条：这轮我自己的断言里又找出两个洞（变量形式的 source 溜过过滤器、双引号里的反引号变成命令替换）。三轮下来，每一轮都是反向验证抓出验证者自己的问题，没有一轮例外。「新增断言必须反向验证」这条硬要求的实际收益，已经不是偶尔抓到一个 bug，而是它每次都抓到。",
+  "reflection": "这是今晚同一个『判据只看字符串出现、不看语境』的第三次实例（密钥判据误判变量引用、M6 把文档提到的 0.0.0.0 当代码、现在这条）。三次都是同一个通则：硬编码的字符串匹配模式一旦被现实的布局演进甩开，就会在不知情的情况下从『放行』的一边掉到『拦截』的一边，而且拦截的还是最不该拦的——如实记录。修法本身不难，难的是这次没有停在『在 60 号加一个 case 分支』，而是先问『这个形状还出现在哪』，扫出 5 处里有 4 处此前完全没被人提起过（doc_impact.sh、11-doc-sync.sh 两处、reindex.sh），其中 reindex.sh 那处如果不扫会一直安静地漏掉 J3 落点的索引项，没有任何报错信号——这正是铁律 23 强调『同一个坑会在下一次重构里原样复活』的样子：如果只修 CFO 报的那一处，下一个装了新版但用了 doc_impact.sh 或 reindex.sh 的人还会撞。",
   "recommendations": [
-    "【下一轮，consulter】emit.sh 的可选件语义按铁律 23 补「已跳过」打印；并先验一件事：缺 emit.sh 时逃生口记账是否静默停掉（如果是，它就不是可选件，得升到必需件）",
-    "【CFO】装机两条：install-gates 的「.」语义是 workspace root、装机源取工作区而非 HEAD",
-    "【consulter】check-report-schema 的 review_target 七项大 and 拆成逐项判；错误文案点明 changed_files 必须是 core.quotePath=false 形态",
-    "【consulter】断言 36 的排除项按路径判而非按整行文本判；agents/reference/工作空间全景.md:255 的「34 条」改成「条数见运行输出」（现已 65 条，化石又漂了）",
-    "【已裁决 2026-08-02，台账 D16，原文保留不删】C1 覆不覆盖 .md —— 人类裁定：C1 只管源码，散文不算（500 行本意是逼你拆职责，那是代码的道理）。落地见 agents/consulter/docs/worklog/2026-08-02-consulter-C1只管源码.md",
-    "【已完成，记账】本轮把 18-secret-literal.sh 的守卫措辞统一到全仓惯用法。动了 CFO 的文件，只动守卫那一行，理由：断言 63 靠守卫独有措辞分辨「守卫拦的」与「碰巧红的」，两套措辞会让断言要认两套规矩"
+    "【nexus-core arbiter 或 CFO】装新版 install-gates.sh 拉取本次修复后，实跑一次 60-doc-paths-exist.sh 验证 module_docs/worklog/2026-08-11-任务单-reviewlog退役.md 不再需要豁免，确认后删除 doc-path-exempt.local.txt 里对应那一行",
+    "【CFO】本轮改动全在框架区，按 J7『consulter 改的框架 → 人类审，CFO 只辅助举证』，请用三件审法（留痕/范围/机械核验）跑一遍并把证据交人类裁决"
   ],
   "reviewer_opinion": {
     "reviewer": "human",
     "verdict": "pending",
-    "path": "agents/consulter/docs/worklog/2026-08-02-consulter-S1两层防线.md",
+    "path": "agents/consulter/docs/worklog/2026-08-11-consulter-doc-paths-worklog死链误判.md",
     "round": 1,
     "note": "consulter 改的框架由人类审、CFO 只辅助举证（裁决 J7）。本轮全部是 consulter 自己的框架改动，无自审自批空间"
   }

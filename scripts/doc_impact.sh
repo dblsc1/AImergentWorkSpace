@@ -24,7 +24,9 @@ esac
 declare -a code=()
 for f in "${changed[@]}"; do
   [ -n "$f" ] || continue
-  case "$f" in *.md|*/docs/worklog/*|*/docs/findings/*|*/docs/decisions/*|logs/*) continue ;; esac
+  case "$f" in *.md) continue ;; esac
+  is_narrative_doc_path "$f" && continue
+  case "$f" in logs/*) continue ;; esac
   code+=("$f")
 done
 

@@ -56,9 +56,8 @@ fi
 # 本次改了哪些「非文档」文件
 changed=()
 for f in "${staged[@]}"; do
-  case "$f" in
-    *.md|*/docs/worklog/*|*/docs/findings/*|*/docs/decisions/*|logs/*) continue ;;
-  esac
+  case "$f" in *.md|logs/*) continue ;; esac
+  is_narrative_doc_path "$f" && continue
   changed+=("$f")
 done
 [ "${#changed[@]}" -gt 0 ] || exit 0
@@ -117,7 +116,7 @@ for c in "${changed[@]}"; do
   # ③ 反引号反查 —— 只提示，不计入 fail（偶然提及，粒度太细）
   while IFS= read -r -d '' doc; do
     case "$doc" in *.md) ;; *) continue ;; esac
-    case "$doc" in */docs/worklog/*|*/docs/findings/*|*/docs/decisions/*) continue ;; esac
+    is_narrative_doc_path "$doc" && continue
     grep -qF -- "\`$c\`" "$doc" 2>/dev/null || continue
     [ -n "${staged_all[$doc]:-}" ] && continue
     [ -n "${declared[$doc]:-}" ] && continue

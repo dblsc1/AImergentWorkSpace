@@ -417,3 +417,54 @@ else
     F "C1 判据失灵：$_v62"
   fi
 fi
+
+# 70 ── 60-doc-paths-exist.sh 的历史叙事豁免是否覆盖 J3 之后的全部 canonical 落点
+#      成因（CFO 2026-08-11 实测，nexus-core 撞上）：豁免正则原来只写 `*/docs/worklog/*`
+#      `*/docs/findings/*` `*/docs/decisions/*`，锚定的是 J3 迁移**前**旧布局
+#      （`codeagent/<角色>/docs/worklog/`）。裁决 J3 之后 arbiter worklog 落
+#      `module_docs/worklog/`、programmer worklog 落 `code/<子文件夹>/worklog/`——
+#      两条都**没有 docs/ 中段**，正则匹配不上，于是一条如实写「我删除了 X」的
+#      worklog 被判成引用了死链：**惩罚的正是准确留痕**。
+#      修法：`is_narrative_doc_path()`（scripts/lib/paths.sh 唯一实现）。
+#      正反两侧都要验，只加正例会把检查改瞎（判例库教训）：
+#        正例 · J3 落点 worklog 里写一条已删除路径 → 不该报
+#        反例 · **非**叙事类文档（contract.md）里写死链 → 必须还能报
+printf '70. 60-doc-paths-exist.sh 的历史叙事豁免是否覆盖 J3 canonical worklog 落点\n'
+if [ ! -x "$S/checks/_common/60-doc-paths-exist.sh" ]; then
+  N "本仓没有 checks/_common/60-doc-paths-exist.sh，不适用"
+elif ! grep -q 'is_narrative_doc_path' "$S/lib/paths.sh" 2>/dev/null; then
+  F "lib/paths.sh 里没有 is_narrative_doc_path —— 叙事类判据没有公共件，各处各写一套正则（铁律 23）"
+else
+  _sb70=$(mktemp -d); git -C "$_sb70" init -q
+  git -C "$_sb70" config user.email t@e.com; git -C "$_sb70" config user.name t
+  mkdir -p "$_sb70/scripts/gates" "$_sb70/scripts/checks/_common" "$_sb70/scripts/lib" "$_sb70/module_docs"   # ref-fixture
+  mkdir -p "$_sb70/module_docs/worklog" "$_sb70/code/backend/worklog"   # ref-fixture
+  cp "$S/checks/_common/60-doc-paths-exist.sh" "$_sb70/scripts/checks/_common/"
+  cp "$S/lib/paths.sh" "$_sb70/scripts/lib/"
+  chmod +x "$_sb70/scripts/checks/_common/"*.sh
+  : > "$_sb70/scripts/gates/doc-path-exempt.txt"
+
+  # 下面 never-existed-fixture-{a,b} 是喂给判据的合成输入，按定义不该存在于任何仓。   # ref-fixture
+  # 正例①：arbiter J3 worklog（module_docs/worklog/），无 docs/ 中段
+  printf '本轮删除了 `code/_template/module_docs/never-existed-fixture-a.md`（已确认，不是笔误）。\n' > "$_sb70/module_docs/worklog/2026-08-11-x.md"   # ref-fixture
+  # 正例②：programmer J3 worklog（code/<子文件夹>/worklog/），同样无 docs/ 中段
+  printf '本轮删除了 `code/_template/code/backend/never-existed-fixture-b.py`（已确认，不是笔误）。\n' > "$_sb70/code/backend/worklog/2026-08-11-y.md"   # ref-fixture
+  # 反例：非叙事类文档（contract.md）引用同一个不存在的路径 —— 必须照红
+  printf '参见 `code/_template/module_docs/never-existed-fixture-a.md` 了解历史设计。\n' > "$_sb70/module_docs/contract.md"   # ref-fixture
+  git -C "$_sb70" add -A >/dev/null 2>&1
+  _o70=$( cd "$_sb70" && bash scripts/checks/_common/60-doc-paths-exist.sh 2>&1 )
+  _rc70=$?
+  rm -rf "$_sb70"
+
+  _v70=""
+  case "$_o70" in *"module_docs/worklog"*"never-existed-fixture-a.md"*) _v70="$_v70 [arbiter J3 worklog 仍被判死链]" ;; esac
+  case "$_o70" in *"code/backend/worklog"*"never-existed-fixture-b.py"*) _v70="$_v70 [programmer J3 worklog 仍被判死链]" ;; esac   # ref-fixture
+  case "$_o70" in *"module_docs/contract.md"*"never-existed-fixture-a.md"*) ;; *) _v70="$_v70 [反例：contract.md 里的真死链没被抓到——只加正例把检查改瞎了]" ;; esac
+  if [ -n "$_v70" ]; then
+    F "60-doc-paths-exist.sh 的历史叙事豁免：$_v70（输出：$_o70）"
+  elif [ "$_rc70" -eq 0 ]; then
+    F "contract.md 的真死链应让脚本非零退出，实得 rc=0"
+  else
+    P "J3 落点 worklog（module_docs/worklog、code/<子文件夹>/worklog）里如实记录已删除路径不再被判死链；非叙事类文档（contract.md）里的真死链依旧照红"
+  fi
+fi

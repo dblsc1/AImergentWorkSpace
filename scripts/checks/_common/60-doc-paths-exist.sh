@@ -10,7 +10,9 @@ while IFS= read -r -d '' f; do
   case "$f" in *.md) ;; *) continue ;; esac
   # 历史叙事类不查：worklog / findings 记录的是当时的状态，
   # 强制它们指向现存路径 = 强制篡改历史，与「留痕不可篡改」直接冲突。
-  case "$f" in */docs/worklog/*|*/docs/findings/*|*/docs/decisions/*) continue ;; esac
+  # 判据用 is_narrative_doc_path（paths.sh 唯一实现）——覆盖 J3 之后
+  # module_docs/worklog/、code/<子文件夹>/worklog/ 等无 docs/ 中段的落点。
+  is_narrative_doc_path "$f" && continue
   [ -f "$f" ] || continue
   while IFS= read -r p; do
     [ -n "$p" ] || continue
