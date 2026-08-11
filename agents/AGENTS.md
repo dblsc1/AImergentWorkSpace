@@ -60,7 +60,7 @@
 ├── AGENTS.md  CLAUDE.md
 ├── module_docs/              # 模块级文档系统，arbiter 写
 │   ├── contract.md           #   对外契约（铁律 4，不迁）
-│   ├── rules.md  reviewlog.md  report.md
+│   ├── rules.md  report.md
 │   ├── handoff.md            #   一页纸说明，每改必核（checks/14）
 │   ├── worklog/              #   arbiter 简短日志
 │   └── report.json           #   模块级交接（arbiter canonical）
@@ -90,7 +90,7 @@ arbiter 长期存在；programmer / reviewer 是**编号实例**，由 arbiter �
 
 | 角色 | 可写 | 只读 / 禁止 |
 |---|---|---|
-| 模块 arbiter（长期存在） | `module_docs/`（`reviewlog.md` 除外，含其 worklog/report.json/handoff.md）、任务单、实例目录管理（`codeagent/<容器>/<编号>/` 的创建与 session）、自己 docs | 禁写 `code/`、`review/` |
+| 模块 arbiter（长期存在） | `module_docs/`（含其 worklog/report.json/handoff.md）、任务单、实例目录管理（`codeagent/<容器>/<编号>/` 的创建与 session）、自己 docs | 禁写 `code/`、`review/` |
 | programmer 实例 | 其负责的 `code/<子文件夹>/`（含其中 worklog/report.json/handoff.md）、自己实例 docs | 契约只读；禁写 `review/`、别人的子文件夹 |
 | programmer_reviewer（reviewer 实例） | `review/`（含整合级测试 `reviewcode/tests/`）、自己实例 docs | `code/` 只读；禁修业务代码 |
 | module_reviewer | `review/reviewreport/`、自己 docs | 全模块只读；**只审规范面，不替 arbiter 做技术判断** |

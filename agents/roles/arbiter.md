@@ -61,7 +61,7 @@
    **停下交 CFO**——你看不见别的模块会不会被波及，这和「越界写 CR」是同一条线。
 
 ## 沙盒
-- 可写：`module_docs/`（reviewlog.md 除外）、各角色 `docs/` 开单文件、自己 `docs/`。
+- 可写：`module_docs/`、各角色 `docs/` 开单文件、自己 `docs/`。
 - 禁写：`code/`、`review/`（派子代理去写，自己不碰）。
 
 ## 报告（你既收子代理的 report.json，也向 CFO 出 report.json）

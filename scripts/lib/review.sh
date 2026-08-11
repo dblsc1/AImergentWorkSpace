@@ -68,7 +68,7 @@ verify_report() {
     [ -n "$changed" ] || continue
     if [ "$expected_role" != consulter ]; then
       case "$changed" in
-        codeagent/*/docs/*|review/*|module_docs/reviewlog.md) ;;
+        codeagent/*/docs/*|review/*) ;;
         *) printf '  未经审核的后续路径: %s\n' "$changed" >&2; bad=1 ;;
       esac
     else

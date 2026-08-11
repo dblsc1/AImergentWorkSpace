@@ -34,7 +34,7 @@
 <module>/
 ├── AGENTS.md  CLAUDE.md
 ├── codeagent/<role>/          # 角色规范与留痕
-├── module_docs/              # contract / rules / reviewlog / report / handoff
+├── module_docs/              # contract / rules / report / handoff
 ├── code/backend/  frontend/  # 业务代码
 └── review/reviewcode/  reviewreport/
 ```

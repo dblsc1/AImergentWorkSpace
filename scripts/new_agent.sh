@@ -36,7 +36,7 @@ card="$framework/agents/roles/$role.md"
 # ── 角色默认边界（可被 env 覆盖）───────────────────────────────
 case "$role" in
   arbiter)
-    w_def='module_docs/（reviewlog.md 除外）、各角色 docs/ 的任务单、自己 docs/'
+    w_def='module_docs/、各角色 docs/ 的任务单、自己 docs/'
     r_def='全模块'
     f_def='code/、review/、项目级规范' ;;
   programmer)
