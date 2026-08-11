@@ -9,7 +9,7 @@
   "git": {
     "protocol": "embedded-self-v2",
     "branch": "fix/consulter-doc-paths-worklog",
-    "base": "0d1798814d26e22afae62241f15e31fd38971c18",
+    "base": "211bdec5559ab4ab798a464272cde5dc27f64740",
     "head": "SELF",
     "diff_mode": "contains",
     "changed_files": [

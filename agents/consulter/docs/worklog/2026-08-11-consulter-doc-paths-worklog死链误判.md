@@ -158,6 +158,12 @@ rc=1
    `git interpret-trailers --parse` 能正确识别 3 条 trailer，改用 `git commit -F <file>` 一次成功。
    没有进一步下钻是命令替换的换行/转义丢了什么，还是这次工具调用管道的问题——记在这里，
    如果别的 agent 也撞到「trailer 传了但 hook 说 0 条」，先换 `-F` 试试，不必重新排查一遍。
+3. **`report.json` 的 `git.base` 第一稿填成了本 worktree 的分支点**（`origin/v5` @ `0d17988`）——
+   这是「这条 worktree 从哪切出来」，不是判据要的「这条分支从目标基线（`origin/main`）的
+   哪一点分出去」。`scripts/gates/run-gates.sh` 的 canonical report schema 判据报得很直接：
+   点名错误、给出正确值、给出计算命令（`git merge-base HEAD origin/main`），照抄即改对。
+   这与 CFO 上一份提交（`8e03fee`，`report.json git.base 改用 merge-base(HEAD, origin/main)`）
+   是同一条判据、同一个易错点，记在这里避免下一个 agent 重踩。
 
 ## 谁来验（consulter 禁自审自己改的框架）
 
