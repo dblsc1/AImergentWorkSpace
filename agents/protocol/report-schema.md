@@ -212,6 +212,25 @@ squash 后的 main 终态复验必须显式传入“旧 main SHA”为 task base
 字段规则：
 
 - `base`：逻辑任务或 PR 起点的完整 40 位 commit SHA，必须取自 **PR 目标分支**（通常是建任务分支时的 `main`），并是解析后 head 的祖先。禁止把只存在于 feature 分支的中间 worker/arbiter commit 填入公共 `git.base`，因为 squash 后该 commit 不在 `main` 祖先链上；中间审核范围必须放在角色字段 `review_target`。
+  **怎么算（照抄，别自己推）** —— 2026-08-11 补。当天有**四批** agent（含 CFO 本人）
+  在这一条上各自踩了一次：上面那段散文讲清了语义，却没给命令，于是每个人凭直觉猜一次、
+  被门禁拒一次、再回来改一次。
+
+  ```bash
+  # 框架根仓（有 origin/main）：
+  git merge-base HEAD origin/main
+
+  # 模块仓（⚠️ 多数模块仓没有 origin/main —— origin/HEAD 指向 origin/feat/init）：
+  git merge-base HEAD main
+  ```
+
+  **最常见的错法**：把「我这轮改动从哪开始」当成 base（例如上一份 report 的
+  `resolved_head`、或 `HEAD~1`）。判据要的不是那个，是**这条分支从目标基线的哪一点分出去的**。
+  在长命 feature 分支上两者差很远，`check-report-schema.sh` 会当场拒收。
+
+  改完 base 记得**重新机械核对 `changed_files`**：base 前移后，区间内「建了又销」的文件
+  净变化为零、不再出现在 diff 里，留在清单里会被判「声称了 diff 中不存在的文件」。
+
 - `head`：新报告固定为字符串 `SELF`；接收方从本 report 路径在当前交接 ref 上的最近提交解析 `resolved_head`。
 - `diff_mode`：固定 `contains`。`changed_files` 是本角色声称交付的仓根相对路径集合；每一项必须出现在 `git diff --name-only --no-renames base..resolved_head` 中。允许同一 PR 中其他角色文件也出现在 diff，但不得声称 diff 中不存在的文件。
 - `changed_files` 必须包含本 report 路径；有 worklog 的任务也必须包含本角色 worklog。reviewagent 的公共 `git` 描述审核产物，另用 `review_target` 描述被审范围。
