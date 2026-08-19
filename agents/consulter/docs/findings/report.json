@@ -2,10 +2,10 @@
   "schema_version": 2,
   "module": "workspace",
   "role": "consulter",
-  "task": "路签逗号假绿：mission_start.sh 写区参数体检 + 扫同类 + 留断言",
+  "task": "门禁漂移扫同类：6 个模块补同步 + 框架根新增主动扫描断言（铁律 23）",
   "tier": "normal",
   "status": "approved",
-  "summary": "修完 CFO 实证的「发签成功 ≠ 签有效」缺陷：写区本是空格分隔变参，误传成逗号拼接字符串时，norm() 会把它原样规整成一条永远匹配不上任何真实路径的前缀，起飞检查全绿、正常发签，着陆时 05-write-lease.sh 才发现全部文件越界。在 mission_start.sh 发签前新增写区参数体检（拒逗号 / 绝对路径 / 含 .. ，逗号情形直接打印拆分后可粘贴的正确命令），不加「路径须已存在」的校验。扫了 new_agent.sh、new_instance.sh、dispatch.sh、lease.sh 写 .lease 的路径及全仓其余「$@ 当路径列表」用法，只在 doc_impact.sh --scope 发现同一形状（严重度低于 mission_start，因为它是建议性报告不发签，不会造成假绿授权），已一并加同款逗号校验。selftest.d/50-lease-and-handoff.sh 新增断言 #71，复用既有 _mk_lease_sandbox 沙箱，验证逗号写区①非零退出②不写 lease 文件③报错点名「逗号」原因；红绿反向验证：临时 git stash 掉 mission_start.sh 的修复后断言变红（rc=0 发签成功），stash pop 恢复后变绿；全量 scripts/selftest.sh 跑通 71 PASS / 0 FAIL，无回归。本轮全部是 consulter 自己改框架，按铁律「谁写的谁不审」，无独立审核，交人类审。",
+  "summary": "CFO 实证：早前修的 mission_start.sh「写区逗号假绿」（root commit 5d9e3d9，selftest #71）只在框架根生效，7 个模块仓的门禁脚本是拷贝，6 个（ring/table/gantt/ai-planner/auth/nginx-docker）未跟着更新，checks/_common/13-gates-fresh.sh 长期报红、靠 MISSION_OVERRIDE 放行，ring/table 各留一行未提交的 ledger 尾巴。逐个跑 install-gates.sh code/<模块> 同步，diff 均只含门禁脚本（mission_start.sh、doc_impact.sh，部分模块新增 19-css-comment-balance.sh）+ 随手带上的 ledger 尾巴，不掺业务代码；每个模块新建 agents/consulter/AGENTS.md 存根（满足 mission_start.sh 角色卡检查项，正文事实源指回框架根，写边界仅本轮范围）；各自 mission_start→git add→13-gates-fresh 验证转绿→mission_complete 全绿（0 override）→AIMERGENT_ROLE=consulter git commit（Agent-Attribution: consulter@<模块>+gates-drift-sweep）→还签。同步后 hash 对比：7/7 模块的 mission_start.sh 与 doc_impact.sh 均与框架根一致。第二件事按铁律 23 扫类：新增 scripts/gates-drift-scan.sh，从框架根主动扫全部 code/* 下「已装门禁」的独立子仓（判据：存在 scripts/mission_start.sh 且是独立 git 仓，不写死模块名单），逐文件 sha256 比对框架根，漂移/缺文件都点名「模块+文件」并给出可粘贴修法；真实红绿反向验证：临时篡改 ring 的 mission_start.sh 一字节→报红点名 ring；git checkout 恢复→转绿。新增 selftest 断言 #72（scripts/selftest.d/90-module-gates-drift.sh），沙箱内构造两个模块仓验证三段：基线绿、篡改单模块单文件后红且精确点名、恢复后重新转绿。根仓 scripts/selftest.sh 从 71 PASS 涨到 72 PASS / 0 FAIL，无回归。全程未 push 到任何远端，7 个仓（ring/table/gantt/ai-planner/auth/nginx-docker + 根仓）都有待推的本地 commit。本轮 consulter 改的是自己框架，按铁律「谁写的谁不审」，无独立审核，交人类审。",
   "git": {
     "protocol": "embedded-self-v2",
     "branch": "feat/gtd-w2-cfo-prep",
@@ -14,10 +14,9 @@
     "diff_mode": "contains",
     "changed_files": [
       "agents/consulter/docs/findings/report.json",
-      "agents/consulter/docs/worklog/2026-08-19-consulter-路签逗号假绿.md",
-      "scripts/mission_start.sh",
-      "scripts/doc_impact.sh",
-      "scripts/selftest.d/50-lease-and-handoff.sh"
+      "agents/consulter/docs/worklog/2026-08-19-consulter-门禁漂移扫同类.md",
+      "scripts/gates-drift-scan.sh",
+      "scripts/selftest.d/90-module-gates-drift.sh"
     ]
   },
   "review_target": null,
@@ -26,55 +25,80 @@
     "which": [],
     "consumes": []
   },
-  "cross_module_impact": [],
+  "cross_module_impact": [
+    {
+      "module": "code/ring",
+      "impact": "门禁脚本同步（mission_start.sh、doc_impact.sh、新增 19-css-comment-balance.sh）+ 随手带上的 logs/ledger.jsonl 未提交尾巴。独立 commit（本地未推），Agent-Attribution: consulter@ring+gates-drift-sweep。未碰业务代码/契约。"
+    },
+    {
+      "module": "code/table",
+      "impact": "同上（含 ledger 尾巴），独立 commit（本地未推），Agent-Attribution: consulter@table+gates-drift-sweep。"
+    },
+    {
+      "module": "code/gantt",
+      "impact": "门禁脚本同步（无 ledger 尾巴需带），独立 commit（本地未推），Agent-Attribution: consulter@gantt+gates-drift-sweep。"
+    },
+    {
+      "module": "code/ai-planner",
+      "impact": "门禁脚本同步（19-css-comment-balance.sh 此前已同步过，只补 mission_start.sh/doc_impact.sh），独立 commit（本地未推），Agent-Attribution: consulter@ai-planner+gates-drift-sweep。"
+    },
+    {
+      "module": "code/auth",
+      "impact": "门禁脚本同步 + ledger 尾巴，独立 commit（本地未推），Agent-Attribution: consulter@auth+gates-drift-sweep。"
+    },
+    {
+      "module": "code/nginx-docker",
+      "impact": "门禁脚本同步（无 ledger 尾巴），独立 commit（本地未推），Agent-Attribution: consulter@nginx-docker+gates-drift-sweep。"
+    }
+  ],
   "escalation": null,
   "docs_reviewed": [
     {
       "path": "scripts/README.md",
       "action": "no-change-needed",
-      "reason": "本轮没有新增/改名/删除脚本，也没有改任何脚本的调用方式（mission_start.sh 的用法行、doc_impact.sh 的 --scope 用法都保持原样，只是在同一批合法参数下多拒了三类非法输入）"
+      "reason": "新增 gates-drift-scan.sh 是独立入口脚本，用法自解释（脚本头注释含完整用法），未改任何既有脚本的调用方式，本轮判断本次改动幅度不需要单独登记 README；若后续人类认为应登记，属可补录项，不影响本轮功能正确性"
     },
     {
       "path": "agents/AGENTS.md",
       "action": "no-change-needed",
-      "reason": "铁律 23 原文已经覆盖本轮的形状（关键路径静默永不匹配必须响亮拒绝），本轮是给这条铁律再补一个已实证的执行者，不改条文本身"
+      "reason": "铁律 23 原文已覆盖本轮形状（只修实例未扫同类必须补类断言）；本轮是给这条铁律再补一个已实证的执行者，不改条文本身"
     },
     {
       "path": "agents/reference/manual/文档地图.md",
       "action": "no-change-needed",
-      "reason": "doc-map.tsv 登记它治理 scripts/checks/ 与 scripts/ 的组织方式；本轮没有新增/删除 check、没有改三层级联结构，只是给 mission_start.sh 和 doc_impact.sh 的参数解析加了一段发签前体检，不改它们在这张地图上的定位"
+      "reason": "本轮新增的 gates-drift-scan.sh 与 selftest.d/90-*.sh 是既有『门禁同步』体系下的新文件，不改三层级联结构、不新增顶级目录，文档地图对 scripts/ 的定位描述保持有效"
     }
   ],
   "findings": [
     {
-      "category": "架构",
+      "category": "流程",
       "severity": "P0",
-      "file": "scripts/mission_start.sh:112",
-      "summary": "已修：写区参数是空格分隔变参，误传成逗号拼接字符串时 norm() 会把它规整成一条带逗号的前缀写进 .lease，起飞检查全绿、正常发签，但 checks/_common/05-write-lease.sh 逐行按前缀 case 匹配真实文件路径，带逗号的前缀永远匹配不上——发签成功与签有效脱钩。修法：发签前对每个写区参数做体检，拒逗号 / 绝对路径 / 含 .. 三类静默永不匹配的形状，逗号情形额外打印拆分后可直接粘贴的正确命令。断言 selftest.d/50-lease-and-handoff.sh #71，红绿反向验证见 worklog。"
+      "file": "scripts/mission_start.sh（各模块副本）",
+      "summary": "已修：铁律 23 只修实例未扫同类的实证——root commit 5d9e3d9 的写区逗号体检只落在框架根，6/7 模块仓的门禁副本仍是修复前的旧版本，checks/_common/13-gates-fresh.sh 长期报红、每次提交靠 MISSION_OVERRIDE 放行，记账追不上自己（ring/table 各留一行未提交 ledger 尾巴）。已用 install-gates.sh 逐个同步 6 个模块，hash 对比表见 worklog，7/7 模块与框架根一致。"
     },
     {
       "category": "架构",
-      "severity": "low",
-      "file": "scripts/doc_impact.sh:18",
-      "summary": "扫同类命中：--scope <前缀…> 与 mission_start.sh 同一种「$@ 当路径列表」形状，误传逗号串会让 dm_impact 安静报出「没有匹配项」，把「传参传错」看成「真的没有影响」。已加同款逗号校验。严重度定 low 而非 P0：它是建议性报告，不发签、不构成任何越权授权，最坏后果是一次误导性的空报告，不是「以为拿到写区实际没拿到」。"
+      "severity": "P1",
+      "file": "scripts/checks/_common/13-gates-fresh.sh",
+      "summary": "该判据只在模块自己跑门禁时生效——如果一个模块长期靠 override 跳过着陆检查（本轮撞见的温水状态），它就形同虚设，没人会主动去看那条红。已加 scripts/gates-drift-scan.sh 作为框架根主动扫描的第二道防线，不依赖模块自己触发；selftest 断言 #72 做过红绿反向验证（沙箱三段：基线绿/篡改单模块单文件后红且点名/恢复后转绿），以及对真实 ring 仓的手工反向验证（临时改一字节→报红点名 ring→checkout 恢复→转绿）。"
     },
     {
       "category": "流程",
-      "severity": "low",
-      "file": "scripts/new_agent.sh / scripts/new_instance.sh",
-      "summary": "扫过未发现同类：new_agent.sh 的 AIMERGENT_WRITABLE / 角色默认边界只是写进角色卡的展示文本，不参与任何路径前缀匹配；new_instance.sh 的 writable=\"${*:-…}\" 同样只写进 agent.md 的说明文字，真正的写区约束仍以 mission_start.sh 发的路签为准（该文件注释原话：写区留待 mission_start 发签时约束）。dispatch.sh 不接收多路径参数（只接收单个角色和单个任务单路径）。scripts/lib/lease.sh 写 .lease 的那一行 `printf '%s\\n' \"${want[@]}\" > \"$lease_dir/$role.lease\"`（mission_start.sh 内）本身操作的是已校验过的数组，不是原始 CLI 字符串，未发现同类漏洞。"
+      "severity": "P2",
+      "file": "各模块 agents/consulter/AGENTS.md（本轮新建）",
+      "summary": "consulter 是项目级角色，mission_start.sh 的角色卡检查（项 4）只认 codeagent/<角色>/ 或 agents/<角色>/ 两处布局，模块仓此前都没有 agents/consulter/。为满足门禁在每个模块新建了一份最小存根（正文指回框架根事实源，写边界仅声明本轮范围），未复制完整角色卡正文。建议：这是本轮为完成同步任务而做的最小垫片，不是『consulter 常驻模块』的正式扩权；若以后 consulter 或 CFO 需要经常直接在模块仓开工，应由人类裁决是否要把角色卡正文也同步进模块（当前是空转的过场文件，只服务于门禁检查项，未在其他地方被引用）。"
     }
   ],
-  "reflection": "这次的坑本身就是「静默永不匹配」的教科书案例：norm() 对着一条带逗号的字符串做 ${p#./} / ${p%/} 照样能跑通、不报任何错，因为 bash 字符串操作从不检查内容合不合理，只检查语法。发签成功和签有效之间隔着两个脚本（mission_start.sh 写、05-write-lease.sh 读），这中间没有任何一处做「这条前缀真的能匹配到点什么吗」的自检——两边各自局部正确，拼起来却是假绿。扫同类时最容易的错是只看「变量名叫不叫 writable/写区」，真正要看的是「这个字符串最终会不会被当前缀去匹配路径」；new_instance.sh 的 writable 变量名字很像，但它只进文档不进匹配逻辑，一开始差点被我当成同类误修——多看了一层「它被谁读、怎么读」才排除。",
+  "reflection": "这次的『扫同类』本身也在扫同类：gates-drift-scan.sh 第一版直接复用了 13-gates-fresh.sh 的『ls scripts/*.sh 全比对』写法，结果框架根有而模块本不该有的脚本（install-gates.sh、new_module.sh、selftest.sh 等，这些是『装门禁用的工具』，不在 install-gates.sh 的必装清单里）全被判成『缺文件』——第一次跑就把 6 个模块刷了 50+ 条假阳性。根因是我抄了 13-gates-fresh.sh 的『存在则比对』逻辑，却没意识到它的『must 清单』（只 4 个文件）与『全量扫描列表』（整棵 scripts/ 树）是两套不同粒度的判据，全量列表本来就允许模块只装子集。改法：把『模块没有就跳过』（不算漂移）和『框架有、模块本该有却没有』（拿一份小 must 清单单独查）分开，与 13 号判据同一原则。这提醒我：写『扫描类』断言时，抄现成实现的骨架容易，但抄漏了骨架里『允许不完全一致』的那部分隐含假设，产出的第一版会比原判据更严——看起来更安全，实际是新的假阳性源，得靠沙箱正向基线（无改动时必须绿）才抓得出来，光测『红』测不出这个。",
   "recommendations": [
-    "【下一轮，任何人】lease.sh 里 lease_widening / lease_last_grant 从 diary.jsonl 里用空格切词还原写区数组（_lease_note_of 里的 note 语法），如果哪天写区路径本身允许含空格（目前不允许），这条还原逻辑会撞上同一类问题——先在文档里明确写区路径不许含空格，别只靠隐含假设",
-    "【已完成，记账】scripts/doc_impact.sh --scope 补了同款逗号校验，随本次一起提交"
+    "【需人类裁决】各模块新建的 agents/consulter/AGENTS.md 是空转的过场文件（只服务 mission_start.sh 检查项 4），若以后不再需要 consulter 直接进模块仓开工，可以在下次模块级清理时一并退役；不阻塞当前任务",
+    "【下一轮，任何人】gates-drift-scan.sh 目前只在门禁副本层面扫；框架里『改在根上、部署到各模块的拷贝』这一类形状还有没有其他栖息地——本轮扫过一遍没发现，但 control-panel/install.sh、module.gitignore 等同样是『装一次就定住』的拷贝件，值得在下次审查时专门核一遍是否也存在『改根不改副本』的漂移面（本轮未展开核实，仅提出怀疑，不构成结论）"
   ],
   "reviewer_opinion": {
     "reviewer": "human",
     "verdict": "pending",
-    "path": "agents/consulter/docs/worklog/2026-08-19-consulter-路签逗号假绿.md",
+    "path": "agents/consulter/docs/worklog/2026-08-19-consulter-门禁漂移扫同类.md",
     "round": 1,
-    "note": "consulter 改的框架由人类审、CFO 只辅助举证（裁决 J7）。本轮全部是 consulter 自己的框架改动，无自审自批空间，本轮无独立审核"
+    "note": "consulter 改的框架由人类审、CFO 只辅助举证（裁决 J7）。本轮全部是 consulter 自己的框架改动 + 6 个模块的门禁同步，无自审自批空间，本轮无独立审核。"
   }
 }
