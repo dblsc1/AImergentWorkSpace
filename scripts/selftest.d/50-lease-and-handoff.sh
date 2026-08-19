@@ -320,3 +320,35 @@ else
     P "六个角色的落点与 report-schema 一致，且在**模块独立仓**里也能回退到框架根读到"
   fi
 fi
+
+# 71 ── 写区参数「逗号假绿」：发签成功 ≠ 签有效（2026-08-19 CFO 实证）
+#      病根：写区本是空格分隔的变参；调用方若误传成一条逗号拼接的字符串，
+#      norm() 把它原样规整成**一条**带逗号的前缀写进 .lease；起飞检查全绿、
+#      正常发签；但 checks/_common/05-write-lease.sh 是逐行按前缀 `case` 匹配
+#      真实文件路径 —— 带逗号的前缀永远匹配不上任何真实路径。于是「发签成功」
+#      和「签有效」在这一种输入下脱钩：用户以为拿到两片写区，实际一片都没有
+#      （本机签史：`2026-08-16T12:00  1 片  code/.../,agents/.../`，「1 片」就是铁证）。
+#      断言：拿一个带逗号的写区参数调用 mission_start.sh，必须①非零退出
+#      ②不产生 <角色>.lease 文件 ③报错里点名「逗号」这个原因（不是笼统地说失败）。
+printf '71. 写区参数体检：逗号拼接的写区串必须发签前就被拒绝，不许静默假绿\n'
+if [ ! -f "$S/mission_start.sh" ]; then
+  N "本仓没有 mission_start.sh，不适用"
+else
+  _sbx71=$(mktemp -d)
+  _mk_lease_sandbox "$_sbx71" arbiter 'scripts/'   # 复用 54/55 的沙箱：起飞检查其余 8 项全过
+  rm -f "$_sbx71/.git/aimergent-leases/arbiter.lease" "$_sbx71/.git/aimergent-leases/arbiter.meta"  # 只留自己，避免路签重叠误判
+  _out71=$( cd "$_sbx71" && bash scripts/mission_start.sh consulter task.md \
+    "code/nginx-docker/module_docs/,agents/cfo/docs/worklog/" 2>&1 )
+  _rc71=$?
+  _leased71=0; [ -f "$_sbx71/.git/aimergent-leases/consulter.lease" ] && _leased71=1
+  rm -rf "$_sbx71"
+  if [ "$_rc71" -eq 0 ]; then
+    F "逗号拼接的写区串竟然发签成功了（rc=0）—— 「发签成功≠签有效」这个坑原样复活"
+  elif [ "$_leased71" -eq 1 ]; then
+    F "非零退出但仍然写出了 consulter.lease —— 拒绝要发生在写文件之前"
+  elif ! grep -q '逗号' <<<"$_out71"; then
+    F "拒绝了但没点名「逗号」这个原因，被卡方仍然猜不出怎么改：$_out71"
+  else
+    P "逗号写区在发签前即被拒（rc=$_rc71），不写 lease 文件，报错点名原因并给出改法"
+  fi
+fi

@@ -15,7 +15,17 @@ declare -a changed=()
 case "$mode" in
   --staged) mapfile -t -d '' changed < <(staged_paths ACMRD) ;;
   --range)  r=${1:?用法: --range A..B}; mapfile -t -d '' changed < <(git diff --name-only -z --no-renames "$r") ;;
-  --scope)  changed=("$@") ;;
+  --scope)
+    # 与 mission_start.sh 同一类形状：--scope 后面也是空格分隔的写区变参，
+    # 误传成逗号拼接的一条字符串会被 dm_impact 当成一个（永远匹配不上任何
+    # 真实路径的）前缀，安静地报出「没有匹配项」，把「传参传错」看成「真的没有影响」。
+    for _s in "$@"; do
+      case "$_s" in
+        *,*) printf '❌ --scope 参数含逗号：%q —— 这是空格分隔的变参，不是逗号拼接的一条字符串\n' "$_s" >&2
+             printf '   例: scripts/doc_impact.sh --scope 写区A/ 写区B/\n' >&2; exit 1 ;;
+      esac
+    done
+    changed=("$@") ;;
   *)        mapfile -t -d '' changed < <(git diff --name-only -z --no-renames HEAD 2>/dev/null)
             mapfile -t -d '' _st < <(staged_paths ACMRD); changed+=("${_st[@]}") ;;
 esac

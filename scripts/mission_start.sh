@@ -110,6 +110,47 @@ set -- "${prefixes[@]}"
 [ -f "$task" ] || die "找不到任务单: $task"
 [ $# -ge 1 ] || die "必须显式声明写区，例: code/<模块>/backend/orders/"
 
+# ── 写区参数体检（铁律 23：静默永不匹配这一类形状，发签前就要拦）──────────
+# 病根实证：写区本是空格分隔的变参，若调用方误传成一条逗号分隔的字符串，
+# norm() 会把它原样规整成**一条**带逗号的前缀写进 .lease；起飞检查全绿、
+# 正常发签；但 checks/_common/05-write-lease.sh 是逐行读、按前缀 `case "$p" in
+# "$l"*)` 匹配真实文件路径 —— 带逗号的前缀永远匹配不上任何真实路径。
+# 于是「发签成功」和「签有效」在这一种输入下脱钩：用户拿到 🟢 以为拿到写区，
+# 着陆时全部文件被判越界。此处必须在**发签前**用同一种「会不会静默失配」的
+# 眼光把每个写区参数过一遍，不合法就 die，绝不放过去让 05 事后再发现。
+_lease_bad_prefix() {   # _lease_bad_prefix <写区参数> → 打印原因；成功=非法，退出码 0
+  local p=$1
+  case "$p" in
+    *,*)
+      printf '含逗号 —— 写区是空格分隔的变参，不是逗号拼接的一条字符串'
+      return 0 ;;
+    /*)
+      printf '是绝对路径 —— 路签只认仓内相对前缀'
+      return 0 ;;
+    *..*)
+      printf '含 ..（父目录跳转）—— 会逃出预期写区范围'
+      return 0 ;;
+  esac
+  return 1
+}
+_bad_any=0
+for p in "$@"; do
+  reason=$(_lease_bad_prefix "$p") || continue
+  _bad_any=1
+  printf '❌ 写区参数不合法：%q —— %s\n' "$p" "$reason" >&2
+  case "$p" in
+    *,*)
+      printf '   把它拆成多个独立参数再发签，例如：\n' >&2
+      _fixcmd=$(printf 'scripts/mission_start.sh %q %q' "$role" "$task")
+      _oldifs=$IFS; IFS=','; for _seg in $p; do
+        [ -n "$_seg" ] || continue
+        _fixcmd="$_fixcmd $(printf '%q' "$_seg")"
+      done; IFS=$_oldifs
+      printf '   %s\n' "$_fixcmd" >&2 ;;
+  esac
+done
+[ "$_bad_any" -eq 0 ] || die "写区参数体检未通过（见上面 ❌ 逐条原因与改法），拒绝发签"
+
 cl_header "起飞前检查单 · $role" "任务单 $task"
 
 # 1 任务单四小节
