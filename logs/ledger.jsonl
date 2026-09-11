@@ -49,3 +49,4 @@
 {"ts":"2026-09-11T17:40:38Z","event":"override","hatch":"PUSH_UNREVIEWED","reason":"人类要求契约要推；公开仓，推前比对 6 行零命中；纯契约文档","script":"arbiter-push.sh","actor":"xia","branch":"feat/gtd-w2-cfo-prep","head":"7695bce0bda8efc72cc178faf173bcbe375d76ca"}
 {"ts":"2026-09-11T18:00:51Z","event":"override","hatch":"PUSH_UNREVIEWED","reason":"人类要求做完推送；契约文字同步，已扫真实名零命中","script":"arbiter-push.sh","actor":"xia","branch":"feat/gtd-w2-cfo-prep","head":"9c418cfb6c0739d7ad7f935ceb59ecb2400331f8"}
 {"ts":"2026-09-11T18:15:31Z","event":"override","hatch":"PUSH_UNREVIEWED","reason":"人类要求做完推送；契约文字同步，已扫真实名零命中","script":"arbiter-push.sh","actor":"xia","branch":"feat/gtd-w2-cfo-prep","head":"d7386074952110f5860e12b178762ffab9809d3b"}
+{"ts":"2026-09-11T18:27:49Z","event":"override","hatch":"PUSH_UNREVIEWED","reason":"人类要求做完推送；契约文字同步，已扫真实名零命中","script":"arbiter-push.sh","actor":"xia","branch":"feat/gtd-w2-cfo-prep","head":"720a86ae0c4835a46c266ebea48bdaf58e098d5e"}
