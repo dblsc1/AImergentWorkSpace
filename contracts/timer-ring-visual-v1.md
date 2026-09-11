@@ -106,6 +106,25 @@ el.setAttribute("stroke-dasharray", `${lengthPercent} ${100 - lengthPercent}`);
 可点就要能被键盘用：`role="link"` + `tabindex="0"` + Enter/Space，
 `aria-label` 要说清当前状态（在计时 / 空闲）和点下去会发生什么。
 
+## 蜂巢中心格变体（2026-09-12 人类改表盘）
+
+> 计时数字放在圆环中心，少于 1 小时的时候显示分钟和秒，多于 1 小时显示时和分。白色短指针浮动在
+> 内环作为秒针。全圆环浅青色但是再浅一点，深青色作为分针显示。作出一个记满一小时圆环青色走满一圈的效果。
+
+中心格只有 50–67px 大，承担的是「现在在计什么、计了多久」一件事，所以它是本规范的**变体**：
+几何（viewBox / r=92 刻度 / r=86 弧 / stroke 12 / butt / pathLength=100）照旧，改的是这几条：
+
+| 项 | 中心格变体 | 说明 |
+|---|---|---|
+| 轨道 | `color-mix(--fact 18%, --panel)` | 整圈浅青（取代 `--panel-2`） |
+| 分针弧（r=86） | `--fact` | 60 分钟走满一圈；**跨整点时先走满整圈、发光 1.6s，再瞬间回 0**（不许带过渡倒转） |
+| 秒针 | `--ink`，r 60–74 的一小截，圆头 | 累计角度（秒×6°）不取模，否则 59→0 会倒转一圈 |
+| 圆心读数 | `<1h` 显示 `分:秒`，`≥1h` 显示 `时:分`，下附一行单位小字 | 字号用容器查询单位，跟圆环等比 |
+| 贡献环（r=78） | **不画** | 那一圈让给秒针；ring 页主仪表照旧用它 |
+| 运行指示点 | 不画 | 由秒针承担"在走"的信号 |
+
+读数与分针都按「暂停前累计 + 本段」算（`nexus.timer.carry.v1`，见下节），只影响显示。
+
 ## 计时控制按钮 + 暂停（纯前端）—— 2026-09-12 人类裁决
 
 > 加入三个按钮……下半两个一个是完成一个是暂停。最底部是取消不记录。同样的，给计时面板也加上。
@@ -134,13 +153,14 @@ el.setAttribute("stroke-dasharray", `${lengthPercent} ${100 - lengthPercent}`);
 
 - 键：`nexus.timer.paused.v1`
 - 值：`{"taskId": str, "taskName": str, "projectName": str, "pausedAt": ISO8601}`
-- 值里带 `carriedSeconds: int`：暂停那一刻"之前累计 + 这一段"的秒数（显示用）
+- 值里带 `carriedSeconds: int`：暂停那一刻"之前累计 + 这一段"的秒数（显示用）；
+  可选 `startedAt: ISO8601`：这件事**最初**的开始时刻（「开始 hh:mm」要沿用它，不跳成继续那一刻）
 - 只在 **stop 成功之后**写；`start` 成功、或发现 `views/current` 正在计同一个 `taskId`
   （在别处继续了）时清掉；暂停态点「完成」「取消」= 只清记忆，不发请求
 
 **累计记忆**（「暂停后继续需要继续之前时间」，同源 localStorage，两模块同键）：
 
-- 键：`nexus.timer.carry.v1`，值：`{"taskId": str, "carriedSeconds": int}`
+- 键：`nexus.timer.carry.v1`，值：`{"taskId": str, "carriedSeconds": int, "startedAt"?: ISO8601}`
 - 「继续」成功后由暂停记忆的 `carriedSeconds` 转写；计时中显示的走秒 = `carriedSeconds + 本段`
 - `views/current` 在计别的任务、或停下且没在暂停 → 清掉
 - **只影响显示**：入账的仍是一段一段真实起止，任何一秒都不会被重复记
