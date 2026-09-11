@@ -53,3 +53,4 @@
 **/*.archive
 **/cockpit-export-*.json
 **/dump/
+hex-preview.*
