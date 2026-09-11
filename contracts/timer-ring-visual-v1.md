@@ -181,7 +181,7 @@ el.setAttribute("stroke-dasharray", `${lengthPercent} ${100 - lengthPercent}`);
 |---|---|---|
 | ring 页主仪表 | `code/ring/code/frontend/ring-instrument.js` + `ring.css` | 第一个实现者；三段式贡献环 |
 | ring 页倒计时弧 | `code/ring/code/frontend/ring-countdown.js` | `r=86` 那条 |
-| table 蜂巢中心格 | `code/table/code/frontend/`（2026-09-07 新增） | 标题 + 圆环；悬停/点击两档，点击进 `/ring/`；2026-09-12 起悬停档下部 35% 按六边形轮廓切出的三块按钮（`hex-center-ctl.js`） |
+| table 蜂巢中心格 | `code/table/code/frontend/`（2026-09-07 新增） | 标题 + 圆环；悬停/点击两档，点击进 `/ring/`；2026-09-12 起悬停档下部按六边形轮廓切出的三块按钮（`hex-center-ctl.js` + `.css`，几何写在 css 文件头） |
 | ring 页暂停 | `code/ring/code/frontend/ring-pause.js`（2026-09-12） | 控件区「暂停」+ 空闲态「已暂停：… 继续 / 完成」 |
 
 **新增实现请追加到这张表**，并在自己的 handoff 里写明「实现的是 `timer-ring/v1`」。
