@@ -116,7 +116,8 @@ el.setAttribute("stroke-dasharray", `${lengthPercent} ${100 - lengthPercent}`);
 
 | 项 | 中心格变体 | 说明 |
 |---|---|---|
-| 轨道 | `color-mix(--fact 18%, --panel)` | 整圈浅青（取代 `--panel-2`） |
+| 底色 | 计时中 / 暂停中 = 任务所在分区色的最深档 `color-mix(分区色 44%, --panel)` | 与紧挨中心的格子同色；空闲 = `--panel` |
+| 轨道 | `color-mix(--fact 30%, 中心格底色)` | 整圈浅青，混进中心格自己的底色（取代 `--panel-2`） |
 | 分针弧（r=86） | `--fact` | 60 分钟走满一圈；**跨整点时先走满整圈、发光 1.6s，再瞬间回 0**（不许带过渡倒转） |
 | 秒针 | `--ink`，r 60–74 的一小截，圆头 | 累计角度（秒×6°）不取模，否则 59→0 会倒转一圈 |
 | 圆心读数 | `<1h` 显示 `分:秒`，`≥1h` 显示 `时:分`，下附一行单位小字 | 字号用容器查询单位，跟圆环等比 |
@@ -124,6 +125,10 @@ el.setAttribute("stroke-dasharray", `${lengthPercent} ${100 - lengthPercent}`);
 | 运行指示点 | 不画 | 由秒针承担"在走"的信号 |
 
 读数与分针都按「暂停前累计 + 本段」算（`nexus.timer.carry.v1`，见下节），只影响显示。
+
+**长按接住时的闪烁**（人类 2026-09-12 三改后定稿）：中心格进悬停态 3 秒，底色在**分区色 ↔ 计划紫**
+之间闪 1.5 次，第 3 秒起从紫渐变回分区色 —— 收尾关键帧与常态底色是**同一个变量**，最后一帧就是分区色本身
+（真机：闪完 / 同配方独立算 / 同分区最内圈格子三者 `color(srgb .2309 .2955 .4077)` 完全相同）。
 
 ## 计时控制按钮 + 暂停（纯前端）—— 2026-09-12 人类裁决
 
@@ -154,7 +159,7 @@ el.setAttribute("stroke-dasharray", `${lengthPercent} ${100 - lengthPercent}`);
 - 键：`nexus.timer.paused.v1`
 - 值：`{"taskId": str, "taskName": str, "projectName": str, "pausedAt": ISO8601}`
 - 值里带 `carriedSeconds: int`：暂停那一刻"之前累计 + 这一段"的秒数（显示用）；
-  可选 `startedAt: ISO8601`：这件事**最初**的开始时刻（「开始 hh:mm」要沿用它，不跳成继续那一刻）
+  可选 `startedAt: ISO8601`：这件事**最初**的开始时刻；可选 `zoneId`：暂停中中心格仍用这个分区的底色
 - 只在 **stop 成功之后**写；`start` 成功、或发现 `views/current` 正在计同一个 `taskId`
   （在别处继续了）时清掉；暂停态点「完成」「取消」= 只清记忆，不发请求
 
