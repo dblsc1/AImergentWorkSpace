@@ -20,8 +20,8 @@
  * 它只放下"还要继续"这件事；暂停前的时间已入账，撤不回，界面把这句话说出来。
  *
  * "暂停的是哪个任务"只存在本机 localStorage，键与形状见
- * contracts/timer-ring-visual-v1.md「暂停（纯前端）」。table 蜂巢中心格
- * （code/table/code/frontend/hex-center-ctl.js）读写**同一个键** —— 两页同源，
+ * contracts/timer-ring-visual-v1.md「暂停（纯前端）」。hive 蜂巢中心格
+ * （modules/hive/code/frontend/hex-center-ctl.js）读写**同一个键** —— 两页同源，
  * 在蜂巢暂停、到计时台继续（或反过来）都成立。
  *
  * 与其他文件的分工：只读 window.ringCurrentState（ring-instrument.js 每轮轮询写），

@@ -4,7 +4,7 @@
 起止入账）+ 本机 localStorage 记住停的是哪个任务；继续 = 调现有的 timer/start。
 所以判据落在两处：发出去的请求（只许是 stop / start 这两条既有接口），和
 localStorage 里那条记忆（键与形状见 contracts/timer-ring-visual-v1.md「暂停（纯前端）」，
-table 蜂巢中心格读写同一个键）。
+hive 蜂巢中心格读写同一个键）。
 
 timer/** 在 conftest 里默认是 abort（调了也出不去）。本套件要验"停成功之后"的 UI，
 所以在用例里**后注册**一条 route 盖掉它（Playwright 后注册的先匹配）：照样记账、

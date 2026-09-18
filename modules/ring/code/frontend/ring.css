@@ -132,7 +132,7 @@ main.page {
   gap: var(--sp-4);
 }
 
-/* ── 卡片与按钮（同 mock.css，四页共用的签名件） ─────────────────────── */
+/* ── 卡片与按钮（同设计稿，各页共用的签名件） ─────────────────────── */
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-3); box-shadow: var(--shadow); padding: var(--sp-4); }
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2);

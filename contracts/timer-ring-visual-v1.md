@@ -2,7 +2,7 @@
 
 **跨模块标准。一份规范，多个实现，不共享代码。**
 
-与 `yq-event/v1` 同一个形状：`code/ring` 是它的**第一个实现者**，
+与 `yq-event/v1` 同一个形状：`modules/ring` 是它的**第一个实现者**，
 但**实现与本规范不一致时，改的是实现，不是规范**。
 
 ## 为什么是规范而不是共享组件（人类裁决 2026-09-07）
@@ -181,10 +181,10 @@ el.setAttribute("stroke-dasharray", `${lengthPercent} ${100 - lengthPercent}`);
 
 | 实现 | 位置 | 备注 |
 |---|---|---|
-| ring 页主仪表 | `code/ring/code/frontend/ring-instrument.js` + `ring.css` | 第一个实现者；三段式贡献环 |
-| ring 页倒计时弧 | `code/ring/code/frontend/ring-countdown.js` | `r=86` 那条 |
-| table 蜂巢中心格 | `code/table/code/frontend/`（2026-09-07 新增） | 标题 + 圆环；悬停/点击两档，点击进 `/ring/`；2026-09-12 起悬停档下部按六边形轮廓切出的三块按钮（`hex-center-ctl.js` + `.css`，几何写在 css 文件头） |
-| ring 页暂停 | `code/ring/code/frontend/ring-pause.js`（2026-09-12） | 控件区「暂停」+ 空闲态「已暂停：… 继续 / 完成」 |
+| ring 页主仪表 | `modules/ring/code/frontend/ring-instrument.js` + `ring.css` | 第一个实现者；三段式贡献环 |
+| ring 页倒计时弧 | `modules/ring/code/frontend/ring-countdown.js` | `r=86` 那条 |
+| hive 蜂巢中心格 | `modules/hive/code/frontend/`（2026-09-07 新增） | 标题 + 圆环；悬停/点击两档，点击进 `/ring/`；2026-09-12 起悬停档下部按六边形轮廓切出的三块按钮（`hex-center-ctl.js` + `.css`，几何写在 css 文件头） |
+| ring 页暂停 | `modules/ring/code/frontend/ring-pause.js`（2026-09-12） | 控件区「暂停」+ 空闲态「已暂停：… 继续 / 完成」 |
 
 **新增实现请追加到这张表**，并在自己的 handoff 里写明「实现的是 `timer-ring/v1`」。
 

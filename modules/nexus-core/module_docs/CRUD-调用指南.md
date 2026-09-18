@@ -24,7 +24,7 @@ curl -s -b $JAR -X POST $BASE/api/core/planner/zones \
 
 ## 1. 先过门：鉴权
 
-系统前面挡着一道登录门（`code/auth` 模块）。所有 `/api/core/*` 请求
+系统前面挡着一道登录门（契约见 `contracts/auth.gate.v1`，实现不在本仓）。所有 `/api/core/*` 请求
 在到达业务后端前会先被 nginx 验一次。
 
 | 情况 | 你会拿到 |
@@ -176,7 +176,7 @@ curl -b $JAR -X DELETE $BASE/api/core/planner/zones/z_7f21a4
 
 **建议直接把 `detail` 显示给用户，不要用自己的措辞包装。**
 也**不要在你这边重复实现同一套校验**——后端是权威，你算一遍只会与它漂移。
-（`code/table` 就是这么做的，可以照抄。）
+（`modules/hive` 就是这么做的，可以照抄。）
 
 | 状态码 | 含义 |
 |---|---|

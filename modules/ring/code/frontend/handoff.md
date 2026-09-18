@@ -378,7 +378,7 @@ id（`#mode-tabs`/`#controls-row`）——不是就对。
   localStorage `nexus.timer.paused.v1`。
 - 空闲态出现 `#paused-row`：「已暂停：任务 · 项目　[继续] [完成]」。继续 = `window.startTimer(taskId)`，
   成功后清记忆；完成 = 只清记忆（时间早已入账），不发请求。
-- 键与形状是跨模块规范（`contracts/timer-ring-visual-v1.md`「计时控制按钮 + 暂停」）：table 蜂巢
+- 键与形状是跨模块规范（`contracts/timer-ring-visual-v1.md`「计时控制按钮 + 暂停」）：hive 蜂巢
   中心格 `hex-center-ctl.js` 读写同一个键 —— 两页同源，一边暂停另一边能继续；`storage` 事件即时同步。
 - ⚠️ 为什么暂停必须真 stop：后端一段 = start 到 stop，只停前端走秒，暂停那段照样被记成干活，
   事后没有接口能扣掉。
