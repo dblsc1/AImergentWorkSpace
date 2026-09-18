@@ -1,4 +1,4 @@
-/* ring/frontend · ring-instrument.js —— cockpit-v1 改造（2026-08-08 任务单，
+/* ring/frontend · ring-instrument.js —— cockpit-v1 改造（2026-08-08 ，
  * 含后补的「今天」数据口径落地一轮）。
  *
  * 表盘层：轮询、圆环三段式渲染、表芯（运行态秒跳自增 / 空闲态「今天 · N 分」
@@ -13,7 +13,7 @@
  *   ring-controls.js → window.onStartClicked、window.populateTaskOptions、
  *                      window.startTimer、window.stopTimer
  *
- * **2026-08-09 倒计时任务单**：`window.ringCurrentState` 是本文件唯一为它
+ * **2026-08-09 倒计时**：`window.ringCurrentState` 是本文件唯一为它
  * 新加的东西——每次轮询拿到的最新 `views/current` payload（拿不到时为
  * `null`），供 ring-countdown.js 判断"当前在跑的会话是不是我本地记的那个
  * 倒计时"（比对 `taskId`）。除这一行赋值外本文件其余渲染逻辑不改一个字——
@@ -23,7 +23,7 @@
  * 数据源（module_docs/contract.md consumes）：
  *   GET  /api/core/views/current  计时状态（是否在跑/跑哪个/开始时刻），7 秒轮询
  *   GET  /api/core/views/gantt    「今天」范围的任务级逐日事实数据源，同一 7 秒轮询
- *        （v1.1 新增 tasks[].actual，人类裁决不为 ring 开新端点，直接复用这条
+ *        （v1.1 新增 tasks[].actual，产品决定不为 ring 开新端点，直接复用这条
  *        既有读端——ring 不消费它的计划/依赖层，只取 actual 与 today）
  *
  * **「今天」判据只认服务端 `views/gantt.today` 字符串，绝不用客户端 `new Date()`
@@ -84,7 +84,7 @@
   }
 
   // ── 「今天」数据（GET /api/core/views/gantt，后补的一轮）───────────
-  // 人类裁决：不为 ring 开新端点，直接复用 nexus-core v1.1 已经上线的
+  // 产品决定：不为 ring 开新端点，直接复用 nexus-core v1.1 已经上线的
   // views/gantt——它的 tasks[].actual 本来是给甘特任务行用的，形状恰好也是
   // ring 需要的「任务 × 日 → 秒」。ring 完全不碰它的 plan/dependsOn 层。
   //

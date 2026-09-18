@@ -1,4 +1,4 @@
-/* ring/frontend · ring.css —— cockpit-v1 改造（2026-08-08 任务单）。
+/* ring/frontend · ring.css —— cockpit-v1 改造（2026-08-08）。
  * 取代原 <style> 内联块 + timer-control.css：旧的深色贡献圆环视觉（--project/
  * --task-hot 等自定义变量、渐变描边、callout 引线）随 F-RING-1「两块区域合并成
  * 一件仪器」整体退役，改用 contracts/design-tokens-v1.md 的全站 token 体系。
@@ -219,7 +219,7 @@ select.field:disabled { opacity: .7; cursor: not-allowed; }
   .ring-side { display: grid; gap: var(--sp-4); }
 }
 
-/* ── 计时方式 tab + 倒计时时长面板（2026-08-09 倒计时任务单） ──────────
+/* ── 计时方式 tab + 倒计时时长面板（2026-08-09 倒计时） ──────────
  * 只在空闲态出现，由 ring-countdown.js 按 window.ringCurrentState.running
  * 切 hidden——不进 ring-instrument.js 既有的运行态锁定分支。 */
 .mode-tabs { display: flex; gap: var(--sp-2); }
@@ -287,7 +287,7 @@ select.field:disabled { opacity: .7; cursor: not-allowed; }
   .countdown-overlay.is-time-up .elapsed { animation: none; }
 }
 
-/* ── 补登入口 + 对话框（2026-08-19 任务单）─────────────────────────────
+/* ── 补登入口 + 对话框（2026-08-19）─────────────────────────────
  * .backfill-entry 是 #mode-tabs / #controls-row 的兄弟节点，故意不复用
  * 两者的 hidden 切换逻辑——空闲态/运行态都要可点。 */
 .backfill-entry { display: flex; }

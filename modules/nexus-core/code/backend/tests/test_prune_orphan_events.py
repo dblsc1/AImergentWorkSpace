@@ -1,4 +1,4 @@
-"""孤儿事实清理工具（任务单 2026-08-03 · P1–P7 + 反向验证断言）。
+"""孤儿事实清理工具（2026-08-03 · P1–P7 + 反向验证断言）。
 
 **全部用例只跑测试库。** conftest.py 那条「库名不以 `_test` 结尾就 SystemExit」
 的硬护栏是 2026-08-01 清空真库事故之后立的——本文件不绕它、不改它，
@@ -32,7 +32,7 @@ import prune_orphan_events as prune  # noqa: E402
 BACKEND = Path(__file__).resolve().parent.parent
 SCRIPT = BACKEND / "scripts" / "prune-orphan-events.sh"
 
-#: 3 条真实 + 5 条孤儿（任务单指定的种子规模）
+#: 3 条真实 + 5 条孤儿（规格指定的种子规模）
 REAL_COUNT = 3
 ORPHAN_COUNT = 5
 
@@ -119,7 +119,7 @@ def test_p4_criterion_uses_id_field(seeded_orphans):
 def test_p4_reverse_using_underscore_id_turns_red(seeded_orphans, monkeypatch):
     """**反向验证**：把判据字段换成 ``_id``，断言必须变红。
 
-    这正是任务单里记的那次误判——用 ``_id`` 比对时，实体的身份集合取不到任何
+    这正是规格里记的那次误判——用 ``_id`` 比对时，实体的身份集合取不到任何
     ``p_``/``t_`` 前缀 id，于是**每一条都被判成孤儿**（当时显示「50 条全是孤儿」）。
     如果这个用例没变红，说明 P4 的断言根本没在验判据，是摆设。
     """
@@ -140,7 +140,7 @@ def test_p4_reverse_using_underscore_id_turns_red(seeded_orphans, monkeypatch):
 def test_p4_taskless_real_event_is_kept(seeded_orphans):
     """契约里 ``subject.task`` 选填：没带 task 的事实**没有悬空引用**，不是孤儿。
 
-    按任务单字面「task 不在 tasks 的 id 集合」会把这种合法事实一起删掉——
+    按规格字面「task 不在 tasks 的 id 集合」会把这种合法事实一起删掉——
     那才是真的篡改历史。这条用例把收紧后的判据钉住（见 prune 模块 docstring）。
     """
     get_db()["events"].insert_one(

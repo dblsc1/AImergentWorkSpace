@@ -1,4 +1,4 @@
-/* ring/frontend · ring-controls.js —— cockpit-v1 改造（2026-08-08 任务单）。
+/* ring/frontend · ring-controls.js —— cockpit-v1 改造（2026-08-08）。
  *
  * 控件层：两级选择器（项目→任务）、F-RING-6 前置提示、F-RING-4 URL 预选、
  * 开始/停止/取消三个写操作按钮。拆出这一半是因为整份仪器逻辑合并后单文件
@@ -10,14 +10,14 @@
  * 显式 `window.*` 挂载，不依赖闭包共享——三个 IIFE 各自的词法作用域互不可见）：
  *   本文件 → window.onStartClicked、window.populateTaskOptions、
  *           window.startTimer、window.stopTimer、window.postCore、window.patchCore
- *           （postCore 是 2026-08-19 补登任务单新增导出，见下方 ring-backfill.js 分工；
- *             patchCore 是 2026-09-08 计时台改名任务单新增导出，见 ring-rename.js）
+ *           （postCore 是 2026-08-19 补登新增导出，见下方 ring-backfill.js 分工；
+ *             patchCore 是 2026-09-08 计时台改名新增导出，见 ring-rename.js）
  *   ring-instrument.js → window.fetchAndRender、window.refreshIdleTodayDisplay、
  *                        window.renderContributionRing、window.ringCurrentState
  *   ring-countdown.js  → 不对外挂名字（纯监听者，不被别的文件调用）
  * 两边互相只读对方暴露的这几个名字，不猜对方内部实现。
  *
- * **2026-08-09 倒计时任务单的最小重构**：`startTimer(taskId)` / `stopTimer()`
+ * **2026-08-09 倒计时的最小重构**：`startTimer(taskId)` / `stopTimer()`
  * 从原来揉在按钮 click 处理器里的一次性代码抽成独立函数并挂 window——
  * 倒计时模块「开始倒计时」调用的是与「开始计时」完全相同的
  * `POST /api/core/timer/start`（后端不区分正/倒计时，零新增接口），
@@ -244,8 +244,8 @@
   window.populateTaskOptions = populateTaskOptions;
   window.startTimer = startTimer;
   window.stopTimer = stopTimer;
-  window.postCore = postCore; // 2026-08-19 补登任务单新增导出——ring-backfill.js
-  window.patchCore = patchCore; // 2026-09-08 计时台改名任务单新增导出——ring-rename.js
+  window.postCore = postCore; // 2026-08-19 补登新增导出——ring-backfill.js
+  window.patchCore = patchCore; // 2026-09-08 计时台改名新增导出——ring-rename.js
                                // 复用同一份「从不 throw、detail 原样透传」的请求封装，
                                // 不为补登另写一份 fetch 逻辑（迟早漂移）。
 

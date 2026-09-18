@@ -1,4 +1,4 @@
-"""甘特后端三件套（contract.md v0.8「甘特读端」；任务单 2026-08-02 验收 G1–G9）：
+"""甘特后端三件套（contract.md v0.8「甘特读端」；2026-08-02 验收 G1–G9）：
 
 - daily_stats 投影（``session.completed`` → ``proj_daily_stats``）
 - DISPATCH 表新增第二个 handler

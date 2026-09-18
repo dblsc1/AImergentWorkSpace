@@ -1,6 +1,6 @@
 """ring/frontend 自核套件 —— 真浏览器，但**完全不碰真库**。
 
-2026-08-08 任务单（cockpit-v1 改造）随 F-RING-1 整体重写：旧的「贡献圆环 + 计时
+2026-08-08 （cockpit-v1 改造）随 F-RING-1 整体重写：旧的「贡献圆环 + 计时
 控件」两块区域合并成一件仪器，标记（markup）与文件都变了——`#task-arc`/
 `#project-arc`/`#start-btn`/`#timer-idle`/`#timer-running`/`timer-control.css`
 均已退役，全部换成 `ring.css` / `ring-instrument.js` 与新的两级选择器
@@ -133,7 +133,7 @@ GANTT_WITH_TODAY_DATA: dict[str, Any] = {
                 {"id": "t_write", "key": "310-411-530-4", "name": "乐句创作",
                  "done": False, "plan": None, "dependsOn": ["t_legacy"],
                  # 跨日边界：只有昨天的记录，今天切片必须是 0，不许把昨天的
-                 # 1200s 算进今天（这是本轮任务单点名要的夹具）。
+                 # 1200s 算进今天（这是本轮规格点名要的夹具）。
                  "actual": [{"date": GANTT_YESTERDAY, "seconds": 1200}]},
                 {"id": "t_dangling", "key": "310-411-530-5", "name": "坏引用任务",
                  "done": False, "plan": None, "dependsOn": ["t_missing_ref"], "actual": []},
@@ -285,7 +285,7 @@ class RingHarness:
         self.timer_write_attempts = 0
         self.timer_write_urls: list[str] = []
         self.timer_write_bodies: list[str | None] = []
-        # planner 写入面（2026-09-08 计时台改名任务单）。timer/** 那条是
+        # planner 写入面（2026-09-08 计时台改名）。timer/** 那条是
         # abort（"调了也出不去"），这条不同：改名要验的是**改完之后 UI 怎么
         # 走**，所以必须 fulfill 成功，同时把请求原样记下来当判据。一个字节
         # 也到不了真库——本套件根本没有后端在跑。
@@ -414,7 +414,7 @@ def open_ring(
     """``init_scripts``：在 ``goto()`` 之前额外跑的 JS（``add_init_script``，
     每次导航前执行）——LT/倒计时的刷新续算用例靠它在页面自己的脚本跑之前把
     ``localStorage`` 记录种好，比 goto 之后再 evaluate 更贴近真实的"刷新前就
-    已经有记录"场景（2026-08-09 倒计时任务单新增，之前没有这个需求）。"""
+    已经有记录"场景（2026-08-09 倒计时新增，之前没有这个需求）。"""
     context = browser.new_context(
         viewport={"width": 1100, "height": 900},
         reduced_motion=reduced_motion,

@@ -324,7 +324,7 @@ def test_three_node_cycle_all_downgraded(client):
 
 
 def test_reverse_validation_disabling_cycle_detection_changes_outcome(client, monkeypatch):
-    """反向验证（任务单要求）：临时把环检测短路成"什么都不是环"
+    """反向验证（规格要求）：临时把环检测短路成"什么都不是环"
     （`_tasks_in_cycle` 恒返回空集合），同一个环 fixture 的分类结果必须
     **变得不同**——两个互相依赖又都未完成的任务会永远卡在"等待"互相指
     对方为 blocker（GTD 死锁：谁都排不到"可做"），证明本轮加的检测确实在

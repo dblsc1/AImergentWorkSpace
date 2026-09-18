@@ -1,4 +1,4 @@
-"""``POST /timer/cancel`` —— 取消计时**不记账**（任务单 2026-08-03 · T1–T3 + 反向验证）。
+"""``POST /timer/cancel`` —— 取消计时**不记账**（2026-08-03 · T1–T3 + 反向验证）。
 
 要害只有一句：**cancel 从一开始就不产生事实**。
 
@@ -191,7 +191,7 @@ def test_t3_failed_cancel_is_distinguishable_from_stop_semantics(client):
 def test_reverse_cancel_via_stop_turns_red(client, seeded, monkeypatch):
     """**反向验证**：把 cancel 换成「内部调 stop」，T1 必须变红。
 
-    这是任务单点名要的那条。被换上的实现**正是不许的那种**——
+    这是规格点名要的那条。被换上的实现**正是不许的那种**——
     它对外看着一样（同样的出参形状、同样的 200），但内部走了事件入口，
     于是 events 集合 +1：用户档案里凭空多出一条「这段时间发生过」。
 

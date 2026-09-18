@@ -44,7 +44,7 @@ consumes:
       要能在这里改成人话。落点 code/frontend/ring-rename.js。
       ⚠️ body 只发 name：后端 TaskUpdate 是 _Strict（extra=forbid），
       多带一个字段就是 422。
-      前端写 planner 是 2026-08-01 的人类裁决（推翻「四前端只读」），
+      前端写 planner 是 2026-08-01 的产品决定（推翻「四前端只读」），
       用的是已注册入口，不新增请求面，
       **绝不写 events**（事实账本只追加）。
   - id: nexus-core.views.tree.v1
@@ -69,7 +69,7 @@ consumes:
   - id: nexus-core.views.gantt.v1
     contract: ../nexus-core/module_docs/contract.md
     purpose: >
-      "今天"范围的任务级逐日事实数据源（F-RING-1，2026-08-08 人类裁决：不为
+      "今天"范围的任务级逐日事实数据源（F-RING-1，2026-08-08 产品决定：不为
       本用途新开端点，直接复用甘特既有读端）——仪表圆环分段（今日三档：当前
       任务/次高任务/其余任务合计）与空闲态表芯"今天 · N 分"的唯一数据来源。
       实际用到字段（按 `code/frontend/ring-instrument.js` 的
@@ -120,6 +120,6 @@ consumes:
 | 日期 | CR | 变更 |
 |---|---|---|
 | 2026-07-31 | 无（首次填实，非破坏性变更） | 契约从模板占位填实：provides（渲染入口 + 静态路由）、consumes（nexus-core views/current，字段级列明）；对应代码见 `code/frontend/` 提交 `7b34679` |
-| 2026-08-01 | 人类裁决：四前端做成完整页面，可写但走统一入口 | v0.2：ring 由纯只读改为**可控制计时**。新增 consumes `timer.v1`（start/stop）与 `views.tree.v1`（任务选择器数据源）。**仍不直接写事实**——events 不向前端开放，计时由 timer 代劳 |
-| 2026-08-08 | 无（**代码先行的追平**，非新变更——两项能力已在 `code/frontend/` 落地并有测试覆盖，本文件此前没跟上，不是先批后做） | v0.3：`timer.v1` 的 purpose 补上 `POST /api/core/timer/cancel`（F-RING-2 取消按钮，对应代码 commit `27c506d` 之前的 `696112d`）；新增 consumes `nexus-core.views.gantt.v1`（F-RING-1"今天"数据源，人类裁决不新开端点、复用甘特既有读端，字段级列明 `today`/`projects[].tasks[].id`/`actual[].{date,seconds}`，对应代码 commit `27c506d`）；`views.current.v1` 的 purpose 同步注明 `totalSeconds`/`shareOfPlan` 已让位给 `views.gantt.v1`、仅作不可达兜底；「依赖的外部契约」表拆成 views/timer 两行、覆盖 `GanttOut`/`TimerCancelOut`。本轮同时要求：module_docs/contract.md 的 `consumes` 缺口是本次唯一改动面，**不动代码**（本轮无对应代码 commit） |
+| 2026-08-01 | 产品决定：四前端做成完整页面，可写但走统一入口 | v0.2：ring 由纯只读改为**可控制计时**。新增 consumes `timer.v1`（start/stop）与 `views.tree.v1`（任务选择器数据源）。**仍不直接写事实**——events 不向前端开放，计时由 timer 代劳 |
+| 2026-08-08 | 无（**代码先行的追平**，非新变更——两项能力已在 `code/frontend/` 落地并有测试覆盖，本文件此前没跟上，不是先批后做） | v0.3：`timer.v1` 的 purpose 补上 `POST /api/core/timer/cancel`（F-RING-2 取消按钮，对应代码 commit `27c506d` 之前的 `696112d`）；新增 consumes `nexus-core.views.gantt.v1`（F-RING-1"今天"数据源，产品决定不新开端点、复用甘特既有读端，字段级列明 `today`/`projects[].tasks[].id`/`actual[].{date,seconds}`，对应代码 commit `27c506d`）；`views.current.v1` 的 purpose 同步注明 `totalSeconds`/`shareOfPlan` 已让位给 `views.gantt.v1`、仅作不可达兜底；「依赖的外部契约」表拆成 views/timer 两行、覆盖 `GanttOut`/`TimerCancelOut`。本轮同时要求：module_docs/contract.md 的 `consumes` 缺口是本次唯一改动面，**不动代码**（本轮无对应代码 commit） |
 | 2026-08-19 | 派单：ring/table 各加补登入口 | v0.4：`timer.v1` 的 purpose 补上 `POST /api/core/timer/backfill`（补登「完成了但没计时」的历史段，nexus-core v1.8，与 `timer_state` 完全独立，空闲态/运行态均可点）；「依赖的外部契约」表 timer 行补 `TimerBackfillIn`/`TimerBackfillOut`。对应代码：`code/frontend/ring-backfill.js`（新文件）、`project-task-contribution-ring.html`/`ring.css`/`ring-controls.js`（导出 `window.postCore`）改动，见本次 commit |

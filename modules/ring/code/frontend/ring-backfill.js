@@ -1,4 +1,4 @@
-/* ring/frontend · ring-backfill.js —— 补登入口（2026-08-19 任务单）。
+/* ring/frontend · ring-backfill.js —— 补登入口（2026-08-19）。
  *
  * 「完成了但没计时」的事后补录：POST /api/core/timer/backfill。契约唯一事实源
  * `../nexus-core/module_docs/contract.md`「## 补登（规范性 · v1.8，backfill）」，
@@ -28,7 +28,7 @@
  * 时区）。用浏览器 `Date.getTimezoneOffset()` 拼出本地偏移，绝不发裸的
  * `2026-08-18T14:30:00`。
  *
- * **三条显示规则**（契约要害，任务单点名不许简化）：
+ * **三条显示规则**（契约要害，规格点名不许简化）：
  *   1. `duplicate:true` 必须显示「这段已经补过了」——绝不能显示成「已记录」，
  *      那是骗用户：落库的是**上一次**那条，这一次什么都没发生。
  *   2. 提交成功要回显服务端返回的 `date`（NEXUS_TZ 归日结果）——前端不自己
