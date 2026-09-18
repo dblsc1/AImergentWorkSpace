@@ -1,19 +1,14 @@
-# 框架仓（starter）只跟踪可迁移的规范、文档、角色、CI 与模板 DNA。
-# 在本目录下用 new_module.sh 创建的实例是独立 Git 仓，默认不纳入 starter。
-/*
-!/.gitignore
-!/.github/
-!/AGENTS.md
-!/README.md
-!/CFO_agent/
-!/ci/
-!/docs/
-!/module_template/
-!/roles/
-!/新模块与新项目开设指南.md
+# Python 字节码。
+#
+# 必须忽略，而且不只是为了干净：改名/脱敏之后，旧的 .pyc 里**仍然嵌着旧字符串常量**，
+# 于是真实数据会以二进制形式被带进发布产物——而文本扫描器扫不出二进制里的东西。
+# 2026-09-17 匿名化时真撞见过这一下。
+__pycache__/
+*.py[cod]
 
-# 通用排除
-**/node_modules/
-**/.env
-**/*.secret
-**/secrets.env
+# 安装器产出。默认组装用手写的 deploy/docker-compose.yml，
+# 这个目录是 `install.sh add` 换模块组合时才生成的，不入仓。
+deploy/generated/
+
+# 本地环境
+.env

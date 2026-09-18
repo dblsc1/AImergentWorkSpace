@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<!--
+  auth.gate.v1 的登录页 —— 占位实现的一部分，跟 stub/auth_stub.py 配套。
+
+  为什么放在 contracts/auth.gate.v1/stub/web/ 而不是 deploy/ 组装层：
+  这个页面服务的是 stub 后端的四个端点（见 ../auth_stub.py、../../contract.md）。
+  换掉整个 auth 实现时，这个占位登录页应该跟着 stub/ 一起被换掉，nginx
+  只需要继续把 /login/ 指到新实现挂出来的静态目录，组装层（deploy/）
+  自己不用改一行。
+
+  单文件、零构建、零 CDN、零第三方依赖：这是整个 stub 的原则（见 auth_stub.py
+  文件头 "为什么是标准库"）。一旦这个页面需要 npm install 或者去外网拉一个
+  字体/图标库，它就跟 stub 的其它部分一样，失去了"拉下来就能跑"的资格。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录</title>
+<style>
+  /* 亮色为默认值，暗色用 prefers-color-scheme 覆盖——两套配色都要能看清楚，
+     不能假设访问者的系统主题。 */
+  :root {
+    color-scheme: light dark;
+    --bg: #f4f5f7;
+    --card-bg: #ffffff;
+    --text: #1a1d23;
+    --muted: #6b7280;
+    --border: #d7dbe0;
+    --accent: #2f6feb;
+    --accent-hover: #2557c4;
+    --error-bg: #fdecea;
+    --error-text: #b3261e;
+    --error-border: #f5c6c3;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --card-bg: #1e2126;
+      --text: #e8eaed;
+      --muted: #9aa0a8;
+      --border: #33373e;
+      --accent: #5b8dfb;
+      --accent-hover: #7aa2ff;
+      --error-bg: #3a1f1f;
+      --error-text: #ff9b93;
+      --error-border: #5c2a27;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* 手机宽度：不写死宽度，卡片靠 max-width + 100% 自适应，外层只留一点内边距 */
+    padding: 24px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+
+  .card {
+    width: 100%;
+    max-width: 360px;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 32px 28px;
+  }
+
+  h1 {
+    margin: 0 0 24px;
+    font-size: 1.25rem;
+    font-weight: 600;
+    text-align: center;
+  }
+
+  label {
+    display: block;
+    font-size: 0.875rem;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+
+  input[type="password"] {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  input[type="password"]:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  button {
+    width: 100%;
+    margin-top: 18px;
+    padding: 10px 12px;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #fff;
+    background: var(--accent);
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+
+  button:hover:not(:disabled) { background: var(--accent-hover); }
+  button:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  /* 错误提示区：默认用 hidden 属性藏起来，出错时 login.js 去掉 hidden 再填文案 */
+  #error {
+    margin-top: 14px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: var(--error-bg);
+    color: var(--error-text);
+    border: 1px solid var(--error-border);
+    font-size: 0.875rem;
+    line-height: 1.4;
+  }
+
+  #error[hidden] { display: none; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>登录</h1>
+    <!-- novalidate：错误提示统一交给 login.js 按服务端真实状态码来写，
+         不用浏览器自带的表单校验气泡（那套东西没法按状态码分支）。 -->
+    <form id="login-form" novalidate>
+      <label for="password">口令</label>
+      <input
+        type="password"
+        id="password"
+        name="password"
+        autocomplete="current-password"
+        autofocus
+        required
+      >
+      <!-- type="submit" 天然支持回车键提交，不用额外写键盘事件监听 -->
+      <button type="submit" id="submit">登录</button>
+      <div id="error" role="alert" hidden></div>
+    </form>
+  </div>
+  <script src="login.js"></script>
+</body>
+</html>

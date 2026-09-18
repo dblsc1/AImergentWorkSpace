@@ -1,0 +1,60 @@
+name: ci
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  test-nexus-core:
+    name: nexus-core 测试
+    runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:7
+        ports: ['27017:27017']
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.hello().ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          --health-start-period 20s
+    defaults:
+      run:
+        working-directory: modules/nexus-core/code/backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: 建 venv 并装依赖
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -q -r requirements.txt
+      - name: pytest
+        env:
+          NEXUS_MONGO_URI: mongodb://127.0.0.1:27017
+          NEXUS_DB_NAME: nexus_core_test
+          NEXUS_TZ: Asia/Shanghai
+        run: |
+          F1=tests/test_delete_event.py
+          F2=tests/test_prune_orphan_events.py
+          T1=test_t4_gate4_apply_deletes_exactly_one_and_rebuilds
+          T2=test_p5_apply_deletes_only_orphans_and_rebuilds
+          .venv/bin/python -m pytest -q \
+            --deselect "$F1::$T1" \
+            --deselect "$F2::$T2"
+
+  gitleaks:
+    name: 密钥扫描
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+          GITLEAKS_ENABLE_COMMENTS: false

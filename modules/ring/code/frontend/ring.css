@@ -1,0 +1,335 @@
+/* ring/frontend · ring.css —— cockpit-v1 改造（2026-08-08 任务单）。
+ * 取代原 <style> 内联块 + timer-control.css：旧的深色贡献圆环视觉（--project/
+ * --task-hot 等自定义变量、渐变描边、callout 引线）随 F-RING-1「两块区域合并成
+ * 一件仪器」整体退役，改用 contracts/design-tokens-v1.md 的全站 token 体系。
+ *
+ * **A2（禁裸 hex）**：本文件除下方 tokens-fallback 哨兵块之外，颜色只准 var(--…)。
+ * **A3（兜底不漂移）**：哨兵块内容必须与契约 §3 全表逐字节一致，判据脚本见
+ * tests/check_tokens_fallback.py（diff 对象是 contracts/design-tokens-v1.md 本身，
+ * 不是设计稿附件——契约是唯一事实源）。
+ */
+
+/* ── [hidden] 兜底：必须在最前、必须 !important（本项目已在三个模块踩过这坑：
+ * 任何带 display: 的类选择器都能盖过 [hidden] 的默认样式，且看代码看不出来）。── */
+[hidden] { display: none !important; }
+
+/* tokens-fallback:begin */
+:root,
+html[data-theme="light"] {
+  color-scheme: light;
+  --bg: #F3F5F8;
+  --panel: #FFFFFF;
+  --panel-2: #EDF0F5;
+  --line: #D9DFE8;
+  --line-2: #E7EBF1;
+  --ink: #17202E;
+  --ink-2: #55627A;
+  --ink-3: #8B96A9;
+  --focus: #1E5FD0;
+  --shadow: 0 1px 2px rgba(23,32,46,.06), 0 4px 16px rgba(23,32,46,.07);
+  --plan: #6D5AE6;
+  --plan-soft: #E9E6FB;
+  --fact: #0B7A6F;
+  --fact-soft: #DCF0ED;
+  --fact-ink: #FFFFFF;
+  --fact-s1: #0B7A6F;
+  --fact-s2: #37948A;
+  --fact-s3: #9CCFC8;
+  --warn: #B45309;
+  --danger: #C2333B;
+  --accent: #0B7A6F;
+  --accent-ink: #FFFFFF;
+  --accent-soft: #DCF0ED;
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0D1220;
+  --panel: #151C2E;
+  --panel-2: #1D2639;
+  --line: #26314A;
+  --line-2: #202A40;
+  --ink: #E8ECF4;
+  --ink-2: #9DA9BF;
+  --ink-3: #5F6C84;
+  --focus: #6FA8FF;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 20px rgba(0,0,0,.35);
+  --plan: #9B8CFF;
+  --plan-soft: #2A2A4E;
+  --fact: #2FD4C2;
+  --fact-soft: #123B38;
+  --fact-ink: #04211D;
+  --fact-s1: #2FD4C2;
+  --fact-s2: #6FB8AE;
+  --fact-s3: #46706B;
+  --warn: #F0B36A;
+  --danger: #FF8189;
+  --accent: #2FD4C2;
+  --accent-ink: #04211D;
+  --accent-soft: #123B38;
+}
+html[data-accent="violet"] {
+  --accent: #6D5AE6; --accent-ink: #FFFFFF; --accent-soft: #E9E6FB;
+}
+html[data-theme="dark"][data-accent="violet"] {
+  --accent: #9B8CFF; --accent-ink: #14102E; --accent-soft: #2A2A4E;
+}
+html[data-accent="amber"] {
+  --accent: #9A5B00; --accent-ink: #FFFFFF; --accent-soft: #F5E8D5;
+}
+html[data-theme="dark"][data-accent="amber"] {
+  --accent: #F0B36A; --accent-ink: #2A1A04; --accent-soft: #3A2B12;
+}
+:root {
+  --font-body: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+               "Noto Sans CJK SC", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono",
+               Consolas, "Liberation Mono", monospace;
+  --fs-body: 15px;
+  --fs-sub: 13px;
+  --fs-eyebrow: 11px;
+  --fs-h2: 17px;
+  --fs-time-lg: 40px;
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;
+  --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+  --r-1: 6px;  --r-2: 10px;  --r-3: 14px;
+  --tap: 44px;
+  --t-fast: 150ms ease;
+  --t-med:  240ms ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root { --t-fast: 0ms; --t-med: 0ms; }
+}
+/* tokens-fallback:end */
+
+/* ── 基础 ──────────────────────────────────────────────────────────── */
+* { box-sizing: border-box; margin: 0; }
+html { font-size: var(--fs-body); }
+body {
+  min-height: 100vh;
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--bg);
+  transition: background var(--t-med), color var(--t-med);
+}
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+button { font: inherit; cursor: pointer; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.eyebrow {
+  font-family: var(--font-mono); font-size: var(--fs-eyebrow);
+  letter-spacing: .14em; text-transform: uppercase; color: var(--ink-2);
+}
+
+/* main 是 F-RING-5 的容器查询根——真实页面没有设计稿的 .frame 外壳，
+   直接量 body/main 的宽度才对得上 390px 一等公民的要求。 */
+main.page {
+  container-type: inline-size;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: var(--sp-4);
+  display: grid;
+  gap: var(--sp-4);
+}
+
+/* ── 卡片与按钮（同 mock.css，四页共用的签名件） ─────────────────────── */
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-3); box-shadow: var(--shadow); padding: var(--sp-4); }
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2);
+  min-height: var(--tap); padding: 0 var(--sp-4);
+  border-radius: var(--r-2); border: 1px solid transparent;
+  font-weight: 600; white-space: nowrap;
+  transition: filter var(--t-fast), background var(--t-fast);
+}
+.btn-fact { background: var(--fact); color: var(--fact-ink); }
+.btn-fact:hover { filter: brightness(1.08); }
+.btn-fact:disabled { opacity: .5; cursor: not-allowed; filter: none; }
+.btn-ghost { background: none; border-color: var(--line); color: var(--ink-2); font-weight: 400; }
+.btn-ghost:hover { color: var(--ink); background: var(--panel-2); }
+.btn-ghost.danger { color: var(--danger); }
+.btn-ghost.danger:hover { border-color: var(--danger); background: none; }
+/* 暂停态（2026-09-12，ring-pause.js）。「继续」用计划紫：暂停的是一件"计划里还要接着做"的事，
+   和「停止并记录」的事实青（已经入账）区分开。 */
+.btn-plan { background: var(--plan); color: var(--panel); }
+.btn-plan:hover { filter: brightness(1.08); }
+.btn-plan:disabled { opacity: .5; cursor: not-allowed; filter: none; }
+.paused-row { align-items: center; flex-wrap: wrap; }
+.paused-note { font-size: var(--fs-sub); color: var(--ink-3); margin: 0; }
+.controls .paused-row .paused-label { flex: 1 1 100%; font-size: var(--fs-sub); color: var(--ink-2); }
+select.field {
+  width: 100%; min-height: var(--tap); padding: 0 var(--sp-3);
+  border: 1px solid var(--line); border-radius: var(--r-2);
+  background: var(--panel-2); color: var(--ink); font: inherit;
+}
+select.field:disabled { opacity: .7; cursor: not-allowed; }
+.task-option-empty { color: var(--ink-3); font-style: italic; }
+
+/* ── 计时页：仪表圆环（全站签名件，F-RING-1 两块区域合并成一件仪器） ──── */
+.ring-wrap { display: grid; gap: var(--sp-4); justify-items: center; }
+.chrono { position: relative; width: min(300px, 78cqw); }
+.chrono svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chrono .ticks { stroke: var(--line); }
+.chrono .track { stroke: var(--panel-2); }
+.chrono .seg { fill: none; stroke-width: 12; stroke-linecap: butt; }
+.chrono .seg-current { stroke: var(--fact-s1); }
+.chrono .seg-second { stroke: var(--fact-s2); }
+.chrono .seg-third { stroke: var(--fact-s3); }
+.chrono .seg.is-first-load { transition: stroke-dasharray 350ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .chrono .seg.is-first-load { transition: none; }
+}
+.chrono .center {
+  position: absolute; inset: 0; display: grid; place-content: center; justify-items: center;
+  text-align: center; gap: var(--sp-1); padding: var(--sp-3);
+}
+.chrono .elapsed { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--fs-time-lg); font-weight: 600; letter-spacing: .02em; }
+.chrono .task-name { font-size: var(--fs-sub); color: var(--ink-2); max-width: 180px; overflow-wrap: anywhere; }
+.chrono .idle-total { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--fs-h2); font-weight: 600; }
+.chrono .idle-caption { font-size: var(--fs-sub); color: var(--ink-2); }
+.chrono .start-big {
+  margin-top: var(--sp-2);
+  min-height: var(--tap); padding: 0 var(--sp-5);
+  border-radius: 999px; border: 1px solid transparent;
+  background: var(--fact); color: var(--fact-ink); font-weight: 600; font-size: var(--fs-body);
+}
+.chrono .start-big:disabled { opacity: .5; cursor: not-allowed; }
+.chrono .start-big:not(:disabled):hover { filter: brightness(1.08); }
+
+.controls { display: grid; gap: var(--sp-3); width: 100%; max-width: 420px; }
+.controls .row { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
+.controls .row > * { flex: 1; }
+.depends-hint { font-size: var(--fs-sub); color: var(--ink-2); margin-top: calc(var(--sp-2) * -1); }
+.timer-error { font-size: var(--fs-sub); color: var(--danger); }
+.timer-running-label { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-sub); color: var(--ink-2); }
+.timer-running-label .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fact); animation: ring-pulse 1.6s ease-in-out infinite; }
+@keyframes ring-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .timer-running-label .dot { animation: none; } }
+
+.legend { display: grid; gap: var(--sp-2); width: 100%; max-width: 420px; font-size: var(--fs-sub); }
+.legend .li { display: flex; align-items: center; gap: var(--sp-2); }
+.legend .k { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.legend .k.current { background: var(--fact-s1); }
+.legend .k.second { background: var(--fact-s2); }
+.legend .k.third { background: var(--fact-s3); }
+.legend .t { color: var(--ink); }
+.legend .v { margin-left: auto; color: var(--ink-2); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+@container (min-width: 640px) {
+  .ring-wrap { grid-template-columns: auto 1fr; align-items: center; }
+  .ring-side { display: grid; gap: var(--sp-4); }
+}
+
+/* ── 计时方式 tab + 倒计时时长面板（2026-08-09 倒计时任务单） ──────────
+ * 只在空闲态出现，由 ring-countdown.js 按 window.ringCurrentState.running
+ * 切 hidden——不进 ring-instrument.js 既有的运行态锁定分支。 */
+.mode-tabs { display: flex; gap: var(--sp-2); }
+.mode-tab {
+  flex: 1; min-height: var(--tap); padding: 0 var(--sp-3);
+  border: 1px solid var(--line); border-radius: var(--r-2);
+  background: var(--panel-2); color: var(--ink-2); font-weight: 600;
+  transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+}
+.mode-tab:hover { color: var(--ink); }
+.mode-tab.is-active { background: var(--fact); border-color: var(--fact); color: var(--fact-ink); }
+
+.countdown-picker { display: grid; gap: var(--sp-3); }
+.duration-presets { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.duration-chip {
+  min-height: var(--tap); padding: 0 var(--sp-4);
+  border: 1px solid var(--line); border-radius: 999px;
+  background: var(--panel-2); color: var(--ink); font-weight: 600;
+  transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
+}
+.duration-chip:hover { border-color: var(--fact); }
+.duration-chip.is-active { background: var(--fact-soft); border-color: var(--fact); color: var(--fact); }
+.duration-custom-label { font-size: var(--fs-sub); color: var(--ink-2); }
+.duration-custom {
+  width: 100%; min-height: var(--tap); padding: 0 var(--sp-3);
+  border: 1px solid var(--line); border-radius: var(--r-2);
+  background: var(--panel-2); color: var(--ink); font: inherit;
+}
+.duration-custom:invalid { border-color: var(--danger); }
+
+/* ── 倒计时进度弧（环随剩余比例收缩，与「今日贡献」三段式各画各的） ──── */
+.chrono .countdown-arc {
+  stroke: var(--warn); stroke-width: 4; stroke-linecap: butt;
+  transition: stroke-dasharray var(--t-med) linear;
+}
+@media (prefers-reduced-motion: reduce) {
+  .chrono .countdown-arc { transition: none; }
+}
+
+/* ── 计时台改名（2026-09-08）：与 #chrono-center / #countdown-overlay 三者
+ * 互斥（同为 .center，靠 hidden 切）。圆环里空间就那么点，所以按钮和错误
+ * 行都压到最小，输入框吃掉剩下的宽度。 ──────────────────────────────── */
+.chrono #running-task-name {
+  cursor: text;                                  /* 提示这行字是可以改的 */
+  border-bottom: 1px dashed var(--line);
+  padding-bottom: 1px;
+}
+.chrono #running-task-name:hover { color: var(--ink); border-bottom-color: var(--ink-2); }
+.rename-overlay { gap: var(--sp-2); }
+.rename-input {
+  width: min(190px, 62cqw); min-height: var(--tap); padding: 0 var(--sp-2);
+  border: 1px solid var(--line); border-radius: var(--r-2);
+  background: var(--panel-2); color: var(--ink); font: inherit; text-align: center;
+}
+.rename-input:disabled { opacity: .7; cursor: not-allowed; }
+.rename-actions { display: flex; gap: var(--sp-2); }
+.rename-actions .btn { min-height: var(--tap); padding: 0 var(--sp-3); font-size: var(--fs-sub); }
+.rename-overlay .timer-error { max-width: min(190px, 62cqw); }
+
+/* ── 倒计时中心显示 + 到点闪烁（与 #chrono-center 互斥，见 HTML 注释；
+ * #countdown-caption 复用既有 .idle-caption 样式，这里不用重复定义） ──── */
+.countdown-overlay.is-time-up .elapsed { color: var(--danger); animation: ring-time-up-blink 900ms ease-in-out infinite; }
+@keyframes ring-time-up-blink { 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) {
+  .countdown-overlay.is-time-up .elapsed { animation: none; }
+}
+
+/* ── 补登入口 + 对话框（2026-08-19 任务单）─────────────────────────────
+ * .backfill-entry 是 #mode-tabs / #controls-row 的兄弟节点，故意不复用
+ * 两者的 hidden 切换逻辑——空闲态/运行态都要可点。 */
+.backfill-entry { display: flex; }
+.backfill-entry .btn { width: 100%; }
+
+.backfill-dialog[open] { display: grid; gap: var(--sp-2); }
+.backfill-title { font-size: var(--fs-h2); font-weight: 600; margin-bottom: var(--sp-1); }
+.backfill-hint { font-size: var(--fs-sub); color: var(--ink-2); margin-bottom: var(--sp-2); }
+.backfill-label { font-size: var(--fs-sub); color: var(--ink-2); }
+.backfill-dialog .row { margin-top: var(--sp-3); }
+.backfill-message { font-size: var(--fs-sub); }
+.backfill-message.is-error { color: var(--danger); }
+.backfill-message.is-duplicate { color: var(--warn); }
+.backfill-message.is-success,
+.backfill-message:not(.is-error):not(.is-duplicate) { color: var(--fact); }
+
+/* ── 取消确认弹层（原生 <dialog>，自带焦点陷阱与 Escape=取消） ───────── */
+.confirm-dialog {
+  max-width: min(360px, 92vw);
+  border: 1px solid var(--line); border-radius: var(--r-3);
+  background: var(--panel); color: var(--ink); box-shadow: var(--shadow);
+  padding: var(--sp-4);
+}
+.confirm-dialog::backdrop { background: rgba(0, 0, 0, .35); }
+.confirm-dialog p { margin-bottom: var(--sp-4); }
+.confirm-dialog .row { display: flex; gap: var(--sp-3); }
+.confirm-dialog .row > * { flex: 1; }
+
+/* ── 状态提示（连接失败 / 数据格式错误，与旧版语义一致，改用 tokens） ── */
+.status-message {
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-2);
+  font-size: var(--fs-sub); line-height: 1.5;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--ink-2);
+}
+.status-message.is-error {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: var(--panel-2);
+}
+
+/* ── 390px 一等公民：不横滚（F-RING-5） ──────────────────────────────── */
+html, body { max-width: 100%; overflow-x: hidden; }

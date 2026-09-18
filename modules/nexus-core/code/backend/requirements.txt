@@ -1,0 +1,11 @@
+# nexus-core / backend — 切片 1「金链路」（contract v0.2）
+# 真实现已落地：持久化走 Mongo，唯一驱动入口是各子边界的 repo.py 与 app/repo.py
+# （只有 repo.py 允许 import mongo 客户端）。
+fastapi==0.115.12
+uvicorn==0.49.0
+pydantic==2.13.4
+pymongo==4.17.0
+
+# 测试（fastapi.testclient.TestClient 依赖 httpx）
+pytest==9.0.2
+httpx==0.28.1

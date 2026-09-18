@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>计时 · 时间驾驶舱</title>
+  <!-- cockpit-v1 改造（2026-08-08）：贡献圆环 + 计时控件两块区域合并成一件仪表
+       圆环（F-RING-1）。样式与逻辑分别独立成 ring.css / ring-instrument.js，
+       本文件只留骨架标记，保持单文件 500 行上限有余量。
+       2026-08-09 倒计时任务单新增：计时方式 tab + 时长选择面板（#mode-tabs/
+       #countdown-picker）、倒计时中心覆盖层（#countdown-overlay）、倒计时
+       进度弧（#countdown-arc）——标记全是骨架，逻辑在新文件 ring-countdown.js。 -->
+  <link rel="stylesheet" href="ring.css">
+</head>
+<body>
+  <main class="page">
+    <div class="card ring-wrap" id="ring-wrap">
+      <div class="chrono">
+        <svg viewBox="0 0 200 200" role="img" id="chrono-svg" aria-label="计时圆环">
+          <circle class="ticks" cx="100" cy="100" r="92" fill="none" stroke-width="6"
+                  pathLength="100" stroke-dasharray="0.4 1.2667"></circle>
+          <circle class="track" cx="100" cy="100" r="78" fill="none" stroke-width="12"></circle>
+          <g transform="rotate(-90 100 100)">
+            <circle class="seg seg-current" id="seg-current" cx="100" cy="100" r="78"
+                    pathLength="100" stroke-dasharray="0 100" stroke-dashoffset="0"></circle>
+            <circle class="seg seg-second" id="seg-second" cx="100" cy="100" r="78"
+                    pathLength="100" stroke-dasharray="0 100" stroke-dashoffset="0"></circle>
+            <circle class="seg seg-third" id="seg-third" cx="100" cy="100" r="78"
+                    pathLength="100" stroke-dasharray="0 100" stroke-dashoffset="0"></circle>
+          </g>
+          <!-- 倒计时进度弧（2026-08-09）：独立于上面的「今日贡献」三段式，
+               画在 ticks(r=92) 与 seg(r=78) 之间的 r=86 上，避免两套语义
+               互相遮挡。dasharray 由 ring-countdown.js 按剩余比例收缩，
+               非倒计时态时长度为 0（视觉上不存在），不需要额外的 hidden。 -->
+          <g transform="rotate(-90 100 100)">
+            <circle class="countdown-arc" id="countdown-arc" cx="100" cy="100" r="86" fill="none"
+                    pathLength="100" stroke-dasharray="0 100" stroke-dashoffset="0"></circle>
+          </g>
+        </svg>
+        <div class="center" id="chrono-center" aria-live="polite"></div>
+        <!-- 倒计时中心显示：与 #chrono-center 同尺寸同定位（.center 类），
+             但两者互斥、不叠加——ring-countdown.js 每次判定「倒计时是否
+             在跑」时把二者的 hidden 反着切，任一时刻只有一个可见，不靠
+             z-index 压盖。不进 #chrono-center 的 innerHTML 重建逻辑（那
+             属于 ring-instrument.js 的活，本次不碰它，只读写 hidden）。 -->
+        <div class="center countdown-overlay" id="countdown-overlay" hidden aria-live="polite">
+          <span class="elapsed" id="countdown-remaining">00:00</span>
+          <span class="task-name" id="countdown-task-name"></span>
+          <p class="idle-caption" id="countdown-caption">倒计时剩余</p>
+        </div>
+        <!-- 改名浮层（2026-09-08）：和 #countdown-overlay 同一套规矩——同为
+             .center 的兄弟层、靠 hidden 与 #chrono-center 互斥、不进
+             #chrono-center 的 innerHTML 重建逻辑。之所以不就地改那个 span，
+             是因为它的 textContent 每一轮轮询都被 renderRunningCenter 覆写。 -->
+        <div class="center rename-overlay" id="rename-overlay" hidden>
+          <input class="rename-input" id="rename-input" type="text" maxlength="200"
+                 autocomplete="off" enterkeyhint="done" aria-label="任务名" />
+          <p class="timer-error" id="rename-error" hidden></p>
+          <div class="rename-actions">
+            <button type="button" class="btn btn-ghost" id="rename-cancel">取消</button>
+            <button type="button" class="btn btn-fact" id="rename-save">保存</button>
+          </div>
+        </div>
+      </div>
+      <div class="ring-side">
+        <div class="controls">
+          <select class="field" id="project-select" aria-label="项目">
+            <option value="">选择项目…</option>
+          </select>
+          <select class="field" id="task-select" aria-label="任务" disabled>
+            <option value="">选择任务…</option>
+          </select>
+          <p class="depends-hint" id="depends-hint" hidden></p>
+          <!-- 补登入口（2026-08-19）：与 #mode-tabs / #controls-row 是独立的
+               兄弟节点，不被两者的运行态互斥显隐逻辑碰到——空闲态/运行态都
+               可点（契约明写补登不碰 timer_state，不加「先停表」的伪约束）。
+               逻辑全在 ring-backfill.js，本文件只留骨架标记。 -->
+          <div class="backfill-entry">
+            <button type="button" class="btn btn-ghost" id="backfill-open-btn">补登记录</button>
+          </div>
+          <!-- 计时方式 tab（2026-08-09）：只在空闲态出现（ring-countdown.js
+               按 window.ringCurrentState.running 自行控制 hidden，不动
+               controls-row 那条既有的运行态锁定逻辑）。默认「正计时」=
+               既有行为零变化，「倒计时」选中才露出下面的时长面板，两种
+               「开始」入口不同时存在——见 handoff.md「共存交互方案」。 -->
+          <div class="mode-tabs" id="mode-tabs" role="tablist" aria-label="计时方式">
+            <button type="button" class="mode-tab is-active" id="mode-tab-stopwatch"
+                    role="tab" aria-selected="true">正计时</button>
+            <button type="button" class="mode-tab" id="mode-tab-countdown"
+                    role="tab" aria-selected="false">倒计时</button>
+          </div>
+          <div class="countdown-picker" id="countdown-picker" hidden>
+            <div class="duration-presets" role="group" aria-label="倒计时时长">
+              <button type="button" class="duration-chip" data-minutes="25">25 分</button>
+              <button type="button" class="duration-chip" data-minutes="45">45 分</button>
+              <button type="button" class="duration-chip" data-minutes="60">60 分</button>
+            </div>
+            <label class="duration-custom-label" for="duration-custom">自定义（分钟）</label>
+            <input type="number" class="field duration-custom" id="duration-custom"
+                   min="1" max="180" step="1" placeholder="例如 90" inputmode="numeric">
+            <button type="button" class="btn btn-fact" id="start-countdown-btn" disabled>开始倒计时</button>
+          </div>
+          <!-- #controls-row 的 hidden 由 ring-instrument.js 按运行态切（既有逻辑）。
+               改名按钮塞在这里而不是自己起一个容器，就是为了白蹭这条显隐：
+               只在计时中出现，空闲态自动消失，不用再写一份运行态判断。 -->
+          <div class="row" id="controls-row" hidden>
+            <button class="btn btn-ghost" type="button" id="rename-open-btn">改任务名</button>
+            <button class="btn btn-ghost" type="button" id="pause-btn">暂停</button>
+            <button class="btn btn-fact" type="button" id="stop-btn">停止并记录</button>
+            <button class="btn btn-ghost danger" type="button" id="cancel-open-btn">取消，不记录</button>
+          </div>
+          <!-- 暂停态（2026-09-12，ring-pause.js）：后端此刻是空闲，"暂停的是谁"只在本机。
+               不放进 #controls-row —— 那一行只在计时中出现，而暂停恰恰是没在计时。 -->
+          <div class="row paused-row" id="paused-row" hidden>
+            <span class="paused-label" id="paused-label"></span>
+            <button class="btn btn-plan" type="button" id="resume-btn">继续</button>
+            <button class="btn btn-ghost" type="button" id="paused-done-btn">完成</button>
+            <button class="btn btn-ghost danger" type="button" id="paused-drop-btn">取消，不记录</button>
+          </div>
+          <p class="paused-note" id="paused-note" hidden></p>
+          <p class="timer-error" id="timer-error" role="alert" hidden></p>
+        </div>
+        <div class="legend" id="legend" hidden>
+          <span class="eyebrow" id="legend-title">项目累计贡献</span>
+          <div class="li">
+            <span class="k current"></span>
+            <span class="t" id="legend-current-name"></span>
+            <span class="v mono" id="legend-current-value"></span>
+          </div>
+          <div class="li" id="legend-second-row">
+            <span class="k second"></span>
+            <span class="t" id="legend-second-name">项目其余任务</span>
+            <span class="v mono" id="legend-second-value"></span>
+          </div>
+          <div class="li" id="legend-third-row" hidden>
+            <span class="k third"></span>
+            <span class="t">其他任务</span>
+            <span class="v mono" id="legend-third-value"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="status-message" id="status-message" hidden></p>
+  </main>
+
+  <!-- 取消确认弹层（F-RING-2）：原生 <dialog>，Escape/backdrop 天然等价于「返回」，
+       不需要额外 JS 兜底键盘可达性。 -->
+  <dialog id="cancel-dialog" class="confirm-dialog">
+    <p>取消后这段时间不会入账，无法恢复。</p>
+    <div class="row">
+      <button type="button" class="btn btn-ghost" id="cancel-dialog-back">返回</button>
+      <button type="button" class="btn btn-ghost danger" id="cancel-dialog-confirm">确认取消</button>
+    </div>
+  </dialog>
+
+  <!-- 补登对话框（2026-08-19）：任务 + 日期 + 开始时刻 + 时长（分钟）——
+       人类已定表单粒度，不是「日期＋时长」也不是「起止两端」。原生
+       <dialog>，与取消确认弹层同构（Escape/backdrop 天然等价「取消」）。 -->
+  <dialog id="backfill-dialog" class="confirm-dialog backfill-dialog">
+    <h2 class="backfill-title">补登一段时间</h2>
+    <p class="backfill-hint">完成了但没计时？补一条真实记录。与当前是否在计时无关。</p>
+    <label class="backfill-label" for="backfill-task-select">任务</label>
+    <select class="field" id="backfill-task-select">
+      <option value="">选择任务…</option>
+    </select>
+    <label class="backfill-label" for="backfill-date">日期</label>
+    <input class="field" type="date" id="backfill-date">
+    <label class="backfill-label" for="backfill-time">开始时刻</label>
+    <input class="field" type="time" id="backfill-time">
+    <label class="backfill-label" for="backfill-minutes">时长（分钟）</label>
+    <input class="field" type="number" id="backfill-minutes" min="1" step="1" placeholder="例如 90" inputmode="numeric">
+    <p class="backfill-message" id="backfill-message" role="alert" hidden></p>
+    <div class="row">
+      <button type="button" class="btn btn-ghost" id="backfill-cancel-btn">取消</button>
+      <button type="button" class="btn btn-fact" id="backfill-submit-btn">补登</button>
+    </div>
+  </dialog>
+
+  <!-- 拆文件是因为合并后单文件冲到 585 行，超了单文件 500 行上限；
+       三者共享全局作用域（纯 <script src> 顺序加载，不引入模块系统，保持
+       R9 零构建），跨文件调用一律显式挂 window.*，分工见各自的头注释。
+       加载顺序不可颠倒：ring-controls.js 先（ring-instrument.js 的
+       renderIdleCenter 要用 window.onStartClicked，运行态同步选择器要用
+       window.populateTaskOptions）；ring-countdown.js 最后（2026-08-09
+       新增——依赖 ring-controls.js 的 window.startTimer/stopTimer 与
+       ring-instrument.js 的 window.ringCurrentState，两者必须先执行到
+       挂名字那一行）。ring-backfill.js（2026-08-19）放最后——只依赖
+       ring-controls.js 挂的 window.postCore，与倒计时模块互不相关，顺序
+       只要晚于 ring-controls.js 即可。 -->
+  <script src="ring-controls.js"></script>
+  <script src="ring-instrument.js"></script>
+  <script src="ring-countdown.js"></script>
+  <script src="ring-backfill.js"></script>
+  <script src="ring-rename.js"></script>
+  <script src="ring-pause.js"></script>
+</body>
+</html>

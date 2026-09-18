@@ -1,0 +1,34 @@
+# auth.gate.v1 占位实现 · 运行清单
+#
+# 安装器（tools/install.py add）读这份清单决定怎么把占位件跑起来。
+# 契约本体见 ../contract.md；这里只讲「怎么跑」，不讲「行为规范」。
+#
+# 为什么是挂载源码而不是 build 镜像：占位件的全部意义是"改一行就生效"。
+# 一旦它需要构建步骤，就失去了当占位件的资格。
+
+service:
+  name: auth
+  image: python:3.12-slim
+  command: python /app/auth_stub.py
+  port: 8010
+  healthcheck: /api/auth/health
+  env:
+    # 必填，**故意没有默认值**。一道没有口令的门等于没有门；
+    # 给了默认值就一定会有人原样部署上公网。缺它时 stub 直接拒绝启动。
+    AUTH_PASSWORD: ${HONEYCOMB_PASSWORD:?必填：给登录门设一个真正的口令，无默认值}
+    # 容器内要监听 0.0.0.0 才能被 nginx 从同网络访问；
+    # 宿主端口只有 web 映射，所以这里不构成暴露面。
+    AUTH_BIND: 0.0.0.0:8010
+    # 默认 true。本机 HTTP 调试才设 false —— 见 .env.example 的说明。
+    AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
+    # 不设则每次启动随机生成：重启即所有会话失效。单机自用可接受，
+    # 多实例或不想被重启踢下线就显式给一个。
+    AUTH_SECRET: ${AUTH_SECRET:-}
+
+routes:
+  # 登录/登出/健康检查本身不设门 —— 给它设门就锁死了唯一的入口。
+  # 注意 nginx 那条 location /api/auth/ 由安装器在「登录门」段统一生成，
+  # 这里声明出来是为了让 installed.json 里的路由表完整。
+  - prefix: /api/auth/
+    upstream: /api/auth/
+    gated: false
