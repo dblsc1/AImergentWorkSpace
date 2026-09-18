@@ -2,12 +2,12 @@
 //
 // **不新写一套写入逻辑**：全部走 data.js（window.NexusTableData）已有的函数，
 // 也就是 nexus-core 的统一 CRUD 入口 `/api/core/planner/{type}`（契约 planner.crud.v1，
-// index.html 的 crud.js / gtd-crud.js 用的是同一批函数）。本文件只做
+// index.html 的 crud.js 用的是同一批函数）。本文件只做
 // 「哪个按钮 → 调哪个已有函数 → 写完刷新」的编排，一个新的请求面都不开。
 //
 // 为什么不直接复用 crud.js 本身：那个文件是 index.html 三个 <dialog> 的状态机，
 // 与那一页的 DOM 死死绑在一起（打开/填充/关闭 #zoneDialog 等）。蜂巢是另一页、
-// 另一套 DOM，能复用的是**写路径**，不是那套弹窗编排——同 backfill.js 当初
+// 另一套 DOM，能复用的是**写路径**，不是那套弹窗编排——沿用
 // 「自己挂一个独立 click 监听、不改 crud.js 的事件委托」的既有判断。
 //
 // 事件委托挂在 #hive 上，只认 data-hex-action，与 hex-app.js 的展开/收起点击

@@ -1,6 +1,6 @@
 // table · 蜂巢行动分区 · 纯逻辑层（无 DOM 依赖，2026-09-07）
 //
-// 定位与 rails.js / gtd-data.js / ai-plan-data.js 同一份纪律：逻辑与 DOM 分家，
+// 定位与 rails.js / gtd-data.js 同一份纪律：逻辑与 DOM 分家，
 // 逻辑层可在 Node 里 require() 直接单测，不需要浏览器/无头环境。
 // DOM 侧是 hex-app.js（渲染 + FLIP 动效）与 hex-crud.js（编辑目录）。
 //
@@ -26,7 +26,7 @@
   if (typeof module === "object" && module.exports) {
     module.exports = factory(require("./hex-audit.js"));
   } else {
-    // 浏览器里 hex-audit.js 必须排在本文件**前面**（index.html / hex.html 已经这么排）。
+    // 浏览器里 hex-audit.js 必须排在本文件**前面**（index.html 已经这么排）。
     root.NexusTableHexData = factory(root.NexusTableHexAudit);
   }
 })(typeof self !== "undefined" ? self : this, function (A) {

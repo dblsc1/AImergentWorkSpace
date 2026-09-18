@@ -272,7 +272,7 @@ button { cursor: pointer; font: inherit; }
   border: 1px solid var(--line); background: var(--panel); color: var(--fact);
 }
 .task-go:hover { border-color: var(--fact); background: var(--fact-soft); }
-/* 补登按钮（2026-08-19，backfill.js）：文字按钮，不用图标——与播放钮/编辑钮
+/* 补登按钮（2026-08-19）：文字按钮，不用图标——与播放钮/编辑钮
    区分开，避免用户把「补登」误认成「开始计时」。 */
 .task-backfill {
   flex: none;
@@ -384,7 +384,7 @@ dialog::backdrop { background: color-mix(in srgb, var(--ink) 45%, transparent); 
 }
 .dialog-error[hidden] { display: none; }
 
-/* 补登结果回显（2026-08-19，backfill.js）：成功/重复都落这里，颜色用 --fact
+/* 补登结果回显（2026-08-19）：成功/重复都落这里，颜色用 --fact
    （与 .dialog-error 的 --danger 区分开——重复补登不是错误，是提示）。 */
 .backfill-result {
   margin: var(--sp-1) 0 0;

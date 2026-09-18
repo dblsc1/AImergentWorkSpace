@@ -1,12 +1,12 @@
 /* ── [hidden] 兜底：必须放在最前，且必须 !important ────────────────
- * 与 style.css / gtd.css / tokens.css 顶部同一条规则同一份注释——四个文件互不
- * @import，各自都要有这一行（check_hidden_guard.sh 逐个 CSS 文件扫）。
+ * 与 style.css / tokens.css 顶部同一条规则同一份注释——各文件互不
+ * @import，所以每个文件都要有这一行（门禁脚本逐个 CSS 文件扫）。
  * `hidden` 是 HTML 属性，浏览器默认样式给它 display:none——但那是**默认样式**，
  * 任何一条带 display: 的类选择器都能盖过它（层叠来源优先级，不是特异性问题）。
  * 别删，也别改成不带 !important 的版本。 */
 [hidden] { display: none !important; }
 
-/* table · 蜂巢行动分区（index.html 的行动分区版位 + hex.html 裸壳）。
+/* table · 蜂巢行动分区（index.html 的行动分区版位）。
  * 颜色一律 var(--…) 或 color-mix(… var(--zone-color) …)，零裸 hex（A2）；
  * 分区色由 hex-data.js 计算后写进 inline `--zone-color`，深浅主题的兑色靠
  * color-mix 到 var(--panel)，本文件不判主题。 */

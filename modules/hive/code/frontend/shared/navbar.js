@@ -120,8 +120,8 @@
   });
 
   /* ── 组装 DOM ──────────────────────────────────────────────────
-   * 全程不使用 [hidden] 属性，显隐一律走 class。gantt 仓有一条遍历全部 [hidden]
-   * 元素的回归断言，注入带 hidden 的新 DOM 会把它打乱，而我们无权改别人仓里的测试。 */
+   * 全程不使用 [hidden] 属性，显隐一律走 class。别处有遍历全部 [hidden]
+   * 元素的回归断言，注入带 hidden 的新 DOM 会把它打乱。 */
   var nav = el('nav', 'ckpt-nav');
   nav.setAttribute('aria-label', '驾驶舱导航');
   nav.setAttribute('data-ckpt-nav', '');

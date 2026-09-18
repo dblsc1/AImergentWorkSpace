@@ -72,7 +72,7 @@
 
   // ISO 时间戳 → "YYYY-MM-DD HH:MM"。offsetMinutes 东正西负（UTC+8 传 480）；
   // 不传就用运行环境的真实本地偏移。显式传入是为了单测不依赖跑测机器的时区
-  // （同 backfill-data.js::buildStartAtIso 既有先例）。
+  // （沿用既有先例）。
   function formatStamp(iso, offsetMinutes) {
     var ms = Date.parse(iso || "");
     if (isNaN(ms)) return "";

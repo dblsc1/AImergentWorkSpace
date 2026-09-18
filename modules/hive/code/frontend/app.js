@@ -217,8 +217,8 @@
 
   // crud.js 通过这个小接口接入：refresh() 供写操作成功后调用（C2），
   // onTreeChange() 订阅最新 tree（立即补发一次当前值，晚注册也不丢）。
-  // rerender()（gtd-v1 波2-B 新增）：不重新拉网络，只用当前已有的 state 重画一次——
-  // 供 gtd-app.js 在 lastWriter 角标缓存刷新后触发一次纯本地重渲染（同 loadGantt
+  // rerender()：不重新拉网络，只用当前已有的 state 重画一次——
+  // 供调用方在本地缓存刷新后触发一次纯本地重渲染（同 loadGantt
   // 拿到数据后调 render() 补一次渲染同一个模式，只是搬到跨文件接口上）。
   window.NexusTableApp = {
     refresh: load,

@@ -1,13 +1,11 @@
 // table · 蜂巢行动分区 · DOM 渲染 + FLIP 动效（2026-09-07）
 //
-// 与 hex-data.js（纯逻辑）分层，同 app.js/rails.js、gtd-app.js/gtd-data.js、
-// backfill.js/backfill-data.js 的既有纪律：这个文件碰 DOM，所以不进单测；
+// 与 hex-data.js（纯逻辑）分层，同 app.js/rails.js 的既有纪律：这个文件碰 DOM，所以不进单测；
 // 一切可被单测钉死的判断都已经搬到 hex-data.js / hex-ring.js 去了。
 //
 // 落点（2026-09-07 人类改判）：**直接取代 index.html 的 #zoneGrid 行动分区**。
-// 上一轮为了不碰生产界面先做成了独立页 hex.html；人类看过实物后判「蜂巢行动分区
-// 直接放到行动分区原位取代行动分区」。hex.html 保留成同一套脚本的裸壳（调试用），
-// 两个落点共用 #hive 这一个容器 id，脚本不认页面、只认容器。
+// 上一轮先做成独立调试页，后来直接放进行动分区原位取代它；调试页保留成同一套
+// 脚本的裸壳。两个落点共用 #hive 这一个容器 id，**脚本不认页面、只认容器**。
 //
 // 60fps 是怎么保证的（硬指标，不是口号）：
 //   · 所有格子 position:absolute + left/top 恒为 0，位置**只由 transform 决定**；
@@ -754,7 +752,7 @@
       if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); window.location.href = RING_HREF; }
     });
     window.addEventListener("resize", function () { clearHover(); });
-    // hex.html 才有刷新按钮；嵌进 index.html 时没有，缺了不算错。
+    // 刷新按钮是可选的：嵌进 index.html 时没有，缺了不算错。
     var refreshBtn = $("#hexRefresh");
     if (refreshBtn) refreshBtn.addEventListener("click", function () { refresh(); });
 
@@ -866,7 +864,7 @@
     // 人类 2026-09-08：「新建分区后不会自动刷新出现新建的。」
     // ⚠️ 第一次回调是**补发当前值**（订阅即发），boot 自己马上要拉一次，
     // 不跳过就会连着打两次 views/tree。
-    // hex.html 是独立页，没有 app.js，所以这段必须判空。
+    // 独立调试页没有 app.js，所以这段必须判空。
     var A = window.NexusTableApp;
     if (A && A.onTreeChange) {
       var primed = false;
