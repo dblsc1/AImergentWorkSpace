@@ -1,4 +1,4 @@
-// table · CRUD 弹窗与表单编排（对接 nexus-core.planner.crud.v1）
+// hive · CRUD 弹窗与表单编排（对接 nexus-core.planner.crud.v1）
 //
 // 只做交互编排：打开/关闭三个 <dialog>、填充下拉框、提交时按 C6 拆分成
 // 「只改一个字段」的 PATCH、原样展示后端错误（C3/C4）、成功后调用 app.js
@@ -215,7 +215,7 @@
   // dependsOn 键"（D.hasScheduleFields），不是猜、不是查配置——今天(2026-08-08)
   // nexus-core 还没实现这两个字段（读源码 planner/schemas.py 的 TaskUpdate
   // 确认，extra="forbid"），键不存在，控件整块隐藏，页面其余功能不受影响；
-  // 后端一旦上线，下次打开弹窗就自动显示，table 这边不需要再改代码。
+  // 后端一旦上线，下次打开弹窗就自动显示，hive 这边不需要再改代码。
   function fillDependsSelect(select, task) {
     var others = D.listOtherTasks(currentTree, task.id);
     var selected = (task.dependsOn || []);

@@ -1,4 +1,4 @@
-// table · GTD 数据层（纯逻辑，无 DOM 依赖，gtd-v1 波2-B）
+// hive · GTD 数据层（纯逻辑，无 DOM 依赖，gtd-v1 波2-B）
 //
 // 三块职责，全部 nexus-only、不依赖 ai-planner（硬约束）：
 //   1. 快速捕捉（F-INBOX-2）：只填标题建 task 到 well-known `p_inbox`。

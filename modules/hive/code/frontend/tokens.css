@@ -8,7 +8,7 @@
  * 别删，也别改成不带 !important 的版本。 */
 [hidden] { display: none !important; }
 
-/* table · design tokens 兜底块（cockpit-v1）
+/* hive · design tokens 兜底块（cockpit-v1）
  *
  * 唯一事实源：contracts/design-tokens-v1.md §3（本文件不复述数字，跟着抄）。
  * 生产环境由 nginx 注入 /__cockpit/tokens.css 并层叠覆盖本文件（F-TOKENS-2/3）；
@@ -22,7 +22,7 @@
  * （契约「变更流程」）。哨兵区块之外（本文件其余部分）不豁免裸 hex。
  *
  * data-theme / data-accent 由 nginx 注入的 boot 脚本在 </head> 前设到 <html> 上
- * （F-THEME-6，table 不必自带 boot JS——那只是未注入页面 login 的活）；
+ * （F-THEME-6，hive 不必自带 boot JS——那只是未注入页面 login 的活）；
  * 本文件不设置任何属性，只提供选择器命中后的取值。
  */
 

@@ -1,4 +1,4 @@
-/* table/frontend · hex-zone-plan.css —— 分区规划面板（hex-zone-plan.js，2026-09-12）。
+/* hive · hex-zone-plan.css —— 分区规划面板（hex-zone-plan.js，2026-09-12）。
  * 单独一个文件：hex.css 已经 950 行（上限 1000），面板是一块自成一体的界面，
  * 和蜂巢格子的层叠规则零交集，拆开不存在"顺序一错就静默失效"的风险。
  * 颜色一律 var(--…)（design-tokens-v1 A2）。 */

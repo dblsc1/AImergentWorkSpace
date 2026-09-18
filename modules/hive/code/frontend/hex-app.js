@@ -1,4 +1,4 @@
-// table · 蜂巢行动分区 · DOM 渲染 + FLIP 动效（2026-09-07）
+// hive · 蜂巢行动分区 · DOM 渲染 + FLIP 动效（2026-09-07）
 //
 // 与 hex-data.js（纯逻辑）分层，同 app.js/rails.js 的既有纪律：这个文件碰 DOM，所以不进单测；
 // 一切可被单测钉死的判断都已经搬到 hex-data.js / hex-ring.js 去了。

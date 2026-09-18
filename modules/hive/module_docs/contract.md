@@ -17,6 +17,12 @@ provides:
       分区排序的本机记忆，键 `nexus.hex.zoneOrder.v1`（localStorage，JSON 数组，
       元素是 zoneId）。**仅本机偏好，不是事实**——后端不知道它的存在，清掉只会
       回到默认顺序。别的模块要读可以读，但不得依赖它存在。
+  - id: hive.tree-cache.v1
+    summary: >
+      `views/tree` 的本机缓存，键 `table-tree-cache-v1`（localStorage）。**纯离线兜底**：
+      拉不到后端时先把上一次的树画出来，同时挂离线状态条。清掉只会让离线时没东西可画。
+      键名是 `table-` 前缀不是 `hive-`——模块改名时按「不改运行时标识符」的裁决留下的，
+      改它会让已有用户的缓存失效，别顺手统一。
 
 consumes:
   - id: contracts.design-tokens.v1
