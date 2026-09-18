@@ -226,7 +226,7 @@ button { cursor: pointer; font: inherit; }
 .project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-body); font-weight: 700; }
 .project-chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1); margin-top: 4px; }
 
-/* chip：与 mock.css §4 同款（计划期日期范围 / 已结束 / 未定计划） */
+/* chip：与设计稿 §4 同款（计划期日期范围 / 已结束 / 未定计划） */
 .chip {
   font-size: 12px; padding: 1px 8px; border-radius: 999px;
   border: 1px solid var(--line); color: var(--ink-2); white-space: nowrap;
@@ -234,7 +234,7 @@ button { cursor: pointer; font: inherit; }
 .chip.plan { color: var(--plan); border-color: currentColor; }
 .chip.warn { color: var(--warn); border-color: currentColor; }
 
-/* 双轨（F-TABLE-1，全站签名元素，与 mock.css §4 同结构）*/
+/* 双轨（F-TABLE-1，全站签名元素，与设计稿 §4 同结构）*/
 .rails { display: grid; gap: 6px; margin-top: var(--sp-3); }
 .rail { position: relative; height: 8px; border-radius: 4px; background: var(--panel-2); overflow: hidden; }
 .rail .fill { position: absolute; inset: 0 auto 0 0; border-radius: 4px; }
