@@ -1,0 +1,22 @@
+# gitleaks 配置。默认规则全开，只加**窄**豁免。
+#
+# 为什么不"跳过某个文件"：那会让真密钥从同一个缺口溜走。这里只豁免
+# 一种确切形状的字面值 —— 前端 localStorage 的键名 `nexus.hex.<词>.v1`。
+# 它被 generic-api-key 规则打中，因为那条规则看的是 `KEY = "..."` 这个赋值形状，
+# 不看右边到底是密钥还是键名。
+#
+# 实证：2026-09-17 扫 402 个提交，三处命中全是这个形状
+#   KEY = "nexus.hex.zoneOrder.v1" / zoneOffsets.v1 / labelOffsets.v1
+#
+# 真密钥不会长成 `nexus.hex.<小写词>.v1`，所以这条豁免不构成缺口。
+# 注意：占位符（如 "password":"changeme"）不需要加进来 —— generic-api-key
+# 还过熵阈，低熵字面值默认就放过（2026-09-17 实跑验证）。
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "前端 localStorage 键名，不是密钥"
+regexes = [
+  '''nexus\.hex\.[A-Za-z]+\.v1''',
+]

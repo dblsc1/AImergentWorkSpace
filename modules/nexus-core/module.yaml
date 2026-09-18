@@ -1,0 +1,34 @@
+# nexus-core · 安装清单
+#
+# 契约（module_docs/contract.md）说的是「对外行为」，本文件说的是「怎么把它跑起来」。
+# 两者分开是有意的：契约是消费方要读的，本文件只有安装器读。
+#
+# install.sh 读 contract.md 的 provides/consumes 解析依赖，读本文件生成 compose 与路由。
+
+name: nexus-core
+summary: 事件溯源的时间与任务内核。分区→项目→任务，计时流水，投影读端。
+kind: backend          # backend | static | assembly
+
+service:
+  # 构建上下文相对本文件所在目录。**不复制代码** —— 组装层直接指过来。
+  build: code/backend
+  image: nexus-core:local
+  port: 8000
+  healthcheck: /api/core/health
+  env:
+    NEXUS_MONGO_URI: mongodb://mongo:27017
+    NEXUS_DB_NAME: ${DB_NAME:-honeycomb}
+    NEXUS_TZ: ${TZ:-Asia/Shanghai}
+  # 需要的外部依赖（安装器据此决定要不要起 mongo）
+  requires:
+    - mongo
+
+routes:
+  # 反代前缀 → 容器内路径。安装器按此生成 nginx location。
+  # gated=true 的走 auth_request（若装了提供 auth.gate.v1 的模块）
+  - prefix: /api/core/
+    upstream: /api/core/
+    gated: true
+
+# 无前端。nexus-core 是纯 API。
+static: []

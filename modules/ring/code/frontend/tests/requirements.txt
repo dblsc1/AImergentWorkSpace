@@ -1,0 +1,4 @@
+# ring/frontend 自核套件（U1–U5）。只要浏览器，不要 requests——
+# 本套件不打真网关，所有接口都在浏览器侧 page.route() 桩掉。
+pytest==8.3.5
+playwright==1.49.1
