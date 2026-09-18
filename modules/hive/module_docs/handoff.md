@@ -18,7 +18,8 @@
 没有后端时 fetch 会失败、页面显示连接失败——**这是预期**，走的是错误分支，不是坏了。
 生产由组装层挂路由并要求登录（见 `deploy/`）。
 
-纯逻辑层可以在 Node 里直接 `require()` 单测，不需要浏览器、不需要无头环境：
+纯逻辑层可以在 Node 里直接 `require()` 单测，不需要浏览器、不需要无头环境
+（下面这段在模块根 `modules/hive/` 下跑）：
 
 ```js
 const H = require("./code/frontend/hex-data.js");

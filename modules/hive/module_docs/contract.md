@@ -35,7 +35,7 @@ consumes:
       改中心格圆环之前先读那份规范。
 
   - id: nexus-core.views.tree.v1
-    contract: ../nexus-core/module_docs/contract.md
+    contract: ../../nexus-core/module_docs/contract.md
     purpose: >
       蜂巢的主数据源：分区 / 项目 / 任务三级结构与 id、name、progress、flags。
       **progress / progressSource 直接渲染，不在前端重算。**
@@ -43,26 +43,26 @@ consumes:
       flags 只读不解释，本模块不对 flags 的值做任何 if 分支。
 
   - id: nexus-core.views.current.v1
-    contract: ../nexus-core/module_docs/contract.md
+    contract: ../../nexus-core/module_docs/contract.md
     purpose: 中心格的计时状态：是否在跑、跑的是哪个项目/任务、会话开始时刻。
 
   - id: nexus-core.views.gantt.v1
-    contract: ../nexus-core/module_docs/contract.md
+    contract: ../../nexus-core/module_docs/contract.md
     purpose: >
       项目卡双轨（计划期已走比例 + 有事实天数比例）。这是既有只读投影，
       本模块只是多读一条已经存在的端点，不要求后端加任何东西。
       「今天」用服务端返回的 today，不用本地时钟——客户端时区/时钟不准会让红线飘。
 
   - id: nexus-core.views.next-actions.v1
-    contract: ../nexus-core/module_docs/contract.md
+    contract: ../../nexus-core/module_docs/contract.md
     purpose: 六边形卡片里的「下一步行动」。前端只负责忠实渲染，不自己排序、不自己筛。
 
   - id: nexus-core.views.review.v1
-    contract: ../nexus-core/module_docs/contract.md
+    contract: ../../nexus-core/module_docs/contract.md
     purpose: 回顾面板的数据源，只读。
 
   - id: nexus-core.events.read.v1
-    contract: ../nexus-core/module_docs/contract.md
+    contract: ../../nexus-core/module_docs/contract.md
     purpose: >
       GET /api/core/events，只读展示 `session.completed` 事实（计时档案、最近完成、热度）。
       事实里只有 opaque id（subject.zone/project/task），名字由本模块现查 views/tree
@@ -70,7 +70,7 @@ consumes:
       项目和任务两类 id 都可能被删，按同一套规则兜底，不要只补任务那一种情况。
 
   - id: nexus-core.planner.crud.v1
-    contract: ../nexus-core/module_docs/contract.md
+    contract: ../../nexus-core/module_docs/contract.md
     purpose: >
       分区 / 项目 / 任务的增删改，统一入口 `/api/core/planner/{zones|projects|tasks}`。
       **`views/tree`、`views/current` 不在 planner 命名空间下**，路径不同，
@@ -79,7 +79,7 @@ consumes:
       写成功后由调用方重新 fetchTree 刷新，本模块不做本地乐观更新。
 
   - id: nexus-core.timer.v1
-    contract: ../nexus-core/module_docs/contract.md
+    contract: ../../nexus-core/module_docs/contract.md
     purpose: >
       中心格的三个动作：完成 = POST /api/core/timer/stop，取消不记录 =
       POST /api/core/timer/cancel，继续 = POST /api/core/timer/start {taskId}。

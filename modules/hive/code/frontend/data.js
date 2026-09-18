@@ -7,7 +7,7 @@
 // 2026-07-31 定）；
 // 计时档案的只读展示（对接 nexus-core.events.read.v1，contract.md v0.4）。
 //
-// 契约依赖：../nexus-core/module_docs/contract.md 的 TreeOut / planner CRUD / 档案读端三节。
+// 契约依赖：../../../nexus-core/module_docs/contract.md 的 TreeOut / planner CRUD / 档案读端三节。
 // 关键约束（不要在这个文件里破坏）：
 //   - progress / progressSource 直接渲染，不在前端重算（契约原文见 R4）
 //   - 项目级颜色前端按 zoneId 从 zone.color 派生，契约故意不提供 project.color（R5）
@@ -255,7 +255,7 @@
   // 两个函数本身不做检测，检测在 hasScheduleFields()，调用方（crud.js）
   // 负责先查再发。今天（2026-08-08）nexus-core 的 TaskUpdate 还没有
   // plan/dependsOn 字段且 model_config 是 extra="forbid"（读源码确认，见
-  // ../../nexus-core/code/backend/app/modules/planner/schemas.py），发了会被
+  // ../../../nexus-core/code/backend/app/modules/planner/schemas.py），发了会被
   // pydantic 拒成 422，detail 是数组不是人话字符串——绕开这个坑的办法只有
   // "不发"，不是"发了再兜底解析 422 形状"。
   function updateTaskPlan(id, plan, options) {

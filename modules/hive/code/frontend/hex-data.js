@@ -17,7 +17,7 @@
 //   4. 待办取数：next-actions 已按分区分好组排好序，本文件只做 projectId 归并，
 //      **不重新分类、不重新排序**（同 gtd-data.js 既有口径）。
 //
-// 契约依赖（只读，不改后端）：../../nexus-core/module_docs/contract.md 的
+// 契约依赖（只读，不改后端）：../../../nexus-core/module_docs/contract.md 的
 // TreeOut / NextActionsOut / AuditOut 三节。
 //
 // A2（禁裸 hex）：本文件不出现任何颜色字面量——默认灰用 RGB 三元组表达（那是
