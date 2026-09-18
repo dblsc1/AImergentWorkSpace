@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- theme-color 是 HTML meta 属性，不是 CSS/JS，天生没法写 var(--…)——
+       A2（禁裸 hex）字面写的是"模块 CSS/JS 里颜色"，本行不在其管辖范围；
+       取值照 tokens.css 暗态 --bg 抄一份静态近似值，双主题下都不会太离谱。 -->
+  <meta name="theme-color" content="#0D1220">
+  <title>HoneyComb TimeManagement</title>
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="hex.css">
+  <link rel="stylesheet" href="hex-center-ctl.css">
+  <link rel="stylesheet" href="hex-zone-plan.css">
+  <link rel="stylesheet" href="review.css">
+  <link rel="stylesheet" href="shared/navbar.css">
+  <script defer src="shared/navbar.js"></script>
+  <link rel="icon" href="shared/favicon.svg">
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"></div>
+        <div>
+          <h1 class="brand-title">HoneyComb <span>//</span> TimeManagement</h1>
+          <div class="eyebrow topbar-eyebrow">TIME · HONEYCOMB · V0.1</div>
+        </div>
+      </div>
+      <div class="top-actions">
+        <div class="system-time"><b id="clock">--:--:--</b><span id="today">----</span></div>
+        
+        <button class="btn" id="refreshTree">刷新</button>
+        <button class="btn" id="exportData">导出数据</button>
+        <button class="btn primary" id="newZone">＋ 新建分区</button>
+      </div>
+    </header>
+
+    <div class="status-banner" id="statusBanner" role="status" aria-live="polite"></div>
+
+    
+
+    
+
+    <!-- 两个视图：蜂巢（主）+ 每周回顾。回顾读 GET /api/core/views/review，
+         点一条就切回蜂巢、打开那个对象平常就有的编辑弹窗（review.js）。 -->
+    <nav class="view-tabs" aria-label="视图切换">
+      <button type="button" class="tab-btn active" data-tab="board">蜂巢</button>
+      <button type="button" class="tab-btn" data-tab="review">回顾</button>
+    </nav>
+
+    <div data-tab-panel="board">
+    <!-- 行动分区 = 蜂巢。渲染在 hex-app.js，容器只认 #hive 这个 id。
+         2026-09-14：旧的「经典列表」(#zoneGrid) 和它的开关整个删掉，先把列表独有
+         的写路径搬进了分区规划面板（短按分区名打开，hex-zone-plan.js）：分区改名/
+         删分区、项目改名/换区/删项目。标题也去掉 —— 这一屏只有蜂巢一件东西。 -->
+    <section class="board-shell">
+      <header class="board-head">
+        <div class="hex-status" id="hexStatus"></div>
+      </header>
+      <div class="hive-wrap" id="hiveWrap">
+        <div class="hive" id="hive"></div>
+      </div>
+    </section>
+
+    <section class="archive-shell" aria-label="计时档案">
+      <header class="board-head">
+        <div class="board-title">计时档案 <small>TIMER ARCHIVE</small></div>
+      </header>
+      <ul class="archive-list" id="archiveList">
+        <li class="archive-empty">加载中…</li>
+      </ul>
+      <button type="button" class="btn archive-more" id="archiveLoadMore" hidden>加载更多</button>
+    </section>
+
+    <!-- 导出数据（只读）：点顶栏「导出数据」才拉取/展开，默认 hidden 不占地方。
+         GET /api/core/export（nexus-core.views.export.v1）404/未上线时走 exportStatus
+         文案分支，不崩、不报 console 错误。 -->
+    <section class="export-shell" id="exportShell" hidden aria-label="导出数据">
+      <header class="board-head">
+        <div class="board-title">导出数据 <small>DATA EXPORT</small></div>
+        <button type="button" class="btn" id="exportDownload" hidden>下载 JSON</button>
+      </header>
+      <p class="export-status" id="exportStatus"></p>
+      <pre class="export-pre" id="exportPre" hidden></pre>
+    </section>
+
+    
+    </div><!-- /data-tab-panel="board" -->
+
+    <section class="board-shell" data-tab-panel="review" hidden aria-label="每周回顾">
+      <header class="board-head">
+        <div class="board-title">每周回顾 <small>WEEKLY REVIEW</small></div>
+      </header>
+      <div id="reviewBody"><p class="rv-loading">加载中…</p></div>
+    </section>
+
+  </main>
+
+  <!-- F-INBOX-2：全局快速捕捉弹窗，只有一个标题输入框，不要求选项目/分区。 -->
+  
+
+  <dialog id="zoneDialog">
+    <form class="modal" id="zoneForm">
+      <div class="modal-head">
+        <h2 id="zoneModalTitle">新建分区 <span>SECTOR MATRIX</span></h2>
+        <button class="close" type="button" data-close-dialog aria-label="关闭">×</button>
+      </div>
+      <div class="form-grid">
+        <div class="field full">
+          <label for="zoneNameInput">分区名称 / NAME</label>
+          <input id="zoneNameInput" maxlength="30" placeholder="例如：生活区" required autocomplete="off">
+        </div>
+      </div>
+      <p class="dialog-error" id="zoneDialogError" hidden></p>
+      <div class="modal-actions">
+        <button class="btn danger" type="button" id="deleteZoneBtn" hidden>删除分区</button>
+        <button class="btn" type="button" data-close-dialog>取消</button>
+        <button class="btn primary" type="submit">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="projectDialog">
+    <form class="modal" id="projectForm">
+      <div class="modal-head">
+        <h2 id="projectModalTitle">新建项目 <span>PROJECT CONFIG</span></h2>
+        <button class="close" type="button" data-close-dialog aria-label="关闭">×</button>
+      </div>
+      <div class="form-grid">
+        <div class="field full">
+          <label for="projectNameInput">项目名称 / NAME</label>
+          <input id="projectNameInput" maxlength="40" placeholder="例如：收拾屋子" required autocomplete="off">
+        </div>
+        <div class="field full">
+          <label for="projectZoneSelect">所属分区 / SECTOR</label>
+          <select id="projectZoneSelect" required></select>
+        </div>
+        
+      </div>
+      <p class="dialog-error" id="projectDialogError" hidden></p>
+      <div class="modal-actions">
+        <button class="btn danger" type="button" id="deleteProjectBtn" hidden>删除项目</button>
+        <button class="btn" type="button" data-close-dialog>取消</button>
+        <button class="btn primary" type="submit">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="taskDialog">
+    <form class="modal" id="taskForm">
+      <div class="modal-head">
+        <h2 id="taskModalTitle">新建任务 <span>TASK NODE</span></h2>
+        <button class="close" type="button" data-close-dialog aria-label="关闭">×</button>
+      </div>
+      <div class="form-grid">
+        <div class="field full">
+          <label for="taskNameInput">任务名称 / NAME</label>
+          <input id="taskNameInput" maxlength="50" placeholder="输入一个可执行任务" required autocomplete="off">
+        </div>
+        <div class="field full">
+          <label for="taskProjectSelect">所属项目 / PROJECT</label>
+          <select id="taskProjectSelect" required></select>
+        </div>
+        
+      </div>
+      <!-- 排期 + 前置任务（F-TABLE-3）：只在编辑既有任务、且 feature-detect
+           判定后端已支持（GET 回来的任务对象含 dependsOn 键）时才显示——
+           crud.js openTaskDialog() 切换本区块的 hidden；后端还没支持这两个
+           字段（今天现状）时整块不出现，其余表单功能不受影响。 -->
+      <div class="form-grid" id="taskScheduleSection" hidden>
+        <div class="field full">
+          <label for="taskPlanStartInput">排期 / SCHEDULE（可留空）</label>
+          <div class="schedule-dates">
+            <input type="date" id="taskPlanStartInput" aria-label="计划开始日期">
+            <span class="arrow" aria-hidden="true">→</span>
+            <input type="date" id="taskPlanEndInput" aria-label="计划结束日期">
+          </div>
+          <p class="schedule-hint">开始和结束要么都填，要么都留空（留空 = 不设排期）。</p>
+        </div>
+        <div class="field full">
+          <label for="taskDependsSelect">前置任务 / DEPENDS ON（可多选，可不选）</label>
+          <select id="taskDependsSelect" multiple aria-describedby="taskDependsHint"></select>
+          <p class="schedule-hint" id="taskDependsHint">纯表达顺序关系，不自动排程，也不阻止开始计时。</p>
+        </div>
+      </div>
+      <p class="dialog-error" id="taskDialogError" hidden></p>
+      <div class="modal-actions">
+        <button class="btn danger" type="button" id="deleteTaskBtn" hidden>删除任务</button>
+        <button class="btn" type="button" data-close-dialog>取消</button>
+        <button class="btn primary" type="submit">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  
+
+  
+
+  <div class="toast" id="actionToast" role="status" aria-live="polite"></div>
+
+  
+  <script src="data.js"></script>
+  <!-- 待办卡片要的 next-actions 客户端（蜂巢格子里那三条就靠它） -->
+  <script src="gtd-data.js"></script>
+  <script src="rails.js"></script>
+  <script src="app.js"></script>
+  <script src="crud.js"></script>
+  <script src="review.js"></script>
+  <!-- 蜂巢行动分区，顺序不能换：hex-audit.js（审计流派生，hex-data.js 依赖它）/ hex-data.js / hex-ring.js 是纯逻辑；
+       hex-borders.js（界线 SVG，只画不改状态）与 hex-timer.js（长按计时 + 聚焦灰度）
+       在加载时就要拿到前两者；hex-app.js 建 DOM 并在 boot() 里给 hex-timer 注上下文；
+       hex-crud.js 用 hex-app.js 暴露的 window.NexusTableHexApp。 -->
+  <script src="hex-audit.js"></script>
+  <script src="hex-data.js"></script>
+  <script src="hex-ring.js"></script>
+  <script src="hex-borders.js"></script>
+  <script src="hex-layout.js"></script>
+  <script src="hex-cards.js"></script>
+  <script src="hex-genie.js"></script>
+  <script src="hex-timer.js"></script>
+  <script src="hex-center-ctl.js"></script>
+  <script src="hex-zone-edit.js"></script>
+  <script src="hex-zone-plan.js"></script>
+  <script src="hex-sprout.js"></script>
+  <script src="hex-spark.js"></script>
+  <script src="hex-app.js"></script>
+  <script src="hex-crud.js"></script>
+</body>
+</html>

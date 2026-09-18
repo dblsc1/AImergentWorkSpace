@@ -1,0 +1,55 @@
+/* ── [hidden] 兜底：必须放在最前，且必须 !important ────────────────
+ * 每个 CSS 文件各带一份，不指望"反正 style.css 已经有了"——按加载顺序/
+ * 单独引用的场景那份判断仍可能不生效。同 tokens.css / style.css 顶部。 */
+[hidden] { display: none !important; }
+
+/* HoneyComb · 回顾视图（v0.1 发布版）
+ *
+ * 从开发版样式里只取回顾这一块需要的规则：tab 导航 + 清单行 + 徽标。
+ * 收件箱 / 待办区那两套样式不带过来 —— 发布版没有那两个视图。
+ * 颜色一律 var(--…)，零裸 hex。 */
+
+.view-tabs {
+  display: flex; gap: var(--sp-2); margin: var(--sp-3) 0;
+  border-bottom: 1px solid var(--line);
+}
+.tab-btn {
+  min-height: var(--tap);
+  padding: 0 var(--sp-4);
+  border: 0; border-bottom: 2px solid transparent;
+  color: var(--ink-2); background: none;
+  font-size: var(--fs-sub); font-weight: 600;
+  transition: color var(--t-fast), border-color var(--t-fast);
+}
+.tab-btn:hover { color: var(--ink); }
+.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.rv-loading, .rv-error, .rv-empty {
+  padding: var(--sp-4); color: var(--ink-2); font-size: var(--fs-sub);
+}
+.rv-error { color: var(--danger); }
+.rv-today { margin: 0; padding: var(--sp-3) var(--sp-4) 0; color: var(--ink-2); font-size: var(--fs-sub); }
+
+.rv-badge {
+  margin-left: 6px; padding: 1px 6px; border-radius: 999px;
+  border: 1px solid var(--line); font-size: 11px; white-space: nowrap;
+}
+.rv-badge.overdue { color: var(--warn); border-color: currentColor; }
+.rv-badge.today { color: var(--fact); border-color: currentColor; }
+
+.review-section { padding: var(--sp-3) var(--sp-4); }
+.review-section + .review-section { border-top: 1px solid var(--line-2); }
+.review-section h3 { margin: 0 0 var(--sp-2); font-size: var(--fs-h2); font-weight: 700; }
+.review-list { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--sp-1); }
+.review-row {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--sp-2);
+  min-height: var(--tap);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--line-2); border-radius: var(--r-1);
+  background: var(--panel-2);
+  cursor: pointer;
+  font-size: var(--fs-sub);
+}
+.review-row:hover { border-color: var(--accent); }
+.review-name { color: var(--ink); font-weight: 600; }
+.review-detail { color: var(--ink-2); font-size: 12px; }

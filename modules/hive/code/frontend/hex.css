@@ -1,0 +1,978 @@
+/* ── [hidden] 兜底：必须放在最前，且必须 !important ────────────────
+ * 与 style.css / tokens.css 顶部同一条规则同一份注释——各文件互不
+ * @import，所以每个文件都要有这一行（门禁脚本逐个 CSS 文件扫）。
+ * `hidden` 是 HTML 属性，浏览器默认样式给它 display:none——但那是**默认样式**，
+ * 任何一条带 display: 的类选择器都能盖过它（层叠来源优先级，不是特异性问题）。
+ * 别删，也别改成不带 !important 的版本。 */
+[hidden] { display: none !important; }
+
+/* table · 蜂巢行动分区（index.html 的行动分区版位）。
+ * 颜色一律 var(--…) 或 color-mix(… var(--zone-color) …)，零裸 hex（A2）；
+ * 分区色由 hex-data.js 计算后写进 inline `--zone-color`，深浅主题的兑色靠
+ * color-mix 到 var(--panel)，本文件不判主题。 */
+
+/* ── 分区色阶 · 临时兜底块（哨兵包裹，可整块删）────────────────────
+ * ⚠️ 这一块本来该在 contracts/design-tokens-v1.md + tokens.css 里。
+ * 2026-09-07 尚未把「分区色阶」加进那份契约，为了这一页现在就能看，
+ * 先在本文件放一份临时定义；hex-data.js 已经只产出 `var(--zone-N)` 变量名、
+ * 不产出任何色值，所以 **落地 tokens 之后把下面 zone-ramp 整块删掉即可，
+ * JS 一行都不用改**。删之前它是本页唯一的色源，别在别处再写第二份。
+ *
+ * 取值口径（2026-09-07 定：「直接按色环排列，降低饱和度提高可读性」）：
+ * 12 格色环均布（30° 一格），用 oklch 而不是 hsl —— OKLCH 是感知均匀空间，
+ * 转 30° 在哪个色带上看着都是转了 30°；HSL 在橙棕带里转 30° 几乎看不出变化，
+ * 低彩度还会把这个问题放大。彩度压在 0.06 上下 = 「降低饱和度」。 */
+/* zone-ramp:begin */
+:root, html[data-theme="light"] {
+  --zone-1:  oklch(0.74 0.058 258);
+  --zone-2:  oklch(0.74 0.058 288);
+  --zone-3:  oklch(0.74 0.058 318);
+  --zone-4:  oklch(0.74 0.058 348);
+  --zone-5:  oklch(0.74 0.058  18);
+  --zone-6:  oklch(0.74 0.058  48);
+  --zone-7:  oklch(0.74 0.058  78);
+  --zone-8:  oklch(0.74 0.058 108);
+  --zone-9:  oklch(0.74 0.058 138);
+  --zone-10: oklch(0.74 0.058 168);
+  --zone-11: oklch(0.74 0.058 198);
+  --zone-12: oklch(0.74 0.058 228);
+}
+html[data-theme="dark"] {
+  --zone-1:  oklch(0.62 0.072 258);
+  --zone-2:  oklch(0.62 0.072 288);
+  --zone-3:  oklch(0.62 0.072 318);
+  --zone-4:  oklch(0.62 0.072 348);
+  --zone-5:  oklch(0.62 0.072  18);
+  --zone-6:  oklch(0.62 0.072  48);
+  --zone-7:  oklch(0.62 0.072  78);
+  --zone-8:  oklch(0.62 0.072 108);
+  --zone-9:  oklch(0.62 0.072 138);
+  --zone-10: oklch(0.62 0.072 168);
+  --zone-11: oklch(0.62 0.072 198);
+  --zone-12: oklch(0.62 0.072 228);
+}
+/* zone-ramp:end */
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+}
+
+.hex-page { padding: var(--sp-4) var(--sp-5) var(--sp-6); }
+
+.hex-topbar {
+  display: flex; align-items: center; gap: var(--sp-3);
+  flex-wrap: wrap; margin-bottom: var(--sp-4);
+}
+.hex-topbar h1 { font-size: var(--fs-h2); margin: 0; letter-spacing: .02em; }
+.hex-eyebrow {
+  font-size: var(--fs-eyebrow); letter-spacing: .18em;
+  text-transform: uppercase; color: var(--ink-3);
+}
+.hex-spacer { flex: 1 1 auto; }
+.hex-btn {
+  min-height: 32px; padding: 0 var(--sp-3);
+  border: 1px solid var(--line); border-radius: var(--r-1);
+  background: var(--panel); color: var(--ink);
+  font: inherit; font-size: var(--fs-sub); cursor: pointer;
+}
+.hex-btn:hover { border-color: var(--accent); color: var(--accent); }
+.hex-btn[hidden] { display: none !important; }
+.hex-status { font-size: var(--fs-sub); color: var(--ink-2); min-height: 20px; }
+
+/* ── 蜂巢画布：所有格子绝对定位，位置只由 transform 决定 ──────────── */
+.hive-wrap { overflow: auto; padding: var(--sp-4) 0; display: flex; -webkit-overflow-scrolling: touch; }
+/* 推镜（人类 2026-09-08：「整体放大，注意力聚焦在那个分区和卡片」）。
+   缩放挂在这一层、占位留给 #hive —— transform 不影响布局，两件事一个元素做不了：
+   scale 挂在 #hive 上，.hive-wrap 的滚动区还是原尺寸，放大出去的部分永远滚不到。 */
+.hive-cam { position: relative; transform-origin: 0 0; overflow: visible; }
+/* will-change 只在真的要推镜时挂上（常驻 = 一直付合成成本）。 */
+.hive-wrap.is-zoomed .hive-cam { will-change: transform; }
+/* 展开时 .hive-wrap 变成**取景框**：高度由 JS 钉在未展开时的高度，
+   不跟着放大后的内容长高，否则"推近"就退化成"整页变长"。 */
+.hive-wrap.is-zoomed { overflow: hidden; }
+/* 居中用 margin:auto，**不用 justify-content:center** —— 后者在内容比容器宽时
+   会把溢出全甩到左边、而左边的溢出滚动条够不着（flex 的老坑）。平板横屏
+   蜂巢常常比视口宽，这一条是它能被手指划到的前提。 */
+.hive { position: relative; flex: 0 0 auto; margin: 0 auto; }
+
+.hex-cell {
+  position: absolute; left: 0; top: 0;
+  transform-origin: center center;
+  box-sizing: border-box;
+  /* 原色由 JS 写进 --zone-raw（内联自定义属性压过一切类规则，直接写
+     --zone-color 就没法再分级）。这里转一道手，下面的 .is-mate / .is-dimmed
+     才改得动，而原色始终留在 --zone-raw 里可以被引用。 */
+  --zone-color: var(--zone-raw, var(--line));
+  background: color-mix(in srgb, var(--zone-color) 88%, var(--line));
+  /* --hex-clip 由 hex-app.js 逐格算（朝向别的分区的边额外内缩，让出分界带的道）。
+     没设时退回标准正六边形。**必须走变量**：内联 clip-path 会压过下面
+     .is-expanded 那条卡片形状规则。 */
+  clip-path: var(--hex-clip, polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%));
+  cursor: pointer;
+  /* 触摸：manipulation 去掉 300ms 双击缩放延迟但保留单指平移（蜂巢要能划）。
+     长按是本模块的一等交互，所以连带把系统选中/长按菜单挡掉。 */
+  touch-action: manipulation;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  /* 一格的重绘不外溢到别人身上；21 个格子各自独立，浏览器不用为一格的变化
+     重算整层。 */
+  contain: layout paint style;
+  /* ⚠️ 这里**没有** will-change，也**没有** clip-path 过渡，都是故意删掉的
+     （2026-09-08 人类："视觉效果已经有点卡了"）：
+     · will-change: transform 挂在全部 21 个格子上 = 21 个常驻合成层，
+       内存和合成成本一直在付，而真正在动的每次只有几格。JS 在动画期间
+       临时挂、动完摘掉（applyLayout）。translate3d 本来也会促成提升。
+     · clip-path 是**百分比多边形**，尺寸变化时形状自动跟着缩放，根本不需要
+       过渡；挂着它等于让浏览器每帧去插值并重算裁剪路径 —— 那是逐帧重绘，
+       不是合成器能接的活。真正会变形的只有展开那一格（逐边内缩 → 标准六边形），
+       瞬切看不出来。 */
+}
+.hex-cell::before {
+  /* inset 必须是 0：格子中心在晶格上、GAP=0，同区两格是边贴边的。
+     ::before 每内嵌 1px，两格之间就露出 2px 的 .hex-cell 底色 —— 那正是人类说的
+     「没有分割的所有六边形中间仍有的分割线」。要粘起来，这一层就不能内嵌。
+     悬停/展开时才把它推回 2.5px，让放大的那一格有圈白边、从同色邻居里浮出来。 */
+  content: ""; position: absolute; inset: 0;
+  clip-path: var(--hex-clip, polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%));
+  /* --zone-mix：外浅内深（hex-data.js::zoneMix，JS 按格写入）；兜底 30% 是改之前的统一值 */
+  background: color-mix(in srgb, var(--zone-color) var(--zone-mix, 30%), var(--panel));
+  transition: background-color 200ms ease-out;
+}
+.hex-cell:hover::before { background: color-mix(in srgb, var(--zone-color) calc(var(--zone-mix, 30%) + 18%), var(--panel)); }
+
+.hex-inner {
+  position: relative; z-index: 1;
+  width: 100%; height: 100%;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  padding: 0 9%; box-sizing: border-box;
+  transform-origin: center center;
+  overflow: hidden;
+}
+.hex-title {
+  margin: 0; font-size: 12.5px; font-weight: 600;
+  line-height: 1.22; text-align: center; color: var(--ink);
+  word-break: break-word; overflow-wrap: break-word;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* 静置态只有标题 —— 待办行与详情块都默认不占位（人类：鼠标不在上面只有标题）。 */
+.hex-detail { display: none; }
+.hex-next { display: none; }
+
+/* 占位格：分区里一个项目都没有，但分区本身必须还在（不能让人以为它没了）。
+   2026-09-08 起蜂巢**不再为每个分区预留空位** —— 建项目的抓手是蜂巢外的
+   空白（见 .hex-sprout），所以这一档只剩"零项目分区"这一种情况。 */
+.hex-cell.is-placeholder { cursor: default; }
+.hex-cell.is-placeholder .hex-title { color: var(--ink-3); font-weight: 400; }
+
+/* ── 空白处长按 → 一个六边形在那儿长出来（2026-09-08）──────────────
+ * 人类：「我要的是整个分区长按点击任何一个黑色区域，都会在那里出现一个
+ * 六边形逐渐显现。」
+ * 这是一个**不属于布局系统**的临时元素：applyLayout 只摆 state.cells，
+ * 它由 hex-app.js::bindBlankPress 自己插自己删，坐标算在同一个晶格上，
+ * 所以长出来的位置和真格子严丝合缝。
+ * ⚠️ 显现时长走 --press-ms（= LONGPRESS_MS，JS 注入），和长按判定同一个数：
+ * 长满的那一刻正好开火，「长到和别人一样就打开」这句话才成立。 */
+.hex-sprout {
+  position: absolute; z-index: 6; pointer-events: none;
+  clip-path: var(--hex-clip, polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%));
+  /* 空白处长出来的一格落在分区最外侧 —— 长到和最外圈的格子同一档（hex-sprout.js 写 --zone-mix） */
+  background: color-mix(in srgb, var(--zone-color) var(--zone-mix, 30%), var(--panel));
+  opacity: 0;
+  transition: opacity var(--press-ms, 520ms) linear;
+}
+.hex-sprout.is-growing { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .hex-sprout { transition: none; }
+  .hex-sprout.is-growing { opacity: .62; }
+}
+
+/* ── 悬停档：六边形本体稍微长大，多显示最近的一条待办 ──────────────
+ * 尺寸不在这里写 —— 盒子的 width/height 由 hex-app.js 的布局算出来
+ * （HOVER_SCALE = 1.66），这里只管"长大之后多显示什么、压住谁"。
+ * 之所以不用 CSS transform:scale：那样字会跟着一起放大成 20px 的巨标题，
+ * 而且 transform 已经被 FLIP 占用了（JS 写 inline transform，CSS 里再写一条
+ * 会互相覆盖）。改盒子尺寸 + 内层反向 scale 是这一版全场统一的做法。 */
+/* z-index 分层（改之前先看这张表，这里踩过一次）：
+ *   格子 auto/1 < 界线 6 < 分区标签 20 < 悬停格 25 < 展开卡 30
+ * `.hex-cell.hex-center` 自己带 z-index:5，与 `.hex-cell.is-hover` **同特异性**
+ * （都是两个类），谁在文件里靠后谁赢 —— 中心格那条在后面，于是中心格悬停时
+ * 被四周的格子盖住，放大的六边形和「进入计时台」提示都被压掉一半（真机实测）。
+ * 所以中心格的悬停态要单独写一条三类选择器压过去。 */
+.hex-cell.is-hover { z-index: 25; background: var(--ink); }
+.hex-cell.is-hover::before { inset: 2.5px; }
+.hex-cell.is-hover::before {
+  background: color-mix(in srgb, var(--zone-color) 52%, var(--panel));
+}
+/* 悬停档的排版：**标题顶到上面去、下面挂三条待办**（人类：放大之后"有点空旷了"）。
+ * 静置档是竖直居中的（就一行标题，居中最稳）；悬停档内容变三四行，居中会把
+ * 标题推到六边形最宽的腰部、待办压到下面的斜边上。所以这里改成顶对齐。
+ *
+ * padding-top 26% 不是随手调的：六边形上半是收口的，离顶点 t 处的可用半宽只有
+ * (W/2)·t/(H/4)。标题要放得下就得从 t ≥ H/4·(标题半宽/(W/2)) 开始，
+ * 换算到本尺寸 ≈ 26%。再往上标题两端就顶到斜边上了。 */
+.hex-cell.is-hover .hex-inner {
+  justify-content: flex-start;
+  padding: 26% 12% 13%;
+}
+.hex-cell.is-hover .hex-title {
+  -webkit-line-clamp: 2; font-size: 13.5px; line-height: 1.25;
+}
+.hex-cell.is-hover .hex-next {
+  display: block; list-style: none; margin: 7px 0 0; padding: 0;
+  width: 100%; box-sizing: border-box;
+  font-size: 11.5px; line-height: 1.3;
+  color: var(--ink-2); word-break: break-word; overflow-wrap: break-word;
+}
+/* 六边形下半是**收口**的，一排等宽的卡片走到底下必然被斜边切角。
+   所以三张卡逐层内收 —— 内收量按那一行离中心的距离算：离中心 t 处可用半宽
+   = (W/2)·(H/2−t)/(H/4)。这不是"看着调的"，改 HOVER_SCALE 就得跟着重算。 */
+.hex-cell.is-hover .hex-next li:nth-child(2) { margin-inline: 4%; }
+.hex-cell.is-hover .hex-next li:nth-child(3) { margin-inline: 11%; }
+.hex-cell.is-hover .hex-next.is-none { color: var(--ink-3); text-align: center; }
+
+/* ── 待办卡片：悬停面板与展开卡「下一步」共用一套 ────────────────
+ * 人类：「把这些待办弄成漂亮的卡片式 + 渲染用该主题的主题色」。
+ * 主题色就是这一格已经挂着的 --zone-color（分区色盘色，OKLCH 同 L 同 C、
+ * 只有色相是扇区角度）—— 卡片一律从它 color-mix 出来，不出现第二套颜色，
+ * 也就不会有裸色值（契约 A2）。 */
+.hex-todo-card {
+  display: flex; align-items: center; gap: 6px;
+  box-sizing: border-box; margin-top: 4px; padding: 4px 8px;
+  border-radius: 8px; text-align: left;
+  background: color-mix(in srgb, var(--zone-color) 30%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--zone-color) 52%, transparent);
+  color: var(--ink);
+  transition: background-color 160ms ease-out, transform 160ms ease-out;
+}
+.hex-todo-card:first-child { margin-top: 0; }
+.hex-todo-card:hover { background: color-mix(in srgb, var(--zone-color) 44%, var(--panel)); }
+.hex-todo-dot {
+  flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--zone-color);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--zone-color) 30%, transparent);
+}
+.hex-todo-card.is-waiting { color: var(--ink-3); border-style: dashed; }
+.hex-todo-card.is-waiting .hex-todo-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--zone-color) 70%, var(--ink-3));
+}
+.hex-todo-name {
+  flex: 1 1 auto; min-width: 0;
+  display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+/* ── 分区界线：画在格与格之间那条缝里 ────────────────────────────
+ * 只有咬合（轴向晶格、相邻格中心距恒 √3·S）之后才存在"公共边"这个东西，
+ * 界线才画得出来 —— 上一版格子落在极坐标圆周上，两格之间没有公共边。
+ * 两层各司其职：外沿描本分区色（这一坨是谁的地盘），区与区之间描中性重线
+ * （那才是"分界"）。几何在 hex-data.js::zoneBorderEdges。 */
+.hex-borders {
+  position: absolute; left: 0; top: 0;
+  z-index: 6; pointer-events: none; overflow: visible;
+}
+.hex-border-outer {
+  fill: none; stroke-linecap: round; stroke-linejoin: round;
+  stroke: color-mix(in srgb, var(--zone-color) 72%, var(--ink));
+  stroke-width: 2.4; opacity: .58;
+}
+/* ── 分界带：靠**明度**分，不靠色相分 ──────────────────────────────
+ * 每条边被 JS 拆成两条半宽偏移线，各归各的分区（几何在 hex-app.js::pushHalf，
+ * 半线宽 = DIVIDER_W/2、偏移 ±DIVIDER_W/4），这里只管每一半描什么色。
+ *
+ * 关键是 color-mix 到 **--ink**：分区色本身是 oklch(L C H)，L 和 C 由 tokens
+ * 定死、全场一样，模块只算色相 H。OKLCH 里明度只看 L —— 所以**任何两个分区色
+ * 明度完全相同**，直接拿原色描边，带子和格子填充糊成一坨（人类判词
+ * 「内部分界线确实不好看」，上一版就是这么错的）。压向 --ink 之后亮色主题变暗、
+ * 暗色主题自动变亮，反差从明度来，同时保住本区的色相身份。
+ *
+ * 同理**不能用互补色**：色相就是扇区角度，H+180 正好是对面那个分区的身份色；
+ * 而且互补色与原色 L 相同 = 零明度反差，两块贴一起只会"振"不会"分"。
+ *
+ * 中间那条 --panel 芯线是制图学里的 casing：两半再像，中间隔一条底色发丝线，
+ * 边界永远是脆的。 */
+/* ── 分界线的颜色：色盘色相 + 明度抬离填充 + 由内向外的透明度衰减 ──────
+ *
+ * 一条边拆成两条半线，各描各那侧分区的色（几何在 hex-app.js::pushHalf）。
+ * 描边不是 `stroke:` 而是 JS 挂上去的 `url(#hexrad…)` —— 每个分区一条以蜂巢中心
+ * 为圆心的 radialGradient，三个停靠的 **stop-opacity 1 → .8 → .26**，
+ * 色相一路不变。这就是「从中心往外逐渐变浅」。
+ *
+ * 为什么变的是透明度、不是色相：色相就是分区身份，中途换色就不是同一条边界了。
+ * 为什么不是明度：L 和 C 由 tokens 定死、模块只准算色相（design-tokens 修正案 A
+ * 的分工），模块没有权限逐段改明度。透明度对亮暗两个主题都成立。
+ *
+ * 停靠色本身在这里定、不在 JS 里定（契约 A2：模块 JS 只产出变量名不产出色值）。
+ * `--zone-color` 由 JS 挂在 <radialGradient> 上，自定义属性会继承给它的 <stop>。
+ * 58% 混向 --ink 是把明度抬离格子填充 —— 直接用原色的话，线和填充在 OKLCH 里
+ * 明度完全一样，糊成一坨（第三轮踩过这个坑）。 */
+.hex-stop {
+  /* 第一条是兜底：不认相对色语法的浏览器停在这儿。 */
+  stop-color: color-mix(in oklab, var(--zone-color) 58%, var(--ink));
+  /* 第二条把**彩度**单独放大一档（人类：「把分割线的饱和度提高一档」）。
+   *
+   * 为什么不是把上面那个 58% 调高：`--ink` 几乎无彩，混合本身就把彩度稀释到了
+   * 58%。比例一升彩度是回来了，但混进来的 --ink 少了，**明度反差同时掉**——
+   * 而明度反差正是这条线能从格子填充里分出来的唯一依据（tokens 把 L/C 定死，
+   * 两个分区色明度完全一样，第三轮踩过）。两个目标在同一个旋钮上打架。
+   *
+   * 相对色语法把它们拆开：`l` 原样保留（明度反差不动），只对 `c` 乘一个系数。
+   * 彩度是从变量**导出**的，不是写死的色值 —— 契约 A2 管的是裸色值，这里没有。
+   * 超出色域由浏览器裁到边界，不会出脏色。 */
+  stop-color: oklch(from color-mix(in oklab, var(--zone-color) 58%, var(--ink))
+                    l calc(c * 2.1) h);
+}
+
+/* round 端头是**拐角接缝的解药**：每条边都是独立子路径，butt 端头在共享顶点上
+   接不住，粗到 7px 就是一排看得见的豁口（人类：「粗白线还不接头尾好丑」）。
+   round 让相邻两段各盖半个圆头，正好合缝。线宽由 JS 内联给（DIVIDER_W / EXT_W，
+   两条半线的偏移量按同一组常量算，偏移和线宽必须同源）。 */
+.hex-border-divider { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+
+/* 虚拟格延伸段：蜂巢外面本该有格子的位置补虚拟格，分界线顺着它们的边继续折出去
+   （数据在 hex-data.js::virtualBorderEdges）。跟内部分界同一支笔 —— 同样的
+   双色半线、同样那条径向渐变。它本来就在外圈，渐变自然把它带到最淡的一档，
+   不用再单独调淡。 */
+.hex-border-ext { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ── 展开态：原地长大成**正六边形**编辑栏 ────────────────────────
+ * 人类：「打开后的框也可以再放大点做成正六边形」。上一版是 96% 那个
+ * 近似矩形（只切了两个尖），现在直接用标准正六边形 —— 尺寸那边
+ * CARD_W = √3/2·CARD_H 已经把宽高比钉死，两边必须同时是正的才对得上。
+ *
+ * padding 是**算出来的，不是调出来的**：六边形里能放下的最大矩形满足
+ * h ≤ H/2 − w·H/(2W)。取左右留白 14%W ⇒ w = 0.36W ⇒ h ≤ 0.32H，
+ * 换算成"以宽度为基准"的百分比就是上下各 21%。改 CARD 尺寸不用改这里
+ * （比例式与绝对尺寸无关），改左右留白就得重算上下。 */
+.hex-cell.is-expanded {
+  z-index: 30; cursor: default;
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+  box-shadow: var(--shadow);
+}
+.hex-cell.is-expanded::before {
+  inset: 2px;
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+  background: color-mix(in srgb, var(--zone-color) 10%, var(--panel));
+}
+.hex-cell.is-expanded .hex-inner {
+  align-items: stretch; justify-content: flex-start;
+  padding: 21% 14%;
+  /* ⚠️ 滚动条**不能挂在这一层**。scroll 容器的裁剪边是 padding box，也就是
+     元素的外沿 —— 内容照样会画进那 21% 的留白里，然后被六边形斜边切掉，
+     上面那套 padding 计算就完全白做（真机实测：编辑目录最后两行被切）。
+     所以这一层只负责留白 + 兜底裁剪，滚的是里面的 .hex-detail。 */
+  overflow: hidden;
+}
+.hex-cell.is-expanded .hex-detail {
+  flex: 1 1 auto; min-height: 0;      /* min-height:0 缺了 flex 子项不肯缩，照样溢出 */
+  overflow-y: auto; overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--zone-color) 55%, transparent) transparent;
+}
+/* 底部渐隐：滚动区的下边缘会把一行字拦腰切断，看着像渲染坏了。
+   渐隐一段就变成"下面还有"的明确信号。
+   ⚠️ **不用 mask-image**（2026-09-08 性能回合实测：展开动画里带遮罩的那一版
+   超 20ms 的帧 42/185，去掉遮罩降到 32/203，是单笔最大的一项）。遮罩是每帧
+   合成时的额外通道；改成一条 sticky 的渐变条 —— 纯 paint，而且只画 24px 高。
+   sticky 才能在滚动容器里一直贴着下沿，absolute 会跟着内容滚走。 */
+.hex-cell.is-expanded .hex-detail::after {
+  content: ""; display: block; position: sticky; bottom: 0;
+  height: 24px; margin-top: -24px; pointer-events: none;
+  background: linear-gradient(to bottom, transparent,
+              color-mix(in srgb, var(--zone-color) 10%, var(--panel)));
+}
+/* 展开卡标题：居中 + 再放大一档（人类 2026-09-08：「把六边形详情页面的标题
+   放在正中位置。字体做大一点」）。
+   ⚠️ 居中靠的是**把 × 挪出文档流**，不是给标题加 text-align 就完事——
+   × 原来是同一行的 flex 兄弟，占着宽度，标题的"居中"会被它推着偏左。 */
+.hex-cell.is-expanded .hex-title {
+  text-align: center; font-size: calc(var(--fs-h2) * 1.72); display: block;
+  line-height: 1.2;
+}
+/* 盒子放大了字不跟，等于白放大（人类：「字看不清了」）。
+   这里放大的是**卡片内部**的一整套字号，与外面灰格那档 22px 是两件事。 */
+.hex-cell.is-expanded .hex-sub { font-size: calc(var(--fs-eyebrow) * 1.25); }
+.hex-cell.is-expanded .hex-group-title { font-size: calc(var(--fs-eyebrow) * 1.25); }
+.hex-cell.is-expanded .hex-todo-card { font-size: calc(var(--fs-sub) * 1.4); padding: 8px 12px; }
+.hex-cell.is-expanded .hex-todo-dot { width: 8px; height: 8px; }
+.hex-cell.is-expanded .hex-expander { font-size: calc(var(--fs-sub) * 1.4); padding: 8px 12px; }
+.hex-cell.is-expanded .hex-line { font-size: calc(var(--fs-sub) * 1.15); }
+.hex-cell.is-expanded .hex-stamp,
+.hex-cell.is-expanded .hex-flag { font-size: calc(var(--fs-eyebrow) * 1.2); }
+.hex-cell.is-expanded .hex-mini { font-size: calc(var(--fs-eyebrow) * 1.2); }
+.hex-cell.is-expanded .hex-newcard input { font-size: calc(var(--fs-sub) * 1.4); }
+.hex-cell.is-expanded .hex-add { width: 30px; height: 30px; font-size: 19px; }
+.hex-cell.is-expanded .hex-close { width: 32px; height: 32px; font-size: 20px; }
+
+/* 展开档的标题是改名入口：静置只给一条极淡的虚线底，hover 才实起来。
+   不放铅笔图标 —— 标题居中，右边挂个图标会把"居中"再破坏一次（× 已经为此
+   挪出文档流了）。 */
+.hex-title.is-editable { cursor: text; border-bottom: 1px dashed transparent; }
+.hex-title.is-editable:hover,
+.hex-title.is-editable:focus-visible {
+  border-bottom-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  outline: none;
+}
+.hex-title .hex-rename {
+  width: 100%; text-align: center; font: inherit; font-size: inherit;
+  line-height: inherit; padding: 0 4px;
+}
+
+/* ── 标题行 + 右上角红色关闭 ×（人类：「打开的六边形右上角放一个 x 关闭用，红色」）── */
+.hex-head { display: contents; }                 /* 静置/悬停档：标题照旧独占，不引入新盒子 */
+.hex-cell.is-expanded .hex-head {
+  display: block; position: relative; flex: 0 0 auto;
+}
+.hex-cell.is-expanded .hex-head .hex-title { min-width: 0; padding: 0 36px; }
+.hex-close { display: none; }
+.hex-cell.is-expanded .hex-close {
+  display: flex; align-items: center; justify-content: center;
+  position: absolute; top: 0; right: 0;
+  flex: 0 0 auto; width: 26px; height: 26px; padding: 0;
+  border-radius: 50%; cursor: pointer; line-height: 1;
+  font-size: 16px; font-weight: 600;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 46%, transparent);
+  transition: background-color 150ms ease-out, transform 120ms ease-out;
+}
+.hex-cell.is-expanded .hex-close:hover {
+  background: color-mix(in srgb, var(--danger) 34%, transparent);
+}
+.hex-cell.is-expanded .hex-close:active { transform: scale(.9); }
+
+/* ── 分组标题行：「＋」挂在「下一步」右端（人类改判：不是标题右边）── */
+.hex-group-head { display: flex; align-items: center; gap: var(--sp-2); }
+.hex-group-head .hex-group-title { flex: 1 1 auto; margin: 0; }
+.hex-add {
+  display: flex; align-items: center; justify-content: center;
+  flex: 0 0 auto; width: 24px; height: 24px; padding: 0;
+  border-radius: 8px; cursor: pointer; line-height: 1;
+  font-size: 15px; font-weight: 600; color: var(--ink);
+  background: color-mix(in srgb, var(--zone-color) 34%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--zone-color) 58%, transparent);
+  transition: background-color 150ms ease-out, opacity 140ms ease-out;
+}
+.hex-add:hover { background: color-mix(in srgb, var(--zone-color) 56%, var(--panel)); }
+/* 加号"变成"了那张卡，所以它自己退场（人类：「点击加号，加号向左延展成一张卡片」）。 */
+.hex-cell.is-adding .hex-add { opacity: 0; pointer-events: none; }
+
+/* 新任务卡：**从加号那一点向左延展**，长成一张和「下一步」同款的卡片。
+   动的是 width（右对齐 + margin-left:auto，所以视觉上是往左长）。
+   width 不是合成器友好的属性，但这是一次性的 220ms 单元素动画，
+   不是每帧都在跑的东西 —— 该省的地方在别处（见上面 filter 那一段）。 */
+@keyframes hex-newcard-grow {
+  from { width: 24px; opacity: .25; }
+  to   { width: 100%; opacity: 1; }
+}
+.hex-newcard {
+  display: flex; align-items: center; gap: 6px;
+  box-sizing: border-box; margin: var(--sp-2) 0 0 auto; padding: 4px 8px;
+  border-radius: 8px; overflow: hidden;
+  background: color-mix(in srgb, var(--zone-color) 30%, var(--panel));
+  border: 1px dashed color-mix(in srgb, var(--zone-color) 62%, transparent);
+  animation: hex-newcard-grow 220ms cubic-bezier(.22, 1, .36, 1) both;
+}
+.hex-newcard input {
+  flex: 1 1 auto; min-width: 0;
+  background: transparent; border: 0; outline: none;
+  color: var(--ink); font: inherit; font-size: var(--fs-sub); padding: 2px 0;
+}
+.hex-newcard input::placeholder { color: var(--ink-3); }
+.hex-mini.is-primary { border-color: color-mix(in srgb, var(--zone-color) 70%, transparent); color: var(--ink); }
+
+/* ── 可伸展的「全部待办」──────────────────────────────────────── */
+.hex-group { margin-top: var(--sp-3); }
+.hex-group-title {
+  font-size: var(--fs-eyebrow); letter-spacing: .12em; text-transform: uppercase;
+  color: var(--ink-3); margin: 0 0 var(--sp-1);
+}
+.hex-expander {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  box-sizing: border-box; padding: 5px 9px; border-radius: 8px; cursor: pointer;
+  font: inherit; font-size: var(--fs-sub); text-align: left; color: var(--ink-2);
+  background: color-mix(in srgb, var(--zone-color) 16%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--zone-color) 38%, transparent);
+  transition: background-color 160ms ease-out;
+}
+.hex-expander:hover { background: color-mix(in srgb, var(--zone-color) 30%, var(--panel)); }
+.hex-expander b { color: var(--ink); font-weight: 600; margin: 0 2px; }
+.hex-chev { display: inline-block; font-size: 10px; opacity: .8; }
+.hex-list.hex-all { margin-top: var(--sp-2); }
+
+/* 「全部待办」里第一条放大，第二三条缩小压暗（人类点名）。
+   第四条起沿用第三条那一档 —— 再往下分级只会变成一堆看不出差别的字号。 */
+.hex-list.hex-all .hex-todo-card { font-size: 11.5px; padding: 3px 7px; opacity: .62; }
+.hex-list.hex-all .hex-todo-card:nth-child(2),
+.hex-list.hex-all .hex-todo-card:nth-child(3) { font-size: 12px; opacity: .74; }
+.hex-list.hex-all .hex-todo-card:first-child {
+  font-size: var(--fs-sub); padding: 6px 9px; opacity: 1;
+  border-color: color-mix(in srgb, var(--zone-color) 70%, transparent);
+}
+
+/* ── 工具条：单击卡片才露（人类：「单击下一步卡片应该出现完成/改名/删」）── */
+.hex-tools { display: none; gap: 4px; margin-left: auto; flex: 0 0 auto; }
+.hex-todo-card.is-open .hex-tools, .hex-tools.is-shown { display: flex; }
+.hex-todo-card.is-open {
+  background: color-mix(in srgb, var(--zone-color) 46%, var(--panel));
+  flex-wrap: wrap;
+}
+.hex-todo-card[data-hex-ui] { cursor: pointer; }
+
+/* ── 拖卡片改优先级 ────────────────────────────────────────── */
+.hex-todo-card.is-carding {
+  opacity: .92; cursor: grabbing;
+  box-shadow: var(--shadow);
+  border-color: color-mix(in srgb, var(--zone-color) 85%, transparent);
+}
+.hex-list[data-reorder] .hex-todo-card { touch-action: pan-x; }   /* 竖向留给拖动 */
+
+/* 已完成卡：打勾 + 标题划掉 + 时间戳。和待办共用同一种卡片，只换圆点与状态。 */
+.hex-todo-card.is-done-card { opacity: .72; }
+.hex-todo-card.is-done-card .hex-task-name { text-decoration: line-through; color: var(--ink-3); }
+.hex-todo-card.is-done-card .hex-todo-dot {
+  background: color-mix(in srgb, var(--ok, var(--zone-color)) 80%, var(--zone-color));
+  box-shadow: none;
+}
+.hex-stamp { font-size: var(--fs-eyebrow); color: var(--ink-3); white-space: nowrap; margin-left: auto; }
+.hex-line.is-empty { color: var(--ink-3); font-size: var(--fs-sub); padding: 4px 0; }
+.hex-cell.is-expanded .hex-detail { display: block; opacity: 1; }
+.hex-cell.is-expanded .hex-next { display: none; }
+
+.hex-cell.is-expanded .hex-detail { animation: hex-fade-in 260ms ease-out both; }
+@keyframes hex-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+.hex-sub { font-size: var(--fs-eyebrow); color: var(--ink-3); letter-spacing: .12em; text-transform: uppercase; }
+.hex-section-title {
+  font-size: var(--fs-eyebrow); letter-spacing: .12em; text-transform: uppercase;
+  color: var(--ink-3); margin: var(--sp-3) 0 var(--sp-1);
+}
+.hex-line { font-size: var(--fs-sub); color: var(--ink-2); line-height: 1.5; }
+.hex-list { list-style: none; margin: 0; padding: 0; }
+.hex-list li {
+  display: flex; align-items: center; gap: var(--sp-2);
+  font-size: var(--fs-sub); padding: 3px 0; color: var(--ink);
+}
+.hex-list li.hex-todo-card { padding: 5px 9px; font-size: var(--fs-sub); }
+.hex-list li.is-waiting { color: var(--ink-3); }
+.hex-flag { font-size: var(--fs-eyebrow); color: var(--warn); white-space: nowrap; }
+.hex-task-name { flex: 1 1 auto; overflow-wrap: anywhere; }
+.hex-task-name.is-done { color: var(--ink-3); text-decoration: line-through; }
+.hex-mini {
+  border: 1px solid var(--line); background: transparent; color: var(--ink-2);
+  border-radius: var(--r-1); font: inherit; font-size: var(--fs-eyebrow);
+  padding: 1px 6px; cursor: pointer;
+}
+.hex-mini:hover { border-color: var(--accent); color: var(--accent); }
+.hex-mini.is-danger:hover { border-color: var(--danger); color: var(--danger); }
+.hex-newtask { display: flex; gap: var(--sp-2); margin-top: var(--sp-2); }
+.hex-rename {
+  flex: 1 1 auto; min-width: 0; font: inherit; font-size: var(--fs-sub);
+  padding: 2px 6px; border: 1px solid var(--accent); border-radius: var(--r-1);
+  background: var(--panel); color: var(--ink);
+}
+.hex-newtask input {
+  flex: 1 1 auto; min-width: 0; font: inherit; font-size: var(--fs-sub);
+  padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--r-1);
+  background: var(--panel); color: var(--ink);
+}
+.hex-err { color: var(--danger); font-size: var(--fs-eyebrow); min-height: 14px; }
+
+/* ── 分区名标签 ────────────────────────────────────────────── */
+.hex-zone-label {
+  position: absolute; left: 0; top: 0;
+  transform-origin: center center;
+  /* 可拖：位置存在 localStorage，双击回默认。touch-action:none 是必须的 ——
+     不禁掉浏览器的默认手势，触屏上一拖就变成滚页面，pointermove 收不全。 */
+  pointer-events: auto; cursor: grab; touch-action: none;
+  user-select: none; -webkit-user-select: none; z-index: 20;
+  font-size: var(--fs-eyebrow); letter-spacing: .1em; white-space: nowrap;
+}
+/* 气泡本体（外层 .hex-zone-label 只负责定位，见 hex-app.js::buildLabel）。
+   摇晃、放大、按下都作用在这一层，transform-origin 就是气泡自己的中心。 */
+.hex-zone-pill {
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  background: color-mix(in srgb, var(--zone-color) 78%, var(--panel));
+  color: var(--ink); border: 1px solid color-mix(in srgb, var(--zone-color) 90%, var(--line));
+  transform-origin: 50% 50%;
+  transition: transform var(--t-fast), box-shadow var(--t-fast);
+}
+.hex-zone-label.is-dragging { cursor: grabbing; z-index: 40; }
+.hex-zone-label.is-dragging .hex-zone-pill { box-shadow: var(--shadow); }
+/* ── 编辑模式（2026-09-12，hex-zone-edit.js）：长按分区名进入，学 iOS 桌面 ──────
+ * 人类：「要有一个放大而且所有分区的栏目都在摇晃（学习苹果的编辑模式）」。
+ * 二改（同日）：「摇晃时整体放大一号、圆心不在分区中心」「幅度有点大，摇晃心不在字中心难以阅读，
+ * 学苹果小幅慢速，摇晃中心在字体气泡中心」「长按进入拖动状态会跑远」。
+ * 根因：第一版在外层用独立的 rotate / scale 属性 —— 它们叠在定位用的 translate3d 外面，
+ * 旋转缩放中心落在蜂巢原点附近，2° 的转角被放大成几十像素的甩动，1.34 的放大把气泡推出去老远。
+ * 现在只动里层 .hex-zone-pill 的 transform，中心就是气泡中心；幅度 ±1.6°、周期 ~0.6s、放大 1.06。
+ * 相位错开（不同 delay / 时长），否则一排标签整齐划一地摆，像节拍器不像 iOS。 */
+@keyframes zone-jiggle {
+  from { transform: rotate(-1.6deg) scale(1.06); }   /* 三改：±1° 太轻，放到 ±1.6°（人类：「晃动幅度稍大一点」） */
+  to   { transform: rotate(1.6deg) scale(1.06); }
+}
+#hive.is-zone-edit .hex-zone-label { cursor: grab; }
+#hive.is-zone-edit .hex-zone-pill {
+  animation: zone-jiggle 300ms ease-in-out infinite alternate;   /* 来回一趟 600ms */
+  box-shadow: var(--shadow);
+}
+#hive.is-zone-edit .hex-zone-label:nth-of-type(2n) .hex-zone-pill   { animation-delay: -150ms; animation-direction: alternate-reverse; }
+#hive.is-zone-edit .hex-zone-label:nth-of-type(3n) .hex-zone-pill   { animation-duration: 340ms; animation-delay: -220ms; }
+#hive.is-zone-edit .hex-zone-label:nth-of-type(5n+1) .hex-zone-pill { animation-duration: 280ms; animation-delay: -60ms; }
+/* 拿在手里的那一个：不摇、稍大一点、浮到最上面 —— 和 iOS 拖图标一样（放大绕气泡中心，不会跑远） */
+#hive.is-zone-edit .hex-zone-label.is-dragging { z-index: 45; }
+#hive.is-zone-edit .hex-zone-label.is-dragging .hex-zone-pill { animation: none; transform: scale(1.14); }
+/* 长按判定中：轻轻压下去，给"再按一会儿就进编辑"的反馈 */
+.hex-zone-label.is-pressing .hex-zone-pill { transform: scale(.94); transition: transform var(--t-med); }
+/* 编辑模式里格子压暗一档，注意力留给标签 */
+#hive.is-zone-edit .hex-cell { filter: saturate(.7) brightness(.85); }
+
+/* ── 中心格：当前在做的事 · 悬停/点击两档（2026-09-07 人类改判可点）───── */
+.hex-cell.hex-center { cursor: pointer; z-index: 5; }
+.hex-cell.hex-center:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.hex-cell.hex-center.is-hover { z-index: 25; }
+.hex-cell.hex-center.is-hover { background: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.hex-cell.hex-center.is-hover::before { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+.hex-cell.hex-center {
+  --center-bg: var(--panel);
+  /* 闪烁峰值：没分区的任务退回计划紫；有分区就闪分区色本身（见下面 .is-zoned）。 */
+  --flash-peak: color-mix(in srgb, var(--plan) 58%, var(--panel));
+  --flash-edge: color-mix(in srgb, var(--plan) 70%, var(--line));
+}
+/* 计时中 / 暂停中：底色 = 任务所在分区色「最深档再加一档」（hex-data.js::DEPTH_MIX.center，
+   hex-app.js::paintCenter 写 --zone-raw / --zone-mix）。
+   悬停也用同一个值 —— 长按接住那 3 秒中心格正处在悬停态，闪烁收尾落到的颜色必须和松开悬停后一致。
+   人类 2026-09-12 第四次改：「闪烁颜色也需要是对应的分区色去闪烁的，闪烁完就是对应的分区最浓颜色再加一档」。 */
+.hex-cell.hex-center.is-zoned {
+  --center-bg: color-mix(in srgb, var(--zone-color) var(--zone-mix, 52%), var(--panel));
+  --flash-peak: color-mix(in srgb, var(--zone-color) 86%, var(--panel));
+  --flash-edge: var(--zone-color);
+}
+.hex-cell.hex-center::before, .hex-cell.hex-center.is-zoned.is-hover::before { background: var(--center-bg); }
+.hex-cell.hex-center { background: var(--line); }
+/* 中心格的内容必须塞进**六边形**里，不是塞进它的外接矩形里。
+ * 尖顶六边形在竖直方向上是收口的：离中心 |x| 处的可用半高只有
+ * H/2 − |x|·H/(2W)。实测（79.7×92 的格子）：圆环 74% 宽 + 标题 + 「空闲」
+ * 三件套内容总高 104 > 92，圆环的角超出六边形 25.9px、「空闲」超 21.3px，
+ * 被 clip-path 齐刷刷切掉 —— 人类看到的就是"圆环+标题超出界限"。
+ *
+ * 三条一起治：圆环让到 50%（留出下面两行）、空标题不占位、行高收紧。
+ * （悬停档原来还多一行「进入计时台 →」，2026-09-12 退役，让位给下半部分的三个按钮。） */
+.hex-center-title {
+  margin: 2px 0 0; font-size: var(--fs-eyebrow); font-weight: 600; line-height: 1.2;
+  text-align: center; color: var(--ink); overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden;
+}
+/* 静置档任务名只给**一行**：算过账的 —— 六边形高 92，扣掉圆环和走秒那行，
+   标题第二行的底边会掉到斜边外面。静置档本来就是"只有标题"的极简档，
+   悬停档格子大 1.66 倍，那时才放开两行。 */
+.hex-cell.hex-center.is-hover .hex-center-title { -webkit-line-clamp: 2; }
+/* 空闲态标题是空串。空元素照样吃掉一整行行高（实测 40.3px），
+   在只有 92px 高的六边形里这是致命的一行。 */
+.hex-center-title:empty { display: none; }
+.hex-center-time { font-size: var(--fs-eyebrow); color: var(--fact);
+  font-variant-numeric: tabular-nums; line-height: 1.2; }
+.hex-center-idle { font-size: var(--fs-eyebrow); color: var(--ink-3); line-height: 1.2; }
+/* 走秒/「空闲」那一行的外层容器。它自己没字号，会继承 body 的 line-height 1.55——
+   在 92px 高的六边形里那多出来的 8px 就是压垮下沿的那一下（实测底边越界 2.7px）。 */
+.hex-center-meta { line-height: 1.15; }
+.hex-ring-slot {
+  /* 2026-09-12「稍微扩充一下圆环大小」：62% → 70%。走秒挪进了圆心，
+     静置档少了一行字，圆环正好接过这块地方。 */
+  width: 70%; aspect-ratio: 1 / 1; flex: 0 0 auto;
+  position: relative; container-type: inline-size;
+  transition: width 190ms cubic-bezier(.22, 1, .36, 1);
+}
+/* 悬停档圆环让一档（「进入计时台 →」提示行 2026-09-12 已退役，按钮区见下）。 */
+.hex-cell.hex-center.is-hover .hex-ring-slot { width: 56%; }
+/* 中心格比项目格多一层竖向收口：项目格只有一行标题，中心格是圆环 + 两行字。
+   横向内缩跟项目格一致（9%），竖向多留一点，因为六边形上下是收口的。 */
+.hex-cell.hex-center .hex-inner { padding: 6% 9%; gap: 1px; }
+
+/* 中心格的 完成 / 暂停 / 取消不记录 三块按钮：样式在 hex-center-ctl.css（2026-09-12 拆出，本文件逼近 1000 行）。 */
+
+/* ── timer-ring/v1（contracts/timer-ring-visual-v1.md）──────────
+ * 几何在 hex-ring.js（92 / 86 / 78，stroke-width 12，pathLength=100）；
+ * 这里只上色与动效，颜色一个都不写死。 */
+.tring { width: 100%; height: 100%; display: block; }
+/* 2026-09-12 表盘（人类原话）：「全圆环浅青色但是再浅一点，深青色作为分针显示」
+   「白色短指针浮动在内环作为秒针」「记满一小时圆环青色走满一圈的效果」。
+   · 底圈：--fact 只混 18% —— 亮色主题下是浅青，暗色主题下是很淡的青底
+   · 分针 = 进度弧，--fact 原色（亮色主题深青、暗色主题亮青，两边都压得住底圈）
+   · 秒针 = --ink（暗色主题下就是白），浮在内圈 r 60–74，不连到圆心（圆心是数字）
+   颜色一个都不写死（design-tokens-v1 A2）。 */
+.tring-ticks line { stroke: var(--line); stroke-width: 2; }
+.tring-track { fill: none; stroke: color-mix(in srgb, var(--fact) 18%, var(--panel)); stroke-width: 12; }
+/* 中心格有了分区底色之后，底圈要混进**中心格自己的底色**（--center-bg 从 .hex-center 继承下来），
+   否则浅青混 panel 在分区色上反倒是一圈暗环。浓度稍高一点，浅青才压得出来。 */
+.hex-center .tring-track { stroke: color-mix(in srgb, var(--fact) 30%, var(--center-bg, var(--panel))); }
+.tring-progress {
+  fill: none; stroke: var(--fact); stroke-width: 12; stroke-linecap: butt;
+  transition: stroke-dasharray 350ms ease-out;
+}
+.tring.is-hour-reset .tring-progress { transition: none; }
+.tring-sec {
+  stroke: var(--ink); stroke-width: 5; stroke-linecap: round; opacity: 0;
+  transform-box: view-box; transform-origin: 100px 100px;
+  /* 一跳一跳地走，带一点点回弹 —— 石英表秒针的手感，不是扫秒 */
+  transition: transform 280ms cubic-bezier(.3, 1.6, .5, 1), opacity var(--t-fast);
+}
+.tring.is-running .tring-sec { opacity: .95; }
+/* 满一小时：分针弧走满整圈，加粗 + 发光一下，1.6s 后瞬间回 0 再走（hex-ring.js::HOUR_FULL_MS） */
+@keyframes tring-hour-full {
+  0%   { stroke-width: 12; filter: none; }
+  30%  { stroke-width: 18; filter: drop-shadow(0 0 8px var(--fact)); }
+  100% { stroke-width: 12; filter: none; }
+}
+.tring.is-hour-full .tring-progress { animation: tring-hour-full 1.6s ease-out; }
+/* 圆心读数：字号跟着圆环走（容器查询单位），静置 50px、悬停 67px、展开 300px 都成比例 */
+.tring-read {
+  position: absolute; inset: 0; pointer-events: none;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.tring-num {
+  font-size: 23cqi; font-weight: 600; line-height: 1; color: var(--ink);
+  font-variant-numeric: tabular-nums; letter-spacing: -.02em;
+}
+/* 记分牌翻牌（hex-ring.js::setFlip）：每位一个 inline-block，变了的那位绕水平中线从"平躺"翻到正面，
+   略过头一点再回正 —— 翻牌落定的那一下。只动 transform / opacity。 */
+.tring-d { display: inline-block; transform-origin: 50% 55%; backface-visibility: hidden; }
+.tring-d.is-flip { animation: tring-flip 420ms cubic-bezier(.3, 1.35, .5, 1) both; }
+@keyframes tring-flip {
+  from { transform: perspective(60cqi) rotateX(-90deg); opacity: .2; }
+  to   { transform: perspective(60cqi) rotateX(0); opacity: 1; }
+}
+.tring-unit { margin-top: 3cqi; font-size: 10cqi; line-height: 1; color: var(--ink-3); }
+@container (max-width: 58px) { .tring-unit { display: none; } }
+.tring-num:empty + .tring-unit:empty { display: none; }
+
+/* hover 待办浮层（.hex-tip）已整块退役 —— 人类要的是六边形本体三档尺寸，
+   不是旁边冒出来一个跟着鼠标走的框。见 .hex-cell.is-hover。 */
+
+/* ── 嵌进 index.html 的行动分区版位 ──────────────────────────────
+ * board-shell 已经自带外框与内距，这里不再画第二层框，只管居中与横向滚动。 */
+.board-shell .hive-wrap { padding: var(--sp-3) 0 var(--sp-2); }
+.board-tools { display: flex; align-items: center; gap: var(--sp-3); }
+.board-tools .hex-status { white-space: nowrap; }
+.board-tools .pager small { color: var(--ink-3); font-size: var(--fs-eyebrow); }
+
+
+/* ── 聚焦：展开时本分区亮、别的分区灰 ────────────────────────────
+ * 人类：「不要拆开整个六边形蜂巢，而是把这个分区放大的同时，灰度掉别的分区。
+ * 营造一种屏幕聚焦在当前分区当前任务的感觉」。
+ *
+ * 分工：**放大在 JS**（computeItems 绕分区质心 ×FOCUS_ZOOM，走 FLIP），
+ * **压暗在 CSS**（这里）。不合并的原因是 filter 不是合成器上的廉价属性，
+ * 让 FLIP 每帧去动它就等于把 60fps 让出去；一次性过渡则无所谓。
+ *
+ * 灰掉的分区顺带 pointer-events:none —— 于是点在灰区上等于点在空白处，
+ * 被下面那条 document 监听收走 = 退出聚焦。这正是想要的手势。
+ * 中心格永不灰：计时圆环是这次聚焦要指向的地方。 */
+/* 分级：展开卡最亮 → 同区同伴淡一档 → 别的分区最灰。
+ *
+ * ⚠️ **一律不用 filter**（2026-09-08 人类："视觉效果已经有点卡了"）。
+ * `filter: grayscale()` 挂在十几二十个元素上，每个都会被提成独立合成层；
+ * 而这些元素的祖先 .hive-cam 正在跑 scale 过渡 —— 祖先每变一帧，
+ * 带 filter 的后代就得**重新光栅化一遍**。这是本模块最贵的一笔开销。
+ * 换成"把 --zone-color 调向中性色 + opacity"，两者都是纯合成/纯着色，
+ * 视觉结果几乎一样（分区色本来就是同 L 同 C 只差色相，往 --line 一混就没了身份）。 */
+.hex-cell.is-mate {
+  --zone-color: color-mix(in srgb, var(--zone-raw) 58%, var(--line));
+  opacity: .88;
+  transition: opacity 300ms ease-out;
+}
+/* 展开时格子放大到 4.7 倍，标题字号得跟一点，否则 407px 宽的六边形里孤零零
+   一行 12.5px 的字，比不放大还别扭。**不按 4.7 倍跟**（那是 59px 的大字报）——
+   跟到 22px 就够，六边形一大，字的相对分量本来就该降下来。 */
+.hive.is-focused .hex-cell.is-mate .hex-title,
+.hive.is-focused .hex-cell.is-dimmed .hex-title {
+  font-size: 22px; line-height: 1.3; -webkit-line-clamp: 3;
+  /* 50% 是算出来的上限，防长标题。真正贴着卡片的是**正左右**那两个邻居：
+     它们的标题在自己格子正中，距卡心一个晶格步长 407；卡片放大到
+     CARD_OVER=1.474 后半宽 300，只剩 107 留给标题的半宽 ⇒ 标题宽 ≤ 214
+     ⇒ 214/407 = 52.6%，取 50% 留余量。
+     （斜上/斜下的邻居撞的是卡片高度那一头，但那里是六边形的尖、宽度趋近 0，
+     所以不冲突 —— 别拿矩形外接框去判，会误报。）
+     **和 hex-layout.js 的 CARD_OVER 是一对，改一个必须重算另一个。** */
+  max-width: 50%; margin-left: auto; margin-right: auto;
+}
+.hive.is-focused .hex-cell.hex-center .hex-center-title { font-size: 20px; }
+.hive.is-focused .hex-cell.hex-center .hex-center-meta { font-size: 18px; }
+.hex-cell.is-dimmed {
+  --zone-color: color-mix(in srgb, var(--zone-raw) 10%, var(--line));
+  opacity: .42;
+  transition: opacity 300ms ease-out;
+}
+.hex-zone-label.is-dimmed { opacity: .4; transition: opacity 300ms ease-out; }
+.hex-cell.is-dimmed { cursor: default; }
+/* ⚠️ 展开时禁的是**悬停放大**，不是点击（人类 2026-09-08 澄清：
+   「只是让你禁用放大视图下鼠标放上去放大，不是禁用点击」）。
+   所以这里**不能**用 pointer-events:none —— 那会把点击一起掐死，
+   隔壁的卡片就点不进去了（上一版的错）。
+   悬停档在 JS 侧拦（hex-app.js 的 mouseover：state.expandedId 有值就不进），
+   这里只把 CSS 的 :hover 底色变化按回静置值，免得"指上去有反应、却什么都不会发生"。 */
+.hive.is-focused .hex-cell:not(.is-expanded):hover::before {
+  background: color-mix(in srgb, var(--zone-color) var(--zone-mix, 30%), var(--panel));
+}
+/* 界线跟着格子一起长大：格子的晶格位与尺寸都 ×EXPAND_MAG，界线画在缝里，
+   不跟着缩放就会留在原处、和格子完全对不上。缩放中心是局部原点（蜂巢中心），
+   而 <g> 上已经挂着 translate(ox,oy)，所以这里只叠一个 scale 就对。 */
+.hive.is-focused .hex-borders { opacity: .18; }
+/* 聚焦那一区被放大了，会压到邻区头上 —— 得明确压过去，不能靠 DOM 顺序碰运气。
+   12 落在"界线 6"与"分区标签 20"之间（z 分层表见上面悬停档那一段）。
+   ⚠️ :not(.is-expanded) 不能省：这条选择器比 `.hex-cell.is-expanded` 特异性高，
+   不排掉就会把展开卡也拉到 12，于是同为 12、DOM 在后的中心格盖在卡片上
+   （真机实测：圆环压在「下一步」那块上）。展开卡永远是 30。 */
+.hive.is-focused .hex-cell:not(.is-dimmed):not(.is-expanded) { z-index: 12; }
+.hex-zone-label.is-dimmed { cursor: default; }
+/* 界线层整体退到背景：聚焦那一区的格子被挪动过（×FOCUS_ZOOM），它自己那几条
+   界线还画在原位，对不上。压到这个不透明度对不上也看不出来 —— 这是**故意的
+   取舍**，不是忘了同步。真要同步就得让界线也跟着缩放，那是把整套几何再算一遍。 */
+.hive.is-focused .hex-borders { opacity: .22; }
+/* 拖分区名的时候把界线压淡：正在决定"这块地转到哪去"，边界暂时不是重点。 */
+#hive.is-reordering .hex-borders { opacity: .3; }
+.hex-borders { transition: opacity 300ms ease-out; }
+
+/* ── 长按蓄力：按住的那一刻就要有反馈，不能等到开火才动 ──────────
+ * 时长必须和 hex-app.js 的 LONGPRESS_MS 一致（520ms）。两处硬编码，
+ * 改一处必改另一处 —— CSS 拿不到 JS 常量，除非再插一个变量，不值当。 */
+@keyframes hex-charge { from { opacity: 0; } to { opacity: .62; } }
+/* ⚠️ 时长走 --press-ms（hex-timer.js 按下时注入 = LONGPRESS_MS），
+   **不要在这里写死毫秒数**。人类要的是「从淡到浓直到和已有六边形同色**就**
+   打开」——动画比长按短就提前满格、比长按长就永远填不满，那句话两头都不成立。
+   兜底 520ms 只为脱离 JS 单看这张表时不至于是 0。 */
+.hex-cell.is-pressing::after {
+  content: ""; position: absolute; inset: 0; z-index: 0;
+  clip-path: var(--hex-clip, polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%));
+  background: var(--zone-color);
+  animation: hex-charge var(--press-ms, 520ms) linear both;
+  pointer-events: none;
+}
+/* 占位格的充能**不是**充到实色，是充到「和已有六边形同色」（30% 那一档）。
+   项目格那条充的是 .62 的实色高光，两者语义不同：一个是"要开火了"，
+   一个是"这个空位正在长成一个真格子"。 */
+.hex-cell.is-placeholder.is-pressing::after {
+  background: color-mix(in srgb, var(--zone-color) var(--zone-mix, 30%), var(--panel));
+  animation-name: hex-charge-fill;
+}
+@keyframes hex-charge-fill { from { opacity: 0; } to { opacity: 1; } }
+@keyframes hex-card-charge {
+  from { background: color-mix(in srgb, var(--zone-color) 30%, var(--panel)); }
+  to   { background: color-mix(in srgb, var(--zone-color) 78%, var(--panel)); transform: scale(.97); }
+}
+.hex-todo-card.is-pressing { animation: hex-card-charge 520ms linear both; }
+
+/* ── 飞进中央圆环 = 「神灯」（hex-genie.js）────────────────────────
+ * 替身按被按那一块的形状复刻（格子 = 它自己的 --hex-clip，卡片 = 圆角矩形），切成 12 条，
+ * 每条一个全尺寸替身 + 外层 inset() 只露自己那一条。形状、颜色、字号全在 JS 里从源元素上量，
+ * 这里只放和源无关的骨架。
+ * ⚠️ 这里**不许写百分比 padding**：position:fixed 的百分比按视口宽算，
+ *    上一版 `padding: 0 12%` 在 1400 宽的屏上把替身撑成 336px，形状和落点双双跑偏。 */
+.hex-genie { position: fixed; inset: 0; z-index: 90; pointer-events: none; }
+.hex-genie-band { position: fixed; will-change: transform, opacity; }
+.hex-genie-face {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 10px; box-sizing: border-box;
+  font-weight: 600; line-height: 1.2; text-align: center; overflow: hidden;
+}
+/* 接住 = **圆环自己膨胀 3 秒再缩回**（人类：「正在计时的圆环膨胀 3 秒然后
+   自动缩小就行」）。放大的是 .hex-ring-slot，**不是中心格**：
+   格子的 transform 归 FLIP 管，CSS 再写一条就会互相覆盖（本模块踩过），
+   而且人类明确说了不要看到六边形放大。
+   1.62 是上限：中心格 42% 宽的圆环 ×1.62 ≈ 68%，仍在六边形的平边以内，
+   再大就会被 clip-path 削掉两个角。 */
+/* ── 「接住计时」：放大 3 秒 + 底色闪 1.5 次 + 缩回（2026-09-11；颜色 09-12 定稿为分区色，见下）──
+   人类原话：「中间的计时圈干脆做一个自动放大 3 秒效果和鼠标放上去一样，
+   背景颜色取计划色闪烁 1.5 次。然后缩小回原位。」
+   · **放大不在这里**：hex-timer.js 直接让中心格进悬停态（和鼠标放上去是
+     同一段代码），尺寸 / 层级 / 圆环比例全走 .is-hover 那几条。
+     所以这里**不再给圆环加 scale** —— 悬停时圆环没有额外缩放，这里也不许有。
+   · 底色两段动画接力，时长全部由 JS 注入（不在这里写死一个毫秒数）：
+       ① hex-catch-flash：常 → 计划紫 → 常，一遍 --flash-ms（= 3s / 1.5），
+         播 1.5 遍，正好铺满放大的 3 秒、停在计划紫的峰值上；
+       ② hex-catch-out：从计划紫淡回常态，delay --swell-ms（= 开始缩小那一刻），
+         时长 --anim-ms（= 缩小的过渡时长）。
+     同一属性上两个动画，**后列的赢**；②在 delay 期间不生效（没设 backwards），
+     所以前 3 秒是①在管，第 3 秒起②接手。闪完、缩小、颜色回落是同一条时间轴。
+   · 计划紫用 --plan（design-tokens-v1：「计划紫 / 事实青是信息，不是装饰」），
+     混 panel 58%，圆环和字压在上面仍读得清。 */
+/* 2026-09-12 闪烁颜色改了四次，定稿：**全程分区色**。
+   在 --center-bg（分区色最深档再加一档）↔ --flash-peak（分区色本身，混 panel 86%）之间闪 1.5 次，
+   第 3 秒起从峰值淡回 --center-bg —— 和中心格常态底色是同一个变量，最后一帧分毫不差。
+   任务没有分区时 --flash-peak 退回计划紫、--center-bg 是 --panel（见上面 .hex-center 的默认值）。
+   飞进来的替身不再中途变紫（hex-genie.js），一路保持源格子的分区色。 */
+@keyframes hex-catch-flash {
+  0%, 100% { background: var(--center-bg); }
+  50%      { background: var(--flash-peak); }
+}
+@keyframes hex-catch-out {
+  from { background: var(--flash-peak); }
+  to   { background: var(--center-bg); }
+}
+.hex-cell.hex-center.is-catch { background: var(--flash-edge); }
+.hex-cell.hex-center.is-catch::before {
+  animation:
+    hex-catch-flash var(--flash-ms, 2000ms) ease-in-out 1.5,
+    hex-catch-out var(--anim-ms, 460ms) ease-out var(--swell-ms, 3000ms) forwards;
+}
+
+/* ── 轻粒子：中心圆环往项目格飘的半透明小点（2026-09-14，hex-spark.js）────
+ * 人类：「中间的圆环一个轻粒子动画，半透明稀疏粒子飞向项目六边形。」
+ * 层在 .hive-cam 里（和格子同一套局部坐标，推镜的 scale 一并带着走），
+ * 不吃事件、不参与布局。动画全部在 JS 里用 Web Animations 写（每颗的落点不同，
+ * 写不进一条固定关键帧）；这里只管长相。
+ * 颜色 --c 由 JS 按落点那一格的分区色写进来，拿不到就退回事实青。 */
+.hex-spark-layer {
+  position: absolute; inset: 0; pointer-events: none; z-index: 0; overflow: visible;
+}
+.hex-spark {
+  --c: var(--fact);
+  position: absolute; display: block; border-radius: 50%;
+  /* 径向渐变而不是实心圆点：边缘软一档，像一粒光而不是一颗像素。
+     渐变只在生成时画一次，之后动的只有 transform / opacity —— 比 filter/box-shadow 便宜得多。 */
+  background: radial-gradient(circle, var(--c) 0%,
+              color-mix(in srgb, var(--c) 45%, transparent) 45%, transparent 72%);
+  opacity: 0;                                     /* 初始透明，由动画接管 */
+  will-change: transform, opacity;
+}
+
+/* ── 平板 ────────────────────────────────────────────────────
+ * 触摸屏没有 hover 这一档，档位由 hex-app.js 改成"第一下点出悬停档、
+ * 第二下才展开"。这里只管手指够得着：命中区、按钮高度、可划动。 */
+@media (pointer: coarse) {
+  .hex-cell.is-hover .hex-next { font-size: 12px; }
+  .hex-todo-card { padding: 6px 9px; }
+  .hex-mini { min-height: 32px; padding: 0 10px; }
+  .hex-newtask input { min-height: 34px; }
+  .hex-zone-pill { padding: 6px 10px; }
+}
+
+/* ── 无障碍：设了减少动效就直接到终态，一律不放动画 ────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .hex-cell, .hex-cell::before, .hex-inner, .hex-zone-label,
+  .hex-ring-slot, .tring-progress,
+  .hex-borders path, .hex-borders line {
+    transition: none !important;
+  }
+  .hex-cell.is-expanded .hex-detail { animation: none !important; }
+  .tring-sec { transition: none !important; }
+  .tring-d.is-flip { animation: none !important; }
+  .tring.is-hour-full .tring-progress { animation: none !important; }
+  /* 蓄力反馈保留但不做过程动画：直接到终态，"按住了"这件事仍然看得见。
+     飞行替身在 JS 里就整段跳过（flyToCenter 首行 return）。 */
+  .hex-cell.is-pressing::after { animation: none !important; opacity: .62; }
+  #hive.is-zone-edit .hex-zone-pill { animation: none !important; }
+  .hex-spark-layer { display: none !important; }   /* 纯装饰：减少动效下连层都不要 */
+  .hex-todo-card.is-pressing { animation: none !important; }
+  /* 减少动效：不闪，改成整段静态峰值色；放大照旧（悬停态本身不是动画）。 */
+  .hex-cell.hex-center.is-catch::before {
+    animation: none !important;
+    background: var(--flash-peak);
+  }
+  .hex-cell.is-dimmed, .hex-zone-label.is-dimmed, .hex-borders { transition: none !important; }
+}

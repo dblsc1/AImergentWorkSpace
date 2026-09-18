@@ -1,0 +1,308 @@
+/* 驾驶舱共享顶栏 v2 —— 由 nginx sub_filter 注入 /table/ /ring/ /gantt/ 三页。
+ *
+ * v2（cockpit-v1 升级，2026-08-08）：从「一条轨 + 三个节点」的旧设计换成
+ * PRD F-NAV-1「品牌 · 三页签（当前页下划线）· 录制胶囊 · 主题控件 · 退出」。
+ * 对外不变量没变（契约 v0.6 仍然逐字钉着）：根元素还是
+ * `nav.ckpt-nav[data-ckpt-nav]`，全部 DOM class 仍以 `ckpt-` 起头，
+ * `data-ckpt-timer` 仍是 idle/running/degraded 三态互斥。
+ *
+ * **本文件不再自己定义颜色**（v1 那份「自给自足」的理由——ring 与 table/gantt
+ * 用的不是同一套 token——在 v0.6 之后不成立了：三页现在都被注入同一份
+ * `/__cockpit/tokens.css`，且加载顺序在 navbar.css 之前，见
+ * nginx/templates/cockpit.conf.template 的注入顺序）。样式只准 `var(--…)`，
+ * 唯一豁免是这行注释本身不算代码（design-tokens-v1.md §2「模块 CSS/JS 禁裸 hex」）。
+ */
+
+/* 给固定顶栏让位。
+ * **必须同时设 box-sizing: border-box**：三页的 body 都是 min-height:100vh，
+ * 不改盒模型的话这段高度会加在 100vh 之外，凭空多出一条滚动条。 */
+body {
+  box-sizing: border-box;
+  padding-top: var(--ckpt-h, 52px);
+}
+
+/* 固定顶栏会盖住「被滚动到视口最顶端」的元素，scroll-padding-top 让滚动 API
+ * 主动给顶栏留位（三个仓的 E2E 有点击页面顶部元素的用例，被顶栏截走点击会
+ * 报成一个跟本模块毫无关系的 30s 超时）。 */
+html { scroll-padding-top: var(--ckpt-h, 52px); }
+
+:root {
+  --ckpt-h: 52px;         /* 顶栏高度，窄屏 42px（见下方媒体查询） */
+}
+
+/* ── 顶栏本体 ────────────────────────────────────────────────────
+ * position: fixed 不是为了「吸顶」好看，是**被 ring 逼的**：ring 的 body 是
+ * display:grid + place-items:center，任何在流内的 body 子元素都会变成被居中的
+ * grid item（顶栏会跑到页面正中间）。fixed 定位的元素是 out-of-flow，
+ * **不构成 grid item**，三页因此可以共用一份 CSS。
+ * z-index 60：页面内实测最大 z-index 是 40（gantt 的 toast、table 的浮层）。 */
+.ckpt-nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 60;
+  height: var(--ckpt-h);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3, 12px);
+  padding: 0 var(--sp-4, 16px);
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-body, system-ui, sans-serif);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── 品牌 ──────────────────────────────────────────────────────── */
+.ckpt-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2, 8px);
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--ink);
+  text-decoration: none;
+  flex: none;
+}
+.ckpt-brand svg { flex: none; }
+
+/* ── 页签 ──────────────────────────────────────────────────────── */
+.ckpt-tabs {
+  display: flex;
+  gap: var(--sp-1, 4px);
+  min-width: 0;
+}
+.ckpt-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap, 44px);
+  padding: 0 var(--sp-3, 12px);
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  text-decoration: none;
+  border-radius: var(--r-1, 6px);
+  font-size: var(--fs-body, 15px);
+  white-space: nowrap;
+  transition: color var(--t-fast, 150ms ease), background var(--t-fast, 150ms ease);
+}
+.ckpt-tab:hover { background: var(--panel-2); color: var(--ink); }
+.ckpt-tab[aria-current="page"] { color: var(--ink); font-weight: 600; }
+/* 当前页下划线用 --accent（机身色，随预设换；不是 --fact 台账色——
+ * design-tokens-v1.md §3.3「页签当前下划线」明文归在 accent 一类）。 */
+.ckpt-tab[aria-current="page"]::after {
+  content: "";
+  position: absolute;
+  left: var(--sp-3, 12px);
+  right: var(--sp-3, 12px);
+  bottom: 4px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+/* ── 右侧：录制胶囊 + 主题 + 退出 ──────────────────────────────── */
+.ckpt-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2, 8px);
+  flex: none;
+}
+
+/* 录制胶囊：先判 degraded 再读 running（js 侧）；三态样式各自成立。
+ * 用 --accent 而非 --fact——design-tokens-v1.md §3.3「录制胶囊」也归在 accent 一类，
+ * 机身色跟随预设，图表台账色（--fact）留给仪表页自己的圆环。 */
+.ckpt-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2, 8px);
+  min-height: var(--tap, 44px);
+  padding: 0 var(--sp-3, 12px);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-2);
+  text-decoration: none;
+  font-size: var(--fs-sub, 13px);
+  white-space: nowrap;
+  transition: border-color var(--t-fast, 150ms ease), color var(--t-fast, 150ms ease);
+}
+.ckpt-chip:hover { background: var(--panel-2); }
+
+.ckpt-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ink-3);
+  background: transparent;
+  box-sizing: border-box;
+}
+
+/* idle：空心灰点 + 「未在计时」，无边框强调 */
+.ckpt-nav[data-ckpt-timer="idle"] .ckpt-chip { border-color: var(--line); color: var(--ink-2); }
+
+/* running：--accent 实心点 + 呼吸 + 任务名 + 用时。三个状态里唯一「活」的一个。 */
+.ckpt-nav[data-ckpt-timer="running"] .ckpt-chip { border-color: var(--accent); color: var(--accent); }
+.ckpt-nav[data-ckpt-timer="running"] .ckpt-dot { background: var(--accent); border-color: var(--accent); }
+@media (prefers-reduced-motion: no-preference) {
+  .ckpt-nav[data-ckpt-timer="running"] .ckpt-dot { animation: ckpt-breathe 2s ease-in-out infinite; }
+}
+@keyframes ckpt-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+
+/* degraded：虚线琥珀 + 「状态未知」，不显示任何数字（css 收掉 elapsed）。
+ * 虚线 = 「这个读数不可信」的通用视觉语汇，与 idle 的实线空心、running 的实心都不同。
+ * **不加呼吸动画**——呼吸是「活着」的意思，降级态恰恰是不知道活没活。 */
+.ckpt-nav[data-ckpt-timer="degraded"] .ckpt-chip { border-color: var(--warn); color: var(--warn); }
+.ckpt-nav[data-ckpt-timer="degraded"] .ckpt-dot { background: transparent; border-color: var(--warn); border-style: dashed; }
+.ckpt-nav[data-ckpt-timer="degraded"] .ckpt-elapsed,
+.ckpt-nav[data-ckpt-timer="degraded"] .ckpt-sep { display: none; }
+
+.ckpt-live-word {
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ckpt-elapsed {
+  font-family: var(--font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .04em;
+  flex: none;
+}
+.ckpt-sep { flex: none; color: var(--ink-3); }
+
+/* ── 图标按钮（主题 / 退出） ───────────────────────────────────── */
+.ckpt-icon-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tap, 44px);
+  height: var(--tap, 44px);
+  border-radius: var(--r-1, 6px);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink-2);
+  appearance: none;
+  cursor: pointer;
+  flex: none;
+}
+.ckpt-icon-btn:hover { color: var(--ink); background: var(--panel-2); }
+.ckpt-icon-btn[disabled] { opacity: .5; cursor: default; }
+
+.ckpt-exit {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink-2);
+  font-family: inherit;
+  font-size: var(--fs-sub, 13px);
+  min-height: var(--tap, 44px);
+  padding: 0 var(--sp-3, 12px);
+  border-radius: var(--r-1, 6px);
+  cursor: pointer;
+  flex: none;
+  white-space: nowrap;
+}
+.ckpt-exit:hover { color: var(--danger); border-color: var(--danger); }
+.ckpt-exit[disabled] { opacity: .5; cursor: default; }
+
+/* ── 焦点可见（键盘导航）───────────────────────────────────────
+ * 只在键盘焦点时描边；鼠标点击不出现（:focus-visible 的全部意义）。
+ * 用 --focus，不用 --accent——焦点环是独立于语义色的可达性信号（契约 tokens §3.1）。 */
+.ckpt-nav a:focus-visible,
+.ckpt-nav button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ── 主题面板（F-THEME-4）─────────────────────────────────────────
+ * 明/暗/跟随三选一 + 三色预设圆点三选一。用 class 显隐（gantt 有一条遍历全部
+ * [hidden] 元素的回归断言，注入的新 DOM 带 hidden 会把它打乱）。 */
+.ckpt-theme-panel {
+  position: absolute;
+  top: calc(var(--ckpt-h) + 6px);
+  right: var(--sp-4, 16px);
+  z-index: 61;
+  min-width: 200px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2, 10px);
+  box-shadow: var(--shadow);
+  padding: var(--sp-3, 12px);
+  display: none;
+}
+.ckpt-theme-panel.ckpt-open { display: block; }
+
+.ckpt-theme-group { display: flex; flex-direction: column; gap: var(--sp-1, 4px); }
+.ckpt-theme-label {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--fs-eyebrow, 11px);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: var(--sp-2, 8px) 0 var(--sp-1, 4px);
+}
+.ckpt-theme-label:first-child { margin-top: 0; }
+
+.ckpt-theme-modes { display: flex; gap: var(--sp-1, 4px); }
+.ckpt-mode-btn {
+  flex: 1;
+  min-height: var(--tap, 44px);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink-2);
+  border-radius: var(--r-1, 6px);
+  font-size: var(--fs-sub, 13px);
+  cursor: pointer;
+}
+.ckpt-mode-btn:hover { background: var(--panel-2); }
+.ckpt-mode-btn[aria-pressed="true"] {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.ckpt-accent-dots { display: flex; gap: var(--sp-2, 8px); }
+.ckpt-accent-dot {
+  width: var(--tap, 44px);
+  height: var(--tap, 44px);
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ckpt-accent-dot .ckpt-accent-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+}
+/* 三色预设的圆点是「预览色板」——必须让人看见三种颜色本来的样子，不能跟着
+ * 当前选中的 data-accent 变。取的是 tokens.css 里三个专用的固定预览变量
+ * （--accent-preview-*），不是裸 hex，也不是会随主题切换的 --accent。 */
+.ckpt-accent-dot[data-ckpt-accent="teal"] .ckpt-accent-swatch { background: var(--accent-preview-teal); }
+.ckpt-accent-dot[data-ckpt-accent="violet"] .ckpt-accent-swatch { background: var(--accent-preview-violet); }
+.ckpt-accent-dot[data-ckpt-accent="amber"] .ckpt-accent-swatch { background: var(--accent-preview-amber); }
+.ckpt-accent-dot[aria-pressed="true"] { border-color: var(--ink); }
+
+/* ── 窄屏（<560px，A5/F-NAV-3）─────────────────────────────────
+ * 胶囊缩为点 + 时间，品牌缩为图标，页签保留短词不折行。节点一个都不删。
+ * 用 `@media` 视口宽度而不是 `@container`：三个前端页面都没有在任何祖先上声明
+ * `container-type`，`.ckpt-nav` 是 `position:fixed` 更不会替它凭空建一个——
+ * 写 `@container` 在这三页里是一段永远不触发的死代码。 */
+@media (max-width: 560px) {
+  :root { --ckpt-h: 42px; }
+  .ckpt-nav { padding: 0 10px; gap: 8px; }
+  .ckpt-brand .ckpt-word { display: none; }
+  .ckpt-tab { padding: 0 8px; font-size: var(--fs-sub, 13px); }
+  .ckpt-chip .ckpt-live-word { display: none; }
+  .ckpt-exit .ckpt-word { display: none; }
+}
