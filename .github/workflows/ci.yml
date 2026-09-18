@@ -46,6 +46,45 @@ jobs:
             --deselect "$F1::$T1" \
             --deselect "$F2::$T2"
 
+  ring-tokens:
+    name: ring 令牌兜底
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: 契约必须可达
+        # 脚本对「契约不可达」的处理是 skip 后 exit 0 —— 那是为「ring 被单独
+        # clone 出去测」设计的，在本仓不成立：contracts/ 和 ring 同仓，永远可达。
+        # 不加这道，契约一旦被挪走 CI 照样绿，而它什么都没测。
+        run: test -f contracts/design-tokens-v1.md
+      - name: 跑检测
+        # 纯 stdlib，不装任何东西。退出码就是判据。
+        run: python3 modules/ring/code/frontend/tests/check_tokens_fallback.py
+
+  ring-e2e:
+    name: ring 前端测试
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: modules/ring/code/frontend/tests
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          # 不要升。playwright 1.49.1 拉的 greenlet 没有 3.13+ 的 wheel，
+          # 在新版 python 上装不了：Failed building wheel for greenlet。
+          python-version: '3.12'
+      - name: 装依赖
+        run: |
+          pip install -q -r requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: pytest
+        # 不走 run.sh —— 它在依赖不全时打印装法然后 exit 0，在 CI 里是假绿。
+        # screenshot_dropdown.py 是截图工具不是测试，pytest 不会收集它。
+        run: python -m pytest . -q -rs
+
   gitleaks:
     name: 密钥扫描
     runs-on: ubuntu-latest
