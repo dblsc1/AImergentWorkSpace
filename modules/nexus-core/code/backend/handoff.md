@@ -80,7 +80,7 @@ handlers/daily_stats)`——一个事件类型现在挂两个 handler，各写�
 - **v1.4：`TaskUpdate` 补 `plannedWeight`**（`TaskCreate` 一直有，`TaskUpdate` 漏加过，
   PATCH 权重曾被 `extra="forbid"` 判成 422），复用既有 `_check_weight`，非新校验。
 - **统一入口 `unified_router.py` 的路由注册顺序不能改**：`/zones` `/projects` `/tasks` 的静态路由必须在文件里排在 `/{type}` 兜底路由之前，否则兜底会把合法 type 也吞成「未知 type」。以后要加第四类对象，同样得把它的静态路由插在兜底之前。
-- **v0.6：十二条 planner 旧端点（`/api/core/{zones,projects,tasks}`）已删除**，`planner/router.py` 整个文件随之删除（main.py 不再 include 它）。`/api/core/planner/{type}` 是唯一写路径。**`code/table` 前端仍在直接调旧端点，删除后它会暂时坏**——这是人类裁决 2026-08-01 明确接受的代价，前端迁移不在本目录职责内、另行处理，不要为了不破坏它而恢复旧端点。
+- **v0.6：十二条 planner 旧端点（`/api/core/{zones,projects,tasks}`）已删除**，`planner/router.py` 整个文件随之删除（main.py 不再 include 它）。`/api/core/planner/{type}` 是唯一写路径。**`modules/hive` 前端仍在直接调旧端点，删除后它会暂时坏**——这是人类裁决 2026-08-01 明确接受的代价，前端迁移不在本目录职责内、另行处理，不要为了不破坏它而恢复旧端点。
 - **档案读端 `GET /api/core/events` 放在 `events/` 子边界，不放 `views/`**：`views/` 的红线是「不读 events 集合」，档案读端恰恰要读 events，所以只能长在 events 自己的 router/service/repo 里；与 `POST /events`（ingest）共用 `/events` 前缀但函数完全独立。`from`/`to` 的比较在 `service.py` 里解析成 `datetime` 后再比——`time` 字段带任意时区偏移，直接对 ISO8601 字符串做字典序比较在跨时区时会算错顺序。
 - **甘特「计划」写侧复用既有 PATCH，不开专用端点**：`PATCH /api/core/planner/projects/{id}` 的 `plan` 字段真做校验（`planner/planvalidate.py::validate_plan`，v1.5 从 `service.py` 搬出，逐字节不变）——`start`/`end` 必须 `YYYY-MM-DD`、`end` 不得早于 `start`，违反 400 点名字段；`plan:null` 合法。create/update 共用同一份校验函数。
 - **`proj_daily_stats` 唯一约束是 `(user,date,projectId,taskId)`**，不是 `user` 单字段（那是 `proj_current` 的约束）——`taskId` 可以是 `None`（外部事件可以没有具体任务），`None` 参与唯一索引没问题。幂等实现与 `proj_current` 同构：`appliedKeys` 数组 + 原子 `update_one` + `DuplicateKeyError` 兜底。
@@ -96,7 +96,7 @@ handlers/daily_stats)`——一个事件类型现在挂两个 handler，各写�
 - **`GET /api/core/health` 暴露当前库名**（2026-08-02，契约「健康检查暴露库名」v1.0）：
   返回 `{"status":"ok","db":"<settings.db_name>"}`。让 E2E 能跨进程机械核验「打的是
   不是生产库」——单测护栏只在进程内可判，E2E 打 HTTP 看不见对端库名，两处用同一判据形状。
-- **陈旧 UTC 断言已修复**（2026-08-02，期望值现算不写死字面量，`check_multi_tz.sh`
+- **陈旧 UTC 断言已修复**（2026-08-02，期望值现算不写死字面量，多时区检查脚本
   防复发）。⚠️ 极端时区下 `test_gantt.py` 四条同形状假红**仍未修**，留给下一轮。
 
 ## 只读全量导出 `GET /api/core/export`（2026-08-09 新增，契约 v1.3）
@@ -270,7 +270,7 @@ project 的 `tasks[].actual`。**因此不需要跑 `projector.rebuild`**：没�
 .venv/bin/python migrations/migrate.py`。
 
 **v1.2 补的集成缝**：这批字段当初漏了 `views/schemas.py::Task`（`GET /views/tree`
-用，`ring`/`table` 实际读任务列表主要经这条，不是 planner 分页列表）。**教训**：
+用，`ring`/`hive` 实际读任务列表主要经这条，不是 planner 分页列表）。**教训**：
 加任务级字段要过一遍全部读取该实体的端点（tree/gantt/planner CRUD 三处），
 改完一个不代表改完了；对照表见 `module_docs/contract-schemas.md`「与其他两条读端的对照」。
 

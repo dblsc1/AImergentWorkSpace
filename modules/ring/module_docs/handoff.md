@@ -39,7 +39,7 @@
 表芯秒跳自增。字段级最新明细见 `module_docs/contract.md` 的 `consumes` 声明。
 
 - 2026-09-12：「暂停 / 继续」只用既有 `timer/stop|start`；暂停记忆是跨模块共享的本机键
-  `nexus.timer.paused.v1`（形状见 `contracts/timer-ring-visual-v1.md`，table 蜂巢中心格读写同一个键）。
+  `nexus.timer.paused.v1`（形状见 `contracts/timer-ring-visual-v1.md`，hive 蜂巢中心格读写同一个键）。
 
 ## 避坑 / 冻结点 / 技术债
 
@@ -63,5 +63,5 @@
 | 日期 | 缺口 | 现状 |
 |---|---|---|
 | 2026-09-08 | 「计时台改名」新开了一个消费面（`PATCH /api/core/planner/tasks/{id}`），当时只落在实现里，**没进 `module_docs/contract.md`**。 | **已清**：`nexus-core.planner.crud.v1` 补进 consumes，写明 body 只发 `{name}`（后端 `TaskUpdate` 是 `_Strict`，多带一个字段就是 422），以及"前端能写"的来源是 2026-08-01 人类裁决、用的是已注册入口、绝不写 `events`。 |
-| 2026-09-08 | `contracts/timer-ring-visual-v1.md` 白纸黑字写着「`code/ring` 是它的**第一个实现者**」，可这个仓里一直一个字都没提它。漏登的后果不是报错，是**下一个改圆环的人不知道自己受它约束**（规范说「实现与规范不一致时，改的是实现」），而 table 的蜂巢中心格是照着它做的第二个实现——两处对不上就是全站不一致。 | **已清**：作为 `contracts.timer-ring-visual.v1` 补进 consumes，并写明"改 `ring.css` 的 `.chrono` 那一族之前先读那份规范"。 |
+| 2026-09-08 | `contracts/timer-ring-visual-v1.md` 白纸黑字写着「`modules/ring` 是它的**第一个实现者**」，可这个仓里一直一个字都没提它。漏登的后果不是报错，是**下一个改圆环的人不知道自己受它约束**（规范说「实现与规范不一致时，改的是实现」），而 table 的蜂巢中心格是照着它做的第二个实现——两处对不上就是全站不一致。 | **已清**：作为 `contracts.timer-ring-visual.v1` 补进 consumes，并写明"改 `ring.css` 的 `.chrono` 那一族之前先读那份规范"。 |
 

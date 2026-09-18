@@ -12,7 +12,7 @@ consumes:
   - id: contracts.timer-ring-visual.v1
     contract: ../../../contracts/timer-ring-visual-v1.md
     purpose: >
-      **跨模块视觉规范，不是 API。** 那份契约白纸黑字写着「`code/ring` 是它的
+      **跨模块视觉规范，不是 API。** 那份契约白纸黑字写着「`modules/ring` 是它的
       第一个实现者」，可这个仓里一直一个字都没提它（2026-09-08 审计补登）。
       漏登的后果不是报错，是**下一个改圆环的人不知道自己受它约束**：
       规范说「实现与本规范不一致时，改的是实现，不是规范」，
@@ -82,8 +82,8 @@ consumes:
       **不使用** `projects[].tasks[].done` 与 `projects[].tasks[].dependsOn`
       ——F-RING-6 前置提示读的是 `views.tree.v1` 的同名字段，不是这里；两条
       视图都带这两个字段是巧合的重叠，ring 只认 tree 那份，避免"同一个判断
-      两个数据源各读一次、迟早漂移"。也不使用 `plan` 任务层（`code/gantt`
-      的职责）、不使用 `projects[].actual`（项目层已按**全部任务**求和，
+      两个数据源各读一次、迟早漂移"。也不使用 `plan` 任务层（甘特前端的职责，
+      该前端不在本仓）、不使用 `projects[].actual`（项目层已按**全部任务**求和，
       ring 需要任务级明细自己按 `date` 过滤后再求和，两者口径不同不能互相
       替代）。`views/gantt` 不可达、或响应缺 `today`/`projects`、或某个项目
       缺 `tasks` 数组：静默退回上面 `views.current.v1` 的终身累计两段式

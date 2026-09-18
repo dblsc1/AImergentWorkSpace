@@ -186,7 +186,7 @@ bash code/backend/scripts/restore.sh <archive> <目标库名>
    走 409（同「拒绝级联」语义，不是新的错误家族）。**排期冲突/越界不校验**（用户裁决），
    别看到「甘特要画冲突箭头」就手滑加一道后端拦截——那是展示层的事。
    **v1.2 修了 v1.1 留下的一处集成缝**：`views.tree.v1` 的任务节点当时没跟着补
-   `plan`/`dependsOn`——只顾上了 `TaskOut` 与甘特任务层，而 `ring`/`table` 恰恰
+   `plan`/`dependsOn`——只顾上了 `TaskOut` 与甘特任务层，而 `ring`/`hive` 恰恰
    主要经 tree 读任务列表。**教训钉进 `contract-schemas.md`「与其他两条读端的对照」表**：
    下次任务级字段变更，先查那张表，别改完一个读端就当作那批字段"已经加完了"。
 

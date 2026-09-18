@@ -7,7 +7,7 @@
 > 用于完成了但没计时的情况」——**契约已实现并通过验证**（实现 commit
 > `69da9d6`，12 条单测全绿；验证 commit `f308bdf`，4 条整合测试全绿，结论
 > approved）。新增 `timer.v1` 的 `POST /api/core/timer/backfill`（见下「补登」节）：表单粒度＝
-> 任务+日期+开始时刻+时长，必须挂具体任务；入口 `ring`+`table`（`gantt` 保持
+> 任务+日期+开始时刻+时长，必须挂具体任务；入口 `ring`+`hive`（`gantt` 保持
 > 只读不加写入面）。信封 `data` 与 `stop()` 完全同形，**零投影改动**是本版
 > 的规范性约束——若实现时发现必须改投影，说明设计有错，应停下重新设计，
 > 不许绕过这条约束硬做。
@@ -422,7 +422,7 @@ PRD F-API-4 要「任务 × 日 → 分钟」。**答案是：这份数据从 v0
 
 **为什么要写进契约**（ring 的 programmer 2026-08-01 指出）：
 
-`ring` 与 `table` 都**直接把 `detail` 原样显示给用户**——这是我们有意定的纪律
+`ring` 与 `hive` 都**直接把 `detail` 原样显示给用户**——这是我们有意定的纪律
 （后端是权威，前端不重复实现校验、不用自己的措辞包装）。
 但在 v0.7 之前，这个形状只是 `main.py` 里 exception handler 的**观察到的行为**，
 契约一个字都没承诺。
@@ -437,7 +437,7 @@ PRD F-API-4 要「任务 × 日 → 分钟」。**答案是：这份数据从 v0
    `"validation failed"` 这类通用文案（那会逼前端自己再写一套校验）。
 2. **形状对所有 4xx 一致**，包括 400/401/404/409/422。
 3. 改这个形状 = **破坏性变更**，须走 CR 并通知全部消费方
-   （现为 `code/ring`、`code/table`）。
+   （现为 `modules/ring`、`modules/hive`）。
 
 ## 档案读端（规范性 · v0.6）
 
@@ -466,7 +466,7 @@ x时x分–x时x分完成了 xx 任务」就是从这里来的。
 ## 只读全量导出（规范性 · v1.3）
 
 `GET /api/core/export` —— 一次性把用户在本模块的**全部**数据拼成一份 JSON，
-给用户「导出我自己的数据」这个诉求用（消费方：`table` 前端「导出数据」按钮）。
+给用户「导出我自己的数据」这个诉求用（消费方：`hive` 前端「导出数据」按钮）。
 
 ```jsonc
 {
@@ -498,14 +498,14 @@ x时x分–x时x分完成了 xx 任务」就是从这里来的。
    塑形后的树。** 导出是给用户的数据副本，不是某个 UI 组件的专用视图——没有
    理由像 `views/queries.py` 那样丢字段（如 `color`/`plannedWeight`）或按
    `zone→project→task` 嵌套重排。
-4. **`exportedAt` 由服务端生成。** 消费方（`table` 前端）下载文件时若要用
+4. **`exportedAt` 由服务端生成。** 消费方（`hive` 前端）下载文件时若要用
    日期命名，须用这个字段，**不得用浏览器本地时钟**——同「甘特读端」的
    `today` 那条理由：客户端时区/时钟不准，服务端时刻才是唯一权威。
 
 ## JSON 一键导入编辑（规范性 · v1.7）
 
 `POST /api/core/import` —— 「导出 JSON → 编辑器里改 → 导回去直接生效」的
-外部编辑通道（消费方：`table` 前端，与「只读全量导出」节的导出按钮成对）。
+外部编辑通道（消费方：`hive` 前端，与「只读全量导出」节的导出按钮成对）。
 
 ```jsonc
 // 请求体：与 export 的 zones/projects/tasks 同形状（原始文档），外加四个控制字段
@@ -886,7 +886,7 @@ X-Nexus-Client-Token: <token>
 判据一句话：**"我是 human" 是提权声明，必须有凭据；"我是 ai" 是降权声明，
 谁说都信。** 这条不对称不是妥协，是威胁模型本身的形状——冒充 AI 拿不到任何东西。
 
-**为什么 `unverified` 仍按 v1.5 语义放行**：今天人的前端（`table`/`ring`/`gantt`）
+**为什么 `unverified` 仍按 v1.5 语义放行**：今天人的前端（`hive`/`ring`/`gantt`）
 一个都没有携带凭据，凭据注入点在 `nginx-docker` 网关（跨模块）。把 `unverified`
 一刀切成不可信，等于在网关改造落地前把整个前端写路径打死。**这是有意的、
 已登记的剩余缺口**，见本节末尾「剩余缺口」，并由严格模式提供开关。
@@ -1009,7 +1009,7 @@ X-Nexus-Client-Token: <token>
 > **v0.6 起这是 planner 的唯一写路径。** 十二条旧端点（`/api/core/{zones,projects,tasks}`）
 > **已删除**。人类裁决 2026-08-01：「旧端口清掉」「都要从统一入口走」。
 >
-> v0.5 时曾新旧并存（怕删了 `code/table` 立刻坏），那是**过渡状态不是设计**——
+> v0.5 时曾新旧并存（怕删了 `modules/hive` 立刻坏），那是**过渡状态不是设计**——
 > 同一件事两个入口，迟早有人只改一边。前端迁移另行处理，
 > 迁移期间 table 会暂时坏，这是**有意接受的代价**，不是意外。
 
@@ -1038,7 +1038,7 @@ X-Nexus-Client-Token: <token>
 "任务 kind 非法：'不合法的kind'，合法取值 normal/ephemeral"
 ```
 
-`code/table` 的实现直接依赖这条（原样展示后端消息、不自己包装措辞）。
+`modules/hive` 的实现直接依赖这条（原样展示后端消息、不自己包装措辞）。
 **通用 CRUD 层天然滑向通用报错**（"validation failed"），一旦那样，
 这条契约保证就没了，前端只能自己再写一套校验——正是当初决定不要的重复。
 
@@ -1303,15 +1303,15 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 
 | 消费方 | 用哪条 | 位置 |
 |---|---|---|
-| `ring` 前端 | `views.current.v1`；`timer.v1` 的 `POST /api/core/timer/cancel`（取消计时按钮「取消，不记录」）；v1.2 起 `views.tree.v1` 任务节点的 `dependsOn`/`done`（F-RING-6 前置未完成提示，读既有 tree 接口，无新增请求）；`views.gantt.v1` 的 `today`/`projects[].id`/`projects[].tasks[].{id,name}`/`tasks[].actual[].{date,seconds}`（`code/ring` 契约 commit `2cba2aa` 已登记己方消费，本行是反向索引追平）；**v1.8 新增已登记**：`timer.v1` 的 `POST /api/core/timer/backfill`（空闲态「计时方式」两个 tab 旁的「补登」入口，运行态也可点，任务下拉复用现有取任务列表路径，`code/ring` 契约 commit `e6cfd9d` 已登记己方消费，本行是反向索引追平） | `code/ring` |
-| `table` 前端 | `views.tree.v1`（v1.2 起任务节点带 `plan`/`dependsOn`，控件按这两个键 feature-detect 是否亮起）；`planner.crud.v1` 的 `TaskOut.plan`/`dependsOn`（F-TABLE-3 任务排期与前置任务编辑，写走既有 `PATCH /api/core/planner/tasks/{id}`）；`views.gantt.v1` 的 `projects[].plan`/`projects[].actual[].{date,seconds}`/`today`（`code/table` 契约 commit `603a44e` 已登记己方消费，本行是反向索引追平）；v1.3 起 `views.export.v1`（「导出数据」按钮，全量拉一次 + `exportedAt` 用于文件命名）；**v1.8 新增已登记**：`timer.v1` 的 `POST /api/core/timer/backfill`（任务行「补登」按钮，点开时任务字段预填该行任务且不可改，`code/table` 契约 commit `f11cdb3` 已登记己方消费，本行是反向索引追平） | `code/table` |
-| `gantt` 前端 | `views.gantt.v1`；v1.1 起响应新增 `projects[].tasks[]`（任务层 plan/dependsOn/actual，F-GANTT-1..4） | `code/gantt` |
-| `table` / 新 todo 前端 | **v1.5 新增消费待登记**：`views.next-actions.v1`（F-TODO-2..5，待办区视图）、`views.review.v1`（F-REVIEW-2，每周回顾视图）、`planner.crud.v1` 的 `actor`/`lastWriter`（F-ACTOR-3，AI 写过的对象角标展示）、`p_inbox` 禁删（F-INBOX-1..4，收件箱/理清 UI） | `code/table`（或 GTD PRD O1 待定的新 `/todo/` 页） |
+| `ring` 前端 | `views.current.v1`；`timer.v1` 的 `POST /api/core/timer/cancel`（取消计时按钮「取消，不记录」）；v1.2 起 `views.tree.v1` 任务节点的 `dependsOn`/`done`（F-RING-6 前置未完成提示，读既有 tree 接口，无新增请求）；`views.gantt.v1` 的 `today`/`projects[].id`/`projects[].tasks[].{id,name}`/`tasks[].actual[].{date,seconds}`（`modules/ring` 契约 commit `2cba2aa` 已登记己方消费，本行是反向索引追平）；**v1.8 新增已登记**：`timer.v1` 的 `POST /api/core/timer/backfill`（空闲态「计时方式」两个 tab 旁的「补登」入口，运行态也可点，任务下拉复用现有取任务列表路径，`modules/ring` 契约 commit `e6cfd9d` 已登记己方消费，本行是反向索引追平） | `modules/ring` |
+| `hive` 前端 | `views.tree.v1`（v1.2 起任务节点带 `plan`/`dependsOn`，控件按这两个键 feature-detect 是否亮起）；`planner.crud.v1` 的 `TaskOut.plan`/`dependsOn`（F-TABLE-3 任务排期与前置任务编辑，写走既有 `PATCH /api/core/planner/tasks/{id}`）；`views.gantt.v1` 的 `projects[].plan`/`projects[].actual[].{date,seconds}`/`today`（`modules/hive` 契约 commit `603a44e` 已登记己方消费，本行是反向索引追平）；v1.3 起 `views.export.v1`（「导出数据」按钮，全量拉一次 + `exportedAt` 用于文件命名）；**v1.8 新增已登记**：`timer.v1` 的 `POST /api/core/timer/backfill`（任务行「补登」按钮，点开时任务字段预填该行任务且不可改，`modules/hive` 契约 commit `f11cdb3` 已登记己方消费，本行是反向索引追平） | `modules/hive` |
+| `gantt` 前端 | `views.gantt.v1`；v1.1 起响应新增 `projects[].tasks[]`（任务层 plan/dependsOn/actual，F-GANTT-1..4） | 不在本仓 |
+| `hive` / 新 todo 前端 | **v1.5 新增消费待登记**：`views.next-actions.v1`（F-TODO-2..5，待办区视图）、`views.review.v1`（F-REVIEW-2，每周回顾视图）、`planner.crud.v1` 的 `actor`/`lastWriter`（F-ACTOR-3，AI 写过的对象角标展示）、`p_inbox` 禁删（F-INBOX-1..4，收件箱/理清 UI） | `modules/hive`（或 GTD PRD O1 待定的新 `/todo/` 页） |
 | `ai-planner`（波2 已落地） | `planner.crud.v1` 的统一写入口（受控工具层的白名单命令面，F-AI-2）+ `actor="ai"` 写入（F-ACTOR-1）+ `views.export.v1`（F-AI-3，读全量日程喂 LLM）；**明确不消费** `events`/`timer`（红线，AI 只碰 planner）。**v1.6 新增要求**：写请求应携带 `X-Nexus-Client-Token: $NEXUS_AI_CLIENT_TOKEN`（携带后 `actor` 由服务端强制判定，受控层再也不必、也不能自报）；**高风险写从此在服务端被 403 拒绝**，与受控层「只产提议」互为二次设防 | `code/ai-planner`；AI 侧行为约定见仓根 `contracts/ai-planner-guide-v1.md` |
 | `nginx-docker` 网关（v1.6 新增待办，**尚未实施**） | 人路径的来源凭据注入：为 `/api/core/*` 的写请求注入 `X-Nexus-Client-Token: $NEXUS_HUMAN_CLIENT_TOKEN`。**未实施前 `NEXUS_ACTOR_STRICT` 必须保持 0**，否则前端的搬移/改期/删除全被 403 打死 | `code/nginx-docker`（跨模块，须排期，见「actor 来源区分与高风险二次设防」节「剩余缺口」） |
 
 **`views.gantt.v1` 现有三个消费方，各读不同切片**：`gantt` 前端读全部（项目层
-+ 任务层，画甘特图）；`ring`/`table` 只读其中一部分字段（`today` 作为服务端
++ 任务层，画甘特图）；`ring`/`hive` 只读其中一部分字段（`today` 作为服务端
 时钟基准、`projects[]` 的部分字段），**不需要任务层** `tasks[]`——三方共用
 同一个响应，字段增减只影响真正用到那个字段的消费方，其余的按既有纪律
 （改字段先走 CR）不受影响。
@@ -1321,7 +1321,7 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 不改、一个不删——旧客户端忽略新字段即可继续工作，零迁移期。
 
 **v1.2 是修 v1.1 留下的集成缝**：v1.1 给 `TaskOut` 与 `views.gantt.v1` 都加了
-`plan`/`dependsOn`，唯独漏了 `views.tree.v1`——而 `ring`/`table` 实际读取任务
+`plan`/`dependsOn`，唯独漏了 `views.tree.v1`——而 `ring`/`hive` 实际读取任务
 列表恰恰主要经过 tree（一次性全量树），不是 planner 的分页列表接口。v1.1 report
 里「读既有任务列表接口」这句话不够精确，实际验收在联调时才发现 tree 没带字段。
 补记于此，提醒以后加任务级字段要过一遍全部读取该实体的端点，不能改完一个
