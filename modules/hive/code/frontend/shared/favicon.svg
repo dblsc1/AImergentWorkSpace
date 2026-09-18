@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="COCKPIT">
+  <!-- 驾驶舱站点图标 —— 复用登录页已有的身份标记，不另起炉灶。
+       原件是 CSS 画的，不是 SVG：code/auth/code/frontend/style.css 的 .brand-mark
+         · 外框   clip-path: polygon(15% 0, 100% 0, 100% 72%, 76% 100%, 0 100%, 0 15%)
+                  —— 左上与右下各切一刀的「折角」方框，border #4a5a69
+         · 折角箭头 .brand-mark::before：17×17 方块，3px 实边 var(--acid)=#d8ff3e，
+                  border-left-color: transparent，transform: rotate(45deg)
+                  —— 缺一条边的方块转 45° 后，就是那个酸绿折角箭头
+       本文件把这两笔按同一比例搬进 32×32 视口；底色用 --bg #080b12。
+
+       **这份 SVG 是几何的唯一事实源**：favicon.ico 由 scripts/build-favicon.py
+       从它渲染出来，不要两边各画一遍（两份几何必然漂移）。 -->
+  <rect width="32" height="32" fill="#080b12"/>
+
+  <!-- 折角方框。原件 43px 盒子映射到 2..30 这 28px 见方的区域：
+       15% -> 4.2   72% -> 20.16   76% -> 21.28 -->
+  <path d="M6.2 2 H30 V22.16 L23.28 30 H2 V6.2 Z"
+        fill="#0b1018" stroke="#4a5a69" stroke-width="1.6" stroke-linejoin="miter"/>
+
+  <!-- 折角箭头：缺左边的方块转 45°，等价于「上→右→下→左」三段折线。
+       favicon 尺寸下细线会整条消失，所以描边按可读性取 3（原件 3/43，等比会细到看不见）。 -->
+  <path d="M16 9 L23 16 L16 23 L9 16"
+        fill="none" stroke="#d8ff3e" stroke-width="3"
+        stroke-linecap="square" stroke-linejoin="miter"/>
+</svg>

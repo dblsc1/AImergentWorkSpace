@@ -1,0 +1,147 @@
+/* ── [hidden] 兜底：必须放在最前，且必须 !important ────────────────
+ * 与 style.css 顶部同一条规则同一份注释——两个文件互不 @import，各自都要有
+ * 这一行，任何一处漏了都会在"只加载这一份 CSS"的场景下复发同一个坑
+ * （contracts/design-tokens-v1.md §5 A2/A3 判据不豁免这一行，它不是 token 值）。
+ * `hidden` 是 HTML 属性，浏览器默认样式给它 `display:none`——但那是**默认样式**，
+ * 任何一条带 `display:` 的类选择器都能盖过它（层叠来源优先级，不是特异性问题）。
+ * 本项目已在多个模块踩过同一个坑，全部靠人眼看截图发现，单测/类型检查抓不到。
+ * 别删，也别改成不带 !important 的版本。 */
+[hidden] { display: none !important; }
+
+/* table · design tokens 兜底块（cockpit-v1）
+ *
+ * 唯一事实源：contracts/design-tokens-v1.md §3（本文件不复述数字，跟着抄）。
+ * 生产环境由 nginx 注入 /__cockpit/tokens.css 并层叠覆盖本文件（F-TOKENS-2/3）；
+ * 本文件是**兜底**——注入还没发生（本地单看页面、注入暂时失效）时页面仍要有
+ * 正确的主题与语义色，不能裸奔。
+ *
+ * 哨兵注释包裹的区块是 A2（禁裸 hex）唯一豁免的地方，也是 A3（兜底漂移）
+ * 逐字节比对的对象——门禁脚本里存着同一份内容的 vendored 副本，
+ * 两者一致才放行。
+ * 改这个块必须先改 contracts/design-tokens-v1.md，再同步这里与 vendored 副本
+ * （契约「变更流程」）。哨兵区块之外（本文件其余部分）不豁免裸 hex。
+ *
+ * data-theme / data-accent 由 nginx 注入的 boot 脚本在 </head> 前设到 <html> 上
+ * （F-THEME-6，table 不必自带 boot JS——那只是未注入页面 login 的活）；
+ * 本文件不设置任何属性，只提供选择器命中后的取值。
+ */
+
+/* tokens-fallback:begin */
+:root,
+html[data-theme="light"] {
+  color-scheme: light;
+
+  /* 面 */
+  --bg:      #F3F5F8;
+  --panel:   #FFFFFF;
+  --panel-2: #EDF0F5;
+  --line:    #D9DFE8;
+  --line-2:  #E7EBF1;
+
+  /* 墨 */
+  --ink:     #17202E;
+  --ink-2:   #55627A;
+  --ink-3:   #8B96A9;
+
+  /* 语义（计划紫 / 事实青，不随预设变，契约 §2） */
+  --plan:      #6D5AE6;
+  --plan-soft: #E9E6FB;
+  --fact:      #0B7A6F;
+  --fact-soft: #DCF0ED;
+  --fact-ink:  #FFFFFF;
+  --warn:      #B45309;
+  --danger:    #C2333B;
+
+  --fact-s1: #0B7A6F;
+  --fact-s2: #37948A;
+  --fact-s3: #9CCFC8;
+
+  /* 机身色（预设主题色换的就是这一族；默认 teal == 事实青族） */
+  --accent:      #0B7A6F;
+  --accent-ink:  #FFFFFF;
+  --accent-soft: #DCF0ED;
+
+  --focus:   #1E5FD0;
+  --shadow:  0 1px 2px rgba(23,32,46,.06), 0 4px 16px rgba(23,32,46,.07);
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg:      #0D1220;
+  --panel:   #151C2E;
+  --panel-2: #1D2639;
+  --line:    #26314A;
+  --line-2:  #202A40;
+
+  --ink:     #E8ECF4;
+  --ink-2:   #9DA9BF;
+  --ink-3:   #5F6C84;
+
+  --plan:      #9B8CFF;
+  --plan-soft: #2A2A4E;
+  --fact:      #2FD4C2;
+  --fact-soft: #123B38;
+  --fact-ink:  #04211D;
+  --warn:      #F0B36A;
+  --danger:    #FF8189;
+
+  --fact-s1: #2FD4C2;
+  --fact-s2: #6FB8AE;
+  --fact-s3: #46706B;
+
+  --accent:      #2FD4C2;
+  --accent-ink:  #04211D;
+  --accent-soft: #123B38;
+
+  --focus:   #6FA8FF;
+  --shadow:  0 1px 2px rgba(0,0,0,.4), 0 4px 20px rgba(0,0,0,.35);
+}
+
+/* ── 预设主题色（3.3，只换 --accent* 机身色族） ── */
+html[data-accent="violet"] {
+  --accent: #6D5AE6; --accent-ink: #FFFFFF; --accent-soft: #E9E6FB;
+}
+html[data-theme="dark"][data-accent="violet"] {
+  --accent: #9B8CFF; --accent-ink: #14102E; --accent-soft: #2A2A4E;
+}
+html[data-accent="amber"] {
+  --accent: #9A5B00; --accent-ink: #FFFFFF; --accent-soft: #F5E8D5;
+}
+html[data-theme="dark"][data-accent="amber"] {
+  --accent: #F0B36A; --accent-ink: #2A1A04; --accent-soft: #3A2B12;
+}
+
+:root {
+  /* 字 —— 全部系统栈，局域网离线也不裸奔 */
+  --font-body: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+               "Noto Sans CJK SC", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono",
+               Consolas, "Liberation Mono", monospace;
+
+  /* 型 */
+  --fs-body: 15px;
+  --fs-sub:  13px;
+  --fs-eyebrow: 11px;
+  --fs-h2:   17px;
+  --fs-time-lg: 40px;
+
+  /* 距（密度 7/10） */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;
+  --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+
+  /* 角 */
+  --r-1: 6px;  --r-2: 10px;  --r-3: 14px;
+
+  /* 触控 */
+  --tap: 44px;
+
+  /* 动 */
+  --t-fast: 150ms ease;
+  --t-med:  240ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --t-fast: 0ms; --t-med: 0ms; }
+}
+/* tokens-fallback:end */

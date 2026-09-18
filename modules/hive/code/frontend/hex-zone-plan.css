@@ -1,0 +1,119 @@
+/* table/frontend · hex-zone-plan.css —— 分区规划面板（hex-zone-plan.js，2026-09-12）。
+ * 单独一个文件：hex.css 已经 950 行（上限 1000），面板是一块自成一体的界面，
+ * 和蜂巢格子的层叠规则零交集，拆开不存在"顺序一错就静默失效"的风险。
+ * 颜色一律 var(--…)（design-tokens-v1 A2）。 */
+
+/* [hidden] 兜底：下面有 display 类规则，没有这条 hidden 属性会失效（门禁要求）。 */
+.hex-zone-plan [hidden] { display: none !important; }
+
+.hex-zone-plan {
+  width: min(760px, calc(100vw - 32px)); max-height: min(86vh, 900px);
+  margin: auto; padding: 0; border: 1px solid var(--line); border-radius: 14px;
+  background: var(--panel); color: var(--ink); box-shadow: var(--shadow);
+  overflow: auto; overscroll-behavior: contain;
+}
+.hex-zone-plan::backdrop { background: color-mix(in srgb, var(--bg) 62%, transparent); backdrop-filter: blur(2px); }
+.hex-zone-plan[open] { animation: zp-in var(--t-med) both; }
+@keyframes zp-in { from { opacity: 0; transform: translateY(12px) scale(.98); } }
+.hex-zone-plan > * { padding-inline: 22px; }
+.hex-zone-plan section { margin-block: 18px; }
+.hex-zone-plan h2 { margin: 0; font-size: var(--fs-h2); letter-spacing: .02em; }
+.hex-zone-plan h3 { margin: 0 0 8px; font-size: var(--fs-sub); color: var(--ink-2); font-weight: 600; }
+
+.zp-head {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; align-items: center; gap: 12px;
+  padding-block: 16px 12px; background: var(--panel); border-bottom: 1px solid var(--line);
+}
+.zp-head > div { flex: 1 1 auto; min-width: 0; }
+.zp-head p { margin: 2px 0 0; font-size: var(--fs-sub); }
+.zp-dot { flex: 0 0 auto; width: 14px; height: 16px; background: var(--zone-color);
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%); }
+.zp-close {
+  flex: 0 0 auto; width: 36px; height: 36px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--line); background: none; color: var(--ink-2); font-size: 20px; line-height: 1;
+}
+.zp-close:hover { color: var(--ink); background: var(--panel-2); }
+
+.zp-muted { color: var(--ink-3); }
+.zp-num { font-variant-numeric: tabular-nums; }
+.zp-eyebrow { font-size: var(--fs-eyebrow); letter-spacing: .12em; color: var(--ink-3); }
+.zp-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
+.zp-tile {
+  display: flex; flex-direction: column; gap: 4px; padding: 10px 12px;
+  border-radius: 10px; background: var(--panel-2);
+}
+.zp-tile b { font-size: 18px; font-weight: 600; }
+
+.zp-scroll { overflow-x: auto; }
+.zp-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sub); }
+.zp-table th {
+  text-align: left; font-weight: 400; font-size: var(--fs-eyebrow); color: var(--ink-3);
+  padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+.zp-table td { padding: 8px; border-bottom: 1px solid var(--line-2); white-space: nowrap; }
+.zp-table tbody tr { cursor: pointer; }
+.zp-table tbody tr:hover, .zp-table tbody tr:focus-visible { background: var(--panel-2); outline: none; }
+.zp-table td.zp-name { white-space: normal; min-width: 8em; font-weight: 600; }
+.zp-heat { display: flex; align-items: center; gap: 8px; }
+.zp-bar { position: relative; width: 72px; height: 6px; border-radius: 3px; background: var(--panel-2); overflow: hidden; }
+.zp-bar i { position: absolute; inset: 0 auto 0 0; background: var(--plan); border-radius: 3px; }
+.zp-late { color: var(--danger); }
+.zp-note { margin: 8px 0 0; font-size: var(--fs-eyebrow); color: var(--ink-3); line-height: 1.5; }
+
+.zp-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 22px; }
+.zp-list { margin: 0; padding: 0; list-style: none; font-size: var(--fs-sub); }
+.zp-list li { padding: 6px 0; border-bottom: 1px solid var(--line-2); overflow-wrap: anywhere; }
+.zp-chip {
+  display: inline-block; margin-right: 6px; padding: 0 6px; border-radius: 999px;
+  font-size: var(--fs-eyebrow); line-height: 1.6;
+}
+.zp-chip.is-late { background: color-mix(in srgb, var(--danger) 18%, var(--panel)); color: var(--danger); }
+.zp-chip.is-today { background: color-mix(in srgb, var(--warn) 22%, var(--panel)); color: var(--ink); }
+
+.zp-new {
+  position: sticky; bottom: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding-block: 12px 16px; background: var(--panel); border-top: 1px solid var(--line);
+}
+.zp-new input {
+  flex: 1 1 200px; min-height: 36px; padding: 0 10px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink); font: inherit;
+}
+.zp-new button {
+  min-height: 36px; padding: 0 16px; border-radius: 8px; border: 0; cursor: pointer;
+  background: var(--plan); color: var(--panel); font: inherit; font-weight: 600;
+}
+.zp-new button:disabled { opacity: .5; cursor: progress; }
+.zp-msg { flex: 1 1 100%; font-size: var(--fs-eyebrow); color: var(--ink-2); min-height: 1em; }
+
+.zp-msg.is-bad { color: var(--danger); }
+
+/* 分区/项目的写操作入口（2026-09-14 从经典列表搬进来）。按钮做小、做灰，
+   静置时不和数据抢注意力；表格那一列 hover 整行才亮起来。 */
+.zp-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.zp-ops { flex: 0 0 auto; display: flex; gap: 6px; }
+.zp-mini {
+  min-height: 28px; padding: 0 10px; border-radius: 7px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--ink-2);
+  font: inherit; font-size: var(--fs-eyebrow); line-height: 1; white-space: nowrap;
+}
+.zp-mini:hover { color: var(--ink); border-color: var(--ink-3); }
+.zp-mini.is-danger:hover { color: var(--danger); border-color: var(--danger); }
+.zp-table td.zp-ops { opacity: .35; transition: opacity var(--t-fast, .12s) ease; }
+.zp-table tr:hover td.zp-ops,
+.zp-table tr:focus-within td.zp-ops { opacity: 1; }
+.zp-inline {
+  width: 100%; min-width: 8em; min-height: 30px; padding: 0 8px; border-radius: 7px;
+  border: 1px solid var(--plan); background: var(--bg); color: var(--ink); font: inherit;
+}
+.hex-zone-plan h2 .zp-inline { font-size: var(--fs-h2); }
+
+/* 手机：底部抽屉，四格统计两两一排，两栏列表叠成一栏 */
+@media (max-width: 560px) {
+  .hex-zone-plan { width: 100vw; max-height: 88vh; margin: auto 0 0; border-radius: 16px 16px 0 0; }
+  .hex-zone-plan > * { padding-inline: 16px; }
+  .zp-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .zp-cols { grid-template-columns: 1fr; }
+  .zp-table td.zp-ops { opacity: 1; }   /* 触屏没有 hover，操作列常亮 */
+}
+@media (prefers-reduced-motion: reduce) { .hex-zone-plan[open] { animation: none; } }

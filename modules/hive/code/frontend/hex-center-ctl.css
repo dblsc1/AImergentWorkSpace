@@ -1,0 +1,160 @@
+/* table/frontend · hex-center-ctl.css —— 蜂巢中心格下部的 完成 / 暂停 / 取消不记录（2026-09-12）。
+ * 逻辑在 hex-center-ctl.js。从 hex.css 拆出：那边逼近 1000 行；这一块只作用于
+ * .hex-center-ctl / .hex-ctl-btn 这两个自有类，和 hex.css 的层叠规则不交叉，
+ * 加载顺序放在 hex.css 之后即可（它要压过 .hex-cell.is-hover .hex-inner 的 padding）。 */
+
+/* ── 中心格的 完成 / 暂停 / 取消不记录（2026-09-12，hex-center-ctl.js）──────
+ * 人类判词，按先后（后面的覆盖前面的）：
+ *   ①「2 个四边形和一个三角形（取消，红底），切分掉那个六边形的下半部分」
+ *   ②「折角有点丑，做成气泡 + 阴影 + 圆角」 → 做了药丸
+ *   ③「占 35% 就够了」
+ *   ④「我要的是**有折角的、边缘贴合六边形的四边形**，不是椭圆形按钮」 → 药丸作废
+ *
+ * 所以：下部（67%→100%，2026-09-12 上沿 65% → 57.5% → 60% → 67%，跟着人类几轮判词走）按六边形自己的轮廓切三块，外边**贴着六边形的边**，
+ * 在 75% 那个顶点处跟着六边形一起折下去：
+ *
+ *        ╱  完成  ╲┊╱  暂停  ╲   67%  ← 上沿两角都切 30°（与六边形底边平行），内外对称；中缝顶上一个倒三角口
+ *        │         ┊         │
+ *        ├╮        ┊        ╭┤   75%  ← 六边形的侧顶点，四边形在这里折角
+ *         ╲╱───────┴───────╲╱    82%  ← 取消的两个上尖各切一刀，与上面的切角平行（30°）
+ *            ╲ 取消不记录 ╱
+ *              ╲       ╱
+ *               ╲_____╱          94.6% ← 下尖切一个平角（切掉倒三角下面 30%，露出六边形下尖那一截底色）
+ *                                100% ← 六边形的下尖
+ *
+ * 坐标推导（容器 = 内缩 2.5px 的六边形面，0–100%）：左斜边过 (0,75%) 与 (50%,100%)，
+ * 82% 处落在 x=14%。换到「完成」自己的盒子（x 0–50%、y 67%–82%）：
+ *   (0,75%) → (0, 53.33%)，(14%,82%) → (28%, 100%)。「暂停」镜像。
+ * 三角 = 82% 以下那一截六边形：(14%,82%) (86%,82%) (50%,100%)，和六边形下尖是相似三角形。
+ * 块与块之间留 2px 缝露出底色当分割线；外轮廓再被容器的 --hex-clip 兜一次，
+ * 所以分区边界那种非标准六边形也严丝合缝。折角就是锐角，不做圆角（④）。
+ * 体积感不靠外阴影（clip-path 会把外阴影切掉），靠渐变 + 内高光 + 内阴影。
+ *
+ * 只在悬停档（含长按接住那 3 秒、触摸第一下）和键盘聚焦时出现：
+ * 静置档 87px 宽，下部 35% 只有 35px 高，字放不下。 */
+.hex-center-ctl {
+  position: absolute; inset: 2.5px; z-index: 2;
+  /* 切角要真的 45°：x、y 两个方向得是同一个像素长度，所以用容器查询单位（cqh）
+     而不是各自按宽 / 高算的百分比。 */
+  container-type: size;
+  /* 按钮上沿 57.5%、下沿 82%（高 24.5%）。人类 2026-09-12：「抬高一点按钮上边缘，包裹一部分开始时间和日期」。 */
+  --btn-top: 67%; --btn-h: 15%;         /* 57.5% → 60% → 67%（人类：「按钮上沿降低」，问过方向：往下） */
+  /* 切角：竖直 = 按钮高的 1/3；斜边与六边形底部两条边平行 = 相对水平 30°，所以横向 = 竖直 × √3
+     （人类：「切角竖直位置保持 1/3，角度改为和六边形的底面两条边平行，横着多切一点」）。
+     两个量都用 cqh 换成真实像素，角度才是真的 30°，不随格子长宽比漂。 */
+  --cut-y: calc(15cqh / 3);
+  --cut-x: calc(15cqh / 3 * 1.7320508);
+  clip-path: var(--hex-clip, polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%));
+  pointer-events: none;                 /* 按钮以上留给"点中心格进计时台" */
+}
+.hex-center-ctl[hidden], .hex-ctl-btn[hidden] { display: none !important; }
+.hex-cell.hex-center:not(.is-hover):not(:focus-within) .hex-center-ctl { display: none; }
+/* 悬停档圆环（人类 2026-09-12，三轮）：「扩大到底」→「不用顶到那么上面，上下距离相等就好」→
+   「还是偏上，稍微扩大一点点，然后挪一下让上下间距相等」。
+   第二轮按竖直方向把圆环居中在顶尖和按钮之间，可人眼看的是**圆环到最近那条边**的距离：上面最近的是两条
+   30° 斜边（只剩 3.9px），下面是按钮上沿（12.7px）—— 所以看着还是偏上。现在让这两段相等：
+     上：圆心到斜边距离 − 描边 − ρ = yc·cos30° − 2.5 − ρ
+     下：按钮上沿 − yc − ρ
+   （格子宽 W，高 H = 1.1547W；圆环可见半径 ρ = 0.46 × 槽宽，SVG 的 r=92 外沿。）
+   悬停格 W ≈ 169px、按钮上沿 ≈ 129.8px，取 ρ = 52（上一版 51）⇒ yc ≈ 70.9px，上下各 ≈ 6.9px；
+   槽宽 ≈ 66.9% W、槽顶 ≈ 8.5% W。
+   内边距与槽宽都按**格子宽**算（padding 百分比本来就按宽算，左右内边距清零后槽宽百分比也按 W），换尺寸不漂。 */
+.hex-cell.hex-center.has-ctl.is-hover .hex-inner { justify-content: flex-start; padding: 8.5% 0 0; }
+.hex-cell.hex-center.has-ctl.is-hover .hex-ring-slot { width: 66.9%; }
+.hex-cell.hex-center.has-ctl:not(.is-hover) .hex-center-title,
+.hex-cell.hex-center.has-ctl .hex-center-meta { display: none; }
+.hex-cell.hex-center.has-ctl:not(.is-hover) .hex-ring-slot { width: 84%; }
+/* 圆心排版（人类 2026-09-12 末轮：「01:06 在偏上部位置，时分文字去掉，下方是简要标题，
+   再下方是开始时间以及右下方加一个开始（灰色小字），日期就不要了」）：
+       01:06        ← 读数，顶在 32cqi（圆心上方 18cqi）
+      简要标题       ← 一行，放不下省略号
+     01:30 开始     ← 开始时间粗体 + 右下角灰色小字
+   字号全用 cqi（= 圆环槽宽的 1%），跟圆环等比。秒针在半径 30–37cqi 那一圈，
+   每一行的角都压在半径 30cqi 以内：读数 19cqi 半宽 ≈ 24、上沿 −18 ⇒ 角 ≈ 30；
+   标题 7cqi、宽 50cqi，落在 +4…+12；开始行 9cqi，落在 +15…+24、半宽 ≈ 17 ⇒ 角 ≈ 29。
+   中心格一律不显示单位小字（「时 · 分」「分 · 秒」「已暂停」）：暂停靠读数压暗 + 暂停键变「继续」。 */
+.hex-cell.hex-center .tring-unit { display: none; }
+.hex-cell.hex-center.has-ctl.is-hover .tring-read { justify-content: flex-start; padding-top: 32cqi; }
+.hex-cell.hex-center.has-ctl.is-hover .tring-num { font-size: 19cqi; }
+.hex-cell.hex-center.has-ctl.is-hover .hex-center-title {
+  width: 50cqi; margin: 3cqi 0 0;
+  display: flex; flex-direction: column; align-items: center; gap: 2cqi;
+  font-size: 7cqi; font-weight: 500; line-height: 1.2; color: var(--ink-2);
+  overflow: visible; -webkit-line-clamp: unset;
+}
+.hex-center-title .hc-name {
+  max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.hex-center-title .hc-start { display: flex; align-items: baseline; gap: 1cqi; line-height: 1; }
+.hex-center-title .hc-time {
+  font-size: 9cqi; font-weight: 700; color: var(--ink);
+  font-variant-numeric: tabular-nums; letter-spacing: .01em;
+}
+.hex-center-title .hc-tag { font-size: 5.5cqi; font-weight: 400; color: var(--ink-3); }
+/* 暂停中：圆心读数压暗一档，静置档一眼看出"停着"（单位小字「已暂停」只在悬停档放得下） */
+.hex-cell.hex-center.is-paused .tring-num { color: var(--ink-3); }
+
+/* 外观（人类 2026-09-12 最后一条）：「做成和整体六边形风格一致的低饱和度半透明感，你自行决定风格」。
+ * 蜂巢格子本身就是 `color-mix(分区色 30%, panel)` 的淡色块 + 细描边，所以按钮走同一种语言：
+ *   · 底 = 语义色**混进透明**（不是混进 panel）：透出中心格自己的底色，是"半透明"而不是"浅色实块"
+ *   · 一道同色细描边（inset box-shadow，clip-path 下 border 画不齐折角）+ 顶部一线微光
+ *   · 字用语义色和 ink 的混色，低饱和、不刺眼
+ *   · 悬停透明度加深一档；上膛（等确认）再深一档 —— 状态靠浓淡表达，不靠换成实色
+ * --c 是每块的语义色：完成 = 事实青，暂停 = 中性，继续 = 计划紫，取消 = 危险红。 */
+.hex-ctl-btn {
+  --c: var(--ink-3);
+  --a: 16%;                       /* 底色浓度：常态 16 → 悬停 26 → 上膛 40 */
+  position: absolute; margin: 0; padding: 0; border: 0; border-radius: 0;
+  display: flex; align-items: center; justify-content: center;
+  font: inherit; font-size: var(--fs-sub); font-weight: 600; line-height: 1;
+  white-space: nowrap; cursor: pointer; pointer-events: auto;
+  color: color-mix(in srgb, var(--c) 45%, var(--ink));
+  background: color-mix(in srgb, var(--c) var(--a), transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--c) 34%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--ink) 12%, transparent);
+  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+  transition: background-color var(--t-fast), color var(--t-fast);
+}
+.hex-ctl-btn:hover { --a: 26%; }
+.hex-ctl-btn:active { --a: 34%; }
+.hex-ctl-btn.is-armed { --a: 40%; color: var(--ink); }
+.hex-ctl-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: -4px; }
+.hex-ctl-label { position: relative; }
+.hex-ctl-btn.is-done {
+  --c: var(--fact);
+  top: var(--btn-top); left: 0; width: calc(50% - 1px); height: var(--btn-h);
+  /* 右上角切角：两块的内侧上角一起切掉，中缝顶上开出一个倒三角口，斜边与六边形底边平行。
+     外侧折角在 75% 的六边形侧顶点：(75 − 67) / 15 = 53.33%；底边外端 (14% 面宽 → 28% 盒宽)。 */
+  /* 外侧左上角同样切一刀，和内侧那一刀左右对称（人类 2026-09-12：「按钮的右上左上也做对称小切角」） */
+  clip-path: polygon(0 var(--cut-y), var(--cut-x) 0, calc(100% - var(--cut-x)) 0, 100% var(--cut-y),
+                     100% 100%, 28% 100%, 0 53.33%);
+  padding-top: calc(var(--cut-y) * .6);   /* 字往切角下面让一点，视觉上落在剩下那块的正中 */
+}
+.hex-ctl-btn.is-pause {
+  --c: var(--ink-3);
+  top: var(--btn-top); right: 0; width: calc(50% - 1px); height: var(--btn-h);
+  clip-path: polygon(0 var(--cut-y), var(--cut-x) 0, calc(100% - var(--cut-x)) 0, 100% var(--cut-y),
+                     100% 53.33%, 72% 100%, 0 100%);   /* 完成的镜像：内外两个上角都切 */
+  padding-top: calc(var(--cut-y) * .6);
+}
+.hex-center.is-paused .hex-ctl-btn.is-pause { --c: var(--plan); }
+/* 倒三角：字放在上部 —— 越往下越窄，放正中会被斜边切掉两头。
+   人类早先点名「红色底色」：保留红，但同样是半透明的淡红，浓度比另两块高一档，一眼仍是"危险"。 */
+.hex-ctl-btn.is-cancel {
+  --c: var(--danger); --a: 22%;
+  top: calc(82% + 2px); left: 0; width: 100%; height: calc(18% - 2px);
+  /* 下尖切一个平角（人类 2026-09-12：「底部小切角」→「多切一倍」→「底部角切 30% 正好」）：
+     沿两条斜边在 70% 高处横切：x = 14 + 36 × 0.7 = 39.2%。
+     两个上尖（30° 锐角，贴着六边形的两条底边）各切一刀（「底部的取消不记录也是」）：
+     切口下端落在斜边上 27.78% 高处（x = 14 + 36 × 0.2778 = 24%，「开口竖直位置不用动了」），
+     从那里**与上面两块的切角平行**（相对水平 30°）斜着切到上沿（人类：「和上面两个按钮切角平行，斜切」）。
+     30° 斜切：横向 = 竖直 × √3，竖直 = 本块高（18cqh − 2px）× 0.2778，所以横向 = 本块高 × 0.4811 —— 用 cqh 换真实像素才是真 30°。
+     历次：往里 5% 竖切（看不到）→ 10% 竖切 → 现在的 30° 斜切。 */
+  clip-path: polygon(24% 27.78%, calc(24% + (18cqh - 2px) * .4811) 0,
+                     calc(76% - (18cqh - 2px) * .4811) 0, 76% 27.78%, 60.8% 70%, 39.2% 70%);
+  align-items: flex-start; padding-top: 2.4%;
+  font-size: var(--fs-eyebrow);
+}
+.hex-ctl-btn.is-cancel:hover { --a: 32%; }
+.hex-ctl-btn.is-cancel.is-armed { --a: 48%; }

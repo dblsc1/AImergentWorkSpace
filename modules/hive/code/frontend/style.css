@@ -1,0 +1,459 @@
+/* ── [hidden] 兜底：必须放在最前，且必须 !important ────────────────
+ * `hidden` 是 HTML 属性，浏览器默认样式给它 `display:none`——但那是**默认样式**，
+ * 任何一条带 `display:` 的类选择器都能盖过它（层叠来源优先级，不是特异性问题）。
+ * 于是「JS 设了 hidden，元素照样显示」，而且**看代码完全看不出来**。
+ *
+ * 本项目已在**三个不同模块**踩过同一个坑：
+ *   table  `.btn{display:inline-flex}`  盖过 `.btn[hidden]`   → 删除按钮该藏没藏
+ *   gantt  `.gantt-empty{display:grid}` 盖过 `[hidden]`       → 有项目却显示"暂无项目"
+ * 前两次都是靠**人眼看截图**发现的——单测和类型检查都抓不到。
+ *
+ * 这一行让整类不可能再犯。别删，也别改成不带 !important 的版本。 */
+[hidden] { display: none !important; }
+
+/* table · 样式（cockpit-v1 换肤，2026-08-08）
+ *
+ * 颜色只准 var(--…)（A2，唯一豁免是 tokens.css 的兜底块，本文件不含豁免区）。
+ * 排版参考 cockpit-v1 设计稿的任务页：
+ * zone-head 眉题、proj-grid 双列、rails 双轨、chip 徽标、task 播放钮、
+ * archive 列表——类名与 mock 对齐是有意的，方便下一个换肤的人对照。
+ * 保留本页既有的操作条（刷新/新建分区/时钟）——共享顶栏是组装层的活，
+ * 不在本模块范围（PRD F-NAV）。
+ *
+ * 增删改弹窗（crud.js）、断网横幅（R9）、flags 只读展示（R7）、计时档案
+ * （app.js renderArchive）——现有功能全保留，只换视觉（F-TABLE-4）。
+ * 本轮新增：项目卡双轨 .rails（F-TABLE-1）、任务行播放钮 .task-go（F-TABLE-2）、
+ * 任务弹窗排期 + 前置任务 .schedule-*（F-TABLE-3，feature-detect 隐藏见 crud.js）。
+ */
+
+* { box-sizing: border-box; }
+html { min-width: 320px; background: var(--bg); }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  line-height: 1.55;
+  background: var(--bg);
+  transition: background var(--t-med), color var(--t-med);
+}
+
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+button { cursor: pointer; font: inherit; }
+
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+/* 顶层容器：container-type 让 .proj-grid 的容器查询（F-TABLE-5）与 390px
+ * 不横滚（A5）有一个稳定的参照宽度，不依赖 viewport（future-proof：将来
+ * nginx 注入的共享顶栏/侧栏改变可用宽度时，本页布局仍按自己的实际宽度算）。 */
+.app {
+  width: min(1400px, 100%);
+  margin: 0 auto;
+  padding: var(--sp-4) var(--sp-5) var(--sp-6);
+  container-type: inline-size;
+}
+
+.topbar {
+  min-height: var(--tap);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand { display: flex; align-items: center; gap: var(--sp-3); }
+.brand-mark {
+  width: 34px; height: 34px; flex: none;
+  display: grid; place-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--panel);
+}
+.brand-mark::before {
+  content: "";
+  width: 14px; height: 14px;
+  border: 2px solid var(--accent);
+  border-left-color: transparent;
+  border-radius: 50%;
+  transform: rotate(45deg);
+}
+.brand-title { margin: 0; font-size: var(--fs-h2); font-weight: 700; line-height: 1.2; }
+.brand-title span { color: var(--accent); }
+.eyebrow.topbar-eyebrow { display: block; margin-top: 2px; }
+
+.top-actions { display: flex; align-items: center; gap: var(--sp-2); }
+.system-time { padding-right: var(--sp-2); text-align: right; color: var(--ink-2); font: var(--fs-eyebrow)/1.5 var(--font-mono); }
+.system-time b { display: block; color: var(--ink); font-size: var(--fs-sub); }
+
+.btn {
+  min-height: var(--tap);
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  padding: 0 var(--sp-4);
+  color: var(--ink);
+  background: var(--panel);
+  font-size: var(--fs-sub); font-weight: 600;
+  transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
+}
+/* [hidden] 是 UA 样式表的规则，author 样式表的 display:inline-flex 会覆盖它
+ * （cascade 按来源优先级，不是按选择器特异性）——.btn[hidden] 必须显式声明，
+ * 否则 dialog.dataset 驱动的「新建模式隐藏删除按钮」在视觉上根本不生效
+ * （2026-07-31 Playwright 真机冒烟测出的真 bug）。 */
+.btn[hidden] { display: none; }
+.btn:hover { border-color: var(--ink-3); background: var(--panel-2); }
+.btn.primary { color: var(--accent-ink); border-color: var(--accent); background: var(--accent); }
+.btn.primary:hover { filter: brightness(1.06); }
+.btn.danger { color: var(--danger); border-color: var(--danger); background: var(--panel); }
+.btn.danger:hover { background: color-mix(in srgb, var(--danger) 10%, var(--panel)); }
+.btn:disabled { cursor: not-allowed; opacity: .5; }
+
+.status-banner {
+  display: none;
+  margin: var(--sp-3) 0;
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--warn);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--r-1);
+  background: color-mix(in srgb, var(--warn) 12%, var(--panel));
+  color: var(--ink);
+  font-size: var(--fs-sub);
+}
+.status-banner.show { display: block; }
+
+.hud { display: grid; grid-template-columns: minmax(260px, 1.4fr) repeat(3, minmax(130px, .55fr)); gap: var(--sp-3); padding: var(--sp-4) 0; }
+.briefing, .metric { position: relative; min-height: 76px; border: 1px solid var(--line); border-radius: var(--r-2); background: var(--panel); box-shadow: var(--shadow); }
+.briefing { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-4); }
+.briefing h2 { margin: 0 0 4px; font-size: var(--fs-h2); font-weight: 700; }
+.briefing p { margin: 0; color: var(--ink-2); font-size: var(--fs-sub); }
+.metric { padding: var(--sp-3) var(--sp-4); }
+.metric-label { color: var(--ink-2); font: var(--fs-eyebrow)/1.2 var(--font-mono); letter-spacing: .1em; text-transform: uppercase; }
+.metric-value { margin-top: var(--sp-2); font: 700 22px/1 var(--font-mono); color: var(--metric-tone, var(--ink)); }
+.metric-value small { color: var(--ink-2); font-size: var(--fs-sub); font-weight: 500; }
+
+.board-shell { position: relative; border: 1px solid var(--line); border-radius: var(--r-3); background: var(--panel); box-shadow: var(--shadow); }
+.board-head { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--line); }
+.board-title { display: flex; align-items: center; gap: var(--sp-3); font-weight: 700; font-size: var(--fs-sub); }
+.board-title small { color: var(--ink-2); font: var(--fs-eyebrow)/1 var(--font-mono); letter-spacing: .1em; }
+.pager { display: flex; align-items: center; gap: var(--sp-2); }
+.page-btn { width: var(--tap); height: 36px; border: 1px solid var(--line); border-radius: var(--r-1); color: var(--ink-2); background: var(--panel-2); font-family: var(--font-mono); }
+.page-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+.page-btn:disabled { cursor: not-allowed; opacity: .35; }
+.page-label { min-width: 64px; text-align: center; color: var(--ink-2); font: var(--fs-eyebrow)/1 var(--font-mono); }
+
+/* zones 纵向堆叠（换肤：原三列固定布局改成设计稿 §4 的"眉题 + 卡片网格"竖排，
+ * 分页依旧按 PAGE_SIZE 个一页——布局变了，app.js 的分页判定没变）。 */
+.zones { display: grid; gap: var(--sp-5); padding: var(--sp-4); }
+.zone { min-width: 0; }
+.zone + .zone { padding-top: var(--sp-4); border-top: 1px solid var(--line-2); }
+.zone-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-bottom: var(--sp-3); }
+.zone-ident { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }
+.zone-index {
+  width: 26px; height: 26px; flex: none;
+  display: grid; place-items: center;
+  color: var(--zone, var(--accent));
+  border: 1px solid color-mix(in srgb, var(--zone, var(--accent)) 45%, var(--line));
+  border-radius: var(--r-1);
+  font: var(--fs-eyebrow)/1 var(--font-mono);
+}
+.zone-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-h2); font-weight: 700; }
+.zone-meta { margin-top: 2px; color: var(--ink-2); font: var(--fs-eyebrow)/1 var(--font-mono); letter-spacing: .08em; }
+.zone-menu { width: var(--tap); height: var(--tap); flex: none; border: 1px solid var(--line); border-radius: var(--r-1); color: var(--ink-2); background: var(--panel); font: 15px/1 var(--font-mono); }
+.zone-menu:hover { color: var(--zone, var(--accent)); border-color: var(--zone, var(--accent)); background: var(--panel-2); }
+.zone-add {
+  width: 100%;
+  min-height: var(--tap);
+  margin-top: var(--sp-2);
+  border: 1px dashed var(--line);
+  border-radius: var(--r-2);
+  color: var(--ink-2);
+  background: none;
+  font-size: var(--fs-sub); font-weight: 600;
+}
+.zone-add:hover { color: var(--zone, var(--accent)); border-color: var(--zone, var(--accent)); }
+
+/* 项目卡网格（F-TABLE-5）：≥700px 容器双列，否则单列——按 .app 的
+ * container-type: inline-size 量，不按 viewport 量（A5 390px 不横滚同一原理）。 */
+.project-grid { display: grid; grid-template-columns: 1fr; gap: var(--sp-3); align-items: start; }
+@container (min-width: 700px) {
+  .project-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.project {
+  position: relative; min-width: 0;
+  padding: var(--sp-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+.project::before {
+  content: ""; position: absolute; left: 0; top: var(--sp-3); bottom: var(--sp-3); width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--project, var(--accent));
+}
+.project-edit {
+  position: absolute; top: var(--sp-2); right: var(--sp-2);
+  width: 32px; height: 32px;
+  border: 0; border-radius: var(--r-1);
+  color: var(--ink-3); background: transparent;
+  font: 13px/1 var(--font-mono);
+}
+.project-edit:hover { color: var(--project, var(--accent)); background: var(--panel-2); }
+.project-top { display: flex; align-items: flex-start; gap: var(--sp-3); padding-right: 30px; margin-left: var(--sp-2); }
+.project-icon {
+  width: 30px; height: 30px; flex: none;
+  display: grid; place-items: center;
+  color: var(--project, var(--accent));
+  border: 1px solid color-mix(in srgb, var(--project, var(--accent)) 35%, var(--line));
+  background: color-mix(in srgb, var(--project, var(--accent)) 8%, var(--panel));
+  border-radius: var(--r-1);
+  font: 13px/1 var(--font-mono);
+}
+.project-copy { min-width: 0; flex: 1; }
+.project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-body); font-weight: 700; }
+.project-chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1); margin-top: 4px; }
+
+/* chip：与 mock.css §4 同款（计划期日期范围 / 已结束 / 未定计划） */
+.chip {
+  font-size: 12px; padding: 1px 8px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--ink-2); white-space: nowrap;
+}
+.chip.plan { color: var(--plan); border-color: currentColor; }
+.chip.warn { color: var(--warn); border-color: currentColor; }
+
+/* 双轨（F-TABLE-1，全站签名元素，与 mock.css §4 同结构）*/
+.rails { display: grid; gap: 6px; margin-top: var(--sp-3); }
+.rail { position: relative; height: 8px; border-radius: 4px; background: var(--panel-2); overflow: hidden; }
+.rail .fill { position: absolute; inset: 0 auto 0 0; border-radius: 4px; }
+.rail.plan .fill { background: var(--plan); opacity: .6; }
+.rail.fact .fill { background: var(--fact); }
+.rail-cap { display: flex; justify-content: space-between; gap: var(--sp-2); font-size: 12px; color: var(--ink-2); }
+.rail-cap .mono { font-size: 12px; }
+
+.progress-row { display: flex; align-items: center; gap: var(--sp-2); margin: var(--sp-3) 0; }
+.progress-track { height: 4px; flex: 1; overflow: hidden; border-radius: 2px; background: var(--panel-2); }
+.progress-track span { display: block; height: 100%; background: var(--project, var(--accent)); transition: width .3s ease; }
+.progress-number { color: var(--project, var(--accent)); font: 11px/1 var(--font-mono); display: inline-flex; align-items: center; gap: 5px; }
+.progress-manual { color: var(--ink-2); border: 1px solid var(--line); border-radius: var(--r-1); padding: 1px 4px; font-size: 10px; }
+
+.tasks { display: flex; flex-direction: column; gap: var(--sp-1); margin-top: var(--sp-2); }
+.task {
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2);
+  min-height: var(--tap);
+  border: 1px solid var(--line-2); border-radius: var(--r-1);
+  padding: var(--sp-2) var(--sp-2);
+  color: var(--ink); background: var(--panel-2);
+  font-size: var(--fs-sub); line-height: 1.3;
+}
+.task.done { color: var(--ink-2); }
+.task.done .task-name { text-decoration: line-through; }
+.task-check { flex: none; width: 18px; height: 18px; accent-color: var(--fact); }
+.task-name { flex: 1; min-width: 60px; }
+.task-edit { flex: none; width: 32px; height: 32px; border: 0; border-radius: var(--r-1); color: var(--ink-3); background: transparent; font: 13px/1 var(--font-mono); }
+.task-edit:hover { color: var(--project, var(--accent)); background: var(--panel); }
+/* 播放钮（F-TABLE-2）：跳计时页并带任务预选，不在本模块起表。 */
+.task-go {
+  flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--panel); color: var(--fact);
+}
+.task-go:hover { border-color: var(--fact); background: var(--fact-soft); }
+/* 补登按钮（2026-08-19，backfill.js）：文字按钮，不用图标——与播放钮/编辑钮
+   区分开，避免用户把「补登」误认成「开始计时」。 */
+.task-backfill {
+  flex: none;
+  height: 32px; padding: 0 var(--sp-2);
+  border: 1px solid var(--line); border-radius: var(--r-1);
+  color: var(--ink-2); background: var(--panel); font: 11px/1 var(--font-mono);
+}
+.task-backfill:hover { color: var(--project, var(--accent)); border-color: var(--project, var(--accent)); }
+.task-kind { color: var(--ink-2); border: 1px solid var(--line); border-radius: var(--r-1); padding: 0 4px; font-size: 10px; }
+.tag-row { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.tag { color: var(--ink-2); border: 1px dashed var(--line); border-radius: var(--r-1); padding: 0 4px; font-size: 10px; }
+.tasks-empty { color: var(--ink-3); font: var(--fs-sub)/1.8 var(--font-mono); padding: var(--sp-2) 0; }
+
+.empty-zone, .empty-board {
+  grid-column: 1 / -1; min-height: 110px;
+  display: grid; place-items: center;
+  border: 1px dashed var(--line); border-radius: var(--r-2);
+  color: var(--ink-3); font: var(--fs-sub)/1.8 var(--font-mono); text-align: center;
+}
+.empty-board { min-height: 180px; margin: var(--sp-4); }
+
+/* ── 计时档案（R5-R10，只读展示，见 app.js renderArchive）───────────── */
+.archive-shell { position: relative; margin-top: var(--sp-4); border: 1px solid var(--line); border-radius: var(--r-3); background: var(--panel); box-shadow: var(--shadow); }
+.archive-list { margin: 0; padding: 0 var(--sp-4); list-style: none; max-height: 320px; overflow-y: auto; }
+.archive-entry {
+  padding: var(--sp-2) 0;
+  border-top: 1px solid var(--line-2);
+  color: var(--ink); font-size: var(--fs-sub);
+}
+.archive-entry:first-of-type { border-top: 0; }
+.archive-empty { padding: var(--sp-5) 0; color: var(--ink-3); font: var(--fs-sub)/1.8 var(--font-mono); text-align: center; list-style: none; }
+.archive-more { display: flex; min-height: var(--tap); margin: var(--sp-3) var(--sp-4) var(--sp-4); }
+
+/* ── 导出数据（只读，app.js exportData* 系列函数）───────────────────── */
+.export-shell { position: relative; margin-top: var(--sp-4); border: 1px solid var(--line); border-radius: var(--r-3); background: var(--panel); box-shadow: var(--shadow); }
+.export-status { margin: 0; padding: var(--sp-3) var(--sp-4); color: var(--ink-2); font-size: var(--fs-sub); }
+/* pre 自己 overflow-x:auto——长 JSON 行只在这个框内滚，不撑开整页横向滚动 */
+.export-pre {
+  margin: 0 var(--sp-4) var(--sp-4);
+  padding: var(--sp-3);
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  background: var(--panel-2);
+  color: var(--ink);
+  font: var(--fs-sub)/1.6 var(--font-mono);
+  white-space: pre;
+}
+
+/* ── 增删改弹窗（crud.js） ─────────────────────────────────────────── */
+dialog {
+  width: min(480px, calc(100% - 28px));
+  max-height: calc(100vh - 28px);
+  padding: 0;
+  overflow: auto;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+dialog::backdrop { background: color-mix(in srgb, var(--ink) 45%, transparent); }
+
+.modal { padding: var(--sp-5); }
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3);
+  padding-bottom: var(--sp-3); margin-bottom: var(--sp-4); border-bottom: 1px solid var(--line);
+}
+.modal-head h2 { margin: 0; font-size: var(--fs-h2); font-weight: 700; }
+.modal-head h2 span { margin-left: var(--sp-2); color: var(--ink-2); font: var(--fs-eyebrow)/1 var(--font-mono); letter-spacing: .1em; }
+
+.close {
+  width: 32px; height: 32px;
+  border: 1px solid var(--line); border-radius: var(--r-1);
+  color: var(--ink-2); background: var(--panel-2); font: 16px/1 var(--font-mono);
+}
+.close:hover { color: var(--ink); border-color: var(--ink-3); }
+
+.form-grid { display: grid; grid-template-columns: 1fr; gap: var(--sp-3); }
+.field { display: grid; gap: var(--sp-1); }
+.field.full { grid-column: 1 / -1; }
+.field label { color: var(--ink-2); font: var(--fs-eyebrow)/1 var(--font-mono); letter-spacing: .06em; }
+.field input, .field select {
+  width: 100%; min-height: var(--tap);
+  border: 1px solid var(--line); border-radius: var(--r-2);
+  outline: none; padding: 0 var(--sp-3);
+  color: var(--ink); background: var(--panel-2); font: var(--fs-sub) var(--font-body);
+}
+.field input:focus, .field select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent); }
+.field select[multiple] { min-height: 132px; padding: var(--sp-2); }
+
+/* 任务排期 + 前置任务（F-TABLE-3）：feature-detect 判定后端支持时才 hidden=false
+ * （crud.js），页面其余功能不受这段控件存在与否影响。 */
+.schedule-hint { color: var(--ink-2); font-size: var(--fs-sub); margin: 0; }
+.schedule-dates { display: flex; align-items: center; gap: var(--sp-2); }
+.schedule-dates input[type="date"] { flex: 1; min-width: 0; }
+.schedule-dates .arrow { color: var(--ink-2); flex: none; }
+
+.dialog-error {
+  margin: var(--sp-1) 0 0;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--danger);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--r-1);
+  background: color-mix(in srgb, var(--danger) 10%, var(--panel));
+  color: var(--ink);
+  font-size: var(--fs-sub);
+}
+.dialog-error[hidden] { display: none; }
+
+/* 补登结果回显（2026-08-19，backfill.js）：成功/重复都落这里，颜色用 --fact
+   （与 .dialog-error 的 --danger 区分开——重复补登不是错误，是提示）。 */
+.backfill-result {
+  margin: var(--sp-1) 0 0;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--fact);
+  border-left: 3px solid var(--fact);
+  border-radius: var(--r-1);
+  background: var(--fact-soft);
+  color: var(--ink);
+  font-size: var(--fs-sub);
+}
+.backfill-result[hidden] { display: none; }
+.backfill-task-name {
+  margin: 0;
+  padding: 0 var(--sp-3);
+  min-height: var(--tap);
+  display: flex; align-items: center;
+  border: 1px solid var(--line-2); border-radius: var(--r-2);
+  background: var(--panel-2); color: var(--ink);
+  font: var(--fs-sub) var(--font-body);
+}
+
+.modal-actions {
+  display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2);
+  padding-top: var(--sp-4); margin-top: var(--sp-4); border-top: 1px solid var(--line);
+}
+.modal-actions .danger { margin-right: auto; }
+
+.toast {
+  position: fixed;
+  z-index: 40;
+  right: var(--sp-4); bottom: var(--sp-4);
+  max-width: min(360px, calc(100% - 40px));
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--danger);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--r-2);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: var(--fs-sub);
+  box-shadow: var(--shadow);
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+  transition: opacity var(--t-fast), transform var(--t-fast);
+}
+.toast.show { opacity: 1; transform: translateY(0); }
+
+@media (max-width: 1100px) {
+  .hud { grid-template-columns: 1fr repeat(3, 120px); }
+}
+
+@media (max-width: 860px) {
+  .app { padding: var(--sp-3); }
+  .system-time { display: none; }
+  .hud { grid-template-columns: repeat(3, 1fr); }
+  .briefing { grid-column: 1 / -1; }
+}
+
+/* A5：390px 容器四页不横滚——不靠 viewport 媒体查询，靠 .app 的
+ * container-type 让下面这条容器查询在窄窗时收窄成单列、去掉多余的水平留白。 */
+@container (max-width: 560px) {
+  .hud { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .briefing { display: none; }
+  .metric:last-child { grid-column: 1 / -1; }
+  .board-head { flex-wrap: wrap; }
+  .board-title small { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; }
+}
