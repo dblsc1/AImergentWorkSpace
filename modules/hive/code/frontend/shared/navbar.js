@@ -19,7 +19,7 @@
   'use strict';
 
   var STOPS = [
-    { href: '/table/', label: '任务' },
+    { href: '/hive/', label: '任务' },
     { href: '/ring/',  label: '计时' }
   ];
 
@@ -131,7 +131,7 @@
 
   // 品牌
   var brand = el('a', 'ckpt-brand');
-  brand.href = '/table/';
+  brand.href = '/hive/';
   brand.setAttribute('aria-label', 'HoneyComb');
   brand.appendChild(svg(
     { width: '20', height: '20', viewBox: '0 0 20 20', fill: 'none', 'aria-hidden': 'true' },
