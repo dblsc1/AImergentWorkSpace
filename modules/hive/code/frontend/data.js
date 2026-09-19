@@ -1,9 +1,9 @@
-// table · 数据层（纯逻辑，无 DOM 依赖）
+// hive · 数据层（纯逻辑，无 DOM 依赖）
 //
 // 派生自上游 NEXUS 控制台原型的数据处理部分。
 // 三块职责：读 GET /api/core/views/tree 并整理成渲染层好用的形状；
 // 分区/项目/任务的增删改写请求（对接 nexus-core.planner.crud.v1，
-// 见 module_docs/contract.md v0.2——table 是四个前端里唯一允许写的例外，
+// 见 module_docs/contract.md v0.2——hive 是四个前端里唯一允许写的例外，
 // 2026-07-31 定）；
 // 计时档案的只读展示（对接 nexus-core.events.read.v1，contract.md v0.4）。
 //
@@ -50,7 +50,7 @@
   var ARCHIVE_DEFAULT_LIMIT = 50; // R8：默认拉最近 50 条
 
   // 甘特读端（nexus-core contract.md v0.8「甘特读端」，GET /api/core/views/gantt）。
-  // table 本轮新增消费它——不是为了画甘特图，是为了拿 project.plan{start,end}
+  // hive 本轮新增消费它——不是为了画甘特图，是为了拿 project.plan{start,end}
   // 与 project.actual[]（按天聚合的事实秒数），算项目卡双轨（F-TABLE-1，见 rails.js）。
   // **这是既有投影，不需要后端加任何东西**：queries.get_gantt() 早已返回全部项目
   // （含未排期、无事实的），本文件只是多读一条已经存在的只读端点。
@@ -276,7 +276,7 @@
   }
 
   // 前置任务多选框的候选列表：树里除自己以外的全部任务，跨项目（F-GANTT-4 允许
-  // 跨项目依赖，table 这里是它的兜底编辑路径，口径要一致）。标签"项目 / 任务"
+  // 跨项目依赖，hive 这里是它的兜底编辑路径，口径要一致）。标签"项目 / 任务"
   // 与既有下拉框（fillProjectSelect）同款措辞，不另造一套。
   function listOtherTasks(tree, excludeTaskId) {
     var projects = (tree && tree.projects) || [];

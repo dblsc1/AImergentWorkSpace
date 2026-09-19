@@ -1,4 +1,4 @@
-// table · 双轨计算（纯逻辑，无 DOM 依赖，F-TABLE-1）
+// hive · 双轨计算（纯逻辑，无 DOM 依赖，F-TABLE-1）
 //
 // 项目卡的紫轨（计划期已走比例）+ 青轨（有事实天数比例），数据来自
 // GET /api/core/views/gantt（data.js 的 fetchGantt，见那里的注释——这是既有

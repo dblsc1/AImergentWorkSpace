@@ -4,7 +4,7 @@
 （这是被测行为本身，不能松）。所以测试进程必须在 import ``app`` 前
 备好 ``NEXUS_MONGO_URI`` / ``NEXUS_DB_NAME``。这里用 ``setdefault``：
 外部（如 CI）显式给了就用外部的，没给就指向本机 Mongo
-（任务单「存储环境」节），库名用**独立测试库** ``nexus_core_test``——
+（规格「存储环境」节），库名用**独立测试库** ``nexus_core_test``——
 绝不碰生产库 ``nexus_core``。
 
 这不是业务代码读 env（那仍只在 ``app/config.py``），是测试夹具在**造**环境。

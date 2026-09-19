@@ -4,14 +4,14 @@
  * 于是「JS 设了 hidden，元素照样显示」，而且**看代码完全看不出来**。
  *
  * 本项目已在**三个不同模块**踩过同一个坑：
- *   table  `.btn{display:inline-flex}`  盖过 `.btn[hidden]`   → 删除按钮该藏没藏
+ *   hive   `.btn{display:inline-flex}`  盖过 `.btn[hidden]`   → 删除按钮该藏没藏
  *   gantt  `.gantt-empty{display:grid}` 盖过 `[hidden]`       → 有项目却显示"暂无项目"
  * 前两次都是靠**人眼看截图**发现的——单测和类型检查都抓不到。
  *
  * 这一行让整类不可能再犯。别删，也别改成不带 !important 的版本。 */
 [hidden] { display: none !important; }
 
-/* table · 样式（cockpit-v1 换肤，2026-08-08）
+/* hive · 样式（cockpit-v1 换肤，2026-08-08）
  *
  * 颜色只准 var(--…)（A2，唯一豁免是 tokens.css 的兜底块，本文件不含豁免区）。
  * 排版参考 cockpit-v1 设计稿的任务页：

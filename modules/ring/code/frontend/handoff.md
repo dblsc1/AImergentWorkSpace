@@ -140,7 +140,7 @@ JS，零后端逻辑，只读/只调 nexus-core 四条接口：`GET /api/core/vi
   "仅首载 350ms，此后（含真实数据变化）一律直接就位"——见下「避坑」。
 - **「今天」数据口径缺口已解决（2026-08-08 后补的一轮）**：第一轮上线时
   `views/current` 只有终身累计口径，撑不起设计文案「今天 · N 分」，当时选择
-  不杜撰数字、退回终身累计两段展示。人类裁决**不为 ring 开新端点**：
+  不杜撰数字、退回终身累计两段展示。产品决定**不为 ring 开新端点**：
   nexus-core v1.1 已上线的 `GET /api/core/views/gantt` 的 `tasks[].actual`
   本来就是「任务 × 日 → 秒」的形状，直接复用即可。现在环分段是真正的三段式
   今天切片（当前任务=深/次高任务=中/其余任务合计=浅），idle 态表芯显示真实
@@ -200,7 +200,7 @@ JS，零后端逻辑，只读/只调 nexus-core 四条接口：`GET /api/core/vi
 
 **入口位置与可点性**：`#backfill-open-btn` 是 `#mode-tabs`/`#controls-row` 的
 兄弟节点，**故意不放进任一个会被运行态/空闲态互斥隐藏的容器**——空闲态、
-运行态都可见可点。这是本轮任务单点名的要害：补登与「当前是否在计时」完全
+运行态都可见可点。这是本轮规格点名的要害：补登与「当前是否在计时」完全
 独立（契约明写不碰 `timer_state`），前端**不许自己加「必须先停表」的伪
 约束**。判定「本轮改对了没」只需看一件事：入口按钮的父节点是不是被
 `ring-countdown.js`/`ring-instrument.js` 按 `running` 切 `hidden` 的那几个
@@ -232,7 +232,7 @@ id（`#mode-tabs`/`#controls-row`）——不是就对。
 归日**）；`!result.ok` → `result.message`（`postCore` 已经把 `detail` 原样
 透传出来，本文件不再包一层措辞）。**改这三处任何一处的文案都要同步改
 `test_ring_backfill.py` 里对应的精确字符串断言**（BF4/BF5/BF6），
-这三条不是"大概意思对就行"的判断题，任务单已经把具体字符串钉死。
+这三条不是"大概意思对就行"的判断题，规格已经把具体字符串钉死。
 
 ## 避坑
 
@@ -366,7 +366,7 @@ id（`#mode-tabs`/`#controls-row`）——不是就对。
 - **body 只发 `{name}`。** 后端 `TaskUpdate` 是 `_Strict`（extra=forbid），
   多带一个字段就是 422。`test_rn3_save_sends_patch_with_only_name` 钉死这条。
 - **写 planner，绝不碰 events**（事实账本只追加）。前端能写是 2026-08-01 的
-  人类裁决（推翻了「四前端只读」），走的是已注册的写入口
+  产品决定（推翻了「四前端只读」），走的是已注册的写入口
   `PATCH /api/core/planner/tasks/{id}`。
 
 ### 暂停 / 继续（2026-09-12，`ring-pause.js`）
@@ -385,7 +385,7 @@ id（`#mode-tabs`/`#controls-row`）——不是就对。
 - 发现 `views/current` 正在计同一个 `taskId`（在别处继续了）→ 记忆作废。
 - 2026-09-12（二）：**继续接着之前的时间** —— 暂停记忆带 `carriedSeconds` / `startedAt`，继续成功后转写
   `nexus.timer.carry.v1`；`ring-instrument.js::tickElapsedDisplay` 读 `window.ringCarrySeconds()` 加上去（只影响显示）。
-  **暂停态也能「取消，不记录」**（人类裁决：暂停即入账，取消只作废当前段）：不发请求，只放下"继续"，
+  **暂停态也能「取消，不记录」**（产品决定：暂停即入账，取消只作废当前段）：不发请求，只放下"继续"，
   `#paused-note` 说明暂停前的时间已入账、撤不回。「停止并记录」按人类要求**不加**二次确认。
 - 测试 `tests/test_ring_pause.py` PA1–PA6（全套 58 条全过）。timer/** 在 conftest 默认 abort，
   用例里后注册一条 route 盖掉它（回 200、翻状态、照样记账，不出网）。

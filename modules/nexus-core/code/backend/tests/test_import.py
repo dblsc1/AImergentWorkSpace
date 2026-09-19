@@ -1,6 +1,6 @@
 """JSON 一键导入编辑（契约 v1.7「JSON 一键导入编辑」）。
 
-覆盖任务单六条验收标准：dry-run 零写入、checksum 过期拦截（真造一次「dry-run
+覆盖规格六条验收标准：dry-run 零写入、checksum 过期拦截（真造一次「dry-run
 后库被改动」的场景）、`events`/`projections` 出现即 400（反向验证去掉能过）、
 不带 `allowDelete` 时缺失对象不被删、带 `allowDelete` 时按计划删且级联保护
 仍生效、改出的对象 `lastWriter="human"`。另覆盖若干结构性校验（未知 id、

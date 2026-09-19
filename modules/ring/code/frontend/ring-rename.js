@@ -1,5 +1,5 @@
 /**
- * ring-rename.js —— 计时台改名（2026-09-08 任务单）
+ * ring-rename.js —— 计时台改名（2026-09-08）
  *
  * 干的事：正在计时的任务名（#running-task-name）点一下就能改，
  * 改完 PATCH /api/core/planner/tasks/{id}，再让 ring-instrument.js 重渲染。

@@ -1,4 +1,4 @@
-// table · 蜂巢 · 审计流派生（无 DOM，2026-09-14 从 hex-data.js 拆出）
+// hive · 蜂巢 · 审计流派生（无 DOM，2026-09-14 从 hex-data.js 拆出）
 //
 // 拆出来的原因是 hex-data.js 撞了 1000 行硬线（1066）。缝本来就在：
 // 这一半只认 planner/audit 流水和 next-actions 两份**数据**，一行几何都不碰

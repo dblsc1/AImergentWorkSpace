@@ -100,8 +100,13 @@ UMD 包装、Node 里可 require 的有：`data.js` `gtd-data.js` `rails.js`
 
 ## 已知技术债
 
-- 运行时标识符仍是 `NexusTable*` / `window.NexusTableHex*`，注释里也还写着 `table`。
-  改名会牵动全部互相引用的文件，收益只有可读性，目前**故意不动**——
-  真要改就整批一次改干净，不要改一半。
+- 注释与文件头已统一成 `hive`，但**运行时标识符仍是 `table` 时代的名字**，按「只改目录名、
+  不改运行时标识符」的裁决**故意保留**：`window.NexusTable*` / `window.NexusTableHex*` 一族、
+  localStorage 键 `table-tree-cache-v1`、共享顶栏里写死的 `/table/` 路由。
+  前两个改了要么牵动全部互相引用的文件、要么让已有用户的本地缓存失效；
+  第三个是路由，属于组装层的事，见下一条。
+- **共享顶栏写死了 `/table/`**（`shared/navbar.js` 的 `STOPS` 与品牌链接）。
+  本模块实际挂在哪个前缀由组装层决定，两者对不上「任务」这一栏就是死链。
+  接线时要么把本模块挂到 `/table/`，要么同时改这两处。
 - `hex.css` 978 行、`hex-data.js` 939 行、`hex-app.js` 885 行，都逼近 1000 行。
   下一次往这三个文件里加东西之前先看有没有天然的缝可以拆。

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A2/A3 判据（2026-08-08 任务单）：ring 的 tokens-fallback 兜底块必须与
+"""A2/A3 判据（2026-08-08）：ring 的 tokens-fallback 兜底块必须与
 ``contracts/design-tokens-v1.md`` §3 全表逐字节一致，且兜底块之外禁止裸 hex。
 
     python3 code/frontend/tests/check_tokens_fallback.py

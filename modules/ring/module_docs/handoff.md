@@ -26,7 +26,7 @@
 
 **有自动化测试**（真浏览器 Playwright，不经 nginx、不写库、不需要口令）：
 `bash code/frontend/tests/run.sh`。详见 `code/frontend/handoff.md`「怎么跑/怎么测」
-——本条目此前写的"没有自动化测试"是过期信息，倒计时/仪表圆环/补登三轮任务单
+——本条目此前写的"没有自动化测试"是过期信息，倒计时/仪表圆环/补登三轮规格
 都补了对应套件，只是这份 handoff 没跟上代码侧的进度。
 
 ## 接口
@@ -62,6 +62,6 @@
 
 | 日期 | 缺口 | 现状 |
 |---|---|---|
-| 2026-09-08 | 「计时台改名」新开了一个消费面（`PATCH /api/core/planner/tasks/{id}`），当时只落在实现里，**没进 `module_docs/contract.md`**。 | **已清**：`nexus-core.planner.crud.v1` 补进 consumes，写明 body 只发 `{name}`（后端 `TaskUpdate` 是 `_Strict`，多带一个字段就是 422），以及"前端能写"的来源是 2026-08-01 人类裁决、用的是已注册入口、绝不写 `events`。 |
+| 2026-09-08 | 「计时台改名」新开了一个消费面（`PATCH /api/core/planner/tasks/{id}`），当时只落在实现里，**没进 `module_docs/contract.md`**。 | **已清**：`nexus-core.planner.crud.v1` 补进 consumes，写明 body 只发 `{name}`（后端 `TaskUpdate` 是 `_Strict`，多带一个字段就是 422），以及"前端能写"的来源是 2026-08-01 产品决定、用的是已注册入口、绝不写 `events`。 |
 | 2026-09-08 | `contracts/timer-ring-visual-v1.md` 白纸黑字写着「`modules/ring` 是它的**第一个实现者**」，可这个仓里一直一个字都没提它。漏登的后果不是报错，是**下一个改圆环的人不知道自己受它约束**（规范说「实现与规范不一致时，改的是实现」），而 table 的蜂巢中心格是照着它做的第二个实现——两处对不上就是全站不一致。 | **已清**：作为 `contracts.timer-ring-visual.v1` 补进 consumes，并写明"改 `ring.css` 的 `.chrono` 那一族之前先读那份规范"。 |
 

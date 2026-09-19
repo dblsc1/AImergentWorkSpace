@@ -1,4 +1,4 @@
-/* table/frontend · hex-center-ctl.css —— 蜂巢中心格下部的 完成 / 暂停 / 取消不记录（2026-09-12）。
+/* hive · hex-center-ctl.css —— 蜂巢中心格下部的 完成 / 暂停 / 取消不记录（2026-09-12）。
  * 逻辑在 hex-center-ctl.js。从 hex.css 拆出：那边逼近 1000 行；这一块只作用于
  * .hex-center-ctl / .hex-ctl-btn 这两个自有类，和 hex.css 的层叠规则不交叉，
  * 加载顺序放在 hex.css 之后即可（它要压过 .hex-cell.is-hover .hex-inner 的 padding）。 */

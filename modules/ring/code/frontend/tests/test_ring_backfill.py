@@ -1,4 +1,4 @@
-"""ring 补登入口自核套件（2026-08-19 任务单）。
+"""ring 补登入口自核套件（2026-08-19）。
 
 补登＝POST /api/core/timer/backfill，与 test_ring_countdown.py 的写入面判据不同
 ——那套永远 abort（只测「打没打、打的是哪个 URL/body」）；本套件需要验证前端

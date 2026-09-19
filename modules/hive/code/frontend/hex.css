@@ -6,7 +6,7 @@
  * 别删，也别改成不带 !important 的版本。 */
 [hidden] { display: none !important; }
 
-/* table · 蜂巢行动分区（index.html 的行动分区版位）。
+/* hive · 蜂巢行动分区（index.html 的行动分区版位）。
  * 颜色一律 var(--…) 或 color-mix(… var(--zone-color) …)，零裸 hex（A2）；
  * 分区色由 hex-data.js 计算后写进 inline `--zone-color`，深浅主题的兑色靠
  * color-mix 到 var(--panel)，本文件不判主题。 */

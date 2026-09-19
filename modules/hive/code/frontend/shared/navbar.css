@@ -1,4 +1,4 @@
-/* 驾驶舱共享顶栏 v2 —— 由 nginx sub_filter 注入 /table/ /ring/ /gantt/ 三页。
+/* 驾驶舱共享顶栏 v2 —— 由 nginx sub_filter 注入各页。
  *
  * v2（cockpit-v1 升级，2026-08-08）：从「一条轨 + 三个节点」的旧设计换成
  * PRD F-NAV-1「品牌 · 三页签（当前页下划线）· 录制胶囊 · 主题控件 · 退出」。
@@ -6,7 +6,7 @@
  * `nav.ckpt-nav[data-ckpt-nav]`，全部 DOM class 仍以 `ckpt-` 起头，
  * `data-ckpt-timer` 仍是 idle/running/degraded 三态互斥。
  *
- * **本文件不再自己定义颜色**（v1 那份「自给自足」的理由——ring 与 table/gantt
+ * **本文件不再自己定义颜色**（v1 那份「自给自足」的理由——各页
  * 用的不是同一套 token——在 v0.6 之后不成立了：三页现在都被注入同一份
  * `/__cockpit/tokens.css`，且加载顺序在 navbar.css 之前，见
  * nginx/templates/cockpit.conf.template 的注入顺序）。样式只准 `var(--…)`，
@@ -35,7 +35,7 @@ html { scroll-padding-top: var(--ckpt-h, 52px); }
  * display:grid + place-items:center，任何在流内的 body 子元素都会变成被居中的
  * grid item（顶栏会跑到页面正中间）。fixed 定位的元素是 out-of-flow，
  * **不构成 grid item**，三页因此可以共用一份 CSS。
- * z-index 60：页面内实测最大 z-index 是 40（gantt 的 toast、table 的浮层）。 */
+ * z-index 60：页面内实测最大 z-index 是 40（各页的 toast 与浮层）。 */
 .ckpt-nav {
   position: fixed;
   top: 0;

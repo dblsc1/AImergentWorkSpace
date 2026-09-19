@@ -1,4 +1,4 @@
-// table · 蜂巢行动分区 · 「编辑目录」的写操作编排（2026-09-07）
+// hive · 蜂巢行动分区 · 「编辑目录」的写操作编排（2026-09-07）
 //
 // **不新写一套写入逻辑**：全部走 data.js（window.NexusTableData）已有的函数，
 // 也就是 nexus-core 的统一 CRUD 入口 `/api/core/planner/{type}`（契约 planner.crud.v1，

@@ -1,5 +1,4 @@
-"""日界时区 + 投影重建（契约「日界与时区」/「投影重建」v0.9；任务单
-2026-08-02 验收 T1–T9）。T1（NEXUS_TZ 必填/非法即 die）已在 test_config.py
+"""日界时区 + 投影重建（契约「日界与时区」/「投影重建」v0.9；2026-08-02 验收 T1–T9）。T1（NEXUS_TZ 必填/非法即 die）已在 test_config.py
 覆盖，本文件覆盖 T2–T9：归日按 NEXUS_TZ、today 与归日共用同一函数、事实
 不动、重建只读事实/先清后放/幂等，以及重建结果与手工汇总一致。
 """
@@ -35,7 +34,7 @@ SHANGHAI = load_settings(
 
 #: 显式 UTC 设置，专供下方「对照组」用——**不依赖 conftest 的全局默认值**。
 #: conftest 的 `os.environ.setdefault("NEXUS_TZ", "UTC")` 只在外部没传 NEXUS_TZ
-#: 时生效；本任务单要求整个套件必须在 NEXUS_TZ=Asia/Shanghai 等非 UTC 环境下也
+#: 时生效；本规格要求整个套件必须在 NEXUS_TZ=Asia/Shanghai 等非 UTC 环境下也
 #: 全绿，那种环境里 setdefault 会让路，daily_stats.settings 实际就是外部传入的
 #: 时区——如果对照组不显式 monkeypatch 成 UTC，就会在非 UTC 环境下断言出错误的
 #: 日期（这正是本轮修的第三条陈旧 UTC 断言：H1 扫出的，不是新引入的）。
@@ -91,7 +90,7 @@ def test_t2_same_moment_under_utc_stays_on_utc_day(seeded, monkeypatch):
 
     显式 monkeypatch 成 UTC（与上面的 SHANGHAI 用同一手法），**不依赖** conftest
     的全局默认值：旧写法只在「进程实际跑在 UTC 下」才绿，NEXUS_TZ=Asia/Shanghai
-    等非 UTC 环境会把这条对照断言也带崩——这正是本轮任务单点名要修的陈旧 UTC
+    等非 UTC 环境会把这条对照断言也带崩——这正是本轮规格点名要修的陈旧 UTC
     断言之一（H1 扫出的第三条）。
     """
     monkeypatch.setattr(daily_stats, "settings", UTC)

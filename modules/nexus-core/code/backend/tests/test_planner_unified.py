@@ -1,5 +1,5 @@
 """统一入口 `/api/core/planner/{type}` 的验收测试
-（contract.md v0.5「统一 CRUD 入口」+ v0.6 変更记录；任务单 U1/U5/U6/U7/U8）。
+（contract.md v0.5「统一 CRUD 入口」+ v0.6 変更记录；规格 U1/U5/U6/U7/U8）。
 
 **v0.6 起这是 planner 的唯一写路径**：十二条分离旧端点
 （`/api/core/{zones,projects,tasks}`）已删除，统一入口不再有「旧路径」可比对。
