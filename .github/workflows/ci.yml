@@ -57,6 +57,11 @@ jobs:
       - name: 跑测试
         # 纯逻辑，node 内置 assert，无 npm 依赖、无浏览器。
         # run_tests.sh 缺 node 时非零退出，不静默跳过。
+        env:
+          # 这套测试断言的是**本地时区**下的显示（产品按本地时区格式化时刻），
+          # 断言写死了 UTC+8 的期望值。runner 是 UTC，不钉时区就 '13:05' != '21:05'。
+          # 与 nexus-core 那个 job 的 NEXUS_TZ 取同一个值。
+          TZ: Asia/Shanghai
         run: modules/hive/code/frontend/run_tests.sh
 
   ring-tokens:
