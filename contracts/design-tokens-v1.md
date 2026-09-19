@@ -94,7 +94,7 @@
 
 ## 5. 注入与兜底（行为契约，nginx-docker v0.6 收录细节）
 
-- nginx 向 ring/table/gantt 三页注入：`</head>` 前 boot 脚本（读两个 localStorage 键、
+- nginx 向 ring/hive/gantt 三页注入：`</head>` 前 boot 脚本（读两个 localStorage 键、
   设 `data-theme`/`data-accent`，**不发请求、不摸 documentElement 以外的 DOM、≤10 行**），
   `</body>` 前 `tokens.css` + navbar 资产。锚点判据：每页 `</head>`、`</body>` 各恰好一个。
 - login 不注入：自带兜底块（**含全部 3 预设**）+ 自带同款 boot 逻辑。

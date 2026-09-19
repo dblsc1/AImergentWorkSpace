@@ -122,9 +122,9 @@ never depends on a `pip install`.
 | `contracts/yq-event.v1` | The event envelope spec. **The core contract of the whole system** — every write is an event posted into this envelope. |
 | `contracts/auth.gate.v1` | The login gate contract, a stub implementation (standard library only, zero dependencies), and a minimal login page. |
 
-**Not here yet**: the two frontend modules, the task hive (`/table/`) and the
-timer ring (`/ring/`). The assembly layer has commented-out locations reserved
-for them; uncomment once they land in `modules/`.
+**Not wired up yet**: both frontend modules — the task hive (`/hive/`) and the
+timer ring (`/ring/`) — are in `modules/`, but neither is served. The assembly
+layer keeps their locations commented out until each gets a `module.yaml`.
 
 ---
 
