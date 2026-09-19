@@ -46,6 +46,19 @@ jobs:
             --deselect "$F1::$T1" \
             --deselect "$F2::$T2"
 
+  hive-tests:
+    name: hive 前端测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 跑测试
+        # 纯逻辑，node 内置 assert，无 npm 依赖、无浏览器。
+        # run_tests.sh 缺 node 时非零退出，不静默跳过。
+        run: modules/hive/code/frontend/run_tests.sh
+
   ring-tokens:
     name: ring 令牌兜底
     runs-on: ubuntu-latest
