@@ -44,6 +44,28 @@ def _req(d: dict, key: str, where: Path):
     return d[key]
 
 
+def _statics(manifest: dict, base: str, where: Path) -> list[dict]:
+    """清单里的 `static:` 列表 → 挂载与 location 需要的全部信息。
+
+    每项：prefix（URL 前缀，/ 开头 / 结尾）、root（相对清单所在目录）、
+    index（缺省 index.html）、gated、home（`/` 跳到这里，全站至多一个）。
+    """
+    out = []
+    for st in manifest.get("static") or []:
+        prefix = str(_req(st, "prefix", where))
+        if not (prefix.startswith("/") and prefix.endswith("/")) or prefix == "/":
+            raise BadManifest(f"{where} 的 static.prefix 必须形如 /名字/，收到 {prefix!r}")
+        out.append({
+            "prefix": prefix,
+            "src": f"{base}/{_req(st, 'root', where)}",
+            "dir": "/usr/share/nginx/html" + prefix.rstrip("/"),
+            "index": st.get("index", "index.html"),
+            "gated": bool(st.get("gated")),
+            "home": bool(st.get("home")),
+        })
+    return out
+
+
 def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
     """返回 (生成的文件, 额外元数据)。
 
@@ -57,6 +79,7 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
     req_set: set[str] = set()
     tabs: list[dict] = []
     routes: list[dict] = []
+    statics: list[dict] = []     # 静态目录：挂进 web，由 nginx 直接 serve
     needs_mongo = False
     sources: list[str] = []
 
@@ -70,6 +93,11 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
             )
         m = _load(mf)
         sources.append(str(mf.relative_to(root)))
+        statics += _statics(m, f"modules/{name}", mf)
+        if m.get("kind") == "static":
+            # 纯前端：没有进程可起，只有一个目录要挂。顶栏据此出页签。
+            tabs.append({"module": name, "label": str(m.get("summary", name)).split("。")[0]})
+            continue
         svc = _req(m, "service", mf)
         sname = m.get("name", name)
 
@@ -96,8 +124,6 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
 
         reqs = svc.get("requires") or []
         req_set.update(reqs)
-        if m.get("kind") == "static":
-            tabs.append({"module": name, "label": str(m.get("summary", name)).split("。")[0]})
         if "mongo" in reqs:
             needs_mongo = True
             entry["depends_on"] = {"mongo": {"condition": "service_healthy"}}
@@ -115,7 +141,7 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
     # 修法是**往安全那一侧失败**：有 gated 路由就自动把门的占位件装上并响亮告知；
     # 连提供方都找不到就硬失败。绝不允许"声明了要门、生成出来没门、还一声不响"。
     stub_ids = list(plan["stubs"])
-    needs_gate = any(r.get("gated") for r in routes)
+    needs_gate = any(r.get("gated") for r in routes + statics)
     auto_gate: str | None = None
     if needs_gate and not any(c.startswith("auth.gate") for c in stub_ids):
         found = sorted(
@@ -146,6 +172,7 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
             )
         s = _load(sf)
         sources.append(str(sf.relative_to(root)))
+        statics += _statics(s, f"contracts/{cid}/stub", sf)
         svc = _req(s, "service", sf)
         sname = svc.get("name") or cid.split(".")[0]
         port = svc.get("port")
@@ -195,7 +222,10 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
         # 只有 web 映射宿主端口。默认绑回环 —— 要暴露得自己显式改，
         # 而不是装完就已经在公网上了。
         "ports": ["${HONEYCOMB_BIND:-127.0.0.1:8800}:80"],
-        "volumes": ["./nginx/honeycomb.conf:/etc/nginx/conf.d/default.conf:ro"],
+        # 静态目录只读挂载，不复制代码：改前端去模块目录改，刷新即生效。
+        "volumes": ["./nginx/honeycomb.conf:/etc/nginx/conf.d/default.conf:ro"] + [
+            f"../../{st['src']}:{st['dir']}:ro" for st in statics
+        ],
         "depends_on": {
             s: {"condition": "service_healthy"}
             for s, v in services.items() if "healthcheck" in v
@@ -229,14 +259,17 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
     )
 
     nf = out / "nginx" / "honeycomb.conf"
-    nf.write_text(_nginx(routes, gate, sources), encoding="utf-8")
+    nf.write_text(_nginx(routes, statics, gate, sources), encoding="utf-8")
     meta = {"requires": sorted(req_set), "tabs": tabs, "stubs": stub_ids}
     if auto_gate:
         meta["auto_included"] = [auto_gate]
     return [cf, nf], meta
 
 
-def _nginx(routes: list[dict], gate: bool, sources: list[str]) -> str:
+def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[str]) -> str:
+    homes = [st["prefix"] for st in statics if st["home"]]
+    if len(homes) > 1:
+        raise BadManifest(f"多个静态目录都声明了 home: true：{homes}——`/` 只能跳一个地方")
     L: list[str] = [
         "# ⚠ 本文件由 install.sh 生成，改了会被下次 add 覆盖。",
         "# 要长期改就改上游清单：",
@@ -253,6 +286,11 @@ def _nginx(routes: list[dict], gate: bool, sources: list[str]) -> str:
         "",
         "    location = /healthz { return 200 \"ok\\n\"; add_header Content-Type text/plain; }",
     ]
+    # 根路径：有主界面跳主界面；没有但有门就跳登录页（唯一确实存在的页面）；都没有就不管。
+    if homes:
+        L += ["", f"    location = / {{ return 302 {homes[0]}; }}"]
+    elif gate:
+        L += ["", "    location = / { return 302 /login/; }"]
     if gate:
         L += [
             "",
@@ -266,22 +304,53 @@ def _nginx(routes: list[dict], gate: bool, sources: list[str]) -> str:
             "    }",
             "    location /api/auth/ { proxy_pass http://auth:8010; }",
         ]
-    for r in routes:
-        if r.get("prefix") in ("/api/auth/",):
-            continue          # 门自己那条上面已经写了
-        L += ["", f"    location {r['prefix']} {{"]
-        if gate and r.get("gated"):
+    for st in statics:
+        L += ["", f"    location {st['prefix']} {{"]
+        if gate and st["gated"]:
             L += [
                 "        auth_request /__auth_verify;",
                 "        error_page 401 = @to_login;",
             ]
         L += [
+            f"        alias {st['dir']}/;",
+            f"        index {st['index']};",
+            f"        try_files $uri $uri/ {st['prefix']}{st['index']};",
+            "    }",
+        ]
+    for i, r in enumerate(routes):
+        if r.get("prefix") in ("/api/auth/",):
+            continue          # 门自己那条上面已经写了
+        # degraded：轮询型端点（顶栏计时芯片）。未登录或后端挂了都回这份 JSON，
+        # 不跳登录页——给一个每 10s 一次的 XHR 回 302 毫无意义。
+        degraded = r.get("degraded")
+        if degraded is not None and "'" in str(degraded):
+            raise BadManifest(f"路由 {r['prefix']} 的 degraded 里不能有单引号：{degraded!r}")
+        fallback = f"@degraded_{i}" if degraded is not None else "@to_login"
+        L += ["", f"    location {'= ' if r.get('exact') else ''}{r['prefix']} {{"]
+        if gate and r.get("gated"):
+            L += [
+                "        auth_request /__auth_verify;",
+                f"        error_page 401 = {fallback};",
+            ]
+        L += [
             f"        proxy_pass http://{r['service']}:{r['port']}{r.get('upstream', r['prefix'])};",
             "        proxy_set_header Host $host;",
             "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
-            "        proxy_read_timeout 30s;",
-            "    }",
         ]
+        if degraded is None:
+            L += ["        proxy_read_timeout 30s;", "    }"]
+        else:
+            L += [
+                "        proxy_connect_timeout 2s;",
+                "        proxy_read_timeout 3s;",
+                "        proxy_intercept_errors on;",
+                f"        error_page 500 502 503 504 = {fallback};",
+                "    }",
+                f"    location {fallback} {{",
+                "        default_type application/json;",
+                f"        return 200 '{degraded}';",
+                "    }",
+            ]
     if gate:
         L += ["", "    location @to_login { return 302 /login/; }"]
     L += ["}", ""]
