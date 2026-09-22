@@ -1,0 +1,18 @@
+{
+  "zones": [
+    {"id": "z_inbox", "key": "0", "name": "未分类", "order": 0},
+    {"id": "z_life", "key": "1", "name": "生活区", "order": 1}
+  ],
+  "projects": [
+    {"id": "p_inbox", "key": "0-0", "zoneId": "z_inbox", "name": "收件箱", "status": "active", "plannedWeight": 0, "plan": null},
+    {"id": "p_read", "key": "1-1", "zoneId": "z_life", "name": "考证复习", "status": "active", "plannedWeight": 80, "plan": {"start": "2026-07-01", "end": "2026-08-01"}}
+  ],
+  "tasks": [
+    {"id": "t_a", "key": "0-0-1-1", "projectId": "p_inbox", "name": "看那本关于GTD的书", "done": false, "kind": "normal", "flags": [], "plannedWeight": 0, "plan": null, "dependsOn": []},
+    {"id": "t_b", "key": "0-0-2-1", "projectId": "p_inbox", "name": "重复：看GTD的书", "done": false, "kind": "normal", "flags": [], "plannedWeight": 0, "plan": null, "dependsOn": []},
+    {"id": "t_c", "key": "1-1-3-1", "projectId": "p_read", "name": "读完第三章", "done": false, "kind": "normal", "flags": [], "plannedWeight": 50, "plan": {"start": "2026-07-20", "end": "2026-07-25"}, "dependsOn": []}
+  ],
+  "events": [],
+  "projections": {"proj_current": null, "proj_daily_stats": []},
+  "exportedAt": "2026-08-10T00:00:00+00:00"
+}

@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tool": { "type": "string" },
+          "args_json": {
+            "type": "string",
+            "description": "该命令的参数，编码为一段 JSON 字符串，如 {\"projectId\":\"p_inbox\",\"name\":\"读书\"}"
+          }
+        },
+        "required": ["tool", "args_json"]
+      }
+    }
+  },
+  "required": ["actions"]
+}

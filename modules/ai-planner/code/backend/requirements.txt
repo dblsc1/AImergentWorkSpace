@@ -1,0 +1,7 @@
+# ai-planner 宿主服务依赖（MIT/Apache，codex 是本机现成，不列）
+fastapi>=0.115
+uvicorn>=0.34
+httpx>=0.28
+pydantic>=2.10
+# 测试
+pytest>=8.0
