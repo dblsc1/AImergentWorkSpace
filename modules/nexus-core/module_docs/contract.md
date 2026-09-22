@@ -3,7 +3,15 @@
 > 本文件是 nexus-core 对外行为的**唯一事实**。改动前先想清楚为什么要改，
 > **先改这里、再改代码**，顺序不可颠倒。
 >
-> **本版范围（v1.8）**：人类需求「计时器和网页前端都加个补登功能，
+> **本版范围（v1.9）**：`GET /api/core/export` 产出的快照此前没有任何端点能吃
+> 回去（喂给 import 会被三层拒绝，而那三条拒绝各守一件实事，一条都不该放宽）。
+> 新增 `nexus-core.restore.v1`（`POST /api/core/restore`，见「快照恢复」节）：
+> 吃 export 的**逐字节**输出，**只对空实例开放**（非空 409「恢复通道，不是合并
+> 通道」）；id 原样保留、`events` 原样落台账、`projections` 不落库而是落完台账
+> 现场重建；两段式同 import（dry-run + checksum）；整次恢复算一次高风险写，经
+> `guard.run_write` 设防并留一条审计。import 的任何行为不变，属追加式变更。
+>
+> v1.8：人类需求「计时器和网页前端都加个补登功能，
 > 用于完成了但没计时的情况」——**契约已实现并通过验证**（实现 commit
 > `69da9d6`，12 条单测全绿；验证 commit `f308bdf`，4 条整合测试全绿，结论
 > approved）。新增 `timer.v1` 的 `POST /api/core/timer/backfill`（见下「补登」节）：表单粒度＝
@@ -104,6 +112,12 @@ provides:
       guard.run_write 逐条执行，AI 凭据自报 human 同样 403（与 planner.crud.v1 的
       高风险二次设防同一条防线）
     status: 已实现（v1.7），待验证
+  - id: nexus-core.restore.v1
+    summary: 快照恢复（POST /api/core/restore），吃 GET /api/core/export 的逐字节输出；
+      只对空实例开放（非空 409）；id 原样保留、events 原样落台账（全系统唯一绕开 ingest
+      直写台账的路径）、projections 不落库而是现场重建、「名字 → 号」登记表从 key 反推；
+      两段式 dry-run + checksum；整次恢复算一次高风险写，经 guard.run_write 设防留痕
+    status: 已实现（v1.9），待验证
 consumes:
   - id: yq-event/v1
     contract: ../../contracts/yq-event.v1/contract.md
@@ -127,6 +141,7 @@ consumes:
 | GET | `/api/core/views/review` | 无 | `ReviewOut`（见下「每周回顾读端」节） | ✅ 已实现（v1.5） |
 | GET | `/api/core/planner/audit` | `?limit&objectId&actor&outcome` | `AuditOut`（见下「planner 审计流水」节） | ✅ 已实现（v1.6） |
 | POST | `/api/core/import` | `ImportRequest`（见下「JSON 一键导入编辑」节） | `ImportResultOut` | ✅ 已实现（v1.7） |
+| POST | `/api/core/restore` | 请求体 = `GET /export` 原样；`?dryRun&checksum`（见下「快照恢复」节） | `RestoreResultOut` | ✅ 已实现（v1.9） |
 | ~~GET~~ | ~~`/api/core/zones`~~ | 无 | `[ZoneOut]` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
 | ~~POST~~ | ~~`/api/core/zones`~~ | `{name, color?, order?}` | `ZoneOut` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
 | ~~PATCH~~ | ~~`/api/core/zones/{id}`~~ | `{name?, color?, order?}` | `ZoneOut` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
@@ -642,6 +657,103 @@ payload 只删了父、忘了一起删子，既有的**级联保护（409）在 
 400 拒绝，**不接受静默忽略**——静默忽略会让用户以为改了其实没改，比报错
 坏得多（规格原文）。
 
+## 快照恢复（规范性 · v1.9）
+
+`POST /api/core/restore` —— `GET /api/core/export` 的逆操作：把一份导出快照原样
+搬进**空实例**。给「换机器 / 重装之后把自己的数据搬回来」用；此前唯一的路是
+`mongodump`，要求使用者知道后端是 Mongo、知道卷名、有 docker 权限。
+
+**为什么不是 import**：import 是**编辑通道**，拿快照喂它会被三层拒绝（带 `events`
+→ 400；不认外来 id → 400；不许父子同批新建 → 400）。三条拒绝各守一件实事——台账
+不许经编辑通道伪造、id 不许自己编、引用不许悬空——一条都不放宽。restore 是另一条
+通道，import 的任何行为不变。
+
+```jsonc
+// 请求体：GET /api/core/export 的输出，逐字节原样，一个键都不用加减
+{ "zones": [...], "projects": [...], "tasks": [...], "events": [...],
+  "projections": {...}, "exportedAt": "..." }
+// 控制参数走查询串——请求体要与 export 逐字节一致，`curl --data-binary @export.json` 直接喂：
+//   ?dryRun=true                          缺省 true，零写入
+//   ?dryRun=false&checksum=<dry-run 返回的 checksum>
+```
+
+```jsonc
+// 响应：dry-run 与 apply 同形状
+{
+  "dryRun": false,
+  "checksum": "3f9c2b7a1e8d…",
+  "summary": {"zones": 12, "projects": 28, "tasks": 48, "events": 83},
+  "rebuilt": {"proj_current": 83, "proj_daily_stats": 83}   // {投影名: 重放的事件数}；dry-run 时为 null
+}
+```
+
+### 搬什么、怎么搬（规范性）
+
+| 快照里的 | 怎么处理 |
+|---|---|
+| `zones`/`projects`/`tasks` | **id 原样保留**，文档原样落库——不走 `create_*`，那条路会重发 id、重算 key |
+| `events` | **原样落台账**，`recordedAt` 不重盖（盖章时刻是原实例收到它的时刻，重盖等于改写历史）；防重照旧走唯一索引 |
+| `projections` | **读进来但不落库**；台账落完后按「投影重建」节从全部事实重放。投影是派生物，直接导入等于允许投影与台账对不上 |
+| `exportedAt` | 接受、忽略 |
+| 「名字 → 号」登记表（export 不带） | 从各对象的 `key` 反推补登记，发号器抬到出现过的最大号——否则新实例从 1 重新发号，新建对象与恢复进来的对象撞 key |
+
+`events` 这一行是**全系统唯一允许绕开 `ingest` 直写台账的地方**：它搬的是**同一份
+台账**，不是编辑——与 import 拒收 `events` 守的是同一条纪律的两面。信封校验不放宽，
+每条过同一个 `Envelope` 模型，只是改成整批先过、有一条不合格就整批 400。
+
+### 只对空实例开放（规范性）
+
+`zones`/`projects`/`tasks`/`events` 任一非空 → **409**，`detail` 列出各类条数并写明
+「这是恢复通道，不是合并通道」。dry-run 与 apply 同样判——dry-run 就该告诉你这份
+快照进不去。`planner_audit`/`name_registry`/`counters`/`timer_state` 不参与判定。
+
+**本版不提供覆盖已有数据的模式。**「清空再恢复」要删台账，而台账是 append-only
+的事实来源；这个口子开不开、怎么开，另行决定。
+
+### 两段式（规范性）
+
+与 import 同一套纪律：默认 dry-run 零写入；apply 必须带 dry-run 返回的 checksum。
+
+- **checksum 算法**：对 `{"zones","projects","tasks","events"}` 四个数组（快照原样，
+  不含 `projections`/`exportedAt`）做 `json.dumps(sort_keys=True, ensure_ascii=False,
+  separators=(",",":"))` 之后取 `sha256` 十六进制摘要。
+- **与 import 的区别**：计划只取决于快照本身，所以不把当前库并进哈希；「dry-run
+  之后库变了」由 apply 时重判「库必须为空」承担。
+- apply 缺 `checksum` → 400；与这份快照算出的不一致 → 409（apply 的不是 dry-run
+  过的那一份）。
+
+### 拒绝规则（规范性）
+
+全部校验在**任何写入之前**跑完——恢复写到一半才发现断链，留下的是一个既不空、
+也不完整的实例。
+
+| 情形 | 响应 |
+|---|---|
+| 缺 `zones`/`projects`/`tasks`/`events` 任一数组，或出现未知顶层键 | **422**——文件被截断或手改过，按「少了就是空」恢复会静默丢数据 |
+| 对象缺 `id`，或 `id` 不是非空字符串 | **400**，点名 `类型[下标]` |
+| 同类型 `id` 重复 | **400**，点名 id |
+| 项目的 `zoneId`、任务的 `projectId`、任务 `dependsOn` 指向快照里不存在的对象 | **400**，点名两端 id |
+| 事件信封不合法，或快照内 `(user, source, dedupeKey)` 重复 | **400**，点名 `events[下标]` 与原因（最多列 5 条） |
+| 目标实例非空 | **409**，见上 |
+| apply 缺 checksum / checksum 不符 | **400** / **409** |
+| 有效 actor 为 `ai`，或严格模式下未携人路径凭据 | **403**，见下 |
+
+事件的 `subject` **不做**闭包校验：历史事件本就可以指向已删除的对象（「标识三分」节）。
+
+### 设防与留痕（规范性）
+
+整次恢复经 `guard.run_write` 执行，算**一次高风险写**（`op:"restore"`，它一次能写满
+全库）——与「actor 来源区分与高风险二次设防」节同一条防线，不另开口子：有效 actor
+为 `ai` → 403；严格模式下 source 不是 `human` → 403；拒绝发生在任何写入之前。
+`planner_audit` 记一条 `op:"restore"`、`objectType:"snapshot"`、`changes` 为三类对象
+的条数，applied/denied/failed 照记。dry-run 不判来源（同 import）。
+
+### 执行顺序与失败语义（规范性）
+
+zones → projects → tasks（按 id upsert）→ 补登记表 → events（逐条经防重写入）→
+重建全部投影。**不是事务**：中途失败不回滚，实例留在非空状态，再恢复会 409——此时
+换一个空库重来。`timer_state` 不在快照里，恢复后没有在跑的计时。
+
 ## 收件箱（规范性 · v1.5，F-INBOX-1）
 
 GTD「捕捉」的落点：一个 well-known 的「未分类」zone + 一个 well-known 的
@@ -901,6 +1013,7 @@ X-Nexus-Client-Token: <token>
 | `PATCH` 含 `projectId`（任务搬移） | **是** | 改归属，GTD「理清」的实质动作 |
 | `PATCH` 含 `zoneId`（项目搬移） | **是** | 同上 |
 | `PATCH` 含 `plan`（含 `plan:null` 清空） | **是** | 改计划期＝改用户对时间的承诺 |
+| `POST /api/core/restore` 的 apply（v1.9） | **是** | 一次写满全库，含事实台账 |
 | `POST`（建对象） | 否 | 可撤销，PRD F-AI-4 低风险类 |
 | `PATCH` 只含 `name`/`plannedWeight`/`order`/`color`/`done`/`kind`/`flags`/`status`/`dependsOn` | 否 | 同上 |
 
@@ -955,8 +1068,8 @@ X-Nexus-Client-Token: <token>
   "at":         "2026-08-10T12:00:00+00:00",  // 服务端盖章的 UTC 时刻
   "actor":      "ai",                  // 有效 actor（服务端判定，不是自报）
   "source":     "ai",                  // ai | human | unverified（凭据类别）
-  "op":         "update",              // create | update | delete
-  "objectType": "tasks",               // zones | projects | tasks
+  "op":         "update",              // create | update | delete | restore（v1.9）
+  "objectType": "tasks",               // zones | projects | tasks | snapshot（v1.9，restore 专用）
   "objectId":   "t_a1b2c3",            // 目标 id；create 被拒时为 null（还没有 id）
   "highRisk":   true,                  // 本次操作是否落在高风险表内
   "outcome":    "denied",              // applied | denied | failed

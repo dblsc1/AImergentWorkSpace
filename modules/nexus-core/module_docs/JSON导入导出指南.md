@@ -97,6 +97,8 @@ curl -s -b $JAR $BASE/api/core/export
 而服务端悄悄不理它，你会以为改动生效了、其实什么都没变——**这比报错
 坏得多**。删掉这两个键、只提交 `zones`/`projects`/`tasks` 三个数组即可。
 
+想连计时记录一起**整份搬到另一个实例**？那不是 import 的活，见第 8 节「搬家」。
+
 `exportedAt` 不用管——留着也行，服务端原样接受但忽略。
 
 ## 4. 两段式：先 dry-run，再 apply
@@ -242,10 +244,33 @@ apply 到删除这个项目那一步时仍会撞上「还有任务——不做�
 | `409` | `checksum` 过期，或 apply 途中撞上既有的级联删除保护 |
 | `422` | 请求体不是合法 JSON / 出现了既不是 `events`/`projections` 也不是本文档列出的字段 |
 
-## 8. 相关文档
+## 8. 搬家：整份快照恢复到空实例
+
+换机器、重装之后，把旧实例的导出整份搬进**空的**新实例——连计时记录一起，id 不变。
+请求体就是 `export.json` 原样，控制参数走查询串：
+
+```bash
+# 旧实例上：导出（同第 0 节第 2 步）
+curl -s -b $JAR $BASE/api/core/export -o export.json
+
+# 新实例上：先 dry-run（零写入），拿 checksum
+CHECKSUM=$(curl -s -b $JAR -X POST "$BASE/api/core/restore" \
+  -H 'Content-Type: application/json' --data-binary @export.json \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["checksum"])')
+
+# 再 apply
+curl -s -b $JAR -X POST "$BASE/api/core/restore?dryRun=false&checksum=$CHECKSUM" \
+  -H 'Content-Type: application/json' --data-binary @export.json
+```
+
+- **新实例必须是空库**，否则 409「这是恢复通道，不是合并通道」。要改现有数据用 import。
+- 投影（圆环、甘特的实际时长）不从文件里读，恢复完从计时记录现场重算。
+- 规范性定义见 `contract.md`「快照恢复」节。
+
+## 9. 相关文档
 
 | 文件 | 内容 |
 |---|---|
-| `contract.md` | **规范性定义**，本文与它冲突以它为准（「只读全量导出」「JSON 一键导入编辑」两节）|
+| `contract.md` | **规范性定义**，本文与它冲突以它为准（「只读全量导出」「JSON 一键导入编辑」「快照恢复」三节）|
 | `CRUD-调用指南.md` | 单条建/改/删的直连 CRUD 用法（`import` 是"整批同步一次"，两者不冲突，各按需选） |
 | `../../auth/module_docs/contract.md` | 登录门、会话、已知安全边界 |
