@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- theme-color 是 HTML 属性，天生不能引用 CSS 变量（A2 只管 CSS/JS 里的颜色，
+       字面就没把这个算进去）；取值照 tokens.css 暗态 --bg 抄一份静态近似值，
+       双主题下都不会太离谱（与 hive/index.html 同一约定）。 -->
+  <meta name="theme-color" content="#0D1220">
+  <title>NEXUS // 甘特图</title>
+  <link rel="stylesheet" href="vendor/vis-timeline-graph2d.min.css">
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"></div>
+        <div>
+          <h1 class="brand-title">NEXUS <span>//</span> 甘特图</h1>
+          <div class="eyebrow">DUAL-LAYER TIMELINE · PLAN OVER ACTUAL</div>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button class="btn" id="refreshGantt" type="button">刷新</button>
+      </div>
+    </header>
+
+    <div class="status-banner" id="statusBanner" role="status" aria-live="polite"></div>
+
+    <section class="timeline-shell" aria-label="项目级甘特">
+      <header class="board-head">
+        <div class="board-title">项目级甘特 <small>PROJECT PLAN VS ACTUAL</small></div>
+        <div class="gantt-controls">
+          <ul class="legend" aria-label="图例">
+            <li class="legend-item">
+              <span class="legend-swatch legend-swatch-plan" aria-hidden="true"></span>
+              <span>计划 · 虚线边框 · 半透明填充 · 可拖拽</span>
+            </li>
+            <li class="legend-item">
+              <span class="legend-swatch legend-swatch-actual" aria-hidden="true"></span>
+              <span>事实 · 实线边框 · 实心填充 · 锁死不可改</span>
+            </li>
+            <li class="legend-item">
+              <span class="legend-swatch legend-swatch-today" aria-hidden="true"></span>
+              <span>今天（服务端基准，非本机时钟）</span>
+            </li>
+          </ul>
+          <div class="layer-toggle" role="group" aria-label="图层显隐">
+            <button type="button" class="layer-btn layer-btn-plan" id="togglePlan" aria-pressed="true">计划</button>
+            <button type="button" class="layer-btn layer-btn-actual" id="toggleActual" aria-pressed="true">事实</button>
+          </div>
+          <div class="zoom-toolbar" role="group" aria-label="缩放粒度">
+            <button type="button" class="btn zoom-btn" data-zoom-granularity="day">日</button>
+            <button type="button" class="btn zoom-btn" data-zoom-granularity="week">周</button>
+            <button type="button" class="btn zoom-btn" data-zoom-granularity="month">月</button>
+            <button type="button" class="btn zoom-btn" data-zoom-granularity="quarter">季</button>
+            <button type="button" class="btn" id="fitAllGantt">适应全部</button>
+            <button type="button" class="btn" id="goTodayGantt">今天</button>
+          </div>
+        </div>
+      </header>
+      <div id="ganttTimeline" aria-label="双图层甘特图（计划与事实叠加同一行）"></div>
+      <div class="gantt-empty" id="ganttEmpty" hidden>暂无项目——去项目表新建一个吧。</div>
+    </section>
+  </main>
+
+  <dialog id="scheduleDialog">
+    <form class="modal" id="scheduleForm">
+      <div class="modal-head">
+        <h2 id="scheduleModalTitle"><span id="scheduleModalAction">排期</span> <span id="scheduleProjectName"></span></h2>
+        <button class="close" type="button" data-close-dialog aria-label="关闭">×</button>
+      </div>
+      <div class="form-grid">
+        <div class="field full">
+          <label for="scheduleStartInput">开始 / START</label>
+          <input id="scheduleStartInput" type="date" required>
+        </div>
+        <div class="field full">
+          <label for="scheduleEndInput">结束 / END</label>
+          <input id="scheduleEndInput" type="date" required>
+        </div>
+      </div>
+      <p class="dialog-error" id="scheduleDialogError" hidden></p>
+      <div class="modal-actions">
+        <button class="btn" type="button" data-close-dialog>取消</button>
+        <button class="btn primary" type="submit">保存排期</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="actionToast" role="status" aria-live="polite"></div>
+
+  <script src="vendor/vis-timeline-graph2d.min.js"></script>
+  <!--
+    timeline-arrows 4.6.0 只发布 ES module 源码（无 UMD/standalone 构建，
+    见 vendor/README.md「加载方式」一节），这里用浏览器原生 type="module"
+    加载，仍是零构建（不经打包器）。type="module" 脚本会被延迟执行（等价
+    defer），在下面的经典 <script>（gantt-view.js 等）之后才跑，与"脚本
+    标签写在前面就先执行"的经典顺序不同——所以这里挂完 window.TimelineArrow
+    后要显式 dispatchEvent，gantt-view.js 里消费方（ensureArrowsReady()）
+    要么读到已就位的全局，要么监听这个事件再画箭头，不假设标签顺序＝执行
+    顺序（真机验证过：不等事件时快网络下箭头有时画不出来）。
+  -->
+  <script type="module">
+    import Arrow from "./vendor/timeline-arrows.js";
+    window.TimelineArrow = Arrow;
+    window.dispatchEvent(new Event("timeline-arrows:ready"));
+  </script>
+  <script src="gantt-data.js"></script>
+  <script src="gantt-view.js"></script>
+</body>
+</html>

@@ -1,0 +1,80 @@
+<!doctype html>
+<!--
+  smoke-arrows.html · L1 冒烟：vis-timeline（vendor 现版）+ timeline-arrows 4.6.0 兼容性。
+
+  独立于业务页面（index.html），不接后端、不接 gantt-data.js/gantt-view.js——
+  只验证两件事：(1) vendor 的 vis.Timeline 能画 2 个 item；(2) timeline-arrows
+  能在两者间画 1 条箭头，且过程中控制台零 error。这是独立冒烟验收物证，
+  不是产品页面，不接业务功能检查。
+
+  跑法：本地静态 server 指到 code/frontend/ 再打开
+  http://127.0.0.1:<port>/tests/smoke-arrows.html（ES module 走 fetch，
+  file:// 下多数浏览器会因 CORS 拒绝 module 脚本，不能直接双击打开）。
+  结果通过 #smokeResult 的 textContent 与 data-status 属性暴露给 Playwright，
+  不依赖人眼读 console。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>smoke · vis-timeline + timeline-arrows</title>
+  <link rel="icon" href="data:,"> <!-- 压掉与本次验证无关的 favicon 404 噪音 -->
+  <link rel="stylesheet" href="../vendor/vis-timeline-graph2d.min.css">
+  <style>
+    body { margin: 0; padding: 16px; background: #0d131c; color: #e8edf0; font: 13px/1.5 monospace; }
+    #timeline { width: 720px; height: 160px; margin-top: 12px; background: #11161f; }
+    #smokeResult[data-status="ok"] { color: #58e8e3; }
+    #smokeResult[data-status="error"] { color: #ff6578; }
+  </style>
+</head>
+<body>
+  <h1>smoke: vis-timeline + timeline-arrows 4.6.0</h1>
+  <div id="smokeResult" data-status="pending">pending</div>
+  <div id="timeline"></div>
+
+  <script src="../vendor/vis-timeline-graph2d.min.js"></script>
+  <script type="module">
+    import Arrow from "../vendor/timeline-arrows.js";
+
+    var resultEl = document.getElementById("smokeResult");
+    function fail(message) {
+      resultEl.textContent = "FAIL: " + message;
+      resultEl.setAttribute("data-status", "error");
+    }
+
+    try {
+      // 本模块的甘特图任何 item 都挂在某个 group 下（项目行/任务行，见 L2）——
+      // timeline-arrows 4.6.0 的 _drawArrows() 会读 timeline.groupsData.get(...)，
+      // 构造 Timeline 时不传 groups 会让 groupsData 为 null 直接抛错（撞见过，不是
+      // 猜的）。所以冒烟必须带 groups，才是与生产代码路径一致的兼容性验证。
+      var groups = new window.vis.DataSet([{ id: "g1", content: "group-1" }]);
+      var items = new window.vis.DataSet([
+        { id: 1, group: "g1", content: "item-1", start: "2026-08-01", end: "2026-08-03" },
+        { id: 2, group: "g1", content: "item-2", start: "2026-08-04", end: "2026-08-06" }
+      ]);
+      var timeline = new window.vis.Timeline(document.getElementById("timeline"), items, groups, {
+        start: "2026-07-30", end: "2026-08-10"
+      });
+
+      var arrows = new Arrow(timeline, [{ id: "a1", id_item_1: 1, id_item_2: 2 }], { color: "#9b8cff" });
+
+      // 三个物证：(a) 2 个 item 真的渲染出来了；(b) Arrow 实例记着这 1 条依赖
+      // （公开 API 只有 getIdArrows()/getArrow(id)，没有 arrowsData 这种字段——
+      // 读源码确认过，不是猜的）；(c) 真的画出了一条 <path>（DOM 层面的最终物证，
+      // 前两条只能证明「登记了」，这条才证明「画出来了」）。
+      var itemCount = document.querySelectorAll("#timeline .vis-item").length;
+      var arrowIds = arrows.getIdArrows();
+      var pathCount = document.querySelectorAll("#timeline svg path:not([id])").length;
+      if (itemCount !== 2) throw new Error("期望 2 个 vis-item，实际 " + itemCount);
+      if (arrowIds.length !== 1 || !arrows.getArrow("a1")) {
+        throw new Error("期望登记 1 条箭头（id=a1），实际 " + JSON.stringify(arrowIds));
+      }
+      if (pathCount < 1) throw new Error("期望至少画出 1 条 <path>，实际 " + pathCount);
+
+      resultEl.textContent = "OK: items=" + itemCount + " arrows=" + arrowIds.length + " paths=" + pathCount;
+      resultEl.setAttribute("data-status", "ok");
+    } catch (err) {
+      fail((err && err.message) || String(err));
+    }
+  </script>
+</body>
+</html>
