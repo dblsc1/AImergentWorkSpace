@@ -118,13 +118,16 @@ never depends on a `pip install`.
 
 | | |
 |---|---|
-| `modules/nexus-core` | The event-sourced kernel (FastAPI + MongoDB). Provides 11 contracts: timing, task CRUD, the event write entry point, and read projections for tree / ring / gantt / export. |
+| `modules/nexus-core` | The event-sourced kernel (FastAPI + MongoDB). Provides 12 contracts: timing, task CRUD, the event write entry point and archive read, and read projections for tree / ring / gantt / export. |
+| `modules/hive` | The task hive (`/hive/`), the main screen. A static frontend; all data goes through `/api/core/`. |
+| `modules/ring` | The timer ring (`/ring/`): contribution ring plus start / stop / cancel / backfill. A static frontend. |
 | `contracts/yq-event.v1` | The event envelope spec. **The core contract of the whole system** — every write is an event posted into this envelope. |
 | `contracts/auth.gate.v1` | The login gate contract, a stub implementation (standard library only, zero dependencies), and a minimal login page. |
 
-**Not wired up yet**: both frontend modules — the task hive (`/hive/`) and the
-timer ring (`/ring/`) — are in `modules/`, but neither is served. The assembly
-layer keeps their locations commented out until each gets a `module.yaml`.
+Both frontends sit behind the login gate: open `http://127.0.0.1:8800/`, log
+in, and you land on the task hive. The frontend directories are mounted into
+nginx read-only, so an edit under `modules/<name>/code/frontend/` shows up on
+the next browser refresh.
 
 ---
 

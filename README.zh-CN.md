@@ -94,11 +94,13 @@ install.sh    读契约解析依赖，生成 compose 与路由
 
 | | |
 |---|---|
-| `modules/nexus-core` | 事件溯源内核（FastAPI + MongoDB）。提供 11 个契约：计时、任务 CRUD、事件写入口、以及树/圆环/甘特/导出等读端投影 |
+| `modules/nexus-core` | 事件溯源内核（FastAPI + MongoDB）。提供 12 个契约：计时、任务 CRUD、事件写入口与档案读端、以及树/圆环/甘特/导出等读端投影 |
+| `modules/hive` | 任务蜂巢（`/hive/`），主界面。纯静态前端，数据全走 `/api/core/` |
+| `modules/ring` | 计时台（`/ring/`）：贡献圆环 + 开始/停止/取消/补登。纯静态前端 |
 | `contracts/yq-event.v1` | 事件信封规范。**整个系统的核心契约** —— 所有写操作都是往这个信封里投事件 |
 | `contracts/auth.gate.v1` | 登录门契约 + 占位实现（纯标准库，零依赖）+ 最小登录页 |
 
-**还没接线**：任务蜂巢（`/hive/`）和计时台（`/ring/`）两个前端模块都已经在 `modules/` 里，但都还没被服务。组装层里它们的 location 仍是注释掉的，等各自的 `module.yaml` 写好再打开。
+两个前端都在登录门后面：打开 `http://127.0.0.1:8800/`，登录后落到任务蜂巢。前端目录是只读挂载进 nginx 的，改 `modules/<名>/code/frontend/` 里的文件，浏览器刷新就生效。
 
 ---
 
