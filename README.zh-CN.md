@@ -23,7 +23,7 @@ docker compose up -d
 
 ### 新装是空库，先灌演示数据
 
-登录进去是 `{"zones":[],"projects":[]}`，什么都看不到。灌一批**编造的**演示数据：
+登录后进入任务蜂巢（`/hive/`），但新库是空的。灌一批**编造的**演示数据：
 
 ```sh
 read -rsp '口令: ' HONEYCOMB_PASSWORD && export HONEYCOMB_PASSWORD
@@ -47,7 +47,11 @@ python3 seed/seed_demo.py --big     # 大盘：10 分区 / 40 项目
 - **在前面加一层 TLS**（Caddy / nginx / Traefik 随你）
 - 别把 80 直接暴露出去
 
-登录门是单口令的，cookie 默认带 `Secure` —— **走 HTTP 时浏览器不会保存它**，所以本机 HTTP 调试要显式设 `AUTH_COOKIE_SECURE=false`。别在公网上设这个。
+登录门是单口令的，cookie 默认带 `Secure`。本机用 `127.0.0.1` / `localhost` 打开不受影响——浏览器把本机当安全来源。**用局域网 IP 走 HTTP 时浏览器不会保存它**：前面加 TLS；只在内网调试时才设 `AUTH_COOKIE_SECURE=false`，别在公网上设这个。
+
+### 升级
+
+`git pull` 之后照旧 `docker compose up -d`，nexus-core 会按新代码重新构建（有缓存，很快）；数据在卷里，不动。
 
 ---
 

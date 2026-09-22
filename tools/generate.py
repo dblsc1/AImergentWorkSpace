@@ -106,6 +106,9 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
             # 构建上下文相对 module.yaml 所在目录；compose 文件在 deploy/generated/，
             # 所以要往上退两级再进 modules/。**不复制代码**是这套结构的要点。
             entry["build"] = {"context": f"../../modules/{name}/{svc['build']}"}
+            # 每次 up 都按源码构建：机器上已有同名镜像（旧版、另一套部署）时，
+            # 不加它 compose 会不声不响地拿那个镜像跑。
+            entry["pull_policy"] = "build"
         if "image" in svc:
             entry["image"] = svc["image"]
         if svc.get("env"):

@@ -151,16 +151,23 @@ jobs:
           pip install -q pyyaml
           ./install.sh add hive ring
       - name: 写 .env
-        # 本机 HTTP，没有 TLS：cookie 不能带 Secure，否则 curl 不回传它。
+        # 只填口令，其余照 README 用默认值（含 Secure cookie）：测的就是用户拿到的那份。
         run: |
           sed -e 's/^HONEYCOMB_PASSWORD=.*/HONEYCOMB_PASSWORD=ci-smoke-password/' \
-              -e 's/^AUTH_COOKIE_SECURE=.*/AUTH_COOKIE_SECURE=false/' \
               deploy/.env.example > ${{ matrix.dir }}/.env
+      - name: 放一个同名的旧镜像
+        # 机器上已有同名镜像时，compose 必须照样按源码构建，不许拿旧的跑。
+        # 这里用 hello-world 冒充：真被拿去跑，nexus-core 健康检查过不了，up 就红。
+        run: |
+          docker pull -q hello-world
+          docker tag hello-world honeycomb-nexus-core:local
       - name: 起
         working-directory: ${{ matrix.dir }}
         run: docker compose up -d --wait --wait-timeout 300
       - name: 冒烟
         run: deploy/smoke.sh ci-smoke-password
+      - name: 灌演示数据（照 README）
+        run: HONEYCOMB_PASSWORD=ci-smoke-password python3 seed/seed_demo.py
       - name: 失败时的日志
         if: failure()
         working-directory: ${{ matrix.dir }}

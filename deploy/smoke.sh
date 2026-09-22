@@ -6,7 +6,7 @@
 #   登录后：API 通；/hive/、/ring/ 两个页面，以及页面里引用的**每一个**资源都是 200
 #
 # 用法：deploy/smoke.sh <口令> [基址，缺省 http://127.0.0.1:8800]
-# 本机 HTTP 跑的话 .env 里要 AUTH_COOKIE_SECURE=false，否则 curl 不回传 cookie。
+# 默认 .env（cookie 带 Secure）即可：curl 与浏览器一样，在 127.0.0.1 上回传 Secure cookie。
 # CI 用它核对手写与生成的两份组装（见 .github/workflows/ci.yml 的 compose-smoke）。
 set -uo pipefail
 

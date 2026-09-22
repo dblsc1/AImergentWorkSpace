@@ -12,7 +12,7 @@ kind: backend          # backend | static | assembly
 service:
   # 构建上下文相对本文件所在目录。**不复制代码** —— 组装层直接指过来。
   build: code/backend
-  image: nexus-core:local
+  image: ${HONEYCOMB_PROJECT:-honeycomb}-nexus-core:local   # 带项目名：同机多套部署不互相顶替镜像
   port: 8000
   healthcheck: /api/core/health
   env:

@@ -60,7 +60,11 @@ services:
     # 说的就是这条路径，装配器与人读的是同一份事实）。
     build:
       context: ../modules/nexus-core/code/backend
-    image: nexus-core:local
+    # 镜像名带项目名、且每次 up 都按源码构建。写死 `nexus-core:local` 时，
+    # 机器上已有同名镜像（另一套部署、或 git pull 之前的旧版），compose
+    # **不报错**就拿它跑——跑的根本不是你眼前这份代码。2026-09-22 实测撞上。
+    image: ${HONEYCOMB_PROJECT:-honeycomb}-nexus-core:local
+    pull_policy: build
     container_name: ${HONEYCOMB_PROJECT:-honeycomb}-nexus-core
     restart: unless-stopped
     networks: [honeycomb-net]
