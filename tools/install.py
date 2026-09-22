@@ -116,6 +116,23 @@ def discover() -> dict[str, Module]:
     return {p.name: Module(p) for p in sorted(MODULES.iterdir()) if p.is_dir()}
 
 
+def spec_file(cid: str) -> Path | None:
+    """纯规范文档在哪。两种布局都认：
+
+        contracts/<id>/contract.md          目录形（可带 stub/）
+        contracts/<名字>-v<N>.md            单文件形，id 写作 contracts.<名字>.v<N>
+
+    单文件形是历史布局（design-tokens、timer-ring-visual），被 CI 与别的模块
+    按路径引用着，搬家的代价比多认一种写法大。
+    """
+    d = CONTRACTS / cid / "contract.md"
+    if d.is_file():
+        return d
+    name, _, ver = cid.removeprefix("contracts.").rpartition(".")
+    f = CONTRACTS / f"{name}-{ver}.md"
+    return f if name and f.is_file() else None
+
+
 def contract_dirs() -> dict[str, Path]:
     if not CONTRACTS.is_dir():
         return {}
@@ -164,7 +181,7 @@ def resolve(selected: list[str]) -> dict:
             elif (CONTRACTS / cid / "stub").is_dir():
                 if cid not in stubs:
                     stubs.append(cid)
-            elif (CONTRACTS / cid / "contract.md").is_file():
+            elif spec_file(cid):
                 if cid not in specs:
                     specs.append(cid)          # 纯规范，不起服务
             else:
@@ -213,6 +230,9 @@ def cmd_list() -> int:
             if (p / "stub").is_dir():
                 kind.append("占位实现")
             print(f"  {cid}  [{'+'.join(kind) or '空'}]")
+    for f in sorted(CONTRACTS.glob("*-v*.md")):      # 单文件形，见 spec_file
+        name, _, ver = f.stem.rpartition("-")
+        print(f"  contracts.{name}.{ver}  [规范·单文件]")
     return 0
 
 
@@ -297,7 +317,7 @@ def cmd_doctor() -> int:
             print(f"❌ 占位实现不见了: {cid}")
             bad += 1
     for cid in plan.get("specs", []):
-        if not (CONTRACTS / cid / "contract.md").is_file():
+        if not spec_file(cid):
             print(f"❌ 契约文档不见了: {cid}")
             bad += 1
     try:

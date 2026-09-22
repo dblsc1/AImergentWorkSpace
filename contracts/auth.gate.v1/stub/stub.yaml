@@ -25,6 +25,14 @@ service:
     # 多实例或不想被重启踢下线就显式给一个。
     AUTH_SECRET: ${AUTH_SECRET:-}
 
+# 登录页（index.html + login.js）。换掉整个 auth 实现时，登录页跟着 stub/web/ 一起换。
+# **不设门**：登录页就是给没登录的人用的，给它设门谁都进不来。
+static:
+  - prefix: /login/
+    root: web
+    index: index.html
+    gated: false
+
 routes:
   # 登录/登出/健康检查本身不设门 —— 给它设门就锁死了唯一的入口。
   # 注意 nginx 那条 location /api/auth/ 由安装器在「登录门」段统一生成，

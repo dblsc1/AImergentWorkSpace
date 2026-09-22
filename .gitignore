@@ -12,3 +12,11 @@ deploy/generated/
 
 # 本地环境
 .env
+
+# 模块自己的本地变体（nginx-docker 的 env/.env.local 之类），同样带真值、不入仓。
+# 样例一律叫 *.example，不受这条影响。
+.env.local
+
+# 模块目录里的 venv。nexus-core 与 ai-planner 的脚本约定解释器在
+# code/backend/.venv/bin/python，所以它就长在工作树里，必须忽略。
+.venv/

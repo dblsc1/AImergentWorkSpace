@@ -23,7 +23,7 @@ docker compose up -d
 
 ### 新装是空库，先灌演示数据
 
-登录进去是 `{"zones":[],"projects":[]}`，什么都看不到。灌一批**编造的**演示数据：
+登录后进入任务蜂巢（`/hive/`），但新库是空的。灌一批**编造的**演示数据：
 
 ```sh
 read -rsp '口令: ' HONEYCOMB_PASSWORD && export HONEYCOMB_PASSWORD
@@ -47,7 +47,11 @@ python3 seed/seed_demo.py --big     # 大盘：10 分区 / 40 项目
 - **在前面加一层 TLS**（Caddy / nginx / Traefik 随你）
 - 别把 80 直接暴露出去
 
-登录门是单口令的，cookie 默认带 `Secure` —— **走 HTTP 时浏览器不会保存它**，所以本机 HTTP 调试要显式设 `AUTH_COOKIE_SECURE=false`。别在公网上设这个。
+登录门是单口令的，cookie 默认带 `Secure`。本机用 `127.0.0.1` / `localhost` 打开不受影响——浏览器把本机当安全来源。**用局域网 IP 走 HTTP 时浏览器不会保存它**：前面加 TLS；只在内网调试时才设 `AUTH_COOKIE_SECURE=false`，别在公网上设这个。
+
+### 升级
+
+`git pull` 之后照旧 `docker compose up -d`，nexus-core 会按新代码重新构建（有缓存，很快）；数据在卷里，不动。
 
 ---
 
@@ -94,11 +98,13 @@ install.sh    读契约解析依赖，生成 compose 与路由
 
 | | |
 |---|---|
-| `modules/nexus-core` | 事件溯源内核（FastAPI + MongoDB）。提供 11 个契约：计时、任务 CRUD、事件写入口、以及树/圆环/甘特/导出等读端投影 |
+| `modules/nexus-core` | 事件溯源内核（FastAPI + MongoDB）。提供 12 个契约：计时、任务 CRUD、事件写入口与档案读端、以及树/圆环/甘特/导出等读端投影 |
+| `modules/hive` | 任务蜂巢（`/hive/`），主界面。纯静态前端，数据全走 `/api/core/` |
+| `modules/ring` | 计时台（`/ring/`）：贡献圆环 + 开始/停止/取消/补登。纯静态前端 |
 | `contracts/yq-event.v1` | 事件信封规范。**整个系统的核心契约** —— 所有写操作都是往这个信封里投事件 |
 | `contracts/auth.gate.v1` | 登录门契约 + 占位实现（纯标准库，零依赖）+ 最小登录页 |
 
-**还没接线**：任务蜂巢（`/hive/`）和计时台（`/ring/`）两个前端模块都已经在 `modules/` 里，但都还没被服务。组装层里它们的 location 仍是注释掉的，等各自的 `module.yaml` 写好再打开。
+两个前端都在登录门后面：打开 `http://127.0.0.1:8800/`，登录后落到任务蜂巢。前端目录是只读挂载进 nginx 的，改 `modules/<名>/code/frontend/` 里的文件，浏览器刷新就生效。
 
 ---
 
