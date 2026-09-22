@@ -57,6 +57,11 @@ provides:
   - id: nexus-core.events.ingest.v1
     summary: 事件唯一写入口（校验信封 → 防重 → 落库 → 派生投影）
     status: 已实现，已验证
+  - id: nexus-core.events.read.v1
+    summary: 档案读端 GET /api/core/events（v0.6）——按 type/from/to 过滤、按 time 倒序、
+      分页（默认 100、上限 1000），事件信封原样，不 join 名字。端点 v0.6 起就在，
+      本条是索引补登（hive 早已登记消费它，安装器按索引解依赖时找不到提供方）
+    status: 已实现，已验证
   - id: nexus-core.timer.v1
     summary: 计时开始/结束；stop 时组装 session.completed 投进事件入口；v1.8 起加
       POST /api/core/timer/backfill（补登「完成了但没计时」的历史段），信封 data 形状
