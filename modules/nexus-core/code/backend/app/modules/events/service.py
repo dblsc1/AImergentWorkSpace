@@ -1,7 +1,9 @@
 """事实唯一写入口：校验 → 盖 ``recordedAt`` → 防重 → 落库 → 触发 projector。
 
 全系统只有这一条写事件的路——timer.stop 也从这里走，
-不许绕过校验与防重直写 ``events`` 集合。
+不许绕过校验与防重直写 ``events`` 集合。**唯一例外**是快照恢复的
+``restore_bulk``（契约 v1.9）：它搬的是另一个实例的同一份台账，信封校验挪到
+``check_restore_envelopes`` 整批先过，防重照旧走唯一索引。
 
 四条规范性语义（contract.md IngestOut，逐条对应实现）：
 
@@ -176,3 +178,40 @@ def iter_all_events() -> list[dict]:
     ``projector/rebuild.py`` 拿事实走这里，不许直接 import ``events/repo.py``。
     """
     return repo.query_events()
+
+
+# ------------------------------------------------------------- 快照恢复（v1.9）
+
+
+def check_restore_envelopes(docs: list[dict]) -> list[RejectedItem]:
+    """快照恢复的预检：逐条过 ``Envelope`` + 快照内防重键不重复。**只读**。
+
+    与 ``ingest`` 用同一个信封模型——恢复不因为「搬的是自己的台账」就放宽信封。
+    不同的是结果怎么用：``ingest`` 逐条收、坏的进 ``rejected``；恢复是整份搬家，
+    有一条不合格调用方就整批 400、一条都不写。
+    """
+    rejected: list[RejectedItem] = []
+    seen: set[tuple[str, str, str]] = set()
+    for index, raw in enumerate(docs):
+        try:
+            Envelope.model_validate(raw)
+        except ValidationError as exc:
+            rejected.append(RejectedItem(index=index, reason=_reason(exc)))
+            continue
+        key = (raw["user"], raw["source"], raw["dedupeKey"])
+        if key in seen:
+            rejected.append(RejectedItem(index=index, reason=f"防重键 {key} 在快照里重复出现"))
+        seen.add(key)
+    return rejected
+
+
+def restore_bulk(docs: list[dict]) -> int:
+    """快照恢复：信封**原样**落台账，返回新写入的条数。调用方须先过
+    ``check_restore_envelopes``。
+
+    与 ``ingest`` 有意不同的两处：
+    - **不重盖 ``recordedAt``**——盖章时刻是原实例收到它的时刻，重盖等于改写历史。
+    - **不逐条 dispatch**——投影由调用方落完之后整体 ``rebuild``，与「投影重建」
+      同一个口径。
+    """
+    return sum(repo.append_if_absent(doc) for doc in docs)

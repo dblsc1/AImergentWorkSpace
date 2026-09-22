@@ -18,6 +18,8 @@ from .modules.planner.errors import ForbiddenError, StalePlanError
 from .modules.planner.import_router import router as planner_import_router
 from .modules.planner.service import HasChildrenError, InvalidInputError, NotFoundError
 from .modules.planner.unified_router import router as planner_unified_router
+from .modules.restore.router import router as restore_router
+from .modules.restore.service import NotEmptyError
 from .modules.timer.router import router as timer_router
 from .modules.timer.service import NoRunningTimerError, UnknownTaskError
 from .modules.views.router import router as views_router
@@ -52,6 +54,7 @@ app.include_router(planner_unified_router, prefix=API_PREFIX)
 app.include_router(views_router, prefix=API_PREFIX)
 app.include_router(export_router, prefix=API_PREFIX)
 app.include_router(planner_import_router, prefix=API_PREFIX)
+app.include_router(restore_router, prefix=API_PREFIX)
 
 
 # 域错误 → 状态码的映射只在这里（contract.md v0.4「校验」表 + v0.6「档案读端」）：
@@ -61,7 +64,9 @@ app.include_router(planner_import_router, prefix=API_PREFIX)
 #   InvalidQueryError → 400（GET /events 的 from/to 不是合法 ISO8601，消息指名道姓）
 #   NoRunningTimerError → 409（cancel 时没在计时：请求合法但与当前状态冲突）
 #   ForbiddenError → 403（v1.6 actor 设防：凭据不认识 / 伪装 human / 高风险带 ai）
-#   StalePlanError → 409（v1.7 JSON 导入：apply 的 checksum 与当前库重算不一致）
+#   StalePlanError → 409（v1.7 JSON 导入：apply 的 checksum 与当前库重算不一致；
+#                    v1.9 快照恢复：apply 的快照不是 dry-run 过的那一份）
+#   NotEmptyError → 409（v1.9 快照恢复：目标实例不是空库）
 
 
 @app.exception_handler(UnknownTaskError)
@@ -113,6 +118,13 @@ def events_bad_query(_request: Request, exc: InvalidQueryError) -> JSONResponse:
 def planner_stale_plan(_request: Request, exc: StalePlanError) -> JSONResponse:
     """契约 v1.7：apply 的 checksum 对不上当前库重算的结果——409，不是 400，
     因为请求体本身合法，冲突的是**当前状态**（同 `HasChildrenError` 的形状）。"""
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(NotEmptyError)
+def restore_not_empty(_request: Request, exc: NotEmptyError) -> JSONResponse:
+    """契约 v1.9：恢复只对空实例开放。409 同 `StalePlanError`——请求合法，
+    冲突的是**当前状态**；detail 里那句「恢复通道不是合并通道」本身就是护栏。"""
     return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
