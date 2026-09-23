@@ -133,12 +133,16 @@ jobs:
     # 真起一遍，从门外走：跳登录、登录、两个前端和它们引用的每个资源。
     # 手写的默认组装与 install.sh 生成的那份各跑一遍——「生成的等价于手写的」
     # 不能只靠比服务名，得真跑。
-    name: 组装冒烟 · ${{ matrix.dir }}
+    # 另各按整站挂子路径（HONEYCOMB_BASE_PATH=/Cockpit/，gateway.v1）再跑一遍。
+    name: 组装冒烟 · ${{ matrix.dir }} · ${{ matrix.base }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         dir: [deploy, deploy/generated]
+        base: ['/', '/Cockpit/']
+    env:
+      HONEYCOMB_BASE_PATH: ${{ matrix.base }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -155,6 +159,7 @@ jobs:
         run: |
           sed -e 's/^HONEYCOMB_PASSWORD=.*/HONEYCOMB_PASSWORD=ci-smoke-password/' \
               deploy/.env.example > ${{ matrix.dir }}/.env
+          echo "HONEYCOMB_BASE_PATH=${{ matrix.base }}" >> ${{ matrix.dir }}/.env
       - name: 放一个同名的旧镜像
         # 机器上已有同名镜像时，compose 必须照样按源码构建，不许拿旧的跑。
         # 这里用 hello-world 冒充：真被拿去跑，nexus-core 健康检查过不了，up 就红。
@@ -167,7 +172,7 @@ jobs:
       - name: 冒烟
         run: deploy/smoke.sh ci-smoke-password
       - name: 灌演示数据（照 README）
-        run: HONEYCOMB_PASSWORD=ci-smoke-password python3 seed/seed_demo.py
+        run: HONEYCOMB_PASSWORD=ci-smoke-password python3 seed/seed_demo.py --base "http://127.0.0.1:8800${HONEYCOMB_BASE_PATH%/}"
       - name: 失败时的日志
         if: failure()
         working-directory: ${{ matrix.dir }}

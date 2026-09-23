@@ -18,19 +18,21 @@ server {
     # 那里通常是别的服务，浏览器看到的就是「自动转 /hive/ 然后 502」。
     absolute_redirect off;
 
-    # 站点前缀（gateway.v1 预留）。本版固定为 `/`，整站挂子路径是后续版本的事。
-    # 额外路由里取值处用 $honeycomb_base；location 路径里用 ${HONEYCOMB_BASE_PATH}
-    # （nginx 的 location 路径不接受变量，所以额外路由文件也过一遍 envsubst）。
+    # 站点前缀（gateway.v1）：缺省 `/`；整站挂子路径时如 `/Cockpit/`（以 / 开头和结尾）。
+    # 下面每个对外 location 都写成 ${HONEYCOMB_BASE_PATH}xxx（nginx 的 location 路径
+    # 不接受变量，只能渲染时写成字面量）；取值处用 $honeycomb_base。转给后端与认证服务
+    # 时去掉前缀（proxy_pass 带 URI），它们永远看到 /api/...。
+    # /healthz 与 /__auth_verify 不加前缀：前者只给容器健康检查，后者是内部子请求。
     set $honeycomb_base "${HONEYCOMB_BASE_PATH}";
 
     # 顶栏页签：装了哪些前端就有哪些页签（inject.inc 把它注入页面）。
-    set $honeycomb_nav '{"home":"/hive/","timer":"/ring/","tabs":[{"href":"/hive/","label":"任务"},{"href":"/ring/","label":"计时"}]}';
+    set $honeycomb_nav '{"home":"${HONEYCOMB_BASE_PATH}hive/","timer":"${HONEYCOMB_BASE_PATH}ring/","tabs":[{"href":"${HONEYCOMB_BASE_PATH}hive/","label":"任务"},{"href":"${HONEYCOMB_BASE_PATH}ring/","label":"计时"}]}';
 
     location = /healthz { return 200 "ok\n"; add_header Content-Type text/plain; }
 
     # 根路径跳主界面（任务蜂巢）。未登录的话 /hive/ 自己会再跳 /login/，
     # 登录页登录成功后默认回 /，于是又落到这里 —— 一圈下来正好进蜂巢。
-    location = / { return 302 /hive/; }
+    location = ${HONEYCOMB_BASE_PATH} { return 302 ${HONEYCOMB_BASE_PATH}hive/; }
 
     # ── 登录门（gateway.v1 冻结：/__auth_verify 与 @to_login 这两个名字）──
     #
@@ -46,14 +48,14 @@ server {
         proxy_set_header X-Original-URI $request_uri;
     }
     location @to_login {
-        return 302 /login/;
+        return 302 ${HONEYCOMB_BASE_PATH}login/;
     }
 
     # 认证服务的**整个** /api/auth/ 前缀都转过去（gateway.v1）。
     # **这一段不设门**：登录接口必须未登录可达。所以替换进来的认证服务，
     # 它在这个前缀下的每个非登录端点都得**自己**鉴权——网关不替它挡。
-    location /api/auth/ {
-        proxy_pass http://${AUTH_UPSTREAM};
+    location ${HONEYCOMB_BASE_PATH}api/auth/ {
+        proxy_pass http://${AUTH_UPSTREAM}/api/auth/;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Nexus-Tenant "";
@@ -61,26 +63,26 @@ server {
 
     # 登录页。目录由 HONEYCOMB_LOGIN_DIR 挂进来（缺省是登录门占位件自带的页面）。
     # 不设门、不注入顶栏：还没进门就给导航是错的。
-    location /login/ {
+    location ${HONEYCOMB_BASE_PATH}login/ {
         alias /usr/share/nginx/html/login/;
         index index.html;
         try_files $uri $uri/ =404;
     }
 
     # 顶栏、设计 tokens、站点图标（modules/nginx-docker/static）。不含用户数据，不设门。
-    location /__cockpit/ {
+    location ${HONEYCOMB_BASE_PATH}__cockpit/ {
         alias /usr/share/nginx/html/__cockpit/;
         add_header Cache-Control "no-cache";
     }
-    location = /favicon.ico { alias /usr/share/nginx/html/__cockpit/favicon.ico; }
-    location = /favicon.svg { alias /usr/share/nginx/html/__cockpit/favicon.svg; }
+    location = ${HONEYCOMB_BASE_PATH}favicon.ico { alias /usr/share/nginx/html/__cockpit/favicon.ico; }
+    location = ${HONEYCOMB_BASE_PATH}favicon.svg { alias /usr/share/nginx/html/__cockpit/favicon.svg; }
 
     # 顶栏的计时芯片只打这一个端点（约 10s 一次），固定映射到 views/current。
     #
     # **必须设门**：它回的是"你此刻在做什么"，是用户数据。
     # 但 401 不能跳登录页——每 10s 一次的 XHR 拿到 302 毫无意义——所以未登录、
     # 后端挂了都回同一份降级 JSON，顶栏渲染成"状态未知"，既不泄露也不刷 console。
-    location = /__cockpit/current {
+    location = ${HONEYCOMB_BASE_PATH}__cockpit/current {
         auth_request /__auth_verify;
         auth_request_set $honeycomb_tenant $upstream_http_x_nexus_tenant;
         error_page 401 = @cockpit_degraded;
@@ -98,9 +100,9 @@ server {
     }
 
     # 后端。每个请求先过门；租户由网关覆盖（gate.inc）。
-    location /api/core/ {
+    location ${HONEYCOMB_BASE_PATH}api/core/ {
         include /etc/nginx/honeycomb/gate.inc;
-        proxy_pass http://nexus-core:8000;
+        proxy_pass http://nexus-core:8000/api/core/;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_read_timeout 30s;
@@ -108,19 +110,19 @@ server {
 
     # 前端页面本身也设门：未登录直接去登录页，而不是先渲染一个空壳、
     # 再让里面每个 /api/ 请求挨个 401。顶栏由网关注入（inject.inc）。
-    location /hive/ {
+    location ${HONEYCOMB_BASE_PATH}hive/ {
         include /etc/nginx/honeycomb/gate.inc;
         include /etc/nginx/honeycomb/inject.inc;
         alias /usr/share/nginx/html/hive/;
         index index.html;
-        try_files $uri $uri/ /hive/index.html;
+        try_files $uri $uri/ ${HONEYCOMB_BASE_PATH}hive/index.html;
     }
-    location /ring/ {
+    location ${HONEYCOMB_BASE_PATH}ring/ {
         include /etc/nginx/honeycomb/gate.inc;
         include /etc/nginx/honeycomb/inject.inc;
         alias /usr/share/nginx/html/ring/;
         index project-task-contribution-ring.html;
-        try_files $uri $uri/ /ring/project-task-contribution-ring.html;
+        try_files $uri $uri/ ${HONEYCOMB_BASE_PATH}ring/project-task-contribution-ring.html;
     }
 
     # 部署方的额外路由（HONEYCOMB_EXTRA_ROUTES_DIR 里的 *.conf.template，渲染后落在这里）。

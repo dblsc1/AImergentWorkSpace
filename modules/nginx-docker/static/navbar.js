@@ -20,14 +20,16 @@
   // 页签不写死：网关按「装了哪些前端」在 </head> 前注入 window.HONEYCOMB_NAV
   // （各模块 module.yaml 的 nav 字段）。没装的前端就没有页签，不出死链。
   //   { home: '/hive/', timer: '/ring/', tabs: [{ href, label }, ...] }
-  var NAV = window.HONEYCOMB_NAV || { home: '/', timer: null, tabs: [] };
+  // 站点前缀（gateway.v1）：整站挂子路径时网关注入 HONEYCOMB_BASE，页签 href 已含前缀。
+  var BASE = window.HONEYCOMB_BASE || '/';
+  var NAV = window.HONEYCOMB_NAV || { home: BASE, timer: null, tabs: [] };
   var STOPS = NAV.tabs || [];
 
   var POLL_MS = 10000;             // 拉计时状态：views 本身聚合周期就有这么长
   var TICK_MS = 1000;              // 本地走秒：用时每秒更新，不依赖网络往返
-  var CURRENT_URL = '/__cockpit/current';   // 恒 200 的网关端点，见契约 v0.5/v0.6
-  var LOGOUT_URL = '/api/auth/logout';
-  var LOGIN_URL = '/login/';
+  var CURRENT_URL = BASE + '__cockpit/current';   // 恒 200 的网关端点，见契约 v0.5/v0.6
+  var LOGOUT_URL = BASE + 'api/auth/logout';
+  var LOGIN_URL = BASE + 'login/';
 
   var THEME_KEY = 'cockpit-theme';     // localStorage：light|dark|auto
   var ACCENT_KEY = 'cockpit-accent';   // localStorage：teal|violet|amber
@@ -133,7 +135,7 @@
 
   // 品牌
   var brand = el('a', 'ckpt-brand');
-  brand.href = NAV.home || '/';
+  brand.href = NAV.home || BASE;
   brand.setAttribute('aria-label', 'HoneyComb');
   brand.appendChild(svg(
     { width: '20', height: '20', viewBox: '0 0 20 20', fill: 'none', 'aria-hidden': 'true' },
@@ -166,7 +168,7 @@
 
   // 录制胶囊
   var chip = el('a', 'ckpt-chip');
-  chip.href = NAV.timer || NAV.home || '/';
+  chip.href = NAV.timer || NAV.home || BASE;
   chip.setAttribute('data-ckpt-chip', '');
   chip.setAttribute('aria-label', '录制状态，点击前往计时页');
   var chipDot = el('span', 'ckpt-dot');

@@ -23,8 +23,13 @@ def out(tmp_path):
     plan = install.resolve(["hive", "ring"])
     generate.emit(install.ROOT, plan, tmp_path)
     compose = yaml.safe_load((tmp_path / "docker-compose.yml").read_text(encoding="utf-8"))
-    nginx = (tmp_path / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8")
+    nginx = _render((tmp_path / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8"))
     return plan, compose, nginx
+
+
+def _render(template: str, base: str = "/") -> str:
+    """模拟 nginx 镜像的 envsubst：只换站点前缀（缺省 /，即不挂子路径）。"""
+    return template.replace("${HONEYCOMB_BASE_PATH}", base)
 
 
 def _location(nginx: str, head: str) -> str:
@@ -125,7 +130,7 @@ def test_auth_upstream_and_extra_routes_are_replaceable(out):
     _, compose, nginx = out
     web = compose["services"]["web"]
     assert web["environment"]["AUTH_UPSTREAM"] == "${AUTH_UPSTREAM:-auth:8010}"
-    assert "proxy_pass http://${AUTH_UPSTREAM};" in _location(nginx, "/api/auth/")
+    assert "proxy_pass http://${AUTH_UPSTREAM}/api/auth/;" in _location(nginx, "/api/auth/")
     assert "proxy_pass http://${AUTH_UPSTREAM}/api/auth/verify;" in _location(nginx, "= /__auth_verify")
     assert "${HONEYCOMB_EXTRA_ROUTES_DIR:-../nginx/extra}:/etc/nginx/templates/extra:ro" in web["volumes"]
     assert "include /etc/nginx/conf.d/extra/*.conf;" in nginx
@@ -136,7 +141,7 @@ def test_navbar_tabs_follow_installed_frontends(tmp_path):
     """只装 ring：顶栏只有计时一个页签，不出点了 404 的死页签。"""
     plan = install.resolve(["ring"])
     generate.emit(install.ROOT, plan, tmp_path)
-    nginx = (tmp_path / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8")
+    nginx = _render((tmp_path / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8"))
     assert """set $honeycomb_nav '{"home":"/","timer":"/ring/","tabs":[{"href":"/ring/","label":"计时"}]}';""" in nginx
 
 
@@ -144,7 +149,7 @@ def test_hand_written_gateway_has_the_same_frozen_surface():
     hand = (install.ROOT / "deploy" / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8")
     for needle in (
         "location = /__auth_verify {", "location @to_login {",
-        "proxy_pass http://${AUTH_UPSTREAM};", 'set $honeycomb_base "${HONEYCOMB_BASE_PATH}";',
+        "proxy_pass http://${AUTH_UPSTREAM}/api/auth/;", 'set $honeycomb_base "${HONEYCOMB_BASE_PATH}";',
         "include /etc/nginx/conf.d/extra/*.conf;", 'proxy_set_header X-Nexus-Tenant "";',
     ):
         assert needle in hand, needle
@@ -160,3 +165,23 @@ def test_auth_accounts_file_lives_in_a_declared_named_volume(out):
     assert set(hand["volumes"]) == set(compose["volumes"])
     assert compose["services"]["nexus-core"]["environment"]["NEXUS_TENANT_STRICT"] == \
         hand["services"]["nexus-core"]["environment"]["NEXUS_TENANT_STRICT"]
+
+
+def test_every_public_location_hangs_under_the_base_path(tmp_path):
+    """挂子路径（/Cockpit/）时，对外的每一条 location 都在前缀下，转给后端时去掉前缀；
+    只有容器健康检查与内部子请求例外。手写与生成的两份都查。"""
+    plan = install.resolve(["hive", "ring"])
+    generate.emit(install.ROOT, plan, tmp_path)
+    hand = (install.ROOT / "deploy" / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8")
+    gen = (tmp_path / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8")
+    for name, tpl in (("hand", hand), ("generated", gen)):
+        nginx = _render(tpl, "/Cockpit/")
+        for line in nginx.splitlines():
+            t = line.strip()
+            if t.startswith("location ") and not t.startswith("location @"):
+                path = t.split()[2] if t.split()[1] == "=" else t.split()[1]
+                assert path.startswith("/Cockpit/") or path in ("/healthz", "/__auth_verify"), (name, t)
+            if t.startswith("return 302"):
+                assert t.split()[2].startswith("/Cockpit/"), (name, t)
+        assert "proxy_pass http://nexus-core:8000/api/core/;" in nginx, name
+        assert '"home":"/Cockpit/hive/"' in nginx, name

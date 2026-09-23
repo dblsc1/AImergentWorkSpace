@@ -29,6 +29,13 @@
  * 留在任何一处都是白白多开一个泄漏口子。
  */
 (function () {
+  /**
+   * 站点前缀（gateway.v1）：整站挂在子路径下时（如 /Cockpit/），登录页在
+   * <前缀>login/。登录页不注入顶栏脚本，所以前缀从自己的地址推：去掉末尾的
+   * login/... 就是。所有请求与跳转都从它拼。
+   */
+  var BASE = window.location.pathname.replace(/login\/[^/]*$/, "") || "/";
+
   var form = document.getElementById("login-form");
   var passwordInput = document.getElementById("password");
   var usernameRow = document.getElementById("username-row");
@@ -64,9 +71,11 @@
    * 条件的输入，一律退回站内根路径 "/"，不尝试"修复"或"猜测"用户的意图。
    */
   function safeNext(raw) {
-    if (typeof raw !== "string" || raw === "") return "/";
-    if (raw.charAt(0) !== "/") return "/";
-    if (raw.indexOf("//") === 0 || raw.indexOf("/\\") === 0) return "/";
+    if (typeof raw !== "string" || raw === "") return BASE;
+    if (raw.charAt(0) !== "/") return BASE;
+    if (raw.indexOf("//") === 0 || raw.indexOf("/\\") === 0) return BASE;
+    // 挂在子路径下时只回本站（前缀内）的地址，同域名下别的站点不算自己人
+    if (raw.indexOf(BASE) !== 0) return BASE;
     return raw;
   }
 
@@ -80,7 +89,7 @@
    * 服务、或者网络抖）就保持 v1 的只有口令的样子——那个样子至少共享口令能用。
    */
   function detectMode() {
-    fetch("/api/auth/health", { credentials: "same-origin" })
+    fetch(BASE + "api/auth/health", { credentials: "same-origin" })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (h) {
         if (!h || h.accounts !== true) return;
@@ -95,7 +104,7 @@
   }
 
   function submitLogin(username, password) {
-    return fetch("/api/auth/login", {
+    return fetch(BASE + "api/auth/login", {
       method: "POST",
       // same-origin：把本站已有的 cookie 带上、并允许服务端这次的
       // Set-Cookie 被浏览器写入——不是前端去处理 cookie，是让浏览器

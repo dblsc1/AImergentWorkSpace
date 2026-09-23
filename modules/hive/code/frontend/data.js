@@ -33,8 +33,11 @@
   }
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
+  // 站点前缀（gateway.v1）：网关往页面注入 HONEYCOMB_BASE，整站挂在子路径下时
+  // 所有请求与跳转都从它拼。没注入（单测、直接打开文件）就是 "/"。
+  var BASE = (typeof self !== "undefined" && self.HONEYCOMB_BASE) || "/";
 
-  var TREE_PATH = "/api/core/views/tree";
+  var TREE_PATH = BASE + "api/core/views/tree";
   var CACHE_KEY = "table-tree-cache-v1";
   // 兜底不是样式字面量，是"没有 zone.color 时用什么"的数据默认值；
   // 取 CSS 变量名字符串（不是 hex），这样它被塞进 inline `style="--zone:…"`
@@ -44,8 +47,8 @@
   // views/tree、views/current 不在 planner 命名空间下（R4，路径不变）；
   // 写操作（zones/projects/tasks）统一入口是 PLANNER_PREFIX（R1）。
   // 两个常量分开定义，避免"统一改前缀"时把它们揉到一起。
-  var PLANNER_PREFIX = "/api/core/planner/";
-  var EVENTS_PATH = "/api/core/events";
+  var PLANNER_PREFIX = BASE + "api/core/planner/";
+  var EVENTS_PATH = BASE + "api/core/events";
   var ARCHIVE_TYPE = "session.completed";
   var ARCHIVE_DEFAULT_LIMIT = 50; // R8：默认拉最近 50 条
 
@@ -55,12 +58,12 @@
   // **这是既有投影，不需要后端加任何东西**：queries.get_gantt() 早已返回全部项目
   // （含未排期、无事实的），本文件只是多读一条已经存在的只读端点。
   // ⚠️ 契约缺口：module_docs/contract.md 尚未把这条登记进 consumes（待补）。
-  var GANTT_PATH = "/api/core/views/gantt";
+  var GANTT_PATH = BASE + "api/core/views/gantt";
 
   // 只读全量导出（nexus-core contract.md v1.3「只读全量导出」，
   // GET /api/core/export）。给顶栏「导出数据」按钮用——用户要看/下载自己的
   // 全部数据副本，不是某个渲染组件的数据源，所以不塑形、原样透传给调用方。
-  var EXPORT_PATH = "/api/core/export";
+  var EXPORT_PATH = BASE + "api/core/export";
 
   // ── URL ──────────────────────────────────────────────────────────
   function buildTreeUrl(includeEphemeral) {
