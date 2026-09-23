@@ -3,7 +3,14 @@
 > 本文件是 nexus-core 对外行为的**唯一事实**。改动前先想清楚为什么要改，
 > **先改这里、再改代码**，顺序不可颠倒。
 >
-> **本版范围（v1.9）**：`GET /api/core/export` 产出的快照此前没有任何端点能吃
+> **本版范围（v2.0）**：**按租户分数据**。同一套 nexus-core 可以同时装多份彼此看不见的
+> 数据（多个孩子、多个家庭成员）。租户只从网关转来的 `X-Nexus-Tenant` 头来（网关用认证
+> 服务 verify 的结果覆盖客户端自带的同名头，见 `contracts/gateway.v1`）；缺头＝单人默认
+> 租户 `u_local`，**单人部署的行为与数据和 v1.x 完全一样**。多用户部署打开
+> `NEXUS_TENANT_STRICT=1`：缺头即 401，绝不静默落到 `u_local`。见「按租户分数据」节。
+> 主版本号升到 2 是因为唯一约束从「全局 id」变成「租户内 id」；HTTP 接口一个字段都没减。
+>
+> v1.9：`GET /api/core/export` 产出的快照此前没有任何端点能吃
 > 回去（喂给 import 会被三层拒绝，而那三条拒绝各守一件实事，一条都不该放宽）。
 > 新增 `nexus-core.restore.v1`（`POST /api/core/restore`，见「快照恢复」节）：
 > 吃 export 的**逐字节**输出，**只对空实例开放**（非空 409「恢复通道，不是合并
@@ -123,6 +130,12 @@ provides:
       直写台账的路径）、projections 不落库而是现场重建、「名字 → 号」登记表从 key 反推；
       两段式 dry-run + checksum；整次恢复算一次高风险写，经 guard.run_write 设防留痕
     status: 已实现（v1.9），待验证
+  - id: nexus-core.tenancy.v1
+    summary: 按租户分数据（v2.0）——租户取自网关转来的 X-Nexus-Tenant（格式
+      ^[A-Za-z0-9_.:-]{1,64}$，不合规 400），缺头为 u_local（单人部署零变化）；
+      NEXUS_TENANT_STRICT=1 时缺头 401；全部读写按租户隔离，事件 user 服务端盖章；
+      唯一约束为 (user, id)
+    status: 已实现（v2.0），待验证
 consumes:
   - id: yq-event/v1
     contract: ../../contracts/yq-event.v1/contract.md
@@ -160,17 +173,21 @@ consumes:
 | ~~PATCH~~ | ~~`/api/core/tasks/{id}`~~ | `{name?, projectId?, done?, kind?, flags?, plannedWeight?}` | `TaskOut` | **v0.6 已删除**，改走 `/api/core/planner/{type}`。**v1.4 补 `plannedWeight?`**——`ProjectUpdate` 一直有，任务侧当年切片漏加，见「校验」节 |
 | ~~DELETE~~ | ~~`/api/core/tasks/{id}`~~ | 无 | `204` / `409` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
 
-认证后置期间，所有响应对应 `user="u_local"` 常量（HANDOFF §6 兼容锚点）。
-**今天省认证，不省字段**——将来接 JWT 只替换注入来源，零数据迁移。
+响应对应当前租户（v2.0，见「按租户分数据」）；单人部署即 `user="u_local"`（HANDOFF §6 兼容锚点）。
+**省认证，不省字段**——租户只换注入来源（网关头）；v1.x 老文档无 `user` 字段的读时兼容与回填见「按租户分数据」。
 
 
 **各出参的详细定义（字段、语义、边界）见 `module_docs/contract-schemas.md`。**
 它是本契约的一部分，不是附录——上表是索引，那里是展开。
 
-## 健康检查暴露库名（规范性 · v1.0，v1.6 加 `actorGuard`）
+## 健康检查暴露库名（规范性 · v1.0，v1.6 加 `actorGuard`，v2.0 加 `tenantGuard`）
 
 `GET /api/core/health` 返回
-`{"status":"ok","db":"<当前库名>","actorGuard":"strict"|"lenient"}`。
+`{"status":"ok","db":"<当前库名>","actorGuard":"strict"|"lenient","tenantGuard":"strict"|"lenient"}`。
+
+`tenantGuard`（v2.0）：`strict` 表示缺 `X-Nexus-Tenant` 的请求一律 401；`lenient`（默认）
+表示缺头按单人默认租户 `u_local` 处理。多用户部署忘了开严格模式，从这里一眼看出。
+健康检查本身**不看租户**：它是容器健康检查，直连、不经网关。
 
 `actorGuard` 是**本进程的 actor 设防姿态**（v1.6）：`strict` 表示高风险写必须
 携带有效的人路径凭据，`lenient` 表示未携带任何凭据的调用方仍按 `human` 放行
@@ -661,6 +678,50 @@ payload 只删了父、忘了一起删子，既有的**级联保护（409）在 
 本端点没有任何代码路径写它；请求体里出现 `events`/`projections` 字段直接
 400 拒绝，**不接受静默忽略**——静默忽略会让用户以为改了其实没改，比报错
 坏得多（规格原文）。
+
+## 按租户分数据（规范性 · v2.0）
+
+一个租户 = 一份彼此看不见的数据（zones / projects / tasks / 事件台账 / 两张投影 /
+计时状态 / 审计流水 / 「名字 → 号」登记表）。
+
+### 租户从哪来（规范性）
+
+| 请求里的 `X-Nexus-Tenant` | 结果 |
+|---|---|
+| 没有，或空串 | 单人默认租户 `u_local`；严格模式（`NEXUS_TENANT_STRICT=1`）下 **401** |
+| 匹配 `^[A-Za-z0-9_.:-]{1,64}$` | 就是它 |
+| 不匹配 | **400**，点名取值。不清洗、不截断——截断后的 id 可能正好是别人的 |
+
+- **信任边界**：nexus-core 只在内网、只经网关访问；网关把认证服务 verify 给出的租户
+  设到这个头上，并**覆盖客户端自带的同名头**（`contracts/gateway.v1` 第五节）。
+  nexus-core 自己不做认证，它信的是网关。
+- `/api/core/health` 不看租户（见「健康检查暴露库名」）。
+
+### 隔离（规范性）
+
+- **读**：每个读端只返回当前租户的数据。另一个租户的对象，按 id 改 / 删 → **404**
+  （与「id 不存在」同形状，不暴露它在别的租户里存在）；拿来当父对象或计时 → 400 / 404。
+- **写**：新文档一律盖上当前租户。事件的 `user` **由服务端按租户盖章**（同 `recordedAt`
+  的 B6 纪律）：信封里的 `user` 客户端照填（信封校验不放宽），落库的是租户——否则一个
+  租户能往另一个租户的台账里写事实。快照恢复同理：恢复进哪个租户，事实就属于哪个租户。
+- **响应形状不变**：planner 对象、审计记录读出来都不带 `user` 字段（租户是存储层的事）。
+- **唯一约束**：zones / projects / tasks 为 `(user, id)`，登记表为 `(user, name)`。
+  同一份快照可以恢复进两个租户；每个租户各有自己的收件箱 `p_inbox`。
+  旧的全局唯一索引由 app **启动时**删掉换新（只动索引、不动数据，幂等）——迁移是
+  手动跑的，不能指望它。
+- **「名字 → 号」按租户**：一个租户用过哪些名字，不会从另一个租户拿到的号里看出来。
+- **投影重建**仍然清全体租户、重放全体租户的事实（结果按租户各自归位）。
+
+### 单人部署与老数据（规范性）
+
+- 不带头 = `u_local`，与 v1.x 行为一致。
+- v1.x 的老 planner 文档没有 `user` 字段：`u_local` **同时认**这批文档，不跑迁移也照常
+  可见；别的租户看不到它们。`migrations/004_backfill_tenant.py` 给它们补上 `u_local`。
+
+### 多用户部署必须打开严格模式
+
+认证服务哪天出 bug 漏带了租户头，不开严格模式的后果是：所有人的请求悄悄落进同一份
+`u_local` 数据，**而且不报错**。开了之后是 401，响亮失败。
 
 ## 快照恢复（规范性 · v1.9）
 
@@ -1391,7 +1452,7 @@ app/modules/
 |---|---|---|
 | `yq-event/v1` | `contracts/yq-event-v1.md` | 事件信封唯一事实。**本模块是它的第一个实现者**——实现与标准不一致时，改的是实现，不是标准 |
 
-account-service 的 JWT 为**后置项**（HANDOFF §13），接入前 `user` 恒为 `"u_local"`。
+认证不在本模块：v2.0 起 `user` 是网关转来的租户（`X-Nexus-Tenant`，见「按租户分数据」），缺头为 `"u_local"`。
 
 ## 数据与存储
 
@@ -1411,6 +1472,7 @@ account-service 的 JWT 为**后置项**（HANDOFF §13），接入前 `user` �
 | `NEXUS_BIND` | 否 | 监听地址，默认 `127.0.0.1:8000` | 不得默认 `0.0.0.0` |
 | `NEXUS_AI_CLIENT_TOKEN` | 否 | AI 受控工具层的来源凭据（v1.6） | 设了就必须 ≥16 字符；**只发给 `ai-planner`**；未设＝没有调用方会被判成 `ai` 来源 |
 | `NEXUS_HUMAN_CLIENT_TOKEN` | 否 | 人路径（网关注入）的来源凭据（v1.6） | 设了就必须 ≥16 字符；**绝不得落进受控层 / codex 可及的文件系统**；不得与 AI 凭据相同 |
+| `NEXUS_TENANT_STRICT` | 否 | 租户严格模式，默认 `0`（v2.0） | 取值只认 `0`/`1`/`true`/`false`；置 1 时缺 `X-Nexus-Tenant` 的请求一律 401。**多用户部署必开**，见「按租户分数据」节 |
 | `NEXUS_ACTOR_STRICT` | 否 | 严格模式，默认 `0`（v1.6） | 取值只认 `0`/`1`/`true`/`false`（其余立即失败）；置 1 时 `NEXUS_HUMAN_CLIENT_TOKEN` 必填，否则启动失败——**开了严格模式却没有人路径凭据 = 把前端写路径全打死，这种配置必须炸在启动那一刻，不是炸在用户点删除那一刻** |
 
 本模块**不持有任何 LLM 密钥**——那是 ai-gateway 的事，物理隔离是设计的一部分。
