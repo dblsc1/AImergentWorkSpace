@@ -124,7 +124,7 @@ never depends on a `pip install`.
 
 | | |
 |---|---|
-| `modules/nexus-core` | The event-sourced kernel (FastAPI + MongoDB). Provides 12 contracts: timing, task CRUD, the event write entry point and archive read, and read projections for tree / ring / gantt / export. |
+| `modules/nexus-core` | The event-sourced kernel (FastAPI + MongoDB). Provides 13 contracts: timing, task CRUD, the event write entry point and archive read, and read projections for tree / ring / gantt / export. |
 | `modules/hive` | The task hive (`/hive/`), the main screen. A static frontend; all data goes through `/api/core/`. |
 | `modules/ring` | The timer ring (`/ring/`): contribution ring plus start / stop / cancel / backfill. A static frontend. |
 | `contracts/yq-event.v1` | The event envelope spec. **The core contract of the whole system** — every write is an event posted into this envelope. |

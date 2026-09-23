@@ -23,6 +23,7 @@ from .actor import apply_actor_update, normalize_actor
 # 让 service.HasChildrenError 等历史调用点（main.py、测试）不用跟着改。
 from .errors import HasChildrenError, InvalidInputError, NotFoundError, UnknownProjectError
 from .planvalidate import validate_plan as _validate_plan
+from .snapshot import restore_snapshot  # noqa: F401 —— 转发给 restore/（v1.9），真身在 snapshot.py
 
 #: well-known 收件箱项目 id（契约 v1.5「收件箱」节，F-INBOX-1）。跨边界读端
 #: （如 `views/review.py`）判断"这是不是 inbox 项目"用这个常量，不猜字符串——

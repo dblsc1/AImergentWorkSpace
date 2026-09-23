@@ -57,7 +57,8 @@ def list_tasks_by_project(project_id: str) -> list[dict]:
 
 
 def seed_many(collection: str, docs: list[dict]) -> int:
-    """按 ``id`` 幂等 upsert。只供种子脚本；HTTP 面没有任何写路径。"""
+    """按 ``id`` 幂等 upsert，文档原样落库。只供种子脚本与快照恢复
+    （``snapshot.py``，v1.9）——后者是 HTTP 面唯一经过它的路径。"""
     col = get_db()[collection]
     col.create_index([("id", 1)], unique=True, name="uniq_id")
     for doc in docs:
@@ -91,6 +92,21 @@ def name_num(name: str) -> int:
     except DuplicateKeyError:  # 并发登记同名：用先到者的号（本号作废不回收，无妨）
         return reg.find_one({"name": name}, {"_id": 0})["num"]
     return num
+
+
+def restore_name_registry(pairs: dict[str, int], top: int) -> None:
+    """快照恢复专用：补登记从 key 反推的「名字 → 号」，发号计数器抬到不低于 ``top``。
+
+    已登记的名字不动（``$setOnInsert``，号永不改）；计数器只升不降（``$max``），
+    之后新名字从 ``top + 1`` 发起——号永不重发。
+    """
+    reg = get_db()["name_registry"]
+    reg.create_index([("name", 1)], unique=True, name="uniq_name")
+    for name, num in pairs.items():
+        reg.update_one({"name": name}, {"$setOnInsert": {"num": num}}, upsert=True)
+    get_db()["counters"].update_one(
+        {"_id": "name_registry"}, {"$max": {"seq": top}}, upsert=True,
+    )
 
 
 def count_same_name_in_project(project_id: str, name: str, *, exclude_id: str | None = None) -> int:
