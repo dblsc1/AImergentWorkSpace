@@ -148,3 +148,15 @@ def test_hand_written_gateway_has_the_same_frozen_surface():
         "include /etc/nginx/conf.d/extra/*.conf;", 'proxy_set_header X-Nexus-Tenant "";',
     ):
         assert needle in hand, needle
+
+
+def test_auth_accounts_file_lives_in_a_declared_named_volume(out):
+    _, compose, _ = out
+    auth = compose["services"]["auth"]
+    assert "honeycomb_auth_data:/data" in auth["volumes"]
+    assert auth["environment"]["AUTH_USERS_FILE"] == "/data/users.json"
+    assert set(compose["volumes"]) == {"honeycomb_mongo_data", "honeycomb_auth_data"}
+    hand = yaml.safe_load((install.ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8"))
+    assert set(hand["volumes"]) == set(compose["volumes"])
+    assert compose["services"]["nexus-core"]["environment"]["NEXUS_TENANT_STRICT"] == \
+        hand["services"]["nexus-core"]["environment"]["NEXUS_TENANT_STRICT"]

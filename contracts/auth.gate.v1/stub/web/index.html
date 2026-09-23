@@ -87,7 +87,8 @@
     margin-bottom: 6px;
   }
 
-  input[type="password"] {
+  input[type="password"],
+  input[type="text"] {
     width: 100%;
     padding: 10px 12px;
     font-size: 1rem;
@@ -97,7 +98,8 @@
     color: var(--text);
   }
 
-  input[type="password"]:focus {
+  input[type="password"]:focus,
+  input[type="text"]:focus {
     outline: 2px solid var(--accent);
     outline-offset: 1px;
   }
@@ -130,7 +132,8 @@
     line-height: 1.4;
   }
 
-  #error[hidden] { display: none; }
+  #error[hidden], #username-row[hidden] { display: none; }
+  #username-row { margin-bottom: 14px; }
 </style>
 </head>
 <body>
@@ -139,7 +142,14 @@
     <!-- novalidate：错误提示统一交给 login.js 按服务端真实状态码来写，
          不用浏览器自带的表单校验气泡（那套东西没法按状态码分支）。 -->
     <form id="login-form" novalidate>
-      <label for="password">口令</label>
+      <!-- 账号一栏默认藏着：login.js 问过 /api/auth/health，开了账号登录才显示。
+           只开共享口令的部署看到的还是 v1 那个只有口令的页面。 -->
+      <div id="username-row" hidden>
+        <label for="username">账号</label>
+        <input type="text" id="username" name="username" autocomplete="username"
+               autocapitalize="none" spellcheck="false">
+      </div>
+      <label for="password" id="password-label">口令</label>
       <input
         type="password"
         id="password"

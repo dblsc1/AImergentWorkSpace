@@ -141,14 +141,35 @@ the next browser refresh.
 
 ## The login gate is a door, not an account system
 
-The stub implementation of `contracts/auth.gate.v1` is a **single shared
-password**. It deliberately has **no** registration, no multi-user support, no
-password recovery, no permission tiers, and no third-party login.
+The stub implementation of `contracts/auth.gate.v1` does two things: a
+**single shared password** (everyone shares one set of data), and simple
+**username + password accounts** (each account gets its own data). It
+deliberately has **no** self-registration, no password recovery, no permission
+tiers, and no third-party login.
+
+### Several accounts, each with its own data
+
+For a household or a small team on a LAN. In `deploy/`:
+
+```sh
+# .env: leave HONEYCOMB_PASSWORD empty, set NEXUS_TENANT_STRICT=1
+docker compose run --rm auth python /app/auth_stub.py adduser alice   # asks for the password twice
+docker compose run --rm auth python /app/auth_stub.py adduser bob
+docker compose up -d
+```
+
+The login page then asks for an account. `passwd <name>` changes a password,
+`deluser <name>` removes an account (its data stays), `users` lists them;
+changing or deleting logs that account out everywhere within two seconds.
+Switching from the shared password and want to keep your existing data?
+`adduser <name> --id u_local` hands that data to the account.
+`NEXUS_TENANT_STRICT=1` makes the backend refuse any request that arrives
+without an account instead of quietly dropping it into the shared data.
 
 The reason for drawing the line there: an open-source release should not ship a
-real account system bolted on. If you need multi-user, replace that one
-implementation — as long as it still satisfies the same contract's four
-endpoints and three invariants, **the assembly layer needs no changes at all**.
+real account system bolted on. If you need more, replace that one
+implementation — as long as it still satisfies the same contract's endpoints
+and three invariants, **the assembly layer needs no changes at all**.
 How to plug it in (`AUTH_UPSTREAM`, your own login page, switching the stub off)
 is in `contracts/gateway.v1/contract.md`.
 

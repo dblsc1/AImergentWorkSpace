@@ -169,6 +169,7 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
         stub_ids.append(auto_gate)
 
     # ── 占位实现 ───────────────────────────────────────────────
+    named_volumes: list[str] = []
     for cid in stub_ids:
         sf = root / "contracts" / cid / "stub" / "stub.yaml"
         if not sf.is_file():
@@ -193,6 +194,10 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
             # 它的全部意义是"改一行就生效、不需要构建步骤"。
             "volumes": [f"../../contracts/{cid}/stub:/app:ro"],
         }
+        # 占位件自己的数据（如账号文件）放 named volume，名字进顶层 volumes 声明。
+        for v in svc.get("volumes") or []:
+            entry["volumes"].append(v)
+            named_volumes.append(v.split(":", 1)[0])
         if "command" in svc:
             entry["command"] = svc["command"]
         if svc.get("env"):
@@ -279,7 +284,9 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
         "services": services,
     }
     if needs_mongo:
-        compose["volumes"] = {"honeycomb_mongo_data": None}
+        named_volumes.insert(0, "honeycomb_mongo_data")
+    if named_volumes:
+        compose["volumes"] = {v: None for v in named_volumes}
 
     cf = out / "docker-compose.yml"
     cf.write_text(
