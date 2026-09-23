@@ -56,9 +56,11 @@ import sys
 import threading
 
 try:
-    import fcntl  # 容器里（Linux）有；Windows 裸跑没有，那里只能靠别同时跑两条账号命令
-except ImportError:  # pragma: no cover
+    import fcntl  # 容器里（Linux / macOS）
+    msvcrt = None
+except ImportError:  # pragma: no cover —— Windows 裸跑
     fcntl = None
+    import msvcrt
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -405,9 +407,12 @@ def cli(argv: list[str]) -> None:
     # （deluser 与 passwd），后写的那个会拿旧快照覆盖掉先写的——删掉的账号复活、
     # 该作废的会话不作废（Codex 审核）。
     pw = _read_password() if argv[0] in ("adduser", "passwd") and len(argv) > 1 else ""
-    with open(f"{USERS_FILE}.lock", "a") as lock:
+    with open(f"{USERS_FILE}.lock", "a+") as lock:
         if fcntl:
             fcntl.flock(lock, fcntl.LOCK_EX)
+        else:  # msvcrt 锁第 0 个字节；LK_LOCK 等不到约 10 秒后抛错，不会静默跳过
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
         _cli(argv, pw)
 
 
