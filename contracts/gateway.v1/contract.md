@@ -35,6 +35,7 @@ docker compose -f docker-compose.yml -f /你的/override.yml up -d
 | `AUTH_UPSTREAM` | `auth:8010` | 认证服务地址（`host:port`，须在 compose 网络里可达）【冻结】 |
 | `HONEYCOMB_LOGIN_DIR` | 登录门占位件自带的页面 | 登录页静态目录，挂在 `/login/`【冻结】 |
 | `HONEYCOMB_EXTRA_ROUTES_DIR` | `deploy/nginx/extra`（空） | 额外路由目录，见第四节【冻结】 |
+| `HONEYCOMB_BASE_PATH` | `/` | 站点前缀：整站挂在子路径下时设，如 `/Cockpit/`，以 `/` 开头和结尾。见第七节【冻结】 |
 
 路径变量写**绝对路径**最稳；相对路径按 compose 文件所在目录解析。
 
@@ -98,8 +99,8 @@ HONEYCOMB_EXTRA_ROUTES_DIR=/srv/my-deploy/routes
   - `$honeycomb_tenant`：当前租户（仅在 include 了 gate.inc 的 location 里有值）。
 - 其余 `$xxx` 照常是 nginx 自己的变量——渲染只替换上面列出的名字。
 
-**站点前缀**：本版固定为 `/`，整站挂到子路径是后续版本的事。现在就按
-`${HONEYCOMB_BASE_PATH}` 写路径，那一版来的时候你的路由不用改。
+**站点前缀**：按 `${HONEYCOMB_BASE_PATH}` 写路径，整站挂到子路径时你的路由不用改
+（第七节）。
 
 ### 让自己的路由受同一道门保护【冻结】
 
@@ -140,7 +141,7 @@ proxy_set_header X-Nexus-Tenant $honeycomb_tenant;
 
 | 路径 | 行为 |
 |---|---|
-| `/` | 302 到主界面（装了哪个前端声明 `home: true` 就去哪）|
+| `/`（即站点前缀，下同，见第七节）| 302 到主界面（装了哪个前端声明 `home: true` 就去哪）|
 | `/healthz` | 200，不设门，给健康检查用 |
 | `/__cockpit/*` | 共享顶栏、设计 tokens、站点图标。不设门（不含用户数据）|
 | `/__cockpit/current` | 顶栏计时芯片的数据。设门；未登录或后端挂了回 `{"degraded":true,"running":false}`，不跳登录页 |
@@ -148,3 +149,23 @@ proxy_set_header X-Nexus-Tenant $honeycomb_tenant;
 
 前端页面（hive、ring 及以后装的）被注入同一套顶栏：页签按**已装的前端**生成，没装
 的前端没有页签。
+
+## 七、整站挂在子路径下【冻结】
+
+前面还有一层反代、要把整站挂在 `https://example.com/Cockpit/` 下时，设
+`HONEYCOMB_BASE_PATH=/Cockpit/`（外层反代把 `/Cockpit/` 原样转给网关，**不去前缀**）。
+
+- **对外**：下面第六节的每个路径、登录页、前端页面、`/api/...`、额外路由，全部挂在
+  前缀下（`/Cockpit/hive/`、`/Cockpit/api/core/...`）。跳转（未登录跳登录页、根路径跳
+  主界面）都带前缀。例外只有两个：`/healthz`（给容器健康检查，外层反代不用转）和
+  `/__auth_verify`（内部子请求）。
+- **对后端与认证服务**：网关转发时**去掉前缀**——nexus-core 永远看到 `/api/core/...`，
+  认证服务永远看到 `/api/auth/...`。它们不需要知道前缀，除了下一条。
+- **会话 cookie 的 `Path`** 由认证服务定，应设成站点前缀（同一域名下别的站点收不到这个
+  会话）。占位认证服务读 `AUTH_BASE_PATH`，compose 把它设成同一个值。
+- **前端页面**：网关往每个注入顶栏的页面里注入 `window.HONEYCOMB_BASE`（值即前缀），
+  页面的请求与跳转都从它拼，不写死 `/api/...`。没注入时按 `/` 处理。登录页不注入，
+  从自己的地址推前缀（`<前缀>login/`），`next` 只接受前缀内的地址。
+- 顶栏页签 `window.HONEYCOMB_NAV` 里的地址已含前缀。
+
+CI 把手写与生成的两份组装各按 `/` 与 `/Cockpit/` 真起一遍。

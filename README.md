@@ -173,6 +173,13 @@ and three invariants, **the assembly layer needs no changes at all**.
 How to plug it in (`AUTH_UPSTREAM`, your own login page, switching the stub off)
 is in `contracts/gateway.v1/contract.md`.
 
+### Serving it under a sub-path
+
+Behind another reverse proxy at `https://example.com/Cockpit/`? Set
+`HONEYCOMB_BASE_PATH=/Cockpit/` in `.env` and have the outer proxy pass
+`/Cockpit/` through unchanged. Pages, API, redirects and the login cookie all
+follow the prefix. See `contracts/gateway.v1/contract.md`, section 7.
+
 ### Adding your own routes or frontend
 
 Put a directory outside the repo with `*.conf.template` files (nginx location

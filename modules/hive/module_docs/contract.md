@@ -12,6 +12,9 @@ provides:
       蜂巢视图页面。纯静态页，无构建工具、无 CDN 依赖。分区是圆心发散的角度扇区，
       项目是扇区内的六边形格子；鼠标悬停放大、点开展开为卡片、中心格承载计时。
       静态路由由组装层决定（默认 /），入口文件 code/frontend/index.html。
+      页面里的请求与跳转（/api/core/...、去计时台 ring/）都从网关注入的
+      `window.HONEYCOMB_BASE` 拼，整站挂子路径时跟着走（contracts/gateway.v1 第七节）；
+      没注入按 `/`。
   - id: hive.zone-order.v1
     summary: >
       分区排序的本机记忆，键 `nexus.hex.zoneOrder.v1`（localStorage，JSON 数组，

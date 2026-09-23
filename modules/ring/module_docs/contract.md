@@ -96,7 +96,8 @@ consumes:
 
 ## 入口与路由
 
-- nginx 公开前缀：`/ring/`（静态路由不经 nexus-core）
+- nginx 公开前缀：`<站点前缀>ring/`（缺省 `/ring/`；静态路由不经 nexus-core）。页面里的
+  请求都从网关注入的 `window.HONEYCOMB_BASE` 拼（`contracts/gateway.v1` 第七节）
 - 纯静态页面，无内部服务名/端口
 
 ## 依赖的外部契约
@@ -123,3 +124,4 @@ consumes:
 | 2026-08-01 | 产品决定：四前端做成完整页面，可写但走统一入口 | v0.2：ring 由纯只读改为**可控制计时**。新增 consumes `timer.v1`（start/stop）与 `views.tree.v1`（任务选择器数据源）。**仍不直接写事实**——events 不向前端开放，计时由 timer 代劳 |
 | 2026-08-08 | 无（**代码先行的追平**，非新变更——两项能力已在 `code/frontend/` 落地并有测试覆盖，本文件此前没跟上，不是先批后做） | v0.3：`timer.v1` 的 purpose 补上 `POST /api/core/timer/cancel`（F-RING-2 取消按钮，对应代码 commit `27c506d` 之前的 `696112d`）；新增 consumes `nexus-core.views.gantt.v1`（F-RING-1"今天"数据源，产品决定不新开端点、复用甘特既有读端，字段级列明 `today`/`projects[].tasks[].id`/`actual[].{date,seconds}`，对应代码 commit `27c506d`）；`views.current.v1` 的 purpose 同步注明 `totalSeconds`/`shareOfPlan` 已让位给 `views.gantt.v1`、仅作不可达兜底；「依赖的外部契约」表拆成 views/timer 两行、覆盖 `GanttOut`/`TimerCancelOut`。本轮同时要求：module_docs/contract.md 的 `consumes` 缺口是本次唯一改动面，**不动代码**（本轮无对应代码 commit） |
 | 2026-08-19 | 派单：ring/table 各加补登入口 | v0.4：`timer.v1` 的 purpose 补上 `POST /api/core/timer/backfill`（补登「完成了但没计时」的历史段，nexus-core v1.8，与 `timer_state` 完全独立，空闲态/运行态均可点）；「依赖的外部契约」表 timer 行补 `TimerBackfillIn`/`TimerBackfillOut`。对应代码：`code/frontend/ring-backfill.js`（新文件）、`project-task-contribution-ring.html`/`ring.css`/`ring-controls.js`（导出 `window.postCore`）改动，见本次 commit |
+| 2026-09-23 | 下游需求 6：整站挂子路径 | 页面请求（`/api/core/...`）改为从网关注入的 `window.HONEYCOMB_BASE` 拼，缺省 `/` 时与之前逐字相同（`contracts/gateway.v1` 第七节） |

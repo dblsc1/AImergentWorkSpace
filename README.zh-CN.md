@@ -131,6 +131,10 @@ docker compose up -d
 
 想自己实现，读 `contracts/auth.gate.v1/contract.md` 的「换实现要满足什么」一节；怎么把它接进网关（`AUTH_UPSTREAM`、换登录页、关掉占位件），读 `contracts/gateway.v1/contract.md`。
 
+### 挂在子路径下
+
+前面还有一层反代、要挂在 `https://example.com/Cockpit/` 下？`.env` 里设 `HONEYCOMB_BASE_PATH=/Cockpit/`，外层反代把 `/Cockpit/` 原样转过来（不去前缀）。页面、接口、跳转、登录 cookie 都跟着前缀走。见 `contracts/gateway.v1/contract.md` 第七节。
+
 ### 加自己的路由或前端
 
 在仓外放一个目录，里面写 `*.conf.template`（nginx 的 location 块），`.env` 里设 `HONEYCOMB_EXTRA_ROUTES_DIR` 指过去。加一行 `include /etc/nginx/honeycomb/gate.inc;` 就受同一道登录门保护；再加 `inject.inc`，页面就带上共享顶栏。写法见 `contracts/gateway.v1/contract.md`。

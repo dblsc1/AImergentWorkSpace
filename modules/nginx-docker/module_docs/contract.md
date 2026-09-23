@@ -33,7 +33,9 @@ consumes:
 
 ## 顶栏页签
 
-`navbar.js` 不写死任何路由，读网关注入的 `window.HONEYCOMB_NAV`：
+`navbar.js` 不写死任何路由：站点前缀读网关注入的 `window.HONEYCOMB_BASE`（缺省 `/`，
+计时芯片、登出、登录页地址都从它拼，见 `contracts/gateway.v1` 第七节），页签读
+`window.HONEYCOMB_NAV`（地址已含前缀）：
 
 ```js
 { home: '/hive/', timer: '/ring/', tabs: [{ href: '/hive/', label: '任务' }, ...] }
