@@ -98,7 +98,7 @@ install.sh    读契约解析依赖，生成 compose 与路由
 
 | | |
 |---|---|
-| `modules/nexus-core` | 事件溯源内核（FastAPI + MongoDB）。提供 12 个契约：计时、任务 CRUD、事件写入口与档案读端、以及树/圆环/甘特/导出等读端投影 |
+| `modules/nexus-core` | 事件溯源内核（FastAPI + MongoDB）。提供 13 个契约：计时、任务 CRUD、事件写入口与档案读端、以及树/圆环/甘特/导出等读端投影 |
 | `modules/hive` | 任务蜂巢（`/hive/`），主界面。纯静态前端，数据全走 `/api/core/` |
 | `modules/ring` | 计时台（`/ring/`）：贡献圆环 + 开始/停止/取消/补登。纯静态前端 |
 | `contracts/yq-event.v1` | 事件信封规范。**整个系统的核心契约** —— 所有写操作都是往这个信封里投事件 |
