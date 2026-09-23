@@ -182,3 +182,15 @@ def test_concurrent_account_commands_do_not_lose_updates(users):
         p.wait(30)
     listed = _cli(users, "users").stdout
     assert all(n in listed for n in names), listed
+
+
+def test_cookie_path_follows_base_path(tmp_path):
+    s = Stub({"AUTH_PASSWORD": PW, "AUTH_BASE_PATH": "/Cockpit/"})
+    try:
+        _, h, _ = s.req("POST", "/api/auth/login", {"password": PW})
+        assert "Path=/Cockpit/;" in h["Set-Cookie"]
+    finally:
+        s.stop()
+    env = {**os.environ, "AUTH_PASSWORD": PW, "AUTH_BASE_PATH": "Cockpit"}
+    r = subprocess.run([sys.executable, str(STUB)], env=env, capture_output=True, text=True, timeout=10)
+    assert r.returncode != 0 and "AUTH_BASE_PATH" in r.stderr

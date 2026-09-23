@@ -165,7 +165,8 @@ nginx 对 `200/204/401/403` 之外的返回一律当错误，整个上游请求�
 - [ ] 多用户：verify 带 `X-Nexus-Tenant`（合格式），`/me` 的 `user.id` 与之相等；给不出
       租户时 403/401，不回不带租户的 204
 - [ ] 会话 cookie：`HttpOnly`、`SameSite=Lax`、`Secure`（可经配置关闭，仅用于本机 HTTP
-      调试，**默认必须开启**）、`Path=/`。cookie 名不强制叫 `cockpit_session`
+      调试，**默认必须开启**）、`Path=<站点前缀>`（缺省 `/`，整站挂子路径时见
+      `contracts/gateway.v1` 第七节）。cookie 名不强制叫 `cockpit_session`
 - [ ] 口令、签名的比较用抗时序攻击的方式
 - [ ] 缺关键配置时**拒绝启动**，不接受弱默认值
 - [ ] 登录按来源限次
@@ -246,6 +247,7 @@ docker compose run --rm auth python /app/auth_stub.py users           # 列出�
 | `AUTH_COOKIE_SECURE` | ❌ | `true` | 本机 HTTP 调试须显式设 `false` |
 | `AUTH_BIND` | ❌ | `127.0.0.1:8010` | 监听地址 |
 | `AUTH_SESSION_DAYS` | ❌ | `30` | 会话有效期天数 |
+| `AUTH_BASE_PATH` | ❌ | `/` | 站点前缀，cookie 的 `Path` 跟着它（compose 里 = `HONEYCOMB_BASE_PATH`）。格式不对拒绝启动 |
 
 **限次**：同一对端 15 分钟内错 10 次，之后 `429` 直到窗口滑过去。只数失败。
 
@@ -257,4 +259,5 @@ docker compose run --rm auth python /app/auth_stub.py users           # 列出�
 | 日期 | 变更 |
 |---|---|
 | 2026-09-17 | v1 首版。契约文本从 `stub/auth_stub.py` 的实际行为反推得出 |
+| 2026-09-23 | 站点前缀（`contracts/gateway.v1` 第七节）：cookie `Path` 从固定 `/` 改为站点前缀（缺省仍是 `/`，未挂子路径的部署零变化）；占位实现加 `AUTH_BASE_PATH`；自带登录页从自己的地址推前缀，`next` 只接受前缀内地址 |
 | 2026-09-23 | **v1.1（纯追加）**：verify 的 `204` 可带 `X-Nexus-Tenant`，可回 `403`（登录了但没有可用租户）；新增 `GET /api/auth/me`，冻结最小形状 `{ok, user:{id, name}}`，`user.id` 等于 verify 的租户；login 请求体可带 `username`；login 可回 `429`；health 可带 `accounts` / `sharedPassword`；换实现清单加多用户与限次两条；安全约定加「只存哈希」「限次按网关看到的对端算」。占位实现加账号+密码（scrypt、账号文件、命令行管理、改密码/删账号作废会话），共享口令模式行为不变。引用改为按函数名，不再按行号 |

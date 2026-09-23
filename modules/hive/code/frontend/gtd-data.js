@@ -30,16 +30,19 @@
   }
 })(typeof self !== "undefined" ? self : this, function (D) {
   "use strict";
+  // 站点前缀（gateway.v1）：网关往页面注入 HONEYCOMB_BASE，整站挂在子路径下时
+  // 所有请求与跳转都从它拼。没注入（单测、直接打开文件）就是 "/"。
+  var BASE = (typeof self !== "undefined" && self.HONEYCOMB_BASE) || "/";
 
   // well-known 收件箱项目 id（nexus-core contract.md v1.5「收件箱」节，固定 id，
   // 不走三类对象平时的 uuid 生成——种子脚本 ensure_inbox() 幂等创建）。
   var P_INBOX_ID = "p_inbox";
 
-  var NEXT_ACTIONS_PATH = "/api/core/views/next-actions";
-  var REVIEW_PATH = "/api/core/views/review";
+  var NEXT_ACTIONS_PATH = BASE + "api/core/views/next-actions";
+  var REVIEW_PATH = BASE + "api/core/views/review";
   // 只为取 lastWriter 映射而读（见文件头注释 4），不塑形成别的用途。
-  var PLANNER_PROJECTS_PATH = "/api/core/planner/projects";
-  var PLANNER_TASKS_PATH = "/api/core/planner/tasks";
+  var PLANNER_PROJECTS_PATH = BASE + "api/core/planner/projects";
+  var PLANNER_TASKS_PATH = BASE + "api/core/planner/tasks";
 
   function resolveFetch(options) {
     options = options || {};

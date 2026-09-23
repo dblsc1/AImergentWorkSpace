@@ -36,6 +36,7 @@
     AUTH_COOKIE_SECURE   默认 true。本机 HTTP 调试显式设 false
     AUTH_BIND            默认 127.0.0.1:8010
     AUTH_SESSION_DAYS    默认 30
+    AUTH_BASE_PATH       默认 /。整站挂子路径（如 /Cockpit/）时设，cookie 的 Path 跟着它
 
 为什么不给默认口令
   给了就一定会有人原样部署上公网。关键配置不许弱默认值 ——
@@ -92,6 +93,11 @@ SECRET = os.environ.get("AUTH_SECRET", "").strip() or secrets.token_hex(32)
 COOKIE_SECURE = _bool("AUTH_COOKIE_SECURE", True)
 SESSION_DAYS = int(os.environ.get("AUTH_SESSION_DAYS", "30"))
 SESSION_TTL = SESSION_DAYS * 86400
+# 站点前缀（gateway.v1）：整站挂在子路径下时 cookie 的 Path 跟着它走，同域名下别的
+# 站点收不到这个会话。网关转过来时已去掉前缀，本服务的路由永远是 /api/auth/...
+BASE_PATH = os.environ.get("AUTH_BASE_PATH", "").strip() or "/"
+if not re.fullmatch(r"/(?:[A-Za-z0-9._~-]+/)*", BASE_PATH):
+    sys.exit(f"❌ AUTH_BASE_PATH 须以 / 开头、以 / 结尾，如 /Cockpit/，收到 {BASE_PATH!r}")
 
 
 # ── 账号文件 ─────────────────────────────────────────────────────
@@ -279,7 +285,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _set_cookie(self, token: str, ttl: int) -> dict:
-        bits = [f"{COOKIE_NAME}={token}", "Path=/", "HttpOnly", "SameSite=Lax", f"Max-Age={ttl}"]
+        bits = [f"{COOKIE_NAME}={token}", f"Path={BASE_PATH}", "HttpOnly", "SameSite=Lax", f"Max-Age={ttl}"]
         if COOKIE_SECURE:
             bits.append("Secure")
         return {"Set-Cookie": "; ".join(bits)}

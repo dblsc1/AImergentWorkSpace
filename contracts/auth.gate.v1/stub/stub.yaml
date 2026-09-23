@@ -23,6 +23,8 @@ service:
     # 账号+密码登录（v1.1）。加账号：
     #   docker compose run --rm auth python /app/auth_stub.py adduser <名字>
     AUTH_USERS_FILE: /data/users.json
+    # 站点前缀（gateway.v1）：cookie 的 Path 跟着它走。
+    AUTH_BASE_PATH: ${HONEYCOMB_BASE_PATH:-/}
     # 容器内要监听 0.0.0.0 才能被 nginx 从同网络访问；
     # 宿主端口只有 web 映射，所以这里不构成暴露面。
     AUTH_BIND: 0.0.0.0:8010

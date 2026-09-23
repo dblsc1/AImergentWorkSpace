@@ -248,7 +248,8 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
         # 网关对外冻结的接口见 contracts/gateway.v1/contract.md。
         "environment": {
             "AUTH_UPSTREAM": "${AUTH_UPSTREAM:-auth:8010}",
-            "HONEYCOMB_BASE_PATH": "/",       # gateway.v1 预留，本版固定
+            # 站点前缀（gateway.v1），以 / 开头、以 / 结尾，如 /Cockpit/。
+            "HONEYCOMB_BASE_PATH": "${HONEYCOMB_BASE_PATH:-/}",
             "NGINX_ENVSUBST_FILTER": "^(AUTH_UPSTREAM|HONEYCOMB_)",
         },
         # 静态目录只读挂载，不复制代码：改前端去模块目录改，刷新即生效。
@@ -310,7 +311,17 @@ def _nav_json(statics: list[dict], home: str | None) -> str:
                      ensure_ascii=False, separators=(",", ":"))
     if "'" in nav or "$" in nav:
         raise BadManifest(f"顶栏页签文字里不能有 ' 或 $：{nav}")
-    return nav
+    # 路径挂到站点前缀下：模板渲染时 envsubst 把它换成字面量
+    return nav.replace('"/', '"' + BASE)
+
+
+#: 站点前缀在 nginx 模板里的写法（envsubst 渲染成字面量；location 路径不接受变量）。
+BASE = "${HONEYCOMB_BASE_PATH}"
+
+
+def _b(path: str) -> str:
+    """站内绝对路径 → 挂在站点前缀下。"""
+    return BASE + path.lstrip("/")
 
 
 def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[str]) -> str:
@@ -340,18 +351,18 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
         "    location = /healthz { return 200 \"ok\\n\"; add_header Content-Type text/plain; }",
         "",
         "    # 顶栏、设计 tokens、站点图标（modules/nginx-docker/static）。不含用户数据，不设门。",
-        "    location /__cockpit/ {",
+        f"    location {_b('/__cockpit/')} {{",
         "        alias /usr/share/nginx/html/__cockpit/;",
         "        add_header Cache-Control \"no-cache\";",
         "    }",
-        "    location = /favicon.ico { alias /usr/share/nginx/html/__cockpit/favicon.ico; }",
-        "    location = /favicon.svg { alias /usr/share/nginx/html/__cockpit/favicon.svg; }",
+        f"    location = {_b('/favicon.ico')} {{ alias /usr/share/nginx/html/__cockpit/favicon.ico; }}",
+        f"    location = {_b('/favicon.svg')} {{ alias /usr/share/nginx/html/__cockpit/favicon.svg; }}",
     ]
     # 根路径：有主界面跳主界面；没有但有门就跳登录页（唯一确实存在的页面）；都没有就不管。
     if homes:
-        L += ["", f"    location = / {{ return 302 {homes[0]}; }}"]
+        L += ["", f"    location = {BASE} {{ return 302 {_b(homes[0])}; }}"]
     elif gate:
-        L += ["", "    location = / { return 302 /login/; }"]
+        L += ["", f"    location = {BASE} {{ return 302 {_b('/login/')}; }}"]
     if gate:
         L += [
             "",
@@ -365,19 +376,20 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
             "        proxy_set_header X-Nexus-Tenant \"\";",
             "        proxy_set_header X-Original-URI $request_uri;",
             "    }",
-            "    location @to_login { return 302 /login/; }",
+            f"    location @to_login {{ return 302 {_b('/login/')}; }}",
             "",
             "    # 认证服务的整个 /api/auth/ 前缀。不设门——替换进来的认证服务，",
             "    # 这个前缀下每个非登录端点都得自己鉴权，网关不替它挡。",
-            "    location /api/auth/ {",
-            "        proxy_pass http://${AUTH_UPSTREAM};",
+            "    # 转发时去掉站点前缀：认证服务永远看到 /api/auth/...（gateway.v1）。",
+            f"    location {_b('/api/auth/')} {{",
+            "        proxy_pass http://${AUTH_UPSTREAM}/api/auth/;",
             "        proxy_set_header Host $host;",
             "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
             "        proxy_set_header X-Nexus-Tenant \"\";",
             "    }",
         ]
     for st in statics:
-        L += ["", f"    location {st['prefix']} {{"]
+        L += ["", f"    location {_b(st['prefix'])} {{"]
         if gate and st["gated"]:
             L += [
                 "        include /etc/nginx/honeycomb/gate.inc;",
@@ -386,7 +398,7 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
         L += [
             f"        alias {st['dir']}/;",
             f"        index {st['index']};",
-            f"        try_files $uri $uri/ {st['prefix']}{st['index']};" if st["prefix"] != "/login/"
+            f"        try_files $uri $uri/ {_b(st['prefix'])}{st['index']};" if st["prefix"] != "/login/"
             else "        try_files $uri $uri/ =404;",
             "    }",
         ]
@@ -398,7 +410,7 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
         degraded = r.get("degraded")
         if degraded is not None and "'" in str(degraded):
             raise BadManifest(f"路由 {r['prefix']} 的 degraded 里不能有单引号：{degraded!r}")
-        L += ["", f"    location {'= ' if r.get('exact') else ''}{r['prefix']} {{"]
+        L += ["", f"    location {'= ' if r.get('exact') else ''}{_b(r['prefix'])} {{"]
         gated = gate and r.get("gated")
         if gated and degraded is None:
             L += ["        include /etc/nginx/honeycomb/gate.inc;"]

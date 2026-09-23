@@ -109,6 +109,8 @@ services:
       #   docker compose run --rm auth python /app/auth_stub.py adduser <名字>
       # 多用户部署：去掉 HONEYCOMB_PASSWORD，并设 NEXUS_TENANT_STRICT=1。
       AUTH_USERS_FILE: /data/users.json
+      # 站点前缀（gateway.v1）：cookie 的 Path 跟着它走。
+      AUTH_BASE_PATH: ${HONEYCOMB_BASE_PATH:-/}
       # 不设则每次启动随机生成：重启即所有人重新登录。
       AUTH_SECRET: ${AUTH_SECRET:-}
       # 0.0.0.0 在这里是安全的：这台监听只在 honeycomb-net 这个内部 bridge 网里，
@@ -145,7 +147,8 @@ services:
     environment:
       AUTH_UPSTREAM: ${AUTH_UPSTREAM:-auth:8010}
       # 站点前缀：gateway.v1 预留，本版固定 `/`（不从 .env 读，免得设了却不生效）。
-      HONEYCOMB_BASE_PATH: /
+      # 站点前缀（gateway.v1）：整站挂子路径时设，如 /Cockpit/（以 / 开头和结尾）。
+      HONEYCOMB_BASE_PATH: ${HONEYCOMB_BASE_PATH:-/}
       # 模板里只替换这些变量；$host 之类仍是 nginx 自己的。
       NGINX_ENVSUBST_FILTER: ^(AUTH_UPSTREAM|HONEYCOMB_)
     volumes:

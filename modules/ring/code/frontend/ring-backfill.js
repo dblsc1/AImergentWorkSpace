@@ -39,6 +39,9 @@
 
 (function () {
   "use strict";
+  // 站点前缀（gateway.v1）：网关往页面注入 HONEYCOMB_BASE，整站挂在子路径下时
+  // 所有请求与跳转都从它拼。没注入（单测、直接打开文件）就是 "/"。
+  var BASE = (typeof self !== "undefined" && self.HONEYCOMB_BASE) || "/";
 
   const openBtnEl = document.getElementById("backfill-open-btn");
   const dialogEl = document.getElementById("backfill-dialog");
@@ -84,7 +87,7 @@
     taskSelectEl.textContent = "";
     taskSelectEl.appendChild(new Option("加载任务列表…", ""));
     try {
-      const res = await fetch("/api/core/views/tree");
+      const res = await fetch(BASE + "api/core/views/tree");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const tree = await res.json();
       populateTaskSelect(tree);
@@ -157,7 +160,7 @@
 
     submitBtnEl.disabled = true;
     submitBtnEl.textContent = "补登中…";
-    const result = await window.postCore("/api/core/timer/backfill", {
+    const result = await window.postCore(BASE + "api/core/timer/backfill", {
       taskId: taskId,
       startAt: startAt,
       durationSeconds: Math.round(minutes * 60),
