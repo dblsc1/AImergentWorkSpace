@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 
 from pydantic import ValidationError
 
+from ...tenant import current as current_tenant
 from ..projector import registry
 from . import repo
 from .schemas import Envelope, IngestOut, RejectedItem
@@ -73,6 +74,9 @@ def ingest(payload: dict | list) -> IngestOut:
 
         doc = envelope.model_dump()  # extra="allow"：未知字段原样保留（B9）
         doc["recordedAt"] = _now_iso()  # 服务端盖章；客户端给的值在这里被覆盖（B6）
+        # 租户同样服务端盖章（v2.0）：信封里的 user 客户端必须照填（信封校验不放宽），
+        # 但落库的是网关认定的租户——否则一个租户能往另一个租户的台账里写事实。
+        doc["user"] = current_tenant()
 
         if repo.append_if_absent(doc):
             accepted += 1
@@ -166,7 +170,7 @@ def list_events(
 # ------------------------------------------------------------- 投影重建（v0.9）
 
 
-def iter_all_events() -> list[dict]:
+def iter_all_events(*, all_tenants: bool = False) -> list[dict]:
     """全量、不分页地读出 ``events`` 集合——供 ``projector.rebuild`` 使用。
 
     与 ``list_events`` 不同：那个是给 HTTP 档案端点用的，默认 100 条、上限 1000 条
@@ -176,8 +180,11 @@ def iter_all_events() -> list[dict]:
 
     跨子边界只准调 ``service.py`` 的公开函数（rules.md §7.3 红线 2）——
     ``projector/rebuild.py`` 拿事实走这里，不许直接 import ``events/repo.py``。
+
+    缺省只读当前租户（导出、恢复前的判空）；``all_tenants=True`` 只给重建用——
+    重建清的是全体租户的投影，就得重放全体租户的事实（v2.0）。
     """
-    return repo.query_events()
+    return repo.query_events(all_tenants=all_tenants)
 
 
 # ------------------------------------------------------------- 快照恢复（v1.9）
@@ -198,7 +205,7 @@ def check_restore_envelopes(docs: list[dict]) -> list[RejectedItem]:
         except ValidationError as exc:
             rejected.append(RejectedItem(index=index, reason=_reason(exc)))
             continue
-        key = (raw["user"], raw["source"], raw["dedupeKey"])
+        key = (current_tenant(), raw["source"], raw["dedupeKey"])
         if key in seen:
             rejected.append(RejectedItem(index=index, reason=f"防重键 {key} 在快照里重复出现"))
         seen.add(key)
@@ -211,7 +218,10 @@ def restore_bulk(docs: list[dict]) -> int:
 
     与 ``ingest`` 有意不同的两处：
     - **不重盖 ``recordedAt``**——盖章时刻是原实例收到它的时刻，重盖等于改写历史。
+    - **``user`` 换成当前租户**（v2.0）——快照可能来自另一个实例的另一个租户，
+      恢复进哪个租户，事实就属于哪个租户。
     - **不逐条 dispatch**——投影由调用方落完之后整体 ``rebuild``，与「投影重建」
       同一个口径。
     """
-    return sum(repo.append_if_absent(doc) for doc in docs)
+    tenant = current_tenant()
+    return sum(repo.append_if_absent({**doc, "user": tenant}) for doc in docs)
