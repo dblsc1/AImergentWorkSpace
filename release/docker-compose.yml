@@ -1,0 +1,84 @@
+# HoneyComb 发布版组装（小白版）。镜像来自 ghcr.io，不需要源码。
+#
+# 这份文件随 GitHub Release 发布，版本号已写死在镜像标签里（__VERSION__ 由发布流程
+# 替换）。一般不直接用它，而是跑同一个 Release 里的 honeycomb-install.sh / .ps1。
+#
+# 起：docker compose up -d      停：docker compose down
+# 数据在 named volume 里；`down -v` 会**连数据一起删**。
+#
+# 与源码版 deploy/docker-compose.yml 是同一套服务、同一组环境变量（契约
+# contracts/gateway.v1、contracts/auth.gate.v1），区别只是镜像预先构建好了。
+name: ${HONEYCOMB_PROJECT:-honeycomb}
+
+networks:
+  honeycomb-net:
+    driver: bridge
+
+volumes:
+  honeycomb_mongo_data:
+  honeycomb_auth_data:
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    networks: [honeycomb-net]
+    volumes:
+      - honeycomb_mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  nexus-core:
+    image: ghcr.io/dblsc1/honeycomb-nexus-core:__VERSION__
+    restart: unless-stopped
+    networks: [honeycomb-net]
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      NEXUS_MONGO_URI: mongodb://mongo:27017
+      NEXUS_DB_NAME: ${HONEYCOMB_DB_NAME:-honeycomb}
+      NEXUS_TZ: ${HONEYCOMB_TZ:-Asia/Shanghai}
+      NEXUS_TENANT_STRICT: ${NEXUS_TENANT_STRICT:-0}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/core/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  auth:
+    image: ghcr.io/dblsc1/honeycomb-auth:__VERSION__
+    restart: unless-stopped
+    networks: [honeycomb-net]
+    volumes:
+      - honeycomb_auth_data:/data
+    environment:
+      # 共享口令；与账号+密码二选一或同开（contracts/auth.gate.v1）。两样都没有 = 拒绝启动。
+      AUTH_PASSWORD: ${HONEYCOMB_PASSWORD:-}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
+      AUTH_SECRET: ${AUTH_SECRET:-}
+      AUTH_BASE_PATH: ${HONEYCOMB_BASE_PATH:-/}
+
+  web:
+    image: ghcr.io/dblsc1/honeycomb-web:__VERSION__
+    restart: unless-stopped
+    networks: [honeycomb-net]
+    depends_on:
+      nexus-core:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+        required: false
+    ports:
+      - "${HONEYCOMB_BIND:-127.0.0.1:8800}:80"
+    environment:
+      AUTH_UPSTREAM: ${AUTH_UPSTREAM:-auth:8010}
+      HONEYCOMB_BASE_PATH: ${HONEYCOMB_BASE_PATH:-/}
+    volumes:
+      # 额外路由（contracts/gateway.v1 第四节）；安装脚本建一个空的 extra/。
+      - ${HONEYCOMB_EXTRA_ROUTES_DIR:-./extra}:/etc/nginx/templates/extra:ro
