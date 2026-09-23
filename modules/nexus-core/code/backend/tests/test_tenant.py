@@ -199,11 +199,15 @@ def test_startup_replaces_the_legacy_global_unique_indexes(client):
         db["name_registry"].drop_index("uniq_user_name")
     db["zones"].create_index([("id", 1)], unique=True, name="uniq_id")
     db["name_registry"].create_index([("name", 1)], unique=True, name="uniq_name")
+    if "uniq_user_seq" in db["planner_audit"].index_information():
+        db["planner_audit"].drop_index("uniq_user_seq")
+    db["planner_audit"].create_index([("seq", -1)], unique=True, name="uniq_seq")
 
     ensure_tenant_indexes()
 
     assert "uniq_id" not in db["zones"].index_information()
     assert "uniq_name" not in db["name_registry"].index_information()
+    assert "uniq_seq" not in db["planner_audit"].index_information()
     for tenant in (A, B):
         _post(client, f"{PLANNER}/zones", {"name": "同名分区"}, tenant)
     db["zones"].insert_one({"id": "z_same", "user": "ch_aaaa"})
