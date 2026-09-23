@@ -26,7 +26,8 @@ docker compose version *> $null; if ($LASTEXITCODE -ne 0) { Die '没找到 docke
 docker info *> $null; if ($LASTEXITCODE -ne 0) { Die 'docker 在，但连不上。Docker Desktop 启动了吗？' }
 
 New-Item -ItemType Directory -Force -Path (Join-Path $Dir 'extra') | Out-Null
-Set-Location $Dir
+Push-Location $Dir
+try {
 
 if ($env:HONEYCOMB_ASSETS) {
   Copy-Item (Join-Path $env:HONEYCOMB_ASSETS 'docker-compose.yml') 'docker-compose.yml'
@@ -56,6 +57,13 @@ if (-not (Test-Path '.env')) {
     'HONEYCOMB_TZ=Asia/Shanghai'
   )
   [System.IO.File]::WriteAllText((Join-Path (Get-Location) '.env'), ($lines -join "`n") + "`n", (New-Object System.Text.UTF8Encoding($false)))
+  # 里面是口令和会话密钥：只给当前用户（同 Linux 版的 umask 077）。装在共享目录时
+  # 别人读不到。非 Windows 上跑 pwsh 时没有 icacls，用 chmod。
+  if ($IsWindows -or $env:OS -eq 'Windows_NT') {
+    icacls .env /inheritance:r /grant:r "${env:USERNAME}:(F)" | Out-Null
+  } else {
+    chmod 600 .env
+  }
 }
 
 Write-Host '拉镜像（第一次要几分钟）……'
@@ -76,3 +84,4 @@ if ($fresh) {
   Write-Host '   沿用原来的 .env 和数据（这次是升级）。'
 }
 Write-Host "   停：cd $Dir; docker compose down"
+} finally { Pop-Location }

@@ -21,9 +21,12 @@
 4. **只有第一次**：ghcr 新包缺省是私有的，匿名拉不下来。到 GitHub 个人主页 →
    Packages，把这三个包各自 Package settings → Change visibility 改成 Public。
    改完再从一台干净的机器跑一次安装脚本确认。
+   release.yml 最后一个 job「镜像能匿名拉吗」在包还是私有时会**红**，点名是哪个包——
+   改成 Public 后在 Actions 里 re-run 这个 job，绿了才算发完。
 
 ## 发布前怎么知道它装得起来
 
 `ci.yml` 的「发布包」job 在每个 PR 上：本地构建同样三张镜像，用同一个安装脚本
 （sh 与 PowerShell 7 各一遍）从空目录装、冒烟，再跑一次 sh 验升级路径。
-Windows 自带的 PowerShell 5.1 没有 CI 覆盖，要真机验。
+Windows 自带的 PowerShell 5.1：CI（windows-latest）只验到解码、解析与随机口令写法；
+runner 跑不了 Linux 容器，完整安装要真机验。

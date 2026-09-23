@@ -15,40 +15,44 @@
 #   HONEYCOMB_BIND    监听地址，缺省 127.0.0.1:8800（只本机能访问，这是故意的）
 set -eu
 
-TAG=__TAG__
-REPO=https://github.com/dblsc1/AImergentWorkSpace
-DIR=${HONEYCOMB_DIR:-./honeycomb}
-BIND=${HONEYCOMB_BIND:-127.0.0.1:8800}
+# 整个脚本包在 main 里、最后一行才调用：`curl | sh` 半路断网时，没下载完的脚本
+# 连 main 都没定义完，什么也不会执行，不会留下半装的状态。
+main() {
 
-say() { printf '%s\n' "$*"; }
-die() { printf '❌ %s\n' "$*" >&2; exit 1; }
+  TAG=__TAG__
+  REPO=https://github.com/dblsc1/AImergentWorkSpace
+  DIR=${HONEYCOMB_DIR:-./honeycomb}
+  BIND=${HONEYCOMB_BIND:-127.0.0.1:8800}
 
-command -v docker >/dev/null 2>&1 || die "没找到 docker。先装 Docker：https://docs.docker.com/get-docker/"
-docker compose version >/dev/null 2>&1 || die "没找到 docker compose（v2）。装新版 Docker Desktop 或 docker-compose-plugin。"
-docker info >/dev/null 2>&1 || die "docker 在，但连不上（没启动？当前用户没权限？试试 sudo，或把自己加进 docker 组）。"
+  say() { printf '%s\n' "$*"; }
+  die() { printf '❌ %s\n' "$*" >&2; exit 1; }
 
-mkdir -p "$DIR/extra"
-cd "$DIR"
+  command -v docker >/dev/null 2>&1 || die "没找到 docker。先装 Docker：https://docs.docker.com/get-docker/"
+  docker compose version >/dev/null 2>&1 || die "没找到 docker compose（v2）。装新版 Docker Desktop 或 docker-compose-plugin。"
+  docker info >/dev/null 2>&1 || die "docker 在，但连不上（没启动？当前用户没权限？试试 sudo，或把自己加进 docker 组）。"
 
-# 取本版的 compose。HONEYCOMB_ASSETS 指向本地目录时从那里拷（CI 用，发布前验证）。
-if [ -n "${HONEYCOMB_ASSETS:-}" ]; then
-  cp "$HONEYCOMB_ASSETS/docker-compose.yml" docker-compose.yml
-elif command -v curl >/dev/null 2>&1; then
-  curl -fsSL "$REPO/releases/download/$TAG/docker-compose.yml" -o docker-compose.yml
-else
-  wget -qO docker-compose.yml "$REPO/releases/download/$TAG/docker-compose.yml"
-fi
+  mkdir -p "$DIR/extra"
+  cd "$DIR"
 
-rand() {  # 32 位十六进制，不依赖 openssl
-  od -An -N16 -tx1 /dev/urandom | tr -d ' \n'
-}
+  # 取本版的 compose。HONEYCOMB_ASSETS 指向本地目录时从那里拷（CI 用，发布前验证）。
+  if [ -n "${HONEYCOMB_ASSETS:-}" ]; then
+    cp "$HONEYCOMB_ASSETS/docker-compose.yml" docker-compose.yml
+  elif command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$REPO/releases/download/$TAG/docker-compose.yml" -o docker-compose.yml
+  else
+    wget -qO docker-compose.yml "$REPO/releases/download/$TAG/docker-compose.yml"
+  fi
 
-fresh=0
-if [ ! -f .env ]; then
-  fresh=1
-  pw=$(rand)
-  umask 077
-  cat > .env <<EOF
+  rand() {  # 32 位十六进制，不依赖 openssl
+    od -An -N16 -tx1 /dev/urandom | tr -d ' \n'
+  }
+
+  fresh=0
+  if [ ! -f .env ]; then
+    fresh=1
+    pw=$(rand)
+    umask 077
+    cat > .env <<EOF
 # HoneyComb 配置。改完 docker compose up -d 生效。
 # 登录口令（共享口令：一个口令、一份数据）。要多人各用各的，见 README「多个账号」。
 HONEYCOMB_PASSWORD=$pw
@@ -58,24 +62,27 @@ AUTH_SECRET=$(rand)
 HONEYCOMB_BIND=$BIND
 HONEYCOMB_TZ=Asia/Shanghai
 EOF
-fi
+  fi
 
-say "拉镜像（第一次要几分钟）……"
-[ -n "${HONEYCOMB_NO_PULL:-}" ] || docker compose pull -q
-docker compose up -d --wait --wait-timeout 300 >.up.log 2>&1 || {
-  cat .up.log; docker compose ps
-  die "没起来。看日志：cd $DIR && docker compose logs"
+  say "拉镜像（第一次要几分钟）……"
+  [ -n "${HONEYCOMB_NO_PULL:-}" ] || docker compose pull -q
+  docker compose up -d --wait --wait-timeout 300 >.up.log 2>&1 || {
+    cat .up.log; docker compose ps
+    die "没起来。看日志：cd $DIR && docker compose logs"
+  }
+
+  # 升级时以 .env 里的为准（可能改过端口）
+  BIND=$(sed -n 's/^HONEYCOMB_BIND=//p' .env | tail -1); BIND=${BIND:-127.0.0.1:8800}
+  port=${BIND##*:}
+  say ""
+  say "✅ HoneyComb $TAG 已经跑起来了：http://127.0.0.1:$port/"
+  if [ "$fresh" = 1 ]; then
+    say "   登录口令：$pw"
+    say "   （也存在 $DIR/.env 里。演示数据、多个账号、升级与卸载见 README。）"
+  else
+    say "   沿用原来的 .env 和数据（这次是升级）。"
+  fi
+  say "   停：cd $DIR && docker compose down"
 }
 
-# 升级时以 .env 里的为准（可能改过端口）
-BIND=$(sed -n 's/^HONEYCOMB_BIND=//p' .env | tail -1); BIND=${BIND:-127.0.0.1:8800}
-port=${BIND##*:}
-say ""
-say "✅ HoneyComb $TAG 已经跑起来了：http://127.0.0.1:$port/"
-if [ "$fresh" = 1 ]; then
-  say "   登录口令：$pw"
-  say "   （也存在 $DIR/.env 里。演示数据、多个账号、升级与卸载见 README。）"
-else
-  say "   沿用原来的 .env 和数据（这次是升级）。"
-fi
-say "   停：cd $DIR && docker compose down"
+main "$@"

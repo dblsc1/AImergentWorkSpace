@@ -253,14 +253,34 @@ jobs:
           & "$env:RUNNER_TEMP/assets/honeycomb-install.ps1"
           if ($LASTEXITCODE) { exit 1 }
           $pw = (Select-String -Path "$env:HONEYCOMB_DIR/.env" -Pattern '^HONEYCOMB_PASSWORD=(.*)$').Matches[0].Groups[1].Value
-          bash deploy/smoke.sh $pw
+          bash "$env:GITHUB_WORKSPACE/deploy/smoke.sh" $pw
           if ($LASTEXITCODE) { exit 1 }
+          if ((Get-Location).Path -ne $env:GITHUB_WORKSPACE) { Write-Error '安装脚本改了调用方的当前目录'; exit 1 }
+          if ((stat -c %a "$env:HONEYCOMB_DIR/.env") -ne '600') { Write-Error '.env 权限不是 600'; exit 1 }
       - name: 失败时的日志
         if: failure()
         run: |
           for d in "$RUNNER_TEMP/sh/honeycomb" "$RUNNER_TEMP/ps/honeycomb"; do
             [ -d "$d" ] && (cd "$d" && docker compose logs --no-color) || true
           done
+
+  release-ps51:
+    # Windows 自带的 PowerShell 5.1：runner 上跑不了 Linux 容器，只能验到「装 docker 之前」：
+    # 文件按 UTF-8 BOM 正确解码（中文不乱码）、5.1 能解析整个脚本、随机口令写法 5.1 有。
+    name: 发布包 · PowerShell 5.1
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: 5.1 解析 + 关键写法
+        shell: powershell
+        run: |
+          $PSVersionTable.PSVersion
+          $src = Get-Content -Raw release/honeycomb-install.ps1
+          if ($src -notmatch '一键安装') { throw 'BOM/编码不对：5.1 读出来中文是乱码' }
+          $null = [scriptblock]::Create($src)
+          $b = New-Object byte[] 16
+          [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
+          if ((-join ($b | ForEach-Object { '{0:x2}' -f $_ })).Length -ne 32) { throw '随机口令写法在 5.1 不可用' }
 
   gateway-contract:
     # contracts/gateway.v1 的冻结接口，从门外验：部署方只靠 override + .env

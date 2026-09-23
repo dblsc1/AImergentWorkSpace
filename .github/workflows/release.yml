@@ -81,3 +81,19 @@ jobs:
             --title "HoneyComb $GITHUB_REF_NAME" \
             --notes-file release/NOTES.md \
             --verify-tag
+
+  public-check:
+    # ghcr 新包缺省私有，小白匿名拉不下来（安装脚本在 pull 那一步失败）。
+    # 可见性只能在网页上改（没有 API），这里至少让它响亮地红，而不是等用户来报。
+    name: 镜像能匿名拉吗
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: 匿名 manifest
+        run: |
+          v=${GITHUB_REF_NAME#v}; bad=0
+          for i in honeycomb-nexus-core honeycomb-web honeycomb-auth; do
+            if docker manifest inspect "ghcr.io/dblsc1/$i:$v" >/dev/null 2>&1; then echo "ok    $i"
+            else echo "::error::ghcr.io/dblsc1/$i 匿名拉不到：到 GitHub → Packages → $i → Package settings → Change visibility 改成 Public"; bad=1; fi
+          done
+          exit $bad
