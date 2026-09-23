@@ -180,7 +180,7 @@ def next_audit_seq() -> int:
     "做到第几步"要的是全序，不是近似。
     """
     counter = get_db()["counters"].find_one_and_update(
-        {"_id": AUDIT_COLLECTION},
+        {"_id": _audit_counter()},
         {"$inc": {"seq": 1}},
         upsert=True,
         return_document=ReturnDocument.AFTER,
@@ -188,11 +188,17 @@ def next_audit_seq() -> int:
     return int(counter["seq"])
 
 
+def _audit_counter() -> str:
+    """审计序号按租户分：全局序号会让一个租户从 seq 的跳号里看出别人写了多少次。
+    ``u_local`` 沿用老名字，单人部署的序号接着往下走。"""
+    tenant = current()
+    return AUDIT_COLLECTION if tenant == "u_local" else f"{AUDIT_COLLECTION}:{tenant}"
+
+
 def append_audit(doc: dict) -> None:
-    """追加一条审计记录。**唯一的审计写路径**，只有 insert。"""
-    col = get_db()[AUDIT_COLLECTION]
-    col.create_index([("seq", -1)], unique=True, name="uniq_seq")
-    col.insert_one(stamp(doc))
+    """追加一条审计记录。**唯一的审计写路径**，只有 insert。
+    唯一索引 ``(user, seq)`` 由启动时的 ``ensure_tenant_indexes`` 建。"""
+    get_db()[AUDIT_COLLECTION].insert_one(stamp(doc))
 
 
 def count_audit(query: dict) -> int:
@@ -225,6 +231,7 @@ _TENANT_INDEXES = {
     "projects": ("uniq_id", [("user", 1), ("id", 1)], "uniq_user_id"),
     "tasks": ("uniq_id", [("user", 1), ("id", 1)], "uniq_user_id"),
     "name_registry": ("uniq_name", [("user", 1), ("name", 1)], "uniq_user_name"),
+    "planner_audit": ("uniq_seq", [("user", 1), ("seq", -1)], "uniq_user_seq"),
 }
 
 
