@@ -140,6 +140,11 @@ router 零业务逻辑，跨模块只调对方 `service.py`。
 .venv/bin/python migrations/migrate.py             # 真跑（幂等，已应用的不重跑）
 ```
 
+**v2.0 租户（004）**：读端对 `u_local` 同时认「没有 `user` 字段」的老文档，所以不跑
+004 也不会错；但**要开多用户之前先跑一次**，把老数据明确归到 `u_local`。唯一索引
+（`(user,id)` / `(user,name)`）不靠迁移——app 启动时 `ensure_tenant_indexes()` 自己换。
+Docker 镜像只拷 `app/`，迁移要从源码目录对着库跑。
+
 迁移文件**只增不改**——别人的库已按旧内容跑过，改了就永久分叉。要修写下一个。
 每个迁移**必须幂等**（用 `$exists: False` 之类条件）。
 

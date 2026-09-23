@@ -7,6 +7,8 @@ nginx 公开前缀 ``/api/core/`` 已在契约里定死，前端写死地址—�
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
@@ -16,6 +18,7 @@ from .modules.events.service import InvalidQueryError
 from .modules.export.router import router as export_router
 from .modules.planner.errors import ForbiddenError, StalePlanError
 from .modules.planner.import_router import router as planner_import_router
+from .modules.planner.repo import ensure_tenant_indexes
 from .modules.planner.service import HasChildrenError, InvalidInputError, NotFoundError
 from .modules.planner.unified_router import router as planner_unified_router
 from .modules.restore.router import router as restore_router
@@ -23,14 +26,25 @@ from .modules.restore.service import NotEmptyError
 from .modules.timer.router import router as timer_router
 from .modules.timer.service import NoRunningTimerError, UnknownTaskError
 from .modules.views.router import router as views_router
+from .tenant import TenantMiddleware
 
 API_PREFIX = "/api/core"
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """启动时把旧的全局唯一索引换成按租户的（v2.0）。只动索引、不动数据，幂等。"""
+    ensure_tenant_indexes()
+    yield
+
 
 app = FastAPI(
     title="nexus-core",
     version="0.2.0",
     summary="切片 1「金链路」：events 入口 + timer + proj_current 投影 + 两条读端。",
+    lifespan=lifespan,
 )
+# 租户在任何路由之前定下（契约 v2.0「按租户分数据」，app/tenant.py）。
+app.add_middleware(TenantMiddleware)
 
 
 @app.get(f"{API_PREFIX}/health")
@@ -45,6 +59,8 @@ def health() -> dict[str, str]:
         "status": "ok",
         "db": settings.db_name,
         "actorGuard": settings.actor_guard,
+        # v2.0：租户设防姿态同样跨进程可判——多用户部署忘开严格模式，从这里一眼看出。
+        "tenantGuard": settings.tenant_guard,
     }
 
 

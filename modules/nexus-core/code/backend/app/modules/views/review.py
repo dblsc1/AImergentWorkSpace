@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from ...config import LOCAL_USER, settings
+from ...config import settings
+from ...tenant import current as current_tenant
 from ...timeutil import local_date
 from ..planner import service as planner_service
 from ..projector.handlers import daily_stats as daily_stats_projection
@@ -44,7 +45,7 @@ def _last_active_by_task() -> dict[str, str]:
     O1 节的判断标准：这份数据已经在 `proj_daily_stats` 里，不必新加口子。
     """
     last_active: dict[str, str] = {}
-    for row in daily_stats_projection.read_daily_stats(LOCAL_USER):
+    for row in daily_stats_projection.read_daily_stats(current_tenant()):
         task_id = row.get("taskId")
         if not task_id:
             continue
@@ -60,7 +61,7 @@ def get_review() -> ReviewOut:
     projects = planner_service.list_projects()
     tasks = planner_service.list_tasks()
     week_rows = daily_stats_projection.read_daily_stats(
-        LOCAL_USER, date_from=week_start, date_to=week_end
+        current_tenant(), date_from=week_start, date_to=week_end
     )
 
     actual_by_project: dict[str, int] = {}

@@ -24,6 +24,8 @@ def test_health(client):
         "db": settings.db_name,
         # v1.6：设防姿态跨进程可判（同 db 字段的理由，见契约「健康检查暴露库名」）。
         "actorGuard": settings.actor_guard,
+        # v2.0：租户设防姿态，同一个理由。
+        "tenantGuard": settings.tenant_guard,
     }
 
 

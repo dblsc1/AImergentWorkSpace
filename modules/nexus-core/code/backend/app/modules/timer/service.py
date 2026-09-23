@@ -34,7 +34,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from ...config import LOCAL_USER
+from ...tenant import current as current_tenant
 from ..events import service as events_service
 from ..events.schemas import SPEC
 from ..planner import service as planner_service
@@ -64,8 +64,9 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def get_running_state(user: str = LOCAL_USER) -> dict | None:
+def get_running_state(user: str | None = None) -> dict | None:
     """views 的指定读路径（跨子边界只准调 service 公开函数）。"""
+    user = user or current_tenant()  # v2.0：缺省取请求的租户
     return repo.get_running(user)
 
 
@@ -95,9 +96,10 @@ def _resolve_task_chain(task_id: str, *, action: str) -> tuple[dict, str, str]:
     return task, project_id, zone_id
 
 
-def start(task_id: str, user: str = LOCAL_USER) -> dict:
+def start(task_id: str, user: str | None = None) -> dict:
     """开始计时。**自动关闭上一个未结束的 session**（先 stop 再 start）——
     用户点「开始」时意图明确，让他先手动停上一个是无谓摩擦（contract.md）。"""
+    user = user or current_tenant()  # v2.0：缺省取请求的租户
     _task, project_id, zone_id = _resolve_task_chain(task_id, action="拒绝开始计时")
 
     stop(user)  # 无活状态时是 no-op；有则正常走事件入口收尾
@@ -116,8 +118,9 @@ def start(task_id: str, user: str = LOCAL_USER) -> dict:
     return {"running": True, "taskId": task_id, "startAt": start_at}
 
 
-def stop(user: str = LOCAL_USER) -> dict:
+def stop(user: str | None = None) -> dict:
     """结束计时：组装 ``session.completed`` → 事件入口 → 清活状态。"""
+    user = user or current_tenant()  # v2.0：缺省取请求的租户
     state = repo.get_running(user)
     if state is None:
         return {"running": False, "event": None}  # S8：幂等，不报错
@@ -163,7 +166,7 @@ def backfill(
     task_id: str,
     start_at_raw: str,
     duration_seconds: int,
-    user: str = LOCAL_USER,
+    user: str | None = None,
 ) -> dict:
     """补登：给「完成了但没计时」的工作补一条真实 ``session.completed``
     （契约「补登（规范性 · v1.8，backfill）」节，唯一事实源）。
@@ -173,13 +176,14 @@ def backfill(
     已有的归属链硬取 ``_resolve_task_chain`` 与服务端时钟 ``_now`` 注入进去——
     backfill 与 start()「同一套判据」，不重新实现一遍（契约要害条款）。
     """
+    user = user or current_tenant()  # v2.0：缺省取请求的租户
     return backfill_impl.backfill(
         task_id, start_at_raw, duration_seconds, user,
         resolve_chain=_resolve_task_chain, now=_now,
     )
 
 
-def cancel(user: str = LOCAL_USER) -> dict:
+def cancel(user: str | None = None) -> dict:
     """取消计时：**丢弃活状态，一条事实都不产生**。
 
     本函数刻意**不 import、不调用** ``events_service``，也不碰 projector。
@@ -195,6 +199,7 @@ def cancel(user: str = LOCAL_USER) -> dict:
     返回被丢弃那段的摘要（``discardedSeconds`` 只是给界面回显用的**派生值**，
     没有任何地方存它）——让用户看见「丢掉的是 6h54m」，而不是无声消失。
     """
+    user = user or current_tenant()  # v2.0：缺省取请求的租户
     state = repo.get_running(user)
     if state is None:
         raise NoRunningTimerError(

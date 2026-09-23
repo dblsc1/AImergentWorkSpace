@@ -57,6 +57,8 @@ class Settings:
     human_client_token: str | None = None
     #: 严格模式：高风险写要求持有人路径凭据（v1.6）。默认关，见契约「剩余缺口」。
     actor_strict: bool = False
+    #: 租户严格模式（v2.0）：缺 X-Nexus-Tenant 即 401，不落到 u_local。默认关（单人部署）。
+    tenant_strict: bool = False
 
     @property
     def bind(self) -> str:
@@ -66,6 +68,11 @@ class Settings:
     def actor_guard(self) -> str:
         """``/api/core/health`` 的 ``actorGuard`` 字段（契约 v1.6）。"""
         return "strict" if self.actor_strict else "lenient"
+
+    @property
+    def tenant_guard(self) -> str:
+        """``/api/core/health`` 的 ``tenantGuard`` 字段（契约 v2.0）。"""
+        return "strict" if self.tenant_strict else "lenient"
 
 
 def _parse_bind(raw: str) -> tuple[str, int]:
@@ -189,6 +196,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             "NEXUS_ACTOR_STRICT=1 但 NEXUS_HUMAN_CLIENT_TOKEN 未设——"
             "严格模式下高风险写要求人路径凭据，缺了它前端的搬移/改期/删除会全部 403"
         )
+    tenant_strict = _parse_bool(
+        source, "NEXUS_TENANT_STRICT", "0",
+        "租户严格模式：缺 X-Nexus-Tenant 即 401，多用户部署必开，契约 v2.0",
+    )
     return Settings(
         bind_host=host,
         bind_port=port,
@@ -198,6 +209,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ai_client_token=ai_token,
         human_client_token=human_token,
         actor_strict=actor_strict,
+        tenant_strict=tenant_strict,
     )
 
 

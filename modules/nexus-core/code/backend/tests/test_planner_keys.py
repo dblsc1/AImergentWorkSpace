@@ -31,15 +31,20 @@ def test_r6_same_name_same_project_serial_increments(seeded):
 
 
 def test_r7_unique_index_on_id_none_on_key(seeded):
-    """R7：唯一索引建在 id 上；key 无任何唯一索引（搬移重算期可短暂重复）。"""
+    """R7：唯一索引建在 id 上（v2.0 起按租户：``(user, id)``）；key 无任何唯一索引
+    （搬移重算期可短暂重复）。"""
+    from app.modules.planner.repo import ensure_tenant_indexes  # noqa: PLC0415
+
+    ensure_tenant_indexes()  # 生产上由 app 启动时调；本用例不经 HTTP，手动调一次
     service.create_task("示例任务一", seeded["projects"]["示例项目三"]["id"])
     info = _indexes("tasks")
 
     id_unique = [
         spec for spec in info.values()
-        if spec.get("unique") and [k for k, _ in spec["key"]] == ["id"]
+        if spec.get("unique") and [k for k, _ in spec["key"]] == ["user", "id"]
     ]
-    assert id_unique, f"tasks 必须有 id 唯一索引，实际索引：{list(info)}"
+    assert id_unique, f"tasks 必须有 (user, id) 唯一索引，实际索引：{list(info)}"
+    assert "uniq_id" not in info, "旧的全局 id 唯一索引必须已删：它让两个租户不能有同一个 id"
 
     key_indexed = [
         name for name, spec in info.items()
