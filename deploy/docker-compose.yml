@@ -93,10 +93,13 @@ services:
       - ../contracts/auth.gate.v1/stub/auth_stub.py:/app/auth_stub.py:ro
     command: python /app/auth_stub.py
     environment:
-      # 必填，无默认口令——auth_stub.py 自己在缺失时会直接 sys.exit 拒绝启动，
-      # 这里再用 compose 的 :? 兜一层，让错误在 `docker compose up` 那一刻就说清楚，
-      # 不必等容器起来又立刻退出才去翻日志。
-      AUTH_PASSWORD: ${HONEYCOMB_PASSWORD:?必填：auth 服务没有默认口令，请先在 .env 里设置 HONEYCOMB_PASSWORD 再启动}
+      # 必填，无默认口令：没设时 auth_stub.py 直接 sys.exit 拒绝启动，web 依赖它
+      # 健康，于是整个 `docker compose up` 失败并点名 auth。
+      #
+      # 这里**不再**用 compose 的 `:?` 兜一层：`:?` 在解析文件时就求值，部署方用
+      # override 把 auth 整个换成自己的认证服务时（contracts/gateway.v1），
+      # 也会被逼着给一个用不上的口令。
+      AUTH_PASSWORD: ${HONEYCOMB_PASSWORD:-}
       # 0.0.0.0 在这里是安全的：这台监听只在 honeycomb-net 这个内部 bridge 网里，
       # 本服务在 compose 里根本不映射宿主端口（跟 nexus-core 的 0.0.0.0:8000 同一个道理，
       # 见 modules/nexus-core/code/backend/Dockerfile 的同款注释）。
@@ -118,16 +121,29 @@ services:
     depends_on:
       nexus-core:
         condition: service_healthy
+      # required: false —— 部署方用 override 把占位认证服务整个关掉
+      # （`auth: {profiles: [disabled]}`）、换成自己的认证服务时，这条依赖自动失效，
+      # 不必改本文件（contracts/gateway.v1）。auth 在的时候照样等它健康再起。
       auth:
         condition: service_healthy
+        required: false
     ports:
       - "${HONEYCOMB_BIND:-127.0.0.1:8800}:80"
+    # 网关的对外冻结接口见 contracts/gateway.v1/contract.md。部署方用自己的
+    # .env 或 `-f 自己的 override.yml` 换认证服务、换登录页、加路由，不改本文件。
+    environment:
+      AUTH_UPSTREAM: ${AUTH_UPSTREAM:-auth:8010}
+      # 站点前缀：gateway.v1 预留，本版固定 `/`（不从 .env 读，免得设了却不生效）。
+      HONEYCOMB_BASE_PATH: /
+      # 模板里只替换这些变量；$host 之类仍是 nginx 自己的。
+      NGINX_ENVSUBST_FILTER: ^(AUTH_UPSTREAM|HONEYCOMB_)
     volumes:
-      - ./nginx/honeycomb.conf:/etc/nginx/conf.d/default.conf:ro
-      # 登录页是 auth.gate.v1 占位实现的一部分，不是组装层的代码——只读挂载
-      # 进来，跟 auth 服务挂载 auth_stub.py 是同一个道理（见上面 auth.volumes
-      # 的注释）：改页面去 stub/web/ 改，这里只负责让 nginx 能 serve 到它。
-      - ../contracts/auth.gate.v1/stub/web:/usr/share/nginx/html/login:ro
+      - ./nginx/templates/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ${HONEYCOMB_EXTRA_ROUTES_DIR:-./nginx/extra}:/etc/nginx/templates/extra:ro
+      - ../modules/nginx-docker/nginx:/etc/nginx/honeycomb:ro
+      - ../modules/nginx-docker/static:/usr/share/nginx/html/__cockpit:ro
+      # 登录页，缺省是登录门占位件自带的；换成自己的就设 HONEYCOMB_LOGIN_DIR。
+      - ${HONEYCOMB_LOGIN_DIR:-../contracts/auth.gate.v1/stub/web}:/usr/share/nginx/html/login:ro
       # 两个前端模块，同样只读挂载、不复制代码：改页面去 modules/<名>/code/frontend/
       # 改，浏览器刷新就生效，不用重建任何镜像。
       - ../modules/hive/code/frontend:/usr/share/nginx/html/hive:ro

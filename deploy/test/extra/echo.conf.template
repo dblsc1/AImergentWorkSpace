@@ -1,0 +1,15 @@
+# gateway.v1 契约测试用的额外路由（只给 deploy/test/gateway_contract.sh 用）。
+#
+# /__echo_tenant：受门保护，转给网关自己的 /__echo_backend，后者把**后端实际收到的**
+# X-Nexus-Tenant 原样回显。用来证明：客户端自带的租户头到不了后端。
+# 前缀用 ${HONEYCOMB_BASE_PATH} 写，顺带证明额外路由文件确实过了 envsubst。
+location = ${HONEYCOMB_BASE_PATH}__echo_tenant {
+    include /etc/nginx/honeycomb/gate.inc;
+    proxy_pass http://127.0.0.1:80/__echo_backend;
+}
+location = /__echo_backend {
+    allow 127.0.0.1;
+    deny all;
+    default_type text/plain;
+    return 200 "tenant=[$http_x_nexus_tenant] base=[$honeycomb_base]\n";
+}

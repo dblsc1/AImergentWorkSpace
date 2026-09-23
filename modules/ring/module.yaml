@@ -12,3 +12,5 @@ static:
     root: code/frontend
     index: project-task-contribution-ring.html
     gated: true
+    nav: 计时         # 顶栏页签
+    timer: true       # 顶栏计时芯片点过去就是这一页

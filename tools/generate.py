@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import yaml
@@ -48,7 +49,8 @@ def _statics(manifest: dict, base: str, where: Path) -> list[dict]:
     """清单里的 `static:` 列表 → 挂载与 location 需要的全部信息。
 
     每项：prefix（URL 前缀，/ 开头 / 结尾）、root（相对清单所在目录）、
-    index（缺省 index.html）、gated、home（`/` 跳到这里，全站至多一个）。
+    index（缺省 index.html）、gated、home（`/` 跳到这里，全站至多一个）、
+    nav（顶栏页签的文字；缺省不出页签）、timer（顶栏计时芯片点过去的页面）。
     """
     out = []
     for st in manifest.get("static") or []:
@@ -62,6 +64,8 @@ def _statics(manifest: dict, base: str, where: Path) -> list[dict]:
             "index": st.get("index", "index.html"),
             "gated": bool(st.get("gated")),
             "home": bool(st.get("home")),
+            "nav": st.get("nav"),
+            "timer": bool(st.get("timer")),
         })
     return out
 
@@ -135,6 +139,8 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
         for r in m.get("routes") or []:
             routes.append({**r, "service": sname, "port": port})
 
+    module_services = set(services)
+
     # ── 登录门：声明了 gated 就必须真有门 ─────────────────────
     #
     # 2026-09-17 实测的 fail-open bug：nexus-core 的 module.yaml 声明
@@ -202,6 +208,8 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
         for r in s.get("routes") or []:
             routes.append({**r, "service": sname, "port": port})
 
+    stub_names = set(services) - module_services
+
     # ── 基础设施 ───────────────────────────────────────────────
     if needs_mongo:
         services["mongo"] = {
@@ -218,6 +226,13 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
 
     gate = needs_gate          # 到这里提供方一定存在（上面要么装上了要么已硬失败）
 
+    def _mount(st: dict) -> str:
+        # 登录页可被部署方整个换掉（contracts/gateway.v1 的 HONEYCOMB_LOGIN_DIR）。
+        src = f"../../{st['src']}"
+        if st["prefix"] == "/login/":
+            src = "${HONEYCOMB_LOGIN_DIR:-" + src + "}"
+        return f"{src}:{st['dir']}:ro"
+
     services["web"] = {
         "image": "nginx:alpine",
         "restart": "unless-stopped",
@@ -225,18 +240,29 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
         # 只有 web 映射宿主端口。默认绑回环 —— 要暴露得自己显式改，
         # 而不是装完就已经在公网上了。
         "ports": ["${HONEYCOMB_BIND:-127.0.0.1:8800}:80"],
+        # 网关对外冻结的接口见 contracts/gateway.v1/contract.md。
+        "environment": {
+            "AUTH_UPSTREAM": "${AUTH_UPSTREAM:-auth:8010}",
+            "HONEYCOMB_BASE_PATH": "/",       # gateway.v1 预留，本版固定
+            "NGINX_ENVSUBST_FILTER": "^(AUTH_UPSTREAM|HONEYCOMB_)",
+        },
         # 静态目录只读挂载，不复制代码：改前端去模块目录改，刷新即生效。
-        "volumes": ["./nginx/honeycomb.conf:/etc/nginx/conf.d/default.conf:ro"] + [
-            f"../../{st['src']}:{st['dir']}:ro" for st in statics
-        ],
+        "volumes": [
+            "./nginx/templates/default.conf.template:/etc/nginx/templates/default.conf.template:ro",
+            "${HONEYCOMB_EXTRA_ROUTES_DIR:-../nginx/extra}:/etc/nginx/templates/extra:ro",
+            "../../modules/nginx-docker/nginx:/etc/nginx/honeycomb:ro",
+            "../../modules/nginx-docker/static:/usr/share/nginx/html/__cockpit:ro",
+        ] + [_mount(st) for st in statics],
+        # 占位件的依赖是可选的：部署方用 override 把它关掉（profiles），
+        # 换成自己的认证服务时网关照常起（contracts/gateway.v1）。
         "depends_on": {
-            s: {"condition": "service_healthy"}
+            s: {"condition": "service_healthy", **({"required": False} if s in stub_names else {})}
             for s, v in services.items() if "healthcheck" in v
         },
     }
 
     out.mkdir(parents=True, exist_ok=True)
-    (out / "nginx").mkdir(exist_ok=True)
+    (out / "nginx" / "templates").mkdir(parents=True, exist_ok=True)
 
     header = (
         "# ⚠ 本文件由 install.sh 生成，改了会被下次 add 覆盖。\n"
@@ -261,12 +287,23 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
         encoding="utf-8",
     )
 
-    nf = out / "nginx" / "honeycomb.conf"
+    nf = out / "nginx" / "templates" / "default.conf.template"
     nf.write_text(_nginx(routes, statics, gate, sources), encoding="utf-8")
     meta = {"requires": sorted(req_set), "tabs": tabs, "stubs": stub_ids}
     if auto_gate:
         meta["auto_included"] = [auto_gate]
     return [cf, nf], meta
+
+
+def _nav_json(statics: list[dict], home: str | None) -> str:
+    """顶栏页签配置（注入页面的 window.HONEYCOMB_NAV）：装了什么前端就有什么页签。"""
+    tabs = [{"href": st["prefix"], "label": str(st["nav"])} for st in statics if st.get("nav")]
+    timer = next((st["prefix"] for st in statics if st.get("timer")), None)
+    nav = json.dumps({"home": home or "/", "timer": timer, "tabs": tabs},
+                     ensure_ascii=False, separators=(",", ":"))
+    if "'" in nav or "$" in nav:
+        raise BadManifest(f"顶栏页签文字里不能有 ' 或 $：{nav}")
+    return nav
 
 
 def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[str]) -> str:
@@ -277,6 +314,9 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
         "# ⚠ 本文件由 install.sh 生成，改了会被下次 add 覆盖。",
         "# 要长期改就改上游清单：",
         *(f"#   {s}" for s in sources),
+        "#",
+        "# envsubst 模板：nginx 镜像启动时渲染成 conf.d/default.conf，只替换",
+        "# AUTH_UPSTREAM 与 HONEYCOMB_*。对外冻结接口见 contracts/gateway.v1/contract.md。",
         "server {",
         "    listen 80;",
         "    server_name _;",
@@ -287,7 +327,18 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
         "    # http://IP/...，打在 80 上，浏览器看到的是「自动跳转然后 502」。真机踩过。",
         "    absolute_redirect off;",
         "",
+        '    set $honeycomb_base "${HONEYCOMB_BASE_PATH}";',
+        f"    set $honeycomb_nav '{_nav_json(statics, homes[0] if homes else None)}';",
+        "",
         "    location = /healthz { return 200 \"ok\\n\"; add_header Content-Type text/plain; }",
+        "",
+        "    # 顶栏、设计 tokens、站点图标（modules/nginx-docker/static）。不含用户数据，不设门。",
+        "    location /__cockpit/ {",
+        "        alias /usr/share/nginx/html/__cockpit/;",
+        "        add_header Cache-Control \"no-cache\";",
+        "    }",
+        "    location = /favicon.ico { alias /usr/share/nginx/html/__cockpit/favicon.ico; }",
+        "    location = /favicon.svg { alias /usr/share/nginx/html/__cockpit/favicon.svg; }",
     ]
     # 根路径：有主界面跳主界面；没有但有门就跳登录页（唯一确实存在的页面）；都没有就不管。
     if homes:
@@ -297,27 +348,39 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
     if gate:
         L += [
             "",
-            "    # 登录门。auth_request 只看状态码，所以这里关掉请求体转发：",
-            "    # 把业务请求的 body 再抄一份给 auth 是纯浪费。",
+            "    # 登录门（gateway.v1 冻结 /__auth_verify 与 @to_login 两个名字）。",
+            "    # auth_request 只看状态码，body 不转；客户端自带的租户头不转给认证服务。",
             "    location = /__auth_verify {",
             "        internal;",
-            "        proxy_pass http://auth:8010/api/auth/verify;",
+            "        proxy_pass http://${AUTH_UPSTREAM}/api/auth/verify;",
             "        proxy_pass_request_body off;",
             "        proxy_set_header Content-Length \"\";",
+            "        proxy_set_header X-Nexus-Tenant \"\";",
+            "        proxy_set_header X-Original-URI $request_uri;",
             "    }",
-            "    location /api/auth/ { proxy_pass http://auth:8010; }",
+            "    location @to_login { return 302 /login/; }",
+            "",
+            "    # 认证服务的整个 /api/auth/ 前缀。不设门——替换进来的认证服务，",
+            "    # 这个前缀下每个非登录端点都得自己鉴权，网关不替它挡。",
+            "    location /api/auth/ {",
+            "        proxy_pass http://${AUTH_UPSTREAM};",
+            "        proxy_set_header Host $host;",
+            "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+            "        proxy_set_header X-Nexus-Tenant \"\";",
+            "    }",
         ]
     for st in statics:
         L += ["", f"    location {st['prefix']} {{"]
         if gate and st["gated"]:
             L += [
-                "        auth_request /__auth_verify;",
-                "        error_page 401 = @to_login;",
+                "        include /etc/nginx/honeycomb/gate.inc;",
+                "        include /etc/nginx/honeycomb/inject.inc;",
             ]
         L += [
             f"        alias {st['dir']}/;",
             f"        index {st['index']};",
-            f"        try_files $uri $uri/ {st['prefix']}{st['index']};",
+            f"        try_files $uri $uri/ {st['prefix']}{st['index']};" if st["prefix"] != "/login/"
+            else "        try_files $uri $uri/ =404;",
             "    }",
         ]
     for i, r in enumerate(routes):
@@ -328,13 +391,19 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
         degraded = r.get("degraded")
         if degraded is not None and "'" in str(degraded):
             raise BadManifest(f"路由 {r['prefix']} 的 degraded 里不能有单引号：{degraded!r}")
-        fallback = f"@degraded_{i}" if degraded is not None else "@to_login"
         L += ["", f"    location {'= ' if r.get('exact') else ''}{r['prefix']} {{"]
-        if gate and r.get("gated"):
+        gated = gate and r.get("gated")
+        if gated and degraded is None:
+            L += ["        include /etc/nginx/honeycomb/gate.inc;"]
+        elif gated:
             L += [
                 "        auth_request /__auth_verify;",
-                f"        error_page 401 = {fallback};",
+                "        auth_request_set $honeycomb_tenant $upstream_http_x_nexus_tenant;",
+                f"        error_page 401 = @degraded_{i};",
+                "        proxy_set_header X-Nexus-Tenant $honeycomb_tenant;",
             ]
+        else:
+            L += ["        proxy_set_header X-Nexus-Tenant \"\";"]
         L += [
             f"        proxy_pass http://{r['service']}:{r['port']}{r.get('upstream', r['prefix'])};",
             "        proxy_set_header Host $host;",
@@ -347,14 +416,18 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
                 "        proxy_connect_timeout 2s;",
                 "        proxy_read_timeout 3s;",
                 "        proxy_intercept_errors on;",
-                f"        error_page 500 502 503 504 = {fallback};",
+                f"        error_page 500 502 503 504 = @degraded_{i};",
                 "    }",
-                f"    location {fallback} {{",
+                f"    location @degraded_{i} {{",
                 "        default_type application/json;",
                 f"        return 200 '{degraded}';",
                 "    }",
             ]
-    if gate:
-        L += ["", "    location @to_login { return 302 /login/; }"]
-    L += ["}", ""]
+    L += [
+        "",
+        "    # 部署方的额外路由（HONEYCOMB_EXTRA_ROUTES_DIR 里的 *.conf.template）。",
+        "    include /etc/nginx/conf.d/extra/*.conf;",
+        "}",
+        "",
+    ]
     return "\n".join(L)

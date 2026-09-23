@@ -101,8 +101,10 @@ install.sh    读契约解析依赖，生成 compose 与路由
 | `modules/nexus-core` | 事件溯源内核（FastAPI + MongoDB）。提供 13 个契约：计时、任务 CRUD、事件写入口与档案读端、以及树/圆环/甘特/导出等读端投影 |
 | `modules/hive` | 任务蜂巢（`/hive/`），主界面。纯静态前端，数据全走 `/api/core/` |
 | `modules/ring` | 计时台（`/ring/`）：贡献圆环 + 开始/停止/取消/补登。纯静态前端 |
+| `modules/nginx-docker` | 网关的公用件：共享顶栏、设计 tokens、站点图标，以及门片段与注入片段。网关把顶栏注入每个前端，页签按已装的前端生成 |
 | `contracts/yq-event.v1` | 事件信封规范。**整个系统的核心契约** —— 所有写操作都是往这个信封里投事件 |
 | `contracts/auth.gate.v1` | 登录门契约 + 占位实现（纯标准库，零依赖）+ 最小登录页 |
+| `contracts/gateway.v1` | 网关对外接口：换认证服务、换登录页、加自己的路由、拿当前租户——都不用改本仓文件 |
 
 两个前端都在登录门后面：打开 `http://127.0.0.1:8800/`，登录后落到任务蜂巢。前端目录是只读挂载进 nginx 的，改 `modules/<名>/code/frontend/` 里的文件，浏览器刷新就生效。
 
@@ -114,7 +116,11 @@ install.sh    读契约解析依赖，生成 compose 与路由
 
 为什么这么划：开源版不该捆绑任何真实账号系统。需要多用户的人，换掉那个实现就行 —— 只要还满足同一份契约的四个端点和三条不变量，**组装层一行都不用改**。
 
-想自己实现，读 `contracts/auth.gate.v1/contract.md` 的「换实现要满足什么」一节。
+想自己实现，读 `contracts/auth.gate.v1/contract.md` 的「换实现要满足什么」一节；怎么把它接进网关（`AUTH_UPSTREAM`、换登录页、关掉占位件），读 `contracts/gateway.v1/contract.md`。
+
+### 加自己的路由或前端
+
+在仓外放一个目录，里面写 `*.conf.template`（nginx 的 location 块），`.env` 里设 `HONEYCOMB_EXTRA_ROUTES_DIR` 指过去。加一行 `include /etc/nginx/honeycomb/gate.inc;` 就受同一道登录门保护；再加 `inject.inc`，页面就带上共享顶栏。写法见 `contracts/gateway.v1/contract.md`。
 
 ---
 
