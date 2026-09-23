@@ -19,6 +19,9 @@
  */
 (function () {
   "use strict";
+  // 站点前缀（gateway.v1）：网关往页面注入 HONEYCOMB_BASE，整站挂在子路径下时
+  // 所有请求与跳转都从它拼。没注入（单测、直接打开文件）就是 "/"。
+  var BASE = (typeof self !== "undefined" && self.HONEYCOMB_BASE) || "/";
 
   const overlayEl = document.getElementById("rename-overlay");
   const inputEl = document.getElementById("rename-input");
@@ -69,7 +72,7 @@
     saveEl.disabled = true;
     inputEl.disabled = true;
     const result = await window.patchCore(
-      "/api/core/planner/tasks/" + encodeURIComponent(editingTaskId), { name: name });
+      BASE + "api/core/planner/tasks/" + encodeURIComponent(editingTaskId), { name: name });
     if (!result.ok) {
       saveEl.disabled = false;
       inputEl.disabled = false;

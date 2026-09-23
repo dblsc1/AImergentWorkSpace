@@ -19,6 +19,9 @@
 //   · prefers-reduced-motion 直接跳终态，一帧动画都不放。
 (function () {
   "use strict";
+  // 站点前缀（gateway.v1）：网关往页面注入 HONEYCOMB_BASE，整站挂在子路径下时
+  // 所有请求与跳转都从它拼。没注入（单测、直接打开文件）就是 "/"。
+  var BASE = (typeof self !== "undefined" && self.HONEYCOMB_BASE) || "/";
 
   var L = window.NexusTableHexLayout;    // 布局 + 推镜（几何常量的唯一事实源）
   var H = window.NexusTableHexData;
@@ -61,10 +64,10 @@
   // 「我要的不是每个六边形格子和格子之间间距变大，我要的是只有分割线的那一条变粗」
   // —— 这两个数分家，正是那条判词的物理落点，别为了"看着相关"再并回去。
   var BOUNDARY_INSET = 1.8;
-  var RING_HREF = "/ring/";
+  var RING_HREF = BASE + "ring/";
 
-  var AUDIT_PATH = "/api/core/planner/audit?limit=300";
-  var CURRENT_PATH = "/api/core/views/current";
+  var AUDIT_PATH = BASE + "api/core/planner/audit?limit=300";
+  var CURRENT_PATH = BASE + "api/core/views/current";
 
   // 分区绕圈顺序的存储键。这是**第三版语义**了，每次换 key 且不迁移旧值：
   //   v1 labelOffsets —— 只挪标签（人类否掉：「不只是改变分区名位置」）

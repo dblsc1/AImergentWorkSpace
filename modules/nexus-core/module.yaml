@@ -12,13 +12,15 @@ kind: backend          # backend | static | assembly
 service:
   # 构建上下文相对本文件所在目录。**不复制代码** —— 组装层直接指过来。
   build: code/backend
-  image: nexus-core:local
+  image: ${HONEYCOMB_PROJECT:-honeycomb}-nexus-core:local   # 带项目名：同机多套部署不互相顶替镜像
   port: 8000
   healthcheck: /api/core/health
   env:
     NEXUS_MONGO_URI: mongodb://mongo:27017
-    NEXUS_DB_NAME: ${DB_NAME:-honeycomb}
-    NEXUS_TZ: ${TZ:-Asia/Shanghai}
+    NEXUS_DB_NAME: ${HONEYCOMB_DB_NAME:-honeycomb}
+    NEXUS_TZ: ${HONEYCOMB_TZ:-Asia/Shanghai}
+    # 多用户部署设 1：请求没带租户就 401，而不是悄悄落进共用的 u_local。
+    NEXUS_TENANT_STRICT: ${NEXUS_TENANT_STRICT:-0}
   # 需要的外部依赖（安装器据此决定要不要起 mongo）
   requires:
     - mongo
@@ -29,6 +31,14 @@ routes:
   - prefix: /api/core/
     upstream: /api/core/
     gated: true
+  # 顶栏计时芯片（网关注入的共享顶栏 modules/nginx-docker/static/navbar.js，约 10s 轮询一次）固定打这一个地址。
+  # 设门——它回的是「你此刻在做什么」，是用户数据；但未登录或后端挂了都不跳
+  # 登录页，回 degraded 这份 JSON，顶栏渲染成空。给轮询 XHR 回 302 毫无意义。
+  - prefix: /__cockpit/current
+    exact: true
+    upstream: /api/core/views/current
+    gated: true
+    degraded: '{"degraded":true,"running":false}'
 
 # 无前端。nexus-core 是纯 API。
 static: []

@@ -52,7 +52,7 @@ def rebuild(only: str | None = None) -> dict[str, int]:
         clear()  # 先清目标投影再重放（契约硬约束），不在已有计数上累加
 
     counts = dict.fromkeys(names, 0)
-    for envelope in events_service.iter_all_events():
+    for envelope in events_service.iter_all_events(all_tenants=True):  # 全体租户，见该函数
         routed = DISPATCH.get(envelope.get("type", ""), ())  # 只读 DISPATCH，不改它
         for name in names:
             handler, _ = _TARGETS[name]

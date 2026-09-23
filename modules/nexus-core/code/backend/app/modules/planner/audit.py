@@ -23,7 +23,9 @@ from .errors import InvalidInputError
 OP_CREATE = "create"
 OP_UPDATE = "update"
 OP_DELETE = "delete"
-VALID_OPS = (OP_CREATE, OP_UPDATE, OP_DELETE)
+#: 整库快照恢复（契约 v1.9）：一次写满 zones/projects/tasks，只对空实例开放。
+OP_RESTORE = "restore"
+VALID_OPS = (OP_CREATE, OP_UPDATE, OP_DELETE, OP_RESTORE)
 
 OUTCOME_APPLIED = "applied"
 OUTCOME_DENIED = "denied"

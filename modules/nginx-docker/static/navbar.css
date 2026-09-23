@@ -1,20 +1,17 @@
-/* 驾驶舱共享顶栏 v2 —— 由 nginx sub_filter 注入各页。
+/* 共享顶栏 —— 由网关（nginx sub_filter）注入每个设了门的前端页面。
  *
- * v2（cockpit-v1 升级，2026-08-08）：从「一条轨 + 三个节点」的旧设计换成
- * PRD F-NAV-1「品牌 · 三页签（当前页下划线）· 录制胶囊 · 主题控件 · 退出」。
- * 对外不变量没变（契约 v0.6 仍然逐字钉着）：根元素还是
- * `nav.ckpt-nav[data-ckpt-nav]`，全部 DOM class 仍以 `ckpt-` 起头，
- * `data-ckpt-timer` 仍是 idle/running/degraded 三态互斥。
+ * 品牌 · 按已装前端生成的页签（当前页下划线）· 录制胶囊 · 主题控件 · 退出。
+ * 对外不变量：根元素是 `nav.ckpt-nav[data-ckpt-nav]`，全部 DOM class 以
+ * `ckpt-` 起头，`data-ckpt-timer` 是 idle/running/degraded 三态互斥。
  *
- * **本文件不再自己定义颜色**（v1 那份「自给自足」的理由——各页
- * 用的不是同一套 token——在 v0.6 之后不成立了：三页现在都被注入同一份
- * `/__cockpit/tokens.css`，且加载顺序在 navbar.css 之前，见
- * nginx/templates/cockpit.conf.template 的注入顺序）。样式只准 `var(--…)`，
+ * **本文件不自己定义颜色**：各页都被注入同一份 `/__cockpit/tokens.css`，
+ * 且加载顺序在 navbar.css 之前（见
+ * nginx/templates/cockpit.conf.template 的注入顺序），样式只准 `var(--…)`，
  * 唯一豁免是这行注释本身不算代码（design-tokens-v1.md §2「模块 CSS/JS 禁裸 hex」）。
  */
 
 /* 给固定顶栏让位。
- * **必须同时设 box-sizing: border-box**：三页的 body 都是 min-height:100vh，
+ * **必须同时设 box-sizing: border-box**：各页的 body 常见 min-height:100vh，
  * 不改盒模型的话这段高度会加在 100vh 之外，凭空多出一条滚动条。 */
 body {
   box-sizing: border-box;
@@ -34,8 +31,8 @@ html { scroll-padding-top: var(--ckpt-h, 52px); }
  * position: fixed 不是为了「吸顶」好看，是**被 ring 逼的**：ring 的 body 是
  * display:grid + place-items:center，任何在流内的 body 子元素都会变成被居中的
  * grid item（顶栏会跑到页面正中间）。fixed 定位的元素是 out-of-flow，
- * **不构成 grid item**，三页因此可以共用一份 CSS。
- * z-index 60：页面内实测最大 z-index 是 40（各页的 toast 与浮层）。 */
+ * **不构成 grid item**，各页因此可以共用一份 CSS。
+ * z-index 60：页面内实测最大 z-index 是 40（gantt 的 toast、hive 的浮层）。 */
 .ckpt-nav {
   position: fixed;
   top: 0;
@@ -297,7 +294,7 @@ html { scroll-padding-top: var(--ckpt-h, 52px); }
  * 胶囊缩为点 + 时间，品牌缩为图标，页签保留短词不折行。节点一个都不删。
  * 用 `@media` 视口宽度而不是 `@container`：三个前端页面都没有在任何祖先上声明
  * `container-type`，`.ckpt-nav` 是 `position:fixed` 更不会替它凭空建一个——
- * 写 `@container` 在这三页里是一段永远不触发的死代码。 */
+ * 写 `@container` 在这些页面里是一段永远不触发的死代码。 */
 @media (max-width: 560px) {
   :root { --ckpt-h: 42px; }
   .ckpt-nav { padding: 0 10px; gap: 8px; }

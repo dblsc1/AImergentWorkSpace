@@ -6,7 +6,8 @@
     docker compose up -d
     read -rsp '口令: ' HONEYCOMB_PASSWORD && export HONEYCOMB_PASSWORD
     python3 seed/seed_demo.py                       # 默认打 http://127.0.0.1:8800
-    python3 seed/seed_demo.py --base http://其他地址  # 换入口
+    python3 seed/seed_demo.py --base http://其他地址  # 换入口（挂子路径就带上：http://host/Cockpit）
+    HONEYCOMB_USER=alice python3 seed/seed_demo.py  # 账号登录（auth.gate v1.1），灌进这个账号的数据
     python3 seed/seed_demo.py --big                 # 大盘：10 分区 / 40 项目，看布局压力
 
 做四件事：
@@ -32,6 +33,7 @@ import json
 import os
 import random
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
@@ -167,9 +169,23 @@ SESSIONS = [
 # 不带会话 cookie 的 /api/core/** 请求会被 302 到 /login/，
 # 然后 json.loads 在登录页的 HTML 上炸掉——报错信息还完全看不出是没登录。
 # 踩过一次，所以 login() 在任何请求之前先跑。
+#
+# 会话 cookie 默认带 Secure（deploy/.env 的 AUTH_COOKIE_SECURE=true）。浏览器把
+# 127.0.0.1 / localhost 当安全来源，http 上照样回传它；标准库只在 https 上回传。
+# 不照浏览器的规矩办，照 README 起的默认站点上，登录成功之后每个请求都被踢回
+# /login/（2026-09-22 按 README 从零实跑撞上）。
+_LOOPBACK = ("127.0.0.1", "localhost", "::1")
+
+
+class _LoopbackIsSecure(http.cookiejar.DefaultCookiePolicy):
+    def return_ok_secure(self, cookie, request):
+        host = urllib.parse.urlsplit(request.get_full_url()).hostname
+        return host in _LOOPBACK or super().return_ok_secure(cookie, request)
+
+
 _OPENER = urllib.request.build_opener(
     urllib.request.ProxyHandler({}),
-    urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),
+    urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar(_LoopbackIsSecure())),
 )
 
 
@@ -180,6 +196,12 @@ def api(base: str, path: str, method: str = "GET", body: dict | None = None):
                                  headers={"Content-Type": "application/json"})
     try:
         with _OPENER.open(req, timeout=15) as r:
+            if "/login/" in urllib.parse.urlsplit(r.geturl()).path:
+                raise SystemExit(
+                    f"[{method} {path}] 登录过了，请求却被踢回登录页：会话 cookie 没带上。\n"
+                    "cookie 默认带 Secure，只在 https 或本机地址（127.0.0.1 / localhost）上回传。\n"
+                    "非本机的 http 地址：前面加 TLS；只在内网调试时才在 deploy/.env 设 AUTH_COOKIE_SECURE=false。"
+                )
             raw = r.read()
             return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as e:
@@ -189,13 +211,14 @@ def api(base: str, path: str, method: str = "GET", body: dict | None = None):
         raise SystemExit(f"连不上 {url}：{e.reason}\n先确认 `docker compose up -d` 起来了。") from None
 
 
-def login(base: str, password: str) -> None:
+def login(base: str, password: str, username: str = "") -> None:
     """先过门。cookie 由 _OPENER 的 cookie 罐自动带到后续请求上。
 
     口令不从命令行传（会留在 shell 历史和 ps 输出里），只从环境变量读。
     """
     url = base.rstrip("/") + "/api/auth/login"
-    data = json.dumps({"password": password}).encode()
+    body = {"username": username, "password": password} if username else {"password": password}
+    data = json.dumps(body).encode()
     req = urllib.request.Request(url, data=data, method="POST",
                                  headers={"Content-Type": "application/json"})
     try:
@@ -205,8 +228,8 @@ def login(base: str, password: str) -> None:
     except urllib.error.HTTPError as e:
         if e.code == 401:
             raise SystemExit(
-                "登录失败：口令不对。\n"
-                "口令从环境变量 HONEYCOMB_PASSWORD 读，要和 deploy/.env 里的一致。"
+                "登录失败：账号或口令不对。\n"
+                "口令从环境变量 HONEYCOMB_PASSWORD 读，账号从 HONEYCOMB_USER 读（共享口令模式不设）。"
             ) from None
         raise SystemExit(f"登录 HTTP {e.code}") from None
     except urllib.error.URLError as e:
@@ -236,7 +259,7 @@ def main() -> None:
             "不接受空口令——auth 服务对空口令返回 401，这里提前说清楚，\n"
             "比让你去猜一个 302 到登录页的 JSON 解析错误强。"
         )
-    login(args.base, password)
+    login(args.base, password, os.environ.get("HONEYCOMB_USER", "").strip())
 
     tree = api(args.base, "/api/core/views/tree")
     zone_id = {z["name"]: z["id"] for z in tree.get("zones", [])}

@@ -60,7 +60,7 @@ UMD 包装、Node 里可 require 的有：`data.js` `gtd-data.js` `rails.js`
 
 **样式**：`tokens.css`（设计变量兜底块）→ `style.css` → `hex.css` →
 `hex-center-ctl.css` / `hex-zone-plan.css` / `review.css`。
-`shared/` 是顶栏与站点图标。
+顶栏、站点图标与全站设计 tokens 由网关注入（`modules/nginx-docker`），本模块不自带。
 
 ## 避坑
 
@@ -102,11 +102,7 @@ UMD 包装、Node 里可 require 的有：`data.js` `gtd-data.js` `rails.js`
 
 - 注释与文件头已统一成 `hive`，但**运行时标识符仍是 `table` 时代的名字**，按「只改目录名、
   不改运行时标识符」的裁决**故意保留**：`window.NexusTable*` / `window.NexusTableHex*` 一族、
-  localStorage 键 `table-tree-cache-v1`、共享顶栏里写死的 `/hive/` 路由。
-  前两个改了要么牵动全部互相引用的文件、要么让已有用户的本地缓存失效；
-  第三个是路由，属于组装层的事，见下一条。
-- **共享顶栏写死了 `/hive/`**（`shared/navbar.js` 的 `STOPS` 与品牌链接）。
-  本模块实际挂在哪个前缀由组装层决定，两者对不上「任务」这一栏就是死链。
-  接线时要么把本模块挂到 `/hive/`，要么同时改这两处。
+  localStorage 键 `table-tree-cache-v1`。
+  改了要么牵动全部互相引用的文件、要么让已有用户的本地缓存失效。
 - `hex.css` 978 行、`hex-data.js` 939 行、`hex-app.js` 885 行，都逼近 1000 行。
   下一次往这三个文件里加东西之前先看有没有天然的缝可以拆。

@@ -9,6 +9,9 @@
 // 除了 init() 收下的那几个回调，这个文件不认识 hex-app 里的任何东西。
 (function () {
   "use strict";
+  // 站点前缀（gateway.v1）：网关往页面注入 HONEYCOMB_BASE，整站挂在子路径下时
+  // 所有请求与跳转都从它拼。没注入（单测、直接打开文件）就是 "/"。
+  var BASE = (typeof self !== "undefined" && self.HONEYCOMB_BASE) || "/";
 
   var H = window.NexusTableHexData;
   var D = window.NexusTableData;
@@ -30,8 +33,8 @@
   var LONGPRESS_SLOP = 10;  // 按下后挪超过这么多像素 = 想拖/想滚，不是想长按
   var FLY_MS = 620;
   var SWELL_MS = 3000;      // 圆环膨胀停留多久（人类定的：3 秒）
-  var TIMER_START = "/api/core/timer/start";
-  var TIMER_STOP = "/api/core/timer/stop";
+  var TIMER_START = BASE + "api/core/timer/start";
+  var TIMER_STOP = BASE + "api/core/timer/stop";
 
   // ── 聚焦：展开时本分区亮，其余分区灰 ─────────────────────────
   //

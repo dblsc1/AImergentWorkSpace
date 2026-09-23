@@ -18,6 +18,7 @@ from __future__ import annotations
 from pymongo.errors import DuplicateKeyError
 
 from ...repo import get_db
+from ...tenant import scope
 
 _COLLECTION = "events"
 _indexes_ready = False
@@ -54,14 +55,14 @@ def find_by_dedupe(user: str, source: str, dedupe_key: str) -> dict | None:
     return doc
 
 
-def query_events(type_: str | None = None) -> list[dict]:
+def query_events(type_: str | None = None, *, all_tenants: bool = False) -> list[dict]:
     """档案读端（contract.md v0.6）的唯一读入口。按 ``type`` 过滤（可选），
 
     剔除 ``_id``，返回全部命中文档——时间范围过滤、排序、分页交给 ``service.py``：
     ``time`` 是带任意时区偏移的 ISO8601 字符串，对它做字典序比较在跨时区时不可靠，
     必须先解析成 ``datetime`` 才能比，这不该下推进 mongo 查询。
     """
-    filt: dict = {}
+    filt: dict = {} if all_tenants else scope()
     if type_:
         filt["type"] = type_
     return list(_col().find(filt, {"_id": 0}))

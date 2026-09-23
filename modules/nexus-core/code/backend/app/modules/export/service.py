@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from ...config import LOCAL_USER
+from ...tenant import current as current_tenant
 from ..events import service as events_service
 from ..planner import service as planner_service
 from ..projector.handlers import current as current_projection
@@ -40,8 +40,8 @@ def export_all() -> dict:
         "tasks": planner_service.list_tasks(),
         "events": events_service.iter_all_events(),
         "projections": {
-            "proj_current": current_projection.read_current(LOCAL_USER),
-            "proj_daily_stats": daily_stats_projection.read_daily_stats(LOCAL_USER),
+            "proj_current": current_projection.read_current(current_tenant()),
+            "proj_daily_stats": daily_stats_projection.read_daily_stats(current_tenant()),
         },
         "exportedAt": datetime.now(timezone.utc).isoformat(),
     }

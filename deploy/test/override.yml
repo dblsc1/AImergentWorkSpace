@@ -1,0 +1,31 @@
+# gateway.v1 契约测试：部署方不改本仓文件，只靠 override + .env 接自己的东西。
+#
+#   · 认证服务换成另一个容器（auth2，同一份占位件），AUTH_UPSTREAM 指过去，
+#     缺省的占位认证服务 auth 整个关掉（profiles）
+#   · HONEYCOMB_EXTRA_ROUTES_DIR 指向 deploy/test/extra（见 .env）
+#
+# 用法（在 deploy/ 下）：docker compose -f docker-compose.yml -f test/override.yml up -d --wait
+services:
+  auth:
+    profiles: [disabled]
+  auth2:
+    image: python:3.12-slim
+    networks: [honeycomb-net]
+    volumes:
+      - ../contracts/auth.gate.v1/stub/auth_stub.py:/app/auth_stub.py:ro
+    command: python /app/auth_stub.py
+    environment:
+      AUTH_PASSWORD: ${HONEYCOMB_PASSWORD:-}
+      AUTH_BIND: 0.0.0.0:8010
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8010/api/auth/health').status==200 else 1)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  web:
+    depends_on:
+      auth2:
+        condition: service_healthy
+    environment:
+      AUTH_UPSTREAM: auth2:8010

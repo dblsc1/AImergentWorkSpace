@@ -1,16 +1,15 @@
-/* 驾驶舱共享顶栏 v2 —— 由 nginx sub_filter 注入各页。
+/* 共享顶栏 —— 由网关（nginx sub_filter）注入每个设了门的前端页面。
  *
- * v0.1 发布版：品牌 + 两页签（任务 / 计时）+ 计时芯片 + 主题面板。无登录层，故无退出。
- * （PRD F-NAV-1..5）。对外不变量与 v0.4/v0.5 相同，逐条延续：
+ * 品牌 + 页签（按已装前端） + 录制胶囊 + 主题面板 + 退出。对外不变量：
  *
- *   · 根元素仍是 nav.ckpt-nav[data-ckpt-nav]，全部 class 仍以 ckpt- 起头；
+ *   · 根元素是 nav.ckpt-nav[data-ckpt-nav]，全部 class 以 ckpt- 起头；
  *   · 只对 /__cockpit/current 发 GET（约 10s 一次），先判 degraded 再读 running，
  *     退出发 POST /api/auth/logout 后跳 /login/，不发任何其它非 GET 请求；
  *   · 顶栏自己的网络失败不写 console.error——这条由网关侧 /__cockpit/current
- *     的恒 200 兑现，不是靠这里的 .catch()（契约 v0.4/v0.5 已把因果讲透）。
+ *     的恒 200 兑现，不是靠这里的 .catch()（见 contract.md「HTML 响应体注入」节）。
  *
- * 新增：主题面板（明/暗/跟随 + 三色预设），写 localStorage["cockpit-theme"] /
- * ["cockpit-accent"]，监听 storage 事件做多窗即时同步（PRD F-THEME-3）。
+ * 主题面板（明/暗/跟随 + 三色预设），写 localStorage["cockpit-theme"] /
+ * ["cockpit-accent"]，监听 storage 事件做多窗即时同步。
  * `</head>` 处另有一段独立的内联 boot 脚本（见 cockpit.conf.template）负责首帧
  * 防白闪；本文件只负责「用户在这一页手动切换时」的后续更新，两者分工不重叠：
  * boot 脚本只在页面加载时跑一次，本文件在页面存活期间持续响应交互与跨窗事件。
@@ -18,14 +17,19 @@
 (function () {
   'use strict';
 
-  var STOPS = [
-    { href: '/hive/', label: '任务' },
-    { href: '/ring/',  label: '计时' }
-  ];
+  // 页签不写死：网关按「装了哪些前端」在 </head> 前注入 window.HONEYCOMB_NAV
+  // （各模块 module.yaml 的 nav 字段）。没装的前端就没有页签，不出死链。
+  //   { home: '/hive/', timer: '/ring/', tabs: [{ href, label }, ...] }
+  // 站点前缀（gateway.v1）：整站挂子路径时网关注入 HONEYCOMB_BASE，页签 href 已含前缀。
+  var BASE = window.HONEYCOMB_BASE || '/';
+  var NAV = window.HONEYCOMB_NAV || { home: BASE, timer: null, tabs: [] };
+  var STOPS = NAV.tabs || [];
 
   var POLL_MS = 10000;             // 拉计时状态：views 本身聚合周期就有这么长
   var TICK_MS = 1000;              // 本地走秒：用时每秒更新，不依赖网络往返
-  var CURRENT_URL = '/__cockpit/current';   // 恒 200 的网关端点，见契约 v0.5/v0.6
+  var CURRENT_URL = BASE + '__cockpit/current';   // 恒 200 的网关端点，见契约 v0.5/v0.6
+  var LOGOUT_URL = BASE + 'api/auth/logout';
+  var LOGIN_URL = BASE + 'login/';
 
   var THEME_KEY = 'cockpit-theme';     // localStorage：light|dark|auto
   var ACCENT_KEY = 'cockpit-accent';   // localStorage：teal|violet|amber
@@ -36,7 +40,7 @@
   var WORD_DEGRADED = '状态未知';
   var HINT_DEGRADED = '后端暂时联系不上，计时状态未知 —— 这不表示你没在计时';
 
-  // 注入点已由 nginx 限定在三个页面，这里再挡一道：还没进门就给导航是错的（A1），
+  // 注入点已由网关限定在设了门的前端页面，这里再挡一道：还没进门就给导航是错的（A1），
   // 登录页出现「退出」与主题面板更荒唐。
   if (document.body === null) { return; }
   if (window.__ckptNavMounted) { return; }        // sub_filter 只注一次，这条是防御
@@ -120,10 +124,10 @@
   });
 
   /* ── 组装 DOM ──────────────────────────────────────────────────
-   * 全程不使用 [hidden] 属性，显隐一律走 class。别处有遍历全部 [hidden]
-   * 元素的回归断言，注入带 hidden 的新 DOM 会把它打乱。 */
+   * 全程不使用 [hidden] 属性，显隐一律走 class。gantt 仓有一条遍历全部 [hidden]
+   * 元素的回归断言，注入带 hidden 的新 DOM 会把它打乱，而我们无权改别人仓里的测试。 */
   var nav = el('nav', 'ckpt-nav');
-  nav.setAttribute('aria-label', '驾驶舱导航');
+  nav.setAttribute('aria-label', 'HoneyComb 导航');
   nav.setAttribute('data-ckpt-nav', '');
   // 首帧取 degraded：第一次 poll 回来之前我们确实还不知道，写 idle 等于在没有依据的
   // 情况下断言「你没在计时」（v0.5 就是这么定的，v2 沿用）。
@@ -131,7 +135,7 @@
 
   // 品牌
   var brand = el('a', 'ckpt-brand');
-  brand.href = '/hive/';
+  brand.href = NAV.home || BASE;
   brand.setAttribute('aria-label', 'HoneyComb');
   brand.appendChild(svg(
     { width: '20', height: '20', viewBox: '0 0 20 20', fill: 'none', 'aria-hidden': 'true' },
@@ -164,7 +168,7 @@
 
   // 录制胶囊
   var chip = el('a', 'ckpt-chip');
-  chip.href = '/ring/';
+  chip.href = NAV.timer || NAV.home || BASE;
   chip.setAttribute('data-ckpt-chip', '');
   chip.setAttribute('aria-label', '录制状态，点击前往计时页');
   var chipDot = el('span', 'ckpt-dot');
@@ -255,8 +259,12 @@
     if (e.key === 'Escape') { closeThemePanel(); }
   });
 
-  // v0.1 发布版没有登录层，所以顶栏也没有「退出」。
-  // （开发版里这里会插一个按钮，POST /api/auth/logout 后回登录页。）
+  // 退出
+  var exit = el('button', 'ckpt-exit');
+  exit.type = 'button';
+  exit.setAttribute('data-ckpt-exit', '');
+  exit.appendChild(el('span', 'ckpt-word', '退出'));
+  right.appendChild(exit);
 
   nav.appendChild(right);
 
@@ -335,4 +343,14 @@
   poll();
   setInterval(poll, POLL_MS);
   setInterval(paint, TICK_MS);
+
+  /* ── 退出 ─────────────────────────────────────────────────────
+   * POST /api/auth/logout -> 204 + 清 cookie，然后回登录页。失败也回登录页：
+   * cookie 可能已经被清掉了，把人留在一个已经登出的页面更糟。 */
+  exit.addEventListener('click', function () {
+    exit.disabled = true;
+    fetch(LOGOUT_URL, { method: 'POST', credentials: 'same-origin' })
+      .catch(function () { /* 网络失败照样回登录页，见上 */ })
+      .then(function () { location.assign(LOGIN_URL); });
+  });
 })();

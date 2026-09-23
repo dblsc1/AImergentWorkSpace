@@ -1,0 +1,16 @@
+# ring · 安装清单
+#
+# 契约（module_docs/contract.md）说的是「对外行为」，本文件说的是「怎么把它跑起来」。
+# 纯前端：没有进程，只有一个目录交给 nginx serve，数据全走 /api/core/。
+
+name: ring
+summary: 计时台。贡献圆环 + 开始/停止/取消/补登。
+kind: static
+
+static:
+  - prefix: /ring/
+    root: code/frontend
+    index: project-task-contribution-ring.html
+    gated: true
+    nav: 计时         # 顶栏页签
+    timer: true       # 顶栏计时芯片点过去就是这一页

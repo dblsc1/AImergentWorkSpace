@@ -1,0 +1,99 @@
+# 发布：main 上打 vX.Y.Z 标签即触发。
+#
+#   1. 构建三张镜像（nexus-core / web / auth），amd64 + arm64，推到 ghcr.io/dblsc1/，
+#      标签 X.Y.Z 与 latest；
+#   2. 把 release/ 下的 compose 与两个安装脚本里的 __VERSION__ / __TAG__ 换成本版，
+#      连同源码包一起挂到 GitHub Release。
+#
+# 发布前的「装得起来吗」由 ci.yml 的「发布包」job 在每个 PR 上验（本地构建同样三张镜像，
+# 用同样的安装脚本装一遍再冒烟），这里不重复。
+name: release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write     # 建 Release、传附件
+  packages: write     # 推 ghcr
+
+jobs:
+  images:
+    name: 镜像 · ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - image: honeycomb-nexus-core
+            context: modules/nexus-core/code/backend
+            file: modules/nexus-core/code/backend/Dockerfile
+          - image: honeycomb-web
+            context: .
+            file: release/web.Dockerfile
+          - image: honeycomb-auth
+            context: .
+            file: release/auth.Dockerfile
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: 版本号
+        id: v
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/dblsc1/${{ matrix.image }}:${{ steps.v.outputs.version }}
+            ghcr.io/dblsc1/${{ matrix.image }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.v.outputs.version }}
+
+  release:
+    name: GitHub Release
+    needs: images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: 填版本号
+        run: |
+          v=${GITHUB_REF_NAME#v}
+          mkdir dist
+          sed "s/__VERSION__/$v/g" release/docker-compose.yml > dist/docker-compose.yml
+          sed "s/__TAG__/$GITHUB_REF_NAME/g" release/honeycomb-install.sh > dist/honeycomb-install.sh
+          sed "s/__TAG__/$GITHUB_REF_NAME/g" release/honeycomb-install.ps1 > dist/honeycomb-install.ps1
+          ! grep -l '__VERSION__\|__TAG__' dist/*
+      - name: 建 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "HoneyComb $GITHUB_REF_NAME" \
+            --notes-file release/NOTES.md \
+            --verify-tag
+
+  public-check:
+    # ghcr 新包缺省私有，小白匿名拉不下来（安装脚本在 pull 那一步失败）。
+    # 可见性只能在网页上改（没有 API），这里至少让它响亮地红，而不是等用户来报。
+    name: 镜像能匿名拉吗
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: 匿名 manifest
+        run: |
+          v=${GITHUB_REF_NAME#v}; bad=0
+          for i in honeycomb-nexus-core honeycomb-web honeycomb-auth; do
+            if docker manifest inspect "ghcr.io/dblsc1/$i:$v" >/dev/null 2>&1; then echo "ok    $i"
+            else echo "::error::ghcr.io/dblsc1/$i 匿名拉不到：到 GitHub → Packages → $i → Package settings → Change visibility 改成 Public"; bad=1; fi
+          done
+          exit $bad

@@ -1,0 +1,17 @@
+# hive · 安装清单
+#
+# 契约（module_docs/contract.md）说的是「对外行为」，本文件说的是「怎么把它跑起来」。
+# 纯前端：没有进程，只有一个目录交给 nginx serve，数据全走 /api/core/。
+
+name: hive
+summary: 任务蜂巢。分区→项目→任务的六边形主界面，计时、计划、回顾都从这里进。
+kind: static
+
+static:
+  # 目录只读挂进网关，不复制代码。前缀要和页面里的链接一致（顶栏写死 /hive/）。
+  - prefix: /hive/
+    root: code/frontend
+    index: index.html
+    gated: true       # 页面本身也设门：未登录直接去登录页，别先渲染一个空壳再满屏 401
+    home: true        # 主界面：访问 / 跳这里
+    nav: 任务         # 顶栏页签

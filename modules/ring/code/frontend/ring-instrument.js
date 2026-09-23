@@ -35,6 +35,9 @@
 
 (function () {
   "use strict";
+  // 站点前缀（gateway.v1）：网关往页面注入 HONEYCOMB_BASE，整站挂在子路径下时
+  // 所有请求与跳转都从它拼。没注入（单测、直接打开文件）就是 "/"。
+  var BASE = (typeof self !== "undefined" && self.HONEYCOMB_BASE) || "/";
 
   const POLL_INTERVAL_MS = 7000; // 5–10 秒一次，取中间值，沿用既有值
 
@@ -118,7 +121,7 @@
 
   async function loadGanttToday() {
     try {
-      const res = await fetch("/api/core/views/gantt");
+      const res = await fetch(BASE + "api/core/views/gantt");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       todayByProject = computeTodaySnapshot(await res.json());
     } catch (err) {
@@ -366,7 +369,7 @@
   async function fetchAndRender() {
     let current;
     try {
-      const res = await fetch("/api/core/views/current");
+      const res = await fetch(BASE + "api/core/views/current");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       current = await res.json();
       window.ringCurrentState = current; // ring-countdown.js 的唯一数据入口

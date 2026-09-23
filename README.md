@@ -10,6 +10,28 @@ where you planned it to go.
 
 ---
 
+## Just want to use it
+
+Only Docker is needed (Docker Desktop on Windows / macOS). No source, no Python.
+
+```sh
+# Linux / macOS
+curl -fsSL https://github.com/dblsc1/AImergentWorkSpace/releases/latest/download/honeycomb-install.sh | sh
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://github.com/dblsc1/AImergentWorkSpace/releases/latest/download/honeycomb-install.ps1 -OutFile honeycomb-install.ps1
+powershell -ExecutionPolicy Bypass -File .\honeycomb-install.ps1
+```
+
+It installs into `./honeycomb`, prints a login password once (also kept in
+`honeycomb/.env`) and opens on <http://127.0.0.1:8800/>. Running the same script
+from a newer release upgrades in place and keeps your data. Images come from
+`ghcr.io/dblsc1/honeycomb-*`; see `release/`.
+
+The rest of this README is the source route: clone, read, change, run.
+
 ## Thirty seconds to running
 
 ```sh
@@ -27,8 +49,8 @@ no `pip install`.
 
 ### A fresh install is an empty database
 
-Logging in gives you `{"zones":[],"projects":[]}` and nothing to look at. Fill it
-with made-up demo data:
+Logging in takes you to the task hive (`/hive/`), but a new database is empty.
+Fill it with made-up demo data:
 
 ```sh
 read -rsp 'HoneyComb password: ' HONEYCOMB_PASSWORD && export HONEYCOMB_PASSWORD
@@ -55,10 +77,16 @@ the internet:
 - **put TLS in front of it** (Caddy, nginx, Traefik — your call)
 - don't expose port 80 directly
 
-The login gate is single-password, and the cookie carries `Secure` by default,
-which means **browsers will not store it over plain HTTP**. For local HTTP
-debugging set `AUTH_COOKIE_SECURE=false` explicitly. Never set that on a public
-host.
+The login gate is single-password, and the cookie carries `Secure` by default.
+Opening it at `127.0.0.1` / `localhost` is fine: browsers treat the local machine
+as a secure origin. **Over plain HTTP on a LAN IP, browsers will not store it**:
+put TLS in front, and only for LAN debugging set `AUTH_COOKIE_SECURE=false`.
+Never set that on a public host.
+
+### Upgrading
+
+After `git pull`, run `docker compose up -d` as usual. nexus-core is rebuilt from
+the new code (cached, so it is quick). Data lives in the volume and is not touched.
 
 ---
 
@@ -118,26 +146,69 @@ never depends on a `pip install`.
 
 | | |
 |---|---|
-| `modules/nexus-core` | The event-sourced kernel (FastAPI + MongoDB). Provides 11 contracts: timing, task CRUD, the event write entry point, and read projections for tree / ring / gantt / export. |
+| `modules/nexus-core` | The event-sourced kernel (FastAPI + MongoDB). Provides 13 contracts: timing, task CRUD, the event write entry point and archive read, and read projections for tree / ring / gantt / export. |
+| `modules/hive` | The task hive (`/hive/`), the main screen. A static frontend; all data goes through `/api/core/`. |
+| `modules/ring` | The timer ring (`/ring/`): contribution ring plus start / stop / cancel / backfill. A static frontend. |
+| `modules/nginx-docker` | The gateway's shared parts: the navbar, design tokens, favicons, and the gate and inject snippets. The gateway injects the navbar into every frontend, with one tab per installed frontend. |
 | `contracts/yq-event.v1` | The event envelope spec. **The core contract of the whole system** — every write is an event posted into this envelope. |
 | `contracts/auth.gate.v1` | The login gate contract, a stub implementation (standard library only, zero dependencies), and a minimal login page. |
+| `contracts/gateway.v1` | The gateway's public surface: swap the auth service, swap the login page, add your own routes, read the current tenant — without editing any file in this repo. |
 
-**Not wired up yet**: both frontend modules — the task hive (`/hive/`) and the
-timer ring (`/ring/`) — are in `modules/`, but neither is served. The assembly
-layer keeps their locations commented out until each gets a `module.yaml`.
+Both frontends sit behind the login gate: open `http://127.0.0.1:8800/`, log
+in, and you land on the task hive. The frontend directories are mounted into
+nginx read-only, so an edit under `modules/<name>/code/frontend/` shows up on
+the next browser refresh.
 
 ---
 
 ## The login gate is a door, not an account system
 
-The stub implementation of `contracts/auth.gate.v1` is a **single shared
-password**. It deliberately has **no** registration, no multi-user support, no
-password recovery, no permission tiers, and no third-party login.
+The stub implementation of `contracts/auth.gate.v1` does two things: a
+**single shared password** (everyone shares one set of data), and simple
+**username + password accounts** (each account gets its own data). It
+deliberately has **no** self-registration, no password recovery, no permission
+tiers, and no third-party login.
+
+### Several accounts, each with its own data
+
+For a household or a small team on a LAN. In `deploy/`:
+
+```sh
+# .env: leave HONEYCOMB_PASSWORD empty, set NEXUS_TENANT_STRICT=1
+docker compose run --rm auth python /app/auth_stub.py adduser alice   # asks for the password twice
+docker compose run --rm auth python /app/auth_stub.py adduser bob
+docker compose up -d
+```
+
+The login page then asks for an account. `passwd <name>` changes a password,
+`deluser <name>` removes an account (its data stays), `users` lists them;
+changing or deleting logs that account out everywhere within two seconds.
+Switching from the shared password and want to keep your existing data?
+`adduser <name> --id u_local` hands that data to the account.
+`NEXUS_TENANT_STRICT=1` makes the backend refuse any request that arrives
+without an account instead of quietly dropping it into the shared data.
 
 The reason for drawing the line there: an open-source release should not ship a
-real account system bolted on. If you need multi-user, replace that one
-implementation — as long as it still satisfies the same contract's four
-endpoints and three invariants, **the assembly layer needs no changes at all**.
+real account system bolted on. If you need more, replace that one
+implementation — as long as it still satisfies the same contract's endpoints
+and three invariants, **the assembly layer needs no changes at all**.
+How to plug it in (`AUTH_UPSTREAM`, your own login page, switching the stub off)
+is in `contracts/gateway.v1/contract.md`.
+
+### Serving it under a sub-path
+
+Behind another reverse proxy at `https://example.com/Cockpit/`? Set
+`HONEYCOMB_BASE_PATH=/Cockpit/` in `.env` and have the outer proxy pass
+`/Cockpit/` through unchanged. Pages, API, redirects and the login cookie all
+follow the prefix. See `contracts/gateway.v1/contract.md`, section 7.
+
+### Adding your own routes or frontend
+
+Put a directory outside the repo with `*.conf.template` files (nginx location
+blocks) and point `HONEYCOMB_EXTRA_ROUTES_DIR` at it in `.env`. One line,
+`include /etc/nginx/honeycomb/gate.inc;`, puts a route behind the same login
+gate; add `inject.inc` and the page gets the shared navbar. See
+`contracts/gateway.v1/contract.md`.
 
 To write your own, read the "what a replacement must satisfy" section of
 `contracts/auth.gate.v1/contract.md`.

@@ -19,7 +19,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from ...config import LOCAL_USER, settings
+from ...config import settings
+from ...tenant import current as current_tenant
 from ...timeutil import local_date
 from ..planner import service as planner_service
 from ..projector.handlers import current as current_projection
@@ -47,7 +48,7 @@ def _share(part: int, whole: int) -> float:
 
 
 def get_current() -> CurrentOut:
-    state = timer_service.get_running_state(LOCAL_USER)
+    state = timer_service.get_running_state(current_tenant())
     if state is None:
         return CurrentOut(**_IDLE)
 
@@ -63,7 +64,7 @@ def get_current() -> CurrentOut:
         else None
     )
 
-    projection = current_projection.read_current(LOCAL_USER) or {}
+    projection = current_projection.read_current(current_tenant()) or {}
     project_totals: dict[str, int] = projection.get("projects", {})
     task_totals: dict[str, int] = projection.get("tasks", {})
     all_seconds = sum(project_totals.values())
@@ -182,7 +183,7 @@ def get_gantt(date_from: str | None = None, date_to: str | None = None) -> Gantt
     """
     projects = planner_service.list_projects()
     daily_rows = daily_stats_projection.read_daily_stats(
-        LOCAL_USER, date_from=date_from, date_to=date_to
+        current_tenant(), date_from=date_from, date_to=date_to
     )
 
     # 项目层：按 projectId 分组、同一天多条（不同 taskId）求和——契约「甘特读端」

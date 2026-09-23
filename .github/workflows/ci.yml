@@ -1,9 +1,10 @@
 name: ci
 on:
+  # main 是正式版，dev 是下一版的集成线：功能分支先合进 dev。
   pull_request:
-    branches: [main]
+    branches: [main, dev]
   push:
-    branches: [main]
+    branches: [main, dev]
 permissions:
   contents: read
 jobs:
@@ -102,6 +103,213 @@ jobs:
         # 不走 run.sh —— 它在依赖不全时打印装法然后 exit 0，在 CI 里是假绿。
         # screenshot_dropdown.py 是截图工具不是测试，pytest 不会收集它。
         run: python -m pytest . -q -rs
+
+  installer:
+    name: 安装器
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: 装依赖
+        # add 要解析 module.yaml 的嵌套结构，需要 pyyaml；list/plan/doctor 零依赖。
+        run: pip install -q pyyaml pytest
+      - name: 单测
+        run: python -m pytest -q tools modules/nginx-docker/tests contracts/auth.gate.v1/tests
+      - name: 解依赖 + 生成 + 核对
+        run: |
+          ./install.sh plan hive ring
+          ./install.sh add hive ring
+          ./install.sh doctor
+      - name: 两份 compose 都能解析
+        env:
+          HONEYCOMB_PASSWORD: config-check-only
+        run: |
+          docker compose -f deploy/docker-compose.yml config -q
+          docker compose -f deploy/generated/docker-compose.yml config -q
+
+  compose-smoke:
+    # 真起一遍，从门外走：跳登录、登录、两个前端和它们引用的每个资源。
+    # 手写的默认组装与 install.sh 生成的那份各跑一遍——「生成的等价于手写的」
+    # 不能只靠比服务名，得真跑。
+    # 另各按整站挂子路径（HONEYCOMB_BASE_PATH=/Cockpit/，gateway.v1）再跑一遍。
+    name: 组装冒烟 · ${{ matrix.dir }} · ${{ matrix.base }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: [deploy, deploy/generated]
+        base: ['/', '/Cockpit/']
+    env:
+      HONEYCOMB_BASE_PATH: ${{ matrix.base }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        if: matrix.dir == 'deploy/generated'
+        with:
+          python-version: '3.12'
+      - name: 生成组装
+        if: matrix.dir == 'deploy/generated'
+        run: |
+          pip install -q pyyaml
+          ./install.sh add hive ring
+      - name: 写 .env
+        # 只填口令，其余照 README 用默认值（含 Secure cookie）：测的就是用户拿到的那份。
+        run: |
+          sed -e 's/^HONEYCOMB_PASSWORD=.*/HONEYCOMB_PASSWORD=ci-smoke-password/' \
+              deploy/.env.example > ${{ matrix.dir }}/.env
+          echo "HONEYCOMB_BASE_PATH=${{ matrix.base }}" >> ${{ matrix.dir }}/.env
+      - name: 放一个同名的旧镜像
+        # 机器上已有同名镜像时，compose 必须照样按源码构建，不许拿旧的跑。
+        # 这里用 hello-world 冒充：真被拿去跑，nexus-core 健康检查过不了，up 就红。
+        run: |
+          docker pull -q hello-world
+          docker tag hello-world honeycomb-nexus-core:local
+      - name: 起
+        working-directory: ${{ matrix.dir }}
+        run: docker compose up -d --wait --wait-timeout 300
+      - name: 冒烟
+        run: deploy/smoke.sh ci-smoke-password
+      - name: 灌演示数据（照 README）
+        run: HONEYCOMB_PASSWORD=ci-smoke-password python3 seed/seed_demo.py --base "http://127.0.0.1:8800${HONEYCOMB_BASE_PATH%/}"
+      - name: 失败时的日志
+        if: failure()
+        working-directory: ${{ matrix.dir }}
+        run: docker compose logs --no-color
+      - name: 拆
+        if: always()
+        working-directory: ${{ matrix.dir }}
+        run: docker compose down -v
+
+  accounts:
+    # 占位认证的账号+密码登录（auth.gate v1.1）+ nexus-core 按租户分数据（v2.0），
+    # 按 README「多个账号」那一节的步骤真起一遍：两个账号，数据互不可见。
+    name: 多账号
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: deploy
+    steps:
+      - uses: actions/checkout@v7
+      - name: 写 .env（不设共享口令，开严格模式）
+        run: sed -e 's/^NEXUS_TENANT_STRICT=.*/NEXUS_TENANT_STRICT=1/' .env.example > .env
+      - name: 加账号
+        run: |
+          for u in alice bob; do
+            echo ci-accounts-pw | docker compose run --rm -T auth python /app/auth_stub.py adduser "$u"
+          done
+      - name: 起
+        run: docker compose up -d --wait --wait-timeout 300
+      - name: 多账号
+        run: test/accounts.sh ci-accounts-pw
+      - name: 失败时的日志
+        if: failure()
+        run: docker compose logs --no-color
+      - name: 拆
+        if: always()
+        run: docker compose down -v
+
+  release-package:
+    # 发布包（release/）在打标签之前就得证明装得起来：本地构建同样三张镜像，
+    # 用发布出去的同一个安装脚本（sh 与 PowerShell 各一遍）从空目录装，再冒烟；
+    # 再跑一次 sh = 升级路径，必须保留原来的 .env 与数据。
+    name: 发布包
+    runs-on: ubuntu-latest
+    env:
+      HONEYCOMB_NO_PULL: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - name: 构建镜像（与 release.yml 同样三张，只构建本机架构）
+        run: |
+          docker build -q -t ghcr.io/dblsc1/honeycomb-nexus-core:ci modules/nexus-core/code/backend
+          docker build -q -t ghcr.io/dblsc1/honeycomb-web:ci -f release/web.Dockerfile .
+          docker build -q -t ghcr.io/dblsc1/honeycomb-auth:ci -f release/auth.Dockerfile .
+      - name: 填版本号（同 release.yml）
+        run: |
+          mkdir -p "$RUNNER_TEMP/assets"
+          sed 's/__VERSION__/ci/g' release/docker-compose.yml > "$RUNNER_TEMP/assets/docker-compose.yml"
+          sed 's/__TAG__/ci/g' release/honeycomb-install.sh > "$RUNNER_TEMP/assets/honeycomb-install.sh"
+          sed 's/__TAG__/ci/g' release/honeycomb-install.ps1 > "$RUNNER_TEMP/assets/honeycomb-install.ps1"
+      - name: sh 安装 + 冒烟
+        run: |
+          export HONEYCOMB_ASSETS="$RUNNER_TEMP/assets" HONEYCOMB_DIR="$RUNNER_TEMP/sh/honeycomb"
+          sh "$RUNNER_TEMP/assets/honeycomb-install.sh"
+          pw=$(sed -n 's/^HONEYCOMB_PASSWORD=//p' "$HONEYCOMB_DIR/.env")
+          deploy/smoke.sh "$pw"
+          echo "PW=$pw" >> "$GITHUB_ENV"
+      - name: 再跑一次 = 升级（保留 .env 与数据）
+        run: |
+          export HONEYCOMB_ASSETS="$RUNNER_TEMP/assets" HONEYCOMB_DIR="$RUNNER_TEMP/sh/honeycomb"
+          sh "$RUNNER_TEMP/assets/honeycomb-install.sh" | tee out.txt
+          grep -q '这次是升级' out.txt
+          deploy/smoke.sh "$PW"
+          (cd "$HONEYCOMB_DIR" && docker compose down -v)
+      - name: PowerShell 安装 + 冒烟
+        shell: pwsh
+        run: |
+          $env:HONEYCOMB_ASSETS = "$env:RUNNER_TEMP/assets"
+          $env:HONEYCOMB_DIR = "$env:RUNNER_TEMP/ps/honeycomb"
+          & "$env:RUNNER_TEMP/assets/honeycomb-install.ps1"
+          if ($LASTEXITCODE) { exit 1 }
+          $pw = (Select-String -Path "$env:HONEYCOMB_DIR/.env" -Pattern '^HONEYCOMB_PASSWORD=(.*)$').Matches[0].Groups[1].Value
+          bash "$env:GITHUB_WORKSPACE/deploy/smoke.sh" $pw
+          if ($LASTEXITCODE) { exit 1 }
+          if ((Get-Location).Path -ne $env:GITHUB_WORKSPACE) { Write-Error '安装脚本改了调用方的当前目录'; exit 1 }
+          if ((stat -c %a "$env:HONEYCOMB_DIR/.env") -ne '600') { Write-Error '.env 权限不是 600'; exit 1 }
+      - name: 失败时的日志
+        if: failure()
+        run: |
+          for d in "$RUNNER_TEMP/sh/honeycomb" "$RUNNER_TEMP/ps/honeycomb"; do
+            [ -d "$d" ] && (cd "$d" && docker compose logs --no-color) || true
+          done
+
+  release-ps51:
+    # Windows 自带的 PowerShell 5.1：runner 上跑不了 Linux 容器，只能验到「装 docker 之前」：
+    # 文件按 UTF-8 BOM 正确解码（中文不乱码）、5.1 能解析整个脚本、随机口令写法 5.1 有。
+    # 下面这段 run 只许写 ASCII：runner 把它存成无 BOM 的临时 .ps1，5.1 会按 GBK/1252 读。
+    name: 发布包 · PowerShell 5.1
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: 5.1 解析 + 关键写法
+        shell: powershell
+        run: |
+          $PSVersionTable.PSVersion
+          $src = Get-Content -Raw release/honeycomb-install.ps1
+          $needle = -join [char[]](0x4E00, 0x952E, 0x5B89, 0x88C5)   # the 4 CJK chars of the script title
+          if (-not $src.Contains($needle)) { throw 'BOM/encoding wrong: PowerShell 5.1 reads the CJK text as mojibake' }
+          $null = [scriptblock]::Create($src)
+          $b = New-Object byte[] 16
+          [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
+          if ((-join ($b | ForEach-Object { '{0:x2}' -f $_ })).Length -ne 32) { throw 'random password code does not work on 5.1' }
+
+  gateway-contract:
+    # contracts/gateway.v1 的冻结接口，从门外验：部署方只靠 override + .env
+    # 换认证服务、关掉占位件、加一条受门保护的路由；客户端伪造的租户头到不了后端。
+    name: 网关契约
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: deploy
+    steps:
+      - uses: actions/checkout@v7
+      - name: 写 .env
+        run: |
+          sed -e 's/^HONEYCOMB_PASSWORD=.*/HONEYCOMB_PASSWORD=ci-gateway-password/' .env.example > .env
+          echo 'HONEYCOMB_EXTRA_ROUTES_DIR=./test/extra' >> .env
+      - name: 起（带部署方的 override）
+        run: docker compose -f docker-compose.yml -f test/override.yml up -d --wait --wait-timeout 300
+      - name: 契约
+        run: test/gateway_contract.sh ci-gateway-password
+      - name: 缺省组装仍然完整
+        run: ./smoke.sh ci-gateway-password
+      - name: 失败时的日志
+        if: failure()
+        run: docker compose -f docker-compose.yml -f test/override.yml logs --no-color
+      - name: 拆
+        if: always()
+        run: docker compose -f docker-compose.yml -f test/override.yml down -v
 
   gitleaks:
     name: 密钥扫描

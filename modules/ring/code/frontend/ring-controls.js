@@ -31,6 +31,9 @@
 
 (function () {
   "use strict";
+  // 站点前缀（gateway.v1）：网关往页面注入 HONEYCOMB_BASE，整站挂在子路径下时
+  // 所有请求与跳转都从它拼。没注入（单测、直接打开文件）就是 "/"。
+  var BASE = (typeof self !== "undefined" && self.HONEYCOMB_BASE) || "/";
 
   // ── DOM 引用 ──────────────────────────────────────────────────────
   const projectSelectEl = document.getElementById("project-select");
@@ -147,7 +150,7 @@
 
   async function loadTree() {
     try {
-      const res = await fetch("/api/core/views/tree");
+      const res = await fetch(BASE + "api/core/views/tree");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       treeData = await res.json();
     } catch (err) {
@@ -192,14 +195,14 @@
   // 同一个接口，不能各自维护一份 fetch 逻辑（迟早漂移）。
   async function startTimer(taskId) {
     clearTimerError();
-    const result = await postCore("/api/core/timer/start", { taskId: taskId });
+    const result = await postCore(BASE + "api/core/timer/start", { taskId: taskId });
     if (!result.ok) { showTimerError(result.message); return result; }
     await window.fetchAndRender();
     return result;
   }
   async function stopTimer() {
     clearTimerError();
-    const result = await postCore("/api/core/timer/stop", undefined);
+    const result = await postCore(BASE + "api/core/timer/stop", undefined);
     if (!result.ok) { showTimerError(result.message); return result; }
     await window.fetchAndRender();
     return result;
@@ -233,7 +236,7 @@
 
   cancelDialogConfirmEl.addEventListener("click", async () => {
     cancelDialogConfirmEl.disabled = true;
-    const result = await postCore("/api/core/timer/cancel", undefined);
+    const result = await postCore(BASE + "api/core/timer/cancel", undefined);
     cancelDialogConfirmEl.disabled = false;
     cancelDialogEl.close();
     if (!result.ok) { showTimerError(result.message); return; }

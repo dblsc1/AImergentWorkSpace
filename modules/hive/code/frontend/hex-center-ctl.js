@@ -32,12 +32,15 @@
  */
 (function () {
   "use strict";
+  // 站点前缀（gateway.v1）：网关往页面注入 HONEYCOMB_BASE，整站挂在子路径下时
+  // 所有请求与跳转都从它拼。没注入（单测、直接打开文件）就是 "/"。
+  var BASE = (typeof self !== "undefined" && self.HONEYCOMB_BASE) || "/";
 
   var PAUSE_KEY = "nexus.timer.paused.v1";
   var CARRY_KEY = "nexus.timer.carry.v1";
-  var TIMER_STOP = "/api/core/timer/stop";
-  var TIMER_CANCEL = "/api/core/timer/cancel";
-  var TIMER_START = "/api/core/timer/start";
+  var TIMER_STOP = BASE + "api/core/timer/stop";
+  var TIMER_CANCEL = BASE + "api/core/timer/cancel";
+  var TIMER_START = BASE + "api/core/timer/start";
   // 「完成」「取消不记录」要点第二下才生效：一个把这段结掉、一个把这段丢掉，
   // 都没有撤销；而它们就在「暂停」旁边，手一滑就按错。
   // 计时台那边是弹层确认；六边形里塞不下弹层，改成"按钮原地变成确认"，

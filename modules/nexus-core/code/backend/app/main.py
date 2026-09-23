@@ -7,6 +7,8 @@ nginx 公开前缀 ``/api/core/`` 已在契约里定死，前端写死地址—�
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
@@ -16,19 +18,33 @@ from .modules.events.service import InvalidQueryError
 from .modules.export.router import router as export_router
 from .modules.planner.errors import ForbiddenError, StalePlanError
 from .modules.planner.import_router import router as planner_import_router
+from .modules.planner.repo import ensure_tenant_indexes
 from .modules.planner.service import HasChildrenError, InvalidInputError, NotFoundError
 from .modules.planner.unified_router import router as planner_unified_router
+from .modules.restore.router import router as restore_router
+from .modules.restore.service import NotEmptyError
 from .modules.timer.router import router as timer_router
 from .modules.timer.service import NoRunningTimerError, UnknownTaskError
 from .modules.views.router import router as views_router
+from .tenant import TenantMiddleware
 
 API_PREFIX = "/api/core"
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """启动时把旧的全局唯一索引换成按租户的（v2.0）。只动索引、不动数据，幂等。"""
+    ensure_tenant_indexes()
+    yield
+
 
 app = FastAPI(
     title="nexus-core",
     version="0.2.0",
     summary="切片 1「金链路」：events 入口 + timer + proj_current 投影 + 两条读端。",
+    lifespan=lifespan,
 )
+# 租户在任何路由之前定下（契约 v2.0「按租户分数据」，app/tenant.py）。
+app.add_middleware(TenantMiddleware)
 
 
 @app.get(f"{API_PREFIX}/health")
@@ -43,6 +59,8 @@ def health() -> dict[str, str]:
         "status": "ok",
         "db": settings.db_name,
         "actorGuard": settings.actor_guard,
+        # v2.0：租户设防姿态同样跨进程可判——多用户部署忘开严格模式，从这里一眼看出。
+        "tenantGuard": settings.tenant_guard,
     }
 
 
@@ -52,6 +70,7 @@ app.include_router(planner_unified_router, prefix=API_PREFIX)
 app.include_router(views_router, prefix=API_PREFIX)
 app.include_router(export_router, prefix=API_PREFIX)
 app.include_router(planner_import_router, prefix=API_PREFIX)
+app.include_router(restore_router, prefix=API_PREFIX)
 
 
 # 域错误 → 状态码的映射只在这里（contract.md v0.4「校验」表 + v0.6「档案读端」）：
@@ -61,7 +80,9 @@ app.include_router(planner_import_router, prefix=API_PREFIX)
 #   InvalidQueryError → 400（GET /events 的 from/to 不是合法 ISO8601，消息指名道姓）
 #   NoRunningTimerError → 409（cancel 时没在计时：请求合法但与当前状态冲突）
 #   ForbiddenError → 403（v1.6 actor 设防：凭据不认识 / 伪装 human / 高风险带 ai）
-#   StalePlanError → 409（v1.7 JSON 导入：apply 的 checksum 与当前库重算不一致）
+#   StalePlanError → 409（v1.7 JSON 导入：apply 的 checksum 与当前库重算不一致；
+#                    v1.9 快照恢复：apply 的快照不是 dry-run 过的那一份）
+#   NotEmptyError → 409（v1.9 快照恢复：目标实例不是空库）
 
 
 @app.exception_handler(UnknownTaskError)
@@ -113,6 +134,13 @@ def events_bad_query(_request: Request, exc: InvalidQueryError) -> JSONResponse:
 def planner_stale_plan(_request: Request, exc: StalePlanError) -> JSONResponse:
     """契约 v1.7：apply 的 checksum 对不上当前库重算的结果——409，不是 400，
     因为请求体本身合法，冲突的是**当前状态**（同 `HasChildrenError` 的形状）。"""
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(NotEmptyError)
+def restore_not_empty(_request: Request, exc: NotEmptyError) -> JSONResponse:
+    """契约 v1.9：恢复只对空实例开放。409 同 `StalePlanError`——请求合法，
+    冲突的是**当前状态**；detail 里那句「恢复通道不是合并通道」本身就是护栏。"""
     return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 

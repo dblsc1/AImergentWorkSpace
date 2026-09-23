@@ -11,7 +11,7 @@
    放行，等于用更宽松的身份接住了它。
 2. **来源压过自报**："我是 human" 是提权声明，必须有凭据；"我是 ai" 是降权
    声明，谁说都信。带 AI 凭据却自报 human → 403（伪装，不是笔误）。
-3. **高风险写（DELETE / 改 projectId、zoneId、plan）有效 actor 为 ai → 403**，
+3. **高风险写（DELETE / 改 projectId、zoneId、plan / v1.9 快照恢复）有效 actor 为 ai → 403**，
    **拒在任何库写入与存在性检查之前**。先拒来源再谈对象在不在，否则
    404 与 409 的差异会变成一个 id 探测器。
 
@@ -85,6 +85,8 @@ def high_risk_reason(op: str, changes: dict) -> str | None:
     """高风险判据（契约 v1.6 唯一事实表）。返回原因文案，或 None＝不是高风险。"""
     if op == audit.OP_DELETE:
         return "DELETE（删除不可逆）"
+    if op == audit.OP_RESTORE:
+        return "RESTORE（整库快照恢复，含事实台账）"
     if op == audit.OP_UPDATE:
         hit = [field for field in HIGH_RISK_UPDATE_FIELDS if field in changes]
         if hit:

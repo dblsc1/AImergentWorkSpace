@@ -4,20 +4,21 @@
  * auth.gate.v1 登录页的提交逻辑。原生 fetch，无框架，配套 index.html。
  *
  * 状态码分支严格照抄 ../contract.md 「POST /api/auth/login」一节和
- * ../auth_stub.py:180-199（_login）的真实行为，不臆造契约里没出现过的分支：
+ * ../auth_stub.py 的 _login 的真实行为，不臆造契约里没出现过的分支：
  *   204  口令正确 —— 无 body，Set-Cookie 已由浏览器处理，前端只管跳转
- *   401  口令不正确（auth_stub.py:196-198）
- *   400  Content-Length 不是合法整数（auth_stub.py:182-185），
- *        或请求体不是合法 JSON 对象（auth_stub.py:190-194）——两种情况
+ *   401  账号或口令不正确
+ *   400  Content-Length 不是合法整数，
+ *        或请求体不是合法 JSON 对象——两种情况
  *        都落在同一个 400，前端发的本来就是合法 JSON，走到这里通常是
  *        传输环节出了问题，不必也无法区分子原因
- *   413  请求体超过 4096 字节 / Content-Length 为负（auth_stub.py:47, 186-187）
+ *   413  请求体超过 4096 字节 / Content-Length 为负
+ *   429  同一 IP 错太多次，限一段时间（v1.1）
  *   其它非 2xx，或 fetch 本身抛异常（断网等）—— 契约里没有这些分支，
  *        一律给兜底文案，不猜测原因、不把原始 Error 对象展示给用户
  *
  * 关于 cookie：本文件从头到尾不读、不写、不检查 cookie。会话 cookie 由服务端
  * 经 Set-Cookie 下发，并且带 HttpOnly 属性（contract.md「换实现要满足什么」、
- * auth_stub.py:139-149 的 _set_cookie）。HttpOnly 意味着浏览器从一开始就不把
+ * auth_stub.py 的 _set_cookie）。HttpOnly 意味着浏览器从一开始就不把
  * 这个 cookie 交给任何页面脚本（document.cookie 读不到它）——这是特意的安全
  * 设计：即便页面被注入一段恶意脚本（XSS），那段脚本也偷不到会话凭证。所以
  * "前端不碰 cookie" 不是本文件漏写了什么，而是这条本来就不该、也没有能力去做。
@@ -28,8 +29,19 @@
  * 留在任何一处都是白白多开一个泄漏口子。
  */
 (function () {
+  /**
+   * 站点前缀（gateway.v1）：整站挂在子路径下时（如 /Cockpit/），登录页在
+   * <前缀>login/。登录页不注入顶栏脚本，所以前缀从自己的地址推：去掉末尾的
+   * login/... 就是。所有请求与跳转都从它拼。
+   */
+  var BASE = window.location.pathname.replace(/login\/[^/]*$/, "") || "/";
+
   var form = document.getElementById("login-form");
   var passwordInput = document.getElementById("password");
+  var usernameRow = document.getElementById("username-row");
+  var usernameInput = document.getElementById("username");
+  var accountsOn = false;
+  var sharedOn = true;
   var submitButton = document.getElementById("submit");
   var errorBox = document.getElementById("error");
 
@@ -59,9 +71,11 @@
    * 条件的输入，一律退回站内根路径 "/"，不尝试"修复"或"猜测"用户的意图。
    */
   function safeNext(raw) {
-    if (typeof raw !== "string" || raw === "") return "/";
-    if (raw.charAt(0) !== "/") return "/";
-    if (raw.indexOf("//") === 0 || raw.indexOf("/\\") === 0) return "/";
+    if (typeof raw !== "string" || raw === "") return BASE;
+    if (raw.charAt(0) !== "/") return BASE;
+    if (raw.indexOf("//") === 0 || raw.indexOf("/\\") === 0) return BASE;
+    // 挂在子路径下时只回本站（前缀内）的地址，同域名下别的站点不算自己人
+    if (raw.indexOf(BASE) !== 0) return BASE;
     return raw;
   }
 
@@ -70,15 +84,34 @@
     return safeNext(params.get("next"));
   }
 
-  function submitLogin(password) {
-    return fetch("/api/auth/login", {
+  /**
+   * 开了账号登录（v1.1）才显示「账号」一栏。问不到（换了不带这两个字段的认证
+   * 服务、或者网络抖）就保持 v1 的只有口令的样子——那个样子至少共享口令能用。
+   */
+  function detectMode() {
+    fetch(BASE + "api/auth/health", { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (h) {
+        if (!h || h.accounts !== true) return;
+        accountsOn = true;
+        sharedOn = h.sharedPassword === true;
+        usernameRow.hidden = false;
+        document.getElementById("password-label").textContent = "密码";
+        usernameInput.placeholder = sharedOn ? "用共享口令登录就留空" : "";
+        usernameInput.focus();
+      })
+      .catch(function () {});
+  }
+
+  function submitLogin(username, password) {
+    return fetch(BASE + "api/auth/login", {
       method: "POST",
       // same-origin：把本站已有的 cookie 带上、并允许服务端这次的
       // Set-Cookie 被浏览器写入——不是前端去处理 cookie，是让浏览器
       // 按标准 HTTP 语义自己处理。
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: password }),
+      body: JSON.stringify(username ? { username: username, password: password } : { password: password }),
     }).then(
       function (response) {
         if (response.status === 204) {
@@ -86,11 +119,15 @@
           return;
         }
         if (response.status === 401) {
-          showError("口令不对，请重新输入。");
+          showError(accountsOn ? "账号或密码不对，请重新输入。" : "口令不对，请重新输入。");
           return;
         }
         if (response.status === 400) {
           showError("请求格式有误，请刷新页面后重试。");
+          return;
+        }
+        if (response.status === 429) {
+          showError("错的次数太多，请过一刻钟再试。");
           return;
         }
         if (response.status === 413) {
@@ -108,17 +145,25 @@
     );
   }
 
+  detectMode();
+
   form.addEventListener("submit", function (event) {
     event.preventDefault();
     clearError();
 
     var password = passwordInput.value;
+    var username = accountsOn ? usernameInput.value.trim() : "";
+    if (accountsOn && !sharedOn && !username) {
+      showError("请填账号。");
+      usernameInput.focus();
+      return;
+    }
 
     // 防连点：请求在途时禁用按钮，避免同一次提交被并发发出好几次请求
     // （对一个只认"对/不对"的共享口令门来说，连点没有任何好处，只会
     // 白白多打几次 401/204）。
     submitButton.disabled = true;
-    submitLogin(password).finally(function () {
+    submitLogin(username, password).finally(function () {
       submitButton.disabled = false;
     });
   });

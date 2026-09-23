@@ -8,6 +8,25 @@ English: [README.md](README.md)
 
 ---
 
+## 只想用，不看代码
+
+只需要 Docker（Windows / macOS 装 Docker Desktop），不需要源码、不需要 Python。
+
+```sh
+# Linux / macOS
+curl -fsSL https://github.com/dblsc1/AImergentWorkSpace/releases/latest/download/honeycomb-install.sh | sh
+```
+
+```powershell
+# Windows（PowerShell）
+irm https://github.com/dblsc1/AImergentWorkSpace/releases/latest/download/honeycomb-install.ps1 -OutFile honeycomb-install.ps1
+powershell -ExecutionPolicy Bypass -File .\honeycomb-install.ps1
+```
+
+装在 `./honeycomb`，登录口令打印一次（也存在 `honeycomb/.env`），打开 <http://127.0.0.1:8800/>。以后用新版本的同一个脚本再跑一次就是升级，数据保留。镜像来自 `ghcr.io/dblsc1/honeycomb-*`，见 `release/`。
+
+下面是源码路线：clone、看、改、跑。
+
 ## 三十秒跑起来
 
 ```sh
@@ -23,7 +42,7 @@ docker compose up -d
 
 ### 新装是空库，先灌演示数据
 
-登录进去是 `{"zones":[],"projects":[]}`，什么都看不到。灌一批**编造的**演示数据：
+登录后进入任务蜂巢（`/hive/`），但新库是空的。灌一批**编造的**演示数据：
 
 ```sh
 read -rsp '口令: ' HONEYCOMB_PASSWORD && export HONEYCOMB_PASSWORD
@@ -47,7 +66,11 @@ python3 seed/seed_demo.py --big     # 大盘：10 分区 / 40 项目
 - **在前面加一层 TLS**（Caddy / nginx / Traefik 随你）
 - 别把 80 直接暴露出去
 
-登录门是单口令的，cookie 默认带 `Secure` —— **走 HTTP 时浏览器不会保存它**，所以本机 HTTP 调试要显式设 `AUTH_COOKIE_SECURE=false`。别在公网上设这个。
+登录门是单口令的，cookie 默认带 `Secure`。本机用 `127.0.0.1` / `localhost` 打开不受影响——浏览器把本机当安全来源。**用局域网 IP 走 HTTP 时浏览器不会保存它**：前面加 TLS；只在内网调试时才设 `AUTH_COOKIE_SECURE=false`，别在公网上设这个。
+
+### 升级
+
+`git pull` 之后照旧 `docker compose up -d`，nexus-core 会按新代码重新构建（有缓存，很快）；数据在卷里，不动。
 
 ---
 
@@ -94,21 +117,46 @@ install.sh    读契约解析依赖，生成 compose 与路由
 
 | | |
 |---|---|
-| `modules/nexus-core` | 事件溯源内核（FastAPI + MongoDB）。提供 11 个契约：计时、任务 CRUD、事件写入口、以及树/圆环/甘特/导出等读端投影 |
+| `modules/nexus-core` | 事件溯源内核（FastAPI + MongoDB）。提供 13 个契约：计时、任务 CRUD、事件写入口与档案读端、以及树/圆环/甘特/导出等读端投影 |
+| `modules/hive` | 任务蜂巢（`/hive/`），主界面。纯静态前端，数据全走 `/api/core/` |
+| `modules/ring` | 计时台（`/ring/`）：贡献圆环 + 开始/停止/取消/补登。纯静态前端 |
+| `modules/nginx-docker` | 网关的公用件：共享顶栏、设计 tokens、站点图标，以及门片段与注入片段。网关把顶栏注入每个前端，页签按已装的前端生成 |
 | `contracts/yq-event.v1` | 事件信封规范。**整个系统的核心契约** —— 所有写操作都是往这个信封里投事件 |
 | `contracts/auth.gate.v1` | 登录门契约 + 占位实现（纯标准库，零依赖）+ 最小登录页 |
+| `contracts/gateway.v1` | 网关对外接口：换认证服务、换登录页、加自己的路由、拿当前租户——都不用改本仓文件 |
 
-**还没接线**：任务蜂巢（`/hive/`）和计时台（`/ring/`）两个前端模块都已经在 `modules/` 里，但都还没被服务。组装层里它们的 location 仍是注释掉的，等各自的 `module.yaml` 写好再打开。
+两个前端都在登录门后面：打开 `http://127.0.0.1:8800/`，登录后落到任务蜂巢。前端目录是只读挂载进 nginx 的，改 `modules/<名>/code/frontend/` 里的文件，浏览器刷新就生效。
 
 ---
 
 ## 登录门是一道门，不是账号系统
 
-`contracts/auth.gate.v1` 的占位实现是**单一共享口令**。它刻意**没有**：注册、多用户、找回密码、权限分级、第三方登录。
+`contracts/auth.gate.v1` 的占位实现做两件事：**共享口令**（所有人一份数据）和简单的**账号+密码**（每个账号一份自己的数据）。它刻意**没有**：自助注册、找回密码、权限分级、第三方登录。
 
-为什么这么划：开源版不该捆绑任何真实账号系统。需要多用户的人，换掉那个实现就行 —— 只要还满足同一份契约的四个端点和三条不变量，**组装层一行都不用改**。
+### 多个账号，各用各的数据
 
-想自己实现，读 `contracts/auth.gate.v1/contract.md` 的「换实现要满足什么」一节。
+适合家里或小团队局域网。在 `deploy/` 下：
+
+```sh
+# .env：HONEYCOMB_PASSWORD 留空，NEXUS_TENANT_STRICT=1
+docker compose run --rm auth python /app/auth_stub.py adduser alice   # 输两遍密码
+docker compose run --rm auth python /app/auth_stub.py adduser bob
+docker compose up -d
+```
+
+登录页随之多出「账号」一栏。`passwd <名字>` 改密码，`deluser <名字>` 删账号（数据不动），`users` 列出全部；改密码、删账号两秒内把该账号所有已登录的地方踢下线。从共享口令切过来、想保留原来的数据：`adduser <名字> --id u_local`，这个账号就接手那一份。`NEXUS_TENANT_STRICT=1` 让后端拒绝没带账号的请求，而不是悄悄落进共用的那一份。
+
+为什么这么划：开源版不该捆绑任何真实账号系统。需要更多的人，换掉那个实现就行 —— 只要还满足同一份契约的端点和三条不变量，**组装层一行都不用改**。
+
+想自己实现，读 `contracts/auth.gate.v1/contract.md` 的「换实现要满足什么」一节；怎么把它接进网关（`AUTH_UPSTREAM`、换登录页、关掉占位件），读 `contracts/gateway.v1/contract.md`。
+
+### 挂在子路径下
+
+前面还有一层反代、要挂在 `https://example.com/Cockpit/` 下？`.env` 里设 `HONEYCOMB_BASE_PATH=/Cockpit/`，外层反代把 `/Cockpit/` 原样转过来（不去前缀）。页面、接口、跳转、登录 cookie 都跟着前缀走。见 `contracts/gateway.v1/contract.md` 第七节。
+
+### 加自己的路由或前端
+
+在仓外放一个目录，里面写 `*.conf.template`（nginx 的 location 块），`.env` 里设 `HONEYCOMB_EXTRA_ROUTES_DIR` 指过去。加一行 `include /etc/nginx/honeycomb/gate.inc;` 就受同一道登录门保护；再加 `inject.inc`，页面就带上共享顶栏。写法见 `contracts/gateway.v1/contract.md`。
 
 ---
 
