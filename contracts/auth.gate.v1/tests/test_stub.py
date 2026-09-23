@@ -167,3 +167,18 @@ def test_cli_rejects_bad_names_short_passwords_and_duplicate_ids(users):
     assert _cli(users, "adduser", "carol", password="short").returncode != 0
     assert _cli(users, "adduser", "dave", "--id", "u_local").returncode != 0
     assert _cli(users, "adduser", "alice").returncode != 0
+
+
+def test_concurrent_account_commands_do_not_lose_updates(users):
+    """账号命令读—改—写持锁：并发 adduser 一个都不能丢（Codex 审核）。"""
+    names = [f"user{i}" for i in range(8)]
+    procs = [subprocess.Popen([sys.executable, str(STUB), "adduser", n], stdin=subprocess.PIPE,
+                              env={**os.environ, **users}, text=True, stdout=subprocess.DEVNULL)
+             for n in names]
+    for p in procs:  # 先把密码全喂进去，让它们真的同时跑到读—改—写
+        p.stdin.write(PW + "\n")
+        p.stdin.close()
+    for p in procs:
+        p.wait(30)
+    listed = _cli(users, "users").stdout
+    assert all(n in listed for n in names), listed

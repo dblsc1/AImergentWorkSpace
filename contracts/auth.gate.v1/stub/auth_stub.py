@@ -54,6 +54,11 @@ import re
 import secrets
 import sys
 import threading
+
+try:
+    import fcntl  # 容器里（Linux）有；Windows 裸跑没有，那里只能靠别同时跑两条账号命令
+except ImportError:  # pragma: no cover
+    fcntl = None
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -106,7 +111,7 @@ def load_users(path: str = "") -> dict:
 def save_users(users: dict, path: str = "") -> None:
     """原子写（先写临时文件再 rename），权限 0600：里面是口令哈希。"""
     path = path or USERS_FILE
-    tmp = f"{path}.tmp"
+    tmp = f"{path}.{os.getpid()}.tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump({"users": users}, f, ensure_ascii=False, indent=2)
@@ -396,6 +401,17 @@ def _set_password(user: dict, pw: str) -> None:
 def cli(argv: list[str]) -> None:
     if not USERS_FILE:
         sys.exit("❌ 先设 AUTH_USERS_FILE（账号文件路径）")
+    # 密码先读（别让人打字时占着锁），读—改—写整段再持锁：两条命令同时跑
+    # （deluser 与 passwd），后写的那个会拿旧快照覆盖掉先写的——删掉的账号复活、
+    # 该作废的会话不作废（Codex 审核）。
+    pw = _read_password() if argv[0] in ("adduser", "passwd") and len(argv) > 1 else ""
+    with open(f"{USERS_FILE}.lock", "a") as lock:
+        if fcntl:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        _cli(argv, pw)
+
+
+def _cli(argv: list[str], pw: str) -> None:
     users = load_users()
     cmd, args = argv[0], argv[1:]
     if cmd == "users":
@@ -414,13 +430,13 @@ def cli(argv: list[str]) -> None:
         if not TENANT_RE.match(tenant) or any(u["id"] == tenant for u in users.values()):
             sys.exit(f"❌ 租户 id {tenant!r} 不合格式或已被占用")
         users[name] = {"id": tenant}
-        _set_password(users[name], _read_password())
+        _set_password(users[name], pw)
         save_users(users)
         print(f"✅ 已加 {name}（租户 {tenant}）")
     elif cmd == "passwd":
         if name not in users:
             sys.exit(f"❌ 没有 {name}")
-        _set_password(users[name], _read_password())
+        _set_password(users[name], pw)
         save_users(users)
         print(f"✅ 已改 {name} 的密码；它已登录的会话 {RELOAD_EVERY:g} 秒内失效")
     elif cmd == "deluser":
