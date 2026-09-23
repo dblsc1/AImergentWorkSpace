@@ -19,6 +19,8 @@ service:
     NEXUS_MONGO_URI: mongodb://mongo:27017
     NEXUS_DB_NAME: ${HONEYCOMB_DB_NAME:-honeycomb}
     NEXUS_TZ: ${HONEYCOMB_TZ:-Asia/Shanghai}
+    # 多用户部署设 1：请求没带租户就 401，而不是悄悄落进共用的 u_local。
+    NEXUS_TENANT_STRICT: ${NEXUS_TENANT_STRICT:-0}
   # 需要的外部依赖（安装器据此决定要不要起 mongo）
   requires:
     - mongo

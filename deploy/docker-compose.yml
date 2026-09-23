@@ -38,6 +38,8 @@ networks:
 
 volumes:
   honeycomb_mongo_data:
+  # 占位认证的账号文件（账号+密码登录，auth.gate v1.1）。只开共享口令时它是空的。
+  honeycomb_auth_data:
 
 services:
   mongo:
@@ -75,6 +77,8 @@ services:
       NEXUS_MONGO_URI: mongodb://mongo:27017
       NEXUS_DB_NAME: ${HONEYCOMB_DB_NAME:-honeycomb}
       NEXUS_TZ: ${HONEYCOMB_TZ:-Asia/Shanghai}
+      # 多用户部署设 1：请求没带租户就 401，而不是悄悄落进共用的 u_local。
+      NEXUS_TENANT_STRICT: ${NEXUS_TENANT_STRICT:-0}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/core/health').status==200 else 1)"]
       interval: 10s
@@ -91,15 +95,22 @@ services:
     networks: [honeycomb-net]
     volumes:
       - ../contracts/auth.gate.v1/stub/auth_stub.py:/app/auth_stub.py:ro
+      - honeycomb_auth_data:/data
     command: python /app/auth_stub.py
     environment:
-      # 必填，无默认口令：没设时 auth_stub.py 直接 sys.exit 拒绝启动，web 依赖它
-      # 健康，于是整个 `docker compose up` 失败并点名 auth。
+      # 共享口令，无默认值。没设它、账号文件里也没账号时 auth_stub.py 直接 sys.exit
+      # 拒绝启动，web 依赖它健康，于是整个 `docker compose up` 失败并点名 auth。
       #
       # 这里**不再**用 compose 的 `:?` 兜一层：`:?` 在解析文件时就求值，部署方用
       # override 把 auth 整个换成自己的认证服务时（contracts/gateway.v1），
       # 也会被逼着给一个用不上的口令。
       AUTH_PASSWORD: ${HONEYCOMB_PASSWORD:-}
+      # 账号+密码登录（auth.gate v1.1）。每个账号一份自己的数据。加账号：
+      #   docker compose run --rm auth python /app/auth_stub.py adduser <名字>
+      # 多用户部署：去掉 HONEYCOMB_PASSWORD，并设 NEXUS_TENANT_STRICT=1。
+      AUTH_USERS_FILE: /data/users.json
+      # 不设则每次启动随机生成：重启即所有人重新登录。
+      AUTH_SECRET: ${AUTH_SECRET:-}
       # 0.0.0.0 在这里是安全的：这台监听只在 honeycomb-net 这个内部 bridge 网里，
       # 本服务在 compose 里根本不映射宿主端口（跟 nexus-core 的 0.0.0.0:8000 同一个道理，
       # 见 modules/nexus-core/code/backend/Dockerfile 的同款注释）。

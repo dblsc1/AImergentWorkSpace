@@ -116,7 +116,7 @@ jobs:
         # add 要解析 module.yaml 的嵌套结构，需要 pyyaml；list/plan/doctor 零依赖。
         run: pip install -q pyyaml pytest
       - name: 单测
-        run: python -m pytest -q tools modules/nginx-docker/tests
+        run: python -m pytest -q tools modules/nginx-docker/tests contracts/auth.gate.v1/tests
       - name: 解依赖 + 生成 + 核对
         run: |
           ./install.sh plan hive ring
@@ -175,6 +175,34 @@ jobs:
       - name: 拆
         if: always()
         working-directory: ${{ matrix.dir }}
+        run: docker compose down -v
+
+  accounts:
+    # 占位认证的账号+密码登录（auth.gate v1.1）+ nexus-core 按租户分数据（v2.0），
+    # 按 README「多个账号」那一节的步骤真起一遍：两个账号，数据互不可见。
+    name: 多账号
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: deploy
+    steps:
+      - uses: actions/checkout@v7
+      - name: 写 .env（不设共享口令，开严格模式）
+        run: sed -e 's/^NEXUS_TENANT_STRICT=.*/NEXUS_TENANT_STRICT=1/' .env.example > .env
+      - name: 加账号
+        run: |
+          for u in alice bob; do
+            echo ci-accounts-pw | docker compose run --rm -T auth python /app/auth_stub.py adduser "$u"
+          done
+      - name: 起
+        run: docker compose up -d --wait --wait-timeout 300
+      - name: 多账号
+        run: test/accounts.sh ci-accounts-pw
+      - name: 失败时的日志
+        if: failure()
+        run: docker compose logs --no-color
+      - name: 拆
+        if: always()
         run: docker compose down -v
 
   gateway-contract:
