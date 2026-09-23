@@ -26,6 +26,12 @@ docker compose down -v    # 停 + 删数据（mongo 的 named volume 一起没�
   `web` 另外只读挂载两个前端目录：`/hive/`（任务蜂巢，`/` 跳这里）与 `/ring/`（计时台）。
 - 登录门接在 `/api/`、`/hive/`、`/ring/` 前面：未登录一律跳 `/login/`，
   登录页来自 `contracts/auth.gate.v1/stub/web/`。
+- `web` 的配置是 envsubst 模板 `nginx/templates/default.conf.template`，共用
+  `../modules/nginx-docker/` 里的门片段、顶栏注入片段与静态资源。顶栏由网关注入
+  两个前端，页签按已装的前端生成。
+- 换认证服务、换登录页、加自己的路由：用自己的 `.env` 与 override 文件，不改本目录，
+  见 `../contracts/gateway.v1/contract.md`。`test/` 里是 CI 用来验这份契约的 override
+  与一条示例路由。
 - `./install.sh add hive ring` 从各模块的 `module.yaml` 生成行为相同的一份到
   `deploy/generated/`；CI 把手写与生成的两份都真起一遍、登录、逐个资源请求一遍。
 

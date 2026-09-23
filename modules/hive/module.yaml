@@ -14,3 +14,4 @@ static:
     index: index.html
     gated: true       # 页面本身也设门：未登录直接去登录页，别先渲染一个空壳再满屏 401
     home: true        # 主界面：访问 / 跳这里
+    nav: 任务         # 顶栏页签

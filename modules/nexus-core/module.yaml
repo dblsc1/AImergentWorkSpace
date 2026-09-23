@@ -29,7 +29,7 @@ routes:
   - prefix: /api/core/
     upstream: /api/core/
     gated: true
-  # 顶栏计时芯片（hive 的 shared/navbar.js，约 10s 轮询一次）固定打这一个地址。
+  # 顶栏计时芯片（网关注入的共享顶栏 modules/nginx-docker/static/navbar.js，约 10s 轮询一次）固定打这一个地址。
   # 设门——它回的是「你此刻在做什么」，是用户数据；但未登录或后端挂了都不跳
   # 登录页，回 degraded 这份 JSON，顶栏渲染成空。给轮询 XHR 回 302 毫无意义。
   - prefix: /__cockpit/current

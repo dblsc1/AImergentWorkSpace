@@ -23,7 +23,7 @@ def out(tmp_path):
     plan = install.resolve(["hive", "ring"])
     generate.emit(install.ROOT, plan, tmp_path)
     compose = yaml.safe_load((tmp_path / "docker-compose.yml").read_text(encoding="utf-8"))
-    nginx = (tmp_path / "nginx" / "honeycomb.conf").read_text(encoding="utf-8")
+    nginx = (tmp_path / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8")
     return plan, compose, nginx
 
 
@@ -49,7 +49,8 @@ def test_static_modules_are_mounted_not_run(out):
     for mount in (
         "../../modules/hive/code/frontend:/usr/share/nginx/html/hive:ro",
         "../../modules/ring/code/frontend:/usr/share/nginx/html/ring:ro",
-        "../../contracts/auth.gate.v1/stub/web:/usr/share/nginx/html/login:ro",
+        "${HONEYCOMB_LOGIN_DIR:-../../contracts/auth.gate.v1/stub/web}:/usr/share/nginx/html/login:ro",
+        "../../modules/nginx-docker/static:/usr/share/nginx/html/__cockpit:ro",
     ):
         assert mount in volumes
 
@@ -58,9 +59,12 @@ def test_frontends_are_gated_and_login_is_not(out):
     _, _, nginx = out
     for prefix in ("/hive/", "/ring/"):
         block = _location(nginx, prefix)
-        assert "auth_request /__auth_verify;" in block
+        assert "include /etc/nginx/honeycomb/gate.inc;" in block
+        assert "include /etc/nginx/honeycomb/inject.inc;" in block, "前端要被注入共享顶栏"
         assert f"alias /usr/share/nginx/html{prefix}" in block
-    assert "auth_request" not in _location(nginx, "/login/"), "登录页设门 = 谁都进不来"
+    login = _location(nginx, "/login/")
+    assert "auth_request" not in login and "gate.inc" not in login, "登录页设门 = 谁都进不来"
+    assert "inject.inc" not in login, "还没进门就给导航是错的"
     assert "location = / { return 302 /hive/; }" in nginx
 
 
@@ -100,3 +104,47 @@ def test_two_homes_is_an_error(tmp_path):
     (tmp_path / "contracts").mkdir()
     with pytest.raises(generate.BadManifest, match="home"):
         generate.emit(tmp_path, {"modules": ["a", "b"], "stubs": []}, tmp_path / "out")
+
+
+# ------------------------------------------------ gateway.v1 的冻结接口
+
+
+def test_backend_tenant_header_is_always_set_by_the_gateway(out):
+    """客户端自带的 X-Nexus-Tenant 不能到后端：每条转发都由网关覆盖。"""
+    _, _, nginx = out
+    assert "include /etc/nginx/honeycomb/gate.inc;" in _location(nginx, "/api/core/")
+    chip = _location(nginx, "= /__cockpit/current")
+    assert "proxy_set_header X-Nexus-Tenant $honeycomb_tenant;" in chip
+    for head in ("= /__auth_verify", "/api/auth/"):
+        assert 'proxy_set_header X-Nexus-Tenant "";' in _location(nginx, head)
+    gate = (install.ROOT / "modules" / "nginx-docker" / "nginx" / "gate.inc").read_text(encoding="utf-8")
+    assert "proxy_set_header X-Nexus-Tenant $honeycomb_tenant;" in gate
+
+
+def test_auth_upstream_and_extra_routes_are_replaceable(out):
+    _, compose, nginx = out
+    web = compose["services"]["web"]
+    assert web["environment"]["AUTH_UPSTREAM"] == "${AUTH_UPSTREAM:-auth:8010}"
+    assert "proxy_pass http://${AUTH_UPSTREAM};" in _location(nginx, "/api/auth/")
+    assert "proxy_pass http://${AUTH_UPSTREAM}/api/auth/verify;" in _location(nginx, "= /__auth_verify")
+    assert "${HONEYCOMB_EXTRA_ROUTES_DIR:-../nginx/extra}:/etc/nginx/templates/extra:ro" in web["volumes"]
+    assert "include /etc/nginx/conf.d/extra/*.conf;" in nginx
+    assert "location @to_login" in nginx, "gateway.v1 冻结的名字"
+
+
+def test_navbar_tabs_follow_installed_frontends(tmp_path):
+    """只装 ring：顶栏只有计时一个页签，不出点了 404 的死页签。"""
+    plan = install.resolve(["ring"])
+    generate.emit(install.ROOT, plan, tmp_path)
+    nginx = (tmp_path / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8")
+    assert """set $honeycomb_nav '{"home":"/","timer":"/ring/","tabs":[{"href":"/ring/","label":"计时"}]}';""" in nginx
+
+
+def test_hand_written_gateway_has_the_same_frozen_surface():
+    hand = (install.ROOT / "deploy" / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8")
+    for needle in (
+        "location = /__auth_verify {", "location @to_login {",
+        "proxy_pass http://${AUTH_UPSTREAM};", 'set $honeycomb_base "${HONEYCOMB_BASE_PATH}";',
+        "include /etc/nginx/conf.d/extra/*.conf;", 'proxy_set_header X-Nexus-Tenant "";',
+    ):
+        assert needle in hand, needle

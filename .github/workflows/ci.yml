@@ -116,7 +116,7 @@ jobs:
         # add 要解析 module.yaml 的嵌套结构，需要 pyyaml；list/plan/doctor 零依赖。
         run: pip install -q pyyaml pytest
       - name: 单测
-        run: python -m pytest -q tools
+        run: python -m pytest -q tools modules/nginx-docker/tests
       - name: 解依赖 + 生成 + 核对
         run: |
           ./install.sh plan hive ring
@@ -176,6 +176,33 @@ jobs:
         if: always()
         working-directory: ${{ matrix.dir }}
         run: docker compose down -v
+
+  gateway-contract:
+    # contracts/gateway.v1 的冻结接口，从门外验：部署方只靠 override + .env
+    # 换认证服务、关掉占位件、加一条受门保护的路由；客户端伪造的租户头到不了后端。
+    name: 网关契约
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: deploy
+    steps:
+      - uses: actions/checkout@v7
+      - name: 写 .env
+        run: |
+          sed -e 's/^HONEYCOMB_PASSWORD=.*/HONEYCOMB_PASSWORD=ci-gateway-password/' .env.example > .env
+          echo 'HONEYCOMB_EXTRA_ROUTES_DIR=./test/extra' >> .env
+      - name: 起（带部署方的 override）
+        run: docker compose -f docker-compose.yml -f test/override.yml up -d --wait --wait-timeout 300
+      - name: 契约
+        run: test/gateway_contract.sh ci-gateway-password
+      - name: 缺省组装仍然完整
+        run: ./smoke.sh ci-gateway-password
+      - name: 失败时的日志
+        if: failure()
+        run: docker compose -f docker-compose.yml -f test/override.yml logs --no-color
+      - name: 拆
+        if: always()
+        run: docker compose -f docker-compose.yml -f test/override.yml down -v
 
   gitleaks:
     name: 密钥扫描

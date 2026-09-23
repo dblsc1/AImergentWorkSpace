@@ -127,8 +127,10 @@ never depends on a `pip install`.
 | `modules/nexus-core` | The event-sourced kernel (FastAPI + MongoDB). Provides 13 contracts: timing, task CRUD, the event write entry point and archive read, and read projections for tree / ring / gantt / export. |
 | `modules/hive` | The task hive (`/hive/`), the main screen. A static frontend; all data goes through `/api/core/`. |
 | `modules/ring` | The timer ring (`/ring/`): contribution ring plus start / stop / cancel / backfill. A static frontend. |
+| `modules/nginx-docker` | The gateway's shared parts: the navbar, design tokens, favicons, and the gate and inject snippets. The gateway injects the navbar into every frontend, with one tab per installed frontend. |
 | `contracts/yq-event.v1` | The event envelope spec. **The core contract of the whole system** — every write is an event posted into this envelope. |
 | `contracts/auth.gate.v1` | The login gate contract, a stub implementation (standard library only, zero dependencies), and a minimal login page. |
+| `contracts/gateway.v1` | The gateway's public surface: swap the auth service, swap the login page, add your own routes, read the current tenant — without editing any file in this repo. |
 
 Both frontends sit behind the login gate: open `http://127.0.0.1:8800/`, log
 in, and you land on the task hive. The frontend directories are mounted into
@@ -147,6 +149,16 @@ The reason for drawing the line there: an open-source release should not ship a
 real account system bolted on. If you need multi-user, replace that one
 implementation — as long as it still satisfies the same contract's four
 endpoints and three invariants, **the assembly layer needs no changes at all**.
+How to plug it in (`AUTH_UPSTREAM`, your own login page, switching the stub off)
+is in `contracts/gateway.v1/contract.md`.
+
+### Adding your own routes or frontend
+
+Put a directory outside the repo with `*.conf.template` files (nginx location
+blocks) and point `HONEYCOMB_EXTRA_ROUTES_DIR` at it in `.env`. One line,
+`include /etc/nginx/honeycomb/gate.inc;`, puts a route behind the same login
+gate; add `inject.inc` and the page gets the shared navbar. See
+`contracts/gateway.v1/contract.md`.
 
 To write your own, read the "what a replacement must satisfy" section of
 `contracts/auth.gate.v1/contract.md`.

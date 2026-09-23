@@ -1,0 +1,147 @@
+/* ══════════════════════════════════════════════════════════════════
+ * /__cockpit/tokens.css —— 设计 tokens 的网络落地件
+ *
+ * **唯一数值事实源是 `contracts/design-tokens-v1.md` §3**（跨模块契约）。
+ * 本文件是那份契约表的机械抄写，改数值先改那份契约、再同步这里——
+ * 顺序反了 = 这份文件对不上契约。`code/backend/scripts/check-contrast.py`
+ * 解析的也是契约表本身，不是本文件，所以本文件抄错不会被这道对比度校验拦住，
+ * 需要人工核对两边是否同步。
+ *
+ * 语义先于颜色：
+ *   计划紫 --plan  = 意图（planner 台账：计划期、目标）
+ *   事实青 --fact  = 已发生（events 台账：计时记录、事实条）
+ *   --plan 与 --fact 两族都不随预设主题色变（契约§2）；预设换的是 --accent 机身色族
+ *   （按钮实心、页签当前下划线、录制胶囊、品牌记号、开关选中态——不是图表条块）。
+ *
+ * 双主题：html[data-theme="light"|"dark"]。默认跟随系统（prefers-color-scheme），
+ * 手动切换写 localStorage["cockpit-theme"]（light|dark|auto）。
+ * 预设主题色：html[data-accent="teal"|"violet"|"amber"]，teal 为默认，
+ * 写 localStorage["cockpit-accent"]。两者都由 </head> 处的 boot 脚本首帧钉一次
+ * （见 nginx/templates/cockpit.conf.template 里的两对 sub_filter），
+ * 本文件只提供颜色，不决定切哪一态——那是 navbar.js 主题面板的事。
+ *
+ * 覆盖顺序（design-tokens-v1.md §5）：本文件随注入在 </body> 前加载，
+ * 层叠必胜四个前端仓各自的兜底块（那些块只在本文件还没到达前的首帧顶一下）。
+ * ══════════════════════════════════════════════════════════════════ */
+
+:root,
+html[data-theme="light"] {
+  color-scheme: light;
+
+  /* 面 */
+  --bg:      #F3F5F8;
+  --panel:   #FFFFFF;
+  --panel-2: #EDF0F5;
+  --line:    #D9DFE8;
+  --line-2:  #E7EBF1;
+
+  /* 墨 */
+  --ink:     #17202E;
+  --ink-2:   #55627A;
+  --ink-3:   #8B96A9;
+
+  /* 语义（台账色，不随预设变） */
+  --plan:      #6D5AE6;
+  --plan-soft: #E9E6FB;
+  --fact:      #0B7A6F;
+  --fact-soft: #DCF0ED;
+  --fact-ink:  #FFFFFF;
+  --warn:      #B45309;
+  --danger:    #C2333B;
+
+  /* 事实数据序列（同类量走同色渐变） */
+  --fact-s1: #0B7A6F;
+  --fact-s2: #37948A;
+  --fact-s3: #9CCFC8;
+
+  /* 机身色（预设主题色换的就是这一族；默认 teal == 事实青族） */
+  --accent:      #0B7A6F;
+  --accent-ink:  #FFFFFF;
+  --accent-soft: #DCF0ED;
+
+  --focus:   #1E5FD0;
+  --shadow:  0 1px 2px rgba(23,32,46,.06), 0 4px 16px rgba(23,32,46,.07);
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg:      #0D1220;
+  --panel:   #151C2E;
+  --panel-2: #1D2639;
+  --line:    #26314A;
+  --line-2:  #202A40;
+
+  --ink:     #E8ECF4;
+  --ink-2:   #9DA9BF;
+  --ink-3:   #5F6C84;
+
+  --plan:      #9B8CFF;
+  --plan-soft: #2A2A4E;
+  --fact:      #2FD4C2;
+  --fact-soft: #123B38;
+  --fact-ink:  #04211D;
+  --warn:      #F0B36A;
+  --danger:    #FF8189;
+
+  --fact-s1: #2FD4C2;
+  --fact-s2: #6FB8AE;
+  --fact-s3: #46706B;
+
+  --accent:      #2FD4C2;
+  --accent-ink:  #04211D;
+  --accent-soft: #123B38;
+
+  --focus:   #6FA8FF;
+  --shadow:  0 1px 2px rgba(0,0,0,.4), 0 4px 20px rgba(0,0,0,.35);
+}
+
+/* ── 预设主题色（3.3，随预设轴 × 明暗轴；boot 脚本已把 auto 解析成具体 light/dark） ── */
+html[data-accent="violet"] {
+  --accent: #6D5AE6; --accent-ink: #FFFFFF; --accent-soft: #E9E6FB;
+}
+html[data-theme="dark"][data-accent="violet"] {
+  --accent: #9B8CFF; --accent-ink: #14102E; --accent-soft: #2A2A4E;
+}
+html[data-accent="amber"] {
+  --accent: #9A5B00; --accent-ink: #FFFFFF; --accent-soft: #F5E8D5;
+}
+html[data-theme="dark"][data-accent="amber"] {
+  --accent: #F0B36A; --accent-ink: #2A1A04; --accent-soft: #3A2B12;
+}
+
+/* ── 字 / 型 / 距 / 角 / 触控 / 动（§3.4，与主题无关，抄设计稿 v1 tokens.css 不复述） ── */
+:root {
+  --font-body: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+               "Noto Sans CJK SC", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono",
+               Consolas, "Liberation Mono", monospace;
+
+  --fs-body: 15px;
+  --fs-sub:  13px;
+  --fs-eyebrow: 11px;
+  --fs-h2:   17px;
+  --fs-time-lg: 40px;
+
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;
+  --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+
+  --r-1: 6px;  --r-2: 10px;  --r-3: 14px;
+
+  --tap: 44px;
+
+  --t-fast: 150ms ease;
+  --t-med:  240ms ease;
+
+  /* 主题面板里的预设色预览点：**固定值，不随当前 data-accent 变**——用户要能
+   * 同时看到三个选项本来的样子，选中了 violet 也不能让 teal 的圆点消失长相。
+   * 取各预设浅色态的 --accent 值做代表色；这三个变量只供选择器 UI 用，
+   * 不是可切换的主题变量（navbar v2 靠它们避免在 navbar.css 里裸写 hex）。 */
+  --accent-preview-teal:   #0B7A6F;
+  --accent-preview-violet: #6D5AE6;
+  --accent-preview-amber:  #9A5B00;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --t-fast: 0ms; --t-med: 0ms; }
+}
