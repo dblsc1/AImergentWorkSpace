@@ -14,8 +14,8 @@
 #   mongo  存数据（事件台账 + 投影）
 #   nexus-core  事件溯源的计时与任务内核（FastAPI）
 #   auth   auth.gate.v1 的占位实现，单口令登录门（标准库 http.server，零依赖）
-#   web    nginx，唯一入口：反代 /api/ 到 nexus-core、/api/auth/ 到 auth、
-#          在 /api/ 前面插一道 auth_request 校验
+#   web    nginx，唯一入口：serve /hive/ 与 /ring/ 两个前端、反代 /api/ 到
+#          nexus-core、/api/auth/ 到 auth，在前端与 /api/ 前面插一道 auth_request 校验
 #
 # 只有 web 映射宿主端口，默认绑 127.0.0.1:8800（局域网/公网部署自己改
 # HONEYCOMB_BIND 并在前面加 TLS，见 README）。mongo、nexus-core、auth 只在内部
@@ -60,7 +60,11 @@ services:
     # 说的就是这条路径，装配器与人读的是同一份事实）。
     build:
       context: ../modules/nexus-core/code/backend
-    image: nexus-core:local
+    # 镜像名带项目名、且每次 up 都按源码构建。写死 `nexus-core:local` 时，
+    # 机器上已有同名镜像（另一套部署、或 git pull 之前的旧版），compose
+    # **不报错**就拿它跑——跑的根本不是你眼前这份代码。2026-09-22 实测撞上。
+    image: ${HONEYCOMB_PROJECT:-honeycomb}-nexus-core:local
+    pull_policy: build
     container_name: ${HONEYCOMB_PROJECT:-honeycomb}-nexus-core
     restart: unless-stopped
     networks: [honeycomb-net]
@@ -124,6 +128,10 @@ services:
       # 进来，跟 auth 服务挂载 auth_stub.py 是同一个道理（见上面 auth.volumes
       # 的注释）：改页面去 stub/web/ 改，这里只负责让 nginx 能 serve 到它。
       - ../contracts/auth.gate.v1/stub/web:/usr/share/nginx/html/login:ro
+      # 两个前端模块，同样只读挂载、不复制代码：改页面去 modules/<名>/code/frontend/
+      # 改，浏览器刷新就生效，不用重建任何镜像。
+      - ../modules/hive/code/frontend:/usr/share/nginx/html/hive:ro
+      - ../modules/ring/code/frontend:/usr/share/nginx/html/ring:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/healthz"]
       interval: 10s

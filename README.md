@@ -27,8 +27,8 @@ no `pip install`.
 
 ### A fresh install is an empty database
 
-Logging in gives you `{"zones":[],"projects":[]}` and nothing to look at. Fill it
-with made-up demo data:
+Logging in takes you to the task hive (`/hive/`), but a new database is empty.
+Fill it with made-up demo data:
 
 ```sh
 read -rsp 'HoneyComb password: ' HONEYCOMB_PASSWORD && export HONEYCOMB_PASSWORD
@@ -55,10 +55,16 @@ the internet:
 - **put TLS in front of it** (Caddy, nginx, Traefik — your call)
 - don't expose port 80 directly
 
-The login gate is single-password, and the cookie carries `Secure` by default,
-which means **browsers will not store it over plain HTTP**. For local HTTP
-debugging set `AUTH_COOKIE_SECURE=false` explicitly. Never set that on a public
-host.
+The login gate is single-password, and the cookie carries `Secure` by default.
+Opening it at `127.0.0.1` / `localhost` is fine: browsers treat the local machine
+as a secure origin. **Over plain HTTP on a LAN IP, browsers will not store it**:
+put TLS in front, and only for LAN debugging set `AUTH_COOKIE_SECURE=false`.
+Never set that on a public host.
+
+### Upgrading
+
+After `git pull`, run `docker compose up -d` as usual. nexus-core is rebuilt from
+the new code (cached, so it is quick). Data lives in the volume and is not touched.
 
 ---
 
@@ -118,13 +124,16 @@ never depends on a `pip install`.
 
 | | |
 |---|---|
-| `modules/nexus-core` | The event-sourced kernel (FastAPI + MongoDB). Provides 11 contracts: timing, task CRUD, the event write entry point, and read projections for tree / ring / gantt / export. |
+| `modules/nexus-core` | The event-sourced kernel (FastAPI + MongoDB). Provides 12 contracts: timing, task CRUD, the event write entry point and archive read, and read projections for tree / ring / gantt / export. |
+| `modules/hive` | The task hive (`/hive/`), the main screen. A static frontend; all data goes through `/api/core/`. |
+| `modules/ring` | The timer ring (`/ring/`): contribution ring plus start / stop / cancel / backfill. A static frontend. |
 | `contracts/yq-event.v1` | The event envelope spec. **The core contract of the whole system** — every write is an event posted into this envelope. |
 | `contracts/auth.gate.v1` | The login gate contract, a stub implementation (standard library only, zero dependencies), and a minimal login page. |
 
-**Not wired up yet**: both frontend modules — the task hive (`/hive/`) and the
-timer ring (`/ring/`) — are in `modules/`, but neither is served. The assembly
-layer keeps their locations commented out until each gets a `module.yaml`.
+Both frontends sit behind the login gate: open `http://127.0.0.1:8800/`, log
+in, and you land on the task hive. The frontend directories are mounted into
+nginx read-only, so an edit under `modules/<name>/code/frontend/` shows up on
+the next browser refresh.
 
 ---
 

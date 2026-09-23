@@ -22,12 +22,12 @@ docker compose down -v    # 停 + 删数据（mongo 的 named volume 一起没�
 
 ## 现状
 
-- `api`（nexus-core 模块）、`auth`（auth.gate.v1 占位实现）、`mongo`、`web`（nginx）
-  四个服务，登录门已经接好：未登录访问 `/api/`（进而 `/hive/`、`/ring/` 上线后）
-  一律跳 `/login/`。
-- 前端模块的 location 在 nginx 配置里先留成注释。`ring` 已经进了 `modules/`，
-  接线（取消注释 + `module.yaml`）还没做；`hive` 随后落地。
-- `/login/` 的页面本体（`auth.login-page.v1`）也还没落地，路由先占住。
+- `nexus-core`、`auth`（auth.gate.v1 占位实现）、`mongo`、`web`（nginx）四个服务。
+  `web` 另外只读挂载两个前端目录：`/hive/`（任务蜂巢，`/` 跳这里）与 `/ring/`（计时台）。
+- 登录门接在 `/api/`、`/hive/`、`/ring/` 前面：未登录一律跳 `/login/`，
+  登录页来自 `contracts/auth.gate.v1/stub/web/`。
+- `./install.sh add hive ring` 从各模块的 `module.yaml` 生成行为相同的一份到
+  `deploy/generated/`；CI 把手写与生成的两份都真起一遍、登录、逐个资源请求一遍。
 
 ## 安全边界
 
