@@ -208,3 +208,13 @@ def test_startup_replaces_the_legacy_global_unique_indexes(client):
         _post(client, f"{PLANNER}/zones", {"name": "同名分区"}, tenant)
     db["zones"].insert_one({"id": "z_same", "user": "ch_aaaa"})
     db["zones"].insert_one({"id": "z_same", "user": "ch_bbbb"})
+
+
+def test_audit_seq_is_per_tenant(client):
+    """审计序号全局共用时，一个租户能从 seq 的跳号里看出别的租户写了多少次（Codex 审核）。"""
+    for _ in range(3):
+        _post(client, f"{PLANNER}/zones", {"name": f"乙-{_}"}, B)
+    _post(client, f"{PLANNER}/zones", {"name": "甲"}, A)
+    seqs_a = [i["seq"] for i in client.get(f"{PLANNER}/audit", headers=A).json()["items"]]
+    assert seqs_a == [1]
+    assert "uniq_user_seq" in _db()["planner_audit"].index_information()
