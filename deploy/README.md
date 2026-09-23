@@ -10,6 +10,7 @@
 cp .env.example .env
 # 编辑 .env，把 HONEYCOMB_PASSWORD 填成一个真口令 —— 必须先做这一步，
 # 没有默认口令，auth 服务缺它会直接拒绝启动。
+# （多个账号各用各的数据：见根目录 README「多个账号」，不用填这一项。）
 docker compose up -d
 ```
 
@@ -17,12 +18,13 @@ docker compose up -d
 
 ```bash
 docker compose down       # 停，数据留着
-docker compose down -v    # 停 + 删数据（mongo 的 named volume 一起没了）
+docker compose down -v    # 停 + 删数据（mongo 与账号文件的 named volume 一起没了）
 ```
 
 ## 现状
 
-- `nexus-core`、`auth`（auth.gate.v1 占位实现）、`mongo`、`web`（nginx）四个服务。
+- `nexus-core`、`auth`（auth.gate.v1 占位实现：共享口令 / 账号+密码，账号文件在
+  named volume `honeycomb_auth_data`）、`mongo`、`web`（nginx）四个服务。
   `web` 另外只读挂载两个前端目录：`/hive/`（任务蜂巢，`/` 跳这里）与 `/ring/`（计时台）。
 - 登录门接在 `/api/`、`/hive/`、`/ring/` 前面：未登录一律跳 `/login/`，
   登录页来自 `contracts/auth.gate.v1/stub/web/`。
@@ -31,7 +33,7 @@ docker compose down -v    # 停 + 删数据（mongo 的 named volume 一起没�
   两个前端，页签按已装的前端生成。
 - 换认证服务、换登录页、加自己的路由：用自己的 `.env` 与 override 文件，不改本目录，
   见 `../contracts/gateway.v1/contract.md`。`test/` 里是 CI 用来验这份契约的 override
-  与一条示例路由。
+  与一条示例路由；`test/accounts.sh` 是多账号的端到端验证（CI「多账号」）。
 - `./install.sh add hive ring` 从各模块的 `module.yaml` 生成行为相同的一份到
   `deploy/generated/`；CI 把手写与生成的两份都真起一遍、登录、逐个资源请求一遍。
 

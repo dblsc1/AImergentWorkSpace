@@ -112,9 +112,22 @@ install.sh    读契约解析依赖，生成 compose 与路由
 
 ## 登录门是一道门，不是账号系统
 
-`contracts/auth.gate.v1` 的占位实现是**单一共享口令**。它刻意**没有**：注册、多用户、找回密码、权限分级、第三方登录。
+`contracts/auth.gate.v1` 的占位实现做两件事：**共享口令**（所有人一份数据）和简单的**账号+密码**（每个账号一份自己的数据）。它刻意**没有**：自助注册、找回密码、权限分级、第三方登录。
 
-为什么这么划：开源版不该捆绑任何真实账号系统。需要多用户的人，换掉那个实现就行 —— 只要还满足同一份契约的四个端点和三条不变量，**组装层一行都不用改**。
+### 多个账号，各用各的数据
+
+适合家里或小团队局域网。在 `deploy/` 下：
+
+```sh
+# .env：HONEYCOMB_PASSWORD 留空，NEXUS_TENANT_STRICT=1
+docker compose run --rm auth python /app/auth_stub.py adduser alice   # 输两遍密码
+docker compose run --rm auth python /app/auth_stub.py adduser bob
+docker compose up -d
+```
+
+登录页随之多出「账号」一栏。`passwd <名字>` 改密码，`deluser <名字>` 删账号（数据不动），`users` 列出全部；改密码、删账号两秒内把该账号所有已登录的地方踢下线。从共享口令切过来、想保留原来的数据：`adduser <名字> --id u_local`，这个账号就接手那一份。`NEXUS_TENANT_STRICT=1` 让后端拒绝没带账号的请求，而不是悄悄落进共用的那一份。
+
+为什么这么划：开源版不该捆绑任何真实账号系统。需要更多的人，换掉那个实现就行 —— 只要还满足同一份契约的端点和三条不变量，**组装层一行都不用改**。
 
 想自己实现，读 `contracts/auth.gate.v1/contract.md` 的「换实现要满足什么」一节；怎么把它接进网关（`AUTH_UPSTREAM`、换登录页、关掉占位件），读 `contracts/gateway.v1/contract.md`。
 

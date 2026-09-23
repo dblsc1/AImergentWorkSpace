@@ -13,6 +13,7 @@ JAR=/tmp/cockpit.cookies
 # 1. 登录（拿 cookie）
 curl -s -c $JAR -X POST $BASE/api/auth/login \
   -H 'Content-Type: application/json' -d '{"password":"你的口令"}'
+# 开了账号登录（auth.gate v1.1）就带上账号：{"username":"alice","password":"..."}
 
 # 2. 之后每个请求都带 -b $JAR
 curl -s -b $JAR $BASE/api/core/planner/zones
