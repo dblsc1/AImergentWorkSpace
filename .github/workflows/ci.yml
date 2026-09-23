@@ -267,6 +267,7 @@ jobs:
   release-ps51:
     # Windows 自带的 PowerShell 5.1：runner 上跑不了 Linux 容器，只能验到「装 docker 之前」：
     # 文件按 UTF-8 BOM 正确解码（中文不乱码）、5.1 能解析整个脚本、随机口令写法 5.1 有。
+    # 下面这段 run 只许写 ASCII：runner 把它存成无 BOM 的临时 .ps1，5.1 会按 GBK/1252 读。
     name: 发布包 · PowerShell 5.1
     runs-on: windows-latest
     steps:
@@ -276,11 +277,12 @@ jobs:
         run: |
           $PSVersionTable.PSVersion
           $src = Get-Content -Raw release/honeycomb-install.ps1
-          if ($src -notmatch '一键安装') { throw 'BOM/编码不对：5.1 读出来中文是乱码' }
+          $needle = -join [char[]](0x4E00, 0x952E, 0x5B89, 0x88C5)   # the 4 CJK chars of the script title
+          if (-not $src.Contains($needle)) { throw 'BOM/encoding wrong: PowerShell 5.1 reads the CJK text as mojibake' }
           $null = [scriptblock]::Create($src)
           $b = New-Object byte[] 16
           [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
-          if ((-join ($b | ForEach-Object { '{0:x2}' -f $_ })).Length -ne 32) { throw '随机口令写法在 5.1 不可用' }
+          if ((-join ($b | ForEach-Object { '{0:x2}' -f $_ })).Length -ne 32) { throw 'random password code does not work on 5.1' }
 
   gateway-contract:
     # contracts/gateway.v1 的冻结接口，从门外验：部署方只靠 override + .env
