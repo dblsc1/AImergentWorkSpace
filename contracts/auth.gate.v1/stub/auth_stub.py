@@ -411,6 +411,9 @@ def cli(argv: list[str]) -> None:
         if fcntl:
             fcntl.flock(lock, fcntl.LOCK_EX)
         else:  # msvcrt 锁第 0 个字节；LK_LOCK 等不到约 10 秒后抛错，不会静默跳过
+            if os.path.getsize(lock.name) == 0:  # 锁区不落在空文件外，先垫一个字节
+                lock.write("\n")
+                lock.flush()
             lock.seek(0)
             msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
         _cli(argv, pw)
