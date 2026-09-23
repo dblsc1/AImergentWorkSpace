@@ -8,6 +8,25 @@ English: [README.md](README.md)
 
 ---
 
+## 只想用，不看代码
+
+只需要 Docker（Windows / macOS 装 Docker Desktop），不需要源码、不需要 Python。
+
+```sh
+# Linux / macOS
+curl -fsSL https://github.com/dblsc1/AImergentWorkSpace/releases/latest/download/honeycomb-install.sh | sh
+```
+
+```powershell
+# Windows（PowerShell）
+irm https://github.com/dblsc1/AImergentWorkSpace/releases/latest/download/honeycomb-install.ps1 -OutFile honeycomb-install.ps1
+powershell -ExecutionPolicy Bypass -File .\honeycomb-install.ps1
+```
+
+装在 `./honeycomb`，登录口令打印一次（也存在 `honeycomb/.env`），打开 <http://127.0.0.1:8800/>。以后用新版本的同一个脚本再跑一次就是升级，数据保留。镜像来自 `ghcr.io/dblsc1/honeycomb-*`，见 `release/`。
+
+下面是源码路线：clone、看、改、跑。
+
 ## 三十秒跑起来
 
 ```sh

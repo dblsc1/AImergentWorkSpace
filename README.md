@@ -10,6 +10,28 @@ where you planned it to go.
 
 ---
 
+## Just want to use it
+
+Only Docker is needed (Docker Desktop on Windows / macOS). No source, no Python.
+
+```sh
+# Linux / macOS
+curl -fsSL https://github.com/dblsc1/AImergentWorkSpace/releases/latest/download/honeycomb-install.sh | sh
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://github.com/dblsc1/AImergentWorkSpace/releases/latest/download/honeycomb-install.ps1 -OutFile honeycomb-install.ps1
+powershell -ExecutionPolicy Bypass -File .\honeycomb-install.ps1
+```
+
+It installs into `./honeycomb`, prints a login password once (also kept in
+`honeycomb/.env`) and opens on <http://127.0.0.1:8800/>. Running the same script
+from a newer release upgrades in place and keeps your data. Images come from
+`ghcr.io/dblsc1/honeycomb-*`; see `release/`.
+
+The rest of this README is the source route: clone, read, change, run.
+
 ## Thirty seconds to running
 
 ```sh

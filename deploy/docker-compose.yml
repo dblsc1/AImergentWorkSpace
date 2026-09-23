@@ -146,7 +146,6 @@ services:
     # .env 或 `-f 自己的 override.yml` 换认证服务、换登录页、加路由，不改本文件。
     environment:
       AUTH_UPSTREAM: ${AUTH_UPSTREAM:-auth:8010}
-      # 站点前缀：gateway.v1 预留，本版固定 `/`（不从 .env 读，免得设了却不生效）。
       # 站点前缀（gateway.v1）：整站挂子路径时设，如 /Cockpit/（以 / 开头和结尾）。
       HONEYCOMB_BASE_PATH: ${HONEYCOMB_BASE_PATH:-/}
       # 模板里只替换这些变量；$host 之类仍是 nginx 自己的。
