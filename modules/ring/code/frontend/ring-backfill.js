@@ -138,6 +138,16 @@
   // 日期 + 开始时刻 → 带浏览器本地时区偏移的 ISO 字符串。
   // getTimezoneOffset() 返回"UTC 减本地"的分钟数、且东区为负（东八区 = -480），
   // 与 ISO 偏移符号相反，必须先取负号再判正负——这是本函数唯一容易写反的地方。
+  // 一个确切时刻 → 带它自己那一刻本地偏移的 ISO（夏令时回拨那一小时里，
+  // 只凭「日期 + 时分」分不清是哪一个，所以能用确切时刻时就别绕回日期时分）。
+  function isoFromInstant(d) {
+    const offsetMin = -d.getTimezoneOffset();
+    const sign = offsetMin >= 0 ? "+" : "-";
+    const abs = Math.abs(offsetMin);
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T` +
+      `${pad2(d.getHours())}:${pad2(d.getMinutes())}:00${sign}${pad2(Math.floor(abs / 60))}:${pad2(abs % 60)}`;
+  }
+
   function toIsoWithLocalOffset(dateStr, timeStr) {
     const [y, m, d] = (dateStr || "").split("-").map(Number);
     const [hh, mm] = (timeStr || "").split(":").map(Number);
@@ -171,7 +181,11 @@
     if (!dateStr || !timeStr) { showMessage("请填写日期与开始时刻。", "error"); return; }
     if (!Number.isFinite(minutes) || minutes <= 0) { showMessage("时长必须是正数分钟。", "error"); return; }
 
-    const startAt = toIsoWithLocalOffset(dateStr, timeStr);
+    // 人没动过起点：按提交这一刻现算「现在往前 minutes 分钟」（表单开着放了一会儿
+    // 也不会跑偏），并且从确切时刻取偏移（Codex 审核：夏令时回拨小时）。
+    const startAt = whenTouched
+      ? toIsoWithLocalOffset(dateStr, timeStr)
+      : isoFromInstant(new Date(Math.floor((Date.now() - minutes * 60000) / 60000) * 60000));
     if (!startAt) { showMessage("日期/时刻格式不对，请重新选择。", "error"); return; }
     // 服务端也会拒，但它的说法带 ISO 时间戳，人看不懂。先用人话拦一道。
     // 留 60 秒余量：分钟粒度的开始时刻 + 时长刚好到「现在」时不该被本地时钟误差卡住。

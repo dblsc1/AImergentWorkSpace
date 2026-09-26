@@ -74,7 +74,10 @@
     try { payload = await res.json(); } catch (err) { payload = null; }
     if (res.ok) {
       // 计时写成功 → 告诉顶栏立刻重拉（见 navbar.js 的 honeycomb:timer-changed）
-      if (path.indexOf("api/core/timer/") !== -1) window.dispatchEvent(new Event("honeycomb:timer-changed"));
+      // 补登不碰计时状态（契约），不发
+      if (path.indexOf("api/core/timer/") !== -1 && path.indexOf("timer/backfill") === -1) {
+        window.dispatchEvent(new Event("honeycomb:timer-changed"));
+      }
       return { ok: true, data: payload };
     }
     const message = (payload && payload.detail) ? payload.detail : ("请求失败（HTTP " + res.status + "）");
