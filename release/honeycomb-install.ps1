@@ -67,7 +67,11 @@ if (-not (Test-Path '.env')) {
 }
 
 Write-Host '拉镜像（第一次要几分钟）……'
-if (-not $env:HONEYCOMB_NO_PULL) { docker compose pull -q; if ($LASTEXITCODE -ne 0) { Die '拉镜像失败，检查网络。' } }
+# compose 的 -q 压不住逐层进度（走 stderr），整段收起来，出错才打印
+if (-not $env:HONEYCOMB_NO_PULL) {
+  $pull = docker compose pull -q 2>&1
+  if ($LASTEXITCODE -ne 0) { $pull | Write-Host; Die '拉镜像失败，检查网络。' }
+}
 $log = docker compose up -d --wait --wait-timeout 300 2>&1
 if ($LASTEXITCODE -ne 0) { $log | Write-Host; docker compose ps; Die "没起来。看日志：cd $Dir; docker compose logs" }
 
