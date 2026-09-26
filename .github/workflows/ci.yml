@@ -294,6 +294,7 @@ jobs:
           $out = Invoke-Native { cmd /c "echo boom 1>&2 & exit 3" }
           if ($LASTEXITCODE -ne 3) { throw "exit code lost: $LASTEXITCODE" }
           'Invoke-Native ok on ' + $PSVersionTable.PSVersion
+          exit 0   # the runner exits with $LASTEXITCODE, still 3 from the deliberate failing case above
 
   gateway-contract:
     # contracts/gateway.v1 的冻结接口，从门外验：部署方只靠 override + .env
