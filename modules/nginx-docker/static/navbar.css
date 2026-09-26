@@ -204,6 +204,8 @@ html { scroll-padding-top: var(--ckpt-h, 52px); }
   flex: none;
   white-space: nowrap;
 }
+.ckpt-exit { display: inline-flex; align-items: center; gap: var(--sp-1, 4px); }
+.ckpt-exit-icon { flex: none; }
 .ckpt-exit:hover { color: var(--danger); border-color: var(--danger); }
 .ckpt-exit[disabled] { opacity: .5; cursor: default; }
 
@@ -302,4 +304,11 @@ html { scroll-padding-top: var(--ckpt-h, 52px); }
   .ckpt-tab { padding: 0 8px; font-size: var(--fs-sub, 13px); }
   .ckpt-chip .ckpt-live-word { display: none; }
   .ckpt-exit .ckpt-word { display: none; }
+  /* 页签不许被压：320px 宽时页签被挤窄、「计时」压到胶囊上（v0.2.1 实测）。
+   * 省地方从胶囊和按钮的留白里省。 */
+  .ckpt-tabs { flex: none; }
+  .ckpt-right { gap: 4px; }
+  .ckpt-chip { padding: 0 8px; gap: 4px; }
+  .ckpt-chip .ckpt-sep { display: none; }
+  .ckpt-exit { padding: 0 10px; }
 }

@@ -130,6 +130,10 @@
       init.body = JSON.stringify(body);
     }
     return fetch(path, init).then(function (res) {
+      // 计时写成功 → 告诉顶栏立刻重拉（见 navbar.js 的 honeycomb:timer-changed）
+      if (res.ok && path.indexOf("api/core/timer/") !== -1) {
+        window.dispatchEvent(new Event("honeycomb:timer-changed"));
+      }
       if (res.status === 204) return { ok: true, data: null };
       return res.json().catch(function () { return null; }).then(function (body2) {
         return res.ok ? { ok: true, data: body2 }

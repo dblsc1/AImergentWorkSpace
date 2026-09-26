@@ -93,14 +93,16 @@
     if (t.overdue) flags.push("已过期");
     if (t.dueToday) flags.push("今天到期");
     if (t.state === "waiting") flags.push("被 " + ((t.blockedBy || []).length) + " 条挡住");
-    return '<li class="' + cls + '" data-task-id="' + esc(t.id) + '"' +
-      (opts.done ? "" : ' data-hex-ui="toggle-card"') + ">" +
+    // 最近完成的卡片也能点开，但只给「撤销」：点错了「完成」要能改回来
+    // （v0.2.1 实测：之前完成卡没有任何按钮，误点完成就撤不回）。
+    return '<li class="' + cls + '" data-task-id="' + esc(t.id) + '" data-hex-ui="toggle-card">' +
       '<span class="hex-todo-dot"></span>' +
       '<span class="hex-task-name">' + esc(t.name) + "</span>" +
       (flags.length ? '<span class="hex-flag">' + esc(flags.join(" · ")) + "</span>" : "") +
       (opts.stamp ? '<span class="hex-stamp">' + esc(opts.stamp) + "</span>" : "") +
-      (opts.done ? "" :
-        '<span class="hex-tools">' +
+      (opts.done
+        ? '<span class="hex-tools"><button type="button" class="hex-mini" data-hex-action="toggle-task">撤销</button></span>'
+        : '<span class="hex-tools">' +
           '<button type="button" class="hex-mini" data-hex-action="toggle-task">' +
             (t.done ? "撤销" : "完成") + "</button>" +
           '<button type="button" class="hex-mini" data-hex-action="rename-task">改名</button>' +
@@ -179,17 +181,16 @@
       "</div>" +
 
       // ② 全部待办：可伸展。第一条放大，之后逐级缩小压暗（人类点名）。
-      '<div class="hex-group">' +
+      // 「下一步」已经列全了就整组不出（v0.2.1：之前会显示「展开其余 0 条」）。
+      (rest.length ? '<div class="hex-group">' +
         '<div class="hex-group-title">全部待办</div>' +
         '<button type="button" class="hex-expander" data-hex-ui="toggle-all" aria-expanded="false">' +
           '<span class="hex-chev" aria-hidden="true">▸</span>' +
           "展开其余 <b>" + rest.length + "</b> 条" +
         "</button>" +
-        (rest.length
-          ? '<ul class="hex-list hex-all" data-reorder="1" hidden>' +
-            rest.map(function (t) { return taskCard(t); }).join("") + "</ul>"
-          : "") +
-      "</div>" +
+        '<ul class="hex-list hex-all" data-reorder="1" hidden>' +
+          rest.map(function (t) { return taskCard(t); }).join("") + "</ul>" +
+      "</div>" : "") +
 
       // ③ 最近完成
       '<div class="hex-group">' +

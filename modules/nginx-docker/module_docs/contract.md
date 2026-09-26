@@ -43,6 +43,12 @@ consumes:
 
 来自各前端 `module.yaml` 的 `static[].nav`（页签文字）、`home`、`timer`。没装的前端没有页签。
 
+## 计时芯片即时刷新（v0.2.1）
+
+芯片每 10 秒拉一次 `<前缀>__cockpit/current`。页面自己开始 / 停止 / 取消计时成功后，
+在 `window` 上发一个 `honeycomb:timer-changed` 事件（无 detail），顶栏立刻重拉一次，
+不必等下一个 10 秒。hive 与 ring 都发；自己接进来的前端要芯片跟得上，也发这一个。
+
 ## 对比度校验
 
 `scripts/check-contrast.py` 按 `contracts/design-tokens-v1.md` 的对比度矩阵机械核对

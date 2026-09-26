@@ -163,7 +163,8 @@
         return;
       }
       var payload = result.data || {};
-      status.textContent = "导出于 " + (payload.exportedAt || "未知时间");
+      var at = payload.exportedAt ? new Date(payload.exportedAt) : null;
+      status.textContent = "导出于 " + (at && !isNaN(at) ? at.toLocaleString("zh-CN", { hour12: false }) : "未知时间");
       pre.hidden = false;
       pre.textContent = JSON.stringify(payload, null, 2);
       downloadBtn.hidden = false;
