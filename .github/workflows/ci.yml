@@ -283,6 +283,17 @@ jobs:
           $b = New-Object byte[] 16
           [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
           if ((-join ($b | ForEach-Object { '{0:x2}' -f $_ })).Length -ne 32) { throw 'random password code does not work on 5.1' }
+          # Invoke-Native under 5.1 + ErrorActionPreference=Stop: a native command that writes
+          # to stderr must NOT throw, output must be captured, exit code must survive.
+          $m = [regex]::Match($src, '(?s)function Invoke-Native.*?\r?\n}\r?\n')
+          if (-not $m.Success) { throw 'Invoke-Native not found in installer' }
+          Invoke-Expression $m.Value
+          $ErrorActionPreference = 'Stop'
+          $out = Invoke-Native { cmd /c "echo progress-line 1>&2 & exit 0" }
+          if ($LASTEXITCODE -ne 0 -or ($out -join ' ') -notmatch 'progress-line') { throw "stderr capture failed: $out" }
+          $out = Invoke-Native { cmd /c "echo boom 1>&2 & exit 3" }
+          if ($LASTEXITCODE -ne 3) { throw "exit code lost: $LASTEXITCODE" }
+          'Invoke-Native ok on ' + $PSVersionTable.PSVersion
 
   gateway-contract:
     # contracts/gateway.v1 的冻结接口，从门外验：部署方只靠 override + .env

@@ -19,11 +19,23 @@ $Bind = if ($env:HONEYCOMB_BIND) { $env:HONEYCOMB_BIND } else { '127.0.0.1:8800'
 
 function Die($msg) { Write-Host "[错误] $msg" -ForegroundColor Red; exit 1 }
 
+# 跑 docker 这类原生命令：输出（含 stderr）收成文本返回，退出码照常看 $LASTEXITCODE。
+# ⚠️ 必须临时把 ErrorActionPreference 放回 Continue：Windows PowerShell 5.1 里，
+# 原生命令写到 stderr 的东西一经 2>&1 / *> 重定向就变成 ErrorRecord，在 'Stop' 下
+# 直接当终止错误抛出——而 docker 的正常进度本来就走 stderr，于是一拉镜像就崩
+# （Codex 审核 v0.2.1 指出；PowerShell/PowerShell#4002）。PowerShell 7 不受影响。
+function Invoke-Native([scriptblock]$Cmd) {
+  $old = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try { return (& $Cmd 2>&1 | ForEach-Object { "$_" }) }
+  finally { $ErrorActionPreference = $old }
+}
+
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
   Die '没找到 docker。先装 Docker Desktop：https://docs.docker.com/desktop/install/windows-install/'
 }
-docker compose version *> $null; if ($LASTEXITCODE -ne 0) { Die '没找到 docker compose（v2）。更新 Docker Desktop。' }
-docker info *> $null; if ($LASTEXITCODE -ne 0) { Die 'docker 在，但连不上。Docker Desktop 启动了吗？' }
+$null = Invoke-Native { docker compose version }; if ($LASTEXITCODE -ne 0) { Die '没找到 docker compose（v2）。更新 Docker Desktop。' }
+$null = Invoke-Native { docker info }; if ($LASTEXITCODE -ne 0) { Die 'docker 在，但连不上。Docker Desktop 启动了吗？' }
 
 New-Item -ItemType Directory -Force -Path (Join-Path $Dir 'extra') | Out-Null
 Push-Location $Dir
@@ -69,11 +81,11 @@ if (-not (Test-Path '.env')) {
 Write-Host '拉镜像（第一次要几分钟）……'
 # compose 的 -q 压不住逐层进度（走 stderr），整段收起来，出错才打印
 if (-not $env:HONEYCOMB_NO_PULL) {
-  $pull = docker compose pull -q 2>&1
+  $pull = Invoke-Native { docker compose pull -q }
   if ($LASTEXITCODE -ne 0) { $pull | Write-Host; Die '拉镜像失败，检查网络。' }
 }
-$log = docker compose up -d --wait --wait-timeout 300 2>&1
-if ($LASTEXITCODE -ne 0) { $log | Write-Host; docker compose ps; Die "没起来。看日志：cd $Dir; docker compose logs" }
+$log = Invoke-Native { docker compose up -d --wait --wait-timeout 300 }
+if ($LASTEXITCODE -ne 0) { $log | Write-Host; Invoke-Native { docker compose ps } | Write-Host; Die "没起来。看日志：cd $Dir; docker compose logs" }
 
 # 升级时以 .env 里的为准（可能改过端口）
 $m = Select-String -Path '.env' -Pattern '^HONEYCOMB_BIND=(.+)$' | Select-Object -Last 1
