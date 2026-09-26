@@ -848,11 +848,16 @@
              // 这 3 秒里 hoverLock 正锁着，鼠标扫过别的格子不会把它抢走。
              hoverCenter: function (on) {
                state.catchHover = !!on;
+               if (on) { state.catchLock = state.hoverLock; setHover(state.centerItem); return; }
                // 缩回时鼠标可能正停在某一格上（多半就是中心格，人类要点暂停）。
                // 这 3 秒里 hoverLock 把 mouseover 吞了，鼠标不动就不会再来一次，
                // 所以按 :hover 现查一遍，而不是一律清空（v0.2.2 实测：控制钮不出来）。
-               setHover(on ? state.centerItem
-                           : hoverItemFor(document.querySelector("#hive .hex-cell:hover")));
+               // 两个例外照旧清空：
+               //   · 触摸：松手后浏览器会把 :hover 留在刚按过的格子上，那不是悬停；
+               //   · 放大期间又长按了一次（锁已换成新的）：新一轮的飞行还没落地，
+               //     这是上一轮的定时器，不该替新一轮决定悬停谁。
+               var restore = state.lastPointerType === "mouse" && state.hoverLock === state.catchLock;
+               setHover(restore ? hoverItemFor(document.querySelector("#hive .hex-cell:hover")) : null);
              },
              // 缩小的过渡时长——"颜色从计划色淡回常态"要和缩小同一段时间，
              // 只能从布局层那一份取，不许 hex-timer 自己再写一个 460。
