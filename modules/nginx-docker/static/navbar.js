@@ -263,6 +263,15 @@
   var exit = el('button', 'ckpt-exit');
   exit.type = 'button';
   exit.setAttribute('data-ckpt-exit', '');
+  exit.setAttribute('aria-label', '退出');
+  // 窄屏只留这个图标（文字藏掉）。v0.2.1 之前窄屏下文字藏了又没有图标，是个空框。
+  exit.appendChild(svg(
+    { width: '16', height: '16', viewBox: '0 0 20 20', fill: 'none', 'aria-hidden': 'true', class: 'ckpt-exit-icon' },
+    [
+      svgEl('path', { d: 'M8 3H4v14h4', stroke: 'currentColor', 'stroke-width': '1.6', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }),
+      svgEl('path', { d: 'M12 6l4 4-4 4M16 10H8', stroke: 'currentColor', 'stroke-width': '1.6', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })
+    ]
+  ));
   exit.appendChild(el('span', 'ckpt-word', '退出'));
   right.appendChild(exit);
 
@@ -342,6 +351,10 @@
 
   poll();
   setInterval(poll, POLL_MS);
+  // 页面里开始 / 停止 / 取消计时后立刻重拉，不等下一个 10 秒（v0.2.1 实测：
+  // 蜂巢里刚开始计时，顶栏还显示「未在计时」好几秒）。页面发这个事件即可，
+  // 顶栏不关心是谁发的（契约 modules/nginx-docker/module_docs/contract.md）。
+  window.addEventListener('honeycomb:timer-changed', poll);
   setInterval(paint, TICK_MS);
 
   /* ── 退出 ─────────────────────────────────────────────────────

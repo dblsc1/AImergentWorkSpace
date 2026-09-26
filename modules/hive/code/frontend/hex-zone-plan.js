@@ -285,7 +285,14 @@
     } else if (act === "proj-move") {
       inlineMove(nameCell, pid, zoneId);
     } else if (act === "proj-delete") {
-      if (!window.confirm("删除项目「" + nameCell.textContent + "」及其全部任务？")) return;
+      // 后端不做级联删除（有任务就 409）。先拦住，别让人确认了「及其全部任务」
+      // 再看到一行带内部 id 的拒绝（v0.2.1 实测）。同 zone-delete 的做法。
+      var proj = ((ctx.state.tree && ctx.state.tree.projects) || []).filter(function (p) {
+        return p.id === pid;
+      })[0];
+      var left = proj ? (proj.tasks || []).length : 0;
+      if (left) { headMsg("「" + nameCell.textContent + "」里还有 " + left + " 个任务，先删掉或移走", true); return; }
+      if (!window.confirm("删除项目「" + nameCell.textContent + "」？")) return;
       ctx.deleteProject(pid).then(afterWrite);
     }
   }
