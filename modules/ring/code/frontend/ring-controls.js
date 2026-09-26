@@ -72,7 +72,11 @@
     }
     let payload = null;
     try { payload = await res.json(); } catch (err) { payload = null; }
-    if (res.ok) return { ok: true, data: payload };
+    if (res.ok) {
+      // 计时写成功 → 告诉顶栏立刻重拉（见 navbar.js 的 honeycomb:timer-changed）
+      if (path.indexOf("api/core/timer/") !== -1) window.dispatchEvent(new Event("honeycomb:timer-changed"));
+      return { ok: true, data: payload };
+    }
     const message = (payload && payload.detail) ? payload.detail : ("请求失败（HTTP " + res.status + "）");
     return { ok: false, message: message };
   }
