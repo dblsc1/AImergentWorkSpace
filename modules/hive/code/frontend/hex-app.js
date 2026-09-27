@@ -700,7 +700,10 @@
       T.onPressDown(ev);                     // 长按开始计时
     });
     window.addEventListener("pointermove", function (ev) {
-      var wasStill = state.pointerMoved === false;
+      var isMouse = !ev.pointerType || ev.pointerType === "mouse";
+      // 静止后第一下，或刚从触摸切回鼠标的第一下：此前的 mouseover 都被拦过，要补查。
+      var wasStill = state.pointerMoved === false ||
+                     (isMouse && !!state.lastPointerType && state.lastPointerType !== "mouse");
       state.pointerMoved = true;
       // 触屏笔记本：摸过一下屏幕再改用鼠标、只移不点，lastPointerType 会一直
       // 停在 "touch"，下面 mouseover 的防抖就失效。移动也算"当前在用什么"。
@@ -712,7 +715,7 @@
       // 长按接住计时的锁期间不查：queueHover(null) 不看锁，手一抖落在空白处
       // 就会把 3 秒放大掐掉；锁一过由 hoverCenter(false) 按 :hover 接手。
       var locked = state.hoverLock && Date.now() < state.hoverLock;
-      if (wasStill && !locked && (!ev.pointerType || ev.pointerType === "mouse") && !state.expandedId) {
+      if (wasStill && !locked && isMouse && !state.expandedId) {
         var under = document.elementFromPoint(ev.clientX, ev.clientY);
         var item = hoverItemFor(under && under.closest && under.closest("#hive .hex-cell"));
         if (item !== state.hoverItem) queueHover(item);
