@@ -702,6 +702,10 @@
     window.addEventListener("pointermove", function (ev) {
       var wasStill = state.pointerMoved === false;
       state.pointerMoved = true;
+      // 触屏笔记本：摸过一下屏幕再改用鼠标、只移不点，lastPointerType 会一直
+      // 停在 "touch"，下面 mouseover 的防抖就失效。移动也算"当前在用什么"。
+      // （点击逻辑不受影响：每次点击前的 pointerdown 都会重设它。）
+      if (ev.pointerType) state.lastPointerType = ev.pointerType;
       // 静止之后的第一下移动如果直接跨过了格子边，浏览器先发 mouseover 再发
       // pointermove —— 那次 mouseover 已被上面的"没动过"拦掉了。这里按指针
       // 下面实际是哪一格补查一次（只查一次：之后的 mouseover 照常放行）。
@@ -729,10 +733,13 @@
       // 不是禁用点击」）。拦在这里而不是 CSS 的 pointer-events —— 后者会把
       // 点击一起掐死，隔壁的卡片就点不进去了。点击照常：点隔壁 = 换它展开。
       if (state.expandedId) return;
-      // 见 setHover：鼠标没动过的 mouseover 是格子自己扫过指针补发的，不算数。
-      // 触摸不走这条（它的悬停档由 click 处理器直接 setHover）。
+      // 只认鼠标，且要真的动过（见 setHover：没动过的 mouseover 是格子自己
+      // 扫过指针补发的）。触摸的 mouseover 全是点按后的兼容事件和布局补发，
+      // 一律不认 —— 它的悬停档由 click 处理器直接 setHover。放它进来的话，
+      // 点按前已有一格在悬停时，兼容 mouseover 会先把悬停切到被点的格子，
+      // 紧跟着的 click 看见"已在悬停"就直接展开 / 进计时台，跳过第一档。
       var mouse = !state.lastPointerType || state.lastPointerType === "mouse";
-      if (mouse && state.pointerMoved === false) return;
+      if (!mouse || state.pointerMoved === false) return;
       queueHover(hoverItemFor(ev.target.closest(".hex-cell")));
     });
     hive.addEventListener("mouseleave", function () { clearHover(); });
