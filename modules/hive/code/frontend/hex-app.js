@@ -482,6 +482,14 @@
     if (item) item.el.classList.add("is-hover");
     L.apply(true, HOVER_MS);
   }
+  // 哪些格子能进悬停档。占位格（分区里一个项目都没有）不长大：它没有待办
+  // 可显示，长大了是个空壳；聚焦态整片不进悬停档（见 mouseover 处的注释）。
+  function hoverItemFor(cell) {
+    if (!cell || state.expandedId) return null;
+    var ok = !cell.classList.contains("is-expanded") &&
+             (cell.classList.contains("hex-center") || !!cell.dataset.projectId);
+    return ok ? cell.__hexItem : null;
+  }
   function queueHover(item) {
     // 长按开火之后的一小段时间里不接受新的悬停：人类原话「不应该是看到六边形
     // 放大」。这段正是替身在飞、圆环在膨胀的时候，眼睛该跟着它们走，
@@ -702,11 +710,7 @@
       // 不是禁用点击」）。拦在这里而不是 CSS 的 pointer-events —— 后者会把
       // 点击一起掐死，隔壁的卡片就点不进去了。点击照常：点隔壁 = 换它展开。
       if (state.expandedId) return;
-      var cell = ev.target.closest(".hex-cell");
-      // 占位格（分区里一个项目都没有）不长大：它没有待办可显示，长大了是个空壳。
-      var ok = cell && !cell.classList.contains("is-expanded") &&
-               (cell.classList.contains("hex-center") || !!cell.dataset.projectId);
-      queueHover(ok ? cell.__hexItem : null);
+      queueHover(hoverItemFor(ev.target.closest(".hex-cell")));
     });
     hive.addEventListener("mouseleave", function () { clearHover(); });
     // ⚠️ 真 bug（2026-09-07 真机联调测出，纸面审不出来）：展开时
@@ -747,6 +751,9 @@
     document.addEventListener("click", function (ev) {
       if (!state.hoverItem) return;
       if (ev.target.closest(".hex-cell")) return;
+      // 长按松手补发的那次 click：按下的卡片已被 refresh 换掉，click 落在格子
+      // 外面，不放行就把「接住计时」的 3 秒放大当场掐成 0.3 秒（v0.2.2 实测）。
+      if (T.swallowClickAfterPress()) return;
       clearHover();
     });
     document.addEventListener("keydown", function (ev) {
@@ -841,7 +848,16 @@
              // 这 3 秒里 hoverLock 正锁着，鼠标扫过别的格子不会把它抢走。
              hoverCenter: function (on) {
                state.catchHover = !!on;
-               setHover(on ? state.centerItem : null);
+               if (on) { state.catchLock = state.hoverLock; setHover(state.centerItem); return; }
+               // 缩回时鼠标可能正停在某一格上（多半就是中心格，人类要点暂停）。
+               // 这 3 秒里 hoverLock 把 mouseover 吞了，鼠标不动就不会再来一次，
+               // 所以按 :hover 现查一遍，而不是一律清空（v0.2.2 实测：控制钮不出来）。
+               // 两个例外照旧清空：
+               //   · 触摸：松手后浏览器会把 :hover 留在刚按过的格子上，那不是悬停；
+               //   · 放大期间又长按了一次（锁已换成新的）：新一轮的飞行还没落地，
+               //     这是上一轮的定时器，不该替新一轮决定悬停谁。
+               var restore = state.lastPointerType === "mouse" && state.hoverLock === state.catchLock;
+               setHover(restore ? hoverItemFor(document.querySelector("#hive .hex-cell:hover")) : null);
              },
              // 缩小的过渡时长——"颜色从计划色淡回常态"要和缩小同一段时间，
              // 只能从布局层那一份取，不许 hex-timer 自己再写一个 460。
