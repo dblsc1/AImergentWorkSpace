@@ -477,6 +477,12 @@
   var hoverTimer = null;
   function setHover(item) {
     if (state.hoverItem === item) return;
+    // 悬停一变，格子就开始长大 / 缩回。鼠标不动时浏览器也会因为格子从指针下
+    // 扫过而补发 mouseover；不拦的话，指针停在"小中心格之外、大中心格之内"
+    // 那一圈，就是 长大→扫出指针→缩回→扫进指针→长大 的死循环（v0.2.3 实测：
+    // 4 秒 70 次，刷新页面时指针恰好停在那儿就会一直抖）。所以变一次之后，
+    // 要等鼠标真的动过（pointermove）才接受下一次 mouseover。
+    state.pointerMoved = false;
     if (state.hoverItem) state.hoverItem.el.classList.remove("is-hover");
     state.hoverItem = item || null;
     if (item) item.el.classList.add("is-hover");
@@ -694,6 +700,19 @@
       T.onPressDown(ev);                     // 长按开始计时
     });
     window.addEventListener("pointermove", function (ev) {
+      var wasStill = state.pointerMoved === false;
+      state.pointerMoved = true;
+      // 静止之后的第一下移动如果直接跨过了格子边，浏览器先发 mouseover 再发
+      // pointermove —— 那次 mouseover 已被上面的"没动过"拦掉了。这里按指针
+      // 下面实际是哪一格补查一次（只查一次：之后的 mouseover 照常放行）。
+      // 长按接住计时的锁期间不查：queueHover(null) 不看锁，手一抖落在空白处
+      // 就会把 3 秒放大掐掉；锁一过由 hoverCenter(false) 按 :hover 接手。
+      var locked = state.hoverLock && Date.now() < state.hoverLock;
+      if (wasStill && !locked && (!ev.pointerType || ev.pointerType === "mouse") && !state.expandedId) {
+        var under = document.elementFromPoint(ev.clientX, ev.clientY);
+        var item = hoverItemFor(under && under.closest && under.closest("#hive .hex-cell"));
+        if (item !== state.hoverItem) queueHover(item);
+      }
       onCardPointerMove(ev);
       T.onPressMove(ev);
     }, { passive: true });
@@ -710,6 +729,10 @@
       // 不是禁用点击」）。拦在这里而不是 CSS 的 pointer-events —— 后者会把
       // 点击一起掐死，隔壁的卡片就点不进去了。点击照常：点隔壁 = 换它展开。
       if (state.expandedId) return;
+      // 见 setHover：鼠标没动过的 mouseover 是格子自己扫过指针补发的，不算数。
+      // 触摸不走这条（它的悬停档由 click 处理器直接 setHover）。
+      var mouse = !state.lastPointerType || state.lastPointerType === "mouse";
+      if (mouse && state.pointerMoved === false) return;
       queueHover(hoverItemFor(ev.target.closest(".hex-cell")));
     });
     hive.addEventListener("mouseleave", function () { clearHover(); });
