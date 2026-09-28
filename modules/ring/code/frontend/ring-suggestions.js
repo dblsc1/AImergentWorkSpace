@@ -194,7 +194,7 @@
   }
 
   // 逐条发，失败的留在列表里并显示后端 detail 原文（同补登规则 3）。
-  async function act(targets, action) {
+  async function act(targets, action, bulk) {
     busy = true;
     syncButtons();
     showMessage("", false);
@@ -214,12 +214,12 @@
     busy = false;
     await load();
     if (errors.length) showMessage(errors[0] + (errors.length > 1 ? "（另有 " + (errors.length - 1) + " 条失败）" : ""), true);
-    else if (targets.length > 1) showMessage("已确认 " + done + " 条。", false);
+    else if (bulk) showMessage("已确认 " + done + " 条。", false);
     if (confirmed && window.fetchAndRender) window.fetchAndRender(); // 今天的圆环算上这段
   }
 
   thresholdEl.addEventListener("input", syncButtons);
-  allBtnEl.addEventListener("click", function () { act(eligible(items, threshold()), "confirm"); });
+  allBtnEl.addEventListener("click", function () { act(eligible(items, threshold()), "confirm", true); });
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState === "visible" && !busy) load();
   });
