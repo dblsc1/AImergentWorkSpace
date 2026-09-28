@@ -66,6 +66,31 @@ jobs:
           TZ: Asia/Shanghai
         run: modules/hive/code/frontend/run_tests.sh
 
+  ai-detector:
+    name: ai-detector 测试
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: modules/ai-detector
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: false   # 零第三方依赖，没有 go.sum 可做缓存键
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: vet + test
+        # 全部用 httptest 假服务，不装 ActivityWatch、不连网。
+        run: |
+          go vet ./...
+          go test -count=1 ./...
+      - name: 三系统都能编过
+        run: |
+          for t in linux/amd64 windows/amd64 darwin/arm64 darwin/amd64; do
+            GOOS=${t%/*} GOARCH=${t#*/} CGO_ENABLED=0 go build -o /dev/null . || exit 1
+          done
+
   ring-tokens:
     name: ring 令牌兜底
     runs-on: ubuntu-latest
