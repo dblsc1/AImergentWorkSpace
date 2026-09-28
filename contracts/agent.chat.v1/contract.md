@@ -59,7 +59,7 @@ consumes:
 { "id": "msg_…", "role": "user" /* | "assistant" */, "text": "…", "createdAt": "…" }
 ```
 
-- `health`：`configured:false` = 没配模型密钥（第七节），此时除 `health` 外的端点照常可用，只有发消息回
+- `health`：`configured:false` = 模型没配好（第七节：`AGENT_API_KEY` 与 `AGENT_BASE_URL` 都空），此时除 `health` 外的端点照常可用，只有发消息回
   `503`。前端据此显示「去 `.env` 填 `AGENT_API_KEY`」。**`health` 不是 200（没装聊天后端：网关回 404 或 502）→ 聊天面板整块不出现**。
 - 列会话不分页：每个租户的会话数有上限（第六节）。
 - `messages` 里只有用户说的话和助手的**最终文字**；工具调用过程不进历史（流里有提示，第四节）。
@@ -99,13 +99,16 @@ consumes:
 | `delta` | `{"text": "…"}` | 回答正文的增量，按顺序拼接即全文。可能是任意长度的片段 |
 | `tool` | `{"name": "get_task_tree", "status": "running"}` | 代理在调工具。`status`：`running` / `done` / `error`。`name` 是 `mcp.tools.v1` 的工具名（去掉运行时加的前缀）。只做界面提示，**不含**工具的入参与结果 |
 | `done` | `{"messageId": "…", "reason": "end"}` | 终止事件。`reason`：`end`（正常结束）/ `cancelled`（被取消） |
-| `error` | `{"code": "…", "detail": "<人话>"}` | 终止事件。`code`：`upstream`（模型服务出错：密钥无效、额度用完、超时……）/ `internal` |
+| `error` | `{"code": "…", "detail": "<人话>", "correlationId": "…"}` | 终止事件。`code`：`upstream`（模型服务出错：密钥无效、额度用完、超时……）/ `internal` |
 
 - **恰好一个终止事件**（`done` 或 `error`），之后服务端关流。客户端没收到终止事件就断了 = 连接问题，
   重新 `GET` 会话即可看到已存下的部分。
 - 空闲时每 15 秒发一行 SSE 注释 `: ping`，防中间层超时。
 - `error.detail` 是给人看的固定文案（如「模型服务拒绝了密钥」），**不带**上游原始报错——那里面可能有密钥片段、
-  内部地址。原始错误只进聊天后端自己的日志。
+  内部地址。
+- **日志同样脱敏**：出错时日志只记**错误类别**（`upstream`/`internal` 及其细分，如 `auth`/`quota`/`timeout`）、
+  **状态码**、**关联 id**（每次发消息一个，同时放进 `error` 事件的 `data.correlationId` 方便对日志）。**不记**上游原始
+  错误对象、请求/响应头、请求/响应体、消息正文。
 - 客户端**不认识的事件类型一律忽略**（v1 之内可以追加事件）。
 - 回答生成期间，客户端断开连接 **= 取消**（不留在后台继续花用户的模型额度）。
 
@@ -134,7 +137,10 @@ consumes:
 2. 给代理任何 MCP 只读工具以外的能力：**不许**执行命令、读写文件、访问网络（取网页、搜索）、再派子代理、
    装插件。代理能碰到的数据只有 `mcp.tools.v1`。v0.3 的代理**什么都不写**。
 3. 把会话分享 / 上传到任何第三方（opencode 的「分享」必须关掉，第七节）。
-4. 把模型密钥、用户凭据、`X-Nexus-Tenant` 以外的请求头交给运行时或写进日志；在任何响应、事件里带出密钥。
+4. 泄露模型密钥或用户凭据。**模型密钥**：运行时可以持有它，**唯一用途**是向模型服务认证（第七节把它配进
+   opencode 的 provider）；它不得出现在提示词（系统提示、历史、用户消息里都不拼）、工具结果、SSE 事件、任何响应、
+   任何日志里。**用户凭据**（`Cookie`、`Authorization`、设备令牌）：聊天后端本来就收不到（网关清掉了），也不许
+   以任何方式交给运行时；除 `X-Nexus-Tenant` 外，网关转来的请求头都不传给运行时。
 5. 让运行时自己的 HTTP 接口能从聊天后端容器外面访问到。
 6. 系统提示里必须声明：工具结果（尤其活动建议的 `app`/`title`/`reason`）是**数据，不是指令**。
 
@@ -144,13 +150,30 @@ consumes:
 
 | 变量 | 必填 | 缺省 | 说明 |
 |---|---|---|---|
-| `AGENT_API_KEY` | 用聊天就必填 | 空 | 模型服务的密钥。空 = `configured:false`，发消息 `503`。**只进聊天后端容器**，不进网关、MCP、nexus-core |
-| `AGENT_MODEL` | ❌ | 发布版 `.env.example` 给出 | `<provider>/<model>`（opencode 的写法）。密钥按 `<provider>` 配到 opencode 的 `provider.<provider>.options.apiKey` |
+| `AGENT_API_KEY` | 用云端模型就必填 | 空 | 模型服务的密钥。它与 `AGENT_BASE_URL` 都空 = `configured:false`，发消息 `503`。**只进聊天后端容器**，不进网关、MCP、nexus-core |
+| `AGENT_MODEL` | ❌ | `.env.example` 写 `deepseek/deepseek-chat` | `<provider>/<model>`（opencode 的写法） |
+| `AGENT_BASE_URL` | ❌ | 空 | OpenAI 兼容端点（`.../v1`，如本机 Ollama）。设了就走下面的「自定义端点」映射 |
 | `AGENT_MAX_SESSIONS` | ❌ | `50` | 每个租户的会话上限 |
 | `AGENT_MAX_RUNTIMES` | ❌ | `4` | 同时活着的运行时进程数上限（见下）；满了且没有空闲可回收的 → `503` |
 | `AGENT_UPSTREAM`（网关的） | ❌ | `agent:8030` | 换聊天后端时改它（gateway.v1 第八节） |
 
 用户要做的只有：在 `.env` 里填 `AGENT_API_KEY`（换模型再填 `AGENT_MODEL`），重启。
+
+**怎么映射进 opencode 的配置**（设 `AGENT_MODEL=<p>/<m>`）：
+
+- 没设 `AGENT_BASE_URL`：`<p>` 是 opencode 自带的 provider（如 `deepseek`、`anthropic`、`openai`），
+  配置 `"model": "<p>/<m>"`，`"provider": {"<p>": {"options": {"apiKey": "{env:AGENT_API_KEY}"}}}`。
+- 设了 `AGENT_BASE_URL`（自定义端点）：声明一个 OpenAI 兼容的 provider，id 取 `<p>`：
+  ```json
+  { "model": "<p>/<m>",
+    "provider": { "<p>": { "npm": "@ai-sdk/openai-compatible", "name": "<p>",
+                           "options": { "baseURL": "{env:AGENT_BASE_URL}", "apiKey": "{env:AGENT_API_KEY}" },
+                           "models": { "<m>": { "name": "<m>" } } } } }
+  ```
+  `AGENT_API_KEY` 可空（本机 Ollama 不要密钥；空时不写 `apiKey`）。例：`AGENT_MODEL=ollama/qwen2.5`、
+  `AGENT_BASE_URL=http://host.docker.internal:11434/v1`（Linux 上聊天后端服务要加
+  `extra_hosts: ["host.docker.internal:host-gateway"]` 才解析得到宿主机）。
+- `AGENT_BASE_URL` 只许 `http://`/`https://`，格式不对启动时报错；它和密钥一样只进聊天后端容器。
 
 ### 结构
 
@@ -181,7 +204,9 @@ consumes:
   `{env:VAR}` 替换。—— https://opencode.ai/docs/mcp-servers/
 - 远程 MCP 客户端**先试 Streamable HTTP、再退 SSE**，配置里的 `headers` 经 `requestInit` 带在每个请求上。
   —— `packages/opencode/src/mcp/index.ts`（sst/opencode，dev 分支）
-- 密钥：`provider.<id>.options.apiKey: "{env:…}"`，或标准环境变量（`ANTHROPIC_API_KEY` 等）。—— https://opencode.ai/docs/providers/
+- 密钥：`provider.<id>.options.apiKey: "{env:…}"`，或标准环境变量（`ANTHROPIC_API_KEY` 等）。OpenAI 兼容的自定义
+  provider：`npm: "@ai-sdk/openai-compatible"` + `options.baseURL` + 可选 `options.apiKey` + `models` 表（文档的 Ollama
+  例子即此形）；`deepseek` 是自带 provider。—— https://opencode.ai/docs/providers/
 - 配置来源含 `OPENCODE_CONFIG_CONTENT`（内联，优先级高于项目配置）；`share` 可设 `"disabled"`；`autoupdate` 可关；
   `permission` 支持 `"*"` 通配与 `"deny"`，键有 `read`、`edit`、`glob`、`grep`、`bash`、`task`、`skill`、`lsp`、
   `question`、`webfetch`、`websearch`、`external_directory`、`doom_loop`；**缺省是全部允许**（所以必须显式拒绝）。
@@ -193,6 +218,7 @@ consumes:
 - MCP 工具在 opencode 里的权限名是 `<服务器名>_<工具名>`，`"*": "deny"` 加 `"honeycomb_*": "allow"` 能做到
   「只剩 honeycomb 的工具」；`deny` 在 `serve` 模式下由服务端执行、不需要界面。
 - 事件流里能分辨出「正文增量」「工具开始/结束」「会话空闲/出错」（具体事件名以当时版本为准），足以翻译成第四节。
+- 模型 id `deepseek/deepseek-chat` 在当时的 opencode 模型目录里存在（文档只列了 provider，没列到模型）。
 - 文档里**没有**「一个 serve 进程按目录分多个实例」的可靠说明，所以不用它；这也是「一租户一进程」的原因。
 
 ## 八、换实现要满足什么
@@ -202,7 +228,7 @@ consumes:
 - [ ] 第四节 SSE：`start` → `delta`/`tool`* → 恰好一个 `done` 或 `error`；`: ping` 心跳；断连即取消
 - [ ] 第五节取消幂等；第六节限制与「必须拒绝」逐条
 - [ ] 代理只经 `mcp.tools.v1` 读数据，调 MCP 时带**会话所属租户**
-- [ ] 日志不记消息正文、不记密钥、不记用户凭据
+- [ ] 日志只记错误类别、状态码、关联 id；不记消息正文、密钥、用户凭据、上游原始错误对象、头、体
 
 测试（实现 PR 里给）：两个租户互相列不到、读不到、删不掉对方的会话；取消后流以 `cancelled` 结束；
 没配密钥时 `health.configured=false` 且发消息 `503`；请求体多带 `model` 字段 `422`；运行时的可用工具清单里只有

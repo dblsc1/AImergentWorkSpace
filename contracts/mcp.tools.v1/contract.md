@@ -61,13 +61,17 @@ consumes:
   - 浏览器会话 cookie 能过；
   - 设备令牌（`Authorization: Bearer`，auth.gate v1.3 起对 `<站点前缀>api/mcp/` 也认，见该契约）能过；
   - 没登录：同 `/api/core/`，网关按 gateway.v1 的门语义处理（302 到登录页）。MCP 客户端把它当失败即可。
+    **已知限制**：API 客户端更想要 `401`；v0.3 为与 `/api/core/` 一致保持 302，要改是网关的追加（给 API 路由单独的 401 门）。
 - **对内地址**（只给聊天后端用，见第三节）：缺省组装里是 `http://mcp:8020/api/mcp/`，只在
   `honeycomb-agent-net` 内网可达（网关到 MCP 与聊天后端到 MCP 共用这张网，宿主机不映射端口）。
   MCP 另在 `honeycomb-net` 上，经它调 nexus-core。
 - 网关转给 MCP 的请求**不带**客户端的 `Cookie`、`Authorization`（gateway.v1 第八节）——MCP 不需要、
   也不该拿到用户凭据。
-- **`Origin` 校验**（MCP 规范的 MUST，防 DNS 重绑定）：请求带 `Origin` 且其主机与 `Host` 不同 → `403`。
-  不带 `Origin`（非浏览器客户端）照常。
+- **`Origin` 校验**（MCP 规范的 MUST，防 DNS 重绑定）：**在 MCP 服务里查**（网关之后，对外、对内两个入口都查）。
+  - 请求**不带** `Origin`（非浏览器客户端：opencode、命令行、桌面 MCP 客户端）→ 照常。
+  - 请求**带** `Origin` → 只有与 `MCP_ALLOWED_ORIGINS`（逗号分隔，缺省空）里某一项**完全相等**（协议 + 主机 + 端口，
+    如 `https://example.com:8443`）才放行，否则 `403`。缺省空 = 浏览器一律进不来。
+  - **不拿 `Host` 比**：MCP 在网关后面，看到的 `Host` 是转发设定的值，与浏览器地址栏未必一致，比了等于没比。
 - 请求体上限 64 KiB，超过 `413`。
 
 ## 二、租户（规范性）
@@ -191,6 +195,10 @@ consumes:
 ### `list_time_sessions` —— 人的时间记录（一段一条）
 
 入参：`from`（**必填**，带偏移的时刻）、`to`（选填，带偏移，缺省 = 现在）、`limit`、`cursor`。
+
+- **`to` 缺省时绑进 cursor**：第一页（不带 `cursor`）没给 `to` 就取 MCP 此刻的时间，并把这个值编进 `nextCursor`；
+  之后带 `cursor` 的页**没给 `to` 就沿用绑定的值**（不是重新取「现在」——否则翻页期间新结束的会话会让 offset 错位）；
+  显式给了 `to` 且与绑定值是同一时刻，照常；**显式给了不同的值 → `400`**。`from` 同理：须与第一页相同，不同 `400`。
 按会话**结束时刻**（事件 `time`）过滤，新的在前（同档案读端）。
 
 ```jsonc
@@ -316,7 +324,7 @@ consumes:
 
 ## 七、换实现要满足什么
 
-- [ ] Streamable HTTP，单端点；`Origin` 校验；请求体上限
+- [ ] Streamable HTTP，单端点；`Origin` 校验（无 `Origin` 放行，有则须完全匹配 `MCP_ALLOWED_ORIGINS`）；请求体上限
 - [ ] 第二节租户规则逐条（严格模式 401、格式不对 400、工具无租户入参、`additionalProperties: false`）
 - [ ] 第四节 8 个工具的名字、入参、出参字段与含义；只读注解
 - [ ] 只调第四节表里的 GET；nexus-core 5xx 不把细节回给调用方
