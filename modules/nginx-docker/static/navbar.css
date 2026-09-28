@@ -142,6 +142,9 @@ html { scroll-padding-top: var(--ckpt-h, 52px); }
 /* idle：空心灰点 + 「未在计时」，无边框强调 */
 .ckpt-nav[data-ckpt-timer="idle"] .ckpt-chip { border-color: var(--line); color: var(--ink-2); }
 
+/* 已暂停（空闲的一种）：--accent 空心点。窄屏字被藏时与空闲的灰空心点分得开。 */
+.ckpt-nav[data-ckpt-timer="idle"][data-ckpt-paused] .ckpt-dot { border-color: var(--accent); }
+
 /* running：--accent 实心点 + 呼吸 + 任务名 + 用时。三个状态里唯一「活」的一个。 */
 .ckpt-nav[data-ckpt-timer="running"] .ckpt-chip { border-color: var(--accent); color: var(--accent); }
 .ckpt-nav[data-ckpt-timer="running"] .ckpt-dot { background: var(--accent); border-color: var(--accent); }

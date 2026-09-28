@@ -62,6 +62,8 @@ consumes:
 - 计时中且 `nexus.timer.carry.v1.taskId` 等于在计的任务 → 读数 = `carriedSeconds + 本段`，
   与 hive / ring 一致。每秒现读，不只在拉状态时读一次（「继续」时计时台写累计记忆晚于刷新事件）。
 - 芯片从不写这两个键。
+- 已暂停时顶栏加属性 `data-ckpt-paused`（v0.2.7，追加；`data-ckpt-timer` 仍是 idle），圆点换成 `--accent` 空心：
+  窄屏把字藏了也能和空闲的灰空心点分开。
 
 ## 对比度校验
 
