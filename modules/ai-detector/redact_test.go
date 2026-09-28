@@ -15,7 +15,7 @@ func TestScrub(t *testing.T) {
 		{"身份证 110101199001011234", "身份证 [数字]"},
 		{"会议 2026-09-28 10:00 第 12 周", "会议 2026-09-28 10:00 第 12 周"}, // 日期、短数字不动
 		{"https://mail.example.com/u/0/?q=secret#inbox - 页面", "mail.example.com - 页面"},
-		{"see http://a.b.cn/x?token=abc123456789", "see a.b.cn"},
+		{"see http://a.b.cn/x?page=2&id=987654321", "see a.b.cn"},
 	}
 	for _, c := range cases {
 		if got := scrub(c.in); got != c.want {
