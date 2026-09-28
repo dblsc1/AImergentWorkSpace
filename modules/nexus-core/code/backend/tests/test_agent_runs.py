@@ -245,7 +245,7 @@ def test_agent_projection_identity_includes_source(client):
     assert (row["seconds"], row["runs"]) == (120, 2)
 
 
-@pytest.mark.parametrize("bad", [float("nan"), float("inf"), 1e308, 32 * 86400])
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf"), 1e308, 10**400, 32 * 86400])
 def test_agent_projection_skips_non_finite_or_absurd_duration(bad):
     """坏载荷静默跳过、不炸投影（NaN/Inf 经 HTTP 进不来——JSON 不认，这里直接喂 handler）。"""
     from app.modules.projector.handlers import agent_daily_stats  # noqa: PLC0415

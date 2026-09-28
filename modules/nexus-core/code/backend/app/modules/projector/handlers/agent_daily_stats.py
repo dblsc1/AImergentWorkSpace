@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import json
-import math
 from datetime import datetime
 
 from ....config import settings
@@ -47,7 +46,8 @@ def handle(envelope: dict) -> None:
         or not isinstance(start_at, str)
         or not isinstance(seconds, (int, float))
         or isinstance(seconds, bool)
-        or not math.isfinite(seconds)  # NaN/Inf 过得了上面的类型与 <=0，int() 会炸
+        # 纯比较、不转 float：NaN 两边都不成立、±Inf 与超大 int（10**400）都超上限——
+        # math.isfinite 会对超大 int 抛 OverflowError，反而重新引入崩溃
         or not 0 < seconds <= _MAX_SECONDS
     ):
         return
