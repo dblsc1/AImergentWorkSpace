@@ -100,6 +100,17 @@ consumes:
       **不发** `honeycomb:timer-changed`。GET 404（后端早于 v2.2）→ 面板整块不出现。
       失败原样显示 `detail`，条目留在列表里。app/title 来自别的机器，只当文本渲染。
       任务下拉与路径显示读 `views.tree.v1`（zones/projects/tasks 的 id、name、zoneId）。
+  - id: agent.chat.v1
+    contract: ../../../contracts/agent.chat.v1/contract.md
+    purpose: >
+      （v0.3 AI 桥，契约先行，前端待实现）计时页的聊天面板，与「待确认」面板合成一块：
+      上半是待确认的活动建议（不变），下半是和助手聊天。只调 `<前缀>api/agent/`，**从不调任何
+      代理运行时（opencode）自己的接口**。用到：`GET health`（非 200 → 聊天整块不出现；
+      `configured:false` → 显示「去 .env 填 AGENT_API_KEY」）、会话的列 / 建 / 读 / 删、
+      `POST messages` 读 SSE（`start`/`delta`/`tool`/`done`/`error`，不认识的事件忽略；
+      `tool` 只显示「正在查：…」）、`cancel`（「停止」按钮）。POST 一律 `Content-Type: application/json`。
+      失败原样显示 `detail`。回答正文**当纯文本渲染**（不插 HTML）——里面可能转述别的机器上来的窗口标题。
+      助手在 v0.3 什么都不写；它提到的活动建议仍由人在上半块点确认。
 ```
 
 ## 对外 API
@@ -138,4 +149,5 @@ consumes:
 | 2026-08-19 | 派单：ring/table 各加补登入口 | v0.4：`timer.v1` 的 purpose 补上 `POST /api/core/timer/backfill`（补登「完成了但没计时」的历史段，nexus-core v1.8，与 `timer_state` 完全独立，空闲态/运行态均可点）；「依赖的外部契约」表 timer 行补 `TimerBackfillIn`/`TimerBackfillOut`。对应代码：`code/frontend/ring-backfill.js`（新文件）、`project-task-contribution-ring.html`/`ring.css`/`ring-controls.js`（导出 `window.postCore`）改动，见本次 commit |
 | 2026-09-23 | 下游需求 6：整站挂子路径 | 页面请求（`/api/core/...`）改为从网关注入的 `window.HONEYCOMB_BASE` 拼，缺省 `/` 时与之前逐字相同（`contracts/gateway.v1` 第七节） |
 | 2026-09-26 | v0.2.1 实测 | 补登表单：没动过日期/时刻时，填时长自动把开始时刻推到「现在往前这么久」（之前默认开始=现在，只填时长必被拒）；开始+时长超过现在时本地先拦、用人话说明，不再把服务端带 ISO 时间戳的拒绝原文甩给人。计时写成功后发 `honeycomb:timer-changed`，顶栏芯片即时刷新（modules/nginx-docker 契约） |
+| 2026-09-28 | v0.3 AI 桥（契约先行） | 新增 consumes `agent.chat.v1`：聊天面板与「待确认」面板合并，只经 `<前缀>api/agent/`；前端代码在实现 PR 里跟上 |
 | 2026-09-28 | v0.3 自动检测只是建议 | 新增 consumes `nexus-core.activity.suggestions.v1`：计时页「待确认」面板（`ring-suggestions.js`、HTML 末尾 `#suggest-panel`、`ring.css` 末段）。列出、改任务、确认、忽略、按把握阈值全部确认；端点 404 时整块隐藏；确认后刷新圆环、不发 `honeycomb:timer-changed` |

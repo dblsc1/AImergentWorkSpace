@@ -1,6 +1,9 @@
 # auth.gate.v1 —— 一道登录门（开放契约）
 
-> **契约 id**：`auth.gate.v1`。**当前版本 v1.2**（2026-09-28，纯追加，见文末变更记录）。
+> **契约 id**：`auth.gate.v1`。**当前版本 v1.3**（2026-09-28，纯追加，见文末变更记录）。
+>
+> **v1.3 契约先行**：设备令牌也开 `<站点前缀>api/mcp/`。占位实现在 v0.3 AI 桥的实现 PR 里跟上，
+> 跟上之前 stub 只认 `api/core/`（本文件唯一一处「契约写了、stub 还没做」，已登记）。
 >
 > **状态**：规范性。本文件描述的每一条行为都能在 `stub/auth_stub.py` 里找到对应代码，
 > 按函数名引用（`token_tenant`、`_login` 等）——**不确定的地方以代码为准，不是以这份
@@ -77,7 +80,8 @@ v1.1 占位实现追加两个字段（可选，替换实现可以不给）：`ac
 调用方，带 `Authorization: Bearer <令牌>` 调 `/api/core/*`。
 
 - **只开接口，不开页面**：只有网关转来的 `X-Original-URI`（原始请求的 `$request_uri`，
-  含站点前缀、未解码）的路径落在 `<站点前缀>api/core/` 下时才认令牌；缺这个头、或落在
+  含站点前缀、未解码）的路径落在 `<站点前缀>api/core/` 下（v1.3 起也含 `<站点前缀>api/mcp/`，
+  给用户自己的 MCP 客户端用，见 `contracts/mcp.tools.v1`）时才认令牌；缺这个头、或落在
   别处（`/hive/`、`/login/`、`/api/auth/`……）一律 `401`。判断前先解一遍 `%XX`，路径里
   有 `.` / `..` 段或反斜杠也 `401`——nginx 按**解码、规范化之后**的路径匹配 location，
   `/api/core/%2e%2e/%2e%2e/hive/` 在它眼里是 `/hive/`，不识破这一层令牌就能开页面。
@@ -228,6 +232,8 @@ nginx 对 `200/204/401/403` 之外的返回一律当错误，整个上游请求�
 - [ ] 登录按来源限次
 - [ ] （可选，v1.2）设备令牌：只在 `X-Original-URI` 落在 `<前缀>api/core/` 下时认、识破
       编码过的 `..`；与会话 cookie 互不通用；可吊销；发令牌只认 cookie；日志不记令牌。
+      （可选，v1.3）令牌也认 `<前缀>api/mcp/`；不支持的实现在那里对 `Bearer` 回 `401`，
+      MCP 仍可凭会话 cookie 用。**只加这一个前缀**，`api/agent/` 等其余路径照旧 `401`
       不支持设备令牌的实现对 `Bearer` 回 `401`，`/api/auth/tokens` 回 `404`
 
 **不要求**：cookie 值的编码方式（无状态签名或服务端会话表都行）、账号怎么存怎么管。
@@ -261,7 +267,7 @@ nginx 对 `200/204/401/403` 之外的返回一律当错误，整个上游请求�
 换真账号服务。
 
 **7. 设备令牌（v1.2）只开接口、不进日志。** 令牌是长期凭证（缺省一年），所以：只认
-打 `<前缀>api/core/` 的请求（偷到令牌也打不开页面、换不出新令牌）；只出现在发令牌的
+打 `<前缀>api/core/`（v1.3 起加只读的 `<前缀>api/mcp/`）的请求（偷到令牌也打不开页面、换不出新令牌）；只出现在发令牌的
 响应体与命令行的标准输出里，不进任何日志与提示；签名域与会话 cookie 分开
 （`"device|"` 前缀 + 不同载荷形状），两者互不通用。
 
@@ -355,4 +361,5 @@ docker compose exec auth python /app/auth_stub.py revoke         # 作废共享�
 | 2026-09-17 | v1 首版。契约文本从 `stub/auth_stub.py` 的实际行为反推得出 |
 | 2026-09-23 | 站点前缀（`contracts/gateway.v1` 第七节）：cookie `Path` 从固定 `/` 改为站点前缀（缺省仍是 `/`，未挂子路径的部署零变化）；占位实现加 `AUTH_BASE_PATH`；自带登录页从自己的地址推前缀，`next` 只接受前缀内地址 |
 | 2026-09-23 | **v1.1（纯追加）**：verify 的 `204` 可带 `X-Nexus-Tenant`，可回 `403`（登录了但没有可用租户）；新增 `GET /api/auth/me`，冻结最小形状 `{ok, user:{id, name}}`，`user.id` 等于 verify 的租户；login 请求体可带 `username`；login 可回 `429`；health 可带 `accounts` / `sharedPassword`；换实现清单加多用户与限次两条；安全约定加「只存哈希」「限次按网关看到的对端算」。占位实现加账号+密码（scrypt、账号文件、命令行管理、改密码/删账号作废会话），共享口令模式行为不变。引用改为按函数名，不再按行号 |
+| 2026-09-28 | **v1.3（纯追加，契约先行）**：设备令牌认的路径从 `<前缀>api/core/` 扩到再加 `<前缀>api/mcp/`（`contracts/mcp.tools.v1` 的对外入口）。只多开一个只读接口前缀，页面、`api/auth/`、`api/agent/` 照旧 `401`；v1.2 的实现不认它只是少一个能力，失败方向是拒绝。三条不变量不变 |
 | 2026-09-28 | **v1.2（纯追加）**：设备令牌。verify 可读 `Authorization: Bearer`（只在 `X-Original-URI` 落在 `<前缀>api/core/` 下时认，带了 Bearer 不回落到 cookie；原有 cookie 路径行为不变）；新增 `POST /api/auth/tokens`、`POST /api/auth/tokens/revoke`（只认 cookie、须 `application/json`）；消费方须给 verify 子请求带 `X-Original-URI`（gateway.v1 两份组装早已带）；换实现清单加一条可选项；安全约定加第 7 条。占位实现：`hct1.` 无状态令牌、按租户纪元吊销（`AUTH_TOKENS_FILE`）、`AUTH_TOKEN_DAYS`、命令行 `token` / `revoke`；没设 `AUTH_SECRET` 不发令牌。三条不变量不变 |

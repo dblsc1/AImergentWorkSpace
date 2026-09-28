@@ -36,6 +36,7 @@ docker compose -f docker-compose.yml -f /你的/override.yml up -d
 | `HONEYCOMB_LOGIN_DIR` | 登录门占位件自带的页面 | 登录页静态目录，挂在 `/login/`【冻结】 |
 | `HONEYCOMB_EXTRA_ROUTES_DIR` | `deploy/nginx/extra`（空） | 额外路由目录，见第四节【冻结】 |
 | `HONEYCOMB_BASE_PATH` | `/` | 站点前缀：整站挂在子路径下时设，如 `/Cockpit/`，以 `/` 开头和结尾。见第七节【冻结】 |
+| `AGENT_UPSTREAM` | `agent:8030` | 聊天后端地址（`host:port`），实现 `agent.chat.v1`。见第八节（2026-09-28 追加）|
 
 路径变量写**绝对路径**最稳；相对路径按 compose 文件所在目录解析。
 
@@ -173,3 +174,28 @@ proxy_set_header X-Nexus-Tenant $honeycomb_tenant;
 - 顶栏页签 `window.HONEYCOMB_NAV` 里的地址已含前缀。
 
 CI 把手写与生成的两份组装各按 `/` 与 `/Cockpit/` 真起一遍。
+
+## 八、AI 桥：聊天后端与 MCP（2026-09-28 追加，v0.3）
+
+两条新的受保护路由，都 `include gate.inc`（过门、覆盖租户头）：
+
+| 对外路径 | 转给 | 契约 |
+|---|---|---|
+| `<前缀>api/agent/` | `AGENT_UPSTREAM`（缺省 `agent:8030`）的 `/api/agent/` | `contracts/agent.chat.v1` |
+| `<前缀>api/mcp/` | MCP 服务（缺省 `mcp:8020`）的 `/api/mcp/` | `contracts/mcp.tools.v1` |
+
+- **换聊天后端**：同换认证服务——override 里加自己的服务（接到 `honeycomb-agent-net`），`.env` 里设
+  `AGENT_UPSTREAM`，把缺省的 `agent` 服务 `profiles: [disabled]`。前端、MCP 都不用动。
+- 两条路由转发时**清掉** `Cookie` 与 `Authorization`（`proxy_set_header ... ""`）：门已经在网关验过了，
+  后端只需要租户头；用户凭据不该出现在一个会跑大模型的进程里。门子请求照旧拿得到这两个头
+  （子请求读的是客户端原始请求头，不受本 location 的 `proxy_set_header` 影响）。
+- `<前缀>api/agent/`：`proxy_buffering off`（SSE 逐条到浏览器），`proxy_read_timeout` 不短于 300 秒
+  （聊天后端每 15 秒发心跳）。`<前缀>api/mcp/`：同样关缓冲（Streamable HTTP 可能回 SSE）。
+- 设备令牌：auth.gate v1.3 起对 `<前缀>api/mcp/` 也认（让用户自己的 MCP 客户端能接）；
+  `<前缀>api/agent/` **不认令牌**，只认浏览器会话。
+- 网络：新增内部网 `honeycomb-agent-net`，上面只有网关、MCP、聊天后端。nexus-core、认证服务、mongo
+  **不在**这张网上——聊天后端够不着它们，读数据只能经 MCP（`mcp.tools.v1` 第三节）。MCP 同时在两张网上。
+- **缺了它们网关照常起**：这两条路由的上游用运行期解析（`resolver 127.0.0.11` + 变量写 `proxy_pass`），
+  不在启动时解析——否则关掉 `agent` 服务、或 `AGENT_UPSTREAM` 指向的服务还没起，nginx 直接起不来，整站跟着挂。
+  连不上时这两条路由回 502；前端按 `agent.chat.v1` 把聊天面板整块藏起来。
+
