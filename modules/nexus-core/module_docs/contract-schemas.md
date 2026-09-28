@@ -41,6 +41,13 @@
 空闲态（`running:false`）时四个字段全为 `null`，**不是 0** ——
 0 会被圆环画成一个真实存在但为零的弧，`null` 才表示"没有当前任务"。
 
+#### `agents[]`（v2.1 追加）
+
+`CurrentOut` 增 `agents: [{runId, taskId, agent, tool, model, startedAt}]`——当前租户在跑的
+AI 代理运行（`taskId`/`model` 可为 `null`，键不消失），没有就是 `[]`。它与上面的人类计时字段
+**互不影响**：只有代理在跑时 `running` 仍是 `false`、四个字段仍是 `null`。
+详见 `contract.md`「AI 代理运行」节。
+
 ### `TreeOut` — `GET /api/core/views/tree`
 
 ```jsonc

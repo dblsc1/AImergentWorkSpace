@@ -10,6 +10,16 @@
 > `NEXUS_TENANT_STRICT=1`：缺头即 401，绝不静默落到 `u_local`。见「按租户分数据」节。
 > 主版本号升到 2 是因为唯一约束从「全局 id」变成「租户内 id」；HTTP 接口一个字段都没减。
 >
+> **v2.1（追加式）**：**人是一条泳道，AI 代理是很多条泳道。** 新增
+> `nexus-core.agents.v1`（`POST /api/core/agents/start`、`POST /api/core/agents/{runId}/stop`，
+> 见「AI 代理运行」节）：多个代理运行可以同时在跑、各挂一个任务（不挂则落收件箱），
+> stop 时经事件入口写**一条** `agent.run.completed`；**永远不计入人的时间**——
+> `proj_daily_stats`/`proj_current`/甘特/回顾/圆环一律看不见它，另有独立投影
+> `proj_agent_daily_stats`。人的计时器保持单通道互斥（一个 `session.completed` 一段，
+> 人一天的总时长不可能超过 24h），不做多计时器。`timer.v1` 的 `start`/`backfill`
+> 增可选 `mode`（`do`/`prompt`/`review`，缺省 `do`，见「人类计时模式」节）。
+> `views.current.v1` 增 `agents[]`。既有字段、既有事件形状、既有端点行为一个不改。
+>
 > v1.9：`GET /api/core/export` 产出的快照此前没有任何端点能吃
 > 回去（喂给 import 会被三层拒绝，而那三条拒绝各守一件实事，一条都不该放宽）。
 > 新增 `nexus-core.restore.v1`（`POST /api/core/restore`，见「快照恢复」节）：
@@ -136,6 +146,19 @@ provides:
       NEXUS_TENANT_STRICT=1 时缺头 401；全部读写按租户隔离，事件 user 服务端盖章；
       唯一约束为 (user, id)
     status: 已实现（v2.0），待验证
+  - id: nexus-core.agents.v1
+    summary: AI 代理运行（v2.1）——POST /api/core/agents/start 开一个运行（可并发多个，挂任务或
+      收件箱，不碰人的计时器），POST /api/core/agents/{runId}/stop 经事件入口写一条
+      agent.run.completed（source=agent-hook，dedupeKey=agent:<runId>，重复 stop 不写第二条）；
+      在跑的运行住独立集合 agent_runs（不进台账）；超过 NEXUS_AGENT_RUN_TIMEOUT_HOURS 的运行
+      在下一次 start/stop/current 读时惰性以 outcome=timeout 关闭；时长只进独立投影
+      proj_agent_daily_stats，**永不计入人的时间**；views.current.v1 增 agents[]
+    status: 已实现（v2.1），待验证
+  - id: nexus-core.timer.mode.v1
+    summary: 人类计时模式（v2.1）——timer.v1 的 start/backfill 增可选 mode（do|prompt|review，
+      缺省 do），写进 session.completed 的 data.mode（mode=do 时不写，缺省即 do，老事件照读）；
+      start 时定下的 mode 存进 timer_state，stop 原样带出
+    status: 已实现（v2.1），待验证
 consumes:
   - id: yq-event/v1
     contract: ../../contracts/yq-event.v1/contract.md
@@ -160,6 +183,8 @@ consumes:
 | GET | `/api/core/planner/audit` | `?limit&objectId&actor&outcome` | `AuditOut`（见下「planner 审计流水」节） | ✅ 已实现（v1.6） |
 | POST | `/api/core/import` | `ImportRequest`（见下「JSON 一键导入编辑」节） | `ImportResultOut` | ✅ 已实现（v1.7） |
 | POST | `/api/core/restore` | 请求体 = `GET /export` 原样；`?dryRun&checksum`（见下「快照恢复」节） | `RestoreResultOut` | ✅ 已实现（v1.9） |
+| POST | `/api/core/agents/start` | `AgentStartIn`（见下「AI 代理运行」节） | `201 AgentStartOut` | ✅ 已实现（v2.1） |
+| POST | `/api/core/agents/{runId}/stop` | `AgentStopIn` | `AgentStopOut` | ✅ 已实现（v2.1） |
 | ~~GET~~ | ~~`/api/core/zones`~~ | 无 | `[ZoneOut]` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
 | ~~POST~~ | ~~`/api/core/zones`~~ | `{name, color?, order?}` | `ZoneOut` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
 | ~~PATCH~~ | ~~`/api/core/zones/{id}`~~ | `{name?, color?, order?}` | `ZoneOut` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
@@ -1412,6 +1437,114 @@ planner 是**计划状态**，走普通 CRUD，**不进开放事件标准**（�
 界面上的 `示例分区一/示例项目一/示例任务一#1` 是**渲染时按 id 查 name 拼的**，
 **不入库、不进事件、不做检索键**。
 
+## AI 代理运行（规范性 · v2.1，agents）
+
+**人是一条泳道，AI 代理是很多条泳道。** 人的计时器是互斥的（同一时刻只做一件事，
+一天的总时长不可能超过 24h）；AI 代理（Claude Code、Codex……）可以同时开好几个，
+各挂一个任务在跑。两者**永远不混账**：代理的时长不是人的时长，混进 `proj_daily_stats`
+会让「我今天干了 31 小时」这种数字出现在圆环和甘特上——那是在骗用户。
+
+### 端点与形状
+
+```jsonc
+// POST /api/core/agents/start   请求 AgentStartIn
+{ "taskId": "t_a1b2c3",          // 选填；缺省/null = 挂收件箱（subject 为 z_inbox/p_inbox、无 task）
+  "agent": "claude-code",        // 必填，1–64 字符
+  "tool": "Bash",                // 必填，1–64 字符
+  "model": "opus" }              // 选填，1–64 字符
+// → 201 AgentStartOut
+{ "runId": "run_0123456789ab", "startedAt": "2026-09-28T09:30:00+00:00" }
+
+// POST /api/core/agents/{runId}/stop   请求 AgentStopIn
+{ "outcome": "done",             // 必填：done | failed | cancelled | timeout
+  "output": "PR #31 已开" }      // 选填，≤512 字符
+// → 200 AgentStopOut
+{ "runId": "run_0123456789ab",
+  "duplicate": false,            // true = 这个运行早已结束（重复 stop / 已被超时关闭），本次什么都没写
+  "outcome": "done",             // duplicate:true 时是**原来那条**事件的 outcome，不是这次请求的
+  "durationSeconds": 42,
+  "event": { "id": "evt_...", "dedupeKey": "agent:run_0123456789ab", "type": "agent.run.completed" } }
+```
+
+| 情形 | 状态码 | 理由 |
+|---|---|---|
+| `taskId` 不存在 / 归属链断裂 | 404 | 与 `timer/start` **同一套判据、同一套文案**（共用 `_resolve_task_chain`） |
+| `agent`/`tool`/`model` 为空或超 64 字符；`output` 超 512；`outcome` 不在枚举内 | 422 | 请求体校验，同 `actor` 字段的既有口径（pydantic 先拦） |
+| `runId` 不存在（或属于别的租户，同形状不暴露） | 404 | |
+| 同一 `runId` 第二次 stop | **200，`duplicate:true`** | 与 `timer/stop` 的 S8「幂等、不报错」同一取舍：hook 在网络抖动时一定会重试，409 会让它以为失败再重试一遍；回原来那条事件，**绝不写第二条** |
+
+### 服务端组装的信封（规范性）
+
+| 字段 | 值 |
+|---|---|
+| `type` | `agent.run.completed`（`yq-event.v1` §6 已登记） |
+| `source` | `agent-hook` |
+| `dedupeKey` | `agent:<runId>`——`runId` 在 start 时定死，stop 重试/并发 stop/超时关闭三条路径撞同一个键，只落一条 |
+| `time` | 运行结束时刻（超时关闭时为 `startedAt + 超时上限`，不是被发现的时刻） |
+| `subject` | 有 `taskId`：start 时从 planner 硬取 task→project→zone 全链快照进 `agent_runs`（同 timer）；无 `taskId`：`{zone:"z_inbox", project:"p_inbox"}`，无 `task` |
+| `data` | `{agent, tool, model?, startAt, durationSeconds, outcome, output?}`——`model`/`output` 没给就不出现；`durationSeconds` 秒级下限 1（同 timer）；超时关闭时封顶为超时上限 |
+| `flags` | `[]` |
+
+### 在跑的运行：独立集合 `agent_runs`，不是事实
+
+- 在跑的运行只是**活状态**（同 `timer_state`），不进台账、**不进导出**（导出的是事实与投影；
+  没结束的运行还不是事实，导出一份半截的运行也没有端点能吃回去）。已结束的运行以
+  `agent.run.completed` 在 `events` 里，导出与快照恢复照常带走。
+- **多个运行可以同时在跑**：没有「start 自动关上一个」，也**完全不碰 `timer_state`**——
+  人在计时、代理在跑，两件事互不知道对方存在。
+- 顺序同 timer：**先 ingest 后删活状态**，删失败后重试命中防重，不会丢也不会重。
+
+### 遗忘超时（惰性，无调度器）
+
+hook 没发 stop（终端被关、进程被杀）的运行会永远挂着。超过 `NEXUS_AGENT_RUN_TIMEOUT_HOURS`
+（默认 12）的运行，在**该租户**下一次 `agents/start`、`agents/{runId}/stop`、`views/current`
+时被关闭：写 `outcome:"timeout"`、`durationSeconds` = 超时上限。**不起调度器**——没人读的时候
+晚一点关不影响任何数字（事件的 `time`/`startAt` 都按运行本身算，不按被发现的时刻）。
+这意味着 `GET /views/current` 可能写事件——这是本节明文允许的唯一例外，写的只是
+「早该写的那一条」。
+
+### 投影：`proj_agent_daily_stats`，与人的投影零交集
+
+`agent.run.completed` 在 DISPATCH 表里**只**路由到 `handlers/agent_daily_stats.py`；
+`session.completed` 的两个 handler 一行不改。于是人的一切读端（`views/current` 的人部分、
+圆环占比、甘特 `actual`、每周回顾）**结构上**看不见代理时长——不是靠过滤，是根本没喂进去。
+
+```jsonc
+// proj_agent_daily_stats 文档（唯一约束 (user, date, projectId, taskId, agent)）
+{ "user": "u_local", "date": "2026-09-28", "projectId": "p_3c98de", "taskId": "t_a1b2c3",
+  "agent": "claude-code", "seconds": 5400, "runs": 3, "appliedKeys": ["agent:run_..."] }
+```
+
+- 归日同「日界与时区」：`data.startAt` 经 `NEXUS_TZ`。
+- 投影重建（`rebuild`，含快照恢复末尾的那次）**一并重建**它；`--only proj_agent_daily_stats` 可单独重建。
+- 本版**不开读端**（不进 `export.projections`，那里的键集合是已发布的形状）；要按代理看时长时再加。
+
+### `views.current.v1` 增 `agents[]`
+
+```jsonc
+"agents": [ { "runId": "run_...", "taskId": "t_a1b2c3",   // 收件箱运行为 null
+              "agent": "claude-code", "tool": "Bash", "model": null,   // 未给为 null，键不消失
+              "startedAt": "2026-09-28T09:30:00+00:00" } ]
+```
+
+当前租户在跑的运行，按 `startedAt` 升序；没有就是 `[]`。人的部分（`running`/`zone`/`project`/
+`task`/`sessionStartAt`）**与代理完全无关**：只有代理在跑时 `running` 仍是 `false`。
+
+## 人类计时模式（规范性 · v2.1，mode）
+
+`POST /api/core/timer/start` 与 `POST /api/core/timer/backfill` 增可选
+`mode: "do" | "prompt" | "review"`（缺省 `do`）——人这段时间是在**亲手做**、在**给 AI 写提示**、
+还是在**审 AI 的产出**。人的计时器仍是单通道互斥，`mode` 只是给这一段贴的标签。
+
+- start 时定下的 `mode` 存进 `timer_state`，stop 时原样写进 `session.completed` 的 `data.mode`；
+  `TimerOut` 回显 `mode`。v2.1 之前存下的 `timer_state` 没有 `mode`，stop 按 `do` 处理。
+- **`mode` 为 `do` 时 `data` 里不写这个键**：缺省即 `do`，v2.1 之前的事件（都没有这个键）
+  自然读成 `do`；默认路径下 `session.completed` 的 `data` 与 v1.8「与 `stop()` 完全同形」
+  一个字节都不变。读方一律 `data.mode ?? "do"`。
+- 取值不在枚举内 → 422（同 `actor` 字段口径）。
+- 补登的 `dedupeKey` **不含** `mode`：同一段时间换个标签再补一次仍是同一段，防重照旧命中。
+- 投影不看 `mode`（零投影改动）；按模式拆分统计时再加。
+
 ## 入口与路由
 
 - nginx 公开前缀：`/api/core/`（HANDOFF §4 已定死，前端写死地址）
@@ -1461,6 +1594,8 @@ app/modules/
 - 归本模块所有：`events` / `timer_state` / `zones` / `projects` / `tasks` / `proposals`
   / `proj_current` / `proj_daily_stats` / `proj_trees`（HANDOFF §6）
   / **`planner_audit`（v1.6，审计流水，append-only，见「planner 审计流水」节）**。
+  / **`agent_runs`（v2.1，在跑的 AI 代理运行，活状态，不是事实）**
+  / **`proj_agent_daily_stats`（v2.1，AI 代理时长投影，见「AI 代理运行」节）**。
 - **其他模块一律不得直连本模块的 Mongo**。要数据就加读路径，不要绕。
 - `events` 集合**只增不改不删**；修正历史 = 追加修正事件。
 - data root 由 env 指定，位于 Git 工作树之外。
@@ -1476,6 +1611,7 @@ app/modules/
 | `NEXUS_HUMAN_CLIENT_TOKEN` | 否 | 人路径（网关注入）的来源凭据（v1.6） | 设了就必须 ≥16 字符；**绝不得落进受控层 / codex 可及的文件系统**；不得与 AI 凭据相同 |
 | `NEXUS_TENANT_STRICT` | 否 | 租户严格模式，默认 `0`（v2.0） | 取值只认 `0`/`1`/`true`/`false`；置 1 时缺 `X-Nexus-Tenant` 的请求一律 401。**多用户部署必开**，见「按租户分数据」节 |
 | `NEXUS_ACTOR_STRICT` | 否 | 严格模式，默认 `0`（v1.6） | 取值只认 `0`/`1`/`true`/`false`（其余立即失败）；置 1 时 `NEXUS_HUMAN_CLIENT_TOKEN` 必填，否则启动失败——**开了严格模式却没有人路径凭据 = 把前端写路径全打死，这种配置必须炸在启动那一刻，不是炸在用户点删除那一刻** |
+| `NEXUS_AGENT_RUN_TIMEOUT_HOURS` | 否 | AI 代理运行的遗忘超时（小时），默认 `12`（v2.1） | 正整数，其余立即失败。超时的运行在下一次 start/stop/`views/current` 读时以 `outcome:"timeout"` 关闭，时长封顶为该值 |
 
 本模块**不持有任何 LLM 密钥**——那是 ai-gateway 的事，物理隔离是设计的一部分。
 v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_request`），
