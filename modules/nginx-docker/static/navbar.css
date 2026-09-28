@@ -24,7 +24,7 @@ body {
 html { scroll-padding-top: var(--ckpt-h, 52px); }
 
 :root {
-  --ckpt-h: 52px;         /* 顶栏高度，窄屏 44px（见下方媒体查询） */
+  --ckpt-h: 52px;         /* 顶栏高度，窄屏 45px（见下方媒体查询） */
 }
 
 /* ── 顶栏本体 ────────────────────────────────────────────────────
@@ -298,8 +298,9 @@ html { scroll-padding-top: var(--ckpt-h, 52px); }
  * `container-type`，`.ckpt-nav` 是 `position:fixed` 更不会替它凭空建一个——
  * 写 `@container` 在这些页面里是一段永远不触发的死代码。 */
 @media (max-width: 560px) {
-  /* 44 = 按钮的最小触控高度（--tap）；42 时按钮上沿被切掉 1px（Windows 验收） */
-  :root { --ckpt-h: 44px; }
+  /* 45 = 按钮最小触控高度 44（--tap）+ 底边框 1px（border-box）。42 时切 1px；44 时
+   * 内容区只剩 43、按钮上下各溢出 0.5px（Windows 验收两轮实测）。 */
+  :root { --ckpt-h: 45px; }
   .ckpt-nav { padding: 0 10px; gap: 8px; }
   .ckpt-brand .ckpt-word { display: none; }
   .ckpt-tab { padding: 0 8px; font-size: var(--fs-sub, 13px); }
