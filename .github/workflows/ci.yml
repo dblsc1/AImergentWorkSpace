@@ -117,6 +117,8 @@ jobs:
         # add 要解析 module.yaml 的嵌套结构，需要 pyyaml；list/plan/doctor 零依赖。
         run: pip install -q pyyaml pytest
       - name: 单测
+        # tools/agent-hooks（cockpit-run + Claude Code 会话钩子）纯标准库，
+        # 跟着 `tools` 这一整棵一起收集，不用单独列。
         run: python -m pytest -q tools modules/nginx-docker/tests contracts/auth.gate.v1/tests
       - name: 解依赖 + 生成 + 核对
         run: |

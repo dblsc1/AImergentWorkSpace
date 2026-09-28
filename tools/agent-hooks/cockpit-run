@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+"""cockpit-run —— 包一层，把任意命令的一次执行记成一条 cockpit agent run。
+
+    cockpit-run --task <id> [--agent NAME] [--tool NAME] -- <command...>
+
+给 Codex、shell 脚本或者任何不方便自己接 Claude Code 钩子的工具用：
+跑之前报 start，跑完（或被打断）报 stop，命令本身的 stdin/stdout/stderr、
+退出码原样透传，cockpit 不在线或 token 不对也不影响命令执行——
+见 cockpit_client.py 模块 docstring 的设计取舍。
+
+**纪律**：被包装的命令必须跑起来，不管 cockpit 那边发生什么——配置文件
+格式错、cockpit 返回一个奇怪的形状、URL 写错了，都不该在 `Popen` 之前
+把这个脚本本身炸掉。所以 start 上报那一段整体包在一个宽泛的
+`except Exception` 里，只警告、不中断。
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import cockpit_client as cc  # noqa: E402
+
+
+def _parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
+    if "--" in argv:
+        idx = argv.index("--")
+        opts, command = argv[:idx], argv[idx + 1 :]
+    else:
+        opts, command = argv, []
+    parser = argparse.ArgumentParser(
+        prog="cockpit-run",
+        description="把一次命令执行记成一条 cockpit agent run",
+    )
+    parser.add_argument("--task", help="任务 id；缺省走环境变量/目录映射，再缺省是收件箱")
+    parser.add_argument("--agent", help="agent 显示名；缺省用项目目录名")
+    parser.add_argument("--tool", help="工具名；缺省用被包装命令的可执行文件名")
+    args = parser.parse_args(opts)
+    if not command:
+        parser.error("缺要执行的命令，用 -- 分隔：cockpit-run --task X -- 你的命令")
+    return args, command
+
+
+def _start(args: argparse.Namespace, command: list[str]) -> tuple[dict, str | None]:
+    """算配置 + 报 start。任何异常（配置文件形状不对、URL 写错、cockpit 返回怪
+    形状……）都只警告不上抛——这一步绝不能是"命令跑不跑得起来"的前提条件。
+    """
+    try:
+        config = cc.load_config()
+        task_id = cc.resolve_task(explicit=args.task, config=config)
+        agent = args.agent or cc.default_agent_name()
+        tool = args.tool or os.path.basename(command[0])
+        result = cc.start_run(config, task_id, agent, tool)
+        return config, result.get("runId")
+    except Exception as e:  # noqa: BLE001 — 见函数 docstring 与模块纪律
+        category = e if isinstance(e, cc.CockpitError) else "配置错误"
+        print(f"cockpit-run: 上报开始状态失败，本次不计时（{category}）", file=sys.stderr)
+        return {}, None
+
+
+def _wait_through_ctrl_c(proc: subprocess.Popen) -> tuple[int, bool]:
+    """等子进程退出，中途不管挨多少次 Ctrl-C 都不会带着 traceback 逃出去；
+    返回 `(退出码, 是否被 Ctrl-C 打断过)`。
+
+    只挡一次 KeyboardInterrupt 不够：第二次 Ctrl-C 会直接从 wait() 里逃出来，
+    带着一截 traceback 把整个包装进程带走——不但难看，还会跳过下面的 stop
+    上报和退出码规整化，子进程也变成没人 wait() 的僵尸。这里循环吞掉。
+
+    第 1 次 Ctrl-C：只记下"被打断了"，继续等——终端已经把 SIGINT 发给整个
+    前台进程组，子进程多半正在自己收尾，不该越俎代庖；顺带提示一句，免得
+    用户以为按了没反应。第 3 次：说明子进程不吃 SIGINT（忽略了，或者压根
+    不在前台组），直接 kill()，不再客气。
+
+    子进程如果已经被别处 reap 掉（比如什么地方装了 SIGCHLD 处理器抢先
+    waitpid 了），`wait()` 会抛 ChildProcessError（ECHILD）——这种情况下
+    要不到真实退出码，用 Ctrl-C 场景下的常见约定值 130（128+SIGINT）顶上，
+    总比让异常逃出去、跳过后面的上报和信号规整化要好。
+    """
+    presses = 0
+    while True:
+        try:
+            return proc.wait(), presses > 0
+        except KeyboardInterrupt:
+            presses += 1
+            if presses == 1:
+                print("cockpit-run: 已收到 Ctrl-C，等命令收尾；再按两次强制结束", file=sys.stderr)
+            elif presses >= 3:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+        except ChildProcessError:
+            return 130, True
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    args, command = _parse_args(argv)
+
+    config, run_id = _start(args, command)
+
+    cancelled = False
+    proc: subprocess.Popen | None = None
+
+    def _on_sigterm(signum, frame):
+        nonlocal cancelled
+        cancelled = True
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+
+    # 先装 handler 再 Popen：SIGTERM 要是落在"先 Popen、后装 handler"这道窄缝里，
+    # 就会用 Python 的默认处理直接把这个包装进程杀掉——子进程会变成孤儿，
+    # 也永远报不出 stop。装在前面之后，唯一剩下的窄缝是 Popen 系统调用本身
+    # 执行的那一刻（下面 Popen 后立刻检查一次 cancelled 补上这个缝）。
+    old_handler = signal.signal(signal.SIGTERM, _on_sigterm)
+    try:
+        proc = subprocess.Popen(command)
+        if cancelled and proc.poll() is None:
+            proc.terminate()  # 补上「Popen 返回前 SIGTERM 就到了」这条窄缝
+        # Ctrl-C 时子进程和我们同在一个前台进程组，终端已经把 SIGINT 直接发给
+        # 子进程了——第 1、2 次不该越俎代庖补 terminate()/kill()，子进程这会儿
+        # 多半正在自己收尾；一直不退出（忽略了 SIGINT）才升级成强杀，见
+        # _wait_through_ctrl_c。
+        exit_code, ctrl_c_seen = _wait_through_ctrl_c(proc)
+        cancelled = cancelled or ctrl_c_seen
+    finally:
+        signal.signal(signal.SIGTERM, old_handler)
+
+    # ponytail: SIGTERM 只转发给直接子进程，不管它的子孙——子进程如果是个 shell
+    # 脚本，脚本里再 fork 出来的进程是脚本自己的责任，跟大多数 exec 式包装器
+    # （比如 `exec` 内建）的约定一样。真要管住整棵进程树得用进程组
+    # （Windows 是 Job Object），这里没做；需要的话把 Popen 换成
+    # `start_new_session=True` + `os.killpg`（POSIX）。
+    # Windows 上没有能转发的 SIGTERM 语义：`os.kill(pid, SIGTERM)` 在 Windows
+    # 上直接调 TerminateProcess，不经过任何 Python handler；上面这套只在
+    # POSIX 上真正有效，Windows 下 Ctrl-C（SIGINT/CTRL_C_EVENT）仍然照常工作。
+
+    if cancelled:
+        outcome = "cancelled"
+    elif exit_code == 0:
+        outcome = "done"
+    else:
+        outcome = "failed"
+
+    if run_id:
+        try:
+            cc.stop_run(config, run_id, outcome)
+        except KeyboardInterrupt:
+            # 上报 stop 这几秒内又被 Ctrl-C 一次——_request 内部的 join(timeout)
+            # 是会被 KeyboardInterrupt 打断的阻塞调用，不是 Exception 的子类，
+            # 下面那个 except Exception 接不住，会直接逃出 main()，跳过下面
+            # exit_code < 0 时的信号规整化。这里接住，不重新报（这次 stop 反正
+            # 没报成），只记下"确实被打断过"。
+            cancelled = True
+        except Exception as e:  # noqa: BLE001 — 跟 _start() 一样：任何异常都不能顶替下面真实的退出码
+            category = e if isinstance(e, cc.CockpitError) else "配置错误"
+            print(f"cockpit-run: 上报结束状态失败，不影响命令结果（{category}）", file=sys.stderr)
+
+    if exit_code < 0 and os.name == "posix":
+        # 子进程是被信号杀的（POSIX 上 wait() 返回 -信号号）。直接
+        # `sys.exit(-15)` 会被算成 `-15 & 0xff` = 241，看起来像是正常退出、
+        # 只是码值很怪——不是上游期望的"同一个信号杀死"语义（比如 bash 报的
+        # 是 128+15=143，Python 自己的 subprocess.returncode 则会是 -15）。
+        # 恢复默认处理后把同一个信号发给自己，让这个包装进程也真的死于
+        # 这个信号，退出方式跟子进程一致。
+        sig = -exit_code
+        try:
+            signal.signal(sig, signal.SIG_DFL)
+        except (ValueError, OSError, RuntimeError):
+            pass  # 有些信号（比如 SIGKILL）压根不让设 handler，忽略——它本来就是默认处理
+        try:
+            os.kill(os.getpid(), sig)
+            time.sleep(1)  # 正常情况下上一行就终止了进程；给它一点时间生效
+        except (ValueError, OSError):
+            pass
+        return 128 + sig  # 兜底：自杀没成功就退回传统的 128+信号 约定
+
+    return exit_code
+
+
+if __name__ == "__main__":
+    sys.exit(main())
