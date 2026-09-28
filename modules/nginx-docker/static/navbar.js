@@ -321,6 +321,7 @@
 
   var paint = function () {
     nav.setAttribute('data-ckpt-timer', state);
+    nav.removeAttribute('data-ckpt-paused');
     if (state === DEGRADED) {
       liveWord.textContent = WORD_DEGRADED;
       chip.title = HINT_DEGRADED;
@@ -333,6 +334,8 @@
       // 「已暂停」—— 与 hive 中心格 / 计时台同一语义，要根治得把暂停搬到后端。
       var paused = readKey(PAUSED_KEY);
       liveWord.textContent = paused ? WORD_PAUSED : WORD_IDLE;
+      // 窄屏把字藏了，只剩圆点 + 读数：暂停和空闲得靠点本身分开（Windows 验收）
+      if (paused) nav.setAttribute('data-ckpt-paused', '');
       elapsedNode.textContent = fmt(paused ? secsOf(paused.carriedSeconds) : 0);
       return;
     }
