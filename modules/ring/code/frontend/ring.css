@@ -351,7 +351,7 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .suggest-bulk .btn { flex: 1 1 12em; white-space: normal; }
 .suggest-message { font-size: var(--fs-sub); color: var(--fact); }
 .suggest-message.is-error { color: var(--danger); }
-.suggest-empty { font-size: var(--fs-sub); color: var(--ink-3); }
+.suggest-empty, .suggest-more { font-size: var(--fs-sub); color: var(--ink-3); }
 .suggest-list { list-style: none; padding: 0; display: grid; gap: var(--sp-3); }
 .suggest-item {
   display: grid; gap: var(--sp-2); min-width: 0;

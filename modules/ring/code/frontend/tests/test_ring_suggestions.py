@@ -39,7 +39,8 @@ class SuggestStub:
         self.items = json.loads(json.dumps(items)) if items is not None else None
         self.posts: list[tuple[str, str, Any]] = []
         self.fail_ids: set[str] = set()
-        self.get_status = 200  # 非 200 = 列表接口出错（不是 404 那种「老后端」）
+        self.get_status = 200
+        self.extra_total = 0  # total 比 items 多出来的条数（模拟分页之外还有更早的）  # 非 200 = 列表接口出错（不是 404 那种「老后端」）
 
     def route(self, route: Route) -> None:
         req = route.request
@@ -50,7 +51,7 @@ class SuggestStub:
             if self.items is None:
                 route.fulfill(status=404, content_type="application/json", body='{"detail":"Not Found"}')
                 return
-            body = {"total": len(self.items), "items": self.items}
+            body = {"total": len(self.items) + self.extra_total, "items": self.items}
             route.fulfill(status=200, content_type="application/json", body=json.dumps(body, ensure_ascii=False))
             return
         parts = req.url.split("?")[0].rstrip("/").split("/")
@@ -175,6 +176,17 @@ def test_buttons_recover_when_reload_fails(browser, static_base_url):
         page.wait_for_selector("#suggest-message.is-error")
         assert page.locator('li[data-id="sug_a"] .suggest-confirm').is_enabled()
         assert page.locator("#suggest-confirm-all").is_enabled()
+
+
+def test_more_than_one_page_hint(browser, static_base_url):
+    with open_page(browser, static_base_url, ITEMS) as (h, stub):
+        page = h.page
+        page.wait_for_selector("#suggest-list li")
+        assert page.is_hidden("#suggest-more")
+        stub.extra_total = 250
+        page.locator('li[data-id="sug_c"] .suggest-dismiss').click()
+        page.wait_for_selector("#suggest-more:not([hidden])")
+        assert page.inner_text("#suggest-more") == "还有 250 条更早的待确认，先处理上面的"
 
 
 def test_empty_state(browser, static_base_url):

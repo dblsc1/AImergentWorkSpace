@@ -71,12 +71,14 @@
   var listEl = document.getElementById("suggest-list");
   var countEl = document.getElementById("suggest-count");
   var emptyEl = document.getElementById("suggest-empty");
+  var moreEl = document.getElementById("suggest-more");
   var msgEl = document.getElementById("suggest-message");
   var thresholdEl = document.getElementById("suggest-threshold");
   var allBtnEl = document.getElementById("suggest-confirm-all");
   if (!panelEl || !listEl) return;
 
   var items = [];
+  var total = 0; // 服务端的待确认总数；一次只拉 200 条，多出来的要让人知道还有
   var tree = null;
   var chosen = {}; // id → 人在下拉里改过的 taskId（重绘时保留）
   var busy = false;
@@ -172,6 +174,9 @@
     items.forEach(function (it) { listEl.appendChild(renderItem(it)); });
     countEl.textContent = items.length ? String(items.length) : "";
     emptyEl.hidden = items.length > 0;
+    var more = total - items.length;
+    moreEl.textContent = more > 0 ? "还有 " + more + " 条更早的待确认，先处理上面的" : "";
+    moreEl.hidden = more <= 0;
     syncButtons();
   }
 
@@ -195,6 +200,7 @@
     } catch (err) { /* 拉不到就沿用上一份；从没拉到过则下拉为空，确认按钮保持禁用 */ }
     if (mine !== loadSeq) return;
     items = (body && body.items) || [];
+    total = (body && typeof body.total === "number") ? body.total : items.length;
     panelEl.hidden = false;
     render();
   }

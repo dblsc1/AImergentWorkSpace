@@ -35,7 +35,8 @@ SOURCE = "activity-confirmed"
 #: 单段上限同补登（契约「拒绝规则」）：拦单位填错。
 _MAX_SEGMENT_SECONDS = 86400
 #: 检测程序与服务器的时钟误差容忍：endAt 比服务器「现在」晚这么多以内不算未来。
-_CLOCK_SKEW = timedelta(seconds=60)
+# 被拒的段不重发，所以宁宽勿严：设备时钟快一两分钟就丢掉每一段，代价远大于收下一段「略超前」的
+_CLOCK_SKEW = timedelta(seconds=300)
 _DEFAULT_LIMIT, _MAX_LIMIT = 100, 1000
 _MAX_APP, _MAX_TITLE = 128, 512  # 码点数（Python str 长度即码点）
 

@@ -133,13 +133,14 @@ def test_long_app_and_title_truncated_by_code_point(client):
 def test_time_rules(client):
     now = _recent(0)
     backwards = _seg(now - timedelta(minutes=5)) | {"endAt": (now - timedelta(minutes=6)).isoformat()}
-    future = _seg(now + timedelta(minutes=5))
+    future = _seg(now + timedelta(minutes=5))  # endAt 超前 9 分钟：超出 300 秒容差
+    skewed = _seg(now - timedelta(minutes=1))  # endAt 超前 3 分钟：设备时钟偏快，照收
     too_long = _seg(now - timedelta(days=2), minutes=60 * 25)
     reason_200_bytes_ok = _seg(now - timedelta(minutes=30))
     reason_200_bytes_ok["suggestion"]["reason"] = "中" * 66 + "ab"  # 200 字节整，放行
-    out = _upload(client, [backwards, future, too_long, reason_200_bytes_ok, "not-an-object"])
+    out = _upload(client, [backwards, future, too_long, reason_200_bytes_ok, "not-an-object", skewed])
     assert [r["index"] for r in out["rejected"]] == [0, 1, 2, 4]
-    assert out["accepted"] == 1
+    assert out["accepted"] == 2
 
 
 @pytest.mark.parametrize("body", [

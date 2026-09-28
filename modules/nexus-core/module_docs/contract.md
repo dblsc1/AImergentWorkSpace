@@ -1587,7 +1587,7 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
 { "deviceId": "dev_3f9a1c2b7d4e5a60",            // ^[A-Za-z0-9_.-]{1,64}$
   "segments": [                                   // 0–200 段
     { "startAt": "2026-09-26T11:05:00+08:00",     // 必须带时区偏移
-      "endAt":   "2026-09-26T12:07:00+08:00",     // 必须带时区偏移，晚于 startAt，不晚于现在（容 60 秒时钟误差）
+      "endAt":   "2026-09-26T12:07:00+08:00",     // 必须带时区偏移，晚于 startAt，不晚于现在（容 300 秒时钟误差）
       "durationSeconds": 3600,                    // 整数，1 ≤ n ≤ endAt-startAt，且 ≤ 86400
       "app": "code",                              // 非空；超过 128 个码点截断后存
       "title": "plot.gd — garden — VS Code",      // 可为 ""；超过 512 个码点截断后存
