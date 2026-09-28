@@ -13,6 +13,8 @@
 # 环境变量（都可不设）：
 #   HONEYCOMB_DIR     安装目录，缺省 ./honeycomb
 #   HONEYCOMB_BIND    监听地址，缺省 127.0.0.1:8800（只本机能访问，这是故意的）
+#   HONEYCOMB_PROJECT compose 项目名。缺省：第一份叫 honeycomb，本机已有同名的就依次
+#                     honeycomb-2、honeycomb-3……（第一次装时定下，写进 .env，升级沿用）
 set -eu
 
 # 整个脚本包在 main 里、最后一行才调用：`curl | sh` 半路断网时，没下载完的脚本
@@ -47,9 +49,22 @@ main() {
     od -An -N16 -tx1 /dev/urandom | tr -d ' \n'
   }
 
+  # compose 项目名 = 容器、网络、数据卷的前缀。以前写死 honeycomb：同一台机器在第二个
+  # 目录再装一份，会把第一份的 web / auth 重建成第二份的口令和端口、两份共用一份数据
+  # （Windows 验收实测）。第一次装时挑一个本机没人用的名字，写进 .env。
+  taken() {
+    [ -n "$(docker ps -aq --filter "label=com.docker.compose.project=$1")" ] ||
+      [ -n "$(docker volume ls -q --filter "label=com.docker.compose.project=$1")" ]
+  }
+
   fresh=0
   if [ ! -f .env ]; then
     fresh=1
+    project=${HONEYCOMB_PROJECT:-}
+    if [ -z "$project" ]; then
+      project=honeycomb; n=1
+      while taken "$project"; do n=$((n + 1)); project="honeycomb-$n"; done
+    fi
     pw=$(rand)
     umask 077
     cat > .env <<EOF
@@ -61,6 +76,8 @@ AUTH_SECRET=$(rand)
 # 只本机能访问。要放到局域网改成 0.0.0.0:8800，但先在前面加 TLS（见 README）。
 HONEYCOMB_BIND=$BIND
 HONEYCOMB_TZ=Asia/Shanghai
+# compose 项目名（容器、数据卷的前缀）。别改：改了等于换成一份新的空数据。
+HONEYCOMB_PROJECT=$project
 EOF
   fi
 

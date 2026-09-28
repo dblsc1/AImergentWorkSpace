@@ -245,7 +245,20 @@ jobs:
           sh "$RUNNER_TEMP/assets/honeycomb-install.sh" | tee out.txt
           grep -q '这次是升级' out.txt
           deploy/smoke.sh "$PW"
+      - name: 同一台机器装第二份（换目录换端口）不许接管第一份
+        # v0.2.5 在 Windows 实测：项目名写死 honeycomb，第二份把第一份的 web / auth
+        # 重建成自己的口令和端口、两份共用数据卷。第二份必须自动另起项目名。
+        run: |
+          export HONEYCOMB_ASSETS="$RUNNER_TEMP/assets" HONEYCOMB_DIR="$RUNNER_TEMP/sh2/honeycomb" HONEYCOMB_BIND=127.0.0.1:8801
+          sh "$RUNNER_TEMP/assets/honeycomb-install.sh"
+          grep -qx 'HONEYCOMB_PROJECT=honeycomb-2' "$HONEYCOMB_DIR/.env"
+          grep -qx 'HONEYCOMB_PROJECT=honeycomb' "$RUNNER_TEMP/sh/honeycomb/.env"
+          pw2=$(sed -n 's/^HONEYCOMB_PASSWORD=//p' "$HONEYCOMB_DIR/.env")
+          deploy/smoke.sh "$PW"                          # 第一份：原口令、原端口照常
+          deploy/smoke.sh "$pw2" http://127.0.0.1:8801    # 第二份：自己的口令、自己的端口
+          test "$(docker volume ls -q --filter label=com.docker.compose.project=honeycomb-2 | wc -l)" -ge 1
           (cd "$HONEYCOMB_DIR" && docker compose down -v)
+          (cd "$RUNNER_TEMP/sh/honeycomb" && docker compose down -v)
       - name: PowerShell 安装 + 冒烟
         shell: pwsh
         run: |
@@ -261,7 +274,7 @@ jobs:
       - name: 失败时的日志
         if: failure()
         run: |
-          for d in "$RUNNER_TEMP/sh/honeycomb" "$RUNNER_TEMP/ps/honeycomb"; do
+          for d in "$RUNNER_TEMP/sh/honeycomb" "$RUNNER_TEMP/sh2/honeycomb" "$RUNNER_TEMP/ps/honeycomb"; do
             [ -d "$d" ] && (cd "$d" && docker compose logs --no-color) || true
           done
 
