@@ -1,6 +1,6 @@
 # auth.gate.v1 —— 一道登录门（开放契约）
 
-> **契约 id**：`auth.gate.v1`。**当前版本 v1.1**（2026-09-23，纯追加，见文末变更记录）。
+> **契约 id**：`auth.gate.v1`。**当前版本 v1.2**（2026-09-28，纯追加，见文末变更记录）。
 >
 > **状态**：规范性。本文件描述的每一条行为都能在 `stub/auth_stub.py` 里找到对应代码，
 > 按函数名引用（`token_tenant`、`_login` 等）——**不确定的地方以代码为准，不是以这份
@@ -60,9 +60,9 @@ v1.1 占位实现追加两个字段（可选，替换实现可以不给）：`ac
 
 | | |
 |---|---|
-| 请求 | 无 body；读 `Cookie` 头里的会话 cookie |
+| 请求 | 无 body；读 `Cookie` 头里的会话 cookie。（v1.2）带了 `Authorization: Bearer <设备令牌>` 时改读令牌，见下 |
 | `204` | 会话有效——**无 body**。**可以**带响应头 `X-Nexus-Tenant: <租户 id>`（v1.1） |
-| `401` | 没登录：cookie 缺失 / 签名不对 / 已过期 / 账号已删 / 校验过程抛出任何异常——**无 body** |
+| `401` | 没登录：cookie 缺失 / 签名不对 / 已过期 / 账号已删 / 校验过程抛出任何异常——**无 body**。（v1.2）令牌无效、已吊销、或不是打接口的请求，同样 `401` |
 | `403` | （v1.1，可选）登录了，但当前**没有可用租户**（例：家长账号还没选孩子）——**无 body** |
 
 - **租户头**：格式 `^[A-Za-z0-9_.:-]{1,64}$`（与 gateway.v1、nexus-core 同一格式）。
@@ -73,7 +73,23 @@ v1.1 占位实现追加两个字段（可选，替换实现可以不给）：`ac
   （nexus-core `NEXUS_TENANT_STRICT=1`）会兜底拒绝，但源头就该响亮。
 - 网关对 `403` 回 `403`（不跳登录页）；这三个状态码之外 nginx 一律当 500。
 
-代码：`do_GET` 的 verify 分支、`token_tenant`。
+**设备令牌（v1.2，可选）**：桌面同步程序、AI 代理的钩子这类**没有浏览器 cookie** 的
+调用方，带 `Authorization: Bearer <令牌>` 调 `/api/core/*`。
+
+- **只开接口，不开页面**：只有网关转来的 `X-Original-URI`（原始请求的 `$request_uri`，
+  含站点前缀、未解码）的路径落在 `<站点前缀>api/core/` 下时才认令牌；缺这个头、或落在
+  别处（`/hive/`、`/login/`、`/api/auth/`……）一律 `401`。判断前先解一遍 `%XX`，路径里
+  有 `.` / `..` 段或反斜杠也 `401`——nginx 按**解码、规范化之后**的路径匹配 location，
+  `/api/core/%2e%2e/%2e%2e/hive/` 在它眼里是 `/hive/`，不识破这一层令牌就能开页面。
+  查询串不参与判断。
+- **带了 Bearer 就只看令牌**，不回落到 cookie：令牌无效就是 `401`，哪怕同时带着有效
+  cookie。别的认证方案（如 `Basic`）不算令牌，照旧看 cookie。
+- `204` 的租户头与 cookie 路径完全一样：账号令牌带该账号的租户；共享口令身份的令牌
+  **不带租户**（= `u_local`）。
+- 令牌与会话 cookie **互不通用**：令牌塞进 cookie、cookie 值当令牌，都是 `401`。
+- 三条不变量对令牌路径一样成立（无 body、无 IO、任何异常 `401`）。
+
+代码：`do_GET` 的 verify 分支、`verify_tenant`、`token_tenant`、`device_tenant`、`_api_uri`。
 
 ### `GET /api/auth/me`（v1.1）
 
@@ -110,6 +126,39 @@ v1.1 占位实现追加两个字段（可选，替换实现可以不给）：`ac
 
 代码：`_login`、`check_login`、`FailLimiter`。
 
+### `POST /api/auth/tokens`（v1.2，可选）
+
+登录了的网页用户给自己发一个设备令牌——Windows 用户不必碰 docker 命令行。
+
+| | |
+|---|---|
+| 鉴权 | **只认会话 cookie**，不认 Bearer（令牌不能换出新令牌） |
+| 请求 | 必须 `Content-Type: application/json`；body 可空，或 `{"label": "<≤64 字符>"}` |
+| `201` | `{"token": "<令牌>", "tenant": "<租户 id>", "expiresAt": "<UTC ISO 8601>"}`（`application/json`）。`tenant` 与 `/me` 的 `user.id` 同义（共享口令身份为 `"u_local"`） |
+| `401` | 没有有效会话 cookie（只带 Bearer 也是 `401`）|
+| `400` | body 不是 JSON 对象、`label` 不是字符串或超长；`Content-Length` 不是合法整数（**断开连接**）|
+| `413` | `Content-Length` 为负或超过 4096 字节（**断开连接**）|
+| `415` | `Content-Type` 不是 `application/json` |
+| `503` | 本实例不发令牌（占位实现：没设 `AUTH_SECRET`，或没有令牌文件）、或写令牌文件失败 |
+
+- `Content-Type` 的要求是 CSRF 防线：跨站表单发不出这个类型，跨站 `fetch` 带它要先过
+  CORS 预检（本服务不回 CORS 头）；再加上 cookie 本身 `SameSite=Lax`。
+- `label` 占位实现只校验、不存（令牌是无状态的，没有令牌表）；替换实现可以拿它做列表。
+- 令牌只出现在这个响应体里，**任何日志都不许记令牌**。
+
+### `POST /api/auth/tokens/revoke`（v1.2，可选）
+
+| | |
+|---|---|
+| 鉴权 / 请求 | 同 `POST /api/auth/tokens`（cookie、`application/json`、body 可空）|
+| `204` | 调用者这个身份（租户）的**全部**设备令牌作废，无 body。别的身份不受影响 |
+| 其它 | `401` / `400` / `413` / `415` / `503` 同上 |
+
+吊销之后新发的令牌照常可用。占位实现在本进程立即生效；命令行吊销 `RELOAD_EVERY`（2 秒）
+内生效。
+
+代码：`_tokens`、`_read_json`、`token_state`、`issue_device_token`。
+
 ### `POST /api/auth/logout`
 
 | | |
@@ -136,7 +185,9 @@ nginx `auth_request` 丢弃子请求的 body，返 body 纯属浪费，还会给
 `auth_request` 是**同步**子请求：`verify` 的延迟叠加到每一个受保护请求上，它依赖的库一
 抖动，整个受保护面跟着抖。占位实现的 `token_tenant` 只做字符串切分、一次 HMAC、一次整数
 比较；账号信息（租户 → 会话盐）来自内存视图，由后台线程在账号文件变化时重读
-（`Accounts`），不在请求里读文件。
+（`Accounts`），不在请求里读文件。设备令牌（v1.2）同理：`device_tenant` 比对的吊销
+纪元来自内存视图 `Epochs`，同一个后台线程重读令牌文件；只有发令牌 / 吊销这两个
+端点在请求线程里写文件，它们不在 `auth_request` 的路径上。
 
 ### 3. `verify` 任何内部错误都必须收敛成 401，不许裸奔成 500
 
@@ -144,6 +195,7 @@ nginx 对 `200/204/401/403` 之外的返回一律当错误，整个上游请求�
 的故障就会连坐全部业务请求。宁可错误地拒绝一个合法用户（重新登录一次），也不能让 auth
 的一次抖动波及全部受保护流量。`token_tenant` 用宽 `except` 把所有异常收成「无效」；
 `_cookie_value` 自己解析 Cookie 头，不用标准库 `http.cookies`（畸形头在那里会抛）。
+`verify_tenant` 再包一层宽 `except`：畸形、超长的 `Authorization` 头一样只是 `401`。
 
 ## 消费方怎么接
 
@@ -156,6 +208,10 @@ nginx 对 `200/204/401/403` 之外的返回一律当错误，整个上游请求�
   `proxy_set_header X-Nexus-Tenant $tenant;` 转给后端——这一句同时覆盖掉客户端自带的同名头。
 - `error_page 401 = @登录页跳转;`。
 - `/api/auth/` 本身不设门（设门就锁死了唯一入口）。
+- （v1.2，要用设备令牌时）verify 子请求须带上 `X-Original-URI $request_uri` 与客户端的
+  `Authorization` 头。后者不用写：`auth_request` 子请求默认把原请求的全部头转过去
+  （`proxy_pass_request_headers` 缺省 on）；前者 gateway.v1 的两份组装都已设。缺
+  `X-Original-URI` 时令牌一律 `401`——失败方向是拒绝，不是放行。
 
 ## 换实现要满足什么
 
@@ -170,6 +226,9 @@ nginx 对 `200/204/401/403` 之外的返回一律当错误，整个上游请求�
 - [ ] 口令、签名的比较用抗时序攻击的方式
 - [ ] 缺关键配置时**拒绝启动**，不接受弱默认值
 - [ ] 登录按来源限次
+- [ ] （可选，v1.2）设备令牌：只在 `X-Original-URI` 落在 `<前缀>api/core/` 下时认、识破
+      编码过的 `..`；与会话 cookie 互不通用；可吊销；发令牌只认 cookie；日志不记令牌。
+      不支持设备令牌的实现对 `Bearer` 回 `401`，`/api/auth/tokens` 回 `404`
 
 **不要求**：cookie 值的编码方式（无状态签名或服务端会话表都行）、账号怎么存怎么管。
 
@@ -200,6 +259,11 @@ nginx 对 `200/204/401/403` 之外的返回一律当错误，整个上游请求�
 最后一个——前面的谁都能伪造，信了就能换个假 IP 无限试。已知天花板：网关前面再套一层
 反代时，最后一个是那层反代的地址，所有人共用一个额度；这种部署请在外层反代限次，或
 换真账号服务。
+
+**7. 设备令牌（v1.2）只开接口、不进日志。** 令牌是长期凭证（缺省一年），所以：只认
+打 `<前缀>api/core/` 的请求（偷到令牌也打不开页面、换不出新令牌）；只出现在发令牌的
+响应体与命令行的标准输出里，不进任何日志与提示；签名域与会话 cookie 分开
+（`"device|"` 前缀 + 不同载荷形状），两者互不通用。
 
 ## 占位实现
 
@@ -237,22 +301,52 @@ docker compose run --rm auth python /app/auth_stub.py users           # 列出�
 - 共享口令的会话只能靠换 `AUTH_SECRET`（或不设它、重启）整体作废；去掉 `AUTH_PASSWORD`
   后它签过的会话也立即失效。
 
+**设备令牌**（v1.2）：
+
+```bash
+docker compose exec auth python /app/auth_stub.py token alice    # 给 alice 发一个，打到标准输出
+docker compose exec auth python /app/auth_stub.py token          # 共享口令身份的（须开着共享口令）
+docker compose exec auth python /app/auth_stub.py revoke alice   # 作废 alice 的全部令牌
+docker compose exec auth python /app/auth_stub.py revoke         # 作废共享口令身份的全部令牌
+```
+
+- 用法：`Authorization: Bearer <令牌>` 调 `<站点前缀>api/core/...`。只开接口，不开页面。
+- 格式：`hct1.<签发时间戳>.<纪元>.<租户>.<HMAC-SHA256(AUTH_SECRET, "device|" + 前四段 + "|" + 会话盐 + "|" + 代)>`，
+  无状态，服务端不存令牌表。共享口令身份的租户段为空，「会话盐」取共享口令的派生值
+  （`_shared_sess`）。
+- **吊销**：令牌文件 `{"gen": "<随机>", "epochs": {"<租户，共享口令为 ''>": n}}`（原子写、
+  `0600`、持 `<令牌文件>.lock`）。每个租户一个整数纪元，令牌记着签发时的纪元，对不上就
+  作废，`revoke` 把纪元 +1；`gen` 是这份文件的「代」，签进每个令牌。文件在发第一个令牌
+  （或第一次吊销）时建出来。verify 读的是内存视图，后台线程 `RELOAD_EVERY`（2 秒）内
+  重读——命令行发的令牌、命令行的吊销都是 2 秒内生效。
+- **失败方向是拒绝**：令牌文件不在 = 没有有效令牌；**删掉它 = 全部令牌作废**（重建时
+  换一代），不会让吊销过的令牌复活。启动时文件读不出来 = 令牌一律 `401` 直到修好；
+  运行中文件坏了沿用旧视图。
+- **跟着账号走**：签名里带账号的会话盐，改密码、删账号时该账号的令牌一并作废；换掉或
+  去掉 `AUTH_PASSWORD` 后共享口令身份的令牌失效（会话 cookie 在这一点上维持 v1 行为不变）。
+- **必须设 `AUTH_SECRET`**：不设时每个进程随机生成密钥，命令行签的令牌服务端不认、
+  重启后全部失效——所以命令行拒绝发、`POST /api/auth/tokens` 回 `503`。发布版安装脚本
+  写的 `.env` 已带它；`deploy/` 下手搭的，自己在 `.env` 里加。
+- 换 `AUTH_SECRET` 会作废所有令牌与所有会话。
+
 **环境变量**：
 
 | 变量 | 必填 | 默认值 | 说明 |
 |---|---|---|---|
 | `AUTH_PASSWORD` | 与账号二选一 | 无 | 共享口令。没设它、账号文件里也没账号 = 拒绝启动 |
 | `AUTH_USERS_FILE` | ❌ | 无（不开账号登录） | 账号文件路径。compose 里是 `/data/users.json`（named volume `honeycomb_auth_data`） |
-| `AUTH_SECRET` | ❌ | 每次启动随机 | 签 cookie 用；随机 = 每次重启所有人重新登录 |
+| `AUTH_SECRET` | ❌（设备令牌必填） | 每次启动随机 | 签 cookie 与设备令牌用；随机 = 每次重启所有人重新登录，且不发设备令牌 |
 | `AUTH_COOKIE_SECURE` | ❌ | `true` | 本机 HTTP 调试须显式设 `false` |
 | `AUTH_BIND` | ❌ | `127.0.0.1:8010` | 监听地址 |
 | `AUTH_SESSION_DAYS` | ❌ | `30` | 会话有效期天数 |
-| `AUTH_BASE_PATH` | ❌ | `/` | 站点前缀，cookie 的 `Path` 跟着它（compose 里 = `HONEYCOMB_BASE_PATH`）。格式不对拒绝启动 |
+| `AUTH_BASE_PATH` | ❌ | `/` | 站点前缀，cookie 的 `Path` 跟着它（compose 里 = `HONEYCOMB_BASE_PATH`）；设备令牌只认 `<它>api/core/`。格式不对拒绝启动 |
+| `AUTH_TOKENS_FILE` | ❌ | 账号文件同目录的 `tokens.json`（compose 里 = `/data/tokens.json`，同一个数据卷；只开共享口令时也在） | 设备令牌的纪元文件（v1.2）。它与 `AUTH_USERS_FILE` 都没设 = 不发令牌 |
+| `AUTH_TOKEN_DAYS` | ❌ | `365` | 设备令牌有效期天数（v1.2） |
 
 **限次**：同一对端 15 分钟内错 10 次，之后 `429` 直到窗口滑过去。只数失败。
 
 测试：`contracts/auth.gate.v1/tests/test_stub.py`（真起进程、真发 HTTP）；端到端见
-`deploy/test/accounts.sh`（CI「多账号」）。
+`deploy/test/accounts.sh`、`deploy/test/tokens.sh`（CI「多账号」）。
 
 ## 变更记录
 
@@ -261,3 +355,4 @@ docker compose run --rm auth python /app/auth_stub.py users           # 列出�
 | 2026-09-17 | v1 首版。契约文本从 `stub/auth_stub.py` 的实际行为反推得出 |
 | 2026-09-23 | 站点前缀（`contracts/gateway.v1` 第七节）：cookie `Path` 从固定 `/` 改为站点前缀（缺省仍是 `/`，未挂子路径的部署零变化）；占位实现加 `AUTH_BASE_PATH`；自带登录页从自己的地址推前缀，`next` 只接受前缀内地址 |
 | 2026-09-23 | **v1.1（纯追加）**：verify 的 `204` 可带 `X-Nexus-Tenant`，可回 `403`（登录了但没有可用租户）；新增 `GET /api/auth/me`，冻结最小形状 `{ok, user:{id, name}}`，`user.id` 等于 verify 的租户；login 请求体可带 `username`；login 可回 `429`；health 可带 `accounts` / `sharedPassword`；换实现清单加多用户与限次两条；安全约定加「只存哈希」「限次按网关看到的对端算」。占位实现加账号+密码（scrypt、账号文件、命令行管理、改密码/删账号作废会话），共享口令模式行为不变。引用改为按函数名，不再按行号 |
+| 2026-09-28 | **v1.2（纯追加）**：设备令牌。verify 可读 `Authorization: Bearer`（只在 `X-Original-URI` 落在 `<前缀>api/core/` 下时认，带了 Bearer 不回落到 cookie；原有 cookie 路径行为不变）；新增 `POST /api/auth/tokens`、`POST /api/auth/tokens/revoke`（只认 cookie、须 `application/json`）；消费方须给 verify 子请求带 `X-Original-URI`（gateway.v1 两份组装早已带）；换实现清单加一条可选项；安全约定加第 7 条。占位实现：`hct1.` 无状态令牌、按租户纪元吊销（`AUTH_TOKENS_FILE`）、`AUTH_TOKEN_DAYS`、命令行 `token` / `revoke`；没设 `AUTH_SECRET` 不发令牌。三条不变量不变 |

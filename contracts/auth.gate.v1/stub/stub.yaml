@@ -31,7 +31,9 @@ service:
     # 默认 true。本机 HTTP 调试才设 false —— 见 .env.example 的说明。
     AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
     # 不设则每次启动随机生成：重启即所有会话失效。单机自用可接受，
-    # 多实例或不想被重启踢下线就显式给一个。
+    # 多实例或不想被重启踢下线就显式给一个。设备令牌（v1.2）必须有它，不设就不发。
+    # 令牌的吊销纪元缺省记在 AUTH_USERS_FILE 旁边（/data/tokens.json），要换地方设
+    # AUTH_TOKENS_FILE；有效期 AUTH_TOKEN_DAYS，缺省 365。
     AUTH_SECRET: ${AUTH_SECRET:-}
 
 # 登录页（index.html + login.js）。换掉整个 auth 实现时，登录页跟着 stub/web/ 一起换。
