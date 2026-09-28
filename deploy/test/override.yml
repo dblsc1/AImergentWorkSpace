@@ -3,11 +3,30 @@
 #   · 认证服务换成另一个容器（auth2，同一份占位件），AUTH_UPSTREAM 指过去，
 #     缺省的占位认证服务 auth 整个关掉（profiles）
 #   · HONEYCOMB_EXTRA_ROUTES_DIR 指向 deploy/test/extra（见 .env）
+#   · AI 桥（第八节）：mcp 整个关掉（网关照常起，/api/mcp/ 回 502）；聊天后端换成一个回显
+#     请求头的小服务 agentecho，AGENT_UPSTREAM 指过去（见 .env），接在 honeycomb-agent-net 上
 #
 # 用法（在 deploy/ 下）：docker compose -f docker-compose.yml -f test/override.yml up -d --wait
 services:
   auth:
     profiles: [disabled]
+  mcp:
+    profiles: [disabled]
+  agentecho:
+    image: python:3.12-slim
+    networks: [honeycomb-agent-net]
+    command:
+      - python
+      - -c
+      - |
+        import http.server as h
+        class H(h.BaseHTTPRequestHandler):
+            def do_GET(s):
+                g = lambda k: s.headers.get(k, "")
+                b = ("path=[%s] cookie=[%s] auth=[%s] tenant=[%s]\n" % (
+                    s.path, g("Cookie"), g("Authorization"), g("X-Nexus-Tenant"))).encode()
+                s.send_response(200); s.send_header("Content-Length", str(len(b))); s.end_headers(); s.wfile.write(b)
+        h.HTTPServer(("0.0.0.0", 8030), H).serve_forever()
   auth2:
     image: python:3.12-slim
     networks: [honeycomb-net]

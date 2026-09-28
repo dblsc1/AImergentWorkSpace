@@ -65,13 +65,14 @@ consumes:
 - 已暂停时顶栏加属性 `data-ckpt-paused`（v0.2.7，追加；`data-ckpt-timer` 仍是 idle），圆点换成 `--accent` 空心：
   窄屏把字藏了也能和空闲的灰空心点分开。
 
-## AI 桥路由（v0.3，契约先行）
+## AI 桥路由（v0.3）
 
 网关新增 `<前缀>api/agent/`（→ `AGENT_UPSTREAM`，`agent.chat.v1`）与 `<前缀>api/mcp/`（→ MCP 服务，
 `mcp.tools.v1`）两条受保护路由，规范写在 `contracts/gateway.v1` 第八节：`include gate.inc`、清掉转发的
 `Cookie`/`Authorization`、关缓冲（SSE）、上游运行期解析（缺了这两个服务网关照常起）、新内部网
 `honeycomb-agent-net`。手写组装与 `tools/generate.py` 两份都要加，`NGINX_ENVSUBST_FILTER` 放行
-`AGENT_UPSTREAM`。本模块的 `gate.inc` 不变。
+`AGENT_UPSTREAM`。本模块的 `gate.inc` 不变。已实现：手写组装两条常驻；生成的组装由模块清单的
+`bridge: true` / `upstreamEnv` 产出（见 gateway.v1 第八节「实现落定」）。
 
 ## 对比度校验
 

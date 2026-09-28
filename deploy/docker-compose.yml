@@ -10,9 +10,10 @@
 # 没设直接拒绝启动，不会带着"没有门"的状态跑起来。
 # 起来之后开 http://127.0.0.1:8800/（默认只绑回环，见下）。
 #
-# 四个服务：
+# 五个服务：
 #   mongo  存数据（事件台账 + 投影）
 #   nexus-core  事件溯源的计时与任务内核（FastAPI）
+#   mcp    给 AI 代理用的只读工具（mcp.tools.v1），网关的 /api/mcp/ 过门后转给它
 #   auth   auth.gate.v1 的占位实现，单口令登录门（标准库 http.server，零依赖）
 #   web    nginx，唯一入口：serve /hive/ 与 /ring/ 两个前端、反代 /api/ 到
 #          nexus-core、/api/auth/ 到 auth，在前端与 /api/ 前面插一道 auth_request 校验
@@ -34,6 +35,11 @@ name: ${HONEYCOMB_PROJECT:-honeycomb}
 
 networks:
   honeycomb-net:
+    driver: bridge
+  # AI 桥内网（gateway.v1 第八节）：上面只有网关、MCP、聊天后端；nexus-core、auth、mongo 不在。
+  # 实际网络名是 <项目名>_honeycomb-agent-net（如 honeycomb_honeycomb-agent-net），同机两套部署各一张。
+  # 这个键名是对外接口：部署方的 override 用它把自己的聊天后端接上来，改名 = 破坏性变更。
+  honeycomb-agent-net:
     driver: bridge
 
 volumes:
@@ -127,11 +133,35 @@ services:
       retries: 5
       start_period: 10s
 
+  mcp:
+    # MCP 只读工具（contracts/mcp.tools.v1），纯标准库。同 nexus-core：按源码构建、镜像名带项目名。
+    build:
+      context: ../modules/mcp/code/server
+    image: ${HONEYCOMB_PROJECT:-honeycomb}-mcp:local
+    pull_policy: build
+    container_name: ${HONEYCOMB_PROJECT:-honeycomb}-mcp
+    restart: unless-stopped
+    # 两张网：经 honeycomb-net 调 nexus-core；在 honeycomb-agent-net 上被网关与聊天后端调。
+    # 不映射宿主端口；对外只经网关的 <前缀>api/mcp/（过门）。
+    networks: [honeycomb-net, honeycomb-agent-net]
+    environment:
+      NEXUS_CORE_URL: http://nexus-core:8000
+      # 与 nexus-core 同一个开关：多用户部署缺租户头即 401（mcp.tools.v1 第二节）
+      NEXUS_TENANT_STRICT: ${NEXUS_TENANT_STRICT:-0}
+      # 浏览器 Origin 白名单（逗号分隔、完全相等，如 https://example.com:8443）。缺省空 = 浏览器一律 403
+      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8020/healthz').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
   web:
     image: nginx:alpine
     container_name: ${HONEYCOMB_PROJECT:-honeycomb}-web
     restart: unless-stopped
-    networks: [honeycomb-net]
+    networks: [honeycomb-net, honeycomb-agent-net]
     depends_on:
       nexus-core:
         condition: service_healthy
@@ -147,10 +177,13 @@ services:
     # .env 或 `-f 自己的 override.yml` 换认证服务、换登录页、加路由，不改本文件。
     environment:
       AUTH_UPSTREAM: ${AUTH_UPSTREAM:-auth:8010}
+      # 聊天后端（agent.chat.v1，gateway.v1 第八节）。网关运行期才解析它，没起也不影响网关。
+      # MCP 不经这里换：网关固定转 mcp:8020。
+      AGENT_UPSTREAM: ${AGENT_UPSTREAM:-agent:8030}
       # 站点前缀（gateway.v1）：整站挂子路径时设，如 /Cockpit/（以 / 开头和结尾）。
       HONEYCOMB_BASE_PATH: ${HONEYCOMB_BASE_PATH:-/}
       # 模板里只替换这些变量；$host 之类仍是 nginx 自己的。
-      NGINX_ENVSUBST_FILTER: ^(AUTH_UPSTREAM|HONEYCOMB_)
+      NGINX_ENVSUBST_FILTER: ^(AUTH_UPSTREAM|AGENT_UPSTREAM|HONEYCOMB_)
     volumes:
       - ./nginx/templates/default.conf.template:/etc/nginx/templates/default.conf.template:ro
       - ${HONEYCOMB_EXTRA_ROUTES_DIR:-./nginx/extra}:/etc/nginx/templates/extra:ro

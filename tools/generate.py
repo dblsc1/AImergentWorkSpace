@@ -86,6 +86,8 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
     statics: list[dict] = []     # 静态目录：挂进 web，由 nginx 直接 serve
     needs_mongo = False
     sources: list[str] = []
+    extra_nets: list[str] = []   # 模块声明的额外网络（如 honeycomb-agent-net，gateway.v1 第八节）
+    lazy: set[str] = set()       # 网关运行期才解析的上游：网关不等它健康、缺了照常起
 
     # ── 模块 ───────────────────────────────────────────────────
     for name in plan["modules"]:
@@ -128,6 +130,10 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
             }
         entry["restart"] = "unless-stopped"
         entry["networks"] = ["honeycomb-net"]
+        for net in svc.get("networks") or []:
+            entry["networks"].append(net)
+            if net not in extra_nets:
+                extra_nets.append(net)
 
         reqs = svc.get("requires") or []
         req_set.update(reqs)
@@ -138,6 +144,8 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
         services[sname] = entry
         for r in m.get("routes") or []:
             routes.append({**r, "service": sname, "port": port})
+            if r.get("bridge"):
+                lazy.add(sname)
 
     module_services = set(services)
 
@@ -238,20 +246,26 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
             src = "${HONEYCOMB_LOGIN_DIR:-" + src + "}"
         return f"{src}:{st['dir']}:ro"
 
+    web_env = {
+        "AUTH_UPSTREAM": "${AUTH_UPSTREAM:-auth:8010}",
+        # 站点前缀（gateway.v1），以 / 开头、以 / 结尾，如 /Cockpit/。
+        "HONEYCOMB_BASE_PATH": "${HONEYCOMB_BASE_PATH:-/}",
+    }
+    for r in routes:  # 可由 .env 换掉的上游（如 AGENT_UPSTREAM，gateway.v1 第八节）
+        if r.get("upstreamEnv"):
+            web_env[r["upstreamEnv"]] = f"${{{r['upstreamEnv']}:-{r['service']}:{r['port']}}}"
+    web_env["NGINX_ENVSUBST_FILTER"] = "^(" + "|".join(
+        [k for k in web_env if not k.startswith("HONEYCOMB_")] + ["HONEYCOMB_"]) + ")"
+
     services["web"] = {
         "image": "nginx:alpine",
         "restart": "unless-stopped",
-        "networks": ["honeycomb-net"],
+        "networks": ["honeycomb-net", *extra_nets],
         # 只有 web 映射宿主端口。默认绑回环 —— 要暴露得自己显式改，
         # 而不是装完就已经在公网上了。
         "ports": ["${HONEYCOMB_BIND:-127.0.0.1:8800}:80"],
         # 网关对外冻结的接口见 contracts/gateway.v1/contract.md。
-        "environment": {
-            "AUTH_UPSTREAM": "${AUTH_UPSTREAM:-auth:8010}",
-            # 站点前缀（gateway.v1），以 / 开头、以 / 结尾，如 /Cockpit/。
-            "HONEYCOMB_BASE_PATH": "${HONEYCOMB_BASE_PATH:-/}",
-            "NGINX_ENVSUBST_FILTER": "^(AUTH_UPSTREAM|HONEYCOMB_)",
-        },
+        "environment": web_env,
         # 静态目录只读挂载，不复制代码：改前端去模块目录改，刷新即生效。
         "volumes": [
             "./nginx/templates/default.conf.template:/etc/nginx/templates/default.conf.template:ro",
@@ -263,7 +277,7 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
         # 换成自己的认证服务时网关照常起（contracts/gateway.v1）。
         "depends_on": {
             s: {"condition": "service_healthy", **({"required": False} if s in stub_names else {})}
-            for s, v in services.items() if "healthcheck" in v
+            for s, v in services.items() if "healthcheck" in v and s not in lazy
         },
     }
 
@@ -281,7 +295,8 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
         # 项目名留 env 覆盖点。写死会堵掉 compose 原生的项目名覆盖，而同一台机器上
         # 如果已经跑着另一套同名 honeycomb，`up` **不报错**就把它的容器换掉了。
         "name": "${HONEYCOMB_PROJECT:-honeycomb}",
-        "networks": {"honeycomb-net": {"driver": "bridge"}},
+        # 额外网络按 compose 惯例解析成 <项目名>_<键>，同机两套部署互不相通（gateway.v1 第八节）。
+        "networks": {n: {"driver": "bridge"} for n in ["honeycomb-net", *extra_nets]},
         "services": services,
     }
     if needs_mongo:
@@ -324,6 +339,35 @@ def _b(path: str) -> str:
     return BASE + path.lstrip("/")
 
 
+def _bridge_route(i: int, r: dict, gate: bool) -> list[str]:
+    """AI 桥那种路由（gateway.v1 第八节，清单里 `bridge: true`）：过门、清掉转发的 Cookie 与
+    Authorization、关缓冲（SSE）、上游运行期解析——服务缺了网关照常起，这条回 502。
+    变量 proxy_pass 不做前缀替换，所以先 rewrite 成上游路径。"""
+    if not (gate and r.get("gated")):
+        raise BadManifest(f"路由 {r['prefix']} 声明了 bridge: true，必须同时 gated: true（gateway.v1 第八节）")
+    env = r.get("upstreamEnv")
+    target = "${" + env + "}" if env else f"{r['service']}:{r['port']}"
+    return [
+        "",
+        f"    # {r['prefix']}：AI 桥路由（gateway.v1 第八节），上游运行期解析。",
+        f"    location {_b(r['prefix'])} {{",
+        "        include /etc/nginx/honeycomb/gate.inc;",
+        "        resolver 127.0.0.11 valid=10s ipv6=off;",
+        f'        set $bridge_{i} "{target}";',
+        f"        rewrite ^{_b(r['prefix'])}(.*)$ {r.get('upstream', r['prefix'])}$1 break;",
+        f"        proxy_pass http://$bridge_{i};",
+        "        proxy_set_header Host $host;",
+        "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+        '        proxy_set_header Cookie "";',
+        '        proxy_set_header Authorization "";',
+        "        proxy_http_version 1.1;",
+        '        proxy_set_header Connection "";',
+        "        proxy_buffering off;",
+        f"        proxy_read_timeout {int(r.get('readTimeout', 60))}s;",
+        "    }",
+    ]
+
+
 def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[str]) -> str:
     homes = [st["prefix"] for st in statics if st["home"]]
     if len(homes) > 1:
@@ -334,7 +378,7 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
         *(f"#   {s}" for s in sources),
         "#",
         "# envsubst 模板：nginx 镜像启动时渲染成 conf.d/default.conf，只替换",
-        "# AUTH_UPSTREAM 与 HONEYCOMB_*。对外冻结接口见 contracts/gateway.v1/contract.md。",
+        "# NGINX_ENVSUBST_FILTER 放行的变量（AUTH_UPSTREAM、HONEYCOMB_* 与清单里的 upstreamEnv）。对外冻结接口见 contracts/gateway.v1/contract.md。",
         "server {",
         "    listen 80;",
         "    server_name _;",
@@ -410,6 +454,9 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
         degraded = r.get("degraded")
         if degraded is not None and "'" in str(degraded):
             raise BadManifest(f"路由 {r['prefix']} 的 degraded 里不能有单引号：{degraded!r}")
+        if r.get("bridge"):
+            L += _bridge_route(i, r, gate)
+            continue
         L += ["", f"    location {'= ' if r.get('exact') else ''}{_b(r['prefix'])} {{"]
         gated = gate and r.get("gated")
         if gated and degraded is None:

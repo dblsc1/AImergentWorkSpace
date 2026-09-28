@@ -20,7 +20,8 @@ import install  # noqa: E402
 
 @pytest.fixture()
 def out(tmp_path):
-    plan = install.resolve(["hive", "ring"])
+    # mcp 要点名：聊天后端模块（consumes mcp.tools.v1）进来之前，hive ring 拉不到它（CI 同）
+    plan = install.resolve(["hive", "ring", "mcp"])
     generate.emit(install.ROOT, plan, tmp_path)
     compose = yaml.safe_load((tmp_path / "docker-compose.yml").read_text(encoding="utf-8"))
     nginx = _render((tmp_path / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8"))
@@ -40,7 +41,7 @@ def _location(nginx: str, head: str) -> str:
 
 def test_plan_resolves_single_file_specs_and_pulls_in_nexus_core(out):
     plan, _, _ = out
-    assert plan["modules"] == ["hive", "ring", "nexus-core"]
+    assert plan["modules"] == ["hive", "ring", "mcp", "nexus-core"]
     assert "contracts.design-tokens.v1" in plan["specs"]
     assert "contracts.timer-ring-visual.v1" in plan["specs"]
 
@@ -49,7 +50,7 @@ def test_static_modules_are_mounted_not_run(out):
     _, compose, _ = out
     services = compose["services"]
     assert "hive" not in services and "ring" not in services, "纯前端不该起容器"
-    assert set(services) == {"nexus-core", "auth", "mongo", "web"}
+    assert set(services) == {"nexus-core", "mcp", "auth", "mongo", "web"}
     volumes = services["web"]["volumes"]
     for mount in (
         "../../modules/hive/code/frontend:/usr/share/nginx/html/hive:ro",
@@ -170,7 +171,7 @@ def test_auth_accounts_file_lives_in_a_declared_named_volume(out):
 def test_every_public_location_hangs_under_the_base_path(tmp_path):
     """挂子路径（/Cockpit/）时，对外的每一条 location 都在前缀下，转给后端时去掉前缀；
     只有容器健康检查与内部子请求例外。手写与生成的两份都查。"""
-    plan = install.resolve(["hive", "ring"])
+    plan = install.resolve(["hive", "ring", "mcp"])
     generate.emit(install.ROOT, plan, tmp_path)
     hand = (install.ROOT / "deploy" / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8")
     gen = (tmp_path / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8")
@@ -185,3 +186,67 @@ def test_every_public_location_hangs_under_the_base_path(tmp_path):
                 assert t.split()[2].startswith("/Cockpit/"), (name, t)
         assert "proxy_pass http://nexus-core:8000/api/core/;" in nginx, name
         assert '"home":"/Cockpit/hive/"' in nginx, name
+
+
+def _bridge_checks(block: str, name: str) -> None:
+    for needle in ("include /etc/nginx/honeycomb/gate.inc;", "resolver 127.0.0.11", 'proxy_set_header Cookie "";',
+                   'proxy_set_header Authorization "";', "proxy_buffering off;"):
+        assert needle in block, (name, needle)
+    assert "proxy_pass http://$" in block, (name, "上游须运行期解析（变量 proxy_pass）")
+
+
+def test_ai_bridge_routes_hand_and_generated(out):
+    """gateway.v1 第八节：过门、清凭据头、关缓冲、运行期解析；网关不等 mcp，mcp 与网关同在 AI 桥内网。"""
+    _, compose, nginx = out
+    hand = _render((install.ROOT / "deploy" / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8"))
+    for prefix in ("/api/mcp/", "/api/agent/"):
+        _bridge_checks(_location(hand, prefix), "hand " + prefix)
+    assert 'set $honeycomb_agent "${AGENT_UPSTREAM}";' in hand
+    block = _location(nginx, "/api/mcp/")
+    _bridge_checks(block, "generated")
+    assert "rewrite ^/api/mcp/(.*)$ /api/mcp/$1 break;" in block
+    web, mcp = compose["services"]["web"], compose["services"]["mcp"]
+    assert "mcp" not in web["depends_on"], "缺了 mcp 网关也得起"
+    assert set(web["networks"]) == set(mcp["networks"]) == {"honeycomb-net", "honeycomb-agent-net"}
+    assert compose["networks"]["honeycomb-agent-net"] == {"driver": "bridge"}
+    assert compose["services"]["nexus-core"]["networks"] == ["honeycomb-net"], "nexus-core 不上 AI 桥内网"
+    hand_c = yaml.safe_load((install.ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8"))
+    assert "honeycomb-agent-net" in hand_c["networks"]
+    for svc in ("nexus-core", "auth", "mongo"):
+        assert "honeycomb-agent-net" not in hand_c["services"][svc]["networks"], svc
+    assert "mcp" not in hand_c["services"]["web"].get("depends_on", {})
+    assert hand_c["services"]["mcp"]["environment"]["NEXUS_TENANT_STRICT"] == \
+        hand_c["services"]["nexus-core"]["environment"]["NEXUS_TENANT_STRICT"]
+
+
+def test_bridge_route_upstream_env(tmp_path):
+    """聊天后端那种可由 .env 换的上游：upstreamEnv → 模板里写变量、web 带缺省值、envsubst 放行。"""
+    mod = tmp_path / "modules" / "agent"
+    mod.mkdir(parents=True)
+    (mod / "module.yaml").write_text(
+        "kind: backend\nservice: {image: x, port: 8030, networks: [honeycomb-agent-net]}\n"
+        "routes:\n  - {prefix: /api/agent/, upstream: /api/agent/, gated: true, bridge: true,"
+        " upstreamEnv: AGENT_UPSTREAM, readTimeout: 300}\n", encoding="utf-8")
+    stub = install.ROOT / "contracts" / "auth.gate.v1"
+    (tmp_path / "contracts").mkdir()
+    (tmp_path / "contracts" / "auth.gate.v1").symlink_to(stub)
+    generate.emit(tmp_path, {"modules": ["agent"], "stubs": []}, tmp_path / "out")
+    compose = yaml.safe_load((tmp_path / "out" / "docker-compose.yml").read_text(encoding="utf-8"))
+    env = compose["services"]["web"]["environment"]
+    assert env["AGENT_UPSTREAM"] == "${AGENT_UPSTREAM:-agent:8030}"
+    assert env["NGINX_ENVSUBST_FILTER"] == "^(AUTH_UPSTREAM|AGENT_UPSTREAM|HONEYCOMB_)"
+    block = _location(_render((tmp_path / "out" / "nginx" / "templates" / "default.conf.template").read_text(
+        encoding="utf-8")), "/api/agent/")
+    assert 'set $bridge_0 "${AGENT_UPSTREAM}";' in block and "proxy_read_timeout 300s;" in block
+
+
+def test_bridge_route_must_be_gated(tmp_path):
+    mod = tmp_path / "modules" / "x"
+    mod.mkdir(parents=True)
+    (mod / "module.yaml").write_text(
+        "kind: backend\nservice: {image: x, port: 1}\nroutes:\n  - {prefix: /api/x/, bridge: true}\n"
+        "static:\n  - {prefix: /y/, root: ., gated: true}\n", encoding="utf-8")
+    (tmp_path / "contracts").mkdir()
+    (tmp_path / "contracts" / "auth.gate.v1").symlink_to(install.ROOT / "contracts" / "auth.gate.v1")
+    with pytest.raises(generate.BadManifest, match="gated"):
+        generate.emit(tmp_path, {"modules": ["x"], "stubs": []}, tmp_path / "out")

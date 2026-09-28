@@ -1,0 +1,31 @@
+# mcp · 安装清单
+#
+# 契约（module_docs/contract.md → contracts/mcp.tools.v1）说的是「对外行为」，本文件说的是「怎么把它跑起来」。
+
+name: mcp
+summary: 给 AI 代理用的只读工具（MCP，Streamable HTTP）。包装 nexus-core 的读端，租户只来自网关。
+kind: backend
+
+service:
+  build: code/server
+  image: ${HONEYCOMB_PROJECT:-honeycomb}-mcp:local   # 带项目名：同机多套部署不互相顶替镜像
+  port: 8020
+  healthcheck: /healthz
+  env:
+    NEXUS_CORE_URL: http://nexus-core:8000
+    # 与 nexus-core 读同一个开关（mcp.tools.v1 第二节）：多用户部署缺租户头即 401
+    NEXUS_TENANT_STRICT: ${NEXUS_TENANT_STRICT:-0}
+    # 浏览器 Origin 白名单（逗号分隔，完全相等）。缺省空 = 带 Origin 的请求一律 403
+    MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-}
+  # 另接 AI 桥内网（gateway.v1 第八节）：网关、MCP、聊天后端在这张网上，nexus-core 不在
+  networks:
+    - honeycomb-agent-net
+
+routes:
+  # 过门；bridge = 清掉转发的 Cookie/Authorization、关缓冲、上游运行期解析（缺了 mcp 网关照常起）
+  - prefix: /api/mcp/
+    upstream: /api/mcp/
+    gated: true
+    bridge: true
+
+static: []

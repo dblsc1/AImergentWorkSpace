@@ -3,7 +3,7 @@
 
 这是什么
   开源版 HoneyComb 需要一道登录门，但不该捆绑任何真实账号系统。
-  本文件用标准库实现 `auth.gate.v1`（v1.2）契约的端点，零第三方依赖、零数据库。
+  本文件用标准库实现 `auth.gate.v1`（v1.3）契约的端点，零第三方依赖、零数据库。
   契约原文：<总入口>/contracts/auth.gate.v1/contract.md
 
 两种登录，可以同时开
@@ -32,8 +32,8 @@
 
 设备令牌（v1.2）
   桌面同步程序、AI 代理的钩子没有浏览器 cookie，拿 `Authorization: Bearer <令牌>` 调
-  /api/core/*。令牌**只开接口、不开页面**：verify 只在网关转来的 X-Original-URI 落在
-  <站点前缀>api/core/ 下时才认它。无状态签名，吊销靠每个租户一个整数"纪元"（令牌文件），
+  /api/core/*（v1.3 起也可调只读的 /api/mcp/）。令牌**只开接口、不开页面**：verify 只在网关
+  转来的 X-Original-URI 落在 <站点前缀>api/core/ 或 api/mcp/ 下时才认它。无状态签名，吊销靠每个租户一个整数"纪元"（令牌文件），
   后台线程每 RELOAD_EVERY 秒重读 —— verify 照旧不做 IO。
 
 环境变量
@@ -341,7 +341,8 @@ def issue_device_token(tenant: str, sess: str, now: int | None = None) -> str:
 
 
 def _api_uri(uri: str | None) -> bool:
-    """X-Original-URI（网关的 $request_uri，未解码、带站点前缀）是否落在 <前缀>api/core/ 下。
+    """X-Original-URI（网关的 $request_uri，未解码、带站点前缀）是否落在 <前缀>api/core/
+    或（v1.3）<前缀>api/mcp/ 下。
 
     $request_uri 是客户端发来的原样字节，而 nginx 是拿**解码并规范化之后**的路径去匹配
     location 的：/api/core/%2e%2e/hive/ 在 nginx 眼里就是 /hive/。所以先按 nginx 的方式
@@ -350,8 +351,9 @@ def _api_uri(uri: str | None) -> bool:
     if not uri:
         return False
     path = unquote(uri.split("?", 1)[0].split("#", 1)[0])
-    prefix = BASE_PATH + "api/core/"
-    if not path.startswith(prefix) or "\\" in path:
+    # v1.3：只读的 MCP 入口（contracts/mcp.tools.v1）也认令牌；别的一律不开（api/agent/ 只认 cookie）
+    prefix = next((BASE_PATH + p for p in ("api/core/", "api/mcp/") if path.startswith(BASE_PATH + p)), None)
+    if prefix is None or "\\" in path:
         return False
     return not any(seg in (".", "..") for seg in path[len(prefix):].split("/"))
 
@@ -468,7 +470,7 @@ def _cookie_value(header: str | None) -> str:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "auth-gate-stub/1.2"
+    server_version = "auth-gate-stub/1.3"
     protocol_version = "HTTP/1.1"
 
     # ── 响应助手 ────────────────────────────────────────────────
@@ -715,7 +717,7 @@ def _token_cli(cmd: str, name: str) -> None:
     now = int(time.time())
     print(issue_device_token(tenant, sess, now))
     sys.stderr.write(f"✅ 上面是 {who} 的设备令牌，{_expires_at(now)} 过期，{RELOAD_EVERY:g} 秒内可用。"
-                     "只能调 /api/core/*，请求头 Authorization: Bearer <令牌>\n")
+                     "只能调 /api/core/* 与 /api/mcp/，请求头 Authorization: Bearer <令牌>\n")
 
 
 def _cli(argv: list[str], pw: str) -> None:
@@ -774,7 +776,7 @@ def main() -> None:
     # 配了账号文件但一个账号都没有 = 没开账号登录；别写「账号 0 个 +」再警告两种同时开（Windows 验收）
     modes = ([f"账号 {len(ACCOUNTS.by_id)} 个"] if ACCOUNTS.by_id else []) + (["共享口令"] if PASSWORD else [])
     banner = (
-        "\n  auth.gate.v1.2 · 占位实现（STUB）：一道门 + 一本小账本，不是账号系统。\n"
+        "\n  auth.gate.v1.3 · 占位实现（STUB）：一道门 + 一本小账本，不是账号系统。\n"
         f"  登录方式：{' + '.join(modes)}\n"
         f"  监听 {host}:{port}   cookie Secure={COOKIE_SECURE}   会话 {SESSION_DAYS} 天\n"
     )

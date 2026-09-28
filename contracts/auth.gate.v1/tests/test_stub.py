@@ -232,6 +232,17 @@ def test_bearer_opens_api_with_tenant_but_never_pages(stub, users):
     assert stub.req("GET", "/api/auth/verify", headers=_bearer(tok, "/api/core/x?y=../../hive"))[0] == 204
 
 
+def test_bearer_opens_mcp_but_not_agent(stub, users):
+    """v1.3：令牌也认只读的 <前缀>api/mcp/；api/agent/（聊天后端）与形似的前缀照旧 401。"""
+    tok = _token_cli(users, "alice")
+    time.sleep(2.6)
+    for uri in ("/api/mcp/", "/api/mcp/?x=1"):
+        assert stub.req("GET", "/api/auth/verify", headers=_bearer(tok, uri))[0] == 204, uri
+    for uri in ("/api/agent/", "/api/agent/sessions", "/api/mcp", "/api/mcpx/", "/api/mcp/%2e%2e/%2e%2e/hive/",
+                "/api/mcp/../agent/", "/api/mcp/..%2F..%2Fhive/", "/api/mcp/%5c..%5chive/"):
+        assert stub.req("GET", "/api/auth/verify", headers=_bearer(tok, uri))[0] == 401, uri
+
+
 def test_bearer_follows_base_path(tmp_path):
     env = {"AUTH_PASSWORD": PW, "AUTH_BASE_PATH": "/Cockpit/", "AUTH_TOKENS_FILE": str(tmp_path / "t.json")}
     tok = _token_cli(env)
@@ -239,6 +250,8 @@ def test_bearer_follows_base_path(tmp_path):
     try:
         assert s.req("GET", "/api/auth/verify", headers=_bearer(tok, "/Cockpit/api/core/views/tree"))[0] == 204
         assert s.req("GET", "/api/auth/verify", headers=_bearer(tok, "/api/core/views/tree"))[0] == 401
+        assert s.req("GET", "/api/auth/verify", headers=_bearer(tok, "/Cockpit/api/mcp/"))[0] == 204
+        assert s.req("GET", "/api/auth/verify", headers=_bearer(tok, "/api/mcp/"))[0] == 401
     finally:
         s.stop()
 
