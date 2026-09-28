@@ -27,6 +27,12 @@ func TestScrub(t *testing.T) {
 		{"vim /home/zhang/.ssh/config", "vim config"},
 		{"~/work/garden/plot.gd — Code", "plot.gd — Code"},
 		{"a / b / c", "a / b / c"},
+		{`"~/notes.md"`, `"notes.md"`},
+		{"(/home/alice/a.txt)", "(a.txt)"},
+		{"已修改：/home/alice/文档/合同.docx", "已修改：合同.docx"},
+		{"打开/home/alice/x.txt", "打开x.txt"},
+		{"打开C:\\Users\\alice\\x.txt", "打开x.txt"},
+		{"and/or w/o 10:30/11:00 TCP/IP 2026/09/28", "and/or w/o 10:30/11:00 TCP/IP 2026/09/28"},
 	}
 	for _, c := range cases {
 		if got := scrub(c.in); got != c.want {
@@ -52,7 +58,7 @@ func TestAppOnlyKeepsOnlyAppName(t *testing.T) {
 func TestBrowserKeepsDomainAndTitleOnly(t *testing.T) {
 	r := newRedactor(Config{AppOnlyApps: defaultAppOnly, BrowserApps: defaultBrowsers})
 	tab := &webTab{URL: "https://github.com/dblsc1/repo/pull/12?diff=split&token=xyz", Title: "Fix merge by someone@x.io"}
-	title, key := r.window("firefox", "Fix merge — Mozilla Firefox", tab)
+	title, key := r.window("firefox", "Fix merge by someone@x.io — Mozilla Firefox", tab)
 	if title != "github.com · Fix merge by [邮箱]" {
 		t.Fatalf("title=%q", title)
 	}
@@ -60,7 +66,7 @@ func TestBrowserKeepsDomainAndTitleOnly(t *testing.T) {
 		t.Fatalf("URL path/query leaked: %q %q", title, key)
 	}
 	// 同域名换页面：键相同，能合成一段。
-	_, key2 := r.window("firefox", "", &webTab{URL: "https://github.com/other", Title: "Other"})
+	_, key2 := r.window("firefox", "Other — Mozilla Firefox", &webTab{URL: "https://github.com/other", Title: "Other"})
 	if key != key2 {
 		t.Fatalf("keys differ: %q %q", key, key2)
 	}
@@ -71,6 +77,17 @@ func TestBrowserKeepsDomainAndTitleOnly(t *testing.T) {
 	// 没有对得上的标签页记录（没装扩展、扩展在无痕窗口里默认不跑）：分不清是不是无痕，只留程序名。
 	if title, key := r.window("Google Chrome", "https://bank.example.com/acct?id=1 - Google Chrome", nil); title != "" || key != "googlechrome" {
 		t.Fatalf("no-ext title=%q key=%q", title, key)
+	}
+	// 重叠的标签页来自同一浏览器的普通窗口（扩展不在无痕窗口里跑）：标题对不上，只留程序名。
+	normal := &webTab{URL: "https://github.com/x", Title: "Issues · x"}
+	for _, wt := range []string{"私密页面 - Google Chrome", ""} {
+		if title, key := r.window("Google Chrome", wt, normal); title != "" || key != "googlechrome" {
+			t.Fatalf("mismatch %q: title=%q key=%q", wt, title, key)
+		}
+	}
+	// 标签页标题为空也对不上。
+	if title, _ := r.window("Google Chrome", "x - Google Chrome", &webTab{URL: "https://a.com"}); title != "" {
+		t.Fatalf("empty tab title=%q", title)
 	}
 }
 

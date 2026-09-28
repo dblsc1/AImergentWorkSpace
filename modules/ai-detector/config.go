@@ -187,7 +187,13 @@ func acquireLock(path string) (release func(), err error) {
 		}
 		b, _ := os.ReadFile(path)
 		pid, perr := strconv.Atoi(strings.TrimSpace(string(b)))
-		if perr == nil && pid != os.Getpid() && processAlive(pid) {
+		if perr != nil {
+			// 空的 / 读不懂：可能正好是别人刚建好文件、还没写进 pid。新文件不碰，旧的才当残骸接管。
+			if fi, err := os.Stat(path); err == nil && time.Since(fi.ModTime()) < lockGrace {
+				return nil, fmt.Errorf("另一个 ai-detector 可能正在启动，稍后重试")
+			}
+		} else if pid == os.Getpid() || processAlive(pid) {
+			// pid 是自己：本进程已经拿着（或 pid 被复用），都不能删。
 			return nil, fmt.Errorf("另一个 ai-detector（pid %d）正在同步这个配置目录；先停掉它，"+
 				"或确认它已退出后删除 %s", pid, path)
 		}
@@ -195,6 +201,8 @@ func acquireLock(path string) (release func(), err error) {
 	}
 	return nil, fmt.Errorf("拿不到锁 %s", path)
 }
+
+const lockGrace = 5 * time.Second
 
 func processAlive(pid int) bool {
 	p, err := os.FindProcess(pid)

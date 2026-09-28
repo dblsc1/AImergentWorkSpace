@@ -539,7 +539,7 @@ func TestLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 同进程再拿：pid 是自己，视为旧锁接管（真正的第二个进程 pid 不同，见下）。
+	// 另一个活着的进程拿着：拒绝。
 	os.WriteFile(p, []byte(fmt.Sprint(os.Getppid())), 0o600) // 父进程（go test）活着
 	if _, err := acquireLock(p); err == nil {
 		t.Fatal("lock held by a live process must be refused")
@@ -553,6 +553,61 @@ func TestLock(t *testing.T) {
 	rel()
 	if _, err := os.Stat(p); !os.IsNotExist(err) {
 		t.Fatal("release must remove the lock file")
+	}
+}
+
+func TestLockDoesNotStealStartingOrOwnLock(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "x.lock")
+	// 刚建好、还没写 pid 的锁：不能当旧锁删。
+	os.WriteFile(p, nil, 0o600)
+	if _, err := acquireLock(p); err == nil || !strings.Contains(err.Error(), "正在启动") {
+		t.Fatalf("err=%v", err)
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Fatal("young empty lock must not be removed")
+	}
+	// 空文件放久了：残骸，接管。
+	old := time.Now().Add(-time.Minute)
+	os.Chtimes(p, old, old)
+	rel, err := acquireLock(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// pid 是自己的锁：不删。
+	if _, err := acquireLock(p); err == nil {
+		t.Fatal("own-pid lock must be refused")
+	}
+	rel()
+}
+
+func TestDeadClassifierCalledOncePerRound(t *testing.T) {
+	calls := 0
+	svc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(500)
+	}))
+	defer svc.Close()
+	var evs []awEvent
+	for i := 0; i < 450; i++ {
+		evs = append(evs, win(float64(i*16), 10, "code", "x"))
+	}
+	aw := fakeAW(t, evs, nil)
+	defer aw.Close()
+	ck := fakeCockpit(t)
+	defer ck.Close()
+	cfg := testConfig(aw.URL, ck.URL)
+	cfg.MaxBacklogHours = 0
+	cfg.ClassifierURL = svc.URL
+	if _, err := tick(cfg, activeState(), at(450*16+60), http.DefaultClient); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || len(ck.bodies) != 3 {
+		t.Fatalf("classifier calls=%d uploads=%d", calls, len(ck.bodies))
+	}
+	var last uploadBody
+	json.Unmarshal(ck.bodies[2], &last)
+	if last.Segments[0].Suggestion.Reason != "分类服务不可用" {
+		t.Fatalf("reason=%q", last.Segments[0].Suggestion.Reason)
 	}
 }
 

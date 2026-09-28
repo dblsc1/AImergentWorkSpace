@@ -17,9 +17,12 @@ var (
 	reUNC = regexp.MustCompile(`\\\\[^\s"'<>]+`)
 	// 没写 scheme 的「域名/路径」：github.com/x/y?token=…，只留域名。
 	reHostPath = regexp.MustCompile(`\b((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?::\d+)?)/[^\s"'<>]*`)
-	// 本机绝对路径（C:\Users\张三\… 、/home/zhangsan/…）：路径里有用户名和目录结构，
+	// 本机绝对路径（C:\Users\张三\… 、/home/zhangsan/…、~/…）：路径里有用户名和目录结构，
 	// 只留最后的文件名——编辑器标题靠文件名认得出是哪件事。
-	rePath  = regexp.MustCompile(`(?:\b[A-Za-z]:[\\/]|(?:^|\s)~?/)(?:[^\s\\/"'<>]+[\\/])+([^\s\\/"'<>]*)`)
+	// 路径前面只要不是字母数字、下划线、斜杠就算开头（「打开/home/…」「(/home/…)」「：/home/…」），
+	// RE2 没有后顾断言，所以把前一个字符捕获进 $1 再原样放回。and/or、w/o、10:30/11:00
+	// 这种斜杠前是字母数字的不动。以 / 开头的至少要有一层目录，免得「A /B」这类被误伤。
+	rePath  = regexp.MustCompile(`(^|[^\w/])(?:(?:[A-Za-z]:|~)[\\/](?:[^\s\\/"'<>]+[\\/])*|/(?:[^\s\\/"'<>]+/)+)([^\s\\/"'<>]*)`)
 	reEmail = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`)
 	// 国际前缀可选 + 3~4 位两组 + 4 位；中间允许空格 / 连字符。
 	// 故意不匹配 2026-09-28 这种日期（第二组只有 2 位），日期在标题里很常见，也不敏感。
@@ -37,12 +40,11 @@ func scrub(s string) string {
 	s = reUNC.ReplaceAllString(s, "[路径]")
 	s = reHostPath.ReplaceAllString(s, "$1")
 	s = rePath.ReplaceAllStringFunc(s, func(m string) string {
-		lead := m[:len(m)-len(strings.TrimLeft(m, " \t"))] // 保留前面那个空白
-		base := rePath.FindStringSubmatch(m)[1]
-		if base == "" {
-			return lead + "[路径]"
+		g := rePath.FindStringSubmatch(m)
+		if g[2] == "" {
+			return g[1] + "[路径]"
 		}
-		return lead + base
+		return g[1] + g[2]
 	})
 	s = reEmail.ReplaceAllString(s, "[邮箱]")
 	s = rePhone.ReplaceAllString(s, "[电话]")
@@ -86,6 +88,12 @@ type webTab struct {
 // 而且人确认时要靠它认出这段是什么。
 func (r redactor) window(app, title string, tab *webTab) (string, string) {
 	a := normApp(app)
+	// 对得上 = 窗口标题以这条标签页的标题开头（浏览器窗口标题一般是「页面标题 - Google Chrome」）。
+	// 扩展在无痕窗口里默认不运行，这时重叠的标签页记录可能来自同一浏览器的普通窗口——
+	// 标题对不上就不能拿它的域名、标题去描述这个窗口。
+	if tab != nil && (strings.TrimSpace(tab.Title) == "" || !strings.HasPrefix(strings.TrimSpace(title), strings.TrimSpace(tab.Title))) {
+		tab = nil
+	}
 	// 浏览器没有对得上的标签页记录（没装扩展、扩展在无痕窗口里默认不运行、这段时间
 	// 扩展没报）时，窗口标题就是唯一信息——而无痕窗口的标题、地址栏里的网址都在里面。
 	// 分不清是不是无痕，就按最保守的处理：只留程序名。

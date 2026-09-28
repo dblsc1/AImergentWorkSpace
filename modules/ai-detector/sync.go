@@ -122,9 +122,16 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 		}
 		return tasksFromTree(b)
 	})
+	// 分类服务一轮里挂过一次就不再叫它：每批都等一次超时，积压多时要白等 N×超时才轮到上传。
+	// 规则照用，没命中的段按「分类服务不可用」上传。
+	var serviceErr error
 	post := func(u string, body []byte) ([]byte, error) {
+		if serviceErr != nil {
+			return nil, serviceErr
+		}
 		// 分类服务是用户填的任意地址：只带它自己的 classifierToken，HoneyComb 的设备令牌不给它。
 		b, _, err := postJSON(service, cfg.ClassifierToken, u, body)
+		serviceErr = err
 		return b, err
 	}
 

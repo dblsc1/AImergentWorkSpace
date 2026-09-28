@@ -128,9 +128,6 @@ func cli(args []string, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		if exe, err = filepath.EvalSymlinks(exe); err != nil {
-			return err
-		}
 		path, content, err := autostartFile(runtime.GOOS, exe)
 		if err != nil {
 			return err
