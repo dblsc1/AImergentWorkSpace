@@ -34,9 +34,12 @@ def _desc(groups: dict) -> list:
 
 def get_agent_time(date_from: str | None = None, date_to: str | None = None) -> AgentTimeOut:
     user = current_tenant()
-    # 先收超时再读投影：被收掉的运行此刻已是 timeout 事实，落进下面的汇总而不是 open[]
-    open_runs = timer_service.list_open_agent_runs(user)
+    # 先收超时再读投影：被收掉的运行此刻已是 timeout 事实，落进下面的汇总而不是 open[]。
+    # open[] 在读完投影之后再取一次：两次读之间刚结束的运行只会在汇总里，不会两边都算
+    # （反过来最多暂时两边都不在，下次读就对了）。
+    timer_service.list_open_agent_runs(user)
     rows = agent_projection.read_agent_daily_stats(user, date_from=date_from, date_to=date_to)
+    open_runs = timer_service.list_open_agent_runs(user)
 
     days = _sum_by(rows, lambda r: r["date"])
     agents = _sum_by(rows, lambda r: r["agent"])
