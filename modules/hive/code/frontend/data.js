@@ -366,7 +366,7 @@
     return request(resolveFetch(options), "POST", RESTORE_PATH + query, snapshot);
   }
 
-  // 下载文件名：cockpit-export-<日期>.json，日期取自响应体的 exportedAt
+  // 下载文件名：honeycomb-export-<日期>.json，日期取自响应体的 exportedAt
   // （服务端生成，contract.md v1.3 明文），**不用本地 new Date() 拼**——
   // 客户端时钟/时区不准会让文件名的日期与响应内容的 exportedAt 不一致。
   // exportedAt 是带时区偏移的 ISO8601，直接切前 10 个字符拿 YYYY-MM-DD，
@@ -374,7 +374,7 @@
   function exportFileName(exportedAt) {
     var datePart = (typeof exportedAt === "string" && exportedAt.length >= 10)
       ? exportedAt.slice(0, 10) : "unknown-date";
-    return "cockpit-export-" + datePart + ".json";
+    return "honeycomb-export-" + datePart + ".json";
   }
 
   // ── 事实 → 展示行的纯映射（R10 要求单测的部分）──────────────────────

@@ -78,7 +78,7 @@ if (-not (Test-Path '.env')) {
   }
 }
 
-Write-Host '拉镜像（第一次要几分钟）……'
+if ($fresh) { Write-Host '拉镜像（第一次要几分钟）……' } else { Write-Host '拉新版镜像……' }
 # compose 的 -q 压不住逐层进度（走 stderr），整段收起来，出错才打印
 if (-not $env:HONEYCOMB_NO_PULL) {
   $pull = Invoke-Native { docker compose pull -q }

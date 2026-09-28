@@ -423,3 +423,15 @@ def test_changing_shared_password_kills_shared_tokens(tmp_path):
         assert s.req("GET", "/api/auth/verify", headers=_bearer(tok))[0] == 401
     finally:
         s.stop()
+
+
+def test_shared_password_with_absent_users_file_does_not_spam_log(tmp_path):
+    # 发布版：只开共享口令、AUTH_USERS_FILE 指向还不存在的文件。以前后台线程每 2 秒
+    # 报一次「读账号文件失败」（Windows 验收）。
+    s = Stub({"AUTH_PASSWORD": PW, "AUTH_USERS_FILE": str(tmp_path / "users.json")})
+    try:
+        assert s.login(password=PW)[0] == 204
+        time.sleep(4.5)  # 跨过两轮 RELOAD_EVERY
+    finally:
+        s.stop()
+    assert "读账号文件失败" not in s.proc.stderr.read()
