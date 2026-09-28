@@ -194,3 +194,15 @@ def test_cookie_path_follows_base_path(tmp_path):
     env = {**os.environ, "AUTH_PASSWORD": PW, "AUTH_BASE_PATH": "Cockpit"}
     r = subprocess.run([sys.executable, str(STUB)], env=env, capture_output=True, text=True, timeout=10)
     assert r.returncode != 0 and "AUTH_BASE_PATH" in r.stderr
+
+
+def test_shared_password_with_absent_users_file_does_not_spam_log(tmp_path):
+    # 发布版：只开共享口令、AUTH_USERS_FILE 指向还不存在的文件。以前后台线程每 2 秒
+    # 报一次「读账号文件失败」（Windows 验收）。
+    s = Stub({"AUTH_PASSWORD": PW, "AUTH_USERS_FILE": str(tmp_path / "users.json")})
+    try:
+        assert s.login(password=PW)[0] == 204
+        time.sleep(4.5)  # 跨过两轮 RELOAD_EVERY
+    finally:
+        s.stop()
+    assert "读账号文件失败" not in s.proc.stderr.read()
