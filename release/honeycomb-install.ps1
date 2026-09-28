@@ -53,9 +53,27 @@ function Rand {  # 32 位十六进制；这种写法 PowerShell 5.1 与 7 都有
   -join ($b | ForEach-Object { '{0:x2}' -f $_ })
 }
 
+# compose 项目名 = 容器、网络、数据卷的前缀。以前写死 honeycomb：同一台机器在第二个
+# 目录再装一份，会把第一份的 web / auth 重建成第二份的口令和端口、两份共用一份数据
+# （Windows 验收实测）。第一次装时挑一个本机没人用的名字，写进 .env。
+# 查询失败必须停下：Invoke-Native 把 stderr 也收成字符串，不查退出码的话报错文本会被当成
+# 「有人用」，名字一路往后加个没完。
+function Test-ProjectTaken([string]$Name) {
+  $c = Invoke-Native { docker ps -aq --filter "label=com.docker.compose.project=$Name" }
+  if ($LASTEXITCODE -ne 0) { Die '查不了 docker 容器列表。' }
+  $v = Invoke-Native { docker volume ls -q --filter "label=com.docker.compose.project=$Name" }
+  if ($LASTEXITCODE -ne 0) { Die '查不了 docker 数据卷列表。' }
+  return [bool](($c | Where-Object { $_ }) -or ($v | Where-Object { $_ }))
+}
+
 $fresh = $false
 if (-not (Test-Path '.env')) {
   $fresh = $true
+  $project = $env:HONEYCOMB_PROJECT
+  if (-not $project) {
+    $project = 'honeycomb'; $n = 1
+    while (Test-ProjectTaken $project) { $n++; $project = "honeycomb-$n" }
+  }
   $pw = Rand
   # UTF-8 无 BOM：compose 读 .env 时 BOM 会粘在第一个变量名上
   $lines = @(
@@ -66,7 +84,9 @@ if (-not (Test-Path '.env')) {
     "AUTH_SECRET=$(Rand)",
     '# 只本机能访问。要放到局域网改成 0.0.0.0:8800，但先在前面加 TLS（见 README）。',
     "HONEYCOMB_BIND=$Bind",
-    'HONEYCOMB_TZ=Asia/Shanghai'
+    'HONEYCOMB_TZ=Asia/Shanghai',
+    '# compose 项目名（容器、数据卷的前缀）。别改：改了等于换成一份新的空数据。',
+    "HONEYCOMB_PROJECT=$project"
   )
   [System.IO.File]::WriteAllText((Join-Path (Get-Location) '.env'), ($lines -join "`n") + "`n", (New-Object System.Text.UTF8Encoding($false)))
   # 里面是口令和会话密钥：只给当前用户（同 Linux 版的 umask 077）。装在共享目录时
