@@ -194,9 +194,14 @@ def confirm(sug_id: str, task_id: str | None, mode: str) -> dict:
             ai={"generated": True, "confidence": doc["suggestion"]["confidence"], "confirmed": True},
         )
     except Exception:
-        # 任务不存在等：事实没写成，放回待确认（并发的另一次确认若已写成，就别放回）
-        if claimed and events_service.find_by_dedupe(user, SOURCE, dedupe_key) is None:
-            repo.set_status(user, sug_id, "pending", _now(), only_from="confirmed")
+        # 任务不存在等：事实没写成，放回待确认（并发的另一次确认若已写成，就别放回）。
+        # 尽力而为：放回本身出错也要把原来的错误原样抛出去
+        if claimed:
+            try:
+                if events_service.find_by_dedupe(user, SOURCE, dedupe_key) is None:
+                    repo.set_status(user, sug_id, "pending", _now(), only_from="confirmed")
+            except Exception:  # noqa: BLE001, S110
+                pass
         raise
     return {"id": sug_id, "status": "confirmed", "duplicate": out["duplicate"],
             "date": out["date"], "event": out["event"]}

@@ -184,10 +184,10 @@
     } catch (err) {
       return; // 网络抖一下不值得在计时台上报错，下次可见时再拉
     }
+    if (mine !== loadSeq) return;
     if (res.status === 404) { panelEl.hidden = true; return; } // 后端早于 v2.2：整块不出现
     if (!res.ok) { panelEl.hidden = false; showMessage("待确认列表加载失败（HTTP " + res.status + "）", true); return; }
     var body = await res.json().catch(function () { return null; });
-    if (mine !== loadSeq) return;
     // 每次都重拉树：人可能刚在「任务」页加了任务，要能马上选到
     try {
       var t = await fetch(BASE + "api/core/views/tree");
@@ -220,10 +220,10 @@
         }
       }
     } finally {
-      busy = false;
-      syncButtons(); // load() 失败时不重绘，按钮不能停在禁用
+      busy = false; // 按钮先保持禁用，等列表重拉完再按新列表放开（旧列表上再点就是重复提交）
     }
     await load();
+    syncButtons(); // load() 失败时不重绘，按钮不能停在禁用
     if (errors.length) showMessage(errors[0] + (errors.length > 1 ? "（另有 " + (errors.length - 1) + " 条失败）" : ""), true);
     else if (bulk) showMessage("已确认 " + done + " 条。", false);
     if (confirmed && window.fetchAndRender) window.fetchAndRender(); // 今天的圆环算上这段
