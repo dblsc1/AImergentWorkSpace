@@ -48,8 +48,21 @@
 
 ## 2. 装 ai-detector
 
-从 Release 下载对应系统的单文件（未签名：Windows 会弹 SmartScreen，点「仍要运行」；
+从 [Release](../../releases) 下载对应系统的单文件（未签名：Windows 会弹 SmartScreen，点「仍要运行」；
 macOS 需要在「隐私与安全性」里放行一次），放到固定位置，然后：
+
+| 系统 | 文件 |
+|---|---|
+| Linux x86_64 | `ai-detector-<tag>-linux-amd64` |
+| Windows x86_64 | `ai-detector-<tag>-windows-amd64.exe` |
+| macOS Apple Silicon | `ai-detector-<tag>-darwin-arm64` |
+| macOS Intel | `ai-detector-<tag>-darwin-amd64` |
+
+校验完整性（可选）：同一个 Release 里的 `ai-detector-<tag>-SHA256SUMS.txt` 记了四个文件的
+SHA256，下载后 `sha256sum -c --ignore-missing ai-detector-<tag>-SHA256SUMS.txt` 核对。
+
+macOS 下载后先执行一次 `xattr -d com.apple.quarantine ./ai-detector-<tag>-darwin-*`，
+否则会被隔离属性拦下，「隐私与安全性」里放行的是同一件事，命令行更快。
 
 ```sh
 ai-detector init        # 写默认配置（同步是关的）和规则文件样例
