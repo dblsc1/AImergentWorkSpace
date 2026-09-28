@@ -190,6 +190,35 @@ def test_human_daily_total_unaffected_by_concurrent_agents(client, seeded, shift
     assert 3 * 3600 <= agent <= 3 * 3610
 
 
+def test_agent_projection_concurrent_first_upsert_not_lost(monkeypatch):
+    """两条不同事件并发建同一聚合行：后到者撞唯一索引，不能被当成「已应用」丢掉。
+    用一层包装模拟竞态：首次 upsert 前先让「另一请求」建好行，再抛 DuplicateKeyError。"""
+    from pymongo.errors import DuplicateKeyError  # noqa: PLC0415
+
+    from app.modules.projector import repo  # noqa: PLC0415
+
+    real = repo._agent_daily_col
+    key = {"user": "u_local", "date": "2026-09-28", "projectId": "p1", "taskId": "t1", "agent": "a"}
+
+    class Racy:
+        raced = False
+
+        def update_one(self, query, update, upsert=False):
+            if upsert and not Racy.raced:
+                Racy.raced = True
+                real().insert_one({**key, "seconds": 10, "runs": 1, "appliedKeys": ["agent:first"]})
+                raise DuplicateKeyError("E11000 模拟竞态")
+            return real().update_one(query, update, upsert=upsert)
+
+    monkeypatch.setattr(repo, "_agent_daily_col", Racy)
+    assert repo.apply_agent_daily_stat("u_local", "agent:second", "2026-09-28", "p1", "t1", "a", 5)
+    row = real().find_one({}, {"_id": 0})
+    assert (row["seconds"], row["runs"]) == (15, 2)
+    # 真·重复仍是 False、不重复累计
+    assert not repo.apply_agent_daily_stat("u_local", "agent:second", "2026-09-28", "p1", "t1", "a", 5)
+    assert real().find_one({}, {"_id": 0})["seconds"] == 15
+
+
 # ─────────────────────────────────────────── 超时惰性关闭
 
 

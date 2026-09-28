@@ -194,18 +194,17 @@ def apply_agent_daily_stat(
 ) -> bool:
     """同 ``apply_daily_stat`` 的原子幂等写法，唯一约束多一个 ``agent``；另计 ``runs`` 次数。"""
     key = {"user": user, "date": date, "projectId": project_id, "taskId": task_id, "agent": agent}
+    query = {**key, "appliedKeys": {"$ne": dedupe_key}}
+    update = {"$inc": {"seconds": seconds, "runs": 1}, "$addToSet": {"appliedKeys": dedupe_key}}
     try:
-        result = _agent_daily_col().update_one(
-            {**key, "appliedKeys": {"$ne": dedupe_key}},
-            {
-                "$inc": {"seconds": seconds, "runs": 1},
-                "$addToSet": {"appliedKeys": dedupe_key},
-                "$setOnInsert": key,
-            },
-            upsert=True,
-        )
+        result = _agent_daily_col().update_one(query, {**update, "$setOnInsert": key}, upsert=True)
     except DuplicateKeyError:
-        return False  # 早已应用过
+        # 撞唯一索引有两种可能：① 本键早已应用过；② 并发的**另一条**事件刚好抢先建出了
+        # 同一行（几个代理同时 stop 在同一任务同一天——代理泳道的常态，人的泳道是串行的
+        # 碰不到）。②不能当成「已应用」直接返回，否则那次运行的时长就漏了。行此刻一定在，
+        # 不带 upsert 再试一次：条件中 = 本键没应用过、现在加上；不中 = 真的应用过。
+        result = _agent_daily_col().update_one(query, update)
+        return result.modified_count > 0
     return result.modified_count > 0 or result.upserted_id is not None
 
 
