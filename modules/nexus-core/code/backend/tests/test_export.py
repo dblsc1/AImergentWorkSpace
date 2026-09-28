@@ -24,6 +24,8 @@ _COLLECTIONS = (
     "planner_audit",
     # v2.1 AI 代理运行（与 conftest 同批加）。
     "agent_runs", "proj_agent_daily_stats",
+    # v2.2 活动建议（不是事实，但同样要在测试间清空 / 纳入导出只读证明）。
+    "activity_suggestions",
 )
 
 

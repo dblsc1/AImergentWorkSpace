@@ -13,6 +13,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from .config import settings
+from .modules.activity.router import router as activity_router
+from .modules.activity.service import ConflictError as SuggestionConflictError
 from .modules.events.router import router as events_router
 from .modules.events.service import InvalidQueryError
 from .modules.export.router import router as export_router
@@ -73,6 +75,7 @@ app.include_router(views_router, prefix=API_PREFIX)
 app.include_router(export_router, prefix=API_PREFIX)
 app.include_router(planner_import_router, prefix=API_PREFIX)
 app.include_router(restore_router, prefix=API_PREFIX)
+app.include_router(activity_router, prefix=API_PREFIX)  # v2.2 活动建议
 
 
 # 域错误 → 状态码的映射只在这里（contract.md v0.4「校验」表 + v0.6「档案读端」）：
@@ -85,6 +88,7 @@ app.include_router(restore_router, prefix=API_PREFIX)
 #   StalePlanError → 409（v1.7 JSON 导入：apply 的 checksum 与当前库重算不一致；
 #                    v1.9 快照恢复：apply 的快照不是 dry-run 过的那一份）
 #   NotEmptyError → 409（v1.9 快照恢复：目标实例不是空库）
+#   SuggestionConflictError → 409（v2.2 活动建议：已忽略的再确认 / 已确认的再忽略）
 
 
 @app.exception_handler(UnknownTaskError)
@@ -143,6 +147,12 @@ def planner_stale_plan(_request: Request, exc: StalePlanError) -> JSONResponse:
 def restore_not_empty(_request: Request, exc: NotEmptyError) -> JSONResponse:
     """契约 v1.9：恢复只对空实例开放。409 同 `StalePlanError`——请求合法，
     冲突的是**当前状态**；detail 里那句「恢复通道不是合并通道」本身就是护栏。"""
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(SuggestionConflictError)
+def suggestion_conflict(_request: Request, exc: SuggestionConflictError) -> JSONResponse:
+    """契约 v2.2：请求合法，冲突的是建议的**当前状态**（同 `NoRunningTimerError`）。"""
     return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 

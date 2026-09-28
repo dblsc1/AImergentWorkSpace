@@ -52,6 +52,7 @@ type cockpit struct {
 	*httptest.Server
 	mu     sync.Mutex
 	status int
+	reply  string // 上传的响应体（缺省空）
 	auth   []string
 	bodies [][]byte
 }
@@ -67,6 +68,7 @@ func fakeCockpit(t *testing.T) *cockpit {
 			b, _ := io.ReadAll(r.Body)
 			c.bodies = append(c.bodies, b)
 			w.WriteHeader(c.status)
+			io.WriteString(w, c.reply)
 		case "/Cockpit/api/core/views/tree":
 			io.WriteString(w, `{"zones":[{"id":"z1","name":"学习"}],"projects":[{"id":"p1","zoneId":"z1","name":"garden",
 				"tasks":[{"id":"t_a1","name":"写提示词","done":false},{"id":"t_old","name":"旧","done":true}]}]}`)
@@ -689,5 +691,24 @@ func TestOverlappingWindowEventsCountOnce(t *testing.T) {
 	s := merge(buildFragments(d, at(0), at(60), newRedactor(Config{})), G)
 	if len(s) != 1 || s[0].Active != 30*time.Minute {
 		t.Fatalf("%+v", s)
+	}
+}
+
+func TestRejectedSegmentsAreLoggedWithoutTitles(t *testing.T) {
+	aw := fakeAW(t, []awEvent{win(0, 20, "code", "secret-title.go")}, nil)
+	defer aw.Close()
+	ck := fakeCockpit(t)
+	defer ck.Close()
+	ck.reply = `{"accepted":0,"duplicates":0,"rejected":[{"index":0,"reason":"endAt 在未来"}]}`
+	var buf strings.Builder
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	st := activeState()
+	if _, err := tick(testConfig(aw.URL, ck.URL), st, at(60), http.DefaultClient); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "拒收 1 段") || !strings.Contains(out, "endAt 在未来") || strings.Contains(out, "secret-title") {
+		t.Fatalf("log=%q", out)
 	}
 }

@@ -110,32 +110,62 @@ def backfill(
     #    「+08:00」与等价的「Z」写法字符串不同、指的是同一时刻，不归一化会让
     #    同一件事算出两个不同的键，防重直接失效（契约要害条款）。
     normalized = started.astimezone(timezone.utc).isoformat()
-    dedupe_key = f"backfill:{task_id}:{normalized}:{duration_seconds}"
+    return record_session(
+        user,
+        {"zone": zone_id, "project": project_id, "task": task_id},
+        start_at_raw,
+        ended.isoformat(),  # 会话结束时刻，与 stop() 的 time 语义对齐
+        duration_seconds,
+        source=BACKFILL_SOURCE,
+        dedupe_key=f"backfill:{task_id}:{normalized}:{duration_seconds}",
+        mode=mode,
+    )
 
+
+def record_session(
+    user: str,
+    subject: dict,
+    start_at_raw: str,
+    time_iso: str,
+    duration_seconds: int,
+    *,
+    source: str,
+    dedupe_key: str,
+    mode: str = DEFAULT_MODE,
+    ai: dict | None = None,
+) -> dict:
+    """组装一条 ``session.completed`` → 事件入口 → 回显（``TimerBackfillOut`` 形状）。
+
+    补登与「确认活动建议」（契约 v2.2）共用这一个函数：两条路径的信封形状不许分叉，
+    ``data`` 与 ``stop()`` 同形是「零投影改动」的前提。调用方负责校验与归属链；
+    这里只管组装与防重回显。``ai`` 是 yq-event.v1 §2 的可选块，没给就不写。
+    """
     envelope = {
         "spec": SPEC,
         "id": f"evt_{uuid.uuid4().hex[:12]}",  # 不是防重键，每次组装可不同
         "dedupeKey": dedupe_key,
         "type": "session.completed",
         "user": user,
-        "source": BACKFILL_SOURCE,
-        "time": ended.isoformat(),  # 会话结束时刻，与 stop() 的 time 语义对齐
-        "subject": {"zone": zone_id, "project": project_id, "task": task_id},
-        # v2.1：mode 贴标签（do 不写），与 stop() 同一个函数，两条路径不许分叉
+        "source": source,
+        "time": time_iso,
+        "subject": subject,
+        # v2.1：mode 贴标签（do 不写），与 stop() 同一个函数，几条路径不许分叉
         "data": with_mode({"durationSeconds": duration_seconds, "startAt": start_at_raw}, mode),
         "flags": [],
     }
+    if ai is not None:
+        envelope["ai"] = ai
 
     result = events_service.ingest(envelope)
     if result.rejected:
         # 自己组的信封被自己的校验拒了 = 实现 bug，响亮失败，不吞
-        raise RuntimeError(f"backfill 组装的信封未过事件校验：{result.rejected[0].reason}")
+        raise RuntimeError(f"{source} 组装的信封未过事件校验：{result.rejected[0].reason}")
 
     duplicate = result.duplicate > 0
     if duplicate:
         # duplicate:true 时 event 回显的是**原来那条**，不是刚组装的这条
         # （它的 id 从未落库；contract-schemas.md 明文要求回显原条）。
-        stored = events_service.find_by_dedupe(user, BACKFILL_SOURCE, dedupe_key)
+        stored = events_service.find_by_dedupe(user, source, dedupe_key)
         event_out = {"id": stored["id"], "dedupeKey": stored["dedupeKey"], "type": stored["type"]}
     else:
         event_out = {
@@ -147,6 +177,7 @@ def backfill(
     return {
         "recorded": True,  # accepted 或 duplicate 都算「有一条事件对应这次请求」
         "duplicate": duplicate,
-        "date": timeutil.local_date(started, settings.tz),  # 归日取 startAt，同 daily_stats.py 口径
+        # 归日取 startAt，同 daily_stats.py 口径
+        "date": timeutil.local_date(datetime.fromisoformat(start_at_raw), settings.tz),
         "event": event_out,
     }

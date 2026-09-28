@@ -333,3 +333,36 @@ select.field:disabled { opacity: .7; cursor: not-allowed; }
 
 /* ── 390px 一等公民：不横滚（F-RING-5） ──────────────────────────────── */
 html, body { max-width: 100%; overflow-x: hidden; }
+
+/* ── 「待确认」面板（2026-09-28，ring-suggestions.js，nexus-core v2.2 活动建议）──
+ * 建议不是事实：用 ink-2 的中性色调，只有「确认」按钮是事实青——确认那一下才入账。
+ * 320px 一等公民：每条竖排，按钮行两等分，长标题断行不撑宽。 */
+.suggest-panel { display: grid; gap: var(--sp-3); min-width: 0; }
+.suggest-title { font-size: var(--fs-h2); font-weight: 600; }
+.suggest-count { color: var(--ink-2); font-weight: 400; margin-left: var(--sp-1); }
+.suggest-sub { font-size: var(--fs-sub); color: var(--ink-2); }
+.suggest-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+.suggest-threshold-label { font-size: var(--fs-sub); color: var(--ink-2); }
+.suggest-threshold {
+  width: 5.5em; min-height: var(--tap); padding: 0 var(--sp-2);
+  border: 1px solid var(--line); border-radius: var(--r-2);
+  background: var(--panel-2); color: var(--ink); font: inherit;
+}
+.suggest-bulk .btn { flex: 1 1 12em; white-space: normal; }
+.suggest-message { font-size: var(--fs-sub); color: var(--fact); }
+.suggest-message.is-error { color: var(--danger); }
+.suggest-empty, .suggest-more { font-size: var(--fs-sub); color: var(--ink-3); }
+.suggest-list { list-style: none; padding: 0; display: grid; gap: var(--sp-3); }
+.suggest-item {
+  display: grid; gap: var(--sp-2); min-width: 0;
+  padding: var(--sp-3); border: 1px solid var(--line-2); border-radius: var(--r-2);
+  background: var(--panel-2);
+}
+.suggest-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--sp-2); font-size: var(--fs-sub); }
+.suggest-dur { color: var(--ink-2); }
+.suggest-what { overflow-wrap: anywhere; }
+.suggest-hint { font-size: var(--fs-sub); color: var(--ink-2); overflow-wrap: anywhere; }
+.suggest-item select.field { background: var(--panel); min-width: 0; }
+.suggest-item .row { display: flex; gap: var(--sp-2); }
+.suggest-item .row > * { flex: 1; }
+.suggest-item .btn:disabled { opacity: .5; cursor: not-allowed; filter: none; }
