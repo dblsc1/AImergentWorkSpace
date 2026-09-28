@@ -140,9 +140,17 @@ def default_agent_name(cwd: str | None = None) -> str:
 # 不跟重定向：默认 opener 会跟 3xx 并把请求（含 Authorization 头）原样发到
 # `Location` 指向的新地址——那可能是另一个源。cockpit 正常协议里没有重定向，
 # 出现 3xx 只可能是配置错误或者更糟的情况，一律当错误处理，不跟。
+#
+# 不能只重写 redirect_request() 让它返回 None——那是"我不重定向，看有没有
+# 别的 handler 接手"的信号，最终会不会变成 HTTPError 取决于 opener 里还挂着
+# 哪些 handler（碰巧 build_opener() 默认会挂一个 HTTPDefaultErrorHandler 兜底，
+# 但这是一条隐式链路，不值得依赖）。直接重写 http_error_30x，自己抛
+# HTTPError，行为不再依赖任何"没人接手就摔给默认 handler"的隐式约定。
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
-        return None  # None = 不重定向，交给默认错误处理器把 3xx 当 HTTPError 抛出
+    def http_error_301(self, req, fp, code, msg, headers):
+        raise urllib.error.HTTPError(req.full_url, code, msg, headers, fp)
+
+    http_error_302 = http_error_303 = http_error_307 = http_error_308 = http_error_301
 
 
 _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
@@ -216,6 +224,10 @@ def _request(config: dict[str, Any], method: str, path: str, payload: dict[str, 
     except _DeadlineExceeded:
         raise CockpitError("超时") from None
     except urllib.error.HTTPError as e:
+        try:
+            e.close()  # HTTPError 包着底层响应/连接，raise 出来之后没人再帮它关，自己关掉
+        except Exception:
+            pass
         raise CockpitError(f"HTTP {e.code}") from None
     except urllib.error.URLError as e:
         if isinstance(e.reason, TimeoutError):

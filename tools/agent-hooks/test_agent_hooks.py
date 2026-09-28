@@ -11,6 +11,8 @@ config/state 目录钉在临时目录——不依赖 XDG_*（Windows/mac 上不�
 from __future__ import annotations
 
 import http.server
+import importlib.machinery
+import importlib.util
 import itertools
 import json
 import os
@@ -33,6 +35,21 @@ import claude_hook  # noqa: E402
 
 RUN_SCRIPT = HERE / "cockpit-run"
 HOOK_SCRIPT = HERE / "claude_hook.py"
+
+
+def _load_cockpit_run_module():
+    """`cockpit-run` 没有 .py 后缀，不能用 `import` 语句——用 importlib 按路径加载，
+    这样才能直接调用脚本内部的函数（比如 `_wait_ignoring_keyboard_interrupt`）、
+    mock 掉它引用的 `cc.start_run`/`cc.stop_run`，而不用真的开子进程发信号。
+    信号时序/子进程编排这类真跑一遍很难稳定复现的边界情况，靠这个更快也更稳。
+    """
+    # spec_from_file_location() 靠文件扩展名猜 loader，`cockpit-run` 没有
+    # .py 后缀猜不出来（返回 None）——显式给一个 SourceFileLoader。
+    loader = importlib.machinery.SourceFileLoader("cockpit_run_script", str(RUN_SCRIPT))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
 
 
 # ── 假 cockpit：记请求、按 token 判 401、start/stop 各回该回的形状 ──
@@ -378,7 +395,9 @@ class ClientHttpTests(unittest.TestCase):
         finally:
             _stop_server(server, thread)
 
-    # ── P1 #2：不跟重定向，Authorization 到不了别的源 ────────────
+    # ── P1 #2 / P2 #4：不跟重定向，Authorization 到不了别的源，且分类
+    # 必须是 "HTTP 302"（不是靠 redirect_request 返回 None 之后指望 opener
+    # 里那条隐式的默认错误处理兜底链路，见 _NoRedirect 的注释）。
     def test_redirect_is_not_followed_and_other_origin_gets_nothing(self):
         target_server, target_thread, target_log = _start_server(expect_token=None)
         try:
@@ -503,20 +522,59 @@ class CockpitRunIntegrationTests(_IsolatedHomeMixin, unittest.TestCase):
         self.assertEqual(proc.returncode, -signal.SIGTERM)
 
 
+# ── cockpit-run 内部函数：信号时序类的边界情况，直接调更稳 ─────────
+class CockpitRunUnitTests(unittest.TestCase):
+    # ── P2 #2：第二次 Ctrl-C 不能从 wait 循环里逃出去 ──────────────
+    def test_repeated_ctrl_c_does_not_escape_and_still_waits(self):
+        module = _load_cockpit_run_module()
+
+        class FakeProc:
+            def __init__(self):
+                self.calls = 0
+
+            def wait(self):
+                self.calls += 1
+                if self.calls < 3:
+                    raise KeyboardInterrupt()
+                return 0
+
+        proc = FakeProc()
+        result = module._wait_ignoring_keyboard_interrupt(proc)
+        self.assertEqual(result, 0)
+        self.assertEqual(proc.calls, 3)  # 吞了两次 KeyboardInterrupt，第三次才真的等到
+
+    # ── P2 #3：stop 上报炸了不能顶替真实退出码 ─────────────────────
+    def test_stop_reporting_exception_does_not_replace_exit_code(self):
+        module = _load_cockpit_run_module()
+        with mock.patch.object(module.cc, "load_config", return_value={"url": "http://x", "token": "t", "tasks": {}}), \
+             mock.patch.object(module.cc, "start_run", return_value={"runId": "run-1"}), \
+             mock.patch.object(module.cc, "stop_run", side_effect=RuntimeError("boom")):
+            exit_code = module.main(["--task", "t1", "--", sys.executable, "-c", "import sys; sys.exit(0)"])
+        # 命令本身退出码是 0；stop_run 炸出一个 RuntimeError（不是 CockpitError）
+        # 不该逃出 main() 变成一次 Python 崩溃（那样 sys.exit(main()) 拿到的就不是
+        # 0，而是未处理异常的 traceback + exit 1）。
+        self.assertEqual(exit_code, 0)
+
+
 # ── Claude Code 钩子：状态文件往返 + 失败也 exit 0 ────────────────
 class ClaudeHookTests(_IsolatedHomeMixin, unittest.TestCase):
     def test_state_round_trips_by_session_id_and_cleans_up(self):
         claude_hook._save_run_id("sess-1", "run-1")
         claude_hook._save_run_id("sess-2", "run-2")
 
-        self.assertEqual(claude_hook._pop_run_id("sess-1"), "run-1")
-        # 取过一次之后就该被清掉了
-        self.assertIsNone(claude_hook._pop_run_id("sess-1"))
+        # _read_run_id 是只读的，不删（P2 #1：删不删是 handle_session_end 自己
+        # 根据 stop 成不成来决定的，不是读的时候顺手删）
+        self.assertEqual(claude_hook._read_run_id("sess-1"), "run-1")
+        self.assertEqual(claude_hook._read_run_id("sess-1"), "run-1")
+
+        claude_hook._delete_run_id("sess-1")
+        self.assertIsNone(claude_hook._read_run_id("sess-1"))
         # 另一个会话不受影响
-        self.assertEqual(claude_hook._pop_run_id("sess-2"), "run-2")
+        self.assertEqual(claude_hook._read_run_id("sess-2"), "run-2")
 
     def test_missing_state_file_is_tolerated(self):
-        self.assertIsNone(claude_hook._pop_run_id("nope"))
+        self.assertIsNone(claude_hook._read_run_id("nope"))
+        claude_hook._delete_run_id("nope")  # 删一个不存在的也不该炸
 
     def test_session_start_then_end_round_trip_against_fake_server(self):
         server, thread, log = _start_server(expect_token="good-token")
@@ -529,14 +587,14 @@ class ClaudeHookTests(_IsolatedHomeMixin, unittest.TestCase):
             claude_hook.handle_session_start(
                 {"session_id": "sess-x", "cwd": "/tmp", "hook_event_name": "SessionStart", "model": "sonnet"}
             )
-            self.assertEqual(claude_hook._pop_run_id("sess-x"), "run-1")
-            # 上面这次 pop 已经把记录清掉了，重新存一遍再走 SessionEnd 的正常路径
-            claude_hook._save_run_id("sess-x", "run-1")
+            # 只读，不删——记录还在，handle_session_end 待会还要用
+            self.assertEqual(claude_hook._read_run_id("sess-x"), "run-1")
 
             claude_hook.handle_session_end(
                 {"session_id": "sess-x", "hook_event_name": "SessionEnd", "reason": "other"}
             )
-            self.assertIsNone(claude_hook._pop_run_id("sess-x"))
+            # stop 报成功了，记录该被清掉
+            self.assertIsNone(claude_hook._read_run_id("sess-x"))
             stop_req = [r for r in log.requests if r["path"].endswith("/stop")][-1]
             self.assertEqual(stop_req["body"]["outcome"], "done")
             start_req = [r for r in log.requests if r["path"].endswith("/agents/start")][-1]
@@ -562,6 +620,34 @@ class ClaudeHookTests(_IsolatedHomeMixin, unittest.TestCase):
                 )
             stop_req = [r for r in log.requests if r["path"].endswith("/stop")][-1]
             self.assertEqual(stop_req["body"]["outcome"], "cancelled")
+            self.assertIsNone(claude_hook._read_run_id("sess-z"))  # stop 成功了，记录清掉
+        finally:
+            _stop_server(server, thread)
+
+    # ── P2 #1：stop 没成功之前不能先删本地记录，不然这条 run 永远关不掉 ──
+    def test_stop_failure_keeps_state_file_for_later_retry(self):
+        claude_hook._save_run_id("sess-w", "run-1")
+        bad_config = {"url": f"http://127.0.0.1:{_unused_port()}", "token": "x", "tasks": {}}
+        with mock.patch.object(cc, "load_config", return_value=bad_config):
+            claude_hook.handle_session_end(
+                {"session_id": "sess-w", "hook_event_name": "SessionEnd", "reason": "other"}
+            )
+        # cockpit 连不上：本地记录必须还在，删了就真丢了（只能等服务端自己的
+        # 兜底超时才会关掉这条 run）。
+        self.assertEqual(claude_hook._read_run_id("sess-w"), "run-1")
+
+    def test_stop_404_is_treated_as_definitively_gone_and_state_is_deleted(self):
+        server, thread = _start_fixed_response_server(404, b"")
+        try:
+            claude_hook._save_run_id("sess-v", "run-1")
+            config = {"url": f"http://127.0.0.1:{server.server_address[1]}", "token": "x", "tasks": {}}
+            with mock.patch.object(cc, "load_config", return_value=config):
+                claude_hook.handle_session_end(
+                    {"session_id": "sess-v", "hook_event_name": "SessionEnd", "reason": "other"}
+                )
+            # 404 = cockpit 明确说不认识这条 run 了（比如被服务端自己的兜底超时先
+            # 关掉了），这是唯一"确定不用再留着"的失败情况。
+            self.assertIsNone(claude_hook._read_run_id("sess-v"))
         finally:
             _stop_server(server, thread)
 

@@ -64,21 +64,26 @@ def _save_run_id(session_id: str, run_id: str) -> None:
         pass  # 状态文件写不了也不该拖累会话；下次 SessionEnd 找不到就跳过 stop
 
 
-def _pop_run_id(session_id: str) -> str | None:
-    """取出并删掉这个会话的 runId 记录（SessionEnd 用；用完即清，不会越攒越多）。"""
+def _read_run_id(session_id: str) -> str | None:
+    """只读，不删——SessionEnd 得先确认 stop 报成功了才能删（见 handle_session_end），
+    不然报失败/超时/钩子被杀死的时候，这条记录跟着没了，run 就再也关不掉了，
+    只能等 cockpit 服务端自己的兜底超时（数小时量级）才会收尾。
+    """
     path = _state_file(session_id)
-    run_id = None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            run_id = data.get("runId")
     except (FileNotFoundError, ValueError, OSError):
-        run_id = None
+        return None
+    run_id = data.get("runId") if isinstance(data, dict) else None
+    return run_id if isinstance(run_id, str) else None
+
+
+def _delete_run_id(session_id: str) -> None:
+    path = _state_file(session_id)
     try:
         path.unlink(missing_ok=True)
     except OSError:
         pass
-    return run_id if isinstance(run_id, str) else None
 
 
 def handle_session_start(payload: dict) -> None:
@@ -105,7 +110,7 @@ def handle_session_end(payload: dict) -> None:
     session_id = payload.get("session_id")
     if not session_id:
         return
-    run_id = _pop_run_id(session_id)
+    run_id = _read_run_id(session_id)
     if not run_id:
         return
     outcome = _REASON_TO_OUTCOME.get(payload.get("reason"), "done")
@@ -114,7 +119,18 @@ def handle_session_end(payload: dict) -> None:
         cc.stop_run(config, run_id, outcome, timeout=HOOK_TIMEOUT)
     except Exception as e:  # noqa: BLE001 — 同上，绝不能是"会话结束不了"的理由
         category = e if isinstance(e, cc.CockpitError) else "配置错误"
-        _warn(f"SessionEnd 上报失败（{category}）")
+        if str(category) == "HTTP 404":
+            # cockpit 已经不认识这条 run 了（比如被服务端自己的兜底超时先关掉了）——
+            # 本地这条记录留着也没用，这是唯一"确定不用再重试"的情况，删掉。
+            _delete_run_id(session_id)
+        else:
+            # 其余任何失败（连不上/超时/配置错误/别的 HTTP 状态码）都不删：
+            # 删了就真丢了，只能等 cockpit 服务端自己的兜底超时。保留本地记录，
+            # 下次这个目录/任务再触发 SessionStart 或 SessionEnd 时至少还有机会
+            # 看到它（是否重试是以后的事，这里先不做，只求不丢）。
+            _warn(f"SessionEnd 上报失败，本地记录先保留（{category}）")
+        return
+    _delete_run_id(session_id)
 
 
 def main() -> int:

@@ -65,6 +65,22 @@ def _start(args: argparse.Namespace, command: list[str]) -> tuple[dict, str | No
         return {}, None
 
 
+def _wait_ignoring_keyboard_interrupt(proc: subprocess.Popen) -> int:
+    """一直等到子进程真的退出，中途不管挨了几次 Ctrl-C 都不放弃等。
+
+    只挡一次 KeyboardInterrupt 不够：第二次 Ctrl-C 会直接从 except 块里的
+    那次 wait() 里逃出来，带着一截 traceback 把整个包装进程带走——不但难看，
+    还会跳过下面的 stop 上报，子进程也变成没人 wait() 的僵尸（直到这个
+    包装进程退出才被 init 收走）。这里循环吞掉，吞多少次都行，直到子进程
+    真退出为止。
+    """
+    while True:
+        try:
+            return proc.wait()
+        except KeyboardInterrupt:
+            continue
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     args, command = _parse_args(argv)
@@ -97,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
             # SIGTERM 转发用的，子进程这会儿多半正在自己处理 SIGINT，再插一脚
             # 只会打断它的收尾。
             cancelled = True
-            exit_code = proc.wait()
+            exit_code = _wait_ignoring_keyboard_interrupt(proc)
     finally:
         signal.signal(signal.SIGTERM, old_handler)
 
@@ -120,8 +136,9 @@ def main(argv: list[str] | None = None) -> int:
     if run_id:
         try:
             cc.stop_run(config, run_id, outcome)
-        except cc.CockpitError as e:
-            print(f"cockpit-run: 上报结束状态失败，不影响命令结果（{e}）", file=sys.stderr)
+        except Exception as e:  # noqa: BLE001 — 跟 _start() 一样：任何异常都不能顶替下面真实的退出码
+            category = e if isinstance(e, cc.CockpitError) else "配置错误"
+            print(f"cockpit-run: 上报结束状态失败，不影响命令结果（{category}）", file=sys.stderr)
 
     if exit_code < 0 and os.name == "posix":
         # 子进程是被信号杀的（POSIX 上 wait() 返回 -信号号）。直接
