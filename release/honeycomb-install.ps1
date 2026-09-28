@@ -56,9 +56,13 @@ function Rand {  # 32 位十六进制；这种写法 PowerShell 5.1 与 7 都有
 # compose 项目名 = 容器、网络、数据卷的前缀。以前写死 honeycomb：同一台机器在第二个
 # 目录再装一份，会把第一份的 web / auth 重建成第二份的口令和端口、两份共用一份数据
 # （Windows 验收实测）。第一次装时挑一个本机没人用的名字，写进 .env。
+# 查询失败必须停下：Invoke-Native 把 stderr 也收成字符串，不查退出码的话报错文本会被当成
+# 「有人用」，名字一路往后加个没完。
 function Test-ProjectTaken([string]$Name) {
   $c = Invoke-Native { docker ps -aq --filter "label=com.docker.compose.project=$Name" }
+  if ($LASTEXITCODE -ne 0) { Die '查不了 docker 容器列表。' }
   $v = Invoke-Native { docker volume ls -q --filter "label=com.docker.compose.project=$Name" }
+  if ($LASTEXITCODE -ne 0) { Die '查不了 docker 数据卷列表。' }
   return [bool](($c | Where-Object { $_ }) -or ($v | Where-Object { $_ }))
 }
 

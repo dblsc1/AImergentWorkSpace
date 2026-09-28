@@ -52,9 +52,11 @@ main() {
   # compose 项目名 = 容器、网络、数据卷的前缀。以前写死 honeycomb：同一台机器在第二个
   # 目录再装一份，会把第一份的 web / auth 重建成第二份的口令和端口、两份共用一份数据
   # （Windows 验收实测）。第一次装时挑一个本机没人用的名字，写进 .env。
+  # 查询失败必须停下，不能当成「没人用」：那样会把别人的项目名写进 .env，等于又接管一次。
   taken() {
-    [ -n "$(docker ps -aq --filter "label=com.docker.compose.project=$1")" ] ||
-      [ -n "$(docker volume ls -q --filter "label=com.docker.compose.project=$1")" ]
+    c=$(docker ps -aq --filter "label=com.docker.compose.project=$1") || die "查不了 docker 容器列表。"
+    v=$(docker volume ls -q --filter "label=com.docker.compose.project=$1") || die "查不了 docker 数据卷列表。"
+    [ -n "$c$v" ]
   }
 
   fresh=0

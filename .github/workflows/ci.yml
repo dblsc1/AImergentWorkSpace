@@ -256,7 +256,14 @@ jobs:
           pw2=$(sed -n 's/^HONEYCOMB_PASSWORD=//p' "$HONEYCOMB_DIR/.env")
           deploy/smoke.sh "$PW"                          # 第一份：原口令、原端口照常
           deploy/smoke.sh "$pw2" http://127.0.0.1:8801    # 第二份：自己的口令、自己的端口
-          test "$(docker volume ls -q --filter label=com.docker.compose.project=honeycomb-2 | wc -l)" -ge 1
+          # 数据真隔离：两份的 mongo / auth 实际挂载的卷逐个不同（只数卷的个数证明不了）
+          for svc in mongo auth; do
+            a=$(docker inspect -f '{{range .Mounts}}{{.Name}} {{end}}' honeycomb-$svc-1)
+            b=$(docker inspect -f '{{range .Mounts}}{{.Name}} {{end}}' honeycomb-2-$svc-1)
+            echo "$svc: $a | $b"
+            test -n "$a" && test -n "$b" && test "$a" != "$b"
+            for x in $b; do case " $a " in *" $x "*) echo "共用卷 $x"; exit 1;; esac; done
+          done
           (cd "$HONEYCOMB_DIR" && docker compose down -v)
           (cd "$RUNNER_TEMP/sh/honeycomb" && docker compose down -v)
       - name: PowerShell 安装 + 冒烟
