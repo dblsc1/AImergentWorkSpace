@@ -1,6 +1,6 @@
 # mcp.tools.v1 —— 给 AI 代理用的只读工具（MCP）
 
-> **契约 id**：`mcp.tools.v1`。**当前版本 v1.0**（2026-09-28，v0.3「AI 桥」首版，契约先行，实现待建）。
+> **契约 id**：`mcp.tools.v1`。**当前版本 v1.0**（2026-09-28，v0.3「AI 桥」首版）。实现：`modules/mcp`（v0.3 MCP 实现 PR）。
 >
 > **是什么**：HoneyComb 以 [MCP](https://modelcontextprotocol.io/)（Model Context Protocol）服务器的
 > 形式，把「任务树、人的时间、代理时间、在跑的计时、待确认的活动建议」读给 AI 代理。
@@ -333,8 +333,26 @@ consumes:
 测试（实现 PR 里给）：两个租户各建一棵树，互相看不见；严格模式缺头 401；时间缺偏移 400；
 `tools/list` 里每个工具 `readOnlyHint: true` 且没有 `propose_` 开头的。
 
+## 八、实现澄清（v1.0 实现 PR，只澄清、不改语义）
+
+写实现时碰到契约没说死的地方，按下面办；换实现照此即可：
+
+- **对象工具的 `truncated` 总在**（没截是 `false`），`get_current_timer` 也带（它的 `agents[]` 同样最多 200 条）。
+  「截了就给 `true`」的原文不变，只是没截时不省略这个键。
+- **「跨度超过 92 天」按含两端的天数算**：`2026-01-01..2026-04-02` 正好 92 天，放行；再多一天 `400`。
+- **cursor 绑定对所有列表工具一视同仁**：第一页定下的其余参数（`get_task_tree` 的 `includeDone`/`includeEphemeral`、
+  `get_daily_time` 的日期、`list_activity_suggestions` 的 `status`、`list_time_sessions` 的 `from`/`to`）都编进
+  `nextCursor`；带 cursor 的页没给就沿用，给了且不同 `400`——`to` 那条规则的推广。`limit` 不绑定，每页可以不同。
+  时刻按「同一时刻」比（`...T08:00:00+08:00` 与 `...T00:00:00Z` 相同）。
+- 入参值为 JSON `null` 当作没给。
+- 协议细节：通知（无 `id`）回 `202` 无正文；接受 JSON-RPC 批量（`2025-03-26` 允许）；带了
+  `MCP-Protocol-Version` 头但不是支持的版本 → `400`；`DELETE` 也回 `405`（无会话可删）。
+- `Origin: null`（沙箱 iframe、`file:` 页面）一律 `403`，写进 `MCP_ALLOWED_ORIGINS` 也不认——它不是「协议 + 主机 + 端口」。
+- nexus-core 回 2xx 但形状不对、或响应断在半截：按「连不上」处理（`502`、固定 detail，细节进日志）。
+
 ## 变更记录
 
 | 日期 | 变更 |
 |---|---|
 | 2026-09-28 | v1.0 首版（v0.3 AI 桥）。契约先行，实现待建 |
+| 2026-09-28 | 实现落地（`modules/mcp`，纯标准库）。加第八节「实现澄清」：对象工具 `truncated` 总在、92 天含两端、cursor 绑定推广到所有列表工具的其余参数、`null` 当没给、通知/批量/协议版本头的处理。不改任何既有语义 |

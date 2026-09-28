@@ -2,8 +2,7 @@
 
 > **契约 id**：`auth.gate.v1`。**当前版本 v1.3**（2026-09-28，纯追加，见文末变更记录）。
 >
-> **v1.3 契约先行**：设备令牌也开 `<站点前缀>api/mcp/`。占位实现在 v0.3 AI 桥的实现 PR 里跟上，
-> 跟上之前 stub 只认 `api/core/`（本文件唯一一处「契约写了、stub 还没做」，已登记）。
+> **v1.3**：设备令牌也开 `<站点前缀>api/mcp/`。占位实现已跟上（v0.3 AI 桥实现 PR，`_api_uri`）。
 >
 > **状态**：规范性。本文件描述的每一条行为都能在 `stub/auth_stub.py` 里找到对应代码，
 > 按函数名引用（`token_tenant`、`_login` 等）——**不确定的地方以代码为准，不是以这份
@@ -316,7 +315,7 @@ docker compose exec auth python /app/auth_stub.py revoke alice   # 作废 alice 
 docker compose exec auth python /app/auth_stub.py revoke         # 作废共享口令身份的全部令牌
 ```
 
-- 用法：`Authorization: Bearer <令牌>` 调 `<站点前缀>api/core/...`。只开接口，不开页面。
+- 用法：`Authorization: Bearer <令牌>` 调 `<站点前缀>api/core/...`（v1.3 起也可调 `<站点前缀>api/mcp/`）。只开接口，不开页面。
 - 格式：`hct1.<签发时间戳>.<纪元>.<租户>.<HMAC-SHA256(AUTH_SECRET, "device|" + 前四段 + "|" + 会话盐 + "|" + 代)>`，
   无状态，服务端不存令牌表。共享口令身份的租户段为空，「会话盐」取共享口令的派生值
   （`_shared_sess`）。
@@ -345,7 +344,7 @@ docker compose exec auth python /app/auth_stub.py revoke         # 作废共享�
 | `AUTH_COOKIE_SECURE` | ❌ | `true` | 本机 HTTP 调试须显式设 `false` |
 | `AUTH_BIND` | ❌ | `127.0.0.1:8010` | 监听地址 |
 | `AUTH_SESSION_DAYS` | ❌ | `30` | 会话有效期天数 |
-| `AUTH_BASE_PATH` | ❌ | `/` | 站点前缀，cookie 的 `Path` 跟着它（compose 里 = `HONEYCOMB_BASE_PATH`）；设备令牌只认 `<它>api/core/`。格式不对拒绝启动 |
+| `AUTH_BASE_PATH` | ❌ | `/` | 站点前缀，cookie 的 `Path` 跟着它（compose 里 = `HONEYCOMB_BASE_PATH`）；设备令牌只认 `<它>api/core/`（v1.3 起加 `<它>api/mcp/`）。格式不对拒绝启动 |
 | `AUTH_TOKENS_FILE` | ❌ | 账号文件同目录的 `tokens.json`（compose 里 = `/data/tokens.json`，同一个数据卷；只开共享口令时也在） | 设备令牌的纪元文件（v1.2）。它与 `AUTH_USERS_FILE` 都没设 = 不发令牌 |
 | `AUTH_TOKEN_DAYS` | ❌ | `365` | 设备令牌有效期天数（v1.2） |
 
@@ -361,5 +360,5 @@ docker compose exec auth python /app/auth_stub.py revoke         # 作废共享�
 | 2026-09-17 | v1 首版。契约文本从 `stub/auth_stub.py` 的实际行为反推得出 |
 | 2026-09-23 | 站点前缀（`contracts/gateway.v1` 第七节）：cookie `Path` 从固定 `/` 改为站点前缀（缺省仍是 `/`，未挂子路径的部署零变化）；占位实现加 `AUTH_BASE_PATH`；自带登录页从自己的地址推前缀，`next` 只接受前缀内地址 |
 | 2026-09-23 | **v1.1（纯追加）**：verify 的 `204` 可带 `X-Nexus-Tenant`，可回 `403`（登录了但没有可用租户）；新增 `GET /api/auth/me`，冻结最小形状 `{ok, user:{id, name}}`，`user.id` 等于 verify 的租户；login 请求体可带 `username`；login 可回 `429`；health 可带 `accounts` / `sharedPassword`；换实现清单加多用户与限次两条；安全约定加「只存哈希」「限次按网关看到的对端算」。占位实现加账号+密码（scrypt、账号文件、命令行管理、改密码/删账号作废会话），共享口令模式行为不变。引用改为按函数名，不再按行号 |
-| 2026-09-28 | **v1.3（纯追加，契约先行）**：设备令牌认的路径从 `<前缀>api/core/` 扩到再加 `<前缀>api/mcp/`（`contracts/mcp.tools.v1` 的对外入口）。只多开一个只读接口前缀，页面、`api/auth/`、`api/agent/` 照旧 `401`；v1.2 的实现不认它只是少一个能力，失败方向是拒绝。三条不变量不变 |
+| 2026-09-28 | **v1.3（纯追加，契约先行）**：设备令牌认的路径从 `<前缀>api/core/` 扩到再加 `<前缀>api/mcp/`（`contracts/mcp.tools.v1` 的对外入口）。只多开一个只读接口前缀，页面、`api/auth/`、`api/agent/` 照旧 `401`；v1.2 的实现不认它只是少一个能力，失败方向是拒绝。三条不变量不变。占位实现随 v0.3 AI 桥实现 PR 跟上（`_api_uri` 认两个前缀，测试 `test_bearer_opens_mcp_but_not_agent`） |
 | 2026-09-28 | **v1.2（纯追加）**：设备令牌。verify 可读 `Authorization: Bearer`（只在 `X-Original-URI` 落在 `<前缀>api/core/` 下时认，带了 Bearer 不回落到 cookie；原有 cookie 路径行为不变）；新增 `POST /api/auth/tokens`、`POST /api/auth/tokens/revoke`（只认 cookie、须 `application/json`）；消费方须给 verify 子请求带 `X-Original-URI`（gateway.v1 两份组装早已带）；换实现清单加一条可选项；安全约定加第 7 条。占位实现：`hct1.` 无状态令牌、按租户纪元吊销（`AUTH_TOKENS_FILE`）、`AUTH_TOKEN_DAYS`、命令行 `token` / `revoke`；没设 `AUTH_SECRET` 不发令牌。三条不变量不变 |

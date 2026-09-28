@@ -199,3 +199,19 @@ CI 把手写与生成的两份组装各按 `/` 与 `/Cockpit/` 真起一遍。
   不在启动时解析——否则关掉 `agent` 服务、或 `AGENT_UPSTREAM` 指向的服务还没起，nginx 直接起不来，整站跟着挂。
   连不上时这两条路由回 502；前端按 `agent.chat.v1` 把聊天面板整块藏起来。
 
+
+**实现落定（v0.3 MCP 实现 PR，追加）**：
+
+- **网络名【冻结】**：compose 里的网络键是 `honeycomb-agent-net`，按 compose 惯例实际网络名是
+  `<项目名>_honeycomb-agent-net`（项目名即 `HONEYCOMB_PROJECT`，缺省 `honeycomb` → `honeycomb_honeycomb-agent-net`；
+  同机第二套 `honeycomb-2` → `honeycomb-2_honeycomb-agent-net`）。按项目分开是有意的：同一台机器上两套部署的聊天后端
+  不能互相够到对方的 MCP。部署方接自己的服务：与本仓 compose 同项目合并（`-f docker-compose.yml -f override.yml`）时
+  在 override 里写 `networks: [honeycomb-agent-net]`；从另一个 compose 项目接时声明
+  `networks: {honeycomb-agent-net: {external: true, name: <项目名>_honeycomb-agent-net}}`。**键名与这条命名规则改了就是破坏性变更**（发 gateway.v2）。
+- MCP 上游固定 `mcp:8020`，不设变量：换 MCP 实现 = override 里用同名服务 `mcp` 顶替。
+- 生成的组装（`install.sh add`）：路由由模块清单声明，`bridge: true` 即本节这套（过门、清凭据头、关缓冲、
+  运行期解析），`upstreamEnv: <变量>` 让上游可由 `.env` 换（网关的 `NGINX_ENVSUBST_FILTER` 自动放行它）；
+  清单的 `service.networks` 追加 `honeycomb-agent-net`，网关随之接上这张网。所以生成的组装里这两条路由跟着
+  `mcp`、聊天后端模块装上才出现；手写的默认组装两条都常驻。
+- 验证：CI「网关契约」job 把 `mcp` 用 profiles 关掉（网关照常起、`/api/mcp/` 回 502），聊天后端换成回显请求头的
+  小服务（收不到 `Cookie` / `Authorization` / 伪造的租户头）；「多账号」job 用设备令牌经网关调 MCP。

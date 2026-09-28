@@ -13,6 +13,9 @@ name: ${HONEYCOMB_PROJECT:-honeycomb}
 networks:
   honeycomb-net:
     driver: bridge
+  # AI 桥内网（gateway.v1 第八节），实际名 <项目名>_honeycomb-agent-net。只有 web、mcp（与聊天后端）在上面。
+  honeycomb-agent-net:
+    driver: bridge
 
 volumes:
   honeycomb_mongo_data:
@@ -64,10 +67,20 @@ services:
       AUTH_SECRET: ${AUTH_SECRET:-}
       AUTH_BASE_PATH: ${HONEYCOMB_BASE_PATH:-/}
 
+  mcp:
+    # 给 AI 代理用的只读工具（contracts/mcp.tools.v1）；对外只经网关的 /api/mcp/（过门）
+    image: ghcr.io/dblsc1/honeycomb-mcp:__VERSION__
+    restart: unless-stopped
+    networks: [honeycomb-net, honeycomb-agent-net]
+    environment:
+      NEXUS_CORE_URL: http://nexus-core:8000
+      NEXUS_TENANT_STRICT: ${NEXUS_TENANT_STRICT:-0}
+      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-}
+
   web:
     image: ghcr.io/dblsc1/honeycomb-web:__VERSION__
     restart: unless-stopped
-    networks: [honeycomb-net]
+    networks: [honeycomb-net, honeycomb-agent-net]
     depends_on:
       nexus-core:
         condition: service_healthy
@@ -78,6 +91,7 @@ services:
       - "${HONEYCOMB_BIND:-127.0.0.1:8800}:80"
     environment:
       AUTH_UPSTREAM: ${AUTH_UPSTREAM:-auth:8010}
+      AGENT_UPSTREAM: ${AGENT_UPSTREAM:-agent:8030}
       HONEYCOMB_BASE_PATH: ${HONEYCOMB_BASE_PATH:-/}
     volumes:
       # 额外路由（contracts/gateway.v1 第四节）；安装脚本建一个空的 extra/。

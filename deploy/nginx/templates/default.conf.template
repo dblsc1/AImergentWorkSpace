@@ -1,7 +1,7 @@
 # HoneyComb 网关 · 唯一入口（手写的默认组装：nexus-core + hive + ring + 登录门占位件）
 #
 # 这是 envsubst 模板：nginx 官方镜像启动时把它渲染成 /etc/nginx/conf.d/default.conf。
-# 只替换 NGINX_ENVSUBST_FILTER 放行的变量（AUTH_UPSTREAM、HONEYCOMB_*），
+# 只替换 NGINX_ENVSUBST_FILTER 放行的变量（AUTH_UPSTREAM、AGENT_UPSTREAM、HONEYCOMB_*），
 # 其余 `$host` 之类照样是 nginx 自己的变量。
 #
 # 对外冻结的接口（部署方靠这些接自己的东西，不改、不复制本仓文件）见
@@ -106,6 +106,45 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_read_timeout 30s;
+    }
+
+    # ── AI 桥（gateway.v1 第八节）：MCP 只读工具与聊天后端 ──
+    #
+    # 都过门、覆盖租户头；转发时清掉 Cookie 与 Authorization——后端只要租户头，用户凭据
+    # 不该出现在会跑大模型的进程里（门子请求 /__auth_verify 读的是客户端原始请求头，不受影响）。
+    # 上游**运行期解析**（resolver + 变量 proxy_pass）：mcp / agent 没起、被 profiles 关掉，
+    # 网关照常起，这两条回 502。变量 proxy_pass 不做前缀替换，所以先 rewrite 去掉站点前缀。
+    # 关缓冲：聊天是 SSE，MCP 的 Streamable HTTP 也可能回 SSE。
+    location ${HONEYCOMB_BASE_PATH}api/mcp/ {
+        include /etc/nginx/honeycomb/gate.inc;
+        resolver 127.0.0.11 valid=10s ipv6=off;
+        set $honeycomb_mcp "mcp:8020";
+        rewrite ^${HONEYCOMB_BASE_PATH}api/mcp/(.*)$ /api/mcp/$1 break;
+        proxy_pass http://$honeycomb_mcp;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization "";
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_read_timeout 60s;
+    }
+    location ${HONEYCOMB_BASE_PATH}api/agent/ {
+        include /etc/nginx/honeycomb/gate.inc;
+        resolver 127.0.0.11 valid=10s ipv6=off;
+        set $honeycomb_agent "${AGENT_UPSTREAM}";
+        rewrite ^${HONEYCOMB_BASE_PATH}api/agent/(.*)$ /api/agent/$1 break;
+        proxy_pass http://$honeycomb_agent;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization "";
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 300s;   # 聊天后端每 15 秒发心跳（agent.chat.v1）
     }
 
     # 前端页面本身也设门：未登录直接去登录页，而不是先渲染一个空壳、

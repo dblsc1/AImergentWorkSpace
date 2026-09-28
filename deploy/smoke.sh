@@ -3,7 +3,8 @@
 #
 #   未登录：/ 跳 /hive/，/hive/ 与 /api/ 跳 /login/，登录页本身能打开，
 #           顶栏计时芯片回降级 JSON（不跳、不泄露）
-#   登录后：API 通；/hive/、/ring/ 两个页面，以及页面里引用的**每一个**资源都是 200
+#   登录后：API 通；/hive/、/ring/ 两个页面，以及页面里引用的**每一个**资源都是 200；
+#           MCP（/api/mcp/）经网关列得出工具
 #
 # 用法：deploy/smoke.sh <口令> [基址，缺省 http://127.0.0.1:8800]
 # 整站挂子路径时先 export HONEYCOMB_BASE_PATH=/Cockpit/（与 .env 一致），基址不带前缀。
@@ -56,6 +57,16 @@ check 1 "$(grep -c "window.HONEYCOMB_BASE=\"$bp\"" <<<"$hive")" "页面拿到站
 for a in $(grep -oE '(src|href)="[^"]*__cockpit/[^"]*"' <<<"$hive" | sed -E 's/^[a-z]+="//; s/"$//'); do
   check 200 "$(code -b "$jar" "$base$a")" "  注入的 $a"
 done
+
+# AI 桥（mcp.tools.v1，gateway.v1 第八节）：MCP 过门；登录态经网关调得到 8 个只读工具。
+# 部署方把 mcp 关掉的组装（CI 的网关契约 job）设 HONEYCOMB_SMOKE_MCP=0 跳过这一段。
+if [ "${HONEYCOMB_SMOKE_MCP:-1}" = 1 ]; then
+  rpc='{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+  check "${bp}login/" "$(location -H 'Content-Type: application/json' -d "$rpc" "$base${bp}api/mcp/")" "未登录 MCP 跳登录页"
+  check "8 True" "$(curl -s -b "$jar" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+    -d "$rpc" "$base${bp}api/mcp/" | python3 -c 'import json,sys; t=json.load(sys.stdin)["result"]["tools"]
+print(len(t), all(x["annotations"]["readOnlyHint"] for x in t))')" "MCP tools/list 经网关"
+fi
 
 [ "$fail" = 0 ] && echo "✅ 全部通过" || echo "❌ 有失败项"
 exit "$fail"
