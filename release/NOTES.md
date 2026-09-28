@@ -28,3 +28,5 @@ powershell -ExecutionPolicy Bypass -File .\honeycomb-install.ps1
 |---|---|
 | `honeycomb-install.sh` / `.ps1` | 一键安装 / 升级 |
 | `docker-compose.yml` | 本版组装（镜像 `ghcr.io/dblsc1/honeycomb-*`），安装脚本会下载它 |
+| `ai-detector-<tag>-<系统>-<架构>[.exe]` | ai-detector 桌面单文件（linux-amd64 / windows-amd64 / darwin-arm64 / darwin-amd64），装法见 [`modules/ai-detector/README.md`](https://github.com/dblsc1/AImergentWorkSpace/blob/main/modules/ai-detector/README.md) |
+| `ai-detector-<tag>-SHA256SUMS.txt` | 上面四个文件的 SHA256 校验值 |
