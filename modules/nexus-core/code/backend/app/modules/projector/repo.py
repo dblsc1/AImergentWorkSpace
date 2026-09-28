@@ -159,3 +159,56 @@ def clear_daily_stats() -> None:
     """重建专用：清空整张 ``proj_daily_stats`` 集合。只碰投影集合，不碰
     ``events``（契约「投影重建」硬约束）。"""
     _daily_col().delete_many({})
+
+
+# ------------------------------------------------ proj_agent_daily_stats（v2.1）
+#
+# AI 代理时长单独一张集合，**不**往 proj_daily_stats 里加一个 agent 维度——
+# 人的一切读端都读那张表，加维度就得每个读端记得过滤；分表是结构上看不见，不靠自觉。
+
+_AGENT_DAILY_COLLECTION = "proj_agent_daily_stats"
+_agent_daily_indexes_ready = False
+
+
+def _agent_daily_col():
+    global _agent_daily_indexes_ready
+    col = get_db()[_AGENT_DAILY_COLLECTION]
+    if not _agent_daily_indexes_ready:
+        col.create_index(
+            [("user", 1), ("date", 1), ("projectId", 1), ("taskId", 1), ("agent", 1)],
+            unique=True,
+            name="uniq_user_date_project_task_agent",
+        )
+        _agent_daily_indexes_ready = True
+    return col
+
+
+def apply_agent_daily_stat(
+    user: str,
+    dedupe_key: str,
+    date: str,
+    project_id: str,
+    task_id: str | None,
+    agent: str,
+    seconds: int,
+) -> bool:
+    """同 ``apply_daily_stat`` 的原子幂等写法，唯一约束多一个 ``agent``；另计 ``runs`` 次数。"""
+    key = {"user": user, "date": date, "projectId": project_id, "taskId": task_id, "agent": agent}
+    try:
+        result = _agent_daily_col().update_one(
+            {**key, "appliedKeys": {"$ne": dedupe_key}},
+            {
+                "$inc": {"seconds": seconds, "runs": 1},
+                "$addToSet": {"appliedKeys": dedupe_key},
+                "$setOnInsert": key,
+            },
+            upsert=True,
+        )
+    except DuplicateKeyError:
+        return False  # 早已应用过
+    return result.modified_count > 0 or result.upserted_id is not None
+
+
+def clear_agent_daily_stats() -> None:
+    """重建专用，同 ``clear_daily_stats``。"""
+    _agent_daily_col().delete_many({})

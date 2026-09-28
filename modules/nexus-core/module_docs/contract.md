@@ -1517,6 +1517,8 @@ hook 没发 stop（终端被关、进程被杀）的运行会永远挂着。超�
 
 - 归日同「日界与时区」：`data.startAt` 经 `NEXUS_TZ`。
 - 投影重建（`rebuild`，含快照恢复末尾的那次）**一并重建**它；`--only proj_agent_daily_stats` 可单独重建。
+  快照恢复响应的 `rebuilt` 按其既有定义（`{投影名: 重放的事件数}`）因此多出一个
+  `proj_agent_daily_stats` 键——读方按键取值不受影响。
 - 本版**不开读端**（不进 `export.projections`，那里的键集合是已发布的形状）；要按代理看时长时再加。
 
 ### `views.current.v1` 增 `agents[]`
