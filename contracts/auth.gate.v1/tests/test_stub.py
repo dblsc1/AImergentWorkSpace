@@ -223,6 +223,7 @@ def _http_token(stub, cookie: str, body: dict | None = None):
 def test_bearer_opens_api_with_tenant_but_never_pages(stub, users):
     alice = json.loads(Path(users["AUTH_USERS_FILE"]).read_text())["users"]["alice"]["id"]
     tok = _token_cli(users, "alice")
+    time.sleep(2.6)  # 第一个令牌顺带建出令牌文件，服务端 RELOAD_EVERY 内读到
     status, h, body = stub.req("GET", "/api/auth/verify", headers=_bearer(tok))
     assert (status, h.get("X-Nexus-Tenant"), body) == (204, alice, b"")
     for uri in ("/hive/", "/login/", "/api/auth/me", "/api/core/%2e%2e/hive/", "/api/core/../hive/",
@@ -367,6 +368,7 @@ def test_http_refuses_tokens_without_secret(users):
 
 def test_revocation_fails_closed(tmp_path):
     """删掉令牌文件不能让吊销过的令牌复活；启动时令牌文件坏着 = 令牌一律 401（Codex 审核）。"""
+
     tfile = tmp_path / "t.json"
     env = {"AUTH_PASSWORD": PW, "AUTH_TOKENS_FILE": str(tfile)}
     old = _token_cli(env)
@@ -374,8 +376,16 @@ def test_revocation_fails_closed(tmp_path):
     s = Stub(env)
     try:
         assert s.req("GET", "/api/auth/verify", headers=_bearer(old))[0] == 401
-        tfile.unlink()
+        valid = _token_cli(env)
         time.sleep(2.6)
+        assert s.req("GET", "/api/auth/verify", headers=_bearer(valid))[0] == 204
+        tfile.unlink()  # 删文件 = 这一代全部作废，而不是吊销记录清零、旧令牌复活
+        time.sleep(2.6)
+        assert s.req("GET", "/api/auth/verify", headers=_bearer(valid))[0] == 401
+        assert s.req("GET", "/api/auth/verify", headers=_bearer(old))[0] == 401
+        _, cookie = s.login(password=PW)
+        fresh = _http_token(s, cookie)[1]["token"]  # 重建一代，新令牌立即可用
+        assert s.req("GET", "/api/auth/verify", headers=_bearer(fresh))[0] == 204
         assert s.req("GET", "/api/auth/verify", headers=_bearer(old))[0] == 401
     finally:
         s.stop()

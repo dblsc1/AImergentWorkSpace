@@ -167,49 +167,62 @@ def _locked(path: str):
 
 
 # ── 令牌纪元文件 ─────────────────────────────────────────────────
-# {"epochs": {"<租户，共享口令为 ''>": n}}。令牌签发时记下当时的纪元，verify 时纪元
-# 对不上就作废 —— 吊销 = 纪元 +1，一个整数就作废这个身份的全部令牌，不必存令牌表。
+# {"gen": "<随机 hex>", "epochs": {"<租户，共享口令为 ''>": n}}。令牌签发时记下当时的纪元，
+# verify 时纪元对不上就作废 —— 吊销 = 纪元 +1，一个整数就作废这个身份的全部令牌，不必存
+# 令牌表。gen 是这份文件的"代"，签进每个令牌的 HMAC：文件被删、重建，gen 就变，旧令牌
+# 全部作废。否则删一下文件（再重启），吊销过的令牌（纪元回到 0）就复活了（Codex 审核）。
+# 所以失败方向一律是拒绝：文件不在 = 没有任何有效令牌。
 
-def load_epochs() -> dict:
+def load_token_state() -> tuple[str, dict] | None:
+    """(gen, epochs)；文件不存在返回 None。文件坏了照常抛。"""
     if not TOKENS_FILE or not os.path.exists(TOKENS_FILE):
-        return {}
+        return None
     with open(TOKENS_FILE, encoding="utf-8") as f:
-        return {str(k): int(v) for k, v in json.load(f).get("epochs", {}).items()}
+        data = json.load(f)
+    gen = data["gen"]
+    if not isinstance(gen, str) or not gen:
+        raise ValueError("gen")
+    return gen, {str(k): int(v) for k, v in data.get("epochs", {}).items()}
 
 
-def bump_epoch(tenant: str) -> None:
-    """吊销：持锁读—改—写，原子替换，0600。"""
+def token_state(bump: str | None = None) -> tuple[str, dict]:
+    """持锁读—改—写：文件不在就新建一代；bump 给了租户就把它的纪元 +1。
+    原子替换、0600。发令牌也走这里 —— 保证签进令牌的 gen 已经落盘。"""
     with _locked(TOKENS_FILE):
-        epochs = load_epochs()
-        epochs[tenant] = epochs.get(tenant, 0) + 1
-        tmp = f"{TOKENS_FILE}.{os.getpid()}.{threading.get_ident()}.tmp"
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump({"epochs": epochs}, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, TOKENS_FILE)
+        state = load_token_state()
+        gen, epochs = state if state else (secrets.token_hex(16), {})
+        if bump is not None:
+            epochs[bump] = epochs.get(bump, 0) + 1
+        if state is None or bump is not None:
+            tmp = f"{TOKENS_FILE}.{os.getpid()}.{threading.get_ident()}.tmp"
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump({"gen": gen, "epochs": epochs}, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, TOKENS_FILE)
+        return gen, epochs
 
 
 class Epochs:
-    """verify 用的纪元内存视图，与 Accounts 同一个套路：后台按 mtime 重读，
+    """verify 用的令牌状态内存视图，与 Accounts 同一个套路：后台按 mtime 重读，
     请求里不碰文件（契约不变量 2）。吊销最多晚 RELOAD_EVERY 秒生效。
 
-    失败方向一律是「拒绝」（Codex 审核）：一次都没读成功之前视图是 None，所有设备令牌
-    401（None.get 抛错 → 收成 None）；读过之后文件坏了、或者被删了，都沿用旧视图 ——
-    否则删一下文件，吊销过的令牌（纪元 0）就复活了。
+    state 为 None（文件不在、或一次都没读成功）时所有设备令牌 401（解包 None 抛错 →
+    收成 None）。读过之后文件坏了，沿用旧视图（坏文件不该把吊销过的令牌放回来，也不该
+    把所有人踢掉）；文件被删 = 这一代作废，跟着变 None。
     """
 
     def __init__(self) -> None:
-        self.by_tenant: dict[str, int] | None = None
+        self.state: tuple[str, dict] | None = None
         self._mtime = 0  # 不同于任何真实 mtime，也不同于"文件不存在"的 None
 
     def refresh(self) -> None:
         try:
             mtime = os.stat(TOKENS_FILE).st_mtime_ns if TOKENS_FILE and os.path.exists(TOKENS_FILE) else None
-            if mtime == self._mtime or (mtime is None and self.by_tenant is not None):
+            if mtime == self._mtime:
                 return
-            self.by_tenant = load_epochs()
+            self.state = load_token_state()
             self._mtime = mtime
-        except Exception as e:  # 文件坏了：沿用旧视图（旧视图里吊销过的依旧作废）
+        except Exception as e:
             sys.stderr.write(f"[auth-stub] 读令牌文件失败，沿用旧视图：{type(e).__name__}\n")
 
 
@@ -305,13 +318,17 @@ def _shared_sess() -> str:
     return hashlib.sha256(f"shared|{PASSWORD}".encode()).hexdigest()
 
 
-def _sign_device(payload: str, sess: str) -> str:
-    return hmac.new(SECRET.encode(), f"device|{payload}|{sess}".encode(), hashlib.sha256).hexdigest()
+def _sign_device(payload: str, sess: str, gen: str) -> str:
+    msg = f"device|{payload}|{sess}|{gen}"
+    return hmac.new(SECRET.encode(), msg.encode(), hashlib.sha256).hexdigest()
 
 
-def issue_device_token(tenant: str, sess: str, epoch: int, now: int | None = None) -> str:
-    payload = f"{TOKEN_PREFIX}.{int(time.time() if now is None else now)}.{epoch}.{tenant}"
-    return f"{payload}.{_sign_device(payload, sess)}"
+def issue_device_token(tenant: str, sess: str, now: int | None = None) -> str:
+    """持锁取（必要时新建）令牌状态再签：纪元直接读文件而不是内存视图 —— 命令行刚
+    吊销、视图还没刷新时，用旧纪元签出来的令牌两秒后就会莫名失效。"""
+    gen, epochs = token_state()
+    payload = f"{TOKEN_PREFIX}.{int(time.time() if now is None else now)}.{epochs.get(tenant, 0)}.{tenant}"
+    return f"{payload}.{_sign_device(payload, sess, gen)}"
 
 
 def _api_uri(uri: str | None) -> bool:
@@ -351,9 +368,10 @@ def device_tenant(token: str, now: int | None = None) -> str | None:
             sess = _shared_sess()
         else:  # 共享口令已关：它的令牌一并作废
             return None
-        if not hmac.compare_digest(sig, _sign_device(f"{TOKEN_PREFIX}.{body}", sess)):
+        gen, epochs = EPOCHS.state  # None（没有令牌文件）→ 抛 → 401
+        if not hmac.compare_digest(sig, _sign_device(f"{TOKEN_PREFIX}.{body}", sess, gen)):
             return None
-        if int(epoch_str) != EPOCHS.by_tenant.get(tenant, 0):  # 吊销过
+        if int(epoch_str) != epochs.get(tenant, 0):  # 吊销过
             return None
         issued = int(ts_str)
     except Exception:
@@ -578,15 +596,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             if revoke:
-                bump_epoch(tenant)
+                token_state(bump=tenant)
                 EPOCHS.refresh()  # 本进程立即生效，不等后台线程
                 self._status_only(204)
                 return
             sess = by_id[tenant][1] if tenant else _shared_sess()
             now = int(time.time())
-            # 纪元直接读文件而不是内存视图：命令行刚吊销、视图还没刷新时，用旧纪元
-            # 签出来的令牌两秒后就会莫名失效。
-            token = issue_device_token(tenant, sess, load_epochs().get(tenant, 0), now)
+            token = issue_device_token(tenant, sess, now)
+            EPOCHS.refresh()  # 第一次发令牌时文件刚建出来：本进程立即认
         except Exception as e:
             sys.stderr.write(f"[auth-stub] 令牌操作出错：{type(e).__name__}\n")
             self._json(503, {"ok": False, "error": "tokens_unavailable"})
@@ -683,13 +700,13 @@ def _token_cli(cmd: str, name: str) -> None:
         tenant, sess = "", _shared_sess()
     who = name or "共享口令身份"
     if cmd == "revoke":
-        bump_epoch(tenant)
+        token_state(bump=tenant)
         print(f"✅ 已作废 {who} 的全部设备令牌；{RELOAD_EVERY:g} 秒内生效")
         return
     now = int(time.time())
-    print(issue_device_token(tenant, sess, load_epochs().get(tenant, 0), now))
-    sys.stderr.write(f"✅ 上面是 {who} 的设备令牌，{_expires_at(now)} 过期。只能调 /api/core/*，"
-                     "请求头 Authorization: Bearer <令牌>\n")
+    print(issue_device_token(tenant, sess, now))
+    sys.stderr.write(f"✅ 上面是 {who} 的设备令牌，{_expires_at(now)} 过期，{RELOAD_EVERY:g} 秒内可用。"
+                     "只能调 /api/core/*，请求头 Authorization: Bearer <令牌>\n")
 
 
 def _cli(argv: list[str], pw: str) -> None:
