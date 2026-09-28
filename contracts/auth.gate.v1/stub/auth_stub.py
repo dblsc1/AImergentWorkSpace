@@ -179,10 +179,10 @@ def load_token_state() -> tuple[str, dict] | None:
         return None
     with open(TOKENS_FILE, encoding="utf-8") as f:
         data = json.load(f)
-    gen = data["gen"]
-    if not isinstance(gen, str) or not gen:
-        raise ValueError("gen")
-    return gen, {str(k): int(v) for k, v in data.get("epochs", {}).items()}
+    gen, epochs = data["gen"], data["epochs"]  # 缺哪个都抛：半坏的文件不能把纪元清零
+    if not isinstance(gen, str) or not gen or not isinstance(epochs, dict):
+        raise ValueError("tokens file")
+    return gen, {str(k): int(v) for k, v in epochs.items()}
 
 
 def token_state(bump: str | None = None) -> tuple[str, dict]:
@@ -214,8 +214,16 @@ class Epochs:
     def __init__(self) -> None:
         self.state: tuple[str, dict] | None = None
         self._mtime = 0  # 不同于任何真实 mtime，也不同于"文件不存在"的 None
+        # 后台线程与发令牌 / 吊销的请求线程都会调 refresh：不串行的话，读到旧内容的那个
+        # 可能后写，配上新的 mtime，之后就再也不重读 —— 吊销永久失效（Codex 审核）。
+        # verify 只读 self.state（一次引用赋值），不拿这把锁。
+        self._lock = threading.Lock()
 
     def refresh(self) -> None:
+        with self._lock:
+            self._refresh()
+
+    def _refresh(self) -> None:
         try:
             mtime = os.stat(TOKENS_FILE).st_mtime_ns if TOKENS_FILE and os.path.exists(TOKENS_FILE) else None
             if mtime == self._mtime:

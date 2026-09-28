@@ -389,6 +389,22 @@ def test_revocation_fails_closed(tmp_path):
         assert s.req("GET", "/api/auth/verify", headers=_bearer(old))[0] == 401
     finally:
         s.stop()
+    s = Stub(env)
+    try:
+        cookie = s.login(password=PW)[1]
+        revoked = _http_token(s, cookie)[1]["token"]
+        assert s.req("POST", "/api/auth/tokens/revoke", {}, cookie=cookie)[0] == 204  # 本进程立即生效
+        gen = json.loads(tfile.read_text())["gen"]
+        tfile.write_text(json.dumps({"gen": gen}))  # 半坏（同一代、缺 epochs）：不能当"没吊销过"
+        time.sleep(2.6)
+        assert s.req("GET", "/api/auth/verify", headers=_bearer(revoked))[0] == 401
+    finally:
+        s.stop()
+    s = Stub(env)  # 带着半坏的文件重启：一样拒绝
+    try:
+        assert s.req("GET", "/api/auth/verify", headers=_bearer(revoked))[0] == 401
+    finally:
+        s.stop()
     tfile.write_text("{坏的")
     s = Stub(env)
     try:
