@@ -174,7 +174,11 @@
 
   // ── 导入数据（快照恢复）：选文件 → 预演报条数 → 确认才写 ─────────────
   // 只对空实例开放：服务端 409 时如实转述，并说清楚为什么（恢复通道不是合并通道）。
+  // 每选一次文件编一个号：前一个文件的预演晚到时不许覆盖当前这一个——否则人以为
+  // 确认的是后选的文件，提交的却是先选的（Codex 审核）。
+  var importSeq = 0;
   function importFileChosen(file) {
+    var seq = ++importSeq;
     var shell = $("#importShell");
     var status = $("#importStatus");
     var confirmBtn = $("#importConfirm");
@@ -182,6 +186,7 @@
     // 面板在页面最底下，数据多时点了按钮看不见它出来；每次改字都重新对齐——
     // 预演结果回来时文字变长、面板长高，只在开头滚一次底部会露不全（手机实测）。
     function say(text) {
+      if (seq !== importSeq) return;   // 已经换了文件：旧流程闭嘴
       status.textContent = text;
       if (shell.scrollIntoView) shell.scrollIntoView({ block: "nearest" });
     }
@@ -202,20 +207,25 @@
             : "⚠ 导入不了：" + dry.message);
           return;
         }
+        if (seq !== importSeq) return;
         var n = (dry.data && dry.data.summary) || {};
         say("预演通过，将导入：" + (n.zones || 0) + " 个分区、" + (n.projects || 0) +
           " 个项目、" + (n.tasks || 0) + " 个任务、" + (n.events || 0) + " 条记录。确认无误点「确认导入」。");
         confirmBtn.hidden = false;
         confirmBtn.onclick = function () {
+          if (seq !== importSeq) return;
           confirmBtn.hidden = true;
+          $("#importData").disabled = true;   // 写入途中不许再选文件
           say("正在导入…");
           D.restoreSnapshot(snapshot, dry.data.checksum).then(function (res) {
-            if (!res.ok) { say("⚠ 导入失败：" + res.message); return; }
+            if (!res.ok) { $("#importData").disabled = false; say("⚠ 导入失败：" + res.message); return; }
             say("✅ 已导入，正在刷新页面…");
             window.setTimeout(function () { window.location.reload(); }, 800);
           });
         };
       });
+    }).catch(function (err) {
+      say("⚠ 读不了这个文件：" + ((err && err.message) || err) + "。换一个文件再试。");
     });
   }
 
