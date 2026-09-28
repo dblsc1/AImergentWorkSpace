@@ -12,13 +12,16 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from .handlers import current, daily_stats
+from .handlers import agent_daily_stats, current, daily_stats
 
 #: type → handler 元组。当前联动面：
 #:   session.completed → handlers/current.handle      → 只动 proj_current（贡献圆环）
 #:                      → handlers/daily_stats.handle  → 只动 proj_daily_stats（甘特「事实」图层）
+#:   agent.run.completed → handlers/agent_daily_stats.handle → 只动 proj_agent_daily_stats（v2.1）
+#:     AI 代理时长只走这一行：人的两个 handler 不在这里 = 人的读端结构上看不见它。
 DISPATCH: dict[str, tuple[Callable[[dict], None], ...]] = {
     "session.completed": (current.handle, daily_stats.handle),
+    "agent.run.completed": (agent_daily_stats.handle,),
 }
 
 
