@@ -478,13 +478,14 @@ def main() -> None:
         )
     host, _, port = os.environ.get("AUTH_BIND", "127.0.0.1:8010").rpartition(":")
     host = host or "127.0.0.1"
-    modes = ([f"账号 {len(ACCOUNTS.by_id)} 个"] if USERS_FILE else []) + (["共享口令"] if PASSWORD else [])
+    # 配了账号文件但一个账号都没有 = 没开账号登录；别写「账号 0 个 +」再警告两种同时开（Windows 验收）
+    modes = ([f"账号 {len(ACCOUNTS.by_id)} 个"] if ACCOUNTS.by_id else []) + (["共享口令"] if PASSWORD else [])
     banner = (
         "\n  auth.gate.v1.1 · 占位实现（STUB）：一道门 + 一本小账本，不是账号系统。\n"
         f"  登录方式：{' + '.join(modes)}\n"
         f"  监听 {host}:{port}   cookie Secure={COOKIE_SECURE}   会话 {SESSION_DAYS} 天\n"
     )
-    if USERS_FILE and PASSWORD:
+    if ACCOUNTS.by_id and PASSWORD:
         banner += "  ⚠ 两种登录同时开着：知道共享口令的人都进 u_local。多用户部署请去掉 AUTH_PASSWORD\n"
     if not COOKIE_SECURE:
         banner += "  ⚠ AUTH_COOKIE_SECURE=false —— 只应出现在本机 HTTP 调试，别上公网\n"
