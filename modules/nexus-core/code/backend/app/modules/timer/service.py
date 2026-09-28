@@ -38,6 +38,7 @@ from ...tenant import current as current_tenant
 from ..events import service as events_service
 from ..events.schemas import SPEC
 from ..planner import service as planner_service
+from . import agents as agents_impl
 from . import backfill as backfill_impl
 from . import repo
 
@@ -96,7 +97,12 @@ def _resolve_task_chain(task_id: str, *, action: str) -> tuple[dict, str, str]:
     return task, project_id, zone_id
 
 
-def start(task_id: str, user: str | None = None) -> dict:
+#: 人类计时模式（v2.1）：真身在 ``backfill.py``（stop 与 backfill 共用一个函数），这里重导出。
+DEFAULT_MODE = backfill_impl.DEFAULT_MODE
+with_mode = backfill_impl.with_mode
+
+
+def start(task_id: str, user: str | None = None, mode: str = DEFAULT_MODE) -> dict:
     """开始计时。**自动关闭上一个未结束的 session**（先 stop 再 start）——
     用户点「开始」时意图明确，让他先手动停上一个是无谓摩擦（contract.md）。"""
     user = user or current_tenant()  # v2.0：缺省取请求的租户
@@ -113,9 +119,10 @@ def start(task_id: str, user: str | None = None) -> dict:
             "projectId": project_id,
             "zoneId": zone_id,
             "startAt": start_at,
+            "mode": mode,  # v2.1：stop 原样带出；v2.1 之前的活状态没有这个键，按 do
         }
     )
-    return {"running": True, "taskId": task_id, "startAt": start_at}
+    return {"running": True, "taskId": task_id, "startAt": start_at, "mode": mode}
 
 
 def stop(user: str | None = None) -> dict:
@@ -142,7 +149,10 @@ def stop(user: str | None = None) -> dict:
             "project": state["projectId"],
             "task": state["taskId"],
         },
-        "data": {"durationSeconds": duration, "startAt": state["startAt"]},
+        "data": with_mode(
+            {"durationSeconds": duration, "startAt": state["startAt"]},
+            state.get("mode", DEFAULT_MODE),
+        ),
         "flags": [],
     }
 
@@ -167,6 +177,7 @@ def backfill(
     start_at_raw: str,
     duration_seconds: int,
     user: str | None = None,
+    mode: str = DEFAULT_MODE,
 ) -> dict:
     """补登：给「完成了但没计时」的工作补一条真实 ``session.completed``
     （契约「补登（规范性 · v1.8，backfill）」节，唯一事实源）。
@@ -179,8 +190,30 @@ def backfill(
     user = user or current_tenant()  # v2.0：缺省取请求的租户
     return backfill_impl.backfill(
         task_id, start_at_raw, duration_seconds, user,
+        resolve_chain=_resolve_task_chain, now=_now, mode=mode,
+    )
+
+
+# ------------------------------------------------ AI 代理运行（v2.1，真身在 agents.py）
+# 薄委托，同 backfill：注入与 timer/start 同一套归属链判据和服务端时钟。
+
+
+def agent_start(
+    task_id: str | None, agent: str, tool: str, model: str | None, user: str | None = None,
+) -> dict:
+    return agents_impl.start(
+        task_id, agent, tool, model, user or current_tenant(),
         resolve_chain=_resolve_task_chain, now=_now,
     )
+
+
+def agent_stop(run_id: str, outcome: str, output: str | None, user: str | None = None) -> dict:
+    return agents_impl.stop(run_id, outcome, output, user or current_tenant(), now=_now)
+
+
+def list_agent_runs(user: str | None = None) -> list[dict]:
+    """views 的指定读路径（``views/current`` 的 ``agents[]``）。"""
+    return agents_impl.list_running(user or current_tenant(), now=_now)
 
 
 def cancel(user: str | None = None) -> dict:

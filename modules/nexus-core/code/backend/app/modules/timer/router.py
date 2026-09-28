@@ -6,22 +6,31 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import service
 
 router = APIRouter(prefix="/timer", tags=["timer"])
+#: v2.1「AI 代理运行」：与人的计时同住 timer 子边界（同一类活状态），路径另起前缀。
+agents_router = APIRouter(prefix="/agents", tags=["agents"])
+
+#: v2.1 人类计时模式。取值不在枚举内 → 422（pydantic 先拦，同 actor 字段口径）。
+Mode = Literal["do", "prompt", "review"]
 
 
 class StartIn(BaseModel):
     taskId: str
+    mode: Mode = "do"
 
 
 class TimerOut(BaseModel):
     running: bool
     taskId: str
     startAt: str
+    mode: Mode = "do"  # v2.1 回显
 
 
 class StopEvent(BaseModel):
@@ -39,7 +48,7 @@ class TimerStopOut(BaseModel):
 
 @router.post("/start", response_model=TimerOut)
 def start(body: StartIn) -> dict:
-    return service.start(body.taskId)
+    return service.start(body.taskId, mode=body.mode)
 
 
 class CancelledSession(BaseModel):
@@ -79,6 +88,7 @@ class BackfillIn(BaseModel):
     taskId: str
     startAt: str  # 必须带时区偏移，不带即 400（service 层校验，不在这里猜）
     durationSeconds: int
+    mode: Mode = "do"  # v2.1
 
 
 class BackfillEvent(BaseModel):
@@ -108,4 +118,46 @@ def backfill(body: BackfillIn) -> dict:
     活状态计时的关系」）。拒绝规则见 ``service.backfill``：404/400 的映射在
     ``main.py``（``UnknownTaskError``/``InvalidInputError``，router 不许有
     业务判断）。"""
-    return service.backfill(body.taskId, body.startAt, body.durationSeconds)
+    return service.backfill(body.taskId, body.startAt, body.durationSeconds, mode=body.mode)
+
+
+# ------------------------------------------------ AI 代理运行（v2.1，契约「AI 代理运行」节）
+
+class AgentStartIn(BaseModel):
+    taskId: str | None = None  # 缺省 = 挂收件箱
+    agent: str = Field(min_length=1, max_length=64)
+    tool: str = Field(min_length=1, max_length=64)
+    model: str | None = Field(default=None, min_length=1, max_length=64)
+
+
+class AgentStartOut(BaseModel):
+    runId: str
+    startedAt: str
+
+
+class AgentStopIn(BaseModel):
+    outcome: Literal["done", "failed", "cancelled", "timeout"]
+    output: str | None = Field(default=None, max_length=512)
+
+
+class AgentStopOut(BaseModel):
+    """``duplicate:true`` = 这个运行早已结束（重复 stop / 已被超时关闭），本次什么都没写；
+    ``outcome``/``durationSeconds``/``event`` 回显的是**原来那条**事件。"""
+
+    runId: str
+    duplicate: bool
+    outcome: str
+    durationSeconds: int
+    event: StopEvent
+
+
+@agents_router.post("/start", response_model=AgentStartOut, status_code=201)
+def agent_start(body: AgentStartIn) -> dict:
+    """不碰人的计时器；可与任意多个运行并发。taskId 不存在 → 404（映射在 main.py）。"""
+    return service.agent_start(body.taskId, body.agent, body.tool, body.model)
+
+
+@agents_router.post("/{runId}/stop", response_model=AgentStopOut)
+def agent_stop(runId: str, body: AgentStopIn) -> dict:  # noqa: N803 —— 路径参数名即契约
+    """runId 不存在 → 404（NotFoundError，映射在 main.py）。"""
+    return service.agent_stop(runId, body.outcome, body.output)

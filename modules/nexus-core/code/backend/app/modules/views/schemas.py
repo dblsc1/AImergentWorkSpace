@@ -57,6 +57,17 @@ class CurrentTask(_Strict):
     shareOfProject: float = Field(ge=SHARE_MIN, le=SHARE_MAX)
 
 
+class CurrentAgent(_Strict):
+    """在跑的 AI 代理运行（v2.1）。``taskId``/``model`` 可为 null，但键不消失（同空闲态纪律）。"""
+
+    runId: str
+    taskId: str | None
+    agent: str
+    tool: str
+    model: str | None
+    startedAt: str
+
+
 class CurrentOut(_Strict):
     """``GET /api/core/views/current``。
 
@@ -69,6 +80,9 @@ class CurrentOut(_Strict):
     task: CurrentTask | None = None
     #: ISO8601 **带时区**字符串；``null`` = 未在计时。
     sessionStartAt: str | None = None
+    #: v2.1：当前租户在跑的 AI 代理运行，没有为 []。与上面人的字段互不影响——
+    #: 只有代理在跑时 running 仍是 false（人一条泳道，代理很多条）。
+    agents: list[CurrentAgent] = Field(default_factory=list)
 
 
 # ------------------------------------------------------------------- TreeOut

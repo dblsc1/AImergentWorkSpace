@@ -32,3 +32,38 @@ def set_running(doc: dict) -> None:
 
 def clear_running(user: str) -> None:
     _col().delete_one({"user": user})
+
+
+# ------------------------------------------------ agent_runs（v2.1，AI 代理运行活状态）
+#
+# 与 timer_state 相反：**一个 user 可以有任意多条**（没有 uniq_user）——人一条泳道，
+# 代理很多条。唯一约束是 runId（uuid 生成），查询一律带 user，别的租户的 runId 查不到。
+
+_AGENT_COLLECTION = "agent_runs"
+_agent_indexes_ready = False
+
+
+def _agent_col():
+    global _agent_indexes_ready
+    col = get_db()[_AGENT_COLLECTION]
+    if not _agent_indexes_ready:
+        col.create_index([("runId", 1)], unique=True, name="uniq_run")
+        col.create_index([("user", 1), ("startedAt", 1)], name="user_started")
+        _agent_indexes_ready = True
+    return col
+
+
+def add_agent_run(doc: dict) -> None:
+    _agent_col().insert_one(dict(doc))
+
+
+def get_agent_run(user: str, run_id: str) -> dict | None:
+    return _agent_col().find_one({"user": user, "runId": run_id}, {"_id": 0})
+
+
+def list_agent_runs(user: str) -> list[dict]:
+    return list(_agent_col().find({"user": user}, {"_id": 0}).sort("startedAt", 1))
+
+
+def delete_agent_run(user: str, run_id: str) -> None:
+    _agent_col().delete_one({"user": user, "runId": run_id})

@@ -22,6 +22,8 @@ _COLLECTIONS = (
     # 万一哪次改动让导出顺手写了条审计流水，这个测试照样绿。
     # 同一形状的登记表在仓里不止一份，漏的那份不会报错，只会静默少守一块。
     "planner_audit",
+    # v2.1 AI 代理运行（与 conftest 同批加）。
+    "agent_runs", "proj_agent_daily_stats",
 )
 
 

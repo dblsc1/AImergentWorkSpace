@@ -23,6 +23,7 @@ from .modules.planner.service import HasChildrenError, InvalidInputError, NotFou
 from .modules.planner.unified_router import router as planner_unified_router
 from .modules.restore.router import router as restore_router
 from .modules.restore.service import NotEmptyError
+from .modules.timer.router import agents_router
 from .modules.timer.router import router as timer_router
 from .modules.timer.service import NoRunningTimerError, UnknownTaskError
 from .modules.views.router import router as views_router
@@ -66,6 +67,7 @@ def health() -> dict[str, str]:
 
 app.include_router(events_router, prefix=API_PREFIX)
 app.include_router(timer_router, prefix=API_PREFIX)
+app.include_router(agents_router, prefix=API_PREFIX)  # v2.1 AI 代理运行
 app.include_router(planner_unified_router, prefix=API_PREFIX)
 app.include_router(views_router, prefix=API_PREFIX)
 app.include_router(export_router, prefix=API_PREFIX)

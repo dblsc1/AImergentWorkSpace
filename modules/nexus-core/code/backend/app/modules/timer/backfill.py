@@ -26,6 +26,17 @@ from ..planner.errors import InvalidInputError
 #: 证据强度的判别位。
 BACKFILL_SOURCE = "manual-backfill"
 
+#: 人类计时模式（契约 v2.1「人类计时模式」）。缺省 ``do``，且 ``do`` 不写进 ``data``——
+#: 缺省即 do，默认路径的信封与 v1.8 一字节不差，v2.1 之前的老事件天然读成 do。
+DEFAULT_MODE = "do"
+
+
+def with_mode(data: dict, mode: str) -> dict:
+    """给 ``session.completed`` 的 ``data`` 贴模式标签（非缺省才写）。
+    ``service.stop`` 与本文件的补登共用这一个函数——两条路径的 data 形状不许分叉。"""
+    return data if mode == DEFAULT_MODE else {**data, "mode": mode}
+
+
 #: 契约「拒绝规则」：单段会话不可能超过一天，主要拦单位填错（分钟当秒存）。
 _MAX_BACKFILL_DURATION_SECONDS = 86400
 
@@ -59,6 +70,7 @@ def backfill(
     *,
     resolve_chain: Callable[..., tuple[dict, str, str]],
     now: Callable[[], datetime],
+    mode: str = DEFAULT_MODE,
 ) -> dict:
     """补登：给「完成了但没计时」的工作补一条真实 ``session.completed``。
 
@@ -109,7 +121,8 @@ def backfill(
         "source": BACKFILL_SOURCE,
         "time": ended.isoformat(),  # 会话结束时刻，与 stop() 的 time 语义对齐
         "subject": {"zone": zone_id, "project": project_id, "task": task_id},
-        "data": {"durationSeconds": duration_seconds, "startAt": start_at_raw},
+        # v2.1：mode 贴标签（do 不写），与 stop() 同一个函数，两条路径不许分叉
+        "data": with_mode({"durationSeconds": duration_seconds, "startAt": start_at_raw}, mode),
         "flags": [],
     }
 
