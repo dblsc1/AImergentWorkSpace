@@ -150,7 +150,7 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 			})
 		}
 		b, _ := json.Marshal(body)
-		_, code, err := postJSON(uploader, cfg.DeviceToken, base+"/api/core/activity/suggestions", b)
+		resp, code, err := postJSON(uploader, cfg.DeviceToken, base+"/api/core/activity/suggestions", b)
 		if err != nil {
 			// 这一批没确认收到：游标停在这一批的开始（已确认的批次之后），下一轮从这里重算重发。
 			st.FailedParams = params
@@ -160,12 +160,29 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 			return "", fmt.Errorf("上传失败（已送达 %d/%d 段），下一轮重试：%w", k, len(segs), err)
 		}
 		st.FailedParams = ""
+		logRejected(resp, k)
 		if k+uploadBatch < len(segs) {
 			st.Cursor = segs[k+uploadBatch].Start
 		}
 	}
 	st.Cursor = next
 	return fmt.Sprintf("已上传 %d 段待确认建议", len(segs)), nil
+}
+
+// logRejected：2xx 里服务端逐段拒收的段不会重发（游标照常前进），至少在日志里留个数。
+// 只记条数和第一条理由（理由是服务端写的校验说明）；不记标题——标题可能含隐私。
+func logRejected(resp []byte, offset int) {
+	var r struct {
+		Rejected []struct {
+			Index  int    `json:"index"`
+			Reason string `json:"reason"`
+		} `json:"rejected"`
+	}
+	if json.Unmarshal(resp, &r) != nil || len(r.Rejected) == 0 {
+		return
+	}
+	first := r.Rejected[0]
+	log.Printf("服务端拒收 %d 段（不会重发）；第一条：第 %d 段，%s", len(r.Rejected), offset+first.Index, first.Reason)
 }
 
 const (

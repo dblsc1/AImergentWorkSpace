@@ -107,7 +107,7 @@ def test_unknown_task_in_suggestion_stored_as_null(client, seeded):
 
 
 @pytest.mark.parametrize("bad", [
-    {"app": ""}, {"app": "x" * 129}, {"title": "x" * 513}, {"title": None},
+    {"app": ""}, {"title": None},
     {"durationSeconds": 0}, {"durationSeconds": 241}, {"durationSeconds": "60"}, {"durationSeconds": True},
     {"startAt": "2026-09-26T11:05:00"}, {"endAt": "nope"},
     {"suggestion": {"taskId": None, "confidence": 1.5, "reason": "", "classifier": "rules"}},
@@ -122,6 +122,12 @@ def test_bad_segment_rejected_others_kept(client, bad):
     assert out["accepted"] == 1 and out["duplicates"] == 0
     assert [r["index"] for r in out["rejected"]] == [1] and out["rejected"][0]["reason"]
     assert _pending(client)["total"] == 1
+
+
+def test_long_app_and_title_truncated_by_code_point(client):
+    _upload(client, [_seg(_recent(), app="应" * 130, title="标" * 600)])
+    item = _pending(client)["items"][0]
+    assert item["app"] == "应" * 128 and item["title"] == "标" * 512
 
 
 def test_time_rules(client):

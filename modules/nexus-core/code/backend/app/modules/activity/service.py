@@ -37,6 +37,7 @@ _MAX_SEGMENT_SECONDS = 86400
 #: 检测程序与服务器的时钟误差容忍：endAt 比服务器「现在」晚这么多以内不算未来。
 _CLOCK_SKEW = timedelta(seconds=60)
 _DEFAULT_LIMIT, _MAX_LIMIT = 100, 1000
+_MAX_APP, _MAX_TITLE = 128, 512  # 码点数（Python str 长度即码点）
 
 
 class ConflictError(RuntimeError):
@@ -62,8 +63,9 @@ class _Segment(BaseModel):
     startAt: Annotated[StrictStr, Field(max_length=64)]
     endAt: Annotated[StrictStr, Field(max_length=64)]
     durationSeconds: StrictInt
-    app: Annotated[StrictStr, Field(min_length=1, max_length=128)]
-    title: Annotated[StrictStr, Field(max_length=512)]
+    # 超长不拒、截断（按码点）：标题是展示用的，为几个多余字符丢掉一整段真实活动不划算
+    app: Annotated[StrictStr, Field(min_length=1)]
+    title: StrictStr
     suggestion: _Suggestion
 
 
@@ -135,7 +137,7 @@ def upload(device_id: str, segments: list[Any]) -> dict:
         doc = {
             "user": user, "id": _sug_id(dedupe_key), "dedupeKey": dedupe_key, "deviceId": device_id,
             "startAt": seg.startAt, "endAt": seg.endAt, "startTs": start,
-            "durationSeconds": seg.durationSeconds, "app": seg.app, "title": seg.title,
+            "durationSeconds": seg.durationSeconds, "app": seg.app[:_MAX_APP], "title": seg.title[:_MAX_TITLE],
             "suggestion": suggestion, "status": "pending", "receivedAt": now,
         }
         if repo.insert_if_absent(doc):

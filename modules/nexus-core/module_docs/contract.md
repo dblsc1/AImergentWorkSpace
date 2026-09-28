@@ -1589,8 +1589,8 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
     { "startAt": "2026-09-26T11:05:00+08:00",     // 必须带时区偏移
       "endAt":   "2026-09-26T12:07:00+08:00",     // 必须带时区偏移，晚于 startAt，不晚于现在（容 60 秒时钟误差）
       "durationSeconds": 3600,                    // 整数，1 ≤ n ≤ endAt-startAt，且 ≤ 86400
-      "app": "code",                              // 1–128 字符
-      "title": "plot.gd — garden — VS Code",      // 0–512 字符
+      "app": "code",                              // 非空；超过 128 个码点截断后存
+      "title": "plot.gd — garden — VS Code",      // 可为 ""；超过 512 个码点截断后存
       "suggestion": { "taskId": "t_a1",           // 字符串或 null
                       "confidence": 0.9,          // 0–1
                       "reason": "规则 #1 命中",    // ≤200 字节（UTF-8）
@@ -1619,12 +1619,15 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
 | 情形 | 结果 | 理由 |
 |---|---|---|
 | 请求体不是对象 / `deviceId` 不合格式 / `segments` 不是数组或超过 200 段 | **422 整批拒** | 整批的形状错了，没有「部分」可言 |
-| 某一段缺字段、类型不对、超长、时间不带偏移、`durationSeconds` 越界、`endAt` 在未来 | 该段进 `rejected[{index, reason}]`，**其余照收**，HTTP 200 | 同 `POST /events` 的「部分失败不整批回滚」。检测程序只在 2xx 后推进游标：一段坏数据若让整批 4xx，它会永远重发同一批、永远卡住 |
+| `app` 超过 128 / `title` 超过 512 个码点 | **截断后照收** | 只是展示用的文字；为几个多余字符丢掉一整段真实活动不划算 |
+| 某一段缺字段、类型不对、`reason` 超 200 字节、时间不带偏移、`durationSeconds` 越界、`endAt` 在未来 | 该段进 `rejected[{index, reason}]`，**其余照收**，HTTP 200 | 同 `POST /events` 的「部分失败不整批回滚」。检测程序只在 2xx 后推进游标：一段坏数据若让整批 4xx，它会永远重发同一批、永远卡住 |
 | `suggestion.taskId` 指向不存在的任务 | **照收**，存成 `taskId: null, confidence: 0` | 建议错了不等于活动没发生；人确认时自己挑任务 |
 | 防重键已存在 | 计入 `duplicates`，**什么都不改** | 已确认/已忽略的不会被重传改回 pending，也不会被新建议覆盖 |
 
 - **防重键** `aw:<deviceId>:<startAt 归一化为 UTC ISO>`，唯一约束 `(user, dedupeKey)`。归一化理由同补登：
   `+08:00` 与 `Z` 两种写法指同一时刻。`deviceId` 不许含 `:`，免得拼出来的键有歧义。
+- **两台设备报同一段时间 = 两条建议**（`deviceId` 在防重键里）。人两条都确认就会记两遍——
+  这是有意的：服务端分不清是两台电脑各干了一段还是同一件事，由确认的人判断。
 - **`id` 由防重键确定性派生**（`sug_` + SHA-256 前 20 位十六进制）：同一段即使过期被清、之后又被重传，
   拿到的还是同一个 `id`，于是 `activity:<id>` 防重照样命中——**同一段活动全系统至多一条事实**。
 
