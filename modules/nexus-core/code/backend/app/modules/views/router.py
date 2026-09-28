@@ -10,8 +10,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query
 
-from . import next_actions, queries, review
-from .schemas import CurrentOut, GanttOut, NextActionsOut, ReviewOut, TreeOut
+from . import agent_time, next_actions, queries, review
+from .schemas import AgentTimeOut, CurrentOut, GanttOut, NextActionsOut, ReviewOut, TreeOut
+
+_DATE = r"^\d{4}-\d{2}-\d{2}$"
 
 router = APIRouter(prefix="/views", tags=["views"])
 
@@ -53,3 +55,13 @@ def read_next_actions() -> NextActionsOut:
 @router.get("/review", response_model=ReviewOut)
 def read_review() -> ReviewOut:
     return review.get_review()
+
+
+@router.get("/agent-time", response_model=AgentTimeOut)
+def read_agent_time(
+    from_: Annotated[
+        str | None, Query(alias="from", pattern=_DATE, description="起始日期（含），YYYY-MM-DD")
+    ] = None,
+    to: Annotated[str | None, Query(pattern=_DATE, description="结束日期（含），YYYY-MM-DD")] = None,
+) -> AgentTimeOut:
+    return agent_time.get_agent_time(from_, to)

@@ -208,6 +208,15 @@ def apply_agent_daily_stat(
     return result.modified_count > 0 or result.upserted_id is not None
 
 
+def read_agent_daily_stats(user: str, date_from: str | None = None, date_to: str | None = None) -> list[dict]:
+    """同 ``read_daily_stats``：按用户、可选闭区间日期过滤（v2.3 读端）。"""
+    query: dict = {"user": user}
+    date_range = {op: v for op, v in (("$gte", date_from), ("$lte", date_to)) if v}
+    if date_range:
+        query["date"] = date_range
+    return list(_agent_daily_col().find(query, {"_id": 0, "user": 0, "appliedKeys": 0}))
+
+
 def clear_agent_daily_stats() -> None:
     """重建专用，同 ``clear_daily_stats``。"""
     _agent_daily_col().delete_many({})

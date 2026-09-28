@@ -28,6 +28,13 @@
 > `session.completed`（`source: activity-confirmed`，信封带 `ai` 块）。既有端点、事件形状、
 > 导出形状一个不改。
 >
+> **v2.3（追加式）**：**代理时长有了读端，但仍是另一个维度。** 新增
+> `nexus-core.views.agent-time.v1`（`GET /api/core/views/agent-time?from=&to=`，见「AI 代理时长读端」节）：
+> 读 v2.1 起就在记的 `proj_agent_daily_stats`，按天 / 按代理 / 按任务汇总代理的**泳道秒数**（并行的
+> 运行各算各的，可以超过 24h/天），外加 `open[]` 列出在跑运行的已跑时长（不计入汇总）。
+> 响应里**没有任何人的时长字段**——人的时长仍只在圆环/甘特/回顾里。零投影改动、零重建，
+> 既有端点与形状一个不改。
+>
 > v1.9：`GET /api/core/export` 产出的快照此前没有任何端点能吃
 > 回去（喂给 import 会被三层拒绝，而那三条拒绝各守一件实事，一条都不该放宽）。
 > 新增 `nexus-core.restore.v1`（`POST /api/core/restore`，见「快照恢复」节）：
@@ -175,6 +182,12 @@ provides:
       不写第二条；{id}/dismiss 标记忽略。建议住独立集合 activity_suggestions，**不是事实**：不进台账、
       投影、导出；超过 NEXUS_SUGGESTION_TTL_DAYS 的在下一次上传/读取时惰性清掉
     status: 已实现（v2.2），待验证
+  - id: nexus-core.views.agent-time.v1
+    summary: AI 代理时长读端（v2.3）——GET /api/core/views/agent-time?from=&to= 读
+      proj_agent_daily_stats，回按天 / 按代理 / 按任务汇总的代理泳道秒数与运行次数（已结束的运行，
+      归日同人：data.startAt 经 NEXUS_TZ，整段归开始那天）+ open[] 在跑运行的已跑时长（不计入汇总）；
+      响应不含任何人的时长，两个维度永不相加
+    status: 已实现（v2.3），待验证
 consumes:
   - id: yq-event/v1
     contract: ../../contracts/yq-event.v1/contract.md
@@ -201,6 +214,7 @@ consumes:
 | POST | `/api/core/restore` | 请求体 = `GET /export` 原样；`?dryRun&checksum`（见下「快照恢复」节） | `RestoreResultOut` | ✅ 已实现（v1.9） |
 | POST | `/api/core/agents/start` | `AgentStartIn`（见下「AI 代理运行」节） | `201 AgentStartOut` | ✅ 已实现（v2.1） |
 | POST | `/api/core/agents/{runId}/stop` | `AgentStopIn` | `AgentStopOut` | ✅ 已实现（v2.1） |
+| GET | `/api/core/views/agent-time` | `?from&to`（`YYYY-MM-DD`，均选填） | `AgentTimeOut`（见下「AI 代理时长读端」节） | ✅ 已实现（v2.3） |
 | POST | `/api/core/activity/suggestions` | `SuggestionUploadIn`（见下「活动建议」节） | `SuggestionUploadOut` | ✅ 已实现（v2.2） |
 | GET | `/api/core/activity/suggestions` | `?status&limit&offset` | `{total, items[]}` | ✅ 已实现（v2.2） |
 | POST | `/api/core/activity/suggestions/{id}/confirm` | `{taskId?, mode?}` | `SuggestionConfirmOut` | ✅ 已实现（v2.2） |
@@ -1522,6 +1536,7 @@ hook 没发 stop（终端被关、进程被杀）的运行会永远挂着。超�
 晚一点关不影响任何数字（事件的 `time`/`startAt` 都按运行本身算，不按被发现的时刻）。
 这意味着 `GET /views/current` 可能写事件——这是本节明文允许的唯一例外，写的只是
 「早该写的那一条」。
+（v2.3：`GET /views/agent-time` 读前同样收超时，是这条例外的第二个读端，见「AI 代理时长读端」节。）
 
 ### 投影：`proj_agent_daily_stats`，与人的投影零交集
 
@@ -1542,6 +1557,7 @@ hook 没发 stop（终端被关、进程被杀）的运行会永远挂着。超�
   快照恢复响应的 `rebuilt` 按其既有定义（`{投影名: 重放的事件数}`）因此多出一个
   `proj_agent_daily_stats` 键——读方按键取值不受影响。
 - 本版**不开读端**（不进 `export.projections`，那里的键集合是已发布的形状）；要按代理看时长时再加。
+  （v2.3：读端已加，见「AI 代理时长读端」节；`export.projections` 仍不带它。）
 
 ### `views.current.v1` 增 `agents[]`
 
@@ -1553,6 +1569,42 @@ hook 没发 stop（终端被关、进程被杀）的运行会永远挂着。超�
 
 当前租户在跑的运行，按 `startedAt` 升序；没有就是 `[]`。人的部分（`running`/`zone`/`project`/
 `task`/`sessionStartAt`）**与代理完全无关**：只有代理在跑时 `running` 仍是 `false`。
+
+## AI 代理时长读端（规范性 · v2.3，agent-time）
+
+代理时长是**另一个维度**，不是人的时长的一部分。本端点只读 `proj_agent_daily_stats`（v2.1 起就在记，
+零投影改动、零重建），响应里**没有任何人的时长字段**——需要对照时由调用方另读甘特，两个数永不相加。
+
+```jsonc
+// GET /api/core/views/agent-time?from=2026-09-27&to=2026-09-28   → 200 AgentTimeOut
+{ "today": "2026-09-28",                 // 服务端的今天（NEXUS_TZ），同甘特
+  "totalSeconds": 9000, "runs": 4,       // 范围内已结束运行的泳道秒数之和 / 运行次数
+  "days":   [ { "date": "2026-09-28", "seconds": 9000, "runs": 4 } ],            // 按日期升序，没有运行的日子不出现
+  "agents": [ { "agent": "claude-code", "seconds": 5400, "runs": 3 },            // 按 seconds 降序
+              { "agent": "codex",       "seconds": 3600, "runs": 1 } ],
+  "tasks":  [ { "projectId": "p_3c98de", "taskId": "t_a1b2c3", "seconds": 5400, "runs": 3 },   // 按 seconds 降序
+              { "projectId": "p_inbox",  "taskId": null,       "seconds": 3600, "runs": 1 } ], // 无任务（收件箱）为 null
+  "open":   [ { "runId": "run_0123456789ab", "agent": "codex", "projectId": "p_3c98de",
+                "taskId": "t_a1b2c3", "startedAt": "2026-09-28T09:30:00+00:00",
+                "elapsedSeconds": 1200 } ] }                                     // 按 startedAt 升序
+```
+
+- `from`/`to` 选填、闭区间，按日期（`YYYY-MM-DD`）过滤，同甘特；格式不对 422；`from > to` 得到空结果，不报错。
+  不分页：行已按「天 × 任务 × 代理」聚合，量级同甘特的 `actual[]`（甘特也不分页）。
+- **泳道秒数，不是墙钟**：两个代理同时跑 1h 记 2h，同一个代理开两个并行运行也记 2h——每个运行
+  是一条泳道，`seconds` 是泳道长度之和，所以一天可以超过 86400。「这段时间里至少有一个代理在跑」的
+  墙钟覆盖时长与并行峰值**本版不给**：投影里没有每个运行的起止，要算得读 `events`，而 views 不读台账
+  （「内部子边界」红线）；真需要时加一张按运行存区间的投影再开字段。
+- **归日同人**：整段运行归 `data.startAt`（经 `NEXUS_TZ`）所在那天，**跨零点不切分**——与
+  `proj_daily_stats` 同一口径（理由见 `daily_stats.py`），这样同一天的人和代理两个数说的是同一个「那天」；
+  单个运行被遗忘超时封顶在 `NEXUS_AGENT_RUN_TIMEOUT_HOURS`，溢出到次日的量有上界。
+  不接受 `tz` 参数：「那天」是服务端的 `NEXUS_TZ` 定的（「日界与时区」节），不许每个调用方一个答案。
+- **`open[]` 不计入任何汇总**：在跑的运行还不是事实。列出的是开始日期（同上归日）落在范围内的在跑运行，
+  `elapsedSeconds` = 服务端此刻 − `startedAt`（钳到 ≥0）。读之前先按「遗忘超时」收掉超时的运行
+  ——与 `views/current` 同一条「读时写」例外（本端点是该例外的第二个、也是最后一个读端），
+  所以 `elapsedSeconds` 不会超过超时上限，被收掉的运行已作为 `timeout` 事实进了汇总。
+- 按当前租户（「按租户分数据」）；`agent` 是 start 时记录的原样字符串，不 join 显示名（任务/项目名
+  由调用方按 id 从树里取，同 `events` 档案读端）。
 
 ## 人类计时模式（规范性 · v2.1，mode）
 
