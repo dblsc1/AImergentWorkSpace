@@ -1516,6 +1516,8 @@ hook 没发 stop（终端被关、进程被杀）的运行会永远挂着。超�
 ```
 
 - 归日同「日界与时区」：`data.startAt` 经 `NEXUS_TZ`。
+- 「已应用」身份是 `(source, dedupeKey)`，与事件入口的防重身份一致（`appliedKeys` 存二者的 JSON 数组）；
+  `durationSeconds` 非有限数或超过 31 天视为坏载荷，静默跳过。（人的两张投影仍只记 `dedupeKey`，本版不动。）
 - 投影重建（`rebuild`，含快照恢复末尾的那次）**一并重建**它；`--only proj_agent_daily_stats` 可单独重建。
   快照恢复响应的 `rebuilt` 按其既有定义（`{投影名: 重放的事件数}`）因此多出一个
   `proj_agent_daily_stats` 键——读方按键取值不受影响。

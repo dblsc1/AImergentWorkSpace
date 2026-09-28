@@ -219,6 +219,41 @@ def test_agent_projection_concurrent_first_upsert_not_lost(monkeypatch):
     assert real().find_one({}, {"_id": 0})["seconds"] == 15
 
 
+def _agent_envelope(source: str, dedupe_key: str, seconds) -> dict:
+    return {
+        "spec": "yq-event/v1", "id": f"evt_{source}", "dedupeKey": dedupe_key,
+        "type": "agent.run.completed", "user": "u_local", "source": source,
+        "time": "2026-09-28T10:00:00+00:00",
+        "subject": {"zone": "z1", "project": "p1", "task": "t1"},
+        "data": {"agent": "a", "tool": "t", "startAt": "2026-09-28T09:00:00+00:00",
+                 "durationSeconds": seconds, "outcome": "done"},
+    }
+
+
+def test_agent_projection_identity_includes_source(client):
+    """同 dedupeKey、不同 source 是两条合法事件（入口防重身份含 source），投影不许并成一条。"""
+    for source in ("hook-a", "hook-b"):
+        resp = client.post(f"{API}/events", json=_agent_envelope(source, "same-key", 60))
+        assert resp.json()["accepted"] == 1
+    row = _db()["proj_agent_daily_stats"].find_one()
+    assert (row["seconds"], row["runs"]) == (120, 2)
+
+    from app.modules.projector.rebuild import rebuild  # noqa: PLC0415
+
+    rebuild(only="proj_agent_daily_stats")  # 重建同样不并
+    row = _db()["proj_agent_daily_stats"].find_one()
+    assert (row["seconds"], row["runs"]) == (120, 2)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), 1e308, 32 * 86400])
+def test_agent_projection_skips_non_finite_or_absurd_duration(bad):
+    """坏载荷静默跳过、不炸投影（NaN/Inf 经 HTTP 进不来——JSON 不认，这里直接喂 handler）。"""
+    from app.modules.projector.handlers import agent_daily_stats  # noqa: PLC0415
+
+    agent_daily_stats.handle(_agent_envelope("x", f"k-{bad}", bad))
+    assert _db()["proj_agent_daily_stats"].count_documents({}) == 0
+
+
 # ─────────────────────────────────────────── 超时惰性关闭
 
 

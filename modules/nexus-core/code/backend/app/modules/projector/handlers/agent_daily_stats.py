@@ -11,11 +11,27 @@
 
 from __future__ import annotations
 
+import json
+import math
 from datetime import datetime
 
 from ....config import settings
 from ....timeutil import local_date
 from .. import repo
+
+#: 单次运行时长的健全上限（31 天）。不是业务规则（业务上限是 NEXUS_AGENT_RUN_TIMEOUT_HOURS，
+#: 由 agents.py 在写事件时封顶），只拦外部 source 的坏载荷：单位填错、1e308 之类。
+_MAX_SECONDS = 31 * 86400
+
+
+def applied_key(envelope: dict) -> str:
+    """投影侧的「已应用」身份 = 事件入口的防重身份 ``(source, dedupeKey)``（user 已在行键里）。
+
+    只用 ``dedupeKey`` 会把两条合法的不同事件（不同 source、碰巧同一个 dedupeKey、落进
+    同一行）当成一条，少计。用 JSON 数组拼接：任何 source/dedupeKey 取值都不会拼出歧义。
+    ⚠️ 人的 ``proj_daily_stats``/``proj_current`` 仍只记 ``dedupeKey``（既有行为，本版不动）。
+    """
+    return json.dumps([envelope["source"], envelope["dedupeKey"]], ensure_ascii=False)
 
 
 def handle(envelope: dict) -> None:
@@ -31,7 +47,8 @@ def handle(envelope: dict) -> None:
         or not isinstance(start_at, str)
         or not isinstance(seconds, (int, float))
         or isinstance(seconds, bool)
-        or seconds <= 0
+        or not math.isfinite(seconds)  # NaN/Inf 过得了上面的类型与 <=0，int() 会炸
+        or not 0 < seconds <= _MAX_SECONDS
     ):
         return
     try:
@@ -43,7 +60,7 @@ def handle(envelope: dict) -> None:
 
     repo.apply_agent_daily_stat(
         user=envelope["user"],
-        dedupe_key=envelope["dedupeKey"],
+        dedupe_key=applied_key(envelope),
         date=local_date(moment, settings.tz),
         project_id=project_id,
         task_id=subject.get("task"),
