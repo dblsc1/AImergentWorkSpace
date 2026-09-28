@@ -194,6 +194,33 @@ def backfill(
     )
 
 
+def record_session(
+    task_id: str,
+    start_at: str,
+    time_iso: str,
+    duration_seconds: int,
+    *,
+    source: str,
+    dedupe_key: str,
+    ai: dict | None = None,
+    mode: str = DEFAULT_MODE,
+    user: str | None = None,
+) -> dict:
+    """给别的子边界用的「写一段人的时间」入口（契约 v2.2「活动建议」的确认）。
+
+    ``session.completed`` 的组装只住在 timer 子边界：activity 只说「哪个任务、哪段时间、
+    什么来源」，归属链与补登/start 同一套判据，信封与补登同一个 ``record_session``。
+    时间合法性由调用方负责（建议在上传时已校验过）。
+    """
+    user = user or current_tenant()
+    _task, project_id, zone_id = _resolve_task_chain(task_id, action="拒绝记录")
+    return backfill_impl.record_session(
+        user, {"zone": zone_id, "project": project_id, "task": task_id},
+        start_at, time_iso, duration_seconds,
+        source=source, dedupe_key=dedupe_key, mode=mode, ai=ai,
+    )
+
+
 # ------------------------------------------------ AI 代理运行（v2.1，真身在 agents.py）
 # 薄委托，同 backfill：注入与 timer/start 同一套归属链判据和服务端时钟。
 
