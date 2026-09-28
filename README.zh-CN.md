@@ -155,7 +155,7 @@ docker compose up -d
 - 网页上：登录后 `POST /api/auth/tokens`（`Content-Type: application/json`，body `{}` 或 `{"label":"笔记本"}`）拿到 `{"token", "tenant", "expiresAt"}`；`POST /api/auth/tokens/revoke` 作废自己名下的全部令牌。
 - 命令行（`deploy/` 下）：`docker compose exec auth python /app/auth_stub.py token alice` 发一个，`revoke alice` 全部作废，不带名字 = 共享口令身份。
 
-要先在 `.env` 里设 `AUTH_SECRET`（发布版安装脚本已写好；`deploy/` 下手搭的自己加一行随机串）——没有固定密钥时令牌重启就废，所以干脆不发。改密码、删账号、去掉共享口令，对应的令牌跟着作废；吊销两秒内生效。
+要先在 `.env` 里设 `AUTH_SECRET`（发布版安装脚本已写好；`deploy/` 下手搭的自己加一行随机串）——没有固定密钥时令牌重启就废，所以干脆不发。改密码、删账号、换掉或去掉共享口令，对应的令牌跟着作废；吊销两秒内生效。
 
 想自己实现，读 `contracts/auth.gate.v1/contract.md` 的「换实现要满足什么」一节；怎么把它接进网关（`AUTH_UPSTREAM`、换登录页、关掉占位件），读 `contracts/gateway.v1/contract.md`。
 

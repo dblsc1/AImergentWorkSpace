@@ -363,3 +363,37 @@ def test_http_refuses_tokens_without_secret(users):
         assert status == 503 and body["error"] == "tokens_disabled"
     finally:
         s.stop()
+
+
+def test_revocation_fails_closed(tmp_path):
+    """删掉令牌文件不能让吊销过的令牌复活；启动时令牌文件坏着 = 令牌一律 401（Codex 审核）。"""
+    tfile = tmp_path / "t.json"
+    env = {"AUTH_PASSWORD": PW, "AUTH_TOKENS_FILE": str(tfile)}
+    old = _token_cli(env)
+    assert _cli({**env, **SECRET_ENV}, "revoke").returncode == 0
+    s = Stub(env)
+    try:
+        assert s.req("GET", "/api/auth/verify", headers=_bearer(old))[0] == 401
+        tfile.unlink()
+        time.sleep(2.6)
+        assert s.req("GET", "/api/auth/verify", headers=_bearer(old))[0] == 401
+    finally:
+        s.stop()
+    tfile.write_text("{坏的")
+    s = Stub(env)
+    try:
+        assert s.req("GET", "/api/auth/verify", headers=_bearer(old))[0] == 401
+        _, cookie = s.login(password=PW)  # cookie 登录不受影响
+        assert s.req("GET", "/api/auth/verify", cookie=cookie)[0] == 204
+    finally:
+        s.stop()
+
+
+def test_changing_shared_password_kills_shared_tokens(tmp_path):
+    env = {"AUTH_PASSWORD": PW, "AUTH_TOKENS_FILE": str(tmp_path / "t.json")}
+    tok = _token_cli(env)
+    s = Stub({**env, "AUTH_PASSWORD": "a-new-shared-pw"})
+    try:
+        assert s.req("GET", "/api/auth/verify", headers=_bearer(tok))[0] == 401
+    finally:
+        s.stop()

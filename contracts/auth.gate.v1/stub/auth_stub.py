@@ -191,16 +191,21 @@ def bump_epoch(tenant: str) -> None:
 
 class Epochs:
     """verify 用的纪元内存视图，与 Accounts 同一个套路：后台按 mtime 重读，
-    请求里不碰文件（契约不变量 2）。吊销最多晚 RELOAD_EVERY 秒生效。"""
+    请求里不碰文件（契约不变量 2）。吊销最多晚 RELOAD_EVERY 秒生效。
+
+    失败方向一律是「拒绝」（Codex 审核）：一次都没读成功之前视图是 None，所有设备令牌
+    401（None.get 抛错 → 收成 None）；读过之后文件坏了、或者被删了，都沿用旧视图 ——
+    否则删一下文件，吊销过的令牌（纪元 0）就复活了。
+    """
 
     def __init__(self) -> None:
-        self.by_tenant: dict[str, int] = {}
-        self._mtime = None
+        self.by_tenant: dict[str, int] | None = None
+        self._mtime = 0  # 不同于任何真实 mtime，也不同于"文件不存在"的 None
 
     def refresh(self) -> None:
         try:
             mtime = os.stat(TOKENS_FILE).st_mtime_ns if TOKENS_FILE and os.path.exists(TOKENS_FILE) else None
-            if mtime == self._mtime:
+            if mtime == self._mtime or (mtime is None and self.by_tenant is not None):
                 return
             self.by_tenant = load_epochs()
             self._mtime = mtime
@@ -259,18 +264,19 @@ def issue_token(tenant: str = "", sess: str = "", now: int | None = None) -> str
     return f"{payload}.{_sign(payload, sess)}"
 
 
-def token_tenant(token: str, now: int | None = None) -> str | None:
+def token_tenant(token: str, now: int | None = None, by_id: dict | None = None) -> str | None:
     """有效则返回租户（共享口令登录为 ""），无效返回 None。
 
     只做签名与过期校验，账号信息取自内存视图。不查库、不做 IO —— 它在每个
     业务请求的关键路径上。任何异常都收敛成 None（=401）。契约第 3 条：内部
     错误不许裸奔成 500，否则 auth 一抖动，整个 /api/core/* 全挂。
+    by_id：调用方要用同一份账号快照接着干活时传进来（见 _tokens）。
     """
     try:
         payload, _, sig = token.rpartition(".")
         ts_str, _, tenant = payload.partition(".")
         if tenant:
-            known = ACCOUNTS.by_id.get(tenant)
+            known = (ACCOUNTS.by_id if by_id is None else by_id).get(tenant)
             if known is None:  # 账号删了
                 return None
             sess = known[1]
@@ -292,6 +298,12 @@ def token_tenant(token: str, now: int | None = None) -> str | None:
 # 与会话 cookie 的签名域分开（"device|" 前缀 + 不同的载荷形状），所以令牌塞进 cookie、
 # cookie 当令牌用，签名都对不上。租户里可能有 "."：签名从右切，前三段从左切。
 # 账号令牌的签名里带会话盐 —— 改密码 / 删账号时它跟着会话一起作废。
+
+def _shared_sess() -> str:
+    """共享口令身份的令牌用口令派生的"会话盐"：换共享口令 = 它的令牌全部作废（Codex
+    审核）。会话 cookie 那边不这么做（v1 行为不变，靠换 AUTH_SECRET 整体作废）。"""
+    return hashlib.sha256(f"shared|{PASSWORD}".encode()).hexdigest()
+
 
 def _sign_device(payload: str, sess: str) -> str:
     return hmac.new(SECRET.encode(), f"device|{payload}|{sess}".encode(), hashlib.sha256).hexdigest()
@@ -336,7 +348,7 @@ def device_tenant(token: str, now: int | None = None) -> str | None:
                 return None
             sess = known[1]
         elif PASSWORD:
-            sess = ""
+            sess = _shared_sess()
         else:  # 共享口令已关：它的令牌一并作废
             return None
         if not hmac.compare_digest(sig, _sign_device(f"{TOKEN_PREFIX}.{body}", sess)):
@@ -548,7 +560,11 @@ class Handler(BaseHTTPRequestHandler):
         body = self._read_json(require_type=True)
         if body is None:
             return
-        tenant = token_tenant(_cookie_value(self.headers.get("Cookie")))
+        # 验 cookie 与取会话盐用**同一份**账号快照（后台线程是整份替换 by_id 的）：
+        # 否则改密码恰好发生在两步之间时，旧 cookie 会换到一个用新盐签的、改完密码
+        # 依旧有效的令牌（Codex 审核）。
+        by_id = ACCOUNTS.by_id
+        tenant = token_tenant(_cookie_value(self.headers.get("Cookie")), by_id=by_id)
         if tenant is None:
             self._json(401, {"ok": False, "error": "not_logged_in"})
             return
@@ -566,14 +582,11 @@ class Handler(BaseHTTPRequestHandler):
                 EPOCHS.refresh()  # 本进程立即生效，不等后台线程
                 self._status_only(204)
                 return
-            known = ACCOUNTS.by_id.get(tenant) if tenant else ("", "")
-            if known is None:  # 账号恰好在这一瞬间被删
-                self._json(401, {"ok": False, "error": "not_logged_in"})
-                return
+            sess = by_id[tenant][1] if tenant else _shared_sess()
             now = int(time.time())
             # 纪元直接读文件而不是内存视图：命令行刚吊销、视图还没刷新时，用旧纪元
             # 签出来的令牌两秒后就会莫名失效。
-            token = issue_device_token(tenant, known[1], load_epochs().get(tenant, 0), now)
+            token = issue_device_token(tenant, sess, load_epochs().get(tenant, 0), now)
         except Exception as e:
             sys.stderr.write(f"[auth-stub] 令牌操作出错：{type(e).__name__}\n")
             self._json(503, {"ok": False, "error": "tokens_unavailable"})
@@ -667,7 +680,7 @@ def _token_cli(cmd: str, name: str) -> None:
     else:
         if cmd == "token" and not PASSWORD:
             sys.exit("❌ 没开共享口令（AUTH_PASSWORD），这个身份的令牌用不了；要给账号发请带名字")
-        tenant, sess = "", ""
+        tenant, sess = "", _shared_sess()
     who = name or "共享口令身份"
     if cmd == "revoke":
         bump_epoch(tenant)

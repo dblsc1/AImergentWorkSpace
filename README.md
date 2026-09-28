@@ -205,7 +205,7 @@ API only, never pages**, and last a year by default.
 `AUTH_SECRET` must be set in `.env` (the release installer already writes one;
 for a hand-built `deploy/` add a random string yourself) — without a fixed key a
 token would die on restart, so none are issued. Changing or deleting an account,
-or removing the shared password, kills the matching tokens; revocation takes
+or changing or removing the shared password, kills the matching tokens; revocation takes
 effect within two seconds.
 
 The reason for drawing the line there: an open-source release should not ship a
