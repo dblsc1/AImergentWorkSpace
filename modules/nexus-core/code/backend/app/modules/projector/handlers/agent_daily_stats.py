@@ -67,3 +67,10 @@ def handle(envelope: dict) -> None:
         agent=agent,
         seconds=int(seconds),
     )
+
+
+def read_agent_daily_stats(
+    user: str, date_from: str | None = None, date_to: str | None = None
+) -> list[dict]:
+    """views 的指定读路径（v2.3 ``views/agent-time``），同 ``daily_stats.read_daily_stats``。"""
+    return repo.read_agent_daily_stats(user, date_from=date_from, date_to=date_to)

@@ -243,6 +243,11 @@ def list_agent_runs(user: str | None = None) -> list[dict]:
     return agents_impl.list_running(user or current_tenant(), now=_now)
 
 
+def list_open_agent_runs(user: str | None = None) -> list[dict]:
+    """views 的指定读路径（``views/agent-time`` 的 ``open[]``，v2.3）：含 projectId 与 elapsedSeconds。"""
+    return agents_impl.list_open(user or current_tenant(), now=_now)
+
+
 def cancel(user: str | None = None) -> dict:
     """取消计时：**丢弃活状态，一条事实都不产生**。
 

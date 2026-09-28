@@ -291,3 +291,48 @@ class ReviewOut(_Strict):
     overdueProjects: list[ReviewOverdueProject]
     staleTasks: list[ReviewStaleTask]
     inboxPendingCount: int
+
+
+# ------------------------------------------------------ AgentTimeOut（v2.3）
+
+
+class AgentTimeDay(_Strict):
+    date: str
+    seconds: int
+    runs: int
+
+
+class AgentTimeAgent(_Strict):
+    agent: str
+    seconds: int
+    runs: int
+
+
+class AgentTimeTask(_Strict):
+    projectId: str
+    #: null = 只挂项目（收件箱运行）；键不消失。
+    taskId: str | None
+    seconds: int
+    runs: int
+
+
+class AgentTimeOpen(_Strict):
+    runId: str
+    agent: str
+    projectId: str
+    taskId: str | None
+    startedAt: str
+    elapsedSeconds: int
+
+
+class AgentTimeOut(_Strict):
+    """``GET /api/core/views/agent-time``（契约 v2.3）。**泳道秒数**，不是墙钟；
+    没有任何人的时长字段——两个维度永不相加。``open[]`` 不计入汇总。"""
+
+    today: str
+    totalSeconds: int
+    runs: int
+    days: list[AgentTimeDay]
+    agents: list[AgentTimeAgent]
+    tasks: list[AgentTimeTask]
+    open: list[AgentTimeOpen]

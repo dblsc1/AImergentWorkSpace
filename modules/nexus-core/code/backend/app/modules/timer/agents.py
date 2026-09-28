@@ -155,10 +155,21 @@ def stop(
     return _out(run_id, event, duplicate)
 
 
+def list_open(user: str, *, now: Callable[[], datetime]) -> list[dict]:
+    """在跑的运行原样文档 + ``elapsedSeconds``（服务端此刻 − startedAt，钳到 ≥0）。
+    读之前先收超时——契约明文允许的「读时写」，只给 ``views/current`` 与 ``views/agent-time``（v2.3）。"""
+    right_now = now()
+    _expire(user, right_now)
+    runs = repo.list_agent_runs(user)
+    for run in runs:
+        elapsed = (right_now - datetime.fromisoformat(run["startedAt"])).total_seconds()
+        run["elapsedSeconds"] = max(int(elapsed), 0)
+    return runs
+
+
 def list_running(user: str, *, now: Callable[[], datetime]) -> list[dict]:
-    """``views/current`` 的 ``agents[]``。读之前先收超时（契约明文允许的唯一「读时写」）。"""
-    _expire(user, now())
+    """``views/current`` 的 ``agents[]``。"""
     return [
         {k: run.get(k) for k in ("runId", "taskId", "agent", "tool", "model", "startedAt")}
-        for run in repo.list_agent_runs(user)
+        for run in list_open(user, now=now)
     ]
