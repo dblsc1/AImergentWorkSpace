@@ -149,10 +149,9 @@
         <p class="suggest-sub">电脑自动记下的活动，确认后才算进你的时间。</p>
       </div>
       <div class="suggest-bulk">
-        <label class="suggest-threshold-label" for="suggest-threshold">把握至少</label>
+        <label class="suggest-threshold-label" for="suggest-threshold">把握至少（%）</label>
         <input class="field suggest-threshold" id="suggest-threshold" type="number"
-               min="0" max="100" step="5" value="80" inputmode="numeric" aria-describedby="suggest-pct">
-        <span class="suggest-threshold-label" id="suggest-pct">%</span>
+               min="0" max="100" step="5" value="80" inputmode="numeric">
         <button type="button" class="btn btn-fact" id="suggest-confirm-all" disabled>全部确认</button>
       </div>
       <p class="suggest-message" id="suggest-message" role="status" hidden></p>

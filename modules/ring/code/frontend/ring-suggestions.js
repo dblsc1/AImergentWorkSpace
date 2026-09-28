@@ -55,10 +55,12 @@
   }
 
   // 「全部确认」只动有建议任务、且把握够的（契约：没有 taskId 的必须人挑）。
-  function eligible(items, threshold) {
+  // 给了 tree 时建议的任务还得在树里——被删的任务确认必 404，该由人重挑。
+  function eligible(items, threshold, tree) {
     return (items || []).filter(function (it) {
       var s = it.suggestion || {};
-      return Boolean(s.taskId) && typeof s.confidence === "number" && s.confidence >= threshold;
+      return Boolean(s.taskId) && typeof s.confidence === "number" && s.confidence >= threshold &&
+        (!tree || taskPath(tree, s.taskId) !== null);
     });
   }
 
@@ -156,7 +158,7 @@
   }
 
   function syncButtons() {
-    var n = eligible(items, threshold()).length;
+    var n = eligible(items, threshold(), tree).length;
     allBtnEl.textContent = "全部确认（把握 ≥ " + Math.round(threshold() * 100) + "%）" + (n ? " · " + n : "");
     allBtnEl.disabled = busy || n === 0;
     listEl.querySelectorAll("li").forEach(function (li) {
@@ -173,7 +175,9 @@
     syncButtons();
   }
 
+  var loadSeq = 0; // 只认最后一次 load 的结果：早发晚到的旧快照会把刚确认的条目又放回来
   async function load() {
+    var mine = ++loadSeq;
     var res;
     try {
       res = await fetch(API + "?status=pending&limit=200");
@@ -183,11 +187,13 @@
     if (res.status === 404) { panelEl.hidden = true; return; } // 后端早于 v2.2：整块不出现
     if (!res.ok) { panelEl.hidden = false; showMessage("待确认列表加载失败（HTTP " + res.status + "）", true); return; }
     var body = await res.json().catch(function () { return null; });
+    if (mine !== loadSeq) return;
     // 每次都重拉树：人可能刚在「任务」页加了任务，要能马上选到
     try {
       var t = await fetch(BASE + "api/core/views/tree");
       if (t.ok) tree = await t.json();
     } catch (err) { /* 拉不到就沿用上一份；从没拉到过则下拉为空，确认按钮保持禁用 */ }
+    if (mine !== loadSeq) return;
     items = (body && body.items) || [];
     panelEl.hidden = false;
     render();
@@ -199,19 +205,24 @@
     syncButtons();
     showMessage("", false);
     var done = 0, confirmed = 0, errors = [];
-    for (var i = 0; i < targets.length; i++) {
-      var it = targets[i];
-      var body = action === "confirm" ? { taskId: selectedTask(it.id) || it.suggestion.taskId } : undefined;
-      var r = await window.postCore(API + "/" + encodeURIComponent(it.id) + "/" + action, body);
-      if (r.ok) {
-        done += 1;
-        if (action === "confirm") confirmed += 1;
-        delete chosen[it.id];
-      } else {
-        errors.push(r.message);
+    try {
+      for (var i = 0; i < targets.length; i++) {
+        var it = targets[i];
+        var suggested = (it.suggestion || {}).taskId;
+        var body = action === "confirm" ? { taskId: selectedTask(it.id) || suggested } : undefined;
+        var r = await window.postCore(API + "/" + encodeURIComponent(it.id) + "/" + action, body);
+        if (r.ok) {
+          done += 1;
+          if (action === "confirm") confirmed += 1;
+          delete chosen[it.id];
+        } else {
+          errors.push(r.message);
+        }
       }
+    } finally {
+      busy = false;
+      syncButtons(); // load() 失败时不重绘，按钮不能停在禁用
     }
-    busy = false;
     await load();
     if (errors.length) showMessage(errors[0] + (errors.length > 1 ? "（另有 " + (errors.length - 1) + " 条失败）" : ""), true);
     else if (bulk) showMessage("已确认 " + done + " 条。", false);
@@ -219,7 +230,7 @@
   }
 
   thresholdEl.addEventListener("input", syncButtons);
-  allBtnEl.addEventListener("click", function () { act(eligible(items, threshold()), "confirm", true); });
+  allBtnEl.addEventListener("click", function () { act(eligible(items, threshold(), tree), "confirm", true); });
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState === "visible" && !busy) load();
   });

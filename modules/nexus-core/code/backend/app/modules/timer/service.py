@@ -204,15 +204,15 @@ def record_session(
     dedupe_key: str,
     ai: dict | None = None,
     mode: str = DEFAULT_MODE,
-    user: str | None = None,
 ) -> dict:
     """给别的子边界用的「写一段人的时间」入口（契约 v2.2「活动建议」的确认）。
 
     ``session.completed`` 的组装只住在 timer 子边界：activity 只说「哪个任务、哪段时间、
     什么来源」，归属链与补登/start 同一套判据，信封与补登同一个 ``record_session``。
-    时间合法性由调用方负责（建议在上传时已校验过）。
+    时间合法性由调用方负责（建议在上传时已校验过）。**不收 user 参数**：归属链按当前租户查，
+    事件也只能记在当前租户名下，两者不许分开给。
     """
-    user = user or current_tenant()
+    user = current_tenant()
     _task, project_id, zone_id = _resolve_task_chain(task_id, action="拒绝记录")
     return backfill_impl.record_session(
         user, {"zone": zone_id, "project": project_id, "task": task_id},

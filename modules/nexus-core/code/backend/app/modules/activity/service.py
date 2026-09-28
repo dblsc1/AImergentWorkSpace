@@ -10,7 +10,8 @@
   就会永远重发、永远卡住（同 events 入口「部分失败不整批回滚」）。
 - **id 由防重键派生**：过期清掉又被重传的同一段拿到同一个 id，``activity:<id>`` 照样防重——
   同一段活动全系统至多一条事实。
-- **先 ingest 后改状态**（同 timer.stop）：改状态失败后重试命中防重，不丢不重。
+- **确认先占位（pending→confirmed 条件更新）再写事实**：与忽略二选一，不会出现「忽略成功、
+  事实照写」；写事实失败放回 pending；占位后崩掉，重试照样补写，防重键兜底不重。
 - **过期惰性清理**，无调度器（同代理运行的遗忘超时）。
 """
 
@@ -58,8 +59,8 @@ class _Suggestion(BaseModel):
 
 
 class _Segment(BaseModel):
-    startAt: StrictStr
-    endAt: StrictStr
+    startAt: Annotated[StrictStr, Field(max_length=64)]
+    endAt: Annotated[StrictStr, Field(max_length=64)]
     durationSeconds: StrictInt
     app: Annotated[StrictStr, Field(min_length=1, max_length=128)]
     title: Annotated[StrictStr, Field(max_length=512)]
@@ -168,26 +169,35 @@ def confirm(sug_id: str, task_id: str | None, mode: str) -> dict:
     if doc["status"] == "dismissed":
         raise ConflictError(f"活动建议 {sug_id!r} 已忽略，不能再确认")
     dedupe_key = f"activity:{sug_id}"
-    if doc["status"] == "confirmed":
+    stored = events_service.find_by_dedupe(user, SOURCE, dedupe_key)
+    if stored is not None:
         # 重复确认（哪怕换了任务）：回原来那条，不写第二条（同代理运行重复 stop）
-        stored = events_service.find_by_dedupe(user, SOURCE, dedupe_key)
-        if stored is not None:
-            return {
-                "id": sug_id, "status": "confirmed", "duplicate": True,
-                "date": timeutil.local_date(datetime.fromisoformat(doc["startAt"]), config.settings.tz),
-                "event": {k: stored[k] for k in ("id", "dedupeKey", "type")},
-            }
-        # 状态说已确认、台账里却没有（不应发生）：落到下面重写一遍，由防重兜底
+        repo.set_status(user, sug_id, "confirmed", _now(), only_from="pending")  # 补齐上次没改成的状态
+        return {
+            "id": sug_id, "status": "confirmed", "duplicate": True,
+            "date": timeutil.local_date(datetime.fromisoformat(doc["startAt"]), config.settings.tz),
+            "event": {k: stored[k] for k in ("id", "dedupeKey", "type")},
+        }
     task_id = task_id or doc["suggestion"].get("taskId")
     if not task_id:
         raise InvalidInputError("没有可确认的任务：请求体与建议里都没有 taskId，请先选一个任务")
-    out = timer_service.record_session(
-        task_id, doc["startAt"], doc["endAt"], doc["durationSeconds"],
-        source=SOURCE, dedupe_key=dedupe_key, mode=mode,
-        ai={"generated": True, "confidence": doc["suggestion"]["confidence"], "confirmed": True},
-    )
-    # ingest 之后才改状态；无条件改——事实已写，哪怕并发的忽略抢先一步，状态也得跟事实走
-    repo.set_status(user, sug_id, "confirmed", _now())
+    # 先占位再写事实：pending→confirmed 是条件更新，与忽略（同样只从 pending 转）二选一，
+    # 不会出现「忽略回了 200，事实却照样落库」。占位后崩在写事实之前 → 状态已确认、台账没有，
+    # 重试走到这里（占位不中但状态是 confirmed）照样补写，防重键兜底不重。
+    claimed = repo.set_status(user, sug_id, "confirmed", _now(), only_from="pending")
+    if not claimed and _get(user, sug_id)["status"] == "dismissed":
+        raise ConflictError(f"活动建议 {sug_id!r} 已忽略，不能再确认")
+    try:
+        out = timer_service.record_session(
+            task_id, doc["startAt"], doc["endAt"], doc["durationSeconds"],
+            source=SOURCE, dedupe_key=dedupe_key, mode=mode,
+            ai={"generated": True, "confidence": doc["suggestion"]["confidence"], "confirmed": True},
+        )
+    except Exception:
+        # 任务不存在等：事实没写成，放回待确认（并发的另一次确认若已写成，就别放回）
+        if claimed and events_service.find_by_dedupe(user, SOURCE, dedupe_key) is None:
+            repo.set_status(user, sug_id, "pending", _now(), only_from="confirmed")
+        raise
     return {"id": sug_id, "status": "confirmed", "duplicate": out["duplicate"],
             "date": out["date"], "event": out["event"]}
 

@@ -311,6 +311,40 @@ def test_dismiss_and_conflicts(client, seeded):
     assert [i["id"] for i in _pending(client, status="dismissed")["items"]] == [a]
 
 
+def test_dismiss_racing_a_confirm_loses(client, seeded, monkeypatch):
+    """确认占位之后、写事实之前来了一次忽略：忽略必须 409，不能「忽略成功、事实照写」。"""
+    from app.modules.activity import service  # noqa: PLC0415
+
+    task = seeded["tasks"]["示例任务三"]
+    _upload(client, [_seg(_recent(), task_id=task["id"])])
+    sug_id = _pending(client)["items"][0]["id"]
+    real = service.timer_service.record_session
+    seen = {}
+
+    def racing(*args, **kwargs):
+        seen["dismiss"] = client.post(f"{SUG}/{sug_id}/dismiss").status_code
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(service.timer_service, "record_session", racing)
+    assert client.post(f"{SUG}/{sug_id}/confirm", json={}).status_code == 200
+    assert seen["dismiss"] == 409
+    assert _pending(client, status="confirmed")["total"] == 1 and len(_session_events()) == 1
+
+
+def test_pending_with_existing_fact_confirms_as_duplicate(client, seeded):
+    """过期清掉又重传成 pending、事实早已在台账：再确认回原事件并补齐状态，不需要 taskId。"""
+    task = seeded["tasks"]["示例任务三"]
+    seg = _seg(_recent(), task_id=task["id"])
+    _upload(client, [seg])
+    sug_id = _pending(client)["items"][0]["id"]
+    client.post(f"{SUG}/{sug_id}/confirm", json={})
+    col = _db()["activity_suggestions"]
+    col.update_one({"id": sug_id}, {"$set": {"status": "pending", "suggestion.taskId": None}})
+    body = client.post(f"{SUG}/{sug_id}/confirm", json={}).json()
+    assert body["duplicate"] is True
+    assert col.find_one({"id": sug_id})["status"] == "confirmed"
+
+
 # ─────────────────────────────────────────── 租户隔离
 
 

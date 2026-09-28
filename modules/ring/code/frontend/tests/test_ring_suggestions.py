@@ -39,10 +39,14 @@ class SuggestStub:
         self.items = json.loads(json.dumps(items)) if items is not None else None
         self.posts: list[tuple[str, str, Any]] = []
         self.fail_ids: set[str] = set()
+        self.get_status = 200  # 非 200 = 列表接口出错（不是 404 那种「老后端」）
 
     def route(self, route: Route) -> None:
         req = route.request
         if req.method == "GET":
+            if self.get_status != 200:
+                route.fulfill(status=self.get_status, body="boom")
+                return
             if self.items is None:
                 route.fulfill(status=404, content_type="application/json", body='{"detail":"Not Found"}')
                 return
@@ -162,6 +166,17 @@ def test_failure_keeps_item_and_shows_detail(browser, static_base_url):
         assert "sug_a" in _ids(page)
 
 
+def test_buttons_recover_when_reload_fails(browser, static_base_url):
+    with open_page(browser, static_base_url, ITEMS) as (h, stub):
+        page = h.page
+        page.wait_for_selector("#suggest-list li")
+        stub.get_status = 500
+        page.locator('li[data-id="sug_c"] .suggest-dismiss').click()
+        page.wait_for_selector("#suggest-message.is-error")
+        assert page.locator('li[data-id="sug_a"] .suggest-confirm').is_enabled()
+        assert page.locator("#suggest-confirm-all").is_enabled()
+
+
 def test_empty_state(browser, static_base_url):
     with open_page(browser, static_base_url, []) as (h, _stub):
         page = h.page
@@ -206,6 +221,10 @@ def test_pure_helpers(browser, static_base_url):
               {id: 'c', suggestion: {taskId: null, confidence: 1}},
               {id: 'd', suggestion: {taskId: 't'}},
               {id: 'e'}], 0.8).map(i => i.id),
+            eligTree: S.eligible([
+              {id: 'a', suggestion: {taskId: 't_read', confidence: 0.9}},
+              {id: 'b', suggestion: {taskId: 't_gone', confidence: 0.9}}], 0.8, tree).map(i => i.id),
           };
         }""" % json.dumps(TREE, ensure_ascii=False))
-        assert r == {"path": "练琴区 / 吉他练习 / 曲目视奏", "gone": None, "none": None, "elig": ["a"]}
+        assert r == {"path": "练琴区 / 吉他练习 / 曲目视奏", "gone": None, "none": None, "elig": ["a"],
+                     "eligTree": ["a"]}
