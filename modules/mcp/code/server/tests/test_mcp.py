@@ -541,3 +541,76 @@ def test_nexus_5xx_and_down_are_502_without_details(servers):
         assert err(servers, "get_task_tree") == {"status": 502, "detail": "数据服务暂时不可用"}
     finally:
         tools.NEXUS_CORE_URL = real
+
+
+# ── Codex 审核后补：cursor 还原后整体再校验、只给 cursor 就能翻页、上限 ────
+
+
+def _tamper(cursor, **b):
+    import base64
+    d = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
+    d["b"].update(b)
+    for k in [k for k, v in b.items() if v is ...]:
+        del d["b"][k]
+    return base64.urlsafe_b64encode(json.dumps(d).encode()).decode().rstrip("=")
+
+
+def test_next_page_with_only_cursor(servers):
+    p1 = ok(servers, "list_time_sessions", {"from": "2026-09-01T00:00:00Z", "limit": 2})
+    p2 = ok(servers, "list_time_sessions", {"cursor": p1["nextCursor"]})  # from 也不用再给
+    assert [i["eventId"] for i in p2["items"]] == ["evt_2", "evt_bf"]
+    d1 = ok(servers, "get_daily_time", {"fromDate": "2026-09-27", "toDate": "2026-09-28", "limit": 1})
+    d2 = ok(servers, "get_daily_time", {"cursor": d1["nextCursor"], "limit": 1})
+    assert d2["items"][0]["taskId"] == "t_a1"
+    s1 = ok(servers, "list_activity_suggestions", {"status": "pending", "limit": 2})
+    assert [i["suggestionId"] for i in ok(servers, "list_activity_suggestions",
+                                          {"cursor": s1["nextCursor"]})["items"]] == ["sug_2"]
+    assert err(servers, "list_time_sessions", {"limit": 2})["status"] == 400  # 没 cursor 时 from 仍必填
+
+
+def test_cursor_tools_do_not_mark_required_in_schema(servers):
+    tl = {t["name"]: t["inputSchema"] for t in rpc(servers, "tools/list")["result"]["tools"]}
+    assert "required" not in tl["list_time_sessions"] and "required" not in tl["get_daily_time"]
+    assert tl["get_agent_time"]["required"] == ["fromDate", "toDate"]
+
+
+def test_tampered_cursor_values_are_validated(servers):
+    s1 = ok(servers, "list_activity_suggestions", {"limit": 1})
+    assert err(servers, "list_activity_suggestions", {"cursor": _tamper(s1["nextCursor"], status="all")})["status"] == 400
+    d1 = ok(servers, "get_daily_time", {"fromDate": "2026-09-27", "toDate": "2026-09-28", "limit": 1})
+    assert err(servers, "get_daily_time", {"cursor": _tamper(d1["nextCursor"], fromDate="2020-01-01")})["status"] == 400
+    assert err(servers, "get_daily_time", {"cursor": _tamper(d1["nextCursor"], extra=1)})["status"] == 400
+    assert err(servers, "get_daily_time", {"cursor": _tamper(d1["nextCursor"], toDate=...)})["status"] == 400
+    t1 = ok(servers, "list_time_sessions", {"from": "2026-09-01T00:00:00Z", "limit": 1})
+    assert err(servers, "list_time_sessions", {"cursor": _tamper(t1["nextCursor"], to="2026-09-28")})["status"] == 400
+    g1 = ok(servers, "get_task_tree", {"limit": 1})
+    assert err(servers, "get_task_tree", {"cursor": _tamper(g1["nextCursor"], includeDone="yes")})["status"] == 400
+
+
+def test_upstream_body_cap(servers, monkeypatch):
+    monkeypatch.setattr(tools, "MAX_UPSTREAM", 100)
+    assert err(servers, "get_task_tree") == {"status": 502, "detail": "数据服务暂时不可用"}
+
+
+def test_inflight_cap_503(servers, monkeypatch):
+    import threading
+    full = threading.BoundedSemaphore(1)
+    full.acquire()
+    monkeypatch.setattr(mcp_server, "SLOTS", full)
+    monkeypatch.setattr(mcp_server, "SLOT_WAIT", 0.05)
+    assert post(servers, {"jsonrpc": "2.0", "id": 1, "method": "ping"})[0] == 503
+
+
+def test_batch_cap_and_isolation(servers, monkeypatch):
+    ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+    status, body = post(servers, [ping] * 17)
+    assert status == 400 and body["error"]["code"] == -32600
+    assert post(servers, [])[0] == 400
+    real = tools.call
+    monkeypatch.setattr(tools, "call", lambda n, a, t: 1 / 0 if n == "get_weekly_review" else real(n, a, t))
+    status, body = post(servers, [
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": ["x"]}},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "get_weekly_review"}},
+        {"jsonrpc": "2.0", "id": 3, "method": "ping"}])
+    assert status == 200
+    assert [(r["id"], r.get("error", {}).get("code")) for r in body] == [(1, -32602), (2, -32603), (3, None)]

@@ -21,6 +21,7 @@ import logging
 import os
 import re
 import sys
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import tools
@@ -29,6 +30,10 @@ log = logging.getLogger("mcp")
 
 PROTOCOLS = ("2025-06-18", "2025-03-26")   # 第一个是缺省（客户端要的不认识时回它）
 MAX_BODY = 64 * 1024
+MAX_BATCH = 16          # 批量（只有 2025-03-26 有，2025-06-18 已去掉）最多这么多条，超了整批 -32600
+MAX_INFLIGHT = 8        # 同时在处理的请求上限；等 SLOT_WAIT 秒还没空位 → 503
+SLOT_WAIT = 10.0
+SLOTS = threading.BoundedSemaphore(MAX_INFLIGHT)
 TENANT = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")   # 同 nexus-core tenant.PATTERN
 ENDPOINT = ("/api/mcp/", "/api/mcp")
 SERVER_INFO = {"name": "honeycomb-mcp", "version": "1.0.0"}
@@ -55,6 +60,16 @@ def _error(mid, code: int, message: str) -> dict:
 
 
 def handle(msg, tenant: str | None) -> dict | None:
+    """一条消息的任何异常都只影响这一条（批量里别的照常）。"""
+    try:
+        return _handle(msg, tenant)
+    except Exception:
+        log.exception("处理 JSON-RPC 消息时内部错误")
+        mid = msg.get("id") if isinstance(msg, dict) else None
+        return _error(mid if isinstance(mid, (str, int)) else None, -32603, "内部错误")
+
+
+def _handle(msg, tenant: str | None) -> dict | None:
     """一条 JSON-RPC 消息 → 响应；通知与客户端发来的响应 → None。"""
     if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0":
         return _error(None, -32600, "不是 JSON-RPC 2.0 消息")
@@ -79,13 +94,9 @@ def handle(msg, tenant: str | None) -> dict | None:
         result = {"tools": tools.TOOL_LIST}
     elif method == "tools/call":
         name = params.get("name")
-        if name not in tools.TOOLS:
+        if not isinstance(name, str) or name not in tools.TOOLS:
             return _error(mid, -32602, f"没有这个工具：{name!r}")
-        try:
-            result = tools.call(name, params.get("arguments") or {}, tenant)
-        except Exception:
-            log.exception("tool %s 内部错误", name)
-            return _error(mid, -32603, "内部错误")
+        result = tools.call(name, params.get("arguments") or {}, tenant)
     else:
         return _error(mid, -32601, f"不支持的方法：{method!r}")
     return {"jsonrpc": "2.0", "id": mid, "result": result}
@@ -159,11 +170,17 @@ class Handler(BaseHTTPRequestHandler):
             msg = json.loads(self.rfile.read(n))
         except ValueError:
             return self._send(400, _error(None, -32700, "请求体不是 JSON"))
-        if isinstance(msg, list):  # 2025-03-26 允许批量
-            out = [r for r in (handle(m, tenant) for m in msg) if r is not None] if msg else \
-                _error(None, -32600, "空的批量请求")
-        else:
-            out = handle(msg, tenant)
+        if isinstance(msg, list) and not 0 < len(msg) <= MAX_BATCH:  # 2025-03-26 允许批量
+            return self._send(400, _error(None, -32600, f"批量须是 1–{MAX_BATCH} 条"))
+        if not SLOTS.acquire(timeout=SLOT_WAIT):
+            return self._send(503, {"detail": "忙，稍后再试"}, (("Retry-After", "5"),))
+        try:
+            if isinstance(msg, list):
+                out = [r for r in (handle(m, tenant) for m in msg) if r is not None]
+            else:
+                out = handle(msg, tenant)
+        finally:
+            SLOTS.release()
         if not out:
             return self._send(202)
         self._send(200, out)

@@ -48,6 +48,7 @@ consumes:
 - **纯标准库，没有用官方 MCP Python SDK。** SDK 能做无状态 Streamable HTTP，但要带进 starlette / pydantic /
   anyio / httpx 一串依赖，Origin 与租户这两道 HTTP 层的门还得另写中间件（SDK 自带的 DNS 重绑定防护比的是 `Host`，
   契约明确不拿 `Host` 比）；用到的协议面只有四个方法，手写更小、每一步都看得见。
+- 上限：请求体 64 KiB、批量 16 条、同时处理 8 个请求（再多等 10 秒后 503）、nexus-core 单次响应 8 MiB。
 - 无状态、不缓存：每次工具调用现取 `views/tree` 算路径，不存在跨租户缓存。
 - 日志只记请求行、状态码、工具名与结果状态，不记请求头（`Authorization`/`Cookie` 本来也被网关清掉了）、不记工具结果。
 
