@@ -254,13 +254,13 @@ Promise.resolve()
     });
   }); })
   .then(function () { return test("exportFileName：文件名日期取自 exportedAt 前 10 位，不本地拼日期", function () {
-    assert.strictEqual(D.exportFileName("2026-08-09T12:00:00+00:00"), "cockpit-export-2026-08-09.json");
-    assert.strictEqual(D.exportFileName("2026-01-01T00:00:00+08:00"), "cockpit-export-2026-01-01.json");
+    assert.strictEqual(D.exportFileName("2026-08-09T12:00:00+00:00"), "honeycomb-export-2026-08-09.json");
+    assert.strictEqual(D.exportFileName("2026-01-01T00:00:00+08:00"), "honeycomb-export-2026-01-01.json");
   }); })
   .then(function () { return test("exportFileName：exportedAt 缺失/非字符串不崩，回落 unknown-date", function () {
-    assert.strictEqual(D.exportFileName(undefined), "cockpit-export-unknown-date.json");
-    assert.strictEqual(D.exportFileName(null), "cockpit-export-unknown-date.json");
-    assert.strictEqual(D.exportFileName(12345), "cockpit-export-unknown-date.json");
+    assert.strictEqual(D.exportFileName(undefined), "honeycomb-export-unknown-date.json");
+    assert.strictEqual(D.exportFileName(null), "honeycomb-export-unknown-date.json");
+    assert.strictEqual(D.exportFileName(12345), "honeycomb-export-unknown-date.json");
   }); })
   // ── 快照恢复（顶栏「导入数据」按钮，contract.md v1.9）──────────────
   .then(function () { return test("restoreSnapshot：不给 checksum = dry-run；给了 = apply 且 checksum 编码进查询串", function () {

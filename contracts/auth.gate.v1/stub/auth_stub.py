@@ -140,7 +140,8 @@ class Accounts:
 
     def refresh(self) -> None:
         try:
-            mtime = os.stat(USERS_FILE).st_mtime_ns if USERS_FILE else None
+            # 只开共享口令时账号文件本来就不存在：当成空，别每 2 秒报一次错（Windows 验收）
+            mtime = os.stat(USERS_FILE).st_mtime_ns if USERS_FILE and os.path.exists(USERS_FILE) else None
             if mtime == self._mtime:
                 return
             users = load_users()

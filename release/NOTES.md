@@ -18,7 +18,7 @@ powershell -ExecutionPolicy Bypass -File .\honeycomb-install.ps1
 装完打开 <http://127.0.0.1:8800/>，登录口令脚本会打印一次，也存在 `honeycomb/.env` 里。
 再跑一次同一个脚本 = 升级到这一版（保留配置与数据）。
 
-> Windows 脚本在 CI 里用 PowerShell 7 真跑过；Windows 自带的 PowerShell 5.1 尚未在真机上验证。
+> Windows 脚本在 CI 里用 PowerShell 7 和 5.1 真跑过，并在 Windows 10 真机（自带 PowerShell 5.1 + Docker Desktop）上验收过安装与升级。
 
 想看源码、自己改：clone 仓库，照 README「三十秒跑起来」走源码路线。
 
