@@ -65,17 +65,36 @@ def _save_run_id(session_id: str, run_id: str) -> None:
 
 
 def _read_run_id(session_id: str) -> str | None:
-    """只读，不删——SessionEnd 得先确认 stop 报成功了才能删（见 handle_session_end），
-    不然报失败/超时/钩子被杀死的时候，这条记录跟着没了，run 就再也关不掉了，
-    只能等 cockpit 服务端自己的兜底超时（数小时量级）才会收尾。
+    """只读，成功时不删——SessionEnd 得先确认 stop 报成功了才能删（见
+    handle_session_end），不然报失败/超时/钩子被杀死的时候，这条记录跟着
+    没了，run 就再也关不掉了，只能等 cockpit 服务端自己的兜底超时
+    （数小时量级）才会收尾。
+
+    但内容本身读不出可用 runId 的情况要分两种：
+    - 文件压根不存在 / 权限问题之类读不了（`FileNotFoundError`/`OSError`）——
+      不是"内容坏了"，可能只是还没开始过、或者暂时的 I/O 问题，别删，留给
+      下次再试。
+    - 文件存在但内容不是合法 JSON，或者形状不对（不是 `{"runId": "..."}`
+      这种结构）——这份文件已经没有任何可用信息了，留着就是垃圾，删掉，
+      不然它会一直躺在 state 目录里，SessionEnd 每次都白读一遍。
     """
     path = _state_file(session_id)
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, ValueError, OSError):
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        _delete_run_id(session_id)
         return None
     run_id = data.get("runId") if isinstance(data, dict) else None
-    return run_id if isinstance(run_id, str) else None
+    if not isinstance(run_id, str):
+        _delete_run_id(session_id)
+        return None
+    return run_id
 
 
 def _delete_run_id(session_id: str) -> None:
@@ -119,9 +138,14 @@ def handle_session_end(payload: dict) -> None:
         cc.stop_run(config, run_id, outcome, timeout=HOOK_TIMEOUT)
     except Exception as e:  # noqa: BLE001 — 同上，绝不能是"会话结束不了"的理由
         category = e if isinstance(e, cc.CockpitError) else "配置错误"
-        if str(category) == "HTTP 404":
-            # cockpit 已经不认识这条 run 了（比如被服务端自己的兜底超时先关掉了）——
-            # 本地这条记录留着也没用，这是唯一"确定不用再重试"的情况，删掉。
+        # code == 404 且响应体是 JSON，才是 nexus-core 应用层明确说"这条 run
+        # 不存在"；光看状态码不够——COCKPIT_URL 配错了（比如指到了一个完全
+        # 不相关的服务，或者网关本身）同样会给 404，但那是网关/nginx 的默认
+        # 404 页（HTML），不是 cockpit 说这条 run 没了，不能当"确定丢弃"处理，
+        # 不然一次配置错误就会把所有还开着的 run 的本地记录全部冲掉。
+        run_confirmed_gone = isinstance(category, cc.CockpitError) and category.code == 404 and category.json_body
+        if run_confirmed_gone:
+            _warn(f"SessionEnd: cockpit 说这条 run 已经不存在了，清掉本地记录（{category}）")
             _delete_run_id(session_id)
         else:
             # 其余任何失败（连不上/超时/配置错误/别的 HTTP 状态码）都不删：

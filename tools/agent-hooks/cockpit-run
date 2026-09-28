@@ -65,20 +65,39 @@ def _start(args: argparse.Namespace, command: list[str]) -> tuple[dict, str | No
         return {}, None
 
 
-def _wait_ignoring_keyboard_interrupt(proc: subprocess.Popen) -> int:
-    """一直等到子进程真的退出，中途不管挨了几次 Ctrl-C 都不放弃等。
+def _wait_through_ctrl_c(proc: subprocess.Popen) -> tuple[int, bool]:
+    """等子进程退出，中途不管挨多少次 Ctrl-C 都不会带着 traceback 逃出去；
+    返回 `(退出码, 是否被 Ctrl-C 打断过)`。
 
-    只挡一次 KeyboardInterrupt 不够：第二次 Ctrl-C 会直接从 except 块里的
-    那次 wait() 里逃出来，带着一截 traceback 把整个包装进程带走——不但难看，
-    还会跳过下面的 stop 上报，子进程也变成没人 wait() 的僵尸（直到这个
-    包装进程退出才被 init 收走）。这里循环吞掉，吞多少次都行，直到子进程
-    真退出为止。
+    只挡一次 KeyboardInterrupt 不够：第二次 Ctrl-C 会直接从 wait() 里逃出来，
+    带着一截 traceback 把整个包装进程带走——不但难看，还会跳过下面的 stop
+    上报和退出码规整化，子进程也变成没人 wait() 的僵尸。这里循环吞掉。
+
+    第 1 次 Ctrl-C：只记下"被打断了"，继续等——终端已经把 SIGINT 发给整个
+    前台进程组，子进程多半正在自己收尾，不该越俎代庖；顺带提示一句，免得
+    用户以为按了没反应。第 3 次：说明子进程不吃 SIGINT（忽略了，或者压根
+    不在前台组），直接 kill()，不再客气。
+
+    子进程如果已经被别处 reap 掉（比如什么地方装了 SIGCHLD 处理器抢先
+    waitpid 了），`wait()` 会抛 ChildProcessError（ECHILD）——这种情况下
+    要不到真实退出码，用 Ctrl-C 场景下的常见约定值 130（128+SIGINT）顶上，
+    总比让异常逃出去、跳过后面的上报和信号规整化要好。
     """
+    presses = 0
     while True:
         try:
-            return proc.wait()
+            return proc.wait(), presses > 0
         except KeyboardInterrupt:
-            continue
+            presses += 1
+            if presses == 1:
+                print("cockpit-run: 已收到 Ctrl-C，等命令收尾；再按两次强制结束", file=sys.stderr)
+            elif presses >= 3:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+        except ChildProcessError:
+            return 130, True
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -105,15 +124,12 @@ def main(argv: list[str] | None = None) -> int:
         proc = subprocess.Popen(command)
         if cancelled and proc.poll() is None:
             proc.terminate()  # 补上「Popen 返回前 SIGTERM 就到了」这条窄缝
-        try:
-            exit_code = proc.wait()
-        except KeyboardInterrupt:
-            # Ctrl-C 时子进程和我们同在一个前台进程组，终端已经把 SIGINT 直接发给
-            # 子进程了，不用（也不该）再补一个 terminate()——那是配合上面的
-            # SIGTERM 转发用的，子进程这会儿多半正在自己处理 SIGINT，再插一脚
-            # 只会打断它的收尾。
-            cancelled = True
-            exit_code = _wait_ignoring_keyboard_interrupt(proc)
+        # Ctrl-C 时子进程和我们同在一个前台进程组，终端已经把 SIGINT 直接发给
+        # 子进程了——第 1、2 次不该越俎代庖补 terminate()/kill()，子进程这会儿
+        # 多半正在自己收尾；一直不退出（忽略了 SIGINT）才升级成强杀，见
+        # _wait_through_ctrl_c。
+        exit_code, ctrl_c_seen = _wait_through_ctrl_c(proc)
+        cancelled = cancelled or ctrl_c_seen
     finally:
         signal.signal(signal.SIGTERM, old_handler)
 
@@ -136,6 +152,13 @@ def main(argv: list[str] | None = None) -> int:
     if run_id:
         try:
             cc.stop_run(config, run_id, outcome)
+        except KeyboardInterrupt:
+            # 上报 stop 这几秒内又被 Ctrl-C 一次——_request 内部的 join(timeout)
+            # 是会被 KeyboardInterrupt 打断的阻塞调用，不是 Exception 的子类，
+            # 下面那个 except Exception 接不住，会直接逃出 main()，跳过下面
+            # exit_code < 0 时的信号规整化。这里接住，不重新报（这次 stop 反正
+            # 没报成），只记下"确实被打断过"。
+            cancelled = True
         except Exception as e:  # noqa: BLE001 — 跟 _start() 一样：任何异常都不能顶替下面真实的退出码
             category = e if isinstance(e, cc.CockpitError) else "配置错误"
             print(f"cockpit-run: 上报结束状态失败，不影响命令结果（{category}）", file=sys.stderr)

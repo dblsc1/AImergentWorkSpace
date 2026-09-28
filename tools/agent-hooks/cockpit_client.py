@@ -33,7 +33,18 @@ class CockpitError(Exception):
 
     调用方应当当作"跳过计时"处理，不是致命错误；`str(e)` 本身不含任何原始异常
     文本（见模块 docstring），直接打印到 stderr 是安全的。
+
+    `code`：HTTP 状态码，仅 HTTP 类失败时非 None。`json_body`：那次 HTTP 错误
+    的响应体是否解析成了 JSON。两者搭配起来才能判断"cockpit 应用层明确说
+    这个东西不存在"（`code == 404` 且 `json_body`，nexus-core 的错误体是 JSON）
+    还是"根本没打到 cockpit"（比如 URL 配错了，命中 nginx/网关自己的默认 404
+    页——那是 HTML）——只看状态码分不出这两种，配错地址一样会给 404。
     """
+
+    def __init__(self, category: str, code: int | None = None, json_body: bool = False):
+        super().__init__(category)
+        self.code = code
+        self.json_body = json_body
 
 
 # ── 每用户目录（跨平台） ──────────────────────────────────────────
@@ -224,11 +235,23 @@ def _request(config: dict[str, Any], method: str, path: str, payload: dict[str, 
     except _DeadlineExceeded:
         raise CockpitError("超时") from None
     except urllib.error.HTTPError as e:
+        body = b""
+        try:
+            body = e.read()
+        except Exception:
+            pass
+        json_body = False
+        if body:
+            try:
+                json.loads(body)
+                json_body = True
+            except ValueError:  # 包括 JSONDecodeError 和坏编码的 UnicodeDecodeError
+                json_body = False
         try:
             e.close()  # HTTPError 包着底层响应/连接，raise 出来之后没人再帮它关，自己关掉
         except Exception:
             pass
-        raise CockpitError(f"HTTP {e.code}") from None
+        raise CockpitError(f"HTTP {e.code}", code=e.code, json_body=json_body) from None
     except urllib.error.URLError as e:
         if isinstance(e.reason, TimeoutError):
             raise CockpitError("超时") from None
