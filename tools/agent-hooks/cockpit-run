@@ -7,6 +7,11 @@
 跑之前报 start，跑完（或被打断）报 stop，命令本身的 stdin/stdout/stderr、
 退出码原样透传，cockpit 不在线或 token 不对也不影响命令执行——
 见 cockpit_client.py 模块 docstring 的设计取舍。
+
+**纪律**：被包装的命令必须跑起来，不管 cockpit 那边发生什么——配置文件
+格式错、cockpit 返回一个奇怪的形状、URL 写错了，都不该在 `Popen` 之前
+把这个脚本本身炸掉。所以 start 上报那一段整体包在一个宽泛的
+`except Exception` 里，只警告、不中断。
 """
 
 from __future__ import annotations
@@ -16,6 +21,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -42,41 +48,67 @@ def _parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     return args, command
 
 
+def _start(args: argparse.Namespace, command: list[str]) -> tuple[dict, str | None]:
+    """算配置 + 报 start。任何异常（配置文件形状不对、URL 写错、cockpit 返回怪
+    形状……）都只警告不上抛——这一步绝不能是"命令跑不跑得起来"的前提条件。
+    """
+    try:
+        config = cc.load_config()
+        task_id = cc.resolve_task(explicit=args.task, config=config)
+        agent = args.agent or cc.default_agent_name()
+        tool = args.tool or os.path.basename(command[0])
+        result = cc.start_run(config, task_id, agent, tool)
+        return config, result.get("runId")
+    except Exception as e:  # noqa: BLE001 — 见函数 docstring 与模块纪律
+        category = e if isinstance(e, cc.CockpitError) else "配置错误"
+        print(f"cockpit-run: 上报开始状态失败，本次不计时（{category}）", file=sys.stderr)
+        return {}, None
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     args, command = _parse_args(argv)
 
-    config = cc.load_config()
-    task_id = cc.resolve_task(explicit=args.task)
-    agent = args.agent or cc.default_agent_name()
-    tool = args.tool or os.path.basename(command[0])
+    config, run_id = _start(args, command)
 
-    run_id = None
-    try:
-        result = cc.start_run(config, task_id, agent, tool)
-        run_id = result.get("runId")
-    except cc.CockpitError as e:
-        print(f"cockpit-run: 连不上 cockpit，本次不计时（{e}）", file=sys.stderr)
-
-    proc = subprocess.Popen(command)
     cancelled = False
+    proc: subprocess.Popen | None = None
 
-    def _forward_sigterm(signum, frame):
+    def _on_sigterm(signum, frame):
         nonlocal cancelled
         cancelled = True
-        if proc.poll() is None:
+        if proc is not None and proc.poll() is None:
             proc.terminate()
 
-    old_handler = signal.signal(signal.SIGTERM, _forward_sigterm)
+    # 先装 handler 再 Popen：SIGTERM 要是落在"先 Popen、后装 handler"这道窄缝里，
+    # 就会用 Python 的默认处理直接把这个包装进程杀掉——子进程会变成孤儿，
+    # 也永远报不出 stop。装在前面之后，唯一剩下的窄缝是 Popen 系统调用本身
+    # 执行的那一刻（下面 Popen 后立刻检查一次 cancelled 补上这个缝）。
+    old_handler = signal.signal(signal.SIGTERM, _on_sigterm)
     try:
+        proc = subprocess.Popen(command)
+        if cancelled and proc.poll() is None:
+            proc.terminate()  # 补上「Popen 返回前 SIGTERM 就到了」这条窄缝
         try:
             exit_code = proc.wait()
         except KeyboardInterrupt:
+            # Ctrl-C 时子进程和我们同在一个前台进程组，终端已经把 SIGINT 直接发给
+            # 子进程了，不用（也不该）再补一个 terminate()——那是配合上面的
+            # SIGTERM 转发用的，子进程这会儿多半正在自己处理 SIGINT，再插一脚
+            # 只会打断它的收尾。
             cancelled = True
-            proc.terminate()
             exit_code = proc.wait()
     finally:
         signal.signal(signal.SIGTERM, old_handler)
+
+    # ponytail: SIGTERM 只转发给直接子进程，不管它的子孙——子进程如果是个 shell
+    # 脚本，脚本里再 fork 出来的进程是脚本自己的责任，跟大多数 exec 式包装器
+    # （比如 `exec` 内建）的约定一样。真要管住整棵进程树得用进程组
+    # （Windows 是 Job Object），这里没做；需要的话把 Popen 换成
+    # `start_new_session=True` + `os.killpg`（POSIX）。
+    # Windows 上没有能转发的 SIGTERM 语义：`os.kill(pid, SIGTERM)` 在 Windows
+    # 上直接调 TerminateProcess，不经过任何 Python handler；上面这套只在
+    # POSIX 上真正有效，Windows 下 Ctrl-C（SIGINT/CTRL_C_EVENT）仍然照常工作。
 
     if cancelled:
         outcome = "cancelled"
@@ -90,6 +122,25 @@ def main(argv: list[str] | None = None) -> int:
             cc.stop_run(config, run_id, outcome)
         except cc.CockpitError as e:
             print(f"cockpit-run: 上报结束状态失败，不影响命令结果（{e}）", file=sys.stderr)
+
+    if exit_code < 0 and os.name == "posix":
+        # 子进程是被信号杀的（POSIX 上 wait() 返回 -信号号）。直接
+        # `sys.exit(-15)` 会被算成 `-15 & 0xff` = 241，看起来像是正常退出、
+        # 只是码值很怪——不是上游期望的"同一个信号杀死"语义（比如 bash 报的
+        # 是 128+15=143，Python 自己的 subprocess.returncode 则会是 -15）。
+        # 恢复默认处理后把同一个信号发给自己，让这个包装进程也真的死于
+        # 这个信号，退出方式跟子进程一致。
+        sig = -exit_code
+        try:
+            signal.signal(sig, signal.SIG_DFL)
+        except (ValueError, OSError, RuntimeError):
+            pass  # 有些信号（比如 SIGKILL）压根不让设 handler，忽略——它本来就是默认处理
+        try:
+            os.kill(os.getpid(), sig)
+            time.sleep(1)  # 正常情况下上一行就终止了进程；给它一点时间生效
+        except (ValueError, OSError):
+            pass
+        return 128 + sig  # 兜底：自杀没成功就退回传统的 128+信号 约定
 
     return exit_code
 

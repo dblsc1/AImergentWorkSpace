@@ -47,6 +47,10 @@ curl -sb "<你登录时浏览器里的会话 cookie>" -X POST <cockpit 地址>/a
 | macOS | `~/Library/Application Support/honeycomb/agent-hooks.json` |
 | Linux | `$XDG_CONFIG_HOME/honeycomb/agent-hooks.json`（缺省 `~/.config/honeycomb/agent-hooks.json`） |
 
+（内部还认一个 `HONEYCOMB_AGENT_HOOKS_HOME` 环境变量，设了就把 config/state
+两个目录都钉死在它下面——只给测试用，跨三个平台把状态/配置目录换成临时目录，
+不用管。）
+
 ```json
 {
   "url": "http://127.0.0.1:8800/",
@@ -81,11 +85,21 @@ python3 tools/agent-hooks/cockpit-run --task task-id-1 -- codex exec "把这个 
 - `--` 之后的全部原样传给子进程：stdin/stdout/stderr 透传，退出码原样返回
 
 结束状态怎么定：命令退出码 `0` → `done`，非 `0` → `failed`，
-你按 Ctrl-C 或者外部发 `SIGTERM` 打断 → `cancelled`。
+你按 Ctrl-C 或者外部发 `SIGTERM` 打断 → `cancelled`。命令被信号杀掉时，
+`cockpit-run` 自己也会死于同一个信号（而不是包出一个奇怪的退出码），
+上游脚本看到的退出方式跟直接跑这条命令一致。
 
-**cockpit 连不上、token 不对，都不影响命令本身执行**——只在 stderr 打一行警告，
-命令照跑，退出码照样准确转发。网络调用超时给得很短（约 3 秒），不会让你的命令
-等 cockpit。
+**cockpit 连不上、token 不对、配置文件格式不对，都不影响命令本身执行**——
+最多在 stderr 打一行警告（只报"连不上/超时/HTTP 几百/配置错误/响应格式不对"
+这几个固定说法，不会把 token 或者其他原始错误细节印出来），命令照跑，
+退出码照样准确转发。网络调用有总时限（约 3 秒，且是"总时限"而不是单次网络
+操作的超时——服务器响应慢、body 一个字节一个字节地吐，都不会拖过这个时限）。
+
+**已知的边界**（ponytail：先不做，真需要再加）：
+- SIGTERM 只转发给直接子进程，不管它的子孙进程（比如子进程是个 shell 脚本，
+  脚本里再 fork 出来的进程）——要管住整棵进程树得用进程组，这里没做。
+- Windows 上没有能转发的 SIGTERM 语义（`os.kill(pid, SIGTERM)` 在 Windows 上
+  直接杀进程，不经过任何 handler）；Ctrl-C 在 Windows 上照常工作。
 
 ## Claude Code 钩子：自动记会话时间
 
@@ -126,11 +140,13 @@ Claude Code 设置文件**）：
 - `SessionEnd` → 关掉这条 run。Claude Code 不会告诉钩子「这次工作算成功还是
   失败」，所以缺省报 `done`；只有 `reason` 是 `prompt_input_exit`
   （在输入框按 Ctrl-C/Ctrl-D 主动退出）才报 `cancelled`
-- 两次调用之间用 Claude Code 的 `session_id` 对上号（一个小状态文件，
-  跨平台的每用户 state 目录，见 `cockpit_client.user_dir`）；`SessionEnd`
-  处理完就把这条记录从状态文件里删掉，不会越攒越多
-- 钩子本身**永远 `exit 0`**——网络失败、cockpit 没配、状态文件读不了，
-  统统吞掉，最多在 stderr 留一行；绝不会拖慢或打断你的会话
+- 两次调用之间用 Claude Code 的 `session_id` 对上号：每个会话各自一个小状态
+  文件（文件名是 `session_id` 的哈希，原子写入），不同会话不共用同一份文件，
+  多个 Claude Code 窗口同时开着也不会互相踩；`SessionEnd` 处理完就把那个
+  会话的文件删掉，不会越攒越多
+- 钩子本身**永远 `exit 0`**——网络失败、cockpit 没配、配置文件格式不对、
+  状态文件读不了，统统吞掉，最多在 stderr 留一行（同样只报固定分类，不带
+  原始错误细节）；绝不会拖慢或打断你的会话
 
 Codex 或者别的 agent 工具，接法见上面的 `cockpit-run`（Codex 目前没有
 SessionStart/SessionEnd 这样的钩子机制，用 `cockpit-run` 包一层是目前
