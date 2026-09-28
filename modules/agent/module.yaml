@@ -1,0 +1,38 @@
+# agent · 安装清单
+#
+# 契约（module_docs/contract.md → contracts/agent.chat.v1）说的是「对外行为」，本文件说的是「怎么把它跑起来」。
+
+name: agent
+summary: 聊天后端（agent.chat.v1 的 opencode 适配器）。计时台「问问助手」，只经 MCP 读数据。
+kind: backend
+
+service:
+  build: code/backend
+  image: ${HONEYCOMB_PROJECT:-honeycomb}-agent:local   # 带项目名：同机多套部署不互相顶替镜像
+  port: 8030
+  healthcheck: /api/agent/health
+  env:
+    # 模型密钥只进这个容器。与 AGENT_BASE_URL 都空 = 面板提示去填，发消息 503
+    AGENT_API_KEY: ${AGENT_API_KEY:-}
+    AGENT_MODEL: ${AGENT_MODEL:-deepseek/deepseek-flash}
+    AGENT_BASE_URL: ${AGENT_BASE_URL:-}
+    AGENT_MAX_SESSIONS: ${AGENT_MAX_SESSIONS:-50}
+    AGENT_MAX_RUNTIMES: ${AGENT_MAX_RUNTIMES:-4}
+    NEXUS_TENANT_STRICT: ${NEXUS_TENANT_STRICT:-0}
+  # 只在 AI 桥内网上（gateway.v1 第八节）：够不着 nexus-core / auth / mongo，读数据只能经 MCP
+  isolated: true
+  networks:
+    - honeycomb-agent-net
+  volumes:
+    - honeycomb_agent_data:/data
+
+routes:
+  # 过门；bridge = 清掉 Cookie/Authorization、关缓冲（SSE）、运行期解析；上游可由 AGENT_UPSTREAM 换
+  - prefix: /api/agent/
+    upstream: /api/agent/
+    gated: true
+    bridge: true
+    upstreamEnv: AGENT_UPSTREAM
+    readTimeout: 300
+
+static: []

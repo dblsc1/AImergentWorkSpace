@@ -215,6 +215,18 @@ and three invariants, **the assembly layer needs no changes at all**.
 How to plug it in (`AUTH_UPSTREAM`, your own login page, switching the stub off)
 is in `contracts/gateway.v1/contract.md`.
 
+### The AI assistant ("Ask the assistant" on the timer page)
+
+The timer page has a chat panel for questions like "which project took most of my
+time this week?". The assistant reads your data only through the read-only MCP
+tools — it writes nothing, runs no commands, has no web access. Put your model key
+in `.env` as `AGENT_API_KEY` (default model `deepseek/deepseek-flash`) and run
+`docker compose up -d`; without a key the panel tells you to add one and
+everything else works as before. Other models, a local Ollama or any
+OpenAI-compatible server on your network: see the AI assistant section of
+`deploy/.env.example`. The interface is `contracts/agent.chat.v1`; the default
+implementation (opencode) lives in `modules/agent/`.
+
 ### Serving it under a sub-path
 
 Behind another reverse proxy at `https://example.com/Cockpit/`? Set

@@ -1,0 +1,8 @@
+# agent（agent.chat.v1 的 opencode 适配器）。与 nexus-core 同一套版本。
+fastapi==0.115.12
+uvicorn==0.49.0
+pydantic==2.13.4
+httpx==0.28.1
+
+# 测试
+pytest==9.0.2

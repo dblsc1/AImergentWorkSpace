@@ -103,8 +103,9 @@ consumes:
   - id: agent.chat.v1
     contract: ../../../contracts/agent.chat.v1/contract.md
     purpose: >
-      （v0.3 AI 桥，契约先行，前端待实现）计时页的聊天面板，与「待确认」面板合成一块：
-      上半是待确认的活动建议（不变），下半是和助手聊天。只调 `<前缀>api/agent/`，**从不调任何
+      （v0.3 AI 桥，`code/frontend/ring-chat.js`、HTML 末尾 `#chat-panel`、`ring.css` 末段）计时页的
+      「问问助手」面板，与「待确认」面板上下叠放：上面是待确认的活动建议（不变），下面是和助手聊天
+      （会话下拉 + 新对话 + 删除、消息列表、输入框、发送 / 停止）。只调 `<前缀>api/agent/`，**从不调任何
       代理运行时（opencode）自己的接口**。用到：`GET health`（非 200 → 聊天整块不出现；
       `configured:false` → 显示「去 .env 填 AGENT_API_KEY」）、会话的列 / 建 / 读 / 删、
       `POST messages` 读 SSE（`start`/`delta`/`tool`/`done`/`error`，不认识的事件忽略；
@@ -150,4 +151,5 @@ consumes:
 | 2026-09-23 | 下游需求 6：整站挂子路径 | 页面请求（`/api/core/...`）改为从网关注入的 `window.HONEYCOMB_BASE` 拼，缺省 `/` 时与之前逐字相同（`contracts/gateway.v1` 第七节） |
 | 2026-09-26 | v0.2.1 实测 | 补登表单：没动过日期/时刻时，填时长自动把开始时刻推到「现在往前这么久」（之前默认开始=现在，只填时长必被拒）；开始+时长超过现在时本地先拦、用人话说明，不再把服务端带 ISO 时间戳的拒绝原文甩给人。计时写成功后发 `honeycomb:timer-changed`，顶栏芯片即时刷新（modules/nginx-docker 契约） |
 | 2026-09-28 | v0.3 AI 桥（契约先行） | 新增 consumes `agent.chat.v1`：聊天面板与「待确认」面板合并，只经 `<前缀>api/agent/`；前端代码在实现 PR 里跟上 |
+| 2026-09-28 | v0.3 AI 桥实现 | `agent.chat.v1` 的前端落地：`ring-chat.js`（新文件）、`#chat-panel`、`ring.css` 末段。与「待确认」上下叠放（不做页签）；POST 的 SSE 用 fetch + ReadableStream 解析；全部 textContent；Enter 发送、Shift+Enter 换行。装 ring 时安装器随之装上聊天后端模块 `agent`（它再拉上 `mcp`） |
 | 2026-09-28 | v0.3 自动检测只是建议 | 新增 consumes `nexus-core.activity.suggestions.v1`：计时页「待确认」面板（`ring-suggestions.js`、HTML 末尾 `#suggest-panel`、`ring.css` 末段）。列出、改任务、确认、忽略、按把握阈值全部确认；端点 404 时整块隐藏；确认后刷新圆环、不发 `honeycomb:timer-changed` |

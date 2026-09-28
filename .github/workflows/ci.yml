@@ -65,6 +65,37 @@ jobs:
           pip install -q pytest
           python -m pytest -q tests
 
+  agent:
+    # 聊天后端（contracts/agent.chat.v1，modules/agent）。先在 runner 上跑不需要 opencode 的那部分，
+    # 再按 compose 起镜像：真 opencode（镜像里钉死的版本）+ 假模型（内网服务名 fake-llm）+ 假 MCP，
+    # 不要任何密钥。
+    name: agent 测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: 单测（假运行时）
+        working-directory: modules/agent/code/backend
+        run: |
+          pip install -q -r requirements.txt
+          python -m pytest -q tests/test_api.py
+      - name: 起（agent + 假模型 + 假 MCP）
+        working-directory: deploy
+        run: docker compose -f docker-compose.yml -f test/agent.yml up -d --wait --wait-timeout 600 agent fake-llm fake-mcp
+      - name: 镜像里的全部测试 + 跑起来的服务
+        working-directory: deploy
+        run: test/agent.sh
+      - name: 失败时的日志
+        if: failure()
+        working-directory: deploy
+        run: docker compose -f docker-compose.yml -f test/agent.yml logs --no-color
+      - name: 拆
+        if: always()
+        working-directory: deploy
+        run: docker compose -f docker-compose.yml -f test/agent.yml down -v
+
   hive-tests:
     name: hive 前端测试
     runs-on: ubuntu-latest
@@ -164,9 +195,9 @@ jobs:
         run: python -m pytest -q tools modules/nginx-docker/tests contracts/auth.gate.v1/tests
       - name: 解依赖 + 生成 + 核对
         run: |
-          # mcp 要点名：在聊天后端模块（consumes mcp.tools.v1）进来之前，hive ring 拉不到它
-          ./install.sh plan hive ring mcp
-          ./install.sh add hive ring mcp
+          # ring consumes agent.chat.v1 → 拉上 agent；agent consumes mcp.tools.v1 → 拉上 mcp
+          ./install.sh plan hive ring
+          ./install.sh add hive ring
           ./install.sh doctor
       - name: 两份 compose 都能解析
         env:
@@ -199,7 +230,7 @@ jobs:
         if: matrix.dir == 'deploy/generated'
         run: |
           pip install -q pyyaml
-          ./install.sh add hive ring mcp
+          ./install.sh add hive ring
       - name: 写 .env
         # 只填口令，其余照 README 用默认值（含 Secure cookie）：测的就是用户拿到的那份。
         run: |
@@ -264,7 +295,7 @@ jobs:
         run: docker compose down -v
 
   release-package:
-    # 发布包（release/）在打标签之前就得证明装得起来：本地构建同样四张镜像，
+    # 发布包（release/）在打标签之前就得证明装得起来：本地构建同样五张镜像，
     # 用发布出去的同一个安装脚本（sh 与 PowerShell 各一遍）从空目录装，再冒烟；
     # 再跑一次 sh = 升级路径，必须保留原来的 .env 与数据。
     name: 发布包
@@ -273,12 +304,13 @@ jobs:
       HONEYCOMB_NO_PULL: '1'
     steps:
       - uses: actions/checkout@v7
-      - name: 构建镜像（与 release.yml 同样四张，只构建本机架构）
+      - name: 构建镜像（与 release.yml 同样五张，只构建本机架构）
         run: |
           docker build -q -t ghcr.io/dblsc1/honeycomb-nexus-core:ci modules/nexus-core/code/backend
           docker build -q -t ghcr.io/dblsc1/honeycomb-web:ci -f release/web.Dockerfile .
           docker build -q -t ghcr.io/dblsc1/honeycomb-auth:ci -f release/auth.Dockerfile .
           docker build -q -t ghcr.io/dblsc1/honeycomb-mcp:ci modules/mcp/code/server
+          docker build -q -t ghcr.io/dblsc1/honeycomb-agent:ci modules/agent/code/backend
       - name: 填版本号（同 release.yml）
         run: |
           mkdir -p "$RUNNER_TEMP/assets"

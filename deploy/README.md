@@ -26,6 +26,10 @@ docker compose down -v    # 停 + 删数据（mongo 与账号文件的 named vol
 - `nexus-core`、`auth`（auth.gate.v1 占位实现：共享口令 / 账号+密码，账号文件在
   named volume `honeycomb_auth_data`）、`mongo`、`web`（nginx）四个服务。
   `web` 另外只读挂载两个前端目录：`/hive/`（任务蜂巢，`/` 跳这里）与 `/ring/`（计时台）。
+- v0.3 起另有 `mcp`（只读 MCP 工具，`contracts/mcp.tools.v1`）与 `agent`（聊天后端，`contracts/agent.chat.v1`，
+  计时台「问问助手」；在 `.env` 填 `AGENT_API_KEY` 才能发消息，聊天记录在 named volume `honeycomb_agent_data`）。
+  两者与网关同在内网 `honeycomb-agent-net`；`agent` 不在 `honeycomb-net` 上，读数据只能经 MCP。
+  `test/agent.yml` + `test/agent.sh` 是 CI「agent 测试」：真 opencode、假模型、假 MCP，不要密钥。
 - 登录门接在 `/api/`、`/hive/`、`/ring/` 前面：未登录一律跳 `/login/`，
   登录页来自 `contracts/auth.gate.v1/stub/web/`。
 - `web` 的配置是 envsubst 模板 `nginx/templates/default.conf.template`，共用
