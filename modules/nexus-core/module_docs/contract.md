@@ -20,6 +20,14 @@
 > 增可选 `mode`（`do`/`prompt`/`review`，缺省 `do`，见「人类计时模式」节）。
 > `views.current.v1` 增 `agents[]`。既有字段、既有事件形状、既有端点行为一个不改。
 >
+> **v2.2（追加式）**：**自动检测到的活动只是建议，人确认了才是事实。** 新增
+> `nexus-core.activity.suggestions.v1`（`POST/GET /api/core/activity/suggestions`、
+> `POST /api/core/activity/suggestions/{id}/confirm|dismiss`，见「活动建议」节）：桌面检测程序
+> （`modules/ai-detector`）上传的活动段住独立集合 `activity_suggestions`，**不进台账**，
+> 任何统计、圆环、甘特、回顾、导出都看不见它；人在计时台点「确认」时才经与补登同一条路径写**一条**
+> `session.completed`（`source: activity-confirmed`，信封带 `ai` 块）。既有端点、事件形状、
+> 导出形状一个不改。
+>
 > v1.9：`GET /api/core/export` 产出的快照此前没有任何端点能吃
 > 回去（喂给 import 会被三层拒绝，而那三条拒绝各守一件实事，一条都不该放宽）。
 > 新增 `nexus-core.restore.v1`（`POST /api/core/restore`，见「快照恢复」节）：
@@ -159,6 +167,14 @@ provides:
       缺省 do），写进 session.completed 的 data.mode（mode=do 时不写，缺省即 do，老事件照读）；
       start 时定下的 mode 存进 timer_state，stop 原样带出
     status: 已实现（v2.1），待验证
+  - id: nexus-core.activity.suggestions.v1
+    summary: 活动建议（v2.2）——POST /api/core/activity/suggestions 收桌面检测程序上传的活动段
+      （每批 ≤200 段，逐段校验、坏段进 rejected 不拖累整批，防重键 aw:<deviceId>:<startAt 归一化 UTC>，
+      重传是 no-op）；GET 同路径按状态分页读（新的在前）；{id}/confirm 经补登同一条路径写一条
+      session.completed（source=activity-confirmed，dedupeKey=activity:<id>，信封 ai 块），重复确认
+      不写第二条；{id}/dismiss 标记忽略。建议住独立集合 activity_suggestions，**不是事实**：不进台账、
+      投影、导出；超过 NEXUS_SUGGESTION_TTL_DAYS 的在下一次上传/读取时惰性清掉
+    status: 已实现（v2.2），待验证
 consumes:
   - id: yq-event/v1
     contract: ../../contracts/yq-event.v1/contract.md
@@ -185,6 +201,10 @@ consumes:
 | POST | `/api/core/restore` | 请求体 = `GET /export` 原样；`?dryRun&checksum`（见下「快照恢复」节） | `RestoreResultOut` | ✅ 已实现（v1.9） |
 | POST | `/api/core/agents/start` | `AgentStartIn`（见下「AI 代理运行」节） | `201 AgentStartOut` | ✅ 已实现（v2.1） |
 | POST | `/api/core/agents/{runId}/stop` | `AgentStopIn` | `AgentStopOut` | ✅ 已实现（v2.1） |
+| POST | `/api/core/activity/suggestions` | `SuggestionUploadIn`（见下「活动建议」节） | `SuggestionUploadOut` | ✅ 已实现（v2.2） |
+| GET | `/api/core/activity/suggestions` | `?status&limit&offset` | `{total, items[]}` | ✅ 已实现（v2.2） |
+| POST | `/api/core/activity/suggestions/{id}/confirm` | `{taskId?, mode?}` | `SuggestionConfirmOut` | ✅ 已实现（v2.2） |
+| POST | `/api/core/activity/suggestions/{id}/dismiss` | 无 | `{id, status}` | ✅ 已实现（v2.2） |
 | ~~GET~~ | ~~`/api/core/zones`~~ | 无 | `[ZoneOut]` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
 | ~~POST~~ | ~~`/api/core/zones`~~ | `{name, color?, order?}` | `ZoneOut` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
 | ~~PATCH~~ | ~~`/api/core/zones/{id}`~~ | `{name?, color?, order?}` | `ZoneOut` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
@@ -1549,6 +1569,103 @@ hook 没发 stop（终端被关、进程被杀）的运行会永远挂着。超�
 - 补登的 `dedupeKey` **不含** `mode`：同一段时间换个标签再补一次仍是同一段，防重照旧命中。
 - 投影不看 `mode`（零投影改动）；按模式拆分统计时再加。
 
+## 活动建议（规范性 · v2.2，activity suggestions）
+
+**人是一条泳道；自动检测到的活动只是建议。** 桌面检测程序（`modules/ai-detector`，读
+ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」，但看不见人在想什么——
+猜对了是省事，猜错了就是往人的档案里写假事实。所以：
+
+- 建议住独立集合 `activity_suggestions`，**不进 `events` 台账**。`proj_daily_stats`/`proj_current`/
+  甘特/回顾/圆环/导出**结构上**看不见它——不是靠过滤，是根本没喂进去（同「AI 代理运行」的投影零交集）。
+- 只有人点「确认」，才经**补登同一条路径**写一条 `session.completed`。从那一刻起它就是普通事实，
+  和补登一样计入人的时间。
+
+### 端点与形状
+
+```jsonc
+// POST /api/core/activity/suggestions   请求 SuggestionUploadIn（形状以 ai-detector 契约「上传」节为准）
+{ "deviceId": "dev_3f9a1c2b7d4e5a60",            // ^[A-Za-z0-9_.-]{1,64}$
+  "segments": [                                   // 0–200 段
+    { "startAt": "2026-09-26T11:05:00+08:00",     // 必须带时区偏移
+      "endAt":   "2026-09-26T12:07:00+08:00",     // 必须带时区偏移，晚于 startAt，不晚于现在（容 60 秒时钟误差）
+      "durationSeconds": 3600,                    // 整数，1 ≤ n ≤ endAt-startAt，且 ≤ 86400
+      "app": "code",                              // 1–128 字符
+      "title": "plot.gd — garden — VS Code",      // 0–512 字符
+      "suggestion": { "taskId": "t_a1",           // 字符串或 null
+                      "confidence": 0.9,          // 0–1
+                      "reason": "规则 #1 命中",    // ≤200 字节（UTF-8）
+                      "classifier": "rules" } } ] } // "rules" | "service"
+// → 200 SuggestionUploadOut
+{ "accepted": 1, "duplicates": 0, "rejected": [ { "index": 3, "reason": "..." } ] }
+
+// GET /api/core/activity/suggestions?status=pending&limit=100&offset=0
+//   status: pending（缺省）| confirmed | dismissed；limit 缺省 100、上限 1000（同档案读端）
+{ "total": 1,
+  "items": [ { "id": "sug_…", "deviceId": "dev_…", "startAt": "…", "endAt": "…",
+               "durationSeconds": 3600, "app": "code", "title": "…",
+               "suggestion": { "taskId": "t_a1", "confidence": 0.9, "reason": "…", "classifier": "rules" },
+               "status": "pending" } ] }          // 按 startAt 倒序（新的在前）
+
+// POST /api/core/activity/suggestions/{id}/confirm   请求 { "taskId"?: "t_…", "mode"?: "do"|"prompt"|"review" }
+{ "id": "sug_…", "status": "confirmed", "duplicate": false, "date": "2026-09-26",
+  "event": { "id": "evt_…", "dedupeKey": "activity:sug_…", "type": "session.completed" } }
+
+// POST /api/core/activity/suggestions/{id}/dismiss
+{ "id": "sug_…", "status": "dismissed" }
+```
+
+### 上传：逐段校验，坏段不拖累整批（规范性）
+
+| 情形 | 结果 | 理由 |
+|---|---|---|
+| 请求体不是对象 / `deviceId` 不合格式 / `segments` 不是数组或超过 200 段 | **422 整批拒** | 整批的形状错了，没有「部分」可言 |
+| 某一段缺字段、类型不对、超长、时间不带偏移、`durationSeconds` 越界、`endAt` 在未来 | 该段进 `rejected[{index, reason}]`，**其余照收**，HTTP 200 | 同 `POST /events` 的「部分失败不整批回滚」。检测程序只在 2xx 后推进游标：一段坏数据若让整批 4xx，它会永远重发同一批、永远卡住 |
+| `suggestion.taskId` 指向不存在的任务 | **照收**，存成 `taskId: null, confidence: 0` | 建议错了不等于活动没发生；人确认时自己挑任务 |
+| 防重键已存在 | 计入 `duplicates`，**什么都不改** | 已确认/已忽略的不会被重传改回 pending，也不会被新建议覆盖 |
+
+- **防重键** `aw:<deviceId>:<startAt 归一化为 UTC ISO>`，唯一约束 `(user, dedupeKey)`。归一化理由同补登：
+  `+08:00` 与 `Z` 两种写法指同一时刻。`deviceId` 不许含 `:`，免得拼出来的键有歧义。
+- **`id` 由防重键确定性派生**（`sug_` + SHA-256 前 20 位十六进制）：同一段即使过期被清、之后又被重传，
+  拿到的还是同一个 `id`，于是 `activity:<id>` 防重照样命中——**同一段活动全系统至多一条事实**。
+
+### 确认：与补登同一条路径（规范性）
+
+| 字段 | 值 | 为什么 |
+|---|---|---|
+| `type` | `session.completed` | 确认后就是人的时间，与计时/补登同一种事实 |
+| `source` | **`activity-confirmed`** | 第三种证据强度：「表测的」`timer-backend`、「回忆填的」`manual-backfill`、「机器看见、人认了的」`activity-confirmed`。唯一约束 `(user, source, dedupeKey)` 使三条防重轨道结构上不可能撞 |
+| `dedupeKey` | `activity:<id>` | 重复确认、并发确认撞同一个键，只落一条 |
+| `time` | 建议的 `endAt` | 会话结束时刻（同 `stop()`/补登的 `time` 语义） |
+| `subject` | 从 planner 硬取 task→project→zone 全链，与 `timer/start`、补登**同一套判据**（共用 `_resolve_task_chain`） | 断链 404，不留给投影静默跳过 |
+| `data` | `{durationSeconds, startAt}`（+ `mode`，`do` 不写） | **与 `stop()`/补登完全同形 → 零投影改动**。`durationSeconds` 是在电脑前的秒数，不是 `endAt-startAt` |
+| `ai` | `{generated: true, confidence: <建议的 confidence>, confirmed: true}` | `yq-event.v1` §2 已登记的可选块，不新增信封字段。人改了任务时 `confidence` 仍是分类器对它自己那个建议的把握 |
+| `flags` | `[]` | |
+
+| 情形 | 状态码 |
+|---|---|
+| `id` 不存在（或属于别的租户，同形状不暴露） | 404 |
+| 请求体与建议里都没有 `taskId` | 400 |
+| `taskId` 不存在 / 归属链断裂 | 404（同 `timer/start` 文案） |
+| 已忽略的建议再确认 | 409 |
+| 已确认的建议再确认（哪怕换了任务） | **200，`duplicate:true`**，回显原来那条事件（同代理运行重复 stop 的取舍：前端网络重试不该看到错误） |
+| 已确认的建议再忽略 | 409——事实已经写了，忽略改不回去；要撤销去档案里处理那条事件 |
+| 已忽略的再忽略 | 200（幂等） |
+
+- **顺序同 timer：先 ingest 后改状态**。改状态失败后重试命中防重，不丢不重。
+- **不碰 `timer_state`**；与计时、补登、其他已确认的段在墙钟上重叠**不拦**（同补登「允许墙钟重叠」）。
+  检测程序看见的是屏幕，人可能同时在计时——判断重不重复是人确认时的事。
+- 确认不是计时的开始/停止，**不发** `honeycomb:timer-changed`（顶栏芯片只关心在跑的计时）。
+
+### 过期（惰性，无调度器）
+
+`NEXUS_SUGGESTION_TTL_DAYS`（默认 14）：待确认的按**收到时刻**、已确认/已忽略的按**处理时刻**，
+超过即在该租户下一次上传或读取时删除。已确认的删掉无妨——事实在 `events` 里，建议只是来源的草稿。
+
+### 不进导出，不进快照恢复
+
+建议不是事实，也不是计划：`GET /api/core/export` 不带它（导出形状一个键都不加），快照恢复不认它，
+「空实例」判据也不看它。换机器搬家丢掉的只是还没确认的草稿，检测程序下一轮会从它的游标继续传。
+
 ## 入口与路由
 
 - nginx 公开前缀：`/api/core/`（HANDOFF §4 已定死，前端写死地址）
@@ -1567,6 +1684,7 @@ app/modules/
   planner/    router service repo     zones/projects/tasks 的 CRUD 状态
   proposals/  router service          AI 与人的交接台
   views/      router queries          纯只读，本契约两条读端住在这里
+  activity/   router service repo     活动建议（v2.2）：不是事实；确认时调 timer 的 record_session
   projector/  registry handlers/      DISPATCH 显式表 + 各投影 handler
 ```
 
@@ -1599,7 +1717,8 @@ app/modules/
   / `proj_current` / `proj_daily_stats` / `proj_trees`（HANDOFF §6）
   / **`planner_audit`（v1.6，审计流水，append-only，见「planner 审计流水」节）**。
   / **`agent_runs`（v2.1，在跑的 AI 代理运行，活状态，不是事实）**
-  / **`proj_agent_daily_stats`（v2.1，AI 代理时长投影，见「AI 代理运行」节）**。
+  / **`proj_agent_daily_stats`（v2.1，AI 代理时长投影，见「AI 代理运行」节）**
+  / **`activity_suggestions`（v2.2，活动建议，不是事实，见「活动建议」节）**。
 - **其他模块一律不得直连本模块的 Mongo**。要数据就加读路径，不要绕。
 - `events` 集合**只增不改不删**；修正历史 = 追加修正事件。
 - data root 由 env 指定，位于 Git 工作树之外。
@@ -1615,6 +1734,7 @@ app/modules/
 | `NEXUS_HUMAN_CLIENT_TOKEN` | 否 | 人路径（网关注入）的来源凭据（v1.6） | 设了就必须 ≥16 字符；**绝不得落进受控层 / codex 可及的文件系统**；不得与 AI 凭据相同 |
 | `NEXUS_TENANT_STRICT` | 否 | 租户严格模式，默认 `0`（v2.0） | 取值只认 `0`/`1`/`true`/`false`；置 1 时缺 `X-Nexus-Tenant` 的请求一律 401。**多用户部署必开**，见「按租户分数据」节 |
 | `NEXUS_ACTOR_STRICT` | 否 | 严格模式，默认 `0`（v1.6） | 取值只认 `0`/`1`/`true`/`false`（其余立即失败）；置 1 时 `NEXUS_HUMAN_CLIENT_TOKEN` 必填，否则启动失败——**开了严格模式却没有人路径凭据 = 把前端写路径全打死，这种配置必须炸在启动那一刻，不是炸在用户点删除那一刻** |
+| `NEXUS_SUGGESTION_TTL_DAYS` | 否 | 活动建议的保留天数，默认 `14`（v2.2） | 正整数，其余立即失败。见「活动建议」节「过期」 |
 | `NEXUS_AGENT_RUN_TIMEOUT_HOURS` | 否 | AI 代理运行的遗忘超时（小时），默认 `12`（v2.1） | 正整数，其余立即失败。超时的运行在下一次 start/stop/`views/current` 读时以 `outcome:"timeout"` 关闭，时长封顶为该值 |
 
 本模块**不持有任何 LLM 密钥**——那是 ai-gateway 的事，物理隔离是设计的一部分。
@@ -1627,6 +1747,8 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 |---|---|---|
 | `ring` 前端 | `views.current.v1`；`timer.v1` 的 `POST /api/core/timer/cancel`（取消计时按钮「取消，不记录」）；v1.2 起 `views.tree.v1` 任务节点的 `dependsOn`/`done`（F-RING-6 前置未完成提示，读既有 tree 接口，无新增请求）；`views.gantt.v1` 的 `today`/`projects[].id`/`projects[].tasks[].{id,name}`/`tasks[].actual[].{date,seconds}`（`modules/ring` 契约 commit `2cba2aa` 已登记己方消费，本行是反向索引追平）；**v1.8 新增已登记**：`timer.v1` 的 `POST /api/core/timer/backfill`（空闲态「计时方式」两个 tab 旁的「补登」入口，运行态也可点，任务下拉复用现有取任务列表路径，`modules/ring` 契约 commit `e6cfd9d` 已登记己方消费，本行是反向索引追平） | `modules/ring` |
 | `hive` 前端 | `views.tree.v1`（v1.2 起任务节点带 `plan`/`dependsOn`，控件按这两个键 feature-detect 是否亮起）；`planner.crud.v1` 的 `TaskOut.plan`/`dependsOn`（F-TABLE-3 任务排期与前置任务编辑，写走既有 `PATCH /api/core/planner/tasks/{id}`）；`views.gantt.v1` 的 `projects[].plan`/`projects[].actual[].{date,seconds}`/`today`（`modules/hive` 契约 commit `603a44e` 已登记己方消费，本行是反向索引追平）；v1.3 起 `views.export.v1`（「导出数据」按钮，全量拉一次 + `exportedAt` 用于文件命名）；**v1.8 新增已登记**：`timer.v1` 的 `POST /api/core/timer/backfill`（任务行「补登」按钮，点开时任务字段预填该行任务且不可改，`modules/hive` 契约 commit `f11cdb3` 已登记己方消费，本行是反向索引追平） | `modules/hive` |
+| `ring` 前端（v2.2） | `activity.suggestions.v1` 的 GET / confirm / dismiss（计时页「待确认」面板；端点 404 时整块隐藏） | `modules/ring` |
+| `ai-detector` 桌面程序（v2.2） | `activity.suggestions.v1` 的 `POST /api/core/activity/suggestions`（带设备令牌，经网关） | `modules/ai-detector` |
 | `gantt` 前端 | `views.gantt.v1`；v1.1 起响应新增 `projects[].tasks[]`（任务层 plan/dependsOn/actual，F-GANTT-1..4） | 不在本仓 |
 | `hive` / 新 todo 前端 | **v1.5 新增消费待登记**：`views.next-actions.v1`（F-TODO-2..5，待办区视图）、`views.review.v1`（F-REVIEW-2，每周回顾视图）、`planner.crud.v1` 的 `actor`/`lastWriter`（F-ACTOR-3，AI 写过的对象角标展示）、`p_inbox` 禁删（F-INBOX-1..4，收件箱/理清 UI） | `modules/hive`（或 GTD PRD O1 待定的新 `/todo/` 页） |
 | `ai-planner`（波2 已落地） | `planner.crud.v1` 的统一写入口（受控工具层的白名单命令面，F-AI-2）+ `actor="ai"` 写入（F-ACTOR-1）+ `views.export.v1`（F-AI-3，读全量日程喂 LLM）；**明确不消费** `events`/`timer`（红线，AI 只碰 planner）。**v1.6 新增要求**：写请求应携带 `X-Nexus-Client-Token: $NEXUS_AI_CLIENT_TOKEN`（携带后 `actor` 由服务端强制判定，受控层再也不必、也不能自报）；**高风险写从此在服务端被 403 拒绝**，与受控层「只产提议」互为二次设防 | `code/ai-planner`；AI 侧行为约定见仓根 `contracts/ai-planner-guide-v1.md` |
