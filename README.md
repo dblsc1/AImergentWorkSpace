@@ -188,6 +188,26 @@ Switching from the shared password and want to keep your existing data?
 `NEXUS_TENANT_STRICT=1` makes the backend refuse any request that arrives
 without an account instead of quietly dropping it into the shared data.
 
+### Device tokens for desktop programs and AI agents
+
+A sync program or an agent hook has no browser cookie. Give it a device token
+and send `Authorization: Bearer <token>` to `/api/core/...`. Tokens **open the
+API only, never pages**, and last a year by default.
+
+- On the web: once logged in, `POST /api/auth/tokens`
+  (`Content-Type: application/json`, body `{}` or `{"label":"laptop"}`) returns
+  `{"token", "tenant", "expiresAt"}`; `POST /api/auth/tokens/revoke` kills every
+  token of your own account.
+- From the CLI (in `deploy/`):
+  `docker compose exec auth python /app/auth_stub.py token alice` issues one,
+  `revoke alice` kills them all; no name = the shared-password identity.
+
+`AUTH_SECRET` must be set in `.env` (the release installer already writes one;
+for a hand-built `deploy/` add a random string yourself) — without a fixed key a
+token would die on restart, so none are issued. Changing or deleting an account,
+or removing the shared password, kills the matching tokens; revocation takes
+effect within two seconds.
+
 The reason for drawing the line there: an open-source release should not ship a
 real account system bolted on. If you need more, replace that one
 implementation — as long as it still satisfies the same contract's endpoints

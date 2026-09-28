@@ -80,6 +80,10 @@ HONEYCOMB_EXTRA_ROUTES_DIR=/srv/my-deploy/routes
   设门就锁死了唯一的入口。所以**认证服务在这个前缀下的每一个非登录端点都必须自己
   鉴权**，网关不替它挡。别以为「在网关后面」就等于「受保护」。
 - 网关转给认证服务的请求**不带**客户端的 `X-Nexus-Tenant`（见第五节）。
+- verify 子请求带 `X-Original-URI: $request_uri`（原始请求的路径，含站点前缀、未解码），
+  并照 `auth_request` 的缺省把原请求的其余头（含 `Authorization`）原样带过去。
+  auth.gate v1.2 的设备令牌靠这两样判断「只开 `/api/core/*`、不开页面」；自己写的门
+  子请求也要保留这两样，否则令牌一律被拒（失败方向是拒绝，不是放行）。
 
 ## 三、登录页【冻结】
 

@@ -186,6 +186,7 @@ jobs:
   accounts:
     # 占位认证的账号+密码登录（auth.gate v1.1）+ nexus-core 按租户分数据（v2.0），
     # 按 README「多个账号」那一节的步骤真起一遍：两个账号，数据互不可见。
+    # 同一套栈再验设备令牌（v1.2）：令牌过网关只开 /api/core/*，开不了页面，吊销即失效。
     name: 多账号
     runs-on: ubuntu-latest
     defaults:
@@ -193,8 +194,10 @@ jobs:
         working-directory: deploy
     steps:
       - uses: actions/checkout@v7
-      - name: 写 .env（不设共享口令，开严格模式）
-        run: sed -e 's/^NEXUS_TENANT_STRICT=.*/NEXUS_TENANT_STRICT=1/' .env.example > .env
+      - name: 写 .env（不设共享口令，开严格模式；设 AUTH_SECRET 才发设备令牌）
+        run: |
+          sed -e 's/^NEXUS_TENANT_STRICT=.*/NEXUS_TENANT_STRICT=1/' .env.example > .env
+          echo "AUTH_SECRET=$(openssl rand -hex 32)" >> .env
       - name: 加账号
         run: |
           for u in alice bob; do
@@ -204,6 +207,8 @@ jobs:
         run: docker compose up -d --wait --wait-timeout 300
       - name: 多账号
         run: test/accounts.sh ci-accounts-pw
+      - name: 设备令牌（auth.gate v1.2）
+        run: test/tokens.sh ci-accounts-pw
       - name: 失败时的日志
         if: failure()
         run: docker compose logs --no-color

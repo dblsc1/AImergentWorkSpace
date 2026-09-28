@@ -1,4 +1,4 @@
-"""auth.gate.v1.1 占位实现：真起进程、真发 HTTP，按契约逐条核对。"""
+"""auth.gate.v1.2 占位实现：真起进程、真发 HTTP，按契约逐条核对。"""
 
 from __future__ import annotations
 
@@ -194,3 +194,172 @@ def test_cookie_path_follows_base_path(tmp_path):
     env = {**os.environ, "AUTH_PASSWORD": PW, "AUTH_BASE_PATH": "Cockpit"}
     r = subprocess.run([sys.executable, str(STUB)], env=env, capture_output=True, text=True, timeout=10)
     assert r.returncode != 0 and "AUTH_BASE_PATH" in r.stderr
+
+
+# ── 设备令牌（v1.2）────────────────────────────────────────────────
+
+SECRET_ENV = {"AUTH_SECRET": "s" * 32}  # 与 Stub 同一把密钥：命令行签的令牌服务端才认
+API = {"X-Original-URI": "/api/core/views/tree"}
+
+
+def _bearer(token: str, uri: str | None = "/api/core/views/tree") -> dict:
+    h = {"Authorization": f"Bearer {token}"}
+    if uri is not None:
+        h["X-Original-URI"] = uri
+    return h
+
+
+def _token_cli(env: dict, *args: str) -> str:
+    r = _cli({**env, **SECRET_ENV}, "token", *args)
+    assert r.returncode == 0, r.stderr
+    return r.stdout.strip()
+
+
+def _http_token(stub, cookie: str, body: dict | None = None):
+    status, _, data = stub.req("POST", "/api/auth/tokens", body if body is not None else {}, cookie=cookie)
+    return status, (json.loads(data) if data else None)
+
+
+def test_bearer_opens_api_with_tenant_but_never_pages(stub, users):
+    alice = json.loads(Path(users["AUTH_USERS_FILE"]).read_text())["users"]["alice"]["id"]
+    tok = _token_cli(users, "alice")
+    status, h, body = stub.req("GET", "/api/auth/verify", headers=_bearer(tok))
+    assert (status, h.get("X-Nexus-Tenant"), body) == (204, alice, b"")
+    for uri in ("/hive/", "/login/", "/api/auth/me", "/api/core/%2e%2e/hive/", "/api/core/../hive/",
+                "/api/core/..%2Fhive/", "/api/core/%2e%2e/%2E%2E/hive/", "/api/corex/", None):
+        assert stub.req("GET", "/api/auth/verify", headers=_bearer(tok, uri))[0] == 401, uri
+    assert stub.req("GET", "/api/auth/verify", headers=_bearer(tok, "/api/core/x?y=../../hive"))[0] == 204
+
+
+def test_bearer_follows_base_path(tmp_path):
+    env = {"AUTH_PASSWORD": PW, "AUTH_BASE_PATH": "/Cockpit/", "AUTH_TOKENS_FILE": str(tmp_path / "t.json")}
+    tok = _token_cli(env)
+    s = Stub(env)
+    try:
+        assert s.req("GET", "/api/auth/verify", headers=_bearer(tok, "/Cockpit/api/core/views/tree"))[0] == 204
+        assert s.req("GET", "/api/auth/verify", headers=_bearer(tok, "/api/core/views/tree"))[0] == 401
+    finally:
+        s.stop()
+
+
+def test_token_and_cookie_domains_are_separate(stub, users):
+    tok = _token_cli(users, "alice")
+    _, cookie = stub.login(username="alice", password=PW)
+    assert stub.req("GET", "/api/auth/verify", cookie=f"cockpit_session={tok}")[0] == 401
+    assert stub.req("GET", "/api/auth/verify", headers=_bearer(cookie.partition("=")[2]))[0] == 401
+    # 带了 Bearer 就只看令牌，不回落到 cookie
+    assert stub.req("GET", "/api/auth/verify", cookie=cookie, headers=_bearer("garbage"))[0] == 401
+
+
+def test_garbage_and_huge_authorization_is_401(stub):
+    for auth in ("Bearer", "Bearer ", "Bearer hct1", "Bearer hct1....", "Bearer hct1.x.y.z.w",
+                 "bearer hct1.1.0..deadbeef", "Bearer " + "é" * 50, "Bearer " + "a." * 8000):
+        assert stub.req("GET", "/api/auth/verify", headers={**API, "Authorization": auth})[0] == 401, auth[:30]
+
+
+def test_http_issue_and_revoke(stub, users):
+    _, cookie = stub.login(username="alice", password=PW)
+    status, body = _http_token(stub, cookie, {"label": "laptop"})
+    assert status == 201 and set(body) == {"token", "tenant", "expiresAt"} and body["tenant"].startswith("u_")
+    old = body["token"]
+    assert stub.req("GET", "/api/auth/verify", headers=_bearer(old))[0] == 204
+    assert stub.req("POST", "/api/auth/tokens/revoke", {}, cookie=cookie)[0] == 204
+    assert stub.req("GET", "/api/auth/verify", headers=_bearer(old))[0] == 401
+    status, body = _http_token(stub, cookie)
+    assert status == 201 and stub.req("GET", "/api/auth/verify", headers=_bearer(body["token"]))[0] == 204
+    # 别人的令牌不受影响
+    _, bob = stub.login(username="bob", password=PW)
+    bob_tok = _http_token(stub, bob)[1]["token"]
+    stub.req("POST", "/api/auth/tokens/revoke", {}, cookie=cookie)
+    assert stub.req("GET", "/api/auth/verify", headers=_bearer(bob_tok))[0] == 204
+    assert os.stat(stub.env["AUTH_USERS_FILE"].replace("users.json", "tokens.json")).st_mode & 0o077 == 0
+
+
+def test_http_endpoints_need_cookie_json_and_small_body(stub, users):
+    tok = _token_cli(users, "alice")
+    assert _http_token(stub, "")[0] == 401
+    assert stub.req("POST", "/api/auth/tokens", {}, headers={"Authorization": f"Bearer {tok}"})[0] == 401
+    assert stub.req("POST", "/api/auth/tokens/revoke", {}, headers={"Authorization": f"Bearer {tok}"})[0] == 401
+    _, cookie = stub.login(username="alice", password=PW)
+    assert _http_token(stub, cookie, {"label": "x" * 65})[0] == 400
+    assert stub.req("POST", "/api/auth/tokens", None, cookie=cookie)[0] == 415  # 没有 JSON 类型
+    # 拒收请求体必须断连（安全约定 5）：读到 EOF 而不是挂住等下一个请求
+    with socket.create_connection(("127.0.0.1", stub.port), timeout=10) as sock:
+        sock.sendall(f"POST /api/auth/tokens HTTP/1.1\r\nHost: x\r\nCookie: {cookie}\r\n"
+                     "Content-Type: application/json\r\nContent-Length: 9000\r\n\r\n".encode())  # 只报长度不发体
+        got = b""
+        while chunk := sock.recv(65536):
+            got += chunk
+    assert got.startswith(b"HTTP/1.1 413")
+
+
+def test_cli_revoke_and_passwd_kill_tokens(stub, users):
+    old = _token_cli(users, "alice")
+    assert _cli(users, "revoke", "alice").returncode == 0
+    new = _token_cli(users, "alice")
+    time.sleep(2.6)
+    assert stub.req("GET", "/api/auth/verify", headers=_bearer(old))[0] == 401
+    assert stub.req("GET", "/api/auth/verify", headers=_bearer(new))[0] == 204
+    assert _cli(users, "passwd", "alice", password="another-pass-2").returncode == 0
+    time.sleep(2.6)
+    assert stub.req("GET", "/api/auth/verify", headers=_bearer(new))[0] == 401
+
+
+def test_expired_token_is_401(tmp_path):
+    env = {"AUTH_PASSWORD": PW, "AUTH_TOKENS_FILE": str(tmp_path / "t.json"), "AUTH_TOKEN_DAYS": "0"}
+    tok = _token_cli(env)
+    s = Stub(env)
+    try:
+        time.sleep(1.1)
+        assert s.req("GET", "/api/auth/verify", headers=_bearer(tok))[0] == 401
+    finally:
+        s.stop()
+
+
+def test_shared_password_token_dies_without_password(tmp_path):
+    env = {"AUTH_PASSWORD": PW, "AUTH_TOKENS_FILE": str(tmp_path / "t.json")}
+    tok = _token_cli(env)
+    s = Stub(env)
+    try:
+        status, h, _ = s.req("GET", "/api/auth/verify", headers=_bearer(tok))
+        assert status == 204 and "X-Nexus-Tenant" not in h
+        _, cookie = s.login(password=PW)
+        assert _http_token(s, cookie)[1]["tenant"] == "u_local"
+    finally:
+        s.stop()
+    users = {"AUTH_USERS_FILE": str(tmp_path / "u.json"), "AUTH_TOKENS_FILE": env["AUTH_TOKENS_FILE"]}
+    assert _cli(users, "adduser", "alice").returncode == 0
+    s = Stub(users)  # 同一把密钥，只是关了共享口令
+    try:
+        assert s.req("GET", "/api/auth/verify", headers=_bearer(tok))[0] == 401
+    finally:
+        s.stop()
+
+
+def test_cli_refuses_tokens_without_secret_or_identity(users):
+    env = {k: v for k, v in os.environ.items() if k != "AUTH_SECRET"}
+    r = subprocess.run([sys.executable, str(STUB), "token", "alice"], env={**env, **users},
+                       capture_output=True, text=True)
+    assert r.returncode != 0 and "AUTH_SECRET" in r.stderr and not r.stdout
+    assert _cli({**users, **SECRET_ENV}, "token", "nobody").returncode != 0
+    assert _cli({**users, **SECRET_ENV}, "token").returncode != 0  # 没开共享口令
+
+
+def test_http_refuses_tokens_without_secret(users):
+    s = Stub(users)
+    s.proc.terminate(); s.proc.wait(5)
+    env = {k: v for k, v in s.env.items() if k != "AUTH_SECRET"}
+    s.proc = subprocess.Popen([sys.executable, str(STUB)], env={**{k: v for k, v in os.environ.items()
+                              if k != "AUTH_SECRET"}, **env}, stderr=subprocess.PIPE, text=True)
+    try:
+        for _ in range(100):
+            try:
+                s.req("GET", "/api/auth/health")
+                break
+            except OSError:
+                time.sleep(0.05)
+        _, cookie = s.login(username="alice", password=PW)
+        status, body = _http_token(s, cookie)
+        assert status == 503 and body["error"] == "tokens_disabled"
+    finally:
+        s.stop()
