@@ -172,6 +172,53 @@
     });
   }
 
+  // ── 导入数据（快照恢复）：选文件 → 预演报条数 → 确认才写 ─────────────
+  // 只对空实例开放：服务端 409 时如实转述，并说清楚为什么（恢复通道不是合并通道）。
+  function importFileChosen(file) {
+    var shell = $("#importShell");
+    var status = $("#importStatus");
+    var confirmBtn = $("#importConfirm");
+    if (!shell || !status || !confirmBtn || !file) return;
+    // 面板在页面最底下，数据多时点了按钮看不见它出来；每次改字都重新对齐——
+    // 预演结果回来时文字变长、面板长高，只在开头滚一次底部会露不全（手机实测）。
+    function say(text) {
+      status.textContent = text;
+      if (shell.scrollIntoView) shell.scrollIntoView({ block: "nearest" });
+    }
+    shell.hidden = false;
+    confirmBtn.hidden = true;
+    say("正在读取 " + file.name + "…");
+    return file.text().then(function (text) {
+      var snapshot;
+      try { snapshot = JSON.parse(text); } catch (e) {
+        say("⚠ 这不是合法的 JSON 文件：" + file.name);
+        return;
+      }
+      say("正在预演（不会写入任何东西）…");
+      return D.restoreSnapshot(snapshot, null).then(function (dry) {
+        if (!dry.ok) {
+          say(dry.status === 409
+            ? "⚠ 这里已经有数据了。导入只能进空的实例（换机器 / 重装后把数据搬回来用），不会和现有数据合并。"
+            : "⚠ 导入不了：" + dry.message);
+          return;
+        }
+        var n = (dry.data && dry.data.summary) || {};
+        say("预演通过，将导入：" + (n.zones || 0) + " 个分区、" + (n.projects || 0) +
+          " 个项目、" + (n.tasks || 0) + " 个任务、" + (n.events || 0) + " 条记录。确认无误点「确认导入」。");
+        confirmBtn.hidden = false;
+        confirmBtn.onclick = function () {
+          confirmBtn.hidden = true;
+          say("正在导入…");
+          D.restoreSnapshot(snapshot, dry.data.checksum).then(function (res) {
+            if (!res.ok) { say("⚠ 导入失败：" + res.message); return; }
+            say("✅ 已导入，正在刷新页面…");
+            window.setTimeout(function () { window.location.reload(); }, 800);
+          });
+        };
+      });
+    });
+  }
+
   // crud.js 监听最新 tree（填下拉框、算改前改后 diff，见 C6），不重复发请求。
   var treeListeners = [];
   function notifyTreeListeners() {
@@ -206,6 +253,12 @@
     $("#refreshTree").addEventListener("click", function () { load(); loadArchive(true); });
     $("#archiveLoadMore").addEventListener("click", function () { loadArchive(false); });
     $("#exportData").addEventListener("click", function () { loadExport(); });
+    $("#importData").addEventListener("click", function () { $("#importFile").click(); });
+    $("#importFile").addEventListener("change", function (ev) {
+      var file = ev.target.files && ev.target.files[0];
+      ev.target.value = "";   // 同一个文件再选一次也要触发 change
+      importFileChosen(file);
+    });
 
     updateClock();
     window.setInterval(updateClock, 1000);
