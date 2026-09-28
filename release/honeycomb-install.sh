@@ -64,7 +64,7 @@ HONEYCOMB_TZ=Asia/Shanghai
 EOF
   fi
 
-  say "拉镜像（第一次要几分钟）……"
+  if [ "$fresh" = 1 ]; then say "拉镜像（第一次要几分钟）……"; else say "拉新版镜像……"; fi
   # compose 的 -q 压不住逐层进度（走 stderr），整段收进日志，出错才打印
   if [ -z "${HONEYCOMB_NO_PULL:-}" ]; then
     docker compose pull -q >.pull.log 2>&1 || { cat .pull.log; die "拉镜像失败，检查网络。"; }

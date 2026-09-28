@@ -37,6 +37,22 @@
 
   var IDLE = 'idle', RUNNING = 'running', DEGRADED = 'degraded';
   var WORD_IDLE = '未在计时';
+  var WORD_PAUSED = '已暂停';
+  // 蜂巢 / 计时台共用的两个本机键（contracts/timer-ring-visual-v1.md「暂停记忆」「累计记忆」）。
+  // 后端没有暂停：暂停时 views/current 是空闲，只有这两个键知道「停的是谁、之前累计多少」。
+  var PAUSED_KEY = 'nexus.timer.paused.v1';
+  var CARRY_KEY = 'nexus.timer.carry.v1';
+  // 形状不对（不是对象、没有 taskId）一律当不存在；秒数只认有限非负数，
+  // 否则负数会倒扣本段、怪对象在转数字时抛（Codex 审核）。
+  var readKey = function (k) {
+    try {
+      var v = JSON.parse(localStorage.getItem(k) || 'null');
+      return (v && typeof v === 'object' && typeof v.taskId === 'string') ? v : null;
+    } catch (e) { return null; }
+  };
+  var secsOf = function (v) {
+    return (typeof v === 'number' && isFinite(v) && v >= 0) ? Math.floor(v) : 0;
+  };
   var WORD_DEGRADED = '状态未知';
   var HINT_DEGRADED = '后端暂时联系不上，计时状态未知 —— 这不表示你没在计时';
 
@@ -291,6 +307,7 @@
   /* ── 计时状态 ────────────────────────────────────────────────── */
   var taskNode = null;   // 运行时把 elapsed 前面那段替换成任务名，靠 liveWord 本身承载
   var startMs = null;
+  var taskId = null;     // 在计的任务：每秒对一次累计记忆（见 paint）
   var state = DEGRADED;
 
   var two = function (n) { return (n < 10 ? '0' : '') + n; };
@@ -311,12 +328,22 @@
     }
     chip.title = '';
     if (state === IDLE) {
-      liveWord.textContent = WORD_IDLE;
+      // 以前空闲时读数停在上一段的最后一秒（「未在计时 · 03:47」，Windows 验收）。
+      // 已知天花板：暂停记忆按契约只在本机。在别的浏览器继续并结束了，这里仍显示
+      // 「已暂停」—— 与 hive 中心格 / 计时台同一语义，要根治得把暂停搬到后端。
+      var paused = readKey(PAUSED_KEY);
+      liveWord.textContent = paused ? WORD_PAUSED : WORD_IDLE;
+      elapsedNode.textContent = fmt(paused ? secsOf(paused.carriedSeconds) : 0);
       return;
     }
     // running：liveWord 显示任务名（F-NAV-2：running -> 青点脉动 + 任务名 + 时长）
     liveWord.textContent = taskNode || '计时中';
-    elapsedNode.textContent = fmt(Math.floor((Date.now() - startMs) / 1000));
+    // 暂停后继续：读数 = 之前各段累计 + 本段（只影响显示，同 hive / ring）。每次画都现读：
+    // 「继续」时 start 一成功顶栏就收到刷新事件，计时台写累计记忆在那之后，只在 apply
+    // 读一次会错过（实测继续后仍从 00:00 走）。
+    var carry = readKey(CARRY_KEY);
+    var carrySec = (carry && carry.taskId === taskId) ? secsOf(carry.carriedSeconds) : 0;
+    elapsedNode.textContent = fmt(Math.floor((Date.now() - startMs) / 1000) + carrySec);
   };
 
   var degrade = function () { startMs = null; state = DEGRADED; paint(); };
@@ -333,6 +360,7 @@
     startMs = t;
     state = RUNNING;
     taskNode = (data.task && data.task.name) ? data.task.name : '';
+    taskId = (data.task && data.task.id) || null;
     paint();
   };
 
