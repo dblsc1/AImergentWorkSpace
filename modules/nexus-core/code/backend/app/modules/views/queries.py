@@ -27,6 +27,7 @@ from ..projector.handlers import current as current_projection
 from ..projector.handlers import daily_stats as daily_stats_projection
 from ..timer import service as timer_service
 from .schemas import (
+    CurrentAgent,
     CurrentOut,
     CurrentProject,
     CurrentTask,
@@ -48,9 +49,11 @@ def _share(part: int, whole: int) -> float:
 
 
 def get_current() -> CurrentOut:
+    # v2.1：代理泳道与人的泳道各算各的；list_agent_runs 会顺手收掉超时的运行（契约明文）。
+    agents = [CurrentAgent(**run) for run in timer_service.list_agent_runs(current_tenant())]
     state = timer_service.get_running_state(current_tenant())
     if state is None:
-        return CurrentOut(**_IDLE)
+        return CurrentOut(**_IDLE, agents=agents)
 
     task_doc = planner_service.get_task(state["taskId"])
     project_doc = (
@@ -95,6 +98,7 @@ def get_current() -> CurrentOut:
         if task_doc
         else None,
         sessionStartAt=state["startAt"],
+        agents=agents,
     )
 
 

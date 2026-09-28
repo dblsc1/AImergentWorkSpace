@@ -32,6 +32,8 @@ from .snapshot import restore_snapshot  # noqa: F401 —— 转发给 restore/�
 #: 转发（省一层薄包装，把本文件拉回 300 行预算），种子脚本本就已经直接用
 #: `planner.repo`/`planner.service` 两层，多认一个 `planner.inbox` 不算新越界。
 INBOX_PROJECT_ID = inbox.PROJECT_ID
+#: 收件箱分区 id（v2.1）：不挂任务的 AI 代理运行，subject 落在收件箱上（timer/agents.py）。
+INBOX_ZONE_ID = inbox.ZONE_ID
 
 _VALID_KINDS = ("normal", "ephemeral")
 

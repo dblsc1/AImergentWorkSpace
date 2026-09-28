@@ -172,6 +172,7 @@ key = <分区号>-<项目号>-<名字号>-<同名序号>
 | `growth.granted` | `amount`, `note` | 通用成长点（**学生入门用的最简类型**） |
 | `diary.extracted` | 结构化分类、备注 | 日记链路泛化 |
 | `plan.updated` | 变更摘要 | 计划修改留痕（审计用） |
+| `agent.run.completed` | `agent`, `tool`, `model?`, `startAt`, `durationSeconds`, `outcome`（`done`/`failed`/`cancelled`/`timeout`）, `output?` | 一次 AI 代理运行结束（2026-09-28 追加）。**不是人的时间**：消费方不得把它与 `session.completed` 相加 |
 
 **学生入门只需要：信封 + `growth.granted`。**
 
@@ -237,3 +238,4 @@ key = <分区号>-<项目号>-<名字号>-<同名序号>
 | 日期 | 变更 |
 |---|---|
 | 2026-07-29 | v1 首版。定 dedupeKey 与双时间语义|
+| 2026-09-28 | §6 追加 `agent.run.completed`（AI 代理运行结束）。只增类型，信封不变 |

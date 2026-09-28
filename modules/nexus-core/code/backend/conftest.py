@@ -64,6 +64,8 @@ _COLLECTIONS = (
     # 漏了它，审计记录会跨测试累积，"这条流水是本用例写的"就再也不成立，
     # 而症状是别的用例莫名其妙地多几条——最难查的那种。
     "planner_audit",
+    # v2.1 AI 代理运行：活状态 + 代理时长投影。
+    "agent_runs", "proj_agent_daily_stats",
 )
 
 
