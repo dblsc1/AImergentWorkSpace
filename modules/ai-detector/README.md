@@ -16,11 +16,14 @@
 
 脱敏（上传前在本机做）：
 
-- 邮箱 → `[邮箱]`，手机 / 电话号 → `[电话]`，6 位以上数字串 → `[数字]`，标题里的网址只留域名。
+- 邮箱 → `[邮箱]`，手机 / 电话号 → `[电话]`，6 位以上数字串 → `[数字]`。
+- 标题里的网址（http、ftp、smb、ssh……，写没写 `https://` 都算）只留域名；`file://` 与
+  `\\服务器\共享` 路径整个换成 `[路径]`；本机路径（`C:\Users\你\…\a.docx`、`/home/你/…`）只留文件名。
 - 聊天、邮件、密码管理器（微信、QQ、钉钉、飞书、Telegram、Slack、Outlook、1Password、KeePassXC……
   名单可改，见 `appOnlyApps`）：**只留程序名，标题为空**。
 - 浏览器：只留 `域名 · 页面标题`，完整网址、路径、查询串一律不发。无痕窗口只留程序名。
-  （域名来自 ActivityWatch 的浏览器扩展；没装扩展就只有脱敏后的窗口标题。）
+  域名和标题来自 ActivityWatch 的浏览器扩展；**没装扩展（或扩展没报这段时间）的浏览器段只留程序名**——
+  窗口标题里可能有无痕页面，分不清就不发。
 
 隐私默认值：**同步默认关**，要你自己打开；随时可以暂停。关着 / 暂停时程序不读也不发任何东西，
 而且**那段时间以后也不会补传**。
@@ -36,7 +39,10 @@
 - **Linux GNOME Wayland**：自带的窗口记录器在 Wayland 下拿不到窗口。先装 GNOME 扩展
   [Focused Window D-Bus](https://extensions.gnome.org/extension/5592/focused-window-d-bus/)，
   再用 [awatcher](https://github.com/2e3s/awatcher) 代替自带的窗口记录器和离开检测。
-- 想让浏览器段带上域名：装 ActivityWatch 的浏览器扩展（aw-watcher-web，Chrome / Firefox 商店里有）。
+- 想让浏览器段带上域名和页面标题：装 ActivityWatch 的浏览器扩展（aw-watcher-web，Chrome / Firefox
+  商店里有）。不装的话浏览器段只有程序名。
+- 只读**本机**的记录：ActivityWatch 开了多设备同步时，别的电脑的桶不会被读。主机名改过导致对不上时，
+  `status` 会报错并列出现有的桶，在配置里填 `windowBucket` / `afkBucket` 即可。
 
 ## 2. 装 ai-detector
 
@@ -53,6 +59,7 @@ ai-detector run         # 或者现在就常驻
 ```
 
 其他命令：`status`（看上一轮结果）、`pause` / `resume`、`disable`、`autostart uninstall`。
+同一个配置目录只能有一个 `run`；`run` 在跑时 `once` 会拒绝（避免两个进程抢游标）。
 
 **设备令牌**：桌面程序没有浏览器登录态，用设备令牌访问 HoneyComb（`Authorization: Bearer`）。
 令牌由 HoneyComb 的认证服务发放；用自带的占位认证时，在服务器上执行
@@ -86,7 +93,8 @@ docker run --rm -v "$PWD":/src -w /src -e CGO_ENABLED=0 -e GOOS=windows -e GOARC
 
 可选的外部分类服务：配 `classifierUrl`，规则没认出来的段会发给它，接口见
 [`contracts/activity.classifier.v1`](../../contracts/activity.classifier.v1/contract.md)。
-服务挂了不影响上传，那些段只是没有建议。
+地址必须是 `https://`（本机 `localhost` 除外）；它要鉴权就填 `classifierToken`——
+**设备令牌不会发给分类服务**。服务挂了不影响上传，那些段只是没有建议。
 
 ## 4. 配置参考（`ai-detector.json`）
 
@@ -106,10 +114,15 @@ Linux `~/.config/honeycomb/`；设环境变量 `AI_DETECTOR_HOME` 可换目录�
 | `minSegmentMinutes` | 3 | M：在电脑前不到 M 分钟的段丢掉 |
 | `maxBacklogHours` | 72 | 离线太久，超过这么多小时的积压丢弃 |
 | `rulesFile` | 配置目录下 `rules.json` | |
-| `classifierUrl` | 空 | 外部分类服务地址，空 = 只用规则 |
+| `classifierUrl` | 空 | 外部分类服务地址，空 = 只用规则。须 https（本机回环除外） |
+| `classifierToken` | 空 | 分类服务自己的令牌，作为 `Authorization: Bearer` 发给它；与设备令牌无关 |
+| `windowBucket` / `afkBucket` | 空 | ActivityWatch 桶 id，空 = 按本机主机名找 |
 | `appOnlyApps` | 聊天 / 邮件 / 密码管理器名单 | 这些程序只留程序名 |
 | `browserApps` | 常见浏览器名单 | 这些程序只留域名 + 页面标题 |
 
 程序名比较时忽略大小写、`.exe`、空格和连字符，所以 `WeChat.exe` 与 `wechat` 是同一个。
 
 日志：`run` 模式写 `ai-detector.log`（与配置同目录），超过 5 MB 启动时清空。
+
+配置文件里有设备令牌。macOS / Linux 上它的权限是 0600（只有你能读）；**Windows 上程序没有另设权限**，
+依靠的是 `%APPDATA%` 目录默认只允许本用户访问——别把配置目录挪到共享位置。

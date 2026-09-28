@@ -65,41 +65,53 @@ type awData struct {
 	window, afk, web []awEvent
 }
 
-func (c awClient) fetch(from, to time.Time) (awData, error) {
+// fetch 取 [from,to] 的三类事件。windowBucket / afkBucket 非空时直接用它们（桶 id），
+// 否则按本机主机名找。
+func (c awClient) fetch(from, to time.Time, windowBucket, afkBucket string) (awData, error) {
 	var buckets map[string]awBucket
 	if err := c.get("/buckets/", &buckets); err != nil {
 		return awData{}, err
 	}
 	host, _ := os.Hostname()
+	// 只认本机的桶。ActivityWatch 可以在多台设备间同步，同类型的桶可能有好几台机器的；
+	// 猜错一个就会把别人的电脑活动当成本机的上传。所以对不上主机名就报错，不猜——
+	// 主机名改过的话，在配置里写明桶 id。
 	pick := func(typ string) []string {
-		// 同一类型可能有多台机器的桶（ActivityWatch 可以同步）。只要本机的；
-		// 找不到本机名对得上的（主机名改过），退回同类型里 id 最小的那个——
-		// 窗口 / 离开桶只取一个，多取会把两台机器的时间叠在一条人的时间线上。
-		var mine, all []string
+		var ids []string
 		for id, b := range buckets {
-			if b.Type != typ {
-				continue
-			}
-			all = append(all, id)
-			if b.Hostname == host {
-				mine = append(mine, id)
+			if b.Type == typ && b.Hostname == host {
+				ids = append(ids, id)
 			}
 		}
-		sort.Strings(mine)
-		sort.Strings(all)
-		if len(mine) > 0 {
-			return mine
+		sort.Strings(ids)
+		return ids
+	}
+	one := func(typ, explicit, field string) (string, error) {
+		if explicit != "" {
+			if _, ok := buckets[explicit]; !ok {
+				return "", fmt.Errorf("配置的 %s=%q 在 ActivityWatch 里不存在", field, explicit)
+			}
+			return explicit, nil
 		}
-		return all
+		ids := pick(typ)
+		if len(ids) == 0 {
+			var others []string
+			for id, b := range buckets {
+				if b.Type == typ {
+					others = append(others, id)
+				}
+			}
+			sort.Strings(others)
+			return "", fmt.Errorf("ActivityWatch 里没有本机（主机名 %q）的 %s 桶；现有同类桶 %v。"+
+				"记录器没在跑，或主机名改过——后者请在配置里写 %s", host, typ, others, field)
+		}
+		return ids[0], nil
 	}
 	q := "?start=" + url.QueryEscape(from.UTC().Format(time.RFC3339Nano)) +
 		"&end=" + url.QueryEscape(to.UTC().Format(time.RFC3339Nano))
-	events := func(ids []string, limit int) ([]awEvent, error) {
+	events := func(ids ...string) ([]awEvent, error) {
 		var out []awEvent
-		for i, id := range ids {
-			if limit > 0 && i >= limit {
-				break
-			}
+		for _, id := range ids {
 			var evs []awEvent
 			if err := c.get("/buckets/"+url.PathEscape(id)+"/events"+q, &evs); err != nil {
 				return nil, err
@@ -108,20 +120,23 @@ func (c awClient) fetch(from, to time.Time) (awData, error) {
 		}
 		return out, nil
 	}
-	win := pick("currentwindow")
-	if len(win) == 0 {
-		return awData{}, fmt.Errorf("ActivityWatch 里没有窗口桶（currentwindow）：窗口记录器没在跑？")
+	win, err := one("currentwindow", windowBucket, "windowBucket")
+	if err != nil {
+		return awData{}, err
+	}
+	afk, err := one("afkstatus", afkBucket, "afkBucket")
+	if err != nil {
+		return awData{}, err
 	}
 	var d awData
-	var err error
-	if d.window, err = events(win, 1); err != nil {
+	if d.window, err = events(win); err != nil {
 		return d, err
 	}
-	if d.afk, err = events(pick("afkstatus"), 1); err != nil {
+	if d.afk, err = events(afk); err != nil {
 		return d, err
 	}
-	// 浏览器扩展每个浏览器一个桶，全要；它们只用来给浏览器窗口找域名，不会叠时间。
-	if d.web, err = events(pick("web.tab.current"), 0); err != nil {
+	// 浏览器扩展每个浏览器一个桶，本机的全要；它们只用来给浏览器窗口找域名，不会叠时间。
+	if d.web, err = events(pick("web.tab.current")...); err != nil {
 		return d, err
 	}
 	return d, nil
@@ -177,12 +192,24 @@ func buildFragments(d awData, from, to time.Time, r redactor) []fragment {
 	}
 	sort.Slice(afk, func(i, j int) bool { return afk[i].start.Before(afk[j].start) })
 
+	// 窗口事件理论上首尾相接，实际会重叠（记录器重启、数据恢复 / 导入）。重叠不裁掉的话，
+	// 同一分钟算两遍 Active，而且段的起点会随「这一轮从哪读起」漂移，服务端按 startAt
+	// 防重就失效了。按 (开始, 结束) 排好后，每条的开始不早于前面的最晚结束。
+	win := append([]awEvent(nil), d.window...)
+	sort.SliceStable(win, func(i, j int) bool {
+		if !win[i].Timestamp.Equal(win[j].Timestamp) {
+			return win[i].Timestamp.Before(win[j].Timestamp)
+		}
+		return win[i].end().Before(win[j].end())
+	})
 	var out []fragment
-	for _, e := range d.window {
-		s, ok := clip(span{e.Timestamp, e.end()}, from, to)
+	covered := from
+	for _, e := range win {
+		s, ok := clip(span{e.Timestamp, e.end()}, covered, to)
 		if !ok {
 			continue
 		}
+		covered = s.end
 		for _, p := range subtract(s, afk) {
 			title, key := r.window(e.str("app"), e.str("title"), bestTab(d.web, p))
 			out = append(out, fragment{Start: p.start, End: p.end, App: e.str("app"), Title: title, Key: key})

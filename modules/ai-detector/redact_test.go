@@ -16,6 +16,17 @@ func TestScrub(t *testing.T) {
 		{"会议 2026-09-28 10:00 第 12 周", "会议 2026-09-28 10:00 第 12 周"}, // 日期、短数字不动
 		{"https://mail.example.com/u/0/?q=secret#inbox - 页面", "mail.example.com - 页面"},
 		{"see http://a.b.cn/x?page=2&id=987654321", "see a.b.cn"},
+		{"open file:///C:/Users/zhang/合同.pdf now", "open [路径] now"},
+		{"ftp://files.corp.lan/pub/x.zip", "files.corp.lan"},
+		{"smb://nas.local/家庭/照片", "nas.local"},
+		{"ssh://git@git.corp.io:2222/team/repo", "git.corp.io"},
+		{`打开 \\fileserver\财务\工资.xlsx 中`, "打开 [路径] 中"},
+		{"github.com/dblsc1/repo/pull/12?diff=split - 标题", "github.com - 标题"},
+		{"localhost:8800/Cockpit/hive/", "localhost:8800/Cockpit/hive/"}, // 没有点的主机名不算域名，但也没有敏感段
+		{`C:\Users\zhang\Documents\plan.docx - Word`, "plan.docx - Word"},
+		{"vim /home/zhang/.ssh/config", "vim config"},
+		{"~/work/garden/plot.gd — Code", "plot.gd — Code"},
+		{"a / b / c", "a / b / c"},
 	}
 	for _, c := range cases {
 		if got := scrub(c.in); got != c.want {
@@ -57,9 +68,9 @@ func TestBrowserKeepsDomainAndTitleOnly(t *testing.T) {
 	if title, _ := r.window("chrome.exe", "secret", &webTab{URL: "https://x.com", Title: "secret", Incognito: true}); title != "" {
 		t.Fatalf("incognito title=%q", title)
 	}
-	// 没装浏览器扩展：标题里的网址也只剩域名。
-	if title, _ := r.window("Google Chrome", "https://bank.example.com/acct?id=1 - Google Chrome", nil); title != "bank.example.com - Google Chrome" {
-		t.Fatalf("no-ext title=%q", title)
+	// 没有对得上的标签页记录（没装扩展、扩展在无痕窗口里默认不跑）：分不清是不是无痕，只留程序名。
+	if title, key := r.window("Google Chrome", "https://bank.example.com/acct?id=1 - Google Chrome", nil); title != "" || key != "googlechrome" {
+		t.Fatalf("no-ext title=%q key=%q", title, key)
 	}
 }
 

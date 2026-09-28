@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const usage = `用法: ai-detector <命令>
@@ -55,7 +56,10 @@ func cli(args []string, out io.Writer) error {
 			fmt.Fprintf(out, "配置已存在，没有覆盖：%s\n", p.config)
 			return nil
 		}
-		cfg := defaultConfig(dir)
+		cfg, err := defaultConfig(dir)
+		if err != nil {
+			return err
+		}
 		if err := saveJSON(p.config, cfg); err != nil {
 			return err
 		}
@@ -65,6 +69,12 @@ func cli(args []string, out io.Writer) error {
 		fmt.Fprintf(out, "已写入 %s\n同步默认关闭：填好 cockpitUrl 和 deviceToken 后执行 ai-detector enable。\n", p.config)
 		return nil
 	case "once", "run":
+		// 同一个配置目录只许一个进程同步：run 常驻期间一直拿着锁，once 拿不到就拒绝。
+		release, err := acquireLock(p.lock)
+		if err != nil {
+			return err
+		}
+		defer release()
 		if args[0] == "once" {
 			return runOnce(p, hc, out)
 		}
@@ -91,7 +101,16 @@ func cli(args []string, out io.Writer) error {
 		}
 		// 关掉 / 暂停时顺手把状态记成「不活跃」：常驻进程要是这会儿没在跑，
 		// 下次恢复时游标照样会跳到现在，关着的那段不会被补传。
+		//
+		// run 正在跑（锁被占着）时不碰状态文件：它下一轮读到新配置自己会记，两个进程
+		// 同时写状态反而可能把它刚推进的游标写回旧值。
 		if !cfg.Enabled || cfg.Paused {
+			release, lerr := acquireLock(p.lock)
+			if lerr != nil {
+				fmt.Fprintf(out, "enabled=%v paused=%v（常驻进程下一轮生效）\n", cfg.Enabled, cfg.Paused)
+				return nil
+			}
+			defer release()
 			var st State
 			_ = loadJSON(p.state, &st)
 			st.Active = false
@@ -107,6 +126,9 @@ func cli(args []string, out io.Writer) error {
 		}
 		exe, err := os.Executable()
 		if err != nil {
+			return err
+		}
+		if exe, err = filepath.EvalSymlinks(exe); err != nil {
 			return err
 		}
 		path, content, err := autostartFile(runtime.GOOS, exe)
@@ -221,6 +243,18 @@ const rulesExample = `{
 // autostartFile 返回该系统的自启文件路径和内容。按 goos 分支而不是 build tag：
 // 一个函数三种输出，测试在任何系统上都能把三种都测到。
 func autostartFile(goos, exe string) (string, string, error) {
+	// 程序路径要原样嵌进三种文件格式（VBScript 字符串、plist XML、Desktop Entry 的 Exec），
+	// 每种的转义规则都不同。与其逐种转义出错，不如拒绝会出问题的字符：正常安装路径不含它们。
+	// Desktop Entry 规范里 Exec 的双引号内 " ` $ \ 要反斜杠转义、% 要写成 %%，一律不收。
+	bad := "\"`$%\\"
+	if goos != "linux" && goos != "freebsd" && goos != "openbsd" && goos != "netbsd" {
+		bad = "\"" // Windows / macOS 路径里的反斜杠、$、% 在各自格式里都安全，只有引号不行
+	}
+	for _, r := range exe {
+		if unicode.IsControl(r) || strings.ContainsRune(bad, r) {
+			return "", "", fmt.Errorf("程序路径 %q 含有 %q，写进自启文件不安全；把程序挪到普通路径（不含引号、$、%%、反斜杠、控制字符）再装", exe, r)
+		}
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", "", err
@@ -233,8 +267,7 @@ func autostartFile(goos, exe string) (string, string, error) {
 			appdata = filepath.Join(home, "AppData", "Roaming")
 		}
 		path := filepath.Join(appdata, "Microsoft", "Windows", "Start Menu", "Programs", "Startup", "honeycomb-ai-detector.vbs")
-		q := strings.ReplaceAll(exe, `"`, `""`)
-		return path, "CreateObject(\"WScript.Shell\").Run \"\"\"" + q + "\"\" run\", 0, False\r\n", nil
+		return path, "CreateObject(\"WScript.Shell\").Run \"\"\"" + exe + "\"\" run\", 0, False\r\n", nil
 	case "darwin":
 		path := filepath.Join(home, "Library", "LaunchAgents", "com.honeycomb.ai-detector.plist")
 		return path, `<?xml version="1.0" encoding="UTF-8"?>
@@ -257,6 +290,7 @@ func autostartFile(goos, exe string) (string, string, error) {
 	}
 }
 
+// xmlEscape：控制字符已在 autostartFile 开头拒掉，这里只剩 XML 的三个特殊字符。
 func xmlEscape(s string) string {
 	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(s)
 }

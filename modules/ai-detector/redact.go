@@ -7,10 +7,19 @@ import (
 )
 
 // 本机脱敏。规则写在 module_docs/contract.md「隐私默认值」，这里是它的唯一实现。
-// 顺序有讲究：先网址（网址里可能有邮箱、长数字），再邮箱，再电话，最后长数字——
+// 顺序有讲究：先各种网址 / 路径（里面可能有邮箱、长数字），再邮箱，再电话，最后长数字——
 // 反过来的话，长数字规则会先把电话号吃成 [数字]，电话规则就永远测不到。
 var (
-	reURL   = regexp.MustCompile(`https?://[^\s"'<>]+`)
+	// 任意 scheme：http(s)、ftp、smb、ssh、sftp、file……有主机的只留主机，没有主机
+	// （file:///C:/…）的整个换成 [路径]。
+	reURL = regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9+.-]*://[^\s"'<>]*`)
+	// Windows 共享路径 \\server\share\…：服务器名、共享名本身就可能是内部信息，整个不留。
+	reUNC = regexp.MustCompile(`\\\\[^\s"'<>]+`)
+	// 没写 scheme 的「域名/路径」：github.com/x/y?token=…，只留域名。
+	reHostPath = regexp.MustCompile(`\b((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?::\d+)?)/[^\s"'<>]*`)
+	// 本机绝对路径（C:\Users\张三\… 、/home/zhangsan/…）：路径里有用户名和目录结构，
+	// 只留最后的文件名——编辑器标题靠文件名认得出是哪件事。
+	rePath  = regexp.MustCompile(`(?:\b[A-Za-z]:[\\/]|(?:^|\s)~?/)(?:[^\s\\/"'<>]+[\\/])+([^\s\\/"'<>]*)`)
 	reEmail = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`)
 	// 国际前缀可选 + 3~4 位两组 + 4 位；中间允许空格 / 连字符。
 	// 故意不匹配 2026-09-28 这种日期（第二组只有 2 位），日期在标题里很常见，也不敏感。
@@ -20,10 +29,20 @@ var (
 
 func scrub(s string) string {
 	s = reURL.ReplaceAllStringFunc(s, func(u string) string {
-		if p, err := url.Parse(u); err == nil && p.Hostname() != "" {
+		if p, err := url.Parse(u); err == nil && p.Hostname() != "" && !strings.EqualFold(p.Scheme, "file") {
 			return p.Hostname()
 		}
-		return "[网址]"
+		return "[路径]"
+	})
+	s = reUNC.ReplaceAllString(s, "[路径]")
+	s = reHostPath.ReplaceAllString(s, "$1")
+	s = rePath.ReplaceAllStringFunc(s, func(m string) string {
+		lead := m[:len(m)-len(strings.TrimLeft(m, " \t"))] // 保留前面那个空白
+		base := rePath.FindStringSubmatch(m)[1]
+		if base == "" {
+			return lead + "[路径]"
+		}
+		return lead + base
 	})
 	s = reEmail.ReplaceAllString(s, "[邮箱]")
 	s = rePhone.ReplaceAllString(s, "[电话]")
@@ -67,10 +86,13 @@ type webTab struct {
 // 而且人确认时要靠它认出这段是什么。
 func (r redactor) window(app, title string, tab *webTab) (string, string) {
 	a := normApp(app)
-	if r.appOnly[a] || (r.browsers[a] && tab != nil && tab.Incognito) {
+	// 浏览器没有对得上的标签页记录（没装扩展、扩展在无痕窗口里默认不运行、这段时间
+	// 扩展没报）时，窗口标题就是唯一信息——而无痕窗口的标题、地址栏里的网址都在里面。
+	// 分不清是不是无痕，就按最保守的处理：只留程序名。
+	if r.appOnly[a] || (r.browsers[a] && (tab == nil || tab.Incognito)) {
 		return "", a
 	}
-	if r.browsers[a] && tab != nil {
+	if r.browsers[a] {
 		host := ""
 		if p, err := url.Parse(tab.URL); err == nil {
 			host = p.Hostname()

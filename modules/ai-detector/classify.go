@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"regexp"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // 分类：先规则（本机、确定、可解释），规则没认出来的才交给可选的外部分类服务
@@ -140,15 +144,18 @@ func classify(segs []segment, rules []rule, serviceURL string, tasks func() ([]t
 	if serviceURL == "" || len(pending) == 0 {
 		return out
 	}
-	fail := func(why string) []suggestion {
+	// reason 会随段一起上传，所以只放固定文案；错误细节（可能含完整地址、查询串）
+	// 只进本机日志。
+	fail := func(reason string, detail error) []suggestion {
+		log.Printf("%s：%v", reason, detail)
 		for _, i := range pending {
-			out[i] = none("分类服务不可用："+why, "service")
+			out[i] = none(reason, "service")
 		}
 		return out
 	}
 	ts, err := tasks()
 	if err != nil {
-		return fail("取不到任务树（" + err.Error() + "）")
+		return fail("分类服务未调用：取不到任务树", err)
 	}
 	type reqSeg struct {
 		ID              string `json:"id"`
@@ -171,7 +178,7 @@ func classify(segs []segment, rules []rule, serviceURL string, tasks func() ([]t
 	body, _ := json.Marshal(req)
 	resp, err := post(serviceURL, body)
 	if err != nil {
-		return fail(err.Error())
+		return fail("分类服务不可用", err)
 	}
 	var r struct {
 		Suggestions []struct {
@@ -182,7 +189,7 @@ func classify(segs []segment, rules []rule, serviceURL string, tasks func() ([]t
 		} `json:"suggestions"`
 	}
 	if err := json.Unmarshal(resp, &r); err != nil {
-		return fail("响应不是合法 JSON")
+		return fail("分类服务响应格式不对", err)
 	}
 	known := map[string]bool{}
 	for _, t := range ts {
@@ -197,7 +204,7 @@ func classify(segs []segment, rules []rule, serviceURL string, tasks func() ([]t
 		if _, err := fmt.Sscanf(s.SegmentID, "seg_%d", &i); err != nil || i < 0 || i >= len(segs) || out[i].Classifier != "service" {
 			continue
 		}
-		sg := suggestion{Confidence: min(max(s.Confidence, 0), 1), Reason: s.Reason, Classifier: "service"}
+		sg := suggestion{Confidence: min(max(s.Confidence, 0), 1), Reason: cleanReason(s.Reason), Classifier: "service"}
 		if s.TaskID != nil && known[*s.TaskID] {
 			id := *s.TaskID
 			sg.TaskID = &id
@@ -209,13 +216,34 @@ func classify(segs []segment, rules []rule, serviceURL string, tasks func() ([]t
 	return out
 }
 
-// postJSON 是 classify / upload 共用的 HTTP 发送：带设备令牌，非 2xx 算错。
+// cleanReason：服务给的理由会上传并显示在界面上。去掉控制字符，截到 200 字节以内
+// （按字符边界截，不切坏 UTF-8）。
+func cleanReason(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || r == utf8.RuneError {
+			return -1
+		}
+		return r
+	}, s)
+	if len(s) <= 200 {
+		return s
+	}
+	cut := 200
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
+}
+
+// postJSON 发一个 JSON POST，非 2xx 算错。token 为空就不带 Authorization 头。
 func postJSON(c *http.Client, token, url string, body []byte) ([]byte, int, error) {
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	return do(c, req)
 }
