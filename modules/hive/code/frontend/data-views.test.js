@@ -254,13 +254,48 @@ Promise.resolve()
     });
   }); })
   .then(function () { return test("exportFileName：文件名日期取自 exportedAt 前 10 位，不本地拼日期", function () {
-    assert.strictEqual(D.exportFileName("2026-08-09T12:00:00+00:00"), "cockpit-export-2026-08-09.json");
-    assert.strictEqual(D.exportFileName("2026-01-01T00:00:00+08:00"), "cockpit-export-2026-01-01.json");
+    assert.strictEqual(D.exportFileName("2026-08-09T12:00:00+00:00"), "honeycomb-export-2026-08-09.json");
+    assert.strictEqual(D.exportFileName("2026-01-01T00:00:00+08:00"), "honeycomb-export-2026-01-01.json");
   }); })
   .then(function () { return test("exportFileName：exportedAt 缺失/非字符串不崩，回落 unknown-date", function () {
-    assert.strictEqual(D.exportFileName(undefined), "cockpit-export-unknown-date.json");
-    assert.strictEqual(D.exportFileName(null), "cockpit-export-unknown-date.json");
-    assert.strictEqual(D.exportFileName(12345), "cockpit-export-unknown-date.json");
+    assert.strictEqual(D.exportFileName(undefined), "honeycomb-export-unknown-date.json");
+    assert.strictEqual(D.exportFileName(null), "honeycomb-export-unknown-date.json");
+    assert.strictEqual(D.exportFileName(12345), "honeycomb-export-unknown-date.json");
+  }); })
+  // ── 快照恢复（顶栏「导入数据」按钮，contract.md v1.9）──────────────
+  .then(function () { return test("restoreSnapshot：不给 checksum = dry-run；给了 = apply 且 checksum 编码进查询串", function () {
+    var calls = [];
+    var fetchImpl = function (url, init) {
+      calls.push({ url: url, method: init.method, body: JSON.parse(init.body) });
+      return Promise.resolve({ ok: true, status: 200, json: function () {
+        return Promise.resolve({ dryRun: true, checksum: "ab/c", summary: { zones: 1 } });
+      } });
+    };
+    var snap = { zones: [{ id: "z_1" }], projects: [], tasks: [], events: [] };
+    return D.restoreSnapshot(snap, null, { fetchImpl: fetchImpl }).then(function (r) {
+      assert.strictEqual(r.ok, true);
+      return D.restoreSnapshot(snap, "ab/c", { fetchImpl: fetchImpl });
+    }).then(function () {
+      assert.strictEqual(calls[0].url, "/api/core/restore?dryRun=true");
+      assert.strictEqual(calls[1].url, "/api/core/restore?dryRun=false&checksum=ab%2Fc");
+      assert.strictEqual(calls[0].method, "POST");
+      assert.deepStrictEqual(calls[1].body, snap);
+    });
+  }); })
+  .then(function () { return test("restoreSnapshot：409（实例非空）→ ok:false 带后端原话；422 数组 detail 不变成 [object Object]", function () {
+    var reply = function (status, detail) {
+      return function () { return Promise.resolve({ ok: false, status: status, json: function () {
+        return Promise.resolve({ detail: detail });
+      } }); };
+    };
+    return D.restoreSnapshot({}, null, { fetchImpl: reply(409, "目标实例不是空库") }).then(function (r) {
+      assert.strictEqual(r.status, 409);
+      assert.strictEqual(r.message, "目标实例不是空库");
+      return D.restoreSnapshot({}, null, { fetchImpl: reply(422, [{ loc: ["body", "zones"], msg: "field required" }]) });
+    }).then(function (r) {
+      assert.strictEqual(r.status, 422);
+      assert.ok(r.message.indexOf("field required") >= 0, r.message);
+    });
   }); })
   .then(function () {
     console.log(passed + " passed");

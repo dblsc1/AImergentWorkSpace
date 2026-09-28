@@ -95,6 +95,21 @@ consumes:
       与 ring 的「停止并记录」/「取消，不记录」是同一批接口，不另开请求面。
       开始计时前若已有任务在跑，无条件先发一次 stop 再 start，**两步串行不并行**。
       **本模块绝不写 events**——事实账本只追加，由后端在 stop 之后自己投。
+
+  - id: nexus-core.views.export.v1
+    contract: ../../nexus-core/module_docs/contract.md
+    purpose: >
+      顶栏「导出数据」：GET /api/core/export，原样展示 + 下载 JSON，不塑形。
+      （早就在用，2026-09-28 补登记。）
+
+  - id: nexus-core.restore.v1
+    contract: ../../nexus-core/module_docs/contract.md
+    purpose: >
+      顶栏「导入数据」（2026-09-28）：选一份导出的 JSON，原样发给
+      POST /api/core/restore。两步：先 dryRun=true 报「将导入多少」、零写入；人点「确认导入」
+      才带 dry-run 回的 checksum 发 dryRun=false。**只进空实例**：服务端 409 时如实告诉人
+      「这里已经有数据、不会合并」，不在前端做任何合并或清库。
+      导入成功后整页刷新（蜂巢、档案、中心格一次全部重拉）。
 ```
 
 ## 两条本模块自己定的语义

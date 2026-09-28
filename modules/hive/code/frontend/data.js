@@ -65,6 +65,11 @@
   // 全部数据副本，不是某个渲染组件的数据源，所以不塑形、原样透传给调用方。
   var EXPORT_PATH = BASE + "api/core/export";
 
+  // 快照恢复（nexus-core contract.md v1.9「快照恢复」，POST /api/core/restore）：
+  // export 的逆操作，只对空实例开放（非空 409）。两段式：dryRun=true 零写入、回
+  // summary + checksum；带着这个 checksum 再发 dryRun=false 才真写。给「导入数据」按钮用。
+  var RESTORE_PATH = BASE + "api/core/restore";
+
   // ── URL ──────────────────────────────────────────────────────────
   function buildTreeUrl(includeEphemeral) {
     return TREE_PATH + (includeEphemeral ? "?includeEphemeral=true" : "");
@@ -190,7 +195,11 @@
       if (res.status === 204) return { ok: true, data: null };
       return res.json().catch(function () { return null; }).then(function (payload) {
         if (res.ok) return { ok: true, data: payload };
-        var message = (payload && payload.detail) ? payload.detail : ("请求失败（HTTP " + res.status + "）");
+        var detail = payload && payload.detail;
+        // 422 的 detail 是校验错误数组，别让它变成 "[object Object]"
+        var message = detail
+          ? (typeof detail === "string" ? detail : JSON.stringify(detail))
+          : ("请求失败（HTTP " + res.status + "）");
         return { ok: false, status: res.status, message: message };
       });
     }).catch(function (err) {
@@ -349,7 +358,15 @@
     return request(resolveFetch(options), "GET", EXPORT_PATH);
   }
 
-  // 下载文件名：cockpit-export-<日期>.json，日期取自响应体的 exportedAt
+  // 不给 checksum = dry-run（只看会导入多少、零写入）；给了 = 真正写入。
+  function restoreSnapshot(snapshot, checksum, options) {
+    var query = checksum
+      ? "?dryRun=false&checksum=" + encodeURIComponent(checksum)
+      : "?dryRun=true";
+    return request(resolveFetch(options), "POST", RESTORE_PATH + query, snapshot);
+  }
+
+  // 下载文件名：honeycomb-export-<日期>.json，日期取自响应体的 exportedAt
   // （服务端生成，contract.md v1.3 明文），**不用本地 new Date() 拼**——
   // 客户端时钟/时区不准会让文件名的日期与响应内容的 exportedAt 不一致。
   // exportedAt 是带时区偏移的 ISO8601，直接切前 10 个字符拿 YYYY-MM-DD，
@@ -357,7 +374,7 @@
   function exportFileName(exportedAt) {
     var datePart = (typeof exportedAt === "string" && exportedAt.length >= 10)
       ? exportedAt.slice(0, 10) : "unknown-date";
-    return "cockpit-export-" + datePart + ".json";
+    return "honeycomb-export-" + datePart + ".json";
   }
 
   // ── 事实 → 展示行的纯映射（R10 要求单测的部分）──────────────────────
@@ -475,6 +492,7 @@
     listOtherTasks: listOtherTasks,
     fetchGantt: fetchGantt,
     fetchExport: fetchExport,
+    restoreSnapshot: restoreSnapshot,
     exportFileName: exportFileName,
     ARCHIVE_DEFAULT_LIMIT: ARCHIVE_DEFAULT_LIMIT,
     buildArchiveUrl: buildArchiveUrl,

@@ -19,6 +19,9 @@ consumes:
   - id: nexus-core.views.current.v1
     contract: ../../nexus-core/module_docs/contract.md
     purpose: 顶栏计时芯片（经网关的 /__cockpit/current）
+  - id: contracts.timer-ring-visual.v1
+    contract: ../../../contracts/timer-ring-visual-v1.md
+    purpose: 只读 hive / ring 共用的两个本机键 nexus.timer.paused.v1 / nexus.timer.carry.v1（见下「暂停与累计」）
 ```
 
 ## 文件
@@ -48,6 +51,17 @@ consumes:
 芯片每 10 秒拉一次 `<前缀>__cockpit/current`。页面自己开始 / 停止 / 取消计时成功后，
 在 `window` 上发一个 `honeycomb:timer-changed` 事件（无 detail），顶栏立刻重拉一次，
 不必等下一个 10 秒。hive 与 ring 都发；自己接进来的前端要芯片跟得上，也发这一个。
+
+## 暂停与累计（v0.2.5）
+
+后端没有暂停：暂停时 `views/current` 是空闲。芯片**只读**两个本机键（形状见
+`contracts/timer-ring-visual-v1.md`，读不到 / 解析失败一律当不存在）：
+
+- 空闲 + 有 `nexus.timer.paused.v1` → 「已暂停」，读数 = 其 `carriedSeconds`；
+  否则「未在计时」，读数 `00:00`（此前读数停在上一段最后一秒）。
+- 计时中且 `nexus.timer.carry.v1.taskId` 等于在计的任务 → 读数 = `carriedSeconds + 本段`，
+  与 hive / ring 一致。每秒现读，不只在拉状态时读一次（「继续」时计时台写累计记忆晚于刷新事件）。
+- 芯片从不写这两个键。
 
 ## 对比度校验
 

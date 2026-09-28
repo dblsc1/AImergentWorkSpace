@@ -31,6 +31,8 @@
         
         <button class="btn" id="refreshTree">刷新</button>
         <button class="btn" id="exportData">导出数据</button>
+        <button class="btn" id="importData">导入数据</button>
+        <input type="file" id="importFile" accept="application/json,.json" hidden>
         <button class="btn primary" id="newZone">＋ 新建分区</button>
       </div>
     </header>
@@ -82,6 +84,16 @@
       </header>
       <p class="export-status" id="exportStatus"></p>
       <pre class="export-pre" id="exportPre" hidden></pre>
+    </section>
+
+    <!-- 导入数据：把另一台 / 重装前导出的 JSON 整份搬进来（POST /api/core/restore）。
+         两步：选文件 = 预演（零写入，报条数）→ 点「确认导入」才写。只对空实例开放。 -->
+    <section class="export-shell" id="importShell" hidden aria-label="导入数据">
+      <header class="board-head">
+        <div class="board-title">导入数据 <small>DATA IMPORT</small></div>
+        <button type="button" class="btn primary" id="importConfirm" hidden>确认导入</button>
+      </header>
+      <p class="export-status" id="importStatus" role="status" aria-live="polite"></p>
     </section>
 
     
