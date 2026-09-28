@@ -1,0 +1,146 @@
+# agent-hooks —— 把 AI agent 跑的时间报给 cockpit
+
+一个很薄的客户端：agent（Claude Code、Codex，或者任何你想接的工具）跑起来的时候
+喊一声「开始」，跑完喊一声「结束」，cockpit（nexus-core）把这段算成一条
+**agent run**——不是人的计时。多条 run 可以同时存在（many-lane），
+它们**永远不计入人的时间**，无论跑多久、跑多少条。
+
+纯标准库（`urllib`），Windows / macOS / Linux 通用，不用装任何东西。
+
+## 记录什么 / 不记录什么
+
+上报给 cockpit 的只有：agent 名字、工具名（`claude-code` / `codex` / ...）、
+model（如果拿得到）、开始/结束时间戳、结束状态（`done`/`failed`/`cancelled`/`timeout`）、
+以及一个可选的「输出在哪」的链接。
+
+**不上报**：不发你的 prompt，不发任何代码，不发命令的 stdout/stderr 内容。
+`cockpit-run` 包装命令时，命令的输入输出照常打印在你的终端上，本工具看不到、
+也不会去读。
+
+## 装 token
+
+先在网页上登录 cockpit，然后换一个设备 token（`Authorization: Bearer <token>`，
+只对 `<cockpit 地址>/api/core/*` 有效）：
+
+```sh
+curl -sb "<你登录时浏览器里的会话 cookie>" -X POST <cockpit 地址>/api/auth/tokens
+```
+
+也可以用 cockpit 提供的 CLI 登录方式换 token（如果有）。拿到 token 之后，
+填进环境变量或者配置文件（下面两选一，环境变量优先）。
+
+## 配置
+
+**环境变量**（适合 CI / 容器，覆盖配置文件）：
+
+| 变量 | 作用 |
+|---|---|
+| `COCKPIT_URL` | cockpit 地址，比如 `http://127.0.0.1:8800/` |
+| `COCKPIT_TOKEN` | 设备 token |
+| `COCKPIT_TASK` | 可选。这次 run 挂在哪个任务上；不设就走目录映射，再不然就是收件箱 |
+
+**配置文件**（跨会话常驻，含目录 → 任务的映射）：
+
+| 系统 | 路径 |
+|---|---|
+| Windows | `%APPDATA%\honeycomb\agent-hooks.json` |
+| macOS | `~/Library/Application Support/honeycomb/agent-hooks.json` |
+| Linux | `$XDG_CONFIG_HOME/honeycomb/agent-hooks.json`（缺省 `~/.config/honeycomb/agent-hooks.json`） |
+
+```json
+{
+  "url": "http://127.0.0.1:8800/",
+  "token": "换来的设备 token",
+  "tasks": {
+    "/home/you/code/project-a": "task-id-1",
+    "/home/you/code/project-b/backend": "task-id-2"
+  }
+}
+```
+
+## 任务怎么定（解析顺序）
+
+1. 显式传入的值（`cockpit-run --task xxx` 的那个 `--task`）
+2. `COCKPIT_TASK` 环境变量
+3. 配置文件 `tasks` 里，当前目录**最长匹配**的那条目录前缀
+   （比如同时配了 `/code` 和 `/code/project-a`，在 `/code/project-a/sub` 下跑，
+   用的是 `/code/project-a` 那条）
+4. 都没有 → 收件箱（`taskId` 不传）
+
+## `cockpit-run`：包一层跑任何命令
+
+给 Codex、shell 脚本，或者任何不方便自己接钩子的工具用：
+
+```sh
+python3 tools/agent-hooks/cockpit-run --task task-id-1 -- codex exec "把这个 bug 修了"
+```
+
+- `--task`：任务 id，不给就走上面的解析顺序
+- `--agent`：agent 显示名，不给就用当前目录名
+- `--tool`：工具名，不给就用被包装命令的可执行文件名（上面例子里是 `codex`）
+- `--` 之后的全部原样传给子进程：stdin/stdout/stderr 透传，退出码原样返回
+
+结束状态怎么定：命令退出码 `0` → `done`，非 `0` → `failed`，
+你按 Ctrl-C 或者外部发 `SIGTERM` 打断 → `cancelled`。
+
+**cockpit 连不上、token 不对，都不影响命令本身执行**——只在 stderr 打一行警告，
+命令照跑，退出码照样准确转发。网络调用超时给得很短（约 3 秒），不会让你的命令
+等 cockpit。
+
+## Claude Code 钩子：自动记会话时间
+
+把下面这段接进 `settings.json`（项目级 `.claude/settings.json` 或者用户级，
+按你想多大范围生效来定；**这是你自己要加的配置，本工具不会替你改任何
+Claude Code 设置文件**）：
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 /绝对路径/tools/agent-hooks/claude_hook.py" }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 /绝对路径/tools/agent-hooks/claude_hook.py", "timeout": 5 }
+        ]
+      }
+    ]
+  }
+}
+```
+
+两个事件指向同一个脚本，脚本自己从 stdin 的 `hook_event_name` 分流。
+**`SessionEnd` 那条务必显式给 `timeout`**（几秒即可）——Claude Code 文档里
+`SessionEnd` 钩子默认预算只有 1.5 秒，本工具自己的网络超时已经压到 1 秒，
+但加上 Python 解释器启动、读写状态文件的开销，1.5 秒并不宽松，不显式调大的话，
+偶尔会在我们的超时生效前，钩子进程就被 Claude Code 自己杀了（不影响会话，
+但这次的结束状态就报不上去了）。
+
+- `SessionStart` → 开一条 run（agent = 项目目录名，tool = `claude-code`，
+  model 取钩子输入里的 `model` 字段，拿不到就不传）
+- `SessionEnd` → 关掉这条 run。Claude Code 不会告诉钩子「这次工作算成功还是
+  失败」，所以缺省报 `done`；只有 `reason` 是 `prompt_input_exit`
+  （在输入框按 Ctrl-C/Ctrl-D 主动退出）才报 `cancelled`
+- 两次调用之间用 Claude Code 的 `session_id` 对上号（一个小状态文件，
+  跨平台的每用户 state 目录，见 `cockpit_client.user_dir`）；`SessionEnd`
+  处理完就把这条记录从状态文件里删掉，不会越攒越多
+- 钩子本身**永远 `exit 0`**——网络失败、cockpit 没配、状态文件读不了，
+  统统吞掉，最多在 stderr 留一行；绝不会拖慢或打断你的会话
+
+Codex 或者别的 agent 工具，接法见上面的 `cockpit-run`（Codex 目前没有
+SessionStart/SessionEnd 这样的钩子机制，用 `cockpit-run` 包一层是目前
+最简单的接法）。
+
+## 测试
+
+```sh
+python3 -m pytest -q tools/agent-hooks
+```
+
+纯标准库，`pip install pytest` 之外不需要别的依赖；内进程假 HTTP 服务器录请求，
+不用真起 cockpit。CI 里跟着仓库根目录 `python -m pytest -q tools ...` 那一步一起跑。

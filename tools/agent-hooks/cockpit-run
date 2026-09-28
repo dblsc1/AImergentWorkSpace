@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""cockpit-run —— 包一层，把任意命令的一次执行记成一条 cockpit agent run。
+
+    cockpit-run --task <id> [--agent NAME] [--tool NAME] -- <command...>
+
+给 Codex、shell 脚本或者任何不方便自己接 Claude Code 钩子的工具用：
+跑之前报 start，跑完（或被打断）报 stop，命令本身的 stdin/stdout/stderr、
+退出码原样透传，cockpit 不在线或 token 不对也不影响命令执行——
+见 cockpit_client.py 模块 docstring 的设计取舍。
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import signal
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import cockpit_client as cc  # noqa: E402
+
+
+def _parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
+    if "--" in argv:
+        idx = argv.index("--")
+        opts, command = argv[:idx], argv[idx + 1 :]
+    else:
+        opts, command = argv, []
+    parser = argparse.ArgumentParser(
+        prog="cockpit-run",
+        description="把一次命令执行记成一条 cockpit agent run",
+    )
+    parser.add_argument("--task", help="任务 id；缺省走环境变量/目录映射，再缺省是收件箱")
+    parser.add_argument("--agent", help="agent 显示名；缺省用项目目录名")
+    parser.add_argument("--tool", help="工具名；缺省用被包装命令的可执行文件名")
+    args = parser.parse_args(opts)
+    if not command:
+        parser.error("缺要执行的命令，用 -- 分隔：cockpit-run --task X -- 你的命令")
+    return args, command
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    args, command = _parse_args(argv)
+
+    config = cc.load_config()
+    task_id = cc.resolve_task(explicit=args.task)
+    agent = args.agent or cc.default_agent_name()
+    tool = args.tool or os.path.basename(command[0])
+
+    run_id = None
+    try:
+        result = cc.start_run(config, task_id, agent, tool)
+        run_id = result.get("runId")
+    except cc.CockpitError as e:
+        print(f"cockpit-run: 连不上 cockpit，本次不计时（{e}）", file=sys.stderr)
+
+    proc = subprocess.Popen(command)
+    cancelled = False
+
+    def _forward_sigterm(signum, frame):
+        nonlocal cancelled
+        cancelled = True
+        if proc.poll() is None:
+            proc.terminate()
+
+    old_handler = signal.signal(signal.SIGTERM, _forward_sigterm)
+    try:
+        try:
+            exit_code = proc.wait()
+        except KeyboardInterrupt:
+            cancelled = True
+            proc.terminate()
+            exit_code = proc.wait()
+    finally:
+        signal.signal(signal.SIGTERM, old_handler)
+
+    if cancelled:
+        outcome = "cancelled"
+    elif exit_code == 0:
+        outcome = "done"
+    else:
+        outcome = "failed"
+
+    if run_id:
+        try:
+            cc.stop_run(config, run_id, outcome)
+        except cc.CockpitError as e:
+            print(f"cockpit-run: 上报结束状态失败，不影响命令结果（{e}）", file=sys.stderr)
+
+    return exit_code
+
+
+if __name__ == "__main__":
+    sys.exit(main())
