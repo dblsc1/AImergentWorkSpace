@@ -20,8 +20,8 @@ import install  # noqa: E402
 
 @pytest.fixture()
 def out(tmp_path):
-    # mcp 要点名：聊天后端模块（consumes mcp.tools.v1）进来之前，hive ring 拉不到它（CI 同）
-    plan = install.resolve(["hive", "ring", "mcp"])
+    # ring consumes agent.chat.v1 → 拉上 agent，agent consumes mcp.tools.v1 → 拉上 mcp（CI 同）
+    plan = install.resolve(["hive", "ring"])
     generate.emit(install.ROOT, plan, tmp_path)
     compose = yaml.safe_load((tmp_path / "docker-compose.yml").read_text(encoding="utf-8"))
     nginx = _render((tmp_path / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8"))
@@ -41,7 +41,7 @@ def _location(nginx: str, head: str) -> str:
 
 def test_plan_resolves_single_file_specs_and_pulls_in_nexus_core(out):
     plan, _, _ = out
-    assert plan["modules"] == ["hive", "ring", "mcp", "nexus-core"]
+    assert plan["modules"] == ["hive", "ring", "nexus-core", "agent", "mcp"]
     assert "contracts.design-tokens.v1" in plan["specs"]
     assert "contracts.timer-ring-visual.v1" in plan["specs"]
 
@@ -50,7 +50,7 @@ def test_static_modules_are_mounted_not_run(out):
     _, compose, _ = out
     services = compose["services"]
     assert "hive" not in services and "ring" not in services, "纯前端不该起容器"
-    assert set(services) == {"nexus-core", "mcp", "auth", "mongo", "web"}
+    assert set(services) == {"nexus-core", "agent", "mcp", "auth", "mongo", "web"}
     volumes = services["web"]["volumes"]
     for mount in (
         "../../modules/hive/code/frontend:/usr/share/nginx/html/hive:ro",
@@ -161,7 +161,7 @@ def test_auth_accounts_file_lives_in_a_declared_named_volume(out):
     auth = compose["services"]["auth"]
     assert "honeycomb_auth_data:/data" in auth["volumes"]
     assert auth["environment"]["AUTH_USERS_FILE"] == "/data/users.json"
-    assert set(compose["volumes"]) == {"honeycomb_mongo_data", "honeycomb_auth_data"}
+    assert set(compose["volumes"]) == {"honeycomb_mongo_data", "honeycomb_auth_data", "honeycomb_agent_data"}
     hand = yaml.safe_load((install.ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8"))
     assert set(hand["volumes"]) == set(compose["volumes"])
     assert compose["services"]["nexus-core"]["environment"]["NEXUS_TENANT_STRICT"] == \
@@ -210,6 +210,12 @@ def test_ai_bridge_routes_hand_and_generated(out):
     assert set(web["networks"]) == set(mcp["networks"]) == {"honeycomb-net", "honeycomb-agent-net"}
     assert compose["networks"]["honeycomb-agent-net"] == {"driver": "bridge"}
     assert compose["services"]["nexus-core"]["networks"] == ["honeycomb-net"], "nexus-core 不上 AI 桥内网"
+    # 聊天后端只在 AI 桥内网（够不着 nexus-core / auth / mongo），网关不等它；聊天记录在自己的卷里
+    agent = compose["services"]["agent"]
+    assert agent["networks"] == ["honeycomb-agent-net"] and "agent" not in web["depends_on"]
+    assert agent["volumes"] == ["honeycomb_agent_data:/data"] and "honeycomb_agent_data" in compose["volumes"]
+    assert 'set $bridge_' in _location(nginx, "/api/agent/") and "proxy_read_timeout 300s;" in _location(nginx, "/api/agent/")
+    assert hand_c_agent_only_on_bridge()
     hand_c = yaml.safe_load((install.ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8"))
     assert "honeycomb-agent-net" in hand_c["networks"]
     for svc in ("nexus-core", "auth", "mongo"):
@@ -217,6 +223,12 @@ def test_ai_bridge_routes_hand_and_generated(out):
     assert "mcp" not in hand_c["services"]["web"].get("depends_on", {})
     assert hand_c["services"]["mcp"]["environment"]["NEXUS_TENANT_STRICT"] == \
         hand_c["services"]["nexus-core"]["environment"]["NEXUS_TENANT_STRICT"]
+
+
+def hand_c_agent_only_on_bridge() -> bool:
+    hand_c = yaml.safe_load((install.ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8"))
+    rel = yaml.safe_load((install.ROOT / "release" / "docker-compose.yml").read_text(encoding="utf-8"))
+    return all(c["services"]["agent"]["networks"] == ["honeycomb-agent-net"] for c in (hand_c, rel))
 
 
 def test_bridge_route_upstream_env(tmp_path):

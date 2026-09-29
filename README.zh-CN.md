@@ -159,6 +159,13 @@ docker compose up -d
 
 想自己实现，读 `contracts/auth.gate.v1/contract.md` 的「换实现要满足什么」一节；怎么把它接进网关（`AUTH_UPSTREAM`、换登录页、关掉占位件），读 `contracts/gateway.v1/contract.md`。
 
+### AI 助手（计时台「问问助手」）
+
+计时台页面下方有个聊天面板，问「这周我在哪个项目上花的时间最多」之类。它只能经 MCP 的只读工具读你的数据，
+什么都不写、不跑命令、不上网。用之前在 `.env` 里填 `AGENT_API_KEY`（缺省模型 `deepseek/deepseek-flash`），
+再 `docker compose up -d`；不填，面板会提示你去填，别的功能不受影响。换模型、接本机 Ollama 或内网里的 OpenAI 兼容服务，
+见 `deploy/.env.example` 的「AI 助手」一节。接口是 `contracts/agent.chat.v1`，缺省实现（opencode）在 `modules/agent/`。
+
 ### 挂在子路径下
 
 前面还有一层反代、要挂在 `https://example.com/Cockpit/` 下？`.env` 里设 `HONEYCOMB_BASE_PATH=/Cockpit/`，外层反代把 `/Cockpit/` 原样转过来（不去前缀）。页面、接口、跳转、登录 cookie 都跟着前缀走。见 `contracts/gateway.v1/contract.md` 第七节。

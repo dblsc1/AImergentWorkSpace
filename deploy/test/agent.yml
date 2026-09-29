@@ -1,0 +1,37 @@
+# agent.chat.v1 的组装测试：真 opencode（agent 镜像里钉死的那版），假模型、假 MCP，不要任何密钥。
+#
+#   · fake-llm：OpenAI 兼容的假模型，**内网服务名** http://fake-llm:9100/v1（AGENT_BASE_URL 可以是内网地址）
+#   · fake-mcp：mcp.tools.v1 的最小假货，记下每次调用带的 X-Nexus-Tenant
+#   · 两个都接在 honeycomb-agent-net 上——部署方把自己的服务接到这张网，写法就是这样
+#
+# 用法（在 deploy/ 下）：
+#   docker compose -f docker-compose.yml -f test/agent.yml up -d --wait agent fake-llm fake-mcp
+#   test/agent.sh
+x-fake: &fake
+  image: python:3.12-slim
+  networks: [honeycomb-agent-net]
+  volumes:
+    - ../modules/agent/code/backend/tests/fakes:/fakes:ro
+services:
+  fake-llm:
+    <<: *fake
+    command: python /fakes/fake_openai.py 9100
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9100/_log')"]
+      interval: 2s
+      retries: 15
+  fake-mcp:
+    <<: *fake
+    command: python /fakes/fake_mcp.py 8020
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8020/_log')"]
+      interval: 2s
+      retries: 15
+  agent:
+    volumes:
+      - ../modules/agent/code/backend/tests:/app/tests:ro
+    environment:
+      AGENT_API_KEY: sk-test
+      AGENT_MODEL: fake/fake-model
+      AGENT_BASE_URL: http://fake-llm:9100/v1
+      AGENT_MCP_URL: http://fake-mcp:8020/api/mcp/

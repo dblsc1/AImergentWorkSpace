@@ -159,6 +159,26 @@
       <ul class="suggest-list" id="suggest-list"></ul>
       <p class="suggest-more" id="suggest-more" hidden></p>
     </section>
+    <!-- 「问问助手」（contracts/agent.chat.v1，ring-chat.js）：和「待确认」上下叠放。
+         聊天后端没装（health 不是 200）时整块保持 hidden。 -->
+    <section class="card chat-panel" id="chat-panel" hidden aria-labelledby="chat-title">
+      <h2 class="suggest-title" id="chat-title">问问助手</h2>
+      <p class="suggest-sub">它只能读你的任务和时间，什么都不会改。</p>
+      <div class="chat-bar">
+        <select class="field" id="chat-session" aria-label="对话"></select>
+        <button type="button" class="btn btn-ghost" id="chat-new">新对话</button>
+        <button type="button" class="btn btn-ghost danger" id="chat-delete">删除</button>
+      </div>
+      <div class="chat-log" id="chat-log" aria-live="polite"></div>
+      <p class="chat-tool" id="chat-tool" hidden></p>
+      <p class="suggest-message" id="chat-message" role="status" hidden></p>
+      <form class="chat-form" id="chat-form">
+        <textarea class="field chat-input" id="chat-input" rows="2" maxlength="8000"
+                  placeholder="比如：这周我在哪个项目上花的时间最多？" aria-label="问题"></textarea>
+        <button type="submit" class="btn btn-fact" id="chat-send">发送</button>
+        <button type="button" class="btn btn-ghost" id="chat-stop" hidden>停止</button>
+      </form>
+    </section>
   </main>
 
   <!-- 取消确认弹层（F-RING-2）：原生 <dialog>，Escape/backdrop 天然等价于「返回」，
@@ -212,5 +232,6 @@
   <script src="ring-rename.js"></script>
   <script src="ring-pause.js"></script>
   <script src="ring-suggestions.js"></script>
+  <script src="ring-chat.js"></script>
 </body>
 </html>

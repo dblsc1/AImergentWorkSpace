@@ -39,6 +39,7 @@ networks:
   # AI 桥内网（gateway.v1 第八节）：上面只有网关、MCP、聊天后端；nexus-core、auth、mongo 不在。
   # 实际网络名是 <项目名>_honeycomb-agent-net（如 honeycomb_honeycomb-agent-net），同机两套部署各一张。
   # 这个键名是对外接口：部署方的 override 用它把自己的聊天后端接上来，改名 = 破坏性变更。
+  # 不设 internal：聊天后端要连外网上的模型服务。
   honeycomb-agent-net:
     driver: bridge
 
@@ -46,6 +47,8 @@ volumes:
   honeycomb_mongo_data:
   # 占位认证的账号文件（账号+密码登录，auth.gate v1.1）。只开共享口令时它是空的。
   honeycomb_auth_data:
+  # 聊天记录（agent.chat.v1）。down 不删，down -v 删。
+  honeycomb_agent_data:
 
 services:
   mongo:
@@ -156,6 +159,39 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
+
+  agent:
+    # 聊天后端（contracts/agent.chat.v1 的 opencode 适配器，modules/agent）。页面上的「问问助手」。
+    # 只在 honeycomb-agent-net 上：够不着 nexus-core / auth / mongo，读数据只能经 MCP。
+    # 换成自己的聊天后端：override 里给它 profiles: [disabled]，.env 设 AGENT_UPSTREAM（gateway.v1 第八节）。
+    build:
+      context: ../modules/agent/code/backend
+    image: ${HONEYCOMB_PROJECT:-honeycomb}-agent:local
+    pull_policy: build
+    container_name: ${HONEYCOMB_PROJECT:-honeycomb}-agent
+    restart: unless-stopped
+    networks: [honeycomb-agent-net]
+    # 让 AGENT_BASE_URL=http://host.docker.internal:11434/v1（本机 Ollama）在 Linux 上也解析得到
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes:
+      - honeycomb_agent_data:/data
+    environment:
+      # 模型密钥只进这个容器（agent.chat.v1 第七节）。与 AGENT_BASE_URL 都空 = 面板提示去填，发消息 503。
+      AGENT_API_KEY: ${AGENT_API_KEY:-}
+      AGENT_MODEL: ${AGENT_MODEL:-deepseek/deepseek-flash}
+      # OpenAI 兼容端点（本机 Ollama、内网服务 http://svc:port/v1 都行），只许 http:// / https://
+      AGENT_BASE_URL: ${AGENT_BASE_URL:-}
+      AGENT_MAX_SESSIONS: ${AGENT_MAX_SESSIONS:-50}
+      AGENT_MAX_RUNTIMES: ${AGENT_MAX_RUNTIMES:-4}
+      # 一轮回答的总时限（秒），到点中止
+      AGENT_MAX_TURN_SECONDS: ${AGENT_MAX_TURN_SECONDS:-300}
+      NEXUS_TENANT_STRICT: ${NEXUS_TENANT_STRICT:-0}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8030/api/agent/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   web:
     image: nginx:alpine

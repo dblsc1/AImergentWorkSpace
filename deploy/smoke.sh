@@ -4,7 +4,7 @@
 #   未登录：/ 跳 /hive/，/hive/ 与 /api/ 跳 /login/，登录页本身能打开，
 #           顶栏计时芯片回降级 JSON（不跳、不泄露）
 #   登录后：API 通；/hive/、/ring/ 两个页面，以及页面里引用的**每一个**资源都是 200；
-#           MCP（/api/mcp/）经网关列得出工具
+#           MCP（/api/mcp/）经网关列得出工具；聊天后端（/api/agent/）health 经网关
 #
 # 用法：deploy/smoke.sh <口令> [基址，缺省 http://127.0.0.1:8800]
 # 整站挂子路径时先 export HONEYCOMB_BASE_PATH=/Cockpit/（与 .env 一致），基址不带前缀。
@@ -66,6 +66,9 @@ if [ "${HONEYCOMB_SMOKE_MCP:-1}" = 1 ]; then
   check "8 True" "$(curl -s -b "$jar" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
     -d "$rpc" "$base${bp}api/mcp/" | python3 -c 'import json,sys; t=json.load(sys.stdin)["result"]["tools"]
 print(len(t), all(x["annotations"]["readOnlyHint"] for x in t))')" "MCP tools/list 经网关"
+  # 聊天后端（agent.chat.v1）：过门；没填 AGENT_API_KEY 的缺省组装 configured=false（页面提示去填）
+  check "${bp}login/" "$(location "$base${bp}api/agent/health")" "未登录聊天后端跳登录页"
+  check '{"status":"ok","configured":false}' "$(curl -s -b "$jar" "$base${bp}api/agent/health")" "聊天后端 health 经网关"
 fi
 
 [ "$fail" = 0 ] && echo "✅ 全部通过" || echo "❌ 有失败项"

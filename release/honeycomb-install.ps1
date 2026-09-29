@@ -85,6 +85,8 @@ if (-not (Test-Path '.env')) {
     '# 只本机能访问。要放到局域网改成 0.0.0.0:8800，但先在前面加 TLS（见 README）。',
     "HONEYCOMB_BIND=$Bind",
     'HONEYCOMB_TZ=Asia/Shanghai',
+    '# 计时台「问问助手」用的模型密钥（缺省 DeepSeek；换模型见 README）。填了再 docker compose up -d。',
+    'AGENT_API_KEY=',
     '# compose 项目名（容器、数据卷的前缀）。别改：改了等于换成一份新的空数据。',
     "HONEYCOMB_PROJECT=$project"
   )

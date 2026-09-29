@@ -13,13 +13,15 @@ name: ${HONEYCOMB_PROJECT:-honeycomb}
 networks:
   honeycomb-net:
     driver: bridge
-  # AI 桥内网（gateway.v1 第八节），实际名 <项目名>_honeycomb-agent-net。只有 web、mcp（与聊天后端）在上面。
+  # AI 桥内网（gateway.v1 第八节），实际名 <项目名>_honeycomb-agent-net。只有 web、mcp、agent（聊天后端）在上面。
   honeycomb-agent-net:
     driver: bridge
 
 volumes:
   honeycomb_mongo_data:
   honeycomb_auth_data:
+  # 聊天记录（agent.chat.v1）。down 不删，down -v 删。
+  honeycomb_agent_data:
 
 services:
   mongo:
@@ -76,6 +78,32 @@ services:
       NEXUS_CORE_URL: http://nexus-core:8000
       NEXUS_TENANT_STRICT: ${NEXUS_TENANT_STRICT:-0}
       MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-}
+
+  agent:
+    # 聊天后端（contracts/agent.chat.v1）。在 .env 里填 AGENT_API_KEY 后 docker compose up -d。
+    image: ghcr.io/dblsc1/honeycomb-agent:__VERSION__
+    restart: unless-stopped
+    networks: [honeycomb-agent-net]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes:
+      - honeycomb_agent_data:/data
+    environment:
+      # 模型密钥只进这个容器（agent.chat.v1 第七节）。与 AGENT_BASE_URL 都空 = 面板提示去填，发消息 503。
+      AGENT_API_KEY: ${AGENT_API_KEY:-}
+      AGENT_MODEL: ${AGENT_MODEL:-deepseek/deepseek-flash}
+      # OpenAI 兼容端点（本机 Ollama、内网服务 http://svc:port/v1 都行），只许 http:// / https://
+      AGENT_BASE_URL: ${AGENT_BASE_URL:-}
+      AGENT_MAX_SESSIONS: ${AGENT_MAX_SESSIONS:-50}
+      AGENT_MAX_RUNTIMES: ${AGENT_MAX_RUNTIMES:-4}
+      # 一轮回答的总时限（秒），到点中止
+      AGENT_MAX_TURN_SECONDS: ${AGENT_MAX_TURN_SECONDS:-300}
+      NEXUS_TENANT_STRICT: ${NEXUS_TENANT_STRICT:-0}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8030/api/agent/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   web:
     image: ghcr.io/dblsc1/honeycomb-web:__VERSION__

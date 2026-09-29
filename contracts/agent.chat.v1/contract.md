@@ -1,6 +1,6 @@
 # agent.chat.v1 —— 和 AI 助手聊天（可替换的聊天后端）
 
-> **契约 id**：`agent.chat.v1`。**当前版本 v1.0**（2026-09-28，v0.3「AI 桥」首版，契约先行，实现待建）。
+> **契约 id**：`agent.chat.v1`。**当前版本 v1.2**（2026-09-28：v1.0 契约先行；v1.1 追加实现 PR 的核实结果，第七节末；v1.2 追加存储与时长上限，第六节末）。
 >
 > **是什么**：网页里的聊天面板（计时台 `ring`，与「待确认」面板合在一起）只跟这份契约说话：
 > 建会话、列会话、接着聊、发一条消息并以 SSE 流式收回答、取消。**会话管理是本契约的形状，
@@ -131,6 +131,17 @@ consumes:
 | 同一会话同时生成 | 1 | `409` |
 | 同一租户同时生成 | 2 | `429` |
 
+**上限（v1.2 追加）**——都不改既有状态码，只把「无限」变成有限：
+
+| 上限 | 值 | 到了怎样 |
+|---|---|---|
+| 每个会话存的消息 | 最近 500 条（= `GET ?limit` 的上限） | 更早的丢掉；之后读历史 `truncated` 恒为 `true`。不拒绝发消息 |
+| 一条回答的正文 | 32000 个字符 | 多出的部分不转、不存，这一轮中止，流以 `done {"reason": "cancelled"}` 结束 |
+| 一轮回答的总时长 | `AGENT_MAX_TURN_SECONDS`，缺省 300 秒 | 中止，流以 `error {"code": "upstream"}`（「模型服务超时」）结束 |
+
+取消、断连、超时之后，实现**确认运行时这一轮真停了**（有上限地等）才放开这个会话的 `busy`；确认不了就重启
+这个租户的运行时——迟到的中止或事件不能落到下一轮头上。
+
 聊天后端**必须拒绝 / 必须不做**：
 
 1. 客户端指定模型、系统提示、工具、智能体、附件、文件——v1 请求体里没有这些字段，带了就是 `422`。
@@ -151,7 +162,7 @@ consumes:
 | 变量 | 必填 | 缺省 | 说明 |
 |---|---|---|---|
 | `AGENT_API_KEY` | 用云端模型就必填 | 空 | 模型服务的密钥。它与 `AGENT_BASE_URL` 都空 = `configured:false`，发消息 `503`。**只进聊天后端容器**，不进网关、MCP、nexus-core |
-| `AGENT_MODEL` | ❌ | `.env.example` 写 `deepseek/deepseek-chat` | `<provider>/<model>`（opencode 的写法） |
+| `AGENT_MODEL` | ❌ | `.env.example` 写 `deepseek/deepseek-chat`（v1.1 起 `deepseek/deepseek-flash`，见第七节末） | `<provider>/<model>`（opencode 的写法） |
 | `AGENT_BASE_URL` | ❌ | 空 | OpenAI 兼容端点（`.../v1`，如本机 Ollama）。设了就走下面的「自定义端点」映射 |
 | `AGENT_MAX_SESSIONS` | ❌ | `50` | 每个租户的会话上限 |
 | `AGENT_MAX_RUNTIMES` | ❌ | `4` | 同时活着的运行时进程数上限（见下）；满了且没有空闲可回收的 → `503` |
@@ -221,6 +232,39 @@ consumes:
 - 模型 id `deepseek/deepseek-chat` 在当时的 opencode 模型目录里存在（文档只列了 provider，没列到模型）。
 - 文档里**没有**「一个 serve 进程按目录分多个实例」的可靠说明，所以不用它；这也是「一租户一进程」的原因。
 
+### 实现核实结果（v1.1 追加，2026-09-28，opencode 1.18.33）
+
+上面「假设了」的五条，实现 PR（`modules/agent`）用真 opencode 逐条测过（`modules/agent/code/backend/tests/test_integration.py`，
+CI「agent 测试」在镜像里跑，假模型 + 假 MCP，不要密钥）：
+
+| 假设 | 结果 | 证据 / 适配器的做法 |
+|---|---|---|
+| 会话存储随 `XDG_DATA_HOME` 走、两进程互不可见 | **成立** | 会话库在 `$XDG_DATA_HOME/opencode/opencode.db`；两个租户的进程各列各的会话 |
+| MCP 工具权限名 `<服务器名>_<工具名>`；`"*": "deny"` + `"honeycomb_*": "allow"` 只剩 honeycomb 工具；serve 模式下服务端执行 | **成立** | 发给模型的工具表只有 `honeycomb_get_*`；让假模型硬调 `bash`/`read`/`webfetch`/`task`/`edit`/`write`，opencode 回「unavailable tool」，工作目录里什么都没多 |
+| 事件流分得出正文增量、工具开始/结束、空闲/出错 | **成立** | `message.part.delta`（`field: "text"`）；`message.part.updated` 的 `part.type` 为 `text` / `tool`（`state.status`：`pending`/`running`/`completed`/`error`）；`session.error`（取消时 `name: "MessageAbortedError"`，上游出错 `APIError` 带 `data.statusCode`）；`session.idle`。翻译见适配器 `Translator` |
+| `deepseek/deepseek-chat` 在 opencode 模型目录里 | **不成立** | 1.18.33 自带的目录与 models.dev（2026-09-28）里 deepseek 只有 `deepseek-flash`、`deepseek-v4-flash`、`deepseek-v4-pro`、`deepseek-v4-flash-vision-exp`；DeepSeek 官方文档（api-docs.deepseek.com，2026-09-28）写的是「模型名用 `deepseek-flash`」（或 `deepseek-v4-pro`），`deepseek-chat` 已不在文档里。**所以缺省改为 `deepseek/deepseek-flash`**（`.env.example`、compose、适配器缺省值；上面配置表里的 `deepseek/deepseek-chat` 以此为准）。另外适配器总是显式登记 `provider.<p>.models.<m>`：目录里没有的 id 也照发（已验证 opencode 向上游发的 `model` 就是配置里的那个），换新模型不必等 opencode 升级 |
+| 一个 serve 进程不能靠目录分实例 | 未改做法 | 仍是一租户一进程 |
+
+另外测出、并据此定下的做法：
+
+- **自定义端点模式下打到上游的只有一个路径**：`POST <AGENT_BASE_URL>/chat/completions`（`stream: true`，带 `tools`；设了
+  `AGENT_API_KEY` 时带 `Authorization: Bearer <密钥>`）。**不**请求 `<AGENT_BASE_URL>/models`，也不为起标题多调一次
+  （opencode 自带的 `title` 智能体关掉了）。私有版或自建网关只需实现这一个端点（OpenAI Chat Completions 流式 + 工具调用）。
+- `AGENT_BASE_URL` 的主机不设限：公网、`host.docker.internal`、同一张网上的内网服务名（`http://my-llm:8000/v1`）都行，
+  只查 `http://`/`https://` 与主机非空（CI 用 `http://fake-llm:9100/v1` 验）。
+- 自定义智能体的 `prompt` **替换** opencode 自带的系统提示；opencode 仍在后面附一段环境信息（模型名、工作目录、日期），
+  不含密钥。自带的 `build`/`plan`/`general`/`explore`/`title` 智能体全部 `disable`。
+- opencode 自己的日志文件（`$XDG_DATA_HOME/opencode/log/opencode.log`）会原样记上游报错正文（可能带密钥片段）——
+  适配器把它接到 `/dev/null`。opencode 的会话库里也存着上游报错原文，它在租户目录里，适配器从不读出、不回给任何人。
+- 运行时进程的环境从零拼（不继承适配器的环境），另设 opencode 的开关：不读项目 / Claude Code 配置与技能、不自动更新、
+  不分享、不下 LSP、**不拉模型目录**（用钉死版本自带的，行为可复现）、不加载外部插件。
+- 历史与会话列表由适配器自己存（租户目录下的 JSON）：列会话、读历史不用拉起运行时；opencode 的会话只当模型上下文。
+  删会话时运行时没在跑，就记下 opencode 会话 id，下次拉起时删。
+- 网络：compose 键 `honeycomb-agent-net`，实际网络名 `<项目名>_honeycomb-agent-net`（同机两套部署各一张，互不相通）。
+  部署方接自己的服务写这个键名；**键名与命名规则改了是破坏性变更**（与 gateway.v1 第八节「网络名【冻结】」同一条）。
+- 只给测试 / 换组装用的变量（用户不用管）：`AGENT_MCP_URL`（缺省 `http://mcp:8020/api/mcp/`）、`AGENT_DATA_DIR`、
+  `AGENT_IDLE_SECONDS`、`AGENT_OPENCODE_BIN`。
+
 ## 八、换实现要满足什么
 
 - [ ] 第二节端点、状态码、形状；错误一律 `{"detail"}`；POST 要 `application/json`
@@ -239,3 +283,5 @@ honeycomb MCP 的只读工具。
 | 日期 | 变更 |
 |---|---|
 | 2026-09-28 | v1.0 首版（v0.3 AI 桥）。契约先行，实现待建 |
+| 2026-09-28 | v1.2 追加（实现 PR · Codex 审核）：第六节末「上限」——每会话存最近 500 条、回答 32000 字、一轮 `AGENT_MAX_TURN_SECONDS`（300 秒）；取消/断连/超时确认停了才放开 busy |
+| 2026-09-28 | v1.1 追加（实现 PR）：第七节末「实现核实结果」——五条假设四条成立；`deepseek/deepseek-chat` 不在目录、DeepSeek 文档也已改用 `deepseek-flash`，缺省模型改为 `deepseek/deepseek-flash`，适配器总是显式登记模型；自定义端点只调 `/chat/completions`；`AGENT_BASE_URL` 可为内网服务名；网络名规则。接口不变 |

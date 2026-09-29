@@ -88,6 +88,7 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
     sources: list[str] = []
     extra_nets: list[str] = []   # 模块声明的额外网络（如 honeycomb-agent-net，gateway.v1 第八节）
     lazy: set[str] = set()       # 网关运行期才解析的上游：网关不等它健康、缺了照常起
+    named_volumes: list[str] = []
 
     # ── 模块 ───────────────────────────────────────────────────
     for name in plan["modules"]:
@@ -129,7 +130,13 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
                 "interval": "10s", "timeout": "5s", "retries": 5, "start_period": "15s",
             }
         entry["restart"] = "unless-stopped"
-        entry["networks"] = ["honeycomb-net"]
+        # isolated: 不上 honeycomb-net（够不着 nexus-core / auth / mongo），只在自己声明的网络上。
+        # 聊天后端就是这样：它读数据只能经 MCP（agent.chat.v1 第七节）。
+        entry["networks"] = [] if svc.get("isolated") else ["honeycomb-net"]
+        # 模块自己的数据放 named volume（同占位件的写法 "卷名:/容器内路径"），名字进顶层 volumes。
+        for v in svc.get("volumes") or []:
+            entry.setdefault("volumes", []).append(v)
+            named_volumes.append(v.split(":", 1)[0])
         for net in svc.get("networks") or []:
             entry["networks"].append(net)
             if net not in extra_nets:
@@ -177,7 +184,6 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
         stub_ids.append(auto_gate)
 
     # ── 占位实现 ───────────────────────────────────────────────
-    named_volumes: list[str] = []
     for cid in stub_ids:
         sf = root / "contracts" / cid / "stub" / "stub.yaml"
         if not sf.is_file():

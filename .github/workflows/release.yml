@@ -1,11 +1,11 @@
 # 发布：main 上打 vX.Y.Z 标签即触发。
 #
-#   1. 构建四张镜像（nexus-core / web / auth / mcp），amd64 + arm64，推到 ghcr.io/dblsc1/，
+#   1. 构建五张镜像（nexus-core / web / auth / mcp / agent），amd64 + arm64，推到 ghcr.io/dblsc1/，
 #      标签 X.Y.Z 与 latest；
 #   2. 把 release/ 下的 compose 与两个安装脚本里的 __VERSION__ / __TAG__ 换成本版，
 #      连同 ai-detector 四个平台的单文件（+ SHA256SUMS）、源码包一起挂到 GitHub Release。
 #
-# 发布前的「装得起来吗」由 ci.yml 的「发布包」job 在每个 PR 上验（本地构建同样四张镜像，
+# 发布前的「装得起来吗」由 ci.yml 的「发布包」job 在每个 PR 上验（本地构建同样五张镜像，
 # 用同样的安装脚本装一遍再冒烟），这里不重复。
 name: release
 
@@ -37,6 +37,9 @@ jobs:
           - image: honeycomb-mcp
             context: modules/mcp/code/server
             file: modules/mcp/code/server/Dockerfile
+          - image: honeycomb-agent
+            context: modules/agent/code/backend
+            file: modules/agent/code/backend/Dockerfile
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v4
@@ -111,7 +114,7 @@ jobs:
       - name: 匿名 manifest
         run: |
           v=${GITHUB_REF_NAME#v}; bad=0
-          for i in honeycomb-nexus-core honeycomb-web honeycomb-auth honeycomb-mcp; do
+          for i in honeycomb-nexus-core honeycomb-web honeycomb-auth honeycomb-mcp honeycomb-agent; do
             if docker manifest inspect "ghcr.io/dblsc1/$i:$v" >/dev/null 2>&1; then echo "ok    $i"
             else echo "::error::ghcr.io/dblsc1/$i 匿名拉不到：到 GitHub → Packages → $i → Package settings → Change visibility 改成 Public"; bad=1; fi
           done
