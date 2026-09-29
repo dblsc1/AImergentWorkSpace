@@ -95,6 +95,8 @@ services:
       AGENT_BASE_URL: ${AGENT_BASE_URL:-}
       AGENT_MAX_SESSIONS: ${AGENT_MAX_SESSIONS:-50}
       AGENT_MAX_RUNTIMES: ${AGENT_MAX_RUNTIMES:-4}
+      # 一轮回答的总时限（秒），到点中止
+      AGENT_MAX_TURN_SECONDS: ${AGENT_MAX_TURN_SECONDS:-300}
       NEXUS_TENANT_STRICT: ${NEXUS_TENANT_STRICT:-0}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8030/api/agent/health').status==200 else 1)"]

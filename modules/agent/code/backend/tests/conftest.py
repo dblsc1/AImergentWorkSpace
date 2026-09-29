@@ -28,9 +28,14 @@ def free_port() -> int:
 class Server:
     def __init__(self, app):
         self.port = free_port()
+        self.loop = None
         self.server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=self.port,
                                                     log_level="warning", lifespan="on"))
-        self.thread = threading.Thread(target=self.server.run, daemon=True)
+        def run():
+            import asyncio
+            self.loop = asyncio.new_event_loop()
+            self.loop.run_until_complete(self.server.serve())
+        self.thread = threading.Thread(target=run, daemon=True)
         self.thread.start()
         for _ in range(200):
             if self.server.started:

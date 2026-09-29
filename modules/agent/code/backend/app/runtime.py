@@ -34,6 +34,7 @@ OPENCODE_FLAGS = {k: "1" for k in (
     "OPENCODE_DISABLE_CLAUDE_CODE", "OPENCODE_DISABLE_EXTERNAL_SKILLS", "OPENCODE_DISABLE_LSP_DOWNLOAD",
     "OPENCODE_DISABLE_MODELS_FETCH", "OPENCODE_DISABLE_EMBEDDED_WEB_UI", "OPENCODE_DISABLE_DEFAULT_PLUGINS",
     "OPENCODE_PURE")}
+MAX_ANSWER_CHARS = 32000   # 一条回答最多存/转这么多字；超了就中止这一轮（agent.chat.v1 v1.2）
 LISTEN_RE = re.compile(rb"listening on http://127\.0\.0\.1:(\d+)")
 
 
@@ -45,7 +46,7 @@ class Runtime:
     def __init__(self, tenant: str, proc: asyncio.subprocess.Process, port: int, password: str):
         self.tenant, self.proc = tenant, proc
         self.client = httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}", auth=("opencode", password),
-                                        timeout=httpx.Timeout(30, read=None), trust_env=False)
+                                        timeout=httpx.Timeout(30), trust_env=False)   # 普通 RPC 都有上限
         self.active = 0
         self.last_used = time.monotonic()
 
@@ -74,13 +75,27 @@ class Runtime:
         with contextlib.suppress(httpx.HTTPError):
             await self.client.post(f"/session/{oc_id}/abort", json={})
 
+    async def wait_idle(self, oc_id: str, seconds: float) -> bool:
+        """中止之后确认它真停了：/session/status 里这个会话不再是 busy/retry。确认不了返回 False。"""
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            try:
+                st = (await self.client.get("/session/status", timeout=5)).json().get(oc_id) or {}
+                if st.get("type", "idle") == "idle":
+                    return True
+            except (httpx.HTTPError, ValueError, AttributeError):
+                pass
+            await asyncio.sleep(0.2)
+        return False
+
     async def delete_session(self, oc_id: str) -> None:
         await self._ok(await self.client.delete(f"/session/{oc_id}"))
 
     @contextlib.asynccontextmanager
     async def events(self, oc_id: str):
         """订阅 /event，等到 server.connected 再交出去（之后才发 prompt，不丢事件）。只给这个会话的事件。"""
-        async with self.client.stream("GET", "/event") as r:
+        # 只有事件流读不设上限（空闲时 opencode 不发东西；心跳与总时限由 main.py 管）
+        async with self.client.stream("GET", "/event", timeout=httpx.Timeout(30, read=None)) as r:
             await self._ok(r)
             lines = r.aiter_lines()
 
@@ -132,10 +147,12 @@ class RuntimeManager:
     async def reap(self) -> None:
         async with self.lock:
             cutoff = time.monotonic() - self.s.idle_seconds
-            for t, rt in list(self.runtimes.items()):
-                if not rt.alive or (rt.active == 0 and rt.last_used < cutoff):
-                    del self.runtimes[t]
-                    await rt.stop()
+            gone = [rt for rt in self.runtimes.values()
+                    if not rt.alive or (rt.active == 0 and rt.last_used < cutoff)]
+            for rt in gone:
+                del self.runtimes[rt.tenant]
+        for rt in gone:
+            await rt.stop()
 
     def running(self, tenant: str) -> Runtime | None:
         rt = self.runtimes.get(tenant)
@@ -143,7 +160,8 @@ class RuntimeManager:
 
     async def acquire(self, tenant: str) -> Runtime:
         """拿到（必要时拉起）这个租户的运行时，并记一次占用；用完调 release。"""
-        # ponytail: 一把全局锁，拉起一个进程（约 1–3 秒）期间别的租户排队；租户多了再改成按租户的锁
+        # ponytail: 一把全局锁，拉起一个进程（约 1–3 秒，上限 30 秒）期间别的租户排队；租户多了再改成按租户的锁
+        fresh = False
         async with self.lock:
             rt = self.running(tenant)
             if rt is None:
@@ -159,10 +177,19 @@ class RuntimeManager:
                     await lru.stop()
                 rt = await self._spawn(tenant)
                 self.runtimes[tenant] = rt
-                await self._flush_pending_deletes(rt)
+                fresh = True
             rt.active += 1
             rt.last_used = time.monotonic()
-            return rt
+        if fresh:   # 网络请求不放在锁里
+            await self._flush_pending_deletes(rt)
+        return rt
+
+    async def kill(self, rt: Runtime) -> None:
+        """中止确认不了：整个运行时收掉，下一轮重新拉起（别让迟到的事件、迟到的中止串到下一轮）。"""
+        async with self.lock:
+            if self.runtimes.get(rt.tenant) is rt:
+                del self.runtimes[rt.tenant]
+        await rt.stop()
 
     def release(self, rt: Runtime) -> None:
         rt.active -= 1
@@ -296,6 +323,8 @@ class Translator:
         self.text_parts: dict[str, int] = {}     # 正文 part id → 已吐出的字符数
         self.tools: dict[str, str] = {}          # callID → 已报告的状态
         self.text: list[str] = []
+        self.size = 0
+        self.overflow = False                    # 回答超长：main.py 看到就中止
         self.cancelled = False
         self.final: tuple | None = None          # ("done", reason) | ("error", code, sub, status)
 
@@ -331,12 +360,17 @@ class Translator:
                 self.final = ("error", *classify(err))
         elif t == "session.idle" or (t == "session.status" and (p.get("status") or {}).get("type") == "idle"):
             if self.final is None:
-                self.final = ("done", "cancelled" if self.cancelled else "end")
+                self.final = ("done", "cancelled" if self.cancelled or self.overflow else "end")
         return out
 
     def _delta(self, pid: str, s: str) -> list[tuple[str, dict]]:
+        self.text_parts[pid] += len(s)
+        cut = s[:max(MAX_ANSWER_CHARS - self.size, 0)]
+        if len(cut) < len(s):
+            self.overflow = True             # 截了：这一轮算被停下的（done.reason = cancelled）
+        s = cut
         if not s:
             return []
-        self.text_parts[pid] += len(s)
+        self.size += len(s)
         self.text.append(s)
         return [("delta", {"text": s})]

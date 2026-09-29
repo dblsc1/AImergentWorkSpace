@@ -44,6 +44,7 @@ class Settings:
     strict: bool
     opencode_bin: str
     idle_seconds: int
+    max_turn_seconds: int = 300
 
     @property
     def configured(self) -> bool:
@@ -94,6 +95,8 @@ def load() -> Settings:
         strict=e("NEXUS_TENANT_STRICT", "0").strip() == "1",
         opencode_bin=e("AGENT_OPENCODE_BIN", "opencode"),
         idle_seconds=_int("AGENT_IDLE_SECONDS", 15 * 60),
+        # 一轮回答的总时限：上游卡住也不能一直占着名额（到点中止，回 error/超时）
+        max_turn_seconds=_int("AGENT_MAX_TURN_SECONDS", 300),
     )
 
 

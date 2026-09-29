@@ -147,9 +147,11 @@ def test_denied_tools_cannot_run_even_if_model_calls_them(agent, fakes, tmp_path
 
 
 def test_cancel_and_disconnect(agent, fakes):
-    srv, _ = agent()
+    srv, mgr = agent()
     c = srv.client("alice")
     sid = new(c)
+    chat(c, sid, "hi")
+    pid = mgr.runtimes["alice"].proc.pid
     with c.stream("POST", f"/api/agent/sessions/{sid}/messages", json={"text": "go slow"}) as r:
         lines = r.iter_lines()
         first = read_sse(lines, stop_after="delta")
@@ -169,6 +171,48 @@ def test_cancel_and_disconnect(agent, fakes):
         time.sleep(0.1)
     else:
         pytest.fail("断开后上游请求没被掐断")
+    # 取消与断开都经 /session/status 确认停了：没走「确认不了就收掉运行时」那条路
+    assert mgr.runtimes["alice"].proc.pid == pid
+    assert chat(c, sid, "hi")[-1][1]["reason"] == "end"
+
+
+def test_raw_opencode_events_carry_top_level_session_id(agent, fakes, tmp_path):
+    """Codex 审核 P1 的核对：1.18.33 的 message.updated / message.part.updated / message.part.delta
+    都在 properties.sessionID 顶层带会话号（适配器按它过滤）。录一段真 /event 断言。"""
+    import threading
+    srv, mgr = agent()
+    c = srv.client("alice")
+    sid = new(c)
+    chat(c, sid, "hi")
+    rt = mgr.runtimes["alice"]
+    meta = json.loads((tenant_dir(str(tmp_path), "alice") / "sessions" / f"{sid}.json").read_text())
+    raw, stop = [], threading.Event()
+
+    def listen():
+        with httpx.Client(base_url=str(rt.client.base_url), auth=rt.client.auth, trust_env=False,
+                          timeout=httpx.Timeout(10, read=None)) as h, h.stream("GET", "/event") as r:
+            for line in r.iter_lines():
+                if line.startswith("data:"):
+                    raw.append(json.loads(line[5:]))
+                if stop.is_set():
+                    return
+    th = threading.Thread(target=listen, daemon=True)
+    th.start()
+    time.sleep(0.5)
+    ev = chat(c, sid, "call:get_task_tree")
+    time.sleep(0.5)
+    stop.set()
+    types = {e["type"] for e in raw}
+    assert {"message.updated", "message.part.updated", "message.part.delta", "session.idle"} <= types, types
+    for e in raw:
+        if e["type"] in ("message.updated", "message.part.updated", "message.part.delta", "session.idle"):
+            assert e["properties"]["sessionID"] == meta["ocId"], e
+    deltas = [e["properties"]["delta"] for e in raw if e["type"] == "message.part.delta"]
+    assert "".join(deltas) == "TOOL_OK" == "".join(d["text"] for t, d in ev if t == "delta")
+    tools = [e["properties"]["part"]["state"]["status"] for e in raw
+             if e["type"] == "message.part.updated" and e["properties"]["part"]["type"] == "tool"]
+    assert "running" in tools and tools[-1] == "completed"
+    assert [d["status"] for t, d in ev if t == "tool"] == ["running", "done"]
 
 
 def test_upstream_error_redacted(agent, fakes):

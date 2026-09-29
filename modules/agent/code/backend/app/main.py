@@ -52,6 +52,7 @@ class Gen:
     oc_id: str
     rt: object
     cancelled_at: float | None = None
+    abandoned: bool = False
     tr: Translator = field(default_factory=Translator)
 
 
@@ -160,8 +161,9 @@ def create_app(settings: config.Settings | None = None, manager=None) -> FastAPI
         if not 1 <= limit <= 500:
             raise HTTPException(422, "limit 要在 1–500 之间")
         sess = session_of(t, sid)
-        msgs = sess["messages"]
-        return {"session": public(t, sess), "messages": msgs[-limit:], "truncated": len(msgs) > limit}
+        msgs = store.messages(t, sid, limit)
+        truncated = sess.get("count", 0) > limit or sess.get("dropped", 0) > 0
+        return {"session": public(t, sess), "messages": msgs, "truncated": truncated}
 
     @app.delete("/api/agent/sessions/{sid}", status_code=204)
     async def delete_session(req: Request, sid: str):
@@ -231,9 +233,18 @@ def create_app(settings: config.Settings | None = None, manager=None) -> FastAPI
             mgr.release(rt)
             log.error("generation error category=internal sub=session")
             raise HTTPException(503, "聊天运行时暂时不可用，稍后再试")
-        if oc_id != sess.get("ocId"):
-            sess["ocId"] = oc_id
-            store.save(t, sess)
+        # 上面两次 await 期间会话可能被删了：不能拿旧快照写回去（那会让它复活）
+        cur = store.get(t, sid)
+        if cur is None:
+            gens.pop(key, None)
+            if oc_id != sess.get("ocId"):
+                with contextlib.suppress(Exception):
+                    await rt.delete_session(oc_id)
+            mgr.release(rt)
+            raise HTTPException(404, "会话不存在")
+        if oc_id != cur.get("ocId"):
+            cur["ocId"] = oc_id
+            store.save(t, cur)
         g.oc_id, g.rt = oc_id, rt
         user_mid, mid, cid = new_id("msg_"), new_id("msg_"), "c_" + secrets.token_hex(8)
         store.add_message(t, sid, user_mid, "user", text)
@@ -248,7 +259,7 @@ def create_app(settings: config.Settings | None = None, manager=None) -> FastAPI
                             g.tr.final = ("done", "cancelled")
                         else:
                             await rt.prompt(oc_id, text)
-                        q: asyncio.Queue = asyncio.Queue()
+                        q: asyncio.Queue = asyncio.Queue(maxsize=256)   # 满了就不读上游（背压），不无限攒
 
                         async def pump():
                             try:
@@ -258,15 +269,23 @@ def create_app(settings: config.Settings | None = None, manager=None) -> FastAPI
                                 await q.put(None)
 
                         pt = asyncio.create_task(pump())
+                        deadline = time.monotonic() + s.max_turn_seconds
                         try:
                             while g.tr.final is None:
-                                if g.cancelled_at and time.monotonic() - g.cancelled_at > CANCEL_GRACE:
-                                    g.tr.final = ("done", "cancelled")
+                                now = time.monotonic()
+                                if g.cancelled_at and now - g.cancelled_at > CANCEL_GRACE:
+                                    g.tr.final = ("done", "cancelled")      # settle() 会确认或收掉运行时
                                     break
+                                if now > deadline:                         # 总时限到了
+                                    g.tr.final = ("error", "upstream", "timeout", None)
+                                    break
+                                if g.tr.overflow and not g.cancelled_at:   # 回答超长：停在这里
+                                    await _cancel(g)
                                 try:
-                                    ev = await asyncio.wait_for(q.get(), PING_SECONDS)
+                                    ev = await asyncio.wait_for(q.get(), min(PING_SECONDS, max(deadline - now, 0.05)))
                                 except asyncio.TimeoutError:
-                                    yield ": ping\n\n"
+                                    if time.monotonic() < deadline:
+                                        yield ": ping\n\n"
                                     continue
                                 if ev is None:
                                     raise RuntimeError("event stream closed")
@@ -278,6 +297,8 @@ def create_app(settings: config.Settings | None = None, manager=None) -> FastAPI
                     if g.tr.final is None:
                         g.tr.final = ("error", "internal", "internal", None)
                 fin = g.tr.final
+                if fin != ("done", "end"):
+                    await settle(abort=True)       # 没正常结束：确认运行时这一轮真停了再放人
                 if fin[0] == "done":
                     last = _sse("done", {"messageId": mid, "reason": fin[1]})
                 else:
@@ -292,13 +313,29 @@ def create_app(settings: config.Settings | None = None, manager=None) -> FastAPI
                 if not finished:
                     abandon()
 
+        async def settle(abort: bool):
+            """中止并确认（有上限）；确认不了就把这个租户的运行时整个收掉。之后才放开 busy，
+            迟到的中止、迟到的事件不会落到下一轮头上。"""
+            if abort:
+                await rt.abort(oc_id)
+            if not await rt.wait_idle(oc_id, CANCEL_GRACE):
+                log.warning("generation error category=internal sub=abort_unconfirmed correlationId=%s", cid)
+                await mgr.kill(rt)
+
         def abandon():
-            """客户端断开 = 取消（契约第四节）。可能在被取消的任务里，abort 另起一个任务去做。"""
-            if gens.get(key) is not g:
+            """客户端断开 = 取消（契约第四节）。这里可能在被取消的任务里：另起一个任务中止、确认、收尾，
+            确认之前会话一直 busy。"""
+            if gens.get(key) is not g or g.abandoned:
                 return
+            g.abandoned = True
             g.tr.cancelled = True
-            asyncio.get_running_loop().create_task(rt.abort(oc_id))
-            cleanup()
+
+            async def finish():
+                try:
+                    await settle(abort=True)
+                finally:
+                    cleanup()
+            asyncio.get_running_loop().create_task(finish())
 
         def cleanup():
             if gens.get(key) is not g:

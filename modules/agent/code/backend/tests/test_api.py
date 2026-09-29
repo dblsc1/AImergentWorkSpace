@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import threading
 
@@ -52,8 +53,12 @@ class FakeRuntime:
         self.tenant, self.active, self.alive = tenant, 0, True
         self.qs: dict[str, asyncio.Queue] = {}
         self.prompts, self.aborts, self.deleted, self.n = [], [], [], 0
+        self.idle_ok = True           # False = 中止之后确认不了它停了
+        self.ensure_gate: asyncio.Event | None = None   # 设了就让 ensure_session 卡在这里
 
     async def ensure_session(self, oc_id):
+        if self.ensure_gate:
+            await self.ensure_gate.wait()
         if not oc_id:
             self.n += 1
             oc_id = f"oc{self.n}"
@@ -76,9 +81,14 @@ class FakeRuntime:
 
     async def abort(self, oc_id):
         self.aborts.append(oc_id)
-        if oc_id in self.qs:
+        if oc_id in self.qs and self.idle_ok:
             for e in ABORTED:
                 self.qs[oc_id].put_nowait(e)
+
+    async def wait_idle(self, oc_id, seconds):
+        if not self.idle_ok:
+            await asyncio.sleep(seconds)     # 同真货：等满时限才放弃
+        return self.idle_ok
 
     async def delete_session(self, oc_id):
         self.deleted.append(oc_id)
@@ -103,6 +113,10 @@ class FakeManager:
 
     def running(self, tenant):
         return self.rts.get(tenant)
+
+    async def kill(self, rt):
+        self.killed = getattr(self, "killed", []) + [rt.tenant]
+        self.rts.pop(rt.tenant, None)
 
     def defer_delete(self, tenant, oc_id):
         self.deferred.append((tenant, oc_id))
@@ -439,3 +453,92 @@ def test_ping_while_idle(app_env, monkeypatch):
         assert next(l for l in lines if l) == ": ping"
         assert c.post(f"/api/agent/sessions/{sid}/cancel", json={}).status_code == 204
         assert read_sse(lines)[-1][1]["reason"] == "cancelled"
+
+
+def test_turn_deadline_and_unconfirmed_abort_kills_runtime(app_env, monkeypatch):
+    import app.main
+    monkeypatch.setattr(app.main, "CANCEL_GRACE", 0.3)
+    srv, mgr = app_env(max_turn_seconds=1)
+    c = srv.client("alice")
+    sid = new_session(c)
+    mgr.rts.setdefault("alice", FakeRuntime("alice")).idle_ok = False     # 上游卡死、中止也不回话
+    ev = send(c, sid, "hang")
+    assert ev[-1][0] == "error" and ev[-1][1]["detail"].startswith("模型服务超时")
+    assert mgr.rts == {} and mgr.killed == ["alice"]                        # 运行时整个收掉
+    assert c.get(f"/api/agent/sessions/{sid}").json()["session"]["busy"] is False
+    assert send(c, sid, "hi")[-1][0] == "done"                               # 下一轮换新运行时
+
+
+def test_disconnect_keeps_busy_until_abort_confirmed(app_env, monkeypatch):
+    import app.main
+    monkeypatch.setattr(app.main, "CANCEL_GRACE", 1.0)
+    srv, mgr = app_env()
+    c = srv.client("alice")
+    sid = new_session(c)
+    rt = mgr.rts.setdefault("alice", FakeRuntime("alice"))
+    rt.idle_ok = False
+    with srv.client("alice").stream("POST", f"/api/agent/sessions/{sid}/messages", json={"text": "hang"}) as r:
+        read_sse(r, stop_after="delta")
+    threading.Event().wait(0.3)
+    # 断开了，但运行时还没确认停：会话仍 busy，下一条 409
+    assert c.get(f"/api/agent/sessions/{sid}").json()["session"]["busy"] is True
+    assert c.post(f"/api/agent/sessions/{sid}/messages", json={"text": "x"}).status_code == 409
+    for _ in range(60):
+        if not c.get(f"/api/agent/sessions/{sid}").json()["session"]["busy"]:
+            break
+        threading.Event().wait(0.05)
+    assert mgr.killed == ["alice"]
+
+
+def test_delete_during_first_send_does_not_resurrect(app_env):
+    srv, mgr = app_env()
+    c = srv.client("alice")
+    sid = new_session(c)
+    rt = mgr.rts.setdefault("alice", FakeRuntime("alice"))
+    rt.ensure_gate = asyncio.Event()
+    box = {}
+    th = threading.Thread(target=lambda: box.setdefault(
+        "r", srv.client("alice").post(f"/api/agent/sessions/{sid}/messages", json={"text": "hi"})))
+    th.start()
+    threading.Event().wait(0.3)
+    assert c.delete(f"/api/agent/sessions/{sid}").status_code == 204
+    asyncio.run_coroutine_threadsafe(_set(rt.ensure_gate), srv.loop).result(5)
+    th.join(10)
+    assert box["r"].status_code == 404
+    assert c.get(f"/api/agent/sessions/{sid}").status_code == 404
+    assert c.get("/api/agent/sessions").json()["items"] == []
+    assert rt.deleted == ["oc1"]                    # 刚建的 opencode 会话也删掉
+
+
+async def _set(ev):
+    ev.set()
+
+
+def test_history_capped_and_list_reads_metadata_only(app_env, tmp_path, monkeypatch):
+    import app.store as st
+    monkeypatch.setattr(st, "MAX_MESSAGES", 4)
+    monkeypatch.setattr(st, "COMPACT_SLACK", 2)
+    srv, _ = app_env()
+    c = srv.client("alice")
+    sid = new_session(c)
+    for i in range(5):
+        send(c, sid, f"q{i}")
+    got = c.get(f"/api/agent/sessions/{sid}?limit=500").json()
+    assert got["truncated"] is True and len(got["messages"]) <= 6
+    assert got["messages"][-2]["text"] == "q4"
+    d = tenant_dir(str(tmp_path), "alice") / "sessions"
+    meta = json.loads((d / f"{sid}.json").read_text())
+    assert "messages" not in meta and meta["dropped"] > 0
+    assert sum(1 for _ in open(d / f"{sid}.jsonl")) == meta["count"]
+
+
+def test_answer_length_capped(app_env, monkeypatch):
+    import app.runtime as rtm
+    monkeypatch.setattr(rtm, "MAX_ANSWER_CHARS", 4)
+    srv, mgr = app_env()
+    c = srv.client("alice")
+    sid = new_session(c)
+    ev = send(c, sid, "hi")          # 脚本回 "Hel" + "lo"：只转前 4 个字，然后中止
+    assert "".join(d["text"] for t, d in ev if t == "delta") == "Hell"
+    assert ev[-1][1]["reason"] == "cancelled"
+    assert c.get(f"/api/agent/sessions/{sid}").json()["messages"][-1]["text"] == "Hell"
