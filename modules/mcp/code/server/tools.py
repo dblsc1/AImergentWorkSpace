@@ -1,4 +1,4 @@
-"""mcp.tools.v1 的 8 个只读工具（contracts/mcp.tools.v1 第四节）。
+"""mcp.tools.v1 的只读工具（v1.1 起 9 个）（contracts/mcp.tools.v1 第四节）。
 
 每个工具固定包装 nexus-core 的一个 GET 读端，路径另读 views/tree。**没有**按参数拼路径的
 代码路径：URL 只在 ``_get`` 的调用处以字面量出现。租户由 HTTP 层给，原样设到每个下游请求上；
