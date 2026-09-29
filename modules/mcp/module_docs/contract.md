@@ -7,11 +7,11 @@
 provides:
   - id: mcp.tools.v1
     contract: ../../../contracts/mcp.tools.v1/contract.md
-    summary: 8 个只读工具，挂在 <站点前缀>api/mcp/（经网关、过门）；对内 http://mcp:8020/api/mcp/
+    summary: 9 个只读工具，挂在 <站点前缀>api/mcp/（经网关、过门）；对内 http://mcp:8020/api/mcp/
 consumes:
   - id: nexus-core.views.tree.v1
     contract: ../../nexus-core/module_docs/contract.md
-    purpose: get_task_tree；所有工具的显示路径
+    purpose: get_task_tree、list_projects；所有工具的显示路径
   - id: nexus-core.views.current.v1
     contract: ../../nexus-core/module_docs/contract.md
     purpose: get_current_timer
@@ -44,7 +44,7 @@ consumes:
 ## 实现
 
 - `code/server/mcp_server.py`：HTTP 层（Origin → 租户 → 协议版本头 → 64 KiB 上限）与 JSON-RPC
-  （`initialize`、`ping`、`tools/list`、`tools/call`）。`code/server/tools.py`：8 个工具、入参校验、cursor、路径。
+  （`initialize`、`ping`、`tools/list`、`tools/call`）。`code/server/tools.py`：9 个工具、入参校验、cursor、路径。
 - **纯标准库，没有用官方 MCP Python SDK。** SDK 能做无状态 Streamable HTTP，但要带进 starlette / pydantic /
   anyio / httpx 一串依赖，Origin 与租户这两道 HTTP 层的门还得另写中间件（SDK 自带的 DNS 重绑定防护比的是 `Host`，
   契约明确不拿 `Host` 比）；用到的协议面只有四个方法，手写更小、每一步都看得见。

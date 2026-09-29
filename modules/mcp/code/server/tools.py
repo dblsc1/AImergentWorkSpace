@@ -241,6 +241,29 @@ def get_task_tree(a, tenant):
     return _page("get_task_tree", items, a)
 
 
+def list_projects(a, tenant):
+    """项目一个不漏（没建任务的也在）：get_task_tree 只列任务，空项目在那里看不见（仓主实测）。"""
+    tree = _tree(tenant)
+    paths = _Paths(tree)
+    used = set()
+    items = []
+    for p in tree["projects"]:
+        used.add(p["zoneId"])
+        if not a["includeDone"] and p["status"] == "done":
+            continue
+        tasks = [t for t in p["tasks"] if t.get("kind") != "ephemeral"]
+        items.append({
+            "projectId": p["id"], "key": p["key"], "name": p["name"], "zoneId": p["zoneId"],
+            "status": p["status"], "progress": p.get("progress"), "deadline": p.get("deadline"),
+            "openTasks": sum(1 for t in tasks if not t["done"]),
+            "doneTasks": sum(1 for t in tasks if t["done"]),
+            "path": paths(None, p["id"]),
+        })
+    page = _page("list_projects", items, a)
+    page["emptyZones"] = [z["name"] for z in tree["zones"] if z["id"] not in used]
+    return page
+
+
 def get_current_timer(a, tenant):
     c = _get("/api/core/views/current", {}, tenant)
     paths = _Paths(_tree(tenant))
@@ -394,6 +417,12 @@ _SPECS = [
      _schema({"includeDone": {"type": "boolean", "default": False, "description": "含已完成的任务"},
               "includeEphemeral": {"type": "boolean", "default": False, "description": "含临时任务"},
               "limit": _LIMIT, "cursor": _CURSOR}), [], {"includeDone": False, "includeEphemeral": False}),
+    (list_projects, "项目列表",
+     "列出所有项目（含还没建任务的），每条带状态、进度、截止日期、未完成/已完成任务数与显示路径；"
+     "emptyZones 是还没有项目的分区名（按整棵树算，不随 limit/cursor 变）。问「有哪些项目」「某项目怎么样」先用它，任务明细再用 get_task_tree。"
+     "缺省不含已完成（status=done）的项目。" + _IDS,
+     _schema({"includeDone": {"type": "boolean", "default": False, "description": "含已完成的项目"},
+              "limit": _LIMIT, "cursor": _CURSOR}), [], {"includeDone": False}),
     (get_current_timer, "此刻在计什么",
      "人的计时器此刻是否在跑、计在哪个任务、已计多少秒；agents 是另外在跑的 AI 代理运行（另一个维度）。",
      _schema({}), [], {}),
