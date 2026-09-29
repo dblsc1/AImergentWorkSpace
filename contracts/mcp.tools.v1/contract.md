@@ -1,6 +1,6 @@
 # mcp.tools.v1 —— 给 AI 代理用的只读工具（MCP）
 
-> **契约 id**：`mcp.tools.v1`。**当前版本 v1.0**（2026-09-28，v0.3「AI 桥」首版）。实现：`modules/mcp`（v0.3 MCP 实现 PR）。
+> **契约 id**：`mcp.tools.v1`。**当前版本 v1.1**（2026-09-30 加 `list_projects`；v1.0 2026-09-28，v0.3「AI 桥」首版）。实现：`modules/mcp`（v0.3 MCP 实现 PR）。
 >
 > **是什么**：HoneyComb 以 [MCP](https://modelcontextprotocol.io/)（Model Context Protocol）服务器的
 > 形式，把「任务树、人的时间、代理时间、在跑的计时、待确认的活动建议」读给 AI 代理。
@@ -152,6 +152,7 @@ consumes:
 | 工具 | 包装的 nexus-core 读端 | 类型 |
 |---|---|---|
 | `get_task_tree` | `GET /api/core/views/tree?includeEphemeral=` | 列表 |
+| `list_projects`（v1.1） | `GET /api/core/views/tree?includeEphemeral=true` | 列表 |
 | `get_current_timer` | `GET /api/core/views/current` | 对象 |
 | `list_time_sessions` | `GET /api/core/events?type=session.completed&from=&to=&limit=&offset=` | 列表 |
 | `get_daily_time` | `GET /api/core/views/gantt?from=&to=` | 列表 |
@@ -177,7 +178,23 @@ consumes:
   "nextCursor": null, "truncated": false }
 ```
 
-顺序同 `views/tree`（分区 → 项目 → 任务）。只列任务；没有任务的项目不出现。
+顺序同 `views/tree`（分区 → 项目 → 任务）。只列任务；没有任务的项目不出现——项目看 `list_projects`。
+
+### `list_projects` —— 项目列表（v1.1 追加）
+
+入参：`includeDone`（bool，缺省 `false`：不含 `status=done` 的项目；`archived` 照列、带状态）、`limit`、`cursor`。
+
+```jsonc
+{ "items": [
+    { "projectId": "p_3c", "key": "Z01-P01", "name": "garden", "zoneId": "z_7f",
+      "status": "active", "progress": 0.4, "deadline": "2026-10-10",   // 没有截止为 null
+      "openTasks": 6, "doneTasks": 1,                                   // 不含临时任务
+      "path": "学习 / garden" } ],
+  "emptyZones": ["空分区"],          // 还没有任何项目的分区名（整个树，不随分页变）
+  "nextCursor": null, "truncated": false }
+```
+
+一个项目一条，**没建任务的项目也在**（v1.0 只有 `get_task_tree`，空项目对智能体不可见——仓主实测）。顺序同 `views/tree`。
 
 ### `get_current_timer` —— 此刻在计什么
 
@@ -362,4 +379,5 @@ consumes:
 | 日期 | 变更 |
 |---|---|
 | 2026-09-28 | v1.0 首版（v0.3 AI 桥）。契约先行，实现待建 |
+| 2026-09-30 | v1.1 追加工具 `list_projects`（含没建任务的项目与空分区）。只增，既有工具不变 |
 | 2026-09-28 | 实现落地（`modules/mcp`，纯标准库）。加第八节「实现澄清」：对象工具 `truncated` 总在、92 天含两端、cursor 绑定推广到所有列表工具的其余参数、`null` 当没给、通知/批量/协议版本头的处理、只给 cursor 翻页、批量/并发/上游响应上限。不改任何既有语义 |

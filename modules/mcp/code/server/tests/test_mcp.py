@@ -44,9 +44,14 @@ def tree_for(tenant):
          "plan": None, "dependsOn": []},
     ] + [{"id": f"t_{i}", "key": f"K{i}", "name": f"任务{i}", "done": False, "kind": "normal", "flags": [],
           "plan": None, "dependsOn": []} for i in range(5)]
-    return {"zones": [{"id": "z_7f", "key": "Z01", "name": "学习", "color": "#000", "order": 0}],
+    return {"zones": [{"id": "z_7f", "key": "Z01", "name": "学习", "color": "#000", "order": 0},
+                      {"id": "z_e", "key": "Z02", "name": "空分区", "color": "#000", "order": 1}],
             "projects": [{"id": "p_3c", "key": "Z01-P01", "zoneId": "z_7f", "name": "garden", "status": "active",
-                          "progress": 0, "progressSource": "computed", "deadline": None, "tasks": tasks}]}
+                          "progress": 0, "progressSource": "computed", "deadline": None, "tasks": tasks},
+                         {"id": "p_new", "key": "Z01-P02", "zoneId": "z_7f", "name": "刚建的", "status": "active",
+                          "progress": 0, "progressSource": "computed", "deadline": "2026-10-10", "tasks": []},
+                         {"id": "p_old", "key": "Z01-P03", "zoneId": "z_7f", "name": "做完了", "status": "done",
+                          "progress": 1, "progressSource": "computed", "deadline": None, "tasks": []}]}
 
 
 SESSIONS = [
@@ -229,7 +234,7 @@ def test_initialize_negotiates_and_declares_only_tools(servers):
 def test_tools_list_all_read_only_strict_schemas(servers):
     tl = rpc(servers, "tools/list")["result"]["tools"]
     assert [t["name"] for t in tl] == [
-        "get_task_tree", "get_current_timer", "list_time_sessions", "get_daily_time",
+        "get_task_tree", "list_projects", "get_current_timer", "list_time_sessions", "get_daily_time",
         "get_weekly_review", "get_next_actions", "get_agent_time", "list_activity_suggestions"]
     for t in tl:
         assert not t["name"].startswith("propose_")
@@ -614,3 +619,16 @@ def test_batch_cap_and_isolation(servers, monkeypatch):
         {"jsonrpc": "2.0", "id": 3, "method": "ping"}])
     assert status == 200
     assert [(r["id"], r.get("error", {}).get("code")) for r in body] == [(1, -32602), (2, -32603), (3, None)]
+
+
+def test_list_projects_includes_projects_without_tasks(servers):
+    r = ok(servers, "list_projects")
+    assert [i["projectId"] for i in r["items"]] == ["p_3c", "p_new"]
+    new = r["items"][1]
+    assert new == {"projectId": "p_new", "key": "Z01-P02", "name": "刚建的", "zoneId": "z_7f", "status": "active",
+                   "progress": 0, "deadline": "2026-10-10", "openTasks": 0, "doneTasks": 0, "path": "学习 / 刚建的"}
+    assert (r["items"][0]["openTasks"], r["items"][0]["doneTasks"]) == (6, 1)  # 临时任务不算
+    assert r["emptyZones"] == ["空分区"]
+    assert [i["projectId"] for i in ok(servers, "list_projects", {"includeDone": True})["items"]][-1] == "p_old"
+    p1 = ok(servers, "list_projects", {"limit": 1})
+    assert p1["truncated"] is True and ok(servers, "list_projects", {"cursor": p1["nextCursor"]})["items"][0]["projectId"] == "p_new"

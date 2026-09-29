@@ -11,7 +11,7 @@ provides:
 consumes:
   - id: nexus-core.views.tree.v1
     contract: ../../nexus-core/module_docs/contract.md
-    purpose: get_task_tree；所有工具的显示路径
+    purpose: get_task_tree、list_projects；所有工具的显示路径
   - id: nexus-core.views.current.v1
     contract: ../../nexus-core/module_docs/contract.md
     purpose: get_current_timer
