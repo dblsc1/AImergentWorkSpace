@@ -16,7 +16,7 @@
 provides:
   - id: mcp.tools.v1
     summary: >
-      MCP 服务器（Streamable HTTP，挂在 <站点前缀>api/mcp/）。v1 的 8 个工具全部只读，
+      MCP 服务器（Streamable HTTP，挂在 <站点前缀>api/mcp/）。v1 的工具全部只读（v1.0 八个，v1.1 起九个），
       包装 nexus-core 既有读端；租户只来自网关的 X-Nexus-Tenant，工具没有任何用户/租户入参。
 consumes:
   # 每个工具固定包装一个读端（第四节映射表）。只调 GET，不调任何写端点
