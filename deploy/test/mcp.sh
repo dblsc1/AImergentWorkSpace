@@ -38,9 +38,9 @@ check "没登录调 MCP 被拒（302 去登录页）" \
 check "令牌 initialize" \
   "$(mcp "$TOK" initialize '{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}' \
      | py 'print(r["result"]["protocolVersion"], list(r["result"]["capabilities"]))')" "2025-06-18 ['tools']"
-check "tools/list：8 个工具全部只读" \
+check "tools/list：9 个工具全部只读" \
   "$(mcp "$TOK" tools/list '{}' | py 't=r["result"]["tools"]; print(len(t), all(x["annotations"]["readOnlyHint"] for x in t))')" \
-  "8 True"
+  "9 True"
 check "alice 经 MCP 看得到自己的任务与路径" \
   "$(mcp "$TOK" tools/call '{"name":"get_task_tree","arguments":{}}' \
      | py "print([i['path'] for i in r['result']['structuredContent']['items'] if i['taskId']=='$T'])")" \
