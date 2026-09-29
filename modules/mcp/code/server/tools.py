@@ -419,7 +419,7 @@ _SPECS = [
               "limit": _LIMIT, "cursor": _CURSOR}), [], {"includeDone": False, "includeEphemeral": False}),
     (list_projects, "项目列表",
      "列出所有项目（含还没建任务的），每条带状态、进度、截止日期、未完成/已完成任务数与显示路径；"
-     "emptyZones 是还没有项目的分区名。问「有哪些项目」「某项目怎么样」先用它，任务明细再用 get_task_tree。"
+     "emptyZones 是还没有项目的分区名（按整棵树算，不随 limit/cursor 变）。问「有哪些项目」「某项目怎么样」先用它，任务明细再用 get_task_tree。"
      "缺省不含已完成（status=done）的项目。" + _IDS,
      _schema({"includeDone": {"type": "boolean", "default": False, "description": "含已完成的项目"},
               "limit": _LIMIT, "cursor": _CURSOR}), [], {"includeDone": False}),
