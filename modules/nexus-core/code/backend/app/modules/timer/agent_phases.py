@@ -43,8 +43,10 @@ def _closed_out(user: str, run_id: str, run: dict | None) -> dict:
         stored = agents.events_service.find_by_dedupe(user, agents.SOURCE, agents._dedupe_key(run_id))
         if stored is None:
             raise NotFoundError(f"代理运行不存在：{run_id!r}")
-        run = stored.get("data") or {}
-    return {"runId": run_id, "phase": agents.current_phase(run), "applied": False, "reason": "closed"}
+        data = stored.get("data") or {}
+    else:
+        data, _ended = agents.snapshot_data(run)  # 已标记：按关闭裁剪后的那份，与将落账的事实一致
+    return {"runId": run_id, "phase": agents.current_phase(data), "applied": False, "reason": "closed"}
 
 
 def record_phase(

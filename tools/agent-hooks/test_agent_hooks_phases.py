@@ -184,6 +184,16 @@ class CockpitRunPhaseTests(_ServerMixin, unittest.TestCase):
         self.assertEqual(body["label"], "L")
         self.assertNotIn("match", body)  # 不足 3 码点不带
 
+    def test_failed_start_does_not_leak_parent_run_id_to_child(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "env.txt"
+            code = f"import os; open({str(out)!r}, 'w').write(os.environ.get('COCKPIT_RUN_ID', '<none>'))"
+            full_env = self._subprocess_env(COCKPIT_URL=f"http://127.0.0.1:{_unused_port()}", COCKPIT_TOKEN="x",
+                                            COCKPIT_RUN_ID="outer-run")
+            subprocess.run([sys.executable, str(RUN_SCRIPT), "--", sys.executable, "-c", code], env=full_env,
+                           capture_output=True, text=True, timeout=10)
+            self.assertEqual(out.read_text(), "<none>")
+
     def test_literal_phase_after_double_dash_is_still_wrapped(self):
         proc = self._run("--task", "t1", "--", sys.executable, "-c", "import sys; sys.exit(3)", "phase")
         self.assertEqual(proc.returncode, 3)

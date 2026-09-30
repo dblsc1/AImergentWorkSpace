@@ -155,7 +155,10 @@ def main(argv: list[str] | None = None) -> int:
     old_handler = signal.signal(signal.SIGTERM, _on_sigterm)
     try:
         # 被包的程序想报相位时用 COCKPIT_RUN_ID 找到本次运行（`cockpit-run phase` 缺省读它）
-        env = dict(os.environ, COCKPIT_RUN_ID=run_id) if run_id else None
+        # start 没报成时把继承来的 COCKPIT_RUN_ID 去掉：嵌套包装时别把相位报到外层那条运行上
+        env = {k: v for k, v in os.environ.items() if k != "COCKPIT_RUN_ID"}
+        if run_id:
+            env["COCKPIT_RUN_ID"] = run_id
         proc = subprocess.Popen(command, env=env)
         if cancelled and proc.poll() is None:
             proc.terminate()  # 补上「Popen 返回前 SIGTERM 就到了」这条窄缝

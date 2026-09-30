@@ -185,6 +185,13 @@ def start(
     """开一个代理运行。**不碰 timer_state，不关任何在跑的运行。**
 
     返回 ``(响应, 是否新开)``：带 ``clientKey`` 且同租户同 key 的运行还在跑时回原来那个（v2.4）。"""
+    right_now = now()
+    _expire(user, right_now)  # 超时的同 key 运行先收掉，下面才开得出新的
+    if client_key:
+        # 先认原运行，再校验只对新建有意义的字段：原任务后来被删了，重试照样回原运行
+        existing = repo.find_agent_run_by_client_key(user, client_key)
+        if existing is not None:
+            return {"runId": existing["runId"], "startedAt": existing["startedAt"]}, False
     if task_id is None:
         # 不挂任务 → 收件箱（同人的「先记下来再理清」）。只用 well-known id，不代建收件箱：
         # 事件 subject 只存 opaque id，收件箱哪天被种子建出来，名字自然 join 得上。
@@ -192,8 +199,6 @@ def start(
     else:
         _task, project_id, zone_id = resolve_chain(task_id, action="拒绝开始代理运行")
 
-    right_now = now()
-    _expire(user, right_now)  # 超时的同 key 运行先收掉，下面才开得出新的
     run = {
         "user": user,
         "runId": f"run_{uuid.uuid4().hex[:12]}",

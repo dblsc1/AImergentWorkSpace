@@ -182,3 +182,16 @@ def test_attend_tenant_isolated_and_capped(client, clock, monkeypatch):
     clock(500)
     _beat(client, headers=A)  # 超了不再记，不报错
     assert len(_inter(a_run)) == 1
+
+
+def test_read_clips_from_to_rolling_window_without_writing():
+    from app.modules.activity import service  # noqa: PLC0415
+
+    span = {"from": T0, "to": T0 + timedelta(hours=1), "app": "a", "title": "t", "afk": False}
+    _db()["activity_presence"].insert_one({"user": "u_local", "deviceId": "d", "lastAt": span["to"],
+                                           "app": "a", "title": "t", "afk": False, "spans": [span]})
+    now = T0 + timedelta(hours=2, minutes=30)
+    [out] = service.list_presence("u_local", now, T0 - timedelta(days=1), now)
+    assert out["from"] == now - timedelta(hours=2) and out["deviceId"] == "d"
+    assert _db()["activity_presence"].find_one({})["spans"][0]["from"] == T0  # 存储不动
+    assert service.list_presence("u_local", T0 + timedelta(hours=3, seconds=1), T0, now) == []

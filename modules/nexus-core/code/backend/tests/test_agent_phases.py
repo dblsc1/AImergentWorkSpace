@@ -253,3 +253,22 @@ def test_concurrent_phase_writes_all_land():
     doc = _doc(run["runId"])
     assert [p["at"] for p in doc["phases"]] == [(base + timedelta(seconds=i)).isoformat() for i in range(1, 21)]
     assert len(doc["interactions"]) == 20
+
+
+def test_client_key_retry_returns_run_even_if_task_was_deleted(client, seeded):
+    task = next(iter(seeded["tasks"].values()))
+    first = _start(client, taskId=task["id"], clientKey="k_del")
+    assert client.delete(f"{API}/planner/tasks/{task['id']}").status_code in (200, 204)
+    assert _start(client, expect=200, taskId=task["id"], clientKey="k_del") == first
+
+
+def test_closed_answer_uses_trimmed_phases_of_marked_run(client, monkeypatch):
+    from app.modules.timer import agents, repo  # noqa: PLC0415
+
+    run = _start(client, phase="idle")
+    _phase(client, run["runId"], "working", _at(run, 200))  # 超前、在 300s 内
+    monkeypatch.setattr(agents, "_expire", lambda user, now: None)  # 让标记留着，走「已标记」分支
+    repo.mark_agent_run_closing("u_local", run["runId"],
+                                {"outcome": "done", "endedAt": _at(run, 1)})
+    out = _phase(client, run["runId"], "error", _at(run, 2))
+    assert (out["reason"], out["phase"]) == ("closed", "idle")  # +200 那条在结束之后，不算
