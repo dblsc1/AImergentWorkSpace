@@ -95,10 +95,11 @@ def presence_purge(user: str, cutoff: datetime) -> None:
     _presence_col().delete_many({"user": user, "lastAt": {"$lt": cutoff}})
 
 
-def presence_oldest_devices(user: str, keep: int) -> list[str]:
-    """该租户按最近心跳排，最旧的那些设备 id——超出 ``keep`` 台的部分。"""
-    ids = [d["deviceId"] for d in _presence_col().find({"user": user}, {"deviceId": 1}).sort("lastAt", 1)]
-    return ids[: max(len(ids) - keep, 0)]
+def presence_evictable(user: str, keep_self: str, cap: int) -> list[str]:
+    """除 ``keep_self`` 外按最近心跳排，最旧的那些设备 id——删掉它们后该租户至多 ``cap`` 台。"""
+    ids = [d["deviceId"] for d in _presence_col().find({"user": user, "deviceId": {"$ne": keep_self}},
+                                                       {"deviceId": 1}).sort("lastAt", 1)]
+    return ids[: max(len(ids) - (cap - 1), 0)]
 
 
 def presence_delete(user: str, device_ids: list[str]) -> None:

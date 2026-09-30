@@ -48,10 +48,9 @@ def heartbeat(device_id: str, app: str, title: str, afk: bool) -> dict:
     spans = [{**s, "from": max(s["from"], cutoff)} for s in spans if s["to"] >= cutoff][-MAX_SPANS:]
     repo.presence_put({"user": user, "deviceId": device_id, "lastAt": now,
                        "app": app, "title": title, "afk": afk, "spans": spans})
-    if doc is None:
-        # 新设备：写入**之后**再把超出上限的最旧设备挤掉（不含自己）。并发的几台新设备各自插入后
-        # 各修剪一次，最后一次修剪一定看得见全部插入，所以请求都结束后上限必然成立。
-        repo.presence_delete(user, [d for d in repo.presence_oldest_devices(user, MAX_DEVICES) if d != device_id])
+    # 每次写入**之后**修剪到上限（自己不删）：并发的几次写入各修剪一次，最后一次一定看得见全部写入，
+    # 所以请求都结束后上限必然成立（被挤掉的设备下一次心跳会把自己写回来并挤掉别人）。
+    repo.presence_delete(user, repo.presence_evictable(user, device_id, MAX_DEVICES))
 
     if not afk and title:
         timer_service.record_attend(user, title, now)  # 连线 attend：跨子边界只走 service
@@ -61,10 +60,11 @@ def heartbeat(device_id: str, app: str, title: str, afk: bool) -> dict:
 def list_spans(user: str, now: datetime, start: datetime, end: datetime) -> list[dict]:
     """``views/lanes`` 的 ``human.presence``：最近 2 小时内、与窗口重叠的段，按 from 升序。**不写**。"""
     cutoff = now - WINDOW
-    out = [
+    clipped = (
         {"deviceId": doc["deviceId"], **span, "from": max(span["from"], cutoff)}  # 只裁返回的副本，不写
         for doc in repo.presence_list(user)
         for span in doc.get("spans") or []
-        if span["to"] >= cutoff and span["from"] < end and span["to"] > start
-    ]
+        if span["to"] >= cutoff
+    )
+    out = [s for s in clipped if s["from"] < end and s["to"] > start]  # 先裁再判重叠
     return sorted(out, key=lambda s: s["from"])
