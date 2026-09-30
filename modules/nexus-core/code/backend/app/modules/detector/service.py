@@ -110,6 +110,8 @@ class DetectorSettings(_Strict):
     schemaVersion: StrictInt  # 严格整数：true、1.0 都不收（Literal[1] 会按相等放过它们）
     privacy: Privacy = Field(default_factory=Privacy)
     idle: Idle = Field(default_factory=Idle)
+    # v1.1 追加（只增）：在场心跳开关。null = 用检测程序本机配置的 presence。
+    presence: bool | None = None
 
     @field_validator("schemaVersion")
     @classmethod

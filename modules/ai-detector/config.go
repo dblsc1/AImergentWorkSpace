@@ -10,11 +10,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
+	"sync"
 	"time"
 )
 
@@ -45,6 +44,11 @@ type Config struct {
 	Privacy     Privacy `json:"privacy"`
 	Idle        Idle    `json:"idle"`
 	ArchiveDays int     `json:"archiveDays,omitempty"`
+	// v0.3：在场心跳（ai-detector.presence.v1）与状态文件桥（ai-detector.agent-status-bridge.v1），都默认关，只在 run 里跑。
+	Presence          bool     `json:"presence"`
+	PresenceSeconds   float64  `json:"presenceSeconds,omitempty"` // 5–300，越界按 15
+	AgentStatusFile   string   `json:"agentStatusFile"`           // 空 = 关
+	AgentStatusIgnore []string `json:"agentStatusIgnore"`         // key 前缀，命中的条目整个忽略
 
 	dir      string   // 配置目录；readConfig 填。空（测试直接构造 Config）= 不写留档、代号只在内存里
 	warnings []string // 配置里不认识的 privacy / idle 键（想关强制脱敏也落在这里），readConfig 填
@@ -200,8 +204,10 @@ func defaultConfig(dir string) (Config, error) {
 		AppOnlyApps:       defaultAppOnly,
 		BrowserApps:       defaultBrowsers,
 		// 把缺省值写出来，用户打开文件就看得见有哪些可选项。
-		Privacy:     Privacy{Paths: "full", Titles: "keep", Browser: "domain"},
-		ArchiveDays: 30,
+		Privacy:           Privacy{Paths: "full", Titles: "keep", Browser: "domain"},
+		ArchiveDays:       30,
+		PresenceSeconds:   15,
+		AgentStatusIgnore: []string{},
 	}, nil
 }
 
@@ -264,6 +270,21 @@ type State struct {
 	// FailedParams：上一轮上传失败时用的合并参数（G / M），成功后清空。失败后改了 G / M，
 	// 重算出来的段起点会变，服务端按 startAt 防重就对不上，可能多出重复建议——要在日志里说出来。
 	FailedParams string `json:"failedParams,omitempty"`
+	// Agents：状态文件桥的 key → 运行（v0.3）。与上面的游标由不同的 goroutine 写，都经 updateState。
+	Agents map[string]*agentRun `json:"agents,omitempty"`
+}
+
+var stateMu sync.Mutex
+
+// updateState：读—改—写状态文件。同步一轮（游标）和状态文件桥（Agents）在同一进程的两个 goroutine 里，
+// 各自只改自己那几个字段，整份读改写放在一把锁里，谁也不会把对方刚写的盖回旧值。
+func updateState(path string, f func(*State)) error {
+	stateMu.Lock()
+	defer stateMu.Unlock()
+	var st State
+	_ = loadJSON(path, &st)
+	f(&st)
+	return saveJSON(path, st)
 }
 
 type paths struct{ config, state, log, lock string }
@@ -280,49 +301,29 @@ func pathsIn(dir string) paths {
 // acquireLock 让同一个配置目录同时只有一个进程在同步：run 常驻时拿着它，once 拿不到就拒绝。
 // 两个进程一起跑，会各自从同一个游标出发、各自回写状态，后写的把先写的游标盖回去。
 //
-// 用「O_EXCL 建 pid 文件」而不是系统文件锁：标准库没有跨平台的文件锁（Windows 要
-// LockFileEx，得引 x/sys）。进程崩了留下的旧锁靠「pid 还活着吗」判断后接管。
-// ponytail: pid 被系统复用时会误判为「还有人在跑」，删掉 ai-detector.lock 即可；
-// 真遇到了再换 x/sys 的文件锁。
+// 用系统的建议锁（Unix flock、Windows LockFileEx，见 lock_*.go），不用「pid 文件 + 看 pid 活没活着」：
+// 进程一退出（包括崩溃、断电、容器被杀）系统就收回锁，残留的文件挡不住任何人。pid 判活在容器里必错——
+// 程序总是 pid 1，重启后旧文件里的「pid 1」看起来就是自己 / 活着的，于是永远拒绝；实机重启后 pid 复用也一样。
+// 文件里的 pid 只用来在报错时告诉人是谁拿着。文件本身不删（Windows 上删不了打开着的文件，也没必要）。
 func acquireLock(path string) (release func(), err error) {
-	for attempt := 0; attempt < 2; attempt++ {
-		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if err == nil {
-			fmt.Fprintf(f, "%d\n", os.Getpid())
-			f.Close()
-			return func() { os.Remove(path) }, nil
-		}
-		if !errors.Is(err, os.ErrExist) {
-			return nil, err
-		}
-		b, _ := os.ReadFile(path)
-		pid, perr := strconv.Atoi(strings.TrimSpace(string(b)))
-		if perr != nil {
-			// 空的 / 读不懂：可能正好是别人刚建好文件、还没写进 pid。新文件不碰，旧的才当残骸接管。
-			if fi, err := os.Stat(path); err == nil && time.Since(fi.ModTime()) < lockGrace {
-				return nil, fmt.Errorf("另一个 ai-detector 可能正在启动，稍后重试")
-			}
-		} else if pid == os.Getpid() || processAlive(pid) {
-			// pid 是自己：本进程已经拿着（或 pid 被复用），都不能删。
-			return nil, fmt.Errorf("另一个 ai-detector（pid %d）正在同步这个配置目录；先停掉它，"+
-				"或确认它已退出后删除 %s", pid, path)
-		}
-		os.Remove(path) // 旧锁：进程已经不在了
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
 	}
-	return nil, fmt.Errorf("拿不到锁 %s", path)
-}
-
-const lockGrace = 5 * time.Second
-
-func processAlive(pid int) bool {
-	p, err := os.FindProcess(pid)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		return false // Windows：进程不存在时 FindProcess 就失败
+		return nil, err
 	}
-	if runtime.GOOS == "windows" {
-		p.Release()
-		return true
+	if err := lockFile(f); err != nil {
+		f.Close()
+		if errors.Is(err, errLocked) {
+			b, _ := os.ReadFile(path)
+			return nil, fmt.Errorf("另一个 ai-detector（pid %s）正在同步这个配置目录；先停掉它", strings.TrimSpace(string(b)))
+		}
+		return nil, fmt.Errorf("拿不到锁 %s：%w", path, err)
 	}
-	// Unix 上 FindProcess 总是成功，发 0 号信号才知道活没活着。
-	return p.Signal(syscall.Signal(0)) == nil
+	_ = f.Truncate(0)
+	_, _ = f.WriteAt([]byte(strconv.Itoa(os.Getpid())+"\n"), 0)
+	return func() { f.Close() }, nil // 关掉文件即释放锁
 }
+
+var errLocked = errors.New("锁被别的进程拿着")

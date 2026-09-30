@@ -292,6 +292,7 @@ func applyRemoteSettings(cfg *Config, c *http.Client, base string) error {
 	req.Header.Set("Authorization", "Bearer "+cfg.DeviceToken)
 	b, code, err := do(c, req)
 	if code == http.StatusNotFound {
+		remotePresence.Store(nil)
 		return nil
 	}
 	if err != nil {
@@ -301,13 +302,20 @@ func applyRemoteSettings(cfg *Config, c *http.Client, base string) error {
 		Settings *struct {
 			Privacy Privacy `json:"privacy"`
 			Idle    Idle    `json:"idle"`
+			// v1.1 追加：null / 没有 = 用本机配置的 presence
+			Presence *bool `json:"presence"`
 		} `json:"settings"`
 	}
 	if err := json.Unmarshal(b, &r); err != nil {
 		return fmt.Errorf("网页上的检测设置格式不对（%v），这一轮不上传", err)
 	}
+	remotePresence.Store(nil)
 	if r.Settings != nil {
 		cfg.Privacy, cfg.Idle = r.Settings.Privacy, r.Settings.Idle
+		if p := r.Settings.Presence; p != nil {
+			cfg.Presence = *p
+			remotePresence.Store(p)
+		}
 		// 服务端按 Python 正则校验，个别写法 Go 不认：跳过那一条并写日志（少保留 = 更保守），
 		// 不能因为一条白名单让每一轮都卡住（契约 detector.settings.v1「校验」）。
 		var ok []string

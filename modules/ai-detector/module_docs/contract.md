@@ -35,11 +35,11 @@ provides:
       以及规则文件 `rules.json` 的形状。用户可手改，程序每轮重读。
   - id: ai-detector.presence.v1
     summary: >
-      （v0.3 追加，契约先行）在场心跳：默认关；开了之后约每 15 秒把「此刻前台的程序 + 脱敏标题 + 是否离开」
+      （v0.3 追加，**已实现** 2026-09-30）在场心跳：默认关；开了之后约每 15 秒把「此刻前台的程序 + 脱敏标题 + 是否离开」
       报给 nexus-core，只给页面画实时的人那条线。脱敏同上传。见「在场心跳」节。
   - id: ai-detector.agent-status-bridge.v1
     summary: >
-      （v0.3 追加，契约先行）状态文件桥：默认关；指向一个本机状态文件（通用格式，见「状态文件桥」节，
+      （v0.3 追加，**已实现** 2026-09-30）状态文件桥：默认关；指向一个本机状态文件（通用格式，见「状态文件桥」节，
       例如某个桌面状态守护进程写的），把里面各代理的状态变化报成 nexus-core 的代理运行 + 相位。
       只报相位与时刻，不报状态文件里的自由文本。
 
@@ -278,7 +278,7 @@ Content-Type: application/json
 | 文件 | 内容 |
 |---|---|
 | `ai-detector.json` | 配置（里面有设备令牌）。macOS / Linux 权限 0600；**Windows 上不另设 ACL**，靠 `%APPDATA%` 默认的「仅本用户」访问控制。字段见 README「配置参考」 |
-| `ai-detector.lock` | `run` 常驻时持有（内容是 pid）；`once` 发现有活着的持有者就拒绝，避免两个进程各自推进游标互相覆盖。持有者已退出的旧锁自动接管；内容为空 / 读不懂且不到 5 秒的锁视为「正在启动」，不接管；pid 是自己的不接管 |
+| `ai-detector.lock` | `run` 常驻时持有；`once` 发现锁被别人拿着就拒绝，避免两个进程各自推进游标互相覆盖。**锁是系统的建议锁**（Unix `flock`、Windows `LockFileEx`），跟着持有者进程走，进程一退出（崩溃、断电、容器被杀）系统就收回——残留的文件从不挡人（2026-09-30 改：之前按「文件里的 pid 活没活着」判，容器里程序总是 pid 1，重启后旧文件的「pid 1」被当成活着的持有者，永远拒绝）。文件内容是持有者的 pid，只用于报错提示；文件不删 |
 | `ai-detector.state.json` | 游标与上一轮结果，程序自己写，别手改 |
 | `rules.json` | 规则分类，用户可编辑 |
 | `pseudonyms.json` | 标题代号对照表（v1.1），0600，只在本机，见「标题代号」 |
@@ -292,6 +292,10 @@ Content-Type: application/json
 | `privacy` | 见 `detector.settings.v1`「privacy 节」 | 与网页设置同形状（不带 `schemaVersion`）。网页上设过就以网页为准（整节替换） |
 | `idle` | 见 `detector.settings.v1`「idle 节」 | 同上 |
 | `archiveDays` | 30 | 本机留档保留天数，< 1 按 30 |
+| `presence` | `false` | 在场心跳（v0.3），见「在场心跳」。网页设置 `presence` 非 null 时以网页为准 |
+| `presenceSeconds` | 15 | 心跳间隔，5–300，越界按 15 |
+| `agentStatusFile` | `""` | 状态文件桥读的本机路径，空 = 关 |
+| `agentStatusIgnore` | `[]` | `key` 前缀，命中的条目忽略 |
 
 `privacy.appOnlyApps: null` 时用顶层 `appOnlyApps`（`init` 写入内置默认名单；顶层也没有就用内置默认）。
 `privacy` / `idle` 里出现不认识的键：忽略并警告（见「强制脱敏」）。枚举值写错、白名单正则编译不过：
@@ -332,6 +336,10 @@ Authorization: Bearer <deviceToken>
 
 - **默认关**：配置 `presence`（缺省 `false`）。只有 `enabled && !paused && presence` 时才发；关 / 暂停时零请求
   （同「隐私默认值」第 1、2 条）。只在 `run` 常驻模式下发，`once` 不发。
+- 网页开关（`detector.settings.v1` v1.1 的 `presence`）：非 `null` 时以网页为准。开没开先按最近一次拉到的设置
+  （同步一轮每 5 分钟拉一次）判断；**要发之前再拉一次设置**，用此刻的隐私选项脱敏，拉不到（404 以外的失败）这次就不发。
+- 实现：`run` 里单独一个 goroutine，不等 5 分钟一轮的同步；脱敏调用与上传同一段代码（`buildFragments` + `sendTitles`，
+  测试逐条比对心跳与上传出去的标题完全相同）。
 - 节奏：`presenceSeconds`（缺省 15，取值 5–300，越界按缺省）。
 - 内容：ActivityWatch 窗口桶**最新一条**事件的 `app`/`title` + 离开桶最新状态。**脱敏规则与上传完全相同**
   （标题表、`appOnlyApps`、`browserApps` 须对得上标签页否则按 app-only），在本机做完再发；
@@ -384,6 +392,9 @@ Authorization: Bearer <deviceToken>
 - 网络失败：本轮不重试，映射与「上次报过的相位」都不前进；那条观测**连同原始 `at`、`reply`** 记进状态文件的待发队列
   （每个 `key` 至多留最近 20 条），下一轮原样重发——`(at, phase)` 相同，服务端按 `duplicate` 去重，`reply` 不会记两次。
   之后新发现的变化另起一条排在后面。
+- 实现：`run` 里单独一个 goroutine。一轮里碰到网络失败后，这一轮剩下的请求都不再发（观测照样排进队列）；
+  `phase`/`stop` 回 4xx（404、401、403、408、429 以外）表示请求本身不合格，丢掉那一条。
+  开新运行时要给 `label` 脱敏，才拉一次网页设置（拉不到这一轮不开新运行）。
 - **离开本机的只有**：`key` 的前缀（合规的代理种类名，作 agent/tool 名）、`clientKey`（哈希）、脱敏后的 `label`、相位、时刻、结束状态。`key` 的其余部分、
   `detail`、文件路径都不上传。
 
@@ -391,5 +402,6 @@ Authorization: Bearer <deviceToken>
 
 | 日期 | 变更 |
 |---|---|
+| 2026-09-30 | 实现在场心跳与状态文件桥（状态改为已实现）；在场心跳可由网页设置 `presence`（`detector.settings.v1` v1.1）开关；`agentStatusIgnore` 缺省维持 `[]`。单实例锁改为系统建议锁（修容器里 pid 1 重启后永远拒绝），`ai-detector.lock` 的对外语义（`once` 在 `run` 跑着时拒绝）不变 |
 | 2026-09-30 | v0.3 追加（契约先行）：`ai-detector.presence.v1` 在场心跳、`ai-detector.agent-status-bridge.v1` 状态文件桥；都默认关，新增配置 `presence`/`presenceSeconds`/`agentStatusFile`/`agentStatusIgnore`。上传、脱敏、游标的既有承诺一条不改 |
 | 2026-09-30 | upload.v1 v1.1、config.v1 v1.1、archive.v1：仓主 2026-09-30：强制脱敏（密码、密钥、私钥、银行卡、身份证，写死在程序里）；隐私做成可单独勾选的选项（`detector.settings.v1`，缺省 = v1.0 行为，另加地址 / IP / 用户名默认开）；标题代号；离开判定四项；段增可选 `idle`；本机留档与 `archive` / `preview` / `pseudonyms` 命令；每轮从 nexus-core 拉网页设置。在场心跳、状态文件桥里的「脱敏」同样指强制脱敏 + 隐私选项 |

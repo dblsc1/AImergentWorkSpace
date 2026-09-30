@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 )
@@ -226,7 +227,8 @@ func runOnce(p paths, hc *http.Client, out io.Writer) error {
 	} else {
 		st.LastOutcome = msg
 	}
-	if serr := saveJSON(p.state, st); serr != nil {
+	// 状态文件桥在另一个 goroutine 里写 Agents：只写回本轮自己的字段。
+	if serr := updateState(p.state, func(s *State) { ag := s.Agents; *s = st; s.Agents = ag }); serr != nil {
 		return serr
 	}
 	if out == nil {
@@ -248,14 +250,22 @@ func runLoop(p paths, hc *http.Client) error {
 		log.SetOutput(io.MultiWriter(os.Stderr, f))
 	}
 	log.Print("ai-detector 启动")
-	for {
+	// 在场心跳、状态文件桥各自一个 goroutine：同步一轮可能要好几分钟（积压、分类服务慢），不能让它们等。
+	// 同一进程里，仍在 run 拿着的单实例锁之内。
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); presenceLoop(p, hc) }()
+	go func() { defer wg.Done(); bridgeLoop(p, hc) }()
+	every(func() time.Duration {
 		_ = runOnce(p, hc, nil) // 失败已写进日志与状态；常驻进程不因一轮失败退出
 		interval := 5.0
 		if cfg, err := readConfig(p); err == nil && cfg.IntervalMinutes > 0 {
 			interval = cfg.IntervalMinutes
 		}
-		time.Sleep(minutes(interval))
-	}
+		return minutes(interval)
+	})
+	wg.Wait()
+	return nil
 }
 
 func status(p paths, out io.Writer) error {
@@ -294,6 +304,12 @@ func status(p paths, out io.Writer) error {
 	for _, k := range cfg.warnings {
 		fmt.Fprintf(out, "警告      配置里的 %s 不认识，已忽略\n", k)
 	}
+	bridge := "关"
+	if cfg.AgentStatusFile != "" {
+		bridge = cfg.AgentStatusFile
+	}
+	fmt.Fprintf(out, "在场心跳  %v（每 %v；网页上设过的话以网页为准）\n状态文件桥 %s（运行中 %d 个）\n",
+		cfg.Presence, presenceInterval(cfg), bridge, len(st.Agents))
 	if !st.LastRunAt.IsZero() {
 		fmt.Fprintf(out, "上一轮    %s  %s\n", isoTime(st.LastRunAt), st.LastOutcome)
 	}
