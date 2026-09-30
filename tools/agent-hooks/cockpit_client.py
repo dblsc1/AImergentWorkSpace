@@ -21,6 +21,7 @@ import platform
 import threading
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -271,14 +272,59 @@ def start_run(
     tool: str,
     model: str | None = None,
     timeout: float = DEFAULT_TIMEOUT,
+    *,
+    phase: str | None = None,
+    label: str | None = None,
+    match: str | None = None,
+    client_key: str | None = None,
 ) -> dict[str, Any]:
-    """`POST /api/core/agents/start` → `{runId, startedAt}`。taskId 缺省 = 收件箱。"""
+    """`POST /api/core/agents/start` → `{runId, startedAt}`。taskId 缺省 = 收件箱。
+
+    v2.4 选填：`phase`（开跑时的相位）、`label`/`match`（目录名这一级，见 `lane_names`）、
+    `client_key`（不透明哈希：同 key 的运行还在跑时服务端回原运行，重试不多开一条泳道）。没给的键不发。"""
     payload: dict[str, Any] = {"agent": agent, "tool": tool}
     if task_id:
         payload["taskId"] = task_id
     if model:
         payload["model"] = model
+    for key, value in (("phase", phase), ("label", label), ("match", match), ("clientKey", client_key)):
+        if value:
+            payload[key] = value
     return _request(config, "POST", "/api/core/agents/start", payload, timeout)
+
+
+PHASES = ("working", "waiting_input", "waiting_permission", "idle", "error")
+
+
+def now_iso() -> str:
+    """相位的 `at`：本机时钟、带本地偏移。**在事件发生时取**，不是发请求时补（服务端按 at 排序）。"""
+    return datetime.now(timezone.utc).astimezone().isoformat()
+
+
+def lane_names(cwd: str | None = None) -> tuple[str, str | None]:
+    """`(label, match)`：都是工作目录名（不是完整路径）；label 截到 64 码点，
+    match 截到 128、不足 3 个字符不带（契约：match 3–128 码点）。"""
+    name = default_agent_name(cwd)
+    return name[:64], (name[:128] if len(name) >= 3 else None)
+
+
+def phase_run(
+    config: dict[str, Any],
+    run_id: str,
+    phase: str,
+    at: str,
+    detail: str | None = None,
+    reply: bool = False,
+    timeout: float = DEFAULT_TIMEOUT,
+) -> dict[str, Any]:
+    """`POST /api/core/agents/{runId}/phase`（v2.4）。`detail` 只放短标签（工具名、通知种类、错误种类），
+    截到 64 码点；`reply` 只在 true 时发。"""
+    payload: dict[str, Any] = {"phase": phase, "at": at}
+    if detail:
+        payload["detail"] = detail[:64]
+    if reply:
+        payload["reply"] = True
+    return _request(config, "POST", f"/api/core/agents/{run_id}/phase", payload, timeout)
 
 
 def stop_run(

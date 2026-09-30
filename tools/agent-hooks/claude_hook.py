@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Claude Code 会话钩子：SessionStart 开一条 cockpit run，SessionEnd 关掉它。
+"""Claude Code 会话钩子：SessionStart 开一条 cockpit run，SessionEnd 关掉它；
+v0.3 起中间的事件报**相位**（在干活 / 等你 / 空闲 / 出错，映射表见 README「相位」节）。
 
-在 settings.json 里，`SessionStart` 与 `SessionEnd` 两个事件都指向**同一个**
-脚本——用 stdin JSON 里的 `hook_event_name` 分流，省得配两份路径。见 README
-里的配置片段。
+在 settings.json 里，所有事件都指向**同一个**脚本——用 stdin JSON 里的
+`hook_event_name` 分流，省得配多份路径。见 README 里的配置片段。
+相位钩子配成 `"async": true`（绝不让 Claude 等它）；SessionStart 保持同步（先存好 runId）。
+**不读** `prompt`、通知的 `message`、工具参数：只报相位、时刻、短标签。
 
 **纪律**（钩子绝不能拖慢或打断会话）：
 - Claude Code 文档：`SessionEnd` 钩子默认预算只有 1.5 秒（`SessionStart` 是
@@ -53,18 +55,26 @@ def _state_file(session_id: str) -> Path:
     return cc.user_dir("state") / f"session-{digest}.json"
 
 
-def _save_run_id(session_id: str, run_id: str) -> None:
+def _write_state(session_id: str, state: dict) -> None:
     path = _state_file(session_id)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"runId": run_id}), encoding="utf-8")
+        # 每个进程一个临时名：异步相位钩子是并行跑的，共用一个 .tmp 会互相写花
+        tmp = path.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(state), encoding="utf-8")
         os.replace(tmp, path)  # 原子替换：不会有人读到"写了一半"的文件
     except OSError:
         pass  # 状态文件写不了也不该拖累会话；下次 SessionEnd 找不到就跳过 stop
 
 
-def _read_run_id(session_id: str) -> str | None:
+def _save_run_id(session_id: str, run_id: str, last_phase: str | None = None) -> None:
+    state: dict = {"runId": run_id}
+    if last_phase:
+        state["lastPhase"] = last_phase  # v0.3：PostToolUse 靠它决定报不报（见 _phase_for）
+    _write_state(session_id, state)
+
+
+def _read_state(session_id: str) -> dict | None:
     """只读，成功时不删——SessionEnd 得先确认 stop 报成功了才能删（见
     handle_session_end），不然报失败/超时/钩子被杀死的时候，这条记录跟着
     没了，run 就再也关不掉了，只能等 cockpit 服务端自己的兜底超时
@@ -81,20 +91,22 @@ def _read_run_id(session_id: str) -> str | None:
     path = _state_file(session_id)
     try:
         raw = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return None
-    except OSError:
+    except OSError:  # 含 FileNotFoundError
         return None
     try:
         data = json.loads(raw)
     except ValueError:
         _delete_run_id(session_id)
         return None
-    run_id = data.get("runId") if isinstance(data, dict) else None
-    if not isinstance(run_id, str):
+    if not isinstance(data, dict) or not isinstance(data.get("runId"), str):
         _delete_run_id(session_id)
         return None
-    return run_id
+    return data
+
+
+def _read_run_id(session_id: str) -> str | None:
+    state = _read_state(session_id)
+    return state["runId"] if state else None
 
 
 def _delete_run_id(session_id: str) -> None:
@@ -114,15 +126,82 @@ def handle_session_start(payload: dict) -> None:
         config = cc.load_config()
         task_id = cc.resolve_task(cwd=cwd, config=config)
         agent = cc.default_agent_name(cwd)
+        label, match = cc.lane_names(cwd)
         model = payload.get("model")  # 文档：只有 SessionStart 会带，且不保证有
-        result = cc.start_run(config, task_id, agent, "claude-code", model=model, timeout=HOOK_TIMEOUT)
+        result = cc.start_run(
+            config, task_id, agent, "claude-code", model=model, timeout=HOOK_TIMEOUT,
+            # 会话开着、还没说话 = idle；clientKey 是 session_id 的哈希（不发原始会话号），
+            # 钩子被重试 / 响应丢了时服务端回原运行，不多开一条泳道
+            phase="idle", label=label, match=match,
+            client_key=hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:32],
+        )
     except Exception as e:  # noqa: BLE001 — 配置/网络任何一步出岔子都只是"这次不计时"
         category = e if isinstance(e, cc.CockpitError) else "配置错误"
         _warn(f"SessionStart 上报失败，本次会话不计时（{category}）")
         return
     run_id = result.get("runId")
     if run_id:
-        _save_run_id(session_id, run_id)
+        _save_run_id(session_id, run_id, "idle")
+
+
+# Notification 的 notification_type → 相位（其余种类不报）。message 字段不读。
+_NOTIFICATION_PHASE = {
+    "permission_prompt": "waiting_permission",  # 兜底：沙箱网络请求的批准不触发 PermissionRequest
+    "elicitation_dialog": "waiting_input",
+    "elicitation_url_dialog": "waiting_input",
+    "agent_needs_input": "waiting_input",
+    "idle_prompt": "idle",  # 按 Esc 打断时 Stop 不触发，靠它把灯收回来
+}
+
+
+def _tag(value) -> str | None:
+    """短标签：只收字符串，截到 64 码点（服务端上限）。"""
+    return value[:64] if isinstance(value, str) and value else None
+
+
+def _phase_for(payload: dict, last_phase: str | None) -> tuple[str, str | None, bool] | None:
+    """规范性映射（README「Claude Code 钩子：相位」）。返回 (phase, detail, reply) 或 None=不报。"""
+    event = payload.get("hook_event_name")
+    if event == "UserPromptSubmit":  # 不读 prompt：人说了话
+        return "working", None, True
+    if event == "PermissionRequest":
+        return "waiting_permission", _tag(payload.get("tool_name")), False
+    if event == "Notification":
+        kind = payload.get("notification_type")
+        phase = _NOTIFICATION_PHASE.get(kind) if isinstance(kind, str) else None
+        return (phase, kind, False) if phase else None
+    if event in ("PostToolUse", "PostToolUseFailure"):
+        # 只在上次报的是「等」时报：人批准 / 回答了，它接着干。不为每次工具调用发一次请求
+        if last_phase in ("waiting_input", "waiting_permission"):
+            return "working", None, True
+        return None
+    if event == "Stop":
+        return "idle", None, False
+    if event == "StopFailure":
+        return "error", _tag(payload.get("error")), False
+    return None
+
+
+def handle_phase(payload: dict, at: str) -> None:
+    """`at` 是钩子进程开始处理的那一刻（异步钩子并行跑，服务端按 at 排）。
+    先写状态、再发请求；并行钩子读到旧状态的窗口里最坏是黄灯留到下一次 Stop——已知上限，不加锁。"""
+    session_id = payload.get("session_id")
+    if not session_id:
+        return
+    state = _read_state(session_id)
+    if not state:
+        return  # 没开过 run（SessionStart 没报成）：这次会话不画相位
+    decision = _phase_for(payload, state.get("lastPhase"))
+    if decision is None:
+        return
+    phase, detail, reply = decision
+    _write_state(session_id, {**state, "lastPhase": phase})
+    try:
+        config = cc.load_config()
+        cc.phase_run(config, state["runId"], phase, at, detail=detail, reply=reply, timeout=HOOK_TIMEOUT)
+    except Exception as e:  # noqa: BLE001 — 相位只是记录，失败只留一行固定分类
+        category = e if isinstance(e, cc.CockpitError) else "配置错误"
+        _warn(f"{payload.get('hook_event_name')} 相位上报失败（{category}）")
 
 
 def handle_session_end(payload: dict) -> None:
@@ -158,16 +237,21 @@ def handle_session_end(payload: dict) -> None:
 
 
 def main() -> int:
+    at = cc.now_iso()  # 事件发生的那一刻，先于读 stdin / 网络
     try:
         payload = json.loads(sys.stdin.read() or "{}")
     except ValueError:
         payload = {}
     try:
+        if not isinstance(payload, dict):
+            payload = {}
         event = payload.get("hook_event_name")
         if event == "SessionStart":
             handle_session_start(payload)
         elif event == "SessionEnd":
             handle_session_end(payload)
+        else:
+            handle_phase(payload, at)
     except Exception as e:  # noqa: BLE001 — 钩子绝不能把异常抛给 Claude Code，见模块 docstring
         _warn(f"未预期的错误，忽略（{type(e).__name__}）")
     return 0  # 无论如何都成功退出：钩子不许拖慢或打断会话

@@ -93,6 +93,9 @@ def _make_handler(log: _RequestLog, expect_token: str | None, run_id_factory=Non
             if self.command == "POST" and self.path.startswith("/api/core/agents/") and self.path.endswith("/stop"):
                 self._json(200, {})
                 return
+            if self.command == "POST" and self.path.startswith("/api/core/agents/") and self.path.endswith("/phase"):
+                self._json(200, {"applied": True})
+                return
             self.send_response(404)
             self.end_headers()
 
