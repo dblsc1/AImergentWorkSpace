@@ -29,7 +29,7 @@ MAX_BODY = 256 * 1024
 MAX_RULES = 500
 MAX_ERRORS = 50
 DRAFT_TTL = timedelta(days=14)
-_VERSION = re.compile(r'^(?:W/)?"?([0-9]{1,15})"?$')
+_VERSION = re.compile(r'^(?:W/)?(?:"([0-9]{1,15})"|([0-9]{1,15}))$')
 
 
 class RulesError(Exception):
@@ -116,7 +116,7 @@ def _if_match(value: str | None) -> int:
     m = _VERSION.fullmatch((value or "").strip())
     if not m:
         raise RulesError(428, '须带 If-Match: "<version>"（先 GET 规则拿 version / ETag）')
-    return int(m.group(1))
+    return int(m.group(1) or m.group(2))
 
 
 def _task_ids() -> set[str]:
@@ -232,10 +232,9 @@ def create_draft(authorization: str | None, body: bytes) -> dict:
     rules = _validate(raw["rules"])
     user, now = current_tenant(), _now()
     doc = _state(user)
-    repo.put_draft(user, {"id": "drf_" + secrets.token_hex(6), "author": author, "summary": summary,
-                          "createdAt": now, "expiresAt": now + DRAFT_TTL,
-                          "baseVersion": doc.get("version", 0), "rules": rules})
-    return _draft_out(_state(user))
+    return _draft_out(repo.put_draft(user, {"id": "drf_" + secrets.token_hex(6), "author": author, "summary": summary,
+                                            "createdAt": now, "expiresAt": now + DRAFT_TTL,
+                                            "baseVersion": doc.get("version", 0), "rules": rules}))
 
 
 def current_draft() -> dict:

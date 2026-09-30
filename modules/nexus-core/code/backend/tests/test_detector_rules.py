@@ -58,6 +58,8 @@ def test_if_match_required_and_conflict(client, tid):
     rule = [{"title": "x", "taskId": tid}]
     assert client.put(API, json={"rules": rule}).status_code == 428
     assert client.put(API, json={"rules": rule}, headers={"If-Match": "*"}).status_code == 428
+    for bad in ('"0', '0"', '"x"'):
+        assert client.put(API, json={"rules": rule}, headers={"If-Match": bad}).status_code == 428, bad
     assert _put(client, rule, 0).status_code == 200
     r = _put(client, rule, 0)  # 基于旧版本
     assert r.status_code == 412 and r.json()["currentVersion"] == 1 and isinstance(r.json()["detail"], str)

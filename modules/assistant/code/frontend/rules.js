@@ -67,7 +67,8 @@
   var discardBtn = document.getElementById("rules-discard");
 
   var tasks = {};          // taskId → {path, done}
-  var server = null;       // GET rules 的响应 {version, rules}
+  var server = null;       // 编辑器的底稿 {version, rules}：保存时 If-Match 带它的 version
+  var current = null;      // 最近一次读到的生效规则（草稿的「旧值」按它显示；有没保存的改动时可能比底稿新）
   var rules = [];          // 编辑中的副本
   var draft = null;
   var busy = false;
@@ -87,6 +88,7 @@
     saveBtn.disabled = busy || !d;
     addBtn.disabled = busy;
     applyBtn.disabled = discardBtn.disabled = busy;
+    editorEl.inert = busy;   // 请求在路上时编辑器不可改：回来会用服务端的规则重填，期间的改动会被冲掉
     emptyEl.hidden = rules.length > 0;
   }
 
@@ -194,7 +196,7 @@
     sync();
   }
   function setServer(body) {
-    server = { version: body.version, rules: body.rules || [] };
+    server = current = { version: body.version, rules: body.rules || [] };
     rules = JSON.parse(JSON.stringify(server.rules));
     errors = {};
     render();
@@ -212,7 +214,7 @@
       " · " + (exp.getMonth() + 1) + "-" + exp.getDate() + " 前不应用就作废";
     diffEl.textContent = "";
     var cur = {};
-    ((server && server.rules) || []).forEach(function (r) { cur[r.id] = r; });
+    ((current && current.rules) || []).forEach(function (r) { cur[r.id] = r; });
     draft.rules.forEach(function (r) {
       var kind = d.added.indexOf(r.id) >= 0 ? "add" : d.changed.indexOf(r.id) >= 0 ? "change" : null;
       if (!kind) return;
@@ -232,6 +234,13 @@
   async function loadDraft() {
     var r = await request("GET", "/drafts/current");
     draft = r.ok && r.body ? r.body.draft : null;
+    if (draft && current && draft.currentVersion !== current.version) {
+      // 别处改过规则：旧值按最新的生效规则显示。没手改就连编辑器一起刷新；有手改就留着（保存时照样 412）
+      var g = await request("GET", "");
+      if (g.ok) {
+        if (dirty()) current = { version: g.body.version, rules: g.body.rules || [] }; else setServer(g.body);
+      }
+    }
     renderDraft();
   }
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from ...repo import get_db
@@ -80,9 +81,11 @@ def replace_rules(user: str, expected_version: int, rules: list[dict], at: datet
     return res.matched_count == 1 or res.upserted_id is not None
 
 
-def put_draft(user: str, draft: dict) -> None:
-    _rules_col().update_one({"user": user}, {"$set": {"draft": draft},
-                                             "$setOnInsert": {"version": 0, "rules": []}}, upsert=True)
+def put_draft(user: str, draft: dict) -> dict:
+    """写草稿并原子地回写后的文档（别的请求紧接着顶掉 / 应用，也不影响这次的返回）。"""
+    return _rules_col().find_one_and_update(
+        {"user": user}, {"$set": {"draft": draft}, "$setOnInsert": {"version": 0, "rules": []}},
+        projection={"_id": 0}, upsert=True, return_document=ReturnDocument.AFTER)
 
 
 def drop_draft(user: str, draft_id: str | None = None) -> None:
