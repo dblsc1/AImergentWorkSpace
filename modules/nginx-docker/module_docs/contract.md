@@ -89,6 +89,10 @@ consumes:
   - 触屏（没有悬停）：第一下点芯片切换预览开 / 关，预览里放一个「去计时页」链接；点预览外面关上。
   - `prefers-reduced-motion` 时不闪。
   - 预览是浮层（不占文档流），打开 / 关上**不引起布局位移**；宽度 `min(360px, 100vw - 32px)`，320px 宽的屏上左右各留 16px、不出横向滚动。
+- **共享渲染件**（v0.3 实现时追加）：泳道的画法放在 `static/lanes.js` + `static/lanes.css`，网关照旧在
+  `<前缀>__cockpit/` 下服出（不设门、不含数据）。顶栏在预览**第一次打开**时才加载它；计时页（`modules/ring`
+  的 `ring-lanes.js`）按 `HONEYCOMB_BASE` 加载同一份——两处的配色、段的推法、连线画法因此只有一处实现。
+  对外只挂 `window.HoneycombLanes`；本文件不发请求，全部 `textContent`。
 
 ## AI 桥路由（v0.3）
 

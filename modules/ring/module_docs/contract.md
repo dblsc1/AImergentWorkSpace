@@ -176,3 +176,4 @@ consumes:
 | 2026-09-28 | v0.3 自动检测只是建议 | 新增 consumes `nexus-core.activity.suggestions.v1`：计时页「待确认」面板（`ring-suggestions.js`、HTML 末尾 `#suggest-panel`、`ring.css` 末段）。列出、改任务、确认、忽略、按把握阈值全部确认；端点 404 时整块隐藏；确认后刷新圆环、不发 `honeycomb:timer-changed` |
 | 2026-09-30 | v0.3 人一条线、代理多条线（契约先行） | 新增 consumes `nexus-core.views.lanes.v1`（计时页「泳道」面板：配色、闪烁、连线、轮询、404 隐藏）与 `views.current.v1` 的 `agents[].phase`；前端代码在实现 PR 里跟上 |
 | 2026-09-30 | 仓主定（PR #50） | 泳道从「可折叠面板」改为计时页默认展开的主视图、画全部泳道；配色走 tokens、与顶栏预览一致；写入页面分工设计意图（ring=现在 / hive=未来 / 待建「AI助理」=回顾与分析） |
+| 2026-09-30 | v0.3 泳道前端实现 | `views.lanes.v1` 落地：`ring-lanes.js`（新文件）、HTML `#lanes-panel`（圆环卡下方）、`ring.css` 末段；画图用 nginx-docker 的共享件 `<前缀>__cockpit/lanes.js`（顶栏预览同一份）。缺省最近 3 小时、可切「今天」；标题红绿灯取同一份响应里在跑运行的当前相位（与 `views.current` 的 `agents[].phase` 同源，不另拉）。配色 token `--agent-work`/`--agent-wait` 按 design-tokens v1.2 追加，兜底块同步 |

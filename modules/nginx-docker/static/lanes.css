@@ -1,0 +1,107 @@
+/* 泳道（lanes.js 配套，计时页全部泳道 + 顶栏精简预览共用）。
+ * 颜色只取 tokens.css 的语义色（design-tokens-v1 §3.2）：人 = 事实青族（按模式深浅），
+ * 代理 working = --agent-work、waiting_* = --agent-wait、idle = --ink-3、error = --danger。
+ * 连线 reply / attend 同色（--ink-2），attend 半透明。禁裸 hex。 */
+.hcl {
+  --hcl-row-h: 30px;
+  --hcl-label-w: 8.5em;
+  position: relative; container-type: inline-size; box-sizing: border-box;
+  display: grid; gap: var(--sp-2); min-width: 0;
+  font-size: var(--fs-sub); color: var(--ink);
+}
+.hcl * { box-sizing: border-box; }
+.hcl-compact { --hcl-row-h: 24px; --hcl-label-w: 6em; }
+.hcl-sr {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+}
+
+/* 时间轴 */
+.hcl-axis-row { display: flex; height: 1.4em; }
+.hcl-label-spacer { flex: 0 0 var(--hcl-label-w); }
+.hcl-axis { position: relative; flex: 1; min-width: 0; border-bottom: 1px solid var(--line); }
+.hcl-tick { position: absolute; bottom: 0; height: 4px; border-left: 1px solid var(--line); }
+.hcl-tick-label {
+  position: absolute; bottom: 5px; transform: translateX(-50%);
+  font-family: var(--font-mono); font-size: var(--fs-eyebrow); color: var(--ink-2); white-space: nowrap;
+}
+@container (max-width: 480px) { .hcl-tick-odd .hcl-tick-label { display: none; } }
+
+/* 行 */
+.hcl-rows { position: relative; }
+.hcl-row { display: flex; height: var(--hcl-row-h); align-items: center; }
+.hcl-row + .hcl-row { border-top: 1px solid var(--line-2); }
+.hcl-label {
+  flex: 0 0 var(--hcl-label-w); min-width: 0; padding-right: var(--sp-2);
+  display: flex; flex-direction: column; line-height: 1.2; overflow: hidden;
+}
+.hcl-name, .hcl-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hcl-name { display: flex; align-items: center; gap: var(--sp-1); font-weight: 600; }
+.hcl-sub { font-size: var(--fs-eyebrow); color: var(--ink-2); }
+.hcl-compact .hcl-sub { display: none; }
+.hcl-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+.hcl-track {
+  position: relative; flex: 1; min-width: 0; height: 60%;
+  background: var(--panel-2); border-radius: 3px;
+}
+
+/* 段 */
+.hcl-seg { position: absolute; top: 0; bottom: 0; min-width: 1px; }
+.hcl-human.hcl-mode-do { background: var(--fact-s1); }
+.hcl-human.hcl-mode-prompt { background: var(--fact-s2); }
+.hcl-human.hcl-mode-review { background: var(--fact-s3); }
+.hcl-human.is-running { box-shadow: inset -3px 0 0 var(--ink); }
+.hcl-ph-working { --hcl-c: var(--agent-work); }
+.hcl-ph-waiting { --hcl-c: var(--agent-wait); }
+.hcl-ph-idle { --hcl-c: var(--ink-3); }
+.hcl-ph-error { --hcl-c: var(--danger); }
+.hcl-seg[class*="hcl-ph-"], .hcl-dot, .hcl-swatch[class*="hcl-ph-"] { background: var(--hcl-c); }
+/* 超时还挂着：末段画成同色虚线，不实心 */
+.hcl-seg.is-overdue {
+  background: repeating-linear-gradient(90deg, var(--hcl-c) 0 6px, transparent 6px 10px);
+}
+/* 在场细带：贴人那条线下缘；离开画斜线 */
+.hcl-presence { top: auto; height: 4px; bottom: -6px; background: var(--ink-2); opacity: .55; }
+.hcl-presence.is-afk {
+  background: repeating-linear-gradient(135deg, var(--ink-3) 0 2px, transparent 2px 4px); opacity: 1;
+}
+
+/* 只有在跑运行的最后一段闪：绿慢、黄快 */
+.hcl-seg.is-live.hcl-ph-working { animation: hcl-blink 2.4s ease-in-out infinite; }
+.hcl-seg.is-live.hcl-ph-waiting { animation: hcl-blink .9s ease-in-out infinite; }
+.hcl-dot.hcl-ph-working { animation: hcl-blink 2.4s ease-in-out infinite; }
+.hcl-dot.hcl-ph-waiting { animation: hcl-blink .9s ease-in-out infinite; }
+.hcl-dot.hcl-ph-human { background: var(--fact); }
+@keyframes hcl-blink { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) {
+  .hcl-seg.is-live, .hcl-dot { animation: none !important; }
+}
+
+/* 连线层：与轨道同一坐标（左边让出标签列）；第 r 行的中线 = (r + .5) × 行高 */
+.hcl-overlay { position: absolute; top: 0; bottom: 0; left: var(--hcl-label-w); right: 0; pointer-events: none; }
+.hcl-reply, .hcl-attend {
+  position: absolute; top: calc(var(--hcl-row-h) * .5);
+  height: calc(var(--hcl-row-h) * var(--hcl-r, 1));
+}
+.hcl-reply { width: 0; border-left: 2px solid var(--ink-2); }
+.hcl-attend { min-width: 2px; background: var(--ink-2); opacity: .22; border-radius: 2px; }
+.hcl-now { position: absolute; top: 0; bottom: 0; border-left: 1px dashed var(--ink); opacity: .6; }
+
+.hcl-empty, .hcl-more { color: var(--ink-3); }
+a.hcl-more { color: var(--ink-2); }
+
+/* 图例 */
+.hcl-legend { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-3); color: var(--ink-2); font-size: var(--fs-eyebrow); }
+.hcl-key { display: inline-flex; align-items: center; gap: var(--sp-1); }
+.hcl-swatch { position: relative; display: inline-block; width: 12px; height: 8px; border-radius: 2px; }
+.hcl-swatch.hcl-key-reply { width: 0; height: 12px; border-left: 2px solid var(--ink-2); border-radius: 0; }
+.hcl-swatch.hcl-key-attend { background: var(--ink-2); opacity: .3; height: 12px; }
+
+/* 悬停提示 */
+.hcl-tip {
+  position: absolute; z-index: 5; display: none; max-width: min(320px, 100%);
+  padding: var(--sp-1) var(--sp-2); border-radius: var(--r-1);
+  background: var(--ink); color: var(--panel); font-size: var(--fs-eyebrow); line-height: 1.4;
+  pointer-events: none; overflow-wrap: anywhere;
+}
+.hcl-tip.is-on { display: block; }

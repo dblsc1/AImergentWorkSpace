@@ -43,6 +43,9 @@ import pytest
 from playwright.sync_api import Browser, Page, Route, sync_playwright
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent
+# 共享顶栏的静态件（lanes.js / lanes.css：计时页泳道与顶栏预览共用的渲染件），线上由网关在
+# <前缀>__cockpit/ 下服出；本套件不起网关，浏览器侧直接从工作树里的文件回。
+COCKPIT_STATIC_DIR = FRONTEND_DIR.parent.parent.parent / "nginx-docker" / "static"
 PAGE_NAME = "project-task-contribution-ring.html"
 GATEWAY_BASE_URL = "http://127.0.0.1:8800"
 
@@ -366,6 +369,21 @@ def _install_stub_routes(page: Page, harness: RingHarness) -> None:
         harness.timer_write_bodies.append(route.request.post_data)
         route.abort()
 
+    def cockpit_static_route(route: Route) -> None:
+        name = route.request.url.split("?")[0].rsplit("/", 1)[-1]
+        f = COCKPIT_STATIC_DIR / name
+        if not f.is_file():
+            route.fulfill(status=404, body="")
+            return
+        ctype = "text/css" if name.endswith(".css") else "application/javascript"
+        route.fulfill(status=200, content_type=ctype, body=f.read_bytes())
+
+    def lanes_route(route: Route) -> None:
+        # 缺省模拟老后端（早于 v2.4）：泳道面板整块不出现，既有用例的页面形状不变。
+        route.fulfill(status=404, content_type="application/json", body='{"detail":"Not Found"}')
+
+    page.route("**/__cockpit/lanes.*", cockpit_static_route)
+    page.route("**/api/core/views/lanes*", lanes_route)
     page.route("**/api/core/views/tree", tree_route)
     page.route("**/api/core/views/current", current_route)
     page.route("**/api/core/views/gantt", gantt_route)
