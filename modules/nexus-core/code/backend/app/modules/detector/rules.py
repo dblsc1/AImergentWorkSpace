@@ -208,9 +208,9 @@ def put_rules(authorization: str | None, if_match: str | None, body: bytes) -> d
     version = _if_match(if_match)
     rules = _validate(raw["rules"])
     user = current_tenant()
-    if not repo.replace_rules(user, version, rules, _now()):
+    if (doc := repo.replace_rules(user, version, rules, _now())) is None:
         raise _stale(user, version)
-    return _rules_out(_state(user))
+    return _rules_out(doc)
 
 
 def _stale(user: str, version: int) -> RulesError:
@@ -253,13 +253,13 @@ def apply_draft(authorization: str | None, draft_id: str, if_match: str | None) 
         raise _stale(user, version)
     if errors := _missing_tasks(d["rules"]):  # 建草稿之后任务可能被删了
         raise _invalid(errors)
-    if not repo.replace_rules(user, version, d["rules"], _now(), draft_id=draft_id):
+    if (done := repo.replace_rules(user, version, d["rules"], _now(), draft_id=draft_id)) is None:
         # 期间有人改了规则或换了草稿：按此刻的状态分辨
         again = _state(user)
         if (again.get("draft") or {}).get("id") != draft_id:
             raise RulesError(404, f"草稿 {draft_id[:80]!r} 刚被顶掉或丢弃")
         raise _stale(user, version)
-    return _rules_out(_state(user))
+    return _rules_out(done)
 
 
 def discard_draft(authorization: str | None, draft_id: str) -> None:

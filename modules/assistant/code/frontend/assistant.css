@@ -268,6 +268,7 @@ fieldset.set-field > legend { font-size: var(--fs-sub); color: var(--ink-2); mar
 .rules-diff-list .diff-add { border-left-color: var(--fact); }
 .rules-diff-list .diff-change { border-left-color: var(--warn); }
 .rules-diff-list .diff-remove { border-left-color: var(--danger); }
+.rules-diff-list .diff-move { border-left-color: var(--plan); }
 .diff-tag { font-size: var(--fs-eyebrow); font-weight: 600; color: var(--ink-2); }
 .diff-old { color: var(--ink-3); text-decoration: line-through; }
 .diff-change .diff-old::after { content: " →"; }

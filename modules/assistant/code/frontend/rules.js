@@ -224,6 +224,17 @@
       li.appendChild(el("span", "diff-new", describe(r, tasks)));
       diffEl.appendChild(li);
     });
+    if (d.reordered) {   // 顺序决定哪条先命中：内容没变、只是挪了位置的也列出来
+      var was = {};
+      ((current && current.rules) || []).forEach(function (r, i) { was[r.id] = i; });
+      draft.rules.forEach(function (r, i) {
+        if (d.added.indexOf(r.id) >= 0 || d.changed.indexOf(r.id) >= 0 || was[r.id] === i) return;
+        var li = el("li", "diff-move");
+        li.appendChild(el("span", "diff-tag", "挪动 #" + (was[r.id] + 1) + " → #" + (i + 1)));
+        li.appendChild(el("span", "diff-new", describe(r, tasks)));
+        diffEl.appendChild(li);
+      });
+    }
     d.removed.forEach(function (id) {
       var li = el("li", "diff-remove");
       li.appendChild(el("span", "diff-tag", "删除"));
@@ -233,14 +244,15 @@
   }
   async function loadDraft() {
     var r = await request("GET", "/drafts/current");
-    draft = r.ok && r.body ? r.body.draft : null;
-    if (draft && current && draft.currentVersion !== current.version) {
+    var next = r.ok && r.body ? r.body.draft : null;   // 拿齐（草稿 + 对应的生效规则）才换上，期间「应用」仍指旧草稿
+    if (next && current && next.currentVersion !== current.version) {
       // 别处改过规则：旧值按最新的生效规则显示。没手改就连编辑器一起刷新；有手改就留着（保存时照样 412）
       var g = await request("GET", "");
       if (g.ok) {
         if (dirty()) current = { version: g.body.version, rules: g.body.rules || [] }; else setServer(g.body);
       }
     }
+    draft = next;
     renderDraft();
   }
 
@@ -282,7 +294,8 @@
       return;
     }
     if (r.status === 412) {
-      server.version = r.body.currentVersion;   // 下面仍是你的版本；再点保存 = 用你的覆盖
+      // 下面仍是你的版本；再点保存 = 用你的覆盖。新对象：current（草稿旧值的底）不跟着变，下次读草稿会重拉
+      server = { version: r.body.currentVersion, rules: server.rules };
       showMessage("规则刚被别处改过（现在是第 " + server.version + " 版，可能是刚应用了草稿）。下面仍是你的改动：" +
         "再点「保存规则」就用它覆盖；想放弃就刷新页面。", true);
       sync();

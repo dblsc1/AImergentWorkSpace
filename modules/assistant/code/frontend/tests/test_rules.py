@@ -236,3 +236,16 @@ def test_narrow_no_horizontal_scroll(browser, static_base_url, width, theme):
         # 草稿横幅、按钮都用 tokens 上色，暗色下也不是默认黑白
         bg = page.eval_on_selector("#rules-draft", "e => getComputedStyle(e).backgroundColor")
         assert bg not in ("rgba(0, 0, 0, 0)", "rgb(255, 255, 255)")
+
+
+def test_reorder_only_draft_lists_moves(browser, static_base_url):
+    d = copy.deepcopy(DRAFT)
+    d["rules"] = [RULES[1], RULES[0], RULES[2]]
+    d["diff"] = {"added": [], "removed": [], "changed": [], "unchanged": 3, "reordered": True}
+    with page_with(browser, static_base_url, RulesStub(d)) as page:
+        ready(page)
+        page.wait_for_selector("#rules-draft:not([hidden])")
+        assert page.inner_text("#rules-draft-head") == "AI 草稿：新增 0 / 修改 0 / 删除 0（顺序有变）"
+        page.click(".rules-diff summary")
+        tags = page.eval_on_selector_all("#rules-diff-list .diff-tag", "ts => ts.map(t => t.textContent)")
+        assert tags == ["挪动 #2 → #1", "挪动 #1 → #2"]
