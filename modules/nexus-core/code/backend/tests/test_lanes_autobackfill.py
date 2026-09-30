@@ -35,7 +35,7 @@ def test_backfills_when_empty_then_noop(client, seeded):
     assert backfill_lanes_if_empty() == 3
     assert sorted(d["key"] for d in _db()["proj_lanes"].find({})) == before  # 全体租户
     assert backfill_lanes_if_empty() == 0  # 非空：no-op
-    assert _db()["_startup_locks"].count_documents({}) == 0  # 锁已释放
+    assert _db()["_startup_locks"].count_documents({}) == 0  # 锁与进度标记都已清掉
 
 
 def test_noop_without_relevant_facts():
@@ -102,3 +102,38 @@ def test_failure_does_not_block_startup(monkeypatch):
     monkeypatch.setattr(main, "backfill_lanes_if_empty", boom)
     with TestClient(main.app) as fresh:
         assert fresh.get(f"{API}/health").status_code == 200
+
+
+def test_interrupted_replay_resumes_next_startup_even_if_non_empty(client, seeded, monkeypatch):
+    from app.modules.projector import rebuild  # noqa: PLC0415
+
+    _facts(client, seeded)
+    _db()["proj_lanes"].delete_many({})
+    real = rebuild.lanes.handle
+    calls = {"n": 0}
+
+    def crash_after_one(env):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("crash mid-replay")
+        real(env)
+
+    monkeypatch.setattr(rebuild.lanes, "handle", crash_after_one)
+    try:
+        rebuild.backfill_lanes_if_empty()
+    except RuntimeError:
+        pass
+    monkeypatch.setattr(rebuild.lanes, "handle", real)
+    assert _db()["proj_lanes"].count_documents({}) == 1  # 半截：非空
+    assert rebuild.backfill_lanes_if_empty() == 3  # 进度标记还在 → 接着补
+    assert _db()["proj_lanes"].count_documents({}) == 3
+
+
+def test_lock_release_only_by_owner():
+    from app.modules.projector import repo  # noqa: PLC0415
+
+    now = datetime.now(timezone.utc)
+    assert repo.acquire_startup_lock("x", "a", now - timedelta(minutes=20), timedelta(minutes=10))
+    assert repo.acquire_startup_lock("x", "b", now, timedelta(minutes=10))  # a 的锁已过期，被接管
+    repo.release_startup_lock("x", "a")  # 迟到的 a 不能删 b 的锁
+    assert _db()["_startup_locks"].find_one({"_id": "x"})["owner"] == "b"
