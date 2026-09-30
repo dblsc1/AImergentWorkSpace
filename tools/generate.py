@@ -346,6 +346,13 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
         "    absolute_redirect off;",
         "",
         '    set $honeycomb_base "${HONEYCOMB_BASE_PATH}";',
+        "",
+        "    # 上游一律运行期解析（Docker 内置 DNS + 变量 proxy_pass）：写死主机名只在启动时",
+        "    # 解析一次，后端被单独重建换了 IP 后网关一直 502（2026-09-30 真机）。变量",
+        "    # proxy_pass 不做前缀替换，所以每条先 rewrite … break 改好路径（query 原样保留；",
+        "    # \\Q…\\E 让前缀按字面匹配），缺省的 proxy_redirect 也没了，照旧写明。",
+        "    # 各条用各自的变量名：/__auth_verify 子请求与主请求共用变量，同名会互相覆盖。",
+        "    resolver 127.0.0.11 valid=10s ipv6=off;",
         f"    set $honeycomb_nav '{_nav_json(statics, homes[0] if homes else None)}';",
         "",
         "    location = /healthz { return 200 \"ok\\n\"; add_header Content-Type text/plain; }",
@@ -370,7 +377,9 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
             "    # auth_request 只看状态码，body 不转；客户端自带的租户头不转给认证服务。",
             "    location = /__auth_verify {",
             "        internal;",
-            "        proxy_pass http://${AUTH_UPSTREAM}/api/auth/verify;",
+            '        set $honeycomb_auth "${AUTH_UPSTREAM}";',
+            "        rewrite ^ /api/auth/verify break;",
+            "        proxy_pass http://$honeycomb_auth;",
             "        proxy_pass_request_body off;",
             "        proxy_set_header Content-Length \"\";",
             "        proxy_set_header X-Nexus-Tenant \"\";",
@@ -382,7 +391,10 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
             "    # 这个前缀下每个非登录端点都得自己鉴权，网关不替它挡。",
             "    # 转发时去掉站点前缀：认证服务永远看到 /api/auth/...（gateway.v1）。",
             f"    location {_b('/api/auth/')} {{",
-            "        proxy_pass http://${AUTH_UPSTREAM}/api/auth/;",
+            '        set $honeycomb_auth "${AUTH_UPSTREAM}";',
+            f"        rewrite (?s)^\\Q{_b('/api/auth/')}\\E(.*)$ /api/auth/$1 break;",
+            "        proxy_pass http://$honeycomb_auth;",
+            f"        proxy_redirect http://${{AUTH_UPSTREAM}}/api/auth/ {_b('/api/auth/')};",
             "        proxy_set_header Host $host;",
             "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
             "        proxy_set_header X-Nexus-Tenant \"\";",
@@ -423,8 +435,13 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
             ]
         else:
             L += ["        proxy_set_header X-Nexus-Tenant \"\";"]
+        upstream = r.get("upstream", r["prefix"])
         L += [
-            f"        proxy_pass http://{r['service']}:{r['port']}{r.get('upstream', r['prefix'])};",
+            f'        set $honeycomb_up_{i} "{r["service"]}:{r["port"]}";',
+            f"        rewrite ^ {upstream} break;" if r.get("exact")
+            else f"        rewrite (?s)^\\Q{_b(r['prefix'])}\\E(.*)$ {upstream}$1 break;",
+            f"        proxy_pass http://$honeycomb_up_{i};",
+            f"        proxy_redirect http://{r['service']}:{r['port']}{upstream} {_b(r['prefix'])};",
             "        proxy_set_header Host $host;",
             "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
         ]
