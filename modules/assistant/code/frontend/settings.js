@@ -50,7 +50,8 @@
       .filter(function (l) { return l !== ""; });
   }
 
-  // 白名单正则的本地检查：只拦肯定不行的（长度、RE2 不支持的构造，同服务端那条规则）。
+  // 白名单正则的本地检查：只拦肯定不行的（长度、RE2 不支持的构造）。NOT_RE2 与服务端
+  // （nexus-core detector/service.py 的 _NOT_RE2）逐字同一条，所以不会拦下服务端会收的写法。
   // 语法本身交给服务端（422 挂回这一项）——JS 的 RegExp 与 RE2 不同，拿它判会误拦合法写法（如 \Q…\E）。
   var NOT_RE2 = /\(\?<?[=!]|\\[1-9]|\(\?P=|\(\?\(|\(\?>|(?<!\\)[*+?}]\+/;
   function checkPattern(p) {
@@ -139,7 +140,10 @@
   function fieldBox(key) { return formEl.querySelector('[data-field="' + key + '"]'); }
   function clearErrors() {
     formEl.querySelectorAll(".field-error").forEach(function (p) { p.hidden = true; p.textContent = ""; });
-    formEl.querySelectorAll("[aria-invalid]").forEach(function (n) { n.removeAttribute("aria-invalid"); });
+    formEl.querySelectorAll("[aria-invalid]").forEach(function (n) {
+      n.removeAttribute("aria-invalid");
+      n.removeAttribute("aria-describedby");
+    });
   }
   function showErrors(errs) {
     clearErrors();
@@ -151,7 +155,12 @@
       p.textContent = errs[key];
       p.hidden = false;
       var input = box.querySelector("input:not([type=radio]):not([data-null]), textarea, input[type=radio]");
-      if (input) { input.setAttribute("aria-invalid", "true"); first = first || input; }
+      p.id = "err-" + key.replace(/\./g, "-");
+      if (input) {   // 读屏跟着焦点念出具体原因，不只是底部那句「见标红的」
+        input.setAttribute("aria-invalid", "true");
+        input.setAttribute("aria-describedby", p.id);
+        first = first || input;
+      }
     });
     return first;
   }
@@ -315,6 +324,7 @@
       var errs = {};
       errs[key] = r.detail;
       var input = showErrors(errs);
+      sync();                       // 先解锁表单（busy 时整组 disabled，聚焦不上）
       if (input) input.focus();
       showMessage("服务器没收：见标红的那一项。", true);
     } else {

@@ -200,6 +200,8 @@ def test_server_422_goes_under_its_field(browser, static_base_url):
         err = page.locator('[data-field="idle.focusMaxMinutes"] .field-error')
         err.wait_for(state="visible")
         assert err.inner_text() == "idle.focusMaxMinutes: Input should be less than or equal to 480"
+        assert page.evaluate("document.activeElement.id") == "det-focus-max"
+        assert page.get_attribute("#det-focus-max", "aria-describedby") == "err-idle-focusMaxMinutes"
         assert "服务器没收" in page.inner_text("#det-message")
         assert page.is_visible("#det-dirty")          # 没存上，改动还在
         # 对不上某一项的 422 显示在表单底部
