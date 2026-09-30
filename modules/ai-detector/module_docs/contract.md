@@ -22,8 +22,26 @@ provides:
     summary: >
       本机配置文件 `<系统配置目录>/honeycomb/ai-detector.json` 的字段与语义，
       以及规则文件 `rules.json` 的形状。用户可手改，程序每轮重读。
+  - id: ai-detector.presence.v1
+    summary: >
+      （v0.3 追加，契约先行）在场心跳：默认关；开了之后约每 15 秒把「此刻前台的程序 + 脱敏标题 + 是否离开」
+      报给 nexus-core，只给页面画实时的人那条线。脱敏同上传。见「在场心跳」节。
+  - id: ai-detector.agent-status-bridge.v1
+    summary: >
+      （v0.3 追加，契约先行）状态文件桥：默认关；指向一个本机状态文件（通用格式，见「状态文件桥」节，
+      例如某个桌面状态守护进程写的），把里面各代理的状态变化报成 nexus-core 的代理运行 + 相位。
+      只报相位与时刻，不报状态文件里的自由文本。
 
 consumes:
+  - id: nexus-core.activity.presence.v1
+    contract: ../../nexus-core/module_docs/contract.md
+    purpose: >
+      POST /api/core/activity/presence 在场心跳（v2.4）。形状以本文件「在场心跳」节为准。
+  - id: nexus-core.agents.phase.v1
+    contract: ../../nexus-core/module_docs/contract.md
+    purpose: >
+      状态文件桥：POST /api/core/agents/start（带 phase/label/match）、/{runId}/phase、/{runId}/stop
+      （后两条属 agents.v1 / agents.phase.v1，v2.4）。
   - id: nexus-core.activity.suggestions.v1
     contract: ../../nexus-core/module_docs/contract.md
     purpose: >
@@ -177,3 +195,79 @@ Content-Type: application/json
   `.vbs`（隐藏窗口启动）、macOS `~/Library/LaunchAgents/*.plist`、Linux
   `~/.config/autostart/*.desktop`。
 - 系统权限（macOS「辅助功能」、GNOME Wayland 的扩展）是 ActivityWatch 的事，见 README。
+
+## 在场心跳（`ai-detector.presence.v1` · 规范性，v0.3 追加）
+
+```
+POST <cockpitUrl>/api/core/activity/presence
+Authorization: Bearer <deviceToken>
+```
+
+```jsonc
+{ "deviceId": "dev_3f9a1c2b7d4e5a60", "app": "code",
+  "title": "plot.gd — garden — Visual Studio Code",   // 已脱敏
+  "afk": false }
+```
+
+- **默认关**：配置 `presence`（缺省 `false`）。只有 `enabled && !paused && presence` 时才发；关 / 暂停时零请求
+  （同「隐私默认值」第 1、2 条）。只在 `run` 常驻模式下发，`once` 不发。
+- 节奏：`presenceSeconds`（缺省 15，取值 5–300，越界按缺省）。
+- 内容：ActivityWatch 窗口桶**最新一条**事件的 `app`/`title` + 离开桶最新状态。**脱敏规则与上传完全相同**
+  （标题表、`appOnlyApps`、`browserApps` 须对得上标签页否则按 app-only），在本机做完再发；
+  离开时 `app`、`title` 都发 `""`。
+- 不带时间：服务端按收到的时刻算。**失败就丢**：不重试、不排队、不补发——心跳只描述「现在」，
+  补发一条过去的「现在」没有意义。日志只记失败分类，不记标题。
+- 服务端只留最近 2 小时、不进导出（nexus-core v2.4「在场心跳」节）；想留成记录的仍走上面的「上传」→ 人确认。
+
+## 状态文件桥（`ai-detector.agent-status-bridge.v1` · 规范性，v0.3 追加）
+
+给**没有钩子**的代理（或已经有一个桌面状态守护进程在看着它们的用户）用：本程序定期读一个本机 JSON 文件，
+把里面各代理的状态变化报成 nexus-core 的代理运行与相位。**本程序不猜代理状态**——怎么从各代理的日志 / 状态里
+认出「在干活 / 等授权」是写这个文件的那一方的事，不在本契约里。
+
+### 文件格式（通用，谁都可以写）
+
+```jsonc
+{ "updated_at": 1790000000,            // 写文件那一刻，Unix 秒
+  "agents": [
+    { "key": "codex:7f3a",             // 必填，1–128 字符，在这个文件里唯一、在代理这次会话里不变
+      "label": "garden",               // 选填：显示名（如工作目录名）
+      "state": "working",              // working | waiting_input | waiting_permission | complete | idle | error
+      "detail": "…" } ] }              // 选填，自由文本——**本程序不读、不上传**
+```
+
+- `state` 映射：`working`→`working`，`waiting_input`→`waiting_input`，`waiting_permission`→`waiting_permission`，
+  `complete`/`idle`→`idle`，`error`→`error`；其他值 → 这一条本轮跳过（不产生转入）。
+- 格式不对（不是对象、`updated_at` 不是数、`agents` 不是数组）→ 当作「文件过期」处理。单条缺 `key`/`state` → 跳过那一条。
+
+### 行为
+
+- **默认关**：配置 `agentStatusFile`（缺省 `""` = 关）填本机路径才开。同样只在 `enabled && !paused` 且 `run`
+  常驻模式下工作；关 / 暂停时不读文件、零请求。
+- 约每 3 秒读一次。**文件过期**（读不到、解析不了、`updated_at` 早于现在 30 秒以上）→ 这一轮**什么都不报**：
+  不编转入、不 stop。在跑的运行留给服务端的遗忘超时去收（守护进程停了 ≠ 代理停了，本程序分不清）。
+- `agentStatusIgnore`（字符串数组，缺省 `[]`）：`key` 以其中任一前缀开头的条目整个忽略。用来**避免重复上报**
+  ——例如已经装了 `tools/agent-hooks` 的 Claude Code 钩子，就把 Claude 那一类的前缀填进来，否则同一个会话会有两条泳道。
+- 新鲜文件里**第一次看到**某个 `key` → `agents/start`：`agent`、`tool` 都取 `key` 第一个 `:` 之前的部分，
+  须在内置白名单里（`claude`、`codex`、`hermes`、`gemini`、`opencode`、`aider`、`cursor`；只增），否则一律报 `"agent"`
+  ——格式对不代表不是隐私（`secret_project:1` 也合格式）；
+  `clientKey` = SHA-256(`deviceId` + `key`) 前 32 位十六进制（丢了响应重试不会多开一条运行；原始 `key` 不上传）；`phase` 为映射后的相位，`label` 为脱敏后的 `label`（按上传的标题
+  脱敏规则，截到 64 码点；空则不发），`match` 同 `label`（不足 3 码点不发）。不挂任务（落收件箱）。
+- 映射后的相位**变了** → `agents/{runId}/phase`：`at` = 本程序发现变化的时刻（本机时钟，最多晚一个轮询间隔），
+  **不发 `detail`**；只在从 `waiting_input`/`waiting_permission` 转入 `working` 时带 `reply: true`（等人的状态解除，
+  通常是人答了）。从 `idle`/`error` 转回 `working` **不带**——可能是人说了话，也可能是自动重试、定时任务，
+  文件格式里没有能分清的信号，宁可少一根连线也不编一根。
+- 新鲜文件里某个 `key` **不见了** → `agents/{runId}/stop`：最后状态是 `error` 报 `failed`，否则报 `done`。
+- `key → runId` 存进 `ai-detector.state.json`，重启后接着用。`phase`/`stop` 回 404 或 `applied:false, reason:"closed"`
+  （服务端已按超时收掉）→ 忘掉这个映射，下次看到这个 `key` 当作第一次看到（同一 `clientKey` 的旧运行已关，会开新运行）。
+- 网络失败：本轮不重试，映射与「上次报过的相位」都不前进；那条观测**连同原始 `at`、`reply`** 记进状态文件的待发队列
+  （每个 `key` 至多留最近 20 条），下一轮原样重发——`(at, phase)` 相同，服务端按 `duplicate` 去重，`reply` 不会记两次。
+  之后新发现的变化另起一条排在后面。
+- **离开本机的只有**：`key` 的前缀（合规的代理种类名，作 agent/tool 名）、`clientKey`（哈希）、脱敏后的 `label`、相位、时刻、结束状态。`key` 的其余部分、
+  `detail`、文件路径都不上传。
+
+## 变更记录
+
+| 日期 | 变更 |
+|---|---|
+| 2026-09-30 | v0.3 追加（契约先行）：`ai-detector.presence.v1` 在场心跳、`ai-detector.agent-status-bridge.v1` 状态文件桥；都默认关，新增配置 `presence`/`presenceSeconds`/`agentStatusFile`/`agentStatusIgnore`。上传、脱敏、游标的既有承诺一条不改 |

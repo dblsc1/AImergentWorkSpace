@@ -48,6 +48,9 @@ AI 代理运行（`taskId`/`model` 可为 `null`，键不消失），没有就�
 **互不影响**：只有代理在跑时 `running` 仍是 `false`、四个字段仍是 `null`。
 详见 `contract.md`「AI 代理运行」节。
 
+v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permission`/`idle`/`error`，从没报过相位为
+`null`，读方按 `working` 画）与 `label`（没给为 `null`）。见 `contract.md`「人一条线、代理多条线的时间线」节。
+
 ### `TreeOut` — `GET /api/core/views/tree`
 
 ```jsonc
