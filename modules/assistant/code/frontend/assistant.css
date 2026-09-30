@@ -252,6 +252,8 @@ fieldset.set-field > legend { font-size: var(--fs-sub); color: var(--ink-2); mar
 .det-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--sp-2); }
 .det-dirty { margin-right: auto; font-size: var(--fs-sub); color: var(--warn); }
 
+.det-rules-title { font-size: var(--fs-body); font-weight: 600; }
+
 /* ── 「回顾」：只放入口 ── */
 .review-panel { display: grid; gap: var(--sp-2); }
 .review-links { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--sp-2); }

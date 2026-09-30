@@ -16,6 +16,9 @@ def test_sections_in_order_and_review_links(browser, static_base_url):
         assert page.get_attribute("#review-lanes", "href") == "../ring/#lanes-panel"
         assert page.get_attribute("#review-hive", "href") == "../hive/"
         assert page.is_visible("#review-lanes") and page.is_visible("#review-hive")
+        # 「分类规则」只占位（规则库另有契约），没有任何控件
+        assert "编辑器即将上线" in page.inner_text("#det-rules")
+        assert page.locator("#det-rules input, #det-rules button, #det-rules textarea").count() == 0
 
 
 def test_everything_404_leaves_a_quiet_page(browser, static_base_url):
@@ -24,6 +27,7 @@ def test_everything_404_leaves_a_quiet_page(browser, static_base_url):
     with open_page(browser, static_base_url) as page:
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.wait_for_selector("#det-note:not([hidden])")
+        assert page.is_visible("#det-rules")
         assert page.is_hidden("#chat-panel") and page.is_hidden("#suggest-panel")
         assert page.is_visible("#review-panel")
     assert errors == []

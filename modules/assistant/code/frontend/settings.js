@@ -45,6 +45,8 @@
     o[ks[ks.length - 1]] = value;
   }
   // 程序名去掉首尾空白；正则**逐字保留**（首尾空格也是正则的一部分），只丢空行
+  // 按码点数（同服务端 Python 的 len）：emoji 之类不算两个
+  function chars(s) { return Array.from(s).length; }
   function lines(text, verbatim) {
     return String(text || "").split("\n").map(function (l) { return verbatim ? l.replace(/\r$/, "") : l.trim(); })
       .filter(function (l) { return l !== ""; });
@@ -55,7 +57,7 @@
   // 语法本身交给服务端（422 挂回这一项）——JS 的 RegExp 与 RE2 不同，拿它判会误拦合法写法（如 \Q…\E）。
   var NOT_RE2 = /\(\?<?[=!]|\\[1-9]|\(\?P=|\(\?\(|\(\?>|(?<!\\)[*+?}]\+/;
   function checkPattern(p) {
-    if (p.length > 200) return "太长（最多 200 个字符）";
+    if (chars(p) > 200) return "太长（最多 200 个字符）";
     var probe = p.replace(/\\[pP](\{[^}]*\}|[A-Za-z])/g, "x");   // 同服务端：\p{Han}+ 的「}+」不是占有量词
     if (NOT_RE2.test(probe)) return "用了 RE2 不支持的写法（前后查找 / 反向引用 / 条件组 / 原子组 / 占有量词）";
     return "";
@@ -70,7 +72,7 @@
       if (v.length > lim[0]) { errs[key] = "最多 " + lim[0] + " 条（现在 " + v.length + " 条）"; return; }
       for (var i = 0; i < v.length; i++) {
         var msg = key === "privacy.pathWhitelist" ? checkPattern(v[i])
-          : (v[i].length > lim[1] ? "每项最多 " + lim[1] + " 个字符" : "");
+          : (chars(v[i]) > lim[1] ? "每项最多 " + lim[1] + " 个字符" : "");
         if (msg) { errs[key] = "第 " + (i + 1) + " 条" + msg; return; }
       }
     });

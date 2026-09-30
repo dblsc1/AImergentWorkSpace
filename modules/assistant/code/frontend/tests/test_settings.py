@@ -188,6 +188,15 @@ def test_whitelist_accepts_re2_only_syntax(browser, static_base_url):
         r = page.evaluate("""() => ['(?i)notes', '\\\\p{Han}+', '(?P<n>a)b', 'end\\\\z', '(?i:x)y', '\\\\Q(\\\\E']
             .map(p => window.assistantSettings.checkPattern(p))""")
     assert r == ["", "", "", "", "", ""]
+    assert page_len_ok(browser, static_base_url)
+
+
+def page_len_ok(browser, static_base_url) -> bool:
+    """长度按码点数（同服务端）：200 个 emoji 不超，201 个超。"""
+    with page_with(browser, static_base_url, DetectorStub()) as page:
+        ready(page)
+        return page.evaluate("""() => { const S = window.assistantSettings;
+            return S.checkPattern('😀'.repeat(200)) === '' && S.checkPattern('😀'.repeat(201)) !== ''; }""")
 
 
 def test_server_422_goes_under_its_field(browser, static_base_url):
