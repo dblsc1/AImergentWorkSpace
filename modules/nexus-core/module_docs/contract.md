@@ -44,6 +44,14 @@
 > `proj_lanes`，不写）。`views.current.v1` 的 `agents[]` 增 `phase`/`label`。**连线与在场永不计入人的时间。**
 > 见「人一条线、代理多条线的时间线」节。
 >
+> **v2.5（追加式）**：**检测程序的设置在网页上改。** 实现 `detector.settings.v1`
+> （`contracts/detector.settings.v1/contract.md`，设置文档的字段、缺省、校验都以那里为准）：
+> `GET/PUT/DELETE /api/core/detector/settings?deviceId=`、`GET /api/core/detector/devices`，
+> 设置按租户、按设备存独立集合 `detector_settings`，不进台账 / 投影 / 导出 / 快照恢复；
+> **`PUT`/`DELETE` 带 `Authorization: Bearer`（设备令牌）一律 403**——设备令牌只能读设置。
+> 活动建议上传的段增**可选** `idle`（布尔，缺省 `false`，存下并在列表里回出）：检测程序把
+> 「前台没换、但无操作」的时段作为低把握建议上传时打这个标。既有字段、端点行为一个不改。
+>
 > v1.9：`GET /api/core/export` 产出的快照此前没有任何端点能吃
 > 回去（喂给 import 会被三层拒绝，而那三条拒绝各守一件实事，一条都不该放宽）。
 > 新增 `nexus-core.restore.v1`（`POST /api/core/restore`，见「快照恢复」节）：
@@ -212,6 +220,12 @@ provides:
       最近在场）、代理多条线（运行 + 相位）、连线（reply/attend）；与窗口有重叠即列出、不求和、不写；
       读新投影 proj_lanes（session.completed 与 agent.run.completed 各一条区间）
     status: 已实现（v2.4），待验证
+  - id: detector.settings.v1
+    contract: ../../../contracts/detector.settings.v1/contract.md
+    summary: 检测程序设置（v2.5）——GET/PUT/DELETE /api/core/detector/settings?deviceId=、
+      GET /api/core/detector/devices；按租户、按设备存 detector_settings；PUT/DELETE 带 Bearer 设备令牌 403；
+      活动建议段增可选 idle 布尔
+    status: 已实现（v2.5），待验证
 consumes:
   - id: yq-event/v1
     contract: ../../contracts/yq-event.v1/contract.md
@@ -246,6 +260,10 @@ consumes:
 | GET | `/api/core/activity/suggestions` | `?status&limit&offset` | `{total, items[]}` | ✅ 已实现（v2.2） |
 | POST | `/api/core/activity/suggestions/{id}/confirm` | `{taskId?, mode?}` | `SuggestionConfirmOut` | ✅ 已实现（v2.2） |
 | POST | `/api/core/activity/suggestions/{id}/dismiss` | 无 | `{id, status}` | ✅ 已实现（v2.2） |
+| GET | `/api/core/detector/settings` | `?deviceId` | `{deviceId, settings\|null, updatedAt\|null}`（见 `contracts/detector.settings.v1`） | ✅ 已实现（v2.5） |
+| PUT | `/api/core/detector/settings` | `?deviceId`，`DetectorSettings` | 同 GET；带 Bearer 403 | ✅ 已实现（v2.5） |
+| DELETE | `/api/core/detector/settings` | `?deviceId` | `204`；带 Bearer 403 | ✅ 已实现（v2.5） |
+| GET | `/api/core/detector/devices` | 无 | `{devices[]}` | ✅ 已实现（v2.5） |
 | ~~GET~~ | ~~`/api/core/zones`~~ | 无 | `[ZoneOut]` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
 | ~~POST~~ | ~~`/api/core/zones`~~ | `{name, color?, order?}` | `ZoneOut` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
 | ~~PATCH~~ | ~~`/api/core/zones/{id}`~~ | `{name?, color?, order?}` | `ZoneOut` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
@@ -1673,7 +1691,8 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
       "suggestion": { "taskId": "t_a1",           // 字符串或 null
                       "confidence": 0.9,          // 0–1
                       "reason": "规则 #1 命中",    // ≤200 字节（UTF-8）
-                      "classifier": "rules" } } ] } // "rules" | "service"
+                      "classifier": "rules" },    // "rules" | "service"
+      "idle": false } ] }                         // v2.5 可选，布尔，缺省 false：检测程序认为这段「前台没换、但无操作」
 // → 200 SuggestionUploadOut
 { "accepted": 1, "duplicates": 0, "rejected": [ { "index": 3, "reason": "..." } ] }
 
@@ -1683,6 +1702,7 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
   "items": [ { "id": "sug_…", "deviceId": "dev_…", "startAt": "…", "endAt": "…",
                "durationSeconds": 3600, "app": "code", "title": "…",
                "suggestion": { "taskId": "t_a1", "confidence": 0.9, "reason": "…", "classifier": "rules" },
+               "idle": false,                     // v2.5；v2.5 之前存下的建议回 false
                "status": "pending" } ] }          // 按 startAt 倒序（新的在前）
 
 // POST /api/core/activity/suggestions/{id}/confirm   请求 { "taskId"?: "t_…", "mode"?: "do"|"prompt"|"review" }
@@ -1999,6 +2019,7 @@ app/modules/
   views/      router queries          纯只读，本契约两条读端住在这里
   activity/   router service repo     活动建议（v2.2）：不是事实；确认时调 timer 的 record_session
                                       在场心跳（v2.4，presence.py）：活状态；attend 经 timer service 的 record_attend 写
+  detector/   router service repo     检测程序设置（v2.5）：不是事实；设备列表经 activity 的 service 读上传时刻
   projector/  registry handlers/      DISPATCH 显式表 + 各投影 handler
 ```
 

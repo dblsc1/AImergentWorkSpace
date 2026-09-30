@@ -146,7 +146,9 @@ func (c awClient) fetch(from, to time.Time, windowBucket, afkBucket string) (awD
 type fragment struct {
 	Start, End time.Time
 	App, Title string // Title 已脱敏
+	Raw        string // 原始窗口标题，只过了强制脱敏：只进本机留档，从不上传
 	Key        string // 合并键，见 redactor.window
+	Idle       bool   // 无操作碎片（idle.idleSuggestions），只和无操作碎片合并
 }
 
 type span struct{ start, end time.Time }
@@ -182,15 +184,29 @@ func clip(s span, from, to time.Time) (span, bool) {
 	return s, s.end.After(s.start)
 }
 
-// buildFragments：窗口事件裁到 [from,to] → 扣掉 afk → 脱敏。原始标题在这一步之后就不存在了。
+// buildFragments：窗口事件裁到 [from,to] → 扣掉离开（按 idle 节缩减过的）→ 脱敏。
+// 原始标题在这一步之后只剩强制脱敏过的 Raw（留档用）。
 func buildFragments(d awData, from, to time.Time, r redactor) []fragment {
-	var afk []span
+	th := minutes(r.idle.AfkThresholdMinutes)
+	var afk, audible []span
 	for _, e := range d.afk {
-		if e.str("status") == "afk" {
+		// afkThresholdMinutes：短于阈值的离开整段不算离开。还没结束的离开（一直延续到现在）不知道最后多长，
+		// 照算离开——否则一段正在变长的离开会在它还短的时候被当成在电脑前传上去。
+		ongoing := !e.end().Before(to.Add(-time.Minute))
+		if e.str("status") == "afk" && (ongoing || e.end().Sub(e.Timestamp) >= th) {
 			afk = append(afk, span{e.Timestamp, e.end()})
 		}
 	}
 	sort.Slice(afk, func(i, j int) bool { return afk[i].start.Before(afk[j].start) })
+	if r.idle.AudibleAsPresent {
+		for _, e := range d.web {
+			if a, _ := e.Data["audible"].(bool); a {
+				audible = append(audible, span{e.Timestamp, e.end()})
+			}
+		}
+		sort.Slice(audible, func(i, j int) bool { return audible[i].start.Before(audible[j].start) })
+	}
+	focusCap := minutes(focusMax(r.idle))
 
 	// 窗口事件理论上首尾相接，实际会重叠（记录器重启、数据恢复 / 导入）。重叠不裁掉的话，
 	// 同一分钟算两遍 Active，而且段的起点会随「这一轮从哪读起」漂移，服务端按 startAt
@@ -210,9 +226,39 @@ func buildFragments(d awData, from, to time.Time, r redactor) []fragment {
 			continue
 		}
 		covered = s.end
-		for _, p := range subtract(s, afk) {
+		app := normApp(e.str("app"))
+		holes := afk
+		// 这个窗口在前台时，哪些离开不算离开（契约「离开判定」）。
+		if len(audible) > 0 && r.browsers[app] {
+			var h2 []span
+			for _, h := range holes {
+				h2 = append(h2, subtract(h, audible)...)
+			}
+			holes = h2
+		}
+		if r.idle.FocusAppsEnabled && r.focus[app] {
+			var h2 []span
+			for _, h := range holes {
+				if h.start = h.start.Add(focusCap); h.end.After(h.start) {
+					h2 = append(h2, h)
+				}
+			}
+			holes = h2
+		}
+		raw := scrubSecrets(e.str("title"))
+		emit := func(p span, idle bool) {
 			title, key := r.window(e.str("app"), e.str("title"), bestTab(d.web, p))
-			out = append(out, fragment{Start: p.start, End: p.end, App: e.str("app"), Title: title, Key: key})
+			out = append(out, fragment{Start: p.start, End: p.end, App: e.str("app"), Title: title, Raw: raw, Key: key, Idle: idle})
+		}
+		present := subtract(s, holes)
+		for _, p := range present {
+			emit(p, false)
+		}
+		if r.idle.IdleSuggestions {
+			// 前台窗口没换、但算离开的部分：不丢，做成无操作碎片。
+			for _, p := range subtract(s, present) {
+				emit(p, true)
+			}
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Start.Before(out[j].Start) })

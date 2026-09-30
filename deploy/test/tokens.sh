@@ -35,6 +35,18 @@ if "${C[@]}" -b "$A" "$BASE/api/core/planner/zones" | grep -q alice-only-zone; t
     "$("${C[@]}" -H "Authorization: Bearer $TOK" "$BASE/api/core/planner/zones" | grep -c alice-only-zone)" 1
 fi
 
+# detector.settings.v1：设备令牌只能读检测程序设置，改 / 删必须是人的会话。服务端靠「请求带没带
+# Authorization: Bearer」区分——这条要求网关对 /api/core/ 原样转发 Authorization，从门外验一遍。
+S='/api/core/detector/settings?deviceId=dev_ci'
+BODY='{"schemaVersion":1,"privacy":{"titles":"drop"}}'
+check "令牌读检测程序设置" "$(code "$TOK" "$S")" 200
+check "令牌改检测程序设置被拒" \
+  "$(code "$TOK" "$S" -X PUT -H 'Content-Type: application/json' -d "$BODY")" 403
+check "令牌删检测程序设置被拒" "$(code "$TOK" "$S" -X DELETE)" 403
+check "网页会话改检测程序设置" "$("${C[@]}" -b "$A" -o /dev/null -w '%{http_code}' -X PUT \
+  -H 'Content-Type: application/json' -d "$BODY" "$BASE$S")" 200
+check "网页会话删检测程序设置" "$("${C[@]}" -b "$A" -o /dev/null -w '%{http_code}' -X DELETE "$BASE$S")" 204
+
 "${C[@]}" -b "$A" -o /dev/null -X POST -H 'Content-Type: application/json' "$BASE/api/auth/tokens/revoke"
 check "网页吊销后旧令牌被拒" "$(code "$TOK" /api/core/views/tree)" 302
 

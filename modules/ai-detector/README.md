@@ -30,6 +30,52 @@
 隐私默认值：**同步默认关**，要你自己打开；随时可以暂停。关着 / 暂停时程序不读也不发任何东西，
 而且**那段时间以后也不会补传**。
 
+### 隐私选项（可以逐项勾选）
+
+上面是缺省值。每一项都能单独改：在 HoneyComb 的 **「AI助理」页**勾选（推荐，改完下一轮生效），
+或者写进本机配置文件的 `privacy` 节。网页上设过的，以网页为准。完整说明、缺省值、改前改后的例子见
+[`contracts/detector.settings.v1`](../../contracts/detector.settings.v1/contract.md)。
+
+| 选项 | 缺省 | 可选 |
+|---|---|---|
+| 文件路径 `paths` | `full`：只留文件名 | `half`：只留「上一级目录/文件名」，去掉盘符、用户名；`off`：原样 |
+| 路径白名单 `pathWhitelist` | 空 | 正则，命中的片段原样保留 |
+| 窗口标题 `titles` | `keep` | `pseudonymize`：换成「窗口名1」「路径1」这样的代号（对照表只在本机，`ai-detector pseudonyms` 查看）；`drop`：只留程序名 |
+| 聊天 / 邮件 / 密码管理器只留程序名 `appOnly` | 开 | 名单 `appOnlyApps` 可改 |
+| 浏览器 `browser` | `domain`：域名 · 页面标题 | `full`：完整网址（`queryStrings` 管是否去掉 `?查询`）；`off`：只留程序名 |
+| 邮箱 / 电话 / 中文地址 / IP / 用户名主机名 / 6 位以上数字 | 全开 | 各自单独开关 |
+
+### 强制脱敏（关不掉）
+
+不管上面怎么选，**密码**（`password=…`、`密码：…`）、**密钥 / 访问令牌**（AWS、GitHub、OpenAI / Anthropic /
+DeepSeek 的 `sk-…`、Slack、Google、JWT 等，规则取自 gitleaks）、**私钥**、**银行卡号**（Luhn 校验）、
+**身份证号**（校验位）都会先被换成 `[已隐藏:密码]`、`[已隐藏:密钥]`、`[已隐藏:银行卡]`……
+网页上是灰的，配置文件里写 `"secrets": false` 之类只会得到一条警告。
+
+懂源码、会自己打包的人确实要关：改 `secrets.go` 顶部的 `mandatory*` 常量（`true` → `false`），
+按下面「自己从源码构建」重新编译。官方发布的程序这几项全开。
+
+### 离开怎么算（可选，缺省按 ActivityWatch 原样）
+
+- **无操作多久算离开**（`afkThresholdMinutes`）：短于 N 分钟的离开照算在电脑前。
+- **有声音的浏览器标签算在电脑前**（`audibleAsPresent`，需要浏览器扩展）。
+- **阅读 / 会议程序**（`focusAppsEnabled` + 名单 `focusApps`，每次离开至多算 `focusMaxMinutes` 分钟，缺省 60）。
+- **无操作的时段也报上来让我决定**（`idleSuggestions`）：前台窗口没换、但人没动的时段单独成段，
+  标「无操作，可能在阅读」、把握 ≤ 0.3，在待确认列表里由你决定算不算。
+
+### 本机留档：发出去了什么，自己查
+
+每次发给 HoneyComb、发给分类服务的内容，都在本机 `archive/YYYY-MM-DD.jsonl` 留一份：
+**原始标题**（只过了强制脱敏）和**实际发出去的标题**并排。只在你电脑上，默认留 30 天（`archiveDays`）。
+
+```sh
+ai-detector archive              # 今天发了什么
+ai-detector archive 2026-09-30   # 某一天
+ai-detector preview 20           # 最近 20 段按现在的选项会变成什么（改选项前先看效果，不联网）
+ai-detector preview --app code --title "vim /home/me/work/a.go"
+ai-detector pseudonyms           # 标题代号对照表
+```
+
 ## 1. 装 ActivityWatch
 
 到 <https://activitywatch.net/downloads/> 下载，装好后开着就行（本地接口 `http://localhost:5600`）。
@@ -73,7 +119,7 @@ ai-detector autostart install   # 开机自启（可选）
 ai-detector run         # 或者现在就常驻
 ```
 
-其他命令：`status`（看上一轮结果）、`pause` / `resume`、`disable`、`autostart uninstall`。
+其他命令：`status`（看上一轮结果、隐私选项、强制脱敏状态）、`archive` / `preview` / `pseudonyms`（见上）、`pause` / `resume`、`disable`、`autostart uninstall`。
 自启记的是你运行 `autostart install` 时用的那个路径（符号链接不展开，版本管理器升级后照样有效）；
 **把程序挪到别处后要重新运行 `autostart install`**。
 同一个配置目录只能有一个 `run`；`run` 在跑时 `once` 会拒绝（避免两个进程抢游标）。
@@ -136,6 +182,9 @@ Linux `~/.config/honeycomb/`；设环境变量 `AI_DETECTOR_HOME` 可换目录�
 | `windowBucket` / `afkBucket` | 空 | ActivityWatch 桶 id，空 = 按本机主机名找 |
 | `appOnlyApps` | 聊天 / 邮件 / 密码管理器名单 | 这些程序只留程序名 |
 | `browserApps` | 常见浏览器名单 | 这些程序只留域名 + 页面标题 |
+| `privacy` | 见「隐私选项」 | 网页上设过就以网页为准 |
+| `idle` | 全关 | 见「离开怎么算」 |
+| `archiveDays` | 30 | 本机留档保留天数 |
 
 程序名比较时忽略大小写、`.exe`、空格和连字符，所以 `WeChat.exe` 与 `wechat` 是同一个。
 

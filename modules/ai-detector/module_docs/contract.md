@@ -8,6 +8,11 @@
 > 它读本机 ActivityWatch 记下的窗口活动，合并成「段」，**在本机脱敏**，
 > 附上分类建议，上传成 nexus-core 的**待确认建议**。它从不写事实：
 > 人在界面上确认了，才由 nexus-core 写 `session.completed`。
+>
+> **当前版本**：`ai-detector.upload.v1` **v1.1**、`ai-detector.config.v1` **v1.1**、新增
+> `ai-detector.archive.v1`（2026-09-30）。v1.1 全是追加：隐私从「一套写死的脱敏」变成
+> 「写死的强制脱敏 + 一组可单独勾选的选项」（缺省值 = v1.0 的行为），选项可以在 Cockpit 网页上改
+> （`detector.settings.v1`）；离开判定四个可选项；本机留档。上传形状只多一个可选字段 `idle`。
 
 ## 契约索引声明（provides / consumes）
 
@@ -17,7 +22,13 @@ provides:
     summary: >
       「什么会离开这台电脑」的承诺：只有脱敏后的段（程序名、脱敏标题、起止、时长、建议），
       原始窗口切换记录永不上传。形状见「上传」节。隐私默认值（默认关、可暂停、脱敏规则）
-      是本条的一部分，由测试锁住。
+      是本条的一部分，由测试锁住。v1.1：强制脱敏（关不掉）+ 可选隐私项（detector.settings.v1）、
+      段增可选 idle。
+  - id: ai-detector.archive.v1
+    summary: >
+      本机留档 `<配置目录>/archive/YYYY-MM-DD.jsonl`：每次发给 cockpit / 分类服务的内容
+      （原始标题只过强制脱敏的 raw + 实际发出的 sent），只在本机，按 archiveDays 清理。
+      `ai-detector archive` / `preview` 读它。形状见「本机留档」节。
   - id: ai-detector.config.v1
     summary: >
       本机配置文件 `<系统配置目录>/honeycomb/ai-detector.json` 的字段与语义，
@@ -49,6 +60,12 @@ consumes:
       同步建设，接口形状以本文件「上传」节为准**（那边按这里写的请求体实现）。
       服务端防重键 `aw:<deviceId>:<startAt 归一化 UTC>`，所以本程序重发同一段是安全的。
 
+  - id: detector.settings.v1
+    contract: ../../../contracts/detector.settings.v1/contract.md
+    purpose: >
+      每轮 GET /api/core/detector/settings?deviceId= 拉网页上设的隐私 / 离开选项，有就整节替换本机配置的
+      privacy / idle；null 或 404 用本机；其他失败这一轮不上传。
+
   - id: nexus-core.views.tree.v1
     contract: ../../nexus-core/module_docs/contract.md
     purpose: >
@@ -76,7 +93,7 @@ consumes:
 | `GET /buckets/<id>/events?start=&end=` | 取时间段内的事件；服务端按「有重叠」筛并裁剪到区间，本程序本地再裁一遍 |
 
 事件形状 `{id, timestamp(UTC ISO8601), duration(秒，浮点), data}`；窗口桶 `data={app,title}`，
-离开桶 `data={status:"afk"|"not-afk"}`，浏览器桶 `data={url,title,incognito?}`。
+离开桶 `data={status:"afk"|"not-afk"}`，浏览器桶 `data={url,title,incognito?,audible?}`。
 
 ## 上传（`ai-detector.upload.v1` · 规范性）
 
@@ -99,10 +116,15 @@ Content-Type: application/json
         "taskId": "t_a1",                         // 或 null
         "confidence": 0.9,                        // 0..1
         "reason": "规则 #1 命中",
-        "classifier": "rules" } }                 // "rules" | "service"
+        "classifier": "rules" },                  // "rules" | "service"
+      "idle": true }                              // v1.1 可选：只在 idle.idleSuggestions 开着、这段是「无操作但前台没换」时出现
   ]
 }
 ```
+
+- **v1.1 `idle`**：只有 `true` 时才带；普通段不带这个键（v2.5 之前的 nexus-core 会忽略它，照收）。
+  带 `idle: true` 的段 `suggestion.confidence ≤ 0.3`，`reason` 以「无操作，可能在阅读」开头
+  （老服务端不存 `idle`，人从 `reason` 也看得出来）。
 
 - **每段都带 `suggestion` 对象**，认不出时 `taskId: null, confidence: 0`，形状不变。
 - `durationSeconds` 是段内**在电脑前**的秒数（扣掉离开），`endAt - startAt` 是墙钟跨度，
@@ -127,27 +149,78 @@ Content-Type: application/json
    ActivityWatch 都不读），日志写明「未开启，不上传」。
 2. **暂停**：`paused=true`（或 `ai-detector pause`）同样零请求。关 / 暂停期间的活动
    **以后也不补传**：重新打开时游标直接跳到「现在」。
-3. **本机脱敏，先脱敏再合并再上传**：
-   - 所有标题：
-     | 形状 | 变成 |
-     |---|---|
-     | 任意 `scheme://` 网址（http、https、ftp、smb、ssh……） | 只留主机名 |
-     | `file://…`、没有主机的网址 | `[路径]` |
-     | Windows 共享路径 `\\server\share\…` | `[路径]` |
-     | 没写 scheme 的 `域名/路径?查询` | 只留域名 |
-     | 本机绝对路径 `C:\Users\…\a.docx`、`/home/…/a.txt`、`~/a.txt`（前面紧挨的字符不是字母数字、`_`、`/` 即可，如「打开/home/…」「(/home/…)」；`/` 开头的至少一层目录） | 只留文件名 |
-     | 邮箱 | `[邮箱]` |
-     | 手机 / 电话号 | `[电话]` |
-     | 6 位以上数字串 | `[数字]` |
-   - `appOnlyApps` 名单里的程序（聊天、邮件、密码管理器，默认名单见 README，可配）：
-     `title` 一律为空串，只留程序名。
-   - `browserApps` 名单里的程序：`title` = `域名 · 页面标题`（取浏览器扩展桶里与这段时间
-     重叠最多的标签页，且**窗口标题须以该标签页标题开头**才算对得上——浏览器窗口标题一般是
-     「页面标题 - Google Chrome」；对不上多半是扩展没在无痕窗口里跑、重叠的是普通窗口的标签页）。**完整网址、路径、查询串永不上传**。
-     无痕窗口（扩展报 `incognito:true`）按 app-only 处理；**没有对得上的标签页记录**
-     （没装扩展、这段时间扩展没报、标签页标题为空或与窗口标题对不上）**也按 app-only 处理**——
-     这时分不清是不是无痕，而窗口标题里可能有无痕页面的标题或地址栏网址。
+3. **本机脱敏，先脱敏再合并再上传**：每条窗口标题（以及浏览器扩展报的标签页标题、网址）读进来的第一步是
+   **强制脱敏**（下节），然后按**隐私选项**（`detector.settings.v1` 的 `privacy` 节，逐项定义、缺省值、
+   前后例子以那里为准）处理。缺省值组合 = v1.0 的全部行为：路径只留文件名、标题里的网址只留域名、
+   邮箱 / 电话 / 6 位以上数字替换、聊天邮件密码管理器只留程序名、浏览器只留「域名 · 页面标题」且
+   无痕 / 对不上标签页只留程序名。v1.1 新增的 `addresses`、`ips`、`usernames` 缺省也开着。
+   **缺省值下的完整行为（v1.0 承诺，仍然成立）**：
+     | 形状 | 变成 | 对应选项 |
+     |---|---|---|
+     | 任意 `scheme://` 网址（http、https、ftp、smb、ssh……） | 只留主机名（主机名是 IP 时再按 `ips` 换成 `[IP]`） | 总是 |
+     | `file://…`、没有主机的网址 | `[路径]` | `paths: full` |
+     | Windows 共享路径 `\\server\share\…` | `[路径]` | `paths: full` |
+     | 没写 scheme 的 `域名/路径?查询` | 只留域名 | 总是 |
+     | 本机绝对路径 `C:\Users\…\a.docx`、`/home/…/a.txt`、`~/a.txt`（前面紧挨的字符不是字母数字、`_`、`/` 即可，如「打开/home/…」「(/home/…)」；`/` 开头的至少一层目录） | 只留文件名 | `paths: full` |
+     | 邮箱 | `[邮箱]` | `emails` |
+     | 手机 / 电话号 | `[电话]` | `phones` |
+     | 6 位以上数字串 | `[数字]` | `longNumbers` |
+   - `appOnlyApps` 名单里的程序（`appOnly: true`）：`title` 一律为空串，只留程序名。
+   - `browserApps` 名单里的程序：`title` = `域名 · 页面标题`（`browser: domain`；`full` 换成网址），取浏览器扩展桶里
+     与这段时间重叠最多的标签页，且**窗口标题须以该标签页标题开头**才算对得上（浏览器窗口标题一般是
+     「页面标题 - Google Chrome」；对不上多半是扩展没在无痕窗口里跑、重叠的是普通窗口的标签页）。
+     无痕窗口（扩展报 `incognito:true`）、**没有对得上的标签页记录**（没装扩展、这段时间扩展没报、标签页标题为空
+     或与窗口标题对不上）**一律只留程序名**，不管 `browser` 选什么——这时分不清是不是无痕。
 4. 原始窗口事件不离开本机；只有「段」离开。
+5. 规则分类（`rules.json`）匹配的是**隐私选项处理后、换代号之前**的标题（本机匹配，不离开本机）；
+   发给分类服务的是和上传**完全相同**的标题（换过代号的就是代号）。
+
+### 强制脱敏（规范性，关不掉）
+
+两类场合都跑，**先于**一切别的处理：读进窗口标题 / 标签页标题 / 标签页网址的第一步；以及最后一道——
+上传体、分类服务请求体（含候选任务路径）组装时每个字符串字段再过一遍（幂等）。本机留档（`raw` 与 `sent`）
+与标题代号对照表里存的也都是强制脱敏之后的文字。
+
+| 类别 | 认法（实现：`secrets.go`） | 换成 |
+|---|---|---|
+| 私钥 | `-----BEGIN … PRIVATE KEY-----` 到 `-----END … PRIVATE KEY-----` 或行尾 | `[已隐藏:私钥]` |
+| 密钥 / 访问令牌 | gitleaks 默认规则的子集，改写为 Go 正则：AWS 访问密钥 ID（`AKIA`/`ASIA`/`ABIA`/`ACCA`/`A3T…` + 16 位）、GitHub（`ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_` + 36 位、`github_pat_` + 82 位）、GitLab `glpat-`、OpenAI / Anthropic / DeepSeek 等 `sk-`（`sk-proj-`/`sk-svcacct-`/`sk-admin-`/`sk-ant-api03-` 等，或含一段 ≥20 位无连字符字母数字的 `sk-…`）、Slack（`xox[abposr]-`、`xapp-`、`hooks.slack.com/…`）、Google（`AIza` + 35 位、`GOCSPX-`、`ya29.`）、Stripe（`sk_`/`rk_` + `live`/`test`/`prod`）、npm `npm_`、PyPI `pypi-AgEIcHlwaS5vcmc…`、Hugging Face `hf_`、JWT（`ey….ey….`）、`Bearer <≥16 位>`、网址里的 `用户:密码@`、通用 `关键词(access/auth/api/credential/creds/key/secret/token…) = / : 值`（值 8–150 位、同时有字母数字、香农熵 ≥ 3.5） | `[已隐藏:密钥]`（Bearer、key= 这类只盖值，留下前面的词） |
+| 密码 | `password` / `passwd` / `pwd`（含前后缀，如 `db_password`）+ `=`/`:`/`:=`/`=>` + 值；`密码` / `口令` + `：`/`:`/`=`/`是`/`为` + 值。**值不看熵，一律盖** | 只盖值：`password=[已隐藏:密码]` |
+| 银行卡号 | 13–19 位数字（组间可有空格 / `-`），首位 2–6（Visa、万事达、银联、运通、JCB、Discover 的发卡行前缀范围），且过 Luhn 校验。一串用空格分组的数字里，**任意连续几组**拼起来满足条件就只盖那几组 | `[已隐藏:银行卡]` |
+| 身份证号 | 18 位（末位可为 `X`），GB 11643 校验位正确，且第 7–14 位像出生日期（18xx/19xx/20xx 年、01–12 月、01–31 日） | `[已隐藏:身份证]` |
+
+- **配置文件、网页设置里都没有开关**。`ai-detector.json` 的 `privacy` / `idle` 节里出现不认识的键
+  （例如 `secrets: false`、`mandatory: false`）一律忽略，并在日志与 `status` 里警告；网页设置的 schema
+  里没有这些键，发了 `422`。**测试锁住**：带着这些键跑，密钥照样被盖。
+- 唯一关法是改源码：`secrets.go` 顶部的 `mandatory*` 常量改成 `false` 后自己编译（README「自己构建」）。
+  官方发布的程序全是 `true`。
+- 取舍：宁可多盖。`Settings: Password: Reset` 这种标题里 `Reset` 也会被当成密码盖掉。
+  已知不会误伤（测试锁住）：git 提交号、UUID、日期时间、Unix 时间戳、以 1 / 7 / 8 / 9 开头的长订单号、
+  校验位不对的 18 位数字、`Hotkey: Ctrl+Shift+P`、`max tokens: 4096`。
+- 为什么不直接引 gitleaks：它是整套扫描器（带 viper、zerolog 等几十个依赖），这个程序零第三方依赖、
+  单文件分发；我们只需要其中十几条正则。挑出来的规则保留 gitleaks 的 MIT 许可声明（`secrets.go` 文件头）。
+
+### 标题代号（`titles: "pseudonymize"`）
+
+- 代号按「隐私选项处理后的标题」分配：没见过的标题拿下一个号，「窗口名1」「窗口名2」……；标题里还带着路径的
+  （只可能在 `paths` 为 `half`/`off` 时）用「路径1」「路径2」……，两套号各自递增。
+- **稳定**：对照表存本机 `pseudonyms.json`（0600），跨轮、跨天、跨重启同一条标题同一个代号；删掉这个文件
+  代号从 1 重新编。对照表**从不上传**、不进留档的 `sent`；`ai-detector pseudonyms` 在本机查看。
+- 对照表读不了（坏了）：这一轮不上传——重新编号会让旧代号指向新标题。
+- 代号在合并之后换：合并键仍按真实标题算，换不换代号，段的切法完全一样。
+
+## 离开判定（规范性，`detector.settings.v1` 的 `idle` 节）
+
+窗口事件扣掉「离开」区间之前，离开区间先按下列选项缩减（缺省全关 = v1.0 行为）：
+
+- `afkThresholdMinutes = N > 0`：短于 N 分钟的离开区间整段不算离开。
+- `audibleAsPresent`：前台是 `browserApps` 里的程序时，离开区间与「`audible: true` 的浏览器标签页事件」重叠的部分不算离开。
+- `focusAppsEnabled`：前台是 `focusApps` 里的程序时，每个离开区间的前 `focusMaxMinutes` 分钟不算离开。
+- `idleSuggestions`：其余仍算离开、但这段时间前台窗口没换（窗口事件覆盖着它）的部分，**不丢**：
+  单独做成「无操作碎片」，只和无操作碎片合并（规则同「合并」，键同普通碎片），**绝不并进普通段**
+  （否则会被当成在电脑前的时间吸收进去）；收口、丢短段规则相同。上传时带 `idle: true`，
+  规则 / 分类服务照常给建议，但把握夹到 ≤ 0.3，理由前加「无操作，可能在阅读」。
+  无操作段与普通段可能在墙钟上相邻或被普通段的跨度覆盖——这是有意的，由人确认时判断。
 
 ## 合并（规范性）
 
@@ -162,6 +235,40 @@ Content-Type: application/json
 - 只上传**已收口**的段：`段结束 + G ≤ 现在`。没收口的段下轮从它的开始处重算。
 - 全程用绝对时刻（`time.Time`），不按日切：跨午夜、跨夏令时都是一段。
 
+## 本机留档（`ai-detector.archive.v1`，规范性）
+
+「原始的 AI 抓的数据留档可查」：每次真的把段发出去（上传给 cockpit、发给分类服务），在本机追加一行 JSON 到
+`<配置目录>/archive/YYYY-MM-DD.jsonl`（本机日期；目录 0700、文件 0600；只追加）。
+
+```jsonc
+{ "at": "2026-09-30T10:05:12+08:00",   // 发出去的时刻（本机时区）
+  "to": "cockpit",                     // "cockpit" | "classifier"
+  "ok": true,                          // 收到 2xx
+  "result": "accepted=2 duplicates=0 rejected=0",   // 人读的一句话；失败时是错误
+  "segments": [                        // ok=false 时省略（见下）
+    { "startAt": "…", "endAt": "…", "durationSeconds": 3600, "app": "code",
+      "raw":  "plot.gd — garden — Visual Studio Code",   // 本机原始标题：**只过了强制脱敏**
+      "sent": "窗口名3",                                   // 实际发出去的标题
+      "idle": false,
+      "suggestion": { "taskId": "t_a1", "confidence": 0.9, "reason": "规则 #1 命中", "classifier": "rules" } } ],
+  "tasks": 12 }                        // 仅 to=classifier：随请求发出的候选任务条数
+```
+
+- **成功才记全文**：失败的请求只记一行 `ok:false` + 错误 + 段数。失败的那批下一轮会**原样**重算重发
+  （同一批段、同样的标题），成功时再记全文——这样离线几天也不会每 5 分钟把同一批几百段写一遍。
+  「请求其实到了服务端、只是响应丢了」的情况，内容与随后成功那次相同，照样查得到。
+- `raw` 是本机原始窗口标题（强制脱敏后），浏览器段也是窗口标题（不是扩展报的网址）。它比 ActivityWatch
+  自己存的还少（强制脱敏过），但仍是隐私数据：**只在本机**，从不上传。
+- **保留期** `archiveDays`（缺省 30，最小 1）：每轮开始时删掉文件名日期早于「今天 − archiveDays + 1」的文件。
+- **磁盘上限估算**：一段一行至多约 2 KB（两份标题 + 建议）；段短于 `minSegmentMinutes`（缺省 3）就丢，
+  一天至多 1440 / 3 = 480 个普通段，加同样多的无操作段、再加发分类服务的一份，最坏约 4 MB / 天、
+  30 天约 120 MB；日常一天几十段，几十 KB。
+- 留档写失败（磁盘满、权限）：日志报错，**不影响上传**（已经发出去的收不回来，不能因为记不下就重发）。
+- `ai-detector archive [YYYY-MM-DD]` 打印某天（缺省今天）的留档；`ai-detector preview [N]` 取留档里最近 N 段
+  （缺省 20）的 `raw`，按**当前**隐私选项重新处理，与当时的 `sent` 并排打印，改选项前先看效果；
+  `ai-detector preview --app <程序> --title <标题>` 对一条样例标题试。预览只在本机终端输出，不联网
+  （浏览器段在预览里没有扩展数据，按「对不上标签页」只留程序名）。
+
 ## 本机文件（`ai-detector.config.v1`）
 
 目录 = Go `os.UserConfigDir()` + `/honeycomb/`：Windows `%APPDATA%`、macOS
@@ -174,7 +281,21 @@ Content-Type: application/json
 | `ai-detector.lock` | `run` 常驻时持有（内容是 pid）；`once` 发现有活着的持有者就拒绝，避免两个进程各自推进游标互相覆盖。持有者已退出的旧锁自动接管；内容为空 / 读不懂且不到 5 秒的锁视为「正在启动」，不接管；pid 是自己的不接管 |
 | `ai-detector.state.json` | 游标与上一轮结果，程序自己写，别手改 |
 | `rules.json` | 规则分类，用户可编辑 |
+| `pseudonyms.json` | 标题代号对照表（v1.1），0600，只在本机，见「标题代号」 |
+| `archive/YYYY-MM-DD.jsonl` | 本机留档（v1.1），见「本机留档」 |
 | `ai-detector.log` | `run` 模式的日志，超过 5 MB 启动时清空 |
+
+配置文件 v1.1 新增（全部可省略，省略 = 缺省）：
+
+| 字段 | 缺省 | 说明 |
+|---|---|---|
+| `privacy` | 见 `detector.settings.v1`「privacy 节」 | 与网页设置同形状（不带 `schemaVersion`）。网页上设过就以网页为准（整节替换） |
+| `idle` | 见 `detector.settings.v1`「idle 节」 | 同上 |
+| `archiveDays` | 30 | 本机留档保留天数，< 1 按 30 |
+
+`privacy.appOnlyApps: null` 时用顶层 `appOnlyApps`（`init` 写入内置默认名单；顶层也没有就用内置默认）。
+`privacy` / `idle` 里出现不认识的键：忽略并警告（见「强制脱敏」）。枚举值写错、白名单正则编译不过：
+这一轮报错不上传（同规则文件写坏），`status` 里看得到。
 
 规则文件形状：
 
@@ -271,3 +392,4 @@ Authorization: Bearer <deviceToken>
 | 日期 | 变更 |
 |---|---|
 | 2026-09-30 | v0.3 追加（契约先行）：`ai-detector.presence.v1` 在场心跳、`ai-detector.agent-status-bridge.v1` 状态文件桥；都默认关，新增配置 `presence`/`presenceSeconds`/`agentStatusFile`/`agentStatusIgnore`。上传、脱敏、游标的既有承诺一条不改 |
+| 2026-09-30 | upload.v1 v1.1、config.v1 v1.1、archive.v1：仓主 2026-09-30：强制脱敏（密码、密钥、私钥、银行卡、身份证，写死在程序里）；隐私做成可单独勾选的选项（`detector.settings.v1`，缺省 = v1.0 行为，另加地址 / IP / 用户名默认开）；标题代号；离开判定四项；段增可选 `idle`；本机留档与 `archive` / `preview` / `pseudonyms` 命令；每轮从 nexus-core 拉网页设置。在场心跳、状态文件桥里的「脱敏」同样指强制脱敏 + 隐私选项 |

@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +43,7 @@ type uploadSegment struct {
 	App             string     `json:"app"`
 	Title           string     `json:"title"`
 	Suggestion      suggestion `json:"suggestion"`
+	Idle            bool       `json:"idle,omitempty"` // upload.v1 v1.1
 }
 
 type uploadBody struct {
@@ -80,7 +84,18 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 			return "", err
 		}
 	}
-	params := fmt.Sprintf("G=%v分钟,M=%v分钟", cfg.MergeGapMinutes, cfg.MinSegmentMinutes)
+	base := strings.TrimRight(cfg.CockpitURL, "/")
+	cockpit := withPolicy(hc, hc.Timeout, sameHostOnly)
+	// 网页上设过隐私 / 离开选项就用网页的（整节替换）；拉不到（不是 404）这一轮不上传。
+	if err := applyRemoteSettings(&cfg, cockpit, base); err != nil {
+		return "", err
+	}
+	if err := cfg.Privacy.check(); err != nil {
+		return "", err
+	}
+	// 隐私 / 离开选项也决定段怎么切（合并键、离开扣不扣），和 G / M 一样要记进失败参数。
+	sb, _ := json.Marshal([]any{cfg.Privacy, cfg.Idle})
+	params := fmt.Sprintf("G=%v分钟,M=%v分钟,设置#%08x", cfg.MergeGapMinutes, cfg.MinSegmentMinutes, crc32.ChecksumIEEE(sb))
 	if st.FailedParams != "" && st.FailedParams != params {
 		log.Printf("上一轮上传失败时的合并参数是 %s，现在是 %s：从 %s 起重算的段起点可能和失败那轮不同，"+
 			"如果那轮其实已经到达服务端，待确认列表里可能出现重叠的建议，确认时留意", st.FailedParams, params, isoTime(st.Cursor))
@@ -88,12 +103,40 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 
 	gap, minSeg := minutes(cfg.MergeGapMinutes), minutes(cfg.MinSegmentMinutes)
 	aw := awClient{base: cfg.ActivityWatchURL, http: hc}
-	data, err := aw.fetch(st.Cursor, now, cfg.WindowBucket, cfg.AfkBucket)
+	// 离开区间要看它**原本**多长、从哪开始（阈值、阅读程序上限都按整段算），而 ActivityWatch 会把事件
+	// 裁到查询区间。往前多取一段：比这更早开始的离开，裁剪后也不短于阈值、阅读上限也早已用完，结论不变。
+	// 窗口事件照样只从游标算起（buildFragments 裁到 [游标, 现在]）。
+	lookback := time.Duration(0)
+	if cfg.Idle.AfkThresholdMinutes > 0 {
+		lookback = minutes(cfg.Idle.AfkThresholdMinutes)
+	}
+	if cfg.Idle.FocusAppsEnabled {
+		lookback = max(lookback, minutes(focusMax(cfg.Idle)))
+	}
+	data, err := aw.fetch(st.Cursor.Add(-lookback), now, cfg.WindowBucket, cfg.AfkBucket)
 	if err != nil {
 		return "", err
 	}
 	frags := buildFragments(data, st.Cursor, now, newRedactor(cfg))
-	segs, next := settle(merge(frags, gap), now, gap, minSeg)
+	// 无操作碎片单独合并：混在一起的话会被当成「短暂切出去」吸收进普通段，算成在电脑前的时间。
+	var act, idle []fragment
+	for _, f := range frags {
+		if f.Idle {
+			idle = append(idle, f)
+		} else {
+			act = append(act, f)
+		}
+	}
+	segs, next := settle(merge(act, gap), now, gap, minSeg)
+	if len(idle) > 0 {
+		isegs, inext := settle(merge(idle, gap), now, gap, minSeg)
+		// 两条流各自不重叠，但彼此可能交叠：游标不能落在任何一段中间（见 safeCursor）。
+		segs = append(segs, isegs...)
+		sort.SliceStable(segs, func(i, j int) bool { return segs[i].Start.Before(segs[j].Start) })
+		if inext.Before(next) {
+			next = inext
+		}
+	}
 	// 游标只进不退：退回去会重新读到「开启之前」的活动。
 	if next.Before(st.Cursor) {
 		next = st.Cursor
@@ -109,8 +152,28 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 		// 停在这里，日志里天天报，游标不动，改好规则后一次补上。
 		return "", err
 	}
-	base := strings.TrimRight(cfg.CockpitURL, "/")
-	cockpit := withPolicy(hc, hc.Timeout, sameHostOnly)
+	// 离开本机的标题：换代号（合并之后换，段的切法不受影响）。对照表先存盘再上传。
+	var ps *pseudonyms
+	if cfg.Privacy.Titles == "pseudonymize" {
+		pp := ""
+		if cfg.dir != "" {
+			pp = filepath.Join(cfg.dir, "pseudonyms.json")
+		}
+		if ps, err = loadPseudonyms(pp); err != nil {
+			return "", err
+		}
+	}
+	for i := range segs {
+		segs[i].Sent = segs[i].Title
+		if ps != nil {
+			segs[i].Sent = ps.token(segs[i].Title)
+		}
+	}
+	if ps != nil {
+		if err := ps.save(); err != nil {
+			return "", fmt.Errorf("标题代号对照表存不了，这一轮不上传：%w", err)
+		}
+	}
 	uploader := withPolicy(hc, uploadTimeout, sameHostOnly)
 	service := withPolicy(hc, hc.Timeout, noRedirect)
 	tasks := sync.OnceValues(func() ([]taskRef, error) {
@@ -125,6 +188,7 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 	// 分类服务一轮里挂过一次就不再叫它：每批都等一次超时，积压多时要白等 N×超时才轮到上传。
 	// 规则照用，没命中的段按「分类服务不可用」上传。
 	var serviceErr error
+	var batch []segment
 	post := func(u string, body []byte) ([]byte, error) {
 		if serviceErr != nil {
 			return nil, serviceErr
@@ -132,6 +196,7 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 		// 分类服务是用户填的任意地址：只带它自己的 classifierToken，HoneyComb 的设备令牌不给它。
 		b, _, err := postJSON(service, cfg.ClassifierToken, u, body)
 		serviceErr = err
+		archiveClassifier(cfg.dir, time.Now(), batch, body, b, err)
 		return b, err
 	}
 
@@ -139,18 +204,32 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 	// 每批成功后游标挪到下一批第一段的开始——从段的开始处重算，得到的段和这次一模一样
 	// （同 settle 对没收口段的处理），startAt 不变，防重照样成立。
 	for k := 0; k < len(segs); k += uploadBatch {
-		batch := segs[k:min(k+uploadBatch, len(segs))]
+		batch = segs[k:min(k+uploadBatch, len(segs))]
 		sugs := classify(batch, rules, cfg.ClassifierURL, tasks, post)
 		body := uploadBody{DeviceID: cfg.DeviceID}
+		rec := archiveRec{To: "cockpit"}
 		for i, s := range batch {
-			body.Segments = append(body.Segments, uploadSegment{
+			if s.Idle {
+				// 无操作段只是「可能」：把握夹到 0.3，理由里写明，由人决定（契约「离开判定」）。
+				sugs[i].Confidence = min(sugs[i].Confidence, 0.3)
+				sugs[i].Reason = "无操作，可能在阅读；" + sugs[i].Reason
+			}
+			// 理由可能来自外部分类服务：同样过强制脱敏再上传、再留档。
+			sugs[i].Reason = cleanReason(scrubSecrets(sugs[i].Reason))
+			u := uploadSegment{
 				StartAt: isoTime(s.Start), EndAt: isoTime(s.End),
 				DurationSeconds: int64(s.Active.Seconds()),
-				App:             s.App, Title: s.Title, Suggestion: sugs[i],
-			})
+				// 最后一道：离开本机的每个字符串再过一遍强制脱敏（幂等）。
+				App: scrubSecrets(s.App), Title: scrubSecrets(s.Sent), Suggestion: sugs[i], Idle: s.Idle,
+			}
+			body.Segments = append(body.Segments, u)
+			sg := sugs[i]
+			rec.Segments = append(rec.Segments, archiveSeg{u.StartAt, u.EndAt, u.DurationSeconds, u.App, s.Raw, u.Title, s.Idle, &sg})
 		}
 		b, _ := json.Marshal(body)
 		resp, code, err := postJSON(uploader, cfg.DeviceToken, base+"/api/core/activity/suggestions", b)
+		rec.OK, rec.Result = err == nil, uploadSummary(resp, err)
+		appendArchive(cfg.dir, time.Now(), rec)
 		if err != nil {
 			// 这一批没确认收到：游标停在这一批的开始（已确认的批次之后），下一轮从这里重算重发。
 			st.FailedParams = params
@@ -162,11 +241,71 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 		st.FailedParams = ""
 		logRejected(resp, k)
 		if k+uploadBatch < len(segs) {
-			st.Cursor = segs[k+uploadBatch].Start
+			st.Cursor = safeCursor(segs[k+uploadBatch].Start, segs)
 		}
 	}
-	st.Cursor = next
+	st.Cursor = safeCursor(next, segs)
 	return fmt.Sprintf("已上传 %d 段待确认建议", len(segs)), nil
+}
+
+// safeCursor 把游标往前挪到不落在任何一段中间的位置。游标落在一段中间，下一轮从游标重算会把那段
+// 裁成起点不同的新段（服务端防重对不上，多一条建议）。挪到段的开始则重算出一模一样的段，重发只算 duplicates。
+// 只有普通段 + 无操作段两条流彼此交叠时才会真的挪（单条流的段互不重叠，游标本来就在段与段之间）。
+func safeCursor(c time.Time, segs []segment) time.Time {
+	for moved := true; moved; {
+		moved = false
+		for _, s := range segs {
+			if s.Start.Before(c) && s.End.After(c) {
+				c, moved = s.Start, true
+			}
+		}
+	}
+	return c
+}
+
+func uploadSummary(resp []byte, err error) string {
+	if err != nil {
+		return err.Error()
+	}
+	var r struct {
+		Accepted   int               `json:"accepted"`
+		Duplicates int               `json:"duplicates"`
+		Rejected   []json.RawMessage `json:"rejected"`
+	}
+	_ = json.Unmarshal(resp, &r)
+	return fmt.Sprintf("accepted=%d duplicates=%d rejected=%d", r.Accepted, r.Duplicates, len(r.Rejected))
+}
+
+// archiveClassifier 把发给分类服务的请求按段记进留档：body 就是真正发出去的字节，
+// 从里面取标题（而不是另算一遍），留档与实际发送不会对不上。
+func archiveClassifier(dir string, now time.Time, batch []segment, body, resp []byte, err error) {
+	var req struct {
+		Segments []struct {
+			ID, App, Title, StartAt string
+			DurationSeconds         int64
+		} `json:"segments"`
+		Tasks []taskRef `json:"tasks"`
+	}
+	_ = json.Unmarshal(body, &req)
+	rec := archiveRec{To: "classifier", OK: err == nil, Tasks: len(req.Tasks)}
+	if err != nil {
+		rec.Result = err.Error()
+	} else {
+		var r struct {
+			Suggestions []json.RawMessage `json:"suggestions"`
+		}
+		_ = json.Unmarshal(resp, &r)
+		rec.Result = fmt.Sprintf("收到 %d 条建议", len(r.Suggestions))
+	}
+	for _, s := range req.Segments {
+		var i int
+		raw := ""
+		if _, e := fmt.Sscanf(s.ID, "seg_%d", &i); e == nil && i >= 0 && i < len(batch) {
+			raw = batch[i].Raw
+		}
+		rec.Segments = append(rec.Segments, archiveSeg{StartAt: s.StartAt, DurationSeconds: s.DurationSeconds, App: s.App, Raw: raw, Sent: s.Title})
+	}
+	appendArchive(dir, now, rec)
 }
 
 // logRejected：2xx 里服务端逐段拒收的段不会重发（游标照常前进），至少在日志里留个数。

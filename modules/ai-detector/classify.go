@@ -168,12 +168,15 @@ func classify(segs []segment, rules []rule, serviceURL string, tasks func() ([]t
 		Segments []reqSeg  `json:"segments"`
 		Tasks    []taskRef `json:"tasks"`
 	}{Tasks: ts}
-	if req.Tasks == nil {
-		req.Tasks = []taskRef{}
+	req.Tasks = []taskRef{}
+	// 发给分类服务的与上传的完全相同（Sent，换过代号的就是代号），并且每个字符串再过一遍强制脱敏——
+	// 候选任务路径来自 cockpit，也可能被人写进了密钥。
+	for _, t := range ts {
+		req.Tasks = append(req.Tasks, taskRef{t.ID, scrubSecrets(t.Path)})
 	}
 	for _, i := range pending {
 		s := segs[i]
-		req.Segments = append(req.Segments, reqSeg{fmt.Sprintf("seg_%d", i), s.App, s.Title, isoTime(s.Start), int64(s.Active.Seconds())})
+		req.Segments = append(req.Segments, reqSeg{fmt.Sprintf("seg_%d", i), scrubSecrets(s.App), scrubSecrets(s.Sent), isoTime(s.Start), int64(s.Active.Seconds())})
 	}
 	body, _ := json.Marshal(req)
 	resp, err := post(serviceURL, body)

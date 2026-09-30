@@ -5,6 +5,9 @@ import (
 	"testing"
 )
 
+// scrub：缺省隐私选项下一段文字的完整处理（强制脱敏 + 可选项）。
+func scrub(s string) string { return newRedactor(Config{}).text(scrubSecrets(s)) }
+
 func TestScrub(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"回复 alice.w+tag@example.co.uk 的邮件", "回复 [邮箱] 的邮件"},

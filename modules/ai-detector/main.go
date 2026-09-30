@@ -4,6 +4,7 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -26,6 +28,10 @@ const usage = `用法: ai-detector <命令>
   pause | resume       暂停 / 恢复（暂停期间的活动以后也不补传）
   autostart install    开机自启（Windows 启动文件夹 / macOS LaunchAgent / Linux autostart）
   autostart uninstall  取消开机自启
+  archive [YYYY-MM-DD] 看某天（缺省今天）发出去了什么：原始标题（只过强制脱敏）与实际发出的并排
+  preview [N]          最近 N 段（缺省 20）按现在的隐私选项会变成什么（只在本机，不联网）
+  preview --app <程序> --title <标题>   试一条样例标题
+  pseudonyms           看标题代号对照表（只在本机）
 
 配置目录：%APPDATA%\honeycomb、~/Library/Application Support/honeycomb 或 ~/.config/honeycomb，
 环境变量 AI_DETECTOR_HOME 可覆盖。
@@ -81,6 +87,42 @@ func cli(args []string, out io.Writer) error {
 		return runLoop(p, hc)
 	case "status":
 		return status(p, out)
+	case "archive":
+		day := time.Now().Format("2006-01-02")
+		if len(args) > 1 {
+			day = args[1]
+		}
+		return printArchive(dir, day, out)
+	case "pseudonyms":
+		return printPseudonyms(filepath.Join(dir, "pseudonyms.json"), out)
+	case "preview":
+		cfg, err := readConfig(p)
+		if err != nil {
+			return err
+		}
+		if err := cfg.Privacy.check(); err != nil {
+			return err
+		}
+		fs := flag.NewFlagSet("preview", flag.ContinueOnError)
+		fs.SetOutput(out)
+		app := fs.String("app", "", "程序名")
+		title := fs.String("title", "", "窗口标题")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *title != "" || *app != "" {
+			ps, _ := loadPseudonyms("")
+			fmt.Fprintf(out, "原始（强制脱敏后）：%s\n发出：%s\n", scrubSecrets(*title), previewOne(newRedactor(cfg), ps, *app, *title))
+			return nil
+		}
+		n := 20
+		if fs.NArg() > 0 {
+			if n, err = strconv.Atoi(fs.Arg(0)); err != nil || n < 1 {
+				return fmt.Errorf("用法: ai-detector preview [N]")
+			}
+		}
+		fmt.Fprintln(out, "注意：只按本机配置文件预览；网页上设过的话，以网页为准（run 每轮会拉）。")
+		return preview(cfg, n, out)
 	case "enable", "disable", "pause", "resume":
 		cfg, err := readConfig(p)
 		if err != nil {
@@ -160,6 +202,10 @@ func readConfig(p paths) (Config, error) {
 		}
 		return cfg, fmt.Errorf("配置 %s 读不了：%w", p.config, err)
 	}
+	cfg.dir = filepath.Dir(p.config)
+	if b, err := os.ReadFile(p.config); err == nil {
+		cfg.warnings = unknownKeys(b)
+	}
 	return cfg, nil
 }
 
@@ -168,6 +214,10 @@ func runOnce(p paths, hc *http.Client, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	for _, k := range cfg.warnings {
+		log.Printf("配置里的 %s 不认识，已忽略（强制脱敏没有配置开关，见 README）", k)
+	}
+	purgeArchive(cfg.dir, cfg.ArchiveDays, time.Now())
 	var st State
 	_ = loadJSON(p.state, &st) // 没有状态文件 = 第一次跑
 	msg, err := tick(cfg, &st, time.Now(), hc)
@@ -221,6 +271,29 @@ func status(p paths, out io.Writer) error {
 	}
 	fmt.Fprintf(out, "配置      %s\nenabled   %v\npaused    %v\ncockpit   %s\n设备令牌  %s\ndeviceId  %s\n",
 		p.config, cfg.Enabled, cfg.Paused, cfg.CockpitURL, tok, cfg.DeviceID)
+	pr := cfg.Privacy
+	orDefault := func(v, d string) string {
+		if v == "" {
+			return d
+		}
+		return v
+	}
+	fmt.Fprintf(out, "隐私选项  路径=%s 标题=%s 浏览器=%s（本机配置；网页上设过的话以网页为准）\n",
+		orDefault(pr.Paths, "full"), orDefault(pr.Titles, "keep"), orDefault(pr.Browser, "domain"))
+	if err := pr.check(); err != nil {
+		fmt.Fprintf(out, "配置错误  %v（这样的配置不会上传）\n", err)
+	}
+	fmt.Fprintln(out, "强制脱敏（关不掉）：")
+	for _, m := range mandatoryItems {
+		state := "开"
+		if !m.On {
+			state = "关（本程序是改过源码自己编译的）"
+		}
+		fmt.Fprintf(out, "  %s  %s\n", state, m.Name)
+	}
+	for _, k := range cfg.warnings {
+		fmt.Fprintf(out, "警告      配置里的 %s 不认识，已忽略\n", k)
+	}
 	if !st.LastRunAt.IsZero() {
 		fmt.Fprintf(out, "上一轮    %s  %s\n", isoTime(st.LastRunAt), st.LastOutcome)
 	}

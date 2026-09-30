@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -38,6 +41,102 @@ type Config struct {
 	AfkBucket    string   `json:"afkBucket"`
 	AppOnlyApps  []string `json:"appOnlyApps"`
 	BrowserApps  []string `json:"browserApps"`
+	// Privacy / Idle：与网页设置（contracts/detector.settings.v1）同形状；网页上设过就整节换成网页的。
+	Privacy     Privacy `json:"privacy"`
+	Idle        Idle    `json:"idle"`
+	ArchiveDays int     `json:"archiveDays,omitempty"`
+
+	dir      string   // 配置目录；readConfig 填。空（测试直接构造 Config）= 不写留档、代号只在内存里
+	warnings []string // 配置里不认识的 privacy / idle 键（想关强制脱敏也落在这里），readConfig 填
+}
+
+// Privacy：可选隐私项，语义见 contracts/detector.settings.v1「privacy 节」。
+// 缺省为「开」的布尔用 *bool：零值（没写这个键）必须是更保守的那一边。
+type Privacy struct {
+	Paths         string   `json:"paths,omitempty"` // "full"（缺省）| "half" | "off"
+	PathWhitelist []string `json:"pathWhitelist,omitempty"`
+	Titles        string   `json:"titles,omitempty"` // "keep"（缺省）| "pseudonymize" | "drop"
+	AppOnly       *bool    `json:"appOnly,omitempty"`
+	AppOnlyApps   []string `json:"appOnlyApps,omitempty"` // nil = 用顶层 appOnlyApps
+	Browser       string   `json:"browser,omitempty"`     // "domain"（缺省）| "full" | "off"
+	QueryStrings  *bool    `json:"queryStrings,omitempty"`
+	Emails        *bool    `json:"emails,omitempty"`
+	Phones        *bool    `json:"phones,omitempty"`
+	Addresses     *bool    `json:"addresses,omitempty"`
+	IPs           *bool    `json:"ips,omitempty"`
+	Usernames     *bool    `json:"usernames,omitempty"`
+	LongNumbers   *bool    `json:"longNumbers,omitempty"`
+}
+
+// Idle：离开判定，语义见 contracts/detector.settings.v1「idle 节」。零值 = 全关 = 按 ActivityWatch 原样。
+type Idle struct {
+	AfkThresholdMinutes float64  `json:"afkThresholdMinutes,omitempty"`
+	AudibleAsPresent    bool     `json:"audibleAsPresent,omitempty"`
+	FocusAppsEnabled    bool     `json:"focusAppsEnabled,omitempty"`
+	FocusApps           []string `json:"focusApps,omitempty"`       // nil = defaultFocusApps
+	FocusMaxMinutes     float64  `json:"focusMaxMinutes,omitempty"` // 0 = 60
+	IdleSuggestions     bool     `json:"idleSuggestions,omitempty"`
+}
+
+func on(b *bool) bool { return b == nil || *b }
+
+func focusMax(i Idle) float64 {
+	if i.FocusMaxMinutes <= 0 {
+		return 60
+	}
+	return i.FocusMaxMinutes
+}
+
+// check：枚举写错、白名单正则编译不过都算错——这一轮不上传（同规则文件写坏），别静默当缺省用。
+func (p Privacy) check() error {
+	enum := func(field, v string, ok ...string) error {
+		if v == "" {
+			return nil
+		}
+		for _, o := range ok {
+			if v == o {
+				return nil
+			}
+		}
+		return fmt.Errorf("privacy.%s 只能是 %s，现在是 %q", field, strings.Join(ok, " / "), v)
+	}
+	if err := enum("paths", p.Paths, "full", "half", "off"); err != nil {
+		return err
+	}
+	if err := enum("titles", p.Titles, "keep", "pseudonymize", "drop"); err != nil {
+		return err
+	}
+	if err := enum("browser", p.Browser, "domain", "full", "off"); err != nil {
+		return err
+	}
+	for i, w := range p.PathWhitelist {
+		if _, err := regexp.Compile(w); err != nil {
+			return fmt.Errorf("privacy.pathWhitelist 第 %d 条正则写错了：%w", i+1, err)
+		}
+	}
+	return nil
+}
+
+// unknownKeys 列出 privacy / idle 节里本程序不认识的键。强制脱敏没有配置开关，
+// 写 "secrets": false 之类只会落到这里：忽略 + 警告。
+func unknownKeys(raw []byte) []string {
+	var doc map[string]map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &doc) // 整个文件的合法性由 loadJSON 负责
+	var out []string
+	for sec, known := range map[string]any{"privacy": Privacy{}, "idle": Idle{}} {
+		keys := map[string]bool{}
+		t := reflect.TypeOf(known)
+		for i := 0; i < t.NumField(); i++ {
+			keys[strings.Split(t.Field(i).Tag.Get("json"), ",")[0]] = true
+		}
+		for k := range doc[sec] {
+			if !keys[k] {
+				out = append(out, sec+"."+k)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // 默认名单：写的是各系统上 ActivityWatch 实际报出来的程序名（Windows 是 exe 名，
@@ -52,6 +151,14 @@ var defaultAppOnly = []string{
 	// 密码管理器
 	"1Password", "Bitwarden", "KeePass", "KeePassXC", "LastPass", "Enpass", "Dashlane",
 	"Keychain Access", "seahorse", "Passwords",
+}
+
+// defaultFocusApps：阅读器、会议软件（idle.focusApps 为 null 时用）。
+var defaultFocusApps = []string{
+	"Acrobat", "AcroRd32", "Acrobat Reader", "Adobe Acrobat", "SumatraPDF", "okular", "evince", "Preview",
+	"FoxitPDFReader", "Foxit Reader", "wps", "wpspdf", "Zotero", "calibre", "ebook-viewer", "KOReader",
+	"wemeet", "WeMeet", "腾讯会议", "TencentMeeting", "Zoom", "zoom.us", "Teams", "ms-teams", "Microsoft Teams",
+	"Feishu", "Lark", "飞书", "DingTalk", "钉钉", "Webex", "CiscoWebexStart", "Google Meet",
 }
 
 var defaultBrowsers = []string{
@@ -92,6 +199,9 @@ func defaultConfig(dir string) (Config, error) {
 		RulesFile:         filepath.Join(dir, "rules.json"),
 		AppOnlyApps:       defaultAppOnly,
 		BrowserApps:       defaultBrowsers,
+		// 把缺省值写出来，用户打开文件就看得见有哪些可选项。
+		Privacy:     Privacy{Paths: "full", Titles: "keep", Browser: "domain"},
+		ArchiveDays: 30,
 	}, nil
 }
 

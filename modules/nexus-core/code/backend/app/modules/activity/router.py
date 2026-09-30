@@ -51,6 +51,7 @@ class Item(BaseModel):
     app: str
     title: str
     suggestion: Suggestion
+    idle: bool = False  # v2.5
     status: str
 
 

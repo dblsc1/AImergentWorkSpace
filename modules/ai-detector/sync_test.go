@@ -465,6 +465,10 @@ func TestUploadInBatchesCursorFollowsAckedBatches(t *testing.T) {
 	// 第二批失败：游标停在第 201 段（下标 200）的开始。
 	calls := 0
 	ck.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "detector/settings") {
+			w.WriteHeader(404) // 老 nexus-core：没有设置端点
+			return
+		}
 		calls++
 		b, _ := io.ReadAll(r.Body)
 		ck.bodies = append(ck.bodies, b)
