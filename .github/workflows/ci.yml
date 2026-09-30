@@ -177,6 +177,9 @@ jobs:
         # 不走 run.sh —— 它在依赖不全时打印装法然后 exit 0，在 CI 里是假绿。
         # screenshot_dropdown.py 是截图工具不是测试，pytest 不会收集它。
         run: python -m pytest . -q -rs
+      - name: 顶栏泳道预览（navbar.js + 共享 lanes.js）
+        # 顶栏属 nginx-docker，但要浏览器：借本 job 装好的 playwright 跑。
+        run: python -m pytest ../../../../nginx-docker/tests/test_navbar_lanes.py -q -rs
 
   installer:
     name: 安装器

@@ -317,3 +317,36 @@ html { scroll-padding-top: var(--ckpt-h, 52px); }
   .ckpt-chip .ckpt-sep { display: none; }
   .ckpt-exit { padding: 0 10px; }
 }
+
+/* ── 泳道预览（v0.3，navbar.js 末段；泳道本身的样式在 lanes.css） ──
+ * 浮层：fixed、不占文档流，开关不引起布局位移。宽度与左边由 JS 按视口算：
+ * min(360px, 视口 − 32px)，左右至少各留 16px，320px 宽也不横滚。 */
+.ckpt-lanes-pop {
+  position: fixed;
+  top: calc(var(--ckpt-h) + 6px);
+  z-index: 61;
+  width: min(360px, calc(100vw - 32px));
+  box-sizing: border-box;
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2, 10px);
+  box-shadow: var(--shadow);
+  padding: var(--sp-3, 12px);
+  display: none;
+  font-family: var(--font-body, system-ui, sans-serif);
+}
+.ckpt-lanes-pop.ckpt-open { display: grid; gap: var(--sp-2, 8px); }
+.ckpt-lanes-head {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--fs-eyebrow, 11px);
+  letter-spacing: .1em;
+  color: var(--ink-2);
+}
+.ckpt-lanes-go {
+  justify-self: end;
+  display: inline-flex; align-items: center;
+  min-height: 32px;
+  font-size: var(--fs-sub, 13px);
+  color: var(--accent);
+}
