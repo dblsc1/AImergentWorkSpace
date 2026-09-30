@@ -44,22 +44,19 @@
     ks.slice(0, -1).forEach(function (k) { if (!o[k] || typeof o[k] !== "object") o[k] = {}; o = o[k]; });
     o[ks[ks.length - 1]] = value;
   }
-  function lines(text) {
-    return String(text || "").split("\n").map(function (l) { return l.trim(); }).filter(Boolean);
+  // 程序名去掉首尾空白；正则**逐字保留**（首尾空格也是正则的一部分），只丢空行
+  function lines(text, verbatim) {
+    return String(text || "").split("\n").map(function (l) { return verbatim ? l.replace(/\r$/, "") : l.trim(); })
+      .filter(function (l) { return l !== ""; });
   }
 
-  // 白名单正则的本地检查（RE2 语法；服务端还会再查一遍，检测程序再用 Go 编译一次）。
-  // 只拦肯定不行的：RE2 不支持的构造、长度、以及换成 JS 写法后还编不过的。
+  // 白名单正则的本地检查：只拦肯定不行的（长度、RE2 不支持的构造，同服务端那条规则）。
+  // 语法本身交给服务端（422 挂回这一项）——JS 的 RegExp 与 RE2 不同，拿它判会误拦合法写法（如 \Q…\E）。
   var NOT_RE2 = /\(\?<?[=!]|\\[1-9]|\(\?P=|\(\?\(|\(\?>|(?<!\\)[*+?}]\+/;
   function checkPattern(p) {
     if (p.length > 200) return "太长（最多 200 个字符）";
-    var probe = p.replace(/\\[pP](\{[^}]*\}|[A-Za-z])/g, "x")      // Unicode 类：JS 非 u 模式不认
-      .replace(/\(\?P</g, "(?<")                                      // RE2 的命名组
-      .replace(/\\z/g, "$")
-      .replace(/\(\?[imsU]+\)/g, "")                                  // 行内标志 (?i)
-      .replace(/\(\?[imsU]*-?[imsU]*:/g, "(?:");
+    var probe = p.replace(/\\[pP](\{[^}]*\}|[A-Za-z])/g, "x");   // 同服务端：\p{Han}+ 的「}+」不是占有量词
     if (NOT_RE2.test(probe)) return "用了 RE2 不支持的写法（前后查找 / 反向引用 / 条件组 / 原子组 / 占有量词）";
-    try { new RegExp(probe); } catch (e) { return "写错了：" + e.message; }
     return "";
   }
 
@@ -169,7 +166,7 @@
     formEl.querySelectorAll("input[type=radio]:checked").forEach(function (n) { setPath(doc, n.name, n.value); });
     formEl.querySelectorAll("textarea[data-list]").forEach(function (t) {
       var key = t.dataset.list, nul = formEl.querySelector('input[data-null="' + key + '"]');
-      setPath(doc, key, nul && nul.checked ? null : lines(t.value));
+      setPath(doc, key, nul && nul.checked ? null : lines(t.value, key === "privacy.pathWhitelist"));
     });
     return doc;
   }
@@ -205,6 +202,8 @@
     saveBtn.disabled = busy || !base || !(dirty || !has);
     resetBtn.disabled = busy || !has;
     deviceEl.disabled = busy;
+    // 请求在路上时整张表不可改：PUT 回来会用服务端的文档重填，期间的改动会被冲掉
+    formEl.querySelectorAll(".set-group").forEach(function (g) { g.disabled = busy; });
   }
 
   function fill(body) {

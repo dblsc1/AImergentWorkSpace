@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -43,6 +44,7 @@ class DetectorStub:
         self.settings = settings if settings is not None else {"dev_a": copy.deepcopy(CUSTOM), "dev_b": None}
         self.calls: list[tuple[str, str, str | None, Any]] = []   # (方法, 路径, deviceId, body)
         self.put_reply: tuple[int, dict] | None = None             # 非 None = PUT 回这个（422 / 403…）
+        self.get_status = 200                                      # 非 200 = 读设置出错
 
     def route(self, route: Route) -> None:
         req = route.request
@@ -58,6 +60,8 @@ class DetectorStub:
                 return j(404, {"detail": "Not Found"})
             return j(200, {"devices": self.devices})
         if req.method == "GET":
+            if self.get_status != 200:
+                return j(self.get_status, {"detail": "数据库暂时连不上"})
             s = self.settings.get(dev)
             return j(200, {"deviceId": dev, "settings": s, "updatedAt": "2026-09-30T02:00:00+00:00" if s else None})
         if req.method == "PUT":
@@ -129,7 +133,7 @@ def test_save_sends_exact_document_and_keeps_unknown_keys(browser, static_base_u
         ready(page)
         page.check('input[name="privacy.paths"][value="off"]')
         page.uncheck('[data-key="privacy.emails"]')
-        page.fill("#det-whitelist", "garden/\\S+\n(?i)notes\n  \n^docs/[a-z]+$")
+        page.fill("#det-whitelist", "garden/\\S+\n(?i)notes\n\n ^docs/[a-z]+$ ")
         page.check('[data-null="privacy.appOnlyApps"]')            # 改回用本机名单 = null
         assert page.is_disabled("#det-apponly-apps")
         page.uncheck('[data-null="idle.focusApps"]')
@@ -141,7 +145,7 @@ def test_save_sends_exact_document_and_keeps_unknown_keys(browser, static_base_u
         page.wait_for_selector("#det-message:not([hidden])")
         want = copy.deepcopy(CUSTOM)
         want["privacy"].update({"paths": "off", "emails": False, "appOnlyApps": None,
-                                "pathWhitelist": ["garden/\\S+", "(?i)notes", "^docs/[a-z]+$"]})
+                                "pathWhitelist": ["garden/\\S+", "(?i)notes", " ^docs/[a-z]+$ "]})
         want["idle"].update({"afkThresholdMinutes": 15, "audibleAsPresent": True, "focusApps": ["Zotero", "腾讯会议"]})
         assert puts(stub) == [("PUT", "settings", "dev_a", want)]
         assert "已保存" in page.inner_text("#det-message") and "5 分钟" in page.inner_text("#det-message")
@@ -159,7 +163,7 @@ def test_dirty_clears_when_change_is_undone(browser, static_base_url):
 
 @pytest.mark.parametrize("field,sel,value,words", [
     ("privacy.pathWhitelist", "#det-whitelist", "ok/.*\n(?<=x)y", "第 2 条"),
-    ("privacy.pathWhitelist", "#det-whitelist", "a(b", "写错了"),
+    ("privacy.pathWhitelist", "#det-whitelist", "a\\1", "RE2 不支持"),
     ("idle.afkThresholdMinutes", "#det-afk", "241", "0–240"),
     ("idle.focusMaxMinutes", "#det-focus-max", "1.5", "1–480"),
 ])
@@ -181,9 +185,9 @@ def test_whitelist_accepts_re2_only_syntax(browser, static_base_url):
     r = None
     with page_with(browser, static_base_url, DetectorStub()) as page:
         ready(page)
-        r = page.evaluate("""() => ['(?i)notes', '\\\\p{Han}+', '(?P<n>a)b', 'end\\\\z', '(?i:x)y']
+        r = page.evaluate("""() => ['(?i)notes', '\\\\p{Han}+', '(?P<n>a)b', 'end\\\\z', '(?i:x)y', '\\\\Q(\\\\E']
             .map(p => window.assistantSettings.checkPattern(p))""")
-    assert r == ["", "", "", "", ""]
+    assert r == ["", "", "", "", "", ""]
 
 
 def test_server_422_goes_under_its_field(browser, static_base_url):
@@ -343,3 +347,26 @@ def test_narrow_no_horizontal_scroll(browser, static_base_url, width, theme):
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         bg = page.eval_on_selector("#settings-panel", "e => getComputedStyle(e).backgroundColor")
         assert bg == ("rgb(21, 28, 46)" if theme == "dark" else "rgb(255, 255, 255)")
+
+
+def test_load_error_is_visible_while_form_is_hidden(browser, static_base_url):
+    stub = DetectorStub()
+    stub.get_status = 500
+    with page_with(browser, static_base_url, stub) as page:
+        page.wait_for_selector("#det-message.is-error")
+        assert page.is_visible("#det-message") and page.is_hidden("#det-form")
+        assert "数据库暂时连不上" in page.inner_text("#det-message")
+
+
+def test_form_locked_while_saving(browser, static_base_url):
+    stub = DetectorStub()
+    held = []
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        page.route(re.compile(r"/api/core/detector/settings"), lambda r: held.append(r) if r.request.method == "PUT" else r.fallback())
+        page.uncheck('[data-key="privacy.ips"]')
+        page.click("#det-save")
+        page.wait_for_function("document.querySelector('[data-key=privacy\\\\.emails]').matches(':disabled')")
+        held[0].fallback()
+        page.wait_for_selector("#det-message:not([hidden])")
+        assert page.is_enabled('[data-key="privacy.emails"]')

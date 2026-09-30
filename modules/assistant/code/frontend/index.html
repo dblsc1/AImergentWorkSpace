@@ -190,13 +190,14 @@
           </div>
         </fieldset>
 
-        <p class="suggest-message" id="det-message" role="status" hidden></p>
         <div class="det-actions">
           <span class="det-dirty" id="det-dirty" hidden>有没保存的改动</span>
           <button type="button" class="btn btn-ghost" id="det-reset" disabled>恢复默认</button>
           <button type="submit" class="btn btn-fact" id="det-save" disabled>保存</button>
         </div>
       </form>
+      <!-- 在表单外：读取失败（表单藏着）时也看得见 -->
+      <p class="suggest-message" id="det-message" role="status" hidden></p>
     </section>
 
     <!-- 「回顾」：v0.3 只放入口，分析以后做（不加后端）。 -->
