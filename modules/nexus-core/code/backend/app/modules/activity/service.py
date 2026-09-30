@@ -21,7 +21,15 @@ import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, StrictInt, StrictStr, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    ValidationError,
+    field_validator,
+)
 
 from ... import config, timeutil
 from ...tenant import current as current_tenant
@@ -68,6 +76,7 @@ class _Segment(BaseModel):
     app: Annotated[StrictStr, Field(min_length=1)]
     title: StrictStr
     suggestion: _Suggestion
+    idle: StrictBool = False  # v2.5：检测程序认为这段「前台没换、但无操作」
 
 
 def _parse(raw: str, field: str) -> datetime:
@@ -139,7 +148,7 @@ def upload(device_id: str, segments: list[Any]) -> dict:
             "user": user, "id": _sug_id(dedupe_key), "dedupeKey": dedupe_key, "deviceId": device_id,
             "startAt": seg.startAt, "endAt": seg.endAt, "startTs": start,
             "durationSeconds": seg.durationSeconds, "app": seg.app[:_MAX_APP], "title": seg.title[:_MAX_TITLE],
-            "suggestion": suggestion, "status": "pending", "receivedAt": now,
+            "suggestion": suggestion, "idle": seg.idle, "status": "pending", "receivedAt": now,
         }
         if repo.insert_if_absent(doc):
             accepted += 1
@@ -151,12 +160,22 @@ def upload(device_id: str, segments: list[Any]) -> dict:
 _ITEM_KEYS = ("id", "deviceId", "startAt", "endAt", "durationSeconds", "app", "title", "suggestion", "status")
 
 
+def _item(d: dict) -> dict:
+    # v2.5 之前存下的建议没有 idle 字段：回 false
+    return {**{k: d[k] for k in _ITEM_KEYS}, "idle": d.get("idle", False)}
+
+
+def last_uploads(user: str) -> dict:
+    """{deviceId: 最近一次收到它上传的时刻}——detector 子边界的设备列表用（跨子边界只走 service）。"""
+    return repo.last_received(user)
+
+
 def list_suggestions(status: str, limit: int, offset: int) -> dict:
     user = current_tenant()
     _purge(user, _now())
     limit = _DEFAULT_LIMIT if limit <= 0 else min(limit, _MAX_LIMIT)  # 同档案读端口径
     total, docs = repo.page(user, status, limit, max(offset, 0))
-    return {"total": total, "items": [{k: d[k] for k in _ITEM_KEYS} for d in docs]}
+    return {"total": total, "items": [_item(d) for d in docs]}
 
 
 def _get(user: str, sug_id: str) -> dict:

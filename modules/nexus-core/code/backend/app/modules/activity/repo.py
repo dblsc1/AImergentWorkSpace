@@ -56,6 +56,12 @@ def set_status(user: str, sug_id: str, status: str, at: datetime, *, only_from: 
     return _col().update_one(filt, {"$set": {"status": status, "decidedAt": at}}).matched_count > 0
 
 
+def last_received(user: str) -> dict:
+    rows = _col().aggregate([{"$match": {"user": user}},
+                             {"$group": {"_id": "$deviceId", "at": {"$max": "$receivedAt"}}}])
+    return {r["_id"]: r["at"] for r in rows}
+
+
 def purge(user: str, cutoff: datetime) -> None:
     """待确认的按收到时刻、已处理的按处理时刻，早于 cutoff 的删掉（契约「过期」）。"""
     _col().delete_many({"user": user, "$or": [

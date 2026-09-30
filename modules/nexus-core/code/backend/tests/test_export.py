@@ -30,6 +30,8 @@ _COLLECTIONS = (
     "activity_presence", "proj_lanes",
     # v2.4 启动期一次性任务的锁（proj_lanes 自动补建）。
     "_startup_locks",
+    # v2.5 检测程序设置。
+    "detector_settings",
 )
 
 
