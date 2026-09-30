@@ -6,7 +6,10 @@ import "time"
 type segment struct {
 	Start, End time.Time
 	Active     time.Duration // 段内在电脑前的时间（碎片时长之和，含被吸收的短暂切换）
-	App, Title string
+	App, Title string        // Title：隐私选项处理后、换代号前（规则分类匹配它）
+	Raw        string        // 本机原始标题（只过强制脱敏），只进留档
+	Sent       string        // 真正离开本机的标题（换过代号的就是代号）；tick 在分类前填
+	Idle       bool
 }
 
 // merge 把碎片合成段，规则见 contract.md「合并」。frags 必须按 Start 排序、互不重叠
@@ -28,7 +31,7 @@ func merge(frags []fragment, gap time.Duration) []segment {
 				last = j
 			}
 		}
-		seg := segment{Start: first.Start, End: frags[last].End, App: first.App}
+		seg := segment{Start: first.Start, End: frags[last].End, App: first.App, Idle: first.Idle}
 		byTitle := map[string]time.Duration{}
 		for _, f := range frags[i : last+1] {
 			d := f.End.Sub(f.Start)
@@ -41,7 +44,7 @@ func merge(frags []fragment, gap time.Duration) []segment {
 		var best time.Duration = -1
 		for _, f := range frags[i : last+1] {
 			if f.Key == first.Key && byTitle[f.Title] > best {
-				seg.Title, best = f.Title, byTitle[f.Title]
+				seg.Title, seg.Raw, best = f.Title, f.Raw, byTitle[f.Title]
 			}
 		}
 		out = append(out, seg)
