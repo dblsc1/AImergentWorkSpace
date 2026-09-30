@@ -199,8 +199,8 @@ provides:
     status: 已实现（v2.3），待验证
   - id: nexus-core.agents.phase.v1
     summary: 代理运行的相位（v2.4，agents.v1 的追加）——POST /api/core/agents/{runId}/phase
-      {phase, at, detail?, reply?}，按 at 排序、幂等、运行结束后 applied:false；start 增选填
-      phase/label/match；结束时相位与连线随 agent.run.completed 的 data 追加键落账，不新增事件类型
+      {phase, at, detail?, reply?}，每条观测按 at 排序原样存（读时合并）、幂等、运行结束后 applied:false；
+      start 增选填 phase/label/match/clientKey（同 key 的运行还在跑时重复 start 回原运行）；结束时相位与连线随 agent.run.completed 的 data 追加键落账，不新增事件类型
     status: 契约先行（v2.4），待实现
   - id: nexus-core.activity.presence.v1
     summary: 在场心跳（v2.4）——POST /api/core/activity/presence {deviceId, app, title, afk}，时间服务端盖；
@@ -1780,7 +1780,10 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
 { "agent": "claude-code", "tool": "claude-code",
   "phase": "idle",               // 选填：开跑时的相位；缺省 = 不记（读方把第一条相位之前当 working，见下）
   "label": "garden",             // 选填，1–64 码点：泳道上显示的名字（如工作目录名）；缺省读方用 agent
-  "match": "garden" }            // 选填，3–128 码点：认「人在看这个代理」的线索，见「连线」
+  "match": "garden",             // 选填，3–128 码点：认「人在看这个代理」的线索，见「连线」
+  "clientKey": "k_9f2c…" }       // 选填，1–128 字符，不透明：同一租户里带同一 clientKey 的运行**还在跑**时，
+                                 // 再 start 不开新运行，回原来那个的 {runId, startedAt}（200）——丢了响应后重试不会多出一条泳道。
+                                 // 客户端用哈希之类的不透明值，不放原始会话号 / 文件里的 key
 
 // POST /api/core/agents/{runId}/phase   请求 AgentPhaseIn
 { "phase": "waiting_permission", // 必填，上表五选一
@@ -1790,19 +1793,21 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
 // → 200 AgentPhaseOut
 { "runId": "run_…",
   "phase": "waiting_permission", // 应用本次之后，这个运行按 at 排最后的那条相位（即「当前相位」）
-  "applied": true,               // false = 没记（重复、与前一条相同、运行已结束、超上限，见下表）
-  "reason": null }               // applied:false 时：duplicate | same | closed | capped
+  "applied": true,               // false = 没记（重复、运行已结束、超上限，见下表）
+  "reason": null }               // applied:false 时：duplicate | closed | capped
 ```
 
 **存法：在跑时是活状态，结束时随那一条事实落账——不为相位另开事件类型。**
 
-- 在跑的运行（`agent_runs` 文档）追加 `phases: [{at, phase, detail?}]`（按 `at` 升序的**转入点**列表）、
+- 在跑的运行（`agent_runs` 文档）追加 `phases: [{at, phase, detail?}]`（收到的**每一条观测**，按 `(at, 到达先后)`
+  升序；**存的时候不合并**——乱序到达时先合并会丢信息，如先到 `working@10`、`working@30`，后到 `idle@20`，
+  合并过就只剩 `working@10, idle@20`）、
   `interactions: [...]`（见「连线」）、`label?`、`match?`。
 - stop / 超时关闭时，`agent.run.completed` 的 `data` **追加**选填键 `label?`、`phases?`、`interactions?`
   （没有就不出现，v2.4 之前的事件与不报相位的客户端写出的事件逐字节不变）。于是历史时间线、导出、
   快照恢复、投影重建全都随既有那一条事实走，零新增事件类型、零新增防重轨道。
-- 相位段由读方从转入点推出：第 k 段 = `[phases[k].at, phases[k+1].at)`，最后一段止于运行结束
-  （在跑的止于「现在」）。**第一个转入点之前**（含整条运行都没有 `phases` 的老运行 / `cockpit-run` 包的命令）
+- 相位段由读方从观测推出：第 k 段 = `[phases[k].at, phases[k+1].at)`，相邻同相位的段合成一段（**只在读 / 画时合并**），
+  最后一段止于运行结束（在跑的止于「现在」；`at` 晚于「现在」的观测在读时按「现在」画）。**第一个转入点之前**（含整条运行都没有 `phases` 的老运行 / `cockpit-run` 包的命令）
   一律当 `working`——这正是 v2.1 的含义：运行在跑 = 在干活。
 
 **写入规则（规范性）**：
@@ -1811,18 +1816,22 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
 |---|---|
 | `phase` 不在枚举 / `at` 不带偏移或解析不了 / `detail` 超 64 码点 / 多了未知字段 | 422（请求体校验，同 v2.1 口径） |
 | `at` 晚于服务端现在 + 300 秒 | 422（同活动建议的时钟误差口径） |
-| `at` 在 (现在, 现在+300s] | 钳到现在 |
+| `at` 在 (现在, 现在+300s] | 原样收（**不钳**：钳到「现在」会让重试算出另一个 `at`，去重就失效了） |
 | `at` 早于运行的 `startedAt` | 钳到 `startedAt`（`startedAt` 是服务端时间，客户端时钟慢一点时开头几秒的相位会挤到起点上——有意接受，不另做对时） |
 | `runId` 不存在（或属于别的租户，同形状） | 404 |
 | 运行已结束（stop 过 / 已被超时关闭） | **200，`applied:false, reason:"closed"`**，什么都不写（同重复 stop 的取舍：钩子会重试，4xx 只会让它以为失败） |
 | 已有一条 `at`、`phase` 都相同的转入点 | 200，`applied:false, reason:"duplicate"`（重试安全） |
-| 插进去后与**按 `at` 排在它前面**的那条相位相同 | 200，`applied:false, reason:"same"`（不产生空转入点）；若它导致**后面**那条变成与它相同，后面那条被合掉 |
-| 转入点已有 1000 条 | 200，`applied:false, reason:"capped"`；时间线停在最后记下的那条相位直到运行结束 |
+| 与前一条相位相同（重复报了同一个状态） | **照收**，`applied:true`——合并是读方的事 |
+| 已有 1000 条观测 | 200，`applied:false, reason:"capped"`；时间线停在最后记下的那条相位直到运行结束 |
 
 - **按 `at` 排序，不按到达顺序**：Claude Code 的异步钩子是并行跑的，两个几乎同时的事件
   （如 `PostToolUse` 与 `Stop`）到达顺序不保证；客户端在事件发生时取 `at`，服务端按 `at` 插入。
   `at` 完全相同时后到的排后面。「当前相位」= 按 `at` 排最后的那条，不是最后到达的那条。
 - 本端点是写端点：处理前同样先按「遗忘超时」收掉该租户超时的运行（超时的运行因此回 `closed`）。
+- **关闭是一道原子边界**（stop、超时、相位、`attend` 共用）：关闭先用一次条件更新把运行标成「已关闭」并取回
+  **那一刻的整份文档**作快照，再用快照组装事件、ingest、删活状态；相位与 `attend` 的写入都是带「未关闭」条件的
+  单文档原子更新（追加到数组）。于是关闭前成功写入的一定进快照，关闭后到的一律 `closed` / 不记，不会有
+  「回了 200 却没进事实」的更新。
 - 超时关闭时，`at` 晚于封顶结束时刻的转入点丢弃（结束时刻见 v2.1「遗忘超时」）；运行结束（stop 或超时）时
   `attend` 的 `until` 钳到结束时刻，起点已在结束之后的丢弃。
 - **隐私**：`detail` 只放**短标签**——工具名、通知种类、错误种类这类固定词。**不许**放提示词、命令、
@@ -1846,8 +1855,9 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
 - **时间由服务端盖**（收到的时刻），请求里没有时间字段——心跳说的就是「现在」，不需要对时。
 - **活状态，不是事实**：住独立集合 `activity_presence`，每个 `(租户, deviceId)` 一份文档：最新一次心跳，
   外加一段**合并过的**近况 `spans: [{from, to, app, title, afk}]`——相邻心跳 `(app, title, afk)` 相同且间隔
-  ≤ 45 秒就延长上一段的 `to`，否则开新段。只留 `to` 在最近 **2 小时**内的段、至多 **500** 段，
-  超出的从旧的删。设备 2 小时没有心跳，整份文档在该租户下一次心跳 / 读时惰性删除。每租户至多 20 台设备，
+  ≤ 45 秒就延长上一段的 `to`，否则开新段。只留最近 **2 小时**：`to` 早于截止线的段删掉，跨截止线的段把 `from`
+  裁到截止线（同一个窗口开一整天，也只留最后 2 小时）；至多 **500** 段，超出的从旧的删。
+  设备 2 小时没有心跳，整份文档在该租户**下一次心跳写入时**删除；读端不删，只把过期的滤掉（`views/lanes` 不写）。每租户至多 20 台设备，
   第 21 台出现时挤掉最久没心跳的那台（`deviceId` 是客户端自报的，不设上限就是一个无界写入口）。
 - **不进台账、不进任何投影、不进导出、不进快照恢复、不算进「空实例」判据**（同活动建议）。
   换句话说：页面上「人刚才 1 小时在干什么」的那条细带子，过两小时就没了——想留下来的，走活动建议 → 确认。
@@ -1865,8 +1875,8 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
 | `reply` | 相位写入带 `reply: true`（钩子在人提交提示词、人批准了一个等授权的动作时这么报） | `{kind:"reply", at}`，`at` 同那次相位转入（已钳过） |
 | `attend` | 在场心跳：人没离开、前台 `title` **不分大小写包含**某个在跑运行的 `match` | `{kind:"attend", at, until}`：同一运行上一条 `attend` 的 `until` 距这次心跳 ≤ 45 秒就延长 `until`，否则开新的一条 |
 
-- `reply` 在 `reason` 为 `duplicate`（重试）或 `closed`（运行已结束）时不记，其余都记——包括因 `same`/`capped`
-  没记下相位的那次：人确实回话了，只是代理本来就在干活。
+- `reply` 在 `reason` 为 `duplicate`（重试）或 `closed`（运行已结束）时不记，其余都记（含 `capped`：人确实回话了）。
+  同一运行已有同一 `at` 的 `reply` 时不再记——`capped` 的请求重试也不会多出连线。
 - `attend` 在心跳写入时就地算好写进在跑运行；心跳过期删掉后，已经写进运行里的 `attend` 不受影响——
   所以历史时间线也有它，但**只存时间，不存当时的窗口标题**。一个心跳同时匹配多个运行 = 每个都记
   （同一目录开两个会话时分不清是哪个，照实都连上）。没给 `match` 的运行永远没有 `attend`。

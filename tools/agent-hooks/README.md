@@ -202,7 +202,7 @@ Claude Code 给它的默认超时只有 30 秒）。`SessionStart` **保持同�
 
 | Claude Code 事件（读的字段） | 报什么 |
 |---|---|
-| `SessionStart` | 开 run 时带 `phase: "idle"`（会话开着、还没说话）、`label` = 工作目录名、`match` = 工作目录名（不足 3 个字符不带） |
+| `SessionStart` | 开 run 时带 `phase: "idle"`（会话开着、还没说话）、`label` = 工作目录名、`match` = 工作目录名（不足 3 个字符不带）、`clientKey` = `session_id` 的 SHA-256 前 32 位十六进制（钩子被重试 / 响应丢了时不多开一条 run）。目录名与 v2.1 起就在报的 `agent` 名是同一级信息，不多报 |
 | `UserPromptSubmit`（**不读 `prompt`**） | `working`，`reply: true`——你说了话 |
 | `PermissionRequest`（`tool_name`） | `waiting_permission`，`detail` = 工具名。这是「要请你批准」那一刻就触发的事件 |
 | `Notification`（`notification_type`，**不读 `message`**） | `permission_prompt` → `waiting_permission`（兜底：沙箱网络请求的批准不触发 `PermissionRequest`）；`elicitation_dialog`/`elicitation_url_dialog`/`agent_needs_input` → `waiting_input`；`idle_prompt` → `idle`（你按 Esc 打断时 `Stop` 不触发，靠它把灯收回来）；其余种类不报。`detail` = 种类名 |
@@ -213,8 +213,10 @@ Claude Code 给它的默认超时只有 30 秒）。`SessionStart` **保持同�
 
 - `at` 取钩子进程开始处理那一刻。异步钩子是**并行**跑的、到达服务端的顺序不保证，服务端按 `at` 排，所以时间戳必须在
   事件发生时取，不能在发请求时补。
-- 每会话的状态文件里多记一个「上次报的相位」，只在相位变了时才发请求；并行钩子偶尔重复发一次无妨（服务端对
-  「与前一条相同」回 `applied:false`）。
+- 上表里的事件**每次都发**（一轮对话也就几条；`UserPromptSubmit` 哪怕 Claude 正在干活也要发——那是一次人的回话）。
+  唯一按本地状态决定发不发的是 `PostToolUse`/`PostToolUseFailure`：每会话的状态文件里多记一个「上次报的相位」，
+  其余钩子**先写状态、再发请求**。并行钩子读到旧状态的极小窗口里，最坏是这盏黄灯留到下一次 `Stop`/`UserPromptSubmit`
+  ——已知上限，不为它加锁。
 - 纪律不变：永远 `exit 0`，网络总时限约 1 秒，失败只在 stderr 留固定分类的一行。
 
 事件名与字段核对自 Claude Code 官方文档 <https://code.claude.com/docs/en/hooks>（2026-09-30）：

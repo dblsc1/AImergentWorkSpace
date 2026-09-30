@@ -248,18 +248,20 @@ Authorization: Bearer <deviceToken>
   不编转入、不 stop。在跑的运行留给服务端的遗忘超时去收（守护进程停了 ≠ 代理停了，本程序分不清）。
 - `agentStatusIgnore`（字符串数组，缺省 `[]`）：`key` 以其中任一前缀开头的条目整个忽略。用来**避免重复上报**
   ——例如已经装了 `tools/agent-hooks` 的 Claude Code 钩子，就把 Claude 那一类的前缀填进来，否则同一个会话会有两条泳道。
-- 新鲜文件里**第一次看到**某个 `key` → `agents/start`：`agent`、`tool` 都取 `key` 第一个 `:` 之前的部分
-  （没有 `:` 取 `"agent"`，截到 64 字符），`phase` 为映射后的相位，`label` 为脱敏后的 `label`（按上传的标题
+- 新鲜文件里**第一次看到**某个 `key` → `agents/start`：`agent`、`tool` 都取 `key` 第一个 `:` 之前的部分，
+  须匹配 `^[a-z0-9_-]{1,32}$`（`claude`、`codex`、`hermes` 这类代理种类名），否则一律报 `"agent"`；
+  `clientKey` = SHA-256(`deviceId` + `key`) 前 32 位十六进制（丢了响应重试不会多开一条运行；原始 `key` 不上传）；`phase` 为映射后的相位，`label` 为脱敏后的 `label`（按上传的标题
   脱敏规则，截到 64 码点；空则不发），`match` 同 `label`（不足 3 码点不发）。不挂任务（落收件箱）。
 - 映射后的相位**变了** → `agents/{runId}/phase`：`at` = 本程序发现变化的时刻（本机时钟，最多晚一个轮询间隔），
-  **不发 `detail`**；从非 `working` 转入 `working`（第一次除外）时带 `reply: true`——等人 / 空闲的代理重新动起来，
-  只能是人回了话或点了批准。
+  **不发 `detail`**；只在从 `waiting_input`/`waiting_permission` 转入 `working` 时带 `reply: true`（等人的状态解除，
+  通常是人答了）。从 `idle`/`error` 转回 `working` **不带**——可能是人说了话，也可能是自动重试、定时任务，
+  文件格式里没有能分清的信号，宁可少一根连线也不编一根。
 - 新鲜文件里某个 `key` **不见了** → `agents/{runId}/stop`：最后状态是 `error` 报 `failed`，否则报 `done`。
 - `key → runId` 存进 `ai-detector.state.json`，重启后接着用。`phase`/`stop` 回 404 或 `applied:false, reason:"closed"`
-  （服务端已按超时收掉）→ 忘掉这个映射，下次看到这个 `key` 当作第一次看到。
-- 网络失败：本轮不重试，映射与「上次报过的相位」都不前进，下一轮看到的仍是变化、会再报一次（服务端按 `(at, phase)`
-  与「与前一条相同」去重，重报安全）。
-- **离开本机的只有**：`key` 的前缀（作 agent/tool 名）、脱敏后的 `label`、相位、时刻、结束状态。`key` 的其余部分、
+  （服务端已按超时收掉）→ 忘掉这个映射，下次看到这个 `key` 当作第一次看到（同一 `clientKey` 的旧运行已关，会开新运行）。
+- 网络失败：本轮不重试，映射与「上次报过的相位」都不前进，下一轮看到的仍是变化、会再报一次（`at` 取新的发现时刻；
+  服务端照收，读时合并同相位，重报只是多一条观测，不改变画出来的样子）。
+- **离开本机的只有**：`key` 的前缀（合规的代理种类名，作 agent/tool 名）、`clientKey`（哈希）、脱敏后的 `label`、相位、时刻、结束状态。`key` 的其余部分、
   `detail`、文件路径都不上传。
 
 ## 变更记录
