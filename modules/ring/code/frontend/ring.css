@@ -338,72 +338,16 @@ select.field:disabled { opacity: .7; cursor: not-allowed; }
 /* ── 390px 一等公民：不横滚（F-RING-5） ──────────────────────────────── */
 html, body { max-width: 100%; overflow-x: hidden; }
 
-/* ── 「待确认」面板（2026-09-28，ring-suggestions.js，nexus-core v2.2 活动建议）──
- * 建议不是事实：用 ink-2 的中性色调，只有「确认」按钮是事实青——确认那一下才入账。
- * 320px 一等公民：每条竖排，按钮行两等分，长标题断行不撑宽。 */
-.suggest-panel { display: grid; gap: var(--sp-3); min-width: 0; }
+/* 「待确认」「问问助手」两块 2026-09-30 搬去「AI助理」页（modules/assistant）；泳道标题还借用 .suggest-title。
+ * 这里只剩计时页上那条「N 条待确认 → AI助理」的小链接。 */
 .suggest-title { font-size: var(--fs-h2); font-weight: 600; }
-.suggest-count { color: var(--ink-2); font-weight: 400; margin-left: var(--sp-1); }
-.suggest-sub { font-size: var(--fs-sub); color: var(--ink-2); }
-.suggest-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
-.suggest-threshold-label { font-size: var(--fs-sub); color: var(--ink-2); }
-.suggest-threshold {
-  width: 5.5em; min-height: var(--tap); padding: 0 var(--sp-2);
-  border: 1px solid var(--line); border-radius: var(--r-2);
-  background: var(--panel-2); color: var(--ink); font: inherit;
+.suggest-link {
+  justify-self: start; display: inline-flex; align-items: center; min-height: var(--tap);
+  padding: 0 var(--sp-3); border: 1px solid var(--line); border-radius: 999px;
+  background: var(--panel); color: var(--ink-2); font-size: var(--fs-sub); text-decoration: none;
+  transition: color var(--t-fast), border-color var(--t-fast);
 }
-.suggest-bulk .btn { flex: 1 1 12em; white-space: normal; }
-.suggest-message { font-size: var(--fs-sub); color: var(--fact); }
-.suggest-message.is-error { color: var(--danger); }
-.suggest-empty, .suggest-more { font-size: var(--fs-sub); color: var(--ink-3); }
-.suggest-list { list-style: none; padding: 0; display: grid; gap: var(--sp-3); }
-.suggest-item {
-  display: grid; gap: var(--sp-2); min-width: 0;
-  padding: var(--sp-3); border: 1px solid var(--line-2); border-radius: var(--r-2);
-  background: var(--panel-2);
-}
-.suggest-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--sp-2); font-size: var(--fs-sub); }
-.suggest-dur { color: var(--ink-2); }
-.suggest-what { overflow-wrap: anywhere; }
-.suggest-hint { font-size: var(--fs-sub); color: var(--ink-2); overflow-wrap: anywhere; }
-.suggest-item select.field { background: var(--panel); min-width: 0; }
-.suggest-item .row { display: flex; gap: var(--sp-2); }
-.suggest-item .row > * { flex: 1; }
-.suggest-item .btn:disabled { opacity: .5; cursor: not-allowed; filter: none; }
-
-/* ── 「问问助手」（2026-09-28，ring-chat.js，contracts/agent.chat.v1）──
- * 与「待确认」共用标题/副标题/消息样式；320px 下会话栏换行、气泡断长词。 */
-.chat-panel { display: grid; gap: var(--sp-3); min-width: 0; }
-.chat-bar { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
-.chat-bar select.field { flex: 1 1 10em; min-width: 0; }
-.chat-log {
-  display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); max-height: 50vh; overflow-y: auto; min-width: 0;
-}
-.chat-log:empty { display: none; }
-.chat-msg {
-  padding: var(--sp-2) var(--sp-3); border-radius: var(--r-2); white-space: pre-wrap;
-  overflow-wrap: anywhere; max-width: 100%;
-}
-.chat-user { background: var(--panel-2); justify-self: end; }
-.chat-assistant { border: 1px solid var(--line-2); }
-.chat-note, .chat-tool { font-size: var(--fs-sub); color: var(--ink-3); }
-.chat-form { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
-.chat-input {
-  flex: 1 1 100%; min-width: 0; min-height: var(--tap); padding: var(--sp-2);
-  border: 1px solid var(--line); border-radius: var(--r-2);
-  background: var(--panel-2); color: var(--ink); font: inherit; resize: vertical;
-}
-.chat-form .btn { flex: 1 1 auto; }
-/* 「调试」（AGENT_DEBUG=1 才有）：原始 JSON 在 pre 里自己横滚，页面不横滚 */
-.chat-debug { min-width: 0; font-size: var(--fs-sub); color: var(--ink-2); }
-.chat-debug summary { cursor: pointer; min-height: var(--tap); display: flex; align-items: center; }
-.chat-debug details { margin-left: var(--sp-3); min-width: 0; }
-.chat-debug-head { margin: var(--sp-2) 0 0; font-weight: 600; color: var(--ink); }
-.chat-debug pre {
-  margin: 0; padding: var(--sp-2); max-width: 100%; max-height: 24em; overflow: auto;
-  background: var(--panel-2); color: var(--ink); border-radius: var(--r-2);
-  font-family: var(--font-mono); font-size: var(--fs-eyebrow); white-space: pre;
-}
+.suggest-link:hover { color: var(--ink); border-color: var(--fact); }
 
 /* ── 「泳道」主视图（2026-09-30，ring-lanes.js，nexus-core v2.4 views.lanes.v1）──
  * 泳道本身的样式在共享的 __cockpit/lanes.css（顶栏预览同一份）；这里只管面板外壳。 */

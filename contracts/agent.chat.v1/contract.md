@@ -330,6 +330,7 @@ honeycomb MCP 的只读工具。
 | 日期 | 变更 |
 |---|---|
 | 2026-09-28 | v1.0 首版（v0.3 AI 桥）。契约先行，实现待建 |
+| 2026-09-30 | 消费方搬家（接口不变）：聊天面板从计时台 `ring` 搬到新页「AI助理」（`modules/assistant`），开头「是什么」里的「计时台 `ring`」以此为准 |
 | 2026-09-30 | v1.3 追加（仓主要的调试窗口）：第九节——`AGENT_DEBUG=1` 时录下每轮发给模型 / 模型回来的原文，`GET /api/agent/sessions/{id}/debug`，`health` 追加 `debug` 字段。关着时不存在；既有端点与事件不变 |
 | 2026-09-28 | v1.2 追加（实现 PR · Codex 审核）：第六节末「上限」——每会话存最近 500 条、回答 32000 字、一轮 `AGENT_MAX_TURN_SECONDS`（300 秒）；取消/断连/超时确认停了才放开 busy |
 | 2026-09-28 | v1.1 追加（实现 PR）：第七节末「实现核实结果」——五条假设四条成立；`deepseek/deepseek-chat` 不在目录、DeepSeek 文档也已改用 `deepseek-flash`，缺省模型改为 `deepseek/deepseek-flash`，适配器总是显式登记模型；自定义端点只调 `/chat/completions`；`AGENT_BASE_URL` 可为内网服务名；网络名规则。接口不变 |

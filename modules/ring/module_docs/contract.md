@@ -91,15 +91,11 @@ consumes:
   - id: nexus-core.activity.suggestions.v1
     contract: ../nexus-core/module_docs/contract.md
     purpose: >
-      计时页「待确认」面板（2026-09-28，`code/frontend/ring-suggestions.js`）：
-      GET /api/core/activity/suggestions?status=pending&limit=200 列出桌面检测程序上传的活动段，
-      每条可改任务后 POST {id}/confirm {taskId}，或 POST {id}/dismiss；「全部确认」只发
-      `suggestion.taskId` 非空且 `confidence ≥ 阈值`（缺省 80%）的条目。用到字段：
-      `items[].{id,startAt,endAt,durationSeconds,app,title,suggestion.taskId,suggestion.confidence}`。
-      **建议不是事实**：确认之后才调 `window.fetchAndRender` 刷新圆环；确认不是计时，
-      **不发** `honeycomb:timer-changed`。GET 404（后端早于 v2.2）→ 面板整块不出现。
-      失败原样显示 `detail`，条目留在列表里。app/title 来自别的机器，只当文本渲染。
-      任务下拉与路径显示读 `views.tree.v1`（zones/projects/tasks 的 id、name、zoneId）。
+      计时页「N 条待确认 → AI助理」小链接（2026-09-30，`code/frontend/ring-suggest-link.js`、`#suggest-link`）：
+      GET /api/core/activity/suggestions?status=pending&limit=1，只用 `total`。0 条、404（后端早于 v2.2）、出错，
+      或网关注入的 `window.HONEYCOMB_NAV` 里没有 `<前缀>assistant/` 页签（没装「AI助理」）→ 链接不出现。
+      打开页面与标签页重新可见时各拉一次，不轮询。**只读**：确认 / 忽略都在「AI助理」页
+      （`modules/assistant`，那里的契约写全了字段）。2026-09-28 至 09-30 这里是完整的「待确认」面板，已整体搬走。
   - id: nexus-core.views.lanes.v1
     contract: ../nexus-core/module_docs/contract.md
     purpose: >
@@ -120,19 +116,7 @@ consumes:
       与顶栏芯片悬停的精简预览（`modules/nginx-docker` 契约「泳道预览」节）同一套配色。
       页面分工（设计意图，仓主 2026-09-30 定）：**计时页（ring）= 现在**——在跑的计时、全部泳道；
       **任务 / 项目页（hive）= 未来**——计划；**新页「AI助理」= 回顾与分析**——聊天、待确认的活动建议、检测程序设置、
-      回顾与分析（该页待建；聊天与待确认面板现住 ring，迁过去另起 PR）。泳道的历史某天视图将来可从「AI助理」链过来，本版不要求。
-  - id: agent.chat.v1
-    contract: ../../../contracts/agent.chat.v1/contract.md
-    purpose: >
-      （v0.3 AI 桥，`code/frontend/ring-chat.js`、HTML 末尾 `#chat-panel`、`ring.css` 末段）计时页的
-      「问问助手」面板，与「待确认」面板上下叠放：上面是待确认的活动建议（不变），下面是和助手聊天
-      （会话下拉 + 新对话 + 删除、消息列表、输入框、发送 / 停止）。只调 `<前缀>api/agent/`，**从不调任何
-      代理运行时（opencode）自己的接口**。用到：`GET health`（非 200 → 聊天整块不出现；
-      `configured:false` → 显示「去 .env 填 AGENT_API_KEY」）、会话的列 / 建 / 读 / 删、
-      `POST messages` 读 SSE（`start`/`delta`/`tool`/`done`/`error`，不认识的事件忽略；
-      `tool` 只显示「正在查：…」）、`cancel`（「停止」按钮）。POST 一律 `Content-Type: application/json`。
-      失败原样显示 `detail`。回答正文**当纯文本渲染**（不插 HTML）——里面可能转述别的机器上来的窗口标题。
-      助手在 v0.3 什么都不写；它提到的活动建议仍由人在上半块点确认。
+      回顾与分析（2026-09-30 已建，`modules/assistant`；聊天与待确认面板已搬过去）。泳道的历史某天视图将来可从「AI助理」链过来，本版不要求。
 ```
 
 ## 对外 API
@@ -177,3 +161,4 @@ consumes:
 | 2026-09-30 | v0.3 人一条线、代理多条线（契约先行） | 新增 consumes `nexus-core.views.lanes.v1`（计时页「泳道」面板：配色、闪烁、连线、轮询、404 隐藏）与 `views.current.v1` 的 `agents[].phase`；前端代码在实现 PR 里跟上 |
 | 2026-09-30 | 仓主定（PR #50） | 泳道从「可折叠面板」改为计时页默认展开的主视图、画全部泳道；配色走 tokens、与顶栏预览一致；写入页面分工设计意图（ring=现在 / hive=未来 / 待建「AI助理」=回顾与分析） |
 | 2026-09-30 | v0.3 泳道前端实现 | `views.lanes.v1` 落地：`ring-lanes.js`（新文件）、HTML `#lanes-panel`（圆环卡下方）、`ring.css` 末段；画图用 nginx-docker 的共享件 `<前缀>__cockpit/lanes.js`（顶栏预览同一份）。缺省最近 3 小时、可切「今天」；标题红绿灯取同一份响应里在跑运行的当前相位（与 `views.current` 的 `agents[].phase` 同源，不另拉）。配色 token `--agent-work`/`--agent-wait` 按 design-tokens v1.2 追加，兜底块同步 |
+| 2026-09-30 | 仓主定新页「AI助理」 | 「问问助手」聊天（`ring-chat.js`、`#chat-panel`）与「待确认」面板（`ring-suggestions.js`、`#suggest-panel`）连同样式、测试原样搬到 `modules/assistant`（行为与承诺由那边的契约接着兑现）；本页**不再 consume `agent.chat.v1`**（装 ring 不再带上聊天后端，装 assistant 才带）；`activity.suggestions.v1` 改为只读个数的小链接「N 条待确认 → AI助理」（0 条、404、没装 AI助理页时不出现） |

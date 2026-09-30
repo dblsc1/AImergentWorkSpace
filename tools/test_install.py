@@ -20,8 +20,8 @@ import install  # noqa: E402
 
 @pytest.fixture()
 def out(tmp_path):
-    # ring consumes agent.chat.v1 → 拉上 agent，agent consumes mcp.tools.v1 → 拉上 mcp（CI 同）
-    plan = install.resolve(["hive", "ring"])
+    # assistant consumes agent.chat.v1 → 拉上 agent，agent consumes mcp.tools.v1 → 拉上 mcp（CI 同）
+    plan = install.resolve(["hive", "ring", "assistant"])
     generate.emit(install.ROOT, plan, tmp_path)
     compose = yaml.safe_load((tmp_path / "docker-compose.yml").read_text(encoding="utf-8"))
     nginx = _render((tmp_path / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8"))
@@ -41,7 +41,7 @@ def _location(nginx: str, head: str) -> str:
 
 def test_plan_resolves_single_file_specs_and_pulls_in_nexus_core(out):
     plan, _, _ = out
-    assert plan["modules"] == ["hive", "ring", "nexus-core", "agent", "mcp"]
+    assert plan["modules"] == ["hive", "ring", "assistant", "nexus-core", "agent", "mcp"]
     assert "contracts.design-tokens.v1" in plan["specs"]
     assert "contracts.timer-ring-visual.v1" in plan["specs"]
 
@@ -49,12 +49,13 @@ def test_plan_resolves_single_file_specs_and_pulls_in_nexus_core(out):
 def test_static_modules_are_mounted_not_run(out):
     _, compose, _ = out
     services = compose["services"]
-    assert "hive" not in services and "ring" not in services, "纯前端不该起容器"
+    assert not {"hive", "ring", "assistant"} & set(services), "纯前端不该起容器"
     assert set(services) == {"nexus-core", "agent", "mcp", "auth", "mongo", "web"}
     volumes = services["web"]["volumes"]
     for mount in (
         "../../modules/hive/code/frontend:/usr/share/nginx/html/hive:ro",
         "../../modules/ring/code/frontend:/usr/share/nginx/html/ring:ro",
+        "../../modules/assistant/code/frontend:/usr/share/nginx/html/assistant:ro",
         "${HONEYCOMB_LOGIN_DIR:-../../contracts/auth.gate.v1/stub/web}:/usr/share/nginx/html/login:ro",
         "../../modules/nginx-docker/static:/usr/share/nginx/html/__cockpit:ro",
     ):
@@ -63,7 +64,7 @@ def test_static_modules_are_mounted_not_run(out):
 
 def test_frontends_are_gated_and_login_is_not(out):
     _, _, nginx = out
-    for prefix in ("/hive/", "/ring/"):
+    for prefix in ("/hive/", "/ring/", "/assistant/"):
         block = _location(nginx, prefix)
         assert "include /etc/nginx/honeycomb/gate.inc;" in block
         assert "include /etc/nginx/honeycomb/inject.inc;" in block, "前端要被注入共享顶栏"
@@ -146,6 +147,21 @@ def test_navbar_tabs_follow_installed_frontends(tmp_path):
     assert """set $honeycomb_nav '{"home":"/","timer":"/ring/","tabs":[{"href":"/ring/","label":"计时"}]}';""" in nginx
 
 
+def test_navbar_three_tabs_same_in_hand_written_and_generated(out):
+    """缺省组装的顶栏：任务、计时、AI助理，手写与生成的两份逐字相同。"""
+    _, _, nginx = out
+    hand = _render((install.ROOT / "deploy" / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8"))
+    nav = """set $honeycomb_nav '{"home":"/hive/","timer":"/ring/","tabs":[{"href":"/hive/","label":"任务"},""" \
+          """{"href":"/ring/","label":"计时"},{"href":"/assistant/","label":"AI助理"}]}';"""
+    assert nav in nginx and nav in hand
+
+
+def test_ring_alone_no_longer_pulls_in_the_chat_backend():
+    """聊天搬去 AI助理页之后，只装 ring 不再带上 agent / mcp；装 assistant 才带。"""
+    assert "agent" not in install.resolve(["ring"])["modules"]
+    assert {"agent", "mcp"} <= set(install.resolve(["assistant"])["modules"])
+
+
 def test_hand_written_gateway_has_the_same_frozen_surface():
     hand = (install.ROOT / "deploy" / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8")
     for needle in (
@@ -171,7 +187,7 @@ def test_auth_accounts_file_lives_in_a_declared_named_volume(out):
 def test_every_public_location_hangs_under_the_base_path(tmp_path):
     """挂子路径（/Cockpit/）时，对外的每一条 location 都在前缀下，转给后端时去掉前缀；
     只有容器健康检查与内部子请求例外。手写与生成的两份都查。"""
-    plan = install.resolve(["hive", "ring", "mcp"])
+    plan = install.resolve(["hive", "ring", "assistant", "mcp"])
     generate.emit(install.ROOT, plan, tmp_path)
     hand = (install.ROOT / "deploy" / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8")
     gen = (tmp_path / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8")

@@ -4,7 +4,7 @@
 
 | 文件 | 作用 |
 |---|---|
-| `web.Dockerfile` | 网关镜像：nginx + 网关模板 + 顶栏 + 登录页 + hive / ring，文件与源码版挂载的是同一批 |
+| `web.Dockerfile` | 网关镜像：nginx + 网关模板 + 顶栏 + 登录页 + hive / ring / assistant，文件与源码版挂载的是同一批 |
 | `auth.Dockerfile` | 占位认证服务镜像（`contracts/auth.gate.v1` 的参考实现） |
 | nexus-core 镜像 | 直接用 `modules/nexus-core/code/backend/Dockerfile` |
 | mcp 镜像 | 直接用 `modules/mcp/code/server/Dockerfile`（v0.3 起，`contracts/mcp.tools.v1`） |

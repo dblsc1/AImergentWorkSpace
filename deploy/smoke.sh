@@ -3,7 +3,7 @@
 #
 #   未登录：/ 跳 /hive/，/hive/ 与 /api/ 跳 /login/，登录页本身能打开，
 #           顶栏计时芯片回降级 JSON（不跳、不泄露）
-#   登录后：API 通；/hive/、/ring/ 两个页面，以及页面里引用的**每一个**资源都是 200；
+#   登录后：API 通；/hive/、/ring/、/assistant/ 三个页面，以及页面里引用的**每一个**资源都是 200；
 #           MCP（/api/mcp/）经网关列得出工具；聊天后端（/api/agent/）health 经网关
 #
 # 用法：deploy/smoke.sh <口令> [基址，缺省 http://127.0.0.1:8800]
@@ -51,6 +51,7 @@ page() {  # 前缀 页面文件：页面 + 它引用的每个资源都得 200
 }
 page "${bp}hive/" modules/hive/code/frontend/index.html
 page "${bp}ring/" modules/ring/code/frontend/project-task-contribution-ring.html
+page "${bp}assistant/" modules/assistant/code/frontend/index.html
 # 网关注入给页面的前缀、页签与顶栏资源都在前缀下
 hive=$(curl -s -b "$jar" "$base${bp}hive/")
 check 1 "$(grep -c "window.HONEYCOMB_BASE=\"$bp\"" <<<"$hive")" "页面拿到站点前缀"

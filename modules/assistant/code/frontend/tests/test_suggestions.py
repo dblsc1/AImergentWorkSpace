@@ -1,4 +1,7 @@
-"""「待确认」面板（ring-suggestions.js，nexus-core v2.2 活动建议）。
+"""「待确认建议」面板（suggestions.js，nexus-core v2.2 活动建议 + v2.5 idle 段）。
+
+2026-09-30 连同本文件从 ring 搬来「AI助理」页：断言照旧，只少了「确认后刷新圆环」（这页没有圆环），
+多了 idle 段的几条。
 
 同本套件其余文件：真浏览器、接口全在浏览器侧桩掉，一个字节都不写库。
 判据只落在行为上：发了什么请求、哪些条目留下、面板在不在、窄屏会不会横滚。
@@ -8,11 +11,11 @@ from __future__ import annotations
 
 import contextlib
 import json
-import re
+from types import SimpleNamespace
 from typing import Any, Iterator
 
 import pytest
-from conftest import CURRENT_IDLE, PAGE_NAME, TREE, RingHarness, _install_stub_routes
+from conftest import TREE, open_page as _open
 from playwright.sync_api import Browser, Route
 
 ITEMS = [
@@ -68,25 +71,12 @@ class SuggestStub:
 
 @contextlib.contextmanager
 def open_page(browser: Browser, base: str, items, *, width: int = 1100,
-              theme: str | None = None) -> Iterator[tuple[RingHarness, SuggestStub]]:
-    context = browser.new_context(viewport={"width": width, "height": 900}, timezone_id="Asia/Shanghai")
-    page = context.new_page()
-    harness = RingHarness(page, CURRENT_IDLE)
-    _install_stub_routes(page, harness)
+              theme: str | None = None) -> Iterator[tuple[SimpleNamespace, SuggestStub]]:
     stub = SuggestStub(items)
-    page.route(re.compile(r"/api/core/activity/suggestions([/?]|$)"), stub.route)
-    events: list[str] = []
-    page.expose_function("__timerChanged", lambda: events.append("x"))
-    page.add_init_script("window.addEventListener('honeycomb:timer-changed', () => window.__timerChanged())")
-    page.goto(f"{base}/{PAGE_NAME}")
-    page.wait_for_selector("#task-select", state="attached")
-    if theme:  # 线上由顶栏 navbar.js 设这个属性；本套件不注入顶栏，直接设
-        page.evaluate(f"document.documentElement.dataset.theme = {theme!r}")
-    stub.timer_events = events  # type: ignore[attr-defined]
-    try:
-        yield harness, stub
-    finally:
-        context.close()
+    init = "window.__timerEvents = 0; window.addEventListener('honeycomb:timer-changed', () => window.__timerEvents++)"
+    with _open(browser, base, routes={r"/api/core/activity/suggestions([/?]|$)": stub.route},
+               width=width, theme=theme, init=init) as page:
+        yield SimpleNamespace(page=page), stub
 
 
 def _ids(page) -> list[str]:
@@ -115,19 +105,17 @@ def test_lists_items_with_path_confidence_and_safe_text(browser, static_base_url
         assert page.is_hidden("#suggest-empty")
 
 
-def test_confirm_sends_chosen_task_and_refreshes_ring_without_timer_event(browser, static_base_url):
+def test_confirm_sends_chosen_task_without_timer_event(browser, static_base_url):
     with open_page(browser, static_base_url, ITEMS) as (h, stub):
         page = h.page
         page.wait_for_selector("#suggest-list li")
-        polls = h.current_polls
         page.locator('li[data-id="sug_b"] select').select_option("t_legacy")
         page.locator('li[data-id="sug_b"] .suggest-confirm').click()
         page.wait_for_function("() => !document.querySelector('li[data-id=\"sug_b\"]')")
         assert stub.posts == [("confirm", "sug_b", {"taskId": "t_legacy"})]
         assert _ids(page) == ["sug_a", "sug_c"]
         page.wait_for_timeout(300)
-        assert h.current_polls > polls  # 圆环刷新了
-        assert stub.timer_events == []  # 确认不是计时，不叫顶栏
+        assert page.evaluate("window.__timerEvents") == 0  # 确认不是计时，不叫顶栏
 
 
 def test_dismiss(browser, static_base_url):
@@ -223,7 +211,7 @@ def test_narrow_no_horizontal_scroll(browser, static_base_url, width, theme):
 def test_pure_helpers(browser, static_base_url):
     with open_page(browser, static_base_url, []) as (h, _stub):
         r = h.page.evaluate("""() => {
-          const S = window.ringSuggestions;
+          const S = window.assistantSuggestions;
           const tree = %s;
           return {
             path: S.taskPath(tree, 't_read'), gone: S.taskPath(tree, 't_nope'), none: S.taskPath(tree, null),
@@ -240,3 +228,39 @@ def test_pure_helpers(browser, static_base_url):
         }""" % json.dumps(TREE, ensure_ascii=False))
         assert r == {"path": "练琴区 / 吉他练习 / 曲目视奏", "gone": None, "none": None, "elig": ["a"],
                      "eligTree": ["a"]}
+
+
+IDLE = {"id": "sug_idle", "deviceId": "dev_x", "startAt": "2026-09-26T13:00:00+08:00",
+        "endAt": "2026-09-26T13:40:00+08:00", "durationSeconds": 2400, "app": "SumatraPDF", "title": "论文.pdf",
+        "suggestion": {"taskId": "t_read", "confidence": 0.3, "reason": "无操作，可能在阅读", "classifier": "rules"},
+        "idle": True, "status": "pending"}
+
+
+def test_idle_item_is_marked_and_never_bulk_confirmed(browser, static_base_url):
+    with open_page(browser, static_base_url, [IDLE] + ITEMS) as (h, stub):
+        page = h.page
+        page.wait_for_selector("#suggest-list li")
+        li = page.locator('li[data-id="sug_idle"]')
+        assert "is-idle" in li.get_attribute("class")
+        assert li.locator(".suggest-badge").inner_text() == "无操作·可能在阅读"
+        assert "把握 30%" in li.inner_text()
+        # 别的条目没有徽标
+        assert page.locator('li[data-id="sug_a"] .suggest-badge').count() == 0
+        page.fill("#suggest-threshold", "0")
+        assert page.locator("#suggest-confirm-all").inner_text().endswith("· 2")   # sug_a、sug_b，不含 idle
+        page.click("#suggest-confirm-all")
+        page.wait_for_function("() => document.querySelectorAll('#suggest-list li').length === 2")
+        assert [i for _, i, _ in stub.posts] == ["sug_a", "sug_b"]
+        # 逐条确认照常可以
+        page.locator('li[data-id="sug_idle"] .suggest-confirm').click()
+        page.wait_for_function("() => !document.querySelector('li[data-id=\"sug_idle\"]')")
+        assert stub.posts[-1] == ("confirm", "sug_idle", {"taskId": "t_read"})
+
+
+def test_eligible_skips_idle(browser, static_base_url):
+    with open_page(browser, static_base_url, []) as (h, _stub):
+        r = h.page.evaluate("""() => window.assistantSuggestions.eligible([
+            {id: 'a', suggestion: {taskId: 't', confidence: 0.9}},
+            {id: 'b', idle: true, suggestion: {taskId: 't', confidence: 0.9}},
+            {id: 'c', idle: false, suggestion: {taskId: 't', confidence: 0.9}}], 0).map(i => i.id)""")
+        assert r == ["a", "c"]

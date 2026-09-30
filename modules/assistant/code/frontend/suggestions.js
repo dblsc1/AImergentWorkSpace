@@ -1,14 +1,13 @@
 /**
- * ring-suggestions.js —— 「待确认」面板（nexus-core 契约 v2.2「活动建议」）
+ * suggestions.js —— 「待确认建议」面板（nexus-core 契约 v2.2「活动建议」，v2.5 的 idle 段）
  *
  * 桌面检测程序（ai-detector）看见「11:05–12:07 在 VS Code 里」就上传一条建议，但**建议不是事实**：
- * 它不进任何统计，直到人在这里点「确认」。确认 = 后端经补登同一条路径写一条 session.completed，
- * 所以确认完刷新圆环（window.fetchAndRender），让「今天」立刻算上这段。
+ * 它不进任何统计，直到人在这里点「确认」。确认 = 后端经补登同一条路径写一条 session.completed。
+ * （2026-09-30 从计时页搬来「AI助理」页；计时页只留一个「N 条待确认 → AI助理」的链接。）
  *
- * 依赖（跨文件只走 window.*，同 ring-rename.js）：
- *   window.postCore       ← ring-controls.js（从不 throw、detail 原样透传）
- *   window.fetchAndRender ← ring-instrument.js（确认后刷新圆环）
- * 对外只挂 window.ringSuggestions（纯函数，给单测用）。
+ * - idle 段（v2.5：前台没换、但无操作）单独标「无操作·可能在阅读」，**永远不进「全部确认」**——
+ *   契约说由人决定算不算；它的把握本来就 ≤ 0.3。
+ * 对外只挂 window.assistantSuggestions（纯函数，给单测用）。
  *
  * - 端点 404（后端早于 v2.2）→ 整块不出现，不报错。
  * - **不发 honeycomb:timer-changed**：确认不是开始/停止计时，顶栏芯片只关心在跑的那段
@@ -56,15 +55,16 @@
 
   // 「全部确认」只动有建议任务、且把握够的（契约：没有 taskId 的必须人挑）。
   // 给了 tree 时建议的任务还得在树里——被删的任务确认必 404，该由人重挑。
+  // idle 段（无操作）一律人挑，不管阈值调多低。
   function eligible(items, threshold, tree) {
     return (items || []).filter(function (it) {
       var s = it.suggestion || {};
-      return Boolean(s.taskId) && typeof s.confidence === "number" && s.confidence >= threshold &&
+      return !it.idle && Boolean(s.taskId) && typeof s.confidence === "number" && s.confidence >= threshold &&
         (!tree || taskPath(tree, s.taskId) !== null);
     });
   }
 
-  window.ringSuggestions = { formatRange: formatRange, taskPath: taskPath, eligible: eligible };
+  window.assistantSuggestions = { formatRange: formatRange, taskPath: taskPath, eligible: eligible };
 
   // ── DOM ─────────────────────────────────────────────────────────────
   var panelEl = document.getElementById("suggest-panel");
@@ -82,6 +82,22 @@
   var tree = null;
   var chosen = {}; // id → 人在下拉里改过的 taskId（重绘时保留）
   var busy = false;
+
+  // 同计时页的 postCore：从不 throw，失败时 detail 原样透传。
+  async function post(url, body) {
+    var init = { method: "POST" };
+    if (body !== undefined) {
+      init.headers = { "Content-Type": "application/json" };
+      init.body = JSON.stringify(body);
+    }
+    var res;
+    try { res = await fetch(url, init); } catch (err) {
+      return { ok: false, message: "网络请求失败：" + ((err && err.message) || String(err)) };
+    }
+    var payload = await res.json().catch(function () { return null; });
+    if (res.ok) return { ok: true, data: payload };
+    return { ok: false, message: (payload && payload.detail) ? payload.detail : "请求失败（HTTP " + res.status + "）" };
+  }
 
   function showMessage(text, isError) {
     msgEl.textContent = text;
@@ -125,10 +141,11 @@
   }
 
   function renderItem(item) {
-    var li = el("li", "suggest-item");
+    var li = el("li", "suggest-item" + (item.idle ? " is-idle" : ""));
     li.dataset.id = item.id;
     var head = el("div", "suggest-head");
     head.appendChild(el("span", "suggest-range mono", formatRange(item.startAt, item.endAt)));
+    if (item.idle) head.appendChild(el("span", "suggest-badge", "无操作·可能在阅读"));
     head.appendChild(el("span", "suggest-dur mono", formatMinutes(item.durationSeconds)));
     li.appendChild(head);
     li.appendChild(el("p", "suggest-what", item.app + (item.title ? " · " + item.title : "")));
@@ -187,7 +204,7 @@
     try {
       res = await fetch(API + "?status=pending&limit=200");
     } catch (err) {
-      return; // 网络抖一下不值得在计时台上报错，下次可见时再拉
+      return; // 网络抖一下不值得在页面上报错，下次可见时再拉
     }
     if (mine !== loadSeq) return;
     if (res.status === 404) { panelEl.hidden = true; return; } // 后端早于 v2.2：整块不出现
@@ -210,16 +227,15 @@
     busy = true;
     syncButtons();
     showMessage("", false);
-    var done = 0, confirmed = 0, errors = [];
+    var done = 0, errors = [];
     try {
       for (var i = 0; i < targets.length; i++) {
         var it = targets[i];
         var suggested = (it.suggestion || {}).taskId;
         var body = action === "confirm" ? { taskId: selectedTask(it.id) || suggested } : undefined;
-        var r = await window.postCore(API + "/" + encodeURIComponent(it.id) + "/" + action, body);
+        var r = await post(API + "/" + encodeURIComponent(it.id) + "/" + action, body);
         if (r.ok) {
           done += 1;
-          if (action === "confirm") confirmed += 1;
           delete chosen[it.id];
         } else {
           errors.push(r.message);
@@ -232,7 +248,6 @@
     syncButtons(); // load() 失败时不重绘，按钮不能停在禁用
     if (errors.length) showMessage(errors[0] + (errors.length > 1 ? "（另有 " + (errors.length - 1) + " 条失败）" : ""), true);
     else if (bulk) showMessage("已确认 " + done + " 条。", false);
-    if (confirmed && window.fetchAndRender) window.fetchAndRender(); // 今天的圆环算上这段
   }
 
   thresholdEl.addEventListener("input", syncButtons);
