@@ -261,3 +261,43 @@ def read_lanes(user: str, kind: str, start, end, limit: int) -> list[dict]:
 def clear_lanes() -> None:
     """重建专用，同 ``clear_daily_stats``。"""
     _lanes_col().delete_many({})
+
+
+def lanes_empty() -> bool:
+    return _lanes_col().find_one({}, {"_id": 1}) is None
+
+
+# ------------------------------------------------ 启动期一次性任务的锁与进度标记（v2.4：proj_lanes 自动补建）
+#
+# 锁：多个实例同时启动时只让一个去做；带持有者令牌，只删自己的；过了 ``stale`` 可被接管。
+# 补建本身幂等（唯一约束），锁只省重复劳动，不承担正确性（ponytail: 不续租，超时后可能两个
+# 实例同时重放——结果一样，只是多做一遍）。
+# 进度标记 ``<name>:pending``：重放前写、成功后删；崩在半路留下它，下次启动即使集合已非空也接着补。
+
+_LOCKS_COLLECTION = "_startup_locks"
+
+
+def acquire_startup_lock(name: str, owner: str, now, stale) -> bool:
+    try:
+        get_db()[_LOCKS_COLLECTION].find_one_and_update(
+            {"_id": name, "at": {"$lt": now - stale}}, {"$set": {"at": now, "owner": owner}}, upsert=True,
+        )
+    except DuplicateKeyError:
+        return False  # 锁在且没过期：别的实例正在做
+    return True
+
+
+def release_startup_lock(name: str, owner: str) -> None:
+    get_db()[_LOCKS_COLLECTION].delete_one({"_id": name, "owner": owner})
+
+
+def set_pending(name: str, pending: bool) -> None:
+    col = get_db()[_LOCKS_COLLECTION]
+    if pending:
+        col.update_one({"_id": f"{name}:pending"}, {"$set": {"pending": True}}, upsert=True)
+    else:
+        col.delete_one({"_id": f"{name}:pending"})
+
+
+def is_pending(name: str) -> bool:
+    return get_db()[_LOCKS_COLLECTION].find_one({"_id": f"{name}:pending"}) is not None
