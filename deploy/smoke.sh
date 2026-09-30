@@ -68,7 +68,7 @@ if [ "${HONEYCOMB_SMOKE_MCP:-1}" = 1 ]; then
 print(len(t), all(x["annotations"]["readOnlyHint"] for x in t))')" "MCP tools/list 经网关"
   # 聊天后端（agent.chat.v1）：过门；没填 AGENT_API_KEY 的缺省组装 configured=false（页面提示去填）
   check "${bp}login/" "$(location "$base${bp}api/agent/health")" "未登录聊天后端跳登录页"
-  check '{"status":"ok","configured":false}' "$(curl -s -b "$jar" "$base${bp}api/agent/health")" "聊天后端 health 经网关"
+  check '{"status":"ok","configured":false,"debug":false}' "$(curl -s -b "$jar" "$base${bp}api/agent/health")" "聊天后端 health 经网关"
 fi
 
 [ "$fail" = 0 ] && echo "✅ 全部通过" || echo "❌ 有失败项"
