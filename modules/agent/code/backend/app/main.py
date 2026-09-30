@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from starlette.background import BackgroundTask
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import config
+from . import config, debug
 from .runtime import ERROR_TEXT, RuntimeManager, RuntimeUnavailable, Translator
 from .store import ID_RE, Store, new_id
 
@@ -59,9 +59,13 @@ class Gen:
 def create_app(settings: config.Settings | None = None, manager=None) -> FastAPI:
     s = settings or config.load()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)   # 它的 INFO 行带完整地址（上游、opencode 会话号），不记
     store = Store(s.data_dir)
     mgr = manager or RuntimeManager(s)
     gens: dict[tuple[str, str], Gen] = {}
+    rec = getattr(mgr, "debug", None)        # 调试窗口（第九节）；None = 没开
+    if rec is None:
+        debug.wipe(s.data_dir)
 
     @contextlib.asynccontextmanager
     async def lifespan(app):
@@ -137,7 +141,7 @@ def create_app(settings: config.Settings | None = None, manager=None) -> FastAPI
     # ── 端点 ──
     @app.get("/api/agent/health")
     async def health():
-        return {"status": "ok", "configured": s.configured}
+        return {"status": "ok", "configured": s.configured, "debug": rec is not None}
 
     @app.get("/api/agent/sessions")
     async def list_sessions(req: Request):
@@ -164,6 +168,16 @@ def create_app(settings: config.Settings | None = None, manager=None) -> FastAPI
         msgs = store.messages(t, sid, limit)
         truncated = sess.get("count", 0) > limit or sess.get("dropped", 0) > 0
         return {"session": public(t, sess), "messages": msgs, "truncated": truncated}
+
+    @app.get("/api/agent/sessions/{sid}/debug")
+    async def get_debug(req: Request, sid: str, messageId: str | None = None):
+        if rec is None:
+            raise HTTPException(404, "调试没开：.env 里设 AGENT_DEBUG=1 后重启")
+        t = tenant_of(req)
+        session_of(t, sid)
+        if messageId is not None and not re.fullmatch(ID_RE, messageId):
+            raise HTTPException(422, "messageId 格式不对")
+        return {"turns": rec.read(t, sid, messageId)}
 
     @app.delete("/api/agent/sessions/{sid}", status_code=204)
     async def delete_session(req: Request, sid: str):
@@ -248,6 +262,8 @@ def create_app(settings: config.Settings | None = None, manager=None) -> FastAPI
         g.oc_id, g.rt = oc_id, rt
         user_mid, mid, cid = new_id("msg_"), new_id("msg_"), "c_" + secrets.token_hex(8)
         store.add_message(t, sid, user_mid, "user", text)
+        if rec:
+            rec.begin(t, oc_id, sid, mid, user_mid)
 
         async def stream():
             finished = False
@@ -344,6 +360,8 @@ def create_app(settings: config.Settings | None = None, manager=None) -> FastAPI
             if answer:
                 store.add_message(t, sid, mid, "assistant", answer)
             gens.pop(key, None)
+            if rec:
+                rec.end(t, oc_id)
             mgr.release(rt)
 
         # background 在响应结束后总会跑，包括「流还没开始客户端就断了」——那时生成器一行没执行、

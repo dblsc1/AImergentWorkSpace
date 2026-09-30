@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import secrets
+import shutil
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
@@ -89,6 +90,7 @@ class Store:
         if s:
             (self._dir(tenant) / f"{sid}.json").unlink(missing_ok=True)
             (self._dir(tenant) / f"{sid}.jsonl").unlink(missing_ok=True)
+            shutil.rmtree(tenant_dir(self.data_dir, tenant) / "debug" / sid, ignore_errors=True)   # 调试记录（debug.py）
         return s
 
     def add_message(self, tenant: str, sid: str, mid: str, role: str, text: str) -> None:

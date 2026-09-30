@@ -185,6 +185,8 @@ services:
       AGENT_MAX_RUNTIMES: ${AGENT_MAX_RUNTIMES:-4}
       # 一轮回答的总时限（秒），到点中止
       AGENT_MAX_TURN_SECONDS: ${AGENT_MAX_TURN_SECONDS:-300}
+      # 调试窗口：=1 时录下每轮发给模型 / 模型回来的原文，面板里每条回答下多一个「调试」。只在自己机器上调试时开
+      AGENT_DEBUG: ${AGENT_DEBUG:-0}
       NEXUS_TENANT_STRICT: ${NEXUS_TENANT_STRICT:-0}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8030/api/agent/health').status==200 else 1)"]

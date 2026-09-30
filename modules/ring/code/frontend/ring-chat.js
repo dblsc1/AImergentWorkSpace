@@ -8,6 +8,8 @@
  * - configured:false → 面板在，但说明「去 .env 填 AGENT_API_KEY」，输入框禁用。
  * - 模型输出、会话标题、错误 detail 一律 textContent，不进 innerHTML。
  * - 不认识的 SSE 事件一律忽略（契约 v1 之内可以追加事件）。
+ * - health.debug 为真（.env 设了 AGENT_DEBUG=1，契约第九节）：每条回答下面多一个折叠的「调试」，
+ *   点开才去取这一轮发给模型的原始请求与模型的原始应答，同样只当文本显示。
  * 对外只挂 window.ringChat（纯函数，给单测用）。
  */
 (function () {
@@ -41,7 +43,42 @@
     return pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) + " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + " 的对话";
   }
 
-  window.ringChat = { parseSSE: parseSSE, sessionLabel: sessionLabel };
+  function pretty(v) { return typeof v === "string" ? v : JSON.stringify(v, null, 2); }
+
+  // 一次模型请求 → 要显示的几块：[标题, 内容文本, 是否默认展开]。纯函数，单测直接喂。
+  function debugSections(r) {
+    var q = r.request, out = [];
+    if (!q || typeof q !== "object" || Array.isArray(q) || q.truncated) {
+      out.push(["请求（原文" + (q && q.truncated ? "，太大已截断" : "") + "）", pretty(q && q.truncated ? q.head : q), false]);
+    } else {
+      var msgs = Array.isArray(q.messages) ? q.messages : [];
+      var sys = msgs.filter(function (m) { return m && m.role === "system"; });
+      var rest = msgs.filter(function (m) { return !m || m.role !== "system"; });
+      var params = {};
+      Object.keys(q).forEach(function (k) { if (k !== "messages" && k !== "tools") params[k] = q[k]; });
+      out.push(["系统提示", sys.map(function (m) { return pretty(m.content); }).join("\n\n") || "（没有）", false]);
+      out.push(["消息（" + rest.length + " 条）", pretty(rest), false]);
+      out.push(["工具（" + (Array.isArray(q.tools) ? q.tools.length : 0) + " 个）", pretty(q.tools || []), false]);
+      out.push(["参数", pretty(params), false]);
+    }
+    var a = r.response || {}, lines = [];
+    if (a.truncated) {
+      lines.push("（应答太大，只留了开头）\n" + pretty(a.head));
+    } else if (a.stream) {
+      if (a.reasoning) lines.push("【思考】\n" + a.reasoning);
+      if (a.content) lines.push("【正文】\n" + a.content);
+      if (a.toolCalls && a.toolCalls.length) lines.push("【工具调用】\n" + pretty(a.toolCalls));
+      lines.push("【结束原因】" + (a.finishReason || "（无）") + "　【分块】" + a.chunks +
+        (a.captureTruncated ? "　（应答太长，后面的没录）" : ""));
+      if (a.usage) lines.push("【用量】\n" + pretty(a.usage));
+    } else {
+      lines.push(pretty(a.body));
+    }
+    out.push(["应答", lines.join("\n\n"), true]);
+    return out;
+  }
+
+  window.ringChat = { parseSSE: parseSSE, sessionLabel: sessionLabel, debugSections: debugSections };
 
   // ── DOM ─────────────────────────────────────────────────────────────
   var panelEl = document.getElementById("chat-panel");
@@ -58,6 +95,7 @@
   if (!panelEl || !formEl) return;
 
   var configured = false;
+  var debugOn = false;
   var current = null;      // 当前会话 id
   var generating = false;
 
@@ -99,6 +137,52 @@
     return p;
   }
 
+  // 「调试」折叠块：放在 after 后面；第一次点开才取
+  function debugToggle(after, sid, mid) {
+    var box = document.createElement("details");
+    box.className = "chat-debug";
+    var sum = document.createElement("summary");
+    sum.textContent = "调试";
+    box.appendChild(sum);
+    var loaded = false;
+    box.addEventListener("toggle", function () {
+      if (!box.open || loaded) return;
+      loaded = true;
+      var note = document.createElement("p");
+      note.className = "chat-note";
+      note.textContent = "读取中…";
+      box.appendChild(note);
+      call("GET", "sessions/" + encodeURIComponent(sid) + "/debug?messageId=" + encodeURIComponent(mid)).then(function (body) {
+        var turn = (body.turns || [])[0];
+        if (!turn || !turn.requests.length) {
+          note.textContent = turn ? "这一轮没有发出模型请求。" : "这一轮没有调试记录（开调试之前的对话，或已超出最近 20 轮）。";
+          return;
+        }
+        note.textContent = "这一轮一共请求了模型 " + turn.requests.length + " 次" +
+          (turn.omitted ? "（另有 " + turn.omitted + " 次太大没存）" : "") + "。";
+        turn.requests.forEach(function (r) {
+          var h = document.createElement("p");
+          h.className = "chat-debug-head";
+          h.textContent = "请求 #" + r.n + " · HTTP " + r.status + " · " + r.ms + " 毫秒" + (r.aborted ? " · 中途断开" : "");
+          box.appendChild(h);
+          debugSections(r).forEach(function (sec) {
+            var d = document.createElement("details");
+            d.open = sec[2];
+            var s = document.createElement("summary");
+            s.textContent = sec[0];
+            var pre = document.createElement("pre");
+            pre.textContent = sec[1];
+            d.appendChild(s);
+            d.appendChild(pre);
+            box.appendChild(d);
+          });
+        });
+      }).catch(function (err) { loaded = false; note.textContent = err.message; });
+    });
+    after.after(box);
+    return box;
+  }
+
   async function loadSessions(selectId) {
     var body = await call("GET", "sessions");
     var items = body.items || [];
@@ -117,7 +201,10 @@
     sync();
     if (!current) return;
     var body = await call("GET", "sessions/" + encodeURIComponent(current));
-    body.messages.forEach(function (m) { bubble(m.role, m.text); });
+    body.messages.forEach(function (m) {
+      var p = bubble(m.role, m.text);
+      if (debugOn && m.role === "assistant") debugToggle(p, current, m.id);
+    });
   }
 
   async function send(text) {
@@ -128,7 +215,7 @@
     }
     generating = true;
     sync();
-    var sid = current, answer = null, ended = false;
+    var sid = current, answer = null, ended = false, mid = null, userEl = null;
     try {
       var res = await fetch(API + "sessions/" + encodeURIComponent(sid) + "/messages", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: text }),
@@ -138,7 +225,7 @@
         throw new Error((j && typeof j.detail === "string") ? j.detail : "发送失败（HTTP " + res.status + "）");
       }
       inputEl.value = "";
-      bubble("user", text);
+      userEl = bubble("user", text);
       var reader = res.body.getReader(), dec = new TextDecoder(), buf = "";
       for (;;) {
         var chunk = await reader.read();
@@ -147,7 +234,9 @@
         buf = parsed.rest;
         parsed.events.forEach(function (ev) {
           var d = ev.data || {};
-          if (ev.type === "delta") {
+          if (ev.type === "start") {
+            mid = d.messageId;
+          } else if (ev.type === "delta") {
             if (!answer) answer = bubble("assistant", "");
             answer.textContent += d.text || "";
             logEl.scrollTop = logEl.scrollHeight;
@@ -164,6 +253,7 @@
         });
       }
       if (!ended) showMessage("连接断了，已收到的部分已保存。", true);
+      if (debugOn && mid) debugToggle(answer || userEl, sid, mid);   // 出错、没正文的一轮也能看
     } catch (err) {
       showMessage(err.message, true);
     } finally {
@@ -217,6 +307,7 @@
     }
     if (!health || health.status !== "ok") return;   // 没装聊天后端：整块不出现
     configured = health.configured === true;
+    debugOn = health.debug === true;
     panelEl.hidden = false;
     if (!configured) showMessage("还没配模型：在 .env 里填 AGENT_API_KEY（换模型再填 AGENT_MODEL），重启 HoneyComb。", false);
     sync();

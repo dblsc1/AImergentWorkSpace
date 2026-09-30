@@ -47,6 +47,7 @@ class Settings:
     opencode_bin: str
     idle_seconds: int
     max_turn_seconds: int = 300
+    debug: bool = False      # AGENT_DEBUG=1：录下发给模型 / 模型回来的原文（debug.py）
 
     @property
     def configured(self) -> bool:
@@ -99,17 +100,21 @@ def load() -> Settings:
         idle_seconds=_int("AGENT_IDLE_SECONDS", 15 * 60),
         # 一轮回答的总时限：上游卡住也不能一直占着名额（到点中止，回 error/超时）
         max_turn_seconds=_int("AGENT_MAX_TURN_SECONDS", 300),
+        debug=e("AGENT_DEBUG", "").strip() == "1",
     )
 
 
-def opencode_config(s: Settings, with_tenant_header: bool) -> dict:
-    """agent.chat.v1 第七节「怎么映射进 opencode 的配置」。密钥与端点只以 {env:…} 出现，值不进配置文本。"""
+def opencode_config(s: Settings, with_tenant_header: bool, debug_proxy: bool = False) -> dict:
+    """agent.chat.v1 第七节「怎么映射进 opencode 的配置」。密钥与端点只以 {env:…} 出现，值不进配置文本。
+    debug_proxy：调试开着时 baseURL 改指本容器里的录制代理（第九节），它再转给真上游。"""
     p, _, m = s.model.partition("/")
     # 模型总是显式登记：opencode 自带目录里没有的模型 id（如 2026-09 的 deepseek-chat）也能用。
     prov: dict = {"models": {m: {"name": m}}, "options": {}}
     if s.base_url:
         prov.update(npm="@ai-sdk/openai-compatible", name=p)
         prov["options"]["baseURL"] = "{env:AGENT_BASE_URL}"
+    if debug_proxy:
+        prov["options"]["baseURL"] = "{env:HC_DEBUG_BASE_URL}"
     if s.api_key:
         prov["options"]["apiKey"] = "{env:AGENT_API_KEY}"
     mcp: dict = {"type": "remote", "url": s.mcp_url, "enabled": True}

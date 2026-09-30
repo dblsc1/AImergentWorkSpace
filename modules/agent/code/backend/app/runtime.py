@@ -21,7 +21,7 @@ from pathlib import Path
 
 import httpx
 
-from . import config
+from . import config, debug
 from .store import tenant_dir
 
 log = logging.getLogger("agent")
@@ -135,6 +135,10 @@ class RuntimeManager:
         self.runtimes: dict[str, Runtime] = {}
         self.lock = asyncio.Lock()
         self._reaper: asyncio.Task | None = None
+        up = debug.upstream_of(s)
+        self.debug = debug.Recorder(s, up) if up else None
+        if s.debug and not up:
+            log.warning("AGENT_DEBUG ignored: not configured, or provider has no known upstream (set AGENT_BASE_URL)")
 
     def start_reaper(self) -> None:
         self._reaper = asyncio.create_task(self._reap_loop())
@@ -214,7 +218,7 @@ class RuntimeManager:
             "HOME": str(home),
             "XDG_DATA_HOME": str(home / "data"), "XDG_CONFIG_HOME": str(home / "config"),
             "XDG_CACHE_HOME": str(home / "cache"), "XDG_STATE_HOME": str(home / "state"),
-            "OPENCODE_CONFIG_CONTENT": json.dumps(config.opencode_config(self.s, not local)),
+            "OPENCODE_CONFIG_CONTENT": json.dumps(config.opencode_config(self.s, not local, bool(self.debug))),
             "OPENCODE_SERVER_PASSWORD": password,
             **OPENCODE_FLAGS,
         }
@@ -224,6 +228,9 @@ class RuntimeManager:
             env["AGENT_BASE_URL"] = self.s.base_url
         if not local:
             env["HC_TENANT"] = tenant
+        if self.debug:
+            await self.debug.start()
+            env["HC_DEBUG_BASE_URL"] = self.debug.base_for(tenant)
         try:
             proc = await asyncio.create_subprocess_exec(
                 self.s.opencode_bin, "serve", "--hostname", "127.0.0.1", "--port", "0",
@@ -284,6 +291,8 @@ class RuntimeManager:
         for rt in list(self.runtimes.values()):
             await rt.stop()
         self.runtimes.clear()
+        if self.debug:
+            await self.debug.stop()
 
 
 async def _drain(stream: asyncio.StreamReader) -> None:

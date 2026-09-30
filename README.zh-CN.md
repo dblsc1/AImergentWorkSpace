@@ -165,6 +165,8 @@ docker compose up -d
 什么都不写、不跑命令、不上网。用之前在 `.env` 里填 `AGENT_API_KEY`（缺省模型 `deepseek/deepseek-flash`），
 再 `docker compose up -d`；不填，面板会提示你去填，别的功能不受影响。换模型、接本机 Ollama 或内网里的 OpenAI 兼容服务，
 见 `deploy/.env.example` 的「AI 助手」一节。接口是 `contracts/agent.chat.v1`，缺省实现（opencode）在 `modules/agent/`。
+想看它每一轮到底发了什么给模型、模型回了什么：`.env` 设 `AGENT_DEBUG=1` 重启，每条回答下面多一个「调试」。
+那些记录就是你的数据（完整提示与工具结果）——**只在自己机器上调试时开**，用完改回 `0`。
 
 ### 挂在子路径下
 

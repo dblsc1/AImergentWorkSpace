@@ -38,6 +38,7 @@ class ChatStub:
         self.reply: str | tuple[int, dict] = REPLY
         self.hold: list[Route] = []   # hold_reply=True 时发消息的请求先挂着，测试自己决定何时回
         self.hold_reply = False
+        self.debug: list[dict] = []
 
     def route(self, route: Route) -> None:
         req = route.request
@@ -60,8 +61,11 @@ class ChatStub:
             self.sessions.insert(0, s)
             self.messages[s["id"]] = []
             return j(201, s)
-        m = re.fullmatch(r"sessions/([^/]+)(?:/(messages|cancel))?", path)
+        m = re.fullmatch(r"sessions/([^/]+)(?:/(messages|cancel|debug))?", path)
         sid, action = m.group(1), m.group(2)
+        if action == "debug":
+            mid = req.url.split("messageId=", 1)[1] if "messageId=" in req.url else None
+            return j(200, {"turns": [t for t in self.debug if mid in (None, t["messageId"])]})
         if action == "messages":
             if self.hold_reply:
                 self.hold.append(route)
@@ -233,3 +237,92 @@ def test_parse_sse(browser, static_base_url):
         assert r["a"] == [{"type": "delta", "data": {"text": "a"}}] and r["rest"] == "event: del"
         assert r["b"] == [{"type": "delta", "data": {"text": "b"}}] and r["bRest"] == ""
         assert r["c"] == [{"type": "delta", "data": {"text": "c"}}]
+
+
+LONG = "很长的一行" * 200
+DEBUG_TURN = {"messageId": "m_a", "userMessageId": "m_u", "startedAt": "…", "omitted": 0, "requests": [
+    {"n": 1, "status": 200, "ms": 812, "aborted": False, "path": "/chat/completions",
+     "request": {"model": "deepseek-flash", "stream": True, "messages": [
+         {"role": "system", "content": "你是 HoneyComb 的时间助手。<b>x</b>" + LONG},
+         {"role": "user", "content": "这周？"}],
+         "tools": [{"type": "function", "function": {"name": "honeycomb_get_task_tree"}}]},
+     "response": {"stream": True, "content": "", "reasoning": "先查任务树", "finishReason": "tool_calls", "chunks": 4,
+                  "toolCalls": [{"id": "c1", "name": "honeycomb_get_task_tree", "arguments": "{}"}],
+                  "usage": {"prompt_tokens": 900, "completion_tokens": 12}}},
+    {"n": 2, "status": 200, "ms": 400, "aborted": False, "path": "/chat/completions",
+     "request": {"model": "deepseek-flash", "messages": [{"role": "tool", "content": "[任务树 JSON]"}]},
+     "response": {"stream": True, "content": "这周 <b>吉他</b> 最多。", "reasoning": None, "finishReason": "stop",
+                  "chunks": 3, "toolCalls": [], "usage": None}}]}
+
+
+def test_debug_toggle_hidden_when_off(browser, static_base_url):
+    stub = ChatStub(sessions=list(SESSIONS))
+    stub.messages["ses_old"] = [{"id": "m_a", "role": "assistant", "text": "hi", "createdAt": "…"}]
+    with open_page(browser, static_base_url, stub) as h:
+        h.page.wait_for_selector(".chat-assistant")
+        h.page.fill("#chat-input", "q")
+        h.page.press("#chat-input", "Enter")
+        h.page.wait_for_function("document.querySelectorAll('.chat-assistant').length === 2")
+        h.page.wait_for_function("!document.querySelector('#chat-send').hidden")
+        assert h.page.locator(".chat-debug").count() == 0
+        assert not [c for c in stub.calls if c[1].endswith("/debug")]
+
+
+@pytest.mark.parametrize("width", [320, 390])
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_debug_toggle_shows_raw_io(browser, static_base_url, width, theme):
+    stub = ChatStub(health={"status": "ok", "configured": True, "debug": True}, sessions=list(SESSIONS))
+    stub.messages["ses_old"] = [{"id": "m_u", "role": "user", "text": "这周？", "createdAt": "…"},
+                                {"id": "m_a", "role": "assistant", "text": "这周 <b>吉他</b> 最多。", "createdAt": "…"}]
+    stub.debug = [DEBUG_TURN]
+    with open_page(browser, static_base_url, stub, width=width, theme=theme) as h:
+        page = h.page
+        page.wait_for_selector(".chat-debug")
+        assert page.inner_text(".chat-debug > summary") == "调试"
+        assert not [c for c in stub.calls if c[1].endswith("/debug")]       # 点开才取
+        page.click(".chat-debug > summary")
+        page.wait_for_selector(".chat-debug-head")
+        assert ("GET", "sessions/ses_old/debug", None, None) in stub.calls
+        heads = page.locator(".chat-debug-head").all_inner_texts()
+        assert heads == ["请求 #1 · HTTP 200 · 812 毫秒", "请求 #2 · HTTP 200 · 400 毫秒"]
+        titles = page.locator(".chat-debug details > summary").all_inner_texts()
+        assert titles[:5] == ["系统提示", "消息（1 条）", "工具（1 个）", "参数", "应答"]
+        # 只有「应答」默认展开；展开系统提示看到原文（<b> 只当文本）
+        resp = page.locator(".chat-debug details").nth(4)
+        assert resp.get_attribute("open") is not None
+        assert "【思考】\n先查任务树" in resp.inner_text() and "honeycomb_get_task_tree" in resp.inner_text()
+        assert "【结束原因】tool_calls" in resp.inner_text()
+        page.locator(".chat-debug details > summary").first.click()
+        assert page.locator(".chat-debug pre").first.inner_text().startswith("你是 HoneyComb 的时间助手。<b>x</b>")
+        assert page.locator(".chat-debug b").count() == 0
+        # 长行在 pre 里自己横滚，整页不横滚
+        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+        overflow = page.evaluate(
+            "() => [...document.querySelectorAll('#chat-panel, #chat-panel *')]"
+            ".filter(e => e.getBoundingClientRect().right > document.documentElement.clientWidth + 0.5)"
+            ".map(e => e.tagName + '.' + e.className)")
+        assert overflow == []
+        pre = page.locator(".chat-debug pre").first
+        assert pre.evaluate("e => e.scrollWidth > e.clientWidth")
+        fg, bg = pre.evaluate("e => [getComputedStyle(e).color, getComputedStyle(e).backgroundColor]")
+        assert fg != bg
+
+
+def test_debug_toggle_on_live_turn_even_without_text(browser, static_base_url):
+    stub = ChatStub(health={"status": "ok", "configured": True, "debug": True}, sessions=list(SESSIONS))
+    stub.reply = sse(("start", {"userMessageId": "u", "messageId": "m_err"}),
+                     ("error", {"code": "upstream", "detail": "模型服务拒绝了密钥", "correlationId": "c_1"}))
+    stub.debug = [{"messageId": "m_err", "userMessageId": "u", "startedAt": "…", "omitted": 0, "requests": [
+        {"n": 1, "status": 401, "ms": 90, "aborted": False, "request": "not json",
+         "response": {"stream": False, "body": {"error": {"message": "invalid api key [已隐去]"}}}}]}]
+    with open_page(browser, static_base_url, stub) as h:
+        page = h.page
+        page.wait_for_selector("#chat-panel", state="visible")
+        page.fill("#chat-input", "hi")
+        page.click("#chat-send")
+        page.wait_for_selector(".chat-user + .chat-debug")
+        page.click(".chat-debug > summary")
+        page.wait_for_selector(".chat-debug-head")
+        assert ("GET", "sessions/ses_old/debug", None, None) in stub.calls
+        assert page.inner_text(".chat-debug-head") == "请求 #1 · HTTP 401 · 90 毫秒"
+        assert "invalid api key [已隐去]" in page.inner_text(".chat-debug")
