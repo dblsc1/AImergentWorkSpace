@@ -248,9 +248,13 @@
     if (next && current && next.currentVersion !== current.version) {
       // 别处改过规则：旧值按最新的生效规则显示。没手改就连编辑器一起刷新；有手改就留着（保存时照样 412）
       var g = await request("GET", "");
-      if (g.ok) {
-        if (dirty()) current = { version: g.body.version, rules: g.body.rules || [] }; else setServer(g.body);
+      if (!g.ok) {   // 拿不到草稿对应的生效规则：不显示草稿（否则「旧值」是过时的，人看不到真正会被换掉的）
+        draft = null;
+        renderDraft();
+        showMessage("读取最新规则失败，AI 草稿先不显示：" + explain(g), true);
+        return;
       }
+      if (dirty()) current = { version: g.body.version, rules: g.body.rules || [] }; else setServer(g.body);
     }
     draft = next;
     renderDraft();

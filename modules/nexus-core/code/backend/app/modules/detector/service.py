@@ -43,6 +43,9 @@ _RE2_ONLY = (
     (re.compile(r"\\[pP](\{[^}]*\}|[A-Za-z])"), "x"),
     (re.compile(r"\(\?<(?=[A-Za-z_])"), "(?P<"),
     (re.compile(r"\\z"), r"\\Z"),
+    # Go 的非贪婪翻转标志 U：Python 没有。只为检查语法，去掉它（(?U) 整个去掉，(?iU:…) → (?i:…)）
+    (re.compile(r"\(\?([imsU]*)U([imsU]*)(:|\))"), lambda m: "" if m[3] == ")" and not (m[1] + m[2]) else
+     "(?" + (m[1] + m[2]).replace("U", "") + m[3]),
 )
 
 

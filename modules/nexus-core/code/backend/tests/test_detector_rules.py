@@ -106,7 +106,8 @@ def test_rule_validation_reports_index(client, tid, rule, field):
 
 
 def test_go_only_syntax_and_duplicate_ids(client, tid):
-    ok = [{"title": r"\p{Han}+", "taskId": tid}, {"title": r"(?<proj>\w+)\z", "taskId": tid}]
+    ok = [{"title": r"\p{Han}+", "taskId": tid}, {"title": r"(?<proj>\w+)\z", "taskId": tid},
+          {"title": r"(?U)foo.*bar", "taskId": tid}, {"title": r"(?iU:a+)b", "taskId": tid}]
     assert _put(client, ok).status_code == 200
     r = _put(client, [{"id": "a", "title": "x", "taskId": tid}, {"id": "a", "title": "y", "taskId": tid}], 1)
     assert r.status_code == 422 and r.json()["errors"] == [{"index": 1, "field": "id", "message": "id 重复：a"}]
