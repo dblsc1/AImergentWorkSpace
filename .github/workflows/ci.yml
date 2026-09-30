@@ -258,6 +258,10 @@ jobs:
         run: deploy/smoke.sh ci-smoke-password
       - name: 灌演示数据（照 README）
         run: HONEYCOMB_PASSWORD=ci-smoke-password python3 seed/seed_demo.py --base "http://127.0.0.1:8800${HONEYCOMB_BASE_PATH%/}"
+      - name: 后端单独重建（换 IP），网关不重启照常转发
+        # 升级时 compose 只重建换了镜像的服务；网关写死主机名时它会一直打旧 IP（2026-09-30 真机）。
+        working-directory: ${{ matrix.dir }}
+        run: $GITHUB_WORKSPACE/deploy/test/recreate.sh ci-smoke-password
       - name: 失败时的日志
         if: failure()
         working-directory: ${{ matrix.dir }}

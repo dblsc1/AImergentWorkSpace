@@ -215,3 +215,19 @@ CI 把手写与生成的两份组装各按 `/` 与 `/Cockpit/` 真起一遍。
   `mcp`、聊天后端模块装上才出现；手写的默认组装两条都常驻。
 - 验证：CI「网关契约」job 把 `mcp` 用 profiles 关掉（网关照常起、`/api/mcp/` 回 502），聊天后端换成回显请求头的
   小服务（收不到 `Cookie` / `Authorization` / 伪造的租户头）；「多账号」job 用设备令牌经网关调 MCP。
+
+## 实现说明（不改接口）
+
+- **2026-09-30 · 上游运行期解析**（0.2.x 修复）：以前 `proxy_pass` 写死主机名，nginx 只在启动时解析一次；
+  `docker compose up -d` 只重建了 nexus-core 或认证服务（升级只换了它的镜像）时它换了 IP，网关还打旧 IP，
+  `/api/core/`、登录门一直 502，直到重启 web。现在两份组装的每条上游（nexus-core、`AUTH_UPSTREAM`、
+  模块清单声明的路由）都用 `resolver 127.0.0.11 valid=10s` + 变量 `proxy_pass`，后端重建后 10 秒内自动跟上；
+  转发路径由 `rewrite … break` 去前缀，后端看到的路径与 query 串不变（唯一差别：请求行里**未编码**的
+  非 ASCII 或 `"<>` 之类字符，现在按百分号编码转发，含义相同；浏览器本来就会编码）。
+  附带：上游没起时网关照常启动，这些路由回 502（顶栏芯片仍回降级 JSON）。
+  `AUTH_UPSTREAM` 仍是 `host:port`，主机名须能被 Docker 内置 DNS 解析（compose 服务名 / 网络别名，或直接写 IP）；
+  只写在 `extra_hosts`（容器 `/etc/hosts`）里的名字不行。CI：`deploy/test/recreate.sh` 在两份组装、两种前缀下
+  单独重建 nexus-core 与 auth，不重启网关，断言 `/api/core/` 200。
+- **2026-09-30 · 并入 v0.3**：第八节两条 AI 桥路由（手写与生成的 `bridge: true`）改成同一写法：共用 server 级
+  `resolver`（不再每个 location 各写一条），`rewrite` 用 `\Q…\E` 按字面匹配站点前缀并带 `(?s)`，补写与普通路由
+  同形的 `proxy_redirect`；生成组装里的变量名统一为 `$honeycomb_up_<序号>`。`recreate.sh` 同样逐个重建 `mcp`、`agent`。

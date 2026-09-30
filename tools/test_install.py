@@ -6,6 +6,7 @@ compose-smoke 里（手写与生成两份组装都真起一遍）。
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -78,7 +79,8 @@ def test_frontends_are_gated_and_login_is_not(out):
 def test_navbar_chip_degrades_instead_of_redirecting(out):
     _, _, nginx = out
     block = _location(nginx, "= /__cockpit/current")
-    assert "proxy_pass http://nexus-core:8000/api/core/views/current;" in block
+    assert 'set $honeycomb_up_' in block and '"nexus-core:8000";' in block
+    assert "rewrite ^ /api/core/views/current break;" in block
     assert "error_page 401 = @degraded_" in block
     assert "@to_login" not in block
 
@@ -132,8 +134,11 @@ def test_auth_upstream_and_extra_routes_are_replaceable(out):
     _, compose, nginx = out
     web = compose["services"]["web"]
     assert web["environment"]["AUTH_UPSTREAM"] == "${AUTH_UPSTREAM:-auth:8010}"
-    assert "proxy_pass http://${AUTH_UPSTREAM}/api/auth/;" in _location(nginx, "/api/auth/")
-    assert "proxy_pass http://${AUTH_UPSTREAM}/api/auth/verify;" in _location(nginx, "= /__auth_verify")
+    for head, rw in (("/api/auth/", "rewrite (?s)^\\Q/api/auth/\\E(.*)$ /api/auth/$1 break;"),
+                     ("= /__auth_verify", "rewrite ^ /api/auth/verify break;")):
+        block = _location(nginx, head)
+        assert 'set $honeycomb_auth "${AUTH_UPSTREAM}";' in block and rw in block, head
+        assert "proxy_pass http://$honeycomb_auth;" in block, head
     assert "${HONEYCOMB_EXTRA_ROUTES_DIR:-../nginx/extra}:/etc/nginx/templates/extra:ro" in web["volumes"]
     assert "include /etc/nginx/conf.d/extra/*.conf;" in nginx
     assert "location @to_login" in nginx, "gateway.v1 冻结的名字"
@@ -166,7 +171,7 @@ def test_hand_written_gateway_has_the_same_frozen_surface():
     hand = (install.ROOT / "deploy" / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8")
     for needle in (
         "location = /__auth_verify {", "location @to_login {",
-        "proxy_pass http://${AUTH_UPSTREAM}/api/auth/;", 'set $honeycomb_base "${HONEYCOMB_BASE_PATH}";',
+        'set $honeycomb_auth "${AUTH_UPSTREAM}";', 'set $honeycomb_base "${HONEYCOMB_BASE_PATH}";',
         "include /etc/nginx/conf.d/extra/*.conf;", 'proxy_set_header X-Nexus-Tenant "";',
     ):
         assert needle in hand, needle
@@ -200,12 +205,14 @@ def test_every_public_location_hangs_under_the_base_path(tmp_path):
                 assert path.startswith("/Cockpit/") or path in ("/healthz", "/__auth_verify"), (name, t)
             if t.startswith("return 302"):
                 assert t.split()[2].startswith("/Cockpit/"), (name, t)
-        assert "proxy_pass http://nexus-core:8000/api/core/;" in nginx, name
+        assert "rewrite (?s)^\\Q/Cockpit/api/core/\\E(.*)$ /api/core/$1 break;" in nginx, name
+        assert "rewrite (?s)^\\Q/Cockpit/api/auth/\\E(.*)$ /api/auth/$1 break;" in nginx, name
+        assert "proxy_redirect http://nexus-core:8000/api/core/ /Cockpit/api/core/;" in nginx, name
         assert '"home":"/Cockpit/hive/"' in nginx, name
 
 
 def _bridge_checks(block: str, name: str) -> None:
-    for needle in ("include /etc/nginx/honeycomb/gate.inc;", "resolver 127.0.0.11", 'proxy_set_header Cookie "";',
+    for needle in ("include /etc/nginx/honeycomb/gate.inc;", 'proxy_set_header Cookie "";',
                    'proxy_set_header Authorization "";', "proxy_buffering off;"):
         assert needle in block, (name, needle)
     assert "proxy_pass http://$" in block, (name, "上游须运行期解析（变量 proxy_pass）")
@@ -220,7 +227,7 @@ def test_ai_bridge_routes_hand_and_generated(out):
     assert 'set $honeycomb_agent "${AGENT_UPSTREAM}";' in hand
     block = _location(nginx, "/api/mcp/")
     _bridge_checks(block, "generated")
-    assert "rewrite ^/api/mcp/(.*)$ /api/mcp/$1 break;" in block
+    assert "rewrite (?s)^\\Q/api/mcp/\\E(.*)$ /api/mcp/$1 break;" in block
     web, mcp = compose["services"]["web"], compose["services"]["mcp"]
     assert "mcp" not in web["depends_on"], "缺了 mcp 网关也得起"
     assert set(web["networks"]) == set(mcp["networks"]) == {"honeycomb-net", "honeycomb-agent-net"}
@@ -230,7 +237,7 @@ def test_ai_bridge_routes_hand_and_generated(out):
     agent = compose["services"]["agent"]
     assert agent["networks"] == ["honeycomb-agent-net"] and "agent" not in web["depends_on"]
     assert agent["volumes"] == ["honeycomb_agent_data:/data"] and "honeycomb_agent_data" in compose["volumes"]
-    assert 'set $bridge_' in _location(nginx, "/api/agent/") and "proxy_read_timeout 300s;" in _location(nginx, "/api/agent/")
+    assert 'set $honeycomb_up_' in _location(nginx, "/api/agent/") and "proxy_read_timeout 300s;" in _location(nginx, "/api/agent/")
     assert hand_c_agent_only_on_bridge()
     hand_c = yaml.safe_load((install.ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8"))
     assert "honeycomb-agent-net" in hand_c["networks"]
@@ -265,7 +272,7 @@ def test_bridge_route_upstream_env(tmp_path):
     assert env["NGINX_ENVSUBST_FILTER"] == "^(AUTH_UPSTREAM|AGENT_UPSTREAM|HONEYCOMB_)"
     block = _location(_render((tmp_path / "out" / "nginx" / "templates" / "default.conf.template").read_text(
         encoding="utf-8")), "/api/agent/")
-    assert 'set $bridge_0 "${AGENT_UPSTREAM}";' in block and "proxy_read_timeout 300s;" in block
+    assert 'set $honeycomb_up_0 "${AGENT_UPSTREAM}";' in block and "proxy_read_timeout 300s;" in block
 
 
 def test_bridge_route_must_be_gated(tmp_path):
@@ -278,3 +285,18 @@ def test_bridge_route_must_be_gated(tmp_path):
     (tmp_path / "contracts" / "auth.gate.v1").symlink_to(install.ROOT / "contracts" / "auth.gate.v1")
     with pytest.raises(generate.BadManifest, match="gated"):
         generate.emit(tmp_path, {"modules": ["x"], "stubs": []}, tmp_path / "out")
+
+
+def test_every_upstream_is_resolved_at_runtime(tmp_path):
+    """写死主机名的 proxy_pass 只在 nginx 启动时解析一次：后端被单独重建换了 IP，
+    网关就一直 502（2026-09-30 真机）。每条 proxy_pass 都得是变量形式、配 Docker DNS。"""
+    plan = install.resolve(["hive", "ring", "assistant"])   # 含 AI 桥路由（agent、mcp）
+    generate.emit(install.ROOT, plan, tmp_path)
+    hand = (install.ROOT / "deploy" / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8")
+    gen = (tmp_path / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8")
+    for name, tpl in (("hand", hand), ("generated", gen)):
+        assert tpl.count("resolver 127.0.0.11 valid=10s ipv6=off;") == 1, name   # server 级一条管全部
+        passes = [t.strip() for t in tpl.splitlines() if t.strip().startswith("proxy_pass ")]
+        assert len(passes) >= 4, (name, passes)
+        for t in passes:
+            assert re.fullmatch(r"proxy_pass http://\$honeycomb_\w+;", t), (name, t)
