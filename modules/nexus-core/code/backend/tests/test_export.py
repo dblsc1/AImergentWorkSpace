@@ -28,6 +28,8 @@ _COLLECTIONS = (
     "activity_suggestions",
     # v2.4 在场心跳（活状态）+ 时间线区间投影。
     "activity_presence", "proj_lanes",
+    # v2.4 启动期一次性任务的锁（proj_lanes 自动补建）。
+    "_startup_locks",
 )
 
 

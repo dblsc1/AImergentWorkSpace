@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 
 from ..events import service as events_service
 from . import repo as projector_repo
@@ -64,6 +65,36 @@ def rebuild(only: str | None = None) -> dict[str, int]:
                 handler(envelope)
                 counts[name] += 1
     return counts
+
+
+#: 喂给 proj_lanes 的事实类型（只读 DISPATCH 推出来，不另写一份）
+_LANES_TYPES = frozenset(t for t, handlers in DISPATCH.items() if lanes.handle in handlers)
+_LOCK_STALE = timedelta(minutes=10)
+
+
+def backfill_lanes_if_empty() -> int:
+    """启动时调（契约 v2.4「上线」补注）：``proj_lanes`` 为空而台账里有它要的事实 → 从全体租户的事实补建。
+
+    升级上来的发布版用户不会手跑 ``rebuild --only proj_lanes``，不补的话历史时间线是空的。
+    **不清空、只重放**：handler 按 (user, key) 幂等，所以与同时进来的新事实、与另一个实例的补建
+    都不会重复或丢失；锁只是让并发启动时别各做一遍。返回补建时重放的事实数，no-op 为 0。
+    ponytail: proj_lanes 非空就不看——部分缺失（只丢了几条）不在这里修，那是手动 rebuild 的事。
+    """
+    if not projector_repo.lanes_empty():
+        return 0
+    if not projector_repo.acquire_startup_lock("proj_lanes", datetime.now(timezone.utc), _LOCK_STALE):
+        return 0
+    try:
+        if not projector_repo.lanes_empty():  # 拿锁前别的实例刚补完
+            return 0
+        count = 0
+        for envelope in events_service.iter_all_events(all_tenants=True):
+            if envelope.get("type") in _LANES_TYPES:
+                lanes.handle(envelope)
+                count += 1
+        return count
+    finally:
+        projector_repo.release_startup_lock("proj_lanes")
 
 
 def main(argv: list[str] | None = None) -> int:

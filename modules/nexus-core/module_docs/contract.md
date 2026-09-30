@@ -1957,6 +1957,11 @@ DISPATCH 表：`session.completed` 与 `agent.run.completed` **各追加**路由
 - 两种 `kind` 住同一张表只为按时间区间一次查出来；**本投影不求和、不进任何人的汇总**，谁也不许拿它算时长。
 - `durationSeconds` 非有限数或超过 31 天视为坏载荷，静默跳过（同 `proj_agent_daily_stats`）。
 - 投影重建一并重建它；`--only proj_lanes` 可单独重建；**上线本版须跑一次重建**，否则历史时间线是空的。
+  （补注，只增：**启动时自动补建**——nexus-core 启动时若 `proj_lanes` 为空而台账里有 `session.completed`/
+  `agent.run.completed`，就从全体租户的事实补建一次并在日志留一行；非空时什么都不做。不清空、只重放，
+  handler 幂等，所以与同时进来的新事实、与另一个实例的补建都不重不漏；并发启动由集合 `_startup_locks`
+  里的一把锁只让一个实例做（锁 10 分钟过期可接管）。升级上来的发布版用户因此不必手跑重建；
+  「非空但缺了几条」不在自动范围内，仍用手动重建。）
   不进 `export.projections`（已发布形状不加键），快照恢复末尾的重建会把它建回来。
 
 ### `views.current.v1` 的 `agents[]` 再追加两个键
@@ -2028,7 +2033,8 @@ app/modules/
   / **`proj_agent_daily_stats`（v2.1，AI 代理时长投影，见「AI 代理运行」节）**
   / **`activity_suggestions`（v2.2，活动建议，不是事实，见「活动建议」节）**
   / **`activity_presence`（v2.4，在场心跳，活状态，不是事实）**
-  / **`proj_lanes`（v2.4，时间线区间投影，见「人一条线、代理多条线的时间线」节）**。
+  / **`proj_lanes`（v2.4，时间线区间投影，见「人一条线、代理多条线的时间线」节）**
+  / **`_startup_locks`（v2.4，启动期一次性任务的锁，只在 proj_lanes 自动补建时短暂存在）**。
 - **其他模块一律不得直连本模块的 Mongo**。要数据就加读路径，不要绕。
 - `events` 集合**只增不改不删**；修正历史 = 追加修正事件。
 - data root 由 env 指定，位于 Git 工作树之外。

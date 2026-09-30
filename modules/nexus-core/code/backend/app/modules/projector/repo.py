@@ -261,3 +261,29 @@ def read_lanes(user: str, kind: str, start, end, limit: int) -> list[dict]:
 def clear_lanes() -> None:
     """重建专用，同 ``clear_daily_stats``。"""
     _lanes_col().delete_many({})
+
+
+def lanes_empty() -> bool:
+    return _lanes_col().find_one({}, {"_id": 1}) is None
+
+
+# ------------------------------------------------ 启动期一次性任务的锁（v2.4：proj_lanes 自动补建）
+#
+# 多个实例同时启动时只让一个去补建。持锁者崩了留下的锁过了 ``stale`` 就可以被接管——
+# 补建本身幂等（唯一约束），锁只省重复劳动，不承担正确性。
+
+_LOCKS_COLLECTION = "_startup_locks"
+
+
+def acquire_startup_lock(name: str, now, stale) -> bool:
+    try:
+        get_db()[_LOCKS_COLLECTION].find_one_and_update(
+            {"_id": name, "at": {"$lt": now - stale}}, {"$set": {"at": now}}, upsert=True,
+        )
+    except DuplicateKeyError:
+        return False  # 锁在且没过期：别的实例正在做
+    return True
+
+
+def release_startup_lock(name: str) -> None:
+    get_db()[_LOCKS_COLLECTION].delete_one({"_id": name})
