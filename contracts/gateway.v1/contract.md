@@ -169,3 +169,16 @@ proxy_set_header X-Nexus-Tenant $honeycomb_tenant;
 - 顶栏页签 `window.HONEYCOMB_NAV` 里的地址已含前缀。
 
 CI 把手写与生成的两份组装各按 `/` 与 `/Cockpit/` 真起一遍。
+
+## 实现说明（不改接口）
+
+- **2026-09-30 · 上游运行期解析**（0.2.x 修复）：以前 `proxy_pass` 写死主机名，nginx 只在启动时解析一次；
+  `docker compose up -d` 只重建了 nexus-core 或认证服务（升级只换了它的镜像）时它换了 IP，网关还打旧 IP，
+  `/api/core/`、登录门一直 502，直到重启 web。现在两份组装的每条上游（nexus-core、`AUTH_UPSTREAM`、
+  模块清单声明的路由）都用 `resolver 127.0.0.11 valid=10s` + 变量 `proxy_pass`，后端重建后 10 秒内自动跟上；
+  转发路径由 `rewrite … break` 去前缀，后端看到的路径与 query 串不变（唯一差别：请求行里**未编码**的
+  非 ASCII 或 `"<>` 之类字符，现在按百分号编码转发，含义相同；浏览器本来就会编码）。
+  附带：上游没起时网关照常启动，这些路由回 502（顶栏芯片仍回降级 JSON）。
+  `AUTH_UPSTREAM` 仍是 `host:port`，主机名须能被 Docker 内置 DNS 解析（compose 服务名 / 网络别名，或直接写 IP）；
+  只写在 `extra_hosts`（容器 `/etc/hosts`）里的名字不行。CI：`deploy/test/recreate.sh` 在两份组装、两种前缀下
+  单独重建 nexus-core 与 auth，不重启网关，断言 `/api/core/` 200。
