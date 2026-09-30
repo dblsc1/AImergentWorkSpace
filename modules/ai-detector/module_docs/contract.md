@@ -249,7 +249,8 @@ Authorization: Bearer <deviceToken>
 - `agentStatusIgnore`（字符串数组，缺省 `[]`）：`key` 以其中任一前缀开头的条目整个忽略。用来**避免重复上报**
   ——例如已经装了 `tools/agent-hooks` 的 Claude Code 钩子，就把 Claude 那一类的前缀填进来，否则同一个会话会有两条泳道。
 - 新鲜文件里**第一次看到**某个 `key` → `agents/start`：`agent`、`tool` 都取 `key` 第一个 `:` 之前的部分，
-  须匹配 `^[a-z0-9_-]{1,32}$`（`claude`、`codex`、`hermes` 这类代理种类名），否则一律报 `"agent"`；
+  须在内置白名单里（`claude`、`codex`、`hermes`、`gemini`、`opencode`、`aider`、`cursor`；只增），否则一律报 `"agent"`
+  ——格式对不代表不是隐私（`secret_project:1` 也合格式）；
   `clientKey` = SHA-256(`deviceId` + `key`) 前 32 位十六进制（丢了响应重试不会多开一条运行；原始 `key` 不上传）；`phase` 为映射后的相位，`label` 为脱敏后的 `label`（按上传的标题
   脱敏规则，截到 64 码点；空则不发），`match` 同 `label`（不足 3 码点不发）。不挂任务（落收件箱）。
 - 映射后的相位**变了** → `agents/{runId}/phase`：`at` = 本程序发现变化的时刻（本机时钟，最多晚一个轮询间隔），
@@ -259,8 +260,9 @@ Authorization: Bearer <deviceToken>
 - 新鲜文件里某个 `key` **不见了** → `agents/{runId}/stop`：最后状态是 `error` 报 `failed`，否则报 `done`。
 - `key → runId` 存进 `ai-detector.state.json`，重启后接着用。`phase`/`stop` 回 404 或 `applied:false, reason:"closed"`
   （服务端已按超时收掉）→ 忘掉这个映射，下次看到这个 `key` 当作第一次看到（同一 `clientKey` 的旧运行已关，会开新运行）。
-- 网络失败：本轮不重试，映射与「上次报过的相位」都不前进，下一轮看到的仍是变化、会再报一次（`at` 取新的发现时刻；
-  服务端照收，读时合并同相位，重报只是多一条观测，不改变画出来的样子）。
+- 网络失败：本轮不重试，映射与「上次报过的相位」都不前进；那条观测**连同原始 `at`、`reply`** 记进状态文件的待发队列
+  （每个 `key` 至多留最近 20 条），下一轮原样重发——`(at, phase)` 相同，服务端按 `duplicate` 去重，`reply` 不会记两次。
+  之后新发现的变化另起一条排在后面。
 - **离开本机的只有**：`key` 的前缀（合规的代理种类名，作 agent/tool 名）、`clientKey`（哈希）、脱敏后的 `label`、相位、时刻、结束状态。`key` 的其余部分、
   `detail`、文件路径都不上传。
 
