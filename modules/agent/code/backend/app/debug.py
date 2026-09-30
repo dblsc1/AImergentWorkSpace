@@ -97,11 +97,13 @@ class SSEAssembler:
         self.model = None
 
     def feed(self, b: bytes) -> None:
-        if self.fed >= MAX_RECORD:
+        keep = b[:max(MAX_RECORD - self.fed, 0)]
+        if len(keep) < len(b):
             self.capped = True
+        if not keep:
             return
-        self.fed += len(b)
-        self.buf += b
+        self.fed += len(keep)
+        self.buf += keep
         *lines, self.buf = self.buf.split(b"\n")
         for line in lines:
             self._line(line.strip())
@@ -277,7 +279,7 @@ class Recorder:
             log.warning("debug proxy upstream unreachable")     # 不记地址、不记异常原文
             return JSONResponse({"error": {"message": "debug proxy: upstream unreachable"}}, status_code=502)
         sse = target is not None and "text/event-stream" in up.headers.get("content-type", "")   # 不录的不攒
-        asm, raw = SSEAssembler(), bytearray()
+        asm, raw, lost = SSEAssembler(), bytearray(), [0]
 
         async def relay():
             aborted = True
@@ -285,20 +287,22 @@ class Recorder:
                 async for b in up.aiter_bytes():     # 解过压缩的：上游不理 identity 也照样对
                     if sse:
                         asm.feed(b)
-                    elif target and len(raw) < MAX_RECORD:
-                        raw.extend(b[:MAX_RECORD - len(raw)])
+                    elif target:
+                        cut = b[:max(MAX_RECORD - len(raw), 0)]
+                        raw.extend(cut)
+                        lost[0] += len(b) - len(cut)
                     yield b
                 aborted = False
             finally:
                 if target:          # 先录（同步），再关连接：这里可能正在被取消
                     self._record(tenant, target, req.method, path, body, up.status_code, sse, asm, raw,
-                                 started, aborted)
+                                 lost[0], started, aborted)
                 await up.aclose()
 
         keep = {k: v for k, v in up.headers.items() if k.lower() not in HOP and k.lower() != "content-encoding"}
         return StreamingResponse(relay(), status_code=up.status_code, headers=keep)
 
-    def _record(self, tenant, target, method, path, body, status, sse, asm, raw, started, aborted) -> None:
+    def _record(self, tenant, target, method, path, body, status, sse, asm, raw, lost, started, aborted) -> None:
         try:
             request = json.loads(body) if body else None
         except ValueError:
@@ -311,6 +315,7 @@ class Recorder:
                 response = {"stream": False, "body": json.loads(txt)}
             except ValueError:
                 response = {"stream": False, "body": txt}
+            response["captureTruncated"] = lost > 0      # 超过 MAX_RECORD 的部分照转不录
         rec = {"at": now(), "method": method, "path": "/" + path, "status": status,
                "ms": int((time.monotonic() - started) * 1000), "aborted": aborted,
                "request": request, "response": response}

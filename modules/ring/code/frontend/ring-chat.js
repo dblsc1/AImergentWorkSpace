@@ -72,7 +72,7 @@
         (a.captureTruncated ? "　（应答太长，后面的没录）" : ""));
       if (a.usage) lines.push("【用量】\n" + pretty(a.usage));
     } else {
-      lines.push(pretty(a.body));
+      lines.push(pretty(a.body) + (a.captureTruncated ? "\n（应答太长，后面的没录）" : ""));
     }
     out.push(["应答", lines.join("\n\n"), true]);
     return out;

@@ -208,6 +208,9 @@ def test_response_side_caps_and_value_redaction(tmp_path, monkeypatch):
         a.feed(chunk({"content": "x" * 200}) + b"\n\n")
     r = a.result()
     assert r["captureTruncated"] is True and len(r["content"]) <= 8192
+    one = debug.SSEAssembler()
+    one.feed(b"data: " + b"z" * 10000)                  # 单块就超：也截、也标
+    assert one.capped and one.fed == 8192
     s = settings(tmp_path, api_key=KEY, debug=True)
     rec = debug.Recorder(s, "x")
     sid = Store(s.data_dir).create("alice", None)["id"]
