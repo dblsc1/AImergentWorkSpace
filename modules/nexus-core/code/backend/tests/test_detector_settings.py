@@ -28,6 +28,7 @@ DEFAULTS = {
         "afkThresholdMinutes": 0, "audibleAsPresent": False, "focusAppsEnabled": False, "focusApps": None,
         "focusMaxMinutes": 60, "idleSuggestions": False,
     },
+    "presence": None,
 }
 
 
@@ -73,6 +74,8 @@ def test_device_token_cannot_write(client):
     {"schemaVersion": 1, "privacy": {"pathWhitelist": ["(?>ab)"]}},     # 原子组
     {"schemaVersion": 1, "privacy": {"pathWhitelist": ["a*+"]}},        # 占有量词
     {"schemaVersion": 1, "extra": 1},
+    {"schemaVersion": 1, "presence": "true"},                     # v1.1 presence：严格布尔
+    {"schemaVersion": 1, "presence": 1},
     {"schemaVersion": 1, "privacy": {"secrets": False}},          # 强制脱敏不在 schema 里
     {"schemaVersion": 1, "privacy": {"bankCards": False}},
     {"schemaVersion": 1, "privacy": {"mandatory": False}},
@@ -146,3 +149,13 @@ def test_devices_list(client):
 def test_settings_not_exported(client):
     _put(client, {"schemaVersion": 1})
     assert "detector" not in client.get(f"{API}/export").text
+
+
+def test_presence_toggle_v1_1(client):
+    """v1.1 追加的 presence：缺省 null（检测程序用本机配置），true / false 原样存回。"""
+    assert _put(client, {"schemaVersion": 1}).json()["settings"]["presence"] is None
+    for v in (True, False, None):
+        r = _put(client, {"schemaVersion": 1, "presence": v})
+        assert r.status_code == 200, r.text
+        assert r.json()["settings"] == {**DEFAULTS, "presence": v}
+        assert client.get(S, params={"deviceId": DEV}, headers=BEARER).json()["settings"]["presence"] is v
