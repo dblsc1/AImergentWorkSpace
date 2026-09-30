@@ -545,45 +545,32 @@ func TestLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 另一个活着的进程拿着：拒绝。
-	os.WriteFile(p, []byte(fmt.Sprint(os.Getppid())), 0o600) // 父进程（go test）活着
-	if _, err := acquireLock(p); err == nil {
-		t.Fatal("lock held by a live process must be refused")
+	if b, _ := os.ReadFile(p); strings.TrimSpace(string(b)) != fmt.Sprint(os.Getpid()) {
+		t.Fatalf("lock file content %q", b)
 	}
-	os.WriteFile(p, []byte("999999999"), 0o600) // 不存在的进程：旧锁，接管
+	// 另一个持有者（另一个打开的文件 = 另一个进程的锁）拿着：拒绝，报出它的 pid。
+	if _, err := acquireLock(p); err == nil || !strings.Contains(err.Error(), fmt.Sprint(os.Getpid())) {
+		t.Fatalf("held lock must be refused, err=%v", err)
+	}
+	rel()
 	rel2, err := acquireLock(p)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatal("released lock must be acquirable:", err)
 	}
 	rel2()
-	rel()
-	if _, err := os.Stat(p); !os.IsNotExist(err) {
-		t.Fatal("release must remove the lock file")
-	}
 }
 
-func TestLockDoesNotStealStartingOrOwnLock(t *testing.T) {
+// 容器里程序总是 pid 1：上一个进程留下的文件写着「pid 1」或者就是自己的 pid，都不能挡住新进程。
+func TestStaleLockFileNeverBlocks(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "x.lock")
-	// 刚建好、还没写 pid 的锁：不能当旧锁删。
-	os.WriteFile(p, nil, 0o600)
-	if _, err := acquireLock(p); err == nil || !strings.Contains(err.Error(), "正在启动") {
-		t.Fatalf("err=%v", err)
+	for _, content := range []string{"1\n", fmt.Sprint(os.Getpid()), fmt.Sprint(os.Getppid()), "", "garbage"} {
+		os.WriteFile(p, []byte(content), 0o600)
+		rel, err := acquireLock(p)
+		if err != nil {
+			t.Fatalf("stale %q: %v", content, err)
+		}
+		rel()
 	}
-	if _, err := os.Stat(p); err != nil {
-		t.Fatal("young empty lock must not be removed")
-	}
-	// 空文件放久了：残骸，接管。
-	old := time.Now().Add(-time.Minute)
-	os.Chtimes(p, old, old)
-	rel, err := acquireLock(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// pid 是自己的锁：不删。
-	if _, err := acquireLock(p); err == nil {
-		t.Fatal("own-pid lock must be refused")
-	}
-	rel()
 }
 
 func TestDeadClassifierCalledOncePerRound(t *testing.T) {
@@ -621,7 +608,11 @@ func TestOnceRefusesWhileRunHoldsLock(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("AI_DETECTOR_HOME", dir)
 	cli([]string{"init"}, io.Discard)
-	os.WriteFile(pathsIn(dir).lock, []byte(fmt.Sprint(os.Getppid())), 0o600)
+	rel, err := acquireLock(pathsIn(dir).lock) // 「run」拿着锁
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rel()
 	if err := cli([]string{"once"}, io.Discard); err == nil || !strings.Contains(err.Error(), "正在同步") {
 		t.Fatalf("err=%v", err)
 	}

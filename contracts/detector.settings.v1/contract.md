@@ -45,13 +45,14 @@ provides:
     "focusApps": null,          // null | 字符串数组
     "focusMaxMinutes": 60,      // 整数 1–480
     "idleSuggestions": false
-  }
+  },
+  "presence": null              // v1.1 追加：null | true | false
 }
 ```
 
 **校验（服务端写入时，全部 `422`）**：
 
-- 顶层只许 `schemaVersion`、`privacy`、`idle` 三个键；`privacy`、`idle` 里只许下表列出的键。
+- 顶层只许 `schemaVersion`、`privacy`、`idle`、`presence`（v1.1）四个键；`privacy`、`idle` 里只许下表列出的键。
   **任何未知键 → 422**（包括想关强制脱敏的键，如 `secrets`、`passwords`、`bankCards`）。
 - `schemaVersion` 必填，必须是整数 `1`。`privacy` / `idle` 及其中每个键都**可省略**，省略 = 取缺省值；
   服务端存、回的永远是**补齐缺省值后的完整文档**。
@@ -99,6 +100,12 @@ ActivityWatch 的离开记录（`afkstatus` 桶的 `afk` 区间）缺省从「�
 | `focusApps` | `null` | 上一项的名单；`null` = 内置默认名单（Acrobat、SumatraPDF、Okular、Evince、Preview、Foxit、WPS、Zotero、腾讯会议 / wemeet、Zoom、Teams、飞书会议、钉钉会议、Webex、Google Meet 桌面版等，以 ai-detector README 为准）。比较规则同 `appOnlyApps` |
 | `focusMaxMinutes` | `60` | 整数 1–480，见上 |
 | `idleSuggestions` | `false` | 开：**其余**被扣掉的离开时间里，前台窗口没换的那部分不丢，单独合成段上传，标 `idle: true`、`confidence ≤ 0.3`、`reason` 以「无操作，可能在阅读」开头——**由人决定**算不算。关：照旧丢掉 |
+
+### presence（v1.1 追加）
+
+| 键 | 缺省 | 作用 |
+|---|---|---|
+| `presence` | `null` | 在场心跳（ai-detector 契约「在场心跳」）开关。`null` = 用这台电脑本机配置的 `presence`（缺省关）；`true` / `false` = 以网页为准。严格布尔或 `null`，其他 422。只增的键：v1.0 的检测程序读到会忽略；v1.0 存下的文档没有这个键，读方按 `null` 处理 |
 
 ## 二、端点（nexus-core 实现，规范性）
 
@@ -158,4 +165,5 @@ ActivityWatch 的离开记录（`afkstatus` 桶的 `afk` 区间）缺省从「�
 
 | 日期 | 版本 | 变更 |
 |---|---|---|
+| 2026-09-30 | v1.1 | 追加顶层可选键 `presence`（`null` / 布尔，缺省 `null`）：在场心跳可在 Cockpit 设置里开关。只增，`schemaVersion` 仍为 `1` |
 | 2026-09-30 | v1 | 首版。仓主 2026-09-30 定：隐私做成细粒度勾选（路径三档 + 白名单、标题三档、app-only 名单、浏览器三档、各类个人信息单独开关），强制脱敏不进设置；离开判定四项（阈值、出声标签页、阅读 / 会议程序、无操作段作低把握建议）；设置在 Cockpit「AI助理」页改、存 nexus-core、检测程序每轮拉 |

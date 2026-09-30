@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -152,27 +151,17 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 		// 停在这里，日志里天天报，游标不动，改好规则后一次补上。
 		return "", err
 	}
-	// 离开本机的标题：换代号（合并之后换，段的切法不受影响）。对照表先存盘再上传。
-	var ps *pseudonyms
-	if cfg.Privacy.Titles == "pseudonymize" {
-		pp := ""
-		if cfg.dir != "" {
-			pp = filepath.Join(cfg.dir, "pseudonyms.json")
-		}
-		if ps, err = loadPseudonyms(pp); err != nil {
-			return "", err
-		}
+	// 离开本机的标题：换代号（合并之后换，段的切法不受影响）+ 再过一遍强制脱敏。对照表先存盘再上传。
+	titles := make([]string, len(segs))
+	for i := range segs {
+		titles[i] = segs[i].Title
+	}
+	sent, err := sendTitles(cfg, titles)
+	if err != nil {
+		return "", err
 	}
 	for i := range segs {
-		segs[i].Sent = segs[i].Title
-		if ps != nil {
-			segs[i].Sent = ps.token(segs[i].Title)
-		}
-	}
-	if ps != nil {
-		if err := ps.save(); err != nil {
-			return "", fmt.Errorf("标题代号对照表存不了，这一轮不上传：%w", err)
-		}
+		segs[i].Sent = sent[i]
 	}
 	uploader := withPolicy(hc, uploadTimeout, sameHostOnly)
 	service := withPolicy(hc, hc.Timeout, noRedirect)

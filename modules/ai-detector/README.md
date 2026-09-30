@@ -84,13 +84,36 @@ ai-detector pseudonyms           # 标题代号对照表
 - **macOS**：首次运行要在「系统设置 → 隐私与安全性 → 辅助功能」里给 ActivityWatch 授权，
   否则拿不到窗口标题。
 - **Linux X11**：直接装。
-- **Linux GNOME Wayland**：自带的窗口记录器在 Wayland 下拿不到窗口。先装 GNOME 扩展
-  [Focused Window D-Bus](https://extensions.gnome.org/extension/5592/focused-window-d-bus/)，
-  再用 [awatcher](https://github.com/2e3s/awatcher) 代替自带的窗口记录器和离开检测。
+- **Linux GNOME Wayland**：见下面单独一节。
 - 想让浏览器段带上域名和页面标题：装 ActivityWatch 的浏览器扩展（aw-watcher-web，Chrome / Firefox
   商店里有）。不装的话浏览器段只有程序名。
 - 只读**本机**的记录：ActivityWatch 开了多设备同步时，别的电脑的桶不会被读。主机名改过导致对不上时，
   `status` 会报错并列出现有的桶，在配置里填 `windowBucket` / `afkBucket` 即可。
+
+### Linux GNOME Wayland
+
+ActivityWatch 自带的 `aw-watcher-window` 在 GNOME 的原生 Wayland 窗口上**什么都看不到**
+（只看得见走 XWayland 的老程序），所以窗口桶是空的或只有零星几条，ai-detector 就没东西可传。
+2026-09-30 在 Ubuntu 26.04 / GNOME 50.1 上验证可用的做法：
+
+1. 装 GNOME 扩展 **Focused Window D-Bus**（`focused-window-dbus@flexagoon.com`），让 GNOME 通过 D-Bus 报出前台窗口：
+
+   ```sh
+   gdbus call --session --dest org.gnome.Shell.Extensions \
+     --object-path /org/gnome/Shell/Extensions \
+     --method org.gnome.Shell.Extensions.InstallRemoteExtension focused-window-dbus@flexagoon.com
+   ```
+
+   桌面上会弹一个确认框，点「安装」。命令可能打印一个 `NoReply` 错误，**其实已经装上了**
+   （`gnome-extensions list --enabled | grep focused` 能看到）；不用重新登录。
+2. 用 [awatcher](https://github.com/2e3s/awatcher) **v0.4.0 的 bundle 版**（自带 aw-server，一个程序顶
+   ActivityWatch 的服务 + 窗口记录器 + 离开检测）代替 ActivityWatch 自带的那一套：先退出 ActivityWatch，
+   再运行 awatcher bundle。接口还是 `http://localhost:5600`，ai-detector 不用改配置；桶名按主机名找得到。
+3. 不想装扩展的替代办法：登录时在齿轮里选 **Xorg** 会话（「Ubuntu on Xorg」），自带的记录器在 X11 下正常。
+
+**离开（afk）是怎么判的**：离开检测看的是「多久没碰键盘鼠标」（ActivityWatch 缺省 3 分钟，awatcher 同样），
+不是看窗口。所以看视频、读长文、开会时人在但没动，会被记成离开，这段时间不进「在电脑前」的秒数——
+需要的话用上面「离开怎么算」里的选项（出声的标签页、阅读 / 会议程序、无操作段让你决定）。
 
 ## 2. 装 ai-detector
 
@@ -122,7 +145,8 @@ ai-detector run         # 或者现在就常驻
 其他命令：`status`（看上一轮结果、隐私选项、强制脱敏状态）、`archive` / `preview` / `pseudonyms`（见上）、`pause` / `resume`、`disable`、`autostart uninstall`。
 自启记的是你运行 `autostart install` 时用的那个路径（符号链接不展开，版本管理器升级后照样有效）；
 **把程序挪到别处后要重新运行 `autostart install`**。
-同一个配置目录只能有一个 `run`；`run` 在跑时 `once` 会拒绝（避免两个进程抢游标）。
+同一个配置目录只能有一个 `run`；`run` 在跑时 `once` 会拒绝（避免两个进程抢游标）。这把锁是系统锁，
+程序一退出（包括崩溃、断电、容器重启）就自动释放，留下的 `ai-detector.lock` 文件不会挡住下次启动。
 
 **设备令牌**：桌面程序没有浏览器登录态，用设备令牌访问 HoneyComb（`Authorization: Bearer`）。
 令牌由 HoneyComb 的认证服务发放；用自带的占位认证时，在服务器上执行
@@ -186,9 +210,56 @@ Linux `~/.config/honeycomb/`；设环境变量 `AI_DETECTOR_HOME` 可换目录�
 | `idle` | 全关 | 见「离开怎么算」 |
 | `archiveDays` | 30 | 本机留档保留天数 |
 
+| `presence` | `false` | 在场心跳（见下）。网页「AI助理」页设过就以网页为准 |
+| `presenceSeconds` | 15 | 心跳间隔，5–300 秒 |
+| `agentStatusFile` | 空 | 状态文件桥读的文件路径，空 = 关（见下） |
+| `agentStatusIgnore` | `[]` | 状态文件里 `key` 以这些前缀开头的条目不报 |
+
 程序名比较时忽略大小写、`.exe`、空格和连字符，所以 `WeChat.exe` 与 `wechat` 是同一个。
 
 日志：`run` 模式写 `ai-detector.log`（与配置同目录），超过 5 MB 启动时清空。
 
 配置文件里有设备令牌。macOS / Linux 上它的权限是 0600（只有你能读）；**Windows 上程序没有另设权限**，
 依靠的是 `%APPDATA%` 目录默认只允许本用户访问——别把配置目录挪到共享位置。
+
+## 5. 实时泳道（v0.3，可选，默认都关）
+
+HoneyComb 的时间线页可以把「人一条线、AI 代理多条线」画在一起。ai-detector 能给它两样东西，都只在
+`ai-detector run` 常驻时工作（`once` 不做），关 / 暂停时零请求：
+
+### 在场心跳（`presence`）
+
+每 `presenceSeconds` 秒把「此刻前台的程序 + 脱敏后的标题 + 是不是离开了」报给 HoneyComb，
+页面上的人那条线就是实时的。**脱敏和上传段完全同一套**：强制脱敏、隐私选项（路径、标题代号 / 丢弃、
+聊天程序只留名、浏览器要对得上标签页）、网页上的设置——每次发之前都重新拉一次网页设置。离开时程序名和标题都发空。
+发不出去就丢掉，不重试、不补发；服务端只留最近 2 小时，不进统计、不进导出。
+
+```json
+{ "presence": true, "presenceSeconds": 15 }
+```
+
+也可以在网页「AI助理」页打开（`detector.settings.v1` 的 `presence`；那里是「用本机配置」时按上面这个字段）。
+
+### 状态文件桥（`agentStatusFile`）
+
+给**没有钩子**的 AI 代理用（Claude Code 用 `tools/agent-hooks` 的钩子更准，不用这个）。
+某个程序（例如你自己的桌面状态守护进程）把各代理的状态写进一个 JSON 文件，ai-detector 约每 3 秒读一次，
+把变化报成 HoneyComb 的代理运行和相位：
+
+```jsonc
+{ "updated_at": 1790000000,          // Unix 秒；早于现在 30 秒以上 = 过期，这一轮什么都不报
+  "agents": [
+    { "key": "codex:7f3a", "label": "garden", "state": "working", "detail": "…" } ] }
+// state：working | waiting_input | waiting_permission | complete | idle | error
+```
+
+```json
+{ "agentStatusFile": "/home/me/.local/state/agents/status.json", "agentStatusIgnore": ["claude:"] }
+```
+
+- 第一次看到一个 `key` 开一条运行；状态变了报相位（从「等你」回到「干活」时记一次「你回话了」）；`key` 消失就结束
+  （最后是 `error` 记失败）。`key → 运行` 记在状态文件里，重启不会多开。
+- **离开本机的只有**：`key` 冒号前的代理种类（只认 claude / codex / hermes / gemini / opencode / aider / cursor，
+  别的一律报 `agent`）、`key` 的哈希、脱敏后的 `label`、相位和时刻。`key` 其余部分、`detail`、文件路径都不发。
+- 已经装了 Claude Code 钩子的，把 Claude 的前缀填进 `agentStatusIgnore`，否则同一个会话会有两条线。
+- 网络断了：没发出去的变化带着原来的时刻排队，恢复后原样补发（服务端去重）。
