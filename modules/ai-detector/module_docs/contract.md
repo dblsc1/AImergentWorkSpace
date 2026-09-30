@@ -66,6 +66,12 @@ consumes:
       每轮 GET /api/core/detector/settings?deviceId= 拉网页上设的隐私 / 离开选项，有就整节替换本机配置的
       privacy / idle；null 或 404 用本机；其他失败这一轮不上传。
 
+  - id: detector.rules.v1
+    contract: ../../../contracts/detector.rules.v1/contract.md
+    purpose: >
+      有段要上传的每一轮 GET /api/core/detector/rules（设备令牌，只读）：服务端存过（version > 0，哪怕是空集）
+      就只用它（停用的跳过、Go 编译不过的跳过并写日志）；没存过 / 404 / 拉不到用本机 rules.json。
+
   - id: nexus-core.views.tree.v1
     contract: ../../nexus-core/module_docs/contract.md
     purpose: >
@@ -312,6 +318,10 @@ Content-Type: application/json
 `app` / `title` 是正则（不分大小写），空 = 不限，至少写一个；`title` 匹配的是**脱敏后**的标题
 （用户在待确认列表里看到的就是它）。按顺序第一条命中生效；`confidence` 缺省 0.9。
 
+**config.v1 v1.2（追加）**：网页上（Cockpit「AI助理 → 规则」，多由 AI 助理起草、人应用）存过规则后，
+以服务端为准，本机 `rules.json` 不再读；服务端从没存过、老 nexus-core、或拉不到时仍用本机文件（离线后备）。
+服务端规则命中的 `reason` 是「网页规则 #N 命中」。规则来源变化时写一行日志。见 `contracts/detector.rules.v1`「四」。
+
 ## 平台差异（只有这两处）
 
 - 配置目录：见上。
@@ -403,5 +413,6 @@ Authorization: Bearer <deviceToken>
 | 日期 | 变更 |
 |---|---|
 | 2026-09-30 | 实现在场心跳与状态文件桥（状态改为已实现）；在场心跳可由网页设置 `presence`（`detector.settings.v1` v1.1）开关；`agentStatusIgnore` 缺省维持 `[]`。单实例锁改为系统建议锁（修容器里 pid 1 重启后永远拒绝），`ai-detector.lock` 的对外语义（`once` 在 `run` 跑着时拒绝）不变 |
+| 2026-09-30 | config.v1 v1.2（追加）：分类规则可以存在 nexus-core（`detector.rules.v1`），每轮拉；服务端存过就以它为准，本机 `rules.json` 变成没存过 / 拉不到时的后备。上传形状不变 |
 | 2026-09-30 | v0.3 追加（契约先行）：`ai-detector.presence.v1` 在场心跳、`ai-detector.agent-status-bridge.v1` 状态文件桥；都默认关，新增配置 `presence`/`presenceSeconds`/`agentStatusFile`/`agentStatusIgnore`。上传、脱敏、游标的既有承诺一条不改 |
 | 2026-09-30 | upload.v1 v1.1、config.v1 v1.1、archive.v1：仓主 2026-09-30：强制脱敏（密码、密钥、私钥、银行卡、身份证，写死在程序里）；隐私做成可单独勾选的选项（`detector.settings.v1`，缺省 = v1.0 行为，另加地址 / IP / 用户名默认开）；标题代号；离开判定四项；段增可选 `idle`；本机留档与 `archive` / `preview` / `pseudonyms` 命令；每轮从 nexus-core 拉网页设置。在场心跳、状态文件桥里的「脱敏」同样指强制脱敏 + 隐私选项 |

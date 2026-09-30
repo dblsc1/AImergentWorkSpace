@@ -17,6 +17,7 @@ from .config import settings
 from .modules.activity.presence_router import router as presence_router
 from .modules.activity.router import router as activity_router
 from .modules.activity.service import ConflictError as SuggestionConflictError
+from .modules.detector import rules as detector_rules
 from .modules.detector import service as detector_service
 from .modules.detector.router import router as detector_router
 from .modules.events.router import router as events_router
@@ -91,7 +92,7 @@ app.include_router(planner_import_router, prefix=API_PREFIX)
 app.include_router(restore_router, prefix=API_PREFIX)
 app.include_router(activity_router, prefix=API_PREFIX)  # v2.2 活动建议
 app.include_router(presence_router, prefix=API_PREFIX)  # v2.4 在场心跳
-app.include_router(detector_router, prefix=API_PREFIX)  # v2.5 检测程序设置
+app.include_router(detector_router, prefix=API_PREFIX)  # v2.5 检测程序设置；v2.6 分类规则
 
 
 # 域错误 → 状态码的映射只在这里（contract.md v0.4「校验」表 + v0.6「档案读端」）：
@@ -108,6 +109,7 @@ app.include_router(detector_router, prefix=API_PREFIX)  # v2.5 检测程序设�
 #   UnprocessableError → 422（v2.4：相位 at 超前 300 秒；views/lanes 的参数互斥 / 跨度超 7 天）
 #   detector ForbiddenError → 403（v2.5：设备令牌想改检测设置）
 #   detector InvalidSettingsError → 422、TooLargeError → 413（v2.5：设置文档不合 schema / 太大）
+#   detector RulesError → 自带状态码（v2.6 分类规则：403/404/412/413/422/428，体 {detail, **附加字段}）
 
 
 @app.exception_handler(detector_service.ForbiddenError)
@@ -118,6 +120,11 @@ def detector_forbidden(_request: Request, exc: Exception) -> JSONResponse:
 @app.exception_handler(detector_service.InvalidSettingsError)
 def detector_invalid(_request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+
+@app.exception_handler(detector_rules.RulesError)
+def detector_rules_error(_request: Request, exc: detector_rules.RulesError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status, content={"detail": exc.detail, **exc.extra})
 
 
 @app.exception_handler(detector_service.TooLargeError)

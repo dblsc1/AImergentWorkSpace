@@ -178,6 +178,10 @@ docker run --rm -v "$PWD":/src -w /src -e CGO_ENABLED=0 -e GOOS=windows -e GOARC
 `taskId` 在蜂巢里打开任务就能看到，或看 `GET /api/core/views/tree` 的输出。规则写错
 （JSON 不合法、正则写坏）时**这一轮不上传**，`status` 会告诉你哪条错了，改好后自动补上。
 
+**更省事的办法：让 AI 助理写。** 在 Cockpit「AI助理」里说「帮我按终端标签页整理分类规则」，
+助理读你的项目、任务和最近的窗口标题，写出一整套规则的草稿；你在「AI助理 → 规则」看过改动点「应用」。
+网页上存过规则后，本程序每轮从服务端拉、**不再读本机 `rules.json`**（服务端没存过或连不上时才用它）。
+
 可选的外部分类服务：配 `classifierUrl`，规则没认出来的段会发给它，接口见
 [`contracts/activity.classifier.v1`](../../contracts/activity.classifier.v1/contract.md)。
 地址必须是 `https://`（本机 `localhost` 除外）；它要鉴权就填 `classifierToken`——

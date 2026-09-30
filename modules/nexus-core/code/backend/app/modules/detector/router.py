@@ -9,7 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request, Response
 from starlette.concurrency import run_in_threadpool
 
-from . import service
+from . import rules, service
 
 router = APIRouter(prefix="/detector", tags=["detector"])
 
@@ -35,3 +35,46 @@ def delete_settings(deviceId: str, request: Request) -> Response:
 @router.get("/devices")
 def list_devices() -> dict:
     return service.list_devices()
+
+
+# ── detector.rules.v1（v2.6）：分类规则与 AI 草稿 ──
+
+
+def _etag(response: Response, out: dict) -> dict:
+    response.headers["ETag"] = f'"{out["version"]}"'
+    return out
+
+
+@router.get("/rules")
+def get_rules(response: Response) -> dict:
+    return _etag(response, rules.get_rules())
+
+
+@router.put("/rules")
+async def put_rules(request: Request, response: Response) -> dict:
+    body = await request.body()
+    h = request.headers
+    return _etag(response, await run_in_threadpool(rules.put_rules, h.get("authorization"), h.get("if-match"), body))
+
+
+@router.post("/rules/drafts", status_code=201)
+async def create_draft(request: Request) -> dict:
+    body = await request.body()
+    return await run_in_threadpool(rules.create_draft, request.headers.get("authorization"), body)
+
+
+@router.get("/rules/drafts/current")
+def current_draft() -> dict:
+    return rules.current_draft()
+
+
+@router.post("/rules/drafts/{draft_id}/apply")
+def apply_draft(draft_id: str, request: Request, response: Response) -> dict:
+    h = request.headers
+    return _etag(response, rules.apply_draft(h.get("authorization"), draft_id, h.get("if-match")))
+
+
+@router.post("/rules/drafts/{draft_id}/discard", status_code=204)
+def discard_draft(draft_id: str, request: Request) -> Response:
+    rules.discard_draft(request.headers.get("authorization"), draft_id)
+    return Response(status_code=204)

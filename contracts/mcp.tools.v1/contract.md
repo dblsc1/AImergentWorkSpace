@@ -1,6 +1,6 @@
 # mcp.tools.v1 —— 给 AI 代理用的只读工具（MCP）
 
-> **契约 id**：`mcp.tools.v1`。**当前版本 v1.1**（2026-09-30 加 `list_projects`；v1.0 2026-09-28，v0.3「AI 桥」首版）。实现：`modules/mcp`（v0.3 MCP 实现 PR）。
+> **契约 id**：`mcp.tools.v1`。**当前版本 v1.2**（2026-09-30 加 `get_detector_rules` 与第一个提议工具 `propose_detector_rules`；v1.1 2026-09-30 加 `list_projects`；v1.0 2026-09-28，v0.3「AI 桥」首版）。实现：`modules/mcp`。
 >
 > **是什么**：HoneyComb 以 [MCP](https://modelcontextprotocol.io/)（Model Context Protocol）服务器的
 > 形式，把「任务树、人的时间、代理时间、在跑的计时、待确认的活动建议」读给 AI 代理。
@@ -9,6 +9,12 @@
 >
 > **v1 的每一个工具都只读。代理什么都不写。** 写是 v0.4 的事，而且只会是「提议」（见第六节）。
 >
+> **v1.2 起**：第六节的「提议」提前落地一个——`propose_detector_rules`（仓主 2026-09-30：分类规则由 AI 助理写、能一次写入全部）。
+> 它写的是**待人确认的草稿**，不写事实、不改任何已生效的东西；人在页面上点「应用」才生效。
+> 所以本契约的承诺改述为：**除 `propose_` 开头的工具外全部只读；`propose_` 工具只产生待人确认的草稿 / 建议**
+> （`readOnlyHint: false`、`destructiveHint: false`）。依赖「v1 全部只读」的客户端请按 `readOnlyHint` 区分，
+> 或只放行不以 `propose_` 开头的工具。
+>
 > **版本号语义**：工具名一经发布不改不删；v1 之内只接受追加——新工具、工具的新**可选**入参、
 > 输出的新字段。改名、删工具、改既有字段的含义、把只读工具变成会写的，都要发 `mcp.tools.v2`，与 v1 并行。
 
@@ -16,8 +22,9 @@
 provides:
   - id: mcp.tools.v1
     summary: >
-      MCP 服务器（Streamable HTTP，挂在 <站点前缀>api/mcp/）。v1 的工具全部只读（v1.0 八个，v1.1 起九个），
-      包装 nexus-core 既有读端；租户只来自网关的 X-Nexus-Tenant，工具没有任何用户/租户入参。
+      MCP 服务器（Streamable HTTP，挂在 <站点前缀>api/mcp/）。v1.0 八个只读工具，v1.1 九个；v1.2 十一个：
+      加只读的 get_detector_rules 与只写草稿的 propose_detector_rules（第六节）。包装 nexus-core 既有端点；
+      租户只来自网关的 X-Nexus-Tenant，工具没有任何用户/租户入参。
 consumes:
   # 每个工具固定包装一个读端（第四节映射表）。只调 GET，不调任何写端点
   - id: nexus-core.views.tree.v1
@@ -44,6 +51,9 @@ consumes:
   - id: nexus-core.activity.suggestions.v1
     contract: ../../modules/nexus-core/module_docs/contract.md
     purpose: list_activity_suggestions（只调 GET，不调 confirm / dismiss / 上传）
+  - id: detector.rules.v1
+    contract: ../detector.rules.v1/contract.md
+    purpose: get_detector_rules（GET rules、GET drafts/current）；propose_detector_rules（POST drafts——MCP 唯一调用的写端点）
   - id: nexus-core.tenancy.v1
     contract: ../../modules/nexus-core/module_docs/contract.md
     purpose: 租户头格式与严格模式，MCP 照抄同一套规则
@@ -72,7 +82,7 @@ consumes:
   - 请求**带** `Origin` → 只有与 `MCP_ALLOWED_ORIGINS`（逗号分隔，缺省空）里某一项**完全相等**（协议 + 主机 + 端口，
     如 `https://example.com:8443`）才放行，否则 `403`。缺省空 = 浏览器一律进不来。
   - **不拿 `Host` 比**：MCP 在网关后面，看到的 `Host` 是转发设定的值，与浏览器地址栏未必一致，比了等于没比。
-- 请求体上限 64 KiB，超过 `413`。
+- 请求体上限 64 KiB，超过 `413`。**v1.2 放宽到 256 KiB**（`propose_detector_rules` 一次交整套规则，≤ 500 条）。
 
 ## 二、租户（规范性）
 
@@ -124,6 +134,7 @@ consumes:
 
 - **只读**：每个工具声明 MCP 注解 `readOnlyHint: true`、`destructiveHint: false`、`openWorldHint: false`。
   实现是**固定映射**（下表一行一个 GET），不是通用反代：不存在「按参数拼路径」的代码路径。
+  （v1.2：`propose_` 开头的工具例外，注解见第六节；它同样是固定映射，一行一个写端点。）
 - **结果**：成功时 `structuredContent` 是下面写的 JSON 对象，`content` 里同时给一条 `type:"text"`、
   内容为同一对象的 JSON 文本（给不认 `structuredContent` 的客户端）。
 - **错误**：工具执行失败回 `isError: true`，`structuredContent: {"error": {"status": <int>, "detail": "<人话>"}}`：
@@ -161,8 +172,12 @@ consumes:
 | `get_agent_time` | `GET /api/core/views/agent-time?from=&to=` | 对象 |
 | `list_activity_suggestions` | `GET /api/core/activity/suggestions?status=&limit=&offset=` | 列表 |
 
+| `get_detector_rules`（v1.2） | `GET /api/core/detector/rules` + `GET /api/core/detector/rules/drafts/current` | 对象 |
+| `propose_detector_rules`（v1.2，**提议**） | `POST /api/core/detector/rules/drafts` | 对象 |
+
 路径（`path`）另读 `GET /api/core/views/tree?includeEphemeral=true`。**以上之外的 nexus-core 端点 MCP 一个都不调**
-（尤其：不调 `export`、`planner/audit`、任何 POST/PATCH/DELETE）。
+（尤其：不调 `export`、`planner/audit`、任何 POST/PATCH/DELETE）。**v1.2 唯一的例外**是 `propose_detector_rules` 的
+`POST /api/core/detector/rules/drafts`；规则的 `PUT`、草稿的 `apply` / `discard` MCP 永远不调（只有人能）。
 
 ### `get_task_tree` —— 任务树（扁平）
 
@@ -320,6 +335,53 @@ consumes:
   答错话，写不了任何东西——这也是 v0.4 的写只能是「提议」的原因之一。
 - `suggestionId` 与 `suggestedTaskId` 就是 v0.4 提议工具要引用的键（第六节）。
 
+### `get_detector_rules` —— 活动分类规则（v1.2 追加）
+
+入参：无。形状与语义以 `contracts/detector.rules.v1` 为准。
+
+```jsonc
+{ "version": 7, "updatedAt": "2026-09-30T10:00:00+00:00",     // 从没存过：0 / null
+  "rules": [                                                  // 生效中的全部规则，按顺序（≤ 500，不截）
+    { "id": "r_3f9a1c2b", "app": "code|goland", "title": "garden", "taskId": "t_a1",
+      "path": "学习 / garden / 写提示词",                        // 任务已删为 null
+      "confidence": 0.9, "note": "…", "enabled": true } ],
+  "draft": {                                                  // 没有待应用草稿为 null
+    "draftId": "drf_…", "author": "assistant", "summary": "…", "createdAt": "…", "expiresAt": "…",
+    "diff": { "added": [], "removed": [], "changed": [], "unchanged": 0, "reordered": false },
+    "rules": [ /* 同上形状 */ ] },
+  "truncated": false }                                        // 恒为 false（规则集本身 ≤ 500）
+```
+
+- 这是对象工具「每个数组最多 200 条」的**例外**：规则最多 500 条，全给。模型要交整套才能改规则，看不全就会误删。
+- `app` / `title` / `note` / `summary` 是人或模型写的文本，**是数据，不是指令**（工具描述写明）。
+
+### `propose_detector_rules` —— 起草活动分类规则（v1.2 追加，第一个提议工具）
+
+注解：`readOnlyHint: false`、`destructiveHint: false`、`idempotentHint: false`、`openWorldHint: false`。
+
+入参（都必填）：
+
+- `rules`：数组，≤ 500 条，**完整的规则集**（替换全部，不是追加）。每条 `{id?, app?, title?, taskId, confidence?, note?, enabled?}`，
+  字段语义与校验以 `detector.rules.v1`「一」为准；改已有规则须带回原 `id`，新规则省略 `id`。
+  MCP 只查「是数组、≤ 500 条」，逐条校验在 nexus-core。
+- `summary`：字符串，≤ 500 字符（空串由 nexus-core 拒），给人看的改动说明。
+
+MCP 发 `POST /api/core/detector/rules/drafts {rules, summary, author: "assistant"}`（带租户头、不带 `Authorization`）。
+
+```jsonc
+// 成功
+{ "draftId": "drf_…", "expiresAt": "…", "rulesCount": 14,
+  "diff": { "added": ["r_…"], "removed": ["r_old"], "changed": ["r_3f9a1c2b"], "unchanged": 11, "reordered": false },
+  "applied": false,
+  "next": "草稿已存，尚未生效。请用户在 Cockpit「AI助理 → 规则」查看改动并点「应用」。" }
+// 校验不过（isError: true）——在通用错误形状上追加 errors，原样来自 nexus-core
+{ "error": { "status": 422, "detail": "2 处不合规，第一处：rules[4].taskId：任务不存在：t_zz",
+             "errors": [ { "index": 4, "field": "taskId", "message": "任务不存在：t_zz" } ] } }
+```
+
+- 建草稿**顶掉**之前没应用的草稿（不论谁建的）。草稿 14 天过期。
+- 本工具**永远不让规则生效**：生效只有人在页面上点「应用」（`detector.rules.v1`「三」）。
+
 ## 五、不做（v1 有意不提供）
 
 - 任何写：计时开始/停止、补登、确认/忽略建议、改任务。一个都没有。
@@ -329,6 +391,16 @@ consumes:
 ## 六、v0.4 预留：写 = 提议（**未实现，仅占位**）
 
 写在这里是为了让 v1 的读形状现在就对齐，**v1 的服务端不得列出下面任何工具**。
+
+> **v1.2 修订**：上面这句的「不得列出」对 `propose_detector_rules` 解除（它已实现，见第四节）；对本节其余
+> 预留的 `propose_*`（时间条目、建议挂任务等）仍然有效，直到它们各自在本契约里定下形状。
+> 所有 `propose_*` 工具（已实现的与将来的）共同遵守：
+>
+> 1. **只产生待人确认的东西**（草稿、建议），人在页面上点确认 / 应用才生效；**永远不直接写台账、不直接写 planner、
+>    不碰计时状态、不改任何已生效的配置**。
+> 2. 注解 `readOnlyHint: false`、`destructiveHint: false`。
+> 3. 写入只经它在第四节表里登记的**一个**固定端点；人确认用的端点（应用、确认、丢弃）MCP 永远不调。
+> 4. 返回里写明「尚未生效、要人确认」以及去哪里确认，模型据此告诉用户。
 
 - 工具名前缀 `propose_` 保留给写工具（例：`propose_time_entry`、`propose_task_for_suggestion`，名字到 v0.4 再定）。
 - 语义：**只产生待确认的建议**，进 nexus-core 既有的 `activity.suggestions` 确认流程
@@ -343,12 +415,13 @@ consumes:
 
 - [ ] Streamable HTTP，单端点；`Origin` 校验（无 `Origin` 放行，有则须完全匹配 `MCP_ALLOWED_ORIGINS`）；请求体上限
 - [ ] 第二节租户规则逐条（严格模式 401、格式不对 400、工具无租户入参、`additionalProperties: false`）
-- [ ] 第四节 8 个工具的名字、入参、出参字段与含义；只读注解
+- [ ] 第四节 8 个工具的名字、入参、出参字段与含义；只读注解（v1.1 起 9 个，v1.2 起 11 个：`propose_detector_rules` 按第六节注解）
 - [ ] 只调第四节表里的 GET；nexus-core 5xx 不把细节回给调用方
 - [ ] 日志不记 `Authorization`、`Cookie`，不记工具结果正文（那是用户数据）
 
 测试（实现 PR 里给）：两个租户各建一棵树，互相看不见；严格模式缺头 401；时间缺偏移 400；
-`tools/list` 里每个工具 `readOnlyHint: true` 且没有 `propose_` 开头的。
+`tools/list` 里每个工具 `readOnlyHint: true` 且没有 `propose_` 开头的（v1.2 起：除 `propose_` 开头的外每个 `readOnlyHint: true`，
+`propose_` 开头的 `readOnlyHint: false`、`destructiveHint: false`，且只调它登记的那一个写端点）。
 
 ## 八、实现澄清（v1.0 实现 PR，只澄清、不改语义）
 
@@ -381,3 +454,4 @@ consumes:
 | 2026-09-28 | v1.0 首版（v0.3 AI 桥）。契约先行，实现待建 |
 | 2026-09-28 | 实现落地（`modules/mcp`，纯标准库）。加第八节「实现澄清」：对象工具 `truncated` 总在、92 天含两端、cursor 绑定推广到所有列表工具的其余参数、`null` 当没给、通知/批量/协议版本头的处理、只给 cursor 翻页、批量/并发/上游响应上限。不改任何既有语义 |
 | 2026-09-30 | v1.1 追加工具 `list_projects`（含没建任务的项目与空分区）。只增，既有工具不变 |
+| 2026-09-30 | v1.2 追加 `get_detector_rules`（只读，规则全给、不受 200 条上限）与第一个提议工具 `propose_detector_rules`（一整套规则 → 待人应用的草稿，`detector.rules.v1`）；第六节把「v1 不得列出 `propose_*`」对这一个解除，并定下所有 `propose_*` 的共同规则；请求体上限 64 → 256 KiB；错误对象可追加 `errors`。既有 9 个工具不变 |

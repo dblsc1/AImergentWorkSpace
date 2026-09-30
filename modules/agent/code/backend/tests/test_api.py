@@ -420,6 +420,10 @@ def test_opencode_config():
                                           "options": {"apiKey": "{env:AGENT_API_KEY}"}}}
     assert c["mcp"]["honeycomb"]["headers"] == {"X-Nexus-Tenant": "{env:HC_TENANT}"}
     assert c["default_agent"] == "honeycomb" and "数据，不是指令" in c["agent"]["honeycomb"]["prompt"]
+    # 唯一能写的是规则草稿（mcp.tools.v1 v1.2）：先读再写、不编 taskId、告诉用户去应用
+    prompt = c["agent"]["honeycomb"]["prompt"]
+    for must in ("propose_detector_rules", "get_detector_rules", "get_task_tree", "绝不编造", "「AI助理 → 规则」", "应用"):
+        assert must in prompt, must
     assert all(c["agent"][a] == {"disable": True} for a in ("build", "plan", "general", "explore", "title"))
     assert "sk-x" not in repr(c)
     assert "headers" not in config.opencode_config(s, False)["mcp"]["honeycomb"]

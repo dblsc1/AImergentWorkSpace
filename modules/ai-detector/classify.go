@@ -30,6 +30,7 @@ type rule struct {
 	TaskID     string  `json:"taskId"`
 	Confidence float64 `json:"confidence"`
 	app, title *regexp.Regexp
+	reason     string // 空 = 「规则 #N 命中」；网页规则填「网页规则 #N 命中」（N 是服务端数组里的位置）
 }
 
 // loadRules：文件不存在不算错（没写规则 = 全部认不出），写错了算错——
@@ -76,9 +77,11 @@ func compileCI(p string) (*regexp.Regexp, error) {
 func matchRules(rules []rule, s segment) (suggestion, bool) {
 	for i, r := range rules {
 		if (r.app == nil || r.app.MatchString(s.App)) && (r.title == nil || r.title.MatchString(s.Title)) {
-			id := r.TaskID
-			return suggestion{TaskID: &id, Confidence: r.Confidence,
-				Reason: fmt.Sprintf("规则 #%d 命中", i+1), Classifier: "rules"}, true
+			id, reason := r.TaskID, r.reason
+			if reason == "" {
+				reason = fmt.Sprintf("规则 #%d 命中", i+1)
+			}
+			return suggestion{TaskID: &id, Confidence: r.Confidence, Reason: reason, Classifier: "rules"}, true
 		}
 	}
 	return suggestion{}, false

@@ -32,6 +32,8 @@ _COLLECTIONS = (
     "_startup_locks",
     # v2.5 检测程序设置。
     "detector_settings",
+    # v2.6 检测程序分类规则 + AI 草稿。
+    "detector_rules",
 )
 
 

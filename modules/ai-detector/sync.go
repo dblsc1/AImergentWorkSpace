@@ -145,9 +145,10 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 		return fmt.Sprintf("没有收口的段（%d 个碎片）", len(frags)), nil
 	}
 
-	rules, err := loadRules(cfg.RulesFile)
+	// 网页上存过规则就用网页的（detector.rules.v1），否则 / 拉不到用本机 rules.json。
+	rules, err := rulesForRound(cfg, cockpit, base)
 	if err != nil {
-		// 规则写坏了就不上传：带着「全部认不出」上传不丢数据，但用户会以为规则失效了还没察觉。
+		// 本机规则写坏了就不上传：带着「全部认不出」上传不丢数据，但用户会以为规则失效了还没察觉。
 		// 停在这里，日志里天天报，游标不动，改好规则后一次补上。
 		return "", err
 	}
