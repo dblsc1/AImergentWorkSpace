@@ -1,4 +1,4 @@
-"""「问问助手」面板（ring-chat.js，contracts/agent.chat.v1）。
+"""「AI 对话」面板（chat.js，contracts/agent.chat.v1；2026-09-30 连同本文件从 ring 搬来，断言不变）。
 
 同本套件其余文件：真浏览器、/api/agent/ 全在浏览器侧桩掉。判据落在行为上：发了什么请求、
 显示了什么（且只当文本）、面板在不在、窄屏会不会横滚。
@@ -9,10 +9,11 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+from types import SimpleNamespace
 from typing import Any, Iterator
 
 import pytest
-from conftest import CURRENT_IDLE, PAGE_NAME, RingHarness, _install_stub_routes
+from conftest import open_page as _open
 from playwright.sync_api import Browser, Route
 
 
@@ -84,20 +85,9 @@ class ChatStub:
 
 @contextlib.contextmanager
 def open_page(browser: Browser, base: str, stub: ChatStub, *, width: int = 1100,
-              theme: str | None = None) -> Iterator[RingHarness]:
-    context = browser.new_context(viewport={"width": width, "height": 900}, timezone_id="Asia/Shanghai")
-    page = context.new_page()
-    harness = RingHarness(page, CURRENT_IDLE)
-    _install_stub_routes(page, harness)
-    page.route(re.compile(r"/api/agent/"), stub.route)
-    page.goto(f"{base}/{PAGE_NAME}")
-    page.wait_for_selector("#task-select", state="attached")
-    if theme:
-        page.evaluate(f"document.documentElement.dataset.theme = {theme!r}")
-    try:
-        yield harness
-    finally:
-        context.close()
+              theme: str | None = None) -> Iterator[SimpleNamespace]:
+    with _open(browser, base, routes={r"/api/agent/": stub.route}, width=width, theme=theme) as page:
+        yield SimpleNamespace(page=page)
 
 
 SESSIONS = [{"id": "ses_old", "title": "上周回顾", "createdAt": "2026-09-20T01:00:00+00:00",
@@ -228,7 +218,7 @@ def test_narrow_no_horizontal_scroll(browser, static_base_url, width, theme):
 def test_parse_sse(browser, static_base_url):
     with open_page(browser, static_base_url, ChatStub(health=404)) as h:
         r = h.page.evaluate("""() => {
-          const P = window.ringChat.parseSSE;
+          const P = window.assistantChat.parseSSE;
           const a = P('event: delta\\ndata: {"text":"a"}\\n\\nevent: del');
           const b = P(a.rest + 'ta\\r\\ndata: {"text":"b"}\\r\\n\\r\\n: ping\\n\\nevent: x\\ndata: {bad\\n\\n');
           const c = P('event: delta\\ndata: {"text":\\ndata: "c"}\\n\\n');

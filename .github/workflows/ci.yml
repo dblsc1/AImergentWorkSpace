@@ -154,7 +154,9 @@ jobs:
         run: test -f contracts/design-tokens-v1.md
       - name: 跑检测
         # 纯 stdlib，不装任何东西。退出码就是判据。
-        run: python3 modules/ring/code/frontend/tests/check_tokens_fallback.py
+        run: |
+          python3 modules/ring/code/frontend/tests/check_tokens_fallback.py
+          python3 modules/ring/code/frontend/tests/check_tokens_fallback.py modules/assistant/code/frontend/assistant.css
 
   ring-e2e:
     name: ring 前端测试
@@ -180,6 +182,9 @@ jobs:
       - name: 顶栏泳道预览（navbar.js + 共享 lanes.js）
         # 顶栏属 nginx-docker，但要浏览器：借本 job 装好的 playwright 跑。
         run: python -m pytest ../../../../nginx-docker/tests/test_navbar_lanes.py -q -rs
+      - name: AI助理页（modules/assistant：聊天、待确认建议、检测设置）
+        # 同样要浏览器：借本 job 装好的 playwright 跑，单独一次 pytest（两套 conftest 各管各的）。
+        run: python -m pytest ../../../../assistant/code/frontend/tests -q -rs
 
   installer:
     name: 安装器
@@ -198,9 +203,9 @@ jobs:
         run: python -m pytest -q tools modules/nginx-docker/tests contracts/auth.gate.v1/tests
       - name: 解依赖 + 生成 + 核对
         run: |
-          # ring consumes agent.chat.v1 → 拉上 agent；agent consumes mcp.tools.v1 → 拉上 mcp
-          ./install.sh plan hive ring
-          ./install.sh add hive ring
+          # assistant consumes agent.chat.v1 → 拉上 agent；agent consumes mcp.tools.v1 → 拉上 mcp
+          ./install.sh plan hive ring assistant
+          ./install.sh add hive ring assistant
           ./install.sh doctor
       - name: 两份 compose 都能解析
         env:
@@ -233,7 +238,7 @@ jobs:
         if: matrix.dir == 'deploy/generated'
         run: |
           pip install -q pyyaml
-          ./install.sh add hive ring
+          ./install.sh add hive ring assistant
       - name: 写 .env
         # 只填口令，其余照 README 用默认值（含 Secure cookie）：测的就是用户拿到的那份。
         run: |

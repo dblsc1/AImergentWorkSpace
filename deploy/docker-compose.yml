@@ -15,7 +15,7 @@
 #   nexus-core  事件溯源的计时与任务内核（FastAPI）
 #   mcp    给 AI 代理用的只读工具（mcp.tools.v1），网关的 /api/mcp/ 过门后转给它
 #   auth   auth.gate.v1 的占位实现，单口令登录门（标准库 http.server，零依赖）
-#   web    nginx，唯一入口：serve /hive/ 与 /ring/ 两个前端、反代 /api/ 到
+#   web    nginx，唯一入口：serve /hive/、/ring/、/assistant/ 三个前端、反代 /api/ 到
 #          nexus-core、/api/auth/ 到 auth，在前端与 /api/ 前面插一道 auth_request 校验
 #
 # 只有 web 映射宿主端口，默认绑 127.0.0.1:8800（局域网/公网部署自己改
@@ -229,10 +229,11 @@ services:
       - ../modules/nginx-docker/static:/usr/share/nginx/html/__cockpit:ro
       # 登录页，缺省是登录门占位件自带的；换成自己的就设 HONEYCOMB_LOGIN_DIR。
       - ${HONEYCOMB_LOGIN_DIR:-../contracts/auth.gate.v1/stub/web}:/usr/share/nginx/html/login:ro
-      # 两个前端模块，同样只读挂载、不复制代码：改页面去 modules/<名>/code/frontend/
+      # 三个前端模块，同样只读挂载、不复制代码：改页面去 modules/<名>/code/frontend/
       # 改，浏览器刷新就生效，不用重建任何镜像。
       - ../modules/hive/code/frontend:/usr/share/nginx/html/hive:ro
       - ../modules/ring/code/frontend:/usr/share/nginx/html/ring:ro
+      - ../modules/assistant/code/frontend:/usr/share/nginx/html/assistant:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/healthz"]
       interval: 10s

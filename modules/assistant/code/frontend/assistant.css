@@ -1,0 +1,262 @@
+/* assistant/frontend · assistant.css —— 「AI助理」页（2026-09-30）。
+ *
+ * 颜色只准 var(--…)（design-tokens v1 A2）；开头的 tokens-fallback 块与 ring.css 同一份，
+ * 必须与 contracts/design-tokens-v1.md §3 逐字节一致（tests/check_tokens_fallback.py 查这两份）。
+ * 网关注入的 __cockpit/tokens.css 到了之后层叠盖过它，它只顶首帧 / 没有网关的单测。
+ * 「待确认建议」「AI 对话」两段样式原样搬自 ring.css。
+ */
+
+[hidden] { display: none !important; }
+
+/* tokens-fallback:begin */
+:root,
+html[data-theme="light"] {
+  color-scheme: light;
+  --bg: #F3F5F8;
+  --panel: #FFFFFF;
+  --panel-2: #EDF0F5;
+  --line: #D9DFE8;
+  --line-2: #E7EBF1;
+  --ink: #17202E;
+  --ink-2: #55627A;
+  --ink-3: #8B96A9;
+  --focus: #1E5FD0;
+  --shadow: 0 1px 2px rgba(23,32,46,.06), 0 4px 16px rgba(23,32,46,.07);
+  --plan: #6D5AE6;
+  --plan-soft: #E9E6FB;
+  --fact: #0B7A6F;
+  --fact-soft: #DCF0ED;
+  --fact-ink: #FFFFFF;
+  --fact-s1: #0B7A6F;
+  --fact-s2: #37948A;
+  --fact-s3: #9CCFC8;
+  --warn: #B45309;
+  --danger: #C2333B;
+  --agent-work: #3B8132;
+  --agent-wait: #9A7B00;
+  --accent: #0B7A6F;
+  --accent-ink: #FFFFFF;
+  --accent-soft: #DCF0ED;
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0D1220;
+  --panel: #151C2E;
+  --panel-2: #1D2639;
+  --line: #26314A;
+  --line-2: #202A40;
+  --ink: #E8ECF4;
+  --ink-2: #9DA9BF;
+  --ink-3: #5F6C84;
+  --focus: #6FA8FF;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 20px rgba(0,0,0,.35);
+  --plan: #9B8CFF;
+  --plan-soft: #2A2A4E;
+  --fact: #2FD4C2;
+  --fact-soft: #123B38;
+  --fact-ink: #04211D;
+  --fact-s1: #2FD4C2;
+  --fact-s2: #6FB8AE;
+  --fact-s3: #46706B;
+  --warn: #F0B36A;
+  --danger: #FF8189;
+  --agent-work: #7BD389;
+  --agent-wait: #F5C542;
+  --accent: #2FD4C2;
+  --accent-ink: #04211D;
+  --accent-soft: #123B38;
+}
+html[data-accent="violet"] {
+  --accent: #6D5AE6; --accent-ink: #FFFFFF; --accent-soft: #E9E6FB;
+}
+html[data-theme="dark"][data-accent="violet"] {
+  --accent: #9B8CFF; --accent-ink: #14102E; --accent-soft: #2A2A4E;
+}
+html[data-accent="amber"] {
+  --accent: #9A5B00; --accent-ink: #FFFFFF; --accent-soft: #F5E8D5;
+}
+html[data-theme="dark"][data-accent="amber"] {
+  --accent: #F0B36A; --accent-ink: #2A1A04; --accent-soft: #3A2B12;
+}
+:root {
+  --font-body: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+               "Noto Sans CJK SC", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono",
+               Consolas, "Liberation Mono", monospace;
+  --fs-body: 15px;
+  --fs-sub: 13px;
+  --fs-eyebrow: 11px;
+  --fs-h2: 17px;
+  --fs-time-lg: 40px;
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;
+  --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+  --r-1: 6px;  --r-2: 10px;  --r-3: 14px;
+  --tap: 44px;
+  --t-fast: 150ms ease;
+  --t-med:  240ms ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root { --t-fast: 0ms; --t-med: 0ms; }
+}
+/* tokens-fallback:end */
+
+/* ── 基础（同 ring.css） ──────────────────────────────────────────── */
+* { box-sizing: border-box; margin: 0; }
+html { font-size: var(--fs-body); }
+body {
+  min-height: 100vh;
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--bg);
+  transition: background var(--t-med), color var(--t-med);
+}
+html, body { max-width: 100%; overflow-x: hidden; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+button { font: inherit; cursor: pointer; }
+a { color: var(--accent); }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+main.page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: var(--sp-4);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-4);
+}
+.page-head { display: grid; gap: var(--sp-1); }
+.page-title { font-size: 22px; font-weight: 600; }
+
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-3); box-shadow: var(--shadow); padding: var(--sp-4); }
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2);
+  min-height: var(--tap); padding: 0 var(--sp-4);
+  border-radius: var(--r-2); border: 1px solid transparent;
+  font-weight: 600; white-space: nowrap;
+  transition: filter var(--t-fast), background var(--t-fast);
+}
+.btn-fact { background: var(--fact); color: var(--fact-ink); }
+.btn-fact:hover { filter: brightness(1.08); }
+.btn-fact:disabled { opacity: .5; cursor: not-allowed; filter: none; }
+.btn-ghost { background: none; border-color: var(--line); color: var(--ink-2); font-weight: 400; }
+.btn-ghost:hover { color: var(--ink); background: var(--panel-2); }
+.btn-ghost:disabled { opacity: .5; cursor: not-allowed; background: none; }
+.btn-ghost.danger { color: var(--danger); }
+.btn-ghost.danger:hover { border-color: var(--danger); background: none; }
+:where(select, input, textarea).field {
+  width: 100%; min-height: var(--tap); padding: 0 var(--sp-3);
+  border: 1px solid var(--line); border-radius: var(--r-2);
+  background: var(--panel-2); color: var(--ink); font: inherit;
+}
+:where(textarea).field { padding: var(--sp-2) var(--sp-3); }
+.field:disabled { opacity: .6; cursor: not-allowed; }
+
+/* ── 「待确认」面板（2026-09-28，ring-suggestions.js，nexus-core v2.2 活动建议）──
+ * 建议不是事实：用 ink-2 的中性色调，只有「确认」按钮是事实青——确认那一下才入账。
+ * 320px 一等公民：每条竖排，按钮行两等分，长标题断行不撑宽。 */
+.suggest-panel { display: grid; gap: var(--sp-3); min-width: 0; }
+.suggest-title { font-size: var(--fs-h2); font-weight: 600; }
+.suggest-count { color: var(--ink-2); font-weight: 400; margin-left: var(--sp-1); }
+.suggest-sub { font-size: var(--fs-sub); color: var(--ink-2); }
+.suggest-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+.suggest-threshold-label { font-size: var(--fs-sub); color: var(--ink-2); }
+.suggest-threshold {
+  width: 5.5em; min-height: var(--tap); padding: 0 var(--sp-2);
+  border: 1px solid var(--line); border-radius: var(--r-2);
+  background: var(--panel-2); color: var(--ink); font: inherit;
+}
+.suggest-bulk .btn { flex: 1 1 12em; white-space: normal; }
+.suggest-message { font-size: var(--fs-sub); color: var(--fact); }
+.suggest-message.is-error { color: var(--danger); }
+.suggest-empty, .suggest-more { font-size: var(--fs-sub); color: var(--ink-3); }
+.suggest-list { list-style: none; padding: 0; display: grid; gap: var(--sp-3); }
+.suggest-item {
+  display: grid; gap: var(--sp-2); min-width: 0;
+  padding: var(--sp-3); border: 1px solid var(--line-2); border-radius: var(--r-2);
+  background: var(--panel-2);
+}
+.suggest-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--sp-2); font-size: var(--fs-sub); }
+.suggest-dur { color: var(--ink-2); }
+.suggest-what { overflow-wrap: anywhere; }
+.suggest-hint { font-size: var(--fs-sub); color: var(--ink-2); overflow-wrap: anywhere; }
+.suggest-item select.field { background: var(--panel); min-width: 0; }
+.suggest-item .row { display: flex; gap: var(--sp-2); }
+.suggest-item .row > * { flex: 1; }
+.suggest-item .btn:disabled { opacity: .5; cursor: not-allowed; filter: none; }
+
+/* ── 「问问助手」（2026-09-28，ring-chat.js，contracts/agent.chat.v1）──
+ * 与「待确认」共用标题/副标题/消息样式；320px 下会话栏换行、气泡断长词。 */
+.chat-panel { display: grid; gap: var(--sp-3); min-width: 0; }
+.chat-bar { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.chat-bar select.field { flex: 1 1 10em; min-width: 0; }
+.chat-log {
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); max-height: 50vh; overflow-y: auto; min-width: 0;
+}
+.chat-log:empty { display: none; }
+.chat-msg {
+  padding: var(--sp-2) var(--sp-3); border-radius: var(--r-2); white-space: pre-wrap;
+  overflow-wrap: anywhere; max-width: 100%;
+}
+.chat-user { background: var(--panel-2); justify-self: end; }
+.chat-assistant { border: 1px solid var(--line-2); }
+.chat-note, .chat-tool { font-size: var(--fs-sub); color: var(--ink-3); }
+.chat-form { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.chat-input {
+  flex: 1 1 100%; min-width: 0; min-height: var(--tap); padding: var(--sp-2);
+  border: 1px solid var(--line); border-radius: var(--r-2);
+  background: var(--panel-2); color: var(--ink); font: inherit; resize: vertical;
+}
+.chat-form .btn { flex: 1 1 auto; }
+/* 「调试」（AGENT_DEBUG=1 才有）：原始 JSON 在 pre 里自己横滚，页面不横滚 */
+.chat-debug { min-width: 0; font-size: var(--fs-sub); color: var(--ink-2); }
+.chat-debug summary { cursor: pointer; min-height: var(--tap); display: flex; align-items: center; }
+.chat-debug details { margin-left: var(--sp-3); min-width: 0; }
+.chat-debug-head { margin: var(--sp-2) 0 0; font-weight: 600; color: var(--ink); }
+.chat-debug pre {
+  margin: 0; padding: var(--sp-2); max-width: 100%; max-height: 24em; overflow: auto;
+  background: var(--panel-2); color: var(--ink); border-radius: var(--r-2);
+  font-family: var(--font-mono); font-size: var(--fs-eyebrow); white-space: pre;
+}
+
+/* ── 「待确认建议」里的 idle 段（v2.5：前台没换、但无操作）：虚线框、淡一档，徽标说明为什么 ── */
+.suggest-item.is-idle { border-style: dashed; background: var(--panel); }
+.suggest-item.is-idle .suggest-what { color: var(--ink-2); }
+.suggest-badge {
+  margin-right: auto; padding: 0 var(--sp-2); border: 1px solid var(--line); border-radius: 999px;
+  color: var(--ink-2); font-size: var(--fs-eyebrow); line-height: 1.8;
+}
+
+/* ── 「活动检测设置」（2026-09-30，settings.js，contracts/detector.settings.v1）──
+ * 一列到底；320px 下例子自己换行，名单框随宽度缩。强制清洗那组是勾着的灰框（disabled），关不掉。 */
+.settings-panel { display: grid; gap: var(--sp-3); min-width: 0; }
+.det-device { display: grid; gap: var(--sp-1); min-width: 0; }
+.det-form { display: grid; gap: var(--sp-4); min-width: 0; }
+.set-group { border: 1px solid var(--line-2); border-radius: var(--r-2); padding: var(--sp-3); display: grid; gap: var(--sp-3); min-width: 0; }
+.set-group > legend { padding: 0 var(--sp-1); font-weight: 600; }
+.set-field { display: grid; gap: var(--sp-1); min-width: 0; border: 0; padding: 0; }
+fieldset.set-field > legend { font-size: var(--fs-sub); color: var(--ink-2); margin-bottom: var(--sp-1); padding: 0; }
+.set-checks { display: grid; gap: var(--sp-2); }
+.set-label { font-size: var(--fs-sub); color: var(--ink-2); }
+.set-opt { display: flex; flex-wrap: wrap; align-items: center; column-gap: var(--sp-2); min-height: var(--tap); overflow-wrap: anywhere; }
+.set-opt input { width: 18px; height: 18px; flex: none; accent-color: var(--fact); }
+.set-opt .eg { flex: 1 1 100%; padding-left: calc(18px + var(--sp-2)); font-family: var(--font-mono); font-size: var(--fs-eyebrow); color: var(--ink-3); overflow-wrap: anywhere; }
+.set-hint { font-size: var(--fs-sub); color: var(--ink-3); overflow-wrap: anywhere; }
+.set-num { max-width: 8em; }
+.set-list { min-height: calc(var(--tap) * 1.5); font-family: var(--font-mono); font-size: var(--fs-sub); resize: vertical; }
+.set-mandatory .set-opt { color: var(--ink-3); cursor: not-allowed; }
+.set-mandatory .set-opt input { accent-color: var(--ink-3); cursor: not-allowed; }
+.field-error { font-size: var(--fs-sub); color: var(--danger); overflow-wrap: anywhere; }
+.field[aria-invalid="true"] { border-color: var(--danger); }
+.det-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--sp-2); }
+.det-dirty { margin-right: auto; font-size: var(--fs-sub); color: var(--warn); }
+
+/* ── 「回顾」：只放入口 ── */
+.review-panel { display: grid; gap: var(--sp-2); }
+.review-links { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.review-links a {
+  display: inline-flex; align-items: center; min-height: var(--tap); padding: 0 var(--sp-3);
+  border: 1px solid var(--line); border-radius: var(--r-2); text-decoration: none; color: var(--ink);
+}
+.review-links a:hover { border-color: var(--fact); }

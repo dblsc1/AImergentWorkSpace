@@ -140,6 +140,10 @@
         </div>
       </div>
     </div>
+    <!-- 「待确认」与「问问助手」两块 2026-09-30 搬去「AI助理」页（modules/assistant）。这里只留一个
+         小链接（ring-suggest-link.js）：有待确认的活动时显示「N 条待确认 → AI助理」，0 条、端点 404、
+         或没装「AI助理」页时不出现。 -->
+    <a class="suggest-link" id="suggest-link" href="../assistant/" hidden></a>
     <!-- 「泳道」主视图（nexus-core v2.4 views.lanes.v1，ring-lanes.js）：圆环下方整宽、默认展开，
          人一条线 + 每个代理运行一条线。画图用共享的 __cockpit/lanes.js（顶栏预览同一份）。
          后端没有这个端点（404）时整块保持 hidden。 -->
@@ -154,44 +158,6 @@
       <div id="lanes-view"></div>
     </section>
     <p class="status-message" id="status-message" hidden></p>
-    <!-- 「待确认」面板（nexus-core v2.2 活动建议，ring-suggestions.js）：桌面检测程序
-         上传的活动段只是建议，人确认了才入账。后端没有这个端点（404）时整块保持 hidden。 -->
-    <section class="card suggest-panel" id="suggest-panel" hidden aria-labelledby="suggest-title">
-      <div class="suggest-top">
-        <h2 class="suggest-title" id="suggest-title">待确认 <span class="suggest-count mono" id="suggest-count"></span></h2>
-        <p class="suggest-sub">电脑自动记下的活动，确认后才算进你的时间。</p>
-      </div>
-      <div class="suggest-bulk">
-        <label class="suggest-threshold-label" for="suggest-threshold">把握至少（%）</label>
-        <input class="field suggest-threshold" id="suggest-threshold" type="number"
-               min="0" max="100" step="5" value="80" inputmode="numeric">
-        <button type="button" class="btn btn-fact" id="suggest-confirm-all" disabled>全部确认</button>
-      </div>
-      <p class="suggest-message" id="suggest-message" role="status" hidden></p>
-      <p class="suggest-empty" id="suggest-empty">没有待确认的活动。</p>
-      <ul class="suggest-list" id="suggest-list"></ul>
-      <p class="suggest-more" id="suggest-more" hidden></p>
-    </section>
-    <!-- 「问问助手」（contracts/agent.chat.v1，ring-chat.js）：和「待确认」上下叠放。
-         聊天后端没装（health 不是 200）时整块保持 hidden。 -->
-    <section class="card chat-panel" id="chat-panel" hidden aria-labelledby="chat-title">
-      <h2 class="suggest-title" id="chat-title">问问助手</h2>
-      <p class="suggest-sub">它只能读你的任务和时间，什么都不会改。</p>
-      <div class="chat-bar">
-        <select class="field" id="chat-session" aria-label="对话"></select>
-        <button type="button" class="btn btn-ghost" id="chat-new">新对话</button>
-        <button type="button" class="btn btn-ghost danger" id="chat-delete">删除</button>
-      </div>
-      <div class="chat-log" id="chat-log" aria-live="polite"></div>
-      <p class="chat-tool" id="chat-tool" hidden></p>
-      <p class="suggest-message" id="chat-message" role="status" hidden></p>
-      <form class="chat-form" id="chat-form">
-        <textarea class="field chat-input" id="chat-input" rows="2" maxlength="8000"
-                  placeholder="比如：这周我在哪个项目上花的时间最多？" aria-label="问题"></textarea>
-        <button type="submit" class="btn btn-fact" id="chat-send">发送</button>
-        <button type="button" class="btn btn-ghost" id="chat-stop" hidden>停止</button>
-      </form>
-    </section>
   </main>
 
   <!-- 取消确认弹层（F-RING-2）：原生 <dialog>，Escape/backdrop 天然等价于「返回」，
@@ -244,8 +210,7 @@
   <script src="ring-backfill.js"></script>
   <script src="ring-rename.js"></script>
   <script src="ring-pause.js"></script>
-  <script src="ring-suggestions.js"></script>
-  <script src="ring-chat.js"></script>
+  <script src="ring-suggest-link.js"></script>
   <script src="ring-lanes.js"></script>
 </body>
 </html>

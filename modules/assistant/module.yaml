@@ -1,0 +1,15 @@
+# assistant · 安装清单
+#
+# 契约（module_docs/contract.md）说的是「对外行为」，本文件说的是「怎么把它跑起来」。
+# 纯前端：没有进程，只有一个目录交给 nginx serve，数据全走 /api/core/ 与 /api/agent/。
+
+name: assistant
+summary: AI助理。回顾与分析：和助手聊、确认检测到的活动、改检测程序设置。
+kind: static
+
+static:
+  - prefix: /assistant/
+    root: code/frontend
+    index: index.html
+    gated: true
+    nav: AI助理       # 顶栏页签（排在 任务、计时 之后：按 install.sh add 的模块顺序）

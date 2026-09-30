@@ -1,5 +1,5 @@
 /**
- * ring-chat.js —— 「问问助手」聊天面板（contracts/agent.chat.v1）
+ * chat.js —— 「AI 对话」聊天面板（contracts/agent.chat.v1；2026-09-30 从计时页搬来「AI助理」页）
  *
  * 只跟 <站点前缀>api/agent/ 说话：列会话、建会话、删会话、读历史、发消息（POST 回的是 SSE 流，
  * 用 fetch + ReadableStream 自己解析——EventSource 只会 GET）、停止。前端不认识任何代理运行时的形状。
@@ -10,7 +10,7 @@
  * - 不认识的 SSE 事件一律忽略（契约 v1 之内可以追加事件）。
  * - health.debug 为真（.env 设了 AGENT_DEBUG=1，契约第九节）：每条回答下面多一个折叠的「调试」，
  *   点开才去取这一轮发给模型的原始请求与模型的原始应答，同样只当文本显示。
- * 对外只挂 window.ringChat（纯函数，给单测用）。
+ * 对外只挂 window.assistantChat（纯函数，给单测用）。
  */
 (function () {
   "use strict";
@@ -78,7 +78,7 @@
     return out;
   }
 
-  window.ringChat = { parseSSE: parseSSE, sessionLabel: sessionLabel, debugSections: debugSections };
+  window.assistantChat = { parseSSE: parseSSE, sessionLabel: sessionLabel, debugSections: debugSections };
 
   // ── DOM ─────────────────────────────────────────────────────────────
   var panelEl = document.getElementById("chat-panel");

@@ -22,7 +22,8 @@ import sys
 from pathlib import Path
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent
-CSS_FILE = FRONTEND_DIR / "ring.css"
+# 可传一个别的 css 路径（CI 也拿它查 modules/assistant 的 assistant.css：同一份兜底块）
+CSS_FILE = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else FRONTEND_DIR / "ring.css"
 CONTRACT_FILE = FRONTEND_DIR / "../../../../contracts/design-tokens-v1.md"
 DESIGN_TOKENS_FILE = FRONTEND_DIR / "../../../../contracts/design/tokens.css"
 
@@ -129,7 +130,7 @@ _HEX_RE = re.compile(r"#[0-9a-fA-F]{3,8}\b")
 
 def check_no_bare_hex_outside_fallback() -> int:
     fail_count = 0
-    for css_path in sorted(FRONTEND_DIR.glob("*.css")):
+    for css_path in sorted(CSS_FILE.parent.glob("*.css")):
         text = css_path.read_text(encoding="utf-8")
         if BEGIN_MARK in text and END_MARK in text:
             _, outside = extract_fallback_block(text)
@@ -141,7 +142,7 @@ def check_no_bare_hex_outside_fallback() -> int:
             fail_count += 1
         else:
             ok(f"A2：{css_path.name} 兜底块之外无裸 hex")
-    for js_path in sorted(FRONTEND_DIR.glob("*.js")):
+    for js_path in sorted(CSS_FILE.parent.glob("*.js")):
         hits = _HEX_RE.findall(js_path.read_text(encoding="utf-8"))
         if hits:
             fail(f"A2：{js_path.name} 出现裸 hex（JS 不该有兜底块豁免）：{sorted(set(hits))}")
