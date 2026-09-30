@@ -61,8 +61,14 @@ class Site:
                 route.fulfill(status=200, content_type="application/json",
                               body=json.dumps(self.lanes, ensure_ascii=False))
         else:
+            # 主题照线上走：localStorage["cockpit-theme"]（light|dark|auto）+ 网关注入的首帧 boot 脚本
+            # （nginx/inject.inc 原样）。只设 data-theme 不够——navbar.js 起来会按 localStorage 重算一遍。
             theme = getattr(self, "theme", "light")
-            boot = f"document.documentElement.setAttribute('data-theme','{theme}')"
+            boot = (f"try{{localStorage.setItem('cockpit-theme','{theme}')}}catch(e){{}}"
+                    "(function(){try{var d=document.documentElement,t=localStorage.getItem('cockpit-theme')||'auto';"
+                    "if(t==='auto')t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';"
+                    "d.setAttribute('data-theme',t);var a=localStorage.getItem('cockpit-accent');"
+                    "if(a)d.setAttribute('data-accent',a)}catch(e){}})();")
             route.fulfill(status=200, content_type="text/html; charset=utf-8",
                           body=PAGE % (json.dumps(NAV, ensure_ascii=False), boot))
 
@@ -78,9 +84,10 @@ def browser() -> Iterator[Browser]:
 @contextlib.contextmanager
 def open_site(browser: Browser, lanes: dict[str, Any] | None = fx.LANES_FULL, *, path: str = "/hive/",
               status: int = 200, width: int = 1100, theme: str = "light", touch: bool = False,
-              reduced_motion: str | None = None) -> Iterator[tuple[Page, Site]]:
+              reduced_motion: str | None = None, color_scheme: str = "light") -> Iterator[tuple[Page, Site]]:
     context = browser.new_context(viewport={"width": width, "height": 800}, timezone_id="Asia/Shanghai",
-                                  has_touch=touch, is_mobile=touch, reduced_motion=reduced_motion)
+                                  has_touch=touch, is_mobile=touch, reduced_motion=reduced_motion,
+                                  color_scheme=color_scheme)
     page = context.new_page()
     page.clock.install()
     site = Site(lanes, status)
@@ -273,6 +280,7 @@ def test_overlay_fits_viewport_without_layout_shift(browser, width, theme) -> No
         page.focus("[data-ckpt-chip]")
         settle(page, 50)
         page.wait_for_selector(f"{POP}.ckpt-open .hcl-row")
+        assert pop_colours(page)["pop"] == PANEL[theme]
         box = page.locator(POP).bounding_box()
         assert box["width"] == pytest.approx(min(360, width - 32), abs=0.5)
         assert box["x"] >= 16 - 0.5 and box["x"] + box["width"] <= width - 16 + 0.5
@@ -297,3 +305,33 @@ def test_focus_survives_mouse_exit_and_polling(browser) -> None:
         settle(page, 15_100)
         assert len(site.lanes_urls) == n + 1
         assert page.evaluate("() => document.activeElement.classList.contains('hcl-more')")
+
+
+PANEL = {"light": "rgb(255, 255, 255)", "dark": "rgb(21, 28, 46)"}   # --panel（design-tokens §3.1）
+
+
+def pop_colours(page: Page) -> dict[str, str]:
+    return page.evaluate(f"""() => {{
+        const pop = document.querySelector('{POP}');
+        const track = pop.querySelector('.hcl-track');
+        return {{theme: document.documentElement.getAttribute('data-theme'),
+                 pop: getComputedStyle(pop).backgroundColor,
+                 nav: getComputedStyle(document.querySelector('[data-ckpt-nav]')).backgroundColor,
+                 track: getComputedStyle(track).backgroundColor}};
+    }}""")
+
+
+@pytest.mark.parametrize("how", ["manual", "os"])
+def test_popover_follows_dark_theme(browser, how) -> None:
+    """暗色：手动选「暗」（localStorage）与「跟随」+ 系统暗色两条路，浮层与顶栏都得是暗面板。"""
+    kw = {"theme": "dark"} if how == "manual" else {"theme": "auto", "color_scheme": "dark"}
+    with open_site(browser, **kw) as (page, _):
+        hover_open(page)
+        c = pop_colours(page)
+        assert c["theme"] == "dark"
+        assert c["pop"] == PANEL["dark"] and c["nav"] == PANEL["dark"], c
+        assert c["track"] == "rgb(29, 38, 57)", c          # --panel-2 暗
+        # 顶栏主题面板里切到「亮」，浮层跟着变（颜色全是 var(--…)，不用重画）
+        page.click("button[aria-label='切换主题']")
+        page.click("[data-ckpt-mode='light']")
+        assert pop_colours(page)["pop"] == PANEL["light"]
