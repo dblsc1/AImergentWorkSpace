@@ -103,7 +103,8 @@ consumes:
   - id: nexus-core.views.lanes.v1
     contract: ../nexus-core/module_docs/contract.md
     purpose: >
-      （v0.3，**契约先行，前端待建**）计时页「泳道」面板，与圆环同页、可折叠：人一条线在最上，下面每个代理运行
+      （v0.3，**契约先行，前端待建**）计时页的**主视图之一**：圆环下方整宽的「泳道」区，**默认展开**，画窗口里的
+      **全部**泳道（读端上限 200 个运行，`truncated` 时在区尾写一句「还有更多」）。人一条线在最上，下面每个代理运行
       一条线（名字用 `label`，没有用 `agent`），横轴是时间（缺省「最近 3 小时」实时窗口，可切「今天」；实时窗口
       读 `?date=<today>`——跨零点时读 `?from=<昨天>&to=<今天>`——本地按 `now` 裁出最近 3 小时）。人那条线：`human.sessions` 画实心块（按 `mode` 深浅），
       `running` 画到 `now`，`human.presence` 在人那条线下缘画一条细带（离开画斜线，悬停显示程序名 + 标题）。
@@ -115,6 +116,11 @@ consumes:
       **画的是标记，不是时长**：面板里不出现任何秒数合计，人的数字仍只在圆环上。另读 `views.current.v1` 的
       `agents[].phase` 给顶栏 / 面板标题画当前红绿灯（`null` 按 `working`）。
       选在 ring 而不是新开模块：ring 本来就是「此刻」的页面、已在轮询 current，不必为一张图再加路由与安装项。
+      颜色取 `tokens.css` 的语义色（缺的在实现 PR 里按 `contracts/design-tokens-v1.md` 先加 token，不在 JS 里现算），
+      与顶栏芯片悬停的精简预览（`modules/nginx-docker` 契约「泳道预览」节）同一套配色。
+      页面分工（设计意图，仓主 2026-09-30 定）：**计时页（ring）= 现在**——在跑的计时、全部泳道；
+      **任务 / 项目页（hive）= 未来**——计划；**新页「AI助理」= 回顾与分析**——聊天、待确认的活动建议、检测程序设置、
+      回顾与分析（该页待建；聊天与待确认面板现住 ring，迁过去另起 PR）。泳道的历史某天视图将来可从「AI助理」链过来，本版不要求。
   - id: agent.chat.v1
     contract: ../../../contracts/agent.chat.v1/contract.md
     purpose: >
@@ -169,3 +175,4 @@ consumes:
 | 2026-09-28 | v0.3 AI 桥实现 | `agent.chat.v1` 的前端落地：`ring-chat.js`（新文件）、`#chat-panel`、`ring.css` 末段。与「待确认」上下叠放（不做页签）；POST 的 SSE 用 fetch + ReadableStream 解析；全部 textContent；Enter 发送、Shift+Enter 换行。装 ring 时安装器随之装上聊天后端模块 `agent`（它再拉上 `mcp`） |
 | 2026-09-28 | v0.3 自动检测只是建议 | 新增 consumes `nexus-core.activity.suggestions.v1`：计时页「待确认」面板（`ring-suggestions.js`、HTML 末尾 `#suggest-panel`、`ring.css` 末段）。列出、改任务、确认、忽略、按把握阈值全部确认；端点 404 时整块隐藏；确认后刷新圆环、不发 `honeycomb:timer-changed` |
 | 2026-09-30 | v0.3 人一条线、代理多条线（契约先行） | 新增 consumes `nexus-core.views.lanes.v1`（计时页「泳道」面板：配色、闪烁、连线、轮询、404 隐藏）与 `views.current.v1` 的 `agents[].phase`；前端代码在实现 PR 里跟上 |
+| 2026-09-30 | 仓主定（PR #50） | 泳道从「可折叠面板」改为计时页默认展开的主视图、画全部泳道；配色走 tokens、与顶栏预览一致；写入页面分工设计意图（ring=现在 / hive=未来 / 待建「AI助理」=回顾与分析） |

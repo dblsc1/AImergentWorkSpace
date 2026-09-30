@@ -19,6 +19,9 @@ consumes:
   - id: nexus-core.views.current.v1
     contract: ../../nexus-core/module_docs/contract.md
     purpose: 顶栏计时芯片（经网关的 /__cockpit/current）
+  - id: nexus-core.views.lanes.v1
+    contract: ../../nexus-core/module_docs/contract.md
+    purpose: 计时芯片悬停 / 聚焦时弹出的泳道精简预览（v0.3，契约先行，见下「泳道预览」）
   - id: contracts.timer-ring-visual.v1
     contract: ../../../contracts/timer-ring-visual-v1.md
     purpose: 只读 hive / ring 共用的两个本机键 nexus.timer.paused.v1 / nexus.timer.carry.v1（见下「暂停与累计」）
@@ -64,6 +67,28 @@ consumes:
 - 芯片从不写这两个键。
 - 已暂停时顶栏加属性 `data-ckpt-paused`（v0.2.7，追加；`data-ckpt-timer` 仍是 idle），圆点换成 `--accent` 空心：
   窄屏把字藏了也能和空闲的灰空心点分开。
+
+## 泳道预览（v0.3，契约先行，前端待建）
+
+每个页面都有同一个顶栏，所以「人一条线、代理多条线」的精简版挂在计时芯片上，全站一个样：
+
+- **内容**：人一条线 + **至多 4 条**代理线，最近约 **1 小时**。代理线的挑法：在跑且当前相位是
+  `waiting_input`/`waiting_permission` 的在前，其次在跑且 `working`，再次在跑的其他相位，最后按结束时刻最近的已结束运行；
+  同档按最近一次相位转入时刻倒序。配色、段的推法、`reply`/`attend` 连线与计时页泳道（`modules/ring` 契约
+  `nexus-core.views.lanes.v1` 条）**同一套**，颜色取 `tokens.css`；超出 4 条时末尾一行「还有 N 个 → 计时页」。
+  不画在场细带、不显示任何秒数合计（标记，不是时长）。
+- **数据**：打开时拉 `<前缀>api/core/views/lanes?date=<今天>`（1 小时窗口跨零点时 `?from=<昨天>&to=<今天>`），
+  本地按响应的 `now` 裁出最近 1 小时。**只在预览打开时**约每 15 秒轮询一次，关上即停；页面不可见时也停。
+  直接走 `api/core`（用户已登录、在看页面），**不新开 `__cockpit/*` 路由**。非 2xx（含 404：后端早于 v2.4；401）
+  → 不弹预览，芯片照旧，不跳登录页。`label`/`agent`/`detail` 只当文本渲染。
+- **计时页上不弹**：当前页就是 `HONEYCOMB_NAV.timer` 时芯片悬停什么都不加——那一页已经画了全部泳道，再弹一份是重复。
+- **交互与无障碍**：
+  - 鼠标：悬停约 150 ms 后打开，移出芯片与预览约 300 ms 后关上（防闪）；点击芯片照旧去计时页。
+  - 键盘：芯片获得焦点即打开，`Esc` 关上并把焦点留在芯片；芯片带 `aria-expanded`/`aria-controls`，预览里另有一段
+    文字摘要（如「garden：等你批准」）给读屏用，不只靠颜色。
+  - 触屏（没有悬停）：第一下点芯片切换预览开 / 关，预览里放一个「去计时页」链接；点预览外面关上。
+  - `prefers-reduced-motion` 时不闪。
+  - 预览是浮层（不占文档流），打开 / 关上**不引起布局位移**；宽度 `min(360px, 100vw - 32px)`，320px 宽的屏上左右各留 16px、不出横向滚动。
 
 ## AI 桥路由（v0.3）
 
