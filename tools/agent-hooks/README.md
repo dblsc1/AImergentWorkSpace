@@ -156,6 +156,87 @@ Codex 或者别的 agent 工具，接法见上面的 `cockpit-run`（Codex 目�
 SessionStart/SessionEnd 这样的钩子机制，用 `cockpit-run` 包一层是目前
 最简单的接法）。
 
+## 相位：代理此刻在干活还是在等你（v0.3 追加，契约先行）
+
+cockpit 的时间线页面要画出「代理 1 在干活、代理 3 在等你批准、你刚回了代理 3」。为此 run 在
+开始与结束之间可以报**相位**（nexus-core 契约 v2.4「人一条线、代理多条线的时间线」节）：
+
+| 相位 | 意思 |
+|---|---|
+| `working` | 在干活 |
+| `waiting_input` | 停下来等你说话 |
+| `waiting_permission` | 停下来等你批准一个动作 |
+| `idle` | 一轮做完了 |
+| `error` | 一轮因出错结束（限流、认证失败……） |
+
+一条都不报也行：没报相位的 run 在页面上整条画成「在干活」（就是 v2.1 的样子）。
+
+### 上报什么 / 不上报什么（相位部分）
+
+只报：相位、它发生的时刻（本机时钟）、可选的**短标签** `detail`（只会是工具名如 `Bash`、Claude Code 的
+通知种类如 `permission_prompt`、错误种类如 `rate_limit` 这类固定词）、「这次是不是你回话 / 批准引起的」、
+开始时的 `label`/`match`（**工作目录名这一级**，不是完整路径）。
+**不报**：提示词、工具参数（命令、文件路径）、通知正文、Claude 的回答、transcript 路径。
+
+### Claude Code 钩子：相位
+
+在上面 `SessionStart`/`SessionEnd` 的基础上，再把下面这些事件指向**同一个脚本**，并加
+`"async": true`——相位只是记录，绝不能让 Claude 等它（`UserPromptSubmit` 钩子同步跑时会挡住模型处理，
+Claude Code 给它的默认超时只有 30 秒）。`SessionStart` **保持同步**：它要先把 runId 存好，后面的相位才找得到它。
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit":   [ { "hooks": [ { "type": "command", "command": "python3 /绝对路径/tools/agent-hooks/claude_hook.py", "async": true } ] } ],
+    "PermissionRequest":  [ { "hooks": [ { "type": "command", "command": "python3 /绝对路径/tools/agent-hooks/claude_hook.py", "async": true } ] } ],
+    "Notification":       [ { "hooks": [ { "type": "command", "command": "python3 /绝对路径/tools/agent-hooks/claude_hook.py", "async": true } ] } ],
+    "PostToolUse":        [ { "hooks": [ { "type": "command", "command": "python3 /绝对路径/tools/agent-hooks/claude_hook.py", "async": true } ] } ],
+    "PostToolUseFailure": [ { "hooks": [ { "type": "command", "command": "python3 /绝对路径/tools/agent-hooks/claude_hook.py", "async": true } ] } ],
+    "Stop":               [ { "hooks": [ { "type": "command", "command": "python3 /绝对路径/tools/agent-hooks/claude_hook.py", "async": true } ] } ],
+    "StopFailure":        [ { "hooks": [ { "type": "command", "command": "python3 /绝对路径/tools/agent-hooks/claude_hook.py", "async": true } ] } ]
+  }
+}
+```
+
+脚本按 stdin 的 `hook_event_name` 分流（规范性映射）：
+
+| Claude Code 事件（读的字段） | 报什么 |
+|---|---|
+| `SessionStart` | 开 run 时带 `phase: "idle"`（会话开着、还没说话）、`label` = 工作目录名、`match` = 工作目录名（不足 3 个字符不带） |
+| `UserPromptSubmit`（**不读 `prompt`**） | `working`，`reply: true`——你说了话 |
+| `PermissionRequest`（`tool_name`） | `waiting_permission`，`detail` = 工具名。这是「要请你批准」那一刻就触发的事件 |
+| `Notification`（`notification_type`，**不读 `message`**） | `permission_prompt` → `waiting_permission`（兜底：沙箱网络请求的批准不触发 `PermissionRequest`）；`elicitation_dialog`/`elicitation_url_dialog`/`agent_needs_input` → `waiting_input`；`idle_prompt` → `idle`（你按 Esc 打断时 `Stop` 不触发，靠它把灯收回来）；其余种类不报。`detail` = 种类名 |
+| `PostToolUse` / `PostToolUseFailure` | **仅当**上次报的是 `waiting_*` 时报 `working`、`reply: true`（你批准 / 回答了，它接着干）；否则不报——不为每次工具调用发一次请求 |
+| `Stop` | `idle` |
+| `StopFailure`（`error`） | `error`，`detail` = `error` 字段（`rate_limit`、`authentication_failed` 这类固定枚举） |
+| `SessionEnd` | 关 run（不变） |
+
+- `at` 取钩子进程开始处理那一刻。异步钩子是**并行**跑的、到达服务端的顺序不保证，服务端按 `at` 排，所以时间戳必须在
+  事件发生时取，不能在发请求时补。
+- 每会话的状态文件里多记一个「上次报的相位」，只在相位变了时才发请求；并行钩子偶尔重复发一次无妨（服务端对
+  「与前一条相同」回 `applied:false`）。
+- 纪律不变：永远 `exit 0`，网络总时限约 1 秒，失败只在 stderr 留固定分类的一行。
+
+事件名与字段核对自 Claude Code 官方文档 <https://code.claude.com/docs/en/hooks>（2026-09-30）：
+`PermissionRequest` 在要请求批准时立即触发，而 `Notification` 的 `permission_prompt` 要等提示挂了约 6 秒才触发；
+`idle_prompt` 在回答结束约 60 秒且你没打字时触发；`Stop` 在用户打断时不触发，API 出错时触发的是 `StopFailure`；
+`UserPromptSubmit` 同步钩子默认超时 30 秒；`"async": true` 只对 `type: "command"` 有效、且不受 `timeout` 约束。
+
+### `cockpit-run`：相位
+
+`cockpit-run` 包命令时把本次的 runId 放进子进程的环境变量 `COCKPIT_RUN_ID`。被包的程序（或它自己的钩子机制）
+想报相位时调：
+
+```sh
+cockpit-run phase <working|waiting_input|waiting_permission|idle|error> [--run <runId>] [--detail 短标签] [--reply]
+```
+
+- `--run` 缺省读 `COCKPIT_RUN_ID`；两者都没有 → stderr 一行提示，什么都不发。
+- 第一个参数是字面的 `phase`、且参数里**没有** `--` 时才是这个子命令；`cockpit-run --task X -- phase …` 仍是包一个
+  叫 `phase` 的命令，老用法不受影响。
+- 包命令时另可给 `--label`、`--match`（缺省都是当前目录名），随 start 一起发。
+- 同 hooks 的纪律：**永远退出码 0**，连不上 / 404 / 422 只在 stderr 留一行固定分类，绝不打断调用它的代理。
+
 ## 测试
 
 ```sh
