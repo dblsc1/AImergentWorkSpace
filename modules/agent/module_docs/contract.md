@@ -28,6 +28,9 @@ consumes:
   opencode 自己的会话库只当模型上下文。
 - 普通 RPC 30 秒超时（只有事件流不限读）；一轮总时限到了、取消或断连后，中止并经 `/session/status` 确认停了才放开 busy，确认不了就重启这个租户的运行时。
 - opencode 钉死在 `Dockerfile` 的 `OPENCODE_VERSION`（npm 包 `opencode-ai`）。镜像里的进程不是 root。
+- `code/backend/app/debug.py`：调试窗口（契约第九节，`AGENT_DEBUG=1` 才有）。同进程里只听 127.0.0.1 的转发代理
+  （内嵌一个 uvicorn，不抢信号），按请求头 `x-session-id` 把 opencode 的每次模型请求归到（租户, 会话, 这一轮）；
+  流式应答拼回正文 / 思考 / 工具调用 / 用量。存 `tenants/<…>/debug/<会话 id>/<时刻>_<messageId>.json`，一轮一个文件。
 - opencode 自己的日志文件接到 `/dev/null`：它会原样记上游报错（可能带密钥片段）。本服务的日志只记错误类别、
   状态码、关联 id。
 
@@ -37,12 +40,13 @@ consumes:
 ## 配置
 
 见 `contracts/agent.chat.v1` 第七节（`AGENT_API_KEY`、`AGENT_MODEL`、`AGENT_BASE_URL`、`AGENT_MAX_SESSIONS`、
-`AGENT_MAX_RUNTIMES`、`AGENT_MAX_TURN_SECONDS`）。另有只给测试与换组装用的：`AGENT_MCP_URL`（缺省 `http://mcp:8020/api/mcp/`）、
+`AGENT_MAX_RUNTIMES`、`AGENT_MAX_TURN_SECONDS`）与第九节的 `AGENT_DEBUG`。另有只给测试与换组装用的：`AGENT_MCP_URL`（缺省 `http://mcp:8020/api/mcp/`）、
 `AGENT_DATA_DIR`（`/data`）、`AGENT_IDLE_SECONDS`（900）、`AGENT_OPENCODE_BIN`（`opencode`）。
 
 ## 测试
 
 - `cd modules/agent/code/backend && python -m pytest -q tests`：`test_api.py` 用脚本化的假运行时测 HTTP 行为；
+  `test_debug.py` 测录制代理（对着假模型：密钥不落盘、SSE 拼装含工具调用增量、上限、租户隔离、端点）；
   `test_integration.py` 起真 opencode + 假模型 + 假 MCP（`tests/fakes/`），找不到 opencode 就跳过。
 - `deploy/test/agent.sh`（CI「agent」）：在镜像里跑全部测试（真 opencode 必须在），假模型用内网服务名
   `http://fake-llm:9100/v1`，再按 compose 的环境变量验跑起来的服务本身。

@@ -16,7 +16,7 @@ def req(m, p, body=None, tenant="alice"):
                                headers={"Content-Type": "application/json", "X-Nexus-Tenant": tenant})
     return urllib.request.urlopen(r, timeout=120)
 h = json.load(req("GET", "health"))
-assert h == {"status": "ok", "configured": True}, h
+assert h == {"status": "ok", "configured": True, "debug": False}, h
 sid = json.load(req("POST", "sessions", {}))["id"]
 body = req("POST", f"sessions/{sid}/messages", {"text": "call:get_task_tree"}).read().decode()
 events = [l[7:] for l in body.splitlines() if l.startswith("event: ")]

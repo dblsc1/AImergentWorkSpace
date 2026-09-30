@@ -151,7 +151,7 @@ def send(c, sid, text):
 # ── 健康与配置 ──
 def test_health_configured(app_env):
     srv, _ = app_env()
-    assert srv.client().get("/api/agent/health").json() == {"status": "ok", "configured": True}
+    assert srv.client().get("/api/agent/health").json() == {"status": "ok", "configured": True, "debug": False}
 
 
 def test_unconfigured_only_messages_503(app_env):

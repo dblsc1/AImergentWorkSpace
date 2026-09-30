@@ -1,6 +1,6 @@
 # agent.chat.v1 —— 和 AI 助手聊天（可替换的聊天后端）
 
-> **契约 id**：`agent.chat.v1`。**当前版本 v1.2**（2026-09-28：v1.0 契约先行；v1.1 追加实现 PR 的核实结果，第七节末；v1.2 追加存储与时长上限，第六节末）。
+> **契约 id**：`agent.chat.v1`。**当前版本 v1.3**（2026-09-28：v1.0 契约先行；v1.1 追加实现 PR 的核实结果，第七节末；v1.2 追加存储与时长上限，第六节末；2026-09-30 v1.3 追加调试窗口，第九节）。
 >
 > **是什么**：网页里的聊天面板（计时台 `ring`，与「待确认」面板合在一起）只跟这份契约说话：
 > 建会话、列会话、接着聊、发一条消息并以 SSE 流式收回答、取消。**会话管理是本契约的形状，
@@ -278,10 +278,58 @@ CI「agent 测试」在镜像里跑，假模型 + 假 MCP，不要密钥）：
 没配密钥时 `health.configured=false` 且发消息 `503`；请求体多带 `model` 字段 `422`；运行时的可用工具清单里只有
 honeycomb MCP 的只读工具。
 
+## 九、调试窗口（v1.3 追加，可选）
+
+给「想看清楚到底发了什么给模型」的人：**关着时什么都不存在**；打开后录下每一轮里聊天后端发给模型服务的**原始请求**
+与模型服务回来的**原始应答**，面板上每条回答下面多一个折叠的「调试」。换实现可以不做（`health.debug` 恒为 `false`、
+下面的端点回 `404`）。
+
+| 方法 | 路径 | 请求 | 成功 |
+|---|---|---|---|
+| GET | `/api/agent/health` | — | 追加字段 `"debug": <bool>`：调试窗口此刻是否开着 |
+| GET | `/api/agent/sessions/{id}/debug` | `?messageId=`（可选，只要那一轮） | `200 {"turns": [Turn]}`，按时间升序 |
+
+```jsonc
+// Turn：一轮 = 一次「发消息」
+{ "messageId": "msg_…",        // 这一轮回答的 id（= SSE start 事件的 messageId；没生成正文也有）
+  "userMessageId": "msg_…", "startedAt": "…",
+  "requests": [Request],        // 这一轮里对模型服务的每一次请求（工具调用会让一轮有多次）
+  "omitted": 0 }                // 超了上限没存的请求数
+// Request
+{ "n": 1, "at": "…", "method": "POST", "path": "/chat/completions", "status": 200, "ms": 812,
+  "aborted": false,             // 应答没收完连接就断了（取消、超时）
+  "request": { /* 发给模型服务的请求体原样：model、messages（含系统提示、历史、工具结果）、tools、其余参数 */ },
+  "response": { "stream": true, "model": "…", "content": "正文", "reasoning": "思考（reasoning_content）或 null",
+                "toolCalls": [{"id": "…", "name": "…", "arguments": "<JSON 字符串>"}],
+                "finishReason": "stop", "usage": { /* 上游给的原样 */ }, "chunks": 12, "unparsedChunks": 0 }
+  // 非流式 / 报错的应答：{"stream": false, "body": <上游回的 JSON 或文本>}
+}
+```
+
+规范性：
+
+- **开关**：`.env` 的 `AGENT_DEBUG=1`（缺省 `0`），只传给聊天后端容器。关着时 `debug` 端点一律 `404`，
+  `health.debug=false`，**以前录下的记录在启动时删掉**。模型没配好（`configured:false`）时也算关着。
+- **隔离**：同第三节。记录存在会话所属租户的目录里；别的租户的会话 id → `404`。**删会话一并删**它的记录。
+- **不录的东西**：任何请求 / 应答**头**（`Authorization` 在头里）；记录里出现的模型密钥原文替换成 `[已隐去]`
+  （上游报错正文有时会回显密钥）。**不写进日志**——第四节「日志脱敏」照旧。用户凭据本来就到不了这里。
+- **上限**：每个会话留最近 20 轮；每条 `Request` 序列化后 ≤ 2 MiB（超长字符串截断并注明原长，还超就只留请求的开头），
+  每轮 ≤ 50 条且 ≤ 8 MiB（超了记进 `omitted`）。
+- **风险**：记录就是用户的数据（完整的提示、历史、工具结果），存在聊天后端的数据卷里。**只在自己机器上调试时开**。
+
+缺省实现（opencode 适配器）怎么录：同一个进程里一个只听 `127.0.0.1` 的转发代理。调试开着时，每个运行时的
+`provider.<p>.options.baseURL` 改指 `http://127.0.0.1:<代理端口>/<随机令牌>`（令牌每次拉起运行时换一个，令牌 → 租户），
+代理把请求原样转给真上游、把应答原样回给 opencode，边转边录。opencode 1.18.33 每个请求带 `x-session-id: <opencode 会话 id>`
+（已实测），适配器在一轮开始时登记（租户, opencode 会话）→（会话, `messageId`），请求按它归到那一轮；登记不到的只转不录。
+真上游：设了 `AGENT_BASE_URL` 就是它；否则 `deepseek` → `https://api.deepseek.com`（opencode 1.18.33 自带目录的 `api`，
+请求打到 `<api>/chat/completions`；已用假密钥实测 DeepSeek 回 401 而不是 404）。别的自带 provider 不认识真上游，
+`AGENT_DEBUG` 被忽略（启动日志一行警告），要调试就改用 `AGENT_BASE_URL`。
+
 ## 变更记录
 
 | 日期 | 变更 |
 |---|---|
 | 2026-09-28 | v1.0 首版（v0.3 AI 桥）。契约先行，实现待建 |
+| 2026-09-30 | v1.3 追加（仓主要的调试窗口）：第九节——`AGENT_DEBUG=1` 时录下每轮发给模型 / 模型回来的原文，`GET /api/agent/sessions/{id}/debug`，`health` 追加 `debug` 字段。关着时不存在；既有端点与事件不变 |
 | 2026-09-28 | v1.2 追加（实现 PR · Codex 审核）：第六节末「上限」——每会话存最近 500 条、回答 32000 字、一轮 `AGENT_MAX_TURN_SECONDS`（300 秒）；取消/断连/超时确认停了才放开 busy |
 | 2026-09-28 | v1.1 追加（实现 PR）：第七节末「实现核实结果」——五条假设四条成立；`deepseek/deepseek-chat` 不在目录、DeepSeek 文档也已改用 `deepseek-flash`，缺省模型改为 `deepseek/deepseek-flash`，适配器总是显式登记模型；自定义端点只调 `/chat/completions`；`AGENT_BASE_URL` 可为内网服务名；网络名规则。接口不变 |

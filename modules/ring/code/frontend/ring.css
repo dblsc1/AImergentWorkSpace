@@ -373,7 +373,7 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .chat-bar { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 .chat-bar select.field { flex: 1 1 10em; min-width: 0; }
 .chat-log {
-  display: grid; gap: var(--sp-2); max-height: 50vh; overflow-y: auto; min-width: 0;
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); max-height: 50vh; overflow-y: auto; min-width: 0;
 }
 .chat-log:empty { display: none; }
 .chat-msg {
@@ -390,3 +390,13 @@ html, body { max-width: 100%; overflow-x: hidden; }
   background: var(--panel-2); color: var(--ink); font: inherit; resize: vertical;
 }
 .chat-form .btn { flex: 1 1 auto; }
+/* 「调试」（AGENT_DEBUG=1 才有）：原始 JSON 在 pre 里自己横滚，页面不横滚 */
+.chat-debug { min-width: 0; font-size: var(--fs-sub); color: var(--ink-2); }
+.chat-debug summary { cursor: pointer; min-height: var(--tap); display: flex; align-items: center; }
+.chat-debug details { margin-left: var(--sp-3); min-width: 0; }
+.chat-debug-head { margin: var(--sp-2) 0 0; font-weight: 600; color: var(--ink); }
+.chat-debug pre {
+  margin: 0; padding: var(--sp-2); max-width: 100%; max-height: 24em; overflow: auto;
+  background: var(--panel-2); color: var(--ink); border-radius: var(--r-2);
+  font-family: var(--font-mono); font-size: var(--fs-eyebrow); white-space: pre;
+}

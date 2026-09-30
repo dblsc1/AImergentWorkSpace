@@ -225,7 +225,11 @@ in `.env` as `AGENT_API_KEY` (default model `deepseek/deepseek-flash`) and run
 everything else works as before. Other models, a local Ollama or any
 OpenAI-compatible server on your network: see the AI assistant section of
 `deploy/.env.example`. The interface is `contracts/agent.chat.v1`; the default
-implementation (opencode) lives in `modules/agent/`.
+implementation (opencode) lives in `modules/agent/`. To see exactly what each
+turn sends to the model and what comes back, set `AGENT_DEBUG=1` in `.env` and
+restart: every answer gets a collapsed "调试" (debug) section. Those records are
+your data (full prompts and tool results) — only turn it on while debugging on
+your own machine, and set it back to `0` afterwards.
 
 ### Serving it under a sub-path
 

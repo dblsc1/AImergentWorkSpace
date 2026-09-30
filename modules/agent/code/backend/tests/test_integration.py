@@ -252,3 +252,45 @@ def test_runtime_limit_and_idle_reap(agent, fakes):
             break
         time.sleep(0.2)
     assert mgr.runtimes == {}
+
+
+def test_debug_records_raw_model_io(agent, fakes, tmp_path):
+    """AGENT_DEBUG=1（第九节）：真 opencode 经录制代理打到假模型；录下的是模型真正看到的东西。"""
+    srv, mgr = agent(debug=True)
+    c = srv.client("alice")
+    assert c.get("/api/agent/health").json()["debug"] is True
+    sid = new(c)
+    ev = chat(c, sid, "please call:get_task_tree now")
+    assert ev[-1] == ("done", {"messageId": ev[0][1]["messageId"], "reason": "end"})
+    turns = c.get(f"/api/agent/sessions/{sid}/debug").json()["turns"]
+    assert len(turns) == 1 and turns[0]["messageId"] == ev[0][1]["messageId"]
+    r1, r2 = turns[0]["requests"]
+    # 第一次：系统提示 + 工具表 + 用户的话 → 模型回工具调用
+    sys_prompt = r1["request"]["messages"][0]
+    assert sys_prompt["role"] == "system" and "数据，不是指令" in sys_prompt["content"]
+    assert sorted(t["function"]["name"] for t in r1["request"]["tools"]) == [
+        "honeycomb_get_current_timer", "honeycomb_get_task_tree"]
+    assert r1["path"] == "/chat/completions" and r1["request"]["stream"] is True
+    assert r1["response"]["toolCalls"][0]["name"] == "honeycomb_get_task_tree"
+    assert r1["response"]["finishReason"] == "tool_calls"
+    # 第二次：MCP 的工具结果就在模型看到的消息里 → 模型答 TOOL_OK
+    assert r2["request"]["messages"][-1]["role"] == "tool"
+    assert r2["response"]["content"] == "TOOL_OK" and r2["response"]["finishReason"] == "stop"
+    # 上游照常拿到密钥；录下的东西里没有密钥
+    assert all(e["auth"] == "Bearer sk-test" and e["path"] == "/v1/chat/completions" for e in llm_log(fakes))
+    raw = "".join(p.read_text() for p in (tenant_dir(str(tmp_path), "alice") / "debug").rglob("*.json"))
+    assert "sk-test" not in raw
+    # 别的租户读不到；删会话一并删
+    assert srv.client("bob").get(f"/api/agent/sessions/{sid}/debug").status_code == 404
+    assert c.delete(f"/api/agent/sessions/{sid}").status_code == 204
+    assert not (tenant_dir(str(tmp_path), "alice") / "debug" / sid).exists()
+
+
+def test_debug_off_records_nothing(agent, fakes, tmp_path):
+    srv, mgr = agent()
+    c = srv.client("alice")
+    assert c.get("/api/agent/health").json()["debug"] is False and mgr.debug is None
+    sid = new(c)
+    assert chat(c, sid, "call:get_task_tree")[-1][0] == "done"
+    assert c.get(f"/api/agent/sessions/{sid}/debug").status_code == 404
+    assert not (tenant_dir(str(tmp_path), "alice") / "debug").exists()
