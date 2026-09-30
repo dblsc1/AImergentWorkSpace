@@ -13,12 +13,13 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from .config import settings
+from .modules.activity.presence_router import router as presence_router
 from .modules.activity.router import router as activity_router
 from .modules.activity.service import ConflictError as SuggestionConflictError
 from .modules.events.router import router as events_router
 from .modules.events.service import InvalidQueryError
 from .modules.export.router import router as export_router
-from .modules.planner.errors import ForbiddenError, StalePlanError
+from .modules.planner.errors import ForbiddenError, StalePlanError, UnprocessableError
 from .modules.planner.import_router import router as planner_import_router
 from .modules.planner.repo import ensure_tenant_indexes
 from .modules.planner.service import HasChildrenError, InvalidInputError, NotFoundError
@@ -76,6 +77,7 @@ app.include_router(export_router, prefix=API_PREFIX)
 app.include_router(planner_import_router, prefix=API_PREFIX)
 app.include_router(restore_router, prefix=API_PREFIX)
 app.include_router(activity_router, prefix=API_PREFIX)  # v2.2 活动建议
+app.include_router(presence_router, prefix=API_PREFIX)  # v2.4 在场心跳
 
 
 # 域错误 → 状态码的映射只在这里（contract.md v0.4「校验」表 + v0.6「档案读端」）：
@@ -89,6 +91,7 @@ app.include_router(activity_router, prefix=API_PREFIX)  # v2.2 活动建议
 #                    v1.9 快照恢复：apply 的快照不是 dry-run 过的那一份）
 #   NotEmptyError → 409（v1.9 快照恢复：目标实例不是空库）
 #   SuggestionConflictError → 409（v2.2 活动建议：已忽略的再确认 / 已确认的再忽略）
+#   UnprocessableError → 422（v2.4：相位 at 超前 300 秒；views/lanes 的参数互斥 / 跨度超 7 天）
 
 
 @app.exception_handler(UnknownTaskError)
@@ -154,6 +157,12 @@ def restore_not_empty(_request: Request, exc: NotEmptyError) -> JSONResponse:
 def suggestion_conflict(_request: Request, exc: SuggestionConflictError) -> JSONResponse:
     """契约 v2.2：请求合法，冲突的是建议的**当前状态**（同 `NoRunningTimerError`）。"""
     return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(UnprocessableError)
+def unprocessable(_request: Request, exc: UnprocessableError) -> JSONResponse:
+    """契约 v2.4：取值不可处理，与 pydantic 请求体校验同为 422。"""
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
 
 
 def main() -> None:

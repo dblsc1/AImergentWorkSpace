@@ -68,6 +68,8 @@ _COLLECTIONS = (
     "agent_runs", "proj_agent_daily_stats",
     # v2.2 活动建议（不是事实，但同样要在测试间清空 / 纳入导出只读证明）。
     "activity_suggestions",
+    # v2.4 在场心跳（活状态）+ 时间线区间投影。
+    "activity_presence", "proj_lanes",
 )
 
 

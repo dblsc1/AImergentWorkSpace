@@ -17,6 +17,11 @@ class InvalidInputError(ValueError):
     """入参引用/取值非法 → 400。消息必须指名道姓。"""
 
 
+class UnprocessableError(ValueError):
+    """请求体 / 查询参数形状合法但取值不可处理 → 422（v2.4：相位 ``at`` 超前 300 秒、
+    ``views/lanes`` 的 date 与 from/to 同时给或跨度超 7 天）。与 pydantic 的 422 同一口径。"""
+
+
 class UnknownProjectError(InvalidInputError):
     """create/move 指了一个不存在的项目（历史名，保持兼容）。"""
 

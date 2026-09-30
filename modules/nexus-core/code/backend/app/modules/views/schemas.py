@@ -66,6 +66,9 @@ class CurrentAgent(_Strict):
     tool: str
     model: str | None
     startedAt: str
+    #: v2.4：当前相位（从没报过为 null，读方按 working 画）与泳道名（没给为 null）。键不消失。
+    phase: Literal["working", "waiting_input", "waiting_permission", "idle", "error"] | None = None
+    label: str | None = None
 
 
 class CurrentOut(_Strict):
@@ -336,3 +339,88 @@ class AgentTimeOut(_Strict):
     agents: list[AgentTimeAgent]
     tasks: list[AgentTimeTask]
     open: list[AgentTimeOpen]
+
+
+# -------------------------------------------------------- LanesOut（v2.4）
+
+
+class LaneSession(_Strict):
+    startAt: str
+    endAt: str
+    durationSeconds: int
+    taskId: str | None
+    projectId: str | None
+    mode: str
+    source: str | None
+
+
+class LaneRunning(_Strict):
+    startAt: str
+    taskId: str | None
+    projectId: str | None
+
+
+class LanePresence(_Strict):
+    deviceId: str
+    #: 契约字段名就是 from（Python 关键字），用别名
+    from_: str = Field(alias="from")
+    to: str
+    app: str
+    title: str
+    afk: bool
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)
+
+
+class LaneHuman(_Strict):
+    sessions: list[LaneSession]
+    running: LaneRunning | None
+    presence: list[LanePresence]
+
+
+class LanePhase(_Strict):
+    at: str
+    phase: str
+    detail: str | None
+
+
+class LaneAgent(_Strict):
+    runId: str
+    agent: str | None
+    tool: str | None
+    model: str | None
+    label: str | None
+    taskId: str | None
+    projectId: str | None
+    startAt: str
+    endAt: str | None
+    outcome: str | None
+    elapsedSeconds: int
+    overdue: bool
+    phases: list[LanePhase]
+
+
+class LaneReply(_Strict):
+    runId: str
+    kind: Literal["reply"]
+    at: str
+
+
+class LaneAttend(_Strict):
+    runId: str
+    kind: Literal["attend"]
+    at: str
+    until: str
+
+
+class LanesOut(_Strict):
+    """``GET /api/core/views/lanes``（契约 v2.4）。时间线，不是汇总：**没有任何合计字段**。"""
+
+    today: str
+    now: str
+    windowStart: str
+    windowEnd: str
+    human: LaneHuman
+    agents: list[LaneAgent]
+    interactions: list[LaneReply | LaneAttend]
+    truncated: bool

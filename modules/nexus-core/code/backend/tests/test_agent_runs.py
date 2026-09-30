@@ -98,9 +98,9 @@ def test_views_current_agents_shape_and_idle_human(client, seeded):
         assert body[key] is None
     assert body["agents"] == [
         {"runId": run["runId"], "taskId": task["id"], "agent": "claude-code", "tool": "Bash",
-         "model": "opus", "startedAt": run["startedAt"]},
+         "model": "opus", "startedAt": run["startedAt"], "phase": None, "label": None},
         {"runId": inbox["runId"], "taskId": None, "agent": "claude-code", "tool": "Bash",
-         "model": None, "startedAt": inbox["startedAt"]},
+         "model": None, "startedAt": inbox["startedAt"], "phase": None, "label": None},
     ]
 
 

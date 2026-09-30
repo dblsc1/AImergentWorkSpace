@@ -62,3 +62,49 @@ def purge(user: str, cutoff: datetime) -> None:
         {"status": "pending", "receivedAt": {"$lt": cutoff}},
         {"status": {"$ne": "pending"}, "decidedAt": {"$lt": cutoff}},
     ]})
+
+
+# ------------------------------------------------ activity_presence（v2.4，在场心跳，活状态）
+#
+# 每个 (user, deviceId) 一份文档：最新一次心跳 + 合并过的近况 spans。不是事实：
+# 不进台账 / 投影 / 导出 / 快照恢复。过期文档只在心跳写入时删（读端只过滤）。
+
+_PRESENCE = "activity_presence"
+_presence_ready = False
+
+
+def _presence_col():
+    global _presence_ready
+    col = get_db()[_PRESENCE]
+    if not _presence_ready:
+        col.create_index([("user", 1), ("deviceId", 1)], unique=True, name="uniq_user_device")
+        col.create_index([("user", 1), ("lastAt", 1)], name="user_last")
+        _presence_ready = True
+    return col
+
+
+def presence_get(user: str, device_id: str) -> dict | None:
+    return _presence_col().find_one({"user": user, "deviceId": device_id}, {"_id": 0})
+
+
+def presence_put(doc: dict) -> None:
+    _presence_col().replace_one({"user": doc["user"], "deviceId": doc["deviceId"]}, dict(doc), upsert=True)
+
+
+def presence_purge(user: str, cutoff: datetime) -> None:
+    _presence_col().delete_many({"user": user, "lastAt": {"$lt": cutoff}})
+
+
+def presence_oldest_devices(user: str, keep: int) -> list[str]:
+    """该租户按最近心跳排，最旧的那些设备 id——超出 ``keep`` 台的部分。"""
+    ids = [d["deviceId"] for d in _presence_col().find({"user": user}, {"deviceId": 1}).sort("lastAt", 1)]
+    return ids[: max(len(ids) - keep, 0)]
+
+
+def presence_delete(user: str, device_ids: list[str]) -> None:
+    if device_ids:
+        _presence_col().delete_many({"user": user, "deviceId": {"$in": device_ids}})
+
+
+def presence_list(user: str) -> list[dict]:
+    return list(_presence_col().find({"user": user}, {"_id": 0}))

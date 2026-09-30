@@ -38,6 +38,7 @@ from ...tenant import current as current_tenant
 from ..events import service as events_service
 from ..events.schemas import SPEC
 from ..planner import service as planner_service
+from . import agent_phases as phases_impl
 from . import agents as agents_impl
 from . import backfill as backfill_impl
 from . import repo
@@ -225,17 +226,27 @@ def record_session(
 # 薄委托，同 backfill：注入与 timer/start 同一套归属链判据和服务端时钟。
 
 
-def agent_start(
-    task_id: str | None, agent: str, tool: str, model: str | None, user: str | None = None,
-) -> dict:
-    return agents_impl.start(
-        task_id, agent, tool, model, user or current_tenant(),
-        resolve_chain=_resolve_task_chain, now=_now,
-    )
+def agent_start(task_id: str | None, agent: str, tool: str, model: str | None, user: str | None = None, **v24):
+    """返回 ``(AgentStartOut, 是否新开)``；``v24`` = phase/label/match/client_key（v2.4 选填）。"""
+    return agents_impl.start(task_id, agent, tool, model, user or current_tenant(),
+                             resolve_chain=_resolve_task_chain, now=_now, **v24)
 
 
 def agent_stop(run_id: str, outcome: str, output: str | None, user: str | None = None) -> dict:
     return agents_impl.stop(run_id, outcome, output, user or current_tenant(), now=_now)
+
+
+# v2.4（真身 agent_phases.py）：record_attend = activity 心跳的公开入口；list_lane_runs = views/lanes 读路径，不收超时
+def agent_phase(run_id: str, phase: str, at: str, detail: str | None, reply: bool) -> dict:
+    return phases_impl.record_phase(run_id, phase, at, detail, reply, current_tenant(), now=_now)
+
+
+def record_attend(user: str, title: str, at: datetime) -> None:
+    phases_impl.record_attend(user, title, at)
+
+
+def list_lane_runs(user: str | None = None) -> tuple[datetime, list[dict]]:
+    return phases_impl.lane_runs(user or current_tenant(), now=_now)
 
 
 def list_agent_runs(user: str | None = None) -> list[dict]:

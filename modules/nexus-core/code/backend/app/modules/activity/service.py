@@ -29,7 +29,7 @@ from ..events import service as events_service
 from ..planner import service as planner_service
 from ..planner.errors import InvalidInputError, NotFoundError
 from ..timer import service as timer_service
-from . import repo
+from . import presence, repo
 
 SOURCE = "activity-confirmed"
 #: 单段上限同补登（契约「拒绝规则」）：拦单位填错。
@@ -217,3 +217,8 @@ def dismiss(sug_id: str) -> dict:
         if _get(user, sug_id)["status"] == "confirmed":
             raise ConflictError(f"活动建议 {sug_id!r} 已确认、事实已写，不能再忽略")
     return {"id": sug_id, "status": "dismissed"}
+
+
+def list_presence(user: str, now: datetime, start: datetime, end: datetime) -> list[dict]:
+    """v2.4 在场心跳的公开读路径（``views/lanes``），真身在 ``presence.py``。**不写**。"""
+    return presence.list_spans(user, now, start, end)
