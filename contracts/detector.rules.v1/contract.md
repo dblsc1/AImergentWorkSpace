@@ -158,11 +158,12 @@ PUT 的失败：
 
 ## 五、Cockpit「AI助理 → 规则」页要做的（规范性，给 UI 实现）
 
-本契约的实现 PR **不含** UI；UI 按下面做（`modules/nexus-core/code/frontend` 的 AI助理页）：
+实现：`modules/assistant`（「AI助理」页 → 活动检测设置面板末尾的「分类规则」，`code/frontend/rules.js`）。换实现按下面做：
 
 1. **规则列表**：GET rules；每行显示 `app`、`title`、任务的显示路径（按 `taskId` 从 `views/tree?includeEphemeral=true`
-   现取；查不到显示「任务已删除」并标红）、`confidence`、`note`、`enabled` 开关；可增、删、改、拖动排序。
-   存 = PUT 整套，`If-Match` 带读到的 `version`；`412` 提示「规则刚被改过」并重新加载（不静默覆盖）；
+   现取；查不到显示「任务已删除（id）」）、`confidence`、`note`、`enabled` 开关；可增、删、改、拖动排序。
+   存 = PUT 整套，`If-Match` 带读到的 `version`；`412` 不静默覆盖：提示「规则刚被改过」，保留人的改动、
+   把 `version` 换成 `currentVersion`，人**再点一次保存**才用他的版本覆盖（或刷新放弃）；
    `422` 按 `errors[].index` / `field` 把错标在对应行的对应格上。
 2. **AI 草稿横幅**：GET `drafts/current` 非 null 时，在列表上方显示
    「AI 草稿：新增 N / 修改 M / 删除 K（顺序有变）— 应用 / 丢弃」，附 `summary`、`createdAt`、`expiresAt`；

@@ -19,7 +19,7 @@
     <!-- 「AI 对话」（contracts/agent.chat.v1，chat.js）。聊天后端没装（health 不是 200）时整块保持 hidden。 -->
     <section class="card chat-panel" id="chat-panel" hidden aria-labelledby="chat-title">
       <h2 class="suggest-title" id="chat-title">AI 对话</h2>
-      <p class="suggest-sub">它只能读你的任务和时间，什么都不会改。</p>
+      <p class="suggest-sub">它能读你的任务和时间；唯一能写的是分类规则的草稿，要你在下面点「应用」才生效。</p>
       <div class="chat-bar">
         <select class="field" id="chat-session" aria-label="对话"></select>
         <button type="button" class="btn btn-ghost" id="chat-new">新对话</button>
@@ -198,10 +198,36 @@
       </form>
       <!-- 在表单外：读取失败（表单藏着）时也看得见 -->
       <p class="suggest-message" id="det-message" role="status" hidden></p>
-      <!-- 「分类规则」占位：规则库与 AI 起草另有契约（feat/v0.3-detector-rules），编辑器以后插在这里。 -->
+      <!-- 「分类规则」（contracts/detector.rules.v1，rules.js）：AI 起草的草稿横幅 + 生效规则的编辑器。
+           后端没有这个端点（404，早于 nexus-core v2.6）时只剩 #rules-note 一句说明。 -->
       <div class="set-group det-rules" id="det-rules" aria-labelledby="det-rules-title">
         <h3 class="det-rules-title" id="det-rules-title">分类规则</h3>
-        <p class="set-hint">规则由 AI 助理起草、你一键应用；编辑器即将上线。</p>
+        <p class="set-hint">规则把检测到的窗口归到任务：按顺序第一条命中生效，程序名 / 窗口标题是不分大小写的正则。
+          最省事的是让 AI 助理起草——在上面的对话里说「帮我按终端标签页整理分类规则」；它只能写草稿，应用要你点。</p>
+        <p class="set-hint" id="rules-note" hidden></p>
+        <div class="rules-draft" id="rules-draft" hidden aria-labelledby="rules-draft-head">
+          <p class="rules-draft-head" id="rules-draft-head"></p>
+          <p class="rules-draft-summary" id="rules-draft-summary"></p>
+          <p class="set-hint" id="rules-draft-meta"></p>
+          <details class="rules-diff">
+            <summary>看逐条改动</summary>
+            <ul class="rules-diff-list" id="rules-diff-list"></ul>
+          </details>
+          <div class="det-actions">
+            <button type="button" class="btn btn-ghost" id="rules-discard">丢弃</button>
+            <button type="button" class="btn btn-fact" id="rules-apply">应用</button>
+          </div>
+        </div>
+        <div class="rules-editor" id="rules-editor" hidden>
+          <ol class="rules-list" id="rules-list"></ol>
+          <p class="suggest-empty" id="rules-empty" hidden>还没有规则：检测程序在用它本机的 rules.json（如果有）。</p>
+          <div class="det-actions">
+            <span class="det-dirty" id="rules-dirty" hidden>有没保存的改动</span>
+            <button type="button" class="btn btn-ghost" id="rules-add">加一条</button>
+            <button type="button" class="btn btn-fact" id="rules-save" disabled>保存规则</button>
+          </div>
+        </div>
+        <p class="suggest-message" id="rules-message" role="status" hidden></p>
       </div>
     </section>
 
@@ -219,6 +245,7 @@
   <script src="chat.js"></script>
   <script src="suggestions.js"></script>
   <script src="settings.js"></script>
+  <script src="rules.js"></script>
   <script src="review.js"></script>
 </body>
 </html>

@@ -257,6 +257,7 @@
     } catch (err) {
       showMessage(err.message, true);
     } finally {
+      document.dispatchEvent(new Event("assistant:turn-done"));   // 分类规则面板据此看有没有新草稿（rules.js）
       generating = false;
       toolEl.hidden = true;
       sync();
