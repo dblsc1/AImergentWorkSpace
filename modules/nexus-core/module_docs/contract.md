@@ -201,17 +201,17 @@ provides:
     summary: 代理运行的相位（v2.4，agents.v1 的追加）——POST /api/core/agents/{runId}/phase
       {phase, at, detail?, reply?}，每条观测按 at 排序原样存（读时合并）、幂等、运行结束后 applied:false；
       start 增选填 phase/label/match/clientKey（同 key 的运行还在跑时重复 start 回原运行）；结束时相位与连线随 agent.run.completed 的 data 追加键落账，不新增事件类型
-    status: 契约先行（v2.4），待实现
+    status: 已实现（v2.4），待验证
   - id: nexus-core.activity.presence.v1
     summary: 在场心跳（v2.4）——POST /api/core/activity/presence {deviceId, app, title, afk}，时间服务端盖；
       活状态住 activity_presence（每设备最新 + 2 小时内合并段），不是事实、不进导出/恢复；
       命中在跑运行的 match 时给该运行记 attend 连线
-    status: 契约先行（v2.4），待实现
+    status: 已实现（v2.4），待验证
   - id: nexus-core.views.lanes.v1
     summary: 时间线读端（v2.4）——GET /api/core/views/lanes?date=|from=&to= 回人一条线（计时段 + 在计时 +
       最近在场）、代理多条线（运行 + 相位）、连线（reply/attend）；与窗口有重叠即列出、不求和、不写；
       读新投影 proj_lanes（session.completed 与 agent.run.completed 各一条区间）
-    status: 契约先行（v2.4），待实现
+    status: 已实现（v2.4），待验证
 consumes:
   - id: yq-event/v1
     contract: ../../contracts/yq-event.v1/contract.md
@@ -239,9 +239,9 @@ consumes:
 | POST | `/api/core/agents/start` | `AgentStartIn`（见下「AI 代理运行」节） | `201 AgentStartOut` | ✅ 已实现（v2.1） |
 | POST | `/api/core/agents/{runId}/stop` | `AgentStopIn` | `AgentStopOut` | ✅ 已实现（v2.1） |
 | GET | `/api/core/views/agent-time` | `?from&to`（`YYYY-MM-DD`，均选填） | `AgentTimeOut`（见下「AI 代理时长读端」节） | ✅ 已实现（v2.3） |
-| POST | `/api/core/agents/{runId}/phase` | `AgentPhaseIn`（见下「人一条线、代理多条线的时间线」节） | `AgentPhaseOut` | 📝 契约先行（v2.4） |
-| GET | `/api/core/views/lanes` | `?date` 或 `?from&to`（`YYYY-MM-DD`） | `LanesOut`（同上节） | 📝 契约先行（v2.4） |
-| POST | `/api/core/activity/presence` | `PresenceIn`（同上节） | `{ok}` | 📝 契约先行（v2.4） |
+| POST | `/api/core/agents/{runId}/phase` | `AgentPhaseIn`（见下「人一条线、代理多条线的时间线」节） | `AgentPhaseOut` | ✅ 已实现（v2.4） |
+| GET | `/api/core/views/lanes` | `?date` 或 `?from&to`（`YYYY-MM-DD`） | `LanesOut`（同上节） | ✅ 已实现（v2.4） |
+| POST | `/api/core/activity/presence` | `PresenceIn`（同上节） | `{ok}` | ✅ 已实现（v2.4） |
 | POST | `/api/core/activity/suggestions` | `SuggestionUploadIn`（见下「活动建议」节） | `SuggestionUploadOut` | ✅ 已实现（v2.2） |
 | GET | `/api/core/activity/suggestions` | `?status&limit&offset` | `{total, items[]}` | ✅ 已实现（v2.2） |
 | POST | `/api/core/activity/suggestions/{id}/confirm` | `{taskId?, mode?}` | `SuggestionConfirmOut` | ✅ 已实现（v2.2） |
@@ -1795,6 +1795,9 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
   "phase": "waiting_permission", // 应用本次之后，这个运行按 at 排最后的那条相位（即「当前相位」）
   "applied": true,               // false = 没记（重复、运行已结束、超上限，见下表）
   "reason": null }               // applied:false 时：duplicate | closed | capped
+// 实现补注（v2.4 实现时追加，只增）：`phase` 在这个运行从没报过相位时为 null（closed 时取结束时的当前相位）；
+// start 带 `phase` 时记为一条 at = startedAt 的观测。422 的 `detail` 在「at 超前」这一条上是一句话（字符串），
+// 其余请求体校验同 pydantic 的数组形状——读方只看状态码。
 ```
 
 **存法：在跑时是活状态，结束时随那一条事实落账——不为相位另开事件类型。**
@@ -1803,6 +1806,8 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
   升序；**存的时候不合并**——乱序到达时先合并会丢信息，如先到 `working@10`、`working@30`，后到 `idle@20`，
   合并过就只剩 `working@10, idle@20`）、
   `interactions: [...]`（见「连线」）、`label?`、`match?`。
+  （实现：文档另带乐观锁版本号 `v`，相位 / reply / attend 都是「未关闭 + 版本没变」的单文档条件更新，
+  不中就重读重算；关闭标记同时 `$unset` 掉 `clientKey`，于是「同 key 至多一个在跑的运行」由部分唯一索引保证。）
 - stop / 超时关闭时，`agent.run.completed` 的 `data` **追加**选填键 `label?`、`phases?`、`interactions?`
   （没有就不出现，v2.4 之前的事件与不报相位的客户端写出的事件逐字节不变）。于是历史时间线、导出、
   快照恢复、投影重建全都随既有那一条事实走，零新增事件类型、零新增防重轨道。
@@ -1863,6 +1868,7 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
   第 21 台出现时挤掉最久没心跳的那台（`deviceId` 是客户端自报的，不设上限就是一个无界写入口）。
 - **不进台账、不进任何投影、不进导出、不进快照恢复、不算进「空实例」判据**（同活动建议）。
   换句话说：页面上「人刚才 1 小时在干什么」的那条细带子，过两小时就没了——想留下来的，走活动建议 → 确认。
+- 同一设备的两次心跳并发时后写覆盖先写（最多丢一次段的延长；客户端同设备串行、约 15 秒一次，不加锁）。
 - 与活动建议无关：心跳不会变成建议，建议也不读心跳。
 - 请求体不是对象 / `deviceId` 不合格式 / `afk` 不是布尔 / `app`、`title` 不是字符串 → 422。
   不限频（每次只改一份文档、`spans` 有上限）；客户端约定的节奏见 ai-detector 契约。
@@ -1919,7 +1925,12 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
   `> windowStart`）。这是时间线，不是汇总——**响应里没有任何合计字段**，跨零点的段由画图的人自己裁到窗口。
   与 `agent-time`/甘特的「整段归开始那天」口径不同是有意的：那两处在求和，这里在画图。
 - `date` 与 `from`/`to` 互斥（同时给 422）；格式不对 422；`from > to` 空结果；跨度超过 7 天 422。
-  不接受 `tz`（同「日界与时区」）。
+  不接受 `tz`（同「日界与时区」）。只给 `from` 或只给 `to` = 就那一天（v2.4 实现补注）。
+- 时刻的写法（v2.4 实现补注）：`now`/`windowStart`/`windowEnd`、`sessions`/`agents` 的 `startAt`/`endAt`、
+  `presence` 的 `from`/`to` 一律换算到 `NEXUS_TZ` 的偏移；`phases[].at` 与 `interactions` 的时刻是存下的原样
+  （客户端的偏移；attend 的是服务端 UTC）。读方一律按绝对时刻解析，不看偏移。
+- `human.running` 同 `views/current`，不按窗口过滤（`from > to` 的空结果里为 `null`）。
+- 关闭标记已打、落账还没完成的运行（崩在半路，下一次写端点会补完）按标记画成已结束（`endAt`/`outcome` 取标记里的）。
 - 上限：`human.sessions` 至多 1000 条、`agents` 至多 200 条（各取窗口里**最新的**那些），超了
   `truncated: true`；`interactions` 只含列出的运行的。`presence` 本身有上限（每设备 500 段）。
 - **本端点不写**：不收超时运行（v2.1「读时写」例外已明文止于 `agent-time`）。超过上限还挂着的运行照列，
@@ -1981,6 +1992,7 @@ app/modules/
   proposals/  router service          AI 与人的交接台
   views/      router queries          纯只读，本契约两条读端住在这里
   activity/   router service repo     活动建议（v2.2）：不是事实；确认时调 timer 的 record_session
+                                      在场心跳（v2.4，presence.py）：活状态；attend 经 timer service 的 record_attend 写
   projector/  registry handlers/      DISPATCH 显式表 + 各投影 handler
 ```
 

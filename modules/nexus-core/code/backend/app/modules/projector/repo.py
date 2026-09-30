@@ -220,3 +220,44 @@ def read_agent_daily_stats(user: str, date_from: str | None = None, date_to: str
 def clear_agent_daily_stats() -> None:
     """重建专用，同 ``clear_daily_stats``。"""
     _agent_daily_col().delete_many({})
+
+
+# ------------------------------------------------ proj_lanes（v2.4，时间线区间）
+#
+# 一条事实 → 一份文档（人的一段 / 代理的一次运行），只为按时间区间一次查出来画图。
+# **不求和、不进任何人的汇总**。幂等靠唯一约束 (user, key)，key = 已应用身份。
+
+_LANES_COLLECTION = "proj_lanes"
+_lanes_indexes_ready = False
+
+
+def _lanes_col():
+    global _lanes_indexes_ready
+    col = get_db()[_LANES_COLLECTION]
+    if not _lanes_indexes_ready:
+        col.create_index([("user", 1), ("key", 1)], unique=True, name="uniq_user_key")
+        col.create_index([("user", 1), ("kind", 1), ("startAt", -1)], name="user_kind_start")
+        _lanes_indexes_ready = True
+    return col
+
+
+def apply_lane(doc: dict) -> bool:
+    """同一 (user, key) 只写一次；重放 / 重投递是 no-op。"""
+    try:
+        result = _lanes_col().update_one(
+            {"user": doc["user"], "key": doc["key"]}, {"$setOnInsert": doc}, upsert=True,
+        )
+    except DuplicateKeyError:
+        return False  # 并发的同一条抢先插入
+    return result.upserted_id is not None
+
+
+def read_lanes(user: str, kind: str, start, end, limit: int) -> list[dict]:
+    """与 [start, end) 有重叠的区间，最新（startAt 大）的在前，至多 ``limit`` 条。"""
+    query = {"user": user, "kind": kind, "startAt": {"$lt": end}, "endAt": {"$gt": start}}
+    return list(_lanes_col().find(query, {"_id": 0}).sort("startAt", -1).limit(limit))
+
+
+def clear_lanes() -> None:
+    """重建专用，同 ``clear_daily_stats``。"""
+    _lanes_col().delete_many({})

@@ -11,7 +11,8 @@
 
 上报给 cockpit 的只有：agent 名字、工具名（`claude-code` / `codex` / ...）、
 model（如果拿得到）、开始/结束时间戳、结束状态（`done`/`failed`/`cancelled`/`timeout`）、
-以及一个可选的「输出在哪」的链接。
+以及一个可选的「输出在哪」的链接；v0.3 起另有相位（见下「相位」节：相位名、时刻、短标签、
+工作目录名、会话号的哈希）。
 
 **不上报**：不发你的 prompt，不发任何代码，不发命令的 stdout/stderr 内容。
 `cockpit-run` 包装命令时，命令的输入输出照常打印在你的终端上，本工具看不到、
@@ -156,7 +157,7 @@ Codex 或者别的 agent 工具，接法见上面的 `cockpit-run`（Codex 目�
 SessionStart/SessionEnd 这样的钩子机制，用 `cockpit-run` 包一层是目前
 最简单的接法）。
 
-## 相位：代理此刻在干活还是在等你（v0.3 追加，契约先行）
+## 相位：代理此刻在干活还是在等你（v0.3 追加）
 
 cockpit 的时间线页面要画出「代理 1 在干活、代理 3 在等你批准、你刚回了代理 3」。为此 run 在
 开始与结束之间可以报**相位**（nexus-core 契约 v2.4「人一条线、代理多条线的时间线」节）：
@@ -180,7 +181,8 @@ cockpit 的时间线页面要画出「代理 1 在干活、代理 3 在等你批
 
 ### Claude Code 钩子：相位
 
-在上面 `SessionStart`/`SessionEnd` 的基础上，再把下面这些事件指向**同一个脚本**，并加
+在上面 `SessionStart`/`SessionEnd` 的基础上（不改那两条；卸载 = 把这些条目从 `settings.json` 里删掉，
+本工具同样不替你改），再把下面这些事件指向**同一个脚本**，并加
 `"async": true`——相位只是记录，绝不能让 Claude 等它（`UserPromptSubmit` 钩子同步跑时会挡住模型处理，
 Claude Code 给它的默认超时只有 30 秒）。`SessionStart` **保持同步**：它要先把 runId 存好，后面的相位才找得到它。
 

@@ -26,7 +26,7 @@ from collections.abc import Callable
 
 from ..events import service as events_service
 from . import repo as projector_repo
-from .handlers import agent_daily_stats, current, daily_stats
+from .handlers import agent_daily_stats, current, daily_stats, lanes
 from .registry import DISPATCH
 
 #: 投影名 → (handler, 对应 clear 函数)。投影名取自集合名，与 contract.md 一致。
@@ -35,6 +35,8 @@ _TARGETS: dict[str, tuple[Callable[[dict], None], Callable[[], None]]] = {
     "proj_daily_stats": (daily_stats.handle, projector_repo.clear_daily_stats),
     # v2.1：AI 代理时长。快照恢复末尾调的也是 rebuild()，所以恢复同样重建它。
     "proj_agent_daily_stats": (agent_daily_stats.handle, projector_repo.clear_agent_daily_stats),
+    # v2.4：时间线区间。上线本版须跑一次重建，否则历史时间线是空的。
+    "proj_lanes": (lanes.handle, projector_repo.clear_lanes),
 }
 
 

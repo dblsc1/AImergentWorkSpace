@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """cockpit-run —— 包一层，把任意命令的一次执行记成一条 cockpit agent run。
 
-    cockpit-run --task <id> [--agent NAME] [--tool NAME] -- <command...>
+    cockpit-run --task <id> [--agent NAME] [--tool NAME] [--label L] [--match M] -- <command...>
+    cockpit-run phase <working|waiting_input|waiting_permission|idle|error> [--run ID] [--detail 短标签] [--reply]
 
 给 Codex、shell 脚本或者任何不方便自己接 Claude Code 钩子的工具用：
 跑之前报 start，跑完（或被打断）报 stop，命令本身的 stdin/stdout/stderr、
@@ -42,6 +43,8 @@ def _parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--task", help="任务 id；缺省走环境变量/目录映射，再缺省是收件箱")
     parser.add_argument("--agent", help="agent 显示名；缺省用项目目录名")
     parser.add_argument("--tool", help="工具名；缺省用被包装命令的可执行文件名")
+    parser.add_argument("--label", help="泳道上显示的名字；缺省用当前目录名")
+    parser.add_argument("--match", help="认「人在看这个代理」的窗口标题线索；缺省用当前目录名（不足 3 个字符不带）")
     args = parser.parse_args(opts)
     if not command:
         parser.error("缺要执行的命令，用 -- 分隔：cockpit-run --task X -- 你的命令")
@@ -57,7 +60,10 @@ def _start(args: argparse.Namespace, command: list[str]) -> tuple[dict, str | No
         task_id = cc.resolve_task(explicit=args.task, config=config)
         agent = args.agent or cc.default_agent_name()
         tool = args.tool or os.path.basename(command[0])
-        result = cc.start_run(config, task_id, agent, tool)
+        label, match = cc.lane_names()
+        label, match = (args.label or label)[:64], (args.match or match or "")[:128]
+        result = cc.start_run(config, task_id, agent, tool, label=label,
+                              match=match if len(match) >= 3 else None)  # 服务端要求 3–128 码点
         return config, result.get("runId")
     except Exception as e:  # noqa: BLE001 — 见函数 docstring 与模块纪律
         category = e if isinstance(e, cc.CockpitError) else "配置错误"
@@ -100,8 +106,35 @@ def _wait_through_ctrl_c(proc: subprocess.Popen) -> tuple[int, bool]:
             return 130, True
 
 
+def _phase_main(argv: list[str]) -> int:
+    """`cockpit-run phase …`：给被包装的程序（或它自己的钩子机制）报相位。**永远退出码 0**。"""
+    parser = argparse.ArgumentParser(prog="cockpit-run phase", description="报一次代理相位")
+    parser.add_argument("phase", choices=cc.PHASES)
+    parser.add_argument("--run", help="runId；缺省读环境变量 COCKPIT_RUN_ID")
+    parser.add_argument("--detail", help="短标签（工具名、错误种类这类固定词），不放正文 / 路径")
+    parser.add_argument("--reply", action="store_true", help="这次转入是人回话 / 人批准引起的")
+    at = cc.now_iso()  # 事件发生的那一刻
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit:
+        return 0  # argparse 已在 stderr 说明用法；纪律是绝不打断调用方
+    run_id = args.run or os.environ.get("COCKPIT_RUN_ID")
+    if not run_id:
+        print("cockpit-run: 没有 runId（--run 或 COCKPIT_RUN_ID），相位不上报", file=sys.stderr)
+        return 0
+    try:
+        cc.phase_run(cc.load_config(), run_id, args.phase, at, detail=args.detail, reply=args.reply)
+    except Exception as e:  # noqa: BLE001 — 连不上 / 404 / 422 都只留一行固定分类
+        category = e if isinstance(e, cc.CockpitError) else "配置错误"
+        print(f"cockpit-run: 相位上报失败（{category}）", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    # 字面的 phase 打头、且没有 `--` 才是子命令：`cockpit-run --task X -- phase …` 仍是包一个叫 phase 的命令
+    if argv[:1] == ["phase"] and "--" not in argv:
+        return _phase_main(argv[1:])
     args, command = _parse_args(argv)
 
     config, run_id = _start(args, command)
@@ -121,7 +154,12 @@ def main(argv: list[str] | None = None) -> int:
     # 执行的那一刻（下面 Popen 后立刻检查一次 cancelled 补上这个缝）。
     old_handler = signal.signal(signal.SIGTERM, _on_sigterm)
     try:
-        proc = subprocess.Popen(command)
+        # 被包的程序想报相位时用 COCKPIT_RUN_ID 找到本次运行（`cockpit-run phase` 缺省读它）
+        # start 没报成时把继承来的 COCKPIT_RUN_ID 去掉：嵌套包装时别把相位报到外层那条运行上
+        env = {k: v for k, v in os.environ.items() if k != "COCKPIT_RUN_ID"}
+        if run_id:
+            env["COCKPIT_RUN_ID"] = run_id
+        proc = subprocess.Popen(command, env=env)
         if cancelled and proc.poll() is None:
             proc.terminate()  # 补上「Popen 返回前 SIGTERM 就到了」这条窄缝
         # Ctrl-C 时子进程和我们同在一个前台进程组，终端已经把 SIGINT 直接发给

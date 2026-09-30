@@ -6,10 +6,11 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Response
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from . import service
 
@@ -123,11 +124,20 @@ def backfill(body: BackfillIn) -> dict:
 
 # ------------------------------------------------ AI 代理运行（v2.1，契约「AI 代理运行」节）
 
+#: v2.4 代理相位（契约「人一条线、代理多条线的时间线」）。不在枚举内 → 422。
+Phase = Literal["working", "waiting_input", "waiting_permission", "idle", "error"]
+
+
 class AgentStartIn(BaseModel):
     taskId: str | None = None  # 缺省 = 挂收件箱
     agent: str = Field(min_length=1, max_length=64)
     tool: str = Field(min_length=1, max_length=64)
     model: str | None = Field(default=None, min_length=1, max_length=64)
+    # v2.4 选填（长度按码点）：缺省都不记
+    phase: Phase | None = None
+    label: str | None = Field(default=None, min_length=1, max_length=64)
+    match: str | None = Field(default=None, min_length=3, max_length=128)
+    clientKey: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class AgentStartOut(BaseModel):
@@ -152,9 +162,53 @@ class AgentStopOut(BaseModel):
 
 
 @agents_router.post("/start", response_model=AgentStartOut, status_code=201)
-def agent_start(body: AgentStartIn) -> dict:
-    """不碰人的计时器；可与任意多个运行并发。taskId 不存在 → 404（映射在 main.py）。"""
-    return service.agent_start(body.taskId, body.agent, body.tool, body.model)
+def agent_start(body: AgentStartIn, response: Response) -> dict:
+    """不碰人的计时器；可与任意多个运行并发。taskId 不存在 → 404（映射在 main.py）。
+    v2.4：同 clientKey 的运行还在跑 → 200 回原运行（不是新建，所以不是 201）。"""
+    out, created = service.agent_start(
+        body.taskId, body.agent, body.tool, body.model,
+        phase=body.phase, label=body.label, match=body.match, client_key=body.clientKey,
+    )
+    if not created:
+        response.status_code = 200
+    return out
+
+
+class AgentPhaseIn(BaseModel):
+    """v2.4。多了未知字段 → 422（extra=forbid）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    phase: Phase
+    at: str = Field(max_length=64)
+    detail: str | None = Field(default=None, max_length=64)
+    reply: bool = False
+
+    @field_validator("at")
+    @classmethod
+    def _at_with_offset(cls, v: str) -> str:
+        try:
+            parsed = datetime.fromisoformat(v)
+        except ValueError as exc:
+            raise ValueError(f"at 不是合法 ISO8601：{v!r}") from exc
+        if parsed.tzinfo is None:
+            raise ValueError(f"at 缺少时区偏移：{v!r}")
+        return v
+
+
+class AgentPhaseOut(BaseModel):
+    """``phase`` = 按 at 排最后的那条相位（从没报过为 null）；``reason`` 只在 applied:false 时有值。"""
+
+    runId: str
+    phase: Phase | None
+    applied: bool
+    reason: Literal["duplicate", "closed", "capped"] | None
+
+
+@agents_router.post("/{runId}/phase", response_model=AgentPhaseOut)
+def agent_phase(runId: str, body: AgentPhaseIn) -> dict:  # noqa: N803 —— 路径参数名即契约
+    """at 超前 300s → 422（UnprocessableError）；runId 不存在 → 404（映射都在 main.py）。"""
+    return service.agent_phase(runId, body.phase, body.at, body.detail, body.reply)
 
 
 @agents_router.post("/{runId}/stop", response_model=AgentStopOut)
