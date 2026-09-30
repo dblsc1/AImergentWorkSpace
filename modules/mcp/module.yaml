@@ -3,7 +3,7 @@
 # 契约（module_docs/contract.md → contracts/mcp.tools.v1）说的是「对外行为」，本文件说的是「怎么把它跑起来」。
 
 name: mcp
-summary: 给 AI 代理用的只读工具（MCP，Streamable HTTP）。包装 nexus-core 的读端，租户只来自网关。
+summary: 给 AI 代理用的工具（MCP，Streamable HTTP）：只读工具 + 只写待人应用草稿的 propose_*。包装 nexus-core，租户只来自网关。
 kind: backend
 
 service:

@@ -1,7 +1,8 @@
-# mcp · 给 AI 代理用的只读工具
+# mcp · 给 AI 代理用的工具（只读 + 只写草稿）
 
 HoneyComb 的 MCP 服务器（契约 `contracts/mcp.tools.v1`）：把任务树、人的时间、代理时间、在跑的计时、
-待确认的活动建议读给 AI 代理。**9 个工具全部只读**，什么都不写。
+待确认的活动建议、活动分类规则读给 AI 代理。11 个工具：10 个只读；`propose_detector_rules`（v1.2）
+只写**待人应用的规则草稿**——生效要人在 Cockpit「AI助理 → 规则」点「应用」。
 
 默认组装（`deploy/docker-compose.yml`）和发布版都自带它，经网关挂在 `<站点前缀>api/mcp/`，要登录：
 

@@ -1,7 +1,9 @@
-"""mcp.tools.v1 的只读工具（v1.1 起 9 个）（contracts/mcp.tools.v1 第四节）。
+"""mcp.tools.v1 的工具（contracts/mcp.tools.v1 第四节）：v1.1 起 9 个只读工具；v1.2 加
+``get_detector_rules``（只读）与 ``propose_detector_rules``（只写草稿，第六节）。
 
-每个工具固定包装 nexus-core 的一个 GET 读端，路径另读 views/tree。**没有**按参数拼路径的
-代码路径：URL 只在 ``_get`` 的调用处以字面量出现。租户由 HTTP 层给，原样设到每个下游请求上；
+每个工具固定包装 nexus-core 的读端（GET），路径另读 views/tree；唯一的写是 propose_detector_rules 的
+``POST /api/core/detector/rules/drafts``（草稿，人应用才生效）。**没有**按参数拼路径的代码路径：
+URL 只在 ``_get`` / ``_post`` 的调用处以字面量出现。租户由 HTTP 层给，原样设到每个下游请求上；
 不缓存任何东西，所以不存在跨租户缓存。
 """
 
@@ -31,9 +33,9 @@ _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 class ToolError(Exception):
-    def __init__(self, status: int, detail: str):
+    def __init__(self, status: int, detail: str, errors: list | None = None):
         super().__init__(detail)
-        self.status, self.detail = status, detail
+        self.status, self.detail, self.errors = status, detail, errors
 
 
 def _bad(detail: str) -> ToolError:
@@ -45,7 +47,17 @@ def _bad(detail: str) -> ToolError:
 
 def _get(path: str, params: dict, tenant: str | None) -> dict:
     url = NEXUS_CORE_URL + path + ("?" + urllib.parse.urlencode(params) if params else "")
-    req = urllib.request.Request(url, headers={"X-Nexus-Tenant": tenant} if tenant else {})
+    return _send(urllib.request.Request(url, headers={"X-Nexus-Tenant": tenant} if tenant else {}), path)
+
+
+def _post(path: str, body: dict, tenant: str | None) -> dict:
+    """只给 propose_*（草稿）用。不带 Authorization：对内直连，nexus-core 据此认作非设备令牌。"""
+    headers = {"Content-Type": "application/json", **({"X-Nexus-Tenant": tenant} if tenant else {})}
+    data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    return _send(urllib.request.Request(NEXUS_CORE_URL + path, data=data, headers=headers, method="POST"), path)
+
+
+def _send(req: urllib.request.Request, path: str) -> dict:
     try:
         with _opener.open(req, timeout=10) as r:
             body = r.read(MAX_UPSTREAM + 1)
@@ -57,12 +69,14 @@ def _get(path: str, params: dict, tenant: str | None) -> dict:
             log.warning("nexus-core %s -> %s", path, e.code)
             raise ToolError(502, UNAVAILABLE) from None
         try:
-            detail = json.loads(e.read(64 * 1024)).get("detail")
+            err = json.loads(e.read(256 * 1024))
+            detail, errors = err.get("detail"), err.get("errors")
         except Exception:
-            detail = None
+            detail = errors = None
         if not isinstance(detail, str):  # 422 的 detail 是数组；照原样转成文本
             detail = json.dumps(detail, ensure_ascii=False) if detail is not None else f"nexus-core 回 {e.code}"
-        raise ToolError(e.code, detail) from None
+        # detector.rules.v1 的逐条错误 [{index, field, message}]：原样带给模型，让它按下标改
+        raise ToolError(e.code, detail, errors if isinstance(errors, list) else None) from None
     except (OSError, ValueError, http.client.HTTPException) as e:  # 连不上、超时、断在半截、回的不是 JSON
         log.warning("nexus-core %s 不可用：%s", path, e)
         raise ToolError(502, UNAVAILABLE) from None
@@ -103,7 +117,8 @@ def _types(schema: dict, args: dict) -> None:
         ok = {
             "boolean": isinstance(v, bool),
             "integer": isinstance(v, int) and not isinstance(v, bool),
-            "string": isinstance(v, str),
+            "string": isinstance(v, str) and len(v) <= p.get("maxLength", len(v)),
+            "array": isinstance(v, list) and len(v) <= p.get("maxItems", len(v)),  # 元素由 nexus-core 逐条校验
         }[p["type"]]
         if ok and "enum" in p:
             ok = v in p["enum"]
@@ -392,6 +407,33 @@ def list_activity_suggestions(a, tenant):
     return {"total": r["total"], **_page("list_activity_suggestions", items, a, total=r["total"])}
 
 
+def _rule_out(r: dict, paths: _Paths) -> dict:
+    return {"id": r["id"], "app": r["app"], "title": r["title"], "taskId": r["taskId"], "path": paths(r["taskId"]),
+            "confidence": r["confidence"], "note": r["note"], "enabled": r["enabled"]}
+
+
+def get_detector_rules(a, tenant):
+    """生效中的分类规则（全部，≤ 500，不截）+ 待应用草稿（没有为 null）。"""
+    r = _get("/api/core/detector/rules", {}, tenant)
+    d = _get("/api/core/detector/rules/drafts/current", {}, tenant)["draft"]
+    paths = _Paths(_tree(tenant))
+    draft = None
+    if d:
+        draft = {"draftId": d["id"], "author": d["author"], "summary": d["summary"], "createdAt": d["createdAt"],
+                 "expiresAt": d["expiresAt"], "diff": d["diff"], "rules": [_rule_out(x, paths) for x in d["rules"]]}
+    return {"version": r["version"], "updatedAt": r["updatedAt"],
+            "rules": [_rule_out(x, paths) for x in r["rules"]], "draft": draft, "truncated": False}
+
+
+def propose_detector_rules(a, tenant):
+    """一整套规则 → 待应用草稿（顶掉旧草稿）。生效要人在「AI助理 → 规则」点应用。"""
+    d = _post("/api/core/detector/rules/drafts",
+              {"rules": a["rules"], "summary": a["summary"], "author": "assistant"}, tenant)
+    return {"draftId": d["id"], "expiresAt": d["expiresAt"], "rulesCount": len(d["rules"]), "diff": d["diff"],
+            "applied": False,
+            "next": "草稿已存，尚未生效。请用户在 Cockpit「AI助理 → 规则」查看改动并点「应用」。"}
+
+
 # ── 声明 ───────────────────────────────────────────────────────────
 
 _LIMIT = {"type": "integer", "minimum": 1, "maximum": MAX_ITEMS, "default": 50, "description": "每页条数，1–200"}
@@ -454,14 +496,41 @@ _SPECS = [
      _schema({"status": {"type": "string", "enum": ["pending", "confirmed", "dismissed"], "default": "pending",
                          "description": "缺省 pending"},
               "limit": _LIMIT, "cursor": _CURSOR}), [], {"status": "pending"}),
+    (get_detector_rules, "活动分类规则",
+     "桌面活动检测用来把窗口归到任务的分类规则（全部，按顺序第一条命中生效；app / title 是不分大小写的 RE2 正则，"
+     "匹配程序名 / 脱敏后的窗口标题），每条带 id、taskId 与任务路径；draft 是还没应用的规则草稿（没有为 null）。"
+     "改规则前先读它：propose_detector_rules 要交一整套，改已有规则须带回原 id。" + _IDS,
+     _schema({}), [], {}),
+    (propose_detector_rules, "起草活动分类规则",
+     "把一整套分类规则写成草稿（替换全部规则，不是追加；顶掉之前没应用的草稿）。草稿不生效，"
+     "要用户在 Cockpit「AI助理 → 规则」看过改动后点「应用」。rules 按顺序第一条命中生效；"
+     "每条 {id?（改已有规则时带回原 id，新规则省略）, app?, title?（不分大小写的 RE2 正则，至少一个；"
+     "不支持前后查找与反向引用）, taskId（必须来自 get_task_tree，不许编）, confidence?（0–1，缺省 0.9）, "
+     "note?（≤120 字，给人看的一句话）, enabled?（缺省 true）}，最多 500 条。"
+     "summary 用一两句话说明这套规则做了什么改动（≤500 字）。校验不过时 error.errors 按下标列出哪条哪个键错了。",
+     _schema({"rules": {"type": "array", "maxItems": 500, "description": "完整的规则集（替换全部）",
+                        "items": {"type": "object", "additionalProperties": False, "required": ["taskId"],
+                                  "properties": {
+                                      "id": {"type": "string", "description": "已有规则的 id；新规则省略"},
+                                      "app": {"type": ["string", "null"], "description": "程序名正则"},
+                                      "title": {"type": ["string", "null"], "description": "窗口标题正则"},
+                                      "taskId": {"type": "string"},
+                                      "confidence": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+                                      "note": {"type": ["string", "null"], "maxLength": 120},
+                                      "enabled": {"type": "boolean"}}}},
+              "summary": {"type": "string", "maxLength": 500, "description": "这次改了什么，给用户看"}},
+             required=["rules", "summary"]), ["rules", "summary"], {}),
 ]
+#: 会写的工具（只写待人确认的草稿，第六节）；其余全部只读
+_PROPOSE = {"propose_detector_rules"}
 
 _READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False}
+_PROPOSES = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False}
 #: 工具名 → (函数, inputSchema, 必填参数, 列表工具绑进 cursor 的其余参数及缺省值；None = 无缺省)
 TOOLS = {fn.__name__: (fn, schema, required, bind) for fn, _, _, schema, required, bind in _SPECS}
 TOOL_LIST = [
     {"name": fn.__name__, "title": title, "description": desc, "inputSchema": schema,
-     "annotations": {"title": title, **_READ_ONLY}}
+     "annotations": {"title": title, **(_PROPOSES if fn.__name__ in _PROPOSE else _READ_ONLY)}}
     for fn, title, desc, schema, _, _ in _SPECS
 ]
 
@@ -477,7 +546,10 @@ def call(name: str, args, tenant: str | None) -> dict:
         out = TOOLS[name][0](_resolve(name, args), tenant)
     except ToolError as e:
         log.info("tool %s -> %s", name, e.status)
-        return _result({"error": {"status": e.status, "detail": e.detail}}, error=True)
+        err = {"status": e.status, "detail": e.detail}
+        if e.errors is not None:
+            err["errors"] = e.errors
+        return _result({"error": err}, error=True)
     except (KeyError, TypeError, ValueError, AttributeError):  # nexus-core 回的形状不对：同「数据服务不可用」
         log.exception("tool %s：nexus-core 响应形状不对", name)
         return _result({"error": {"status": 502, "detail": UNAVAILABLE}}, error=True)

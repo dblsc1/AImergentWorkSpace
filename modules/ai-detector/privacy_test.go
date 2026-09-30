@@ -333,6 +333,10 @@ func TestRemoteSettingsOverrideLocal(t *testing.T) {
 			io.WriteString(w, reply)
 			return
 		}
+		if r.Method == http.MethodGet { // 分类规则（detector.rules.v1）：老服务端，用本机
+			w.WriteHeader(404)
+			return
+		}
 		b, _ := io.ReadAll(r.Body)
 		uploads = append(uploads, b)
 	}))

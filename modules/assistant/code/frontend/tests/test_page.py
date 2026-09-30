@@ -16,9 +16,10 @@ def test_sections_in_order_and_review_links(browser, static_base_url):
         assert page.get_attribute("#review-lanes", "href") == "../ring/#lanes-panel"
         assert page.get_attribute("#review-hive", "href") == "../hive/"
         assert page.is_visible("#review-lanes") and page.is_visible("#review-hive")
-        # 「分类规则」只占位（规则库另有契约），没有任何控件
-        assert "编辑器即将上线" in page.inner_text("#det-rules")
-        assert page.locator("#det-rules input, #det-rules button, #det-rules textarea").count() == 0
+        # 「分类规则」在检测设置面板里；老后端（404）只剩一句说明，没有编辑器
+        page.wait_for_selector("#rules-note:not([hidden])")
+        assert "nexus-core v2.6" in page.inner_text("#rules-note")
+        assert page.is_hidden("#rules-editor") and page.is_hidden("#rules-draft")
 
 
 def test_everything_404_leaves_a_quiet_page(browser, static_base_url):

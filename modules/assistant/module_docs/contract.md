@@ -52,7 +52,18 @@ consumes:
       显示为勾着的灰框（disabled），注明「不能关；需要改源码重新编译」——它们不在文档里，本页从不发。
       `presence`：文档里（顶层、privacy 或 idle 节）有布尔 `presence` 时才多出一个勾选项，读写同一位置；没有就不出现、不发。
       devices 404（后端早于 v2.5）→ 面板说明「后端还不支持」，不出表单。页面提示「检测程序下一轮（≤ 5 分钟）生效」。
-      面板末尾留「分类规则」占位（只有标题与一句说明，无控件、无请求）：规则库与 AI 起草另立契约，编辑器以后插在这里。
+      面板末尾是「分类规则」（见下一条）。
+  - id: detector.rules.v1
+    contract: ../../../contracts/detector.rules.v1/contract.md
+    purpose: >
+      「分类规则」（`code/frontend/rules.js`、`#det-rules`，在活动检测设置面板末尾），按该契约「五」：
+      GET rules 填编辑器（每条一张卡：启用、上移 / 下移、删除、程序名正则、标题正则、任务下拉〔未完成任务的路径；
+      规则指向已删任务时单列「任务已删除（id）」〕、把握、备注），「加一条」「保存规则」= PUT 整套 + `If-Match`；
+      412 保留人的改动并换到最新版本号，再点保存才覆盖；422 的 `errors[]` 挂到对应行、对应格。
+      GET drafts/current 非 null → 草稿横幅「AI 草稿：新增 N / 修改 M / 删除 K」+ summary + 折叠的逐条改动
+      （新增 / 修改〔旧 → 新〕/ 删除），「应用」一次点击 = POST apply（`If-Match: currentVersion`；有没保存的手改先确认），
+      「丢弃」= POST discard；412 / 404 重新拉草稿并提示。聊天一轮结束（`assistant:turn-done` 事件，chat.js 发）、
+      标签页重新可见时重拉草稿。所有规则 / AI 文本只当文本渲染。rules 404（早于 nexus-core v2.6）→ 只留一句说明。
 ```
 
 ## 入口与路由
@@ -75,4 +86,5 @@ consumes:
 
 | 日期 | CR | 变更 |
 |---|---|---|
+| 2026-09-30 | 仓主：分类规则由 AI 助理写 | 「分类规则」占位换成编辑器 + AI 草稿横幅（detector.rules.v1）；聊天一轮结束时发 `assistant:turn-done`；聊天副标题改为「唯一能写的是分类规则的草稿」 |
 | 2026-09-30 | 仓主定新页「AI助理」 | 首版：新模块。聊天（agent.chat.v1）与待确认建议（activity.suggestions.v1）从 ring 搬来、行为不变；待确认建议认 v2.5 的 `idle`（徽标、不进全部确认）；新增活动检测设置（detector.settings.v1）与回顾入口 |

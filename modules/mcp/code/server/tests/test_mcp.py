@@ -128,11 +128,27 @@ def respond(path, q, tenant):
         off, lim = int(one("offset", 0)), int(one("limit", 100))
         items = SUGGESTIONS if one("status") == "pending" else []
         return 200, {"total": len(items), "items": items[off: off + lim]}
+    if path == "/api/core/detector/rules":
+        return 200, {"version": 3, "updatedAt": "2026-09-30T10:00:00+00:00", "rules": [RULE]}
+    if path == "/api/core/detector/rules/drafts/current":
+        return 200, {"draft": DRAFT if tenant != "u_idle" else None}
+    if path == "/api/core/detector/rules/drafts":
+        return 201, DRAFT
     return 404, {"detail": f"没有 {path}"}
+
+
+RULE = {"id": "r_1", "app": "code", "title": None, "taskId": "t_a1", "confidence": 0.9, "note": "编辑器",
+        "enabled": True}
+DRAFT = {"id": "drf_1", "status": "pending", "author": "assistant", "summary": "按标题分",
+         "createdAt": "2026-09-30T10:00:00+00:00", "expiresAt": "2026-10-14T10:00:00+00:00",
+         "baseVersion": 3, "currentVersion": 3,
+         "rules": [{**RULE, "title": "garden"}, {**RULE, "id": "r_2", "taskId": "t_gone"}],
+         "diff": {"added": ["r_2"], "removed": [], "changed": ["r_1"], "unchanged": 0, "reordered": False}}
 
 
 class Fake:
     requests: list = []
+    bodies: list = []   # POST 收到的请求体（JSON）与 Authorization 头
     override = None  # (status, body) 强制回
 
 
@@ -145,6 +161,9 @@ class FakeNexus(BaseHTTPRequestHandler):
         q = urllib.parse.parse_qs(u.query)
         tenant = self.headers.get("X-Nexus-Tenant")
         Fake.requests.append((self.command, u.path, q, tenant))
+        if self.command == "POST":
+            n = int(self.headers.get("Content-Length") or 0)
+            Fake.bodies.append((json.loads(self.rfile.read(n)), self.headers.get("Authorization")))
         status, body = Fake.override or respond(u.path, q, tenant)
         data = json.dumps(body).encode()
         self.send_response(status)
@@ -174,6 +193,7 @@ def servers():
 @pytest.fixture(autouse=True)
 def _reset(monkeypatch):
     Fake.requests.clear()
+    Fake.bodies.clear()
     Fake.override = None
     monkeypatch.setattr(mcp_server, "STRICT", False)
     monkeypatch.setattr(mcp_server, "ALLOWED_ORIGINS", set())
@@ -231,15 +251,17 @@ def test_initialize_negotiates_and_declares_only_tools(servers):
     assert rpc(servers, "ping")["result"] == {}
 
 
-def test_tools_list_all_read_only_strict_schemas(servers):
+def test_tools_list_read_only_except_propose_strict_schemas(servers):
     tl = rpc(servers, "tools/list")["result"]["tools"]
     assert [t["name"] for t in tl] == [
         "get_task_tree", "list_projects", "get_current_timer", "list_time_sessions", "get_daily_time",
-        "get_weekly_review", "get_next_actions", "get_agent_time", "list_activity_suggestions"]
+        "get_weekly_review", "get_next_actions", "get_agent_time", "list_activity_suggestions",
+        "get_detector_rules", "propose_detector_rules"]
     for t in tl:
-        assert not t["name"].startswith("propose_")
         a = t["annotations"]
-        assert (a["readOnlyHint"], a["destructiveHint"], a["openWorldHint"]) == (True, False, False)
+        # v1.2：只有 propose_ 开头的会写（写的是待人确认的草稿），且不是破坏性的
+        want = (False, False, False) if t["name"].startswith("propose_") else (True, False, False)
+        assert (a["readOnlyHint"], a["destructiveHint"], a["openWorldHint"]) == want
         s = t["inputSchema"]
         assert s["type"] == "object" and s["additionalProperties"] is False
         assert not {"user", "tenant", "owner", "userId", "tenantId"} & set(s["properties"])
@@ -277,7 +299,7 @@ def test_get_is_405_and_health(servers):
 
 
 def test_body_cap_413(servers):
-    big = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "ping", "params": {"x": "a" * 70000}}).encode()
+    big = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "ping", "params": {"x": "a" * 270000}}).encode()
     assert post(servers, None, raw=big)[0] == 413
 
 
@@ -632,3 +654,48 @@ def test_list_projects_includes_projects_without_tasks(servers):
     assert [i["projectId"] for i in ok(servers, "list_projects", {"includeDone": True})["items"]][-1] == "p_old"
     p1 = ok(servers, "list_projects", {"limit": 1})
     assert p1["truncated"] is True and ok(servers, "list_projects", {"cursor": p1["nextCursor"]})["items"][0]["projectId"] == "p_new"
+
+
+# ── v1.2：分类规则 ────────────────────────────────────────────────
+
+
+def test_get_detector_rules(servers):
+    r = ok(servers, "get_detector_rules")
+    assert r["version"] == 3 and r["truncated"] is False
+    assert r["rules"] == [{**RULE, "path": "学习 / garden / 写提示词"}]
+    d = r["draft"]
+    assert d["draftId"] == "drf_1" and d["summary"] == "按标题分" and d["diff"]["added"] == ["r_2"]
+    assert [x["path"] for x in d["rules"]] == ["学习 / garden / 写提示词", None]  # 已删的任务路径为 null
+    assert {(m, p) for m, p, *_ in Fake.requests} == {
+        ("GET", "/api/core/detector/rules"), ("GET", "/api/core/detector/rules/drafts/current"),
+        ("GET", "/api/core/views/tree")}
+    assert ok(servers, "get_detector_rules", headers={"X-Nexus-Tenant": "u_idle"})["draft"] is None
+
+
+def test_propose_detector_rules_posts_one_draft(servers):
+    rules = [{"app": "code", "taskId": "t_a1"}, {"id": "r_1", "title": "garden", "taskId": "t_a1"}]
+    r = ok(servers, "propose_detector_rules", {"rules": rules, "summary": "按标题分"},
+           headers={"X-Nexus-Tenant": "u_alice"})
+    assert r["draftId"] == "drf_1" and r["applied"] is False and r["rulesCount"] == 2
+    assert r["diff"] == DRAFT["diff"] and "应用" in r["next"]
+    # 只发了一个请求：POST 草稿；带租户、不带 Authorization；author 固定 assistant
+    assert [(m, p, t) for m, p, _, t in Fake.requests] == [("POST", "/api/core/detector/rules/drafts", "u_alice")]
+    assert Fake.bodies == [({"rules": rules, "summary": "按标题分", "author": "assistant"}, None)]
+
+
+@pytest.mark.parametrize("args", [{"summary": "s"}, {"rules": []}, {"rules": {}, "summary": "s"},
+                                  {"rules": [], "summary": "s" * 501}, {"rules": [{}] * 501, "summary": "s"},
+                                  {"rules": [], "summary": "s", "author": "human"}])
+def test_propose_bad_args_400_without_calling_nexus(servers, args):
+    assert err(servers, "propose_detector_rules", args)["status"] == 400
+    assert not Fake.requests
+
+
+def test_propose_passes_per_rule_errors(servers):
+    errors = [{"index": 1, "field": "taskId", "message": "任务不存在：t_x"}]
+    Fake.override = (422, {"detail": "1 处不合规，第一处：rules[1].taskId：任务不存在：t_x", "errors": errors})
+    e = err(servers, "propose_detector_rules", {"rules": [{"title": "a", "taskId": "t_a1"}], "summary": "s"})
+    assert e == {"status": 422, "detail": "1 处不合规，第一处：rules[1].taskId：任务不存在：t_x", "errors": errors}
+    Fake.override = (500, {"detail": "boom"})
+    e = err(servers, "propose_detector_rules", {"rules": [], "summary": "s"})
+    assert e == {"status": 502, "detail": tools.UNAVAILABLE}

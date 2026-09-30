@@ -54,6 +54,13 @@
 > 同版追加（`detector.settings.v1` v1.1）：设置文档顶层增可选 `presence`（`null` / 布尔，缺省 `null`），
 > 在网页上开关检测程序的在场心跳；严格校验同其余键。
 >
+> **v2.6（追加式）**：**分类规则存服务端，AI 助理起草、人一键应用。** 实现 `detector.rules.v1`
+> （`contracts/detector.rules.v1/contract.md`，规则形状、校验、草稿、状态码都以那里为准）：
+> `GET/PUT /api/core/detector/rules`（PUT 须 `If-Match`，缺 428、对不上 412）、
+> `POST /api/core/detector/rules/drafts`、`GET .../drafts/current`、`POST .../drafts/{id}/apply|discard`；
+> 每租户一个文档存独立集合 `detector_rules`（规则集 + 至多一份 14 天过期的草稿），不进台账 / 投影 / 导出 / 快照恢复；
+> **PUT、建草稿、应用、丢弃带 `Authorization: Bearer` 一律 403**。既有端点一个不改。
+>
 > v1.9：`GET /api/core/export` 产出的快照此前没有任何端点能吃
 > 回去（喂给 import 会被三层拒绝，而那三条拒绝各守一件实事，一条都不该放宽）。
 > 新增 `nexus-core.restore.v1`（`POST /api/core/restore`，见「快照恢复」节）：
@@ -228,6 +235,12 @@ provides:
       GET /api/core/detector/devices；按租户、按设备存 detector_settings；PUT/DELETE 带 Bearer 设备令牌 403；
       活动建议段增可选 idle 布尔
     status: 已实现（v2.5），待验证
+  - id: detector.rules.v1
+    contract: ../../../contracts/detector.rules.v1/contract.md
+    summary: 检测程序分类规则（v2.6）——GET/PUT /api/core/detector/rules（If-Match，412/428）、
+      POST .../rules/drafts、GET .../drafts/current、POST .../drafts/{id}/apply|discard；按租户存 detector_rules；
+      PUT/建草稿/应用/丢弃带 Bearer 403
+    status: 已实现（v2.6），待验证
 consumes:
   - id: yq-event/v1
     contract: ../../contracts/yq-event.v1/contract.md
@@ -266,6 +279,12 @@ consumes:
 | PUT | `/api/core/detector/settings` | `?deviceId`，`DetectorSettings` | 同 GET；带 Bearer 403 | ✅ 已实现（v2.5） |
 | DELETE | `/api/core/detector/settings` | `?deviceId` | `204`；带 Bearer 403 | ✅ 已实现（v2.5） |
 | GET | `/api/core/detector/devices` | 无 | `{devices[]}` | ✅ 已实现（v2.5） |
+| GET | `/api/core/detector/rules` | 无 | `{version, updatedAt, rules[]}` + `ETag`（见 `contracts/detector.rules.v1`） | ✅ 已实现（v2.6） |
+| PUT | `/api/core/detector/rules` | `If-Match`，`{rules[]}` | 同 GET；带 Bearer 403、缺 If-Match 428、版本不符 412 | ✅ 已实现（v2.6） |
+| POST | `/api/core/detector/rules/drafts` | `{rules[], summary, author?}` | `201 Draft`（含与生效规则的 `diff`）；带 Bearer 403 | ✅ 已实现（v2.6） |
+| GET | `/api/core/detector/rules/drafts/current` | 无 | `{draft\|null}` | ✅ 已实现（v2.6） |
+| POST | `/api/core/detector/rules/drafts/{id}/apply` | `If-Match` | 同 GET rules；带 Bearer 403、404、412、422 | ✅ 已实现（v2.6） |
+| POST | `/api/core/detector/rules/drafts/{id}/discard` | 无 | `204`（幂等）；带 Bearer 403 | ✅ 已实现（v2.6） |
 | ~~GET~~ | ~~`/api/core/zones`~~ | 无 | `[ZoneOut]` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
 | ~~POST~~ | ~~`/api/core/zones`~~ | `{name, color?, order?}` | `ZoneOut` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
 | ~~PATCH~~ | ~~`/api/core/zones/{id}`~~ | `{name?, color?, order?}` | `ZoneOut` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |

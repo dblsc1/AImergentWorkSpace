@@ -254,6 +254,35 @@ fieldset.set-field > legend { font-size: var(--fs-sub); color: var(--ink-2); mar
 
 .det-rules-title { font-size: var(--fs-body); font-weight: 600; }
 
+/* ── 「分类规则」（2026-09-30，rules.js，contracts/detector.rules.v1）──
+ * 草稿横幅用 plan 色（「还没发生的」），应用按钮是事实青；每条规则一张小卡，320px 下格子一列。 */
+.rules-draft {
+  display: grid; gap: var(--sp-2); min-width: 0; padding: var(--sp-3);
+  border: 1px solid var(--plan); border-radius: var(--r-2); background: var(--plan-soft);
+}
+.rules-draft-head { font-weight: 600; color: var(--ink); }
+.rules-draft-summary { overflow-wrap: anywhere; }
+.rules-diff summary { cursor: pointer; min-height: var(--tap); display: flex; align-items: center; color: var(--ink-2); }
+.rules-diff-list { list-style: none; padding: 0; display: grid; gap: var(--sp-2); font-size: var(--fs-sub); }
+.rules-diff-list li { display: grid; gap: var(--sp-1); padding: var(--sp-2); border-radius: var(--r-1); background: var(--panel); border-left: 3px solid var(--line); overflow-wrap: anywhere; }
+.rules-diff-list .diff-add { border-left-color: var(--fact); }
+.rules-diff-list .diff-change { border-left-color: var(--warn); }
+.rules-diff-list .diff-remove { border-left-color: var(--danger); }
+.rules-diff-list .diff-move { border-left-color: var(--plan); }
+.diff-tag { font-size: var(--fs-eyebrow); font-weight: 600; color: var(--ink-2); }
+.diff-old { color: var(--ink-3); text-decoration: line-through; }
+.diff-change .diff-old::after { content: " →"; }
+.rules-editor { display: grid; gap: var(--sp-3); min-width: 0; }
+.rules-list { list-style: none; padding: 0; display: grid; gap: var(--sp-3); }
+.rule-item { display: grid; gap: var(--sp-2); min-width: 0; padding: var(--sp-3); border: 1px solid var(--line-2); border-radius: var(--r-2); background: var(--panel-2); }
+.rule-item.is-off { opacity: .6; }
+.rule-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+.rule-no { color: var(--ink-3); }
+.rule-on { margin-right: auto; }
+.rule-move { padding: 0 var(--sp-3); }
+.rule-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14em), 1fr)); gap: var(--sp-2); min-width: 0; }
+.rule-item .field { background: var(--panel); min-width: 0; }
+
 /* ── 「回顾」：只放入口 ── */
 .review-panel { display: grid; gap: var(--sp-2); }
 .review-links { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--sp-2); }

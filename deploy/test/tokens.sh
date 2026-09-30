@@ -47,6 +47,16 @@ check "网页会话改检测程序设置" "$("${C[@]}" -b "$A" -o /dev/null -w '
   -H 'Content-Type: application/json' -d "$BODY" "$BASE$S")" 200
 check "网页会话删检测程序设置" "$("${C[@]}" -b "$A" -o /dev/null -w '%{http_code}' -X DELETE "$BASE$S")" 204
 
+# detector.rules.v1：同一条规矩管分类规则——令牌能读，改规则、建 / 应用草稿都 403。
+R='/api/core/detector/rules'
+check "令牌读分类规则" "$(code "$TOK" "$R")" 200
+check "令牌改分类规则被拒" \
+  "$(code "$TOK" "$R" -X PUT -H 'If-Match: "0"' -H 'Content-Type: application/json' -d '{"rules":[]}')" 403
+check "令牌直连建规则草稿被拒" \
+  "$(code "$TOK" "$R/drafts" -X POST -H 'Content-Type: application/json' -d '{"rules":[],"summary":"x"}')" 403
+check "网页会话改分类规则" "$("${C[@]}" -b "$A" -o /dev/null -w '%{http_code}' -X PUT -H 'If-Match: "0"' \
+  -H 'Content-Type: application/json' -d '{"rules":[]}' "$BASE$R")" 200
+
 "${C[@]}" -b "$A" -o /dev/null -X POST -H 'Content-Type: application/json' "$BASE/api/auth/tokens/revoke"
 check "网页吊销后旧令牌被拒" "$(code "$TOK" /api/core/views/tree)" 302
 

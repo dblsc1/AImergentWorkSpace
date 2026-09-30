@@ -38,9 +38,23 @@ check "没登录调 MCP 被拒（302 去登录页）" \
 check "令牌 initialize" \
   "$(mcp "$TOK" initialize '{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}' \
      | py 'print(r["result"]["protocolVersion"], list(r["result"]["capabilities"]))')" "2025-06-18 ['tools']"
-check "tools/list：9 个工具全部只读" \
-  "$(mcp "$TOK" tools/list '{}' | py 't=r["result"]["tools"]; print(len(t), all(x["annotations"]["readOnlyHint"] for x in t))')" \
-  "9 True"
+check "tools/list：11 个工具，只有 propose_ 那个不是只读" \
+  "$(mcp "$TOK" tools/list '{}' | py 't=r["result"]["tools"]; print(len(t), [x["name"] for x in t if not x["annotations"]["readOnlyHint"]])')" \
+  "11 ['propose_detector_rules']"
+# detector.rules.v1：经 MCP 起草规则 → 草稿在，但生效规则没变（应用只有人能，令牌直连 403）
+V=$("${C[@]}" -b "$A" "$BASE/api/core/detector/rules" | py 'print(r["version"])')  # tokens.sh 可能已经存过
+check "经 MCP 起草分类规则（草稿，不生效）" \
+  "$(mcp "$TOK" tools/call "{\"name\":\"propose_detector_rules\",\"arguments\":{\"rules\":[{\"title\":\"mcp-ci\",\"taskId\":\"$T\"}],\"summary\":\"ci\"}}" \
+     | py 's=r["result"]["structuredContent"]; print(r["result"]["isError"], s["applied"], s["diff"]["added"] != [])')" "False False True"
+check "起草后生效规则没变" \
+  "$("${C[@]}" -b "$A" "$BASE/api/core/detector/rules" | py 'print(r["version"])')" "$V"
+D=$("${C[@]}" -b "$A" "$BASE/api/core/detector/rules/drafts/current" | py 'print(r["draft"]["id"])')
+check "令牌应用草稿被拒" "$(post "/api/core/detector/rules/drafts/$D/apply" '' -H "Authorization: Bearer $TOK" \
+  -H "If-Match: \"$V\"" -o /dev/null -w '%{http_code}')" 403
+check "网页会话应用草稿" "$(post "/api/core/detector/rules/drafts/$D/apply" '' -b "$A" -H "If-Match: \"$V\"" \
+  | py 'print(r["version"], [x["title"] for x in r["rules"]])')" "$((V + 1)) ['mcp-ci']"
+check "bob 看不到 alice 的规则" \
+  "$(mcp "$BOB" tools/call '{"name":"get_detector_rules","arguments":{}}' | py 'print(r["result"]["structuredContent"]["rules"])')" "[]"
 check "alice 经 MCP 看得到自己的任务与路径" \
   "$(mcp "$TOK" tools/call '{"name":"get_task_tree","arguments":{}}' \
      | py "print([i['path'] for i in r['result']['structuredContent']['items'] if i['taskId']=='$T'])")" \

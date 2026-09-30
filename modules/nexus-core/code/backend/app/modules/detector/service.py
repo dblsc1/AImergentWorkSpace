@@ -43,7 +43,25 @@ _RE2_ONLY = (
     (re.compile(r"\\[pP](\{[^}]*\}|[A-Za-z])"), "x"),
     (re.compile(r"\(\?<(?=[A-Za-z_])"), "(?P<"),
     (re.compile(r"\\z"), r"\\Z"),
+    # Go 的非贪婪翻转标志 U：Python 没有。只为检查语法，去掉它（(?U) 整个去掉，(?iU:…) → (?i:…)）
+    (re.compile(r"\(\?([imsU]*)U([imsU]*)(:|\))"), lambda m: "" if m[3] == ")" and not (m[1] + m[2]) else
+     "(?" + (m[1] + m[2]).replace("U", "") + m[3]),
 )
+
+
+def re2_error(p: str) -> str | None:
+    """正则能不能给检测程序（Go RE2）用：能 → None，不能 → 一句人话（以「正则」开头）。
+    detector.rules.v1 的 app / title 也用它。"""
+    probe = p
+    for pat, repl in _RE2_ONLY:
+        probe = pat.sub(repl, probe)
+    if _NOT_RE2.search(probe):  # 查换过的：\p{Han}+ 的「}+」不是占有量词
+        return f"正则用了 RE2 不支持的写法（前后查找 / 反向引用 / 条件组 / 原子组 / 占有量词）：{p!r}"
+    try:
+        re.compile(probe)
+    except re.error as exc:
+        return f"正则写错了：{exc}"
+    return None
 
 
 class ForbiddenError(RuntimeError):
@@ -85,15 +103,8 @@ class Privacy(_Strict):
     @classmethod
     def _regexes(cls, v: list[str]) -> list[str]:
         for i, p in enumerate(v):
-            probe = p
-            for pat, repl in _RE2_ONLY:
-                probe = pat.sub(repl, probe)
-            if _NOT_RE2.search(probe):  # 查换过的：\p{Han}+ 的「}+」不是占有量词
-                raise ValueError(f"第 {i + 1} 条正则用了 RE2 不支持的写法（前后查找 / 反向引用 / 条件组 / 原子组 / 占有量词）：{p!r}")
-            try:
-                re.compile(probe)
-            except re.error as exc:
-                raise ValueError(f"第 {i + 1} 条正则写错了：{exc}") from exc
+            if err := re2_error(p):
+                raise ValueError(f"第 {i + 1} 条{err}")
         return v
 
 
