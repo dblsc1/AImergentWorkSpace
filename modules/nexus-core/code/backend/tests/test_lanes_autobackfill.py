@@ -89,3 +89,16 @@ def test_concurrent_startups_converge(client, seeded):
         t.join()
     assert not errors and max(results) == 3
     assert _db()["proj_lanes"].count_documents({}) == 3
+
+
+def test_failure_does_not_block_startup(monkeypatch):
+    from fastapi.testclient import TestClient  # noqa: PLC0415
+
+    from app import main  # noqa: PLC0415
+
+    def boom():
+        raise RuntimeError("bad ledger")
+
+    monkeypatch.setattr(main, "backfill_lanes_if_empty", boom)
+    with TestClient(main.app) as fresh:
+        assert fresh.get(f"{API}/health").status_code == 200

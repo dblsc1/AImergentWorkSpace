@@ -41,9 +41,14 @@ async def lifespan(_app: FastAPI):
     """启动时把旧的全局唯一索引换成按租户的（v2.0）。只动索引、不动数据，幂等。
     v2.4：``proj_lanes`` 空而台账里有事实时自动补建一次（升级上来的用户不会手跑 rebuild）。"""
     ensure_tenant_indexes()
-    replayed = backfill_lanes_if_empty()
-    if replayed:
-        logging.getLogger("uvicorn.error").info("proj_lanes 为空，已从 %d 条事实自动补建（v2.4 升级）", replayed)
+    log = logging.getLogger("uvicorn.error")
+    try:
+        replayed = backfill_lanes_if_empty()
+    except Exception:  # noqa: BLE001 —— 补建失败不许挡住服务启动：时间线空着，其余一切照常
+        log.exception("proj_lanes 自动补建失败，服务照常启动；可手动 rebuild --only proj_lanes")
+    else:
+        if replayed:
+            log.info("proj_lanes 为空，已从 %d 条事实自动补建（v2.4 升级）", replayed)
     yield
 
 
