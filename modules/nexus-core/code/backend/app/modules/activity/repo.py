@@ -56,22 +56,22 @@ def set_status(user: str, sug_id: str, status: str, at: datetime, *, only_from: 
     return _col().update_one(filt, {"$set": {"status": status, "decidedAt": at}}).matched_count > 0
 
 
-def claim(user: str, sug_id: str, at: datetime, claim_id: str, *, takeover: bool = False,
-          only_task: str | None = None) -> bool:
-    """确认的占位：pending→confirmed 并记下是谁占的（``claimId``）。``takeover`` = 接手一个已占位、事实还没写的
-    （对方崩了，或还在写）：接手后对方的 ``release`` 不再生效。``only_task`` 给了还要求建议的任务仍是它
+def claim(user: str, sug_id: str, at: datetime, *, takeover: bool = False, only_task: str | None = None) -> bool:
+    """确认的占位：pending→confirmed，``claims`` 记有几个确认正占着（在写事实）。``takeover`` = 加入一个已占位、
+    事实还没写的（对方还在写，或占位后崩了）。``only_task`` 给了还要求建议的任务仍是它
     （v2.7：确认用的是建议里的任务时，防与否 / 重配赛跑）。"""
     filt = {"user": user, "id": sug_id, "status": "confirmed" if takeover else "pending"}
     if only_task is not None:
         filt["suggestion.taskId"] = only_task
-    upd = {"$set": {"status": "confirmed", "decidedAt": at, "claimId": claim_id}}
+    upd = {"$inc": {"claims": 1}} if takeover else {"$set": {"status": "confirmed", "decidedAt": at, "claims": 1}}
     return _col().update_one(filt, upd).matched_count > 0
 
 
-def release(user: str, sug_id: str, at: datetime, claim_id: str) -> None:
-    """写事实失败：放回 pending——只在占位的还是自己时（被别的确认接手了就不放，它还在写）。"""
-    _col().update_one({"user": user, "id": sug_id, "status": "confirmed", "claimId": claim_id},
-                      {"$set": {"status": "pending", "decidedAt": at}, "$unset": {"claimId": ""}})
+def release(user: str, sug_id: str, at: datetime) -> None:
+    """写事实失败：退出占位；**没有别的确认还占着**才放回 pending（还有人在写就不放，免得它写成后状态却是待确认）。"""
+    filt = {"user": user, "id": sug_id, "status": "confirmed"}
+    _col().update_one(filt, {"$inc": {"claims": -1}})
+    _col().update_one({**filt, "claims": {"$lte": 0}}, {"$set": {"status": "pending", "decidedAt": at}})
 
 
 def set_match(user: str, sug_id: str, suggestion: dict) -> bool:

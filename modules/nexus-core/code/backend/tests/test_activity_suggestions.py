@@ -620,7 +620,7 @@ def test_bodyless_confirm_never_backfills_a_superseded_task(client, seeded, monk
         if not seen:
             seen["unmatch"] = client.post(f"{SUG}/{sug_id}/unmatch").status_code
             seen["match"] = _match(client, [{"id": sug_id, "taskId": new["id"], "confidence": 0.4}])["matched"]
-            real(args[0], sug_id, args[2], "claim-b")  # 确认乙：占了位，还没写事实
+            real(args[0], sug_id, args[2])  # 确认乙：占了位，还没写事实
         return real(*args, **kwargs)
 
     monkeypatch.setattr(service.repo, "claim", racing)
@@ -651,8 +651,8 @@ def test_confirm_uses_confidence_as_of_the_claim(client, seeded, monkeypatch):
     assert seen == {"match": 1} and event["ai"]["confidence"] == 0.2
 
 
-def test_failed_confirm_does_not_reopen_a_record_another_confirm_took_over(client, seeded, monkeypatch):
-    """确认甲（任务不存在）占位 → 确认乙接手 → 甲写失败：不许把状态放回 pending（乙还在写）。"""
+def test_failed_confirm_does_not_reopen_a_record_another_confirm_holds(client, seeded, monkeypatch):
+    """确认甲（任务不存在）占位 → 确认乙加入 → 甲写失败：不许把状态放回 pending（乙还占着）。反过来也一样。"""
     from app.modules.activity import service  # noqa: PLC0415
 
     task = seeded["tasks"]["示例任务三"]
@@ -679,3 +679,20 @@ def test_failed_confirm_does_not_reopen_a_record_another_confirm_took_over(clien
     monkeypatch.setattr(service.timer_service, "record_session", real)
     assert client.post(f"{SUG}/{other}/confirm", json={"taskId": "t_nope"}).status_code == 404
     assert [i["id"] for i in _pending(client)["items"]] == [other]
+    # 反过来：甲（任务对）占位、正要写 → 乙（任务不存在）加入、失败 → 不放回；甲写成后状态是已确认
+    _upload(client, [_seg(_recent(50))])
+    third = next(i["id"] for i in _pending(client)["items"] if i["id"] != other)
+    seen.clear()
+
+    def racing2(task_id, *args, **kwargs):
+        if task_id == task["id"] and not seen:
+            seen["b"] = "started"
+            seen["b"] = client.post(f"{SUG}/{third}/confirm", json={"taskId": "t_nope"}).status_code
+            assert [i["id"] for i in _pending(client)["items"]] == [other]   # 乙失败后 third 没回到待确认
+        return real(task_id, *args, **kwargs)
+
+    monkeypatch.setattr(service.timer_service, "record_session", racing2)
+    assert client.post(f"{SUG}/{third}/confirm", json={"taskId": task["id"]}).status_code == 200
+    assert seen == {"b": 404}
+    assert {i["id"] for i in _pending(client, status="confirmed")["items"]} == {sug_id, third}
+    assert len(_session_events()) == 2

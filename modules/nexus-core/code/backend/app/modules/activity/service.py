@@ -20,7 +20,6 @@
 from __future__ import annotations
 
 import hashlib
-import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Literal
 
@@ -225,9 +224,8 @@ def confirm(sug_id: str, task_id: str | None, mode: str) -> dict:
         raise InvalidInputError("没有可确认的任务：请求体与建议里都没有 taskId，请先选一个任务")
     # 先占位再写事实：pending→confirmed 是条件更新，与忽略（同样只从 pending 转）二选一，
     # 不会出现「忽略回了 200，事实却照样落库」。占位后崩在写事实之前 → 状态已确认、台账没有，
-    # 重试走到这里（占位不中但状态是 confirmed）接手占位再补写，防重键兜底不重。
-    claim_id = uuid.uuid4().hex
-    if not repo.claim(user, sug_id, _now(), claim_id, only_task=only_task):
+    # 重试走到这里（占位不中但状态是 confirmed）加入占位再补写，防重键兜底不重。
+    if not repo.claim(user, sug_id, _now(), only_task=only_task):
         cur = _get(user, sug_id)
         if cur["status"] == "dismissed":
             raise ConflictError(f"活动建议 {sug_id!r} 已忽略，不能再确认")
@@ -235,9 +233,10 @@ def confirm(sug_id: str, task_id: str | None, mode: str) -> dict:
             # 用建议里的任务：只认**现在**建议里的那个——自己早先读到的可能已被否掉 / 换掉
             only_task = task_id = cur["suggestion"].get("taskId")
         # 还是 pending = 建议的任务在读与占位之间变了；confirmed = 别的确认占着位（或占位后崩了）：
-        # 接手它再写。接手之后对方写失败也不会把状态放回 pending，于是没人能趁机否掉 / 换掉这个任务
+        # 加入占位再写。只要还有一个确认占着，谁写失败都不会把状态放回 pending——
+        # 于是没人能趁机否掉 / 换掉这个任务，也不会出现「事实写成了、状态却是待确认」
         if (not task_id or cur["status"] != "confirmed"
-                or not repo.claim(user, sug_id, _now(), claim_id, takeover=True, only_task=only_task)):
+                or not repo.claim(user, sug_id, _now(), takeover=True, only_task=only_task)):
             raise ConflictError(f"活动建议 {sug_id!r} 刚被改动，请刷新后再确认")
     # 占着位重读：已确认的建议不会再被配 / 否（那两个只动 pending），这份就是定稿，把握取它
     doc = _get(user, sug_id)
@@ -248,11 +247,11 @@ def confirm(sug_id: str, task_id: str | None, mode: str) -> dict:
             ai={"generated": True, "confidence": doc["suggestion"]["confidence"], "confirmed": True},
         )
     except Exception:
-        # 任务不存在等：事实没写成，放回待确认（并发的另一次确认若已写成、或已接手占位，就别放回）。
+        # 任务不存在等：事实没写成，退出占位；没有别的确认还占着、台账里也没有才放回待确认。
         # 尽力而为：放回本身出错也要把原来的错误原样抛出去
         try:
             if events_service.find_by_dedupe(user, SOURCE, dedupe_key) is None:
-                repo.release(user, sug_id, _now(), claim_id)
+                repo.release(user, sug_id, _now())
         except Exception:  # noqa: BLE001, S110
             pass
         raise
