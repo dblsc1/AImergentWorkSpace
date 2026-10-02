@@ -85,6 +85,16 @@ func TestTabKeyNormalization(t *testing.T) {
 		{"notes - draft", "notes - draft"}, // 结尾不是程序名：不动
 		{"build - ok", "build - ok"},       // 「ok」不足 3 个字符，不当程序名
 		{"✳", ""},
+		// 实机上 Ptyxis 报的标题：项目名后面带一个空格，没有符号前缀、没有程序名后缀
+		{"Cockpit-Pub-Coder1 ", "cockpit-pub-coder1"},
+		{"AImergent教育部门技术主管 ", "aimergent教育部门技术主管"},
+		{"GardenV0.2 Dev ", "gardenv0.2 dev"},
+		// 没起名字的 shell 标签页：「用户@主机: 当前目录」，换目录不换键（脱敏前后都认）
+		{"xia@AImergent: ~", "xia@aimergent:"},
+		{"xia@AImergent: /srv/aimergent/AImergentWorkspace", "xia@aimergent:"},
+		{"[用户]@[主机]: ~", "[用户]@[主机]:"},
+		{"[用户]@[主机]: AImergentWorkspace", "[用户]@[主机]:"},
+		{"mail to a@b.c: hi", "mail to a@b.c: hi"}, // 不是开头的提示符：不动
 	} {
 		if got := tabKey(c.a, app); got != c.b {
 			t.Errorf("tabKey(%q) = %q, want %q", c.a, got, c.b)
@@ -414,5 +424,16 @@ func TestFirstRoundAfterUpgradeUsesOldSegmentation(t *testing.T) {
 	json.Unmarshal(ck.bodies[1], &b)
 	if len(b.Segments) != 2 || b.Segments[0].Title != "GardenV0.2 Dev" || b.Segments[1].Title != "Cockpit-Pub-Coder1" {
 		t.Fatalf("then per tab: %+v", b.Segments)
+	}
+}
+
+// 没起名字的 shell 标签页在几个目录之间换：算一段，不会因为每个目录都不足 M 而全丢；起了名字的标签页照样各算各的。
+func TestShellPromptTabsCollapseAcrossCwd(t *testing.T) {
+	s := segsOf([]awEvent{
+		win(0, 2, term, "alice@thinkpad: ~"), win(2, 2, term, "alice@thinkpad: ~/work/garden"),
+		win(4, 4, term, "Cockpit-Pub-Coder1 "), win(8, 2, term, "alice@thinkpad: /srv/data"),
+	}, Config{}, 60)
+	if !same(brief(s), []string{"[用户]@[主机]: ~|0.00|10.00|360", "Cockpit-Pub-Coder1|4.00|8.00|240"}) {
+		t.Fatalf("%q", brief(s))
 	}
 }

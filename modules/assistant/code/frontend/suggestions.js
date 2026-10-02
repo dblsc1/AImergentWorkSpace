@@ -7,6 +7,10 @@
  *
  * - idle 段（v2.5：前台没换、但无操作）单独标「无操作·可能在阅读」，**永远不进「全部确认」**——
  *   契约说由人决定算不算；它的把握本来就 ≤ 0.3。
+ * - AI 匹配（v2.7，仓主 2026-10-02「最简单的匹配 + y/n」）：「让 AI 匹配」借 chat.js 发一轮固定的话，助理经 MCP 给
+ *   没有任务的条目配任务（classifier=assistant）。这样的条目只出一行「AI 建议：路径 · 把握 · 理由」和两个按钮：
+ *   「是 ✓」= 既有的 confirm（带那个任务）；「否 ✗」= unmatch（清掉、记住，条目留在待确认里，换成手动挑任务）。
+ *   聊天后端没装 / 没配模型时按钮不出现。reason 是模型写的，同样只进 textContent。
  * 对外只挂 window.assistantSuggestions（纯函数，给单测用）。
  *
  * - 端点 404（后端早于 v2.2）→ 整块不出现，不报错。
@@ -64,7 +68,16 @@
     });
   }
 
-  window.assistantSuggestions = { formatRange: formatRange, taskPath: taskPath, eligible: eligible };
+  // 助理配的、任务还在树里的 → 出「是 / 否」；任务已删的退回手动挑。
+  function aiMatch(item, tree) {
+    var s = item.suggestion || {};
+    return s.classifier === "assistant" && taskPath(tree, s.taskId) !== null;
+  }
+
+  window.assistantSuggestions = { formatRange: formatRange, taskPath: taskPath, eligible: eligible, aiMatch: aiMatch };
+
+  var AI_PROMPT = "请匹配待确认的活动：读取待确认的活动记录和我的项目、任务，" +
+    "给能判断的每条活动配一个最合适的任务，拿不准的跳过。";
 
   // ── DOM ─────────────────────────────────────────────────────────────
   var panelEl = document.getElementById("suggest-panel");
@@ -75,6 +88,7 @@
   var msgEl = document.getElementById("suggest-message");
   var thresholdEl = document.getElementById("suggest-threshold");
   var allBtnEl = document.getElementById("suggest-confirm-all");
+  var aiBtnEl = document.getElementById("suggest-ai-match");
   if (!panelEl || !listEl) return;
 
   var items = [];
@@ -82,6 +96,8 @@
   var tree = null;
   var chosen = {}; // id → 人在下拉里改过的 taskId（重绘时保留）
   var busy = false;
+  var chat = { configured: false, generating: false }; // chat.js 报的状态（没装聊天后端就一直是这个）
+  var aiAsked = false; // 这一轮是「让 AI 匹配」发起的：答完后报一句结果
 
   // 同计时页的 postCore：从不 throw，失败时 detail 原样透传。
   async function post(url, body) {
@@ -152,19 +168,27 @@
 
     var s = item.suggestion || {};
     var path = taskPath(tree, s.taskId);
-    var hint = s.taskId
-      ? "建议：" + (path || "（任务已不存在）") + " · 把握 " + Math.round((s.confidence || 0) * 100) + "%"
-      : "没有建议，请选任务";
-    li.appendChild(el("p", "suggest-hint", hint));
-
-    li.appendChild(taskSelect(item));
+    var pct = " · 把握 " + Math.round((s.confidence || 0) * 100) + "%";
+    var ai = aiMatch(item, tree);
     var row = el("div", "row");
-    var ok = el("button", "btn btn-fact suggest-confirm", "确认");
+    var ok = el("button", "btn btn-fact suggest-confirm", ai ? "是 ✓" : "确认");
     ok.type = "button";
-    var no = el("button", "btn btn-ghost suggest-dismiss", "忽略");
+    var no = el("button", "btn btn-ghost " + (ai ? "suggest-no" : "suggest-dismiss"), ai ? "否 ✗" : "忽略");
     no.type = "button";
+    if (ai) {
+      // 助理配的：一行建议 + 是 / 否，不出下拉（否了之后重绘成手动挑）
+      li.classList.add("is-ai");
+      li.appendChild(el("p", "suggest-hint", "AI 建议：" + path + pct + (s.reason ? " · " + s.reason : "")));
+      ok.setAttribute("aria-label", "是，记到 " + path);
+      no.setAttribute("aria-label", "否，不是 " + path);
+    } else {
+      var hint = s.taskId ? "建议：" + (path || "（任务已不存在）") + pct
+        : (item.rejectedTaskIds || []).length ? "AI 的建议已否掉，请自己选任务，或忽略" : "没有建议，请选任务";
+      li.appendChild(el("p", "suggest-hint", hint));
+      li.appendChild(taskSelect(item));
+    }
     ok.addEventListener("click", function () { act([item], "confirm"); });
-    no.addEventListener("click", function () { act([item], "dismiss"); });
+    no.addEventListener("click", function () { act([item], ai ? "unmatch" : "dismiss"); });
     row.appendChild(ok);
     row.appendChild(no);
     li.appendChild(row);
@@ -181,9 +205,16 @@
     allBtnEl.textContent = "全部确认（把握 ≥ " + Math.round(threshold() * 100) + "%）" + (n ? " · " + n : "");
     allBtnEl.disabled = busy || n === 0;
     listEl.querySelectorAll("li").forEach(function (li) {
-      li.querySelector(".suggest-confirm").disabled = busy || !li.querySelector("select").value;
-      li.querySelector(".suggest-dismiss").disabled = busy;
+      var sel = li.querySelector("select"); // 助理配的条目没有下拉：「是」总可点
+      li.querySelector(".suggest-confirm").disabled = busy || Boolean(sel && !sel.value);
+      li.querySelector(".suggest-dismiss, .suggest-no").disabled = busy;
     });
+    if (aiBtnEl) {
+      aiBtnEl.hidden = !chat.configured; // 没装聊天后端 / 没配模型：不出现
+      // aiAsked 在点击那一下就置上：建会话还没完（generating 还没变）时连点不会发出第二轮
+      aiBtnEl.disabled = busy || chat.generating || aiAsked || items.length === 0;
+      aiBtnEl.textContent = aiAsked ? "AI 正在匹配…" : "让 AI 匹配";
+    }
   }
 
   function render() {
@@ -232,7 +263,9 @@
       for (var i = 0; i < targets.length; i++) {
         var it = targets[i];
         var suggested = (it.suggestion || {}).taskId;
-        var body = action === "confirm" ? { taskId: selectedTask(it.id) || suggested } : undefined;
+        // unmatch 带上页面上看到的任务：助理刚换过的话后端 409，不会否错
+        var body = action === "confirm" ? { taskId: selectedTask(it.id) || suggested }
+          : action === "unmatch" ? { taskId: suggested } : undefined;
         var r = await post(API + "/" + encodeURIComponent(it.id) + "/" + action, body);
         if (r.ok) {
           done += 1;
@@ -249,6 +282,33 @@
     if (errors.length) showMessage(errors[0] + (errors.length > 1 ? "（另有 " + (errors.length - 1) + " 条失败）" : ""), true);
     else if (bulk) showMessage("已确认 " + done + " 条。", false);
   }
+
+  // ── 让 AI 匹配：借「AI 对话」发一轮；答完（assistant:turn-done）重拉列表 ──
+  if (aiBtnEl) {
+    aiBtnEl.addEventListener("click", function () {
+      if (!window.assistantChat || !window.assistantChat.ask || !window.assistantChat.ask(AI_PROMPT)) return;
+      aiAsked = true;
+      showMessage("AI 正在看活动记录和你的项目，进度见上面的「AI 对话」…", false);
+      syncButtons();
+    });
+  }
+  document.addEventListener("assistant:chat-state", function (e) {
+    chat = e.detail || chat;
+    syncButtons();
+  });
+  // 一轮答完：助理可能配了任务（不管是点按钮还是用户自己在对话里说的）。正在确认时不抢，确认完自己会重拉。
+  document.addEventListener("assistant:turn-done", function () {
+    var asked = aiAsked;
+    aiAsked = false;
+    if (busy) return;
+    load().then(function () {
+      syncButtons();
+      if (!asked) return;
+      var n = items.filter(function (it) { return aiMatch(it, tree); }).length;
+      showMessage(n ? "AI 给 " + n + " 条配了任务，逐条点「是」或「否」。"
+        : "AI 这次没配上任何一条，原因见上面的对话。", false);
+    });
+  });
 
   thresholdEl.addEventListener("input", syncButtons);
   allBtnEl.addEventListener("click", function () { act(eligible(items, threshold(), tree), "confirm", true); });

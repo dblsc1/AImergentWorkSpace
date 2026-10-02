@@ -337,14 +337,21 @@ func tabApps(c Config) []string {
 	return c.SegmentByTitleApps
 }
 
-var reTabLead = regexp.MustCompile(`^[^\p{L}\p{N}]+`)
+var (
+	reTabLead = regexp.MustCompile(`^[^\p{L}\p{N}]+`)
+	// 没起名字的 shell 标签页：标题是提示符「用户@主机: 当前目录」，cd 一下就变。
+	reTabPrompt = regexp.MustCompile(`^([^\s@]+@[^\s:]+:)(\s|$)`)
+)
 
 // tabKey：终端标签页的合并键（契约「按标签页分段」）。t 是隐私选项处理后的标题，app 已过 normApp。
 // 状态符号 / 转圈动画一直在变，不去掉的话同一个标签页会碎成很多键。
-// ponytail: 只认开头的符号和结尾的程序名；标题中间在变的（提示符里的当前目录、进度）认不出，
+// ponytail: 只认开头的符号、结尾的程序名和「用户@主机: 目录」形状的提示符；别的在标题中间变的（进度）认不出，
 // 真遇到再按程序定制。
 func tabKey(t, app string) string {
 	t = strings.Join(strings.Fields(t), " ")
+	if m := reTabPrompt.FindStringSubmatch(t); m != nil {
+		return strings.ToLower(m[1]) // 同一台主机上的 shell 标签页算一件事，换目录不拆
+	}
 	if m := reTitleSep.FindAllStringIndex(t, -1); len(m) > 0 {
 		last := m[len(m)-1]
 		if tail := normApp(t[last[1]:]); len(tail) >= 3 && strings.Contains(app, tail) {

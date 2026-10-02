@@ -19,7 +19,8 @@
     <!-- 「AI 对话」（contracts/agent.chat.v1，chat.js）。聊天后端没装（health 不是 200）时整块保持 hidden。 -->
     <section class="card chat-panel" id="chat-panel" hidden aria-labelledby="chat-title">
       <h2 class="suggest-title" id="chat-title">AI 对话</h2>
-      <p class="suggest-sub">它能读你的任务和时间；唯一能写的是分类规则的草稿，要你在下面点「应用」才生效。</p>
+      <p class="suggest-sub">它能读你的任务和时间；能写的只有两样建议：分类规则的草稿（要你在下面点「应用」），
+        和给待确认的活动配任务（要你逐条点「是」）。</p>
       <div class="chat-bar">
         <select class="field" id="chat-session" aria-label="对话"></select>
         <button type="button" class="btn btn-ghost" id="chat-new">新对话</button>
@@ -41,13 +42,16 @@
     <section class="card suggest-panel" id="suggest-panel" hidden aria-labelledby="suggest-title">
       <div class="suggest-top">
         <h2 class="suggest-title" id="suggest-title">待确认建议 <span class="suggest-count mono" id="suggest-count"></span></h2>
-        <p class="suggest-sub">电脑自动记下的活动，确认后才算进你的时间。标「无操作」的是没碰键盘鼠标的时段，只能一条条自己定。</p>
+        <p class="suggest-sub">电脑自动记下的活动，确认后才算进你的时间。标「无操作」的是没碰键盘鼠标的时段，只能一条条自己定。
+          没配上任务的可以「让 AI 匹配」：它给建议，你点「是」入账、点「否」自己挑。</p>
       </div>
       <div class="suggest-bulk">
         <label class="suggest-threshold-label" for="suggest-threshold">把握至少（%）</label>
         <input class="field suggest-threshold" id="suggest-threshold" type="number"
                min="0" max="100" step="5" value="80" inputmode="numeric">
         <button type="button" class="btn btn-fact" id="suggest-confirm-all" disabled>全部确认</button>
+        <!-- 聊天后端没装 / 没配模型时保持 hidden（suggestions.js 听 chat.js 的 assistant:chat-state） -->
+        <button type="button" class="btn btn-ghost" id="suggest-ai-match" hidden disabled>让 AI 匹配</button>
       </div>
       <p class="suggest-message" id="suggest-message" role="status" hidden></p>
       <p class="suggest-empty" id="suggest-empty">没有待确认的活动。</p>
@@ -195,7 +199,7 @@
           <div class="set-field" data-field="segmentByTitle">
             <label class="set-opt"><input type="checkbox" data-key="segmentByTitle"> 终端按标签页分段
               <span class="eg">一个终端开很多标签页时，每个标签页（程序 + 标题）各算各的时间，不并成一段</span></label>
-            <p class="set-hint">标题开头的状态符号（✳、转圈动画）和结尾的程序名不算区别。只在本机用标题分组，不多上传任何东西；
+            <p class="set-hint">标题开头的状态符号（✳、转圈动画）和结尾的程序名不算区别；没起名字的 shell 标签页（用户@主机: 目录）换目录不拆。只在本机用标题分组，不多上传任何东西；
               窗口标题选了「不要标题，只留程序名」时自动退回只按程序。</p>
             <p class="field-error" hidden></p>
           </div>

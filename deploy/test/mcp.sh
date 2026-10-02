@@ -38,9 +38,9 @@ check "没登录调 MCP 被拒（302 去登录页）" \
 check "令牌 initialize" \
   "$(mcp "$TOK" initialize '{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}' \
      | py 'print(r["result"]["protocolVersion"], list(r["result"]["capabilities"]))')" "2025-06-18 ['tools']"
-check "tools/list：11 个工具，只有 propose_ 那个不是只读" \
+check "tools/list：12 个工具，只有 propose_ 那两个不是只读" \
   "$(mcp "$TOK" tools/list '{}' | py 't=r["result"]["tools"]; print(len(t), [x["name"] for x in t if not x["annotations"]["readOnlyHint"]])')" \
-  "11 ['propose_detector_rules']"
+  "12 ['propose_detector_rules', 'propose_activity_matches']"
 # detector.rules.v1：经 MCP 起草规则 → 草稿在，但生效规则没变（应用只有人能，令牌直连 403）
 V=$("${C[@]}" -b "$A" "$BASE/api/core/detector/rules" | py 'print(r["version"])')  # tokens.sh 可能已经存过
 check "经 MCP 起草分类规则（草稿，不生效）" \
@@ -55,6 +55,28 @@ check "网页会话应用草稿" "$(post "/api/core/detector/rules/drafts/$D/app
   | py 'print(r["version"], [x["title"] for x in r["rules"]])')" "$((V + 1)) ['mcp-ci']"
 check "bob 看不到 alice 的规则" \
   "$(mcp "$BOB" tools/call '{"name":"get_detector_rules","arguments":{}}' | py 'print(r["result"]["structuredContent"]["rules"])')" "[]"
+# nexus-core v2.7 AI 匹配：设备令牌上传一段活动 → 经 MCP 配任务（只是建议）→ 令牌直连 matches / unmatch 403
+SEG=$(python3 -c "
+import json; from datetime import datetime, timedelta, timezone
+e = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=5)
+print(json.dumps({'deviceId': 'dev_mcpci', 'segments': [{'startAt': (e - timedelta(minutes=4)).isoformat(), 'endAt': e.isoformat(),
+  'durationSeconds': 200, 'app': 'code', 'title': 'mcp-ci', 'suggestion': {'taskId': None, 'confidence': 0.0, 'reason': '', 'classifier': 'rules'}}]}))")
+check "令牌上传一段活动" "$(post /api/core/activity/suggestions "$SEG" -H "Authorization: Bearer $TOK" | py 'print(r["accepted"] + r["duplicates"])')" 1
+S=$("${C[@]}" -b "$A" "$BASE/api/core/activity/suggestions" | py 'print([i["id"] for i in r["items"] if i["title"] == "mcp-ci"][0])')
+M="{\"matches\":[{\"id\":\"$S\",\"taskId\":\"$T\",\"confidence\":0.5}]}"
+check "令牌直连 matches 被拒" "$(post /api/core/activity/suggestions/matches "$M" -H "Authorization: Bearer $TOK" -o /dev/null -w '%{http_code}')" 403
+check "令牌直连 unmatch 被拒" "$(post "/api/core/activity/suggestions/$S/unmatch" '' -H "Authorization: Bearer $TOK" -o /dev/null -w '%{http_code}')" 403
+check "经 MCP 给活动配任务（只是建议，不入账）" \
+  "$(mcp "$TOK" tools/call "{\"name\":\"propose_activity_matches\",\"arguments\":{\"matches\":[{\"suggestionId\":\"$S\",\"taskId\":\"$T\",\"confidence\":0.6,\"reason\":\"ci\"}]}}" \
+     | py 's=r["result"]["structuredContent"]; print(r["result"]["isError"], s["matched"], s["rejected"], s["confirmed"])')" "False 1 [] False"
+check "配完仍是 pending，classifier=assistant" \
+  "$("${C[@]}" -b "$A" "$BASE/api/core/activity/suggestions" | py "print([(i['status'], i['suggestion']['taskId'] == '$T', i['suggestion']['classifier']) for i in r['items'] if i['id'] == '$S'])")" \
+  "[('pending', True, 'assistant')]"
+check "网页会话说「否」→ 任务清掉并记住" \
+  "$(post "/api/core/activity/suggestions/$S/unmatch" "{\"taskId\":\"$T\"}" -b "$A" | py "print(r['status'], r['rejectedTaskIds'] == ['$T'])")" "pending True"
+check "bob 经 MCP 配不了 alice 的建议" \
+  "$(mcp "$BOB" tools/call "{\"name\":\"propose_activity_matches\",\"arguments\":{\"matches\":[{\"suggestionId\":\"$S\",\"taskId\":\"$T\",\"confidence\":0.6}]}}" \
+     | py 's=r["result"]["structuredContent"]; print(s["matched"], len(s["rejected"]))')" "0 1"
 check "alice 经 MCP 看得到自己的任务与路径" \
   "$(mcp "$TOK" tools/call '{"name":"get_task_tree","arguments":{}}' \
      | py "print([i['path'] for i in r['result']['structuredContent']['items'] if i['taskId']=='$T'])")" \
