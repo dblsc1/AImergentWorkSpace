@@ -1,6 +1,6 @@
 # mcp.tools.v1 —— 给 AI 代理用的只读工具（MCP）
 
-> **契约 id**：`mcp.tools.v1`。**当前版本 v1.2**（2026-09-30 加 `get_detector_rules` 与第一个提议工具 `propose_detector_rules`；v1.1 2026-09-30 加 `list_projects`；v1.0 2026-09-28，v0.3「AI 桥」首版）。实现：`modules/mcp`。
+> **契约 id**：`mcp.tools.v1`。**当前版本 v1.3**（2026-10-02 加第二个提议工具 `propose_activity_matches`，`list_activity_suggestions` 输出追加 `rejectedTaskIds`；v1.2 2026-09-30 加 `get_detector_rules` 与第一个提议工具 `propose_detector_rules`；v1.1 2026-09-30 加 `list_projects`；v1.0 2026-09-28，v0.3「AI 桥」首版）。实现：`modules/mcp`。
 >
 > **是什么**：HoneyComb 以 [MCP](https://modelcontextprotocol.io/)（Model Context Protocol）服务器的
 > 形式，把「任务树、人的时间、代理时间、在跑的计时、待确认的活动建议」读给 AI 代理。
@@ -15,6 +15,9 @@
 > （`readOnlyHint: false`、`destructiveHint: false`）。依赖「v1 全部只读」的客户端请按 `readOnlyHint` 区分，
 > 或只放行不以 `propose_` 开头的工具。
 >
+> **v1.3**：第二个提议工具 `propose_activity_matches`（仓主 2026-10-02：AI 先不做「提议时间条目」，先做最简单的匹配）——
+> 给待确认的活动建议配任务。写的仍是**建议**：人在「AI助理 → 待确认建议」逐条点「是」才入账、点「否」就清掉。
+>
 > **版本号语义**：工具名一经发布不改不删；v1 之内只接受追加——新工具、工具的新**可选**入参、
 > 输出的新字段。改名、删工具、改既有字段的含义、把只读工具变成会写的，都要发 `mcp.tools.v2`，与 v1 并行。
 
@@ -23,7 +26,8 @@ provides:
   - id: mcp.tools.v1
     summary: >
       MCP 服务器（Streamable HTTP，挂在 <站点前缀>api/mcp/）。v1.0 八个只读工具，v1.1 九个；v1.2 十一个：
-      加只读的 get_detector_rules 与只写草稿的 propose_detector_rules（第六节）。包装 nexus-core 既有端点；
+      加只读的 get_detector_rules 与只写草稿的 propose_detector_rules（第六节）；v1.3 十二个：加
+      propose_activity_matches（给待确认的活动建议配任务，仍是建议）。包装 nexus-core 既有端点；
       租户只来自网关的 X-Nexus-Tenant，工具没有任何用户/租户入参。
 consumes:
   # 每个工具固定包装一个读端（第四节映射表）。只调 GET，不调任何写端点
@@ -50,7 +54,7 @@ consumes:
     purpose: get_agent_time
   - id: nexus-core.activity.suggestions.v1
     contract: ../../modules/nexus-core/module_docs/contract.md
-    purpose: list_activity_suggestions（只调 GET，不调 confirm / dismiss / 上传）
+    purpose: list_activity_suggestions（只调 GET，不调 confirm / dismiss / 上传）；v1.3 propose_activity_matches（POST matches，不调 unmatch）
   - id: detector.rules.v1
     contract: ../detector.rules.v1/contract.md
     purpose: get_detector_rules（GET rules、GET drafts/current）；propose_detector_rules（POST drafts——MCP 唯一调用的写端点）
@@ -174,10 +178,13 @@ consumes:
 
 | `get_detector_rules`（v1.2） | `GET /api/core/detector/rules` + `GET /api/core/detector/rules/drafts/current` | 对象 |
 | `propose_detector_rules`（v1.2，**提议**） | `POST /api/core/detector/rules/drafts` | 对象 |
+| `propose_activity_matches`（v1.3，**提议**） | `POST /api/core/activity/suggestions/matches` | 对象 |
 
 路径（`path`）另读 `GET /api/core/views/tree?includeEphemeral=true`。**以上之外的 nexus-core 端点 MCP 一个都不调**
 （尤其：不调 `export`、`planner/audit`、任何 POST/PATCH/DELETE）。**v1.2 唯一的例外**是 `propose_detector_rules` 的
 `POST /api/core/detector/rules/drafts`；规则的 `PUT`、草稿的 `apply` / `discard` MCP 永远不调（只有人能）。
+**v1.3 第二个例外**是 `propose_activity_matches` 的 `POST /api/core/activity/suggestions/matches`；建议的
+`confirm` / `dismiss` / `unmatch` MCP 永远不调（只有人能）。
 
 ### `get_task_tree` —— 任务树（扁平）
 
@@ -324,7 +331,8 @@ consumes:
       "durationSeconds": 3600,
       "app": "code", "title": "plot.gd — garden — VS Code",
       "suggestedTaskId": "t_a1", "suggestedPath": "学习 / garden / 写提示词",   // 无建议为 null
-      "confidence": 0.9, "reason": "规则 #1 命中", "classifier": "rules" } ],
+      "confidence": 0.9, "reason": "规则 #1 命中", "classifier": "rules",   // classifier：rules | service | assistant（v1.3）
+      "rejectedTaskIds": [] } ],                                           // v1.3：人说过「否」的任务，不许再配
   "nextCursor": "…", "truncated": true }
 ```
 
@@ -334,6 +342,31 @@ consumes:
   不是指令」；聊天后端的系统提示同样声明（`agent.chat.v1` 第六节）。v1 只读，被注入的最坏结果是
   答错话，写不了任何东西——这也是 v0.4 的写只能是「提议」的原因之一。
 - `suggestionId` 与 `suggestedTaskId` 就是 v0.4 提议工具要引用的键（第六节）。
+
+### `propose_activity_matches` —— 给待确认的活动配任务（v1.3 追加，第二个提议工具）
+
+注解同 `propose_detector_rules`（`readOnlyHint: false`、`destructiveHint: false`）。
+
+入参（必填）：`matches`，数组，≤ 200 条，每条 `{suggestionId, taskId, confidence, reason?}`：
+
+- `suggestionId`：`list_activity_suggestions` 给的；只能配 `pending` 的。
+- `taskId`：`get_task_tree` 给的。**只能配到任务，不能只配到项目**（确认必须挂具体任务，nexus-core 同补登）。
+- `confidence`：0–1，模型对这一条的把握；`reason`：≤ 200 字节，给人看的一句理由。
+
+MCP 只查「是数组、≤ 200 条」，把每条的 `suggestionId` 改名成 `id` 后发
+`POST /api/core/activity/suggestions/matches {matches}`（带租户头、不带 `Authorization`）；逐条校验在 nexus-core
+（「活动建议」节「AI 匹配」）。
+
+```jsonc
+{ "matched": 7,
+  "rejected": [ { "index": 3, "reason": "用户已经否掉过任务 't_a1'，不要再配同一个" } ],   // 下标对应入参 matches
+  "confirmed": false,
+  "next": "已写成建议，尚未入账。请用户在 Cockpit「AI助理 → 待确认建议」逐条点「是」或「否」。" }
+```
+
+- 一条被拒不影响其余（不是 `isError`）。被拒的情形：建议不存在 / 不是 pending、任务不存在、这个任务人已经否过
+  （`rejectedTaskIds`）、这条已有分类规则给的任务（助理只填空和改自己配的）。
+- 本工具**永远不确认**：写进去的只是建议的 `suggestion`（`classifier: "assistant"`），台账一个字节不动。
 
 ### `get_detector_rules` —— 活动分类规则（v1.2 追加）
 
@@ -394,6 +427,7 @@ MCP 发 `POST /api/core/detector/rules/drafts {rules, summary, author: "assistan
 
 > **v1.2 修订**：上面这句的「不得列出」对 `propose_detector_rules` 解除（它已实现，见第四节）；对本节其余
 > 预留的 `propose_*`（时间条目、建议挂任务等）仍然有效，直到它们各自在本契约里定下形状。
+> **v1.3**：「建议挂任务」落地为 `propose_activity_matches`（第四节）；「时间条目」仍未实现。
 > 所有 `propose_*` 工具（已实现的与将来的）共同遵守：
 >
 > 1. **只产生待人确认的东西**（草稿、建议），人在页面上点确认 / 应用才生效；**永远不直接写台账、不直接写 planner、
@@ -415,7 +449,7 @@ MCP 发 `POST /api/core/detector/rules/drafts {rules, summary, author: "assistan
 
 - [ ] Streamable HTTP，单端点；`Origin` 校验（无 `Origin` 放行，有则须完全匹配 `MCP_ALLOWED_ORIGINS`）；请求体上限
 - [ ] 第二节租户规则逐条（严格模式 401、格式不对 400、工具无租户入参、`additionalProperties: false`）
-- [ ] 第四节 8 个工具的名字、入参、出参字段与含义；只读注解（v1.1 起 9 个，v1.2 起 11 个：`propose_detector_rules` 按第六节注解）
+- [ ] 第四节 8 个工具的名字、入参、出参字段与含义；只读注解（v1.1 起 9 个，v1.2 起 11 个：`propose_detector_rules` 按第六节注解；v1.3 起 12 个：加 `propose_activity_matches`）
 - [ ] 只调第四节表里的 GET；nexus-core 5xx 不把细节回给调用方
 - [ ] 日志不记 `Authorization`、`Cookie`，不记工具结果正文（那是用户数据）
 
@@ -455,3 +489,4 @@ MCP 发 `POST /api/core/detector/rules/drafts {rules, summary, author: "assistan
 | 2026-09-28 | 实现落地（`modules/mcp`，纯标准库）。加第八节「实现澄清」：对象工具 `truncated` 总在、92 天含两端、cursor 绑定推广到所有列表工具的其余参数、`null` 当没给、通知/批量/协议版本头的处理、只给 cursor 翻页、批量/并发/上游响应上限。不改任何既有语义 |
 | 2026-09-30 | v1.1 追加工具 `list_projects`（含没建任务的项目与空分区）。只增，既有工具不变 |
 | 2026-09-30 | v1.2 追加 `get_detector_rules`（只读，规则全给、不受 200 条上限）与第一个提议工具 `propose_detector_rules`（一整套规则 → 待人应用的草稿，`detector.rules.v1`）；第六节把「v1 不得列出 `propose_*`」对这一个解除，并定下所有 `propose_*` 的共同规则；请求体上限 64 → 256 KiB；错误对象可追加 `errors`。既有 9 个工具不变 |
+| 2026-10-02 | v1.3 追加第二个提议工具 `propose_activity_matches`（给待确认的活动建议配任务：`POST /api/core/activity/suggestions/matches`，nexus-core v2.7；只写建议、不确认，人逐条答「是 / 否」）；`list_activity_suggestions` 每条追加 `rejectedTaskIds`，`classifier` 多一个取值 `assistant`。只增，既有工具不变 |

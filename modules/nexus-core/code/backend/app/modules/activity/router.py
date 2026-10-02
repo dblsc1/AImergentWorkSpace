@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
 from ..timer.router import Mode
@@ -52,6 +52,7 @@ class Item(BaseModel):
     title: str
     suggestion: Suggestion
     idle: bool = False  # v2.5
+    rejectedTaskIds: list[str] = []  # v2.7：人否掉过的任务
     status: str
 
 
@@ -86,6 +87,25 @@ class DismissOut(BaseModel):
     status: str
 
 
+class MatchesIn(BaseModel):
+    matches: list[Any] = Field(max_length=200)  # 逐条校验在 service.match（坏的进 rejected，同上传）
+
+
+class MatchesOut(BaseModel):
+    matched: int
+    rejected: list[Rejected]
+
+
+class UnmatchIn(BaseModel):
+    taskId: str | None = None  # 人否掉的是哪个任务；给了且与当前建议不同 → 409
+
+
+class UnmatchOut(BaseModel):
+    id: str
+    status: str
+    rejectedTaskIds: list[str]
+
+
 @router.post("", response_model=UploadOut)
 def upload(body: UploadIn) -> dict:
     return service.upload(body.deviceId, body.segments)
@@ -109,3 +129,13 @@ def confirm(sugId: str, body: ConfirmIn | None = None) -> dict:  # noqa: N803 �
 @router.post("/{sugId}/dismiss", response_model=DismissOut)
 def dismiss(sugId: str) -> dict:  # noqa: N803
     return service.dismiss(sugId)
+
+
+@router.post("/matches", response_model=MatchesOut)
+def match(body: MatchesIn, request: Request) -> dict:
+    return service.match(request.headers.get("authorization"), body.matches)
+
+
+@router.post("/{sugId}/unmatch", response_model=UnmatchOut)
+def unmatch(sugId: str, request: Request, body: UnmatchIn | None = None) -> dict:  # noqa: N803
+    return service.unmatch(request.headers.get("authorization"), sugId, (body or UnmatchIn()).taskId)

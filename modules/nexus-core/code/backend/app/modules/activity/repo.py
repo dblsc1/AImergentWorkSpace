@@ -56,6 +56,21 @@ def set_status(user: str, sug_id: str, status: str, at: datetime, *, only_from: 
     return _col().update_one(filt, {"$set": {"status": status, "decidedAt": at}}).matched_count > 0
 
 
+def set_match(user: str, sug_id: str, suggestion: dict) -> bool:
+    """v2.7 助理配任务：只在仍 pending、这个任务没被人否过、原建议可盖（没任务或也是助理配的）时换上。"""
+    filt = {"user": user, "id": sug_id, "status": "pending", "rejectedTaskIds": {"$ne": suggestion["taskId"]},
+            "$or": [{"suggestion.taskId": None}, {"suggestion.classifier": "assistant"}]}
+    return _col().update_one(filt, {"$set": {"suggestion": suggestion}}).matched_count > 0
+
+
+def clear_match(user: str, sug_id: str, task_id: str) -> bool:
+    """v2.7 人说「否」：只在仍 pending 且建议的任务还是 ``task_id`` 时清掉，并记住它。"""
+    filt = {"user": user, "id": sug_id, "status": "pending", "suggestion.taskId": task_id}
+    upd = {"$set": {"suggestion.taskId": None, "suggestion.confidence": 0.0, "suggestion.reason": ""},
+           "$addToSet": {"rejectedTaskIds": task_id}}
+    return _col().update_one(filt, upd).matched_count > 0
+
+
 def last_received(user: str) -> dict:
     rows = _col().aggregate([{"$match": {"user": user}},
                              {"$group": {"_id": "$deviceId", "at": {"$max": "$receivedAt"}}}])

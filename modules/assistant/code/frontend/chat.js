@@ -10,7 +10,8 @@
  * - 不认识的 SSE 事件一律忽略（契约 v1 之内可以追加事件）。
  * - health.debug 为真（.env 设了 AGENT_DEBUG=1，契约第九节）：每条回答下面多一个折叠的「调试」，
  *   点开才去取这一轮发给模型的原始请求与模型的原始应答，同样只当文本显示。
- * 对外只挂 window.assistantChat（纯函数，给单测用）。
+ * 对外只挂 window.assistantChat：纯函数（给单测用）+ ask(text)（别的面板借这里发一轮，如「让 AI 匹配」）。
+ * 每次状态变了发 assistant:chat-state {configured, generating}；一轮结束发 assistant:turn-done。
  */
 (function () {
   "use strict";
@@ -112,6 +113,10 @@
     sendBtn.disabled = !configured;
     selectEl.disabled = newBtn.disabled = generating;
     delBtn.disabled = generating || !current;
+    // 别的面板（suggestions.js 的「让 AI 匹配」）据此显示 / 禁用自己的按钮
+    document.dispatchEvent(new CustomEvent("assistant:chat-state", {
+      detail: { configured: configured, generating: generating },
+    }));
   }
 
   async function call(method, path, body) {
@@ -263,6 +268,13 @@
       sync();
     }
   }
+
+  // 别的面板替用户发一轮固定的话。没配模型 / 正在答 → false，什么都不发。
+  window.assistantChat.ask = function (text) {
+    if (!configured || generating) return false;
+    send(text).catch(function (err) { showMessage(err.message, true); });   // 建会话失败等
+    return true;
+  };
 
   formEl.addEventListener("submit", function (e) {
     e.preventDefault();

@@ -228,6 +228,10 @@ main.page {
   color: var(--ink-2); font-size: var(--fs-eyebrow); line-height: 1.8;
 }
 
+/* ── 助理配的建议（v2.7）：左边一道 plan 色（「还没入账的」），建议那行用正文色；是 / 否两等分 ── */
+.suggest-item.is-ai { border-left: 3px solid var(--plan); }
+.suggest-item.is-ai .suggest-hint { color: var(--ink); }
+
 /* ── 「活动检测设置」（2026-09-30，settings.js，contracts/detector.settings.v1）──
  * 一列到底；320px 下例子自己换行，名单框随宽度缩。强制清洗那组是勾着的灰框（disabled），关不掉。 */
 .settings-panel { display: grid; gap: var(--sp-3); min-width: 0; }

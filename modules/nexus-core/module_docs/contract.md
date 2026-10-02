@@ -61,6 +61,14 @@
 > 每租户一个文档存独立集合 `detector_rules`（规则集 + 至多一份 14 天过期的草稿），不进台账 / 投影 / 导出 / 快照恢复；
 > **PUT、建草稿、应用、丢弃带 `Authorization: Bearer` 一律 403**。既有端点一个不改。
 >
+> **v2.7（追加式）**：**AI 助理给待确认的活动配任务，人逐条答「是 / 否」。** `activity.suggestions.v1` 追加
+> `POST /api/core/activity/suggestions/matches`（助理一次交一批 `{id, taskId, confidence, reason}`，只改
+> **待确认**建议里的 `suggestion`，`classifier: "assistant"`，**什么都不确认**）与
+> `POST /api/core/activity/suggestions/{id}/unmatch`（人说「否」：清掉建议的任务并记进 `rejectedTaskIds`，
+> 助理不许再配同一个）；列表每条追加 `rejectedTaskIds`。人说「是」就是既有的 confirm，不变。
+> 两个新端点带 `Authorization: Bearer` 一律 403。只能配到**任务**，不能只配到项目（确认必须挂具体任务，同补登）。
+> 上传端点的 `classifier` 仍只收 `rules` / `service`。见「活动建议」节「AI 匹配」。
+>
 > v1.9：`GET /api/core/export` 产出的快照此前没有任何端点能吃
 > 回去（喂给 import 会被三层拒绝，而那三条拒绝各守一件实事，一条都不该放宽）。
 > 新增 `nexus-core.restore.v1`（`POST /api/core/restore`，见「快照恢复」节）：
@@ -207,6 +215,8 @@ provides:
       session.completed（source=activity-confirmed，dedupeKey=activity:<id>，信封 ai 块），重复确认
       不写第二条；{id}/dismiss 标记忽略。建议住独立集合 activity_suggestions，**不是事实**：不进台账、
       投影、导出；超过 NEXUS_SUGGESTION_TTL_DAYS 的在下一次上传/读取时惰性清掉
+      v2.7 追加：POST .../suggestions/matches（AI 助理给待确认的建议配任务，classifier=assistant，逐条校验、
+      不确认任何东西）、POST .../{id}/unmatch（人说「否」：清掉任务并记 rejectedTaskIds）；列表每条追加 rejectedTaskIds
     status: 已实现（v2.2），待验证
   - id: nexus-core.views.agent-time.v1
     summary: AI 代理时长读端（v2.3）——GET /api/core/views/agent-time?from=&to= 读
@@ -275,6 +285,8 @@ consumes:
 | GET | `/api/core/activity/suggestions` | `?status&limit&offset` | `{total, items[]}` | ✅ 已实现（v2.2） |
 | POST | `/api/core/activity/suggestions/{id}/confirm` | `{taskId?, mode?}` | `SuggestionConfirmOut` | ✅ 已实现（v2.2） |
 | POST | `/api/core/activity/suggestions/{id}/dismiss` | 无 | `{id, status}` | ✅ 已实现（v2.2） |
+| POST | `/api/core/activity/suggestions/matches` | `{matches[]}`（≤ 200，见「活动建议」节「AI 匹配」） | `{matched, rejected[]}`；带 Bearer 403 | ✅ 已实现（v2.7） |
+| POST | `/api/core/activity/suggestions/{id}/unmatch` | `{taskId?}` | `{id, status, rejectedTaskIds[]}`；带 Bearer 403 | ✅ 已实现（v2.7） |
 | GET | `/api/core/detector/settings` | `?deviceId` | `{deviceId, settings\|null, updatedAt\|null}`（见 `contracts/detector.settings.v1`） | ✅ 已实现（v2.5） |
 | PUT | `/api/core/detector/settings` | `?deviceId`，`DetectorSettings` | 同 GET；带 Bearer 403 | ✅ 已实现（v2.5） |
 | DELETE | `/api/core/detector/settings` | `?deviceId` | `204`；带 Bearer 403 | ✅ 已实现（v2.5） |
@@ -1781,6 +1793,63 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
   检测程序看见的是屏幕，人可能同时在计时——判断重不重复是人确认时的事。
 - 确认不是计时的开始/停止，**不发** `honeycomb:timer-changed`（顶栏芯片只关心在跑的计时）。
 
+### AI 匹配：助理配任务，人答「是 / 否」（规范性 · v2.7）
+
+仓主 2026-10-02：「AI 分析活动先不做提议。先做个最简单的匹配：能看到活动记录和项目，给匹配建议，和 y/n 选框。」
+规则没命中的建议 `taskId` 是 `null`，人得一条条自己挑任务。AI 助理（经 `mcp.tools.v1` 的
+`propose_activity_matches`）读得到待确认的建议和任务树，能替人先配一遍；**配的仍然只是建议**，人说「是」才确认。
+
+```jsonc
+// POST /api/core/activity/suggestions/matches
+{ "matches": [                                   // 0–200 条
+    { "id": "sug_…",                             // 待确认建议的 id
+      "taskId": "t_a1",                          // 必填：只能配到任务，不能只配到项目
+      "confidence": 0.7,                         // 0–1
+      "reason": "标题里有 garden" } ] }          // ≤200 字节（UTF-8），可为 ""
+// → 200
+{ "matched": 1, "rejected": [ { "index": 2, "reason": "…" } ] }
+
+// POST /api/core/activity/suggestions/{id}/unmatch   请求体可省；{ "taskId"?: "t_a1" } = 人否掉的是哪个任务
+{ "id": "sug_…", "status": "pending", "rejectedTaskIds": ["t_a1"] }
+
+// GET 列表每条追加（v2.7）
+{ "…": "…", "suggestion": { "taskId": "t_a1", "confidence": 0.7, "reason": "…", "classifier": "assistant" },
+  "rejectedTaskIds": [] }                        // 人否掉过的任务；v2.7 之前存下的回 []
+```
+
+**matches**（助理写；逐条校验，坏的进 `rejected[{index, reason}]`，其余照写，HTTP 200——同上传）：
+
+| 情形 | 结果 |
+|---|---|
+| 请求体不是对象 / `matches` 不是数组或超过 200 条 | **422 整批拒** |
+| 某条缺字段、类型不对、`confidence` 越界、`reason` 超 200 字节 | 该条进 `rejected` |
+| `id` 不存在（或属于别的租户，同形状） | 该条进 `rejected` |
+| 建议不是 `pending`（已确认 / 已忽略） | 该条进 `rejected`，**什么都不改** |
+| `taskId` 不存在 | 该条进 `rejected`（不像上传那样存成 `null`：没配上就别动原来的） |
+| `taskId` 在这条建议的 `rejectedTaskIds` 里 | 该条进 `rejected`——人说过「否」的不许再配 |
+| 建议已经有任务、且不是助理配的（`classifier` 是 `rules` / `service`） | 该条进 `rejected`——助理只填空和改自己配的，不盖规则的结果 |
+| 其余 | `suggestion` 整个换成 `{taskId, confidence, reason, classifier: "assistant"}`，计入 `matched` |
+
+- **不确认任何东西**：状态仍是 `pending`，台账、投影、导出一个字节都不动。重复交同一批是幂等的。
+- 写入是条件更新（`pending`、任务没被否过、原建议可盖），与并发的确认 / 忽略 / 否不会互相盖。
+- `classifier: "assistant"` 只由本端点写。**上传端点的 `classifier` 仍只收 `rules` / `service`**——
+  检测程序不能自称助理；读方把 `classifier` 当开放字符串。
+- 人说「**是**」= 既有的 `{id}/confirm {taskId}`，一个字不改：事实的 `ai.confidence` 就是助理给的把握。
+
+**unmatch**（人说「否」）：
+
+| 情形 | 结果 |
+|---|---|
+| `id` 不存在 / 别的租户 | 404 |
+| 建议不是 `pending` | 409 |
+| 建议当前没有任务（已经否过了） | 200，什么都不改（幂等，网络重试不该看到错误） |
+| 请求体给了 `taskId`、但与建议当前的任务不同 | 409——页面上看到的建议已经被换掉了，重拉再定 |
+| 其余 | `suggestion` 变成 `{taskId: null, confidence: 0, reason: "", classifier: <原值>}`，原任务记进 `rejectedTaskIds`（去重）；状态仍是 `pending`，人可以自己挑任务再确认，或忽略 |
+
+- 两个端点带 `Authorization: Bearer` 一律 **403**（设备令牌只管上传；同 `detector.settings.v1` / `detector.rules.v1` 的写）。
+  MCP 走对内地址不带 Bearer；它按固定映射只调 matches，**不调 unmatch / confirm / dismiss**。
+- `rejectedTaskIds` 随建议过期一起清；不进导出、不进快照恢复（同建议本身）。
+
 ### 过期（惰性，无调度器）
 
 `NEXUS_SUGGESTION_TTL_DAYS`（默认 14）：待确认的按**收到时刻**、已确认/已忽略的按**处理时刻**，
@@ -2108,6 +2177,8 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 | `hive` 前端 | `views.tree.v1`（v1.2 起任务节点带 `plan`/`dependsOn`，控件按这两个键 feature-detect 是否亮起）；`planner.crud.v1` 的 `TaskOut.plan`/`dependsOn`（F-TABLE-3 任务排期与前置任务编辑，写走既有 `PATCH /api/core/planner/tasks/{id}`）；`views.gantt.v1` 的 `projects[].plan`/`projects[].actual[].{date,seconds}`/`today`（`modules/hive` 契约 commit `603a44e` 已登记己方消费，本行是反向索引追平）；v1.3 起 `views.export.v1`（「导出数据」按钮，全量拉一次 + `exportedAt` 用于文件命名）；**v1.8 新增已登记**：`timer.v1` 的 `POST /api/core/timer/backfill`（任务行「补登」按钮，点开时任务字段预填该行任务且不可改，`modules/hive` 契约 commit `f11cdb3` 已登记己方消费，本行是反向索引追平） | `modules/hive` |
 | `ring` 前端（v2.2） | `activity.suggestions.v1` 的 GET / confirm / dismiss（计时页「待确认」面板；端点 404 时整块隐藏） | `modules/ring` |
 | `ai-detector` 桌面程序（v2.2） | `activity.suggestions.v1` 的 `POST /api/core/activity/suggestions`（带设备令牌，经网关） | `modules/ai-detector` |
+| `assistant` 前端（v2.7） | `activity.suggestions.v1` 的 GET / confirm / dismiss / **unmatch**（「待确认建议」面板：助理配的建议出「是 / 否」，否 = unmatch）；读 `suggestion.classifier`、`rejectedTaskIds` | `modules/assistant` |
+| MCP 服务（v2.7） | `activity.suggestions.v1` 的 `POST .../suggestions/matches`（`propose_activity_matches`，`mcp.tools.v1` v1.3）；GET 多读 `rejectedTaskIds` | `contracts/mcp.tools.v1` |
 | `ai-detector` 桌面程序（v2.4） | `activity.presence.v1` 的 POST（在场心跳）；可选「状态文件桥」经 `agents.v1` 的 start/stop 与 `agents.phase.v1` 报没有钩子的代理（带设备令牌） | `modules/ai-detector` |
 | `tools/agent-hooks`（v2.1 起，v2.4 追加） | `agents.v1` 的 start/stop；v2.4 起 `agents.phase.v1`（Claude Code 钩子与 `cockpit-run phase`） | `tools/agent-hooks` |
 | 共享顶栏 `nginx-docker/static/navbar.js`（v2.4，契约先行） | `views.lanes.v1`（计时芯片悬停的精简预览：人 + 至多 4 条代理线、最近 1 小时，只在预览打开时约 15 秒轮询；计时页上不弹） | `modules/nginx-docker` |

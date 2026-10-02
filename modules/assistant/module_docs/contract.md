@@ -33,6 +33,13 @@ consumes:
       标「无操作·可能在阅读」，只能逐条确认。GET 404（后端早于 v2.2）→ 面板整块不出现。失败原样显示 `detail`，
       条目留在列表里。app/title 来自别的机器，只当文本渲染。**确认不是计时**：不发 `honeycomb:timer-changed`。
       只在打开页面、每次操作后、标签页重新可见时拉，不轮询。
+      **AI 匹配（nexus-core v2.7，仓主 2026-10-02）**：「让 AI 匹配」按钮借 `chat.js` 的 `window.assistantChat.ask(固定的一句话)`
+      在当前对话里发一轮（助理经 MCP 的 `propose_activity_matches` 配任务，本页自己不调 matches）；聊天后端没装 /
+      `configured:false` 时按钮不出现（听 `assistant:chat-state {configured, generating}`），答的时候禁用并显示「AI 正在匹配…」；
+      每一轮结束（`assistant:turn-done`）重拉列表。`suggestion.classifier == "assistant"` 且任务还在树里的条目只出
+      「AI 建议：路径 · 把握 N% · 理由」和两个按钮：**「是 ✓」= POST {id}/confirm {taskId}**；**「否 ✗」= POST {id}/unmatch {taskId}**
+      （条目留在待确认里，换成任务下拉 + 确认 / 忽略，提示「AI 的建议已否掉」——读 `rejectedTaskIds`）。规则给的建议仍是
+      下拉 + 确认 / 忽略。「全部确认」照旧按把握阈值，助理配的也算。`reason` 是模型写的，只当文本渲染。
   - id: nexus-core.views.tree.v1
     contract: ../nexus-core/module_docs/contract.md
     purpose: >
@@ -86,5 +93,6 @@ consumes:
 
 | 日期 | CR | 变更 |
 |---|---|---|
+| 2026-10-02 | 仓主：AI 先做最简单的活动匹配 + 是 / 否 | 待确认建议加「让 AI 匹配」按钮（借聊天发一轮，答完重拉）；助理配的条目出「AI 建议 + 是 ✓ / 否 ✗」（是 = confirm，否 = nexus-core v2.7 的 unmatch）；`chat.js` 追加 `window.assistantChat.ask` 与 `assistant:chat-state` 事件；聊天副标题改为「能写的只有两样建议」 |
 | 2026-09-30 | 仓主：分类规则由 AI 助理写 | 「分类规则」占位换成编辑器 + AI 草稿横幅（detector.rules.v1）；聊天一轮结束时发 `assistant:turn-done`；聊天副标题改为「唯一能写的是分类规则的草稿」 |
 | 2026-09-30 | 仓主定新页「AI助理」 | 首版：新模块。聊天（agent.chat.v1）与待确认建议（activity.suggestions.v1）从 ring 搬来、行为不变；待确认建议认 v2.5 的 `idle`（徽标、不进全部确认）；新增活动检测设置（detector.settings.v1）与回顾入口 |

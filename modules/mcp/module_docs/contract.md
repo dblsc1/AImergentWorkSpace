@@ -1,13 +1,13 @@
 # mcp · 对外接口契约
 
-> 本模块实现 `contracts/mcp.tools.v1`（给 AI 代理用的工具，MCP Streamable HTTP；v1.2 起 10 个只读 + 1 个只写草稿的 propose_）。行为的唯一事实在
+> 本模块实现 `contracts/mcp.tools.v1`（给 AI 代理用的工具，MCP Streamable HTTP；v1.2 起 10 个只读 + 1 个只写草稿的 propose_；v1.3 再加 1 个只写建议的 propose_activity_matches）。行为的唯一事实在
 > 那份契约里，本文件只登记依赖、说明实现选择。改行为先改那份契约。
 
 ```yaml
 provides:
   - id: mcp.tools.v1
     contract: ../../../contracts/mcp.tools.v1/contract.md
-    summary: 11 个工具（10 个只读 + propose_detector_rules 只写草稿），挂在 <站点前缀>api/mcp/（经网关、过门）；对内 http://mcp:8020/api/mcp/
+    summary: 12 个工具（10 个只读 + propose_detector_rules 只写草稿 + propose_activity_matches 只写待确认的建议），挂在 <站点前缀>api/mcp/（经网关、过门）；对内 http://mcp:8020/api/mcp/
 consumes:
   - id: nexus-core.views.tree.v1
     contract: ../../nexus-core/module_docs/contract.md
@@ -35,7 +35,7 @@ consumes:
     purpose: get_agent_time
   - id: nexus-core.activity.suggestions.v1
     contract: ../../nexus-core/module_docs/contract.md
-    purpose: list_activity_suggestions（只调 GET）
+    purpose: list_activity_suggestions（只调 GET）；propose_activity_matches（POST matches；不调 confirm / dismiss / unmatch）
   - id: nexus-core.tenancy.v1
     contract: ../../nexus-core/module_docs/contract.md
     purpose: 租户头格式与严格模式
@@ -47,7 +47,7 @@ consumes:
 ## 实现
 
 - `code/server/mcp_server.py`：HTTP 层（Origin → 租户 → 协议版本头 → 256 KiB 上限（v1.2 前 64 KiB））与 JSON-RPC
-  （`initialize`、`ping`、`tools/list`、`tools/call`）。`code/server/tools.py`：11 个工具、入参校验、cursor、路径。
+  （`initialize`、`ping`、`tools/list`、`tools/call`）。`code/server/tools.py`：12 个工具、入参校验、cursor、路径。
 - **纯标准库，没有用官方 MCP Python SDK。** SDK 能做无状态 Streamable HTTP，但要带进 starlette / pydantic /
   anyio / httpx 一串依赖，Origin 与租户这两道 HTTP 层的门还得另写中间件（SDK 自带的 DNS 重绑定防护比的是 `Host`，
   契约明确不拿 `Host` 比）；用到的协议面只有四个方法，手写更小、每一步都看得见。
@@ -69,5 +69,6 @@ consumes:
 `cd modules/mcp/code/server && python -m pytest -q tests`（CI「mcp 测试」）：真起服务 + 假 nexus-core，
 覆盖每个工具的形状、分页与 cursor 绑定、时间偏移 400、日期区间、租户 401/400/单人/两租户隔离、Origin、413、
 405、只调白名单 GET、下游 4xx 透传 / 5xx 与连不上 502、建议不出 `deviceId`、`tools/list` 除 `propose_` 外全部只读、
-`propose_detector_rules` 只发一个 POST 草稿且不带 `Authorization`、逐条错误原样带回。
+`propose_detector_rules` 只发一个 POST 草稿且不带 `Authorization`、逐条错误原样带回、
+`propose_activity_matches` 只发一个 POST matches（`suggestionId` → `id`）。
 经网关的整条链（设备令牌、两个账号互不可见、cookie、令牌开不了 `/api/agent/`）在 `deploy/test/mcp.sh`（CI「多账号」）。

@@ -13,6 +13,8 @@
 - **确认先占位（pending→confirmed 条件更新）再写事实**：与忽略二选一，不会出现「忽略成功、
   事实照写」；写事实失败放回 pending；占位后崩掉，重试照样补写，防重键兜底不重。
 - **过期惰性清理**，无调度器（同代理运行的遗忘超时）。
+- **v2.7 AI 匹配**：助理（经 MCP）给待确认的建议配任务（``match``），人说「否」清掉并记住（``unmatch``），
+  人说「是」就是 ``confirm``。两者都不确认任何东西；设备令牌（Bearer）一律 403。
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from pydantic import (
     BaseModel,
     Field,
     StrictBool,
+    StrictFloat,
     StrictInt,
     StrictStr,
     ValidationError,
@@ -35,7 +38,7 @@ from ... import config, timeutil
 from ...tenant import current as current_tenant
 from ..events import service as events_service
 from ..planner import service as planner_service
-from ..planner.errors import InvalidInputError, NotFoundError
+from ..planner.errors import ForbiddenError, InvalidInputError, NotFoundError
 from ..timer import service as timer_service
 from . import presence, repo
 
@@ -53,19 +56,31 @@ class ConflictError(RuntimeError):
     """已确认的再忽略 / 已忽略的再确认。main.py 映射成 409。"""
 
 
+def _reason_bytes(v: str) -> str:
+    # 契约按字节限长：检测程序按 UTF-8 字节截断，中文一字三字节，按字符数会放进 600 字节
+    if len(v.encode("utf-8")) > 200:
+        raise ValueError("reason 超过 200 字节")
+    return v
+
+
 class _Suggestion(BaseModel):
     taskId: Annotated[StrictStr, Field(min_length=1, max_length=128)] | None
     confidence: Annotated[float, Field(ge=0, le=1, strict=True)]
     reason: StrictStr
-    classifier: Literal["rules", "service"]
+    classifier: Literal["rules", "service"]  # "assistant" 只由 match 写，上传不能自称
 
-    @field_validator("reason")
-    @classmethod
-    def _reason_bytes(cls, v: str) -> str:
-        # 契约按字节限长：检测程序按 UTF-8 字节截断，中文一字三字节，按字符数会放进 600 字节
-        if len(v.encode("utf-8")) > 200:
-            raise ValueError("reason 超过 200 字节")
-        return v
+    reason_bytes = field_validator("reason")(_reason_bytes)
+
+
+class _Match(BaseModel):
+    """v2.7 助理配的一条。confidence 整数 0 / 1 也收（模型常这么写），布尔不收。"""
+
+    id: Annotated[StrictStr, Field(min_length=1, max_length=64)]
+    taskId: Annotated[StrictStr, Field(min_length=1, max_length=128)]
+    confidence: Annotated[StrictFloat | StrictInt, Field(ge=0, le=1)]
+    reason: StrictStr = ""
+
+    reason_bytes = field_validator("reason")(_reason_bytes)
 
 
 class _Segment(BaseModel):
@@ -161,8 +176,9 @@ _ITEM_KEYS = ("id", "deviceId", "startAt", "endAt", "durationSeconds", "app", "t
 
 
 def _item(d: dict) -> dict:
-    # v2.5 之前存下的建议没有 idle 字段：回 false
-    return {**{k: d[k] for k in _ITEM_KEYS}, "idle": d.get("idle", False)}
+    # v2.5 之前存下的建议没有 idle 字段：回 false；没被人否过的没有 rejectedTaskIds：回 []
+    return {**{k: d[k] for k in _ITEM_KEYS}, "idle": d.get("idle", False),
+            "rejectedTaskIds": d.get("rejectedTaskIds", [])}
 
 
 def last_uploads(user: str) -> dict:
@@ -236,6 +252,63 @@ def dismiss(sug_id: str) -> dict:
         if _get(user, sug_id)["status"] == "confirmed":
             raise ConflictError(f"活动建议 {sug_id!r} 已确认、事实已写，不能再忽略")
     return {"id": sug_id, "status": "dismissed"}
+
+
+# ------------------------------------------------ v2.7 AI 匹配（契约「AI 匹配」）
+
+
+def _forbid_device_token(authorization: str | None) -> None:
+    # auth.gate：带了 Bearer 就是设备令牌（网页会话走 cookie，MCP 对内直连不带）。同 detector 的写。
+    if (authorization or "").strip().lower().startswith("bearer "):
+        raise ForbiddenError("设备令牌不能给活动建议配任务；请在 Cockpit「AI助理」页登录后操作")
+
+
+def match(authorization: str | None, matches: list[Any]) -> dict:
+    """助理给待确认的建议配任务。逐条校验，坏的进 rejected；**不确认任何东西**。"""
+    _forbid_device_token(authorization)
+    user = current_tenant()
+    matched, rejected = 0, []
+    for index, raw in enumerate(matches):
+        try:
+            m = _Match.model_validate(raw)
+        except ValidationError as exc:
+            rejected.append({"index": index, "reason": _reason(exc)})
+            continue
+        doc = repo.get(user, m.id)
+        why = None
+        if doc is None:
+            why = f"活动建议不存在：{m.id!r}"
+        elif doc["status"] != "pending":
+            why = f"活动建议 {m.id!r} 已{'确认' if doc['status'] == 'confirmed' else '忽略'}，不能再配"
+        elif m.taskId in doc.get("rejectedTaskIds", []):
+            why = f"用户已经否掉过任务 {m.taskId!r}，不要再配同一个"
+        elif doc["suggestion"].get("taskId") and doc["suggestion"].get("classifier") != "assistant":
+            why = "这条已有分类规则给的任务，助理不覆盖"
+        elif planner_service.get_task(m.taskId) is None:
+            why = f"任务不存在：{m.taskId!r}"
+        elif not repo.set_match(user, m.id, {"taskId": m.taskId, "confidence": float(m.confidence),
+                                             "reason": m.reason, "classifier": "assistant"}):
+            why = "这条建议刚被改动（确认 / 忽略 / 否），没有写入"
+        if why:
+            rejected.append({"index": index, "reason": why})
+        else:
+            matched += 1
+    return {"matched": matched, "rejected": rejected}
+
+
+def unmatch(authorization: str | None, sug_id: str, task_id: str | None) -> dict:
+    """人说「否」：清掉建议的任务并记进 rejectedTaskIds；状态仍 pending。"""
+    _forbid_device_token(authorization)
+    user = current_tenant()
+    doc = _get(user, sug_id)
+    current = doc["suggestion"].get("taskId")
+    if doc["status"] != "pending":
+        raise ConflictError(f"活动建议 {sug_id!r} 已处理，不能再否")
+    if task_id is not None and current is not None and task_id != current:
+        raise ConflictError("这条建议的任务已经变了，请刷新后再定")
+    if current is not None and not repo.clear_match(user, sug_id, current):
+        raise ConflictError("这条建议刚被改动，请刷新后再定")
+    return {"id": sug_id, "status": "pending", "rejectedTaskIds": _get(user, sug_id).get("rejectedTaskIds", [])}
 
 
 def list_presence(user: str, now: datetime, start: datetime, end: datetime) -> list[dict]:
