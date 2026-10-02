@@ -604,3 +604,27 @@ def test_bodyless_confirm_racing_an_unmatch_does_not_record_rejected_task(client
     assert seen["unmatch"] == 200 and _session_events() == []
     item = _pending(client)["items"][0]
     assert item["suggestion"]["taskId"] is None and item["rejectedTaskIds"] == [task["id"]]
+
+
+def test_bodyless_confirm_never_backfills_a_superseded_task(client, seeded, monkeypatch):
+    """确认甲读到任务 A → 人否掉 A、助理换成 B → 确认乙已占位但事实还没写：甲补写只能写 B，不能写 A。"""
+    from app.modules.activity import repo, service  # noqa: PLC0415
+
+    old, new = seeded["tasks"]["示例任务三"], seeded["tasks"]["示例任务四"]
+    _upload(client, [_seg(_recent())])
+    sug_id = _pending(client)["items"][0]["id"]
+    _match(client, [{"id": sug_id, "taskId": old["id"], "confidence": 0.7}])
+    real, seen = repo.set_status, {}
+
+    def racing(*args, **kwargs):
+        if not seen:
+            seen["unmatch"] = client.post(f"{SUG}/{sug_id}/unmatch").status_code
+            seen["match"] = _match(client, [{"id": sug_id, "taskId": new["id"], "confidence": 0.4}])["matched"]
+            real(args[0], sug_id, "confirmed", args[3], only_from="pending")  # 确认乙：占了位，还没写事实
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(service.repo, "set_status", racing)
+    assert client.post(f"{SUG}/{sug_id}/confirm", json={}).status_code == 200
+    assert seen == {"unmatch": 200, "match": 1}
+    (event,) = _session_events()
+    assert event["subject"]["task"] == new["id"] and event["ai"]["confidence"] == 0.4

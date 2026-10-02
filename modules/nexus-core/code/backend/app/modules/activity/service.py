@@ -227,11 +227,18 @@ def confirm(sug_id: str, task_id: str | None, mode: str) -> dict:
     # 重试走到这里（占位不中但状态是 confirmed）照样补写，防重键兜底不重。
     claimed = repo.set_status(user, sug_id, "confirmed", _now(), only_from="pending", only_task=only_task)
     if not claimed:
-        status = _get(user, sug_id)["status"]
-        if status == "dismissed":
+        doc = _get(user, sug_id)  # 重读：下面补写用的任务、把握都以占位成功那一刻的建议为准
+        if doc["status"] == "dismissed":
             raise ConflictError(f"活动建议 {sug_id!r} 已忽略，不能再确认")
-        if status == "pending":  # 建议的任务在读与占位之间变了
-            raise ConflictError(f"活动建议 {sug_id!r} 的任务刚被改动，请刷新后再确认")
+        stale = "的任务刚被改动，请刷新后再确认"
+        if doc["status"] == "pending":  # 建议的任务在读与占位之间变了
+            raise ConflictError(f"活动建议 {sug_id!r} {stale}")
+        if only_task is not None:
+            # 已被另一次确认占位（或上次占位后崩了）：用建议里的任务时，补写只认**现在**建议里的那个——
+            # 自己早先读到的可能已被否掉 / 换掉，拿它补写会抢在对方前面把时间记到被否掉的任务上
+            task_id = doc["suggestion"].get("taskId")
+            if not task_id:
+                raise ConflictError(f"活动建议 {sug_id!r} {stale}")
     try:
         out = timer_service.record_session(
             task_id, doc["startAt"], doc["endAt"], doc["durationSeconds"],
