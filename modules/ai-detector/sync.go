@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -93,7 +92,7 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 		return "", err
 	}
 	// 隐私 / 离开选项也决定段怎么切（合并键、离开扣不扣），和 G / M 一样要记进失败参数。
-	sb, _ := json.Marshal([]any{cfg.Privacy, cfg.Idle})
+	sb, _ := json.Marshal([]any{cfg.Privacy, cfg.Idle, on(cfg.SegmentByTitle), tabApps(cfg)})
 	params := fmt.Sprintf("G=%v分钟,M=%v分钟,设置#%08x", cfg.MergeGapMinutes, cfg.MinSegmentMinutes, crc32.ChecksumIEEE(sb))
 	if st.FailedParams != "" && st.FailedParams != params {
 		log.Printf("上一轮上传失败时的合并参数是 %s，现在是 %s：从 %s 起重算的段起点可能和失败那轮不同，"+
@@ -117,31 +116,26 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 		return "", err
 	}
 	frags := buildFragments(data, st.Cursor, now, newRedactor(cfg))
-	// 无操作碎片单独合并：混在一起的话会被当成「短暂切出去」吸收进普通段，算成在电脑前的时间。
-	var act, idle []fragment
-	for _, f := range frags {
-		if f.Idle {
-			idle = append(idle, f)
-		} else {
-			act = append(act, f)
-		}
-	}
-	segs, next := settle(merge(act, gap), now, gap, minSeg)
-	if len(idle) > 0 {
-		isegs, inext := settle(merge(idle, gap), now, gap, minSeg)
-		// 两条流各自不重叠，但彼此可能交叠：游标不能落在任何一段中间（见 safeCursor）。
-		segs = append(segs, isegs...)
-		sort.SliceStable(segs, func(i, j int) bool { return segs[i].Start.Before(segs[j].Start) })
-		if inext.Before(next) {
-			next = inext
-		}
-	}
+	// 普通、无操作、各标签页的流各自合并，段彼此可能交叠：游标不能落在任何一段中间（见 safeCursor）。
+	closed, next := settle(segments(frags, gap), now, gap, minSeg)
 	// 游标只进不退：退回去会重新读到「开启之前」的活动。
 	if next.Before(st.Cursor) {
 		next = st.Cursor
 	}
+	// 有段一直不收口（一个标签页几小时里每隔几分钟回来一次）时游标停在它的开始处，早就收口、发过的别的段
+	// 每轮都会被重算出来：结束不晚于 SentUntil 的那一轮已经处理过，不再发（契约「按标签页分段」）。
+	var segs []segment
+	for _, s := range closed {
+		if st.SentParams != params || s.End.After(st.SentUntil) {
+			segs = append(segs, s)
+		}
+	}
+	done := func() {
+		st.Cursor = safeCursor(next, closed)
+		st.SentUntil, st.SentParams = now.Add(-gap), params
+	}
 	if len(segs) == 0 {
-		st.Cursor = next
+		done()
 		return fmt.Sprintf("没有收口的段（%d 个碎片）", len(frags)), nil
 	}
 
@@ -231,16 +225,21 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 		st.FailedParams = ""
 		logRejected(resp, k)
 		if k+uploadBatch < len(segs) {
-			st.Cursor = safeCursor(segs[k+uploadBatch].Start, segs)
+			// 下一批的第一段可能比某个没收口的段开始得晚（几条流交叠）：游标不能越过 next。
+			c := segs[k+uploadBatch].Start
+			if next.Before(c) {
+				c = next
+			}
+			st.Cursor = safeCursor(c, closed)
 		}
 	}
-	st.Cursor = safeCursor(next, segs)
+	done()
 	return fmt.Sprintf("已上传 %d 段待确认建议", len(segs)), nil
 }
 
 // safeCursor 把游标往前挪到不落在任何一段中间的位置。游标落在一段中间，下一轮从游标重算会把那段
 // 裁成起点不同的新段（服务端防重对不上，多一条建议）。挪到段的开始则重算出一模一样的段，重发只算 duplicates。
-// 只有普通段 + 无操作段两条流彼此交叠时才会真的挪（单条流的段互不重叠，游标本来就在段与段之间）。
+// 只有几条流（普通、无操作、各标签页）彼此交叠时才会真的挪（单条流的段互不重叠，游标本来就在段与段之间）。
 func safeCursor(c time.Time, segs []segment) time.Time {
 	for moved := true; moved; {
 		moved = false

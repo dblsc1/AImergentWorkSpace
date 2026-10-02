@@ -29,6 +29,8 @@ DEFAULTS = {
         "focusMaxMinutes": 60, "idleSuggestions": False,
     },
     "presence": None,
+    "segmentByTitle": True,
+    "segmentByTitleApps": None,
 }
 
 
@@ -76,6 +78,14 @@ def test_device_token_cannot_write(client):
     {"schemaVersion": 1, "extra": 1},
     {"schemaVersion": 1, "presence": "true"},                     # v1.1 presence：严格布尔
     {"schemaVersion": 1, "presence": 1},
+    {"schemaVersion": 1, "segmentByTitle": "true"},               # v1.2：严格布尔，不收 null
+    {"schemaVersion": 1, "segmentByTitle": 1},
+    {"schemaVersion": 1, "segmentByTitle": None},
+    {"schemaVersion": 1, "segmentByTitleApps": "kitty"},
+    {"schemaVersion": 1, "segmentByTitleApps": [""]},
+    {"schemaVersion": 1, "segmentByTitleApps": ["x" * 65]},
+    {"schemaVersion": 1, "segmentByTitleApps": ["a"] * 201},
+    {"schemaVersion": 1, "privacy": {"segmentByTitle": False}},   # 是顶层键，不在 privacy 里
     {"schemaVersion": 1, "privacy": {"secrets": False}},          # 强制脱敏不在 schema 里
     {"schemaVersion": 1, "privacy": {"bankCards": False}},
     {"schemaVersion": 1, "privacy": {"mandatory": False}},
@@ -159,3 +169,15 @@ def test_presence_toggle_v1_1(client):
         assert r.status_code == 200, r.text
         assert r.json()["settings"] == {**DEFAULTS, "presence": v}
         assert client.get(S, params={"deviceId": DEV}, headers=BEARER).json()["settings"]["presence"] is v
+
+
+def test_segment_by_title_v1_2(client):
+    """v1.2 追加：终端按标签页分段。缺省开 + 名单 null；关、自定义名单原样存回，检测程序读得到。"""
+    assert _put(client, {"schemaVersion": 1}).json()["settings"]["segmentByTitle"] is True
+    body = {"schemaVersion": 1, "segmentByTitle": False, "segmentByTitleApps": ["org.gnome.Ptyxis", "kitty"]}
+    r = _put(client, body)
+    assert r.status_code == 200, r.text
+    assert r.json()["settings"] == {**DEFAULTS, **body}
+    assert client.get(S, params={"deviceId": DEV}, headers=BEARER).json()["settings"] == {**DEFAULTS, **body}
+    # 空名单合法（= 谁都不按标签页分）
+    assert _put(client, {"schemaVersion": 1, "segmentByTitleApps": []}).json()["settings"]["segmentByTitleApps"] == []

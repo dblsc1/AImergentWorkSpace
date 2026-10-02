@@ -86,5 +86,6 @@ consumes:
 
 | 日期 | CR | 变更 |
 |---|---|---|
+| 2026-10-02 | 仓主：终端按标签页分段 | 活动检测设置面板增「分段」一组：复选框「终端按标签页分段」+ 可改的程序名单（`detector.settings.v1` v1.2 的 `segmentByTitle` / `segmentByTitleApps`）。v1.1 存下的文档没有这两个键时按缺省（开 + 本机名单）显示，保存时带上；所以保存需要 nexus-core 认 v1.2（同版发布） |
 | 2026-09-30 | 仓主：分类规则由 AI 助理写 | 「分类规则」占位换成编辑器 + AI 草稿横幅（detector.rules.v1）；聊天一轮结束时发 `assistant:turn-done`；聊天副标题改为「唯一能写的是分类规则的草稿」 |
 | 2026-09-30 | 仓主定新页「AI助理」 | 首版：新模块。聊天（agent.chat.v1）与待确认建议（activity.suggestions.v1）从 ring 搬来、行为不变；待确认建议认 v2.5 的 `idle`（徽标、不进全部确认）；新增活动检测设置（detector.settings.v1）与回顾入口 |

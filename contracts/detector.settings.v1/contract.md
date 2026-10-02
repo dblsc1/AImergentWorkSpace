@@ -13,7 +13,7 @@
 provides:
   - id: detector.settings.v1
     summary: >
-      设置文档 DetectorSettings（schemaVersion 1：privacy + idle 两节，字段、类型、缺省、取值范围见「一」），
+      设置文档 DetectorSettings（schemaVersion 1：privacy + idle 两节、顶层 presence（v1.1）与分段两项（v1.2），字段、类型、缺省、取值范围见「一」），
       与存取它的三个端点：GET/PUT/DELETE /api/core/detector/settings?deviceId=、GET /api/core/detector/devices。
       PUT/DELETE 只收人的会话（带 Bearer 设备令牌的请求 403）。
 ```
@@ -46,13 +46,15 @@ provides:
     "focusMaxMinutes": 60,      // 整数 1–480
     "idleSuggestions": false
   },
-  "presence": null              // v1.1 追加：null | true | false
+  "presence": null,             // v1.1 追加：null | true | false
+  "segmentByTitle": true,       // v1.2 追加
+  "segmentByTitleApps": null    // v1.2 追加：null | 字符串数组
 }
 ```
 
 **校验（服务端写入时，全部 `422`）**：
 
-- 顶层只许 `schemaVersion`、`privacy`、`idle`、`presence`（v1.1）四个键；`privacy`、`idle` 里只许下表列出的键。
+- 顶层只许 `schemaVersion`、`privacy`、`idle`、`presence`（v1.1）、`segmentByTitle`、`segmentByTitleApps`（v1.2）这几个键；`privacy`、`idle` 里只许下表列出的键。
   **任何未知键 → 422**（包括想关强制脱敏的键，如 `secrets`、`passwords`、`bankCards`）。
 - `schemaVersion` 必填，必须是整数 `1`。`privacy` / `idle` 及其中每个键都**可省略**，省略 = 取缺省值；
   服务端存、回的永远是**补齐缺省值后的完整文档**。
@@ -60,7 +62,7 @@ provides:
 - `pathWhitelist`：≤ 20 条，每条 1–200 个字符，必须能编译成正则，且**不许用 RE2（Go）不支持的构造**：
   前后查找 `(?=` `(?!` `(?<=` `(?<!`、反向引用 `\1`…`\9`、`(?P=name)`。服务端据此拒；
   ai-detector 自己再编译一次，编译不过的那条**跳过并写日志**（少保留 = 更保守）。
-- `appOnlyApps` / `focusApps`：`null`，或 ≤ 200 项的字符串数组，每项 1–64 个字符。
+- `appOnlyApps` / `focusApps` / `segmentByTitleApps`（v1.2）：`null`，或 ≤ 200 项的字符串数组，每项 1–64 个字符。
 - 请求体超过 64 KiB → `413`。
 
 ### privacy 节：每项单独可选
@@ -106,6 +108,16 @@ ActivityWatch 的离开记录（`afkstatus` 桶的 `afk` 区间）缺省从「�
 | 键 | 缺省 | 作用 |
 |---|---|---|
 | `presence` | `null` | 在场心跳（ai-detector 契约「在场心跳」）开关。`null` = 用这台电脑本机配置的 `presence`（缺省关）；`true` / `false` = 以网页为准。严格布尔或 `null`，其他 422。只增的键：v1.0 的检测程序读到会忽略；v1.0 存下的文档没有这个键，读方按 `null` 处理 |
+
+### 分段（v1.2 追加）
+
+| 键 | 缺省 | 作用 |
+|---|---|---|
+| `segmentByTitle` | `true` | 开：`segmentByTitleApps` 名单里的程序（终端）**按标签页各自成段**——合并键是「程序 + 归一化后的标题」，每个标签页的时长只算自己的，段的墙钟跨度可以交叠（ai-detector 契约「按标签页分段」）。关：这些程序和别的程序一样合并（v1.1 行为）。键用的是隐私选项处理后的标题、只在本机算，不多上传任何东西；`titles: "drop"` 时标题为空，自动退回只按程序。严格布尔 |
+| `segmentByTitleApps` | `null` | 上一项的名单。`null` = 用这台电脑本机配置里的名单（本机没写就是内置终端名单：GNOME Terminal、Ptyxis、kitty、Alacritty、WezTerm、Konsole、iTerm2、Windows Terminal……，见 ai-detector 契约）。比较规则同 `appOnlyApps` |
+
+只增的键：v1.1 及更早的检测程序读到会忽略（照旧合并）。v1.1 存下的文档没有这两个键，读方按「没设」处理：
+检测程序用本机配置（缺省开 + 内置名单），页面按缺省值显示。
 
 ## 二、端点（nexus-core 实现，规范性）
 
@@ -159,11 +171,14 @@ ActivityWatch 的离开记录（`afkstatus` 桶的 `afk` 区间）缺省从「�
 - 其他失败（网络错误、5xx、401/403、响应不是合法 JSON）：**这一轮不上传**，游标不动，下一轮重试——
   不能因为拉不到设置就退回本机配置（可能比网页上设的宽松）把数据发出去。
 - 读到本机不认识的键：忽略（服务端可能比程序新）；枚举值不认识：这一轮报错不上传。
+- v1.2：文档里有 `segmentByTitle`（布尔）就用它替换本机配置的同名项；`segmentByTitleApps` 是数组就用它，
+  `null` / 没有这个键用本机配置（本机也没写 = 内置名单）。
 - 设置只影响**以后**的上传：已经上传的建议不会被改写。
 
 ## 四、变更记录
 
 | 日期 | 版本 | 变更 |
 |---|---|---|
+| 2026-10-02 | v1.2 | 追加顶层可选键 `segmentByTitle`（布尔，缺省 `true`）、`segmentByTitleApps`（`null` / 字符串数组，缺省 `null`）：终端按标签页分段可在 Cockpit 设置里开关、改名单。只增，`schemaVersion` 仍为 `1` |
 | 2026-09-30 | v1.1 | 追加顶层可选键 `presence`（`null` / 布尔，缺省 `null`）：在场心跳可在 Cockpit 设置里开关。只增，`schemaVersion` 仍为 `1` |
 | 2026-09-30 | v1 | 首版。仓主 2026-09-30 定：隐私做成细粒度勾选（路径三档 + 白名单、标题三档、app-only 名单、浏览器三档、各类个人信息单独开关），强制脱敏不进设置；离开判定四项（阈值、出声标签页、阅读 / 会议程序、无操作段作低把握建议）；设置在 Cockpit「AI助理」页改、存 nexus-core、检测程序每轮拉 |

@@ -190,6 +190,23 @@
           </div>
         </fieldset>
 
+        <fieldset class="set-group">
+          <legend>分段</legend>
+          <div class="set-field" data-field="segmentByTitle">
+            <label class="set-opt"><input type="checkbox" data-key="segmentByTitle"> 终端按标签页分段
+              <span class="eg">一个终端开很多标签页时，每个标签页（程序 + 标题）各算各的时间，不并成一段</span></label>
+            <p class="set-hint">标题开头的状态符号（✳、转圈动画）和结尾的程序名不算区别。只在本机用标题分组，不多上传任何东西；
+              窗口标题选了「不要标题，只留程序名」时自动退回只按程序。</p>
+            <p class="field-error" hidden></p>
+          </div>
+          <div class="set-field" data-field="segmentByTitleApps">
+            <label class="set-opt"><input type="checkbox" data-null="segmentByTitleApps"> 用这台电脑本机的名单（GNOME Terminal、Ptyxis、kitty、iTerm2、Windows Terminal……）</label>
+            <label class="set-label" for="det-tab-apps">或者自己列（每行一个程序名）</label>
+            <textarea class="field set-list" id="det-tab-apps" data-list="segmentByTitleApps" rows="3" spellcheck="false"></textarea>
+            <p class="field-error" hidden></p>
+          </div>
+        </fieldset>
+
         <div class="det-actions">
           <span class="det-dirty" id="det-dirty" hidden>有没保存的改动</span>
           <button type="button" class="btn btn-ghost" id="det-reset" disabled>恢复默认</button>

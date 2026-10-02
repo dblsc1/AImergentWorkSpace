@@ -40,6 +40,9 @@ type Config struct {
 	AfkBucket    string   `json:"afkBucket"`
 	AppOnlyApps  []string `json:"appOnlyApps"`
 	BrowserApps  []string `json:"browserApps"`
+	// 终端类程序按标签页（程序 + 标题）各自成段，契约「按标签页分段」。nil = 开；名单 nil = defaultTabApps。
+	SegmentByTitle     *bool    `json:"segmentByTitle,omitempty"`
+	SegmentByTitleApps []string `json:"segmentByTitleApps,omitempty"`
 	// Privacy / Idle：与网页设置（contracts/detector.settings.v1）同形状；网页上设过就整节换成网页的。
 	Privacy     Privacy `json:"privacy"`
 	Idle        Idle    `json:"idle"`
@@ -165,6 +168,15 @@ var defaultFocusApps = []string{
 	"Feishu", "Lark", "飞书", "DingTalk", "钉钉", "Webex", "CiscoWebexStart", "Google Meet",
 }
 
+// defaultTabApps：终端（segmentByTitleApps 为 null 时用）。只增。
+var defaultTabApps = []string{
+	"gnome-terminal", "gnome-terminal-server", "org.gnome.Terminal", "org.gnome.Ptyxis", "ptyxis",
+	"org.gnome.Console", "kgx", "kitty", "Alacritty", "wezterm", "wezterm-gui", "org.wezfurlong.wezterm",
+	"konsole", "org.kde.konsole", "xterm", "tilix", "com.gexperts.Tilix", "foot", "footclient", "terminator",
+	"xfce4-terminal", "ghostty", "com.mitchellh.ghostty", "Terminal", "iTerm2", "iTerm", "WindowsTerminal",
+	"cmd", "powershell", "pwsh", "Warp", "dev.warp.Warp", "Hyper", "Tabby",
+}
+
 var defaultBrowsers = []string{
 	"chrome", "Google Chrome", "google-chrome", "chromium", "chromium-browser", "firefox",
 	"firefox-esr", "msedge", "Microsoft Edge", "microsoft-edge", "Safari", "brave", "Brave Browser",
@@ -270,6 +282,10 @@ type State struct {
 	// FailedParams：上一轮上传失败时用的合并参数（G / M），成功后清空。失败后改了 G / M，
 	// 重算出来的段起点会变，服务端按 startAt 防重就对不上，可能多出重复建议——要在日志里说出来。
 	FailedParams string `json:"failedParams,omitempty"`
+	// SentUntil：上一次整轮成功时的「现在 − G」；结束不晚于它的收口段那一轮已处理过，不再发。
+	// SentParams 是当时的合并参数，变了就不跳过（契约「按标签页分段」）。
+	SentUntil  time.Time `json:"sentUntil"`
+	SentParams string    `json:"sentParams,omitempty"`
 	// Agents：状态文件桥的 key → 运行（v0.3）。与上面的游标由不同的 goroutine 写，都经 updateState。
 	Agents map[string]*agentRun `json:"agents,omitempty"`
 }

@@ -218,6 +218,14 @@ Linux `~/.config/honeycomb/`；设环境变量 `AI_DETECTOR_HOME` 可换目录�
 | `presenceSeconds` | 15 | 心跳间隔，5–300 秒 |
 | `agentStatusFile` | 空 | 状态文件桥读的文件路径，空 = 关（见下） |
 | `agentStatusIgnore` | `[]` | 状态文件里 `key` 以这些前缀开头的条目不报 |
+| `segmentByTitle` | `true` | 终端按标签页分段（见下）。网页「AI助理」页设过就以网页为准 |
+| `segmentByTitleApps` | 内置终端名单 | 哪些程序按标签页分段；不写 = 内置名单（GNOME Terminal、Ptyxis、kitty、Alacritty、WezTerm、Konsole、iTerm2、Windows Terminal……） |
+
+**终端按标签页分段**：一个终端窗口开很多标签页、每个标签页干一件事（比如各跑一个 AI 代理）时，
+每个标签页（程序 + 标题）各自成段、各算各的时间；在标签页之间来回切，回到同一个标签页（间隔不超过 G）
+仍接在它自己的段上。标题开头的状态符号（`✳`、转圈动画）、结尾的「 - 程序名」不算区别。所以这些段的起止时间可以互相
+盖着，但时长不会重复算。标签页标题一直在变（提示符里带当前目录）的话每个标题各算各的，不足 M 分钟的都会丢——
+给标签页起个固定名字，或者 `"segmentByTitle": false` 关掉。
 
 程序名比较时忽略大小写、`.exe`、空格和连字符，所以 `WeChat.exe` 与 `wechat` 是同一个。
 

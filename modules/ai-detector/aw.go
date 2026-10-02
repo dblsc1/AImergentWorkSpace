@@ -149,6 +149,7 @@ type fragment struct {
 	Raw        string // 原始窗口标题，只过了强制脱敏：只进本机留档，从不上传
 	Key        string // 合并键，见 redactor.window
 	Idle       bool   // 无操作碎片（idle.idleSuggestions），只和无操作碎片合并
+	Tab        bool   // 标签页碎片：每个键各自一条流（契约「按标签页分段」）
 }
 
 type span struct{ start, end time.Time }
@@ -248,7 +249,8 @@ func buildFragments(d awData, from, to time.Time, r redactor) []fragment {
 		raw := scrubSecrets(e.str("title"))
 		emit := func(p span, idle bool) {
 			title, key := r.window(e.str("app"), e.str("title"), bestTab(d.web, p))
-			out = append(out, fragment{Start: p.start, End: p.end, App: e.str("app"), Title: title, Raw: raw, Key: key, Idle: idle})
+			out = append(out, fragment{Start: p.start, End: p.end, App: e.str("app"), Title: title, Raw: raw, Key: key,
+				Idle: idle, Tab: !idle && title != "" && r.tabs[app]})
 		}
 		present := subtract(s, holes)
 		for _, p := range present {

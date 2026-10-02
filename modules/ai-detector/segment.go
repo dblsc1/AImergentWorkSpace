@@ -1,6 +1,9 @@
 package main
 
-import "time"
+import (
+	"sort"
+	"time"
+)
 
 // segment 是合并后的一段，也是唯一会离开本机的东西（再加上分类建议）。
 type segment struct {
@@ -53,9 +56,39 @@ func merge(frags []fragment, gap time.Duration) []segment {
 	return out
 }
 
+// segments 把一轮的碎片合成全部候选段，按开始时刻排。三种流各自合并、互不吸收：
+//   - 普通碎片：merge 的老规则（中间夹着的异键碎片被吸收）；
+//   - 无操作碎片：同上，只在无操作碎片之间——混在一起会被当成「短暂切出去」算成在电脑前；
+//   - 标签页碎片：每个键一条流，单键的 merge 就是「间隔 ≤ G 接上」，Active 只有自己的碎片。
+//
+// 不同流的段墙钟跨度可以交叠。短于 1 秒的碎片不要：每段都从 ≥ 1 秒的碎片开始、碎片互不重叠，
+// 任何两段的 startAt（精确到秒）就一定不同，服务端按它防重。纯函数，同 merge。
+func segments(frags []fragment, gap time.Duration) []segment {
+	var act, idle []fragment
+	tabs := map[string][]fragment{}
+	for _, f := range frags {
+		switch {
+		case f.End.Sub(f.Start) < time.Second:
+		case f.Idle:
+			idle = append(idle, f)
+		case f.Tab:
+			tabs[f.Key] = append(tabs[f.Key], f)
+		default:
+			act = append(act, f)
+		}
+	}
+	out := append(merge(act, gap), merge(idle, gap)...)
+	for _, fs := range tabs {
+		out = append(out, merge(fs, gap)...)
+	}
+	// 开始时刻各不相同，所以 map 的遍历顺序不影响结果。
+	sort.Slice(out, func(i, j int) bool { return out[i].Start.Before(out[j].Start) })
+	return out
+}
+
 // settle 决定这一轮上传哪些段、游标挪到哪。
 //   - 收口 = End+G ≤ now：之后不可能再有碎片并进来，这段定了。
-//   - 没收口的段一定是尾部（段按时间先后排、互不重叠），下一轮从第一个没收口段的开始处重算。
+//   - 下一轮从最早的没收口段的开始处重算（几条流交叠时，没收口的不一定在尾部）。
 //   - 短于 M 的收口段直接丢掉（游标越过它）。
 func settle(segs []segment, now time.Time, gap, min time.Duration) (upload []segment, cursor time.Time) {
 	cursor = now.Add(-gap)
@@ -64,7 +97,7 @@ func settle(segs []segment, now time.Time, gap, min time.Duration) (upload []seg
 			if s.Start.Before(cursor) {
 				cursor = s.Start
 			}
-			break
+			continue
 		}
 		if s.Active >= min {
 			upload = append(upload, s)
