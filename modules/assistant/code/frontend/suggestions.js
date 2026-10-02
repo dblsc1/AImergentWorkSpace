@@ -211,8 +211,9 @@
     });
     if (aiBtnEl) {
       aiBtnEl.hidden = !chat.configured; // 没装聊天后端 / 没配模型：不出现
-      aiBtnEl.disabled = busy || chat.generating || items.length === 0;
-      aiBtnEl.textContent = chat.generating && aiAsked ? "AI 正在匹配…" : "让 AI 匹配";
+      // aiAsked 在点击那一下就置上：建会话还没完（generating 还没变）时连点不会发出第二轮
+      aiBtnEl.disabled = busy || chat.generating || aiAsked || items.length === 0;
+      aiBtnEl.textContent = aiAsked ? "AI 正在匹配…" : "让 AI 匹配";
     }
   }
 
