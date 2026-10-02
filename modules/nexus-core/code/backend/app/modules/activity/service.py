@@ -226,8 +226,10 @@ def confirm(sug_id: str, task_id: str | None, mode: str) -> dict:
     # 不会出现「忽略回了 200，事实却照样落库」。占位后崩在写事实之前 → 状态已确认、台账没有，
     # 重试走到这里（占位不中但状态是 confirmed）照样补写，防重键兜底不重。
     claimed = repo.set_status(user, sug_id, "confirmed", _now(), only_from="pending", only_task=only_task)
+    # 占位之后重读：已确认的建议不会再被配 / 否（那两个只动 pending），所以这份就是定稿——
+    # 写事实用的把握（以及占位不中时的任务）都取它，不取占位之前读到的旧值
+    doc = _get(user, sug_id)
     if not claimed:
-        doc = _get(user, sug_id)  # 重读：下面补写用的任务、把握都以占位成功那一刻的建议为准
         if doc["status"] == "dismissed":
             raise ConflictError(f"活动建议 {sug_id!r} 已忽略，不能再确认")
         stale = "的任务刚被改动，请刷新后再确认"

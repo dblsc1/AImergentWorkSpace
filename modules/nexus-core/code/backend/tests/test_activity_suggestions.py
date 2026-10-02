@@ -628,3 +628,24 @@ def test_bodyless_confirm_never_backfills_a_superseded_task(client, seeded, monk
     assert seen == {"unmatch": 200, "match": 1}
     (event,) = _session_events()
     assert event["subject"]["task"] == new["id"] and event["ai"]["confidence"] == 0.4
+
+
+def test_confirm_uses_confidence_as_of_the_claim(client, seeded, monkeypatch):
+    """确认读到把握 0.9 之后、占位之前，助理把同一个任务重配成 0.2：事实里记的是 0.2。"""
+    from app.modules.activity import repo, service  # noqa: PLC0415
+
+    task = seeded["tasks"]["示例任务三"]
+    _upload(client, [_seg(_recent())])
+    sug_id = _pending(client)["items"][0]["id"]
+    _match(client, [{"id": sug_id, "taskId": task["id"], "confidence": 0.9}])
+    real, seen = repo.set_status, {}
+
+    def racing(*args, **kwargs):
+        if not seen:
+            seen["match"] = _match(client, [{"id": sug_id, "taskId": task["id"], "confidence": 0.2}])["matched"]
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(service.repo, "set_status", racing)
+    assert client.post(f"{SUG}/{sug_id}/confirm", json={}).status_code == 200
+    (event,) = _session_events()
+    assert seen == {"match": 1} and event["ai"]["confidence"] == 0.2
