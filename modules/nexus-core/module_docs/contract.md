@@ -1835,6 +1835,8 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
 - `classifier: "assistant"` 只由本端点写。**上传端点的 `classifier` 仍只收 `rules` / `service`**——
   检测程序不能自称助理；读方把 `classifier` 当开放字符串。
 - 人说「**是**」= 既有的 `{id}/confirm {taskId}`，一个字不改：事实的 `ai.confidence` 就是助理给的把握。
+  confirm **不带 `taskId`**（用建议里的任务）时，占位那一下要求建议的任务没变；读到之后刚被否掉 / 被换掉 → **409**，
+  不会把时间记到已经被否掉的任务上。带 `taskId` 的确认照旧（人明说了记到哪）。
 
 **unmatch**（人说「否」）：
 
@@ -1846,7 +1848,8 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
 | 请求体给了 `taskId`、但与建议当前的任务不同 | 409——页面上看到的建议已经被换掉了，重拉再定 |
 | 其余 | `suggestion` 变成 `{taskId: null, confidence: 0, reason: "", classifier: <原值>}`，原任务记进 `rejectedTaskIds`（去重）；状态仍是 `pending`，人可以自己挑任务再确认，或忽略 |
 
-- 两个端点带 `Authorization: Bearer` 一律 **403**（设备令牌只管上传；同 `detector.settings.v1` / `detector.rules.v1` 的写）。
+- 两个端点带 `Authorization: Bearer` 一律 **403**（设备令牌只管上传；同 `detector.settings.v1` / `detector.rules.v1` 的写），
+  **先于请求体校验**：带 Bearer 的坏请求体也是 403，不是 422。
   MCP 走对内地址不带 Bearer；它按固定映射只调 matches，**不调 unmatch / confirm / dismiss**。
 - `rejectedTaskIds` 随建议过期一起清；不进导出、不进快照恢复（同建议本身）。
 

@@ -538,7 +538,7 @@ _SPECS = [
      "给待确认（pending）的活动建议各配一个任务。写进去的只是建议：用户在 Cockpit「AI助理 → 待确认建议」"
      "逐条点「是」才入账，点「否」就清掉。matches 每条 {suggestionId（来自 list_activity_suggestions）, "
      "taskId（来自 get_task_tree，不许编；只能配到任务，不能只配到项目）, confidence（0–1，如实给）, "
-     "reason?（≤200 字节，给人看的一句理由）}，最多 200 条，一次交完。拿不准的不要交。"
+     "reason?（≤200 字节，给人看的一句理由）}，一次最多 200 条，更多就分几次调用。拿不准的不要交。"
      "rejected 按下标列出没写进去的（任务不存在、用户已否过这个任务、已有规则给的任务等），其余照写。",
      _schema({"matches": {"type": "array", "maxItems": 200, "description": "要配的建议（没列出的不动）",
                           "items": {"type": "object", "additionalProperties": False,

@@ -347,7 +347,7 @@ consumes:
 
 注解同 `propose_detector_rules`（`readOnlyHint: false`、`destructiveHint: false`）。
 
-入参（必填）：`matches`，数组，≤ 200 条，每条 `{suggestionId, taskId, confidence, reason?}`：
+入参（必填）：`matches`，数组，≤ 200 条（更多就分几次调用），每条 `{suggestionId, taskId, confidence, reason?}`：
 
 - `suggestionId`：`list_activity_suggestions` 给的；只能配 `pending` 的。
 - `taskId`：`get_task_tree` 给的。**只能配到任务，不能只配到项目**（确认必须挂具体任务，nexus-core 同补登）。

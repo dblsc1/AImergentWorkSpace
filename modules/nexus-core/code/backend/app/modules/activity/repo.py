@@ -48,11 +48,15 @@ def page(user: str, status: str, limit: int, offset: int) -> tuple[int, list[dic
     return col.count_documents(filt), list(docs)
 
 
-def set_status(user: str, sug_id: str, status: str, at: datetime, *, only_from: str | None = None) -> bool:
-    """改状态。``only_from`` 给了就是条件更新（忽略只能从 pending 转过去，防与确认赛跑）。"""
+def set_status(user: str, sug_id: str, status: str, at: datetime, *, only_from: str | None = None,
+               only_task: str | None = None) -> bool:
+    """改状态。``only_from`` 给了就是条件更新（忽略只能从 pending 转过去，防与确认赛跑）；
+    ``only_task`` 给了还要求建议的任务仍是它（v2.7：确认用的是建议里的任务时，防与否 / 重配赛跑）。"""
     filt = {"user": user, "id": sug_id}
     if only_from is not None:
         filt["status"] = only_from
+    if only_task is not None:
+        filt["suggestion.taskId"] = only_task
     return _col().update_one(filt, {"$set": {"status": status, "decidedAt": at}}).matched_count > 0
 
 

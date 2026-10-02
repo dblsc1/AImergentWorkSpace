@@ -516,6 +516,13 @@ def test_device_token_cannot_match_or_unmatch(client, seeded):
     assert client.post(MATCHES, json=body, headers=BEARER).status_code == 403
     assert client.post(MATCHES, json=body, headers={"Authorization": "  bearer x"}).status_code == 403
     assert client.post(f"{SUG}/{sug_id}/unmatch", headers=BEARER).status_code == 403
+    # 403 先于请求体校验：带 Bearer 的坏请求体也是 403，不是 422
+    assert client.post(MATCHES, json={}, headers=BEARER).status_code == 403
+    assert client.post(MATCHES, content=b"{not json", headers=BEARER).status_code == 403
+    assert client.post(f"{SUG}/{sug_id}/unmatch", json={"taskId": 1}, headers=BEARER).status_code == 403
+    # 不带 Bearer 的坏请求体照旧 422
+    assert client.post(MATCHES, content=b"{not json").status_code == 422
+    assert client.post(f"{SUG}/{sug_id}/unmatch", json={"taskId": 1}).status_code == 422
     assert _pending(client)["items"][0]["suggestion"]["classifier"] == "rules"  # 403 在任何写入之前
 
 
@@ -575,3 +582,25 @@ def test_match_tenant_isolation(client):
     assert client.post(f"{SUG}/{sug_id}/unmatch", headers=B).status_code == 404
     assert _pending(client, headers=A)["items"][0]["suggestion"]["taskId"] is None
     assert _match(client, one, headers=A)["matched"] == 1
+
+
+def test_bodyless_confirm_racing_an_unmatch_does_not_record_rejected_task(client, seeded, monkeypatch):
+    """不带 taskId 的确认读到任务 A 之后、占位之前，人把 A 否掉了：确认必须 409，不能把时间记到 A。"""
+    from app.modules.activity import repo, service  # noqa: PLC0415
+
+    task = seeded["tasks"]["示例任务三"]
+    _upload(client, [_seg(_recent())])
+    sug_id = _pending(client)["items"][0]["id"]
+    _match(client, [{"id": sug_id, "taskId": task["id"], "confidence": 0.7}])
+    real, seen = repo.set_status, {}
+
+    def racing(*args, **kwargs):
+        if "unmatch" not in seen:
+            seen["unmatch"] = client.post(f"{SUG}/{sug_id}/unmatch").status_code
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(service.repo, "set_status", racing)
+    assert client.post(f"{SUG}/{sug_id}/confirm", json={}).status_code == 409
+    assert seen["unmatch"] == 200 and _session_events() == []
+    item = _pending(client)["items"][0]
+    assert item["suggestion"]["taskId"] is None and item["rejectedTaskIds"] == [task["id"]]

@@ -216,15 +216,22 @@ def confirm(sug_id: str, task_id: str | None, mode: str) -> dict:
             "date": timeutil.local_date(datetime.fromisoformat(doc["startAt"]), config.settings.tz),
             "event": {k: stored[k] for k in ("id", "dedupeKey", "type")},
         }
-    task_id = task_id or doc["suggestion"].get("taskId")
+    suggested = doc["suggestion"].get("taskId")
+    # 请求体没给任务 = 用建议里的：占位时要求建议的任务没变（v2.7：读到之后可能刚被人否掉 / 被助理换掉）
+    only_task = suggested if not task_id else None
+    task_id = task_id or suggested
     if not task_id:
         raise InvalidInputError("没有可确认的任务：请求体与建议里都没有 taskId，请先选一个任务")
     # 先占位再写事实：pending→confirmed 是条件更新，与忽略（同样只从 pending 转）二选一，
     # 不会出现「忽略回了 200，事实却照样落库」。占位后崩在写事实之前 → 状态已确认、台账没有，
     # 重试走到这里（占位不中但状态是 confirmed）照样补写，防重键兜底不重。
-    claimed = repo.set_status(user, sug_id, "confirmed", _now(), only_from="pending")
-    if not claimed and _get(user, sug_id)["status"] == "dismissed":
-        raise ConflictError(f"活动建议 {sug_id!r} 已忽略，不能再确认")
+    claimed = repo.set_status(user, sug_id, "confirmed", _now(), only_from="pending", only_task=only_task)
+    if not claimed:
+        status = _get(user, sug_id)["status"]
+        if status == "dismissed":
+            raise ConflictError(f"活动建议 {sug_id!r} 已忽略，不能再确认")
+        if status == "pending":  # 建议的任务在读与占位之间变了
+            raise ConflictError(f"活动建议 {sug_id!r} 的任务刚被改动，请刷新后再确认")
     try:
         out = timer_service.record_session(
             task_id, doc["startAt"], doc["endAt"], doc["durationSeconds"],
@@ -257,7 +264,7 @@ def dismiss(sug_id: str) -> dict:
 # ------------------------------------------------ v2.7 AI 匹配（契约「AI 匹配」）
 
 
-def _forbid_device_token(authorization: str | None) -> None:
+def forbid_device_token(authorization: str | None) -> None:
     # auth.gate：带了 Bearer 就是设备令牌（网页会话走 cookie，MCP 对内直连不带）。同 detector 的写。
     if (authorization or "").strip().lower().startswith("bearer "):
         raise ForbiddenError("设备令牌不能给活动建议配任务；请在 Cockpit「AI助理」页登录后操作")
@@ -265,7 +272,7 @@ def _forbid_device_token(authorization: str | None) -> None:
 
 def match(authorization: str | None, matches: list[Any]) -> dict:
     """助理给待确认的建议配任务。逐条校验，坏的进 rejected；**不确认任何东西**。"""
-    _forbid_device_token(authorization)
+    forbid_device_token(authorization)
     user = current_tenant()
     matched, rejected = 0, []
     for index, raw in enumerate(matches):
@@ -298,7 +305,7 @@ def match(authorization: str | None, matches: list[Any]) -> dict:
 
 def unmatch(authorization: str | None, sug_id: str, task_id: str | None) -> dict:
     """人说「否」：清掉建议的任务并记进 rejectedTaskIds；状态仍 pending。"""
-    _forbid_device_token(authorization)
+    forbid_device_token(authorization)
     user = current_tenant()
     doc = _get(user, sug_id)
     current = doc["suggestion"].get("taskId")

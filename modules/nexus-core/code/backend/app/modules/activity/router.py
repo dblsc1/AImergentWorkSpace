@@ -10,7 +10,9 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel, Field
+from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel, Field, ValidationError
+from starlette.concurrency import run_in_threadpool
 
 from ..timer.router import Mode
 from . import service
@@ -131,11 +133,25 @@ def dismiss(sugId: str) -> dict:  # noqa: N803
     return service.dismiss(sugId)
 
 
+# v2.7 的两个端点自己读请求体：设备令牌要在**看请求体之前**就 403（让 FastAPI 先解析的话，
+# 带 Bearer 的坏请求体会得到 422 而不是 403）。请求体不合形状仍是标准的 422。
+async def _body(request: Request, model: type[BaseModel]):
+    auth = request.headers.get("authorization")
+    service.forbid_device_token(auth)
+    raw = (await request.body()).strip()
+    try:
+        return auth, model() if raw in (b"", b"null") else model.model_validate_json(raw)
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors(include_url=False, include_context=False)) from exc
+
+
 @router.post("/matches", response_model=MatchesOut)
-def match(body: MatchesIn, request: Request) -> dict:
-    return service.match(request.headers.get("authorization"), body.matches)
+async def match(request: Request) -> dict:
+    auth, body = await _body(request, MatchesIn)
+    return await run_in_threadpool(service.match, auth, body.matches)
 
 
 @router.post("/{sugId}/unmatch", response_model=UnmatchOut)
-def unmatch(sugId: str, request: Request, body: UnmatchIn | None = None) -> dict:  # noqa: N803
-    return service.unmatch(request.headers.get("authorization"), sugId, (body or UnmatchIn()).taskId)
+async def unmatch(sugId: str, request: Request) -> dict:  # noqa: N803
+    auth, body = await _body(request, UnmatchIn)
+    return await run_in_threadpool(service.unmatch, auth, sugId, body.taskId)

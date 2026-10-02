@@ -272,7 +272,10 @@
   // 别的面板替用户发一轮固定的话。没配模型 / 正在答 → false，什么都不发。
   window.assistantChat.ask = function (text) {
     if (!configured || generating) return false;
-    send(text).catch(function (err) { showMessage(err.message, true); });   // 建会话失败等
+    send(text).catch(function (err) {   // 建会话失败：这一轮根本没开始，也要让等着的面板知道结束了
+      showMessage(err.message, true);
+      document.dispatchEvent(new Event("assistant:turn-done"));
+    });
     return true;
   };
 
