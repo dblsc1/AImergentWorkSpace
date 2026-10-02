@@ -35,7 +35,7 @@ func plain() []awEvent {
 }
 
 func segsOf(evs []awEvent, cfg Config, to float64) []segment {
-	return segments(buildFragments(awData{window: evs}, at(0), at(to), newRedactor(cfg)), G)
+	return segments(buildFragments(awData{window: evs}, at(0), at(to), newRedactor(cfg)), G, false)
 }
 
 // brief 把段压成「标题|开始分钟|结束分钟|在电脑前秒数」，好一眼比对。
@@ -196,7 +196,7 @@ func TestIdleFragmentsOfTerminalsStayInIdleStream(t *testing.T) {
 			}
 		}
 	}
-	s := segments(fr, G)
+	s := segments(fr, G, false)
 	if idle != 1 || len(s) != 3 || !s[1].Idle || s[1].Active != 25*time.Minute || s[0].Idle || s[2].Idle {
 		t.Fatalf("idle=%d %q", idle, brief(s))
 	}
@@ -209,8 +209,12 @@ func TestStartAtIsUniquePerSecond(t *testing.T) {
 		{Start: t0.Add(400 * time.Millisecond), End: at(4), App: term, Title: "b", Key: "b", Tab: true},
 		{Start: at(4), End: at(8), App: term, Title: "a", Key: "a", Tab: true},
 	}
-	s := segments(fr, G)
+	s := segments(fr, G, false)
 	if len(s) != 2 || isoTime(s[0].Start) == isoTime(s[1].Start) || s[1].Title != "a" || s[1].Start != at(4) {
+		t.Fatalf("%q", brief(s))
+	}
+	// 升级后的第一轮要和老版本切得一样：短碎片留着，a 还是从那 0.3 秒开始。
+	if s := segments(fr, G, true); len(s) != 2 || s[0].Title != "a" || !s[0].Start.Equal(t0.Add(100*time.Millisecond)) {
 		t.Fatalf("%q", brief(s))
 	}
 }

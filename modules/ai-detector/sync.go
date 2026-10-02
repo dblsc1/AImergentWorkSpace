@@ -91,8 +91,9 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 	if err := cfg.Privacy.check(); err != nil {
 		return "", err
 	}
-	if !st.SentReady {
-		// 升级后的第一轮按老切法：见 State.SentReady。
+	legacy := !st.SentReady
+	if legacy {
+		// 升级后的第一轮按老切法（不按标签页分、短碎片也留着）：见 State.SentReady。
 		off := false
 		cfg.SegmentByTitle = &off
 	}
@@ -123,7 +124,7 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 	// 游标之后已经送达的活动先挖掉（几条流交叠、游标停在没收口的段的开始处时才会有，见 State.Sent）。
 	frags := unsent(buildFragments(data, st.Cursor, now, newRedactor(cfg)), st.Sent)
 	// 普通、无操作、各标签页的流各自合并，段的墙钟跨度彼此可能交叠。
-	segs, next := settle(segments(frags, gap), now, gap, minSeg)
+	segs, next := settle(segments(frags, gap, legacy), now, gap, minSeg)
 	// 游标只进不退：退回去会重新读到「开启之前」的活动。
 	if next.Before(st.Cursor) {
 		next = st.Cursor

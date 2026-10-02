@@ -65,12 +65,14 @@ func merge(frags []fragment, gap time.Duration) []segment {
 //
 // 不同流的段墙钟跨度可以交叠。短于 1 秒的碎片不要：每段都从 ≥ 1 秒的碎片开始、碎片互不重叠，
 // 任何两段的 startAt（精确到秒）就一定不同，服务端按它防重。纯函数，同 merge。
-func segments(frags []fragment, gap time.Duration) []segment {
+//
+// keepShort：升级后的第一轮（State.SentReady）要和老版本切得一模一样，短碎片也留着。
+func segments(frags []fragment, gap time.Duration, keepShort bool) []segment {
 	var act, idle []fragment
 	tabs := map[string][]fragment{}
 	for _, f := range frags {
 		switch {
-		case f.End.Sub(f.Start) < time.Second:
+		case !keepShort && f.End.Sub(f.Start) < time.Second:
 		case f.Idle:
 			idle = append(idle, f)
 		case f.Tab:
