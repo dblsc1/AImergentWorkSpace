@@ -95,7 +95,7 @@ func testConfig(aw, ck string) Config {
 }
 
 // 已处于活跃状态、游标在 t0 的状态。
-func activeState() *State { return &State{Cursor: at(0), Active: true} }
+func activeState() *State { return &State{Cursor: at(0), Active: true, SentReady: true} }
 
 func TestUploadPayloadShapeAndBearer(t *testing.T) {
 	aw := fakeAW(t, []awEvent{

@@ -286,6 +286,9 @@ type State struct {
 	// 没收口的段的开始处，这些区间里的活动下一轮重算时先挖掉，不会再算进任何段（契约「按标签页分段」）。
 	// 没有交叠时游标总在已送达的段之后，这里是空的。
 	Sent [][2]time.Time `json:"sent,omitempty"`
+	// SentReady：认得 Sent 的版本已经成功跑完过一轮。升级上来的状态文件没有它：那一轮先按老切法
+	// （不按标签页分段）跑，把老版本可能已经送达、游标却还停在它开头的段原样重算重发（服务端防重）并记进 Sent。
+	SentReady bool `json:"sentReady,omitempty"`
 	// Agents：状态文件桥的 key → 运行（v0.3）。与上面的游标由不同的 goroutine 写，都经 updateState。
 	Agents map[string]*agentRun `json:"agents,omitempty"`
 }

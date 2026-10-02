@@ -386,3 +386,29 @@ func TestRemoteSettingsCanTurnTabsOff(t *testing.T) {
 		}
 	}
 }
+
+// 从老版本升级上来的状态文件（没有 sentReady）：第一轮按老切法跑——老版本可能已经把这段送达了、游标却还停在它的开头，
+// 原样重算重发服务端会防重；换成新切法就会多出起点不同的段。之后才按标签页分段。
+func TestFirstRoundAfterUpgradeUsesOldSegmentation(t *testing.T) {
+	aw := fakeAW(t, append(plain(), win(20, 5, term, "GardenV0.2 Dev"), win(25, 5, term, "Cockpit-Pub-Coder1")), nil)
+	defer aw.Close()
+	ck := fakeCockpit(t)
+	defer ck.Close()
+	cfg := testConfig(aw.URL, ck.URL)
+	st := &State{Cursor: at(0), Active: true}
+	if _, err := tick(cfg, st, at(20), http.DefaultClient); err != nil {
+		t.Fatal(err)
+	}
+	var b uploadBody
+	json.Unmarshal(ck.bodies[0], &b)
+	if len(b.Segments) != 1 || b.Segments[0].DurationSeconds != 860 || b.Segments[0].StartAt != isoTime(at(0)) || !st.SentReady {
+		t.Fatalf("first round must cut the old way: %+v ready=%v", b.Segments, st.SentReady)
+	}
+	if _, err := tick(cfg, st, at(40), http.DefaultClient); err != nil {
+		t.Fatal(err)
+	}
+	json.Unmarshal(ck.bodies[1], &b)
+	if len(b.Segments) != 2 || b.Segments[0].Title != "GardenV0.2 Dev" || b.Segments[1].Title != "Cockpit-Pub-Coder1" {
+		t.Fatalf("then per tab: %+v", b.Segments)
+	}
+}

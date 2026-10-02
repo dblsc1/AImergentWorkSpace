@@ -91,6 +91,11 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 	if err := cfg.Privacy.check(); err != nil {
 		return "", err
 	}
+	if !st.SentReady {
+		// 升级后的第一轮按老切法：见 State.SentReady。
+		off := false
+		cfg.SegmentByTitle = &off
+	}
 	// 隐私 / 离开选项也决定段怎么切（合并键、离开扣不扣），和 G / M 一样要记进失败参数。
 	sb, _ := json.Marshal([]any{cfg.Privacy, cfg.Idle, on(cfg.SegmentByTitle), tabApps(cfg)})
 	params := fmt.Sprintf("G=%v分钟,M=%v分钟,设置#%08x", cfg.MergeGapMinutes, cfg.MinSegmentMinutes, crc32.ChecksumIEEE(sb))
@@ -125,6 +130,7 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 	}
 	if len(segs) == 0 {
 		markSent(st, nil, next)
+		st.SentReady = true
 		return fmt.Sprintf("没有收口的段（%d 个碎片）", len(frags)), nil
 	}
 
@@ -221,6 +227,7 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 		}
 		markSent(st, batch, c)
 	}
+	st.SentReady = true
 	return fmt.Sprintf("已上传 %d 段待确认建议", len(segs)), nil
 }
 
