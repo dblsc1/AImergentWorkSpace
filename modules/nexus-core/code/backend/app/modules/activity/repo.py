@@ -48,16 +48,30 @@ def page(user: str, status: str, limit: int, offset: int) -> tuple[int, list[dic
     return col.count_documents(filt), list(docs)
 
 
-def set_status(user: str, sug_id: str, status: str, at: datetime, *, only_from: str | None = None,
-               only_task: str | None = None) -> bool:
-    """改状态。``only_from`` 给了就是条件更新（忽略只能从 pending 转过去，防与确认赛跑）；
-    ``only_task`` 给了还要求建议的任务仍是它（v2.7：确认用的是建议里的任务时，防与否 / 重配赛跑）。"""
+def set_status(user: str, sug_id: str, status: str, at: datetime, *, only_from: str | None = None) -> bool:
+    """改状态。``only_from`` 给了就是条件更新（忽略只能从 pending 转过去，防与确认赛跑）。"""
     filt = {"user": user, "id": sug_id}
     if only_from is not None:
         filt["status"] = only_from
+    return _col().update_one(filt, {"$set": {"status": status, "decidedAt": at}}).matched_count > 0
+
+
+def claim(user: str, sug_id: str, at: datetime, claim_id: str, *, takeover: bool = False,
+          only_task: str | None = None) -> bool:
+    """确认的占位：pending→confirmed 并记下是谁占的（``claimId``）。``takeover`` = 接手一个已占位、事实还没写的
+    （对方崩了，或还在写）：接手后对方的 ``release`` 不再生效。``only_task`` 给了还要求建议的任务仍是它
+    （v2.7：确认用的是建议里的任务时，防与否 / 重配赛跑）。"""
+    filt = {"user": user, "id": sug_id, "status": "confirmed" if takeover else "pending"}
     if only_task is not None:
         filt["suggestion.taskId"] = only_task
-    return _col().update_one(filt, {"$set": {"status": status, "decidedAt": at}}).matched_count > 0
+    upd = {"$set": {"status": "confirmed", "decidedAt": at, "claimId": claim_id}}
+    return _col().update_one(filt, upd).matched_count > 0
+
+
+def release(user: str, sug_id: str, at: datetime, claim_id: str) -> None:
+    """写事实失败：放回 pending——只在占位的还是自己时（被别的确认接手了就不放，它还在写）。"""
+    _col().update_one({"user": user, "id": sug_id, "status": "confirmed", "claimId": claim_id},
+                      {"$set": {"status": "pending", "decidedAt": at}, "$unset": {"claimId": ""}})
 
 
 def set_match(user: str, sug_id: str, suggestion: dict) -> bool:

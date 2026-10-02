@@ -592,14 +592,14 @@ def test_bodyless_confirm_racing_an_unmatch_does_not_record_rejected_task(client
     _upload(client, [_seg(_recent())])
     sug_id = _pending(client)["items"][0]["id"]
     _match(client, [{"id": sug_id, "taskId": task["id"], "confidence": 0.7}])
-    real, seen = repo.set_status, {}
+    real, seen = repo.claim, {}
 
     def racing(*args, **kwargs):
         if "unmatch" not in seen:
             seen["unmatch"] = client.post(f"{SUG}/{sug_id}/unmatch").status_code
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(service.repo, "set_status", racing)
+    monkeypatch.setattr(service.repo, "claim", racing)
     assert client.post(f"{SUG}/{sug_id}/confirm", json={}).status_code == 409
     assert seen["unmatch"] == 200 and _session_events() == []
     item = _pending(client)["items"][0]
@@ -614,16 +614,16 @@ def test_bodyless_confirm_never_backfills_a_superseded_task(client, seeded, monk
     _upload(client, [_seg(_recent())])
     sug_id = _pending(client)["items"][0]["id"]
     _match(client, [{"id": sug_id, "taskId": old["id"], "confidence": 0.7}])
-    real, seen = repo.set_status, {}
+    real, seen = repo.claim, {}
 
     def racing(*args, **kwargs):
         if not seen:
             seen["unmatch"] = client.post(f"{SUG}/{sug_id}/unmatch").status_code
             seen["match"] = _match(client, [{"id": sug_id, "taskId": new["id"], "confidence": 0.4}])["matched"]
-            real(args[0], sug_id, "confirmed", args[3], only_from="pending")  # 确认乙：占了位，还没写事实
+            real(args[0], sug_id, args[2], "claim-b")  # 确认乙：占了位，还没写事实
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(service.repo, "set_status", racing)
+    monkeypatch.setattr(service.repo, "claim", racing)
     assert client.post(f"{SUG}/{sug_id}/confirm", json={}).status_code == 200
     assert seen == {"unmatch": 200, "match": 1}
     (event,) = _session_events()
@@ -638,14 +638,44 @@ def test_confirm_uses_confidence_as_of_the_claim(client, seeded, monkeypatch):
     _upload(client, [_seg(_recent())])
     sug_id = _pending(client)["items"][0]["id"]
     _match(client, [{"id": sug_id, "taskId": task["id"], "confidence": 0.9}])
-    real, seen = repo.set_status, {}
+    real, seen = repo.claim, {}
 
     def racing(*args, **kwargs):
         if not seen:
             seen["match"] = _match(client, [{"id": sug_id, "taskId": task["id"], "confidence": 0.2}])["matched"]
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(service.repo, "set_status", racing)
+    monkeypatch.setattr(service.repo, "claim", racing)
     assert client.post(f"{SUG}/{sug_id}/confirm", json={}).status_code == 200
     (event,) = _session_events()
     assert seen == {"match": 1} and event["ai"]["confidence"] == 0.2
+
+
+def test_failed_confirm_does_not_reopen_a_record_another_confirm_took_over(client, seeded, monkeypatch):
+    """确认甲（任务不存在）占位 → 确认乙接手 → 甲写失败：不许把状态放回 pending（乙还在写）。"""
+    from app.modules.activity import service  # noqa: PLC0415
+
+    task = seeded["tasks"]["示例任务三"]
+    _upload(client, [_seg(_recent())])
+    sug_id = _pending(client)["items"][0]["id"]
+    _match(client, [{"id": sug_id, "taskId": task["id"], "confidence": 0.7}])
+    real, seen = service.timer_service.record_session, {}
+
+    def racing(task_id, *args, **kwargs):
+        if task_id == "t_nope" and not seen:
+            seen["b"] = "started"
+            seen["b"] = client.post(f"{SUG}/{sug_id}/confirm", json={}).status_code   # 乙：接手并写成
+        return real(task_id, *args, **kwargs)
+
+    monkeypatch.setattr(service.timer_service, "record_session", racing)
+    assert client.post(f"{SUG}/{sug_id}/confirm", json={"taskId": "t_nope"}).status_code == 404
+    assert seen == {"b": 200}
+    assert _pending(client)["total"] == 0 and _pending(client, status="confirmed")["total"] == 1
+    (event,) = _session_events()
+    assert event["subject"]["task"] == task["id"]
+    # 没人接手时照旧放回 pending
+    _upload(client, [_seg(_recent(30))])
+    other = _pending(client)["items"][0]["id"]
+    monkeypatch.setattr(service.timer_service, "record_session", real)
+    assert client.post(f"{SUG}/{other}/confirm", json={"taskId": "t_nope"}).status_code == 404
+    assert [i["id"] for i in _pending(client)["items"]] == [other]

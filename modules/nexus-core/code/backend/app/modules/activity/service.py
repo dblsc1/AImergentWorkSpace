@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import hashlib
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Literal
 
@@ -224,23 +225,22 @@ def confirm(sug_id: str, task_id: str | None, mode: str) -> dict:
         raise InvalidInputError("没有可确认的任务：请求体与建议里都没有 taskId，请先选一个任务")
     # 先占位再写事实：pending→confirmed 是条件更新，与忽略（同样只从 pending 转）二选一，
     # 不会出现「忽略回了 200，事实却照样落库」。占位后崩在写事实之前 → 状态已确认、台账没有，
-    # 重试走到这里（占位不中但状态是 confirmed）照样补写，防重键兜底不重。
-    claimed = repo.set_status(user, sug_id, "confirmed", _now(), only_from="pending", only_task=only_task)
-    # 占位之后重读：已确认的建议不会再被配 / 否（那两个只动 pending），所以这份就是定稿——
-    # 写事实用的把握（以及占位不中时的任务）都取它，不取占位之前读到的旧值
-    doc = _get(user, sug_id)
-    if not claimed:
-        if doc["status"] == "dismissed":
+    # 重试走到这里（占位不中但状态是 confirmed）接手占位再补写，防重键兜底不重。
+    claim_id = uuid.uuid4().hex
+    if not repo.claim(user, sug_id, _now(), claim_id, only_task=only_task):
+        cur = _get(user, sug_id)
+        if cur["status"] == "dismissed":
             raise ConflictError(f"活动建议 {sug_id!r} 已忽略，不能再确认")
-        stale = "的任务刚被改动，请刷新后再确认"
-        if doc["status"] == "pending":  # 建议的任务在读与占位之间变了
-            raise ConflictError(f"活动建议 {sug_id!r} {stale}")
         if only_task is not None:
-            # 已被另一次确认占位（或上次占位后崩了）：用建议里的任务时，补写只认**现在**建议里的那个——
-            # 自己早先读到的可能已被否掉 / 换掉，拿它补写会抢在对方前面把时间记到被否掉的任务上
-            task_id = doc["suggestion"].get("taskId")
-            if not task_id:
-                raise ConflictError(f"活动建议 {sug_id!r} {stale}")
+            # 用建议里的任务：只认**现在**建议里的那个——自己早先读到的可能已被否掉 / 换掉
+            only_task = task_id = cur["suggestion"].get("taskId")
+        # 还是 pending = 建议的任务在读与占位之间变了；confirmed = 别的确认占着位（或占位后崩了）：
+        # 接手它再写。接手之后对方写失败也不会把状态放回 pending，于是没人能趁机否掉 / 换掉这个任务
+        if (not task_id or cur["status"] != "confirmed"
+                or not repo.claim(user, sug_id, _now(), claim_id, takeover=True, only_task=only_task)):
+            raise ConflictError(f"活动建议 {sug_id!r} 刚被改动，请刷新后再确认")
+    # 占着位重读：已确认的建议不会再被配 / 否（那两个只动 pending），这份就是定稿，把握取它
+    doc = _get(user, sug_id)
     try:
         out = timer_service.record_session(
             task_id, doc["startAt"], doc["endAt"], doc["durationSeconds"],
@@ -248,14 +248,13 @@ def confirm(sug_id: str, task_id: str | None, mode: str) -> dict:
             ai={"generated": True, "confidence": doc["suggestion"]["confidence"], "confirmed": True},
         )
     except Exception:
-        # 任务不存在等：事实没写成，放回待确认（并发的另一次确认若已写成，就别放回）。
+        # 任务不存在等：事实没写成，放回待确认（并发的另一次确认若已写成、或已接手占位，就别放回）。
         # 尽力而为：放回本身出错也要把原来的错误原样抛出去
-        if claimed:
-            try:
-                if events_service.find_by_dedupe(user, SOURCE, dedupe_key) is None:
-                    repo.set_status(user, sug_id, "pending", _now(), only_from="confirmed")
-            except Exception:  # noqa: BLE001, S110
-                pass
+        try:
+            if events_service.find_by_dedupe(user, SOURCE, dedupe_key) is None:
+                repo.release(user, sug_id, _now(), claim_id)
+        except Exception:  # noqa: BLE001, S110
+            pass
         raise
     return {"id": sug_id, "status": "confirmed", "duplicate": out["duplicate"],
             "date": out["date"], "event": out["event"]}
