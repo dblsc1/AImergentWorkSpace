@@ -115,27 +115,16 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 	if err != nil {
 		return "", err
 	}
-	frags := buildFragments(data, st.Cursor, now, newRedactor(cfg))
-	// 普通、无操作、各标签页的流各自合并，段彼此可能交叠：游标不能落在任何一段中间（见 safeCursor）。
-	closed, next := settle(segments(frags, gap), now, gap, minSeg)
+	// 游标之后已经送达的活动先挖掉（几条流交叠、游标停在没收口的段的开始处时才会有，见 State.Sent）。
+	frags := unsent(buildFragments(data, st.Cursor, now, newRedactor(cfg)), st.Sent)
+	// 普通、无操作、各标签页的流各自合并，段的墙钟跨度彼此可能交叠。
+	segs, next := settle(segments(frags, gap), now, gap, minSeg)
 	// 游标只进不退：退回去会重新读到「开启之前」的活动。
 	if next.Before(st.Cursor) {
 		next = st.Cursor
 	}
-	// 有段一直不收口（一个标签页几小时里每隔几分钟回来一次）时游标停在它的开始处，早就收口、发过的别的段
-	// 每轮都会被重算出来：结束不晚于 SentUntil 的那一轮已经处理过，不再发（契约「按标签页分段」）。
-	var segs []segment
-	for _, s := range closed {
-		if st.SentParams != params || s.End.After(st.SentUntil) {
-			segs = append(segs, s)
-		}
-	}
-	done := func() {
-		st.Cursor = safeCursor(next, closed)
-		st.SentUntil, st.SentParams = now.Add(-gap), params
-	}
 	if len(segs) == 0 {
-		done()
+		markSent(st, nil, next)
 		return fmt.Sprintf("没有收口的段（%d 个碎片）", len(frags)), nil
 	}
 
@@ -186,7 +175,7 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 
 	// 分批上传：积压很久时一次性发几千段，请求大、慢，超时后下一轮又是同样大，永远发不出去。
 	// 每批成功后游标挪到下一批第一段的开始——从段的开始处重算，得到的段和这次一模一样
-	// （同 settle 对没收口段的处理），startAt 不变，防重照样成立。
+	// （同 settle 对没收口段的处理），startAt 不变，防重照样成立；已送达的批次记在 st.Sent 里，不会再算一遍。
 	for k := 0; k < len(segs); k += uploadBatch {
 		batch = segs[k:min(k+uploadBatch, len(segs))]
 		sugs := classify(batch, rules, cfg.ClassifierURL, tasks, post)
@@ -224,32 +213,15 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 		}
 		st.FailedParams = ""
 		logRejected(resp, k)
-		if k+uploadBatch < len(segs) {
-			// 下一批的第一段可能比某个没收口的段开始得晚（几条流交叠）：游标不能越过 next。
-			c := segs[k+uploadBatch].Start
-			if next.Before(c) {
-				c = next
-			}
-			st.Cursor = safeCursor(c, closed)
+		// 这一批送达了：记下来，游标挪到下一批第一段的开始（全部送完则到 next）。
+		// 下一批的第一段可能比某个没收口的段开始得晚（几条流交叠）：游标不能越过 next。
+		c := next
+		if k+uploadBatch < len(segs) && segs[k+uploadBatch].Start.Before(c) {
+			c = segs[k+uploadBatch].Start
 		}
+		markSent(st, batch, c)
 	}
-	done()
 	return fmt.Sprintf("已上传 %d 段待确认建议", len(segs)), nil
-}
-
-// safeCursor 把游标往前挪到不落在任何一段中间的位置。游标落在一段中间，下一轮从游标重算会把那段
-// 裁成起点不同的新段（服务端防重对不上，多一条建议）。挪到段的开始则重算出一模一样的段，重发只算 duplicates。
-// 只有几条流（普通、无操作、各标签页）彼此交叠时才会真的挪（单条流的段互不重叠，游标本来就在段与段之间）。
-func safeCursor(c time.Time, segs []segment) time.Time {
-	for moved := true; moved; {
-		moved = false
-		for _, s := range segs {
-			if s.Start.Before(c) && s.End.After(c) {
-				c, moved = s.Start, true
-			}
-		}
-	}
-	return c
 }
 
 func uploadSummary(resp []byte, err error) string {

@@ -327,9 +327,6 @@ func (r redactor) window(app, title string, tab *webTab) (string, string) {
 		return loc + " · " + t, a + "\x00" + host
 	}
 	t := r.text(title)
-	if r.tabs[a] {
-		return t, a + "\x00" + tabKey(t, a)
-	}
 	return t, a + "\x00" + titleKey(t)
 }
 

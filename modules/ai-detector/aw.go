@@ -249,8 +249,12 @@ func buildFragments(d awData, from, to time.Time, r redactor) []fragment {
 		raw := scrubSecrets(e.str("title"))
 		emit := func(p span, idle bool) {
 			title, key := r.window(e.str("app"), e.str("title"), bestTab(d.web, p))
-			out = append(out, fragment{Start: p.start, End: p.end, App: e.str("app"), Title: title, Raw: raw, Key: key,
-				Idle: idle, Tab: !idle && title != "" && r.tabs[app]})
+			// 标签页碎片（契约「按标签页分段」）：终端、标题没被隐私选项清空、不是无操作碎片。
+			tab := !idle && title != "" && r.tabs[app]
+			if tab {
+				key = app + "\x00" + tabKey(title, app)
+			}
+			out = append(out, fragment{Start: p.start, End: p.end, App: e.str("app"), Title: title, Raw: raw, Key: key, Idle: idle, Tab: tab})
 		}
 		present := subtract(s, holes)
 		for _, p := range present {

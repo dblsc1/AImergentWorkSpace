@@ -191,7 +191,7 @@ func TestIdleFragmentsOfTerminalsStayInIdleStream(t *testing.T) {
 	for _, f := range fr {
 		if f.Idle {
 			idle++
-			if f.Tab {
+			if f.Tab || f.Key != normApp(term)+"\x00"+titleKey("proj") { // 键也是老的
 				t.Fatalf("idle fragment must not be a tab fragment: %+v", f)
 			}
 		}
@@ -271,9 +271,13 @@ func TestOpenTabPinsCursorWithoutResending(t *testing.T) {
 	if len(uploads) != 1 || !st.Cursor.Equal(at(0)) {
 		t.Fatalf("C was resent or cursor moved: %d uploads, cursor=%v", len(uploads), st.Cursor)
 	}
-	fail = true // A 收口的那一轮上传失败：游标、sentUntil 都不动
-	if _, err := tick(cfg, st, at(50), http.DefaultClient); err == nil || !st.Cursor.Equal(at(0)) || !st.SentUntil.Equal(at(25)) {
-		t.Fatalf("failed round: err=%v cursor=%v sentUntil=%v", err, st.Cursor, st.SentUntil)
+	// 游标之后送达过的只有 C 那 4 分钟
+	if len(st.Sent) != 1 || !st.Sent[0][0].Equal(at(8+1.0/3)) || !st.Sent[0][1].Equal(at(12+1.0/3)) {
+		t.Fatalf("sent=%v", st.Sent)
+	}
+	fail = true // A 收口的那一轮上传失败：游标、已送达的记录都不动
+	if _, err := tick(cfg, st, at(50), http.DefaultClient); err == nil || !st.Cursor.Equal(at(0)) || len(st.Sent) != 1 {
+		t.Fatalf("failed round: err=%v cursor=%v sent=%v", err, st.Cursor, st.Sent)
 	}
 	fail = false
 	run(50) // 重试：只发 A，startAt 是它最初的开始，时长只有自己的 5+3+2+24 分
@@ -284,19 +288,65 @@ func TestOpenTabPinsCursorWithoutResending(t *testing.T) {
 	if a.Title != "Cockpit-Pub-Coder1" || a.StartAt != isoTime(at(0)) || a.EndAt != isoTime(at(40)) || a.DurationSeconds != 34*60 {
 		t.Fatalf("A: %+v", a)
 	}
-	if !st.Cursor.Equal(at(40)) { // 游标越过 A，停在没收口的 code 段的开始
-		t.Fatalf("cursor=%v", st.Cursor)
+	if !st.Cursor.Equal(at(40)) || len(st.Sent) != 0 { // 游标越过 A，停在没收口的 code 段的开始；之前的记录用不着了
+		t.Fatalf("cursor=%v sent=%v", st.Cursor, st.Sent)
 	}
 	run(80)
 	if len(uploads) != 3 || !same(titles(uploads[2]), []string{"x@" + isoTime(at(40))[11:19]}) {
 		t.Fatalf("round 3: %v", uploads)
 	}
-	// 合并参数变了：段的切法可能不同，不再相信 sentUntil——从游标起收口的都重发（服务端防重）。
-	st.Cursor = at(0)
-	cfg.MinSegmentMinutes = 4
-	run(80)
-	if len(uploads) != 4 || len(uploads[3].Segments) != 3 {
-		t.Fatalf("params changed: %v", uploads)
+}
+
+// 游标停着的时候改了设置（关掉按标签页分段）：已经送达的 B、C 不会被重算的普通段再吸收一遍。
+func TestSettingsChangeWhileCursorPinnedDoesNotDoubleCount(t *testing.T) {
+	evs := []awEvent{
+		win(0, 3, "code", "x"), win(3, 3, term, "B"), win(6, 1, "code", "x"), win(7, 3, term, "C"),
+		win(10, 1, "code", "x"), win(11, 3, term, "B"), win(14, 16, "code", "x"),
+	}
+	aw := fakeAW(t, evs, nil)
+	defer aw.Close()
+	ck := fakeCockpit(t)
+	defer ck.Close()
+	cfg := testConfig(aw.URL, ck.URL)
+	st := activeState()
+	if _, err := tick(cfg, st, at(20), http.DefaultClient); err != nil {
+		t.Fatal(err)
+	}
+	cfg.SegmentByTitle = bp(false)
+	if _, err := tick(cfg, st, at(40), http.DefaultClient); err != nil {
+		t.Fatal(err)
+	}
+	var total int64
+	var got []string
+	for _, raw := range ck.bodies {
+		var b uploadBody
+		json.Unmarshal(raw, &b)
+		for _, s := range b.Segments {
+			total += s.DurationSeconds
+			got = append(got, fmt.Sprintf("%s|%s|%d", s.Title, s.StartAt[14:19], s.DurationSeconds))
+		}
+	}
+	// B 6 分、C 3 分、code 3+1+1+16 = 21 分：合计正好是在电脑前的 30 分钟，一秒不多。
+	if total != 30*60 || !same(got, []string{"B|03:00|360", "C|07:00|180", "x|00:00|1260"}) || !st.Cursor.Equal(at(35)) || len(st.Sent) != 0 {
+		t.Fatalf("total=%d %q cursor=%v sent=%v", total, got, st.Cursor, st.Sent)
+	}
+}
+
+func TestMarkSentAndUnsent(t *testing.T) {
+	sp := func(a, b float64) span { return span{at(a), at(b)} }
+	st := &State{Sent: [][2]time.Time{{at(20), at(25)}}}
+	markSent(st, []segment{{parts: []span{sp(0, 5), sp(8, 10)}}, {parts: []span{sp(5, 8), sp(24, 30)}}}, at(4))
+	// 相接、交叠的并成一条；游标之前的丢掉（跨着游标的留着）。
+	if len(st.Sent) != 2 || st.Sent[0] != [2]time.Time{at(0), at(10)} || st.Sent[1] != [2]time.Time{at(20), at(30)} || st.Cursor != at(4) {
+		t.Fatalf("%v", st.Sent)
+	}
+	got := unsent([]fragment{f(4, 12, "a", "x"), f(12, 22, "b", "y"), f(22, 28, "c", "z")}, st.Sent)
+	if len(got) != 2 || got[0].Start != at(10) || got[0].End != at(12) || got[0].Title != "x" || got[1].Start != at(12) || got[1].End != at(20) {
+		t.Fatalf("%+v", got)
+	}
+	markSent(st, nil, at(30))
+	if len(st.Sent) != 0 {
+		t.Fatalf("%v", st.Sent)
 	}
 }
 

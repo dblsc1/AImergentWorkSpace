@@ -13,6 +13,7 @@ type segment struct {
 	Raw        string        // 本机原始标题（只过强制脱敏），只进留档
 	Sent       string        // 真正离开本机的标题（换过代号的就是代号）；tick 在分类前填
 	Idle       bool
+	parts      []span // 算进这段的碎片各自的起止：送达后记进 State.Sent
 }
 
 // merge 把碎片合成段，规则见 contract.md「合并」。frags 必须按 Start 排序、互不重叠
@@ -39,6 +40,7 @@ func merge(frags []fragment, gap time.Duration) []segment {
 		for _, f := range frags[i : last+1] {
 			d := f.End.Sub(f.Start)
 			seg.Active += d
+			seg.parts = append(seg.parts, span{f.Start, f.End})
 			if f.Key == first.Key {
 				byTitle[f.Title] += d
 			}
@@ -84,6 +86,50 @@ func segments(frags []fragment, gap time.Duration) []segment {
 	// 开始时刻各不相同，所以 map 的遍历顺序不影响结果。
 	sort.Slice(out, func(i, j int) bool { return out[i].Start.Before(out[j].Start) })
 	return out
+}
+
+// unsent 从碎片里挖掉已经送达的区间（State.Sent）：送达过的活动不会再算进任何段，
+// 不管这一轮从哪重算、设置变没变。
+func unsent(frags []fragment, sent [][2]time.Time) []fragment {
+	if len(sent) == 0 {
+		return frags
+	}
+	holes := make([]span, len(sent))
+	for i, s := range sent {
+		holes[i] = span{s[0], s[1]}
+	}
+	var out []fragment
+	for _, f := range frags {
+		for _, p := range subtract(span{f.Start, f.End}, holes) {
+			f.Start, f.End = p.start, p.end
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// markSent 把刚确认送达的段记进 st.Sent（排序、相接的并成一条），再把游标挪到 cursor、丢掉游标之前的区间。
+func markSent(st *State, segs []segment, cursor time.Time) {
+	all := st.Sent
+	for _, s := range segs {
+		for _, p := range s.parts {
+			all = append(all, [2]time.Time{p.start, p.end})
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i][0].Before(all[j][0]) })
+	st.Cursor, st.Sent = cursor, nil
+	for _, s := range all {
+		if !s[1].After(cursor) {
+			continue
+		}
+		if n := len(st.Sent); n > 0 && !s[0].After(st.Sent[n-1][1]) {
+			if s[1].After(st.Sent[n-1][1]) {
+				st.Sent[n-1][1] = s[1]
+			}
+			continue
+		}
+		st.Sent = append(st.Sent, s)
+	}
 }
 
 // settle 决定这一轮上传哪些段、游标挪到哪。

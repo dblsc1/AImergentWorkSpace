@@ -282,10 +282,10 @@ type State struct {
 	// FailedParams：上一轮上传失败时用的合并参数（G / M），成功后清空。失败后改了 G / M，
 	// 重算出来的段起点会变，服务端按 startAt 防重就对不上，可能多出重复建议——要在日志里说出来。
 	FailedParams string `json:"failedParams,omitempty"`
-	// SentUntil：上一次整轮成功时的「现在 − G」；结束不晚于它的收口段那一轮已处理过，不再发。
-	// SentParams 是当时的合并参数，变了就不跳过（契约「按标签页分段」）。
-	SentUntil  time.Time `json:"sentUntil"`
-	SentParams string    `json:"sentParams,omitempty"`
+	// Sent：游标之后已经确认送达的段所占的时间区间 [开始, 结束]（按开始排、互不相接）。几条流交叠时游标会停在
+	// 没收口的段的开始处，这些区间里的活动下一轮重算时先挖掉，不会再算进任何段（契约「按标签页分段」）。
+	// 没有交叠时游标总在已送达的段之后，这里是空的。
+	Sent [][2]time.Time `json:"sent,omitempty"`
 	// Agents：状态文件桥的 key → 运行（v0.3）。与上面的游标由不同的 goroutine 写，都经 updateState。
 	Agents map[string]*agentRun `json:"agents,omitempty"`
 }
