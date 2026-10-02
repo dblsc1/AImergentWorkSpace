@@ -304,6 +304,9 @@ func applyRemoteSettings(cfg *Config, c *http.Client, base string) error {
 			Idle    Idle    `json:"idle"`
 			// v1.1 追加：null / 没有 = 用本机配置的 presence
 			Presence *bool `json:"presence"`
+			// v1.2 追加：没有这个键 / 名单 null = 用本机配置
+			SegmentByTitle     *bool    `json:"segmentByTitle"`
+			SegmentByTitleApps []string `json:"segmentByTitleApps"`
 		} `json:"settings"`
 	}
 	if err := json.Unmarshal(b, &r); err != nil {
@@ -312,6 +315,12 @@ func applyRemoteSettings(cfg *Config, c *http.Client, base string) error {
 	remotePresence.Store(nil)
 	if r.Settings != nil {
 		cfg.Privacy, cfg.Idle = r.Settings.Privacy, r.Settings.Idle
+		if r.Settings.SegmentByTitle != nil {
+			cfg.SegmentByTitle = r.Settings.SegmentByTitle
+		}
+		if r.Settings.SegmentByTitleApps != nil {
+			cfg.SegmentByTitleApps = r.Settings.SegmentByTitleApps
+		}
 		if p := r.Settings.Presence; p != nil {
 			cfg.Presence = *p
 			remotePresence.Store(p)

@@ -53,6 +53,8 @@
 > 「前台没换、但无操作」的时段作为低把握建议上传时打这个标。既有字段、端点行为一个不改。
 > 同版追加（`detector.settings.v1` v1.1）：设置文档顶层增可选 `presence`（`null` / 布尔，缺省 `null`），
 > 在网页上开关检测程序的在场心跳；严格校验同其余键。
+> 再追加（`detector.settings.v1` v1.2，2026-10-02）：顶层增可选 `segmentByTitle`（布尔，缺省 `true`）、
+> `segmentByTitleApps`（`null` / 字符串数组，缺省 `null`）——终端按标签页分段的开关与名单；严格校验同其余键。
 >
 > **v2.6（追加式）**：**分类规则存服务端，AI 助理起草、人一键应用。** 实现 `detector.rules.v1`
 > （`contracts/detector.rules.v1/contract.md`，规则形状、校验、草稿、状态码都以那里为准）：

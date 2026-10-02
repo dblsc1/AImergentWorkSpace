@@ -8,6 +8,7 @@
  *   radio 的 name = 枚举、textarea[data-list] = 每行一项的字符串数组、data-null 复选框勾上 = null（用本机名单）。
  * - 发出去的是「读进来的文档 + 表单改动」：服务端将来追加的键（比如 presence）原样带回去，不会被这页清掉。
  *   presence 只在文档里真有这个布尔时才出现一个勾选项；没有就不出现、也不发。
+ * - 分段两项（v1.2 的 segmentByTitle / segmentByTitleApps）总是显示、总是发：文档里没有（v1.1 存下的）就按缺省填。
  * - 强制脱敏（密码、密钥……）不在文档里，页面上是勾着的灰框，关不掉。
  * - 422 的 detail 形如「privacy.pathWhitelist: …」：按前缀挂到对应那一项下面，对不上就显示在表单底部。
  * 对外只挂 window.assistantSettings（纯函数，给单测用）。
@@ -28,9 +29,12 @@
       afkThresholdMinutes: 0, audibleAsPresent: false, focusAppsEnabled: false, focusApps: null,
       focusMaxMinutes: 60, idleSuggestions: false,
     },
+    // v1.2：终端按标签页分段。v1.1 存下的文档没有这两个键——fill() 按这里的缺省补上再填表。
+    segmentByTitle: true, segmentByTitleApps: null,
   };
   var LIMITS = {   // 契约「校验」：列表条数、每条长度；整数范围
     "privacy.pathWhitelist": [20, 200], "privacy.appOnlyApps": [200, 64], "idle.focusApps": [200, 64],
+    "segmentByTitleApps": [200, 64],
     "idle.afkThresholdMinutes": [0, 240], "idle.focusMaxMinutes": [1, 480],
   };
 
@@ -66,7 +70,7 @@
   // 整份文档的本地校验 → {字段: 说明}；空对象 = 没问题
   function validate(doc) {
     var errs = {};
-    ["privacy.pathWhitelist", "privacy.appOnlyApps", "idle.focusApps"].forEach(function (key) {
+    ["privacy.pathWhitelist", "privacy.appOnlyApps", "idle.focusApps", "segmentByTitleApps"].forEach(function (key) {
       var v = getPath(doc, key), lim = LIMITS[key];
       if (v === null) return;
       if (v.length > lim[0]) { errs[key] = "最多 " + lim[0] + " 条（现在 " + v.length + " 条）"; return; }
@@ -85,7 +89,7 @@
 
   // 422 detail「privacy.pathWhitelist: Value error, …」→「privacy.pathWhitelist」；对不上 → null
   function fieldOf(detail) {
-    var m = /^((?:privacy|idle)\.[A-Za-z]+|presence)\b/.exec(String(detail || ""));
+    var m = /^((?:privacy|idle)\.[A-Za-z]+|presence|segmentByTitleApps|segmentByTitle)\b/.exec(String(detail || ""));
     return m ? m[1] : null;
   }
 
@@ -220,6 +224,7 @@
   function fill(body) {
     loaded = body;
     base = body.settings ? clone(body.settings) : clone(DEFAULTS);
+    ["segmentByTitle", "segmentByTitleApps"].forEach(function (k) { if (base[k] === undefined) base[k] = DEFAULTS[k]; });
     var pkey = findPresence(base);
     presenceRow.hidden = !pkey;
     if (pkey) presenceEl.dataset.key = pkey; else delete presenceEl.dataset.key;

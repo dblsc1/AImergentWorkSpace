@@ -208,6 +208,7 @@ type redactor struct {
 	p        Privacy
 	appOnly  map[string]bool
 	browsers map[string]bool
+	tabs     map[string]bool // 按标签页分段的程序（已去掉浏览器）；segmentByTitle 关 = 空
 	white    []*regexp.Regexp
 	literals []literal // 本机用户名、主机名（usernames 选项）
 	// 离开判定（idle 节）也放这里：buildFragments 只收一个 redactor，它们和隐私项一样都是「这一轮的设置」。
@@ -237,6 +238,12 @@ func newRedactor(c Config) redactor {
 		focus = defaultFocusApps
 	}
 	r := redactor{p: c.Privacy, appOnly: nameSet(apps), browsers: nameSet(browsers), idle: c.Idle, focus: nameSet(focus)}
+	if on(c.SegmentByTitle) {
+		r.tabs = nameSet(tabApps(c))
+		for b := range r.browsers {
+			delete(r.tabs, b)
+		}
+	}
 	for _, w := range c.Privacy.PathWhitelist {
 		// 编译不过的跳过（少保留 = 更保守）；tick 开头的 check 已经把这种配置报成错了。
 		if re, err := regexp.Compile(w); err == nil {
@@ -321,6 +328,38 @@ func (r redactor) window(app, title string, tab *webTab) (string, string) {
 	}
 	t := r.text(title)
 	return t, a + "\x00" + titleKey(t)
+}
+
+func tabApps(c Config) []string {
+	if c.SegmentByTitleApps == nil {
+		return defaultTabApps
+	}
+	return c.SegmentByTitleApps
+}
+
+var (
+	reTabLead = regexp.MustCompile(`^[^\p{L}\p{N}]+`)
+	// 没起名字的 shell 标签页：标题是提示符「用户@主机: 当前目录」，cd 一下就变。
+	reTabPrompt = regexp.MustCompile(`^([^\s@]+@[^\s:]+:)(\s|$)`)
+)
+
+// tabKey：终端标签页的合并键（契约「按标签页分段」）。t 是隐私选项处理后的标题，app 已过 normApp。
+// 状态符号 / 转圈动画一直在变，不去掉的话同一个标签页会碎成很多键。
+// ponytail: 只认开头的符号、结尾的程序名和「用户@主机: 目录」形状的提示符；别的在标题中间变的（进度）认不出，
+// 真遇到再按程序定制。
+func tabKey(t, app string) string {
+	t = strings.Join(strings.Fields(t), " ")
+	if m := reTabPrompt.FindStringSubmatch(t); m != nil {
+		return strings.ToLower(m[1]) // 同一台主机上的 shell 标签页算一件事，换目录不拆
+	}
+	if m := reTitleSep.FindAllStringIndex(t, -1); len(m) > 0 {
+		last := m[len(m)-1]
+		if tail := normApp(t[last[1]:]); len(tail) >= 3 && strings.Contains(app, tail) {
+			t = t[:last[0]]
+		}
+	}
+	t = reTabLead.ReplaceAllString(reTitleNoise.ReplaceAllString(t, ""), "")
+	return strings.ToLower(strings.TrimSpace(t))
 }
 
 var (

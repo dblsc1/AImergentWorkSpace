@@ -1,6 +1,9 @@
 package main
 
-import "time"
+import (
+	"sort"
+	"time"
+)
 
 // segment 是合并后的一段，也是唯一会离开本机的东西（再加上分类建议）。
 type segment struct {
@@ -10,6 +13,7 @@ type segment struct {
 	Raw        string        // 本机原始标题（只过强制脱敏），只进留档
 	Sent       string        // 真正离开本机的标题（换过代号的就是代号）；tick 在分类前填
 	Idle       bool
+	parts      []span // 算进这段的碎片各自的起止：送达后记进 State.Sent
 }
 
 // merge 把碎片合成段，规则见 contract.md「合并」。frags 必须按 Start 排序、互不重叠
@@ -36,6 +40,7 @@ func merge(frags []fragment, gap time.Duration) []segment {
 		for _, f := range frags[i : last+1] {
 			d := f.End.Sub(f.Start)
 			seg.Active += d
+			seg.parts = append(seg.parts, span{f.Start, f.End})
 			if f.Key == first.Key {
 				byTitle[f.Title] += d
 			}
@@ -53,9 +58,85 @@ func merge(frags []fragment, gap time.Duration) []segment {
 	return out
 }
 
+// segments 把一轮的碎片合成全部候选段，按开始时刻排。三种流各自合并、互不吸收：
+//   - 普通碎片：merge 的老规则（中间夹着的异键碎片被吸收）；
+//   - 无操作碎片：同上，只在无操作碎片之间——混在一起会被当成「短暂切出去」算成在电脑前；
+//   - 标签页碎片：每个键一条流，单键的 merge 就是「间隔 ≤ G 接上」，Active 只有自己的碎片。
+//
+// 不同流的段墙钟跨度可以交叠。短于 1 秒的碎片不要：每段都从 ≥ 1 秒的碎片开始、碎片互不重叠，
+// 任何两段的 startAt（精确到秒）就一定不同，服务端按它防重。纯函数，同 merge。
+//
+// keepShort：升级后的第一轮（State.SentReady）要和老版本切得一模一样，短碎片也留着。
+func segments(frags []fragment, gap time.Duration, keepShort bool) []segment {
+	var act, idle []fragment
+	tabs := map[string][]fragment{}
+	for _, f := range frags {
+		switch {
+		case !keepShort && f.End.Sub(f.Start) < time.Second:
+		case f.Idle:
+			idle = append(idle, f)
+		case f.Tab:
+			tabs[f.Key] = append(tabs[f.Key], f)
+		default:
+			act = append(act, f)
+		}
+	}
+	out := append(merge(act, gap), merge(idle, gap)...)
+	for _, fs := range tabs {
+		out = append(out, merge(fs, gap)...)
+	}
+	// 开始时刻各不相同，所以 map 的遍历顺序不影响结果。
+	sort.Slice(out, func(i, j int) bool { return out[i].Start.Before(out[j].Start) })
+	return out
+}
+
+// unsent 从碎片里挖掉已经送达的区间（State.Sent）：送达过的活动不会再算进任何段，
+// 不管这一轮从哪重算、设置变没变。
+func unsent(frags []fragment, sent [][2]time.Time) []fragment {
+	if len(sent) == 0 {
+		return frags
+	}
+	holes := make([]span, len(sent))
+	for i, s := range sent {
+		holes[i] = span{s[0], s[1]}
+	}
+	var out []fragment
+	for _, f := range frags {
+		for _, p := range subtract(span{f.Start, f.End}, holes) {
+			f.Start, f.End = p.start, p.end
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// markSent 把刚确认送达的段记进 st.Sent（排序、相接的并成一条），再把游标挪到 cursor、丢掉游标之前的区间。
+func markSent(st *State, segs []segment, cursor time.Time) {
+	all := st.Sent
+	for _, s := range segs {
+		for _, p := range s.parts {
+			all = append(all, [2]time.Time{p.start, p.end})
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i][0].Before(all[j][0]) })
+	st.Cursor, st.Sent = cursor, nil
+	for _, s := range all {
+		if !s[1].After(cursor) {
+			continue
+		}
+		if n := len(st.Sent); n > 0 && !s[0].After(st.Sent[n-1][1]) {
+			if s[1].After(st.Sent[n-1][1]) {
+				st.Sent[n-1][1] = s[1]
+			}
+			continue
+		}
+		st.Sent = append(st.Sent, s)
+	}
+}
+
 // settle 决定这一轮上传哪些段、游标挪到哪。
 //   - 收口 = End+G ≤ now：之后不可能再有碎片并进来，这段定了。
-//   - 没收口的段一定是尾部（段按时间先后排、互不重叠），下一轮从第一个没收口段的开始处重算。
+//   - 下一轮从最早的没收口段的开始处重算（几条流交叠时，没收口的不一定在尾部）。
 //   - 短于 M 的收口段直接丢掉（游标越过它）。
 func settle(segs []segment, now time.Time, gap, min time.Duration) (upload []segment, cursor time.Time) {
 	cursor = now.Add(-gap)
@@ -64,7 +145,7 @@ func settle(segs []segment, now time.Time, gap, min time.Duration) (upload []seg
 			if s.Start.Before(cursor) {
 				cursor = s.Start
 			}
-			break
+			continue
 		}
 		if s.Active >= min {
 			upload = append(upload, s)

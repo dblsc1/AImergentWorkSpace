@@ -123,6 +123,9 @@ class DetectorSettings(_Strict):
     idle: Idle = Field(default_factory=Idle)
     # v1.1 追加（只增）：在场心跳开关。null = 用检测程序本机配置的 presence。
     presence: bool | None = None
+    # v1.2 追加（只增）：终端按标签页分段。名单 null = 用检测程序本机配置的名单（缺省内置终端名单）。
+    segmentByTitle: bool = True
+    segmentByTitleApps: Annotated[list[_Name], Field(max_length=200)] | None = None
 
     @field_validator("schemaVersion")
     @classmethod

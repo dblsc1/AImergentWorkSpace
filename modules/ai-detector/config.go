@@ -40,6 +40,9 @@ type Config struct {
 	AfkBucket    string   `json:"afkBucket"`
 	AppOnlyApps  []string `json:"appOnlyApps"`
 	BrowserApps  []string `json:"browserApps"`
+	// 终端类程序按标签页（程序 + 标题）各自成段，契约「按标签页分段」。nil = 开；名单 nil = defaultTabApps。
+	SegmentByTitle     *bool    `json:"segmentByTitle,omitempty"`
+	SegmentByTitleApps []string `json:"segmentByTitleApps,omitempty"`
 	// Privacy / Idle：与网页设置（contracts/detector.settings.v1）同形状；网页上设过就整节换成网页的。
 	Privacy     Privacy `json:"privacy"`
 	Idle        Idle    `json:"idle"`
@@ -165,6 +168,15 @@ var defaultFocusApps = []string{
 	"Feishu", "Lark", "飞书", "DingTalk", "钉钉", "Webex", "CiscoWebexStart", "Google Meet",
 }
 
+// defaultTabApps：终端（segmentByTitleApps 为 null 时用）。只增。
+var defaultTabApps = []string{
+	"gnome-terminal", "gnome-terminal-server", "org.gnome.Terminal", "org.gnome.Ptyxis", "ptyxis",
+	"org.gnome.Console", "kgx", "kitty", "Alacritty", "wezterm", "wezterm-gui", "org.wezfurlong.wezterm",
+	"konsole", "org.kde.konsole", "xterm", "tilix", "com.gexperts.Tilix", "foot", "footclient", "terminator",
+	"xfce4-terminal", "ghostty", "com.mitchellh.ghostty", "Terminal", "iTerm2", "iTerm", "WindowsTerminal",
+	"cmd", "powershell", "pwsh", "Warp", "dev.warp.Warp", "Hyper", "Tabby",
+}
+
 var defaultBrowsers = []string{
 	"chrome", "Google Chrome", "google-chrome", "chromium", "chromium-browser", "firefox",
 	"firefox-esr", "msedge", "Microsoft Edge", "microsoft-edge", "Safari", "brave", "Brave Browser",
@@ -270,6 +282,13 @@ type State struct {
 	// FailedParams：上一轮上传失败时用的合并参数（G / M），成功后清空。失败后改了 G / M，
 	// 重算出来的段起点会变，服务端按 startAt 防重就对不上，可能多出重复建议——要在日志里说出来。
 	FailedParams string `json:"failedParams,omitempty"`
+	// Sent：游标之后已经确认送达的段所占的时间区间 [开始, 结束]（按开始排、互不相接）。几条流交叠时游标会停在
+	// 没收口的段的开始处，这些区间里的活动下一轮重算时先挖掉，不会再算进任何段（契约「按标签页分段」）。
+	// 没有交叠时游标总在已送达的段之后，这里是空的。
+	Sent [][2]time.Time `json:"sent,omitempty"`
+	// SentReady：认得 Sent 的版本已经成功跑完过一轮。升级上来的状态文件没有它：那一轮先按老切法
+	// （不按标签页分段）跑，把老版本可能已经送达、游标却还停在它开头的段原样重算重发（服务端防重）并记进 Sent。
+	SentReady bool `json:"sentReady,omitempty"`
 	// Agents：状态文件桥的 key → 运行（v0.3）。与上面的游标由不同的 goroutine 写，都经 updateState。
 	Agents map[string]*agentRun `json:"agents,omitempty"`
 }

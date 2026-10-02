@@ -489,16 +489,6 @@ func TestClassifierReasonIsScrubbedBeforeUpload(t *testing.T) {
 	}
 }
 
-func TestSafeCursorNeverLandsInsideASegment(t *testing.T) {
-	segs := []segment{{Start: at(0), End: at(30)}, {Start: at(20), End: at(50)}, {Start: at(60), End: at(70)}}
-	for _, c := range []struct{ in, want float64 }{{25, 0}, {45, 0}, {55, 55}, {60, 60}, {65, 60}} {
-		if got := safeCursor(at(c.in), segs); !got.Equal(at(c.want)) {
-			t.Errorf("safeCursor(%v) = %v, want %v", c.in, got, at(c.want))
-		}
-	}
-}
-
-// 离开区间被裁到游标时，阈值、阅读上限仍按整段算；正在延续的离开照算离开。
 func TestIdleUsesWholeAFKSpan(t *testing.T) {
 	var gotStart string
 	aw := fakeAW(t, []awEvent{win(0, 120, "code", "x")},

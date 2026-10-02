@@ -23,6 +23,7 @@ DEFAULTS = {
                 "ips": True, "usernames": True, "longNumbers": True},
     "idle": {"afkThresholdMinutes": 0, "audibleAsPresent": False, "focusAppsEnabled": False, "focusApps": None,
              "focusMaxMinutes": 60, "idleSuggestions": False},
+    "segmentByTitle": True, "segmentByTitleApps": None,
 }
 
 CUSTOM = copy.deepcopy(DEFAULTS)
@@ -381,3 +382,58 @@ def test_form_locked_while_saving(browser, static_base_url):
         held[0].fallback()
         page.wait_for_selector("#det-message:not([hidden])")
         assert page.is_enabled('[data-key="privacy.emails"]')
+
+
+def test_segment_by_title_round_trip(browser, static_base_url):
+    """「终端按标签页分段」：缺省勾着 + 用本机名单；关掉、自己列名单后 PUT 出去的文档一字不差。"""
+    stub = DetectorStub()
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        assert "终端按标签页分段" in page.inner_text('[data-field="segmentByTitle"]')
+        assert page.is_checked('[data-key="segmentByTitle"]')
+        assert page.is_checked('[data-null="segmentByTitleApps"]') and page.is_disabled("#det-tab-apps")
+        assert page.is_hidden("#det-dirty")
+        page.uncheck('[data-null="segmentByTitleApps"]')
+        page.fill("#det-tab-apps", " org.gnome.Ptyxis \n\nkitty")
+        page.uncheck('[data-key="segmentByTitle"]')
+        assert page.is_visible("#det-dirty")
+        page.click("#det-save")
+        page.wait_for_selector("#det-message:not([hidden])")
+        want = copy.deepcopy(CUSTOM)
+        want.update({"segmentByTitle": False, "segmentByTitleApps": ["org.gnome.Ptyxis", "kitty"]})
+        assert puts(stub) == [("PUT", "settings", "dev_a", want)]
+        # 存回来的文档再填表：关着、名单是自己列的
+        assert not page.is_checked('[data-key="segmentByTitle"]')
+        assert page.input_value("#det-tab-apps") == "org.gnome.Ptyxis\nkitty" and page.is_enabled("#det-tab-apps")
+
+
+def test_segment_by_title_from_v1_1_document_defaults_on(browser, static_base_url):
+    """v1.1 存下的文档没有分段两项：按缺省显示（开 + 本机名单），不算有改动；保存时带上缺省值。"""
+    old = copy.deepcopy(CUSTOM)
+    del old["segmentByTitle"], old["segmentByTitleApps"]
+    stub = DetectorStub(settings={"dev_a": old, "dev_b": None})
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        assert page.is_checked('[data-key="segmentByTitle"]') and page.is_checked('[data-null="segmentByTitleApps"]')
+        assert page.is_hidden("#det-dirty")
+        page.uncheck('[data-key="privacy.ips"]')
+        page.click("#det-save")
+        page.wait_for_selector("#det-message:not([hidden])")
+        body = puts(stub)[0][3]
+        assert body["segmentByTitle"] is True and body["segmentByTitleApps"] is None
+
+
+def test_segment_apps_validation_and_422(browser, static_base_url):
+    stub = DetectorStub()
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        page.uncheck('[data-null="segmentByTitleApps"]')
+        page.fill("#det-tab-apps", "kitty\n" + "x" * 65)
+        page.click("#det-save")
+        err = page.locator('[data-field="segmentByTitleApps"] .field-error')
+        err.wait_for(state="visible")
+        assert "第 2 条" in err.inner_text() and puts(stub) == []
+        assert page.evaluate("document.activeElement.id") == "det-tab-apps"
+        r = page.evaluate("""() => ['segmentByTitleApps.0: too long', 'segmentByTitle: Input should be a valid boolean']
+            .map(d => window.assistantSettings.fieldOf(d))""")
+        assert r == ["segmentByTitleApps", "segmentByTitle"]
