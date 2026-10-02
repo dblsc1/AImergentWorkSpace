@@ -9,8 +9,10 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Request
+from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel, Field, ValidationError
+from starlette.concurrency import run_in_threadpool
 
 from ..timer.router import Mode
 from . import service
@@ -52,6 +54,7 @@ class Item(BaseModel):
     title: str
     suggestion: Suggestion
     idle: bool = False  # v2.5
+    rejectedTaskIds: list[str] = []  # v2.7：人否掉过的任务
     status: str
 
 
@@ -86,6 +89,25 @@ class DismissOut(BaseModel):
     status: str
 
 
+class MatchesIn(BaseModel):
+    matches: list[Any] = Field(max_length=200)  # 逐条校验在 service.match（坏的进 rejected，同上传）
+
+
+class MatchesOut(BaseModel):
+    matched: int
+    rejected: list[Rejected]
+
+
+class UnmatchIn(BaseModel):
+    taskId: str | None = None  # 人否掉的是哪个任务；给了且与当前建议不同 → 409
+
+
+class UnmatchOut(BaseModel):
+    id: str
+    status: str
+    rejectedTaskIds: list[str]
+
+
 @router.post("", response_model=UploadOut)
 def upload(body: UploadIn) -> dict:
     return service.upload(body.deviceId, body.segments)
@@ -109,3 +131,27 @@ def confirm(sugId: str, body: ConfirmIn | None = None) -> dict:  # noqa: N803 �
 @router.post("/{sugId}/dismiss", response_model=DismissOut)
 def dismiss(sugId: str) -> dict:  # noqa: N803
     return service.dismiss(sugId)
+
+
+# v2.7 的两个端点自己读请求体：设备令牌要在**看请求体之前**就 403（让 FastAPI 先解析的话，
+# 带 Bearer 的坏请求体会得到 422 而不是 403）。请求体不合形状仍是标准的 422。
+async def _body(request: Request, model: type[BaseModel]):
+    auth = request.headers.get("authorization")
+    service.forbid_device_token(auth)
+    raw = (await request.body()).strip()
+    try:
+        return auth, model() if raw in (b"", b"null") else model.model_validate_json(raw)
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors(include_url=False, include_context=False)) from exc
+
+
+@router.post("/matches", response_model=MatchesOut)
+async def match(request: Request) -> dict:
+    auth, body = await _body(request, MatchesIn)
+    return await run_in_threadpool(service.match, auth, body.matches)
+
+
+@router.post("/{sugId}/unmatch", response_model=UnmatchOut)
+async def unmatch(sugId: str, request: Request) -> dict:  # noqa: N803
+    auth, body = await _body(request, UnmatchIn)
+    return await run_in_threadpool(service.unmatch, auth, sugId, body.taskId)

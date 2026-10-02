@@ -36,7 +36,8 @@ ITEMS = [
 
 
 class SuggestStub:
-    """GET 返回 ``self.items``（None = 404，模拟老后端）；confirm/dismiss 记下并从列表里拿掉。"""
+    """GET 返回 ``self.items``（None = 404，模拟老后端）；confirm/dismiss 记下并从列表里拿掉；
+    unmatch 记下、把那条的任务清掉。"""
 
     def __init__(self, items: list[dict] | None) -> None:
         self.items = json.loads(json.dumps(items)) if items is not None else None
@@ -63,6 +64,13 @@ class SuggestStub:
         if sug_id in self.fail_ids:
             route.fulfill(status=404, content_type="application/json",
                           body=json.dumps({"detail": "任务不存在：'t_gone'"}, ensure_ascii=False))
+            return
+        if action == "unmatch":  # v2.7 人说「否」：条目留在待确认里，任务清掉并记住
+            item = next(i for i in self.items if i["id"] == sug_id)
+            item["rejectedTaskIds"] = [item["suggestion"]["taskId"]]
+            item["suggestion"] = {**item["suggestion"], "taskId": None, "confidence": 0, "reason": ""}
+            route.fulfill(status=200, content_type="application/json", body=json.dumps(
+                {"id": sug_id, "status": "pending", "rejectedTaskIds": item["rejectedTaskIds"]}))
             return
         self.items = [i for i in self.items if i["id"] != sug_id]
         route.fulfill(status=200, content_type="application/json",

@@ -75,8 +75,8 @@ def test_upload_then_list_newest_first_with_contract_shape(client, seeded):
     first, second = body["items"]
     assert first["startAt"] == newer.isoformat() and second["startAt"] == older.isoformat()
     assert set(first) == {"id", "deviceId", "startAt", "endAt", "durationSeconds", "app", "title",
-                          "suggestion", "idle", "status"}  # idle：v2.5 追加
-    assert first["idle"] is False
+                          "suggestion", "idle", "rejectedTaskIds", "status"}  # idle：v2.5；rejectedTaskIds：v2.7
+    assert first["idle"] is False and first["rejectedTaskIds"] == []
     assert first["status"] == "pending" and first["deviceId"] == DEV and first["durationSeconds"] == 100
     assert second["suggestion"] == {"taskId": task["id"], "confidence": 0.9, "reason": "规则 #1 命中",
                                     "classifier": "rules"}
@@ -426,3 +426,273 @@ def test_ttl_config_rejects_garbage():
     assert load_settings({**env, "NEXUS_SUGGESTION_TTL_DAYS": "3"}).suggestion_ttl_days == 3
     with pytest.raises(ConfigError, match="NEXUS_SUGGESTION_TTL_DAYS"):
         load_settings({**env, "NEXUS_SUGGESTION_TTL_DAYS": "0"})
+
+
+# ─────────────────────────────────────────── v2.7 AI 匹配：助理配任务，人答「是 / 否」
+
+MATCHES = f"{SUG}/matches"
+BEARER = {"Authorization": "Bearer " + "x" * 8}  # 形状像设备令牌即可，不是真凭据
+
+
+def _match(client, matches, headers=None):
+    resp = client.post(MATCHES, json={"matches": matches}, headers=headers or {})
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def test_match_sets_assistant_suggestion_without_confirming(client, seeded):
+    task = seeded["tasks"]["示例任务三"]
+    _upload(client, [_seg(_recent(10))])
+    sug_id = _pending(client)["items"][0]["id"]
+    before = _human_views(client)
+
+    out = _match(client, [{"id": sug_id, "taskId": task["id"], "confidence": 0.7, "reason": "标题里有 garden"}])
+    assert out == {"matched": 1, "rejected": []}
+    item = _pending(client)["items"][0]
+    assert item["status"] == "pending"
+    assert item["suggestion"] == {"taskId": task["id"], "confidence": 0.7, "reason": "标题里有 garden",
+                                  "classifier": "assistant"}
+    # 什么都没确认：台账、投影、导出一个字节不动
+    assert _session_events() == [] and _human_views(client) == before
+    # 助理可以改自己配的（重交幂等；整数 1 也收，reason 可省）
+    other = seeded["tasks"]["示例任务四"]
+    assert _match(client, [{"id": sug_id, "taskId": other["id"], "confidence": 1}])["matched"] == 1
+    assert _pending(client)["items"][0]["suggestion"] == {
+        "taskId": other["id"], "confidence": 1.0, "reason": "", "classifier": "assistant"}
+
+
+def test_match_rejects_per_index_without_failing_batch(client, seeded):
+    task = seeded["tasks"]["示例任务三"]
+    _upload(client, [_seg(_recent(10)), _seg(_recent(20)), _seg(_recent(30)),
+                     _seg(_recent(40), task_id=task["id"])])
+    newest, confirmed, dismissed, ruled = (i["id"] for i in _pending(client)["items"])
+    client.post(f"{SUG}/{confirmed}/confirm", json={"taskId": task["id"]})
+    client.post(f"{SUG}/{dismissed}/dismiss")
+    ok = {"taskId": task["id"], "confidence": 0.5, "reason": ""}
+
+    out = _match(client, [
+        {"id": newest, **ok},                                    # 0 收
+        {"id": "sug_nope", **ok},                                # 1 不存在
+        {"id": confirmed, **ok},                                 # 2 已确认
+        {"id": dismissed, **ok},                                 # 3 已忽略
+        {"id": newest, "taskId": "t_nope", "confidence": 0.5},   # 4 任务不存在
+        {"id": newest, **ok, "confidence": 1.5},                 # 5 越界
+        {"id": newest, **ok, "confidence": True},                # 6 布尔不是把握
+        {"id": newest, **ok, "reason": "字" * 67},               # 7 201 字节
+        {"id": newest, "taskId": None, "confidence": 0.5},       # 8 只能配到任务
+        {"id": newest, "projectId": "p_x", "confidence": 0.5},   # 9 不能只配到项目
+        "nope",                                                  # 10 不是对象
+        {"id": ruled, **ok},                                     # 11 规则已经配上的不盖
+    ])
+    assert out["matched"] == 1
+    assert [r["index"] for r in out["rejected"]] == list(range(1, 12))
+    assert all(r["reason"] for r in out["rejected"])
+    # 被拒的没动任何东西
+    assert _pending(client, status="confirmed")["items"][0]["suggestion"]["classifier"] == "rules"
+    assert _pending(client, status="dismissed")["items"][0]["suggestion"]["taskId"] is None
+    by_id = {i["id"]: i for i in _pending(client)["items"]}
+    assert by_id[ruled]["suggestion"]["classifier"] == "rules"
+    assert by_id[newest]["suggestion"]["taskId"] == task["id"]
+    assert len(_session_events()) == 1  # 只有上面人确认的那一条
+
+
+@pytest.mark.parametrize("body", [{}, {"matches": "x"}, {"matches": [{}] * 201}, []])
+def test_match_batch_shape_is_422(client, body):
+    assert client.post(MATCHES, json=body).status_code == 422
+
+
+def test_upload_cannot_claim_assistant(client):
+    seg = _seg(_recent())
+    seg["suggestion"]["classifier"] = "assistant"
+    out = _upload(client, [seg])
+    assert out["accepted"] == 0 and out["rejected"][0]["index"] == 0
+
+
+def test_device_token_cannot_match_or_unmatch(client, seeded):
+    task = seeded["tasks"]["示例任务三"]
+    _upload(client, [_seg(_recent(), task_id=task["id"])])
+    sug_id = _pending(client)["items"][0]["id"]
+    body = {"matches": [{"id": sug_id, "taskId": task["id"], "confidence": 0.5}]}
+    assert client.post(MATCHES, json=body, headers=BEARER).status_code == 403
+    assert client.post(MATCHES, json=body, headers={"Authorization": "  bearer x"}).status_code == 403
+    assert client.post(f"{SUG}/{sug_id}/unmatch", headers=BEARER).status_code == 403
+    # 403 先于请求体校验：带 Bearer 的坏请求体也是 403，不是 422
+    assert client.post(MATCHES, json={}, headers=BEARER).status_code == 403
+    assert client.post(MATCHES, content=b"{not json", headers=BEARER).status_code == 403
+    assert client.post(f"{SUG}/{sug_id}/unmatch", json={"taskId": 1}, headers=BEARER).status_code == 403
+    # 不带 Bearer 的坏请求体照旧 422
+    assert client.post(MATCHES, content=b"{not json").status_code == 422
+    assert client.post(f"{SUG}/{sug_id}/unmatch", json={"taskId": 1}).status_code == 422
+    assert _pending(client)["items"][0]["suggestion"]["classifier"] == "rules"  # 403 在任何写入之前
+
+
+def test_unmatch_clears_and_remembers_rejected_task(client, seeded):
+    task, other = seeded["tasks"]["示例任务三"], seeded["tasks"]["示例任务四"]
+    _upload(client, [_seg(_recent())])
+    sug_id = _pending(client)["items"][0]["id"]
+    _match(client, [{"id": sug_id, "taskId": task["id"], "confidence": 0.7, "reason": "猜的"}])
+
+    # 页面上看到的任务与当前的不一样（助理刚换过）→ 409，什么都不动
+    assert client.post(f"{SUG}/{sug_id}/unmatch", json={"taskId": other["id"]}).status_code == 409
+    resp = client.post(f"{SUG}/{sug_id}/unmatch", json={"taskId": task["id"]})
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"id": sug_id, "status": "pending", "rejectedTaskIds": [task["id"]]}
+    item = _pending(client)["items"][0]
+    assert item["suggestion"] == {"taskId": None, "confidence": 0.0, "reason": "", "classifier": "assistant"}
+    assert item["rejectedTaskIds"] == [task["id"]]
+    # 再否一次（没有请求体）：幂等
+    assert client.post(f"{SUG}/{sug_id}/unmatch").json()["rejectedTaskIds"] == [task["id"]]
+
+    # 助理不许再配同一个；换一个可以
+    out = _match(client, [{"id": sug_id, "taskId": task["id"], "confidence": 0.9},
+                          {"id": sug_id, "taskId": other["id"], "confidence": 0.6}])
+    assert out["matched"] == 1 and [r["index"] for r in out["rejected"]] == [0]
+    assert _pending(client)["items"][0]["suggestion"]["taskId"] == other["id"]
+    # 人自己挑回被否过的任务确认：照常可以（否的是助理的猜测，不是人的选择）
+    assert client.post(f"{SUG}/{sug_id}/confirm", json={"taskId": task["id"]}).status_code == 200
+    assert client.post(f"{SUG}/{sug_id}/unmatch").status_code == 409  # 已确认的不能再否
+    assert client.post(f"{SUG}/sug_nope/unmatch").status_code == 404
+
+
+def test_confirm_after_match_writes_fact_with_assistant_confidence(client, seeded):
+    task = seeded["tasks"]["示例任务三"]
+    _upload(client, [_seg(_recent(), active=120)])
+    sug = _pending(client)["items"][0]
+    _match(client, [{"id": sug["id"], "taskId": task["id"], "confidence": 0.65, "reason": "r"}])
+
+    resp = client.post(f"{SUG}/{sug['id']}/confirm", json={"taskId": task["id"]})  # 人说「是」
+    assert resp.status_code == 200, resp.text
+    (event,) = _session_events()
+    assert event["source"] == "activity-confirmed" and event["subject"]["task"] == task["id"]
+    assert event["data"] == {"durationSeconds": 120, "startAt": sug["startAt"]}
+    assert event["ai"] == {"generated": True, "confidence": 0.65, "confirmed": True}
+
+
+def test_match_tenant_isolation(client):
+    _upload(client, [_seg(_recent())], headers=A)
+    sug_id = _pending(client, headers=A)["items"][0]["id"]
+    task = client.post(f"{API}/planner/zones", json={"name": "z"}, headers=A)
+    assert task.status_code in (200, 201), task.text
+    proj = client.post(f"{API}/planner/projects", json={"zoneId": task.json()["id"], "name": "p"}, headers=A).json()
+    t_a = client.post(f"{API}/planner/tasks", json={"projectId": proj["id"], "name": "t"}, headers=A).json()["id"]
+    one = [{"id": sug_id, "taskId": t_a, "confidence": 0.5}]
+    # B 看不见 A 的建议，也看不见 A 的任务
+    assert _match(client, one, headers=B) == {"matched": 0, "rejected": [
+        {"index": 0, "reason": f"活动建议不存在：{sug_id!r}"}]}
+    assert client.post(f"{SUG}/{sug_id}/unmatch", headers=B).status_code == 404
+    assert _pending(client, headers=A)["items"][0]["suggestion"]["taskId"] is None
+    assert _match(client, one, headers=A)["matched"] == 1
+
+
+def test_bodyless_confirm_racing_an_unmatch_does_not_record_rejected_task(client, seeded, monkeypatch):
+    """不带 taskId 的确认读到任务 A 之后、占位之前，人把 A 否掉了：确认必须 409，不能把时间记到 A。"""
+    from app.modules.activity import repo, service  # noqa: PLC0415
+
+    task = seeded["tasks"]["示例任务三"]
+    _upload(client, [_seg(_recent())])
+    sug_id = _pending(client)["items"][0]["id"]
+    _match(client, [{"id": sug_id, "taskId": task["id"], "confidence": 0.7}])
+    real, seen = repo.claim, {}
+
+    def racing(*args, **kwargs):
+        if "unmatch" not in seen:
+            seen["unmatch"] = client.post(f"{SUG}/{sug_id}/unmatch").status_code
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(service.repo, "claim", racing)
+    assert client.post(f"{SUG}/{sug_id}/confirm", json={}).status_code == 409
+    assert seen["unmatch"] == 200 and _session_events() == []
+    item = _pending(client)["items"][0]
+    assert item["suggestion"]["taskId"] is None and item["rejectedTaskIds"] == [task["id"]]
+
+
+def test_bodyless_confirm_never_backfills_a_superseded_task(client, seeded, monkeypatch):
+    """确认甲读到任务 A → 人否掉 A、助理换成 B → 确认乙已占位但事实还没写：甲补写只能写 B，不能写 A。"""
+    from app.modules.activity import repo, service  # noqa: PLC0415
+
+    old, new = seeded["tasks"]["示例任务三"], seeded["tasks"]["示例任务四"]
+    _upload(client, [_seg(_recent())])
+    sug_id = _pending(client)["items"][0]["id"]
+    _match(client, [{"id": sug_id, "taskId": old["id"], "confidence": 0.7}])
+    real, seen = repo.claim, {}
+
+    def racing(*args, **kwargs):
+        if not seen:
+            seen["unmatch"] = client.post(f"{SUG}/{sug_id}/unmatch").status_code
+            seen["match"] = _match(client, [{"id": sug_id, "taskId": new["id"], "confidence": 0.4}])["matched"]
+            real(args[0], sug_id, args[2])  # 确认乙：占了位，还没写事实
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(service.repo, "claim", racing)
+    assert client.post(f"{SUG}/{sug_id}/confirm", json={}).status_code == 200
+    assert seen == {"unmatch": 200, "match": 1}
+    (event,) = _session_events()
+    assert event["subject"]["task"] == new["id"] and event["ai"]["confidence"] == 0.4
+
+
+def test_confirm_uses_confidence_as_of_the_claim(client, seeded, monkeypatch):
+    """确认读到把握 0.9 之后、占位之前，助理把同一个任务重配成 0.2：事实里记的是 0.2。"""
+    from app.modules.activity import repo, service  # noqa: PLC0415
+
+    task = seeded["tasks"]["示例任务三"]
+    _upload(client, [_seg(_recent())])
+    sug_id = _pending(client)["items"][0]["id"]
+    _match(client, [{"id": sug_id, "taskId": task["id"], "confidence": 0.9}])
+    real, seen = repo.claim, {}
+
+    def racing(*args, **kwargs):
+        if not seen:
+            seen["match"] = _match(client, [{"id": sug_id, "taskId": task["id"], "confidence": 0.2}])["matched"]
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(service.repo, "claim", racing)
+    assert client.post(f"{SUG}/{sug_id}/confirm", json={}).status_code == 200
+    (event,) = _session_events()
+    assert seen == {"match": 1} and event["ai"]["confidence"] == 0.2
+
+
+def test_failed_confirm_does_not_reopen_a_record_another_confirm_holds(client, seeded, monkeypatch):
+    """确认甲（任务不存在）占位 → 确认乙加入 → 甲写失败：不许把状态放回 pending（乙还占着）。反过来也一样。"""
+    from app.modules.activity import service  # noqa: PLC0415
+
+    task = seeded["tasks"]["示例任务三"]
+    _upload(client, [_seg(_recent())])
+    sug_id = _pending(client)["items"][0]["id"]
+    _match(client, [{"id": sug_id, "taskId": task["id"], "confidence": 0.7}])
+    real, seen = service.timer_service.record_session, {}
+
+    def racing(task_id, *args, **kwargs):
+        if task_id == "t_nope" and not seen:
+            seen["b"] = "started"
+            seen["b"] = client.post(f"{SUG}/{sug_id}/confirm", json={}).status_code   # 乙：接手并写成
+        return real(task_id, *args, **kwargs)
+
+    monkeypatch.setattr(service.timer_service, "record_session", racing)
+    assert client.post(f"{SUG}/{sug_id}/confirm", json={"taskId": "t_nope"}).status_code == 404
+    assert seen == {"b": 200}
+    assert _pending(client)["total"] == 0 and _pending(client, status="confirmed")["total"] == 1
+    (event,) = _session_events()
+    assert event["subject"]["task"] == task["id"]
+    # 没人接手时照旧放回 pending
+    _upload(client, [_seg(_recent(30))])
+    other = _pending(client)["items"][0]["id"]
+    monkeypatch.setattr(service.timer_service, "record_session", real)
+    assert client.post(f"{SUG}/{other}/confirm", json={"taskId": "t_nope"}).status_code == 404
+    assert [i["id"] for i in _pending(client)["items"]] == [other]
+    # 反过来：甲（任务对）占位、正要写 → 乙（任务不存在）加入、失败 → 不放回；甲写成后状态是已确认
+    _upload(client, [_seg(_recent(50))])
+    third = next(i["id"] for i in _pending(client)["items"] if i["id"] != other)
+    seen.clear()
+
+    def racing2(task_id, *args, **kwargs):
+        if task_id == task["id"] and not seen:
+            seen["b"] = "started"
+            seen["b"] = client.post(f"{SUG}/{third}/confirm", json={"taskId": "t_nope"}).status_code
+            assert [i["id"] for i in _pending(client)["items"]] == [other]   # 乙失败后 third 没回到待确认
+        return real(task_id, *args, **kwargs)
+
+    monkeypatch.setattr(service.timer_service, "record_session", racing2)
+    assert client.post(f"{SUG}/{third}/confirm", json={"taskId": task["id"]}).status_code == 200
+    assert seen == {"b": 404}
+    assert {i["id"] for i in _pending(client, status="confirmed")["items"]} == {sug_id, third}
+    assert len(_session_events()) == 2
