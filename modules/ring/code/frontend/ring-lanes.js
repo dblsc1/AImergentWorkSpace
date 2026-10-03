@@ -2,6 +2,8 @@
  * ring-lanes.js —— 计时页的「泳道」主视图（nexus-core v2.4 `views.lanes.v1`，ring 契约同名条）
  *
  * 圆环下方整宽、默认展开：人一条线在最上，下面每个代理运行一条线，连线表示人回话 / 人在看。
+ * 2026-10-03 起画成卡片（ring 契约同日条）：人一张卡钉在最前（卡头写此刻在电脑前 / 离开 / 不在线），
+ * 代理按「在等你的在前 → 视窗内活跃秒数 → 最近转入」排，前 5 张展开，其余收进「还有 N 个」。
  * 缺省「最近 3 小时」实时窗口（读今天，跨零点读昨天 + 今天，本地按响应的 now 裁），可切「今天」。
  * 画图交给共享的 <前缀>__cockpit/lanes.js（顶栏芯片的精简预览用的是同一份，配色、段的推法一致）。
  *
@@ -39,23 +41,24 @@
       v1 = Date.parse(last.windowEnd);
       v0 = v1 - DAY;
     }
+    var infos = L.render(view, last, {
+      viewStart: v0, viewEnd: v1, presence: true, cards: true, top: 5,
+      focusFallback: document.getElementById("lanes-title"),   // 「还有 N 个」重画后没了时焦点落这里
+      more: last.truncated ? "还有更多（只列出了最新的一部分）" : ""
+    });
+    // 标题红绿灯：复用 render 排好的 runInfo（在跑的运行一定与视窗重叠，都在里面），不再逐个排 phases
     var live = { working: 0, waiting: 0, error: 0 };
-    (last.agents || []).forEach(function (r) {
-      if (r.endAt) return;
-      var ph = L.currentPhase(r);
-      if (ph === "working") live.working += 1;
-      else if (ph === "error") live.error += 1;
-      else if (ph !== "idle") live.waiting += 1;
+    infos.forEach(function (k) {
+      if (k.r.endAt) return;
+      if (k.ph === "working") live.working += 1;
+      else if (k.ph === "error") live.error += 1;
+      else if (k.ph !== "idle") live.waiting += 1;
     });
     var bits = [];
     if (live.waiting) bits.push(live.waiting + " 个在等你");
     if (live.working) bits.push(live.working + " 个在干活");
     if (live.error) bits.push(live.error + " 个出错");
     stateEl.textContent = bits.join(" · ");
-    L.render(view, last, {
-      viewStart: v0, viewEnd: v1, presence: true,
-      more: last.truncated ? "还有更多（只列出了最新的一部分）" : ""
-    });
   }
 
   async function load() {

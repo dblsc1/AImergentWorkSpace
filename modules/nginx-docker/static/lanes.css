@@ -60,10 +60,14 @@
 .hcl-seg.is-overdue {
   background: repeating-linear-gradient(90deg, var(--hcl-c) 0 6px, transparent 6px 10px);
 }
-/* 在场细带：贴人那条线下缘；离开画斜线 */
-.hcl-presence { top: auto; height: 4px; bottom: -6px; background: var(--ink-2); opacity: .55; }
-.hcl-presence.is-afk {
-  background: repeating-linear-gradient(135deg, var(--ink-3) 0 2px, transparent 2px 4px); opacity: 1;
+/* 人那条线分上下两半（2026-10-03）：上半是计时记下的段（实心），下半是在场（同色系浅填 = 人在电脑前、
+ * 还没归进任何计时；离开画斜线）。两半不互相盖住，悬停各说各的。 */
+.hcl-track.hcl-track-human { height: 80%; }
+.hcl-track-human .hcl-seg.hcl-human { bottom: 42%; }
+.hcl-seg.hcl-presence, .hcl-swatch.hcl-presence { background: color-mix(in srgb, var(--fact) 32%, transparent); }
+.hcl-track-human .hcl-seg.hcl-presence { top: 64%; }
+.hcl-seg.hcl-presence.is-afk, .hcl-swatch.hcl-presence.is-afk {
+  background: repeating-linear-gradient(135deg, var(--ink-3) 0 2px, transparent 2px 4px);
 }
 
 /* 只有在跑运行的最后一段闪：绿慢、黄快 */
@@ -72,6 +76,9 @@
 .hcl-dot.hcl-ph-working { animation: hcl-blink 2.4s ease-in-out infinite; }
 .hcl-dot.hcl-ph-waiting { animation: hcl-blink .9s ease-in-out infinite; }
 .hcl-dot.hcl-ph-human { background: var(--fact); }
+/* 人此刻的状态（humanStatus）：在电脑前 = 事实青、离开 / 不在线 = 灰 */
+.hcl-st-present { --hcl-c: var(--fact); }
+.hcl-st-away, .hcl-st-offline, .is-ended { --hcl-c: var(--ink-3); }
 @keyframes hcl-blink { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) {
   .hcl-seg.is-live, .hcl-dot { animation: none !important; }
@@ -88,6 +95,10 @@
 .hcl-now { position: absolute; top: 0; bottom: 0; border-left: 1px dashed var(--ink); opacity: .6; }
 
 .hcl-empty, .hcl-more { color: var(--ink-3); }
+.hcl-status {
+  margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2);
+}
+.hcl-status.hcl-st-present { color: var(--ink); }
 a.hcl-more { color: var(--ink-2); }
 
 /* 图例 */
@@ -105,3 +116,55 @@ a.hcl-more { color: var(--ink-2); }
   pointer-events: none; overflow-wrap: anywhere;
 }
 .hcl-tip.is-on { display: block; }
+
+/* ── 卡片式（计时页，2026-10-03）：人一张卡钉在最前，代理按活跃排，前 5 张展开，其余收进「还有 N 个」。
+ * 各卡左右内边距相同，轨道与最上面那一条时间轴对齐。 */
+.hcl-cards { --hcl-card-pad: var(--sp-3); gap: var(--sp-3); }
+.hcl-cards .hcl-label-spacer { flex-basis: calc(var(--hcl-card-pad) + 1px); }
+.hcl-cards .hcl-axis-row { padding-right: calc(var(--hcl-card-pad) + 1px); }
+.hcl-deck { display: grid; gap: var(--sp-2); min-width: 0; }
+.hcl-card {
+  display: grid; gap: var(--sp-2); min-width: 0;
+  padding: var(--sp-2) var(--hcl-card-pad) var(--sp-3);
+  background: var(--bg); border: 1px solid var(--line); border-radius: var(--r-2);
+}
+/* 在等你的：左侧一道黄、底色带一点黄（「要你」的那几张） */
+.hcl-card.is-needs-you {
+  border-color: var(--agent-wait);
+  background: color-mix(in srgb, var(--agent-wait) 8%, var(--bg));
+  box-shadow: inset 3px 0 0 var(--agent-wait);
+}
+.hcl-card-head {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-2); min-width: 0;
+}
+.hcl-card-head .hcl-name { font-size: var(--fs-body); min-width: 0; max-width: 100%; }
+.hcl-pill {
+  display: inline-flex; align-items: center; gap: var(--sp-1); flex: none;
+  padding: 1px var(--sp-2); border-radius: 999px; border: 1px solid var(--hcl-c);
+  background: color-mix(in srgb, var(--hcl-c) 14%, var(--panel));
+  color: var(--ink); font-size: var(--fs-eyebrow); font-weight: 600; line-height: 1.5;
+}
+.hcl-pill.hcl-ph-human { --hcl-c: var(--fact); }
+.hcl-pill.hcl-ph-waiting { background: color-mix(in srgb, var(--hcl-c) 28%, var(--panel)); font-weight: 700; }
+.hcl-stat {
+  margin-left: auto; min-width: 0; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--fs-eyebrow); color: var(--ink-2);
+}
+.hcl-cards .hcl-track { flex: none; width: 100%; height: 16px; background: var(--panel); }
+.hcl-cards .hcl-track.hcl-track-human { height: 26px; }
+.hcl-cards .hcl-now { top: -3px; bottom: -3px; }
+.hcl-cards .hcl-reply { top: -3px; bottom: -3px; height: auto; pointer-events: auto; }
+.hcl-cards .hcl-attend { top: 0; bottom: 0; height: auto; pointer-events: auto; }
+/* 折叠区：原生 <details>，收起时只露一行「还有 N 个」 */
+.hcl-fold > summary {
+  cursor: pointer; padding: var(--sp-1) 0; color: var(--ink-2); font-size: var(--fs-sub);
+}
+.hcl-fold > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-1); }
+.hcl-fold[open] > summary { margin-bottom: var(--sp-2); }
+.hcl-fold .hcl-card { padding-block: var(--sp-1) var(--sp-2); gap: var(--sp-1); }
+.hcl-fold .hcl-track { height: 10px; }
+@container (max-width: 480px) {
+  .hcl-cards { --hcl-card-pad: var(--sp-2); }
+  .hcl-stat { margin-left: 0; flex-basis: 100%; }
+}
