@@ -175,11 +175,6 @@ def proposal_claim_create(user: str, proposal_id: str, at: datetime) -> bool:
     return _proposals_col().update_one(filt, {"$set": {"createClaimedAt": at}}).matched_count > 0
 
 
-def proposal_unclaim_create(user: str, proposal_id: str) -> None:
-    """占到的那一次建任务报错了（任务没建成）：放掉，人可以再试。"""
-    _proposals_col().update_one({"user": user, "id": proposal_id}, {"$set": {"createClaimedAt": None}})
-
-
 def proposal_reject_if_unused(user: str, proposal_id: str, at: datetime) -> None:
     """没有待确认的建议还指着它、且没建成 → 标已否掉（助理不许再提）。"""
     if _col().count_documents({"user": user, "status": "pending", "suggestion.newTask.proposalId": proposal_id},

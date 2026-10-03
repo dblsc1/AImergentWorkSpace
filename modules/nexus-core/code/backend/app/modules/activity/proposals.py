@@ -90,7 +90,8 @@ def task_for(user: str, proposal_id: str, name: str | None, request) -> str:
     3. 任务已在 → 直接用。不在 → 先在提议上**持久地**占「建」（``createClaimedAt`` 空 → 现在，条件更新），
        只有占到的那一次去建。planner 的删除是硬删除，任务表里不留痕，所以「这个 id 建过没有」只能记在这里：
        占过之后任务不在 = 正在建，或建过又被删了 / 建的那一次崩了——等一会儿还不出现就 404，**绝不再建**
-       （planner「id 不可复用」）。建的那一次自己报错（项目已删等）会放掉占位，人可以再试。
+       （planner「id 不可复用」）。占位**永不放掉**：建的那一次报错（项目已删等）也一样——报错时可能其实已经插进去、
+       又被并发地删掉了，放掉就可能建回来。代价：这条提议再也建不出任务，人改选现成任务（安全失败）。
     """
     repo.proposal_accept(user, proposal_id, name, datetime.now(timezone.utc))
     p = repo.proposal_get(user, proposal_id)
@@ -102,16 +103,11 @@ def task_for(user: str, proposal_id: str, name: str | None, request) -> str:
     if planner_service.get_task(tid) is not None:
         return tid
     if repo.proposal_claim_create(user, proposal_id, datetime.now(timezone.utc)):
-        try:
-            guard.run_write(
-                request, op=audit.OP_CREATE, object_type="tasks",
-                changes={"projectId": p["projectId"], "name": p["name"]},
-                action=lambda actor: planner_service.create_task(p["name"], p["projectId"], actor=actor, task_id=tid),
-            )
-        except Exception:
-            if planner_service.get_task(tid) is None:
-                repo.proposal_unclaim_create(user, proposal_id)
-            raise
+        guard.run_write(
+            request, op=audit.OP_CREATE, object_type="tasks",
+            changes={"projectId": p["projectId"], "name": p["name"]},
+            action=lambda actor: planner_service.create_task(p["name"], p["projectId"], actor=actor, task_id=tid),
+        )
         return tid
     # 别人占着「建」：等它建好（同一组几段并发确认时）；等不到 = 建过又删了 / 那一次崩了
     deadline = time.monotonic() + WAIT_SECONDS

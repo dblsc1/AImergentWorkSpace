@@ -213,10 +213,35 @@ def test_concurrent_confirms_create_exactly_one_task(client, seeded, monkeypatch
     assert len(_session_events()) == len(ids)
 
 
-def test_crash_after_accept_retry_creates_with_the_chosen_name(client, seeded, monkeypatch):
-    """接受了提议（名字已定）之后、建任务之前崩了：重试照样补建，名字是第一次定下的，id 是预留的。"""
+def test_crash_before_claim_retry_creates_with_the_chosen_name(client, seeded, monkeypatch):
+    """接受了提议（名字已定）之后、占「建」之前崩了：重试照样建，名字是第一次定下的，id 是预留的。"""
     from app.modules.activity import proposals  # noqa: PLC0415
 
+    ids, pid = _setup(client, seeded, n=2)
+    _propose(client, ids, pid)
+    prop = _pid(client, ids[0])
+    reserved = _db()["activity_task_proposals"].find_one({"id": prop})["taskId"]
+    real = proposals.repo.proposal_claim_create
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("崩在占建之前")
+
+    monkeypatch.setattr(proposals.repo, "proposal_claim_create", boom)
+    with pytest.raises(RuntimeError):
+        _yes(client, ids[0], prop, name="改过的名字")
+    assert _pending(client)["total"] == 2 and _db()["tasks"].count_documents({"id": reserved}) == 0
+    monkeypatch.setattr(proposals.repo, "proposal_claim_create", real)
+    resp = _yes(client, ids[1], prop, name="后来的名字")   # 另一段、另一个名字重试
+    assert resp.status_code == 200 and resp.json()["taskId"] == reserved
+    (task,) = _tasks_named("改过的名字")
+    assert task["id"] == reserved and _tasks_named("后来的名字") == []
+
+
+def test_create_failure_after_claim_never_releases(client, seeded, monkeypatch):
+    """占到「建」之后建任务报错：占位不放（报错时可能其实已插进去又被并发删掉），这条提议再也不建，安全失败。"""
+    from app.modules.activity import proposals  # noqa: PLC0415
+
+    monkeypatch.setattr(proposals, "WAIT_SECONDS", 0.3)
     ids, pid = _setup(client, seeded, n=2)
     _propose(client, ids, pid)
     prop = _pid(client, ids[0])
@@ -224,17 +249,19 @@ def test_crash_after_accept_retry_creates_with_the_chosen_name(client, seeded, m
     real = proposals.planner_service.create_task
 
     def boom(*args, **kwargs):
-        raise RuntimeError("崩在建任务")
+        raise RuntimeError("建任务报错")
 
     monkeypatch.setattr(proposals.planner_service, "create_task", boom)
     with pytest.raises(RuntimeError):
-        _yes(client, ids[0], prop, name="改过的名字")
-    assert _pending(client)["total"] == 2 and _db()["tasks"].count_documents({"id": reserved}) == 0
+        _yes(client, ids[0], prop)
     monkeypatch.setattr(proposals.planner_service, "create_task", real)
-    resp = _yes(client, ids[1], prop, name="后来的名字")   # 另一段、另一个名字重试
-    assert resp.status_code == 200 and resp.json()["taskId"] == reserved
-    (task,) = _tasks_named("改过的名字")
-    assert task["id"] == reserved and _tasks_named("后来的名字") == []
+    assert _db()["activity_task_proposals"].find_one({"id": prop})["createClaimedAt"] is not None
+    for sug_id in ids:
+        assert _yes(client, sug_id, prop).status_code == 404
+    assert _db()["tasks"].count_documents({"id": reserved}) == 0 and _session_events() == []
+    assert _pending(client)["total"] == 2   # 段都还在，人可以改选现成任务
+    task = seeded["tasks"]["示例任务三"]
+    assert client.post(f"{SUG}/{ids[0]}/confirm", json={"taskId": task["id"]}).status_code == 200
 
 
 def test_confirm_is_bound_to_the_displayed_proposal(client, seeded):
