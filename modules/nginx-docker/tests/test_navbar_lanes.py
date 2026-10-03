@@ -142,8 +142,13 @@ def test_hover_opens_human_plus_four_agents_in_priority_order(browser) -> None:
         # 同一套配色与段：plot 末段是在等（黄）且在闪
         assert page.eval_on_selector(f"{POP} [data-run-id=run_c] .is-live", "n => n.className") == \
             "hcl-seg hcl-ph-waiting is-live"
-        # 预览不画在场细带、不写秒数合计
-        assert page.locator(f"{POP} .hcl-presence").count() == 0
+        # 2026-10-03 起预览也画在场（人那条线下半），最上一行写人此刻的状态：在电脑前 + 在计时（优先于前台程序）
+        assert page.locator(f"{POP} .hcl-track-human .hcl-seg.hcl-presence").count() == 3
+        assert page.text_content(f"{POP} .hcl-status") == "我：在电脑前 · 计时中 · 10:00 起"
+        assert page.text_content(f"{POP} .hcl-row-human .hcl-sub") == "计时中"
+        # 预览仍是列表式（不是计时页的卡片），不写活跃分钟
+        assert page.locator(f"{POP} .hcl-card").count() == 0
+        assert page.locator(f"{POP} .hcl-stat").count() == 0
         # 读屏摘要
         assert "plot：等你回话" in page.text_content(f"{POP} [data-hcl-summary]")
         assert site.lanes_urls[0].endswith("/api/core/views/lanes")

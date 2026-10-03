@@ -454,7 +454,7 @@
       var L = window.HoneycombLanes, now = Date.parse(lanesLast.now), v0 = now - HOUR_MS;
       var pick = L.pickPreview(lanesLast.agents, v0, 4);
       L.render(popBody, lanesLast, {
-        viewStart: v0, viewEnd: now + HOUR_MS * 0.03, agents: pick.shown, compact: true,
+        viewStart: v0, viewEnd: now + HOUR_MS * 0.03, agents: pick.shown, compact: true, presence: true,
         more: pick.more ? '还有 ' + pick.more + ' 个 → 计时页' : '', moreHref: chip.getAttribute('href'),
         focusFallback: popGo
       });
