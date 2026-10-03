@@ -89,12 +89,15 @@
     return out;
   }
 
-  // 组的建议：有建议的段都指向同一个任务才算（把握取最小），指向不同任务 → mixed，让人挑。
+  // 组的建议：**每一段**都建议同一个任务才算（把握取最小）。有的段指向别的任务、有的没建议（比如「否」只成功了一半，
+  // 那几段的建议已清掉）→ mixed，让人挑——否则「是」会把已否掉的那段也记到同一个任务上。
   function groupSuggestion(g) {
     var withTask = g.items.filter(function (it) { return it.suggestion && it.suggestion.taskId; });
     if (!withTask.length) return { taskId: null };
     var s0 = withTask[0].suggestion;
-    if (withTask.some(function (it) { return it.suggestion.taskId !== s0.taskId; })) return { taskId: null, mixed: true };
+    if (withTask.length < g.items.length || withTask.some(function (it) { return it.suggestion.taskId !== s0.taskId; })) {
+      return { taskId: null, mixed: true };
+    }
     return {
       taskId: s0.taskId, reason: s0.reason,
       confidence: Math.min.apply(null, withTask.map(function (it) {
@@ -180,7 +183,15 @@
     return Number.isFinite(v) && thresholdEl.value !== "" ? Math.min(Math.max(v, 0), 100) / 100 : 0.8;
   }
 
-  function taskSelect(g, suggested) {
+  // 一组此刻显示的样子。下拉的选择按「组 + 组此刻的建议」记：重拉后建议变了（比如助理刚配了任务），旧的选择自然作废，
+  // 行上的按钮与「全部确认」发的都是 taskId（= 看得到的那个任务）。
+  function view(g) {
+    var s = groupSuggestion(g), ai = aiMatch({ suggestion: s }, tree);
+    var ck = JSON.stringify([g.key, s.taskId, Boolean(s.mixed), ai]);
+    return { s: s, ai: ai, ck: ck, taskId: ai || chosen[ck] === undefined ? s.taskId : chosen[ck] };
+  }
+
+  function taskSelect(v) {
     var sel = document.createElement("select");
     sel.className = "field suggest-task";
     sel.setAttribute("aria-label", "确认到哪个任务");
@@ -195,10 +206,10 @@
       tasks.forEach(function (t) { group.appendChild(new Option(t.name, t.id)); });
       sel.appendChild(group);
     });
-    var want = chosen[g.key] !== undefined ? chosen[g.key] : suggested || "";
+    var want = v.taskId || "";
     sel.value = want;
     if (sel.value !== want) sel.value = ""; // 建议的任务已不在树里：让人重挑
-    sel.addEventListener("change", function () { chosen[g.key] = sel.value; syncButtons(); });
+    sel.addEventListener("change", function () { chosen[v.ck] = sel.value; syncButtons(); });
     return sel;
   }
 
@@ -238,10 +249,9 @@
       li.appendChild(det);
     }
 
-    var s = groupSuggestion(g);
+    var v = view(g), s = v.s, ai = v.ai;
     var path = taskPath(tree, s.taskId);
     var pct = " · 把握 " + Math.round((s.confidence || 0) * 100) + "%";
-    var ai = aiMatch({ suggestion: s }, tree);
     var sel = null;
     var row = el("div", "row");
     var ok = el("button", "btn btn-fact suggest-confirm", ai ? "是 ✓" : "确认");
@@ -260,7 +270,7 @@
         : s.mixed ? "建议不一致，请自己选任务"
         : rejected ? "AI 的建议已否掉，请自己选任务，或忽略" : "没有建议，请选任务";
       li.appendChild(el("p", "suggest-hint", hint));
-      li.appendChild(sel = taskSelect(g, s.taskId));
+      li.appendChild(sel = taskSelect(v));
     }
     // 勾上 = 确认成功后加一条规则，检测程序以后自动给这个窗口建议同一个任务。rules.js 没加载就不出现。
     var cb = null;
@@ -278,16 +288,19 @@
       li.appendChild(lab);
     }
     ok.addEventListener("click", function () {
-      act([{ g: g, taskId: sel ? sel.value : s.taskId, remember: Boolean(cb && cb.checked) }], "confirm");
+      act([{ g: g, ck: v.ck, taskId: sel ? sel.value : s.taskId, remember: Boolean(cb && cb.checked) }], "confirm");
     });
-    no.addEventListener("click", function () { act([{ g: g, taskId: s.taskId }], ai ? "unmatch" : "dismiss"); });
+    no.addEventListener("click", function () { act([{ g: g, ck: v.ck, taskId: s.taskId }], ai ? "unmatch" : "dismiss"); });
     row.appendChild(ok);
     row.appendChild(no);
     li.appendChild(row);
     return li;
   }
 
-  function bulkTargets() { return eligibleGroups(groups, threshold(), tree); }
+  // 下拉被人清空的组（看得到的任务是空）不进「全部确认」
+  function bulkTargets() {
+    return eligibleGroups(groups, threshold(), tree).filter(function (g) { return view(g).taskId; });
+  }
 
   function syncButtons() {
     var n = bulkTargets().reduce(function (sum, g) { return sum + g.items.length; }, 0);
@@ -319,37 +332,41 @@
   }
 
   var loadSeq = 0; // 只认最后一次 load 的结果：早发晚到的旧快照会把刚确认的条目又放回来
+  // 返回 false = 没拉到新列表（页面上还是旧的）；被更新的一次 load 顶掉的算 true（那一次会重绘）
   async function load() {
     var mine = ++loadSeq;
     var res;
     try {
       res = await fetch(API + "?status=pending&limit=200");
     } catch (err) {
-      return; // 网络抖一下不值得在页面上报错，下次可见时再拉
+      return false; // 网络抖一下不值得在页面上报错，下次可见时再拉
     }
-    if (mine !== loadSeq) return;
-    if (res.status === 404) { panelEl.hidden = true; return; } // 后端早于 v2.2：整块不出现
-    if (!res.ok) { panelEl.hidden = false; showMessage("待确认列表加载失败（HTTP " + res.status + "）", true); return; }
+    if (mine !== loadSeq) return true;
+    if (res.status === 404) { panelEl.hidden = true; return true; } // 后端早于 v2.2：整块不出现
+    if (!res.ok) { panelEl.hidden = false; showMessage("待确认列表加载失败（HTTP " + res.status + "）", true); return false; }
     var body = await res.json().catch(function () { return null; });
     // 每次都重拉树：人可能刚在「任务」页加了任务，要能马上选到
     try {
       var t = await fetch(BASE + "api/core/views/tree");
       if (t.ok) tree = await t.json();
     } catch (err) { /* 拉不到就沿用上一份；从没拉到过则下拉为空，确认按钮保持禁用 */ }
-    if (mine !== loadSeq) return;
+    if (mine !== loadSeq) return true;
     items = (body && body.items) || [];
     total = (body && typeof body.total === "number") ? body.total : items.length;
     panelEl.hidden = false;
     render();
+    return true;
   }
 
-  // jobs = [{g, taskId, remember}]：一组里逐段发，失败的留在列表里，按组报后端 detail 原文（同补登规则 3）；
+  // jobs = [{g, ck, taskId, remember}]：一组里逐段发，失败的留在列表里，按组报后端 detail 原文（同补登规则 3）；
   // 同组已成功的段就是确认了，不回滚。unmatch 只发带着那个建议的段。
+  // busy 从第一个请求一直到列表重拉完：期间阈值、聊天状态等触发的 syncButtons 不会把旧列表上的按钮放开。
   async function act(jobs, action, bulk) {
+    if (busy) return;
     busy = true;
     syncButtons();
     showMessage("", false);
-    var done = 0, errors = [], notes = [];
+    var done = 0, errors = [], notes = [], handled = {};
     try {
       for (var j = 0; j < jobs.length; j++) {
         var g = jobs[j].g, taskId = jobs[j].taskId;
@@ -357,21 +374,26 @@
           ? g.items.filter(function (it) { return (it.suggestion || {}).taskId === taskId; }) : g.items;
         var ok = 0, firstErr = "";
         for (var i = 0; i < targets.length; i++) {
+          // 人对这段否掉过的任务，确认时绝不发（组里别的段可能还建议着它）
+          if (action === "confirm" && (targets[i].rejectedTaskIds || []).indexOf(taskId) >= 0) {
+            if (!firstErr) firstErr = "有的段你已经否掉过这个任务，请换一个";
+            continue;
+          }
           // unmatch 带上页面上看到的任务：助理刚换过的话后端 409，不会否错
           var body = action === "dismiss" ? undefined : { taskId: taskId };
           var r = await post(API + "/" + encodeURIComponent(targets[i].id) + "/" + action, body);
-          if (r.ok) ok += 1;
+          if (r.ok) { ok += 1; handled[targets[i].id] = true; }
           else if (!firstErr) firstErr = r.message;
         }
         done += ok;
         if (firstErr) {
           errors.push(label(g) + "：" + (targets.length > 1 ? (targets.length - ok) + " / " + targets.length + " 段失败，" : "") + firstErr);
         } else {
-          delete chosen[g.key];
+          delete chosen[jobs[j].ck];
         }
         var rule = windowRule(g.app, g.title, taskId).rule;
         if (action === "confirm" && jobs[j].remember && ok > 0 && rule) {
-          var rr = await window.assistantRules.prepend(rule);
+          var rr = await window.assistantRules.prepend(rule, { app: g.app || "", title: g.title || "" });
           if (!rr.ok) errors.push(label(g) + "：已确认，但规则没加上：" + rr.detail);
           else {
             delete remember[g.key];
@@ -379,11 +401,16 @@
           }
         }
       }
+      // 按钮保持禁用，等列表重拉完再按新列表放开（旧列表上再点就是重复提交）
+      if (!(await load())) {
+        // 没拉到新列表：已处理的段从旧列表里拿掉，剩下的照旧可点（下次可见时再拉全）
+        items = items.filter(function (it) { return !handled[it.id]; });
+        render();
+      }
     } finally {
-      busy = false; // 按钮先保持禁用，等列表重拉完再按新列表放开（旧列表上再点就是重复提交）
+      busy = false;
     }
-    await load();
-    syncButtons(); // load() 失败时不重绘，按钮不能停在禁用
+    syncButtons();
     if (errors.length) showMessage(errors[0] + (errors.length > 1 ? "（另有 " + (errors.length - 1) + " 处失败）" : ""), true);
     else if (bulk || notes.length) showMessage((bulk ? "已确认 " + done + " 条。" : "") + notes.join(""), false);
   }
@@ -418,7 +445,8 @@
   thresholdEl.addEventListener("input", syncButtons);
   allBtnEl.addEventListener("click", function () {
     act(bulkTargets().map(function (g) {
-      return { g: g, taskId: chosen[g.key] || groupSuggestion(g).taskId, remember: Boolean(remember[g.key]) };
+      var v = view(g);
+      return { g: g, ck: v.ck, taskId: v.taskId, remember: Boolean(remember[g.key]) };
     }), "confirm", true);
   });
   document.addEventListener("visibilitychange", function () {

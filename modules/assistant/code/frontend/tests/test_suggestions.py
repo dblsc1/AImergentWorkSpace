@@ -45,9 +45,14 @@ class SuggestStub:
         self.fail_ids: set[str] = set()
         self.get_status = 200
         self.extra_total = 0  # total 比 items 多出来的条数（模拟分页之外还有更早的）  # 非 200 = 列表接口出错（不是 404 那种「老后端」）
+        self.hold_get = False  # True = GET 先压着不回（测「重拉还在路上」），测试自己拿 held 里的放行
+        self.held: list[Route] = []
 
     def route(self, route: Route) -> None:
         req = route.request
+        if req.method == "GET" and self.hold_get:
+            self.held.append(route)
+            return
         if req.method == "GET":
             if self.get_status != 200:
                 route.fulfill(status=self.get_status, body="boom")
@@ -172,6 +177,7 @@ def test_buttons_recover_when_reload_fails(browser, static_base_url):
         page.wait_for_selector("#suggest-message.is-error")
         assert page.locator('li[data-id="sug_a"] .suggest-confirm').is_enabled()
         assert page.locator("#suggest-confirm-all").is_enabled()
+        assert _ids(page) == ["sug_a", "sug_b"]   # 已忽略的那条从旧列表里拿掉，不能再点一次
 
 
 def test_more_than_one_page_hint(browser, static_base_url):
@@ -285,7 +291,7 @@ def _seg(i: int, *, app: str = "kitty", title: str = "vim garden [IP]", task: st
             "suggestion": {"taskId": task, "confidence": conf, "reason": "", "classifier": classifier}}
 
 
-WINDOW = [_seg(1), _seg(3, conf=0.85), _seg(5, task=None, conf=0), _seg(7, app="chrome", title="docs")]
+WINDOW = [_seg(1), _seg(3, conf=0.85), _seg(5, conf=0.95), _seg(7, app="chrome", title="docs")]
 
 
 @contextlib.contextmanager
@@ -312,7 +318,7 @@ def test_groups_same_window_into_one_row(browser, static_base_url):
         assert "3 段 · 共 5 分" in li.inner_text()          # 90 秒 × 3
         assert "10-03 10:01–10:06" in li.inner_text()      # 第一段开始 – 最后一段结束
         assert li.locator(".suggest-seg").count() == 3
-        # 有建议的两段都指 t_word：预选它，把握取最小（85%）；没建议的那段跟着组走
+        # 三段都建议 t_word：预选它，把握取最小（85%）
         assert li.locator("select").input_value() == "t_word"
         assert "把握 85%" in li.inner_text()
         # 单段的组与原来一条一样
@@ -352,14 +358,71 @@ def test_group_dismiss_and_ai_unmatch(browser, static_base_url):
         assert stub.posts[2:] == [("dismiss", "seg_1", None), ("dismiss", "seg_2", None)]
 
 
-def test_disagreeing_suggestions_leave_picker_empty(browser, static_base_url):
-    with open_both(browser, static_base_url, [_seg(1), _seg(2, task="t_read")]) as (page, _stub, _rules):
+@pytest.mark.parametrize("other", [{"task": "t_read"}, {"task": None, "conf": 0}])
+def test_disagreeing_suggestions_leave_picker_empty(browser, static_base_url, other):
+    # 指向别的任务、或有的段没建议：都算不一致，要人挑
+    with open_both(browser, static_base_url, [_seg(1), _seg(2, **other)]) as (page, _stub, _rules):
         li = page.locator('li[data-id="seg_1"]')
         assert "建议不一致" in li.inner_text()
         assert li.locator("select").input_value() == ""
         assert li.locator(".suggest-confirm").is_disabled()
         page.fill("#suggest-threshold", "0")
         assert page.locator("#suggest-confirm-all").is_disabled()
+
+
+def test_partial_unmatch_requires_manual_pick_and_never_sends_rejected(browser, static_base_url):
+    ai = [_seg(1, task="t_read", classifier="assistant"), _seg(2, task="t_read", classifier="assistant")]
+    with open_both(browser, static_base_url, ai) as (page, stub, _rules):
+        stub.fail_ids.add("seg_2")
+        page.locator('li[data-id="seg_1"] .suggest-no').click()
+        page.wait_for_selector("#suggest-message.is-error")
+        # seg_1 已否掉、seg_2 还建议 t_read：不出「是」，不预选
+        li = page.locator('li[data-id="seg_1"]')
+        assert li.locator(".suggest-no").count() == 0 and "建议不一致" in li.inner_text()
+        assert li.locator("select").input_value() == ""
+        stub.fail_ids.clear()
+        li.locator("select").select_option("t_read")   # 人偏要选回被否掉的任务：否掉过的那段不发
+        li.locator(".suggest-confirm").click()
+        page.wait_for_function("() => document.querySelector('#suggest-message').textContent.includes('否掉过')")
+        assert [p for p in stub.posts if p[0] == "confirm"] == [("confirm", "seg_2", {"taskId": "t_read"})]
+        assert _ids(page) == ["seg_1"]
+
+
+def test_bulk_uses_displayed_task_after_suggestion_changes(browser, static_base_url):
+    with open_both(browser, static_base_url, [_seg(1, task=None, conf=0)]) as (page, stub, _rules):
+        page.locator('li[data-id="seg_1"] select').select_option("t_legacy")   # 人先挑了一个
+        # 助理随后配了 t_read：重拉后这行显示「AI 建议 + 是 / 否」，旧的下拉选择作废
+        stub.items[0]["suggestion"] = {"taskId": "t_read", "confidence": 0.9, "reason": "", "classifier": "assistant"}
+        page.evaluate("document.dispatchEvent(new Event('assistant:turn-done'))")
+        page.wait_for_selector('li[data-id="seg_1"].is-ai')
+        page.click("#suggest-confirm-all")
+        page.wait_for_function("() => !document.querySelector('li[data-id=\"seg_1\"]')")
+        assert stub.posts == [("confirm", "seg_1", {"taskId": "t_read"})]
+
+
+def test_buttons_stay_disabled_until_reload_settles(browser, static_base_url):
+    with open_both(browser, static_base_url, WINDOW) as (page, stub, _rules):
+        stub.hold_get = True
+        page.locator('li[data-id="seg_7"] .suggest-dismiss').click()
+        for _ in range(100):
+            if stub.held:
+                break
+            page.wait_for_timeout(50)
+        assert stub.held
+        # 重拉还在路上：调阈值、聊天状态变化都不能把旧列表的按钮放开
+        page.fill("#suggest-threshold", "10")
+        page.evaluate("document.dispatchEvent(new CustomEvent('assistant:chat-state', {detail: {configured: true, generating: false}}))")
+        assert page.locator('li[data-id="seg_1"] .suggest-confirm').is_disabled()
+        assert page.locator("#suggest-confirm-all").is_disabled()
+        # 绕过禁用硬点：act 自己也不接
+        page.evaluate("""() => { const b = document.querySelector('li[data-id="seg_1"] .suggest-confirm');
+                                  b.disabled = false; b.click(); }""")
+        page.wait_for_timeout(200)
+        assert stub.posts == [("dismiss", "seg_7", None)]
+        stub.hold_get = False
+        stub.route(stub.held.pop())
+        page.wait_for_function("() => !document.querySelector('li[data-id=\"seg_7\"]')")
+        assert page.locator('li[data-id="seg_1"] .suggest-confirm').is_enabled()
 
 
 def test_idle_segments_grouped_separately_and_not_bulk(browser, static_base_url):
@@ -433,6 +496,26 @@ def test_remember_skips_duplicate_and_keeps_confirm_on_rule_failure(browser, sta
         assert "已确认，但规则没加上：规则太多" in page.inner_text("#suggest-message")
         assert _ids(page) == []
         assert [i for a, i, _ in stub.posts if a == "confirm"] == ["seg_1", "seg_3", "seg_5", "seg_7"]
+
+
+@pytest.mark.parametrize("case", ["disabled", "shadowed"])
+def test_remember_moves_existing_rule_to_front(browser, static_base_url, case):
+    """同样的规则已在，但停用、或前面有条更宽的规则先命中（指向别的任务）：挪到最前并启用，一次 PUT。"""
+    from test_rules import RulesStub
+    stub = RulesStub()
+    if case == "shadowed":
+        stub.rules.insert(0, {"id": "r_wide", "app": "KITTY", "title": None, "taskId": "t_read", "confidence": 0.8,
+                              "note": None, "enabled": True})
+    stub.rules.append({"id": "r_dup", **WANT_RULE, "enabled": case != "disabled"})
+    before = [r["id"] for r in stub.rules if r["id"] != "r_dup"]
+    with open_both(browser, static_base_url, WINDOW, stub) as (page, _stub, rules):
+        li = page.locator('li[data-id="seg_1"]')
+        li.locator(".suggest-rule-cb").check()
+        li.locator(".suggest-confirm").click()
+        page.wait_for_function("() => document.querySelector('#suggest-message').textContent.includes('已加规则')")
+        (put,) = _put_calls(rules)
+        assert put[3]["rules"][0] == {"id": "r_dup", **WANT_RULE}       # 保留 id、启用
+        assert [r["id"] for r in put[3]["rules"][1:]] == before         # 其余顺序不变，没有重复
 
 
 def test_remember_disabled_for_pseudonym_titles(browser, static_base_url):

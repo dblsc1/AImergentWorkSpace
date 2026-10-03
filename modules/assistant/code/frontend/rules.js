@@ -109,18 +109,34 @@
     return r.status === 403 ? "服务器不让改（403）：" + r.detail + "。规则只能在登录后的网页上改。" : r.detail;
   }
 
-  // 「待确认建议」勾了「以后这个窗口都记到这个任务」（suggestions.js）：把一条规则放到**最前面**——
-  // 第一条命中生效，放最后会被更宽的旧规则挡住。同样的规则（app、title、taskId 都一样）已在就不加。
+  // 规则 r 会不会命中窗口 win（{app, title}）。规则是 RE2、不分大小写；JS 编译不了的写法（比如 (?i)）
+  // 当它**可能命中**——宁可多挪一次，也不让一条挡在前面的规则被当成不存在。
+  function mayMatch(r, win) {
+    function test(p, s) {
+      if (p == null) return true;
+      try { return new RegExp(p, "i").test(s); } catch (err) { return true; }
+    }
+    return r.enabled !== false && test(r.app, win.app) && test(r.title, win.title);
+  }
+
+  // 「待确认建议」勾了「以后这个窗口都记到这个任务」（suggestions.js）：让这条规则成为这个窗口**第一条命中的**——
+  // 放到最前面（放最后会被更宽的旧规则挡住）。同样的规则（app、title、taskId 都一样）已在：它启用且已经是这个窗口
+  // 第一条命中的 → 不动；否则把它（保留 id、改成启用）挪到最前。都是一次 PUT。
   // 412（别处刚改过）重读一次再试。编辑器没手改时跟着刷新，有手改就留着（保存时照样 412）。
-  async function prepend(rule) {
+  async function prepend(rule, win) {
     for (var tries = 0; tries < 2; tries++) {
       var g = await request("GET", "");
       if (!g.ok) return { ok: false, detail: explain(g) };
       var list = g.body.rules || [];
-      if (list.some(function (r) { return r.app === rule.app && r.title === rule.title && r.taskId === rule.taskId; })) {
-        return { ok: true, skipped: true };
-      }
-      var r = await request("PUT", "", ifMatch(g.body.version, { rules: [toWire(rule)].concat(list.map(toWire)) }));
+      var same = -1, first = -1;
+      list.forEach(function (r, i) {
+        if (same < 0 && r.app === rule.app && r.title === rule.title && r.taskId === rule.taskId) same = i;
+        if (first < 0 && mayMatch(r, win)) first = i;
+      });
+      if (same >= 0 && same === first) return { ok: true, skipped: true };
+      var head = same >= 0 ? Object.assign({}, list[same], { enabled: true }) : rule;
+      var rest = list.filter(function (r, i) { return i !== same; });
+      var r = await request("PUT", "", ifMatch(g.body.version, { rules: [toWire(head)].concat(rest.map(toWire)) }));
       if (r.ok) {
         if (server && !busy && !dirty()) { setServer(r.body); loadDraft(); }
         return { ok: true };
