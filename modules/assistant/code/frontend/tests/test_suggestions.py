@@ -70,6 +70,13 @@ class SuggestStub:
             route.fulfill(status=404, content_type="application/json",
                           body=json.dumps({"detail": "任务不存在：'t_gone'"}, ensure_ascii=False))
             return
+        body = json.loads(req.post_data) if req.post_data else {}
+        if action == "unmatch" and "proposalId" in body:  # v2.8 否掉提议的新任务：去掉提议
+            item = next(i for i in self.items if i["id"] == sug_id)
+            item["suggestion"] = {k: v for k, v in item["suggestion"].items() if k != "newTask"}
+            route.fulfill(status=200, content_type="application/json", body=json.dumps(
+                {"id": sug_id, "status": "pending", "rejectedTaskIds": []}))
+            return
         if action == "unmatch":  # v2.7 人说「否」：条目留在待确认里，任务清掉并记住
             item = next(i for i in self.items if i["id"] == sug_id)
             item["rejectedTaskIds"] = [item["suggestion"]["taskId"]]
@@ -78,8 +85,10 @@ class SuggestStub:
                 {"id": sug_id, "status": "pending", "rejectedTaskIds": item["rejectedTaskIds"]}))
             return
         self.items = [i for i in self.items if i["id"] != sug_id]
-        route.fulfill(status=200, content_type="application/json",
-                      body=json.dumps({"id": sug_id, "status": action + "ed"}))
+        out = {"id": sug_id, "status": action + "ed"}
+        if action == "confirm":  # v2.8 响应带 taskId；确认提议的新任务（带 name）= 后端建了 t_new
+            out["taskId"] = body.get("taskId") or ("t_new" if "name" in body else None)
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(out))
 
 
 @contextlib.contextmanager

@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Request
 from fastapi.exceptions import RequestValidationError
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from ..timer.router import Mode
@@ -38,6 +38,8 @@ class UploadOut(BaseModel):
 
 
 class Suggestion(BaseModel):
+    model_config = ConfigDict(extra="allow")  # v2.8 newTask {proposalId, projectId, name}：只在有提议时出现
+
     taskId: str | None
     confidence: float
     reason: str
@@ -66,6 +68,7 @@ class ListOut(BaseModel):
 class ConfirmIn(BaseModel):
     taskId: str | None = None  # 缺省 = 用建议里的任务
     mode: Mode = "do"
+    name: str | None = None  # v2.8：确认 AI 提议的新任务时人改过的名字
 
 
 class EventRef(BaseModel):
@@ -82,6 +85,7 @@ class ConfirmOut(BaseModel):
     duplicate: bool
     date: str
     event: EventRef
+    taskId: str  # v2.8：这次确认记到的任务
 
 
 class DismissOut(BaseModel):
@@ -100,6 +104,7 @@ class MatchesOut(BaseModel):
 
 class UnmatchIn(BaseModel):
     taskId: str | None = None  # 人否掉的是哪个任务；给了且与当前建议不同 → 409
+    proposalId: str | None = None  # v2.8 人否掉的是哪条新任务提议；同上
 
 
 class UnmatchOut(BaseModel):
@@ -123,9 +128,10 @@ def list_suggestions(
 
 
 @router.post("/{sugId}/confirm", response_model=ConfirmOut)
-def confirm(sugId: str, body: ConfirmIn | None = None) -> dict:  # noqa: N803 —— 路径参数名即契约
+def confirm(sugId: str, request: Request, body: ConfirmIn | None = None) -> dict:  # noqa: N803 —— 路径参数名即契约
     body = body or ConfirmIn()
-    return service.confirm(sugId, body.taskId, body.mode)
+    # request：v2.8 确认提议的新任务时要判设备令牌、经 planner 写入口建任务
+    return service.confirm(sugId, body.taskId, body.mode, body.name, request)
 
 
 @router.post("/{sugId}/dismiss", response_model=DismissOut)
@@ -154,4 +160,4 @@ async def match(request: Request) -> dict:
 @router.post("/{sugId}/unmatch", response_model=UnmatchOut)
 async def unmatch(sugId: str, request: Request) -> dict:  # noqa: N803
     auth, body = await _body(request, UnmatchIn)
-    return await run_in_threadpool(service.unmatch, auth, sugId, body.taskId)
+    return await run_in_threadpool(service.unmatch, auth, sugId, body.taskId, body.proposalId)

@@ -15,6 +15,8 @@
 - **过期惰性清理**，无调度器（同代理运行的遗忘超时）。
 - **v2.7 AI 匹配**：助理（经 MCP）给待确认的建议配任务（``match``），人说「否」清掉并记住（``unmatch``），
   人说「是」就是 ``confirm``。两者都不确认任何东西；设备令牌（Bearer）一律 403。
+- **v2.8 AI 提议新任务**：match 可以给 ``newTask`` 代替 ``taskId``；人确认时才建任务（只建一个），
+  提议的校验、去重、建任务都在 ``proposals.py``。
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from pydantic import (
     StrictStr,
     ValidationError,
     field_validator,
+    model_validator,
 )
 
 from ... import config, timeutil
@@ -40,7 +43,8 @@ from ..events import service as events_service
 from ..planner import service as planner_service
 from ..planner.errors import ForbiddenError, InvalidInputError, NotFoundError
 from ..timer import service as timer_service
-from . import presence, repo
+from . import presence, proposals, repo
+from .proposals import ConflictError  # noqa: F401 —— 真身在 proposals.py（v2.8 也要抛它），main.py 照旧从这里取
 
 SOURCE = "activity-confirmed"
 #: 单段上限同补登（契约「拒绝规则」）：拦单位填错。
@@ -50,10 +54,6 @@ _MAX_SEGMENT_SECONDS = 86400
 _CLOCK_SKEW = timedelta(seconds=300)
 _DEFAULT_LIMIT, _MAX_LIMIT = 100, 1000
 _MAX_APP, _MAX_TITLE = 128, 512  # 码点数（Python str 长度即码点）
-
-
-class ConflictError(RuntimeError):
-    """已确认的再忽略 / 已忽略的再确认。main.py 映射成 409。"""
 
 
 def _reason_bytes(v: str) -> str:
@@ -72,15 +72,28 @@ class _Suggestion(BaseModel):
     reason_bytes = field_validator("reason")(_reason_bytes)
 
 
+class _NewTask(BaseModel):
+    projectId: Annotated[StrictStr, Field(min_length=1, max_length=128)]
+    name: Annotated[StrictStr, Field(max_length=1024)]  # 1–64 码点的判据在 proposals.clean_name（去空白之后）
+
+
 class _Match(BaseModel):
-    """v2.7 助理配的一条。confidence 整数 0 / 1 也收（模型常这么写），布尔不收。"""
+    """v2.7 助理配的一条。confidence 整数 0 / 1 也收（模型常这么写），布尔不收。
+    v2.8：``taskId`` 与 ``newTask``（提议新任务）二选一。"""
 
     id: Annotated[StrictStr, Field(min_length=1, max_length=64)]
-    taskId: Annotated[StrictStr, Field(min_length=1, max_length=128)]
+    taskId: Annotated[StrictStr, Field(min_length=1, max_length=128)] | None = None
+    newTask: _NewTask | None = None
     confidence: Annotated[StrictFloat | StrictInt, Field(ge=0, le=1)]
     reason: StrictStr = ""
 
     reason_bytes = field_validator("reason")(_reason_bytes)
+
+    @model_validator(mode="after")
+    def _one_target(self):
+        if (self.taskId is None) == (self.newTask is None):
+            raise ValueError("taskId 与 newTask 必须二选一（只能配到任务，或提议一个新任务）")
+        return self
 
 
 class _Segment(BaseModel):
@@ -177,6 +190,7 @@ _ITEM_KEYS = ("id", "deviceId", "startAt", "endAt", "durationSeconds", "app", "t
 
 def _item(d: dict) -> dict:
     # v2.5 之前存下的建议没有 idle 字段：回 false；没被人否过的没有 rejectedTaskIds：回 []
+    # v2.8 suggestion.newTask 只在有提议时出现（存在 suggestion 里，原样带出）
     return {**{k: d[k] for k in _ITEM_KEYS}, "idle": d.get("idle", False),
             "rejectedTaskIds": d.get("rejectedTaskIds", [])}
 
@@ -201,7 +215,8 @@ def _get(user: str, sug_id: str) -> dict:
     return doc
 
 
-def confirm(sug_id: str, task_id: str | None, mode: str) -> dict:
+def confirm(sug_id: str, task_id: str | None, mode: str, name: str | None = None, request=None) -> dict:
+    """``name`` / ``request``（v2.8）：确认 AI 提议的新任务时人改过的名字，与建任务要经的 planner 写入口（判来源、留审计）。"""
     user = current_tenant()
     doc = _get(user, sug_id)
     if doc["status"] == "dismissed":
@@ -214,18 +229,29 @@ def confirm(sug_id: str, task_id: str | None, mode: str) -> dict:
         return {
             "id": sug_id, "status": "confirmed", "duplicate": True,
             "date": timeutil.local_date(datetime.fromisoformat(doc["startAt"]), config.settings.tz),
-            "event": {k: stored[k] for k in ("id", "dedupeKey", "type")},
+            "event": {k: stored[k] for k in ("id", "dedupeKey", "type")}, "taskId": stored["subject"]["task"],
         }
     suggested = doc["suggestion"].get("taskId")
+    # v2.8：没给任务、建议是助理提议的新任务 → 人点「是」才建（同一提议只建一个，见 proposals.task_for）
+    proposal = (doc["suggestion"].get("newTask") or {}).get("proposalId") if not (task_id or suggested) else None
+    if name is not None:
+        if proposal is None:
+            raise InvalidInputError("name 只用于确认 AI 提议的新任务（不能与 taskId 同给）")
+        try:
+            name = proposals.clean_name(name)
+        except ValueError as exc:
+            raise InvalidInputError(str(exc)) from exc
+    if proposal is not None:
+        forbid_device_token(request.headers.get("authorization") if request is not None else None, "建任务")
     # 请求体没给任务 = 用建议里的：占位时要求建议的任务没变（v2.7：读到之后可能刚被人否掉 / 被助理换掉）
     only_task = suggested if not task_id else None
     task_id = task_id or suggested
-    if not task_id:
+    if not task_id and proposal is None:
         raise InvalidInputError("没有可确认的任务：请求体与建议里都没有 taskId，请先选一个任务")
     # 先占位再写事实：pending→confirmed 是条件更新，与忽略（同样只从 pending 转）二选一，
     # 不会出现「忽略回了 200，事实却照样落库」。占位后崩在写事实之前 → 状态已确认、台账没有，
     # 重试走到这里（占位不中但状态是 confirmed）加入占位再补写，防重键兜底不重。
-    if not repo.claim(user, sug_id, _now(), only_task=only_task):
+    if not repo.claim(user, sug_id, _now(), only_task=only_task, only_proposal=proposal):
         cur = _get(user, sug_id)
         if cur["status"] == "dismissed":
             raise ConflictError(f"活动建议 {sug_id!r} 已忽略，不能再确认")
@@ -235,12 +261,14 @@ def confirm(sug_id: str, task_id: str | None, mode: str) -> dict:
         # 还是 pending = 建议的任务在读与占位之间变了；confirmed = 别的确认占着位（或占位后崩了）：
         # 加入占位再写。只要还有一个确认占着，谁写失败都不会把状态放回 pending——
         # 于是没人能趁机否掉 / 换掉这个任务，也不会出现「事实写成了、状态却是待确认」
-        if (not task_id or cur["status"] != "confirmed"
-                or not repo.claim(user, sug_id, _now(), takeover=True, only_task=only_task)):
+        if ((not task_id and proposal is None) or cur["status"] != "confirmed"
+                or not repo.claim(user, sug_id, _now(), takeover=True, only_task=only_task, only_proposal=proposal)):
             raise ConflictError(f"活动建议 {sug_id!r} 刚被改动，请刷新后再确认")
     # 占着位重读：已确认的建议不会再被配 / 否（那两个只动 pending），这份就是定稿，把握取它
     doc = _get(user, sug_id)
     try:
+        if proposal is not None:
+            task_id = proposals.task_for(user, proposal, name, request)
         out = timer_service.record_session(
             task_id, doc["startAt"], doc["endAt"], doc["durationSeconds"],
             source=SOURCE, dedupe_key=dedupe_key, mode=mode,
@@ -256,7 +284,7 @@ def confirm(sug_id: str, task_id: str | None, mode: str) -> dict:
             pass
         raise
     return {"id": sug_id, "status": "confirmed", "duplicate": out["duplicate"],
-            "date": out["date"], "event": out["event"]}
+            "date": out["date"], "event": out["event"], "taskId": task_id}
 
 
 def dismiss(sug_id: str) -> dict:
@@ -271,10 +299,10 @@ def dismiss(sug_id: str) -> dict:
 # ------------------------------------------------ v2.7 AI 匹配（契约「AI 匹配」）
 
 
-def forbid_device_token(authorization: str | None) -> None:
+def forbid_device_token(authorization: str | None, what: str = "给活动建议配任务") -> None:
     # auth.gate：带了 Bearer 就是设备令牌（网页会话走 cookie，MCP 对内直连不带）。同 detector 的写。
     if (authorization or "").strip().lower().startswith("bearer "):
-        raise ForbiddenError("设备令牌不能给活动建议配任务；请在 Cockpit「AI助理」页登录后操作")
+        raise ForbiddenError(f"设备令牌不能{what}；请在 Cockpit「AI助理」页登录后操作")
 
 
 def match(authorization: str | None, matches: list[Any]) -> dict:
@@ -294,15 +322,18 @@ def match(authorization: str | None, matches: list[Any]) -> dict:
             why = f"活动建议不存在：{m.id!r}"
         elif doc["status"] != "pending":
             why = f"活动建议 {m.id!r} 已{'确认' if doc['status'] == 'confirmed' else '忽略'}，不能再配"
-        elif m.taskId in doc.get("rejectedTaskIds", []):
+        elif m.taskId is not None and m.taskId in doc.get("rejectedTaskIds", []):
             why = f"用户已经否掉过任务 {m.taskId!r}，不要再配同一个"
         elif doc["suggestion"].get("taskId") and doc["suggestion"].get("classifier") != "assistant":
             why = "这条已有分类规则给的任务，助理不覆盖"
-        elif planner_service.get_task(m.taskId) is None:
+        elif m.taskId is not None and planner_service.get_task(m.taskId) is None:
             why = f"任务不存在：{m.taskId!r}"
-        elif not repo.set_match(user, m.id, {"taskId": m.taskId, "confidence": float(m.confidence),
-                                             "reason": m.reason, "classifier": "assistant"}):
-            why = "这条建议刚被改动（确认 / 忽略 / 否），没有写入"
+        else:
+            sug = {"taskId": m.taskId, "confidence": float(m.confidence), "reason": m.reason, "classifier": "assistant"}
+            if m.newTask is not None:  # v2.8：提议新任务（校验 + 去重在 proposals.py）
+                sug["newTask"], why = proposals.propose(user, doc, m.newTask.projectId, m.newTask.name, _now())
+            if not why and not repo.set_match(user, m.id, sug):
+                why = "这条建议刚被改动（确认 / 忽略 / 否），没有写入"
         if why:
             rejected.append({"index": index, "reason": why})
         else:
@@ -310,14 +341,25 @@ def match(authorization: str | None, matches: list[Any]) -> dict:
     return {"matched": matched, "rejected": rejected}
 
 
-def unmatch(authorization: str | None, sug_id: str, task_id: str | None) -> dict:
-    """人说「否」：清掉建议的任务并记进 rejectedTaskIds；状态仍 pending。"""
+def unmatch(authorization: str | None, sug_id: str, task_id: str | None, proposal_id: str | None = None) -> dict:
+    """人说「否」：清掉建议的任务并记进 rejectedTaskIds；状态仍 pending。
+    v2.8 建议是提议的新任务时：清掉提议、记进 rejectedProposalIds，没人再指着它就把提议标为已否掉。"""
     forbid_device_token(authorization)
     user = current_tenant()
     doc = _get(user, sug_id)
     current = doc["suggestion"].get("taskId")
+    offer = (doc["suggestion"].get("newTask") or {}).get("proposalId")
     if doc["status"] != "pending":
         raise ConflictError(f"活动建议 {sug_id!r} 已处理，不能再否")
+    if offer is not None:
+        if task_id is not None or proposal_id not in (None, offer):
+            raise ConflictError("这条建议已经变了，请刷新后再定")
+        if not repo.clear_proposal(user, sug_id, offer):
+            raise ConflictError("这条建议刚被改动，请刷新后再定")
+        repo.proposal_reject_if_unused(user, offer, _now())
+        return {"id": sug_id, "status": "pending", "rejectedTaskIds": doc.get("rejectedTaskIds", [])}
+    if proposal_id is not None and current is not None:
+        raise ConflictError("这条建议已经变了，请刷新后再定")
     if task_id is not None and current is not None and task_id != current:
         raise ConflictError("这条建议的任务已经变了，请刷新后再定")
     if current is not None and not repo.clear_match(user, sug_id, current):

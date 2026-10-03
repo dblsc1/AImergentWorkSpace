@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from ...repo import get_db
@@ -56,13 +57,16 @@ def set_status(user: str, sug_id: str, status: str, at: datetime, *, only_from: 
     return _col().update_one(filt, {"$set": {"status": status, "decidedAt": at}}).matched_count > 0
 
 
-def claim(user: str, sug_id: str, at: datetime, *, takeover: bool = False, only_task: str | None = None) -> bool:
+def claim(user: str, sug_id: str, at: datetime, *, takeover: bool = False, only_task: str | None = None,
+          only_proposal: str | None = None) -> bool:
     """确认的占位：pending→confirmed，``claims`` 记有几个确认正占着（在写事实）。``takeover`` = 加入一个已占位、
     事实还没写的（对方还在写，或占位后崩了）。``only_task`` 给了还要求建议的任务仍是它
     （v2.7：确认用的是建议里的任务时，防与否 / 重配赛跑）。"""
     filt = {"user": user, "id": sug_id, "status": "confirmed" if takeover else "pending"}
     if only_task is not None:
         filt["suggestion.taskId"] = only_task
+    if only_proposal is not None:  # v2.8：确认的是助理提议的新任务，要求提议没变
+        filt["suggestion.newTask.proposalId"] = only_proposal
     upd = {"$inc": {"claims": 1}} if takeover else {"$set": {"status": "confirmed", "decidedAt": at, "claims": 1}}
     return _col().update_one(filt, upd).matched_count > 0
 
@@ -75,9 +79,14 @@ def release(user: str, sug_id: str, at: datetime) -> None:
 
 
 def set_match(user: str, sug_id: str, suggestion: dict) -> bool:
-    """v2.7 助理配任务：只在仍 pending、这个任务没被人否过、原建议可盖（没任务或也是助理配的）时换上。"""
-    filt = {"user": user, "id": sug_id, "status": "pending", "rejectedTaskIds": {"$ne": suggestion["taskId"]},
+    """v2.7 助理配任务：只在仍 pending、这个任务没被人否过、原建议可盖（没任务或也是助理配的）时换上。
+    v2.8 配的是新任务提议时，换成「这个提议没被人否过」。"""
+    filt = {"user": user, "id": sug_id, "status": "pending",
             "$or": [{"suggestion.taskId": None}, {"suggestion.classifier": "assistant"}]}
+    if suggestion.get("newTask"):
+        filt["rejectedProposalIds"] = {"$ne": suggestion["newTask"]["proposalId"]}
+    else:
+        filt["rejectedTaskIds"] = {"$ne": suggestion["taskId"]}
     return _col().update_one(filt, {"$set": {"suggestion": suggestion}}).matched_count > 0
 
 
@@ -86,6 +95,14 @@ def clear_match(user: str, sug_id: str, task_id: str) -> bool:
     filt = {"user": user, "id": sug_id, "status": "pending", "suggestion.taskId": task_id}
     upd = {"$set": {"suggestion.taskId": None, "suggestion.confidence": 0.0, "suggestion.reason": ""},
            "$addToSet": {"rejectedTaskIds": task_id}}
+    return _col().update_one(filt, upd).matched_count > 0
+
+
+def clear_proposal(user: str, sug_id: str, proposal_id: str) -> bool:
+    """v2.8 人对提议说「否」：只在仍 pending 且建议的提议还是它时清掉，并记住。"""
+    filt = {"user": user, "id": sug_id, "status": "pending", "suggestion.newTask.proposalId": proposal_id}
+    upd = {"$set": {"suggestion.confidence": 0.0, "suggestion.reason": ""}, "$unset": {"suggestion.newTask": ""},
+           "$addToSet": {"rejectedProposalIds": proposal_id}}
     return _col().update_one(filt, upd).matched_count > 0
 
 
@@ -101,6 +118,65 @@ def purge(user: str, cutoff: datetime) -> None:
         {"status": "pending", "receivedAt": {"$lt": cutoff}},
         {"status": {"$ne": "pending"}, "decidedAt": {"$lt": cutoff}},
     ]})
+    # v2.8 提议：最后一次被提 / 被处理之后过期（总比指着它的建议活得久）
+    _proposals_col().delete_many({"user": user, "updatedAt": {"$lt": cutoff}})
+
+
+# ------------------------------------------------ activity_task_proposals（v2.8，AI 提议的新任务，不是事实）
+#
+# 每个 (user, 项目, 归一化名字) 一份（id 由它派生）：status pending / accepted（已建成，taskId）/ rejected。
+# lock / lockedAt = 正在建任务的那一次确认（30 秒过期，见 proposals.py）。
+
+_PROPOSALS = "activity_task_proposals"
+_proposals_ready = False
+
+
+def _proposals_col():
+    global _proposals_ready
+    col = get_db()[_PROPOSALS]
+    if not _proposals_ready:
+        col.create_index([("user", 1), ("id", 1)], unique=True, name="uniq_user_id")
+        _proposals_ready = True
+    return col
+
+
+def proposal_get(user: str, proposal_id: str) -> dict | None:
+    return _proposals_col().find_one({"user": user, "id": proposal_id}, {"_id": 0})
+
+
+def proposal_upsert(user: str, proposal_id: str, project_id: str, name: str, at: datetime) -> dict:
+    """取（或新建）提议，刷新 updatedAt。名字只在第一次提出时定下。返回现在的文档。"""
+    insert = {"projectId": project_id, "name": name, "status": "pending", "taskId": None, "lock": None,
+              "lockedAt": None, "createdAt": at}
+    return _proposals_col().find_one_and_update(
+        {"user": user, "id": proposal_id}, {"$setOnInsert": insert, "$set": {"updatedAt": at}},
+        upsert=True, return_document=ReturnDocument.AFTER, projection={"_id": 0})
+
+
+def proposal_lock(user: str, proposal_id: str, token: str, at: datetime, stale: datetime) -> bool:
+    """抢建任务锁：没建成、且没人在建（或在建的已超时）才抢得到。"""
+    filt = {"user": user, "id": proposal_id, "status": {"$ne": "accepted"},
+            "$or": [{"lockedAt": None}, {"lockedAt": {"$lt": stale}}]}
+    return _proposals_col().update_one(filt, {"$set": {"lock": token, "lockedAt": at}}).matched_count > 0
+
+
+def proposal_unlock(user: str, proposal_id: str, token: str) -> None:
+    _proposals_col().update_one({"user": user, "id": proposal_id, "lock": token},
+                                {"$set": {"lock": None, "lockedAt": None}})
+
+
+def proposal_accept(user: str, proposal_id: str, task_id: str, at: datetime) -> None:
+    _proposals_col().update_one({"user": user, "id": proposal_id}, {"$set": {
+        "status": "accepted", "taskId": task_id, "lock": None, "lockedAt": None, "updatedAt": at}})
+
+
+def proposal_reject_if_unused(user: str, proposal_id: str, at: datetime) -> None:
+    """没有待确认的建议还指着它、且没建成 → 标已否掉（助理不许再提）。"""
+    if _col().count_documents({"user": user, "status": "pending", "suggestion.newTask.proposalId": proposal_id},
+                              limit=1):
+        return
+    _proposals_col().update_one({"user": user, "id": proposal_id, "status": "pending"},
+                                {"$set": {"status": "rejected", "updatedAt": at}})
 
 
 # ------------------------------------------------ activity_presence（v2.4，在场心跳，活状态）

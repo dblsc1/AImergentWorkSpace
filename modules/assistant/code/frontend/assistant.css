@@ -231,6 +231,10 @@ main.page {
 /* ── 助理配的建议（v2.7）：左边一道 plan 色（「还没入账的」），建议那行用正文色；是 / 否两等分 ── */
 .suggest-item.is-ai { border-left: 3px solid var(--plan); }
 .suggest-item.is-ai .suggest-hint { color: var(--ink); }
+/* 提议新任务（v2.8）：「新建任务：项目 /」+ 可改的名字；窄屏名字框换到下一行占满 */
+.suggest-newtask { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-width: 0; overflow-wrap: anywhere; }
+.suggest-newtask-path { font-size: var(--fs-sub); color: var(--ink-2); }
+.suggest-item input.suggest-newname { flex: 1 1 10em; min-width: 0; min-height: var(--tap); background: var(--panel); }
 
 /* ── 按窗口分组（2026-10-03）：折叠的逐段明细、「以后这个窗口都记到这个任务」 ── */
 .suggest-segs { min-width: 0; font-size: var(--fs-sub); color: var(--ink-2); }
