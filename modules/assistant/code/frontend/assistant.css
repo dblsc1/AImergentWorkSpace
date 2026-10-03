@@ -232,6 +232,13 @@ main.page {
 .suggest-item.is-ai { border-left: 3px solid var(--plan); }
 .suggest-item.is-ai .suggest-hint { color: var(--ink); }
 
+/* ── 按窗口分组（2026-10-03）：折叠的逐段明细、「以后这个窗口都记到这个任务」 ── */
+.suggest-segs { min-width: 0; font-size: var(--fs-sub); color: var(--ink-2); }
+.suggest-segs summary { cursor: pointer; min-height: var(--tap); display: flex; align-items: center; }
+.suggest-seg { margin-left: var(--sp-3); }
+.suggest-rule { font-size: var(--fs-sub); color: var(--ink-2); overflow-wrap: anywhere; min-height: var(--tap); display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-1); }
+.suggest-rule-why { color: var(--ink-3); }
+
 /* ── 「活动检测设置」（2026-09-30，settings.js，contracts/detector.settings.v1）──
  * 一列到底；320px 下例子自己换行，名单框随宽度缩。强制清洗那组是勾着的灰框（disabled），关不掉。 */
 .settings-panel { display: grid; gap: var(--sp-3); min-width: 0; }
