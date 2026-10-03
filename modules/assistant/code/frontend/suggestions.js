@@ -407,6 +407,7 @@
       if (!(await load())) {
         // 没拉到新列表：确认 / 忽略成功的段已不在待确认里，从旧列表拿掉；否掉的段仍待确认，
         // 在本地清掉建议、记进 rejectedTaskIds（同服务端），留着手动挑。下次可见时再拉全。
+        var before = items.length;
         items = items.filter(function (it) { return handled[it.id] !== true; }).map(function (it) {
           var no = handled[it.id];
           if (!no) return it;
@@ -415,6 +416,8 @@
             rejectedTaskIds: (it.rejectedTaskIds || []).concat([no]),
           });
         });
+        // 拿掉的段也不再算进服务端总数（否掉的仍待确认，不减）；「还有 N 条更早的」才不会多报
+        total = Math.max(total - (before - items.length), items.length);
         render();
       }
     } finally {

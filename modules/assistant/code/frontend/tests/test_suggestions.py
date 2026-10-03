@@ -178,6 +178,7 @@ def test_buttons_recover_when_reload_fails(browser, static_base_url):
         assert page.locator('li[data-id="sug_a"] .suggest-confirm').is_enabled()
         assert page.locator("#suggest-confirm-all").is_enabled()
         assert _ids(page) == ["sug_a", "sug_b"]   # 已忽略的那条从旧列表里拿掉，不能再点一次
+        assert page.is_hidden("#suggest-more")     # 总数跟着减：不多报「还有 1 条更早的」
 
 
 def test_more_than_one_page_hint(browser, static_base_url):
@@ -427,6 +428,9 @@ def test_chosen_task_deleted_after_refresh_is_dropped(browser, static_base_url, 
 def test_unmatch_kept_when_reload_fails(browser, static_base_url):
     ai = [_seg(1, task="t_read", classifier="assistant"), _seg(2, task="t_read", classifier="assistant"), WINDOW[3]]
     with open_both(browser, static_base_url, ai) as (page, stub, _rules):
+        stub.extra_total = 5   # 服务端总数 8：页上 3 段，还有 5 条更早的
+        page.evaluate("document.dispatchEvent(new Event('assistant:turn-done'))")
+        page.wait_for_selector("#suggest-more:not([hidden])")
         stub.get_status = 500
         page.locator('li[data-id="seg_1"] .suggest-no').click()
         page.wait_for_selector("#suggest-message.is-error")
@@ -437,10 +441,12 @@ def test_unmatch_kept_when_reload_fails(browser, static_base_url):
         assert li.get_attribute("data-count") == "2"
         assert li.locator(".suggest-no").count() == 0 and li.locator("select").input_value() == ""
         assert "AI 的建议已否掉" in li.inner_text()
-        # 忽略成功的则拿掉
+        assert page.inner_text("#suggest-more") == "还有 5 条更早的待确认，先处理上面的"   # 否掉不减总数
+        # 忽略成功的则拿掉，总数跟着减（8 → 7，页上 2 段，仍是 5 条更早的）
         page.locator('li[data-id="seg_7"] .suggest-dismiss').click()
         page.wait_for_function("() => !document.querySelector('li[data-id=\"seg_7\"]')")
         assert _ids(page) == ["seg_1"]
+        assert page.inner_text("#suggest-more") == "还有 5 条更早的待确认，先处理上面的"
 
 
 def test_buttons_stay_disabled_until_reload_settles(browser, static_base_url):
