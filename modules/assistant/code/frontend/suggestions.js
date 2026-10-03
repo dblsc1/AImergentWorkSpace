@@ -184,11 +184,13 @@
   }
 
   // 一组此刻显示的样子。下拉的选择按「组 + 组此刻的建议」记：重拉后建议变了（比如助理刚配了任务），旧的选择自然作废，
-  // 行上的按钮与「全部确认」发的都是 taskId（= 看得到的那个任务）。
+  // 行上的按钮与「全部确认」发的都是 taskId（= 下拉里看得到的那个任务；不在当前任务树里的一律当没选）。
   function view(g) {
     var s = groupSuggestion(g), ai = aiMatch({ suggestion: s }, tree);
     var ck = JSON.stringify([g.key, s.taskId, Boolean(s.mixed), ai]);
-    return { s: s, ai: ai, ck: ck, taskId: ai || chosen[ck] === undefined ? s.taskId : chosen[ck] };
+    if (chosen[ck] && taskPath(tree, chosen[ck]) === null) delete chosen[ck]; // 选过的任务刷新后被删了
+    var t = ai || chosen[ck] === undefined ? s.taskId : chosen[ck];
+    return { s: s, ai: ai, ck: ck, taskId: t && taskPath(tree, t) !== null ? t : "" };
   }
 
   function taskSelect(v) {
@@ -382,7 +384,7 @@
           // unmatch 带上页面上看到的任务：助理刚换过的话后端 409，不会否错
           var body = action === "dismiss" ? undefined : { taskId: taskId };
           var r = await post(API + "/" + encodeURIComponent(targets[i].id) + "/" + action, body);
-          if (r.ok) { ok += 1; handled[targets[i].id] = true; }
+          if (r.ok) { ok += 1; handled[targets[i].id] = action === "unmatch" ? taskId : true; }
           else if (!firstErr) firstErr = r.message;
         }
         done += ok;
@@ -393,7 +395,7 @@
         }
         var rule = windowRule(g.app, g.title, taskId).rule;
         if (action === "confirm" && jobs[j].remember && ok > 0 && rule) {
-          var rr = await window.assistantRules.prepend(rule, { app: g.app || "", title: g.title || "" });
+          var rr = await window.assistantRules.prepend(rule);
           if (!rr.ok) errors.push(label(g) + "：已确认，但规则没加上：" + rr.detail);
           else {
             delete remember[g.key];
@@ -403,8 +405,16 @@
       }
       // 按钮保持禁用，等列表重拉完再按新列表放开（旧列表上再点就是重复提交）
       if (!(await load())) {
-        // 没拉到新列表：已处理的段从旧列表里拿掉，剩下的照旧可点（下次可见时再拉全）
-        items = items.filter(function (it) { return !handled[it.id]; });
+        // 没拉到新列表：确认 / 忽略成功的段已不在待确认里，从旧列表拿掉；否掉的段仍待确认，
+        // 在本地清掉建议、记进 rejectedTaskIds（同服务端），留着手动挑。下次可见时再拉全。
+        items = items.filter(function (it) { return handled[it.id] !== true; }).map(function (it) {
+          var no = handled[it.id];
+          if (!no) return it;
+          return Object.assign({}, it, {
+            suggestion: Object.assign({}, it.suggestion, { taskId: null, confidence: 0, reason: "" }),
+            rejectedTaskIds: (it.rejectedTaskIds || []).concat([no]),
+          });
+        });
         render();
       }
     } finally {

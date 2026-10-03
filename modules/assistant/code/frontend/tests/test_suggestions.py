@@ -400,6 +400,49 @@ def test_bulk_uses_displayed_task_after_suggestion_changes(browser, static_base_
         assert stub.posts == [("confirm", "seg_1", {"taskId": "t_read"})]
 
 
+@pytest.mark.parametrize("suggested", [None, "t_word"])
+def test_chosen_task_deleted_after_refresh_is_dropped(browser, static_base_url, suggested):
+    import re
+    items = [_seg(1, task=suggested, conf=0.9 if suggested else 0)]
+    with open_both(browser, static_base_url, items) as (page, stub, _rules):
+        li = page.locator('li[data-id="seg_1"]')
+        li.locator("select").select_option("t_legacy")
+        # 别处把 t_legacy 删了，然后这页重拉
+        tree = json.loads(json.dumps(TREE))
+        tree["projects"][0]["tasks"] = [t for t in tree["projects"][0]["tasks"] if t["id"] != "t_legacy"]
+        page.route(re.compile(r"/api/core/views/tree$"), lambda r: r.fulfill(
+            status=200, content_type="application/json", body=json.dumps(tree, ensure_ascii=False)))
+        page.evaluate("document.dispatchEvent(new Event('assistant:turn-done'))")
+        page.wait_for_function("() => !document.querySelector('#suggest-list option[value=\"t_legacy\"]')")
+        li = page.locator('li[data-id="seg_1"]')
+        assert li.locator("select").input_value() == (suggested or "")   # 退回看得到的：建议，或空
+        if suggested is None:
+            assert li.locator(".suggest-confirm").is_disabled()
+            return
+        page.click("#suggest-confirm-all")
+        page.wait_for_function("() => !document.querySelector('li[data-id=\"seg_1\"]')")
+        assert stub.posts == [("confirm", "seg_1", {"taskId": "t_word"})]
+
+
+def test_unmatch_kept_when_reload_fails(browser, static_base_url):
+    ai = [_seg(1, task="t_read", classifier="assistant"), _seg(2, task="t_read", classifier="assistant"), WINDOW[3]]
+    with open_both(browser, static_base_url, ai) as (page, stub, _rules):
+        stub.get_status = 500
+        page.locator('li[data-id="seg_1"] .suggest-no').click()
+        page.wait_for_selector("#suggest-message.is-error")
+        page.wait_for_function("() => document.querySelector('li[data-id=\"seg_1\"] select')")
+        # 否掉的段仍待确认：留在列表里，建议清掉，换成手动挑
+        assert _ids(page) == ["seg_1", "seg_7"]
+        li = page.locator('li[data-id="seg_1"]')
+        assert li.get_attribute("data-count") == "2"
+        assert li.locator(".suggest-no").count() == 0 and li.locator("select").input_value() == ""
+        assert "AI 的建议已否掉" in li.inner_text()
+        # 忽略成功的则拿掉
+        page.locator('li[data-id="seg_7"] .suggest-dismiss').click()
+        page.wait_for_function("() => !document.querySelector('li[data-id=\"seg_7\"]')")
+        assert _ids(page) == ["seg_1"]
+
+
 def test_buttons_stay_disabled_until_reload_settles(browser, static_base_url):
     with open_both(browser, static_base_url, WINDOW) as (page, stub, _rules):
         stub.hold_get = True
@@ -480,7 +523,7 @@ def test_remember_retries_once_on_412(browser, static_base_url):
 def test_remember_skips_duplicate_and_keeps_confirm_on_rule_failure(browser, static_base_url):
     from test_rules import RulesStub
     dup = RulesStub()
-    dup.rules.append({"id": "r_dup", **WANT_RULE})
+    dup.rules.insert(0, {"id": "r_dup", **WANT_RULE})   # 已是第一条且启用：不动
     with open_both(browser, static_base_url, WINDOW, dup) as (page, stub, rules):
         li = page.locator('li[data-id="seg_1"]')
         li.locator(".suggest-rule-cb").check()
@@ -498,15 +541,20 @@ def test_remember_skips_duplicate_and_keeps_confirm_on_rule_failure(browser, sta
         assert [i for a, i, _ in stub.posts if a == "confirm"] == ["seg_1", "seg_3", "seg_5", "seg_7"]
 
 
-@pytest.mark.parametrize("case", ["disabled", "shadowed"])
+@pytest.mark.parametrize("case", ["disabled_first", "disabled_last", "enabled_not_first", "re2_only_before"])
 def test_remember_moves_existing_rule_to_front(browser, static_base_url, case):
-    """同样的规则已在，但停用、或前面有条更宽的规则先命中（指向别的任务）：挪到最前并启用，一次 PUT。"""
+    """同样的规则已在，但停用、或不是第一条：挪到第一条并启用，一次 PUT。不在浏览器里猜谁先命中——
+    前面那条哪怕是 JS 读不懂的 RE2 写法（[[:alpha:]]），也一样挪。"""
     from test_rules import RulesStub
     stub = RulesStub()
-    if case == "shadowed":
-        stub.rules.insert(0, {"id": "r_wide", "app": "KITTY", "title": None, "taskId": "t_read", "confidence": 0.8,
-                              "note": None, "enabled": True})
-    stub.rules.append({"id": "r_dup", **WANT_RULE, "enabled": case != "disabled"})
+    if case == "re2_only_before":
+        stub.rules.insert(0, {"id": "r_posix", "app": "[[:alpha:]]+", "title": None, "taskId": "t_read",
+                              "confidence": 0.8, "note": None, "enabled": True})
+    dup = {"id": "r_dup", **WANT_RULE, "enabled": not case.startswith("disabled")}
+    if case == "disabled_first":
+        stub.rules.insert(0, dup)
+    else:
+        stub.rules.append(dup)
     before = [r["id"] for r in stub.rules if r["id"] != "r_dup"]
     with open_both(browser, static_base_url, WINDOW, stub) as (page, _stub, rules):
         li = page.locator('li[data-id="seg_1"]')
