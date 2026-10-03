@@ -198,6 +198,7 @@
    *                             前 top 张（缺省 5）展开，其余收进 <details>「还有 N 个」
    *   opts.more / moreHref      区尾一行（「还有更多」/「还有 N 个 → 计时页」）
    *   opts.focusFallback        焦点在区尾链接上、重画后链接没了时，焦点交给它
+   * 返回画了的代理运行的 runInfo 列表（按画的顺序；r / ph / act / last …），调用方拿来数状态，不必再排一遍 phases。
    */
   function render(root, data, opts) {
     var v0 = opts.viewStart, v1 = opts.viewEnd, span = v1 - v0;
@@ -469,6 +470,7 @@
       tip.style.top = (r.bottom - box.top + 4) + 'px';
     };
     root.onmouseleave = hideTip;
+    return infos;
   }
 
   window.HoneycombLanes = {

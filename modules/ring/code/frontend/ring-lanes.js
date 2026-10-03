@@ -41,24 +41,24 @@
       v1 = Date.parse(last.windowEnd);
       v0 = v1 - DAY;
     }
+    var infos = L.render(view, last, {
+      viewStart: v0, viewEnd: v1, presence: true, cards: true, top: 5,
+      focusFallback: document.getElementById("lanes-title"),   // 「还有 N 个」重画后没了时焦点落这里
+      more: last.truncated ? "还有更多（只列出了最新的一部分）" : ""
+    });
+    // 标题红绿灯：复用 render 排好的 runInfo（在跑的运行一定与视窗重叠，都在里面），不再逐个排 phases
     var live = { working: 0, waiting: 0, error: 0 };
-    (last.agents || []).forEach(function (r) {
-      if (r.endAt) return;
-      var ph = L.currentPhase(r);
-      if (ph === "working") live.working += 1;
-      else if (ph === "error") live.error += 1;
-      else if (ph !== "idle") live.waiting += 1;
+    infos.forEach(function (k) {
+      if (k.r.endAt) return;
+      if (k.ph === "working") live.working += 1;
+      else if (k.ph === "error") live.error += 1;
+      else if (k.ph !== "idle") live.waiting += 1;
     });
     var bits = [];
     if (live.waiting) bits.push(live.waiting + " 个在等你");
     if (live.working) bits.push(live.working + " 个在干活");
     if (live.error) bits.push(live.error + " 个出错");
     stateEl.textContent = bits.join(" · ");
-    L.render(view, last, {
-      viewStart: v0, viewEnd: v1, presence: true, cards: true, top: 5,
-      focusFallback: document.getElementById("lanes-title"),   // 「还有 N 个」重画后没了时焦点落这里
-      more: last.truncated ? "还有更多（只列出了最新的一部分）" : ""
-    });
   }
 
   async function load() {
