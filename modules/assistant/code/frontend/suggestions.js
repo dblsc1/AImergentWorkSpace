@@ -15,7 +15,8 @@
  *   同一 (app, title, idle) 的几段并成一行，一个下拉、一次确认 / 忽略 / 是 / 否，逐段发。有建议的段指向不同任务
  *   →「建议不一致」让人挑。勾「以后这个窗口都记到这个任务」→ 确认后经 rules.js 往分类规则最前面加一条精确匹配的规则。
  * - 提议新任务（nexus-core v2.8，仓主 2026-10-03「AI 能自动加新任务」，草稿 + 一键确认）：助理找不到合适的现成任务时
- *   可以提议「新建任务：项目 / 名称」。行上名字可改；「是 ✓」= confirm {name}（后端建任务，同一提议只建一个），
+ *   可以提议「新建任务：项目 / 名称」。行上名字可改；「是 ✓」= confirm {name, proposalId}（后端建任务，同一提议只建一个；
+ *   提议在页面显示之后变了 → 409），
  *   组里其余段用建好的 taskId；「否 ✗」= unmatch {proposalId}。下拉仍可改选现成任务。**「全部确认」永远不建任务**。
  * 对外只挂 window.assistantSuggestions（纯函数，给单测用）。
  *
@@ -333,7 +334,7 @@
     ok.addEventListener("click", function () {
       var pick = sel ? sel.value : s.taskId;
       act([{ g: g, ck: v.ck, taskId: pick, remember: Boolean(cb && cb.checked),
-        newName: nt && !pick ? nameEl.value.trim() : "" }], "confirm");
+        newName: nt && !pick ? nameEl.value.trim() : "", proposalId: nt && !pick ? nt.proposalId : "" }], "confirm");
     });
     no.addEventListener("click", function () {
       act([{ g: g, ck: v.ck, taskId: s.taskId, proposalId: nt ? nt.proposalId : "" }], ai || nt ? "unmatch" : "dismiss");
@@ -431,7 +432,7 @@
           // unmatch 带上页面上看到的任务 / 提议：助理刚换过的话后端 409，不会否错
           var body = action === "dismiss" ? undefined
             : action === "unmatch" ? (pid ? { proposalId: pid } : { taskId: taskId })
-            : newName && !created ? { name: newName } : { taskId: created || taskId };
+            : newName && !created ? { name: newName, proposalId: pid } : { taskId: created || taskId };
           var r = await post(API + "/" + encodeURIComponent(targets[i].id) + "/" + action, body);
           if (r.ok) {
             ok += 1;

@@ -4,7 +4,7 @@
 人点「是」才建。本文件管两件事：
 
 - ``propose``：助理交来的 ``newTask`` 校验、按（项目, 归一化名字）去重成一条提议；
-- ``task_for``：人确认时取任务——同一提议**只建一个**任务（建任务锁 + 同名任务兜底），并发的确认复用它。
+- ``task_for``：人确认时取任务——同一提议**只建一个**任务（预留 id + 条件更新 + 唯一索引），并发的确认复用它。
 
 建任务走 planner **既有的写入口**（``guard.run_write`` → ``create_task``，同 ``POST /api/core/planner/tasks``）：
 来源判定、二次设防、审计流水一样不少，没有为这里另开一个更宽的口子。
@@ -13,19 +13,15 @@
 from __future__ import annotations
 
 import hashlib
-import time
-import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
+
+from pymongo.errors import DuplicateKeyError
 
 from ..planner import audit, guard
 from ..planner import service as planner_service
 from . import repo
 
 MAX_NAME = 64  # 码点
-#: 建任务锁的过期：建的那一次崩了，后来的确认可以接手（接手先找同名任务，不会建出第二个）
-_LOCK_STALE = timedelta(seconds=30)
-#: 没抢到锁的确认最多等这么久（对方建完就复用）；等不到回 409 让人重试
-_WAIT_SECONDS = 10.0
 
 
 class ConflictError(RuntimeError):
@@ -73,34 +69,43 @@ def propose(user: str, doc: dict, project_id: str, name: str, now: datetime) -> 
     return {"proposalId": pid, "projectId": project_id, "name": p["name"]}, None
 
 
-def task_for(user: str, proposal_id: str, name: str | None, request) -> str:
-    """人确认带提议的建议：返回要记到的任务 id。提议已建成就复用；否则抢锁建（同一提议只建一个）。
+def is_open(user: str, proposal_id: str) -> bool:
+    """提议还能用（待定 / 已接受）。已否掉、已过期的不能再挂到建议上，也不能再建。"""
+    p = repo.proposal_get(user, proposal_id)
+    return p is not None and p["status"] in ("pending", "accepted")
 
-    ``name`` = 人改过的名字（已校验），缺省用提议的名字。抢到锁之后先找项目里的同名任务：人刚手建的、
-    或上一次建完崩在记账之前的，都直接用——锁过期接手也不会建出第二个。
+
+def statuses(user: str, proposal_ids: list[str]) -> dict:
+    return repo.proposal_statuses(user, proposal_ids)
+
+
+def task_for(user: str, proposal_id: str, name: str | None, request) -> str:
+    """人确认带提议的建议：返回要记到的任务 id。同一提议**结构上**只建一个任务，不靠锁：
+
+    1. 任务 id 在提议第一次提出时就预留好（存在提议上）；
+    2. 先把提议 pending → accepted（条件更新），同时定下名字——第一位确认的人改的名字为准；
+       与「否」（pending → rejected，同样是条件更新）二选一，已否掉的提议永远建不出任务；
+    3. 再用预留的 id 建任务：撞 ``(user, id)`` 唯一索引 = 别的确认刚建好，直接用。
+       建好记 ``created``——之后人把任务删了也不会用同一个 id 再建（id 不复用）。
+
+    在第 2、3 步之间崩掉，重试走到第 3 步照样补建，名字用已定下的那个。
     """
-    token, deadline = uuid.uuid4().hex, time.monotonic() + _WAIT_SECONDS
-    while True:
-        p = repo.proposal_get(user, proposal_id)
-        if p is None:
-            raise ConflictError("这条新任务提议已过期，请刷新后自己选任务")
-        if p["status"] == "accepted":
-            return p["taskId"]
-        now = datetime.now(timezone.utc)
-        if repo.proposal_lock(user, proposal_id, token, now, now - _LOCK_STALE):
-            want = name or p["name"]
+    repo.proposal_accept(user, proposal_id, name, datetime.now(timezone.utc))
+    p = repo.proposal_get(user, proposal_id)
+    if p is None:
+        raise ConflictError("这条新任务提议已过期，请刷新后自己选任务")
+    if p["status"] != "accepted":
+        raise ConflictError("这个新任务提议已被否掉，请刷新后自己选任务")
+    if not p.get("created"):
+        if planner_service.get_task(p["taskId"]) is None:
             try:
-                task = _same_name_task(p["projectId"], want) or guard.run_write(
+                guard.run_write(
                     request, op=audit.OP_CREATE, object_type="tasks",
-                    changes={"projectId": p["projectId"], "name": want},
-                    action=lambda actor: planner_service.create_task(want, p["projectId"], actor=actor),
+                    changes={"projectId": p["projectId"], "name": p["name"]},
+                    action=lambda actor: planner_service.create_task(
+                        p["name"], p["projectId"], actor=actor, task_id=p["taskId"]),
                 )
-            except Exception:
-                repo.proposal_unlock(user, proposal_id, token)
-                raise
-            repo.proposal_accept(user, proposal_id, task["id"], now)
-            return task["id"]
-        if time.monotonic() > deadline:
-            raise ConflictError("这个新任务正在由另一次确认建，请稍后重试")
-        # ponytail: 轮询等对方建完；同一提议同时确认的只有同一组的几段，0.1 秒一轮足够
-        time.sleep(0.1)
+            except DuplicateKeyError:
+                pass  # 并发的另一次确认刚用同一个 id 建好（审计里留一条 failed，如实）
+        repo.proposal_created(user, proposal_id)
+    return p["taskId"]

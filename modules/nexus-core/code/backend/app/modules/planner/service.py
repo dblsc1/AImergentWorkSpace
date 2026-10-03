@@ -151,8 +151,10 @@ def create_task(
     plan: dict | None = None,
     depends_on: list[str] | None = None,
     actor: str | None = None,
+    task_id: str | None = None,
 ) -> dict:
-    """建任务：id 与 key 都由系统生成（契约「建任务时」）。``plan``/``dependsOn``
+    """建任务：id 与 key 都由系统生成（契约「建任务时」）。``task_id``（v2.8）只给 activity 的「确认 AI 提议的
+    新任务」用：id 是提议时就预留好的（同样系统生成），重复建撞 ``(user, id)`` 唯一索引——那就是「建过了」。``plan``/``dependsOn``
     是 v1.1 新增字段，校验与 PATCH 共用同一份函数，不是两套各管一半。"""
     project = repo.get_project(project_id)
     if project is None:
@@ -167,7 +169,7 @@ def create_task(
         raise InvalidInputError(f"任务 kind 非法：{kind!r}，合法取值 {'/'.join(_VALID_KINDS)}")
 
     task = {
-        "id": f"t_{uuid.uuid4().hex[:6]}",
+        "id": task_id or f"t_{uuid.uuid4().hex[:6]}",
         "key": _task_key(zone["name"], project["name"], name,
                          repo.count_same_name_in_project(project_id, name) + 1),
         "name": name,

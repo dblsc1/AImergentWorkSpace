@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 
 from pymongo import ReturnDocument
@@ -124,8 +125,8 @@ def purge(user: str, cutoff: datetime) -> None:
 
 # ------------------------------------------------ activity_task_proposals（v2.8，AI 提议的新任务，不是事实）
 #
-# 每个 (user, 项目, 归一化名字) 一份（id 由它派生）：status pending / accepted（已建成，taskId）/ rejected。
-# lock / lockedAt = 正在建任务的那一次确认（30 秒过期，见 proposals.py）。
+# 每个 (user, 项目, 归一化名字) 一份（id 由它派生）：status pending / accepted（人点了「是」）/ rejected。
+# taskId = 第一次提出时预留的任务 id（建任务就用它，见 proposals.task_for）；created = 任务已经建过。
 
 _PROPOSALS = "activity_task_proposals"
 _proposals_ready = False
@@ -145,29 +146,30 @@ def proposal_get(user: str, proposal_id: str) -> dict | None:
 
 
 def proposal_upsert(user: str, proposal_id: str, project_id: str, name: str, at: datetime) -> dict:
-    """取（或新建）提议，刷新 updatedAt。名字只在第一次提出时定下。返回现在的文档。"""
-    insert = {"projectId": project_id, "name": name, "status": "pending", "taskId": None, "lock": None,
-              "lockedAt": None, "createdAt": at}
+    """取（或新建）提议，刷新 updatedAt。名字与预留的任务 id 只在第一次提出时定下。返回现在的文档。
+    任务 id 是新的随机号（同 planner 建任务），不由提议 id 派生：提议过期后再被提出，拿到的是新号，
+    人删掉的任务 id 永远不会被再用（planner「id 不可复用」）。"""
+    insert = {"projectId": project_id, "name": name, "status": "pending", "taskId": f"t_{uuid.uuid4().hex[:12]}",
+              "created": False, "createdAt": at}
     return _proposals_col().find_one_and_update(
         {"user": user, "id": proposal_id}, {"$setOnInsert": insert, "$set": {"updatedAt": at}},
         upsert=True, return_document=ReturnDocument.AFTER, projection={"_id": 0})
 
 
-def proposal_lock(user: str, proposal_id: str, token: str, at: datetime, stale: datetime) -> bool:
-    """抢建任务锁：没建成、且没人在建（或在建的已超时）才抢得到。"""
-    filt = {"user": user, "id": proposal_id, "status": {"$ne": "accepted"},
-            "$or": [{"lockedAt": None}, {"lockedAt": {"$lt": stale}}]}
-    return _proposals_col().update_one(filt, {"$set": {"lock": token, "lockedAt": at}}).matched_count > 0
+def proposal_statuses(user: str, proposal_ids: list[str]) -> dict:
+    """{提议 id: status}；查不到（过期）的不在里面。"""
+    rows = _proposals_col().find({"user": user, "id": {"$in": proposal_ids}}, {"id": 1, "status": 1})
+    return {r["id"]: r["status"] for r in rows}
 
 
-def proposal_unlock(user: str, proposal_id: str, token: str) -> None:
-    _proposals_col().update_one({"user": user, "id": proposal_id, "lock": token},
-                                {"$set": {"lock": None, "lockedAt": None}})
+def proposal_accept(user: str, proposal_id: str, name: str | None, at: datetime) -> None:
+    """人点「是」：pending → accepted（条件更新，与否掉二选一），定下名字（给了才改）。已 accepted / rejected 不动。"""
+    upd = {"status": "accepted", "updatedAt": at, **({"name": name} if name else {})}
+    _proposals_col().update_one({"user": user, "id": proposal_id, "status": "pending"}, {"$set": upd})
 
 
-def proposal_accept(user: str, proposal_id: str, task_id: str, at: datetime) -> None:
-    _proposals_col().update_one({"user": user, "id": proposal_id}, {"$set": {
-        "status": "accepted", "taskId": task_id, "lock": None, "lockedAt": None, "updatedAt": at}})
+def proposal_created(user: str, proposal_id: str) -> None:
+    _proposals_col().update_one({"user": user, "id": proposal_id}, {"$set": {"created": True}})
 
 
 def proposal_reject_if_unused(user: str, proposal_id: str, at: datetime) -> None:

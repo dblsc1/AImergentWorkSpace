@@ -188,11 +188,16 @@ def upload(device_id: str, segments: list[Any]) -> dict:
 _ITEM_KEYS = ("id", "deviceId", "startAt", "endAt", "durationSeconds", "app", "title", "suggestion", "status")
 
 
-def _item(d: dict) -> dict:
+def _item(d: dict, open_ids: set | None = None) -> dict:
     # v2.5 之前存下的建议没有 idle 字段：回 false；没被人否过的没有 rejectedTaskIds：回 []
-    # v2.8 suggestion.newTask 只在有提议时出现（存在 suggestion 里，原样带出）
-    return {**{k: d[k] for k in _ITEM_KEYS}, "idle": d.get("idle", False),
-            "rejectedTaskIds": d.get("rejectedTaskIds", [])}
+    # v2.8 suggestion.newTask 只在有提议时出现；提议已否掉 / 过期 → 当作没有建议（不出 newTask，把握 0）
+    out = {**{k: d[k] for k in _ITEM_KEYS}, "idle": d.get("idle", False),
+           "rejectedTaskIds": d.get("rejectedTaskIds", [])}
+    nt = d["suggestion"].get("newTask")
+    if nt and open_ids is not None and nt["proposalId"] not in open_ids:
+        out["suggestion"] = {**{k: v for k, v in d["suggestion"].items() if k != "newTask"},
+                             "confidence": 0.0, "reason": ""}
+    return out
 
 
 def last_uploads(user: str) -> dict:
@@ -205,7 +210,10 @@ def list_suggestions(status: str, limit: int, offset: int) -> dict:
     _purge(user, _now())
     limit = _DEFAULT_LIMIT if limit <= 0 else min(limit, _MAX_LIMIT)  # 同档案读端口径
     total, docs = repo.page(user, status, limit, max(offset, 0))
-    return {"total": total, "items": [_item(d) for d in docs]}
+    pids = [d["suggestion"]["newTask"]["proposalId"] for d in docs if d["suggestion"].get("newTask")]
+    st = proposals.statuses(user, pids) if pids else {}
+    open_ids = {k for k, v in st.items() if v in ("pending", "accepted")}
+    return {"total": total, "items": [_item(d, open_ids) for d in docs]}
 
 
 def _get(user: str, sug_id: str) -> dict:
@@ -215,8 +223,10 @@ def _get(user: str, sug_id: str) -> dict:
     return doc
 
 
-def confirm(sug_id: str, task_id: str | None, mode: str, name: str | None = None, request=None) -> dict:
-    """``name`` / ``request``（v2.8）：确认 AI 提议的新任务时人改过的名字，与建任务要经的 planner 写入口（判来源、留审计）。"""
+def confirm(sug_id: str, task_id: str | None, mode: str, name: str | None = None, request=None,
+            proposal_id: str | None = None) -> dict:
+    """v2.8：``proposal_id`` = 人在页面上看到并点「是」的那条新任务提议（占位时要求建议的提议仍是它）；
+    ``name`` = 人改过的名字；``request`` 给建任务要经的 planner 写入口（判来源、留审计）。"""
     user = current_tenant()
     doc = _get(user, sug_id)
     if doc["status"] == "dismissed":
@@ -232,11 +242,13 @@ def confirm(sug_id: str, task_id: str | None, mode: str, name: str | None = None
             "event": {k: stored[k] for k in ("id", "dedupeKey", "type")}, "taskId": stored["subject"]["task"],
         }
     suggested = doc["suggestion"].get("taskId")
-    # v2.8：没给任务、建议是助理提议的新任务 → 人点「是」才建（同一提议只建一个，见 proposals.task_for）
-    proposal = (doc["suggestion"].get("newTask") or {}).get("proposalId") if not (task_id or suggested) else None
+    # v2.8：带 proposalId = 确认 AI 提议的新任务，人点「是」才建（同一提议只建一个，见 proposals.task_for）
+    if task_id and (proposal_id is not None or name is not None):
+        raise InvalidInputError("taskId 与 proposalId / name 不能同给：要么记到现成任务，要么确认新任务")
+    if name is not None and proposal_id is None:
+        raise InvalidInputError("name 只用于确认 AI 提议的新任务，须同时带 proposalId")
+    proposal = proposal_id
     if name is not None:
-        if proposal is None:
-            raise InvalidInputError("name 只用于确认 AI 提议的新任务（不能与 taskId 同给）")
         try:
             name = proposals.clean_name(name)
         except ValueError as exc:
@@ -244,8 +256,8 @@ def confirm(sug_id: str, task_id: str | None, mode: str, name: str | None = None
     if proposal is not None:
         forbid_device_token(request.headers.get("authorization") if request is not None else None, "建任务")
     # 请求体没给任务 = 用建议里的：占位时要求建议的任务没变（v2.7：读到之后可能刚被人否掉 / 被助理换掉）
-    only_task = suggested if not task_id else None
-    task_id = task_id or suggested
+    only_task = suggested if not task_id and proposal is None else None
+    task_id = task_id or (None if proposal is not None else suggested)
     if not task_id and proposal is None:
         raise InvalidInputError("没有可确认的任务：请求体与建议里都没有 taskId，请先选一个任务")
     # 先占位再写事实：pending→confirmed 是条件更新，与忽略（同样只从 pending 转）二选一，
@@ -283,8 +295,10 @@ def confirm(sug_id: str, task_id: str | None, mode: str, name: str | None = None
         except Exception:  # noqa: BLE001, S110
             pass
         raise
+    # taskId 取台账里真正落下的那条（并发确认带了不同的任务时，可能不是本次的）
+    stored = events_service.find_by_dedupe(user, SOURCE, dedupe_key)
     return {"id": sug_id, "status": "confirmed", "duplicate": out["duplicate"],
-            "date": out["date"], "event": out["event"], "taskId": task_id}
+            "date": out["date"], "event": out["event"], "taskId": stored["subject"]["task"]}
 
 
 def dismiss(sug_id: str) -> dict:
@@ -334,6 +348,11 @@ def match(authorization: str | None, matches: list[Any]) -> dict:
                 sug["newTask"], why = proposals.propose(user, doc, m.newTask.projectId, m.newTask.name, _now())
             if not why and not repo.set_match(user, m.id, sug):
                 why = "这条建议刚被改动（确认 / 忽略 / 否），没有写入"
+            elif not why and m.newTask is not None and not proposals.is_open(user, sug["newTask"]["proposalId"]):
+                # 挂上之后再看一眼：提议恰好在这期间被否掉了 → 摘下来。仍有极窄的窗口（这一眼之后才被否掉），
+                # 但安全：列表把否掉的提议当没有建议，确认也会 409，建不出任务
+                repo.clear_proposal(user, m.id, sug["newTask"]["proposalId"])
+                why = "用户已经否掉过这个新任务，不要再提"
         if why:
             rejected.append({"index": index, "reason": why})
         else:

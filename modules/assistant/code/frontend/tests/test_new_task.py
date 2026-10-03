@@ -58,7 +58,7 @@ def test_yes_creates_with_edited_name_then_reuses_task(browser, static_base_url)
         li.locator(".suggest-confirm").click()
         page.wait_for_function("() => !document.querySelector('li[data-id=\"sug_n1\"]')")
         # 第一段带名字（后端建任务），其余段直接记到建好的那个
-        assert stub.posts == [("confirm", "sug_n1", {"name": "乐理复习计划"}), ("confirm", "sug_n2", {"taskId": "t_new"})]
+        assert stub.posts == [("confirm", "sug_n1", {"name": "乐理复习计划", "proposalId": "tp_1"}), ("confirm", "sug_n2", {"taskId": "t_new"})]
         assert "已新建任务「乐理复习计划」，2 段记进去了。" in page.inner_text("#suggest-message")
 
 
