@@ -282,6 +282,16 @@ func TestPresenceZeroDurationLatest(t *testing.T) {
 	if p := ck.posts("/presence")[0].body; p["title"] != "new" {
 		t.Fatalf("presence %v", p)
 	}
+	// 边界：0 秒事件正好开始在 now。
+	aw2 := fakeAWWeb(t, []awEvent{{Timestamp: now, Duration: 0, Data: map[string]any{"app": "ptyxis", "title": "edge"}}}, nil, nil)
+	defer aw2.Close()
+	ck.take()
+	if sent, err := presenceBeat(liveConfig(aw2.URL, ck.URL), http.DefaultClient, now); !sent || err != nil {
+		t.Fatalf("edge: sent=%v err=%v", sent, err)
+	}
+	if p := ck.posts("/presence")[0].body; p["title"] != "edge" {
+		t.Fatalf("edge presence %v", p)
+	}
 }
 
 // 失败就丢：返回错误，没有任何排队；拉不到设置时不发（不能退回可能更宽松的本机隐私选项）。
