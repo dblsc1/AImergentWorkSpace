@@ -4,7 +4,7 @@
 人点「是」才建。本文件管两件事：
 
 - ``propose``：助理交来的 ``newTask`` 校验、按（项目, 归一化名字）去重成一条提议；
-- ``task_for``：人确认时取任务——同一提议**只建一个**任务（预留 id + 条件更新 + 唯一索引），并发的确认复用它。
+- ``task_for``：人确认时取任务——同一提议**只建一次**任务（预留 id + 持久的「建」占位），并发的确认复用它。
 
 建任务走 planner **既有的写入口**（``guard.run_write`` → ``create_task``，同 ``POST /api/core/planner/tasks``）：
 来源判定、二次设防、审计流水一样不少，没有为这里另开一个更宽的口子。
@@ -13,15 +13,17 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from datetime import datetime, timezone
-
-from pymongo.errors import DuplicateKeyError
 
 from ..planner import audit, guard
 from ..planner import service as planner_service
+from ..planner.errors import NotFoundError
 from . import repo
 
 MAX_NAME = 64  # 码点
+#: 没占到「建」的确认最多等这么久让任务出现（只在同一提议并发确认时才会等）
+WAIT_SECONDS = 10.0
 
 
 class ConflictError(RuntimeError):
@@ -80,15 +82,15 @@ def statuses(user: str, proposal_ids: list[str]) -> dict:
 
 
 def task_for(user: str, proposal_id: str, name: str | None, request) -> str:
-    """人确认带提议的建议：返回要记到的任务 id。同一提议**结构上**只建一个任务，不靠锁：
+    """人确认带提议的建议：返回要记到的任务 id。同一提议**结构上**只建一次任务：
 
     1. 任务 id 在提议第一次提出时就预留好（存在提议上）；
-    2. 先把提议 pending → accepted（条件更新），同时定下名字——第一位确认的人改的名字为准；
+    2. 提议 pending → accepted（条件更新），同时定下名字——第一位确认的人改的名字为准；
        与「否」（pending → rejected，同样是条件更新）二选一，已否掉的提议永远建不出任务；
-    3. 再用预留的 id 建任务：撞 ``(user, id)`` 唯一索引 = 别的确认刚建好，直接用。
-       建好记 ``created``——之后人把任务删了也不会用同一个 id 再建（id 不复用）。
-
-    在第 2、3 步之间崩掉，重试走到第 3 步照样补建，名字用已定下的那个。
+    3. 任务已在 → 直接用。不在 → 先在提议上**持久地**占「建」（``createClaimedAt`` 空 → 现在，条件更新），
+       只有占到的那一次去建。planner 的删除是硬删除，任务表里不留痕，所以「这个 id 建过没有」只能记在这里：
+       占过之后任务不在 = 正在建，或建过又被删了 / 建的那一次崩了——等一会儿还不出现就 404，**绝不再建**
+       （planner「id 不可复用」）。建的那一次自己报错（项目已删等）会放掉占位，人可以再试。
     """
     repo.proposal_accept(user, proposal_id, name, datetime.now(timezone.utc))
     p = repo.proposal_get(user, proposal_id)
@@ -96,16 +98,25 @@ def task_for(user: str, proposal_id: str, name: str | None, request) -> str:
         raise ConflictError("这条新任务提议已过期，请刷新后自己选任务")
     if p["status"] != "accepted":
         raise ConflictError("这个新任务提议已被否掉，请刷新后自己选任务")
-    if not p.get("created"):
-        if planner_service.get_task(p["taskId"]) is None:
-            try:
-                guard.run_write(
-                    request, op=audit.OP_CREATE, object_type="tasks",
-                    changes={"projectId": p["projectId"], "name": p["name"]},
-                    action=lambda actor: planner_service.create_task(
-                        p["name"], p["projectId"], actor=actor, task_id=p["taskId"]),
-                )
-            except DuplicateKeyError:
-                pass  # 并发的另一次确认刚用同一个 id 建好（审计里留一条 failed，如实）
-        repo.proposal_created(user, proposal_id)
-    return p["taskId"]
+    tid = p["taskId"]
+    if planner_service.get_task(tid) is not None:
+        return tid
+    if repo.proposal_claim_create(user, proposal_id, datetime.now(timezone.utc)):
+        try:
+            guard.run_write(
+                request, op=audit.OP_CREATE, object_type="tasks",
+                changes={"projectId": p["projectId"], "name": p["name"]},
+                action=lambda actor: planner_service.create_task(p["name"], p["projectId"], actor=actor, task_id=tid),
+            )
+        except Exception:
+            if planner_service.get_task(tid) is None:
+                repo.proposal_unclaim_create(user, proposal_id)
+            raise
+        return tid
+    # 别人占着「建」：等它建好（同一组几段并发确认时）；等不到 = 建过又删了 / 那一次崩了
+    deadline = time.monotonic() + WAIT_SECONDS
+    while time.monotonic() < deadline:
+        time.sleep(0.1)
+        if planner_service.get_task(tid) is not None:
+            return tid
+    raise NotFoundError(f"这个新任务（{tid!r}）已不存在：建过又被删掉，或建的时候出了错。请自己选任务")

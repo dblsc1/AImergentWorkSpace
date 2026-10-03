@@ -1925,12 +1925,16 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
 4. 取任务——**不靠锁，结构上只建一个**：
    - 提议 pending → accepted（条件更新），同时定下名字：**第一位确认的人改的名字为准**，后到的确认带的 `name` 不起作用。
      「否」把提议标为已否掉也只从 pending 转，两者二选一：**已否掉的提议 → 409，永远建不出任务**。
-   - 用预留的任务 id 经 planner **既有建任务路径**建（`guard.run_write` → `create_task`，与 `POST /api/core/planner/tasks`
-     同一条：actor 按来源判定、留一条审计；`create_task` 为此追加一个只给本路径用的 `task_id` 入参）。
-     撞 `(user, id)` 唯一索引 = 并发的另一次确认刚建好，直接用（审计里如实留一条 failed）。建好记 `created`，
-     之后人把任务删了也不会再建（这段的确认就 404，同任务不存在）。
-   - 在「接受」与「建」之间崩掉：重试照样用同一个 id、已定下的名字补建。
-   - **所以同一提议无论多少段、多少次并发确认，只建一个任务。**
+   - 预留 id 的任务已在 → 直接用。不在 → 先在提议上**持久地**占「建」（`createClaimedAt` 空 → 现在，条件更新），
+     **只有占到的那一次**用预留的 id 经 planner **既有建任务路径**建（`guard.run_write` → `create_task`，与
+     `POST /api/core/planner/tasks` 同一条：actor 按来源判定、留一条审计；`create_task` 为此追加一个只给本路径用的 `task_id` 入参）。
+     占到的那一次自己报错且任务没建成（项目已删等）→ 放掉占位，人可以再试。
+   - 没占到的：等任务出现（≤ 10 秒，同一组几段并发确认时）复用；等不到 → **404**——占过「建」而任务不在，只可能是
+     建过又被删了（planner 的删除是硬删除，任务表里不留痕，所以「建过没有」记在提议上，删任务也不清），或建的那一次崩了：
+     **绝不用同一个 id 再建**（planner「id 不可复用」）。代价：建的那一次恰好崩在建成之前，这条提议就再也建不出任务，
+     人改选现成任务即可（安全失败）。
+   - 在「接受」与「占建」之间崩掉：重试照样占、用已定下的名字建。
+   - **所以同一提议无论多少段、多少次并发确认，只建一次任务；人删掉之后也不会被建回来。**
 5. 取任务失败（项目已删 → 400、提议过期没了 / 已否掉 → 409 等）放回占位，同 v2.2。之后同 v2.2 写事实。
 6. 响应的 `taskId` 取台账里这段**真正落下**的那条事实的任务（同一段并发确认、各带不同任务时，后到的是重复，回的是先写成的那个）。
 
@@ -2276,7 +2280,7 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 | `ai-detector` 桌面程序（v2.2） | `activity.suggestions.v1` 的 `POST /api/core/activity/suggestions`（带设备令牌，经网关） | `modules/ai-detector` |
 | `assistant` 前端（v2.7） | `activity.suggestions.v1` 的 GET / confirm / dismiss / **unmatch**（「待确认建议」面板：助理配的建议出「是 / 否」，否 = unmatch）；读 `suggestion.classifier`、`rejectedTaskIds` | `modules/assistant` |
 | MCP 服务（v2.7） | `activity.suggestions.v1` 的 `POST .../suggestions/matches`（`propose_activity_matches`，`mcp.tools.v1` v1.3）；GET 多读 `rejectedTaskIds` | `contracts/mcp.tools.v1` |
-| `assistant` 前端（v2.8） | 带提议的建议（`suggestion.newTask`）出「新建任务：项目 / 名称」，名字可改；「是」= confirm `{name, proposalId}`（不带 `taskId`），响应的 `taskId` 用于其余段与「以后这个窗口」的规则；「否」= unmatch `{proposalId}`；「全部确认」不含提议 | `modules/assistant` |
+| `assistant` 前端（v2.8） | 带提议的建议（`suggestion.newTask`）出「新建任务：项目 / 名称」，名字可改；「是」= confirm `{name, proposalId}`（不带 `taskId`），组里每一段都这样发，响应的 `taskId` 用于「以后这个窗口」的规则；「否」= unmatch `{proposalId}`；「全部确认」不含提议 | `modules/assistant` |
 | MCP 服务（v2.8） | `propose_activity_matches` 每条可给 `newTask`（`mcp.tools.v1` v1.4）；GET 多读 `suggestion.newTask` | `contracts/mcp.tools.v1` |
 | `ai-detector` 桌面程序（v2.4） | `activity.presence.v1` 的 POST（在场心跳）；可选「状态文件桥」经 `agents.v1` 的 start/stop 与 `agents.phase.v1` 报没有钩子的代理（带设备令牌） | `modules/ai-detector` |
 | `tools/agent-hooks`（v2.1 起，v2.4 追加） | `agents.v1` 的 start/stop；v2.4 起 `agents.phase.v1`（Claude Code 钩子与 `cockpit-run phase`） | `tools/agent-hooks` |

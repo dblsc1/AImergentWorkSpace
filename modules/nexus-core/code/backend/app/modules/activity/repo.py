@@ -126,7 +126,8 @@ def purge(user: str, cutoff: datetime) -> None:
 # ------------------------------------------------ activity_task_proposals（v2.8，AI 提议的新任务，不是事实）
 #
 # 每个 (user, 项目, 归一化名字) 一份（id 由它派生）：status pending / accepted（人点了「是」）/ rejected。
-# taskId = 第一次提出时预留的任务 id（建任务就用它，见 proposals.task_for）；created = 任务已经建过。
+# taskId = 第一次提出时预留的任务 id（建任务就用它，见 proposals.task_for）；
+# createClaimedAt = 有一次确认占了「建」（持久，任务被删也不清，于是同一 id 永远只建一次）。
 
 _PROPOSALS = "activity_task_proposals"
 _proposals_ready = False
@@ -150,7 +151,7 @@ def proposal_upsert(user: str, proposal_id: str, project_id: str, name: str, at:
     任务 id 是新的随机号（同 planner 建任务），不由提议 id 派生：提议过期后再被提出，拿到的是新号，
     人删掉的任务 id 永远不会被再用（planner「id 不可复用」）。"""
     insert = {"projectId": project_id, "name": name, "status": "pending", "taskId": f"t_{uuid.uuid4().hex[:12]}",
-              "created": False, "createdAt": at}
+              "createClaimedAt": None, "createdAt": at}
     return _proposals_col().find_one_and_update(
         {"user": user, "id": proposal_id}, {"$setOnInsert": insert, "$set": {"updatedAt": at}},
         upsert=True, return_document=ReturnDocument.AFTER, projection={"_id": 0})
@@ -168,8 +169,15 @@ def proposal_accept(user: str, proposal_id: str, name: str | None, at: datetime)
     _proposals_col().update_one({"user": user, "id": proposal_id, "status": "pending"}, {"$set": upd})
 
 
-def proposal_created(user: str, proposal_id: str) -> None:
-    _proposals_col().update_one({"user": user, "id": proposal_id}, {"$set": {"created": True}})
+def proposal_claim_create(user: str, proposal_id: str, at: datetime) -> bool:
+    """占「建」：只有一次能占到（空 → 现在，条件更新）。"""
+    filt = {"user": user, "id": proposal_id, "status": "accepted", "createClaimedAt": None}
+    return _proposals_col().update_one(filt, {"$set": {"createClaimedAt": at}}).matched_count > 0
+
+
+def proposal_unclaim_create(user: str, proposal_id: str) -> None:
+    """占到的那一次建任务报错了（任务没建成）：放掉，人可以再试。"""
+    _proposals_col().update_one({"user": user, "id": proposal_id}, {"$set": {"createClaimedAt": None}})
 
 
 def proposal_reject_if_unused(user: str, proposal_id: str, at: datetime) -> None:

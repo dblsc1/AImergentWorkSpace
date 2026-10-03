@@ -92,7 +92,20 @@ def _yes(client, sug_id, prop, **body):
     return client.post(f"{SUG}/{sug_id}/confirm", json={"proposalId": prop, **body})
 
 
-def test_confirm_creates_once_and_other_segments_reuse(client, seeded):
+def _point(client, prop, pid, minutes_ago):
+    """再来一段待确认、指着同一条提议（模拟同组里后确认的那段）。"""
+    _upload(client, [_seg(_recent(minutes_ago))])
+    sug_id = _pending(client)["items"][0]["id"]
+    _db()["activity_suggestions"].update_one({"id": sug_id}, {"$set": {"suggestion": {
+        "taskId": None, "confidence": 0.5, "reason": "", "classifier": "assistant",
+        "newTask": {"proposalId": prop, "projectId": pid, "name": "x"}}}})
+    return sug_id
+
+
+def test_confirm_creates_once_and_other_segments_reuse(client, seeded, monkeypatch):
+    from app.modules.activity import proposals  # noqa: PLC0415
+
+    monkeypatch.setattr(proposals, "WAIT_SECONDS", 0.3)
     ids, pid = _setup(client, seeded, n=3)
     _propose(client, ids, pid)
     prop = _pid(client, ids[0])
@@ -120,19 +133,62 @@ def test_confirm_creates_once_and_other_segments_reuse(client, seeded):
     out = _propose(client, [new], pid)
     assert out["matched"] == 0 and task["id"] in out["rejected"][0]["reason"]
     # 人把任务删了：同一提议不会用同一个 id 再建（id 不复用）
-    _db()["tasks"].delete_one({"id": task["id"]})
-    _upload(client, [_seg(_recent(150))])
-    later = next(i["id"] for i in _pending(client)["items"])
-    _db()["activity_suggestions"].update_one({"id": later}, {"$set": {"suggestion": {
-        "taskId": None, "confidence": 0.5, "reason": "", "classifier": "assistant",
-        "newTask": {"proposalId": prop, "projectId": pid, "name": "重构存档系统"}}}})
+    _db()["tasks"].delete_one({"id": task["id"]})   # planner 的删除是硬删除
+    later = _point(client, prop, pid, 150)
     assert _yes(client, later, prop).status_code == 404   # 任务已删：不重建，确认失败
     assert _db()["tasks"].count_documents({"id": task["id"]}) == 0
-    assert _db()["activity_task_proposals"].find_one({"id": prop})["created"] is True
+    assert _pending(client)["total"] >= 1 and later in [i["id"] for i in _pending(client)["items"]]
+
+
+def test_crash_after_create_then_delete_then_retry_never_recreates(client, seeded, monkeypatch):
+    """建成了、还没返回就崩了 → 人把任务删了 → 重试：占过「建」就绝不再建同一个 id。"""
+    from app.modules.activity import proposals  # noqa: PLC0415
+
+    monkeypatch.setattr(proposals, "WAIT_SECONDS", 0.3)
+    ids, pid = _setup(client, seeded, n=2)
+    _propose(client, ids, pid)
+    prop = _pid(client, ids[0])
+    real = proposals.planner_service.create_task
+
+    def create_then_crash(*args, **kwargs):
+        real(*args, **kwargs)
+        raise RuntimeError("建成之后崩了")
+
+    monkeypatch.setattr(proposals.planner_service, "create_task", create_then_crash)
+    with pytest.raises(RuntimeError):
+        _yes(client, ids[0], prop)
+    monkeypatch.setattr(proposals.planner_service, "create_task", real)
+    (task,) = _tasks_named("重构存档")
+    _db()["tasks"].delete_one({"id": task["id"]})
+    for sug_id in ids:   # 崩掉的那段重试、组里另一段确认：都不重建
+        assert _yes(client, sug_id, prop).status_code == 404
+    assert _db()["tasks"].count_documents({"id": task["id"]}) == 0 and _session_events() == []
+
+
+def test_stale_concurrent_caller_never_recreates_a_deleted_task(client, seeded, monkeypatch):
+    """甲读到「任务不在」之后、去占「建」之前：乙占了、建了，人又删了。甲不许再建。"""
+    from app.modules.activity import proposals, repo  # noqa: PLC0415
+
+    monkeypatch.setattr(proposals, "WAIT_SECONDS", 0.3)
+    ids, pid = _setup(client, seeded, n=2)
+    _propose(client, ids, pid)
+    prop = _pid(client, ids[0])
+    real, seen = repo.proposal_claim_create, {}
+
+    def racing(*args, **kwargs):
+        if not seen:
+            seen["b"] = "started"
+            seen["b"] = _yes(client, ids[1], prop).json()["taskId"]   # 乙：占、建、记
+            _db()["tasks"].delete_one({"id": seen["b"]})               # 人删了
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(proposals.repo, "proposal_claim_create", racing)
+    assert _yes(client, ids[0], prop).status_code == 404
+    assert _db()["tasks"].count_documents({"id": seen["b"]}) == 0
 
 
 def test_concurrent_confirms_create_exactly_one_task(client, seeded, monkeypatch):
-    """不靠锁：几次确认同时跑到「建任务」，用的都是提议预留的同一个 id，唯一索引只放进一条。"""
+    """几次确认同时跑到「建任务」：只有占到「建」的那一次去建（用预留的 id），其余等它建好复用。"""
     from app.modules.activity import proposals  # noqa: PLC0415
 
     ids, pid = _setup(client, seeded, n=6)
@@ -144,14 +200,14 @@ def test_concurrent_confirms_create_exactly_one_task(client, seeded, monkeypatch
         import time  # noqa: PLC0415
 
         calls.append(1)
-        time.sleep(0.4)   # 慢一点：其余确认也走到「任务还不在，建」
+        time.sleep(0.4)   # 慢一点：其余确认都撞上「任务还不在」
         return real(*args, **kwargs)
 
     monkeypatch.setattr(proposals.planner_service, "create_task", slow)
     with ThreadPoolExecutor(len(ids)) as pool:
         resps = list(pool.map(lambda i: _yes(client, i, prop), ids))
     assert [r.status_code for r in resps] == [200] * len(ids), [r.text for r in resps]
-    assert len(calls) > 1   # 真撞上了：不止一次去建
+    assert len(calls) == 1   # 只建了一次
     (task,) = _tasks_named("重构存档")
     assert {r.json()["taskId"] for r in resps} == {task["id"]}
     assert len(_session_events()) == len(ids)
