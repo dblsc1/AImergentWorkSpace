@@ -9,7 +9,7 @@
  * - 422 的 errors[{index, field, message}] 挂到对应那一行的对应格下。
  * - 规则文本（正则、备注、AI 写的说明）一律 textContent / value，不进 innerHTML。
  * - 端点 404（后端早于 v2.6）→ 只留一句说明，不出编辑器。
- * 对外只挂 window.assistantRules（纯函数，给单测用）。
+ * 对外只挂 window.assistantRules（纯函数，给单测用；外加 prepend：「待确认建议」勾「以后这个窗口都记到这个任务」时用）。
  */
 (function () {
   "use strict";
@@ -108,6 +108,34 @@
   function explain(r) {
     return r.status === 403 ? "服务器不让改（403）：" + r.detail + "。规则只能在登录后的网页上改。" : r.detail;
   }
+
+  // 「待确认建议」勾了「以后这个窗口都记到这个任务」（suggestions.js）：把这条规则放到**第一条**——
+  // 第一条命中生效，放最后会被更宽的旧规则挡住。不在浏览器里猜哪条会先命中（JS 正则 ≠ RE2）：
+  // 同样的规则（app、title、taskId 都一样）已是第一条且启用 → 不动；已在别处或停用 → 挪到第一条并启用（保留 id）；
+  // 没有 → 新加在第一条。都是一次 PUT。
+  // 412（别处刚改过）重读一次再试。编辑器没手改时跟着刷新，有手改就留着（保存时照样 412）。
+  async function prepend(rule) {
+    for (var tries = 0; tries < 2; tries++) {
+      var g = await request("GET", "");
+      if (!g.ok) return { ok: false, detail: explain(g) };
+      var list = g.body.rules || [];
+      var same = -1;
+      list.forEach(function (r, i) {
+        if (same < 0 && r.app === rule.app && r.title === rule.title && r.taskId === rule.taskId) same = i;
+      });
+      if (same === 0 && list[0].enabled !== false) return { ok: true, skipped: true };
+      var head = same >= 0 ? Object.assign({}, list[same], { enabled: true }) : rule;
+      var rest = list.filter(function (r, i) { return i !== same; });
+      var r = await request("PUT", "", ifMatch(g.body.version, { rules: [toWire(head)].concat(rest.map(toWire)) }));
+      if (r.ok) {
+        if (server && !busy && !dirty()) { setServer(r.body); loadDraft(); }
+        return { ok: true };
+      }
+      if (r.status !== 412) return { ok: false, detail: explain(r) };
+    }
+    return { ok: false, detail: "规则刚被别处改过两次，稍后再试" };
+  }
+  window.assistantRules.prepend = prepend;
 
   // ── 规则列表 ──
   function el(tag, cls, text) {
