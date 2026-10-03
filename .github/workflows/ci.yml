@@ -1,11 +1,11 @@
 name: ci
 on:
   # main 是正式版；dev 是 0.2.x 修复线（修完从 dev 发补丁版）；
-  # v0.3 是 0.3 的开发线（功能分支合进 v0.3，定期把 dev 的修复合进来）。
+  # v0.3 是 0.3 的开发线（功能分支合进 v0.3，定期把 dev 的修复合进来）；v0.4 同理（2026-10-03 从 v0.3 切出）。
   pull_request:
-    branches: [main, dev, v0.3]
+    branches: [main, dev, v0.3, v0.4]
   push:
-    branches: [main, dev, v0.3]
+    branches: [main, dev, v0.3, v0.4]
 permissions:
   contents: read
 jobs:

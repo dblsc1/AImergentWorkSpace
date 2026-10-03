@@ -71,6 +71,15 @@
 > 两个新端点带 `Authorization: Bearer` 一律 403。只能配到**任务**，不能只配到项目（确认必须挂具体任务，同补登）。
 > 上传端点的 `classifier` 仍只收 `rules` / `service`。见「活动建议」节「AI 匹配」。
 >
+> **v2.8（追加式）**：**AI 助理可以提议新建任务，人点「是」才建。** 仓主 2026-10-03：「AI 应该能自动加新任务」，
+> 定为「草稿 + 一键确认」——AI 从不直接写任务。`matches` 的每条可以用 `newTask: {projectId, name}` 代替 `taskId`
+> （现成任务里没有合适的时）：服务端按（租户, 项目, 归一化名字）去重成一条**新任务提议**（独立集合
+> `activity_task_proposals`，不进台账 / 投影 / 导出 / 快照恢复），建议里存 `suggestion.newTask {proposalId, projectId, name}`，
+> `taskId` 仍是 `null`。人对这条建议 `confirm`（不带 `taskId`，带 `proposalId`，可带改过的 `name`）时，才经 planner
+> **既有的建任务路径**（`guard.run_write` → `create_task`，与 `POST /api/core/planner/tasks` 同一条，留审计）用提议预留的
+> 任务 id 建任务——同一提议只建**一次**，其余段复用；`unmatch` 清掉提议并记进 `rejectedProposalIds`。confirm 响应追加 `taskId`。带 `Authorization: Bearer`
+> 的 confirm 碰到提议一律 403（设备令牌不能建任务）。既有字段、端点行为一个不改。见「活动建议」节「AI 提议新任务」。
+>
 > v1.9：`GET /api/core/export` 产出的快照此前没有任何端点能吃
 > 回去（喂给 import 会被三层拒绝，而那三条拒绝各守一件实事，一条都不该放宽）。
 > 新增 `nexus-core.restore.v1`（`POST /api/core/restore`，见「快照恢复」节）：
@@ -219,6 +228,9 @@ provides:
       投影、导出；超过 NEXUS_SUGGESTION_TTL_DAYS 的在下一次上传/读取时惰性清掉
       v2.7 追加：POST .../suggestions/matches（AI 助理给待确认的建议配任务，classifier=assistant，逐条校验、
       不确认任何东西）、POST .../{id}/unmatch（人说「否」：清掉任务并记 rejectedTaskIds）；列表每条追加 rejectedTaskIds
+      v2.8 追加：matches 每条可给 newTask {projectId, name} 代替 taskId（新任务提议，按项目 + 归一化名字去重，存
+      activity_task_proposals）；confirm 这样的建议（带 proposalId，可带 name）经 planner 建任务路径只建一次、其余段复用；
+      unmatch 记 rejectedProposalIds；confirm 响应追加 taskId
     status: 已实现（v2.2），待验证
   - id: nexus-core.views.agent-time.v1
     summary: AI 代理时长读端（v2.3）——GET /api/core/views/agent-time?from=&to= 读
@@ -289,6 +301,7 @@ consumes:
 | POST | `/api/core/activity/suggestions/{id}/dismiss` | 无 | `{id, status}` | ✅ 已实现（v2.2） |
 | POST | `/api/core/activity/suggestions/matches` | `{matches[]}`（≤ 200，见「活动建议」节「AI 匹配」） | `{matched, rejected[]}`；带 Bearer 403 | ✅ 已实现（v2.7） |
 | POST | `/api/core/activity/suggestions/{id}/unmatch` | `{taskId?}` | `{id, status, rejectedTaskIds[]}`；带 Bearer 403 | ✅ 已实现（v2.7） |
+| — | （v2.8 追加，无新端点）matches 每条可给 `newTask`；confirm 带 `proposalId`（可带 `name`）、响应加 `taskId`；unmatch 可带 `proposalId` | 见「活动建议」节「AI 提议新任务」 | | ✅ 已实现（v2.8） |
 | GET | `/api/core/detector/settings` | `?deviceId` | `{deviceId, settings\|null, updatedAt\|null}`（见 `contracts/detector.settings.v1`） | ✅ 已实现（v2.5） |
 | PUT | `/api/core/detector/settings` | `?deviceId`，`DetectorSettings` | 同 GET；带 Bearer 403 | ✅ 已实现（v2.5） |
 | DELETE | `/api/core/detector/settings` | `?deviceId` | `204`；带 Bearer 403 | ✅ 已实现（v2.5） |
@@ -1857,6 +1870,89 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
   MCP 走对内地址不带 Bearer；它按固定映射只调 matches，**不调 unmatch / confirm / dismiss**。
 - `rejectedTaskIds` 随建议过期一起清；不进导出、不进快照恢复（同建议本身）。
 
+### AI 提议新任务：人点「是」才建（规范性 · v2.8）
+
+仓主 2026-10-03：「AI 应该能自动加新任务。」定为**草稿 + 一键确认**（同分类规则草稿：AI 起草、人应用）：
+助理匹配时发现现成任务里没有合适的，可以提议「在项目 P 下建任务 N，把这些段记进去」。**人点「是」之前什么都不建**。
+
+```jsonc
+// POST /api/core/activity/suggestions/matches —— 每条 taskId 与 newTask 二选一
+{ "matches": [
+    { "id": "sug_…", "newTask": { "projectId": "p_3c", "name": "重构存档" },
+      "confidence": 0.6, "reason": "标题里反复出现 save.gd，现有任务里没有对应的" } ] }
+
+// GET 列表：带提议的建议，suggestion 追加 newTask（没有提议的建议没有这个键）
+{ "suggestion": { "taskId": null, "confidence": 0.6, "reason": "…", "classifier": "assistant",
+                  "newTask": { "proposalId": "tp_…", "projectId": "p_3c", "name": "重构存档" } } }
+
+// POST /api/core/activity/suggestions/{id}/confirm   请求 { "proposalId": "tp_…", "name"?: "重构存档系统", "mode"?: … }（不带 taskId）
+{ "id": "sug_…", "status": "confirmed", "duplicate": false, "date": "…", "event": { … },
+  "taskId": "t_9a1b2c3d4e5f" }                   // v2.8 追加：台账里这段真正记到的任务（所有 confirm 都回）
+
+// POST /api/core/activity/suggestions/{id}/unmatch   请求 { "proposalId"?: "tp_…" }
+{ "id": "sug_…", "status": "pending", "rejectedTaskIds": [] }
+```
+
+**提议**住独立集合 `activity_task_proposals`，每租户按（`projectId`, 归一化名字）唯一——同一个窗口的十几段、
+或几轮匹配提的同一个名字，都是**同一条提议**，只会建一个任务。归一化 = 去首尾空白、连续空白并成一个、不分大小写。
+`proposalId` 由（项目, 归一化名字）确定性派生（`tp_` + SHA-256 前 20 位）。`newTask.name` 是这条提议第一次提出时的写法。
+提议第一次提出时就**预留好任务 id**（`t_` + 12 位随机十六进制，存在提议上），建任务只用它；提议过期后再被提出拿到的是新号，
+所以人删掉的任务 id 永远不会被再用（planner「id 不可复用」）。
+**列表**：建议指着的提议已被否掉或已过期 → 当作没有建议回出（不出 `newTask`，`confidence: 0`、`reason: ""`）。
+提议不是事实，也不是计划：不进台账、投影、导出、快照恢复；最后一次被提 / 被处理之后超过 `NEXUS_SUGGESTION_TTL_DAYS`
+惰性清掉（总比指着它的建议活得久）。
+
+**matches 里的 `newTask`**（逐条校验，坏的进 `rejected`，同 v2.7）：
+
+| 情形 | 结果 |
+|---|---|
+| `taskId` 与 `newTask` 都给 / 都没给 | 该条进 `rejected` |
+| `newTask.projectId` 不存在 | 该条进 `rejected` |
+| `newTask.name` 去首尾空白后为空，或超过 64 个码点 | 该条进 `rejected` |
+| 项目里已有同名任务（归一化后相同，含已完成的） | 该条进 `rejected`，理由点名那个任务的 id——**有现成的就用 `taskId`** |
+| 这条提议已经建成任务 | 该条进 `rejected`（同上，用 `taskId`） |
+| 这条建议的 `rejectedProposalIds` 里有它，或这条提议已被否掉 | 该条进 `rejected`——人说过「否」的不许再提 |
+| 建议不存在 / 不是 pending / 已有规则给的任务 | 同 v2.7 |
+| 其余 | 取（或新建）提议；`suggestion` 整个换成 `{taskId: null, confidence, reason, classifier: "assistant", newTask}`，计入 `matched` |
+
+**confirm 一条带提议的建议**（请求体带 `proposalId`、**不带** `taskId`；带了 `taskId` = 人在下拉里挑了现成任务，就是 v2.7 的普通确认）：
+
+1. 带 `Authorization: Bearer` → **403**（设备令牌不能建任务），任何写入之前。
+2. `proposalId` = 人在页面上看到并点「是」的那条提议；`taskId` 与 `proposalId` / `name` 同给 → **400**；
+   只给 `name` 不给 `proposalId` → **400**；什么都不给而建议只有提议 → **400**（同「没有可确认的任务」，老页面建不出任务）。
+   `name`（可选）= 人改过的名字，校验同上（去空白、1–64 码点），不合规 **400**。
+3. 先占位（同 v2.2，条件追加「建议**当前**的 `newTask.proposalId` 就是请求里的那个」；页面显示之后被否掉 / 换掉 → **409**）。
+4. 取任务——**不靠锁，结构上只建一个**：
+   - 提议 pending → accepted（条件更新），同时定下名字：**第一位确认的人改的名字为准**，后到的确认带的 `name` 不起作用。
+     「否」把提议标为已否掉也只从 pending 转，两者二选一：**已否掉的提议 → 409，永远建不出任务**。
+   - 预留 id 的任务已在 → 直接用。不在 → 先在提议上**持久地**占「建」（`createClaimedAt` 空 → 现在，条件更新；
+     条件里带读到的预留 id——提议 id 是派生的，过期清掉又被同名提出时 id 相同、预留 id 不同，拿旧读数的占不到新的那份；
+     建只用占到的那份里的 id 与名字），
+     **只有占到的那一次**用预留的 id 经 planner **既有建任务路径**建（`guard.run_write` → `create_task`，与
+     `POST /api/core/planner/tasks` 同一条：actor 按来源判定、留一条审计；`create_task` 为此追加一个只给本路径用的 `task_id` 入参）。
+     占位**永不放掉**：占到的那一次建任务报错（项目已删等）也不放——报错时可能其实已经插进去、又被并发地删掉了，
+     放掉就可能建回来。这条提议从此建不出任务（之后的确认 404），人改选现成任务，或等它过期后助理再提（新提议、新 id）。
+   - 没占到的：等任务出现（≤ 10 秒，同一组几段并发确认时）复用；等不到 → **404**——占过「建」而任务不在，只可能是
+     建过又被删了（planner 的删除是硬删除，任务表里不留痕，所以「建过没有」记在提议上，删任务也不清），或建的那一次崩了：
+     **绝不用同一个 id 再建**（planner「id 不可复用」）。代价同上：建的那一次崩在建成之前，这条提议就再也建不出任务，
+     人改选现成任务即可（安全失败）。
+   - 在「接受」与「占建」之间崩掉：重试照样占、用已定下的名字建。
+   - **所以同一提议无论多少段、多少次并发确认，只建一次任务；人删掉之后也不会被建回来。**
+5. 取任务失败（项目已删 → 400、提议过期没了 / 已否掉 → 409 等）放回占位，同 v2.2。之后同 v2.2 写事实。
+6. 响应的 `taskId` 取台账里这段**真正落下**的那条事实的任务（同一段并发确认、各带不同任务时，后到的是重复，回的是先写成的那个）。
+
+**unmatch 一条带提议的建议**（人说「否」）：`proposalId` 给了且与建议当前的不同 → **409**；给了 `taskId` → **409**
+（页面上看到的不是提议）。其余：清掉 `newTask`（`confidence: 0`、`reason: ""`），提议记进这条建议的
+`rejectedProposalIds`（去重，不在列表里回出）；状态仍 `pending`。之后若已没有待确认的建议还指着这条提议、且还没人点过「是」，
+提议标为**已否掉**：助理再提同一（项目, 名字）一律被拒，指着它的段也确认不了（409）。
+
+**挂提议与否掉的赛跑**：提议在另一个集合，挂到建议上与「看提议还在不在」不是一个原子操作。matches 挂上之后再看一眼，
+提议恰好被否掉了就摘下来、该条进 `rejected`。剩下极窄的窗口（那一眼之后才被否掉）留着一条指着已否掉提议的段——
+**安全失败**：列表把它当没有建议，确认 409，建不出任务。
+
+- 「全部确认」类批量操作**不许**替人建任务：提议的建议 `taskId` 是 `null`，本来就不满足「有任务才批量确认」（前端契约另行写明）。
+- MCP 照旧只调 matches，不调 confirm / unmatch。提议从提出到建成，planner 里一个字节都不动。
+
 ### 过期（惰性，无调度器）
 
 `NEXUS_SUGGESTION_TTL_DAYS`（默认 14）：待确认的按**收到时刻**、已确认/已忽略的按**处理时刻**，
@@ -2151,6 +2247,7 @@ app/modules/
   / **`agent_runs`（v2.1，在跑的 AI 代理运行，活状态，不是事实）**
   / **`proj_agent_daily_stats`（v2.1，AI 代理时长投影，见「AI 代理运行」节）**
   / **`activity_suggestions`（v2.2，活动建议，不是事实，见「活动建议」节）**
+  / **`activity_task_proposals`（v2.8，AI 提议的新任务，不是事实，见「活动建议」节「AI 提议新任务」）**
   / **`activity_presence`（v2.4，在场心跳，活状态，不是事实）**
   / **`proj_lanes`（v2.4，时间线区间投影，见「人一条线、代理多条线的时间线」节）**
   / **`_startup_locks`（v2.4，启动期一次性任务的锁，只在 proj_lanes 自动补建时短暂存在）**。
@@ -2186,6 +2283,8 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 | `ai-detector` 桌面程序（v2.2） | `activity.suggestions.v1` 的 `POST /api/core/activity/suggestions`（带设备令牌，经网关） | `modules/ai-detector` |
 | `assistant` 前端（v2.7） | `activity.suggestions.v1` 的 GET / confirm / dismiss / **unmatch**（「待确认建议」面板：助理配的建议出「是 / 否」，否 = unmatch）；读 `suggestion.classifier`、`rejectedTaskIds` | `modules/assistant` |
 | MCP 服务（v2.7） | `activity.suggestions.v1` 的 `POST .../suggestions/matches`（`propose_activity_matches`，`mcp.tools.v1` v1.3）；GET 多读 `rejectedTaskIds` | `contracts/mcp.tools.v1` |
+| `assistant` 前端（v2.8） | 带提议的建议（`suggestion.newTask`）出「新建任务：项目 / 名称」，名字可改；「是」= confirm `{name, proposalId}`（不带 `taskId`），组里每一段都这样发，响应的 `taskId` 用于「以后这个窗口」的规则；「否」= unmatch `{proposalId}`；「全部确认」不含提议 | `modules/assistant` |
+| MCP 服务（v2.8） | `propose_activity_matches` 每条可给 `newTask`（`mcp.tools.v1` v1.4）；GET 多读 `suggestion.newTask` | `contracts/mcp.tools.v1` |
 | `ai-detector` 桌面程序（v2.4） | `activity.presence.v1` 的 POST（在场心跳）；可选「状态文件桥」经 `agents.v1` 的 start/stop 与 `agents.phase.v1` 报没有钩子的代理（带设备令牌） | `modules/ai-detector` |
 | `tools/agent-hooks`（v2.1 起，v2.4 追加） | `agents.v1` 的 start/stop；v2.4 起 `agents.phase.v1`（Claude Code 钩子与 `cockpit-run phase`） | `tools/agent-hooks` |
 | 共享顶栏 `nginx-docker/static/navbar.js`（v2.4，契约先行） | `views.lanes.v1`（计时芯片悬停的精简预览：人 + 至多 4 条代理线、最近 1 小时，只在预览打开时约 15 秒轮询；计时页上不弹） | `modules/nginx-docker` |

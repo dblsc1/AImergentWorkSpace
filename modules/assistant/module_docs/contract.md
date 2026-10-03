@@ -51,6 +51,13 @@ consumes:
       否掉（unmatch）成功的段仍待确认，留在页面上并在本地清掉建议、记进 `rejectedTaskIds`，等人手动挑。idle 段单独成组，
       照旧不进「全部确认」。界面上的条数（计数、「全部确认 · N」「已确认 N 条」）仍按段数。
       每组一个勾选项「以后这个窗口都记到这个任务」，确认成功后经 `detector.rules.v1` 加一条规则（见下一条的 2026-10-03 段）。
+      **提议新任务（nexus-core v2.8，仓主 2026-10-03「AI 能自动加新任务」，草稿 + 一键确认）**：组里每一段的
+      `suggestion.newTask.proposalId` 都相同（`classifier == "assistant"`、项目还在任务树里）时，行上出「AI 建议新建任务 · 把握 · 理由」、
+      「新建任务：分区 / 项目 /」+ 可改的名字框（≤ 64 字，预填 `newTask.name`），下拉缺省「不选现成任务（新建上面这个）」、仍可改选现成任务。
+      **「是 ✓」**：没选现成任务 → 第一段 POST {id}/confirm `{name: 去空白的名字, proposalId}`（名字空则按钮禁用；提议在页面显示后变了 → 409，按组报），后端建任务并在响应里回 `taskId`，
+      组里其余段同样 POST confirm `{name, proposalId}`（后端只建一次、其余复用；提议变了的段 409，按组报）；选了现成任务 → 同普通确认。**「否 ✗」**= 对带这个提议的每段 POST {id}/unmatch `{proposalId}`，
+      条目留下、换成下拉 + 确认 / 忽略。段的提议不一致、或有段指向任务 →「建议不一致」。项目已不在树里 → 当没有建议。
+      **「全部确认」永远不含提议新任务的组**（建任务必须人逐组点）。勾了「以后这个窗口」时规则用建好的 `taskId`。
   - id: nexus-core.views.tree.v1
     contract: ../nexus-core/module_docs/contract.md
     purpose: >
@@ -115,6 +122,7 @@ consumes:
 
 | 日期 | CR | 变更 |
 |---|---|---|
+| 2026-10-03 | 仓主：AI 能自动加新任务（草稿 + 一键确认） | 待确认建议认 nexus-core v2.8 的 `suggestion.newTask`：组上出「新建任务：项目 / 名称」（名字可改），「是」= 组里每一段 confirm `{name, proposalId}`（后端只建一次），「否」= unmatch `{proposalId}`；下拉仍可改选现成任务；「全部确认」不含提议的组。「让 AI 匹配」那句话加「现成任务都不合适时可以提议新任务」 |
 | 2026-10-03 | 仓主：一个窗口对应一个任务（短段太多挑不过来） | 待确认建议按 `(app, title, idle)` 分组，一组一行、一次挑任务，确认 / 忽略 / 是 / 否对组里每段逐个发，部分失败按组报；有建议的段指向不同任务时提示「建议不一致」。每组勾选项「以后这个窗口都记到这个任务」：确认后往分类规则**最前面**加一条精确匹配这个窗口的规则（`detector.rules.v1` PUT + If-Match，412 重试一次，相同规则不重复加；标题是代号时禁用）。`rules.js` 追加 `window.assistantRules.prepend`。纯前端，不动后端 |
 | 2026-10-02 | 仓主：终端按标签页分段 | 活动检测设置面板增「分段」一组：复选框「终端按标签页分段」+ 可改的程序名单（`detector.settings.v1` v1.2 的 `segmentByTitle` / `segmentByTitleApps`）。v1.1 存下的文档没有这两个键时按缺省（开 + 本机名单）显示，保存时带上；所以保存需要 nexus-core 认 v1.2（同版发布） |
 | 2026-10-02 | 仓主：AI 先做最简单的活动匹配 + 是 / 否 | 待确认建议加「让 AI 匹配」按钮（借聊天发一轮，答完重拉）；助理配的条目出「AI 建议 + 是 ✓ / 否 ✗」（是 = confirm，否 = nexus-core v2.7 的 unmatch）；`chat.js` 追加 `window.assistantChat.ask` 与 `assistant:chat-state` 事件；聊天副标题改为「能写的只有两样建议」 |
