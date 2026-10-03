@@ -102,13 +102,16 @@ def task_for(user: str, proposal_id: str, name: str | None, request) -> str:
     tid = p["taskId"]
     if planner_service.get_task(tid) is not None:
         return tid
-    if repo.proposal_claim_create(user, proposal_id, datetime.now(timezone.utc)):
+    won = repo.proposal_claim_create(user, proposal_id, tid, datetime.now(timezone.utc))
+    if won is not None:
+        # 只用占到的那份文档里的 id / 名字 / 项目，不用之前读到的
         guard.run_write(
             request, op=audit.OP_CREATE, object_type="tasks",
-            changes={"projectId": p["projectId"], "name": p["name"]},
-            action=lambda actor: planner_service.create_task(p["name"], p["projectId"], actor=actor, task_id=tid),
+            changes={"projectId": won["projectId"], "name": won["name"]},
+            action=lambda actor: planner_service.create_task(
+                won["name"], won["projectId"], actor=actor, task_id=won["taskId"]),
         )
-        return tid
+        return won["taskId"]
     # 别人占着「建」：等它建好（同一组几段并发确认时）；等不到 = 建过又删了 / 那一次崩了
     deadline = time.monotonic() + WAIT_SECONDS
     while time.monotonic() < deadline:

@@ -169,10 +169,13 @@ def proposal_accept(user: str, proposal_id: str, name: str | None, at: datetime)
     _proposals_col().update_one({"user": user, "id": proposal_id, "status": "pending"}, {"$set": upd})
 
 
-def proposal_claim_create(user: str, proposal_id: str, at: datetime) -> bool:
-    """占「建」：只有一次能占到（空 → 现在，条件更新）。"""
-    filt = {"user": user, "id": proposal_id, "status": "accepted", "createClaimedAt": None}
-    return _proposals_col().update_one(filt, {"$set": {"createClaimedAt": at}}).matched_count > 0
+def proposal_claim_create(user: str, proposal_id: str, task_id: str, at: datetime) -> dict | None:
+    """占「建」：只有一次能占到（空 → 现在，条件更新）。返回占到的那份提议，没占到为 None。
+    条件里带调用方读到的预留任务 id：提议 id 由（项目, 名字）派生，过期清掉又被重新提出时 id 相同、预留的任务 id 不同——
+    拿着旧读数的调用方占不到新的那份（ABA）。"""
+    filt = {"user": user, "id": proposal_id, "taskId": task_id, "status": "accepted", "createClaimedAt": None}
+    return _proposals_col().find_one_and_update(filt, {"$set": {"createClaimedAt": at}},
+                                                return_document=ReturnDocument.AFTER, projection={"_id": 0})
 
 
 def proposal_reject_if_unused(user: str, proposal_id: str, at: datetime) -> None:

@@ -213,6 +213,35 @@ def test_concurrent_confirms_create_exactly_one_task(client, seeded, monkeypatch
     assert len(_session_events()) == len(ids)
 
 
+def test_stale_caller_cannot_claim_a_purged_and_recreated_proposal(client, seeded, monkeypatch):
+    """ABA：甲读到已接受的提议（预留 id 甲）→ 提议过期被清 → 同名再被提出、接受（同一 proposalId、新的预留 id）→
+    甲去占「建」：占不到新的那份，也就不会拿旧 id 去建。"""
+    from app.modules.activity import proposals  # noqa: PLC0415
+
+    monkeypatch.setattr(proposals, "WAIT_SECONDS", 0.3)
+    ids, pid = _setup(client, seeded, n=1)
+    _propose(client, ids, pid)
+    prop = _pid(client, ids[0])
+    old = _db()["activity_task_proposals"].find_one({"id": prop})["taskId"]
+    real, seen = proposals.repo.proposal_claim_create, {}
+
+    def racing(user, proposal_id, task_id, at):
+        if not seen:
+            seen["stale"] = task_id
+            # 过期清掉，再被同名提出（同一 proposalId、新的预留 id），并被人接受
+            _db()["activity_task_proposals"].delete_one({"id": prop})
+            proposals.repo.proposal_upsert(user, prop, pid, "重构存档", at)
+            proposals.repo.proposal_accept(user, prop, None, at)
+        return real(user, proposal_id, task_id, at)
+
+    monkeypatch.setattr(proposals.repo, "proposal_claim_create", racing)
+    assert _yes(client, ids[0], prop).status_code == 404
+    fresh = _db()["activity_task_proposals"].find_one({"id": prop})
+    assert seen["stale"] == old and fresh["taskId"] != old
+    assert fresh["createClaimedAt"] is None   # 新的那份没被旧调用方占走
+    assert _db()["tasks"].count_documents({"id": {"$in": [old, fresh["taskId"]]}}) == 0
+
+
 def test_crash_before_claim_retry_creates_with_the_chosen_name(client, seeded, monkeypatch):
     """接受了提议（名字已定）之后、占「建」之前崩了：重试照样建，名字是第一次定下的，id 是预留的。"""
     from app.modules.activity import proposals  # noqa: PLC0415
