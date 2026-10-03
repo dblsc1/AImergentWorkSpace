@@ -56,6 +56,7 @@
     stateEl.textContent = bits.join(" · ");
     L.render(view, last, {
       viewStart: v0, viewEnd: v1, presence: true, cards: true, top: 5,
+      focusFallback: document.getElementById("lanes-title"),   // 「还有 N 个」重画后没了时焦点落这里
       more: last.truncated ? "还有更多（只列出了最新的一部分）" : ""
     });
   }

@@ -83,12 +83,13 @@
   }
 
   // [{phase, s, e, detail, last}]；在跑的止于 now，at 晚于 now 的按 now 画。
-  function segments(run, nowMs) {
+  // sorted：调用方已排好的 phases（runInfo 只排一次），缺省自己排
+  function segments(run, nowMs, sorted) {
     var start = ms(run.startAt);
     var end = run.endAt ? ms(run.endAt) : nowMs;
     if (start === null || end === null || end <= start) { return []; }
     var cuts = [{ at: start, phase: 'working', detail: null }];
-    sortedPhases(run).forEach(function (p) {
+    (sorted || sortedPhases(run)).forEach(function (p) {
       var at = Math.min(Math.max(ms(p.at), start), end);
       if (isNaN(at) || !PHASE_WORD[p.phase]) { return; }
       cuts.push({ at: at, phase: p.phase, detail: p.detail || null });
@@ -113,37 +114,45 @@
 
   function isWaiting(ph) { return ph === 'waiting_input' || ph === 'waiting_permission'; }
 
-  // 运行在 [v0, v1] 里不空闲（working / waiting_* / error）的秒数——代理卡片的排序依据，只是代理的，不是人的时间。
-  function activeSeconds(run, v0, v1, nowMs) {
-    var sum = 0;
-    segments(run, nowMs).forEach(function (g) {
+  // 一个运行一次重画要用的全部：phases 只排一次，段、当前相位、最近转入、视窗内活跃秒数都从它来。
+  // act = 在 [v0, v1] 里不空闲（working / waiting_* / error）的秒数——代理卡片的排序依据，只是代理的，不是人的时间。
+  function runInfo(r, v0, v1, nowMs) {
+    var p = sortedPhases(r), lastP = p.length ? p[p.length - 1] : null;
+    var ph = lastP && PHASE_WORD[lastP.phase] ? lastP.phase : 'working';
+    var segs = segments(r, nowMs, p), sum = 0;
+    segs.forEach(function (g) {
       if (g.phase !== 'idle') { sum += Math.max(0, Math.min(g.e, v1) - Math.max(g.s, v0)); }
     });
-    return sum / 1000;
+    return { r: r, ph: ph, segs: segs, act: sum / 1000, last: (lastP ? ms(lastP.at) : ms(r.startAt)) || 0,
+      wait: !r.endAt && isWaiting(ph) ? 0 : 1 };
   }
 
+  function activeSeconds(run, v0, v1, nowMs) { return runInfo(run, v0, v1, nowMs).act; }
+
   // 计时页卡片的排序（ring 契约 2026-10-03）：在跑且在等你（waiting_input / waiting_permission）的浮到最前，
-  // 其余按视窗内活跃秒数倒序，同分按最近一次相位转入倒序。纯函数，不改入参。
-  function sortByActivity(agents, v0, v1, nowMs) {
-    return (agents || []).map(function (r) {
-      return { r: r, wait: !r.endAt && isWaiting(currentPhase(r)) ? 0 : 1,
-        act: activeSeconds(r, v0, v1, nowMs), last: lastAt(r) || 0 };
-    }).sort(function (a, b) {
+  // 其余按视窗内活跃秒数倒序，同分按最近一次相位转入倒序。纯函数，不改入参。返回 runInfo 列表（render 复用）。
+  function rankRuns(agents, v0, v1, nowMs) {
+    return (agents || []).map(function (r) { return runInfo(r, v0, v1, nowMs); }).sort(function (a, b) {
       return (a.wait - b.wait) || (b.act - a.act) || (b.last - a.last);
-    }).map(function (k) { return k.r; });
+    });
+  }
+
+  function sortByActivity(agents, v0, v1, nowMs) {
+    return rankRuns(agents, v0, v1, nowMs).map(function (k) { return k.r; });
   }
 
   // 人此刻的状态（ring / nginx-docker 契约 2026-10-03）：看各设备里 to 离 now ≤ 90 秒的在场段——
   // 有一段不是离开 → 在电脑前（detail = 程序 · 标题，服务端已脱敏）；都是离开 → 离开；没有 → 不在线。
   // 在计时（human.running）时 detail 写计时，优先于前台程序。
-  var FRESH_MS = 90000;
+  var FRESH_MS = 90000, SKEW_MS = 60000;
   var HUMAN_WORD = { present: '在电脑前', away: '离开', offline: '不在线' };
   function humanStatus(human, nowMs) {
     human = human || {};
     var seen = null, away = false;
     (human.presence || []).forEach(function (p) {
       var to = ms(p.to);
-      if (to === null || nowMs - to > FRESH_MS) { return; }
+      // 新鲜 = to 落在 [now − 90 秒, now + 60 秒]；再往后的（设备时钟快太多）不算
+      if (to === null || nowMs - to > FRESH_MS || to - nowMs > SKEW_MS) { return; }
       if (p.afk) { away = true; return; }
       if (!seen || to > ms(seen.to)) { seen = p; }
     });
@@ -205,8 +214,9 @@
     // 折叠区开着就还开着
     var a = document.activeElement;
     var refocus = a && root.contains(a) && a.classList.contains('hcl-more');
+    // 开合记在 root 上（同一个 root 跨重画）：折叠区这次没了、下次又出现时照旧开着
     var oldFold = root.querySelector('details.hcl-fold');
-    var foldOpen = !!(oldFold && oldFold.open);
+    if (oldFold) { root.hclFoldOpen = oldFold.open; }
     var foldFocus = !!(oldFold && a && oldFold.contains(a) && a.tagName === 'SUMMARY');
     root.textContent = '';
     root.className = 'hcl' + (opts.compact ? ' hcl-compact' : '') + (cards ? ' hcl-cards' : '');
@@ -331,20 +341,24 @@
     var agents = opts.agents || (data.agents || []).filter(function (r) {
       return inView(ms(r.startAt), r.endAt ? ms(r.endAt) : now);
     });
-    if (cards) { agents = sortByActivity(agents, v0, Math.min(v1, now), now); }
+    var vEnd = Math.min(v1, now);
+    var infos = cards ? rankRuns(agents, v0, vEnd, now)
+      : agents.map(function (r) { return runInfo(r, v0, vEnd, now); });
+    // ponytail: 折叠区里的卡也整张建好（只是收着）；几十个运行无所谓，真到读端上限 200 个嫌慢再改成展开时才建
+    agents = infos.map(function (k) { return k.r; });
     var top = cards ? (opts.top || 5) : agents.length;
     var fold = null, foldList = null;
     if (agents.length > top) {
       fold = el('details', 'hcl-fold');
-      fold.open = foldOpen;
+      fold.open = !!root.hclFoldOpen;
       fold.appendChild(el('summary', 'hcl-fold-toggle', '还有 ' + (agents.length - top) + ' 个'));
       foldList = el('div', 'hcl-deck');
       fold.appendChild(foldList);
     }
     var rowOf = {};
-    agents.forEach(function (r, i) {
-      var live = !r.endAt;
-      var ph = currentPhase(r);
+    infos.forEach(function (info, i) {
+      var r = info.r, live = !r.endAt;
+      var ph = info.ph;
       var sub = r.agent && r.label ? r.agent : (r.tool || '');
       if (r.overdue) { sub = '超时未收'; }
       var track = addRow(i < top ? rows : foldList, 'hcl-row-agent', laneName(r), sub,
@@ -356,11 +370,11 @@
         var head = track.previousSibling;
         pill(head, live ? 'hcl-ph-' + PHASE_CLASS[ph] : 'is-ended', live ? PHASE_WORD[ph] : '已结束');
         if (live && isWaiting(ph)) { card.classList.add('is-needs-you'); }
-        var act = Math.round(activeSeconds(r, v0, Math.min(v1, now), now) / 60);
+        var act = Math.round(info.act / 60);
         head.appendChild(el('span', 'hcl-stat', '活跃 ' + (act < 1 ? '不到 1' : act) + ' 分 · ' +
-          (live ? '最近 ' + when(lastAt(r)) : when(ms(r.endAt)) + ' 结束')));
+          (live ? '最近 ' + when(info.last) : when(ms(r.endAt)) + ' 结束')));
       }
-      segments(r, now).forEach(function (g) {
+      info.segs.forEach(function (g) {
         if (!inView(g.s, g.e)) { return; }
         var isLive = live && g.last;
         var cls = 'hcl-ph-' + PHASE_CLASS[g.phase] + (isLive ? ' is-live' : '') +
@@ -407,6 +421,8 @@
     if (fold) {
       root.appendChild(fold);
       if (foldFocus) { fold.firstChild.focus(); }
+    } else if (foldFocus && opts.focusFallback) {
+      opts.focusFallback.focus();                      // 「还有 N 个」没了（≤ top 张）：焦点别掉到 body 上
     }
 
     if (!agents.length) { root.appendChild(el('p', 'hcl-empty', '这段时间没有代理在跑。')); }
@@ -422,7 +438,7 @@
     var legend = el('div', 'hcl-legend');
     legend.setAttribute('aria-hidden', 'true');
     var keys = [['hcl-human hcl-mode-do', '我在计时']];
-    if (opts.presence) { keys.push(['hcl-presence', '在电脑前（未计时）'], ['hcl-presence is-afk', '离开']); }
+    if (opts.presence) { keys.push(['hcl-presence', '在电脑前'], ['hcl-presence is-afk', '离开']); }
     keys.concat([['hcl-ph-working', '在干活'], ['hcl-ph-waiting', '在等你'],
      ['hcl-ph-idle', '空闲'], ['hcl-ph-error', '出错'], ['hcl-key-reply', '回话'], ['hcl-key-attend', '在看']
     ]).forEach(function (p) {

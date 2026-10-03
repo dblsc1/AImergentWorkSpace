@@ -210,7 +210,8 @@ def test_connectors_reply_lines_and_attend_band(browser, static_base_url) -> Non
         assert page.text_content("#lanes-view .hcl-tip") == "我回了话 · 10:04"
         # 图例 + 读屏摘要
         assert "在等你" in page.text_content("#lanes-view .hcl-legend")
-        assert "在电脑前（未计时）" in page.text_content("#lanes-view .hcl-legend")
+        assert "在电脑前" in page.text_content("#lanes-view .hcl-legend")
+        assert "未计时" not in page.text_content("#lanes-view .hcl-legend"), "在场那半条不扣计时，不能这么写"
         assert "plot：等你回话" in page.text_content("#lanes-view [data-hcl-summary]")
 
 
@@ -343,6 +344,8 @@ STATUS_JS = """() => {
     afk:     {presence: [sp(5, true)]},
     two:     {presence: [sp(3, true, '', '', 'laptop'), sp(20, false, 'chrome', '', 'desk')]},
     running: {presence: [sp(10, false, 'code', 'garden')], running: {startAt: '2026-09-30T10:00:00+08:00'}},
+    skewOk:  {presence: [sp(-30, false, 'code')]},
+    skewBad: {presence: [sp(-120, false, 'code')]},
     offRun:  {presence: [], running: {startAt: '2026-09-30T10:00:00+08:00'}},
     none:    null,
   };
@@ -362,6 +365,8 @@ def test_human_status_fresh_stale_afk_and_running_precedence(browser, static_bas
         assert pick["running"] == ("present", "在电脑前", "计时中 · 10:00 起"), "在计时优先于前台程序"
         assert pick["offRun"] == ("offline", "不在线", "计时中 · 10:00 起")
         assert pick["none"] == ("offline", "不在线", "")
+        assert pick["skewOk"] == ("present", "在电脑前", "code"), "设备时钟快 30 秒：容得下"
+        assert pick["skewBad"] == ("offline", "不在线", ""), "快 2 分钟：不算"
         assert r["running"]["running"] and not r["fresh"]["running"]
 
 
@@ -404,3 +409,26 @@ def test_lanes_sources_never_use_innerhtml() -> None:
     for f in (COCKPIT_STATIC_DIR / "lanes.js",
               COCKPIT_STATIC_DIR.parent.parent / "ring" / "code" / "frontend" / "ring-lanes.js"):
         assert "innerHTML" not in f.read_text(encoding="utf-8").replace("不用 innerHTML", ""), f
+
+
+def test_fold_disappearing_moves_focus_to_heading_and_open_state_comes_back(browser, static_base_url) -> None:
+    with open_lanes(browser, static_base_url, many_agents(8), clock=True) as (page, stub):
+        page.wait_for_selector("#lanes-view .hcl-fold")
+        page.focus("#lanes-view .hcl-fold > summary")
+        page.keyboard.press("Enter")
+        page.clock.pause_at(datetime.fromtimestamp(page.evaluate("() => Date.now()") / 1000 + 1, timezone.utc))
+
+        def poll() -> None:
+            n = len(stub.urls)
+            page.clock.run_for(15_500)
+            page.wait_for_timeout(100)
+            assert len(stub.urls) > n
+
+        stub.body = many_agents(4)          # 只剩 4 个：折叠区没了，焦点不掉到 body 上
+        poll()
+        assert page.locator("#lanes-view .hcl-fold").count() == 0
+        assert page.evaluate("() => document.activeElement.id") == "lanes-title"
+        stub.body = many_agents(7)          # 又多出来：折叠区回来，照旧开着
+        poll()
+        assert page.text_content("#lanes-view .hcl-fold > summary") == "还有 2 个"
+        assert page.get_attribute("#lanes-view .hcl-fold", "open") is not None
