@@ -40,6 +40,13 @@ consumes:
       「AI 建议：路径 · 把握 N% · 理由」和两个按钮：**「是 ✓」= POST {id}/confirm {taskId}**；**「否 ✗」= POST {id}/unmatch {taskId}**
       （条目留在待确认里，换成任务下拉 + 确认 / 忽略，提示「AI 的建议已否掉」——读 `rejectedTaskIds`）。规则给的建议仍是
       下拉 + 确认 / 忽略。「全部确认」照旧按把握阈值，助理配的也算。`reason` 是模型写的，只当文本渲染。
+      **按窗口分组（仓主 2026-10-03）**：列表按 `(app, title, idle)` 原样相等分组，一组一行（程序 · 标题、段数、
+      `durationSeconds` 之和、最早 `startAt`–最晚 `endAt`，折叠的逐段明细）；只有一段的组与原来一条一样。一个任务下拉 + 按钮管整组，
+      对组里**每一段**逐个发上面的 confirm / dismiss（unmatch 只发带着那个建议任务的段）；部分失败按组报「N / M 段失败」+
+      第一条 `detail`，已成功的段不回滚，完了重拉。组的建议：有 `suggestion.taskId` 的段全指同一任务才预选它，
+      把握取这些段的最小值（「全部确认」按它比阈值）；指向不同任务 → 下拉留空、提示「建议不一致」。idle 段单独成组，
+      照旧不进「全部确认」。界面上的条数（计数、「全部确认 · N」「已确认 N 条」）仍按段数。
+      每组一个勾选项「以后这个窗口都记到这个任务」，确认成功后经 `detector.rules.v1` 加一条规则（见下一条的 2026-10-03 段）。
   - id: nexus-core.views.tree.v1
     contract: ../nexus-core/module_docs/contract.md
     purpose: >
@@ -71,6 +78,15 @@ consumes:
       （新增 / 修改〔旧 → 新〕/ 删除），「应用」一次点击 = POST apply（`If-Match: currentVersion`；有没保存的手改先确认），
       「丢弃」= POST discard；412 / 404 重新拉草稿并提示。聊天一轮结束（`assistant:turn-done` 事件，chat.js 发）、
       标签页重新可见时重拉草稿。所有规则 / AI 文本只当文本渲染。rules 404（早于 nexus-core v2.6）→ 只留一句说明。
+      **待确认建议也写规则（2026-10-03）**：`suggestions.js` 的组勾了「以后这个窗口都记到这个任务」且至少一段确认成功时，
+      经 `rules.js` 暴露的 `window.assistantRules.prepend(rule)`：GET rules → PUT `{rules: [新规则, ...原有规则]}`、
+      `If-Match: "<读到的 version>"`（与 `ETag` 同值）。新规则放**最前**（第一条命中生效，放最后会被更宽的旧规则挡住）：
+      `app = "^" + 转义(app) + "$"`、`title = "^" + 转义(title) + "$"`（RE2 元字符 `.*+?^${}()|[]\` 加反斜杠；规则不分大小写），
+      `confidence 0.9`、`note「待确认里勾的：程序 · 标题」`（截到 120 字）、`enabled true`。已有 `app`、`title`、`taskId` 完全相同的规则 → 不 PUT。
+      412 → 重新 GET 再试一次；仍失败或其它错误 → 报「已确认，但规则没加上：detail」，确认不回滚。规则编辑器没有手改时跟着刷新。
+      规则匹配的是「隐私处理后、换代号前」的标题（该契约「一」），页面上的标题与之相同（`[IP]` 这类占位符两边一样），
+      **除了**标题代号（`privacy.titles = pseudonymize` 时上传的 `窗口名N` / `路径N`）：这样的组勾选项禁用并注明原因；
+      转义后超过 200 个字符的也禁用。
 ```
 
 ## 入口与路由
@@ -93,6 +109,7 @@ consumes:
 
 | 日期 | CR | 变更 |
 |---|---|---|
+| 2026-10-03 | 仓主：一个窗口对应一个任务（短段太多挑不过来） | 待确认建议按 `(app, title, idle)` 分组，一组一行、一次挑任务，确认 / 忽略 / 是 / 否对组里每段逐个发，部分失败按组报；有建议的段指向不同任务时提示「建议不一致」。每组勾选项「以后这个窗口都记到这个任务」：确认后往分类规则**最前面**加一条精确匹配这个窗口的规则（`detector.rules.v1` PUT + If-Match，412 重试一次，相同规则不重复加；标题是代号时禁用）。`rules.js` 追加 `window.assistantRules.prepend`。纯前端，不动后端 |
 | 2026-10-02 | 仓主：终端按标签页分段 | 活动检测设置面板增「分段」一组：复选框「终端按标签页分段」+ 可改的程序名单（`detector.settings.v1` v1.2 的 `segmentByTitle` / `segmentByTitleApps`）。v1.1 存下的文档没有这两个键时按缺省（开 + 本机名单）显示，保存时带上；所以保存需要 nexus-core 认 v1.2（同版发布） |
 | 2026-10-02 | 仓主：AI 先做最简单的活动匹配 + 是 / 否 | 待确认建议加「让 AI 匹配」按钮（借聊天发一轮，答完重拉）；助理配的条目出「AI 建议 + 是 ✓ / 否 ✗」（是 = confirm，否 = nexus-core v2.7 的 unmatch）；`chat.js` 追加 `window.assistantChat.ask` 与 `assistant:chat-state` 事件；聊天副标题改为「能写的只有两样建议」 |
 | 2026-09-30 | 仓主：分类规则由 AI 助理写 | 「分类规则」占位换成编辑器 + AI 草稿横幅（detector.rules.v1）；聊天一轮结束时发 `assistant:turn-done`；聊天副标题改为「唯一能写的是分类规则的草稿」 |
