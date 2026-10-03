@@ -265,6 +265,35 @@ func TestPresenceOffAfkAndRemoteToggle(t *testing.T) {
 	}
 }
 
+// 标题刚变：最新事件 0 秒（记录器还没续上），心跳照发最新标题，不报「没有窗口记录」。
+func TestPresenceZeroDurationLatest(t *testing.T) {
+	now := time.Now()
+	aw := fakeAWWeb(t, []awEvent{
+		{Timestamp: now.Add(-40 * time.Second), Duration: 30, Data: map[string]any{"app": "ptyxis", "title": "old"}},
+		{Timestamp: now.Add(-2 * time.Second), Duration: 0, Data: map[string]any{"app": "ptyxis", "title": "new"}},
+	}, nil, nil)
+	defer aw.Close()
+	ck := newLiveCockpit(t)
+	defer ck.Close()
+	remotePresence.Store(nil)
+	if sent, err := presenceBeat(liveConfig(aw.URL, ck.URL), http.DefaultClient, now); !sent || err != nil {
+		t.Fatalf("sent=%v err=%v", sent, err)
+	}
+	if p := ck.posts("/presence")[0].body; p["title"] != "new" {
+		t.Fatalf("presence %v", p)
+	}
+	// 边界：0 秒事件正好开始在 now。
+	aw2 := fakeAWWeb(t, []awEvent{{Timestamp: now, Duration: 0, Data: map[string]any{"app": "ptyxis", "title": "edge"}}}, nil, nil)
+	defer aw2.Close()
+	ck.take()
+	if sent, err := presenceBeat(liveConfig(aw2.URL, ck.URL), http.DefaultClient, now); !sent || err != nil {
+		t.Fatalf("edge: sent=%v err=%v", sent, err)
+	}
+	if p := ck.posts("/presence")[0].body; p["title"] != "edge" {
+		t.Fatalf("edge presence %v", p)
+	}
+}
+
 // 失败就丢：返回错误，没有任何排队；拉不到设置时不发（不能退回可能更宽松的本机隐私选项）。
 func TestPresenceFailureDropped(t *testing.T) {
 	now := time.Now()

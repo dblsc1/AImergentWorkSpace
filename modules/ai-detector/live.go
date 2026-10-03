@@ -147,9 +147,19 @@ func presenceBeat(cfg Config, hc *http.Client, now time.Time) (bool, error) {
 		if win == nil {
 			return false, errors.New("ActivityWatch 最近一分钟没有窗口记录")
 		}
+		// 最新这条就是当前窗口，延到现在：标题刚变时记录器先写一条 0 秒的事件，
+		// 不延的话裁剪后是空的，心跳就误报「没有窗口记录」（标题每秒变的终端几乎每拍都中）。
+		// 开始时刻不早于 now（同一秒、时钟差）时多给一秒，否则区间仍是空的。
+		cur, to := *win, now
+		if !cur.Timestamp.Before(now) {
+			to = cur.Timestamp.Add(time.Second)
+		}
+		if cur.end().Before(to) {
+			cur.Duration = to.Sub(cur.Timestamp).Seconds()
+		}
 		// 脱敏走和上传**同一条路**：buildFragments（强制脱敏 → 隐私选项 → app-only / 浏览器对标签页）
 		// 再 sendTitles（代号 → 强制脱敏）。只喂最新这一条窗口事件、不扣离开（离开已经单独看过）。
-		frags := buildFragments(awData{window: []awEvent{*win}, web: d.web}, from, now, newRedactor(cfg))
+		frags := buildFragments(awData{window: []awEvent{cur}, web: d.web}, from, to, newRedactor(cfg))
 		if len(frags) == 0 {
 			return false, errors.New("ActivityWatch 最近一分钟没有窗口记录")
 		}
