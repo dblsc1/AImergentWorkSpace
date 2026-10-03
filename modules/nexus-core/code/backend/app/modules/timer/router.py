@@ -6,22 +6,32 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
-from pydantic import BaseModel
+from datetime import datetime
+from typing import Literal
+
+from fastapi import APIRouter, Response
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from . import service
 
 router = APIRouter(prefix="/timer", tags=["timer"])
+#: v2.1「AI 代理运行」：与人的计时同住 timer 子边界（同一类活状态），路径另起前缀。
+agents_router = APIRouter(prefix="/agents", tags=["agents"])
+
+#: v2.1 人类计时模式。取值不在枚举内 → 422（pydantic 先拦，同 actor 字段口径）。
+Mode = Literal["do", "prompt", "review"]
 
 
 class StartIn(BaseModel):
     taskId: str
+    mode: Mode = "do"
 
 
 class TimerOut(BaseModel):
     running: bool
     taskId: str
     startAt: str
+    mode: Mode = "do"  # v2.1 回显
 
 
 class StopEvent(BaseModel):
@@ -39,7 +49,7 @@ class TimerStopOut(BaseModel):
 
 @router.post("/start", response_model=TimerOut)
 def start(body: StartIn) -> dict:
-    return service.start(body.taskId)
+    return service.start(body.taskId, mode=body.mode)
 
 
 class CancelledSession(BaseModel):
@@ -79,6 +89,7 @@ class BackfillIn(BaseModel):
     taskId: str
     startAt: str  # 必须带时区偏移，不带即 400（service 层校验，不在这里猜）
     durationSeconds: int
+    mode: Mode = "do"  # v2.1
 
 
 class BackfillEvent(BaseModel):
@@ -108,4 +119,99 @@ def backfill(body: BackfillIn) -> dict:
     活状态计时的关系」）。拒绝规则见 ``service.backfill``：404/400 的映射在
     ``main.py``（``UnknownTaskError``/``InvalidInputError``，router 不许有
     业务判断）。"""
-    return service.backfill(body.taskId, body.startAt, body.durationSeconds)
+    return service.backfill(body.taskId, body.startAt, body.durationSeconds, mode=body.mode)
+
+
+# ------------------------------------------------ AI 代理运行（v2.1，契约「AI 代理运行」节）
+
+#: v2.4 代理相位（契约「人一条线、代理多条线的时间线」）。不在枚举内 → 422。
+Phase = Literal["working", "waiting_input", "waiting_permission", "idle", "error"]
+
+
+class AgentStartIn(BaseModel):
+    taskId: str | None = None  # 缺省 = 挂收件箱
+    agent: str = Field(min_length=1, max_length=64)
+    tool: str = Field(min_length=1, max_length=64)
+    model: str | None = Field(default=None, min_length=1, max_length=64)
+    # v2.4 选填（长度按码点）：缺省都不记
+    phase: Phase | None = None
+    label: str | None = Field(default=None, min_length=1, max_length=64)
+    match: str | None = Field(default=None, min_length=3, max_length=128)
+    clientKey: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class AgentStartOut(BaseModel):
+    runId: str
+    startedAt: str
+
+
+class AgentStopIn(BaseModel):
+    outcome: Literal["done", "failed", "cancelled", "timeout"]
+    output: str | None = Field(default=None, max_length=512)
+
+
+class AgentStopOut(BaseModel):
+    """``duplicate:true`` = 这个运行早已结束（重复 stop / 已被超时关闭），本次什么都没写；
+    ``outcome``/``durationSeconds``/``event`` 回显的是**原来那条**事件。"""
+
+    runId: str
+    duplicate: bool
+    outcome: str
+    durationSeconds: int
+    event: StopEvent
+
+
+@agents_router.post("/start", response_model=AgentStartOut, status_code=201)
+def agent_start(body: AgentStartIn, response: Response) -> dict:
+    """不碰人的计时器；可与任意多个运行并发。taskId 不存在 → 404（映射在 main.py）。
+    v2.4：同 clientKey 的运行还在跑 → 200 回原运行（不是新建，所以不是 201）。"""
+    out, created = service.agent_start(
+        body.taskId, body.agent, body.tool, body.model,
+        phase=body.phase, label=body.label, match=body.match, client_key=body.clientKey,
+    )
+    if not created:
+        response.status_code = 200
+    return out
+
+
+class AgentPhaseIn(BaseModel):
+    """v2.4。多了未知字段 → 422（extra=forbid）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    phase: Phase
+    at: str = Field(max_length=64)
+    detail: str | None = Field(default=None, max_length=64)
+    reply: bool = False
+
+    @field_validator("at")
+    @classmethod
+    def _at_with_offset(cls, v: str) -> str:
+        try:
+            parsed = datetime.fromisoformat(v)
+        except ValueError as exc:
+            raise ValueError(f"at 不是合法 ISO8601：{v!r}") from exc
+        if parsed.tzinfo is None:
+            raise ValueError(f"at 缺少时区偏移：{v!r}")
+        return v
+
+
+class AgentPhaseOut(BaseModel):
+    """``phase`` = 按 at 排最后的那条相位（从没报过为 null）；``reason`` 只在 applied:false 时有值。"""
+
+    runId: str
+    phase: Phase | None
+    applied: bool
+    reason: Literal["duplicate", "closed", "capped"] | None
+
+
+@agents_router.post("/{runId}/phase", response_model=AgentPhaseOut)
+def agent_phase(runId: str, body: AgentPhaseIn) -> dict:  # noqa: N803 —— 路径参数名即契约
+    """at 超前 300s → 422（UnprocessableError）；runId 不存在 → 404（映射都在 main.py）。"""
+    return service.agent_phase(runId, body.phase, body.at, body.detail, body.reply)
+
+
+@agents_router.post("/{runId}/stop", response_model=AgentStopOut)
+def agent_stop(runId: str, body: AgentStopIn) -> dict:  # noqa: N803 —— 路径参数名即契约
+    """runId 不存在 → 404（NotFoundError，映射在 main.py）。"""
+    return service.agent_stop(runId, body.outcome, body.output)

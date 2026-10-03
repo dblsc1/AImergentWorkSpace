@@ -110,7 +110,11 @@ def test_export_restore_export_round_trip_is_identical(client):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["summary"] == {"zones": 1, "projects": 1, "tasks": 2, "events": 2}
-    assert body["rebuilt"] == {"proj_current": 2, "proj_daily_stats": 2}
+    # v2.1：rebuilt 是 {投影名: 重放数}，新投影 proj_agent_daily_stats 同样被重建（这里无代理事件，0）。
+    # v2.4：proj_lanes 同样被重建（两条 session.completed 各一条区间）。
+    assert body["rebuilt"] == {
+        "proj_current": 2, "proj_daily_stats": 2, "proj_agent_daily_stats": 0, "proj_lanes": 2,
+    }
 
     after = client.get(EXPORT).json()
     before.pop("exportedAt")

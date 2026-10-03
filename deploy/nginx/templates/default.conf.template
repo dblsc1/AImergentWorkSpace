@@ -1,11 +1,11 @@
-# HoneyComb 网关 · 唯一入口（手写的默认组装：nexus-core + hive + ring + 登录门占位件）
+# HoneyComb 网关 · 唯一入口（手写的默认组装：nexus-core + hive + ring + assistant + 登录门占位件）
 #
 # 这是 envsubst 模板：nginx 官方镜像启动时把它渲染成 /etc/nginx/conf.d/default.conf。
-# 只替换 NGINX_ENVSUBST_FILTER 放行的变量（AUTH_UPSTREAM、HONEYCOMB_*），
+# 只替换 NGINX_ENVSUBST_FILTER 放行的变量（AUTH_UPSTREAM、AGENT_UPSTREAM、HONEYCOMB_*），
 # 其余 `$host` 之类照样是 nginx 自己的变量。
 #
 # 对外冻结的接口（部署方靠这些接自己的东西，不改、不复制本仓文件）见
-# contracts/gateway.v1/contract.md。`./install.sh add hive ring` 生成行为相同的一份
+# contracts/gateway.v1/contract.md。`./install.sh add hive ring assistant` 生成行为相同的一份
 # （deploy/generated/），CI 两份都起一遍核对。
 server {
     listen 80;
@@ -21,12 +21,21 @@ server {
     # 站点前缀（gateway.v1）：缺省 `/`；整站挂子路径时如 `/Cockpit/`（以 / 开头和结尾）。
     # 下面每个对外 location 都写成 ${HONEYCOMB_BASE_PATH}xxx（nginx 的 location 路径
     # 不接受变量，只能渲染时写成字面量）；取值处用 $honeycomb_base。转给后端与认证服务
-    # 时去掉前缀（proxy_pass 带 URI），它们永远看到 /api/...。
+    # 时去掉前缀（rewrite … break，见下），它们永远看到 /api/...。
     # /healthz 与 /__auth_verify 不加前缀：前者只给容器健康检查，后者是内部子请求。
     set $honeycomb_base "${HONEYCOMB_BASE_PATH}";
 
+    # 上游一律**运行期解析**（Docker 内置 DNS + 变量 proxy_pass）。写死主机名的
+    # proxy_pass 只在 nginx 启动时解析一次：`docker compose up -d` 只重建了 nexus-core
+    # （升级换镜像）或 auth 时它们换了 IP，网关还打旧 IP，全站 502 直到重启 web
+    # （2026-09-30 真机）。变量 proxy_pass 不做前缀替换，所以每条先
+    # `rewrite … break` 把路径改成后端要的样子（query 串原样保留；\Q…\E 让前缀按字面匹配），
+    # 再 proxy_pass 不带 URI；变量 proxy_pass 也没有缺省的 proxy_redirect，照旧写明。
+    # 各条用各自的变量名：/__auth_verify 子请求与主请求共用变量，同名会互相覆盖。
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
     # 顶栏页签：装了哪些前端就有哪些页签（inject.inc 把它注入页面）。
-    set $honeycomb_nav '{"home":"${HONEYCOMB_BASE_PATH}hive/","timer":"${HONEYCOMB_BASE_PATH}ring/","tabs":[{"href":"${HONEYCOMB_BASE_PATH}hive/","label":"任务"},{"href":"${HONEYCOMB_BASE_PATH}ring/","label":"计时"}]}';
+    set $honeycomb_nav '{"home":"${HONEYCOMB_BASE_PATH}hive/","timer":"${HONEYCOMB_BASE_PATH}ring/","tabs":[{"href":"${HONEYCOMB_BASE_PATH}hive/","label":"任务"},{"href":"${HONEYCOMB_BASE_PATH}ring/","label":"计时"},{"href":"${HONEYCOMB_BASE_PATH}assistant/","label":"AI助理"}]}';
 
     location = /healthz { return 200 "ok\n"; add_header Content-Type text/plain; }
 
@@ -41,7 +50,9 @@ server {
     # 客户端自带的 X-Nexus-Tenant 不转给认证服务——租户只能由认证服务说了算。
     location = /__auth_verify {
         internal;
-        proxy_pass http://${AUTH_UPSTREAM}/api/auth/verify;
+        set $honeycomb_auth "${AUTH_UPSTREAM}";
+        rewrite ^ /api/auth/verify break;
+        proxy_pass http://$honeycomb_auth;
         proxy_pass_request_body off;
         proxy_set_header Content-Length "";
         proxy_set_header X-Nexus-Tenant "";
@@ -55,7 +66,10 @@ server {
     # **这一段不设门**：登录接口必须未登录可达。所以替换进来的认证服务，
     # 它在这个前缀下的每个非登录端点都得**自己**鉴权——网关不替它挡。
     location ${HONEYCOMB_BASE_PATH}api/auth/ {
-        proxy_pass http://${AUTH_UPSTREAM}/api/auth/;
+        set $honeycomb_auth "${AUTH_UPSTREAM}";
+        rewrite (?s)^\Q${HONEYCOMB_BASE_PATH}api/auth/\E(.*)$ /api/auth/$1 break;
+        proxy_pass http://$honeycomb_auth;
+        proxy_redirect http://${AUTH_UPSTREAM}/api/auth/ ${HONEYCOMB_BASE_PATH}api/auth/;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Nexus-Tenant "";
@@ -86,7 +100,10 @@ server {
         auth_request /__auth_verify;
         auth_request_set $honeycomb_tenant $upstream_http_x_nexus_tenant;
         error_page 401 = @cockpit_degraded;
-        proxy_pass http://nexus-core:8000/api/core/views/current;
+        set $honeycomb_core "nexus-core:8000";
+        rewrite ^ /api/core/views/current break;
+        proxy_pass http://$honeycomb_core;
+        proxy_redirect http://nexus-core:8000/api/core/views/current ${HONEYCOMB_BASE_PATH}__cockpit/current;
         proxy_set_header Host $host;
         proxy_set_header X-Nexus-Tenant $honeycomb_tenant;
         proxy_connect_timeout 2s;
@@ -102,10 +119,52 @@ server {
     # 后端。每个请求先过门；租户由网关覆盖（gate.inc）。
     location ${HONEYCOMB_BASE_PATH}api/core/ {
         include /etc/nginx/honeycomb/gate.inc;
-        proxy_pass http://nexus-core:8000/api/core/;
+        set $honeycomb_core "nexus-core:8000";
+        rewrite (?s)^\Q${HONEYCOMB_BASE_PATH}api/core/\E(.*)$ /api/core/$1 break;
+        proxy_pass http://$honeycomb_core;
+        proxy_redirect http://nexus-core:8000/api/core/ ${HONEYCOMB_BASE_PATH}api/core/;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_read_timeout 30s;
+    }
+
+    # ── AI 桥（gateway.v1 第八节）：MCP 只读工具与聊天后端 ──
+    #
+    # 都过门、覆盖租户头；转发时清掉 Cookie 与 Authorization——后端只要租户头，用户凭据
+    # 不该出现在会跑大模型的进程里（门子请求 /__auth_verify 读的是客户端原始请求头，不受影响）。
+    # 上游同样运行期解析（server 级 resolver + 变量 proxy_pass）：mcp / agent 没起、被 profiles
+    # 关掉，网关照常起，这两条回 502。
+    # 关缓冲：聊天是 SSE，MCP 的 Streamable HTTP 也可能回 SSE。
+    location ${HONEYCOMB_BASE_PATH}api/mcp/ {
+        include /etc/nginx/honeycomb/gate.inc;
+        set $honeycomb_mcp "mcp:8020";
+        rewrite (?s)^\Q${HONEYCOMB_BASE_PATH}api/mcp/\E(.*)$ /api/mcp/$1 break;
+        proxy_pass http://$honeycomb_mcp;
+        proxy_redirect http://mcp:8020/api/mcp/ ${HONEYCOMB_BASE_PATH}api/mcp/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization "";
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_read_timeout 60s;
+    }
+    location ${HONEYCOMB_BASE_PATH}api/agent/ {
+        include /etc/nginx/honeycomb/gate.inc;
+        set $honeycomb_agent "${AGENT_UPSTREAM}";
+        rewrite (?s)^\Q${HONEYCOMB_BASE_PATH}api/agent/\E(.*)$ /api/agent/$1 break;
+        proxy_pass http://$honeycomb_agent;
+        proxy_redirect http://${AGENT_UPSTREAM}/api/agent/ ${HONEYCOMB_BASE_PATH}api/agent/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization "";
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 300s;   # 聊天后端每 15 秒发心跳（agent.chat.v1）
     }
 
     # 前端页面本身也设门：未登录直接去登录页，而不是先渲染一个空壳、
@@ -123,6 +182,13 @@ server {
         alias /usr/share/nginx/html/ring/;
         index project-task-contribution-ring.html;
         try_files $uri $uri/ ${HONEYCOMB_BASE_PATH}ring/project-task-contribution-ring.html;
+    }
+    location ${HONEYCOMB_BASE_PATH}assistant/ {
+        include /etc/nginx/honeycomb/gate.inc;
+        include /etc/nginx/honeycomb/inject.inc;
+        alias /usr/share/nginx/html/assistant/;
+        index index.html;
+        try_files $uri $uri/ ${HONEYCOMB_BASE_PATH}assistant/index.html;
     }
 
     # 部署方的额外路由（HONEYCOMB_EXTRA_ROUTES_DIR 里的 *.conf.template，渲染后落在这里）。

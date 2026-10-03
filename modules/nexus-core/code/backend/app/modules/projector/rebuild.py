@@ -22,17 +22,23 @@ DISPATCH 表的一个**只读**投影（用 handler 是否在 ``DISPATCH[type]``
 from __future__ import annotations
 
 import argparse
+import uuid
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 
 from ..events import service as events_service
 from . import repo as projector_repo
-from .handlers import current, daily_stats
+from .handlers import agent_daily_stats, current, daily_stats, lanes
 from .registry import DISPATCH
 
 #: 投影名 → (handler, 对应 clear 函数)。投影名取自集合名，与 contract.md 一致。
 _TARGETS: dict[str, tuple[Callable[[dict], None], Callable[[], None]]] = {
     "proj_current": (current.handle, projector_repo.clear_current),
     "proj_daily_stats": (daily_stats.handle, projector_repo.clear_daily_stats),
+    # v2.1：AI 代理时长。快照恢复末尾调的也是 rebuild()，所以恢复同样重建它。
+    "proj_agent_daily_stats": (agent_daily_stats.handle, projector_repo.clear_agent_daily_stats),
+    # v2.4：时间线区间。上线本版须跑一次重建，否则历史时间线是空的。
+    "proj_lanes": (lanes.handle, projector_repo.clear_lanes),
 }
 
 
@@ -60,6 +66,38 @@ def rebuild(only: str | None = None) -> dict[str, int]:
                 handler(envelope)
                 counts[name] += 1
     return counts
+
+
+#: 喂给 proj_lanes 的事实类型（只读 DISPATCH 推出来，不另写一份）
+_LANES_TYPES = frozenset(t for t, handlers in DISPATCH.items() if lanes.handle in handlers)
+_LOCK_STALE = timedelta(minutes=10)
+
+
+def backfill_lanes_if_empty() -> int:
+    """启动时调（契约 v2.4「上线」补注）：``proj_lanes`` 为空而台账里有它要的事实 → 从全体租户的事实补建。
+
+    升级上来的发布版用户不会手跑 ``rebuild --only proj_lanes``，不补的话历史时间线是空的。
+    **不清空、只重放**：handler 按 (user, key) 幂等，所以与同时进来的新事实、与另一个实例的补建
+    都不会重复或丢失。触发条件是「集合为空」或「上次补建没做完」（进度标记还在）——拿到锁之后
+    不再看集合空不空：那时新进来的事实会让它非空，但历史还没补。返回重放的事实数，no-op 为 0。
+    ponytail: 从没触发过、只是「非空但缺了几条」不在这里修，那是手动 rebuild 的事。
+    """
+    if not projector_repo.lanes_empty() and not projector_repo.is_pending("proj_lanes"):
+        return 0
+    owner = uuid.uuid4().hex
+    if not projector_repo.acquire_startup_lock("proj_lanes", owner, datetime.now(timezone.utc), _LOCK_STALE):
+        return 0
+    try:
+        projector_repo.set_pending("proj_lanes", True)
+        count = 0
+        for envelope in events_service.iter_all_events(all_tenants=True):
+            if envelope.get("type") in _LANES_TYPES:
+                lanes.handle(envelope)
+                count += 1
+        projector_repo.set_pending("proj_lanes", False)  # 只在整遍重放成功后清掉
+        return count
+    finally:
+        projector_repo.release_startup_lock("proj_lanes", owner)
 
 
 def main(argv: list[str] | None = None) -> int:

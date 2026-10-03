@@ -140,6 +140,23 @@
         </div>
       </div>
     </div>
+    <!-- 「待确认」与「问问助手」两块 2026-09-30 搬去「AI助理」页（modules/assistant）。这里只留一个
+         小链接（ring-suggest-link.js）：有待确认的活动时显示「N 条待确认 → AI助理」，0 条、端点 404、
+         或没装「AI助理」页时不出现。 -->
+    <a class="suggest-link" id="suggest-link" href="../assistant/" hidden></a>
+    <!-- 「泳道」主视图（nexus-core v2.4 views.lanes.v1，ring-lanes.js）：圆环下方整宽、默认展开，
+         人一条线 + 每个代理运行一条线。画图用共享的 __cockpit/lanes.js（顶栏预览同一份）。
+         后端没有这个端点（404）时整块保持 hidden。 -->
+    <section class="card lanes-panel" id="lanes-panel" hidden aria-labelledby="lanes-title">
+      <div class="lanes-top">
+        <h2 class="suggest-title" id="lanes-title" tabindex="-1">泳道 <span class="lanes-state" id="lanes-state"></span></h2>
+        <div class="lanes-range" role="group" aria-label="时间范围">
+          <button type="button" class="mode-tab is-active" data-hours="3" aria-pressed="true">最近 3 小时</button>
+          <button type="button" class="mode-tab" data-hours="0" aria-pressed="false">今天</button>
+        </div>
+      </div>
+      <div id="lanes-view"></div>
+    </section>
     <p class="status-message" id="status-message" hidden></p>
   </main>
 
@@ -193,5 +210,7 @@
   <script src="ring-backfill.js"></script>
   <script src="ring-rename.js"></script>
   <script src="ring-pause.js"></script>
+  <script src="ring-suggest-link.js"></script>
+  <script src="ring-lanes.js"></script>
 </body>
 </html>

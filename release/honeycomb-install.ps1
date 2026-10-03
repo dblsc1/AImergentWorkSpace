@@ -85,6 +85,8 @@ if (-not (Test-Path '.env')) {
     '# 只本机能访问。要放到局域网改成 0.0.0.0:8800，但先在前面加 TLS（见 README）。',
     "HONEYCOMB_BIND=$Bind",
     'HONEYCOMB_TZ=Asia/Shanghai',
+    '# 计时台「问问助手」用的模型密钥（缺省 DeepSeek；换模型见 README）。填了再 docker compose up -d。',
+    'AGENT_API_KEY=',
     '# compose 项目名（容器、数据卷的前缀）。别改：改了等于换成一份新的空数据。',
     "HONEYCOMB_PROJECT=$project"
   )
@@ -96,6 +98,14 @@ if (-not (Test-Path '.env')) {
   } else {
     chmod 600 .env
   }
+} elseif (-not (Select-String -Path '.env' -Pattern '^HONEYCOMB_PROJECT=' -Quiet)) {
+  # v0.2.6 之前装的 .env 没有项目名，compose 一直用的是缺省值（或当时环境变量里的）。
+  # 升级时补写进去，以后不再靠缺省值，免得本机再来一份旧安装时撞名（Windows 验收）。
+  $project = if ($env:HONEYCOMB_PROJECT) { $env:HONEYCOMB_PROJECT } else { 'honeycomb' }
+  $old = [System.IO.File]::ReadAllText((Join-Path (Get-Location) '.env'))
+  $add = "# compose 项目名（容器、数据卷的前缀）。别改：改了等于换成一份新的空数据。`nHONEYCOMB_PROJECT=$project`n"
+  if ($old -and -not $old.EndsWith("`n")) { $add = "`n" + $add }
+  [System.IO.File]::AppendAllText((Join-Path (Get-Location) '.env'), $add, (New-Object System.Text.UTF8Encoding($false)))
 }
 
 if ($fresh) { Write-Host '拉镜像（第一次要几分钟）……' } else { Write-Host '拉新版镜像……' }

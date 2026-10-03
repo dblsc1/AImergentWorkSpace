@@ -120,6 +120,7 @@ install.sh    读契约解析依赖，生成 compose 与路由
 | `modules/nexus-core` | 事件溯源内核（FastAPI + MongoDB）。提供 13 个契约：计时、任务 CRUD、事件写入口与档案读端、以及树/圆环/甘特/导出等读端投影 |
 | `modules/hive` | 任务蜂巢（`/hive/`），主界面。纯静态前端，数据全走 `/api/core/` |
 | `modules/ring` | 计时台（`/ring/`）：贡献圆环 + 开始/停止/取消/补登。纯静态前端 |
+| `modules/assistant` | AI助理（`/assistant/`），回顾与分析：和助手聊、确认检测到的活动、改检测程序的隐私 / 离开设置。纯静态前端 |
 | `modules/nginx-docker` | 网关的公用件：共享顶栏、设计 tokens、站点图标，以及门片段与注入片段。网关把顶栏注入每个前端，页签按已装的前端生成 |
 | `contracts/yq-event.v1` | 事件信封规范。**整个系统的核心契约** —— 所有写操作都是往这个信封里投事件 |
 | `contracts/auth.gate.v1` | 登录门契约 + 占位实现（纯标准库，零依赖）+ 最小登录页 |
@@ -148,7 +149,25 @@ docker compose up -d
 
 为什么这么划：开源版不该捆绑任何真实账号系统。需要更多的人，换掉那个实现就行 —— 只要还满足同一份契约的端点和三条不变量，**组装层一行都不用改**。
 
+### 给桌面程序、AI 代理用的设备令牌
+
+同步程序、代理钩子没有浏览器 cookie，给它一个设备令牌，请求头带 `Authorization: Bearer <令牌>` 调 `/api/core/...`。令牌**只开接口、不开页面**，缺省一年有效。
+
+- 网页上：登录后 `POST /api/auth/tokens`（`Content-Type: application/json`，body `{}` 或 `{"label":"笔记本"}`）拿到 `{"token", "tenant", "expiresAt"}`；`POST /api/auth/tokens/revoke` 作废自己名下的全部令牌。
+- 命令行（`deploy/` 下）：`docker compose exec auth python /app/auth_stub.py token alice` 发一个，`revoke alice` 全部作废，不带名字 = 共享口令身份。
+
+要先在 `.env` 里设 `AUTH_SECRET`（发布版安装脚本已写好；`deploy/` 下手搭的自己加一行随机串）——没有固定密钥时令牌重启就废，所以干脆不发。改密码、删账号、换掉或去掉共享口令，对应的令牌跟着作废；吊销两秒内生效。
+
 想自己实现，读 `contracts/auth.gate.v1/contract.md` 的「换实现要满足什么」一节；怎么把它接进网关（`AUTH_UPSTREAM`、换登录页、关掉占位件），读 `contracts/gateway.v1/contract.md`。
+
+### AI 助手（计时台「问问助手」）
+
+计时台页面下方有个聊天面板，问「这周我在哪个项目上花的时间最多」之类。它只能经 MCP 的只读工具读你的数据，
+什么都不写、不跑命令、不上网。用之前在 `.env` 里填 `AGENT_API_KEY`（缺省模型 `deepseek/deepseek-flash`），
+再 `docker compose up -d`；不填，面板会提示你去填，别的功能不受影响。换模型、接本机 Ollama 或内网里的 OpenAI 兼容服务，
+见 `deploy/.env.example` 的「AI 助手」一节。接口是 `contracts/agent.chat.v1`，缺省实现（opencode）在 `modules/agent/`。
+想看它每一轮到底发了什么给模型、模型回了什么：`.env` 设 `AGENT_DEBUG=1` 重启，每条回答下面多一个「调试」。
+那些记录就是你的数据（完整提示与工具结果）——**只在自己机器上调试时开**，用完改回 `0`。
 
 ### 挂在子路径下
 

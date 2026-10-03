@@ -177,6 +177,18 @@
   // 每选一次文件编一个号：前一个文件的预演晚到时不许覆盖当前这一个——否则人以为
   // 确认的是后选的文件，提交的却是先选的（Codex 审核）。
   var importSeq = 0;
+  // 409 说清楚剩了什么：计时记录是只追加的台账，网页上删不掉——删光分区 / 项目 / 任务后
+  // 仍然「不是空的」，人会以为导入坏了（仓主实测）。数目取自服务端的 detail，取不到就不列。
+  function notEmptyText(detail) {
+    var m = /zones (\d+), projects (\d+), tasks (\d+), events (\d+)/.exec(detail || "");
+    var left = m ? [[m[1], " 个分区"], [m[2], " 个项目"], [m[3], " 个任务"], [m[4], " 条计时记录"]]
+      .filter(function (x) { return x[0] !== "0"; })
+      .map(function (x) { return x[0] + x[1]; }).join("、") : "";
+    return "⚠ 这里已经有数据了" + (left ? "（还有 " + left + "）" : "") +
+      "。导入只能进全新的实例，不会和现有数据合并。" +
+      (m && m[4] !== "0" ? "计时记录只能追加、网页上删不掉，所以删光分区、项目、任务也不算空。" : "") +
+      "请在新目录另装一份再导入。";
+  }
   function importFileChosen(file) {
     var seq = ++importSeq;
     var shell = $("#importShell");
@@ -202,9 +214,7 @@
       say("正在预演（不会写入任何东西）…");
       return D.restoreSnapshot(snapshot, null).then(function (dry) {
         if (!dry.ok) {
-          say(dry.status === 409
-            ? "⚠ 这里已经有数据了。导入只能进空的实例（换机器 / 重装后把数据搬回来用），不会和现有数据合并。"
-            : "⚠ 导入不了：" + dry.message);
+          say(dry.status === 409 ? notEmptyText(dry.message) : "⚠ 导入不了：" + dry.message);
           return;
         }
         if (seq !== importSeq) return;

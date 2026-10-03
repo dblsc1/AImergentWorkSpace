@@ -38,6 +38,8 @@ from ...tenant import current as current_tenant
 from ..events import service as events_service
 from ..events.schemas import SPEC
 from ..planner import service as planner_service
+from . import agent_phases as phases_impl
+from . import agents as agents_impl
 from . import backfill as backfill_impl
 from . import repo
 
@@ -96,7 +98,12 @@ def _resolve_task_chain(task_id: str, *, action: str) -> tuple[dict, str, str]:
     return task, project_id, zone_id
 
 
-def start(task_id: str, user: str | None = None) -> dict:
+#: 人类计时模式（v2.1）：真身在 ``backfill.py``（stop 与 backfill 共用一个函数），这里重导出。
+DEFAULT_MODE = backfill_impl.DEFAULT_MODE
+with_mode = backfill_impl.with_mode
+
+
+def start(task_id: str, user: str | None = None, mode: str = DEFAULT_MODE) -> dict:
     """开始计时。**自动关闭上一个未结束的 session**（先 stop 再 start）——
     用户点「开始」时意图明确，让他先手动停上一个是无谓摩擦（contract.md）。"""
     user = user or current_tenant()  # v2.0：缺省取请求的租户
@@ -113,9 +120,10 @@ def start(task_id: str, user: str | None = None) -> dict:
             "projectId": project_id,
             "zoneId": zone_id,
             "startAt": start_at,
+            "mode": mode,  # v2.1：stop 原样带出；v2.1 之前的活状态没有这个键，按 do
         }
     )
-    return {"running": True, "taskId": task_id, "startAt": start_at}
+    return {"running": True, "taskId": task_id, "startAt": start_at, "mode": mode}
 
 
 def stop(user: str | None = None) -> dict:
@@ -142,7 +150,10 @@ def stop(user: str | None = None) -> dict:
             "project": state["projectId"],
             "task": state["taskId"],
         },
-        "data": {"durationSeconds": duration, "startAt": state["startAt"]},
+        "data": with_mode(
+            {"durationSeconds": duration, "startAt": state["startAt"]},
+            state.get("mode", DEFAULT_MODE),
+        ),
         "flags": [],
     }
 
@@ -167,6 +178,7 @@ def backfill(
     start_at_raw: str,
     duration_seconds: int,
     user: str | None = None,
+    mode: str = DEFAULT_MODE,
 ) -> dict:
     """补登：给「完成了但没计时」的工作补一条真实 ``session.completed``
     （契约「补登（规范性 · v1.8，backfill）」节，唯一事实源）。
@@ -179,8 +191,72 @@ def backfill(
     user = user or current_tenant()  # v2.0：缺省取请求的租户
     return backfill_impl.backfill(
         task_id, start_at_raw, duration_seconds, user,
-        resolve_chain=_resolve_task_chain, now=_now,
+        resolve_chain=_resolve_task_chain, now=_now, mode=mode,
     )
+
+
+def record_session(
+    task_id: str,
+    start_at: str,
+    time_iso: str,
+    duration_seconds: int,
+    *,
+    source: str,
+    dedupe_key: str,
+    ai: dict | None = None,
+    mode: str = DEFAULT_MODE,
+) -> dict:
+    """给别的子边界用的「写一段人的时间」入口（契约 v2.2「活动建议」的确认）。
+
+    ``session.completed`` 的组装只住在 timer 子边界：activity 只说「哪个任务、哪段时间、
+    什么来源」，归属链与补登/start 同一套判据，信封与补登同一个 ``record_session``。
+    时间合法性由调用方负责（建议在上传时已校验过）。**不收 user 参数**：归属链按当前租户查，
+    事件也只能记在当前租户名下，两者不许分开给。
+    """
+    user = current_tenant()
+    _task, project_id, zone_id = _resolve_task_chain(task_id, action="拒绝记录")
+    return backfill_impl.record_session(
+        user, {"zone": zone_id, "project": project_id, "task": task_id},
+        start_at, time_iso, duration_seconds,
+        source=source, dedupe_key=dedupe_key, mode=mode, ai=ai,
+    )
+
+
+# ------------------------------------------------ AI 代理运行（v2.1，真身在 agents.py）
+# 薄委托，同 backfill：注入与 timer/start 同一套归属链判据和服务端时钟。
+
+
+def agent_start(task_id: str | None, agent: str, tool: str, model: str | None, user: str | None = None, **v24):
+    """返回 ``(AgentStartOut, 是否新开)``；``v24`` = phase/label/match/client_key（v2.4 选填）。"""
+    return agents_impl.start(task_id, agent, tool, model, user or current_tenant(),
+                             resolve_chain=_resolve_task_chain, now=_now, **v24)
+
+
+def agent_stop(run_id: str, outcome: str, output: str | None, user: str | None = None) -> dict:
+    return agents_impl.stop(run_id, outcome, output, user or current_tenant(), now=_now)
+
+
+# v2.4（真身 agent_phases.py）：record_attend = activity 心跳的公开入口；list_lane_runs = views/lanes 读路径，不收超时
+def agent_phase(run_id: str, phase: str, at: str, detail: str | None, reply: bool) -> dict:
+    return phases_impl.record_phase(run_id, phase, at, detail, reply, current_tenant(), now=_now)
+
+
+def record_attend(user: str, title: str, at: datetime) -> None:
+    phases_impl.record_attend(user, title, at)
+
+
+def list_lane_runs(user: str | None = None) -> tuple[datetime, list[dict]]:
+    return phases_impl.lane_runs(user or current_tenant(), now=_now)
+
+
+def list_agent_runs(user: str | None = None) -> list[dict]:
+    """views 的指定读路径（``views/current`` 的 ``agents[]``）。"""
+    return agents_impl.list_running(user or current_tenant(), now=_now)
+
+
+def list_open_agent_runs(user: str | None = None) -> list[dict]:
+    """views 的指定读路径（``views/agent-time`` 的 ``open[]``，v2.3）：含 projectId 与 elapsedSeconds。"""
+    return agents_impl.list_open(user or current_tenant(), now=_now)
 
 
 def cancel(user: str | None = None) -> dict:

@@ -57,6 +57,20 @@ class CurrentTask(_Strict):
     shareOfProject: float = Field(ge=SHARE_MIN, le=SHARE_MAX)
 
 
+class CurrentAgent(_Strict):
+    """在跑的 AI 代理运行（v2.1）。``taskId``/``model`` 可为 null，但键不消失（同空闲态纪律）。"""
+
+    runId: str
+    taskId: str | None
+    agent: str
+    tool: str
+    model: str | None
+    startedAt: str
+    #: v2.4：当前相位（从没报过为 null，读方按 working 画）与泳道名（没给为 null）。键不消失。
+    phase: Literal["working", "waiting_input", "waiting_permission", "idle", "error"] | None = None
+    label: str | None = None
+
+
 class CurrentOut(_Strict):
     """``GET /api/core/views/current``。
 
@@ -69,6 +83,9 @@ class CurrentOut(_Strict):
     task: CurrentTask | None = None
     #: ISO8601 **带时区**字符串；``null`` = 未在计时。
     sessionStartAt: str | None = None
+    #: v2.1：当前租户在跑的 AI 代理运行，没有为 []。与上面人的字段互不影响——
+    #: 只有代理在跑时 running 仍是 false（人一条泳道，代理很多条）。
+    agents: list[CurrentAgent] = Field(default_factory=list)
 
 
 # ------------------------------------------------------------------- TreeOut
@@ -277,3 +294,133 @@ class ReviewOut(_Strict):
     overdueProjects: list[ReviewOverdueProject]
     staleTasks: list[ReviewStaleTask]
     inboxPendingCount: int
+
+
+# ------------------------------------------------------ AgentTimeOut（v2.3）
+
+
+class AgentTimeDay(_Strict):
+    date: str
+    seconds: int
+    runs: int
+
+
+class AgentTimeAgent(_Strict):
+    agent: str
+    seconds: int
+    runs: int
+
+
+class AgentTimeTask(_Strict):
+    projectId: str
+    #: null = 只挂项目（收件箱运行）；键不消失。
+    taskId: str | None
+    seconds: int
+    runs: int
+
+
+class AgentTimeOpen(_Strict):
+    runId: str
+    agent: str
+    projectId: str
+    taskId: str | None
+    startedAt: str
+    elapsedSeconds: int
+
+
+class AgentTimeOut(_Strict):
+    """``GET /api/core/views/agent-time``（契约 v2.3）。**泳道秒数**，不是墙钟；
+    没有任何人的时长字段——两个维度永不相加。``open[]`` 不计入汇总。"""
+
+    today: str
+    totalSeconds: int
+    runs: int
+    days: list[AgentTimeDay]
+    agents: list[AgentTimeAgent]
+    tasks: list[AgentTimeTask]
+    open: list[AgentTimeOpen]
+
+
+# -------------------------------------------------------- LanesOut（v2.4）
+
+
+class LaneSession(_Strict):
+    startAt: str
+    endAt: str
+    durationSeconds: int
+    taskId: str | None
+    projectId: str | None
+    mode: str
+    source: str | None
+
+
+class LaneRunning(_Strict):
+    startAt: str
+    taskId: str | None
+    projectId: str | None
+
+
+class LanePresence(_Strict):
+    deviceId: str
+    #: 契约字段名就是 from（Python 关键字），用别名
+    from_: str = Field(alias="from")
+    to: str
+    app: str
+    title: str
+    afk: bool
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)
+
+
+class LaneHuman(_Strict):
+    sessions: list[LaneSession]
+    running: LaneRunning | None
+    presence: list[LanePresence]
+
+
+class LanePhase(_Strict):
+    at: str
+    phase: str
+    detail: str | None
+
+
+class LaneAgent(_Strict):
+    runId: str
+    agent: str | None
+    tool: str | None
+    model: str | None
+    label: str | None
+    taskId: str | None
+    projectId: str | None
+    startAt: str
+    endAt: str | None
+    outcome: str | None
+    elapsedSeconds: int
+    overdue: bool
+    phases: list[LanePhase]
+
+
+class LaneReply(_Strict):
+    runId: str
+    kind: Literal["reply"]
+    at: str
+
+
+class LaneAttend(_Strict):
+    runId: str
+    kind: Literal["attend"]
+    at: str
+    until: str
+
+
+class LanesOut(_Strict):
+    """``GET /api/core/views/lanes``（契约 v2.4）。时间线，不是汇总：**没有任何合计字段**。"""
+
+    today: str
+    now: str
+    windowStart: str
+    windowEnd: str
+    human: LaneHuman
+    agents: list[LaneAgent]
+    interactions: list[LaneReply | LaneAttend]
+    truncated: bool

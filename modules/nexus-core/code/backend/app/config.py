@@ -59,6 +59,10 @@ class Settings:
     actor_strict: bool = False
     #: 租户严格模式（v2.0）：缺 X-Nexus-Tenant 即 401，不落到 u_local。默认关（单人部署）。
     tenant_strict: bool = False
+    #: AI 代理运行的遗忘超时（小时，v2.1）。超时的运行惰性以 timeout 关闭，时长封顶于此。
+    agent_run_timeout_hours: int = 12
+    #: 活动建议的保留天数（v2.2）。建议不是事实，过期惰性删除。
+    suggestion_ttl_days: int = 14
 
     @property
     def bind(self) -> str:
@@ -160,6 +164,14 @@ def _parse_bool(source: Mapping[str, str], key: str, default: str, purpose: str)
     )
 
 
+def _parse_positive_int(source: Mapping[str, str], key: str, default: str, purpose: str) -> int:
+    """正整数开关：看不懂就炸，同 ``_parse_bool`` 的理由——不许静默落回默认值。"""
+    raw = (source.get(key) or default).strip()
+    if not raw.isdigit() or int(raw) <= 0:
+        raise ConfigError(f"{key} 非法：取值 {raw!r} 不是正整数（{purpose}）")
+    return int(raw)
+
+
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     """从 ``env``（默认真实进程环境）读出配置。
 
@@ -200,6 +212,14 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         source, "NEXUS_TENANT_STRICT", "0",
         "租户严格模式：缺 X-Nexus-Tenant 即 401，多用户部署必开，契约 v2.0",
     )
+    agent_timeout = _parse_positive_int(
+        source, "NEXUS_AGENT_RUN_TIMEOUT_HOURS", "12",
+        "AI 代理运行的遗忘超时（小时），契约 v2.1「AI 代理运行」",
+    )
+    suggestion_ttl = _parse_positive_int(
+        source, "NEXUS_SUGGESTION_TTL_DAYS", "14",
+        "活动建议的保留天数，契约 v2.2「活动建议」",
+    )
     return Settings(
         bind_host=host,
         bind_port=port,
@@ -210,6 +230,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         human_client_token=human_token,
         actor_strict=actor_strict,
         tenant_strict=tenant_strict,
+        agent_run_timeout_hours=agent_timeout,
+        suggestion_ttl_days=suggestion_ttl,
     )
 
 

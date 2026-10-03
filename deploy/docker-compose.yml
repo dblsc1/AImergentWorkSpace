@@ -10,11 +10,12 @@
 # 没设直接拒绝启动，不会带着"没有门"的状态跑起来。
 # 起来之后开 http://127.0.0.1:8800/（默认只绑回环，见下）。
 #
-# 四个服务：
+# 五个服务：
 #   mongo  存数据（事件台账 + 投影）
 #   nexus-core  事件溯源的计时与任务内核（FastAPI）
+#   mcp    给 AI 代理用的只读工具（mcp.tools.v1），网关的 /api/mcp/ 过门后转给它
 #   auth   auth.gate.v1 的占位实现，单口令登录门（标准库 http.server，零依赖）
-#   web    nginx，唯一入口：serve /hive/ 与 /ring/ 两个前端、反代 /api/ 到
+#   web    nginx，唯一入口：serve /hive/、/ring/、/assistant/ 三个前端、反代 /api/ 到
 #          nexus-core、/api/auth/ 到 auth，在前端与 /api/ 前面插一道 auth_request 校验
 #
 # 只有 web 映射宿主端口，默认绑 127.0.0.1:8800（局域网/公网部署自己改
@@ -35,11 +36,19 @@ name: ${HONEYCOMB_PROJECT:-honeycomb}
 networks:
   honeycomb-net:
     driver: bridge
+  # AI 桥内网（gateway.v1 第八节）：上面只有网关、MCP、聊天后端；nexus-core、auth、mongo 不在。
+  # 实际网络名是 <项目名>_honeycomb-agent-net（如 honeycomb_honeycomb-agent-net），同机两套部署各一张。
+  # 这个键名是对外接口：部署方的 override 用它把自己的聊天后端接上来，改名 = 破坏性变更。
+  # 不设 internal：聊天后端要连外网上的模型服务。
+  honeycomb-agent-net:
+    driver: bridge
 
 volumes:
   honeycomb_mongo_data:
   # 占位认证的账号文件（账号+密码登录，auth.gate v1.1）。只开共享口令时它是空的。
   honeycomb_auth_data:
+  # 聊天记录（agent.chat.v1）。down 不删，down -v 删。
+  honeycomb_agent_data:
 
 services:
   mongo:
@@ -111,7 +120,8 @@ services:
       AUTH_USERS_FILE: /data/users.json
       # 站点前缀（gateway.v1）：cookie 的 Path 跟着它走。
       AUTH_BASE_PATH: ${HONEYCOMB_BASE_PATH:-/}
-      # 不设则每次启动随机生成：重启即所有人重新登录。
+      # 不设则每次启动随机生成：重启即所有人重新登录，且不发设备令牌（auth.gate v1.2）。
+      # 令牌的吊销纪元缺省记在账号文件旁边：/data/tokens.json（同一个数据卷）。
       AUTH_SECRET: ${AUTH_SECRET:-}
       # 0.0.0.0 在这里是安全的：这台监听只在 honeycomb-net 这个内部 bridge 网里，
       # 本服务在 compose 里根本不映射宿主端口（跟 nexus-core 的 0.0.0.0:8000 同一个道理，
@@ -126,11 +136,70 @@ services:
       retries: 5
       start_period: 10s
 
+  mcp:
+    # MCP 只读工具（contracts/mcp.tools.v1），纯标准库。同 nexus-core：按源码构建、镜像名带项目名。
+    build:
+      context: ../modules/mcp/code/server
+    image: ${HONEYCOMB_PROJECT:-honeycomb}-mcp:local
+    pull_policy: build
+    container_name: ${HONEYCOMB_PROJECT:-honeycomb}-mcp
+    restart: unless-stopped
+    # 两张网：经 honeycomb-net 调 nexus-core；在 honeycomb-agent-net 上被网关与聊天后端调。
+    # 不映射宿主端口；对外只经网关的 <前缀>api/mcp/（过门）。
+    networks: [honeycomb-net, honeycomb-agent-net]
+    environment:
+      NEXUS_CORE_URL: http://nexus-core:8000
+      # 与 nexus-core 同一个开关：多用户部署缺租户头即 401（mcp.tools.v1 第二节）
+      NEXUS_TENANT_STRICT: ${NEXUS_TENANT_STRICT:-0}
+      # 浏览器 Origin 白名单（逗号分隔、完全相等，如 https://example.com:8443）。缺省空 = 浏览器一律 403
+      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8020/healthz').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  agent:
+    # 聊天后端（contracts/agent.chat.v1 的 opencode 适配器，modules/agent）。页面上的「问问助手」。
+    # 只在 honeycomb-agent-net 上：够不着 nexus-core / auth / mongo，读数据只能经 MCP。
+    # 换成自己的聊天后端：override 里给它 profiles: [disabled]，.env 设 AGENT_UPSTREAM（gateway.v1 第八节）。
+    build:
+      context: ../modules/agent/code/backend
+    image: ${HONEYCOMB_PROJECT:-honeycomb}-agent:local
+    pull_policy: build
+    container_name: ${HONEYCOMB_PROJECT:-honeycomb}-agent
+    restart: unless-stopped
+    networks: [honeycomb-agent-net]
+    # 让 AGENT_BASE_URL=http://host.docker.internal:11434/v1（本机 Ollama）在 Linux 上也解析得到
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes:
+      - honeycomb_agent_data:/data
+    environment:
+      # 模型密钥只进这个容器（agent.chat.v1 第七节）。与 AGENT_BASE_URL 都空 = 面板提示去填，发消息 503。
+      AGENT_API_KEY: ${AGENT_API_KEY:-}
+      AGENT_MODEL: ${AGENT_MODEL:-deepseek/deepseek-flash}
+      # OpenAI 兼容端点（本机 Ollama、内网服务 http://svc:port/v1 都行），只许 http:// / https://
+      AGENT_BASE_URL: ${AGENT_BASE_URL:-}
+      AGENT_MAX_SESSIONS: ${AGENT_MAX_SESSIONS:-50}
+      AGENT_MAX_RUNTIMES: ${AGENT_MAX_RUNTIMES:-4}
+      # 一轮回答的总时限（秒），到点中止
+      AGENT_MAX_TURN_SECONDS: ${AGENT_MAX_TURN_SECONDS:-300}
+      # 调试窗口：=1 时录下每轮发给模型 / 模型回来的原文，面板里每条回答下多一个「调试」。只在自己机器上调试时开
+      AGENT_DEBUG: ${AGENT_DEBUG:-0}
+      NEXUS_TENANT_STRICT: ${NEXUS_TENANT_STRICT:-0}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8030/api/agent/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   web:
     image: nginx:alpine
     container_name: ${HONEYCOMB_PROJECT:-honeycomb}-web
     restart: unless-stopped
-    networks: [honeycomb-net]
+    networks: [honeycomb-net, honeycomb-agent-net]
     depends_on:
       nexus-core:
         condition: service_healthy
@@ -146,10 +215,13 @@ services:
     # .env 或 `-f 自己的 override.yml` 换认证服务、换登录页、加路由，不改本文件。
     environment:
       AUTH_UPSTREAM: ${AUTH_UPSTREAM:-auth:8010}
+      # 聊天后端（agent.chat.v1，gateway.v1 第八节）。网关运行期才解析它，没起也不影响网关。
+      # MCP 不经这里换：网关固定转 mcp:8020。
+      AGENT_UPSTREAM: ${AGENT_UPSTREAM:-agent:8030}
       # 站点前缀（gateway.v1）：整站挂子路径时设，如 /Cockpit/（以 / 开头和结尾）。
       HONEYCOMB_BASE_PATH: ${HONEYCOMB_BASE_PATH:-/}
       # 模板里只替换这些变量；$host 之类仍是 nginx 自己的。
-      NGINX_ENVSUBST_FILTER: ^(AUTH_UPSTREAM|HONEYCOMB_)
+      NGINX_ENVSUBST_FILTER: ^(AUTH_UPSTREAM|AGENT_UPSTREAM|HONEYCOMB_)
     volumes:
       - ./nginx/templates/default.conf.template:/etc/nginx/templates/default.conf.template:ro
       - ${HONEYCOMB_EXTRA_ROUTES_DIR:-./nginx/extra}:/etc/nginx/templates/extra:ro
@@ -157,10 +229,11 @@ services:
       - ../modules/nginx-docker/static:/usr/share/nginx/html/__cockpit:ro
       # 登录页，缺省是登录门占位件自带的；换成自己的就设 HONEYCOMB_LOGIN_DIR。
       - ${HONEYCOMB_LOGIN_DIR:-../contracts/auth.gate.v1/stub/web}:/usr/share/nginx/html/login:ro
-      # 两个前端模块，同样只读挂载、不复制代码：改页面去 modules/<名>/code/frontend/
+      # 三个前端模块，同样只读挂载、不复制代码：改页面去 modules/<名>/code/frontend/
       # 改，浏览器刷新就生效，不用重建任何镜像。
       - ../modules/hive/code/frontend:/usr/share/nginx/html/hive:ro
       - ../modules/ring/code/frontend:/usr/share/nginx/html/ring:ro
+      - ../modules/assistant/code/frontend:/usr/share/nginx/html/assistant:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/healthz"]
       interval: 10s

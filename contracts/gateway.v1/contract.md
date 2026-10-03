@@ -36,6 +36,7 @@ docker compose -f docker-compose.yml -f /你的/override.yml up -d
 | `HONEYCOMB_LOGIN_DIR` | 登录门占位件自带的页面 | 登录页静态目录，挂在 `/login/`【冻结】 |
 | `HONEYCOMB_EXTRA_ROUTES_DIR` | `deploy/nginx/extra`（空） | 额外路由目录，见第四节【冻结】 |
 | `HONEYCOMB_BASE_PATH` | `/` | 站点前缀：整站挂在子路径下时设，如 `/Cockpit/`，以 `/` 开头和结尾。见第七节【冻结】 |
+| `AGENT_UPSTREAM` | `agent:8030` | 聊天后端地址（`host:port`），实现 `agent.chat.v1`。见第八节（2026-09-28 追加）|
 
 路径变量写**绝对路径**最稳；相对路径按 compose 文件所在目录解析。
 
@@ -80,6 +81,10 @@ HONEYCOMB_EXTRA_ROUTES_DIR=/srv/my-deploy/routes
   设门就锁死了唯一的入口。所以**认证服务在这个前缀下的每一个非登录端点都必须自己
   鉴权**，网关不替它挡。别以为「在网关后面」就等于「受保护」。
 - 网关转给认证服务的请求**不带**客户端的 `X-Nexus-Tenant`（见第五节）。
+- verify 子请求带 `X-Original-URI: $request_uri`（原始请求的路径，含站点前缀、未解码），
+  并照 `auth_request` 的缺省把原请求的其余头（含 `Authorization`）原样带过去。
+  auth.gate v1.2 的设备令牌靠这两样判断「只开 `/api/core/*`、不开页面」；自己写的门
+  子请求也要保留这两样，否则令牌一律被拒（失败方向是拒绝，不是放行）。
 
 ## 三、登录页【冻结】
 
@@ -169,3 +174,60 @@ proxy_set_header X-Nexus-Tenant $honeycomb_tenant;
 - 顶栏页签 `window.HONEYCOMB_NAV` 里的地址已含前缀。
 
 CI 把手写与生成的两份组装各按 `/` 与 `/Cockpit/` 真起一遍。
+
+## 八、AI 桥：聊天后端与 MCP（2026-09-28 追加，v0.3）
+
+两条新的受保护路由，都 `include gate.inc`（过门、覆盖租户头）：
+
+| 对外路径 | 转给 | 契约 |
+|---|---|---|
+| `<前缀>api/agent/` | `AGENT_UPSTREAM`（缺省 `agent:8030`）的 `/api/agent/` | `contracts/agent.chat.v1` |
+| `<前缀>api/mcp/` | MCP 服务（缺省 `mcp:8020`）的 `/api/mcp/` | `contracts/mcp.tools.v1` |
+
+- **换聊天后端**：同换认证服务——override 里加自己的服务（接到 `honeycomb-agent-net`），`.env` 里设
+  `AGENT_UPSTREAM`，把缺省的 `agent` 服务 `profiles: [disabled]`。前端、MCP 都不用动。
+- 两条路由转发时**清掉** `Cookie` 与 `Authorization`（`proxy_set_header ... ""`）：门已经在网关验过了，
+  后端只需要租户头；用户凭据不该出现在一个会跑大模型的进程里。门子请求照旧拿得到这两个头
+  （子请求读的是客户端原始请求头，不受本 location 的 `proxy_set_header` 影响）。
+- `<前缀>api/agent/`：`proxy_buffering off`（SSE 逐条到浏览器），`proxy_read_timeout` 不短于 300 秒
+  （聊天后端每 15 秒发心跳）。`<前缀>api/mcp/`：同样关缓冲（Streamable HTTP 可能回 SSE）。
+- 设备令牌：auth.gate v1.3 起对 `<前缀>api/mcp/` 也认（让用户自己的 MCP 客户端能接）；
+  `<前缀>api/agent/` **不认令牌**，只认浏览器会话。
+- 网络：新增内部网 `honeycomb-agent-net`，上面只有网关、MCP、聊天后端。nexus-core、认证服务、mongo
+  **不在**这张网上——聊天后端够不着它们，读数据只能经 MCP（`mcp.tools.v1` 第三节）。MCP 同时在两张网上。
+- **缺了它们网关照常起**：这两条路由的上游用运行期解析（`resolver 127.0.0.11` + 变量写 `proxy_pass`），
+  不在启动时解析——否则关掉 `agent` 服务、或 `AGENT_UPSTREAM` 指向的服务还没起，nginx 直接起不来，整站跟着挂。
+  连不上时这两条路由回 502；前端按 `agent.chat.v1` 把聊天面板整块藏起来。
+
+
+**实现落定（v0.3 MCP 实现 PR，追加）**：
+
+- **网络名【冻结】**：compose 里的网络键是 `honeycomb-agent-net`，按 compose 惯例实际网络名是
+  `<项目名>_honeycomb-agent-net`（项目名即 `HONEYCOMB_PROJECT`，缺省 `honeycomb` → `honeycomb_honeycomb-agent-net`；
+  同机第二套 `honeycomb-2` → `honeycomb-2_honeycomb-agent-net`）。按项目分开是有意的：同一台机器上两套部署的聊天后端
+  不能互相够到对方的 MCP。部署方接自己的服务：与本仓 compose 同项目合并（`-f docker-compose.yml -f override.yml`）时
+  在 override 里写 `networks: [honeycomb-agent-net]`；从另一个 compose 项目接时声明
+  `networks: {honeycomb-agent-net: {external: true, name: <项目名>_honeycomb-agent-net}}`。**键名与这条命名规则改了就是破坏性变更**（发 gateway.v2）。
+- MCP 上游固定 `mcp:8020`，不设变量：换 MCP 实现 = override 里用同名服务 `mcp` 顶替。
+- 生成的组装（`install.sh add`）：路由由模块清单声明，`bridge: true` 即本节这套（过门、清凭据头、关缓冲、
+  运行期解析），`upstreamEnv: <变量>` 让上游可由 `.env` 换（网关的 `NGINX_ENVSUBST_FILTER` 自动放行它）；
+  清单的 `service.networks` 追加 `honeycomb-agent-net`，网关随之接上这张网。所以生成的组装里这两条路由跟着
+  `mcp`、聊天后端模块装上才出现；手写的默认组装两条都常驻。
+- 验证：CI「网关契约」job 把 `mcp` 用 profiles 关掉（网关照常起、`/api/mcp/` 回 502），聊天后端换成回显请求头的
+  小服务（收不到 `Cookie` / `Authorization` / 伪造的租户头）；「多账号」job 用设备令牌经网关调 MCP。
+
+## 实现说明（不改接口）
+
+- **2026-09-30 · 上游运行期解析**（0.2.x 修复）：以前 `proxy_pass` 写死主机名，nginx 只在启动时解析一次；
+  `docker compose up -d` 只重建了 nexus-core 或认证服务（升级只换了它的镜像）时它换了 IP，网关还打旧 IP，
+  `/api/core/`、登录门一直 502，直到重启 web。现在两份组装的每条上游（nexus-core、`AUTH_UPSTREAM`、
+  模块清单声明的路由）都用 `resolver 127.0.0.11 valid=10s` + 变量 `proxy_pass`，后端重建后 10 秒内自动跟上；
+  转发路径由 `rewrite … break` 去前缀，后端看到的路径与 query 串不变（唯一差别：请求行里**未编码**的
+  非 ASCII 或 `"<>` 之类字符，现在按百分号编码转发，含义相同；浏览器本来就会编码）。
+  附带：上游没起时网关照常启动，这些路由回 502（顶栏芯片仍回降级 JSON）。
+  `AUTH_UPSTREAM` 仍是 `host:port`，主机名须能被 Docker 内置 DNS 解析（compose 服务名 / 网络别名，或直接写 IP）；
+  只写在 `extra_hosts`（容器 `/etc/hosts`）里的名字不行。CI：`deploy/test/recreate.sh` 在两份组装、两种前缀下
+  单独重建 nexus-core 与 auth，不重启网关，断言 `/api/core/` 200。
+- **2026-09-30 · 并入 v0.3**：第八节两条 AI 桥路由（手写与生成的 `bridge: true`）改成同一写法：共用 server 级
+  `resolver`（不再每个 location 各写一条），`rewrite` 用 `\Q…\E` 按字面匹配站点前缀并带 `(?s)`，补写与普通路由
+  同形的 `proxy_redirect`；生成组装里的变量名统一为 `$honeycomb_up_<序号>`。`recreate.sh` 同样逐个重建 `mcp`、`agent`。

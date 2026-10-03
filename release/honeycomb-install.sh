@@ -78,9 +78,17 @@ AUTH_SECRET=$(rand)
 # 只本机能访问。要放到局域网改成 0.0.0.0:8800，但先在前面加 TLS（见 README）。
 HONEYCOMB_BIND=$BIND
 HONEYCOMB_TZ=Asia/Shanghai
+# 计时台「问问助手」用的模型密钥（缺省 DeepSeek；换模型见 README）。填了再 docker compose up -d。
+AGENT_API_KEY=
 # compose 项目名（容器、数据卷的前缀）。别改：改了等于换成一份新的空数据。
 HONEYCOMB_PROJECT=$project
 EOF
+  elif ! grep -q '^HONEYCOMB_PROJECT=' .env; then
+    # v0.2.6 之前装的 .env 没有项目名，compose 一直用的是缺省值（或当时环境变量里的）。
+    # 升级时补写进去，以后不再靠缺省值，免得本机再来一份旧安装时撞名（Windows 验收）。
+    [ -z "$(tail -c1 .env)" ] || echo >> .env
+    printf '%s\n' '# compose 项目名（容器、数据卷的前缀）。别改：改了等于换成一份新的空数据。' \
+      "HONEYCOMB_PROJECT=${HONEYCOMB_PROJECT:-honeycomb}" >> .env
   fi
 
   if [ "$fresh" = 1 ]; then say "拉镜像（第一次要几分钟）……"; else say "拉新版镜像……"; fi

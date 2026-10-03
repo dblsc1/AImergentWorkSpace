@@ -149,6 +149,7 @@ never depends on a `pip install`.
 | `modules/nexus-core` | The event-sourced kernel (FastAPI + MongoDB). Provides 13 contracts: timing, task CRUD, the event write entry point and archive read, and read projections for tree / ring / gantt / export. |
 | `modules/hive` | The task hive (`/hive/`), the main screen. A static frontend; all data goes through `/api/core/`. |
 | `modules/ring` | The timer ring (`/ring/`): contribution ring plus start / stop / cancel / backfill. A static frontend. |
+| `modules/assistant` | The AI assistant page (`/assistant/`), for looking back: chat with the assistant, confirm detected activity, and edit the activity detector's privacy / away settings. A static frontend. |
 | `modules/nginx-docker` | The gateway's shared parts: the navbar, design tokens, favicons, and the gate and inject snippets. The gateway injects the navbar into every frontend, with one tab per installed frontend. |
 | `contracts/yq-event.v1` | The event envelope spec. **The core contract of the whole system** — every write is an event posted into this envelope. |
 | `contracts/auth.gate.v1` | The login gate contract, a stub implementation (standard library only, zero dependencies), and a minimal login page. |
@@ -188,12 +189,48 @@ Switching from the shared password and want to keep your existing data?
 `NEXUS_TENANT_STRICT=1` makes the backend refuse any request that arrives
 without an account instead of quietly dropping it into the shared data.
 
+### Device tokens for desktop programs and AI agents
+
+A sync program or an agent hook has no browser cookie. Give it a device token
+and send `Authorization: Bearer <token>` to `/api/core/...`. Tokens **open the
+API only, never pages**, and last a year by default.
+
+- On the web: once logged in, `POST /api/auth/tokens`
+  (`Content-Type: application/json`, body `{}` or `{"label":"laptop"}`) returns
+  `{"token", "tenant", "expiresAt"}`; `POST /api/auth/tokens/revoke` kills every
+  token of your own account.
+- From the CLI (in `deploy/`):
+  `docker compose exec auth python /app/auth_stub.py token alice` issues one,
+  `revoke alice` kills them all; no name = the shared-password identity.
+
+`AUTH_SECRET` must be set in `.env` (the release installer already writes one;
+for a hand-built `deploy/` add a random string yourself) — without a fixed key a
+token would die on restart, so none are issued. Changing or deleting an account,
+or changing or removing the shared password, kills the matching tokens; revocation takes
+effect within two seconds.
+
 The reason for drawing the line there: an open-source release should not ship a
 real account system bolted on. If you need more, replace that one
 implementation — as long as it still satisfies the same contract's endpoints
 and three invariants, **the assembly layer needs no changes at all**.
 How to plug it in (`AUTH_UPSTREAM`, your own login page, switching the stub off)
 is in `contracts/gateway.v1/contract.md`.
+
+### The AI assistant ("Ask the assistant" on the timer page)
+
+The timer page has a chat panel for questions like "which project took most of my
+time this week?". The assistant reads your data only through the read-only MCP
+tools — it writes nothing, runs no commands, has no web access. Put your model key
+in `.env` as `AGENT_API_KEY` (default model `deepseek/deepseek-flash`) and run
+`docker compose up -d`; without a key the panel tells you to add one and
+everything else works as before. Other models, a local Ollama or any
+OpenAI-compatible server on your network: see the AI assistant section of
+`deploy/.env.example`. The interface is `contracts/agent.chat.v1`; the default
+implementation (opencode) lives in `modules/agent/`. To see exactly what each
+turn sends to the model and what comes back, set `AGENT_DEBUG=1` in `.env` and
+restart: every answer gets a collapsed "调试" (debug) section. Those records are
+your data (full prompts and tool results) — only turn it on while debugging on
+your own machine, and set it back to `0` afterwards.
 
 ### Serving it under a sub-path
 

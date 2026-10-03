@@ -3,8 +3,10 @@
  * 品牌 + 页签（按已装前端） + 录制胶囊 + 主题面板 + 退出。对外不变量：
  *
  *   · 根元素是 nav.ckpt-nav[data-ckpt-nav]，全部 class 以 ckpt- 起头；
- *   · 只对 /__cockpit/current 发 GET（约 10s 一次），先判 degraded 再读 running，
+ *   · 对 /__cockpit/current 发 GET（约 10s 一次），先判 degraded 再读 running，
  *     退出发 POST /api/auth/logout 后跳 /login/，不发任何其它非 GET 请求；
+ *   · 泳道预览（v0.3，契约「泳道预览」节）：只在预览打开、页面可见时约 15s GET 一次
+ *     api/core/views/lanes，并在第一次打开时加载同目录的 lanes.js（计时页上整段不启用）；
  *   · 顶栏自己的网络失败不写 console.error——这条由网关侧 /__cockpit/current
  *     的恒 200 兑现，不是靠这里的 .catch()（见 contract.md「HTML 响应体注入」节）。
  *
@@ -321,6 +323,7 @@
 
   var paint = function () {
     nav.setAttribute('data-ckpt-timer', state);
+    nav.removeAttribute('data-ckpt-paused');
     if (state === DEGRADED) {
       liveWord.textContent = WORD_DEGRADED;
       chip.title = HINT_DEGRADED;
@@ -333,6 +336,8 @@
       // 「已暂停」—— 与 hive 中心格 / 计时台同一语义，要根治得把暂停搬到后端。
       var paused = readKey(PAUSED_KEY);
       liveWord.textContent = paused ? WORD_PAUSED : WORD_IDLE;
+      // 窄屏把字藏了，只剩圆点 + 读数：暂停和空闲得靠点本身分开（Windows 验收）
+      if (paused) nav.setAttribute('data-ckpt-paused', '');
       elapsedNode.textContent = fmt(paused ? secsOf(paused.carriedSeconds) : 0);
       return;
     }
@@ -394,4 +399,166 @@
       .catch(function () { /* 网络失败照样回登录页，见上 */ })
       .then(function () { location.assign(LOGIN_URL); });
   });
+
+  /* ── 泳道预览（v0.3，nexus-core views.lanes.v1；契约「泳道预览」节）────────────
+   * 悬停 / 聚焦 / 触屏点一下计时芯片，弹出人一条线 + 至多 4 条代理线的最近 1 小时。
+   * 计时页上不弹（那一页画了全部泳道）。画图交给共享的 lanes.js（计时页同一份），
+   * 第一次打开时才加载。非 2xx（含 404 老后端、401）→ 不弹，芯片照旧，不跳登录页。 */
+  if (!(NAV.timer && location.pathname.indexOf(NAV.timer) === 0)) {
+    var LANES_URL = BASE + 'api/core/views/lanes';
+    var LANES_JS = BASE + '__cockpit/lanes.js';
+    var LANES_POLL_MS = 15000;
+    var HOUR_MS = 3600000;
+
+    var pop = el('div', 'ckpt-lanes-pop');
+    pop.id = 'ckpt-lanes-pop';
+    pop.setAttribute('data-ckpt-lanes', '');
+    pop.setAttribute('role', 'region');
+    pop.setAttribute('aria-label', '泳道预览');
+    pop.appendChild(el('div', 'ckpt-lanes-head', '最近 1 小时'));
+    var popBody = el('div', 'ckpt-lanes-body');
+    pop.appendChild(popBody);
+    var popGo = el('a', 'ckpt-lanes-go', '去计时页');
+    popGo.href = chip.getAttribute('href');
+    pop.appendChild(popGo);
+    right.insertBefore(pop, chip.nextSibling);      // 紧跟芯片：Tab 从芯片直接走进预览
+    chip.setAttribute('aria-controls', pop.id);
+    chip.setAttribute('aria-expanded', 'false');
+
+    var want = false, lanesPoll = null, lanesLast = null, lanesGone = false;
+    var gen = 0;   // 每发一次、每关一次都加一：只认最新那次请求的回应（Codex 审核）
+    var openT = null, closeT = null, lastTouch = 0, quietFocus = false;
+
+    var placePop = function () {
+      var vw = document.documentElement.clientWidth;
+      var w = Math.min(360, vw - 32);
+      var r = chip.getBoundingClientRect();
+      pop.style.width = w + 'px';
+      pop.style.left = Math.min(Math.max(r.right - w, 16), vw - 16 - w) + 'px';
+    };
+    var showPop = function () {
+      placePop();
+      pop.classList.add('ckpt-open');
+      chip.setAttribute('aria-expanded', 'true');
+    };
+    var closePreview = function () {
+      want = false;
+      gen += 1;
+      clearTimeout(openT);
+      clearInterval(lanesPoll);
+      lanesPoll = null;
+      pop.classList.remove('ckpt-open');
+      chip.setAttribute('aria-expanded', 'false');
+    };
+    var paintLanes = function () {
+      var L = window.HoneycombLanes, now = Date.parse(lanesLast.now), v0 = now - HOUR_MS;
+      var pick = L.pickPreview(lanesLast.agents, v0, 4);
+      L.render(popBody, lanesLast, {
+        viewStart: v0, viewEnd: now + HOUR_MS * 0.03, agents: pick.shown, compact: true, presence: true,
+        more: pick.more ? '还有 ' + pick.more + ' 个 → 计时页' : '', moreHref: chip.getAttribute('href'),
+        focusFallback: popGo
+      });
+    };
+    var fetchLanes = function () {
+      if (!want || document.visibilityState === 'hidden') { return; }
+      var q = window.HoneycombLanes.query(lanesLast, 1), mine = ++gen;
+      fetch(LANES_URL + q, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+        .then(function (r) {
+          if (r.status === 404) { lanesGone = true; }
+          if (!r.ok) { throw new Error('HTTP ' + r.status); }
+          return r.json();
+        })
+        .then(function (d) {
+          if (mine !== gen) { return; }
+          if (!d || !d.now) { throw new Error('bad body'); }
+          lanesLast = d;
+          var next = window.HoneycombLanes.query(d, 1);   // 1 小时跨了零点：补拉昨天 + 今天
+          if (next !== q && next.indexOf('from=') !== -1) { fetchLanes(); return; }
+          paintLanes();
+          showPop();
+        })
+        .catch(function () { if (mine === gen) { closePreview(); } });
+    };
+    var withLib = function (cb) {
+      if (window.HoneycombLanes) { cb(); return; }
+      var s = document.querySelector('script[data-ckpt-lanes-js]');
+      if (!s) {
+        s = document.createElement('script');
+        s.src = LANES_JS;
+        s.setAttribute('data-ckpt-lanes-js', '');
+        document.head.appendChild(s);
+      }
+      s.addEventListener('load', cb);
+    };
+    var openPreview = function () {
+      if (want || lanesGone) { return; }
+      want = true;
+      withLib(function () {
+        if (!want || lanesPoll) { return; }
+        fetchLanes();
+        lanesPoll = setInterval(fetchLanes, LANES_POLL_MS);
+      });
+    };
+
+    // 鼠标：停 150 ms 才开，离开芯片与预览 300 ms 才关（防闪）；点芯片照旧去计时页。
+    var hoverIn = function (e) {
+      if (e.pointerType !== 'mouse') { return; }
+      clearTimeout(closeT);
+      if (!want) { clearTimeout(openT); openT = setTimeout(openPreview, 150); }
+    };
+    var hoverOut = function (e) {
+      if (e.pointerType !== 'mouse') { return; }
+      clearTimeout(openT);
+      closeT = setTimeout(function () {
+        // 焦点还在芯片或预览里（键盘打开的）就不因鼠标离开而关
+        var a = document.activeElement;
+        if (a && (chip.contains(a) || pop.contains(a))) { return; }
+        closePreview();
+      }, 300);
+    };
+    [chip, pop].forEach(function (n) {
+      n.addEventListener('pointerenter', hoverIn);
+      n.addEventListener('pointerleave', hoverOut);
+    });
+
+    // 键盘：芯片获得焦点即开；焦点离开芯片与预览就关；Esc 关并把焦点留在芯片。
+    chip.addEventListener('focus', function () {
+      clearTimeout(closeT);
+      if (quietFocus || Date.now() - lastTouch < 1000) { return; }
+      openPreview();
+    });
+    var focusOut = function (e) {
+      // 只在焦点真的走到别的控件上时关；点到空白处（relatedTarget 为空）交给下面的「点外面」
+      var to = e.relatedTarget;
+      if (!to || chip.contains(to) || pop.contains(to)) { return; }
+      closePreview();
+    };
+    chip.addEventListener('blur', focusOut);
+    pop.addEventListener('focusout', focusOut);
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape' || !want) { return; }
+      closePreview();
+      quietFocus = true;
+      chip.focus();
+      quietFocus = false;
+    });
+
+    // 触屏（没有悬停）：第一下点芯片只切换预览，预览里的「去计时页」才走；点外面关。
+    document.addEventListener('pointerdown', function (e) {
+      if (e.pointerType === 'touch' || e.pointerType === 'pen') { lastTouch = Date.now(); }
+    }, true);
+    chip.addEventListener('click', function (e) {
+      if (Date.now() - lastTouch > 1000) { return; }
+      e.preventDefault();
+      if (want) { closePreview(); } else { openPreview(); }
+    });
+    document.addEventListener('click', function (e) {
+      if (want && !chip.contains(e.target) && !pop.contains(e.target)) { closePreview(); }
+    });
+
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible') { fetchLanes(); }   // 关着时 fetchLanes 直接返回
+    });
+    window.addEventListener('resize', function () { if (want) { placePop(); } });
+  }
 })();

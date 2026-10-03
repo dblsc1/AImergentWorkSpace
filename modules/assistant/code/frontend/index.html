@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI助理</title>
+  <!-- 「AI助理」页（仓主 2026-09-30 定页面分工：计时 = 现在，任务 = 未来，AI助理 = 回顾与分析）。
+       四块从上到下：AI 对话、待确认建议（两块从计时页搬来）、活动检测设置、回顾。
+       顶栏、设计 tokens 由网关注入（modules/nginx-docker），本页只自带兜底 tokens（assistant.css 开头）。 -->
+  <link rel="stylesheet" href="assistant.css">
+</head>
+<body>
+  <main class="page">
+    <header class="page-head">
+      <h1 class="page-title">AI助理</h1>
+      <p class="suggest-sub">回顾与分析：问助手、确认电脑记下的活动、管检测程序记什么。</p>
+    </header>
+
+    <!-- 「AI 对话」（contracts/agent.chat.v1，chat.js）。聊天后端没装（health 不是 200）时整块保持 hidden。 -->
+    <section class="card chat-panel" id="chat-panel" hidden aria-labelledby="chat-title">
+      <h2 class="suggest-title" id="chat-title">AI 对话</h2>
+      <p class="suggest-sub">它能读你的任务和时间；能写的只有两样建议：分类规则的草稿（要你在下面点「应用」），
+        和给待确认的活动配任务（要你逐条点「是」）。</p>
+      <div class="chat-bar">
+        <select class="field" id="chat-session" aria-label="对话"></select>
+        <button type="button" class="btn btn-ghost" id="chat-new">新对话</button>
+        <button type="button" class="btn btn-ghost danger" id="chat-delete">删除</button>
+      </div>
+      <div class="chat-log" id="chat-log" aria-live="polite"></div>
+      <p class="chat-tool" id="chat-tool" hidden></p>
+      <p class="suggest-message" id="chat-message" role="status" hidden></p>
+      <form class="chat-form" id="chat-form">
+        <textarea class="field chat-input" id="chat-input" rows="2" maxlength="8000"
+                  placeholder="比如：这周我在哪个项目上花的时间最多？" aria-label="问题"></textarea>
+        <button type="submit" class="btn btn-fact" id="chat-send">发送</button>
+        <button type="button" class="btn btn-ghost" id="chat-stop" hidden>停止</button>
+      </form>
+    </section>
+
+    <!-- 「待确认建议」（nexus-core v2.2 活动建议 + v2.5 idle 段，suggestions.js）：建议不是事实，
+         人确认了才入账。后端没有这个端点（404）时整块保持 hidden。 -->
+    <section class="card suggest-panel" id="suggest-panel" hidden aria-labelledby="suggest-title">
+      <div class="suggest-top">
+        <h2 class="suggest-title" id="suggest-title">待确认建议 <span class="suggest-count mono" id="suggest-count"></span></h2>
+        <p class="suggest-sub">电脑自动记下的活动，确认后才算进你的时间。标「无操作」的是没碰键盘鼠标的时段，只能一条条自己定。
+          没配上任务的可以「让 AI 匹配」：它给建议，你点「是」入账、点「否」自己挑。
+          同一个窗口的几段并成一行，一次确认；勾「以后这个窗口都记到这个任务」，以后它自动建议这个任务。</p>
+      </div>
+      <div class="suggest-bulk">
+        <label class="suggest-threshold-label" for="suggest-threshold">把握至少（%）</label>
+        <input class="field suggest-threshold" id="suggest-threshold" type="number"
+               min="0" max="100" step="5" value="80" inputmode="numeric">
+        <button type="button" class="btn btn-fact" id="suggest-confirm-all" disabled>全部确认</button>
+        <!-- 聊天后端没装 / 没配模型时保持 hidden（suggestions.js 听 chat.js 的 assistant:chat-state） -->
+        <button type="button" class="btn btn-ghost" id="suggest-ai-match" hidden disabled>让 AI 匹配</button>
+      </div>
+      <p class="suggest-message" id="suggest-message" role="status" hidden></p>
+      <p class="suggest-empty" id="suggest-empty">没有待确认的活动。</p>
+      <ul class="suggest-list" id="suggest-list"></ul>
+      <p class="suggest-more" id="suggest-more" hidden></p>
+    </section>
+
+    <!-- 「活动检测设置」（contracts/detector.settings.v1，settings.js）。data-key / name 与文档的「节.键」一一对应。 -->
+    <section class="card settings-panel" id="settings-panel" hidden aria-labelledby="settings-title">
+      <h2 class="suggest-title" id="settings-title">活动检测设置</h2>
+      <p class="suggest-sub">桌面检测程序（ai-detector）上传前怎么清洗窗口标题、离开怎么算。按设备分开设；
+        检测程序每轮（最多 5 分钟）拉一次，改了下一轮生效。</p>
+      <div class="det-device" id="det-device-row" hidden>
+        <label class="set-label" for="det-device">设备</label>
+        <select class="field" id="det-device"></select>
+        <p class="set-hint" id="det-device-meta"></p>
+      </div>
+      <p class="suggest-empty" id="det-note" hidden></p>
+
+      <form id="det-form" class="det-form" hidden novalidate>
+        <fieldset class="set-group">
+          <legend>隐私</legend>
+
+          <fieldset class="set-field" data-field="privacy.paths">
+            <legend>标题里的文件路径</legend>
+            <label class="set-opt"><input type="radio" name="privacy.paths" value="full"> 只留文件名
+              <span class="eg">vim /home/alice/work/garden/plot.gd → vim plot.gd</span></label>
+            <label class="set-opt"><input type="radio" name="privacy.paths" value="half"> 留最后两级
+              <span class="eg">→ vim garden/plot.gd</span></label>
+            <label class="set-opt"><input type="radio" name="privacy.paths" value="off"> 原样（用户名仍按下面「用户名」处理）
+              <span class="eg">→ vim /home/[用户]/work/garden/plot.gd</span></label>
+            <p class="field-error" hidden></p>
+          </fieldset>
+
+          <div class="set-field" data-field="privacy.pathWhitelist">
+            <label class="set-label" for="det-whitelist">路径白名单（正则，每行一条，最多 20 条）</label>
+            <textarea class="field set-list" id="det-whitelist" data-list="privacy.pathWhitelist" rows="2"
+                      spellcheck="false" placeholder="例如 garden/\S+"></textarea>
+            <p class="set-hint">命中的片段原样保留，不受这里其他各项影响。<strong>盖不过强制清洗</strong>：
+              白名单里就算写了卡号，卡号也已经被盖掉了。RE2 语法、区分大小写（不分就写 (?i)）。</p>
+            <p class="field-error" hidden></p>
+          </div>
+
+          <fieldset class="set-field" data-field="privacy.titles">
+            <legend>窗口标题</legend>
+            <label class="set-opt"><input type="radio" name="privacy.titles" value="keep"> 保留（经上面各项处理后）
+              <span class="eg">plot.gd — garden — VS Code</span></label>
+            <label class="set-opt"><input type="radio" name="privacy.titles" value="pseudonymize"> 换成代号，对照表只在本机
+              <span class="eg">→ 窗口名3</span></label>
+            <label class="set-opt"><input type="radio" name="privacy.titles" value="drop"> 不要标题，只留程序名
+              <span class="eg">→ （空）</span></label>
+            <p class="field-error" hidden></p>
+          </fieldset>
+
+          <div class="set-field" data-field="privacy.appOnly">
+            <label class="set-opt"><input type="checkbox" data-key="privacy.appOnly"> 聊天、邮件、密码管理器只留程序名
+              <span class="eg">微信「张三：明天把合同发我」→ （空）</span></label>
+            <p class="field-error" hidden></p>
+          </div>
+          <div class="set-field" data-field="privacy.appOnlyApps">
+            <label class="set-opt"><input type="checkbox" data-null="privacy.appOnlyApps"> 用这台电脑本机的名单（微信、QQ、钉钉、飞书、Slack、1Password……）</label>
+            <label class="set-label" for="det-apponly-apps">或者自己列（每行一个程序名）</label>
+            <textarea class="field set-list" id="det-apponly-apps" data-list="privacy.appOnlyApps" rows="3" spellcheck="false"></textarea>
+            <p class="field-error" hidden></p>
+          </div>
+
+          <fieldset class="set-field" data-field="privacy.browser">
+            <legend>浏览器标签页</legend>
+            <label class="set-opt"><input type="radio" name="privacy.browser" value="domain"> 域名 + 页面标题
+              <span class="eg">→ github.com · Fix #1</span></label>
+            <label class="set-opt"><input type="radio" name="privacy.browser" value="full"> 完整网址 + 页面标题
+              <span class="eg">→ https://github.com/a/b/pull/1 · Fix #1</span></label>
+            <label class="set-opt"><input type="radio" name="privacy.browser" value="off"> 只留程序名
+              <span class="eg">→ （空）</span></label>
+            <p class="set-hint">无痕窗口、对不上标签页的，三种都只留程序名。需要 ActivityWatch 浏览器扩展。</p>
+            <p class="field-error" hidden></p>
+          </fieldset>
+
+          <div class="set-checks">
+            <div class="set-field" data-field="privacy.queryStrings"><label class="set-opt"><input type="checkbox" data-key="privacy.queryStrings"> 去掉网址的 ?查询串 和 #片段（只在「完整网址」时有用）
+              <span class="eg">…/pull/1?tab=files → …/pull/1</span></label><p class="field-error" hidden></p></div>
+            <div class="set-field" data-field="privacy.emails"><label class="set-opt"><input type="checkbox" data-key="privacy.emails"> 邮箱
+              <span class="eg">回复 alice@corp.com → 回复 [邮箱]</span></label><p class="field-error" hidden></p></div>
+            <div class="set-field" data-field="privacy.phones"><label class="set-opt"><input type="checkbox" data-key="privacy.phones"> 电话
+              <span class="eg">客户 +86 138 1234 5678 → 客户 [电话]</span></label><p class="field-error" hidden></p></div>
+            <div class="set-field" data-field="privacy.addresses"><label class="set-opt"><input type="checkbox" data-key="privacy.addresses"> 中文街道地址
+              <span class="eg">寄到北京市朝阳区建国路88号… → 寄到北京[地址]</span></label><p class="field-error" hidden></p></div>
+            <div class="set-field" data-field="privacy.ips"><label class="set-opt"><input type="checkbox" data-key="privacy.ips"> IP 地址
+              <span class="eg">ssh 192.168.1.20 → ssh [IP]</span></label><p class="field-error" hidden></p></div>
+            <div class="set-field" data-field="privacy.usernames"><label class="set-opt"><input type="checkbox" data-key="privacy.usernames"> 用户名、主机名
+              <span class="eg">alice@thinkpad: ~/work → [用户]@[主机]: ~/work</span></label><p class="field-error" hidden></p></div>
+            <div class="set-field" data-field="privacy.longNumbers"><label class="set-opt"><input type="checkbox" data-key="privacy.longNumbers"> 6 位以上的数字
+              <span class="eg">订单 20260926000123 → 订单 [数字]</span></label><p class="field-error" hidden></p></div>
+          </div>
+        </fieldset>
+
+        <fieldset class="set-group set-mandatory">
+          <legend>强制清洗</legend>
+          <p class="set-hint">不能关；需要改源码重新编译（见 ai-detector README）。不管上面怎么选，这几样都会先被盖掉。</p>
+          <div class="set-checks">
+            <label class="set-opt"><input type="checkbox" checked disabled> 密码</label>
+            <label class="set-opt"><input type="checkbox" checked disabled> 密钥 / 令牌</label>
+            <label class="set-opt"><input type="checkbox" checked disabled> 私钥</label>
+            <label class="set-opt"><input type="checkbox" checked disabled> 银行卡号</label>
+            <label class="set-opt"><input type="checkbox" checked disabled> 身份证号</label>
+          </div>
+        </fieldset>
+
+        <fieldset class="set-group">
+          <legend>离开判定</legend>
+          <div class="set-field" data-field="idle.afkThresholdMinutes">
+            <label class="set-label" for="det-afk">无操作多久算离开（分钟，0 = 按 ActivityWatch 原样）</label>
+            <input class="field set-num" id="det-afk" type="number" data-key="idle.afkThresholdMinutes"
+                   min="0" max="240" step="1" inputmode="numeric">
+            <p class="set-hint">短于这么久的离开照算在电脑前。只能往长了放：ActivityWatch 自己要无操作几分钟
+              （缺省 3 分钟）才记离开，设得比它短等于没设。</p>
+            <p class="field-error" hidden></p>
+          </div>
+          <div class="set-field" data-field="idle.audibleAsPresent"><label class="set-opt"><input type="checkbox" data-key="idle.audibleAsPresent"> 浏览器标签页在出声（看视频、听课）时算在电脑前
+            <span class="eg">需要浏览器扩展</span></label><p class="field-error" hidden></p></div>
+          <div class="set-field" data-field="idle.focusAppsEnabled"><label class="set-opt"><input type="checkbox" data-key="idle.focusAppsEnabled"> 前台是阅读器、会议软件时算在电脑前</label><p class="field-error" hidden></p></div>
+          <div class="set-field" data-field="idle.focusApps">
+            <label class="set-opt"><input type="checkbox" data-null="idle.focusApps"> 用内置名单（Acrobat、Zotero、腾讯会议、Zoom、Teams……）</label>
+            <label class="set-label" for="det-focus-apps">或者自己列（每行一个程序名）</label>
+            <textarea class="field set-list" id="det-focus-apps" data-list="idle.focusApps" rows="3" spellcheck="false"></textarea>
+            <p class="field-error" hidden></p>
+          </div>
+          <div class="set-field" data-field="idle.focusMaxMinutes">
+            <label class="set-label" for="det-focus-max">每段离开最多这样算几分钟（1–480）</label>
+            <input class="field set-num" id="det-focus-max" type="number" data-key="idle.focusMaxMinutes"
+                   min="1" max="480" step="1" inputmode="numeric">
+            <p class="field-error" hidden></p>
+          </div>
+          <div class="set-field" data-field="idle.idleSuggestions"><label class="set-opt"><input type="checkbox" data-key="idle.idleSuggestions"> 其余无操作、但窗口没换的时间也传上来，标「无操作·可能在阅读」，由你定算不算
+            <span class="eg">关着就直接扣掉</span></label><p class="field-error" hidden></p></div>
+          <!-- 在场心跳：只在服务端文档里有布尔 presence 时才出现（别的 PR 会追加）。 -->
+          <div class="set-field" data-field="presence" id="det-presence-row" hidden>
+            <label class="set-opt"><input type="checkbox" id="det-presence"> 在场心跳：约每 15 秒报一次此刻在用的程序，给泳道画实时的人那条线</label>
+            <p class="field-error" hidden></p>
+          </div>
+        </fieldset>
+
+        <fieldset class="set-group">
+          <legend>分段</legend>
+          <div class="set-field" data-field="segmentByTitle">
+            <label class="set-opt"><input type="checkbox" data-key="segmentByTitle"> 终端按标签页分段
+              <span class="eg">一个终端开很多标签页时，每个标签页（程序 + 标题）各算各的时间，不并成一段</span></label>
+            <p class="set-hint">标题开头的状态符号（✳、转圈动画）和结尾的程序名不算区别；没起名字的 shell 标签页（用户@主机: 目录）换目录不拆。只在本机用标题分组，不多上传任何东西；
+              窗口标题选了「不要标题，只留程序名」时自动退回只按程序。</p>
+            <p class="field-error" hidden></p>
+          </div>
+          <div class="set-field" data-field="segmentByTitleApps">
+            <label class="set-opt"><input type="checkbox" data-null="segmentByTitleApps"> 用这台电脑本机的名单（GNOME Terminal、Ptyxis、kitty、iTerm2、Windows Terminal……）</label>
+            <label class="set-label" for="det-tab-apps">或者自己列（每行一个程序名）</label>
+            <textarea class="field set-list" id="det-tab-apps" data-list="segmentByTitleApps" rows="3" spellcheck="false"></textarea>
+            <p class="field-error" hidden></p>
+          </div>
+        </fieldset>
+
+        <div class="det-actions">
+          <span class="det-dirty" id="det-dirty" hidden>有没保存的改动</span>
+          <button type="button" class="btn btn-ghost" id="det-reset" disabled>恢复默认</button>
+          <button type="submit" class="btn btn-fact" id="det-save" disabled>保存</button>
+        </div>
+      </form>
+      <!-- 在表单外：读取失败（表单藏着）时也看得见 -->
+      <p class="suggest-message" id="det-message" role="status" hidden></p>
+      <!-- 「分类规则」（contracts/detector.rules.v1，rules.js）：AI 起草的草稿横幅 + 生效规则的编辑器。
+           后端没有这个端点（404，早于 nexus-core v2.6）时只剩 #rules-note 一句说明。 -->
+      <div class="set-group det-rules" id="det-rules" aria-labelledby="det-rules-title">
+        <h3 class="det-rules-title" id="det-rules-title">分类规则</h3>
+        <p class="set-hint">规则把检测到的窗口归到任务：按顺序第一条命中生效，程序名 / 窗口标题是不分大小写的正则。
+          最省事的是让 AI 助理起草——在上面的对话里说「帮我按终端标签页整理分类规则」；它只能写草稿，应用要你点。</p>
+        <p class="set-hint" id="rules-note" hidden></p>
+        <div class="rules-draft" id="rules-draft" hidden aria-labelledby="rules-draft-head">
+          <p class="rules-draft-head" id="rules-draft-head"></p>
+          <p class="rules-draft-summary" id="rules-draft-summary"></p>
+          <p class="set-hint" id="rules-draft-meta"></p>
+          <details class="rules-diff">
+            <summary>看逐条改动</summary>
+            <ul class="rules-diff-list" id="rules-diff-list"></ul>
+          </details>
+          <div class="det-actions">
+            <button type="button" class="btn btn-ghost" id="rules-discard">丢弃</button>
+            <button type="button" class="btn btn-fact" id="rules-apply">应用</button>
+          </div>
+        </div>
+        <div class="rules-editor" id="rules-editor" hidden>
+          <ol class="rules-list" id="rules-list"></ol>
+          <p class="suggest-empty" id="rules-empty" hidden>还没有规则：检测程序在用它本机的 rules.json（如果有）。</p>
+          <div class="det-actions">
+            <span class="det-dirty" id="rules-dirty" hidden>有没保存的改动</span>
+            <button type="button" class="btn btn-ghost" id="rules-add">加一条</button>
+            <button type="button" class="btn btn-fact" id="rules-save" disabled>保存规则</button>
+          </div>
+        </div>
+        <p class="suggest-message" id="rules-message" role="status" hidden></p>
+      </div>
+    </section>
+
+    <!-- 「回顾」：v0.3 只放入口，分析以后做（不加后端）。 -->
+    <section class="card review-panel" id="review-panel" aria-labelledby="review-title">
+      <h2 class="suggest-title" id="review-title">回顾</h2>
+      <ul class="review-links">
+        <li data-needs="ring/"><a href="../ring/#lanes-panel" id="review-lanes">今天的泳道 → 计时页</a></li>
+        <li data-needs="hive/"><a href="../hive/" id="review-hive">排期与回顾 → 任务页</a></li>
+      </ul>
+      <p class="suggest-sub">以后这里会有按天、按周的分析（花在哪、和计划差多少、代理帮你做了什么）。</p>
+    </section>
+  </main>
+
+  <script src="chat.js"></script>
+  <script src="suggestions.js"></script>
+  <script src="settings.js"></script>
+  <script src="rules.js"></script>
+  <script src="review.js"></script>
+</body>
+</html>

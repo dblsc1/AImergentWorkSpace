@@ -10,6 +10,67 @@
 > `NEXUS_TENANT_STRICT=1`：缺头即 401，绝不静默落到 `u_local`。见「按租户分数据」节。
 > 主版本号升到 2 是因为唯一约束从「全局 id」变成「租户内 id」；HTTP 接口一个字段都没减。
 >
+> **v2.1（追加式）**：**人是一条泳道，AI 代理是很多条泳道。** 新增
+> `nexus-core.agents.v1`（`POST /api/core/agents/start`、`POST /api/core/agents/{runId}/stop`，
+> 见「AI 代理运行」节）：多个代理运行可以同时在跑、各挂一个任务（不挂则落收件箱），
+> stop 时经事件入口写**一条** `agent.run.completed`；**永远不计入人的时间**——
+> `proj_daily_stats`/`proj_current`/甘特/回顾/圆环一律看不见它，另有独立投影
+> `proj_agent_daily_stats`。人的计时器保持单通道互斥（一个 `session.completed` 一段，
+> 人一天的总时长不可能超过 24h），不做多计时器。`timer.v1` 的 `start`/`backfill`
+> 增可选 `mode`（`do`/`prompt`/`review`，缺省 `do`，见「人类计时模式」节）。
+> `views.current.v1` 增 `agents[]`。既有字段、既有事件形状、既有端点行为一个不改。
+>
+> **v2.2（追加式）**：**自动检测到的活动只是建议，人确认了才是事实。** 新增
+> `nexus-core.activity.suggestions.v1`（`POST/GET /api/core/activity/suggestions`、
+> `POST /api/core/activity/suggestions/{id}/confirm|dismiss`，见「活动建议」节）：桌面检测程序
+> （`modules/ai-detector`）上传的活动段住独立集合 `activity_suggestions`，**不进台账**，
+> 任何统计、圆环、甘特、回顾、导出都看不见它；人在计时台点「确认」时才经与补登同一条路径写**一条**
+> `session.completed`（`source: activity-confirmed`，信封带 `ai` 块）。既有端点、事件形状、
+> 导出形状一个不改。
+>
+> **v2.3（追加式）**：**代理时长有了读端，但仍是另一个维度。** 新增
+> `nexus-core.views.agent-time.v1`（`GET /api/core/views/agent-time?from=&to=`，见「AI 代理时长读端」节）：
+> 读 v2.1 起就在记的 `proj_agent_daily_stats`，按天 / 按代理 / 按任务汇总代理的**泳道秒数**（并行的
+> 运行各算各的，可以超过 24h/天），外加 `open[]` 列出在跑运行的已跑时长（不计入汇总）。
+> 响应里**没有任何人的时长字段**——人的时长仍只在圆环/甘特/回顾里。零投影改动、零重建，
+> 既有端点与形状一个不改。
+>
+> **v2.4（追加式）**：**画出一对多的时间线。** 代理运行增**相位**（`POST /api/core/agents/{runId}/phase`：
+> `working`/`waiting_input`/`waiting_permission`/`idle`/`error`，按客户端 `at` 排序、幂等、结束后丢弃），
+> 在跑时是活状态，结束时随那一条 `agent.run.completed` 以追加的 `data.phases?`/`interactions?`/`label?` 落账
+> （不新增事件类型）；新增**在场心跳** `POST /api/core/activity/presence`（桌面程序每 ~15 秒报一次脱敏后的前台，
+> 活状态，只留 2 小时，不是事实、不进导出）；心跳命中在跑运行的 `match` 记一条 `attend` 连线，钩子报的
+> 人回话记 `reply` 连线；新增读端 `GET /api/core/views/lanes`（人一条线 + 代理多条线 + 连线，读新投影
+> `proj_lanes`，不写）。`views.current.v1` 的 `agents[]` 增 `phase`/`label`。**连线与在场永不计入人的时间。**
+> 见「人一条线、代理多条线的时间线」节。
+>
+> **v2.5（追加式）**：**检测程序的设置在网页上改。** 实现 `detector.settings.v1`
+> （`contracts/detector.settings.v1/contract.md`，设置文档的字段、缺省、校验都以那里为准）：
+> `GET/PUT/DELETE /api/core/detector/settings?deviceId=`、`GET /api/core/detector/devices`，
+> 设置按租户、按设备存独立集合 `detector_settings`，不进台账 / 投影 / 导出 / 快照恢复；
+> **`PUT`/`DELETE` 带 `Authorization: Bearer`（设备令牌）一律 403**——设备令牌只能读设置。
+> 活动建议上传的段增**可选** `idle`（布尔，缺省 `false`，存下并在列表里回出）：检测程序把
+> 「前台没换、但无操作」的时段作为低把握建议上传时打这个标。既有字段、端点行为一个不改。
+> 同版追加（`detector.settings.v1` v1.1）：设置文档顶层增可选 `presence`（`null` / 布尔，缺省 `null`），
+> 在网页上开关检测程序的在场心跳；严格校验同其余键。
+> 再追加（`detector.settings.v1` v1.2，2026-10-02）：顶层增可选 `segmentByTitle`（布尔，缺省 `true`）、
+> `segmentByTitleApps`（`null` / 字符串数组，缺省 `null`）——终端按标签页分段的开关与名单；严格校验同其余键。
+>
+> **v2.6（追加式）**：**分类规则存服务端，AI 助理起草、人一键应用。** 实现 `detector.rules.v1`
+> （`contracts/detector.rules.v1/contract.md`，规则形状、校验、草稿、状态码都以那里为准）：
+> `GET/PUT /api/core/detector/rules`（PUT 须 `If-Match`，缺 428、对不上 412）、
+> `POST /api/core/detector/rules/drafts`、`GET .../drafts/current`、`POST .../drafts/{id}/apply|discard`；
+> 每租户一个文档存独立集合 `detector_rules`（规则集 + 至多一份 14 天过期的草稿），不进台账 / 投影 / 导出 / 快照恢复；
+> **PUT、建草稿、应用、丢弃带 `Authorization: Bearer` 一律 403**。既有端点一个不改。
+>
+> **v2.7（追加式）**：**AI 助理给待确认的活动配任务，人逐条答「是 / 否」。** `activity.suggestions.v1` 追加
+> `POST /api/core/activity/suggestions/matches`（助理一次交一批 `{id, taskId, confidence, reason}`，只改
+> **待确认**建议里的 `suggestion`，`classifier: "assistant"`，**什么都不确认**）与
+> `POST /api/core/activity/suggestions/{id}/unmatch`（人说「否」：清掉建议的任务并记进 `rejectedTaskIds`，
+> 助理不许再配同一个）；列表每条追加 `rejectedTaskIds`。人说「是」就是既有的 confirm，不变。
+> 两个新端点带 `Authorization: Bearer` 一律 403。只能配到**任务**，不能只配到项目（确认必须挂具体任务，同补登）。
+> 上传端点的 `classifier` 仍只收 `rules` / `service`。见「活动建议」节「AI 匹配」。
+>
 > v1.9：`GET /api/core/export` 产出的快照此前没有任何端点能吃
 > 回去（喂给 import 会被三层拒绝，而那三条拒绝各守一件实事，一条都不该放宽）。
 > 新增 `nexus-core.restore.v1`（`POST /api/core/restore`，见「快照恢复」节）：
@@ -136,6 +197,62 @@ provides:
       NEXUS_TENANT_STRICT=1 时缺头 401；全部读写按租户隔离，事件 user 服务端盖章；
       唯一约束为 (user, id)
     status: 已实现（v2.0），待验证
+  - id: nexus-core.agents.v1
+    summary: AI 代理运行（v2.1）——POST /api/core/agents/start 开一个运行（可并发多个，挂任务或
+      收件箱，不碰人的计时器），POST /api/core/agents/{runId}/stop 经事件入口写一条
+      agent.run.completed（source=agent-hook，dedupeKey=agent:<runId>，重复 stop 不写第二条）；
+      在跑的运行住独立集合 agent_runs（不进台账）；超过 NEXUS_AGENT_RUN_TIMEOUT_HOURS 的运行
+      在下一次 start/stop/current 读时惰性以 outcome=timeout 关闭；时长只进独立投影
+      proj_agent_daily_stats，**永不计入人的时间**；views.current.v1 增 agents[]
+    status: 已实现（v2.1），待验证
+  - id: nexus-core.timer.mode.v1
+    summary: 人类计时模式（v2.1）——timer.v1 的 start/backfill 增可选 mode（do|prompt|review，
+      缺省 do），写进 session.completed 的 data.mode（mode=do 时不写，缺省即 do，老事件照读）；
+      start 时定下的 mode 存进 timer_state，stop 原样带出
+    status: 已实现（v2.1），待验证
+  - id: nexus-core.activity.suggestions.v1
+    summary: 活动建议（v2.2）——POST /api/core/activity/suggestions 收桌面检测程序上传的活动段
+      （每批 ≤200 段，逐段校验、坏段进 rejected 不拖累整批，防重键 aw:<deviceId>:<startAt 归一化 UTC>，
+      重传是 no-op）；GET 同路径按状态分页读（新的在前）；{id}/confirm 经补登同一条路径写一条
+      session.completed（source=activity-confirmed，dedupeKey=activity:<id>，信封 ai 块），重复确认
+      不写第二条；{id}/dismiss 标记忽略。建议住独立集合 activity_suggestions，**不是事实**：不进台账、
+      投影、导出；超过 NEXUS_SUGGESTION_TTL_DAYS 的在下一次上传/读取时惰性清掉
+      v2.7 追加：POST .../suggestions/matches（AI 助理给待确认的建议配任务，classifier=assistant，逐条校验、
+      不确认任何东西）、POST .../{id}/unmatch（人说「否」：清掉任务并记 rejectedTaskIds）；列表每条追加 rejectedTaskIds
+    status: 已实现（v2.2），待验证
+  - id: nexus-core.views.agent-time.v1
+    summary: AI 代理时长读端（v2.3）——GET /api/core/views/agent-time?from=&to= 读
+      proj_agent_daily_stats，回按天 / 按代理 / 按任务汇总的代理泳道秒数与运行次数（已结束的运行，
+      归日同人：data.startAt 经 NEXUS_TZ，整段归开始那天）+ open[] 在跑运行的已跑时长（不计入汇总）；
+      响应不含任何人的时长，两个维度永不相加
+    status: 已实现（v2.3），待验证
+  - id: nexus-core.agents.phase.v1
+    summary: 代理运行的相位（v2.4，agents.v1 的追加）——POST /api/core/agents/{runId}/phase
+      {phase, at, detail?, reply?}，每条观测按 at 排序原样存（读时合并）、幂等、运行结束后 applied:false；
+      start 增选填 phase/label/match/clientKey（同 key 的运行还在跑时重复 start 回原运行）；结束时相位与连线随 agent.run.completed 的 data 追加键落账，不新增事件类型
+    status: 已实现（v2.4），待验证
+  - id: nexus-core.activity.presence.v1
+    summary: 在场心跳（v2.4）——POST /api/core/activity/presence {deviceId, app, title, afk}，时间服务端盖；
+      活状态住 activity_presence（每设备最新 + 2 小时内合并段），不是事实、不进导出/恢复；
+      命中在跑运行的 match 时给该运行记 attend 连线
+    status: 已实现（v2.4），待验证
+  - id: nexus-core.views.lanes.v1
+    summary: 时间线读端（v2.4）——GET /api/core/views/lanes?date=|from=&to= 回人一条线（计时段 + 在计时 +
+      最近在场）、代理多条线（运行 + 相位）、连线（reply/attend）；与窗口有重叠即列出、不求和、不写；
+      读新投影 proj_lanes（session.completed 与 agent.run.completed 各一条区间）
+    status: 已实现（v2.4），待验证
+  - id: detector.settings.v1
+    contract: ../../../contracts/detector.settings.v1/contract.md
+    summary: 检测程序设置（v2.5）——GET/PUT/DELETE /api/core/detector/settings?deviceId=、
+      GET /api/core/detector/devices；按租户、按设备存 detector_settings；PUT/DELETE 带 Bearer 设备令牌 403；
+      活动建议段增可选 idle 布尔
+    status: 已实现（v2.5），待验证
+  - id: detector.rules.v1
+    contract: ../../../contracts/detector.rules.v1/contract.md
+    summary: 检测程序分类规则（v2.6）——GET/PUT /api/core/detector/rules（If-Match，412/428）、
+      POST .../rules/drafts、GET .../drafts/current、POST .../drafts/{id}/apply|discard；按租户存 detector_rules；
+      PUT/建草稿/应用/丢弃带 Bearer 403
+    status: 已实现（v2.6），待验证
 consumes:
   - id: yq-event/v1
     contract: ../../contracts/yq-event.v1/contract.md
@@ -160,6 +277,28 @@ consumes:
 | GET | `/api/core/planner/audit` | `?limit&objectId&actor&outcome` | `AuditOut`（见下「planner 审计流水」节） | ✅ 已实现（v1.6） |
 | POST | `/api/core/import` | `ImportRequest`（见下「JSON 一键导入编辑」节） | `ImportResultOut` | ✅ 已实现（v1.7） |
 | POST | `/api/core/restore` | 请求体 = `GET /export` 原样；`?dryRun&checksum`（见下「快照恢复」节） | `RestoreResultOut` | ✅ 已实现（v1.9） |
+| POST | `/api/core/agents/start` | `AgentStartIn`（见下「AI 代理运行」节） | `201 AgentStartOut` | ✅ 已实现（v2.1） |
+| POST | `/api/core/agents/{runId}/stop` | `AgentStopIn` | `AgentStopOut` | ✅ 已实现（v2.1） |
+| GET | `/api/core/views/agent-time` | `?from&to`（`YYYY-MM-DD`，均选填） | `AgentTimeOut`（见下「AI 代理时长读端」节） | ✅ 已实现（v2.3） |
+| POST | `/api/core/agents/{runId}/phase` | `AgentPhaseIn`（见下「人一条线、代理多条线的时间线」节） | `AgentPhaseOut` | ✅ 已实现（v2.4） |
+| GET | `/api/core/views/lanes` | `?date` 或 `?from&to`（`YYYY-MM-DD`） | `LanesOut`（同上节） | ✅ 已实现（v2.4） |
+| POST | `/api/core/activity/presence` | `PresenceIn`（同上节） | `{ok}` | ✅ 已实现（v2.4） |
+| POST | `/api/core/activity/suggestions` | `SuggestionUploadIn`（见下「活动建议」节） | `SuggestionUploadOut` | ✅ 已实现（v2.2） |
+| GET | `/api/core/activity/suggestions` | `?status&limit&offset` | `{total, items[]}` | ✅ 已实现（v2.2） |
+| POST | `/api/core/activity/suggestions/{id}/confirm` | `{taskId?, mode?}` | `SuggestionConfirmOut` | ✅ 已实现（v2.2） |
+| POST | `/api/core/activity/suggestions/{id}/dismiss` | 无 | `{id, status}` | ✅ 已实现（v2.2） |
+| POST | `/api/core/activity/suggestions/matches` | `{matches[]}`（≤ 200，见「活动建议」节「AI 匹配」） | `{matched, rejected[]}`；带 Bearer 403 | ✅ 已实现（v2.7） |
+| POST | `/api/core/activity/suggestions/{id}/unmatch` | `{taskId?}` | `{id, status, rejectedTaskIds[]}`；带 Bearer 403 | ✅ 已实现（v2.7） |
+| GET | `/api/core/detector/settings` | `?deviceId` | `{deviceId, settings\|null, updatedAt\|null}`（见 `contracts/detector.settings.v1`） | ✅ 已实现（v2.5） |
+| PUT | `/api/core/detector/settings` | `?deviceId`，`DetectorSettings` | 同 GET；带 Bearer 403 | ✅ 已实现（v2.5） |
+| DELETE | `/api/core/detector/settings` | `?deviceId` | `204`；带 Bearer 403 | ✅ 已实现（v2.5） |
+| GET | `/api/core/detector/devices` | 无 | `{devices[]}` | ✅ 已实现（v2.5） |
+| GET | `/api/core/detector/rules` | 无 | `{version, updatedAt, rules[]}` + `ETag`（见 `contracts/detector.rules.v1`） | ✅ 已实现（v2.6） |
+| PUT | `/api/core/detector/rules` | `If-Match`，`{rules[]}` | 同 GET；带 Bearer 403、缺 If-Match 428、版本不符 412 | ✅ 已实现（v2.6） |
+| POST | `/api/core/detector/rules/drafts` | `{rules[], summary, author?}` | `201 Draft`（含与生效规则的 `diff`）；带 Bearer 403 | ✅ 已实现（v2.6） |
+| GET | `/api/core/detector/rules/drafts/current` | 无 | `{draft\|null}` | ✅ 已实现（v2.6） |
+| POST | `/api/core/detector/rules/drafts/{id}/apply` | `If-Match` | 同 GET rules；带 Bearer 403、404、412、422 | ✅ 已实现（v2.6） |
+| POST | `/api/core/detector/rules/drafts/{id}/discard` | 无 | `204`（幂等）；带 Bearer 403 | ✅ 已实现（v2.6） |
 | ~~GET~~ | ~~`/api/core/zones`~~ | 无 | `[ZoneOut]` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
 | ~~POST~~ | ~~`/api/core/zones`~~ | `{name, color?, order?}` | `ZoneOut` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
 | ~~PATCH~~ | ~~`/api/core/zones/{id}`~~ | `{name?, color?, order?}` | `ZoneOut` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
@@ -1412,6 +1551,551 @@ planner 是**计划状态**，走普通 CRUD，**不进开放事件标准**（�
 界面上的 `示例分区一/示例项目一/示例任务一#1` 是**渲染时按 id 查 name 拼的**，
 **不入库、不进事件、不做检索键**。
 
+## AI 代理运行（规范性 · v2.1，agents）
+
+**人是一条泳道，AI 代理是很多条泳道。** 人的计时器是互斥的（同一时刻只做一件事，
+一天的总时长不可能超过 24h）；AI 代理（Claude Code、Codex……）可以同时开好几个，
+各挂一个任务在跑。两者**永远不混账**：代理的时长不是人的时长，混进 `proj_daily_stats`
+会让「我今天干了 31 小时」这种数字出现在圆环和甘特上——那是在骗用户。
+
+### 端点与形状
+
+```jsonc
+// POST /api/core/agents/start   请求 AgentStartIn
+{ "taskId": "t_a1b2c3",          // 选填；缺省/null = 挂收件箱（subject 为 z_inbox/p_inbox、无 task）
+  "agent": "claude-code",        // 必填，1–64 字符
+  "tool": "Bash",                // 必填，1–64 字符
+  "model": "opus" }              // 选填，1–64 字符
+// → 201 AgentStartOut
+{ "runId": "run_0123456789ab", "startedAt": "2026-09-28T09:30:00+00:00" }
+
+// POST /api/core/agents/{runId}/stop   请求 AgentStopIn
+{ "outcome": "done",             // 必填：done | failed | cancelled | timeout
+  "output": "PR #31 已开" }      // 选填，≤512 字符
+// → 200 AgentStopOut
+{ "runId": "run_0123456789ab",
+  "duplicate": false,            // true = 这个运行早已结束（重复 stop / 已被超时关闭），本次什么都没写
+  "outcome": "done",             // duplicate:true 时是**原来那条**事件的 outcome，不是这次请求的
+  "durationSeconds": 42,
+  "event": { "id": "evt_...", "dedupeKey": "agent:run_0123456789ab", "type": "agent.run.completed" } }
+```
+
+| 情形 | 状态码 | 理由 |
+|---|---|---|
+| `taskId` 不存在 / 归属链断裂 | 404 | 与 `timer/start` **同一套判据、同一套文案**（共用 `_resolve_task_chain`） |
+| `agent`/`tool`/`model` 为空或超 64 字符；`output` 超 512；`outcome` 不在枚举内 | 422 | 请求体校验，同 `actor` 字段的既有口径（pydantic 先拦） |
+| `runId` 不存在（或属于别的租户，同形状不暴露） | 404 | |
+| 同一 `runId` 第二次 stop | **200，`duplicate:true`** | 与 `timer/stop` 的 S8「幂等、不报错」同一取舍：hook 在网络抖动时一定会重试，409 会让它以为失败再重试一遍；回原来那条事件，**绝不写第二条** |
+
+### 服务端组装的信封（规范性）
+
+| 字段 | 值 |
+|---|---|
+| `type` | `agent.run.completed`（`yq-event.v1` §6 已登记） |
+| `source` | `agent-hook` |
+| `dedupeKey` | `agent:<runId>`——`runId` 在 start 时定死，stop 重试/并发 stop/超时关闭三条路径撞同一个键，只落一条 |
+| `time` | 运行结束时刻（超时关闭时为 `startedAt + 超时上限`，不是被发现的时刻） |
+| `subject` | 有 `taskId`：start 时从 planner 硬取 task→project→zone 全链快照进 `agent_runs`（同 timer）；无 `taskId`：`{zone:"z_inbox", project:"p_inbox"}`，无 `task` |
+| `data` | `{agent, tool, model?, startAt, durationSeconds, outcome, output?}`——`model`/`output` 没给就不出现；`durationSeconds` 秒级下限 1（同 timer）；超时关闭时封顶为超时上限 |
+| `flags` | `[]` |
+
+### 在跑的运行：独立集合 `agent_runs`，不是事实
+
+- 在跑的运行只是**活状态**（同 `timer_state`），不进台账、**不进导出**（导出的是事实与投影；
+  没结束的运行还不是事实，导出一份半截的运行也没有端点能吃回去）。已结束的运行以
+  `agent.run.completed` 在 `events` 里，导出与快照恢复照常带走。
+- **多个运行可以同时在跑**：没有「start 自动关上一个」，也**完全不碰 `timer_state`**——
+  人在计时、代理在跑，两件事互不知道对方存在。
+- 顺序同 timer：**先 ingest 后删活状态**，删失败后重试命中防重，不会丢也不会重。
+
+### 遗忘超时（惰性，无调度器）
+
+hook 没发 stop（终端被关、进程被杀）的运行会永远挂着。超过 `NEXUS_AGENT_RUN_TIMEOUT_HOURS`
+（默认 12）的运行，在**该租户**下一次 `agents/start`、`agents/{runId}/stop`、`views/current`
+时被关闭：写 `outcome:"timeout"`、`durationSeconds` = 超时上限。**不起调度器**——没人读的时候
+晚一点关不影响任何数字（事件的 `time`/`startAt` 都按运行本身算，不按被发现的时刻）。
+这意味着 `GET /views/current` 可能写事件——这是本节明文允许的唯一例外，写的只是
+「早该写的那一条」。
+（v2.3：`GET /views/agent-time` 读前同样收超时，是这条例外的第二个读端，见「AI 代理时长读端」节。）
+
+### 投影：`proj_agent_daily_stats`，与人的投影零交集
+
+`agent.run.completed` 在 DISPATCH 表里**只**路由到 `handlers/agent_daily_stats.py`；
+`session.completed` 的两个 handler 一行不改。于是人的一切读端（`views/current` 的人部分、
+圆环占比、甘特 `actual`、每周回顾）**结构上**看不见代理时长——不是靠过滤，是根本没喂进去。
+
+```jsonc
+// proj_agent_daily_stats 文档（唯一约束 (user, date, projectId, taskId, agent)）
+{ "user": "u_local", "date": "2026-09-28", "projectId": "p_3c98de", "taskId": "t_a1b2c3",
+  "agent": "claude-code", "seconds": 5400, "runs": 3, "appliedKeys": ["agent:run_..."] }
+```
+
+- 归日同「日界与时区」：`data.startAt` 经 `NEXUS_TZ`。
+- 「已应用」身份是 `(source, dedupeKey)`，与事件入口的防重身份一致（`appliedKeys` 存二者的 JSON 数组）；
+  `durationSeconds` 非有限数或超过 31 天视为坏载荷，静默跳过。（人的两张投影仍只记 `dedupeKey`，本版不动。）
+- 投影重建（`rebuild`，含快照恢复末尾的那次）**一并重建**它；`--only proj_agent_daily_stats` 可单独重建。
+  快照恢复响应的 `rebuilt` 按其既有定义（`{投影名: 重放的事件数}`）因此多出一个
+  `proj_agent_daily_stats` 键——读方按键取值不受影响。
+- 本版**不开读端**（不进 `export.projections`，那里的键集合是已发布的形状）；要按代理看时长时再加。
+  （v2.3：读端已加，见「AI 代理时长读端」节；`export.projections` 仍不带它。）
+
+### `views.current.v1` 增 `agents[]`
+
+```jsonc
+"agents": [ { "runId": "run_...", "taskId": "t_a1b2c3",   // 收件箱运行为 null
+              "agent": "claude-code", "tool": "Bash", "model": null,   // 未给为 null，键不消失
+              "startedAt": "2026-09-28T09:30:00+00:00" } ]
+```
+
+当前租户在跑的运行，按 `startedAt` 升序；没有就是 `[]`。人的部分（`running`/`zone`/`project`/
+`task`/`sessionStartAt`）**与代理完全无关**：只有代理在跑时 `running` 仍是 `false`。
+
+## AI 代理时长读端（规范性 · v2.3，agent-time）
+
+代理时长是**另一个维度**，不是人的时长的一部分。本端点只读 `proj_agent_daily_stats`（v2.1 起就在记，
+零投影改动、零重建），响应里**没有任何人的时长字段**——需要对照时由调用方另读甘特，两个数永不相加。
+
+```jsonc
+// GET /api/core/views/agent-time?from=2026-09-27&to=2026-09-28   → 200 AgentTimeOut
+{ "today": "2026-09-28",                 // 服务端的今天（NEXUS_TZ），同甘特
+  "totalSeconds": 9000, "runs": 4,       // 范围内已结束运行的泳道秒数之和 / 运行次数
+  "days":   [ { "date": "2026-09-28", "seconds": 9000, "runs": 4 } ],            // 按日期升序，没有运行的日子不出现
+  "agents": [ { "agent": "claude-code", "seconds": 5400, "runs": 3 },            // 按 seconds 降序
+              { "agent": "codex",       "seconds": 3600, "runs": 1 } ],
+  "tasks":  [ { "projectId": "p_3c98de", "taskId": "t_a1b2c3", "seconds": 5400, "runs": 3 },   // 按 seconds 降序
+              { "projectId": "p_inbox",  "taskId": null,       "seconds": 3600, "runs": 1 } ], // 无任务（收件箱）为 null
+  "open":   [ { "runId": "run_0123456789ab", "agent": "codex", "projectId": "p_3c98de",
+                "taskId": "t_a1b2c3", "startedAt": "2026-09-28T09:30:00+00:00",
+                "elapsedSeconds": 1200 } ] }                                     // 按 startedAt 升序
+```
+
+- `from`/`to` 选填、闭区间，按日期（`YYYY-MM-DD`）过滤，同甘特；格式不对 422；`from > to` 得到空结果，不报错。
+  不分页：行已按「天 × 任务 × 代理」聚合，量级同甘特的 `actual[]`（甘特也不分页）。
+- **泳道秒数，不是墙钟**：两个代理同时跑 1h 记 2h，同一个代理开两个并行运行也记 2h——每个运行
+  是一条泳道，`seconds` 是泳道长度之和，所以一天可以超过 86400。「这段时间里至少有一个代理在跑」的
+  墙钟覆盖时长与并行峰值**本版不给**：投影里没有每个运行的起止，要算得读 `events`，而 views 不读台账
+  （「内部子边界」红线）；真需要时加一张按运行存区间的投影再开字段。
+- **归日同人**：整段运行归 `data.startAt`（经 `NEXUS_TZ`）所在那天，**跨零点不切分**——与
+  `proj_daily_stats` 同一口径（理由见 `daily_stats.py`），这样同一天的人和代理两个数说的是同一个「那天」；
+  单个运行被遗忘超时封顶在 `NEXUS_AGENT_RUN_TIMEOUT_HOURS`，溢出到次日的量有上界。
+  不接受 `tz` 参数：「那天」是服务端的 `NEXUS_TZ` 定的（「日界与时区」节），不许每个调用方一个答案。
+- **`open[]` 不计入任何汇总**：在跑的运行还不是事实。列出的是开始日期（同上归日）落在范围内的在跑运行，
+  `elapsedSeconds` = 服务端此刻 − `startedAt`（钳到 ≥0）。读之前先按「遗忘超时」收掉超时的运行
+  ——与 `views/current` 同一条「读时写」例外（本端点是该例外的第二个、也是最后一个读端），
+  所以 `elapsedSeconds` 不会超过超时上限，被收掉的运行已作为 `timeout` 事实进了汇总。
+- 按当前租户（「按租户分数据」）；`agent` 是 start 时记录的原样字符串，不 join 显示名（任务/项目名
+  由调用方按 id 从树里取，同 `events` 档案读端）。
+
+## 人类计时模式（规范性 · v2.1，mode）
+
+`POST /api/core/timer/start` 与 `POST /api/core/timer/backfill` 增可选
+`mode: "do" | "prompt" | "review"`（缺省 `do`）——人这段时间是在**亲手做**、在**给 AI 写提示**、
+还是在**审 AI 的产出**。人的计时器仍是单通道互斥，`mode` 只是给这一段贴的标签。
+
+- start 时定下的 `mode` 存进 `timer_state`，stop 时原样写进 `session.completed` 的 `data.mode`；
+  `TimerOut` 回显 `mode`。v2.1 之前存下的 `timer_state` 没有 `mode`，stop 按 `do` 处理。
+- **`mode` 为 `do` 时 `data` 里不写这个键**：缺省即 `do`，v2.1 之前的事件（都没有这个键）
+  自然读成 `do`；默认路径下 `session.completed` 的 `data` 与 v1.8「与 `stop()` 完全同形」
+  一个字节都不变。读方一律 `data.mode ?? "do"`。
+- 取值不在枚举内 → 422（同 `actor` 字段口径）。
+- 补登的 `dedupeKey` **不含** `mode`：同一段时间换个标签再补一次仍是同一段，防重照旧命中。
+- 投影不看 `mode`（零投影改动）；按模式拆分统计时再加。
+
+## 活动建议（规范性 · v2.2，activity suggestions）
+
+**人是一条泳道；自动检测到的活动只是建议。** 桌面检测程序（`modules/ai-detector`，读
+ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」，但看不见人在想什么——
+猜对了是省事，猜错了就是往人的档案里写假事实。所以：
+
+- 建议住独立集合 `activity_suggestions`，**不进 `events` 台账**。`proj_daily_stats`/`proj_current`/
+  甘特/回顾/圆环/导出**结构上**看不见它——不是靠过滤，是根本没喂进去（同「AI 代理运行」的投影零交集）。
+- 只有人点「确认」，才经**补登同一条路径**写一条 `session.completed`。从那一刻起它就是普通事实，
+  和补登一样计入人的时间。
+
+### 端点与形状
+
+```jsonc
+// POST /api/core/activity/suggestions   请求 SuggestionUploadIn（形状以 ai-detector 契约「上传」节为准）
+{ "deviceId": "dev_3f9a1c2b7d4e5a60",            // ^[A-Za-z0-9_.-]{1,64}$
+  "segments": [                                   // 0–200 段
+    { "startAt": "2026-09-26T11:05:00+08:00",     // 必须带时区偏移
+      "endAt":   "2026-09-26T12:07:00+08:00",     // 必须带时区偏移，晚于 startAt，不晚于现在（容 300 秒时钟误差）
+      "durationSeconds": 3600,                    // 整数，1 ≤ n ≤ endAt-startAt，且 ≤ 86400
+      "app": "code",                              // 非空；超过 128 个码点截断后存
+      "title": "plot.gd — garden — VS Code",      // 可为 ""；超过 512 个码点截断后存
+      "suggestion": { "taskId": "t_a1",           // 字符串或 null
+                      "confidence": 0.9,          // 0–1
+                      "reason": "规则 #1 命中",    // ≤200 字节（UTF-8）
+                      "classifier": "rules" },    // "rules" | "service"
+      "idle": false } ] }                         // v2.5 可选，布尔，缺省 false：检测程序认为这段「前台没换、但无操作」
+// → 200 SuggestionUploadOut
+{ "accepted": 1, "duplicates": 0, "rejected": [ { "index": 3, "reason": "..." } ] }
+
+// GET /api/core/activity/suggestions?status=pending&limit=100&offset=0
+//   status: pending（缺省）| confirmed | dismissed；limit 缺省 100、上限 1000（同档案读端）
+{ "total": 1,
+  "items": [ { "id": "sug_…", "deviceId": "dev_…", "startAt": "…", "endAt": "…",
+               "durationSeconds": 3600, "app": "code", "title": "…",
+               "suggestion": { "taskId": "t_a1", "confidence": 0.9, "reason": "…", "classifier": "rules" },
+               "idle": false,                     // v2.5；v2.5 之前存下的建议回 false
+               "status": "pending" } ] }          // 按 startAt 倒序（新的在前）
+
+// POST /api/core/activity/suggestions/{id}/confirm   请求 { "taskId"?: "t_…", "mode"?: "do"|"prompt"|"review" }
+{ "id": "sug_…", "status": "confirmed", "duplicate": false, "date": "2026-09-26",
+  "event": { "id": "evt_…", "dedupeKey": "activity:sug_…", "type": "session.completed" } }
+
+// POST /api/core/activity/suggestions/{id}/dismiss
+{ "id": "sug_…", "status": "dismissed" }
+```
+
+### 上传：逐段校验，坏段不拖累整批（规范性）
+
+| 情形 | 结果 | 理由 |
+|---|---|---|
+| 请求体不是对象 / `deviceId` 不合格式 / `segments` 不是数组或超过 200 段 | **422 整批拒** | 整批的形状错了，没有「部分」可言 |
+| `app` 超过 128 / `title` 超过 512 个码点 | **截断后照收** | 只是展示用的文字；为几个多余字符丢掉一整段真实活动不划算 |
+| 某一段缺字段、类型不对、`reason` 超 200 字节、时间不带偏移、`durationSeconds` 越界、`endAt` 在未来 | 该段进 `rejected[{index, reason}]`，**其余照收**，HTTP 200 | 同 `POST /events` 的「部分失败不整批回滚」。检测程序只在 2xx 后推进游标：一段坏数据若让整批 4xx，它会永远重发同一批、永远卡住 |
+| `suggestion.taskId` 指向不存在的任务 | **照收**，存成 `taskId: null, confidence: 0` | 建议错了不等于活动没发生；人确认时自己挑任务 |
+| 防重键已存在 | 计入 `duplicates`，**什么都不改** | 已确认/已忽略的不会被重传改回 pending，也不会被新建议覆盖 |
+
+- **防重键** `aw:<deviceId>:<startAt 归一化为 UTC ISO>`，唯一约束 `(user, dedupeKey)`。归一化理由同补登：
+  `+08:00` 与 `Z` 两种写法指同一时刻。`deviceId` 不许含 `:`，免得拼出来的键有歧义。
+- **两台设备报同一段时间 = 两条建议**（`deviceId` 在防重键里）。人两条都确认就会记两遍——
+  这是有意的：服务端分不清是两台电脑各干了一段还是同一件事，由确认的人判断。
+- **`id` 由防重键确定性派生**（`sug_` + SHA-256 前 20 位十六进制）：同一段即使过期被清、之后又被重传，
+  拿到的还是同一个 `id`，于是 `activity:<id>` 防重照样命中——**同一段活动全系统至多一条事实**。
+
+### 确认：与补登同一条路径（规范性）
+
+| 字段 | 值 | 为什么 |
+|---|---|---|
+| `type` | `session.completed` | 确认后就是人的时间，与计时/补登同一种事实 |
+| `source` | **`activity-confirmed`** | 第三种证据强度：「表测的」`timer-backend`、「回忆填的」`manual-backfill`、「机器看见、人认了的」`activity-confirmed`。唯一约束 `(user, source, dedupeKey)` 使三条防重轨道结构上不可能撞 |
+| `dedupeKey` | `activity:<id>` | 重复确认、并发确认撞同一个键，只落一条 |
+| `time` | 建议的 `endAt` | 会话结束时刻（同 `stop()`/补登的 `time` 语义） |
+| `subject` | 从 planner 硬取 task→project→zone 全链，与 `timer/start`、补登**同一套判据**（共用 `_resolve_task_chain`） | 断链 404，不留给投影静默跳过 |
+| `data` | `{durationSeconds, startAt}`（+ `mode`，`do` 不写） | **与 `stop()`/补登完全同形 → 零投影改动**。`durationSeconds` 是在电脑前的秒数，不是 `endAt-startAt` |
+| `ai` | `{generated: true, confidence: <建议的 confidence>, confirmed: true}` | `yq-event.v1` §2 已登记的可选块，不新增信封字段。人改了任务时 `confidence` 仍是分类器对它自己那个建议的把握 |
+| `flags` | `[]` | |
+
+| 情形 | 状态码 |
+|---|---|
+| `id` 不存在（或属于别的租户，同形状不暴露） | 404 |
+| 请求体与建议里都没有 `taskId` | 400 |
+| `taskId` 不存在 / 归属链断裂 | 404（同 `timer/start` 文案） |
+| 已忽略的建议再确认 | 409 |
+| 已确认的建议再确认（哪怕换了任务） | **200，`duplicate:true`**，回显原来那条事件（同代理运行重复 stop 的取舍：前端网络重试不该看到错误） |
+| 已确认的建议再忽略 | 409——事实已经写了，忽略改不回去；要撤销去档案里处理那条事件 |
+| 已忽略的再忽略 | 200（幂等） |
+
+- **先占位再写事实**：确认先把状态从 `pending` 条件更新成 `confirmed`，忽略也只从 `pending` 转——
+  两者二选一，不会出现「忽略回了 200、事实照样落库」。写事实失败（如任务不存在）放回 `pending`；
+  占位后崩在写事实之前，重试照样补写，`activity:<id>` 防重兜底不重。
+- **不碰 `timer_state`**；与计时、补登、其他已确认的段在墙钟上重叠**不拦**（同补登「允许墙钟重叠」）。
+  检测程序看见的是屏幕，人可能同时在计时——判断重不重复是人确认时的事。
+- 确认不是计时的开始/停止，**不发** `honeycomb:timer-changed`（顶栏芯片只关心在跑的计时）。
+
+### AI 匹配：助理配任务，人答「是 / 否」（规范性 · v2.7）
+
+仓主 2026-10-02：「AI 分析活动先不做提议。先做个最简单的匹配：能看到活动记录和项目，给匹配建议，和 y/n 选框。」
+规则没命中的建议 `taskId` 是 `null`，人得一条条自己挑任务。AI 助理（经 `mcp.tools.v1` 的
+`propose_activity_matches`）读得到待确认的建议和任务树，能替人先配一遍；**配的仍然只是建议**，人说「是」才确认。
+
+```jsonc
+// POST /api/core/activity/suggestions/matches
+{ "matches": [                                   // 0–200 条
+    { "id": "sug_…",                             // 待确认建议的 id
+      "taskId": "t_a1",                          // 必填：只能配到任务，不能只配到项目
+      "confidence": 0.7,                         // 0–1
+      "reason": "标题里有 garden" } ] }          // ≤200 字节（UTF-8），可为 ""
+// → 200
+{ "matched": 1, "rejected": [ { "index": 2, "reason": "…" } ] }
+
+// POST /api/core/activity/suggestions/{id}/unmatch   请求体可省；{ "taskId"?: "t_a1" } = 人否掉的是哪个任务
+{ "id": "sug_…", "status": "pending", "rejectedTaskIds": ["t_a1"] }
+
+// GET 列表每条追加（v2.7）
+{ "…": "…", "suggestion": { "taskId": "t_a1", "confidence": 0.7, "reason": "…", "classifier": "assistant" },
+  "rejectedTaskIds": [] }                        // 人否掉过的任务；v2.7 之前存下的回 []
+```
+
+**matches**（助理写；逐条校验，坏的进 `rejected[{index, reason}]`，其余照写，HTTP 200——同上传）：
+
+| 情形 | 结果 |
+|---|---|
+| 请求体不是对象 / `matches` 不是数组或超过 200 条 | **422 整批拒** |
+| 某条缺字段、类型不对、`confidence` 越界、`reason` 超 200 字节 | 该条进 `rejected` |
+| `id` 不存在（或属于别的租户，同形状） | 该条进 `rejected` |
+| 建议不是 `pending`（已确认 / 已忽略） | 该条进 `rejected`，**什么都不改** |
+| `taskId` 不存在 | 该条进 `rejected`（不像上传那样存成 `null`：没配上就别动原来的） |
+| `taskId` 在这条建议的 `rejectedTaskIds` 里 | 该条进 `rejected`——人说过「否」的不许再配 |
+| 建议已经有任务、且不是助理配的（`classifier` 是 `rules` / `service`） | 该条进 `rejected`——助理只填空和改自己配的，不盖规则的结果 |
+| 其余 | `suggestion` 整个换成 `{taskId, confidence, reason, classifier: "assistant"}`，计入 `matched` |
+
+- **不确认任何东西**：状态仍是 `pending`，台账、投影、导出一个字节都不动。重复交同一批是幂等的。
+- 写入是条件更新（`pending`、任务没被否过、原建议可盖），与并发的确认 / 忽略 / 否不会互相盖。
+- `classifier: "assistant"` 只由本端点写。**上传端点的 `classifier` 仍只收 `rules` / `service`**——
+  检测程序不能自称助理；读方把 `classifier` 当开放字符串。
+- 人说「**是**」= 既有的 `{id}/confirm {taskId}`，一个字不改：事实的 `ai.confidence` 就是助理给的把握。
+  confirm **不带 `taskId`**（用建议里的任务）时，占位那一下要求建议的任务没变；读到之后刚被否掉 / 被换掉 → **409**，
+  不会把时间记到已经被否掉的任务上；这时若另一次确认已经占位（状态已是 `confirmed`、事实还没落库），
+  本次**加入占位**再补写，用的是**现在**建议里的任务，不是自己早先读到的那个；只要还有一个确认占着位，
+  谁写失败都不把状态放回 `pending`（全都失败了才放回）。事实里的 `ai.confidence` 取占位之后的建议。带 `taskId` 的确认照旧（人明说了记到哪）。
+
+**unmatch**（人说「否」）：
+
+| 情形 | 结果 |
+|---|---|
+| `id` 不存在 / 别的租户 | 404 |
+| 建议不是 `pending` | 409 |
+| 建议当前没有任务（已经否过了） | 200，什么都不改（幂等，网络重试不该看到错误） |
+| 请求体给了 `taskId`、但与建议当前的任务不同 | 409——页面上看到的建议已经被换掉了，重拉再定 |
+| 其余 | `suggestion` 变成 `{taskId: null, confidence: 0, reason: "", classifier: <原值>}`，原任务记进 `rejectedTaskIds`（去重）；状态仍是 `pending`，人可以自己挑任务再确认，或忽略 |
+
+- 两个端点带 `Authorization: Bearer` 一律 **403**（设备令牌只管上传；同 `detector.settings.v1` / `detector.rules.v1` 的写），
+  **先于请求体校验**：带 Bearer 的坏请求体也是 403，不是 422。
+  MCP 走对内地址不带 Bearer；它按固定映射只调 matches，**不调 unmatch / confirm / dismiss**。
+- `rejectedTaskIds` 随建议过期一起清；不进导出、不进快照恢复（同建议本身）。
+
+### 过期（惰性，无调度器）
+
+`NEXUS_SUGGESTION_TTL_DAYS`（默认 14）：待确认的按**收到时刻**、已确认/已忽略的按**处理时刻**，
+超过即在该租户下一次上传或读取时删除。已确认的删掉无妨——事实在 `events` 里，建议只是来源的草稿。
+
+### 不进导出，不进快照恢复
+
+建议不是事实，也不是计划：`GET /api/core/export` 不带它（导出形状一个键都不加），快照恢复不认它，
+「空实例」判据也不看它。换机器搬家丢掉的只是还没确认的草稿，检测程序下一轮会从它的游标继续传。
+
+## 人一条线、代理多条线的时间线（规范性 · v2.4，lanes）
+
+**要画的是一对多的时间线**：「代理在等 → 人回复、驱动代理 1 → 代理 1 干活 → 代理 2 干活 →
+代理 3 呼叫 → 人去看、回复代理 3」。为此本版补三样东西，**全部追加式**：
+
+1. 代理运行里的**相位**（在干活 / 等输入 / 等授权 / 空闲 / 出错）——`POST /api/core/agents/{runId}/phase`；
+2. 人此刻在电脑上干什么的**在场心跳**——`POST /api/core/activity/presence`（活状态，不是事实）；
+3. 一条读端把人一条线、代理多条线、两者之间的连线一次给全——`GET /api/core/views/lanes`。
+
+红线不变：**代理的一切、人的在场、人与代理之间的连线，都不计入人的时间**。人的时长仍只来自
+`session.completed`（计时 / 补登 / 确认过的建议）；本版没有任何一条路径往 `proj_daily_stats`/
+`proj_current`/甘特/回顾/圆环里加一秒。
+
+### 相位（`nexus-core.agents.phase.v1`，`agents.v1` 的追加）
+
+| 相位 | 意思 | 红绿灯里对应 |
+|---|---|---|
+| `working` | 代理在干活 | 绿、闪 |
+| `waiting_input` | 代理停下来等人**说话**（MCP 表单、后台会话等输入……） | 黄、快闪 |
+| `waiting_permission` | 代理停下来等人**批准**一个动作 | 黄、快闪 |
+| `idle` | 一轮做完了，没在等什么具体的东西（人随时可以接着说） | 绿、常亮（页面上画灰） |
+| `error` | 一轮因出错结束（限流、认证失败……），同样不在干活 | 红 |
+
+两种「等」分开是因为人要做的事不同（回话 vs 点批准）；页面上可以画成同一种黄。
+
+```jsonc
+// POST /api/core/agents/start   AgentStartIn 追加三个选填字段（既有字段、响应一个不改）
+{ "agent": "claude-code", "tool": "claude-code",
+  "phase": "idle",               // 选填：开跑时的相位；缺省 = 不记（读方把第一条相位之前当 working，见下）
+  "label": "garden",             // 选填，1–64 码点：泳道上显示的名字（如工作目录名）；缺省读方用 agent
+  "match": "garden",             // 选填，3–128 码点：认「人在看这个代理」的线索，见「连线」
+  "clientKey": "k_9f2c…" }       // 选填，1–128 字符，不透明：同一租户里带同一 clientKey 的运行**还在跑**时，
+                                 // 再 start 不开新运行，回原来那个的 {runId, startedAt}（200）——丢了响应后重试不会多出一条泳道。
+                                 // 客户端用哈希之类的不透明值，不放原始会话号 / 文件里的 key
+
+// POST /api/core/agents/{runId}/phase   请求 AgentPhaseIn
+{ "phase": "waiting_permission", // 必填，上表五选一
+  "at": "2026-09-30T10:05:03.120+08:00",   // 必填，带时区偏移；客户端在事情发生那一刻取的时间
+  "detail": "Bash",              // 选填，≤64 码点：短标签（工具名、错误种类），不是正文，见「隐私」
+  "reply": false }               // 选填，缺省 false：true = 这次转入是**人回话 / 人批准**引起的，见「连线」
+// → 200 AgentPhaseOut
+{ "runId": "run_…",
+  "phase": "waiting_permission", // 应用本次之后，这个运行按 at 排最后的那条相位（即「当前相位」）
+  "applied": true,               // false = 没记（重复、运行已结束、超上限，见下表）
+  "reason": null }               // applied:false 时：duplicate | closed | capped
+// 实现补注（v2.4 实现时追加，只增）：`phase` 在这个运行从没报过相位时为 null（closed 时取结束时的当前相位）；
+// start 带 `phase` 时记为一条 at = startedAt 的观测。422 的 `detail` 在「at 超前」这一条上是一句话（字符串），
+// 其余请求体校验同 pydantic 的数组形状——读方只看状态码。
+```
+
+**存法：在跑时是活状态，结束时随那一条事实落账——不为相位另开事件类型。**
+
+- 在跑的运行（`agent_runs` 文档）追加 `phases: [{at, phase, detail?}]`（收到的**每一条观测**，按 `(at, 到达先后)`
+  升序；**存的时候不合并**——乱序到达时先合并会丢信息，如先到 `working@10`、`working@30`，后到 `idle@20`，
+  合并过就只剩 `working@10, idle@20`）、
+  `interactions: [...]`（见「连线」）、`label?`、`match?`。
+  （实现：文档另带乐观锁版本号 `v`，相位 / reply / attend 都是「未关闭 + 版本没变」的单文档条件更新，
+  不中就重读重算；关闭标记同时 `$unset` 掉 `clientKey`，于是「同 key 至多一个在跑的运行」由部分唯一索引保证。）
+- stop / 超时关闭时，`agent.run.completed` 的 `data` **追加**选填键 `label?`、`phases?`、`interactions?`
+  （没有就不出现，v2.4 之前的事件与不报相位的客户端写出的事件逐字节不变）。于是历史时间线、导出、
+  快照恢复、投影重建全都随既有那一条事实走，零新增事件类型、零新增防重轨道。
+- 相位段由读方从观测推出：第 k 段 = `[phases[k].at, phases[k+1].at)`，相邻同相位的段合成一段（**只在读 / 画时合并**），
+  最后一段止于运行结束（在跑的止于「现在」；`at` 晚于「现在」的观测在读时按「现在」画）。**第一个转入点之前**（含整条运行都没有 `phases` 的老运行 / `cockpit-run` 包的命令）
+  一律当 `working`——这正是 v2.1 的含义：运行在跑 = 在干活。
+
+**写入规则（规范性）**：
+
+| 情形 | 结果 |
+|---|---|
+| `phase` 不在枚举 / `at` 不带偏移或解析不了 / `detail` 超 64 码点 / 多了未知字段 | 422（请求体校验，同 v2.1 口径） |
+| `at` 晚于服务端现在 + 300 秒 | 422（同活动建议的时钟误差口径） |
+| `at` 在 (现在, 现在+300s] | 原样收（**不钳**：钳到「现在」会让重试算出另一个 `at`，去重就失效了） |
+| `at` 早于运行的 `startedAt` | 钳到 `startedAt`（`startedAt` 是服务端时间，客户端时钟慢一点时开头几秒的相位会挤到起点上——有意接受，不另做对时） |
+| `runId` 不存在（或属于别的租户，同形状） | 404 |
+| 运行已结束（stop 过 / 已被超时关闭） | **200，`applied:false, reason:"closed"`**，什么都不写（同重复 stop 的取舍：钩子会重试，4xx 只会让它以为失败） |
+| 已有一条 `at`、`phase` 都相同的转入点 | 200，`applied:false, reason:"duplicate"`（重试安全） |
+| 与前一条相位相同（重复报了同一个状态） | **照收**，`applied:true`——合并是读方的事 |
+| 已有 1000 条观测 | 200，`applied:false, reason:"capped"`；时间线停在最后记下的那条相位直到运行结束 |
+
+- **按 `at` 排序，不按到达顺序**：Claude Code 的异步钩子是并行跑的，两个几乎同时的事件
+  （如 `PostToolUse` 与 `Stop`）到达顺序不保证；客户端在事件发生时取 `at`，服务端按 `at` 插入。
+  `at` 完全相同时后到的排后面。「当前相位」= 按 `at` 排最后的那条，不是最后到达的那条。
+- 本端点是写端点：处理前同样先按「遗忘超时」收掉该租户超时的运行（超时的运行因此回 `closed`）。
+- **关闭是一道原子边界**（stop、超时、相位、`attend` 共用）：关闭先用一次条件更新把运行标成「已关闭」并取回
+  **那一刻的整份文档**作快照，再用快照组装事件、ingest、删活状态；相位与 `attend` 的写入都是带「未关闭」条件的
+  单文档原子更新（追加到数组）。于是关闭前成功写入的一定进快照，关闭后到的一律 `closed` / 不记，不会有
+  「回了 200 却没进事实」的更新。关闭标记里同时定死结束时刻与 `outcome`；标记后崩溃 / ingest 失败时活状态仍在，
+  之后任何一次 stop 重试或超时清理看到「已标记未删除」的运行，都按标记里的快照重做 ingest（`agent:<runId>` 防重兜底），
+  确认落账后才删活状态——同 v2.1「先 ingest 后删活状态」。
+- **所有关闭路径**（stop、超时）统一按最终结束时刻裁剪：`at` 晚于结束时刻的相位观测与 `reply` 丢弃，
+  `attend` 的 `until` 钳到结束时刻、起点已在结束之后的丢弃（结束时刻见 v2.1：stop 为服务端此刻，超时为封顶时刻）。
+- **隐私**：`detail` 只放**短标签**——工具名、通知种类、错误种类这类固定词。**不许**放提示词、命令、
+  文件路径、通知正文。服务端截不出什么是隐私，所以这是**客户端的义务**（`tools/agent-hooks` 与
+  `modules/ai-detector` 的契约各自写明只发哪些值）；服务端只做长度上限与去掉控制字符。`label`/`match`
+  同理只放目录名这一级，不放完整路径。
+
+### 在场心跳（`nexus-core.activity.presence.v1`）
+
+桌面检测程序每 ~15 秒报一次「人此刻前台是什么」，给页面画**实时**的人那条线、并据此认「人在看哪个代理」。
+
+```jsonc
+// POST /api/core/activity/presence   请求 PresenceIn（形状以 ai-detector 契约「在场心跳」节为准）
+{ "deviceId": "dev_3f9a1c2b7d4e5a60",   // 同活动建议：^[A-Za-z0-9_.-]{1,64}$
+  "app": "code",                        // 离开时为 ""；超过 128 码点截断
+  "title": "plot.gd — garden — VS Code",// 已在本机脱敏；app-only 程序与离开时为 ""；超过 512 码点截断
+  "afk": false }
+// → 200 { "ok": true }
+```
+
+- **时间由服务端盖**（收到的时刻），请求里没有时间字段——心跳说的就是「现在」，不需要对时。
+- **活状态，不是事实**：住独立集合 `activity_presence`，每个 `(租户, deviceId)` 一份文档：最新一次心跳，
+  外加一段**合并过的**近况 `spans: [{from, to, app, title, afk}]`——相邻心跳 `(app, title, afk)` 相同且间隔
+  ≤ 45 秒就延长上一段的 `to`，否则开新段。只留最近 **2 小时**：`to` 早于截止线的段删掉，跨截止线的段把 `from`
+  裁到截止线（同一个窗口开一整天，也只留最后 2 小时）；至多 **500** 段，超出的从旧的删。
+  设备 2 小时没有心跳，整份文档在该租户**下一次心跳写入时**删除；读端不删，只把过期的滤掉（`views/lanes` 不写）。每租户至多 20 台设备，
+  第 21 台出现时挤掉最久没心跳的那台（`deviceId` 是客户端自报的，不设上限就是一个无界写入口）。
+- **不进台账、不进任何投影、不进导出、不进快照恢复、不算进「空实例」判据**（同活动建议）。
+  换句话说：页面上「人刚才 1 小时在干什么」的那条细带子，过两小时就没了——想留下来的，走活动建议 → 确认。
+- 同一设备的两次心跳并发时后写覆盖先写（最多丢一次段的延长；客户端同设备串行、约 15 秒一次，不加锁）。
+- 与活动建议无关：心跳不会变成建议，建议也不读心跳。
+- 请求体不是对象 / `deviceId` 不合格式 / `afk` 不是布尔 / `app`、`title` 不是字符串 → 422。
+  不限频（每次只改一份文档、`spans` 有上限）；客户端约定的节奏见 ai-detector 契约。
+
+### 连线：人与代理之间（规范性）
+
+连线挂在**代理运行上**（`interactions[]`），跟着那一条 `agent.run.completed` 落账；**只是标记，不是时长**，
+永远不计入人的任何时间汇总。两种：
+
+| `kind` | 从哪来 | 形状 |
+|---|---|---|
+| `reply` | 相位写入带 `reply: true`（钩子在人提交提示词、人批准了一个等授权的动作时这么报） | `{kind:"reply", at}`，`at` 同那次相位转入（已钳过） |
+| `attend` | 在场心跳：人没离开、前台 `title` **不分大小写包含**某个在跑运行的 `match` | `{kind:"attend", at, until}`：同一运行上一条 `attend` 的 `until` 距这次心跳 ≤ 45 秒就延长 `until`，否则开新的一条 |
+
+- `reply` 在 `reason` 为 `duplicate`（重试）或 `closed`（运行已结束）时不记，其余都记（含 `capped`：人确实回话了）。
+  同一运行已有同一 `at` 的 `reply` 时不再记——`capped` 的请求重试也不会多出连线。
+- `attend` 在心跳写入时就地算好写进在跑运行；心跳过期删掉后，已经写进运行里的 `attend` 不受影响——
+  所以历史时间线也有它，但**只存时间，不存当时的窗口标题**。一个心跳同时匹配多个运行 = 每个都记
+  （同一目录开两个会话时分不清是哪个，照实都连上）。没给 `match` 的运行永远没有 `attend`。
+- 每个运行至多 500 条 `interactions`，超了不再记（不报错）。
+- 实现落点：心跳写在 `activity/`，`attend` 由它调代理运行那边 `service.py` 的公开函数写进 `agent_runs`
+  （「内部子边界」：跨子边界只走 service，不直碰对方的 repo）。
+- 按 `at` 升序存。
+
+### 读端 `GET /api/core/views/lanes`（`nexus-core.views.lanes.v1`）
+
+```jsonc
+// GET /api/core/views/lanes?date=2026-09-30        或 ?from=2026-09-29&to=2026-09-30；都不给 = 今天
+{ "today": "2026-09-30",                              // 服务端的今天（NEXUS_TZ），同甘特
+  "now": "2026-09-30T10:20:00+08:00",                 // 服务端此刻：在跑的段画到这里
+  "windowStart": "2026-09-30T00:00:00+08:00",         // [from 当天 0 点, to 次日 0 点)，按 NEXUS_TZ
+  "windowEnd":   "2026-10-01T00:00:00+08:00",
+  "human": {
+    "sessions": [ { "startAt": "…", "endAt": "…", "durationSeconds": 3600,     // endAt = 事件 time
+                    "taskId": "t_a1", "projectId": "p_1", "mode": "do",         // mode 已按 ?? "do" 补齐
+                    "source": "timer-backend" } ],                               // 按 startAt 升序
+    "running": { "startAt": "…", "taskId": "t_a1", "projectId": "p_1" },  // 没在计时为 null；同 views/current 的 sessionStartAt/task/project
+    "presence": [ { "deviceId": "dev_…", "from": "…", "to": "…",               // 只有最近 2 小时有
+                    "app": "code", "title": "…", "afk": false } ] },            // 按 from 升序
+  "agents": [ { "runId": "run_…", "agent": "claude-code", "tool": "claude-code", "model": null,
+                "label": "garden",                    // 没给为 null
+                "taskId": "t_a1", "projectId": "p_1", // 收件箱运行 taskId 为 null
+                "startAt": "…", "endAt": null,        // 在跑的为 null
+                "outcome": null,                      // 在跑的为 null
+                "elapsedSeconds": 1200,               // 在跑的：现在 − startAt，封顶超时上限；已结束的为 durationSeconds
+                "overdue": false,                     // 在跑且已超过超时上限（本端点不收它，见下）
+                "phases": [ { "at": "…", "phase": "working", "detail": null } ] } ],   // 按 startAt 升序
+  "interactions": [ { "runId": "run_…", "kind": "reply",  "at": "…" },
+                    { "runId": "run_…", "kind": "attend", "at": "…", "until": "…" } ],  // 按 at 升序
+  "truncated": false }
+```
+
+- **与窗口有重叠就列出，不按开始日归日、不裁剪**（`startAt < windowEnd` 且 `endAt`（在跑的取「现在」）
+  `> windowStart`）。这是时间线，不是汇总——**响应里没有任何合计字段**，跨零点的段由画图的人自己裁到窗口。
+  与 `agent-time`/甘特的「整段归开始那天」口径不同是有意的：那两处在求和，这里在画图。
+- `date` 与 `from`/`to` 互斥（同时给 422）；格式不对 422；`from > to` 空结果；跨度超过 7 天 422。
+  不接受 `tz`（同「日界与时区」）。只给 `from` 或只给 `to` = 就那一天（v2.4 实现补注）。
+- 时刻的写法（v2.4 实现补注）：`now`/`windowStart`/`windowEnd`、`sessions`/`agents` 的 `startAt`/`endAt`、
+  `presence` 的 `from`/`to` 一律换算到 `NEXUS_TZ` 的偏移；`phases[].at` 与 `interactions` 的时刻是存下的原样
+  （客户端的偏移；attend 的是服务端 UTC）。读方一律按绝对时刻解析，不看偏移。
+- `human.running` 同 `views/current`，不按窗口过滤（`from > to` 的空结果里为 `null`）。
+- 关闭标记已打、落账还没完成的运行（崩在半路，下一次写端点会补完）按标记画成已结束（`endAt`/`outcome` 取标记里的）。
+- 上限：`human.sessions` 至多 1000 条、`agents` 至多 200 条（各取窗口里**最新的**那些），超了
+  `truncated: true`；`interactions` 只含列出的运行的。`presence` 本身有上限（每设备 500 段）。
+- **本端点不写**：不收超时运行（v2.1「读时写」例外已明文止于 `agent-time`）。超过上限还挂着的运行照列，
+  `overdue: true`、`elapsedSeconds` 封顶；下一次 `views/current`/start/stop/phase 会把它收成 `timeout` 事实。
+- 数据来源：已结束的人的段与代理运行读新投影 `proj_lanes`（下）；在跑的运行读 `agent_runs`；
+  `running` 与 `views/current` 的人部分同源；`presence` 读 `activity_presence`。**不读 `events`**（「内部子边界」红线不破）。
+- 按当前租户；名字不 join（同 agent-time）。
+
+### 投影 `proj_lanes`：每个段 / 每个运行一条区间
+
+DISPATCH 表：`session.completed` 与 `agent.run.completed` **各追加**路由到 `handlers/lanes.py`
+（既有 handler 一行不改；人的两张投影照旧看不见代理）。一条事实 → 一份文档：
+
+```jsonc
+{ "user": "u_local", "kind": "session" | "run",
+  "key": "<source>|<dedupeKey>",             // 已应用身份，唯一约束 (user, key)；重放不重复
+  "startAt": <UTC 时刻>, "endAt": <UTC 时刻>, // session：data.startAt → 事件 time；run：data.startAt → +durationSeconds
+  "taskId": …, "projectId": …,
+  // session 另存：durationSeconds, mode（?? "do"）, source
+  // run 另存：runId（dedupeKey 去掉 "agent:" 前缀）, agent, tool, model, label, outcome, durationSeconds, phases, interactions
+}
+```
+
+- 两种 `kind` 住同一张表只为按时间区间一次查出来；**本投影不求和、不进任何人的汇总**，谁也不许拿它算时长。
+- `durationSeconds` 非有限数或超过 31 天视为坏载荷，静默跳过（同 `proj_agent_daily_stats`）。
+- 投影重建一并重建它；`--only proj_lanes` 可单独重建；**上线本版须跑一次重建**，否则历史时间线是空的。
+  （补注，只增：**启动时自动补建**——nexus-core 启动时若 `proj_lanes` 为空而台账里有 `session.completed`/
+  `agent.run.completed`，就从全体租户的事实补建一次并在日志留一行；非空时什么都不做。不清空、只重放，
+  handler 幂等，所以与同时进来的新事实、与另一个实例的补建都不重不漏；并发启动由集合 `_startup_locks`
+  里的一把带持有者的锁只让一个实例做（10 分钟过期可接管，只删自己的锁）；重放前写一个进度标记、整遍成功后才删，
+  崩在半路时下次启动即使集合已非空也接着补。补建失败不挡启动（日志一行，时间线先空着）。升级上来的发布版用户因此不必手跑重建；
+  「非空但缺了几条」不在自动范围内，仍用手动重建。）
+  不进 `export.projections`（已发布形状不加键），快照恢复末尾的重建会把它建回来。
+
+### `views.current.v1` 的 `agents[]` 再追加两个键
+
+`agents[]` 每项追加 `"phase": "working" | … | null`（当前相位；从没报过相位为 `null`，读方按 `working` 画）
+与 `"label": "garden" | null`。键不消失，既有键一个不改。顶栏芯片可以据此画红绿灯。
+
+### 本版不做（有意的）
+
+- **不做按相位的时长统计**（「代理今天等了我多久」）：数据已在事实里，要统计时加投影 / 读端。
+- **不推送**（SSE / WebSocket）：页面轮询（约 15 秒），与计时页现有节奏一致。
+- **不做 MCP 读工具**：将来可在 `contracts/mcp.tools.v1` 追加只读的 `get_lanes`（映射到本读端），本版不动那份契约。
+- **不单开「在场」读端**：页面要的都在 `views/lanes` 的 `human.presence` 里。
+- **不从窗口活动反推代理相位**、不做服务端对时、不做多设备在场合并（每台设备一条细带子，照实画）。
+- `attend` 只认 `title` 子串，不做模糊匹配 / 学习；认错了只是多一根虚线，不影响任何数字。
+
 ## 入口与路由
 
 - nginx 公开前缀：`/api/core/`（HANDOFF §4 已定死，前端写死地址）
@@ -1430,6 +2114,9 @@ app/modules/
   planner/    router service repo     zones/projects/tasks 的 CRUD 状态
   proposals/  router service          AI 与人的交接台
   views/      router queries          纯只读，本契约两条读端住在这里
+  activity/   router service repo     活动建议（v2.2）：不是事实；确认时调 timer 的 record_session
+                                      在场心跳（v2.4，presence.py）：活状态；attend 经 timer service 的 record_attend 写
+  detector/   router service repo     检测程序设置（v2.5）：不是事实；设备列表经 activity 的 service 读上传时刻
   projector/  registry handlers/      DISPATCH 显式表 + 各投影 handler
 ```
 
@@ -1461,6 +2148,12 @@ app/modules/
 - 归本模块所有：`events` / `timer_state` / `zones` / `projects` / `tasks` / `proposals`
   / `proj_current` / `proj_daily_stats` / `proj_trees`（HANDOFF §6）
   / **`planner_audit`（v1.6，审计流水，append-only，见「planner 审计流水」节）**。
+  / **`agent_runs`（v2.1，在跑的 AI 代理运行，活状态，不是事实）**
+  / **`proj_agent_daily_stats`（v2.1，AI 代理时长投影，见「AI 代理运行」节）**
+  / **`activity_suggestions`（v2.2，活动建议，不是事实，见「活动建议」节）**
+  / **`activity_presence`（v2.4，在场心跳，活状态，不是事实）**
+  / **`proj_lanes`（v2.4，时间线区间投影，见「人一条线、代理多条线的时间线」节）**
+  / **`_startup_locks`（v2.4，启动期一次性任务的锁，只在 proj_lanes 自动补建时短暂存在）**。
 - **其他模块一律不得直连本模块的 Mongo**。要数据就加读路径，不要绕。
 - `events` 集合**只增不改不删**；修正历史 = 追加修正事件。
 - data root 由 env 指定，位于 Git 工作树之外。
@@ -1476,6 +2169,8 @@ app/modules/
 | `NEXUS_HUMAN_CLIENT_TOKEN` | 否 | 人路径（网关注入）的来源凭据（v1.6） | 设了就必须 ≥16 字符；**绝不得落进受控层 / codex 可及的文件系统**；不得与 AI 凭据相同 |
 | `NEXUS_TENANT_STRICT` | 否 | 租户严格模式，默认 `0`（v2.0） | 取值只认 `0`/`1`/`true`/`false`；置 1 时缺 `X-Nexus-Tenant` 的请求一律 401。**多用户部署必开**，见「按租户分数据」节 |
 | `NEXUS_ACTOR_STRICT` | 否 | 严格模式，默认 `0`（v1.6） | 取值只认 `0`/`1`/`true`/`false`（其余立即失败）；置 1 时 `NEXUS_HUMAN_CLIENT_TOKEN` 必填，否则启动失败——**开了严格模式却没有人路径凭据 = 把前端写路径全打死，这种配置必须炸在启动那一刻，不是炸在用户点删除那一刻** |
+| `NEXUS_SUGGESTION_TTL_DAYS` | 否 | 活动建议的保留天数，默认 `14`（v2.2） | 正整数，其余立即失败。见「活动建议」节「过期」 |
+| `NEXUS_AGENT_RUN_TIMEOUT_HOURS` | 否 | AI 代理运行的遗忘超时（小时），默认 `12`（v2.1） | 正整数，其余立即失败。超时的运行在下一次 start/stop/`views/current` 读时以 `outcome:"timeout"` 关闭，时长封顶为该值 |
 
 本模块**不持有任何 LLM 密钥**——那是 ai-gateway 的事，物理隔离是设计的一部分。
 v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_request`），
@@ -1487,6 +2182,15 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 |---|---|---|
 | `ring` 前端 | `views.current.v1`；`timer.v1` 的 `POST /api/core/timer/cancel`（取消计时按钮「取消，不记录」）；v1.2 起 `views.tree.v1` 任务节点的 `dependsOn`/`done`（F-RING-6 前置未完成提示，读既有 tree 接口，无新增请求）；`views.gantt.v1` 的 `today`/`projects[].id`/`projects[].tasks[].{id,name}`/`tasks[].actual[].{date,seconds}`（`modules/ring` 契约 commit `2cba2aa` 已登记己方消费，本行是反向索引追平）；**v1.8 新增已登记**：`timer.v1` 的 `POST /api/core/timer/backfill`（空闲态「计时方式」两个 tab 旁的「补登」入口，运行态也可点，任务下拉复用现有取任务列表路径，`modules/ring` 契约 commit `e6cfd9d` 已登记己方消费，本行是反向索引追平） | `modules/ring` |
 | `hive` 前端 | `views.tree.v1`（v1.2 起任务节点带 `plan`/`dependsOn`，控件按这两个键 feature-detect 是否亮起）；`planner.crud.v1` 的 `TaskOut.plan`/`dependsOn`（F-TABLE-3 任务排期与前置任务编辑，写走既有 `PATCH /api/core/planner/tasks/{id}`）；`views.gantt.v1` 的 `projects[].plan`/`projects[].actual[].{date,seconds}`/`today`（`modules/hive` 契约 commit `603a44e` 已登记己方消费，本行是反向索引追平）；v1.3 起 `views.export.v1`（「导出数据」按钮，全量拉一次 + `exportedAt` 用于文件命名）；**v1.8 新增已登记**：`timer.v1` 的 `POST /api/core/timer/backfill`（任务行「补登」按钮，点开时任务字段预填该行任务且不可改，`modules/hive` 契约 commit `f11cdb3` 已登记己方消费，本行是反向索引追平） | `modules/hive` |
+| `ring` 前端（v2.2） | `activity.suggestions.v1` 的 GET / confirm / dismiss（计时页「待确认」面板；端点 404 时整块隐藏） | `modules/ring` |
+| `ai-detector` 桌面程序（v2.2） | `activity.suggestions.v1` 的 `POST /api/core/activity/suggestions`（带设备令牌，经网关） | `modules/ai-detector` |
+| `assistant` 前端（v2.7） | `activity.suggestions.v1` 的 GET / confirm / dismiss / **unmatch**（「待确认建议」面板：助理配的建议出「是 / 否」，否 = unmatch）；读 `suggestion.classifier`、`rejectedTaskIds` | `modules/assistant` |
+| MCP 服务（v2.7） | `activity.suggestions.v1` 的 `POST .../suggestions/matches`（`propose_activity_matches`，`mcp.tools.v1` v1.3）；GET 多读 `rejectedTaskIds` | `contracts/mcp.tools.v1` |
+| `ai-detector` 桌面程序（v2.4） | `activity.presence.v1` 的 POST（在场心跳）；可选「状态文件桥」经 `agents.v1` 的 start/stop 与 `agents.phase.v1` 报没有钩子的代理（带设备令牌） | `modules/ai-detector` |
+| `tools/agent-hooks`（v2.1 起，v2.4 追加） | `agents.v1` 的 start/stop；v2.4 起 `agents.phase.v1`（Claude Code 钩子与 `cockpit-run phase`） | `tools/agent-hooks` |
+| 共享顶栏 `nginx-docker/static/navbar.js`（v2.4，契约先行） | `views.lanes.v1`（计时芯片悬停的精简预览：人 + 至多 4 条代理线、最近 1 小时，只在预览打开时约 15 秒轮询；计时页上不弹） | `modules/nginx-docker` |
+| `ring` 前端（v2.4，契约先行） | `views.lanes.v1`（计时页默认展开的「泳道」主视图，全部泳道，约 15 秒轮询）；`views.current.v1` 的 `agents[].phase`/`label` | `modules/ring` |
+| MCP 服务（v0.3 AI 桥，契约先行，待建） | **只读**：`views.tree.v1`、`views.current.v1`、`events.read.v1`（仅 `type=session.completed`）、`views.gantt.v1`、`views.review.v1`、`views.next-actions.v1`、`views.agent-time.v1`、`activity.suggestions.v1` 的 GET。带网关给的 `X-Nexus-Tenant` 原样转来；不调任何写端点、不调 `export`/`planner/audit`。映射表见 `contracts/mcp.tools.v1` 第四节。本模块零改动 | `contracts/mcp.tools.v1` |
 | `gantt` 前端 | `views.gantt.v1`；v1.1 起响应新增 `projects[].tasks[]`（任务层 plan/dependsOn/actual，F-GANTT-1..4） | 不在本仓 |
 | `hive` / 新 todo 前端 | **v1.5 新增消费待登记**：`views.next-actions.v1`（F-TODO-2..5，待办区视图）、`views.review.v1`（F-REVIEW-2，每周回顾视图）、`planner.crud.v1` 的 `actor`/`lastWriter`（F-ACTOR-3，AI 写过的对象角标展示）、`p_inbox` 禁删（F-INBOX-1..4，收件箱/理清 UI） | `modules/hive`（或 GTD PRD O1 待定的新 `/todo/` 页） |
 | `ai-planner`（波2 已落地） | `planner.crud.v1` 的统一写入口（受控工具层的白名单命令面，F-AI-2）+ `actor="ai"` 写入（F-ACTOR-1）+ `views.export.v1`（F-AI-3，读全量日程喂 LLM）；**明确不消费** `events`/`timer`（红线，AI 只碰 planner）。**v1.6 新增要求**：写请求应携带 `X-Nexus-Client-Token: $NEXUS_AI_CLIENT_TOKEN`（携带后 `actor` 由服务端强制判定，受控层再也不必、也不能自报）；**高风险写从此在服务端被 403 拒绝**，与受控层「只产提议」互为二次设防 | `code/ai-planner`；AI 侧行为约定见仓根 `contracts/ai-planner-guide-v1.md` |

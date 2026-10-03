@@ -37,6 +37,8 @@ html[data-theme="light"] {
   --fact-s3: #9CCFC8;
   --warn: #B45309;
   --danger: #C2333B;
+  --agent-work: #3B8132;
+  --agent-wait: #9A7B00;
   --accent: #0B7A6F;
   --accent-ink: #FFFFFF;
   --accent-soft: #DCF0ED;
@@ -63,6 +65,8 @@ html[data-theme="dark"] {
   --fact-s3: #46706B;
   --warn: #F0B36A;
   --danger: #FF8189;
+  --agent-work: #7BD389;
+  --agent-wait: #F5C542;
   --accent: #2FD4C2;
   --accent-ink: #04211D;
   --accent-soft: #123B38;
@@ -333,3 +337,22 @@ select.field:disabled { opacity: .7; cursor: not-allowed; }
 
 /* ── 390px 一等公民：不横滚（F-RING-5） ──────────────────────────────── */
 html, body { max-width: 100%; overflow-x: hidden; }
+
+/* 「待确认」「问问助手」两块 2026-09-30 搬去「AI助理」页（modules/assistant）；泳道标题还借用 .suggest-title。
+ * 这里只剩计时页上那条「N 条待确认 → AI助理」的小链接。 */
+.suggest-title { font-size: var(--fs-h2); font-weight: 600; }
+.suggest-link {
+  justify-self: start; display: inline-flex; align-items: center; min-height: var(--tap);
+  padding: 0 var(--sp-3); border: 1px solid var(--line); border-radius: 999px;
+  background: var(--panel); color: var(--ink-2); font-size: var(--fs-sub); text-decoration: none;
+  transition: color var(--t-fast), border-color var(--t-fast);
+}
+.suggest-link:hover { color: var(--ink); border-color: var(--fact); }
+
+/* ── 「泳道」主视图（2026-09-30，ring-lanes.js，nexus-core v2.4 views.lanes.v1）──
+ * 泳道本身的样式在共享的 __cockpit/lanes.css（顶栏预览同一份）；这里只管面板外壳。 */
+.lanes-panel { display: grid; gap: var(--sp-3); min-width: 0; }
+.lanes-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+.lanes-state { font-size: var(--fs-sub); font-weight: 400; color: var(--ink-2); margin-left: var(--sp-1); }
+.lanes-range { display: flex; gap: var(--sp-2); }
+.lanes-range .mode-tab { flex: 0 1 auto; font-size: var(--fs-sub); }

@@ -7,22 +7,31 @@ nginx 公开前缀 ``/api/core/`` 已在契约里定死，前端写死地址—�
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from .config import settings
+from .modules.activity.presence_router import router as presence_router
+from .modules.activity.router import router as activity_router
+from .modules.activity.service import ConflictError as SuggestionConflictError
+from .modules.detector import rules as detector_rules
+from .modules.detector import service as detector_service
+from .modules.detector.router import router as detector_router
 from .modules.events.router import router as events_router
 from .modules.events.service import InvalidQueryError
 from .modules.export.router import router as export_router
-from .modules.planner.errors import ForbiddenError, StalePlanError
+from .modules.planner.errors import ForbiddenError, StalePlanError, UnprocessableError
 from .modules.planner.import_router import router as planner_import_router
 from .modules.planner.repo import ensure_tenant_indexes
 from .modules.planner.service import HasChildrenError, InvalidInputError, NotFoundError
 from .modules.planner.unified_router import router as planner_unified_router
+from .modules.projector.rebuild import backfill_lanes_if_empty
 from .modules.restore.router import router as restore_router
 from .modules.restore.service import NotEmptyError
+from .modules.timer.router import agents_router
 from .modules.timer.router import router as timer_router
 from .modules.timer.service import NoRunningTimerError, UnknownTaskError
 from .modules.views.router import router as views_router
@@ -32,8 +41,17 @@ API_PREFIX = "/api/core"
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """启动时把旧的全局唯一索引换成按租户的（v2.0）。只动索引、不动数据，幂等。"""
+    """启动时把旧的全局唯一索引换成按租户的（v2.0）。只动索引、不动数据，幂等。
+    v2.4：``proj_lanes`` 空而台账里有事实时自动补建一次（升级上来的用户不会手跑 rebuild）。"""
     ensure_tenant_indexes()
+    log = logging.getLogger("uvicorn.error")
+    try:
+        replayed = backfill_lanes_if_empty()
+    except Exception:  # noqa: BLE001 —— 补建失败不许挡住服务启动：时间线空着，其余一切照常
+        log.exception("proj_lanes 自动补建失败，服务照常启动；可手动 rebuild --only proj_lanes")
+    else:
+        if replayed:
+            log.info("proj_lanes 为空，已从 %d 条事实自动补建（v2.4 升级）", replayed)
     yield
 
 
@@ -66,11 +84,15 @@ def health() -> dict[str, str]:
 
 app.include_router(events_router, prefix=API_PREFIX)
 app.include_router(timer_router, prefix=API_PREFIX)
+app.include_router(agents_router, prefix=API_PREFIX)  # v2.1 AI 代理运行
 app.include_router(planner_unified_router, prefix=API_PREFIX)
 app.include_router(views_router, prefix=API_PREFIX)
 app.include_router(export_router, prefix=API_PREFIX)
 app.include_router(planner_import_router, prefix=API_PREFIX)
 app.include_router(restore_router, prefix=API_PREFIX)
+app.include_router(activity_router, prefix=API_PREFIX)  # v2.2 活动建议
+app.include_router(presence_router, prefix=API_PREFIX)  # v2.4 在场心跳
+app.include_router(detector_router, prefix=API_PREFIX)  # v2.5 检测程序设置；v2.6 分类规则
 
 
 # 域错误 → 状态码的映射只在这里（contract.md v0.4「校验」表 + v0.6「档案读端」）：
@@ -83,6 +105,31 @@ app.include_router(restore_router, prefix=API_PREFIX)
 #   StalePlanError → 409（v1.7 JSON 导入：apply 的 checksum 与当前库重算不一致；
 #                    v1.9 快照恢复：apply 的快照不是 dry-run 过的那一份）
 #   NotEmptyError → 409（v1.9 快照恢复：目标实例不是空库）
+#   SuggestionConflictError → 409（v2.2 活动建议：已忽略的再确认 / 已确认的再忽略）
+#   UnprocessableError → 422（v2.4：相位 at 超前 300 秒；views/lanes 的参数互斥 / 跨度超 7 天）
+#   detector ForbiddenError → 403（v2.5：设备令牌想改检测设置）
+#   detector InvalidSettingsError → 422、TooLargeError → 413（v2.5：设置文档不合 schema / 太大）
+#   detector RulesError → 自带状态码（v2.6 分类规则：403/404/412/413/422/428，体 {detail, **附加字段}）
+
+
+@app.exception_handler(detector_service.ForbiddenError)
+def detector_forbidden(_request: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+
+@app.exception_handler(detector_service.InvalidSettingsError)
+def detector_invalid(_request: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+
+@app.exception_handler(detector_rules.RulesError)
+def detector_rules_error(_request: Request, exc: detector_rules.RulesError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status, content={"detail": exc.detail, **exc.extra})
+
+
+@app.exception_handler(detector_service.TooLargeError)
+def detector_too_large(_request: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(status_code=413, content={"detail": str(exc)})
 
 
 @app.exception_handler(UnknownTaskError)
@@ -142,6 +189,18 @@ def restore_not_empty(_request: Request, exc: NotEmptyError) -> JSONResponse:
     """契约 v1.9：恢复只对空实例开放。409 同 `StalePlanError`——请求合法，
     冲突的是**当前状态**；detail 里那句「恢复通道不是合并通道」本身就是护栏。"""
     return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(SuggestionConflictError)
+def suggestion_conflict(_request: Request, exc: SuggestionConflictError) -> JSONResponse:
+    """契约 v2.2：请求合法，冲突的是建议的**当前状态**（同 `NoRunningTimerError`）。"""
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(UnprocessableError)
+def unprocessable(_request: Request, exc: UnprocessableError) -> JSONResponse:
+    """契约 v2.4：取值不可处理，与 pydantic 请求体校验同为 422。"""
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
 
 
 def main() -> None:

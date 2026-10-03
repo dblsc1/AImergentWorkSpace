@@ -34,4 +34,16 @@ check "登录接口也走 AUTH_UPSTREAM" \
   "$("${C[@]}" -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"password\":\"$PW\"}" "$BASE/api/auth/login")" \
   "204"
 
+# 第八节 AI 桥：/api/agent/ 过门；转给 AGENT_UPSTREAM 时去掉 Cookie 与 Authorization、保留路径与查询串；
+# mcp 被 profiles 关掉，网关照常起，/api/mcp/ 回 502
+check "聊天后端路由未登录跳登录页" \
+  "$("${C[@]}" -o /dev/null -w '%{http_code} %{redirect_url}' "$BASE/api/agent/x")" \
+  "302 $BASE/login/"
+check "聊天后端收不到 Cookie / Authorization、收不到伪造的租户" \
+  "$("${C[@]}" -b "$JAR" -H 'Authorization: Basic Zm9vOmJhcg==' -H 'X-Nexus-Tenant: evil' "$BASE/api/agent/x?q=1")" \
+  "path=[/api/agent/x?q=1] cookie=[] auth=[] tenant=[]"
+check "mcp 关掉时网关照常起，/api/mcp/ 回 502" \
+  "$("${C[@]}" -b "$JAR" -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' "$BASE/api/mcp/")" \
+  "502"
+
 [ "$fail" = 0 ] && echo "✅ gateway.v1 契约全部通过" || { echo "❌ 有失败"; exit 1; }

@@ -49,6 +49,10 @@ html[data-theme="light"] {
   --warn:      #B45309;
   --danger:    #C2333B;
 
+  /* 泳道相位（v1.2 追加：代理在干活 / 在等人） */
+  --agent-work: #3B8132;
+  --agent-wait: #9A7B00;
+
   /* 事实数据序列（同类量走同色渐变） */
   --fact-s1: #0B7A6F;
   --fact-s2: #37948A;
@@ -83,6 +87,9 @@ html[data-theme="dark"] {
   --fact-ink:  #04211D;
   --warn:      #F0B36A;
   --danger:    #FF8189;
+
+  --agent-work: #7BD389;
+  --agent-wait: #F5C542;
 
   --fact-s1: #2FD4C2;
   --fact-s2: #6FB8AE;

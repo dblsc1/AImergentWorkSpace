@@ -22,6 +22,18 @@ _COLLECTIONS = (
     # 万一哪次改动让导出顺手写了条审计流水，这个测试照样绿。
     # 同一形状的登记表在仓里不止一份，漏的那份不会报错，只会静默少守一块。
     "planner_audit",
+    # v2.1 AI 代理运行（与 conftest 同批加）。
+    "agent_runs", "proj_agent_daily_stats",
+    # v2.2 活动建议（不是事实，但同样要在测试间清空 / 纳入导出只读证明）。
+    "activity_suggestions",
+    # v2.4 在场心跳（活状态）+ 时间线区间投影。
+    "activity_presence", "proj_lanes",
+    # v2.4 启动期一次性任务的锁（proj_lanes 自动补建）。
+    "_startup_locks",
+    # v2.5 检测程序设置。
+    "detector_settings",
+    # v2.6 检测程序分类规则 + AI 草稿。
+    "detector_rules",
 )
 
 

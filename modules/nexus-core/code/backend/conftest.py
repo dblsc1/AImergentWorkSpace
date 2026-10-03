@@ -64,6 +64,18 @@ _COLLECTIONS = (
     # 漏了它，审计记录会跨测试累积，"这条流水是本用例写的"就再也不成立，
     # 而症状是别的用例莫名其妙地多几条——最难查的那种。
     "planner_audit",
+    # v2.1 AI 代理运行：活状态 + 代理时长投影。
+    "agent_runs", "proj_agent_daily_stats",
+    # v2.2 活动建议（不是事实，但同样要在测试间清空 / 纳入导出只读证明）。
+    "activity_suggestions",
+    # v2.4 在场心跳（活状态）+ 时间线区间投影。
+    "activity_presence", "proj_lanes",
+    # v2.4 启动期一次性任务的锁（proj_lanes 自动补建）。
+    "_startup_locks",
+    # v2.5 检测程序设置。
+    "detector_settings",
+    # v2.6 检测程序分类规则 + AI 草稿。
+    "detector_rules",
 )
 
 

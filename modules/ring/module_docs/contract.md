@@ -88,6 +88,35 @@ consumes:
       替代）。`views/gantt` 不可达、或响应缺 `today`/`projects`、或某个项目
       缺 `tasks` 数组：静默退回上面 `views.current.v1` 的终身累计两段式
       兜底展示，不报错、不影响 `views.current.v1` 那一半的正常渲染。
+  - id: nexus-core.activity.suggestions.v1
+    contract: ../nexus-core/module_docs/contract.md
+    purpose: >
+      计时页「N 条待确认 → AI助理」小链接（2026-09-30，`code/frontend/ring-suggest-link.js`、`#suggest-link`）：
+      GET /api/core/activity/suggestions?status=pending&limit=1，只用 `total`。0 条、404（后端早于 v2.2）、出错，
+      或网关注入的 `window.HONEYCOMB_NAV` 里没有 `<前缀>assistant/` 页签（没装「AI助理」）→ 链接不出现。
+      打开页面与标签页重新可见时各拉一次，不轮询。**只读**：确认 / 忽略都在「AI助理」页
+      （`modules/assistant`，那里的契约写全了字段）。2026-09-28 至 09-30 这里是完整的「待确认」面板，已整体搬走。
+  - id: nexus-core.views.lanes.v1
+    contract: ../nexus-core/module_docs/contract.md
+    purpose: >
+      （v0.3，**契约先行，前端待建**）计时页的**主视图之一**：圆环下方整宽的「泳道」区，**默认展开**，画窗口里的
+      **全部**泳道（读端上限 200 个运行，`truncated` 时在区尾写一句「还有更多」）。人一条线在最上，下面每个代理运行
+      一条线（名字用 `label`，没有用 `agent`），横轴是时间（缺省「最近 3 小时」实时窗口，可切「今天」；实时窗口
+      读 `?date=<today>`——跨零点时读 `?from=<昨天>&to=<今天>`——本地按 `now` 裁出最近 3 小时）。人那条线：`human.sessions` 画实心块（按 `mode` 深浅），
+      `running` 画到 `now`，`human.presence` 在人那条线下缘画一条细带（离开画斜线，悬停显示程序名 + 标题）。
+      代理线按 `phases` 推出的段着色：`working` 绿、`waiting_input`/`waiting_permission` 黄、`idle` 灰、`error` 红；
+      第一个转入点之前按 `working` 画；**只有在跑运行的最后一段**做闪烁（绿慢闪、黄快闪），
+      `prefers-reduced-motion` 时不闪；`overdue` 的运行末段画虚线。连线：`reply` 画一根从人那条线落到该代理线的
+      实线竖线，`attend` 画同色半透明的竖向带子（`at`→`until`）。约 15 秒轮询，页面不可见时停；404（后端早于 v2.4）
+      → 面板整块不出现。`app`/`title`/`label`/`detail` 来自别的机器，只当文本渲染（textContent）。
+      **画的是标记，不是时长**：面板里不出现任何秒数合计，人的数字仍只在圆环上。另读 `views.current.v1` 的
+      `agents[].phase` 给顶栏 / 面板标题画当前红绿灯（`null` 按 `working`）。
+      选在 ring 而不是新开模块：ring 本来就是「此刻」的页面、已在轮询 current，不必为一张图再加路由与安装项。
+      颜色取 `tokens.css` 的语义色（缺的在实现 PR 里按 `contracts/design-tokens-v1.md` 先加 token，不在 JS 里现算），
+      与顶栏芯片悬停的精简预览（`modules/nginx-docker` 契约「泳道预览」节）同一套配色。
+      页面分工（设计意图，仓主 2026-09-30 定）：**计时页（ring）= 现在**——在跑的计时、全部泳道；
+      **任务 / 项目页（hive）= 未来**——计划；**新页「AI助理」= 回顾与分析**——聊天、待确认的活动建议、检测程序设置、
+      回顾与分析（2026-09-30 已建，`modules/assistant`；聊天与待确认面板已搬过去）。泳道的历史某天视图将来可从「AI助理」链过来，本版不要求。
 ```
 
 ## 对外 API
@@ -126,3 +155,11 @@ consumes:
 | 2026-08-19 | 派单：ring/table 各加补登入口 | v0.4：`timer.v1` 的 purpose 补上 `POST /api/core/timer/backfill`（补登「完成了但没计时」的历史段，nexus-core v1.8，与 `timer_state` 完全独立，空闲态/运行态均可点）；「依赖的外部契约」表 timer 行补 `TimerBackfillIn`/`TimerBackfillOut`。对应代码：`code/frontend/ring-backfill.js`（新文件）、`project-task-contribution-ring.html`/`ring.css`/`ring-controls.js`（导出 `window.postCore`）改动，见本次 commit |
 | 2026-09-23 | 下游需求 6：整站挂子路径 | 页面请求（`/api/core/...`）改为从网关注入的 `window.HONEYCOMB_BASE` 拼，缺省 `/` 时与之前逐字相同（`contracts/gateway.v1` 第七节） |
 | 2026-09-26 | v0.2.1 实测 | 补登表单：没动过日期/时刻时，填时长自动把开始时刻推到「现在往前这么久」（之前默认开始=现在，只填时长必被拒）；开始+时长超过现在时本地先拦、用人话说明，不再把服务端带 ISO 时间戳的拒绝原文甩给人。计时写成功后发 `honeycomb:timer-changed`，顶栏芯片即时刷新（modules/nginx-docker 契约） |
+| 2026-09-28 | v0.3 AI 桥（契约先行） | 新增 consumes `agent.chat.v1`：聊天面板与「待确认」面板合并，只经 `<前缀>api/agent/`；前端代码在实现 PR 里跟上 |
+| 2026-09-28 | v0.3 AI 桥实现 | `agent.chat.v1` 的前端落地：`ring-chat.js`（新文件）、`#chat-panel`、`ring.css` 末段。与「待确认」上下叠放（不做页签）；POST 的 SSE 用 fetch + ReadableStream 解析；全部 textContent；Enter 发送、Shift+Enter 换行。装 ring 时安装器随之装上聊天后端模块 `agent`（它再拉上 `mcp`） |
+| 2026-09-28 | v0.3 自动检测只是建议 | 新增 consumes `nexus-core.activity.suggestions.v1`：计时页「待确认」面板（`ring-suggestions.js`、HTML 末尾 `#suggest-panel`、`ring.css` 末段）。列出、改任务、确认、忽略、按把握阈值全部确认；端点 404 时整块隐藏；确认后刷新圆环、不发 `honeycomb:timer-changed` |
+| 2026-09-30 | v0.3 人一条线、代理多条线（契约先行） | 新增 consumes `nexus-core.views.lanes.v1`（计时页「泳道」面板：配色、闪烁、连线、轮询、404 隐藏）与 `views.current.v1` 的 `agents[].phase`；前端代码在实现 PR 里跟上 |
+| 2026-09-30 | 仓主定（PR #50） | 泳道从「可折叠面板」改为计时页默认展开的主视图、画全部泳道；配色走 tokens、与顶栏预览一致；写入页面分工设计意图（ring=现在 / hive=未来 / 待建「AI助理」=回顾与分析） |
+| 2026-09-30 | v0.3 泳道前端实现 | `views.lanes.v1` 落地：`ring-lanes.js`（新文件）、HTML `#lanes-panel`（圆环卡下方）、`ring.css` 末段；画图用 nginx-docker 的共享件 `<前缀>__cockpit/lanes.js`（顶栏预览同一份）。缺省最近 3 小时、可切「今天」；标题红绿灯取同一份响应里在跑运行的当前相位（与 `views.current` 的 `agents[].phase` 同源，不另拉）。配色 token `--agent-work`/`--agent-wait` 按 design-tokens v1.2 追加，兜底块同步 |
+| 2026-09-30 | 仓主定新页「AI助理」 | 「问问助手」聊天（`ring-chat.js`、`#chat-panel`）与「待确认」面板（`ring-suggestions.js`、`#suggest-panel`）连同样式、测试原样搬到 `modules/assistant`（行为与承诺由那边的契约接着兑现）；本页**不再 consume `agent.chat.v1`**（装 ring 不再带上聊天后端，装 assistant 才带）；`activity.suggestions.v1` 改为只读个数的小链接「N 条待确认 → AI助理」（0 条、404、没装 AI助理页时不出现） |
+| 2026-10-03 | 仓主：泳道改卡片式、按活跃排、只展开前 5；人那条线要看得出「我在」 | `views.lanes.v1` 的画法追加如下，**取代** `nexus-core.views.lanes.v1` 条里与之冲突的三处说法（其余承诺不变：配色、闪烁、轮询、404 隐藏、textContent、读端上限与「还有更多」）。① **卡片**：每条泳道一张卡（卡头：名字、当前相位胶囊、摘要；卡身：该线的时间条），所有卡共用最上面一条时间轴、左右对齐。人那张卡**钉在最前**、不算进 5 张。② **排序与折叠**（取代「按响应顺序」）：代理按共享件 `lanes.js` 的纯函数 `sortByActivity` 排——在跑且当前相位是 `waiting_input`/`waiting_permission` 的浮到最前（它们在等人），其余按**视窗内不空闲（working / waiting_* / error）的秒数**倒序，同分按最近一次相位转入倒序；前 **5** 张展开，其余收进原生 `<details>`「还有 N 个」（仍是窗口里的**全部**泳道，只是收着；轮询重画保持开合与焦点；折叠区因只剩 ≤ 5 张而消失时，焦点交给面板标题，开合记着、再出现时照旧）。在等你的卡另加黄色左边与底色。③ **代理卡头写活跃分钟**（「活跃 N 分 · 最近 HH:MM」/「HH:MM 结束」，不是今天的时刻带日期）：这是**代理**运行的、排序依据的数字，取代「面板里不出现任何秒数合计」对代理的那一半；**人**的时间仍不出现任何合计，人的数字仍只在圆环上。④ **连线**（取代「从人那条线落到该代理线的竖线」）：卡片之间分开放，`reply` 画成该代理自己时间条上的一根竖线、`attend` 画成该条上的半透明带子，悬停写「我回了话 · HH:MM」/「我在看 · HH:MM–HH:MM」；「现在」在每张卡的条上各一根。⑤ **人此刻的状态**（取代「在场细带」）：人那张卡的卡头放状态胶囊——各设备里 `to` 落在 `[now − 90 秒, now + 60 秒]`（容设备时钟快一点，再往后的不算）的 `human.presence` 段中有一段 `afk:false` → 「在电脑前」，只有 `afk:true` → 「离开」，都没有 → 「不在线」（灰）；摘要写前台「程序 · 标题」（服务端已脱敏，原样当文本、CSS 截断），在计时（`human.running`）时改写「计时中 · HH:MM 起」并另加「计时中」胶囊，优先于前台程序（共享件纯函数 `humanStatus`）。在场不再是细带：人那条时间条分上下两半，上半是计时记下的段（实心），下半是在场（同色系浅填 = 在电脑前，与上半各占一行、不扣掉计时的时段；离开画斜线），图例加「在电脑前」「离开」。窄屏卡片纵排、条随宽度缩放、不出横向滚动。代码：共享件 `lanes.js`（`render` 加 `opts.cards`/`opts.top`，新增导出 `sortByActivity`/`activeSeconds`/`humanStatus`）、`lanes.css` 末段；`ring-lanes.js` 传 `cards: true, top: 5` |
