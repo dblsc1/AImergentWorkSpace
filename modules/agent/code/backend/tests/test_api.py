@@ -440,6 +440,10 @@ def test_opencode_config():
                  "**一定**带 projectId", "同类窗口绝不再配那个任务", "集合名优先沿用历史里已有的"):
         assert must in prompt, must
     assert prompt.index("get_match_history") < prompt.index("给**每一条**")  # 先看历史，再归类
+    # v1.9：认窗口（mcp.tools.v1 v1.9）——先读窗口、读历史、只答一次、认不出就 none、不硬猜、0.8 的含义、人能撤
+    for must in ("能写的只有三样", "get_window_awaiting_target", "suggest_window_target", "**只调用一次**", "none: true",
+                 "window 为 null", "0.8 以上的以后命中会直接记成时间", "认错了时间就记错了地方", "「不对」"):
+        assert must in prompt, must
     assert all(c["agent"][a] == {"disable": True} for a in ("build", "plan", "general", "explore", "title"))
     assert "sk-x" not in repr(c)
     assert "headers" not in config.opencode_config(s, False)["mcp"]["honeycomb"]

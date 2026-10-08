@@ -94,7 +94,9 @@ def llm_log(fakes):
 
 
 def mcp_calls(fakes):
-    return [e for e in H.get(fakes[1] + "/_log").json() if e["method"] == "tools/call"]
+    # 组装测试里同一个假 MCP 还接着跑着的服务：它的后台工人（autotrack.py）定时来问有没有窗口要认，不算在这里
+    return [e for e in H.get(fakes[1] + "/_log").json()
+            if e["method"] == "tools/call" and e["tool"] != "get_window_awaiting_target"]
 
 
 def test_tool_call_tenant_and_only_honeycomb_tools(agent, fakes, tmp_path):

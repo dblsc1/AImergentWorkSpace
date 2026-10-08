@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from starlette.background import BackgroundTask
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import config, debug
+from . import autotrack, config, debug
 from .runtime import ERROR_TEXT, RuntimeManager, RuntimeUnavailable, Translator
 from .store import ID_RE, Store, new_id
 
@@ -71,7 +71,11 @@ def create_app(settings: config.Settings | None = None, manager=None) -> FastAPI
     async def lifespan(app):
         if hasattr(mgr, "start_reaper"):
             mgr.start_reaper()
+        if app.state.autotrack:
+            app.state.autotrack.start()
         yield
+        if app.state.autotrack:
+            await app.state.autotrack.stop()
         await mgr.shutdown()
 
     app = FastAPI(title="agent.chat.v1 · opencode", lifespan=lifespan, docs_url=None, redoc_url=None,
@@ -100,6 +104,7 @@ def create_app(settings: config.Settings | None = None, manager=None) -> FastAPI
             return config.LOCAL_TENANT
         if not config.TENANT_RE.fullmatch(t):
             raise HTTPException(400, f"X-Nexus-Tenant 格式不对：{t!r}")
+        store.note_tenant(t)     # 后台认窗口的工人（autotrack.py）靠它知道该替哪些租户去问
         return t
 
     async def body_of(req: Request, model: type[_Strict]):
@@ -218,11 +223,21 @@ def create_app(settings: config.Settings | None = None, manager=None) -> FastAPI
     async def send(req: Request, sid: str):
         t = tenant_of(req)
         b = await body_of(req, NewMessage)
+        session_of(t, sid)
+        # background 在响应结束后总会跑，包括「流还没开始客户端就断了」——那时生成器一行没执行、
+        # 它的 finally 也不会跑，不兜这一下会话就永远 busy。正常结束时 abandon 什么都不做。
+        stream, abandon = await turn(t, sid, b.text)
+        return StreamingResponse(stream, media_type="text/event-stream", background=BackgroundTask(abandon),
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    async def turn(t: str, sid: str, raw: str):
+        """起一轮回答 → (SSE 事件流, abandon)。人发消息与后台认窗口（autotrack.py）走的是同一条路：
+        同样的校验、限流、时限、存档、调试记录。调用方读完流，或不读了就调 abandon()（= 取消）。"""
         sess = session_of(t, sid)
-        text = b.text.strip()
+        text = raw.strip()
         if not text:
             raise HTTPException(422, "text 不能为空")
-        if len(b.text) > MAX_TEXT:
+        if len(raw) > MAX_TEXT:
             raise HTTPException(422, f"text 最多 {MAX_TEXT} 个字符")
         if not s.configured:
             raise HTTPException(503, "还没配模型：在 .env 里填 AGENT_API_KEY 后重启")
@@ -364,11 +379,10 @@ def create_app(settings: config.Settings | None = None, manager=None) -> FastAPI
                 rec.end(t, oc_id)
             mgr.release(rt)
 
-        # background 在响应结束后总会跑，包括「流还没开始客户端就断了」——那时生成器一行没执行、
-        # 它的 finally 也不会跑，不兜这一下会话就永远 busy。正常结束时 abandon 什么都不做。
-        return StreamingResponse(stream(), media_type="text/event-stream", background=BackgroundTask(abandon),
-                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+        return stream(), abandon
 
+    # 后台认窗口（第十节）：配了模型、AGENT_AUTOTRACK 没关才有
+    app.state.autotrack = autotrack.Worker(s, store, gens, turn, mgr) if s.configured and s.autotrack else None
     return app
 
 
