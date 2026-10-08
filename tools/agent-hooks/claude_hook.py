@@ -22,10 +22,12 @@ v0.4：泳道名用会话的名字——从 `transcript_path` 末尾只取 `cust
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -54,6 +56,64 @@ def _warn(msg: str) -> None:
 def _state_file(session_id: str) -> Path:
     digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
     return cc.user_dir("state") / f"session-{digest}.json"
+
+
+LOCK_WAIT = 2.0  # 拿锁最多等这么久（SessionEnd 钩子总预算 5s，锁内还有一次 HOOK_TIMEOUT 的请求）
+
+
+@contextlib.contextmanager
+def _session_lock(session_id: str, wait: float | None = None):
+    """每会话一把排他咨询锁（状态文件旁的 .lock）：状态文件的「读→发请求→写/删」整段串行化，
+    否则改名的 start 新开的 run 会被夹在 SessionEnd 的 stop 与删状态之间写回状态，再没人关它。
+    钩子是互不相干的短命进程，所以用文件锁（POSIX flock / Windows msvcrt.locking）：进程死了内核自动放锁，
+    不会有陈旧锁；锁文件本身留着无害。等锁有上限，超时或锁不了就不带锁继续——钩子绝不能为锁卡住会话
+    （残余：这时回到「检查后写」的窄窗口，最坏是一条要等服务端兜底超时才收的 run）。"""
+    wait = LOCK_WAIT if wait is None else wait
+    f = None
+    try:
+        path = _state_file(session_id).with_suffix(".lock")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        f = open(path, "a+b")
+        if os.name == "nt":
+            import msvcrt
+
+            def try_lock():
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+
+            def unlock():
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            def try_lock():
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+            def unlock():
+                fcntl.flock(f, fcntl.LOCK_UN)
+        deadline = time.monotonic() + wait
+        held = False
+        while not held:
+            try:
+                try_lock()
+                held = True
+            except OSError:
+                if time.monotonic() >= deadline:
+                    _warn("状态锁等待超时，不带锁继续")
+                    break
+                time.sleep(0.02)
+    except (OSError, ImportError):
+        held = False
+    try:
+        yield
+    finally:
+        if f is not None:
+            with contextlib.suppress(Exception):
+                if held:
+                    unlock()
+            with contextlib.suppress(Exception):
+                f.close()
 
 
 def _write_state(session_id: str, state: dict) -> None:
@@ -150,7 +210,8 @@ def handle_session_start(payload: dict) -> None:
         _warn(f"SessionStart 上报失败，本次会话不计时（{category}）")
         return
     if run_id:
-        _save_run_id(session_id, run_id, "idle", label)
+        with _session_lock(session_id):
+            _save_run_id(session_id, run_id, "idle", label)
 
 
 # Notification 的 notification_type → 相位（其余种类不报）。message 字段不读。
@@ -204,7 +265,9 @@ def handle_phase(payload: dict, at: str) -> None:
     if decision is None:
         return
     phase, detail, reply = decision
-    _write_state(session_id, {**state, "lastPhase": phase})
+    with _session_lock(session_id):
+        if _same_live_run(session_id, state["runId"]):  # SessionEnd 已收尾：别把状态写回来
+            _write_state(session_id, {**state, "lastPhase": phase})
     try:
         config = cc.load_config()
         cc.phase_run(config, state["runId"], phase, at, detail=detail, reply=reply, timeout=HOOK_TIMEOUT)
@@ -227,6 +290,11 @@ def _relabel(payload: dict, session_id: str, phase: str, title: str | None, stat
     """改名只许改名，绝不能新开 run：异步钩子可能在 SessionEnd 停掉 run、删了状态之后才跑到这里，
     这时 start 会（clientKey 已停）新建一条 run，且再没有结束钩子去关它。所以发前发后各查一次状态，
     返回的 runId 不同时：状态还在且仍是原 runId（会话活着、原 run 被服务端收了）就换成新的；状态没了或已是别的 runId 就当会话已结束，关掉多出来的 run、不写状态。"""
+    with _session_lock(session_id):
+        _relabel_locked(payload, session_id, phase, title, state)
+
+
+def _relabel_locked(payload: dict, session_id: str, phase: str, title: str | None, state: dict) -> None:
     if not _same_live_run(session_id, state["runId"]):
         return
     try:
@@ -245,6 +313,11 @@ def handle_session_end(payload: dict) -> None:
     session_id = payload.get("session_id")
     if not session_id:
         return
+    with _session_lock(session_id):  # 读状态 → stop → 删状态 一整段持锁：停的是锁内读到的那条 run
+        _session_end_locked(payload, session_id)
+
+
+def _session_end_locked(payload: dict, session_id: str) -> None:
     run_id = _read_run_id(session_id)
     if not run_id:
         return
