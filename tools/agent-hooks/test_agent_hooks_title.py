@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
+import time
 import unittest
 import unittest.mock as mock
 from pathlib import Path
@@ -218,6 +220,52 @@ class HookTitleTests(_TranscriptMixin, unittest.TestCase):
         state = claude_hook._read_state("s1")
         self.assertEqual((state["runId"], state["label"]), ("run-2", "New Name"))
         self.assertEqual(self._stops(), [])
+
+    def test_session_end_starting_during_the_relabel_request_waits_and_stops_the_new_run(self):
+        path = self._transcript(_title("New Name"))
+        claude_hook._save_run_id("s1", "run-1", "idle", "garden")
+        ender = threading.Thread(target=claude_hook.handle_session_end, args=({"session_id": "s1"},))
+
+        def slow_start(*a, **k):  # start 进行中，SessionEnd 钩子到了：必须等在锁外
+            ender.start()
+            time.sleep(0.4)
+            self.assertTrue(ender.is_alive())
+            self.assertEqual(self._stops(), [])
+            return {"runId": "run-2"}  # 原 run 已被服务端收掉 → 新 run，被采纳
+
+        with mock.patch.object(cc, "start_run", side_effect=slow_start):
+            claude_hook.handle_phase(self._event("Stop", transcript_path=path), self.AT)
+        ender.join(5)
+        self.assertEqual([r["path"] for r in self._stops()], ["/api/core/agents/run-2/stop"])
+        self.assertIsNone(claude_hook._read_state("s1"))
+
+    def test_relabel_after_session_end_sends_nothing(self):
+        claude_hook._save_run_id("s1", "run-1", "idle", "garden")
+        stale = claude_hook._read_state("s1")
+        claude_hook.handle_session_end({"session_id": "s1"})
+        claude_hook._relabel(self._event("Stop"), "s1", "idle", "New Name", stale)
+        self.assertEqual(self._starts(), [])
+        self.assertIsNone(claude_hook._read_state("s1"))
+
+    def test_lock_wait_is_bounded_and_proceeds_without_the_lock(self):
+        with claude_hook._session_lock("s1"):
+            t0 = time.monotonic()
+            with claude_hook._session_lock("s1", wait=0.15):
+                ran = True
+            self.assertTrue(ran and 0.15 <= time.monotonic() - t0 < 2)
+        t0 = time.monotonic()  # 外层放锁后能立刻拿到
+        with claude_hook._session_lock("s1", wait=0.15):
+            pass
+        self.assertLess(time.monotonic() - t0, 0.1)
+
+    def test_leftover_lock_file_is_not_a_stale_lock(self):
+        lock = claude_hook._state_file("s1").with_suffix(".lock")
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_bytes(b"left by a killed hook")
+        t0 = time.monotonic()
+        with claude_hook._session_lock("s1", wait=1):
+            pass
+        self.assertLess(time.monotonic() - t0, 0.1)
 
 
 if __name__ == "__main__":
