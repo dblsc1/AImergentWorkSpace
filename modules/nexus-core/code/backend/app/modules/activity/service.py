@@ -273,12 +273,13 @@ def _bucket(project_id: str, request) -> str:
 
 
 def confirm(sug_id: str, task_id: str | None, mode: str, name: str | None = None, request=None,
-            proposal_id: str | None = None, project_id: str | None = None, auto: bool = False) -> dict:
+            proposal_id: str | None = None, project_id: str | None = None, auto: bool | str = False) -> dict:
     """v2.8：``proposal_id`` = 人在页面上看到并点「是」的那条新任务提议（占位时要求建议的提议仍是它）；
     ``name`` = 人改过的名字；``request`` 给建任务要经的 planner 写入口（判来源、留审计）。
     v2.9：``project_id`` = 只指定项目，记到它的「未分类」时间桶——先取或建出桶的 id，之后与带 ``taskId`` 的确认同一条路
     （桶是懒建的系统任务，占位没成功多建一个空桶也无妨）。
-    v2.14：``auto`` = 不是人点的，是自动记录（``auto.record``）——同一条路径，只有出处不同（信封 ``ai``、建议的 ``auto``）。"""
+    v2.14：``auto`` = 不是人点的，是自动记录（``auto_entry.record``）——同一条路径，只有出处不同（信封 ``ai``、建议的 ``auto``）；
+    给字符串 ``"rules"`` / ``"choice"`` = 顺带记下是按规则还是按人的临时选择记的（建议的 ``autoSource``）。"""
     user = current_tenant()
     doc = _get(user, sug_id)
     if doc["status"] == "dismissed":

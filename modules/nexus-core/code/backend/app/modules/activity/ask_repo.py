@@ -2,7 +2,9 @@
 activity 子边界里只有 ``repo.py`` 与本文件碰 mongo，查询一律带 ``user``。
 
 - 每个 (user, key) 一份问询：``{user, key, app, title, claimedAt, answeredAt?, outcome?, taskId?, projectId?,
-  confidence?, reason?, rejectedAt?}``，``outcome`` ∈ suggested / none / rejected。同一个窗口再问就整份换掉。
+  confidence?, reason?, rejectedAt?, humanAt?, humanChose?}``，``outcome`` ∈ suggested / none / rejected。
+  同一个窗口隔了 ``AI_RETRY`` 再问才整份换掉。``humanAt`` = 这次问询期间人自己对这个窗口做了决定（选了 / 这次不选），
+  ``humanChose`` = 人选的目标 ``[taskId, projectId]``（这次不选为 null）。
 - 每租户另有一份 ``key == "_tenant"``：``{polledAt, claims: [最近一小时里每次认领的时刻]}``——AI 这条路活着没有、
   这一小时问了几次。
 活状态，不是事实：不进台账 / 投影 / 导出 / 快照恢复。过期的只在认领（写路径）时删。
@@ -12,6 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from ...repo import get_db
@@ -53,8 +56,8 @@ def polled(user: str, now: datetime, keep_from: datetime) -> None:
 
 
 def live(user: str, since: datetime) -> dict | None:
-    """``since`` 之后认领、还没回答的那一份（至多一份在等；万一有几份取最新）。"""
-    filt = {"user": user, "key": {"$ne": _TENANT}, "claimedAt": {"$gte": since}, "answeredAt": None}
+    """``since`` 之后认领、还没回答、人也没抢先决定的那一份（万一有几份取最新）。"""
+    filt = {"user": user, "key": {"$ne": _TENANT}, "claimedAt": {"$gte": since}, "answeredAt": None, "humanAt": None}
     return _col().find_one(filt, {"_id": 0}, sort=[("claimedAt", -1)])
 
 
@@ -66,21 +69,35 @@ def count_claim(user: str, now: datetime, hour_ago: datetime, cap: int) -> bool:
                           {"$push": {"claims": now}}).matched_count > 0
 
 
-def claim(doc: dict) -> None:
-    """写下新的一次问询（同一个窗口以前的那份整份换掉）。"""
+def claim(doc: dict, stale_before: datetime) -> bool:
+    """写下新的一次问询——**单个条件 upsert**：这个窗口没有问询、或那份早于 ``stale_before`` 才写（整份换掉）。
+    有一份不够旧的（别的认领刚建的，可能已经答了）→ 条件不中、upsert 撞唯一键 → False，什么都不改。"""
+    filt = {"user": doc["user"], "key": doc["key"], "claimedAt": {"$lte": stale_before}}
     try:
-        _col().replace_one({"user": doc["user"], "key": doc["key"]}, dict(doc), upsert=True)
-    except DuplicateKeyError:  # 两个认领同时建同一份：内容一样，谁写的都行
-        pass
+        _col().replace_one(filt, dict(doc), upsert=True)
+    except DuplicateKeyError:
+        return False
+    return True
+
+
+def unclaim(user: str, key: str, claimed_at: datetime) -> None:
+    """撤掉自己刚写下、还没人答的那一次认领（名额没占到）。"""
+    _col().delete_one({"user": user, "key": key, "claimedAt": claimed_at, "answeredAt": None})
 
 
 def answer(user: str, key: str, claimed_at: datetime, fields: dict) -> bool:
-    """回答：只在「还是那一次认领、还没人答」时写（条件更新）——一次问询恰好被答一次。"""
-    filt = {"user": user, "key": key, "claimedAt": claimed_at, "answeredAt": None}
+    """回答：只在「还是那一次认领、还没人答、人也没抢先决定」时写（条件更新）——一次问询恰好被答一次。"""
+    filt = {"user": user, "key": key, "claimedAt": claimed_at, "answeredAt": None, "humanAt": None}
     return _col().update_one(filt, {"$set": fields}).matched_count > 0
 
 
 def reject(user: str, key: str, at: datetime) -> bool:
-    """人说「不对」：suggested → rejected（条件更新，只成一次）。"""
+    """人说「不对」：suggested → rejected（条件更新，只成一次）。此前「人也选了它」的记号一并作废。"""
     return _col().update_one({"user": user, "key": key, "outcome": "suggested"},
-                             {"$set": {"outcome": "rejected", "rejectedAt": at}}).matched_count > 0
+                             {"$set": {"outcome": "rejected", "rejectedAt": at, "humanChose": None}}).matched_count > 0
+
+
+def decided(user: str, key: str, at: datetime, chose: list | None) -> dict | None:
+    """人对这个窗口做了决定：在它的问询上留记号（没有问询就什么都不做）。返回写后的问询。"""
+    return _col().find_one_and_update({"user": user, "key": key}, {"$set": {"humanAt": at, "humanChose": chose}},
+                                      projection={"_id": 0}, return_document=ReturnDocument.AFTER)

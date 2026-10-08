@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from ..timer.router import Mode
-from . import auto, history, service
+from . import auto_entry, history, service
 
 router = APIRouter(prefix="/activity/suggestions", tags=["activity"])
 
@@ -119,7 +119,7 @@ class UnmatchOut(BaseModel):
 @router.post("", response_model=UploadOut)
 def upload(body: UploadIn, request: Request) -> dict:
     # v2.14：收下之后，开了 autoTrack 的设备规则高把握命中的段直接记（request：要建「未分类」桶时经 planner 写入口）
-    return auto.upload(body.deviceId, body.segments, request)
+    return auto_entry.upload(body.deviceId, body.segments, request)
 
 
 @router.get("", response_model=ListOut)

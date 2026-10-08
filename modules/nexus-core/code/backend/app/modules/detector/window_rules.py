@@ -12,9 +12,11 @@ from .rules import MAX_RULES, RulesError, _now, _validate
 _TRIES = 3  # 撞版本重读重试这么多次
 
 
-def prepend(rule: dict) -> bool:
+def prepend(rule: dict, yield_to_human: bool = False) -> bool:
     """往最前面加一条窗口规则，同 ``app`` / ``title``（或同 ``id``）的旧规则去掉（一个窗口至多一条）。
-    True = 已在最前面；False = 放不下（不合规 / 满了）或连续撞版本。只校验新的这一条——别的规则指着已删的任务不该挡住它。"""
+    True = 已在最前面；False = 放不下（不合规 / 满了）或连续撞版本。只校验新的这一条——别的规则指着已删的任务不该挡住它。
+    ``yield_to_human``（AI 写的那条用）：这个窗口已有一条不带 ``auto`` 的规则（人写的）→ 不动它，False。
+    判断与写入在同一次带版本的替换里，所以人的规则不会在两者之间被换掉。"""
     user = current_tenant()
     try:
         rule = _validate([rule])[0]
@@ -25,6 +27,9 @@ def prepend(rule: dict) -> bool:
         old = doc.get("rules", [])
         if old and {**old[0], "id": rule["id"]} == rule:  # 同样的规则已是第一条：不写，version 不动
             return True
+        if yield_to_human and any((r["app"], r["title"]) == (rule["app"], rule["title"]) and not r.get("auto")
+                                  for r in old):
+            return False
         rules = [rule] + [r for r in old
                           if (r["app"], r["title"]) != (rule["app"], rule["title"]) and r["id"] != rule["id"]]
         if len(rules) > MAX_RULES:

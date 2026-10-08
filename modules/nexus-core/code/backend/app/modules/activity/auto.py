@@ -5,15 +5,15 @@
 全部挂在设备的 ``autoTrack`` 开关下（detector.settings.v1 v1.3，缺省关）。
 
 - ``state``：``views/lanes`` 的 ``human.auto`` / ``needsChoice`` / ``aiThinking``（``views/current`` 顶层同一份）。**不写**。
-- ``heartbeat`` / ``upload``：心跳、上传的入口（路由调这里）——先走原来的路径，再做本版追加的那一步。
-- ``choose`` / ``dismiss``：人答「记到哪」/「这次不选」。``recorded_today``：今天自动记下的段。
+- ``heartbeat``：心跳的入口（路由调这里）——先走原来的路径，再续期人的临时选择。上传的入口与自动记录在 ``auto_entry.py``。
+- ``choose`` / ``dismiss``：人答「记到哪」/「这次不选」（路由经 ``auto_ai`` 的同名函数调：那里顺带告诉 AI 的问询「人定了」）。
+  ``recorded_today``：今天自动记下的段。
 规则只在检测程序里匹配（服务端没有原始标题）：这里看到的「规则认得出」就是心跳带来的 ``guess``。
 """
 
 from __future__ import annotations
 
 import hashlib
-import logging
 import re
 from datetime import datetime, time, timedelta, timezone
 from typing import Any, Literal
@@ -28,7 +28,7 @@ from ..planner import unclassified
 from ..planner.errors import InvalidInputError, NotFoundError
 from ..projector.handlers import lanes as lanes_projection
 from ..timer import service as timer_service
-from . import presence, repo, service
+from . import choice_repo, presence, repo, service
 from .history import norm_title
 
 #: 最新一次心跳距今不超过它才算「人在电脑前」（页面画「在电脑前」同一个口径）
@@ -51,8 +51,6 @@ _RE_SPECIAL = re.compile(r"[.*+?^${}()|\[\]\\]")  # 同 assistant suggestions.js
 #: 标题开头的状态符号 / 计数（norm_title 去掉的那些）：规则里放过它们，转圈符号在变的标签页才对得上
 _DECOR = r"^(?:[^\pL\pN]|\(\d+\)|\[\d+\])*"
 _FOREVER = datetime.max.replace(tzinfo=timezone.utc)
-
-log = logging.getLogger("uvicorn.error")
 
 
 def _now() -> datetime:
@@ -126,7 +124,7 @@ def state(user: str, now: datetime, timer_running: bool, asks: Any) -> dict:
     spans = doc.get("spans") or []
     if doc["afk"] or not spans or not detector_service.device_flags(user, doc["deviceId"])["autoTrack"]:
         return out
-    window = _Windows(repo.choices(user, now), asks.on(doc["deviceId"]))
+    window = _Windows(choice_repo.live(user, now), asks.on(doc["deviceId"]))
 
     current = window(spans[-1])
     if next_step(current) == "rules":
@@ -171,7 +169,7 @@ def heartbeat(device_id: str, app: str, title: str, afk: bool, guess: dict | Non
     out = presence.heartbeat(device_id, app, title, afk, guess)
     if not afk:
         now = _now()
-        repo.choice_seen(current_tenant(), window_key(*presence.clip(app, title)), now, now + CHOICE_AWAY)
+        choice_repo.seen(current_tenant(), window_key(*presence.clip(app, title)), now, now + CHOICE_AWAY)
     return out
 
 
@@ -215,7 +213,7 @@ def choose(key: str, task_id: str | None, project_id: str | None, remember: bool
     if found is None:
         raise NotFoundError(f"任务不存在：{task_id!r}" if task_id else f"项目不存在：{project_id!r}")
     target = {"taskId": task_id} if task_id else {"projectId": project_id}
-    repo.choice_put({"user": user, "key": key, "kind": "choice", "app": span["app"], "title": span["title"],
+    choice_repo.put({"user": user, "key": key, "kind": "choice", "app": span["app"], "title": span["title"],
                      **target, "at": now, "expiresAt": now + CHOICE_AWAY})
     # 规则认的是换代号之前的标题：标题是代号（或这台设备设成了换代号）就写不出能中的规则
     pseudonymized = remember and bool(span["title"]) and (
@@ -233,12 +231,12 @@ def dismiss(key: str) -> dict:
     user, now = current_tenant(), _now()
     span, _device = _find(user, key)
     until = now + DISMISS
-    repo.choice_put({"user": user, "key": key, "kind": "dismiss", "app": span["app"], "title": span["title"],
+    choice_repo.put({"user": user, "key": key, "kind": "dismiss", "app": span["app"], "title": span["title"],
                      "at": now, "expiresAt": until})
     return {"key": key, "dismissedUntil": until.isoformat()}
 
 
-# ------------------------------------------------ 自动记录：规则高把握命中的段直接记成事实
+# ------------------------------------------------ 自动记录（记的那一步在 ``auto_entry.py``）
 
 
 def _manual_spans(user: str, start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
@@ -251,39 +249,9 @@ def _manual_spans(user: str, start: datetime, end: datetime) -> list[tuple[datet
     return out
 
 
-def record(device_id: str, docs: list[dict], request: Any) -> None:
-    """对新写入的建议做自动记录（契约「自动记录」五个条件）。记不成的留在待确认，**从不抛**——
-    检测程序只在 2xx 后推进游标，这一步不能让上传失败。"""
-    user = current_tenant()
-    eligible = []
-    for d in docs:
-        sug = d["suggestion"]
-        to_project = sug.get("projectId") if "projectSource" not in sug else None
-        if (not d["idle"] and sug["classifier"] == "rules" and sug["confidence"] >= AUTO_CONFIDENCE
-                and (sug["taskId"] or to_project)):
-            eligible.append((d, datetime.fromisoformat(d["endAt"]), None if sug["taskId"] else to_project))
-    if not eligible or not detector_service.device_flags(user, device_id)["autoTrack"]:
-        return
-    manual = _manual_spans(user, min(d["startTs"] for d, _, _ in eligible), max(end for _, end, _ in eligible))
-    for d, end, project_id in eligible:
-        if any(start < end and stop > d["startTs"] for start, stop in manual):
-            continue  # 人自己掐着表的那段时间，AI 不插手
-        try:
-            # task_id 不给 = 用建议里的任务（占位时要求它没变）；只到项目 = 记到它的「未分类」
-            service.confirm(d["id"], None, "do", request=request, project_id=project_id, auto=True)
-        except Exception as exc:  # noqa: BLE001 —— 任务刚被删、桶的 id 被占……：留在待确认
-            log.warning("自动记录没记成，留在待确认：%s（%s: %s）", d["id"], type(exc).__name__, exc)
-
-
-def upload(device_id: str, segments: list[Any], request: Any) -> dict:
-    fresh: list[dict] = []
-    out = service.upload(device_id, segments, fresh)
-    record(device_id, fresh, request)
-    return out
-
-
 def recorded_today() -> dict:
-    """今天（NEXUS_TZ，按 startAt）自动记下的段，新的在前；归属取台账里的当前归属。只读。"""
+    """今天（NEXUS_TZ，按 startAt）自动记下的段，新的在前；归属取台账里的当前归属。只读。
+    ``source``：按规则记的 ``"rules"``（没记出处的旧段也算它）/ 按人的临时选择记的 ``"choice"``。"""
     user = current_tenant()
     tz = config.settings.tz
     start = datetime.combine(_now().astimezone(tz).date(), time(), tz)
@@ -295,5 +263,5 @@ def recorded_today() -> dict:
         if hit:
             items.append({**{k: d[k] for k in ("id", "startAt", "endAt", "durationSeconds", "app", "title")},
                           "eventId": hit["id"], "taskId": hit["task"], "projectId": hit["project"],
-                          "reassigned": hit["moved"]})
+                          "reassigned": hit["moved"], "source": d.get("autoSource", "rules")})
     return {"items": items}
