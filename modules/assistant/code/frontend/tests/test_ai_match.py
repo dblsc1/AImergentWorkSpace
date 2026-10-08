@@ -59,7 +59,9 @@ def test_button_starts_a_turn_and_list_refreshes_when_done(browser, static_base_
         page.wait_for_function("() => document.querySelector('#suggest-ai-match').textContent === 'AI 正在匹配…'")
         assert page.is_disabled("#suggest-ai-match")
         assert "AI 对话" in page.inner_text("#suggest-message")
-        sent = [c for c in chat.calls if c[0] == "POST" and c[1].endswith("/messages")]
+        while not chat.hold:                       # 按钮先变字，这一轮的 POST 随后才到（回答被压着）
+            page.wait_for_timeout(50)
+        sent =[c for c in chat.calls if c[0] == "POST" and c[1].endswith("/messages")]
         assert len(sent) == 1 and "匹配待确认的活动" in sent[0][2]["text"]
         chat.hold_reply = False
         chat.hold.pop().fulfill(status=200, content_type="text/event-stream", body=chat.reply)
