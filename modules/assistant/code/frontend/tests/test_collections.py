@@ -182,6 +182,26 @@ def test_project_limits_task_pickers_with_other_project_escape(browser, static_b
         assert page.locator('li[data-id="s2"] option').all_inner_texts() == ["未分类（只记到这个项目）", "鼓组", "其他项目…"]
 
 
+def test_cleared_away_row_is_skipped_by_collection_confirm_until_picked(browser, static_base_url):
+    items = [seg(1, "a", coll=AGENT, project="p_eng"), seg(2, "b", coll=AGENT, task="t_mix", conf=0.9),
+             seg(3, "c", coll=AGENT, project="p_eng")]
+    with open_page(browser, static_base_url, items, tree=TREE2) as (page, stub):
+        page.locator(COLL + " .suggest-project").select_option("p_eng")
+        b = page.locator('li[data-id="s2"]')
+        assert b.locator("select").input_value() == "t_mix"  # 规则的任务在项目 A（这里是 p_mix），集合选的是 p_eng
+        b.locator("select").select_option("")  # 清空：行显示「选择任务…」，自己的确认禁用
+        assert b.locator("option").first.inner_text() == "选择任务…" and b.locator(".suggest-confirm").is_disabled()
+        assert page.locator(COLL + " .suggest-confirm-coll").inner_text() == "确认整个集合 · 2 段"
+        page.locator(COLL + " .suggest-confirm-coll").click()
+        page.wait_for_function("() => document.querySelectorAll('#suggest-list li').length === 1")
+        assert stub.posts == [("confirm", "s1", {"projectId": "p_eng"}), ("confirm", "s3", {"projectId": "p_eng"})]
+        # 退回「← 只看集合的项目」= 明说记到未分类：这时才发 {projectId}
+        page.locator('li[data-id="s2"] select').select_option("__back")
+        page.locator(COLL + " .suggest-confirm-coll").click()
+        page.wait_for_function("() => !document.querySelector('li[data-id=\"s2\"]')")
+        assert stub.posts[-1] == ("confirm", "s2", {"projectId": "p_eng"})
+
+
 def test_confirm_collection_sends_task_or_project_per_row(browser, static_base_url):
     with open_page(browser, static_base_url, MIXED) as (page, stub):
         coll = page.locator(COLL)

@@ -212,16 +212,33 @@ def handle_phase(payload: dict, at: str) -> None:
         category = e if isinstance(e, cc.CockpitError) else "配置错误"
         _warn(f"{payload.get('hook_event_name')} 相位上报失败（{category}）")
     # 会话改名（/rename）不触发任何钩子：趁这次本来就要发请求，看一眼 transcript 末尾，名字变了才多发一次 start。
-    # 没起名的会话不走这里（目录名在 SessionStart 已经报过），所以平时零额外请求。
+    # 比的是「有效名字」（标题，没有就是目录名）：标题被清空时要退回目录名。没改名时零额外请求。
     title = cc.session_title(payload.get("transcript_path"))
-    if title and title[:64] != state.get("label"):
-        try:
-            run_id, label = _start(payload, session_id, phase, title)
-            if run_id:  # 原运行已被服务端收掉时这里是新运行：跟着换
-                _write_state(session_id, {**state, "runId": run_id, "lastPhase": phase, "label": label})
-        except Exception as e:  # noqa: BLE001 — 改名没报上去：下一个事件再试
-            category = e if isinstance(e, cc.CockpitError) else "配置错误"
-            _warn(f"会话改名上报失败（{category}）")
+    if cc.lane_names(payload.get("cwd"), title)[0] != state.get("label"):
+        _relabel(payload, session_id, phase, title, state)
+
+
+def _same_live_run(session_id: str, run_id: str) -> bool:
+    cur = _read_state(session_id)
+    return bool(cur) and cur["runId"] == run_id
+
+
+def _relabel(payload: dict, session_id: str, phase: str, title: str | None, state: dict) -> None:
+    """改名只许改名，绝不能新开 run：异步钩子可能在 SessionEnd 停掉 run、删了状态之后才跑到这里，
+    这时 start 会（clientKey 已停）新建一条 run，且再没有结束钩子去关它。所以发前发后各查一次状态，
+    返回的 runId 不同时：状态还在且仍是原 runId（会话活着、原 run 被服务端收了）就换成新的；状态没了或已是别的 runId 就当会话已结束，关掉多出来的 run、不写状态。"""
+    if not _same_live_run(session_id, state["runId"]):
+        return
+    try:
+        run_id, label = _start(payload, session_id, phase, title)
+        if run_id and _same_live_run(session_id, state["runId"]):
+            # 状态还在、还是发前读到的那条：会话活着。同一条 run 改名；不同 = 服务端已收掉原 run，跟着换
+            _write_state(session_id, {**state, "runId": run_id, "lastPhase": phase, "label": label})
+        elif run_id and run_id != state["runId"]:  # 状态没了 / 被别人换了：SessionEnd 等抢先了，关掉多出来的 run
+            cc.stop_run(cc.load_config(), run_id, "cancelled", timeout=HOOK_TIMEOUT)
+    except Exception as e:  # noqa: BLE001 — 改名没报上去：下一个事件再试
+        category = e if isinstance(e, cc.CockpitError) else "配置错误"
+        _warn(f"会话改名上报失败（{category}）")
 
 
 def handle_session_end(payload: dict) -> None:
