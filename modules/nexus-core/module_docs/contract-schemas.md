@@ -317,6 +317,7 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
 // POST /api/core/activity/choice/reject {key} → 200 RejectOut
 { "key": "wk_…", "app": "kitty", "title": "✳ notes", "ruleRemoved": true }
 // GET /api/core/activity/auto —— 每条追加 ai（布尔）
+// GET /api/core/activity/auto —— 每条再追加 source: "rules" | "choice"（2026-10-08 波次统一审核：按规则 / 按人的临时选择记下的）
 // 规则（detector.rules.v1 v1.2）可带 "author": "assistant" | "human"、"auto": true；没有就不带这两个键
 ```
 

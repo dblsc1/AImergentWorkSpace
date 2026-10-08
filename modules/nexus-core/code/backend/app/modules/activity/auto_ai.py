@@ -8,6 +8,11 @@ nexus-core 够不着聊天后端（gateway.v1 第八节），所以是**对方�
 - 认领了、没回答、没超过 ``AI_ANSWER_WAIT`` → ``ask_ai``；
 - 其余（没人来认领、超时、AI 说认不出、``AI_RETRY`` 内问过）→ ``ask_human``，就是第一步那张卡。
 没装 / 没配聊天后端 = 从来没人认领 = 与 v2.14 完全相同，一秒也不多等。
+
+**人与 AI 抢同一个窗口时人总是赢**（2026-10-08 波次统一审核），靠的是条件写与次序，不是先查后写：
+人的端点（``choose`` / ``dismiss`` / ``reject``）先写自己的，再在问询上留记号（``_decided`` / ``ask_repo.reject``）、撤 AI 的规则；
+AI 的回答只在「没答过、人也没留记号」时写得进，它的规则不换掉人的规则、它的临时选择不盖活着的那一份，
+全写完**再看一眼**问询——已经不是它刚写下的那个答案了就把自己写的撤回。两边无论怎么交错，最后都没有 AI 的东西留下。
 """
 
 from __future__ import annotations
@@ -20,7 +25,7 @@ from ..detector import window_rules
 from ..planner import service as planner_service
 from ..planner.errors import InvalidInputError, NotFoundError
 from ..timer import service as timer_service
-from . import ask_repo, auto, repo
+from . import ask_repo, auto, choice_repo
 from .service import ConflictError
 
 #: 最近这么久里有人来认领过，才算「AI 这条路活着」（聊天后端约 25 秒来一次）
@@ -39,6 +44,13 @@ def _ids(ref: dict) -> tuple:
 
 def _rule_id(key: str) -> str:
     return "r_ai_" + key[3:]  # 一个窗口至多一条 AI 写的规则，id 由窗口的键定
+
+
+def stale(rec: dict | None, ref: dict) -> bool:
+    """``ref`` 是人说过「不对」的那个 AI 目标吗（检测程序拉到新规则之前，心跳与上传的段还会带着它）。
+    人后来自己选了同一个目标就不算了——那是人的决定。"""
+    return bool(rec) and rec.get("outcome") == "rejected" and _ids(rec) == _ids(ref) and (
+        rec.get("humanChose") != list(_ids(ref)))
 
 
 def _writable(user: str, device: str, app: str, title: str) -> bool:
@@ -68,8 +80,7 @@ class Asks:
     def guess(self, key: str, span: dict) -> dict | None:
         """心跳带的规则猜测。人说过「不对」的那个 AI 目标不算——检测程序拉到新规则之前还会带着它。"""
         g = span.get("guess")
-        rec = self._rec(key) if g else None
-        return None if rec and rec.get("outcome") == "rejected" and _ids(rec) == _ids(g) else g
+        return None if g and stale(self._rec(key), g) else g
 
     def source(self, key: str, ref: dict, source: str) -> str:
         """这个目标是 AI 认的吗（问询里记着同一个目标）→ ``"ai"``；否则原样。"""
@@ -80,7 +91,8 @@ class Asks:
         """这个没有目标的窗口此刻归 AI 认吗（``next_step`` 的 ``"ask_ai"``）。"""
         rec = self._rec(key)
         if rec and self.now - rec["claimedAt"] < AI_RETRY:
-            return rec.get("answeredAt") is None and self.now - rec["claimedAt"] <= AI_ANSWER_WAIT
+            return (rec.get("answeredAt") is None and rec.get("humanAt") is None
+                    and self.now - rec["claimedAt"] <= AI_ANSWER_WAIT)
         if self._alive is None:
             t = ask_repo.tenant(self.user)
             recent = [c for c in t.get("claims") or [] if self.now - c < timedelta(hours=1)]
@@ -95,19 +107,27 @@ def _window(rec: dict) -> dict:
 
 
 def claim() -> dict:
-    """聊天后端来取：此刻等 AI 认的那个窗口（并认领），没有 → ``{"window": null}``。同一时刻每租户至多一个在等；
-    已认领、还没答、没超时的那个原样再给（工人重启、模型自己再读一遍都拿到同一个）。"""
+    """聊天后端来取：此刻等 AI 认的那个窗口（并认领），没有 → ``{"window": null}``。
+    已认领、还没答、没超时的那个原样再给（工人重启、模型自己再读一遍都拿到同一个）。
+    认领是一次条件写（``ask_repo.claim``）：几个认领同时来只有一个写得进，其余的重读、拿到同一份；
+    答过的问询不会被盖掉；名额只由写进去的那一个算。
+    ponytail: 两个同时的认领各自看中**不同**的窗口时会有两份在等（之后只再给最新的那份，另一份超时转去请人）；
+    要严格「每租户一份」就把在等的那份记到 ``_tenant`` 文档上一起条件更新。"""
     user, now = current_tenant(), auto._now()  # noqa: SLF001
     ask_repo.polled(user, now, now - AI_KEEP)
     rec = ask_repo.live(user, now - AI_ANSWER_WAIT)
     if rec is None:
         running = timer_service.get_running_state(user) is not None
         w = auto.state(user, now, running, Asks(user, now))["aiThinking"]
-        if not w or not ask_repo.count_claim(user, now, now - timedelta(hours=1), AI_MAX_PER_HOUR):
+        if not w:
             return {"window": None}
         rec = {"user": user, "key": w["key"], "app": w["app"], "title": w["title"], "claimedAt": now}
-        ask_repo.claim(rec)
-    return {"window": _window(rec)}
+        if not ask_repo.claim(rec, now - AI_RETRY):  # 别的认领抢先了：不盖它，给此刻在等的那一份（它已答完就没有）
+            rec = ask_repo.live(user, now - AI_ANSWER_WAIT)
+        elif not ask_repo.count_claim(user, now, now - timedelta(hours=1), AI_MAX_PER_HOUR):
+            ask_repo.unclaim(user, w["key"], now)  # 名额恰好被别的窗口的认领用完：撤回，这个窗口去请人选
+            rec = None
+    return {"window": _window(rec) if rec else None}
 
 
 def suggest(key: str, task_id: str | None, project_id: str | None, confidence: float | None, reason: str,
@@ -119,16 +139,17 @@ def suggest(key: str, task_id: str | None, project_id: str | None, confidence: f
         raise ConflictError(f"窗口 {key!r} 现在没在等 AI 认（没认领过、已经答过或超时了）。什么都没写")
     ask_repo.polled(user, now, now - AI_KEEP)  # 在回答 = 这条路活着
     done = {"answeredAt": now, "reason": reason}
+    taken = ConflictError(f"窗口 {key!r} 刚被别的回答抢先了，或人刚对它做了决定。什么都没写")
     if none:
         if not ask_repo.answer(user, key, rec["claimedAt"], {**done, "outcome": "none"}):
-            raise ConflictError(f"窗口 {key!r} 刚被别的回答抢先了。什么都没写")
+            raise taken
         return {"key": key, "outcome": "none", "taskId": None, "projectId": None, "confidence": None,
                 "autoRecord": False, "ruleWritten": False}
     span, device = auto._find(user, key)  # noqa: SLF001
     if (not detector_service.device_flags(user, device)["autoTrack"]
             or not _writable(user, device, span["app"], span["title"])):
         raise ConflictError("这台设备没开「允许 AI 管理进行中的任务」，或这个窗口写不出规则。什么都没写")
-    if key in repo.choices(user, now):
+    if key in choice_repo.live(user, now):
         raise ConflictError("人已经对这个窗口做了选择（或说了这次不选），不覆盖。什么都没写")
     found = auto._lookup(task_id, project_id)  # noqa: SLF001
     if found is None:
@@ -138,13 +159,19 @@ def suggest(key: str, task_id: str | None, project_id: str | None, confidence: f
         raise InvalidInputError("只能记到没完成的普通任务（定不了任务就只给 projectId）。什么都没写")
     target = {"taskId": task_id} if task_id else {"projectId": project_id}
     stored = auto.AUTO_CONFIDENCE if confidence >= AI_TRUST else float(confidence)
+    # 上面的检查之后人还可能插进来，所以下面每一步都是条件写，写完再看一眼（见本文件头部「人总是赢」）
     if not ask_repo.answer(user, key, rec["claimedAt"], {**done, "outcome": "suggested", **target, "confidence": stored}):
-        raise ConflictError(f"窗口 {key!r} 刚被别的回答抢先了。什么都没写")
+        raise taken
     rule = {**auto._window_rule(span["app"], span["title"], target), "id": _rule_id(key),  # noqa: SLF001
             "confidence": stored, "author": "assistant", "auto": True, "note": ("AI 认的：" + reason)[:120]}
-    written = window_rules.prepend(rule)
-    repo.choice_put({"user": user, "key": key, "kind": "choice", "app": span["app"], "title": span["title"],
-                     **target, "at": now, "expiresAt": now + auto.CHOICE_AWAY})
+    written = window_rules.prepend(rule, yield_to_human=True)
+    choice_repo.put({"user": user, "key": key, "kind": "choice", "by": "ai", "app": span["app"], "title": span["title"],
+                     **target, "at": now, "expiresAt": now + auto.CHOICE_AWAY}, unless_live=now)
+    if ((ask_repo.get(user, key) or {}).get("outcome") != "suggested"
+            or not detector_service.device_flags(user, device)["autoTrack"]):
+        window_rules.remove_auto(_rule_id(key))
+        choice_repo.drop_ai(user, key)
+        raise ConflictError("人刚对这个窗口做了决定（或关了开关），AI 写的已经撤回。什么都没写")
     return {"key": key, "outcome": "suggested", "taskId": found["taskId"], "projectId": found["projectId"],
             "confidence": stored, "autoRecord": written and stored >= auto.AUTO_CONFIDENCE, "ruleWritten": written}
 
@@ -157,9 +184,31 @@ def reject(key: str) -> dict:
         raise NotFoundError(f"窗口 {key!r} 不是 AI 认的（或已经说过不对了）")
     removed = window_rules.remove_auto(_rule_id(key))
     # 临时选择：盖成一份立刻过期的（repo 没有单删；过期的在下一次心跳清掉）
-    repo.choice_put({"user": user, "key": key, "kind": "rejected", "app": rec["app"], "title": rec["title"],
+    choice_repo.put({"user": user, "key": key, "kind": "rejected", "app": rec["app"], "title": rec["title"],
                      "at": now, "expiresAt": now})
     return {"key": key, "app": rec["app"], "title": rec["title"], "ruleRemoved": removed}
+
+
+def _decided(key: str, target: dict | None) -> None:
+    """人对这个窗口做了决定（``target`` = 选的目标；None = 这次不选）：在它的问询上留记号——还没答的那一次从此答不进
+    （``ask_repo.answer`` 的条件）；AI 已经认到**别的**目标 → 等同人说了「不对」，撤掉它写的规则。"""
+    user, now = current_tenant(), auto._now()  # noqa: SLF001
+    rec = ask_repo.decided(user, key, now, list(_ids(target)) if target else None)
+    if rec and rec.get("outcome") == "suggested" and _ids(rec) != _ids(target or {}) and ask_repo.reject(user, key, now):
+        window_rules.remove_auto(_rule_id(key))
+
+
+def choose(key: str, task_id: str | None, project_id: str | None, remember: bool) -> dict:
+    """``POST activity/choice``：人答（``auto.choose``），再告诉问询「人定了」。次序要紧：人的先写完。"""
+    out = auto.choose(key, task_id, project_id, remember)
+    _decided(key, {"taskId": task_id, "projectId": project_id})
+    return out
+
+
+def dismiss(key: str) -> dict:
+    out = auto.dismiss(key)
+    _decided(key, None)
+    return out
 
 
 def recorded_today() -> dict:

@@ -535,8 +535,8 @@ def test_auto_sessions_list_and_reassign(client, world, monkeypatch):
     assert len(items) == 1
     item = items[0]
     assert set(item) == {"id", "eventId", "startAt", "endAt", "durationSeconds", "app", "title", "taskId",
-                         "projectId", "reassigned", "ai"}  # v2.15 追加 ai
-    assert item["ai"] is False
+                         "projectId", "reassigned", "ai", "source"}  # v2.15 追加 ai；波次统一审核追加 source
+    assert item["ai"] is False and item["source"] == "rules"
     assert (item["taskId"], item["projectId"], item["reassigned"]) == (world["a"], world["p"], False)
 
     url = f"{API}/sessions/{item['eventId']}/reassign"
