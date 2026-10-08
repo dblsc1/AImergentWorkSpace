@@ -319,7 +319,12 @@
     sel.value = want;
     if (sel.value !== want) sel.value = ""; // 建议的任务已不在树里：让人重挑
     sel.addEventListener("change", function () {
-      if (sel.value !== OTHER && sel.value !== BACK) { chosen[v.ck] = sel.value; syncButtons(); return; }
+      if (sel.value !== OTHER && sel.value !== BACK) {
+        chosen[v.ck] = sel.value;
+        if (!v.scoped && !sel.value) other[v.ck] = true; // 清空不 scoped 的行：留在「其他项目」，不悄悄变成未分类（集合确认才与看到的一致）
+        syncButtons();
+        return;
+      }
       other[v.ck] = sel.value === OTHER; // 换一套选项：重绘（这行的选择清空，焦点还给它）
       chosen[v.ck] = "";
       var id = sel.closest("li").dataset.id;

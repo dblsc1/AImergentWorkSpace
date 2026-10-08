@@ -139,8 +139,8 @@ class HookTitleTests(_TranscriptMixin, unittest.TestCase):
         claude_hook.handle_session_start(self._event("SessionStart", session_id="s2"))  # 没有 transcript_path
         self.assertEqual([(b["label"], b["match"]) for b in self._starts()], [("garden", "garden")] * 2)
         claude_hook.handle_phase(self._event("UserPromptSubmit", transcript_path=path), self.AT)
-        claude_hook.handle_phase(self._event("Stop", cwd="/somewhere/else", transcript_path=path), self.AT)
-        self.assertEqual(len(self._starts()), 2)  # 没起名：相位事件不多发 start（cwd 变了也不改名）
+        claude_hook.handle_phase(self._event("Stop", transcript_path=path), self.AT)
+        self.assertEqual(len(self._starts()), 2)  # 没起名且目录名没变：相位事件不多发 start
 
     def test_rename_mid_session_is_picked_up_once_on_the_next_reported_event(self):
         path = self._transcript('{"type":"user"}')
@@ -167,6 +167,56 @@ class HookTitleTests(_TranscriptMixin, unittest.TestCase):
         self.assertEqual(claude_hook._read_state("s1")["label"], "garden")
         claude_hook.handle_phase(self._event("Stop", transcript_path=path), self.AT)
         self.assertEqual(claude_hook._read_state("s1")["label"], "X-company Coder1")
+
+    def _stops(self):
+        return [r for r in self.log.requests if r["path"].endswith("/stop")]
+
+    def test_cleared_title_reverts_the_lane_to_the_directory_name(self):
+        path = self._transcript(_title(""))
+        claude_hook._save_run_id("s1", "run-1", "idle", "Old Name")
+        claude_hook.handle_phase(self._event("Stop", transcript_path=path), self.AT)
+        self.assertEqual(self._starts()[-1]["label"], "garden")
+        self.assertEqual(claude_hook._read_state("s1")["label"], "garden")
+
+    def test_rename_racing_session_end_never_resurrects_the_run(self):
+        path = self._transcript(_title("New Name"))
+        claude_hook._save_run_id("s1", "run-1", "idle", "garden")
+        real_start = cc.start_run
+
+        def end_then_start(*a, **k):  # SessionEnd 夹在「读状态」和「start」之间：停 run、删状态
+            claude_hook._delete_run_id("s1")
+            real_start(*a, **k)
+            return {"runId": "run-new"}  # 服务端：clientKey 已停 → 新 run
+
+        with mock.patch.object(cc, "start_run", side_effect=end_then_start):
+            claude_hook.handle_phase(self._event("Stop", transcript_path=path), self.AT)
+        self.assertIsNone(claude_hook._read_state("s1"))
+        self.assertEqual([r["path"] for r in self._stops()], ["/api/core/agents/run-new/stop"])
+
+    def test_rename_with_state_gone_before_start_sends_nothing(self):
+        path = self._transcript(_title("New Name"))
+        claude_hook._save_run_id("s1", "run-1", "idle", "garden")
+        real_read = claude_hook._read_state
+        calls = []
+
+        def read(sid):
+            calls.append(1)
+            if len(calls) == 2:  # 第 1 次是 handle_phase 自己读的，第 2 次是发前复查
+                claude_hook._delete_run_id(sid)
+            return real_read(sid)
+
+        with mock.patch.object(claude_hook, "_read_state", side_effect=read):
+            claude_hook.handle_phase(self._event("Stop", transcript_path=path), self.AT)
+        self.assertEqual(self._starts(), [])
+        self.assertIsNone(real_read("s1"))
+
+    def test_rename_returning_a_different_run_while_live_is_closed_not_adopted(self):
+        path = self._transcript(_title("New Name"))
+        claude_hook._save_run_id("s1", "run-1", "idle", "garden")
+        with mock.patch.object(cc, "start_run", return_value={"runId": "run-2"}):
+            claude_hook.handle_phase(self._event("Stop", transcript_path=path), self.AT)
+        self.assertEqual(claude_hook._read_state("s1")["runId"], "run-1")
+        self.assertEqual([r["path"] for r in self._stops()], ["/api/core/agents/run-2/stop"])
 
 
 if __name__ == "__main__":
