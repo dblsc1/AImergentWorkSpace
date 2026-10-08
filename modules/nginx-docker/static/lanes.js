@@ -12,7 +12,7 @@
  *   activeSeconds(run, v0, v1, now)  运行在视窗里不空闲的秒数
  *   sortByActivity(agents, v0, v1, now)  计时页卡片的排序（档位：在等你 → 干活 → 出错 → 空闲 → 已结束；同档按活跃秒数、最近转入）
  *   recentRuns(agents, now)        计时页只留在跑的 + 结束不到 3 小时的运行（2026-10-08）
- *   humanStatus(human, now)        人此刻：在电脑前 / 离开 / 不在线（+ 在计时 / 前台程序）
+ *   humanStatus(human, now)        人此刻：在电脑前 / 离开 / 不在线（+ 在计时 / 前台程序；v2.14 + 自动跟踪 auto {text, since}）
  *   render(root, data, opts)       画一张图；全部 textContent，不用 innerHTML
  *                                  同一个 root 第二次起的重画带换位动效（2026-10-08，见 motion()）
  */
@@ -169,8 +169,32 @@
     var state = seen ? 'present' : away ? 'away' : 'offline';
     var run = human.running && ms(human.running.startAt);
     var doing = seen ? [seen.app, seen.title].filter(function (s) { return s; }).join(' · ') : '';
+    // 自动跟踪（nexus-core v2.14）：没在计时、服务端说「我」当前的窗口对上了项目 / 任务。手动计时永远优先。
+    var a = !run && human.auto, since = a ? ms(a.since) : null;
     return { state: state, word: HUMAN_WORD[state], running: !!run,
-      detail: run ? '计时中 · ' + hm(run) + ' 起' : doing };
+      detail: run ? '计时中 · ' + hm(run) + ' 起' : doing,
+      auto: since === null ? null : { since: since,
+        text: '自动 · ' + [a.projectName, a.taskName].filter(function (x) { return x; }).join(' / ') } };
+  }
+
+  // 从 since 起走秒的钟（「自动 · …」后面那个）。本文件唯一的定时器：一秒一次，只改这些钟的字。
+  // 节点上记的是换到本机时钟上的起点（服务端的 now 与本机的差在画的那一刻扣掉），之后每秒只读 Date.now()。
+  var ticking = null;
+  function clockText(sec) {
+    sec = Math.max(0, Math.floor(sec));
+    var h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60);
+    return (h ? h + ':' + pad2(m) : pad2(m)) + ':' + pad2(sec % 60);
+  }
+  function tick() {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-hcl-since]'), function (n) {
+      n.textContent = clockText((Date.now() - Number(n.getAttribute('data-hcl-since'))) / 1000);
+    });
+  }
+  function clock(since, nowMs) {
+    var n = el('span', 'hcl-clock', clockText((nowMs - since) / 1000));
+    n.setAttribute('data-hcl-since', String(since - (nowMs - Date.now())));
+    if (!ticking) { ticking = setInterval(tick, 1000); }
+    return n;
   }
 
   // 顶栏预览：只看与 [v0, now] 有重叠的运行；在跑且在等 → 在跑且干活 → 在跑其他 → 已结束（结束晚的在前），
@@ -263,6 +287,8 @@
    *   opts.compact              顶栏预览的紧凑尺寸
    *   opts.cards / top          计时页的卡片布局（只画 recentRuns：结束超过 3 小时的不画）：人一张卡钉在最前，代理按 sortByActivity 排，
    *                             前 top 张（缺省 5；在等你 / 干活的卡永不折叠，多于 top 就全展开）展开，其余收进 <details>「还有 N 个」
+   *   opts.lead                 卡片式：调用方的一张置顶卡（计时页的「你在 X，记到哪？」），放在人那张卡之前。同一个节点
+   *                             跨重画搬过来（表单状态不丢、焦点还回去）；换位动效把它当一张卡，第一次出现淡入上浮
    *   opts.more / moreHref      区尾一行（「还有更多」/「还有 N 个 → 计时页」）
    *   opts.focusFallback        焦点在区尾链接上、重画后链接没了时，焦点交给它
    * 返回画了的代理运行的 runInfo 列表（按画的顺序；r / ph / act / last …），调用方拿来数状态，不必再排一遍 phases。
@@ -286,6 +312,7 @@
     var oldFold = root.querySelector('details.hcl-fold');
     if (oldFold) { root.hclFoldOpen = oldFold.open; }
     var foldFocus = !!(oldFold && a && oldFold.contains(a) && a.tagName === 'SUMMARY');
+    var lead = cards ? opts.lead : null, leadFocus = lead && a && lead.contains(a) ? a : null;
     // 换位动效要的旧位置（第一次画没有 → 不动）；同一个 root 换了布局（卡片 ↔ 列表）也当第一次
     var before = root.hclDrawn === cards ? snapshot(root) : null;
     root.hclDrawn = cards;
@@ -302,6 +329,13 @@
     if (!cards) {
       var stLine = el('p', 'hcl-status hcl-st-' + st.state, '我：' + st.word + (st.detail ? ' · ' + st.detail : ''));
       stLine.title = stLine.textContent;
+      if (st.auto) {                                   // 自动跟踪：换成「我：自动 · 项目 / 任务」+ 走秒的钟
+        stLine.textContent = '我：';
+        stLine.appendChild(el('span', 'hcl-auto-text', st.auto.text));
+        stLine.appendChild(clock(st.auto.since, now));
+        stLine.classList.add('hcl-st-auto');
+        stLine.title = '我：' + st.auto.text + (st.detail ? '（' + st.detail + '）' : '');
+      }
       root.appendChild(stLine);
     }
 
@@ -348,6 +382,7 @@
       p.appendChild(el('span', 'hcl-dot ' + cls));
       p.appendChild(document.createTextNode(text));
       head.appendChild(p);
+      return p;
     };
     var seg = function (track, cls, s, e, tip) {
       var n = el('span', 'hcl-seg ' + cls);
@@ -370,6 +405,11 @@
       }
     };
 
+    if (lead) {
+      lead.classList.add('hcl-card', 'hcl-lead');
+      lead.setAttribute('data-run-id', 'lead');
+      rows.appendChild(lead);
+    }
     // 人那条线（卡片式：钉在最前的一张卡，不算进 top）
     var running = human.running && ms(human.running.startAt);
     var hTrack = cards ? addRow(rows, 'hcl-row-human', '我', '', null)
@@ -379,6 +419,12 @@
       var hHead = hTrack.previousSibling;
       pill(hHead, 'hcl-st-' + st.state, st.word);
       if (running) { pill(hHead, 'hcl-ph-human', '计时中'); }
+      if (st.auto) {                                   // 虚线边 + 走秒的钟：一眼看得出不是手动计时
+        var ap = pill(hHead, 'hcl-st-auto', '');
+        ap.appendChild(el('span', 'hcl-auto-text', st.auto.text));
+        ap.appendChild(clock(st.auto.since, now));
+        ap.title = st.auto.text + ' —— 按分类规则自动跟着你当前的窗口，不是手动计时';
+      }
       if (st.detail) {
         var hStat = el('span', 'hcl-stat', st.running ? st.detail : '正在用 ' + st.detail);
         hStat.title = hStat.textContent;
@@ -396,7 +442,7 @@
       seg(hTrack, 'hcl-human hcl-mode-do is-running', running, now,
         '计时中 · ' + hm(running) + '–现在（' + dur(running, now) + '）');
     }
-    sayLines.push('我：' + st.word + '，' + (running ? '计时中' : '没在计时'));
+    sayLines.push('我：' + st.word + '，' + (running ? '计时中' : st.auto ? st.auto.text : '没在计时'));
     if (opts.presence) {
       (human.presence || []).forEach(function (p) {
         var s = ms(p.from), e = ms(p.to);
@@ -493,6 +539,7 @@
       rows.appendChild(overlay);
     }
     root.appendChild(rows);
+    if (leadFocus) { leadFocus.focus(); }
     if (fold) {
       root.appendChild(fold);
       if (foldFocus) { fold.firstChild.focus(); }

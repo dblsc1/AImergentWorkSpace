@@ -5,6 +5,8 @@
  *   · 根元素是 nav.ckpt-nav[data-ckpt-nav]，全部 class 以 ckpt- 起头；
  *   · 对 /__cockpit/current 发 GET（约 10s 一次），先判 degraded 再读 running，
  *     退出发 POST /api/auth/logout 后跳 /login/，不发任何其它非 GET 请求；
+ *   · 自动跟踪（nexus-core v2.14）：没在计时、同一份响应带 auto 时芯片显示「自动 · 项目 / 任务」+ 走秒
+ *     （data-ckpt-auto）；带 needsChoice 时芯片上多一个小点（data-ckpt-choice，点芯片去计时页选）。不多发请求；
  *   · 泳道预览（v0.3，契约「泳道预览」节）：只在预览打开、页面可见时约 15s GET 一次
  *     api/core/views/lanes，并在第一次打开时加载同目录的 lanes.js（计时页上整段不启用）；
  *   · 顶栏自己的网络失败不写 console.error——这条由网关侧 /__cockpit/current
@@ -198,6 +200,9 @@
   var elapsedNode = el('span', 'ckpt-elapsed', '00:00');
   elapsedNode.setAttribute('aria-live', 'off');  // 每秒变化，告诉读屏软件安静更新
   chip.appendChild(elapsedNode);
+  var needDot = el('span', 'ckpt-need');         // 有个窗口等人选记到哪（data-ckpt-choice 时才显示）
+  needDot.setAttribute('aria-hidden', 'true');
+  chip.appendChild(needDot);
   right.appendChild(chip);
 
   // 主题按钮 + 面板
@@ -311,6 +316,11 @@
   var startMs = null;
   var taskId = null;     // 在计的任务：每秒对一次累计记忆（见 paint）
   var state = DEGRADED;
+  // 自动跟踪（nexus-core v2.14，views/current 的 auto / needsChoice）：只在没在计时时有
+  var auto = null;       // {text, since}：「我」当前的窗口按规则对上了项目 / 任务
+  var needsChoice = false;
+  var CHIP_LABEL = chip.getAttribute('aria-label');
+  var HINT_CHOICE = '有个窗口不知道记到哪 —— 去计时页选';
 
   var two = function (n) { return (n < 10 ? '0' : '') + n; };
   var fmt = function (totalSec) {
@@ -324,17 +334,28 @@
   var paint = function () {
     nav.setAttribute('data-ckpt-timer', state);
     nav.removeAttribute('data-ckpt-paused');
+    nav.removeAttribute('data-ckpt-auto');
+    var asking = state === IDLE && needsChoice;
+    if (asking) { nav.setAttribute('data-ckpt-choice', ''); } else { nav.removeAttribute('data-ckpt-choice'); }
+    chip.setAttribute('aria-label', CHIP_LABEL + (asking ? '；' + HINT_CHOICE : ''));
     if (state === DEGRADED) {
       liveWord.textContent = WORD_DEGRADED;
       chip.title = HINT_DEGRADED;
       return;
     }
-    chip.title = '';
+    chip.title = asking ? HINT_CHOICE : '';
     if (state === IDLE) {
       // 以前空闲时读数停在上一段的最后一秒（「未在计时 · 03:47」，Windows 验收）。
       // 已知天花板：暂停记忆按契约只在本机。在别的浏览器继续并结束了，这里仍显示
       // 「已暂停」—— 与 hive 中心格 / 计时台同一语义，要根治得把暂停搬到后端。
       var paused = readKey(PAUSED_KEY);
+      if (auto && !paused) {
+        // 没在计时、也没暂停着：「我」当前在做的事顶上来。虚线边 + 空心点，和手动计时的实心呼吸点分得开
+        nav.setAttribute('data-ckpt-auto', '');
+        liveWord.textContent = auto.text;
+        elapsedNode.textContent = fmt(Math.floor((Date.now() - auto.since) / 1000));
+        return;
+      }
       liveWord.textContent = paused ? WORD_PAUSED : WORD_IDLE;
       // 窄屏把字藏了，只剩圆点 + 读数：暂停和空闲得靠点本身分开（Windows 验收）
       if (paused) nav.setAttribute('data-ckpt-paused', '');
@@ -351,7 +372,7 @@
     elapsedNode.textContent = fmt(Math.floor((Date.now() - startMs) / 1000) + carrySec);
   };
 
-  var degrade = function () { startMs = null; state = DEGRADED; paint(); };
+  var degrade = function () { startMs = null; auto = null; needsChoice = false; state = DEGRADED; paint(); };
 
   var apply = function (data) {
     // 网关的降级体：恒 200 但明说了自己不可信，必须先判。降级体里 running 恒为
@@ -359,6 +380,11 @@
     if (!data || data.degraded) { degrade(); return; }
 
     var running = !!data.running && data.sessionStartAt;
+    // 手动计时永远优先：在计时就不看 auto / needsChoice（服务端此时也给 null）
+    var a = !running && data.auto, since = a ? Date.parse(a.since) : NaN;
+    auto = isNaN(since) ? null : { since: since,
+      text: '自动 · ' + [a.projectName, a.taskName].filter(function (x) { return x; }).join(' / ') };
+    needsChoice = !running && !!data.needsChoice;
     if (!running) { startMs = null; state = IDLE; paint(); return; }
     var t = Date.parse(data.sessionStartAt);
     if (isNaN(t)) { degrade(); return; }   // 有 sessionStartAt 但解析不出来 = 数据坏了，同样是「不知道」

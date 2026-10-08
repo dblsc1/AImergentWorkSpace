@@ -145,6 +145,14 @@ html { scroll-padding-top: var(--ckpt-h, 52px); }
 /* 已暂停（空闲的一种）：--accent 空心点。窄屏字被藏时与空闲的灰空心点分得开。 */
 .ckpt-nav[data-ckpt-timer="idle"][data-ckpt-paused] .ckpt-dot { border-color: var(--accent); }
 
+/* 自动跟踪（空闲的一种，nexus-core v2.14）：没在计时，按规则跟着「我」当前的窗口。--plan 虚线边 + --plan 空心点 +
+ * 「自动 · 项目 / 任务」+ 走秒。不是手动计时：不用 --accent 实心点、不呼吸。 */
+.ckpt-nav[data-ckpt-timer="idle"][data-ckpt-auto] .ckpt-chip { border-color: var(--plan); border-style: dashed; color: var(--ink); }
+.ckpt-nav[data-ckpt-timer="idle"][data-ckpt-auto] .ckpt-dot { border-color: var(--plan); }
+/* 有个窗口等人选记到哪：芯片末尾一个 --warn 小点（芯片本身就是去计时页的链接）。平时不占位。 */
+.ckpt-need { display: none; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
+.ckpt-nav[data-ckpt-choice] .ckpt-need { display: inline-block; }
+
 /* running：--accent 实心点 + 呼吸 + 任务名 + 用时。三个状态里唯一「活」的一个。 */
 .ckpt-nav[data-ckpt-timer="running"] .ckpt-chip { border-color: var(--accent); color: var(--accent); }
 .ckpt-nav[data-ckpt-timer="running"] .ckpt-dot { background: var(--accent); border-color: var(--accent); }
