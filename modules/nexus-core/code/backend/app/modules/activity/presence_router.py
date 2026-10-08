@@ -98,13 +98,13 @@ class AutoSessionsOut(BaseModel):
 @router.post("/choice", response_model=ChoiceOut)
 async def choose(request: Request) -> dict:
     _auth, body = await human_body(request, ChoiceIn, "替人选项目 / 任务")  # 设备令牌先 403，再看请求体
-    return await run_in_threadpool(auto.choose, body.key, body.taskId, body.projectId, body.remember)
+    return await run_in_threadpool(auto_ai.choose, body.key, body.taskId, body.projectId, body.remember)
 
 
 @router.post("/choice/dismiss", response_model=DismissOut)
 async def dismiss_choice(request: Request) -> dict:
     _auth, body = await human_body(request, _Key, "替人说「这次不选」")
-    return await run_in_threadpool(auto.dismiss, body.key)
+    return await run_in_threadpool(auto_ai.dismiss, body.key)
 
 
 @router.get("/auto", response_model=AutoSessionsOut)

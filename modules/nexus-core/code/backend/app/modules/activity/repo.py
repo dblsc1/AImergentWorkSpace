@@ -1,4 +1,4 @@
-"""``activity_suggestions`` 集合的存取。**本文件是 activity 子边界唯一碰 mongo 的地方。**
+"""``activity_suggestions`` 集合的存取。**activity 子边界只有本文件与 ``ask_repo.py`` / ``choice_repo.py`` 碰 mongo。**
 
 唯一约束 ``(user, dedupeKey)`` 就是上传防重本身：先查再插在并发下有竞态，唯一索引没有
 （同 events/repo.py）。``id`` 由 dedupeKey 派生，所以 ``(user, id)`` 也唯一。
@@ -80,17 +80,19 @@ def set_status(user: str, sug_id: str, status: str, at: datetime, *, only_from: 
 
 
 def claim(user: str, sug_id: str, at: datetime, *, takeover: bool = False, only_task: str | None = None,
-          only_proposal: str | None = None, auto: bool = False) -> bool:
+          only_proposal: str | None = None, auto: bool | str = False) -> bool:
     """确认的占位：pending→confirmed，``claims`` 记有几个确认正占着（在写事实）。``takeover`` = 加入一个已占位、
     事实还没写的（对方还在写，或占位后崩了）。``only_task`` 给了还要求建议的任务仍是它
-    （v2.7：确认用的是建议里的任务时，防与否 / 重配赛跑）。``auto`` = v2.14 自动记录占的位（标 ``auto: true``）。"""
+    （v2.7：确认用的是建议里的任务时，防与否 / 重配赛跑）。``auto`` = v2.14 自动记录占的位（标 ``auto: true``）；
+    给的是字符串（``"rules"`` / ``"choice"``）就一并记成 ``autoSource``——按规则记的还是按人的临时选择记的。"""
     filt = {"user": user, "id": sug_id, "status": "confirmed" if takeover else "pending"}
     if only_task is not None:
         filt["suggestion.taskId"] = only_task
     if only_proposal is not None:  # v2.8：确认的是助理提议的新任务，要求提议没变
         filt["suggestion.newTask.proposalId"] = only_proposal
     upd = {"$inc": {"claims": 1}} if takeover else {
-        "$set": {"status": "confirmed", "decidedAt": at, "claims": 1, **({"auto": True} if auto else {})}}
+        "$set": {"status": "confirmed", "decidedAt": at, "claims": 1, **({"auto": True} if auto else {}),
+                 **({"autoSource": auto} if isinstance(auto, str) else {})}}
     return _col().update_one(filt, upd).matched_count > 0
 
 
@@ -99,7 +101,7 @@ def release(user: str, sug_id: str, at: datetime) -> None:
     filt = {"user": user, "id": sug_id, "status": "confirmed"}
     _col().update_one(filt, {"$inc": {"claims": -1}})
     _col().update_one({**filt, "claims": {"$lte": 0}},
-                      {"$set": {"status": "pending", "decidedAt": at}, "$unset": {"auto": ""}})
+                      {"$set": {"status": "pending", "decidedAt": at}, "$unset": {"auto": "", "autoSource": ""}})
 
 
 def set_match(user: str, sug_id: str, suggestion: dict) -> bool:
@@ -263,37 +265,3 @@ def presence_delete(user: str, device_ids: list[str]) -> None:
 
 def presence_list(user: str) -> list[dict]:
     return list(_presence_col().find({"user": user}, {"_id": 0}))
-
-
-# ------------------------------------------------ activity_choices（v2.14，人对某个窗口的临时选择 / 「这次不选」）
-#
-# 每个 (user, key) 一份：kind "choice"（taskId 或 projectId）/ "dismiss"；expiresAt 之后当作没有。
-# 活状态，不是事实：不进台账 / 投影 / 导出 / 快照恢复。过期文档只在心跳写入时删。
-
-_CHOICES = "activity_choices"
-_choices_ready = False
-
-
-def _choices_col():
-    global _choices_ready
-    col = get_db()[_CHOICES]
-    if not _choices_ready:
-        col.create_index([("user", 1), ("key", 1)], unique=True, name="uniq_user_key")
-        _choices_ready = True
-    return col
-
-
-def choice_put(doc: dict) -> None:
-    _choices_col().replace_one({"user": doc["user"], "key": doc["key"]}, dict(doc), upsert=True)
-
-
-def choices(user: str, now: datetime) -> dict[str, dict]:
-    """没过期的：{key: 文档}。"""
-    return {d["key"]: d for d in _choices_col().find({"user": user, "expiresAt": {"$gt": now}}, {"_id": 0})}
-
-
-def choice_seen(user: str, key: str, now: datetime, until: datetime) -> None:
-    """这个窗口又在前台了：没过期的临时选择续期（「这次不选」不续）；顺手清掉该租户过期的。"""
-    col = _choices_col()
-    col.delete_many({"user": user, "expiresAt": {"$lte": now}})
-    col.update_one({"user": user, "key": key, "kind": "choice"}, {"$set": {"expiresAt": until}})

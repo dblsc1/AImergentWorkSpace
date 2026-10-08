@@ -2876,6 +2876,9 @@ DISPATCH 表：`session.completed` 与 `agent.run.completed` **各追加**路由
   `privacy.titles` 为 `"pseudonymize"`）→ `pseudonymized: true`；转义后的正则超过 200 字符、规则已满 500 条、
   连续撞版本。
 - 不写台账、不确认任何建议：这段活动的事实仍由「自动记录」在下一次上传时落（规则写成了的话），或人去待确认里点。
+  （2026-10-08 波次统一审核追加：临时选择有效期间上传的、这个窗口的段也由「自动记录」落，不必写成规则，见该小节末尾。）
+- 2026-10-08 波次统一审核追加：这个窗口若有 AI 认的目标（「让 AI 认窗口」节），人在这里选了**别的**目标 = 同时说了「不对」
+  （AI 那条规则撤掉、问询记 `rejected`）；选的就是 AI 认的那个 → AI 的规则留着。`choice/dismiss` 同理（没有目标 = 别的）。
 
 ### 这次不选：`POST /api/core/activity/choice/dismiss`
 
@@ -2909,6 +2912,21 @@ DISPATCH 表：`session.completed` 与 `agent.run.completed` **各追加**路由
 - 「匹配历史」（v2.12）**不含**自动记下的段：那不是人的决定，喂回给助理只会自我强化。
 - 计入人的时间（它就是一条 `session.completed`）。两台设备各报一段 = 记两段（同 v2.2「两台设备」）。
 
+**2026-10-08 波次统一审核追加（同版修订，只增）**——一段的目标与页面上 `human.auto` **同一个取法**（规则优先，其次人的临时选择），
+条件 1、2、5 不变，条件 3、4 的「目标」改成下面两条里先成立的那条：
+
+- **规则的猜测**：`suggestion.classifier` 是 `"rules"` 且有目标（条件 4 的取法）。但**人说过「不对」的那个 AI 目标不算**
+  （该窗口的问询 `outcome: "rejected"` 且目标相同——与心跳的 `guess` 同一条过滤，见「让 AI 认窗口」节「人说『不对』」第 3 点）：
+  检测程序拉到新规则之前上传的段不再按旧规则记下。人后来自己又选了同一个目标（`choice`）→ 那是人的决定，过滤解除。
+  规则的猜测在、把握 < 0.9 → 留在待确认，**不**退到临时选择（页面此刻显示的也是规则的目标）。
+- **人的临时选择**：没有（算数的）规则猜测，而这一段的窗口（`window_key(app, title)`，与心跳同一个键）此刻有未过期的
+  `kind: "choice"`、且是**人**写的（AI 认到时写的那份不算——AI 的把握走它那条规则的 `confidence`），且这一段的 `endAt`
+  晚于人做选择的时刻（补传的积压不追认）→ 记到选的任务 / 该项目的「未分类」桶。所以**没勾「以后这个窗口都这样记」的选择，
+  在它有效期间同样让那个窗口的段自动记下**——页面写着「自动 · …」，落账就跟着它。
+
+出处：建议文档另存 `autoSource: "rules" | "choice"`；`GET /api/core/activity/auto` 每条追加 `source`（同样两个取值；
+本次追加之前记下的段没有 `autoSource`，回 `"rules"`）。信封 `ai` 不变（`auto: true`，改挂照旧）。
+
 ### 自动记下的段：`GET /api/core/activity/auto`
 
 ```jsonc
@@ -2920,6 +2938,7 @@ DISPATCH 表：`session.completed` 与 `agent.run.completed` **各追加**路由
 ```
 
 今天（`NEXUS_TZ`，按 `startAt`）自动记下的段，新的在前，至多 200 条；台账里找不到事实的（占位后崩了）不出。
+每条另有 `source: "rules" | "choice"`（2026-10-08 波次统一审核追加，见「自动记录」小节末尾）。
 名字不 join。只读，带 Bearer 也能读。改归属 = `POST /api/core/sessions/{eventId}/reassign`（「改挂未分类时间」节
 v2.14 追加）。撤销整段不在本版：改挂到对的任务 / 放回项目的未分类就是修正，台账只追加。
 
@@ -2932,6 +2951,8 @@ v2.14 追加）。撤销整段不在本版：改挂到对的任务 / 放回项�
 
 - 新集合 `activity_choices`：`{user, key, kind: "choice" | "dismiss", app, title, taskId?, projectId?, at, expiresAt}`，
   唯一约束 `(user, key)`；过期的在心跳写入时清。**活状态，不是事实**：不进台账 / 投影 / 导出 / 快照恢复 /「空实例」判据。
+  2026-10-08 波次统一审核追加：AI 认到时写的那份带 `by: "ai"`（人写的没有这个键），它只在该窗口没有未过期的那一份时
+  才写得进；存取住 `activity/choice_repo.py`，上传的入口与自动记录住 `activity/auto_entry.py`（都是从贴着行数预算的文件里拆出来的）。
 - `views/lanes` 仍然**不写**；续期与清理都在心跳的写路径上。
 - 实现落点：`activity/auto.py`（`next_step`、`auto` / `needsChoice`、choice、自动记录）；读开关经 detector 的
   service，写规则经 `detector/rules.py` 的公开函数，写事实经 `service.confirm`（跨子边界只走 service）。
@@ -3011,6 +3032,11 @@ nexus-core 不在 AI 桥内网上，够不着聊天后端（`gateway.v1` 第八�
   一遍、另一个代理也来取，拿到的都是同一个）；否则取 `aiThinking` 的那个窗口，这一小时的认领数原子地 +1（满 12 → `null`），
   写下问询 `{key, app, title, claimedAt}`（同一个窗口以前的问询整份换掉）。
 - **按租户**：只看、只认领调用方租户的窗口。
+- **2026-10-08 波次统一审核追加：认领是一次条件写。** 「写下问询」只在该窗口没有问询、或那份已早于 `AI_RETRY`（6 小时）时
+  写得进（单个条件 upsert，唯一约束 `(user, key)` 兜底）；几个认领同时到，只有一个写得进，其余的重读并回同一份
+  （那份已经答完 → `window: null`）。**已有的问询不会被并发的认领换掉**——答过的不会变回「没答」。这一小时的认领数
+  只由写进去的那一个 +1（名额恰好在这期间用完 → 撤回刚写的那份，回 `null`）。人已经抢先做了决定的问询（见「回答」）不再给出。
+  两个同时的认领各自看中不同的窗口时可能短暂有两份在等：之后只再给最新的那份，另一份超时后转去请人选。
 - 带 `Authorization: Bearer` 一律 403，先于读请求体——AI 这两个端点只经 MCP（对内直连、不带 Bearer）调，同 v2.7 的 matches。
 
 ### 回答：`POST /api/core/activity/ai/suggest`
@@ -3044,6 +3070,13 @@ nexus-core 不在 AI 桥内网上，够不着聊天后端（`gateway.v1` 第八�
   一个窗口至多一条。② 写下与人的选择同样的按窗口临时选择，所以 `auto` **立刻**显示。③ 问询记
   `outcome: "suggested"` 与目标。
 - 带 Bearer 一律 403，先于读请求体。类型不对、多了未知键、`none` 与目标同给 → 422。
+- **2026-10-08 波次统一审核追加：人与 AI 抢同一个窗口，人总是赢**——不靠上面那次「先看人选了没有」的检查，靠条件写与次序：
+  ① 人的 `choice` / `choice/dismiss` 在该窗口的问询上留记号（`humanAt`）；回答的条件更新除了「没答过」还要求没有这个记号，
+  于是人的决定先到 → 409，什么都没写（`none` 同）。② AI 写规则时**不换掉人的规则**：这个窗口已有一条不带 `auto` 的规则 →
+  `ruleWritten: false`；AI 的临时选择只在该窗口没有未过期的那一份（人的选择 /「这次不选」）时才写得进。③ 全写完之后再看一眼
+  问询：已经被人否掉（「不对」，或人选了别的 / 说了这次不选），或那台设备的 `autoTrack` 刚被关掉 → **撤回**刚写的规则与
+  临时选择，回 409（`detail` 仍以「什么都没写」结尾；这次问询算答过，6 小时内不再问）。人的端点先写自己的、再留记号、
+  再撤 AI 的规则，所以两边无论怎么交错，结束时都没有 AI 写的规则 / 选择留下，人写的原样在。
 
 ### 出处：`auto.source: "ai"`、`auto.key`、`GET activity/auto` 的 `ai`
 
@@ -3061,6 +3094,7 @@ nexus-core 不在 AI 桥内网上，够不着聊天后端（`gateway.v1` 第八�
 2. 清掉该窗口的临时选择；问询记 `outcome: "rejected"`；
 3. 此后心跳带来的、目标与 AI 给的相同的 `guess` **不算**（检测程序拉到新规则之前还会带着它，最多 5 分钟），
    于是这个窗口回到 `"ask_human"`——页面随即摆出「你在 X，记到哪？」，人照 v2.14 自己选。6 小时内不再问 AI。
+   2026-10-08 波次统一审核追加：**上传的段同样不算**（「自动记录」小节末尾）；人之后自己选了同一个目标 → 过滤解除。
 
 人也可以不点「不对」：那条规则在「AI助理 → 规则」里标着「AI 自动」，照常能改、能删、能停用。
 
@@ -3068,6 +3102,8 @@ nexus-core 不在 AI 桥内网上，够不着聊天后端（`gateway.v1` 第八�
 
 - 新集合 `activity_ai_asks`：每个 (user, key) 一份问询 `{user, key, app, title, claimedAt, answeredAt?, outcome?,
   taskId?, projectId?, confidence?, reason?, rejectedAt?}`；每租户另有一份 `key: "_tenant"` 的 `{polledAt, claims[]}`。
+  2026-10-08 波次统一审核追加两个可选键：`humanAt`（这次问询期间人自己对这个窗口做了决定的时刻）、`humanChose`
+  （人选的 `[taskId, projectId]`，「这次不选」为 `null`，「不对」时清掉）。
   唯一约束 `(user, key)`。**活状态，不是事实**：不进台账 / 投影 / 导出 / 快照恢复 /「空实例」判据。
 - 实现落点：`activity/auto_ai.py`（状态机、三个端点的业务）、`activity/ask_repo.py`（存取）、`detector/window_rules.py`
   （单条窗口规则的加 / 删，走 `detector.rules.v1` 的整套替换）；`auto.py` 的 `next_step` 仍是唯一的决定处。
@@ -3087,6 +3123,7 @@ AI 仍不能改 / 删任何已有规则、不能写匹配范围超出那一个�
 
 - **不做「任务变了就重问」**：6 小时内同一个窗口只问一次。人刚建了任务回来要选时，卡不会被「AI 正在认」顶掉。
 - 「不对」之后检测程序拉到新规则之前（≤ 5 分钟）上传的段仍可能按旧规则自动记下——用「改归属」修。
+  **（2026-10-08 波次统一审核取代：不再成立——这样的段留在待确认，见「自动记录」小节末尾。）**
 - 不做多设备合并（同 v2.14：只看最近报心跳的那台）；不在服务端跑规则。
 
 ## 入口与路由
@@ -3118,6 +3155,8 @@ app/modules/
                                       与 proj_lanes 的 read_lanes 读；views/lanes 经 activity service 的 auto_state 读它
                                       让 AI 认窗口（v2.15，auto_ai.py + ask_repo.py）：接在 auto.py 的 next_step 上；窗口规则经
                                       detector/window_rules.py 的 prepend / remove_auto 写（v2.14 的 prepend 也挪到了这里）
+                                      2026-10-08 波次统一审核：自动记录拆到 auto_entry.py（上传的入口，读问询与临时选择）、
+                                      activity_choices 的存取拆到 choice_repo.py；碰 mongo 的仍只有 repo / ask_repo / choice_repo
   detector/   router service repo     检测程序设置（v2.5）：不是事实；设备列表经 activity 的 service 读上传时刻
   projector/  registry handlers/      DISPATCH 显式表 + 各投影 handler
 ```
