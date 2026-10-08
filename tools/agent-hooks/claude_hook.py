@@ -124,7 +124,7 @@ def handle_session_start(payload: dict) -> None:
     try:
         cwd = payload.get("cwd")
         config = cc.load_config()
-        task_id = cc.resolve_task(cwd=cwd, config=config)
+        task_id, project_id = cc.resolve_target(cwd=cwd, config=config)
         agent = cc.default_agent_name(cwd)
         label, match = cc.lane_names(cwd)
         model = payload.get("model")  # 文档：只有 SessionStart 会带，且不保证有
@@ -134,6 +134,7 @@ def handle_session_start(payload: dict) -> None:
             # 钩子被重试 / 响应丢了时服务端回原运行，不多开一条泳道
             phase="idle", label=label, match=match,
             client_key=hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:32],
+            project_id=project_id,
         )
     except Exception as e:  # noqa: BLE001 — 配置/网络任何一步出岔子都只是"这次不计时"
         category = e if isinstance(e, cc.CockpitError) else "配置错误"

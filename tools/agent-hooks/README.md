@@ -11,7 +11,7 @@
 
 上报给 cockpit 的只有：agent 名字、工具名（`claude-code` / `codex` / ...）、
 model（如果拿得到）、开始/结束时间戳、结束状态（`done`/`failed`/`cancelled`/`timeout`）、
-以及一个可选的「输出在哪」的链接；v0.3 起另有相位（见下「相位」节：相位名、时刻、短标签、
+你在配置里写的任务 id 或项目 id、以及一个可选的「输出在哪」的链接；v0.3 起另有相位（见下「相位」节：相位名、时刻、短标签、
 工作目录名、会话号的哈希）。
 
 **不上报**：不发你的 prompt，不发任何代码，不发命令的 stdout/stderr 内容。
@@ -39,8 +39,9 @@ curl -sb "<你登录时浏览器里的会话 cookie>" -X POST <cockpit 地址>/a
 | `COCKPIT_URL` | cockpit 地址，比如 `http://127.0.0.1:8800/` |
 | `COCKPIT_TOKEN` | 设备 token |
 | `COCKPIT_TASK` | 可选。这次 run 挂在哪个任务上；不设就走目录映射，再不然就是收件箱 |
+| `COCKPIT_PROJECT` | 可选。定不出任务时，这次 run 挂在哪个项目上（见「挂到项目」） |
 
-**配置文件**（跨会话常驻，含目录 → 任务的映射）：
+**配置文件**（跨会话常驻，含目录 → 任务、目录 → 项目的映射）：
 
 | 系统 | 路径 |
 |---|---|
@@ -59,18 +60,52 @@ curl -sb "<你登录时浏览器里的会话 cookie>" -X POST <cockpit 地址>/a
   "tasks": {
     "/home/you/code/project-a": "task-id-1",
     "/home/you/code/project-b/backend": "task-id-2"
+  },
+  "projects": {
+    "/home/you/agents/CFO_agent": "project-id-finance",
+    "/home/you/code": "project-id-dev"
   }
 }
 ```
 
-## 任务怎么定（解析顺序）
+## 任务 / 项目怎么定（解析顺序）
 
-1. 显式传入的值（`cockpit-run --task xxx` 的那个 `--task`）
+先到先得，定出任务就不再看项目（任务本身就在某个项目里）：
+
+1. 显式传入的任务（`cockpit-run --task xxx` 的那个 `--task`）
 2. `COCKPIT_TASK` 环境变量
 3. 配置文件 `tasks` 里，当前目录**最长匹配**的那条目录前缀
    （比如同时配了 `/code` 和 `/code/project-a`，在 `/code/project-a/sub` 下跑，
    用的是 `/code/project-a` 那条）
-4. 都没有 → 收件箱（`taskId` 不传）
+4. 显式传入的项目（`cockpit-run --project xxx`）
+5. `COCKPIT_PROJECT` 环境变量
+6. 配置文件 `projects` 里，当前目录最长匹配的那条目录前缀（规则同第 3 条）
+7. 都没有 → 收件箱（`taskId`、`projectId` 都不传）
+
+## 挂到项目：目录 → 项目（v0.4 追加）
+
+大多数代理会话开起来的时候并不知道自己在做哪个**任务**，但一定知道自己在哪个**目录**——而目录属于哪个项目是固定的。
+在配置文件的 `projects` 里写一次「目录 → 项目 id」（项目 id 在 cockpit 的项目页 / `GET /api/core/views/tree` 里看），
+此后在这个目录（或它下面任何一层）里开的会话就自动属于那个项目，不用每次指定任务：
+
+```json
+{ "projects": { "/home/you/agents/CFO_agent": "project-id-finance" } }
+```
+
+- 这样的 run **只挂项目、不挂任务**（nexus-core 契约 v2.13「只挂项目的运行」）：代理时长记在这个项目名下，
+  时间线上这条泳道显示在这个项目里。它仍然只是代理的时长，**不计入人的时间**。
+- 同一个目录既在 `tasks` 又在 `projects` 里时任务优先（上面的解析顺序）。
+- 值写错（项目不存在）→ cockpit 回 404，本工具照旧只在 stderr 留一行「HTTP 404」，这次不计时，会话 / 命令不受影响。
+- cockpit 还没升到带 v2.13 的版本时，多出的 `projectId` 被忽略，run 落收件箱（同没配）。
+
+**顺带得到的：人的窗口也跟着归到这个项目。** 终端标签页的标题通常就是会话所在的目录名（Claude Code 会在前面加
+「✳」之类的状态符号，终端会在后面加「 - Ptyxis」之类的程序名）。桌面检测程序（`modules/ai-detector`）上传你的前台活动时，
+cockpit 把标题去掉这些装饰后与**同一时间在跑的会话**的 `label` / `match`（就是下文的工作目录名）比：完全相等，就把这段活动
+预先标到这个会话的项目上，你在「AI助理」页确认时项目已经选好，不必等 AI 从标题猜（契约 v2.13「窗口 ↔ 代理会话」）。
+它只是预选，不会替你确认任何东西。两个前提：
+
+- 标签页标题与目录名一致（改了标签页标题的话，用 `cockpit-run --match <标题>` / `--label <标题>` 报同一个名字）；
+- 检测程序的隐私设置允许终端标题**原样**上传——标题被去掉或换成代号（「窗口名3」）时对不上，这是有意的。
 
 ## `cockpit-run`：包一层跑任何命令
 
@@ -81,6 +116,7 @@ python3 tools/agent-hooks/cockpit-run --task task-id-1 -- codex exec "把这个 
 ```
 
 - `--task`：任务 id，不给就走上面的解析顺序
+- `--project`：项目 id，定不出任务时只挂项目；不给就走上面的解析顺序
 - `--agent`：agent 显示名，不给就用当前目录名
 - `--tool`：工具名，不给就用被包装命令的可执行文件名（上面例子里是 `codex`）
 - `--` 之后的全部原样传给子进程：stdin/stdout/stderr 透传，退出码原样返回
@@ -141,7 +177,7 @@ Claude Code 设置文件**）：
 但这次的结束状态就报不上去了）。
 
 - `SessionStart` → 开一条 run（agent = 项目目录名，tool = `claude-code`，
-  model 取钩子输入里的 `model` 字段，拿不到就不传）
+  model 取钩子输入里的 `model` 字段，拿不到就不传；任务 / 项目按上面的解析顺序，用钩子输入里的 `cwd`）
 - `SessionEnd` → 关掉这条 run。Claude Code 不会告诉钩子「这次工作算成功还是
   失败」，所以缺省报 `done`；只有 `reason` 是 `prompt_input_exit`
   （在输入框按 Ctrl-C/Ctrl-D 主动退出）才报 `cancelled`

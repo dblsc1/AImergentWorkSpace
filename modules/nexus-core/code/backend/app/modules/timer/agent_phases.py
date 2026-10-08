@@ -132,6 +132,7 @@ def lane_runs(user: str, *, now: Callable[[], datetime]) -> tuple[datetime, list
     for run in repo.list_agent_runs(user):
         started = agents.ts(run["startedAt"])
         base = {k: run.get(k) for k in ("runId", "agent", "tool", "model", "label", "taskId", "projectId")}
+        base["match"] = run.get("match")  # v2.13：activity 的「窗口 ↔ 代理会话」要认它；views/lanes 不回出
         if "closing" in run:
             data, ended = agents.snapshot_data(run)
             out.append({**base, "startTs": started, "endTs": ended, "outcome": data["outcome"],

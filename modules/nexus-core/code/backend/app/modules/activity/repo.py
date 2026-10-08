@@ -93,7 +93,9 @@ def set_match(user: str, sug_id: str, suggestion: dict) -> bool:
 
 def set_labels(user: str, sug_id: str, labels: dict) -> bool:
     """v2.10 只贴标签（``suggestion.collection`` / ``suggestion.projectId``）：仍 pending 才写，任务、把握、来源不动。"""
-    upd = {"$set": {f"suggestion.{k}": v for k, v in labels.items()}}
+    upd: dict = {"$set": {f"suggestion.{k}": v for k, v in labels.items()}}
+    if "projectId" in labels:  # v2.13：助理给了项目，就不再是「按代理会话对上的」
+        upd["$unset"] = {"suggestion.projectSource": ""}
     return _col().update_one({"user": user, "id": sug_id, "status": "pending"}, upd).matched_count > 0
 
 

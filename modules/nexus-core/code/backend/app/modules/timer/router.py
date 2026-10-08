@@ -133,6 +133,7 @@ Phase = Literal["working", "waiting_input", "waiting_permission", "idle", "error
 
 class AgentStartIn(BaseModel):
     taskId: str | None = None  # 缺省 = 挂收件箱
+    projectId: str | None = Field(default=None, min_length=1, max_length=128)  # v2.13：不带 taskId 时只挂项目
     agent: str = Field(min_length=1, max_length=64)
     tool: str = Field(min_length=1, max_length=64)
     model: str | None = Field(default=None, min_length=1, max_length=64)
@@ -166,11 +167,12 @@ class AgentStopOut(BaseModel):
 
 @agents_router.post("/start", response_model=AgentStartOut, status_code=201)
 def agent_start(body: AgentStartIn, response: Response) -> dict:
-    """不碰人的计时器；可与任意多个运行并发。taskId 不存在 → 404（映射在 main.py）。
+    """不碰人的计时器；可与任意多个运行并发。taskId / projectId 不存在 → 404，两者矛盾 → 400（映射在 main.py）。
     v2.4：同 clientKey 的运行还在跑 → 200 回原运行（不是新建，所以不是 201）。"""
     out, created = service.agent_start(
         body.taskId, body.agent, body.tool, body.model,
         phase=body.phase, label=body.label, match=body.match, client_key=body.clientKey,
+        project_id=body.projectId,
     )
     if not created:
         response.status_code = 200
