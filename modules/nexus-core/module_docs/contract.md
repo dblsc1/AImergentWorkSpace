@@ -1213,6 +1213,23 @@ v2.7「只能配到任务，不能只配到项目」说的是 `matches`（助理
 改挂是人的决定。设备令牌（`Authorization: Bearer`）403，理由同检测设置（auth.gate v1.2「带了 Bearer 就只看令牌」）。
 来源凭据按 v1.6：`actor=ai` 403；`NEXUS_ACTOR_STRICT=1` 时须带人路径凭据。MCP 没有对应工具（`mcp.tools.v1` 不变）。
 
+判定顺序：**先过门，再读任何东西**。两种请求体、以及「目标已是当前归属」的幂等早退都一样——被拒的调用方拿到的
+永远是 403，探不出某个事件 id 在不在；403 时台账、任务表（`{projectId}` 的懒建桶）一个字节不写。
+
+### 一段时间的身份、载荷的类型（规范性）
+
+- **改挂认的是那一段，不只是事件 `id`。** 事件 `id` 不唯一，外部 source 可以再投一条同 `id` 的段。一条
+  `session.reassigned` 只对「同租户、`id` = `data.sessionEventId`、且 `(source, dedupeKey)` = `data.session` 里抄录的那一对」
+  的那条 `session.completed` 生效（读端的 `currentSubject`、`taskId` 过滤、投影重建同一口径）；后来的同 `id` 段不跟着走。
+- **不信载荷的类型。** `session.reassigned` 也会经快照恢复原样进台账（没过本端点）。`data` 不是对象、`seq` 不是整数
+  （布尔也不算）、`sessionEventId` / 抄录的 `source` / `dedupeKey` 不是非空字符串的，一律**当没有这条改挂**——读端与重建
+  跳过它，不报错、不中断。请求体的 `taskId` / `projectId` 只收 1–128 字符的字符串，别的 422。
+- **幂等键不与客户端可控的键同住。** 汇总投影记「这条改挂应用过没有」用单独的 `movedKeys`，不放进 `appliedKeys`
+  （那里是各 source 自己定的 `dedupeKey`）——否则一条 `dedupeKey` 恰好叫 `reassign:…` 的外部事件能把某次改挂的加减吞掉。
+  `movedKeys` 不读出、不进导出。
+- 快照恢复搬进来的改挂可以指向本租户里不存在的任务（与恢复一条指向不存在任务的 `session.completed` 相同：
+  时间算在那个 id 上，读端显示「任务已删除」）；投影行按租户分，碰不到别的租户的数据。
+
 ### 并发
 
 两个并发的改挂各自读到「当前第 n 次」，都想写第 n+1 条——`dedupeKey` 相同，唯一索引只放进一条；没抢到的那个重新读、

@@ -48,8 +48,13 @@ def handle_reassign(envelope: dict) -> None:
     挪到新归属。判据同 ``handle``：那一段没有正时长就没累计过，也就没有可挪的。"""
     data = envelope.get("data") or {}
     subject = envelope.get("subject") or {}
-    seconds = (data.get("session") or {}).get("durationSeconds")
-    if not isinstance(seconds, (int, float)) or isinstance(seconds, bool) or seconds <= 0:
+    session = data.get("session")
+    seconds = session.get("durationSeconds") if isinstance(session, dict) else None
+    ids = (data.get("fromProjectId"), data.get("fromTaskId"), subject.get("project"), subject.get("task"))
+    if (
+        not isinstance(seconds, (int, float)) or isinstance(seconds, bool) or seconds <= 0
+        or not all(i is None or isinstance(i, str) for i in ids)  # 不信载荷的类型：非字符串不进字段路径
+    ):
         return
 
     repo.move_session(

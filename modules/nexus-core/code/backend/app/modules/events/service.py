@@ -115,28 +115,37 @@ def find_by_dedupe(user: str, source: str, dedupe_key: str) -> dict | None:
 # ------------------------------------------------------------- 改挂后的当前归属（v2.11）
 
 
-def latest_reassignments(docs: list[dict]) -> dict[tuple[str, str], dict]:
-    """``(user, sessionEventId)`` → 那一段 ``seq`` 最大的 ``session.reassigned``。纯函数。
+def _identity(user, event_id, source, dedupe_key) -> tuple | None:
+    """一段计时的身份：租户 + 事件 id + 入口的防重身份 (source, dedupeKey)。事件 id 不唯一（外部 source 可以
+    再投一条同 id 的段），所以改挂只认它抄录的那一段。不信载荷的类型——快照恢复搬进来的事实没过改挂端点，
+    不是字符串的一律当没有（不进 dict 键、不进查询）。"""
+    if not all(isinstance(part, str) and part for part in (event_id, source, dedupe_key)):
+        return None
+    return (user or LOCAL_USER, event_id, source, dedupe_key)
+
+
+def latest_reassignments(docs: list[dict]) -> dict[tuple, dict]:
+    """段的身份 → 那一段 ``seq`` 最大的 ``session.reassigned``。纯函数。
 
     「一段时间当前算在谁头上」只有这一个算法：档案读端、改挂端点、投影重建都从这里来。
     """
-    latest: dict[tuple[str, str], dict] = {}
+    latest: dict[tuple, dict] = {}
     for doc in docs:
-        data = doc.get("data") or {}
-        session_id, seq = data.get("sessionEventId"), data.get("seq")
-        if doc.get("type") != REASSIGNED_TYPE or not isinstance(session_id, str) or type(seq) is not int:
+        data = doc.get("data")
+        copied = data.get("session") if isinstance(data, dict) else None
+        if doc.get("type") != REASSIGNED_TYPE or not isinstance(copied, dict) or type(data.get("seq")) is not int:
             continue
-        key = (doc.get("user") or LOCAL_USER, session_id)
-        if key not in latest or seq > latest[key]["data"]["seq"]:
+        key = _identity(doc.get("user"), data.get("sessionEventId"), copied.get("source"), copied.get("dedupeKey"))
+        if key is not None and (key not in latest or data["seq"] > latest[key]["data"]["seq"]):
             latest[key] = doc
     return latest
 
 
-def _current_subject(doc: dict, latest: dict[tuple[str, str], dict]) -> dict | None:
+def _current_subject(doc: dict, latest: dict[tuple, dict]) -> dict | None:
     """改挂过的 ``session.completed`` → 最后一次改挂的去向；没改挂过 / 不是计时段 → None。"""
     if doc.get("type") != SESSION_TYPE:
         return None
-    hit = latest.get((doc.get("user") or LOCAL_USER, doc.get("id")))
+    hit = latest.get(_identity(doc.get("user"), doc.get("id"), doc.get("source"), doc.get("dedupeKey")))
     return hit["subject"] if hit else None
 
 
@@ -152,10 +161,12 @@ def find_sessions(event_id: str) -> list[dict]:
     return repo.query_events(SESSION_TYPE, where={"id": event_id})
 
 
-def reassignments_of(event_id: str) -> list[dict]:
-    """当前租户里某一段的全部改挂，按 ``seq`` 升序（最后一条 = 当前归属）。"""
-    docs = repo.query_events(REASSIGNED_TYPE, where={"data.sessionEventId": event_id})
-    return sorted((d for d in docs if type((d.get("data") or {}).get("seq")) is int), key=lambda d: d["data"]["seq"])
+def reassignments_of(session: dict) -> list[dict]:
+    """当前租户里这一段的全部改挂，按 ``seq`` 升序（最后一条 = 当前归属）。同 id 的别的段的改挂不算。"""
+    mine = _identity(session.get("user"), session.get("id"), session.get("source"), session.get("dedupeKey"))
+    docs = [d for d in repo.query_events(REASSIGNED_TYPE, where={"data.sessionEventId": session["id"]})
+            if latest_reassignments([d]).get(mine) is d]  # 同一套身份与类型判据，不另写一份
+    return sorted(docs, key=lambda d: d["data"]["seq"])
 
 
 # ------------------------------------------------------------- 档案读端（v0.6）

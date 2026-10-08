@@ -80,7 +80,8 @@ def move_session(
     to_task: str | None,
 ) -> bool:
     """v2.11 改挂：一段的秒数从旧归属挪到新归属，``totalSeconds`` 不变。``dedupe_key`` 是那条
-    ``session.reassigned`` 的防重键（与 ``apply_session`` 记的会话键同住 ``appliedKeys``，互不相撞）。
+    ``session.reassigned`` 的防重键，记在 ``movedKeys``（不读出）——``appliedKeys`` 仍然只是「算进来的段」，
+    所以重建（不重放改挂）出来的文档与实时投影的读出来一样。
     纯 ``$inc``、带 upsert：与那一段自己的累计、与别的改挂谁先谁后到达，结果都一样。"""
     inc: dict[str, int] = {}
     for field, delta in (
@@ -91,30 +92,33 @@ def move_session(
     ):
         inc[field] = inc.get(field, 0) + delta  # 同项目内改挂：项目那一项一减一加，抵成 0
     inc = {field: delta for field, delta in inc.items() if delta}
-    return bool(inc) and _inc_current(user, dedupe_key, inc)
+    return bool(inc) and _inc_current(user, dedupe_key, inc, applied="movedKeys")
 
 
-def _inc_current(user: str, dedupe_key: str, inc: dict[str, int]) -> bool:
+def _inc_current(user: str, dedupe_key: str, inc: dict[str, int], applied: str = "appliedKeys") -> bool:
     try:
         result = _col().update_one(
-            {"user": user, "appliedKeys": {"$ne": dedupe_key}},
+            {"user": user, applied: {"$ne": dedupe_key}},
             {
                 "$inc": inc,
-                "$addToSet": {"appliedKeys": dedupe_key},
+                "$addToSet": {applied: dedupe_key},
                 "$setOnInsert": {"user": user},
             },
             upsert=True,
         )
     except DuplicateKeyError:
-        return False  # 文档在，但 appliedKeys 已含此键 → 早已应用过
+        return False  # 文档在，但已含此键 → 早已应用过
     return result.modified_count > 0 or result.upserted_id is not None
 
 
 def read_current(user: str) -> dict | None:
-    doc = _col().find_one({"user": user}, {"_id": 0})
-    for field in ("projects", "tasks") if doc else ():
-        # v2.11：改挂把旧归属减到 0，那个键不再读出（从没记过和全挪走了，读起来一样）
-        doc[field] = {key: secs for key, secs in (doc.get(field) or {}).items() if secs > 0}
+    doc = _col().find_one({"user": user}, {"_id": 0, "movedKeys": 0})
+    for field in ("projects", "tasks"):
+        if doc and field in doc:
+            # v2.11：改挂把旧归属减到 0，那个键不再读出（从没记过和全挪走了，读起来一样）
+            # 只摘「是数、且 ≤ 0」的：外部事件的 id 带点时 $inc 写出的是嵌套文档，原样留着，不拿它比大小
+            doc[field] = {key: secs for key, secs in doc[field].items()
+                          if not (isinstance(secs, (int, float)) and secs <= 0)}
     return doc
 
 
@@ -131,6 +135,7 @@ def apply_daily_stat(
     project_id: str,
     task_id: str | None,
     seconds: int,
+    applied: str = "appliedKeys",
 ) -> bool:
     """``(user, date, projectId, taskId)`` 唯一；同一 ``dedupe_key`` 只累计一次。
 
@@ -138,12 +143,14 @@ def apply_daily_stat(
     Mongo 字段值参与唯一索引没有问题，同一 ``(user,date,projectId)`` 下所有
     「无任务」的事件会落进同一份文档，语义上等价于「这个项目当天的无任务时长」。
 
-    v2.11：改挂用负的 ``seconds`` 从旧归属那行减（``dedupe_key`` 是那条 ``session.reassigned`` 的）。
+    v2.11：改挂用负的 ``seconds`` 从旧归属那行减（``dedupe_key`` 是那条 ``session.reassigned`` 的，
+    ``applied="movedKeys"``——``appliedKeys`` 里是外部 source 自己定的 dedupeKey，同住一个数组的话，
+    一条 dedupeKey 恰好叫 ``reassign:…`` 的外部事件就能把某次改挂的加减吞掉）。
     纯 ``$inc``、带 upsert，所以与那一段自己的累计、与别的改挂的到达顺序无关；减到 0 的行读端不出。
     """
     key = {"user": user, "date": date, "projectId": project_id, "taskId": task_id}
-    query = {**key, "appliedKeys": {"$ne": dedupe_key}}
-    update = {"$inc": {"seconds": seconds}, "$addToSet": {"appliedKeys": dedupe_key}}
+    query = {**key, applied: {"$ne": dedupe_key}}
+    update = {"$inc": {"seconds": seconds}, "$addToSet": {applied: dedupe_key}}
     try:
         result = _daily_col().update_one(query, {**update, "$setOnInsert": key}, upsert=True)
     except DuplicateKeyError:
@@ -174,7 +181,7 @@ def read_daily_stats(
     if date_range:
         query["date"] = date_range
     return list(
-        _daily_col().find(query, {"_id": 0, "user": 0, "appliedKeys": 0}).sort("date", 1)
+        _daily_col().find(query, {"_id": 0, "user": 0, "appliedKeys": 0, "movedKeys": 0}).sort("date", 1)
     )
 
 

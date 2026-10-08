@@ -103,14 +103,18 @@ def handle_reassign(envelope: dict) -> None:
     旧归属那行减、新归属那行加。跳过的判据同 ``handle``（那一段没进过本投影，就没有可挪的）。"""
     data = envelope.get("data") or {}
     subject = envelope.get("subject") or {}
-    session = data.get("session") or {}
+    session = data.get("session")
+    if not isinstance(session, dict):
+        return
     seconds = session.get("durationSeconds")
     date = _day(session.get("startAt"))
     old = (data.get("fromProjectId"), data.get("fromTaskId"))
     new = (subject.get("project"), subject.get("task"))
     if (
         not isinstance(seconds, (int, float)) or isinstance(seconds, bool) or seconds <= 0
-        or date is None or not old[0] or not new[0] or old == new
+        or date is None or old == new
+        or not all(isinstance(p, str) and p for p in (old[0], new[0]))
+        or not all(t is None or isinstance(t, str) for t in (old[1], new[1]))
     ):
         return
 
@@ -122,6 +126,7 @@ def handle_reassign(envelope: dict) -> None:
             project_id=project_id,
             task_id=task_id,
             seconds=delta,
+            applied="movedKeys",
         )
 
 

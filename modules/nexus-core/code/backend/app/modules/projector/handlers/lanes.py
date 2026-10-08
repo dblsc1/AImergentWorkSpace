@@ -94,9 +94,12 @@ def handle_reassign(envelope: dict) -> None:
     """吃一条已落库的 ``session.reassigned``（契约 v2.11）：换那一段的 taskId / projectId，其余不动。"""
     data = envelope.get("data") or {}
     subject = envelope.get("subject") or {}
-    session = data.get("session") or {}
+    session = data.get("session")
     seq = data.get("seq")
-    if type(seq) is not int or not isinstance(session.get("source"), str) or not isinstance(session.get("dedupeKey"), str):
+    if (
+        type(seq) is not int or not isinstance(session, dict)
+        or not isinstance(session.get("source"), str) or not isinstance(session.get("dedupeKey"), str)
+    ):
         return
     repo.reassign_lane(envelope["user"], applied_key(session), subject.get("task"), subject.get("project"), seq)
 

@@ -9,14 +9,17 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from . import reassign as reassign_impl
 from . import service
 
 router = APIRouter(prefix="/timer", tags=["timer"])
 #: v2.1「AI 代理运行」：与人的计时同住 timer 子边界（同一类活状态），路径另起前缀。
 agents_router = APIRouter(prefix="/agents", tags=["agents"])
+#: v2.11「改挂未分类时间」：对象是一段已落账的 session.completed，路径按它起前缀。
+sessions_router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 #: v2.1 人类计时模式。取值不在枚举内 → 422（pydantic 先拦，同 actor 字段口径）。
 Mode = Literal["do", "prompt", "review"]
@@ -215,3 +218,34 @@ def agent_phase(runId: str, body: AgentPhaseIn) -> dict:  # noqa: N803 —— �
 def agent_stop(runId: str, body: AgentStopIn) -> dict:  # noqa: N803 —— 路径参数名即契约
     """runId 不存在 → 404（NotFoundError，映射在 main.py）。"""
     return service.agent_stop(runId, body.outcome, body.output)
+
+
+# ------------------------------------------------ 改挂未分类时间（v2.11，契约「改挂未分类时间」节）
+
+
+class ReassignIn(BaseModel):
+    """``taskId``（归到这个任务）与 ``projectId``（放回这个项目的未分类）二选一；多了未知字段 → 422。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    taskId: str | None = Field(default=None, min_length=1, max_length=128)
+    projectId: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class SessionReassignOut(BaseModel):
+    """``duplicate:true`` = 这一段此刻已经在目标上，什么都没追加；``event`` 是决定当前归属的那条
+    ``session.reassigned``（从没改挂过时为 null）。"""
+
+    sessionEventId: str
+    duplicate: bool
+    fromTaskId: str
+    taskId: str
+    projectId: str
+    seq: int
+    event: StopEvent | None
+
+
+@sessions_router.post("/{eventId}/reassign", response_model=SessionReassignOut)
+def reassign_session(eventId: str, body: ReassignIn, request: Request) -> dict:  # noqa: N803 —— 路径参数名即契约
+    """带 Bearer / actor=ai → 403；段或目标不存在 → 404；不是未分类的段 → 409（映射都在 main.py）。"""
+    return reassign_impl.reassign(eventId, body.taskId, body.projectId, request)
