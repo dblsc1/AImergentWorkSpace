@@ -168,3 +168,25 @@ a.hcl-more { color: var(--ink-2); }
   .hcl-cards { --hcl-card-pad: var(--sp-2); }
   .hcl-stat { margin-left: 0; flex-basis: 100%; }
 }
+
+/* ── 换位动效（2026-10-08，lanes.js motion()）：平移 / 放大由 JS 的 Web Animations 做，这里只有静态的那一半。
+ * 往上走的卡压在别的卡上面，抬起的阴影画在 ::before 上（JS 只动它的 opacity）；相位变了的卡：胶囊弹一下、卡边亮一圈。 */
+.hcl-card { position: relative; }
+.hcl-card::before, .hcl-card.is-phase-changed::after {
+  content: ""; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none; opacity: 0;
+}
+.hcl-card::before { box-shadow: var(--shadow), var(--shadow); }
+.is-rising { position: relative; z-index: 2; }
+.hcl-card.is-phase-changed::after {
+  border: 2px solid var(--agent-work);
+  animation: hcl-flash .9s ease-out 1;
+}
+.hcl-card.is-phase-changed.is-needs-you::after { border-color: var(--agent-wait); }
+.hcl-card.is-phase-changed[data-phase="error"]::after { border-color: var(--danger); }
+.hcl-card.is-phase-changed[data-phase="idle"]::after, .hcl-card.is-phase-changed[data-phase="ended"]::after { border-color: var(--ink-3); }
+.hcl-card.is-phase-changed .hcl-pill { animation: hcl-pop .45s ease-out 1; }
+@keyframes hcl-flash { 25% { opacity: .9; } }
+@keyframes hcl-pop { 40% { transform: scale(1.12); } }
+@media (prefers-reduced-motion: reduce) {
+  .hcl-card.is-phase-changed .hcl-pill { animation: none; }
+}

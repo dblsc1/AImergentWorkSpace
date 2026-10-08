@@ -356,3 +356,33 @@ def test_chip_shows_project_name_for_unclassified_bucket(browser) -> None:
         site.current = {**current, "task": {"id": "t1", "name": "做题", "kind": "normal"}}
         page.evaluate("() => window.dispatchEvent(new Event('honeycomb:timer-changed'))")
         page.wait_for_function("() => document.querySelector('.ckpt-live-word').textContent === '做题'")
+
+
+def test_preview_reorder_slides_rows_without_scaling(browser) -> None:
+    """2026-10-08 换位动效：预览用同一份 lanes.js，重画换位时行平移到新位置（列表式不放大）；第一次打开不动。"""
+    moving = "document.getAnimations().filter(a => a.id === 'hcl-move')"
+    with open_site(browser) as (page, site):
+        hover_open(page)
+        assert page.evaluate(f"() => {moving}.length") == 0
+        d = json.loads(json.dumps(fx.LANES_FULL))
+        next(r for r in d["agents"] if r["runId"] == "run_e")["phases"].append(
+            {"at": fx.at("10:19"), "phase": "waiting_input", "detail": None})
+        site.lanes = d
+        n = len(site.lanes_urls)
+        page.clock.run_for(15_100)
+        page.wait_for_function(f"() => {moving}.length > 0")
+        assert len(site.lanes_urls) == n + 1
+        got = page.evaluate(f"""async () => {{
+            const as = {moving};
+            const out = {{ids: as.map(a => a.effect.target.dataset.runId).sort(),
+                          scaled: as.some(a => a.effect.getKeyframes().some(k => /scale\\(1\\.0[1-9]/.test(k.transform)))}};
+            as.forEach(a => a.finish());
+            await Promise.all(as.map(a => a.finished));
+            const rows = [...document.querySelectorAll('{POP} [data-run-id]')];
+            return {{...out, order: rows.map(n => n.dataset.runId),
+                    transforms: [...new Set(rows.map(n => getComputedStyle(n).transform))]}};
+        }}""")
+        # old-job 转成在等（10:19，比 plot 的 10:12 新）→ 升到最前，其余三行各让一位
+        assert got["order"] == ["run_e", "run_c", "run_a", "run_b"]
+        assert got["ids"] == ["run_a", "run_b", "run_c", "run_e"] and not got["scaled"]
+        assert got["transforms"] == ["none"]

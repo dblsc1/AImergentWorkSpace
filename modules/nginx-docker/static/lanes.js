@@ -10,9 +10,11 @@
  *   currentPhase(run)              按 at 排最后的那条相位，null → working
  *   pickPreview(agents, v0, max)   顶栏预览的挑法与排序（契约「泳道预览」）
  *   activeSeconds(run, v0, v1, now)  运行在视窗里不空闲的秒数
- *   sortByActivity(agents, v0, v1, now)  计时页卡片的排序（在等你的在前，再按活跃秒数、最近转入）
+ *   sortByActivity(agents, v0, v1, now)  计时页卡片的排序（档位：在等你 → 干活 → 出错 → 空闲 → 已结束；同档按活跃秒数、最近转入）
+ *   recentRuns(agents, now)        计时页只留在跑的 + 结束不到 3 小时的运行（2026-10-08）
  *   humanStatus(human, now)        人此刻：在电脑前 / 离开 / 不在线（+ 在计时 / 前台程序）
  *   render(root, data, opts)       画一张图；全部 textContent，不用 innerHTML
+ *                                  同一个 root 第二次起的重画带换位动效（2026-10-08，见 motion()）
  */
 (function () {
   'use strict';
@@ -124,17 +126,25 @@
       if (g.phase !== 'idle') { sum += Math.max(0, Math.min(g.e, v1) - Math.max(g.s, v0)); }
     });
     return { r: r, ph: ph, segs: segs, act: sum / 1000, last: (lastP ? ms(lastP.at) : ms(r.startAt)) || 0,
-      wait: !r.endAt && isWaiting(ph) ? 0 : 1 };
+      tier: r.endAt ? 4 : isWaiting(ph) ? 0 : ph === 'working' ? 1 : ph === 'error' ? 2 : 3 };
   }
 
   function activeSeconds(run, v0, v1, nowMs) { return runInfo(run, v0, v1, nowMs).act; }
 
-  // 计时页卡片的排序（ring 契约 2026-10-03）：在跑且在等你（waiting_input / waiting_permission）的浮到最前，
-  // 其余按视窗内活跃秒数倒序，同分按最近一次相位转入倒序。纯函数，不改入参。返回 runInfo 列表（render 复用）。
+  // 计时页卡片的排序（ring 契约 2026-10-08，取代 10-03 的排法）：档位 在跑且在等你（waiting_input / waiting_permission）
+  // → 在跑且干活 → 在跑出错 → 在跑空闲 → 已结束；同档按视窗内活跃秒数倒序，同分按最近一次相位转入倒序。
+  // 纯函数，不改入参。返回 runInfo 列表（render 复用）。
   function rankRuns(agents, v0, v1, nowMs) {
     return (agents || []).map(function (r) { return runInfo(r, v0, v1, nowMs); }).sort(function (a, b) {
-      return (a.wait - b.wait) || (b.act - a.act) || (b.last - a.last);
+      return (a.tier - b.tier) || (b.act - a.act) || (b.last - a.last);
     });
+  }
+
+  // 计时页的卡片只留「还开着的」和「刚结束的」（ring 契约 2026-10-08）：在跑的都留；已结束的只留 endAt 距
+  // now（服务端的 now）不到 ENDED_KEEP_MS 的。与选的窗口（最近 3 小时 / 今天）无关。纯函数，不改入参。
+  var ENDED_KEEP_MS = 3 * HOUR;
+  function recentRuns(agents, nowMs) {
+    return (agents || []).filter(function (r) { return !r.endAt || nowMs - ms(r.endAt) < ENDED_KEEP_MS; });
   }
 
   function sortByActivity(agents, v0, v1, nowMs) {
@@ -189,13 +199,70 @@
     return 3 * HOUR;
   }
 
+  /* 换位动效（2026-10-08）。重画照旧整棵换掉，动效只靠「按 runId 记的旧位置」做 FLIP：
+   * before = 重画前各行 / 卡的 {rect（看不见 = null）, ph}，重画后一次读完新位置、再一次写完动画（不来回量）。
+   *   往上走：略放大（只卡片式）+ 抬起的阴影 + 压在别的卡上面，ease-out，几张一起上时自上而下各晚 50 毫秒（排队）
+   *   往下走：只平移，稍慢稍软
+   *   新出现：淡入 + 上浮；从折叠区里出来 / 进去（一头看不见）：只淡入
+   *   相位变了：is-phase-changed（胶囊与卡边闪一下，样式在 lanes.css）
+   * 只动 transform / opacity；prefers-reduced-motion 时不平移不放大，只留淡入。第一次画、页面不可见时不动。 */
+  var MOVE_ID = 'hcl-move';
+  // 看得见才有位置。收着的 <details> 里的卡在新浏览器里仍有盒子（content-visibility），所以另看一眼祖先
+  function seenRect(n) {
+    return n.getClientRects().length && !n.closest('details:not([open])') ? n.getBoundingClientRect() : null;
+  }
+  function snapshot(root) {
+    var map = {};
+    Array.prototype.forEach.call(root.querySelectorAll('[data-run-id]'), function (n) {
+      var id = n.getAttribute('data-run-id');
+      if (id) { map[id] = { rect: seenRect(n), ph: n.getAttribute('data-phase') }; }
+    });
+    return map;
+  }
+  function motion(root, before, cards) {
+    if (!before || !root.animate || document.visibilityState === 'hidden') { return; }
+    var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var jobs = [];
+    Array.prototype.forEach.call(root.querySelectorAll('[data-run-id]'), function (n) {      // 先全部读
+      var old = before[n.getAttribute('data-run-id')];
+      var rect = seenRect(n);
+      if (old && old.ph !== n.getAttribute('data-phase')) { n.classList.add('is-phase-changed'); }
+      if (!rect) { return; }
+      if (!old || !old.rect) { jobs.push({ n: n, top: rect.top, fresh: !old }); return; }
+      var dx = old.rect.left - rect.left, dy = old.rect.top - rect.top;
+      if (Math.abs(dx) > 1 || Math.abs(dy) > 1) { jobs.push({ n: n, top: rect.top, dx: dx, dy: dy }); }
+    });
+    var fade = { duration: 280, easing: 'ease-out', id: MOVE_ID }, ups = 0;
+    jobs.sort(function (a, b) { return a.top - b.top; }).forEach(function (j) {              // 再全部写
+      var n = j.n, at = function (k, sc) {
+        return 'translate(' + j.dx * k + 'px,' + j.dy * k + 'px) scale(' + sc + ')';
+      };
+      if (j.dy === undefined) {
+        n.animate(j.fresh && !still ? [{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }]
+          : [{ opacity: 0 }, { opacity: 1 }], fade);
+      } else if (still) {
+        return;                                        // 减少动态效果：直接到位
+      } else if (j.dy > 0) {
+        var t = { duration: 360, delay: 50 * ups++, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'backwards', id: MOVE_ID };
+        n.classList.add('is-rising');
+        n.animate([{ transform: at(1, 1) }, { transform: at(.6, cards ? 1.025 : 1), offset: .4 }, { transform: at(0, 1) }], t)
+          .onfinish = function () { n.classList.remove('is-rising'); };
+        // 抬起的阴影画在 ::before 上、只动它的 opacity（不动 box-shadow 本身）
+        if (cards) { try { n.animate([{ opacity: 0 }, { opacity: 1, offset: .4 }, { opacity: 0 }], { duration: t.duration, delay: t.delay, easing: 'ease-out', pseudoElement: '::before' }); } catch (e) { /* 老浏览器没有 pseudoElement：不要阴影 */ } }
+      } else {
+        n.animate([{ transform: at(1, 1) }, { transform: at(0, 1) }],
+          { duration: 440, easing: 'cubic-bezier(.4,0,.2,1)', id: MOVE_ID });
+      }
+    });
+  }
+
   /* render(root, data, opts)
    *   opts.viewStart / viewEnd  ms，画的时间范围（段裁到这里）
    *   opts.agents               要画的运行（缺省 data.agents 里与视窗有重叠的）
    *   opts.presence             画人的在场带（计时页与顶栏预览都画，2026-10-03 起）
    *   opts.compact              顶栏预览的紧凑尺寸
-   *   opts.cards / top          计时页的卡片布局：人一张卡钉在最前，代理按 sortByActivity 排，
-   *                             前 top 张（缺省 5）展开，其余收进 <details>「还有 N 个」
+   *   opts.cards / top          计时页的卡片布局（只画 recentRuns：结束超过 3 小时的不画）：人一张卡钉在最前，代理按 sortByActivity 排，
+   *                             前 top 张（缺省 5；在等你 / 干活的卡永不折叠，多于 top 就全展开）展开，其余收进 <details>「还有 N 个」
    *   opts.more / moreHref      区尾一行（「还有更多」/「还有 N 个 → 计时页」）
    *   opts.focusFallback        焦点在区尾链接上、重画后链接没了时，焦点交给它
    * 返回画了的代理运行的 runInfo 列表（按画的顺序；r / ph / act / last …），调用方拿来数状态，不必再排一遍 phases。
@@ -219,6 +286,9 @@
     var oldFold = root.querySelector('details.hcl-fold');
     if (oldFold) { root.hclFoldOpen = oldFold.open; }
     var foldFocus = !!(oldFold && a && oldFold.contains(a) && a.tagName === 'SUMMARY');
+    // 换位动效要的旧位置（第一次画没有 → 不动）；同一个 root 换了布局（卡片 ↔ 列表）也当第一次
+    var before = root.hclDrawn === cards ? snapshot(root) : null;
+    root.hclDrawn = cards;
     root.textContent = '';
     root.className = 'hcl' + (opts.compact ? ' hcl-compact' : '') + (cards ? ' hcl-cards' : '');
 
@@ -342,12 +412,15 @@
     var agents = opts.agents || (data.agents || []).filter(function (r) {
       return inView(ms(r.startAt), r.endAt ? ms(r.endAt) : now);
     });
+    if (cards) { agents = recentRuns(agents, now); }
     var vEnd = Math.min(v1, now);
     var infos = cards ? rankRuns(agents, v0, vEnd, now)
       : agents.map(function (r) { return runInfo(r, v0, vEnd, now); });
     // ponytail: 折叠区里的卡也整张建好（只是收着）；几十个运行无所谓，真到读端上限 200 个嫌慢再改成展开时才建
     agents = infos.map(function (k) { return k.r; });
     var top = cards ? (opts.top || 5) : agents.length;
+    // 在跑且在等你 / 在干活的（档 0–1）不许被折叠：多于 top 个就全展开，折叠从它们之后才开始
+    if (cards) { infos.forEach(function (k, i) { if (k.tier <= 1 && i + 1 > top) { top = i + 1; } }); }
     var fold = null, foldList = null;
     if (agents.length > top) {
       fold = el('details', 'hcl-fold');
@@ -366,6 +439,7 @@
         live && !cards ? PHASE_CLASS[ph] : null);
       var card = track.parentNode;
       card.setAttribute('data-run-id', r.runId || '');
+      card.setAttribute('data-phase', live ? ph : 'ended');
       rowOf[r.runId] = cards ? track : i + 1;
       if (cards) {
         var head = track.previousSibling;
@@ -470,12 +544,13 @@
       tip.style.top = (r.bottom - box.top + 4) + 'px';
     };
     root.onmouseleave = hideTip;
+    motion(root, before, cards);
     return infos;
   }
 
   window.HoneycombLanes = {
     query: query, prevDay: prevDay, segments: segments, currentPhase: currentPhase,
-    pickPreview: pickPreview, activeSeconds: activeSeconds, sortByActivity: sortByActivity,
+    pickPreview: pickPreview, activeSeconds: activeSeconds, sortByActivity: sortByActivity, recentRuns: recentRuns,
     humanStatus: humanStatus, render: render, PHASE_WORD: PHASE_WORD
   };
 })();

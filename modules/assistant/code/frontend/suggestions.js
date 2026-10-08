@@ -17,6 +17,11 @@
  * - 提议新任务（nexus-core v2.8，仓主 2026-10-03「AI 能自动加新任务」，草稿 + 一键确认）：助理找不到合适的现成任务时
  *   可以提议「新建任务：项目 / 名称」。行上名字可改；「是 ✓」= confirm {name, proposalId}（后端建任务，同一提议只建一个；
  *   提议在页面显示之后变了 → 409），组里每一段都这样发（后端复用建好的任务）；「否 ✗」= unmatch {proposalId}。下拉仍可改选现成任务。**「全部确认」永远不建任务**。
+ * - 集合（nexus-core v2.10，仓主 2026-10-08「碎片太多」）：最上面一层是集合，按总时长从大到小排。助理分过的按
+ *   suggestion.collection.key 归；没分过的按「程序 + 去掉开头状态符号 / 计数的标题」归，不用 AI 也能把只差转圈符号的并到一起。
+ *   集合头：名字、合计、项目下拉（集合里的建议都指向同一个项目时预选）、「确认整个集合」。集合选了项目后，里面每行的下拉
+ *   只列这个项目的任务，空着 =「未分类」= confirm {projectId}（nexus-core v2.9：记进项目的未分类）；「其他项目…」退回全部任务。
+ *   「确认整个集合」逐行发 {taskId} 或 {projectId}；无操作的行、要新建任务的行永远不在里面。集合的项目只记在页面上。
  * 对外只挂 window.assistantSuggestions（纯函数，给单测用）。
  *
  * - 端点 404（后端早于 v2.2）→ 整块不出现，不报错。
@@ -150,12 +155,69 @@
     return { rule: r };
   }
 
+  // ── 集合（v2.10）──
+  // 没有 AI 集合标签时的归并用：去掉标题开头的状态符号（✳ ⠂ ● * 之类）、计数「(3)」「[2]」，空白并成一个。
+  // 去完是空的（标题只有符号）就用原样的。
+  function normTitle(title) {
+    var t = String(title || "").replace(/\s+/g, " ").trim();
+    return t.replace(/^(?:[\p{So}*•·]|\(\d+\)|\[\d+\]|\s)+/u, "") || t;
+  }
+
+  // taskId → 所在项目的 id；查不到返回 null
+  function projectOfTask(tree, taskId) {
+    var ps = (tree && taskId && tree.projects) || [];
+    for (var i = 0; i < ps.length; i++) {
+      if ((ps[i].tasks || []).some(function (t) { return t.id === taskId; })) return ps[i].id;
+    }
+    return null;
+  }
+
+  // 待确认的段 → 集合，按总时长从大到小（一样长的按先出现的在前）。助理分过的按它给的 key；没分过的按程序 + normTitle。
+  // 每个集合：{key, name, items, groups（集合里按窗口分的行，同 groupItems）, seconds, startAt, endAt}。
+  function collect(list) {
+    var out = [], by = {};
+    (list || []).forEach(function (it) {
+      var c = (it.suggestion || {}).collection, nt = normTitle(it.title);
+      var k = c && c.key ? "ai:" + c.key : "win:" + JSON.stringify([it.app, nt]);
+      if (!by[k]) {
+        out.push(by[k] = { key: k, name: c && c.key ? c.name || c.key : it.app + (nt ? " · " + nt : ""),
+          items: [], seconds: 0, startAt: it.startAt, endAt: it.endAt });
+      }
+      var o = by[k];
+      o.items.push(it);
+      o.seconds += it.durationSeconds || 0;
+      if (new Date(it.startAt) < new Date(o.startAt)) o.startAt = it.startAt;
+      if (new Date(it.endAt) > new Date(o.endAt)) o.endAt = it.endAt;
+    });
+    out.forEach(function (o) {
+      o.groups = groupItems(o.items);
+      // 行的键带上集合：同一个窗口的几段被助理分进两个集合时，两行各记各的选择
+      o.groups.forEach(function (g) { g.coll = o; g.key = JSON.stringify([o.key, g.key]); });
+    });
+    return out.sort(function (a, b) { return b.seconds - a.seconds; }); // Array.prototype.sort 是稳定的
+  }
+
+  // 集合里的建议指向的项目：任务所在的项目、提议新任务的项目、助理只标到项目的（suggestion.projectId）。
+  // 有建议的段都指向同一个还在树里的项目才算（预选它）；没有建议的段不算数；不一致返回 ""，让人挑。
+  function suggestedProject(c, tree) {
+    var seen = {};
+    c.items.forEach(function (it) {
+      var s = it.suggestion || {};
+      var p = projectOfTask(tree, s.taskId) || (s.newTask && s.newTask.projectId) || s.projectId;
+      if (p && projectPath(tree, p) !== null) seen[p] = true;
+    });
+    var ids = Object.keys(seen);
+    return ids.length === 1 ? ids[0] : "";
+  }
+
   window.assistantSuggestions = { formatRange: formatRange, taskPath: taskPath, eligible: eligible, aiMatch: aiMatch,
     groupItems: groupItems, groupSuggestion: groupSuggestion, eligibleGroups: eligibleGroups, windowRule: windowRule,
-    projectPath: projectPath, newTaskOf: newTaskOf };
+    projectPath: projectPath, newTaskOf: newTaskOf, normTitle: normTitle, collect: collect,
+    suggestedProject: suggestedProject, projectOfTask: projectOfTask };
 
   var AI_PROMPT = "请匹配待确认的活动：读取待确认的活动记录和我的项目、任务，" +
-    "给能判断的每条活动配一个最合适的任务；现成任务都不合适、又明显属于某个项目的，可以提议一个新任务；拿不准的跳过。";
+    "先把同类的零碎窗口归进集合（每条都归），看得出项目的标上项目；" +
+    "再给能判断的活动配一个最合适的任务；现成任务都不合适、又明显属于某个项目的，可以提议一个新任务；任务拿不准的不配。";
 
   // ── DOM ─────────────────────────────────────────────────────────────
   var panelEl = document.getElementById("suggest-panel");
@@ -170,7 +232,12 @@
   if (!panelEl || !listEl) return;
 
   var items = [];
-  var groups = []; // items 按窗口分的组（render 时重算）
+  var colls = []; // items 分成的集合（render 时重算），按总时长从大到小
+  var groups = []; // 所有集合里按窗口分的组，摊平（render 时重算）
+  var collProject = {}; // 集合键 → 人给集合选的项目（"" = 明说不选）；集合没了就丢
+  var opened = {}; // 集合键 → 人展开 / 收起过（重绘时保留）；集合没了就丢
+  var other = {}; // 下拉选择键 → 这行改看全部项目的任务（true）/ 改回只看集合的项目（false）
+  var OTHER = "__other", BACK = "__back"; // 下拉里两个不是任务的选项
   var total = 0; // 服务端的待确认总数；一次只拉 200 条，多出来的要让人知道还有
   var tree = null;
   var chosen = {}; // 组键 → 人在下拉里改过的 taskId（重绘时保留）
@@ -210,33 +277,55 @@
 
   // 一组此刻显示的样子。下拉的选择按「组 + 组此刻的建议」记：重拉后建议变了（比如助理刚配了任务），旧的选择自然作废，
   // 行上的按钮与「全部确认」发的都是 taskId（= 下拉里看得到的那个任务；不在当前任务树里的一律当没选）。
+  // 集合此刻的项目：人挑过的（还在树里，或明说不选）优先，否则集合里的建议一致指向的那个；没有 = ""
+  function projectOf(c) {
+    var h = collProject[c.key];
+    return h !== undefined && (h === "" || projectPath(tree, h) !== null) ? h : suggestedProject(c, tree);
+  }
+
+  // v2.10：集合有项目时这行是 scoped——下拉只列这个项目的任务，空 = 记到项目的「未分类」（projectId 非空）。
+  // 助理配的（是 / 否）与提议新任务的行照旧；任务在别的项目、或人点了「其他项目…」→ 不 scoped，同没有集合项目时。
   function view(g) {
+    var P = g.coll ? projectOf(g.coll) : "";
     var s = groupSuggestion(g), ai = aiMatch({ suggestion: s }, tree), nt = newTaskOf(s, tree);
-    var ck = JSON.stringify([g.key, s.taskId, Boolean(s.mixed), ai, nt ? nt.proposalId : null]);
+    var ck = JSON.stringify([g.key, s.taskId, Boolean(s.mixed), ai, nt ? nt.proposalId : null, P]);
     if (chosen[ck] && taskPath(tree, chosen[ck]) === null) delete chosen[ck]; // 选过的任务刷新后被删了
     var t = ai || chosen[ck] === undefined ? s.taskId : chosen[ck];
-    return { s: s, ai: ai, nt: nt, ck: ck, taskId: t && taskPath(tree, t) !== null ? t : "" };
+    var taskId = t && taskPath(tree, t) !== null ? t : "";
+    var away = other[ck] !== undefined ? other[ck] : Boolean(taskId) && projectOfTask(tree, taskId) !== P;
+    var scoped = Boolean(P) && !ai && !nt && !away;
+    return { s: s, ai: ai, nt: nt, ck: ck, taskId: taskId, P: P, scoped: scoped, projectId: scoped && !taskId ? P : "" };
   }
 
   function taskSelect(v, placeholder) {
     var sel = document.createElement("select");
     sel.className = "field suggest-task";
     sel.setAttribute("aria-label", "确认到哪个任务");
-    sel.appendChild(new Option(placeholder || "选择任务…", ""));
+    sel.appendChild(new Option(v.scoped ? "未分类（只记到这个项目）" : placeholder || "选择任务…", ""));
     var zones = {};
     ((tree && tree.zones) || []).forEach(function (z) { zones[z.id] = z.name; });
     ((tree && tree.projects) || []).forEach(function (p) {
       var tasks = p.tasks || [];
-      if (!tasks.length) return;
+      if (!tasks.length || (v.scoped && p.id !== v.P)) return;
       var group = document.createElement("optgroup");
       group.label = [zones[p.zoneId], p.name].filter(Boolean).join(" / ");
       tasks.forEach(function (t) { group.appendChild(new Option(t.name, t.id)); });
       sel.appendChild(group);
     });
+    if (v.scoped) sel.appendChild(new Option("其他项目…", OTHER));
+    else if (v.P && !v.nt) sel.appendChild(new Option("← 只看集合的项目", BACK));
     var want = v.taskId || "";
     sel.value = want;
     if (sel.value !== want) sel.value = ""; // 建议的任务已不在树里：让人重挑
-    sel.addEventListener("change", function () { chosen[v.ck] = sel.value; syncButtons(); });
+    sel.addEventListener("change", function () {
+      if (sel.value !== OTHER && sel.value !== BACK) { chosen[v.ck] = sel.value; syncButtons(); return; }
+      other[v.ck] = sel.value === OTHER; // 换一套选项：重绘（这行的选择清空，焦点还给它）
+      chosen[v.ck] = "";
+      var id = sel.closest("li").dataset.id;
+      render();
+      var again = [].filter.call(listEl.querySelectorAll("li"), function (li) { return li.dataset.id === id; })[0];
+      if (again && again.querySelector("select")) again.querySelector("select").focus();
+    });
     return sel;
   }
 
@@ -310,8 +399,10 @@
     } else {
       var rejected = g.items.some(function (it) { return (it.rejectedTaskIds || []).length; });
       var hint = s.taskId ? "建议：" + (path || "（任务已不存在）") + pct
+        : v.scoped ? (s.mixed ? "建议不一致；" : rejected ? "AI 的建议已否掉；" : "") + "不选任务就记到这个项目的「未分类」"
         : s.mixed ? "建议不一致，请自己选任务"
         : rejected ? "AI 的建议已否掉，请自己选任务，或忽略" : "没有建议，请选任务";
+      if (v.scoped) li.dataset.scoped = "1"; // 下拉空着也能确认（记到未分类）
       li.appendChild(el("p", "suggest-hint", hint));
       li.appendChild(sel = taskSelect(v));
     }
@@ -332,7 +423,7 @@
     }
     ok.addEventListener("click", function () {
       var pick = sel ? sel.value : s.taskId;
-      act([{ g: g, ck: v.ck, taskId: pick, remember: Boolean(cb && cb.checked),
+      act([{ g: g, ck: v.ck, taskId: pick, projectId: v.scoped && !pick ? v.P : "", remember: Boolean(cb && cb.checked),
         newName: nt && !pick ? nameEl.value.trim() : "", proposalId: nt && !pick ? nt.proposalId : "" }], "confirm");
     });
     no.addEventListener("click", function () {
@@ -342,6 +433,56 @@
     row.appendChild(no);
     li.appendChild(row);
     return li;
+  }
+
+  // 一个集合：头（名字、合计、项目下拉、「确认整个集合」、这一下会怎么记）+ 折叠着的窗口行。
+  // 项目下拉与按钮不放进 <summary>：收着也能直接定；只有一个窗口的集合缺省展开（没什么可收的）。
+  function renderColl(c) {
+    var sec = el("section", "suggest-coll");
+    sec.dataset.key = c.key;
+    sec.appendChild(el("h3", "suggest-coll-name", c.name));
+    sec.appendChild(el("p", "suggest-coll-meta mono", "共 " + formatMinutes(c.seconds) + " · " + c.groups.length +
+      " 个窗口 · " + c.items.length + " 段 · " + formatRange(c.startAt, c.endAt)));
+    var bar = el("div", "suggest-coll-act");
+    var sel = el("select", "field suggest-project");
+    sel.setAttribute("aria-label", "这个集合记到哪个项目");
+    sel.appendChild(new Option("选择项目…", ""));
+    ((tree && tree.projects) || []).forEach(function (p) { sel.appendChild(new Option(projectPath(tree, p.id), p.id)); });
+    sel.value = projectOf(c);
+    sel.addEventListener("change", function () {
+      collProject[c.key] = sel.value; // 只记在页面上；里面每行的下拉跟着换
+      render();
+      var again = [].filter.call(listEl.querySelectorAll(".suggest-coll"), function (n) { return n.dataset.key === c.key; })[0];
+      if (again) again.querySelector(".suggest-project").focus();
+    });
+    var btn = el("button", "btn btn-fact suggest-confirm-coll", "确认整个集合");
+    btn.type = "button";
+    btn.addEventListener("click", function () { act(collJobs(c), "confirm", true); });
+    bar.appendChild(sel);
+    bar.appendChild(btn);
+    sec.appendChild(bar);
+    sec.appendChild(el("p", "suggest-coll-plan"));
+    var det = el("details", "suggest-coll-rows");
+    det.open = opened[c.key] !== undefined ? opened[c.key] : c.groups.length === 1;
+    det.addEventListener("toggle", function () { opened[c.key] = det.open; });
+    det.appendChild(el("summary", null, "看这 " + c.groups.length + " 个窗口"));
+    var ul = el("ul", "suggest-rows");
+    c.groups.forEach(function (g) { ul.appendChild(renderGroup(g)); });
+    det.appendChild(ul);
+    sec.appendChild(det);
+    return sec;
+  }
+
+  // 「确认整个集合」发什么：每个窗口行此刻看得到的——选了任务的记到任务，scoped 且没选的记到项目的未分类。
+  // 无操作的行（契约：由人逐条定）、没东西可发的行（要新建任务的、没项目也没选任务的）不在里面。
+  function collJobs(c) {
+    var jobs = [];
+    c.groups.forEach(function (g) {
+      var v = view(g);
+      if (g.idle || (!v.taskId && !v.projectId)) return;
+      jobs.push({ g: g, ck: v.ck, taskId: v.taskId, projectId: v.projectId, remember: Boolean(remember[g.key]) });
+    });
+    return jobs;
   }
 
   // 下拉被人清空的组（看得到的任务是空）不进「全部确认」
@@ -356,8 +497,21 @@
     listEl.querySelectorAll("li").forEach(function (li) {
       var sel = li.querySelector("select"); // 助理配的条目没有下拉：「是」总可点
       var name = li.querySelector(".suggest-newname"); // 提议新任务：没选现成任务时名字不能空
-      li.querySelector(".suggest-confirm").disabled = busy || Boolean(sel && !sel.value && !(name && name.value.trim()));
+      li.querySelector(".suggest-confirm").disabled = busy ||
+        Boolean(sel && !sel.value && !li.dataset.scoped && !(name && name.value.trim()));
       li.querySelector(".suggest-dismiss, .suggest-no").disabled = busy;
+    });
+    listEl.querySelectorAll(".suggest-coll").forEach(function (sec, i) {
+      var c = colls[i], nTask = 0, nProj = 0;
+      collJobs(c).forEach(function (j) { if (j.taskId) nTask += j.g.items.length; else nProj += j.g.items.length; });
+      var rest = c.items.length - nTask - nProj, btn = sec.querySelector(".suggest-confirm-coll");
+      btn.textContent = "确认整个集合" + (nTask + nProj ? " · " + (nTask + nProj) + " 段" : "");
+      btn.disabled = busy || nTask + nProj === 0;
+      sec.querySelector(".suggest-project").disabled = busy;
+      sec.querySelector(".suggest-coll-plan").textContent = nTask + nProj === 0
+        ? "先给集合选项目，或展开后逐个窗口定"
+        : [nTask ? nTask + " 段记到选好的任务" : "", nProj ? nProj + " 段记到「" + projectPath(tree, projectOf(c)) + "」的未分类" : "",
+          rest ? rest + " 段要展开后单独定" : ""].filter(Boolean).join("，");
     });
     if (aiBtnEl) {
       aiBtnEl.hidden = !chat.configured; // 没装聊天后端 / 没配模型：不出现
@@ -369,8 +523,14 @@
 
   function render() {
     listEl.textContent = "";
-    groups = groupItems(items);
-    groups.forEach(function (g) { listEl.appendChild(renderGroup(g)); });
+    colls = collect(items);
+    groups = [].concat.apply([], colls.map(function (c) { return c.groups; }));
+    var alive = {};
+    colls.forEach(function (c) { alive[c.key] = true; });
+    [collProject, opened].forEach(function (m) { // 集合没了，页面上为它记的也丢
+      Object.keys(m).forEach(function (k) { if (!alive[k]) delete m[k]; });
+    });
+    colls.forEach(function (c) { listEl.appendChild(renderColl(c)); });
     countEl.textContent = items.length ? String(items.length) : "";
     emptyEl.hidden = items.length > 0;
     var more = total - items.length;
@@ -406,7 +566,7 @@
     return true;
   }
 
-  // jobs = [{g, ck, taskId, remember, newName?, proposalId?}]：一组里逐段发，失败的留在列表里，按组报后端 detail 原文（同补登规则 3）；
+  // jobs = [{g, ck, taskId, projectId?, remember, newName?, proposalId?}]（taskId 空而 projectId 非空 = 记到项目的未分类）：一组里逐段发，失败的留在列表里，按组报后端 detail 原文（同补登规则 3）；
   // 同组已成功的段就是确认了，不回滚。unmatch 只发带着那个建议的段。
   // busy 从第一个请求一直到列表重拉完：期间阈值、聊天状态等触发的 syncButtons 不会把旧列表上的按钮放开。
   async function act(jobs, action, bulk) {
@@ -432,7 +592,8 @@
           var body = action === "dismiss" ? undefined
             : action === "unmatch" ? (pid ? { proposalId: pid } : { taskId: taskId })
             // 新任务：每一段都带提议（后端只建一次、其余复用），提议在页面显示之后变了的段 409，不会被记到别处
-            : newName ? { name: newName, proposalId: pid } : { taskId: taskId };
+            : newName ? { name: newName, proposalId: pid }
+            : taskId || !jobs[j].projectId ? { taskId: taskId } : { projectId: jobs[j].projectId };
           var r = await post(API + "/" + encodeURIComponent(targets[i].id) + "/" + action, body);
           if (r.ok) {
             ok += 1;
@@ -449,7 +610,9 @@
         }
         if (created) notes.push("已新建任务「" + newName + "」，" + ok + " 段记进去了。");
         var rule = windowRule(g.app, g.title, created || taskId).rule;
-        if (action === "confirm" && jobs[j].remember && ok > 0 && rule) {
+        if (action === "confirm" && jobs[j].remember && ok > 0 && !(created || taskId)) {
+          notes.push("记到了未分类，没有具体任务，这个窗口的规则没加。");
+        } else if (action === "confirm" && jobs[j].remember && ok > 0 && rule) {
           var rr = await window.assistantRules.prepend(rule);
           if (!rr.ok) errors.push(label(g) + "：已确认，但规则没加上：" + rr.detail);
           else {
@@ -510,7 +673,9 @@
       syncButtons();
       if (!asked) return;
       var n = items.filter(function (it) { return aiMatch(it, tree) || newTaskOf(it.suggestion, tree); }).length;
-      showMessage(n ? "AI 给 " + n + " 条配了任务，逐条点「是」或「否」。"
+      var k = colls.filter(function (c) { return c.key.indexOf("ai:") === 0; }).length;
+      showMessage(k ? "AI 把活动分成了 " + k + " 个集合" + (n ? "，给 " + n + " 条配了任务" : "") + "。给集合选项目后确认，或展开逐条定。"
+        : n ? "AI 给 " + n + " 条配了任务，逐条点「是」或「否」。"
         : "AI 这次没配上任何一条，原因见上面的对话。", false);
     });
   });

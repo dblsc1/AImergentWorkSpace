@@ -243,6 +243,22 @@ main.page {
 .suggest-rule { font-size: var(--fs-sub); color: var(--ink-2); overflow-wrap: anywhere; min-height: var(--tap); display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-1); }
 .suggest-rule-why { color: var(--ink-3); }
 
+/* ── 集合（v2.10，2026-10-08）：同类窗口归到一起，一个集合一张卡；头上直接选项目、确认，窗口行折叠在里面。
+ * 320px：项目下拉与按钮各占一行；名字、合计断行不撑宽。 */
+.suggest-coll {
+  display: grid; gap: var(--sp-2); min-width: 0;
+  padding: var(--sp-3); border: 1px solid var(--line); border-radius: var(--r-2);
+}
+.suggest-coll-name { font-size: inherit; font-weight: 600; overflow-wrap: anywhere; }
+.suggest-coll-meta, .suggest-coll-plan { font-size: var(--fs-sub); color: var(--ink-2); overflow-wrap: anywhere; }
+.suggest-coll-act { display: flex; flex-wrap: wrap; gap: var(--sp-2); min-width: 0; }
+.suggest-coll-act select.field { flex: 1 1 12em; min-width: 0; }
+.suggest-coll-act .btn { flex: 1 1 12em; white-space: normal; }
+.suggest-coll-act .btn:disabled { opacity: .5; cursor: not-allowed; filter: none; }
+.suggest-coll-rows { min-width: 0; }
+.suggest-coll-rows > summary { cursor: pointer; min-height: var(--tap); display: flex; align-items: center; font-size: var(--fs-sub); color: var(--ink-2); }
+.suggest-rows { list-style: none; padding: 0; display: grid; gap: var(--sp-3); }
+
 /* ── 「活动检测设置」（2026-09-30，settings.js，contracts/detector.settings.v1）──
  * 一列到底；320px 下例子自己换行，名单框随宽度缩。强制清洗那组是勾着的灰框（disabled），关不掉。 */
 .settings-panel { display: grid; gap: var(--sp-3); min-width: 0; }
