@@ -2806,7 +2806,7 @@ DISPATCH 表：`session.completed` 与 `agent.run.completed` **各追加**路由
 
 ```jsonc
 // 请求
-{ "key": "wk_3f9a1c2b7d4e5a601b2c",       // needsChoice.key；^wk_[0-9a-f]{20}$
+{ "key": "wk_0a0a0a0a0a0a0a0a0a0a",       // needsChoice.key；^wk_[0-9a-f]{20}$
   "taskId": "t_a1",                       // 与 projectId 恰好给一个（1–128 字符的字符串）；projectId = 记到该项目的「未分类」
   "remember": true }                      // 布尔，缺省 false：以后这个窗口都这样记（写一条规则）
 // 200 ChoiceOut
