@@ -75,7 +75,8 @@ def test_upload_then_list_newest_first_with_contract_shape(client, seeded):
     first, second = body["items"]
     assert first["startAt"] == newer.isoformat() and second["startAt"] == older.isoformat()
     assert set(first) == {"id", "deviceId", "startAt", "endAt", "durationSeconds", "app", "title",
-                          "suggestion", "idle", "rejectedTaskIds", "status"}  # idle：v2.5；rejectedTaskIds：v2.7
+                          "suggestion", "idle", "rejectedTaskIds", "status",
+                          "auto"}  # idle：v2.5；rejectedTaskIds：v2.7；auto：v2.14
     assert first["idle"] is False and first["rejectedTaskIds"] == []
     assert first["status"] == "pending" and first["deviceId"] == DEV and first["durationSeconds"] == 100
     assert second["suggestion"] == {"taskId": task["id"], "confidence": 0.9, "reason": "规则 #1 命中",

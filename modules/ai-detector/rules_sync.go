@@ -5,15 +5,22 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
+	"time"
 )
 
 // 分类规则从 nexus-core 拉（contracts/detector.rules.v1「四」）：服务端存过（version > 0，哪怕是空集）就只用它；
 // 从没存过、老 nexus-core（404）、拉不到，都用本机 rules.json。规则只决定建议挂哪个任务、不决定什么离开本机，
 // 所以拉不到不必停上传（与隐私设置不同）。
 
-var lastRulesSource string // 规则来源变了才写日志（run 常驻时不每轮刷屏）
+var (
+	rulesMu         sync.Mutex // 同步一轮与在场心跳（autoTrack）都会拉规则
+	lastRulesSource string     // 规则来源变了才写日志（run 常驻时不每轮刷屏）
+)
 
 func rulesForRound(cfg Config, c *http.Client, base string) ([]rule, error) {
+	rulesMu.Lock()
+	defer rulesMu.Unlock()
 	rules, src, ok, err := remoteRules(cfg, c, base)
 	if err != nil {
 		log.Printf("拉不到网页上的分类规则（%v），这一轮用本机 rules.json", err)
@@ -46,7 +53,8 @@ func remoteRules(cfg Config, c *http.Client, base string) (rules []rule, src str
 		Version int `json:"version"`
 		Rules   []struct {
 			App, Title *string
-			TaskID     string  `json:"taskId"`
+			TaskID     string  `json:"taskId"`    // null（只到项目的规则）读成 ""
+			ProjectID  string  `json:"projectId"` // v1.1
 			Confidence float64 `json:"confidence"`
 			Enabled    *bool   `json:"enabled"`
 		} `json:"rules"`
@@ -62,7 +70,7 @@ func remoteRules(cfg Config, c *http.Client, base string) (rules []rule, src str
 		if !on(x.Enabled) {
 			continue
 		}
-		ru := rule{TaskID: x.TaskID, Confidence: x.Confidence, reason: fmt.Sprintf("网页规则 #%d 命中", i+1)}
+		ru := rule{TaskID: x.TaskID, ProjectID: x.ProjectID, Confidence: x.Confidence, reason: fmt.Sprintf("网页规则 #%d 命中", i+1)}
 		if x.App != nil {
 			ru.App = *x.App
 		}
@@ -72,7 +80,7 @@ func remoteRules(cfg Config, c *http.Client, base string) (rules []rule, src str
 		var e1, e2 error
 		ru.app, e1 = compileCI(ru.App)
 		ru.title, e2 = compileCI(ru.Title)
-		if e1 != nil || e2 != nil || ru.TaskID == "" || (ru.App == "" && ru.Title == "") {
+		if e1 != nil || e2 != nil || (ru.TaskID == "") == (ru.ProjectID == "") || (ru.App == "" && ru.Title == "") {
 			// 服务端按 Python 校验过，个别写法 Go 仍可能不认：少一条规则 = 少一个建议，跳过并记日志
 			log.Printf("网页规则 #%d 本程序用不了，跳过（app=%v title=%v）", i+1, e1, e2)
 			continue
@@ -83,4 +91,31 @@ func remoteRules(cfg Config, c *http.Client, base string) (rules []rule, src str
 		rules = append(rules, ru)
 	}
 	return rules, fmt.Sprintf("网页 v%d（%d 条生效）", r.Version, len(rules)), true, nil
+}
+
+// ── 在场心跳用的规则（presence.v1 v1.1 的 guess）──
+
+const beatRulesTTL = 60 * time.Second
+
+var beatRules struct {
+	mu    sync.Mutex
+	key   string
+	at    time.Time
+	rules []rule
+}
+
+// rulesForBeat：与上传同源的规则（rulesForRound），每 beatRulesTTL 重拉一次。拉不到 / 本机规则写坏 = 没有规则
+// （这次心跳不带 guess，心跳照发），到期再试。
+func rulesForBeat(cfg Config, c *http.Client, base string, now time.Time) []rule {
+	beatRules.mu.Lock()
+	defer beatRules.mu.Unlock()
+	key := base + "\x00" + cfg.RulesFile
+	if d := now.Sub(beatRules.at); key != beatRules.key || d < 0 || d >= beatRulesTTL {
+		rules, err := rulesForRound(cfg, c, base)
+		if err != nil {
+			rules = nil
+		}
+		beatRules.key, beatRules.at, beatRules.rules = key, now, rules
+	}
+	return beatRules.rules
 }

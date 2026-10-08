@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from ..timer.router import Mode
-from . import history, service
+from . import auto, history, service
 
 router = APIRouter(prefix="/activity/suggestions", tags=["activity"])
 
@@ -57,6 +57,7 @@ class Item(BaseModel):
     suggestion: Suggestion
     idle: bool = False  # v2.5
     rejectedTaskIds: list[str] = []  # v2.7：人否掉过的任务
+    auto: bool = False  # v2.14：不是人确认的，是自动记录记下的
     status: str
 
 
@@ -116,8 +117,9 @@ class UnmatchOut(BaseModel):
 
 
 @router.post("", response_model=UploadOut)
-def upload(body: UploadIn) -> dict:
-    return service.upload(body.deviceId, body.segments)
+def upload(body: UploadIn, request: Request) -> dict:
+    # v2.14：收下之后，开了 autoTrack 的设备规则高把握命中的段直接记（request：要建「未分类」桶时经 planner 写入口）
+    return auto.upload(body.deviceId, body.segments, request)
 
 
 @router.get("", response_model=ListOut)
@@ -154,11 +156,11 @@ def dismiss(sugId: str) -> dict:  # noqa: N803
     return service.dismiss(sugId)
 
 
-# v2.7 的两个端点自己读请求体：设备令牌要在**看请求体之前**就 403（让 FastAPI 先解析的话，
+# v2.7 的两个端点（v2.14 的 choice 两个同）自己读请求体：设备令牌要在**看请求体之前**就 403（让 FastAPI 先解析的话，
 # 带 Bearer 的坏请求体会得到 422 而不是 403）。请求体不合形状仍是标准的 422。
-async def _body(request: Request, model: type[BaseModel]):
+async def human_body(request: Request, model: type[BaseModel], what: str = "给活动建议配任务"):
     auth = request.headers.get("authorization")
-    service.forbid_device_token(auth)
+    service.forbid_device_token(auth, what)
     raw = (await request.body()).strip()
     try:
         return auth, model() if raw in (b"", b"null") else model.model_validate_json(raw)
@@ -168,11 +170,11 @@ async def _body(request: Request, model: type[BaseModel]):
 
 @router.post("/matches", response_model=MatchesOut)
 async def match(request: Request) -> dict:
-    auth, body = await _body(request, MatchesIn)
+    auth, body = await human_body(request, MatchesIn)
     return await run_in_threadpool(service.match, auth, body.matches)
 
 
 @router.post("/{sugId}/unmatch", response_model=UnmatchOut)
 async def unmatch(sugId: str, request: Request) -> dict:  # noqa: N803
-    auth, body = await _body(request, UnmatchIn)
+    auth, body = await human_body(request, UnmatchIn)
     return await run_in_threadpool(service.unmatch, auth, sugId, body.taskId, body.proposalId)

@@ -265,6 +265,115 @@ func TestPresenceOffAfkAndRemoteToggle(t *testing.T) {
 	}
 }
 
+// presence.v1 v1.1：网页设置 autoTrack 开着时，心跳带的 guess 与同一个窗口上传出去的建议是同一个目标、同一个把握
+// （同一个 matchRules，匹配换代号之前的标题）；关着、没设过、没命中、离开时没有这个键（请求体与 v1.0 相同）。
+func TestPresenceGuessParityWithUpload(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	rules := filepath.Join(t.TempDir(), "rules.json")
+	os.WriteFile(rules, []byte(`{"rules":[{"title":"garden","taskId":"t_a1"},{"app":"firefox","projectId":"p_2","confidence":0.7}]}`), 0o600)
+	settings := func(extra string) string {
+		return `{"settings":{"privacy":{` + extra + `},"idle":{},"presence":true,"autoTrack":true}}`
+	}
+	cases := []struct {
+		name, app, title, settings string
+		key, id                    string // 期望 guess 的目标键与 id；key 为空 = 不带 guess
+		conf                       float64
+	}{
+		{"task rule", "code", "plot.gd — garden — Code", settings(""), "taskId", "t_a1", 0.9},
+		{"project rule", "firefox", "Docs - Mozilla Firefox", settings(""), "projectId", "p_2", 0.7},
+		{"matches the title before pseudonymization", "code", "plot.gd — garden — Code", settings(`"titles":"pseudonymize"`), "taskId", "t_a1", 0.9},
+		{"no rule", "vim", "notes", settings(""), "", "", 0},
+		{"switch off", "code", "plot.gd — garden — Code", `{"settings":{"privacy":{},"idle":{},"presence":true,"autoTrack":false}}`, "", "", 0},
+		{"old settings doc without the key", "code", "plot.gd — garden — Code", `{"settings":{"privacy":{},"idle":{}}}`, "", "", 0},
+		{"never set on the web", "code", "plot.gd — garden — Code", "", "", "", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ev := awEvent{Timestamp: now.Add(-5 * time.Minute), Duration: 290, Data: map[string]any{"app": tc.app, "title": tc.title}}
+			aw := fakeAWWeb(t, []awEvent{ev}, nil, nil)
+			defer aw.Close()
+			ck := newLiveCockpit(t)
+			defer ck.Close()
+			defer remotePresence.Store(nil)
+			ck.settings = tc.settings
+			cfg := liveConfig(aw.URL, ck.URL)
+			cfg.RulesFile, cfg.dir = rules, t.TempDir()
+
+			if _, err := tick(cfg, &State{Active: true, Cursor: now.Add(-10 * time.Minute)}, now, http.DefaultClient); err != nil {
+				t.Fatal(err)
+			}
+			if sent, err := presenceBeat(cfg, http.DefaultClient, now); err != nil || !sent {
+				t.Fatalf("beat sent=%v err=%v", sent, err)
+			}
+			sug := ck.posts("/activity/suggestions")[0].body["segments"].([]any)[0].(map[string]any)["suggestion"].(map[string]any)
+			p := ck.posts("/activity/presence")[0].body
+			g, has := p["guess"].(map[string]any)
+			if tc.key == "" {
+				if has || len(p) != 4 {
+					t.Fatalf("unexpected guess: %v", p)
+				}
+				return
+			}
+			if !has || len(g) != 3 || g[tc.key] != tc.id || g["confidence"] != tc.conf || g["classifier"] != "rules" {
+				t.Fatalf("guess %v", p["guess"])
+			}
+			if sug[tc.key] != g[tc.key] || sug["confidence"] != g["confidence"] || sug["classifier"] != g["classifier"] {
+				t.Fatalf("guess %v != upload suggestion %v", g, sug)
+			}
+			if tc.key == "projectId" && sug["taskId"] != nil {
+				t.Fatalf("project-only rule uploaded a task: %v", sug)
+			}
+			if tc.settings != settings("") && p["title"] == tc.title {
+				t.Fatalf("title not pseudonymized: %v", p)
+			}
+		})
+	}
+
+	// 离开：不带 guess（app / title 都是空的，没有窗口可猜）。
+	ev := awEvent{Timestamp: now.Add(-time.Minute), Duration: 55, Data: map[string]any{"app": "code", "title": "garden"}}
+	aw := fakeAWWeb(t, []awEvent{ev}, []awEvent{{Timestamp: now.Add(-30 * time.Second), Duration: 25, Data: map[string]any{"status": "afk"}}}, nil)
+	defer aw.Close()
+	ck := newLiveCockpit(t)
+	defer ck.Close()
+	defer remotePresence.Store(nil)
+	ck.settings = settings("")
+	cfg := liveConfig(aw.URL, ck.URL)
+	cfg.RulesFile = rules
+	if sent, err := presenceBeat(cfg, http.DefaultClient, now); !sent || err != nil {
+		t.Fatalf("afk beat sent=%v err=%v", sent, err)
+	}
+	if p := ck.posts("/activity/presence")[0].body; p["afk"] != true || len(p) != 4 {
+		t.Fatalf("afk body %v", p)
+	}
+}
+
+// 心跳用的规则每 60 秒才重拉一次；拉不到 / 本机规则写坏 = 这次没有规则（不带 guess），心跳照发。
+func TestRulesForBeatCachesAndSurvivesBrokenRules(t *testing.T) {
+	var hits int
+	body := `{"version":1,"rules":[{"id":"a","app":"code","title":null,"taskId":"t_1","confidence":0.9,"enabled":true}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		io.WriteString(w, body)
+	}))
+	defer srv.Close()
+	now := time.Now()
+	cfg := Config{DeviceToken: "tok"}
+	for i, at := range []time.Duration{0, 30 * time.Second, 59 * time.Second, 60 * time.Second} {
+		if rs := rulesForBeat(cfg, srv.Client(), srv.URL, now.Add(at)); len(rs) != 1 {
+			t.Fatalf("#%d rules=%v", i, rs)
+		}
+	}
+	if hits != 2 {
+		t.Fatalf("fetched %d times, want 2", hits)
+	}
+	body = `{"version":0,"rules":[]}` // 服务端没存过 → 本机 rules.json，而它写坏了
+	cfg.RulesFile = filepath.Join(t.TempDir(), "rules.json")
+	os.WriteFile(cfg.RulesFile, []byte(`{broken`), 0o600)
+	if rs := rulesForBeat(cfg, srv.Client(), srv.URL, now); rs != nil {
+		t.Fatalf("broken rules must mean no rules, got %v", rs)
+	}
+}
+
 // 标题刚变：最新事件 0 秒（记录器还没续上），心跳照发最新标题，不报「没有窗口记录」。
 func TestPresenceZeroDurationLatest(t *testing.T) {
 	now := time.Now()

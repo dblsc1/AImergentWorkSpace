@@ -270,6 +270,37 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
 - `LaneAgent.projectId` / `AgentTimeTask.projectId` 形状不变：只挂项目的运行在这里是那个项目、`taskId` 为 `null`。
 - `projectSource` 只有一个取值 `"agent-session"`；没有这个键 = `projectId`（若有）是助理给的。
 
+### 自动跟踪：`LaneHuman.auto` / `needsChoice`、`PresenceIn.guess`、`ChoiceIn/Out`、`AutoSessionsOut`（v2.14）
+
+规范性条款只住 `contract.md`「自动跟踪进行中的任务」节。形状：
+
+```jsonc
+// POST /api/core/activity/presence —— 追加选填 guess（taskId / projectId 恰好一个；不合形状 422）
+{ "deviceId": "dev_…", "app": "code", "title": "…", "afk": false,
+  "guess": { "taskId": "t_a1", "confidence": 0.9, "classifier": "rules" } }
+// GET /api/core/views/lanes —— human 追加两个键（总在，可为 null）
+{ "human": { "sessions": [], "running": null, "presence": [],
+             "auto": { "taskId": "t_a1", "projectId": "p_1", "taskName": "写提示词", "projectName": "garden",
+                       "since": "…", "app": "code", "title": "…", "source": "rules" },     // rules | choice
+             "needsChoice": { "key": "wk_…", "app": "kitty", "title": "…", "since": "…" } } }
+// GET /api/core/views/current —— 顶层追加同样的两个键（总在；running: true 时都是 null）
+{ "running": false, "zone": null, "project": null, "task": null, "sessionStartAt": null, "agents": [],
+  "auto": { /* 同上 */ }, "needsChoice": null }
+// POST /api/core/activity/choice
+{ "key": "wk_…", "taskId": "t_a1", "remember": true }        // 或 "projectId": "p_1"；多余的键 422
+{ "key": "wk_…", "taskId": "t_a1", "projectId": "p_1", "remembered": true, "pseudonymized": false }
+// POST /api/core/activity/choice/dismiss
+{ "key": "wk_…" }  →  { "key": "wk_…", "dismissedUntil": "2026-10-08T06:00:00+00:00" }
+// GET /api/core/activity/auto
+{ "items": [ { "id": "sug_…", "eventId": "evt_…", "startAt": "…", "endAt": "…", "durationSeconds": 1500,
+               "app": "code", "title": "…", "taskId": "t_a1", "projectId": "p_1", "reassigned": false } ] }
+// GET /api/core/activity/suggestions —— 每条追加 auto（布尔，缺省 false）；suggestion 可能带规则给的 projectId
+```
+
+- `auto.taskId` / `auto.taskName` 在只到项目时为 `null`（键不消失）；读方画「自动 · 项目」或「自动 · 项目 / 任务」。
+- `auto` 与 `needsChoice` 可以同时非 `null`（说的不一定是同一个窗口）。`human.running` 非 `null` 时两者都是 `null`。
+- `ChoiceOut.remembered: false` 且 `pseudonymized: false` = 规则没写成（太长 / 规则已满 / 撞版本），选择本身已生效。
+
 ### `AuditOut` — `GET /api/core/planner/audit`（v1.6，F-ACTOR-2）
 
 记录形状、三种 `outcome` 的语义、append-only 的保证方式见 `contract.md`

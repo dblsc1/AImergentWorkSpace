@@ -1,4 +1,5 @@
 """改挂未分类时间：``POST /api/core/sessions/{eventId}/reassign``（契约 v2.11「改挂未分类时间」，唯一事实源）。
+v2.14 起自动记下的段（``ai.auto``）也能改挂。
 
 仓主 2026-10-08：「时间记录到未分类以后，能不能追加记录『归入 xxx 任务』？不能破坏可追溯性。」
 
@@ -79,9 +80,12 @@ def reassign(event_id: str, task_id: str | None, project_id: str | None, request
     session = sessions[0]
     origin = session.get("subject") or {}
     # 判据只看台账：桶的 id 由项目 id 派生，项目 / 桶以后删了也判得出「这一段原本记在桶上」
-    if not origin.get("project") or origin.get("task") != unclassified.task_id(origin["project"]):
+    # v2.14：自动记下的段（规则替人记的，信封 ai.auto）也放行——人要能改
+    ai = session.get("ai")
+    auto = session.get("source") == "activity-confirmed" and isinstance(ai, dict) and ai.get("auto") is True
+    if not auto and (not origin.get("project") or origin.get("task") != unclassified.task_id(origin["project"])):
         raise HasChildrenError(
-            f"计时段 {event_id!r} 原本不是记在项目的「未分类」上的——只有未分类的时间能改挂到任务")
+            f"计时段 {event_id!r} 原本不是记在项目的「未分类」上的、也不是自动记下的——只有这两种时间能改挂")
 
     to_bucket = task_id is None
     if to_bucket:

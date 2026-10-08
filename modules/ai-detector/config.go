@@ -53,8 +53,11 @@ type Config struct {
 	AgentStatusFile   string   `json:"agentStatusFile"`           // 空 = 关
 	AgentStatusIgnore []string `json:"agentStatusIgnore"`         // key 前缀，命中的条目整个忽略
 
-	dir      string   // 配置目录；readConfig 填。空（测试直接构造 Config）= 不写留档、代号只在内存里
-	warnings []string // 配置里不认识的 privacy / idle 键（想关强制脱敏也落在这里），readConfig 填
+	// autoTrack：「允许 AI 管理进行中的任务」。只来自网页设置（detector.settings.v1 v1.3），本机配置里没有这个键——
+	// 服务端要读它才知道该不该显示 / 直接记。applyRemoteSettings 填。
+	autoTrack bool
+	dir       string   // 配置目录；readConfig 填。空（测试直接构造 Config）= 不写留档、代号只在内存里
+	warnings  []string // 配置里不认识的 privacy / idle 键（想关强制脱敏也落在这里），readConfig 填
 }
 
 // Privacy：可选隐私项，语义见 contracts/detector.settings.v1「privacy 节」。

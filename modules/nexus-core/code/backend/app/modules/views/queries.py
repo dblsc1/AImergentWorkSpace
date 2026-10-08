@@ -22,6 +22,7 @@ from datetime import datetime
 from ...config import settings
 from ...tenant import current as current_tenant
 from ...timeutil import local_date
+from ..activity import service as activity_service
 from ..planner import service as planner_service
 from ..projector.handlers import current as current_projection
 from ..projector.handlers import daily_stats as daily_stats_projection
@@ -55,7 +56,8 @@ def get_current() -> CurrentOut:
     agents = [CurrentAgent(**run) for run in timer_service.list_agent_runs(current_tenant())]
     state = timer_service.get_running_state(current_tenant())
     if state is None:
-        return CurrentOut(**_IDLE, agents=agents)
+        # v2.14：没在计时才有「自动 · 项目 / 任务」与请人选的窗口（顶栏芯片读这里，与 views/lanes 的 human 同一份）
+        return CurrentOut(**_IDLE, agents=agents, **activity_service.auto_state(current_tenant(), False))
 
     task_doc = planner_service.get_task(state["taskId"])
     project_doc = (

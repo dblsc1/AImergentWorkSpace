@@ -73,6 +73,7 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
     agents: list[dict] = []
     presence: list[dict] = []
     running = None
+    auto = {"auto": None, "needsChoice": None}
     truncated = False
     if not empty:
         rows = lanes_projection.read_lanes(user, "session", start, end, MAX_SESSIONS + 1)
@@ -109,12 +110,14 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
             {**s, "from": _iso(s["from"]), "to": _iso(s["to"])}
             for s in activity_service.list_presence(user, now, start, end)
         ]
+        # v2.14：没有手动计时时，「我」当前窗口对上的项目 / 任务，与请人选的窗口
+        auto = activity_service.auto_state(user, state is not None, now)
     else:
         interactions = []
 
     interactions.sort(key=lambda i: datetime.fromisoformat(i["at"]))
     return LanesOut(
         today=_today(), now=_iso(now), windowStart=_iso(start), windowEnd=_iso(end),
-        human={"sessions": sessions, "running": running, "presence": presence},
+        human={"sessions": sessions, "running": running, "presence": presence, **auto},
         agents=agents, interactions=interactions, truncated=truncated,
     )

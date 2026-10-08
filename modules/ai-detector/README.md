@@ -170,10 +170,13 @@ docker run --rm -v "$PWD":/src -w /src -e CGO_ENABLED=0 -e GOOS=windows -e GOARC
   "rules": [
     { "app": "code|goland|idea", "title": "garden", "taskId": "t_a1", "confidence": 0.9 },
     { "app": "firefox|chrome", "title": "^github\\.com", "taskId": "t_b2" },
-    { "app": "blender", "taskId": "t_c3", "confidence": 0.7 }
+    { "app": "blender", "taskId": "t_c3", "confidence": 0.7 },
+    { "title": "blog", "projectId": "p_2" }
   ]
 }
 ```
+
+规则的目标可以是任务（`taskId`），也可以只到项目（`projectId`，时间记到该项目的「未分类」，以后再归到具体任务）；两个恰好写一个。
 
 `taskId` 在蜂巢里打开任务就能看到，或看 `GET /api/core/views/tree` 的输出。规则写错
 （JSON 不合法、正则写坏）时**这一轮不上传**，`status` 会告诉你哪条错了，改好后自动补上。
@@ -216,6 +219,7 @@ Linux `~/.config/honeycomb/`；设环境变量 `AI_DETECTOR_HOME` 可换目录�
 
 | `presence` | `false` | 在场心跳（见下）。网页「AI助理」页设过就以网页为准 |
 | `presenceSeconds` | 15 | 心跳间隔，5–300 秒 |
+| （网页上的）`autoTrack` | 关 | 「允许 AI 管理进行中的任务」。**只在网页「AI助理 → 活动检测设置」里开关**，本机配置没有这个键（见下） |
 | `agentStatusFile` | 空 | 状态文件桥读的文件路径，空 = 关（见下） |
 | `agentStatusIgnore` | `[]` | 状态文件里 `key` 以这些前缀开头的条目不报 |
 | `segmentByTitle` | `true` | 终端按标签页分段（见下）。网页「AI助理」页设过就以网页为准 |
@@ -252,6 +256,18 @@ HoneyComb 的时间线页可以把「人一条线、AI 代理多条线」画在�
 ```
 
 也可以在网页「AI助理」页打开（`detector.settings.v1` 的 `presence`；那里是「用本机配置」时按上面这个字段）。
+
+### 允许 AI 管理进行中的任务（网页上的 `autoTrack`，默认关）
+
+在网页「AI助理 → 活动检测设置」勾上之后（要同时开着在场心跳）：
+
+- 心跳里多带一样东西：分类规则对**当前窗口**的猜测（哪个任务 / 项目、把握多少）。猜测在本机算，和上传段用的是同一套规则；
+  发出去的只有任务 / 项目的 id 和把握，程序名、标题还是原来那份脱敏过的，没有多发任何内容。规则没命中就不带。
+- 你没有手动计时的时候，计时页把你正在做的事显示成「自动 · 项目 / 任务」；规则认不出的窗口停留一会儿，页面会问你记到哪。
+- 规则把握 ≥ 90% 的段上传后**直接记成时间**，不用再逐条确认；记错了在「AI助理 → 自动记录」里改归属。
+  你手动计时的那段时间 AI 不插手。
+
+关掉（缺省）就和以前完全一样：一切都只是待确认的建议。
 
 ### 状态文件桥（`agentStatusFile`）
 

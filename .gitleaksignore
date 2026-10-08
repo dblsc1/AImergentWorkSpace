@@ -6,3 +6,6 @@
 # 5b3217b：本文件第一版的注释原样引用了那个假网址，同一个误报。
 4a29cb14fd30d2975009892159ec324ea39ea493:modules/ai-detector/redact_test.go:generic-api-key:18
 5b3217b8398b3fbe48315d540660ff5bced65a97:.gitleaksignore:generic-api-key:3
+# cc34fa1：nexus-core 契约里「人答」请求体的示例窗口键（wk_ + 20 位十六进制，窗口标题的哈希，不是密钥）；
+#          后续提交已把示例换成低熵的字面值。
+cc34fa13aeefc3dc136b34a8d9034d173f558599:modules/nexus-core/module_docs/contract.md:generic-api-key:2805

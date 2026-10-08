@@ -1,7 +1,7 @@
 """mcp.tools.v1 的工具（contracts/mcp.tools.v1 第四节）：v1.1 起 9 个只读工具；v1.2 加
 ``get_detector_rules``（只读）与 ``propose_detector_rules``（只写草稿，第六节）；v1.3 加
 ``propose_activity_matches``（给待确认的活动建议配任务，仍是建议）；v1.7 加只读的 ``get_match_history``
-（人以前把哪个窗口定到了哪个项目 / 任务）。
+（人以前把哪个窗口定到了哪个项目 / 任务）；v1.8 分类规则可以只到项目（``projectId`` 代替 ``taskId``，工具数不变）。
 
 每个工具固定包装 nexus-core 的读端（GET），路径另读 views/tree；写只有两处：propose_detector_rules 的
 ``POST /api/core/detector/rules/drafts``（草稿，人应用才生效）与 propose_activity_matches 的
@@ -454,7 +454,9 @@ def get_match_history(a, tenant):
 
 
 def _rule_out(r: dict, paths: _Paths) -> dict:
-    return {"id": r["id"], "app": r["app"], "title": r["title"], "taskId": r["taskId"], "path": paths(r["taskId"]),
+    # v1.8：只到项目的规则 taskId 为 null、带 projectId，path 是「分区 / 项目」
+    return {"id": r["id"], "app": r["app"], "title": r["title"], "taskId": r["taskId"],
+            "projectId": r.get("projectId"), "path": paths(r["taskId"], r.get("projectId")),
             "confidence": r["confidence"], "note": r["note"], "enabled": r["enabled"]}
 
 
@@ -565,23 +567,27 @@ _SPECS = [
                         "description": "最多几行，1–200，缺省 60"}}), [], {"limit": 60}),  # 末项只为缺省 60（不分页）
     (get_detector_rules, "活动分类规则",
      "桌面活动检测用来把窗口归到任务的分类规则（全部，按顺序第一条命中生效；app / title 是不分大小写的 RE2 正则，"
-     "匹配程序名 / 脱敏后的窗口标题），每条带 id、taskId 与任务路径；draft 是还没应用的规则草稿（没有为 null）。"
+     "匹配程序名 / 脱敏后的窗口标题），每条带 id、taskId（只到项目的规则是 projectId）与路径；"
+     "draft 是还没应用的规则草稿（没有为 null）。"
      "改规则前先读它：propose_detector_rules 要交一整套，改已有规则须带回原 id。" + _IDS,
      _schema({}), [], {}),
     (propose_detector_rules, "起草活动分类规则",
      "把一整套分类规则写成草稿（替换全部规则，不是追加；顶掉之前没应用的草稿）。草稿不生效，"
      "要用户在 Cockpit「AI助理 → 规则」看过改动后点「应用」。rules 按顺序第一条命中生效；"
      "每条 {id?（改已有规则时带回原 id，新规则省略）, app?, title?（不分大小写的 RE2 正则，至少一个；"
-     "不支持前后查找与反向引用）, taskId（必须来自 get_task_tree，不许编）, confidence?（0–1，缺省 0.9）, "
+     "不支持前后查找与反向引用）, taskId（必须来自 get_task_tree，不许编）或 projectId（来自 list_projects："
+     "认得出项目、定不了任务时只到项目，时间记到它的「未分类」）恰好给一个, confidence?（0–1，缺省 0.9；"
+     "用户打开「允许 AI 管理进行中的任务」后，把握 ≥ 0.9 的规则命中会直接记成时间，拿不准的别给到 0.9）, "
      "note?（≤120 字，给人看的一句话）, enabled?（缺省 true）}，最多 500 条。"
      "summary 用一两句话说明这套规则做了什么改动（≤500 字）。校验不过时 error.errors 按下标列出哪条哪个键错了。",
      _schema({"rules": {"type": "array", "maxItems": 500, "description": "完整的规则集（替换全部）",
-                        "items": {"type": "object", "additionalProperties": False, "required": ["taskId"],
+                        "items": {"type": "object", "additionalProperties": False,
                                   "properties": {
                                       "id": {"type": "string", "description": "已有规则的 id；新规则省略"},
                                       "app": {"type": ["string", "null"], "description": "程序名正则"},
                                       "title": {"type": ["string", "null"], "description": "窗口标题正则"},
-                                      "taskId": {"type": "string"},
+                                      "taskId": {"type": ["string", "null"], "description": "与 projectId 二选一"},
+                                      "projectId": {"type": ["string", "null"], "description": "只到项目的规则"},
                                       "confidence": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
                                       "note": {"type": ["string", "null"], "maxLength": 120},
                                       "enabled": {"type": "boolean"}}}},

@@ -743,7 +743,7 @@ def test_list_projects_includes_projects_without_tasks(servers):
 def test_get_detector_rules(servers):
     r = ok(servers, "get_detector_rules")
     assert r["version"] == 3 and r["truncated"] is False
-    assert r["rules"] == [{**RULE, "path": "学习 / garden / 写提示词"}]
+    assert r["rules"] == [{**RULE, "projectId": None, "path": "学习 / garden / 写提示词"}]
     d = r["draft"]
     assert d["draftId"] == "drf_1" and d["summary"] == "按标题分" and d["diff"]["added"] == ["r_2"]
     assert [x["path"] for x in d["rules"]] == ["学习 / garden / 写提示词", None]  # 已删的任务路径为 null
@@ -751,6 +751,18 @@ def test_get_detector_rules(servers):
         ("GET", "/api/core/detector/rules"), ("GET", "/api/core/detector/rules/drafts/current"),
         ("GET", "/api/core/views/tree")}
     assert ok(servers, "get_detector_rules", headers={"X-Nexus-Tenant": "u_idle"})["draft"] is None
+
+
+def test_detector_rules_can_target_a_project(servers):
+    """v1.8：只到项目的规则读出来带 projectId 与「分区 / 项目」路径；起草时 taskId 不再必填，原样下传。"""
+    assert tools._rule_out({**RULE, "taskId": None, "projectId": "p_3c"}, tools._Paths(tree_for("u_local"))) == {
+        **RULE, "taskId": None, "projectId": "p_3c", "path": "学习 / garden"}
+    item = next(t for t in rpc(servers, "tools/list")["result"]["tools"]
+                if t["name"] == "propose_detector_rules")["inputSchema"]["properties"]["rules"]["items"]
+    assert "required" not in item and {"taskId", "projectId"} <= set(item["properties"])
+    rules = [{"title": "blog", "projectId": "p_3c"}]
+    ok(servers, "propose_detector_rules", {"rules": rules, "summary": "只到项目"})
+    assert Fake.bodies == [({"rules": rules, "summary": "只到项目", "author": "assistant"}, None)]
 
 
 def test_propose_detector_rules_posts_one_draft(servers):

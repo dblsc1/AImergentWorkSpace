@@ -102,6 +102,16 @@ type presenceBody struct {
 	App      string `json:"app"`
 	Title    string `json:"title"`
 	Afk      bool   `json:"afk"`
+	// presence.v1 v1.1：网页设置 autoTrack 开着、规则命中当前窗口时才带。
+	Guess *presenceGuess `json:"guess,omitempty"`
+}
+
+// presenceGuess：规则对当前窗口的猜测。TaskID / ProjectID 恰好一个。
+type presenceGuess struct {
+	TaskID     *string `json:"taskId,omitempty"`
+	ProjectID  *string `json:"projectId,omitempty"`
+	Confidence float64 `json:"confidence"`
+	Classifier string  `json:"classifier"`
 }
 
 // presenceBeat 发一次心跳。返回 (是否发了, 错误)。失败就丢：不重试、不排队。
@@ -169,6 +179,12 @@ func presenceBeat(cfg Config, hc *http.Client, now time.Time) (bool, error) {
 			return false, err
 		}
 		body.App, body.Title = scrubSecrets(f.App), t[0]
+		if cfg.autoTrack {
+			// 与上传同一个 matchRules、同样匹配「隐私选项处理后、换代号前」的标题；在本机算，只发目标 id 与把握。
+			if sg, ok := matchRules(rulesForBeat(cfg, cockpit, base, now), segment{App: f.App, Title: f.Title}); ok {
+				body.Guess = &presenceGuess{sg.TaskID, sg.ProjectID, sg.Confidence, sg.Classifier}
+			}
+		}
 	}
 	b, _ := json.Marshal(body)
 	if _, _, err := postJSON(cockpit, cfg.DeviceToken, base+"/api/core/activity/presence", b); err != nil {

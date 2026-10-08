@@ -36,6 +36,8 @@ _COLLECTIONS = (
     "detector_settings",
     # v2.6 检测程序分类规则 + AI 草稿。
     "detector_rules",
+    # v2.14 人对某个窗口的临时选择 /「这次不选」（活状态）。
+    "activity_choices",
 )
 
 

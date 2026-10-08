@@ -73,6 +73,28 @@ class CurrentAgent(_Strict):
     label: str | None = None
 
 
+class LaneAuto(_Strict):
+    """v2.14：没有手动计时时，「我」当前窗口对上的项目 / 任务。只是显示，不是事实。"""
+
+    taskId: str | None
+    projectId: str
+    taskName: str | None
+    projectName: str
+    since: str
+    app: str
+    title: str
+    source: Literal["rules", "choice"]
+
+
+class LaneNeedsChoice(_Strict):
+    """v2.14：规则认不出、停留够久的窗口——请人选项目 / 任务。"""
+
+    key: str
+    app: str
+    title: str
+    since: str
+
+
 class CurrentOut(_Strict):
     """``GET /api/core/views/current``。
 
@@ -88,6 +110,9 @@ class CurrentOut(_Strict):
     #: v2.1：当前租户在跑的 AI 代理运行，没有为 []。与上面人的字段互不影响——
     #: 只有代理在跑时 running 仍是 false（人一条泳道，代理很多条）。
     agents: list[CurrentAgent] = Field(default_factory=list)
+    #: v2.14 自动跟踪（与 ``views/lanes`` 的 ``human.auto`` / ``needsChoice`` 同一份）：只在没在计时时可能非 null
+    auto: LaneAuto | None = None
+    needsChoice: LaneNeedsChoice | None = None
 
 
 # ------------------------------------------------------------------- TreeOut
@@ -382,6 +407,9 @@ class LaneHuman(_Strict):
     sessions: list[LaneSession]
     running: LaneRunning | None
     presence: list[LanePresence]
+    #: v2.14 自动跟踪（契约「自动跟踪进行中的任务」）：键总在，条件不成立为 null
+    auto: LaneAuto | None = None
+    needsChoice: LaneNeedsChoice | None = None
 
 
 class LanePhase(_Strict):

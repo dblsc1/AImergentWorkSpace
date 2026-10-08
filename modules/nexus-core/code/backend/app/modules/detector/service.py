@@ -126,6 +126,8 @@ class DetectorSettings(_Strict):
     # v1.2 追加（只增）：终端按标签页分段。名单 null = 用检测程序本机配置的名单（缺省内置终端名单）。
     segmentByTitle: bool = True
     segmentByTitleApps: Annotated[list[_Name], Field(max_length=200)] | None = None
+    # v1.3 追加（只增）：「允许 AI 管理进行中的任务」，行为见 nexus-core 契约 v2.14。只在网页上有。
+    autoTrack: bool = False
 
     @field_validator("schemaVersion")
     @classmethod
@@ -189,6 +191,14 @@ def put_settings(device_id: str, authorization: str | None, body: bytes) -> dict
     user = current_tenant()
     repo.put(user, device_id, settings, _now())
     return _out(device_id, repo.get(user, device_id))
+
+
+def device_flags(user: str, device_id: str) -> dict:
+    """activity 子边界的指定读路径（v2.14）：这台设备开没开 autoTrack、标题是不是换成代号上传。
+    没在网页上存过设置 = 都是 False。"""
+    s = (repo.get(user, device_id) or {}).get("settings") or {}
+    return {"autoTrack": s.get("autoTrack") is True,
+            "pseudonymize": (s.get("privacy") or {}).get("titles") == "pseudonymize"}
 
 
 def delete_settings(device_id: str, authorization: str | None) -> None:

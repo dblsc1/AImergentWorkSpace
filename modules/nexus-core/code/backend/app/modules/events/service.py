@@ -149,19 +149,25 @@ def _current_subject(doc: dict, latest: dict[tuple, dict]) -> dict | None:
     return hit["subject"] if hit else None
 
 
-def current_tasks(source: str, dedupe_keys: list[str]) -> dict[str, tuple[str, bool]]:
-    """v2.12 匹配历史用：当前租户里某个 ``source`` 的这些 ``session.completed``，
-    防重键 → (当前归属的任务 id, 改挂过没有)。只读；``dedupe_keys`` 是调用方由自己的 id 拼的，不是请求里的值。"""
+def current_sessions(source: str, dedupe_keys: list[str]) -> dict[str, dict]:
+    """当前租户里某个 ``source`` 的这些 ``session.completed``：防重键 → ``{id, task, project, moved}``
+    （事件 id、当前归属的任务 / 项目、改挂过没有）。只读；``dedupe_keys`` 是调用方由自己的 id 拼的，不是请求里的值。"""
     if not dedupe_keys:
         return {}
     latest = latest_reassignments(repo.query_events(REASSIGNED_TYPE))
     out = {}
     for doc in repo.query_events(SESSION_TYPE, where={"source": source, "dedupeKey": {"$in": dedupe_keys}}):
         moved = _current_subject(doc, latest)
-        task = (moved or doc.get("subject") or {}).get("task")
-        if isinstance(task, str):
-            out[doc["dedupeKey"]] = (task, moved is not None)
+        subject = moved or doc.get("subject") or {}
+        if isinstance(subject.get("task"), str):
+            out[doc["dedupeKey"]] = {"id": doc["id"], "task": subject["task"], "project": subject.get("project"),
+                                     "moved": moved is not None}
     return out
+
+
+def current_tasks(source: str, dedupe_keys: list[str]) -> dict[str, tuple[str, bool]]:
+    """v2.12 匹配历史用：防重键 → (当前归属的任务 id, 改挂过没有)。"""
+    return {k: (v["task"], v["moved"]) for k, v in current_sessions(source, dedupe_keys).items()}
 
 
 def with_current_subjects(docs: list[dict]) -> list[dict]:
