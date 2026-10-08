@@ -196,7 +196,8 @@ def test_a_claim_racing_another_never_replaces_its_ask(client, world, clock, mon
         assert len(_rules(client)["rules"]) == 1 and _human(client)["auto"]["source"] == "ai"
 
 
-def test_concurrent_claims_agree_on_one_ask_and_count_once(client, clock, monkeypatch):
+@pytest.mark.parametrize("clocks", ["distinct", "identical"])
+def test_concurrent_claims_agree_on_one_ask_and_count_once(client, clock, monkeypatch, clocks):
     from app.modules.activity import auto, auto_ai  # noqa: PLC0415
 
     _dwell(client, clock)
@@ -207,7 +208,8 @@ def test_concurrent_claims_agree_on_one_ask_and_count_once(client, clock, monkey
             ticks[0] += 1
             return base + timedelta(milliseconds=ticks[0])
 
-    monkeypatch.setattr(auto, "_now", now)
+    if clocks == "distinct":                                             # identical：同一毫秒——没抢到的只退自己那一个名额
+        monkeypatch.setattr(auto, "_now", now)
     for _ in range(6):
         _db()["activity_ai_asks"].delete_many({})
         barrier = threading.Barrier(8)
@@ -222,18 +224,26 @@ def test_concurrent_claims_agree_on_one_ask_and_count_once(client, clock, monkey
         assert len(_asks()) == 1 and _allowance() == 1
 
 
-def test_a_claim_that_finds_the_hour_full_leaves_no_ask_behind(client, clock, monkeypatch):
+def test_an_ask_is_never_visible_before_its_allowance_slot_is_secured(client, world, clock, monkeypatch):
     from app.modules.activity import ask_repo, auto_ai  # noqa: PLC0415
 
     _dwell(client, clock)
     at = clock(S + 61)
+    _claim(client)                                                       # 报到（建 _tenant），顺带认领——清掉重来
+    _db()["activity_ai_asks"].delete_many({"key": {"$ne": "_tenant"}})
+    full = [at] * auto_ai.AI_MAX_PER_HOUR
+    _db()["activity_ai_asks"].update_one({"key": "_tenant"}, {"$set": {"claims": full[:-1]}})   # 只剩最后一个名额
 
-    def fill():                                                          # 别的窗口的认领恰好在这期间用完了名额
-        _db()["activity_ai_asks"].update_one({"key": "_tenant"}, {"$set": {"claims": [at] * auto_ai.AI_MAX_PER_HOUR}})
+    def meanwhile():                                                     # 别的窗口的认领拿走了最后一个名额；另一个调用方来取、来答
+        _db()["activity_ai_asks"].update_one({"key": "_tenant"}, {"$set": {"claims": full}})
+        w = _claim(client)
+        if w:
+            _answer(client, w["key"], taskId=world["a"], confidence=0.95)
 
-    _once(monkeypatch, ask_repo, "claim", before=fill)
-    assert _claim(client) is None and _asks() == [] and _allowance() == auto_ai.AI_MAX_PER_HOUR
-    assert _human(client)["needsChoice"]["title"] == "notes"
+    _once(monkeypatch, ask_repo, "count_claim", before=meanwhile)
+    assert _claim(client) is None
+    assert _asks() == [] and _rules(client)["rules"] == []               # 没占到名额的问询谁也没见过、没被答过
+    assert _allowance() == auto_ai.AI_MAX_PER_HOUR and _human(client)["needsChoice"]["title"] == "notes"
 
 
 # ─────────────────────────────────────────── ④ 人的临时选择也自动记
@@ -290,3 +300,52 @@ def test_temporary_choice_auto_entry_exceptions_stay_pending(client, world, cloc
         seg = _notes(5, world["a"], confidence=0.6)
     assert _upload(client, [seg])["accepted"] == 1
     assert _pending(client)["total"] == 1 and [e for e in _session_events() if e["source"] != "timer-backend"] == []
+
+
+# ─────────────────────────────────────────── 第二轮：决定与落账之间、重问之后
+
+
+@pytest.mark.parametrize("how", ["reject", "choose_other", "dismiss_choice"])
+def test_a_human_decision_completed_before_the_fact_is_written_stops_the_record(client, world, clock, monkeypatch, how):
+    from app.modules.activity import repo  # noqa: PLC0415
+
+    if how == "dismiss_choice":                                          # 按人的临时选择记的那条路
+        key = _ask(client, clock)
+        _post(client, CHOICE, {"key": key, "projectId": world["q"]})
+        seg, act = _notes(5), lambda: _post(client, f"{CHOICE}/dismiss", {"key": key})
+    else:                                                                # 按 AI 那条规则记的那条路
+        key = _waiting(client, clock)["key"]
+        _answer(client, key, taskId=world["a"], confidence=0.95)
+        seg = _notes(5, world["a"])
+        act = (lambda: _post(client, REJECT, {"key": key})) if how == "reject" else (
+            lambda: _post(client, CHOICE, {"key": key, "projectId": world["q"]}))
+    # 上传已经读过问询 / 选择、给这一段占了位；人的决定在写事实之前整个做完
+    _once(monkeypatch, repo, "claim", after=act)
+    assert _upload(client, [seg])["accepted"] == 1
+    item = _pending(client)["items"][0]
+    assert (item["status"], item["auto"]) == ("pending", False) and _session_events() == []
+
+
+def test_rejected_targets_survive_a_later_re_claim_of_the_window(client, world, clock):
+    from app.modules.activity import auto_ai  # noqa: PLC0415
+
+    key = _waiting(client, clock)["key"]
+    _answer(client, key, taskId=world["a"], confidence=0.95)
+    _post(client, REJECT, {"key": key})
+    later = 61 + auto_ai.AI_RETRY.total_seconds()
+    _dwell(client, clock, start=later)                                   # 6 小时后同一个窗口又去问 AI
+    clock(S + later + 61)
+    assert _claim(client)["key"] == key and "outcome" not in _asks(key=key)[0]
+    stale = _guess(taskId=world["a"])
+    for answered in (False, True):                                       # 新问询没答 / 答了「认不出」：被否掉的目标都还记着
+        _run(client, clock, [(later + 62 + answered, "notes", stale)])
+        assert _human(client)["auto"] is None
+        _upload(client, [_notes(20 + 5 * answered, world["a"])])         # 迟到的、还带着旧规则猜测的段
+        assert _pending(client)["total"] == 1 + answered and _session_events() == []
+        if not answered:
+            _answer(client, key, none=True)
+    _post(client, CHOICE, {"key": key, "taskId": world["a"], "remember": True})   # 人自己选了它：解除
+    _run(client, clock, [(later + 70, "notes", stale)])
+    assert _human(client)["auto"]["source"] == "rules"
+    _upload(client, [_notes(10, world["a"])])
+    assert _pending(client)["total"] == 2 and len(_session_events()) == 1

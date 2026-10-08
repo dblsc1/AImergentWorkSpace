@@ -47,10 +47,9 @@ def _rule_id(key: str) -> str:
 
 
 def stale(rec: dict | None, ref: dict) -> bool:
-    """``ref`` 是人说过「不对」的那个 AI 目标吗（检测程序拉到新规则之前，心跳与上传的段还会带着它）。
-    人后来自己选了同一个目标就不算了——那是人的决定。"""
-    return bool(rec) and rec.get("outcome") == "rejected" and _ids(rec) == _ids(ref) and (
-        rec.get("humanChose") != list(_ids(ref)))
+    """``ref`` 是人对这个窗口说过「不对」的目标吗（检测程序拉到新规则之前，心跳与上传的段还会带着它）。
+    看问询的 ``rejected``：它不随再问 AI 清掉；人后来自己选了同一个目标就从里面拿掉了——那是人的决定。"""
+    return any(_ids(r) == _ids(ref) for r in (rec or {}).get("rejected") or [])
 
 
 def _writable(user: str, device: str, app: str, title: str) -> bool:
@@ -95,7 +94,7 @@ class Asks:
                     and self.now - rec["claimedAt"] <= AI_ANSWER_WAIT)
         if self._alive is None:
             t = ask_repo.tenant(self.user)
-            recent = [c for c in t.get("claims") or [] if self.now - c < timedelta(hours=1)]
+            recent = [c for c in t.get("claims") or [] if c and self.now - c < timedelta(hours=1)]
             self._alive = (t.get("polledAt") is not None and self.now - t["polledAt"] <= AI_CLAIM_GRACE
                            and len(recent) < AI_MAX_PER_HOUR)
         return self._alive and _writable(self.user, self.device, span["app"], span["title"])
@@ -109,8 +108,8 @@ def _window(rec: dict) -> dict:
 def claim() -> dict:
     """聊天后端来取：此刻等 AI 认的那个窗口（并认领），没有 → ``{"window": null}``。
     已认领、还没答、没超时的那个原样再给（工人重启、模型自己再读一遍都拿到同一个）。
-    认领是一次条件写（``ask_repo.claim``）：几个认领同时来只有一个写得进，其余的重读、拿到同一份；
-    答过的问询不会被盖掉；名额只由写进去的那一个算。
+    **先占名额、再让问询露面**：这一小时的名额占到了才写问询（一次条件写，``ask_repo.claim``）——所以谁都取不到、
+    答不了一份没占到名额的问询。几个认领同时来只有一个写得进，其余的把名额退回、重读、拿到同一份；答过的问询不会被盖掉。
     ponytail: 两个同时的认领各自看中**不同**的窗口时会有两份在等（之后只再给最新的那份，另一份超时转去请人）；
     要严格「每租户一份」就把在等的那份记到 ``_tenant`` 文档上一起条件更新。"""
     user, now = current_tenant(), auto._now()  # noqa: SLF001
@@ -122,11 +121,11 @@ def claim() -> dict:
         if not w:
             return {"window": None}
         rec = {"user": user, "key": w["key"], "app": w["app"], "title": w["title"], "claimedAt": now}
-        if not ask_repo.claim(rec, now - AI_RETRY):  # 别的认领抢先了：不盖它，给此刻在等的那一份（它已答完就没有）
-            rec = ask_repo.live(user, now - AI_ANSWER_WAIT)
-        elif not ask_repo.count_claim(user, now, now - timedelta(hours=1), AI_MAX_PER_HOUR):
-            ask_repo.unclaim(user, w["key"], now)  # 名额恰好被别的窗口的认领用完：撤回，这个窗口去请人选
-            rec = None
+        counted = ask_repo.count_claim(user, now, now - timedelta(hours=1), AI_MAX_PER_HOUR)
+        if not counted or not ask_repo.claim(rec, now - AI_RETRY):
+            if counted:  # 别的认领抢先建了这个窗口的问询：不盖它，名额退回
+                ask_repo.uncount_claim(user, now)
+            rec = ask_repo.live(user, now - AI_ANSWER_WAIT)  # 给此刻在等的那一份（没有 / 已答完 → None）
     return {"window": _window(rec) if rec else None}
 
 
@@ -193,7 +192,7 @@ def _decided(key: str, target: dict | None) -> None:
     """人对这个窗口做了决定（``target`` = 选的目标；None = 这次不选）：在它的问询上留记号——还没答的那一次从此答不进
     （``ask_repo.answer`` 的条件）；AI 已经认到**别的**目标 → 等同人说了「不对」，撤掉它写的规则。"""
     user, now = current_tenant(), auto._now()  # noqa: SLF001
-    rec = ask_repo.decided(user, key, now, list(_ids(target)) if target else None)
+    rec = ask_repo.decided(user, key, now, target)
     if rec and rec.get("outcome") == "suggested" and _ids(rec) != _ids(target or {}) and ask_repo.reject(user, key, now):
         window_rules.remove_auto(_rule_id(key))
 

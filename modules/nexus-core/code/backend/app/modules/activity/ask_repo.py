@@ -2,9 +2,10 @@
 activity 子边界里只有 ``repo.py`` 与本文件碰 mongo，查询一律带 ``user``。
 
 - 每个 (user, key) 一份问询：``{user, key, app, title, claimedAt, answeredAt?, outcome?, taskId?, projectId?,
-  confidence?, reason?, rejectedAt?, humanAt?, humanChose?}``，``outcome`` ∈ suggested / none / rejected。
-  同一个窗口隔了 ``AI_RETRY`` 再问才整份换掉。``humanAt`` = 这次问询期间人自己对这个窗口做了决定（选了 / 这次不选），
-  ``humanChose`` = 人选的目标 ``[taskId, projectId]``（这次不选为 null）。
+  confidence?, reason?, rejectedAt?, humanAt?, rejected?}``，``outcome`` ∈ suggested / none / rejected。
+  同一个窗口隔了 ``AI_RETRY`` 再问才换成新的一次（回答清掉）。``humanAt`` = 这次问询期间人自己对这个窗口做了决定
+  （选了 / 这次不选）。``rejected`` = 人对这个窗口否掉过的目标 ``[{taskId, projectId, at}]``（最近 8 个）：**不随再问清掉**，
+  人后来自己选了其中哪个就拿掉哪个。
 - 每租户另有一份 ``key == "_tenant"``：``{polledAt, claims: [最近一小时里每次认领的时刻]}``——AI 这条路活着没有、
   这一小时问了几次。
 活状态，不是事实：不进台账 / 投影 / 导出 / 快照恢复。过期的只在认领（写路径）时删。
@@ -69,20 +70,29 @@ def count_claim(user: str, now: datetime, hour_ago: datetime, cap: int) -> bool:
                           {"$push": {"claims": now}}).matched_count > 0
 
 
+#: 再问时清掉的键 = 上一次问询的回答；``rejected``（人否掉过的目标）不在里面，跟着窗口走
+_ANSWER_KEYS = ("answeredAt", "outcome", "taskId", "projectId", "confidence", "reason", "rejectedAt", "humanAt")
+_MAX_REJECTED = 8  # 每个窗口记最近这么多个被否掉的目标
+
+
+def uncount_claim(user: str, at: datetime) -> None:
+    """退回 ``count_claim`` 占的那一个名额（问询没写进去）。恰好退一个：同一毫秒有别的认领也不多退。"""
+    col = _col()
+    col.update_one({"user": user, "key": _TENANT, "claims": at}, {"$unset": {"claims.$": ""}})
+    col.update_one({"user": user, "key": _TENANT}, {"$pull": {"claims": None}})
+
+
 def claim(doc: dict, stale_before: datetime) -> bool:
-    """写下新的一次问询——**单个条件 upsert**：这个窗口没有问询、或那份早于 ``stale_before`` 才写（整份换掉）。
-    有一份不够旧的（别的认领刚建的，可能已经答了）→ 条件不中、upsert 撞唯一键 → False，什么都不改。"""
+    """写下新的一次问询——**单个条件 upsert**：这个窗口没有问询、或那份早于 ``stale_before`` 才写
+    （上一次的回答清掉，``rejected`` 留着）。有一份不够旧的（别的认领刚建的，可能已经答了）→ 条件不中、
+    upsert 撞唯一键 → False，什么都不改。"""
     filt = {"user": doc["user"], "key": doc["key"], "claimedAt": {"$lte": stale_before}}
+    upd = {"$set": {k: v for k, v in doc.items() if k not in ("user", "key")}, "$unset": dict.fromkeys(_ANSWER_KEYS, "")}
     try:
-        _col().replace_one(filt, dict(doc), upsert=True)
+        _col().update_one(filt, upd, upsert=True)
     except DuplicateKeyError:
         return False
     return True
-
-
-def unclaim(user: str, key: str, claimed_at: datetime) -> None:
-    """撤掉自己刚写下、还没人答的那一次认领（名额没占到）。"""
-    _col().delete_one({"user": user, "key": key, "claimedAt": claimed_at, "answeredAt": None})
 
 
 def answer(user: str, key: str, claimed_at: datetime, fields: dict) -> bool:
@@ -92,12 +102,19 @@ def answer(user: str, key: str, claimed_at: datetime, fields: dict) -> bool:
 
 
 def reject(user: str, key: str, at: datetime) -> bool:
-    """人说「不对」：suggested → rejected（条件更新，只成一次）。此前「人也选了它」的记号一并作废。"""
+    """人说「不对」：suggested → rejected（条件更新，只成一次），同一次更新里把那个目标记进 ``rejected``
+    （最近 ``_MAX_REJECTED`` 个）——以后再问 AI、问询的回答被清掉，它也还在。"""
+    was = {"taskId": {"$ifNull": ["$taskId", None]}, "projectId": {"$ifNull": ["$projectId", None]}, "at": at}
+    kept = {"$slice": [{"$concatArrays": [{"$ifNull": ["$rejected", []]}, [was]]}, -_MAX_REJECTED]}
     return _col().update_one({"user": user, "key": key, "outcome": "suggested"},
-                             {"$set": {"outcome": "rejected", "rejectedAt": at, "humanChose": None}}).matched_count > 0
+                             [{"$set": {"outcome": "rejected", "rejectedAt": at, "rejected": kept}}]).matched_count > 0
 
 
-def decided(user: str, key: str, at: datetime, chose: list | None) -> dict | None:
-    """人对这个窗口做了决定：在它的问询上留记号（没有问询就什么都不做）。返回写后的问询。"""
-    return _col().find_one_and_update({"user": user, "key": key}, {"$set": {"humanAt": at, "humanChose": chose}},
-                                      projection={"_id": 0}, return_document=ReturnDocument.AFTER)
+def decided(user: str, key: str, at: datetime, chose: dict | None) -> dict | None:
+    """人对这个窗口做了决定：在它的问询上留记号（没有问询就什么都不做）；人选的那个目标（``chose``，这次不选为 None）
+    若被否掉过，从 ``rejected`` 里拿掉——那是人的决定。返回写后的问询。"""
+    upd: dict = {"$set": {"humanAt": at}}
+    if chose:
+        upd["$pull"] = {"rejected": {"taskId": chose.get("taskId"), "projectId": chose.get("projectId")}}
+    return _col().find_one_and_update({"user": user, "key": key}, upd, projection={"_id": 0},
+                                      return_document=ReturnDocument.AFTER)
