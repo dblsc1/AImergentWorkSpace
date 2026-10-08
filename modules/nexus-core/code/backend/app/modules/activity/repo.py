@@ -91,6 +91,12 @@ def set_match(user: str, sug_id: str, suggestion: dict) -> bool:
     return _col().update_one(filt, {"$set": {"suggestion": suggestion}}).matched_count > 0
 
 
+def set_labels(user: str, sug_id: str, labels: dict) -> bool:
+    """v2.10 只贴标签（``suggestion.collection`` / ``suggestion.projectId``）：仍 pending 才写，任务、把握、来源不动。"""
+    upd = {"$set": {f"suggestion.{k}": v for k, v in labels.items()}}
+    return _col().update_one({"user": user, "id": sug_id, "status": "pending"}, upd).matched_count > 0
+
+
 def clear_match(user: str, sug_id: str, task_id: str) -> bool:
     """v2.7 人说「否」：只在仍 pending 且建议的任务还是 ``task_id`` 时清掉，并记住它。"""
     filt = {"user": user, "id": sug_id, "status": "pending", "suggestion.taskId": task_id}

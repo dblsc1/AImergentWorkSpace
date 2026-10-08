@@ -65,6 +65,13 @@ def browser() -> Iterator[Browser]:
         b.close()
 
 
+# 「待确认建议」的集合（v2.10）缺省把多个窗口的行收着。既有用例断言的是行本身，所以缺省一出现就展开；
+# 测「缺省收着」的用例传 expand=False。
+_EXPAND = """new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => {
+  if (n.querySelectorAll) n.querySelectorAll('details.suggest-coll-rows').forEach(d => { d.open = true; });
+}))).observe(document, {childList: true, subtree: true});"""
+
+
 def _not_found(route: Route) -> None:
     route.fulfill(status=404, content_type="application/json", body='{"detail":"Not Found"}')
 
@@ -72,7 +79,7 @@ def _not_found(route: Route) -> None:
 @contextlib.contextmanager
 def open_page(browser: Browser, base: str, *, routes: dict[str, Callable[[Route], None]] | None = None,
               width: int = 1100, theme: str | None = None, init: str | None = None,
-              reduced_motion: str | None = None) -> Iterator[Page]:
+              reduced_motion: str | None = None, expand: bool = True) -> Iterator[Page]:
     """``routes``：正则 → 处理函数，盖在缺省的 404 上（Playwright 后注册的先匹配）。"""
     context = browser.new_context(viewport={"width": width, "height": 900}, timezone_id="Asia/Shanghai",
                                   reduced_motion=reduced_motion)
@@ -83,6 +90,8 @@ def open_page(browser: Browser, base: str, *, routes: dict[str, Callable[[Route]
         status=200, content_type="application/json", body=json.dumps(TREE, ensure_ascii=False)))
     for pat, fn in (routes or {}).items():
         page.route(re.compile(pat), fn)
+    if expand:
+        page.add_init_script(_EXPAND)
     if init:
         page.add_init_script(init)
     page.goto(f"{base}/{PAGE_NAME}")

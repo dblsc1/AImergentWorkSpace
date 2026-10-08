@@ -17,6 +17,8 @@
   人说「是」就是 ``confirm``。两者都不确认任何东西；设备令牌（Bearer）一律 403。
 - **v2.8 AI 提议新任务**：match 可以给 ``newTask`` 代替 ``taskId``；人确认时才建任务（只建一个），
   提议的校验、去重、建任务都在 ``proposals.py``。
+- **v2.10 集合与项目**：match 的每条还可以带 ``collection {name}``（同类窗口的集合标签）与 ``projectId``
+  （只到项目的建议）；只带这两样时不动建议的任务。两者只是给页面看的提示，不进台账。
 """
 
 from __future__ import annotations
@@ -77,22 +79,34 @@ class _NewTask(BaseModel):
     name: Annotated[StrictStr, Field(max_length=1024)]  # 1–64 码点的判据在 proposals.clean_name（去空白之后）
 
 
+class _Collection(BaseModel):
+    name: Annotated[StrictStr, Field(max_length=1024)]  # 1–64 码点的判据在 proposals.collection（去空白之后）
+
+
 class _Match(BaseModel):
     """v2.7 助理配的一条。confidence 整数 0 / 1 也收（模型常这么写），布尔不收。
-    v2.8：``taskId`` 与 ``newTask``（提议新任务）二选一。"""
+    v2.8：``taskId`` 与 ``newTask``（提议新任务）二选一。
+    v2.10：给了 ``collection`` / ``projectId`` 时两者可以都不给（只贴标签，不动任务），这时 ``confidence`` 也可省。"""
 
     id: Annotated[StrictStr, Field(min_length=1, max_length=64)]
     taskId: Annotated[StrictStr, Field(min_length=1, max_length=128)] | None = None
     newTask: _NewTask | None = None
-    confidence: Annotated[StrictFloat | StrictInt, Field(ge=0, le=1)]
+    confidence: Annotated[StrictFloat | StrictInt, Field(ge=0, le=1)] | None = None
     reason: StrictStr = ""
+    collection: _Collection | None = None
+    projectId: Annotated[StrictStr, Field(min_length=1, max_length=128)] | None = None
 
     reason_bytes = field_validator("reason")(_reason_bytes)
 
     @model_validator(mode="after")
     def _one_target(self):
-        if (self.taskId is None) == (self.newTask is None):
-            raise ValueError("taskId 与 newTask 必须二选一（只能配到任务，或提议一个新任务）")
+        both = self.taskId is not None and self.newTask is not None
+        none = self.taskId is None and self.newTask is None
+        if both or (none and self.collection is None and self.projectId is None):
+            raise ValueError("taskId 与 newTask 必须二选一（只能配到任务，或提议一个新任务）；"
+                             "都不给时至少要有 collection 或 projectId")
+        if not none and self.confidence is None:
+            raise ValueError("配任务 / 提议新任务必须给 confidence")
         return self
 
 
@@ -327,9 +341,17 @@ def match(authorization: str | None, matches: list[Any]) -> dict:
     for index, raw in enumerate(matches):
         try:
             m = _Match.model_validate(raw)
+            # v2.10 标签：集合（名字归一成 key）与只到项目的建议
+            labels = {"collection": proposals.collection(m.collection.name)} if m.collection is not None else {}
         except ValidationError as exc:
             rejected.append({"index": index, "reason": _reason(exc)})
             continue
+        except ValueError as exc:
+            rejected.append({"index": index, "reason": str(exc)})
+            continue
+        if m.projectId is not None:
+            labels["projectId"] = m.projectId
+        label_only = m.taskId is None and m.newTask is None  # 只贴标签，不动建议的任务
         doc = repo.get(user, m.id)
         why = None
         if doc is None:
@@ -338,12 +360,23 @@ def match(authorization: str | None, matches: list[Any]) -> dict:
             why = f"活动建议 {m.id!r} 已{'确认' if doc['status'] == 'confirmed' else '忽略'}，不能再配"
         elif m.taskId is not None and m.taskId in doc.get("rejectedTaskIds", []):
             why = f"用户已经否掉过任务 {m.taskId!r}，不要再配同一个"
-        elif doc["suggestion"].get("taskId") and doc["suggestion"].get("classifier") != "assistant":
-            why = "这条已有分类规则给的任务，助理不覆盖"
-        elif m.taskId is not None and planner_service.get_task(m.taskId) is None:
+        elif not label_only and doc["suggestion"].get("taskId") and doc["suggestion"].get("classifier") != "assistant":
+            why = "这条已有分类规则给的任务，助理不覆盖（只贴 collection / projectId 可以：别带 taskId / newTask）"
+        elif m.taskId is not None and (task := planner_service.get_task(m.taskId)) is None:
             why = f"任务不存在：{m.taskId!r}"
+        elif m.projectId is not None and planner_service.get_project(m.projectId) is None:
+            why = f"项目不存在：{m.projectId!r}"
+        elif not label_only and m.projectId not in (
+                None, m.newTask.projectId if m.newTask else task["projectId"]):
+            why = f"projectId {m.projectId!r} 不是这个任务 / 新任务所在的项目"
+        elif label_only:
+            if not repo.set_labels(user, m.id, labels):
+                why = "这条建议刚被改动（确认 / 忽略），没有写入"
         else:
             sug = {"taskId": m.taskId, "confidence": float(m.confidence), "reason": m.reason, "classifier": "assistant"}
+            if "collection" in doc["suggestion"]:  # 换任务不丢集合标签
+                sug["collection"] = doc["suggestion"]["collection"]
+            sug.update(labels)
             if m.newTask is not None:  # v2.8：提议新任务（校验 + 去重在 proposals.py）
                 sug["newTask"], why = proposals.propose(user, doc, m.newTask.projectId, m.newTask.name, _now())
             if not why and not repo.set_match(user, m.id, sug):

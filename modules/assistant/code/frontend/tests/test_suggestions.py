@@ -370,14 +370,21 @@ def test_group_dismiss_and_ai_unmatch(browser, static_base_url):
 
 @pytest.mark.parametrize("other", [{"task": "t_read"}, {"task": None, "conf": 0}])
 def test_disagreeing_suggestions_leave_picker_empty(browser, static_base_url, other):
-    # 指向别的任务、或有的段没建议：都算不一致，要人挑
-    with open_both(browser, static_base_url, [_seg(1), _seg(2, **other)]) as (page, _stub, _rules):
+    # 指向别的任务、或有的段没建议：都算不一致，不预选任务，「全部确认」不碰
+    with open_both(browser, static_base_url, [_seg(1), _seg(2, **other)]) as (page, stub, _rules):
         li = page.locator('li[data-id="seg_1"]')
         assert "建议不一致" in li.inner_text()
         assert li.locator("select").input_value() == ""
-        assert li.locator(".suggest-confirm").is_disabled()
         page.fill("#suggest-threshold", "0")
         assert page.locator("#suggest-confirm-all").is_disabled()
+        # v2.10：建议都在同一个项目里 → 集合预选这个项目，空着的下拉 = 记到项目的「未分类」
+        assert page.locator(".suggest-project").input_value() == "p_eng"
+        assert li.locator("select option").first.inner_text() == "未分类（只记到这个项目）"
+        # 集合不选项目 → 回到原来的样子：没选任务不能确认
+        page.locator(".suggest-project").select_option("")
+        li = page.locator('li[data-id="seg_1"]')
+        assert "建议不一致，请自己选任务" in li.inner_text() and li.locator(".suggest-confirm").is_disabled()
+        assert stub.posts == []
 
 
 def test_partial_unmatch_requires_manual_pick_and_never_sends_rejected(browser, static_base_url):
