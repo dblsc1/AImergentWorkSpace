@@ -10,7 +10,7 @@
 ```yaml
 provides:
   - id: assistant.page.v1
-    summary: 「AI助理」页面，静态路由 <站点前缀>assistant/。自上而下四块：AI 对话、待确认建议、活动检测设置、回顾。
+    summary: 「AI助理」页面，静态路由 <站点前缀>assistant/。自上而下五块：AI 对话、待确认建议、待分类（2026-10-08）、活动检测设置、回顾。
 consumes:
   - id: agent.chat.v1
     contract: ../../../contracts/agent.chat.v1/contract.md
@@ -62,6 +62,27 @@ consumes:
     contract: ../nexus-core/module_docs/contract.md
     purpose: >
       待确认建议的任务下拉与「分区 / 项目 / 任务」路径显示：zones/projects/tasks 的 id、name、zoneId。
+  - id: nexus-core.sessions.reassign.v1
+    contract: ../nexus-core/module_docs/contract.md
+    purpose: >
+      「待分类」面板（`code/frontend/unclassified.js`、`#unclassified-panel`，仓主 2026-10-08：记进未分类的时间要能
+      「归入 xxx 任务」）。列出**此刻还记在各项目「未分类」时间桶上**的每一段，人挑任务归进去。
+      读：`views.tree.v1` 里每个带 `unclassifiedTaskId` 的项目各发一次
+      `GET /api/core/events?type=session.completed&taskId=<桶>&limit=200`（`events.read.v1`，nexus-core v2.11 起只回当前还在
+      桶上的段）；用到 `total`、`items[].{id, source, time, data.startAt, data.durationSeconds}`。
+      按项目分组（时间多的项目在前）：组头「分区 / 项目」+「N 段 · 共 M 分」（`total` 大于页上条数时注明还有几段没列）；
+      每段一行「临时任务 MM-DD HH:MM · N 分」（时间 = `data.startAt`，没有则 `time`；浏览器本地时区）+ 来源徽标
+      （`timer-backend` 计时、`manual-backfill` 补登、`activity-confirmed` 电脑检测，其余原样显示 source）。
+      每组一个任务下拉：缺省只列**本项目**的任务（已完成的标「（已完成）」），末尾「其他项目…」换成全部项目的任务
+      （按「分区 / 项目」分组，可「只看本项目」换回）。没选任务时归入按钮禁用。
+      写：行上的「归入」= `POST /api/core/sessions/{eventId}/reassign {taskId}`；组上的「全部归入所选任务」对组里每一段逐个发
+      （一个接一个，不并发）。成功（含 `duplicate: true`）的行立即从页面上拿掉；部分失败报「N / M 段没归入：第一条 `detail`」，
+      已成功的不回滚；全部成功报「已归入 N 段 → 任务路径」。从第一个请求到列表重拉完，面板里所有按钮与下拉禁用。
+      一段都没有、或 events 端点 404（后端早于 v0.6）/ 读取失败 → 面板整块不出现；reassign 404（后端早于 v2.11）按失败原样显示。
+      **归入不是计时**：不发 `honeycomb:timer-changed`。只在打开页面、每次操作后、标签页重新可见时拉，不轮询。
+      **撤回**：刚归入成功的那一批在提示旁出一个「撤回」按钮 = 对其中每一段 `POST …/reassign {projectId: 原项目}`（放回原项目的桶，
+      台账里追加的是又一条改挂，不是删除）；只管最近一次操作，做了下一次操作或重新打开页面就没有了。
+      所有名字只当文本渲染。
   - id: detector.settings.v1
     contract: ../../../contracts/detector.settings.v1/contract.md
     purpose: >
@@ -122,6 +143,7 @@ consumes:
 
 | 日期 | CR | 变更 |
 |---|---|---|
+| 2026-10-08 | 仓主：记进未分类的时间能不能追加「归入 xxx 任务」 | 新增第三块「待分类」（`unclassified.js`、`#unclassified-panel`，在待确认建议与检测设置之间）：按项目列出还记在「未分类」时间桶上的每一段，下拉限本项目任务（+「其他项目…」），逐段「归入」或「全部归入所选任务」= nexus-core v2.11 的 `POST /api/core/sessions/{eventId}/reassign`；没有可归的段 / 端点 404 时整块不出现 |
 | 2026-10-03 | 仓主：AI 能自动加新任务（草稿 + 一键确认） | 待确认建议认 nexus-core v2.8 的 `suggestion.newTask`：组上出「新建任务：项目 / 名称」（名字可改），「是」= 组里每一段 confirm `{name, proposalId}`（后端只建一次），「否」= unmatch `{proposalId}`；下拉仍可改选现成任务；「全部确认」不含提议的组。「让 AI 匹配」那句话加「现成任务都不合适时可以提议新任务」 |
 | 2026-10-03 | 仓主：一个窗口对应一个任务（短段太多挑不过来） | 待确认建议按 `(app, title, idle)` 分组，一组一行、一次挑任务，确认 / 忽略 / 是 / 否对组里每段逐个发，部分失败按组报；有建议的段指向不同任务时提示「建议不一致」。每组勾选项「以后这个窗口都记到这个任务」：确认后往分类规则**最前面**加一条精确匹配这个窗口的规则（`detector.rules.v1` PUT + If-Match，412 重试一次，相同规则不重复加；标题是代号时禁用）。`rules.js` 追加 `window.assistantRules.prepend`。纯前端，不动后端 |
 | 2026-10-02 | 仓主：终端按标签页分段 | 活动检测设置面板增「分段」一组：复选框「终端按标签页分段」+ 可改的程序名单（`detector.settings.v1` v1.2 的 `segmentByTitle` / `segmentByTitleApps`）。v1.1 存下的文档没有这两个键时按缺省（开 + 本机名单）显示，保存时带上；所以保存需要 nexus-core 认 v1.2（同版发布） |

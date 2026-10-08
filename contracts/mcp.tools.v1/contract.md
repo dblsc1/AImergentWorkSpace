@@ -259,6 +259,10 @@ consumes:
 
 只出 `session.completed`；别的事件类型（含 `agent.run.completed`）不出。
 
+**改挂过的段（2026-10-08，nexus-core v2.11）**：人把记在「未分类」上的一段归到具体任务之后，这一条的 `taskId` / `projectId` /
+`zoneId` / `path` / `unclassified` 给的是它**当前**的归属（读 nexus-core 条目上的 `currentSubject`，没有就是原来的 `subject`），
+与 `get_daily_time` 的口径一致；`eventId`、时刻、时长不变。`session.reassigned` 本身不出。不加字段。
+
 **项目的「未分类」时间（v1.5，nexus-core v2.9）**：每个项目可以有一个系统任务当「未分类」时间桶（id `t_unc_<projectId>`）——
 用户长按项目直接计时、或确认活动建议时只指定了项目，时间就记在它上面，直到归到具体任务。它**不是普通任务**：
 `get_task_tree`、`list_projects` 的任务计数、`get_next_actions`、`get_weekly_review.staleTasks` 都不含它。
@@ -512,4 +516,5 @@ MCP 发 `POST /api/core/detector/rules/drafts {rules, summary, author: "assistan
 | 2026-09-30 | v1.2 追加 `get_detector_rules`（只读，规则全给、不受 200 条上限）与第一个提议工具 `propose_detector_rules`（一整套规则 → 待人应用的草稿，`detector.rules.v1`）；第六节把「v1 不得列出 `propose_*`」对这一个解除，并定下所有 `propose_*` 的共同规则；请求体上限 64 → 256 KiB；错误对象可追加 `errors`。既有 9 个工具不变 |
 | 2026-10-02 | v1.3 追加第二个提议工具 `propose_activity_matches`（给待确认的活动建议配任务：`POST /api/core/activity/suggestions/matches`，nexus-core v2.7；只写建议、不确认，人逐条答「是 / 否」）；`list_activity_suggestions` 每条追加 `rejectedTaskIds`，`classifier` 多一个取值 `assistant`。只增，既有工具不变 |
 | 2026-10-03 | v1.4 `propose_activity_matches` 每条可用 `newTask {projectId, name}` 代替 `taskId`（提议新任务，nexus-core v2.8；人点「是」才建、只建一次）；`list_activity_suggestions` 每条追加 `newTask`（含 `projectPath`）。工具仍是 12 个，只增 |
+| 2026-10-08 | 认 nexus-core v2.11 的改挂（不加字段、版本号不动）：`list_time_sessions` 条目的 `taskId` / `projectId` / `zoneId` / `path` / `unclassified` 按这一段**当前**的归属（`currentSubject`，没改挂过即原 `subject`）；此前归走的段仍会被报成 `unclassified: true`，与 `get_daily_time` 对不上 |
 | 2026-10-08 | v1.5 认 nexus-core v2.9 的项目「未分类」时间桶：`list_time_sessions` 与 `get_daily_time` 的每个条目追加布尔 `unclassified`；桶的 `path` 为「分区 / 项目 / 未分类」（所有带任务路径的工具）；桶不出现在 `get_task_tree` / `list_projects` 的任务计数 / `get_next_actions` / `staleTasks`。工具仍是十二个，入参不变，只增输出字段 |

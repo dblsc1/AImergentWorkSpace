@@ -90,6 +90,16 @@
 > `views.gantt.v1` 的任务加 `kind`；档案读端 `GET /api/core/events` 加可选过滤 `taskId`（列出记在某个桶上的每一段）。
 > 既有字段、端点行为一个不改。见「项目未分类时间」节。
 >
+> **v2.11（追加式；v2.10 由并行的「AI 分集合」占用）**：**记在「未分类」里的一段时间可以归到具体任务，台账一个字不改。**
+> 仓主 2026-10-08：「时间记录到未分类以后，能不能追加记录『归入 xxx 任务』？不能破坏可追溯性。」新增
+> `nexus-core.sessions.reassign.v1`（`POST /api/core/sessions/{eventId}/reassign`，见「改挂未分类时间」节）：
+> 每次改挂往台账**追加**一条新事实 `session.reassigned`（哪一段、从哪个任务、到哪个任务、第几次），原来那条
+> `session.completed` 永不修改；可以再改、可以放回某个项目的「未分类」，最后一次为准，全部历史都在台账里。
+> 这一段的秒数从此算在当前归属的任务 / 项目上（圆环、甘特、回顾、时间线、MCP），投影重建与快照恢复得到同样的结果。
+> 档案读端 `GET /api/core/events` 的 `taskId` 过滤改按**当前归属**，改挂过的段追加 `currentSubject`。
+> `session.reassigned` 只由该端点写：`POST /api/core/events` 收到它一律进 `rejected`。带 `Authorization: Bearer` 403。
+> 既有字段、端点行为一个不改。
+>
 > v1.9：`GET /api/core/export` 产出的快照此前没有任何端点能吃
 > 回去（喂给 import 会被三层拒绝，而那三条拒绝各守一件实事，一条都不该放宽）。
 > 新增 `nexus-core.restore.v1`（`POST /api/core/restore`，见「快照恢复」节）：
@@ -275,6 +285,12 @@ provides:
       POST .../rules/drafts、GET .../drafts/current、POST .../drafts/{id}/apply|discard；按租户存 detector_rules；
       PUT/建草稿/应用/丢弃带 Bearer 403
     status: 已实现（v2.6），待验证
+  - id: nexus-core.sessions.reassign.v1
+    summary: 改挂未分类时间（v2.11）——POST /api/core/sessions/{eventId}/reassign {taskId} | {projectId}：把原本记在
+      项目「未分类」时间桶上的一段 session.completed 归到具体任务（或放回某项目的桶），往台账追加一条
+      session.reassigned（原事实不改，可再改，最后一次为准）；各投影把这段秒数挪到当前归属，重建 / 恢复结果相同；
+      events.read.v1 的 taskId 过滤按当前归属、改挂过的段追加 currentSubject。带 Bearer 403；actor=ai 403
+    status: 已实现（v2.11），待验证
 consumes:
   - id: yq-event/v1
     contract: ../../contracts/yq-event.v1/contract.md
@@ -324,6 +340,8 @@ consumes:
 | GET | `/api/core/detector/rules/drafts/current` | 无 | `{draft\|null}` | ✅ 已实现（v2.6） |
 | POST | `/api/core/detector/rules/drafts/{id}/apply` | `If-Match` | 同 GET rules；带 Bearer 403、404、412、422 | ✅ 已实现（v2.6） |
 | POST | `/api/core/detector/rules/drafts/{id}/discard` | 无 | `204`（幂等）；带 Bearer 403 | ✅ 已实现（v2.6） |
+| POST | `/api/core/sessions/{eventId}/reassign` | `{taskId}` 或 `{projectId}`（二选一） | `SessionReassignOut`（见「改挂未分类时间」节）；带 Bearer / `actor=ai` 403、404、409 | ✅ 已实现（v2.11） |
+| — | （v2.11 追加，无新端点）`GET /api/core/events` 的 `taskId` 过滤按当前归属，改挂过的 `session.completed` 条目追加 `currentSubject`；`POST /api/core/events` 拒收 `session.reassigned` | 见「改挂未分类时间」节 | ✅ 已实现（v2.11） |
 | ~~GET~~ | ~~`/api/core/zones`~~ | 无 | `[ZoneOut]` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
 | ~~POST~~ | ~~`/api/core/zones`~~ | `{name, color?, order?}` | `ZoneOut` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
 | ~~PATCH~~ | ~~`/api/core/zones/{id}`~~ | `{name?, color?, order?}` | `ZoneOut` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
@@ -652,6 +670,8 @@ x时x分–x时x分完成了 xx 任务」就是从这里来的。
 | `limit` | ❌ | 默认 100，上限 1000 |
 | `offset` | ❌ | 默认 0 |
 | `taskId` | ❌ | v2.9：只回 `subject.task` 等于它的事件（过滤后再排序、分页） |
+
+v2.11：`taskId` 对 `session.completed` 比的是这一段**当前**的归属，改挂过的条目追加 `currentSubject`（见「改挂未分类时间」节「读端」）。
 
 ```jsonc
 { "total": 42, "items": [ /* 事件信封原样，剔除 _id */ ] }
@@ -1106,8 +1126,148 @@ v2.7「只能配到任务，不能只配到项目」说的是 `matches`（助理
 ### 本版不做
 
 - 把已经记在桶里的时间**改挂**到具体任务（改 `subject` 要动 append-only 台账，另行设计）。
+  （v2.11 已做：不改 `subject`，追加 `session.reassigned`，见下一节「改挂未分类时间」。）
 - `matches` 只配到项目。
 - 旧版长按建出来的「日期 时间」占位任务不迁移，仍是普通任务。
+
+## 改挂未分类时间（规范性 · v2.11，`nexus-core.sessions.reassign.v1`）
+
+仓主 2026-10-08：「时间记录到未分类以后，能不能追加记录『归入 xxx 任务』？不能破坏可追溯性。」
+
+**做法：只追加，不改写。** 记在桶上的那条 `session.completed` 永远原样留在台账里；每次改挂追加一条
+`session.reassigned`，说清「哪一段、从哪、到哪、第几次、什么时候」。一段时间**当前**算在谁头上 = 它最后一次改挂的去向
+（没改挂过 = 原来的 `subject`）。全部历史用 `GET /api/core/events?type=session.reassigned` 读得到。
+
+### 新事实 `session.reassigned`
+
+```jsonc
+{ "spec": "yq-event/v1", "id": "evt_…", "type": "session.reassigned",
+  "dedupeKey": "reassign:<sessionEventId>:<seq>",     // 同一段的第 seq 次改挂只可能落一条
+  "user": "<租户>", "source": "session-reassign",
+  "time": "<服务端收到请求的时刻>",
+  "subject": { "zone": "z_…", "project": "p_…", "task": "t_…" },   // 改挂之后的归属（去向）
+  "data": {
+    "sessionEventId": "evt_…",          // 被改挂的那条 session.completed 的 id
+    "seq": 1,                            // 这一段的第几次改挂，从 1 起、连续
+    "fromTaskId": "t_unc_p_ab12cd", "fromProjectId": "p_ab12cd",   // 改挂之前的归属
+    "toTaskId": "t_9f8e7d", "toProjectId": "p_ab12cd",             // = subject.task / subject.project
+    "actor": "human",                    // 只有人能改挂（见「谁能调」）
+    "session": {                         // 被改挂那一段的抄录：这条事实单独拿出来也读得懂、投影不必回头查台账
+      "source": "timer-backend", "dedupeKey": "timer:sess_…",
+      "startAt": "2026-10-08T09:00:00+08:00", "durationSeconds": 1920 } },
+  "flags": [] }
+```
+
+- **只由本节的端点写。** `POST /api/core/events` 收到 `type: "session.reassigned"` 的信封一律不落库，进 `rejected`
+  （理由：改挂是人的决定，事件入口对设备令牌 / 外部 source 开放，放行就绕过了下面的全部规则）。
+  快照恢复（`/api/core/restore`）照常原样搬它——那是同一份台账。
+- **链是连续的**：同一段的 `seq` 为 1、2、3…，第 n+1 条的 `from*` 一定等于第 n 条的 `to*`
+  （防重唯一索引上的 `dedupeKey` 保证同一个 `seq` 只落一条，见「并发」）。
+- `data.session` 是抄录，不是第二份事实：**投影重建只认原来那条 `session.completed`**（见「投影」）。
+
+### 端点
+
+`POST /api/core/sessions/{eventId}/reassign`，`eventId` = 那条 `session.completed` 的 `id`。请求体二选一：
+
+```jsonc
+{ "taskId": "t_9f8e7d" }      // 归到这个任务（任何项目的都行；跨项目就是把这段时间挪到那个项目的合计里）
+{ "projectId": "p_ab12cd" }   // 放回这个项目的「未分类」时间桶（取或建，同 POST /planner/projects/{id}/unclassified）——点错了用它撤回
+```
+
+`200 SessionReassignOut`：
+
+```jsonc
+{ "sessionEventId": "evt_…",
+  "duplicate": false,                    // true = 这一段此刻已经在目标任务上，什么都没追加
+  "fromTaskId": "t_unc_p_ab12cd",        // 这次改挂之前的归属（duplicate 时 = taskId）
+  "taskId": "t_9f8e7d", "projectId": "p_ab12cd",   // 现在的归属
+  "seq": 1,                              // 现在的改挂次数（从没改挂过又 duplicate 时为 0）
+  "event": { "id": "evt_…", "dedupeKey": "reassign:evt_…:1", "type": "session.reassigned" } }
+  // event = 决定当前归属的那条 session.reassigned；从没改挂过（duplicate 且 seq 0）时为 null
+```
+
+| 情形 | 结果 |
+|---|---|
+| `eventId` 在当前租户的台账里不是一条 `session.completed` | **404** |
+| 同一个 `id` 对上不止一条 `session.completed`（事件 `id` 不唯一，见 yq-event/v1 §3） | **409**，不猜 |
+| 这一段**原本**不是记在「未分类」时间桶上的（`subject.task` ≠ `t_unc_<subject.project>`） | **409**——只有未分类的时间能改挂；直接记在具体任务上的时间不在本版范围 |
+| 请求体 `taskId` / `projectId` 都没给或都给了 | **400**；多了别的键、类型不对 **422**（pydantic） |
+| `taskId` 不存在，或它的项目 / 分区链断了 | **404**（与 `timer/start` 同一套归属链判据） |
+| `taskId` 是某个「未分类」时间桶 | **400**——放回未分类请用 `{projectId}` |
+| `projectId` 不存在 | **404**；桶的 id 被不是桶的任务占着 **409**（同 v2.9） |
+| 目标就是这一段当前的归属 | **200**，`duplicate: true`，台账、投影都不动（幂等：重试、连点两下都安全） |
+| 带 `Authorization: Bearer`（设备令牌） | **403** |
+| 有效 actor 为 `ai`（带 AI 来源凭据），或严格模式下没带人路径凭据 | **403**（与 v1.6 的高风险写同一套判据：改挂是搬移时间） |
+| 并发改挂连续 5 次都没抢到下一个 `seq` | **409**，重试即可 |
+
+规则：
+
+- **能改挂的** = 原本记在桶上的段。改挂过的可以**再改**（去别的任务、换项目、放回任何项目的桶），次数不限，最后一次为准。
+- **目标** = 任何存在的任务（`normal` / `ephemeral`，完成与否都行），或 `{projectId}` 指的那个项目的桶。
+- 目标任务以后被删 / 被搬到别的项目：这一段留在改挂时写下的 `task` / `project` 上（与任何记在已删任务上的时间相同，
+  「搬移不污染历史」），仍可再改挂。
+- **不留 planner 审计**：台账里那条 `session.reassigned` 本身就是留痕（`{projectId}` 真的要建桶时照旧留一条 `create` 审计）。
+
+### 谁能调
+
+改挂是人的决定。设备令牌（`Authorization: Bearer`）403，理由同检测设置（auth.gate v1.2「带了 Bearer 就只看令牌」）。
+来源凭据按 v1.6：`actor=ai` 403；`NEXUS_ACTOR_STRICT=1` 时须带人路径凭据。MCP 没有对应工具（`mcp.tools.v1` 不变）。
+
+### 并发
+
+两个并发的改挂各自读到「当前第 n 次」，都想写第 n+1 条——`dedupeKey` 相同，唯一索引只放进一条；没抢到的那个重新读、
+按新的当前归属再试（这时目标若已是当前归属就回 `duplicate: true`）。所以台账里永远是一条连续的链，
+**链的最后一条 = 各投影的状态**：汇总类投影按每条 `session.reassigned` 做「从旧归属减、往新归属加」，加减可交换、
+各自按 `dedupeKey` 幂等，先后到达顺序不影响结果；时间线投影按 `seq` 只进不退。
+
+### 投影
+
+一段时间的秒数、归日（`data.startAt` 经 `NEXUS_TZ`）、时刻都不变，变的只是算在哪个任务 / 项目上：
+
+| 投影 / 读端 | 改挂之后 |
+|---|---|
+| `proj_current`（`views/current` 的 `totalSeconds` / 占比） | `tasks[旧]`、`projects[旧]` 减，`tasks[新]`、`projects[新]` 加；`totalSeconds` 不变。减到 0 的键不再读出 |
+| `proj_daily_stats`（`views/gantt` 的 `actual`、`views/review` 的本周实际 / 久未动） | 同一天：`(旧项目, 旧任务)` 那行减、`(新项目, 新任务)` 那行加。减到 0 的行不再读出（不出 `seconds: 0` 的条目，也不算「最近动过」） |
+| `proj_lanes`（`views/lanes` 的 `human.sessions[]`） | 这一段的 `taskId` / `projectId` 换成新的，其余不变 |
+| `proj_agent_daily_stats` | 不相干（改挂只针对人的 `session.completed`） |
+| `GET /api/core/export` | `events` 原样含 `session.completed` 与全部 `session.reassigned`；`projections` 是改挂之后的数 |
+
+- **DISPATCH**：`session.reassigned` → `handlers/current.py`、`handlers/daily_stats.py`、`handlers/lanes.py` 各一个
+  `handle_reassign`（只动自己的投影、幂等、不发事件）。
+- **投影重建 / 快照恢复**：不重放 `session.reassigned` 的加减，而是先从台账算出每一段最后一次改挂的去向（同租户、
+  同 `sessionEventId` 里 `seq` 最大的那条），重放 `session.completed` 时把 `subject` 换成它。结果与事件到达顺序无关；
+  指向台账里已经没有的段的 `session.reassigned` 不起作用（不会凭空减出负数）。**重建结果 = 逐条实时投影的结果**
+  （各读端的响应相同）。`proj_lanes` 的启动补建同一口径。
+- 已知窗口（ponytail）：一段刚落账、它的投影还没写完的那几毫秒里改挂，时间线上这一段可能仍显示旧归属，直到下一次重建；
+  汇总类投影不受影响。
+
+### 读端：`GET /api/core/events`
+
+- **`taskId` 过滤按当前归属**（v2.9 的「`subject.task` 等于它」对没改挂过的段不变）：对 `session.completed`，
+  比的是这一段当前的任务。所以 `?type=session.completed&taskId=<某项目的桶>` 只回**此刻还在桶上**的段——归走一段，
+  「待分类」就少一段；`taskId=<某任务>` 则包含改挂进来的段。其它类型的事件（含 `session.reassigned` 自己）仍比 `subject.task`。
+- **改挂过的 `session.completed` 条目追加一个键 `currentSubject`**，形状同 `subject`：
+
+  ```jsonc
+  { "id": "evt_…", "type": "session.completed",
+    "subject":        { "zone": "z_1", "project": "p_ab12cd", "task": "t_unc_p_ab12cd" },   // 原样，永不变
+    "currentSubject": { "zone": "z_1", "project": "p_ab12cd", "task": "t_9f8e7d" },          // 现在算在谁头上
+    … }
+  ```
+
+  没改挂过的条目**没有**这个键（读方写 `currentSubject || subject`）；放回桶的条目有这个键、值是桶。
+  它是读的时候现算的，不存进台账，`GET /api/core/export` 的 `events` 里也没有。
+- 改挂历史：`?type=session.reassigned`（按 `time` 倒序），一段的全部改挂 = `data.sessionEventId` 相同的那些，按 `data.seq` 排。
+
+### 运维脚本
+
+`scripts/prune_orphan_events.py` 判孤儿时同样按当前归属：原项目已删、但已改挂到现存任务的段不是孤儿，不删。
+
+### 本版不做
+
+- 改挂**原本就记在具体任务上**的时间（记错任务的更正）——规则与界面另行设计。
+- 拆分一段时间、改时长 / 起止时刻。
+- 给 AI 的改挂工具（MCP 只读到改挂后的结果）。
 
 ## 下一步行动读端（规范性 · v1.5，F-TODO-1）
 
@@ -2307,6 +2467,7 @@ DISPATCH 表：`session.completed` 与 `agent.run.completed` **各追加**路由
 app/modules/
   events/     router service repo     事实写入口、dedupe、落库
   timer/      router service          活状态；stop 时组装 session.completed
+                                      v2.11 reassign.py：改挂未分类时间，组装 session.reassigned（同样只经 events 的 service 写）
   planner/    router service repo     zones/projects/tasks 的 CRUD 状态
   proposals/  router service          AI 与人的交接台
   views/      router queries          纯只读，本契约两条读端住在这里
@@ -2353,6 +2514,7 @@ app/modules/
   / **`_startup_locks`（v2.4，启动期一次性任务的锁，只在 proj_lanes 自动补建时短暂存在）**。
 - **其他模块一律不得直连本模块的 Mongo**。要数据就加读路径，不要绕。
 - `events` 集合**只增不改不删**；修正历史 = 追加修正事件。
+  v2.11 的 `session.reassigned` 就是这样一条修正事件（不新增集合）。
 - data root 由 env 指定，位于 Git 工作树之外。
 
 ## 配置与密钥
@@ -2391,6 +2553,9 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 | MCP 服务（v2.9） | `views.tree.v1` 的 `unclassifiedTaskId`（桶的路径「分区 / 项目 / 未分类」）；`views.gantt.v1` 任务的 `kind`（`mcp.tools.v1` v1.5） | `contracts/mcp.tools.v1` |
 | `ai-detector` 桌面程序（v2.4） | `activity.presence.v1` 的 POST（在场心跳）；可选「状态文件桥」经 `agents.v1` 的 start/stop 与 `agents.phase.v1` 报没有钩子的代理（带设备令牌） | `modules/ai-detector` |
 | `tools/agent-hooks`（v2.1 起，v2.4 追加） | `agents.v1` 的 start/stop；v2.4 起 `agents.phase.v1`（Claude Code 钩子与 `cockpit-run phase`） | `tools/agent-hooks` |
+| `assistant` 前端（v2.11） | 「待分类」面板：`views.tree.v1` 的 `unclassifiedTaskId` → 每个桶 `GET /api/core/events?type=session.completed&taskId=<桶>&limit=200`（只回还在桶上的段），逐段 `POST /api/core/sessions/{eventId}/reassign {taskId}`；events 404 时整块隐藏 | `modules/assistant` |
+| `hive` 前端（v2.11） | `events.read.v1` 的 `currentSubject`：「最近完成」与计时档案按当前归属认段——归走的段不再叫「临时任务」，档案里显示新任务名 | `modules/hive` |
+| MCP 服务（v2.11） | `events.read.v1` 的 `currentSubject`：`list_time_sessions` 的 `taskId` / `projectId` / `zoneId` / `path` / `unclassified` 按当前归属（`mcp.tools.v1` 不加字段） | `contracts/mcp.tools.v1` |
 | 共享顶栏 `nginx-docker/static/navbar.js`（v2.4，契约先行） | `views.lanes.v1`（计时芯片悬停的精简预览：人 + 至多 4 条代理线、最近 1 小时，只在预览打开时约 15 秒轮询；计时页上不弹） | `modules/nginx-docker` |
 | `ring` 前端（v2.4，契约先行） | `views.lanes.v1`（计时页默认展开的「泳道」主视图，全部泳道，约 15 秒轮询）；`views.current.v1` 的 `agents[].phase`/`label` | `modules/ring` |
 | MCP 服务（v0.3 AI 桥，契约先行，待建） | **只读**：`views.tree.v1`、`views.current.v1`、`events.read.v1`（仅 `type=session.completed`）、`views.gantt.v1`、`views.review.v1`、`views.next-actions.v1`、`views.agent-time.v1`、`activity.suggestions.v1` 的 GET。带网关给的 `X-Nexus-Tenant` 原样转来；不调任何写端点、不调 `export`/`planner/audit`。映射表见 `contracts/mcp.tools.v1` 第四节。本模块零改动 | `contracts/mcp.tools.v1` |
