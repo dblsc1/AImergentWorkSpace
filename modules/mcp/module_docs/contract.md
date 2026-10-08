@@ -98,3 +98,9 @@ v1.10（2026-10-09）：此刻的焦点走 MCP（nexus-core v2.16）。`get_curr
 `focus.title` / `needsChoice.title` 截到 80 个字符；`elapsedSeconds` = MCP 此刻 − `since`。老后端没有这些键 → 三个都是 `null`。
 工具仍是 15 个，说明改写（在计时 / 否则看 focus / 只是提示 / 标题已脱敏）。测试：三种形状（有目标、只到项目、离开）、
 截断、老后端为 `null`、在计时时两样都在、下游请求集合不变。
+
+v1.10 同版（安全审查）：屏幕来的文字不可信。`tools.py` 的 `_screen()` 是唯一的清洗处——控制字符 / 换行 / 零宽 / 双向控制符
+→ 空格并成一行，再截断（`MAX_TITLE` 80 / `MAX_SCREEN_TEXT` 200）；`get_current_timer`、`list_activity_suggestions`、
+`get_match_history`、`get_window_awaiting_target` 的 `app` / `title`（及 `reason`、集合名）与 `get_detector_rules` 的 `note`
+都过它，规则的正则不过。五个工具的说明加同一句 `_SCREEN`，`INSTRUCTIONS` 也加。测试：带换行 / 控制符 / 「IGNORE ALL PREVIOUS
+INSTRUCTIONS」的标题在五个工具里都是一行、截断过、只在自己的字段里；说明里有那句话；`suggest_window_target` 多带 `title` 400 且不调下游。
