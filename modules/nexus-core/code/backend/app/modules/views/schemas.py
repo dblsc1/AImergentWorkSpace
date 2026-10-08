@@ -378,10 +378,35 @@ class LanePresence(_Strict):
     model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)
 
 
+class LaneAuto(_Strict):
+    """v2.14：没有手动计时时，「我」当前窗口对上的项目 / 任务。只是显示，不是事实。"""
+
+    taskId: str | None
+    projectId: str
+    taskName: str | None
+    projectName: str
+    since: str
+    app: str
+    title: str
+    source: Literal["rules", "choice"]
+
+
+class LaneNeedsChoice(_Strict):
+    """v2.14：规则认不出、停留够久的窗口——请人选项目 / 任务。"""
+
+    key: str
+    app: str
+    title: str
+    since: str
+
+
 class LaneHuman(_Strict):
     sessions: list[LaneSession]
     running: LaneRunning | None
     presence: list[LanePresence]
+    #: v2.14 自动跟踪（契约「自动跟踪进行中的任务」）：键总在，条件不成立为 null
+    auto: LaneAuto | None = None
+    needsChoice: LaneNeedsChoice | None = None
 
 
 class LanePhase(_Strict):

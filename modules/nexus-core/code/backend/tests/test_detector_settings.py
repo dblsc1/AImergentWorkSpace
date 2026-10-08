@@ -31,6 +31,7 @@ DEFAULTS = {
     "presence": None,
     "segmentByTitle": True,
     "segmentByTitleApps": None,
+    "autoTrack": False,  # v1.3
 }
 
 

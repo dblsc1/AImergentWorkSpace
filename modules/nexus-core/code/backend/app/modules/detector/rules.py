@@ -28,6 +28,7 @@ from .service import ForbiddenError, _is_device_token, _iso, re2_error
 MAX_BODY = 256 * 1024
 MAX_RULES = 500
 MAX_ERRORS = 50
+_PREPEND_TRIES = 3  # v2.14 加窗口规则：撞版本重读重试这么多次
 DRAFT_TTL = timedelta(days=14)
 _VERSION = re.compile(r'^(?:W/)?(?:"([0-9]{1,15})"|([0-9]{1,15}))$')
 
@@ -51,7 +52,9 @@ class Rule(_Strict):
     id: Annotated[StrictStr, Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")] | None = None
     app: _Regex | None = None
     title: _Regex | None = None
-    taskId: Annotated[StrictStr, Field(min_length=1, max_length=128)]
+    # v1.1：目标是任务或项目，恰好一个（只到项目 = 记到该项目的「未分类」）
+    taskId: Annotated[StrictStr, Field(min_length=1, max_length=128)] | None = None
+    projectId: Annotated[StrictStr, Field(min_length=1, max_length=128)] | None = None
     confidence: float = Field(0.9, gt=0, le=1)
     note: Annotated[StrictStr, Field(max_length=120)] | None = None
     enabled: bool = True
@@ -67,6 +70,8 @@ class Rule(_Strict):
     def _one_of(self) -> Rule:
         if self.app is None and self.title is None:
             raise ValueError("app 与 title 至少写一个")
+        if (self.taskId is None) == (self.projectId is None):
+            raise ValueError("taskId 与 projectId 必须给一个、且只能给一个")
         return self
 
 
@@ -119,13 +124,18 @@ def _if_match(value: str | None) -> int:
     return int(m.group(1) or m.group(2))
 
 
-def _task_ids() -> set[str]:
-    return {t["id"] for t in planner_service.list_tasks()}
-
-
 def _missing_tasks(rules: list[dict]) -> list[dict]:
-    known = _task_ids()
-    return [_err(i, "taskId", f"任务不存在：{r['taskId']}") for i, r in enumerate(rules) if r["taskId"] not in known]
+    """目标（任务；v1.1 起也可以是项目）已不在的规则。"""
+    tasks = {t["id"] for t in planner_service.list_tasks()}
+    projects = {p["id"] for p in planner_service.list_projects()}
+    errors = []
+    for i, r in enumerate(rules):
+        if r.get("projectId"):
+            if r["projectId"] not in projects:
+                errors.append(_err(i, "projectId", f"项目不存在：{r['projectId']}"))
+        elif r["taskId"] not in tasks:
+            errors.append(_err(i, "taskId", f"任务不存在：{r['taskId']}"))
+    return errors
 
 
 def _validate(raw: Any) -> list[dict]:
@@ -143,6 +153,8 @@ def _validate(raw: Any) -> list[dict]:
         except ValidationError as exc:
             errors += [_err(i, ".".join(str(p) for p in e["loc"]) or None, e["msg"]) for e in exc.errors()]
             continue
+        if rule["projectId"] is None:
+            del rule["projectId"]  # 到任务的规则不带这个键：与 v1 存下的逐字节相同，草稿 diff 不误报「修改」
         if rule["id"] is not None:
             if rule["id"] in seen:
                 errors.append(_err(i, "id", f"id 重复：{rule['id']}"))
@@ -211,6 +223,27 @@ def put_rules(authorization: str | None, if_match: str | None, body: bytes) -> d
     if (doc := repo.replace_rules(user, version, rules, _now())) is None:
         raise _stale(user, version)
     return _rules_out(doc)
+
+
+def prepend(rule: dict) -> bool:
+    """v2.14 ``activity/choice`` 的 remember：往最前面加一条窗口规则，同 ``app`` / ``title`` 的旧规则去掉（一个窗口至多一条）。
+    True = 已在最前面；False = 放不下（不合规 / 满了）或连续撞版本。只校验新的这一条——别的规则指着已删的任务不该挡住它。"""
+    user = current_tenant()
+    try:
+        rule = _validate([rule])[0]
+    except RulesError:
+        return False
+    for _ in range(_PREPEND_TRIES):
+        doc = repo.get_rules(user) or {}
+        old = doc.get("rules", [])
+        if old and {**old[0], "id": rule["id"]} == rule:  # 同样的规则已是第一条：不写，version 不动
+            return True
+        rules = [rule] + [r for r in old if (r["app"], r["title"]) != (rule["app"], rule["title"])]
+        if len(rules) > MAX_RULES:
+            return False
+        if repo.replace_rules(user, doc.get("version", 0), rules, _now()) is not None:
+            return True
+    return False
 
 
 def _stale(user: str, version: int) -> RulesError:

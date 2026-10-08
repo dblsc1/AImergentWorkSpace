@@ -6,6 +6,7 @@
 
 - 时间由服务端盖（收到的时刻）：心跳说的就是「现在」，不需要对时。
 - 相邻心跳 ``(app, title, afk)`` 相同且间隔 ≤ 45 秒 → 延长上一段；否则开新段。
+  v2.14：心跳可带规则对当前窗口的猜测 ``guess``，跟着段存；猜测的目标变了也开新段。
 - 清理只在心跳写入时做（本设备的旧段 + 该租户 2 小时没心跳的设备）；读端只过滤。
 - 每租户至多 20 台设备：``deviceId`` 是客户端自报的，不设上限就是一个无界写入口。
 
@@ -32,19 +33,32 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def heartbeat(device_id: str, app: str, title: str, afk: bool) -> dict:
+def clip(app: str, title: str) -> tuple[str, str]:
+    return app[:_MAX_APP], title[:_MAX_TITLE]
+
+
+def heartbeat(device_id: str, app: str, title: str, afk: bool, guess: dict | None = None) -> dict:
+    """``guess``（v2.14）= ``{taskId | projectId, confidence}``，调用方已校验；离开时不存。"""
     user, now = current_tenant(), _now()
     cutoff = now - WINDOW
     repo.presence_purge(user, cutoff)
     doc = repo.presence_get(user, device_id)
-    app, title = app[:_MAX_APP], title[:_MAX_TITLE]
+    app, title = clip(app, title)
+    guess = None if afk else guess
+
+    def target(g: dict | None) -> tuple:
+        return (g.get("taskId"), g.get("projectId")) if g else (None, None)
 
     spans = doc["spans"] if doc else []
     last = spans[-1] if spans else None
-    if last and (last["app"], last["title"], last["afk"]) == (app, title, afk) and now - last["to"] <= MERGE_GAP:
+    if (last and (last["app"], last["title"], last["afk"]) == (app, title, afk) and now - last["to"] <= MERGE_GAP
+            and target(last.get("guess")) == target(guess)):
         last["to"] = now
+        if guess:
+            last["guess"] = guess  # 把握取最新的
     else:
-        spans.append({"from": now, "to": now, "app": app, "title": title, "afk": afk})
+        spans.append({"from": now, "to": now, "app": app, "title": title, "afk": afk,
+                      **({"guess": guess} if guess else {})})
     spans = [{**s, "from": max(s["from"], cutoff)} for s in spans if s["to"] >= cutoff][-MAX_SPANS:]
     repo.presence_put({"user": user, "deviceId": device_id, "lastAt": now,
                        "app": app, "title": title, "afk": afk, "spans": spans})
@@ -61,7 +75,9 @@ def list_spans(user: str, now: datetime, start: datetime, end: datetime) -> list
     """``views/lanes`` 的 ``human.presence``：最近 2 小时内、与窗口重叠的段，按 from 升序。**不写**。"""
     cutoff = now - WINDOW
     clipped = (
-        {"deviceId": doc["deviceId"], **span, "from": max(span["from"], cutoff)}  # 只裁返回的副本，不写
+        # 只裁返回的副本，不写；guess（v2.14）不回出
+        {"deviceId": doc["deviceId"], **{k: v for k, v in span.items() if k != "guess"},
+         "from": max(span["from"], cutoff)}
         for doc in repo.presence_list(user)
         for span in doc.get("spans") or []
         if span["to"] >= cutoff

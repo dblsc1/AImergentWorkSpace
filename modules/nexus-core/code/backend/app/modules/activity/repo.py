@@ -53,7 +53,15 @@ def page(user: str, status: str, limit: int, offset: int) -> tuple[int, list[dic
 def confirmed(user: str, cap: int) -> list[dict]:
     """v2.12 匹配历史：已确认的建议，最近处理的在前，至多 ``cap`` 条（只取用得着的字段）。"""
     proj = {"_id": 0, "id": 1, "app": 1, "title": 1, "decidedAt": 1, "suggestion.collection": 1}
-    return list(_col().find({"user": user, "status": "confirmed"}, proj).sort("decidedAt", -1).limit(cap))
+    # v2.14：自动记下的不算——那不是人的决定
+    filt = {"user": user, "status": "confirmed", "auto": {"$ne": True}}
+    return list(_col().find(filt, proj).sort("decidedAt", -1).limit(cap))
+
+
+def auto_between(user: str, start: datetime, end: datetime, cap: int) -> list[dict]:
+    """v2.14 自动记下的段：``startTs`` 在 [start, end) 里的，新的在前，至多 ``cap`` 条。"""
+    filt = {"user": user, "status": "confirmed", "auto": True, "startTs": {"$gte": start, "$lt": end}}
+    return list(_col().find(filt, {"_id": 0}).sort("startTs", -1).limit(cap))
 
 
 def with_rejections(user: str, cap: int) -> list[dict]:
@@ -72,16 +80,17 @@ def set_status(user: str, sug_id: str, status: str, at: datetime, *, only_from: 
 
 
 def claim(user: str, sug_id: str, at: datetime, *, takeover: bool = False, only_task: str | None = None,
-          only_proposal: str | None = None) -> bool:
+          only_proposal: str | None = None, auto: bool = False) -> bool:
     """确认的占位：pending→confirmed，``claims`` 记有几个确认正占着（在写事实）。``takeover`` = 加入一个已占位、
     事实还没写的（对方还在写，或占位后崩了）。``only_task`` 给了还要求建议的任务仍是它
-    （v2.7：确认用的是建议里的任务时，防与否 / 重配赛跑）。"""
+    （v2.7：确认用的是建议里的任务时，防与否 / 重配赛跑）。``auto`` = v2.14 自动记录占的位（标 ``auto: true``）。"""
     filt = {"user": user, "id": sug_id, "status": "confirmed" if takeover else "pending"}
     if only_task is not None:
         filt["suggestion.taskId"] = only_task
     if only_proposal is not None:  # v2.8：确认的是助理提议的新任务，要求提议没变
         filt["suggestion.newTask.proposalId"] = only_proposal
-    upd = {"$inc": {"claims": 1}} if takeover else {"$set": {"status": "confirmed", "decidedAt": at, "claims": 1}}
+    upd = {"$inc": {"claims": 1}} if takeover else {
+        "$set": {"status": "confirmed", "decidedAt": at, "claims": 1, **({"auto": True} if auto else {})}}
     return _col().update_one(filt, upd).matched_count > 0
 
 
@@ -89,7 +98,8 @@ def release(user: str, sug_id: str, at: datetime) -> None:
     """写事实失败：退出占位；**没有别的确认还占着**才放回 pending（还有人在写就不放，免得它写成后状态却是待确认）。"""
     filt = {"user": user, "id": sug_id, "status": "confirmed"}
     _col().update_one(filt, {"$inc": {"claims": -1}})
-    _col().update_one({**filt, "claims": {"$lte": 0}}, {"$set": {"status": "pending", "decidedAt": at}})
+    _col().update_one({**filt, "claims": {"$lte": 0}},
+                      {"$set": {"status": "pending", "decidedAt": at}, "$unset": {"auto": ""}})
 
 
 def set_match(user: str, sug_id: str, suggestion: dict) -> bool:
@@ -253,3 +263,37 @@ def presence_delete(user: str, device_ids: list[str]) -> None:
 
 def presence_list(user: str) -> list[dict]:
     return list(_presence_col().find({"user": user}, {"_id": 0}))
+
+
+# ------------------------------------------------ activity_choices（v2.14，人对某个窗口的临时选择 / 「这次不选」）
+#
+# 每个 (user, key) 一份：kind "choice"（taskId 或 projectId）/ "dismiss"；expiresAt 之后当作没有。
+# 活状态，不是事实：不进台账 / 投影 / 导出 / 快照恢复。过期文档只在心跳写入时删。
+
+_CHOICES = "activity_choices"
+_choices_ready = False
+
+
+def _choices_col():
+    global _choices_ready
+    col = get_db()[_CHOICES]
+    if not _choices_ready:
+        col.create_index([("user", 1), ("key", 1)], unique=True, name="uniq_user_key")
+        _choices_ready = True
+    return col
+
+
+def choice_put(doc: dict) -> None:
+    _choices_col().replace_one({"user": doc["user"], "key": doc["key"]}, dict(doc), upsert=True)
+
+
+def choices(user: str, now: datetime) -> dict[str, dict]:
+    """没过期的：{key: 文档}。"""
+    return {d["key"]: d for d in _choices_col().find({"user": user, "expiresAt": {"$gt": now}}, {"_id": 0})}
+
+
+def choice_seen(user: str, key: str, now: datetime, until: datetime) -> None:
+    """这个窗口又在前台了：没过期的临时选择续期（「这次不选」不续）；顺手清掉该租户过期的。"""
+    col = _choices_col()
+    col.delete_many({"user": user, "expiresAt": {"$lte": now}})
+    col.update_one({"user": user, "key": key, "kind": "choice"}, {"$set": {"expiresAt": until}})

@@ -19,6 +19,8 @@
   提议的校验、去重、建任务都在 ``proposals.py``。
 - **v2.10 集合与项目**：match 的每条还可以带 ``collection {name}``（同类窗口的集合标签）与 ``projectId``
   （只到项目的建议）；只带这两样时不动建议的任务。两者只是给页面看的提示，不进台账。
+- **v2.14 自动跟踪**：上传的 ``suggestion`` 可带规则给的 ``projectId``；``confirm(auto=True)`` 是自动记录走的
+  同一条确认路径（只有出处不同）。判定与编排都在 ``auto.py``，本文件只留这两处入口。
 """
 
 from __future__ import annotations
@@ -73,8 +75,16 @@ class _Suggestion(BaseModel):
     confidence: Annotated[float, Field(ge=0, le=1, strict=True)]
     reason: StrictStr
     classifier: Literal["rules", "service"]  # "assistant" 只由 match 写，上传不能自称
+    # v2.14：规则只到项目（detector.rules.v1 v1.1）。与 taskId 不能同给。
+    projectId: Annotated[StrictStr, Field(min_length=1, max_length=128)] | None = None
 
     reason_bytes = field_validator("reason")(_reason_bytes)
+
+    @model_validator(mode="after")
+    def _one_target(self):
+        if self.taskId is not None and self.projectId is not None:
+            raise ValueError("taskId 与 projectId 不能同给")
+        return self
 
 
 class _NewTask(BaseModel):
@@ -169,7 +179,8 @@ def _purge(user: str, now: datetime) -> None:
     repo.purge(user, now - timedelta(days=config.settings.suggestion_ttl_days))  # 调用时读，测试可换 settings
 
 
-def upload(device_id: str, segments: list[Any]) -> dict:
+def upload(device_id: str, segments: list[Any], inserted: list[dict] | None = None) -> dict:
+    """``inserted`` 给了就把**新写入**的建议文档追加进去（v2.14 自动记录只看这些，防重命中的不看）。"""
     user, now = current_tenant(), _now()
     _purge(user, now)
     accepted = duplicates = 0
@@ -187,10 +198,16 @@ def upload(device_id: str, segments: list[Any]) -> dict:
     runs = session_link.runs(user, min(s for _, s, _ in valid), max(e for _, _, e in valid)) if valid else []
     for seg, start, end in valid:
         suggestion = seg.suggestion.model_dump()
+        project = suggestion.pop("projectId")
         if suggestion["taskId"] is not None and planner_service.get_task(suggestion["taskId"]) is None:
             # 建议错了不等于活动没发生：照收，任务留给人挑
             suggestion.update(taskId=None, confidence=0.0)
-        if suggestion["taskId"] is None:
+        if project is not None and planner_service.get_project(project) is None:
+            project = None
+            suggestion.update(confidence=0.0)
+        if project is not None:
+            suggestion["projectId"] = project  # v2.14 规则只到项目：规则是人定的，不再按代理会话去对
+        elif suggestion["taskId"] is None:
             suggestion.update(session_link.link(runs, seg.app, seg.title, start, end))
         dedupe_key = f"aw:{device_id}:{start.astimezone(timezone.utc).isoformat()}"
         doc = {
@@ -201,6 +218,8 @@ def upload(device_id: str, segments: list[Any]) -> dict:
         }
         if repo.insert_if_absent(doc):
             accepted += 1
+            if inserted is not None:
+                inserted.append(doc)
         else:
             duplicates += 1
     return {"accepted": accepted, "duplicates": duplicates, "rejected": rejected}
@@ -213,7 +232,7 @@ def _item(d: dict, open_ids: set | None = None) -> dict:
     # v2.5 之前存下的建议没有 idle 字段：回 false；没被人否过的没有 rejectedTaskIds：回 []
     # v2.8 suggestion.newTask 只在有提议时出现；提议已否掉 / 过期 → 当作没有建议（不出 newTask，把握 0）
     out = {**{k: d[k] for k in _ITEM_KEYS}, "idle": d.get("idle", False),
-           "rejectedTaskIds": d.get("rejectedTaskIds", [])}
+           "rejectedTaskIds": d.get("rejectedTaskIds", []), "auto": d.get("auto", False)}  # auto：v2.14
     nt = d["suggestion"].get("newTask")
     if nt and open_ids is not None and nt["proposalId"] not in open_ids:
         out["suggestion"] = {**{k: v for k, v in d["suggestion"].items() if k != "newTask"},
@@ -254,11 +273,12 @@ def _bucket(project_id: str, request) -> str:
 
 
 def confirm(sug_id: str, task_id: str | None, mode: str, name: str | None = None, request=None,
-            proposal_id: str | None = None, project_id: str | None = None) -> dict:
+            proposal_id: str | None = None, project_id: str | None = None, auto: bool = False) -> dict:
     """v2.8：``proposal_id`` = 人在页面上看到并点「是」的那条新任务提议（占位时要求建议的提议仍是它）；
     ``name`` = 人改过的名字；``request`` 给建任务要经的 planner 写入口（判来源、留审计）。
     v2.9：``project_id`` = 只指定项目，记到它的「未分类」时间桶——先取或建出桶的 id，之后与带 ``taskId`` 的确认同一条路
-    （桶是懒建的系统任务，占位没成功多建一个空桶也无妨）。"""
+    （桶是懒建的系统任务，占位没成功多建一个空桶也无妨）。
+    v2.14：``auto`` = 不是人点的，是自动记录（``auto.record``）——同一条路径，只有出处不同（信封 ``ai``、建议的 ``auto``）。"""
     user = current_tenant()
     doc = _get(user, sug_id)
     if doc["status"] == "dismissed":
@@ -299,7 +319,7 @@ def confirm(sug_id: str, task_id: str | None, mode: str, name: str | None = None
     # 先占位再写事实：pending→confirmed 是条件更新，与忽略（同样只从 pending 转）二选一，
     # 不会出现「忽略回了 200，事实却照样落库」。占位后崩在写事实之前 → 状态已确认、台账没有，
     # 重试走到这里（占位不中但状态是 confirmed）加入占位再补写，防重键兜底不重。
-    if not repo.claim(user, sug_id, _now(), only_task=only_task, only_proposal=proposal):
+    if not repo.claim(user, sug_id, _now(), only_task=only_task, only_proposal=proposal, auto=auto):
         cur = _get(user, sug_id)
         if cur["status"] == "dismissed":
             raise ConflictError(f"活动建议 {sug_id!r} 已忽略，不能再确认")
@@ -320,7 +340,8 @@ def confirm(sug_id: str, task_id: str | None, mode: str, name: str | None = None
         out = timer_service.record_session(
             task_id, doc["startAt"], doc["endAt"], doc["durationSeconds"],
             source=SOURCE, dedupe_key=dedupe_key, mode=mode,
-            ai={"generated": True, "confidence": doc["suggestion"]["confidence"], "confirmed": True},
+            ai={"generated": True, "confidence": doc["suggestion"]["confidence"], "confirmed": not auto,
+                **({"auto": True} if auto else {})},
         )
     except Exception:
         # 任务不存在等：事实没写成，退出占位；没有别的确认还占着、台账里也没有才放回待确认。
@@ -444,3 +465,10 @@ def unmatch(authorization: str | None, sug_id: str, task_id: str | None, proposa
 def list_presence(user: str, now: datetime, start: datetime, end: datetime) -> list[dict]:
     """v2.4 在场心跳的公开读路径（``views/lanes``），真身在 ``presence.py``。**不写**。"""
     return presence.list_spans(user, now, start, end)
+
+
+def auto_state(user: str, now: datetime, timer_running: bool, manual_end: datetime | None) -> dict:
+    """v2.14 ``views/lanes`` 的 ``human.auto`` / ``human.needsChoice``，真身在 ``auto.py``。**不写**。"""
+    from . import auto  # noqa: PLC0415 —— auto 也 import 本文件（confirm），模块级会成环
+
+    return auto.state(user, now, timer_running, manual_end)
