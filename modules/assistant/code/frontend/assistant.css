@@ -306,3 +306,23 @@ fieldset.set-field > legend { font-size: var(--fs-sub); color: var(--ink-2); mar
   border: 1px solid var(--line); border-radius: var(--r-2); text-decoration: none; color: var(--ink);
 }
 .review-links a:hover { border-color: var(--fact); }
+
+/* ── 「待分类」（2026-10-08，unclassified.js，nexus-core v2.11 改挂未分类时间）──
+ * 按项目一组：组头（项目 · 段数 · 合计）、任务下拉 + 「全部归入」、逐段一行。320px 下按钮换行，不横滚。 */
+.unc-panel, .unc-groups { display: grid; gap: var(--sp-3); min-width: 0; }
+.unc-status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+.unc-status .suggest-message { flex: 1 1 12em; overflow-wrap: anywhere; }
+.unc-group {
+  display: grid; gap: var(--sp-2); min-width: 0;
+  padding: var(--sp-3); border: 1px solid var(--line-2); border-radius: var(--r-2); background: var(--panel-2);
+}
+.unc-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--sp-2); }
+.unc-project { font-size: var(--fs-body); font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
+.unc-total { font-size: var(--fs-sub); color: var(--ink-2); }
+.unc-bar { display: flex; flex-wrap: wrap; gap: var(--sp-2); min-width: 0; }
+.unc-bar .unc-task { flex: 1 1 12em; min-width: 0; background: var(--panel); }
+.unc-bar .btn { flex: 1 1 10em; white-space: normal; }
+.unc-list { list-style: none; padding: 0; display: grid; gap: var(--sp-1); }
+.unc-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-width: 0; }
+.unc-what { flex: 1 1 12em; min-width: 0; font-size: var(--fs-sub); overflow-wrap: anywhere; }
+.unc-source { font-size: var(--fs-eyebrow); color: var(--ink-2); overflow-wrap: anywhere; }
