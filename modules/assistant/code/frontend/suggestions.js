@@ -215,8 +215,9 @@
     projectPath: projectPath, newTaskOf: newTaskOf, normTitle: normTitle, collect: collect,
     suggestedProject: suggestedProject, projectOfTask: projectOfTask };
 
-  var AI_PROMPT = "请匹配待确认的活动：读取待确认的活动记录和我的项目、任务，" +
-    "先把同类的零碎窗口归进集合（每条都归），看得出项目的标上项目；" +
+  // 「先看我以前是怎么归类的」：助理有匹配历史（mcp.tools.v1 v1.7 get_match_history），同类窗口照以前的定
+  var AI_PROMPT = "请匹配待确认的活动：读取待确认的活动记录和我的项目、任务，先看我以前是怎么归类的（同类窗口照以前的定）；" +
+    "把同类的零碎窗口归进集合（每条都归），看得出项目的一定标上项目；" +
     "再给能判断的活动配一个最合适的任务；现成任务都不合适、又明显属于某个项目的，可以提议一个新任务；任务拿不准的不配。";
 
   // ── DOM ─────────────────────────────────────────────────────────────

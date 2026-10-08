@@ -38,9 +38,9 @@ check "没登录调 MCP 被拒（302 去登录页）" \
 check "令牌 initialize" \
   "$(mcp "$TOK" initialize '{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}' \
      | py 'print(r["result"]["protocolVersion"], list(r["result"]["capabilities"]))')" "2025-06-18 ['tools']"
-check "tools/list：12 个工具，只有 propose_ 那两个不是只读" \
+check "tools/list：13 个工具，只有 propose_ 那两个不是只读" \
   "$(mcp "$TOK" tools/list '{}' | py 't=r["result"]["tools"]; print(len(t), [x["name"] for x in t if not x["annotations"]["readOnlyHint"]])')" \
-  "12 ['propose_detector_rules', 'propose_activity_matches']"
+  "13 ['propose_detector_rules', 'propose_activity_matches']"
 # detector.rules.v1：经 MCP 起草规则 → 草稿在，但生效规则没变（应用只有人能，令牌直连 403）
 V=$("${C[@]}" -b "$A" "$BASE/api/core/detector/rules" | py 'print(r["version"])')  # tokens.sh 可能已经存过
 check "经 MCP 起草分类规则（草稿，不生效）" \
@@ -77,6 +77,17 @@ check "网页会话说「否」→ 任务清掉并记住" \
 check "bob 经 MCP 配不了 alice 的建议" \
   "$(mcp "$BOB" tools/call "{\"name\":\"propose_activity_matches\",\"arguments\":{\"matches\":[{\"suggestionId\":\"$S\",\"taskId\":\"$T\",\"confidence\":0.6}]}}" \
      | py 's=r["result"]["structuredContent"]; print(s["matched"], len(s["rejected"]))')" "0 1"
+# v1.7 匹配历史（nexus-core v2.12）：人确认之后，助理读得到「这个窗口 → 这个任务」；别的账号读不到
+check "网页会话确认这段到任务" \
+  "$(post "/api/core/activity/suggestions/$S/confirm" "{\"taskId\":\"$T\"}" -b "$A" | py 'print(r["status"])')" confirmed
+check "alice 经 MCP 读到匹配历史" \
+  "$(mcp "$TOK" tools/call '{"name":"get_match_history","arguments":{}}' \
+     | py "s=r['result']['structuredContent']; print([(i['app'], i['title'], i['path'], i['via'], i['count']) for i in s['items']], s['rejected'])")" \
+  "[('code', 'mcp-ci', 'mcp-zone / mcp-proj / alice-mcp-task', 'confirm', 1)] []"
+check "令牌直连也读得到历史（只读，同建议列表）" \
+  "$("${C[@]}" -H "Authorization: Bearer $TOK" "$BASE/api/core/activity/suggestions/history" | py 'print(len(r["items"]))')" 1
+check "bob 经 MCP 读不到 alice 的历史" \
+  "$(mcp "$BOB" tools/call '{"name":"get_match_history","arguments":{}}' | py 'print(r["result"]["structuredContent"]["items"])')" "[]"
 check "alice 经 MCP 看得到自己的任务与路径" \
   "$(mcp "$TOK" tools/call '{"name":"get_task_tree","arguments":{}}' \
      | py "print([i['path'] for i in r['result']['structuredContent']['items'] if i['taskId']=='$T'])")" \

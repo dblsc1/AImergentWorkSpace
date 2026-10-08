@@ -149,6 +149,21 @@ def _current_subject(doc: dict, latest: dict[tuple, dict]) -> dict | None:
     return hit["subject"] if hit else None
 
 
+def current_tasks(source: str, dedupe_keys: list[str]) -> dict[str, tuple[str, bool]]:
+    """v2.12 匹配历史用：当前租户里某个 ``source`` 的这些 ``session.completed``，
+    防重键 → (当前归属的任务 id, 改挂过没有)。只读；``dedupe_keys`` 是调用方由自己的 id 拼的，不是请求里的值。"""
+    if not dedupe_keys:
+        return {}
+    latest = latest_reassignments(repo.query_events(REASSIGNED_TYPE))
+    out = {}
+    for doc in repo.query_events(SESSION_TYPE, where={"source": source, "dedupeKey": {"$in": dedupe_keys}}):
+        moved = _current_subject(doc, latest)
+        task = (moved or doc.get("subject") or {}).get("task")
+        if isinstance(task, str):
+            out[doc["dedupeKey"]] = (task, moved is not None)
+    return out
+
+
 def with_current_subjects(docs: list[dict]) -> list[dict]:
     """给投影重建用：改挂过的 ``session.completed`` 的 ``subject`` 换成当前归属，其余原样。
     指向台账里已经没有的段的 ``session.reassigned`` 自然不起作用。"""

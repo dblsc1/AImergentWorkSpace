@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from ..timer.router import Mode
-from . import service
+from . import history, service
 
 router = APIRouter(prefix="/activity/suggestions", tags=["activity"])
 
@@ -127,6 +127,19 @@ def list_suggestions(
     offset: int = 0,
 ) -> dict:
     return service.list_suggestions(status, limit, offset)
+
+
+class HistoryOut(BaseModel):
+    """v2.12 匹配历史（契约「活动建议」节「匹配历史」）。条目的键见契约：只定到项目的没有 task* 三个键。"""
+
+    items: list[dict]
+    collections: list[dict]
+    rejected: list[dict]
+
+
+@router.get("/history", response_model=HistoryOut)
+def match_history(limit: int = 60) -> dict:
+    return history.history(limit)
 
 
 @router.post("/{sugId}/confirm", response_model=ConfirmOut)
