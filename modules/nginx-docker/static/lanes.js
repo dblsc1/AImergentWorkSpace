@@ -11,6 +11,7 @@
  *   pickPreview(agents, v0, max)   顶栏预览的挑法与排序（契约「泳道预览」）
  *   activeSeconds(run, v0, v1, now)  运行在视窗里不空闲的秒数
  *   sortByActivity(agents, v0, v1, now)  计时页卡片的排序（档位：在等你 → 干活 → 出错 → 空闲 → 已结束；同档按活跃秒数、最近转入）
+ *   recentRuns(agents, now)        计时页只留在跑的 + 结束不到 3 小时的运行（2026-10-08）
  *   humanStatus(human, now)        人此刻：在电脑前 / 离开 / 不在线（+ 在计时 / 前台程序）
  *   render(root, data, opts)       画一张图；全部 textContent，不用 innerHTML
  *                                  同一个 root 第二次起的重画带换位动效（2026-10-08，见 motion()）
@@ -139,6 +140,13 @@
     });
   }
 
+  // 计时页的卡片只留「还开着的」和「刚结束的」（ring 契约 2026-10-08）：在跑的都留；已结束的只留 endAt 距
+  // now（服务端的 now）不到 ENDED_KEEP_MS 的。与选的窗口（最近 3 小时 / 今天）无关。纯函数，不改入参。
+  var ENDED_KEEP_MS = 3 * HOUR;
+  function recentRuns(agents, nowMs) {
+    return (agents || []).filter(function (r) { return !r.endAt || nowMs - ms(r.endAt) < ENDED_KEEP_MS; });
+  }
+
   function sortByActivity(agents, v0, v1, nowMs) {
     return rankRuns(agents, v0, v1, nowMs).map(function (k) { return k.r; });
   }
@@ -253,7 +261,7 @@
    *   opts.agents               要画的运行（缺省 data.agents 里与视窗有重叠的）
    *   opts.presence             画人的在场带（计时页与顶栏预览都画，2026-10-03 起）
    *   opts.compact              顶栏预览的紧凑尺寸
-   *   opts.cards / top          计时页的卡片布局：人一张卡钉在最前，代理按 sortByActivity 排，
+   *   opts.cards / top          计时页的卡片布局（只画 recentRuns：结束超过 3 小时的不画）：人一张卡钉在最前，代理按 sortByActivity 排，
    *                             前 top 张（缺省 5；在等你 / 干活的卡永不折叠，多于 top 就全展开）展开，其余收进 <details>「还有 N 个」
    *   opts.more / moreHref      区尾一行（「还有更多」/「还有 N 个 → 计时页」）
    *   opts.focusFallback        焦点在区尾链接上、重画后链接没了时，焦点交给它
@@ -404,6 +412,7 @@
     var agents = opts.agents || (data.agents || []).filter(function (r) {
       return inView(ms(r.startAt), r.endAt ? ms(r.endAt) : now);
     });
+    if (cards) { agents = recentRuns(agents, now); }
     var vEnd = Math.min(v1, now);
     var infos = cards ? rankRuns(agents, v0, vEnd, now)
       : agents.map(function (r) { return runInfo(r, v0, vEnd, now); });
@@ -541,7 +550,7 @@
 
   window.HoneycombLanes = {
     query: query, prevDay: prevDay, segments: segments, currentPhase: currentPhase,
-    pickPreview: pickPreview, activeSeconds: activeSeconds, sortByActivity: sortByActivity,
+    pickPreview: pickPreview, activeSeconds: activeSeconds, sortByActivity: sortByActivity, recentRuns: recentRuns,
     humanStatus: humanStatus, render: render, PHASE_WORD: PHASE_WORD
   };
 })();

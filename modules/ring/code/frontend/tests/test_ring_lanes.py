@@ -468,6 +468,56 @@ def test_fold_disappearing_moves_focus_to_heading_and_open_state_comes_back(brow
         assert page.get_attribute("#lanes-view .hcl-fold", "open") is not None
 
 
+# ── 2026-10-08 结束超过 3 小时的运行不画（lanes.js recentRuns），与选的窗口无关 ─────────
+
+def aged() -> dict[str, Any]:
+    """现在 10:20。stale 06:10 结束（4 小时多）、edge 07:20 结束（整 3 小时）→ 不画；recent 08:20 结束（2 小时）→ 画；
+    在跑的 6 个（含昨晚起、超时挂着的 old-job）都画。"""
+    d = copy.deepcopy(fx.LANES_FULL)
+    work = lambda t: [(fx.at(t), "working", None)]  # noqa: E731
+    d["agents"] = [fx.run("stale", "stale", fx.at("05:00"), end=fx.at("06:10"), phases=work("05:00")),
+                   fx.run("edge", "edge", fx.at("06:00"), end=fx.at("07:20"), phases=work("06:00")),
+                   fx.run("recent", "recent", fx.at("07:30"), end=fx.at("08:20"), phases=work("07:30")),
+                   fx.run("run_e", "old-job", fx.at("21:00", "2026-09-29"), overdue=True)] + \
+                  [fx.run(f"w{i}", f"w{i}", fx.at("09:00"), phases=work("09:00")) for i in range(5)]
+    d["interactions"] = []
+    return d
+
+
+@pytest.mark.parametrize("hours", ["3", "0"])
+def test_runs_ended_over_three_hours_ago_are_hidden_in_both_windows(browser, static_base_url, hours) -> None:
+    with open_lanes(browser, static_base_url, aged()) as (page, stub):
+        page.wait_for_selector("#lanes-view .hcl-card")
+        if hours == "0":
+            page.click(".lanes-range [data-hours='0']")
+            page.wait_for_function("() => document.querySelectorAll('#lanes-view .hcl-tick-label')[0].textContent === '00:00'")
+        ids = page.eval_on_selector_all("#lanes-view [data-run-id]", "ns => ns.map(n => n.dataset.runId)")
+        assert sorted(ids) == ["recent", "run_e", "w0", "w1", "w2", "w3", "w4"]
+        # 数的也只是画出来的：6 个在干活（都不折叠），折叠区里只有刚结束的那一个
+        assert page.text_content("#lanes-state") == "6 个在干活"
+        assert page.text_content("#lanes-view .hcl-fold > summary") == "还有 1 个"
+        assert page.eval_on_selector_all("#lanes-view .hcl-fold [data-run-id]", "ns => ns.map(n => n.dataset.runId)") == ["recent"]
+        said = page.text_content("#lanes-view [data-hcl-summary]")
+        assert "recent：已结束" in said and "stale" not in said and "edge" not in said
+
+
+def test_only_long_ended_runs_left_shows_the_empty_state(browser, static_base_url) -> None:
+    d = aged()
+    d["agents"] = d["agents"][:2]
+    with open_lanes(browser, static_base_url, d) as (page, _):
+        page.wait_for_selector("#lanes-view .hcl-card")
+        page.click(".lanes-range [data-hours='0']")
+        page.wait_for_function("() => document.querySelectorAll('#lanes-view .hcl-tick-label')[0].textContent === '00:00'")
+        assert rows(page) == ["我"]
+        assert page.text_content("#lanes-view .hcl-empty") == "这段时间没有代理在跑。"
+        assert page.locator("#lanes-view .hcl-fold").count() == 0 and page.text_content("#lanes-state") == ""
+        # 纯函数：不改入参
+        assert page.evaluate("""(a) => { const before = JSON.stringify(a);
+            const got = window.HoneycombLanes.recentRuns(a, Date.parse('2026-09-30T10:20:00+08:00')).map(r => r.runId);
+            return [got, JSON.stringify(a) === before]; }""", aged()["agents"]) == \
+            [["recent", "run_e", "w0", "w1", "w2", "w3", "w4"], True]
+
+
 # ── 2026-10-08 换位动效（lanes.js motion()）。不看时间：重画那一刻同步抓动画对象，再等它们的 finished ─────────
 
 # 包一层 render：每次画完当场记下「谁身上挂着换位动画」（此刻一定还在跑），并留着入参给测试自己再画一次
