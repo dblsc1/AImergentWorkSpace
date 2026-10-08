@@ -32,6 +32,8 @@ def list_events(
     to: str | None = None,
     limit: int = 100,
     offset: int = 0,
+    taskId: str | None = None,  # noqa: N803 —— v2.9：只要 subject.task 是它的（如某项目的「未分类」时间桶）
 ) -> ArchiveOut:
-    total, items = service.list_events(type_=type, from_=from_, to=to, limit=limit, offset=offset)
+    total, items = service.list_events(
+        type_=type, from_=from_, to=to, limit=limit, offset=offset, task_id=taskId)
     return ArchiveOut(total=total, items=items)

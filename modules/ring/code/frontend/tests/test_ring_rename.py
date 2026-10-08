@@ -150,3 +150,25 @@ def test_rn9_rename_button_is_a_real_tap_target(ring) -> None:
         " return r.scrollWidth - r.clientWidth; }"
     )
     assert overflow <= 0, f"控件行横向溢出 {overflow}px"
+
+
+def test_rn10_unclassified_bucket_shows_project_only_and_cannot_be_renamed(ring) -> None:
+    """RN10（仓主 2026-10-08）：计的是项目的「未分类」时间桶（nexus-core v2.9，蜂巢长按项目格起的）
+    → 圆环里只写项目名（不写「未分类」），改名的两个入口都关掉，一个 planner 请求都不发。"""
+    page = ring.page
+    bucket = json.loads(json.dumps(ring.current))
+    bucket["task"].update(id="t_unc_p_eng", name="未分类", kind="unclassified")
+    ring.set_current(bucket)
+    page.evaluate("() => window.fetchAndRender()")
+    page.wait_for_function("() => document.getElementById('running-task-name').textContent === '吉他练习'")
+    assert "未分类" not in page.get_attribute("#chrono-svg", "aria-label")
+    assert page.locator("#rename-open-btn").is_hidden()
+    page.click("#running-task-name")
+    page.wait_for_timeout(200)
+    assert page.locator("#rename-overlay").is_hidden() and page.locator("#chrono-center").is_visible()
+    assert ring.planner_writes == []
+    # 换回普通任务，按钮回来
+    ring.set_current(json.loads(json.dumps({**bucket, "task": {**bucket["task"], "kind": "normal", "name": "音阶练习"}})))
+    page.evaluate("() => window.fetchAndRender()")
+    page.wait_for_function("() => document.getElementById('running-task-name').textContent === '音阶练习 · 吉他练习'")
+    assert page.locator("#rename-open-btn").is_visible()

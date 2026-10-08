@@ -827,24 +827,50 @@ test("圆环：贡献环拿不到 shareOfProject 就不画（不硬凑一段 0 �
     { current: 32.1, others: 67.9 });
 });
 
-// ── 长按自动建任务的命名（产品决定：「标题就弄个日期+时间任务」）──────────
-test("长按建任务：名字是「年-月-日 时:分」，个位数补零", function () {
-  assert.strictEqual(H.stampTaskName(new Date(2026, 8, 8, 0, 43)), "2026-09-08 00:43");
-  assert.strictEqual(H.stampTaskName(new Date(2026, 11, 25, 9, 5)), "2026-12-25 09:05");
+// ── 临时任务（仓主 2026-10-08：长按项目不再建「日期 时间」任务，时间记进项目的「未分类」）──
+var TEMP_TREE = {
+  zones: [{ id: "z1", name: "学习" }],
+  projects: [
+    { id: "p1", zoneId: "z1", name: "数学", unclassifiedTaskId: "t_unc_p1", tasks: [{ id: "t1", name: "真任务" }] },
+    { id: "p2", zoneId: "z1", name: "还没桶", unclassifiedTaskId: null, tasks: [] }
+  ]
+};
+function tempEvent(id, task, startAt, time, seconds, type) {
+  return { id: id, type: type || "session.completed", time: time, source: "timer-backend",
+           subject: { zone: "z1", project: "p1", task: task }, data: { startAt: startAt, durationSeconds: seconds } };
+}
+
+test("临时任务：只挑记在未分类时间桶上的段，名字是「临时任务 年-月-日 时:分 · N 分钟」", function () {
+  var rows = H.tempSessions([
+    tempEvent("e1", "t_unc_p1", "2026-09-08T00:43:00+08:00", "2026-09-08T01:15:10+08:00", 1930),
+    tempEvent("e2", "t1", "2026-09-08T02:00:00+08:00", "2026-09-08T02:10:00+08:00", 600),
+    tempEvent("e3", "t_unc_p1", "2026-09-08T03:00:00+08:00", "2026-09-08T03:00:20+08:00", 20),
+    tempEvent("e4", "t_unc_p1", "2026-09-08T04:00:00+08:00", "2026-09-08T04:10:00+08:00", 600, "agent.run.completed"),
+    tempEvent("e5", null, "2026-09-08T05:00:00+08:00", "2026-09-08T05:10:00+08:00", 600)
+  ], TEMP_TREE, { offsetMinutes: 480 });
+  assert.deepStrictEqual(rows.map(function (r) { return r.taskName; }),
+    ["临时任务 2026-09-08 00:43 · 32 分钟", "临时任务 2026-09-08 03:00 · <1 分钟"]);
+  var r = rows[0];
+  assert.strictEqual(r.session, true);
+  assert.strictEqual(r.taskId, null, "临时任务不是任务：没有 id，卡片上不出撤销 / 长按不计时");
+  assert.strictEqual(r.eventId, "e1");
+  assert.strictEqual(r.projectId, "p1");
+  assert.strictEqual(r.projectName, "数学");
+  assert.strictEqual(r.at, "2026-09-08T01:15:10+08:00");
+  assert.strictEqual(r.path, "学习/数学/临时任务 2026-09-08 00:43 · 32 分钟");
 });
 
-// 反向验证：把年份去掉这条就挂——证明"带年份"是被钉住的，不是顺手写的
-test("长按建任务：带年份，跨年同月同日同时刻不会重名", function () {
-  var a = H.stampTaskName(new Date(2025, 8, 8, 14, 30));
-  var b = H.stampTaskName(new Date(2026, 8, 8, 14, 30));
-  assert.notStrictEqual(a, b);
-  assert.ok(/^\d{4}-/.test(a), "开头必须是四位年份，实得 " + a);
+test("临时任务：没有桶的树 / 空输入都是空数组，不崩", function () {
+  assert.deepStrictEqual(H.tempSessions(null, null), []);
+  assert.deepStrictEqual(H.tempSessions([tempEvent("e1", "t_unc_p1", "x", "y", 1)], { projects: [{ id: "p1" }] }), []);
 });
 
-test("长按建任务：不传参用当前时间，格式恒为 YYYY-MM-DD HH:mm", function () {
-  var s = H.stampTaskName();
-  assert.strictEqual(s.length, 16);
-  assert.ok(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(s), "实得 " + s);
+test("临时任务：与完成的任务并成一份最近完成，新的在前", function () {
+  var merged = H.mergeRecent(
+    [{ taskId: "a", at: "2026-09-08T10:00:00+00:00" }, { taskId: "b", at: "2026-09-06T10:00:00+00:00" }],
+    [{ session: true, eventId: "e", at: "2026-09-07T10:00:00+00:00" }]);
+  assert.deepStrictEqual(merged.map(function (r) { return r.taskId || r.eventId; }), ["a", "e", "b"]);
+  assert.deepStrictEqual(H.mergeRecent(null, null), []);
 });
 
 // ── 最近完成热度 + 按热度靠中心（产品决定 2026-09-08）──────────────

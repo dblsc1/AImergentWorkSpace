@@ -1,6 +1,6 @@
 # mcp.tools.v1 —— 给 AI 代理用的只读工具（MCP）
 
-> **契约 id**：`mcp.tools.v1`。**当前版本 v1.6**（2026-10-08 `propose_activity_matches` 每条可带 `collection`、`projectId`，`list_activity_suggestions` 追加 `collection`、`suggestedProjectId`、`suggestedProjectPath`；v1.4 2026-10-03 `propose_activity_matches` 每条可提议新任务 `newTask`，`list_activity_suggestions` 追加 `newTask`；v1.3 2026-10-02 加第二个提议工具 `propose_activity_matches`，`list_activity_suggestions` 输出追加 `rejectedTaskIds`；v1.2 2026-09-30 加 `get_detector_rules` 与第一个提议工具 `propose_detector_rules`；v1.1 2026-09-30 加 `list_projects`；v1.0 2026-09-28，v0.3「AI 桥」首版）。实现：`modules/mcp`。
+> **契约 id**：`mcp.tools.v1`。**当前版本 v1.6**（2026-10-08 `propose_activity_matches` 每条可带 `collection`、`projectId`，`list_activity_suggestions` 追加 `collection`、`suggestedProjectId`、`suggestedProjectPath`；v1.5 2026-10-08 认 nexus-core v2.9 的项目「未分类」时间：`list_time_sessions` / `get_daily_time` 的条目追加 `unclassified`；v1.4 2026-10-03 `propose_activity_matches` 每条可提议新任务 `newTask`，`list_activity_suggestions` 追加 `newTask`；v1.3 2026-10-02 加第二个提议工具 `propose_activity_matches`，`list_activity_suggestions` 输出追加 `rejectedTaskIds`；v1.2 2026-09-30 加 `get_detector_rules` 与第一个提议工具 `propose_detector_rules`；v1.1 2026-09-30 加 `list_projects`；v1.0 2026-09-28，v0.3「AI 桥」首版）。实现：`modules/mcp`。
 >
 > **是什么**：HoneyComb 以 [MCP](https://modelcontextprotocol.io/)（Model Context Protocol）服务器的
 > 形式，把「任务树、人的时间、代理时间、在跑的计时、待确认的活动建议」读给 AI 代理。
@@ -259,11 +259,18 @@ consumes:
       "mode": "do",                         // do|prompt|review（事件没写即 do）
       "source": "timer-backend",            // timer-backend | manual-backfill | activity-confirmed，证据强度不同
       "taskId": "t_a1", "projectId": "p_3c", "zoneId": "z_7f",   // taskId 可为 null（只挂项目）
-      "path": "学习 / garden / 写提示词" } ],
+      "path": "学习 / garden / 写提示词",
+      "unclassified": false } ],            // v1.5：true = 记在项目的「未分类」上，还没归到具体任务（见下）
   "nextCursor": "…", "truncated": true }
 ```
 
 只出 `session.completed`；别的事件类型（含 `agent.run.completed`）不出。
+
+**项目的「未分类」时间（v1.5，nexus-core v2.9）**：每个项目可以有一个系统任务当「未分类」时间桶（id `t_unc_<projectId>`）——
+用户长按项目直接计时、或确认活动建议时只指定了项目，时间就记在它上面，直到归到具体任务。它**不是普通任务**：
+`get_task_tree`、`list_projects` 的任务计数、`get_next_actions`、`get_weekly_review.staleTasks` 都不含它。
+凡是带任务路径的地方，它的 `path` 是「分区 / 项目 / 未分类」；本工具与 `get_daily_time` 的条目另有 `unclassified: true`。
+不要把它当成可以配给活动建议的任务（`propose_activity_matches` 仍只配具体任务或提议新任务）。
 
 ### `get_daily_time` —— 人的时间按天按任务汇总
 
@@ -274,7 +281,9 @@ consumes:
   "totalSeconds": 25200,                 // 整个区间人的总秒数，与分页无关
   "items": [
     { "date": "2026-09-28", "projectId": "p_3c", "taskId": "t_a1", "seconds": 3600, "path": "学习 / garden / 写提示词" },
-    { "date": "2026-09-28", "projectId": "p_3c", "taskId": null,   "seconds": 600,  "path": "学习 / garden" } ],
+    { "date": "2026-09-28", "projectId": "p_3c", "taskId": null,   "seconds": 600,  "path": "学习 / garden" },
+    { "date": "2026-09-28", "projectId": "p_3c", "taskId": "t_unc_p_3c", "seconds": 300,
+      "path": "学习 / garden / 未分类", "unclassified": true } ],   // v1.5：该项目当天「未分类」的合计；其余行 unclassified:false
   "nextCursor": null, "truncated": false }
 ```
 
@@ -519,5 +528,6 @@ MCP 发 `POST /api/core/detector/rules/drafts {rules, summary, author: "assistan
 | 2026-09-30 | v1.1 追加工具 `list_projects`（含没建任务的项目与空分区）。只增，既有工具不变 |
 | 2026-09-30 | v1.2 追加 `get_detector_rules`（只读，规则全给、不受 200 条上限）与第一个提议工具 `propose_detector_rules`（一整套规则 → 待人应用的草稿，`detector.rules.v1`）；第六节把「v1 不得列出 `propose_*`」对这一个解除，并定下所有 `propose_*` 的共同规则；请求体上限 64 → 256 KiB；错误对象可追加 `errors`。既有 9 个工具不变 |
 | 2026-10-02 | v1.3 追加第二个提议工具 `propose_activity_matches`（给待确认的活动建议配任务：`POST /api/core/activity/suggestions/matches`，nexus-core v2.7；只写建议、不确认，人逐条答「是 / 否」）；`list_activity_suggestions` 每条追加 `rejectedTaskIds`，`classifier` 多一个取值 `assistant`。只增，既有工具不变 |
-| 2026-10-08 | v1.6 `propose_activity_matches` 每条可带 `collection {name}`（同类窗口的集合）与 `projectId`（只标到项目），只带这两样时 `taskId` / `newTask` / `confidence` 可省（nexus-core v2.10，只贴标签、不动任务、不确认）；`list_activity_suggestions` 每条追加 `collection`、`suggestedProjectId`、`suggestedProjectPath`。工具仍是 12 个，只增 |
 | 2026-10-03 | v1.4 `propose_activity_matches` 每条可用 `newTask {projectId, name}` 代替 `taskId`（提议新任务，nexus-core v2.8；人点「是」才建、只建一次）；`list_activity_suggestions` 每条追加 `newTask`（含 `projectPath`）。工具仍是 12 个，只增 |
+| 2026-10-08 | v1.5 认 nexus-core v2.9 的项目「未分类」时间桶：`list_time_sessions` 与 `get_daily_time` 的每个条目追加布尔 `unclassified`；桶的 `path` 为「分区 / 项目 / 未分类」（所有带任务路径的工具）；桶不出现在 `get_task_tree` / `list_projects` 的任务计数 / `get_next_actions` / `staleTasks`。工具仍是十二个，入参不变，只增输出字段 |
+| 2026-10-08 | v1.6 `propose_activity_matches` 每条可带 `collection {name}`（同类窗口的集合）与 `projectId`（只标到项目），只带这两样时 `taskId` / `newTask` / `confidence` 可省（nexus-core v2.10，只贴标签、不动任务、不确认）；`list_activity_suggestions` 每条追加 `collection`、`suggestedProjectId`、`suggestedProjectPath`。工具仍是 12 个，只增 |

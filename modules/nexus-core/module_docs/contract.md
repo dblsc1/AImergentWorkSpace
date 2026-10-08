@@ -80,6 +80,15 @@
 > 任务 id 建任务——同一提议只建**一次**，其余段复用；`unmatch` 清掉提议并记进 `rejectedProposalIds`。confirm 响应追加 `taskId`。带 `Authorization: Bearer`
 > 的 confirm 碰到提议一律 403（设备令牌不能建任务）。既有字段、端点行为一个不改。见「活动建议」节「AI 提议新任务」。
 >
+> **v2.9（追加式）**：**每个项目一个「未分类」时间桶。** 仓主 2026-10-08：不再快捷新建只有日期时间的占位任务，
+> 时间直接记进所在项目的「未分类」总量；AI 汇总的东西在归到具体任务（或用户指定）之前也记在这里。
+> 桶是一个**系统任务**：`kind: "unclassified"`、id 由项目 id 派生（`t_unc_<projectId>`）、名字「未分类」，
+> 每个项目至多一个、第一次用到时才建——计时 / 补登 / 确认 / 台账 / 投影仍然只认 `taskId`，**没有不挂任务的时间**。
+> 新端点 `POST /api/core/planner/projects/{id}/unclassified` → `{taskId}`（取或建，幂等）；活动建议的 confirm
+> 可只带 `projectId`（服务端取或建该项目的桶，记到它上面）。桶不能经任务端点改 / 删（409），不算待办、不算进度，
+> 时间照常计入项目合计；`views.tree.v1` 的项目加 `unclassifiedTaskId`、`views.current.v1` 的 `task` 与
+> `views.gantt.v1` 的任务加 `kind`；档案读端 `GET /api/core/events` 加可选过滤 `taskId`（列出记在某个桶上的每一段）。
+> 既有字段、端点行为一个不改。见「项目未分类时间」节。
 > **v2.10（追加式）**：**AI 助理把同类的零碎窗口归成集合，并可以只把建议标到项目。** 仓主 2026-10-08：「碎片太多。
 > 让 AI 把同类型的碎片窗口放在一个集合中，按总时间自上而下排列；人可以设置集合的项目。」`matches` 的每条追加两个可选键：
 > `collection: {name}`（集合标签，服务端归一出 `key`）与 `projectId`（只到项目的建议）；给了其中之一时 `taskId` / `newTask`
@@ -312,6 +321,8 @@ consumes:
 | POST | `/api/core/activity/suggestions/matches` | `{matches[]}`（≤ 200，见「活动建议」节「AI 匹配」） | `{matched, rejected[]}`；带 Bearer 403 | ✅ 已实现（v2.7） |
 | POST | `/api/core/activity/suggestions/{id}/unmatch` | `{taskId?}` | `{id, status, rejectedTaskIds[]}`；带 Bearer 403 | ✅ 已实现（v2.7） |
 | — | （v2.8 追加，无新端点）matches 每条可给 `newTask`；confirm 带 `proposalId`（可带 `name`）、响应加 `taskId`；unmatch 可带 `proposalId` | 见「活动建议」节「AI 提议新任务」 | | ✅ 已实现（v2.8） |
+| POST | `/api/core/planner/projects/{id}/unclassified` | 无 | `{taskId}`（该项目的「未分类」时间桶，取或建，幂等；见「项目未分类时间」节） | ✅ 已实现（v2.9） |
+| — | （v2.9 追加，无新端点）confirm 可只带 `projectId`（与 `taskId` / `proposalId` / `name` 互斥）；`views/tree` 项目加 `unclassifiedTaskId`，`views/current` 的 `task`、`views/gantt` 的任务加 `kind` | 见「项目未分类时间」节 | | ✅ 已实现（v2.9） |
 | — | （v2.10 追加，无新端点）matches 每条可带 `collection {name}`、`projectId`（这时 `taskId` / `newTask` / `confidence` 可省）；列表的 `suggestion` 追加 `collection {key, name}`、`projectId` | 见「活动建议」节「AI 分集合」 | | ✅ 已实现（v2.10） |
 | GET | `/api/core/detector/settings` | `?deviceId` | `{deviceId, settings\|null, updatedAt\|null}`（见 `contracts/detector.settings.v1`） | ✅ 已实现（v2.5） |
 | PUT | `/api/core/detector/settings` | `?deviceId`，`DetectorSettings` | 同 GET；带 Bearer 403 | ✅ 已实现（v2.5） |
@@ -650,6 +661,7 @@ x时x分–x时x分完成了 xx 任务」就是从这里来的。
 | `from` / `to` | ❌ | ISO8601 日期或日期时间，按 `time` 过滤 |
 | `limit` | ❌ | 默认 100，上限 1000 |
 | `offset` | ❌ | 默认 0 |
+| `taskId` | ❌ | v2.9：只回 `subject.task` 等于它的事件（过滤后再排序、分页） |
 
 ```jsonc
 { "total": 42, "items": [ /* 事件信封原样，剔除 _id */ ] }
@@ -1019,6 +1031,93 @@ uuid 生成——它们是系统单例，不是用户建的对象，固定 id �
 任务仍可以正常从 `p_inbox` 搬走（`PATCH .../tasks/{id}` 改 `projectId`，
 J10 已有的能力，不新增写路径）——禁删保护的是**容器本身**，不限制容器
 里的任务流动，这正是 F-INBOX-3「理清」要用到的既有能力。
+
+## 项目未分类时间（规范性 · v2.9）
+
+仓主 2026-10-08：「之前的快捷新建时间占位任务改成：不能再快捷新建一个只是日期时间的任务，而是直接把时间记录到
+项目总的『项目未分类』时间。AI 汇总的东西也是汇总到这个里面，直到分类到这个项目的某个具体任务，或者用户指定。」
+
+### 桶是一个系统任务
+
+每个项目至多一个「未分类」时间桶，它是 `tasks` 集合里的一个任务：
+
+```jsonc
+{ "id": "t_unc_p_ab12cd",        // 由项目 id 派生：t_unc_<projectId>，同一项目永远是同一个 id
+  "key": "1-2-7-1", "name": "未分类", "projectId": "p_ab12cd",
+  "kind": "unclassified",          // 任务 kind 的第三个取值；只由本节的取或建路径写
+  "done": false, "doneAt": null, "flags": [], "plannedWeight": 100, "plan": null, "dependsOn": [],
+  "lastWriter": "human" }
+```
+
+**为什么是任务而不是「不挂任务的时间」**：计时活状态、补登、活动建议确认、`session.completed` 的 `subject`、
+`proj_current` / `proj_daily_stats` / `proj_lanes` 三张投影、导出 / 恢复，全都按 `taskId` 归。开一条「只有项目」的
+时间要把这些逐个改一遍（补登与确认的契约还明文要求「必须挂具体任务」）；把桶做成一个任务，这些一行不改。
+
+- **懒建、幂等**：第一次用到才建（不是每个项目预建一个）。并发的首建撞 `(user, id)` 唯一索引，后到者直接用
+  先到者建的那一个——同一项目结构上不可能有两个桶。
+- **取或建**：`POST /api/core/planner/projects/{id}/unclassified`，无请求体，回 `200 {"taskId": "t_unc_…"}`。
+  项目不存在 404。真的要建时走 planner **既有的写入口**（`guard.run_write` → `create_task`，同
+  `POST /api/core/planner/tasks`）：来源判定、留一条 `create` 审计；建任务不是高风险写，`actor=ai` 也能建。
+  桶已存在时这次调用是纯读取，不留审计。带 `Authorization: Bearer`（设备令牌）与其他 planner 写同样对待（不拦）。
+- 拿到 `taskId` 之后，`timer/start`、`timer/backfill`、`agents/start`、confirm 的 `taskId` 原样用它，没有特殊路径。
+
+### 保护（规范性）
+
+| 操作 | 结果 |
+|---|---|
+| `PATCH /api/core/planner/tasks/{桶}`（任何字段：改名、`done`、`projectId`、`kind`、`plan`…） | **409**，`detail` 说明这是项目的「未分类」时间桶 |
+| `DELETE /api/core/planner/tasks/{桶}` | **409**（同上） |
+| `POST` / `PATCH` 任务时 `kind: "unclassified"` | **400**（合法取值仍只有 `normal` / `ephemeral`） |
+| 别的任务 `dependsOn` 里写桶的 id | **400**（桶永远不会完成，依赖它等于永远等待） |
+| `DELETE /api/core/planner/projects/{id}`，项目下只剩桶 | 204，**桶随项目一起删**（桶不算「还有子对象」；还有别的任务照旧 409） |
+| JSON 导入（`/api/core/import`） | 桶不参与 diff：payload 里带着它不产生 `update`，少了它不产生 `delete`（也不进 `skippedDeletes`）。payload 里 `kind: "unclassified"` 而库里没有这个 id 的条目（导出方有桶、这边还没懒建；或没带 id）同样**跳过**，不报「id 不存在」也不新建——桶只由取或建懒建 |
+| 桶的 id 上是一个不是桶的任务（只有快照恢复 / 种子写得出来） | 取或建、confirm `{projectId}` 一律 **409**，绝不把它当桶用 |
+| 快照恢复（`/api/core/restore`） | `kind: "unclassified"` 与 id `t_unc_<projectId>` 必须成对出现，否则 **400**、一个字节不写 |
+
+409 而不是 400 / 403：请求本身合法，冲突的是「这个对象是系统单例」（同 `p_inbox` 禁删）。桶删掉后台账里的事实
+照旧保留（与删任何有时间的任务相同）；项目 id 不复用，所以桶的 id 也不会被复用。
+删项目的顺序是「删项目文档 → 再清桶」，取或建则在插入桶之后回头确认项目还在（不在就自己删掉、回 404）：
+两者并发也不会留下没有项目的桶。
+
+### 读端怎么对待桶（规范性）
+
+| 读端 | 桶 |
+|---|---|
+| `views/tree` | **不进** `tasks[]`（`includeEphemeral=true` 也不进）；项目多一个键 `unclassifiedTaskId`（还没建过为 `null`）。`progress`（`computed`）的分子分母都不含桶 |
+| `views/next-actions` | 不出现（不是待办） |
+| `views/review` | 不进 `staleTasks`，不计入 `inboxPendingCount`；`planVsActual[].actualSecondsThisWeek` 照常含桶的时间 |
+| `views/current` | 正在计的是桶时照常返回，`task.kind` 为 `"unclassified"`、`task.name` 为「未分类」。`task` 多一个键 `kind`（其余任务是 `normal` / `ephemeral`） |
+| `views/gantt` | 项目层 `actual` 照常含桶的时间；任务层 `tasks[]` **含**桶这一行（它就是「这个项目未分类的时间」），每个任务多一个键 `kind` 供读方区分 |
+| `views/lanes` | 段照常带桶的 `taskId`，不特殊处理 |
+| `GET /api/core/events` | 段照常带桶的 `taskId`。**追加可选查询参数 `taskId`**：只回 `subject.task` 等于它的事件（过滤后再排序、分页，`total` 是过滤后的总数）。列出某项目记在桶上的每一段 = `?type=session.completed&taskId=<unclassifiedTaskId>`，每条有 `id`、`source`、`time`（结束）、`data.startAt`、`data.durationSeconds`——给「待分类」一类的界面用 |
+| `GET /api/core/planner/tasks`、`GET /api/core/export` | 原样含桶（`kind` 可辨）；导出再经 `/api/core/restore` 恢复后 id 不变，取或建拿到的还是它 |
+| `proj_current` / `proj_daily_stats` | 不改：桶的秒数在 `tasks[桶 id]` 下，也在所属项目的合计里 |
+
+显示约定（仓主 2026-10-08 定，给前端）：
+
+- **正在计桶**：只显示**项目名**（不写「未分类」、不写时间戳），不提供改名入口。
+- **记在桶上的一段**（最近完成、计时档案等逐段列出的地方）：叫「临时任务 YYYY-MM-DD HH:MM」，时间是这一段的开始
+  （`data.startAt`，与所在列表同一套时区规则），后面照常跟时长。桶这个任务本身不出现在任何任务列表 / 下拉里。
+- **项目级的合计**（按任务汇总的那一行）仍可叫「未分类」。
+
+### 活动建议：只指定项目的确认
+
+`POST /api/core/activity/suggestions/{id}/confirm` 的请求体追加可选 `projectId`：
+
+- 与 `taskId`、`proposalId`、`name` **互斥**，同给 400；
+- 服务端取或建该项目的桶（同上面的端点，同一条写入口），把这一段记到桶上；响应的 `taskId` 是桶的 id；
+- 项目不存在 404，建议放回待确认（同「任务不存在」）；
+- 其余（先占位再写事实、`activity:<id>` 防重、重复确认 `duplicate:true`、信封形状）与带 `taskId` 的确认完全相同；
+- 带 `Authorization: Bearer` 不拦（与带 `taskId` 的确认相同；v2.8 的 403 只针对确认新任务提议）。
+
+v2.7「只能配到任务，不能只配到项目」说的是 `matches`（助理的建议），本版不改：助理仍只能配任务或提议新任务；
+「只记到项目」是人确认时的选择。
+
+### 本版不做
+
+- 把已经记在桶里的时间**改挂**到具体任务（改 `subject` 要动 append-only 台账，另行设计）。
+- `matches` 只配到项目。
+- 旧版长按建出来的「日期 时间」占位任务不迁移，仍是普通任务。
 
 ## 下一步行动读端（规范性 · v1.5，F-TODO-1）
 
@@ -2344,6 +2443,10 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 | MCP 服务（v2.7） | `activity.suggestions.v1` 的 `POST .../suggestions/matches`（`propose_activity_matches`，`mcp.tools.v1` v1.3）；GET 多读 `rejectedTaskIds` | `contracts/mcp.tools.v1` |
 | `assistant` 前端（v2.8） | 带提议的建议（`suggestion.newTask`）出「新建任务：项目 / 名称」，名字可改；「是」= confirm `{name, proposalId}`（不带 `taskId`），组里每一段都这样发，响应的 `taskId` 用于「以后这个窗口」的规则；「否」= unmatch `{proposalId}`；「全部确认」不含提议 | `modules/assistant` |
 | MCP 服务（v2.8） | `propose_activity_matches` 每条可给 `newTask`（`mcp.tools.v1` v1.4）；GET 多读 `suggestion.newTask` | `contracts/mcp.tools.v1` |
+| `hive` 前端（v2.9） | `planner.crud.v1` 的 `POST /api/core/planner/projects/{id}/unclassified`（长按项目格：取或建桶再 `timer/start`，不再建「日期 时间」任务）；`views.current.v1` 的 `task.kind`；`views.tree.v1` 的 `unclassifiedTaskId` + `events.read.v1`（记在桶上的段在「最近完成」与计时档案里叫「临时任务 <开始时间>」） | `modules/hive` |
+| `ring` 前端、共享顶栏（v2.9） | `views.current.v1` 的 `task.kind`（正在计桶时只显示项目名，计时台不给它改名）；`ring` 另经 `views.gantt.v1` 的任务层读到桶当天的秒数 | `modules/ring`、`modules/nginx-docker` |
+| `assistant` 前端（v2.9） | confirm 只带 `projectId`（集合有项目时的「未分类」，随 v2.10 实现）；**待后续 PR**：`GET /api/core/events?type=session.completed&taskId=`（「待分类」） | `modules/assistant` |
+| MCP 服务（v2.9） | `views.tree.v1` 的 `unclassifiedTaskId`（桶的路径「分区 / 项目 / 未分类」）；`views.gantt.v1` 任务的 `kind`（`mcp.tools.v1` v1.5） | `contracts/mcp.tools.v1` |
 | `assistant` 前端（v2.10） | 读 `suggestion.collection.{key,name}`、`suggestion.projectId`：待确认建议按集合分组、按总时长排序，集合的项目预选 | `modules/assistant` |
 | MCP 服务（v2.10） | `propose_activity_matches` 每条可带 `collection`、`projectId`（`mcp.tools.v1` v1.6）；GET 多读 `suggestion.collection`、`suggestion.projectId` | `contracts/mcp.tools.v1` |
 | `ai-detector` 桌面程序（v2.4） | `activity.presence.v1` 的 POST（在场心跳）；可选「状态文件桥」经 `agents.v1` 的 start/stop 与 `agents.phase.v1` 报没有钩子的代理（带设备令牌） | `modules/ai-detector` |

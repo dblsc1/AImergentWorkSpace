@@ -27,7 +27,7 @@ def test_d9_gantt_project_has_tasks_layer_with_own_plan_and_depends_on(client, s
     assert "tasks" in gp
 
     gt = next(t for t in gp["tasks"] if t["id"] == task["id"])
-    assert set(gt) == {"id", "key", "name", "done", "plan", "dependsOn", "actual"}
+    assert set(gt) == {"id", "key", "name", "done", "kind", "plan", "dependsOn", "actual"}  # kind：v2.9
     assert gt["plan"] == {"start": "2026-08-01", "end": "2026-08-03"}
     assert gt["dependsOn"] == []
     assert gt["done"] is False

@@ -28,12 +28,12 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
-from . import audit, guard, service
+from . import audit, guard, service, unclassified
 from .actor import with_actor
 from .schemas import (
     AuditOut,
     ProjectCreate, ProjectOut, ProjectUpdate,
-    TaskCreate, TaskOut, TaskUpdate,
+    TaskCreate, TaskOut, TaskUpdate, UnclassifiedOut,
     ZoneCreate, ZoneOut, ZoneUpdate,
 )
 
@@ -137,6 +137,16 @@ def delete_project_unified(
         body_actor=actor, action=lambda _actor: service.delete_project(entity_id),
     )
     return _NO_CONTENT
+
+
+@router.post("/projects/{entity_id}/unclassified", response_model=UnclassifiedOut)
+def unclassified_task_unified(entity_id: str, request: Request) -> dict:
+    """v2.9：取或建该项目的「未分类」时间桶。已有 = 纯读取；没有才经写入口建（留审计）。"""
+    task = unclassified.find(entity_id) or guard.run_write(
+        request, op=audit.OP_CREATE, object_type="tasks", changes=unclassified.changes(entity_id),
+        action=lambda actor: unclassified.create(entity_id, actor),
+    )
+    return {"taskId": task["id"]}
 
 
 # ------------------------------------------------------------------- tasks

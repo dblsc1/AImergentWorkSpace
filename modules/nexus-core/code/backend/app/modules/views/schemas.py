@@ -55,6 +55,8 @@ class CurrentTask(_Strict):
     name: str
     totalSeconds: int
     shareOfProject: float = Field(ge=SHARE_MIN, le=SHARE_MAX)
+    #: v2.9：``normal`` | ``ephemeral`` | ``unclassified``（项目的「未分类」时间桶，显示成「项目名 · 未分类」）。
+    kind: str = "normal"
 
 
 class CurrentAgent(_Strict):
@@ -134,6 +136,8 @@ class Project(_Strict):
     progressSource: Literal["computed", "manual"]
     #: ``projects.plan.end`` 的投影，``YYYY-MM-DD``；无计划则 ``null``。
     deadline: str | None = None
+    #: v2.9：本项目「未分类」时间桶的任务 id，还没建过为 ``null``。桶不在 ``tasks`` 里。
+    unclassifiedTaskId: str | None = None
     tasks: list[Task]
 
 
@@ -174,6 +178,8 @@ class GanttTask(_Strict):
     key: str
     name: str
     done: bool
+    #: v2.9：``unclassified`` = 项目的「未分类」时间桶（这一行是没归到具体任务的时间）。
+    kind: str = "normal"
     #: ``null`` = 未排期。与 ``GanttProject.plan`` 同一个形状，同一份校验。
     plan: GanttPlan | None = None
     #: 前置任务 id 列表，纯表达不排程；默认 []。
