@@ -188,7 +188,9 @@ def test_auto_shows_the_rule_target_with_names(client, world, clock):
     human = _human(client)
     assert human["auto"] == {
         "taskId": world["a"], "projectId": world["p"], "taskName": "任务 a", "projectName": "项目 P",
-        "since": human["auto"]["since"], "app": "code", "title": "plot.gd — garden", "source": "rules"}
+        "since": human["auto"]["since"], "app": "code", "title": "plot.gd — garden", "source": "rules",
+        "key": human["auto"]["key"]}  # v2.15 追加 key
+    assert human["auto"]["key"].startswith("wk_") and human["aiThinking"] is None
     assert datetime.fromisoformat(human["auto"]["since"]) == since
     assert human["needsChoice"] is None and human["running"] is None
 
@@ -533,7 +535,8 @@ def test_auto_sessions_list_and_reassign(client, world, monkeypatch):
     assert len(items) == 1
     item = items[0]
     assert set(item) == {"id", "eventId", "startAt", "endAt", "durationSeconds", "app", "title", "taskId",
-                         "projectId", "reassigned"}
+                         "projectId", "reassigned", "ai"}  # v2.15 追加 ai
+    assert item["ai"] is False
     assert (item["taskId"], item["projectId"], item["reassigned"]) == (world["a"], world["p"], False)
 
     url = f"{API}/sessions/{item['eventId']}/reassign"

@@ -1,12 +1,10 @@
 """自动跟踪进行中的任务（契约 v2.14「自动跟踪进行中的任务」节，唯一事实源）。
 
-仓主 2026-10-08：「'我'的操作自动替代进行中计时」「保留开关：允许 / 不允许 AI 管理进行中的任务。人手动开始计时时，
-不要 AI 计时。人在操作但没有计时：先试死规则；认不出，让 AI 写规则；写不出、也没有现成任务对得上，提醒人选项目和任务；
-到这段活动结束人还没选，走碎片流程一起归类。」
-本文件是**第一步**：除了「让 AI 写规则」之外的全部。下一步由 ``next_step`` 一个函数定——第二步把 ``"ask_ai"``
-插在「规则没认出」与「请人选」之间，别处不用动。全部挂在设备的 ``autoTrack`` 开关下（detector.settings.v1 v1.3，缺省关）。
+仓主 2026-10-08（原话见契约头部 v2.14）：手动计时永远优先；没在计时 → 先试死规则 → 认不出让 AI 写规则 → 再不行请人选。
+下一步由 ``next_step`` 一个函数定；「让 AI 写规则」（v2.15）在 ``auto_ai.py``，经 ``state`` 的 ``asks`` 参数接进来。
+全部挂在设备的 ``autoTrack`` 开关下（detector.settings.v1 v1.3，缺省关）。
 
-- ``state``：``views/lanes`` 的 ``human.auto`` / ``human.needsChoice``（``views/current`` 顶层同一份）。**不写**。
+- ``state``：``views/lanes`` 的 ``human.auto`` / ``needsChoice`` / ``aiThinking``（``views/current`` 顶层同一份）。**不写**。
 - ``heartbeat`` / ``upload``：心跳、上传的入口（路由调这里）——先走原来的路径，再做本版追加的那一步。
 - ``choose`` / ``dismiss``：人答「记到哪」/「这次不选」。``recorded_today``：今天自动记下的段。
 规则只在检测程序里匹配（服务端没有原始标题）：这里看到的「规则认得出」就是心跳带来的 ``guess``。
@@ -22,8 +20,8 @@ from typing import Any, Literal
 
 from ... import config
 from ...tenant import current as current_tenant
-from ..detector import rules as detector_rules
 from ..detector import service as detector_service
+from ..detector import window_rules
 from ..events import service as events_service
 from ..planner import service as planner_service
 from ..planner import unclassified
@@ -70,12 +68,11 @@ def window_key(app: str, title: str) -> str:
 def next_step(window: dict) -> Literal["rules", "ask_ai", "ask_human"]:
     """这个窗口下一步找谁——**全系统只有这一处决定**。
 
-    ``"rules"``：已经有目标（规则的猜测，或人对这个窗口的临时选择）；``"ask_human"``：请人选。
-    ``"ask_ai"``（让自带的 AI 给这个窗口写一条规则）留给第二步：插在下面两行之间，本版永不返回。
-    """
+    ``"rules"``：已经有目标（规则的猜测，或对这个窗口的临时选择）；``"ask_ai"``（v2.15）：此刻归 AI 认
+    （``auto_ai.Asks.wants``：这条路活着、没问过、没超时）；``"ask_human"``：请人选。"""
     if window["target"]:
         return "rules"
-    return "ask_human"  # 第二步：先看能不能 "ask_ai"
+    return "ask_ai" if window["ai"] else "ask_human"
 
 
 def _lookup(task_id: Any, project_id: Any) -> dict | None:
@@ -91,35 +88,37 @@ def _lookup(task_id: Any, project_id: Any) -> dict | None:
 
 
 class _Windows:
-    """一次读里把在场的段变成窗口：键、目标（规则的猜测优先，其次人的临时选择）、有没有「这次不选」。带缓存。"""
+    """一次读里把在场的段变成窗口：键、目标（规则的猜测优先，其次临时选择）、有没有「这次不选」、归不归 AI 认。带缓存。"""
 
-    def __init__(self, choices: dict[str, dict]):
-        self._choices = choices
+    def __init__(self, choices: dict[str, dict], asks: Any):
+        self._choices, self._asks = choices, asks
         self._targets: dict[tuple, dict | None] = {}
 
-    def _target(self, ref: dict, source: str) -> dict | None:
+    def _target(self, key: str, ref: dict | None, source: str) -> dict | None:
+        if not ref:
+            return None
         ids = (ref.get("taskId"), ref.get("projectId"))
         if ids not in self._targets:
             self._targets[ids] = _lookup(*ids)
-        return {**self._targets[ids], "source": source} if self._targets[ids] else None
+        return {**self._targets[ids], "source": self._asks.source(key, ref, source)} if self._targets[ids] else None
 
     def __call__(self, span: dict) -> dict:
         key = window_key(span["app"], span["title"])
         choice = self._choices.get(key) or {}
-        target = self._target(span["guess"], "rules") if span.get("guess") else None
-        if target is None and choice.get("kind") == "choice":
-            target = self._target(choice, "choice")
-        return {"key": key, "app": span["app"], "title": span["title"], "target": target,
-                "dismissed": choice.get("kind") == "dismiss"}
+        target = (self._target(key, self._asks.guess(key, span), "rules")
+                  or self._target(key, choice if choice.get("kind") == "choice" else None, "choice"))
+        dismissed = choice.get("kind") == "dismiss"
+        return {"key": key, "app": span["app"], "title": span["title"], "target": target, "dismissed": dismissed,
+                "ai": target is None and not dismissed and bool(span["app"]) and self._asks.wants(key, span)}
 
 
 def _same(a: dict | None, b: dict) -> bool:
     return a is not None and (a["taskId"], a["projectId"]) == (b["taskId"], b["projectId"])
 
 
-def state(user: str, now: datetime, timer_running: bool) -> dict:
-    """``{auto, needsChoice}``（契约同名两小节；``views/lanes`` 与 ``views/current`` 同一份）。"""
-    out: dict = {"auto": None, "needsChoice": None}
+def state(user: str, now: datetime, timer_running: bool, asks: Any) -> dict:
+    """``{auto, needsChoice, aiThinking}``（契约同名小节；views/lanes 与 views/current 同一份）。``asks`` = ``auto_ai.Asks``。"""
+    out: dict = {"auto": None, "needsChoice": None, "aiThinking": None}
     docs = [] if timer_running else [d for d in repo.presence_list(user) if now - d["lastAt"] <= FRESH]
     if not docs:
         return out
@@ -127,7 +126,7 @@ def state(user: str, now: datetime, timer_running: bool) -> dict:
     spans = doc.get("spans") or []
     if doc["afk"] or not spans or not detector_service.device_flags(user, doc["deviceId"])["autoTrack"]:
         return out
-    window = _Windows(repo.choices(user, now))
+    window = _Windows(repo.choices(user, now), asks.on(doc["deviceId"]))
 
     current = window(spans[-1])
     if next_step(current) == "rules":
@@ -139,7 +138,7 @@ def state(user: str, now: datetime, timer_running: bool) -> dict:
         # since 不早于这段时间里最近一条手动计时段的结束（刚停表：不把表测过的那段算进来）
         ends = [stop for _start, stop in _manual_spans(user, spans[i]["from"], now) if stop <= now]
         out["auto"] = {**target, "since": max([spans[i]["from"], *ends]), "app": current["app"],
-                       "title": current["title"]}
+                       "title": current["title"], "key": current["key"]}
 
     horizon = now - LOOKBACK
     asked: dict[str, dict] = {}  # 从新往旧走：先碰到的是这个窗口最近的一段
@@ -151,17 +150,17 @@ def state(user: str, now: datetime, timer_running: bool) -> dict:
         if span["afk"] or not span["app"]:
             continue
         w = window(span)
-        if w["dismissed"] or next_step(w) != "ask_human":
+        if w["dismissed"] or next_step(w) == "rules":
             continue
         start = max(span["from"], horizon)
         a = asked.setdefault(w["key"], {"seconds": 0.0, "last": i, "window": w})
         a["seconds"] += (end - start).total_seconds()
         a["since"] = start
-    waiting = [a for a in asked.values() if a["seconds"] >= DWELL.total_seconds()]
-    if waiting:
-        a = max(waiting, key=lambda a: (a["seconds"], a["last"]))
-        out["needsChoice"] = {"key": a["window"]["key"], "app": a["window"]["app"], "title": a["window"]["title"],
-                              "since": a["since"]}
+    for step, name in (("ask_human", "needsChoice"), ("ask_ai", "aiThinking")):  # 各取停留最久的那个窗口
+        waiting = [a for a in asked.values() if a["seconds"] >= DWELL.total_seconds() and next_step(a["window"]) == step]
+        if waiting:
+            a = max(waiting, key=lambda a: (a["seconds"], a["last"]))
+            out[name] = {**{k: a["window"][k] for k in ("key", "app", "title")}, "since": a["since"]}
     return out
 
 
@@ -225,7 +224,7 @@ def choose(key: str, task_id: str | None, project_id: str | None, remember: bool
     remembered = False
     if remember and not pseudonymized:
         rule = _window_rule(span["app"], span["title"], target)
-        remembered = rule is not None and detector_rules.prepend(rule)
+        remembered = rule is not None and window_rules.prepend(rule)
     return {"key": key, "taskId": found["taskId"], "projectId": found["projectId"],
             "remembered": remembered, "pseudonymized": pseudonymized}
 

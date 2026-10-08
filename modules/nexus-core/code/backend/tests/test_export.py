@@ -38,6 +38,8 @@ _COLLECTIONS = (
     "detector_rules",
     # v2.14 人对某个窗口的临时选择 /「这次不选」（活状态）。
     "activity_choices",
+    # v2.15 让 AI 认窗口的问询（活状态）。
+    "activity_ai_asks",
 )
 
 
