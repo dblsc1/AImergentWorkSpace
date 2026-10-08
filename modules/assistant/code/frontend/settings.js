@@ -9,6 +9,8 @@
  * - 发出去的是「读进来的文档 + 表单改动」：服务端将来追加的键（比如 presence）原样带回去，不会被这页清掉。
  *   presence 只在文档里真有这个布尔时才出现一个勾选项；没有就不出现、也不发。
  * - 分段两项（v1.2 的 segmentByTitle / segmentByTitleApps）总是显示、总是发：文档里没有（v1.1 存下的）就按缺省填。
+ * - autoTrack（v1.3「允许 AI 管理进行中的任务」，缺省关）同样总是显示、总是发。勾上保存时，文档里还没有布尔的
+ *   presence（没设过在场心跳）就一并设成 true——实时的「自动 · 项目 / 任务」靠心跳，页面上的说明写着这一条。
  * - 强制脱敏（密码、密钥……）不在文档里，页面上是勾着的灰框，关不掉。
  * - 422 的 detail 形如「privacy.pathWhitelist: …」：按前缀挂到对应那一项下面，对不上就显示在表单底部。
  * 对外只挂 window.assistantSettings（纯函数，给单测用）。
@@ -31,6 +33,7 @@
     },
     // v1.2：终端按标签页分段。v1.1 存下的文档没有这两个键——fill() 按这里的缺省补上再填表。
     segmentByTitle: true, segmentByTitleApps: null,
+    autoTrack: false,   // v1.3
   };
   var LIMITS = {   // 契约「校验」：列表条数、每条长度；整数范围
     "privacy.pathWhitelist": [20, 200], "privacy.appOnlyApps": [200, 64], "idle.focusApps": [200, 64],
@@ -89,7 +92,7 @@
 
   // 422 detail「privacy.pathWhitelist: Value error, …」→「privacy.pathWhitelist」；对不上 → null
   function fieldOf(detail) {
-    var m = /^((?:privacy|idle)\.[A-Za-z]+|presence|segmentByTitleApps|segmentByTitle)\b/.exec(String(detail || ""));
+    var m = /^((?:privacy|idle)\.[A-Za-z]+|presence|segmentByTitleApps|segmentByTitle|autoTrack)\b/.exec(String(detail || ""));
     return m ? m[1] : null;
   }
 
@@ -183,6 +186,7 @@
       var key = t.dataset.list, nul = formEl.querySelector('input[data-null="' + key + '"]');
       setPath(doc, key, nul && nul.checked ? null : lines(t.value, key === "privacy.pathWhitelist"));
     });
+    if (doc.autoTrack === true && !findPresence(doc)) doc.presence = true;   // 自动跟踪要心跳：没设过就一并打开
     return doc;
   }
 
@@ -224,7 +228,7 @@
   function fill(body) {
     loaded = body;
     base = body.settings ? clone(body.settings) : clone(DEFAULTS);
-    ["segmentByTitle", "segmentByTitleApps"].forEach(function (k) { if (base[k] === undefined) base[k] = DEFAULTS[k]; });
+    ["segmentByTitle", "segmentByTitleApps", "autoTrack"].forEach(function (k) { if (base[k] === undefined) base[k] = DEFAULTS[k]; });
     var pkey = findPresence(base);
     presenceRow.hidden = !pkey;
     if (pkey) presenceEl.dataset.key = pkey; else delete presenceEl.dataset.key;

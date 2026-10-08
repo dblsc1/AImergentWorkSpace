@@ -342,3 +342,8 @@ fieldset.set-field > legend { font-size: var(--fs-sub); color: var(--ink-2); mar
 .unc-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-width: 0; }
 .unc-what { flex: 1 1 12em; min-width: 0; font-size: var(--fs-sub); overflow-wrap: anywhere; }
 .unc-source { font-size: var(--fs-eyebrow); color: var(--ink-2); overflow-wrap: anywhere; }
+
+/* ── 「自动记录」（auto.js，nexus-core v2.14）：行的骨架借「待分类」的 .unc-row；这里只有去向与改归属的下拉 ── */
+.auto-target { flex: 1 1 10em; min-width: 0; font-size: var(--fs-sub); color: var(--ink-2); overflow-wrap: anywhere; }
+.auto-row .auto-pick { flex: 0 1 12em; min-width: 0; max-width: 100%; background: var(--panel); }
+

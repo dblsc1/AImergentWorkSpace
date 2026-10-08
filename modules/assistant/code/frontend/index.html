@@ -72,6 +72,15 @@
       <div class="unc-groups" id="unc-groups"></div>
     </section>
 
+    <!-- 「自动记录」（nexus-core v2.14 自动跟踪，auto.js）：今天按分类规则直接记下的段，可以改归属。
+         一段都没有、或后端没有这个读端时整块保持 hidden。 -->
+    <section class="card unc-panel" id="auto-panel" hidden aria-labelledby="auto-title">
+      <h2 class="suggest-title" id="auto-title">自动记录 <span class="suggest-count mono" id="auto-count"></span></h2>
+      <p class="suggest-sub">今天按分类规则直接记下的时间（「允许 AI 管理进行中的任务」开着时）。记错了就改归属——原来的记录不改，只追加一条改挂。</p>
+      <p class="suggest-message" id="auto-message" role="status" hidden></p>
+      <ul class="unc-list" id="auto-list"></ul>
+    </section>
+
     <!-- 「活动检测设置」（contracts/detector.settings.v1，settings.js）。data-key / name 与文档的「节.键」一一对应。 -->
     <section class="card settings-panel" id="settings-panel" hidden aria-labelledby="settings-title">
       <h2 class="suggest-title" id="settings-title">活动检测设置</h2>
@@ -85,6 +94,19 @@
       <p class="suggest-empty" id="det-note" hidden></p>
 
       <form id="det-form" class="det-form" hidden novalidate>
+        <!-- 自动跟踪的总开关（detector.settings.v1 v1.3 的 autoTrack，nexus-core v2.14）。缺省关 = 一切照旧。 -->
+        <fieldset class="set-group">
+          <legend>进行中的任务</legend>
+          <div class="set-field" data-field="autoTrack">
+            <label class="set-opt"><input type="checkbox" data-key="autoTrack"> 允许 AI 管理进行中的任务</label>
+            <p class="set-hint">关着（缺省）：一切照旧——检测到的活动只是待确认的建议，要你逐条确认。<br>
+              打开后：你没有手动计时的时候，按分类规则把你正在做的事显示成「自动 · 项目 / 任务」；规则把握 ≥ 90% 的段直接记成时间
+              （记错了在「自动记录」里改归属）；规则认不出的窗口停留一会儿，计时页会问你记到哪。你手动计时的时候 AI 不插手。
+              实时显示要靠在场心跳——没设过的话保存时会一并打开（约每 15 秒报一次此刻在用的程序与清洗后的标题）。</p>
+            <p class="field-error" hidden></p>
+          </div>
+        </fieldset>
+
         <fieldset class="set-group">
           <legend>隐私</legend>
 
@@ -279,6 +301,7 @@
   <script src="chat.js"></script>
   <script src="suggestions.js"></script>
   <script src="unclassified.js"></script>
+  <script src="auto.js"></script>
   <script src="settings.js"></script>
   <script src="rules.js"></script>
   <script src="review.js"></script>

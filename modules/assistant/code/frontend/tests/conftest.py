@@ -86,7 +86,7 @@ def open_page(browser: Browser, base: str, *, routes: dict[str, Callable[[Route]
     page = context.new_page()
     for pat in (r"/api/agent/", r"/api/core/activity/suggestions", r"/api/core/detector/"):
         page.route(re.compile(pat), _not_found)
-    page.route(re.compile(r"/api/core/views/tree$"), lambda r: r.fulfill(
+    page.route(re.compile(r"/api/core/views/tree(\?includeEphemeral=true)?$"), lambda r: r.fulfill(
         status=200, content_type="application/json", body=json.dumps(TREE, ensure_ascii=False)))
     for pat, fn in (routes or {}).items():
         page.route(re.compile(pat), fn)

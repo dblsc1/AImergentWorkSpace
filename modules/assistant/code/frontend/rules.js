@@ -9,6 +9,8 @@
  * - 422 的 errors[{index, field, message}] 挂到对应那一行的对应格下。
  * - 规则文本（正则、备注、AI 写的说明）一律 textContent / value，不进 innerHTML。
  * - 端点 404（后端早于 v2.6）→ 只留一句说明，不出编辑器。
+ * - v1.1（nexus-core v2.14）：规则的目标可以只到项目（projectId 代替 taskId，时间记到该项目的「未分类」）。
+ *   「归到」下拉里每个项目多一项「…（只到项目）」，值是 "p:" + 项目 id。
  * 对外只挂 window.assistantRules（纯函数，给单测用；外加 prepend：「待确认建议」勾「以后这个窗口都记到这个任务」时用）。
  */
 (function () {
@@ -19,8 +21,9 @@
   // ── 纯函数 ─────────────────────────────────────────────────────────
   // 编辑中的一行 → 发给服务端的规则（空串 = null；新行不带 id，服务端分配）
   function toWire(r) {
-    var out = { app: r.app || null, title: r.title || null, taskId: r.taskId, confidence: Number(r.confidence),
-      note: r.note || null, enabled: r.enabled !== false };
+    var out = { app: r.app || null, title: r.title || null, taskId: r.projectId ? null : r.taskId,
+      confidence: Number(r.confidence), note: r.note || null, enabled: r.enabled !== false };
+    if (r.projectId) out.projectId = r.projectId;   // 只到项目的规则才有这个键（到任务的与 v1 逐字节相同）
     if (r.id) out.id = r.id;
     return out;
   }
@@ -38,14 +41,23 @@
     });
     return out;
   }
-  function describe(r, tasks) {
+  // 项目 id → 「分区 / 项目」（只到项目的规则用）
+  function projectPaths(tree) {
+    var zones = {}, out = {};
+    ((tree && tree.zones) || []).forEach(function (z) { zones[z.id] = z.name; });
+    ((tree && tree.projects) || []).forEach(function (p) { out[p.id] = (zones[p.zoneId] || "?") + " / " + p.name; });
+    return out;
+  }
+  function describe(r, tasks, projects) {
     var what = [r.app ? "程序 /" + r.app + "/" : "", r.title ? "标题 /" + r.title + "/" : ""].filter(Boolean).join(" 且 ");
-    var t = tasks[r.taskId];
-    return what + " → " + (t ? t.path : "任务已删除（" + r.taskId + "）") + " · " + Math.round(r.confidence * 100) + "%" +
+    var t = tasks[r.taskId], p = (projects || {})[r.projectId];
+    var to = r.projectId ? (p ? p + " · 未分类" : "项目已删除（" + r.projectId + "）")
+      : (t ? t.path : "任务已删除（" + r.taskId + "）");
+    return what + " → " + to + " · " + Math.round(r.confidence * 100) + "%" +
       (r.enabled === false ? " · 停用" : "") + (r.note ? " · " + r.note : "");
   }
 
-  window.assistantRules = { toWire: toWire, counts: counts, paths: paths, describe: describe };
+  window.assistantRules = { toWire: toWire, counts: counts, paths: paths, projectPaths: projectPaths, describe: describe };
 
   // ── DOM ─────────────────────────────────────────────────────────────
   var boxEl = document.getElementById("det-rules");
@@ -67,6 +79,7 @@
   var discardBtn = document.getElementById("rules-discard");
 
   var tasks = {};          // taskId → {path, done}
+  var projects = {};       // projectId → 「分区 / 项目」
   var server = null;       // 编辑器的底稿 {version, rules}：保存时 If-Match 带它的 version
   var current = null;      // 最近一次读到的生效规则（草稿的「旧值」按它显示；有没保存的改动时可能比底稿新）
   var rules = [];          // 编辑中的副本
@@ -121,7 +134,8 @@
       var list = g.body.rules || [];
       var same = -1;
       list.forEach(function (r, i) {
-        if (same < 0 && r.app === rule.app && r.title === rule.title && r.taskId === rule.taskId) same = i;
+        if (same < 0 && r.app === rule.app && r.title === rule.title && r.taskId === (rule.taskId || null) &&
+            (r.projectId || null) === (rule.projectId || null)) same = i;
       });
       if (same === 0 && list[0].enabled !== false) return { ok: true, skipped: true };
       var head = same >= 0 ? Object.assign({}, list[same], { enabled: true }) : rule;
@@ -166,11 +180,19 @@
     var s = el("select", "field");
     s.dataset.f = "taskId";
     var ids = Object.keys(tasks).filter(function (id) { return !tasks[id].done || id === r.taskId; });
-    if (!r.taskId) s.appendChild(new Option("选一个任务", ""));
-    if (r.taskId && !tasks[r.taskId]) s.appendChild(new Option("任务已删除（" + r.taskId + "）", r.taskId));
+    var now = r.projectId ? "p:" + r.projectId : (r.taskId || "");
+    if (!now) s.appendChild(new Option("选一个任务或项目", ""));
+    if (r.projectId && !projects[r.projectId]) s.appendChild(new Option("项目已删除（" + r.projectId + "）", now));
+    if (!r.projectId && r.taskId && !tasks[r.taskId]) s.appendChild(new Option("任务已删除（" + r.taskId + "）", r.taskId));
     ids.forEach(function (id) { s.appendChild(new Option(tasks[id].path + (tasks[id].done ? "（已完成）" : ""), id)); });
-    s.value = r.taskId || "";
-    s.addEventListener("change", function () { r.taskId = s.value; sync(); });
+    Object.keys(projects).forEach(function (id) { s.appendChild(new Option(projects[id] + " · 未分类（只到项目）", "p:" + id)); });
+    s.value = now;
+    s.addEventListener("change", function () {
+      var toProject = s.value.indexOf("p:") === 0;
+      r.projectId = toProject ? s.value.slice(2) : null;
+      r.taskId = toProject ? null : s.value;
+      sync();
+    });
     return s;
   }
   function move(i, to) {
@@ -213,11 +235,11 @@
       var grid = el("div", "rule-grid");
       grid.appendChild(field("程序名（正则）", input(r, "app", { maxlength: "200", placeholder: "比如 code|goland" }), err.app));
       grid.appendChild(field("窗口标题（正则）", input(r, "title", { maxlength: "200", placeholder: "比如 garden" }), err.title));
-      grid.appendChild(field("归到任务", taskSelect(r), err.taskId));
+      grid.appendChild(field("归到", taskSelect(r), err.taskId || err.projectId));
       grid.appendChild(field("把握（0–1）", input(r, "confidence", { type: "number", min: "0.01", max: "1", step: "0.05", inputmode: "decimal" }), err.confidence));
       grid.appendChild(field("备注", input(r, "note", { maxlength: "120" }), err.note));
       li.appendChild(grid);
-      var rest = Object.keys(err).filter(function (k) { return ["app", "title", "taskId", "confidence", "note"].indexOf(k) < 0; });
+      var rest = Object.keys(err).filter(function (k) { return ["app", "title", "taskId", "projectId", "confidence", "note"].indexOf(k) < 0; });
       if (rest.length) li.appendChild(el("p", "field-error", rest.map(function (k) { return err[k]; }).join("；")));
       listEl.appendChild(li);
     });
@@ -248,8 +270,8 @@
       if (!kind) return;
       var li = el("li", "diff-" + kind);
       li.appendChild(el("span", "diff-tag", kind === "add" ? "新增" : "修改"));
-      if (kind === "change" && cur[r.id]) li.appendChild(el("span", "diff-old", describe(cur[r.id], tasks)));
-      li.appendChild(el("span", "diff-new", describe(r, tasks)));
+      if (kind === "change" && cur[r.id]) li.appendChild(el("span", "diff-old", describe(cur[r.id], tasks, projects)));
+      li.appendChild(el("span", "diff-new", describe(r, tasks, projects)));
       diffEl.appendChild(li);
     });
     if (d.reordered) {   // 顺序决定哪条先命中：内容没变、只是挪了位置的也列出来
@@ -259,14 +281,14 @@
         if (d.added.indexOf(r.id) >= 0 || d.changed.indexOf(r.id) >= 0 || was[r.id] === i) return;
         var li = el("li", "diff-move");
         li.appendChild(el("span", "diff-tag", "挪动 #" + (was[r.id] + 1) + " → #" + (i + 1)));
-        li.appendChild(el("span", "diff-new", describe(r, tasks)));
+        li.appendChild(el("span", "diff-new", describe(r, tasks, projects)));
         diffEl.appendChild(li);
       });
     }
     d.removed.forEach(function (id) {
       var li = el("li", "diff-remove");
       li.appendChild(el("span", "diff-tag", "删除"));
-      li.appendChild(el("span", "diff-old", cur[id] ? describe(cur[id], tasks) : id));
+      li.appendChild(el("span", "diff-old", cur[id] ? describe(cur[id], tasks, projects) : id));
       diffEl.appendChild(li);
     });
   }
@@ -298,7 +320,7 @@
     if (!r.ok) { showMessage("读取规则失败：" + explain(r), true); return; }
     try {
       var t = await fetch(BASE + "api/core/views/tree");
-      if (t.ok) tasks = paths(await t.json());
+      if (t.ok) { var tree = await t.json(); tasks = paths(tree); projects = projectPaths(tree); }
     } catch (err) { /* 没有任务树：下拉只剩规则里已有的 taskId */ }
     editorEl.hidden = false;
     setServer(r.body);
