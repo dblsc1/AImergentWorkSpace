@@ -73,3 +73,5 @@ consumes:
 `propose_activity_matches` 只发一个 POST matches（`suggestionId` → `id`；v1.4 的 `newTask` 原样下传，MCP 不建任务）、
 `list_activity_suggestions` 带出 `newTask`（含 `projectPath`）。
 经网关的整条链（设备令牌、两个账号互不可见、cookie、令牌开不了 `/api/agent/`）在 `deploy/test/mcp.sh`（CI「多账号」）。
+
+v1.5（2026-10-08）：`_Paths` 从 `views/tree` 的 `project.unclassifiedTaskId` 认出项目的「未分类」时间桶（nexus-core v2.9），路径「分区 / 项目 / 未分类」；`list_time_sessions` / `get_daily_time` 的条目加 `unclassified`。没有新的下游请求。
