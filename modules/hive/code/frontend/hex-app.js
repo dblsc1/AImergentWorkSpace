@@ -68,6 +68,8 @@
 
   var AUDIT_PATH = BASE + "api/core/planner/audit?limit=300";
   var CURRENT_PATH = BASE + "api/core/views/current";
+  // 最近的计时段：只为从里面挑出记在「未分类」时间桶上的（「最近完成」里的临时任务）
+  var SESSIONS_PATH = BASE + "api/core/events?type=session.completed&limit=200";
 
   // 分区绕圈顺序的存储键。这是**第三版语义**了，每次换 key 且不迁移旧值：
   //   v1 labelOffsets —— 只挪标签（人类否掉：「不只是改变分区名位置」）
@@ -148,7 +150,8 @@
       D.fetchTree(),
       G.fetchNextActions(),
       getJson(AUDIT_PATH),
-      getJson(CURRENT_PATH)
+      getJson(CURRENT_PATH),
+      getJson(SESSIONS_PATH)
     ]).then(function (r) {
       // ⚠️ data.js::fetchTree 的返回形状是 {tree, source, error}，**不是**其余
       // 函数那套 {ok, data}（读端与写端两套约定，本仓既有事实）。照抄 .ok 会
@@ -157,7 +160,9 @@
       if (!treeRes.tree) { setStatus("读取项目树失败：" + (treeRes.error || "")); return false; }
       state.tree = treeRes.tree;
       state.todos = r[1].ok ? H.nextActionsByProject(r[1].data) : {};
-      state.completions = r[2].ok ? H.recentCompletions((r[2].data || {}).items, state.tree) : [];
+      state.completions = H.mergeRecent(
+        r[2].ok ? H.recentCompletions((r[2].data || {}).items, state.tree) : [],
+        r[4].ok ? H.tempSessions((r[4].data || {}).items, state.tree) : []);
       // 热度：按半衰期加权的最近完成次数（人类：「经常有任务被完成的排得更靠近中心」）。
       state.heat = r[2].ok ? H.completionHeat((r[2].data || {}).items, state.tree) : {};
       state.current = r[3].ok ? r[3].data : null;
@@ -541,11 +546,15 @@
     el.style.setProperty("--zone-raw", zone ? zone.color : "var(--line)");
     el.style.setProperty("--zone-mix", H.DEPTH_MIX.center + "%");
     var title = $("#hexCenterTitle"), meta = $("#hexCenterMeta");
-    var name = running ? ((state.current.task && state.current.task.name) || "计时中")
+    // 计的是项目的「未分类」时间桶（长按项目格起的）：只显示项目名，不写「未分类」也不写时间戳
+    // （仓主 2026-10-08）。暂停记忆里存的也已经是项目名（hex-center-ctl.js）。
+    var bucket = running && state.current.task && state.current.task.kind === "unclassified";
+    var name = running ? ((bucket ? (state.current.project && state.current.project.name)
+                                  : (state.current.task && state.current.task.name)) || "计时中")
                        : (paused ? paused.taskName : "");
     // 圆心下半部分（人类 2026-09-12 末轮）：「01:06 在偏上部位置，时分文字去掉，下方是简要标题，
     // 再下方是开始时间以及右下方加一个开始（灰色小字），日期就不要了」。
-    //   · 简要标题：长按建的任务名就是「YYYY-MM-DD HH:MM[ 备注]」（hex-data.js::stampTaskName），
+    //   · 简要标题：2026-10-08 之前长按建的任务名是「YYYY-MM-DD HH:MM[ 备注]」（现在不再建，旧的还在），
     //     这种名字本身只是个时间戳 —— 有备注用备注，没有就退到项目名；别的任务名照原样。
     //   · 开始时间：这件事**最初**几点开始（继续出来的那段沿用暂停前的起点，K.startedAt / 暂停记忆的 startedAt），
     //     不再从任务名里抠。
@@ -571,7 +580,7 @@
     // 上一轮的「空闲态不可点」随之作废 —— 空闲态点进去正是要去开始计时。
     // 规范 contracts/timer-ring-visual-v1.md 已同步改（规范先于实现）。
     el.setAttribute("aria-label", running
-      ? ("正在计时：" + ((state.current.task && state.current.task.name) || "") + "，点击进入计时台")
+      ? ("正在计时：" + name + "，点击进入计时台")
       : "当前空闲，点击进入计时台");
   }
   function startTicking() {

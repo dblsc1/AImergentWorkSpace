@@ -436,13 +436,23 @@
 
   // "做家务 / 洗碗"，项目/任务查不到时改成 "id（已删除）"；subject.task
   // 未填（选填字段，见契约 Subject）时只展示项目，不拼 " / "。
-  function resolveArchiveLabel(tree, subject) {
+  // v2.9：记在项目「未分类」时间桶上的一段（project.unclassifiedTaskId）叫「临时任务 YYYY-MM-DD HH:MM」，
+  // 时间 = 这一段的开始（startAtIso，本地时区，同本文件其余时刻）。
+  function resolveArchiveLabel(tree, subject, startAtIso) {
     subject = subject || {};
     var projectId = subject.project;
     var project = projectId ? findProjectById(tree, projectId) : null;
     var projectLabel = project ? project.name : (projectId ? projectId + "（项目已删除）" : "未知项目");
 
     if (!subject.task) return projectLabel;
+    if (project && project.unclassifiedTaskId === subject.task) {
+      var start = startAtIso ? new Date(startAtIso) : null;
+      var stamp = start && !isNaN(start.getTime())
+        ? " " + start.getFullYear() + "-" + pad2(start.getMonth() + 1) + "-" + pad2(start.getDate()) +
+          " " + formatArchiveClock(start)
+        : "";
+      return projectLabel + " / 临时任务" + stamp;
+    }
     var task = findTaskById(tree, subject.task);
     var taskLabel = task ? task.name : subject.task + "（任务已删除）";
     return projectLabel + " / " + taskLabel;
@@ -454,7 +464,7 @@
     event = event || {};
     var data = event.data || {};
     var when = formatArchiveWhen(data.startAt, event.time);
-    var label = resolveArchiveLabel(tree, event.subject);
+    var label = resolveArchiveLabel(tree, event.subject, data.startAt);
     var duration = formatArchiveDuration(data.durationSeconds);
     return {
       id: event.id,

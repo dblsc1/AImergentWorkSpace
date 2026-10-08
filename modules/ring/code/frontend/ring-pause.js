@@ -103,8 +103,10 @@
     const current = window.ringCurrentState;
     const memo = (current && current.running && current.task) ? {
       taskId: current.task.id,
-      taskName: current.task.name,
-      projectName: (current.project && current.project.name) || "",
+      // 「未分类」时间桶：名字记项目名（同计时中的显示），项目名一栏留空免得写两遍
+      taskName: current.task.kind === "unclassified"
+        ? ((current.project && current.project.name) || "") : current.task.name,
+      projectName: current.task.kind === "unclassified" ? "" : ((current.project && current.project.name) || ""),
       pausedAt: new Date().toISOString(),
       carriedSeconds: carrySeconds(current) + sessionSeconds(current),
       // 这件事最初的开始时刻（契约可选字段）：蜂巢中心格的「开始 hh:mm」沿用它

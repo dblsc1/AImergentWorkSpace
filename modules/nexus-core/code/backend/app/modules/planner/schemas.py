@@ -136,6 +136,12 @@ class TaskOut(_Out):
     lastWriter: str = "human"
 
 
+class UnclassifiedOut(_Out):
+    """``POST /api/core/planner/projects/{id}/unclassified``（契约 v2.9「项目未分类时间」）。"""
+
+    taskId: str
+
+
 # ------------------------------------------------------------------ 审计流水
 
 

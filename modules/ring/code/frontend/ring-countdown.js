@@ -266,12 +266,18 @@
 
   // Web Notification：只在**已经**拿到权限时发，不在到点这一刻代为
   // requestPermission()（那需要用户手势上下文，自动请求既不合规也常被拒）。
+  // 显示用的名字：计的是项目的「未分类」时间桶时只说项目名（同圆环中心）。
+  function taskLabel(current) {
+    if (!current || !current.task) return "";
+    return (current.task.kind === "unclassified" ? (current.project && current.project.name) : current.task.name) || "";
+  }
+
   function sendNotification() {
     try {
       if (!("Notification" in window)) return;
       if (Notification.permission !== "granted") return;
       const current = window.ringCurrentState;
-      const taskName = (current && current.task && current.task.name) || "";
+      const taskName = taskLabel(current);
       new Notification("时间到", { body: taskName ? `『${taskName}』倒计时结束` : "倒计时结束" });
     } catch (err) {
       // 通知构造失败：静默降级，不报错。
@@ -322,7 +328,7 @@
     const remainingMs = rec.endAt - Date.now();
     const remainingSeconds = Math.ceil(Math.max(0, remainingMs) / 1000);
     countdownRemainingEl.textContent = formatRemaining(remainingSeconds);
-    countdownTaskNameEl.textContent = (current.task && current.task.name) || "";
+    countdownTaskNameEl.textContent = taskLabel(current);
     setArc(rec.targetSeconds > 0 ? (remainingMs / (rec.targetSeconds * 1000)) * 100 : 0);
 
     if (remainingMs <= 0) {

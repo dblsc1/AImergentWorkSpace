@@ -10,7 +10,7 @@
  *   currentPhase(run)              按 at 排最后的那条相位，null → working
  *   pickPreview(agents, v0, max)   顶栏预览的挑法与排序（契约「泳道预览」）
  *   activeSeconds(run, v0, v1, now)  运行在视窗里不空闲的秒数
- *   sortByActivity(agents, v0, v1, now)  计时页卡片的排序（在等你的在前，再按活跃秒数、最近转入）
+ *   sortByActivity(agents, v0, v1, now)  计时页卡片的排序（档位：在等你 → 干活 → 出错 → 空闲 → 已结束；同档按活跃秒数、最近转入）
  *   humanStatus(human, now)        人此刻：在电脑前 / 离开 / 不在线（+ 在计时 / 前台程序）
  *   render(root, data, opts)       画一张图；全部 textContent，不用 innerHTML
  */
@@ -196,7 +196,7 @@
    *   opts.presence             画人的在场带（计时页与顶栏预览都画，2026-10-03 起）
    *   opts.compact              顶栏预览的紧凑尺寸
    *   opts.cards / top          计时页的卡片布局：人一张卡钉在最前，代理按 sortByActivity 排，
-   *                             前 top 张（缺省 5）展开，其余收进 <details>「还有 N 个」
+   *                             前 top 张（缺省 5；在等你 / 干活的卡永不折叠，多于 top 就全展开）展开，其余收进 <details>「还有 N 个」
    *   opts.more / moreHref      区尾一行（「还有更多」/「还有 N 个 → 计时页」）
    *   opts.focusFallback        焦点在区尾链接上、重画后链接没了时，焦点交给它
    * 返回画了的代理运行的 runInfo 列表（按画的顺序；r / ph / act / last …），调用方拿来数状态，不必再排一遍 phases。

@@ -140,8 +140,9 @@ def list_events(
     to: str | None = None,
     limit: int = _ARCHIVE_DEFAULT_LIMIT,
     offset: int = 0,
+    task_id: str | None = None,
 ) -> tuple[int, list[dict]]:
-    """``GET /api/core/events`` 档案读端（contract.md v0.6）。
+    """``GET /api/core/events`` 档案读端（contract.md v0.6；v2.9 加 ``taskId`` 过滤）。
 
     只读，不改变事实的产生方式：不碰 ``ingest``、不碰 DISPATCH 表。
     按 ``time`` 倒序（最近的在前，R7）；``total`` 是过滤后、分页前的总数（R9 空结果 total=0）。
@@ -149,6 +150,8 @@ def list_events(
     消费方拿 id 去 planner 查当前名字。
     """
     docs = repo.query_events(type_)
+    if task_id:
+        docs = [d for d in docs if (d.get("subject") or {}).get("task") == task_id]
 
     lo = _parse_bound(from_, "from") if from_ else None
     hi = _parse_bound(to, "to") if to else None

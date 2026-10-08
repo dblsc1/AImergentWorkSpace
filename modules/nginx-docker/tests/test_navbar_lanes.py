@@ -43,11 +43,13 @@ class Site:
         self.lanes = lanes
         self.status = status
         self.lanes_urls: list[str] = []
+        self.current: dict[str, Any] = {"running": False}
 
     def route(self, route: Route) -> None:
         path = route.request.url[len(ORIGIN):].split("?")[0]
         if path.startswith("/__cockpit/current"):
-            route.fulfill(status=200, content_type="application/json", body='{"running": false}')
+            route.fulfill(status=200, content_type="application/json",
+                          body=json.dumps(self.current, ensure_ascii=False))
         elif path.startswith("/__cockpit/"):
             f = STATIC / path.rsplit("/", 1)[-1]
             ctype = {"css": "text/css", "js": "application/javascript"}.get(f.suffix[1:], "application/octet-stream")
@@ -340,3 +342,17 @@ def test_popover_follows_dark_theme(browser, how) -> None:
         page.click("button[aria-label='切换主题']")
         page.click("[data-ckpt-mode='light']")
         assert pop_colours(page)["pop"] == PANEL["light"]
+
+
+def test_chip_shows_project_name_for_unclassified_bucket(browser) -> None:
+    """仓主 2026-10-08：计的是项目的「未分类」时间桶（nexus-core v2.9）时芯片只写项目名；普通任务照旧写任务名。"""
+    with open_site(browser) as (page, site):
+        start = datetime.now(timezone.utc).isoformat()
+        current = {"running": True, "sessionStartAt": start, "project": {"id": "p1", "name": "数学"},
+                   "task": {"id": "t_unc_p1", "name": "未分类", "kind": "unclassified"}}
+        site.current = current
+        page.evaluate("() => window.dispatchEvent(new Event('honeycomb:timer-changed'))")
+        page.wait_for_function("() => document.querySelector('.ckpt-live-word').textContent === '数学'")
+        site.current = {**current, "task": {"id": "t1", "name": "做题", "kind": "normal"}}
+        page.evaluate("() => window.dispatchEvent(new Event('honeycomb:timer-changed'))")
+        page.wait_for_function("() => document.querySelector('.ckpt-live-word').textContent === '做题'")

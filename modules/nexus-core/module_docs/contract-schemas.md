@@ -92,6 +92,10 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
   发现永远读不到 `dependsOn` 键。**教训**：加字段时要过一遍**全部**读取同一
   实体的端点，不能改完一个就当作那批字段"已经加完了"。
 
+- **`unclassifiedTaskId`（v2.9，项目上）**：该项目「未分类」时间桶的任务 id，还没建过为 `null`。桶本身
+  **不在** `tasks[]` 里（带 `includeEphemeral=true` 也不在），`progress` 也不算它。同版 `CurrentOut.task` 与
+  `GanttOut` 的任务各多一个 `kind`（`normal` / `ephemeral` / `unclassified`）。规则见 `contract.md`「项目未分类时间」节。
+
 #### 与其他两条读端的对照（v1.2 新增，防止再漏第三处）
 
 | 读端 | 任务节点带 `plan`/`dependsOn` | 用途 |
