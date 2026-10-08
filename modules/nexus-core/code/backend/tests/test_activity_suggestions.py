@@ -794,3 +794,19 @@ def test_labels_device_token_403_upload_cannot_label_and_tenants_isolated(client
     other = client.post(MATCHES, json=label, headers=B).json()
     assert other["matched"] == 0 and len(other["rejected"]) == 1
     assert "collection" not in _pending(client)["items"][0]["suggestion"]
+
+
+def test_label_only_suggestion_confirms_with_project_into_the_bucket(client, seeded):
+    """v2.10 接 v2.9：助理只贴了集合 + 项目（没有任务）的建议，人按 {projectId} 确认 → 记到该项目的「未分类」桶。"""
+    pid = seeded["tasks"]["示例任务三"]["projectId"]
+    _upload(client, [_seg(_recent(10))])
+    sug_id = _pending(client)["items"][0]["id"]
+    assert _match(client, [{"id": sug_id, "collection": {"name": "终端"}, "projectId": pid}])["matched"] == 1
+    assert _pending(client)["items"][0]["suggestion"]["taskId"] is None
+
+    out = client.post(f"{SUG}/{sug_id}/confirm", json={"projectId": pid})
+    assert out.status_code == 200, out.text
+    assert out.json()["taskId"] == f"t_unc_{pid}"
+    events = _session_events()
+    assert len(events) == 1 and events[0]["subject"]["task"] == f"t_unc_{pid}"
+    assert _pending(client)["items"] == []
