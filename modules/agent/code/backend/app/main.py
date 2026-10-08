@@ -230,9 +230,10 @@ def create_app(settings: config.Settings | None = None, manager=None) -> FastAPI
         return StreamingResponse(stream, media_type="text/event-stream", background=BackgroundTask(abandon),
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-    async def turn(t: str, sid: str, raw: str):
+    async def turn(t: str, sid: str, raw: str, fresh: bool = False):
         """起一轮回答 → (SSE 事件流, abandon)。人发消息与后台认窗口（autotrack.py）走的是同一条路：
-        同样的校验、限流、时限、存档、调试记录。调用方读完流，或不读了就调 abandon()（= 取消）。"""
+        同样的校验、限流、时限、存档、调试记录。调用方读完流，或不读了就调 abandon()（= 取消）。
+        ``fresh``（只有后台认窗口传）：这一轮换一个新的模型上下文，旧的记下来待删。"""
         sess = session_of(t, sid)
         text = raw.strip()
         if not text:
@@ -248,6 +249,12 @@ def create_app(settings: config.Settings | None = None, manager=None) -> FastAPI
             raise HTTPException(429, "同时在生成的回答太多了，等一条结束再发")
         g = Gen(t, sid, "", None)
         gens[key] = g            # 先占位再 await，防并发穿过上面的检查
+        if fresh and sess.get("ocId"):
+            # 占了位才换上下文（从读会话到这里没有 await）：这个会话此刻没有别的生成在用旧上下文。
+            # ponytail: 旧上下文只记下来，等下次拉起运行时再删（运行时闲 15 分钟就会收）；一直不闲、攒多了再改成当场删
+            mgr.defer_delete(t, sess["ocId"])
+            sess["ocId"] = None
+            store.save(t, sess)
         try:
             rt = await mgr.acquire(t)
         except Exception as e:           # 任何失败都要把占位拿掉，否则这个会话永远 409

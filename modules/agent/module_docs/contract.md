@@ -26,7 +26,8 @@ consumes:
   `permission: {"*": "deny", "honeycomb_*": "allow"}`、自定义智能体 `honeycomb` 与系统提示、关掉自带智能体）。
 - `code/backend/app/autotrack.py`（契约第十节，v1.9）：后台认窗口的工人——随 app 起的一个 asyncio 任务，约 25 秒一次，
   每个认识的租户各一个任务：经 MCP 问 `get_window_awaiting_target`（httpx 直连，不拉运行时），有窗口才调 `main.py` 的
-  `turn`（人发消息走的同一个函数）在「自动识别窗口」会话里跑一轮；读完流或 90 秒到点就 `abandon()`。认识哪些租户：
+  `turn`（人发消息走的同一个函数）在「自动识别窗口」会话里跑一轮；读完流或 90 秒到点就 `abandon()`。「人在聊吗」问之前、问回来之后各看一次；
+  换模型上下文由 `turn(fresh=True)` 在占住会话的生成位之后做，工人自己不改会话（2026-10-08 波次统一审核）。认识哪些租户：
   `store.py` 在第一次见到一个租户头时往 `tenants/<…>/tenant` 写下租户 id（目录名是哈希，反推不出）。
 - `code/backend/app/store.py`：会话与消息存成租户目录下的 JSON 文件。列会话、读历史不用拉起 opencode；
   opencode 自己的会话库只当模型上下文。

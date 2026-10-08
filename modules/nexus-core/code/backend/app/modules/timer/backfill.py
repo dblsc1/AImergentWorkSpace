@@ -156,7 +156,7 @@ def record_session(
     if ai is not None:
         envelope["ai"] = ai
 
-    result = events_service.ingest(envelope)
+    result = events_service.ingest(envelope, internal=True)  # 服务端自己组的：ai.auto 作数
     if result.rejected:
         # 自己组的信封被自己的校验拒了 = 实现 bug，响亮失败，不吞
         raise RuntimeError(f"{source} 组装的信封未过事件校验：{result.rejected[0].reason}")

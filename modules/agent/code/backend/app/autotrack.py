@@ -75,17 +75,24 @@ class Worker:
         finally:
             self.busy.pop(tenant, None)
 
+    def _human_busy(self, tenant: str) -> bool:
+        return any(t == tenant for t, _ in self.gens)
+
     async def once(self, tenant: str) -> bool:
         """问一次；有窗口在等就跑一轮。返回跑没跑。"""
-        if any(t == tenant for t, _ in self.gens):       # 人正在和助手聊：共用同一个限额与运行时，让人先
+        if self._human_busy(tenant):                     # 人正在和助手聊：共用同一个限额与运行时，让人先
             return False
         now, turns = self.clock(), self.turns.setdefault(tenant, deque())
         while turns and now - turns[0] >= 3600:
             turns.popleft()
         if len(turns) >= MAX_PER_HOUR or not await self._awaiting(tenant):
             return False
+        if self._human_busy(tenant):                     # 问的那一下是 await：这期间人开始聊了，照样让人先
+            return False                                 # （认领白占了，nexus-core 等不到回答会自己请人选）
         turns.append(now)
-        stream, abandon = await self.turn(tenant, self._session(tenant), PROMPT)
+        # fresh：每轮换一个新的模型上下文（这个窗口与上一个无关，也不让上下文越攒越长）。换是 turn 占着这个会话的
+        # 生成位之后做的——本文件不直接改会话：人正在这个会话里生成时，后台这一轮进不去，也就动不了它的上下文
+        stream, abandon = await self.turn(tenant, self._session(tenant), PROMPT, fresh=True)
         try:
             async with asyncio.timeout(TURN_SECONDS):
                 async for _ in stream:
@@ -105,13 +112,6 @@ class Worker:
         return not res.get("isError") and bool((res.get("structuredContent") or {}).get("window"))
 
     def _session(self, tenant: str) -> str:
-        """该租户专用的那个会话（没有就建；人在「AI助理」的会话列表里看得到每一轮）。每轮换一个新的模型上下文：
-        这个窗口与上一个无关，也不让上下文越攒越长。"""
+        """该租户专用的那个会话（没有就建；人在「AI助理」的会话列表里看得到每一轮）。只找 / 建，不改。"""
         sess = next((x for x in self.store.list(tenant) if x.get("title") == SESSION_TITLE), None)
-        sess = sess or self.store.create(tenant, SESSION_TITLE)
-        if sess.get("ocId"):
-            # ponytail: 旧上下文只记下来，等下次拉起运行时再删（运行时闲 15 分钟就会收）；一直不闲、攒多了再改成当场删
-            self.mgr.defer_delete(tenant, sess["ocId"])
-            sess["ocId"] = None
-            self.store.save(tenant, sess)
-        return sess["id"]
+        return (sess or self.store.create(tenant, SESSION_TITLE))["id"]

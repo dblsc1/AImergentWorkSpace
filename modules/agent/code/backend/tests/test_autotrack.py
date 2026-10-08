@@ -99,6 +99,44 @@ def test_waits_while_the_human_is_chatting(tmp_path):
     assert run(w.once("u_other")) is True                # 别的租户不受影响
 
 
+@pytest.mark.parametrize("where", ["auto", "other"])
+def test_human_who_starts_chatting_during_the_poll_keeps_their_context(tmp_path, where):
+    """问 MCP 的那一下是 await。这期间人发了消息——发在「自动识别窗口」会话里，或别的会话里。MCP 回来说有窗口在等：
+    工人这一次不跑，更不能碰那个会话（它的模型上下文是人这一轮正在用的）。"""
+    from fastapi import HTTPException
+
+    app, w, mgr, mcp = make(tmp_path)
+    store = app.state.store
+
+    async def go():
+        assert await w.once(LOCAL) is True                   # 先有专用会话和它的模型上下文 oc1
+        (auto,) = store.list(LOCAL)
+        sid = auto["id"] if where == "auto" else store.create(LOCAL, "我的会话")["id"]
+        mcp.gate = asyncio.Event()
+        w.tick()
+        while len(mcp.calls) < 2:                            # 工人看过「没人在聊」，卡在问 MCP 上
+            await asyncio.sleep(0)
+        stream, _ = await w.turn(LOCAL, sid, "hang")         # 人发消息：走的就是这个函数
+        await anext(stream)                                  # start
+        await anext(stream)                                  # 第一段正文：提示已经发给模型了
+        mcp.gate.set()                                       # MCP 回来：有窗口在等
+        await asyncio.gather(*w.busy.values())
+        assert mgr.rts[LOCAL].prompts == [autotrack.PROMPT, "hang"]
+        assert mgr.deferred == [] and store.get(LOCAL, auto["id"])["ocId"] == "oc1"
+        # 换上下文只在占着这个会话的生成位时做：人正在这个会话里生成，后台那一轮进不来，也就动不了它
+        with pytest.raises(HTTPException) as busy:
+            await w.turn(LOCAL, sid, autotrack.PROMPT, fresh=True)
+        assert busy.value.status_code == 409
+        assert mgr.deferred == [] and store.get(LOCAL, sid)["ocId"] == ("oc1" if where == "auto" else "oc2")
+        await stream.aclose()                                # 人断开 = 取消；等它收尾
+        for _ in range(1000):
+            if not app.state.gens:
+                break
+            await asyncio.sleep(0)
+        assert app.state.gens == {}
+    run(go())
+
+
 def test_hourly_cap_is_mirrored_here(tmp_path):
     app, w, mgr, mcp = make(tmp_path)
 
