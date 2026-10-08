@@ -68,16 +68,16 @@ def rows(page) -> list[str]:
 def test_lanes_cards_human_pinned_then_waiting_then_by_activity(browser, static_base_url) -> None:
     with open_lanes(browser, static_base_url, fx.LANES_FULL) as (page, stub):
         page.wait_for_selector("#lanes-panel:not([hidden]) .hcl-card")
-        # 最近 3 小时（07:20–10:20），2026-10-03 起按卡片排：人钉在最前；在等你的 plot 浮上来；
-        # 其余按视窗内活跃分钟倒序：old-job 180 > docs 105 > garden 90 > codex 70 > tests 20
-        assert rows(page) == ["我", "plot", "old-job", "docs", "garden", "codex", "tests"]
+        # 最近 3 小时（07:20–10:20），卡片排：人钉在最前；2026-10-08 起按档位：在等你的 plot → 在跑干活
+        # （old-job 180 > garden 90 > codex 70 分）→ 在跑空闲 tests → 已结束 docs（105 分也垫底）
+        assert rows(page) == ["我", "plot", "old-job", "garden", "codex", "tests", "docs"]
         # 前 5 张代理卡展开（+ 人那张），第 6 张收进「还有 1 个」，默认收着
         top = page.eval_on_selector_all("#lanes-view > .hcl-deck > .hcl-card", "ns => ns.map(n => n.dataset.runId || 'me')")
-        assert top == ["me", "run_c", "run_e", "run_d", "run_a", "run_b"]
+        assert top == ["me", "run_c", "run_e", "run_a", "run_b", "run_f"]
         assert page.text_content("#lanes-view details.hcl-fold > summary") == "还有 1 个"
-        assert not page.is_visible("[data-run-id=run_f]")
+        assert not page.is_visible("[data-run-id=run_d]")
         page.click("#lanes-view details.hcl-fold > summary")
-        assert page.is_visible("[data-run-id=run_f]")
+        assert page.is_visible("[data-run-id=run_d]")
         # 卡头：相位胶囊 + 活跃分钟；在等你的那张单独标出来
         assert page.text_content("[data-run-id=run_c] .hcl-pill") == "等你回话"
         assert page.text_content("[data-run-id=run_c] .hcl-stat") == "活跃 50 分 · 最近 10:12"
@@ -328,10 +328,44 @@ def test_sort_waiting_first_then_activity_then_recency(browser, static_base_url)
     with open_lanes(browser, static_base_url, fx.LANES_EMPTY) as (page, _):
         page.wait_for_function("() => window.HoneycombLanes && window.HoneycombLanes.sortByActivity")
         r = page.evaluate(SORT_JS)
-        # 在等你的两条在最前（之间也按活跃：ask 20 分 > perm 2 分）；其余按活跃；30 分打平的按最近转入
-        assert r["got"] == ["ask", "perm", "busy", "tieNew2", "tieOld", "tieNew", "endedWait", "idle"]
+        # 在等你的两条在最前；再在跑干活、在跑空闲（按活跃；30 分打平的按最近转入）；已结束的垫底
+        assert r["got"] == ["ask", "perm", "busy", "tieNew2", "tieOld", "tieNew", "idle", "endedWait"]
         assert r["untouched"], "不许改入参"
         assert r["act"] == 1800 and r["clipped"] == 1800, "活跃秒数只算视窗内、不算空闲"
+
+
+TIER_JS = """() => {
+  const L = window.HoneycombLanes, at = s => '2026-09-30T' + s + ':00+08:00';
+  const now = Date.parse(at('10:00')), v0 = Date.parse(at('09:00'));
+  const run = (id, start, phases, end) => ({runId: id, startAt: at(start), endAt: end ? at(end) : null,
+    phases: phases.map(([t, p]) => ({at: at(t), phase: p}))});
+  const agents = [
+    run('endedHeavy', '09:00', [['09:00', 'working']], '09:55'),                  // 55 分但已结束
+    run('idleLive', '09:00', [['09:00', 'working'], ['09:50', 'idle']]),           // 50 分，空闲
+    run('errLive', '09:30', [['09:30', 'working'], ['09:55', 'error']]),           // 30 分，出错
+    run('workLight', '09:58', [['09:58', 'working']]),                             // 2 分，干活
+    run('waitLight', '09:59', [['09:59', 'waiting_input']]),                       // 1 分，在等
+  ];
+  return L.sortByActivity(agents, v0, now, now).map(r => r.runId);
+}"""
+
+
+def test_sort_tiers_live_working_beats_ended_heavy(browser, static_base_url) -> None:
+    with open_lanes(browser, static_base_url, fx.LANES_EMPTY) as (page, _):
+        page.wait_for_function("() => window.HoneycombLanes && window.HoneycombLanes.sortByActivity")
+        assert page.evaluate(TIER_JS) == ["waitLight", "workLight", "errLive", "idleLive", "endedHeavy"]
+
+
+def test_live_working_never_folded_even_beyond_five(browser, static_base_url) -> None:
+    d = copy.deepcopy(fx.LANES_FULL)
+    d["agents"] = [fx.run(f"w{i}", f"w{i}", fx.at("09:00"), phases=[(fx.at("09:00"), "working", None)])
+                   for i in range(7)] + \
+                  [fx.run("old", "old", fx.at("08:00"), end=fx.at("09:50"), phases=[(fx.at("08:00"), "working", None)])]
+    d["interactions"] = []
+    with open_lanes(browser, static_base_url, d, clock=True) as (page, _):
+        page.wait_for_selector("#lanes-view .hcl-card")
+        assert page.locator("#lanes-view > .hcl-deck > .hcl-card[data-run-id^=w]").count() == 7
+        assert page.eval_on_selector_all("#lanes-view .hcl-fold .hcl-card", "ns => ns.map(n => n.dataset.runId)") == ["old"]
 
 
 STATUS_JS = """() => {
