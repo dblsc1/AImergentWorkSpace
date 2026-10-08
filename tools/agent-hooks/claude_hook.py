@@ -6,6 +6,7 @@ v0.3 起中间的事件报**相位**（在干活 / 等你 / 空闲 / 出错，�
 `hook_event_name` 分流，省得配多份路径。见 README 里的配置片段。
 相位钩子配成 `"async": true`（绝不让 Claude 等它）；SessionStart 保持同步（先存好 runId）。
 **不读** `prompt`、通知的 `message`、工具参数：只报相位、时刻、短标签。
+v0.4：泳道名用会话的名字——从 `transcript_path` 末尾只取 `custom-title` 记录的标题（`cc.session_title`），对话内容不读。
 
 **纪律**（钩子绝不能拖慢或打断会话）：
 - Claude Code 文档：`SessionEnd` 钩子默认预算只有 1.5 秒（`SessionStart` 是
@@ -67,10 +68,12 @@ def _write_state(session_id: str, state: dict) -> None:
         pass  # 状态文件写不了也不该拖累会话；下次 SessionEnd 找不到就跳过 stop
 
 
-def _save_run_id(session_id: str, run_id: str, last_phase: str | None = None) -> None:
+def _save_run_id(session_id: str, run_id: str, last_phase: str | None = None, label: str | None = None) -> None:
     state: dict = {"runId": run_id}
     if last_phase:
         state["lastPhase"] = last_phase  # v0.3：PostToolUse 靠它决定报不报（见 _phase_for）
+    if label:
+        state["label"] = label  # v0.4：报过的泳道名；会话改名后靠它发现「变了」（见 handle_phase）
     _write_state(session_id, state)
 
 
@@ -117,32 +120,37 @@ def _delete_run_id(session_id: str) -> None:
         pass
 
 
+def _start(payload: dict, session_id: str, phase: str, title: str | None) -> tuple[str | None, str]:
+    """报 start，返回 `(runId, 报上去的 label)`。泳道名 = 会话的名字（`title`），没起名就是工作目录名。
+    clientKey 是 session_id 的哈希（不发原始会话号）：钩子被重试 / 响应丢了时服务端回原运行，不多开一条泳道；
+    同一个会话改了名再调一次，服务端给原运行换名字（nexus-core v2.13「会话改名」）。"""
+    cwd = payload.get("cwd")
+    config = cc.load_config()
+    task_id, project_id = cc.resolve_target(cwd=cwd, config=config)
+    label, match = cc.lane_names(cwd, title)
+    result = cc.start_run(
+        config, task_id, cc.default_agent_name(cwd), "claude-code", timeout=HOOK_TIMEOUT,
+        model=payload.get("model"),  # 文档：只有 SessionStart 会带，且不保证有
+        phase=phase, label=label, match=match,
+        client_key=hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:32],
+        project_id=project_id,
+    )
+    return result.get("runId"), label
+
+
 def handle_session_start(payload: dict) -> None:
     session_id = payload.get("session_id")
     if not session_id:
         return
     try:
-        cwd = payload.get("cwd")
-        config = cc.load_config()
-        task_id, project_id = cc.resolve_target(cwd=cwd, config=config)
-        agent = cc.default_agent_name(cwd)
-        label, match = cc.lane_names(cwd)
-        model = payload.get("model")  # 文档：只有 SessionStart 会带，且不保证有
-        result = cc.start_run(
-            config, task_id, agent, "claude-code", model=model, timeout=HOOK_TIMEOUT,
-            # 会话开着、还没说话 = idle；clientKey 是 session_id 的哈希（不发原始会话号），
-            # 钩子被重试 / 响应丢了时服务端回原运行，不多开一条泳道
-            phase="idle", label=label, match=match,
-            client_key=hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:32],
-            project_id=project_id,
-        )
+        # 会话开着、还没说话 = idle。恢复的会话（--resume）transcript 里已经有名字
+        run_id, label = _start(payload, session_id, "idle", cc.session_title(payload.get("transcript_path")))
     except Exception as e:  # noqa: BLE001 — 配置/网络任何一步出岔子都只是"这次不计时"
         category = e if isinstance(e, cc.CockpitError) else "配置错误"
         _warn(f"SessionStart 上报失败，本次会话不计时（{category}）")
         return
-    run_id = result.get("runId")
     if run_id:
-        _save_run_id(session_id, run_id, "idle")
+        _save_run_id(session_id, run_id, "idle", label)
 
 
 # Notification 的 notification_type → 相位（其余种类不报）。message 字段不读。
@@ -203,6 +211,17 @@ def handle_phase(payload: dict, at: str) -> None:
     except Exception as e:  # noqa: BLE001 — 相位只是记录，失败只留一行固定分类
         category = e if isinstance(e, cc.CockpitError) else "配置错误"
         _warn(f"{payload.get('hook_event_name')} 相位上报失败（{category}）")
+    # 会话改名（/rename）不触发任何钩子：趁这次本来就要发请求，看一眼 transcript 末尾，名字变了才多发一次 start。
+    # 没起名的会话不走这里（目录名在 SessionStart 已经报过），所以平时零额外请求。
+    title = cc.session_title(payload.get("transcript_path"))
+    if title and title[:64] != state.get("label"):
+        try:
+            run_id, label = _start(payload, session_id, phase, title)
+            if run_id:  # 原运行已被服务端收掉时这里是新运行：跟着换
+                _write_state(session_id, {**state, "runId": run_id, "lastPhase": phase, "label": label})
+        except Exception as e:  # noqa: BLE001 — 改名没报上去：下一个事件再试
+            category = e if isinstance(e, cc.CockpitError) else "配置错误"
+            _warn(f"会话改名上报失败（{category}）")
 
 
 def handle_session_end(payload: dict) -> None:

@@ -12,7 +12,7 @@
 上报给 cockpit 的只有：agent 名字、工具名（`claude-code` / `codex` / ...）、
 model（如果拿得到）、开始/结束时间戳、结束状态（`done`/`failed`/`cancelled`/`timeout`）、
 你在配置里写的任务 id 或项目 id、以及一个可选的「输出在哪」的链接；v0.3 起另有相位（见下「相位」节：相位名、时刻、短标签、
-工作目录名、会话号的哈希）。
+工作目录名、会话号的哈希）；v0.4 起 Claude Code 会话**你自己起的名字**（`/rename`，见「会话的名字」）。
 
 **不上报**：不发你的 prompt，不发任何代码，不发命令的 stdout/stderr 内容。
 `cockpit-run` 包装命令时，命令的输入输出照常打印在你的终端上，本工具看不到、
@@ -98,14 +98,23 @@ curl -sb "<你登录时浏览器里的会话 cookie>" -X POST <cockpit 地址>/a
 - 值写错（项目不存在）→ cockpit 回 404，本工具照旧只在 stderr 留一行「HTTP 404」，这次不计时，会话 / 命令不受影响。
 - cockpit 还没升到带 v2.13 的版本时，多出的 `projectId` 被忽略，run 落收件箱（同没配）。
 
-**顺带得到的：人的窗口也跟着归到这个项目。** 终端标签页的标题通常就是会话所在的目录名（Claude Code 会在前面加
+**顺带得到的：人的窗口也跟着归到这个项目。** 终端标签页的标题就是会话的名字（Claude Code 会在前面加
 「✳」之类的状态符号，终端会在后面加「 - Ptyxis」之类的程序名）。桌面检测程序（`modules/ai-detector`）上传你的前台活动时，
-cockpit 把标题去掉这些装饰后与**同一时间在跑的会话**的 `label` / `match`（就是下文的工作目录名）比：完全相等，就把这段活动
+cockpit 把标题去掉这些装饰后与**同一时间在跑的会话**的 `label` / `match`（见下「会话的名字」）比：完全相等，就把这段活动
 预先标到这个会话的项目上，你在「AI助理」页确认时项目已经选好，不必等 AI 从标题猜（契约 v2.13「窗口 ↔ 代理会话」）。
 它只是预选，不会替你确认任何东西。两个前提：
 
-- 标签页标题与目录名一致（改了标签页标题的话，用 `cockpit-run --match <标题>` / `--label <标题>` 报同一个名字）；
+- 标签页显示的就是会话的名字（Claude Code 钩子自动跟；`cockpit-run` 包的命令用 `--label <标题>` / `--match <标题>` 报同一个名字）；
 - 检测程序的隐私设置允许终端标题**原样**上传——标题被去掉或换成代号（「窗口名3」）时对不上，这是有意的。
+
+### 会话的名字（Claude Code 钩子）
+
+泳道的 `label` / `match` 报的是**会话的名字**：你用 `/rename` 给会话起的那个（终端标签页显示的也是它，比如
+「Cockpit-Pub-Coder1」）；没起过名就是工作目录名（v0.3 的行为）。钩子从输入里的 `transcript_path`（会话记录，JSONL）
+**只读末尾 256 KB**、从后往前找最后一条 `{"type":"custom-title","customTitle":…}` 记录，只取这一个字段——
+对话内容不读、不上报；文件不在、读不了、没有这种记录都只是退回目录名。自动生成的标题（`ai-title`）不用：改过名的标签页不显示它。
+会话**中途改名**不触发任何钩子，所以每次本来就要报相位的事件顺带看一眼：名字变了才多发一次 `agents/start`
+（同一个 `clientKey`，cockpit 给原来那条泳道换名字，不多开一条；nexus-core 契约 v2.13「会话改名」）。`agent` 名仍是目录名。
 
 ## `cockpit-run`：包一层跑任何命令
 
@@ -212,7 +221,7 @@ cockpit 的时间线页面要画出「代理 1 在干活、代理 3 在等你批
 
 只报：相位、它发生的时刻（本机时钟）、可选的**短标签** `detail`（只会是工具名如 `Bash`、Claude Code 的
 通知种类如 `permission_prompt`、错误种类如 `rate_limit` 这类固定词）、「这次是不是你回话 / 批准引起的」、
-开始时的 `label`/`match`（**工作目录名这一级**，不是完整路径）。
+开始时的 `label`/`match`（会话的名字；没起名时是**工作目录名这一级**，不是完整路径）。
 **不报**：提示词、工具参数（命令、文件路径）、通知正文、Claude 的回答、transcript 路径。
 
 ### Claude Code 钩子：相位
@@ -240,7 +249,7 @@ Claude Code 给它的默认超时只有 30 秒）。`SessionStart` **保持同�
 
 | Claude Code 事件（读的字段） | 报什么 |
 |---|---|
-| `SessionStart` | 开 run 时带 `phase: "idle"`（会话开着、还没说话）、`label` = 工作目录名、`match` = 工作目录名（不足 3 个字符不带）、`clientKey` = `session_id` 的 SHA-256 前 32 位十六进制（钩子被重试 / 响应丢了时不多开一条 run）。目录名与 v2.1 起就在报的 `agent` 名是同一级信息，不多报 |
+| `SessionStart` | 开 run 时带 `phase: "idle"`（会话开着、还没说话）、`label` / `match` = 会话的名字（没起名时是工作目录名；`match` 不足 3 个字符不带）、`clientKey` = `session_id` 的 SHA-256 前 32 位十六进制（钩子被重试 / 响应丢了时不多开一条 run）。目录名与 v2.1 起就在报的 `agent` 名是同一级信息，不多报 |
 | `UserPromptSubmit`（**不读 `prompt`**） | `working`，`reply: true`——你说了话 |
 | `PermissionRequest`（`tool_name`） | `waiting_permission`，`detail` = 工具名。这是「要请你批准」那一刻就触发的事件 |
 | `Notification`（`notification_type`，**不读 `message`**） | `permission_prompt` → `waiting_permission`（兜底：沙箱网络请求的批准不触发 `PermissionRequest`）；`elicitation_dialog`/`elicitation_url_dialog`/`agent_needs_input` → `waiting_input`；`idle_prompt` → `idle`（你按 Esc 打断时 `Stop` 不触发，靠它把灯收回来）；其余种类不报。`detail` = 种类名 |

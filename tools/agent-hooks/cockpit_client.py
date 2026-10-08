@@ -325,11 +325,48 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat()
 
 
-def lane_names(cwd: str | None = None) -> tuple[str, str | None]:
-    """`(label, match)`：都是工作目录名（不是完整路径）；label 截到 64 码点，
-    match 截到 128、不足 3 个字符不带（契约：match 3–128 码点）。"""
-    name = default_agent_name(cwd)
+def lane_names(cwd: str | None = None, title: str | None = None) -> tuple[str, str | None]:
+    """`(label, match)`：缺省都是工作目录名（不是完整路径）；`title`（会话的名字，见 `session_title`）
+    给了就用它。label 截到 64 码点，match 截到 128、不足 3 个字符不带（契约：match 3–128 码点）。"""
+    name = title or default_agent_name(cwd)
     return name[:64], (name[:128] if len(name) >= 3 else None)
+
+
+TITLE_TAIL_BYTES = 256 * 1024
+
+
+def session_title(transcript_path: Any) -> str | None:
+    """Claude Code 会话的名字：transcript（JSONL）里**最后一条** `{"type":"custom-title","customTitle":…}`
+    （用户 `/rename` 起的，终端标签页显示的就是它）。没有 / 读不了 → None，调用方退回目录名。
+
+    只读文件末尾 `TITLE_TAIL_BYTES`、从后往前找：transcript 动辄几十 MB，钩子每个事件都跑；Claude Code 会把
+    标题记录在文件里反复重写，末尾找得到。截断的第一行、坏 JSON、别的记录一律跳过。不读 `ai-title`
+    （自动标题：改过名的标签页不显示它）。**只取这一个字段**，对话内容不读、不上报。
+    """
+    if not isinstance(transcript_path, str) or not transcript_path:
+        return None
+    try:
+        with open(transcript_path, "rb") as f:
+            size = f.seek(0, os.SEEK_END)
+            start = max(size - TITLE_TAIL_BYTES, 0)
+            f.seek(start)
+            lines = f.read(TITLE_TAIL_BYTES).split(b"\n")
+    except OSError:
+        return None
+    if start:
+        lines = lines[1:]  # 从行中间切进来的那半行
+    for line in reversed(lines):
+        if b"custom-title" not in line:
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError:  # 含坏编码的 UnicodeDecodeError
+            continue
+        if isinstance(record, dict) and record.get("type") == "custom-title":
+            title = record.get("customTitle")
+            title = " ".join(title.split()) if isinstance(title, str) else ""
+            return title or None  # 最后一条为准：清空了名字 = 没有名字
+    return None
 
 
 def phase_run(

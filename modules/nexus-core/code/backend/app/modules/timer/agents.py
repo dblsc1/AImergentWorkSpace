@@ -192,6 +192,10 @@ def start(
         # 先认原运行，再校验只对新建有意义的字段：原任务后来被删了，重试照样回原运行
         existing = repo.find_agent_run_by_client_key(user, client_key)
         if existing is not None:
+            # v2.13 会话改名：这次给了且不同的 label / match 换掉存着的，其余不动
+            names = {k: v for k, v in (("label", clean(label)), ("match", clean(match))) if v and v != existing.get(k)}
+            if names:
+                repo.relabel_agent_run(user, existing["runId"], names)
             return {"runId": existing["runId"], "startedAt": existing["startedAt"]}, False
     if task_id is not None:
         _task, chain_project, zone_id = resolve_chain(task_id, action="拒绝开始代理运行")

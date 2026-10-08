@@ -198,3 +198,40 @@ def test_sessions_of_another_tenant_are_invisible(client, seeded):
     _start(client, headers=A, projectId=proj["id"], label="CFO_agent")
     assert "projectId" not in _upload_one(client, _seg("CFO_agent"))  # 缺省租户看不见 A 的会话
     assert _upload_one(client, _seg("CFO_agent"), headers=A)["projectId"] == proj["id"]
+
+
+# ─────────────────────────────────────────── 会话改名（同 clientKey 再 start）
+
+
+def test_restart_with_same_client_key_renames_the_run_and_nothing_else(client, seeded):
+    project = _projects(seeded)[0]
+    run = _start(client, projectId=project["id"], label="garden", match="garden", clientKey="k1", phase="idle")
+    before = _db()["agent_runs"].find_one({"runId": run["runId"]}, {"_id": 0})
+
+    again = _start(client, expect=200, label="Cockpit-Pub-Coder1", match="Cockpit-Pub-Coder1", clientKey="k1",
+                   agent="other", projectId="p_nope", phase="working")  # 其余字段对原运行不起作用，也不校验
+    assert again == run
+    after = _db()["agent_runs"].find_one({"runId": run["runId"]}, {"_id": 0})
+    assert after == {**before, "label": "Cockpit-Pub-Coder1", "match": "Cockpit-Pub-Coder1"}
+
+    _start(client, expect=200, clientKey="k1")  # 没给名字：不动
+    _start(client, expect=200, clientKey="k1", label="只换显示名")
+    doc = _db()["agent_runs"].find_one({"runId": run["runId"]})
+    assert (doc["label"], doc["match"]) == ("只换显示名", "Cockpit-Pub-Coder1")
+    assert _db()["agent_runs"].count_documents({}) == 1
+
+    _start(client, headers=A, clientKey="k1", label="别的租户")  # 别的租户的同 key 是另一条运行
+    assert _db()["agent_runs"].find_one({"runId": run["runId"]})["label"] == "只换显示名"
+
+
+def test_renamed_session_links_by_its_new_name_live_and_after_it_ends(client, seeded):
+    project = _projects(seeded)[0]
+    run = _start(client, projectId=project["id"], label="garden", match="garden", clientKey="k1")
+    _start(client, expect=200, label="Cockpit-Pub-Coder1", match="Cockpit-Pub-Coder1", clientKey="k1")
+    assert _upload_one(client, _seg("✳ Cockpit-Pub-Coder1 - Ptyxis", ago=62))["projectId"] == project["id"]
+    assert "projectId" not in _upload_one(client, _seg("garden", ago=61))  # 旧名字不再认
+
+    assert client.post(f"{AGENTS}/{run['runId']}/stop", json={"outcome": "done"}).status_code == 200
+    assert _db()["events"].find_one({"type": "agent.run.completed"})["data"]["label"] == "Cockpit-Pub-Coder1"
+    sug = _upload_one(client, _seg("Cockpit-Pub-Coder1", ago=60))
+    assert sug["collection"] == {"key": "cockpit-pub-coder1", "name": "Cockpit-Pub-Coder1"}
