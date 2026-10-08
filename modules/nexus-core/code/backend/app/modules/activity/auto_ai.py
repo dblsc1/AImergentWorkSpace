@@ -122,7 +122,12 @@ def claim() -> dict:
             return {"window": None}
         rec = {"user": user, "key": w["key"], "app": w["app"], "title": w["title"], "claimedAt": now}
         counted = ask_repo.count_claim(user, now, now - timedelta(hours=1), AI_MAX_PER_HOUR)
-        if not counted or not ask_repo.claim(rec, now - AI_RETRY):
+        try:
+            written = counted and ask_repo.claim(rec, now - AI_RETRY)
+        except Exception:  # 问询没写进去（库出错等）：名额不能白占，退回再抛
+            ask_repo.uncount_claim(user, now)
+            raise
+        if not written:
             if counted:  # 别的认领抢先建了这个窗口的问询：不盖它，名额退回
                 ask_repo.uncount_claim(user, now)
             rec = ask_repo.live(user, now - AI_ANSWER_WAIT)  # 给此刻在等的那一份（没有 / 已答完 → None）

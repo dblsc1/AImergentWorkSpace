@@ -349,3 +349,38 @@ def test_rejected_targets_survive_a_later_re_claim_of_the_window(client, world, 
     assert _human(client)["auto"]["source"] == "rules"
     _upload(client, [_notes(10, world["a"])])
     assert _pending(client)["total"] == 2 and len(_session_events()) == 1
+
+
+# ── 波次统一审核第三轮：名额不白占 ──────────────────────────────────────────────
+
+
+def test_a_failed_ask_write_gives_its_allowance_slot_back(client, world, clock, monkeypatch):
+    from app.modules.activity import ask_repo  # noqa: PLC0415
+
+    _dwell(client, clock)
+    clock(S + 61)
+    _claim(client)                                                       # 报到（建 _tenant），顺带认领——清掉重来
+    _db()["activity_ai_asks"].delete_many({"key": {"$ne": "_tenant"}})
+    _db()["activity_ai_asks"].update_one({"key": "_tenant"}, {"$set": {"claims": []}})
+
+    def boom(*a, **k):
+        raise RuntimeError("库出错")
+
+    monkeypatch.setattr(ask_repo, "claim", boom)
+    with pytest.raises(RuntimeError):
+        _claim(client)
+    assert _db()["activity_ai_asks"].find_one({"key": "_tenant"})["claims"] == []
+
+
+def test_a_null_left_by_an_interrupted_release_does_not_hold_a_slot(client, world, clock):
+    from app.modules.activity import auto_ai  # noqa: PLC0415
+
+    _dwell(client, clock)
+    at = clock(S + 61)
+    _claim(client)
+    _db()["activity_ai_asks"].delete_many({"key": {"$ne": "_tenant"}})
+    # 名额只差一个就满，其中一个是退名额退到一半留下的 null
+    _db()["activity_ai_asks"].update_one(
+        {"key": "_tenant"}, {"$set": {"claims": [at] * (auto_ai.AI_MAX_PER_HOUR - 1) + [None]}})
+    assert _claim(client) is not None
+    assert None not in _db()["activity_ai_asks"].find_one({"key": "_tenant"})["claims"]

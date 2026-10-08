@@ -66,6 +66,8 @@ def count_claim(user: str, now: datetime, hour_ago: datetime, cap: int) -> bool:
     """这一小时的认领数 +1；已满 ``cap`` → False、不加。两步都是单文档原子更新，并发也超不了。"""
     col = _col()
     col.update_one({"user": user, "key": _TENANT}, {"$pull": {"claims": {"$lt": hour_ago}}})
+    # ``uncount_claim`` 两步之间断了会留下一个 null：它占着名额、上面按时间的 $pull 又清不掉，这里一并清
+    col.update_one({"user": user, "key": _TENANT, "claims": None}, {"$pull": {"claims": None}})
     return col.update_one({"user": user, "key": _TENANT, f"claims.{cap - 1}": {"$exists": False}},
                           {"$push": {"claims": now}}).matched_count > 0
 
