@@ -437,3 +437,15 @@ func TestShellPromptTabsCollapseAcrossCwd(t *testing.T) {
 		t.Fatalf("%q", brief(s))
 	}
 }
+
+// 没有前台窗口（app 为空）的事件不出碎片：服务端不收空程序名，整批里它会被拒。
+func TestEmptyAppEventsAreSkipped(t *testing.T) {
+	evs := []awEvent{
+		{Timestamp: at(0), Duration: 600, Data: map[string]any{"app": "", "title": ""}},
+		{Timestamp: at(10), Duration: 600, Data: map[string]any{"app": "code", "title": "x"}},
+	}
+	fr := buildFragments(awData{window: evs}, at(0), at(20), newRedactor(Config{}))
+	if len(fr) != 1 || fr[0].App != "code" {
+		t.Fatalf("fragments %+v", fr)
+	}
+}
