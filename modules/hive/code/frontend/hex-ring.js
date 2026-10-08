@@ -177,7 +177,8 @@
   // carrySeconds：暂停后继续时之前累计的秒数（hex-center-ctl.js 记的），
   // 分针、秒针、数字都按"累计 + 本段"走 —— 人类要的是接着之前的时间。
   // 返回的仍是**本段**秒数，调用方需要累计就自己加（与旧接口一致）。
-  function paint(svg, current, nowMs, carrySeconds) {
+  // idleText（2026-10-09）：没在计时时圆心写的字（「此刻的焦点」的走秒）；不给就是空圆环。
+  function paint(svg, current, nowMs, carrySeconds, idleText) {
     if (!svg) return null;
     var running = !!(current && current.running);
     var progress = svg.querySelector(".tring-progress");
@@ -188,7 +189,7 @@
     svg.classList.toggle("is-running", running);
     if (!running) {
       setSegment(progress, 0, 0);
-      setFlip(num, "");
+      setFlip(num, idleText || "");
       if (unit) unit.textContent = "";
       svg.__hour = null;
       return null;

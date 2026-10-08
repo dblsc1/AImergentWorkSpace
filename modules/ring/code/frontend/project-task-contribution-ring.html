@@ -204,7 +204,11 @@
        挂名字那一行）。ring-backfill.js（2026-08-19）放最后——只依赖
        ring-controls.js 挂的 window.postCore，与倒计时模块互不相关，顺序
        只要晚于 ring-controls.js 即可。 -->
+  <!-- 此刻的焦点的共享文案件（网关在 <前缀>__cockpit/ 下服出；顶栏、蜂巢用的同一份）。网关也会随顶栏
+       再注入一次，重复加载是空操作；这里直接引是为了表芯第一次画的时候它一定已经在。 -->
+  <script src="../__cockpit/focus.js"></script>
   <script src="ring-controls.js"></script>
+  <script src="ring-focus.js"></script>
   <script src="ring-instrument.js"></script>
   <script src="ring-countdown.js"></script>
   <script src="ring-backfill.js"></script>

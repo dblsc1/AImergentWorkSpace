@@ -126,8 +126,8 @@
   // 从运行态回到空闲态都会重建一次（默认可见）——这里每 tick 都重新按当前
   // tab 校正一次，不是一次性挂载就够。
   function syncStopwatchStartVisibility() {
-    const btn = document.getElementById("start-big-btn");
-    if (btn) btn.hidden = activeMode === "countdown";
+    // 2026-10-09：「此刻的焦点」的一键开始（#focus-start-btn）也是正计时的入口，同样藏
+    chronoCenterEl.querySelectorAll(".start-big").forEach(btn => { btn.hidden = activeMode === "countdown"; });
   }
 
   function selectPreset(minutes) {

@@ -7,6 +7,9 @@
  *     退出发 POST /api/auth/logout 后跳 /login/，不发任何其它非 GET 请求；
  *   · 自动跟踪（nexus-core v2.14）：没在计时、同一份响应带 auto 时芯片显示「自动 · 项目 / 任务」+ 走秒
  *     （data-ckpt-auto）；带 needsChoice 时芯片上多一个小点（data-ckpt-choice，点芯片去计时页选）。不多发请求；
+ *   · 此刻的焦点（nexus-core v2.16）：没在计时、没有 auto、同一份响应带 focus 时芯片显示「正在：项目或窗口」+ 走秒
+ *     （data-ckpt-focus="present"），离开时「离开」（"afk"）。字出自共享件 focus.js（网关先于本文件注入），
+ *     与 auto 是同一段代码；不多发请求；
  *   · 泳道预览（v0.3，契约「泳道预览」节）：只在预览打开、页面可见时约 15s GET 一次
  *     api/core/views/lanes，并在第一次打开时加载同目录的 lanes.js（计时页上整段不启用）；
  *   · 顶栏自己的网络失败不写 console.error——这条由网关侧 /__cockpit/current
@@ -316,8 +319,9 @@
   var startMs = null;
   var taskId = null;     // 在计的任务：每秒对一次累计记忆（见 paint）
   var state = DEGRADED;
-  // 自动跟踪（nexus-core v2.14，views/current 的 auto / needsChoice）：只在没在计时时有
-  var auto = null;       // {text, since}：「我」当前的窗口按规则对上了项目 / 任务
+  // 自动跟踪（nexus-core v2.14 的 auto / needsChoice）与此刻的焦点（v2.16 的 focus）：只在没在计时时用。
+  // focus = 共享件 HoneycombFocus.describe() 的结果（自动跟踪 / 在某个窗口 / 离开），没有为 null
+  var focus = null;
   var needsChoice = false;
   var CHIP_LABEL = chip.getAttribute('aria-label');
   var HINT_CHOICE = '有个窗口不知道记到哪 —— 去计时页选';
@@ -335,6 +339,7 @@
     nav.setAttribute('data-ckpt-timer', state);
     nav.removeAttribute('data-ckpt-paused');
     nav.removeAttribute('data-ckpt-auto');
+    nav.removeAttribute('data-ckpt-focus');
     var asking = state === IDLE && needsChoice;
     if (asking) { nav.setAttribute('data-ckpt-choice', ''); } else { nav.removeAttribute('data-ckpt-choice'); }
     chip.setAttribute('aria-label', CHIP_LABEL + (asking ? '；' + HINT_CHOICE : ''));
@@ -349,11 +354,14 @@
       // 已知天花板：暂停记忆按契约只在本机。在别的浏览器继续并结束了，这里仍显示
       // 「已暂停」—— 与 hive 中心格 / 计时台同一语义，要根治得把暂停搬到后端。
       var paused = readKey(PAUSED_KEY);
-      if (auto && !paused) {
-        // 没在计时、也没暂停着：「我」当前在做的事顶上来。虚线边 + 空心点，和手动计时的实心呼吸点分得开
-        nav.setAttribute('data-ckpt-auto', '');
-        liveWord.textContent = auto.text;
-        elapsedNode.textContent = fmt(Math.floor((Date.now() - auto.since) / 1000));
+      if (focus && !paused) {
+        // 没在计时、也没暂停着：「我」此刻在做的事顶上来——自动跟踪（虚线边 + 空心点）、在某个窗口（「正在：…」）、
+        // 离开（压暗）。三种都和手动计时的实线边分得开。
+        if (focus.auto) { nav.setAttribute('data-ckpt-auto', ''); } else { nav.setAttribute('data-ckpt-focus', focus.state); }
+        liveWord.textContent = focus.chip;
+        elapsedNode.textContent = window.HoneycombFocus.clock((Date.now() - focus.since) / 1000);
+        var full = focus.lead + (focus.window ? ' · ' + focus.window : '');   // 字截断了，全文放这里
+        chip.title = asking ? full + ' —— ' + HINT_CHOICE : full;
         return;
       }
       liveWord.textContent = paused ? WORD_PAUSED : WORD_IDLE;
@@ -372,7 +380,7 @@
     elapsedNode.textContent = fmt(Math.floor((Date.now() - startMs) / 1000) + carrySec);
   };
 
-  var degrade = function () { startMs = null; auto = null; needsChoice = false; state = DEGRADED; paint(); };
+  var degrade = function () { startMs = null; focus = null; needsChoice = false; state = DEGRADED; paint(); };
 
   var apply = function (data) {
     // 网关的降级体：恒 200 但明说了自己不可信，必须先判。降级体里 running 恒为
@@ -380,10 +388,8 @@
     if (!data || data.degraded) { degrade(); return; }
 
     var running = !!data.running && data.sessionStartAt;
-    // 手动计时永远优先：在计时就不看 auto / needsChoice（服务端此时也给 null）
-    var a = !running && data.auto, since = a ? Date.parse(a.since) : NaN;
-    auto = isNaN(since) ? null : { since: since,
-      text: '自动 · ' + [a.projectName, a.taskName].filter(function (x) { return x; }).join(' / ') };
+    // 手动计时永远优先：在计时就不看 auto / focus / needsChoice
+    focus = (!running && window.HoneycombFocus) ? window.HoneycombFocus.describe(data) : null;
     needsChoice = !running && !!data.needsChoice;
     if (!running) { startMs = null; state = IDLE; paint(); return; }
     var t = Date.parse(data.sessionStartAt);

@@ -16,3 +16,5 @@ node gtd-data.test.js
 node hex-audit.test.js
 node hex-data.test.js
 node hex-timer.test.js
+# 共享件 focus.js（此刻的焦点的文案：顶栏 / 计时页 / 本页中心格共用；文件在 nginx-docker，本页是它的使用方之一）
+node ../../../nginx-docker/tests/focus.test.js

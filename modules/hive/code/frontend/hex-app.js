@@ -534,8 +534,14 @@
     var paused = K.paint(el, state.current);
     // 分针 / 秒针 / 圆心数字都按"继续之前累计的 + 本段"走（人类：「暂停后继续需要继续之前时间」）。
     // 只是显示，入账仍按段。
-    Ring.paint(svg, state.current, Date.now(), K.carried(state.current));
     var running = !!(state.current && state.current.running);
+    // 此刻的焦点（2026-10-09，nexus-core v2.16 的 views/current.focus；契约「此刻的焦点」节）：没在计时、没暂停着时，
+    // 中心格写人此刻在哪个窗口 / 项目、待了多久。字出自共享件 window.HoneycombFocus（网关随顶栏注入；没有就照旧「空闲」）。
+    var F = window.HoneycombFocus;
+    var focus = (!running && !paused && F) ? F.describe(state.current) : null;
+    // 有焦点时圆心读数是「这个窗口待了多久」；交给 Ring.paint 写，只有变了的那几位翻牌
+    Ring.paint(svg, state.current, Date.now(), K.carried(state.current),
+               focus ? F.clock((Date.now() - focus.since) / 1000) : "");
     // 中心格底色 = 正在计的任务所在分区的颜色（人类 2026-09-12：「闪烁结束后，六边形底色还是黑色的，
     // 需要有任务分区的对应颜色……闪烁结束的颜色需要刚好对应分区颜色」）。
     // 浓度取该分区**最深那一档再加一档**（DEPTH_MIX.center；人类 2026-09-12 第四次改）：比紧挨着它的格子深一档，
@@ -575,18 +581,40 @@
     }
     // 这一行只剩空闲态的「空闲」；暂停中靠读数压暗 + 暂停键变「继续」表达（中心格不显示单位小字）。
     meta.innerHTML = (running || paused) ? "" : '<span class="hex-center-idle">空闲</span>';
+    if (focus) {
+      // 圆环下两行：在哪（项目 / 任务，认不出写窗口；一行截断，全文在 title）+ 这是什么（正在 / 自动 / 离开 · 出处）。
+      // 第二行原来写「空闲」的那个节点；静置档格子小，有第一行时第二行只在悬停档露出来（hex-focus.css）。
+      var how = meta.firstChild;
+      how.textContent = [focus.state === "afk" ? "离开" : (focus.auto ? "自动" : "正在"), focus.hint]
+        .filter(function (x) { return x; }).join(" · ");
+      var what = document.createElement("span");
+      what.className = "hex-center-focus";
+      what.textContent = focus.target || focus.window;
+      what.title = focus.lead + (focus.window ? " · " + focus.window : "");
+      if (what.textContent) meta.insertBefore(what, how);
+    }
+    el.classList.toggle("is-focus", !!focus);
+    el.classList.toggle("is-afk", !!focus && focus.state === "afk");
+    // 人此刻在的那个项目格：一圈呼吸的描边（hex-focus.css 的 .is-live-focus）。格子不在页面上就什么都不做。
+    var liveProject = (focus && focus.state === "present" && focus.projectId) || null;
+    state.cells.forEach(function (item) {
+      item.el.classList.toggle("is-live-focus", !!liveProject && item.el.dataset.projectId === liveProject);
+    });
     el.classList.toggle("is-running", running);
     // 2026-09-07 人类改判：中心圆环也要悬停/点击两档，点击直接进计时台。
     // 上一轮的「空闲态不可点」随之作废 —— 空闲态点进去正是要去开始计时。
     // 规范 contracts/timer-ring-visual-v1.md 已同步改（规范先于实现）。
     el.setAttribute("aria-label", running
       ? ("正在计时：" + name + "，点击进入计时台")
+      : focus ? (focus.lead + (focus.window ? "，" + focus.window : "") +
+                 (focus.state === "afk" ? "" : "（没有在计时）") + "，点击进入计时台")
       : "当前空闲，点击进入计时台");
   }
   function startTicking() {
     if (tickHandle) clearInterval(tickHandle);
     tickHandle = setInterval(function () {
-      if (state.current && state.current.running) paintCenter();
+      // 计时中每秒走；有「此刻的焦点」/ 自动跟踪时也走（那个钟也是每秒一跳）
+      if (state.current && (state.current.running || state.current.focus || state.current.auto)) paintCenter();
     }, 1000);
     setInterval(function () {
       getJson(CURRENT_PATH).then(function (r) { if (r.ok) { state.current = r.data; paintCenter(); } });

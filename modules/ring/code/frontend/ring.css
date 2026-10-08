@@ -196,6 +196,26 @@ select.field:disabled { opacity: .7; cursor: not-allowed; }
   border-radius: 999px; border: 1px solid transparent;
   background: var(--fact); color: var(--fact-ink); font-weight: 600; font-size: var(--fs-body);
 }
+/* ── 此刻的焦点（2026-10-09）：没在计时，只是显示人此刻在哪个窗口 / 项目。轨道换成 --fact 色虚线并缓慢呼吸，
+ * 比手动计时的实心贡献弧轻，一眼看得出「这不是在计时」；贡献弧这时不画。离开：整块压暗、不呼吸。 ── */
+.chrono.is-focus .seg { visibility: hidden; }
+.chrono.is-focus .track { stroke: var(--fact); stroke-width: 4; stroke-dasharray: 3 7; opacity: .6; }
+@media (prefers-reduced-motion: no-preference) {
+  .chrono.is-focus:not(.is-afk) .track { animation: ring-focus-breathe 3.2s ease-in-out infinite; }
+}
+@keyframes ring-focus-breathe { 50% { opacity: .25; } }
+.chrono.is-afk .track { stroke: var(--ink-3); opacity: .35; }
+.chrono.is-afk .center { color: var(--ink-3); }
+.chrono .focus-lead { font-size: var(--fs-body); font-weight: 600; }
+.chrono .focus-lead, .chrono .focus-window {
+  max-width: 64cqi; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chrono.is-focus { container-type: inline-size; }   /* 两行字的限宽跟着圆环走（cqi = 圆环宽的 1%） */
+.chrono .focus-lead { max-width: 58cqi; }           /* 第一行在圆里更靠上，弦更短 */
+.chrono .focus-window, .chrono .focus-hint { font-size: var(--fs-sub); color: var(--ink-2); }
+.chrono .focus-hint { font-size: var(--fs-eyebrow); color: var(--ink-3); }
+.chrono .focus-elapsed { font-size: var(--fs-h2); }
+.chrono.is-afk .focus-window { color: var(--ink-3); }
 .chrono .start-big:disabled { opacity: .5; cursor: not-allowed; }
 .chrono .start-big:not(:disabled):hover { filter: brightness(1.08); }
 

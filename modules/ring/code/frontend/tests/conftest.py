@@ -383,6 +383,7 @@ def _install_stub_routes(page: Page, harness: RingHarness) -> None:
         route.fulfill(status=404, content_type="application/json", body='{"detail":"Not Found"}')
 
     page.route("**/__cockpit/lanes.*", cockpit_static_route)
+    page.route("**/__cockpit/focus.js", cockpit_static_route)
     page.route("**/api/core/views/lanes*", lanes_route)
     page.route("**/api/core/views/tree", tree_route)
     page.route("**/api/core/views/current", current_route)
@@ -408,10 +409,12 @@ def _inject_navbar(page: Page) -> None:
             link.rel = "stylesheet";
             link.href = base + "/__cockpit/navbar.css";
             document.body.appendChild(link);
-            const script = document.createElement("script");
-            script.src = base + "/__cockpit/navbar.js";
-            script.defer = true;
-            document.body.appendChild(script);
+            for (const name of ["focus.js", "navbar.js"]) {   // 顺序同 inject.inc；动态插入的脚本要 async=false 才按序
+                const script = document.createElement("script");
+                script.src = base + "/__cockpit/" + name;
+                script.async = false;
+                document.body.appendChild(script);
+            }
         }""",
         GATEWAY_BASE_URL,
     )
