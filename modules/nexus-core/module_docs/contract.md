@@ -124,6 +124,21 @@
 > ③ 带同一 `clientKey` 再 start（原运行还在跑）时，这次给的 `label` / `match` 换掉存着的——会话中途改名，泳道的名字跟上。
 > 既有字段、端点行为一个不改。见「AI 代理运行」节「只挂项目的运行」「会话改名」与「活动建议」节「窗口 ↔ 代理会话」。
 >
+> **v2.14（追加式）**：**「我」此刻在做的事自动顶替进行中的计时——开关在人手里，默认关。** 仓主 2026-10-08：
+> 「保留开关：允许 / 不允许 AI 管理进行中的任务。人手动开始计时时，不要 AI 计时。人在操作但没有计时：先试死规则；
+> 规则认不出，让 AI 写规则；写不出规则、也没有现成任务对得上，提醒人选项目和任务；到这段活动结束人还没选，
+> 就走碎片流程一起归类。」本版是**第一步：除了「让 AI 写规则」之外的全部**。新增 `nexus-core.activity.auto.v1`
+> （见「自动跟踪进行中的任务」节），全部挂在 `detector.settings.v1` v1.3 的 `autoTrack`（按设备，缺省 `false`）下——
+> **关着时本版的一切行为与 v2.13 完全相同**：① 在场心跳可带 `guess`（检测程序用同一套规则对当前窗口的猜测）；
+> ② `views/lanes` 的 `human` 追加 `auto`（没有手动计时、人在电脑前、当前窗口规则认得出 → 「自动 · 项目 / 任务」）
+> 与 `needsChoice`（规则认不出的窗口停留够久 → 请人选）；③ 新端点 `POST /api/core/activity/choice`、
+> `POST /api/core/activity/choice/dismiss`（人答 / 这次不选）、`GET /api/core/activity/auto`（今天自动记下的段）；
+> ④ 上传的段规则把握够高时**直接记成事实**（`ai.auto: true`，建议 `auto: true`），与人的手动计时重叠 / 无操作 /
+> 把握不够 / 目标不存在的照旧待确认；⑤ 自动记下的段可经 v2.11 的改挂端点归到别处；⑥ 规则可以只到项目
+> （`detector.rules.v1` v1.1），上传的 `suggestion` 可带 `projectId`。**「自动检测到的活动只是建议，人确认了才是事实」
+> 只在 `autoTrack` 打开时、只对规则高把握命中的段被取代**（那条规则是人写的或人点了应用的），取代条目见该节末尾。
+> 手动计时永远优先。既有字段、端点行为一个不改。
+>
 > v1.9：`GET /api/core/export` 产出的快照此前没有任何端点能吃
 > 回去（喂给 import 会被三层拒绝，而那三条拒绝各守一件实事，一条都不该放宽）。
 > 新增 `nexus-core.restore.v1`（`POST /api/core/restore`，见「快照恢复」节）：
@@ -320,6 +335,14 @@ provides:
       session.reassigned（原事实不改，可再改，最后一次为准）；各投影把这段秒数挪到当前归属，重建 / 恢复结果相同；
       events.read.v1 的 taskId 过滤按当前归属、改挂过的段追加 currentSubject。带 Bearer 403；actor=ai 403
     status: 已实现（v2.11），待验证
+  - id: nexus-core.activity.auto.v1
+    summary: 自动跟踪进行中的任务（v2.14，全部挂在 detector.settings.v1 的 autoTrack 下，缺省关）——在场心跳可带
+      guess {taskId | projectId, confidence, classifier}；views/lanes 的 human 追加 auto（当前窗口规则认得出、没有手动计时）
+      与 needsChoice（规则认不出的窗口请人选）；POST /api/core/activity/choice {key, taskId | projectId, remember}、
+      POST /api/core/activity/choice/dismiss {key}（带 Bearer 403）；GET /api/core/activity/auto（今天自动记下的段）；
+      上传的段规则把握 ≥ 0.9 时直接记成 session.completed（ai.auto=true），与手动计时重叠 / 无操作 / 目标不存在的仍待确认；
+      sessions.reassign.v1 追加放行自动记下的段；上传的 suggestion 可带 projectId（规则只到项目）
+    status: 已实现（v2.14），待验证
 consumes:
   - id: yq-event/v1
     contract: ../../contracts/yq-event.v1/contract.md
@@ -373,6 +396,10 @@ consumes:
 | POST | `/api/core/detector/rules/drafts/{id}/discard` | 无 | `204`（幂等）；带 Bearer 403 | ✅ 已实现（v2.6） |
 | POST | `/api/core/sessions/{eventId}/reassign` | `{taskId}` 或 `{projectId}`（二选一） | `SessionReassignOut`（见「改挂未分类时间」节）；带 Bearer / `actor=ai` 403、404、409 | ✅ 已实现（v2.11） |
 | — | （v2.11 追加，无新端点）`GET /api/core/events` 的 `taskId` 过滤按当前归属，改挂过的 `session.completed` 条目追加 `currentSubject`；`POST /api/core/events` 拒收 `session.reassigned` | 见「改挂未分类时间」节 | ✅ 已实现（v2.11） |
+| POST | `/api/core/activity/choice` | `{key, taskId \| projectId, remember?}` | `ChoiceOut`（见「自动跟踪进行中的任务」节）；带 Bearer 403、404、422 | ✅ 已实现（v2.14） |
+| POST | `/api/core/activity/choice/dismiss` | `{key}` | `{key, dismissedUntil}`；带 Bearer 403、404、422 | ✅ 已实现（v2.14） |
+| GET | `/api/core/activity/auto` | 无 | `{items[]}`（今天自动记下的段，新的在前，至多 200 条） | ✅ 已实现（v2.14） |
+| — | （v2.14 追加，无新端点）在场心跳可带 `guess`；`views/lanes` 的 `human` 追加 `auto`、`needsChoice`；上传的 `suggestion` 可带 `projectId`、列表每条追加 `auto`；改挂端点放行自动记下的段；`DetectorSettings` 追加 `autoTrack`、规则可用 `projectId` 代替 `taskId` | 见「自动跟踪进行中的任务」节 | | ✅ 已实现（v2.14） |
 | ~~GET~~ | ~~`/api/core/zones`~~ | 无 | `[ZoneOut]` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
 | ~~POST~~ | ~~`/api/core/zones`~~ | `{name, color?, order?}` | `ZoneOut` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
 | ~~PATCH~~ | ~~`/api/core/zones/{id}`~~ | `{name?, color?, order?}` | `ZoneOut` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
@@ -1238,6 +1265,11 @@ v2.7「只能配到任务，不能只配到项目」说的是 `matches`（助理
 - 目标任务以后被删 / 被搬到别的项目：这一段留在改挂时写下的 `task` / `project` 上（与任何记在已删任务上的时间相同，
   「搬移不污染历史」），仍可再改挂。
 - **不留 planner 审计**：台账里那条 `session.reassigned` 本身就是留痕（`{projectId}` 真的要建桶时照旧留一条 `create` 审计）。
+
+**v2.14 追加（只增）**：除了原本记在桶上的段，**自动记下的段**（`source: "activity-confirmed"` 且信封 `ai.auto === true`，
+见「自动跟踪进行中的任务」节「自动记录」）也能改挂——那是规则替人记的，人要能改。判据同样只看台账里那条
+`session.completed`；目标、幂等、并发、谁能调、投影全部同上。上表「原本不是记在桶上的 → 409」对这类段不适用；
+人自己确认的（`ai.auto` 不是 `true`）、手动计时的、补登的仍然 409。
 
 ### 谁能调
 
@@ -2125,6 +2157,14 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
 - **`id` 由防重键确定性派生**（`sug_` + SHA-256 前 20 位十六进制）：同一段即使过期被清、之后又被重传，
   拿到的还是同一个 `id`，于是 `activity:<id>` 防重照样命中——**同一段活动全系统至多一条事实**。
 
+- **v2.14 追加：`suggestion.projectId`（规则只到项目）。** 上传的 `suggestion` 可以带 `projectId`（1–128 字符的字符串）
+  且 `taskId` 为 `null`——检测程序的规则只定到项目时这样报（`detector.rules.v1` v1.1）。项目存在 → 原样存进
+  `suggestion.projectId`（与 v2.10 助理标的是同一个键，页面照旧拿它预选项目），`confidence` / `reason` / `classifier`
+  照存，**没有 `projectSource`**；项目不存在 → 同任务不存在：`projectId` 不存、`confidence: 0`，照收。
+  `taskId` 与 `projectId` 都给了 / `projectId` 不是字符串 → 该段进 `rejected`。带了规则给的项目的段不再做
+  v2.13 的「窗口 ↔ 代理会话」（规则是人定的，优先）。这一条**取代** v2.13「上传的 `suggestion` 里自带 `projectId` …
+  仍然不存」中关于 `projectId` 的那半句；`projectSource` / `collection` 仍然不收。老检测程序不发这个键，行为不变。
+
 ### 确认：与补登同一条路径（规范性）
 
 | 字段 | 值 | 为什么 |
@@ -2574,6 +2614,13 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
 - 请求体不是对象 / `deviceId` 不合格式 / `afk` 不是布尔 / `app`、`title` 不是字符串 → 422。
   不限频（每次只改一份文档、`spans` 有上限）；客户端约定的节奏见 ai-detector 契约。
 
+- **v2.14 追加：可选的 `guess`。** `{ "taskId": "t_a1" | "projectId": "p_1", "confidence": 0.9, "classifier": "rules" }`
+  ——检测程序在 `autoTrack` 打开、人没离开时，用**与上传同一套规则**对当前窗口的猜测；规则没命中就**没有这个键**。
+  `taskId` / `projectId` 恰好给一个（1–128 字符的字符串），`confidence` 是 0–1 的数（布尔不收），`classifier` 只能是
+  `"rules"`；不合形状 → 422（整次心跳不收）。服务端把 `{taskId | projectId, confidence}` 跟着这一段存
+  （`spans[].guess`）；合并相邻心跳的判据多一项「`guess` 的目标相同」。`views/lanes` 的 `human.presence` **不回出**
+  `guess`（形状不变），它只喂给 `human.auto`。`afk: true` 的心跳带了也不存。见「自动跟踪进行中的任务」节。
+
 ### 连线：人与代理之间（规范性）
 
 连线挂在**代理运行上**（`interactions[]`），跟着那一条 `agent.run.completed` 落账；**只是标记，不是时长**，
@@ -2640,6 +2687,9 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
   `running` 与 `views/current` 的人部分同源；`presence` 读 `activity_presence`。**不读 `events`**（「内部子边界」红线不破）。
 - 按当前租户；名字不 join（同 agent-time）。
 
+- **v2.14 追加**：`human` 多两个键 `auto`、`needsChoice`（都可为 `null`，键总在），形状与判据见
+  「自动跟踪进行中的任务」节。两者只看「此刻」，不按窗口过滤（同 `running`；`from > to` 的空结果里为 `null`）。
+
 ### 投影 `proj_lanes`：每个段 / 每个运行一条区间
 
 DISPATCH 表：`session.completed` 与 `agent.run.completed` **各追加**路由到 `handlers/lanes.py`
@@ -2679,6 +2729,178 @@ DISPATCH 表：`session.completed` 与 `agent.run.completed` **各追加**路由
 - **不单开「在场」读端**：页面要的都在 `views/lanes` 的 `human.presence` 里。
 - **不从窗口活动反推代理相位**、不做服务端对时、不做多设备在场合并（每台设备一条细带子，照实画）。
 - `attend` 只认 `title` 子串，不做模糊匹配 / 学习；认错了只是多一根虚线，不影响任何数字。
+
+## 自动跟踪进行中的任务（规范性 · v2.14，`nexus-core.activity.auto.v1`）
+
+仓主 2026-10-08（原话见本文件头部 v2.14）。一句话：**「我」此刻在做的事自动顶替进行中的计时。** 本版是第一步——
+除了「让 AI 写规则」之外的全部；那一步以后插在下面 `next_step` 的 `"ask_ai"` 上，别处不用动。
+
+**总开关**：`detector.settings.v1` v1.3 的 `autoTrack`（按设备，缺省 `false`，人在「AI助理 → 活动检测设置」里勾）。
+本节的每一条都要求「报这次心跳 / 这批上传的那台设备 `autoTrack` 为 `true`」；关着（或这台设备没在网页上存过设置）时
+`auto` / `needsChoice` 恒为 `null`、上传的段全部照旧待确认——**与 v2.13 完全相同**。
+
+命名常量（实现里是具名常量，改它们要改这里）：
+
+| 常量 | 值 | 用在哪 |
+|---|---|---|
+| 在场新鲜 | **90 秒** | 最新一次心跳距今不超过它才算「人在电脑前」（与页面画「在电脑前」同一个口径） |
+| 自动记录的把握门槛 | **0.9** | 规则的 `confidence` ≥ 它才直接记（= 页面「以后这个窗口都记到…」写出的规则的把握） |
+| 请人选的停留 | **60 秒**，在最近 **5 分钟**里累计 | 规则认不出的窗口累计在前台这么久才提醒（来回切标签页不清零） |
+| 人的临时选择保留 | 那个窗口离开 **30 分钟**后失效 | `choice` 写下的按窗口的覆盖 |
+| 「这次不选」的静默 | **4 小时** | `choice/dismiss` |
+
+### 窗口的键与 `next_step`
+
+- **窗口的键** `key` = `"wk_"` + SHA-256(`app` 小写 + `"\n"` + 归一化标题小写) 的前 20 位十六进制。标题归一化与
+  「匹配历史」同一个函数（去开头的状态符号 / 计数、空白并成一个）——转圈符号在变的终端标签页是同一个窗口。
+  `app`、`title` 是在场心跳里的（已在本机脱敏）。
+- **下一步由一个函数定**：`next_step(window) -> "rules" | "ask_ai" | "ask_human"`（`activity/auto.py`）。
+  窗口有目标（心跳带的 `guess`，或人的临时选择）→ `"rules"`；否则 → `"ask_human"`。**本版永不返回 `"ask_ai"`**——
+  第二步在「规则没认出」与「请人选」之间插进它。`auto` 只出 `"rules"` 的窗口，`needsChoice` 只出 `"ask_human"` 的窗口。
+- **目标的取法**：先看心跳的 `guess`（规则），没有再看人对这个窗口的临时选择（下「人答」）。目标必须此刻还在
+  （任务及其项目存在 / 项目存在），不在就当没有目标。
+
+### `human.auto`：自动 · 项目 / 任务
+
+```jsonc
+"auto": { "taskId": "t_a1" | null,        // 只到项目（含规则指到「未分类」桶）时为 null
+          "projectId": "p_1",
+          "taskName": "写提示词" | null, "projectName": "garden",
+          "since": "2026-10-08T10:02:00+08:00",   // 这一轮连续在同一目标上的开始
+          "app": "code", "title": "plot.gd — garden",   // 当前窗口（心跳里的，已脱敏）
+          "source": "rules" | "choice" }          // 规则猜的 / 人刚才选的
+```
+
+非 `null` 当且仅当**全部**成立：
+
+1. 当前租户**没有手动计时在跑**（`human.running` 为 `null`）——手动计时永远优先，它在跑时不出 `auto`；
+2. 该租户各设备里**最近一次心跳**距今 ≤ 90 秒，且不是 `afk`；
+3. 那台设备 `autoTrack` 为 `true`；
+4. 当前窗口 `next_step` 为 `"rules"`，且目标还在。
+
+`since`：从最新一段往回数，相邻两段间隔 ≤ 45 秒（心跳的合并间隔）、不是 `afk`、目标相同就继续，否则停；
+再与「窗口里最近一条手动计时段（`source: "timer-backend"`）的结束时刻」取较晚的——刚停表不会把表测过的那段算进来。
+切到别的窗口再切回来会重新起算（那一小会儿不是这个目标）；在场只留 2 小时，`since` 最早也就是 2 小时前。
+`auto` **只是显示**：它不是事实、不写任何东西、不占 `timer_state`；事实仍然只从「自动记录」（下）或人的确认来。
+
+### `human.needsChoice`：规则认不出，请人选
+
+```jsonc
+"needsChoice": { "key": "wk_3f9a…", "app": "kitty", "title": "✳ notes",   // 标题取该窗口最近一段的原样
+                 "since": "2026-10-08T10:02:00+08:00" }                   // 最近 5 分钟里它第一次出现
+```
+
+非 `null` 当且仅当：上面的 1–3 成立，且最近 5 分钟里（同一台设备）存在这样的窗口：不是 `afk`、`app` 非空、
+`next_step` 为 `"ask_human"`、累计在前台 ≥ 60 秒、没有未过期的「这次不选」。有几个就取累计最久的（一样久取最近出现的）。
+一段的时长算到下一段开始（最后一段算到现在），至多比它最后一次心跳多 45 秒。
+
+- **不要求它是此刻在前台的那个窗口**（对设计稿的偏离，有意的）：人要回答就得切到浏览器，那一刻前台已经是 Cockpit
+  自己；只认「此刻的窗口」的话卡片一出来就消失。所以 `auto` 与 `needsChoice` 可以同时非 `null`。
+- 人一直不答：什么都不发生。那段活动照常随上传进待确认，走集合 / 确认的既有流程（v2.2 / v2.10）。
+
+### 人答：`POST /api/core/activity/choice`
+
+```jsonc
+// 请求
+{ "key": "wk_3f9a1c2b7d4e5a601b2c",       // needsChoice.key；^wk_[0-9a-f]{20}$
+  "taskId": "t_a1",                       // 与 projectId 恰好给一个（1–128 字符的字符串）；projectId = 记到该项目的「未分类」
+  "remember": true }                      // 布尔，缺省 false：以后这个窗口都这样记（写一条规则）
+// 200 ChoiceOut
+{ "key": "wk_…", "taskId": "t_a1" | null, "projectId": "p_1",
+  "remembered": true,                     // 规则已在（刚写的，或本来就有同样的）
+  "pseudonymized": false }                // true = 这台设备把标题换成代号上传，规则认的是换代号之前的标题 → 没写规则
+```
+
+- **只收人**：带 `Authorization: Bearer`（设备令牌）一律 403，先于读请求体（同 v2.7 的 matches）。
+- `key` 必须是该租户在场记录（最近 2 小时）里出现过的窗口，否则 404；`taskId` / `projectId` 不存在 404；
+  都给 / 都没给 400；类型不对、多了未知键 422。
+- **不管 `remember`**：记下「这个窗口 → 这个目标」的临时选择（集合 `activity_choices`，每租户每个 `key` 一份），
+  `auto` 立刻按它显示（`source: "choice"`）。它跟着窗口走：该窗口每次心跳把有效期续到 30 分钟后，离开满 30 分钟失效。
+  规则优先——心跳带了 `guess` 就用规则的。
+- **`remember: true`** → 往该租户的分类规则**最前面**加一条只认这个窗口的规则（与「待确认建议」页勾
+  「以后这个窗口都记到…」写的同形：`app`、`title` 各是整串匹配的转义正则，`confidence: 0.9`，`enabled: true`，
+  `note` 写明来历；目标是 `taskId` 或 `projectId`）；`app` / `title` 相同的旧规则先去掉，所以同一个窗口**至多一条**。
+  检测程序下一次拉规则起生效。走 `detector.rules.v1` 的整套替换（`version` +1，撞版本重读重试）。
+  下列情形不写规则、`remembered: false`，选择本身照样生效：标题是代号（`窗口名N` / `路径N`，或该设备设置
+  `privacy.titles` 为 `"pseudonymize"`）→ `pseudonymized: true`；转义后的正则超过 200 字符、规则已满 500 条、
+  连续撞版本。
+- 不写台账、不确认任何建议：这段活动的事实仍由「自动记录」在下一次上传时落（规则写成了的话），或人去待确认里点。
+
+### 这次不选：`POST /api/core/activity/choice/dismiss`
+
+请求 `{ "key": "wk_…" }` → `200 { "key": "wk_…", "dismissedUntil": "<UTC ISO>" }`。该窗口 4 小时内不再出现在
+`needsChoice`（盖掉之前对它的临时选择）。带 Bearer 403；`key` 不在在场记录里 404；形状不对 422。
+
+### 自动记录：规则高把握命中的段直接记成事实
+
+`POST /api/core/activity/suggestions` 收下一批之后，对其中**新写入**的每一段（防重命中的不看），全部成立就立刻记：
+
+1. 上传的 `deviceId` 那台设备 `autoTrack` 为 `true`；
+2. 不是无操作段（`idle` 不是 `true`）；
+3. `suggestion.classifier` 是 `"rules"`，`confidence` ≥ 0.9；
+4. 有目标且还在：`suggestion.taskId`（记到它），或 `suggestion.projectId` 且没有 `projectSource`
+   （记到该项目的「未分类」桶，取或建，同 v2.9）；
+5. 这段的 `[startAt, endAt]` **不与人的手动计时重叠**——已落账的 `source: "timer-backend"` 的段、以及此刻在跑的计时。
+   人自己掐着表的那段时间，AI 不插手（那一段照旧待确认，由人判断算不算重复）。
+
+记 = 走**确认的同一条路径**（「确认：与补登同一条路径」的全部规则：占位、防重键 `activity:<id>`、
+`source: "activity-confirmed"`、归属链），只有出处不同：
+
+| 哪里 | 人确认的 | 自动记下的 |
+|---|---|---|
+| 信封 `ai` | `{generated: true, confidence, confirmed: true}` | `{generated: true, confidence, confirmed: false, auto: true}` |
+| 建议文档 | `status: "confirmed"` | `status: "confirmed"`，另有 `auto: true`（列表每条回出 `auto`，缺省 `false`） |
+
+- 重传同一段 = 防重命中，什么都不做（不会记第二遍）；之后人再点确认 = `duplicate: true`（同已确认的再确认）。
+- 任何一步失败（任务刚被删、桶的 id 被占……）：这一段留在待确认，**上传照样 200**——自动记录不能让检测程序的游标卡住。
+- 带设备令牌的上传照常触发：这是服务端按人打开的开关、人认可的规则做的，不是「设备确认建议」
+  （`confirm` 端点对设备令牌的行为不变）。要建桶时照 v2.9 留一条 `create` 审计。
+- 「匹配历史」（v2.12）**不含**自动记下的段：那不是人的决定，喂回给助理只会自我强化。
+- 计入人的时间（它就是一条 `session.completed`）。两台设备各报一段 = 记两段（同 v2.2「两台设备」）。
+
+### 自动记下的段：`GET /api/core/activity/auto`
+
+```jsonc
+{ "items": [ { "id": "sug_…", "eventId": "evt_…",          // eventId 给改挂端点用
+               "startAt": "…", "endAt": "…", "durationSeconds": 1500,
+               "app": "code", "title": "plot.gd — garden",
+               "taskId": "t_a1", "projectId": "p_1",        // 这一段**当前**的归属（改挂过的取最后一次）
+               "reassigned": false } ] }                     // 人改过归属没有
+```
+
+今天（`NEXUS_TZ`，按 `startAt`）自动记下的段，新的在前，至多 200 条；台账里找不到事实的（占位后崩了）不出。
+名字不 join。只读，带 Bearer 也能读。改归属 = `POST /api/core/sessions/{eventId}/reassign`（「改挂未分类时间」节
+v2.14 追加）。撤销整段不在本版：改挂到对的任务 / 放回项目的未分类就是修正，台账只追加。
+
+### 隐私
+
+`guess` 在检测程序本机算（规则匹配的是本机脱敏后、换代号前的标题），发出去的只有目标 id 与把握；心跳的 `app` /
+`title` 与 v2.4 完全一样（同一条脱敏路径）。服务端不拿、也拿不到原始标题：`remember` 写规则用的是心跳里那份。
+
+### 存储与边界
+
+- 新集合 `activity_choices`：`{user, key, kind: "choice" | "dismiss", app, title, taskId?, projectId?, at, expiresAt}`，
+  唯一约束 `(user, key)`；过期的在心跳写入时清。**活状态，不是事实**：不进台账 / 投影 / 导出 / 快照恢复 /「空实例」判据。
+- `views/lanes` 仍然**不写**；续期与清理都在心跳的写路径上。
+- 实现落点：`activity/auto.py`（`next_step`、`auto` / `needsChoice`、choice、自动记录）；读开关经 detector 的
+  service，写规则经 `detector/rules.py` 的公开函数，写事实经 `service.confirm`（跨子边界只走 service）。
+
+### 被本版取代的旧承诺（只在 `autoTrack` 打开时）
+
+**2026-10-08 取代条目**。下面的承诺此前无条件成立；自 v2.14 起，**仅当那台设备的 `autoTrack` 为 `true`、且只对
+「规则高把握命中」的段**不再成立，其余情形（开关关着、助理配的、分类服务配的、把握不够的、人还没应用的规则草稿）一个字不变：
+
+1. v2.2「自动检测到的活动只是建议，人确认了才是事实」「只有人点『确认』，才……写一条 `session.completed`」；
+2. `detector.rules.v1` / `mcp.tools.v1`「规则 / AI 只起草，人应用 / 确认」里「规则命中只产生建议」的那一层
+   （**AI 仍然只能写规则草稿，应用仍要人点**——被取代的只是「已生效的规则命中之后还要人再点一次确认」）。
+
+v2.4「心跳不会变成建议，建议也不读心跳」仍成立；新增的只是心跳带的 `guess` 会变成页面上的 `auto` 显示（不是事实）。
+
+### 本版不做（有意的）
+
+- **不叫 AI**（第二步）；不在服务端跑规则（规则只在检测程序里匹配，服务端没有原始标题）。
+- 不做「撤销自动记下的段」（删事实）；不做多设备合并（只看最近报心跳的那台）。
+- `auto` 不产生事实、不代替上传：检测程序没在跑同步（只开了心跳）时页面有「自动 · …」却不会落账。
 
 ## 入口与路由
 

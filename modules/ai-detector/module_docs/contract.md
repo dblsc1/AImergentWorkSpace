@@ -15,6 +15,10 @@
 > （`detector.settings.v1`）；离开判定四个可选项；本机留档。上传形状只多一个可选字段 `idle`。
 > **2026-10-02 追加**：`ai-detector.upload.v1` **v1.2**、`ai-detector.config.v1` **v1.3**——终端类程序
 > **按标签页（程序 + 标题）各自成段**（见「合并」的「按标签页分段」）。上传形状一个字段不改，变的只是段怎么切。
+> **2026-10-08 追加**：`ai-detector.upload.v1` **v1.3**、`ai-detector.presence.v1` **v1.1**、`ai-detector.config.v1` **v1.4**——
+> 规则可以只到项目（`suggestion.projectId`）；网页设置 `autoTrack` 打开时在场心跳带规则对当前窗口的猜测 `guess`。
+> 都是追加，`autoTrack` 关着时发出去的内容与此前逐字节相同。打开之后 nexus-core 会把规则高把握命中的段直接记成事实
+> （nexus-core v2.14）——上面「人在界面上确认了，才……写」那句从此只在 `autoTrack` 关着时无条件成立。
 
 ## 契约索引声明（provides / consumes）
 
@@ -124,7 +128,7 @@ Content-Type: application/json
         "taskId": "t_a1",                         // 或 null
         "confidence": 0.9,                        // 0..1
         "reason": "规则 #1 命中",
-        "classifier": "rules" },                  // "rules" | "service"
+        "classifier": "rules" },                  // "rules" | "service"；v1.3：规则只到项目时 taskId 为 null、多一个 "projectId"
       "idle": true }                              // v1.1 可选：只在 idle.idleSuggestions 开着、这段是「无操作但前台没换」时出现
   ]
 }
@@ -133,6 +137,10 @@ Content-Type: application/json
 - **v1.1 `idle`**：只有 `true` 时才带；普通段不带这个键（v2.5 之前的 nexus-core 会忽略它，照收）。
   带 `idle: true` 的段 `suggestion.confidence ≤ 0.3`，`reason` 以「无操作，可能在阅读」开头
   （老服务端不存 `idle`，人从 `reason` 也看得出来）。
+
+- **v1.3 `suggestion.projectId`**：命中的规则只到项目（`detector.rules.v1` v1.1，本机 `rules.json` 也能写）时，
+  `suggestion` 是 `{taskId: null, projectId: "p_…", confidence, reason, classifier: "rules"}`；到任务的规则、没命中的段
+  不带这个键（形状与 v1.2 相同）。v2.14 之前的 nexus-core 忽略它（这段没有任务建议，照收）。
 
 - **每段都带 `suggestion` 对象**，认不出时 `taskId: null, confidence: 0`，形状不变。
 - `durationSeconds` 是段内**在电脑前**的秒数（扣掉离开），`endAt - startAt` 是墙钟跨度，
@@ -350,6 +358,7 @@ Content-Type: application/json
 | `archiveDays` | 30 | 本机留档保留天数，< 1 按 30 |
 | `presence` | `false` | 在场心跳（v0.3），见「在场心跳」。网页设置 `presence` 非 null 时以网页为准 |
 | `presenceSeconds` | 15 | 心跳间隔，5–300，越界按 15 |
+| （没有本机键）`autoTrack` | — | 「允许 AI 管理进行中的任务」只在网页设置里（`detector.settings.v1` v1.3）：服务端要读它，只写本机没有用 |
 | `agentStatusFile` | `""` | 状态文件桥读的本机路径，空 = 关 |
 | `agentStatusIgnore` | `[]` | `key` 前缀，命中的条目忽略 |
 
@@ -368,7 +377,8 @@ Content-Type: application/json
 
 ```jsonc
 { "rules": [
-    { "app": "code|goland", "title": "garden", "taskId": "t_a1", "confidence": 0.9 }
+    { "app": "code|goland", "title": "garden", "taskId": "t_a1", "confidence": 0.9 },
+    { "title": "blog", "projectId": "p_2" }      // config.v1 v1.4：只到项目；taskId 与 projectId 恰好写一个
 ] }
 ```
 
@@ -411,6 +421,14 @@ Authorization: Bearer <deviceToken>
 - 内容：ActivityWatch 窗口桶**最新一条**事件的 `app`/`title` + 离开桶最新状态。**脱敏规则与上传完全相同**
   （标题表、`appOnlyApps`、`browserApps` 须对得上标签页否则按 app-only），在本机做完再发；
   离开时 `app`、`title` 都发 `""`。
+- **`guess`（presence.v1 v1.1，追加）**：网页设置 `autoTrack`（`detector.settings.v1` v1.3）为 `true`、人没离开时，
+  对当前窗口跑**与上传同一个规则匹配函数**（匹配的是隐私选项处理后、换代号前的标题与程序名，同上传），命中就在心跳里加
+  `"guess": {"taskId": "t_a1", "confidence": 0.9, "classifier": "rules"}`（只到项目的规则是 `"projectId"`）；
+  **没命中、`autoTrack` 关着、离开时都没有这个键**（请求体与 v1.0 逐字节相同）。规则与上传同源（网页存过用网页的，否则本机
+  `rules.json`），心跳这边每 60 秒重拉一次；拉不到 / 本机规则写坏 → 这次不带 `guess`，心跳照发。
+  **隐私**：猜测在本机算，发出去的只有目标 id 与把握；`app` / `title` 仍是同一条脱敏路径出来的那份，一个字符不多。
+  老 nexus-core 忽略这个键。
+
 - 不带时间：服务端按收到的时刻算。**失败就丢**：不重试、不排队、不补发——心跳只描述「现在」，
   补发一条过去的「现在」没有意义。日志只记失败分类，不记标题。
 - 服务端只留最近 2 小时、不进导出（nexus-core v2.4「在场心跳」节）；想留成记录的仍走上面的「上传」→ 人确认。
@@ -469,6 +487,7 @@ Authorization: Bearer <deviceToken>
 
 | 日期 | 变更 |
 |---|---|
+| 2026-10-08 | upload.v1 v1.3、presence.v1 v1.1、config.v1 v1.4（追加）：仓主 2026-10-08「我的操作自动替代进行中计时」。规则可以只到项目（`projectId`，上传 `suggestion.projectId`）；网页设置 `autoTrack` 打开时在场心跳带规则对当前窗口的猜测 `guess`（同一个匹配函数，本机算，只发目标 id 与把握）。`autoTrack` 关着时两条请求体与此前逐字节相同。**取代条目**：本文件开头「它从不写事实：人在界面上确认了，才由 nexus-core 写 `session.completed`」仍然成立于本程序（它只上传建议）；但设备打开 `autoTrack` 后，nexus-core 会把规则把握 ≥ 0.9 的段直接记成事实（nexus-core v2.14） |
 | 2026-10-02 | upload.v1 v1.2、config.v1 v1.3（追加）：仓主 2026-10-02：终端类程序**按标签页分段**（程序 + 归一化标题各自一条流，`durationSeconds` 只算自己的碎片，段的墙钟跨度可交叠）；新配置 `segmentByTitle`（缺省开）/ `segmentByTitleApps`（缺省内置终端名单），网页设置 `detector.settings.v1` v1.2 可改；短于 1 秒的碎片不参与合并（保证 `startAt` 按秒唯一）；状态文件增 `sent`（游标之后已送达的区间，重算时挖掉，不重发也不重复计）。上传形状不变；关掉 `segmentByTitle` = v1.1 的切法 |
 | 2026-09-30 | 实现在场心跳与状态文件桥（状态改为已实现）；在场心跳可由网页设置 `presence`（`detector.settings.v1` v1.1）开关；`agentStatusIgnore` 缺省维持 `[]`。单实例锁改为系统建议锁（修容器里 pid 1 重启后永远拒绝），`ai-detector.lock` 的对外语义（`once` 在 `run` 跑着时拒绝）不变 |
 | 2026-09-30 | config.v1 v1.2（追加）：分类规则可以存在 nexus-core（`detector.rules.v1`），每轮拉；服务端存过就以它为准，本机 `rules.json` 变成没存过 / 拉不到时的后备。上传形状不变 |

@@ -1,6 +1,6 @@
 # mcp.tools.v1 —— 给 AI 代理用的只读工具（MCP）
 
-> **契约 id**：`mcp.tools.v1`。**当前版本 v1.7**（2026-10-08 追加只读工具 `get_match_history`：人以前把哪个窗口定到了哪个项目 / 任务；v1.6 2026-10-08 `propose_activity_matches` 每条可带 `collection`、`projectId`，`list_activity_suggestions` 追加 `collection`、`suggestedProjectId`、`suggestedProjectPath`；v1.5 2026-10-08 认 nexus-core v2.9 的项目「未分类」时间：`list_time_sessions` / `get_daily_time` 的条目追加 `unclassified`；v1.4 2026-10-03 `propose_activity_matches` 每条可提议新任务 `newTask`，`list_activity_suggestions` 追加 `newTask`；v1.3 2026-10-02 加第二个提议工具 `propose_activity_matches`，`list_activity_suggestions` 输出追加 `rejectedTaskIds`；v1.2 2026-09-30 加 `get_detector_rules` 与第一个提议工具 `propose_detector_rules`；v1.1 2026-09-30 加 `list_projects`；v1.0 2026-09-28，v0.3「AI 桥」首版）。实现：`modules/mcp`。
+> **契约 id**：`mcp.tools.v1`。**当前版本 v1.8**（2026-10-08 `propose_detector_rules` / `get_detector_rules` 的规则可以只到项目：`projectId` 代替 `taskId`，工具数不变；v1.7 2026-10-08 追加只读工具 `get_match_history`：人以前把哪个窗口定到了哪个项目 / 任务；v1.6 2026-10-08 `propose_activity_matches` 每条可带 `collection`、`projectId`，`list_activity_suggestions` 追加 `collection`、`suggestedProjectId`、`suggestedProjectPath`；v1.5 2026-10-08 认 nexus-core v2.9 的项目「未分类」时间：`list_time_sessions` / `get_daily_time` 的条目追加 `unclassified`；v1.4 2026-10-03 `propose_activity_matches` 每条可提议新任务 `newTask`，`list_activity_suggestions` 追加 `newTask`；v1.3 2026-10-02 加第二个提议工具 `propose_activity_matches`，`list_activity_suggestions` 输出追加 `rejectedTaskIds`；v1.2 2026-09-30 加 `get_detector_rules` 与第一个提议工具 `propose_detector_rules`；v1.1 2026-09-30 加 `list_projects`；v1.0 2026-09-28，v0.3「AI 桥」首版）。实现：`modules/mcp`。
 >
 > **是什么**：HoneyComb 以 [MCP](https://modelcontextprotocol.io/)（Model Context Protocol）服务器的
 > 形式，把「任务树、人的时间、代理时间、在跑的计时、待确认的活动建议」读给 AI 代理。
@@ -35,6 +35,12 @@
 > **版本号语义**：工具名一经发布不改不删；v1 之内只接受追加——新工具、工具的新**可选**入参、
 > 输出的新字段。改名、删工具、改既有字段的含义、把只读工具变成会写的，都要发 `mcp.tools.v2`，与 v1 并行。
 
+> **v1.8**（仓主 2026-10-08：「我的操作自动替代进行中计时」，`detector.rules.v1` v1.1）：分类规则的目标可以只到项目——
+> `propose_detector_rules` 的每条规则 `taskId` 与 `projectId` **恰好给一个**，`get_detector_rules` 的规则带出 `projectId`
+> 与项目路径。**仍是十三个工具**，仍然只写草稿。**取代条目**：第六节「写 = 提议」对规则仍然成立（AI 只能写草稿、人点应用）；
+> 但用户打开「允许 AI 管理进行中的任务」（`detector.settings.v1` 的 `autoTrack`）之后，**已应用的**规则高把握命中的活动
+> 会直接记成时间，不再逐条确认（nexus-core v2.14）——写规则时把握如实给，拿不准的别写到 0.9 以上。
+>
 ```yaml
 provides:
   - id: mcp.tools.v1
@@ -450,7 +456,8 @@ MCP 只查「是数组、≤ 200 条」，把每条的 `suggestionId` 改名成 
 { "version": 7, "updatedAt": "2026-09-30T10:00:00+00:00",     // 从没存过：0 / null
   "rules": [                                                  // 生效中的全部规则，按顺序（≤ 500，不截）
     { "id": "r_3f9a1c2b", "app": "code|goland", "title": "garden", "taskId": "t_a1",
-      "path": "学习 / garden / 写提示词",                        // 任务已删为 null
+      "projectId": null,                                      // v1.8：只到项目的规则 taskId 为 null、这里是项目 id
+      "path": "学习 / garden / 写提示词",                        // 任务已删为 null；只到项目的规则是「分区 / 项目」，项目已删为 null
       "confidence": 0.9, "note": "…", "enabled": true } ],
   "draft": {                                                  // 没有待应用草稿为 null
     "draftId": "drf_…", "author": "assistant", "summary": "…", "createdAt": "…", "expiresAt": "…",
@@ -468,7 +475,8 @@ MCP 只查「是数组、≤ 200 条」，把每条的 `suggestionId` 改名成 
 
 入参（都必填）：
 
-- `rules`：数组，≤ 500 条，**完整的规则集**（替换全部，不是追加）。每条 `{id?, app?, title?, taskId, confidence?, note?, enabled?}`，
+- `rules`：数组，≤ 500 条，**完整的规则集**（替换全部，不是追加）。每条 `{id?, app?, title?, taskId | projectId, confidence?, note?, enabled?}`
+  （v1.8：`projectId` 来自 `list_projects`，规则只认得出项目、定不了任务时用它代替 `taskId`，两者恰好给一个），
   字段语义与校验以 `detector.rules.v1`「一」为准；改已有规则须带回原 `id`，新规则省略 `id`。
   MCP 只查「是数组、≤ 500 条」，逐条校验在 nexus-core。
 - `summary`：字符串，≤ 500 字符（空串由 nexus-core 拒），给人看的改动说明。
@@ -570,3 +578,4 @@ MCP 发 `POST /api/core/detector/rules/drafts {rules, summary, author: "assistan
 | 2026-10-08 | v1.6 `propose_activity_matches` 每条可带 `collection {name}`（同类窗口的集合）与 `projectId`（只标到项目），只带这两样时 `taskId` / `newTask` / `confidence` 可省（nexus-core v2.10，只贴标签、不动任务、不确认）；`list_activity_suggestions` 每条追加 `collection`、`suggestedProjectId`、`suggestedProjectPath`。工具仍是 12 个，只增 |
 | 2026-10-08 | v1.7 追加只读工具 `get_match_history`（`GET /api/core/activity/suggestions/history`，nexus-core v2.12）：用户以前确认过的归类按窗口去重成「窗口 → 项目 / 任务」，另带用过的集合名与否掉过的（窗口, 任务）；标题截到 80 个字。工具 13 个（11 个只读 + 2 个 `propose_`），既有工具不变 |
 | 2026-10-08 | 传输（不动版本号、不动工具）：`MCP-Protocol-Version` 与 `initialize.protocolVersion` 追加接受 `2025-11-25`（缺省仍是 `2025-06-18`）。起因：Hermes 握手时发 `2025-11-25`，被第一节「不是支持的版本 → 400」挡住。本服务器只有无状态的 `tools/list` / `tools/call`，新版对这两样没有不兼容的改动。第一节的「协议版本 `2025-06-18`；也接受 `2025-03-26`」自此读作「也接受 `2025-11-25`、`2025-03-26`」 |
+| 2026-10-08 | v1.8 分类规则可以只到项目（`detector.rules.v1` v1.1，nexus-core v2.14）：`propose_detector_rules` 每条 `taskId` 与 `projectId` 恰好给一个（入参 schema 不再要求 `taskId` 必填，逐条校验仍在 nexus-core）；`get_detector_rules` 的每条规则追加 `projectId`（到任务的为 `null`），只到项目的规则 `path` 为「分区 / 项目」。工具数不变（十三个）、映射不变。附取代条目：用户打开 `autoTrack` 后已应用规则的高把握命中直接入账 |

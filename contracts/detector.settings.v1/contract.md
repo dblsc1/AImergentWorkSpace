@@ -13,7 +13,7 @@
 provides:
   - id: detector.settings.v1
     summary: >
-      设置文档 DetectorSettings（schemaVersion 1：privacy + idle 两节、顶层 presence（v1.1）与分段两项（v1.2），字段、类型、缺省、取值范围见「一」），
+      设置文档 DetectorSettings（schemaVersion 1：privacy + idle 两节、顶层 presence（v1.1）、分段两项（v1.2）与 autoTrack（v1.3），字段、类型、缺省、取值范围见「一」），
       与存取它的三个端点：GET/PUT/DELETE /api/core/detector/settings?deviceId=、GET /api/core/detector/devices。
       PUT/DELETE 只收人的会话（带 Bearer 设备令牌的请求 403）。
 ```
@@ -48,13 +48,14 @@ provides:
   },
   "presence": null,             // v1.1 追加：null | true | false
   "segmentByTitle": true,       // v1.2 追加
-  "segmentByTitleApps": null    // v1.2 追加：null | 字符串数组
+  "segmentByTitleApps": null,   // v1.2 追加：null | 字符串数组
+  "autoTrack": false            // v1.3 追加：允许 AI 管理进行中的任务
 }
 ```
 
 **校验（服务端写入时，全部 `422`）**：
 
-- 顶层只许 `schemaVersion`、`privacy`、`idle`、`presence`（v1.1）、`segmentByTitle`、`segmentByTitleApps`（v1.2）这几个键；`privacy`、`idle` 里只许下表列出的键。
+- 顶层只许 `schemaVersion`、`privacy`、`idle`、`presence`（v1.1）、`segmentByTitle`、`segmentByTitleApps`（v1.2）、`autoTrack`（v1.3）这几个键；`privacy`、`idle` 里只许下表列出的键。
   **任何未知键 → 422**（包括想关强制脱敏的键，如 `secrets`、`passwords`、`bankCards`）。
 - `schemaVersion` 必填，必须是整数 `1`。`privacy` / `idle` 及其中每个键都**可省略**，省略 = 取缺省值；
   服务端存、回的永远是**补齐缺省值后的完整文档**。
@@ -119,6 +120,20 @@ ActivityWatch 的离开记录（`afkstatus` 桶的 `afk` 区间）缺省从「�
 只增的键：v1.1 及更早的检测程序读到会忽略（照旧合并）。v1.1 存下的文档没有这两个键，读方按「没设」处理：
 检测程序用本机配置（缺省开 + 内置名单），页面按缺省值显示。
 
+### autoTrack（v1.3 追加）：允许 AI 管理进行中的任务
+
+| 键 | 缺省 | 作用 |
+|---|---|---|
+| `autoTrack` | `false` | 页面上叫「允许 AI 管理进行中的任务」。**关（缺省）：一切照旧**——检测到的活动只是待确认的建议，心跳只画「在电脑前」。**开**：① 检测程序在心跳里带上规则对当前窗口的猜测（`guess`）；② 没有手动计时在跑时，页面把「我」当前在做的事显示成「自动 · 项目 / 任务」；③ 规则把握 ≥ 0.9 命中的段上传后**直接记成时间**（不用再逐条确认，记错了在「AI助理 → 自动记录」里改归属）；④ 规则认不出的窗口停留够久，计时页提醒人选项目 / 任务。**手动开始计时时 AI 不插手**：手动计时在跑就不显示自动，与手动计时重叠的段照旧待确认。严格布尔，其他 422 |
+
+- **只在网页上有**：本机配置文件里没有对应的键（服务端要读这个开关才知道该不该显示 / 直接记，只写在本机没有用）。
+  这台设备没在网页上存过设置（`settings` 为 `null`）= 关。
+- 行为的规范性定义在 nexus-core 契约 v2.14「自动跟踪进行中的任务」节与 ai-detector 契约「在场心跳」节；本文件只定这个键。
+- 只增的键：v1.2 及更早的检测程序读到会忽略（不带 `guess`——页面没有「自动」显示，但上传的段照样按 ③ 直接记，
+  因为那一步在服务端）；v1.2 存下的文档没有这个键，读方按 `false` 处理。
+- **取代条目（2026-10-08）**：本契约与 `detector.rules.v1`、nexus-core v2.2 里「规则 / AI 只给建议，人确认才入账」的承诺，
+  **只在这台设备 `autoTrack` 为 `true` 时**、只对已生效规则高把握命中的段被取代；`false` 时一个字不变。
+
 ## 二、端点（nexus-core 实现，规范性）
 
 均在 `/api/core/` 下，经网关登录门，**按租户隔离**（`X-Nexus-Tenant`，同 nexus-core 其余端点）。
@@ -173,12 +188,15 @@ ActivityWatch 的离开记录（`afkstatus` 桶的 `afk` 区间）缺省从「�
 - 读到本机不认识的键：忽略（服务端可能比程序新）；枚举值不认识：这一轮报错不上传。
 - v1.2：文档里有 `segmentByTitle`（布尔）就用它替换本机配置的同名项；`segmentByTitleApps` 是数组就用它，
   `null` / 没有这个键用本机配置（本机也没写 = 内置名单）。
+- v1.3：文档里 `autoTrack` 为 `true` 时，在场心跳带上规则对当前窗口的猜测（ai-detector 契约「在场心跳」的 `guess`）；
+  `false` / 没有这个键 / `settings` 为 `null` / 404 都不带。它不改变上传的内容与脱敏。
 - 设置只影响**以后**的上传：已经上传的建议不会被改写。
 
 ## 四、变更记录
 
 | 日期 | 版本 | 变更 |
 |---|---|---|
+| 2026-10-08 | v1.3 | 追加顶层可选键 `autoTrack`（布尔，缺省 `false`）：「允许 AI 管理进行中的任务」的总开关（仓主 2026-10-08），行为见 nexus-core v2.14。只增，`schemaVersion` 仍为 `1`。附取代条目：「规则只给建议，人确认才入账」仅在本键为 `true` 时被取代 |
 | 2026-10-02 | v1.2 | 追加顶层可选键 `segmentByTitle`（布尔，缺省 `true`）、`segmentByTitleApps`（`null` / 字符串数组，缺省 `null`）：终端按标签页分段可在 Cockpit 设置里开关、改名单。只增，`schemaVersion` 仍为 `1` |
 | 2026-09-30 | v1.1 | 追加顶层可选键 `presence`（`null` / 布尔，缺省 `null`）：在场心跳可在 Cockpit 设置里开关。只增，`schemaVersion` 仍为 `1` |
 | 2026-09-30 | v1 | 首版。仓主 2026-09-30 定：隐私做成细粒度勾选（路径三档 + 白名单、标题三档、app-only 名单、浏览器三档、各类个人信息单独开关），强制脱敏不进设置；离开判定四项（阈值、出声标签页、阅读 / 会议程序、无操作段作低把握建议）；设置在 Cockpit「AI助理」页改、存 nexus-core、检测程序每轮拉 |

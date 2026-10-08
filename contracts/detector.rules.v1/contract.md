@@ -17,7 +17,7 @@
 provides:
   - id: detector.rules.v1
     summary: >
-      规则集 RuleSet（≤ 500 条 Rule：id、app?/title? 正则、taskId、confidence、note?、enabled）与版本号；
+      规则集 RuleSet（≤ 500 条 Rule：id、app?/title? 正则、taskId 或 projectId（v1.1，二选一）、confidence、note?、enabled）与版本号；
       GET/PUT /api/core/detector/rules（PUT 须 If-Match，冲突 412）；
       草稿 POST /api/core/detector/rules/drafts、GET .../drafts/current、POST .../drafts/{id}/apply|discard。
       PUT、建草稿、应用、丢弃只收不带 Bearer 的请求（带 Bearer 设备令牌 403）。
@@ -36,13 +36,17 @@ provides:
       "taskId": "t_a1",
       "confidence": 0.9,
       "note": "garden 项目的编辑器窗口",          // 给人看的一句话或 null
-      "enabled": true } ] }
+      "enabled": true },
+    { "id": "r_7b1c", "app": null, "title": "garden",   // v1.1：只到项目的规则——taskId 为 null，多一个 projectId
+      "taskId": null, "projectId": "p_1",
+      "confidence": 0.9, "note": null, "enabled": true } ] }
 ```
 
 响应另带 `ETag: "<version>"` 头（带引号的十进制整数）。
 
 **语义**（与 ai-detector 本机 `rules.json` 相同）：按数组顺序，**第一条**命中（`enabled` 为 `true`、
-`app` 为 null 或匹配程序名、`title` 为 null 或匹配标题）的规则给出建议 `taskId` + `confidence`。
+`app` 为 null 或匹配程序名、`title` 为 null 或匹配标题）的规则给出建议 `taskId` + `confidence`
+（v1.1：只到项目的规则给出 `projectId` + `confidence`，建议里 `taskId` 为 null）。
 正则**不分大小写**（ai-detector 编译时加 `(?i)`），RE2 / Go 语法，部分匹配（要整条匹配自己写 `^…$`）。
 `title` 匹配的是**隐私选项处理后、换代号之前**的标题（ai-detector 契约「上传」节第 5 条）。
 
@@ -54,11 +58,12 @@ provides:
 | `rules` | 数组，**≤ 500** 条 |
 | `id` | 可省略 / `null`：服务端分配 `r_` + 12 位十六进制。给了：`^[A-Za-z0-9_-]{1,64}$`，同一集合内不许重复。**AI 改一条已有规则时必须带回原 `id`**，否则算「删一条 + 加一条」 |
 | `app` / `title` | `null`、省略，或 1–200 个字符的正则；**至少一个非 null**。须能编译，且不许用 RE2 不支持的写法（前后查找、反向引用、`(?P=name)`、条件组、原子组、占有量词）——与 `detector.settings.v1` 的 `pathWhitelist` 同一套检查。`\p{Han}`、`(?<name>…)`、`\z` 这类 Go 有的写法放行 |
-| `taskId` | 1–128 个字符，**必须是本租户现存的任务**（已删的 422；已完成的照收） |
+| `taskId` | 1–128 个字符，**必须是本租户现存的任务**（已删的 422；已完成的照收）。v1.1：可以是 `null` / 省略——这时必须给 `projectId` |
+| `projectId`（v1.1） | 省略 / `null`，或 1–128 个字符、**本租户现存的项目**（已删的 422）。**`taskId` 与 `projectId` 恰好给一个**：都给、都没给 422。规则只认得出项目（「这个仓库的窗口」「这个网站」）、定不了任务时用它：时间记到该项目的「未分类」，人以后再归到具体任务 |
 | `confidence` | 数字，`0 < confidence ≤ 1`，省略 = `0.9`（布尔不收） |
 | `note` | `null`、省略，或 ≤ 120 个字符 |
 | `enabled` | 布尔，省略 = `true` |
-| 每条规则 | 只许上面七个键，未知键 422 |
+| 每条规则 | 只许上面八个键（v1.1 起含 `projectId`），未知键 422 |
 
 - 请求体超过 **256 KiB** → `413`。不是合法 JSON → `422`。
 - 422 的响应体（规则相关的端点都用这个形状，`detail` 永远是字符串，同 nexus-core 其余端点）：
@@ -68,7 +73,8 @@ provides:
     "errors": [ { "index": 4, "field": "taskId", "message": "任务不存在：t_zz" } ] }  // 最多 50 条；index 从 0 起；与规则无关的错误 index 为 null
   ```
 
-- 存回的是**补齐后的完整规则**（七个键都在，缺省值填上、分配的 `id` 填上）。
+- 存回的是**补齐后的完整规则**（七个键都在，缺省值填上、分配的 `id` 填上）。v1.1：只到项目的规则 `taskId` 为 `null`、另有 `projectId`；**到任务的规则没有 `projectId` 这个键**（与 v1 存下的逐字节相同，草稿 diff 不会把它们算成「修改」）。
+  老读方（v1 的检测程序、页面、MCP）遇到 `taskId: null` 的规则：检测程序跳过它并写日志，页面显示成「任务已删除」——不出错，只是不生效。
 
 ## 二、生效中的规则：读与人改（规范性）
 
@@ -86,6 +92,11 @@ PUT 的失败：
 - `412`：`If-Match` 与当前 `version` 不同——别人（另一个页面、刚应用的草稿）先改了。
   体 `{"detail": "...", "currentVersion": 8}`；页面应重新 GET、让人看过再存。
 - `422` / `413`：见「一」。
+
+**v1.1：服务端自己加的规则。** nexus-core v2.14 的 `POST /api/core/activity/choice`（人在计时页答「你在 X，记到哪？」
+并勾了「以后这个窗口都这样记」）会往规则**最前面**加一条只认那个窗口的规则——与「待确认建议」页勾「以后这个窗口都记到…」
+经 PUT 写的同形（`app`、`title` 各是整串匹配的转义正则，`confidence: 0.9`，`enabled: true`），`app` / `title` 相同的旧规则先去掉。
+它同样是整套替换、`version` +1；页面此前读到的 `version` 因此过期，再存会 `412`（按上面的 412 处理）。只收人（带 Bearer 403）。
 
 规则整套替换（不是逐条 PATCH）：页面编辑一条也是把整套发回去——500 条的上限下这不贵，而且与「草稿 = 一整套」同一个形状。
 
@@ -149,6 +160,9 @@ PUT 的失败：
 - **每轮**（同步开着且没暂停、有段要上传时）`GET /api/core/detector/rules`，带设备令牌。
 - `version > 0`（网页 / 草稿存过，**哪怕是空集**）：用服务端的规则，**不读**本机 `rules.json`。
   `enabled: false` 的跳过。某条正则 Go 编译不过：跳过那一条并写日志（少一条 = 少一个建议，不影响隐私）。
+  v1.1：只到项目的规则命中时，上传的建议是 `{taskId: null, projectId, confidence, reason, classifier: "rules"}`；
+  `taskId` 与 `projectId` 都没有 / 都有的规则跳过并写日志。本机 `rules.json` 同样可以写 `projectId`。
+  网页设置 `autoTrack` 打开时，在场心跳也用**同一套规则**猜当前窗口（约每分钟拉一次规则，见 ai-detector 契约「在场心跳」）。
 - `version == 0`、`404`（老 nexus-core）、或**拉取失败**（网络、5xx、401/403、不是合法 JSON）：用本机 `rules.json`
   （离线后备，行为同 v0.3 之前；本机文件写坏照旧这一轮不上传）。规则只影响「建议挂哪个任务」，
   不影响什么离开本机，所以拉不到不必停上传（与 `detector.settings.v1` 不同）。
@@ -161,7 +175,7 @@ PUT 的失败：
 实现：`modules/assistant`（「AI助理」页 → 活动检测设置面板末尾的「分类规则」，`code/frontend/rules.js`）。换实现按下面做：
 
 1. **规则列表**：GET rules；每行显示 `app`、`title`、任务的显示路径（按 `taskId` 从 `views/tree?includeEphemeral=true`
-   现取；查不到显示「任务已删除（id）」）、`confidence`、`note`、`enabled` 开关；可增、删、改、拖动排序。
+   现取；查不到显示「任务已删除（id）」；v1.1：只到项目的规则显示「分区 / 项目 · 未分类」，目标选择里每个项目多一项「（只到项目）」）、`confidence`、`note`、`enabled` 开关；可增、删、改、拖动排序。
    存 = PUT 整套，`If-Match` 带读到的 `version`；`412` 不静默覆盖：提示「规则刚被改过」，保留人的改动、
    把 `version` 换成 `currentVersion`，人**再点一次保存**才用他的版本覆盖（或刷新放弃）；
    `422` 按 `errors[].index` / `field` 把错标在对应行的对应格上。
@@ -177,4 +191,5 @@ PUT 的失败：
 
 | 日期 | 版本 | 变更 |
 |---|---|---|
+| 2026-10-08 | v1.1 | 规则的目标可以是项目：`taskId` 可为 `null`，追加可选键 `projectId`（二选一，须是现存项目）；检测程序命中时上传 `suggestion.projectId`。nexus-core v2.14 的 `POST /api/core/activity/choice` 可往最前面加一条窗口规则。只增：到任务的规则存回的形状与 v1 逐字节相同。**取代条目**：「规则命中只产生待确认的建议」在设备打开 `detector.settings.v1` 的 `autoTrack` 时、对把握 ≥ 0.9 的命中被取代（直接记成时间）；AI 仍然只能写草稿、应用仍要人点 |
 | 2026-09-30 | v1 | 首版。仓主 2026-09-30：分类规则不手写，由 AI 助理写，且能一次写入全部。规则存服务端（按租户一套，≤ 500 条，版本号 + If-Match）；AI 经 MCP `propose_detector_rules` 一次写一整套**草稿**，人在「AI助理 → 规则」一键应用；设备令牌只读；ai-detector 每轮拉，服务端没存过 / 拉不到时用本机 `rules.json` |
