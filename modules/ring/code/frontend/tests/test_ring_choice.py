@@ -218,3 +218,80 @@ def test_card_and_auto_pill_fit_narrow_screens(browser, static_base_url, width) 
         assert over == []
         assert page.evaluate("() => document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         assert page.is_visible(".hcl-row-human .hcl-clock")                      # 名字截断，钟不被挤掉
+
+
+# ------------------------------------------------------------------ 让 AI 认窗口（nexus-core v2.15）
+
+AI_AUTO = {**AUTO, "source": "ai", "key": "wk_" + "0b" * 10, "title": "garden " + EVIL}
+THINK = {"key": "wk_" + "0c" * 10, "app": "kitty", "title": "notes " + EVIL, "since": fx.at("10:18")}
+
+
+def thinking(**kw) -> dict[str, Any]:
+    d = lanes(**kw)
+    d["human"]["aiThinking"] = THINK
+    return d
+
+
+def test_ai_thinking_is_a_quiet_line_on_my_card_not_a_card(browser, static_base_url) -> None:
+    line = ".hcl-row-human .hcl-ai-thinking"
+    with open_lanes(browser, static_base_url, thinking()) as (page, _):
+        page.wait_for_selector(line)
+        assert page.text_content(line) == "AI 正在认这个窗口…"
+        assert page.get_attribute(line, "title") == "AI 正在认：kitty · notes " + EVIL + "（认不出会请你选）"
+        assert page.locator(CARD).count() == 0 and deck(page)[0] == "me"         # 不另起一张卡，也不问人
+        assert page.locator(".hcl-row-human img").count() == 0 and page.evaluate("window.__pwned") is None
+        assert page.eval_on_selector(line, "n => getComputedStyle(n).animationName") == "hcl-thinking"
+    with open_lanes(browser, static_base_url, thinking(), reduced_motion="reduce") as (page, _):
+        page.wait_for_selector(line)
+        assert page.eval_on_selector(line, "n => getComputedStyle(n).animationName") == "none"
+    with open_lanes(browser, static_base_url, thinking(running=True)) as (page, _):   # 手动计时永远优先
+        page.wait_for_selector(".hcl-row-human .hcl-pill")
+        assert page.locator(line).count() == 0
+
+
+def test_only_ai_recognised_targets_get_the_wrong_button(browser, static_base_url) -> None:
+    for source in ("rules", "choice"):
+        with open_lanes(browser, static_base_url, lanes(auto={**AUTO, "source": source, "key": AI_AUTO["key"]})) as (page, _):
+            page.wait_for_selector(".hcl-row-human .hcl-st-auto")
+            assert page.text_content(".hcl-row-human .hcl-auto-text") == "自动 · 花园 / <b>浇水</b>"
+            assert page.locator(".hcl-auto-wrong").count() == 0
+
+
+def test_ai_recognised_pill_and_one_click_wrong_hands_the_window_back_to_me(browser, static_base_url) -> None:
+    with open_lanes(browser, static_base_url, lanes(auto=AI_AUTO)) as (page, stub):
+        page.wait_for_selector(".hcl-row-human .hcl-auto-wrong")
+        assert page.text_content(".hcl-row-human .hcl-auto-text") == "自动 · 花园 / <b>浇水</b>（AI 认的）"
+        assert page.text_content(".hcl-row-human .hcl-auto-wrong") == "不对"
+        assert page.locator(".hcl-row-human .hcl-st-auto b").count() == 0
+        rejects: list[Any] = []
+
+        def reject(route: Route) -> None:
+            rejects.append(json.loads(route.request.post_data))
+            stub.body["human"]["auto"] = None            # 服务端撤掉了 AI 的规则与临时选择
+            route.fulfill(status=200, content_type="application/json", body=json.dumps(
+                {"key": AI_AUTO["key"], "app": "code", "title": AI_AUTO["title"], "ruleRemoved": True}))
+
+        page.route(re.compile(r"/api/core/activity/choice/reject$"), reject)
+        page.click(".hcl-row-human .hcl-auto-wrong")
+        page.wait_for_selector(CARD)
+        assert rejects == [{"key": AI_AUTO["key"]}]
+        assert page.text_content(f"{CARD} .choice-title") == "你在 code · garden " + EVIL + "，记到哪？"
+        assert deck(page)[:2] == ["lead", "me"] and page.locator(".hcl-st-auto").count() == 0
+        assert page.locator(f"{CARD} img").count() == 0 and page.evaluate("window.__pwned") is None
+        choice = with_choice(page, stub)                 # 接下来就是平常那张卡：人自己选
+        page.select_option(f"{CARD} .choice-project", "p_eng")
+        page.click(f"{CARD} .choice-ok")
+        page.wait_for_selector(CARD, state="detached")
+        assert choice.posts == [("choice", {"key": AI_AUTO["key"], "remember": True, "projectId": "p_eng"})]
+
+
+def test_wrong_that_the_server_refuses_changes_nothing(browser, static_base_url) -> None:
+    with open_lanes(browser, static_base_url, lanes(auto=AI_AUTO)) as (page, stub):
+        page.wait_for_selector(".hcl-row-human .hcl-auto-wrong")
+        before = len(stub.urls)
+        page.route(re.compile(r"/api/core/activity/choice/reject$"), lambda r: r.fulfill(
+            status=404, content_type="application/json", body=json.dumps({"detail": "不是 AI 认的"})))
+        page.click(".hcl-row-human .hcl-auto-wrong")
+        page.wait_for_selector(".hcl-row-human .hcl-auto-wrong:not([disabled])")   # 重拉后按服务端此刻的说法重画
+        assert len(stub.urls) > before and page.locator(CARD).count() == 0
+        assert page.text_content(".hcl-row-human .hcl-pill.hcl-st-auto .hcl-auto-text").endswith("（AI 认的）")   # 胶囊还在

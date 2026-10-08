@@ -11,6 +11,7 @@
  * - 端点 404（后端早于 v2.6）→ 只留一句说明，不出编辑器。
  * - v1.1（nexus-core v2.14）：规则的目标可以只到项目（projectId 代替 taskId，时间记到该项目的「未分类」）。
  *   「归到」下拉里每个项目多一项「…（只到项目）」，值是 "p:" + 项目 id。
+ * - v1.2（nexus-core v2.15）：AI 认窗口时直接写下的规则带 auto: true —— 行头标「AI 自动」，照样能改、能删、能停用。
  * 对外只挂 window.assistantRules（纯函数，给单测用；外加 prepend：「待确认建议」勾「以后这个窗口都记到这个任务」时用）。
  */
 (function () {
@@ -25,6 +26,9 @@
       confidence: Number(r.confidence), note: r.note || null, enabled: r.enabled !== false };
     if (r.projectId) out.projectId = r.projectId;   // 只到项目的规则才有这个键（到任务的与 v1 逐字节相同）
     if (r.id) out.id = r.id;
+    // v1.2 出处键：服务端替 AI 直接写下的窗口规则带 author / auto（nexus-core v2.15）。整套存回去时原样带着，别弄丢
+    if (r.author) out.author = r.author;
+    if (r.auto === true) out.auto = true;
     return out;
   }
   function counts(diff) {
@@ -209,6 +213,11 @@
       li.dataset.index = String(i);
       var head = el("div", "rule-head");
       head.appendChild(el("span", "rule-no mono", "#" + (i + 1)));
+      if (r.auto === true) {
+        var badge = el("span", "suggest-badge rule-auto", "AI 自动");
+        badge.title = "这条是 AI 认窗口时直接写下的（只认这一个窗口）。不对就删掉或改掉。";
+        head.appendChild(badge);
+      }
       var on = el("label", "set-opt rule-on");
       var cb = el("input");
       cb.type = "checkbox";

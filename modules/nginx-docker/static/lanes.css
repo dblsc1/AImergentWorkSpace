@@ -153,6 +153,15 @@ a.hcl-more { color: var(--ink-2); }
 .hcl-auto-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hcl-clock { flex: none; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .hcl-status .hcl-clock { margin-left: var(--sp-1); }
+/* 让 AI 认窗口（nexus-core v2.15）：「不对」是胶囊旁的一个小按钮；「AI 正在认这个窗口…」是小字 + 轻微的呼吸。 */
+.hcl-auto-wrong {
+  flex: none; min-height: var(--tap, 24px); padding: 0 var(--sp-2); border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink-2); font: inherit; font-size: var(--fs-eyebrow);
+}
+.hcl-auto-wrong:hover, .hcl-auto-wrong:focus-visible { color: var(--ink); border-color: var(--ink-2); }
+.hcl-ai-thinking { flex: none; color: var(--ink-2); font-size: var(--fs-eyebrow); animation: hcl-thinking 2s ease-in-out infinite; }
+@keyframes hcl-thinking { 50% { opacity: .55; } }
+@media (prefers-reduced-motion: reduce) { .hcl-ai-thinking { animation: none; } }
 /* 调用方的置顶卡（计时页的「你在 X，记到哪？」）：卡片的壳在这里，里面的表单归调用方 */
 .hcl-lead { border-style: dashed; border-color: var(--agent-wait); }
 .hcl-stat {
