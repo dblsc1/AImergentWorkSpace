@@ -194,7 +194,7 @@ def test_cleared_away_row_is_skipped_by_collection_confirm_until_picked(browser,
         assert page.locator(COLL + " .suggest-confirm-coll").inner_text() == "确认整个集合 · 2 段"
         page.locator(COLL + " .suggest-confirm-coll").click()
         page.wait_for_function("() => document.querySelectorAll('#suggest-list li').length === 1")
-        assert stub.posts == [("confirm", "s1", {"projectId": "p_eng"}), ("confirm", "s3", {"projectId": "p_eng"})]
+        assert stub.posts == [("confirm", "s3", {"projectId": "p_eng"}), ("confirm", "s1", {"projectId": "p_eng"})]  # 一样长：新的在前
         # 退回「← 只看集合的项目」= 明说记到未分类：这时才发 {projectId}
         page.locator('li[data-id="s2"] select').select_option("__back")
         page.locator(COLL + " .suggest-confirm-coll").click()
@@ -212,14 +212,14 @@ def test_confirm_collection_sends_task_or_project_per_row(browser, static_base_u
         coll.locator(".suggest-confirm-coll").click()
         page.wait_for_function("() => document.querySelectorAll('#suggest-list li').length === 3")
         assert stub.posts == [
-            ("confirm", "s1", {"projectId": "p_eng"}), ("confirm", "s2", {"projectId": "p_eng"}),   # 没任务 → 未分类
-            ("confirm", "s3", {"taskId": "t_word"}), ("confirm", "s7", {"taskId": "t_word"}),       # 规则的任务
-            ("confirm", "s4", {"taskId": "t_read"}),                                                # 助理配的任务
+            ("confirm", "s3", {"taskId": "t_word"}), ("confirm", "s7", {"taskId": "t_word"}),       # 规则的任务（2 分，最新）
+            ("confirm", "s1", {"projectId": "p_eng"}), ("confirm", "s2", {"projectId": "p_eng"}),   # 没任务 → 未分类（2 分）
+            ("confirm", "s4", {"taskId": "t_read"}),                                                # 助理配的任务（1 分）
         ]
         assert page.inner_text("#suggest-message") == "已确认 5 条。"
         # 无操作的、要新建任务的：留着，等人逐行点；这时整个集合没东西可确认了
         left = page.eval_on_selector_all("#suggest-list li", "els => els.map(e => e.dataset.id)")
-        assert left == ["s5", "s6", "s8"]
+        assert left == ["s6", "s5", "s8"]   # 无操作的在集合里排最后
         assert page.locator(COLL + " .suggest-confirm-coll").is_disabled()
         assert page.locator('li[data-id="s6"] .suggest-newname').input_value() == "乐理复习"
         # 无操作的行自己能确认到未分类
@@ -265,12 +265,13 @@ def test_partial_failure_reported_per_row_and_rejected_task_never_sent(browser, 
         page.locator(COLL + " .suggest-confirm-coll").click()
         page.wait_for_selector("#suggest-message.is-error")
         assert [(i, b) for _, i, b in stub.posts] == [
-            ("s1", {"projectId": "p_eng"}), ("s2", {"projectId": "p_eng"}), ("s3", {"taskId": "t_word"}),
-            ("s5", {"taskId": "t_read"})]                                 # s4 否掉过 t_read：不发
+            ("s5", {"taskId": "t_read"}), ("s1", {"projectId": "p_eng"}), ("s2", {"projectId": "p_eng"}),
+            ("s3", {"taskId": "t_word"})]                                 # s4 否掉过 t_read：不发
         msg = page.inner_text("#suggest-message")
-        assert msg.startswith("kitty · a：1 / 2 段失败，任务不存在：'t_gone'") and "另有 1 处失败" in msg
+        assert msg.startswith("kitty · c：1 / 2 段失败，有的段你已经否掉过这个任务") and "另有 1 处失败" in msg   # 先发的 c 先报
+
         left = page.eval_on_selector_all("#suggest-list li", "els => els.map(e => e.dataset.id)")
-        assert left == ["s2", "s4"]                                       # 成功的不回滚，失败的留下
+        assert left == ["s4", "s2"]                                       # 成功的不回滚，失败的留下
 
 
 def test_busy_guard_and_project_choice_dropped_with_collection(browser, static_base_url):
@@ -285,7 +286,7 @@ def test_busy_guard_and_project_choice_dropped_with_collection(browser, static_b
             if stub.held:
                 break
             page.wait_for_timeout(50)
-        assert stub.posts == [("confirm", "s1", {"projectId": "p_book"}), ("confirm", "s2", {"projectId": "p_book"})]
+        assert stub.posts == [("confirm", "s2", {"projectId": "p_book"}), ("confirm", "s1", {"projectId": "p_book"})]
         # 重拉还在路上：旧列表上的控件全禁用（再点就是重复提交）
         assert page.locator(COLL + " .suggest-confirm-coll").is_disabled()
         assert page.locator(COLL + " .suggest-project").is_disabled()
@@ -326,3 +327,80 @@ def test_narrow_no_horizontal_scroll(browser, static_base_url, width, theme):
             assert coll.locator(sel).first.bounding_box()["height"] >= 44   # 手指点得中
         page.locator(".suggest-coll").first.locator("li select").first.select_option("__other")
         assert overflowing(page, "#suggest-panel") == []
+
+
+# ── 没有任务的项目也是合法目标；窗口行、分段按时长排 ─────────────────────────
+TREE3 = json.loads(json.dumps(TREE))
+TREE3["zones"].append({"id": "z_time", "key": "330", "name": "时间管理", "color": "#888", "order": 2})
+TREE3["projects"].append({"id": "p_new", "key": "330-1", "zoneId": "z_time", "name": "HoneyComb Pub代码开发", "tasks": []})
+NEW_OPT = "p:p_new"
+
+
+def _rerender(page: Page) -> None:
+    page.evaluate("document.dispatchEvent(new Event('assistant:turn-done'))")
+    page.wait_for_timeout(300)
+
+
+def test_project_without_tasks_listed_and_row_confirms_to_its_unclassified(browser, static_base_url):
+    items = [seg(1, "a"), seg(2, "b")]
+    with open_page(browser, static_base_url, items, tree=TREE3) as (page, stub):
+        a = page.locator('li[data-id="s1"]')
+        assert a.locator('optgroup[label="时间管理 / HoneyComb Pub代码开发"] option').all_inner_texts() == [
+            "未分类（只记到这个项目）"]                      # 没有任务的项目也有一组
+        assert a.locator("option").first.inner_text() == "选择任务…" and a.locator(".suggest-confirm").is_disabled()
+        a.locator("select").select_option(NEW_OPT)
+        assert a.locator(".suggest-confirm").is_enabled()
+        _rerender(page)                                    # 重拉重绘：选择还在
+        assert page.locator('li[data-id="s1"] select').input_value() == NEW_OPT
+        assert page.locator('li[data-id="s1"] .suggest-confirm').is_enabled()
+        page.locator('li[data-id="s1"] .suggest-confirm').click()
+        page.wait_for_function("() => !document.querySelector('li[data-id=\"s1\"]')")
+        assert stub.posts == [("confirm", "s1", {"projectId": "p_new"})]       # 绝不是 {taskId: "p:…"}
+
+
+def test_collection_confirm_sends_project_for_bucket_rows(browser, static_base_url):
+    items = [seg(1, "a", coll=AGENT), seg(3, "c", coll=AGENT)]
+    with open_page(browser, static_base_url, items, tree=TREE3) as (page, stub):
+        page.locator('li[data-id="s1"] select').select_option(NEW_OPT)
+        coll = page.locator(COLL)
+        assert coll.locator(".suggest-confirm-coll").inner_text() == "确认整个集合 · 1 段"
+        assert coll.locator(".suggest-coll-plan").inner_text() == (
+            "1 段记到「时间管理 / HoneyComb Pub代码开发」的未分类，1 段要展开后单独定")
+        coll.locator(".suggest-confirm-coll").click()
+        page.wait_for_function("() => !document.querySelector('li[data-id=\"s1\"]')")
+        assert stub.posts == [("confirm", "s1", {"projectId": "p_new"})]
+
+
+def test_confirm_all_by_threshold_ignores_bucket_rows(browser, static_base_url):
+    items = [seg(1, "a"), seg(2, "b", task="t_word", conf=0.9)]
+    with open_page(browser, static_base_url, items, tree=TREE3) as (page, stub):
+        page.fill("#suggest-threshold", "0")
+        page.locator('li[data-id="s1"] select').select_option(NEW_OPT)
+        assert page.inner_text("#suggest-confirm-all").endswith("· 1")
+        page.click("#suggest-confirm-all")
+        page.wait_for_function("() => !document.querySelector('li[data-id=\"s2\"]')")
+        assert stub.posts == [("confirm", "s2", {"taskId": "t_word"})]
+    with open_page(browser, static_base_url, items, tree=TREE3) as (page, stub):
+        page.fill("#suggest-threshold", "0")
+        page.locator('li[data-id="s2"] select').select_option("__other")   # 规则的任务指向 p_eng：集合 scoped，先「其他项目…」
+        page.locator('li[data-id="s2"] select').select_option(NEW_OPT)   # 把任务改成只记到项目：不再进「全部确认」
+        assert page.locator("#suggest-confirm-all").is_disabled() and stub.posts == []
+
+
+def _seg_starts(page: Page, row: str) -> list[str]:
+    return page.eval_on_selector_all(f'{row} .suggest-seg', "els => els.map(e => /10:(\\d\\d)/.exec(e.textContent)[1])")
+
+
+def test_window_rows_and_segments_sorted_longest_first_stable(browser, static_base_url):
+    items = [seg(1, "A", coll=AGENT, secs=60), seg(2, "B", coll=AGENT, secs=300), seg(3, "C", coll=AGENT, secs=300),
+             seg(4, "I", coll=AGENT, secs=900, idle=True),
+             seg(5, "D", coll=AGENT, secs=60), seg(6, "D", coll=AGENT, secs=300), seg(7, "D", coll=AGENT, secs=120),
+             seg(8, "D", coll=AGENT, secs=300)]
+    with open_page(browser, static_base_url, items) as (page, _stub):
+        want = ["s5", "s3", "s2", "s1", "s4"]        # D 共 13 分 > C（新）> B > A；无操作的在最后
+        assert page.eval_on_selector_all("#suggest-list li", "els => els.map(e => e.dataset.id)") == want
+        assert _seg_starts(page, 'li[data-id="s5"]') == ["08", "06", "07", "05"]   # 长的在前，一样长的新的在前
+        _rerender(page)
+        _rerender(page)
+        assert page.eval_on_selector_all("#suggest-list li", "els => els.map(e => e.dataset.id)") == want
+        assert _seg_starts(page, 'li[data-id="s5"]') == ["08", "06", "07", "05"]
