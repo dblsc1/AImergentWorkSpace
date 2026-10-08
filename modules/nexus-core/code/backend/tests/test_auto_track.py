@@ -439,11 +439,19 @@ def _rule_seg(minutes_ago, **over):
     return _seg(_recent(minutes_ago), **over)
 
 
+def _pin_today(monkeypatch, when):
+    """读「今天自动记下的段」时把服务端的「今天」钉在这一段开始的那天：零点后半小时内跑也不会把它算成昨天的。"""
+    from app.modules.activity import auto  # noqa: PLC0415
+
+    monkeypatch.setattr(auto, "_now", lambda: when)
+
+
 def test_auto_entry_records_task_and_project_with_provenance(client, world):
     _track(client)
     to_project = {"taskId": None, "projectId": world["q"], "confidence": 0.95, "reason": "网页规则 #2 命中",
                   "classifier": "rules"}
-    out = _upload(client, [_rule_seg(60, task_id=world["a"]), _rule_seg(50, suggestion=to_project)], headers=BEARER)
+    first = _rule_seg(60, task_id=world["a"])        # 重传要用同一段（_recent 每次按此刻算，跨秒就成了另一段）
+    out = _upload(client, [first, _rule_seg(50, suggestion=to_project)], headers=BEARER)
     assert out == {"accepted": 2, "duplicates": 0, "rejected": []}
     assert _pending(client)["total"] == 0
     done = _pending(client, status="confirmed")["items"]
@@ -455,7 +463,7 @@ def test_auto_entry_records_task_and_project_with_provenance(client, world):
     assert events[world["a"]]["ai"] == {"generated": True, "confidence": 0.9, "confirmed": False, "auto": True}
     assert events[f"t_unc_{world['q']}"]["ai"]["confidence"] == 0.95
     # 重传：防重命中，不记第二遍；人再点确认 = duplicate
-    assert _upload(client, [_rule_seg(60, task_id=world["a"])], headers=BEARER)["duplicates"] == 1
+    assert _upload(client, [first], headers=BEARER)["duplicates"] == 1
     again = _post(client, f"{API}/activity/suggestions/{done[0]['id']}/confirm", {"taskId": world["a"]})
     assert again["duplicate"] is True and len(_session_events()) == 2
     # 匹配历史不含自动记下的（那不是人的决定）
@@ -514,9 +522,11 @@ def test_auto_entry_failure_never_fails_the_upload(client, world, monkeypatch):
     assert item["status"] == "pending" and item["auto"] is False  # 占的位退了，auto 标记也摘了
 
 
-def test_auto_sessions_list_and_reassign(client, world):
+def test_auto_sessions_list_and_reassign(client, world, monkeypatch):
     _track(client)
-    _upload(client, [_rule_seg(20, task_id=world["a"]), _rule_seg(10, confidence=0.5, task_id=world["a"])])
+    start = _recent(20)
+    _upload(client, [_seg(start, task_id=world["a"]), _rule_seg(10, confidence=0.5, task_id=world["a"])])
+    _pin_today(monkeypatch, start)
     human = _pending(client)["items"][0]["id"]
     manual = _post(client, f"{API}/activity/suggestions/{human}/confirm", {"taskId": world["a"]})["event"]["id"]
     items = client.get(f"{API}/activity/auto", headers=BEARER).json()["items"]  # 只读，设备令牌也能读
@@ -540,10 +550,12 @@ def test_auto_sessions_list_and_reassign(client, world):
 # ─────────────────────────────────────────── 租户隔离
 
 
-def test_tenant_isolation(client, world, clock):
+def test_tenant_isolation(client, world, clock, monkeypatch):
     key = _ask(client, clock)
     _post(client, f"{API}/activity/choice", {"key": key, "taskId": world["a"], "remember": True})
-    _upload(client, [_rule_seg(30, task_id=world["a"])])
+    start = _recent(30)
+    _upload(client, [_seg(start, task_id=world["a"])])
+    _pin_today(monkeypatch, start)
     assert len(client.get(f"{API}/activity/auto").json()["items"]) == 1
     # 另一个租户：看不到在场、选择、规则、自动记下的段；拿着别人的 key 是 404
     human = _human(client, headers=B)

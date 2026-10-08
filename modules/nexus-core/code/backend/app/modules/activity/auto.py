@@ -42,8 +42,7 @@ DWELL = timedelta(seconds=60)
 LOOKBACK = timedelta(minutes=5)
 #: 人的临时选择：那个窗口离开这么久后失效（每次心跳续期）
 CHOICE_AWAY = timedelta(minutes=30)
-#: 「这次不选」：这么久不再提醒
-DISMISS = timedelta(hours=4)
+DISMISS = timedelta(hours=4)  #: 「这次不选」：这么久不再提醒
 
 KEY_PATTERN = r"^wk_[0-9a-f]{20}$"
 _MAX_AUTO = 200
