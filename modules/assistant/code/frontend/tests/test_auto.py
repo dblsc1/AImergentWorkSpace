@@ -159,3 +159,17 @@ def test_segments_recorded_by_an_ai_recognised_rule_are_marked(browser, static_b
         rows.nth(0).locator(".auto-pick").select_option("p:p_book")
         _idle(page)
         assert stub.posts == [("evt_2", {"projectId": "p_book"})]
+
+
+def test_rows_sorted_longest_first_stable(browser, static_base_url):
+    items = list(reversed(_items()))      # 后端给的顺序：短的在前
+    items.append({**items[0], "id": "seg_3", "eventId": "evt_3", "durationSeconds": 20,
+                  "startAt": "2026-10-08T11:00:00+08:00"})
+    stub = Stub(items)
+    with opened(browser, static_base_url, stub) as page:
+        page.wait_for_selector(".auto-row")
+        ids = lambda: page.eval_on_selector_all(".auto-row", "els => els.map(e => e.dataset.id)")  # noqa: E731
+        assert ids() == ["evt_2", "evt_1", "evt_3"]    # 一样长的保持后端的顺序
+        page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+        page.wait_for_timeout(300)
+        assert ids() == ["evt_2", "evt_1", "evt_3"]

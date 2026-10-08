@@ -80,8 +80,14 @@ class Stub:
             route.fulfill(status=409, content_type="application/json", body=json.dumps(
                 {"detail": "这一段正被并发改挂，请重试 <u>x</u>"}, ensure_ascii=False))
             return
-        if "projectId" in body:  # 撤回：放回那个项目的桶
-            self.sessions["t_unc_" + body["projectId"]].append(self.away.pop(event_id))
+        if "projectId" in body:  # 撤回 / 归入某项目的未分类：放进那个项目的桶
+            item = self.away.pop(event_id, None)
+            if item is None:
+                for items in self.sessions.values():
+                    for hit in [i for i in items if i["id"] == event_id]:
+                        items.remove(hit)
+                        item = hit
+            self.sessions.setdefault("t_unc_" + body["projectId"], []).append(item)
         else:
             for items in self.sessions.values():
                 for item in [i for i in items if i["id"] == event_id]:
@@ -218,7 +224,7 @@ def test_other_projects_escape_and_back(browser, static_base_url):
         sel = f"{BOOK} .unc-task"
         page.select_option(sel, "__other")
         assert [g.get_attribute("label") for g in page.locator(f"{sel} optgroup").all()] == [
-            "练琴区 / 吉他练习", "练琴区 / <i>考级</i>计划"]
+            "练琴区 / 吉他练习", "练琴区 / <i>考级</i>计划", "制作区 / 没有桶"]   # 没有任务的项目也在
         assert page.locator(f"{sel} option").first.inner_text() == "选任务…" and page.input_value(sel) == ""
         assert page.locator(f"{BOOK} .unc-all").is_disabled()
         page.select_option(sel, "t_word")  # 别的项目的任务
@@ -321,3 +327,35 @@ def test_narrow_screens_do_not_scroll_sideways(browser, static_base_url, width):
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         box = page.locator(".unc-one").first.bounding_box()
         assert box["height"] >= 44  # 触控目标
+
+
+def test_wide_list_has_unclassified_target_for_projects_without_tasks(browser, static_base_url):
+    with opened(browser, static_base_url) as (page, stub):
+        page.wait_for_selector(BOOK)
+        sel = f"{ENG} .unc-task"
+        page.select_option(sel, "__other")
+        values = page.eval_on_selector_all(f"{sel} option", "os => os.map(o => o.value)")
+        assert "p:p_book" in values and "p:p_none" in values
+        assert "p:p_eng" not in values                                 # 自己的未分类就是现在的位置，不是目标
+        assert page.locator(f'{sel} optgroup[label="制作区 / 没有桶"] option').all_inner_texts() == [
+            "未分类（只记到这个项目）"]
+        page.select_option(sel, "p:p_none")
+        assert page.locator(f"{ENG} .unc-all").is_enabled()
+        page.click(f"{ENG} .unc-all")
+        _gone(page, "evt_1")
+        _idle(page)
+        # 发的是 {projectId}，不是 {taskId: "p:…"}
+        assert stub.posts == [("evt_1", {"projectId": "p_none"}), ("evt_2", {"projectId": "p_none"}),
+                              ("evt_3", {"projectId": "p_none"})]
+        assert page.inner_text("#unc-message") == "已归入 3 段 → 制作区 / 没有桶 · 未分类"
+
+
+def test_rows_sorted_longest_first_newest_on_ties_stable_across_reload(browser, static_base_url):
+    sessions = {BUCKET_ENG: [_seg("a", "2026-10-01T10:00:00+08:00", 600), _seg("b", "2026-10-02T10:00:00+08:00", 600),
+                             _seg("c", "2026-10-03T10:00:00+08:00", 60), _seg("d", "2026-10-04T10:00:00+08:00", 1200)]}
+    with opened(browser, static_base_url, sessions) as (page, _stub):
+        page.wait_for_selector(ENG)
+        assert _rows(page, ENG) == ["d", "b", "a", "c"]
+        page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+        page.wait_for_timeout(300)
+        assert _rows(page, ENG) == ["d", "b", "a", "c"]
