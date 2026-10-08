@@ -117,6 +117,20 @@ Promise.resolve()
     var mapped = D.mapArchiveEvent(event, SAMPLE_TREE);
     assert.ok(mapped.summary.indexOf("t_ghost（任务已删除）") !== -1);
   }); })
+  .then(function () { return test("mapArchiveEvent：记在项目未分类时间桶上的一段 → 「项目 / 临时任务 年-月-日 时:分」，不是「任务已删除」", function () {
+    var tree = { zones: SAMPLE_TREE.zones, projects: SAMPLE_TREE.projects.map(function (p) {
+      return p.id === "p_1" ? Object.assign({}, p, { unclassifiedTaskId: "t_unc_p_1" }) : p;
+    }) };
+    var event = {
+      id: "evt_u",
+      time: "2026-08-01T13:47:00+00:00",
+      subject: { zone: "z_life", project: "p_1", task: "t_unc_p_1" },
+      data: { startAt: "2026-08-01T13:15:00+00:00", durationSeconds: 1920 }
+    };
+    assert.strictEqual(D.mapArchiveEvent(event, tree).summary,
+      "2026年8月1日 21:15–21:47 · 阳台种菜 / 临时任务 2026-08-01 21:15 · 32分钟");
+    assert.strictEqual(D.resolveArchiveLabel(tree, event.subject), "阳台种菜 / 临时任务");
+  }); })
   .then(function () { return test("mapArchiveEvent：tree 为 null（未加载完）也不抛异常", function () {
     var event = {
       id: "evt_3",

@@ -122,7 +122,7 @@ test("formatStamp：偏移显式传入，不依赖跑测机器时区", function 
 test("转发没断：hex-data.js 上的这批名字必须就是 hex-audit.js 的同一个函数", function () {
   ["isDoneChange", "auditOrder", "lastDoneActions", "indexTasks", "formatStamp",
    "recentCompletions", "latestCompletionForProject", "nextActionsByProject",
-   "hoverTodoText", "topTodos", "stampTaskName", "completionHeat"].forEach(function (k) {
+   "hoverTodoText", "topTodos", "tempSessions", "mergeRecent", "completionHeat"].forEach(function (k) {
     assert.strictEqual(H[k], A[k], "hex-data.js 的 " + k + " 不是 hex-audit.js 那一个");
   });
   assert.strictEqual(H.NO_TODO_TEXT, A.NO_TODO_TEXT);

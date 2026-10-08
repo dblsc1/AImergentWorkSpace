@@ -266,12 +266,17 @@
         '<span class="elapsed" id="elapsed-display">00:00:00</span>' +
         '<span class="task-name" id="running-task-name"></span>';
     }
+    // 计的是项目的「未分类」时间桶（nexus-core v2.9，蜂巢长按项目格起的）：只显示项目名，
+    // 不写「未分类」（仓主 2026-10-08）；它不是人起名的任务，「改任务名」按钮一并藏掉。
+    const bucket = current.task.kind === "unclassified";
     document.getElementById("running-task-name").textContent =
-      `${current.task.name} · ${current.project.name}`;
+      bucket ? current.project.name : `${current.task.name} · ${current.project.name}`;
+    const renameBtnEl = document.getElementById("rename-open-btn");
+    if (renameBtnEl) renameBtnEl.hidden = bucket;
     startElapsedTicker(current.sessionStartAt);
     chronoSvgEl.setAttribute(
       "aria-label",
-      `计时圆环，正在为『${current.task.name}』计时，占项目累计 ${current.task.shareOfProject}%`
+      `计时圆环，正在为『${bucket ? current.project.name : current.task.name}』计时，占项目累计 ${current.task.shareOfProject}%`
     );
   }
 

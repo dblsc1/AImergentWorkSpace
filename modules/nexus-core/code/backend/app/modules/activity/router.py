@@ -70,6 +70,7 @@ class ConfirmIn(BaseModel):
     mode: Mode = "do"
     name: str | None = None  # v2.8：确认 AI 提议的新任务时人改过的名字
     proposalId: str | None = None  # v2.8：人看到并点「是」的那条新任务提议（变了 → 409）
+    projectId: str | None = None  # v2.9：只指定项目 → 记到该项目的「未分类」时间桶（与上面三个互斥）
 
 
 class EventRef(BaseModel):
@@ -132,7 +133,7 @@ def list_suggestions(
 def confirm(sugId: str, request: Request, body: ConfirmIn | None = None) -> dict:  # noqa: N803 —— 路径参数名即契约
     body = body or ConfirmIn()
     # request：v2.8 确认提议的新任务时要判设备令牌、经 planner 写入口建任务
-    return service.confirm(sugId, body.taskId, body.mode, body.name, request, body.proposalId)
+    return service.confirm(sugId, body.taskId, body.mode, body.name, request, body.proposalId, body.projectId)
 
 
 @router.post("/{sugId}/dismiss", response_model=DismissOut)

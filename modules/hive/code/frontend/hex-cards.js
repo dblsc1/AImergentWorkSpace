@@ -95,6 +95,11 @@
     if (t.state === "waiting") flags.push("被 " + ((t.blockedBy || []).length) + " 条挡住");
     // 最近完成的卡片也能点开，但只给「撤销」：点错了「完成」要能改回来
     // （v0.2.1 实测：之前完成卡没有任何按钮，误点完成就撤不回）。
+    // 临时任务（记在「未分类」时间桶上的一段）不是任务：没有 id、没有按钮、点不开
+    if (opts.session) {
+      return '<li class="' + cls + '"><span class="hex-todo-dot"></span>' +
+        '<span class="hex-task-name">' + esc(t.name) + "</span></li>";
+    }
     return '<li class="' + cls + '" data-task-id="' + esc(t.id) + '" data-hex-ui="toggle-card">' +
       '<span class="hex-todo-dot"></span>' +
       '<span class="hex-task-name">' + esc(t.name) + "</span>" +
@@ -198,7 +203,7 @@
         (done.length
           ? '<ul class="hex-list">' + done.map(function (c) {
               return taskCard({ id: c.taskId, name: c.taskName || c.path, done: true },
-                              { done: true, stamp: c.stamp });
+                              { done: true, stamp: c.stamp, session: c.session });
             }).join("") + "</ul>"
           : emptyLine("暂无完成记录")) +
       "</div>" +

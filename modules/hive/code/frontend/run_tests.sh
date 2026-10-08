@@ -15,3 +15,4 @@ node rails.test.js
 node gtd-data.test.js
 node hex-audit.test.js
 node hex-data.test.js
+node hex-timer.test.js

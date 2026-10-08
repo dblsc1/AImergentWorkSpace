@@ -59,7 +59,8 @@ def get_review() -> ReviewOut:
     week_start, week_end = _week_bounds(today)
 
     projects = planner_service.list_projects()
-    tasks = planner_service.list_tasks()
+    # v2.9：「未分类」时间桶不是待办——不进久未动、不算收件箱待理清
+    tasks = [t for t in planner_service.list_tasks() if t.get("kind") != planner_service.UNCLASSIFIED_KIND]
     week_rows = daily_stats_projection.read_daily_stats(
         current_tenant(), date_from=week_start, date_to=week_end
     )

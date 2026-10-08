@@ -47,7 +47,8 @@ def tree_for(tenant):
     return {"zones": [{"id": "z_7f", "key": "Z01", "name": "学习", "color": "#000", "order": 0},
                       {"id": "z_e", "key": "Z02", "name": "空分区", "color": "#000", "order": 1}],
             "projects": [{"id": "p_3c", "key": "Z01-P01", "zoneId": "z_7f", "name": "garden", "status": "active",
-                          "progress": 0, "progressSource": "computed", "deadline": None, "tasks": tasks},
+                          "progress": 0, "progressSource": "computed", "deadline": None, "tasks": tasks,
+                          "unclassifiedTaskId": "t_unc_p_3c"},  # v1.5：未分类时间桶，不在 tasks 里
                          {"id": "p_new", "key": "Z01-P02", "zoneId": "z_7f", "name": "刚建的", "status": "active",
                           "progress": 0, "progressSource": "computed", "deadline": "2026-10-10", "tasks": []},
                          {"id": "p_old", "key": "Z01-P03", "zoneId": "z_7f", "name": "做完了", "status": "done",
@@ -62,6 +63,8 @@ SESSIONS = [
     for i in range(3)
 ] + [{"id": "evt_bf", "type": "session.completed", "source": "manual-backfill", "time": "2026-09-27T12:00:00+08:00",
       "subject": {"zone": "z_7f", "project": "p_3c", "task": None}, "data": {"durationSeconds": 600, "mode": "review"}}]
+# v1.5：第三段记在项目的「未分类」时间桶上（不加条数，分页用例按四条写的）
+SESSIONS[2]["subject"] = {**SESSIONS[2]["subject"], "task": "t_unc_p_3c"}
 
 SUGGESTIONS = [
     {"id": f"sug_{i}", "deviceId": "SECRET-DEVICE", "startAt": "2026-09-26T11:05:00+08:00",
@@ -99,11 +102,13 @@ def respond(path, q, tenant):
     if path == "/api/core/views/gantt":
         return 200, {"today": "2026-09-28", "projects": [
             {"id": "p_3c", "key": "k", "name": "garden", "plan": None,
-             "actual": [{"date": "2026-09-27", "seconds": 100}, {"date": "2026-09-28", "seconds": 4200}],
+             "actual": [{"date": "2026-09-27", "seconds": 100}, {"date": "2026-09-28", "seconds": 4500}],
              "tasks": [{"id": "t_a1", "key": "k", "name": "写提示词", "done": False, "plan": None, "dependsOn": [],
                         "actual": [{"date": "2026-09-28", "seconds": 3600}]},
                        {"id": "t_gone", "key": "k", "name": "x", "done": False, "plan": None, "dependsOn": [],
-                        "actual": [{"date": "2026-09-27", "seconds": 100}]}]}]}
+                        "actual": [{"date": "2026-09-27", "seconds": 100}]},
+                       {"id": "t_unc_p_3c", "key": "k", "name": "未分类", "done": False, "kind": "unclassified",
+                        "plan": None, "dependsOn": [], "actual": [{"date": "2026-09-28", "seconds": 300}]}]}]}
     if path == "/api/core/views/review":
         return 200, {"today": "2026-09-28", "weekStart": "2026-09-28", "weekEnd": "2026-10-04",
                      "planVsActual": [{"projectId": "p_3c", "key": "k", "name": "garden", "plan": None,
@@ -448,7 +453,9 @@ def test_list_time_sessions_shape(servers):
     assert r["items"][0] == {"eventId": "evt_0", "startAt": "2026-09-28T00:30:00+08:00",
                              "endAt": "2026-09-28T10:30:00+08:00", "durationSeconds": 3600, "mode": "do",
                              "source": "timer-backend", "taskId": "t_a1", "projectId": "p_3c", "zoneId": "z_7f",
-                             "path": "学习 / garden / 写提示词"}
+                             "path": "学习 / garden / 写提示词", "unclassified": False}
+    unc = r["items"][2]  # v1.5：记在项目「未分类」上的一段
+    assert (unc["taskId"], unc["path"], unc["unclassified"]) == ("t_unc_p_3c", "学习 / garden / 未分类", True)
     bf = r["items"][-1]
     assert (bf["mode"], bf["source"], bf["taskId"], bf["path"]) == ("review", "manual-backfill", None, "学习 / garden")
     assert bf["startAt"] == "2026-09-27T11:50:00+08:00"  # 没有 data.startAt：结束 − 时长
@@ -476,16 +483,22 @@ def test_list_time_sessions_cursor_binds_to_and_from(servers):
 
 def test_get_daily_time(servers):
     r = ok(servers, "get_daily_time", {"fromDate": "2026-09-27", "toDate": "2026-09-28"})
-    assert r["today"] == "2026-09-28" and r["totalSeconds"] == 4300
+    assert r["today"] == "2026-09-28" and r["totalSeconds"] == 4600
+    no = {"unclassified": False}
     assert r["items"] == [
-        {"date": "2026-09-27", "projectId": "p_3c", "taskId": "t_gone", "seconds": 100, "path": None},  # 已删
-        {"date": "2026-09-28", "projectId": "p_3c", "taskId": "t_a1", "seconds": 3600, "path": "学习 / garden / 写提示词"},
-        {"date": "2026-09-28", "projectId": "p_3c", "taskId": None, "seconds": 600, "path": "学习 / garden"},
+        {"date": "2026-09-27", "projectId": "p_3c", "taskId": "t_gone", "seconds": 100, "path": None, **no},  # 已删
+        {"date": "2026-09-28", "projectId": "p_3c", "taskId": "t_a1", "seconds": 3600,
+         "path": "学习 / garden / 写提示词", **no},
+        {"date": "2026-09-28", "projectId": "p_3c", "taskId": None, "seconds": 600, "path": "学习 / garden", **no},
+        # v1.5：项目当天「未分类」的合计——不是普通任务，get_task_tree / list_projects 里看不到它
+        {"date": "2026-09-28", "projectId": "p_3c", "taskId": "t_unc_p_3c", "seconds": 300,
+         "path": "学习 / garden / 未分类", "unclassified": True},
     ]
+    assert "t_unc_p_3c" not in {t["taskId"] for t in ok(servers, "get_task_tree", {"limit": 200})["items"]}
     _, _, q, _ = next(x for x in Fake.requests if x[1] == "/api/core/views/gantt")
     assert q == {"from": ["2026-09-27"], "to": ["2026-09-28"]}
     p1 = ok(servers, "get_daily_time", {"fromDate": "2026-09-27", "toDate": "2026-09-28", "limit": 2})
-    assert p1["totalSeconds"] == 4300 and p1["truncated"] is True
+    assert p1["totalSeconds"] == 4600 and p1["truncated"] is True
     assert err(servers, "get_daily_time", {"fromDate": "2026-09-26", "toDate": "2026-09-28",
                                            "cursor": p1["nextCursor"]})["status"] == 400
 
