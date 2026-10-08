@@ -356,3 +356,18 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .lanes-state { font-size: var(--fs-sub); font-weight: 400; color: var(--ink-2); margin-left: var(--sp-1); }
 .lanes-range { display: flex; gap: var(--sp-2); }
 .lanes-range .mode-tab { flex: 0 1 auto; font-size: var(--fs-sub); }
+
+/* ── 「你在 X，记到哪？」（2026-10-08，ring-choice.js，nexus-core v2.14 自动跟踪）──
+ * 卡的壳（边、底、浮上来的动效）是共享 lanes.css 的 .hcl-card / .hcl-lead；这里只管卡里的表单。
+ * 窄屏每个控件独占一行（flex 换行 + 最小宽度），窗口标题再长也不撑破卡。 */
+.choice-card { display: grid; gap: var(--sp-2); min-width: 0; }
+.choice-title { font-size: var(--fs-body); overflow-wrap: anywhere; }
+.choice-window { font-weight: 600; }
+.choice-form { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-width: 0; }
+.choice-form .field { flex: 1 1 11em; min-width: 0; max-width: 100%; }
+.choice-remember { flex: 1 1 100%; display: flex; align-items: center; gap: var(--sp-1); min-height: var(--tap);
+  font-size: var(--fs-sub); color: var(--ink-2); }
+.choice-form .btn { flex: 0 1 auto; }
+.choice-message { font-size: var(--fs-sub); color: var(--ink-2); overflow-wrap: anywhere; }
+.choice-message.is-error { color: var(--danger); }
+
