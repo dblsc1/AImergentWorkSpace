@@ -249,3 +249,55 @@ def test_reorder_only_draft_lists_moves(browser, static_base_url):
         page.click(".rules-diff summary")
         tags = page.eval_on_selector_all("#rules-diff-list .diff-tag", "ts => ts.map(t => t.textContent)")
         assert tags == ["挪动 #2 → #1", "挪动 #1 → #2"]
+
+
+# ------------------------------------------------------------------ 只到项目的规则（detector.rules.v1 v1.1）
+
+P_RULE = {"id": "r_p", "app": "figma", "title": None, "taskId": None, "projectId": "p_book", "confidence": 0.9,
+          "note": None, "enabled": True}
+
+
+def test_project_target_rule_shown_and_round_trips(browser, static_base_url):
+    stub = RulesStub()
+    stub.rules = [copy.deepcopy(P_RULE), copy.deepcopy(RULES[0]), {**P_RULE, "id": "r_pg", "projectId": "p_gone"}]
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        assert page.input_value(row(page, 0, "taskId")) == "p:p_book"
+        assert page.eval_on_selector(row(page, 0, "taskId"), "s => s.selectedOptions[0].textContent") \
+            == "练琴区 / 考级计划 · 未分类（只到项目）"
+        assert page.input_value(row(page, 2, "taskId")) == "p:p_gone"
+        assert "项目已删除（p_gone）" in page.inner_text(row(page, 2, "taskId"))
+        page.select_option(row(page, 1, "taskId"), "p:p_eng")     # 任务 → 只到项目
+        page.select_option(row(page, 0, "taskId"), "t_read")      # 只到项目 → 任务
+        page.click("#rules-save")
+        page.wait_for_selector("#rules-message:not([hidden])")
+        put = [c for c in stub.calls if c[0] == "PUT"]
+        assert put[0][3] == {"rules": [
+            {"id": "r_p", "app": "figma", "title": None, "taskId": "t_read", "confidence": 0.9, "note": None,
+             "enabled": True},                                     # 到任务的规则不带 projectId 键（同 v1）
+            {"id": "r_1", "app": "code", "title": "garden", "taskId": None, "projectId": "p_eng", "confidence": 0.9,
+             "note": "编辑器", "enabled": True},
+            {"id": "r_pg", "app": "figma", "title": None, "taskId": None, "projectId": "p_gone", "confidence": 0.9,
+             "note": None, "enabled": True}]}
+
+
+def test_project_target_422_and_describe(browser, static_base_url):
+    stub = RulesStub()
+    stub.rules = [copy.deepcopy(P_RULE)]
+    stub.put_reply = (422, {"detail": "规则有误", "errors": [{"index": 0, "field": "projectId", "message": "项目不存在"}]})
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        page.fill(row(page, 0, "note"), "x")
+        page.click("#rules-save")
+        page.wait_for_selector('#rules-list > li[data-index="0"] .field-error')
+        assert "项目不存在" in page.inner_text('#rules-list > li[data-index="0"]')
+        said = page.evaluate("""() => {
+            const R = window.assistantRules, projects = R.projectPaths({zones: [{id: 'z', name: '区'}],
+                projects: [{id: 'p', zoneId: 'z', name: '<b>项</b>'}]});
+            return [R.describe({app: 'a', title: null, taskId: null, projectId: 'p', confidence: 0.9}, {}, projects),
+                    R.describe({app: 'a', title: null, taskId: null, projectId: 'p_x', confidence: 0.9}, {}, projects),
+                    R.toWire({app: 'a', title: '', taskId: 't', projectId: null, confidence: '0.5'})];
+        }""")
+        assert said[0] == "程序 /a/ → 区 / <b>项</b> · 未分类 · 90%"
+        assert said[1] == "程序 /a/ → 项目已删除（p_x） · 90%"
+        assert said[2] == {"app": "a", "title": None, "taskId": "t", "confidence": 0.5, "note": None, "enabled": True}

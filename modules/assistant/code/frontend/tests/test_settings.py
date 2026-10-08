@@ -23,7 +23,7 @@ DEFAULTS = {
                 "ips": True, "usernames": True, "longNumbers": True},
     "idle": {"afkThresholdMinutes": 0, "audibleAsPresent": False, "focusAppsEnabled": False, "focusApps": None,
              "focusMaxMinutes": 60, "idleSuggestions": False},
-    "segmentByTitle": True, "segmentByTitleApps": None,
+    "segmentByTitle": True, "segmentByTitleApps": None, "autoTrack": False,
 }
 
 CUSTOM = copy.deepcopy(DEFAULTS)
@@ -437,3 +437,56 @@ def test_segment_apps_validation_and_422(browser, static_base_url):
         r = page.evaluate("""() => ['segmentByTitleApps.0: too long', 'segmentByTitle: Input should be a valid boolean']
             .map(d => window.assistantSettings.fieldOf(d))""")
         assert r == ["segmentByTitleApps", "segmentByTitle"]
+
+
+# ------------------------------------------------------------------ autoTrack（v1.3，nexus-core v2.14）
+
+
+def test_auto_track_default_off_with_greyed_explanation(browser, static_base_url):
+    stub = DetectorStub()
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        assert not page.is_checked('[data-key="autoTrack"]')        # 存下的文档没有这个键 = 关
+        assert "允许 AI 管理进行中的任务" in page.inner_text('[data-field="autoTrack"] .set-opt')
+        hint = page.inner_text('[data-field="autoTrack"] .set-hint')
+        assert "一切照旧" in hint and "手动计时的时候 AI 不插手" in hint and "在场心跳" in hint
+
+
+def test_auto_track_on_round_trip_and_turns_presence_on_when_never_set(browser, static_base_url):
+    stub = DetectorStub()
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        page.check('[data-key="autoTrack"]')
+        page.click("#det-save")
+        page.wait_for_selector("#det-message:not([hidden])")
+        assert puts(stub) == [("PUT", "settings", "dev_a", {**CUSTOM, "autoTrack": True, "presence": True})]
+        page.reload()
+        ready(page)
+        assert page.is_checked('[data-key="autoTrack"]')
+        assert page.is_visible("#det-presence-row") and page.is_checked("#det-presence")
+        page.uncheck('[data-key="autoTrack"]')
+        page.click("#det-save")
+        page.wait_for_selector("#det-message:not([hidden])")
+        assert puts(stub)[1][3] == {**CUSTOM, "autoTrack": False, "presence": True}   # 关掉不动心跳
+
+
+def test_auto_track_keeps_an_explicit_presence_choice(browser, static_base_url):
+    doc = {**copy.deepcopy(DEFAULTS), "presence": False}
+    stub = DetectorStub(settings={"dev_a": doc, "dev_b": None})
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        page.check('[data-key="autoTrack"]')
+        page.click("#det-save")
+        page.wait_for_selector("#det-message:not([hidden])")
+        assert puts(stub)[0][3] == {**doc, "autoTrack": True}        # 人明确关过心跳：不替他打开
+
+
+def test_auto_track_422_lands_on_its_field(browser, static_base_url):
+    stub = DetectorStub()
+    stub.put_reply = (422, {"detail": "autoTrack: Input should be a valid boolean"})
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        page.check('[data-key="autoTrack"]')
+        page.click("#det-save")
+        page.wait_for_selector('[data-field="autoTrack"] .field-error:not([hidden])')
+        assert "valid boolean" in page.inner_text('[data-field="autoTrack"] .field-error')

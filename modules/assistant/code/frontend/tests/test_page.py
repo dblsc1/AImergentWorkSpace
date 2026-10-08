@@ -11,7 +11,7 @@ from conftest import open_page, overflowing
 def test_sections_in_order_and_review_links(browser, static_base_url):
     with open_page(browser, static_base_url) as page:
         ids = page.eval_on_selector_all("main > section", "ss => ss.map(s => s.id)")
-        assert ids == ["chat-panel", "suggest-panel", "unclassified-panel", "settings-panel", "review-panel"]
+        assert ids == ["chat-panel", "suggest-panel", "unclassified-panel", "auto-panel", "settings-panel", "review-panel"]
         assert page.title() == "AI助理"
         assert page.get_attribute("#review-lanes", "href") == "../ring/#lanes-panel"
         assert page.get_attribute("#review-hive", "href") == "../hive/"

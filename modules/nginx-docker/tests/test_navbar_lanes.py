@@ -386,3 +386,119 @@ def test_preview_reorder_slides_rows_without_scaling(browser) -> None:
         assert got["order"] == ["run_e", "run_c", "run_a", "run_b"]
         assert got["ids"] == ["run_a", "run_b", "run_c", "run_e"] and not got["scaled"]
         assert got["transforms"] == ["none"]
+
+
+# ------------------------------------------------------------------ 自动跟踪（nexus-core v2.14）
+
+
+def _poll(page: Page) -> None:
+    page.evaluate("() => window.dispatchEvent(new Event('honeycomb:timer-changed'))")
+
+
+def _auto(page: Page, seconds_ago: int, **over: Any) -> dict[str, Any]:
+    since = datetime.fromtimestamp(page.evaluate("() => Date.now()") / 1000 - seconds_ago, timezone.utc).isoformat()
+    return {"taskId": "t1", "projectId": "p1", "taskName": "做题", "projectName": "<b>数学</b>", "since": since,
+            "app": "code", "title": "garden", "source": "rules", **over}
+
+
+NAV_SEL = "[data-ckpt-nav]"
+WORD = "document.querySelector('.ckpt-live-word').textContent"
+
+
+def test_chip_shows_auto_track_with_ticking_clock_and_no_extra_requests(browser) -> None:
+    with open_site(browser) as (page, site):
+        site.current = {"running": False, "auto": _auto(page, 65), "needsChoice": None}
+        _poll(page)
+        page.wait_for_function(f"() => {WORD} === '自动 · <b>数学</b> / 做题'")
+        assert page.get_attribute(NAV_SEL, "data-ckpt-auto") == ""
+        assert page.get_attribute(NAV_SEL, "data-ckpt-timer") == "idle"      # 不是手动计时那个状态
+        assert page.locator(".ckpt-live-word b").count() == 0                # 项目名只当文本
+        assert page.text_content(".ckpt-elapsed") == "01:05"
+        settle(page, 3000)
+        assert page.text_content(".ckpt-elapsed") == "01:08"
+        assert page.is_hidden(".ckpt-need") and page.get_attribute(NAV_SEL, "data-ckpt-choice") is None
+        # 只到项目：只写项目名
+        site.current = {"running": False, "auto": _auto(page, 5, taskId=None, taskName=None), "needsChoice": None}
+        _poll(page)
+        page.wait_for_function(f"() => {WORD} === '自动 · <b>数学</b>'")
+        # 没了就回到「未在计时」
+        site.current = {"running": False, "auto": None, "needsChoice": None}
+        _poll(page)
+        page.wait_for_function(f"() => {WORD} === '未在计时'")
+        assert page.get_attribute(NAV_SEL, "data-ckpt-auto") is None
+        assert site.lanes_urls == []                                         # 预览没打开：一次泳道都不拉
+
+
+def test_manual_timer_always_wins_over_auto_and_choice(browser) -> None:
+    with open_site(browser) as (page, site):
+        need = {"key": "wk_1", "app": "code", "title": "x", "since": _auto(page, 90)["since"]}
+        start = datetime.fromtimestamp(page.evaluate("() => Date.now()") / 1000 - 10, timezone.utc).isoformat()
+        # 服务端在计时时本来就给 null；就算带了，芯片也只认手动计时
+        site.current = {"running": True, "sessionStartAt": start, "project": {"id": "p1", "name": "数学"},
+                        "task": {"id": "t1", "name": "手动的任务", "kind": "normal"},
+                        "auto": _auto(page, 65), "needsChoice": need}
+        _poll(page)
+        page.wait_for_function(f"() => {WORD} === '手动的任务'")
+        assert page.get_attribute(NAV_SEL, "data-ckpt-auto") is None
+        assert page.get_attribute(NAV_SEL, "data-ckpt-choice") is None and page.is_hidden(".ckpt-need")
+        assert page.get_attribute(NAV_SEL, "data-ckpt-timer") == "running"
+        # 本机暂停着：也不让 auto 顶掉「已暂停」
+        page.evaluate("() => localStorage.setItem('nexus.timer.paused.v1', JSON.stringify({taskId: 't1'}))")
+        site.current = {"running": False, "auto": _auto(page, 65), "needsChoice": None}
+        _poll(page)
+        page.wait_for_function(f"() => {WORD} === '已暂停'")
+        assert page.get_attribute(NAV_SEL, "data-ckpt-auto") is None
+
+
+def test_needs_choice_dot_on_chip(browser) -> None:
+    with open_site(browser) as (page, site):
+        assert page.is_hidden(".ckpt-need")
+        label = page.get_attribute("[data-ckpt-chip]", "aria-label")
+        need = {"key": "wk_1", "app": "code", "title": "<i>x</i>", "since": _auto(page, 90)["since"]}
+        site.current = {"running": False, "auto": None, "needsChoice": need}
+        _poll(page)
+        page.wait_for_selector(".ckpt-need", state="visible")
+        assert page.get_attribute(NAV_SEL, "data-ckpt-choice") == ""
+        assert page.get_attribute("[data-ckpt-chip]", "title") == "有个窗口不知道记到哪 —— 去计时页选"
+        assert page.get_attribute("[data-ckpt-chip]", "aria-label") == label + "；有个窗口不知道记到哪 —— 去计时页选"
+        assert page.get_attribute("[data-ckpt-chip]", "href") == "/ring/"
+        # 可以和 auto 同时有（等人选的不一定是前台窗口）
+        site.current = {"running": False, "auto": _auto(page, 5), "needsChoice": need}
+        _poll(page)
+        page.wait_for_function(f"() => {WORD}.startsWith('自动 · ')")
+        assert page.is_visible(".ckpt-need")
+        site.current = {"running": False}                                    # 老后端：没有这两个键
+        _poll(page)
+        page.wait_for_selector(".ckpt-need", state="hidden")
+        assert page.get_attribute("[data-ckpt-chip]", "aria-label") == label
+        # 网关降级体：一并收掉
+        site.current = {"running": False, "auto": _auto(page, 5), "needsChoice": need, "degraded": True}
+        _poll(page)
+        page.wait_for_function(f"() => document.querySelector('{NAV_SEL}').dataset.ckptTimer === 'degraded'")
+        assert page.is_hidden(".ckpt-need") and page.get_attribute(NAV_SEL, "data-ckpt-auto") is None
+
+
+def test_preview_status_line_shows_auto_with_clock(browser) -> None:
+    d = json.loads(json.dumps(fx.LANES_FULL))
+    d["human"]["running"] = None
+    d["human"]["auto"] = {"taskId": None, "projectId": "p_1", "taskName": None, "projectName": "<b>花园</b>",
+                          "since": fx.at("10:15"), "app": "code", "title": "garden", "source": "rules"}
+    with open_site(browser, d) as (page, site):
+        hover_open(page)
+        assert page.text_content(f"{POP} .hcl-status .hcl-auto-text") == "自动 · <b>花园</b>"
+        assert page.locator(f"{POP} .hcl-status b").count() == 0
+        assert page.text_content(f"{POP} .hcl-status .hcl-clock") == "05:00"
+        settle(page, 2000)
+        assert page.text_content(f"{POP} .hcl-status .hcl-clock") == "05:02"
+
+
+@pytest.mark.parametrize("width", [320, 390])
+def test_auto_chip_fits_narrow_screens(browser, width) -> None:
+    with open_site(browser, width=width) as (page, site):
+        need = {"key": "wk_1", "app": "code", "title": "x", "since": _auto(page, 90)["since"]}
+        site.current = {"running": False, "needsChoice": need,
+                        "auto": _auto(page, 3700, projectName="很长很长的项目名字" * 6, taskName="很长的任务名" * 6)}
+        _poll(page)
+        page.wait_for_function(f"() => {WORD}.startsWith('自动 · ')")
+        assert page.text_content(".ckpt-elapsed") == "1:01:40"
+        assert page.evaluate("() => document.documentElement.scrollWidth <= document.documentElement.clientWidth")

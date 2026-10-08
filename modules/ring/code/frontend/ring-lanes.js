@@ -10,6 +10,9 @@
  * - 约 15 秒轮询，页面不可见时不拉；404（后端早于 v2.4）或共享渲染件加载失败 → 整块不出现。
  * - 画的是标记，不是时长：不出现任何合计。label/agent/detail/app/title 一律 textContent（lanes.js 保证）。
  * - 面板标题的红绿灯读的是同一份响应里在跑运行的当前相位（与 views/current 的 agents[].phase 同源）。
+ * - 自动跟踪（nexus-core v2.14）：human.auto → 人那张卡上的「自动 · 项目 / 任务」+ 走秒（lanes.js 画）；
+ *   human.needsChoice → 泳道最上面一张「你在 X，记到哪？」（ring-choice.js 做卡，经 opts.lead 交给 lanes.js 摆）。
+ *   卡出现后一直留到人答 / 说这次不选——人得切到浏览器来答，期间服务端换了别的窗口也不换卡；手动开始计时就收。
  */
 (function () {
   "use strict";
@@ -28,10 +31,22 @@
   var last = null;     // 最近一次成功的响应
   var gone = false;    // 404：后端没有这个端点，不再拉
   var seq = 0;
+  var lead = null;     // 「你在 X，记到哪？」那张卡（没有为 null）
+
+  function closeLead() {
+    lead = null;
+    if (last && last.human) last.human.needsChoice = null;   // 手里这份响应还写着它：别马上又问一遍
+    draw();
+    load();
+    window.dispatchEvent(new Event("honeycomb:timer-changed"));   // 顶栏芯片上的小点跟着收
+  }
 
   function draw() {
     var L = window.HoneycombLanes;
     if (!last || !L) return;
+    var human = last.human || {};
+    if (human.running) lead = null;                         // 手动计时永远优先
+    else if (!lead && human.needsChoice && window.RingChoice) lead = window.RingChoice.card(human.needsChoice, closeLead);
     var now = Date.parse(last.now);
     var v0, v1;
     if (hours) {
@@ -42,7 +57,7 @@
       v0 = v1 - DAY;
     }
     var infos = L.render(view, last, {
-      viewStart: v0, viewEnd: v1, presence: true, cards: true, top: 5,
+      viewStart: v0, viewEnd: v1, presence: true, cards: true, top: 5, lead: lead,
       focusFallback: document.getElementById("lanes-title"),   // 「还有 N 个」重画后没了时焦点落这里
       more: last.truncated ? "还有更多（只列出了最新的一部分）" : ""
     });

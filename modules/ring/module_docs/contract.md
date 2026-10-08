@@ -117,6 +117,23 @@ consumes:
       页面分工（设计意图，仓主 2026-09-30 定）：**计时页（ring）= 现在**——在跑的计时、全部泳道；
       **任务 / 项目页（hive）= 未来**——计划；**新页「AI助理」= 回顾与分析**——聊天、待确认的活动建议、检测程序设置、
       回顾与分析（2026-09-30 已建，`modules/assistant`；聊天与待确认面板已搬过去）。泳道的历史某天视图将来可从「AI助理」链过来，本版不要求。
+  - id: nexus-core.activity.auto.v1
+    contract: ../nexus-core/module_docs/contract.md
+    purpose: >
+      自动跟踪在计时页上的两样东西（2026-10-08，nexus-core v2.14；数据都在已经在拉的 `views.lanes.v1` 响应里，不多一个轮询）。
+      ① `human.auto` 非 null 且 `human.running` 为 null：人那张卡的卡头多一粒胶囊「自动 · 项目 / 任务」（只到项目时
+      「自动 · 项目」）+ 从 `since` 起走秒的钟（`MM:SS` / `H:MM:SS`，一秒一跳）；`--plan` 色虚线边，与「计时中」（实线）
+      和「在电脑前」分得开；轨道上**不画**计时段（它不是手动计时）。② `human.needsChoice` 非 null 且没在计时：泳道
+      最上面（人那张卡之前）一张卡「你在 <程序 · 标题>，记到哪？」（`code/frontend/ring-choice.js`）：项目下拉
+      （`views.tree.v1`，不列 `status: "done"` 的项目）→ 任务下拉（缺省「未分类」，不列已完成的任务）、勾选项
+      「以后这个窗口都这样记」（缺省勾）、按钮「确定」（没选项目时禁用）与「这次不选」。
+      「确定」= `POST /api/core/activity/choice {key, taskId | projectId, remember}`；「这次不选」=
+      `POST /api/core/activity/choice/dismiss {key}`。成功即收卡，并发 `honeycomb:timer-changed`（顶栏芯片上的小点跟着收）；
+      例外先留一句说明、人点「知道了」才收：响应 `pseudonymized: true`（标题是代号，没法记住）、勾了记住但
+      `remembered: false`（规则没写成）、404 且是窗口已不在在场记录里。其他失败（含选的任务 / 项目刚被删的 404）
+      卡留着、显示「没记上：detail」。**卡是粘的**：出现后留到人答 / 说这次不选——之后的轮询换了别的窗口或不再报，
+      卡不换、表单与焦点不丢；手动开始计时（`running` 非 null）就收。人一直不答 = 什么都不发生（那段活动照常进
+      「待确认」）。程序名、标题、项目名、任务名只当文本渲染。
 ```
 
 ## 对外 API
@@ -149,6 +166,7 @@ consumes:
 
 | 日期 | CR | 变更 |
 |---|---|---|
+| 2026-10-08 | 仓主：留一个开关——允许 / 不允许 AI 管理进行中的任务；规则认不出时提醒人选项目 / 任务（自动跟踪第一步） | 认 nexus-core v2.14 在 `views.lanes.v1` 的 `human` 上追加的 `auto` / `needsChoice`（新增 consumes `nexus-core.activity.auto.v1`，写全了行为）：没在计时时人那张卡上出「自动 · 项目 / 任务」胶囊 + 走秒的钟（共享件 `lanes.js` 画）；规则认不出的窗口停留够久时泳道最上面出一张「你在 X，记到哪？」（新文件 `ring-choice.js`，经 `lanes.js` 的 `opts.lead` 摆在人那张卡之前，随换位动效浮上来），选项目 →（可选）任务，缺省勾「以后这个窗口都这样记」，「确定」/「这次不选」。**手动计时永远优先**：在计时时两样都不出现，圆环、开始 / 暂停 / 停止的行为一概不变。开关关着（缺省）时服务端不给这两个键，页面与此前相同。只增 |
 | 2026-07-31 | 无（首次填实，非破坏性变更） | 契约从模板占位填实：provides（渲染入口 + 静态路由）、consumes（nexus-core views/current，字段级列明）；对应代码见 `code/frontend/` 提交 `7b34679` |
 | 2026-08-01 | 产品决定：四前端做成完整页面，可写但走统一入口 | v0.2：ring 由纯只读改为**可控制计时**。新增 consumes `timer.v1`（start/stop）与 `views.tree.v1`（任务选择器数据源）。**仍不直接写事实**——events 不向前端开放，计时由 timer 代劳 |
 | 2026-08-08 | 无（**代码先行的追平**，非新变更——两项能力已在 `code/frontend/` 落地并有测试覆盖，本文件此前没跟上，不是先批后做） | v0.3：`timer.v1` 的 purpose 补上 `POST /api/core/timer/cancel`（F-RING-2 取消按钮，对应代码 commit `27c506d` 之前的 `696112d`）；新增 consumes `nexus-core.views.gantt.v1`（F-RING-1"今天"数据源，产品决定不新开端点、复用甘特既有读端，字段级列明 `today`/`projects[].tasks[].id`/`actual[].{date,seconds}`，对应代码 commit `27c506d`）；`views.current.v1` 的 purpose 同步注明 `totalSeconds`/`shareOfPlan` 已让位给 `views.gantt.v1`、仅作不可达兜底；「依赖的外部契约」表拆成 views/timer 两行、覆盖 `GanttOut`/`TimerCancelOut`。本轮同时要求：module_docs/contract.md 的 `consumes` 缺口是本次唯一改动面，**不动代码**（本轮无对应代码 commit） |
