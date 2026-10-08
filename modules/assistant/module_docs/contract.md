@@ -181,6 +181,7 @@ consumes:
 
 | 日期 | CR | 变更 |
 |---|---|---|
+| 2026-10-08 | 仓主：规则认不出就让 AI 出来写规则，人要能管住它 | nexus-core v2.15 / `detector.rules.v1` v1.2：「规则」分页里带 `auto: true` 的规则行头标「AI 自动」（`rules.js`；照常能改、能删、能停用），整套保存时把读到的 `author` / `auto` 原样带回（`toWire`）；「自动记录」面板里 `ai: true` 的段标「AI 认的」（`auto.js`），改归属照旧。测试：`tests/test_rules.py`、`tests/test_auto.py` 各一条 |
 | 2026-10-08 | 仓主：留一个开关——允许 / 不允许 AI 管理进行中的任务（自动跟踪第一步） | ① 活动检测设置最上面新增一组「进行中的任务」：勾选项「允许 AI 管理进行中的任务」（`detector.settings.v1` v1.3 的 `autoTrack`，缺省关）+ 灰字说明；勾上保存且没设过 `presence` 时一并发 `presence: true`。② 分类规则编辑器认只到项目的规则（`detector.rules.v1` v1.1 的 `projectId`）：「归到」下拉多出每个项目的「· 未分类（只到项目）」。③ 新增第四块「自动记录」（`auto.js`、`#auto-panel`，在待分类与活动检测设置之间）：今天自动记下的每一段 + 「改归属…」下拉（nexus-core v2.14 的 `GET /api/core/activity/auto` 与扩了范围的 reassign）；没有段 / 端点 404 时整块不出现。新增 consumes `nexus-core.activity.auto.v1`。只增：开关关着、没有只到项目的规则时页面与此前逐像素相同（多一组开关除外）。**须与 nexus-core v2.14 同版发布** |
 | 2026-10-08 | 仓主：学历史是要的，直接把历史加进 AI 的上下文 | 「让 AI 匹配」发的那句固定的话加上「先看我以前是怎么归类的（同类窗口照以前的定）」「看得出项目的一定标上项目」：助理经 `mcp.tools.v1` v1.7 的 `get_match_history` 读匹配历史（nexus-core v2.12）。本页自己不读历史端点，不新增 consumes，界面零改动 |
 | 2026-10-08 | 仓主：记进未分类的时间能不能追加「归入 xxx 任务」 | 新增第三块「待分类」（`unclassified.js`、`#unclassified-panel`，在待确认建议与检测设置之间）：按项目列出还记在「未分类」时间桶上的每一段，下拉限本项目任务（+「其他项目…」），逐段「归入」或「全部归入所选任务」= nexus-core v2.11 的 `POST /api/core/sessions/{eventId}/reassign`；没有可归的段 / 端点 404 时整块不出现 |

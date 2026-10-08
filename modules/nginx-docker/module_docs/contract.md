@@ -84,6 +84,13 @@ nexus-core v2.14「自动跟踪进行中的任务」在 `views.current.v1`（也
 只改这些钟的字。`render` 新增 `opts.lead`（卡片式）：调用方的一张置顶卡，摆在人那张卡之前（`data-run-id="lead"`、
 class 加 `hcl-card hcl-lead`），同一个节点跨重画搬过来（表单状态、焦点不丢），换位动效把它当一张卡。
 
+**2026-10-08 追加（nexus-core v2.15「让 AI 认窗口」）**：共享的 `static/lanes.js` 的 `humanStatus` 多回两样——
+`auto.ai`（`human.auto.source` 为 `"ai"`，`auto.text` 末尾带「（AI 认的）」，另带 `key` / `app` / `title`）与
+`thinking`（`human.aiThinking` 的窗口叫法，没有为 `null`）。卡片式（计时页）下：`thinking` 画成人那张卡头上一行小字
+「AI 正在认这个窗口…」（`.hcl-ai-thinking`，轻微呼吸，`prefers-reduced-motion` 下不动）；调用方给了 `opts.onAutoWrong`
+且 `auto.ai` 时，胶囊后面多一个「不对」按钮（`.hcl-auto-wrong`），点了调 `opts.onAutoWrong(auto)`。顶栏预览不给这个回调，
+所以没有按钮；芯片的文字、小点与请求数不变（`views/current` 的 `aiThinking` 顶栏不读）。
+
 ## 暂停与累计（v0.2.5）
 
 后端没有暂停：暂停时 `views/current` 是空闲。芯片**只读**两个本机键（形状见

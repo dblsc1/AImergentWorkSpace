@@ -139,6 +139,19 @@
 > 只在 `autoTrack` 打开时、只对规则高把握命中的段被取代**（那条规则是人写的或人点了应用的），取代条目见该节末尾。
 > 手动计时永远优先。既有字段、端点行为一个不改。
 >
+> **v2.15（追加式）**：**规则认不出的窗口，先让 AI 认一下，认不出再请人选。** 仓主 2026-10-08：「认不出，让 AI 出来写规则；
+> 写不出规则、也没有现成任务对得上，提醒人选项目和任务」「cockpit 能不能主动调 opencode 做匹配」。这是 v2.14 留的第二步，
+> 插在 `next_step` 的 `"ask_ai"` 上（见「让 AI 认窗口」节）。nexus-core 够不着聊天后端（`gateway.v1` 第八节），所以是
+> **对方来取**：聊天后端的后台工人经 MCP 定时调 ① `POST /api/core/activity/ai/claim`（此刻等 AI 认的那一个窗口，并认领），
+> 有窗口就跑一轮模型、经 MCP 调 ② `POST /api/core/activity/ai/suggest`（`{key, taskId | projectId, confidence, reason}` 或
+> `{key, none: true, reason}`）——**只在那个窗口此刻被认领着等回答时收，写下的是只认这一个窗口的一条规则**
+> （`detector.rules.v1` v1.2：带 `author: "assistant"`、`auto: true`）+ 按窗口的临时选择，`auto` 立刻显示、`source: "ai"`。
+> ③ `views/lanes` 的 `human` 与 `views/current` 顶层追加 `aiThinking`（AI 正在认的窗口，这期间它不出现在 `needsChoice`），
+> `auto` 追加 `key`、`source` 追加取值 `"ai"`；④ 人说「不对」：`POST /api/core/activity/choice/reject {key}`（只收人）撤掉 AI 写的
+> 规则与临时选择；⑤ `GET /api/core/activity/auto` 每条追加 `ai`。**没人来认领（没装 / 没配聊天后端）时一切与 v2.14 完全相同，
+> 一秒也不多等。** 这是「AI 只能写规则草稿、应用要人点」的**第二条取代条目**（只对被认领的那一个窗口、只在 `autoTrack` 打开时），
+> 见该节末尾；`propose_detector_rules` 仍然只写草稿。既有字段、端点行为一个不改。
+>
 > v1.9：`GET /api/core/export` 产出的快照此前没有任何端点能吃
 > 回去（喂给 import 会被三层拒绝，而那三条拒绝各守一件实事，一条都不该放宽）。
 > 新增 `nexus-core.restore.v1`（`POST /api/core/restore`，见「快照恢复」节）：
@@ -343,6 +356,15 @@ provides:
       上传的段规则把握 ≥ 0.9 时直接记成 session.completed（ai.auto=true），与手动计时重叠 / 无操作 / 目标不存在的仍待确认；
       sessions.reassign.v1 追加放行自动记下的段；上传的 suggestion 可带 projectId（规则只到项目）
     status: 已实现（v2.14），待验证
+  - id: nexus-core.activity.auto-ai.v1
+    summary: 让 AI 认规则认不出的窗口（v2.15，activity.auto.v1 的第二步，同样挂在 autoTrack 下）——
+      POST /api/core/activity/ai/claim（聊天后端经 MCP 来取此刻等 AI 认的那一个窗口并认领；没有 → window null）、
+      POST /api/core/activity/ai/suggest {key, taskId | projectId, confidence, reason} | {key, none: true, reason}
+      （只在该窗口被认领着等回答时收；写一条只认这个窗口的规则 author=assistant auto=true + 临时选择）、
+      POST /api/core/activity/choice/reject {key}（人说「不对」，带 Bearer 403）；三个端点带 Bearer 一律 403；
+      views/lanes 的 human 与 views/current 顶层追加 aiThinking，auto 追加 key、source 追加 "ai"；
+      GET /api/core/activity/auto 每条追加 ai。没人认领 = 与 v2.14 完全相同
+    status: 已实现（v2.15），待验证
 consumes:
   - id: yq-event/v1
     contract: ../../contracts/yq-event.v1/contract.md
@@ -399,6 +421,10 @@ consumes:
 | POST | `/api/core/activity/choice` | `{key, taskId \| projectId, remember?}` | `ChoiceOut`（见「自动跟踪进行中的任务」节）；带 Bearer 403、404、422 | ✅ 已实现（v2.14） |
 | POST | `/api/core/activity/choice/dismiss` | `{key}` | `{key, dismissedUntil}`；带 Bearer 403、404、422 | ✅ 已实现（v2.14） |
 | GET | `/api/core/activity/auto` | 无 | `{items[]}`（今天自动记下的段，新的在前，至多 200 条） | ✅ 已实现（v2.14） |
+| POST | `/api/core/activity/ai/claim` | 无（空体或 `{}`） | `{window: null \| {key, app, title, claimedAt, answerBy}}`（见「让 AI 认窗口」节）；带 Bearer 403 | ✅ 已实现（v2.15） |
+| POST | `/api/core/activity/ai/suggest` | `{key, taskId \| projectId, confidence, reason}` 或 `{key, none: true, reason}` | `SuggestOut`；带 Bearer 403、400、404、409（不在等回答，什么都没写）、422 | ✅ 已实现（v2.15） |
+| POST | `/api/core/activity/choice/reject` | `{key}` | `{key, app, title, ruleRemoved}`；带 Bearer 403、404（不是 AI 认的）、422 | ✅ 已实现（v2.15） |
+| — | （v2.15 追加，无新端点）`views/lanes` 的 `human` 与 `views/current` 顶层追加 `aiThinking`；`auto` 追加 `key`、`source` 追加取值 `"ai"`；`GET /api/core/activity/auto` 每条追加 `ai`；规则追加可选的 `author`、`auto` | 见「让 AI 认窗口」节 | | ✅ 已实现（v2.15） |
 | — | （v2.14 追加，无新端点）在场心跳可带 `guess`；`views/lanes` 的 `human` 与 `views/current` 顶层追加 `auto`、`needsChoice`；上传的 `suggestion` 可带 `projectId`、列表每条追加 `auto`；改挂端点放行自动记下的段；`DetectorSettings` 追加 `autoTrack`、规则可用 `projectId` 代替 `taskId` | 见「自动跟踪进行中的任务」节 | | ✅ 已实现（v2.14） |
 | ~~GET~~ | ~~`/api/core/zones`~~ | 无 | `[ZoneOut]` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
 | ~~POST~~ | ~~`/api/core/zones`~~ | `{name, color?, order?}` | `ZoneOut` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
@@ -2906,6 +2932,142 @@ v2.4「心跳不会变成建议，建议也不读心跳」仍成立；新增的�
 - 不做「撤销自动记下的段」（删事实）；不做多设备合并（只看最近报心跳的那台）。
 - `auto` 不产生事实、不代替上传：检测程序没在跑同步（只开了心跳）时页面有「自动 · …」却不会落账。
 
+## 让 AI 认窗口（规范性 · v2.15，`nexus-core.activity.auto-ai.v1`）
+
+仓主 2026-10-08（原话见本文件头部 v2.15）。v2.14 的 `next_step` 在「规则没认出」与「请人选」之间留的那一步。
+**全部仍挂在那台设备的 `autoTrack` 下；手动计时永远优先（在计时就没有窗口在等 AI）。**
+
+### 谁来叫 AI：对方来取，不是我们去推
+
+nexus-core 不在 AI 桥内网上，够不着聊天后端（`gateway.v1` 第八节，不为此加网络通路）。所以由聊天后端的后台工人
+（`agent.chat.v1` 第十节）约每 25 秒经 MCP（`mcp.tools.v1` v1.9 `get_window_awaiting_target`）调一次 `ai/claim`：
+没有窗口在等就什么都不发生（不花模型的钱）；有，就跑一轮模型，模型经 MCP（`suggest_window_target`）调 `ai/suggest`。
+**「AI 这条路活着」= 最近 60 秒内有人调过 `ai/claim` 或 `ai/suggest`**——没装、没配模型、关了 `AGENT_AUTOTRACK` 的部署
+从来没人调，于是 `next_step` 永不返回 `"ask_ai"`，行为与 v2.14 逐字相同。
+
+命名常量（实现里是具名常量，`activity/auto_ai.py`；改它们要改这里）：
+
+| 常量 | 值 | 含义 |
+|---|---|---|
+| `AI_CLAIM_GRACE` | **60 秒** | 距最近一次认领 / 回答不超过它，才算这条路活着（没有问询的窗口才会等 AI） |
+| `AI_ANSWER_WAIT` | **120 秒** | 认领后这么久没回答 → 转去请人选；迟到的回答 409 |
+| `AI_RETRY` | **6 小时** | 同一个窗口问过一次（不论结果）后，这么久不再问 AI |
+| `AI_MAX_PER_HOUR` | **12** | 每租户每小时至多认领这么多次（满了的窗口直接请人选） |
+| `AI_TRUST` | **0.8** | AI 自报的把握 ≥ 它，写下的规则才给到自动记录的门槛 0.9；低于它按自报的存 |
+| `AI_KEEP` | **30 天** | 问询保留这么久（`source: "ai"`、「不对」、被否掉的猜测靠它认） |
+
+### `next_step` 的 `"ask_ai"` 与 `human.aiThinking`
+
+一个没有目标、没有「这次不选」的窗口，`next_step` 为 `"ask_ai"` 当且仅当：
+
+- 它有一份 6 小时内的问询、已认领、**还没回答、认领至今 ≤ 120 秒**；或
+- 它没有 6 小时内的问询，且：这条路活着、这一小时认领数 < 12、**写得出规则**（标题不是代号 `窗口名N` / `路径N`，
+  该设备 `privacy.titles` 不是 `"pseudonymize"`，转义后的正则 ≤ 200 字符——同 v2.14 `remember` 的条件）。
+
+其余都是 `"ask_human"`：没人来认领、认领后超时、AI 说认不出（`none`）、6 小时内问过、人说过「不对」、写不出规则、问满了。
+读端**仍然不写**：问询只在 `ai/claim` 时建。
+
+```jsonc
+"aiThinking": { "key": "wk_0a0a0a0a0a0a0a0a0a0a", "app": "kitty", "title": "✳ notes",
+                "since": "2026-10-08T10:02:00+08:00" }            // 与 needsChoice 同形
+```
+
+`aiThinking` 非 `null` 当且仅当 v2.14 `needsChoice` 的条件成立、只是把其中的 `"ask_human"` 换成 `"ask_ai"`（同样的 60 秒
+停留、同样的 5 分钟窗口、同样取停留最久的）。**同一个窗口不会同时出现在两处**；两个键可以同时非 `null`（说的是不同的窗口）。
+`views/current` 顶层同一份。页面在人那张卡上写一行「AI 正在认这个窗口…」，不出选卡。
+
+### 认领：`POST /api/core/activity/ai/claim`
+
+无请求体（空体或 `{}`）。`200 { "window": null }` 或：
+
+```jsonc
+{ "window": { "key": "wk_0a0a0a0a0a0a0a0a0a0a", "app": "kitty", "title": "✳ notes",   // 心跳里的原样（已在本机脱敏）
+              "claimedAt": "2026-10-08T02:03:00+00:00", "answerBy": "2026-10-08T02:05:00+00:00" } }
+```
+
+- 每次调用都记一次「这条路活着」，并清掉该租户 30 天前的问询。
+- **同一时刻每租户至多一个窗口在等**：有已认领、没回答、没超时的问询就原样再给它（重复调用幂等——工人重启、模型自己再读
+  一遍、另一个代理也来取，拿到的都是同一个）；否则取 `aiThinking` 的那个窗口，这一小时的认领数原子地 +1（满 12 → `null`），
+  写下问询 `{key, app, title, claimedAt}`（同一个窗口以前的问询整份换掉）。
+- **按租户**：只看、只认领调用方租户的窗口。
+- 带 `Authorization: Bearer` 一律 403，先于读请求体——AI 这两个端点只经 MCP（对内直连、不带 Bearer）调，同 v2.7 的 matches。
+
+### 回答：`POST /api/core/activity/ai/suggest`
+
+```jsonc
+// 认到了
+{ "key": "wk_0a0a0a0a0a0a0a0a0a0a",      // ^wk_[0-9a-f]{20}$，必须是此刻被认领着等回答的那个
+  "taskId": "t_a1",                       // 与 projectId 恰好给一个（1–128 字符）；projectId = 只到项目（记到它的「未分类」）
+  "confidence": 0.85,                     // 数字，0 < c ≤ 1
+  "reason": "历史里同一个窗口确认到这个任务" }   // 1–200 字符，给人看
+// 认不出
+{ "key": "wk_…", "none": true, "reason": "历史和任务树里都对不上" }
+// 200 SuggestOut
+{ "key": "wk_…", "outcome": "suggested" | "none", "taskId": "t_a1" | null, "projectId": "p_1" | null,
+  "confidence": 0.9 | null,               // 写进规则的把握（见下）
+  "autoRecord": true,                     // 规则写成了、且把握到了自动记录的门槛
+  "ruleWritten": true }                   // false = 规则没写成（已满 500 条 / 连续撞版本），临时选择照样生效
+```
+
+- **状态把关（唯一让这个写安全的东西）**：`key` 没有问询、已回答过、认领超过 120 秒 → **409，什么都没写**（`detail` 以
+  「什么都没写」结尾）。调用方**不能指定 `app` / `title`**——规则用的程序名与标题取自在场记录里那个窗口最近的一段，
+  请求体里多任何键都是 422。所以它只能给「此刻服务端认定在等 AI 的那一个窗口」写规则，写不了任意标题。
+- 还要求：那台设备 `autoTrack` 仍开着、窗口仍写得出规则、**人没有抢先对它做选择 / 说这次不选**（否则 409，不覆盖人）；
+  目标此刻存在（否则 404）；`taskId` 必须是**没完成的普通任务**（已完成、临时任务、「未分类」桶 → 400）。
+  404 / 400 不算回答：120 秒内可以改了再答。成功的回答（含 `none`）每次问询**恰好一次**（条件更新），再答 409。
+- **`none: true`** → 问询记 `outcome: "none"`，该窗口立刻转去 `needsChoice`。不带 `taskId` / `projectId` / `confidence`。
+- **认到了** → ① 往规则**最前面**加一条只认这个窗口的规则：与 v2.14 `remember` 写的同形（`app`、`title` 整串匹配的转义正则，
+  开头的状态符号 / 计数不钉死），外加 `id: "r_ai_" + key 去掉 "wk_"`、`author: "assistant"`、`auto: true`、
+  `note: "AI 认的：" + reason`（截到 120 字）、`confidence` = **自报 ≥ 0.8 → 0.9（自动记录的门槛），否则按自报的存**
+  （低于门槛：规则照样让 `auto` 显示、让上传的段带上建议，但不直接记成时间）。同 `app`/`title` 或同 `id` 的旧规则先去掉——
+  一个窗口至多一条。② 写下与人的选择同样的按窗口临时选择，所以 `auto` **立刻**显示。③ 问询记
+  `outcome: "suggested"` 与目标。
+- 带 Bearer 一律 403，先于读请求体。类型不对、多了未知键、`none` 与目标同给 → 422。
+
+### 出处：`auto.source: "ai"`、`auto.key`、`GET activity/auto` 的 `ai`
+
+- `human.auto`（`views/current` 的 `auto` 同）追加 `key`（当前窗口的键，总在）。`source` 追加取值 `"ai"`：这个窗口有
+  `outcome: "suggested"` 的问询、且此刻的目标（不论来自心跳的 `guess` 还是临时选择）就是 AI 给的那个。人后来自己选了别的 →
+  `"choice"`；别的规则给了别的目标 → `"rules"`。问询保留 30 天，之后它就是一条普通规则（规则页仍标着「AI 自动」）。
+- `GET /api/core/activity/auto` 每条追加 `ai`（布尔）：这一段的窗口有 `suggested` 的问询、当前归属就是 AI 给的目标、没被改挂过。
+
+### 人说「不对」：`POST /api/core/activity/choice/reject`
+
+请求 `{ "key": "wk_…" }` → `200 { "key", "app", "title", "ruleRemoved": true }`。**只收人**（带 Bearer 403，先于读请求体）。
+窗口没有 `suggested` 的问询（不是 AI 认的、或已经说过不对）→ 404；形状不对 422。效果：
+
+1. 删掉 `id` 为 `r_ai_…` 且带 `auto: true` 的那条规则（没有了 → `ruleRemoved: false`，其余照做）；
+2. 清掉该窗口的临时选择；问询记 `outcome: "rejected"`；
+3. 此后心跳带来的、目标与 AI 给的相同的 `guess` **不算**（检测程序拉到新规则之前还会带着它，最多 5 分钟），
+   于是这个窗口回到 `"ask_human"`——页面随即摆出「你在 X，记到哪？」，人照 v2.14 自己选。6 小时内不再问 AI。
+
+人也可以不点「不对」：那条规则在「AI助理 → 规则」里标着「AI 自动」，照常能改、能删、能停用。
+
+### 存储与边界
+
+- 新集合 `activity_ai_asks`：每个 (user, key) 一份问询 `{user, key, app, title, claimedAt, answeredAt?, outcome?,
+  taskId?, projectId?, confidence?, reason?, rejectedAt?}`；每租户另有一份 `key: "_tenant"` 的 `{polledAt, claims[]}`。
+  唯一约束 `(user, key)`。**活状态，不是事实**：不进台账 / 投影 / 导出 / 快照恢复 /「空实例」判据。
+- 实现落点：`activity/auto_ai.py`（状态机、三个端点的业务）、`activity/ask_repo.py`（存取）、`detector/window_rules.py`
+  （单条窗口规则的加 / 删，走 `detector.rules.v1` 的整套替换）；`auto.py` 的 `next_step` 仍是唯一的决定处。
+- 安全：`ai/suggest` 任何能经 MCP 说话的调用方（含拿设备令牌的外部代理）都够得着——可以接受**只因为**上面的状态把关：
+  一次问询一个窗口、目标必须已存在、每租户每小时至多 12 次认领、全部按租户。设备令牌仍调不了任何只收人的端点。
+  这样的调用方最坏能做的：把此刻在等的那一个窗口认到一个错的现存项目 / 任务上（页面标着「AI 认的」，人一键「不对」），
+  或者认领了不答，让那张选卡晚出来至多 120 秒（每小时至多 12 次）。写不了别的标题的规则，改不了、删不了已有规则。
+
+### 被本版取代的旧承诺（只在 `autoTrack` 打开时、只对被认领的那一个窗口）
+
+**2026-10-08 第二条取代条目**。v2.14 取代条目第 2 点括号里的「AI 仍然只能写规则草稿，应用仍要人点」，自 v2.15 起对
+**`ai/suggest` 写的那一条窗口规则**不再成立：它不经草稿、直接生效。其余一个字不变——`propose_detector_rules` 仍只写草稿、
+AI 仍不能改 / 删任何已有规则、不能写匹配范围超出那一个窗口的规则、不能确认建议；把握够高的段直接记成事实仍是 v2.14 的
+「自动记录」，条件没有放宽。人随时能撤（「不对」/ 规则页），自动记下的段随时能改挂。
+
+### 本版不做（有意的）
+
+- **不做「任务变了就重问」**：6 小时内同一个窗口只问一次。人刚建了任务回来要选时，卡不会被「AI 正在认」顶掉。
+- 「不对」之后检测程序拉到新规则之前（≤ 5 分钟）上传的段仍可能按旧规则自动记下——用「改归属」修。
+- 不做多设备合并（同 v2.14：只看最近报心跳的那台）；不在服务端跑规则。
+
 ## 入口与路由
 
 - nginx 公开前缀：`/api/core/`（HANDOFF §4 已定死，前端写死地址）
@@ -2933,6 +3095,8 @@ app/modules/
                                       自动跟踪（v2.14，auto.py）：开关经 detector 的 service（device_flags）读，窗口规则经
                                       detector/rules.py 的 prepend 写，事实经本子边界 service.confirm 写；手动计时经 timer service
                                       与 proj_lanes 的 read_lanes 读；views/lanes 经 activity service 的 auto_state 读它
+                                      让 AI 认窗口（v2.15，auto_ai.py + ask_repo.py）：接在 auto.py 的 next_step 上；窗口规则经
+                                      detector/window_rules.py 的 prepend / remove_auto 写（v2.14 的 prepend 也挪到了这里）
   detector/   router service repo     检测程序设置（v2.5）：不是事实；设备列表经 activity 的 service 读上传时刻
   projector/  registry handlers/      DISPATCH 显式表 + 各投影 handler
 ```
@@ -2971,7 +3135,8 @@ app/modules/
   / **`activity_task_proposals`（v2.8，AI 提议的新任务，不是事实，见「活动建议」节「AI 提议新任务」）**
   / **`activity_presence`（v2.4，在场心跳，活状态，不是事实）**
   / **`proj_lanes`（v2.4，时间线区间投影，见「人一条线、代理多条线的时间线」节）**
-  / **`_startup_locks`（v2.4，启动期一次性任务的锁，只在 proj_lanes 自动补建时短暂存在）**。
+  / **`_startup_locks`（v2.4，启动期一次性任务的锁，只在 proj_lanes 自动补建时短暂存在）**
+  / **`activity_choices`（v2.14）、`activity_ai_asks`（v2.15）：按窗口的临时选择与 AI 问询，活状态，不是事实**。
 - **其他模块一律不得直连本模块的 Mongo**。要数据就加读路径，不要绕。
 - `events` 集合**只增不改不删**；修正历史 = 追加修正事件。
   v2.11 的 `session.reassigned` 就是这样一条修正事件（不新增集合）。
@@ -3021,6 +3186,9 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 | MCP 服务（v2.12） | `activity.suggestions.v1` 的 `GET .../suggestions/history`（`get_match_history`，`mcp.tools.v1` v1.7）：助理配任务前读人以前的决定 | `contracts/mcp.tools.v1` |
 | `ring` 前端（v2.14） | `views.lanes.v1` 的 `human.auto`（人那张卡上的「自动 · 项目 / 任务」+ 走秒）与 `human.needsChoice`（泳道最上面的「你在 X，记到哪？」）；`activity.auto.v1` 的 `POST /api/core/activity/choice`、`POST /api/core/activity/choice/dismiss` | `modules/ring` |
 | 共享顶栏 `nginx-docker/static/navbar.js`（v2.14） | `views.current.v1` 的 `auto` / `needsChoice`（芯片上的「自动 · 项目 / 任务」+ 走秒、等人选的小点；不多发请求）；共享件 `lanes.js` 画 `views.lanes.v1` 的 `human.auto` | `modules/nginx-docker` |
+| `mcp`（v2.15） | `activity.auto-ai.v1` 的 `POST /api/core/activity/ai/claim`、`POST /api/core/activity/ai/suggest`（`mcp.tools.v1` v1.9 的两个工具，对内直连、不带 Bearer） | `modules/mcp` |
+| `ring` 前端 / 共享 `lanes.js`（v2.15） | `views.lanes.v1` 的 `human.aiThinking`、`human.auto.source: "ai"` / `auto.key`；`POST /api/core/activity/choice/reject` | `modules/ring`、`modules/nginx-docker` |
+| `assistant` 前端（v2.15） | 规则的 `auto`（「AI 自动」徽标，整套保存时原样带回 `author` / `auto`）；`GET /api/core/activity/auto` 的 `ai` | `modules/assistant` |
 | `assistant` 前端（v2.14） | `activity.auto.v1` 的 `GET /api/core/activity/auto`（「自动记录」面板）+ `sessions.reassign.v1`（改归属，v2.14 起收自动记下的段）；`detector.settings.v1` v1.3 的 `autoTrack`；`detector.rules.v1` v1.1 的 `projectId` | `modules/assistant` |
 | 共享顶栏 `nginx-docker/static/navbar.js`（v2.4，契约先行） | `views.lanes.v1`（计时芯片悬停的精简预览：人 + 至多 4 条代理线、最近 1 小时，只在预览打开时约 15 秒轮询；计时页上不弹） | `modules/nginx-docker` |
 | `ring` 前端（v2.4，契约先行） | `views.lanes.v1`（计时页默认展开的「泳道」主视图，全部泳道，约 15 秒轮询）；`views.current.v1` 的 `agents[].phase`/`label` | `modules/ring` |

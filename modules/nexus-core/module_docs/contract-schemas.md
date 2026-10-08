@@ -299,6 +299,29 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
 
 - `auto.taskId` / `auto.taskName` 在只到项目时为 `null`（键不消失）；读方画「自动 · 项目」或「自动 · 项目 / 任务」。
 - `auto` 与 `needsChoice` 可以同时非 `null`（说的不一定是同一个窗口）。`human.running` 非 `null` 时两者都是 `null`。
+
+### 让 AI 认窗口：`LaneHuman.aiThinking`、`auto.key` / `source: "ai"`、`ClaimOut`、`SuggestIn/Out`、`RejectOut`（v2.15）
+
+```jsonc
+// GET /api/core/views/lanes 的 human（v2.15 追加）；GET /api/core/views/current 顶层同样追加 aiThinking
+"human": { /* …v2.14 的键… */
+           "auto": { /* …v2.14 的键… */ "source": "rules" | "choice" | "ai", "key": "wk_0a0a0a0a0a0a0a0a0a0a" },
+           "aiThinking": { "key": "wk_…", "app": "kitty", "title": "✳ notes", "since": "<ISO>" } | null }
+// POST /api/core/activity/ai/claim → 200
+{ "window": { "key": "wk_…", "app": "kitty", "title": "✳ notes", "claimedAt": "<UTC ISO>", "answerBy": "<UTC ISO>" } | null }
+// POST /api/core/activity/ai/suggest  SuggestIn（多余的键 422）
+{ "key": "wk_…", "taskId": "t_a1" /* 或 "projectId" */, "confidence": 0.85, "reason": "…" }   // 或 { key, "none": true, reason }
+// 200 SuggestOut
+{ "key": "wk_…", "outcome": "suggested" | "none", "taskId": "t_a1" | null, "projectId": "p_1" | null,
+  "confidence": 0.9 | null, "autoRecord": true, "ruleWritten": true }
+// POST /api/core/activity/choice/reject {key} → 200 RejectOut
+{ "key": "wk_…", "app": "kitty", "title": "✳ notes", "ruleRemoved": true }
+// GET /api/core/activity/auto —— 每条追加 ai（布尔）
+// 规则（detector.rules.v1 v1.2）可带 "author": "assistant" | "human"、"auto": true；没有就不带这两个键
+```
+
+- `aiThinking` 的窗口不会同时是 `needsChoice` 的窗口；`human.running` 非 `null` 时也是 `null`。
+- `auto.key` 总在（当前窗口的键）；老读方忽略它即可。
 - `ChoiceOut.remembered: false` 且 `pseudonymized: false` = 规则没写成（太长 / 规则已满 / 撞版本），选择本身已生效。
 
 ### `AuditOut` — `GET /api/core/planner/audit`（v1.6，F-ACTOR-2）

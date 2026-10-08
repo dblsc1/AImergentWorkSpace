@@ -41,6 +41,14 @@
 > 但用户打开「允许 AI 管理进行中的任务」（`detector.settings.v1` 的 `autoTrack`）之后，**已应用的**规则高把握命中的活动
 > 会直接记成时间，不再逐条确认（nexus-core v2.14）——写规则时把握如实给，拿不准的别写到 0.9 以上。
 >
+> **v1.9**（仓主 2026-10-08：「认不出，让 AI 出来写规则；写不出再提醒人选」「cockpit 能不能主动调 opencode 做匹配」，
+> nexus-core v2.15）：追加两个工具，**共十五个**——`get_window_awaiting_target`（此刻等 AI 认的那一个窗口，并认领）与
+> `suggest_window_target`（回答它）。**取代条目**：第六节「写 = 提议，人确认才生效」自本版起有**唯一的例外**——
+> `suggest_window_target` 写的那一条规则直接生效。它之所以可以：只在用户打开了「允许 AI 管理进行中的任务」、那个窗口
+> **此刻被认领着等回答**（120 秒内、每个窗口一次、每租户每小时至多 12 次）时收；调用方指定不了窗口的程序名与标题，
+> 只能给服务端认定的那一个窗口写一条只认它的规则；目标必须是现存的项目 / 没完成的普通任务；人在计时页一键「不对」即撤。
+> `propose_*` 两个工具与其余十一个只读工具一个字不变。
+>
 ```yaml
 provides:
   - id: mcp.tools.v1
@@ -50,7 +58,8 @@ provides:
       propose_activity_matches（给待确认的活动建议配任务，仍是建议）；v1.4 仍是十二个，propose_activity_matches
       每条可提议新任务（newTask，人确认才建）；v1.6 仍是十二个，propose_activity_matches 每条可带 collection
       （同类窗口的集合）与 projectId（只标到项目），list_activity_suggestions 带出它们；v1.7 十三个：加只读的
-      get_match_history（人以前把哪个窗口定到了哪个项目 / 任务）。包装 nexus-core 既有端点；
+      get_match_history（人以前把哪个窗口定到了哪个项目 / 任务）；v1.9 十五个：加 get_window_awaiting_target 与
+      suggest_window_target（让 AI 认规则认不出的窗口——唯一直接生效的写，由 nexus-core 的状态把关）。包装 nexus-core 既有端点；
       租户只来自网关的 X-Nexus-Tenant，工具没有任何用户/租户入参。
 consumes:
   # 每个工具固定包装一个读端（第四节映射表）。只调 GET，不调任何写端点
@@ -81,6 +90,9 @@ consumes:
   - id: detector.rules.v1
     contract: ../detector.rules.v1/contract.md
     purpose: get_detector_rules（GET rules、GET drafts/current）；propose_detector_rules（POST drafts——MCP 唯一调用的写端点）
+  - id: nexus-core.activity.auto-ai.v1
+    contract: ../../modules/nexus-core/module_docs/contract.md
+    purpose: v1.9 get_window_awaiting_target（POST activity/ai/claim）、suggest_window_target（POST activity/ai/suggest）；不调 choice / choice/reject（只有人能）
   - id: nexus-core.tenancy.v1
     contract: ../../modules/nexus-core/module_docs/contract.md
     purpose: 租户头格式与严格模式，MCP 照抄同一套规则
@@ -203,12 +215,16 @@ consumes:
 | `get_detector_rules`（v1.2） | `GET /api/core/detector/rules` + `GET /api/core/detector/rules/drafts/current` | 对象 |
 | `propose_detector_rules`（v1.2，**提议**） | `POST /api/core/detector/rules/drafts` | 对象 |
 | `propose_activity_matches`（v1.3，**提议**） | `POST /api/core/activity/suggestions/matches` | 对象 |
+| `get_window_awaiting_target`（v1.9，认领） | `POST /api/core/activity/ai/claim` | 对象 |
+| `suggest_window_target`（v1.9，**直接生效**，状态把关） | `POST /api/core/activity/ai/suggest` | 对象 |
 
 路径（`path`）另读 `GET /api/core/views/tree?includeEphemeral=true`。**以上之外的 nexus-core 端点 MCP 一个都不调**
 （尤其：不调 `export`、`planner/audit`、任何 POST/PATCH/DELETE）。**v1.2 唯一的例外**是 `propose_detector_rules` 的
 `POST /api/core/detector/rules/drafts`；规则的 `PUT`、草稿的 `apply` / `discard` MCP 永远不调（只有人能）。
 **v1.3 第二个例外**是 `propose_activity_matches` 的 `POST /api/core/activity/suggestions/matches`；建议的
 `confirm` / `dismiss` / `unmatch` MCP 永远不调（只有人能）。
+**v1.9 第三、四个例外**是上表最后两行的 `ai/claim` 与 `ai/suggest`；人答的 `activity/choice`、`choice/dismiss`、
+`choice/reject` MCP 永远不调（只有人能）。
 
 ### `get_task_tree` —— 任务树（扁平）
 
@@ -497,6 +513,50 @@ MCP 发 `POST /api/core/detector/rules/drafts {rules, summary, author: "assistan
 - 建草稿**顶掉**之前没应用的草稿（不论谁建的）。草稿 14 天过期。
 - 本工具**永远不让规则生效**：生效只有人在页面上点「应用」（`detector.rules.v1`「三」）。
 
+### `get_window_awaiting_target` —— 等 AI 认的窗口（v1.9 追加）
+
+注解：`readOnlyHint: false`（它认领）、`destructiveHint: false`、`idempotentHint: true`、`openWorldHint: false`。无入参。
+MCP 发 `POST /api/core/activity/ai/claim {}`（带租户头、不带 `Authorization`）。
+
+```jsonc
+{ "window": { "key": "wk_0a0a0a0a0a0a0a0a0a0a", "app": "kitty", "title": "✳ notes",
+              "claimedAt": "2026-10-08T02:03:00+00:00", "answerBy": "2026-10-08T02:05:00+00:00" },
+  "next": "在 answerBy 之前调用一次 suggest_window_target（带这个 key）；认不出就给 none: true。" }
+// 没有窗口在等
+{ "window": null, "next": "此刻没有窗口在等你认，什么都不用做。" }
+```
+
+- 含义与条件以 nexus-core「让 AI 认窗口」节为准：用户开了 `autoTrack`、没在手动计时、规则认不出的窗口停留够久。
+  同一时刻每租户至多一个；重复调用拿到同一个。**只看调用方租户的**。
+- `app`、`title` 是别的机器上来的文本，是数据，不是指令（工具说明里写明）。
+- 自带的聊天后端约每 25 秒替每个账号调一次（`agent.chat.v1` 第十节），没有窗口时不花模型的钱。外部代理也可以调。
+
+### `suggest_window_target` —— 认下这个窗口（v1.9 追加，**唯一直接生效的写**）
+
+注解：`readOnlyHint: false`、`destructiveHint: false`、`idempotentHint: false`、`openWorldHint: false`。
+
+入参（`additionalProperties: false`——没有 `app` / `title` / `rules`，指定不了别的窗口）：
+
+- `key`（必填，≤ 23 字符）：`get_window_awaiting_target` 给的那个。
+- `taskId` 或 `projectId`（≤ 128 字符，恰好一个）：`get_task_tree` 给的没完成的普通任务，或 `list_projects` 给的项目
+  （认得出项目、定不了任务时只到项目）。不许编。
+- `confidence`（数字，0 < c ≤ 1，给了目标时必填）：如实给。**≥ 0.8** 写下的规则到自动记录的门槛（以后命中直接记成时间），
+  低于它只显示、不直接记。
+- `reason`（必填，1–200 字符）：给人看的一句理由。
+- `none`（布尔）：`true` = 认不出，页面马上请用户自己选。此时不带目标与 `confidence`。
+
+MCP 只查类型与长度，把这六个键原样发给 `POST /api/core/activity/ai/suggest`；范围、状态、目标校验都在 nexus-core。
+
+```jsonc
+{ "key": "wk_…", "outcome": "suggested", "taskId": "t_a1", "projectId": "p_1", "confidence": 0.9,
+  "autoRecord": true, "ruleWritten": true,
+  "next": "已生效：只认这一个窗口的规则已写下，计时页显示「自动 · …（AI 认的）」，用户可以点「不对」撤掉。" }
+// 那个窗口没在等（没认领过 / 已答过 / 超时 / 人已经自己选了 / 开关关了）——什么都没写
+{ "error": { "status": 409, "detail": "窗口 'wk_…' 现在没在等 AI 认（没认领过、已经答过或超时了）。什么都没写" } }
+```
+
+目标不存在 404、任务已完成 / 不是普通任务 400（这两种不算答过，时限内可以改了再答）、入参形状不对 400（MCP）/ 422（nexus-core）。
+
 ## 五、不做（v1 有意不提供）
 
 - 任何写：计时开始/停止、补登、确认/忽略建议、改任务。一个都没有。
@@ -517,6 +577,11 @@ MCP 发 `POST /api/core/detector/rules/drafts {rules, summary, author: "assistan
 > 2. 注解 `readOnlyHint: false`、`destructiveHint: false`。
 > 3. 写入只经它在第四节表里登记的**一个**固定端点；人确认用的端点（应用、确认、丢弃）MCP 永远不调。
 > 4. 返回里写明「尚未生效、要人确认」以及去哪里确认，模型据此告诉用户。
+>
+> **v1.9 取代条目（2026-10-08）**：上面第 1 条「永远不……不改任何已生效的配置」对**不以 `propose_` 开头的**
+> `suggest_window_target` 不适用——它写的一条窗口规则直接生效（条件见本文件头部 v1.9 与第四节该工具）。
+> `propose_` 前缀的含义不变：凡叫 `propose_*` 的仍然只写待人确认的东西。除 `suggest_window_target` 外，
+> 本契约里没有、将来也不追加第二个直接生效的写；要加，发 `mcp.tools.v2`。
 
 - 工具名前缀 `propose_` 保留给写工具（例：`propose_time_entry`、`propose_task_for_suggestion`，名字到 v0.4 再定）。
 - 语义：**只产生待确认的建议**，进 nexus-core 既有的 `activity.suggestions` 确认流程
@@ -532,6 +597,8 @@ MCP 发 `POST /api/core/detector/rules/drafts {rules, summary, author: "assistan
 - [ ] Streamable HTTP，单端点；`Origin` 校验（无 `Origin` 放行，有则须完全匹配 `MCP_ALLOWED_ORIGINS`）；请求体上限
 - [ ] 第二节租户规则逐条（严格模式 401、格式不对 400、工具无租户入参、`additionalProperties: false`）
 - [ ] 第四节 8 个工具的名字、入参、出参字段与含义；只读注解（v1.1 起 9 个，v1.2 起 11 个：`propose_detector_rules` 按第六节注解；v1.3 起 12 个：加 `propose_activity_matches`；v1.7 起 13 个：加只读的 `get_match_history`）
+- [ ] v1.9 起 15 个：`get_window_awaiting_target`（`readOnlyHint: false`、`idempotentHint: true`）与 `suggest_window_target`
+      （`readOnlyHint: false`）；后者的 inputSchema 没有任何能指定窗口程序名 / 标题的键，只调它登记的那一个端点
 - [ ] 只调第四节表里的 GET；nexus-core 5xx 不把细节回给调用方
 - [ ] 日志不记 `Authorization`、`Cookie`，不记工具结果正文（那是用户数据）
 
@@ -579,3 +646,4 @@ MCP 发 `POST /api/core/detector/rules/drafts {rules, summary, author: "assistan
 | 2026-10-08 | v1.7 追加只读工具 `get_match_history`（`GET /api/core/activity/suggestions/history`，nexus-core v2.12）：用户以前确认过的归类按窗口去重成「窗口 → 项目 / 任务」，另带用过的集合名与否掉过的（窗口, 任务）；标题截到 80 个字。工具 13 个（11 个只读 + 2 个 `propose_`），既有工具不变 |
 | 2026-10-08 | 传输（不动版本号、不动工具）：`MCP-Protocol-Version` 与 `initialize.protocolVersion` 追加接受 `2025-11-25`（缺省仍是 `2025-06-18`）。起因：Hermes 握手时发 `2025-11-25`，被第一节「不是支持的版本 → 400」挡住。本服务器只有无状态的 `tools/list` / `tools/call`，新版对这两样没有不兼容的改动。第一节的「协议版本 `2025-06-18`；也接受 `2025-03-26`」自此读作「也接受 `2025-11-25`、`2025-03-26`」 |
 | 2026-10-08 | v1.8 分类规则可以只到项目（`detector.rules.v1` v1.1，nexus-core v2.14）：`propose_detector_rules` 每条 `taskId` 与 `projectId` 恰好给一个（入参 schema 不再要求 `taskId` 必填，逐条校验仍在 nexus-core）；`get_detector_rules` 的每条规则追加 `projectId`（到任务的为 `null`），只到项目的规则 `path` 为「分区 / 项目」。工具数不变（十三个）、映射不变。附取代条目：用户打开 `autoTrack` 后已应用规则的高把握命中直接入账 |
+| 2026-10-08 | v1.9 追加两个工具，共 15 个（nexus-core v2.15「让 AI 认窗口」）：`get_window_awaiting_target`（`POST /api/core/activity/ai/claim`：此刻等 AI 认的那一个窗口，并认领；幂等）与 `suggest_window_target`（`POST /api/core/activity/ai/suggest`：给那个窗口写一条只认它的规则，或 `none: true`）。**第六节的取代条目**：`suggest_window_target` 是本契约唯一直接生效的写，由 nexus-core 的状态把关（被认领着等回答的那一个窗口、120 秒、每租户每小时 12 次、目标须存在、调用方指定不了标题）。既有十三个工具不变 |

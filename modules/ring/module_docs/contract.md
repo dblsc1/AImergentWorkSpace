@@ -166,6 +166,7 @@ consumes:
 
 | 日期 | CR | 变更 |
 |---|---|---|
+| 2026-10-08 | 仓主：规则认不出就让 AI 出来写规则；认错了人要一键撤 | nexus-core v2.15「让 AI 认窗口」在计时页上的三样（都画在人那张卡上，不另起卡）：① `human.aiThinking` → 一行小字「AI 正在认这个窗口…」+ 轻微的呼吸（`prefers-reduced-motion` 下不动），这期间不出「你在 X，记到哪？」；② `human.auto.source` 为 `"ai"` → 胶囊写「自动 · 项目 / 任务（AI 认的）」，后面一个「不对」；③ 点「不对」= `POST api/core/activity/choice/reject {key}`（`ring-choice.js` 的 `reject`），成功后 `ring-lanes.js` 立刻把那张「你在 X，记到哪？」摆到最上面让人自己选，失败就重拉、按服务端此刻的说法画。画法在共享的 `lanes.js`（`opts.onAutoWrong`），本模块只接动作。测试：`tests/test_ring_choice.py` 追加四条 |
 | 2026-10-08 | 仓主：留一个开关——允许 / 不允许 AI 管理进行中的任务；规则认不出时提醒人选项目 / 任务（自动跟踪第一步） | 认 nexus-core v2.14 在 `views.lanes.v1` 的 `human` 上追加的 `auto` / `needsChoice`（新增 consumes `nexus-core.activity.auto.v1`，写全了行为）：没在计时时人那张卡上出「自动 · 项目 / 任务」胶囊 + 走秒的钟（共享件 `lanes.js` 画）；规则认不出的窗口停留够久时泳道最上面出一张「你在 X，记到哪？」（新文件 `ring-choice.js`，经 `lanes.js` 的 `opts.lead` 摆在人那张卡之前，随换位动效浮上来），选项目 →（可选）任务，缺省勾「以后这个窗口都这样记」，「确定」/「这次不选」。**手动计时永远优先**：在计时时两样都不出现，圆环、开始 / 暂停 / 停止的行为一概不变。开关关着（缺省）时服务端不给这两个键，页面与此前相同。只增 |
 | 2026-07-31 | 无（首次填实，非破坏性变更） | 契约从模板占位填实：provides（渲染入口 + 静态路由）、consumes（nexus-core views/current，字段级列明）；对应代码见 `code/frontend/` 提交 `7b34679` |
 | 2026-08-01 | 产品决定：四前端做成完整页面，可写但走统一入口 | v0.2：ring 由纯只读改为**可控制计时**。新增 consumes `timer.v1`（start/stop）与 `views.tree.v1`（任务选择器数据源）。**仍不直接写事实**——events 不向前端开放，计时由 timer 代劳 |

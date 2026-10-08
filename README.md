@@ -230,7 +230,11 @@ implementation (opencode) lives in `modules/agent/`. To see exactly what each
 turn sends to the model and what comes back, set `AGENT_DEBUG=1` in `.env` and
 restart: every answer gets a collapsed "调试" (debug) section. Those records are
 your data (full prompts and tool results) — only turn it on while debugging on
-your own machine, and set it back to `0` afterwards.
+your own machine, and set it back to `0` afterwards. With "allow the AI to manage
+the in-progress task" switched on, the assistant also looks at windows your rules
+cannot place and writes a rule for that one window in the background (the timer
+page shows "自动 · … (AI 认的)" with a one-click "不对" to undo; at most 12 an
+hour). Set `AGENT_AUTOTRACK=0` in `.env` to turn that off.
 
 ### Serving it under a sub-path
 
