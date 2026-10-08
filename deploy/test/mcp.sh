@@ -38,9 +38,9 @@ check "没登录调 MCP 被拒（302 去登录页）" \
 check "令牌 initialize" \
   "$(mcp "$TOK" initialize '{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}' \
      | py 'print(r["result"]["protocolVersion"], list(r["result"]["capabilities"]))')" "2025-06-18 ['tools']"
-check "tools/list：13 个工具，只有 propose_ 那两个不是只读" \
+check "tools/list：15 个工具，不是只读的只有 propose_ 那两个与认窗口的两个（v1.9）" \
   "$(mcp "$TOK" tools/list '{}' | py 't=r["result"]["tools"]; print(len(t), [x["name"] for x in t if not x["annotations"]["readOnlyHint"]])')" \
-  "13 ['propose_detector_rules', 'propose_activity_matches']"
+  "15 ['propose_detector_rules', 'propose_activity_matches', 'get_window_awaiting_target', 'suggest_window_target']"
 # detector.rules.v1：经 MCP 起草规则 → 草稿在，但生效规则没变（应用只有人能，令牌直连 403）
 V=$("${C[@]}" -b "$A" "$BASE/api/core/detector/rules" | py 'print(r["version"])')  # tokens.sh 可能已经存过
 check "经 MCP 起草分类规则（草稿，不生效）" \
@@ -104,5 +104,18 @@ check "带陌生 Origin → 403" \
   "$(mcp "$TOK" ping '{}' -H 'Origin: https://evil.example' -o /dev/null -w '%{http_code}')" 403
 check "令牌开不了聊天后端 /api/agent/（只认会话）" \
   "$("${C[@]}" -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOK" "$BASE/api/agent/sessions")" 302
+# v1.9 让 AI 认窗口（nexus-core v2.15）：没有窗口在等 → null；没被认领的 key 什么都写不进去；令牌直连那三个端点都 403
+K=wk_00000000000000000000
+RV=$("${C[@]}" -b "$A" "$BASE/api/core/detector/rules" | py 'print(r["version"])')
+check "经 MCP 取等 AI 认的窗口：没有" \
+  "$(mcp "$TOK" tools/call '{"name":"get_window_awaiting_target","arguments":{}}' | py 's=r["result"]; print(s["isError"], s["structuredContent"]["window"])')" "False None"
+check "经 MCP 认一个没在等的窗口 → isError 409" \
+  "$(mcp "$TOK" tools/call "{\"name\":\"suggest_window_target\",\"arguments\":{\"key\":\"$K\",\"taskId\":\"$T\",\"confidence\":0.9,\"reason\":\"ci\"}}" \
+     | py 's=r["result"]; print(s["isError"], s["structuredContent"]["error"]["status"])')" "True 409"
+check "规则没被它动过" "$("${C[@]}" -b "$A" "$BASE/api/core/detector/rules" | py 'print(r["version"])')" "$RV"
+check "令牌直连认领被拒" "$(post /api/core/activity/ai/claim '{}' -H "Authorization: Bearer $TOK" -o /dev/null -w '%{http_code}')" 403
+check "令牌直连回答被拒" "$(post /api/core/activity/ai/suggest "{\"key\":\"$K\",\"none\":true,\"reason\":\"ci\"}" -H "Authorization: Bearer $TOK" -o /dev/null -w '%{http_code}')" 403
+check "令牌替人说「不对」被拒" "$(post /api/core/activity/choice/reject "{\"key\":\"$K\"}" -H "Authorization: Bearer $TOK" -o /dev/null -w '%{http_code}')" 403
+check "网页会话对不是 AI 认的窗口说「不对」→ 404" "$(post /api/core/activity/choice/reject "{\"key\":\"$K\"}" -b "$A" -o /dev/null -w '%{http_code}')" 404
 
 [ "$fail" = 0 ] && echo "✅ MCP 全部通过" || { echo "❌ 有失败"; exit 1; }

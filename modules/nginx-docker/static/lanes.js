@@ -170,11 +170,15 @@
     var run = human.running && ms(human.running.startAt);
     var doing = seen ? [seen.app, seen.title].filter(function (s) { return s; }).join(' · ') : '';
     // 自动跟踪（nexus-core v2.14）：没在计时、服务端说「我」当前的窗口对上了项目 / 任务。手动计时永远优先。
-    var a = !run && human.auto, since = a ? ms(a.since) : null;
+    // v2.15：source 是 "ai" = 这个目标是 AI 认的（后面标出来，计时页给一个「不对」）；aiThinking = AI 正在认的窗口。
+    var a = !run && human.auto, since = a ? ms(a.since) : null, ai = !!a && a.source === 'ai';
+    var th = !run && human.aiThinking;
     return { state: state, word: HUMAN_WORD[state], running: !!run,
       detail: run ? '计时中 · ' + hm(run) + ' 起' : doing,
-      auto: since === null ? null : { since: since,
-        text: '自动 · ' + [a.projectName, a.taskName].filter(function (x) { return x; }).join(' / ') } };
+      thinking: th ? [th.app, th.title].filter(function (x) { return x; }).join(' · ') || '窗口' : null,
+      auto: since === null ? null : { since: since, ai: ai, key: a.key, app: a.app, title: a.title,
+        text: '自动 · ' + [a.projectName, a.taskName].filter(function (x) { return x; }).join(' / ') +
+          (ai ? '（AI 认的）' : '') } };
   }
 
   // 从 since 起走秒的钟（「自动 · …」后面那个）。本文件唯一的定时器：一秒一次，只改这些钟的字。
@@ -289,6 +293,8 @@
    *                             前 top 张（缺省 5；在等你 / 干活的卡永不折叠，多于 top 就全展开）展开，其余收进 <details>「还有 N 个」
    *   opts.lead                 卡片式：调用方的一张置顶卡（计时页的「你在 X，记到哪？」），放在人那张卡之前。同一个节点
    *                             跨重画搬过来（表单状态不丢、焦点还回去）；换位动效把它当一张卡，第一次出现淡入上浮
+   *   opts.onAutoWrong(auto)    卡片式：人那张卡上「自动 · …（AI 认的）」后面给一个「不对」按钮，点了调它（auto 带 key / app / title）。
+   *                             不给就没有按钮（顶栏预览不给）
    *   opts.more / moreHref      区尾一行（「还有更多」/「还有 N 个 → 计时页」）
    *   opts.focusFallback        焦点在区尾链接上、重画后链接没了时，焦点交给它
    * 返回画了的代理运行的 runInfo 列表（按画的顺序；r / ph / act / last …），调用方拿来数状态，不必再排一遍 phases。
@@ -424,6 +430,18 @@
         ap.appendChild(el('span', 'hcl-auto-text', st.auto.text));
         ap.appendChild(clock(st.auto.since, now));
         ap.title = st.auto.text + ' —— 按分类规则自动跟着你当前的窗口，不是手动计时';
+        if (st.auto.ai && opts.onAutoWrong) {          // AI 认的：一键「不对」（撤掉 AI 的规则，换人来选）
+          var wrong = el('button', 'hcl-auto-wrong', '不对');
+          wrong.type = 'button';
+          wrong.title = '这个窗口不是 AI 认的那个项目 / 任务：撤掉 AI 写的规则，我自己选';
+          wrong.addEventListener('click', function () { wrong.disabled = true; opts.onAutoWrong(st.auto); });
+          hHead.appendChild(wrong);
+        }
+      }
+      if (st.thinking) {                               // AI 正在认某个窗口：小字 + 轻微的呼吸，不另起一张卡
+        var thinking = el('span', 'hcl-ai-thinking', 'AI 正在认这个窗口…');
+        thinking.title = 'AI 正在认：' + st.thinking + '（认不出会请你选）';
+        hHead.appendChild(thinking);
       }
       if (st.detail) {
         var hStat = el('span', 'hcl-stat', st.running ? st.detail : '正在用 ' + st.detail);
@@ -442,7 +460,8 @@
       seg(hTrack, 'hcl-human hcl-mode-do is-running', running, now,
         '计时中 · ' + hm(running) + '–现在（' + dur(running, now) + '）');
     }
-    sayLines.push('我：' + st.word + '，' + (running ? '计时中' : st.auto ? st.auto.text : '没在计时'));
+    sayLines.push('我：' + st.word + '，' + (running ? '计时中' : st.auto ? st.auto.text : '没在计时') +
+      (st.thinking ? '，AI 正在认窗口 ' + st.thinking : ''));
     if (opts.presence) {
       (human.presence || []).forEach(function (p) {
         var s = ms(p.from), e = ms(p.to);

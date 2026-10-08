@@ -20,6 +20,7 @@ service:
     AGENT_MAX_RUNTIMES: ${AGENT_MAX_RUNTIMES:-4}
     AGENT_MAX_TURN_SECONDS: ${AGENT_MAX_TURN_SECONDS:-300}
     AGENT_DEBUG: ${AGENT_DEBUG:-0}       # 调试窗口（agent.chat.v1 第九节），只在自己机器上调试时开
+    AGENT_AUTOTRACK: ${AGENT_AUTOTRACK:-1}   # 后台认窗口（第十节）：填了模型就开，0 = 关
     NEXUS_TENANT_STRICT: ${NEXUS_TENANT_STRICT:-0}
   # 只在 AI 桥内网上（gateway.v1 第八节）：够不着 nexus-core / auth / mongo，读数据只能经 MCP
   isolated: true

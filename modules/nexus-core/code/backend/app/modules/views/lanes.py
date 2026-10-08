@@ -73,7 +73,7 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
     agents: list[dict] = []
     presence: list[dict] = []
     running = None
-    auto = {"auto": None, "needsChoice": None}
+    auto = {"auto": None, "needsChoice": None, "aiThinking": None}
     truncated = False
     if not empty:
         rows = lanes_projection.read_lanes(user, "session", start, end, MAX_SESSIONS + 1)

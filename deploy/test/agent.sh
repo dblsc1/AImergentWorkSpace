@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # agent.chat.v1 组装测试（配 test/agent.yml）。在 deploy/ 下跑。
 #  1. 容器里跑适配器全部测试，真 opencode 必须在（AGENT_REQUIRE_OPENCODE=1），假模型用内网服务名
-#  2. 按 compose 的环境变量起来的那个服务本身：health、建会话、带工具调用的一轮对话、MCP 收到的租户头
+#  2. 按 compose 的环境变量起来的那个服务本身：health、建会话、带工具调用的一轮对话、MCP 收到的租户头、
+#     后台认窗口的工人在定时经 MCP 问
 set -euo pipefail
 dc() { docker compose -f docker-compose.yml -f test/agent.yml "$@"; }
 
@@ -22,6 +23,16 @@ body = req("POST", f"sessions/{sid}/messages", {"text": "call:get_task_tree"}).r
 events = [l[7:] for l in body.splitlines() if l.startswith("event: ")]
 assert events == ["start", "tool", "tool", "delta", "done"], body
 log = json.load(urllib.request.urlopen("http://fake-mcp:8020/_log"))
-assert [e["tenant"] for e in log if e["method"] == "tools/call"][-1] == "alice", log
-print("agent service ok:", events)
+assert [e["tenant"] for e in log if e["tool"] == "get_task_tree"][-1] == "alice", log
+# 后台认窗口的工人（第十节）：配了模型就自己定时经 MCP 问（约 25 秒一次），带的是该租户的头；假 MCP 没有窗口在等，不花模型的钱
+import time
+deadline = time.time() + 90
+while True:
+    polls = [e["tenant"] for e in json.load(urllib.request.urlopen("http://fake-mcp:8020/_log"))
+             if e["tool"] == "get_window_awaiting_target"]
+    if "alice" in polls and None in polls:
+        break
+    assert time.time() < deadline, polls
+    time.sleep(2)
+print("agent service ok:", events, "autotrack polls:", sorted(set(map(str, polls))))
 PY

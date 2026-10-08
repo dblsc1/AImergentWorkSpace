@@ -301,3 +301,26 @@ def test_project_target_422_and_describe(browser, static_base_url):
         assert said[0] == "程序 /a/ → 区 / <b>项</b> · 未分类 · 90%"
         assert said[1] == "程序 /a/ → 项目已删除（p_x） · 90%"
         assert said[2] == {"app": "a", "title": None, "taskId": "t", "confidence": 0.5, "note": None, "enabled": True}
+
+
+def test_ai_written_rule_has_a_badge_and_its_provenance_survives_a_save(browser, static_base_url):
+    """v1.2（nexus-core v2.15）：AI 认窗口时直接写下的规则标「AI 自动」；照样能改，整套存回去不丢 author / auto。"""
+    stub = RulesStub()
+    ai = {"id": "r_ai_0a0a", "app": "^kitty$", "title": "^notes$", "taskId": "t_word", "confidence": 0.9,
+          "note": "AI 认的：" + EVIL, "enabled": True, "author": "assistant", "auto": True}
+    stub.rules = [ai, copy.deepcopy(RULES[0])]
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        badges = page.eval_on_selector_all("#rules-list > li", "ls => ls.map(l => l.querySelectorAll('.rule-auto').length)")
+        assert badges == [1, 0]
+        assert page.inner_text('#rules-list > li[data-index="0"] .rule-auto') == "AI 自动"
+        assert page.locator("#rules-list img").count() == 0 and page.evaluate("window.__pwned") is None
+        page.select_option(row(page, 0, "taskId"), "t_read")       # 人改它的目标
+        page.fill(row(page, 1, "note"), "动一下")
+        page.click("#rules-save")
+        page.wait_for_selector("#rules-message:not([hidden])")
+        put = [c for c in stub.calls if c[0] == "PUT"][0][3]["rules"]
+        assert put[0] == {**ai, "taskId": "t_read"}                # 出处键原样带回
+        assert "author" not in put[1] and "auto" not in put[1]     # 普通规则不多带键
+        page.click('#rules-list > li[data-index="0"] button[aria-label="删除第 1 条"]')   # 也能删
+        assert page.locator("#rules-list .rule-auto").count() == 0

@@ -16,7 +16,7 @@ import json
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError, field_validator, model_validator
 
@@ -28,7 +28,6 @@ from .service import ForbiddenError, _is_device_token, _iso, re2_error
 MAX_BODY = 256 * 1024
 MAX_RULES = 500
 MAX_ERRORS = 50
-_PREPEND_TRIES = 3  # v2.14 加窗口规则：撞版本重读重试这么多次
 DRAFT_TTL = timedelta(days=14)
 _VERSION = re.compile(r'^(?:W/)?(?:"([0-9]{1,15})"|([0-9]{1,15}))$')
 
@@ -58,6 +57,9 @@ class Rule(_Strict):
     confidence: float = Field(0.9, gt=0, le=1)
     note: Annotated[StrictStr, Field(max_length=120)] | None = None
     enabled: bool = True
+    # v1.2：出处——谁写的、是不是服务端替 AI 直接写下的窗口规则（nexus-core v2.15）。不影响匹配；没有就不带这两个键
+    author: Literal["assistant", "human"] | None = None
+    auto: bool | None = None
 
     @field_validator("app", "title")
     @classmethod
@@ -153,8 +155,9 @@ def _validate(raw: Any) -> list[dict]:
         except ValidationError as exc:
             errors += [_err(i, ".".join(str(p) for p in e["loc"]) or None, e["msg"]) for e in exc.errors()]
             continue
-        if rule["projectId"] is None:
-            del rule["projectId"]  # 到任务的规则不带这个键：与 v1 存下的逐字节相同，草稿 diff 不误报「修改」
+        for k in ("projectId", "author", "auto"):  # 没给就不带这个键：与 v1 存下的逐字节相同，草稿 diff 不误报「修改」
+            if not rule[k]:
+                del rule[k]
         if rule["id"] is not None:
             if rule["id"] in seen:
                 errors.append(_err(i, "id", f"id 重复：{rule['id']}"))
@@ -223,27 +226,6 @@ def put_rules(authorization: str | None, if_match: str | None, body: bytes) -> d
     if (doc := repo.replace_rules(user, version, rules, _now())) is None:
         raise _stale(user, version)
     return _rules_out(doc)
-
-
-def prepend(rule: dict) -> bool:
-    """v2.14 ``activity/choice`` 的 remember：往最前面加一条窗口规则，同 ``app`` / ``title`` 的旧规则去掉（一个窗口至多一条）。
-    True = 已在最前面；False = 放不下（不合规 / 满了）或连续撞版本。只校验新的这一条——别的规则指着已删的任务不该挡住它。"""
-    user = current_tenant()
-    try:
-        rule = _validate([rule])[0]
-    except RulesError:
-        return False
-    for _ in range(_PREPEND_TRIES):
-        doc = repo.get_rules(user) or {}
-        old = doc.get("rules", [])
-        if old and {**old[0], "id": rule["id"]} == rule:  # 同样的规则已是第一条：不写，version 不动
-            return True
-        rules = [rule] + [r for r in old if (r["app"], r["title"]) != (rule["app"], rule["title"])]
-        if len(rules) > MAX_RULES:
-            return False
-        if repo.replace_rules(user, doc.get("version", 0), rules, _now()) is not None:
-            return True
-    return False
 
 
 def _stale(user: str, version: int) -> RulesError:

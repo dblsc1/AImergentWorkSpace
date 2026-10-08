@@ -10,6 +10,7 @@ opencode 那边的会话只当模型上下文。单进程单事件循环，文�
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -46,6 +47,26 @@ def _write(path: Path, text: str) -> None:
 class Store:
     def __init__(self, data_dir: str):
         self.data_dir = data_dir
+        self._seen: set[str] = set()
+
+    def note_tenant(self, tenant: str) -> None:
+        """记下见过的租户 id（目录名是哈希，反推不出）：后台认窗口的工人重启后也知道该替谁去问。"""
+        if tenant in self._seen:
+            return
+        self._seen.add(tenant)
+        f = tenant_dir(self.data_dir, tenant) / "tenant"
+        if not f.exists():
+            f.parent.mkdir(parents=True, exist_ok=True)
+            _write(f, tenant)
+
+    def tenants(self) -> list[str]:
+        out = []
+        for f in sorted(Path(self.data_dir).glob("tenants/*/tenant")):
+            with contextlib.suppress(OSError):
+                t = f.read_text().strip()
+                if tenant_dir(self.data_dir, t) == f.parent:     # 文件里写的确实是这个目录的租户
+                    out.append(t)
+        return out
 
     def _dir(self, tenant: str) -> Path:
         d = tenant_dir(self.data_dir, tenant) / "sessions"

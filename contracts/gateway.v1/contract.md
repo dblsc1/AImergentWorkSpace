@@ -231,3 +231,7 @@ CI 把手写与生成的两份组装各按 `/` 与 `/Cockpit/` 真起一遍。
 - **2026-09-30 · 并入 v0.3**：第八节两条 AI 桥路由（手写与生成的 `bridge: true`）改成同一写法：共用 server 级
   `resolver`（不再每个 location 各写一条），`rewrite` 用 `\Q…\E` 按字面匹配站点前缀并带 `(?s)`，补写与普通路由
   同形的 `proxy_redirect`；生成组装里的变量名统一为 `$honeycomb_up_<序号>`。`recreate.sh` 同样逐个重建 `mcp`、`agent`。
+- **2026-10-08 · 让 AI 认窗口（nexus-core v2.15）不动本契约**：第八节的网络划分一个字不改——`honeycomb-agent-net` 上
+  仍然只有 web、mcp、agent，nexus-core 不在上面、也不去调聊天后端。「cockpit 主动叫 AI」的方向反过来实现：聊天后端的后台工人
+  定时经 MCP 的对内地址去取（`agent.chat.v1` 第十节、`mcp.tools.v1` v1.9），走的是既有的 agent → mcp → nexus-core 这一条，
+  带的仍是租户头、不带用户凭据。没有新路由、新变量、新网络。

@@ -13,6 +13,9 @@
  * - 自动跟踪（nexus-core v2.14）：human.auto → 人那张卡上的「自动 · 项目 / 任务」+ 走秒（lanes.js 画）；
  *   human.needsChoice → 泳道最上面一张「你在 X，记到哪？」（ring-choice.js 做卡，经 opts.lead 交给 lanes.js 摆）。
  *   卡出现后一直留到人答 / 说这次不选——人得切到浏览器来答，期间服务端换了别的窗口也不换卡；手动开始计时就收。
+ * - 让 AI 认窗口（nexus-core v2.15）：human.aiThinking → 人那张卡上一行小字「AI 正在认这个窗口…」（这期间不出选卡）；
+ *   human.auto.source 是 "ai" → 「自动 · …（AI 认的）」后面一个「不对」：POST activity/choice/reject {key}
+ *   （服务端撤掉 AI 写的规则与临时选择），随即把那张「你在 X，记到哪？」摆出来让人自己选。都由 lanes.js 画，这里只接动作。
  */
 (function () {
   "use strict";
@@ -41,6 +44,17 @@
     window.dispatchEvent(new Event("honeycomb:timer-changed"));   // 顶栏芯片上的小点跟着收
   }
 
+  // 「不对」：撤掉 AI 认的，换人来选。失败（网络 / 已经撤过）就重拉一次，按服务端此刻的说法画。
+  async function autoWrong(auto) {
+    var r = window.RingChoice ? await window.RingChoice.reject(auto.key) : { ok: false };
+    if (r.ok && last && last.human) {
+      last.human.auto = null;
+      lead = window.RingChoice.card({ key: auto.key, app: auto.app, title: auto.title }, closeLead);
+      draw();
+    }
+    load();
+  }
+
   function draw() {
     var L = window.HoneycombLanes;
     if (!last || !L) return;
@@ -57,7 +71,7 @@
       v0 = v1 - DAY;
     }
     var infos = L.render(view, last, {
-      viewStart: v0, viewEnd: v1, presence: true, cards: true, top: 5, lead: lead,
+      viewStart: v0, viewEnd: v1, presence: true, cards: true, top: 5, lead: lead, onAutoWrong: autoWrong,
       focusFallback: document.getElementById("lanes-title"),   // 「还有 N 个」重画后没了时焦点落这里
       more: last.truncated ? "还有更多（只列出了最新的一部分）" : ""
     });

@@ -1,13 +1,13 @@
 # mcp · 对外接口契约
 
-> 本模块实现 `contracts/mcp.tools.v1`（给 AI 代理用的工具，MCP Streamable HTTP；v1.2 起 10 个只读 + 1 个只写草稿的 propose_；v1.3 再加 1 个只写建议的 propose_activity_matches；v1.7 再加 1 个只读的 get_match_history，共 13 个）。行为的唯一事实在
+> 本模块实现 `contracts/mcp.tools.v1`（给 AI 代理用的工具，MCP Streamable HTTP；v1.2 起 10 个只读 + 1 个只写草稿的 propose_；v1.3 再加 1 个只写建议的 propose_activity_matches；v1.7 再加 1 个只读的 get_match_history，共 13 个；v1.9 再加 get_window_awaiting_target 与 suggest_window_target，共 15 个）。行为的唯一事实在
 > 那份契约里，本文件只登记依赖、说明实现选择。改行为先改那份契约。
 
 ```yaml
 provides:
   - id: mcp.tools.v1
     contract: ../../../contracts/mcp.tools.v1/contract.md
-    summary: 13 个工具（11 个只读 + propose_detector_rules 只写草稿 + propose_activity_matches 只写待确认的建议），挂在 <站点前缀>api/mcp/（经网关、过门）；对内 http://mcp:8020/api/mcp/
+    summary: 15 个工具（11 个只读 + propose_detector_rules 只写草稿 + propose_activity_matches 只写待确认的建议 + v1.9 认窗口的 get_window_awaiting_target / suggest_window_target），挂在 <站点前缀>api/mcp/（经网关、过门）；对内 http://mcp:8020/api/mcp/
 consumes:
   - id: nexus-core.views.tree.v1
     contract: ../../nexus-core/module_docs/contract.md
@@ -47,7 +47,7 @@ consumes:
 ## 实现
 
 - `code/server/mcp_server.py`：HTTP 层（Origin → 租户 → 协议版本头 → 256 KiB 上限（v1.2 前 64 KiB））与 JSON-RPC
-  （`initialize`、`ping`、`tools/list`、`tools/call`）。`code/server/tools.py`：13 个工具、入参校验、cursor、路径。
+  （`initialize`、`ping`、`tools/list`、`tools/call`）。`code/server/tools.py`：15 个工具、入参校验、cursor、路径。
 - **纯标准库，没有用官方 MCP Python SDK。** SDK 能做无状态 Streamable HTTP，但要带进 starlette / pydantic /
   anyio / httpx 一串依赖，Origin 与租户这两道 HTTP 层的门还得另写中间件（SDK 自带的 DNS 重绑定防护比的是 `Host`，
   契约明确不拿 `Host` 比）；用到的协议面只有四个方法，手写更小、每一步都看得见。
@@ -84,3 +84,11 @@ v1.7（2026-10-08）：`get_match_history` 包 `GET /api/core/activity/suggestio
 v1.8（2026-10-08）：分类规则可以只到项目（`detector.rules.v1` v1.1，nexus-core v2.14）。`get_detector_rules` 的每条规则多一个
 `projectId`（到任务的为 `null`），只到项目的 `path` 是「分区 / 项目」；`propose_detector_rules` 的入参 schema 不再要求 `taskId`
 必填、多一个 `projectId`（逐条校验仍在 nexus-core，原样下传）。工具仍是 13 个，下游请求不变。测试：读出的形状、schema、原样下传。
+
+v1.9（2026-10-08）：让 AI 认规则认不出的窗口（nexus-core v2.15）。`get_window_awaiting_target` 包 `POST /api/core/activity/ai/claim`
+（空对象；白名单取 `key / app / title / claimedAt / answerBy`），`suggest_window_target` 包 `POST /api/core/activity/ai/suggest`
+（只下传 `key / taskId / projectId / confidence / reason / none` 六个键；inputSchema 没有能指定窗口的键）。两个都不带
+`Authorization`、带租户头；注解都不是只读，前者 `idempotentHint: true`。`_types` 多认一种 `number`。工具共 15 个。
+测试：下游请求与请求体一字不差、租户下传、没有窗口为 `null`、409 原样带回（「什么都没写」）、坏入参 400 且不调下游、
+`tools/list` 的 15 个与注解。经网关的整条链在 `deploy/test/mcp.sh`（没有窗口 → `null`、没在等的 key → 409 且规则版本不变、
+令牌直连三个端点 403）。

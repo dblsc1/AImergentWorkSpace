@@ -144,3 +144,18 @@ def test_pure_functions(browser, static_base_url):
         assert page.evaluate("assistantAuto.rowLabel({startAt: 'x', durationSeconds: 90, app: 'a', title: ''})") \
             == "2 分 · a"
         assert page.evaluate("assistantAuto.targetLabel(null, {taskId: 't_x', projectId: 'p'})") == "t_x"
+
+
+def test_segments_recorded_by_an_ai_recognised_rule_are_marked(browser, static_base_url):
+    """v2.15：GET activity/auto 的 ai: true = 按 AI 认的那条规则记下的。标出来，改归属照旧。"""
+    items = _items()
+    items[0]["ai"], items[1]["ai"] = True, False
+    stub = Stub(items)
+    with opened(browser, static_base_url, stub) as page:
+        page.wait_for_selector("#auto-panel:not([hidden])")
+        rows = page.locator("#auto-list > li")
+        assert rows.nth(0).locator(".auto-ai").inner_text() == "AI 认的"
+        assert rows.nth(1).locator(".auto-ai").count() == 0
+        rows.nth(0).locator(".auto-pick").select_option("p:p_book")
+        _idle(page)
+        assert stub.posts == [("evt_2", {"projectId": "p_book"})]

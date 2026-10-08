@@ -17,7 +17,7 @@ from pydantic import (
 )
 from starlette.concurrency import run_in_threadpool
 
-from . import auto
+from . import auto, auto_ai
 from .router import human_body
 
 router = APIRouter(prefix="/activity", tags=["activity"])
@@ -109,4 +109,70 @@ async def dismiss_choice(request: Request) -> dict:
 
 @router.get("/auto", response_model=AutoSessionsOut)
 def auto_sessions() -> dict:
-    return auto.recorded_today()
+    return auto_ai.recorded_today()  # v2.15：每条追加 ai
+
+
+# ------------------------------------------------ v2.15 让 AI 认窗口（契约同名节）
+
+
+class SuggestIn(_Key):
+    """AI 的回答：给目标（taskId / projectId 恰好一个 + confidence），或 ``none: true``（认不出）。都要一句 reason。"""
+
+    taskId: _Id | None = None
+    projectId: _Id | None = None
+    confidence: Annotated[StrictFloat | StrictInt, Field(gt=0, le=1)] | None = None
+    reason: StrictStr = Field(min_length=1, max_length=200)
+    none: Literal[True] | None = None
+
+    @model_validator(mode="after")
+    def _shape(self):
+        given = [self.taskId, self.projectId, self.confidence]
+        if self.none and any(v is not None for v in given):
+            raise ValueError("none: true 时不要带 taskId / projectId / confidence")
+        if not self.none and ((self.taskId is None) == (self.projectId is None) or self.confidence is None):
+            raise ValueError("taskId 与 projectId 必须给一个、且只能给一个，并带 confidence；认不出就给 none: true")
+        return self
+
+
+class _Empty(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class ClaimOut(BaseModel):
+    window: dict | None  # {key, app, title, claimedAt, answerBy}
+
+
+class SuggestOut(BaseModel):
+    key: str
+    outcome: Literal["suggested", "none"]
+    taskId: str | None
+    projectId: str | None
+    confidence: float | None
+    autoRecord: bool
+    ruleWritten: bool
+
+
+class RejectOut(BaseModel):
+    key: str
+    app: str
+    title: str
+    ruleRemoved: bool
+
+
+# AI 这两个端点只经 MCP（对内直连、不带 Bearer）调：设备令牌直连一律 403，同 v2.7 的 matches。
+@router.post("/ai/claim", response_model=ClaimOut)
+async def ai_claim(request: Request) -> dict:
+    await human_body(request, _Empty, "直接认领等 AI 认的窗口（请经 MCP 的 get_window_awaiting_target）")
+    return await run_in_threadpool(auto_ai.claim)
+
+
+@router.post("/ai/suggest", response_model=SuggestOut)
+async def ai_suggest(request: Request) -> dict:
+    _auth, b = await human_body(request, SuggestIn, "直接替 AI 认窗口（请经 MCP 的 suggest_window_target）")
+    return await run_in_threadpool(auto_ai.suggest, b.key, b.taskId, b.projectId, b.confidence, b.reason, bool(b.none))
+
+
+@router.post("/choice/reject", response_model=RejectOut)
+async def reject_choice(request: Request) -> dict:
+    _auth, body = await human_body(request, _Key, "替人说「不对」")
+    return await run_in_threadpool(auto_ai.reject, body.key)

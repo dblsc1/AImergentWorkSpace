@@ -44,6 +44,11 @@ provides:
 
 响应另带 `ETag: "<version>"` 头（带引号的十进制整数）。
 
+**v1.2 追加：两个可选的出处键**（不影响匹配，检测程序忽略它们）：`author`（`"assistant"` 或 `"human"`）与 `auto`（布尔）。
+nexus-core v2.15「让 AI 认窗口」直接写下的那条窗口规则带 `"author": "assistant", "auto": true`，页面据此标「AI 自动」。
+**没给（或 `auto: false`）就不带这两个键**——既有规则存下的与读出的逐字节不变，草稿 diff 不误报「修改」。PUT 与草稿都收这两个键
+（类型不对 422），整套替换的写入方（页面）要把读到的原样带回，否则徽标就丢了。它们**不作任何鉴权依据**（同草稿的 `author`）。
+
 **语义**（与 ai-detector 本机 `rules.json` 相同）：按数组顺序，**第一条**命中（`enabled` 为 `true`、
 `app` 为 null 或匹配程序名、`title` 为 null 或匹配标题）的规则给出建议 `taskId` + `confidence`
 （v1.1：只到项目的规则给出 `projectId` + `confidence`，建议里 `taskId` 为 null）。
@@ -154,6 +159,11 @@ PUT 的失败：
   **拿着设备令牌的人经 MCP 也能建草稿**（与 AI 助理同等）。草稿不生效，人应用前看得到逐条 diff；最坏结果是
   顶掉一份没应用的草稿。要堵这条得让网关把「令牌 / 会话」告诉 MCP，那是 gateway.v1 的追加，v1 不做。
 - `author` 由调用方自报（MCP 固定填 `"assistant"`），**不作任何鉴权依据**，只给页面标注。
+- **v1.2 取代条目（2026-10-08）**：本文件「AI 只写草稿，人一键应用」自 nexus-core v2.15 起有一个例外——用户打开了
+  「允许 AI 管理进行中的任务」时，AI 可以经 `mcp.tools.v1` v1.9 的 `suggest_window_target` **直接写下一条只认某一个窗口的规则**
+  （加在最前面，同窗口的旧规则去掉，`version` +1）。只有服务端认定「此刻在等 AI 认」的那一个窗口、一次；匹配范围更宽的规则、
+  改 / 删已有规则，仍然只能走草稿。人说「不对」（`POST /api/core/activity/choice/reject`）时服务端删掉那一条。
+  条件与把关见 nexus-core 契约「让 AI 认窗口」节。
 
 ## 四、ai-detector 怎么用（规范性）
 
@@ -191,5 +201,6 @@ PUT 的失败：
 
 | 日期 | 版本 | 变更 |
 |---|---|---|
+| 2026-10-08 | v1.2 | 规则追加两个可选的出处键 `author`（`"assistant"` / `"human"`）与 `auto`（布尔），没给就不带（既有规则逐字节不变）；nexus-core v2.15「让 AI 认窗口」直接写下的窗口规则带 `author: "assistant"`、`auto: true`，页面标「AI 自动」。**取代条目**：「AI 只写草稿」对那一条窗口规则不再成立（见「鉴权取舍」末条） |
 | 2026-10-08 | v1.1 | 规则的目标可以是项目：`taskId` 可为 `null`，追加可选键 `projectId`（二选一，须是现存项目）；检测程序命中时上传 `suggestion.projectId`。nexus-core v2.14 的 `POST /api/core/activity/choice` 可往最前面加一条窗口规则。只增：到任务的规则存回的形状与 v1 逐字节相同。**取代条目**：「规则命中只产生待确认的建议」在设备打开 `detector.settings.v1` 的 `autoTrack` 时、对把握 ≥ 0.9 的命中被取代（直接记成时间）；AI 仍然只能写草稿、应用仍要人点 |
 | 2026-09-30 | v1 | 首版。仓主 2026-09-30：分类规则不手写，由 AI 助理写，且能一次写入全部。规则存服务端（按租户一套，≤ 500 条，版本号 + If-Match）；AI 经 MCP `propose_detector_rules` 一次写一整套**草稿**，人在「AI助理 → 规则」一键应用；设备令牌只读；ai-detector 每轮拉，服务端没存过 / 拉不到时用本机 `rules.json` |

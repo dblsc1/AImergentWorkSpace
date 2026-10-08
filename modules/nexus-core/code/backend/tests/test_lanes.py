@@ -78,7 +78,7 @@ def test_empty_shape_defaults_to_today(client):
     assert body["windowStart"] == _local(today, 0)
     assert body["windowEnd"] == datetime.combine(today + timedelta(days=1), time(), _tz()).isoformat()
     assert body["human"] == {"sessions": [], "running": None, "presence": [],
-                             "auto": None, "needsChoice": None}  # 后两个键：v2.14
+                             "auto": None, "needsChoice": None, "aiThinking": None}  # v2.14 两个 + v2.15 一个
     assert (body["agents"], body["interactions"], body["truncated"]) == ([], [], False)
     assert set(body) == {"today", "now", "windowStart", "windowEnd", "human", "agents", "interactions",
                          "truncated"}

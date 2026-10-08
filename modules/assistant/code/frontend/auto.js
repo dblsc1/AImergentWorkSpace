@@ -96,6 +96,7 @@
       li.dataset.id = item.eventId;
       li.appendChild(el("span", "unc-what mono", rowLabel(item)));
       li.appendChild(el("span", "auto-target", "→ " + targetLabel(tree, item)));
+      if (item.ai) li.appendChild(el("span", "suggest-badge auto-ai", "AI 认的"));   // v2.15：按 AI 认的那条规则记下的
       if (item.reassigned) li.appendChild(el("span", "suggest-badge", "已改"));
       li.appendChild(picker(item));
       listEl.appendChild(li);

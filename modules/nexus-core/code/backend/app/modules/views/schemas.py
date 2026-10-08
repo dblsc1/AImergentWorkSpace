@@ -83,11 +83,13 @@ class LaneAuto(_Strict):
     since: str
     app: str
     title: str
-    source: Literal["rules", "choice"]
+    #: v2.15 追加 "ai"：这个目标是 AI 认的（人可以说「不对」）
+    source: Literal["rules", "choice", "ai"]
+    key: str  # v2.15：这个窗口的键（「不对」要带它）
 
 
 class LaneNeedsChoice(_Strict):
-    """v2.14：规则认不出、停留够久的窗口——请人选项目 / 任务。"""
+    """v2.14：规则认不出、停留够久的窗口——请人选项目 / 任务。v2.15 的 ``aiThinking``（AI 正在认的窗口）同形。"""
 
     key: str
     app: str
@@ -113,6 +115,7 @@ class CurrentOut(_Strict):
     #: v2.14 自动跟踪（与 ``views/lanes`` 的 ``human.auto`` / ``needsChoice`` 同一份）：只在没在计时时可能非 null
     auto: LaneAuto | None = None
     needsChoice: LaneNeedsChoice | None = None
+    aiThinking: LaneNeedsChoice | None = None  #: v2.15：AI 正在认的窗口（这期间它不出现在 needsChoice）
 
 
 # ------------------------------------------------------------------- TreeOut
@@ -410,6 +413,7 @@ class LaneHuman(_Strict):
     #: v2.14 自动跟踪（契约「自动跟踪进行中的任务」）：键总在，条件不成立为 null
     auto: LaneAuto | None = None
     needsChoice: LaneNeedsChoice | None = None
+    aiThinking: LaneNeedsChoice | None = None  #: v2.15：AI 正在认的窗口（这期间它不出现在 needsChoice）
 
 
 class LanePhase(_Strict):

@@ -113,6 +113,8 @@ app.include_router(detector_router, prefix=API_PREFIX)  # v2.5 检测程序设�
 #   v2.11 改挂复用上面几条：ForbiddenError 403（设备令牌 / actor=ai）、NotFoundError / UnknownTaskError 404、
 #     InvalidInputError 400（taskId / projectId 没二选一、目标是桶）、HasChildrenError 409（不是未分类的段 / 并发没抢到）
 #   detector InvalidSettingsError → 422、TooLargeError → 413（v2.5：设置文档不合 schema / 太大）
+#   v2.15 让 AI 认窗口复用上面几条：SuggestionConflictError 409（窗口没在等 AI 认，什么都没写）、NotFoundError 404、
+#     InvalidInputError 400（任务已完成 / 不是普通任务）、ForbiddenError 403（设备令牌）
 #   detector RulesError → 自带状态码（v2.6 分类规则：403/404/412/413/422/428，体 {detail, **附加字段}）
 
 
