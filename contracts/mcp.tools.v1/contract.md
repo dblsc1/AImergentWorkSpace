@@ -1,6 +1,6 @@
 # mcp.tools.v1 —— 给 AI 代理用的只读工具（MCP）
 
-> **契约 id**：`mcp.tools.v1`。**当前版本 v1.4**（2026-10-03 `propose_activity_matches` 每条可提议新任务 `newTask`，`list_activity_suggestions` 追加 `newTask`；v1.3 2026-10-02 加第二个提议工具 `propose_activity_matches`，`list_activity_suggestions` 输出追加 `rejectedTaskIds`；v1.2 2026-09-30 加 `get_detector_rules` 与第一个提议工具 `propose_detector_rules`；v1.1 2026-09-30 加 `list_projects`；v1.0 2026-09-28，v0.3「AI 桥」首版）。实现：`modules/mcp`。
+> **契约 id**：`mcp.tools.v1`。**当前版本 v1.6**（2026-10-08 `propose_activity_matches` 每条可带 `collection`、`projectId`，`list_activity_suggestions` 追加 `collection`、`suggestedProjectId`、`suggestedProjectPath`；v1.4 2026-10-03 `propose_activity_matches` 每条可提议新任务 `newTask`，`list_activity_suggestions` 追加 `newTask`；v1.3 2026-10-02 加第二个提议工具 `propose_activity_matches`，`list_activity_suggestions` 输出追加 `rejectedTaskIds`；v1.2 2026-09-30 加 `get_detector_rules` 与第一个提议工具 `propose_detector_rules`；v1.1 2026-09-30 加 `list_projects`；v1.0 2026-09-28，v0.3「AI 桥」首版）。实现：`modules/mcp`。
 >
 > **是什么**：HoneyComb 以 [MCP](https://modelcontextprotocol.io/)（Model Context Protocol）服务器的
 > 形式，把「任务树、人的时间、代理时间、在跑的计时、待确认的活动建议」读给 AI 代理。
@@ -22,6 +22,12 @@
 > `newTask: {projectId, name}` 代替 `taskId`——现成任务里没有合适的时，提议「在这个项目下建这个任务，把这段记进去」。
 > **MCP 不建任务**：写进去的仍只是建议（nexus-core v2.8「AI 提议新任务」）；人点「是」时才由 nexus-core 建任务（只建一次）。
 >
+> **v1.6**（仓主 2026-10-08：「碎片太多，让 AI 把同类型的碎片窗口放在一个集合中」）：`propose_activity_matches` 的每条可以带
+> `collection: {name}`（把同类窗口归进一个集合）与 `projectId`（看得出项目、定不了任务时只标项目）；只带这两样时
+> `taskId` / `newTask` / `confidence` 都可省，也不动这条已有的任务。`list_activity_suggestions` 每条追加
+> `collection`、`suggestedProjectId`、`suggestedProjectPath`。写进去的只是页面分组用的标签（nexus-core v2.10「AI 分集合」），
+> 仍然什么都不确认。工具还是 12 个。
+>
 > **版本号语义**：工具名一经发布不改不删；v1 之内只接受追加——新工具、工具的新**可选**入参、
 > 输出的新字段。改名、删工具、改既有字段的含义、把只读工具变成会写的，都要发 `mcp.tools.v2`，与 v1 并行。
 
@@ -32,7 +38,8 @@ provides:
       MCP 服务器（Streamable HTTP，挂在 <站点前缀>api/mcp/）。v1.0 八个只读工具，v1.1 九个；v1.2 十一个：
       加只读的 get_detector_rules 与只写草稿的 propose_detector_rules（第六节）；v1.3 十二个：加
       propose_activity_matches（给待确认的活动建议配任务，仍是建议）；v1.4 仍是十二个，propose_activity_matches
-      每条可提议新任务（newTask，人确认才建）。包装 nexus-core 既有端点；
+      每条可提议新任务（newTask，人确认才建）；v1.6 仍是十二个，propose_activity_matches 每条可带 collection
+      （同类窗口的集合）与 projectId（只标到项目），list_activity_suggestions 带出它们。包装 nexus-core 既有端点；
       租户只来自网关的 X-Nexus-Tenant，工具没有任何用户/租户入参。
 consumes:
   # 每个工具固定包装一个读端（第四节映射表）。只调 GET，不调任何写端点
@@ -338,7 +345,9 @@ consumes:
       "suggestedTaskId": "t_a1", "suggestedPath": "学习 / garden / 写提示词",   // 无建议为 null
       "confidence": 0.9, "reason": "规则 #1 命中", "classifier": "rules",   // classifier：rules | service | assistant（v1.3）
       "rejectedTaskIds": [],                                               // v1.3：人说过「否」的任务，不许再配
-      "newTask": null } ],   // v1.4：助理提议的新任务 {proposalId, projectId, name, projectPath}，没有为 null（此时 suggestedTaskId 也是 null）
+      "newTask": null,       // v1.4：助理提议的新任务 {proposalId, projectId, name, projectPath}，没有为 null（此时 suggestedTaskId 也是 null）
+      "collection": null,    // v1.6：助理分的集合 {key, name}（key 是归一化的名字，同 key = 同一个集合），没有为 null
+      "suggestedProjectId": null, "suggestedProjectPath": null } ],   // v1.6：助理只标到项目的建议与「分区 / 项目」路径，没有为 null
   "nextCursor": "…", "truncated": true }
 ```
 
@@ -363,6 +372,13 @@ consumes:
   项目里已有同名任务会被拒（用它的 `taskId`）。同一项目下同名（不分大小写、空白归一）的提议是同一条，只会建一个任务——
   同一个窗口 / 话题的各段用同一个名字。人点「是」时才建（可先改名），点「否」清掉并记住，之后再提同一名字会被拒。
 
+- `collection`（v1.6）：`{name（1–64 字）}`——这条活动归进哪个集合。**同一个集合用完全相同的名字**（不分大小写、空白归一后相同
+  即同一个）；页面按集合合计时间、从大到小排，人给整个集合选项目。规则已经给了任务的条目也能归集合（只带 `collection`）。
+- `projectId`（v1.6）：`list_projects` 给的已有项目——看得出项目、定不了任务时只标项目。与 `taskId` / `newTask` 同给时必须是
+  那个任务 / 新任务所在的项目。
+- v1.6 起 `taskId` / `newTask` **可以都不给**，只要有 `collection` 或 `projectId`（只贴标签，不动这条已有的任务）；
+  这时 `confidence` 也可省。给了 `taskId` / `newTask` 时 `confidence` 仍必填。
+
 MCP 只查「是数组、≤ 200 条」，把每条的 `suggestionId` 改名成 `id` 后发
 `POST /api/core/activity/suggestions/matches {matches}`（带租户头、不带 `Authorization`）；逐条校验在 nexus-core
 （「活动建议」节「AI 匹配」）。
@@ -377,7 +393,8 @@ MCP 只查「是数组、≤ 200 条」，把每条的 `suggestionId` 改名成 
 - 一条被拒不影响其余（不是 `isError`）。被拒的情形：建议不存在 / 不是 pending、任务不存在、这个任务人已经否过
   （`rejectedTaskIds`）、这条已有分类规则给的任务（助理只填空和改自己配的）。
   v1.4 另有：`taskId` 与 `newTask` 都给 / 都没给、项目不存在、名字空或太长、项目里已有同名任务、这个新任务人已经否过 / 已经建好。
-- MCP 原样下传 `newTask`（只改 `suggestionId` → `id`）；逐条校验仍在 nexus-core。
+  v1.6 另有：四样（`taskId`、`newTask`、`collection`、`projectId`）一个都没给、集合名空或太长、`projectId` 不存在或与任务的项目对不上。
+- MCP 原样下传 `newTask`、`collection`、`projectId`（只改 `suggestionId` → `id`）；逐条校验仍在 nexus-core。
 - 本工具**永远不确认**：写进去的只是建议的 `suggestion`（`classifier: "assistant"`），台账一个字节不动。
 
 ### `get_detector_rules` —— 活动分类规则（v1.2 追加）
@@ -502,4 +519,5 @@ MCP 发 `POST /api/core/detector/rules/drafts {rules, summary, author: "assistan
 | 2026-09-30 | v1.1 追加工具 `list_projects`（含没建任务的项目与空分区）。只增，既有工具不变 |
 | 2026-09-30 | v1.2 追加 `get_detector_rules`（只读，规则全给、不受 200 条上限）与第一个提议工具 `propose_detector_rules`（一整套规则 → 待人应用的草稿，`detector.rules.v1`）；第六节把「v1 不得列出 `propose_*`」对这一个解除，并定下所有 `propose_*` 的共同规则；请求体上限 64 → 256 KiB；错误对象可追加 `errors`。既有 9 个工具不变 |
 | 2026-10-02 | v1.3 追加第二个提议工具 `propose_activity_matches`（给待确认的活动建议配任务：`POST /api/core/activity/suggestions/matches`，nexus-core v2.7；只写建议、不确认，人逐条答「是 / 否」）；`list_activity_suggestions` 每条追加 `rejectedTaskIds`，`classifier` 多一个取值 `assistant`。只增，既有工具不变 |
+| 2026-10-08 | v1.6 `propose_activity_matches` 每条可带 `collection {name}`（同类窗口的集合）与 `projectId`（只标到项目），只带这两样时 `taskId` / `newTask` / `confidence` 可省（nexus-core v2.10，只贴标签、不动任务、不确认）；`list_activity_suggestions` 每条追加 `collection`、`suggestedProjectId`、`suggestedProjectPath`。工具仍是 12 个，只增 |
 | 2026-10-03 | v1.4 `propose_activity_matches` 每条可用 `newTask {projectId, name}` 代替 `taskId`（提议新任务，nexus-core v2.8；人点「是」才建、只建一次）；`list_activity_suggestions` 每条追加 `newTask`（含 `projectPath`）。工具仍是 12 个，只增 |
