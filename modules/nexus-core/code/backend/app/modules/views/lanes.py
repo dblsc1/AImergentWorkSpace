@@ -110,7 +110,7 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
             {**s, "from": _iso(s["from"]), "to": _iso(s["to"])}
             for s in activity_service.list_presence(user, now, start, end)
         ]
-        # v2.14：没有手动计时时，「我」当前窗口对上的项目 / 任务，与请人选的窗口
+        # v2.14：没有手动计时时，「我」当前窗口对上的项目 / 任务，与请人选的窗口；v2.16：加 focus（在计时也有）
         auto = activity_service.auto_state(user, state is not None, now)
     else:
         interactions = []

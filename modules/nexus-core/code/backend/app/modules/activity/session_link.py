@@ -38,20 +38,30 @@ def norm(text: str, app: str = "") -> str:
     return _LEAD.sub("", text).strip().casefold()
 
 
-def runs(user: str, start: datetime, end: datetime) -> list[dict]:
-    """与 [start, end) 有重叠、挂在真项目上的代理运行：``{keys, label, projectId, startTs, endTs}``。"""
-    now, live = timer_service.list_lane_runs(user)
-    seen = {r["runId"] for r in live}
-    closed = [{**r, "startTs": r["startAt"], "endTs": r["endAt"]}
-              for r in lanes_projection.read_lanes(user, "run", start, end, _MAX_CLOSED) if r["runId"] not in seen]
+def _candidates(rows: list[dict], now: datetime) -> list[dict]:
     out = []
-    for run in live + closed:
+    for run in rows:
         keys = {k for k in (norm(run.get(f) or "") for f in ("label", "match")) if len(k) >= _MIN_LEN}
         project = run.get("projectId")
         if keys and project and project != planner_service.INBOX_PROJECT_ID:
             out.append({"keys": keys, "label": run.get("label") or run.get("match"), "projectId": project,
                         "startTs": run["startTs"], "endTs": run["endTs"] or now})
     return out
+
+
+def runs(user: str, start: datetime, end: datetime) -> list[dict]:
+    """与 [start, end) 有重叠、挂在真项目上的代理运行：``{keys, label, projectId, startTs, endTs}``。"""
+    now, live_rows = timer_service.list_lane_runs(user)
+    seen = {r["runId"] for r in live_rows}
+    closed = [{**r, "startTs": r["startAt"], "endTs": r["endAt"]}
+              for r in lanes_projection.read_lanes(user, "run", start, end, _MAX_CLOSED) if r["runId"] not in seen]
+    return _candidates(live_rows + closed, now)
+
+
+def live(user: str) -> list[dict]:
+    """此刻还在跑、挂在真项目上的代理运行（v2.16「此刻的焦点」用；形状同 ``runs``）。"""
+    now, rows = timer_service.list_lane_runs(user)
+    return _candidates([r for r in rows if r["endTs"] is None], now)
 
 
 def link(candidates: list[dict], app: str, title: str, start: datetime, end: datetime) -> dict:
