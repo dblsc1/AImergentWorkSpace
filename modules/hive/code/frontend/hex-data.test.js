@@ -860,6 +860,23 @@ test("临时任务：只挑记在未分类时间桶上的段，名字是「临�
   assert.strictEqual(r.path, "学习/数学/临时任务 2026-09-08 00:43 · 32 分钟");
 });
 
+test("临时任务：归到具体任务之后换成任务名，放回桶的还是临时任务（nexus-core v2.11 的 currentSubject）", function () {
+  function moved(id, task, project) {
+    var e = tempEvent(id, "t_unc_p1", "2026-09-08T00:43:00+08:00", "2026-09-08T01:15:10+08:00", 1930);
+    e.currentSubject = { zone: "z1", project: project || "p1", task: task };
+    return e;
+  }
+  var native = tempEvent("e9", "t1", "2026-09-08T02:00:00+08:00", "2026-09-08T02:10:00+08:00", 600);
+  var rows = H.tempSessions([moved("e1", "t1"), moved("e2", "t_unc_p1"), moved("e3", "t_gone"), native],
+    TEMP_TREE, { offsetMinutes: 480 });
+  assert.deepStrictEqual(rows.map(function (r) { return [r.eventId, r.taskName, r.projectName]; }), [
+    ["e1", "真任务 · 32 分钟", "数学"],
+    ["e2", "临时任务 2026-09-08 00:43 · 32 分钟", "数学"]
+  ], "归到已不在树里的任务的段不列；原本就记在任务上的段从来不列");
+  assert.strictEqual(rows[0].path, "学习/数学/真任务 · 32 分钟");
+  assert.strictEqual(rows[0].taskId, null);
+});
+
 test("临时任务：没有桶的树 / 空输入都是空数组，不崩", function () {
   assert.deepStrictEqual(H.tempSessions(null, null), []);
   assert.deepStrictEqual(H.tempSessions([tempEvent("e1", "t_unc_p1", "x", "y", 1)], { projects: [{ id: "p1" }] }), []);

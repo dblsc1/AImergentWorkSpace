@@ -130,6 +130,11 @@ Promise.resolve()
     assert.strictEqual(D.mapArchiveEvent(event, tree).summary,
       "2026年8月1日 21:15–21:47 · 阳台种菜 / 临时任务 2026-08-01 21:15 · 32分钟");
     assert.strictEqual(D.resolveArchiveLabel(tree, event.subject), "阳台种菜 / 临时任务");
+    // nexus-core v2.11：归到具体任务之后按 currentSubject 显示，不再是「临时任务」
+    var task = SAMPLE_TREE.projects.filter(function (p) { return p.id === "p_1"; })[0].tasks[0];
+    var moved = Object.assign({}, event, { currentSubject: { zone: "z_life", project: "p_1", task: task.id } });
+    assert.strictEqual(D.mapArchiveEvent(moved, tree).summary,
+      "2026年8月1日 21:15–21:47 · 阳台种菜 / " + task.name + " · 32分钟");
   }); })
   .then(function () { return test("mapArchiveEvent：tree 为 null（未加载完）也不抛异常", function () {
     var event = {

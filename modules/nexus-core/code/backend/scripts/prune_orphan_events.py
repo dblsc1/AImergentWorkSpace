@@ -123,7 +123,14 @@ def collect(db, db_name: str) -> Plan:
         total_events=db["events"].count_documents({}),
     )
 
-    for event in db["events"].find({"type": TARGET_TYPE}):
+    # v2.11：按**当前归属**判（契约「改挂未分类时间」）。原项目已删、但人已经把这一段归到现存任务上的，
+    # 不是孤儿——按原 subject 判会把人归好的时间删掉。算法只有 events service 那一份。
+    from app.modules.events.service import REASSIGNED_TYPE, with_current_subjects  # noqa: PLC0415
+
+    events = list(db["events"].find({"type": {"$in": [TARGET_TYPE, REASSIGNED_TYPE]}}))
+    for event in with_current_subjects(events):
+        if event.get("type") != TARGET_TYPE:
+            continue
         if is_orphan(event, project_ids, task_ids):
             plan.orphans.append(event)
         else:

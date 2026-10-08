@@ -60,6 +60,18 @@
       <p class="suggest-more" id="suggest-more" hidden></p>
     </section>
 
+    <!-- 「待分类」（nexus-core v2.11 改挂未分类时间，unclassified.js）：还记在各项目「未分类」里的每一段，挑任务归进去。
+         没有可归的段、或后端没有这个读端时整块保持 hidden。 -->
+    <section class="card unc-panel" id="unclassified-panel" hidden aria-labelledby="unc-title">
+      <h2 class="suggest-title" id="unc-title">待分类 <span class="suggest-count mono" id="unc-count"></span></h2>
+      <p class="suggest-sub">记在项目「未分类」里的时间。挑个任务归进去——原来的记录不改，只是追加一条「归入」，随时可以再改。</p>
+      <div class="unc-status" id="unc-status" hidden>
+        <p class="suggest-message" id="unc-message" role="status"></p>
+        <button type="button" class="btn btn-ghost" id="unc-undo" hidden>撤回</button>
+      </div>
+      <div class="unc-groups" id="unc-groups"></div>
+    </section>
+
     <!-- 「活动检测设置」（contracts/detector.settings.v1，settings.js）。data-key / name 与文档的「节.键」一一对应。 -->
     <section class="card settings-panel" id="settings-panel" hidden aria-labelledby="settings-title">
       <h2 class="suggest-title" id="settings-title">活动检测设置</h2>
@@ -266,6 +278,7 @@
 
   <script src="chat.js"></script>
   <script src="suggestions.js"></script>
+  <script src="unclassified.js"></script>
   <script src="settings.js"></script>
   <script src="rules.js"></script>
   <script src="review.js"></script>

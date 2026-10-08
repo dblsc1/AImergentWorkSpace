@@ -222,6 +222,23 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
   从未出现过任何一行则为 `null`（不是"从很久以前"，是"压根没有过"，两者在
   UI 上应该有不同文案）。
 
+### `SessionReassignOut` — `POST /api/core/sessions/{eventId}/reassign`（v2.11）
+
+规范性条款只住 `contract.md`「改挂未分类时间」节。形状：
+
+```jsonc
+// 请求体（二选一，多余的键 422）
+{ "taskId": "t_…" }  |  { "projectId": "p_…" }
+// 200
+{ "sessionEventId": "evt_…", "duplicate": false, "fromTaskId": "t_unc_p_…",
+  "taskId": "t_…", "projectId": "p_…", "seq": 1,
+  "event": { "id": "evt_…", "dedupeKey": "reassign:evt_…:1", "type": "session.reassigned" } }   // 从没改挂过又 duplicate 时为 null
+```
+
+- `duplicate: true` 时界面应当把它当成功（这一段已经在那个任务上），不是报错。
+- `GET /api/core/events` 的条目在改挂过之后多一个 `currentSubject {zone, project, task}`；没有这个键 = 没改挂过，
+  读方一律写 `currentSubject || subject`。
+
 ### `AuditOut` — `GET /api/core/planner/audit`（v1.6，F-ACTOR-2）
 
 记录形状、三种 `outcome` 的语义、append-only 的保证方式见 `contract.md`

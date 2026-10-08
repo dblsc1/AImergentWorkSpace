@@ -33,6 +33,7 @@ from .modules.restore.router import router as restore_router
 from .modules.restore.service import NotEmptyError
 from .modules.timer.router import agents_router
 from .modules.timer.router import router as timer_router
+from .modules.timer.router import sessions_router
 from .modules.timer.service import NoRunningTimerError, UnknownTaskError
 from .modules.views.router import router as views_router
 from .tenant import TenantMiddleware
@@ -85,6 +86,7 @@ def health() -> dict[str, str]:
 app.include_router(events_router, prefix=API_PREFIX)
 app.include_router(timer_router, prefix=API_PREFIX)
 app.include_router(agents_router, prefix=API_PREFIX)  # v2.1 AI 代理运行
+app.include_router(sessions_router, prefix=API_PREFIX)  # v2.11 改挂未分类时间
 app.include_router(planner_unified_router, prefix=API_PREFIX)
 app.include_router(views_router, prefix=API_PREFIX)
 app.include_router(export_router, prefix=API_PREFIX)
@@ -108,6 +110,8 @@ app.include_router(detector_router, prefix=API_PREFIX)  # v2.5 检测程序设�
 #   SuggestionConflictError → 409（v2.2 活动建议：已忽略的再确认 / 已确认的再忽略）
 #   UnprocessableError → 422（v2.4：相位 at 超前 300 秒；views/lanes 的参数互斥 / 跨度超 7 天）
 #   detector ForbiddenError → 403（v2.5：设备令牌想改检测设置）
+#   v2.11 改挂复用上面几条：ForbiddenError 403（设备令牌 / actor=ai）、NotFoundError / UnknownTaskError 404、
+#     InvalidInputError 400（taskId / projectId 没二选一、目标是桶）、HasChildrenError 409（不是未分类的段 / 并发没抢到）
 #   detector InvalidSettingsError → 422、TooLargeError → 413（v2.5：设置文档不合 schema / 太大）
 #   detector RulesError → 自带状态码（v2.6 分类规则：403/404/412/413/422/428，体 {detail, **附加字段}）
 
