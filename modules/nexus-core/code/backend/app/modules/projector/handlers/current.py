@@ -43,6 +43,26 @@ def handle(envelope: dict) -> None:
     )
 
 
+def handle_reassign(envelope: dict) -> None:
+    """吃一条已落库的 ``session.reassigned``（契约 v2.11「改挂未分类时间」）：把那一段的秒数从旧归属
+    挪到新归属。判据同 ``handle``：那一段没有正时长就没累计过，也就没有可挪的。"""
+    data = envelope.get("data") or {}
+    subject = envelope.get("subject") or {}
+    seconds = (data.get("session") or {}).get("durationSeconds")
+    if not isinstance(seconds, (int, float)) or isinstance(seconds, bool) or seconds <= 0:
+        return
+
+    repo.move_session(
+        user=envelope["user"],
+        dedupe_key=envelope["dedupeKey"],
+        seconds=int(seconds),
+        from_project=data.get("fromProjectId"),
+        from_task=data.get("fromTaskId"),
+        to_project=subject.get("project"),
+        to_task=subject.get("task"),
+    )
+
+
 def read_current(user: str) -> dict | None:
     """views 的指定读路径（rules.md §7.4 公开接口）。"""
     return repo.read_current(user)

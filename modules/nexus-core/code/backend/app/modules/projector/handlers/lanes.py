@@ -90,6 +90,17 @@ def handle(envelope: dict) -> None:
     repo.apply_lane(doc)
 
 
+def handle_reassign(envelope: dict) -> None:
+    """吃一条已落库的 ``session.reassigned``（契约 v2.11）：换那一段的 taskId / projectId，其余不动。"""
+    data = envelope.get("data") or {}
+    subject = envelope.get("subject") or {}
+    session = data.get("session") or {}
+    seq = data.get("seq")
+    if type(seq) is not int or not isinstance(session.get("source"), str) or not isinstance(session.get("dedupeKey"), str):
+        return
+    repo.reassign_lane(envelope["user"], applied_key(session), subject.get("task"), subject.get("project"), seq)
+
+
 def read_lanes(user: str, kind: str, start: datetime, end: datetime, limit: int) -> list[dict]:
     """views 的指定读路径（v2.4 ``views/lanes``）。"""
     return repo.read_lanes(user, kind, start, end, limit)

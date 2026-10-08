@@ -71,17 +71,9 @@ def handle(envelope: dict) -> None:
     if not isinstance(seconds, (int, float)) or isinstance(seconds, bool) or seconds <= 0:
         return  # 没有正时长就没有可累计的东西；坏载荷不炸投影（事件本身已落库）
 
-    start_at = data.get("startAt")
-    if not isinstance(start_at, str) or not start_at:
-        return  # 外部 source 可能没有这个字段（开放标准）；不用 time 猜测顶替
-
-    try:
-        moment = datetime.fromisoformat(start_at)
-    except ValueError:
-        return  # 格式不合法：坏载荷不炸投影，事件本身已落库、可事后排查
-    if moment.tzinfo is None:
-        return  # 契约要求 startAt 带偏移；缺偏移视同坏载荷，同上不炸投影
-    date = local_date(moment, settings.tz)
+    date = _day(data.get("startAt"))
+    if date is None:
+        return
 
     repo.apply_daily_stat(
         user=envelope["user"],
@@ -91,6 +83,46 @@ def handle(envelope: dict) -> None:
         task_id=task_id,
         seconds=int(seconds),
     )
+
+
+def _day(start_at) -> str | None:
+    """``startAt`` → ``NEXUS_TZ`` 下的日期；归不了日返回 None（调用方静默跳过）。"""
+    if not isinstance(start_at, str) or not start_at:
+        return None  # 外部 source 可能没有这个字段（开放标准）；不用 time 猜测顶替
+    try:
+        moment = datetime.fromisoformat(start_at)
+    except ValueError:
+        return None  # 格式不合法：坏载荷不炸投影，事件本身已落库、可事后排查
+    if moment.tzinfo is None:
+        return None  # 契约要求 startAt 带偏移；缺偏移视同坏载荷，同上不炸投影
+    return local_date(moment, settings.tz)
+
+
+def handle_reassign(envelope: dict) -> None:
+    """吃一条已落库的 ``session.reassigned``（契约 v2.11「改挂未分类时间」）：那一段归日的那天，
+    旧归属那行减、新归属那行加。跳过的判据同 ``handle``（那一段没进过本投影，就没有可挪的）。"""
+    data = envelope.get("data") or {}
+    subject = envelope.get("subject") or {}
+    session = data.get("session") or {}
+    seconds = session.get("durationSeconds")
+    date = _day(session.get("startAt"))
+    old = (data.get("fromProjectId"), data.get("fromTaskId"))
+    new = (subject.get("project"), subject.get("task"))
+    if (
+        not isinstance(seconds, (int, float)) or isinstance(seconds, bool) or seconds <= 0
+        or date is None or not old[0] or not new[0] or old == new
+    ):
+        return
+
+    for (project_id, task_id), delta in ((old, -int(seconds)), (new, int(seconds))):
+        repo.apply_daily_stat(
+            user=envelope["user"],
+            dedupe_key=envelope["dedupeKey"],
+            date=date,
+            project_id=project_id,
+            task_id=task_id,
+            seconds=delta,
+        )
 
 
 def read_daily_stats(
