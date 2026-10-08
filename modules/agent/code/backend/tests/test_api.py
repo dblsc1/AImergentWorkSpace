@@ -434,6 +434,12 @@ def test_opencode_config():
     # v1.7：每条归集合、看得出项目就标（mcp.tools.v1 v1.6）——集合少而大、同名、定不了任务也标项目
     for must in ("collection {name}", "每一条", "完全相同的名字", "不要一个窗口一个集合", "projectId", "「未分类」"):
         assert must in prompt, must
+    # v1.8：配之前先读匹配历史（mcp.tools.v1 v1.7）——历史是最强的证据、同类窗口同一个项目 / 任务、
+    # 看得出项目就一定标、否过的（窗口, 任务）不再配、集合名沿用
+    for must in ("get_match_history", "历史是最强的证据", "同一个项目", "配同一个任务", "taskDone", "reassign",
+                 "**一定**带 projectId", "同类窗口绝不再配那个任务", "集合名优先沿用历史里已有的"):
+        assert must in prompt, must
+    assert prompt.index("get_match_history") < prompt.index("给**每一条**")  # 先看历史，再归类
     assert all(c["agent"][a] == {"disable": True} for a in ("build", "plan", "general", "explore", "title"))
     assert "sk-x" not in repr(c)
     assert "headers" not in config.opencode_config(s, False)["mcp"]["honeycomb"]

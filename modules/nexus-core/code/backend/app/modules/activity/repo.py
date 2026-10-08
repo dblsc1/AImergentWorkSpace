@@ -50,6 +50,19 @@ def page(user: str, status: str, limit: int, offset: int) -> tuple[int, list[dic
     return col.count_documents(filt), list(docs)
 
 
+def confirmed(user: str, cap: int) -> list[dict]:
+    """v2.12 匹配历史：已确认的建议，最近处理的在前，至多 ``cap`` 条（只取用得着的字段）。"""
+    proj = {"_id": 0, "id": 1, "app": 1, "title": 1, "decidedAt": 1, "suggestion.collection": 1}
+    return list(_col().find({"user": user, "status": "confirmed"}, proj).sort("decidedAt", -1).limit(cap))
+
+
+def with_rejections(user: str, cap: int) -> list[dict]:
+    """v2.12 匹配历史：人否掉过任务的建议（任何状态），新的在前，至多 ``cap`` 条。"""
+    proj = {"_id": 0, "app": 1, "title": 1, "rejectedTaskIds": 1}
+    filt = {"user": user, "rejectedTaskIds.0": {"$exists": True}}
+    return list(_col().find(filt, proj).sort("startTs", -1).limit(cap))
+
+
 def set_status(user: str, sug_id: str, status: str, at: datetime, *, only_from: str | None = None) -> bool:
     """改状态。``only_from`` 给了就是条件更新（忽略只能从 pending 转过去，防与确认赛跑）。"""
     filt = {"user": user, "id": sug_id}
