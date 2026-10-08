@@ -37,6 +37,8 @@ from .schemas import (
 )
 
 EPHEMERAL_KIND = "ephemeral"
+#: v2.9 项目的「未分类」时间桶：不是待办，不进 tree 的 tasks、不算进度（契约「项目未分类时间」）。
+UNCLASSIFIED_KIND = planner_service.UNCLASSIFIED_KIND
 
 _IDLE = {"running": False, "zone": None, "project": None, "task": None, "sessionStartAt": None}
 
@@ -94,6 +96,7 @@ def get_current() -> CurrentOut:
             name=task_doc["name"],
             totalSeconds=task_seconds,
             shareOfProject=_share(task_seconds, project_seconds),
+            kind=task_doc.get("kind", "normal"),
         )
         if task_doc
         else None,
@@ -117,7 +120,8 @@ def get_tree(include_ephemeral: bool = False) -> TreeOut:
     zones, projects = planner_service.list_tree()
     shaped = []
     for project in projects:
-        all_tasks = project.get("tasks", [])
+        bucket = next((t for t in project.get("tasks", []) if t.get("kind") == UNCLASSIFIED_KIND), None)
+        all_tasks = [t for t in project.get("tasks", []) if t.get("kind") != UNCLASSIFIED_KIND]
         visible = (
             all_tasks
             if include_ephemeral
@@ -135,6 +139,7 @@ def get_tree(include_ephemeral: bool = False) -> TreeOut:
                 "progressSource": project.get("progressSource", "computed"),
                 # deadline = plan.end 的投影（契约）；无计划则回落到旧存量字段
                 "deadline": plan.get("end") or project.get("deadline"),
+                "unclassifiedTaskId": bucket["id"] if bucket else None,
                 "tasks": [
                     {
                         "id": t["id"],
@@ -218,6 +223,7 @@ def get_gantt(date_from: str | None = None, date_to: str | None = None) -> Gantt
                     "key": task["key"],
                     "name": task["name"],
                     "done": bool(task.get("done")),
+                    "kind": task.get("kind", "normal"),
                     "plan": task.get("plan"),
                     "dependsOn": task.get("dependsOn") or [],
                     "actual": [

@@ -50,6 +50,8 @@
     const current = window.ringCurrentState;
     // 没在计时就没有可改的任务——按钮本身也只在运行态才存在，这里是第二道闸。
     if (!current || !current.running || !current.task || !current.task.id) return;
+    // 项目的「未分类」时间桶是系统任务，改不了名（后端 409）：按钮已藏，点圆环里的名字也不开。
+    if (current.task.kind === "unclassified") return;
     editingTaskId = current.task.id;
     inputEl.value = current.task.name || "";
     clearError();

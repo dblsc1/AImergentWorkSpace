@@ -191,7 +191,9 @@
     } else if (act === "pause") {
       busy = true;
       var memo = cur && cur.task ? {
-        taskId: cur.task.id, taskName: cur.task.name,
+        // 「未分类」时间桶（长按项目格起的）：名字记项目名，同计时中中心格的显示
+        taskId: cur.task.id,
+        taskName: cur.task.kind === "unclassified" ? ((cur.project && cur.project.name) || "") : cur.task.name,
         projectName: (cur.project && cur.project.name) || "",
         pausedAt: new Date().toISOString(),
         carriedSeconds: carried(cur) + sessionSeconds(cur),

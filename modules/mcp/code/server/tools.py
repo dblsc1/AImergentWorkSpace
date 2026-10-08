@@ -85,14 +85,20 @@ def _send(req: urllib.request.Request, path: str) -> dict:
 
 
 class _Paths:
-    """id → 当前显示路径「分区 / 项目 / 任务」；查不到（已删）为 None。"""
+    """id → 当前显示路径「分区 / 项目 / 任务」；查不到（已删）为 None。
+    v1.5：项目的「未分类」时间桶（nexus-core v2.9，不在 tree 的 tasks 里）路径是「分区 / 项目 / 未分类」，
+    ``buckets`` 是这些桶的任务 id——记在它上面的时间还没归到具体任务。"""
 
     def __init__(self, tree: dict):
         zones = {z["id"]: z["name"] for z in tree["zones"]}
         self.projects: dict[str, str] = {}
         self.tasks: dict[str, str] = {}
+        self.buckets: set[str] = set()
         for p in tree["projects"]:
             pp = self.projects[p["id"]] = f"{zones.get(p['zoneId'], '?')} / {p['name']}"
+            if p.get("unclassifiedTaskId"):
+                self.buckets.add(p["unclassifiedTaskId"])
+                self.tasks[p["unclassifiedTaskId"]] = f"{pp} / 未分类"
             for t in p["tasks"]:
                 self.tasks[t["id"]] = f"{pp} / {t['name']}"
 
@@ -319,6 +325,7 @@ def list_time_sessions(a, tenant):
             "mode": data.get("mode") or "do", "source": e.get("source"),
             "taskId": subj.get("task"), "projectId": subj.get("project"), "zoneId": subj.get("zone"),
             "path": paths(subj.get("task"), subj.get("project")),
+            "unclassified": subj.get("task") in paths.buckets,  # v1.5：记在项目的「未分类」上，还没归到具体任务
         })
     return _page("list_time_sessions", items, a, total=r["total"])
 
@@ -334,13 +341,14 @@ def get_daily_time(a, tenant):
             for d in t["actual"]:
                 on_tasks[d["date"]] = on_tasks.get(d["date"], 0) + d["seconds"]
                 rows.append({"date": d["date"], "projectId": p["id"], "taskId": t["id"],
-                             "seconds": d["seconds"], "path": paths(t["id"])})
+                             "seconds": d["seconds"], "path": paths(t["id"]),
+                             "unclassified": t["id"] in paths.buckets})  # v1.5：该项目当天未分类的合计
         for d in p["actual"]:
             total += d["seconds"]
             rest = d["seconds"] - on_tasks.get(d["date"], 0)
             if rest > 0:  # 有项目、没挂具体任务的那部分（nexus-core B5）
                 rows.append({"date": d["date"], "projectId": p["id"], "taskId": None,
-                             "seconds": rest, "path": paths(None, p["id"])})
+                             "seconds": rest, "path": paths(None, p["id"]), "unclassified": False})
     rows.sort(key=lambda r: (r["date"], -r["seconds"]))
     return {"today": g["today"], "totalSeconds": total, **_page("get_daily_time", rows, a)}
 

@@ -165,6 +165,8 @@ def build_plan(payload: dict, *, allow_delete: bool) -> PlanResult:
 
         current = {doc["id"]: doc for doc in _LIST_ALL[type_]()}
         current_by_type[type_] = current
+        # v2.9：「未分类」时间桶是系统任务，不参与 diff——带着它不算改，少了它不算删
+        buckets = {i for i, doc in current.items() if doc.get("kind") == "unclassified"} if type_ == "tasks" else set()
 
         seen_ids: set[str] = set()
         type_ops: list[dict] = []
@@ -180,6 +182,8 @@ def build_plan(payload: dict, *, allow_delete: bool) -> PlanResult:
             if entity_id in seen_ids:
                 raise InvalidInputError(f"{type_} 里 id {entity_id!r} 重复出现")
             seen_ids.add(entity_id)
+            if entity_id in buckets:
+                continue
             existing = current.get(entity_id)
             if existing is None:
                 raise InvalidInputError(
@@ -190,7 +194,7 @@ def build_plan(payload: dict, *, allow_delete: bool) -> PlanResult:
             if op is not None:
                 type_ops.append(op)
 
-        missing_ids = sorted(set(current) - seen_ids)
+        missing_ids = sorted(set(current) - seen_ids - buckets)
         if allow_delete:
             type_ops.extend({"op": "delete", "id": mid, "fields": {}} for mid in missing_ids)
             skipped[type_] = []

@@ -108,7 +108,7 @@ def test_p3_tree_shape_matches_contract_with_keys(client, seeded):
     project = tree["projects"][0]
     assert set(project) == {
         "id", "key", "zoneId", "name", "status", "progress", "progressSource",
-        "deadline", "tasks",
+        "deadline", "tasks", "unclassifiedTaskId",  # v2.9
     }
     assert set(project["tasks"][0]) == {
         "id", "key", "name", "done", "kind", "flags", "plan", "dependsOn",

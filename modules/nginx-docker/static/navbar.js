@@ -364,7 +364,9 @@
     if (isNaN(t)) { degrade(); return; }   // 有 sessionStartAt 但解析不出来 = 数据坏了，同样是「不知道」
     startMs = t;
     state = RUNNING;
-    taskNode = (data.task && data.task.name) ? data.task.name : '';
+    // 计的是项目的「未分类」时间桶（nexus-core v2.9）：只显示项目名
+    var bucket = data.task && data.task.kind === 'unclassified';
+    taskNode = (bucket ? (data.project && data.project.name) : (data.task && data.task.name)) || '';
     taskId = (data.task && data.task.id) || null;
     paint();
   };

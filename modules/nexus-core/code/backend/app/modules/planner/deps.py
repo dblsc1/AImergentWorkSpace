@@ -46,8 +46,11 @@ def validate_depends_on(task_id: str | None, depends_on: list[str] | None, owner
     for dep_id in depends_on:
         if task_id is not None and dep_id == task_id:
             raise InvalidInputError(f"{owner} 的 dependsOn 不能包含自身：{dep_id!r}")
-        if repo.get_task(dep_id) is None:
+        dep = repo.get_task(dep_id)
+        if dep is None:
             raise InvalidInputError(f"{owner} 的 dependsOn 引用了不存在的任务：{dep_id!r}")
+        if dep.get("kind") == "unclassified":  # v2.9：桶永远不会完成，依赖它等于永远等待
+            raise InvalidInputError(f"{owner} 的 dependsOn 不能引用「未分类」时间桶：{dep_id!r}")
     graph = {t["id"]: list(t.get("dependsOn") or []) for t in repo.list_tasks()}
     graph[node] = list(depends_on)
     cycle = find_cycle(graph, node)
