@@ -210,13 +210,14 @@ class HookTitleTests(_TranscriptMixin, unittest.TestCase):
         self.assertEqual(self._starts(), [])
         self.assertIsNone(real_read("s1"))
 
-    def test_rename_returning_a_different_run_while_live_is_closed_not_adopted(self):
+    def test_rename_returning_a_different_run_while_live_is_adopted(self):
         path = self._transcript(_title("New Name"))
-        claude_hook._save_run_id("s1", "run-1", "idle", "garden")
+        claude_hook._save_run_id("s1", "run-1", "idle", "garden")  # 服务端已把 run-1 收掉：start 回新 run
         with mock.patch.object(cc, "start_run", return_value={"runId": "run-2"}):
             claude_hook.handle_phase(self._event("Stop", transcript_path=path), self.AT)
-        self.assertEqual(claude_hook._read_state("s1")["runId"], "run-1")
-        self.assertEqual([r["path"] for r in self._stops()], ["/api/core/agents/run-2/stop"])
+        state = claude_hook._read_state("s1")
+        self.assertEqual((state["runId"], state["label"]), ("run-2", "New Name"))
+        self.assertEqual(self._stops(), [])
 
 
 if __name__ == "__main__":
