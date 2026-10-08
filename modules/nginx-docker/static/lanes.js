@@ -124,16 +124,17 @@
       if (g.phase !== 'idle') { sum += Math.max(0, Math.min(g.e, v1) - Math.max(g.s, v0)); }
     });
     return { r: r, ph: ph, segs: segs, act: sum / 1000, last: (lastP ? ms(lastP.at) : ms(r.startAt)) || 0,
-      wait: !r.endAt && isWaiting(ph) ? 0 : 1 };
+      tier: r.endAt ? 4 : isWaiting(ph) ? 0 : ph === 'working' ? 1 : ph === 'error' ? 2 : 3 };
   }
 
   function activeSeconds(run, v0, v1, nowMs) { return runInfo(run, v0, v1, nowMs).act; }
 
-  // 计时页卡片的排序（ring 契约 2026-10-03）：在跑且在等你（waiting_input / waiting_permission）的浮到最前，
-  // 其余按视窗内活跃秒数倒序，同分按最近一次相位转入倒序。纯函数，不改入参。返回 runInfo 列表（render 复用）。
+  // 计时页卡片的排序（ring 契约 2026-10-08，取代 10-03 的排法）：档位 在跑且在等你（waiting_input / waiting_permission）
+  // → 在跑且干活 → 在跑出错 → 在跑空闲 → 已结束；同档按视窗内活跃秒数倒序，同分按最近一次相位转入倒序。
+  // 纯函数，不改入参。返回 runInfo 列表（render 复用）。
   function rankRuns(agents, v0, v1, nowMs) {
     return (agents || []).map(function (r) { return runInfo(r, v0, v1, nowMs); }).sort(function (a, b) {
-      return (a.wait - b.wait) || (b.act - a.act) || (b.last - a.last);
+      return (a.tier - b.tier) || (b.act - a.act) || (b.last - a.last);
     });
   }
 
@@ -348,6 +349,8 @@
     // ponytail: 折叠区里的卡也整张建好（只是收着）；几十个运行无所谓，真到读端上限 200 个嫌慢再改成展开时才建
     agents = infos.map(function (k) { return k.r; });
     var top = cards ? (opts.top || 5) : agents.length;
+    // 在跑且在等你 / 在干活的（档 0–1）不许被折叠：多于 top 个就全展开，折叠从它们之后才开始
+    if (cards) { infos.forEach(function (k, i) { if (k.tier <= 1 && i + 1 > top) { top = i + 1; } }); }
     var fold = null, foldList = null;
     if (agents.length > top) {
       fold = el('details', 'hcl-fold');
