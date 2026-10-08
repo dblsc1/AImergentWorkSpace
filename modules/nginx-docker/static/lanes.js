@@ -13,6 +13,7 @@
  *   sortByActivity(agents, v0, v1, now)  计时页卡片的排序（档位：在等你 → 干活 → 出错 → 空闲 → 已结束；同档按活跃秒数、最近转入）
  *   humanStatus(human, now)        人此刻：在电脑前 / 离开 / 不在线（+ 在计时 / 前台程序）
  *   render(root, data, opts)       画一张图；全部 textContent，不用 innerHTML
+ *                                  同一个 root 第二次起的重画带换位动效（2026-10-08，见 motion()）
  */
 (function () {
   'use strict';
@@ -190,6 +191,63 @@
     return 3 * HOUR;
   }
 
+  /* 换位动效（2026-10-08）。重画照旧整棵换掉，动效只靠「按 runId 记的旧位置」做 FLIP：
+   * before = 重画前各行 / 卡的 {rect（看不见 = null）, ph}，重画后一次读完新位置、再一次写完动画（不来回量）。
+   *   往上走：略放大（只卡片式）+ 抬起的阴影 + 压在别的卡上面，ease-out，几张一起上时自上而下各晚 50 毫秒（排队）
+   *   往下走：只平移，稍慢稍软
+   *   新出现：淡入 + 上浮；从折叠区里出来 / 进去（一头看不见）：只淡入
+   *   相位变了：is-phase-changed（胶囊与卡边闪一下，样式在 lanes.css）
+   * 只动 transform / opacity；prefers-reduced-motion 时不平移不放大，只留淡入。第一次画、页面不可见时不动。 */
+  var MOVE_ID = 'hcl-move';
+  // 看得见才有位置。收着的 <details> 里的卡在新浏览器里仍有盒子（content-visibility），所以另看一眼祖先
+  function seenRect(n) {
+    return n.getClientRects().length && !n.closest('details:not([open])') ? n.getBoundingClientRect() : null;
+  }
+  function snapshot(root) {
+    var map = {};
+    Array.prototype.forEach.call(root.querySelectorAll('[data-run-id]'), function (n) {
+      var id = n.getAttribute('data-run-id');
+      if (id) { map[id] = { rect: seenRect(n), ph: n.getAttribute('data-phase') }; }
+    });
+    return map;
+  }
+  function motion(root, before, cards) {
+    if (!before || !root.animate || document.visibilityState === 'hidden') { return; }
+    var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var jobs = [];
+    Array.prototype.forEach.call(root.querySelectorAll('[data-run-id]'), function (n) {      // 先全部读
+      var old = before[n.getAttribute('data-run-id')];
+      var rect = seenRect(n);
+      if (old && old.ph !== n.getAttribute('data-phase')) { n.classList.add('is-phase-changed'); }
+      if (!rect) { return; }
+      if (!old || !old.rect) { jobs.push({ n: n, top: rect.top, fresh: !old }); return; }
+      var dx = old.rect.left - rect.left, dy = old.rect.top - rect.top;
+      if (Math.abs(dx) > 1 || Math.abs(dy) > 1) { jobs.push({ n: n, top: rect.top, dx: dx, dy: dy }); }
+    });
+    var fade = { duration: 280, easing: 'ease-out', id: MOVE_ID }, ups = 0;
+    jobs.sort(function (a, b) { return a.top - b.top; }).forEach(function (j) {              // 再全部写
+      var n = j.n, at = function (k, sc) {
+        return 'translate(' + j.dx * k + 'px,' + j.dy * k + 'px) scale(' + sc + ')';
+      };
+      if (j.dy === undefined) {
+        n.animate(j.fresh && !still ? [{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }]
+          : [{ opacity: 0 }, { opacity: 1 }], fade);
+      } else if (still) {
+        return;                                        // 减少动态效果：直接到位
+      } else if (j.dy > 0) {
+        var t = { duration: 360, delay: 50 * ups++, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'backwards', id: MOVE_ID };
+        n.classList.add('is-rising');
+        n.animate([{ transform: at(1, 1) }, { transform: at(.6, cards ? 1.025 : 1), offset: .4 }, { transform: at(0, 1) }], t)
+          .onfinish = function () { n.classList.remove('is-rising'); };
+        // 抬起的阴影画在 ::before 上、只动它的 opacity（不动 box-shadow 本身）
+        if (cards) { try { n.animate([{ opacity: 0 }, { opacity: 1, offset: .4 }, { opacity: 0 }], { duration: t.duration, delay: t.delay, easing: 'ease-out', pseudoElement: '::before' }); } catch (e) { /* 老浏览器没有 pseudoElement：不要阴影 */ } }
+      } else {
+        n.animate([{ transform: at(1, 1) }, { transform: at(0, 1) }],
+          { duration: 440, easing: 'cubic-bezier(.4,0,.2,1)', id: MOVE_ID });
+      }
+    });
+  }
+
   /* render(root, data, opts)
    *   opts.viewStart / viewEnd  ms，画的时间范围（段裁到这里）
    *   opts.agents               要画的运行（缺省 data.agents 里与视窗有重叠的）
@@ -220,6 +278,9 @@
     var oldFold = root.querySelector('details.hcl-fold');
     if (oldFold) { root.hclFoldOpen = oldFold.open; }
     var foldFocus = !!(oldFold && a && oldFold.contains(a) && a.tagName === 'SUMMARY');
+    // 换位动效要的旧位置（第一次画没有 → 不动）；同一个 root 换了布局（卡片 ↔ 列表）也当第一次
+    var before = root.hclDrawn === cards ? snapshot(root) : null;
+    root.hclDrawn = cards;
     root.textContent = '';
     root.className = 'hcl' + (opts.compact ? ' hcl-compact' : '') + (cards ? ' hcl-cards' : '');
 
@@ -369,6 +430,7 @@
         live && !cards ? PHASE_CLASS[ph] : null);
       var card = track.parentNode;
       card.setAttribute('data-run-id', r.runId || '');
+      card.setAttribute('data-phase', live ? ph : 'ended');
       rowOf[r.runId] = cards ? track : i + 1;
       if (cards) {
         var head = track.previousSibling;
@@ -473,6 +535,7 @@
       tip.style.top = (r.bottom - box.top + 4) + 'px';
     };
     root.onmouseleave = hideTip;
+    motion(root, before, cards);
     return infos;
   }
 

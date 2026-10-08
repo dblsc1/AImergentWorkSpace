@@ -466,3 +466,131 @@ def test_fold_disappearing_moves_focus_to_heading_and_open_state_comes_back(brow
         poll()
         assert page.text_content("#lanes-view .hcl-fold > summary") == "还有 2 个"
         assert page.get_attribute("#lanes-view .hcl-fold", "open") is not None
+
+
+# ── 2026-10-08 换位动效（lanes.js motion()）。不看时间：重画那一刻同步抓动画对象，再等它们的 finished ─────────
+
+# 包一层 render：每次画完当场记下「谁身上挂着换位动画」（此刻一定还在跑），并留着入参给测试自己再画一次
+SPY_JS = """() => {
+  const L = window.HoneycombLanes, real = L.render;
+  window.__draws = [];
+  L.render = function (root, data, opts) {
+    const out = real.apply(this, arguments);
+    window.__args = [root, data, opts];
+    window.__draws.push(document.getAnimations().filter(a => a.id === 'hcl-move').map(a => {
+      const n = a.effect.target, kf = a.effect.getKeyframes(), t = a.effect.getTiming();
+      return {id: n.dataset.runId, state: a.playState, delay: t.delay, duration: t.duration,
+              props: [...new Set(kf.flatMap(k => Object.keys(k)))].filter(k => k === 'transform' || k === 'opacity').sort(),
+              from: kf[0].transform || '', scaled: kf.some(k => /scale\\(1\\.0[1-9]/.test(k.transform || '')),
+              rising: n.classList.contains('is-rising'), now: getComputedStyle(n).transform};
+    }));
+    return out;
+  };
+}"""
+SETTLE_JS = """async () => {
+  await Promise.all(document.getAnimations().filter(a => a.id === 'hcl-move').map(a => a.finished));
+  const cards = [...document.querySelectorAll('#lanes-view [data-run-id]')];
+  return {left: document.getAnimations().filter(a => a.id === 'hcl-move').length,
+          transforms: [...new Set(cards.map(n => getComputedStyle(n).transform))],
+          rising: document.querySelectorAll('#lanes-view .is-rising').length,
+          order: cards.map(n => n.dataset.runId),
+          rank: window.HoneycombLanes.sortByActivity(window.__args[1].agents, window.__args[2].viewStart,
+                    Date.parse(window.__args[1].now), Date.parse(window.__args[1].now)).map(r => r.runId)};
+}"""
+REPOLL_JS = "() => document.dispatchEvent(new Event('visibilitychange'))"    # 页面可见时 = 马上再拉一次
+
+
+def reordered() -> dict[str, Any]:
+    """codex、tests 都转成在等你：codex（70 分）、plot（50）、tests（25）→ 两张往上走，其余往下让。"""
+    d = copy.deepcopy(fx.LANES_FULL)
+    by = {r["runId"]: r for r in d["agents"]}
+    by["run_b"]["phases"].append({"at": fx.at("10:18"), "phase": "waiting_permission", "detail": "Bash"})
+    by["run_f"]["phases"].append({"at": fx.at("10:15"), "phase": "waiting_input", "detail": None})
+    return d
+
+
+def redraw(page, stub: LanesStub, body: dict[str, Any]) -> list[dict[str, Any]]:
+    page.evaluate(SPY_JS)
+    stub.body = body
+    page.evaluate(REPOLL_JS)
+    page.wait_for_function("() => window.__draws.length > 0")
+    return page.evaluate("() => window.__draws[0]")
+
+
+def dy(move: dict[str, Any]) -> float:
+    """动画起点的竖向位移（translate(Xpx, Ypx) …）：> 0 = 从下面上来。"""
+    return float(move["from"].split(",")[1].split("px")[0])
+
+
+def test_first_paint_has_no_reorder_motion(browser, static_base_url) -> None:
+    with open_lanes(browser, static_base_url, fx.LANES_FULL) as (page, _):
+        page.wait_for_selector("#lanes-view .hcl-card")
+        assert page.evaluate("() => document.getAnimations().filter(a => a.id === 'hcl-move').length") == 0
+        assert page.locator("#lanes-view .is-phase-changed, #lanes-view .is-rising").count() == 0
+
+
+def test_reorder_moves_up_scaled_and_staggered_others_float_down(browser, static_base_url) -> None:
+    with open_lanes(browser, static_base_url, fx.LANES_FULL) as (page, stub):
+        page.wait_for_selector("#lanes-view .hcl-fold")
+        page.focus("#lanes-view .hcl-fold > summary")
+        page.keyboard.press("Enter")
+        moves = {m["id"]: m for m in redraw(page, stub, reordered())}
+        # 往上走的两张：在跑、从下面的旧位置出发、略放大、压在上面；排队：靠上的先走
+        for rid in ("run_b", "run_f"):
+            m = moves[rid]
+            assert m["state"] == "running" and m["props"] == ["transform"] and m["scaled"] and m["rising"], m
+            assert dy(m) > 1, m
+        assert moves["run_b"]["now"] not in ("none", "matrix(1, 0, 0, 1, 0, 0)"), "此刻还在旧位置上"
+        assert (moves["run_b"]["delay"], moves["run_f"]["delay"]) == (0, 50)
+        # 被挤下去的：只平移（不放大、不抬起），比往上的慢一点
+        for rid in ("run_c", "run_e", "run_a"):
+            m = moves[rid]
+            assert m["state"] == "running" and not m["scaled"] and not m["rising"], m
+            assert dy(m) < -1, m
+            assert m["duration"] > moves["run_b"]["duration"]
+        assert "run_d" not in moves, "没换位置的不动"
+        assert all(250 <= m["duration"] <= 450 for m in moves.values())
+        # 相位变了的两张：胶囊与卡边闪一下（别的不闪）
+        assert sorted(page.eval_on_selector_all("#lanes-view .is-phase-changed", "ns => ns.map(n => n.dataset.runId)")) == \
+            ["run_b", "run_f"]
+        assert page.eval_on_selector("[data-run-id=run_b] .hcl-pill", "n => getComputedStyle(n).animationName") == "hcl-pop"
+        # 走完：都回到原位（没有残留的 transform），DOM 顺序 = 排名顺序
+        end = page.evaluate(SETTLE_JS)
+        assert end["left"] == 0 and end["transforms"] == ["none"] and end["rising"] == 0, end
+        assert end["order"] == end["rank"] == ["run_b", "run_c", "run_f", "run_e", "run_a", "run_d"]
+        # 折叠区照旧开着、焦点还在开关上
+        assert page.get_attribute("#lanes-view .hcl-fold", "open") is not None
+        assert page.evaluate("() => document.activeElement.classList.contains('hcl-fold-toggle')")
+        # 页面不可见时重画不动（轮询本来就停了；这里直接再画一次）
+        hidden = page.evaluate("""(body) => {
+            Object.defineProperty(document, 'visibilityState', {value: 'hidden', configurable: true});
+            window.HoneycombLanes.render(window.__args[0], body, window.__args[2]);
+            return document.getAnimations().filter(a => a.id === 'hcl-move').length;
+        }""", fx.LANES_FULL)
+        assert hidden == 0
+        assert page.eval_on_selector("#lanes-view [data-run-id]", "n => n.dataset.runId") == "run_c"
+
+
+def test_reduced_motion_reorders_instantly(browser, static_base_url) -> None:
+    with open_lanes(browser, static_base_url, fx.LANES_FULL, reduced_motion="reduce") as (page, stub):
+        page.wait_for_selector("#lanes-view .hcl-card")
+        moves = redraw(page, stub, reordered())
+        assert [m for m in moves if "transform" in m["props"]] == [], moves
+        end = page.evaluate(SETTLE_JS)
+        assert end["transforms"] == ["none"] and end["order"] == end["rank"]
+        assert page.eval_on_selector("[data-run-id=run_b] .hcl-pill", "n => getComputedStyle(n).animationName") == "none"
+
+
+def test_new_card_fades_in_and_fold_crossing_only_fades(browser, static_base_url) -> None:
+    with open_lanes(browser, static_base_url, fx.LANES_FULL) as (page, stub):
+        page.wait_for_selector("#lanes-view .hcl-card")
+        # 新来一个在干活的 → 它淡入 + 上浮；空闲的 tests 被挤进收着的折叠区（看不见了）→ 不动
+        d = copy.deepcopy(fx.LANES_FULL)
+        d["agents"].append(fx.run("run_g", "fresh", fx.at("10:10"), phases=[(fx.at("10:10"), "working", None)]))
+        moves = {m["id"]: m for m in redraw(page, stub, d)}
+        assert moves["run_g"]["props"] == ["opacity", "transform"] and moves["run_g"]["state"] == "running"
+        assert "run_f" not in moves and not page.is_visible("[data-run-id=run_f]")
+        assert page.evaluate(SETTLE_JS)["transforms"] == ["none"]
+        # 再画回去：tests 从折叠区里出来（旧位置看不见）→ 只淡入，不飞
+        back = {m["id"]: m for m in redraw(page, stub, fx.LANES_FULL)}
+        assert back["run_f"]["props"] == ["opacity"], back
