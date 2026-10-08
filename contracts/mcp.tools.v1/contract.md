@@ -1,6 +1,6 @@
 # mcp.tools.v1 —— 给 AI 代理用的只读工具（MCP）
 
-> **契约 id**：`mcp.tools.v1`。**当前版本 v1.8**（2026-10-08 `propose_detector_rules` / `get_detector_rules` 的规则可以只到项目：`projectId` 代替 `taskId`，工具数不变；v1.7 2026-10-08 追加只读工具 `get_match_history`：人以前把哪个窗口定到了哪个项目 / 任务；v1.6 2026-10-08 `propose_activity_matches` 每条可带 `collection`、`projectId`，`list_activity_suggestions` 追加 `collection`、`suggestedProjectId`、`suggestedProjectPath`；v1.5 2026-10-08 认 nexus-core v2.9 的项目「未分类」时间：`list_time_sessions` / `get_daily_time` 的条目追加 `unclassified`；v1.4 2026-10-03 `propose_activity_matches` 每条可提议新任务 `newTask`，`list_activity_suggestions` 追加 `newTask`；v1.3 2026-10-02 加第二个提议工具 `propose_activity_matches`，`list_activity_suggestions` 输出追加 `rejectedTaskIds`；v1.2 2026-09-30 加 `get_detector_rules` 与第一个提议工具 `propose_detector_rules`；v1.1 2026-09-30 加 `list_projects`；v1.0 2026-09-28，v0.3「AI 桥」首版）。实现：`modules/mcp`。
+> **契约 id**：`mcp.tools.v1`。**当前版本 v1.10**（2026-10-09 `get_current_timer` 的输出追加 `focus` / `auto` / `needsChoice`：人此刻在哪个窗口、它多半属于哪个项目 / 任务，工具数不变；v1.9 2026-10-08 追加 `get_window_awaiting_target` / `suggest_window_target`，共十五个；v1.8 2026-10-08 `propose_detector_rules` / `get_detector_rules` 的规则可以只到项目：`projectId` 代替 `taskId`，工具数不变；v1.7 2026-10-08 追加只读工具 `get_match_history`：人以前把哪个窗口定到了哪个项目 / 任务；v1.6 2026-10-08 `propose_activity_matches` 每条可带 `collection`、`projectId`，`list_activity_suggestions` 追加 `collection`、`suggestedProjectId`、`suggestedProjectPath`；v1.5 2026-10-08 认 nexus-core v2.9 的项目「未分类」时间：`list_time_sessions` / `get_daily_time` 的条目追加 `unclassified`；v1.4 2026-10-03 `propose_activity_matches` 每条可提议新任务 `newTask`，`list_activity_suggestions` 追加 `newTask`；v1.3 2026-10-02 加第二个提议工具 `propose_activity_matches`，`list_activity_suggestions` 输出追加 `rejectedTaskIds`；v1.2 2026-09-30 加 `get_detector_rules` 与第一个提议工具 `propose_detector_rules`；v1.1 2026-09-30 加 `list_projects`；v1.0 2026-09-28，v0.3「AI 桥」首版）。实现：`modules/mcp`。
 >
 > **是什么**：HoneyComb 以 [MCP](https://modelcontextprotocol.io/)（Model Context Protocol）服务器的
 > 形式，把「任务树、人的时间、代理时间、在跑的计时、待确认的活动建议」读给 AI 代理。
@@ -48,6 +48,13 @@
 > **此刻被认领着等回答**（120 秒内、每个窗口一次、每租户每小时至多 12 次）时收；调用方指定不了窗口的程序名与标题，
 > 只能给服务端认定的那一个窗口写一条只认它的规则；目标必须是现存的项目 / 没完成的普通任务；人在计时页一键「不对」即撤。
 > `propose_*` 两个工具与其余十一个只读工具一个字不变。
+>
+> **v1.10**（仓主 2026-10-09：「蜂巢页和计时页还是没有实时显示人类当前焦点所在窗口或者任务」「要通用，得走 MCP」，
+> nexus-core v2.16）：`get_current_timer` 的输出追加三个键——`focus`（人此刻在哪个窗口、从什么时候起、它多半属于
+> 哪个项目 / 任务及出处）、`auto`（自动跟踪正跟着的项目 / 任务）、`needsChoice`（等人选去向的窗口）。**仍是十五个工具**，
+> 没有新入参、没有新的下游请求（都在它本来就读的 `views/current` 里）。**设计原则**：页面与 MCP 读的是**服务端算好的
+> 同一份 `focus`**——任何 MCP 客户端（自带的助理、Hermes、opencode……）看到的和顶栏 / 计时页 / 蜂巢上画的是同一句话，
+> 谁都不各自再认一遍项目 / 任务。`focus` **只是显示提示**：什么都没记下，要回答「计了多少时间」仍看 `running` 与时间记录。
 >
 ```yaml
 provides:
@@ -268,8 +275,25 @@ consumes:
   "sessionStartAt": "2026-09-28T09:30:00+08:00",     // 空闲为 null
   "elapsedSeconds": 1200,                            // MCP 此刻 − sessionStartAt，空闲为 null
   "agents": [ { "runId": "run_…", "agent": "claude-code", "tool": "Bash", "model": null,
-                "taskId": "t_a1", "path": "…", "startedAt": "…" } ] }  // 在跑的代理，另一个维度
+                "taskId": "t_a1", "path": "…", "startedAt": "…" } ],   // 在跑的代理，另一个维度
+  // ↓ v1.10 追加（nexus-core v2.16 / v2.14 的同名键；老后端没有 = 三个都是 null）
+  "focus": { "state": "present",                     // "present" 在电脑前 | "afk" 离开；没有新鲜的心跳 → 整个为 null
+             "app": "code", "title": "plot.gd — garden",   // 当前窗口；title 超过 80 个字符截断（末尾 "…"）
+             "since": "2026-09-28T09:41:00+08:00", "elapsedSeconds": 540,   // 这个窗口待了多久（不是计了多久）
+             "projectId": "p_3c", "taskId": "t_a1",  // 认不出 → null；只认到项目 → taskId 为 null
+             "path": "学习 / garden / 写提示词",       // 同上，认不出为 null
+             "source": "history" },                  // "rules" | "choice" | "ai" | "agent-session" | "history" | null
+  "auto": { "projectId": "p_3c", "taskId": "t_a1", "path": "…", "source": "rules",
+            "since": "…", "elapsedSeconds": 300 },   // 自动跟踪正跟着的目标（用户开了开关、没在手动计时）；没有为 null
+  "needsChoice": { "app": "firefox", "title": "…", "since": "…" } }   // 规则认不出、等用户选去向的窗口；没有为 null
 ```
+
+**怎么读（v1.10）**：`running: true` → 用户正在给 `path` 那个任务计时，这就是「他在做什么」的答案（`focus` 这时也给，
+只说明前台窗口是什么）。`running: false` → 看 `focus`：`state: "present"` 时它说的是用户此刻在哪个窗口、多半属于哪个
+项目 / 任务（`source` 是怎么认出来的：`rules` 分类规则、`choice` 用户刚选的、`ai` 助理认的、`agent-session` 窗口就是某个
+代理会话、`history` 用户以前这样确认过）；`"afk"` = 人离开了；`null` = 没装检测程序或它没在报。**`focus` 只是显示提示，
+什么都没记**；`auto` 非 null 才表示这段时间正被自动记下。窗口标题已经按用户的隐私设置处理过（可能被去掉或换成代号），
+原样转述即可，不要猜原文。
 
 ### `list_time_sessions` —— 人的时间记录（一段一条）
 
@@ -599,6 +623,7 @@ MCP 只查类型与长度，把这六个键原样发给 `POST /api/core/activity
 - [ ] 第四节 8 个工具的名字、入参、出参字段与含义；只读注解（v1.1 起 9 个，v1.2 起 11 个：`propose_detector_rules` 按第六节注解；v1.3 起 12 个：加 `propose_activity_matches`；v1.7 起 13 个：加只读的 `get_match_history`）
 - [ ] v1.9 起 15 个：`get_window_awaiting_target`（`readOnlyHint: false`、`idempotentHint: true`）与 `suggest_window_target`
       （`readOnlyHint: false`）；后者的 inputSchema 没有任何能指定窗口程序名 / 标题的键，只调它登记的那一个端点
+- [ ] v1.10：`get_current_timer` 带出 `focus` / `auto` / `needsChoice`（原样取自 `views/current`，不自己认项目 / 任务；`title` ≤ 80 字符；老后端没有这些键时为 `null`）
 - [ ] 只调第四节表里的 GET；nexus-core 5xx 不把细节回给调用方
 - [ ] 日志不记 `Authorization`、`Cookie`，不记工具结果正文（那是用户数据）
 
@@ -647,3 +672,4 @@ MCP 只查类型与长度，把这六个键原样发给 `POST /api/core/activity
 | 2026-10-08 | 传输（不动版本号、不动工具）：`MCP-Protocol-Version` 与 `initialize.protocolVersion` 追加接受 `2025-11-25`（缺省仍是 `2025-06-18`）。起因：Hermes 握手时发 `2025-11-25`，被第一节「不是支持的版本 → 400」挡住。本服务器只有无状态的 `tools/list` / `tools/call`，新版对这两样没有不兼容的改动。第一节的「协议版本 `2025-06-18`；也接受 `2025-03-26`」自此读作「也接受 `2025-11-25`、`2025-03-26`」 |
 | 2026-10-08 | v1.8 分类规则可以只到项目（`detector.rules.v1` v1.1，nexus-core v2.14）：`propose_detector_rules` 每条 `taskId` 与 `projectId` 恰好给一个（入参 schema 不再要求 `taskId` 必填，逐条校验仍在 nexus-core）；`get_detector_rules` 的每条规则追加 `projectId`（到任务的为 `null`），只到项目的规则 `path` 为「分区 / 项目」。工具数不变（十三个）、映射不变。附取代条目：用户打开 `autoTrack` 后已应用规则的高把握命中直接入账 |
 | 2026-10-08 | v1.9 追加两个工具，共 15 个（nexus-core v2.15「让 AI 认窗口」）：`get_window_awaiting_target`（`POST /api/core/activity/ai/claim`：此刻等 AI 认的那一个窗口，并认领；幂等）与 `suggest_window_target`（`POST /api/core/activity/ai/suggest`：给那个窗口写一条只认它的规则，或 `none: true`）。**第六节的取代条目**：`suggest_window_target` 是本契约唯一直接生效的写，由 nexus-core 的状态把关（被认领着等回答的那一个窗口、120 秒、每租户每小时 12 次、目标须存在、调用方指定不了标题）。既有十三个工具不变 |
+| 2026-10-09 | v1.10 `get_current_timer` 的输出追加 `focus`（`state` / `app` / `title`（≤ 80 字符）/ `since` / `elapsedSeconds` / `projectId` / `taskId` / `path` / `source`）、`auto`（`projectId` / `taskId` / `path` / `source` / `since` / `elapsedSeconds`）、`needsChoice`（`app` / `title` / `since`），都原样取自它本来就读的 `GET /api/core/views/current`（nexus-core v2.16 的 `focus`、v2.14 的 `auto` / `needsChoice`），没有就是 `null`。工具仍是 15 个，无新入参、无新下游请求；工具说明写明「在计时 → 那就是人在做的事；否则看 focus（只是显示提示，什么都没记；标题已按隐私设置处理）」。页面与 MCP 读同一份服务端算好的 `focus` |

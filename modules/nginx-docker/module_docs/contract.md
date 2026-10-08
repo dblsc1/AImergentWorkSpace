@@ -91,6 +91,47 @@ class 加 `hcl-card hcl-lead`），同一个节点跨重画搬过来（表单状
 且 `auto.ai` 时，胶囊后面多一个「不对」按钮（`.hcl-auto-wrong`），点了调 `opts.onAutoWrong(auto)`。顶栏预览不给这个回调，
 所以没有按钮；芯片的文字、小点与请求数不变（`views/current` 的 `aiThinking` 顶栏不读）。
 
+## 此刻的焦点（v0.4，2026-10-09）
+
+仓主 2026-10-09：「蜂巢页和计时页还是没有实时显示人类当前焦点所在窗口或者任务。」nexus-core v2.16 在
+`views.current.v1`（`/__cockpit/current`）与 `views.lanes.v1` 的 `human` 上追加了可空键 `focus`（见该契约「此刻的焦点」节：
+心跳新鲜就有，与自动跟踪的开关无关；项目 / 任务由服务端认，页面**不自己认**）。
+
+**共享件 `static/focus.js`**（新文件，`window.HoneycombFocus`，纯函数、不发请求、不碰 DOM；顶栏、计时页、蜂巢三处的字
+都从它出，谁也不自己拼）。`inject.inc` 在 `navbar.js` 之前注入它（同样 `defer`，先后有保证）；计时页另在页面里直接引一次
+（重复加载是空操作）。没加载到时三处都退回本条之前的样子。
+
+- `describe(src)`：`src` 是 `views/current` 的响应或 `views/lanes` 的 `human`（只读其中的 `auto` / `focus`；
+  **有没有手动计时由调用方先判**，手动计时永远优先）。两样都没有 → `null`。否则回
+  `{state, auto, lead, target, window, chip, since, hint, projectId, projectName, taskId, taskName}`：
+  - `auto` 非 null（自动跟踪正跟着）：`auto: true`，`lead` = `chip` =「自动 · 项目 / 任务」，`since` = `auto.since`
+    （与此前的芯片、人那张卡完全一样；老后端只有 `auto` 没有 `focus` 时也走这一支）；
+  - 否则 `focus.state` 为 `"present"`：认得出目标 → `lead`「正在：项目 / 任务」（只到项目时「正在：项目」），
+    认不出 → `lead`「正在用」；`chip` =「正在：」+ 项目名（没有就用窗口，再没有就「电脑」）；`since` = `focus.since`；
+  - `focus.state` 为 `"afk"`：`lead` = `chip` =「离开」，不带目标。
+  - `target`「项目 / 任务」、`window`「程序 · 标题」（缺哪样省哪样）、`since` 是毫秒时间戳；
+    `hint` 是出处的叫法：`rules` 规则、`choice` 你选的、`ai` AI 认的、`agent-session` 来自会话、`history` 按以往，认不出为空串。
+- `clock(seconds)`：走秒的字，`MM:SS`，满一小时 `H:MM:SS`，负数按 0。
+
+**芯片**（只读已经在拉的那一份 `/__cockpit/current`，**零新增请求**）。**取代**「空闲时芯片只写『未在计时』」
+（「暂停与累计」节第一条的后半句）与上面「自动跟踪」节里芯片自己拼「自动 · …」的写法——三种字现在走同一段代码：
+
+- 手动计时在跑、本机「已暂停」、降级：**都不变**，`focus` / `auto` 不出现。
+- 否则 `describe()` 非 null：
+  - `auto`：`nav` 上 `data-ckpt-auto`，字与读数同「自动跟踪」节（不变）；
+  - 在电脑前：`nav` 上 `data-ckpt-focus="present"`，字「正在：<项目名或窗口>」，读数从 `since` 起每秒走；
+    边是 `--fact` 色**虚线**、点是 `--fact` 色实心并缓慢呼吸（`prefers-reduced-motion` 下不动）——与手动计时
+    （`--accent` 实线边）和自动跟踪（`--plan` 虚线 + 空心点）都分得开；
+  - 离开：`data-ckpt-focus="afk"`，字「离开」，读数从离开那一刻起走，整粒压暗（`--ink-3`）。
+  - 字照旧截到 22 个字宽；芯片的 `title` 是完整的一句（`lead` + 窗口），与 `needsChoice` 的提示同时有时两句都在。
+  - `data-ckpt-timer` 仍是 `idle`（这不是手动计时）；`needsChoice` 的小点照旧。
+- 都没有 →「未在计时」`00:00`，同以前。
+- 项目名 / 任务名 / 程序名 / 标题只当文本渲染。
+
+**共享件 `lanes.js`**：`humanStatus()` 的 `auto` 改由 `describe()` 出（字段与字不变）；多回一个 `focus`
+（`describe()` 的结果，在计时为 `null`）。人那张卡那行字：认得出目标且不是自动跟踪时写「正在：项目 / 任务 · 程序 · 标题」，
+否则照旧「正在用 程序 · 标题」。
+
 ## 暂停与累计（v0.2.5）
 
 后端没有暂停：暂停时 `views/current` 是空闲。芯片**只读**两个本机键（形状见

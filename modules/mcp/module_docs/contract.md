@@ -92,3 +92,9 @@ v1.9（2026-10-08）：让 AI 认规则认不出的窗口（nexus-core v2.15）�
 测试：下游请求与请求体一字不差、租户下传、没有窗口为 `null`、409 原样带回（「什么都没写」）、坏入参 400 且不调下游、
 `tools/list` 的 15 个与注解。经网关的整条链在 `deploy/test/mcp.sh`（没有窗口 → `null`、没在等的 key → 409 且规则版本不变、
 令牌直连三个端点 403）。
+
+v1.10（2026-10-09）：此刻的焦点走 MCP（nexus-core v2.16）。`get_current_timer` 的输出追加 `focus` / `auto` / `needsChoice`，
+都取自它本来就读的 `GET /api/core/views/current`——**不多一个下游请求，也不自己认项目 / 任务**（路径仍由 `views/tree` 按 id 现取）。
+`focus.title` / `needsChoice.title` 截到 80 个字符；`elapsedSeconds` = MCP 此刻 − `since`。老后端没有这些键 → 三个都是 `null`。
+工具仍是 15 个，说明改写（在计时 / 否则看 focus / 只是提示 / 标题已脱敏）。测试：三种形状（有目标、只到项目、离开）、
+截断、老后端为 `null`、在计时时两样都在、下游请求集合不变。
