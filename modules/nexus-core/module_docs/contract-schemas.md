@@ -239,6 +239,23 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
 - `GET /api/core/events` 的条目在改挂过之后多一个 `currentSubject {zone, project, task}`；没有这个键 = 没改挂过，
   读方一律写 `currentSubject || subject`。
 
+### `MatchHistoryOut` — `GET /api/core/activity/suggestions/history`（v2.12）
+
+规范性条款只住 `contract.md`「活动建议」节「匹配历史」。形状：
+
+```jsonc
+// 查询参数：limit（整数，缺省 60，上限 200，非正数按缺省）
+{ "items": [ { "app": "kitty", "title": "Claude Code · cockpit", "collection": "Claude Code · cockpit",   // collection 可缺
+               "projectId": "p_…", "projectPath": "分区 / 项目",
+               "taskId": "t_…", "taskName": "…", "taskDone": false,                                      // 只定到项目时三个键都没有
+               "count": 7, "lastConfirmedAt": "2026-10-08T03:12:00+00:00", "via": "confirm" } ],          // confirm | project | reassign
+  "collections": [ { "name": "…", "projectId": "p_…", "projectPath": "分区 / 项目", "count": 12 } ],
+  "rejected": [ { "app": "…", "title": "…", "taskId": "t_…", "taskName": "…" } ] }
+```
+
+- 三个数组总在（没有就是 `[]`）。`title` 是归一化之后的标题，不是某一段的原样标题。
+- 读方判「只定到项目」看有没有 `taskId`，不要看 `via`（`reassign` 两种都可能）。
+
 ### `AuditOut` — `GET /api/core/planner/audit`（v1.6，F-ACTOR-2）
 
 记录形状、三种 `outcome` 的语义、append-only 的保证方式见 `contract.md`

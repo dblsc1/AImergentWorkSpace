@@ -160,6 +160,7 @@ consumes:
 
 | 日期 | CR | 变更 |
 |---|---|---|
+| 2026-10-08 | 仓主：学历史是要的，直接把历史加进 AI 的上下文 | 「让 AI 匹配」发的那句固定的话加上「先看我以前是怎么归类的（同类窗口照以前的定）」「看得出项目的一定标上项目」：助理经 `mcp.tools.v1` v1.7 的 `get_match_history` 读匹配历史（nexus-core v2.12）。本页自己不读历史端点，不新增 consumes，界面零改动 |
 | 2026-10-08 | 仓主：记进未分类的时间能不能追加「归入 xxx 任务」 | 新增第三块「待分类」（`unclassified.js`、`#unclassified-panel`，在待确认建议与检测设置之间）：按项目列出还记在「未分类」时间桶上的每一段，下拉限本项目任务（+「其他项目…」），逐段「归入」或「全部归入所选任务」= nexus-core v2.11 的 `POST /api/core/sessions/{eventId}/reassign`；没有可归的段 / 端点 404 时整块不出现 |
 | 2026-10-08 | 仓主：碎片太多，同类窗口归成集合、给集合选项目 | 待确认建议最上面一层改为**集合**，按总时长从大到小排：认 nexus-core v2.10 的 `suggestion.collection` / `suggestion.projectId`，没有的按程序 + 去掉开头状态符号 / 计数的标题归并。集合头有项目下拉（建议一致时预选）与「确认整个集合」；集合有项目时行的下拉只列这个项目的任务、缺省「未分类」= confirm `{projectId}`（nexus-core v2.9），「其他项目…」退回全部任务。「确认整个集合」不含 idle 行与提议新任务的行；「全部确认」含义不变、不发 `{projectId}`。`#suggest-list` 由 `<ul>` 改为 `<div>`（行仍是 `li.suggest-item`）。「让 AI 匹配」那句话加「先归集合、标项目」。**须与 nexus-core v2.9（confirm `{projectId}`）同版发布** |
 | 2026-10-03 | 仓主：AI 能自动加新任务（草稿 + 一键确认） | 待确认建议认 nexus-core v2.8 的 `suggestion.newTask`：组上出「新建任务：项目 / 名称」（名字可改），「是」= 组里每一段 confirm `{name, proposalId}`（后端只建一次），「否」= unmatch `{proposalId}`；下拉仍可改选现成任务；「全部确认」不含提议的组。「让 AI 匹配」那句话加「现成任务都不合适时可以提议新任务」 |

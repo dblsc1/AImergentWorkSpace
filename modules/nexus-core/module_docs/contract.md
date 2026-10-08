@@ -107,6 +107,12 @@
 > `session.reassigned` 只由该端点写：`POST /api/core/events` 收到它一律进 `rejected`。带 `Authorization: Bearer` 403。
 > 既有字段、端点行为一个不改。
 >
+> **v2.12（追加式）**：**助理配任务之前，先看人以前是怎么定的。** 仓主 2026-10-08：「学历史是要的」「直接历史加入 AI 的上下文」
+> （不做项目别名 / 关键词表）。新增只读端点 `GET /api/core/activity/suggestions/history`（见「活动建议」节「匹配历史」）：
+> 把已确认的建议按（程序, 归一化标题）去重成「这个窗口 → 这个项目 / 任务」，最近定的在前；确认到项目「未分类」的只给项目，
+> 那一段后来被改挂过（v2.11）的给**当前**归属，任务 / 项目已删的不出。另带以前用过的集合名最近落在哪个项目、
+> 人否掉过的（窗口, 任务）。只读，不写任何东西、不自动确认任何东西；既有字段、端点行为一个不改。
+>
 > v1.9：`GET /api/core/export` 产出的快照此前没有任何端点能吃
 > 回去（喂给 import 会被三层拒绝，而那三条拒绝各守一件实事，一条都不该放宽）。
 > 新增 `nexus-core.restore.v1`（`POST /api/core/restore`，见「快照恢复」节）：
@@ -260,6 +266,9 @@ provides:
       unmatch 记 rejectedProposalIds；confirm 响应追加 taskId
       v2.10 追加：matches 每条可带 collection {name}（集合标签，存 suggestion.collection {key, name}）与 projectId
       （只到项目的建议，存 suggestion.projectId）；只带这两样时不动建议的任务。列表原样回出；只是展示提示，不进台账
+      v2.12 追加：GET .../suggestions/history?limit=（匹配历史，只读）——已确认的建议按（程序, 归一化标题）去重成
+      「窗口 → 项目 / 任务」（去向取台账里的当前归属：确认到桶只给项目、改挂过给改挂后的、已删的不出），
+      另带集合名最近落在的项目与人否掉过的（窗口, 任务）
     status: 已实现（v2.2），待验证
   - id: nexus-core.views.agent-time.v1
     summary: AI 代理时长读端（v2.3）——GET /api/core/views/agent-time?from=&to= 读
@@ -340,6 +349,7 @@ consumes:
 | POST | `/api/core/planner/projects/{id}/unclassified` | 无 | `{taskId}`（该项目的「未分类」时间桶，取或建，幂等；见「项目未分类时间」节） | ✅ 已实现（v2.9） |
 | — | （v2.9 追加，无新端点）confirm 可只带 `projectId`（与 `taskId` / `proposalId` / `name` 互斥）；`views/tree` 项目加 `unclassifiedTaskId`，`views/current` 的 `task`、`views/gantt` 的任务加 `kind` | 见「项目未分类时间」节 | | ✅ 已实现（v2.9） |
 | — | （v2.10 追加，无新端点）matches 每条可带 `collection {name}`、`projectId`（这时 `taskId` / `newTask` / `confidence` 可省）；列表的 `suggestion` 追加 `collection {key, name}`、`projectId` | 见「活动建议」节「AI 分集合」 | | ✅ 已实现（v2.10） |
+| GET | `/api/core/activity/suggestions/history` | `?limit`（缺省 60，上限 200） | `{items[], collections[], rejected[]}`（见「活动建议」节「匹配历史」）；只读，带 Bearer 也能读 | ✅ 已实现（v2.12） |
 | GET | `/api/core/detector/settings` | `?deviceId` | `{deviceId, settings\|null, updatedAt\|null}`（见 `contracts/detector.settings.v1`） | ✅ 已实现（v2.5） |
 | PUT | `/api/core/detector/settings` | `?deviceId`，`DetectorSettings` | 同 GET；带 Bearer 403 | ✅ 已实现（v2.5） |
 | DELETE | `/api/core/detector/settings` | `?deviceId` | `204`；带 Bearer 403 | ✅ 已实现（v2.5） |
@@ -2288,6 +2298,56 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
 - 仍然**什么都不确认**：状态、台账、投影、导出一个字节不动；重复交同一批幂等。只贴标签的写入是条件更新（仍 `pending`）。
 - 标签随建议一起过期；不进导出、不进快照恢复。老读方忽略这两个键即可（`suggestion` 自 v2.8 起就是开放对象）。
 
+### 匹配历史：人以前是怎么定的（规范性 · v2.12）
+
+仓主 2026-10-08：「学历史是要的」——助理不该每次从零猜；人已经确认过「这个窗口算这个项目 / 任务」，下一次同样的窗口就照办。
+「直接历史加入 AI 的上下文」：**不做**项目别名 / 关键词表，历史本身就是例子。实测的起因：v2.10 之后助理几乎从不填 `projectId`，
+连「ShareGPU 开发」「成长花园v0.2 开发」这种一眼看得出项目的集合也不填。本节只管**读端**；怎么用是助理提示词的事
+（`agent.chat.v1` v1.8 补注），经 `mcp.tools.v1` v1.7 的 `get_match_history` 读。
+
+```jsonc
+// GET /api/core/activity/suggestions/history?limit=60        —— 只读；limit 缺省 60、上限 200、非正数按缺省
+{ "items": [                                                   // 一个窗口一行，最近定的在前
+    { "app": "kitty", "title": "Claude Code · cockpit",        // title 是归一化之后的（见下）
+      "collection": "Claude Code · cockpit",                   // 这个窗口最近一次所在的集合名；没分过集合没有这个键
+      "projectId": "p_3c", "projectPath": "学习 / garden",     // 当前名字拼的「分区 / 项目」
+      "taskId": "t_a1", "taskName": "写提示词", "taskDone": false,   // 只定到项目的没有这三个键
+      "count": 7, "lastConfirmedAt": "2026-10-08T03:12:00+00:00",
+      "via": "confirm" } ],                                    // confirm | project | reassign
+  "collections": [                                             // 以前用过的集合名 → 它最近落在的项目（至多 30 个）
+    { "name": "ShareGPU 开发", "projectId": "p_9d", "projectPath": "工作 / ShareGPU", "count": 12 } ],
+  "rejected": [                                                // 人否掉过的（窗口, 任务），新的在前（至多 30 条）
+    { "app": "code", "title": "plot.gd — garden", "taskId": "t_b2", "taskName": "修存档" } ] }
+```
+
+- **来源**：状态是 `confirmed` 的建议（还没过期的），按处理时刻从新到旧。**去向不取建议上存的任务，取台账**：
+  `source=activity-confirmed`、`dedupeKey=activity:<id>` 的那条 `session.completed` 的当前归属——确认时人可以改选别的任务，
+  建议上的 `suggestion.taskId` 不一定是它。台账里没有这条（占了位、事实还没写成）的不算。
+- **键 =（`app`, 归一化标题）**。归一化：空白并成一个、去首尾空白，再去掉**开头**的状态符号（Unicode 类别 `So`，
+  以及 `*` `•` `·`）、计数「`(3)`」「`[2]`」与它们之间的空白；去完是空的就用去之前的。与 AI助理页没有集合标签时的归并键
+  是同一个算法（`modules/assistant` 的 `normTitle`）——「✳ Claude Code」「⠂ Claude Code」「(2) Claude Code」是同一个窗口。
+- **一行说的是人最近一次的决定**：同一个键下取最近处理的那条的去向；`count` 是这个键下**去向与它相同**的段数
+  （人后来改了主意的，旧去向不计）；`lastConfirmedAt` 是那次确认的时刻（改挂过的仍是确认的时刻，不是改挂的时刻）。
+- **`via`**：`confirm` = 确认到了具体任务；`project` = 只确认到项目（记在它的「未分类」时间桶上，v2.9）——
+  **桶不是任务**，这一行没有 `taskId` / `taskName` / `taskDone`；`reassign` = 那一段后来被改挂过（v2.11），
+  给的是**当前**归属（改到具体任务就带任务，放回某个项目的桶就只有项目）。
+- **不存在的去向不出**：当前归属的任务已删、或它的项目已删 → 这条建议不参与（同一个键下更早的、去向还在的那条顶上来）。
+  任务完成了照出，`taskDone: true`（读方自己决定还配不配它）。
+- **`collections`**：已确认建议上的集合标签（v2.10 `suggestion.collection`）按 `key` 归并，`name` 与项目取最近那条的，
+  `count` 是落在这个项目的段数。给助理两样东西：以前用过的集合名（沿用，不要每次换名字）、这个集合一般属于哪个项目。
+- **`rejected`**：`rejectedTaskIds`（v2.7 人说「否」）非空的建议，不论状态，按（`app`, 归一化标题, `taskId`）去重；任务已删的不出；
+  这个窗口在 `items` 里现在的去向就是这个任务的也不出（人后来还是确认到了它，最近的决定为准）。
+  否掉的**新任务提议**（v2.8 `rejectedProposalIds`）不在这里——matches 自己会拒，理由里写着。
+- **上限**：`items` 至多 `limit` 行（缺省 60，上限 200，非正数按缺省，不是整数 422）；只看最近处理的 5000 条已确认建议、
+  最近 500 条被否过的建议。超出的静默不看：这是给模型当例子的，不是台账。
+- **能看多远 = `NEXUS_SUGGESTION_TTL_DAYS`**（默认 14 天）：已确认的建议过期即删，历史随之变短；台账里的事实不带窗口标题，
+  补不回来。想让助理记得更久就调大这个值。读本端点同样会惰性清掉过期的（同列表）。
+- **只读**：不写台账、投影、建议、提议，**不确认、不预填任何东西**（上传时按历史自动配不在本版——那是分类规则的事）。
+- **租户与凭据**：只看当前租户的；带 `Authorization: Bearer`（设备令牌）也能读——与 `GET .../suggestions` 是同一类数据。
+- **隐私**：没有新的暴露面。`app` / `title` 就是上传时已经脱敏过的那两个字段（`ai-detector`「上传」节），列表端点本来就回；
+  本端点只是把它们与人自己选的任务 / 项目并排列出来，不出 `deviceId`、不出时刻段。它们仍是**别的机器上来的文本**，
+  交给模型时照旧当数据、不当指令（`mcp.tools.v1` 第四节）。
+
 ### 过期（惰性，无调度器）
 
 `NEXUS_SUGGESTION_TTL_DAYS`（默认 14）：待确认的按**收到时刻**、已确认/已忽略的按**处理时刻**，
@@ -2548,6 +2608,7 @@ app/modules/
   views/      router queries          纯只读，本契约两条读端住在这里
   activity/   router service repo     活动建议（v2.2）：不是事实；确认时调 timer 的 record_session
                                       在场心跳（v2.4，presence.py）：活状态；attend 经 timer service 的 record_attend 写
+                                      匹配历史（v2.12，history.py）：只读；去向经 events / planner 的 service 读
   detector/   router service repo     检测程序设置（v2.5）：不是事实；设备列表经 activity 的 service 读上传时刻
   projector/  registry handlers/      DISPATCH 显式表 + 各投影 handler
 ```
@@ -2633,6 +2694,7 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 | `assistant` 前端（v2.11） | 「待分类」面板：`views.tree.v1` 的 `unclassifiedTaskId` → 每个桶 `GET /api/core/events?type=session.completed&taskId=<桶>&limit=200`（只回还在桶上的段），逐段 `POST /api/core/sessions/{eventId}/reassign {taskId}`；events 404 时整块隐藏 | `modules/assistant` |
 | `hive` 前端（v2.11） | `events.read.v1` 的 `currentSubject`：「最近完成」与计时档案按当前归属认段——归走的段不再叫「临时任务」，档案里显示新任务名 | `modules/hive` |
 | MCP 服务（v2.11） | `events.read.v1` 的 `currentSubject`：`list_time_sessions` 的 `taskId` / `projectId` / `zoneId` / `path` / `unclassified` 按当前归属（`mcp.tools.v1` 不加字段） | `contracts/mcp.tools.v1` |
+| MCP 服务（v2.12） | `activity.suggestions.v1` 的 `GET .../suggestions/history`（`get_match_history`，`mcp.tools.v1` v1.7）：助理配任务前读人以前的决定 | `contracts/mcp.tools.v1` |
 | 共享顶栏 `nginx-docker/static/navbar.js`（v2.4，契约先行） | `views.lanes.v1`（计时芯片悬停的精简预览：人 + 至多 4 条代理线、最近 1 小时，只在预览打开时约 15 秒轮询；计时页上不弹） | `modules/nginx-docker` |
 | `ring` 前端（v2.4，契约先行） | `views.lanes.v1`（计时页默认展开的「泳道」主视图，全部泳道，约 15 秒轮询）；`views.current.v1` 的 `agents[].phase`/`label` | `modules/ring` |
 | MCP 服务（v0.3 AI 桥，契约先行，待建） | **只读**：`views.tree.v1`、`views.current.v1`、`events.read.v1`（仅 `type=session.completed`）、`views.gantt.v1`、`views.review.v1`、`views.next-actions.v1`、`views.agent-time.v1`、`activity.suggestions.v1` 的 GET。带网关给的 `X-Nexus-Tenant` 原样转来；不调任何写端点、不调 `export`/`planner/audit`。映射表见 `contracts/mcp.tools.v1` 第四节。本模块零改动 | `contracts/mcp.tools.v1` |
