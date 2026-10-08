@@ -2927,6 +2927,18 @@ DISPATCH 表：`session.completed` 与 `agent.run.completed` **各追加**路由
 出处：建议文档另存 `autoSource: "rules" | "choice"`；`GET /api/core/activity/auto` 每条追加 `source`（同样两个取值；
 本次追加之前记下的段没有 `autoSource`，回 `"rules"`）。信封 `ai` 不变（`auto: true`，改挂照旧）。
 
+**2026-10-08 波次统一审核第二轮追加（同版修订，只增）**：
+
+- **占位之后、写事实之前再定一次。** 上面的依据（问询里被否掉的目标、临时选择）是先读下来的。给这一段占位
+  （pending → confirmed）之后、写 `session.completed` 之前**重读一遍、按同样的取法再定一次**：目标与先前定的不一样了
+  （人刚说了「不对」、选了别的、说了这次不选、临时选择刚过期）→ 退出占位，这一段留在待确认，事实不写。
+  所以人的决定做完之后才开始写的段不会再按旧依据记下。仍有一条极窄的缝（重读与写台账之间隔着几次读库，台账与问询不在
+  同一个文档里，做不成一次原子写）：落在缝里的那一段会按旧依据记下，用「改归属」修。
+- **被否掉的目标跟着窗口走，不跟着某一次问询走。** 问询另存 `rejected: [{taskId, projectId, at}]`（最近 8 个，「不对」时
+  与 `outcome: "rejected"` 同一次更新写进去）。同一个窗口 6 小时后再问 AI、上一次的回答被清掉，`rejected` **留着**——
+  迟到的、还带着旧规则猜测的心跳 `guess` 与上传的段照样不算，不论新问询答没答。人后来自己选了其中某个目标（`choice`）→
+  从 `rejected` 里拿掉它（取代上一轮说的 `humanChose`：那个键不再写、不再读）。保留期同问询（距最近一次认领 30 天）。
+
 ### 自动记下的段：`GET /api/core/activity/auto`
 
 ```jsonc
@@ -3037,6 +3049,11 @@ nexus-core 不在 AI 桥内网上，够不着聊天后端（`gateway.v1` 第八�
   （那份已经答完 → `window: null`）。**已有的问询不会被并发的认领换掉**——答过的不会变回「没答」。这一小时的认领数
   只由写进去的那一个 +1（名额恰好在这期间用完 → 撤回刚写的那份，回 `null`）。人已经抢先做了决定的问询（见「回答」）不再给出。
   两个同时的认领各自看中不同的窗口时可能短暂有两份在等：之后只再给最新的那份，另一份超时后转去请人选。
+- **2026-10-08 波次统一审核第二轮追加：先占名额，再让问询露面。** 次序改成「这一小时的认领数原子地 +1（满 12 → 不写问询）
+  → 条件 upsert 写问询 → 没写进去（别的认领抢先）就把刚占的那一个名额退回（恰好一个）」。问询只有在名额占到之后才存在，
+  所以不会有「别的调用方取到并答了一份问询，而它其实没占到名额」；上一条里「撤回刚写的那份」的做法作废。
+  再问同一个窗口时清掉的是上一次的回答（`answeredAt`、`outcome`、目标、`confidence`、`reason`、`rejectedAt`、`humanAt`），
+  `rejected` 不清。
 - 带 `Authorization: Bearer` 一律 403，先于读请求体——AI 这两个端点只经 MCP（对内直连、不带 Bearer）调，同 v2.7 的 matches。
 
 ### 回答：`POST /api/core/activity/ai/suggest`
@@ -3104,6 +3121,7 @@ nexus-core 不在 AI 桥内网上，够不着聊天后端（`gateway.v1` 第八�
   taskId?, projectId?, confidence?, reason?, rejectedAt?}`；每租户另有一份 `key: "_tenant"` 的 `{polledAt, claims[]}`。
   2026-10-08 波次统一审核追加两个可选键：`humanAt`（这次问询期间人自己对这个窗口做了决定的时刻）、`humanChose`
   （人选的 `[taskId, projectId]`，「这次不选」为 `null`，「不对」时清掉）。
+  第二轮追加：`rejected: [{taskId, projectId, at}]`（人对这个窗口否掉过的目标，最近 8 个，不随再问清掉）；`humanChose` 不再使用。
   唯一约束 `(user, key)`。**活状态，不是事实**：不进台账 / 投影 / 导出 / 快照恢复 /「空实例」判据。
 - 实现落点：`activity/auto_ai.py`（状态机、三个端点的业务）、`activity/ask_repo.py`（存取）、`detector/window_rules.py`
   （单条窗口规则的加 / 删，走 `detector.rules.v1` 的整套替换）；`auto.py` 的 `next_step` 仍是唯一的决定处。

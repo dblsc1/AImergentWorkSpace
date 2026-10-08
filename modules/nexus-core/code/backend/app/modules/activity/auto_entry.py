@@ -8,6 +8,11 @@
 - 没有规则的猜测 → 这个窗口此刻未过期的、**人**的临时选择（AI 写的那份不算：AI 的把握走它那条规则），且这一段结束在
   人做选择之后（补传的积压不追认）。
 例外不变：开关关着、无操作段、与手动计时重叠 → 留在待确认。
+
+这些依据（问询、临时选择）是先读下来的；人可能在读与写事实之间否掉它。所以给这一段占位之后、写事实之前**重读一遍
+再定一次**（``service.confirm`` 的 ``still_wanted``），目标变了就退出占位、留在待确认。
+ponytail: 重读与写台账之间仍隔着几次读库（归属链）——台账与问询不在一个文档里，做不成一次原子写；
+落在这条缝里的那一段会按旧依据记下，要彻底就得在记完后再查一遍、把它改挂走（需要一条非人的改挂路径）。
 """
 
 from __future__ import annotations
@@ -44,7 +49,8 @@ def record(device_id: str, docs: list[dict], request: Any) -> None:
         return
     keys = {d["id"]: auto.window_key(d["app"], d["title"]) for d in docs}
     recs = ask_repo.by_keys(user, sorted(set(keys.values())))
-    choices = choice_repo.live(user, auto._now())  # noqa: SLF001
+    now = auto._now()  # noqa: SLF001
+    choices = choice_repo.live(user, now)
     eligible = []
     for d in docs:
         end = datetime.fromisoformat(d["endAt"])
@@ -55,11 +61,18 @@ def record(device_id: str, docs: list[dict], request: Any) -> None:
         return
     manual = auto._manual_spans(user, min(d["startTs"] for d, _, _ in eligible),  # noqa: SLF001
                                 max(end for _, end, _ in eligible))
-    for d, end, (task_id, project_id, source) in eligible:
+    for d, end, target in eligible:
         if any(start < end and stop > d["startTs"] for start, stop in manual):
             continue  # 人自己掐着表的那段时间，AI 不插手
+        task_id, project_id, source = target
+        key = keys[d["id"]]
+
+        def unchanged(d=d, end=end, key=key, target=target) -> bool:
+            return _target(d, end, ask_repo.get(user, key), choice_repo.live(user, now).get(key)) == target
+
         try:
-            service.confirm(d["id"], task_id, "do", request=request, project_id=project_id, auto=source)
+            service.confirm(d["id"], task_id, "do", request=request, project_id=project_id, auto=source,
+                            still_wanted=unchanged)
         except Exception as exc:  # noqa: BLE001 —— 任务刚被删、桶的 id 被占……：留在待确认
             log.warning("自动记录没记成，留在待确认：%s（%s: %s）", d["id"], type(exc).__name__, exc)
 
