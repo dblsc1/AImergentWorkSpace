@@ -87,16 +87,22 @@ def respond(path, q, tenant):
     if path == "/api/core/views/tree":
         return 200, tree_for(tenant)
     if path == "/api/core/views/current":
-        if tenant == "u_idle":
+        if tenant == "u_idle":  # 也是「老后端」的形状：没有 focus / auto / needsChoice 这些键
             return 200, {"running": False, "zone": None, "project": None, "task": None, "sessionStartAt": None,
                          "agents": []}
+        if tenant in FOCUS:
+            return 200, {"running": False, "zone": None, "project": None, "task": None, "sessionStartAt": None,
+                         "agents": [], "aiThinking": None, **FOCUS[tenant]}
         start = (datetime.now(timezone.utc) - timedelta(seconds=1200)).isoformat()
         return 200, {"running": True, "zone": {"id": "z_7f", "key": "Z01", "name": "学习"},
                      "project": {"id": "p_3c", "key": "k", "name": "garden", "totalSeconds": 1, "shareOfPlan": 1},
                      "task": {"id": "t_a1", "key": "k", "name": "写提示词", "totalSeconds": 1, "shareOfProject": 1},
                      "sessionStartAt": start,
                      "agents": [{"runId": "run_1", "taskId": "t_a1", "agent": "claude-code", "tool": "Bash",
-                                 "model": None, "startedAt": start}]}
+                                 "model": None, "startedAt": start}],
+                     "auto": None, "needsChoice": None, "aiThinking": None,  # 在计时：focus 照给（nexus-core v2.16）
+                     "focus": {"state": "present", "app": "firefox", "title": "邮件", "since": start, "projectId": None,
+                               "projectName": None, "taskId": None, "taskName": None, "source": None}}
     if path == "/api/core/events":
         items = SESSIONS if one("type") == "session.completed" else []
         off, lim = int(one("offset", 0)), int(one("limit", 100))
@@ -459,6 +465,55 @@ def test_get_task_tree_shape_filters_and_paging(servers):
     assert err(servers, "get_task_tree", {"cursor": "garbage!!"})["status"] == 400
 
 
+def _since(seconds: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()
+
+
+# views/current 的 v2.16 / v2.14 三个键（按租户）：认到任务（自动跟踪）、只到项目 + 等人选、离开
+FOCUS = {
+    "u_focus_task": {
+        "auto": {"taskId": "t_a1", "projectId": "p_3c", "taskName": "写提示词", "projectName": "garden",
+                 "since": _since(300), "app": "code", "title": "plot.gd", "source": "rules", "key": "wk_1"},
+        "needsChoice": None,
+        "focus": {"state": "present", "app": "code", "title": "plot.gd", "since": _since(540), "projectId": "p_3c",
+                  "projectName": "garden", "taskId": "t_a1", "taskName": "写提示词", "source": "rules"}},
+    "u_focus_project": {
+        "auto": None,
+        "needsChoice": {"key": "wk_2", "app": "kitty", "title": "长" * 200, "since": _since(90)},
+        "focus": {"state": "present", "app": "kitty", "title": "长" * 200, "since": _since(120), "projectId": "p_3c",
+                  "projectName": "garden", "taskId": None, "taskName": None, "source": "agent-session"}},
+    "u_focus_afk": {
+        "auto": None, "needsChoice": None,
+        "focus": {"state": "afk", "app": "", "title": "", "since": _since(60), "projectId": None,
+                  "projectName": None, "taskId": None, "taskName": None, "source": None}},
+}
+
+
+def test_get_current_timer_carries_the_server_computed_focus(servers):
+    """v1.10：focus / auto / needsChoice 原样取自 views/current——路径按 id 现取，标题截到 80 个字符。"""
+    r = ok(servers, "get_current_timer", headers={"X-Nexus-Tenant": "u_focus_task"})
+    f, auto = r["focus"], r["auto"]
+    assert 535 <= f.pop("elapsedSeconds") <= 600 and 295 <= auto.pop("elapsedSeconds") <= 360
+    assert f == {"state": "present", "app": "code", "title": "plot.gd", "since": FOCUS["u_focus_task"]["focus"]["since"],
+                 "projectId": "p_3c", "taskId": "t_a1", "path": "学习 / garden / 写提示词", "source": "rules"}
+    assert auto == {"projectId": "p_3c", "taskId": "t_a1", "path": "学习 / garden / 写提示词", "source": "rules",
+                    "since": FOCUS["u_focus_task"]["auto"]["since"]}
+    assert r["running"] is False and r["needsChoice"] is None and r["taskId"] is None
+
+    r = ok(servers, "get_current_timer", headers={"X-Nexus-Tenant": "u_focus_project"})
+    f = r["focus"]
+    assert (f["projectId"], f["taskId"], f["path"], f["source"]) == ("p_3c", None, "学习 / garden", "agent-session")
+    assert f["title"] == "长" * 79 + "…" and r["auto"] is None
+    assert r["needsChoice"] == {"app": "kitty", "title": "长" * 79 + "…",
+                                "since": FOCUS["u_focus_project"]["needsChoice"]["since"]}
+
+    f = ok(servers, "get_current_timer", headers={"X-Nexus-Tenant": "u_focus_afk"})["focus"]
+    assert (f["state"], f["projectId"], f["taskId"], f["path"], f["source"]) == ("afk", None, None, None, None)
+
+    desc = next(t["description"] for t in rpc(servers, "tools/list")["result"]["tools"] if t["name"] == "get_current_timer")
+    assert all(word in desc for word in ("focus", "只是显示提示", "隐私设置", "running"))
+
+
 def test_get_current_timer_running_and_idle(servers):
     r = ok(servers, "get_current_timer")
     assert r["running"] is True and r["taskId"] == "t_a1" and r["path"] == "学习 / garden / 写提示词"
@@ -468,6 +523,9 @@ def test_get_current_timer_running_and_idle(servers):
     idle = ok(servers, "get_current_timer", headers={"X-Nexus-Tenant": "u_idle"})
     assert {k: idle[k] for k in ("running", "taskId", "path", "sessionStartAt", "elapsedSeconds", "agents")} == \
         {"running": False, "taskId": None, "path": None, "sessionStartAt": None, "elapsedSeconds": None, "agents": []}
+    # v1.10：在计时也带 focus（认不出目标）；老后端没有这些键 = 三个都是 null
+    assert (r["focus"]["state"], r["focus"]["title"], r["focus"]["path"], r["auto"]) == ("present", "邮件", None, None)
+    assert (idle["focus"], idle["auto"], idle["needsChoice"]) == (None, None, None)
     assert err(servers, "get_current_timer", {"x": 1})["status"] == 400
 
 

@@ -2,7 +2,8 @@
 ``get_detector_rules``（只读）与 ``propose_detector_rules``（只写草稿，第六节）；v1.3 加
 ``propose_activity_matches``（给待确认的活动建议配任务，仍是建议）；v1.7 加只读的 ``get_match_history``
 （人以前把哪个窗口定到了哪个项目 / 任务）；v1.8 分类规则可以只到项目（``projectId`` 代替 ``taskId``，工具数不变）；
-v1.9 加 ``get_window_awaiting_target`` / ``suggest_window_target``（让 AI 认规则认不出的窗口，共 15 个）。
+v1.9 加 ``get_window_awaiting_target`` / ``suggest_window_target``（让 AI 认规则认不出的窗口，共 15 个）；
+v1.10 ``get_current_timer`` 带出 ``focus`` / ``auto`` / ``needsChoice``（人此刻的焦点，工具数不变）。
 
 每个工具固定包装 nexus-core 的读端（GET），路径另读 views/tree；写只有四处：propose_detector_rules 的
 ``POST /api/core/detector/rules/drafts``（草稿，人应用才生效）、propose_activity_matches 的
@@ -291,26 +292,52 @@ def list_projects(a, tenant):
     return page
 
 
+MAX_TITLE = 80  # get_current_timer 带出的窗口标题最多这么多个字符（v1.10）
+
+
+def _clip_title(text) -> str:
+    text = text if isinstance(text, str) else ""
+    return text if len(text) <= MAX_TITLE else text[:MAX_TITLE - 1] + "…"
+
+
+def _elapsed(since) -> int | None:
+    try:
+        return max(0, int((_now() - datetime.fromisoformat(since)).total_seconds()))
+    except (TypeError, ValueError):
+        return None
+
+
 def get_current_timer(a, tenant):
     c = _get("/api/core/views/current", {}, tenant)
     paths = _Paths(_tree(tenant))
     running = bool(c.get("running"))
     task, project = c.get("task") or {}, c.get("project") or {}
     start = c.get("sessionStartAt") if running else None
-    elapsed = None
-    if start:
-        elapsed = max(0, int((_now() - datetime.fromisoformat(start)).total_seconds()))
+    # v1.10：focus / auto / needsChoice 原样取自同一份 views/current（nexus-core 算好的，这里不认项目 / 任务）；
+    # 老后端没有这些键 = null
+    focus, auto, need = c.get("focus"), c.get("auto"), c.get("needsChoice")
+
+    def target(t: dict) -> dict:
+        return {"projectId": t.get("projectId"), "taskId": t.get("taskId"),
+                "path": paths(t.get("taskId"), t.get("projectId")), "source": t.get("source"),
+                "since": t.get("since"), "elapsedSeconds": _elapsed(t.get("since"))}
+
     return _cap({
         "running": running,
         "taskId": task.get("id") if running else None,
         "path": paths(task.get("id"), project.get("id")) if running else None,
         "sessionStartAt": start,
-        "elapsedSeconds": elapsed,
+        "elapsedSeconds": _elapsed(start) if start else None,
         "agents": [
             {"runId": g["runId"], "agent": g["agent"], "tool": g["tool"], "model": g.get("model"),
              "taskId": g.get("taskId"), "path": paths(g.get("taskId")), "startedAt": g["startedAt"]}
             for g in c.get("agents") or []
         ],
+        "focus": {"state": focus.get("state"), "app": focus.get("app") or "", "title": _clip_title(focus.get("title")),
+                  **target(focus)} if focus else None,
+        "auto": target(auto) if auto else None,
+        "needsChoice": {"app": need.get("app") or "", "title": _clip_title(need.get("title")),
+                        "since": need.get("since")} if need else None,
     }, "agents")
 
 
@@ -549,7 +576,11 @@ _SPECS = [
      _schema({"includeDone": {"type": "boolean", "default": False, "description": "含已完成的项目"},
               "limit": _LIMIT, "cursor": _CURSOR}), [], {"includeDone": False}),
     (get_current_timer, "此刻在计什么",
-     "人的计时器此刻是否在跑、计在哪个任务、已计多少秒；agents 是另外在跑的 AI 代理运行（另一个维度）。",
+     "人此刻在做什么。running 为 true = 人正在给 path 那个任务手动计时（已计 elapsedSeconds 秒），这就是答案；"
+     "否则看 focus：人此刻在哪个窗口（app / title）、待了多久、它多半属于哪个项目 / 任务（path，source 是怎么认出来的；"
+     "认不出为 null），state 为 afk = 人离开了，focus 为 null = 没有检测程序在报。focus 只是显示提示，什么都没记下；"
+     "auto 非 null 才表示这段时间正被自动记到那个项目 / 任务；needsChoice 是等用户选去向的窗口。"
+     "窗口标题已按用户的隐私设置处理过（可能被去掉或换成代号），原样转述。agents 是另外在跑的 AI 代理运行（另一个维度）。",
      _schema({}), [], {}),
     (list_time_sessions, "人的时间记录",
      "人完成的计时段（一段一条，新的在前），按结束时刻过滤。from/to 必须是带时区偏移的 ISO 8601 时刻；"
