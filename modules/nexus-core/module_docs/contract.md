@@ -2926,6 +2926,9 @@ app/modules/
                                       匹配历史（v2.12，history.py）：只读；去向经 events / planner 的 service 读
                                       窗口 ↔ 代理会话（v2.13，session_link.py）：在跑的运行经 timer service 的 list_lane_runs 读，
                                       已结束的经 proj_lanes 的指定读路径 read_lanes 读（同 views/lanes）；只读
+                                      自动跟踪（v2.14，auto.py）：开关经 detector 的 service（device_flags）读，窗口规则经
+                                      detector/rules.py 的 prepend 写，事实经本子边界 service.confirm 写；手动计时经 timer service
+                                      与 proj_lanes 的 read_lanes 读；views/lanes 经 activity service 的 auto_state 读它
   detector/   router service repo     检测程序设置（v2.5）：不是事实；设备列表经 activity 的 service 读上传时刻
   projector/  registry handlers/      DISPATCH 显式表 + 各投影 handler
 ```

@@ -307,6 +307,8 @@ func applyRemoteSettings(cfg *Config, c *http.Client, base string) error {
 			// v1.2 追加：没有这个键 / 名单 null = 用本机配置
 			SegmentByTitle     *bool    `json:"segmentByTitle"`
 			SegmentByTitleApps []string `json:"segmentByTitleApps"`
+			// v1.3 追加：没有这个键 = 关
+			AutoTrack bool `json:"autoTrack"`
 		} `json:"settings"`
 	}
 	if err := json.Unmarshal(b, &r); err != nil {
@@ -314,7 +316,7 @@ func applyRemoteSettings(cfg *Config, c *http.Client, base string) error {
 	}
 	remotePresence.Store(nil)
 	if r.Settings != nil {
-		cfg.Privacy, cfg.Idle = r.Settings.Privacy, r.Settings.Idle
+		cfg.Privacy, cfg.Idle, cfg.autoTrack = r.Settings.Privacy, r.Settings.Idle, r.Settings.AutoTrack
 		if r.Settings.SegmentByTitle != nil {
 			cfg.SegmentByTitle = r.Settings.SegmentByTitle
 		}

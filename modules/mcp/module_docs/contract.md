@@ -80,3 +80,7 @@ v1.5（2026-10-08）：`_Paths` 从 `views/tree` 的 `project.unclassifiedTaskId
 v1.7（2026-10-08）：`get_match_history` 包 `GET /api/core/activity/suggestions/history`（nexus-core v2.12）——只这一个下游请求，
 不另读 `views/tree`（路径用下游回的名字拼）；白名单取字段、标题截到 80 个字。测试：形状与裁剪、`limit` 原样下传、租户下传、
 坏入参 400、算进「只调白名单 GET」与 `tools/list` 的 13 个。
+
+v1.8（2026-10-08）：分类规则可以只到项目（`detector.rules.v1` v1.1，nexus-core v2.14）。`get_detector_rules` 的每条规则多一个
+`projectId`（到任务的为 `null`），只到项目的 `path` 是「分区 / 项目」；`propose_detector_rules` 的入参 schema 不再要求 `taskId`
+必填、多一个 `projectId`（逐条校验仍在 nexus-core，原样下传）。工具仍是 13 个，下游请求不变。测试：读出的形状、schema、原样下传。

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -82,5 +84,46 @@ func TestRulesForRoundLocalBrokenOnlyMattersWithoutServer(t *testing.T) {
 	body = `{"version":0,"rules":[]}`
 	if _, err := rulesForRound(cfg, srv.Client(), srv.URL); err == nil {
 		t.Fatal("broken local rules.json must still be an error when the server has none")
+	}
+}
+
+// detector.rules.v1 v1.1：规则的目标可以是项目——taskId 与 projectId 恰好一个；命中时建议带 projectId、不带 taskId。
+func TestProjectTargetRules(t *testing.T) {
+	local := filepath.Join(t.TempDir(), "rules.json")
+	for _, bad := range []string{
+		`{"rules":[{"app":"code"}]}`,
+		`{"rules":[{"app":"code","taskId":"t_1","projectId":"p_1"}]}`,
+	} {
+		os.WriteFile(local, []byte(bad), 0o600)
+		if _, err := loadRules(local); err == nil {
+			t.Fatalf("want error for %s", bad)
+		}
+	}
+	os.WriteFile(local, []byte(`{"rules":[{"title":"blog","projectId":"p_local"}]}`), 0o600)
+	body := `{"version":2,"rules":[
+		{"id":"a","app":null,"title":"both","taskId":"t_x","projectId":"p_x","confidence":0.9,"enabled":true},
+		{"id":"b","app":null,"title":"neither","taskId":null,"confidence":0.9,"enabled":true},
+		{"id":"c","app":null,"title":"blog","taskId":null,"projectId":"p_srv","confidence":0.8,"enabled":true}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, body) }))
+	defer srv.Close()
+	for _, want := range []string{"p_srv", "p_local"} {
+		rules, err := rulesForRound(Config{DeviceToken: "tok", RulesFile: local}, srv.Client(), srv.URL)
+		if err != nil || len(rules) != 1 {
+			t.Fatalf("rules=%v err=%v", rules, err) // 两个目标都有 / 都没有的网页规则跳过
+		}
+		sg, ok := matchRules(rules, segment{App: "firefox", Title: "my blog"})
+		if !ok || sg.TaskID != nil || sg.ProjectID == nil || *sg.ProjectID != want || sg.Classifier != "rules" {
+			t.Fatalf("got %+v ok=%v", sg, ok)
+		}
+		b, _ := json.Marshal(sg)
+		if got := string(b); !strings.Contains(got, `"taskId":null`) || !strings.Contains(got, `"projectId":"`+want+`"`) {
+			t.Fatalf("wire %s", got)
+		}
+		body = `{"version":0,"rules":[]}` // 第二轮：服务端没存过，用本机的
+	}
+	// 到任务的建议不带 projectId 这个键（与 v1.2 的上传逐字节相同）
+	id := "t_1"
+	if b, _ := json.Marshal(suggestion{TaskID: &id, Classifier: "rules"}); strings.Contains(string(b), "projectId") {
+		t.Fatalf("wire %s", b)
 	}
 }
