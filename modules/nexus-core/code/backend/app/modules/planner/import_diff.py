@@ -176,15 +176,18 @@ def build_plan(payload: dict, *, allow_delete: bool) -> PlanResult:
                     f"{type_} 数组里的元素必须是对象，收到 {type(item).__name__}"
                 )
             entity_id = _extract_id(type_, item)
+            if entity_id is None and type_ == "tasks" and item.get("kind") == "unclassified":
+                continue  # 没带 id 的桶：桶只由「取或建」懒建，不经导入新建
             if entity_id is None:
                 type_ops.append(_plan_create(type_, item, current_by_type))
                 continue
             if entity_id in seen_ids:
                 raise InvalidInputError(f"{type_} 里 id {entity_id!r} 重复出现")
             seen_ids.add(entity_id)
-            if entity_id in buckets:
-                continue
             existing = current.get(entity_id)
+            # 库里的桶，或 payload 自称是桶而库里没有这个 id（导出方有桶、这边还没懒建）：都跳过，不改也不建
+            if entity_id in buckets or (existing is None and item.get("kind") == "unclassified"):
+                continue
             if existing is None:
                 raise InvalidInputError(
                     f"{type_} 里的 id {entity_id!r} 在库中不存在——"

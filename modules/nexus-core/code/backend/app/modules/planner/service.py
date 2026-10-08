@@ -37,6 +37,7 @@ INBOX_ZONE_ID = inbox.ZONE_ID
 
 #: 项目「未分类」时间桶的 kind（v2.9）。读端按它把桶从待办 / 进度里摘出去；真身在 `unclassified.py`。
 UNCLASSIFIED_KIND = unclassified.KIND
+unclassified_task_id = unclassified.task_id  # 给 restore/ 校验快照用
 
 _VALID_KINDS = ("normal", "ephemeral")
 
@@ -284,14 +285,15 @@ def delete_project(project_id: str) -> None:
         raise NotFoundError(f"项目不存在：{project_id!r}")
     if inbox.is_protected_project(project_id):
         raise HasChildrenError(f"项目 {project_id!r} 是系统收件箱（捕捉落点），禁止删除")
-    tasks = repo.list_tasks(project_id)
-    buckets = [t for t in tasks if unclassified.is_bucket(t)]  # v2.9：未分类时间桶不算子对象，随项目删
-    remaining = len(tasks) - len(buckets)
+    # v2.9：未分类时间桶不算子对象，随项目删
+    remaining = sum(1 for t in repo.list_tasks(project_id) if not unclassified.is_bucket(t))
     if remaining:
         raise HasChildrenError(f"项目 {project_id!r} 下还有 {remaining} 个任务——不做级联删除，先清空再删")
-    for bucket in buckets:
-        repo.delete_by_id("tasks", bucket["id"])
     repo.delete_by_id("projects", project_id)
+    # 先删项目、再清桶：并发的「取或建」插完桶会回头看项目还在不在（unclassified.create），两头合起来不留孤儿
+    for task in repo.list_tasks(project_id):
+        if unclassified.is_bucket(task):
+            repo.delete_by_id("tasks", task["id"])
 
 
 def delete_task(task_id: str) -> None:

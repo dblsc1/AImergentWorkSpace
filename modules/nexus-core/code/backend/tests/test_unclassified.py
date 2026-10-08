@@ -276,3 +276,63 @@ def test_json_import_leaves_the_bucket_alone(client):
                                               "checksum": dry["checksum"]})
     assert done.status_code == 200, done.text
     assert _db()["tasks"].count_documents({"id": tid}) == 0 and _db()["projects"].count_documents({"id": pid}) == 0
+
+
+# ------------------------------------------------------------------ 审核后补的（PR #67）
+
+
+def test_json_import_skips_a_bucket_the_target_does_not_have(client):
+    # 导出方有桶、导入方同一项目还没建过桶（懒建）：payload 里的桶不许被当成「编出来的 id」拒掉，也不新建
+    pid = _project(client)["id"]
+    export = client.get(f"{API}/export").json()
+    bucket = {"id": f"t_unc_{pid}", "projectId": pid, "name": "未分类", "kind": "unclassified", "done": False}
+    for task in (bucket, {**bucket, "id": "t_unc_p_elsewhere"}, {k: v for k, v in bucket.items() if k != "id"}):
+        resp = client.post(f"{API}/import", json={"zones": export["zones"], "projects": export["projects"],
+                                                  "tasks": [task]})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["summary"] == {"create": 0, "update": 0, "delete": 0}
+    assert _db()["tasks"].count_documents({}) == 0
+
+
+def test_a_normal_task_squatting_on_the_bucket_id_is_never_adopted(client):
+    # 只有快照恢复 / 种子能写出这种 id；真出现了也不许把它当桶用（它没有任何保护）
+    from app.modules.planner import repo  # noqa: PLC0415
+
+    pid = _project(client)["id"]
+    repo.seed_many("tasks", [{"id": f"t_unc_{pid}", "key": "1-1-1-1", "name": "冒名的", "projectId": pid,
+                              "done": False, "kind": "normal", "flags": [], "plannedWeight": 1}])
+    resp = client.post(f"{PLANNER}/projects/{pid}/unclassified")
+    assert resp.status_code == 409 and "未分类" in resp.json()["detail"]
+    _upload(client, [_seg(_recent(10))])
+    sid = _pending(client)["items"][0]["id"]
+    assert client.post(f"{SUG}/{sid}/confirm", json={"projectId": pid}).status_code == 409
+    assert _session_events() == [] and _pending(client)["total"] == 1 and _buckets(pid) == []
+
+
+@pytest.mark.parametrize("change", [
+    {"kind": "normal"},                 # 占着桶的 id 却不是桶
+    {"id": "t_unc_p_elsewhere"},        # 是桶，id 却不是它项目的那个
+])
+def test_restore_refuses_a_malformed_bucket(client, change):
+    pid = _project(client)["id"]
+    _bucket(client, pid)
+    snapshot = client.get(f"{API}/export").json()
+    snapshot["tasks"][0].update(change)
+    _wipe()
+    resp = _restore(client, snapshot)
+    assert resp.status_code == 400 and "未分类" in resp.json()["detail"]
+
+
+def test_project_deleted_while_bucket_is_being_created_leaves_no_orphan(client, monkeypatch):
+    from app.modules.planner import repo  # noqa: PLC0415
+
+    pid = _project(client)["id"]
+    real = repo.insert_task
+
+    def insert_then_project_vanishes(doc):
+        real(doc)
+        repo.delete_by_id("projects", pid)  # 并发的删项目刚好在这之间做完（它列任务时桶还不在）
+
+    monkeypatch.setattr(repo, "insert_task", insert_then_project_vanishes)
+    assert client.post(f"{PLANNER}/projects/{pid}/unclassified").status_code == 404
+    assert _db()["tasks"].count_documents({"projectId": pid}) == 0

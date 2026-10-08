@@ -1060,10 +1060,14 @@ J10 已有的能力，不新增写路径）——禁删保护的是**容器本�
 | `POST` / `PATCH` 任务时 `kind: "unclassified"` | **400**（合法取值仍只有 `normal` / `ephemeral`） |
 | 别的任务 `dependsOn` 里写桶的 id | **400**（桶永远不会完成，依赖它等于永远等待） |
 | `DELETE /api/core/planner/projects/{id}`，项目下只剩桶 | 204，**桶随项目一起删**（桶不算「还有子对象」；还有别的任务照旧 409） |
-| JSON 导入（`/api/core/import`） | 桶不参与 diff：payload 里带着它不产生 `update`，少了它不产生 `delete`（也不进 `skippedDeletes`）；想新建一个 `kind: "unclassified"` 的任务在 apply 时 400 |
+| JSON 导入（`/api/core/import`） | 桶不参与 diff：payload 里带着它不产生 `update`，少了它不产生 `delete`（也不进 `skippedDeletes`）。payload 里 `kind: "unclassified"` 而库里没有这个 id 的条目（导出方有桶、这边还没懒建；或没带 id）同样**跳过**，不报「id 不存在」也不新建——桶只由取或建懒建 |
+| 桶的 id 上是一个不是桶的任务（只有快照恢复 / 种子写得出来） | 取或建、confirm `{projectId}` 一律 **409**，绝不把它当桶用 |
+| 快照恢复（`/api/core/restore`） | `kind: "unclassified"` 与 id `t_unc_<projectId>` 必须成对出现，否则 **400**、一个字节不写 |
 
 409 而不是 400 / 403：请求本身合法，冲突的是「这个对象是系统单例」（同 `p_inbox` 禁删）。桶删掉后台账里的事实
 照旧保留（与删任何有时间的任务相同）；项目 id 不复用，所以桶的 id 也不会被复用。
+删项目的顺序是「删项目文档 → 再清桶」，取或建则在插入桶之后回头确认项目还在（不在就自己删掉、回 404）：
+两者并发也不会留下没有项目的桶。
 
 ### 读端怎么对待桶（规范性）
 

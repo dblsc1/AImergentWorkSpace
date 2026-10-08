@@ -32,7 +32,13 @@ def protect(task: dict, verb: str) -> None:
 
 
 def find(project_id: str) -> dict | None:
-    return repo.get_task(task_id(project_id))
+    """该项目的桶，没建过为 None。桶的 id 上坐着的不是桶（只有快照恢复 / 种子写得出来）→ 409，
+    **绝不拿来当桶用**：它没有任何保护，改名 / 删除 / 搬走都拦不住。"""
+    task = repo.get_task(task_id(project_id))
+    if task is not None and not (is_bucket(task) and task.get("projectId") == project_id):
+        raise HasChildrenError(
+            f"任务 {task['id']!r} 占着项目 {project_id!r}「未分类」时间桶的 id，却不是它的桶——请先处理这个任务")
+    return task
 
 
 def changes(project_id: str) -> dict:
@@ -48,9 +54,12 @@ def create(project_id: str, actor: str | None) -> dict:
     if repo.get_project(project_id) is None:
         raise NotFoundError(f"项目不存在：{project_id!r}")
     try:
-        return service.create_task(NAME, project_id, kind=KIND, actor=actor, task_id=task_id(project_id))
+        task = service.create_task(NAME, project_id, kind=KIND, actor=actor, task_id=task_id(project_id))
     except repo.DuplicateKeyError:
         task = find(project_id)
-        if task is None:  # 撞了又没了：项目刚被并发删掉
-            raise NotFoundError(f"项目不存在：{project_id!r}") from None
-        return task
+    # 建完再看一眼项目：删项目是「删项目文档 → 再清桶」，它清桶时这个桶可能还没插进去。
+    # 项目已经没了就自己收走，不留孤儿桶（顺序见 service.delete_project）。
+    if task is None or repo.get_project(project_id) is None:
+        repo.delete_by_id("tasks", task_id(project_id))
+        raise NotFoundError(f"项目不存在：{project_id!r}")
+    return task
