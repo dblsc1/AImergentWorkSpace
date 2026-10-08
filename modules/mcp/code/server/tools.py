@@ -317,7 +317,8 @@ def list_time_sessions(a, tenant):
     paths = _Paths(_tree(tenant))
     items = []
     for e in r["items"]:
-        data, subj = e.get("data") or {}, e.get("subject") or {}
+        # nexus-core v2.11：改挂过的段按现在的归属给（currentSubject），与 get_daily_time 同一口径
+        data, subj = e.get("data") or {}, e.get("currentSubject") or e.get("subject") or {}
         dur = int(data.get("durationSeconds") or 0)
         start = data.get("startAt") or (datetime.fromisoformat(e["time"]) - timedelta(seconds=dur)).isoformat()
         items.append({

@@ -464,7 +464,8 @@
     event = event || {};
     var data = event.data || {};
     var when = formatArchiveWhen(data.startAt, event.time);
-    var label = resolveArchiveLabel(tree, event.subject, data.startAt);
+    // nexus-core v2.11：改挂过的段按现在的归属显示（currentSubject），没改挂过的没有这个键
+    var label = resolveArchiveLabel(tree, event.currentSubject || event.subject, data.startAt);
     var duration = formatArchiveDuration(data.durationSeconds);
     return {
       id: event.id,

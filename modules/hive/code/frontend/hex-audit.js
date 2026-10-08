@@ -173,20 +173,27 @@
   // 在「最近完成」里各占一行，叫「临时任务 YYYY-MM-DD HH:MM · N 分钟」（时间 = 这一段的开始）。
   // 带年份不是啰嗦：跨年之后只有「09-08 00:43」就分不清是哪一年的了。
   // 行的形状同 recentCompletions，多一个 session:true（没有 taskId：它不是能撤销 / 能计时的任务）。
+  // 归到具体任务之后（nexus-core v2.11，在「AI助理」页的「待分类」里归）：事件多一个 currentSubject = 现在的归属。
+  // 这一行留着，名字换成那个任务的（「任务名 · N 分钟」，挂在任务现在所在的项目下），不再叫「临时任务」；
+  // 放回桶的照旧。原本就记在具体任务上的段从来不在这份列表里。
   function tempSessions(events, tree, options) {
     options = options || {};
-    var zones = {}, byBucket = {};
+    var zones = {}, byBucket = {}, byTask = {};
     ((tree && tree.zones) || []).forEach(function (z) { zones[z.id] = z.name; });
     ((tree && tree.projects) || []).forEach(function (p) {
       if (p.unclassifiedTaskId) byBucket[p.unclassifiedTaskId] = p;
+      (p.tasks || []).forEach(function (t) { byTask[t.id] = { task: t, project: p }; });
     });
     var rows = [];
     (events || []).forEach(function (e) {
-      var p = e && e.type === "session.completed" && e.subject && byBucket[e.subject.task];
+      if (!e || e.type !== "session.completed" || !e.subject) return;
+      var now = e.currentSubject || e.subject;
+      var moved = !byBucket[now.task] && byBucket[e.subject.task] && byTask[now.task];
+      var p = byBucket[now.task] || (moved && moved.project);
       if (!p) return;
       var data = e.data || {};
       var minutes = Math.round((Number(data.durationSeconds) || 0) / 60);
-      var name = "临时任务 " + formatStamp(data.startAt || e.time, options.offsetMinutes) +
+      var name = (moved ? moved.task.name : "临时任务 " + formatStamp(data.startAt || e.time, options.offsetMinutes)) +
                  " · " + (minutes < 1 ? "<1" : minutes) + " 分钟";
       var zoneName = zones[p.zoneId] || "?";
       rows.push({

@@ -463,6 +463,15 @@ def test_list_time_sessions_shape(servers):
     assert q["from"] == ["2026-08-31T16:00:00+00:00"] and q["to"] == ["2026-09-30T00:00:00+00:00"]
 
 
+def test_list_time_sessions_follows_the_current_assignment(servers, monkeypatch):
+    # nexus-core v2.11：人把「未分类」里的一段归到任务之后，这一条按现在的归属给，不再报 unclassified
+    monkeypatch.setitem(SESSIONS[2], "currentSubject", {"zone": "z_7f", "project": "p_3c", "task": "t_a1"})
+    r = ok(servers, "list_time_sessions", {"from": "2026-09-01T00:00:00+08:00", "to": "2026-09-30T00:00:00Z"})
+    item = r["items"][2]
+    assert (item["eventId"], item["taskId"], item["projectId"], item["zoneId"], item["path"], item["unclassified"]) == (
+        "evt_2", "t_a1", "p_3c", "z_7f", "学习 / garden / 写提示词", False)
+
+
 def test_list_time_sessions_cursor_binds_to_and_from(servers):
     p1 = ok(servers, "list_time_sessions", {"from": "2026-09-01T00:00:00Z", "limit": 2})
     assert p1["truncated"] is True
