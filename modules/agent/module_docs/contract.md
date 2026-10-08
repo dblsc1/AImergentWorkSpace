@@ -50,3 +50,9 @@ consumes:
   `test_integration.py` 起真 opencode + 假模型 + 假 MCP（`tests/fakes/`），找不到 opencode 就跳过。
 - `deploy/test/agent.sh`（CI「agent」）：在镜像里跑全部测试（真 opencode 必须在），假模型用内网服务名
   `http://fake-llm:9100/v1`，再按 compose 的环境变量验跑起来的服务本身。
+
+## 变更记录
+
+| 日期 | 变更 |
+|---|---|
+| 2026-10-08 | 系统提示（`app/config.py`）按 `agent.chat.v1` v1.8 补注改：整理待确认的活动前先读 `get_match_history`（`mcp.tools.v1` v1.7），历史是最强的证据——同类窗口同一个项目 / 任务、否过的（窗口, 任务）不再配、集合名沿用；看得出项目就**一定**带 `projectId`。代码别处零改动；`test_api.py` 钉住这些话 |

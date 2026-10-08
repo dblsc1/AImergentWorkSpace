@@ -1,7 +1,8 @@
 # mcp · 给 AI 代理用的工具（只读 + 只写草稿）
 
 HoneyComb 的 MCP 服务器（契约 `contracts/mcp.tools.v1`）：把任务树、人的时间、代理时间、在跑的计时、
-待确认的活动建议、活动分类规则读给 AI 代理。12 个工具：10 个只读；`propose_detector_rules`（v1.2）
+待确认的活动建议、以前的归类历史、活动分类规则读给 AI 代理。13 个工具：11 个只读（v1.7 加 `get_match_history`：
+你以前把哪个窗口定到了哪个项目 / 任务，助理归类前先看它）；`propose_detector_rules`（v1.2）
 只写**待人应用的规则草稿**——生效要人在 Cockpit「AI助理 → 规则」点「应用」；`propose_activity_matches`（v1.3）
 只给待确认的活动**配任务建议**——入账要人在「AI助理 → 待确认建议」逐条点「是」；v1.4 起也能**提议新任务**
 （`newTask`），同样人点「是」才建，MCP 自己从不建任务。
