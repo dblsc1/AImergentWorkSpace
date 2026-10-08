@@ -276,6 +276,7 @@ def test_initialize_negotiates_and_declares_only_tools(servers):
     assert r["protocolVersion"] == "2025-03-26"
     assert set(r["capabilities"]) == {"tools"}
     assert rpc(servers, "initialize", {"protocolVersion": "1999-01-01"})["result"]["protocolVersion"] == "2025-06-18"
+    assert rpc(servers, "initialize", {"protocolVersion": "2025-11-25"})["result"]["protocolVersion"] == "2025-11-25"
     assert rpc(servers, "ping")["result"] == {}
 
 
@@ -346,6 +347,7 @@ def test_origin(servers, monkeypatch):
 def test_protocol_version_header(servers):
     ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
     assert post(servers, ping, {"MCP-Protocol-Version": "2025-06-18"})[0] == 200
+    assert post(servers, ping, {"MCP-Protocol-Version": "2025-11-25"})[0] == 200  # Hermes 握手发的就是它
     assert post(servers, ping, {"MCP-Protocol-Version": "2020-01-01"})[0] == 400
 
 
