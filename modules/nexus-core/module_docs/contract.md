@@ -3019,6 +3019,9 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 | `hive` 前端（v2.11） | `events.read.v1` 的 `currentSubject`：「最近完成」与计时档案按当前归属认段——归走的段不再叫「临时任务」，档案里显示新任务名 | `modules/hive` |
 | MCP 服务（v2.11） | `events.read.v1` 的 `currentSubject`：`list_time_sessions` 的 `taskId` / `projectId` / `zoneId` / `path` / `unclassified` 按当前归属（`mcp.tools.v1` 不加字段） | `contracts/mcp.tools.v1` |
 | MCP 服务（v2.12） | `activity.suggestions.v1` 的 `GET .../suggestions/history`（`get_match_history`，`mcp.tools.v1` v1.7）：助理配任务前读人以前的决定 | `contracts/mcp.tools.v1` |
+| `ring` 前端（v2.14） | `views.lanes.v1` 的 `human.auto`（人那张卡上的「自动 · 项目 / 任务」+ 走秒）与 `human.needsChoice`（泳道最上面的「你在 X，记到哪？」）；`activity.auto.v1` 的 `POST /api/core/activity/choice`、`POST /api/core/activity/choice/dismiss` | `modules/ring` |
+| 共享顶栏 `nginx-docker/static/navbar.js`（v2.14） | `views.current.v1` 的 `auto` / `needsChoice`（芯片上的「自动 · 项目 / 任务」+ 走秒、等人选的小点；不多发请求）；共享件 `lanes.js` 画 `views.lanes.v1` 的 `human.auto` | `modules/nginx-docker` |
+| `assistant` 前端（v2.14） | `activity.auto.v1` 的 `GET /api/core/activity/auto`（「自动记录」面板）+ `sessions.reassign.v1`（改归属，v2.14 起收自动记下的段）；`detector.settings.v1` v1.3 的 `autoTrack`；`detector.rules.v1` v1.1 的 `projectId` | `modules/assistant` |
 | 共享顶栏 `nginx-docker/static/navbar.js`（v2.4，契约先行） | `views.lanes.v1`（计时芯片悬停的精简预览：人 + 至多 4 条代理线、最近 1 小时，只在预览打开时约 15 秒轮询；计时页上不弹） | `modules/nginx-docker` |
 | `ring` 前端（v2.4，契约先行） | `views.lanes.v1`（计时页默认展开的「泳道」主视图，全部泳道，约 15 秒轮询）；`views.current.v1` 的 `agents[].phase`/`label` | `modules/ring` |
 | MCP 服务（v0.3 AI 桥，契约先行，待建） | **只读**：`views.tree.v1`、`views.current.v1`、`events.read.v1`（仅 `type=session.completed`）、`views.gantt.v1`、`views.review.v1`、`views.next-actions.v1`、`views.agent-time.v1`、`activity.suggestions.v1` 的 GET。带网关给的 `X-Nexus-Tenant` 原样转来；不调任何写端点、不调 `export`/`planner/audit`。映射表见 `contracts/mcp.tools.v1` 第四节。本模块零改动 | `contracts/mcp.tools.v1` |

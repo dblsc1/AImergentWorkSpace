@@ -62,6 +62,28 @@ consumes:
 计时中芯片写任务名。**例外**：`task.kind === "unclassified"`（nexus-core v2.9，项目的「未分类」时间桶，
 蜂巢长按项目格起的计时）时只写**项目名**，不写「未分类」（仓主 2026-10-08）。老后端没有 `kind` 键 = 照旧写任务名。
 
+## 自动跟踪（v0.4，2026-10-08）
+
+nexus-core v2.14「自动跟踪进行中的任务」在 `views.current.v1`（也就是 `/__cockpit/current`）上追加了两个可空键
+`auto` / `needsChoice`（只在没在计时时可能非 null；开关缺省关 = 恒为 null；老后端没有这两个键 = 当 null）。
+顶栏只读这同一份响应，**不多发任何请求**（预览没打开时仍然一次泳道都不拉）：
+
+- **`auto` 非 null、没在计时、本机也没有暂停记忆**：`nav` 上加 `data-ckpt-auto`，芯片的字写
+  「自动 · 项目 / 任务」（只到项目时「自动 · 项目」），读数从 `auto.since` 起每秒走。样子与手动计时分得开：
+  `--plan` 色虚线边 + 空心点、不呼吸；`data-ckpt-timer` 仍是 `idle`（它不是手动计时）。
+- **`needsChoice` 非 null、没在计时**：`nav` 上加 `data-ckpt-choice`，芯片末尾出一个 `--warn` 小点（`.ckpt-need`，
+  `aria-hidden`），芯片的 `title` 与 `aria-label` 追加「有个窗口不知道记到哪 —— 去计时页选」；芯片本来就是去计时页的
+  链接，那张卡在计时页（`modules/ring` 契约 2026-10-08 条）。可以与 `auto` 同时出现。
+- **手动计时永远优先**：`running` 为真时两样都不出现（服务端此时也给 null）；本机「已暂停」不被 `auto` 顶掉；
+  降级体（`degraded`）时两样都收掉。
+- 项目名 / 任务名只当文本渲染。
+
+共享件 `lanes.js` 同版追加（两个调用方都用）：`humanStatus()` 的返回多一个 `auto {text, since}`（没在计时且
+`human.auto` 非 null 时）；列表式（顶栏预览）最上面那行换成「我：自动 · 项目 / 任务」+ 走秒的钟，卡片式（计时页）
+在人那张卡的卡头多一粒 `hcl-st-auto` 胶囊 + 钟；钟是带 `data-hcl-since` 的 `.hcl-clock`，全页一个一秒一次的定时器
+只改这些钟的字。`render` 新增 `opts.lead`（卡片式）：调用方的一张置顶卡，摆在人那张卡之前（`data-run-id="lead"`、
+class 加 `hcl-card hcl-lead`），同一个节点跨重画搬过来（表单状态、焦点不丢），换位动效把它当一张卡。
+
 ## 暂停与累计（v0.2.5）
 
 后端没有暂停：暂停时 `views/current` 是空闲。芯片**只读**两个本机键（形状见

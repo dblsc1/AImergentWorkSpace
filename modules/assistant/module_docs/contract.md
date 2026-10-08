@@ -10,7 +10,7 @@
 ```yaml
 provides:
   - id: assistant.page.v1
-    summary: 「AI助理」页面，静态路由 <站点前缀>assistant/。自上而下五块：AI 对话、待确认建议、待分类（2026-10-08）、活动检测设置、回顾。
+    summary: 「AI助理」页面，静态路由 <站点前缀>assistant/。自上而下六块：AI 对话、待确认建议、待分类（2026-10-08）、自动记录（2026-10-08，nexus-core v2.14）、活动检测设置、回顾。
 consumes:
   - id: agent.chat.v1
     contract: ../../../contracts/agent.chat.v1/contract.md
@@ -100,6 +100,19 @@ consumes:
       **撤回**：刚归入成功的那一批在提示旁出一个「撤回」按钮 = 对其中每一段 `POST …/reassign {projectId: 原项目}`（放回原项目的桶，
       台账里追加的是又一条改挂，不是删除）；只管最近一次操作，做了下一次操作或重新打开页面就没有了。
       所有名字只当文本渲染。
+  - id: nexus-core.activity.auto.v1
+    contract: ../nexus-core/module_docs/contract.md
+    purpose: >
+      「自动记录」面板（`code/frontend/auto.js`、`#auto-panel`，在待分类与活动检测设置之间；nexus-core v2.14 自动跟踪）。
+      读：`GET /api/core/activity/auto`（今天按分类规则直接记下的段，新的在前），用到
+      `items[].{eventId, startAt, durationSeconds, app, title, taskId, projectId, reassigned}`；名字取
+      `GET /api/core/views/tree?includeEphemeral=true`。每段一行「HH:MM · N 分 · 程序 · 标题」+「→ 分区 / 项目 / 任务」
+      （记在项目的未分类桶上写「分区 / 项目 · 未分类」；改过归属的带「已改」）+ 一个「改归属…」下拉
+      （每个项目一组：「未分类」+ 它的任务）。选了就发 `POST /api/core/sessions/{eventId}/reassign`
+      `{taskId}` 或 `{projectId}`（`sessions.reassign.v1`，v2.14 起也收自动记下的段），发完重拉；失败原样显示 `detail`。
+      一段都没有、端点 404（后端早于 v2.14）/ 读取失败 → 面板整块不出现。**改归属不是计时**：不发
+      `honeycomb:timer-changed`。只在打开页面、每次操作后、标签页重新可见时拉，不轮询。窗口标题与名字只当文本渲染。
+      本页**不**提供「你在 X，记到哪？」那张卡（在计时页，`modules/ring` 契约 2026-10-08 条）。
   - id: detector.settings.v1
     contract: ../../../contracts/detector.settings.v1/contract.md
     purpose: >
@@ -115,6 +128,10 @@ consumes:
       显示为勾着的灰框（disabled），注明「不能关；需要改源码重新编译」——它们不在文档里，本页从不发。
       `presence`：文档里（顶层、privacy 或 idle 节）有布尔 `presence` 时才多出一个勾选项，读写同一位置；没有就不出现、不发。
       devices 404（后端早于 v2.5）→ 面板说明「后端还不支持」，不出表单。页面提示「检测程序下一轮（≤ 5 分钟）生效」。
+      `autoTrack`（v1.3，2026-10-08）：表单最上面一组「进行中的任务」里的勾选项「允许 AI 管理进行中的任务」，缺省不勾，
+      下面一段灰字说明关着 / 开着各是什么行为；**总是显示、总是发**（文档里没有这个键按 `false` 填）。勾上保存时，
+      文档里还没有布尔的 `presence`（没设过在场心跳）就一并发 `presence: true`——实时显示靠心跳；人明确设过
+      `presence` 的不动，取消勾选也不动 `presence`。
       面板末尾是「分类规则」（见下一条）。
   - id: detector.rules.v1
     contract: ../../../contracts/detector.rules.v1/contract.md
@@ -127,6 +144,10 @@ consumes:
       （新增 / 修改〔旧 → 新〕/ 删除），「应用」一次点击 = POST apply（`If-Match: currentVersion`；有没保存的手改先确认），
       「丢弃」= POST discard；412 / 404 重新拉草稿并提示。聊天一轮结束（`assistant:turn-done` 事件，chat.js 发）、
       标签页重新可见时重拉草稿。所有规则 / AI 文本只当文本渲染。rules 404（早于 nexus-core v2.6）→ 只留一句说明。
+      **只到项目的规则（v1.1，2026-10-08）**：下拉标题改为「归到」，任务之后每个项目多一项「分区 / 项目 · 未分类（只到项目）」；
+      选它 = 这条规则发 `taskId: null` + `projectId`，选任务 = 发 `taskId`、**不带** `projectId` 键（与 v1 逐字节相同）。
+      规则指向已删项目时单列「项目已删除（id）」；422 的 `field: "projectId"` 挂在同一格下；草稿逐条改动里写
+      「→ 分区 / 项目 · 未分类」。`prepend` 判「已有相同规则」时连 `projectId` 一起比。
       **待确认建议也写规则（2026-10-03）**：`suggestions.js` 的组勾了「以后这个窗口都记到这个任务」且至少一段确认成功时，
       经 `rules.js` 暴露的 `window.assistantRules.prepend(rule)`：GET rules → PUT `{rules: [新规则, ...原有规则]}`、
       `If-Match: "<读到的 version>"`（与 `ETag` 同值）。新规则放**最前**（第一条命中生效，放最后会被更宽的旧规则挡住）：
@@ -160,6 +181,7 @@ consumes:
 
 | 日期 | CR | 变更 |
 |---|---|---|
+| 2026-10-08 | 仓主：留一个开关——允许 / 不允许 AI 管理进行中的任务（自动跟踪第一步） | ① 活动检测设置最上面新增一组「进行中的任务」：勾选项「允许 AI 管理进行中的任务」（`detector.settings.v1` v1.3 的 `autoTrack`，缺省关）+ 灰字说明；勾上保存且没设过 `presence` 时一并发 `presence: true`。② 分类规则编辑器认只到项目的规则（`detector.rules.v1` v1.1 的 `projectId`）：「归到」下拉多出每个项目的「· 未分类（只到项目）」。③ 新增第四块「自动记录」（`auto.js`、`#auto-panel`，在待分类与活动检测设置之间）：今天自动记下的每一段 + 「改归属…」下拉（nexus-core v2.14 的 `GET /api/core/activity/auto` 与扩了范围的 reassign）；没有段 / 端点 404 时整块不出现。新增 consumes `nexus-core.activity.auto.v1`。只增：开关关着、没有只到项目的规则时页面与此前逐像素相同（多一组开关除外）。**须与 nexus-core v2.14 同版发布** |
 | 2026-10-08 | 仓主：学历史是要的，直接把历史加进 AI 的上下文 | 「让 AI 匹配」发的那句固定的话加上「先看我以前是怎么归类的（同类窗口照以前的定）」「看得出项目的一定标上项目」：助理经 `mcp.tools.v1` v1.7 的 `get_match_history` 读匹配历史（nexus-core v2.12）。本页自己不读历史端点，不新增 consumes，界面零改动 |
 | 2026-10-08 | 仓主：记进未分类的时间能不能追加「归入 xxx 任务」 | 新增第三块「待分类」（`unclassified.js`、`#unclassified-panel`，在待确认建议与检测设置之间）：按项目列出还记在「未分类」时间桶上的每一段，下拉限本项目任务（+「其他项目…」），逐段「归入」或「全部归入所选任务」= nexus-core v2.11 的 `POST /api/core/sessions/{eventId}/reassign`；没有可归的段 / 端点 404 时整块不出现 |
 | 2026-10-08 | 仓主：碎片太多，同类窗口归成集合、给集合选项目 | 待确认建议最上面一层改为**集合**，按总时长从大到小排：认 nexus-core v2.10 的 `suggestion.collection` / `suggestion.projectId`，没有的按程序 + 去掉开头状态符号 / 计数的标题归并。集合头有项目下拉（建议一致时预选）与「确认整个集合」；集合有项目时行的下拉只列这个项目的任务、缺省「未分类」= confirm `{projectId}`（nexus-core v2.9），「其他项目…」退回全部任务。「确认整个集合」不含 idle 行与提议新任务的行；「全部确认」含义不变、不发 `{projectId}`。`#suggest-list` 由 `<ul>` 改为 `<div>`（行仍是 `li.suggest-item`）。「让 AI 匹配」那句话加「先归集合、标项目」。**须与 nexus-core v2.9（confirm `{projectId}`）同版发布** |
