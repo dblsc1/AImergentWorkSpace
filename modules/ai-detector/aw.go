@@ -228,6 +228,9 @@ func buildFragments(d awData, from, to time.Time, r redactor) []fragment {
 		}
 		covered = s.end
 		app := normApp(e.str("app"))
+		if app == "" {
+			continue // 没有前台窗口（桌面、锁屏）：没有程序名，服务端也不收，归不到任何事上
+		}
 		holes := afk
 		// 这个窗口在前台时，哪些离开不算离开（契约「离开判定」）。
 		if len(audible) > 0 && r.browsers[app] {
