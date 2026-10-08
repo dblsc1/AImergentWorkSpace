@@ -59,12 +59,12 @@ for a in $(grep -oE '(src|href)="[^"]*__cockpit/[^"]*"' <<<"$hive" | sed -E 's/^
   check 200 "$(code -b "$jar" "$base$a")" "  注入的 $a"
 done
 
-# AI 桥（mcp.tools.v1，gateway.v1 第八节）：MCP 过门；登录态经网关调得到 13 个工具（v1.7），只有 propose_ 那两个不是只读（v1.3）。
+# AI 桥（mcp.tools.v1，gateway.v1 第八节）：MCP 过门；登录态经网关调得到 15 个工具（v1.9），不是只读的只有 propose_ 那两个（v1.3）与认窗口的两个（v1.9）。
 # 部署方把 mcp 关掉的组装（CI 的网关契约 job）设 HONEYCOMB_SMOKE_MCP=0 跳过这一段。
 if [ "${HONEYCOMB_SMOKE_MCP:-1}" = 1 ]; then
   rpc='{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
   check "${bp}login/" "$(location -H 'Content-Type: application/json' -d "$rpc" "$base${bp}api/mcp/")" "未登录 MCP 跳登录页"
-  check "13 ['propose_detector_rules', 'propose_activity_matches']" "$(curl -s -b "$jar" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+  check "15 ['propose_detector_rules', 'propose_activity_matches', 'get_window_awaiting_target', 'suggest_window_target']" "$(curl -s -b "$jar" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
     -d "$rpc" "$base${bp}api/mcp/" | python3 -c 'import json,sys; t=json.load(sys.stdin)["result"]["tools"]
 print(len(t), [x["name"] for x in t if not x["annotations"]["readOnlyHint"]])')" "MCP tools/list 经网关"
   # 聊天后端（agent.chat.v1）：过门；没填 AGENT_API_KEY 的缺省组装 configured=false（页面提示去填）
