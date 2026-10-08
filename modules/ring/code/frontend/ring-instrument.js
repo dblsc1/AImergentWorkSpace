@@ -230,9 +230,21 @@
     return `今天 · ${Math.round(seconds / 60)} 分`;
   }
 
+  // ── 此刻的焦点（2026-10-09）：没有手动计时、心跳新鲜时表芯写人此刻在哪——画法在 ring-focus.js（window.ringFocus），
+  // 这里只管切换：进（centerMode = "focus"）与出（leaveFocus）。
+  function leaveFocus() { window.ringFocus.leave(); }
+  function renderFocusCenter(focus) {
+    if (centerMode !== "focus") {
+      centerMode = "focus";
+      stopElapsedTicker();
+    }
+    window.ringFocus.render(focus);
+  }
+
   function renderIdleCenter() {
     if (centerMode === "idle") return;
     centerMode = "idle";
+    leaveFocus();
     stopElapsedTicker();
     chronoCenterEl.innerHTML =
       '<p class="idle-total" id="idle-total" hidden></p>' +
@@ -262,6 +274,7 @@
   function renderRunningCenter(current) {
     if (centerMode !== "running") {
       centerMode = "running";
+      leaveFocus();
       chronoCenterEl.innerHTML =
         '<span class="elapsed" id="elapsed-display">00:00:00</span>' +
         '<span class="task-name" id="running-task-name"></span>';
@@ -301,8 +314,14 @@
     const running = Boolean(current && current.running && current.project && current.task);
     if (!running) {
       lastRingKey = null;
-      renderIdleCenter();
-      refreshIdleTodayDisplay(); // 每次轮询都刷新一遍数字（renderIdleCenter 已挂载时会早退）
+      // 没在计时：心跳新鲜就写「此刻的焦点」，否则照旧「今天 · N 分 / 当前没有进行中的计时」
+      const focus = window.HoneycombFocus ? window.HoneycombFocus.describe(current) : null;
+      if (focus) {
+        renderFocusCenter(focus);
+      } else {
+        renderIdleCenter();
+        refreshIdleTodayDisplay(); // 每次轮询都刷新一遍数字（renderIdleCenter 已挂载时会早退）
+      }
       controlsRowEl.hidden = true;
       legendEl.hidden = true;
       projectSelectEl.disabled = false;

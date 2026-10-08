@@ -350,3 +350,19 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
 - 种子数据从哪来：本版允许一次性 seed 脚本落 `code/backend/`，
   **不得**在 `views/` 里硬编码名字——那会让前端看到的名字与库里的漂移。
 
+### 此刻的焦点：`CurrentOut.focus` / `LaneHuman.focus`（v2.16）
+
+```jsonc
+// GET /api/core/views/current 顶层与 GET /api/core/views/lanes 的 human 各追加一个键，同一份
+{ "focus": { "state": "present" | "afk",
+             "app": "code", "title": "plot.gd — garden",      // 心跳带来的原样（已按隐私设置处理）
+             "since": "<ISO，NEXUS_TZ 的偏移>",                 // 这个窗口（或这一轮离开）的起点
+             "projectId": "p_…" | null, "projectName": "garden" | null,
+             "taskId": "t_…" | null, "taskName": "写提示词" | null,
+             "source": "rules" | "choice" | "ai" | "agent-session" | "history" | null } | null }
+```
+
+- `focus` 为 `null` = 没有新鲜（≤ 90 秒）的心跳；非 `null` 时九个键都在。
+- `state: "afk"`、或认不出目标时，后五个键为 `null`；只认到项目时 `taskId` / `taskName` 为 `null`、`source` 非 `null`。
+- 在计时（`running: true`）也给；此时 `auto` 为 `null`，目标从「窗口 ↔ 代理会话」认起。
+- 判据、花费、隐私见 `contract.md`「此刻的焦点」节。

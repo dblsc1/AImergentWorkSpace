@@ -693,6 +693,8 @@ body {
    横向内缩跟项目格一致（9%），竖向多留一点，因为六边形上下是收口的。 */
 .hex-cell.hex-center .hex-inner { padding: 6% 9%; gap: 1px; }
 
+/* 此刻的焦点（中心格的虚线轨道 + 项目格的呼吸描边）：样式在 hex-focus.css（2026-10-09，本文件已到 1000 行）。 */
+
 /* 中心格的 完成 / 暂停 / 取消不记录 三块按钮：样式在 hex-center-ctl.css（2026-09-12 拆出，本文件逼近 1000 行）。 */
 
 /* ── timer-ring/v1（contracts/timer-ring-visual-v1.md）──────────

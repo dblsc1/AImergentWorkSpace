@@ -35,7 +35,7 @@ PAGE = """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <script>%s</script></head>
 <body><main style="padding:16px"><h1>页面</h1><button id="other">别的按钮</button></main>
 <link rel="stylesheet" href="/__cockpit/tokens.css"><link rel="stylesheet" href="/__cockpit/navbar.css">
-<script src="/__cockpit/navbar.js" defer></script></body></html>"""
+<script src="/__cockpit/focus.js" defer></script><script src="/__cockpit/navbar.js" defer></script></body></html>"""
 
 
 class Site:
@@ -502,3 +502,120 @@ def test_auto_chip_fits_narrow_screens(browser, width) -> None:
         page.wait_for_function(f"() => {WORD}.startsWith('自动 · ')")
         assert page.text_content(".ckpt-elapsed") == "1:01:40"
         assert page.evaluate("() => document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+
+
+# ------------------------------------------------------------------ 此刻的焦点（nexus-core v2.16）
+
+
+def _focus(page: Page, seconds_ago: int, **over: Any) -> dict[str, Any]:
+    since = datetime.fromtimestamp(page.evaluate("() => Date.now()") / 1000 - seconds_ago, timezone.utc).isoformat()
+    return {"state": "present", "app": "code", "title": "plot.gd — <i>garden</i>", "since": since, "projectId": None,
+            "projectName": None, "taskId": None, "taskName": None, "source": None, **over}
+
+
+def _show(page: Page, site: Site, current: dict[str, Any], word: str) -> None:
+    site.current = current
+    _poll(page)
+    page.wait_for_function(f"w => {WORD} === w", arg=word)
+
+
+FOCUS_ATTR = "data-ckpt-focus"
+TARGET = {"projectId": "p1", "projectName": "<b>数学</b>", "taskId": "t1", "taskName": "做题", "source": "history"}
+
+
+def test_chip_shows_live_focus_with_ticking_clock_and_no_extra_requests(browser) -> None:
+    with open_site(browser) as (page, site):
+        seen: list[str] = []
+        page.on("request", lambda r: seen.append(r.url[len(ORIGIN):]))
+        # 认得出项目：芯片只写项目名（截得狠），全文在 title 里
+        _show(page, site, {"running": False, "auto": None, "needsChoice": None, "focus": _focus(page, 125, **TARGET)},
+              "正在：<b>数学</b>")
+        assert page.get_attribute(NAV_SEL, FOCUS_ATTR) == "present"
+        assert page.get_attribute(NAV_SEL, "data-ckpt-timer") == "idle"      # 不是手动计时
+        assert page.get_attribute(NAV_SEL, "data-ckpt-auto") is None
+        assert page.locator(".ckpt-live-word b, .ckpt-live-word i").count() == 0   # 名字只当文本
+        assert page.get_attribute("[data-ckpt-chip]", "title") == "正在：<b>数学</b> / 做题 · code · plot.gd — <i>garden</i>"
+        assert page.text_content(".ckpt-elapsed") == "02:05"
+        settle(page, 5000)
+        assert page.text_content(".ckpt-elapsed") == "02:10"
+        # 认不出：写窗口
+        _show(page, site, {"running": False, "focus": _focus(page, 3)}, "正在：code · plot.gd — <i>garden</i>")
+        assert page.eval_on_selector(".ckpt-live-word", "n => n.scrollWidth > n.clientWidth"), "长了就截断"
+        # 离开
+        _show(page, site, {"running": False, "focus": _focus(page, 61, state="afk", app="", title="")}, "离开")
+        assert page.get_attribute(NAV_SEL, FOCUS_ATTR) == "afk" and page.text_content(".ckpt-elapsed") == "01:01"
+        # 没有新鲜的心跳 / 老后端：同以前
+        _show(page, site, {"running": False, "focus": None}, "未在计时")
+        assert page.get_attribute(NAV_SEL, FOCUS_ATTR) is None and page.text_content(".ckpt-elapsed") == "00:00"
+        assert page.get_attribute("[data-ckpt-chip]", "title") == ""
+        assert site.lanes_urls == [] and set(seen) == {"/__cockpit/current"}, "只读已经在拉的那一份"
+
+
+def test_auto_and_focus_share_one_path_without_double_text(browser) -> None:
+    with open_site(browser) as (page, site):
+        # 服务端两样都给（自动跟踪开着）：只写「自动 · …」，读数从 auto.since 起
+        _show(page, site, {"running": False, "auto": _auto(page, 65), "needsChoice": None,
+                           "focus": _focus(page, 600, **TARGET)}, "自动 · <b>数学</b> / 做题")
+        assert page.get_attribute(NAV_SEL, "data-ckpt-auto") == "" and page.get_attribute(NAV_SEL, FOCUS_ATTR) is None
+        assert page.text_content(".ckpt-elapsed") == "01:05"
+        assert "正在" not in page.text_content("[data-ckpt-chip]")
+        # 等人选的小点照旧，title 两句都在
+        need = {"key": "wk_1", "app": "code", "title": "x", "since": _auto(page, 90)["since"]}
+        _show(page, site, {"running": False, "auto": None, "needsChoice": need, "focus": _focus(page, 5)},
+              "正在：code · plot.gd — <i>garden</i>")
+        assert page.is_visible(".ckpt-need") and page.get_attribute(NAV_SEL, "data-ckpt-choice") == ""
+        assert page.get_attribute("[data-ckpt-chip]", "title") == \
+            "正在用 · code · plot.gd — <i>garden</i> —— 有个窗口不知道记到哪 —— 去计时页选"
+
+
+def test_manual_timer_pause_and_degraded_hide_focus(browser) -> None:
+    with open_site(browser) as (page, site):
+        start = datetime.fromtimestamp(page.evaluate("() => Date.now()") / 1000 - 10, timezone.utc).isoformat()
+        _show(page, site, {"running": True, "sessionStartAt": start, "project": {"id": "p1", "name": "数学"},
+                           "task": {"id": "t1", "name": "手动的任务", "kind": "normal"}, "auto": None,
+                           "focus": _focus(page, 300, **TARGET)}, "手动的任务")
+        assert page.get_attribute(NAV_SEL, FOCUS_ATTR) is None and page.get_attribute(NAV_SEL, "data-ckpt-timer") == "running"
+        assert page.text_content(".ckpt-elapsed") == "00:10"
+        page.evaluate("() => localStorage.setItem('nexus.timer.paused.v1', JSON.stringify({taskId: 't1'}))")
+        _show(page, site, {"running": False, "focus": _focus(page, 300, **TARGET)}, "已暂停")
+        assert page.get_attribute(NAV_SEL, FOCUS_ATTR) is None
+        page.evaluate("() => localStorage.removeItem('nexus.timer.paused.v1')")
+        _show(page, site, {"running": False, "degraded": True, "focus": _focus(page, 300, **TARGET)}, "状态未知")
+        assert page.get_attribute(NAV_SEL, FOCUS_ATTR) is None
+
+
+@pytest.mark.parametrize("reduced", [None, "reduce"])
+def test_focus_dot_breathes_unless_reduced_motion(browser, reduced) -> None:
+    with open_site(browser, reduced_motion=reduced) as (page, site):
+        _show(page, site, {"running": False, "focus": _focus(page, 5, **TARGET)}, "正在：<b>数学</b>")
+        style = page.eval_on_selector(".ckpt-dot", "n => [getComputedStyle(n).animationName, "
+                                                   "getComputedStyle(n.parentNode).borderTopStyle]")
+        assert style == ["none" if reduced else "ckpt-breathe", "dashed"], "虚线边：和手动计时的实线分得开"
+        _show(page, site, {"running": False, "focus": _focus(page, 5, state="afk")}, "离开")
+        assert page.eval_on_selector(".ckpt-dot", "n => getComputedStyle(n).animationName") == "none"
+
+
+@pytest.mark.parametrize("width", [320, 390])
+def test_focus_chip_fits_narrow_screens(browser, width) -> None:
+    with open_site(browser, width=width) as (page, site):
+        long = _focus(page, 3700, title="很长很长的窗口标题" * 12, projectId="p1", projectName="很长很长的项目名字" * 6,
+                      source="history")
+        _show(page, site, {"running": False, "focus": long}, "正在：" + "很长很长的项目名字" * 6)
+        assert page.text_content(".ckpt-elapsed") == "1:01:40"
+        assert page.evaluate("() => document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+
+
+def test_preview_card_line_uses_the_same_words(browser) -> None:
+    """泳道预览里人那一行不变；共享件 humanStatus 多回 focus，auto 的字出自同一个 describe()。"""
+    d = json.loads(json.dumps(fx.LANES_FULL))
+    d["human"]["running"] = None
+    d["human"]["focus"] = {"state": "present", "app": "code", "title": "garden", "since": fx.at("10:15"),
+                           "projectId": "p_1", "projectName": "花园", "taskId": None, "taskName": None,
+                           "source": "agent-session"}
+    with open_site(browser, d) as (page, site):
+        hover_open(page)
+        got = page.evaluate("""d => {
+            const st = window.HoneycombLanes.humanStatus(d.human, Date.parse(d.now));
+            return [st.focus.lead, st.focus.hint, st.auto];
+        }""", d)
+        assert got == ["正在：花园", "来自会话", None]

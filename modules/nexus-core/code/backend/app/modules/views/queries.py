@@ -56,7 +56,8 @@ def get_current() -> CurrentOut:
     agents = [CurrentAgent(**run) for run in timer_service.list_agent_runs(current_tenant())]
     state = timer_service.get_running_state(current_tenant())
     if state is None:
-        # v2.14：没在计时才有「自动 · 项目 / 任务」与请人选的窗口（顶栏芯片读这里，与 views/lanes 的 human 同一份）
+        # v2.14：没在计时才有「自动 · 项目 / 任务」与请人选的窗口（顶栏芯片读这里，与 views/lanes 的 human 同一份）；
+        # v2.16 的 focus 也在这一份里
         return CurrentOut(**_IDLE, agents=agents, **activity_service.auto_state(current_tenant(), False))
 
     task_doc = planner_service.get_task(state["taskId"])
@@ -104,6 +105,8 @@ def get_current() -> CurrentOut:
         else None,
         sessionStartAt=state["startAt"],
         agents=agents,
+        # v2.16：在计时也给焦点（页面仍以手动计时为准；MCP 的客户端两样都看得到）
+        focus=activity_service.auto_state(current_tenant(), True)["focus"],
     )
 
 

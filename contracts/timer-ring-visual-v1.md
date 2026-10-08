@@ -190,6 +190,8 @@ el.setAttribute("stroke-dasharray", `${lengthPercent} ${100 - lengthPercent}`);
 | hive 蜂巢中心格 | `modules/hive/code/frontend/`（2026-09-07 新增） | 标题 + 圆环；悬停/点击两档，点击进 `/ring/`；2026-09-12 起悬停档下部按六边形轮廓切出的三块按钮（`hex-center-ctl.js` + `.css`，几何写在 css 文件头） |
 | ring 页暂停 | `modules/ring/code/frontend/ring-pause.js`（2026-09-12） | 控件区「暂停」+ 空闲态「已暂停：… 继续 / 完成」 |
 
+| 此刻的焦点（2026-10-09） | ring 中心（`ring-focus.js`）、hive 中心格（`hex-app.js` + `hex-focus.css`） | **不是计时**：没有手动计时时显示人此刻的窗口 / 项目（nexus-core v2.16 `focus`）。轨道画成 `--fact` 色虚线并缓慢呼吸、不画贡献弧 / 进度弧，读数是「这个窗口待了多久」；手动计时一开始就让回本规范的画法。两页各自的契约有细节 |
+
 **新增实现请追加到这张表**，并在自己的 handoff 里写明「实现的是 `timer-ring/v1`」。
 
 ## 不在本规范内的

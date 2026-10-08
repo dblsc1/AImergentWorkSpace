@@ -12,7 +12,8 @@
  *   activeSeconds(run, v0, v1, now)  运行在视窗里不空闲的秒数
  *   sortByActivity(agents, v0, v1, now)  计时页卡片的排序（档位：在等你 → 干活 → 出错 → 空闲 → 已结束；同档按活跃秒数、最近转入）
  *   recentRuns(agents, now)        计时页只留在跑的 + 结束不到 3 小时的运行（2026-10-08）
- *   humanStatus(human, now)        人此刻：在电脑前 / 离开 / 不在线（+ 在计时 / 前台程序；v2.14 + 自动跟踪 auto {text, since}）
+ *   humanStatus(human, now)        人此刻：在电脑前 / 离开 / 不在线（+ 在计时 / 前台程序；v2.14 + 自动跟踪 auto {text, since}；
+ *                                  v2.16 + focus：共享件 focus.js 的 describe() 结果，auto 的字也出自它）
  *   render(root, data, opts)       画一张图；全部 textContent，不用 innerHTML
  *                                  同一个 root 第二次起的重画带换位动效（2026-10-08，见 motion()）
  */
@@ -171,14 +172,15 @@
     var doing = seen ? [seen.app, seen.title].filter(function (s) { return s; }).join(' · ') : '';
     // 自动跟踪（nexus-core v2.14）：没在计时、服务端说「我」当前的窗口对上了项目 / 任务。手动计时永远优先。
     // v2.15：source 是 "ai" = 这个目标是 AI 认的（后面标出来，计时页给一个「不对」）；aiThinking = AI 正在认的窗口。
-    var a = !run && human.auto, since = a ? ms(a.since) : null, ai = !!a && a.source === 'ai';
+    // v2.16：字出自共享件 focus.js（顶栏芯片、圆环中心、蜂巢同一份）；focus = 此刻的焦点（自动跟踪 / 在某个窗口 / 离开）。
+    var F = window.HoneycombFocus, f = (!run && F) ? F.describe(human) : null;
+    var a = f && f.auto ? human.auto : null, ai = !!a && a.source === 'ai';
     var th = !run && human.aiThinking;
-    return { state: state, word: HUMAN_WORD[state], running: !!run,
+    return { state: state, word: HUMAN_WORD[state], running: !!run, focus: f,
       detail: run ? '计时中 · ' + hm(run) + ' 起' : doing,
       thinking: th ? [th.app, th.title].filter(function (x) { return x; }).join(' · ') || '窗口' : null,
-      auto: since === null ? null : { since: since, ai: ai, key: a.key, app: a.app, title: a.title,
-        text: '自动 · ' + [a.projectName, a.taskName].filter(function (x) { return x; }).join(' / ') +
-          (ai ? '（AI 认的）' : '') } };
+      auto: !a ? null : { since: f.since, ai: ai, key: a.key, app: a.app, title: a.title,
+        text: f.lead + (ai ? '（AI 认的）' : '') } };
   }
 
   // 从 since 起走秒的钟（「自动 · …」后面那个）。本文件唯一的定时器：一秒一次，只改这些钟的字。
@@ -444,7 +446,9 @@
         hHead.appendChild(thinking);
       }
       if (st.detail) {
-        var hStat = el('span', 'hcl-stat', st.running ? st.detail : '正在用 ' + st.detail);
+        // 认得出项目 / 任务（且不是自动跟踪——那已经有胶囊了）：「正在：项目 / 任务 · 窗口」，否则照旧「正在用 窗口」
+        var known = st.focus && !st.focus.auto && st.focus.target;
+        var hStat = el('span', 'hcl-stat', st.running ? st.detail : (known ? st.focus.lead + ' · ' : '正在用 ') + st.detail);
         hStat.title = hStat.textContent;
         hHead.appendChild(hStat);
       }

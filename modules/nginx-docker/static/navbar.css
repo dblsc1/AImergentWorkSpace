@@ -149,6 +149,16 @@ html { scroll-padding-top: var(--ckpt-h, 52px); }
  * 「自动 · 项目 / 任务」+ 走秒。不是手动计时：不用 --accent 实心点、不呼吸。 */
 .ckpt-nav[data-ckpt-timer="idle"][data-ckpt-auto] .ckpt-chip { border-color: var(--plan); border-style: dashed; color: var(--ink); }
 .ckpt-nav[data-ckpt-timer="idle"][data-ckpt-auto] .ckpt-dot { border-color: var(--plan); }
+/* 此刻的焦点（空闲的一种，nexus-core v2.16）：没在计时，只是显示「我」此刻在哪个窗口 / 项目。--fact 虚线边 +
+ * --fact 实心点缓慢呼吸 + 「正在：…」+ 走秒；离开时整粒压暗、不呼吸。与手动计时（--accent 实线边）、自动跟踪
+ * （--plan 空心点）都分得开——窄屏只剩点 + 读数时靠点本身分。 */
+.ckpt-nav[data-ckpt-timer="idle"][data-ckpt-focus] .ckpt-chip { border-style: dashed; }
+.ckpt-nav[data-ckpt-timer="idle"][data-ckpt-focus="present"] .ckpt-chip { border-color: var(--fact); color: var(--ink); }
+.ckpt-nav[data-ckpt-timer="idle"][data-ckpt-focus="present"] .ckpt-dot { background: var(--fact); border-color: var(--fact); }
+.ckpt-nav[data-ckpt-timer="idle"][data-ckpt-focus="afk"] .ckpt-chip { color: var(--ink-3); }
+@media (prefers-reduced-motion: no-preference) {
+  .ckpt-nav[data-ckpt-timer="idle"][data-ckpt-focus="present"] .ckpt-dot { animation: ckpt-breathe 3.2s ease-in-out infinite; }
+}
 /* 有个窗口等人选记到哪：芯片末尾一个 --warn 小点（芯片本身就是去计时页的链接）。平时不占位。 */
 .ckpt-need { display: none; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
 .ckpt-nav[data-ckpt-choice] .ckpt-need { display: inline-block; }

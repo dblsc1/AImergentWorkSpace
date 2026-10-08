@@ -114,10 +114,13 @@ def _same(a: dict | None, b: dict) -> bool:
     return a is not None and (a["taskId"], a["projectId"]) == (b["taskId"], b["projectId"])
 
 
-def state(user: str, now: datetime, timer_running: bool, asks: Any) -> dict:
-    """``{auto, needsChoice, aiThinking}``（契约同名小节；views/lanes 与 views/current 同一份）。``asks`` = ``auto_ai.Asks``。"""
+def state(user: str, now: datetime, timer_running: bool, asks: Any, presence_docs: list[dict] | None = None) -> dict:
+    """``{auto, needsChoice, aiThinking}``（契约同名小节；views/lanes 与 views/current 同一份）。``asks`` = ``auto_ai.Asks``。
+    ``presence_docs``：调用方已经读过的在场文档（v2.16：同一次读里 ``focus`` 也要用，不读两遍）。"""
     out: dict = {"auto": None, "needsChoice": None, "aiThinking": None}
-    docs = [] if timer_running else [d for d in repo.presence_list(user) if now - d["lastAt"] <= FRESH]
+    if timer_running:
+        return out
+    docs = [d for d in (repo.presence_list(user) if presence_docs is None else presence_docs) if now - d["lastAt"] <= FRESH]
     if not docs:
         return out
     doc = max(docs, key=lambda d: d["lastAt"])  # 只看最近报心跳的那台设备

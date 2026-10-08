@@ -185,6 +185,9 @@ jobs:
       - name: AI助理页（modules/assistant：聊天、待确认建议、检测设置）
         # 同样要浏览器：借本 job 装好的 playwright 跑，单独一次 pytest（两套 conftest 各管各的）。
         run: python -m pytest ../../../../assistant/code/frontend/tests -q -rs
+      - name: 蜂巢页的「此刻的焦点」（中心格 + 项目格描边，要看 DOM）
+        # hive 别的测试是 node 里的纯逻辑（上面的「hive 前端测试」）；这一条要浏览器，同样借本 job 的 playwright。
+        run: python -m pytest ../../../../hive/code/frontend/tests -q -rs
 
   installer:
     name: 安装器

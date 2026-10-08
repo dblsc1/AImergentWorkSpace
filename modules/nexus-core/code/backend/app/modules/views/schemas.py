@@ -97,6 +97,22 @@ class LaneNeedsChoice(_Strict):
     since: str
 
 
+class LaneFocus(_Strict):
+    """v2.16：人此刻的焦点（最新心跳新鲜时非 null，与 autoTrack、有没有手动计时都无关）。只是显示，不是事实。
+    认不出项目 / 任务时五个目标键全为 null（键不消失）。"""
+
+    state: Literal["present", "afk"]
+    app: str
+    title: str
+    since: str  #: 当前窗口（或这一轮离开）从什么时候起
+    projectId: str | None = None
+    projectName: str | None = None
+    taskId: str | None = None
+    taskName: str | None = None
+    #: 目标是怎么认出来的：自动跟踪的三种出处 / 窗口 ↔ 代理会话 / 按以往确认过的
+    source: Literal["rules", "choice", "ai", "agent-session", "history"] | None = None
+
+
 class CurrentOut(_Strict):
     """``GET /api/core/views/current``。
 
@@ -116,6 +132,7 @@ class CurrentOut(_Strict):
     auto: LaneAuto | None = None
     needsChoice: LaneNeedsChoice | None = None
     aiThinking: LaneNeedsChoice | None = None  #: v2.15：AI 正在认的窗口（这期间它不出现在 needsChoice）
+    focus: LaneFocus | None = None  #: v2.16：人此刻的焦点（在计时也给；契约「此刻的焦点」）
 
 
 # ------------------------------------------------------------------- TreeOut
@@ -414,6 +431,7 @@ class LaneHuman(_Strict):
     auto: LaneAuto | None = None
     needsChoice: LaneNeedsChoice | None = None
     aiThinking: LaneNeedsChoice | None = None  #: v2.15：AI 正在认的窗口（这期间它不出现在 needsChoice）
+    focus: LaneFocus | None = None  #: v2.16：人此刻的焦点（在计时也给；契约「此刻的焦点」）
 
 
 class LanePhase(_Strict):

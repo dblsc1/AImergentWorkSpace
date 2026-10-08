@@ -474,12 +474,15 @@ def list_presence(user: str, now: datetime, start: datetime, end: datetime) -> l
 
 
 def auto_state(user: str, timer_running: bool, now: datetime | None = None) -> dict:
-    """v2.14 ``{auto, needsChoice}`` + v2.15 ``aiThinking``（``views/lanes`` 的 ``human``、``views/current`` 顶层），
-    真身在 ``auto.py`` / ``auto_ai.py``。``since`` 已换算到 NEXUS_TZ 的偏移。**不写**。"""
-    from . import auto, auto_ai  # noqa: PLC0415 —— 它们也 import 本文件（confirm），模块级会成环
+    """v2.14 ``{auto, needsChoice}`` + v2.15 ``aiThinking`` + v2.16 ``focus``（``views/lanes`` 的 ``human``、
+    ``views/current`` 顶层），真身在 ``auto.py`` / ``auto_ai.py`` / ``focus.py``。``since`` 已换算到 NEXUS_TZ 的偏移。
+    **不写**。在场文档只读一遍，两边共用。"""
+    from . import auto, auto_ai, focus  # noqa: PLC0415 —— 它们也 import 本文件（confirm），模块级会成环
 
     now = now or auto._now()  # noqa: SLF001
-    out = auto.state(user, now, timer_running, auto_ai.Asks(user, now))
+    docs = repo.presence_list(user)
+    out = auto.state(user, now, timer_running, auto_ai.Asks(user, now), docs)
+    out["focus"] = focus.state(user, now, docs, out["auto"])
     for part in out.values():
         if part:
             part["since"] = part["since"].astimezone(config.settings.tz).isoformat()

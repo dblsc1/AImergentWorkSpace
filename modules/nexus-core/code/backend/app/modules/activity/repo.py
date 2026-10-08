@@ -26,6 +26,8 @@ def _col():
         col.create_index([("user", 1), ("dedupeKey", 1)], unique=True, name="uniq_user_dedupe")
         col.create_index([("user", 1), ("id", 1)], unique=True, name="uniq_user_id")
         col.create_index([("user", 1), ("status", 1), ("startTs", -1)], name="user_status_start")
+        # v2.16「此刻的焦点」按以往认：某个程序最近确认的若干条（等值 + 按 decidedAt 倒序，走索引取前 N 条）
+        col.create_index([("user", 1), ("status", 1), ("app", 1), ("decidedAt", -1)], name="user_status_app_decided")
         _indexes_ready = True
     return col
 
@@ -56,6 +58,12 @@ def confirmed(user: str, cap: int) -> list[dict]:
     # v2.14：自动记下的不算——那不是人的决定
     filt = {"user": user, "status": "confirmed", "auto": {"$ne": True}}
     return list(_col().find(filt, proj).sort("decidedAt", -1).limit(cap))
+
+
+def confirmed_for_app(user: str, app: str, cap: int) -> list[dict]:
+    """v2.16 此刻的焦点：这个程序下人确认过的建议，最近处理的在前，至多 ``cap`` 条（自动记下的不算）。"""
+    filt = {"user": user, "status": "confirmed", "app": app, "auto": {"$ne": True}}
+    return list(_col().find(filt, {"_id": 0, "id": 1, "app": 1, "title": 1}).sort("decidedAt", -1).limit(cap))
 
 
 def auto_between(user: str, start: datetime, end: datetime, cap: int) -> list[dict]:

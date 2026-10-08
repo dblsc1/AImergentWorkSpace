@@ -152,6 +152,15 @@
 > 一秒也不多等。** 这是「AI 只能写规则草稿、应用要人点」的**第二条取代条目**（只对被认领的那一个窗口、只在 `autoTrack` 打开时），
 > 见该节末尾；`propose_detector_rules` 仍然只写草稿。既有字段、端点行为一个不改。
 >
+> **v2.16（追加式）**：**人此刻在哪个窗口、它多半属于哪个项目 / 任务，说成一句话，哪里都读同一份。** 仓主 2026-10-09：
+> 「蜂巢页和计时页还是没有实时显示人类当前焦点所在窗口或者任务」「要通用，得走 MCP」。在场心跳从 v2.4 起就有，但只在
+> 计时页人那张卡上留了一行小灰字。本版 `views/current` 顶层与 `views/lanes` 的 `human` 各追加一个键 `focus`
+> （见「此刻的焦点」节）：最新心跳新鲜（≤ 90 秒）就非 `null`，**与 `autoTrack` 开关无关、在计时也给**；带当前窗口、
+> 这个窗口从什么时候起（`since`），以及认得出时的项目 / 任务与出处（自动跟踪的目标 → 窗口 ↔ 代理会话 → 匹配历史，先中先用）。
+> **只是显示**：不记时间、不改自动记录的任何行为、不多一个端点、不往设备外多送一个字（标题就是心跳已经按隐私设置处理过的）。
+> 页面（顶栏 / 计时页 / 蜂巢）与 MCP（`mcp.tools.v1` v1.10 的 `get_current_timer`）读的是**服务端算好的同一份**，
+> 谁都不各自再认一遍项目 / 任务。既有字段、端点行为一个不改。
+>
 > v1.9：`GET /api/core/export` 产出的快照此前没有任何端点能吃
 > 回去（喂给 import 会被三层拒绝，而那三条拒绝各守一件实事，一条都不该放宽）。
 > 新增 `nexus-core.restore.v1`（`POST /api/core/restore`，见「快照恢复」节）：
@@ -365,6 +374,13 @@ provides:
       views/lanes 的 human 与 views/current 顶层追加 aiThinking，auto 追加 key、source 追加 "ai"；
       GET /api/core/activity/auto 每条追加 ai。没人认领 = 与 v2.14 完全相同
     status: 已实现（v2.15），待验证
+  - id: nexus-core.focus.v1
+    summary: 此刻的焦点（v2.16，只读、只是显示）——views/current 顶层与 views/lanes 的 human 追加 focus：
+      最新在场心跳新鲜（≤ 90 秒）时为 {state: present | afk, app, title, since, projectId, projectName, taskId,
+      taskName, source}，否则 null；与 autoTrack 无关、在计时也给。目标先中先用：自动跟踪的 auto（source rules /
+      choice / ai）→ 窗口 ↔ 代理会话（agent-session）→ 匹配历史（history）；认不出时五个目标键为 null。
+      不写任何东西、无新端点；页面与 MCP 读同一份
+    status: 已实现（v2.16），待验证
 consumes:
   - id: yq-event/v1
     contract: ../../contracts/yq-event.v1/contract.md
@@ -424,6 +440,7 @@ consumes:
 | POST | `/api/core/activity/ai/claim` | 无（空体或 `{}`） | `{window: null \| {key, app, title, claimedAt, answerBy}}`（见「让 AI 认窗口」节）；带 Bearer 403 | ✅ 已实现（v2.15） |
 | POST | `/api/core/activity/ai/suggest` | `{key, taskId \| projectId, confidence, reason}` 或 `{key, none: true, reason}` | `SuggestOut`；带 Bearer 403、400、404、409（不在等回答，什么都没写）、422 | ✅ 已实现（v2.15） |
 | POST | `/api/core/activity/choice/reject` | `{key}` | `{key, app, title, ruleRemoved}`；带 Bearer 403、404（不是 AI 认的）、422 | ✅ 已实现（v2.15） |
+| — | （v2.16 追加，无新端点）`views/lanes` 的 `human` 与 `views/current` 顶层追加 `focus`（人此刻的焦点；心跳新鲜就有，与 `autoTrack`、有没有手动计时无关） | 见「此刻的焦点」节 | | ✅ 已实现（v2.16） |
 | — | （v2.15 追加，无新端点）`views/lanes` 的 `human` 与 `views/current` 顶层追加 `aiThinking`；`auto` 追加 `key`、`source` 追加取值 `"ai"`；`GET /api/core/activity/auto` 每条追加 `ai`；规则追加可选的 `author`、`auto` | 见「让 AI 认窗口」节 | | ✅ 已实现（v2.15） |
 | — | （v2.14 追加，无新端点）在场心跳可带 `guess`；`views/lanes` 的 `human` 与 `views/current` 顶层追加 `auto`、`needsChoice`；上传的 `suggestion` 可带 `projectId`、列表每条追加 `auto`；改挂端点放行自动记下的段；`DetectorSettings` 追加 `autoTrack`、规则可用 `projectId` 代替 `taskId` | 见「自动跟踪进行中的任务」节 | | ✅ 已实现（v2.14） |
 | ~~GET~~ | ~~`/api/core/zones`~~ | 无 | `[ZoneOut]` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
@@ -3144,6 +3161,79 @@ AI 仍不能改 / 删任何已有规则、不能写匹配范围超出那一个�
   **（2026-10-08 波次统一审核取代：不再成立——这样的段留在待确认，见「自动记录」小节末尾。）**
 - 不做多设备合并（同 v2.14：只看最近报心跳的那台）；不在服务端跑规则。
 
+## 此刻的焦点（规范性 · v2.16，`nexus-core.focus.v1`）
+
+仓主 2026-10-09（原话见本文件头部 v2.16）。一句话：**人此刻在哪个窗口、它多半属于哪个项目 / 任务。**
+
+**设计原则（规范性）**：`focus` 由服务端的**一个函数**算（`activity/focus.py` 的 `state`），`views/current`、
+`views/lanes` 的 `human`、MCP 的 `get_current_timer` 都原样转它。**页面与 AI 客户端不许各自再认一遍项目 / 任务**——
+认的规则以后变了，只改这一处。
+
+### 形状
+
+```jsonc
+// GET /api/core/views/current 顶层、GET /api/core/views/lanes 的 human：同一份
+"focus": {
+  "state": "present",                     // "present" 在电脑前 | "afk" 离开
+  "app": "code", "title": "plot.gd — garden",   // 当前窗口：心跳带来的原样（已按设备的隐私设置处理过）
+  "since": "2026-10-09T10:12:30+08:00",   // 这个窗口（或这一轮离开）从什么时候起，NEXUS_TZ 的偏移
+  "projectId": "p_3c98de", "projectName": "garden",   // 认不出 → null
+  "taskId": "t_a1b2c3", "taskName": "写提示词",        // 只认到项目 → null
+  "source": "history"                     // "rules" | "choice" | "ai" | "agent-session" | "history"；认不出 → null
+} | null
+```
+
+键总在：`focus` 为 `null` = 没有新鲜的心跳；非 `null` 时九个键都在，认不出目标时后五个为 `null`。
+
+### 判据（规范性）
+
+- **有没有**：该租户各设备里，最新一次心跳距服务端此刻 ≤ 90 秒（与 `auto`、页面的「在电脑前」同一个口径）才非 `null`；
+  只看**最近报心跳的那台**设备（同 v2.14）。**不看 `autoTrack`，不看有没有手动计时**——在计时也照样返回
+  （页面仍以手动计时为准；`auto` / `needsChoice` / `aiThinking` 在计时为 `null` 的规矩不变）。
+- **`state`**：那台设备最新一段是离开 → `"afk"`，否则 `"present"`。`"afk"` 时不认目标（五个键为 `null`）。
+- **`since`**：从最新一段往回，把**同一个窗口**（`app` 不分大小写相同、标题按「匹配历史」的 `norm_title` 归一后相同——
+  与 v2.14 的窗口键同一个算法，标题开头的转圈符号 / 计数在变也算同一个）、且中间没断过（相邻段间隔 ≤ 45 秒）的段并起来，
+  取最早那段的起点。切到别的窗口再切回来、或中间断过，都重新起算。离开同理（一轮连续的离开）。
+  它说的是「这个窗口待了多久」，**不是**记了多久的时间——与 `auto.since`（同一个目标连续了多久、且不早于刚停的手动计时）不是一回事。
+- **目标**，按顺序、先中先用，每一步都只在当前租户里找、且目标此刻还在：
+  1. **自动跟踪的目标**：同一次读里 `auto` 非 `null` → 原样用它的 `projectId` / `projectName` / `taskId` / `taskName` /
+     `source`（`"rules"` / `"choice"` / `"ai"`）。在计时时 `auto` 恒为 `null`，于是从第 2 步认起。
+  2. **窗口 ↔ 代理会话**（v2.13 同一套归一化）：标题归一化后（≥ 3 个字符）等于某条**此刻还在跑**的代理运行的
+     `label` / `match`，且对上的运行指向**恰好一个**真项目（收件箱不算）、项目还在 → 只到项目，`source: "agent-session"`。
+  3. **匹配历史**（v2.12 同一个口径）：这个窗口（同上的窗口键）**最近一次**被人确认到的去向——取台账里那条
+     `session.completed` 的**当前**归属（改挂过的取改挂后的；自动记下的不算）。任务还在、没完成、不是「未分类」桶 →
+     到任务；否则（任务完成了 / 删了 / 是桶）→ 只到项目；项目已删 → 看更早的一次确认；都没有 → 不认。
+     `source: "history"`。标题为空（隐私设置把标题整个去掉了）时不走这一步：只凭程序名不够认。
+  4. 都没中 → 五个目标键为 `null`。
+
+### 只是显示（规范性）
+
+`focus` **不写任何东西**：不记时间、不产生建议、不写规则、不续期临时选择，也不改变 `auto` / `needsChoice` / 自动记录的
+任何判据。它认出的项目 / 任务只是给人和 AI 看的提示——要记时间，仍然是手动计时或 v2.14 的自动跟踪。
+
+### 花费（规范性）
+
+顶栏在每个页面约 10 秒读一次 `views/current`，所以 `focus` 不许让这条读端随数据量变贵：
+
+- 在场文档一次读里只读一遍（`auto` 与 `focus` 共用）；
+- 第 2 步读的是在跑的运行（活状态，每租户有上限）；
+- 第 3 步是一条**有界的索引查询**：`activity_suggestions` 上 `(user, status, app, decidedAt desc)`
+  （`user_status_app_decided`），只取这个程序最近确认的 200 条在内存里比窗口键；随后读台账里的当前归属
+  （含全部改挂）。这一步的结果按（租户, 窗口）在进程内存 30 秒（至多 512 个窗口，满了整个清掉）——
+  **存的只是台账里的去向**，任务 / 项目还在不在每次现查，所以删掉 / 完成的目标立刻不再显示；新确认的去向最迟 30 秒后生效。
+- 实测（5000 条已确认建议、500 段在场记录）：`views/current` 每次约多 0.3 毫秒；缓存没中的那一次约多 5 毫秒。
+
+### 隐私
+
+没有任何新东西离开设备：`app` / `title` 就是在场心跳已经带来、`human.presence` 已经回出的那两个值，已按该设备的
+`detector.settings.v1` 隐私设置（黑名单、去标题、换代号）处理过。`focus` 不进台账 / 投影 / 导出 / 快照恢复。
+
+### 本版不做（有意的）
+
+- 不做多设备合并（同 v2.14：只看最近报心跳的那台）。
+- 第 3 步只看同一个程序最近确认的 200 条：更早确认过的窗口认不出（那时只到「正在用」）。
+- 不为 `focus` 开端点、不推送：读端都是轮询。
+
 ## 入口与路由
 
 - nginx 公开前缀：`/api/core/`（HANDOFF §4 已定死，前端写死地址）
@@ -3175,6 +3265,8 @@ app/modules/
                                       detector/window_rules.py 的 prepend / remove_auto 写（v2.14 的 prepend 也挪到了这里）
                                       2026-10-08 波次统一审核：自动记录拆到 auto_entry.py（上传的入口，读问询与临时选择）、
                                       activity_choices 的存取拆到 choice_repo.py；碰 mongo 的仍只有 repo / ask_repo / choice_repo
+                                      此刻的焦点（v2.16，focus.py）：只读；在场文档由 service.auto_state 读一遍交给它与 auto.py，
+                                      在跑的运行经 session_link.live（timer service 的 list_lane_runs）、去向经 events / planner 的 service 读
   detector/   router service repo     检测程序设置（v2.5）：不是事实；设备列表经 activity 的 service 读上传时刻
   projector/  registry handlers/      DISPATCH 显式表 + 各投影 handler
 ```
@@ -3266,6 +3358,10 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 | 共享顶栏 `nginx-docker/static/navbar.js`（v2.14） | `views.current.v1` 的 `auto` / `needsChoice`（芯片上的「自动 · 项目 / 任务」+ 走秒、等人选的小点；不多发请求）；共享件 `lanes.js` 画 `views.lanes.v1` 的 `human.auto` | `modules/nginx-docker` |
 | `mcp`（v2.15） | `activity.auto-ai.v1` 的 `POST /api/core/activity/ai/claim`、`POST /api/core/activity/ai/suggest`（`mcp.tools.v1` v1.9 的两个工具，对内直连、不带 Bearer） | `modules/mcp` |
 | `ring` 前端 / 共享 `lanes.js`（v2.15） | `views.lanes.v1` 的 `human.aiThinking`、`human.auto.source: "ai"` / `auto.key`；`POST /api/core/activity/choice/reject` | `modules/ring`、`modules/nginx-docker` |
+| 共享顶栏 `nginx-docker/static/navbar.js` + 共享件 `focus.js` / `lanes.js`（v2.16） | `views.current.v1` 的 `focus`（芯片上的「正在：项目 / 窗口」+ 走秒、「离开」；不多发请求）；`views.lanes.v1` 的 `human.focus`（人那张卡那行字） | `modules/nginx-docker` |
+| `ring` 前端（v2.16） | `views.current.v1` 的 `focus`（没在计时时大圆环中心的「正在：项目 / 任务」+ 窗口 + 走秒 + 一键开始计时） | `modules/ring` |
+| `hive` 前端（v2.16） | `views.current.v1` 的 `focus`（中心格的「正在：…」+ 走秒；`focus.projectId` 那个项目格的描边） | `modules/hive` |
+| `mcp`（v2.16） | `views.current.v1` 的 `focus` / `auto` / `needsChoice`（`mcp.tools.v1` v1.10 的 `get_current_timer` 原样带出） | `modules/mcp` |
 | `assistant` 前端（v2.15） | 规则的 `auto`（「AI 自动」徽标，整套保存时原样带回 `author` / `auto`）；`GET /api/core/activity/auto` 的 `ai` | `modules/assistant` |
 | `assistant` 前端（v2.14） | `activity.auto.v1` 的 `GET /api/core/activity/auto`（「自动记录」面板）+ `sessions.reassign.v1`（改归属，v2.14 起收自动记下的段）；`detector.settings.v1` v1.3 的 `autoTrack`；`detector.rules.v1` v1.1 的 `projectId` | `modules/assistant` |
 | 共享顶栏 `nginx-docker/static/navbar.js`（v2.4，契约先行） | `views.lanes.v1`（计时芯片悬停的精简预览：人 + 至多 4 条代理线、最近 1 小时，只在预览打开时约 15 秒轮询；计时页上不弹） | `modules/nginx-docker` |
