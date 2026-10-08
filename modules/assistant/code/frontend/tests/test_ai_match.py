@@ -59,7 +59,9 @@ def test_button_starts_a_turn_and_list_refreshes_when_done(browser, static_base_
         page.wait_for_function("() => document.querySelector('#suggest-ai-match').textContent === 'AI 正在匹配…'")
         assert page.is_disabled("#suggest-ai-match")
         assert "AI 对话" in page.inner_text("#suggest-message")
-        sent = [c for c in chat.calls if c[0] == "POST" and c[1].endswith("/messages")]
+        while not chat.hold:                       # 按钮先变字，这一轮的 POST 随后才到（回答被压着）
+            page.wait_for_timeout(50)
+        sent =[c for c in chat.calls if c[0] == "POST" and c[1].endswith("/messages")]
         assert len(sent) == 1 and "匹配待确认的活动" in sent[0][2]["text"]
         chat.hold_reply = False
         chat.hold.pop().fulfill(status=200, content_type="text/event-stream", body=chat.reply)
@@ -77,6 +79,26 @@ def test_button_starts_a_turn_and_list_refreshes_when_done(browser, static_base_
         assert sug.posts == []   # 页面自己什么都没写：配任务是助理经 MCP 做的
         # 规则给的建议还是原来的「确认 / 忽略」
         assert [b.inner_text() for b in page.locator('li[data-id="sug_a"] button').all()] == ["确认", "忽略"]
+
+
+def test_turn_that_only_sorts_into_collections_says_so(browser, static_base_url):
+    """v2.10：助理这一轮只分了集合（没配任务）也算有结果，提示人去给集合选项目。"""
+    chat = ChatStub()
+    chat.hold_reply = True
+    with open_page(browser, static_base_url, ITEMS, chat=chat) as (page, sug, _):
+        page.wait_for_selector("#suggest-ai-match:not([hidden]):not([disabled])")
+        page.click("#suggest-ai-match")
+        page.wait_for_function("() => document.querySelector('#suggest-ai-match').textContent === 'AI 正在匹配…'")
+        while not chat.hold:                       # 这一轮的 POST 到了（回答被压着）
+            page.wait_for_timeout(50)
+        sent = [c for c in chat.calls if c[0] == "POST" and c[1].endswith("/messages")]
+        assert "归进集合" in sent[0][2]["text"] and "标上项目" in sent[0][2]["text"]
+        for i in sug.items[1:]:
+            i["suggestion"]["collection"] = {"key": "杂项", "name": "杂项"}
+        chat.hold_reply = False
+        chat.hold.pop().fulfill(status=200, content_type="text/event-stream", body=chat.reply)
+        page.wait_for_selector('.suggest-coll[data-key="ai:杂项"]')
+        assert page.inner_text("#suggest-message") == "AI 把活动分成了 1 个集合。给集合选项目后确认，或展开逐条定。"
 
 
 def test_turn_that_matches_nothing_says_so(browser, static_base_url):

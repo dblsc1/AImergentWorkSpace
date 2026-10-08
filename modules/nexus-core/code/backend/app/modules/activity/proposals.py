@@ -30,18 +30,24 @@ class ConflictError(RuntimeError):
     """建议 / 提议的当前状态与请求冲突。main.py 映射成 409（经 service.ConflictError，同一个类）。"""
 
 
-def clean_name(name: str) -> str:
+def clean_name(name: str, what: str = "新任务的 name") -> str:
     """去首尾空白，1–64 码点。不合规抛 ValueError（matches 进 rejected；confirm 由调用方转 400）。"""
     cleaned = (name or "").strip()
     if not cleaned:
-        raise ValueError("新任务的 name 为空或全空白")
+        raise ValueError(f"{what} 为空或全空白")
     if len(cleaned) > MAX_NAME:
-        raise ValueError(f"新任务的 name 超过 {MAX_NAME} 个字：{cleaned[:20]!r}…")
+        raise ValueError(f"{what} 超过 {MAX_NAME} 个字：{cleaned[:20]!r}…")
     return cleaned
 
 
 def _norm(name: str) -> str:
     return " ".join(name.split()).casefold()
+
+
+def collection(name: str) -> dict:
+    """v2.10 集合标签 ``{key, name}``：名字的判据同新任务名；key = 归一化名字（写法略有出入的同名进同一个集合）。"""
+    name = clean_name(name, "collection.name")
+    return {"key": _norm(name), "name": name}
 
 
 def _same_name_task(project_id: str, name: str) -> dict | None:

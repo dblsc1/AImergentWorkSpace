@@ -431,6 +431,9 @@ def test_opencode_config():
     # v1.6：没有合适的现成任务才提议新任务（mcp.tools.v1 v1.4）——用已有项目、同名一个、点「是」才建
     for must in ("newTask", "已有项目", "同一个窗口", "同名只会建一个任务", "点「是」才建"):
         assert must in prompt, must
+    # v1.7：每条归集合、看得出项目就标（mcp.tools.v1 v1.6）——集合少而大、同名、定不了任务也标项目
+    for must in ("collection {name}", "每一条", "完全相同的名字", "不要一个窗口一个集合", "projectId", "「未分类」"):
+        assert must in prompt, must
     assert all(c["agent"][a] == {"disable": True} for a in ("build", "plan", "general", "explore", "title"))
     assert "sk-x" not in repr(c)
     assert "headers" not in config.opencode_config(s, False)["mcp"]["honeycomb"]

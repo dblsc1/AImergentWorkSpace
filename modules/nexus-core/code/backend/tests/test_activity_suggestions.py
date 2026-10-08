@@ -480,7 +480,7 @@ def test_match_rejects_per_index_without_failing_batch(client, seeded):
         {"id": newest, **ok, "confidence": True},                # 6 布尔不是把握
         {"id": newest, **ok, "reason": "字" * 67},               # 7 201 字节
         {"id": newest, "taskId": None, "confidence": 0.5},       # 8 只能配到任务
-        {"id": newest, "projectId": "p_x", "confidence": 0.5},   # 9 不能只配到项目
+        {"id": newest, "projectId": "p_x", "confidence": 0.5},   # 9 v2.10 可以只到项目，但项目得存在
         "nope",                                                  # 10 不是对象
         {"id": ruled, **ok},                                     # 11 规则已经配上的不盖
     ])
@@ -696,3 +696,117 @@ def test_failed_confirm_does_not_reopen_a_record_another_confirm_holds(client, s
     assert seen == {"b": 404}
     assert {i["id"] for i in _pending(client, status="confirmed")["items"]} == {sug_id, third}
     assert len(_session_events()) == 2
+
+
+# ------------------------------------------------ v2.10 集合与只到项目的建议（契约「AI 分集合」）
+
+
+def test_match_labels_collection_and_project_without_touching_the_task(client, seeded):
+    """只贴标签：不带 taskId / newTask / confidence。规则给的任务、把握、来源一个不动；什么都不确认。"""
+    task = seeded["tasks"]["示例任务三"]
+    pid = task["projectId"]
+    _upload(client, [_seg(_recent(10)), _seg(_recent(20), task_id=task["id"])])
+    blank, ruled = (i["id"] for i in _pending(client)["items"])
+    before = _human_views(client)
+
+    out = _match(client, [
+        {"id": blank, "collection": {"name": "  Claude  Code · cockpit "}, "projectId": pid},
+        {"id": ruled, "collection": {"name": "claude code · COCKPIT"}},   # 规则配上的也能贴；写法不同 = 同一个集合
+    ])
+    assert out == {"matched": 2, "rejected": []}
+    by_id = {i["id"]: i for i in _pending(client)["items"]}
+    assert by_id[blank]["suggestion"] == {
+        "taskId": None, "confidence": 0.9, "reason": "规则 #1 命中", "classifier": "rules",   # 上传时的原样
+        "collection": {"key": "claude code · cockpit", "name": "Claude  Code · cockpit"}, "projectId": pid}
+    rs = by_id[ruled]["suggestion"]
+    assert (rs["taskId"], rs["classifier"], rs["confidence"]) == (task["id"], "rules", 0.9)
+    assert rs["collection"]["key"] == "claude code · cockpit" and "projectId" not in rs
+    assert _session_events() == [] and _human_views(client) == before
+    assert all(i["status"] == "pending" for i in by_id.values())
+
+
+def test_match_with_task_carries_labels_and_no_keeps_them(client, seeded):
+    task, other = seeded["tasks"]["示例任务三"], seeded["tasks"]["示例任务四"]
+    _upload(client, [_seg(_recent(10))])
+    sug_id = _pending(client)["items"][0]["id"]
+    coll = {"key": "终端", "name": "终端"}
+
+    assert _match(client, [{"id": sug_id, "taskId": task["id"], "confidence": 0.7, "collection": {"name": "终端"},
+                            "projectId": task["projectId"]}])["matched"] == 1
+    assert _pending(client)["items"][0]["suggestion"] == {
+        "taskId": task["id"], "confidence": 0.7, "reason": "", "classifier": "assistant",
+        "collection": coll, "projectId": task["projectId"]}
+    # 助理换任务、这次没带集合：集合标签留着
+    assert _match(client, [{"id": sug_id, "taskId": other["id"], "confidence": 0.6}])["matched"] == 1
+    assert _pending(client)["items"][0]["suggestion"]["collection"] == coll
+    # 人说「否」：任务清掉，集合标签还在
+    assert client.post(f"{SUG}/{sug_id}/unmatch", json={"taskId": other["id"]}).status_code == 200
+    sug = _pending(client)["items"][0]["suggestion"]
+    assert sug["taskId"] is None and sug["collection"] == coll
+    # 提议新任务同样能带集合；否掉提议后也还在
+    nt = {"projectId": task["projectId"], "name": "v2.10 新任务"}
+    assert _match(client, [{"id": sug_id, "newTask": nt, "confidence": 0.5, "collection": {"name": "终端"}}])["matched"] == 1
+    assert client.post(f"{SUG}/{sug_id}/unmatch").status_code == 200
+    sug = _pending(client)["items"][0]["suggestion"]
+    assert "newTask" not in sug and sug["collection"] == coll
+    # 确认照旧：带任务确认，写一条事实
+    assert client.post(f"{SUG}/{sug_id}/confirm", json={"taskId": task["id"]}).status_code == 200
+    assert len(_session_events()) == 1
+
+
+def test_match_label_validation_rejects_per_index(client, seeded):
+    task, other = seeded["tasks"]["示例任务三"], seeded["tasks"]["示例临时任务"]
+    assert task["projectId"] != other["projectId"]
+    _upload(client, [_seg(_recent(10)), _seg(_recent(20))])
+    newest, dismissed = (i["id"] for i in _pending(client)["items"])
+    client.post(f"{SUG}/{dismissed}/dismiss")
+    out = _match(client, [
+        {"id": newest, "collection": {"name": "长" * 64}},                                  # 0 收（64 个字刚好）
+        {"id": newest, "collection": {"name": "   "}},                                      # 1 空名
+        {"id": newest, "collection": {"name": "长" * 65}},                                  # 2 超 64 字
+        {"id": newest, "collection": {}},                                                   # 3 缺 name
+        {"id": newest, "collection": "终端"},                                               # 4 不是对象
+        {"id": newest, "projectId": "p_nope"},                                              # 5 项目不存在
+        {"id": newest, "projectId": 7},                                                     # 6 类型不对
+        {"id": newest},                                                                     # 7 什么都没给
+        {"id": newest, "taskId": task["id"], "collection": {"name": "x"}},                  # 8 配任务必须给 confidence
+        {"id": newest, "taskId": task["id"], "confidence": 0.5, "projectId": other["projectId"]},  # 9 项目对不上任务
+        {"id": newest, "newTask": {"projectId": task["projectId"], "name": "n"}, "confidence": 0.5,
+         "projectId": other["projectId"]},                                                  # 10 项目对不上新任务
+        {"id": dismissed, "collection": {"name": "x"}},                                     # 11 已忽略
+        {"id": "sug_nope", "collection": {"name": "x"}},                                    # 12 不存在
+    ])
+    assert out["matched"] == 1 and [r["index"] for r in out["rejected"]] == list(range(1, 13))
+    assert all(r["reason"] for r in out["rejected"])
+    sug = _pending(client)["items"][0]["suggestion"]
+    assert sug["collection"]["name"] == "长" * 64 and sug["taskId"] is None and "projectId" not in sug
+    assert "collection" not in _pending(client, status="dismissed")["items"][0]["suggestion"]
+
+
+def test_labels_device_token_403_upload_cannot_label_and_tenants_isolated(client):
+    _upload(client, [{**_seg(_recent(10)), "suggestion": {
+        "taskId": None, "confidence": 0, "reason": "", "classifier": "rules",
+        "collection": {"key": "k", "name": "检测程序自称的"}, "projectId": "p_x"}}])
+    item = _pending(client)["items"][0]
+    assert "collection" not in item["suggestion"] and "projectId" not in item["suggestion"]
+    label = {"matches": [{"id": item["id"], "collection": {"name": "x"}}]}
+    assert client.post(MATCHES, json=label, headers=BEARER).status_code == 403
+    other = client.post(MATCHES, json=label, headers=B).json()
+    assert other["matched"] == 0 and len(other["rejected"]) == 1
+    assert "collection" not in _pending(client)["items"][0]["suggestion"]
+
+
+def test_label_only_suggestion_confirms_with_project_into_the_bucket(client, seeded):
+    """v2.10 接 v2.9：助理只贴了集合 + 项目（没有任务）的建议，人按 {projectId} 确认 → 记到该项目的「未分类」桶。"""
+    pid = seeded["tasks"]["示例任务三"]["projectId"]
+    _upload(client, [_seg(_recent(10))])
+    sug_id = _pending(client)["items"][0]["id"]
+    assert _match(client, [{"id": sug_id, "collection": {"name": "终端"}, "projectId": pid}])["matched"] == 1
+    assert _pending(client)["items"][0]["suggestion"]["taskId"] is None
+
+    out = client.post(f"{SUG}/{sug_id}/confirm", json={"projectId": pid})
+    assert out.status_code == 200, out.text
+    assert out.json()["taskId"] == f"t_unc_{pid}"
+    events = _session_events()
+    assert len(events) == 1 and events[0]["subject"]["task"] == f"t_unc_{pid}"
+    assert _pending(client)["items"] == []

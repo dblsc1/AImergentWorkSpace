@@ -89,6 +89,13 @@
 > 时间照常计入项目合计；`views.tree.v1` 的项目加 `unclassifiedTaskId`、`views.current.v1` 的 `task` 与
 > `views.gantt.v1` 的任务加 `kind`；档案读端 `GET /api/core/events` 加可选过滤 `taskId`（列出记在某个桶上的每一段）。
 > 既有字段、端点行为一个不改。见「项目未分类时间」节。
+> **v2.10（追加式）**：**AI 助理把同类的零碎窗口归成集合，并可以只把建议标到项目。** 仓主 2026-10-08：「碎片太多。
+> 让 AI 把同类型的碎片窗口放在一个集合中，按总时间自上而下排列；人可以设置集合的项目。」`matches` 的每条追加两个可选键：
+> `collection: {name}`（集合标签，服务端归一出 `key`）与 `projectId`（只到项目的建议）；给了其中之一时 `taskId` / `newTask`
+> 可以都不给（**只贴标签，不动建议的任务**，规则给了任务的建议也能贴），这时 `confidence` 也可省。两者存进
+> `suggestion.collection {key, name}` / `suggestion.projectId`，列表原样回出。**只是给页面分组、预选项目用的提示**：
+> 不新建集合、不进台账 / 投影 / 导出，confirm / unmatch / dismiss 的语义一个字不改（人说「否」不清集合标签）。
+> 上传端点不收这两个键。见「活动建议」节「AI 分集合」。
 >
 > v1.9：`GET /api/core/export` 产出的快照此前没有任何端点能吃
 > 回去（喂给 import 会被三层拒绝，而那三条拒绝各守一件实事，一条都不该放宽）。
@@ -241,6 +248,8 @@ provides:
       v2.8 追加：matches 每条可给 newTask {projectId, name} 代替 taskId（新任务提议，按项目 + 归一化名字去重，存
       activity_task_proposals）；confirm 这样的建议（带 proposalId，可带 name）经 planner 建任务路径只建一次、其余段复用；
       unmatch 记 rejectedProposalIds；confirm 响应追加 taskId
+      v2.10 追加：matches 每条可带 collection {name}（集合标签，存 suggestion.collection {key, name}）与 projectId
+      （只到项目的建议，存 suggestion.projectId）；只带这两样时不动建议的任务。列表原样回出；只是展示提示，不进台账
     status: 已实现（v2.2），待验证
   - id: nexus-core.views.agent-time.v1
     summary: AI 代理时长读端（v2.3）——GET /api/core/views/agent-time?from=&to= 读
@@ -314,6 +323,7 @@ consumes:
 | — | （v2.8 追加，无新端点）matches 每条可给 `newTask`；confirm 带 `proposalId`（可带 `name`）、响应加 `taskId`；unmatch 可带 `proposalId` | 见「活动建议」节「AI 提议新任务」 | | ✅ 已实现（v2.8） |
 | POST | `/api/core/planner/projects/{id}/unclassified` | 无 | `{taskId}`（该项目的「未分类」时间桶，取或建，幂等；见「项目未分类时间」节） | ✅ 已实现（v2.9） |
 | — | （v2.9 追加，无新端点）confirm 可只带 `projectId`（与 `taskId` / `proposalId` / `name` 互斥）；`views/tree` 项目加 `unclassifiedTaskId`，`views/current` 的 `task`、`views/gantt` 的任务加 `kind` | 见「项目未分类时间」节 | | ✅ 已实现（v2.9） |
+| — | （v2.10 追加，无新端点）matches 每条可带 `collection {name}`、`projectId`（这时 `taskId` / `newTask` / `confidence` 可省）；列表的 `suggestion` 追加 `collection {key, name}`、`projectId` | 见「活动建议」节「AI 分集合」 | | ✅ 已实现（v2.10） |
 | GET | `/api/core/detector/settings` | `?deviceId` | `{deviceId, settings\|null, updatedAt\|null}`（见 `contracts/detector.settings.v1`） | ✅ 已实现（v2.5） |
 | PUT | `/api/core/detector/settings` | `?deviceId`，`DetectorSettings` | 同 GET；带 Bearer 403 | ✅ 已实现（v2.5） |
 | DELETE | `/api/core/detector/settings` | `?deviceId` | `204`；带 Bearer 403 | ✅ 已实现（v2.5） |
@@ -2053,6 +2063,54 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
 - 「全部确认」类批量操作**不许**替人建任务：提议的建议 `taskId` 是 `null`，本来就不满足「有任务才批量确认」（前端契约另行写明）。
 - MCP 照旧只调 matches，不调 confirm / unmatch。提议从提出到建成，planner 里一个字节都不动。
 
+### AI 分集合：同类窗口归到一起，可以只标到项目（规范性 · v2.10）
+
+仓主 2026-10-08：「最后一个痛点：碎片太多。让 AI 在输出中，把同类型的碎片窗口（如同一个 agent 名字）放在一个集合中，
+集合按总时间自上而下排列。打开集合就能看到所有类似的窗口操作。人可以设置集合的项目，并方便地在集合里选项目的任务。」
+分组与排序是页面的事（`modules/assistant` 契约）；本节只管**助理怎么把标签交进来、列表怎么回出去**。
+
+```jsonc
+// POST /api/core/activity/suggestions/matches —— 每条追加两个可选键
+{ "matches": [
+    { "id": "sug_…", "collection": { "name": "Claude Code · cockpit" }, "projectId": "p_3c" },   // 只贴标签：不动任务
+    { "id": "sug_…", "taskId": "t_a1", "confidence": 0.8, "reason": "…",
+      "collection": { "name": "Claude Code · cockpit" } } ] }                                    // 配任务，顺带归集合
+
+// GET 列表：suggestion 追加（没有标签的建议没有这两个键）
+{ "suggestion": { "taskId": null, "confidence": 0, "reason": "", "classifier": "rules",
+                  "collection": { "key": "claude code · cockpit", "name": "Claude Code · cockpit" },
+                  "projectId": "p_3c" } }
+```
+
+- **`collection.name`**：助理给这一类窗口起的名字，去首尾空白后 1–64 个码点。**`collection.key`** = 归一化的名字
+  （去首尾空白、连续空白并成一个、不分大小写，同新任务提议的归一）——`key` 相同的建议是同一个集合；`name` 存这条交来时的写法。
+  服务端**不存集合本身**（没有集合表、没有成员表）：集合就是「`key` 相同的那些待确认建议」，建议处理完 / 过期，集合自然没了。
+- **`projectId`**：只到项目的建议——看得出项目、但定不了任务。必须是已有项目。**它不让任何东西可确认**：
+  确认要记到哪里仍由 confirm 的请求体决定。这条建议另有 `taskId` / `newTask` 时，读方以任务 / 新任务所在的项目为准。
+- **只贴标签**（`taskId`、`newTask` 都不给）：只写 `suggestion.collection` / `suggestion.projectId`，
+  `taskId`、`confidence`、`reason`、`classifier` **一个不动**——所以规则已经给了任务的建议也能贴（v2.7「助理不盖规则的结果」
+  管的是任务，不是标签）。`confidence` 可省（给了也不用）。
+- **与 `taskId` / `newTask` 同给**：照 v2.7 / v2.8 换掉 `suggestion`，并带上这次给的标签。这次没给 `collection` 而建议原来有 →
+  **保留原来的集合**（助理改主意换任务不该把它踢出集合）；`projectId` 只存这次给的。
+- **人说「否」不清标签**：unmatch 清的是任务 / 提议（v2.7 / v2.8 不变），`collection`、`projectId` 留着。
+  助理可以再交一次换掉标签；没有「去掉标签」的操作（不需要：标签只影响页面怎么分组）。
+
+**matches 里新增的拒绝情形**（逐条，坏的进 `rejected`，其余照写，同 v2.7）：
+
+| 情形 | 结果 |
+|---|---|
+| `taskId`、`newTask`、`collection`、`projectId` 一个都没给 | 该条进 `rejected` |
+| 给了 `taskId` / `newTask` 却没给 `confidence` | 该条进 `rejected`（v2.7 / v2.8 的必填不变） |
+| `collection` 不是对象 / 缺 `name` / `name` 去空白后为空或超过 64 个码点 | 该条进 `rejected` |
+| `projectId` 不存在（或类型不对） | 该条进 `rejected` |
+| `projectId` 与 `taskId` 所在的项目 / `newTask.projectId` 不同 | 该条进 `rejected`——自相矛盾的不收，不替它挑一个 |
+| 建议不存在 / 不是 `pending` | 同 v2.7 |
+| 只贴标签，建议已有规则给的任务 | **收**（只写标签） |
+
+- 两个键**只由 matches 写**：上传端点的 `suggestion` 里带了也不存（检测程序不能自己分集合）。带 `Authorization: Bearer` 照旧 403。
+- 仍然**什么都不确认**：状态、台账、投影、导出一个字节不动；重复交同一批幂等。只贴标签的写入是条件更新（仍 `pending`）。
+- 标签随建议一起过期；不进导出、不进快照恢复。老读方忽略这两个键即可（`suggestion` 自 v2.8 起就是开放对象）。
+
 ### 过期（惰性，无调度器）
 
 `NEXUS_SUGGESTION_TTL_DAYS`（默认 14）：待确认的按**收到时刻**、已确认/已忽略的按**处理时刻**，
@@ -2387,8 +2445,10 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 | MCP 服务（v2.8） | `propose_activity_matches` 每条可给 `newTask`（`mcp.tools.v1` v1.4）；GET 多读 `suggestion.newTask` | `contracts/mcp.tools.v1` |
 | `hive` 前端（v2.9） | `planner.crud.v1` 的 `POST /api/core/planner/projects/{id}/unclassified`（长按项目格：取或建桶再 `timer/start`，不再建「日期 时间」任务）；`views.current.v1` 的 `task.kind`；`views.tree.v1` 的 `unclassifiedTaskId` + `events.read.v1`（记在桶上的段在「最近完成」与计时档案里叫「临时任务 <开始时间>」） | `modules/hive` |
 | `ring` 前端、共享顶栏（v2.9） | `views.current.v1` 的 `task.kind`（正在计桶时只显示项目名，计时台不给它改名）；`ring` 另经 `views.gantt.v1` 的任务层读到桶当天的秒数 | `modules/ring`、`modules/nginx-docker` |
-| `assistant` 前端（v2.9，**待后续 PR**） | confirm 只带 `projectId`；`GET /api/core/events?type=session.completed&taskId=`（「待分类」） | `modules/assistant` |
+| `assistant` 前端（v2.9） | confirm 只带 `projectId`（集合有项目时的「未分类」，随 v2.10 实现）；**待后续 PR**：`GET /api/core/events?type=session.completed&taskId=`（「待分类」） | `modules/assistant` |
 | MCP 服务（v2.9） | `views.tree.v1` 的 `unclassifiedTaskId`（桶的路径「分区 / 项目 / 未分类」）；`views.gantt.v1` 任务的 `kind`（`mcp.tools.v1` v1.5） | `contracts/mcp.tools.v1` |
+| `assistant` 前端（v2.10） | 读 `suggestion.collection.{key,name}`、`suggestion.projectId`：待确认建议按集合分组、按总时长排序，集合的项目预选 | `modules/assistant` |
+| MCP 服务（v2.10） | `propose_activity_matches` 每条可带 `collection`、`projectId`（`mcp.tools.v1` v1.6）；GET 多读 `suggestion.collection`、`suggestion.projectId` | `contracts/mcp.tools.v1` |
 | `ai-detector` 桌面程序（v2.4） | `activity.presence.v1` 的 POST（在场心跳）；可选「状态文件桥」经 `agents.v1` 的 start/stop 与 `agents.phase.v1` 报没有钩子的代理（带设备令牌） | `modules/ai-detector` |
 | `tools/agent-hooks`（v2.1 起，v2.4 追加） | `agents.v1` 的 start/stop；v2.4 起 `agents.phase.v1`（Claude Code 钩子与 `cockpit-run phase`） | `tools/agent-hooks` |
 | 共享顶栏 `nginx-docker/static/navbar.js`（v2.4，契约先行） | `views.lanes.v1`（计时芯片悬停的精简预览：人 + 至多 4 条代理线、最近 1 小时，只在预览打开时约 15 秒轮询；计时页上不弹） | `modules/nginx-docker` |
