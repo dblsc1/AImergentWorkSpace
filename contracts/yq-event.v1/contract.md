@@ -243,3 +243,4 @@ key = <分区号>-<项目号>-<名字号>-<同名序号>
 | 2026-09-30 | §6 `agent.run.completed` 的 `data` 追加三个选填键 `label`/`phases`/`interactions`（代理运行的相位与人↔代理连线）。没有就不出现，老事件与老读方不受影响；不新增类型，信封不变 |
 | 2026-10-08 | §6 追加 `session.reassigned`（一段时间改挂到另一个任务的修正事实）。只增类型，信封不变；`session.completed` 的形状与含义不变 |
 | 2026-10-08 | §2 `ai` 块追加选填键 `auto`（nexus-core v2.14 自动记录的出处标记）。没有就不出现，老事件与老读方不受影响；信封其余不变 |
+| 2026-10-08 | 波次统一审核，nexus-core 入口的两处收紧（信封与类型不变）：`currentSubject` 是 nexus-core 读端现算的键，信封自带的同名键入口不落库（B9 的唯一例外）；自称 `source: "session-reassign"` 的信封进 `rejected`、自称 `source: "activity-confirmed"` 的信封 `ai.auto` 不落库——这两个 source 是 nexus-core 自己写事实用的。见 nexus-core 契约「改挂未分类时间」节 |

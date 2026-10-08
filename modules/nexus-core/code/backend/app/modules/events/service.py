@@ -36,6 +36,15 @@ SESSION_TYPE = "session.completed"
 #: v2.11 改挂事实（契约「改挂未分类时间」）。**只由 ``timer/reassign.py`` 经 ``ingest(internal=True)`` 写**：
 #: 公开入口对设备令牌 / 外部 source 开放，放行就绕过了「只有人能改挂」与链的连续性。
 REASSIGNED_TYPE = "session.reassigned"
+#: 改挂端点写台账用的 source。公开入口同样不收自称它的信封（不论 type）：防重身份是 (user, source, dedupeKey)，
+#: 放行的话一条别的类型的外部事件能先占住 ``reassign:<段>:<n>``，那一段就再也改挂不了。
+REASSIGN_SOURCE = "session-reassign"
+
+#: 读端现算的键（v2.11）：只从改挂链来。信封 ``extra="allow"``，客户端自带的同名键入口摘掉、读端不认。
+CURRENT_SUBJECT = "currentSubject"
+#: 服务端「自动记录」（v2.14）写事实用的 source。公开入口上自称它的信封，``ai.auto`` 摘掉——那是改挂的判据之一，
+#: 只有服务端自己写的才作数（别的 source 自报 ``ai.auto`` 是开放标准允许的，原样留）。
+_AUTO_SOURCE = "activity-confirmed"
 
 _ARCHIVE_DEFAULT_LIMIT = 100
 _ARCHIVE_MAX_LIMIT = 1000
@@ -65,7 +74,8 @@ def _reason(exc: ValidationError) -> str:
 def ingest(payload: dict | list, *, internal: bool = False) -> IngestOut:
     """单条或数组。返回 IngestOut；HTTP 状态码永远由 router 给 200——
     拒绝逐条写进 ``rejected``，重复逐条计入 ``duplicate``，都不是 4xx。
-    ``internal`` 只有改挂端点传 True：``session.reassigned`` 从别处来一律拒（v2.11）。
+    ``internal`` = 信封是服务端自己组的（改挂端点、补登 / 确认 / 自动记录），不是从公开入口进来的：
+    ``session.reassigned`` 从别处来一律拒（v2.11）；服务端才能写的标记从别处来一律摘掉（见 ``_AUTO_SOURCE``）。
     """
     items = payload if isinstance(payload, list) else [payload]
     accepted = 0
@@ -78,12 +88,16 @@ def ingest(payload: dict | list, *, internal: bool = False) -> IngestOut:
         except ValidationError as exc:
             rejected.append(RejectedItem(index=index, reason=_reason(exc)))
             continue
-        if envelope.type == REASSIGNED_TYPE and not internal:
+        if not internal and (envelope.type == REASSIGNED_TYPE or envelope.source == REASSIGN_SOURCE):
             rejected.append(RejectedItem(index=index, reason=(
-                f"{REASSIGNED_TYPE} 只能经 POST /api/core/sessions/{{eventId}}/reassign 写（契约 v2.11）")))
+                f"{REASSIGNED_TYPE} / source {REASSIGN_SOURCE!r} 只能经 "
+                f"POST /api/core/sessions/{{eventId}}/reassign 写（契约 v2.11）")))
             continue
 
         doc = envelope.model_dump()  # extra="allow"：未知字段原样保留（B9）
+        doc.pop(CURRENT_SUBJECT, None)  # 例外：读端现算的键不落库，谁带来的都一样
+        if not internal and doc["source"] == _AUTO_SOURCE and isinstance(doc.get("ai"), dict):
+            doc["ai"] = {k: v for k, v in doc["ai"].items() if k != "auto"}
         doc["recordedAt"] = _now_iso()  # 服务端盖章；客户端给的值在这里被覆盖（B6）
         # 租户同样服务端盖章（v2.0）：信封里的 user 客户端必须照填（信封校验不放宽），
         # 但落库的是网关认定的租户——否则一个租户能往另一个租户的台账里写事实。
@@ -240,11 +254,15 @@ def list_events(
     消费方拿 id 去 planner 查当前名字。
     """
     docs = repo.query_events(type_)
+    for doc in docs:
+        # 只从改挂链现算：台账里已经带着这个键的（快照恢复 / 入口摘它之前落的）一律不认，
+        # 否则一条外部事件能自报一个与投影对不上的归属，还带偏下面的 taskId 过滤
+        doc.pop(CURRENT_SUBJECT, None)
     if type_ in (None, SESSION_TYPE):
         latest = latest_reassignments(docs if type_ is None else repo.query_events(REASSIGNED_TYPE))
-        docs = [{**d, "currentSubject": cur} if (cur := _current_subject(d, latest)) else d for d in docs]
+        docs = [{**d, CURRENT_SUBJECT: cur} if (cur := _current_subject(d, latest)) else d for d in docs]
     if task_id:
-        docs = [d for d in docs if (d.get("currentSubject") or d.get("subject") or {}).get("task") == task_id]
+        docs = [d for d in docs if (d.get(CURRENT_SUBJECT) or d.get("subject") or {}).get("task") == task_id]
 
     lo = _parse_bound(from_, "from") if from_ else None
     hi = _parse_bound(to, "to") if to else None

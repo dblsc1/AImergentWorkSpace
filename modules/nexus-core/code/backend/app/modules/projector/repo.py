@@ -17,8 +17,9 @@
 
 两张集合的幂等实现都是**原子的**，不是「先查再改」：
 文档带 ``appliedKeys`` 数组，更新条件是 ``appliedKeys $ne dedupe_key``——
-条件不中而 upsert 试图新建时会撞唯一索引（DuplicateKeyError），
-那恰好就是「已应用过」的判定。竞态下两个并发投递也只会累计一次。
+条件不中而 upsert 试图新建时会撞唯一索引（DuplicateKeyError）。撞了**不等于**「已应用过」：
+也可能是并发的另一条写刚把这份文档 / 这一行建出来。所以每个带 upsert 的累计都在撞了之后不带 upsert
+再试一次，由那一次的条件中不中来判——同一条并发投两遍只累计一次，两条不同的各算各的。
 """
 
 from __future__ import annotations
@@ -96,18 +97,16 @@ def move_session(
 
 
 def _inc_current(user: str, dedupe_key: str, inc: dict[str, int], applied: str = "appliedKeys") -> bool:
+    query = {"user": user, applied: {"$ne": dedupe_key}}
+    update = {"$inc": inc, "$addToSet": {applied: dedupe_key}}
     try:
-        result = _col().update_one(
-            {"user": user, applied: {"$ne": dedupe_key}},
-            {
-                "$inc": inc,
-                "$addToSet": {applied: dedupe_key},
-                "$setOnInsert": {"user": user},
-            },
-            upsert=True,
-        )
+        result = _col().update_one(query, {**update, "$setOnInsert": {"user": user}}, upsert=True)
     except DuplicateKeyError:
-        return False  # 文档在，但已含此键 → 早已应用过
+        # 两种可能：① 本键早已应用过；② 这个租户还没有文档，并发的**另一条**写（另一段落账、或这一段的改挂）
+        # 抢先建了出来。②不能当成「已应用」，否则这一笔就永远丢了。文档此刻一定在，不带 upsert 再试一次：
+        # 条件中 = 本键没应用过（同 apply_daily_stat）。
+        result = _col().update_one(query, update)
+        return result.modified_count > 0
     return result.modified_count > 0 or result.upserted_id is not None
 
 
@@ -272,25 +271,40 @@ def _lanes_col():
 
 
 def apply_lane(doc: dict) -> bool:
-    """同一 (user, key) 只写一次；重放 / 重投递是 no-op。"""
+    """同一 (user, key) 只写一次；重放 / 重投递是 no-op。
+
+    那一行可能已经被 ``reassign_lane`` 占了位（只有去向、没有 ``kind``：改挂赶在这一行之前到了）——这时补上其余字段，
+    归属留占位行记下的那个。一条管道更新原子地分三种情况：没有 → 整份写入；只有占位 → 合并；已经写过 → 不动。
+    ``$literal``：文档里以 ``$`` 开头的字符串（外部事件的标签、任务 id）是数据，不是字段引用。
+    """
+    # 占位只对人的段作数（改挂只针对 session.completed）；别的 kind 以自己的文档为准
+    merged = [{"$literal": doc}, "$$ROOT"] if doc.get("kind") == "session" else ["$$ROOT", {"$literal": doc}]
+    query = {"user": doc["user"], "key": doc["key"]}
+    update = [{"$replaceWith": {"$cond": [
+        {"$eq": [{"$type": "$kind"}, "missing"]}, {"$mergeObjects": merged}, "$$ROOT"]}}]
     try:
-        result = _lanes_col().update_one(
-            {"user": doc["user"], "key": doc["key"]}, {"$setOnInsert": doc}, upsert=True,
-        )
+        result = _lanes_col().update_one(query, update, upsert=True)
     except DuplicateKeyError:
-        return False  # 并发的同一条抢先插入
-    return result.upserted_id is not None
+        # 并发的同一条、或一条改挂的占位抢先建出了这一行：行此刻一定在，不带 upsert 再走一遍同样的三分支
+        result = _lanes_col().update_one(query, update)
+    return result.modified_count > 0 or result.upserted_id is not None
 
 
 def reassign_lane(user: str, key: str, task_id: str | None, project_id: str | None, seq: int) -> bool:
     """v2.11 改挂：换这一段的归属。按 ``seq`` 只进不退——并发的两条改挂后到的若更旧，不盖新的。
-    ponytail: 段的那一行还没写进来（刚落账的几毫秒内就改挂）时是 no-op，等下一次重建；
-    要补就让 apply_lane 也认 assignSeq。"""
-    result = _lanes_col().update_one(
-        {"user": user, "key": key, "kind": "session", "assignSeq": {"$not": {"$gte": seq}}},
-        {"$set": {"taskId": task_id, "projectId": project_id, "assignSeq": seq}},
-    )
-    return result.modified_count > 0
+
+    段的那一行还没写进来（刚落账就改挂，``lanes.handle`` 还没轮到）时先占位：只记去向与 ``assignSeq``、
+    没有 ``kind``，所以读端与 ``lanes_empty`` 都看不见它；``apply_lane`` 随后补上其余字段、归属以占位为准。
+    那一段永远不进时间线（没有 ``startAt`` 的外部段）时占位行就一直留着，重建时清掉。
+    """
+    query = {"user": user, "key": key, "kind": {"$in": ["session", None]}, "assignSeq": {"$not": {"$gte": seq}}}
+    update = {"$set": {"taskId": task_id, "projectId": project_id, "assignSeq": seq}}
+    try:
+        result = _lanes_col().update_one(query, update, upsert=True)
+    except DuplicateKeyError:
+        # 行在但条件不中（已是更新的 seq / 不是人的段），或并发的另一条写刚建出这一行：不带 upsert 再试一次
+        result = _lanes_col().update_one(query, update)
+    return result.modified_count > 0 or result.upserted_id is not None
 
 
 def read_lanes(user: str, kind: str, start, end, limit: int) -> list[dict]:
@@ -305,7 +319,8 @@ def clear_lanes() -> None:
 
 
 def lanes_empty() -> bool:
-    return _lanes_col().find_one({}, {"_id": 1}) is None
+    """一条区间都没有（改挂留下的占位行没有 ``kind``，不算）。"""
+    return _lanes_col().find_one({"kind": {"$exists": True}}, {"_id": 1}) is None
 
 
 # ------------------------------------------------ 启动期一次性任务的锁与进度标记（v2.4：proj_lanes 自动补建）

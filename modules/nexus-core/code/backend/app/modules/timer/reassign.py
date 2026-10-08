@@ -35,7 +35,7 @@ from ..planner.errors import (
 )
 from . import service as timer_service
 
-SOURCE = "session-reassign"
+SOURCE = events_service.REASSIGN_SOURCE  # "session-reassign"；公开入口不收自称它的信封
 _MAX_TRIES = 5
 
 
