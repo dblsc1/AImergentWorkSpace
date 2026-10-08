@@ -105,7 +105,8 @@
 
   async function load() {
     var got = await Promise.all([getJson(CORE + "activity/auto"), getJson(CORE + "views/tree?includeEphemeral=true")]);
-    items = (got[0] && Array.isArray(got[0].items)) ? got[0].items : [];
+    items = (got[0] && Array.isArray(got[0].items)) ? got[0].items.slice() : [];
+    items.sort(function (p, q) { return (Number(q.durationSeconds) || 0) - (Number(p.durationSeconds) || 0); }); // 长的在前（稳定：一样长的保持后端的新在前）
     tree = got[1];
   }
 

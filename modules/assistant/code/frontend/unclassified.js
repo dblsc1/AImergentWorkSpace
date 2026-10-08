@@ -20,7 +20,7 @@
   "use strict";
   var BASE = (typeof self !== "undefined" && self.HONEYCOMB_BASE) || "/";
   var CORE = BASE + "api/core/";
-  var OTHER = "__other", OWN = "__own";
+  var OTHER = "__other", OWN = "__own", PFX = "p:"; // PFX + 项目 id = 归入那个项目的未分类
   var SOURCES = { "timer-backend": "计时", "manual-backfill": "补登", "activity-confirmed": "电脑检测" };
 
   // ── 纯函数 ─────────────────────────────────────────────────────────
@@ -52,7 +52,10 @@
     return ((tree && tree.projects) || []).filter(function (p) {
       return lists[p.id] && lists[p.id].items.length;
     }).map(function (p) {
-      var items = lists[p.id].items;
+      // 段也是长的在前，一样长的新的在前（稳定排序：再一样保持后端给的顺序）
+      var at = function (e) { return new Date((e.data || {}).startAt || e.time).getTime() || 0; };
+      var dur = function (e) { return Number((e.data || {}).durationSeconds) || 0; };
+      var items = lists[p.id].items.slice().sort(function (a, b) { return dur(b) - dur(a) || at(b) - at(a); });
       return {
         project: p, path: projectPath(tree, p), items: items, total: Math.max(lists[p.id].total || 0, items.length),
         seconds: items.reduce(function (sum, e) { return sum + (Number((e.data || {}).durationSeconds) || 0); }, 0)
@@ -133,7 +136,10 @@
     });
     tree = t;
     groups = buildGroups(tree, lists);
-    Object.keys(choice).forEach(function (pid) { if (!taskIn(tree, choice[pid])) delete choice[pid]; });
+    Object.keys(choice).forEach(function (pid) {
+      var c = choice[pid];
+      if (c.indexOf(PFX) === 0 ? !((tree.projects || []).some(function (p) { return p.id === c.slice(2); })) : !taskIn(tree, c)) delete choice[pid];
+    });
   }
 
   function taskSelect(g) {
@@ -154,9 +160,11 @@
     if (wide[pid]) {
       option(sel, OWN, "← 只看本项目");
       ((tree && tree.projects) || []).forEach(function (p) {
-        if (!(p.tasks || []).length) return;
+        var own = p.id === pid; // 本项目的未分类就是这些段现在的位置：没有「未分类」可选
+        if (own && !(p.tasks || []).length) return;
         var og = document.createElement("optgroup");
         og.label = projectPath(tree, p);
+        if (!own) option(og, PFX + p.id, "未分类（只记到这个项目）"); // 没有任务的项目也在这里
         tasksOf(og, p);
         sel.appendChild(og);
       });
@@ -258,8 +266,10 @@
     undo = null;
     say("");
     render();
-    var label = pathOf(taskId);
-    var result = await sendAll(events.map(function (e) { return e.id; }), { taskId: taskId }, function (id) {
+    var toProject = taskId.indexOf(PFX) === 0 ? taskId.slice(2) : "";
+    var label = toProject ? projectPath(tree, (tree.projects || []).filter(function (p) { return p.id === toProject; })[0]) + " · 未分类"
+      : pathOf(taskId);
+    var result = await sendAll(events.map(function (e) { return e.id; }), toProject ? { projectId: toProject } : { taskId: taskId }, function (id) {
       g.items = g.items.filter(function (e) { return e.id !== id; });  // 成功的行立刻拿掉
       g.total = Math.max(g.total - 1, g.items.length);
       render();

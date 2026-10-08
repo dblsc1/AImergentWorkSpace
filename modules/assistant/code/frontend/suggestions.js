@@ -190,7 +190,14 @@
       if (new Date(it.endAt) > new Date(o.endAt)) o.endAt = it.endAt;
     });
     out.forEach(function (o) {
-      o.groups = groupItems(o.items);
+      o.groups = groupItems(o.items).map(function (g, i) {
+        g.seconds = g.items.reduce(function (n, it) { return n + (it.durationSeconds || 0); }, 0);
+        g.latest = Math.max.apply(null, g.items.map(function (it) { return new Date(it.startAt).getTime() || 0; }));
+        g.at = i;
+        return g;
+      }).sort(function (a, b) { // 无操作的排在后面；时间长的在前，一样长的新的在前，再一样按出现顺序（不跳）
+        return a.idle - b.idle || b.seconds - a.seconds || b.latest - a.latest || a.at - b.at;
+      });
       // 行的键带上集合：同一个窗口的几段被助理分进两个集合时，两行各记各的选择
       o.groups.forEach(function (g) { g.coll = o; g.key = JSON.stringify([o.key, g.key]); });
     });
@@ -239,6 +246,7 @@
   var opened = {}; // 集合键 → 人展开 / 收起过（重绘时保留）；集合没了就丢
   var other = {}; // 下拉选择键 → 这行改看全部项目的任务（true）/ 改回只看集合的项目（false）
   var OTHER = "__other", BACK = "__back"; // 下拉里两个不是任务的选项
+  var PFX = "p:"; // 下拉里「只记到这个项目」的值 = PFX + 项目 id（不是任务 id，绝不当 taskId 发）
   var total = 0; // 服务端的待确认总数；一次只拉 200 条，多出来的要让人知道还有
   var tree = null;
   var chosen = {}; // 组键 → 人在下拉里改过的 taskId（重绘时保留）
@@ -290,12 +298,15 @@
     var P = g.coll ? projectOf(g.coll) : "";
     var s = groupSuggestion(g), ai = aiMatch({ suggestion: s }, tree), nt = newTaskOf(s, tree);
     var ck = JSON.stringify([g.key, s.taskId, Boolean(s.mixed), ai, nt ? nt.proposalId : null, P]);
-    if (chosen[ck] && taskPath(tree, chosen[ck]) === null) delete chosen[ck]; // 选过的任务刷新后被删了
+    var gone = function (x) { return x.indexOf(PFX) === 0 ? projectPath(tree, x.slice(2)) === null : taskPath(tree, x) === null; };
+    if (chosen[ck] && gone(chosen[ck])) delete chosen[ck]; // 选过的任务（或项目）刷新后被删了
     var t = ai || chosen[ck] === undefined ? s.taskId : chosen[ck];
-    var taskId = t && taskPath(tree, t) !== null ? t : "";
-    var away = other[ck] !== undefined ? other[ck] : Boolean(taskId) && projectOfTask(tree, taskId) !== P;
+    var bucket = t && t.indexOf(PFX) === 0 ? t.slice(2) : ""; // 人挑了「只记到某个项目」
+    var taskId = !bucket && t && taskPath(tree, t) !== null ? t : "";
+    var away = other[ck] !== undefined ? other[ck] : Boolean(taskId || bucket) && (bucket || projectOfTask(tree, taskId)) !== P;
     var scoped = Boolean(P) && !ai && !nt && !away;
-    return { s: s, ai: ai, nt: nt, ck: ck, taskId: taskId, P: P, scoped: scoped, projectId: scoped && !taskId ? P : "" };
+    return { s: s, ai: ai, nt: nt, ck: ck, taskId: taskId, P: P, scoped: scoped, bucket: scoped ? "" : bucket,
+      projectId: scoped ? (taskId ? "" : P) : bucket };
   }
 
   function taskSelect(v, placeholder) {
@@ -307,15 +318,16 @@
     ((tree && tree.zones) || []).forEach(function (z) { zones[z.id] = z.name; });
     ((tree && tree.projects) || []).forEach(function (p) {
       var tasks = p.tasks || [];
-      if (!tasks.length || (v.scoped && p.id !== v.P)) return;
+      if (v.scoped && (!tasks.length || p.id !== v.P)) return;
       var group = document.createElement("optgroup");
       group.label = [zones[p.zoneId], p.name].filter(Boolean).join(" / ");
+      if (!v.scoped) group.appendChild(new Option("未分类（只记到这个项目）", PFX + p.id)); // 没有任务的项目也在这里
       tasks.forEach(function (t) { group.appendChild(new Option(t.name, t.id)); });
       sel.appendChild(group);
     });
     if (v.scoped) sel.appendChild(new Option("其他项目…", OTHER));
     else if (v.P && !v.nt) sel.appendChild(new Option("← 只看集合的项目", BACK));
-    var want = v.taskId || "";
+    var want = v.taskId || (v.bucket ? PFX + v.bucket : "");
     sel.value = want;
     if (sel.value !== want) sel.value = ""; // 建议的任务已不在树里：让人重挑
     sel.addEventListener("change", function () {
@@ -365,7 +377,10 @@
     if (n > 1) {
       var det = el("details", "suggest-segs");
       det.appendChild(el("summary", null, "看这 " + n + " 段"));
-      g.items.forEach(function (it) {
+      g.items.map(function (it, i) { return [it, i]; }).sort(function (a, b) { // 长的在前，一样长的新的在前
+        return (b[0].durationSeconds || 0) - (a[0].durationSeconds || 0) || new Date(b[0].startAt) - new Date(a[0].startAt) || a[1] - b[1];
+      }).forEach(function (pr) {
+        var it = pr[0];
         det.appendChild(el("p", "suggest-seg mono", formatRange(it.startAt, it.endAt) + " · " + formatMinutes(it.durationSeconds)));
       });
       li.appendChild(det);
@@ -428,9 +443,10 @@
       li.appendChild(lab);
     }
     ok.addEventListener("click", function () {
-      var pick = sel ? sel.value : s.taskId;
-      act([{ g: g, ck: v.ck, taskId: pick, projectId: v.scoped && !pick ? v.P : "", remember: Boolean(cb && cb.checked),
-        newName: nt && !pick ? nameEl.value.trim() : "", proposalId: nt && !pick ? nt.proposalId : "" }], "confirm");
+      var pick = sel ? sel.value : s.taskId, bkt = "";
+      if (pick && pick.indexOf(PFX) === 0) { bkt = pick.slice(2); pick = ""; }
+      act([{ g: g, ck: v.ck, taskId: pick, projectId: bkt || (v.scoped && !pick ? v.P : ""), remember: Boolean(cb && cb.checked),
+        newName: nt && !pick && !bkt ? nameEl.value.trim() : "", proposalId: nt && !pick && !bkt ? nt.proposalId : "" }], "confirm");
     });
     no.addEventListener("click", function () {
       act([{ g: g, ck: v.ck, taskId: s.taskId, proposalId: nt ? nt.proposalId : "" }], ai || nt ? "unmatch" : "dismiss");
@@ -508,15 +524,19 @@
       li.querySelector(".suggest-dismiss, .suggest-no").disabled = busy;
     });
     listEl.querySelectorAll(".suggest-coll").forEach(function (sec, i) {
-      var c = colls[i], nTask = 0, nProj = 0;
-      collJobs(c).forEach(function (j) { if (j.taskId) nTask += j.g.items.length; else nProj += j.g.items.length; });
+      var c = colls[i], nTask = 0, nProj = 0, pj = {};
+      collJobs(c).forEach(function (j) {
+        if (j.taskId) nTask += j.g.items.length;
+        else { nProj += j.g.items.length; pj[projectPath(tree, j.projectId)] = true; }
+      });
+      var projNames = Object.keys(pj).join("、");
       var rest = c.items.length - nTask - nProj, btn = sec.querySelector(".suggest-confirm-coll");
       btn.textContent = "确认整个集合" + (nTask + nProj ? " · " + (nTask + nProj) + " 段" : "");
       btn.disabled = busy || nTask + nProj === 0;
       sec.querySelector(".suggest-project").disabled = busy;
       sec.querySelector(".suggest-coll-plan").textContent = nTask + nProj === 0
         ? "先给集合选项目，或展开后逐个窗口定"
-        : [nTask ? nTask + " 段记到选好的任务" : "", nProj ? nProj + " 段记到「" + projectPath(tree, projectOf(c)) + "」的未分类" : "",
+        : [nTask ? nTask + " 段记到选好的任务" : "", nProj ? nProj + " 段记到「" + projNames + "」的未分类" : "",
           rest ? rest + " 段要展开后单独定" : ""].filter(Boolean).join("，");
     });
     if (aiBtnEl) {
