@@ -283,6 +283,9 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
              "auto": { "taskId": "t_a1", "projectId": "p_1", "taskName": "写提示词", "projectName": "garden",
                        "since": "…", "app": "code", "title": "…", "source": "rules" },     // rules | choice
              "needsChoice": { "key": "wk_…", "app": "kitty", "title": "…", "since": "…" } } }
+// GET /api/core/views/current —— 顶层追加同样的两个键（总在；running: true 时都是 null）
+{ "running": false, "zone": null, "project": null, "task": null, "sessionStartAt": null, "agents": [],
+  "auto": { /* 同上 */ }, "needsChoice": null }
 // POST /api/core/activity/choice
 { "key": "wk_…", "taskId": "t_a1", "remember": true }        // 或 "projectId": "p_1"；多余的键 422
 { "key": "wk_…", "taskId": "t_a1", "projectId": "p_1", "remembered": true, "pseudonymized": false }

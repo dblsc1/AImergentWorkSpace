@@ -467,8 +467,13 @@ def list_presence(user: str, now: datetime, start: datetime, end: datetime) -> l
     return presence.list_spans(user, now, start, end)
 
 
-def auto_state(user: str, now: datetime, timer_running: bool, manual_end: datetime | None) -> dict:
-    """v2.14 ``views/lanes`` 的 ``human.auto`` / ``human.needsChoice``，真身在 ``auto.py``。**不写**。"""
+def auto_state(user: str, timer_running: bool, now: datetime | None = None) -> dict:
+    """v2.14 ``{auto, needsChoice}``（``views/lanes`` 的 ``human``、``views/current`` 顶层），真身在 ``auto.py``。
+    ``since`` 已换算到 NEXUS_TZ 的偏移。**不写**。"""
     from . import auto  # noqa: PLC0415 —— auto 也 import 本文件（confirm），模块级会成环
 
-    return auto.state(user, now, timer_running, manual_end)
+    out = auto.state(user, now or auto._now(), timer_running)  # noqa: SLF001
+    for part in out.values():
+        if part:
+            part["since"] = part["since"].astimezone(config.settings.tz).isoformat()
+    return out

@@ -110,12 +110,8 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
             {**s, "from": _iso(s["from"]), "to": _iso(s["to"])}
             for s in activity_service.list_presence(user, now, start, end)
         ]
-        # v2.14：没有手动计时时，「我」当前窗口对上的项目 / 任务，与请人选的窗口。since 不早于最近一条手动计时段的结束
-        manual_end = max((r["endAt"] for r in rows if r.get("source") == timer_service.SOURCE), default=None)
-        auto = activity_service.auto_state(user, now, state is not None, manual_end)
-        for part in auto.values():
-            if part:
-                part["since"] = _iso(part["since"])
+        # v2.14：没有手动计时时，「我」当前窗口对上的项目 / 任务，与请人选的窗口
+        auto = activity_service.auto_state(user, state is not None, now)
     else:
         interactions = []
 

@@ -131,7 +131,7 @@
 > （见「自动跟踪进行中的任务」节），全部挂在 `detector.settings.v1` v1.3 的 `autoTrack`（按设备，缺省 `false`）下——
 > **关着时本版的一切行为与 v2.13 完全相同**：① 在场心跳可带 `guess`（检测程序用同一套规则对当前窗口的猜测）；
 > ② `views/lanes` 的 `human` 追加 `auto`（没有手动计时、人在电脑前、当前窗口规则认得出 → 「自动 · 项目 / 任务」）
-> 与 `needsChoice`（规则认不出的窗口停留够久 → 请人选）；③ 新端点 `POST /api/core/activity/choice`、
+> 与 `needsChoice`（规则认不出的窗口停留够久 → 请人选），`views/current` 顶层追加同样的两个键（给顶栏芯片）；③ 新端点 `POST /api/core/activity/choice`、
 > `POST /api/core/activity/choice/dismiss`（人答 / 这次不选）、`GET /api/core/activity/auto`（今天自动记下的段）；
 > ④ 上传的段规则把握够高时**直接记成事实**（`ai.auto: true`，建议 `auto: true`），与人的手动计时重叠 / 无操作 /
 > 把握不够 / 目标不存在的照旧待确认；⑤ 自动记下的段可经 v2.11 的改挂端点归到别处；⑥ 规则可以只到项目
@@ -338,7 +338,7 @@ provides:
   - id: nexus-core.activity.auto.v1
     summary: 自动跟踪进行中的任务（v2.14，全部挂在 detector.settings.v1 的 autoTrack 下，缺省关）——在场心跳可带
       guess {taskId | projectId, confidence, classifier}；views/lanes 的 human 追加 auto（当前窗口规则认得出、没有手动计时）
-      与 needsChoice（规则认不出的窗口请人选）；POST /api/core/activity/choice {key, taskId | projectId, remember}、
+      与 needsChoice（规则认不出的窗口请人选），views/current 顶层追加同样两个键；POST /api/core/activity/choice {key, taskId | projectId, remember}、
       POST /api/core/activity/choice/dismiss {key}（带 Bearer 403）；GET /api/core/activity/auto（今天自动记下的段）；
       上传的段规则把握 ≥ 0.9 时直接记成 session.completed（ai.auto=true），与手动计时重叠 / 无操作 / 目标不存在的仍待确认；
       sessions.reassign.v1 追加放行自动记下的段；上传的 suggestion 可带 projectId（规则只到项目）
@@ -399,7 +399,7 @@ consumes:
 | POST | `/api/core/activity/choice` | `{key, taskId \| projectId, remember?}` | `ChoiceOut`（见「自动跟踪进行中的任务」节）；带 Bearer 403、404、422 | ✅ 已实现（v2.14） |
 | POST | `/api/core/activity/choice/dismiss` | `{key}` | `{key, dismissedUntil}`；带 Bearer 403、404、422 | ✅ 已实现（v2.14） |
 | GET | `/api/core/activity/auto` | 无 | `{items[]}`（今天自动记下的段，新的在前，至多 200 条） | ✅ 已实现（v2.14） |
-| — | （v2.14 追加，无新端点）在场心跳可带 `guess`；`views/lanes` 的 `human` 追加 `auto`、`needsChoice`；上传的 `suggestion` 可带 `projectId`、列表每条追加 `auto`；改挂端点放行自动记下的段；`DetectorSettings` 追加 `autoTrack`、规则可用 `projectId` 代替 `taskId` | 见「自动跟踪进行中的任务」节 | | ✅ 已实现（v2.14） |
+| — | （v2.14 追加，无新端点）在场心跳可带 `guess`；`views/lanes` 的 `human` 与 `views/current` 顶层追加 `auto`、`needsChoice`；上传的 `suggestion` 可带 `projectId`、列表每条追加 `auto`；改挂端点放行自动记下的段；`DetectorSettings` 追加 `autoTrack`、规则可用 `projectId` 代替 `taskId` | 见「自动跟踪进行中的任务」节 | | ✅ 已实现（v2.14） |
 | ~~GET~~ | ~~`/api/core/zones`~~ | 无 | `[ZoneOut]` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
 | ~~POST~~ | ~~`/api/core/zones`~~ | `{name, color?, order?}` | `ZoneOut` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
 | ~~PATCH~~ | ~~`/api/core/zones/{id}`~~ | `{name?, color?, order?}` | `ZoneOut` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
@@ -2779,9 +2779,13 @@ DISPATCH 表：`session.completed` 与 `agent.run.completed` **各追加**路由
 4. 当前窗口 `next_step` 为 `"rules"`，且目标还在。
 
 `since`：从最新一段往回数，相邻两段间隔 ≤ 45 秒（心跳的合并间隔）、不是 `afk`、目标相同就继续，否则停；
-再与「窗口里最近一条手动计时段（`source: "timer-backend"`）的结束时刻」取较晚的——刚停表不会把表测过的那段算进来。
+再与「这段时间里最近一条手动计时段（`source: "timer-backend"`）的结束时刻」取较晚的——刚停表不会把表测过的那段算进来。
 切到别的窗口再切回来会重新起算（那一小会儿不是这个目标）；在场只留 2 小时，`since` 最早也就是 2 小时前。
 `auto` **只是显示**：它不是事实、不写任何东西、不占 `timer_state`；事实仍然只从「自动记录」（下）或人的确认来。
+
+**`views/current` 也带**：`GET /api/core/views/current` 顶层追加 `auto` 与 `needsChoice`，与 `views/lanes` 的 `human`
+里那两个是**同一份**（同一个函数算的，形状、判据、`since` 都相同）；`running: true` 时两者恒为 `null`，键总在。
+顶栏芯片每 10 秒已经在读 `views/current`，不必为了这两样再多读一个端点。时刻换算到 `NEXUS_TZ` 的偏移。
 
 ### `human.needsChoice`：规则认不出，请人选
 

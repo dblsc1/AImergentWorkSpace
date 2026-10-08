@@ -3,11 +3,10 @@
 仓主 2026-10-08：「'我'的操作自动替代进行中计时」「保留开关：允许 / 不允许 AI 管理进行中的任务。人手动开始计时时，
 不要 AI 计时。人在操作但没有计时：先试死规则；认不出，让 AI 写规则；写不出、也没有现成任务对得上，提醒人选项目和任务；
 到这段活动结束人还没选，走碎片流程一起归类。」
-
 本文件是**第一步**：除了「让 AI 写规则」之外的全部。下一步由 ``next_step`` 一个函数定——第二步把 ``"ask_ai"``
 插在「规则没认出」与「请人选」之间，别处不用动。全部挂在设备的 ``autoTrack`` 开关下（detector.settings.v1 v1.3，缺省关）。
 
-- ``state``：``views/lanes`` 的 ``human.auto`` / ``human.needsChoice``。**不写**。
+- ``state``：``views/lanes`` 的 ``human.auto`` / ``human.needsChoice``（``views/current`` 顶层同一份）。**不写**。
 - ``heartbeat`` / ``upload``：心跳、上传的入口（路由调这里）——先走原来的路径，再做本版追加的那一步。
 - ``choose`` / ``dismiss``：人答「记到哪」/「这次不选」。``recorded_today``：今天自动记下的段。
 规则只在检测程序里匹配（服务端没有原始标题）：这里看到的「规则认得出」就是心跳带来的 ``guess``。
@@ -119,8 +118,8 @@ def _same(a: dict | None, b: dict) -> bool:
     return a is not None and (a["taskId"], a["projectId"]) == (b["taskId"], b["projectId"])
 
 
-def state(user: str, now: datetime, timer_running: bool, manual_end: datetime | None) -> dict:
-    """``{auto, needsChoice}``（契约同名两小节）。``manual_end`` = 最近一条手动计时段的结束：``since`` 不早于它。"""
+def state(user: str, now: datetime, timer_running: bool) -> dict:
+    """``{auto, needsChoice}``（契约同名两小节；``views/lanes`` 与 ``views/current`` 同一份）。"""
     out: dict = {"auto": None, "needsChoice": None}
     docs = [] if timer_running else [d for d in repo.presence_list(user) if now - d["lastAt"] <= FRESH]
     if not docs:
@@ -138,8 +137,10 @@ def state(user: str, now: datetime, timer_running: bool, manual_end: datetime | 
         while (i > 0 and not spans[i - 1]["afk"] and spans[i]["from"] - spans[i - 1]["to"] <= presence.MERGE_GAP
                and _same(window(spans[i - 1])["target"], target)):
             i -= 1
-        out["auto"] = {**target, "since": max(spans[i]["from"], manual_end or spans[i]["from"]),
-                       "app": current["app"], "title": current["title"]}
+        # since 不早于这段时间里最近一条手动计时段的结束（刚停表：不把表测过的那段算进来）
+        ends = [stop for _start, stop in _manual_spans(user, spans[i]["from"], now) if stop <= now]
+        out["auto"] = {**target, "since": max([spans[i]["from"], *ends]), "app": current["app"],
+                       "title": current["title"]}
 
     horizon = now - LOOKBACK
     asked: dict[str, dict] = {}  # 从新往旧走：先碰到的是这个窗口最近的一段

@@ -193,6 +193,21 @@ def test_auto_shows_the_rule_target_with_names(client, world, clock):
     assert human["needsChoice"] is None and human["running"] is None
 
 
+def test_views_current_carries_the_same_auto_and_needs_choice(client, world, clock):
+    """顶栏芯片读 views/current：与 views/lanes 的 human 同一份；在计时的时候两个都是 null。"""
+    current = lambda: client.get(f"{API}/views/current").json()  # noqa: E731
+    assert (current()["auto"], current()["needsChoice"]) == (None, None)   # 开关没开：键在，值 null
+    _track(client)
+    _run(client, clock, [(0, "notes", None), (30, "notes", None), (60, "notes", None),
+                         (75, "plot.gd", _guess(taskId=world["a"]))])
+    human, cur = _human(client), current()
+    assert cur["running"] is False and cur["auto"]["taskId"] == world["a"] and cur["needsChoice"]["title"] == "notes"
+    assert (cur["auto"], cur["needsChoice"]) == (human["auto"], human["needsChoice"])
+    _post(client, f"{API}/timer/start", {"taskId": world["a"]})
+    cur = current()
+    assert cur["running"] is True and (cur["auto"], cur["needsChoice"]) == (None, None)
+
+
 def test_auto_project_only_and_bucket_have_no_task(client, world, clock):
     _track(client)
     bucket = _post(client, f"{PLANNER}/projects/{world['p']}/unclassified")["taskId"]
@@ -252,9 +267,7 @@ def test_since_never_predates_the_last_manual_session(client, world, clock):
     stopped = clock(S + 40)
     _post(client, f"{API}/timer/stop")
     _run(client, clock, [(45, "a.py", t)])
-    day = lambda d: (datetime.now(timezone.utc) + timedelta(days=d)).date().isoformat()  # noqa: E731
-    auto = _human(client, **{"from": day(-2), "to": day(1)})["auto"]  # 宽窗口：不管此刻离零点多近都看得到那段
-    assert datetime.fromisoformat(auto["since"]) == stopped
+    assert datetime.fromisoformat(_human(client)["auto"]["since"]) == stopped
 
 
 # ─────────────────────────────────────────── needsChoice：停留、抖动、不要求在前台
