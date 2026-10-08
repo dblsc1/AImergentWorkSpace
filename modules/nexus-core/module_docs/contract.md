@@ -112,6 +112,17 @@
 > 把已确认的建议按（程序, 归一化标题）去重成「这个窗口 → 这个项目 / 任务」，最近定的在前；确认到项目「未分类」的只给项目，
 > 那一段后来被改挂过（v2.11）的给**当前**归属，任务 / 项目已删的不出。另带以前用过的集合名最近落在哪个项目、
 > 人否掉过的（窗口, 任务）。只读，不写任何东西、不自动确认任何东西；既有字段、端点行为一个不改。
+> **v2.13（追加式；v2.12 由并行的「建议历史读端」占用）**：**代理会话在源头就说出自己属于哪个项目，人的窗口跟着它走。**
+> 仓主 2026-10-08：「Claude 钩子可以做了」——不再让 AI 从窗口标题猜项目。两处追加：
+> ① `POST /api/core/agents/start` 增可选 `projectId`（不带 `taskId` 时用）：运行**只挂项目、不挂任务**，
+> 信封 `subject` 为 `{zone, project}`、无 `task`（与收件箱运行同形，只是项目是真的），代理时长照常按项目记进
+> `proj_agent_daily_stats`（`taskId: null` 那一行），`views/lanes`、`views/agent-time` 既有的 `projectId` 键回出它。
+> ② 活动建议**上传时**：一段没有任务猜测的活动，窗口标题（归一化后）与同租户、时间上有重叠的代理运行的
+> `label` / `match` **完全相等**时，服务端给它写上 `suggestion.projectId`（= 那次运行的项目）、
+> `suggestion.projectSource: "agent-session"` 与 `suggestion.collection`（以会话 `label` 命名）。
+> **只是提示**：不确认任何东西，不动任务、把握、`classifier`，不覆盖规则 / 助理 / 人的选择。
+> ③ 带同一 `clientKey` 再 start（原运行还在跑）时，这次给的 `label` / `match` 换掉存着的——会话中途改名，泳道的名字跟上。
+> 既有字段、端点行为一个不改。见「AI 代理运行」节「只挂项目的运行」「会话改名」与「活动建议」节「窗口 ↔ 代理会话」。
 >
 > v1.9：`GET /api/core/export` 产出的快照此前没有任何端点能吃
 > 回去（喂给 import 会被三层拒绝，而那三条拒绝各守一件实事，一条都不该放宽）。
@@ -1909,6 +1920,45 @@ planner 是**计划状态**，走普通 CRUD，**不进开放事件标准**（�
 | `data` | `{agent, tool, model?, startAt, durationSeconds, outcome, output?}`——`model`/`output` 没给就不出现；`durationSeconds` 秒级下限 1（同 timer）；超时关闭时封顶为超时上限 |
 | `flags` | `[]` |
 
+### 只挂项目的运行（规范性 · v2.13）
+
+仓主 2026-10-08：代理会话在某个目录里开起来，就属于那个目录对应的**项目**，不必先指定任务
+（`tools/agent-hooks` 的 `projects` 目录映射）。
+
+```jsonc
+// POST /api/core/agents/start   AgentStartIn 追加一个选填字段（其余字段、响应一个不改）
+{ "agent": "CFO_agent", "tool": "claude-code",
+  "projectId": "p_3c" }          // 选填，1–128 字符：不带 taskId 时，运行挂在这个项目上
+```
+
+| 情形 | 结果 |
+|---|---|
+| 只给 `projectId` | 运行挂该项目：`agent_runs` 存 `projectId` / `zoneId`（开跑时从 planner 取的快照，同带任务的运行）、`taskId: null` |
+| `projectId` 不存在 / 项目没有归属分区 | 404（同 `taskId` 不存在） |
+| `taskId` 与 `projectId` 同给，且项目就是任务所在的项目 | 照带任务的运行处理（`projectId` 多余但不矛盾） |
+| `taskId` 与 `projectId` 同给，项目不是任务所在的项目 | 400——自相矛盾的不收，不替它挑一个（同 v2.10 matches） |
+| 都不给 | 收件箱（v2.1 不变） |
+| 带 `clientKey` 且原运行还在跑 | 回原运行（v2.4 不变；这时不校验 `projectId`，同 `taskId`）；`label` / `match` 见下「会话改名」 |
+
+- **信封**：`subject` = `{zone, project}`、**无 `task`**——与收件箱运行同形，`data` 一个键不加。
+  所以投影零改动：`proj_agent_daily_stats` 本来就按 `(date, projectId, taskId, agent)` 记，这类运行落在
+  `taskId: null` 那一行；`views/agent-time` 的 `tasks[]` 里是 `{projectId, taskId: null}`，`views/lanes` 的
+  `agents[].projectId` 是这个项目（带任务的运行一直回任务所在的项目，不变）。
+- **不碰人的时间**：没有「不挂任务的人的时间」（v2.9）。只挂项目的是**代理**运行，它本来就不进人的任何投影；
+  本版不为它建「未分类」时间桶，也不写任何 `session.completed`。
+- 老客户端不发这个键 = 行为与 v2.12 完全一样；新客户端打到老服务端，多出的键被忽略（落收件箱）。
+
+### 会话改名：同 `clientKey` 再 start 更新 `label` / `match`（规范性 · v2.13）
+
+代理会话的名字会在中途变（Claude Code 里 `/rename`），而终端标签页显示的是新名字——泳道的 `label` 得跟上，
+否则「窗口 ↔ 代理会话」对不上。不为它加端点：**带同一 `clientKey` 再 `POST /api/core/agents/start`**，原运行还在跑时
+照旧回原运行（200，不开新的），并且这次请求里**给了**的 `label` / `match` 若与存着的不同，就换成这次的。
+
+- 只动 `label` / `match`：`agent`、`tool`、`model`、任务 / 项目、`startedAt`、相位、连线一个不动；没给的那个键不动。
+- 条件更新（运行未关闭）；与关闭赛跑输了就不改——那条 `agent.run.completed` 里是关闭那一刻的 `label`。
+- 结束时落账的 `data.label` 是**最后**的名字（一条运行一个名字，不记改名史）。
+- 老服务端（v2.4–v2.12）对同样的请求只回原运行、不改名——客户端不必分辨版本。原运行已结束时，同 key 的 start 开一条新运行（v2.4 不变）。
+
 ### 在跑的运行：独立集合 `agent_runs`，不是事实
 
 - 在跑的运行只是**活状态**（同 `timer_state`），不进台账、**不进导出**（导出的是事实与投影；
@@ -2348,6 +2398,49 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
   本端点只是把它们与人自己选的任务 / 项目并排列出来，不出 `deviceId`、不出时刻段。它们仍是**别的机器上来的文本**，
   交给模型时照旧当数据、不当指令（`mcp.tools.v1` 第四节）。
 
+### 窗口 ↔ 代理会话：标题对上了，项目跟着会话走（规范性 · v2.13）
+
+仓主 2026-10-08：终端标签页的标题就是代理会话的名字（标签页「✳ CFO_agent - Ptyxis」↔ 钩子报的泳道 `label`
+「CFO_agent」）。钩子已经在源头说了这个会话属于哪个项目（见「只挂项目的运行」与任务映射），人看着这个窗口的那段时间
+就不用再让 AI 从标题猜项目。
+
+**做在上传那一刻**（`POST /api/core/activity/suggestions`，逐段，写入前）。一段满足下面全部条件时，服务端在它的
+`suggestion` 里追加三个键：
+
+```jsonc
+// GET 列表里的样子（上传时 suggestion.taskId 为 null 的那些段才可能有）
+{ "suggestion": { "taskId": null, "confidence": 0, "reason": "", "classifier": "rules",
+                  "projectId": "p_3c",                    // 那次代理运行的项目
+                  "projectSource": "agent-session",       // 来历标记：这个 projectId 是按会话对上的，不是助理 / 人给的
+                  "collection": { "key": "cfo_agent", "name": "CFO_agent" } } }   // 以会话 label 命名（归一同 v2.10）
+```
+
+1. 这段**没有任务猜测**：`suggestion.taskId` 为 `null`（规则没给，或给的任务不存在被清掉了）。规则给了任务的段不碰。
+2. 标题归一化后**至少 3 个码点**，且与某次代理运行的 `label` 或 `match`（同样归一化）**完全相等**——不做子串、不做模糊。
+3. 那次运行与这段**时间上有重叠**（运行开始 < 段的 `endAt`，且运行结束（在跑的取「现在」）> 段的 `startAt`），同一租户。
+4. 那次运行挂在一个**真项目**上（带任务的运行取任务所在的项目；收件箱运行不算），且该项目此刻还在。
+5. 满足 2–4 的运行指向的项目**只有一个**。指向两个不同的项目 → 不写（不替人挑）。
+
+**归一化**（与 `modules/ai-detector` 的标签页合并键 `tabKey` 同一个思路，标题与 `label` / `match` 用同一个函数）：
+连续空白并成一个 → 若最后一个「空白 + `-`/`—`/`–`/`|` + 空白」后面那截（不分大小写、≥3 个码点）出现在这段的 `app` 里，
+去掉它（终端加的「 - Ptyxis」后缀；`label` / `match` 不做这一步）→ 去掉开头的状态符号 / 转圈符号 / `(N)` 计数
+（开头所有非字母数字的字符）→ 去首尾空白 → 不分大小写。
+
+- **只是提示，不是事实**：状态仍是 `pending`，`taskId` / `confidence` / `reason` / `classifier` 一个不动；
+  确认要记到哪里仍由 confirm 的请求体决定（页面拿 `suggestion.projectId` 预选集合的项目，v2.10 不变）。
+  **不自动确认任何东西**，不进台账 / 投影 / 导出。
+- **不覆盖任何人的选择**：只在新写入一段时做；重传（防重命中）什么都不改。之后助理经 matches 给了 `projectId`
+  → 换成助理的并去掉 `projectSource`；助理配了任务 / 提议了新任务 → `suggestion` 照 v2.7 / v2.8 换掉
+  （集合保留，`projectId` / `projectSource` 不保留——项目由任务定）。
+- **数据从哪来**：在跑的运行读 `agent_runs`（`label` 与 `match` 都认）；已结束的读 `proj_lanes`（只有 `label`——
+  `match` 是活状态，不进事实）。`tools/agent-hooks` 的钩子两者报的是同一个名字（会话标题，没起名时是目录名；改名后经「会话改名」跟上），所以没有差别。
+  一批上传只查一次（这批段的总时间窗），已结束的最多看最近 500 次运行。
+- **隐私**：标题在检测程序那边已按用户的隐私设置处理过。标题被去掉（`""`）或换成代号（「窗口名3」）时什么都对不上
+  ——这是对的：服务端不拿、也不该拿原始标题。想用这条连线，就得让终端的标题原样上传。
+- 上传带设备令牌（Bearer）照常工作：这是服务端自己写的提示，不是「设备给建议配项目」——上传的 `suggestion`
+  里自带 `projectId` / `projectSource` / `collection` 仍然不存。
+- 老读方忽略 `projectSource` 即可（`suggestion` 自 v2.8 起是开放对象）。
+
 ### 过期（惰性，无调度器）
 
 `NEXUS_SUGGESTION_TTL_DAYS`（默认 14）：待确认的按**收到时刻**、已确认/已忽略的按**处理时刻**，
@@ -2609,6 +2702,8 @@ app/modules/
   activity/   router service repo     活动建议（v2.2）：不是事实；确认时调 timer 的 record_session
                                       在场心跳（v2.4，presence.py）：活状态；attend 经 timer service 的 record_attend 写
                                       匹配历史（v2.12，history.py）：只读；去向经 events / planner 的 service 读
+                                      窗口 ↔ 代理会话（v2.13，session_link.py）：在跑的运行经 timer service 的 list_lane_runs 读，
+                                      已结束的经 proj_lanes 的指定读路径 read_lanes 读（同 views/lanes）；只读
   detector/   router service repo     检测程序设置（v2.5）：不是事实；设备列表经 activity 的 service 读上传时刻
   projector/  registry handlers/      DISPATCH 显式表 + 各投影 handler
 ```

@@ -227,7 +227,7 @@ def record_session(
 
 
 def agent_start(task_id: str | None, agent: str, tool: str, model: str | None, user: str | None = None, **v24):
-    """返回 ``(AgentStartOut, 是否新开)``；``v24`` = phase/label/match/client_key（v2.4 选填）。"""
+    """返回 ``(AgentStartOut, 是否新开)``；``v24`` = phase/label/match/client_key（v2.4 选填）、project_id（v2.13）。"""
     return agents_impl.start(task_id, agent, tool, model, user or current_tenant(),
                              resolve_chain=_resolve_task_chain, now=_now, **v24)
 

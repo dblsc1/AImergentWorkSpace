@@ -75,6 +75,11 @@ def find_agent_run_by_client_key(user: str, client_key: str) -> dict | None:
     return _agent_col().find_one({"user": user, "clientKey": client_key}, {"_id": 0})
 
 
+def relabel_agent_run(user: str, run_id: str, fields: dict) -> None:
+    """v2.13 会话改名：未关闭才改 ``label`` / ``match``。不碰 ``v``——相位 / 连线的乐观锁管的是那两个数组。"""
+    _agent_col().update_one({"user": user, "runId": run_id, "closing": {"$exists": False}}, {"$set": fields})
+
+
 def mark_agent_run_closing(user: str, run_id: str, marker: dict) -> dict | None:
     """关闭边界（v2.4）：一次条件更新打上关闭标记，取回**那一刻的整份文档**作快照。
     None = 不存在或已被别人标记。标记后相位 / attend 的条件更新一律落空。"""

@@ -48,7 +48,7 @@ from ..planner import service as planner_service
 from ..planner import unclassified
 from ..planner.errors import ForbiddenError, InvalidInputError, NotFoundError
 from ..timer import service as timer_service
-from . import presence, proposals, repo
+from . import presence, proposals, repo, session_link
 from .proposals import ConflictError  # noqa: F401 —— 真身在 proposals.py（v2.8 也要抛它），main.py 照旧从这里取
 
 SOURCE = "activity-confirmed"
@@ -174,20 +174,24 @@ def upload(device_id: str, segments: list[Any]) -> dict:
     _purge(user, now)
     accepted = duplicates = 0
     rejected: list[dict] = []
+    valid: list[tuple[_Segment, datetime, datetime]] = []
     for index, raw in enumerate(segments):
         try:
             seg = _Segment.model_validate(raw)
-            start = _check_times(seg, now)
+            valid.append((seg, _check_times(seg, now), _parse(seg.endAt, "endAt")))
         except ValidationError as exc:
             rejected.append({"index": index, "reason": _reason(exc)})
-            continue
         except ValueError as exc:
             rejected.append({"index": index, "reason": str(exc)})
-            continue
+    # v2.13 窗口 ↔ 代理会话：这批段的总时间窗里的代理运行，只查一次
+    runs = session_link.runs(user, min(s for _, s, _ in valid), max(e for _, _, e in valid)) if valid else []
+    for seg, start, end in valid:
         suggestion = seg.suggestion.model_dump()
         if suggestion["taskId"] is not None and planner_service.get_task(suggestion["taskId"]) is None:
             # 建议错了不等于活动没发生：照收，任务留给人挑
             suggestion.update(taskId=None, confidence=0.0)
+        if suggestion["taskId"] is None:
+            suggestion.update(session_link.link(runs, seg.app, seg.title, start, end))
         dedupe_key = f"aw:{device_id}:{start.astimezone(timezone.utc).isoformat()}"
         doc = {
             "user": user, "id": _sug_id(dedupe_key), "dedupeKey": dedupe_key, "deviceId": device_id,

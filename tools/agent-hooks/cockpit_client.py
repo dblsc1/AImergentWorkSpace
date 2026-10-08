@@ -79,13 +79,13 @@ def user_dir(purpose: str = "config") -> Path:
 
 # ── 配置：环境变量优先，其次配置文件 ──────────────────────────────
 def load_config() -> dict[str, Any]:
-    """合并出 `{"url", "token", "tasks"}`。
+    """合并出 `{"url", "token", "tasks", "projects"}`。
 
     `COCKPIT_URL` / `COCKPIT_TOKEN` 环境变量优先于配置文件里的同名字段，
-    方便 CI / 容器场景不落文件也能用。`tasks` 只能来自配置文件
-    （目录 → taskId 的映射，环境变量不适合表达一份映射表）。
+    方便 CI / 容器场景不落文件也能用。`tasks` / `projects` 只能来自配置文件
+    （目录 → taskId / projectId 的映射，环境变量不适合表达一份映射表）。
 
-    配置文件形状不对（顶层不是对象、`tasks` 不是对象）一律当没配，不崩——
+    配置文件形状不对（顶层不是对象、`tasks` / `projects` 不是对象）一律当没配，不崩——
     读一份手改坏了的配置文件不该让所有调用方跟着炸。
     """
     file_cfg: dict[str, Any] = {}
@@ -98,10 +98,8 @@ def load_config() -> dict[str, Any]:
         file_cfg = {}
     url = os.environ.get("COCKPIT_URL") or file_cfg.get("url") or ""
     token = os.environ.get("COCKPIT_TOKEN") or file_cfg.get("token") or ""
-    tasks = file_cfg.get("tasks")
-    if not isinstance(tasks, dict):
-        tasks = {}
-    return {"url": str(url).rstrip("/"), "token": str(token), "tasks": tasks}
+    maps = {key: file_cfg[key] if isinstance(file_cfg.get(key), dict) else {} for key in ("tasks", "projects")}
+    return {"url": str(url).rstrip("/"), "token": str(token), **maps}
 
 
 def _is_under(path: str, base: str) -> bool:
@@ -124,17 +122,38 @@ def resolve_task(explicit: str | None = None, cwd: str | None = None, config: di
     if env_task:
         return env_task
     cfg = config if config is not None else load_config()
-    cwd = cwd or os.getcwd()
-    tasks = cfg.get("tasks")
-    if not isinstance(tasks, dict):
-        tasks = {}
-    best_task: str | None = None
+    return _longest_prefix(cfg.get("tasks"), cwd or os.getcwd())
+
+
+def _longest_prefix(mapping: Any, cwd: str) -> str | None:
+    """`{目录: id}` 里包含 `cwd` 的那些目录中最长的一条；值不是非空字符串的条目不算。"""
+    best: str | None = None
     best_len = -1
-    for dir_path, task_id in tasks.items():
-        if _is_under(cwd, dir_path) and len(os.path.normpath(dir_path)) > best_len:
-            best_task = task_id
-            best_len = len(os.path.normpath(dir_path))
-    return best_task
+    for dir_path, target in (mapping if isinstance(mapping, dict) else {}).items():
+        if isinstance(target, str) and target and _is_under(cwd, dir_path) and len(os.path.normpath(dir_path)) > best_len:
+            best, best_len = target, len(os.path.normpath(dir_path))
+    return best
+
+
+def resolve_target(
+    task: str | None = None, project: str | None = None, cwd: str | None = None, config: dict[str, Any] | None = None,
+) -> tuple[str | None, str | None]:
+    """`(taskId, projectId)`，至多一个非空（先到先得）：
+
+    1–3. 任务：显式 `task` > `COCKPIT_TASK` > 配置文件 `tasks` 映射（同 `resolve_task`）
+    4. 显式 `project`（`cockpit-run --project`）
+    5. `COCKPIT_PROJECT` 环境变量
+    6. 配置文件 `projects` 映射里，当前目录最长匹配的那条目录前缀
+    7. 都没有 → `(None, None)`（收件箱）
+
+    定得出任务就不带项目：任务本身就在某个项目里，服务端自己取。
+    """
+    cfg = config if config is not None else load_config()
+    cwd = cwd or os.getcwd()
+    task_id = resolve_task(task, cwd, cfg)
+    if task_id:
+        return task_id, None
+    return None, project or os.environ.get("COCKPIT_PROJECT") or _longest_prefix(cfg.get("projects"), cwd)
 
 
 def default_agent_name(cwd: str | None = None) -> str:
@@ -277,14 +296,19 @@ def start_run(
     label: str | None = None,
     match: str | None = None,
     client_key: str | None = None,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     """`POST /api/core/agents/start` → `{runId, startedAt}`。taskId 缺省 = 收件箱。
+
+    `project_id`（nexus-core v2.13）：没有任务时只挂项目；有任务就不发（任务定项目）。
 
     v2.4 选填：`phase`（开跑时的相位）、`label`/`match`（目录名这一级，见 `lane_names`）、
     `client_key`（不透明哈希：同 key 的运行还在跑时服务端回原运行，重试不多开一条泳道）。没给的键不发。"""
     payload: dict[str, Any] = {"agent": agent, "tool": tool}
     if task_id:
         payload["taskId"] = task_id
+    elif project_id:
+        payload["projectId"] = project_id
     if model:
         payload["model"] = model
     for key, value in (("phase", phase), ("label", label), ("match", match), ("clientKey", client_key)):
@@ -301,11 +325,48 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat()
 
 
-def lane_names(cwd: str | None = None) -> tuple[str, str | None]:
-    """`(label, match)`：都是工作目录名（不是完整路径）；label 截到 64 码点，
-    match 截到 128、不足 3 个字符不带（契约：match 3–128 码点）。"""
-    name = default_agent_name(cwd)
+def lane_names(cwd: str | None = None, title: str | None = None) -> tuple[str, str | None]:
+    """`(label, match)`：缺省都是工作目录名（不是完整路径）；`title`（会话的名字，见 `session_title`）
+    给了就用它。label 截到 64 码点，match 截到 128、不足 3 个字符不带（契约：match 3–128 码点）。"""
+    name = title or default_agent_name(cwd)
     return name[:64], (name[:128] if len(name) >= 3 else None)
+
+
+TITLE_TAIL_BYTES = 256 * 1024
+
+
+def session_title(transcript_path: Any) -> str | None:
+    """Claude Code 会话的名字：transcript（JSONL）里**最后一条** `{"type":"custom-title","customTitle":…}`
+    （用户 `/rename` 起的，终端标签页显示的就是它）。没有 / 读不了 → None，调用方退回目录名。
+
+    只读文件末尾 `TITLE_TAIL_BYTES`、从后往前找：transcript 动辄几十 MB，钩子每个事件都跑；Claude Code 会把
+    标题记录在文件里反复重写，末尾找得到。截断的第一行、坏 JSON、别的记录一律跳过。不读 `ai-title`
+    （自动标题：改过名的标签页不显示它）。**只取这一个字段**，对话内容不读、不上报。
+    """
+    if not isinstance(transcript_path, str) or not transcript_path:
+        return None
+    try:
+        with open(transcript_path, "rb") as f:
+            size = f.seek(0, os.SEEK_END)
+            start = max(size - TITLE_TAIL_BYTES, 0)
+            f.seek(start)
+            lines = f.read(TITLE_TAIL_BYTES).split(b"\n")
+    except OSError:
+        return None
+    if start:
+        lines = lines[1:]  # 从行中间切进来的那半行
+    for line in reversed(lines):
+        if b"custom-title" not in line:
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError:  # 含坏编码的 UnicodeDecodeError
+            continue
+        if isinstance(record, dict) and record.get("type") == "custom-title":
+            title = record.get("customTitle")
+            title = " ".join(title.split()) if isinstance(title, str) else ""
+            return title or None  # 最后一条为准：清空了名字 = 没有名字
+    return None
 
 
 def phase_run(

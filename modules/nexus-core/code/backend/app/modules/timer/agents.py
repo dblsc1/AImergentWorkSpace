@@ -34,7 +34,7 @@ from ... import config
 from ..events import service as events_service
 from ..events.schemas import SPEC
 from ..planner import service as planner_service
-from ..planner.errors import NotFoundError
+from ..planner.errors import InvalidInputError, NotFoundError
 from . import repo
 
 SOURCE = "agent-hook"
@@ -181,6 +181,7 @@ def start(
     label: str | None = None,
     match: str | None = None,
     client_key: str | None = None,
+    project_id: str | None = None,
 ) -> tuple[dict, bool]:
     """开一个代理运行。**不碰 timer_state，不关任何在跑的运行。**
 
@@ -191,13 +192,26 @@ def start(
         # 先认原运行，再校验只对新建有意义的字段：原任务后来被删了，重试照样回原运行
         existing = repo.find_agent_run_by_client_key(user, client_key)
         if existing is not None:
+            # v2.13 会话改名：这次给了且不同的 label / match 换掉存着的，其余不动
+            names = {k: v for k, v in (("label", clean(label)), ("match", clean(match))) if v and v != existing.get(k)}
+            if names:
+                repo.relabel_agent_run(user, existing["runId"], names)
             return {"runId": existing["runId"], "startedAt": existing["startedAt"]}, False
-    if task_id is None:
-        # 不挂任务 → 收件箱（同人的「先记下来再理清」）。只用 well-known id，不代建收件箱：
+    if task_id is not None:
+        _task, chain_project, zone_id = resolve_chain(task_id, action="拒绝开始代理运行")
+        if project_id not in (None, chain_project):  # v2.13：自相矛盾的不收，不替它挑一个
+            raise InvalidInputError(f"projectId {project_id!r} 不是任务 {task_id!r} 所在的项目")
+        project_id = chain_project
+    elif project_id is not None:
+        # v2.13 只挂项目：subject 与收件箱运行同形（无 task），项目是真的
+        project = planner_service.get_project(project_id)
+        if project is None or not project.get("zoneId"):
+            raise NotFoundError(f"项目不存在：{project_id!r}")
+        zone_id = project["zoneId"]
+    else:
+        # 都不挂 → 收件箱（同人的「先记下来再理清」）。只用 well-known id，不代建收件箱：
         # 事件 subject 只存 opaque id，收件箱哪天被种子建出来，名字自然 join 得上。
         zone_id, project_id = planner_service.INBOX_ZONE_ID, planner_service.INBOX_PROJECT_ID
-    else:
-        _task, project_id, zone_id = resolve_chain(task_id, action="拒绝开始代理运行")
 
     run = {
         "user": user,

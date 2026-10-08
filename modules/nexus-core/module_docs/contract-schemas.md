@@ -256,6 +256,20 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
 - 三个数组总在（没有就是 `[]`）。`title` 是归一化之后的标题，不是某一段的原样标题。
 - 读方判「只定到项目」看有没有 `taskId`，不要看 `via`（`reassign` 两种都可能）。
 
+### `AgentStartIn.projectId` 与 `suggestion.projectSource`（v2.13）
+
+规范性条款只住 `contract.md`「只挂项目的运行」「窗口 ↔ 代理会话」两节。形状：
+
+```jsonc
+// POST /api/core/agents/start —— 追加选填 projectId（1–128 字符；不带 taskId 时用）
+{ "agent": "CFO_agent", "tool": "claude-code", "projectId": "p_3c" }
+// GET /api/core/activity/suggestions —— suggestion 可能多出（服务端按代理会话对上的）
+{ "projectId": "p_3c", "projectSource": "agent-session", "collection": { "key": "cfo_agent", "name": "CFO_agent" } }
+```
+
+- `LaneAgent.projectId` / `AgentTimeTask.projectId` 形状不变：只挂项目的运行在这里是那个项目、`taskId` 为 `null`。
+- `projectSource` 只有一个取值 `"agent-session"`；没有这个键 = `projectId`（若有）是助理给的。
+
 ### `AuditOut` — `GET /api/core/planner/audit`（v1.6，F-ACTOR-2）
 
 记录形状、三种 `outcome` 的语义、append-only 的保证方式见 `contract.md`
