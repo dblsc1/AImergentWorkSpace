@@ -31,11 +31,13 @@ from .modules.planner.unified_router import router as planner_unified_router
 from .modules.projector.rebuild import backfill_lanes_if_empty
 from .modules.restore.router import router as restore_router
 from .modules.restore.service import NotEmptyError
+from .modules.timer.agents import TooManyAnonymousRunsError
 from .modules.timer.router import agents_router
 from .modules.timer.router import router as timer_router
 from .modules.timer.router import sessions_router
 from .modules.timer.service import NoRunningTimerError, UnknownTaskError
 from .modules.views.router import router as views_router
+from .scope import ScopeMiddleware
 from .tenant import TenantMiddleware
 
 API_PREFIX = "/api/core"
@@ -64,6 +66,8 @@ app = FastAPI(
 )
 # 租户在任何路由之前定下（契约 v2.0「按租户分数据」，app/tenant.py）。
 app.add_middleware(TenantMiddleware)
+# v2.19：调用方范围（report / read / write、匿名）同样在任何路由之前拦（app/scope.py）。
+app.add_middleware(ScopeMiddleware)
 
 
 @app.get(f"{API_PREFIX}/health")
@@ -201,6 +205,12 @@ def restore_not_empty(_request: Request, exc: NotEmptyError) -> JSONResponse:
 def suggestion_conflict(_request: Request, exc: SuggestionConflictError) -> JSONResponse:
     """契约 v2.2：请求合法，冲突的是建议的**当前状态**（同 `NoRunningTimerError`）。"""
     return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(TooManyAnonymousRunsError)
+def too_many_anonymous_runs(_request: Request, exc: Exception) -> JSONResponse:
+    """契约 v2.19：同时在跑的匿名运行到上限。429——请求本身合法，稍后（有运行结束 / 超时后）再来。"""
+    return JSONResponse(status_code=429, content={"detail": str(exc)})
 
 
 @app.exception_handler(UnprocessableError)

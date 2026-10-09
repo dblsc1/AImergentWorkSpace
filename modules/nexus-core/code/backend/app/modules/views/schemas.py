@@ -454,6 +454,7 @@ class LaneAgent(_Strict):
     elapsedSeconds: int
     overdue: bool
     phases: list[LanePhase]
+    unverified: bool = False  #: v2.19：匿名开的运行（契约「调用方范围与匿名上报」）
 
 
 class LaneReply(_Strict):

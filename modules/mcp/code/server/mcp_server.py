@@ -4,7 +4,7 @@
 initialize、ping、tools/list、tools/call；通知一律 202。不发 Mcp-Session-Id，GET 回 405
 （不提供服务端主动推送流）——两样都是协议允许的。
 
-HTTP 层在 JSON-RPC 之前依次判：Origin（403）→ 租户（401/400）→ 协议版本头（400）→
+HTTP 层在 JSON-RPC 之前依次判：Origin（403）→ 调用方范围（403，v1.11）→ 租户（401/400）→ 协议版本头（400）→
 请求体大小（413）。日志只记方法、路径、状态码与工具名，不记请求头与工具结果。
 
 环境变量：
@@ -66,17 +66,27 @@ def _error(mid, code: int, message: str) -> dict:
     return {"jsonrpc": "2.0", "id": mid, "error": {"code": code, "message": message}}
 
 
-def handle(msg, tenant: str | None) -> dict | None:
+def caller_scope(headers) -> str | None:
+    """调用方范围（mcp.tools.v1 v1.11「调用方范围」，唯一的判定处）：网关转来的 X-Nexus-Scope / X-Nexus-Anonymous
+    （总是被网关覆盖，客户端写不进来）。返回 "full"（没有这个头 = 网页会话 / 聊天后端对内直连，或 write）、
+    "read"（只读工具）、None（report、匿名、取值不认识、头重复：整个端点 403）。"""
+    scopes = headers.get_all("X-Nexus-Scope") or []
+    if any(headers.get_all("X-Nexus-Anonymous") or []) or len(scopes) > 1:
+        return None
+    return {"": "full", "write": "full", "read": "read"}.get(scopes[0] if scopes else "")
+
+
+def handle(msg, tenant: str | None, read_only: bool = False) -> dict | None:
     """一条消息的任何异常都只影响这一条（批量里别的照常）。"""
     try:
-        return _handle(msg, tenant)
+        return _handle(msg, tenant, read_only)
     except Exception:
         log.exception("处理 JSON-RPC 消息时内部错误")
         mid = msg.get("id") if isinstance(msg, dict) else None
         return _error(mid if isinstance(mid, (str, int)) else None, -32603, "内部错误")
 
 
-def _handle(msg, tenant: str | None) -> dict | None:
+def _handle(msg, tenant: str | None, read_only: bool) -> dict | None:
     """一条 JSON-RPC 消息 → 响应；通知与客户端发来的响应 → None。"""
     if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0":
         return _error(None, -32600, "不是 JSON-RPC 2.0 消息")
@@ -98,12 +108,13 @@ def _handle(msg, tenant: str | None) -> dict | None:
     elif method == "ping":
         result = {}
     elif method == "tools/list":
-        result = {"tools": tools.TOOL_LIST}
+        # read 范围：会写的工具不列出来（调了也会被 tools.call 拒绝）
+        result = {"tools": [t for t in tools.TOOL_LIST if not (read_only and t["name"] in tools.WRITES)]}
     elif method == "tools/call":
         name = params.get("name")
         if not isinstance(name, str) or name not in tools.TOOLS:
             return _error(mid, -32602, f"没有这个工具：{name!r}")
-        result = tools.call(name, params.get("arguments") or {}, tenant)
+        result = tools.call(name, params.get("arguments") or {}, tenant, read_only)
     else:
         return _error(mid, -32601, f"不支持的方法：{method!r}")
     return {"jsonrpc": "2.0", "id": mid, "result": result}
@@ -150,6 +161,10 @@ class Handler(BaseHTTPRequestHandler):
         # "null"（沙箱 iframe、file: 页面）不是一个来源，写进白名单也不认
         if origin is not None and (origin == "null" or origin not in ALLOWED_ORIGINS):
             return self._send(403, {"detail": f"Origin 不在 MCP_ALLOWED_ORIGINS 里：{origin[:200]!r}"})
+        scope = caller_scope(self.headers)
+        if scope is None:  # 只能上报的调用方读不到任何东西：不进 JSON-RPC
+            return self._send(403, {"detail": "这个令牌的范围不能用 MCP（要 read 或 write）"})
+        read_only = scope == "read"
         raw = self.headers.get("X-Nexus-Tenant")
         if not raw:
             if STRICT:
@@ -183,9 +198,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(503, {"detail": "忙，稍后再试"}, (("Retry-After", "5"),))
         try:
             if isinstance(msg, list):
-                out = [r for r in (handle(m, tenant) for m in msg) if r is not None]
+                out = [r for r in (handle(m, tenant, read_only) for m in msg) if r is not None]
             else:
-                out = handle(msg, tenant)
+                out = handle(msg, tenant, read_only)
         finally:
             SLOTS.release()
         if not out:

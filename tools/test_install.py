@@ -130,6 +130,37 @@ def test_backend_tenant_header_is_always_set_by_the_gateway(out):
     assert "proxy_set_header X-Nexus-Tenant $honeycomb_tenant;" in gate
 
 
+def test_caller_scope_headers_and_anonymous_limit_in_both_assemblies(out):
+    """gateway.v1 第九节：门子请求带原始方法；范围头 / 匿名头由网关覆盖（客户端写不进去）；
+    匿名上报有专用限速区。手写的与生成的两份组装都要有，写法一致。"""
+    _, _, gen = out
+    hand = _render((install.ROOT / "deploy" / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8"))
+    gate = (install.ROOT / "modules" / "nginx-docker" / "nginx" / "gate.inc").read_text(encoding="utf-8")
+    overwrite = ("auth_request_set $honeycomb_scope $upstream_http_x_nexus_scope;",
+                 "auth_request_set $honeycomb_anonymous $upstream_http_x_nexus_anonymous;",
+                 "proxy_set_header X-Nexus-Scope $honeycomb_scope;",
+                 "proxy_set_header X-Nexus-Anonymous $honeycomb_anonymous;")
+    for line in overwrite:
+        assert line in gate, line
+    for name, nginx in (("hand", hand), ("generated", _render(gen) if "${HONEYCOMB_BASE_PATH}" in gen else gen)):
+        verify = _location(nginx, "= /__auth_verify")
+        assert "proxy_set_header X-Original-Method $request_method;" in verify, name
+        assert "proxy_set_header X-Original-URI $request_uri;" in verify, name
+        chip = _location(nginx, "= /__cockpit/current")  # 这条手写了门，没 include gate.inc
+        for line in overwrite:
+            assert line in chip, (name, line)
+        # 限速：键只在「POST + 没有 Authorization + /api/core/agents/ 下」时非空；server 级生效、超了回 429
+        assert 'map "$request_method:$http_authorization:$uri" $honeycomb_anon_key {' in nginx, name
+        assert '"~^POST:[ \\t]*:/api/core/agents/" $binary_remote_addr;' in nginx, name
+        assert "limit_req_zone $honeycomb_anon_key zone=honeycomb_anon:1m rate=120r/m;" in nginx, name
+        assert nginx.index("limit_req_zone") < nginx.index("server {"), name
+        assert "    limit_req zone=honeycomb_anon burst=60 nodelay;\n    limit_req_status 429;" in nginx, name
+        # 每条转给后端的受保护路由都走 gate.inc（或上面那条手写的）：没有哪条漏掉覆盖
+        for block in nginx.split("\n    location ")[1:]:
+            if "auth_request /__auth_verify;" in block:
+                assert "proxy_set_header X-Nexus-Scope $honeycomb_scope;" in block, (name, block[:60])
+
+
 def test_auth_upstream_and_extra_routes_are_replaceable(out):
     _, compose, nginx = out
     web = compose["services"]["web"]

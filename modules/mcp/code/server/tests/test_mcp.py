@@ -1038,3 +1038,71 @@ _K = {"key": WINDOW["key"], "reason": "x"}
 def test_suggest_window_target_bad_args_400_without_calling_nexus(servers, args):
     assert err(servers, "suggest_window_target", args)["status"] == 400
     assert not Fake.requests
+
+
+# ── v1.11：调用方范围（auth.gate v1.4 的 report / read / write，网关转来的头）──────────
+
+
+WRITE_TOOLS = {"propose_detector_rules", "propose_activity_matches", "get_window_awaiting_target",
+               "suggest_window_target"}
+
+
+def test_read_scope_hides_and_rejects_write_tools(servers):
+    h = {"X-Nexus-Scope": "read", "X-Nexus-Tenant": "u_alice"}
+    names = [t["name"] for t in rpc(servers, "tools/list", headers=h)["result"]["tools"]]
+    assert len(names) == 11 and not WRITE_TOOLS & set(names)
+    assert ok(servers, "get_task_tree", headers=h)["items"]   # 只读工具照常
+    Fake.requests.clear()
+    for name in sorted(WRITE_TOOLS):
+        e = err(servers, name, {"key": "k", "reason": "r", "rules": [], "summary": "s", "matches": []}, headers=h)
+        assert e["status"] == 403 and "只读" in e["detail"], name
+    assert Fake.requests == [] and Fake.bodies == []   # 一个字节都没发给 nexus-core
+    # 批量里夹一条写工具：只有那一条被拒
+    status, out = post(servers, [
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "get_window_awaiting_target"}},
+        {"jsonrpc": "2.0", "id": 2, "method": "ping"}], h)
+    assert status == 200 and out[0]["result"]["isError"] is True and out[1]["result"] == {}
+    assert Fake.requests == []
+
+
+@pytest.mark.parametrize("headers", [
+    {"X-Nexus-Scope": "report"},
+    {"X-Nexus-Scope": "report", "X-Nexus-Anonymous": "1"},
+    {"X-Nexus-Anonymous": "1"},
+    {"X-Nexus-Scope": "write", "X-Nexus-Anonymous": "1"},   # 匿名标记赢过它自带的范围
+    {"X-Nexus-Scope": "admin"},
+    {"X-Nexus-Scope": "READ"},
+])
+def test_report_anonymous_and_unknown_scopes_get_403_for_the_whole_endpoint(servers, headers):
+    for body in ({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+                 {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                 {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "get_task_tree"}},
+                 {"jsonrpc": "2.0", "method": "notifications/initialized"}):
+        status, out = post(servers, body, headers)
+        assert status == 403 and set(out) == {"detail"}, (headers, body)
+    assert Fake.requests == []
+
+
+def test_doubled_scope_header_is_403(servers):
+    """同名头两行（网关只会给一行）：不挑其中一个，拒绝。"""
+    import http.client  # noqa: PLC0415
+    from urllib.parse import urlsplit  # noqa: PLC0415
+
+    u = urlsplit(servers)
+    body = b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+    c = http.client.HTTPConnection(u.hostname, u.port, timeout=10)
+    c.putrequest("POST", u.path)
+    for k, v in (("Content-Type", "application/json"), ("Content-Length", str(len(body))),
+                 ("X-Nexus-Scope", "write"), ("X-Nexus-Scope", "read")):
+        c.putheader(k, v)
+    c.endheaders(body)
+    status = c.getresponse().status
+    c.close()
+    assert status == 403
+
+
+@pytest.mark.parametrize("headers", [{}, {"X-Nexus-Scope": "write"}, {"X-Nexus-Scope": ""}])
+def test_write_scope_and_no_header_keep_all_fifteen_tools(servers, headers):
+    assert len(rpc(servers, "tools/list", headers=headers)["result"]["tools"]) == 15
+    assert ok(servers, "get_window_awaiting_target", headers={**headers, "X-Nexus-Tenant": "u_alice"})["window"]
+

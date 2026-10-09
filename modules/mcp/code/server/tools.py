@@ -728,6 +728,8 @@ _SPECS = [
 #: 会写的工具；其余全部只读。propose_ 两个只写待人确认的草稿 / 建议（第六节）；v1.9 的两个：认领是幂等的状态标记，
 #: suggest_window_target 直接生效，但只在那个窗口被认领着等回答时、只对那一个窗口（第六节「唯一的例外」）
 _PROPOSE = {"propose_detector_rules", "propose_activity_matches", "get_window_awaiting_target", "suggest_window_target"}
+#: v1.11「调用方范围」：read 范围的令牌看不到也调不了这些
+WRITES = frozenset(_PROPOSE)
 
 _READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False}
 _PROPOSES = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False}
@@ -746,8 +748,12 @@ def _result(obj: dict, error: bool = False) -> dict:
             "structuredContent": obj, "isError": error}
 
 
-def call(name: str, args, tenant: str | None) -> dict:
-    """tools/call 的结果（工具执行失败也是结果：isError=true）。name 须已在 TOOLS 里。"""
+def call(name: str, args, tenant: str | None, read_only: bool = False) -> dict:
+    """tools/call 的结果（工具执行失败也是结果：isError=true）。name 须已在 TOOLS 里。
+    read_only（v1.11）：调用方的令牌是 read 范围——会写的工具不执行，回 403 的工具错误。"""
+    if read_only and name in WRITES:
+        log.info("tool %s -> 403（read 范围）", name)
+        return _result({"error": {"status": 403, "detail": "这个令牌是只读范围（read），不能调会写的工具"}}, error=True)
     try:
         out = TOOLS[name][0](_resolve(name, args), tenant)
     except ToolError as e:

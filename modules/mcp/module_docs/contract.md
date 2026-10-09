@@ -53,6 +53,8 @@ consumes:
   契约明确不拿 `Host` 比）；用到的协议面只有四个方法，手写更小、每一步都看得见。
 - 上限：请求体 256 KiB、批量 16 条、同时处理 8 个请求（再多等 10 秒后 503）、nexus-core 单次响应 8 MiB。
 - 无状态、不缓存：每次工具调用现取 `views/tree` 算路径，不存在跨租户缓存。
+- 调用方范围（`mcp.tools.v1` v1.11）：`mcp_server.caller_scope` 读网关转来的 `X-Nexus-Scope` / `X-Nexus-Anonymous`——
+  `report` / 匿名 / 不认识的取值整个端点 403；`read` 时 `tools/list` 不列 `tools.WRITES`、`tools.call` 拒绝它们。
 - 日志只记请求行、状态码、工具名与结果状态，不记请求头（`Authorization`/`Cookie` 本来也被网关清掉了）、不记工具结果。
 
 ## 配置

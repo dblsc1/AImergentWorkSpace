@@ -53,6 +53,7 @@ def _run_item(run: dict) -> dict:
     return {
         **{k: run.get(k) for k in ("runId", "agent", "tool", "model", "label", "taskId", "projectId",
                                    "outcome", "elapsedSeconds", "overdue")},
+        "unverified": bool(run.get("unverified")),  # v2.19：不带凭据的请求开的运行
         "startAt": _iso(run["startTs"]),
         "endAt": _iso(run["endTs"]) if run["endTs"] is not None else None,
         "phases": [{"at": p["at"], "phase": p["phase"], "detail": p.get("detail")} for p in run["phases"]],
