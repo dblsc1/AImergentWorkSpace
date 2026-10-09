@@ -1,12 +1,31 @@
-# mcp · 给 AI 代理用的工具（只读 + 只写草稿 + 认窗口）
+# mcp · 给 AI 代理用的工具（只读 + 只写草稿 / 报告 + 认窗口）
 
 HoneyComb 的 MCP 服务器（契约 `contracts/mcp.tools.v1`）：把任务树、人的时间、代理时间、在跑的计时、
-待确认的活动建议、以前的归类历史、活动分类规则读给 AI 代理。15 个工具：11 个只读（v1.7 加 `get_match_history`：
+待确认的活动建议、以前的归类历史、活动分类规则读给 AI 代理。17 个工具：12 个只读（v1.13 加 `get_report_status`；v1.7 加 `get_match_history`：
 你以前把哪个窗口定到了哪个项目 / 任务，助理归类前先看它）；`propose_detector_rules`（v1.2）
 只写**待人应用的规则草稿**——生效要人在 Cockpit「AI助理 → 规则」点「应用」（v1.8：规则的目标可以只到项目，
 `projectId` 代替 `taskId`）；`propose_activity_matches`（v1.3）
 只给待确认的活动**配任务建议**——入账要人在「AI助理 → 待确认建议」逐条点「是」；v1.4 起也能**提议新任务**
 （`newTask`），同样人点「是」才建，MCP 自己从不建任务。
+
+v1.13：碎片很多时，**一次交一份报告**——`propose_report` 把一堆动作（把这些建议记到某个项目 / 任务、提议新任务并把它们记进去、
+这些是噪声忽略）装进一份报告，你在「AI助理 → AI 报告」点「全部批准」就全部入账，也可以逐条改 / 批准 / 不要。
+MCP 只存报告，什么都不确认；同一个 `author` 的新报告顶掉它没被批准的旧报告。`get_report_status` 让代理看到上一份报告的结果
+（待处理 / 已批准 / 不要 / 每条的入账数、过期数、失败原因），下一份别再交用户不要的。Hermes / opencode 这样交：
+
+```jsonc
+// tools/call propose_report —— suggestionId 来自 list_activity_suggestions，taskId / projectId 来自 get_task_tree / list_projects
+{ "summary": "把 VS Code 的碎片记到制作区，8 段 Slack 当噪声忽略",
+  "author": "hermes",
+  "items": [
+    { "kind": "assign",  "suggestionIds": ["sug_…", "sug_…"], "taskId": "t_…", "reason": "标题里都是 save.gd" },
+    { "kind": "assign",  "collection": "写文档", "projectId": "p_…" },
+    { "kind": "newTask", "suggestionIds": ["sug_…"], "newTask": { "projectId": "p_…", "name": "重构存档" } },
+    { "kind": "dismiss", "suggestionIds": ["sug_…", "sug_…"], "reason": "后台自动刷新" } ] }
+// → { "reportId": "rp_…", "accepted": 4, "rejected": [], "superseded": null, "applied": false, "next": "…" }
+```
+
+一份最多 200 条；坏的条按下标进 `rejected`（含 `code`），其余照收。
 
 v1.9 的两个是给「允许 AI 管理进行中的任务」用的：`get_window_awaiting_target` 给出此刻规则认不出、等 AI 认的那**一个**窗口
 （没有就是 `null`），`suggest_window_target` 回答它——这是唯一直接生效的写：服务端给那一个窗口写一条只认它的规则，
@@ -27,8 +46,8 @@ v1.10：`get_current_timer` 除了「在不在计时」，还带出 `focus`—�
 
 | 范围 | MCP |
 |---|---|
-| `read`（只读） | 11 个只读工具。`tools/list` 里看不到会写的 4 个，调了回 `isError` + `status: 403` |
-| `write`（读写） | 全部 15 个 |
+| `read`（只读） | 12 个只读工具。`tools/list` 里看不到会写的 5 个，调了回 `isError` + `status: 403` |
+| `write`（读写） | 全部 17 个 |
 | `report`（只上报）、不带令牌 | 整个端点 403——只能上报的调用方读不到任何东西 |
 
 只想让外部代理「看」，发 `read`；要它也能起草规则 / 建议、认窗口，才发 `write`。
