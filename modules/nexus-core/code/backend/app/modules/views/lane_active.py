@@ -2,7 +2,9 @@
 
 一条泳道（身份 = ``prefs.service.ident``，与 ``lane_cap`` / ``lane_order.arrange`` 同口径）**显示**，当且仅当：
 
-- 有在跑（未失联）的运行正处于干活相位，或在等人（waiting_input / waiting_permission，人要动手，永不自动藏）；
+- 有在跑（未失联、未超上限 ``overdue``）的运行正处于干活相位，或在等人（waiting_input / waiting_permission，人要动手，
+  等多久都不自动藏——只要没 ``overdue``）。干活相位的另有条件：声明过心跳（``beatCount > 0``，失联检测已管着它）
+  或距 ``lastSeenAt`` 不到 ``IDLE_HIDE_SECONDS``。**代价**：不发心跳的工具静默超过 1 小时，就折叠，直到它的下一个事件；
 - 或「最后一次干活」距现在不到 ``IDLE_HIDE_SECONDS``；最后干活 = 各运行里 working 段的最晚结束时刻
   （没报过相位的已结束运行 = 它的结束；没报过相位的在跑运行 = 从开始就在干活）——**不是最后心跳**，否则停着的会话永远不空闲；
 - 或人置顶了它。
@@ -21,13 +23,30 @@ from .lane_order import PHASES, WAITING, _t, phase_of
 IDLE_HIDE_SECONDS = 3600
 
 
+def _seen(item: dict) -> datetime:
+    return _t(item.get("lastSeenAt") or item["startAt"])
+
+
+def _live_shown(item: dict, now: datetime) -> bool:
+    """在跑、没失联、没超上限，且（在等人，或干活且有心跳 / 近 1 小时有信号）。"""
+    if item["endAt"] is not None or item["lost"] or item.get("overdue"):
+        return False
+    ph = phase_of(item)
+    if ph in WAITING:
+        return True
+    return ph == "working" and (bool(item.get("beatCount")) or (now - _seen(item)).total_seconds() < IDLE_HIDE_SECONDS)
+
+
 def _last_work(item: dict, now: datetime) -> datetime:
-    """这条运行最后一次处于 working 的结束时刻（从没干过活 = 开始时刻）。"""
+    """这条运行最后一次处于 working 的结束时刻（从没干过活 = 开始时刻）。
+    在跑的：失联 / 不发心跳的，干活段到 ``lastSeenAt`` 为止（静默不算干活）；超上限的当作早已放弃 = 开始时刻。"""
     start = _t(item["startAt"])
     if item["endAt"] is not None:
         stop = _t(item["endAt"])
-    elif item["lost"] and item["lastSeenAt"]:
-        stop = _t(item["lastSeenAt"])
+    elif item.get("overdue"):
+        return start
+    elif item["lost"] or not item.get("beatCount"):
+        stop = min(max(_seen(item), start), now)
     else:
         stop = now
     cuts = [(start, "working")] + sorted(
@@ -50,13 +69,14 @@ def split(items: list[dict], gone: list[dict], prefs: dict, now: datetime) -> tu
     for it in items:
         lanes.setdefault(ident(it["agent"], it["label"], it["unverified"]), []).append(it)
 
+    firsts = {g["key"]: g for g in gone if g.get("live")}  # 整条泳道的运行都被封顶丢了、但还有在跑的：照样判定
     inactive: dict[str, dict] = {}
-    for key, rs in lanes.items():
+    for key in {**{k: [] for k in firsts if k not in lanes}, **lanes}:
+        rs = lanes.get(key, [])
         if key in hidden or key in pinned:
             continue
         every = rs + extra.get(key, [])
-        live = [r for r in every if r["endAt"] is None and not r["lost"]]
-        if any(phase_of(r) == "working" or phase_of(r) in WAITING for r in live):
+        if any(_live_shown(r, now) for r in every):
             continue
         latest = max(every, key=lambda r: r["startAt"])
         failed = phase_of(latest) == "error" if latest["endAt"] is None else latest["outcome"] == "failed"
@@ -67,7 +87,7 @@ def split(items: list[dict], gone: list[dict], prefs: dict, now: datetime) -> tu
             reason = "idle"
         else:
             continue
-        first = rs[0]
+        first = rs[0] if rs else firsts[key]
         inactive[key] = {"agent": first["agent"], "label": first["label"], "unverified": first["unverified"],
                          "reason": reason, "lastWorkAt": last.isoformat(), "runs": len(rs),
                          "elapsedSeconds": sum(r["elapsedSeconds"] or 0 for r in rs)}

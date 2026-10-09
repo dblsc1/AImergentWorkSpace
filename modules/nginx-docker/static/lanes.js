@@ -919,7 +919,7 @@
         if (x.label) { li.appendChild(el('span', 'hcl-sub', x.agent)); }
         var idleH = Math.max(1, Math.floor(((ms(data.now) || Date.now()) - (ms(x.lastWorkAt) || 0)) / (60 * MIN)));
         li.appendChild(el('span', 'hcl-hidden-state hcl-inactive-reason', x.reason === 'error' ? '出错' : '空闲 ' + idleH + ' 小时'));
-        li.appendChild(el('span', 'hcl-sub hcl-inactive-time', '今天 ' + dur(0, (x.elapsedSeconds || 0) * 1000)));
+        li.appendChild(el('span', 'hcl-sub hcl-inactive-time', '本窗口 ' + dur(0, (x.elapsedSeconds || 0) * 1000)));
         if (!x.unverified) {                  // 置顶 = 重新显示（匿名的不能置顶）
           var pin = el('button', 'hcl-hidden-restore hcl-inactive-pin', '置顶显示');
           pin.type = 'button';

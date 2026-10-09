@@ -48,9 +48,10 @@ def _key(item: dict, now: datetime) -> tuple:
     return (tier, -active, -last.timestamp())
 
 
-def arrange(items: list[dict], prefs: dict, now: datetime) -> tuple[list[dict], list[dict], int, list[dict]]:
+def arrange(items: list[dict], prefs: dict, now: datetime, running_extra: frozenset | set = frozenset()) -> tuple[list[dict], list[dict], int, list[dict]]:
     """``items`` = ``_run_item`` 的结果。返回 (去掉藏起来的、加了 pinned / manualOrder / rank 的行，hiddenAgents，hiddenWaiting，
     stalePinned)。行的先后不变（仍按开始时间），先后在 ``rank``。失联的运行不算「在等你」（hiddenAgents.phase 与 hiddenWaiting 一致）。
+    ``running_extra`` = 另外还在跑、但被封顶挤出 items 的身份键。
     stalePinned = 置顶着、但现在没有任何在跑的运行对得上的身份（改名后旧置顶就是这样留下的），页面列出来让人移除。"""
     hidden = {a["key"]: a for a in prefs["agents"] if a["hidden"]}
     pinned = {a["key"]: a["pinnedAt"] for a in prefs["agents"] if a["pinned"] and not a.get("unverified")}
@@ -89,7 +90,7 @@ def arrange(items: list[dict], prefs: dict, now: datetime) -> tuple[list[dict], 
     placed = {s[1]["runId"] for s in movers}
     out = [{**item, "pinned": key in pinned, "manualOrder": slots[item["runId"]] if item["runId"] in placed else None,
             "rank": rank[id(item)]} for key, item in shown]
-    running = {ident(i["agent"], i["label"], i["unverified"]) for i in items if i["endAt"] is None}
+    running = {ident(i["agent"], i["label"], i["unverified"]) for i in items if i["endAt"] is None} | set(running_extra)
     stale = [{"agent": a["agent"], "label": a["label"]} for a in prefs["agents"]
              if a["pinned"] and not a.get("unverified") and a["key"] not in running]
     return out, list(summary.values()), waiting, stale

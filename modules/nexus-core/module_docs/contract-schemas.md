@@ -496,4 +496,4 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
 ```
 
 - `inactiveAgents` 缺省 `[]`；`reason` 只有 `error`（当前出错）/ `idle`（空闲或全部结束满 `IDLE_HIDE_SECONDS` = 3600 秒）。`lastWorkAt` = 最后一次干活的结束时刻（ISO，本地时区）。
-- `runs` / `elapsedSeconds` 含被 v2.23 封顶折掉的运行（不再进 `dropped`）。置顶的、手动隐藏的身份不在其中。过去的日子永远是 `[]`。
+- `runs` / `elapsedSeconds` 含被 v2.23 封顶折掉的运行（不再进 `dropped`：`dropped` 不含不活跃身份）。置顶的、手动隐藏的身份不在其中。过去的日子永远是 `[]`。

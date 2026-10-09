@@ -131,6 +131,11 @@
       else if (k.ph === "error") live.error += 1;
       else if (k.ph !== "idle") live.waiting += 1;
     });
+    // v2.24：出错的泳道已挪进 inactiveAgents（不画成泳道），但出错仍要看得见：今天里出过错的照样亮「N 个出错」
+    var dayStart = Date.parse(last.windowEnd) - DAY;
+    (Array.isArray(last.inactiveAgents) ? last.inactiveAgents : []).forEach(function (x) {
+      if (x.reason === "error" && Date.parse(x.lastWorkAt) >= dayStart) live.error += 1;
+    });
     var bits = [];
     if (live.waiting) bits.push(live.waiting + " 个在等你");
     if (live.working) bits.push(live.working + " 个在干活");
