@@ -36,7 +36,7 @@ def _start(client, headers, expect=201, **body):
 @pytest.mark.parametrize("headers", [REPORT, ANON])
 def test_report_scope_and_anonymous_only_reach_the_report_endpoints(client, seeded, headers):
     run = _start(client, headers)
-    assert set(run) == {"runId", "startedAt"}
+    assert set(run) == {"runId", "startedAt", "heartbeatSeconds"}  # v2.18 起 start 响应带建议的心跳间隔
     phase = client.post(f"{AGENTS}/{run['runId']}/phase", json={"phase": "working", "at": run["startedAt"]},
                         headers=headers)
     assert phase.status_code == 200 and set(phase.json()) == {"runId", "phase", "applied", "reason"}
