@@ -29,6 +29,7 @@ import argparse
 import contextlib
 import hashlib
 import json
+import math
 import os
 import subprocess
 import sys
@@ -61,6 +62,18 @@ def _warn(msg: str) -> None:
 def _state_file(session_id: str) -> Path:
     digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
     return cc.user_dir("state") / f"session-{digest}.json"
+
+
+STATE_MAX_BYTES = 64 * 1024  # 状态文件就几百字节；更大的不是我们写的，不读
+
+
+def _read_small(path: Path) -> str:
+    """读状态文件，带大小上限（状态目录里的东西当不可信：别的进程也写得了）。超了按「读不了」算。"""
+    with open(path, "rb") as f:
+        raw = f.read(STATE_MAX_BYTES + 1)
+    if len(raw) > STATE_MAX_BYTES:
+        raise OSError("state file too large")
+    return raw.decode("utf-8", errors="replace")
 
 
 LOCK_WAIT = 2.0  # 拿锁最多等这么久（SessionEnd 钩子总预算 5s，锁内还有一次 HOOK_TIMEOUT 的请求）
@@ -162,7 +175,7 @@ def _read_state(session_id: str) -> dict | None:
     """
     path = _state_file(session_id)
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw = _read_small(path)
     except OSError:  # 含 FileNotFoundError
         return None
     try:
@@ -476,7 +489,7 @@ def _spawn_beat(session_id: str, state: dict | None) -> None:
         mode = cc.beat_mode()
         if os.name == "nt" or mode in ("off", "monitor"):
             return
-        if mode == "auto" and _plugin_monitor() and (state is None or time.time() - state.get("at", 0) < MONITOR_GRACE_SECONDS):
+        if mode == "auto" and _plugin_monitor() and (state is None or _in_grace(state.get("at"))):
             return  # 让 monitor 先来
         probe = _beat_lock(session_id)
         if probe is None:
@@ -492,12 +505,23 @@ def _spawn_beat(session_id: str, state: dict | None) -> None:
         pass
 
 
+def _in_grace(at) -> bool:
+    """会话是不是刚开始（auto 留给 monitor 的宽限）。`at` 来自状态文件，当不可信：不是有限的数、在将来、
+    或已过宽限，都算「不在宽限里」——坏值只会让伴随进程早点补上，不会让它永远不来。"""
+    if type(at) not in (int, float) or not math.isfinite(at):
+        return False
+    return 0 <= time.time() - at < MONITOR_GRACE_SECONDS
+
+
 def _usable(state: dict) -> bool:
-    """这个进程发得了这个会话的心跳吗。monitor 没有钩子的环境：地址用钩子记下的；钩子带了令牌而自己没有
-    （令牌只填在插件设置里）就发不了——让开，由伴随进程来。"""
-    if state.get("url"):
-        os.environ.setdefault("COCKPIT_URL", str(state["url"]))  # 只改本进程：下面的 load_config / 重开都读得到
+    """这个进程发得了这个会话的心跳吗。monitor 没有钩子的环境：钩子带了令牌而自己没有（令牌只填在插件设置里）
+    就发不了——让开，由伴随进程来。地址同理拿不到时用钩子记在状态文件里的那个，但**只在自己手里没有令牌时**：
+    状态文件别的进程也写得了，令牌绝不发往从那里读来的地址。"""
     config = cc.load_config()
+    remembered = state.get("url")
+    if not config["url"] and not config["token"] and isinstance(remembered, str) and remembered and not state.get("auth"):
+        os.environ["COCKPIT_URL"] = remembered  # 只改本进程：下面的 load_config / 重开都读得到
+        config = cc.load_config()
     return bool(config["url"]) and (bool(config["token"]) or not state.get("auth"))
 
 
@@ -545,7 +569,7 @@ def _session_of(cli: int, born: str | None) -> str | None:
     try:
         for path in cc.user_dir("state").glob("session-*.json"):
             try:
-                data = json.loads(path.read_text(encoding="utf-8"))
+                data = json.loads(_read_small(path))
                 found = (path.stat().st_mtime, data["session"]) if data.get("cli") == [cli, born] else None
             except (OSError, ValueError, KeyError, AttributeError):
                 continue

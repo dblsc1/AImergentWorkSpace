@@ -20,12 +20,28 @@ import os
 import platform
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 DEFAULT_TIMEOUT = 3.0
+MAX_RESPONSE_BYTES = 64 * 1024  # 响应体最多读这么多：协议里的响应都是几百字节，更大的一律当「响应格式不对」
+
+
+def clamp_seconds(value: Any, low: int, high: int, default: int) -> int:
+    """外面来的「多少秒」（服务端响应、状态文件、配置）一律过这里再当界限用。
+    只认真正的整数：bool、浮点（含 NaN / inf——`min` / `max` 对 NaN 不起作用，会原样漏过去）、字符串、
+    零和负数都回 `default`；其余钳到 `[low, high]`。"""
+    if type(value) is not int or value <= 0:
+        return default
+    return min(max(value, low), high)
+
+
+def _run_path(run_id: str, action: str) -> str:
+    """runId 可能是从状态文件读回来的：整个转义后才拼进路径，带 `/`、`?`、`..` 也到不了别的端点。"""
+    return f"/api/core/agents/{urllib.parse.quote(str(run_id), safe='')}/{action}"
 CONFIG_FILENAME = "agent-hooks.json"
 
 
@@ -241,9 +257,11 @@ def _request(config: dict[str, Any], method: str, path: str, payload: dict[str, 
         # 抛异常——连同下面的 open()/read() 一起放进同一个 try，让外层统一分类。
         req = urllib.request.Request(url + path, data=data, method=method, headers=headers)
         with _opener.open(req, timeout=timeout) as resp:
-            body = resp.read()
+            body = resp.read(MAX_RESPONSE_BYTES + 1)
         if not body:
             return {}
+        if len(body) > MAX_RESPONSE_BYTES:
+            raise CockpitError("响应格式不对")
         try:
             parsed = json.loads(body)
         except json.JSONDecodeError:
@@ -261,7 +279,7 @@ def _request(config: dict[str, Any], method: str, path: str, payload: dict[str, 
     except urllib.error.HTTPError as e:
         body = b""
         try:
-            body = e.read()
+            body = e.read(MAX_RESPONSE_BYTES + 1)
         except Exception:
             pass
         json_body = False
@@ -389,7 +407,7 @@ def phase_run(
         payload["detail"] = detail[:64]
     if reply:
         payload["reply"] = True
-    return _request(config, "POST", f"/api/core/agents/{run_id}/phase", payload, timeout)
+    return _request(config, "POST", _run_path(run_id, "phase"), payload, timeout)
 
 
 HEARTBEAT_SECONDS = 900  # 服务端没说（老服务端 / 没报成）时的心跳间隔
@@ -403,15 +421,14 @@ def heartbeat_run(
     第一次调用即声明这条运行会发心跳。`{applied:false, reason:"closed"}` = 运行已结束。
     `beat_source`：谁在发（`companion` / `monitor` / `wrapper`），服务端只当标签记下，用来比哪条路更好使。"""
     payload = {"beatSource": beat_source} if beat_source else None
-    return _request(config, "POST", f"/api/core/agents/{run_id}/heartbeat", payload, timeout)
+    return _request(config, "POST", _run_path(run_id, "heartbeat"), payload, timeout)
 
 
-def heartbeat_interval(response: Any) -> float:
-    """响应里的 `heartbeatSeconds`，钳到 [60, 3600]；没有 / 不是数 → 900。"""
+def heartbeat_interval(response: Any) -> int:
+    """响应里的 `heartbeatSeconds`，过 `clamp_seconds`：钳到 [60, 3600]；没有 / 不是正整数 → 900。
+    这是唯一读它的地方（伴随进程、monitor、cockpit-run 的线程都经 `beat` 到这里），每一下心跳都重新钳一次。"""
     value = response.get("heartbeatSeconds") if isinstance(response, dict) else None
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return HEARTBEAT_SECONDS
-    return min(max(value, HEARTBEAT_MIN), HEARTBEAT_MAX)
+    return clamp_seconds(value, HEARTBEAT_MIN, HEARTBEAT_MAX, HEARTBEAT_SECONDS)
 
 
 def beat(
@@ -422,7 +439,7 @@ def beat(
     4xx（老服务端没有这个端点、令牌不对）→ 照常间隔，不猛敲。"""
     try:
         response = heartbeat_run(config, run_id, timeout, beat_source)
-        return heartbeat_interval(response), response.get("reason") == "closed"
+        return heartbeat_interval(response), response.get("reason") == "closed"  # 间隔已钳
     except CockpitError as e:
         return (HEARTBEAT_SECONDS if e.code and 400 <= e.code < 500 else HEARTBEAT_MIN), False
     except Exception:  # noqa: BLE001 — 配置读坏了之类：同样只是「这一下没发」
@@ -454,4 +471,4 @@ def stop_run(
     payload: dict[str, Any] = {"outcome": outcome}
     if output is not None:
         payload["output"] = output
-    return _request(config, "POST", f"/api/core/agents/{run_id}/stop", payload, timeout)
+    return _request(config, "POST", _run_path(run_id, "stop"), payload, timeout)

@@ -24,6 +24,7 @@ from test_agent_hooks import (  # noqa: E402
     RUN_SCRIPT,
     _IsolatedHomeMixin,
     _load_cockpit_run_module,
+    _start_fixed_response_server,
     _start_server,
     _stop_server,
     _unused_port,
@@ -107,15 +108,6 @@ class _LoopCases:
         self.assertFalse(self._loop(clock))
         self.assertEqual(self.calls, [("beat", "run-1")] * 4)  # 第 0、10、20、30 分钟
         self.assertEqual(clock.sleeps, 61)  # 每 30 秒醒一次看 CLI 还在不在
-
-    def test_default_interval_is_fifteen_minutes_and_server_value_is_clamped(self):
-        self.assertEqual(cc.HEARTBEAT_SECONDS, 900)
-        self.assertEqual(cc.heartbeat_interval({}), 900)
-        self.assertEqual(cc.heartbeat_interval({"heartbeatSeconds": 5}), 60)
-        self.assertEqual(cc.heartbeat_interval({"heartbeatSeconds": 86400}), 3600)
-        self.assertEqual(cc.heartbeat_interval({"heartbeatSeconds": "soon"}), 900)
-        self.assertEqual(cc.heartbeat_interval({"heartbeatSeconds": True}), 900)
-        self.assertEqual(cc.heartbeat_interval([900]), 900)
 
     def test_dead_cli_sends_stop_under_the_session_lock_and_exits(self):
         self._save("s1", "run-1", "working", "garden")
@@ -437,6 +429,97 @@ class CockpitRunBeatTests(_IsolatedHomeMixin, unittest.TestCase):
             self.assertEqual([r["path"].rsplit("/", 1)[-1] for r in log.requests], ["start", "stop"])
         finally:
             _stop_server(server, thread)
+
+
+class BoundsTests(_IsolatedHomeMixin, unittest.TestCase):
+    """外面来的数（服务端响应、状态文件）当界限用之前都过同一个钳子；读多少字节有上限。"""
+
+    def test_clamp_accepts_only_real_positive_ints(self):
+        nan, inf = float("nan"), float("inf")
+        for bad in (None, True, False, 900.0, 59.5, "900", "soon", [900], {"s": 900}, 0, -1, -10 ** 12, 1e12, nan, inf, -inf):
+            got = cc.clamp_seconds(bad, 60, 3600, 900)
+            self.assertTrue(type(got) is int and got == 900, bad)
+        self.assertEqual([cc.clamp_seconds(v, 60, 3600, 900) for v in (1, 59, 60, 61, 900, 3600, 3601, 10 ** 12)],
+                         [60, 60, 60, 61, 900, 3600, 3600, 3600])
+
+    def test_heartbeat_interval_default_and_every_bypass_shape(self):
+        self.assertEqual(cc.HEARTBEAT_SECONDS, 900)
+        for response in ({}, {"heartbeatSeconds": None}, [900], None, "900", {"heartbeatSeconds": float("nan")},
+                         {"heartbeatSeconds": float("inf")}, {"heartbeatSeconds": True}, {"heartbeatSeconds": "900"},
+                         {"heartbeatSeconds": 900.0}, {"heartbeatSeconds": 0}, {"heartbeatSeconds": -1},
+                         {"heartbeatSeconds": 1e12}):
+            self.assertEqual(cc.heartbeat_interval(response), 900, response)
+        self.assertEqual(cc.heartbeat_interval({"heartbeatSeconds": 5}), 60)
+        self.assertEqual(cc.heartbeat_interval({"heartbeatSeconds": 10 ** 12}), 3600)
+
+    def test_nan_from_the_wire_does_not_stop_the_beat(self):
+        """原来的写法 `min(max(v, 60), 3600)` 对 NaN 不起作用：JSON 里一个 NaN 就让下一次心跳的时刻变成 NaN，
+        `now >= NaN` 永远为假——心跳悄悄停了，运行半小时后被判失联。"""
+        server, thread = _start_fixed_response_server(200, b'{"applied": true, "reason": null, "heartbeatSeconds": NaN}')
+        try:
+            config = {"url": f"http://127.0.0.1:{server.server_address[1]}", "token": ""}
+            interval, closed = cc.beat(config, "run-1")
+        finally:
+            _stop_server(server, thread)
+        self.assertEqual((interval, closed), (900, False))
+
+    def test_interval_is_clamped_again_on_every_beat(self):
+        answers = iter([{"heartbeatSeconds": 120}, {"heartbeatSeconds": float("nan")}, {"heartbeatSeconds": 5},
+                        {"heartbeatSeconds": 10 ** 9}, {"heartbeatSeconds": "1"}, {}])
+        with mock.patch.object(cc, "heartbeat_run", lambda *_a: next(answers)):
+            self.assertEqual([cc.beat({}, "r")[0] for _ in range(6)], [120, 900, 60, 3600, 900, 900])
+
+    def test_response_body_read_is_bounded(self):
+        big = b'{"runId": "' + b"x" * (cc.MAX_RESPONSE_BYTES + 10) + b'"}'
+        server, thread = _start_fixed_response_server(201, big)
+        try:
+            config = {"url": f"http://127.0.0.1:{server.server_address[1]}", "token": ""}
+            with self.assertRaises(cc.CockpitError) as caught:
+                cc.start_run(config, None, "a", "t")
+            self.assertEqual(str(caught.exception), "响应格式不对")
+            self.assertEqual(cc.beat(config, "run-1"), (cc.HEARTBEAT_MIN, False))  # 心跳同一条路：不抛
+        finally:
+            _stop_server(server, thread)
+
+    def test_run_id_from_the_state_file_cannot_reach_another_endpoint(self):
+        server, thread, log = _start_server(expect_token=None)
+        try:
+            config = {"url": f"http://127.0.0.1:{server.server_address[1]}", "token": ""}
+            cc.beat(config, "x/../../timer/stop?a=1#")
+            cc.stop_run(config, "../../planner/tasks/t_1", "done")
+        finally:
+            _stop_server(server, thread)
+        self.assertEqual([r["path"] for r in log.requests],
+                         ["/api/core/agents/x%2F..%2F..%2Ftimer%2Fstop%3Fa%3D1%23/heartbeat",
+                          "/api/core/agents/..%2F..%2Fplanner%2Ftasks%2Ft_1/stop"])
+
+    def test_state_file_values_are_untrusted(self):
+        now = time.time()
+        for bad in (None, "0", True, float("nan"), float("inf"), now + 10 ** 9, -1, now - claude_hook.MONITOR_GRACE_SECONDS - 1):
+            self.assertFalse(claude_hook._in_grace(bad), bad)  # 坏值 = 不在宽限里：伴随进程照常补上
+        self.assertTrue(claude_hook._in_grace(now))
+        path = claude_hook._state_file("huge")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"runId": "run-1", "pad": "x" * claude_hook.STATE_MAX_BYTES}), encoding="utf-8")
+        self.assertIsNone(claude_hook._read_state("huge"))  # 过大的不读
+        self.assertIsNone(claude_hook._session_of(1, None))
+
+    def test_token_is_never_sent_to_a_url_read_from_the_state_file(self):
+        env = mock.patch.dict(os.environ)
+        env.start()
+        self.addCleanup(env.stop)
+        for key in ("COCKPIT_URL", "COCKPIT_TOKEN"):
+            os.environ.pop(key, None)
+        planted = {"runId": "run-1", "url": "http://evil.invalid", "auth": False}
+        os.environ["COCKPIT_TOKEN"] = "good-token"  # 自己有令牌、没有地址：不许去状态文件里拿地址
+        self.assertFalse(claude_hook._usable(planted))
+        self.assertNotIn("COCKPIT_URL", os.environ)
+        os.environ["COCKPIT_URL"] = "http://real.invalid"  # 自己有地址：状态文件里的那个不看
+        self.assertTrue(claude_hook._usable(planted))
+        self.assertEqual(cc.load_config()["url"], "http://real.invalid")
+        del os.environ["COCKPIT_TOKEN"], os.environ["COCKPIT_URL"]
+        self.assertTrue(claude_hook._usable(planted))  # 无令牌上报：只有地址会去那里，没有任何凭据
+        self.assertEqual(cc.load_config(), {**cc.load_config(), "url": "http://evil.invalid", "token": ""})
 
 
 class BeatModeTests(_IsolatedHomeMixin, unittest.TestCase):
