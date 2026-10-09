@@ -116,7 +116,7 @@ def set_order(run_id: str, index: int) -> dict:
     def change(agents: list[dict], order: list[dict]) -> None:
         cur = live_order(user, {"agents": agents, "order": order})
         if run_id not in cur:
-            raise NotFoundError(f"运行不在可排位的队列里（已结束 / 置顶 / 藏起来 / 匿名）：{run_id[:80]!r}")
+            raise NotFoundError(f"运行不在可排位的队列里（未显示 / 已结束 / 置顶 / 藏起来 / 匿名）：{run_id[:80]!r}")
         manual = {o["runId"] for o in order} | {run_id}
         cur.remove(run_id)
         cur.insert(min(index, len(cur)), run_id)

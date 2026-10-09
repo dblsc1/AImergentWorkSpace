@@ -57,6 +57,7 @@ def cap(runs: list[dict], start: datetime, end: datetime, now: datetime) -> tupl
         if r.get("open"):
             row["openRuns"].append(r)  # 内部用：丢掉的在跑运行，活跃判定要看见
         row["runs"] += 1
-        row["elapsedSeconds"] += max(0, int((min(r["endTs"] or now, end) - max(r["startTs"], start)).total_seconds()))
+        stop = r["endTs"] or (r["lastSeenTs"] if r.get("lost") and r.get("lastSeenTs") else now)  # 失联的止于最后一次信号（同 agent_phases.lane_runs）
+        row["elapsedSeconds"] += max(0, int((min(stop, end) - max(r["startTs"], start)).total_seconds()))
     rank = {k: i for i, k in enumerate(order)}
     return sorted(keep, key=lambda r: r["startTs"]), sorted(agg.values(), key=lambda a: rank[a["key"]])

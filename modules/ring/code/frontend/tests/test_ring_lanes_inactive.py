@@ -60,3 +60,12 @@ def test_title_still_counts_todays_collapsed_errors(browser, static_base_url) ->
                                    "lastWorkAt": "2000-01-01T00:00:00+00:00", "runs": 1, "elapsedSeconds": 5})
     with open_prefs(browser, static_base_url, body=body) as (page, _server):
         assert "2 个出错" in page.text_content("#lanes-state")
+
+
+def test_title_does_not_count_recent_idle_entries_as_errors(browser, static_base_url) -> None:
+    """reason=idle 即使 lastWorkAt 是刚才也不算出错（只数 reason=error）。"""
+    body = inactive_body()
+    body["inactiveAgents"].append({"agent": "codex", "label": "idle-recent", "unverified": False, "reason": "idle",
+                                   "lastWorkAt": body["now"], "runs": 1, "elapsedSeconds": 5})
+    with open_prefs(browser, static_base_url, body=body) as (page, _server):
+        assert "2 个出错" in page.text_content("#lanes-state")

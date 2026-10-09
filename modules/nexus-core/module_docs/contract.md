@@ -3891,7 +3891,7 @@ AI 写的或「记住」的分类规则与草稿、代理标签（`agent_runs.la
   优先于「刚干过活」；或空闲 / 全部结束已满 1 小时——`reason: "idle"`。更新的在干活的运行会让它自己重新显示。
 - **判定看全部运行**：被在跑封顶（`MAX_LIVE`）丢掉的在跑运行不进 `agents`，但「是否在干活 / 在等人 / 最新一条是否出错」的判定仍把它们算上；该身份若显示，它们留在 `dropped`，若不显示则并入 `inactiveAgents`。
   整条泳道的运行都被封顶丢掉、但其中有在跑的，也照样判定（不活跃的移进 `inactiveAgents`，活跃的留在 `dropped`）；只剩已结束运行被丢的身份没有可判定的数据，留在 `dropped`。
-- **手动排位与本节同一条管线**：`PUT /lanes/prefs/order` 的 `index` 数的是页面上**显示着**的未置顶在跑运行（`inactiveAgents` 里的不占位），服务端与 `get_lanes` 共用一份「封顶 → 过滤 → 排序」。
+- **手动排位与本节同一条管线**：`PUT /lanes/prefs/order` 的 `index` 数的是页面上**显示着**的未置顶在跑运行（`inactiveAgents` 里的不占位），`live_order` 与 `get_lanes` 同一条管线：共用同一份输入（默认窗口里已结束的兄弟运行也读进来，它们决定「最新一条是否出错」「最后干活」）与「封顶 → 过滤 → 排序」。
 - **手动隐藏**（`lanes/prefs` 的 hidden）永远隐藏，只在 `hiddenAgents`，不进 `inactiveAgents`；`hiddenWaiting`、`stalePinned` 口径不变（置顶的永远显示，所以不会因本过滤而「没在跑」）。
 - **`inactiveAgents: [{agent, label, unverified, reason, lastWorkAt, runs, elapsedSeconds}]`**（追加，缺省 `[]`，最近干活的在前）：`runs` / `elapsedSeconds` 是该身份窗口里
   全部运行的条数与秒数，**包含**被 v2.23 封顶折掉的（折掉的并入这里，不再出现在 `dropped`，不重复数）。所以窗口里每条运行恰好落在
