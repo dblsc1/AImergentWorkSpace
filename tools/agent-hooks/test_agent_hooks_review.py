@@ -346,7 +346,7 @@ class StaleSnapshotTests(_BeatMixin, unittest.TestCase):
     def test_phase_keeps_the_ownership_fields_a_concurrent_writer_changed(self):
         self._save("s1", "run-1", "idle", "garden", cwd="/home/u/garden")
 
-        def concurrent(_session, _state, wait=False):  # 钩子读了快照之后，别人（发心跳的进程）改了状态
+        def concurrent(_session, _state, wait=False, probe=None):  # 钩子读了快照之后，别人（发心跳的进程）改了状态
             claude_hook._write_state("s1", {**claude_hook._read_state("s1"), "beat": "unsupported"})
 
         with mock.patch.object(claude_hook, "_spawn_beat", concurrent), mock.patch.object(cc, "phase_run", return_value={}):
@@ -354,7 +354,7 @@ class StaleSnapshotTests(_BeatMixin, unittest.TestCase):
         st = claude_hook._read_state("s1")
         self.assertEqual((st["lastPhase"], st["beat"]), ("working", "unsupported"))  # 只改自己的字段，别人的不抹掉
 
-        def new_session(_session, _state, wait=False):
+        def new_session(_session, _state, wait=False, probe=None):
             claude_hook._write_state("s1", {**claude_hook._read_state("s1"), "gen": "new-gen", "lastPhase": "idle"})
 
         with mock.patch.object(claude_hook, "_spawn_beat", new_session), mock.patch.object(cc, "phase_run", return_value={}):

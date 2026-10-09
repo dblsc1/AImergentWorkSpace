@@ -120,8 +120,12 @@ class BudgetFixTests(_HookProcMixin, unittest.TestCase):
         with mock.patch.object(time, "monotonic", return_value=100.0):
             with mock.patch.object(claude_hook, "_deadline", None):
                 with mock.patch.object(claude_hook.sys.stdin, "read", return_value="{}"):
-                    claude_hook.main(start=50.0)  # 解释器启动用掉的 50 秒要算进去
-                    self.assertEqual(claude_hook._deadline, 50.0 + claude_hook.HOOK_BUDGET)
+                    claude_hook.main(start=99.0)  # 解释器启动用掉的 1 秒要算进去：99 + 3 > 100 + 1.5
+                    self.assertEqual(claude_hook._deadline, 99.0 + claude_hook.HOOK_BUDGET)
+                    claude_hook.main(start=None)  # 对照：不给起点 = 从现在起算
+                    self.assertEqual(claude_hook._deadline, 100.0 + claude_hook.HOOK_BUDGET)
+                    claude_hook.main(start=50.0)  # 启动慢到预算早用完：仍保证启动之后 HOOK_MIN_WORK
+                    self.assertEqual(claude_hook._deadline, 100.0 + claude_hook.HOOK_MIN_WORK)
 
     def test_hook_against_a_hanging_server_finishes_within_the_overall_budget(self):
         """锁被占到约 1.9 秒才放，之后相位请求 + 改名重开两次请求各卡 1 秒：没有总预算（`_deadline=None`）要 ≥ 4 秒。"""

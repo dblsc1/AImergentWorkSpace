@@ -293,5 +293,90 @@ class BeatSpacingTests(_R3):
         self.assertTrue(all(g <= 600 + 2 * claude_hook.BEAT_CHECK_SECONDS for g in gaps), gaps)  # 从请求结束排会是 800+
 
 
+class _FakeStdin:
+    def __init__(self, fd):
+        self._fd = fd
+
+    def fileno(self):
+        return self._fd
+
+
+class MainRound4Tests(_R3):
+    EVENT = {"session_id": "s1", "hook_event_name": "UserPromptSubmit", "cwd": "/x"}
+
+    def setUp(self):
+        super().setUp()
+        mock.patch.object(claude_hook, "_deadline", None).start()  # main() 会设这个全局：别漏给别的测试（addCleanup(stopall) 在 _R3 里）
+
+    def _main(self, text, **kw):
+        with mock.patch.object(claude_hook, "_read_stdin", return_value=text):
+            return claude_hook.main(**kw)
+
+    def test_slow_start_still_leaves_time_for_the_phase_request(self):
+        self._save("s1", "run-1", "idle", "garden")
+        self.assertEqual(self._main(json.dumps(self.EVENT), start=time.monotonic() - 10), 0)  # 进程早在 10 秒前启动
+        self.assertEqual(self.phases, [("run-1", "working")])
+
+    def test_oversized_event_on_stdin_is_ignored(self):
+        self._save("s1", "run-1", "idle", "garden")
+        r, w = os.pipe()
+        body = json.dumps({**self.EVENT, "pad": "x" * (claude_hook.STDIN_MAX + 10)}).encode()
+        t = threading.Thread(target=self._feed, args=(w, body))
+        t.start()
+        self.addCleanup(os.close, r)
+        with mock.patch.object(claude_hook.sys, "stdin", _FakeStdin(r)):
+            self.assertEqual(claude_hook.main(), 0)
+        t.join(5)
+        self.assertEqual(self.phases, [])
+
+    @staticmethod
+    def _feed(fd, body):
+        try:
+            view = memoryview(body)
+            while view:
+                view = view[os.write(fd, view):]
+        except OSError:  # 读端不读了（超限就退出）
+            pass
+        finally:
+            os.close(fd)
+
+
+class ClosedStdinTests(_IsolatedHomeMixin, unittest.TestCase):  # 不继承 _R3：它把 subprocess.Popen 换成了假的
+    @unittest.skipIf(os.name == "nt", "POSIX 关 fd 0")
+    def test_closed_stdin_is_no_event_and_exit_0(self):
+        proc = subprocess.run(
+            [sys.executable, str(HERE / "claude_hook.py")], preexec_fn=lambda: os.close(0),  # fd 0 关掉 = `<&-`
+            env=self._subprocess_env(), capture_output=True, text=True, timeout=20,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+
+
+class SessionOfTieTests(_R3):
+    def test_equal_stamps_are_broken_by_state_mtime_not_session_id(self):
+        self._save("s1", "run-1", "idle", "a")
+        self._save("s2", "run-2", "idle", "b")
+        self._stamp("s1", 100.0)
+        self._stamp("s2", 100.0)
+        os.utime(claude_hook._state_file("s1"), (200, 200))
+        os.utime(claude_hook._state_file("s2"), (100, 100))
+        self.assertEqual(claude_hook._session_of(CLI, "born-1"), "s1")  # 会话号更大的 s2 不该赢
+        os.utime(claude_hook._state_file("s2"), (300, 300))
+        self.assertEqual(claude_hook._session_of(CLI, "born-1"), "s2")
+
+    def test_old_format_states_cannot_prove_a_move(self):
+        self._save("s1", "run-1", "idle", "a")
+        self._save("s2", "run-2", "idle", "b")
+        for s in ("s1", "s2"):  # 老格式：没有 activatedAt
+            claude_hook._write_state(s, {k: v for k, v in claude_hook._read_state(s).items() if k != "activatedAt"})
+        os.utime(claude_hook._state_file("s1"), (100, 100))
+        os.utime(claude_hook._state_file("s2"), (500, 500))
+        self.assertEqual(claude_hook._session_of(CLI, "born-1"), "s2")  # 监督者挑会话照旧
+        self.assertIsNone(claude_hook._session_of(CLI, "born-1", proven=True))  # 但不能据此断言「已换会话」
+        self.assertFalse(self._loop(_Clock(max_sleeps=2), session="s1") is None)  # 循环能正常转，不因此 stop
+        self.assertNotIn(("stop", "run-1", "done"), self.calls)
+        self._stamp("s2", 7.0)
+        self.assertEqual(claude_hook._session_of(CLI, "born-1", proven=True), "s2")
+
 if __name__ == "__main__":
     unittest.main()

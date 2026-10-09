@@ -50,6 +50,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cockpit_client as cc  # noqa: E402
 
 HOOK_TIMEOUT = 1.0  # 单次请求的上限（再被总预算裁短）
+HOOK_MIN_WORK = 1.5  # 启动之后保证的最短干活时间（秒）：进程启动慢（CPU 被抢）时，预算也至少留够一次拿锁 + 一次请求
 HOOK_BUDGET = 3.0  # 一次钩子调用的总预算（秒）：settings.json 里 SessionEnd 要给 `"timeout": 5`（见 README）
 _deadline: float | None = None  # 本次钩子调用的截止时刻（`time.monotonic()`），只由 `main()` 设；库式调用 / 心跳进程为 None = 不设总预算
 
@@ -431,10 +432,10 @@ def handle_phase(payload: dict, at: str) -> None:
     state = _read_state(session_id)
     if not state:
         return  # 没开过 run（SessionStart 没报成）：这次会话不画相位
-    _spawn_beat(session_id, state)  # 没人在发心跳（到了寿命 / 被杀 / 钩子升级前开的会话）就补一个伴随进程
+    probe = _cli_probe()
+    _spawn_beat(session_id, state, probe=probe)  # 没人在发心跳（到了寿命 / 被杀 / 钩子升级前开的会话）就补一个伴随进程
     if _phase_for(payload, "waiting_input") is None:
         return  # 与上次相位无关就不报的事件（只有 PostToolUse 看 lastPhase）：不用拿锁
-    probe = _cli_probe()
     title = cc.session_title(payload.get("transcript_path"))
     with _session_lock(session_id) as held:
         cur = _fresh(session_id, state) if held else None  # SessionEnd 已收尾 / 换了会话 / 没拿到锁：不写、不发
@@ -810,7 +811,7 @@ def _beat_session(
             if not _alive(cli, born):  # 先看死活：CLI 一死 monitor 就被收养、再也认不出祖先，先 identify 会静悄悄退掉、谁也不收尾
                 gone = _stop_gone(session_id, gen, cli, born, sleep)
                 return END_STUCK if gone is None else END_GONE if gone else END_OTHER
-            if (now := _session_of(cli, born)) and now != session_id:  # 同一个 CLI 已经在另一个会话上（/clear、恢复，而 SessionEnd 没拿到锁）：这个会话早结束了
+            if (now := _session_of(cli, born, proven=True)) and now != session_id:  # 同一个 CLI 已经在另一个会话上（/clear、恢复，而 SessionEnd 没拿到锁）：这个会话早结束了
                 moved = _stop_gone(session_id, gen, cli, born, sleep, outcome="done", moved=True)  # 收的结果同 SessionEnd 的缺省；锁内再核对一次
                 return END_STUCK if moved is None else END_OTHER
             if identify is not None and identify() not in ((cli, born), (0, None)):
@@ -851,7 +852,7 @@ def _stop_gone(
             if held:
                 if not _owned(_read_state(session_id), gen, cli, born):
                     return False
-                if moved and (now := _session_of(cli, born)) in (None, session_id):
+                if moved and (now := _session_of(cli, born, proven=True)) in (None, session_id):
                     return False  # 这个会话（又）成了该 CLI 的当前会话，或已认不出别的：不停
                 stuck_before = cc.stuck_requests()
                 _session_end_locked(session_id, outcome)
@@ -862,23 +863,24 @@ def _stop_gone(
     return True
 
 
-def _session_of(cli: int, born: str | None) -> str | None:
+def _session_of(cli: int, born: str | None, proven: bool = False) -> str | None:
     """这个 Claude Code 进程此刻的会话：状态目录里记着同一个 (pid, 启动时刻) 的状态文件中**激活戳 `activatedAt` 最大**的那个
-    （SessionStart 才写；没有戳的老状态按 0）。**限度**：墙钟，时钟被往回拨时可能选错，之后的 SessionStart 会纠正。"""
-    best: tuple[float, str] | None = None
+    （SessionStart 才写；没有戳的老状态按 0）；戳相同 / 都没有时按状态文件 mtime 定（只作平局裁决），再相同才按会话号。
+    `proven`：调用方要据此断言「CLI 已换到别的会话」——最大的候选没有戳（老格式状态证明不了激活先后）就返回 None，不当作换了。**限度**：墙钟，时钟被往回拨时可能选错，之后的 SessionStart 会纠正。"""
+    best: tuple[float, int, str] | None = None
     try:
         for path in cc.user_dir("state").glob("session-*.json"):
             try:
                 data = json.loads(_read_small(path))
                 stamp = data.get("activatedAt")
-                found = (float(stamp) if type(stamp) in (int, float) else 0.0, data["session"]) if data.get("cli") == [cli, born] else None
+                found = (float(stamp) if type(stamp) in (int, float) else 0.0, path.stat().st_mtime_ns, data["session"]) if data.get("cli") == [cli, born] else None
             except (OSError, ValueError, KeyError, AttributeError):
                 continue
-            if found and isinstance(found[1], str) and (best is None or found > best):
+            if found and isinstance(found[2], str) and (best is None or found > best):
                 best = found
     except OSError:
         pass
-    return best[1] if best else None
+    return best[2] if best and not (proven and best[0] == 0.0) else None
 
 
 def beat_loop(
@@ -1012,6 +1014,8 @@ STDIN_MAX = 1024 * 1024  # 钩子的事件 JSON 才几百字节；更大的不�
 def _read_stdin() -> str | None:
     """读事件 JSON：最多 `STDIN_MAX` 字节，且受总预算约束（POSIX：`select` 轮询，父进程一直不关管道也只等到预算用完）。
     超时 / 超限 → None（= 没有事件，exit 0）。Windows（或 stdin 没有文件描述符）退回普通的带上限读取，**没有时限**——已知限制。"""
+    if sys.stdin is None:  # fd 0 被关了（`<&-`）：没有事件
+        return None
     try:
         if os.name == "nt":
             raise OSError
@@ -1045,7 +1049,8 @@ def main(start: float | None = None) -> int:
         except BaseException:  # noqa: BLE001 — 含 argparse 的 SystemExit：没人看它的输出，出错就是这个会话没有心跳
             pass
         return 0
-    _deadline = (time.monotonic() if start is None else start) + HOOK_BUDGET  # 钩子调用的总预算从这里起算（只有钩子路径设；心跳进程是长命的）
+    now = time.monotonic()
+    _deadline = max((now if start is None else start) + HOOK_BUDGET, now + HOOK_MIN_WORK)  # 总预算从进程启动起算，但启动之后至少留 HOOK_MIN_WORK（只有钩子路径设；心跳进程是长命的）
     at = cc.now_iso()  # 事件发生的那一刻，先于读 stdin / 网络
     try:
         payload = json.loads(_read_stdin() or "{}")
