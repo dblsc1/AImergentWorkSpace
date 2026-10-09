@@ -78,8 +78,14 @@ def _printable(value, limit: int = 64) -> str:
     return re.sub(r"[^A-Za-z0-9_.:@/-]", "?", str(value))[:limit]
 
 
+def _safe(value, limit: int = 200) -> str:
+    """路径 / 环境来的片段**只用于输出**：控制字符、换行、转义序列、零宽 / 双向控制（`isprintable()` 为假的）换成 `?`，截到 `limit`。
+    文件系统调用仍用原始路径；中文 / 常见路径字符保留（不像 `_printable` 那么保守）。"""
+    return "".join(c if c.isprintable() else "?" for c in str(value))[:limit]
+
+
 def _warn(msg: str) -> None:
-    print(f"agent-hooks: {msg}", file=sys.stderr)
+    print(f"agent-hooks: {_safe(msg, 400)}", file=sys.stderr)  # 所有 stderr 提示统一过一遍：拼进去的路径 / 地址再怪也不带控制字符
 
 
 # ── 每会话一个状态文件（不是一份共享文件） ────────────────────────
@@ -305,8 +311,21 @@ def _state_dir_problem() -> str | None:
     try:
         _ensure_dir(path)
     except OSError:
-        return f"状态目录 {path} 是符号链接、不属于你或改不了权限，本次会话不计相位、不发心跳。修法：删掉链接 / sudo chown -R \"$USER\" {path} && chmod 700 {path}"
+        shown = _safe(path)  # 只用于输出（环境 / XDG / home 来的路径可能夹换行 / 转义序列）
+        return f"状态目录 {shown} 是符号链接、不属于你或改不了权限，本次会话不计相位、不发心跳。修法：删掉链接 / sudo chown -R \"$USER\" {shown} && chmod 700 {shown}"
     return None
+
+
+def _ours(state: dict, probe: tuple[int, str | None]) -> bool:
+    """**调用方持会话锁。** 锁只串行、不授权：发起这次调用的 CLI（`probe` = 钩子本次调用取的 pid + 启动时刻）是不是这份状态记的那个 `cli`。
+    不是（CLI A 的迟到事件撞上 CLI B 恢复同一会话后的状态）→ 调用方什么都不做：不停 run、不删状态、不写相位、不改名。
+    **限度**：认不出发起的 CLI（不支持的平台 / 取不到启动时刻），或状态里没记 CLI，保持原来的行为（放行）；
+    同一个 CLI 更早一代的迟到事件（同进程内 `/clear`、`--resume`）没有事件代号就分不出来。"""
+    cli, born = _cli_identity(probe)
+    rec = state.get("cli")
+    if not cli or not (isinstance(rec, list) and len(rec) == 2 and rec[0]):
+        return True
+    return rec == [cli, born]
 
 
 def _unsupervised_reason(probe: tuple[int, str | None] | None = None) -> str | None:
@@ -355,11 +374,12 @@ def handle_session_start(payload: dict) -> None:
                     cc.stop_run(cc.load_config(), run_id, "cancelled", timeout=_http_timeout())
             return
         cur = _read_state(session_id) or {}
-        takeover = bool(prev) and prev.get("cli") != cur.get("cli")  # 另一个 CLI 恢复了这个会话：老的发心跳的在退
         if not cur.get("warned") and (why := _unsupervised_reason(probe)):
             _warn(f"没有心跳监督：{why}")  # 每个会话只说一次（记进状态）
             _write_state(session_id, {**cur, "warned": True})
-    _spawn_beat(session_id, cur, wait=takeover, probe=probe)
+    # 无论有没有旧状态：`.beat` 被占着（旧代的发心跳进程睡在里面，醒来发现归属号变了才退）就起一个有界的 `--wait` 伴随进程，
+    # 否则「SessionEnd 删状态 → 同会话 SessionStart」会没人接着发。`takeover` 只剩调用习惯，行为已并进 wait=True。
+    _spawn_beat(session_id, cur, wait=True, probe=probe)
 
 
 # Notification 的 notification_type → 相位（其余种类不报）。message 字段不读。
@@ -402,7 +422,9 @@ def _phase_for(payload: dict, last_phase: str | None) -> tuple[str, str | None, 
 
 def handle_phase(payload: dict, at: str) -> None:
     """`at` 是钩子进程开始处理的那一刻（异步钩子并行跑，服务端按 at 排）。
-    持会话锁：重读状态 → 写 lastPhase → 发相位 →（会话改名 / 原 run 被收了就）改名重开，一整段在锁内；拿不到锁什么都不写、不发。"""
+    持会话锁：重读状态 → **在锁内按新状态定相位** → 写 lastPhase → 发相位 →（会话改名 / 原 run 被收了就）改名重开，一整段在锁内；
+    拿不到锁什么都不写、不发。发起的 CLI 不是状态记的那个 → 整个事件不做（`_ours`）。
+    **限度**：异步钩子的乱序到达在本地不重排（服务端按 `at` 排）。"""
     session_id = payload.get("session_id")
     if not session_id:
         return
@@ -410,15 +432,18 @@ def handle_phase(payload: dict, at: str) -> None:
     if not state:
         return  # 没开过 run（SessionStart 没报成）：这次会话不画相位
     _spawn_beat(session_id, state)  # 没人在发心跳（到了寿命 / 被杀 / 钩子升级前开的会话）就补一个伴随进程
-    decision = _phase_for(payload, state.get("lastPhase"))
-    if decision is None:
-        return
-    phase, detail, reply = decision
+    if _phase_for(payload, "waiting_input") is None:
+        return  # 与上次相位无关就不报的事件（只有 PostToolUse 看 lastPhase）：不用拿锁
+    probe = _cli_probe()
     title = cc.session_title(payload.get("transcript_path"))
     with _session_lock(session_id) as held:
         cur = _fresh(session_id, state) if held else None  # SessionEnd 已收尾 / 换了会话 / 没拿到锁：不写、不发
-        if not cur:
+        if not cur or not _ours(cur, probe):
             return
+        decision = _phase_for(payload, cur.get("lastPhase"))  # 锁内的新状态：锁前读到的 lastPhase 可能已被并发的钩子改过
+        if decision is None:
+            return
+        phase, detail, reply = decision
         _write_state(session_id, {**cur, "lastPhase": phase})  # 在锁内重读的状态上只改 lastPhase：归属字段绝不从锁前快照写
         closed = False
         try:
@@ -442,15 +467,18 @@ def _fresh(session_id: str, state: dict) -> dict | None:
 def _relabel_locked(payload: dict, session_id: str, title: str | None, state: dict) -> None:
     """**调用方持会话锁。** 改名（v0.4 心跳起也用来在原 run 被服务端收掉后重开）：相位取锁内重读的状态里的 `lastPhase`
     （不是调用方手里的旧参数），改名 / 重开**绝不写 `lastPhase`**。同一把锁下 SessionEnd 不可能插进来停 run、删状态，
-    所以 start 返回的 runId（同一条改名，或服务端已收了原 run 而换成新的）直接写回。"""
+    所以 start 返回的 runId（同一条改名，或服务端已收了原 run 而换成新的）直接写回；写不下来 → 见下面的补偿 stop。
+    调用方负责「发起的 CLI 是不是这份状态的主人」（钩子路径 `_ours`；发心跳的进程靠 `gen` 归属核对，换 CLI 必换 `gen`）。"""
     cur = _fresh(session_id, state)
     if not cur:
         return
     phase = cur.get("lastPhase")
     try:
         run_id, label = _start(payload, session_id, phase if phase in cc.PHASES else "idle", title)
-        if run_id:
-            _write_state(session_id, {**cur, "runId": run_id, "label": label})
+        if run_id and not _write_state(session_id, {**cur, "runId": run_id, "label": label}):
+            if run_id != cur["runId"]:  # 重开了新 run 却记不下来：停掉它，保留旧记录（同 SessionStart 的补偿规则；尽力而为）
+                with contextlib.suppress(Exception):
+                    cc.stop_run(cc.load_config(), run_id, "cancelled", timeout=_http_timeout())
     except Exception as e:  # noqa: BLE001 — 改名没报上去：下一个事件再试
         category = e if isinstance(e, cc.CockpitError) else "配置错误"
         _warn(f"会话改名上报失败（{category}）")
@@ -460,8 +488,12 @@ def handle_session_end(payload: dict) -> None:
     session_id = payload.get("session_id")
     if not session_id:
         return
+    probe = _cli_probe()
     with _session_lock(session_id) as held:  # 读状态 → stop → 删状态 一整段持锁：停的是锁内读到的那条 run
         if held:  # 拿不到锁：不停不删（留给服务端的失联 / 遗忘超时），不和别的持锁者抢
+            st = _read_state(session_id)
+            if st and not _ours(st, probe):
+                return  # 别的 CLI 恢复了这个会话，这是老 CLI 迟到的 SessionEnd：不停它的 run、不删它的状态
             _session_end_locked(session_id, _REASON_TO_OUTCOME.get(payload.get("reason"), "done"))
 
 
@@ -602,7 +634,9 @@ def _beat_facts(session_id: str, payload: dict, prev: dict | None = None, probe:
     # `gen`：这一次 SessionStart 写下状态时随机生成的归属号。发心跳的进程带着它和 CLI 身份，每圈核对；会话被另一个 CLI
     # 恢复（SessionStart 换了状态）后，老进程对不上就放手，不会去停新 CLI 的运行（见 `_owned`）。
     # **同一个 CLI 再来一次 SessionStart（/compact、恢复）沿用原来的 `gen`**：否则在发的老进程反被判成「换了主人」退出，没人接着发。
-    facts: dict = {"session": session_id, "gen": secrets.token_hex(8)}
+    # `activatedAt`：**只有 SessionStart 写**（含同会话的再一次 SessionStart = 刷新），别的写入（相位 / 改名 / 重开）一律 `{**cur, …}` 原样带过。
+    # `_session_of` 凭它认「这个 CLI 此刻在哪个会话」，不看文件 mtime（迟到的老会话钩子重写旧状态会抬高 mtime）。
+    facts: dict = {"session": session_id, "gen": secrets.token_hex(8), "activatedAt": time.time()}
     for key, source in (("cwd", "cwd"), ("transcript", "transcript_path")):
         if isinstance(payload.get(source), str):
             facts[key] = payload[source]
@@ -689,8 +723,15 @@ def _usable(state: dict) -> bool:
     return bool(config["url"]) and (bool(config["token"]) or not state.get("auth"))
 
 
+class _MutationStuck(Exception):
+    """`_beat_once` 里改状态的请求（重开的 `/start`）超时而工作线程还在：`_beat_session` 据此返回 `END_STUCK`。"""
+
+
 def _beat_once(session_id: str, state: dict, source: str) -> float | None:
-    """发一次心跳，返回下一次隔多少秒（None = 别再发了）。服务端说这条运行已结束（机器睡过头被判了失联）而会话还在 → 重开一条。"""
+    """发一次心跳，返回下一次隔多少秒（None = 别再发了）。服务端说这条运行已结束（机器睡过头被判了失联）而会话还在 → 重开一条。
+    **心跳不持会话锁**（只有 `.beat` 互斥），所以「每个改状态的请求都持锁」不含它。这不会让心跳改坏正在收尾的运行：服务端的
+    心跳端点（`modules/nexus-core/.../timer/agent_phases.py::heartbeat` → `repo.touch_agent_run`）只对**未打关闭标记**
+    （`closing` 不存在）的运行更新 `lastSeenAt` / `beatCount`，已关闭 / 关闭中的回 `applied:false, reason:"closed"`，既不重开也不改它。"""
     interval, closed = cc.beat(cc.load_config(), state["runId"], BEAT_TIMEOUT, source)
     if closed == cc.BEAT_UNSUPPORTED:  # 服务端没有心跳：记进状态，之后钩子事件不再起发心跳的进程；绝不声明、不重开
         with _session_lock(session_id) as held:
@@ -702,7 +743,10 @@ def _beat_once(session_id: str, state: dict, source: str) -> float | None:
         payload = {"cwd": state["cwd"], "transcript_path": state.get("transcript")}
         with _session_lock(session_id) as held:  # 重开要持锁（拿不到就留给下一圈 / 下一个钩子事件）；相位取锁内状态里的 lastPhase
             if held:
+                stuck_before = cc.stuck_requests()
                 _relabel_locked(payload, session_id, cc.session_title(state.get("transcript")), state)
+                if cc.stuck_requests() > stuck_before:
+                    raise _MutationStuck  # /start 超时而线程还活着：它可能在锁放掉之后才到服务端，进程不许接着正常干活
         # 重开成了：新的那条还没声明心跳，下一轮就发。没成：closed 过一会儿再试；服务端不认这个运行（404，
         # 库重置 / 换了租户）就只重开这一次，不成就停，等下一个钩子事件再补一个发心跳的（有界，不是每个间隔都敲）
         if _read_run_id(session_id) != state["runId"]:
@@ -755,7 +799,7 @@ def _beat_session(
         lock.write(f"{os.getpid()} {source}")
         lock.flush()
         skips = 0
-        next_beat = clock()  # 第一下马上发：声明这条运行会发心跳。用墙钟排：机器睡醒后马上补一下
+        next_beat = clock()  # 第一下马上发：声明这条运行会发心跳。限度：`clock` 是单调钟，机器休眠期间不走，睡醒后下一下可能晚到一个间隔内
         while budget[0] > 0:
             budget[0] -= 1  # 寿命按圈数算（每圈睡 BEAT_CHECK_SECONDS），不受墙钟跳变影响
             state = _read_state(session_id)
@@ -764,10 +808,11 @@ def _beat_session(
             if not _lock_current(lock, session_id):
                 return END_OTHER
             if not _alive(cli, born):  # 先看死活：CLI 一死 monitor 就被收养、再也认不出祖先，先 identify 会静悄悄退掉、谁也不收尾
-                return END_GONE if _stop_gone(session_id, gen, cli, born, sleep) else END_OTHER
+                gone = _stop_gone(session_id, gen, cli, born, sleep)
+                return END_STUCK if gone is None else END_GONE if gone else END_OTHER
             if (now := _session_of(cli, born)) and now != session_id:  # 同一个 CLI 已经在另一个会话上（/clear、恢复，而 SessionEnd 没拿到锁）：这个会话早结束了
-                _stop_gone(session_id, gen, cli, born, sleep, outcome="done")  # 收的结果同 SessionEnd 的缺省
-                return END_OTHER
+                moved = _stop_gone(session_id, gen, cli, born, sleep, outcome="done", moved=True)  # 收的结果同 SessionEnd 的缺省；锁内再核对一次
+                return END_STUCK if moved is None else END_OTHER
             if identify is not None and identify() not in ((cli, born), (0, None)):
                 return END_OTHER  # 认出的是另一个 CLI；认不出但 pid + 启动时刻仍活着 = 没变
             if clock() >= next_beat:
@@ -778,17 +823,27 @@ def _beat_session(
                     next_beat = clock() + cc.HEARTBEAT_MIN
                 else:
                     skips = 0
-                    wait_s = _beat_once(session_id, state, source)
+                    attempt_at = clock()  # 从**这一次尝试开始**的时刻排下一次：请求慢不会把间隔越拉越长（间隔 ≤ 服务端给的）
+                    try:
+                        wait_s = _beat_once(session_id, state, source)
+                    except _MutationStuck:
+                        return END_STUCK
                     if wait_s is None:
                         return END_OTHER  # 重开不成：停，下一个钩子事件再起
-                    next_beat = clock() + wait_s
+                    next_beat = attempt_at + wait_s
             sleep(BEAT_CHECK_SECONDS)
     return END_OTHER
 
 
-def _stop_gone(session_id: str, gen: str | None, cli: int, born: str | None, sleep, outcome: str = GONE_OUTCOME) -> bool:
+def _stop_gone(
+    session_id: str, gen: str | None, cli: int, born: str | None, sleep, outcome: str = GONE_OUTCOME, moved: bool = False,
+) -> bool | None:
     """CLI 没了：持会话锁、核对归属后报 stop。没报成（服务端暂时不可达、没拿到锁）就隔 `STOP_RETRY_SECONDS` 再试，
-    最多 `STOP_ATTEMPTS` 次，之后不管了（CLI 都没了，兜底是服务端的失联规则）。会话被别的 CLI 恢复了 → False（不停）。"""
+    最多 `STOP_ATTEMPTS` 次，之后不管了（CLI 都没了，兜底是服务端的失联规则）。会话被别的 CLI 恢复了 → False（不停）。
+    `moved`：调用方是因为「CLI 已在别的会话上」才来收的——**锁内、停之前再核对一遍**这个会话还是不是被别人顶替了
+    （锁前的判断可能已过时），不是 → False（不停）。
+    **返回 None = `/stop` 超时而它的工作线程还活着**：已发出的请求可能在锁放掉之后才到服务端（见 README「已知限制」），
+    调用方必须让整个进程退出（`END_STUCK`），不许放锁后接着正常干活、也不重试。"""
     for attempt in range(STOP_ATTEMPTS):
         if attempt:
             sleep(STOP_RETRY_SECONDS)
@@ -796,20 +851,27 @@ def _stop_gone(session_id: str, gen: str | None, cli: int, born: str | None, sle
             if held:
                 if not _owned(_read_state(session_id), gen, cli, born):
                     return False
+                if moved and (now := _session_of(cli, born)) in (None, session_id):
+                    return False  # 这个会话（又）成了该 CLI 的当前会话，或已认不出别的：不停
+                stuck_before = cc.stuck_requests()
                 _session_end_locked(session_id, outcome)
+                if cc.stuck_requests() > stuck_before:
+                    return None
                 if _read_state(session_id) is None:  # 成了（或服务端说这条早没了）：状态已删
                     return True
     return True
 
 
 def _session_of(cli: int, born: str | None) -> str | None:
-    """这个 Claude Code 进程此刻的会话：状态目录里记着同一个 (pid, 启动时刻) 的状态文件中最新的那个。"""
+    """这个 Claude Code 进程此刻的会话：状态目录里记着同一个 (pid, 启动时刻) 的状态文件中**激活戳 `activatedAt` 最大**的那个
+    （SessionStart 才写；没有戳的老状态按 0）。**限度**：墙钟，时钟被往回拨时可能选错，之后的 SessionStart 会纠正。"""
     best: tuple[float, str] | None = None
     try:
         for path in cc.user_dir("state").glob("session-*.json"):
             try:
                 data = json.loads(_read_small(path))
-                found = (path.stat().st_mtime, data["session"]) if data.get("cli") == [cli, born] else None
+                stamp = data.get("activatedAt")
+                found = (float(stamp) if type(stamp) in (int, float) else 0.0, data["session"]) if data.get("cli") == [cli, born] else None
             except (OSError, ValueError, KeyError, AttributeError):
                 continue
             if found and isinstance(found[1], str) and (best is None or found > best):
@@ -820,7 +882,7 @@ def _session_of(cli: int, born: str | None) -> str | None:
 
 
 def beat_loop(
-    source: str, session_id: str | None = None, cli: int = 0, *, sleep=time.sleep, clock=time.time,
+    source: str, session_id: str | None = None, cli: int = 0, *, sleep=time.sleep, clock=time.monotonic,
     born: str | None = None, gen: str | None = None, identify=None, wait: bool = False,
 ) -> None:
     """发心跳的进程的主体。`cli` = Claude Code 的 pid，`born` = 它的启动时刻（companion 由启动它的钩子给；
@@ -882,7 +944,7 @@ def _dir_status(path: Path) -> str:
         return "不是目录 → 钩子拒绝使用"
     mode = stat.S_IMODE(st.st_mode)
     if os.name != "nt" and st.st_uid != os.getuid():
-        return f"权限 {mode:04o}，不属于你 → 钩子拒绝使用；修法：sudo chown -R \"$USER\" {path} && chmod 700 {path}"
+        return f"权限 {mode:04o}，不属于你 → 钩子拒绝使用；修法：sudo chown -R \"$USER\" {_safe(path)} && chmod 700 {_safe(path)}"
     return f"权限 {mode:04o}，可用" + ("（钩子下次会把它修成 0700）" if mode & 0o077 else "")
 
 
@@ -892,7 +954,7 @@ def _doctor() -> int:
     cfg = cc.user_dir("config") / cc.CONFIG_FILENAME
     config = cc.load_config()
     source = ("环境变量 COCKPIT_URL" if env("COCKPIT_URL") else "插件设置 CLAUDE_PLUGIN_OPTION_COCKPIT_URL"
-              if env("CLAUDE_PLUGIN_OPTION_COCKPIT_URL") else f"配置文件 {cfg}" if config["url"] else "没配")
+              if env("CLAUDE_PLUGIN_OPTION_COCKPIT_URL") else f"配置文件 {_safe(cfg)}" if config["url"] else "没配")
     try:
         parts = urllib.parse.urlsplit(config["url"])  # 只取主机和端口：地址里万一带了 user:pass@ 也不外露
         host = _printable((parts.hostname or "-") + (f":{parts.port}" if parts.port else ""))
@@ -901,7 +963,7 @@ def _doctor() -> int:
     print(f"配置来源：{source}；服务器 {host}；令牌 {'有' if config['token'] else '无'}")
     state_dir = cc.user_dir("state")
     status = _dir_status(state_dir)
-    print(f"状态目录：{state_dir}（{status}）")
+    print(f"状态目录：{_safe(state_dir)}（{status}）")
     chain, pid = [], os.getppid()
     for _ in range(ANCESTOR_DEPTH):
         info = _proc(pid) if pid > 1 else None
@@ -944,6 +1006,35 @@ def _doctor() -> int:
     return 0
 
 
+STDIN_MAX = 1024 * 1024  # 钩子的事件 JSON 才几百字节；更大的不是 Claude Code 发的，当没有事件
+
+
+def _read_stdin() -> str | None:
+    """读事件 JSON：最多 `STDIN_MAX` 字节，且受总预算约束（POSIX：`select` 轮询，父进程一直不关管道也只等到预算用完）。
+    超时 / 超限 → None（= 没有事件，exit 0）。Windows（或 stdin 没有文件描述符）退回普通的带上限读取，**没有时限**——已知限制。"""
+    try:
+        if os.name == "nt":
+            raise OSError
+        import select
+
+        fd = sys.stdin.fileno()
+    except (OSError, ValueError, AttributeError, ImportError):
+        data = sys.stdin.read(STDIN_MAX + 1)
+        return None if len(data) > STDIN_MAX else data
+    chunks, size = [], 0
+    while True:
+        left = _remaining(HOOK_BUDGET)
+        if left <= 0 or not select.select([fd], [], [], left)[0]:
+            return None
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            return b"".join(chunks).decode("utf-8", errors="replace")
+        size += len(chunk)
+        if size > STDIN_MAX:
+            return None
+        chunks.append(chunk)
+
+
 def main(start: float | None = None) -> int:
     global _deadline
     if "--doctor" in sys.argv[1:]:
@@ -957,7 +1048,7 @@ def main(start: float | None = None) -> int:
     _deadline = (time.monotonic() if start is None else start) + HOOK_BUDGET  # 钩子调用的总预算从这里起算（只有钩子路径设；心跳进程是长命的）
     at = cc.now_iso()  # 事件发生的那一刻，先于读 stdin / 网络
     try:
-        payload = json.loads(sys.stdin.read() or "{}")
+        payload = json.loads(_read_stdin() or "{}")
     except ValueError:
         payload = {}
     try:
