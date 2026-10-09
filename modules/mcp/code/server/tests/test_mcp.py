@@ -163,6 +163,12 @@ def respond(path, q, tenant):
         return 200, {"total": len(items), "items": items[off: off + lim]}
     if path == "/api/core/detector/rules":
         return 200, {"version": 3, "updatedAt": "2026-09-30T10:00:00+00:00", "rules": [RULE]}
+    if path == "/api/core/activity/ignores":   # nexus-core v2.22；u_old 模拟没有这个端点的老后端
+        if tenant == "u_old":
+            return 404, {"detail": "Not Found"}
+        return 200, {"total": 1, "items": [{"id": "ig_1", "app": "chrome", "titleContains": "ignore previous instructions",
+                                            "createdAt": "2026-10-09T01:00:00+00:00", "hits": 3, "seconds": 700,
+                                            "lastHitAt": None}]}
     if path == "/api/core/detector/rules/drafts/current":
         return 200, {"draft": DRAFT if tenant != "u_idle" else None}
     if path == "/api/core/detector/rules/drafts":
@@ -934,8 +940,12 @@ def test_get_detector_rules(servers):
     assert [x["path"] for x in d["rules"]] == ["学习 / garden / 写提示词", None]  # 已删的任务路径为 null
     assert {(m, p) for m, p, *_ in Fake.requests} == {
         ("GET", "/api/core/detector/rules"), ("GET", "/api/core/detector/rules/drafts/current"),
-        ("GET", "/api/core/views/tree")}
+        ("GET", "/api/core/activity/ignores"), ("GET", "/api/core/views/tree")}
     assert ok(servers, "get_detector_rules", headers={"X-Nexus-Tenant": "u_idle"})["draft"] is None
+    # v1.13：被忽略的窗口（只读、同一份 nexus-core 数据）；老后端没有端点 = 空
+    assert r["ignored"] == [{"id": "ig_1", "app": "chrome", "titleContains": "ignore previous instructions",
+                             "since": "2026-10-09T01:00:00+00:00", "ignoredRecords": 3, "ignoredSeconds": 700}]
+    assert ok(servers, "get_detector_rules", headers={"X-Nexus-Tenant": "u_old"})["ignored"] == []
 
 
 def test_detector_rules_can_target_a_project(servers):

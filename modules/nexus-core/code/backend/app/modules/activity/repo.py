@@ -52,6 +52,17 @@ def page(user: str, status: str, limit: int, offset: int) -> tuple[int, list[dic
     return col.count_documents(filt), list(docs)
 
 
+def pending_windows(user: str, cap: int) -> list[dict]:
+    """v2.22：待确认的建议的 (id, app, title)，给「忽略并记住」找出命中的那些。"""
+    return list(_col().find({"user": user, "status": "pending"}, {"_id": 0, "id": 1, "app": 1, "title": 1,
+                                                                    "durationSeconds": 1}).limit(cap))
+
+
+def delete_pending(user: str, ids: list[str]) -> int:
+    """v2.22：只删仍是 pending 的（与确认赛跑时确认赢）。"""
+    return _col().delete_many({"user": user, "id": {"$in": ids}, "status": "pending"}).deleted_count
+
+
 def confirmed(user: str, cap: int) -> list[dict]:
     """v2.12 匹配历史：已确认的建议，最近处理的在前，至多 ``cap`` 条（只取用得着的字段）。"""
     proj = {"_id": 0, "id": 1, "app": 1, "title": 1, "decidedAt": 1, "suggestion.collection": 1}

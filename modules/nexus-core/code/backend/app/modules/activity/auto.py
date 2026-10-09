@@ -28,7 +28,7 @@ from ..planner import unclassified
 from ..planner.errors import InvalidInputError, NotFoundError
 from ..projector.handlers import lanes as lanes_projection
 from ..timer import service as timer_service
-from . import choice_repo, presence, repo, service
+from . import choice_repo, ignore, presence, repo, service
 from .history import norm_title
 
 #: 最新一次心跳距今不超过它才算「人在电脑前」（页面画「在电脑前」同一个口径）
@@ -174,8 +174,10 @@ def state(user: str, now: datetime, timer_running: bool, asks: Any, presence_doc
 
 def heartbeat(device_id: str, app: str, title: str, afk: bool, guess: dict | None,
               spans: list[dict] | None = None, sent_at: datetime | None = None) -> dict:
+    # v2.22：命中「忽略并记住」的窗口换成「没有窗口」再存（人仍在电脑前），也不续它的临时选择
+    app, title, guess, spans, ignored = ignore.mask_beat(current_tenant(), app, title, guess, spans)
     out = presence.heartbeat(device_id, app, title, afk, guess, spans, sent_at)
-    if not afk:
+    if not afk and not ignored:
         now = _now()
         choice_repo.seen(current_tenant(), window_key(*presence.clip(app, title)), now, now + CHOICE_AWAY)
     return out

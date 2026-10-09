@@ -521,12 +521,23 @@ def get_detector_rules(a, tenant):
     r = _get("/api/core/detector/rules", {}, tenant)
     d = _get("/api/core/detector/rules/drafts/current", {}, tenant)["draft"]
     paths = _Paths(_tree(tenant))
+    # v1.13：人说过「忽略并记住」的窗口（nexus-core v2.22）。这些窗口不会产生建议，所以 list_activity_suggestions 里看不到；
+    # 老后端没有这个端点（404）= 空。app / titleContains 是人写的字，同样过一遍
+    try:
+        ignored = _get("/api/core/activity/ignores", {}, tenant)["items"]
+    except ToolError as e:
+        if e.status != 404:
+            raise
+        ignored = []
     draft = None
     if d:
         draft = {"draftId": d["id"], "author": d["author"], "summary": d["summary"], "createdAt": d["createdAt"],
                  "expiresAt": d["expiresAt"], "diff": d["diff"], "rules": [_rule_out(x, paths) for x in d["rules"]]}
     return {"version": r["version"], "updatedAt": r["updatedAt"],
-            "rules": [_rule_out(x, paths) for x in r["rules"]], "draft": draft, "truncated": False}
+            "rules": [_rule_out(x, paths) for x in r["rules"]], "draft": draft, "truncated": False,
+            "ignored": [{"id": x["id"], "app": _screen(x["app"], MAX_TITLE), "titleContains": _screen_or_none(x["titleContains"]),
+                         "since": x["createdAt"], "ignoredRecords": x["hits"], "ignoredSeconds": x["seconds"]}
+                        for x in ignored[:MAX_ITEMS]]}
 
 
 def propose_detector_rules(a, tenant):
@@ -679,7 +690,8 @@ _SPECS = [
     (get_detector_rules, "活动分类规则",
      "桌面活动检测用来把窗口归到任务的分类规则（全部，按顺序第一条命中生效；app / title 是不分大小写的 RE2 正则，"
      "匹配程序名 / 脱敏后的窗口标题），每条带 id、taskId（只到项目的规则是 projectId）与路径；"
-     "draft 是还没应用的规则草稿（没有为 null）。"
+     "draft 是还没应用的规则草稿（没有为 null）。ignored 是用户说过「忽略并记住」的窗口（程序 + 可选的标题片段，"
+     "不是正则；已累计忽略多少条记录 / 秒）：它们不记为工作、不产生建议，不要再为它们归类或起草规则。"
      "改规则前先读它：propose_detector_rules 要交一整套，改已有规则须带回原 id。"
      "note 里可能抄着窗口标题：" + _SCREEN + _IDS,
      _schema({}), [], {}),

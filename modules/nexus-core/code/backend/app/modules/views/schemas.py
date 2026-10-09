@@ -472,6 +472,9 @@ class LaneAgent(_Strict):
     phases: list[LanePhase]
     attention: list[LaneAttention] = []  #: v2.17：人把注意力放在它上面的时间（裁到窗口、已合并）
     unverified: bool = False  #: v2.19：匿名开的运行（契约「调用方范围与匿名上报」）
+    pinned: bool = False  #: v2.22：这个代理身份被置顶了
+    manualOrder: int | None = None  #: v2.22：手动排位的 slot（只对还在跑的运行；没有为 null）
+    rank: int = 0  #: v2.22：服务端排好的先后（0 = 最前）；agents 数组本身仍按开始时间
 
 
 class LaneReply(_Strict):
@@ -487,6 +490,15 @@ class LaneAttend(_Strict):
     until: str
 
 
+class LaneHidden(_Strict):
+    """v2.22：被藏起来的代理（给页面列「已隐藏」并恢复）。``live``：它现在有在跑的运行；``phase``：那些运行里最需要你的相位。"""
+
+    agent: str
+    label: str
+    live: bool
+    phase: str | None
+
+
 class LanesOut(_Strict):
     """``GET /api/core/views/lanes``（契约 v2.4）。时间线，不是汇总：**没有任何合计字段**。"""
 
@@ -498,3 +510,5 @@ class LanesOut(_Strict):
     agents: list[LaneAgent]
     interactions: list[LaneReply | LaneAttend]
     truncated: bool
+    hiddenAgents: list[LaneHidden] = []  #: v2.22
+    hiddenWaiting: int = 0  #: v2.22：藏起来的在跑运行里正等你的个数（页面只给一个很小的提示）

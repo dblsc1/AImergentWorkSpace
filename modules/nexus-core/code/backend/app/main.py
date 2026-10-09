@@ -14,6 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from .config import settings
+from .modules.activity.ignore_router import router as ignore_router
 from .modules.activity.presence_router import router as presence_router
 from .modules.activity.reports import TooManyReportsError
 from .modules.activity.reports_router import router as reports_router
@@ -27,6 +28,7 @@ from .modules.events.service import InvalidQueryError
 from .modules.export.router import router as export_router
 from .modules.planner.errors import ForbiddenError, StalePlanError, UnprocessableError
 from .modules.planner.import_router import router as planner_import_router
+from .modules.prefs.router import router as prefs_router
 from .modules.planner.repo import ensure_tenant_indexes
 from .modules.planner.service import HasChildrenError, InvalidInputError, NotFoundError
 from .modules.planner.unified_router import router as planner_unified_router
@@ -101,7 +103,9 @@ app.include_router(restore_router, prefix=API_PREFIX)
 app.include_router(activity_router, prefix=API_PREFIX)  # v2.2 活动建议
 app.include_router(presence_router, prefix=API_PREFIX)  # v2.4 在场心跳
 app.include_router(reports_router, prefix=API_PREFIX)  # v2.20 AI 报告
+app.include_router(ignore_router, prefix=API_PREFIX)  # v2.22 忽略并记住
 app.include_router(detector_router, prefix=API_PREFIX)  # v2.5 检测程序设置；v2.6 分类规则
+app.include_router(prefs_router, prefix=API_PREFIX)  # v2.22 泳道偏好
 
 
 # 域错误 → 状态码的映射只在这里（contract.md v0.4「校验」表 + v0.6「档案读端」）：

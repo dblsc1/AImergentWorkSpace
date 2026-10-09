@@ -12,6 +12,7 @@ from datetime import datetime
 from ...config import settings
 from ...tenant import current as current_tenant
 from ...timeutil import local_date
+from ..prefs import service as prefs_service
 from ..projector.handlers import agent_daily_stats as agent_projection
 from ..timer import service as timer_service
 from .queries import _today
@@ -46,7 +47,9 @@ def get_agent_time(date_from: str | None = None, date_to: str | None = None) -> 
     # （反过来最多暂时两边都不在，下次读就对了）。
     timer_service.list_open_agent_runs(user)
     rows = agent_projection.read_agent_daily_stats(user, date_from=date_from, date_to=date_to)
-    open_runs = timer_service.list_open_agent_runs(user)
+    hidden = prefs_service.hidden_keys(user)  # v2.22：藏起来的不列在 open[]（open[] 本来就不计入汇总）
+    open_runs = [r for r in timer_service.list_open_agent_runs(user)
+                 if prefs_service.ident(r.get("agent"), r.get("label")) not in hidden]
 
     days = _sum_by(rows, lambda r: r["date"])
     agents = _sum_by(rows, lambda r: r["agent"])

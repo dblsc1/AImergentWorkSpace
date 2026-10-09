@@ -35,6 +35,7 @@ class UploadOut(BaseModel):
     accepted: int
     duplicates: int
     rejected: list[Rejected]
+    ignored: int | None = None  # v2.22：命中「忽略并记住」而没存的段数；没有就不带这个键
 
 
 class Suggestion(BaseModel):
@@ -116,7 +117,7 @@ class UnmatchOut(BaseModel):
     rejectedTaskIds: list[str]
 
 
-@router.post("", response_model=UploadOut)
+@router.post("", response_model=UploadOut, response_model_exclude_none=True)
 def upload(body: UploadIn, request: Request) -> dict:
     # v2.14：收下之后，开了 autoTrack 的设备规则高把握命中的段直接记（request：要建「未分类」桶时经 planner 写入口）
     return auto_entry.upload(body.deviceId, body.segments, request)

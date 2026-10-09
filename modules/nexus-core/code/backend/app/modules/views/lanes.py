@@ -17,8 +17,10 @@ from ...config import settings
 from ...tenant import current as current_tenant
 from ..activity import service as activity_service
 from ..planner.errors import UnprocessableError
+from ..prefs import service as prefs_service
 from ..projector.handlers import lanes as lanes_projection
 from ..timer import service as timer_service
+from .lane_order import arrange
 from .queries import _today
 from .schemas import LanesOut
 
@@ -101,6 +103,8 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
 
     sessions: list[dict] = []
     agents: list[dict] = []
+    hidden: list[dict] = []
+    hidden_waiting = 0
     presence: list[dict] = []
     running = None
     auto = {"auto": None, "needsChoice": None, "aiThinking": None}
@@ -127,9 +131,12 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
         runs = sorted(closed + live, key=lambda r: r["startTs"], reverse=True)
         truncated = truncated or len(runs) > MAX_AGENTS
         runs = runs[:MAX_AGENTS][::-1]
-        agents = [_run_item(r, start, end) for r in runs]
+        # v2.22：藏起来的代理不出现（时间照旧记在账上）；其余加 pinned / manualOrder / rank
+        agents, hidden, hidden_waiting = arrange([_run_item(r, start, end) for r in runs],
+                                                 prefs_service.load(user), now)
+        shown = {a["runId"] for a in agents}
         interactions = [
-            {"runId": r["runId"], **i} for r in runs for i in _interactions(r)
+            {"runId": r["runId"], **i} for r in runs if r["runId"] in shown for i in _interactions(r)
         ]
 
         state = timer_service.get_running_state(user)
@@ -150,4 +157,5 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
         today=_today(), now=_iso(now), windowStart=_iso(start), windowEnd=_iso(end),
         human={"sessions": sessions, "running": running, "presence": presence, **auto},
         agents=agents, interactions=interactions, truncated=truncated,
+        hiddenAgents=hidden, hiddenWaiting=hidden_waiting,
     )

@@ -24,6 +24,7 @@ from ...tenant import current as current_tenant
 from ...timeutil import local_date
 from ..activity import service as activity_service
 from ..planner import service as planner_service
+from ..prefs import service as prefs_service
 from ..projector.handlers import current as current_projection
 from ..projector.handlers import daily_stats as daily_stats_projection
 from ..timer import service as timer_service
@@ -53,7 +54,10 @@ def _share(part: int, whole: int) -> float:
 
 def get_current() -> CurrentOut:
     # v2.1：代理泳道与人的泳道各算各的；list_agent_runs 会顺手收掉超时的运行（契约明文）。
-    agents = [CurrentAgent(**run) for run in timer_service.list_agent_runs(current_tenant())]
+    # v2.22：藏起来的代理不在「现在在跑什么」里（只是不显示，时间照记）
+    hidden = prefs_service.hidden_keys(current_tenant())
+    agents = [CurrentAgent(**run) for run in timer_service.list_agent_runs(current_tenant())
+              if prefs_service.ident(run["agent"], run["label"]) not in hidden]
     state = timer_service.get_running_state(current_tenant())
     if state is None:
         # v2.14：没在计时才有「自动 · 项目 / 任务」与请人选的窗口（顶栏芯片读这里，与 views/lanes 的 human 同一份）；
