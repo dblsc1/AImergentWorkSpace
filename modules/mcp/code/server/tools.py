@@ -345,7 +345,8 @@ def get_current_timer(a, tenant):
         "elapsedSeconds": _elapsed(start) if start else None,
         "agents": [
             {"runId": g["runId"], "agent": g["agent"], "tool": g["tool"], "model": g.get("model"),
-             "taskId": g.get("taskId"), "path": paths(g.get("taskId")), "startedAt": g["startedAt"]}
+             "taskId": g.get("taskId"), "path": paths(g.get("taskId")), "startedAt": g["startedAt"],
+             "elapsedSeconds": g.get("elapsedSeconds")}  # nexus-core 算好的（v2.21）；老后端没有 = null
             for g in c.get("agents") or []
         ],
         "focus": {"state": focus.get("state"), "app": _screen(focus.get("app")), "title": _screen(focus.get("title")),

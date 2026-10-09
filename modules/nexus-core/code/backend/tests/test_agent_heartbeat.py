@@ -193,22 +193,6 @@ def test_phase_closed_between_write_and_touch_is_not_reported_applied(client, mo
         return False
 
     monkeypatch.setattr(repo, "touch_agent_run", closed_first)
-    body = client.post(f"{AGENTS}/{run['runId']}/phase", json={"phase": "working"}).json()
-    assert (body["applied"], body["reason"]) == (False, "closed")
-
-
-def test_phase_closed_between_write_and_touch_is_not_reported_applied(client, monkeypatch):
-    """写相位之后、记信号之前运行被关了（失联 / 超时赛跑）：响应回 closed，不是 applied: true。"""
-    from app.modules.timer import repo  # noqa: PLC0415
-
-    run = _start(client, heartbeat=True)
-    mark = repo.mark_agent_run_closing
-
-    def closed_first(*_a, **_k):  # 写相位之后、记信号之前：失联 / 超时的关闭标记抢先打上
-        mark("u_local", run["runId"], {"outcome": "lost", "endedAt": run["startedAt"]})
-        return False
-
-    monkeypatch.setattr(repo, "touch_agent_run", closed_first)
     at = (datetime.fromisoformat(run["startedAt"]) + timedelta(seconds=5)).isoformat()
     body = client.post(f"{AGENTS}/{run['runId']}/phase", json={"phase": "working", "at": at}).json()
     assert (body["applied"], body["reason"]) == (False, "closed")
@@ -387,3 +371,14 @@ def test_heartbeat_is_tenant_scoped(client, shift_clock):
 def _lane_for(client, headers, run_id):
     agents = client.get(f"{API}/views/lanes", headers=headers).json()["agents"]
     return next(a for a in agents if a["runId"] == run_id)
+
+
+def test_views_current_agents_carry_the_same_elapsed_seconds_as_lanes(client, shift_clock):
+    """v2.21：get_current_timer 以前只有 startedAt（MCP 里 elapsedSeconds 是 null）；现在与 views/lanes 同一口径。"""
+    run = _start(client, phase="working", heartbeat=True)
+    shift_clock(minutes=10)
+    _beat(client, run["runId"])
+    (cur,) = client.get(f"{API}/views/current").json()["agents"]
+    lane = _lane(client, run["runId"])
+    assert 600 <= cur["elapsedSeconds"] <= 660
+    assert abs(cur["elapsedSeconds"] - lane["elapsedSeconds"]) <= 2
