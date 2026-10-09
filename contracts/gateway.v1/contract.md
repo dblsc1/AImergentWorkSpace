@@ -117,7 +117,7 @@ location ${HONEYCOMB_BASE_PATH}my-app/ {
 }
 ```
 
-`gate.inc` 展开后就是下面四行，名字【冻结】，也可以直接手写：
+`gate.inc` 展开后就是下面四行，名字【冻结】，也可以直接手写（2026-10-09 起文件里还多四行转发调用方范围，见第九节）：
 
 ```nginx
 auth_request /__auth_verify;
@@ -215,6 +215,38 @@ CI 把手写与生成的两份组装各按 `/` 与 `/Cockpit/` 真起一遍。
   `mcp`、聊天后端模块装上才出现；手写的默认组装两条都常驻。
 - 验证：CI「网关契约」job 把 `mcp` 用 profiles 关掉（网关照常起、`/api/mcp/` 回 502），聊天后端换成回显请求头的
   小服务（收不到 `Cookie` / `Authorization` / 伪造的租户头）；「多账号」job 用设备令牌经网关调 MCP。
+
+## 九、调用方范围与匿名上报（2026-10-09 追加，v0.4）
+
+auth.gate v1.4 让设备令牌带范围（`report` / `read` / `write`），并让不带凭据的请求只能上报。网关这边四件事：
+
+- **门子请求多带一个头**：`/__auth_verify` 加 `proxy_set_header X-Original-Method $request_method;`
+  （子请求自己的方法永远是 `GET`，`$request_method` 给的是原始请求的）。认证服务据「方法 + `X-Original-URI`」
+  判断范围够不够。这一句同时盖掉客户端自带的同名头。
+- **`gate.inc` 多四行**（原来四行不动，名字照旧【冻结】）：
+
+  ```nginx
+  auth_request_set $honeycomb_scope $upstream_http_x_nexus_scope;
+  auth_request_set $honeycomb_anonymous $upstream_http_x_nexus_anonymous;
+  proxy_set_header X-Nexus-Scope $honeycomb_scope;
+  proxy_set_header X-Nexus-Anonymous $honeycomb_anonymous;
+  ```
+
+  与租户头同一套纪律：认证服务没给就是空，**空值不转发**；**客户端自己带来的 `X-Nexus-Scope` /
+  `X-Nexus-Anonymous` 一律被覆盖**，到不了任何 `include gate.inc` 的后端。`/__cockpit/current` 那条手写了门的
+  location 也加了同样四行。
+- **手写门的部署方**：第四节那四行照旧可用。但如果你的 location 自己转给 nexus-core 或 MCP，要把上面四行也写上——
+  否则后端看不到范围，只剩认证服务那一道。不带凭据的请求到不了你的路由：认证服务只对
+  `<前缀>api/core/agents/…` 的四个上报端点放行匿名。
+- **匿名上报的限速**：`<前缀>api/core/` 这条 location 上有一个专用的限速区 `honeycomb_anon`：
+  **不带 `Authorization` 头**、`POST` 到 `/api/core/agents/` 下的请求，按客户端地址每分钟 120 个、突发 60 个，
+  超了回 `429`。带令牌的请求不进这个区（网页会话的这类请求也算在内——页面不发这种请求）。前面还有一层反代时，
+  所有人共用一个地址的额度（同登录限次的天花板，`auth.gate.v1` 安全约定 6）：这种部署请在外层限速，或关掉匿名上报。
+
+状态码：认证服务回 `403`（令牌有效但范围不够）→ 网关回 `403`；回 `401`（没登录、坏令牌、匿名不许）→ 照旧跳登录页。
+
+验证：CI「组装冒烟」四格（两份组装 × 两种前缀）与「多账号」跑 `deploy/test/scopes.sh`：三种范围各能做什么、
+匿名只能上报、单个吊销、伪造的三个头都被盖掉、限速回 `429`。
 
 ## 实现说明（不改接口）
 

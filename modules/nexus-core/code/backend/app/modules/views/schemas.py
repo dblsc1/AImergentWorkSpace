@@ -467,6 +467,7 @@ class LaneAgent(_Strict):
     overdue: bool
     phases: list[LanePhase]
     attention: list[LaneAttention] = []  #: v2.17：人把注意力放在它上面的时间（裁到窗口、已合并）
+    unverified: bool = False  #: v2.19：匿名开的运行（契约「调用方范围与匿名上报」）
 
 
 class LaneReply(_Strict):

@@ -18,17 +18,26 @@ model（如果拿得到）、开始/结束时间戳、结束状态（`done`/`fai
 `cockpit-run` 包装命令时，命令的输入输出照常打印在你的终端上，本工具看不到、
 也不会去读。
 
-## 装 token
+## 装 token（或者不装）
 
-先在网页上登录 cockpit，然后换一个设备 token（`Authorization: Bearer <token>`，
-只对 `<cockpit 地址>/api/core/*` 有效）：
+钩子只做一件事：上报「这个代理在跑 / 在等你 / 结束了」。所以它只需要**只上报**的权限——
+给它一个 `report` 范围的令牌，它读不到你的任务、时间和别的任何数据，也写不了别的东西。
 
-```sh
-curl -sb "<你登录时浏览器里的会话 cookie>" -X POST <cockpit 地址>/api/auth/tokens
-```
+**发一个 `report` 令牌**（令牌从不自动生成，由你发、你决定给谁）：
 
-也可以用 cockpit 提供的 CLI 登录方式换 token（如果有）。拿到 token 之后，
-填进环境变量或者配置文件（下面两选一，环境变量优先）。
+- 网页上：登录 cockpit → 「AI助理」页 →「Agent 令牌」→ 选「只上报」→ 生成。令牌只显示这一次，页面给出
+  可以直接粘贴的配置；不用了在同一个地方单独吊销它。
+- 命令行（`deploy/` 下）：`docker compose exec auth python /app/auth_stub.py token <账号> --scope report --name <备注>`
+  （不带账号 = 共享口令身份）。
+
+拿到之后填进环境变量或者配置文件（下面两选一，环境变量优先）。
+
+**也可以不装**：单人部署（只开共享口令）缺省接受不带任何凭据的上报，`COCKPIT_TOKEN` / `token` 留空就行。
+这样报上来的运行记为「未验证」（`views/lanes` 里 `unverified: true`），一律落收件箱（挂不了任务 / 项目），同时在跑的最多 20 个。
+前提是 cockpit 那边没关 `AUTH_ANONYMOUS_REPORT`；开了账号登录（多用户）的 cockpit 不收匿名上报，必须用令牌。
+
+想把运行挂到任务 / 项目上、或者 cockpit 的端口对别人开放时，用 `report` 令牌。别给钩子 `read` / `write` 令牌——
+它用不着，丢了的代价却大得多。
 
 ## 配置
 
@@ -37,7 +46,7 @@ curl -sb "<你登录时浏览器里的会话 cookie>" -X POST <cockpit 地址>/a
 | 变量 | 作用 |
 |---|---|
 | `COCKPIT_URL` | cockpit 地址，比如 `http://127.0.0.1:8800/` |
-| `COCKPIT_TOKEN` | 设备 token |
+| `COCKPIT_TOKEN` | 设备令牌（`report` 范围就够）。留空 = 不带凭据上报（见上） |
 | `COCKPIT_TASK` | 可选。这次 run 挂在哪个任务上；不设就走目录映射，再不然就是收件箱 |
 | `COCKPIT_PROJECT` | 可选。定不出任务时，这次 run 挂在哪个项目上（见「挂到项目」） |
 
@@ -56,7 +65,7 @@ curl -sb "<你登录时浏览器里的会话 cookie>" -X POST <cockpit 地址>/a
 ```json
 {
   "url": "http://127.0.0.1:8800/",
-  "token": "换来的设备 token",
+  "token": "report 范围的令牌，或留空",
   "tasks": {
     "/home/you/code/project-a": "task-id-1",
     "/home/you/code/project-b/backend": "task-id-2"

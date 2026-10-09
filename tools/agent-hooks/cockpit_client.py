@@ -228,7 +228,10 @@ def _request(config: dict[str, Any], method: str, path: str, payload: dict[str, 
         data = json.dumps(payload).encode("utf-8") if payload is not None else None
     except (TypeError, ValueError):
         raise CockpitError("配置错误") from None
-    headers = {"Authorization": f"Bearer {config.get('token', '')}"}
+    # 没配令牌就不带 Authorization：单人部署的 cockpit 收不带凭据的上报（auth.gate v1.4「匿名只能上报」）。
+    # 带一个空的 Bearer 反而是「出示了坏令牌」，会被 401。
+    token = config.get("token") or ""
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
     if data is not None:
         headers["Content-Type"] = "application/json"
 

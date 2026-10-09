@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from . import reassign as reassign_impl
@@ -17,7 +17,8 @@ from . import service
 
 router = APIRouter(prefix="/timer", tags=["timer"])
 #: v2.1「AI 代理运行」：与人的计时同住 timer 子边界（同一类活状态），路径另起前缀。
-agents_router = APIRouter(prefix="/agents", tags=["agents"])
+#: v2.19：匿名调用方只能动匿名开的运行——对这个路由上每个带 {runId} 的端点生效（判断在 service 里）。
+agents_router = APIRouter(prefix="/agents", tags=["agents"], dependencies=[Depends(service.anonymous_run_guard)])
 #: v2.11「改挂未分类时间」：对象是一段已落账的 session.completed，路径按它起前缀。
 sessions_router = APIRouter(prefix="/sessions", tags=["sessions"])
 

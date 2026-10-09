@@ -364,6 +364,17 @@ class ClientHttpTests(unittest.TestCase):
         self.assertEqual(req["path"], "/api/core/agents/run-1/stop")
         self.assertEqual(req["body"], {"outcome": "done", "output": "http://x/output"})
 
+    def test_no_token_sends_no_authorization_header(self):
+        # 没配令牌 = 匿名上报（auth.gate v1.4）：不能带一个空的 Bearer，那是「出示了坏令牌」
+        server, thread, log = _start_server(expect_token=None)
+        try:
+            port = server.server_address[1]
+            for config in ({"url": f"http://127.0.0.1:{port}"}, {"url": f"http://127.0.0.1:{port}", "token": ""}):
+                self.assertEqual(cc.start_run(config, None, "a", "t")["runId"], "run-1")
+                self.assertEqual(log.requests[-1]["auth"], "")
+        finally:
+            _stop_server(server, thread)
+
     def test_bad_token_raises_cockpit_error(self):
         bad_config = dict(self.config, token="wrong")
         with self.assertRaises(cc.CockpitError):

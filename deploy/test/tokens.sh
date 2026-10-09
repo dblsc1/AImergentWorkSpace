@@ -61,6 +61,7 @@ check "网页会话改分类规则" "$("${C[@]}" -b "$A" -o /dev/null -w '%{http
 check "网页吊销后旧令牌被拒" "$(code "$TOK" /api/core/views/tree)" 302
 
 BOB=$(docker compose exec -T auth python /app/auth_stub.py token bob 2>/dev/null)
+sleep 3  # v1.4：令牌表是白名单，命令行发的令牌要等 auth 后台重读令牌文件（每 2 秒）才认
 check "命令行发的令牌能用" "$(code "$BOB" /api/core/views/tree)" 200
 docker compose exec -T auth python /app/auth_stub.py revoke bob >/dev/null
 sleep 3  # 后台每 2 秒重读令牌文件

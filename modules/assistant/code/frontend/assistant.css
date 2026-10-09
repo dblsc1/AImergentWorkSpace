@@ -316,6 +316,41 @@ fieldset.set-field > legend { font-size: var(--fs-sub); color: var(--ink-2); mar
 .rule-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14em), 1fr)); gap: var(--sp-2); min-width: 0; }
 .rule-item .field { background: var(--panel); min-width: 0; }
 
+/* ── 「Agent 令牌」（2026-10-09，tokens.js，contracts/auth.gate.v1 v1.4）──
+ * 刚生成的令牌用 warn 色框起来（只显示一次）；长串一律能换行，320px 下不横滚。 */
+.tokens-panel { display: grid; gap: var(--sp-3); min-width: 0; }
+.tok-new {
+  display: grid; gap: var(--sp-3); min-width: 0; padding: var(--sp-3);
+  border: 1px solid var(--warn); border-radius: var(--r-2); background: var(--panel-2);
+}
+.tok-new-head { overflow-wrap: anywhere; }
+.tok-secret-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-width: 0; }
+.tok-secret {
+  flex: 1 1 16em; min-width: 0; padding: var(--sp-2); border-radius: var(--r-1);
+  background: var(--panel); border: 1px solid var(--line); font-size: var(--fs-sub);
+  overflow-wrap: anywhere; word-break: break-all; user-select: all;
+}
+.tok-snippets { display: grid; gap: var(--sp-3); min-width: 0; }
+.tok-snippet { display: grid; gap: var(--sp-1); min-width: 0; }
+.tok-snippet-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+.tok-pre {
+  margin: 0; padding: var(--sp-2); border-radius: var(--r-1); background: var(--panel); border: 1px solid var(--line);
+  font-size: var(--fs-eyebrow); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-all; min-width: 0;
+}
+.tok-list { list-style: none; padding: 0; display: grid; gap: var(--sp-2); min-width: 0; }
+.tok-item {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-width: 0; padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--line-2); border-radius: var(--r-2);
+}
+.tok-item-main { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); flex: 1 1 12em; min-width: 0; }
+.tok-item-name { overflow-wrap: anywhere; min-width: 0; }
+.tok-item-meta { flex: 1 1 100%; order: 3; font-size: var(--fs-eyebrow); color: var(--ink-3); overflow-wrap: anywhere; }
+.tok-scope { padding: 0 var(--sp-2); border-radius: var(--r-1); border: 1px solid var(--line); font-size: var(--fs-sub); white-space: nowrap; }
+.tok-scope-write { border-color: var(--warn); color: var(--warn); }
+.tok-item.is-revoked .tok-item-main { color: var(--ink-3); text-decoration: line-through; }
+.tok-revoked { font-size: var(--fs-sub); color: var(--ink-3); }
+.tok-offscreen { position: fixed; left: -9999px; top: 0; opacity: 0; }
+
 /* ── 「回顾」：只放入口 ── */
 .review-panel { display: grid; gap: var(--sp-2); }
 .review-links { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--sp-2); }
