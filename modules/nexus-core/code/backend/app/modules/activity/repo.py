@@ -52,10 +52,19 @@ def page(user: str, status: str, limit: int, offset: int) -> tuple[int, list[dic
     return col.count_documents(filt), list(docs)
 
 
-def pending_windows(user: str, cap: int) -> list[dict]:
-    """v2.22：还没成为事实的建议（待确认 / 已忽略）的 (id, app, title)，给「忽略并记住」找出命中的那些。"""
-    return list(_col().find({"user": user, "status": {"$in": ["pending", "dismissed"]}}, {"_id": 0, "id": 1, "app": 1, "title": 1,
-                                                                    "durationSeconds": 1}).limit(cap))
+def pending_windows(user: str, batch: int = 1000):
+    """v2.22：还没成为事实的建议（待确认 / 已忽略）的 (id, app, title, 秒)，每批 ``batch`` 条，**扫到底**（不截断），
+    给「忽略并记住」找出命中的那些。"""
+    cur = _col().find({"user": user, "status": {"$in": ["pending", "dismissed"]}},
+                      {"_id": 0, "id": 1, "app": 1, "title": 1, "durationSeconds": 1}).batch_size(batch)
+    buf: list[dict] = []
+    for d in cur:
+        buf.append(d)
+        if len(buf) >= batch:
+            yield buf
+            buf = []
+    if buf:
+        yield buf
 
 
 def delete_pending(user: str, ids: list[str]) -> int:

@@ -341,9 +341,9 @@ def test_purge_failure_reports_error_keeps_rule_and_retries_on_next_write(client
                                           "title": PRIVATE_TITLE, "at": now, "expiresAt": now + timedelta(hours=1)})
     real = ignore_repo.drop_windows
     monkeypatch.setattr(ignore_repo, "drop_windows", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    with pytest.raises(RuntimeError):
-        _ignore(client, "chrome")
-    assert client.get(IGN).json()["total"] == 1  # 规则留着：以后的写入照样被过滤
+    _ignore(client, "chrome", expect=503)  # 规则已保存、清理没做完（会自动重试）
+    monkeypatch.setattr(ignore_repo, "all_rules", ignore_repo.all_rules)
+    assert [r["purged"] for r in ignore_repo.all_rules("u_local")] == [False]  # 规则留着：以后的写入照样被过滤
     assert _db()["activity_choices"].count_documents({}) == 1  # 清理没做完，残留还在
     monkeypatch.setattr(ignore_repo, "drop_windows", real)
     _beat(client, "firefox", "other")  # 下一次写入顺手补清没清完的规则

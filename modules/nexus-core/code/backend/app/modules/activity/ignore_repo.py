@@ -1,7 +1,7 @@
 """``activity_ignores`` 集合的存取（v2.22「忽略并记住」）。规矩同 ``repo.py``：查询一律带 ``user``。
 
 每条规则一份 ``{user, id, app, titleContains, createdAt, hits, seconds, lastHitAt}``；``id`` 由（程序, 标题片段）派生，
-所以同一条规则再建一次是同一份（幂等）。只存规则本身与计数器——**不存任何被忽略的窗口标题**。
+所以同一条规则再建一次是同一份（幂等）。只存规则本身与计数器——**不存被忽略窗口的标题**（规则里的 ``titleContains`` 是人填的匹配文字，只对人可见）。
 """
 
 from __future__ import annotations

@@ -12,11 +12,10 @@
 
 from __future__ import annotations
 
-import re
-import unicodedata
 from datetime import datetime, timezone
 
 from ...tenant import current as current_tenant
+from ...textfold import fold
 from ..planner.errors import NotFoundError, UnprocessableError
 from ..timer import service as timer_service
 from . import repo
@@ -25,17 +24,10 @@ MAX_PREFS = 200  #: 至多记这么多个代理身份（藏起来 / 置顶着的
 MAX_ORDER = 50  #: 至多这么多条运行被手动排过位
 MAX_AGENT, MAX_LABEL = 128, 200
 _CAS_RETRIES = 20
-_ZERO_WIDTH = re.compile("[\u200b-\u200d\u2060\ufeff]")
 
 
 class ConflictError(RuntimeError):
     """写入争用重试用尽 → 409（请求合法，稍后重试）。"""
-
-
-def fold(text: str | None) -> str:
-    """身份归一化：NFKC、去零宽字符、折叠空白、casefold（再 NFKC 一次，保证幂等）。"""
-    t = _ZERO_WIDTH.sub("", unicodedata.normalize("NFKC", text or ""))
-    return unicodedata.normalize("NFKC", " ".join(t.split()).casefold())
 
 
 def ident(agent: str | None, label: str | None, unverified: bool = False) -> str:

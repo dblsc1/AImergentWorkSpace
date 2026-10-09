@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import re
+
 from ...tenant import current as current_tenant
 from . import repo
 from .rules import MAX_RULES, RulesError, _now, _validate
@@ -52,3 +54,32 @@ def remove_auto(rule_id: str) -> bool:
         if repo.replace_rules(user, doc["version"], rules, _now()) is not None:
             return True
     return False
+
+
+def _literal(pattern: str) -> str:
+    """服务端代写的窗口规则（``^转义后的原文$``，标题可能带 ``_DECOR`` 前缀）→ 它当初由什么原文转义而来。"""
+    core = pattern[len("^(?:[^\\pL\\pN]|\\(\\d+\\)|\\[\\d+\\])*"):] if pattern.startswith("^(?:") else pattern.removeprefix("^")
+    return re.sub(r"\\(.)", r"\1", core.removesuffix("$"))
+
+
+def drop_ignored(hit, text_hit) -> int:
+    """「忽略并记住」建规则 / 补清时：AI 代写的（``author: "assistant"``）窗口规则，按它当初转义的原文（程序、标题）过 ``hit(app, title)``，
+    命中的删掉；待批准的 AI 草稿里有命中的规则、或 ``summary`` / 规则的 ``note`` 里带着被忽略的文字（``text_hit(text)``），整份草稿作废。
+    人写的规则不动（那是人自己的配置）。返回删掉的规则数 + 作废的草稿数。"""
+    user, n = current_tenant(), 0
+    lit = lambda r: hit(_literal(r["app"]), _literal(r["title"]))  # noqa: E731
+    for _ in range(_TRIES):
+        doc = repo.get_rules(user) or {}
+        old = doc.get("rules", [])
+        rules = [r for r in old if not (r.get("author") == "assistant" and lit(r))]
+        if len(rules) == len(old) or repo.replace_rules(user, doc["version"], rules, _now()) is not None:
+            n += len(old) - len(rules)
+            break
+    else:
+        raise RuntimeError("AI 规则清理连续撞版本")
+    d = (repo.get_rules(user) or {}).get("draft")
+    if d and d.get("author") == "assistant" and (
+            text_hit(d.get("summary", "")) or any(lit(r) or text_hit(r.get("note", "")) for r in d["rules"])):
+        repo.drop_draft(user, d["id"])
+        n += 1
+    return n

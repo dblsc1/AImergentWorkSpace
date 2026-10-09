@@ -479,9 +479,9 @@ provides:
       pinned / manualOrder / rank（服务端排）、响应追加 hiddenAgents[] / hiddenWaiting；views/current.agents[] 与 views/agent-time.open[] 不列藏起来的
     status: 已实现（v2.22），待验证
   - id: nexus-core.activity.ignores.v1
-    summary: 忽略并记住（v2.22，追加式）——GET /api/core/activity/ignores（读不设限）、POST {app, titleContains?}（只收人，幂等，顺手清掉待确认里的匹配项）、
-      DELETE /{id}（只收人，幂等）。命中（程序名相等 + 可选标题子串，不分大小写）的窗口不记为工作：建议上传丢弃（标题不落库，响应有被忽略时追加 ignored）、
-      在场心跳换成「没有窗口」；规则上 hits / seconds 计数器，不存标题。不是 detector.rules.v1 的规则
+    summary: 忽略并记住（v2.22，追加式）——GET /api/core/activity/ignores（读不设限；非人的调用方没有 titleContains，只有 hasTitleFilter）、POST {app, titleContains?}（只收人，幂等，顺手清掉待确认里的匹配项）、
+      DELETE /{id}（只收人，幂等）。命中（NFKC / 去零宽 / 折叠空白 / casefold 之后：程序名相等 + 可选标题子串）的窗口不记为工作：建议上传丢弃（标题不落库，响应有被忽略时追加 ignored）、
+      在场心跳换成「没有窗口」；被忽略窗口的标题不再保存（规则里存人填的匹配文字，只给人看）。不是 detector.rules.v1 的规则
     status: 已实现（v2.22），待验证
 consumes:
   - id: yq-event/v1
@@ -3802,7 +3802,13 @@ report 令牌与匿名由「调用方范围」放行表挡成 403；放行表还
 
 **规则**：`{id, app, titleContains, createdAt, hits, seconds, lastHitAt}`，存独立集合 `activity_ignores`（每租户至多 `MAX_IGNORES = 200` 条；
 同一条规则再建 = 同一份，幂等；不是事实，不进台账 / 投影 / 导出 / 快照）。
-**匹配**：程序名**不分大小写相等**，且（`titleContains` 给了的话）窗口标题**包含**它（不分大小写）；`titleContains` 为 `null` = 这个程序的所有窗口。
+**匹配**：两边（规则里存的、进来的程序名与窗口标题）都先过**同一个**归一化 `fold`——NFKC（全角 = 半角）、去零宽字符、折叠所有空白（含制表符 / 换行）、strip、casefold——再比：
+程序名归一化后**相等**（`code` 与 `code.exe` 不是同一个，**不猜后缀**），且（`titleContains` 给了的话）归一化后的窗口标题**包含**归一化后的它；`titleContains` 为 `null` = 这个程序的所有窗口。
+建规则、上传过滤、心跳遮蔽、清理（purge）、规则 id 全部用这一个函数。
+
+**隐私（规范性）**：被忽略窗口的**标题不再保存**（上传丢、心跳抹、已存的清掉）；规则本身保存的是**人填的匹配文字**（`titleContains`，UI 里预填窗口标题但可改短成一个无关痛痒的片段），
+这是被保存的一份文字，只对登录的人可见：`GET /activity/ignores` 对非人的调用方（带 `Authorization: Bearer` 的任何范围、MCP）只回 `{id, app, hasTitleFilter, createdAt, hits, seconds, lastHitAt}`，
+**没有 `titleContains`**。整个程序都忽略时，代理会话在这个程序里的「你在看」（`attend`）也不再记（程序里没有窗口 = 对不上会话）。
 **不是正则**：规则是人点一下写出来的，子串够用，也没有回溯的隐患。检测程序若开了「标题换代号」，标题规则中不了（程序规则不受影响）。
 它**不是** `detector.rules.v1` 的规则（那套要求恰好一个任务 / 项目目标、检测程序在本机匹配）——忽略规则存在检测程序之外、**服务端说了算**，
 检测程序不需要知道它，`detector.rules.v1` 一个字节不变。
@@ -3811,8 +3817,8 @@ report 令牌与匿名由「调用方范围」放行表挡成 403；放行表还
 
 | 方法 路径 | 说明 |
 |---|---|
-| `GET /activity/ignores` | `{total, items: [{id, app, titleContains, createdAt, hits, seconds, lastHitAt}]}`，旧的在前。读不设限（MCP 经 `get_detector_rules` 读同一份） |
-| `POST /activity/ignores` | 请求体 `{app, titleContains?}`（`app` 去空白后非空 ≤ 128，`titleContains` ≤ 200，多出的键 422；`app` 全空白 400）。**只收人**（带 Bearer 403）。201：规则 + `created`（false = 早就有）+ `removed`（顺手清掉的已在待确认里的匹配项数）。超 200 条 422 |
+| `GET /activity/ignores` | `{total, items: [{id, app, titleContains, createdAt, hits, seconds, lastHitAt}]}`，旧的在前；**非人的调用方**（Bearer、MCP）该项是 `hasTitleFilter: bool` 而没有 `titleContains`。有规则清理没做完时先补清，补不成 503 |
+| `POST /activity/ignores` | 请求体 `{app, titleContains?}`（`app` 去空白后非空 ≤ 128，`titleContains` ≤ 200，多出的键 422；`app` 全空白 400）。**只收人**（带 Bearer 403）。201：规则 + `created`（false = 早就有）+ `removed`（顺手清掉的已在待确认里的匹配项数）。超 200 条 422。规则已存下但清理没做完 → **503**「规则已保存，清理未完成，会自动重试」（规则在，不是没记住） |
 | `DELETE /activity/ignores/{id}` | **只收人**。204，幂等。取消后以后的窗口照常；已经丢掉的不会回来 |
 
 **生效（规范性）——规则命中的窗口从此不当作工作**：
@@ -3820,23 +3826,28 @@ report 令牌与匿名由「调用方范围」放行表挡成 403；放行表还
 1. **活动建议上传**（`POST activity/suggestions`）：命中的段**直接丢弃，不存**（标题不落库）；不算 `accepted` / `duplicates` / `rejected`；
    响应在**有被忽略的段时**追加整数键 `ignored`（没有就不带这个键，形状与以前逐字节相同）。重传同一段照样丢。规则上 `hits` +1 段、`seconds` += 该段 `durationSeconds`、`lastHitAt`。
 2. **建规则的当下，把已存下的带被忽略窗口 app / title 的东西逐一清掉**（和入口过滤同一个判据），并明说每一处：
-   - `activity_suggestions` 里还没成为事实的（`pending`、`dismissed`）：**删**（计入 `removed` 与计数器）；集合（collection）是这些建议上的标签，随之消失。**已确认**的建议是人确认过的事实的出处：**不动**。
+   - `activity_suggestions` 里还没成为事实的（`pending`、`dismissed`）：**删**（**全部**扫，分批；不截断，任何一步出错整个清理失败、规则不标 `purged`；计入 `removed` 与计数器）；集合（collection）是这些建议上的标签，随之消失。**已确认**的建议是人确认过的事实的出处：**不动**。
    - `activity_presence`：命中的段与当前窗口（`app` / `title`）抹成「没有窗口」，去掉 `guess` 与对上的会话 `runId`；`focus` / `auto` / `needsChoice` 都由它算出，所以一并不再带标题 / 目标。
      已写进代理运行的 `attend` 区间只有起止时刻、没有标题，是「那一刻人在看它」的记录：**保留**（没有删除某段 attend 的写路径，也不改写已记的注意力）。
    - `activity_choices`（人的临时选择 / 这次不选）、`activity_ai_asks`（AI 问询，存了 app / title）：命中的**整份删**；租户级那份（不是窗口）不碰。
    - AI 报告（`activity_reports`）只存建议 id，不存标题；被删的建议在报告里读出来是 `stale`、`suggestions` 里不再有它，批准时按 `stale` 跳过。
    - 匹配历史（`history`）只由**已确认**的建议派生：已确认的保留，其余本来就没有；`proj_*` 投影与 MCP 工具读的就是以上这些，没有另存标题。
    - **台账里的事实**（`events`，含 `session.completed` 的 `data.app/title`、`session.reassigned`）与它们的投影是人确认过的事实，**不可变**，不改写。
-   - 分类规则（`detector.rules.v1`）是人自己的配置，它的 `app` / `title` 正则和 `note` 可能抄着窗口标题：**不动**，要删在「AI助理 → 规则」里删。
+   - 分类规则（`detector.rules.v1`）：**AI 代写的**（`author: "assistant"`，含 `auto: true` 的窗口规则，其 `app` / `title` 是由窗口原文转义出来的 `^…$`，按还原出的原文过同一个判据）**一并删**，
+     待批准的 AI 草稿（`rules/drafts/current`，`author: "assistant"`）里有命中的规则、或 `summary` / 规则 `note` 含被忽略的匹配文字的，**整份作废**；`auto_ai.suggest` 对被忽略的窗口拒绝写规则（409）。
+     **人自己写的**规则（`author` 不是 `assistant`）是人自己的配置，**不动**，要删在「AI助理 → 规则」里删。人批准草稿后落成的规则若仍带 `author: "assistant"` 同样会被清。
    - **取消忽略不会让清掉的东西回来**。
-   - **并发（规范性）**：先存规则、再清；清在位的在场文档时像正常写入者一样把版本号 `v` 加一，所以读了旧文档、正要条件写的心跳写不中、重读到抹过的这份。每个会写这些存储的入口（建议上传、在场心跳、人的选择 / 这次不选、AI 认窗口的认领 / 回答 / 不对）开始时记下已有的规则，写完再看——期间新出现的规则就把它自己写下的再清一遍（清理幂等）；所以读了旧规则、写在清理之后的写入者，要么写入时就看到规则，要么被补清，标题写不回来。**失败一律往「当作忽略 / 不存」那边倒**：规则每次现读、没有缓存；读规则出错 = 这次写入整个失败，什么都不存；取消忽略与写入赛跑，写入要么在规则还在时被过滤、要么之后正常存，被清掉的东西不会回来；清理中途出错，建规则的接口报失败，规则仍在（以后的写入照样被过滤）、没标 `purged`，下一次任何写入入口顺手把没清完的规则补清（幂等），再 `POST` 一次同一条规则也会重清。
+   - **并发（规范性）**：先存规则、再清；清在位的在场文档时像正常写入者一样把版本号 `v` 加一，所以读了旧文档、正要条件写的心跳写不中、重读到抹过的这份。每个会写这些存储的入口（建议上传、在场心跳、人的选择 / 这次不选、AI 认窗口的认领 / 回答 / 不对）开始时记下已有的规则，写完再看——期间新出现的规则就把它自己写下的再清一遍（清理幂等）；所以读了旧规则、写在清理之后的写入者，要么写入时就看到规则，要么被补清，标题写不回来。**失败一律往「当作忽略 / 不存」那边倒**：规则每次现读、没有缓存；读规则出错 = 这次写入整个失败，什么都不存；取消忽略与写入赛跑，写入要么在规则还在时被过滤、要么之后正常存，被清掉的东西不会回来；清理中途出错，建规则的接口报 503，规则仍在（以后的写入照样被过滤）、没标 `purged`，下一次任何写入入口顺手把没清完的规则补清（幂等），再 `POST` 一次同一条规则也会重清；**读路径**（`views/current`、`views/lanes`、建议列表、规则列表）在有规则没清完时也先补清，补不成这次读 503，不把残留的标题交出去。守卫记的是（规则 id, 创建时刻），所以「删了又同样建回来」不会被当成已知规则。
 3. **在场心跳**（`POST activity/presence`，含 `spans`）：命中的窗口换成「没有窗口」（`app` 与 `title` 空、不带 `guess`）再存——人仍是「在电脑前」，
    但它不会成为 `focus` 的窗口 / 目标、自动跟踪（`auto`）的目标、`needsChoice` / `aiThinking` 的窗口，不会对上代理会话（`presence[].runId` 为 `null`，
    `attention` 不因它而长），也不续人的临时选择。空程序名就是既有的「标题被隐私设置整个去掉了」那一种，下游本来就略过它。
    **心跳不计 `hits`**（约每 5 秒一拍，计了没有意义）。
 4. 因为被忽略的建议从未存在，**不会被发给 AI 工具当待办**（`list_activity_suggestions`、AI 报告、让 AI 匹配都看不到）；已存在的在第 2 条被删。
 5. **时间账**：忽略的窗口就是「不记为工作」——它不进建议，所以也不会被确认成事实；已确认的事实一个数都不变。被忽略的时长只以 `hits` / `seconds`
-   计数器的形式留在规则上（隐私友好：不存被忽略窗口的标题）。建规则之前已存进在场文档的最近 2 小时的窗口，按在场文档本来的 2 小时过期自然消失。
+   计数器的形式留在规则上（隐私友好：不存被忽略窗口的标题；规则里的匹配文字见上文「隐私」）。建规则之前已存进在场文档的最近 2 小时的窗口，按在场文档本来的 2 小时过期自然消失。
+
+**已知的残留（声明，不清理）**：① `agent_runs.label`——代理会话自己报的 label 恰好等于窗口标题时，它是代理供给、泳道上显示的运行名；② AI 工人（agent 模块）会话记录里，规则存在之前 AI 看过的标题；
+③ AI 写的 `reason` 文字、任务提议的名字里抄了标题的；④ 已确认的建议与台账事实（上文）；⑤ 规则里的匹配文字。以后新增的存储必须进全库倾倒测试（`test_activity_ignore_leaks.py`）的声明名单或被清理。
 
 ### 存储、边界、本版不做
 

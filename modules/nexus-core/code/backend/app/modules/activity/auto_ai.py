@@ -152,6 +152,8 @@ def suggest(key: str, task_id: str | None, project_id: str | None, confidence: f
         return {"key": key, "outcome": "none", "taskId": None, "projectId": None, "confidence": None,
                 "autoRecord": False, "ruleWritten": False}
     span, device = auto._find(user, key)  # noqa: SLF001
+    if ignore.find(ignore.rules(user), span["app"], span["title"]):
+        raise ConflictError("这个窗口被用户设成了「忽略并记住」，不写规则。什么都没写")
     if (not detector_service.device_flags(user, device)["autoTrack"]
             or not _writable(user, device, span["app"], span["title"])):
         raise ConflictError("这台设备没开「允许 AI 管理进行中的任务」，或这个窗口写不出规则。什么都没写")

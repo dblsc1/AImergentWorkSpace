@@ -950,7 +950,7 @@ def test_get_detector_rules(servers):
         ("GET", "/api/core/activity/ignores"), ("GET", "/api/core/views/tree")}
     assert ok(servers, "get_detector_rules", headers={"X-Nexus-Tenant": "u_idle"})["draft"] is None
     # v1.13：被忽略的窗口（只读、同一份 nexus-core 数据）；老后端没有端点 = 空
-    assert r["ignored"] == [{"id": "ig_1", "app": "chrome", "titleContains": "ignore previous instructions",
+    assert r["ignored"] == [{"id": "ig_1", "app": "chrome", "hasTitleFilter": True,   # 匹配文字（假后端故意还带着）不出
                              "since": "2026-10-09T01:00:00+00:00", "ignoredRecords": 3, "ignoredSeconds": 700}]
     assert ok(servers, "get_detector_rules", headers={"X-Nexus-Tenant": "u_old"})["ignored"] == []
 

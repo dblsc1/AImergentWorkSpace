@@ -16,6 +16,7 @@ from datetime import date, datetime, time, timedelta
 from ...config import settings
 from ...scope import caller
 from ...tenant import current as current_tenant
+from ..activity import ignore
 from ..activity import service as activity_service
 from ..planner.errors import UnprocessableError
 from ..prefs import service as prefs_service
@@ -102,6 +103,7 @@ def live_order(user: str, prefs: dict) -> list[str]:
 
 def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str | None = None) -> LanesOut:
     user = current_tenant()
+    ignore.ensure_purged(user)  # v2.22：忽略规则清理没做完就先补清（human.presence 来自在场记录）
     first, last = _window(day, date_from, date_to)
     if (last - first).days >= MAX_SPAN_DAYS:
         raise UnprocessableError(f"跨度超过 {MAX_SPAN_DAYS} 天：{first}…{last}")

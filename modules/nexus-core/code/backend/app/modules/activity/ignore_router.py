@@ -1,6 +1,6 @@
 """HTTP 层（v2.22「忽略并记住」）：路径、入参、响应。**不许有业务判断。**
 
-读不设限（MCP 经 ``get_detector_rules`` 读同一份）；建 / 删只许人：``human`` 依赖在看请求体之前把带 Bearer 的挡成 403。
+读不设限，但只有人拿得到 ``titleContains``（MCP 经 ``get_detector_rules`` 读同一份，只拿 ``hasTitleFilter``）；建 / 删只许人：``human`` 依赖在看请求体之前把带 Bearer 的挡成 403。
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from ...scope import caller
 from . import ignore
 from .service import forbid_device_token
 
@@ -29,8 +30,9 @@ class IgnoreIn(BaseModel):
 
 
 @router.get("")
-def list_ignores() -> dict:
-    return ignore.listing()
+def list_ignores(authorization: Annotated[str | None, Header()] = None) -> dict:
+    # 人（网页会话：没有 Bearer、没有范围头）看到完整规则；其余调用方只拿 hasTitleFilter，不给匹配文字（见 ignore._out）
+    return ignore.listing(human=caller().scope is None and not (authorization or "").strip().lower().startswith("bearer "))
 
 
 @router.post("", status_code=201, dependencies=[Depends(human)])

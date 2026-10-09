@@ -356,9 +356,11 @@
 
   function label(g) { return g.app + (g.title ? " · " + g.title : ""); }
 
-  // 「忽略并记住」（nexus-core v2.22，ignores.js）：点开后选范围——整个程序，或只是标题含这段话的窗口（集合：这些窗口各一条）。
-  // 服务端存规则、顺手清掉已在待确认里的匹配项；以后匹配的窗口不再记录。后端没有这个端点（ignores.js 探过）就不出现。
-  var TITLE_CHOICE_MAX = 24;
+  // 「忽略并记住」（nexus-core v2.22，ignores.js）：点开后选范围——整个程序，或只是标题含一段文字的窗口。
+  // 标题不会被悄悄整段存下：「只忽略标题含…」给一个预填了标题的输入框，人可以改短成一个无关痛痒的片段；这段文字存在规则里（只有登录的人看得到）。
+  // 集合：只提供「这些窗口所在程序的所有窗口」（各窗口的标题都不带进规则）。服务端存规则、顺手清掉已在待确认里的匹配项；
+  // 以后匹配的窗口不再记录。后端没有这个端点（ignores.js 探过）就不出现。
+  var APP_WARNING = "整个程序都忽略时，代理会话在这个程序里的时间，泳道上“你在看”的蓝条也不再记。";
   function ignoreControl(wins, whole) {
     var I = window.assistantIgnores;
     if (!I || I.supported === false) return null;
@@ -367,36 +369,54 @@
     btn.type = "button";
     btn.title = "以后这样的窗口不再记录，也不再出现在这里";
     wrap.appendChild(btn);
-    function rule(w, withTitle) {
-      var t = withTitle ? normTitle(w.title) : "";
-      return t ? { app: w.app, titleContains: t } : { app: w.app };
-    }
     btn.addEventListener("click", function () {
       btn.hidden = true;
       var box = el("span", "suggest-ignore-choose");
       var first = wins[0], nt = normTitle(first.title);
-      var options = whole ? [["忽略这 " + wins.length + " 个窗口", wins.map(function (w) { return rule(w, true); })]]
-        : [["忽略 " + first.app + " 的所有窗口", [rule(first, false)]]]
-          .concat(nt ? [["只忽略标题含“" + (nt.length > TITLE_CHOICE_MAX ? nt.slice(0, TITLE_CHOICE_MAX) + "…" : nt) + "”的", [rule(first, true)]]] : []);
-      var buttons = options.map(function (o) {
+      var apps = [], seenApp = {};
+      wins.forEach(function (w) { if (!seenApp[w.app.toLowerCase()]) { seenApp[w.app.toLowerCase()] = true; apps.push(w.app); } });
+      var field = null;
+      var options = [[whole ? "忽略 " + apps.join("、") + " 的所有窗口" : "忽略 " + first.app + " 的所有窗口",
+        function () { return apps.map(function (a) { return { app: a }; }); }]];
+      if (!whole && nt) {
+        options.push(["只忽略标题含下面这段文字的", function () {
+          var t = field.value.trim();
+          return t ? [{ app: first.app, titleContains: t }] : [];
+        }]);
+      }
+      var buttons = [];
+      options.forEach(function (o, n) {
         var b = el("button", "btn btn-ghost suggest-ignore-opt", o[0]);
         b.type = "button";
         b.addEventListener("click", async function () {
+          var rules = o[1]();
+          if (!rules.length) { field.focus(); return; }
           buttons.forEach(function (x) { x.disabled = true; });
-          var seen = {}, removed = 0, failed = "";
-          for (var i = 0; i < o[1].length; i++) {
-            var key = JSON.stringify(o[1][i]);
+          var seen = {}, removed = 0, failed = null;
+          for (var i = 0; i < rules.length; i++) {
+            var key = JSON.stringify(rules[i]);
             if (seen[key]) continue;
             seen[key] = true;
-            var r = await I.add(o[1][i].app, o[1][i].titleContains);
-            if (!r.ok) { failed = r.detail || "请稍后再试"; break; }
+            var r = await I.add(rules[i].app, rules[i].titleContains);
+            if (!r.ok) { failed = r; break; }
             removed += r.removed || 0;
           }
-          showMessage(failed ? "没有记住：" + failed : "已忽略并记住（清掉 " + removed + " 条待确认）：以后这样的窗口不再记录。在下面的「被忽略任务」里可以取消。", Boolean(failed));
+          showMessage(failed ? (failed.status === 503 ? failed.detail : "没有记住：" + (failed.detail || "请稍后再试"))
+            : "已忽略并记住（清掉 " + removed + " 条待确认）：以后这样的窗口不再记录。在下面的「被忽略任务」里可以取消。", Boolean(failed));
           await load();
         });
         box.appendChild(b);
-        return b;
+        buttons.push(b);
+        if (n === 0) box.appendChild(el("span", "suggest-ignore-warn hint", APP_WARNING));
+        if (n === 0 && !whole && nt) {
+          field = el("input", "field suggest-ignore-text");
+          field.type = "text";
+          field.maxLength = 200;
+          field.value = nt;
+          field.setAttribute("aria-label", "标题里要含有的文字（可改短）");
+          box.appendChild(field);
+          box.appendChild(el("span", "suggest-ignore-hint hint", "这段文字会保存在规则里（只有你能看到）"));
+        }
       });
       var cancel = el("button", "btn btn-ghost suggest-ignore-cancel", "取消");
       cancel.type = "button";

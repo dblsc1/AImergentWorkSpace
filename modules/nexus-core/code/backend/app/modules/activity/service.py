@@ -251,6 +251,7 @@ def last_uploads(user: str) -> dict:
 
 def list_suggestions(status: str, limit: int, offset: int) -> dict:
     user = current_tenant()
+    ignore.ensure_purged(user)  # v2.22：忽略规则的清理没做完就先补清，补不成这次读失败（不交出残留的标题）
     _purge(user, _now())
     limit = _DEFAULT_LIMIT if limit <= 0 else min(limit, _MAX_LIMIT)  # 同档案读端口径
     total, docs = repo.page(user, status, limit, max(offset, 0))

@@ -95,7 +95,7 @@ def test_ignore_a_window_by_app_clears_it_from_the_pending_list(browser, static_
     with open_ignores(browser, static_base_url, MIXED, []) as (page, sugs, ign):
         chrome = page.locator("li.suggest-item", has_text="chrome · docs")
         chrome.locator(".suggest-ignore-btn").click()
-        assert chrome.locator(".suggest-ignore-opt").all_text_contents() == ["忽略 chrome 的所有窗口", "只忽略标题含“docs”的"]
+        assert chrome.locator(".suggest-ignore-opt").all_text_contents() == ["忽略 chrome 的所有窗口", "只忽略标题含下面这段文字的"]
         chrome.locator(".suggest-ignore-opt").first.click()
         page.wait_for_function("document.querySelector('#suggest-message').textContent.includes('已忽略并记住')")
         assert ign.calls == [("POST", "", {"app": "chrome"})]
@@ -104,6 +104,21 @@ def test_ignore_a_window_by_app_clears_it_from_the_pending_list(browser, static_
         page.wait_for_selector("li.suggest-item:has-text('chrome · docs')", state="detached")  # 重拉后列表里没有了
         page.wait_for_selector("#ignores-panel:not([hidden])")  # 被忽略任务里出现这一条
         assert page.text_content("#ignores-count") == "(1)"
+
+
+def test_ignore_by_title_sends_the_edited_fragment_not_the_whole_title(browser, static_base_url) -> None:
+    items = [seg(1, "✳ 银行转账-私密页面", app="chrome"), seg(2, "新闻", app="chrome")]
+    with open_ignores(browser, static_base_url, items, []) as (page, sugs, ign):
+        row = page.locator("li.suggest-item", has_text="银行转账")
+        row.locator(".suggest-ignore-btn").click()
+        field = row.locator(".suggest-ignore-text")
+        assert field.input_value() == "银行转账-私密页面"  # 预填（转圈符号去掉），人可以改
+        assert "只有你能看到" in row.locator(".suggest-ignore-hint").text_content()
+        assert "你在看" in row.locator(".suggest-ignore-warn").text_content()  # 整个程序忽略的后果说在选项旁边
+        field.fill("银行")
+        row.locator(".suggest-ignore-opt", has_text="标题含").click()
+        page.wait_for_function("document.querySelector('#suggest-message').textContent.includes('已忽略并记住')")
+        assert ign.calls == [("POST", "", {"app": "chrome", "titleContains": "银行"})]
 
 
 def test_ignore_by_title_sends_the_normalised_title_and_cancel_restores_the_button(browser, static_base_url) -> None:
@@ -120,17 +135,13 @@ def test_ignore_by_title_sends_the_normalised_title_and_cancel_restores_the_butt
         assert [i["title"] for i in sugs.items] == ["新闻"]
 
 
-def test_ignore_a_collection_makes_one_rule_per_distinct_window(browser, static_base_url) -> None:
+def test_ignore_a_collection_makes_one_app_rule_per_distinct_app(browser, static_base_url) -> None:
     with open_ignores(browser, static_base_url, MIXED, []) as (page, sugs, ign):
         coll = page.locator('.suggest-coll[data-key="ai:claude code · cockpit"]')
         coll.locator(".suggest-coll-act .suggest-ignore-btn").click()
-        coll.locator(".suggest-coll-act .suggest-ignore-opt").click()  # 只有一个选项：忽略这 N 个窗口
+        coll.locator(".suggest-coll-act .suggest-ignore-opt").click()  # 只有一个选项：这些窗口所在程序的所有窗口（标题一个都不带进规则）
         page.wait_for_function("document.querySelector('#suggest-message').textContent.includes('已忽略并记住')")
-        bodies = [c[2] for c in ign.calls]
-        assert {json.dumps(b, sort_keys=True, ensure_ascii=False) for b in bodies} == {
-            json.dumps({"app": "kitty", "titleContains": t}, sort_keys=True, ensure_ascii=False)
-            for t in ("重构存档", "plot.gd", "视奏", "乐理")}
-        assert len(bodies) == 4  # 同一个窗口的几行只发一次
+        assert [c[2] for c in ign.calls] == [{"app": "kitty"}]
         assert [i["title"] for i in sugs.items] == ["docs"]
         page.wait_for_selector('.suggest-coll[data-key="ai:claude code · cockpit"]', state="detached")  # 整个集合没了
 
