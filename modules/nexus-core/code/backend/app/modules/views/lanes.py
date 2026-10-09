@@ -4,7 +4,7 @@
 口径（规范性）：
 
 - **与窗口有重叠就列出，不归日、不裁剪**：跨零点的段由画图的人自己裁。响应里没有任何合计字段。
-- **不写**：不收超时运行（「读时写」例外止于 agent-time），超过上限的标 ``overdue``。
+- **不写**：不收超时运行（「读时写」例外止于 agent-time），超过上限的标 ``overdue``；失联的标 ``lost``（v2.18）。
 - 数据来源：已结束的读 ``proj_lanes``；在跑的运行与人的计时经 timer service；在场经 activity。
   **不读 events**（「内部子边界」红线）。
 """
@@ -76,10 +76,14 @@ def _interactions(run: dict) -> list[dict]:
 def _run_item(run: dict, start: datetime, end: datetime) -> dict:
     return {
         **{k: run.get(k) for k in ("runId", "agent", "tool", "model", "label", "taskId", "projectId",
-                                   "outcome", "elapsedSeconds", "overdue")},
+                                   "outcome", "elapsedSeconds", "overdue",
+                                   "beatSource", "beatCount")},  # 后两个 v2.18：谁发的心跳、发了几下
         "unverified": bool(run.get("unverified")),  # v2.19：不带凭据的请求开的运行
         "startAt": _iso(run["startTs"]),
         "endAt": _iso(run["endTs"]) if run["endTs"] is not None else None,
+        # v2.18：失联与最后一次信号的时刻只对在跑的运行有意义；已结束的 false / null
+        "lost": bool(run.get("lost")),
+        "lastSeenAt": _iso(run["lastSeenTs"]) if run.get("lastSeenTs") else None,
         "phases": [{"at": p["at"], "phase": p["phase"], "detail": p.get("detail")} for p in run["phases"]],
         "attention": _attention(run, start, end),
     }

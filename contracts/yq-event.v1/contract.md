@@ -172,7 +172,7 @@ key = <分区号>-<项目号>-<名字号>-<同名序号>
 | `growth.granted` | `amount`, `note` | 通用成长点（**学生入门用的最简类型**） |
 | `diary.extracted` | 结构化分类、备注 | 日记链路泛化 |
 | `plan.updated` | 变更摘要 | 计划修改留痕（审计用） |
-| `agent.run.completed` | `agent`, `tool`, `model?`, `startAt`, `durationSeconds`, `outcome`（`done`/`failed`/`cancelled`/`timeout`）, `output?`；2026-09-30 追加选填 `label?`, `phases?`（`[{at, phase, detail?}]`，相位转入点）, `interactions?`（`[{kind:"reply", at} \| {kind:"attend", at, until}]`）；2026-10-09 追加选填 `unverified?`（`true`） | 一次 AI 代理运行结束（2026-09-28 追加）。**不是人的时间**：消费方不得把它与 `session.completed` 相加；`phases`/`interactions` 同样不是时长（语义见 nexus-core 契约 v2.4） |
+| `agent.run.completed` | `agent`, `tool`, `model?`, `startAt`, `durationSeconds`, `outcome`（`done`/`failed`/`cancelled`/`timeout`；2026-10-09 追加 `lost`）, `output?`；2026-10-09 追加选填 `beatSource?`, `beatCount?`；2026-09-30 追加选填 `label?`, `phases?`（`[{at, phase, detail?}]`，相位转入点）, `interactions?`（`[{kind:"reply", at} \| {kind:"attend", at, until}]`）；2026-10-09 追加选填 `unverified?`（`true`） | 一次 AI 代理运行结束（2026-09-28 追加）。**不是人的时间**：消费方不得把它与 `session.completed` 相加；`phases`/`interactions` 同样不是时长（语义见 nexus-core 契约 v2.4） |
 | `session.reassigned` | `sessionEventId`, `seq`, `fromTaskId`, `fromProjectId`, `toTaskId`, `toProjectId`, `actor`, `session`（`{source, dedupeKey, startAt, durationSeconds}`，被改挂那一段的抄录） | 一段 `session.completed` 的时间改挂到另一个任务（2026-10-08 追加）。**修正事实，不改原事实**：原来那条 `session.completed` 原样保留，`subject` 是改挂之后的归属；同一段可有多条，`seq` 最大的为准。消费方算时长时**不得**把它当成一段新的时间（秒数只在原事实里算一次）。`dedupeKey` 为 `reassign:<sessionEventId>:<seq>`。**保留给实现者自己写**：nexus-core 只经它的改挂端点产生，公开事件入口拒收（语义见 nexus-core 契约 v2.11「改挂未分类时间」） |
 
 **学生入门只需要：信封 + `growth.granted`。**
@@ -244,5 +244,6 @@ key = <分区号>-<项目号>-<名字号>-<同名序号>
 | 2026-09-30 | §6 `agent.run.completed` 的 `data` 追加三个选填键 `label`/`phases`/`interactions`（代理运行的相位与人↔代理连线）。没有就不出现，老事件与老读方不受影响；不新增类型，信封不变 |
 | 2026-10-08 | §6 追加 `session.reassigned`（一段时间改挂到另一个任务的修正事实）。只增类型，信封不变；`session.completed` 的形状与含义不变 |
 | 2026-10-08 | §2 `ai` 块追加选填键 `auto`（nexus-core v2.14 自动记录的出处标记）。没有就不出现，老事件与老读方不受影响；信封其余不变 |
+| 2026-10-09 | §6 `agent.run.completed`：`outcome` 追加取值 `lost`（声明过心跳的运行 30 分钟没信号，被服务端关在最后一次信号的时刻）；`data` 追加两个选填键 `beatSource`（谁发的心跳，短标签）、`beatCount`（收到过几次）。没有就不出现，老事件与老读方不受影响；不新增类型，信封不变（语义见 nexus-core 契约 v2.18「心跳与失联」） |
 | 2026-10-08 | 波次统一审核，nexus-core 入口的两处收紧（信封与类型不变）：`currentSubject` 是 nexus-core 读端现算的键，信封自带的同名键入口不落库（B9 的唯一例外）；自称 `source: "session-reassign"` 的信封进 `rejected`、自称 `source: "activity-confirmed"` 的信封 `ai.auto` 不落库——这两个 source 是 nexus-core 自己写事实用的。见 nexus-core 契约「改挂未分类时间」节 |
 | 2026-10-09 | §2 `ai` 块追加选填键 `report`（nexus-core v2.20 AI 报告批准入账的出处 `{id, author}`）。没有就不出现，老事件与老读方不受影响；信封其余不变 |

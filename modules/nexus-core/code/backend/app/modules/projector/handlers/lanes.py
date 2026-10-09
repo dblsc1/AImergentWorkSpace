@@ -84,6 +84,9 @@ def handle(envelope: dict) -> None:
             runId=dedupe.removeprefix("agent:"),
             agent=data.get("agent"), tool=data.get("tool"), model=data.get("model"),
             label=data.get("label"), outcome=data.get("outcome"),
+            # v2.18：外部 source 也能写这类事件，形状不对的当没有
+            beatSource=data["beatSource"] if isinstance(data.get("beatSource"), str) else None,
+            beatCount=data["beatCount"] if type(data.get("beatCount")) is int else None,
             phases=_clean_phases(data.get("phases")),
             interactions=_clean_interactions(data.get("interactions")),
             **({"unverified": True} if data.get("unverified") is True else {}),  # v2.19：匿名开的运行

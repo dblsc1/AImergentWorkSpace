@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -132,6 +132,10 @@ def backfill(body: BackfillIn) -> dict:
 Phase = Literal["working", "waiting_input", "waiting_permission", "idle", "error"]
 
 
+#: v2.18：谁在发心跳（``companion`` / ``monitor`` / 适配器自己起的短名字）。只是标签，服务端不解释。
+BeatSource = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,31}$")]
+
+
 class AgentStartIn(BaseModel):
     taskId: str | None = None  # 缺省 = 挂收件箱
     projectId: str | None = Field(default=None, min_length=1, max_length=128)  # v2.13：不带 taskId 时只挂项目
@@ -143,11 +147,14 @@ class AgentStartIn(BaseModel):
     label: str | None = Field(default=None, min_length=1, max_length=64)
     match: str | None = Field(default=None, min_length=3, max_length=128)
     clientKey: str | None = Field(default=None, min_length=1, max_length=128)
+    heartbeat: bool = False  # v2.18：true = 这个适配器会发心跳，运行受活性规则管（契约「心跳与失联」）
+    beatSource: BeatSource | None = None  # v2.18：选填
 
 
 class AgentStartOut(BaseModel):
     runId: str
     startedAt: str
+    heartbeatSeconds: int  # v2.18：建议的心跳间隔（适配器不必写死）
 
 
 class AgentStopIn(BaseModel):
@@ -173,7 +180,7 @@ def agent_start(body: AgentStartIn, response: Response) -> dict:
     out, created = service.agent_start(
         body.taskId, body.agent, body.tool, body.model,
         phase=body.phase, label=body.label, match=body.match, client_key=body.clientKey,
-        project_id=body.projectId,
+        project_id=body.projectId, heartbeat=body.heartbeat, beat_source=body.beatSource,
     )
     if not created:
         response.status_code = 200
@@ -215,6 +222,28 @@ class AgentPhaseOut(BaseModel):
 def agent_phase(runId: str, body: AgentPhaseIn) -> dict:  # noqa: N803 —— 路径参数名即契约
     """at 超前 300s → 422（UnprocessableError）；runId 不存在 → 404（映射都在 main.py）。"""
     return service.agent_phase(runId, body.phase, body.at, body.detail, body.reply)
+
+
+class AgentHeartbeatIn(BaseModel):
+    """v2.18。空体或 ``{}`` 都收；只有一个选填字段，多了未知字段 → 422。"""
+
+    model_config = ConfigDict(extra="forbid")
+    beatSource: BeatSource | None = None
+
+
+class AgentHeartbeatOut(BaseModel):
+    """``applied:false, reason:"closed"`` = 运行已结束（同相位的 closed）：适配器带原 clientKey 再 start。"""
+
+    runId: str
+    applied: bool
+    reason: Literal["closed"] | None
+    heartbeatSeconds: int
+
+
+@agents_router.post("/{runId}/heartbeat", response_model=AgentHeartbeatOut)
+def agent_heartbeat(runId: str, body: AgentHeartbeatIn | None = None) -> dict:  # noqa: N803 —— 路径参数名即契约
+    """「我还活着」。runId 不存在 → 404（映射在 main.py）。"""
+    return service.agent_heartbeat(runId, body.beatSource if body else None)
 
 
 @agents_router.post("/{runId}/stop", response_model=AgentStopOut)

@@ -729,3 +729,33 @@ def test_three_second_switching_draws_a_serial_timeline(browser, static_base_url
             return r.width && (r.right > w + 0.5 || r.left < -0.5) && !n.closest('.hcl-tip');
         }).map(n => n.className)""", width)
         assert over == []
+
+
+# ── 2026-10-09 失联（nexus-core v2.18）：会发心跳的运行 30 分钟没信号 ─────────────────────────
+
+def test_lost_runs_are_grey_rank_after_live_idle_and_are_not_counted(browser, static_base_url) -> None:
+    d = copy.deepcopy(fx.LANES_FULL)
+    work = lambda t: [(fx.at(t), "working", None)]  # noqa: E731
+    gone = {**fx.run("gone", "gone", fx.at("09:00"), phases=work("09:00")), "lost": True, "lastSeenAt": fx.at("09:40")}
+    dead = {**fx.run("dead", "dead", fx.at("08:00"), end=fx.at("09:00"), phases=work("08:00")), "outcome": "lost"}
+    d["agents"] = [gone, dead, fx.run("busy", "busy", fx.at("09:30"), phases=work("09:30")),
+                   fx.run("idle", "idle", fx.at("09:00"), phases=work("09:00") + [(fx.at("09:05"), "idle", None)])]
+    d["interactions"] = []
+    with open_lanes(browser, static_base_url, d) as (page, _):
+        page.wait_for_selector("#lanes-view [data-run-id=gone]")
+        ids = page.eval_on_selector_all("#lanes-view [data-run-id]", "ns => ns.map(n => n.dataset.runId)")
+        assert ids == ["busy", "idle", "gone", "dead"]  # 在跑的 → 失联 → 已结束
+        pill = lambda rid: page.eval_on_selector(  # noqa: E731
+            f"[data-run-id={rid}] .hcl-pill", "n => [n.textContent, n.classList.contains('is-ended')]")
+        assert pill("gone") == ["失联", True] and pill("dead") == ["失联结束", True]
+        assert page.get_attribute("[data-run-id=gone]", "data-phase") == "lost"
+        # 段止于最后一次信号（09:40），不再跟着「现在」闪
+        assert seg_classes(page, "gone") == ["hcl-seg hcl-ph-working"]
+        page.hover("[data-run-id=gone] .hcl-seg")
+        tip = page.locator("#lanes-view .hcl-tip")
+        tip.wait_for(state="visible")
+        assert tip.text_content() == "gone · 在干活 · 09:00–09:40（40 分）"
+        assert "最后信号" in page.text_content("[data-run-id=gone] .hcl-stat")
+        assert page.text_content("#lanes-state") == "1 个在干活"  # 失联的那个不算
+        said = page.text_content("#lanes-view [data-hcl-summary]")
+        assert "gone：失联" in said and "dead：失联结束" in said

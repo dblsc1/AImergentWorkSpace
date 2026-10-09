@@ -191,6 +191,18 @@
 > `attend` 超上限不丢新的；在场文档加建档代号防 ABA；`app` / `title` 有长度上限。条款见同节末「v2.17.2 修订」。
 > 一条取代条目（`attend` 的判据从「标题包含 `match`」收紧为「窗口就是那条会话」，见该节末）。
 >
+> **v2.18（追加式）**：**代理泳道不再靠「CLI 记得说 stop」活着。** 仓主 2026-10-09：代理泳道全靠 CLI 触发钩子，
+> CLI 崩了 / 卡死 / 被杀就没人说 stop，泳道停在最后的相位上，要等 12 小时的遗忘超时——「同意加心跳。12 小时太长，
+> 改成 30 分钟；15 分钟一次心跳」「要通用，走 HTTP，哪个 CLI 都能用」。本版新增 `POST /api/core/agents/{runId}/heartbeat`
+> 与活性规则（见「心跳与失联」节）：被收下的 start / phase / heartbeat 都更新运行的 `lastSeenAt`；**声明过会发心跳**的运行
+> 超过 30 分钟没有任何信号即**失联**——`views/lanes` 标 `lost: true`（不写），惰性关闭时写 `outcome: "lost"`、
+> **结束 = 最后一次信号的时刻**，代理时长不虚增。没声明过的运行（老适配器、检测程序的状态文件桥）行为一个不变；
+> `NEXUS_AGENT_RUN_TIMEOUT_HOURS` 只剩给它们兜底；声明过的运行另有**安全上限 7 天**（`AGENT_DECLARED_MAX_SECONDS`，按 `timeout`
+> 关、结束 = 开始 + 上限）。**一条泳道的时长是进程寿命，不是活动量**——开着不关的会话照记；分辨「真在干活」
+> 靠 working / waiting / idle 的相位时间。`start` / `heartbeat` 的响应带 `heartbeatSeconds`（900）。
+> 另记 `beatSource` / `beatCount`（谁发的心跳、发了几下），供比较适配器的不同心跳办法。面向适配器的线上协议另成一份
+> 通用契约 `contracts/agent.lane.v1`。既有字段、端点行为、事件形状一个不改。
+>
 > v1.9：`GET /api/core/export` 产出的快照此前没有任何端点能吃
 > 回去（喂给 import 会被三层拒绝，而那三条拒绝各守一件实事，一条都不该放宽）。
 > 新增 `nexus-core.restore.v1`（`POST /api/core/restore`，见「快照恢复」节）：
@@ -419,6 +431,14 @@ provides:
       agents[].attention [{from, to}]、human.presence[].runId；views/agent-time 的 open[].attentionSeconds；
       focus.dwellSeconds。不带 spans 的心跳行为同 v2.16
     status: 已实现（v2.17），待验证
+  - id: nexus-core.agents.liveness.v1
+    summary: 代理运行的心跳与失联（v2.18，agents.v1 的追加；线上协议见 contracts/agent.lane.v1）——
+      POST /api/core/agents/{runId}/heartbeat（空体或 {beatSource?}，回 {runId, applied, reason, heartbeatSeconds}）；
+      start / phase / heartbeat 都更新 lastSeenAt；start 可带 heartbeat: true 声明会发心跳（第一次 heartbeat 同样算声明）；
+      声明过的运行 1800 秒没信号即失联：views/lanes 标 lost + lastSeenAt（不写），惰性关闭写 outcome=lost、
+      结束 = lastSeenAt；没声明的运行不受影响（仍只有遗忘超时）。start / heartbeat 响应带 heartbeatSeconds=900。
+      运行上另记 beatSource / beatCount，views/lanes 与 agent.run.completed 的 data 带出
+    status: 已实现（v2.18），待验证
   - id: nexus-core.activity.reports.v1
     summary: AI 报告（v2.20，追加式）——AI 一次交一份待批准的报告，人一键全批准、单条仍可改 / 批准 / 不要。
       POST /api/core/activity/reports {summary, author?, items[]}（每条 assign | newTask | dismiss，选择器 suggestionIds | collection；
@@ -487,6 +507,8 @@ consumes:
 | POST | `/api/core/activity/ai/suggest` | `{key, taskId \| projectId, confidence, reason}` 或 `{key, none: true, reason}` | `SuggestOut`；带 Bearer 403、400、404、409（不在等回答，什么都没写）、422 | ✅ 已实现（v2.15） |
 | POST | `/api/core/activity/choice/reject` | `{key}` | `{key, app, title, ruleRemoved}`；带 Bearer 403、404（不是 AI 认的）、422 | ✅ 已实现（v2.15） |
 | — | （v2.17 追加，无新端点）`POST /api/core/activity/presence` 追加可选的 `sentAt` + `spans`；`views/lanes` 的 `agents[]` 追加 `attention`、`human.presence[]` 追加 `runId`；`views/agent-time` 的 `open[]` 追加 `attentionSeconds`；`focus` 追加 `dwellSeconds` | 见「串行的注意力时间线」节 | | ✅ 已实现（v2.17） |
+| POST | `/api/core/agents/{runId}/heartbeat` | 无（空体、`{}` 或 `{beatSource?}`） | `{runId, applied, reason, heartbeatSeconds}`（见「心跳与失联」节）；404、422 | ✅ 已实现（v2.18） |
+| — | （v2.18 追加）`agents/start` 请求追加 `heartbeat?`、`beatSource?`，响应追加 `heartbeatSeconds`；`views/lanes` 的 `agents[]` 追加 `lost`、`lastSeenAt`、`beatSource`、`beatCount`；`agent.run.completed` 的 `outcome` 追加取值 `lost`、`data` 追加 `beatSource?`、`beatCount?` | 见「心跳与失联」节 | | ✅ 已实现（v2.18） |
 | — | （v2.16 追加，无新端点）`views/lanes` 的 `human` 与 `views/current` 顶层追加 `focus`（人此刻的焦点；心跳新鲜就有，与 `autoTrack`、有没有手动计时无关） | 见「此刻的焦点」节 | | ✅ 已实现（v2.16） |
 | — | （v2.15 追加，无新端点）`views/lanes` 的 `human` 与 `views/current` 顶层追加 `aiThinking`；`auto` 追加 `key`、`source` 追加取值 `"ai"`；`GET /api/core/activity/auto` 每条追加 `ai`；规则追加可选的 `author`、`auto` | 见「让 AI 认窗口」节 | | ✅ 已实现（v2.15） |
 | — | （v2.14 追加，无新端点）在场心跳可带 `guess`；`views/lanes` 的 `human` 与 `views/current` 顶层追加 `auto`、`needsChoice`；上传的 `suggestion` 可带 `projectId`、列表每条追加 `auto`；改挂端点放行自动记下的段；`DetectorSettings` 追加 `autoTrack`、规则可用 `projectId` 代替 `taskId` | 见「自动跟踪进行中的任务」节 | | ✅ 已实现（v2.14） |
@@ -2105,7 +2127,7 @@ planner 是**计划状态**，走普通 CRUD，**不进开放事件标准**（�
 { "runId": "run_0123456789ab", "startedAt": "2026-09-28T09:30:00+00:00" }
 
 // POST /api/core/agents/{runId}/stop   请求 AgentStopIn
-{ "outcome": "done",             // 必填：done | failed | cancelled | timeout
+{ "outcome": "done",             // 必填：done | failed | cancelled | timeout（响应里还可能是 lost：v2.18，只由服务端写）
   "output": "PR #31 已开" }      // 选填，≤512 字符
 // → 200 AgentStopOut
 { "runId": "run_0123456789ab",
@@ -2191,6 +2213,74 @@ hook 没发 stop（终端被关、进程被杀）的运行会永远挂着。超�
 这意味着 `GET /views/current` 可能写事件——这是本节明文允许的唯一例外，写的只是
 「早该写的那一条」。
 （v2.3：`GET /views/agent-time` 读前同样收超时，是这条例外的第二个读端，见「AI 代理时长读端」节。）
+
+（v2.18：遗忘超时只管**没声明过心跳**的运行。声明过的运行看下一节的活性规则，不看这个上限——
+`NEXUS_AGENT_RUN_TIMEOUT_HOURS` 从「每条运行的寿命上限」退成「不发心跳的运行的安全网」。）
+
+### 心跳与失联（规范性 · v2.18，`nexus-core.agents.liveness.v1`）
+
+仓主 2026-10-09（原话见本文件头部 v2.18）。面向适配器的线上协议（认证、幂等、对适配器的要求、例子）在
+`contracts/agent.lane.v1`；本节是服务端这一侧的唯一事实。
+
+```jsonc
+// POST /api/core/agents/start   AgentStartIn 追加两个选填字段、响应追加一个键
+{ "agent": "garden", "tool": "claude-code",
+  "heartbeat": true,             // 选填，缺省 false：声明这条运行会发心跳
+  "beatSource": "companion" }    // 选填，^[a-z0-9][a-z0-9_-]{0,31}$：谁来发心跳（只是标签）
+// → 201 / 200
+{ "runId": "run_…", "startedAt": "…", "heartbeatSeconds": 900 }
+
+// POST /api/core/agents/{runId}/heartbeat   请求：空体、{} 或 { "beatSource": "monitor" }
+// → 200 AgentHeartbeatOut
+{ "runId": "run_…",
+  "applied": true,               // false = 运行已结束，reason 为 "closed"（同相位端点的 closed）
+  "reason": null,
+  "heartbeatSeconds": 900 }
+```
+
+| 情形 | 状态码 |
+|---|---|
+| `runId` 不存在（或属于别的租户，同形状不暴露） | 404 |
+| 体里有 `beatSource` 以外的键、体不是对象、`beatSource` 不合格式；`start` 的 `heartbeat` 不是布尔 | 422 |
+| 运行已结束（stop 过、超时、失联） | **200，`applied:false, reason:"closed"`** |
+
+规则：
+
+- **信号**：被收下的 `start`（含同 `clientKey` 回原运行的那种）、`phase`（含 `duplicate` / `capped`）、`heartbeat`
+  都把运行的 `lastSeenAt` 更新成服务端此刻。新开的运行 `lastSeenAt` = `startedAt`。`stop` 不算（它直接结束运行）。
+  在场心跳命中 `match` 记的 attend **不算**——那是人在看，不是代理活着。
+- **声明**：`start` 带 `heartbeat: true`，或对这条运行发过一次 `heartbeat`（含同 `clientKey` 再 `start` 时带上）。
+  声明不可撤回。**没声明的运行本节其余各条一概不适用**——v2.17 及以前的适配器、`modules/ai-detector` 的状态文件桥
+  今天怎样还怎样。
+- **失联**：声明过的运行，`服务端此刻 − lastSeenAt > 1800 秒`（`AGENT_LOST_AFTER_SECONDS`）即失联。
+  - `GET /views/lanes`（不写）：该运行 `lost: true`，`elapsedSeconds` 止于 `lastSeenAt`（不再随时间涨），`overdue` 恒 `false`。
+  - 惰性关闭：与遗忘超时同一批时机（该租户下一次 `agents/start`、`stop`、`phase`、`heartbeat`、`views/current`、
+    `views/agent-time`）。写 `outcome: "lost"`，事件的 `time` = `lastSeenAt`、`durationSeconds` = `lastSeenAt − startedAt`
+    （下限 1）——**不是**被发现的时刻，也不是「开始 + 上限」。关闭带着读到的 `lastSeenAt` 作条件：读到「失联」之后、
+    打关闭标记之前又来了信号，就不关。
+  - 关闭之后与任何已结束的运行一样：迟到的 `phase` / `heartbeat` 回 `closed`，`stop` 回 `duplicate:true`（`outcome`
+    是 `lost`）；带原 `clientKey` 再 `start` 开一条**新**运行，`startedAt` 是此刻。
+- **安全上限**：声明过的运行不看 `NEXUS_AGENT_RUN_TIMEOUT_HOURS`，但有自己的上限 `AGENT_DECLARED_MAX_SECONDS` = 7 天
+  （具名常量，远小于投影的 31 天坏载荷线，超过 31 天的事件在统计里会被静默丢掉）。到了上限，惰性关闭写 `outcome: "timeout"`、
+  事件 `time` = 开始 + 上限、`durationSeconds` = 上限（同遗忘超时的算法）；与失联同时成立时取结束更早的。
+  `views/lanes`（不写）：`elapsedSeconds` 封顶、`overdue: true`。之后的迟到信号回 `closed`，带原 `clientKey` 再 `start`
+  开新运行（与失联后一样）。**时长含义**：一条泳道的 `durationSeconds` 是**进程寿命**（开着没关也在跑），不是活动量；
+  周末开着的会话会记满到上限。要分辨「真在干活」看相位时间（working / waiting / idle），不要看总时长。
+- **间隔**：`heartbeatSeconds` = 900（`AGENT_HEARTBEAT_SECONDS`，失联线的一半）。两个数是代码里的具名常量，不是环境变量——
+  仓主定的值，没有部署要调它的理由；要调时发新版契约。
+- **`stop` 的 `outcome` 仍只收** `done` / `failed` / `cancelled` / `timeout`；`lost` 只由服务端写，客户端发 → 422。
+- **`beatSource` / `beatCount`**（只为比较，不参与任何判定）：`beatSource` 是适配器自报的标签，`start` / `heartbeat` 里
+  给了就记，后来的盖先来的；`beatCount` 是这条运行收到的 `heartbeat` 次数（`start` / `phase` 不计）。两者在跑时由
+  `views/lanes` 带出，结束时写进 `agent.run.completed` 的 `data`（没有就不出现——不发心跳的运行写出的事实与 v2.17
+  逐键相同），之后由 `proj_lanes` 带出。按 `beatSource` 分组看 `outcome`（`lost` 对 `cancelled` / `done`）与
+  `beatCount`，就能比较两种心跳办法；查询写法见 `tools/agent-hooks/README.md`「比较两条路」。
+- **`views/agent-time` 与 `views/current`** 读前收失联（同收超时），所以 `open[]` / `agents[]` 里不会有失联的运行；
+  被收掉的那条按 `lastSeenAt − startedAt` 进汇总。
+- 存储：`agent_runs` 文档追加 `lastSeenAt`、`heartbeat?`、`beatSource?`、`beatCount?`；无迁移——升级前就在跑的运行
+  没有 `heartbeat`，按「没声明」处理，第一次心跳时补上 `lastSeenAt`。
+
+本版不做：`modules/ai-detector` 的状态文件桥不声明心跳（它在状态文件过期时有意不动运行，改成发心跳要重定那条语义）；
+失联的运行不自动「复活」成同一条（适配器重开的是新运行，两段之间的空白就是事实）。
 
 ### 投影：`proj_agent_daily_stats`，与人的投影零交集
 
@@ -2866,6 +2956,10 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
                 "outcome": null,                      // 在跑的为 null
                 "elapsedSeconds": 1200,               // 在跑的：现在 − startAt，封顶超时上限；已结束的为 durationSeconds
                 "overdue": false,                     // 在跑且已超过超时上限（本端点不收它，见下）
+                "lost": false,                        // v2.18：在跑、声明过心跳、超过 30 分钟没信号（本端点不收它）
+                "lastSeenAt": "…",                    // v2.18：在跑的运行最后一次信号的时刻；已结束的 / 老运行为 null
+                "beatSource": "companion",            // v2.18：谁在发心跳；没报过为 null
+                "beatCount": 3,                       // v2.18：收到过几次心跳；没有为 null
                 "phases": [ { "at": "…", "phase": "working", "detail": null } ] } ],   // 按 startAt 升序
   "interactions": [ { "runId": "run_…", "kind": "reply",  "at": "…" },
                     { "runId": "run_…", "kind": "attend", "at": "…", "until": "…" } ],  // 按 at 升序
@@ -2886,6 +2980,9 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
   `truncated: true`；`interactions` 只含列出的运行的。`presence` 本身有上限（每设备 500 段）。
 - **本端点不写**：不收超时运行（v2.1「读时写」例外已明文止于 `agent-time`）。超过上限还挂着的运行照列，
   `overdue: true`、`elapsedSeconds` 封顶；下一次 `views/current`/start/stop/phase 会把它收成 `timeout` 事实。
+- **v2.18**：失联的运行同样照列不收：`lost: true`、`endAt` / `outcome` 仍为 `null`、`elapsedSeconds` 止于 `lastSeenAt`；
+  下一次写端点 / `views/current` / `views/agent-time` 把它收成 `outcome: "lost"` 的事实，`endAt` = 原来的 `lastSeenAt`。
+  已结束的运行 `lost` 恒 `false`、`lastSeenAt` 为 `null`（是不是失联结束的看 `outcome`）。
 - 数据来源：已结束的人的段与代理运行读新投影 `proj_lanes`（下）；在跑的运行读 `agent_runs`；
   `running` 与 `views/current` 的人部分同源；`presence` 读 `activity_presence`。**不读 `events`**（「内部子边界」红线不破）。
 - 按当前租户；名字不 join（同 agent-time）。
@@ -3685,7 +3782,7 @@ app/modules/
 | `NEXUS_TENANT_STRICT` | 否 | 租户严格模式，默认 `0`（v2.0） | 取值只认 `0`/`1`/`true`/`false`；置 1 时缺 `X-Nexus-Tenant` 的请求一律 401。**多用户部署必开**，见「按租户分数据」节 |
 | `NEXUS_ACTOR_STRICT` | 否 | 严格模式，默认 `0`（v1.6） | 取值只认 `0`/`1`/`true`/`false`（其余立即失败）；置 1 时 `NEXUS_HUMAN_CLIENT_TOKEN` 必填，否则启动失败——**开了严格模式却没有人路径凭据 = 把前端写路径全打死，这种配置必须炸在启动那一刻，不是炸在用户点删除那一刻** |
 | `NEXUS_SUGGESTION_TTL_DAYS` | 否 | 活动建议的保留天数，默认 `14`（v2.2） | 正整数，其余立即失败。见「活动建议」节「过期」 |
-| `NEXUS_AGENT_RUN_TIMEOUT_HOURS` | 否 | AI 代理运行的遗忘超时（小时），默认 `12`（v2.1） | 正整数，其余立即失败。超时的运行在下一次 start/stop/`views/current` 读时以 `outcome:"timeout"` 关闭，时长封顶为该值 |
+| `NEXUS_AGENT_RUN_TIMEOUT_HOURS` | 否 | AI 代理运行的遗忘超时（小时），默认 `12`（v2.1） | 正整数，其余立即失败。超时的运行在下一次 start/stop/`views/current` 读时以 `outcome:"timeout"` 关闭，时长封顶为该值。v2.18 起只管没声明过心跳的运行（声明过的看「心跳与失联」，30 分钟没信号即失联，该值对它无效） |
 
 本模块**不持有任何 LLM 密钥**——那是 ai-gateway 的事，物理隔离是设计的一部分。
 v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_request`），
@@ -3720,6 +3817,8 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 | `mcp`（v2.15） | `activity.auto-ai.v1` 的 `POST /api/core/activity/ai/claim`、`POST /api/core/activity/ai/suggest`（`mcp.tools.v1` v1.9 的两个工具，对内直连、不带 Bearer） | `modules/mcp` |
 | `ring` 前端 / 共享 `lanes.js`（v2.15） | `views.lanes.v1` 的 `human.aiThinking`、`human.auto.source: "ai"` / `auto.key`；`POST /api/core/activity/choice/reject` | `modules/ring`、`modules/nginx-docker` |
 | 共享顶栏 `nginx-docker/static/navbar.js` + 共享件 `focus.js` / `lanes.js`（v2.16） | `views.current.v1` 的 `focus`（芯片上的「正在：项目 / 窗口」+ 走秒、「离开」；不多发请求）；`views.lanes.v1` 的 `human.focus`（人那张卡那行字） | `modules/nginx-docker` |
+| `tools/agent-hooks`（v2.18） | `agents.liveness.v1`：Claude Code 钩子的心跳伴随进程 / 插件 monitor 与 `cockpit-run` 的心跳线程发 `heartbeat`（带 `beatSource`）；`phase` / `heartbeat` 回 `closed` 时带原 `clientKey` 再 `start` | `tools/agent-hooks`、`contracts/agent.lane.v1` |
+| `ring` 前端 / 共享 `lanes.js`（v2.18） | `views.lanes.v1` 的 `lost` / `lastSeenAt`（灰色「失联」、段止于最后一次信号、不计入标题的在干活 / 在等你）与 `outcome: "lost"`（「失联结束」） | `modules/ring`、`modules/nginx-docker` |
 | `ring` 前端（v2.16） | `views.current.v1` 的 `focus`（没在计时时大圆环中心的「正在：项目 / 任务」+ 窗口 + 走秒 + 一键开始计时） | `modules/ring` |
 | `hive` 前端（v2.16） | `views.current.v1` 的 `focus`（中心格的「正在：…」+ 走秒；`focus.projectId` 那个项目格的描边） | `modules/hive` |
 | `mcp`（v2.16） | `views.current.v1` 的 `focus` / `auto` / `needsChoice`（`mcp.tools.v1` v1.10 的 `get_current_timer` 原样带出） | `modules/mcp` |

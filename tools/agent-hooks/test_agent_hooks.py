@@ -237,8 +237,16 @@ class _IsolatedHomeMixin:
         self._home_tmpdir = tempfile.TemporaryDirectory()
         self._old_home = os.environ.get("HONEYCOMB_AGENT_HOOKS_HOME")
         os.environ["HONEYCOMB_AGENT_HOOKS_HOME"] = self._home_tmpdir.name
+        # 心跳（伴随进程 / cockpit-run 的线程）缺省关掉：不许测试留下脱离的进程，也不让异步的心跳混进请求记录。
+        # 心跳自己的测试在 test_agent_hooks_beat.py 里按需打开。
+        self._old_beat = os.environ.get("COCKPIT_BEAT")
+        os.environ["COCKPIT_BEAT"] = "off"
 
     def tearDown(self):
+        if self._old_beat is None:
+            os.environ.pop("COCKPIT_BEAT", None)
+        else:
+            os.environ["COCKPIT_BEAT"] = self._old_beat
         if self._old_home is None:
             os.environ.pop("HONEYCOMB_AGENT_HOOKS_HOME", None)
         else:
@@ -299,22 +307,41 @@ class LoadConfigTests(_IsolatedHomeMixin, unittest.TestCase):
         cfg_dir.mkdir(parents=True, exist_ok=True)
         (cfg_dir / cc.CONFIG_FILENAME).write_text(content, encoding="utf-8")
 
+    def _load(self, **env):
+        keys = ("COCKPIT_URL", "COCKPIT_TOKEN", "CLAUDE_PLUGIN_OPTION_COCKPIT_URL", "CLAUDE_PLUGIN_OPTION_COCKPIT_TOKEN")
+        clean = {k: v for k, v in os.environ.items() if k not in keys}
+        with mock.patch.dict(os.environ, {**clean, **env}, clear=True):
+            return cc.load_config()
+
     def test_env_overrides_file(self):
         self._write_config(json.dumps({"url": "http://file-url/", "token": "file-token", "tasks": {"/x": "t"}}))
-        old_env = {k: os.environ.get(k) for k in ("COCKPIT_URL", "COCKPIT_TOKEN")}
-        try:
-            os.environ["COCKPIT_URL"] = "http://env-url/"
-            os.environ.pop("COCKPIT_TOKEN", None)
-            cfg = cc.load_config()
-            self.assertEqual(cfg["url"], "http://env-url")  # 环境变量赢，且去掉了结尾斜杠
-            self.assertEqual(cfg["token"], "file-token")  # 没设环境变量，落到文件
-            self.assertEqual(cfg["tasks"], {"/x": "t"})
-        finally:
-            for k, v in old_env.items():
-                if v is None:
-                    os.environ.pop(k, None)
-                else:
-                    os.environ[k] = v
+        cfg = self._load(COCKPIT_URL="http://env-url/", COCKPIT_TOKEN="env-token")
+        self.assertEqual((cfg["url"], cfg["token"]), ("http://env-url", "env-token"))  # 环境变量赢，且去掉了结尾斜杠
+        self.assertEqual(cfg["tasks"], {"/x": "t"})
+
+    def test_token_only_goes_with_the_url_it_was_configured_with(self):
+        """地址与令牌成对取：别的来源的令牌不跟着另一个来源的地址走（文件令牌不能发去插件设置 / 环境变量的地址）。"""
+        self._write_config(json.dumps({"url": "http://file-url/", "token": "file-token"}))
+        plugin_url = "CLAUDE_PLUGIN_OPTION_COCKPIT_URL"
+        plugin_token = "CLAUDE_PLUGIN_OPTION_COCKPIT_TOKEN"
+        cases = [
+            (dict(COCKPIT_URL="http://env-url/"), ("http://env-url", "")),  # 环境变量只给地址：文件令牌不跟
+            (dict(COCKPIT_TOKEN="env-token"), ("http://file-url", "file-token")),  # 只给令牌的来源：令牌不用
+            (dict(**{plugin_url: "http://plugin-url/"}), ("http://plugin-url", "")),
+            (dict(**{plugin_url: "http://plugin-url/", plugin_token: "plugin-token"}), ("http://plugin-url", "plugin-token")),
+            (dict(**{plugin_token: "plugin-token"}), ("http://file-url", "file-token")),  # 插件只填了令牌（地址留空）
+            (dict(COCKPIT_URL="http://env-url/", **{plugin_url: "http://plugin-url/", plugin_token: "plugin-token"}),
+             ("http://env-url", "")),  # 先到先得：插件的令牌不跟环境变量的地址
+            ({}, ("http://file-url", "file-token")),
+        ]
+        for env, expected in cases:
+            with self.subTest(env=sorted(env)):
+                cfg = self._load(**env)
+                self.assertEqual((cfg["url"], cfg["token"]), expected)
+
+    def test_plugin_manifest_has_no_default_url(self):
+        manifest = json.loads((Path(__file__).parent / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        self.assertNotIn("default", manifest["userConfig"]["cockpit_url"])
 
     def test_missing_config_file_is_tolerated(self):
         cfg = cc.load_config()  # 临时目录里压根没有 agent-hooks.json

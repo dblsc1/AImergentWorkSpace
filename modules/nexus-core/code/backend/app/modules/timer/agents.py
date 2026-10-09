@@ -18,6 +18,7 @@
   抖动时一定会重试，409 会让它以为没停成再试一遍。
 - **遗忘超时惰性关闭**：没有调度器。事件的 ``time``/``durationSeconds`` 按「开始 + 上限」
   算，不按被发现的时刻，所以关得晚不影响任何数字。
+- **失联同样惰性关闭（v2.18）**：会发心跳的运行不看遗忘超时，看 ``agent_liveness``（关在最后一次信号的时刻）。
 - **关闭是一道原子边界（v2.4）**：``_close`` 先用一次条件更新打关闭标记（定死结束时刻与 outcome）
   并取回整份文档作快照，再按快照组装、ingest、删活状态；相位 / attend 的写入都带「未关闭」条件
   （``agent_phases.py``）。标记后崩溃留下的「已标记未删除」由下一次清理按快照补完。
@@ -36,6 +37,7 @@ from ..events.schemas import SPEC
 from ..planner import service as planner_service
 from ..planner.errors import InvalidInputError, NotFoundError
 from . import repo
+from .agent_liveness import AGENT_HEARTBEAT_SECONDS, mark_expired
 
 SOURCE = "agent-hook"
 EVENT_TYPE = "agent.run.completed"
@@ -91,6 +93,9 @@ def snapshot_data(snap: dict) -> tuple[dict, datetime]:
         data["output"] = marker["output"]
     if snap.get("label"):
         data["label"] = snap["label"]
+    for key in ("beatSource", "beatCount"):  # v2.18：谁发的心跳、发了几下（没有就不出现）
+        if snap.get(key):
+            data[key] = snap[key]
     if snap.get("unverified"):  # v2.19：匿名开的运行；没有就不出现
         data["unverified"] = True
     phases = [p for p in snap.get("phases") or [] if ts(p["at"]) <= ended]
@@ -166,7 +171,10 @@ def _expire(user: str, now: datetime) -> None:
             _finish(run)
             continue
         started = ts(run["startedAt"])
-        if now - started > cap:
+        if run.get("heartbeat"):  # v2.18：会发心跳的运行不看遗忘超时，只看失联与 7 天安全上限
+            if (snap := mark_expired(run, now)) is not None:
+                _finish(snap)
+        elif now - started > cap:
             _close(run, "timeout", None, started + cap)
 
 
@@ -176,6 +184,10 @@ def clean(value: str | None) -> str | None:
         return None
     cleaned = "".join(ch for ch in value if unicodedata.category(ch) != "Cc")
     return cleaned or None
+
+
+def _started(run: dict) -> dict:
+    return {"runId": run["runId"], "startedAt": run["startedAt"], "heartbeatSeconds": AGENT_HEARTBEAT_SECONDS}
 
 
 def start(
@@ -192,6 +204,8 @@ def start(
     match: str | None = None,
     client_key: str | None = None,
     project_id: str | None = None,
+    heartbeat: bool = False,
+    beat_source: str | None = None,
     unverified: bool = False,
 ) -> tuple[dict, bool]:
     """开一个代理运行。**不碰 timer_state，不关任何在跑的运行。**
@@ -214,7 +228,9 @@ def start(
             names = {k: v for k, v in (("label", clean(label)), ("match", clean(match))) if v and v != existing.get(k)}
             if names:
                 repo.relabel_agent_run(user, existing["runId"], names)
-            return {"runId": existing["runId"], "startedAt": existing["startedAt"]}, False
+            repo.touch_agent_run(user, existing["runId"], right_now.isoformat(),  # v2.18
+                                 declare=heartbeat, beat_source=beat_source)
+            return _started(existing), False
     if task_id is not None:
         _task, chain_project, zone_id = resolve_chain(task_id, action="拒绝开始代理运行")
         if project_id not in (None, chain_project):  # v2.13：自相矛盾的不收，不替它挑一个
@@ -244,6 +260,9 @@ def start(
         "tool": tool,
         "model": model,
         "startedAt": right_now.isoformat(),
+        "lastSeenAt": right_now.isoformat(),  # v2.18：start / phase / heartbeat 都更新它
+        **({"heartbeat": True} if heartbeat else {}),  # 声明会发心跳：活性规则只管这样的运行
+        **({"beatSource": beat_source} if beat_source else {}),
     }
     # v2.4 选填键：没给就不写，老读方看到的文档与 v2.1 一样
     label, match = clean(label), clean(match)
@@ -261,10 +280,10 @@ def start(
         if repo.add_agent_run(run):
             if unverified:
                 _enforce_anonymous_cap(user, run["runId"])
-            return {"runId": run["runId"], "startedAt": run["startedAt"]}, True
+            return _started(run), True
         existing = repo.find_agent_run_by_client_key(user, client_key)
         if existing is not None and bool(existing.get("unverified")) == unverified:
-            return {"runId": existing["runId"], "startedAt": existing["startedAt"]}, False
+            return _started(existing), False
         # 撞键后那条又刚被关掉：再插一次
     raise RuntimeError(f"clientKey 争用未决：{client_key!r}")
 

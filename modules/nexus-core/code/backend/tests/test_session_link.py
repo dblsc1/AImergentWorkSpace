@@ -212,7 +212,9 @@ def test_restart_with_same_client_key_renames_the_run_and_nothing_else(client, s
                    agent="other", projectId="p_nope", phase="working")  # 其余字段对原运行不起作用，也不校验
     assert again == run
     after = _db()["agent_runs"].find_one({"runId": run["runId"]}, {"_id": 0})
-    assert after == {**before, "label": "Cockpit-Pub-Coder1", "match": "Cockpit-Pub-Coder1"}
+    assert after["lastSeenAt"] >= before["lastSeenAt"]  # v2.18：再 start 也是一次信号
+    assert after == {**before, "label": "Cockpit-Pub-Coder1", "match": "Cockpit-Pub-Coder1",
+                     "lastSeenAt": after["lastSeenAt"]}
 
     _start(client, expect=200, clientKey="k1")  # 没给名字：不动
     _start(client, expect=200, clientKey="k1", label="只换显示名")
