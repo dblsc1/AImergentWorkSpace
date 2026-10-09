@@ -37,10 +37,15 @@ def insert_if_absent(doc: dict) -> bool:
     return True
 
 
-def mark_purged(user: str, rule_id: str) -> None:
-    """清理做完了才标：没标的规则（清理中途出错）会按退避补清。"""
-    _col().update_one({"user": user, "id": rule_id},
-                      {"$set": {"purged": True}, "$unset": {"purgeTries": "", "purgeLastTry": "", "purgeFailed": ""}})
+def mark_purged(user: str, rule_id: str, created_at: datetime) -> bool:
+    """校验过一遍确实没有残留才标；条件带 createdAt：规则在清理期间被删了又建回来（新的一条），这一条标不上，新的从 ``purged: false`` 起步。"""
+    return _col().update_one({"user": user, "id": rule_id, "createdAt": created_at},
+                             {"$set": {"purged": True}, "$unset": {"purgeTries": "", "purgeLastTry": "", "purgeFailed": ""}}
+                             ).matched_count > 0
+
+
+def exists(user: str, rule_id: str, created_at: datetime) -> bool:
+    return _col().count_documents({"user": user, "id": rule_id, "createdAt": created_at}, limit=1) > 0
 
 
 def note_purge_attempt(user: str, rule_id: str, at: datetime, failed: bool, give_up_after: int) -> None:
@@ -103,3 +108,9 @@ def drop_windows(user: str, collection: str, hit) -> int:
     ids = [d["_id"] for d in col.find({"user": user, "app": {"$exists": True}}, {"app": 1, "title": 1})
            if hit(d["app"], d.get("title", ""))]
     return col.delete_many({"_id": {"$in": ids}}).deleted_count if ids else 0
+
+
+def any_window(user: str, collection: str, hit) -> bool:
+    """校验用（只读）：``activity_choices`` / ``activity_ai_asks`` 里还有没有命中的。"""
+    return any(hit(d["app"], d.get("title", ""))
+               for d in get_db()[collection].find({"user": user, "app": {"$exists": True}}, {"app": 1, "title": 1}))

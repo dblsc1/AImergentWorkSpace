@@ -7,7 +7,6 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Request
 from pydantic import (
-    AfterValidator,
     AwareDatetime,
     BaseModel,
     BeforeValidator,
@@ -58,9 +57,10 @@ _Moment = Annotated[AwareDatetime, BeforeValidator(_iso_text)]  # 带偏移的 I
 _SLACK = timedelta(seconds=2)  # 段的首尾按毫秒取整、当前窗口可能多给一秒：这点误差不算重叠 / 超前
 
 
-#: app / title：不设长度上限、先截到 1024（presence.clip 再按 128 / 512 取）——契约 v2.4「截断后照收」，老的不带 spans 的客户端也一样。
+#: app / title：不设长度上限（v2.22 起不在这里截断）——「忽略并记住」的闸门要看**收到的全文**（命中的片段可能在 1024 之后），
+#: 闸门之后才由 presence.clip 按 128 / 512 取——契约 v2.4「截断后照收」，老的不带 spans 的客户端也一样。
 #: 真有长标题：GNOME Ptyxis 把整条内联 python 命令放进标题，拒掉就丢了合法的心跳。乱发的大包由网关的体上限（1m）挡。
-_Text = Annotated[StrictStr, AfterValidator(lambda v: v[:1024])]
+_Text = StrictStr
 
 
 class Span(BaseModel):

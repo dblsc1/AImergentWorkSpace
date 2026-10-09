@@ -42,6 +42,14 @@ class PurgeIncomplete(RuntimeError):
     """规则已经存下，但清理没做完 → 503（建规则的接口；会自动重试）。"""
 
 
+class _Gone(Exception):
+    """清理期间规则被删了（或删了又建回来）：这一次清理到此为止。"""
+
+
+class _Dirty(Exception):
+    """清完一遍后校验，还有命中的残留：不能标 purged。"""
+
+
 class _OverBudget(Exception):
     """本次扫描超出预算：不算失败，下次接着清。"""
 
@@ -102,6 +110,8 @@ def add(app: str, title_contains: str | None) -> dict:
         raise UnprocessableError(f"忽略规则最多 {MAX_IGNORES} 条")
     try:
         removed = purge(user, stored, count=True)
+    except _Gone:  # 清理期间被删了：没有什么要清的了
+        removed = 0
     except Exception as exc:  # 规则已经存下（此后的写入者在写入时都会看到它）、没标 purged，之后按退避补清；读路径先遮住
         ignore_repo.note_purge_attempt(user, stored["id"], _now(), not isinstance(exc, _OverBudget), PURGE_GIVE_UP)
         raise PurgeIncomplete("规则已保存，清理未完成，会自动重试") from exc
@@ -117,8 +127,13 @@ def purge(user: str, rule: dict, count: bool = False) -> int:
     hit = lambda app, title: matches(rule, app or "", title or "")  # noqa: E731
     needle = fold(rule["titleContains"]) if rule["titleContains"] else None
     removed = seconds = 0
+    def alive() -> None:
+        if not ignore_repo.exists(user, rule["id"], rule["createdAt"]):
+            raise _Gone
+
     scanned = 0
     for batch in repo.pending_windows(user):
+        alive()
         scanned += len(batch)
         if scanned > SCAN_BUDGET:
             raise _OverBudget
@@ -131,8 +146,22 @@ def purge(user: str, rule: dict, count: bool = False) -> int:
     ignore_repo.mask_presence(user, hit)
     ignore_repo.drop_windows(user, "activity_choices", hit)
     ignore_repo.drop_windows(user, "activity_ai_asks", hit)
+    alive()
     window_rules.drop_ignored(hit, lambda text: bool(needle) and needle in fold(text))  # app 整个忽略时不按文字清草稿，只按窗口
-    ignore_repo.mark_purged(user, rule["id"])
+    # 校验一遍确实没有残留，才标 purged（读路径的遮罩只看这个标志，标早了残留就露出来）；标的条件带 createdAt
+    scanned = 0
+    for batch in repo.pending_windows(user):
+        scanned += len(batch)
+        if scanned > SCAN_BUDGET:
+            raise _OverBudget
+        if any(matches(rule, p["app"], p["title"]) for p in batch):
+            raise _Dirty
+    if (any(hit(d.get("app"), d.get("title")) or any(hit(sp.get("app"), sp.get("title")) for sp in d.get("spans") or [])
+            for d in repo.presence_list(user))
+            or ignore_repo.any_window(user, "activity_choices", hit) or ignore_repo.any_window(user, "activity_ai_asks", hit)
+            or window_rules.has_ignored(hit)):
+        raise _Dirty
+    ignore_repo.mark_purged(user, rule["id"], rule["createdAt"])
     return removed
 
 
@@ -148,6 +177,8 @@ def purge_leftovers(user: str, rule: dict) -> None:
     """（B）清理**规则存在之前**就存下的残留：尽力而为，**从不往调用方抛**（调用方是写入 / 读路径，别的窗口的数据不能因此 5xx）；失败记下时刻与次数。"""
     try:
         purge(user, rule)
+    except _Gone:
+        return
     except Exception as exc:  # noqa: BLE001
         try:
             ignore_repo.note_purge_attempt(user, rule["id"], _now(), not isinstance(exc, _OverBudget), PURGE_GIVE_UP)
@@ -217,7 +248,10 @@ def guarded(fn):
             now = _now()
             for r in rules(user):
                 if (r["id"], r["createdAt"]) not in before:
-                    purge(user, r)  # （A）写的当中新出现的规则：严格
+                    try:
+                        purge(user, r)  # （A）写的当中新出现的规则：严格
+                    except _Gone:
+                        pass  # 刚建又被删了：没有什么要守的了
                 elif _due(r, now):
                     try:
                         purge_leftovers(user, r)  # （B）本来就有的规则的旧残留：尽力

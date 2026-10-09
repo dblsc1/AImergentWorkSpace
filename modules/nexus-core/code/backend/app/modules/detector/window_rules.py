@@ -123,3 +123,8 @@ def drop_ignored(hit, text_hit) -> int:
         except Exception:  # noqa: BLE001
             pass
     return n
+
+
+def has_ignored(hit) -> bool:
+    """校验用（只读）：还有没有出自被忽略窗口的 AI 规则（``drop_ignored`` 删的同一判据）。"""
+    return any(_derived(r, hit) for r in ((repo.get_rules(current_tenant()) or {}).get("rules") or []))

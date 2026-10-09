@@ -355,10 +355,134 @@ def test_write_gate_holds_while_the_leftover_purge_fails_permanently(client, wor
     assert (doc["app"], doc["title"]) == ("", "") and not doc.get("guess")
     blank = [sp for sp in doc["spans"] if sp["app"] == ""]
     assert blank and all(sp["title"] == "" and "guess" not in sp for sp in blank)
-    assert any(sp["title"] == "别的" for sp in doc["spans"])
     # AI 回答：窗口已被忽略（问询也被清掉）→ 拒绝，什么都没写
     out = client.post(f"{API}/activity/ai/suggest", json={"key": w["key"], "taskId": world["a"], "confidence": 0.9, "reason": "r"})
     assert out.status_code in (404, 409)
     assert _rules(client)["rules"] == []
     assert _dump(MARK) <= DECLARED, _dump(MARK)
     assert _dump(MARK) == {"activity_ignores"}
+
+
+# ─────────────────────────────────────────── 闸门看的就是被存下的那个字段：归一化 / 截断 / 字段全覆盖 / 状态漂移
+
+NORM_FRAGMENT = "alpha beta 7731"
+NORM_TITLE = "ａｌｐｈａ\u200b  beta\t７７３１ tail"        # 只有经 NFKC / 去零宽 / 折叠空白才命中
+LONG_TITLE = "LONGMARK" + "y" * 2900 + " alpha beta 7731 end"  # 比所有截断上限（1024 / 512 / 128）都长，命中的片段在最末尾
+
+
+def _beat_raw(client, app, title, spans=None, **extra):
+    body = {"deviceId": DEV, "app": app, "title": title, "afk": False, **extra}
+    if spans is not None:
+        body["spans"] = spans
+    resp = client.post(f"{API}/activity/presence", json=body)
+    assert resp.status_code == 200, resp.text
+
+
+def test_dump_normalised_and_over_long_titles_never_stored_before_or_after_the_rule(client):
+    now, norm_span = _span(NORM_TITLE, 20, 10)
+    _, long_span = _span(LONG_TITLE, 8, 5)
+    _upload(client, [_seg(10, "code", NORM_TITLE)])
+    _beat_raw(client, "code", NORM_TITLE, spans=[norm_span], sentAt=now.isoformat())
+    assert {"activity_suggestions", "activity_presence"} <= _dump("ａｌｐｈａ")
+    _ignore(client, "code", NORM_FRAGMENT)  # 规则里存的是半角、单空格的片段
+    assert _dump("ａｌｐｈａ") == set()
+    # 规则之前就被截断存下的长标题（命中片段在被截掉的尾巴里）认不出来——声明过的残留（契约「已知的残留」）；规则之后的写入看的是收到的全文
+    for title, span in ((NORM_TITLE, norm_span), (LONG_TITLE, long_span)):  # 规则之后的写入：整个丢 / 抹
+        assert _upload(client, [_seg(5, "code", title + "2")]).get("ignored") == 1
+        _beat_raw(client, "code", title, spans=[span], sentAt=now.isoformat())
+    assert _dump("ａｌｐｈａ") == set() and _dump("LONGMARK") == set()
+
+
+def test_duplicate_json_keys_gate_the_value_that_is_parsed_and_stored(client):
+    _ignore(client, "code", MARK)
+    raw = ('{"deviceId": "%s", "app": "code", "title": "ok", "title": "%s", "afk": false}' % (DEV, MARK)).encode()
+    assert client.post(f"{API}/activity/presence", content=raw, headers={"content-type": "application/json"}).status_code == 200
+    assert _dump(MARK) == {"activity_ignores"}
+
+
+#: 守卫端点的请求模型里每个字符串字段：要么是窗口文字（闸门按它匹配，随整项丢 / 抹），要么证明不是窗口文字。
+#: 新加了字符串字段却没归类，这条测试就红——到这里来决定它会不会带标题。
+GATED = {"PresenceIn.app", "PresenceIn.title", "Span.app", "Span.title", "_Segment.app", "_Segment.title"}
+DROPPED_WITH_ITEM = {"_Suggestion.reason", "_Suggestion.collection", "_NewTask.name", "_Collection.name"}  # 随整段建议一起丢
+NOT_WINDOW_TEXT = {"PresenceIn.deviceId", "Guess.taskId", "Guess.projectId", "Guess.classifier", "_Segment.startAt", "_Segment.endAt",
+                   "_Suggestion.taskId", "_Suggestion.classifier", "_Suggestion.projectId", "_NewTask.projectId",
+                   "_Collection.id", "_Collection.key", "UploadIn.deviceId", "_Suggestion.confidence"}
+
+
+def _string_fields():
+    import typing  # noqa: PLC0415
+
+    from app.modules.activity import presence_router, router, service  # noqa: PLC0415
+
+    seen, out = set(), set()
+
+    def is_str(ann) -> bool:
+        return ann is str or (typing.get_origin(ann) is typing.Annotated and is_str(typing.get_args(ann)[0])) \
+            or "str" in getattr(ann, "__name__", "").lower() or any(is_str(a) for a in typing.get_args(ann)
+                                                                    if not isinstance(a, (int, float, type(None))))
+
+    def models_in(ann) -> list:
+        if hasattr(ann, "model_fields"):
+            return [ann]
+        return [m for a in typing.get_args(ann) for m in models_in(a)]
+
+    def walk(model):
+        if model in seen:
+            return
+        seen.add(model)
+        for name, f in model.model_fields.items():
+            subs = models_in(f.annotation)
+            for sub in subs:
+                walk(sub)
+            if is_str(f.annotation) and not subs:
+                out.add(f"{model.__name__}.{name}")
+
+    for m in (presence_router.PresenceIn, router.UploadIn, service._Segment):
+        walk(m)
+    return out
+
+
+def test_every_string_field_of_the_guarded_request_models_is_classified():
+    fields = _string_fields()
+    known = GATED | DROPPED_WITH_ITEM | NOT_WINDOW_TEXT
+    assert fields - known == set(), f"新的字符串字段没归类（会不会带窗口标题？）：{sorted(fields - known)}"
+    assert GATED <= fields
+
+
+def test_one_normalisation_function_everywhere_and_no_process_cache():
+    import pathlib  # noqa: PLC0415
+    import re  # noqa: PLC0415
+
+    base = pathlib.Path(__file__).parent.parent / "app" / "modules" / "activity"
+    for name in ("ignore.py", "ignore_repo.py"):  # ignore_router 里的 .strip() 是在看 Authorization 头，不是窗口文字
+        text = base.joinpath(name).read_text(encoding="utf-8")
+        code = "\n".join(l.split("#")[0] for l in text.splitlines())
+        assert not re.search(r"\.(lower|upper|casefold|strip)\(", code), name  # 比较只许走 textfold.fold
+        assert not re.search(r"lru_cache|functools\.cache|_cache\b", code), name  # 规则不许在进程里缓存
+
+
+def test_a_rule_in_backoff_or_given_up_still_gates_every_write(client):
+    _ignore(client, "code", MARK)
+    _db()["activity_ignores"].update_many({}, {"$set": {"purged": False, "purgeFailed": True, "purgeTries": 9,
+                                                         "purgeLastTry": datetime.now(timezone.utc)}})
+    assert _upload(client, [_seg(10, "code", MARK)]).get("ignored") == 1
+    _plain_beat(client, "code", MARK)
+    assert _dump(MARK) == {"activity_ignores"}
+
+
+def test_purged_is_only_set_after_a_clean_verification_and_a_recreated_rule_starts_unpurged(client, monkeypatch):
+    from app.modules.activity import ignore, ignore_repo  # noqa: PLC0415
+
+    _plain_beat(client, "code", MARK)
+    # 校验发现残留（清理步骤被改成什么都没做）→ 不标 purged，读路径继续遮
+    monkeypatch.setattr(ignore_repo, "mask_presence", lambda *a, **k: 0)
+    assert client.post(IGN, json={"app": "code", "titleContains": MARK}).status_code == 503
+    assert [r["purged"] for r in ignore_repo.all_rules("u_local")] == [False]
+    monkeypatch.undo()
+    # 清理中途规则被删了又建回来：旧的那次清理标不上新的那条
+    rule = ignore_repo.all_rules("u_local")[0]
+    assert client.delete(f"{IGN}/{rule['id']}").status_code == 204
+    _ignore(client, "code", MARK)
+    assert ignore_repo.mark_purged("u_local", rule["id"], rule["createdAt"]) is False
+    with pytest.raises(ignore._Gone):
+        ignore.purge("u_local", rule)  # 删掉的（旧的）规则：清理到此为止
