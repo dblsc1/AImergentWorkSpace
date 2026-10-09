@@ -23,6 +23,7 @@ SCOPES = ("report", "read", "write")
 #: 上报面：恰好这四个 POST，路径全匹配（结尾多一个 / 也不算）。heartbeat 由代理心跳那一版实现，表里先留位。
 REPORT = re.compile(r"/api/core/agents/(?:start|[^/]+/(?:phase|stop|heartbeat))")
 _EXEMPT = ("/api/core/health",)
+PREFS_PATH = "/api/core/lanes/prefs"
 
 
 class Caller(NamedTuple):
@@ -41,6 +42,8 @@ def allowed(scope: str | None, method: str, path: str) -> bool:
     """放行表（契约「放行」）。"""
     if scope in (None, "write"):
         return True
+    if path.startswith(PREFS_PATH):  # v2.22 泳道偏好只许人：read / report / 匿名一律不放（GET 也不放）
+        return False
     if method == "POST" and REPORT.fullmatch(path):
         return True
     return scope == "read" and method == "GET"

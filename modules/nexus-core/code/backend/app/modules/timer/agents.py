@@ -351,6 +351,6 @@ def list_running(user: str, *, now: Callable[[], datetime]) -> list[dict]:
     """``views/current`` 的 ``agents[]``（v2.4 增 phase/label）。"""
     return [
         {**{k: run.get(k) for k in ("runId", "taskId", "agent", "tool", "model", "startedAt", "label")},
-         "phase": current_phase(run)}
+         "phase": current_phase(run), "unverified": bool(run.get("unverified"))}  # unverified 只给 views 过滤用，不回出
         for run in list_open(user, now=now)
     ]

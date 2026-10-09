@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -180,3 +181,71 @@ def test_unignore_makes_windows_count_again(client):
     _beat(client, "chrome", "news2")
     doc = _db()["activity_presence"].find_one({})
     assert doc["spans"][-1]["title"] == "news2"
+
+
+def test_report_and_anonymous_scopes_cannot_read_or_write_ignores(client):
+    for headers in ({"X-Nexus-Scope": "report", "X-Nexus-Anonymous": "1"}, {"X-Nexus-Scope": "report", "Authorization": "Bearer t"}):
+        assert client.get(IGN, headers=headers).status_code == 403
+        assert client.post(IGN, json={"app": "x"}, headers=headers).status_code == 403
+
+
+# ─────────────────────────────────────────── 每个存过窗口标题的地方：建规则后原始集合里都搜不到
+
+
+def _raw_has(title: str) -> dict[str, int]:
+    """每个集合里序列化后含这段标题的文档数（只列非 0 的）。"""
+    out = {}
+    for name in _db().list_collection_names():
+        n = sum(1 for d in _db()[name].find({}, {"_id": 0}) if title in json.dumps(d, default=str, ensure_ascii=False))
+        if n:
+            out[name] = n
+    return out
+
+
+def test_creating_a_rule_purges_every_store_that_held_the_title(client, seeded):
+    task = next(iter(seeded["tasks"].values()))["id"]
+    title = "银行转账-私密页面"
+    keep = "公开页面"
+    _upload(client, [_seg(10, "chrome", title), _seg(20, "chrome", title + " 二"), _seg(30, "chrome", keep)])
+    items = client.get(SUG, params={"status": "pending"}).json()["items"]
+    mine = [i for i in items if i["title"].startswith(title)]
+    # 一段已忽略（dismissed）的、一段已确认（事实）的
+    assert client.post(f"{SUG}/{mine[0]['id']}/dismiss").status_code == 200
+    _upload(client, [_seg(40, "chrome", title + " 三")])
+    confirmed = next(i for i in client.get(SUG, params={"status": "pending"}).json()["items"] if i["title"] == title + " 三")
+    assert client.post(f"{SUG}/{confirmed['id']}/confirm", json={"taskId": task}).status_code == 200
+    # 在场时间线 + 当前窗口、人的临时选择、AI 问询、报告（引用这些建议）
+    _beat(client, "chrome", title)
+    now = datetime.now(timezone.utc)
+    _db()["activity_choices"].insert_one({"user": "u_local", "key": "wk_" + "a" * 20, "kind": "choice", "app": "chrome",
+                                          "title": title, "taskId": task, "at": now, "expiresAt": now + timedelta(hours=1)})
+    _db()["activity_ai_asks"].insert_one({"user": "u_local", "key": "wk_" + "b" * 20, "app": "chrome", "title": title,
+                                          "claimedAt": now})
+    _db()["activity_ai_asks"].insert_one({"user": "u_local", "key": "_tenant", "polledAt": now, "claims": []})
+    other = [i for i in client.get(SUG, params={"status": "pending"}).json()["items"] if i["title"].startswith(title)]
+    rep = client.post(f"{API}/activity/reports", json={"summary": "s", "items": [
+        {"kind": "assign", "suggestionIds": [other[0]["id"]], "taskId": task}]}).json()
+    before = _raw_has(title)
+    assert {"activity_suggestions", "activity_presence", "activity_choices", "activity_ai_asks"} <= set(before)
+
+    _ignore(client, "chrome", "银行转账")
+    left = _raw_has(title)
+    # 只剩已确认的建议（事实的出处）和台账里的事实本身——这两样是人确认过的记录，不改写
+    assert set(left) <= {"activity_suggestions", "events", "proj_lanes", "proj_daily_stats"}, left
+    assert left.get("activity_suggestions", 0) == 1
+    assert client.get(SUG, params={"status": "pending"}).json()["items"][0]["title"] == keep
+    assert client.get(SUG, params={"status": "dismissed"}).json()["items"] == []
+    assert _db()["activity_ai_asks"].count_documents({"key": "_tenant"}) == 1  # 租户级那份不是窗口，不碰
+    # 焦点（读在场）不再带标题，也不再有目标；报告里那条建议成了 stale
+    focus = client.get(f"{API}/views/current").json()["focus"]
+    assert (focus["app"], focus["title"], focus["projectId"]) == ("", "", None)
+    assert client.get(f"{API}/views/lanes").json()["human"]["presence"][0]["title"] == ""
+    got = client.get(f"{API}/activity/reports/{rep['reportId']}").json()
+    assert got["items"][0]["staleNow"] == 1 and got["items"][0]["suggestions"] == []
+    # MCP / AI 工具读的就是上面这些端点：历史里也不剩（已确认的除外，历史本来只由确认的事实派生）
+    hist = client.get(f"{SUG}/history").json()
+    assert title not in json.dumps({"c": hist["collections"], "r": hist["rejected"]}, ensure_ascii=False)
+    # 取消忽略不会让清掉的东西回来
+    client.delete(f"{IGN}/{client.get(IGN).json()['items'][0]['id']}")
+    assert _raw_has(title) == left
+    assert len(client.get(SUG, params={"status": "pending"}).json()["items"]) == 1

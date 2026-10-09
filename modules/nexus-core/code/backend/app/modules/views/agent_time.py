@@ -49,7 +49,7 @@ def get_agent_time(date_from: str | None = None, date_to: str | None = None) -> 
     rows = agent_projection.read_agent_daily_stats(user, date_from=date_from, date_to=date_to)
     hidden = prefs_service.hidden_keys(user)  # v2.22：藏起来的不列在 open[]（open[] 本来就不计入汇总）
     open_runs = [r for r in timer_service.list_open_agent_runs(user)
-                 if prefs_service.ident(r.get("agent"), r.get("label")) not in hidden]
+                 if prefs_service.ident(r.get("agent"), r.get("label"), bool(r.get("unverified"))) not in hidden]
 
     days = _sum_by(rows, lambda r: r["date"])
     agents = _sum_by(rows, lambda r: r["agent"])

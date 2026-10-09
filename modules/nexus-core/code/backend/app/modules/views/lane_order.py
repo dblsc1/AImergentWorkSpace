@@ -49,13 +49,14 @@ def arrange(items: list[dict], prefs: dict, now: datetime) -> tuple[list[dict], 
     """``items`` = ``_run_item`` 的结果。返回 (去掉藏起来的、加了 pinned / manualOrder / rank 的行，hiddenAgents，hiddenWaiting)。
     行的先后不变（仍按开始时间），先后在 ``rank``。"""
     hidden = {a["key"]: a for a in prefs["agents"] if a["hidden"]}
-    pinned = {a["key"]: a["pinnedAt"] for a in prefs["agents"] if a["pinned"]}
+    pinned = {a["key"]: a["pinnedAt"] for a in prefs["agents"] if a["pinned"] and not a.get("unverified")}
     slots = {o["runId"]: o["slot"] for o in prefs["order"]}
 
-    shown, summary, waiting = [], {k: {"agent": a["agent"], "label": a["label"], "live": False, "phase": None}
+    shown, summary, waiting = [], {k: {"agent": a["agent"], "label": a["label"], "unverified": a.get("unverified", False),
+                                       "live": False, "phase": None}
                                    for k, a in hidden.items()}, 0
     for item in items:
-        key = ident(item["agent"], item["label"])
+        key = ident(item["agent"], item["label"], item["unverified"])
         if key not in hidden:
             shown.append((key, item))
             continue
@@ -66,7 +67,9 @@ def arrange(items: list[dict], prefs: dict, now: datetime) -> tuple[list[dict], 
                 row["phase"] = phase
             waiting += phase in WAITING and not item["lost"]
 
-    ranked = sorted(shown, key=lambda s: _key(s[1], now))
+    # 未验证（匿名）的运行自成一组，永远排在已验证的后面：不继承置顶、不能手动排位
+    ranked = sorted((s for s in shown if not s[1]["unverified"]), key=lambda s: _key(s[1], now))
+    anon = sorted((s for s in shown if s[1]["unverified"]), key=lambda s: _key(s[1], now))
     live = [s for s in ranked if s[1]["endAt"] is None]
     top = sorted((s for s in live if s[0] in pinned), key=lambda s: pinned[s[0]])
     top_ids = {id(s) for s in top}
@@ -76,7 +79,7 @@ def arrange(items: list[dict], prefs: dict, now: datetime) -> tuple[list[dict], 
     base = [s for s in rest if s not in movers]
     for s in movers:  # 已结束的永远在后：slot 夹在在跑的个数之内
         base.insert(min(slots[s[1]["runId"]], sum(1 for b in base if b[1]["endAt"] is None)), s)
-    final = top + base
+    final = top + base + anon
 
     rank = {id(s[1]): i for i, s in enumerate(final)}
     placed = {s[1]["runId"] for s in movers}

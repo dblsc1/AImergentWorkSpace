@@ -161,7 +161,7 @@ def test_hide_moves_the_card_into_the_hidden_row_and_restore_brings_it_back(brow
         page.click("[data-run-id=run_c] .hcl-kebab")
         page.click(".hcl-menu-item:text('不再显示')")
         waits(page, lambda: server.calls)
-        assert server.calls[0] == ("PUT", "/agent", {"agent": "claude-code", "label": "plot", "hidden": True})
+        assert server.calls[0] == ("PUT", "/agent", {"agent": "claude-code", "label": "plot", "hidden": True, "unverified": False})
         assert "run_c" not in order(page)
         # 标题上的红绿灯只数画出来的；藏起来的 plot 在等你 → 只在已隐藏那一行轻轻提一句
         assert "在等你" not in page.text_content("#lanes-state")
@@ -172,7 +172,7 @@ def test_hide_moves_the_card_into_the_hidden_row_and_restore_brings_it_back(brow
         assert page.text_content(".hcl-hidden-state") == "在等你"
         page.click(".hcl-hidden-restore")
         waits(page, lambda: len(server.calls) == 2)
-        assert server.calls[1] == ("PUT", "/agent", {"agent": "claude-code", "label": "plot", "hidden": False})
+        assert server.calls[1] == ("PUT", "/agent", {"agent": "claude-code", "label": "plot", "hidden": False, "unverified": False})
         waits(page, lambda: "run_c" in order(page))  # 恢复显示没法乐观地画：卡要等服务端重拉才回来
         assert order(page) == SERVED and page.query_selector("details.hcl-hidden") is None
 
@@ -320,3 +320,15 @@ def test_reduced_motion_gives_the_dragged_cards_no_transition(browser, static_ba
         drag(page, "run_c", centre(page, "run_a")[1] + 4)
         assert page.evaluate("() => getComputedStyle(document.querySelector('[data-run-id=run_e]')).transitionDuration") != "0s"
         page.keyboard.press("Escape")
+
+
+def test_unverified_run_card_only_offers_hide_and_is_not_draggable(browser, static_base_url) -> None:
+    body = served_body()
+    next(r for r in body["agents"] if r["runId"] == "run_f")["unverified"] = True
+    with open_prefs(browser, static_base_url, body=body) as (page, server):
+        page.click("[data-run-id=run_f] .hcl-kebab")
+        assert page.eval_on_selector_all(".hcl-menu-item", "ns => ns.map(n => n.textContent)") == ["不再显示"]
+        assert "is-movable" not in page.get_attribute("[data-run-id=run_f]", "class")
+        page.click(".hcl-menu-item")
+        waits(page, lambda: server.calls)
+        assert server.calls[0][2]["unverified"] is True

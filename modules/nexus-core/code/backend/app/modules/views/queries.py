@@ -56,8 +56,9 @@ def get_current() -> CurrentOut:
     # v2.1：代理泳道与人的泳道各算各的；list_agent_runs 会顺手收掉超时的运行（契约明文）。
     # v2.22：藏起来的代理不在「现在在跑什么」里（只是不显示，时间照记）
     hidden = prefs_service.hidden_keys(current_tenant())
-    agents = [CurrentAgent(**run) for run in timer_service.list_agent_runs(current_tenant())
-              if prefs_service.ident(run["agent"], run["label"]) not in hidden]
+    runs = timer_service.list_agent_runs(current_tenant())
+    agents = [CurrentAgent(**{k: v for k, v in run.items() if k != "unverified"}) for run in runs
+              if prefs_service.ident(run["agent"], run["label"], run["unverified"]) not in hidden]
     state = timer_service.get_running_state(current_tenant())
     if state is None:
         # v2.14：没在计时才有「自动 · 项目 / 任务」与请人选的窗口（顶栏芯片读这里，与 views/lanes 的 human 同一份）；

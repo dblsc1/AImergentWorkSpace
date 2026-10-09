@@ -416,14 +416,14 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
 
 ```jsonc
 // GET /api/core/lanes/prefs（也是 PUT …/agent、PUT …/order、DELETE …/order[/{runId}] 的响应）—— 只收人（Bearer → 403）
-{ "agents": [ { "agent": "claude-code", "label": "garden", "hidden": false, "pinned": true, "pinnedAt": "<ISO>" } ],
+{ "agents": [ { "agent": "claude-code", "label": "garden", "unverified": false, "hidden": false, "pinned": true, "pinnedAt": "<ISO>" } ],
   "order":  [ { "runId": "run_…", "slot": 1 } ] }
 // PUT /api/core/lanes/prefs/agent   { "agent": "claude-code", "label": "garden", "hidden": true }   // hidden / pinned 至少一个，布尔
 // PUT /api/core/lanes/prefs/order   { "runId": "run_…", "index": 1 }                                // 运行不在跑 → 404
 
 // GET /api/core/views/lanes —— 追加（既有键不变）
 { "agents": [ { /* 既有的键 */ "pinned": false, "manualOrder": null, "rank": 0 } ],
-  "hiddenAgents": [ { "agent": "claude-code", "label": "garden", "live": true, "phase": "waiting_input" } ],
+  "hiddenAgents": [ { "agent": "claude-code", "label": "garden", "unverified": false, "live": true, "phase": "waiting_input" } ],
   "hiddenWaiting": 1 }
 
 // GET /api/core/activity/ignores

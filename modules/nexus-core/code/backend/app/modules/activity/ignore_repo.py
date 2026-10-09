@@ -48,3 +48,40 @@ def count(user: str) -> int:
 def hit(user: str, rule_id: str, records: int, seconds: int, at: datetime) -> None:
     _col().update_one({"user": user, "id": rule_id},
                       {"$inc": {"hits": records, "seconds": seconds}, "$set": {"lastHitAt": at}})
+
+
+# ── 建规则时清掉已存下的、带被忽略窗口标题的活状态（presence / 临时选择 / AI 问询）。都带 user；其余集合的存取归各自的 repo，
+# 这里只做「命中就抹掉标题」这一件事，不读别的字段做别的判断。
+_CAS_TRIES = 5
+
+
+def mask_presence(user: str, hit) -> int:
+    """在场文档里命中的段 / 当前窗口抹成「没有窗口」（app、title 空，去掉 guess / runId）。返回抹了几处。``hit(app, title)`` 判命中。"""
+    col, n = get_db()["activity_presence"], 0
+    for doc in list(col.find({"user": user}, {"_id": 0})):
+        for _ in range(_CAS_TRIES):
+            spans, changed = [], 0
+            for sp in doc.get("spans") or []:
+                if hit(sp["app"], sp["title"]):
+                    sp = {k: v for k, v in sp.items() if k not in ("guess", "runId")} | {"app": "", "title": ""}
+                    changed += 1
+                spans.append(sp)
+            top = hit(doc.get("app", ""), doc.get("title", ""))
+            if not changed and not top:
+                break
+            new = {**doc, "spans": spans, **({"app": "", "title": ""} if top else {})}
+            if col.replace_one({"user": user, "deviceId": doc["deviceId"], "v": doc.get("v"), "gen": doc.get("gen")}, new).matched_count:
+                n += changed + top
+                break
+            doc = col.find_one({"user": user, "deviceId": doc["deviceId"]}, {"_id": 0})
+            if doc is None:
+                break
+    return n
+
+
+def drop_windows(user: str, collection: str, hit) -> int:
+    """activity_choices / activity_ai_asks：命中（按存下的 app / title）的整份删掉。没有 app 的（如 ``_tenant`` 那份）不碰。"""
+    col = get_db()[collection]
+    ids = [d["_id"] for d in col.find({"user": user, "app": {"$exists": True}}, {"app": 1, "title": 1})
+           if hit(d["app"], d.get("title", ""))]
+    return col.delete_many({"_id": {"$in": ids}}).deleted_count if ids else 0

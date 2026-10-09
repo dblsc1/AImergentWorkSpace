@@ -61,6 +61,7 @@ def test_prefs_are_human_only(client):
              ("DELETE", f"/order/{run}", None)]
     # 设备令牌 / read 令牌（都带 Bearer）→ 403，report 与匿名被范围中间件拦在外面（也是 403）
     for headers in ({"Authorization": "Bearer t"}, {"X-Nexus-Scope": "read", "Authorization": "Bearer t"},
+                    {"X-Nexus-Scope": "read"},  # 没有 Bearer 的 read 范围：范围表自己也不放偏好端点
                     {"X-Nexus-Scope": "report", "Authorization": "Bearer t"},
                     {"X-Nexus-Scope": "report", "X-Nexus-Anonymous": "1"}):
         for method, path, body in calls:
@@ -135,7 +136,7 @@ def test_hidden_agent_is_omitted_but_listed_for_restore_and_time_is_unchanged(cl
     body = _lanes(client)
     assert [a["label"] for a in body["agents"]] == ["shown"]
     assert {i["runId"] for i in body["interactions"]} <= {shown}
-    assert body["hiddenAgents"] == [{"agent": "cc", "label": "Gone", "live": True, "phase": "waiting_input"}]
+    assert body["hiddenAgents"] == [{"agent": "cc", "label": "Gone", "unverified": False, "live": True, "phase": "waiting_input"}]
     assert body["hiddenWaiting"] == 1
     # 「现在在跑什么」不列它；汇总（含 open 之外的一切）一个数都没变，open 也不再列
     after = client.get(f"{API}/views/agent-time").json()
@@ -153,7 +154,7 @@ def test_hidden_agent_is_omitted_but_listed_for_restore_and_time_is_unchanged(cl
 def test_hidden_without_runs_is_still_listed(client):
     _hide(client, "nobody")
     body = _lanes(client)
-    assert body["hiddenAgents"] == [{"agent": "cc", "label": "nobody", "live": False, "phase": None}]
+    assert body["hiddenAgents"] == [{"agent": "cc", "label": "nobody", "unverified": False, "live": False, "phase": None}]
 
 
 def test_hidden_restart_keeps_hidden_and_pinned_but_not_manual_order(client):
@@ -242,3 +243,38 @@ def test_ended_pinned_run_falls_to_the_end_group(client):
     _stop(client, old)
     body = {a["label"]: a for a in _lanes(client)["agents"]}
     assert _order(client) == ["q", "p"] and body["p"]["pinned"] is True
+
+
+# ─────────────────────────────────────────── 身份是自报的：未验证（匿名）的运行自成一类
+
+
+ANON = {"X-Nexus-Scope": "report", "X-Nexus-Anonymous": "1"}
+
+
+def test_anonymous_run_with_a_cloned_name_inherits_nothing_and_ranks_after_verified(client):
+    _start(client, "plot", phase="waiting_input")
+    _start(client, "other")
+    fake = _start(client, "plot", headers=ANON)  # 同名的匿名运行
+    _pin(client, "plot")
+    rows = {a["runId"]: a for a in _lanes(client)["agents"]}
+    assert rows[fake]["unverified"] is True and rows[fake]["pinned"] is False  # 不继承置顶
+    assert _order(client)[-1] == "plot" and rows[fake]["rank"] == 2  # 排在所有已验证的后面
+    # 匿名运行不能手动排位（和不存在 / 已结束同一个 404），也不能置顶
+    assert client.put(f"{PREFS}/order", json={"runId": fake, "index": 0}).status_code == 404
+    assert client.put(f"{PREFS}/agent", json={"agent": "cc", "label": "plot", "pinned": True, "unverified": True}).status_code == 422
+
+
+def test_hiding_is_keyed_per_class(client):
+    real = _start(client, "plot")
+    fake = _start(client, "plot", headers=ANON)
+    _hide(client, "plot")  # 藏已验证的 plot
+    body = _lanes(client)
+    assert [a["runId"] for a in body["agents"]] == [fake]  # 匿名同名的没被一起藏
+    assert body["hiddenAgents"][0]["unverified"] is False
+    _hide(client, "plot", False)
+    _put(client, "agent", {"agent": "cc", "label": "plot", "hidden": True, "unverified": True})
+    body = _lanes(client)
+    assert [a["runId"] for a in body["agents"]] == [real] and body["hiddenAgents"][0]["unverified"] is True
+    cur = client.get(f"{API}/views/current").json()["agents"]
+    assert [a["runId"] for a in cur] == [real] and "unverified" not in cur[0]
+    assert {o["runId"] for o in client.get(f"{API}/views/agent-time").json()["open"]} == {real}

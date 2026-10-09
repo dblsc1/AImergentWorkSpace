@@ -53,14 +53,14 @@ def page(user: str, status: str, limit: int, offset: int) -> tuple[int, list[dic
 
 
 def pending_windows(user: str, cap: int) -> list[dict]:
-    """v2.22：待确认的建议的 (id, app, title)，给「忽略并记住」找出命中的那些。"""
-    return list(_col().find({"user": user, "status": "pending"}, {"_id": 0, "id": 1, "app": 1, "title": 1,
+    """v2.22：还没成为事实的建议（待确认 / 已忽略）的 (id, app, title)，给「忽略并记住」找出命中的那些。"""
+    return list(_col().find({"user": user, "status": {"$in": ["pending", "dismissed"]}}, {"_id": 0, "id": 1, "app": 1, "title": 1,
                                                                     "durationSeconds": 1}).limit(cap))
 
 
 def delete_pending(user: str, ids: list[str]) -> int:
-    """v2.22：只删仍是 pending 的（与确认赛跑时确认赢）。"""
-    return _col().delete_many({"user": user, "id": {"$in": ids}, "status": "pending"}).deleted_count
+    """v2.22：只删仍是 pending / dismissed 的（与确认赛跑时确认赢；已确认的是事实的出处，不动）。"""
+    return _col().delete_many({"user": user, "id": {"$in": ids}, "status": {"$in": ["pending", "dismissed"]}}).deleted_count
 
 
 def confirmed(user: str, cap: int) -> list[dict]:

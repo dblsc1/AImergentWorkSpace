@@ -5,7 +5,7 @@
 - **活动建议**：上传时直接丢掉，不存（标题不落库），规则上的计数器 +1 段 / +秒；
 - **在场心跳**：窗口换成「没有窗口」（程序名与标题都清空、不带 guess）再存——人还是「在电脑前」，但它不会成为计时页 / 顶栏的
   焦点、自动跟踪的目标、「请你选」的窗口，也不会对上代理会话（泳道「你在看」的蓝条不会因它而长）；
-- 说的当下，已在待确认里的匹配建议一并删掉。已确认记下的事实不动。
+- 说的当下，已存下的匹配项一并清掉（purge）：待确认 / 已忽略的建议、在场时间线里的窗口、人的临时选择、AI 问询；已确认记下的事实不动。
 
 匹配：程序名**不分大小写相等**；``titleContains`` 给了就还要标题**包含**它（不分大小写），不给 = 这个程序的所有窗口。
 不用正则：规则是人点一下写出来的，子串够用，也没有回溯的隐患。检测程序若开了标题换代号，标题规则中不了（程序规则不受影响）。
@@ -78,9 +78,19 @@ def add(app: str, title_contains: str | None) -> dict:
         raise UnprocessableError(f"忽略规则最多 {MAX_IGNORES} 条")
     hit = [p for p in repo.pending_windows(user, _PENDING_SCAN) if matches(stored, p["app"], p["title"])]
     removed = repo.delete_pending(user, [p["id"] for p in hit]) if hit else 0
+    purge(user, stored)
     if removed:
         ignore_repo.hit(user, stored["id"], removed, sum(p["durationSeconds"] for p in hit), _now())
     return {**_out(next(r for r in rules(user) if r["id"] == doc["id"])), "created": created, "removed": removed}
+
+
+def purge(user: str, rule: dict) -> None:
+    """建规则的当下，把已存下的、带被忽略窗口 app / title 的活状态抹掉（和上传、心跳的入口过滤是同一个判据 ``matches``）：
+    在场时间线（段、当前窗口、guess、对上的会话 runId）、人的临时选择、AI 问询。已确认的建议和台账里的事实不动（见契约）。"""
+    hit = lambda app, title: matches(rule, app or "", title or "")  # noqa: E731
+    ignore_repo.mask_presence(user, hit)
+    ignore_repo.drop_windows(user, "activity_choices", hit)
+    ignore_repo.drop_windows(user, "activity_ai_asks", hit)
 
 
 def remove(rule_id_: str) -> None:

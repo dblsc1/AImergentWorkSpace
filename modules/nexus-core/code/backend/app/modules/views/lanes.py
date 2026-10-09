@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta
 
 from ...config import settings
+from ...scope import caller
 from ...tenant import current as current_tenant
 from ..activity import service as activity_service
 from ..planner.errors import UnprocessableError
@@ -134,6 +135,8 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
         # v2.22：藏起来的代理不出现（时间照旧记在账上）；其余加 pinned / manualOrder / rank
         agents, hidden, hidden_waiting = arrange([_run_item(r, start, end) for r in runs],
                                                  prefs_service.load(user), now)
+        if caller().scope == "report":  # 藏起来的摘要只给能读泳道的调用方（report / 匿名本来就读不到，这里再保一道）
+            hidden, hidden_waiting = [], 0
         shown = {a["runId"] for a in agents}
         interactions = [
             {"runId": r["runId"], **i} for r in runs if r["runId"] in shown for i in _interactions(r)

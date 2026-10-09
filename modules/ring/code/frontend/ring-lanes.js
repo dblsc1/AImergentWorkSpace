@@ -87,9 +87,9 @@
     load();
   }
   var prefs = {
-    onPin: function (r, on) { pref({ type: "pin", agent: r.agent, label: r.label, on: on }, "PUT", "/agent", { agent: r.agent || "", label: r.label || "", pinned: on }); },
-    onHide: function (r) { pref({ type: "hide", agent: r.agent, label: r.label }, "PUT", "/agent", { agent: r.agent || "", label: r.label || "", hidden: true }); },
-    onRestore: function (h) { pref({ type: "restore", agent: h.agent, label: h.label }, "PUT", "/agent", { agent: h.agent, label: h.label || "", hidden: false }); },
+    onPin: function (r, on) { pref({ type: "pin", agent: r.agent, label: r.label, unverified: r.unverified, on: on }, "PUT", "/agent", { agent: r.agent || "", label: r.label || "", pinned: on }); },
+    onHide: function (r) { pref({ type: "hide", agent: r.agent, label: r.label, unverified: r.unverified }, "PUT", "/agent", { agent: r.agent || "", label: r.label || "", hidden: true, unverified: !!r.unverified }); },
+    onRestore: function (h) { pref({ type: "restore", agent: h.agent, label: h.label, unverified: h.unverified }, "PUT", "/agent", { agent: h.agent, label: h.label || "", hidden: false, unverified: !!h.unverified }); },
     onMove: function (r, index) { pref({ type: "move", runId: r.runId, index: index }, "PUT", "/order", { runId: r.runId, index: index }); }
   };
   view.addEventListener("hcl-idle", function () { if (dirty) { dirty = false; draw(); } });

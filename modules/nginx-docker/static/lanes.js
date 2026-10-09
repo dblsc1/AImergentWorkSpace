@@ -169,14 +169,14 @@
   }
 
   // ── 泳道偏好（v2.22）：身份键与乐观预演。服务端是唯一事实源，这里只是请求在路上时先让界面动起来。
-  function identKey(agent, label) {
+  function identKey(agent, label, unverified) {
     var norm = function (t) { return String(t || '').split(/\s+/).filter(Boolean).join(' ').toLowerCase(); };
-    return norm(agent) + '\n' + norm(label);
+    return norm(agent) + '\n' + norm(label) + (unverified ? '\n未验证' : '');
   }
   function optimistic(data, op) {
     var d = JSON.parse(JSON.stringify(data));
-    var key = op.agent !== undefined ? identKey(op.agent, op.label) : null;
-    var isTarget = function (r) { return identKey(r.agent, r.label) === key; };
+    var key = op.agent !== undefined ? identKey(op.agent, op.label, op.unverified) : null;
+    var isTarget = function (r) { return identKey(r.agent, r.label, r.unverified) === key; };
     var live = function (r) { return !r.endAt; };
     var byRank = function () { return (d.agents || []).slice().sort(function (a, b) { return (a.rank || 0) - (b.rank || 0); }); };
     var number = function (list) { list.forEach(function (r, i) { r.rank = i; }); };
@@ -191,13 +191,13 @@
       var waiting = phases.filter(isWaiting).length;
       d.agents = d.agents.filter(function (r) { return !isTarget(r); });
       d.interactions = (d.interactions || []).filter(function (i) { return d.agents.some(function (r) { return r.runId === i.runId; }); });
-      d.hiddenAgents.push({ agent: op.agent, label: op.label || '', live: phases.length > 0,
+      d.hiddenAgents.push({ agent: op.agent, label: op.label || '', unverified: !!op.unverified, live: phases.length > 0,
         phase: phases.filter(isWaiting)[0] || phases[0] || null });
       d.hiddenWaiting = (d.hiddenWaiting || 0) + waiting;
       number(byRank());
     } else if (op.type === 'restore') {
       d.hiddenAgents = d.hiddenAgents.filter(function (h) {
-        var hit = identKey(h.agent, h.label) === key;
+        var hit = identKey(h.agent, h.label, h.unverified) === key;
         if (hit && isWaiting(h.phase)) { d.hiddenWaiting = Math.max(0, (d.hiddenWaiting || 0) - 1); }
         return !hit;
       });
@@ -438,8 +438,9 @@
     kebab.addEventListener('click', function (ev) {
       ev.stopPropagation();
       if (kebab.getAttribute('aria-expanded') === 'true') { closeMenu(true); return; }
-      var entries = [[r.pinned ? '取消置顶' : '置顶', function () { P.onPin(r, !r.pinned); }],
-        ['不再显示', function () { P.onHide(r); }]];
+      // 未验证（匿名）的运行不能置顶、不能手动排位（服务端也拒），只能「不再显示」
+      var entries = (r.unverified ? [] : [[r.pinned ? '取消置顶' : '置顶', function () { P.onPin(r, !r.pinned); }]])
+        .concat([['不再显示', function () { P.onHide(r); }]]);
       if (pos > 0) { entries.push(['上移', function () { P.onMove(r, pos - 1); }]); }
       if (pos >= 0 && pos < total - 1) { entries.push(['下移', function () { P.onMove(r, pos + 1); }]); }
       openMenu(root, card, kebab, entries);
@@ -745,7 +746,7 @@
     var rowOf = {};
     // 能手动排位的卡：在跑且没置顶的（按显示顺序）；node 在建卡时补上，addDrag 要用到全体
     var movable = [];
-    infos.forEach(function (k) { if (P && !k.r.endAt && !k.r.pinned) { movable.push({ r: k.r, node: null }); } });
+    infos.forEach(function (k) { if (P && !k.r.endAt && !k.r.pinned && !k.r.unverified) { movable.push({ r: k.r, node: null }); } });
     infos.forEach(function (info, i) {
       var r = info.r, live = !r.endAt && !info.lost;   // 失联的不按「在跑」画：灰、不闪、不算在等你
       var ph = info.ph;

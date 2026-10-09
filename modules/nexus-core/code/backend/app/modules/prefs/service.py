@@ -23,9 +23,12 @@ MAX_AGENT, MAX_LABEL = 128, 200
 _CAS_RETRIES = 20
 
 
-def ident(agent: str | None, label: str | None) -> str:
-    """代理身份的键（归一化）：同一个 agent + 同一个 label（折叠空白、不分大小写）= 同一个代理。"""
-    return " ".join((agent or "").split()).casefold() + "\n" + " ".join((label or "").split()).casefold()
+def ident(agent: str | None, label: str | None, unverified: bool = False) -> str:
+    """代理身份的键（归一化）：同一个 agent + 同一个 label（折叠空白、不分大小写）+ 同一类（已验证 / 未验证）= 同一个代理。
+    agent / label 是开运行的人自报的，**不能证明身份**：匿名（未验证）的运行单独一类，藏起来的偏好互不串——
+    藏起一个匿名的名字不会藏掉同名的已验证会话，反过来也一样。偏好只管显示，不参与任何授权或记账。"""
+    return (" ".join((agent or "").split()).casefold() + "\n" + " ".join((label or "").split()).casefold()
+            + ("\n未验证" if unverified else ""))
 
 
 def _now() -> datetime:
@@ -35,7 +38,8 @@ def _now() -> datetime:
 
 def _out(doc: dict | None) -> dict:
     doc = doc or {}
-    return {"agents": [{"agent": a["agent"], "label": a["label"], "hidden": a["hidden"], "pinned": a["pinned"],
+    return {"agents": [{"agent": a["agent"], "label": a["label"], "unverified": a.get("unverified", False),
+                        "hidden": a["hidden"], "pinned": a["pinned"],
                         "pinnedAt": a["pinnedAt"].isoformat() if a.get("pinnedAt") else None}
                        for a in doc.get("agents", [])],
             "order": [{"runId": o["runId"], "slot": o["slot"]} for o in doc.get("order", [])]}
@@ -51,7 +55,8 @@ def hidden_keys(user: str) -> set[str]:
 
 
 def _live_ids(user: str) -> set[str]:
-    return {r["runId"] for r in timer_service.list_lane_runs(user)[1] if r["endTs"] is None}
+    # 未验证（匿名）的运行不能手动排位：它们永远排在已验证的后面
+    return {r["runId"] for r in timer_service.list_lane_runs(user)[1] if r["endTs"] is None and not r.get("unverified")}
 
 
 def _write(user: str, change) -> dict:
@@ -75,14 +80,16 @@ def get() -> dict:
     return _out(load(current_tenant()))
 
 
-def set_agent(agent: str, label: str, hidden: bool | None, pinned: bool | None) -> dict:
-    """幂等：给哪个标志就设成哪个值，没给的不动。"""
-    key = ident(agent, label)
+def set_agent(agent: str, label: str, hidden: bool | None, pinned: bool | None, unverified: bool = False) -> dict:
+    """幂等：给哪个标志就设成哪个值，没给的不动。未验证的运行只能藏、不能置顶。"""
+    if unverified and pinned:
+        raise UnprocessableError("未验证（匿名）的运行不能置顶")
+    key = ident(agent, label, unverified)
 
     def change(agents: list[dict], _order: list[dict]) -> None:
         hit = next((a for a in agents if a["key"] == key), None)
         if hit is None:
-            hit = {"key": key, "agent": " ".join(agent.split()), "label": " ".join(label.split()),
+            hit = {"key": key, "agent": " ".join(agent.split()), "label": " ".join(label.split()), "unverified": unverified,
                    "hidden": False, "pinned": False, "pinnedAt": None}
             agents.append(hit)
         if hidden is not None:

@@ -3723,19 +3723,19 @@ AI 仍不能改 / 删任何已有规则、不能写匹配范围超出那一个�
 
 **身份与排位是两回事。**
 
-- **代理身份** = (`agent`, 归一化后的 `label`)，**不是** `runId`：归一化 = 折叠空白 + 不分大小写；没有 `label` 的运行身份只有 `agent`
+- **代理身份** = (`agent`, 归一化后的 `label`, 类)，**不是** `runId`：归一化 = 折叠空白 + 不分大小写；**类** = 已验证 / 未验证（匿名，`unverified`）。`agent` / `label` 是开运行的人自报的，不能证明身份，所以**匿名运行单独一类**：藏起一个匿名的名字不会藏掉同名的已验证会话，反过来也一样；匿名运行**不继承置顶**、**不能手动排位**（`order` 对它回与不存在 / 已结束相同的 404）、`pinned` 对它回 422，`rank` 永远排在所有已验证运行之后（自成一组，按活跃排）。偏好**只管显示，不参与任何授权或记账判断**。没有 `label` 的运行身份只有 `agent`
   （藏起来 = 这个代理所有没名字的运行）。「藏起来」「置顶」记在身份上，所以同名代理重启（新的 `runId`）后仍然藏着 / 置顶着。
 - **手动排位**按**运行**：`runId → slot`，`slot` = 这条运行在「未置顶的在跑运行」里的位置（0 起）。只在这条运行**还在跑**时有效；
   它一结束（`endAt` 非 null）就不再占位（读时忽略，下一次写顺手清掉），掉到已结束那一组；同名重启的新运行没有排位。
 - 偏好是显示用的活状态，存独立集合 `lane_prefs`（每租户一个文档，带版本号条件写），**不进台账 / 投影 / 导出 / 快照恢复**。
 
 **端点**（前缀 `/api/core/lanes/prefs`，全部**只收人**：带 `Authorization: Bearer`——设备令牌、read 令牌——一律 403，且在看请求体之前；
-report 令牌与匿名由「调用方范围」放行表挡成 403）：
+report 令牌与匿名由「调用方范围」放行表挡成 403；放行表还单列挡掉 read 范围对 `/api/core/lanes/prefs` 的一切请求，GET 也不放）：
 
 | 方法 路径 | 请求体 | 说明 |
 |---|---|---|
 | `GET /lanes/prefs` | — | `{agents: [{agent, label, hidden, pinned, pinnedAt}], order: [{runId, slot}]}` |
-| `PUT /lanes/prefs/agent` | `{agent, label?, hidden?, pinned?}`（至少给一个标志；多出的键 / 非布尔 422） | 幂等：给哪个标志就设成哪个值。再置顶不动 `pinnedAt`。藏 / 置顶都没了的身份顺手删掉。回新的整份偏好 |
+| `PUT /lanes/prefs/agent` | `{agent, label?, unverified?（缺省 false）, hidden?, pinned?}`（至少给一个标志；多出的键 / 非布尔 422） | 幂等：给哪个标志就设成哪个值。再置顶不动 `pinnedAt`。藏 / 置顶都没了的身份顺手删掉。回新的整份偏好 |
 | `PUT /lanes/prefs/order` | `{runId, index}`（`index` 0–1000 的整数） | 把这条**在跑**的运行放到「未置顶的在跑运行」的第 `index` 位；运行不存在 / 已结束 / 是别的租户的 → 404。幂等 |
 | `DELETE /lanes/prefs/order/{runId}` | — | 清这一条的排位；没有这条也 200 |
 | `DELETE /lanes/prefs/order` | — | 清全部排位 |
@@ -3754,11 +3754,11 @@ report 令牌与匿名由「调用方范围」放行表挡成 403）：
   「活跃排」= 与计时页 `lanes.js` 的 `rankRuns` 同一口径：档位（在等你 0 → 干活 1 → 出错 2 → 空闲 3 → 失联 3.5 → 已结束 4），
   同档按**近 3 小时**（服务端的 `now` 往前）里不空闲的秒数倒序，同分按最近一次相位转入倒序。
   计时页的「最近 3 小时 / 今天」切换只改画的时间范围，**不改先后**（先后以 `rank` 为准）；老后端没有 `rank` 时页面退回本地的活跃排。
-- 响应追加 `hiddenAgents: [{agent, label, live, phase}]`（每个藏起来的身份一条，**包括当前窗口里没有运行的**，页面据此列「已隐藏」并恢复；
+- 响应追加 `hiddenAgents: [{agent, label, unverified, live, phase}]`（每个藏起来的身份一条，**包括当前窗口里没有运行的**，页面据此列「已隐藏」并恢复；
   `live` = 它此刻有在跑的运行，`phase` = 那些运行里最需要人的相位：有在等人的取等人的，否则取第一条的当前相位，没有在跑的为 `null`）
   与 `hiddenWaiting: int`（藏起来的、在跑且**没失联**、正在等人（`waiting_input` / `waiting_permission`）的运行个数）。
   藏起来就是藏起来：`hiddenWaiting` 只给页面一个很小的、可去掉的提示（「已隐藏的有 N 个在等你」），不替人把它翻出来。
-  页面的标题计数（几个在等你 / 干活 / 出错）、顶栏预览只数画出来的，所以不含藏起来的。
+  页面的标题计数（几个在等你 / 干活 / 出错）、顶栏预览只数画出来的，所以不含藏起来的。`hiddenAgents` / `hiddenWaiting` 只给能读泳道的调用方（人 / read / write）；report 范围与匿名读不到 `views/lanes`，服务端另在响应里清空这两个键保一道。
 
 **`views/current` / `views/agent-time` / MCP**：`views/current` 的 `agents[]`（「现在在跑什么」）与 `views/agent-time` 的 `open[]`
 （在跑的运行）**不列藏起来的代理**；`views/agent-time` 的汇总、`views/current` 的其余键不变。`mcp.tools.v1` 的 `get_current_timer` /
@@ -3785,7 +3785,16 @@ report 令牌与匿名由「调用方范围」放行表挡成 403）：
 
 1. **活动建议上传**（`POST activity/suggestions`）：命中的段**直接丢弃，不存**（标题不落库）；不算 `accepted` / `duplicates` / `rejected`；
    响应在**有被忽略的段时**追加整数键 `ignored`（没有就不带这个键，形状与以前逐字节相同）。重传同一段照样丢。规则上 `hits` +1 段、`seconds` += 该段 `durationSeconds`、`lastHitAt`。
-2. **建规则的当下**：已在待确认（`pending`）里的匹配建议**删掉**（计入 `removed` 与计数器）；已确认记下的事实**不动**。
+2. **建规则的当下，把已存下的带被忽略窗口 app / title 的东西逐一清掉**（和入口过滤同一个判据），并明说每一处：
+   - `activity_suggestions` 里还没成为事实的（`pending`、`dismissed`）：**删**（计入 `removed` 与计数器）；集合（collection）是这些建议上的标签，随之消失。**已确认**的建议是人确认过的事实的出处：**不动**。
+   - `activity_presence`：命中的段与当前窗口（`app` / `title`）抹成「没有窗口」，去掉 `guess` 与对上的会话 `runId`；`focus` / `auto` / `needsChoice` 都由它算出，所以一并不再带标题 / 目标。
+     已写进代理运行的 `attend` 区间只有起止时刻、没有标题，是「那一刻人在看它」的记录：**保留**（没有删除某段 attend 的写路径，也不改写已记的注意力）。
+   - `activity_choices`（人的临时选择 / 这次不选）、`activity_ai_asks`（AI 问询，存了 app / title）：命中的**整份删**；租户级那份（不是窗口）不碰。
+   - AI 报告（`activity_reports`）只存建议 id，不存标题；被删的建议在报告里读出来是 `stale`、`suggestions` 里不再有它，批准时按 `stale` 跳过。
+   - 匹配历史（`history`）只由**已确认**的建议派生：已确认的保留，其余本来就没有；`proj_*` 投影与 MCP 工具读的就是以上这些，没有另存标题。
+   - **台账里的事实**（`events`，含 `session.completed` 的 `data.app/title`、`session.reassigned`）与它们的投影是人确认过的事实，**不可变**，不改写。
+   - 分类规则（`detector.rules.v1`）是人自己的配置，它的 `app` / `title` 正则和 `note` 可能抄着窗口标题：**不动**，要删在「AI助理 → 规则」里删。
+   - **取消忽略不会让清掉的东西回来**。
 3. **在场心跳**（`POST activity/presence`，含 `spans`）：命中的窗口换成「没有窗口」（`app` 与 `title` 空、不带 `guess`）再存——人仍是「在电脑前」，
    但它不会成为 `focus` 的窗口 / 目标、自动跟踪（`auto`）的目标、`needsChoice` / `aiThinking` 的窗口，不会对上代理会话（`presence[].runId` 为 `null`，
    `attention` 不因它而长），也不续人的临时选择。空程序名就是既有的「标题被隐私设置整个去掉了」那一种，下游本来就略过它。

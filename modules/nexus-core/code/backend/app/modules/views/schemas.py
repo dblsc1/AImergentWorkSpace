@@ -495,6 +495,7 @@ class LaneHidden(_Strict):
 
     agent: str
     label: str
+    unverified: bool = False  #: 匿名（未验证）的那一类；和同名的已验证会话互不串
     live: bool
     phase: str | None
 

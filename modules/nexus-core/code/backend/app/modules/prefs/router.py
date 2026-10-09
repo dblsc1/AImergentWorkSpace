@@ -30,6 +30,7 @@ class AgentIn(BaseModel):
     label: str = Field("", max_length=service.MAX_LABEL)  # 没有 label 的运行身份只有 agent
     hidden: StrictBool | None = None
     pinned: StrictBool | None = None
+    unverified: StrictBool = False  # 这个身份是匿名（未验证）的那一类：和同名的已验证会话互不串
 
     @model_validator(mode="after")
     def _something(self):
@@ -52,7 +53,7 @@ def get_prefs() -> dict:
 
 @router.put("/agent")
 def put_agent(body: AgentIn) -> dict:
-    return service.set_agent(body.agent, body.label, body.hidden, body.pinned)
+    return service.set_agent(body.agent, body.label, body.hidden, body.pinned, body.unverified)
 
 
 @router.put("/order")
