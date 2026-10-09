@@ -83,6 +83,11 @@ as a secure origin. **Over plain HTTP on a LAN IP, browsers will not store it**:
 put TLS in front, and only for LAN debugging set `AUTH_COOKIE_SECURE=false`.
 Never set that on a public host.
 
+One more thing before you expose the port: a single-user install accepts agent
+status reports that carry **no credentials** (they can only add lane entries and read
+nothing). Set `AUTH_ANONYMOUS_REPORT=false` in `.env` when anyone else can reach the
+port; see "Tokens for desktop programs and AI agents" below.
+
 ### Upgrading
 
 After `git pull`, run `docker compose up -d` as usual. nexus-core is rebuilt from
@@ -189,25 +194,54 @@ Switching from the shared password and want to keep your existing data?
 `NEXUS_TENANT_STRICT=1` makes the backend refuse any request that arrives
 without an account instead of quietly dropping it into the shared data.
 
-### Device tokens for desktop programs and AI agents
+### Tokens for desktop programs and AI agents: read / write / report-only
 
-A sync program or an agent hook has no browser cookie. Give it a device token
-and send `Authorization: Bearer <token>` to `/api/core/...`. Tokens **open the
-API only, never pages**, and last a year by default.
+A sync program or an agent hook has no browser cookie. Give it a token and send
+`Authorization: Bearer <token>`. Tokens **open the API only, never pages**, and
+last a year by default. **Tokens are never minted automatically**: you issue
+one, you decide which agent gets it and how much it may do.
 
-- On the web: once logged in, `POST /api/auth/tokens`
-  (`Content-Type: application/json`, body `{}` or `{"label":"laptop"}`) returns
-  `{"token", "tenant", "expiresAt"}`; `POST /api/auth/tokens/revoke` kills every
-  token of your own account.
+| Scope | What it can do | Give it to |
+|---|---|---|
+| `report` | Only report an agent run's start / phase / heartbeat / stop. **Reads nothing**, writes nothing else | A coding agent's hooks (`tools/agent-hooks`) |
+| `read` | Report, plus read `/api/core/` and the read-only MCP tools. Changes nothing | An assistant that only needs to know what is going on; your own MCP client |
+| `write` | Everything a device token could do before: also upload activity and events, let the AI draft suggestions | The desktop detector (`modules/ai-detector`), a management agent you fully trust |
+
+Things only a person may do (changing detector settings and rules, confirming
+suggestions, reassigning time, ...) stay closed to every token.
+
+- On the web: log in, open the **AI助理** page, section **Agent 令牌**: pick a
+  scope, add a note, generate. The token is **shown once**, with ready-to-paste
+  configuration; the list lets you revoke a single token.
+- API: `POST /api/auth/tokens` (`Content-Type: application/json`, body
+  `{"scope":"report","name":"laptop"}`, both optional, default `write`);
+  `GET /api/auth/tokens` lists them (never the token itself);
+  `POST /api/auth/tokens/revoke` with `{"tokenId":"..."}` revokes one, with an
+  empty body every token of your own account.
 - From the CLI (in `deploy/`):
-  `docker compose exec auth python /app/auth_stub.py token alice` issues one,
-  `revoke alice` kills them all; no name = the shared-password identity.
+  `docker compose exec auth python /app/auth_stub.py token alice --scope report --name laptop`,
+  `tokens alice`, `revoke-token <id>`, `revoke alice`; no name = the
+  shared-password identity.
+
+**A request with no token can only report.** A single-user install (shared
+password only) accepts status reports that carry no credentials at all, so the
+hooks work without a token; runs reported that way are marked "unverified" in
+the lanes and always land in the inbox. The cost, stated plainly: **while this
+is on, anyone who can reach the port can add entries to your lanes.** They can
+read nothing and change nothing that exists, but they can add (rate-limited at
+the gateway, at most 20 live at a time). With the default loopback binding that
+is harmless; **if you expose the port to a LAN or the internet, set
+`AUTH_ANONYMOUS_REPORT=false` in `.env`** and hand out `report` tokens instead.
+A request that presents a bad or expired token is always rejected, never
+treated as anonymous. With accounts enabled (multi-user) there is no anonymous
+reporting.
 
 `AUTH_SECRET` must be set in `.env` (the release installer already writes one;
 for a hand-built `deploy/` add a random string yourself) — without a fixed key a
 token would die on restart, so none are issued. Changing or deleting an account,
 or changing or removing the shared password, kills the matching tokens; revocation takes
-effect within two seconds.
+effect within two seconds. Tokens issued by v0.3 (starting with `hct1`) keep
+working as `write` and do not appear in the list.
 
 The reason for drawing the line there: an open-source release should not ship a
 real account system bolted on. If you need more, replace that one

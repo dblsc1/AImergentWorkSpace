@@ -65,6 +65,7 @@ python3 seed/seed_demo.py --big     # 大盘：10 分区 / 40 项目
 - 改 `HONEYCOMB_BIND`
 - **在前面加一层 TLS**（Caddy / nginx / Traefik 随你）
 - 别把 80 直接暴露出去
+- 在 `.env` 里设 `AUTH_ANONYMOUS_REPORT=false`：缺省单人部署接受**不带任何凭据**的代理状态上报（只能往泳道里加记录，读不到任何东西），端口对别人开放时应当关掉，见下面「给桌面程序、AI 代理用的令牌」
 
 登录门是单口令的，cookie 默认带 `Secure`。本机用 `127.0.0.1` / `localhost` 打开不受影响——浏览器把本机当安全来源。**用局域网 IP 走 HTTP 时浏览器不会保存它**：前面加 TLS；只在内网调试时才设 `AUTH_COOKIE_SECURE=false`，别在公网上设这个。
 
@@ -149,14 +150,25 @@ docker compose up -d
 
 为什么这么划：开源版不该捆绑任何真实账号系统。需要更多的人，换掉那个实现就行 —— 只要还满足同一份契约的端点和三条不变量，**组装层一行都不用改**。
 
-### 给桌面程序、AI 代理用的设备令牌
+### 给桌面程序、AI 代理用的令牌：读 / 写 / 只上报
 
-同步程序、代理钩子没有浏览器 cookie，给它一个设备令牌，请求头带 `Authorization: Bearer <令牌>` 调 `/api/core/...`。令牌**只开接口、不开页面**，缺省一年有效。
+同步程序、代理钩子没有浏览器 cookie，给它一个令牌，请求头带 `Authorization: Bearer <令牌>`。令牌**只开接口、不开页面**，缺省一年有效。**令牌从不自动生成**：你发，你决定交给哪个代理、给多大权限。
 
-- 网页上：登录后 `POST /api/auth/tokens`（`Content-Type: application/json`，body `{}` 或 `{"label":"笔记本"}`）拿到 `{"token", "tenant", "expiresAt"}`；`POST /api/auth/tokens/revoke` 作废自己名下的全部令牌。
-- 命令行（`deploy/` 下）：`docker compose exec auth python /app/auth_stub.py token alice` 发一个，`revoke alice` 全部作废，不带名字 = 共享口令身份。
+| 范围 | 能做什么 | 给谁 |
+|---|---|---|
+| `report`（只上报） | 只能报告代理运行的开始 / 相位 / 心跳 / 结束。**读不到任何数据**，也写不了别的 | 编码代理的钩子（`tools/agent-hooks`） |
+| `read`（只读） | 上报 + 读 `/api/core/` + MCP 的只读工具。什么都改不了 | 只需要了解情况的助理、你自己的 MCP 客户端 |
+| `write`（读写） | 以前设备令牌的全部：还能上传活动与事件、让 AI 起草建议 | 桌面检测程序（`modules/ai-detector`）、完全信任的管理代理 |
 
-要先在 `.env` 里设 `AUTH_SECRET`（发布版安装脚本已写好；`deploy/` 下手搭的自己加一行随机串）——没有固定密钥时令牌重启就废，所以干脆不发。改密码、删账号、换掉或去掉共享口令，对应的令牌跟着作废；吊销两秒内生效。
+只许人做的事（改检测设置与规则、确认建议、改挂时间……）对任何令牌都不开放。
+
+- 网页上：登录 →「AI助理」页 →「Agent 令牌」：选范围、写备注、生成。令牌**只显示一次**，同时给出可以直接粘贴的配置；列表里可以单独吊销某一个。
+- 接口：`POST /api/auth/tokens`（`Content-Type: application/json`，body `{"scope":"report","name":"笔记本"}`，都选填，缺省 `write`）；`GET /api/auth/tokens` 列出（没有令牌本身）；`POST /api/auth/tokens/revoke` body `{"tokenId":"…"}` 吊销一个，空 body 吊销自己名下的全部。
+- 命令行（`deploy/` 下）：`docker compose exec auth python /app/auth_stub.py token alice --scope report --name 笔记本`、`tokens alice`、`revoke-token <id>`、`revoke alice`；不带名字 = 共享口令身份。
+
+**不带令牌的请求只能上报。** 单人部署（只开共享口令）缺省接受不带任何凭据的上报：钩子不配令牌也能把状态报上来，这样报的运行在泳道里标着「未验证」、一律落收件箱。照直说它的代价：**开着的时候，能连到这个端口的任何人都能往你的泳道里加记录**——读不到任何东西、改不了已有的，但能加（网关限速、同时在跑的最多 20 个）。缺省只绑本机回环时这没什么；**把端口开到局域网或公网时，在 `.env` 里设 `AUTH_ANONYMOUS_REPORT=false`**，改发 `report` 令牌。带了坏令牌、过期令牌的请求一律被拒，不会被当成匿名。开了账号登录（多用户）时没有匿名上报。
+
+要先在 `.env` 里设 `AUTH_SECRET`（发布版安装脚本已写好；`deploy/` 下手搭的自己加一行随机串）——没有固定密钥时令牌重启就废，所以干脆不发。改密码、删账号、换掉或去掉共享口令，对应的令牌跟着作废；吊销两秒内生效。v0.3 发的老令牌（`hct1` 开头）照常可用，等于 `write`，不在列表里。
 
 想自己实现，读 `contracts/auth.gate.v1/contract.md` 的「换实现要满足什么」一节；怎么把它接进网关（`AUTH_UPSTREAM`、换登录页、关掉占位件），读 `contracts/gateway.v1/contract.md`。
 

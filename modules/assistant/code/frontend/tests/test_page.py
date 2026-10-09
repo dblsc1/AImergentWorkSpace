@@ -11,7 +11,7 @@ from conftest import open_page, overflowing
 def test_sections_in_order_and_review_links(browser, static_base_url):
     with open_page(browser, static_base_url) as page:
         ids = page.eval_on_selector_all("main > section", "ss => ss.map(s => s.id)")
-        assert ids == ["chat-panel", "suggest-panel", "unclassified-panel", "auto-panel", "settings-panel", "review-panel"]
+        assert ids == ["chat-panel", "suggest-panel", "unclassified-panel", "auto-panel", "settings-panel", "tokens-panel", "review-panel"]
         assert page.title() == "AI助理"
         assert page.get_attribute("#review-lanes", "href") == "../ring/#lanes-panel"
         assert page.get_attribute("#review-hive", "href") == "../hive/"
@@ -32,6 +32,7 @@ def test_everything_404_leaves_a_quiet_page(browser, static_base_url):
         assert page.is_hidden("#chat-panel") and page.is_hidden("#suggest-panel")
         assert page.is_hidden("#unclassified-panel")
         assert page.is_visible("#review-panel")
+        assert page.is_hidden("#tokens-panel")  # 认证服务不支持令牌列表（404）：整块不出现
     assert errors == []
 
 
