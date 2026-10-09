@@ -114,7 +114,7 @@ class DeadCliRealProcessTests(_IsolatedHomeMixin, unittest.TestCase):
         fake = subprocess.Popen([sys.executable, "-c", self.FAKE_CLI, str(go)], env=self._subprocess_env(COCKPIT_CLI_NAMES="python"))
         driver = None
         try:
-            with mock.patch.object(claude_hook, "_cli_pid", return_value=fake.pid):
+            with mock.patch.object(claude_hook, "_cli_find", new=lambda: (fake.pid, claude_hook._born(fake.pid))):
                 claude_hook._save_run_id("s1", "run-1", "idle", "garden", {"cwd": "/tmp"})
             state = claude_hook._read_state("s1")
             start = f"import sys; sys.path.insert(0, {str(HERE)!r}); import claude_hook as h; h.BEAT_CHECK_SECONDS = 1; "
@@ -122,9 +122,9 @@ class DeadCliRealProcessTests(_IsolatedHomeMixin, unittest.TestCase):
                                    f"h.beat_loop('companion', 's1', {fake.pid}, born={claude_hook._born(fake.pid)!r}, gen={state['gen']!r})"))
             beat = claude_hook._state_file("s1").with_suffix(".beat")
             deadline = time.monotonic() + 15
-            while time.monotonic() < deadline and not (beat.exists() and beat.read_text().endswith(f" {mode}")):
+            while time.monotonic() < deadline and not (beat.exists() and f" {mode} " in beat.read_text()):
                 time.sleep(0.05)
-            self.assertTrue(beat.read_text().endswith(f" {mode}"), "发心跳的进程没起来")
+            self.assertTrue(f" {mode} " in beat.read_text(), "发心跳的进程没起来")
             driver = int(beat.read_text().split()[0])
             fake.kill()  # kill -9 Claude Code：没有 SessionEnd
             fake.wait()
@@ -167,7 +167,7 @@ class _SessionCases(_BeatMixin):
         self.popen_mock = mock.patch.object(subprocess, "Popen").start()
         self.addCleanup(mock.patch.stopall)
         self.cli = CLI
-        mock.patch.object(claude_hook, "_cli_pid", lambda: self.cli).start()
+        mock.patch.object(claude_hook, "_cli_find", lambda: (self.cli, claude_hook._born(self.cli))).start()
 
     def _start(self, **extra):
         return _run_hook(claude_hook.handle_session_start, {**self.EVENT, **extra})
@@ -177,9 +177,14 @@ class SessionStartTests(_SessionCases, unittest.TestCase):
     def test_same_cli_keeps_gen_across_compact_and_resume_and_spawns_no_second_beater(self):
         self._start()
         gen = claude_hook._read_state("s1")["gen"]
+        beater = claude_hook._beat_lock("s1")  # 本代的发心跳进程在发（锁 + 写着自己的 pid、起法、gen）
+        self.addCleanup(beater.close)
+        beater.write(f"{os.getpid()} companion {gen}")
+        beater.flush()
+        self.popen_mock.reset_mock()
         self._start()  # /compact、恢复：同一个 CLI 再来一次 SessionStart
         self.assertEqual(claude_hook._read_state("s1")["gen"], gen)  # 以前每次都换：在发的老进程就此退出，没人接着发
-        self.assertTrue(all("--wait" not in c.args[0] for c in self.popen_mock.call_args_list))
+        self.popen_mock.assert_not_called()
 
     def test_other_cli_gets_a_new_gen_and_a_waiting_beater_even_while_the_old_one_holds_the_lock(self):
         self._start()

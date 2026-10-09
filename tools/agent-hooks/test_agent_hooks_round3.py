@@ -31,7 +31,7 @@ class _R3(_BeatMixin, unittest.TestCase):
         self.popen = mock.patch.object(subprocess, "Popen").start()
         self.addCleanup(mock.patch.stopall)
         self.cli = CLI
-        mock.patch.object(claude_hook, "_cli_pid", lambda: self.cli).start()
+        mock.patch.object(claude_hook, "_cli_find", lambda: (self.cli, claude_hook._born(self.cli))).start()
         self.phases, self.starts = [], []
         mock.patch.object(cc, "phase_run", lambda _c, run_id, phase, *_a, **_k: self.phases.append((run_id, phase)) or {"applied": True}).start()
         self.next_run = "run-2"

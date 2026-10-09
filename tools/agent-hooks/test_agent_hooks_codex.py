@@ -108,7 +108,7 @@ class _CompanionCase(_BeatMixin, unittest.TestCase):
     def _resume_elsewhere(self, session="s1", run_id="run-2"):
         """另一个活着的 CLI 恢复了这个会话：SessionStart 换了状态（新归属号 + 新 CLI 身份）。"""
         self.procs[self.OTHER] = (1, "claude", "born-77")
-        with mock.patch.object(claude_hook, "_cli_pid", return_value=self.OTHER):
+        with mock.patch.object(claude_hook, "_cli_find", new=lambda: (self.OTHER, claude_hook._born(self.OTHER))):
             claude_hook._save_run_id(session, run_id, "idle", "garden", {})
 
     def test_old_companion_leaves_a_resumed_sessions_new_run_alone(self):

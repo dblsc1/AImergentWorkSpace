@@ -155,14 +155,14 @@ class SurvivingMutantTests(_IsolatedHomeMixin, unittest.TestCase):
     def test_failed_commit_with_the_same_run_id_already_in_state_sends_no_stop(self):  # M5b
         claude_hook._write_state("s1", {"runId": "run-1", "gen": "g"})
         stops = []
-        with mock.patch.object(claude_hook, "_cli_pid", return_value=0), \
+        with mock.patch.object(claude_hook, "_cli_find", new=lambda: (0, claude_hook._born(0))), \
                 mock.patch.object(claude_hook, "_write_state", return_value=False), \
                 mock.patch.object(cc, "start_run", return_value={"runId": "run-1"}), \
                 mock.patch.object(cc, "stop_run", lambda *a, **k: stops.append(a)), \
                 mock.patch.object(cc, "load_config", return_value={"url": "http://x.invalid", "token": "", "beat": None}):
             claude_hook.handle_session_start({"session_id": "s1", "cwd": "/tmp"})
         self.assertEqual(stops, [])
-        with mock.patch.object(claude_hook, "_cli_pid", return_value=0), \
+        with mock.patch.object(claude_hook, "_cli_find", new=lambda: (0, claude_hook._born(0))), \
                 mock.patch.object(claude_hook, "_write_state", return_value=False), \
                 mock.patch.object(cc, "start_run", return_value={"runId": "run-2"}), \
                 mock.patch.object(cc, "stop_run", lambda *a, **k: stops.append(a)), \

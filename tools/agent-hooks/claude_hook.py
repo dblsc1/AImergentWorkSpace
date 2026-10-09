@@ -239,12 +239,12 @@ def _write_state(session_id: str, state: dict) -> bool:
 
 def _save_run_id(
     session_id: str, run_id: str, last_phase: str | None = None, label: str | None = None, payload: dict | None = None,
-    prev: dict | None = None, probe: tuple[int, str | None] | None = None,
+    prev: dict | None = None, probe: tuple[int, str | None] | None = None, config: dict | None = None,
 ) -> bool:
     """写状态（调用方持会话锁）；`prev` = 写之前的状态（SessionStart 在锁内读的）：同一个 CLI 的 `gen` 沿用，见 `_beat_facts`。"""
     state: dict = {"runId": run_id}
     if payload is not None:
-        state.update(_beat_facts(session_id, payload, prev, probe))
+        state.update(_beat_facts(session_id, payload, prev, probe, config))
     if last_phase:
         state["lastPhase"] = last_phase  # v0.3：PostToolUse 靠它决定报不报（见 _phase_for）
     if label:
@@ -288,12 +288,29 @@ def _delete_run_id(session_id: str) -> None:
         pass
 
 
-def _start(payload: dict, session_id: str, phase: str, title: str | None) -> tuple[str | None, str]:
+def _server_id(url: str) -> str:
+    """服务器身份：scheme + 主机 + 端口 + 路径前缀。**不含 userinfo、查询、令牌**（落盘、比较都只用它）。"""
+    parts = urllib.parse.urlsplit(url or "")
+    host = parts.hostname or ""
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    return f"{parts.scheme.lower()}://{'[%s]' % host if ':' in host else host}{f':{port}' if port else ''}{parts.path.rstrip('/')}" if host else ""
+
+
+def _same_server(state: dict, config: dict) -> bool:
+    """当前配置的服务器就是状态里记的（开这条 run 的）那个吗。老格式状态没记 / 现在没配地址 = 判不了，放行（保持原行为）。"""
+    stored, now = state.get("url"), config.get("url")
+    return not (isinstance(stored, str) and stored and now) or _server_id(stored) == _server_id(now)
+
+
+def _start(payload: dict, session_id: str, phase: str, title: str | None, config: dict | None = None) -> tuple[str | None, str]:
     """报 start，返回 `(runId, 报上去的 label)`。泳道名 = 会话的名字（`title`），没起名就是工作目录名。
     clientKey 是 session_id 的哈希（不发原始会话号）：钩子被重试 / 响应丢了时服务端回原运行，不多开一条泳道；
     同一个会话改了名再调一次，服务端给原运行换名字（nexus-core v2.13「会话改名」）。"""
     cwd = payload.get("cwd")
-    config = cc.load_config()
+    config = config or cc.load_config()  # 调用方给了就用它那一份快照（start 与落状态 / 补偿 stop 必须是同一个服务器）
     task_id, project_id = cc.resolve_target(cwd=cwd, config=config)
     label, match = cc.lane_names(cwd, title)
     result = cc.start_run(
@@ -361,18 +378,19 @@ def handle_session_start(payload: dict) -> None:
             return
         prev = _read_state(session_id)
         try:
+            config = cc.load_config()  # 一份快照：start、落状态、补偿 stop 都用它
             # 会话开着、还没说话 = idle
-            run_id, label = _start(payload, session_id, "idle", title)
+            run_id, label = _start(payload, session_id, "idle", title, config)
         except Exception as e:  # noqa: BLE001 — 配置/网络任何一步出岔子都只是"这次不计时"
             category = e if isinstance(e, cc.CockpitError) else "配置错误"
             _warn(f"SessionStart 上报失败，本次会话不计时（{category}）")
             return
         if not run_id:
             return
-        if not _save_run_id(session_id, run_id, "idle", label, payload, prev, probe):
+        if not _save_run_id(session_id, run_id, "idle", label, payload, prev, probe, config):
             if not (prev and prev["runId"] == run_id):  # start 成了、状态却落不下来：停掉这条，别留没人关的 run（尽力而为）
                 with contextlib.suppress(Exception):
-                    cc.stop_run(cc.load_config(), run_id, "cancelled", timeout=_http_timeout())
+                    cc.stop_run(config, run_id, "cancelled", timeout=_http_timeout())
             return
         cur = _read_state(session_id) or {}
         if not cur.get("warned") and (why := _unsupervised_reason(probe)):
@@ -441,6 +459,12 @@ def handle_phase(payload: dict, at: str) -> None:
         cur = _fresh(session_id, state) if held else None  # SessionEnd 已收尾 / 换了会话 / 没拿到锁：不写、不发
         if not cur or not _ours(cur, probe):
             return
+        try:
+            config = cc.load_config()
+        except Exception:  # noqa: BLE001
+            return
+        if not _same_server(cur, config):
+            return  # 配置换了服务器：这条 run 不在新服务器上，什么都不发（旧的那条靠服务端超时收尾）
         decision = _phase_for(payload, cur.get("lastPhase"))  # 锁内的新状态：锁前读到的 lastPhase 可能已被并发的钩子改过
         if decision is None:
             return
@@ -448,7 +472,7 @@ def handle_phase(payload: dict, at: str) -> None:
         _write_state(session_id, {**cur, "lastPhase": phase})  # 在锁内重读的状态上只改 lastPhase：归属字段绝不从锁前快照写
         closed = False
         try:
-            result = cc.phase_run(cc.load_config(), cur["runId"], phase, at, detail=detail, reply=reply, timeout=_http_timeout())
+            result = cc.phase_run(config, cur["runId"], phase, at, detail=detail, reply=reply, timeout=_http_timeout())
             closed = result.get("reason") == "closed"  # 服务端已收掉这条（失联 / 超时）：会话还活着，下面重开
         except Exception as e:  # noqa: BLE001 — 相位只是记录，失败只留一行固定分类
             category = e if isinstance(e, cc.CockpitError) else "配置错误"
@@ -475,11 +499,14 @@ def _relabel_locked(payload: dict, session_id: str, title: str | None, state: di
         return
     phase = cur.get("lastPhase")
     try:
-        run_id, label = _start(payload, session_id, phase if phase in cc.PHASES else "idle", title)
+        config = cc.load_config()
+        if not _same_server(cur, config):
+            return  # 配置换了服务器：不往新服务器改名 / 重开
+        run_id, label = _start(payload, session_id, phase if phase in cc.PHASES else "idle", title, config)
         if run_id and not _write_state(session_id, {**cur, "runId": run_id, "label": label}):
             if run_id != cur["runId"]:  # 重开了新 run 却记不下来：停掉它，保留旧记录（同 SessionStart 的补偿规则；尽力而为）
                 with contextlib.suppress(Exception):
-                    cc.stop_run(cc.load_config(), run_id, "cancelled", timeout=_http_timeout())
+                    cc.stop_run(config, run_id, "cancelled", timeout=_http_timeout())
     except Exception as e:  # noqa: BLE001 — 改名没报上去：下一个事件再试
         category = e if isinstance(e, cc.CockpitError) else "配置错误"
         _warn(f"会话改名上报失败（{category}）")
@@ -500,12 +527,17 @@ def handle_session_end(payload: dict) -> None:
 
 def _session_end_locked(session_id: str, outcome: str) -> None:
     """**调用方持会话锁。**"""
-    run_id = _read_run_id(session_id)
+    state = _read_state(session_id)
+    run_id = state["runId"] if state else None
     if not run_id:
         _delete_run_id(session_id)  # 没有可用 runId（含坏文件）：清掉，不留垃圾
         return
     try:
         config = cc.load_config()
+        if not _same_server(state, config):  # 配置换了服务器：不把这个 runId 发给新服务器；清本地记录，旧服务器上的 run 靠它自己的超时收尾
+            _warn("SessionEnd: 配置的服务器已不是开这条 run 的那个，不发 stop，清掉本地记录（旧服务器上的 run 由其服务端超时收尾）")
+            _delete_run_id(session_id)
+            return
         cc.stop_run(config, run_id, outcome, timeout=_http_timeout())
     except Exception as e:  # noqa: BLE001 — 同上，绝不能是"会话结束不了"的理由
         category = e if isinstance(e, cc.CockpitError) else "配置错误"
@@ -575,8 +607,9 @@ def _proc(pid: int) -> tuple[int, str, str | None] | None:
         return None
 
 
-def _cli_pid() -> int:
-    """本进程的祖先里哪个是 Claude Code。**「确认认出」只有两种**：
+def _cli_find() -> tuple[int, str | None]:
+    """本进程的祖先里哪个是 Claude Code，返回 `(pid, 启动时刻)`——**启动时刻取自认出它的那一次 `_proc` 观察**，
+    不再单独二次查询（两次查询之间 pid 被复用，会把旧的发现和新进程的启动时刻配成一对）。认不出 → `(0, None)`。**「确认认出」只有两种**：
     1. 环境变量 `COCKPIT_CLI_PID` 明确指了一个活着的进程（用户 / 包装脚本说了算）；
     2. 祖先里（最多 `ANCESTOR_DEPTH` 层）进程名以 `claude` 开头的——或以 `COCKPIT_CLI_NAMES`（逗号分隔的名字前缀）
        里的某个开头的；取最近的一个。
@@ -585,7 +618,8 @@ def _cli_pid() -> int:
     认不出 = 不发心跳（`agent.lane.v1`：发不出死亡就别声明心跳），运行照旧靠遗忘超时兜底。"""
     override = os.environ.get("COCKPIT_CLI_PID", "")
     if override.isdigit() and int(override) > 1:
-        return int(override) if _proc(int(override)) else 0
+        info = _proc(int(override))
+        return (int(override), info[2]) if info else (0, None)
     names = ("claude", *(n.strip().lower() for n in os.environ.get("COCKPIT_CLI_NAMES", "").split(",") if n.strip()))
     pid = os.getppid()
     for _ in range(ANCESTOR_DEPTH):
@@ -593,9 +627,13 @@ def _cli_pid() -> int:
         if info is None:
             break
         if info[1].lower().startswith(names):  # 名字不分大小写
-            return pid
+            return pid, info[2]
         pid = info[0]
-    return 0
+    return 0, None
+
+
+def _cli_pid() -> int:
+    return _cli_find()[0]
 
 
 def _born(pid: int) -> str | None:
@@ -605,8 +643,7 @@ def _born(pid: int) -> str | None:
 def _cli_probe() -> tuple[int, str | None]:
     """`(pid, 启动时刻)`，**在钩子里（启动者）取**，再交给伴随进程——它自己事后再取会留下 pid 被复用的空档。
     一次钩子调用只调一次（祖先要读 /proc 或起 `ps`），结果往下传。认不出 → `(0, None)`。"""
-    pid = _cli_pid()
-    return pid, _born(pid)
+    return _cli_find()
 
 
 def _cli_identity(probe: tuple[int, str | None] | None = None) -> tuple[int, str | None]:
@@ -628,7 +665,7 @@ def _alive(pid: int, born: str | None) -> bool:
     return True
 
 
-def _beat_facts(session_id: str, payload: dict, prev: dict | None = None, probe: tuple[int, str | None] | None = None) -> dict:
+def _beat_facts(session_id: str, payload: dict, prev: dict | None = None, probe: tuple[int, str | None] | None = None, config: dict | None = None) -> dict:
     """SessionStart 时记进状态文件、给发心跳的进程用的几样（**只存本机，不上报**）：
     运行被服务端收掉后重开要的 cwd / transcript；monitor 认会话要的会话号与 Claude Code 的 (pid, 启动时刻)；
     monitor 拿不到插件设置，所以记下钩子用的地址、钩子有没有带令牌（令牌本身不落盘）。"""
@@ -643,8 +680,8 @@ def _beat_facts(session_id: str, payload: dict, prev: dict | None = None, probe:
             facts[key] = payload[source]
     try:
         cli, born = _cli_identity(probe)
-        config = cc.load_config()
-        facts.update(cli=[cli, born], url=config["url"], auth=bool(config["token"]))
+        config = config or cc.load_config()  # SessionStart 给的是 start 用的那份快照：记下的服务器 = 实际开 run 的服务器
+        facts.update(cli=[cli, born], url=_server_id(config["url"]), auth=bool(config["token"]))
     except Exception:  # noqa: BLE001 — 少了这几样只是 monitor 认不出这个会话
         pass
     if prev:
@@ -679,6 +716,17 @@ def _beat_lock(session_id: str):
     return f
 
 
+def _beating_gen(session_id: str, st: dict | None) -> bool:
+    """`.beat` 被占着时：占着的那个发心跳进程（它把 `pid 起法 gen` 写进文件）是不是本代（`st["gen"]`）的、且 pid 还活着。
+    读不出 / 空（刚拿到锁还没写）/ 对不上 → False（宁可多起一个有界的 `--wait` 伴随进程）。"""
+    try:
+        pid, _source, gen = (_read_small(_state_file(session_id).with_suffix(".beat")) or "").split()
+        os.kill(int(pid), 0)
+        return bool(st) and gen == st.get("gen")
+    except (OSError, ValueError):
+        return False
+
+
 def _spawn_beat(session_id: str, state: dict | None, wait: bool = False, probe: tuple[int, str | None] | None = None) -> None:
     """`beat=companion`（缺省）时，没人在发心跳就起一个伴随进程，立刻返回（不等它）。起不来只是「这个会话没有心跳」。
     `state` = 钩子手里的状态（可为 None）。`wait`：另一个 CLI 恢复了这个会话，老的发心跳的还占着锁、
@@ -691,15 +739,15 @@ def _spawn_beat(session_id: str, state: dict | None, wait: bool = False, probe: 
         if not cli or (st and not (_usable(st) and _owned(st, st.get("gen"), cli, born))):
             return  # 认不出 Claude Code（死了看不出来）/ 发了也发不出去 / 状态是另一个 CLI 的：不起
         probe_lock = _beat_lock(session_id)
-        if probe_lock is None and not wait:
-            return  # 已经有人在发
-        if probe_lock:
+        if probe_lock is not None:
             probe_lock.close()  # 两个钩子同时走到这里会各起一个：伴随进程自己再抢一次锁，输的那个直接退
+        elif not wait or _beating_gen(session_id, st):
+            return  # 已经有人在发（wait 时只认「本代」在发：占着锁的可能是旧代的，它正要退，或还没拿到锁就会发现换了主人，照样起 --wait）
         subprocess.Popen(
             [sys.executable, str(Path(__file__).resolve()), "--beat", "--source", "companion",
              "--session", session_id, "--cli", str(cli), "--born", str(born),
              *(["--gen", st["gen"]] if st and isinstance(st.get("gen"), str) else []),
-             *(["--wait"] if wait and probe_lock is None else [])],
+             *(["--wait"] if wait else [])],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True, close_fds=True, cwd=str(_state_file(session_id).parent),
         )
@@ -715,7 +763,7 @@ def _usable(state: dict) -> bool:
     remembered = state.get("url")
     if state.get("beat") == "unsupported":
         return False  # 这个会话的服务端没有心跳路由：不再起也不再发
-    if remembered and config["url"] and remembered != config["url"]:
+    if not _same_server(state, config):
         return False  # 运行活在别的服务器上：往本进程配的这个发会在那里造出一条野运行
     if (not config["url"] and not config["token"] and not os.environ.get("COCKPIT_TOKEN")  # 环境里的令牌会与补进去的地址配成对
             and isinstance(remembered, str) and remembered and not state.get("auth")):
@@ -733,7 +781,10 @@ def _beat_once(session_id: str, state: dict, source: str) -> float | None:
     **心跳不持会话锁**（只有 `.beat` 互斥），所以「每个改状态的请求都持锁」不含它。这不会让心跳改坏正在收尾的运行：服务端的
     心跳端点（`modules/nexus-core/.../timer/agent_phases.py::heartbeat` → `repo.touch_agent_run`）只对**未打关闭标记**
     （`closing` 不存在）的运行更新 `lastSeenAt` / `beatCount`，已关闭 / 关闭中的回 `applied:false, reason:"closed"`，既不重开也不改它。"""
-    interval, closed = cc.beat(cc.load_config(), state["runId"], BEAT_TIMEOUT, source)
+    config = cc.load_config()
+    if not _same_server(state, config):
+        return None  # 配置换了服务器：不往新服务器发心跳，也不重开；发心跳的进程退出
+    interval, closed = cc.beat(config, state["runId"], BEAT_TIMEOUT, source)
     if closed == cc.BEAT_UNSUPPORTED:  # 服务端没有心跳：记进状态，之后钩子事件不再起发心跳的进程；绝不声明、不重开
         with _session_lock(session_id) as held:
             st = _fresh(session_id, state) if held else None
@@ -797,7 +848,7 @@ def _beat_session(
         return END_OTHER  # 另一个已经在给它发
     with lock:
         lock.truncate(0)
-        lock.write(f"{os.getpid()} {source}")
+        lock.write(f"{os.getpid()} {source} {gen}")
         lock.flush()
         skips = 0
         next_beat = clock()  # 第一下马上发：声明这条运行会发心跳。限度：`clock` 是单调钟，机器休眠期间不走，睡醒后下一下可能晚到一个间隔内
@@ -929,7 +980,8 @@ def _beat_main(argv: list[str]) -> None:
         if args.born:
             beat_loop("companion", args.session, args.cli, born=args.born, gen=args.gen, wait=args.wait)
         return
-    beat_loop("monitor", None, _cli_pid(), identify=_cli_identity)
+    cli, born = _cli_find()
+    beat_loop("monitor", None, cli, born=born, identify=_cli_identity)
 
 
 def _dir_status(path: Path) -> str:

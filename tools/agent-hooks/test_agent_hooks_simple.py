@@ -167,7 +167,7 @@ class StaticBeaterTests(_HookProcMixin, unittest.TestCase):
         proc, _ = self._run_hook(event, self.script, COCKPIT_CLI_PID=str(cli1.pid), **env)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         beat = claude_hook._state_file("s1").with_suffix(".beat")
-        self._wait(lambda: beat.exists() and beat.read_text().endswith(" companion"), "CLI#1 的伴随进程没起来")
+        self._wait(lambda: beat.exists() and " companion " in beat.read_text(), "CLI#1 的伴随进程没起来")
         first = int(beat.read_text().split()[0])
         self._wait(lambda: len(self._heartbeats()) >= 1, "第一下心跳没到")
         proc, _ = self._run_hook({**event, "source": "resume"}, self.script, COCKPIT_CLI_PID=str(cli2.pid), **env)  # CLI#2 恢复
@@ -200,7 +200,7 @@ class StaticBeaterTests(_HookProcMixin, unittest.TestCase):
 
     def test_monitor_command_exits_silently_and_sends_nothing_unless_beat_is_monitor(self):
         cli = self._fake_cli()
-        with mock.patch.object(claude_hook, "_cli_pid", return_value=cli.pid):
+        with mock.patch.object(claude_hook, "_cli_find", new=lambda: (cli.pid, claude_hook._born(cli.pid))):
             claude_hook._save_run_id("s1", "run-1", "idle", "garden", {"cwd": "/tmp"})
         for beat in (None, "companion", "off"):  # 缺省也一样：不是显式 monitor 就退
             extra = {"COCKPIT_BEAT": beat} if beat else {}
@@ -243,7 +243,7 @@ class BudgetTests(_HookProcMixin, unittest.TestCase):
 
     def test_cli_ancestry_is_discovered_once_per_session_start(self):
         calls = []
-        with mock.patch.object(claude_hook, "_cli_pid", lambda: calls.append(1) or 0), \
+        with mock.patch.object(claude_hook, "_cli_find", lambda: (calls.append(1) or 0, None)), \
                 mock.patch.object(cc, "start_run", return_value={"runId": "run-1"}), \
                 mock.patch.object(cc, "load_config", return_value={"url": "http://x.invalid", "token": "", "beat": None}):
             claude_hook.handle_session_start({"session_id": "s1", "cwd": "/tmp"})
