@@ -67,9 +67,17 @@ def pending_windows(user: str, batch: int = 1000):
         yield buf
 
 
-def delete_pending(user: str, ids: list[str]) -> int:
-    """v2.22：只删仍是 pending / dismissed 的（与确认赛跑时确认赢；已确认的是事实的出处，不动）。"""
-    return _col().delete_many({"user": user, "id": {"$in": ids}, "status": {"$in": ["pending", "dismissed"]}}).deleted_count
+def delete_pending(user: str, ids: list[str]) -> tuple[int, int]:
+    """v2.22：只删仍是 pending / dismissed 的（与确认赛跑时确认赢；已确认的是事实的出处，不动）。
+    返回 (删了几条, 这些的秒数)：先取此刻还在的候选、删、再看谁没了——只算这次确实删掉的，中途自己消失的 / 变成已确认的不算。"""
+    filt = {"user": user, "id": {"$in": ids}, "status": {"$in": ["pending", "dismissed"]}}
+    cand = {d["id"]: d.get("durationSeconds", 0) for d in _col().find(filt, {"_id": 0, "id": 1, "durationSeconds": 1})}
+    if not cand:
+        return 0, 0
+    _col().delete_many({**filt, "id": {"$in": list(cand)}})
+    left = {d["id"] for d in _col().find({"user": user, "id": {"$in": list(cand)}}, {"_id": 0, "id": 1})}
+    gone = [i for i in cand if i not in left]
+    return len(gone), sum(cand[i] for i in gone)
 
 
 def confirmed(user: str, cap: int) -> list[dict]:

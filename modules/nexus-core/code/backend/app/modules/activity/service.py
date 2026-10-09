@@ -183,6 +183,7 @@ def _purge(user: str, now: datetime) -> None:
 def upload(device_id: str, segments: list[Any], inserted: list[dict] | None = None) -> dict:
     """``inserted`` 给了就把**新写入**的建议文档追加进去（v2.14 自动记录只看这些，防重命中的不看）。"""
     user, now = current_tenant(), _now()
+    rules_ = ignore.prepared(user)   # 先读规则（读不到 → 5xx，此时还什么都没改），再清过期，再闸门
     _purge(user, now)
     accepted = duplicates = 0
     rejected: list[dict] = []
@@ -196,7 +197,7 @@ def upload(device_id: str, segments: list[Any], inserted: list[dict] | None = No
         except ValueError as exc:
             rejected.append({"index": index, "reason": str(exc)})
     # v2.22 忽略并记住：命中规则的段不存，只记在规则的计数器上（读不到规则 → 这里抛，整个上传被拒）
-    valid, ignored = ignore.gate_incoming(user, valid, lambda v: (v[0].app, v[0].title, v[0].durationSeconds))
+    valid, ignored = ignore.gate_incoming(user, rules_, valid, lambda v: (v[0].app, v[0].title, v[0].durationSeconds))
     # v2.13 窗口 ↔ 代理会话：这批段的总时间窗里的代理运行，只查一次
     runs = session_link.runs(user, min(s for _, s, _ in valid), max(e for _, _, e in valid)) if valid else []
     for seg, start, end in valid:

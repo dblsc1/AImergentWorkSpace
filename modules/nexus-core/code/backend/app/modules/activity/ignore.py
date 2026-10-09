@@ -9,7 +9,7 @@
 
 **这不是隐私擦除**：已经记下的在场历史、已确认的记录、已存的自动跟踪选择 / 问询、AI 写的或「记住」的分类规则与草稿、代理标签、AI 对话都不动。
 匹配（两边都过 ``textfold.fold``）：程序名归一化后**相等**（``code`` 与 ``code.exe`` 不是同一个）；``titleContains`` 给了就还要归一化后的标题
-**包含**它，不给 = 这个程序的所有窗口。不用正则。规则存在检测程序之外、服务端说了算。写（建 / 删）只许人：带 Bearer 一律 403。
+**包含**它，不给 = 这个程序的所有窗口。不用正则。规则存在检测程序之外、服务端说了算。写（建 / 删）只许人（``ignore_router.is_human``：无 Bearer、无范围头、非匿名），其余一律 403。
 失败方向：读不到规则 → 这次写入失败（5xx，检测程序会重试）；匹配某一项时出错 → 这一项当作被忽略。读接口不看忽略规则。
 """
 
@@ -21,12 +21,12 @@ from datetime import datetime, timezone
 from ...tenant import current as current_tenant
 from ...textfold import fold
 from ..planner.errors import InvalidInputError, UnprocessableError
-from . import ignore_repo, repo
+from . import ignore_repo, presence, repo
 
 MAX_IGNORES = 200  #: 每租户至多这么多条规则
 MAX_APP, MAX_TITLE = 128, 200
 #: 闸门最多看一个 app / title 的前这么多个码点：请求模型把收到的字符串截到这里（v2.4：超长截断照收、不拒），
-#: 归一化与匹配都只在这个有界的串上做；随后存储再按各自的上限（presence 128 / 512，建议 128 / 512）截——存下来的是闸门看过的串的前缀。
+#: 归一化与匹配都只在这个有界的串上做；随后存储再按各自的上限（presence 128 / 512，建议 128 / 512）截；匹配时收到的串与截后的串都要试（``Prepared.find``）。
 GATE_CHARS = 4096
 SCAN_BUDGET = 50_000  #: 建规则时清理至多扫这么多条待确认建议；超了就停，响应里的 ``removed`` 是实际删掉的
 
@@ -62,7 +62,12 @@ class Prepared:
         return bool(self.items)
 
     def find(self, app: str, title: str) -> dict | None:
+        """收到的串与「将要存下的」串（按存储上限截断后）任一匹配都算命中：折掉的填充不能把规则文字挤出存储上限之外。"""
         app, title = (app or "")[:GATE_CHARS], (title or "")[:GATE_CHARS]   # 任何路径都不归一化无界的串
+        clipped = presence.clip(app, title)
+        return self._find(app, title) or (self._find(*clipped) if clipped != (app, title) else None)
+
+    def _find(self, app: str, title: str) -> dict | None:
         fapp, ftitle = fold(app), None
         for rule, rapp, needle in self.items:
             if rapp != fapp:
@@ -90,7 +95,7 @@ def listing(human: bool = True) -> dict:
 
 
 def add(app: str, title_contains: str | None) -> dict:
-    """幂等：同一条规则再建回已有的那条（``created: false``）。顺手删掉已在待确认 / 已忽略里的命中项（``removed``，尽力而为）。"""
+    """幂等：同一条规则再建回已有的那条（``created: false, removed: 0``，不再清理）。新建时顺手删掉已在待确认 / 已忽略里的命中项（``removed``，尽力而为）。"""
     user = current_tenant()
     app, title = _clean(app), _clean(title_contains)
     if not fold(app):
@@ -100,33 +105,49 @@ def add(app: str, title_contains: str | None) -> dict:
     title = title if fold(title) else ""
     doc = {"user": user, "id": rule_id(app, title), "app": app, "titleContains": title or None,
            "createdAt": _now(), "hits": 0, "seconds": 0}
-    # 先插、再数、超了撤回（并发的创建者各自插完再数：留下的总是 ≤ MAX_IGNORES；同时顶线时可能一起撤回，宁可少收，调用方重试）
-    created = ignore_repo.insert_if_absent(doc)
-    if created and ignore_repo.count(user) > MAX_IGNORES:
-        ignore_repo.delete(user, doc["id"])
-        created = False
-    stored = next((r for r in ignore_repo.all_rules(user) if r["id"] == doc["id"]), None)
-    if stored is None:
+    # 先插、再数、超了撤回（并发的创建者各自插完再数：留下的总是 ≤ MAX_IGNORES；同时顶线时可能一起撤回，宁可少收，调用方重试）。
+    # 插入与撤回之间进程崩了会留下第 201 条：已知、不加事务。数不出来 / 撤回出错 → 尽力把刚插的删掉再报错
+    if not ignore_repo.insert_if_absent(doc):
+        return {**_out(_stored(user, doc)), "created": False, "removed": 0}   # 重复建不再清理：想再扫就先删后建
+    try:
+        over = ignore_repo.count(user) > MAX_IGNORES
+        if over:
+            ignore_repo.delete(user, doc["id"])
+    except Exception:
+        try:
+            ignore_repo.delete(user, doc["id"])
+        except Exception:  # noqa: BLE001  尽力而为
+            pass
+        raise
+    if over:
         raise UnprocessableError(f"忽略规则最多 {MAX_IGNORES} 条")
-    removed = _sweep(user, stored)
-    fresh = next((r for r in ignore_repo.all_rules(user) if r["id"] == doc["id"]), stored)   # 带上刚记的计数器
-    return {**_out(fresh), "created": created, "removed": removed}
+    removed = _sweep(user, doc)
+    return {**_out(_stored(user, doc)), "created": True, "removed": removed}
+
+
+def _stored(user: str, doc: dict) -> dict:
+    """读回带最新计数器的那条；读不到就用手上这份（规则已存下，不因读回失败而报错）。"""
+    try:
+        return next((r for r in ignore_repo.all_rules(user) if r["id"] == doc["id"]), doc)
+    except Exception:  # noqa: BLE001
+        return doc
 
 
 def _sweep(user: str, rule: dict) -> int:
-    """建规则时唯一的清理：删掉命中的待确认 / 已忽略建议。分批、有扫描上限；出错就停在已删的数目上——规则已经存下，不重试。"""
-    one, removed, seconds, scanned = Prepared([rule]), 0, 0, 0
+    """建规则时唯一的清理：删掉命中的待确认 / 已忽略建议。分批、有扫描上限；出错就停在已删的数目上——规则已经存下，不重试。
+    每批删完马上记计数器（秒数只算这批确实删掉的），后面出错不丢前面的。"""
+    one, removed, scanned = Prepared([rule]), 0, 0
     try:
         for batch in repo.pending_windows(user):
             scanned += len(batch)
-            gone = [p for p in batch if one.find(p["app"], p["title"])]
-            if gone:
-                removed += repo.delete_pending(user, [p["id"] for p in gone])
-                seconds += sum(p["durationSeconds"] for p in gone)
+            ids = [p["id"] for p in batch if one.find(p["app"], p["title"])]
+            if ids:
+                n, seconds = repo.delete_pending(user, ids)
+                removed += n
+                if n:
+                    ignore_repo.hit(user, rule["id"], n, seconds, _now())
             if scanned >= SCAN_BUDGET:
                 break
-        if removed:
-            ignore_repo.hit(user, rule["id"], removed, seconds, _now())
     except Exception:  # noqa: BLE001  尽力而为：规则已存下，已删的照实报
         pass
     return removed
@@ -137,9 +158,9 @@ def remove(rule_id_: str) -> None:
     ignore_repo.delete(current_tenant(), rule_id_)
 
 
-def gate_incoming(user: str, items: list, window) -> tuple[list, int]:
-    """上传：把命中忽略规则的项丢掉，计数器记上（一条 +1 段、+秒）。``window(item)`` = (app, title, 秒)。返回 (留下的, 丢了几个)。"""
-    rules_ = prepared(user)
+def gate_incoming(user: str, rules_: Prepared, items: list, window) -> tuple[list, int]:
+    """上传：把命中忽略规则的项丢掉，计数器记上（一条 +1 段、+秒）。``window(item)`` = (app, title, 秒)。返回 (留下的, 丢了几个)。
+    ``rules_`` 由调用方先读好（``prepared``）：读不到就在任何写入之前失败。"""
     if not rules_:
         return items, 0
     kept, hits = [], {}
@@ -159,7 +180,10 @@ def gate_incoming(user: str, items: list, window) -> tuple[list, int]:
             hits[r["id"]] = (n + 1, s_ + seconds)
     now = _now()
     for rid, (records, seconds) in hits.items():
-        ignore_repo.hit(user, rid, records, seconds, now)
+        try:
+            ignore_repo.hit(user, rid, records, seconds, now)
+        except Exception:  # noqa: BLE001  计数器只是统计，入库不能靠它
+            pass
     return kept, len(items) - len(kept)
 
 
