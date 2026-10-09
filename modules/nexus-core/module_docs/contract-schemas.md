@@ -430,8 +430,8 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
 
 // GET /api/core/activity/ignores
 { "total": 1, "items": [ { "id": "ig_…", "app": "chrome", "titleContains": "银行", "createdAt": "<ISO>",
-                           "hits": 3, "seconds": 700, "lastHitAt": "<ISO>" | null } ] }   // 非人的调用方：titleContains 换成 "hasTitleFilter": true
-// POST /api/core/activity/ignores   { "app": "chrome", "titleContains": "银行" }  → 201 { …规则, "created": true, "removed": 2 }
+                           "hits": 3, "seconds": 700, "lastHitAt": "<ISO>" | null } ] }   // 非人的调用方每项只有 id / app / hasTitleFilter / hits / seconds / createdAt
+// POST /api/core/activity/ignores   { "app": "chrome", "titleContains": "银行" }  → 201 { …规则, "created": true, "removed": 2 }   // removed = 顺手删掉的待确认 / 已忽略的匹配建议数（尽力而为）
 // POST /api/core/activity/suggestions → { "accepted": 1, "duplicates": 0, "rejected": [], "ignored": 2 }   // ignored 只在有时才带
 ```
 

@@ -357,7 +357,7 @@
   function label(g) { return g.app + (g.title ? " · " + g.title : ""); }
 
   // 「忽略并记住」（nexus-core v2.22，ignores.js）：点开后选范围——整个程序，或只是标题含一段文字的窗口。
-  // 标题不会被悄悄整段存下：「只忽略标题含…」给一个预填了标题的输入框，人可以改短成一个无关痛痒的片段；这段文字存在规则里（只有登录的人看得到）。
+  // 「只忽略标题含…」给一个预填了标题的输入框，人可以改短成一个无关痛痒的片段；这段文字存在规则里（只有登录的人看得到）。
   // 集合：只提供「这些窗口所在程序的所有窗口」（各窗口的标题都不带进规则）。服务端存规则、顺手清掉已在待确认里的匹配项；
   // 以后匹配的窗口不再记录。后端没有这个端点（ignores.js 探过）就不出现。
   var APP_WARNING = "整个程序都忽略时，代理会话在这个程序里的时间，泳道上“你在看”的蓝条也不再记。";
@@ -401,7 +401,7 @@
             if (!r.ok) { failed = r; break; }
             removed += r.removed || 0;
           }
-          showMessage(failed ? (failed.status === 503 ? failed.detail : "没有记住：" + (failed.detail || "请稍后再试"))
+          showMessage(failed ? "没有记住：" + (failed.detail || "请稍后再试")
             : "已忽略并记住（清掉 " + removed + " 条待确认）：以后这样的窗口不再记录。在下面的「被忽略任务」里可以取消。", Boolean(failed));
           await load();
         });

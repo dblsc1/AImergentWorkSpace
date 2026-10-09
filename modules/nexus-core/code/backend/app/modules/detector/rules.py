@@ -186,19 +186,8 @@ def _state(user: str) -> dict:
     return doc
 
 
-def _public(rules: list[dict]) -> list[dict]:
-    """服务端专用的出处字段 ``src``（生成这条规则的窗口原文）永远不出库：任何接口 / MCP 输出都过这里。"""
-    return [{k: v for k, v in r.items() if k != "src"} for r in rules]
-
-
-def _shown(doc: dict) -> dict:
-    from . import window_rules  # noqa: PLC0415  window_rules 从本文件取校验，顶层互相导入会成环
-
-    return window_rules.shown(doc)
-
-
 def _rules_out(doc: dict) -> dict:
-    return {"version": doc.get("version", 0), "updatedAt": _iso(doc.get("updatedAt")), "rules": _public(doc.get("rules", []))}
+    return {"version": doc.get("version", 0), "updatedAt": _iso(doc.get("updatedAt")), "rules": doc.get("rules", [])}
 
 
 def _diff(current: list[dict], draft: list[dict]) -> dict:
@@ -218,17 +207,14 @@ def _draft_out(doc: dict) -> dict | None:
     return {"id": d["id"], "status": "pending", "author": d["author"], "summary": d["summary"],
             "createdAt": _iso(d["createdAt"]), "expiresAt": _iso(d["expiresAt"]),
             "baseVersion": d["baseVersion"], "currentVersion": doc.get("version", 0),
-            "rules": d["rules"], "diff": _diff(_public(doc.get("rules", [])), d["rules"])}
+            "rules": d["rules"], "diff": _diff(doc.get("rules", []), d["rules"])}
 
 
 # ── 端点 ───────────────────────────────────────────────────────────
 
 
 def get_rules() -> dict:
-    from ..activity import ignore  # noqa: PLC0415
-
-    ignore.retry_pending()
-    return _rules_out(_shown(_state(current_tenant())))
+    return _rules_out(_state(current_tenant()))
 
 
 def put_rules(authorization: str | None, if_match: str | None, body: bytes) -> dict:
@@ -237,9 +223,6 @@ def put_rules(authorization: str | None, if_match: str | None, body: bytes) -> d
     version = _if_match(if_match)
     rules = _validate(raw["rules"])
     user = current_tenant()
-    from . import window_rules  # noqa: PLC0415
-
-    rules = window_rules.keep_src(repo.get_rules(user) or {}, version, rules)
     if (doc := repo.replace_rules(user, version, rules, _now())) is None:
         raise _stale(user, version)
     return _rules_out(doc)
@@ -251,12 +234,6 @@ def _stale(user: str, version: int) -> RulesError:
 
 
 def create_draft(authorization: str | None, body: bytes) -> dict:
-    from ..activity import ignore  # noqa: PLC0415  延迟导入：detector.rules 经 planner 回到 activity.service
-
-    return ignore.guarded(_create_draft)(authorization, body)   # 写完再看一眼：写的当中新出现的忽略规则会把这份草稿清掉
-
-
-def _create_draft(authorization: str | None, body: bytes) -> dict:
     _forbid(authorization)
     raw = _json(body, {"rules", "summary", "author"}, {"rules", "summary"})
     summary, author = raw["summary"], raw.get("author", "assistant")
@@ -269,10 +246,6 @@ def _create_draft(authorization: str | None, body: bytes) -> dict:
         raise _invalid(errors)
     rules = _validate(raw["rules"])
     user, now = current_tenant(), _now()
-    from . import window_rules  # noqa: PLC0415
-
-    if author == "assistant" and window_rules.refuses({"author": author, "summary": summary, "rules": rules}):
-        raise RulesError(409, "草稿里有出自用户设成「忽略并记住」的窗口的规则（或摘要 / 备注带着它的文字），不收。什么都没写")
     doc = _state(user)
     return _draft_out(repo.put_draft(user, {"id": "drf_" + secrets.token_hex(6), "author": author, "summary": summary,
                                             "createdAt": now, "expiresAt": now + DRAFT_TTL,
@@ -280,10 +253,7 @@ def _create_draft(authorization: str | None, body: bytes) -> dict:
 
 
 def current_draft() -> dict:
-    from ..activity import ignore  # noqa: PLC0415
-
-    ignore.retry_pending()
-    return {"draft": _draft_out(_shown(_state(current_tenant())))}
+    return {"draft": _draft_out(_state(current_tenant()))}
 
 
 def apply_draft(authorization: str | None, draft_id: str, if_match: str | None) -> dict:

@@ -578,7 +578,7 @@ MCP 只查类型与 `maxItems`，原样下传 `POST /api/core/activity/reports`�
   "truncated": false,                                         // 恒为 false（规则集本身 ≤ 500）
   "ignored": [                                                // v1.14：用户说过「忽略并记住」的窗口（最多 200 条；老后端为 []）
     { "id": "ig_…", "app": "chrome", "titleContains": "银行",   // titleContains 为 null = 这个程序的所有窗口；不是正则，不分大小写的子串
-      "since": "<ISO>", "ignoredRecords": 3, "ignoredSeconds": 700 } ] }   // 计数器；服务端不存被忽略窗口的标题
+      "since": "<ISO>", "ignoredRecords": 3, "ignoredSeconds": 700 } ] }   // 计数器
 ```
 
 - v1.14 `ignored`：这些窗口**不记为工作**，不会出现在 `list_activity_suggestions` 里，也不要再为它们起草分类规则；`app` / `titleContains` 是人写的字，同样过 `_screen`。只读——建 / 删忽略规则只有人在「AI助理」页能做。

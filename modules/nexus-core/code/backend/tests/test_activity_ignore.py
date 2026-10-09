@@ -1,7 +1,6 @@
-"""忽略并记住（契约 v2.22）：匹配的窗口不当作工作。
+"""忽略并记住（契约 v2.22）：规则的增删读、建规则时的唯一清理、读接口不依赖规则。
 
-要害：被忽略的窗口**一个标题都不落库**（建议上传直接丢、在场心跳换成「没有窗口」），也就不会成为焦点 /
-自动跟踪目标 / 「请你选」的窗口 / 泳道的「你在看」；规则上只有计数器；取消忽略后以后的窗口照常。
+写入闸门（匹配的窗口入口就丢 / 抹）在 ``test_activity_ignore_gate.py``。这不是隐私擦除：已记下的东西不动。
 """
 
 from __future__ import annotations
@@ -143,37 +142,6 @@ def test_unignore_restores_future_records(client):
 # ─────────────────────────────────────────── 在场：不成为焦点 / 目标 / 注意力
 
 
-def test_ignored_window_is_not_stored_nor_focus_nor_attention(client):
-    run = client.post(f"{API}/agents/start", json={"agent": "cc", "tool": "claude-code", "label": "garden", "match": "garden"}).json()
-    _ignore(client, "ptyxis")
-    _beat(client, "ptyxis", "✳ garden " + PRIVATE_TITLE)
-    doc = _db()["activity_presence"].find_one({})
-    assert [(s["app"], s["title"], s["afk"]) for s in doc["spans"]] == [("", "", False)]
-    assert (doc["app"], doc["title"]) == ("", "")
-    assert PRIVATE_TITLE not in str(doc)  # 标题没有落库
-    body = client.get(f"{API}/views/lanes").json()
-    [agent] = body["agents"]
-    assert agent["attention"] == [] and [p["runId"] for p in body["human"]["presence"]] == [None]
-    assert body["human"]["needsChoice"] is None and body["human"]["auto"] is None
-    focus = client.get(f"{API}/views/current").json()["focus"]
-    assert (focus["state"], focus["app"], focus["title"], focus["taskId"], focus["projectId"]) == ("present", "", "", None, None)
-    # 对照：别的窗口照旧能对上会话
-    _beat(client, "kitty", "✳ garden")
-    assert client.get(f"{API}/views/lanes").json()["agents"][0]["attention"] != [] and run["runId"]
-
-
-def test_ignored_spans_in_a_batched_beat_are_masked_one_by_one(client):
-    _ignore(client, "chrome", "银行")
-    now = datetime.now(timezone.utc).replace(microsecond=0)
-    spans = [{"app": "chrome", "title": PRIVATE_TITLE, "from": (now - timedelta(seconds=40)).isoformat(), "seconds": 20},
-             {"app": "chrome", "title": "news", "from": (now - timedelta(seconds=20)).isoformat(), "seconds": 15,
-              "guess": {"projectId": "p_x", "confidence": 0.9, "classifier": "rules"}}]
-    _beat(client, "chrome", "news", sentAt=now.isoformat(), spans=spans)
-    doc = _db()["activity_presence"].find_one({})
-    assert [(s["app"], s["title"]) for s in doc["spans"]] == [("", ""), ("chrome", "news")]
-    assert PRIVATE_TITLE not in str(doc) and "guess" not in doc["spans"][0]
-
-
 def test_unignore_makes_windows_count_again(client):
     rule = _ignore(client, "chrome")
     _beat(client, "chrome", "news")
@@ -189,7 +157,7 @@ def test_report_and_anonymous_scopes_cannot_read_or_write_ignores(client):
         assert client.post(IGN, json={"app": "x"}, headers=headers).status_code == 403
 
 
-# ─────────────────────────────────────────── 每个存过窗口标题的地方：建规则后原始集合里都搜不到
+# ─────────────────────────────────────────── 辅助：每个集合里序列化后含某段标题的文档数
 
 
 def _raw_has(title: str) -> dict[str, int]:
@@ -202,169 +170,65 @@ def _raw_has(title: str) -> dict[str, int]:
     return out
 
 
-def test_creating_a_rule_purges_every_store_that_held_the_title(client, seeded):
-    task = next(iter(seeded["tasks"].values()))["id"]
-    title = "银行转账-私密页面"
-    keep = "公开页面"
-    _upload(client, [_seg(10, "chrome", title), _seg(20, "chrome", title + " 二"), _seg(30, "chrome", keep)])
-    items = client.get(SUG, params={"status": "pending"}).json()["items"]
-    mine = [i for i in items if i["title"].startswith(title)]
-    # 一段已忽略（dismissed）的、一段已确认（事实）的
-    assert client.post(f"{SUG}/{mine[0]['id']}/dismiss").status_code == 200
-    _upload(client, [_seg(40, "chrome", title + " 三")])
-    confirmed = next(i for i in client.get(SUG, params={"status": "pending"}).json()["items"] if i["title"] == title + " 三")
-    assert client.post(f"{SUG}/{confirmed['id']}/confirm", json={"taskId": task}).status_code == 200
-    # 在场时间线 + 当前窗口、人的临时选择、AI 问询、报告（引用这些建议）
-    _beat(client, "chrome", title)
+def test_non_human_callers_get_only_the_projection(client):
+    _ignore(client, "code", PRIVATE_TITLE)
+    _upload(client, [_seg(10, "code", PRIVATE_TITLE, 100)])
+    human = client.get(IGN).json()["items"][0]
+    assert human["titleContains"] == PRIVATE_TITLE and human["hits"] == 1
+    for headers in ({"Authorization": "Bearer t"}, {"X-Nexus-Scope": "read", "Authorization": "Bearer t"}, {"X-Nexus-Scope": "read"}):
+        [row] = client.get(IGN, headers=headers).json()["items"]
+        assert set(row) == {"id", "app", "hasTitleFilter", "hits", "seconds", "createdAt"} and row["hasTitleFilter"] is True
+        assert PRIVATE_TITLE not in json.dumps(row, ensure_ascii=False)
+
+
+def test_creating_a_rule_removes_pending_and_dismissed_even_past_5000_and_reports_the_count(client):
     now = datetime.now(timezone.utc)
-    _db()["activity_choices"].insert_one({"user": "u_local", "key": "wk_" + "a" * 20, "kind": "choice", "app": "chrome",
-                                          "title": title, "taskId": task, "at": now, "expiresAt": now + timedelta(hours=1)})
-    _db()["activity_ai_asks"].insert_one({"user": "u_local", "key": "wk_" + "b" * 20, "app": "chrome", "title": title,
-                                          "claimedAt": now})
-    _db()["activity_ai_asks"].insert_one({"user": "u_local", "key": "_tenant", "polledAt": now, "claims": []})
-    other = [i for i in client.get(SUG, params={"status": "pending"}).json()["items"] if i["title"].startswith(title)]
-    rep = client.post(f"{API}/activity/reports", json={"summary": "s", "items": [
-        {"kind": "assign", "suggestionIds": [other[0]["id"]], "taskId": task}]}).json()
-    before = _raw_has(title)
-    assert {"activity_suggestions", "activity_presence", "activity_choices", "activity_ai_asks"} <= set(before)
 
-    _ignore(client, "chrome", "银行转账")
-    left = _raw_has(title)
-    # 只剩已确认的建议（事实的出处）和台账里的事实本身——这两样是人确认过的记录，不改写
-    assert set(left) <= {"activity_suggestions", "events", "proj_lanes", "proj_daily_stats"}, left
-    assert left.get("activity_suggestions", 0) == 1
-    assert client.get(SUG, params={"status": "pending"}).json()["items"][0]["title"] == keep
-    assert client.get(SUG, params={"status": "dismissed"}).json()["items"] == []
-    assert _db()["activity_ai_asks"].count_documents({"key": "_tenant"}) == 1  # 租户级那份不是窗口，不碰
-    # 焦点（读在场）不再带标题，也不再有目标；报告里那条建议成了 stale
-    focus = client.get(f"{API}/views/current").json()["focus"]
-    assert (focus["app"], focus["title"], focus["projectId"]) == ("", "", None)
-    assert client.get(f"{API}/views/lanes").json()["human"]["presence"][0]["title"] == ""
-    got = client.get(f"{API}/activity/reports/{rep['reportId']}").json()
-    assert got["items"][0]["staleNow"] == 1 and got["items"][0]["suggestions"] == []
-    # MCP / AI 工具读的就是上面这些端点：历史里也不剩（已确认的除外，历史本来只由确认的事实派生）
-    hist = client.get(f"{SUG}/history").json()
-    assert title not in json.dumps({"c": hist["collections"], "r": hist["rejected"]}, ensure_ascii=False)
-    # 取消忽略不会让清掉的东西回来
-    client.delete(f"{IGN}/{client.get(IGN).json()['items'][0]['id']}")
-    assert _raw_has(title) == left
-    assert len(client.get(SUG, params={"status": "pending"}).json()["items"]) == 1
+    def doc(i, title, status="pending"):
+        return {"user": "u_local", "id": f"sug_{i}", "dedupeKey": f"d{i}", "status": status, "app": "code", "title": title,
+                "durationSeconds": 3, "startTs": now, "endTs": now}
+
+    # 命中的散在扫描顺序的中间和最末尾，含 dismissed；别的 app 与已确认的不动
+    docs = [doc(i, "别的") for i in range(2700)] + [doc(5000 + i, PRIVATE_TITLE) for i in range(3)]
+    docs += [doc(6000 + i, "别的") for i in range(2700)] + [doc(9000 + i, PRIVATE_TITLE, "dismissed") for i in range(2)]
+    docs += [doc(9500, PRIVATE_TITLE, "confirmed"), {**doc(9600, PRIVATE_TITLE), "app": "chrome"}]
+    _db()["activity_suggestions"].insert_many(docs)
+    out = _ignore(client, "code", PRIVATE_TITLE)
+    assert out["removed"] == 5 and out["hits"] == 5
+    assert _db()["activity_suggestions"].count_documents({}) == 5400 + 2
 
 
-# ─────────────────────────────────────────── 并发：读了旧规则的写入者，写在建规则的清理之后，也写不回标题
-
-
-def test_stale_presence_cas_loses_after_the_purge_bumps_the_version(client):
+def test_cleanup_failure_does_not_fail_creation_and_reports_what_was_removed(client, monkeypatch):
     from app.modules.activity import repo  # noqa: PLC0415
 
+    _upload(client, [_seg(10, "code", "a"), _seg(20, "code", "b")])
+    monkeypatch.setattr(repo, "delete_pending", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    out = _ignore(client, "code")
+    assert out["created"] is True and out["removed"] == 0
+    assert client.get(IGN).json()["total"] == 1   # 规则在；以后的窗口照样被过滤
+    assert _upload(client, [_seg(30, "code", "c")]).get("ignored") == 1
+
+
+def test_nothing_else_is_erased_history_stays(client):
+    """契约「这不是隐私擦除」：规则之前记下的在场历史、已确认的记录、AI 规则都不动。"""
     _beat(client, "chrome", PRIVATE_TITLE)
-    prev = repo.presence_get("u_local", DEV)
-    _ignore(client, "chrome")  # 清理在这里发生；写入者手里还是清理前读到的那份
-    stale = {k: v for k, v in prev.items() if k not in ("v", "gen", "_id")}
-    assert repo.presence_cas(stale, prev) is None  # 版本已变：条件写写不中，必须重读
-    assert _raw_has(PRIVATE_TITLE) == {}
+    _ignore(client, "chrome")
+    assert _raw_has(PRIVATE_TITLE).get("activity_presence") == 1
 
 
-def _create_rule_mid_flight(client, monkeypatch, module, name, **rule):
-    """让 module.name 先照常跑完，然后（在调用方继续往下写之前）建规则——读了旧规则、写在清理之后的交错。"""
-    real = getattr(module, name)
-
-    def wrapper(*args, **kwargs):
-        out = real(*args, **kwargs)
-        assert client.post(IGN, json=rule).status_code == 201
-        return out
-
-    monkeypatch.setattr(module, name, wrapper)
-
-
-def test_heartbeat_that_read_the_rules_before_the_rule_cannot_write_the_title_back(client, monkeypatch):
-    from app.modules.activity import ignore  # noqa: PLC0415
-
-    _create_rule_mid_flight(client, monkeypatch, ignore, "gate_beat", app="chrome")
-    _beat(client, "chrome", PRIVATE_TITLE)
-    assert len(client.get(IGN).json()["items"]) == 1
-    assert _raw_has(PRIVATE_TITLE) == {}
-
-
-def test_upload_that_read_the_rules_before_the_rule_cannot_insert_the_title(client, monkeypatch):
-    from app.modules.activity import ignore  # noqa: PLC0415
-
-    _create_rule_mid_flight(client, monkeypatch, ignore, "gate_incoming", app="chrome")
-    _upload(client, [_seg(10, "chrome", PRIVATE_TITLE)])
-    assert _raw_has(PRIVATE_TITLE) == {}
-    assert _pending(client) == []
-
-
-def test_rule_lookup_failure_fails_closed_nothing_is_stored(client, monkeypatch):
+def test_read_endpoints_never_touch_the_ignore_rules(client, monkeypatch):
     from app.modules.activity import ignore_repo  # noqa: PLC0415
 
-    def boom(user):
-        raise RuntimeError("mongo hiccup")
-
-    monkeypatch.setattr(ignore_repo, "all_rules", boom)
-    with pytest.raises(RuntimeError):
-        _upload(client, [_seg(10, "chrome", PRIVATE_TITLE)])
-    with pytest.raises(RuntimeError):
-        _beat(client, "chrome", PRIVATE_TITLE)
-    assert _raw_has(PRIVATE_TITLE) == {}  # 查不了规则 = 当作忽略：什么都没存
-
-
-def test_rule_applies_immediately_no_cache(client):
-    _ignore(client, "chrome")
-    assert _upload(client, [_seg(10, "chrome", PRIVATE_TITLE)]).get("ignored") == 1
-    _beat(client, "chrome", PRIVATE_TITLE)
-    assert _raw_has(PRIVATE_TITLE) == {}
-
-
-def test_unignore_racing_an_ingest_does_not_resurrect_or_store(client, monkeypatch):
-    from app.modules.activity import ignore  # noqa: PLC0415
-
+    _upload(client, [_seg(10, "code", PRIVATE_TITLE)])
+    _beat(client, "code", PRIVATE_TITLE)
     rule = _ignore(client, "chrome")
-    real = ignore.gate_incoming
-
-    def drop_then_unignore(*args, **kwargs):
-        out = real(*args, **kwargs)  # 这一批是在规则还在时过滤的
-        assert client.delete(f"{IGN}/{rule['id']}").status_code == 204
-        return out
-
-    monkeypatch.setattr(ignore, "gate_incoming", drop_then_unignore)
-    assert _upload(client, [_seg(10, "chrome", PRIVATE_TITLE)])["accepted"] == 0
-    assert _raw_has(PRIVATE_TITLE) == {}
-
-
-def test_purge_failure_reports_error_keeps_rule_and_retries_on_next_write(client, monkeypatch):
-    from app.modules.activity import ignore, ignore_repo  # noqa: PLC0415
-
-    _beat(client, "chrome", PRIVATE_TITLE)
-    now = datetime.now(timezone.utc)
-    _db()["activity_choices"].insert_one({"user": "u_local", "key": "wk_" + "c" * 20, "kind": "dismiss", "app": "chrome",
-                                          "title": PRIVATE_TITLE, "at": now, "expiresAt": now + timedelta(hours=1)})
-    real = ignore_repo.drop_windows
-    monkeypatch.setattr(ignore_repo, "drop_windows", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    monkeypatch.setattr(ignore, "PURGE_BACKOFF", timedelta(0))  # 退避另有测试；这里要的是「下一次写入补清」
-    _ignore(client, "chrome", expect=503)  # 规则已保存、清理没做完（会自动重试）
-    monkeypatch.setattr(ignore_repo, "all_rules", ignore_repo.all_rules)
-    assert [r["purged"] for r in ignore_repo.all_rules("u_local")] == [False]  # 规则留着：以后的写入照样被过滤
-    assert _db()["activity_choices"].count_documents({}) == 1  # 清理没做完，残留还在
-    monkeypatch.setattr(ignore_repo, "drop_windows", real)
-    _beat(client, "firefox", "other")  # 下一次写入顺手补清没清完的规则
-    assert _raw_has(PRIVATE_TITLE) == {}
-
-
-def test_choice_written_after_the_purge_is_removed_again(client, monkeypatch, seeded):
-    from app.modules.activity import auto  # noqa: PLC0415
-
-    task = next(iter(seeded["tasks"].values()))["id"]
-    _beat(client, "chrome", PRIVATE_TITLE)
-    key = auto.window_key("chrome", PRIVATE_TITLE)
-    real = auto._find
-
-    def find_then_rule(user, k):
-        out = real(user, k)  # 窗口是在规则之前找到的
-        assert client.post(IGN, json={"app": "chrome"}).status_code == 201
-        return out
-
-    monkeypatch.setattr(auto, "_find", find_then_rule)
-    resp = client.post(f"{API}/activity/choice", json={"key": key, "taskId": task})
-    assert resp.status_code == 200, resp.text
-    assert _raw_has(PRIVATE_TITLE) == {}
+    monkeypatch.setattr(ignore_repo, "all_rules", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("must not be read")))
+    rep = client.post(f"{API}/activity/reports", json={"summary": "s", "items": []})
+    urls = [f"{API}/views/current", f"{API}/views/lanes", SUG, f"{API}/detector/rules", f"{API}/detector/rules/drafts/current"]
+    if rep.status_code == 201:
+        urls.append(f"{API}/activity/reports/{rep.json()['reportId']}")
+    for url in urls:
+        assert client.get(url).status_code == 200, url
+    focus = client.get(f"{API}/views/current").json()["focus"]
+    assert focus["title"] == PRIVATE_TITLE   # 读不遮：规则之前记下的原样
+    assert rule["id"]

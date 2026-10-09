@@ -180,7 +180,6 @@ def _purge(user: str, now: datetime) -> None:
     repo.purge(user, now - timedelta(days=config.settings.suggestion_ttl_days))  # 调用时读，测试可换 settings
 
 
-@ignore.guarded
 def upload(device_id: str, segments: list[Any], inserted: list[dict] | None = None) -> dict:
     """``inserted`` 给了就把**新写入**的建议文档追加进去（v2.14 自动记录只看这些，防重命中的不看）。"""
     user, now = current_tenant(), _now()
@@ -196,7 +195,7 @@ def upload(device_id: str, segments: list[Any], inserted: list[dict] | None = No
             rejected.append({"index": index, "reason": _reason(exc)})
         except ValueError as exc:
             rejected.append({"index": index, "reason": str(exc)})
-    # v2.22 忽略并记住：命中规则的段不存（标题不落库），只记在规则的计数器上
+    # v2.22 忽略并记住：命中规则的段不存，只记在规则的计数器上（读不到规则 → 这里抛，整个上传被拒）
     valid, ignored = ignore.gate_incoming(user, valid, lambda v: (v[0].app, v[0].title, v[0].durationSeconds))
     # v2.13 窗口 ↔ 代理会话：这批段的总时间窗里的代理运行，只查一次
     runs = session_link.runs(user, min(s for _, s, _ in valid), max(e for _, _, e in valid)) if valid else []
@@ -258,7 +257,7 @@ def list_suggestions(status: str, limit: int, offset: int) -> dict:
     pids = [d["suggestion"]["newTask"]["proposalId"] for d in docs if d["suggestion"].get("newTask")]
     st = proposals.statuses(user, pids) if pids else {}
     open_ids = {k for k, v in st.items() if v in ("pending", "accepted")}
-    return {"total": total, "items": ignore.visible(user, [_item(d, open_ids) for d in docs])}
+    return {"total": total, "items": [_item(d, open_ids) for d in docs]}
 
 
 def _get(user: str, sug_id: str) -> dict:
@@ -494,7 +493,7 @@ def auto_state(user: str, timer_running: bool, now: datetime | None = None) -> d
     from . import auto, auto_ai, focus  # noqa: PLC0415 —— 它们也 import 本文件（confirm），模块级会成环
 
     now = now or auto._now()  # noqa: SLF001
-    docs = ignore.presence_docs(user)
+    docs = repo.presence_list(user)
     out = auto.state(user, now, timer_running, auto_ai.Asks(user, now), docs)
     out["focus"] = focus.state(user, now, docs, out["auto"])
     for part in out.values():

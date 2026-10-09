@@ -4,7 +4,7 @@
  * 仓主 2026-10-09：「记住：忽略 xx 记录」，不进圆环、不进泳道，再放一个可展开的「被忽略任务」菜单。
  * 规则在服务端：待确认建议里点「忽略并记住」（suggestions.js 调 window.assistantIgnores.add）→ 服务端存一条
  * {程序, 可选的标题片段}，以后匹配的窗口不产生建议、不成为焦点 / 自动跟踪目标、不对会话（也就不长「你在看」）。
- * 本面板列这些规则：匹配什么、从什么时候起、已忽略多少条 / 多少分钟（只是计数；被忽略窗口的标题不再保存，规则里存的是你填的匹配文字，只有登录的人看得到），
+ * 本面板列这些规则：匹配什么、从什么时候起、已忽略多少条 / 多少分钟（只是计数；规则里存的是你填的匹配文字，只有登录的人看得到），
  * 「取消忽略」= 删规则（以后的窗口照常；已经丢掉的不会回来）。
  *
  * - 端点读取失败 / 404（后端早于 v2.22）→ 整块不出现，「忽略并记住」按钮也不出现；一条规则都没有 → 同样不出现。
@@ -69,8 +69,7 @@
       what.textContent = describe(rule);
       var meta = document.createElement("span");
       meta.className = "ign-meta mono";
-      meta.textContent = "自 " + since(rule.createdAt) + " 起 · 已忽略 " + rule.hits + " 条 · " + minutes(rule.seconds) +
-        (rule.purgeFailed ? " · 旧记录清理多次失败，可能还留着；再点一次「忽略并记住」会重清" : "");
+      meta.textContent = "自 " + since(rule.createdAt) + " 起 · 已忽略 " + rule.hits + " 条 · " + minutes(rule.seconds);
       var undo = document.createElement("button");
       undo.type = "button";
       undo.className = "btn btn-ghost ign-undo";

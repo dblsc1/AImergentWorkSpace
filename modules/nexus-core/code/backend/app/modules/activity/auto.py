@@ -120,7 +120,7 @@ def state(user: str, now: datetime, timer_running: bool, asks: Any, presence_doc
     out: dict = {"auto": None, "needsChoice": None, "aiThinking": None}
     if timer_running:
         return out
-    docs = [d for d in (ignore.presence_docs(user) if presence_docs is None else presence_docs) if now - d["lastAt"] <= FRESH]
+    docs = [d for d in (repo.presence_list(user) if presence_docs is None else presence_docs) if now - d["lastAt"] <= FRESH]
     if not docs:
         return out
     doc = max(docs, key=lambda d: d["lastAt"])  # 只看最近报心跳的那台设备
@@ -172,7 +172,6 @@ def state(user: str, now: datetime, timer_running: bool, asks: Any, presence_doc
 # ------------------------------------------------ 心跳：续期人的临时选择
 
 
-@ignore.guarded
 def heartbeat(device_id: str, app: str, title: str, afk: bool, guess: dict | None,
               spans: list[dict] | None = None, sent_at: datetime | None = None) -> dict:
     # v2.22：命中「忽略并记住」的窗口换成「没有窗口」再存（人仍在电脑前），也不续它的临时选择
@@ -191,7 +190,7 @@ def _find(user: str, key: str) -> tuple[dict, str]:
     """在场记录（最近 2 小时）里这个窗口最近的一段与报它的设备；没有 → 404。写规则用的程序名 / 标题从这里取，不信请求。"""
     best = None
     rules_ = ignore.prepared(user)
-    for doc in ignore.presence_docs(user):
+    for doc in repo.presence_list(user):
         for span in reversed(doc.get("spans") or []):
             if not span["afk"] and window_key(span["app"], span["title"]) == key and not ignore.find(rules_, span["app"], span["title"]):
                 if best is None or span["to"] > best[0]["to"]:
@@ -213,11 +212,9 @@ def _window_rule(app: str, title: str, target: dict) -> dict | None:
     pattern = _DECOR + _escape(core) + "$" if core != title and title.endswith(core) else "^" + _escape(title) + "$"
     rule = {"app": "^" + _escape(app) + "$", "title": pattern, **target, "confidence": AUTO_CONFIDENCE,
             "note": ("计时页选的：" + app + (" · " + title if title else ""))[:120], "enabled": True}
-    rule = window_rules.with_src(rule, app, title)   # 服务端专用的出处：忽略清理按它走，不从正则里反推（不出库）
     return rule if len(rule["app"]) <= 200 and len(pattern) <= 200 else None
 
 
-@ignore.guarded
 def choose(key: str, task_id: str | None, project_id: str | None, remember: bool) -> dict:
     if (task_id is None) == (project_id is None):
         raise InvalidInputError("taskId 与 projectId 必须给一个、且只能给一个")
@@ -241,7 +238,6 @@ def choose(key: str, task_id: str | None, project_id: str | None, remember: bool
             "remembered": remembered, "pseudonymized": pseudonymized}
 
 
-@ignore.guarded
 def dismiss(key: str) -> dict:
     user, now = current_tenant(), _now()
     span, _device = _find(user, key)

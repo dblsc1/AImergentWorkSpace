@@ -1,7 +1,7 @@
 """``activity_ignores`` 集合的存取（v2.22「忽略并记住」）。规矩同 ``repo.py``：查询一律带 ``user``。
 
 每条规则一份 ``{user, id, app, titleContains, createdAt, hits, seconds, lastHitAt}``；``id`` 由（程序, 标题片段）派生，
-所以同一条规则再建一次是同一份（幂等）。只存规则本身与计数器——**不存被忽略窗口的标题**（规则里的 ``titleContains`` 是人填的匹配文字，只对人可见）。
+所以同一条规则再建一次是同一份（幂等）。只存规则本身与计数器（规则里的 ``titleContains`` 是人填的匹配文字，只对人可见）。
 """
 
 from __future__ import annotations
@@ -37,28 +37,6 @@ def insert_if_absent(doc: dict) -> bool:
     return True
 
 
-def mark_purged(user: str, rule_id: str, created_at: datetime) -> bool:
-    """校验过一遍确实没有残留才标；条件带 createdAt：规则在清理期间被删了又建回来（新的一条），这一条标不上，新的从 ``purged: false`` 起步。"""
-    return _col().update_one({"user": user, "id": rule_id, "createdAt": created_at},
-                             {"$set": {"purged": True}, "$unset": {"purgeTries": "", "purgeLastTry": "", "purgeFailed": ""}}
-                             ).matched_count > 0
-
-
-def exists(user: str, rule_id: str, created_at: datetime) -> bool:
-    return _col().count_documents({"user": user, "id": rule_id, "createdAt": created_at}, limit=1) > 0
-
-
-def note_purge_attempt(user: str, rule_id: str, at: datetime, failed: bool, give_up_after: int) -> None:
-    """一次没清完：记下时刻（退避用）；``failed``（出错，不是被预算截断）才算一次失败，满 ``give_up_after`` 次标 ``purgeFailed``（人在列表里看得到）。"""
-    if failed:
-        doc = _col().find_one_and_update({"user": user, "id": rule_id}, {"$inc": {"purgeTries": 1}, "$set": {"purgeLastTry": at}},
-                                         return_document=True)
-        if doc and doc.get("purgeTries", 0) >= give_up_after:
-            _col().update_one({"user": user, "id": rule_id}, {"$set": {"purgeFailed": True}})
-    else:
-        _col().update_one({"user": user, "id": rule_id}, {"$set": {"purgeLastTry": at}})
-
-
 def delete(user: str, rule_id: str) -> bool:
     return _col().delete_one({"user": user, "id": rule_id}).deleted_count > 0
 
@@ -70,47 +48,3 @@ def count(user: str) -> int:
 def hit(user: str, rule_id: str, records: int, seconds: int, at: datetime) -> None:
     _col().update_one({"user": user, "id": rule_id},
                       {"$inc": {"hits": records, "seconds": seconds}, "$set": {"lastHitAt": at}})
-
-
-# ── 建规则时清掉已存下的、带被忽略窗口标题的活状态（presence / 临时选择 / AI 问询）。都带 user；其余集合的存取归各自的 repo，
-# 这里只做「命中就抹掉标题」这一件事，不读别的字段做别的判断。
-_CAS_TRIES = 5
-
-
-def mask_presence(user: str, hit) -> int:
-    """在场文档里命中的段 / 当前窗口抹成「没有窗口」（app、title 空，去掉 guess / runId）。返回抹了几处。``hit(app, title)`` 判命中。"""
-    col, n = get_db()["activity_presence"], 0
-    for doc in list(col.find({"user": user}, {"_id": 0})):
-        for _ in range(_CAS_TRIES):
-            spans, changed = [], 0
-            for sp in doc.get("spans") or []:
-                if hit(sp["app"], sp["title"]):
-                    sp = {k: v for k, v in sp.items() if k not in ("guess", "runId")} | {"app": "", "title": ""}
-                    changed += 1
-                spans.append(sp)
-            top = hit(doc.get("app", ""), doc.get("title", ""))
-            if not changed and not top:
-                break
-            # 像正常写入者一样把 v 加一：读了旧文档、正要条件写的心跳会因此写不中，重读到抹过的这份（不然它会把标题写回来）
-            new = {**doc, "spans": spans, "v": (doc.get("v") or 0) + 1, **({"app": "", "title": ""} if top else {})}
-            if col.replace_one({"user": user, "deviceId": doc["deviceId"], "v": doc.get("v"), "gen": doc.get("gen")}, new).matched_count:
-                n += changed + top
-                break
-            doc = col.find_one({"user": user, "deviceId": doc["deviceId"]}, {"_id": 0})
-            if doc is None:
-                break
-    return n
-
-
-def drop_windows(user: str, collection: str, hit) -> int:
-    """activity_choices / activity_ai_asks：命中（按存下的 app / title）的整份删掉。没有 app 的（如 ``_tenant`` 那份）不碰。"""
-    col = get_db()[collection]
-    ids = [d["_id"] for d in col.find({"user": user, "app": {"$exists": True}}, {"app": 1, "title": 1})
-           if hit(d["app"], d.get("title", ""))]
-    return col.delete_many({"_id": {"$in": ids}}).deleted_count if ids else 0
-
-
-def any_window(user: str, collection: str, hit) -> bool:
-    """校验用（只读）：``activity_choices`` / ``activity_ai_asks`` 里还有没有命中的。"""
-    return any(hit(d["app"], d.get("title", ""))
-               for d in get_db()[collection].find({"user": user, "app": {"$exists": True}}, {"app": 1, "title": 1}))

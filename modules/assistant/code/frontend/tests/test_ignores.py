@@ -162,3 +162,11 @@ def test_narrow_screen_does_not_scroll_sideways(browser, static_base_url) -> Non
         page.click("#ign-title")
         page.locator("li.suggest-item", has_text="chrome · docs").locator(".suggest-ignore-btn").click()
         assert overflowing(page, "#suggest-panel") == [] and overflowing(page, "#ignores-panel") == []
+
+
+def test_panel_wording_is_a_filter_not_an_erase_claim(browser, static_base_url) -> None:
+    with open_ignores(browser, static_base_url, MIXED, [RULE]) as (page, _sugs, _ign):
+        page.wait_for_selector("#ignores-panel:not([hidden])")
+        text = page.text_content("#ignores-panel")
+        assert "已经记下的不受影响" in text and "不再计时、不进圆环和泳道" in text
+        assert "不再保存" not in text and "清理" not in text   # 不承诺删除标题
