@@ -383,12 +383,6 @@
   var LONG_PRESS_MS = 400, PRESS_SLOP = 8;
   var gesture = null;     // 进行中的长按 / 拖动；同一时刻只有一个
   var menu = null;        // 开着的菜单 {close()}
-  // 拖动期间不许页面跟着滚：监听必须在触摸开始**之前**就以非被动方式挂着（触摸开始时才挂，浏览器那一轮已经按「没人拦」放行滚动，
-  // touchmove 就成了不可取消的）——所以挂在模块加载时，只在有进行中的拖动时才拦
-  document.addEventListener('touchmove', function (e) {
-    if (gesture && gesture.active && e.cancelable) { e.preventDefault(); }
-  }, { capture: true, passive: false });
-
   function setBusy(root, on, quiet) {
     if (!!root.hclBusy === on) { return; }
     root.hclBusy = on;
@@ -467,6 +461,11 @@
   // 长按拖动。movable = [{node, r}]（在跑且没置顶的卡，按显示顺序）；只有看得见的卡参与量位置。
   function addDrag(root, P, card, r, movable) {
     card.classList.add('is-movable');
+    // 拖动期间不许页面跟着滚：非被动的 touchmove 监听必须在触摸开始**之前**就挂着（触摸开始时才挂，浏览器那一轮已经按「没人拦」放行滚动，
+    // touchmove 就成了不可取消的）——所以随卡片在画的时候就挂在卡上（不挂 document、不在模块加载时挂），只在有进行中的拖动时才拦
+    card.addEventListener('touchmove', function (e) {
+      if (gesture && gesture.active && e.cancelable) { e.preventDefault(); }
+    }, { passive: false });
     card.addEventListener('pointerdown', function (ev) {
       if ((ev.pointerType === 'mouse' && ev.button !== 0) || gesture || ev.target.closest('button, a, summary, input, select, .hcl-menu')) { return; }
       closeMenu(false);

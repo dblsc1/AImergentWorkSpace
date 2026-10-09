@@ -58,6 +58,7 @@ MOVES = dict([
     moved(["run_b", "run_c", "run_e", "run_a", "run_f", "run_d"], "run_a", 0,
           ["run_a", "run_b", "run_c", "run_e", "run_f", "run_d"]),
     moved(SERVED8, "run_f", 5, ["run_c", "run_e", "run_a", "run_b", "run_g", "run_f", "run_h", "run_d"]),
+    moved(SERVED8, "run_c", 2, ["run_e", "run_a", "run_c", "run_b", "run_f", "run_g", "run_h", "run_d"]),
 ])
 
 
@@ -498,8 +499,6 @@ def test_touch_short_swipe_still_scrolls_and_long_press_then_move_drags(browser,
         assert page.query_selector(".is-dragging") is None and server.calls == []
         page.evaluate("() => window.scrollTo(0, 0)")
         # 长按：到点进入拖动（卡抬起、页面占住轮询）；不动就松手 = 什么都没发。
-        # ponytail: 长按之后竖着拖，Chromium 因为卡上是 touch-action: pan-y 会把这串触摸当成平移（pointercancel）而取消拖动，
-        # 所以触屏换位的可靠入口是 ⋯ 菜单的上移 / 下移；真要触屏拖动就得把卡的 touch-action 设成 none（那短划就滚不动了）
         x, y = centre(page, "run_c")
         touch("touchStart", x, y)
         page.wait_for_timeout(600)  # 真时钟：长按 400 毫秒
@@ -507,3 +506,17 @@ def test_touch_short_swipe_still_scrolls_and_long_press_then_move_drags(browser,
         touch("touchEnd", x, y)
         waits(page, lambda: page.query_selector(".is-dragging") is None)
         assert server.calls == [] and order(page) == SERVED8
+        # 长按之后竖着拖（触屏真的能换位——CDP 探针：按住 600 毫秒、10 步竖直移动、松手 → PUT /order）：
+        # 卡上的非被动 touchmove 监听在拖动时拦住页面滚动，所以不会被当成平移取消。
+        x, y = centre(page, "run_c")
+        to_y = centre(page, "run_a")[1] + 4
+        touch("touchStart", x, y)
+        page.wait_for_timeout(600)
+        scrolled = page.evaluate("() => window.scrollY")
+        for k in range(1, 11):
+            touch("touchMove", x, y + (to_y - y) * k / 10)
+        assert page.query_selector(".is-dragging") is not None and page.evaluate("() => window.scrollY") == scrolled   # 拖着，页面没跟着滚
+        touch("touchEnd", x, to_y)
+        waits(page, lambda: server.calls)
+        assert server.calls == [("PUT", "/order", {"runId": "run_c", "index": 2})]
+        assert order(page)[:3] == ["run_e", "run_a", "run_c"]
