@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from test_attention import TERM, URL, _agent, _body, _line, _seconds, _send
+from test_attention import TERM, URL, _agent, _body, _db, _line, _seconds, _send
 from test_auto_track import API, DEV, _beat, _human, clock  # noqa: F401
 from test_session_link import _start
 
@@ -154,15 +154,15 @@ def test_concurrent_beats_of_one_device_do_not_lose_spans(client, clock, monkeyp
 def test_presence_contention_fails_loudly(client, clock, monkeypatch):
     from app.modules.activity import repo  # noqa: PLC0415
 
-    monkeypatch.setattr(repo, "presence_cas", lambda doc, version: False)
+    monkeypatch.setattr(repo, "presence_cas", lambda doc, prev: None)
     with pytest.raises(RuntimeError):
         _send(client, clock(0), [(5, 5, "A")])
 
 
-# ─────────────────────────────────────────── 5：注意力没记上，时间线不推进
+# ─────────────────────────────────────────── 5：注意力跟着已提交的时间线（outbox，v2.17.2 修订）
 
 
-def test_failed_attend_does_not_advance_the_timeline(client, clock, monkeypatch):
+def test_failed_attend_stays_pending_and_the_next_beat_recovers_it(client, clock, monkeypatch):
     from app.modules.activity import presence  # noqa: PLC0415
 
     clock(-60)
@@ -177,24 +177,244 @@ def test_failed_attend_does_not_advance_the_timeline(client, clock, monkeypatch)
         return real(*args)
 
     monkeypatch.setattr(presence.timer_service, "record_attend", flaky)
-    with pytest.raises(RuntimeError):
-        _send(client, now, [(5, 5, "aaa")])
-    assert not _line(now), "这一拍整个失败：时间线没往前走"
+    _send(client, now, [(5, 5, "aaa")])                          # 时间线已落盘，这一拍仍是 2xx
+    assert _line(now) == [(-5, 0, "aaa", False)]
+    assert _agent(client, run)["attention"] == []
+    assert _db()["activity_presence"].find_one({})["pendingAttend"], "没记上的留在 outbox"
     now = clock(5)
-    _send(client, now, [(10, 10, "aaa")])                        # 检测程序下一拍往回多带一截
-    assert _seconds(_agent(client, run)["attention"]) == [10] == _watched(client)[run]
+    _send(client, now, [(5, 5, "bbb")])                          # 下一拍先补上上一拍的注意力
+    assert _seconds(_agent(client, run)["attention"]) == [5]
+    assert _db()["activity_presence"].find_one({})["pendingAttend"] == []
 
 
-def test_attend_contention_fails_loudly(client, clock, monkeypatch):
+def test_attend_failure_never_loses_attention_across_many_beats(client, clock, monkeypatch):
     from app.modules.timer import repo  # noqa: PLC0415
 
     clock(-60)
-    _run(client, label="aaa")
-    now = clock(0)
+    run = _run(client, label="aaa")
+    real = repo.cas_agent_run
     monkeypatch.setattr(repo, "cas_agent_run", lambda *a, **k: False)
-    with pytest.raises(RuntimeError):
-        _send(client, now, [(5, 5, "aaa")])
-    assert not _line(now)
+    for i in range(3):
+        _send(client, clock(5 * i), [(5, 5, "aaa")])             # 争用重试用尽：抛错被吞，留在 outbox
+    assert _db()["activity_presence"].find_one({})["pendingAttend"]
+    monkeypatch.setattr(repo, "cas_agent_run", real)
+    _send(client, clock(15), [(5, 5, "vim")])
+    assert _seconds(_agent(client, run)["attention"]) == [15]
+
+
+def test_cas_loser_does_not_write_attention_for_spans_that_did_not_commit(client, clock, monkeypatch):
+    """两拍并发读到同一份文档，一拍说 [0,10] 看 aaa，另一拍说 [0,10] 看 bbb：先提交的算，后提交的被裁光。"""
+    from app.modules.activity import presence, repo  # noqa: PLC0415
+
+    clock(-60)
+    a, b = _run(client, label="aaa"), _run(client, label="bbb")
+    now = clock(0)
+    real, raced = repo.presence_get, []
+
+    def racing(user, device_id):
+        doc = real(user, device_id)
+        if not raced:
+            raced.append(1)
+            presence.heartbeat(DEV, TERM, "bbb", False, None,
+                               [{"app": TERM, "title": "bbb", "from": now - timedelta(seconds=10), "seconds": 10.0}], now)
+        return doc
+
+    monkeypatch.setattr(repo, "presence_get", racing)
+    _send(client, now, [(10, 10, "aaa")])
+    assert raced
+    att = {r: _seconds(_agent(client, r)["attention"]) for r in (a, b)}
+    assert att == {a: [], b: [10]} and sum(map(sum, att.values())) <= 10
+
+
+def test_out_of_order_beats_of_one_device_contribute_nothing_for_covered_time(client, clock, monkeypatch):
+    """B：时间线只增不倒（定义好的行为）。Y 先提交 [-5,0]；X 的 [-10,-5] 晚到，只算已提交末尾之后的——什么都不剩。"""
+    from app.modules.activity import presence, repo  # noqa: PLC0415
+
+    clock(-60)
+    x, y = _run(client, label="xxx"), _run(client, label="yyy")
+    now = clock(0)
+    real, raced = repo.presence_get, []
+
+    def racing(user, device_id):
+        doc = real(user, device_id)
+        if not raced:
+            raced.append(1)
+            presence.heartbeat(DEV, TERM, "yyy", False, None,
+                               [{"app": TERM, "title": "yyy", "from": now - timedelta(seconds=5), "seconds": 5.0}], now)
+        return doc
+
+    monkeypatch.setattr(repo, "presence_get", racing)
+    _send(client, now, [(10, 5, "xxx")])
+    assert _line(now) == [(-5, 0, "yyy", False)]
+    assert _seconds(_agent(client, x)["attention"]) == [] and _seconds(_agent(client, y)["attention"]) == [5]
+
+
+# ─────────────────────────────────────────── C：老的一拍晚到，不改写当前状态
+
+
+@pytest.mark.parametrize("old_afk", [False, True], ids=["spanless", "afk-marker"])
+def test_delayed_older_beat_does_not_rewrite_current_state(client, clock, monkeypatch, old_afk):
+    from app.modules.activity import presence, repo  # noqa: PLC0415
+
+    t0 = clock(0)
+    real, raced = repo.presence_get, []
+
+    def racing(user, device_id):
+        doc = real(user, device_id)
+        if not raced:
+            raced.append(1)
+            clock(5)                                              # 更新的一拍（5 秒后收到）先提交
+            presence.heartbeat(DEV, TERM, "new", False)
+            clock(0)
+        return doc
+
+    monkeypatch.setattr(repo, "presence_get", racing)
+    presence.heartbeat(DEV, "" if old_afk else TERM, "" if old_afk else "old", old_afk)   # 收到时刻 t0，晚了才写
+    assert raced
+    doc = _db()["activity_presence"].find_one({})
+    assert (doc["app"], doc["title"], doc["afk"]) == (TERM, "new", False)
+    assert doc["lastAt"].replace(tzinfo=timezone.utc) == t0 + timedelta(seconds=5)
+    ends = [s["to"] for s in doc["spans"]]
+    assert ends == sorted(ends) and [s["title"] for s in doc["spans"]] == ["new"]
+
+
+# ─────────────────────────────────────────── D：同一份请求体再发一遍
+
+
+def test_replaying_the_identical_body_cannot_count_more_than_wall_time(client, clock):
+    """检测程序从不重发同一份体（失败就丢，下一拍带新的 sentAt）；即便重放，也只算已提交末尾之后的。"""
+    clock(-60)
+    run = _run(client, label="aaa")
+    t0 = clock(0)
+    body = _body(t0, [(5, 5, "aaa")])
+    assert client.post(URL, json=body).status_code == 200
+    clock(5)
+    assert client.post(URL, json=body).status_code == 200
+    assert client.post(URL, json=body).status_code == 200        # 同一刻再发：什么都不多算
+    total = sum(_seconds(_agent(client, run)["attention"]))
+    assert total <= 10 + 1e-6                                     # ≤ 最早一段的起点到最后一次收到的墙上时间
+    assert total == pytest.approx(sum(_watched(client)[run]))
+    line = _line(t0)
+    assert all(a[1] <= b[0] + 1e-6 for a, b in zip(line, line[1:])), "时间线仍不重叠"
+
+
+# ─────────────────────────────────────────── E：并集是规范形、幂等
+
+
+def _attend_stored(run, t0):
+    return [((datetime.fromisoformat(i["at"]) - t0).total_seconds(),
+             (datetime.fromisoformat(i["until"]) - t0).total_seconds()) for i in _raw(run)]
+
+
+def test_union_gap_reaches_only_from_the_new_interval_and_is_idempotent(client, clock):
+    from app.modules.timer import service as timer  # noqa: PLC0415
+
+    t0 = clock(-300)
+    run = _run(client, label="aaa")
+
+    def at(a, b):
+        return (t0 + timedelta(seconds=a), t0 + timedelta(seconds=b))
+
+    exact = timedelta(0)
+    for a, b in ((0, 1), (40, 41), (80, 81)):
+        timer.record_attend(USER, run, [at(a, b)], exact)
+    timer.record_attend(USER, run, [at(20, 21)], exact)         # 精确插入：不去并相距 < 45 秒的旧段
+    assert _attend_stored(run, t0) == [(0, 1), (20, 21), (40, 41), (80, 81)]
+    legacy = timedelta(seconds=45)
+    timer.record_attend(USER, run, [at(120, 120)], legacy)       # 老心跳的点只并上它够得着的
+    assert _attend_stored(run, t0) == [(0, 1), (20, 21), (40, 41), (80, 120)]   # 点够不着 (40,41)：相距 79 秒，不串起来
+    timer.record_attend(USER, run, [at(120, 120)], legacy)       # 再记一遍：不变
+    assert _attend_stored(run, t0) == [(0, 1), (20, 21), (40, 41), (80, 120)]
+    timer.record_attend(USER, run, [at(60, 60)], legacy)         # 够得着 (20,21)、(40,41)、(80,120)；(0,1) 相距 59 秒，够不着
+    once = _attend_stored(run, t0)
+    assert once == [(0, 1), (20, 120)]
+    timer.record_attend(USER, run, [at(60, 60)], legacy)
+    assert _attend_stored(run, t0) == once
+
+
+def test_legacy_point_does_not_cascade_through_old_spans(client, clock):
+    from app.modules.timer import service as timer  # noqa: PLC0415
+
+    t0 = clock(-300)
+    run = _run(client, label="aaa")
+    for a, b in ((0, 1), (40, 41), (80, 81)):
+        timer.record_attend(USER, run, [(t0 + timedelta(seconds=a), t0 + timedelta(seconds=b))], timedelta(0))
+    timer.record_attend(USER, run, [(t0 + timedelta(seconds=20),) * 2], timedelta(seconds=45))
+    assert _attend_stored(run, t0) == [(0, 41), (80, 81)]        # 点 20 并上两头；并成的这一段不再往外够 (80,81)
+    timer.record_attend(USER, run, [(t0 + timedelta(seconds=20),) * 2], timedelta(seconds=45))
+    assert _attend_stored(run, t0) == [(0, 41), (80, 81)]
+
+
+def test_several_new_intervals_merge_the_same_in_any_order(client, clock):
+    from app.modules.timer import service as timer  # noqa: PLC0415
+
+    t0 = clock(-300)
+    runs = [_run(client, label="aaa"), _run(client, label="bbb")]
+    pts = [(t0 + timedelta(seconds=x),) * 2 for x in (0, 30, 60, 200)]
+    for run, order in zip(runs, (pts, pts[::-1])):
+        timer.record_attend(USER, run, order, timedelta(seconds=45))
+    assert _attend_stored(runs[0], t0) == _attend_stored(runs[1], t0) == [(0, 60), (200, 200)]
+
+
+# ─────────────────────────────────────────── F：超过上限时并拢而不是丢
+
+
+def test_attend_cap_coalesces_instead_of_dropping(client, clock, monkeypatch):
+    from app.modules.timer import agent_phases, service as timer  # noqa: PLC0415
+
+    monkeypatch.setattr(agent_phases, "MAX_ATTENDS", 3)
+    t0 = clock(-300)
+    run = _run(client, label="aaa")
+    for a, b in ((0, 1), (10, 11), (20, 21), (100, 101), (200, 201)):
+        timer.record_attend(USER, run, [(t0 + timedelta(seconds=a), t0 + timedelta(seconds=b))], timedelta(0))
+    got = _attend_stored(run, t0)
+    assert len(got) == 3 and got[-1] == (200, 201), "最新的一段总是记下"
+    assert got[0] == (0, 21) or got[0] == (0, 11)                # 最近的相邻两段先并拢
+
+
+# ─────────────────────────────────────────── G：ABA
+
+
+def test_stale_cas_does_not_match_a_recreated_document():
+    from app.modules.activity import repo  # noqa: PLC0415
+
+    doc = {"user": USER, "deviceId": DEV, "lastAt": datetime.now(timezone.utc), "app": "", "title": "", "afk": False,
+           "spans": []}
+    assert repo.presence_cas(doc, None)
+    stale = repo.presence_get(USER, DEV)                          # 读到 v=1
+    assert repo.presence_cas({**doc, "title": "x"}, {"v": 5, "gen": "nope"}) is None, "版本 / 代号对不上"
+    repo.presence_delete(USER, [DEV])                             # 被 20 台上限挤掉
+    assert repo.presence_cas({**doc, "title": "other"}, None)     # 又以 v=1 重建，内容不同
+    assert repo.presence_get(USER, DEV)["v"] == stale["v"]
+    assert repo.presence_cas({**doc, "title": "stale"}, stale) is None
+    assert repo.presence_get(USER, DEV)["title"] == "other"
+
+
+def test_replacement_never_upserts():
+    from app.modules.activity import repo  # noqa: PLC0415
+
+    doc = {"user": USER, "deviceId": DEV, "lastAt": datetime.now(timezone.utc), "app": "", "title": "", "afk": False,
+           "spans": []}
+    assert repo.presence_cas(doc, {"v": 1, "gen": "gone"}) is None
+    assert repo.presence_get(USER, DEV) is None
+
+
+# ─────────────────────────────────────────── H：app / title 的长度
+
+
+def test_long_strings_are_truncated_and_absurd_ones_rejected(client, clock):
+    now = clock(0)
+    long_title = "python3 -c " + "x" * 3000                       # 终端把整条命令放进标题
+    body = _body(now, [(5, 5, long_title)])
+    body["title"] = long_title
+    assert client.post(URL, json=body).status_code == 200
+    doc = _db()["activity_presence"].find_one({})
+    assert len(doc["title"]) <= 512 and all(len(s["title"]) <= 512 for s in doc["spans"])
+    huge = {**_body(now, [(5, 5, "x" * 20000)]), "title": "ok"}
+    assert client.post(URL, json=huge).status_code == 422, "span 的 title 过大"
+    assert client.post(URL, json={**_body(now, [(5, 5, "ok")]), "app": "a" * 20000}).status_code == 422
+    assert client.post(URL, json={**_body(now, [(5, 5, "ok")]), "title": "t" * 20000}).status_code == 422
+    assert client.post(URL, json={**_body(now, [(5, 5, "ok")]), "title": "t" * 16384}).status_code == 200
 
 
 # ─────────────────────────────────────────── 6：老心跳（不带 spans）仍是 v2.4 的子串规则（另见 test_presence.py）

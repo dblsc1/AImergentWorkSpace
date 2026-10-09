@@ -251,16 +251,22 @@ def presence_get(user: str, device_id: str) -> dict | None:
     return _presence_col().find_one({"user": user, "deviceId": device_id}, {"_id": 0})
 
 
-def presence_cas(doc: dict, version: int | None) -> bool:
-    """版本号 ``v`` 没变才整份换掉（乐观锁，同 detector/repo 的写法）。False = 同一台设备的另一拍抢先写了，调用方重读再算。
-    ``version`` = 读到的那份的 ``v``（没读到文档 / v2.17.1 之前的文档没有这个键 = None，``{"v": None}`` 恰好匹配缺字段）；
-    文档在而版本对不上时 upsert 撞唯一键 = 冲突。"""
-    try:
-        _presence_col().replace_one({"user": doc["user"], "deviceId": doc["deviceId"], "v": version},
-                                    {**doc, "v": (version or 0) + 1}, upsert=True)
-    except DuplicateKeyError:
-        return False
-    return True
+def presence_cas(doc: dict, prev: dict | None) -> dict | None:
+    """条件写，成功返回写下的那份文档，失败（同一台设备的另一拍抢先写了，调用方重读再算）返回 None。
+    ``prev`` = 读到的那份（没有 = 新建）。新建只插入（撞唯一键 = 冲突）；替换只认 ``v`` **和** ``gen`` 都没变——
+    ``gen`` 是建档时盖的随机代号：文档被 20 台上限挤掉、又以同一个 ``v`` 重建，旧的 ``v`` 也对不上新的 ``gen``（ABA），
+    且替换不 upsert（文档没了就冲突，不会被过期的写复活）。v2.17.2 之前的文档没有这两个键，``None`` 恰好匹配缺字段。"""
+    if prev is None:
+        new = {**doc, "v": 1, "gen": uuid.uuid4().hex}
+        try:
+            _presence_col().insert_one(dict(new))
+        except DuplicateKeyError:
+            return None
+        return new
+    new = {**doc, "v": (prev.get("v") or 0) + 1, "gen": prev.get("gen") or uuid.uuid4().hex}
+    hit = _presence_col().replace_one({"user": doc["user"], "deviceId": doc["deviceId"],
+                                       "v": prev.get("v"), "gen": prev.get("gen")}, new)
+    return new if hit.matched_count else None
 
 
 def presence_purge(user: str, cutoff: datetime) -> None:

@@ -26,7 +26,7 @@ from . import agents, repo
 MAX_PHASES = 1000
 MAX_INTERACTIONS = 500  #: reply 的条数上限
 #: attend 的条数上限（v2.17 起与 reply 分开数：每 3 秒切一次窗口的人，每次切回来都是新的一条）
-MAX_ATTENDS = 2000
+MAX_ATTENDS = 2000  #: 超了不丢新的：相距最近的相邻两段并拢（``_union``）
 CLOCK_SKEW = timedelta(seconds=300)  # 同活动建议的时钟误差口径
 #: 同一运行的并发写（异步钩子并行到达）只有几条，重试这么多次还不中 = 有 bug，响亮失败
 _CAS_RETRIES = 50
@@ -98,12 +98,29 @@ def record_phase(
     raise RuntimeError(f"相位写入争用未决：{run_id!r}")
 
 
+def _union(old: list[tuple], new: list[tuple], gap: timedelta) -> list[tuple]:
+    """已有的 attend 并上新的几段，得规范形（互不相交、按起点排；同样的输入再并一遍不变）。
+    ``gap`` 只是**新的一段自己**的够得着的范围：与它相距 ≤ ``gap`` 的旧段并进来，并成的一段不再顺着往外够——
+    旧段之间原本分开的，不会因为这次来的是老心跳（45 秒）而被串起来，否则一个点能把几十秒没看的时间都算进去。
+    新的几段先排序再并（结果与到达顺序无关）。超过 ``MAX_ATTENDS``：把相距最近的相邻两段并拢
+    （不丢最新的；多算的只是最小的那些空档）。"""
+    spans = sorted(old)
+    for a, b in sorted(new):
+        near = [s for s in spans if s[0] - b <= gap and a - s[1] <= gap]
+        merged = (min([a, *(s[0] for s in near)]), max([b, *(s[1] for s in near)]))
+        spans = sorted([*(s for s in spans if s not in near), merged])
+    while len(spans) > MAX_ATTENDS:
+        i = min(range(len(spans) - 1), key=lambda k: spans[k + 1][0] - spans[k][1])
+        spans[i:i + 2] = [(spans[i][0], spans[i + 1][1])]
+    return spans
+
+
 def record_attend(user: str, run_id: str, intervals: list[tuple[datetime, datetime]], gap: timedelta) -> None:
     """人在看这条运行的几段时间 → 并进它的 attend。哪条运行由 activity 认（``activity/session_link``），
     经 ``timer/service.py`` 调来（跨子边界只走 service）。
 
     v2.17.1：**真的并集**——新的一段与已有的 attend 重叠、首尾相接（或相距 ≤ ``gap``）就并成一条，往前往后都伸；
-    否则按时间插进去，到得晚的、更早的一段也留着。``gap``：带停留的段是 0（中间看别处的时间不算），
+    否则按时间插进去，到得晚的、更早的一段也留着（并法见 ``_union``，再记一遍不变）。``gap``：带停留的段是 0（中间看别处的时间不算），
     老心跳是 45 秒（v2.4）。重记同一段不多算。早于运行起点的部分钳到起点；运行已结束 → 不记。
     争用重试用尽 → 抛错（调用方的那一拍整个失败，不悄悄丢）。"""
     for _ in range(_CAS_RETRIES):
@@ -113,16 +130,7 @@ def record_attend(user: str, run_id: str, intervals: list[tuple[datetime, dateti
         started = agents.ts(run["startedAt"])
         interactions = run.get("interactions") or []
         old = sorted((agents.ts(i["at"]), agents.ts(i["until"])) for i in interactions if i["kind"] == "attend")
-        spans = old
-        for start, end in intervals:
-            start = max(start, started)
-            if end < start:
-                continue
-            near = [s for s in spans if s[0] - end <= gap and start - s[1] <= gap]
-            if not near and len(spans) >= MAX_ATTENDS:
-                continue  # 超了不再记，不报错
-            merged = (min([start, *(s[0] for s in near)]), max([end, *(s[1] for s in near)]))
-            spans = sorted([*(s for s in spans if s not in near), merged])
+        spans = _union(old, [(max(a, started), b) for a, b in intervals if b >= max(a, started)], gap)
         if spans == old:
             return
         attends = [{"kind": "attend", "at": a.isoformat(), "until": b.isoformat()} for a, b in spans]
