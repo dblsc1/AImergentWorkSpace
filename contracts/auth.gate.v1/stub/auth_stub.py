@@ -316,25 +316,50 @@ class Accounts:
     """verify 用的内存视图：租户 → (名字, 会话盐)。
 
     契约不变量 2：verify 不做 IO。所以不在请求里读文件，而是后台线程每
-    RELOAD_EVERY 秒看一眼文件的 mtime，变了才重读。代价：删账号 / 改密码
+    RELOAD_EVERY 秒看一眼文件的指纹，变了才重读。代价：删账号 / 改密码
     最多晚 RELOAD_EVERY 秒生效。
+
+    ``known``：账号模式「有没有」已经确定——读成功过一次，或确认文件不存在（只认 ENOENT）。
+    匿名上报只在 ``known`` 且没有账号时才开（``anonymous_allowed``）。任何不确定都是 False：文件在但读不出 /
+    解析不了（含写了一半、空文件、目录）/ 权限或 IO 错误 → 匿名关。读成功过的视图，之后文件坏了 / 没了 / 读不了，
+    一律沿用（账号模式不会因此退回「没有账号」）；只有「读成功过且账号为空」之后又读坏，才回到 ``known=False``。
     """
 
     def __init__(self) -> None:
         self.by_id: dict[str, tuple[str, str]] = {}
+        self.known = False
         self._mtime = None
 
     def refresh(self) -> None:
         try:
-            # 只开共享口令时账号文件本来就不存在：当成空，别每 2 秒报一次错（Windows 验收）
-            mtime = os.stat(USERS_FILE).st_mtime_ns if USERS_FILE and os.path.exists(USERS_FILE) else None
+            if not USERS_FILE:
+                self.known = True  # 没配账号文件 = 确定没有账号
+                return
+            try:
+                st = os.stat(USERS_FILE)
+            except FileNotFoundError:
+                # 只开共享口令时账号文件本来就不存在：当成空，别每 2 秒报一次错（Windows 验收）。
+                # 但读成功过账号之后文件没了：沿用旧视图（删文件不能让门退回匿名）
+                if not self.by_id:
+                    self.by_id, self.known, self._mtime = {}, True, None
+                return
+            mtime = (st.st_mtime_ns, st.st_ino, st.st_size)
             if mtime == self._mtime:
                 return
-            users = load_users()
-            self.by_id = {u["id"]: (name, u["sess"]) for name, u in users.items()}
-            self._mtime = mtime
+            with open(USERS_FILE, encoding="utf-8") as f:
+                users = json.load(f)["users"]  # 缺 users 键 / 不是对象都抛：半坏的文件不能当「没有账号」
+            if not isinstance(users, dict):
+                raise ValueError("users file")
+            by_id = {u["id"]: (name, u["sess"]) for name, u in users.items()}
+            self.by_id, self.known, self._mtime = by_id, True, mtime  # 先放账号再放 known：中途被读到也只会更严
         except Exception as e:  # 文件坏了：保留上一份视图，别把所有人踢下线
+            if not self.by_id:
+                self.known = False  # 没有可沿用的账号视图：不知道有没有账号，匿名关
             sys.stderr.write(f"[auth-stub] 读账号文件失败，沿用旧视图：{type(e).__name__}\n")
+
+    def anonymous_allowed(self) -> bool:
+        """匿名上报开不开：开关开着、单人模式（共享口令、确定没有账号）。"""
+        return bool(ANON_REPORT and PASSWORD and self.known and not self.by_id)
 
 
 ACCOUNTS = Accounts()
@@ -549,7 +574,7 @@ def _verify(headers) -> tuple[int, dict]:
         return (401, {}) if tenant is None else (204, {"X-Nexus-Tenant": tenant} if tenant else {})
     # 匿名。单人模式 = 开着共享口令、一个账号都没有：只有这时「不带租户 = u_local」是唯一的那份数据；
     # 有账号就没有可归属的租户，一律 401（宁可拒绝）。
-    if ANON_REPORT and PASSWORD and not ACCOUNTS.by_id and _report_uri(method, uri):
+    if ACCOUNTS.anonymous_allowed() and _report_uri(method, uri):
         return 204, {"X-Nexus-Scope": "report", "X-Nexus-Anonymous": "1"}
     return 401, {}
 
@@ -670,7 +695,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"status": "ok", "accounts": bool(ACCOUNTS.by_id),
                              "sharedPassword": bool(PASSWORD),
                              # v1.4：此刻不带凭据能不能上报（开关开着且是单人模式）
-                             "anonymousReport": bool(ANON_REPORT and PASSWORD and not ACCOUNTS.by_id)})
+                             "anonymousReport": ACCOUNTS.anonymous_allowed()})
         elif self.path == "/api/auth/verify":
             self._status_only(*verify_access(self.headers))
         elif self.path == "/api/auth/tokens":
@@ -1008,7 +1033,7 @@ def main() -> None:
     )
     if ACCOUNTS.by_id and PASSWORD:
         banner += "  ⚠ 两种登录同时开着：知道共享口令的人都进 u_local。多用户部署请去掉 AUTH_PASSWORD\n"
-    if ANON_REPORT and PASSWORD and not ACCOUNTS.by_id:
+    if ACCOUNTS.anonymous_allowed():
         banner += ("  ⚠ 匿名上报开着：能连到这个端口的人不带任何凭据就能往泳道里加代理运行记录（读不到任何东西）。\n"
                    "    端口对外开放时请设 AUTH_ANONYMOUS_REPORT=false\n")
     if not COOKIE_SECURE:

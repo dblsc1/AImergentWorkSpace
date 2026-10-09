@@ -924,6 +924,7 @@ def mod(tmp_path, monkeypatch):
     spec = importlib.util.spec_from_file_location("auth_stub_under_test", STUB)
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
+    m.ACCOUNTS.refresh()  # main() 在开始服务前做的那次
     return m
 
 
@@ -1122,3 +1123,158 @@ def test_verify_writes_no_log_but_other_endpoints_do(mod, monkeypatch, capsys):
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+# ── 账号 / 匿名的判定不许往宽的一边漂：任何不确定 = 匿名关（见 Accounts 的文档）──────────────
+
+
+def _anon(mod) -> bool:
+    return mod.verify_access(_headers())[0] == 204
+
+
+def _health(mod):
+    import threading  # noqa: PLC0415
+    from http.server import ThreadingHTTPServer  # noqa: PLC0415
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), mod.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=10)
+        c.request("GET", "/api/auth/health")
+        return c.getresponse().read()
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+@pytest.fixture
+def accts(mod, tmp_path, monkeypatch):
+    f = tmp_path / "users.json"
+    monkeypatch.setattr(mod, "USERS_FILE", str(f))
+    return mod, f
+
+
+def _good_users(f, n=1):
+    f.write_text(json.dumps({"users": {f"u{i}": {"id": f"id{i}", "sess": "ab"} for i in range(n)}}))
+
+
+def test_anonymous_off_when_accounts_file_exists_but_cannot_be_read_at_start(accts):
+    mod, f = accts
+    for junk in ("{坏的", "", '{"users": ', "{}", '{"users": []}', '{"users": {"a": {}}}'):
+        f.write_text(junk)
+        mod.ACCOUNTS.__init__()  # 重新开始：从没读成功过
+        mod.ACCOUNTS.refresh()
+        assert not mod.ACCOUNTS.known and not _anon(mod), junk
+        assert json.loads(_health(mod))["anonymousReport"] is False
+
+
+def test_anonymous_off_when_accounts_path_is_a_directory(accts):
+    mod, f = accts
+    f.mkdir()
+    mod.ACCOUNTS.refresh()
+    assert not mod.ACCOUNTS.known and not _anon(mod)
+
+
+def test_anonymous_off_when_accounts_file_is_unreadable_or_parent_not_a_directory(accts, tmp_path):
+    mod, f = accts
+    _good_users(f)
+    f.chmod(0)
+    try:
+        if not os.access(f, os.R_OK):
+            mod.ACCOUNTS.refresh()
+            assert not mod.ACCOUNTS.known and not _anon(mod)
+    finally:
+        f.chmod(0o600)
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x")
+    mod.USERS_FILE = str(blocker / "users.json")  # ENOTDIR：不是 ENOENT，不算「确定没有」
+    mod.ACCOUNTS.__init__()
+    mod.ACCOUNTS.refresh()
+    assert not mod.ACCOUNTS.known and not _anon(mod)
+
+
+def test_confirmed_absent_file_keeps_single_user_anonymous_until_it_appears(accts):
+    mod, f = accts
+    mod.ACCOUNTS.refresh()
+    assert mod.ACCOUNTS.known and _anon(mod)  # 对照：确定没有账号文件 = 单人模式
+    f.write_text('{"users": {"u": {"id": "i", "sess"')  # 创建到一半：不是「没有」
+    mod.ACCOUNTS.refresh()
+    assert not mod.ACCOUNTS.known and not _anon(mod)
+    _good_users(f)  # 写完：可读了，账号模式，匿名关
+    mod.ACCOUNTS.refresh()
+    assert mod.ACCOUNTS.by_id and not _anon(mod)
+
+
+def test_accounts_view_survives_file_turning_bad_or_vanishing(accts):
+    mod, f = accts
+    _good_users(f, 2)
+    mod.ACCOUNTS.refresh()
+    good = dict(mod.ACCOUNTS.by_id)
+    assert good and not _anon(mod)
+    for bad in ("{坏的", "", "{}"):
+        f.write_text(bad)
+        mod.ACCOUNTS.refresh()
+        assert mod.ACCOUNTS.by_id == good and mod.ACCOUNTS.known and not _anon(mod), bad
+    f.unlink()
+    mod.ACCOUNTS.refresh()
+    assert mod.ACCOUNTS.by_id == good and not _anon(mod)  # 删了也不退回「没有账号」
+    f.mkdir()
+    mod.ACCOUNTS.refresh()
+    assert mod.ACCOUNTS.by_id == good and not _anon(mod)
+
+
+def test_failed_refresh_never_resets_known_to_permissive_nor_half_updates(accts):
+    mod, f = accts
+    _good_users(f)
+    mod.ACCOUNTS.refresh()
+    before = (dict(mod.ACCOUNTS.by_id), mod.ACCOUNTS.known, mod.ACCOUNTS._mtime)
+    f.write_text(json.dumps({"users": {"ok": {"id": "x", "sess": "s"}, "bad": {"id": "y"}}}))  # 第二个缺 sess：整份不用
+    mod.ACCOUNTS.refresh()
+    assert (mod.ACCOUNTS.by_id, mod.ACCOUNTS.known, mod.ACCOUNTS._mtime) == before
+    # 读成功过且账号为空，之后读坏：回到「不知道」，匿名关（不沿用「没有账号」）
+    f.write_text('{"users": {}}')
+    mod.ACCOUNTS.refresh()
+    assert mod.ACCOUNTS.known and not mod.ACCOUNTS.by_id and _anon(mod)
+    f.write_text("{坏的")
+    mod.ACCOUNTS.refresh()
+    assert not mod.ACCOUNTS.known and not _anon(mod)
+
+
+def test_garbage_anonymous_switch_refuses_to_start_but_unset_is_on():
+    base = {k: v for k, v in os.environ.items() if not k.startswith("AUTH_")}
+    for raw in ("maybe", "2", "enabled", "tru"):
+        r = subprocess.run([sys.executable, str(STUB)], env={**base, "AUTH_PASSWORD": PW, "AUTH_ANONYMOUS_REPORT": raw},
+                           capture_output=True, text=True, timeout=10)
+        assert r.returncode != 0 and "AUTH_ANONYMOUS_REPORT" in r.stderr, raw  # 不静默当开，也不起来
+    s = Stub({"AUTH_PASSWORD": PW})  # 没设：缺省开
+    try:
+        assert json.loads(s.req("GET", "/api/auth/health")[2])["anonymousReport"] is True
+    finally:
+        s.stop()
+
+
+def test_token_state_view_never_goes_permissive(mod):
+    """令牌状态：坏文件沿用旧视图（吊销不会被忘掉、也不会变成「全收」）；从没读成功过 / 被删 = 全部 401。"""
+    tok, meta = mod.issue_device_token("", mod._shared_sess(), "report")
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is not None
+    f = Path(mod.TOKENS_FILE)
+    good = f.read_text()
+    for bad in ("{坏的", "", json.dumps({"gen": "g"})):
+        f.write_text(bad)
+        mod.EPOCHS.refresh()
+        assert mod.device_identity(tok) is not None, bad  # 沿用旧视图
+    f.write_text(good)
+    assert mod.revoke_token(meta["id"])
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is None
+    f.write_text("{坏的")
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is None  # 吊销没被「忘掉」
+    f.unlink()
+    mod.EPOCHS.refresh()
+    assert mod.EPOCHS.state is None and mod.device_identity(tok) is None
+    mod.EPOCHS.__init__()  # 从没读成功过：什么令牌都不认
+    f.write_text("{坏的")
+    mod.EPOCHS.refresh()
+    assert mod.EPOCHS.state is None and mod.device_identity(tok) is None
