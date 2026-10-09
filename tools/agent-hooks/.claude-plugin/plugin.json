@@ -1,0 +1,24 @@
+{
+  "name": "honeycomb-lanes",
+  "displayName": "HoneyComb lanes",
+  "version": "0.4.0",
+  "description": "Report each Claude Code session to a HoneyComb cockpit as an agent lane (start / phase / heartbeat / stop). Sends phase, time and a short label only; never prompts, tool input or transcript content.",
+  "author": { "name": "dblsc1" },
+  "repository": "https://github.com/dblsc1/AImergentWorkSpace",
+  "license": "AGPL-3.0",
+  "keywords": ["honeycomb", "time-tracking", "agent-lane"],
+  "userConfig": {
+    "cockpit_url": {
+      "type": "string",
+      "title": "Cockpit URL",
+      "description": "Where your HoneyComb cockpit listens, e.g. http://127.0.0.1:8800/",
+      "default": "http://127.0.0.1:8800/"
+    },
+    "cockpit_token": {
+      "type": "string",
+      "title": "Device token (optional)",
+      "description": "A HoneyComb device token. Leave empty on a single-user cockpit that accepts token-less reports.",
+      "sensitive": true
+    }
+  }
+}

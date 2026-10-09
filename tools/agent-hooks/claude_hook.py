@@ -7,6 +7,9 @@ v0.3 起中间的事件报**相位**（在干活 / 等你 / 空闲 / 出错，�
 相位钩子配成 `"async": true`（绝不让 Claude 等它）；SessionStart 保持同步（先存好 runId）。
 **不读** `prompt`、通知的 `message`、工具参数：只报相位、时刻、短标签。
 v0.4：泳道名用会话的名字——从 `transcript_path` 末尾只取 `custom-title` 记录的标题（`cc.session_title`），对话内容不读。
+v0.4 心跳：钩子只在有事件时才跑，会话空着或 Claude Code 崩了就没人说话。所以每个会话带一个发心跳的小进程
+（本文件 `--beat`，见文件末「心跳」）：按服务端给的间隔报「还活着」，发现 Claude Code 没了就替它报 stop。
+同一个循环两种起法：钩子起的脱离伴随进程（companion），或装成插件时 Claude Code 自己起的 monitor。
 
 **纪律**（钩子绝不能拖慢或打断会话）：
 - Claude Code 文档：`SessionEnd` 钩子默认预算只有 1.5 秒（`SessionStart` 是
@@ -22,10 +25,12 @@ v0.4：泳道名用会话的名字——从 `transcript_path` 末尾只取 `cust
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -128,8 +133,12 @@ def _write_state(session_id: str, state: dict) -> None:
         pass  # 状态文件写不了也不该拖累会话；下次 SessionEnd 找不到就跳过 stop
 
 
-def _save_run_id(session_id: str, run_id: str, last_phase: str | None = None, label: str | None = None) -> None:
+def _save_run_id(
+    session_id: str, run_id: str, last_phase: str | None = None, label: str | None = None, payload: dict | None = None,
+) -> None:
     state: dict = {"runId": run_id}
+    if payload is not None:
+        state.update(_beat_facts(session_id, payload))
     if last_phase:
         state["lastPhase"] = last_phase  # v0.3：PostToolUse 靠它决定报不报（见 _phase_for）
     if label:
@@ -211,7 +220,8 @@ def handle_session_start(payload: dict) -> None:
         return
     if run_id:
         with _session_lock(session_id):
-            _save_run_id(session_id, run_id, "idle", label)
+            _save_run_id(session_id, run_id, "idle", label, payload)
+        _spawn_beat(session_id, None)
 
 
 # Notification 的 notification_type → 相位（其余种类不报）。message 字段不读。
@@ -261,6 +271,7 @@ def handle_phase(payload: dict, at: str) -> None:
     state = _read_state(session_id)
     if not state:
         return  # 没开过 run（SessionStart 没报成）：这次会话不画相位
+    _spawn_beat(session_id, state)  # 没人在发心跳（到了寿命 / 被杀 / monitor 没来 / 钩子升级前开的会话）就补一个伴随进程
     decision = _phase_for(payload, state.get("lastPhase"))
     if decision is None:
         return
@@ -268,16 +279,18 @@ def handle_phase(payload: dict, at: str) -> None:
     with _session_lock(session_id):
         if _same_live_run(session_id, state["runId"]):  # SessionEnd 已收尾：别把状态写回来
             _write_state(session_id, {**state, "lastPhase": phase})
+    closed = False
     try:
         config = cc.load_config()
-        cc.phase_run(config, state["runId"], phase, at, detail=detail, reply=reply, timeout=HOOK_TIMEOUT)
+        result = cc.phase_run(config, state["runId"], phase, at, detail=detail, reply=reply, timeout=HOOK_TIMEOUT)
+        closed = result.get("reason") == "closed"  # 服务端已收掉这条（失联 / 超时）：会话还活着，下面重开
     except Exception as e:  # noqa: BLE001 — 相位只是记录，失败只留一行固定分类
         category = e if isinstance(e, cc.CockpitError) else "配置错误"
         _warn(f"{payload.get('hook_event_name')} 相位上报失败（{category}）")
     # 会话改名（/rename）不触发任何钩子：趁这次本来就要发请求，看一眼 transcript 末尾，名字变了才多发一次 start。
     # 比的是「有效名字」（标题，没有就是目录名）：标题被清空时要退回目录名。没改名时零额外请求。
     title = cc.session_title(payload.get("transcript_path"))
-    if cc.lane_names(payload.get("cwd"), title)[0] != state.get("label"):
+    if closed or cc.lane_names(payload.get("cwd"), title)[0] != state.get("label"):
         _relabel(payload, session_id, phase, title, state)
 
 
@@ -287,7 +300,7 @@ def _same_live_run(session_id: str, run_id: str) -> bool:
 
 
 def _relabel(payload: dict, session_id: str, phase: str, title: str | None, state: dict) -> None:
-    """改名只许改名，绝不能新开 run：异步钩子可能在 SessionEnd 停掉 run、删了状态之后才跑到这里，
+    """改名（v0.4 心跳起也用来在原 run 被服务端收掉后重开）。改名只许改名，绝不能新开 run：异步钩子可能在 SessionEnd 停掉 run、删了状态之后才跑到这里，
     这时 start 会（clientKey 已停）新建一条 run，且再没有结束钩子去关它。所以发前发后各查一次状态，
     返回的 runId 不同时：状态还在且仍是原 runId（会话活着、原 run 被服务端收了）就换成新的；状态没了或已是别的 runId 就当会话已结束，关掉多出来的 run、不写状态。"""
     with _session_lock(session_id):
@@ -314,14 +327,13 @@ def handle_session_end(payload: dict) -> None:
     if not session_id:
         return
     with _session_lock(session_id):  # 读状态 → stop → 删状态 一整段持锁：停的是锁内读到的那条 run
-        _session_end_locked(payload, session_id)
+        _session_end_locked(session_id, _REASON_TO_OUTCOME.get(payload.get("reason"), "done"))
 
 
-def _session_end_locked(payload: dict, session_id: str) -> None:
+def _session_end_locked(session_id: str, outcome: str) -> None:
     run_id = _read_run_id(session_id)
     if not run_id:
         return
-    outcome = _REASON_TO_OUTCOME.get(payload.get("reason"), "done")
     try:
         config = cc.load_config()
         cc.stop_run(config, run_id, outcome, timeout=HOOK_TIMEOUT)
@@ -346,7 +358,246 @@ def _session_end_locked(payload: dict, session_id: str) -> None:
     _delete_run_id(session_id)
 
 
+# ── 心跳（v0.4，`contracts/agent.lane.v1`「心跳与失联」；README「心跳」节）──────────────────
+# 一个循环（`_beat_session`），两种起法（`beat_loop` 的 source）：
+#   companion —— 钩子起的脱离进程（自己一个 session、stdio 全接 /dev/null）。会话号由钩子给；最多活 BEAT_MAX_LIFETIME，
+#                到点就退，会话还在的话下一个钩子事件补一个。
+#   monitor   —— 装成 Claude Code 插件时由 CLI 起、随会话结束（monitors/monitors.json）。CLI 不给 monitor 会话号，
+#                也不给插件设置：它按「同一个 Claude Code 进程」到状态目录里认会话，/clear 换了会话就换着跟。
+#                **一个字都不往 stdout / stderr 写**——monitor 的输出会被当成通知送进会话、叫醒模型。
+# 循环只做三件事：每 BEAT_CHECK_SECONDS 看一眼 Claude Code 还在不在（不在了：持会话锁报 stop、删状态、退出）；
+# 状态文件没了（SessionEnd 收过尾）就放手；按服务端给的间隔发心跳（不持锁、3 秒时限、失败不管）。
+# 一个会话同一时刻只有一个在发：两种起法抢同一把锁（`_beat_lock`），先到先得，后到的安静地让开。
+# Windows 上都不起（没有可靠又不伤人的「这个 pid 还活着吗」）：那里的运行不声明心跳，照旧只有遗忘超时兜底。
+BEAT_CHECK_SECONDS = 30
+BEAT_MAX_LIFETIME = 24 * 3600
+BEAT_TIMEOUT = cc.DEFAULT_TIMEOUT
+MONITOR_GRACE_SECONDS = 90  # auto：让 monitor 先来；会话开始这么久还没人发心跳，钩子才补一个伴随进程
+GONE_OUTCOME = "cancelled"  # Claude Code 没发 SessionEnd 就没了（崩了 / 被杀 / 终端被关）
+ANCESTOR_DEPTH = 6
+_SHELLS = frozenset({"sh", "bash", "dash", "zsh", "fish", "ksh", "ash", "busybox", "env"})
+
+
+def _proc(pid: int) -> tuple[int, str, str | None] | None:
+    """`(父 pid, 进程名, 启动时刻)`；不存在 / 已是僵尸 / 查不了 → None。Linux 读 /proc（带启动时刻，pid 被复用也认得出）；
+    别的 POSIX 问 `ps`（没有启动时刻）。"""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+        rest = stat[stat.rindex(")") + 2:].split()  # 进程名里可以有空格和括号：从最后一个 ) 之后数
+        if rest[0] == "Z":
+            return None
+        return int(rest[1]), stat[stat.index("(") + 1:stat.rindex(")")], rest[19]
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        out = subprocess.run(["ps", "-o", "ppid=,comm=", "-p", str(pid)], capture_output=True, text=True,
+                             stdin=subprocess.DEVNULL, timeout=2).stdout.split(None, 1)
+        return int(out[0]), os.path.basename(out[1].strip()).lstrip("-"), None
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return None
+
+
+def _cli_pid() -> int:
+    """本进程的祖先里哪个是 Claude Code：名字以 claude 开头的；没有就取第一个不是 shell 的
+    （钩子与 monitor 都经 shell 起，直接父进程多半是那个 shell）。0 = 认不出。"""
+    pid, first = os.getppid(), 0
+    for _ in range(ANCESTOR_DEPTH):
+        info = _proc(pid) if pid > 1 else None
+        if info is None:
+            break
+        if info[1].startswith("claude"):
+            return pid
+        if not first and info[1] not in _SHELLS:
+            first = pid
+        pid = info[0]
+    return first
+
+
+def _born(pid: int) -> str | None:
+    return (_proc(pid) or (0, "", None))[2] if pid else None
+
+
+def _alive(pid: int, born: str | None) -> bool:
+    if born is not None:  # 有启动时刻：pid 还在且还是同一个进程
+        info = _proc(pid)
+        return info is not None and info[2] == born
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        pass  # 没权限发信号 = 进程在
+    return True
+
+
+def _beat_facts(session_id: str, payload: dict) -> dict:
+    """SessionStart 时记进状态文件、给发心跳的进程用的几样（**只存本机，不上报**）：
+    运行被服务端收掉后重开要的 cwd / transcript；monitor 认会话要的会话号与 Claude Code 的 (pid, 启动时刻)；
+    monitor 拿不到插件设置，所以记下钩子用的地址、钩子有没有带令牌（令牌本身不落盘）；`at` 给 auto 的宽限用。"""
+    facts: dict = {"session": session_id, "at": time.time()}
+    for key, source in (("cwd", "cwd"), ("transcript", "transcript_path")):
+        if isinstance(payload.get(source), str):
+            facts[key] = payload[source]
+    try:
+        cli = _cli_pid()
+        config = cc.load_config()
+        facts.update(cli=[cli, _born(cli)], url=config["url"], auth=bool(config["token"]))
+    except Exception:  # noqa: BLE001 — 少了这几样只是 monitor 认不出这个会话
+        pass
+    return facts
+
+
+def _plugin_monitor() -> bool:
+    """钩子是不是从一个带 monitor 的插件里跑起来的。"""
+    root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+    return bool(root) and (Path(root) / "monitors" / "monitors.json").is_file()
+
+
+def _beat_lock(session_id: str):
+    """「一个会话一个发心跳的」：状态目录里 .beat 文件上的独占 flock，发多久拿多久——进程死了内核放锁，
+    没有陈旧 pidfile 要清。拿到 → 打开着的文件（持有者写进自己的 pid 和起法，给人看）；别人拿着 → None。"""
+    import fcntl
+
+    path = _state_file(session_id).with_suffix(".beat")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    f = open(path, "a+", encoding="utf-8")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.close()
+        return None
+    return f
+
+
+def _spawn_beat(session_id: str, state: dict | None) -> None:
+    """该由伴随进程来、又没人在发心跳，就起一个，立刻返回（不等它）。起不来只是「这个会话没有心跳」。
+    `state` = 钩子手里的状态（SessionStart 刚开跑时给 None）。"""
+    try:
+        mode = cc.beat_mode()
+        if os.name == "nt" or mode in ("off", "monitor"):
+            return
+        if mode == "auto" and _plugin_monitor() and (state is None or time.time() - state.get("at", 0) < MONITOR_GRACE_SECONDS):
+            return  # 让 monitor 先来
+        probe = _beat_lock(session_id)
+        if probe is None:
+            return  # 已经有人在发
+        probe.close()  # 两个钩子同时走到这里会各起一个：伴随进程自己再抢一次锁，输的那个直接退
+        subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), "--beat", "--source", "companion",
+             "--session", session_id, "--cli", str(_cli_pid())],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True, close_fds=True, cwd=str(_state_file(session_id).parent),
+        )
+    except Exception:  # noqa: BLE001 — 钩子绝不能因为它出错
+        pass
+
+
+def _usable(state: dict) -> bool:
+    """这个进程发得了这个会话的心跳吗。monitor 没有钩子的环境：地址用钩子记下的；钩子带了令牌而自己没有
+    （令牌只填在插件设置里）就发不了——让开，由伴随进程来。"""
+    if state.get("url"):
+        os.environ.setdefault("COCKPIT_URL", str(state["url"]))  # 只改本进程：下面的 load_config / 重开都读得到
+    config = cc.load_config()
+    return bool(config["url"]) and (bool(config["token"]) or not state.get("auth"))
+
+
+def _beat_once(session_id: str, state: dict, source: str) -> float:
+    """发一次心跳，返回下一次隔多少秒。服务端说这条运行已结束（机器睡过头被判了失联）而会话还在 → 重开一条。"""
+    interval, closed = cc.beat(cc.load_config(), state["runId"], BEAT_TIMEOUT, source)
+    if closed and state.get("cwd"):
+        payload = {"cwd": state["cwd"], "transcript_path": state.get("transcript")}
+        _relabel(payload, session_id, state.get("lastPhase") or "idle", cc.session_title(state.get("transcript")), state)
+        # 重开成了：新的那条还没声明心跳，下一轮就发；没成：过一会儿再试
+        return 0 if _read_run_id(session_id) != state["runId"] else cc.HEARTBEAT_MIN
+    return interval
+
+
+def _beat_session(session_id: str, source: str, cli: int, born: str | None, until: float, sleep, clock) -> bool:
+    """给一个会话发心跳，直到它结束 / 到 `until` / 轮不到自己。True = Claude Code 没了（已替它收尾）。"""
+    state = _read_state(session_id)
+    if not state or not _usable(state):
+        return False
+    lock = _beat_lock(session_id)
+    if lock is None:
+        return False  # 另一种起法已经在给它发
+    with lock:
+        lock.truncate(0)
+        lock.write(f"{os.getpid()} {source}")
+        lock.flush()
+        next_beat = clock()  # 第一下马上发：声明这条运行会发心跳。用墙钟排：机器睡醒后马上补一下
+        while clock() < until:
+            state = _read_state(session_id)
+            if not state:
+                return False  # SessionEnd 收过尾了
+            if cli and not _alive(cli, born):
+                with _session_lock(session_id):
+                    _session_end_locked(session_id, GONE_OUTCOME)
+                return True
+            if clock() >= next_beat:
+                next_beat = clock() + _beat_once(session_id, state, source)
+            sleep(BEAT_CHECK_SECONDS)
+    return False
+
+
+def _session_of(cli: int, born: str | None) -> str | None:
+    """这个 Claude Code 进程此刻的会话：状态目录里记着同一个 (pid, 启动时刻) 的状态文件中最新的那个。"""
+    best: tuple[float, str] | None = None
+    try:
+        for path in cc.user_dir("state").glob("session-*.json"):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                found = (path.stat().st_mtime, data["session"]) if data.get("cli") == [cli, born] else None
+            except (OSError, ValueError, KeyError, AttributeError):
+                continue
+            if found and isinstance(found[1], str) and (best is None or found > best):
+                best = found
+    except OSError:
+        pass
+    return best[1] if best else None
+
+
+def beat_loop(source: str, session_id: str | None = None, cli: int = 0, *, sleep=time.sleep, clock=time.time) -> None:
+    """发心跳的进程的主体。`cli` = Claude Code 的 pid（companion 认不出时给 0：只看状态文件）。"""
+    born = _born(cli)
+    if source != "monitor":
+        _beat_session(session_id or "", source, cli, born, clock() + BEAT_MAX_LIFETIME, sleep, clock)
+        return
+    while cli and _alive(cli, born):  # 认不出 Claude Code 就认不出会话：直接退，由伴随进程来
+        session_id = _session_of(cli, born)
+        if session_id and _beat_session(session_id, source, cli, born, float("inf"), sleep, clock):
+            return
+        sleep(BEAT_CHECK_SECONDS)
+
+
+def _silence() -> None:
+    """monitor 的每一行输出都会被送进会话：把 stdout / stderr 整个接到 /dev/null（连子进程、解释器的告警一起）。"""
+    null = os.open(os.devnull, os.O_WRONLY)
+    for fd in (1, 2):
+        os.dup2(null, fd)
+
+
+def _beat_main(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--beat", action="store_true")
+    parser.add_argument("--source", choices=("companion", "monitor"), default="companion")
+    parser.add_argument("--session")
+    parser.add_argument("--cli", type=int, default=0)
+    if "monitor" in argv:
+        _silence()  # 先于解析参数：argparse 报错也不许出声
+    args = parser.parse_args(argv)
+    mode = cc.beat_mode()
+    if os.name == "nt" or mode == "off" or mode not in ("auto", args.source):
+        return
+    beat_loop(args.source, args.session, args.cli if args.source == "companion" else _cli_pid())
+
+
 def main() -> int:
+    if "--beat" in sys.argv[1:]:
+        try:
+            _beat_main(sys.argv[1:])
+        except BaseException:  # noqa: BLE001 — 含 argparse 的 SystemExit：没人看它的输出，出错就是这个会话没有心跳
+            pass
+        return 0
     at = cc.now_iso()  # 事件发生的那一刻，先于读 stdin / 网络
     try:
         payload = json.loads(sys.stdin.read() or "{}")

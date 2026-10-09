@@ -79,7 +79,7 @@ def user_dir(purpose: str = "config") -> Path:
 
 # ── 配置：环境变量优先，其次配置文件 ──────────────────────────────
 def load_config() -> dict[str, Any]:
-    """合并出 `{"url", "token", "tasks", "projects"}`。
+    """合并出 `{"url", "token", "beat", "tasks", "projects"}`（`beat` 见 `beat_mode`）。
 
     `COCKPIT_URL` / `COCKPIT_TOKEN` 环境变量优先于配置文件里的同名字段，
     方便 CI / 容器场景不落文件也能用。`tasks` / `projects` 只能来自配置文件
@@ -96,10 +96,13 @@ def load_config() -> dict[str, Any]:
             file_cfg = raw
     except (FileNotFoundError, ValueError, OSError):
         file_cfg = {}
-    url = os.environ.get("COCKPIT_URL") or file_cfg.get("url") or ""
-    token = os.environ.get("COCKPIT_TOKEN") or file_cfg.get("token") or ""
+    # 装成 Claude Code 插件时，地址 / 令牌可以填在插件的设置里（plugin.json 的 userConfig）：Claude Code 把它们
+    # 以 CLAUDE_PLUGIN_OPTION_* 交给钩子进程（monitor 进程拿不到，见 claude_hook「心跳」）。排在 COCKPIT_* 之后、文件之前。
+    env = os.environ.get
+    url = env("COCKPIT_URL") or env("CLAUDE_PLUGIN_OPTION_COCKPIT_URL") or file_cfg.get("url") or ""
+    token = env("COCKPIT_TOKEN") or env("CLAUDE_PLUGIN_OPTION_COCKPIT_TOKEN") or file_cfg.get("token") or ""
     maps = {key: file_cfg[key] if isinstance(file_cfg.get(key), dict) else {} for key in ("tasks", "projects")}
-    return {"url": str(url).rstrip("/"), "token": str(token), **maps}
+    return {"url": str(url).rstrip("/"), "token": str(token), "beat": file_cfg.get("beat"), **maps}
 
 
 def _is_under(path: str, base: str) -> bool:
@@ -228,7 +231,8 @@ def _request(config: dict[str, Any], method: str, path: str, payload: dict[str, 
         data = json.dumps(payload).encode("utf-8") if payload is not None else None
     except (TypeError, ValueError):
         raise CockpitError("配置错误") from None
-    headers = {"Authorization": f"Bearer {config.get('token', '')}"}
+    # 没配令牌就不带这个头：单人部署可以放行无令牌的上报（auth.gate.v1 v1.4，`contracts/agent.lane.v1`「一」）
+    headers = {"Authorization": f"Bearer {config['token']}"} if config.get("token") else {}
     if data is not None:
         headers["Content-Type"] = "application/json"
 
@@ -386,6 +390,57 @@ def phase_run(
     if reply:
         payload["reply"] = True
     return _request(config, "POST", f"/api/core/agents/{run_id}/phase", payload, timeout)
+
+
+HEARTBEAT_SECONDS = 900  # 服务端没说（老服务端 / 没报成）时的心跳间隔
+HEARTBEAT_MIN, HEARTBEAT_MAX = 60, 3600  # 服务端给的值钳在这个范围里
+
+
+def heartbeat_run(
+    config: dict[str, Any], run_id: str, timeout: float = DEFAULT_TIMEOUT, beat_source: str | None = None,
+) -> dict[str, Any]:
+    """`POST /api/core/agents/{runId}/heartbeat`（v2.18，`contracts/agent.lane.v1`）：「我还活着」。
+    第一次调用即声明这条运行会发心跳。`{applied:false, reason:"closed"}` = 运行已结束。
+    `beat_source`：谁在发（`companion` / `monitor` / `wrapper`），服务端只当标签记下，用来比哪条路更好使。"""
+    payload = {"beatSource": beat_source} if beat_source else None
+    return _request(config, "POST", f"/api/core/agents/{run_id}/heartbeat", payload, timeout)
+
+
+def heartbeat_interval(response: Any) -> float:
+    """响应里的 `heartbeatSeconds`，钳到 [60, 3600]；没有 / 不是数 → 900。"""
+    value = response.get("heartbeatSeconds") if isinstance(response, dict) else None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return HEARTBEAT_SECONDS
+    return min(max(value, HEARTBEAT_MIN), HEARTBEAT_MAX)
+
+
+def beat(
+    config: dict[str, Any], run_id: str, timeout: float = DEFAULT_TIMEOUT, beat_source: str | None = None,
+) -> tuple[float, bool]:
+    """发一次心跳，**绝不抛**：返回 `(下一次隔多少秒, 运行是否已结束)`。
+    连不上 / 超时 / 5xx → `HEARTBEAT_MIN` 秒后再试（间隔是失联线的一半，丢一下不补就贴线了）；
+    4xx（老服务端没有这个端点、令牌不对）→ 照常间隔，不猛敲。"""
+    try:
+        response = heartbeat_run(config, run_id, timeout, beat_source)
+        return heartbeat_interval(response), response.get("reason") == "closed"
+    except CockpitError as e:
+        return (HEARTBEAT_SECONDS if e.code and 400 <= e.code < 500 else HEARTBEAT_MIN), False
+    except Exception:  # noqa: BLE001 — 配置读坏了之类：同样只是「这一下没发」
+        return HEARTBEAT_SECONDS, False
+
+
+BEAT_MODES = ("auto", "companion", "monitor", "off")
+
+
+def beat_mode(config: dict[str, Any] | None = None) -> str:
+    """谁来发心跳：环境变量 `COCKPIT_BEAT` > 配置文件的 `beat` > `auto`；认不得的值当 `auto`。
+
+    - `auto`：装成插件且带 monitor 时让 monitor 来，一分半钟没人接手再起伴随进程；否则伴随进程
+    - `companion` / `monitor`：只用这一条路（给「两条路哪条好使」的对比用）
+    - `off`：不发心跳（运行不声明心跳能力，服务端照旧只有遗忘超时兜底）"""
+    cfg = config if config is not None else load_config()
+    mode = os.environ.get("COCKPIT_BEAT") or cfg.get("beat")
+    return mode if mode in BEAT_MODES else "auto"
 
 
 def stop_run(

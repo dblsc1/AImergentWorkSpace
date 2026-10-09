@@ -237,8 +237,16 @@ class _IsolatedHomeMixin:
         self._home_tmpdir = tempfile.TemporaryDirectory()
         self._old_home = os.environ.get("HONEYCOMB_AGENT_HOOKS_HOME")
         os.environ["HONEYCOMB_AGENT_HOOKS_HOME"] = self._home_tmpdir.name
+        # 心跳（伴随进程 / cockpit-run 的线程）缺省关掉：不许测试留下脱离的进程，也不让异步的心跳混进请求记录。
+        # 心跳自己的测试在 test_agent_hooks_beat.py 里按需打开。
+        self._old_beat = os.environ.get("COCKPIT_BEAT")
+        os.environ["COCKPIT_BEAT"] = "off"
 
     def tearDown(self):
+        if self._old_beat is None:
+            os.environ.pop("COCKPIT_BEAT", None)
+        else:
+            os.environ["COCKPIT_BEAT"] = self._old_beat
         if self._old_home is None:
             os.environ.pop("HONEYCOMB_AGENT_HOOKS_HOME", None)
         else:

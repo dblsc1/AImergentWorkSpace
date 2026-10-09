@@ -40,6 +40,7 @@ curl -sb "<你登录时浏览器里的会话 cookie>" -X POST <cockpit 地址>/a
 | `COCKPIT_TOKEN` | 设备 token |
 | `COCKPIT_TASK` | 可选。这次 run 挂在哪个任务上；不设就走目录映射，再不然就是收件箱 |
 | `COCKPIT_PROJECT` | 可选。定不出任务时，这次 run 挂在哪个项目上（见「挂到项目」） |
+| `COCKPIT_BEAT` | 可选。谁来发心跳：`auto`（缺省）/ `companion` / `monitor` / `off`（见「心跳」）。配置文件里同名键是 `beat` |
 
 **配置文件**（跨会话常驻，含目录 → 任务、目录 → 项目的映射）：
 
@@ -285,6 +286,99 @@ cockpit-run phase <working|waiting_input|waiting_permission|idle|error> [--run <
   叫 `phase` 的命令，老用法不受影响。
 - 包命令时另可给 `--label`、`--match`（缺省都是当前目录名），随 start 一起发。
 - 同 hooks 的纪律：**永远退出码 0**，连不上 / 404 / 422 只在 stderr 留一行固定分类，绝不打断调用它的代理。
+
+## 心跳：CLI 崩了泳道不再挂着（v0.4 追加）
+
+钩子只在 Claude Code 有事件时才跑。会话空着的时候没人说话；Claude Code 崩了、被杀了、终端被关了，`SessionEnd`
+不会来，泳道就停在最后的相位上。所以每个会话另有一个小进程，做两件事：
+
+- **按服务端给的间隔报「我还活着」**（`POST /api/core/agents/{runId}/heartbeat`，缺省 15 分钟一次）。
+  服务端的规则是：会发心跳的运行 **30 分钟**没有任何信号就算失联，泳道变灰、按最后一次信号的时刻收掉
+  （协议见 `contracts/agent.lane.v1`，服务端规则见 nexus-core 契约 v2.18「心跳与失联」）。
+- **每 30 秒看一眼 Claude Code 还在不在**；不在了就替它报 `stop`（`cancelled`）、清掉本地状态。
+  所以正常情况下崩溃在半分钟内就收尾了，30 分钟那条线只在这个小进程自己也没了（断电、整机被杀）时才用得上。
+
+机器睡了一觉、被判了失联而会话其实还开着：下一次心跳（或下一个钩子事件）发现运行已被收掉，会带同一个 `clientKey`
+重开一条，从那一刻算起。
+
+它只发 `runId` 和一个标签（`beatSource`，见下），**不发任何别的东西**；3 秒时限，失败不管（连不上时一分钟后再试）。
+老服务端没有这个端点 → 404 → 什么都不发生，行为同以前。
+
+### 两种起法，同一个循环
+
+| | 伴随进程 `companion` | 插件 monitor `monitor` |
+|---|---|---|
+| 谁起它 | `SessionStart` 钩子（之后任何事件发现它不在就补一个） | Claude Code 自己（插件的 `monitors/monitors.json`） |
+| 怎么装 | 不用装：照上面在 `settings.json` 里配钩子就有 | 把本目录装成插件（见下「装成插件」） |
+| 谁管它的生死 | 自己：脱离会话（独立 session、stdio 接 `/dev/null`），Claude Code 退出不等它；状态文件没了 / Claude Code 没了就退，最多活 24 小时（到点后下一个事件补一个） | Claude Code：随会话起、随会话停。只在交互式会话里有（`-p` 没有；Bedrock / Vertex / Foundry 上没有） |
+| 怎么认会话 | 钩子把会话号交给它 | Claude Code 不给 monitor 会话号：它按「同一个 Claude Code 进程」到状态目录里认，`/clear` 换了会话就换着跟 |
+| 地址 / 令牌 | 继承钩子的环境（含插件设置） | **拿不到插件设置**：地址用钩子记在状态文件里的；令牌只能来自 `COCKPIT_TOKEN` 或配置文件。钩子带了令牌而它没有 → 它让开，由伴随进程来 |
+| `beatSource` | `companion` | `monitor` |
+
+两种是同一段代码（`claude_hook.py --beat --source …`），一个会话同一时刻**只有一个**在发：它们抢状态目录里同一把
+文件锁（`session-<哈希>.beat`，里面写着持有者的 pid 和起法），先到先得，后到的安静地让开；持有者死了内核自动放锁。
+
+`COCKPIT_BEAT`（或配置文件的 `"beat"`）定用哪条路：
+
+| 值 | 行为 |
+|---|---|
+| `auto`（缺省） | 钩子是从带 monitor 的插件里跑起来的 → 先让 monitor 来，会话开始 90 秒后还没人发心跳就补一个伴随进程；否则直接用伴随进程 |
+| `companion` | 只用伴随进程（monitor 起来后立刻退出） |
+| `monitor` | 只用 monitor（钩子不起伴随进程；monitor 没来就没有心跳） |
+| `off` | 不发心跳。运行不声明心跳能力，服务端照旧只有 12 小时的遗忘超时兜底 |
+
+**Claude Code 在哪个进程**：两种起法都要知道。从自己的祖先进程里找名字以 `claude` 开头的，找不到就取第一个不是 shell 的
+（钩子和 monitor 都是经 `sh -c` 起的）。Linux 上记 pid + 启动时刻（pid 被复用也认得出），macOS 上只记 pid。
+**把钩子包在别的启动器里**（`uv run …`、自己的包装脚本）而 Claude Code 的进程名又不是 `claude`（比如经 `node` 跑）时，
+会把那个启动器错认成 Claude Code，启动器一退就以为会话没了——钩子命令请照本文写成直接的 `python3 …/claude_hook.py`。
+认不出时（返回 0）伴随进程退回「只看状态文件在不在」，monitor 直接退出。
+
+**Windows**：两种都不起（没有可靠又不伤人的「这个 pid 还活着吗」——`os.kill(pid, 0)` 在 Windows 上会真的发信号），
+运行不声明心跳，行为同以前（12 小时遗忘超时）。`cockpit-run` 的心跳线程在 Windows 上照常工作。
+
+**`cockpit-run`** 包命令期间有一个心跳线程（`beatSource: wrapper`），命令结束即停；`COCKPIT_BEAT=off` 关掉。
+它没有 `clientKey`，运行被判失联后不重开。
+
+### 装成插件（monitor 这条路）
+
+本目录同时是一个 Claude Code 插件（`.claude-plugin/plugin.json`、`hooks/hooks.json`、`monitors/monitors.json`——
+三个 JSON 把同一个 `claude_hook.py` 接上去，没有别的逻辑）。仓库根的 `.claude-plugin/marketplace.json` 把它列了出来：
+
+```
+/plugin marketplace add dblsc1/AImergentWorkSpace
+/plugin install honeycomb-lanes@honeycomb
+```
+
+启用时 Claude Code 会问两项设置：**Cockpit URL**（缺省 `http://127.0.0.1:8800/`）和 **Device token**（选填，
+存进系统的密钥存储；单人部署开了无令牌上报就留空）。它们以 `CLAUDE_PLUGIN_OPTION_COCKPIT_URL` / `_TOKEN` 交给钩子，
+优先级在 `COCKPIT_URL` / `COCKPIT_TOKEN` 之后、配置文件之前。目录 → 任务 / 项目的映射仍然写在配置文件里。
+
+**两种装法只留一种**：装了插件就把 `settings.json` 里手配的那几条钩子删掉，否则每个事件报两遍。
+开发时可以不经市场直接加载：`claude --plugin-dir tools/agent-hooks`；改完用 `claude plugin validate tools/agent-hooks` 查一遍。
+
+monitor 是 Claude Code 的实验性功能（清单形状可能还会变）。它的每一行输出都会被当成通知送进会话，
+所以这个 monitor **一个字都不输出**（stdout / stderr 整个接到 `/dev/null`）。
+
+### 比较两条路
+
+每条运行上记着 `beatSource`（谁发的心跳）和 `beatCount`（收到几下），结束后留在那条 `agent.run.completed` 里。
+用一天之后按来源分组看：
+
+```sh
+curl -fsS -H "Authorization: Bearer $COCKPIT_TOKEN" \
+  "${COCKPIT_URL%/}/api/core/events?type=agent.run.completed&limit=1000" | python3 -c '
+import collections, json, sys
+rows = collections.defaultdict(lambda: collections.Counter())
+for e in json.load(sys.stdin)["items"]:
+    d = e["data"]; r = rows[d.get("beatSource", "(none)")]
+    r["runs"] += 1; r["beats"] += d.get("beatCount", 0); r[d["outcome"]] += 1
+for source, r in sorted(rows.items()):
+    print(source, dict(r))'
+```
+
+怎么读：`lost` 多 = 这条路的进程经常自己没了（或发不出去）；`cancelled` 是它发现 Claude Code 没了、替它收的尾；
+`beats ÷ runs` 对照运行时长看有没有漏发。在跑的运行看 `GET /api/core/views/lanes` 的 `agents[]`
+（`beatSource` / `beatCount` / `lastSeenAt` / `lost`）。想在同一台机器上对比，就隔天换一次 `COCKPIT_BEAT`。
 
 ## 测试
 
