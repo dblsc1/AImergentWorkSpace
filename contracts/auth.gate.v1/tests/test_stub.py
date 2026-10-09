@@ -1362,8 +1362,21 @@ def test_restoring_an_older_backup_is_a_rollback_not_adopted(mod, new_inode):
     assert mod.device_identity(third) is not None and mod.device_identity(tok) is None
 
 
-def test_delete_and_recreate_with_a_lower_rev_is_still_a_rollback(mod):
-    """守卫只看 rev：删了重建、换了 gen，rev 倒退照样不采用（不按 inode / gen 判）。"""
+def _cli_write(mod, change) -> None:
+    """另一个进程（命令行）的写：没有内存视图，信文件——读、改、rev + 1、写回。"""
+    f = Path(mod.TOKENS_FILE)
+    data = json.loads(f.read_text())
+    change(data)
+    data["rev"] = data.get("rev", 0) + 1
+    f.write_text(json.dumps(data))
+
+
+def _fake_record(mod, jti="0" * 16) -> dict:
+    return {jti: {"tenant": "", "name": "cli", "scope": "report", "createdAt": 1, "expiresAt": 2 ** 40}}
+
+
+def test_file_recreated_by_another_process_is_a_new_generation_and_voids_the_old_one(mod):
+    """文件被删、别的进程重建（gen 换了）：采用新的一代——旧一代的令牌一个不留（失败方向是拒绝），吊销过的更不会回来。"""
     tok, meta = _live_token(mod)
     assert mod.revoke_token(meta["id"])
     other, _ = _live_token(mod)
@@ -1371,8 +1384,137 @@ def test_delete_and_recreate_with_a_lower_rev_is_still_a_rollback(mod):
     f.unlink()
     f.write_text(json.dumps({"rev": 1, "gen": "somenewgeneration", "epochs": {}, "tokens": {}}))
     mod.EPOCHS.refresh()
-    assert mod.EPOCHS.state is not None
-    assert mod.device_identity(tok) is None and mod.device_identity(other) is not None  # 内存里的视图没被覆盖
+    assert mod.EPOCHS.state is not None and mod.EPOCHS.state[0] == "somenewgeneration"
+    assert mod.device_identity(tok) is None and mod.device_identity(other) is None
+
+
+def test_backup_from_a_generation_this_process_already_left_is_not_adopted(mod):
+    """跨代的旧备份：本进程离开过的 gen 再出现 → 不认，全部拒绝；本进程下一次写重新落盘。"""
+    tok, _ = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    old_gen_file = f.read_bytes()
+    f.unlink()
+    f.write_text(json.dumps({"rev": 1, "gen": "somenewgeneration", "epochs": {}, "tokens": {}}))
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is None
+    f.write_bytes(old_gen_file)  # 旧一代的备份被拷回来
+    mod.EPOCHS.refresh()
+    assert mod.EPOCHS.state is None and mod.device_identity(tok) is None
+    fresh, _ = mod.issue_device_token("", mod._shared_sess(), "report")
+    assert json.loads(f.read_text())["gen"] == "somenewgeneration"
+    assert mod.device_identity(fresh) is not None and mod.device_identity(tok) is None
+
+
+@pytest.mark.parametrize("new_inode", [False, True])
+def test_cli_revoke_on_a_restored_backup_is_honoured_and_never_undone(mod, new_inode):
+    """审核 C / E：旧备份拷回来之后命令行在那份旧文件上吊销 A（rev 仍比内存小）。A 必须失效，之后的网页写也不能把它写回去。"""
+    a, a_meta = _live_token(mod)
+    b, _ = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    backup = f.read_bytes()
+    later, _ = _live_token(mod)
+    _live_token(mod)
+    if new_inode:
+        tmp = f.with_name("restore.tmp")
+        tmp.write_bytes(backup)
+        os.replace(tmp, f)
+    else:
+        f.write_bytes(backup)
+    _cli_write(mod, lambda d: d["tokens"].pop(a_meta["id"]))  # 命令行 revoke-token A
+    assert _rev(mod) < mod.EPOCHS._good[0]
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(a) is None  # 吊销生效
+    assert mod.device_identity(b) is not None  # 两边都有的照常
+    assert mod.device_identity(later) is None  # 备份之后发的：分叉，保守起见失效
+    mod.EPOCHS.repair()  # 后台线程马上把内存视图重新落盘
+    on_disk = json.loads(f.read_text())
+    assert a_meta["id"] not in on_disk["tokens"] and on_disk["rev"] > mod.EPOCHS._good[0] - 1
+    mod.issue_device_token("", mod._shared_sess(), "report")  # 之后的网页写
+    mod.EPOCHS.refresh()
+    assert a_meta["id"] not in json.loads(f.read_text())["tokens"] and mod.device_identity(a) is None
+
+
+def test_cli_identity_revoke_on_a_restored_backup_is_honoured(mod):
+    """审核 C2：旧备份上做整身份吊销（纪元 +1）：纪元按较大的并进来，之前发的令牌全部失效。"""
+    a, _ = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    backup = f.read_bytes()
+    _live_token(mod)
+    f.write_bytes(backup)
+
+    def revoke_all(d):
+        d["epochs"][""] = d["epochs"].get("", 0) + 1
+        d["tokens"].clear()
+    _cli_write(mod, revoke_all)
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(a) is None and mod.EPOCHS.state[1].get("") == 1
+
+
+def test_equal_rev_with_different_content_cannot_resurrect_a_web_revoked_token(mod):
+    """审核 D：网页吊销 T 之后旧备份拷回来，命令行在旧文件上随便写一次，rev 正好追平内存、内容里还带着 T。"""
+    t, t_meta = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    backup = f.read_bytes()
+    assert mod.revoke_token(t_meta["id"])
+    f.write_bytes(backup)
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(t) is None
+    f.write_bytes(backup)  # 假设修复还没来得及写：命令行看到的仍是旧文件
+    _cli_write(mod, lambda d: d["tokens"].update(_fake_record(mod)))  # 命令行发一个令牌
+    assert _rev(mod) == mod.EPOCHS._good[0]
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(t) is None
+    mod.EPOCHS.repair()
+    assert t_meta["id"] not in json.loads(f.read_text())["tokens"]
+
+
+def test_a_revoked_id_never_comes_back_even_from_a_file_with_a_higher_rev(mod):
+    """分叉的那一支写了很多次、rev 反超内存：照 rev 是「正常前进」，但作废过的 id 仍然不认，并被重新落盘清掉。"""
+    t, t_meta = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    backup = json.loads(f.read_text())
+    assert mod.revoke_token(t_meta["id"])
+    backup["rev"] = mod.EPOCHS._good[0] + 5
+    f.write_text(json.dumps(backup))
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(t) is None and mod.EPOCHS._diverged
+    mod.EPOCHS.repair()
+    assert t_meta["id"] not in json.loads(f.read_text())["tokens"] and not mod.EPOCHS._diverged
+
+
+def test_normal_cli_writes_are_adopted_without_any_repair(mod):
+    """不分叉的日常：命令行在最新文件上发 / 吊销，网关照常读到，不触发重新落盘。"""
+    a, a_meta = _live_token(mod)
+    b, _ = _live_token(mod)
+    _cli_write(mod, lambda d: d["tokens"].pop(a_meta["id"]))
+    before = Path(mod.TOKENS_FILE).read_bytes()
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(a) is None and mod.device_identity(b) is not None and not mod.EPOCHS._diverged
+    mod.EPOCHS.repair()
+    assert Path(mod.TOKENS_FILE).read_bytes() == before
+
+
+def test_background_thread_survives_any_step_failing(mod, monkeypatch):
+    """后台线程不能因为一步抛了就死（视图会停在旧的）：日志写不出、刷新出错都吞掉，下一轮照跑。"""
+    calls = []
+
+    class Stop(BaseException):
+        pass
+
+    def sleep(_):
+        calls.append("tick")
+        if calls.count("tick") > 2:
+            raise Stop
+
+    def boom():
+        calls.append("boom")
+        raise RuntimeError("x")
+    monkeypatch.setattr(mod.time, "sleep", sleep)
+    monkeypatch.setattr(mod.ACCOUNTS, "refresh", boom)
+    monkeypatch.setattr(mod.sys, "stderr", None)  # 连日志都写不出
+    with pytest.raises(Stop):
+        mod._watch()
+    assert calls.count("boom") == 2
 
 
 def test_refresh_that_read_before_an_in_process_revoke_cannot_overwrite_it(mod):
