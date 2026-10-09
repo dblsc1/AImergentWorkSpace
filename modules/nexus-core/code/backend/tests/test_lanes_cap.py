@@ -177,3 +177,57 @@ def test_hidden_lane_live_waiting_run_still_counted(client, monkeypatch):
     assert client.put("/api/core/lanes/prefs/agent", json={"agent": "cc", "label": "sec", "hidden": True}).status_code == 200
     body = _get(client)
     assert body["hiddenWaiting"] == 1 and body["agents"] == [] and body["dropped"] == [] and body["truncated"] is False
+
+
+def test_hidden_live_is_bounded_and_skips_heavy_work(client, monkeypatch):
+    from app.modules.views import lanes  # noqa: PLC0415
+
+    ph = [{"at": _at(2).isoformat(), "phase": "working"}] * 50
+    ph[-1] = {"at": _at(3).isoformat(), "phase": "waiting_input"}
+    _fake_live(monkeypatch, [{"runId": f"H{i}", "label": "sec", "startTs": _at(1) + timedelta(seconds=i), "phases": ph}
+                             for i in range(5000)])
+    assert client.put("/api/core/lanes/prefs/agent", json={"agent": "cc", "label": "sec", "hidden": True}).status_code == 200
+    calls = {"item": 0, "att": 0}
+    item, att = lanes._run_item, lanes._attention
+    monkeypatch.setattr(lanes, "_run_item", lambda *a: calls.__setitem__("item", calls["item"] + 1) or item(*a))
+    monkeypatch.setattr(lanes, "_attention", lambda *a: calls.__setitem__("att", calls["att"] + 1) or att(*a))
+    body = _get(client)
+    assert calls == {"item": 0, "att": 0}
+    assert body["agents"] == [] and body["dropped"] == [] and body["truncated"] is False
+    assert body["hiddenWaiting"] == lane_cap.MAX_LIVE
+    assert [(h["label"], h["live"], h["phase"]) for h in body["hiddenAgents"]] == [("sec", True, "waiting_input")]
+
+
+def test_hidden_summary_same_as_unbounded_when_uncapped(client, monkeypatch):
+    from app.modules.views import lanes  # noqa: PLC0415
+    from app.modules.views.lane_order import arrange  # noqa: PLC0415
+
+    runs = [{"runId": f"w{i}", "label": "sec", "startTs": _at(1, i),
+             "phases": [{"at": _at(2, i).isoformat(), "phase": "waiting_input" if i % 2 else "idle"}]} for i in range(6)]
+    _fake_live(monkeypatch, runs + [{"runId": "v", "label": "vis", "startTs": _at(1)}])
+    assert client.put("/api/core/lanes/prefs/agent", json={"agent": "cc", "label": "sec", "hidden": True}).status_code == 200
+    body = _get(client)
+    start = datetime.fromisoformat(body["windowStart"])
+    end = datetime.fromisoformat(body["windowEnd"])
+    now, rows = lanes.timer_service.list_lane_runs("u_local")
+    full = arrange([lanes._run_item(r, start, end) for r in rows], lanes.prefs_service.load("u_local"), now)
+    assert (body["hiddenAgents"], body["hiddenWaiting"], body["stalePinned"]) == (full[1], full[2], full[3])
+    assert body["hiddenWaiting"] == 3
+
+
+def test_pinned_lane_with_all_live_dropped_is_not_stale(client, monkeypatch):
+    live = [{"runId": f"p{i}", "label": "pin", "startTs": _at(1) + timedelta(seconds=i)} for i in range(10)]
+    live += [{"runId": f"n{i}", "label": "noise", "startTs": _at(2) + timedelta(seconds=i)} for i in range(lane_cap.MAX_LIVE)]
+    _fake_live(monkeypatch, live)
+    assert client.put("/api/core/lanes/prefs/agent", json={"agent": "cc", "label": "pin", "pinned": True}).status_code == 200
+    body = _get(client)
+    assert not any(a["label"] == "pin" for a in body["agents"]) and body["stalePinned"] == []
+
+
+def test_live_counts_against_total_ceiling(client, monkeypatch):
+    monkeypatch.setattr(lane_cap, "MAX_RUNS_TOTAL", 5)
+    _fake_live(monkeypatch, [{"runId": f"L{i}", "label": "lv", "startTs": _at(20) + timedelta(seconds=i)} for i in range(3)])
+    _flood("A", 4, _at(8))
+    body = _get(client)
+    assert len(body["agents"]) == 5 and sum(a["endAt"] is None for a in body["agents"]) == 3
+    assert [(d["label"], d["runs"]) for d in body["dropped"]] == [("A", 2)]
