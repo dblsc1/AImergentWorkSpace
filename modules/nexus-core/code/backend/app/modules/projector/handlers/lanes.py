@@ -108,6 +108,6 @@ def handle_reassign(envelope: dict) -> None:
     repo.reassign_lane(envelope["user"], applied_key(session), subject.get("task"), subject.get("project"), seq)
 
 
-def read_lanes(user: str, kind: str, start: datetime, end: datetime, limit: int) -> list[dict]:
-    """views 的指定读路径（v2.4 ``views/lanes``）。"""
-    return repo.read_lanes(user, kind, start, end, limit)
+def read_lanes(user: str, kind: str, start: datetime, end: datetime, limit: int, **kw) -> list[dict]:
+    """views 的指定读路径（v2.4 ``views/lanes``）；``fields`` / ``run_ids`` 见 ``repo.read_lanes``。"""
+    return repo.read_lanes(user, kind, start, end, limit, **kw)

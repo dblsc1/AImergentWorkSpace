@@ -24,6 +24,8 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from pymongo.errors import DuplicateKeyError
 
 from ...repo import get_db
@@ -307,10 +309,20 @@ def reassign_lane(user: str, key: str, task_id: str | None, project_id: str | No
     return result.modified_count > 0 or result.upserted_id is not None
 
 
-def read_lanes(user: str, kind: str, start, end, limit: int) -> list[dict]:
-    """与 [start, end) 有重叠的区间，最新（startAt 大）的在前，至多 ``limit`` 条。"""
+def read_lanes(user: str, kind: str, start, end, limit: int, *, fields: tuple | None = None,
+               run_ids: list | None = None) -> list[dict]:
+    """与 [start, end) 有重叠的区间，最新（startAt 大）的在前，至多 ``limit`` 条。
+
+    ``fields`` 只取这几列（给「先轻读、再按 runId 取全文」用）；``run_ids`` 只取这些运行。
+    run 的 endAt = startAt + 时长 ≤ 31 天（handler 拦坏载荷），所以多一个 startAt 下界：索引
+    ``user_kind_start`` 只扫 [start-31d, end) 这一段，不会为凑不够 limit 而扫整段历史。"""
     query = {"user": user, "kind": kind, "startAt": {"$lt": end}, "endAt": {"$gt": start}}
-    return list(_lanes_col().find(query, {"_id": 0}).sort("startAt", -1).limit(limit))
+    if kind == "run":
+        query["startAt"]["$gt"] = start - timedelta(days=31)
+    if run_ids is not None:
+        query["runId"] = {"$in": run_ids}
+    proj = {"_id": 0} if fields is None else {"_id": 0, **{f: 1 for f in fields}}
+    return list(_lanes_col().find(query, proj).sort("startAt", -1).limit(limit))
 
 
 def clear_lanes() -> None:
