@@ -142,7 +142,10 @@ def respond(path, q, tenant):
                      "agents": [{"agent": "claude-code", "seconds": 9000, "runs": 4}],
                      "tasks": [{"projectId": "p_3c", "taskId": None, "seconds": 9000, "runs": 4}],
                      "open": [{"runId": "run_9", "agent": "codex", "projectId": "p_3c", "taskId": "t_a1",
-                               "startedAt": "2026-09-28T10:00:00+08:00", "elapsedSeconds": 1200}]}
+                               "startedAt": "2026-09-28T10:00:00+08:00", "elapsedSeconds": 1200,
+                               "attentionSeconds": 95},
+                              {"runId": "run_old", "agent": "codex", "projectId": "p_3c", "taskId": None,   # 老后端的形状
+                               "startedAt": "2026-09-28T10:05:00+08:00", "elapsedSeconds": 900}]}
     if path == "/api/core/activity/suggestions/history":
         return 200, HISTORY if tenant != "u_alice" else {"items": [], "collections": [], "rejected": []}
     if path == "/api/core/activity/suggestions/matches":
@@ -477,8 +480,8 @@ FOCUS = {
         "auto": {"taskId": "t_a1", "projectId": "p_3c", "taskName": "写提示词", "projectName": "garden",
                  "since": _since(300), "app": "code", "title": "plot.gd", "source": "rules", "key": "wk_1"},
         "needsChoice": None,
-        "focus": {"state": "present", "app": "code", "title": "plot.gd", "since": _since(540), "projectId": "p_3c",
-                  "projectName": "garden", "taskId": "t_a1", "taskName": "写提示词", "source": "rules"}},
+        "focus": {"state": "present", "app": "code", "title": "plot.gd", "since": _since(540), "dwellSeconds": 1500,
+                  "projectId": "p_3c", "projectName": "garden", "taskId": "t_a1", "taskName": "写提示词", "source": "rules"}},
     "u_focus_project": {
         "auto": None,
         "needsChoice": {"key": "wk_2", "app": "kitty", "title": "长" * 200, "since": _since(90)},
@@ -497,7 +500,8 @@ def test_get_current_timer_carries_the_server_computed_focus(servers):
     f, auto = r["focus"], r["auto"]
     assert 535 <= f.pop("elapsedSeconds") <= 600 and 295 <= auto.pop("elapsedSeconds") <= 360
     assert f == {"state": "present", "app": "code", "title": "plot.gd", "since": FOCUS["u_focus_task"]["focus"]["since"],
-                 "projectId": "p_3c", "taskId": "t_a1", "path": "学习 / garden / 写提示词", "source": "rules"}
+                 "projectId": "p_3c", "taskId": "t_a1", "path": "学习 / garden / 写提示词", "source": "rules",
+                 "dwellSeconds": 1500}  # v1.11：近 2 小时在这个窗口上的累计（nexus-core v2.17）
     assert auto == {"projectId": "p_3c", "taskId": "t_a1", "path": "学习 / garden / 写提示词", "source": "rules",
                     "since": FOCUS["u_focus_task"]["auto"]["since"]}
     assert r["running"] is False and r["needsChoice"] is None and r["taskId"] is None
@@ -506,6 +510,7 @@ def test_get_current_timer_carries_the_server_computed_focus(servers):
     f = r["focus"]
     assert (f["projectId"], f["taskId"], f["path"], f["source"]) == ("p_3c", None, "学习 / garden", "agent-session")
     assert f["title"] == "长" * 79 + "…" and r["auto"] is None
+    assert f["dwellSeconds"] is None  # 老后端没有这个键
     assert r["needsChoice"] == {"app": "kitty", "title": "长" * 79 + "…",
                                 "since": FOCUS["u_focus_project"]["needsChoice"]["since"]}
 
@@ -734,7 +739,9 @@ def test_get_agent_time(servers):
     r = ok(servers, "get_agent_time", {"fromDate": "2026-09-28", "toDate": "2026-09-28"})
     assert r["tasks"] == [{"projectId": "p_3c", "taskId": None, "path": "学习 / garden", "seconds": 9000, "runs": 4}]
     assert r["open"] == [{"runId": "run_9", "agent": "codex", "taskId": "t_a1", "path": "学习 / garden / 写提示词",
-                          "startedAt": "2026-09-28T10:00:00+08:00", "elapsedSeconds": 1200}]
+                          "startedAt": "2026-09-28T10:00:00+08:00", "elapsedSeconds": 1200, "attentionSeconds": 95},
+                         {"runId": "run_old", "agent": "codex", "taskId": None, "path": "学习 / garden",
+                          "startedAt": "2026-09-28T10:05:00+08:00", "elapsedSeconds": 900, "attentionSeconds": None}]
     assert r["truncated"] is False and r["totalSeconds"] == 9000
 
 
