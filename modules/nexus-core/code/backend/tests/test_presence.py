@@ -1,7 +1,7 @@
 """在场心跳 + attend 连线（契约 v2.4「在场心跳」「连线」两节）。
 
 活状态、只留 2 小时、写入时清理、每设备 500 段、每租户 20 台设备、租户隔离、不进导出；
-心跳标题（归一化后）等于在跑运行的会话名记 attend（45 秒内延长）。v2.17 带 spans 的心跳见 test_attention.py。
+心跳标题包含在跑运行的 match 记 attend（45 秒内延长）。v2.17 带 spans 的心跳见 test_attention.py。
 """
 
 from __future__ import annotations
@@ -154,24 +154,26 @@ def _inter(run_id):
 
 
 def test_attend_created_extended_and_split(client, clock):
-    """老检测程序（不带 spans）：标题归一化后**等于**会话名才算在看它（v2.17：与 v2.13 同一条规则，不再是子串）。"""
+    """老检测程序（不带 spans）：仍是 v2.4 的规则——标题不分大小写**包含**运行的 match，命中几条记几条
+    （v2.17.1：相等规则只管带 spans 的心跳，见 test_attention.py）。"""
     hit = _start(client, match="Garden")
-    part = _start(client, match="plot.gd")  # 只是标题的一部分：不算（v2.17 之前算）
-    none = _start(client)  # 没给 match：永远没有 attend
+    both = _start(client, match="plot.gd")
+    none = _start(client, label="plot.gd — garden")  # 没给 match：老规则下永远没有 attend（label 不认）
     miss = _start(client, match="kitchen")
     for sec in (0, 30):
         clock(sec)
-        _beat(client, app="ptyxis", title="✳ GARDEN")  # 不分大小写、开头的状态符号不算
+        _beat(client, title="plot.gd — GARDEN — VS Code")  # 不分大小写
     clock(40)
-    _beat(client, app="ptyxis", title="garden", afk=True)  # 离开：不算
+    _beat(client, title="plot.gd — garden", afk=True)  # 离开：不算
     clock(100)  # 距上次 until 70s：新开一条
-    _beat(client, app="ptyxis", title="garden")
-    clock(110)
-    _beat(client)  # plot.gd — garden：编辑器的窗口，不是会话
+    _beat(client)
     iso = lambda s: _t(s).isoformat()  # noqa: E731
-    assert _inter(hit) == [{"kind": "attend", "at": iso(0), "until": iso(30)},
-                           {"kind": "attend", "at": iso(100), "until": iso(100)}]
-    assert _inter(part) == [] and _inter(none) == [] and _inter(miss) == []
+    expected = [{"kind": "attend", "at": iso(0), "until": iso(30)},
+                {"kind": "attend", "at": iso(100), "until": iso(100)}]
+    assert _inter(hit) == expected and _inter(both) == expected
+    assert _inter(none) == [] and _inter(miss) == []
+    spans = _db()["activity_presence"].find_one({"deviceId": "dev_1"})["spans"]
+    assert not any("runId" in s for s in spans), "同时包含两条运行的 match：分不清，时间线上不写 runId"
 
 
 def test_attend_tenant_isolated_and_capped(client, clock, monkeypatch):

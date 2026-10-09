@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Request
 from pydantic import (
+    AfterValidator,
     AwareDatetime,
     BaseModel,
     BeforeValidator,
@@ -57,11 +58,16 @@ _Moment = Annotated[AwareDatetime, BeforeValidator(_iso_text)]  # 带偏移的 I
 _SLACK = timedelta(seconds=2)  # 段的首尾按毫秒取整、当前窗口可能多给一秒：这点误差不算重叠 / 超前
 
 
+#: app / title：不超过 16 KiB 码点（再大是乱发的，422）；不超过 1024 的原样收，超过的截断（presence.clip 再按 128 / 512 取）。
+#: 真有长标题：GNOME Ptyxis 把整条内联 python 命令放进标题，拒掉就丢了合法的心跳。
+_Text = Annotated[StrictStr, Field(max_length=16 * 1024), AfterValidator(lambda v: v[:1024])]
+
+
 class Span(BaseModel):
     """v2.17：人在一个窗口上连续待的一段。app / title 同顶层（超长截断）；guess 同顶层的 guess。"""
 
-    app: StrictStr
-    title: StrictStr
+    app: _Text
+    title: _Text
     from_: _Moment = Field(alias="from")
     seconds: Annotated[StrictFloat | StrictInt, Field(gt=0, le=presence.SPAN_LOOKBACK.total_seconds())]
     guess: Guess | None = None
@@ -71,8 +77,8 @@ class PresenceIn(BaseModel):
     """形状以 ai-detector 契约「在场心跳」节为准。app/title 超长不拒、截断（service 里）。"""
 
     deviceId: str = Field(pattern=r"^[A-Za-z0-9_.-]{1,64}$")  # 同活动建议
-    app: StrictStr
-    title: StrictStr
+    app: _Text
+    title: _Text
     afk: StrictBool
     guess: Guess | None = None
     #: v2.17：上一拍以来依次在过的窗口（串行）。sentAt = 设备发这一拍的时刻，只用来把各段换到服务端的时钟上
@@ -86,13 +92,17 @@ class PresenceIn(BaseModel):
         if self.sentAt is None:
             raise ValueError("带 spans 必须带 sentAt")
         try:
-            end = self.sentAt - presence.SPAN_LOOKBACK
+            # v2.17.1：**每一段**都得在 [sentAt − SPAN_LOOKBACK, sentAt] 里（容 _SLACK），起点不倒退、
+            # 与上一段的重叠不超过 _SLACK——只看头尾的话，中间的段能一步步漂到界外
+            oldest, latest = self.sentAt - presence.SPAN_LOOKBACK - _SLACK, self.sentAt + _SLACK
+            prev_from = prev_end = oldest
             for span in self.spans:
-                if span.from_ < end - _SLACK:
-                    raise ValueError(f"spans 必须按时间排、互不重叠，且不早于 sentAt 之前 {presence.SPAN_LOOKBACK}")
                 end = span.from_ + timedelta(seconds=span.seconds)
-            if end > self.sentAt + _SLACK:
-                raise ValueError("spans 不能晚于 sentAt")
+                if span.from_ < prev_from or span.from_ < prev_end - _SLACK:
+                    raise ValueError(f"spans 必须按时间排、互不重叠，且不早于 sentAt 之前 {presence.SPAN_LOOKBACK}")
+                if end > latest:
+                    raise ValueError("spans 不能晚于 sentAt")
+                prev_from, prev_end = span.from_, end
         except OverflowError:  # 0001 / 9999 年附近的时刻加减就越界：同样是 422，不是 500
             raise ValueError("时刻越界") from None
         return self
