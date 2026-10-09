@@ -7,6 +7,10 @@
  * 缺省「最近 3 小时」实时窗口（读今天，跨零点读昨天 + 今天，本地按响应的 now 裁），可切「今天」。
  * 画图交给共享的 <前缀>__cockpit/lanes.js（顶栏芯片的精简预览用的是同一份，配色、段的推法一致）。
  *
+ * - 泳道偏好（nexus-core v2.22，ring 契约同名条）：每张代理卡有 ⋯ 菜单（置顶 / 不再显示 / 上移 / 下移）、在跑的卡能长按拖动换位，
+ *   区尾有可折叠的「已隐藏 (N)」可恢复。偏好在服务端（PUT api/core/lanes/prefs/…），排序也是服务端算的（agents[].rank）；
+ *   这里先乐观地画（lanes.js 的 optimistic()），请求失败就退回原来那份并说一声。菜单开着 / 正在拖时轮询只攒着、收尾再画。
+ *   后端早于 v2.22（响应没有 hiddenAgents）就没有这些入口。
  * - 约 15 秒轮询，页面不可见时不拉；404（后端早于 v2.4）或共享渲染件加载失败 → 整块不出现。
  * - 画的是标记，不是时长：不出现任何合计。label/agent/detail/app/title 一律 textContent（lanes.js 保证）。
  * - 面板标题的红绿灯读的是同一份响应里在跑运行的当前相位（与 views/current 的 agents[].phase 同源）。
@@ -21,7 +25,9 @@
   "use strict";
   var BASE = (typeof self !== "undefined" && self.HONEYCOMB_BASE) || "/";
   var API = BASE + "api/core/views/lanes";
+  var PREFS = BASE + "api/core/lanes/prefs";
   var POLL_MS = 15000;
+  var NOTICE_MS = 4000;
   var HOUR = 3600000, DAY = 86400000;
 
   var panel = document.getElementById("lanes-panel");
@@ -35,6 +41,8 @@
   var gone = false;    // 404：后端没有这个端点，不再拉
   var seq = 0;
   var lead = null;     // 「你在 X，记到哪？」那张卡（没有为 null）
+  var notice = "";     // 偏好动作失败时在标题旁说一声（NOTICE_MS 后消失）
+  var dirty = false;   // 菜单 / 拖动期间攒下的轮询结果，收尾时再画
 
   function closeLead() {
     lead = null;
@@ -55,9 +63,41 @@
     load();
   }
 
+  // 偏好动作：先画乐观的，再发请求；失败退回原来那份。成功后重拉一次拿服务端算的 rank。
+  async function pref(op, method, path, body) {
+    var before = last, guess = window.HoneycombLanes.optimistic(last, op);
+    last = guess;
+    seq += 1;                                                  // 还在路上的旧轮询结果作废，别把乐观的画面冲回去
+    draw();
+    var ok = false;
+    try {
+      var res = await fetch(PREFS + path, {
+        method: method, credentials: "same-origin",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : undefined
+      });
+      ok = res.ok;
+    } catch (e) { ok = false; }
+    if (!ok) {
+      if (last === guess) last = before;                       // 期间没被新结果换掉才退回
+      notice = "没有成功，已恢复";
+      setTimeout(function () { notice = ""; draw(); }, NOTICE_MS);
+      draw();
+    }
+    load();
+  }
+  var prefs = {
+    onPin: function (r, on) { pref({ type: "pin", agent: r.agent, label: r.label, on: on }, "PUT", "/agent", { agent: r.agent || "", label: r.label || "", pinned: on }); },
+    onHide: function (r) { pref({ type: "hide", agent: r.agent, label: r.label }, "PUT", "/agent", { agent: r.agent || "", label: r.label || "", hidden: true }); },
+    onRestore: function (h) { pref({ type: "restore", agent: h.agent, label: h.label }, "PUT", "/agent", { agent: h.agent, label: h.label || "", hidden: false }); },
+    onMove: function (r, index) { pref({ type: "move", runId: r.runId, index: index }, "PUT", "/order", { runId: r.runId, index: index }); }
+  };
+  view.addEventListener("hcl-idle", function () { if (dirty) { dirty = false; draw(); } });
+
   function draw() {
     var L = window.HoneycombLanes;
     if (!last || !L) return;
+    if (view.hclBusy) { dirty = true; return; }               // 菜单开着 / 正在拖：别把手里的东西画没了
     var human = last.human || {};
     if (human.running) lead = null;                         // 手动计时永远优先
     else if (!lead && human.needsChoice && window.RingChoice) lead = window.RingChoice.card(human.needsChoice, closeLead);
@@ -72,6 +112,7 @@
     }
     var infos = L.render(view, last, {
       viewStart: v0, viewEnd: v1, presence: true, cards: true, top: 5, lead: lead, onAutoWrong: autoWrong,
+      prefs: Array.isArray(last.hiddenAgents) ? prefs : null,   // 老后端（早于 v2.22）没有这个键：不给入口
       focusFallback: document.getElementById("lanes-title"),   // 「还有 N 个」重画后没了时焦点落这里
       more: last.truncated ? "还有更多（只列出了最新的一部分）" : ""
     });
@@ -87,6 +128,7 @@
     if (live.waiting) bits.push(live.waiting + " 个在等你");
     if (live.working) bits.push(live.working + " 个在干活");
     if (live.error) bits.push(live.error + " 个出错");
+    if (notice) bits.push(notice);
     stateEl.textContent = bits.join(" · ");
   }
 

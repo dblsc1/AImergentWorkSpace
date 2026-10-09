@@ -356,6 +356,58 @@
 
   function label(g) { return g.app + (g.title ? " · " + g.title : ""); }
 
+  // 「忽略并记住」（nexus-core v2.22，ignores.js）：点开后选范围——整个程序，或只是标题含这段话的窗口（集合：这些窗口各一条）。
+  // 服务端存规则、顺手清掉已在待确认里的匹配项；以后匹配的窗口不再记录。后端没有这个端点（ignores.js 探过）就不出现。
+  var TITLE_CHOICE_MAX = 24;
+  function ignoreControl(wins, whole) {
+    var I = window.assistantIgnores;
+    if (!I || I.supported === false) return null;
+    var wrap = el("span", "suggest-ignore");
+    var btn = el("button", "btn btn-ghost suggest-ignore-btn", "忽略并记住");
+    btn.type = "button";
+    btn.title = "以后这样的窗口不再记录，也不再出现在这里";
+    wrap.appendChild(btn);
+    function rule(w, withTitle) {
+      var t = withTitle ? normTitle(w.title) : "";
+      return t ? { app: w.app, titleContains: t } : { app: w.app };
+    }
+    btn.addEventListener("click", function () {
+      btn.hidden = true;
+      var box = el("span", "suggest-ignore-choose");
+      var first = wins[0], nt = normTitle(first.title);
+      var options = whole ? [["忽略这 " + wins.length + " 个窗口", wins.map(function (w) { return rule(w, true); })]]
+        : [["忽略 " + first.app + " 的所有窗口", [rule(first, false)]]]
+          .concat(nt ? [["只忽略标题含“" + (nt.length > TITLE_CHOICE_MAX ? nt.slice(0, TITLE_CHOICE_MAX) + "…" : nt) + "”的", [rule(first, true)]]] : []);
+      var buttons = options.map(function (o) {
+        var b = el("button", "btn btn-ghost suggest-ignore-opt", o[0]);
+        b.type = "button";
+        b.addEventListener("click", async function () {
+          buttons.forEach(function (x) { x.disabled = true; });
+          var seen = {}, removed = 0, failed = "";
+          for (var i = 0; i < o[1].length; i++) {
+            var key = JSON.stringify(o[1][i]);
+            if (seen[key]) continue;
+            seen[key] = true;
+            var r = await I.add(o[1][i].app, o[1][i].titleContains);
+            if (!r.ok) { failed = r.detail || "请稍后再试"; break; }
+            removed += r.removed || 0;
+          }
+          showMessage(failed ? "没有记住：" + failed : "已忽略并记住（清掉 " + removed + " 条待确认）：以后这样的窗口不再记录。在下面的「被忽略任务」里可以取消。", Boolean(failed));
+          await load();
+        });
+        box.appendChild(b);
+        return b;
+      });
+      var cancel = el("button", "btn btn-ghost suggest-ignore-cancel", "取消");
+      cancel.type = "button";
+      cancel.addEventListener("click", function () { box.remove(); btn.hidden = false; btn.focus(); });
+      box.appendChild(cancel);
+      wrap.appendChild(box);
+      buttons[0].focus();
+    });
+    return wrap;
+  }
+
   // 一行 = 一个窗口（同 app、同 title 的几段）。只有一段时与原来的一条一样。
   function renderGroup(g) {
     var n = g.items.length;
@@ -453,6 +505,8 @@
     });
     row.appendChild(ok);
     row.appendChild(no);
+    var ignoreEl = ignoreControl([{ app: g.app, title: g.title }], false);
+    if (ignoreEl) row.appendChild(ignoreEl);
     li.appendChild(row);
     return li;
   }
@@ -482,6 +536,8 @@
     btn.addEventListener("click", function () { act(collJobs(c), "confirm", true); });
     bar.appendChild(sel);
     bar.appendChild(btn);
+    var ignoreAll = ignoreControl(c.groups.map(function (g) { return { app: g.app, title: g.title }; }), true);
+    if (ignoreAll) bar.appendChild(ignoreAll);
     sec.appendChild(bar);
     sec.appendChild(el("p", "suggest-coll-plan"));
     var det = el("details", "suggest-coll-rows");

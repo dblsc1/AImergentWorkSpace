@@ -76,6 +76,16 @@
       <p class="suggest-empty" id="suggest-empty">没有待确认的活动。</p>
       <div class="suggest-list" id="suggest-list"></div>
       <p class="suggest-more" id="suggest-more" hidden></p>
+      <!-- 「被忽略任务」（nexus-core v2.22「忽略并记住」，ignores.js）：人在上面说过「忽略并记住」的窗口。
+           一条都没有、或后端没有这个端点时保持 hidden。 -->
+      <div class="ign-panel" id="ignores-panel" hidden>
+        <details class="ign-fold">
+          <summary id="ign-title">被忽略任务 <span class="suggest-count mono" id="ignores-count"></span></summary>
+          <p class="suggest-sub">这些窗口不当作工作：不产生建议、不成为计时页的焦点，也不让泳道里的「你在看」变长。服务端只记规则和计数，不存被忽略窗口的标题。</p>
+          <p class="suggest-message" id="ignores-message" role="status" hidden></p>
+          <ul class="unc-list" id="ignores-list"></ul>
+        </details>
+      </div>
     </section>
 
     <!-- 「待分类」（nexus-core v2.11 改挂未分类时间，unclassified.js）：还记在各项目「未分类」里的每一段，挑任务归进去。
@@ -371,6 +381,7 @@
 
   <script src="reports.js"></script>
   <script src="chat.js"></script>
+  <script src="ignores.js"></script>
   <script src="suggestions.js"></script>
   <script src="unclassified.js"></script>
   <script src="auto.js"></script>
