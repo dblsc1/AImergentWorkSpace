@@ -122,12 +122,14 @@
   function runInfo(r, v0, v1, nowMs) {
     var p = sortedPhases(r), lastP = p.length ? p[p.length - 1] : null;
     var ph = lastP && PHASE_WORD[lastP.phase] ? lastP.phase : 'working';
-    var segs = segments(r, nowMs, p), sum = 0;
+    // 失联（nexus-core v2.18）：在跑、会发心跳、30 分钟没信号。段止于最后一次信号，不再往「现在」画
+    var lost = !r.endAt && !!r.lost;
+    var segs = segments(r, lost ? ms(r.lastSeenAt) || nowMs : nowMs, p), sum = 0;
     segs.forEach(function (g) {
       if (g.phase !== 'idle') { sum += Math.max(0, Math.min(g.e, v1) - Math.max(g.s, v0)); }
     });
-    return { r: r, ph: ph, segs: segs, act: sum / 1000, last: (lastP ? ms(lastP.at) : ms(r.startAt)) || 0,
-      tier: r.endAt ? 4 : isWaiting(ph) ? 0 : ph === 'working' ? 1 : ph === 'error' ? 2 : 3 };
+    return { r: r, ph: ph, lost: lost, segs: segs, act: sum / 1000, last: (lastP ? ms(lastP.at) : ms(r.startAt)) || 0,
+      tier: r.endAt ? 4 : lost ? 3.5 : isWaiting(ph) ? 0 : ph === 'working' ? 1 : ph === 'error' ? 2 : 3 };
   }
 
   function activeSeconds(run, v0, v1, nowMs) { return runInfo(run, v0, v1, nowMs).act; }
@@ -208,6 +210,7 @@
   function pickPreview(agents, v0, max) {
     var tier = function (r) {
       if (r.endAt) { return 3; }
+      if (r.lost) { return 2.5; }                   // 失联：排在在跑的之后、已结束的之前
       var ph = currentPhase(r);
       return ph === 'waiting_input' || ph === 'waiting_permission' ? 0 : ph === 'working' ? 1 : 2;
     };
@@ -500,23 +503,25 @@
     }
     var rowOf = {};
     infos.forEach(function (info, i) {
-      var r = info.r, live = !r.endAt;
+      var r = info.r, live = !r.endAt && !info.lost;   // 失联的不按「在跑」画：灰、不闪、不算在等你
       var ph = info.ph;
+      var word = info.lost ? '失联' : live ? PHASE_WORD[ph] : r.outcome === 'lost' ? '失联结束' : '已结束';
       var sub = r.agent && r.label ? r.agent : (r.tool || '');
       if (r.overdue) { sub = '超时未收'; }
       var track = addRow(i < top ? rows : foldList, 'hcl-row-agent', laneName(r), sub,
         live && !cards ? PHASE_CLASS[ph] : null);
       var card = track.parentNode;
       card.setAttribute('data-run-id', r.runId || '');
-      card.setAttribute('data-phase', live ? ph : 'ended');
+      card.setAttribute('data-phase', live ? ph : info.lost ? 'lost' : 'ended');
       rowOf[r.runId] = cards ? track : i + 1;
       if (cards) {
         var head = track.previousSibling;
-        pill(head, live ? 'hcl-ph-' + PHASE_CLASS[ph] : 'is-ended', live ? PHASE_WORD[ph] : '已结束');
+        pill(head, live ? 'hcl-ph-' + PHASE_CLASS[ph] : 'is-ended', word);
         if (live && isWaiting(ph)) { card.classList.add('is-needs-you'); }
         var act = Math.round(info.act / 60);
         head.appendChild(el('span', 'hcl-stat', '活跃 ' + (act < 1 ? '不到 1' : act) + ' 分 · ' +
-          (live ? '最近 ' + when(info.last) : when(ms(r.endAt)) + ' 结束')));
+          (live ? '最近 ' + when(info.last) : info.lost ? '最后信号 ' + when(ms(r.lastSeenAt))
+            : when(ms(r.endAt)) + ' 结束')));
       }
       info.segs.forEach(function (g) {
         if (!inView(g.s, g.e)) { return; }
@@ -528,7 +533,7 @@
           '（' + dur(g.s, g.e) + '）');
       });
       nowMark(track);
-      sayLines.push(laneName(r) + '：' + (live ? PHASE_WORD[ph] : '已结束') + (r.overdue ? '（超时未收）' : ''));
+      sayLines.push(laneName(r) + '：' + word + (r.overdue ? '（超时未收）' : ''));
     });
 
     // 连线：reply 实线竖线、attend 半透明竖带。列表式从人那条线落到该代理线；
