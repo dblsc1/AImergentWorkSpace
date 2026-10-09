@@ -280,7 +280,7 @@ def _create_rule_mid_flight(client, monkeypatch, module, name, **rule):
 def test_heartbeat_that_read_the_rules_before_the_rule_cannot_write_the_title_back(client, monkeypatch):
     from app.modules.activity import ignore  # noqa: PLC0415
 
-    _create_rule_mid_flight(client, monkeypatch, ignore, "mask_beat", app="chrome")
+    _create_rule_mid_flight(client, monkeypatch, ignore, "gate_beat", app="chrome")
     _beat(client, "chrome", PRIVATE_TITLE)
     assert len(client.get(IGN).json()["items"]) == 1
     assert _raw_has(PRIVATE_TITLE) == {}
@@ -289,7 +289,7 @@ def test_heartbeat_that_read_the_rules_before_the_rule_cannot_write_the_title_ba
 def test_upload_that_read_the_rules_before_the_rule_cannot_insert_the_title(client, monkeypatch):
     from app.modules.activity import ignore  # noqa: PLC0415
 
-    _create_rule_mid_flight(client, monkeypatch, ignore, "drop", app="chrome")
+    _create_rule_mid_flight(client, monkeypatch, ignore, "gate_incoming", app="chrome")
     _upload(client, [_seg(10, "chrome", PRIVATE_TITLE)])
     assert _raw_has(PRIVATE_TITLE) == {}
     assert _pending(client) == []
@@ -320,14 +320,14 @@ def test_unignore_racing_an_ingest_does_not_resurrect_or_store(client, monkeypat
     from app.modules.activity import ignore  # noqa: PLC0415
 
     rule = _ignore(client, "chrome")
-    real = ignore.drop
+    real = ignore.gate_incoming
 
     def drop_then_unignore(*args, **kwargs):
         out = real(*args, **kwargs)  # 这一批是在规则还在时过滤的
         assert client.delete(f"{IGN}/{rule['id']}").status_code == 204
         return out
 
-    monkeypatch.setattr(ignore, "drop", drop_then_unignore)
+    monkeypatch.setattr(ignore, "gate_incoming", drop_then_unignore)
     assert _upload(client, [_seg(10, "chrome", PRIVATE_TITLE)])["accepted"] == 0
     assert _raw_has(PRIVATE_TITLE) == {}
 

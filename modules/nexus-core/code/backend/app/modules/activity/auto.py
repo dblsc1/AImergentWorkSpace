@@ -176,7 +176,7 @@ def state(user: str, now: datetime, timer_running: bool, asks: Any, presence_doc
 def heartbeat(device_id: str, app: str, title: str, afk: bool, guess: dict | None,
               spans: list[dict] | None = None, sent_at: datetime | None = None) -> dict:
     # v2.22：命中「忽略并记住」的窗口换成「没有窗口」再存（人仍在电脑前），也不续它的临时选择
-    app, title, guess, spans, ignored = ignore.mask_beat(current_tenant(), app, title, guess, spans)
+    app, title, guess, spans, ignored = ignore.gate_beat(current_tenant(), app, title, guess, spans)
     out = presence.heartbeat(device_id, app, title, afk, guess, spans, sent_at)
     if not afk and not ignored:
         now = _now()
@@ -190,9 +190,10 @@ def heartbeat(device_id: str, app: str, title: str, afk: bool, guess: dict | Non
 def _find(user: str, key: str) -> tuple[dict, str]:
     """在场记录（最近 2 小时）里这个窗口最近的一段与报它的设备；没有 → 404。写规则用的程序名 / 标题从这里取，不信请求。"""
     best = None
+    rules_ = ignore.rules(user)
     for doc in ignore.presence_docs(user):
         for span in reversed(doc.get("spans") or []):
-            if not span["afk"] and window_key(span["app"], span["title"]) == key:
+            if not span["afk"] and window_key(span["app"], span["title"]) == key and not ignore.find(rules_, span["app"], span["title"]):
                 if best is None or span["to"] > best[0]["to"]:
                     best = (span, doc["deviceId"])
                 break

@@ -144,8 +144,8 @@ def _due(rule: dict, now: datetime) -> bool:
     return last is None or now - last.replace(tzinfo=last.tzinfo or timezone.utc) >= PURGE_BACKOFF
 
 
-def _attempt(user: str, rule: dict) -> None:
-    """清一次；任何错都不往外抛（调用方是写入 / 读路径，别的窗口的数据不能因此 5xx）。失败记下时刻与次数。"""
+def purge_leftovers(user: str, rule: dict) -> None:
+    """（B）清理**规则存在之前**就存下的残留：尽力而为，**从不往调用方抛**（调用方是写入 / 读路径，别的窗口的数据不能因此 5xx）；失败记下时刻与次数。"""
     try:
         purge(user, rule)
     except Exception as exc:  # noqa: BLE001
@@ -161,7 +161,7 @@ def retry_pending(user: str | None = None) -> None:
     now = _now()
     for r in rules(user):
         if _due(r, now):
-            _attempt(user, r)
+            purge_leftovers(user, r)
 
 
 def _unpurged(user: str) -> list[dict]:
@@ -196,25 +196,33 @@ def visible(user: str, items: list[dict]) -> list[dict]:
 
 
 def guarded(fn):
-    """写入口的包装：开始时记下有哪些规则（id + 创建时刻：删了又重建的同一条不算「已知」），写完再看——期间新出现的规则
-    （读了旧规则的写入者，写在建规则的清理**之后**）就把它自己写下的再清一遍。规则先存、再清；写入者要么在写入时就看到规则，
-    要么被这里补清。清理是幂等的。
+    """写入口的包装。**不变式：被守卫的写入永远不会把命中任何已存规则的数据存下来，不管清理（purge）处在什么状态。**
+    两个部分，故意分开：
 
-    失败的分工：**查规则出错 = 这次写入整个失败**（开头那一读，瞬时错误，什么都没存）；**清理残留出错 ≠ 写入失败**——别的窗口的上传 / 心跳照常，
-    被忽略窗口的入口过滤（``drop`` / ``mask_beat``）不依赖清理，所以它的数据照样存不进去；失败记在规则上，按 ``PURGE_BACKOFF`` 退避重试、
-    ``PURGE_GIVE_UP`` 次后标 ``purgeFailed``，读路径遮住残留。"""
+    （A）写入闸门——**fail-closed，强度不因清理失败而降低**：写入开头现读规则（读不到 → 这次写入失败，什么都没存），
+    进来的数据先由 ``gate_incoming`` / ``gate_beat`` 整个丢掉 / 抹掉（每个字段、每条路径：段的 app / title、心跳顶层的 app / title / guess 与每一个 span；
+    拿不准的一项按「被忽略」处理，不存）。写完后再现读一次规则：写的当中**新出现**的规则（读了旧规则的写入者写在建规则的清理之后）
+    由这里**严格**清一遍（``purge``，出错就让这次请求失败）——补不完就不能说这次写入是干净的。
+
+    （B）残留清理——唯一被推迟的部分：规则存在**之前**就存下的旧数据，由 ``purge_leftovers`` 尽力清，失败不拖垮别的窗口的写入；
+    记在规则上（``purgeTries`` / ``purgeLastTry``），按 ``PURGE_BACKOFF`` 退避、``PURGE_GIVE_UP`` 次后标 ``purgeFailed``，
+    读路径另外遮住残留。记的是（规则 id, 创建时刻），所以「删了又同样建回来」不算已知规则。"""
     @functools.wraps(fn)
     def run(*args, **kwargs):
         user = current_tenant()
-        before = {(r["id"], r["createdAt"]) for r in rules(user) if r.get("purged", True)}
+        before = {(r["id"], r["createdAt"]) for r in rules(user)}
         try:
             return fn(*args, **kwargs)
         finally:
             now = _now()
             for r in rules(user):
-                if (r["id"], r["createdAt"]) not in before and (r.get("purgeLastTry") is None or _due(r, now)) \
-                        and not r.get("purgeFailed"):
-                    _attempt(user, r)
+                if (r["id"], r["createdAt"]) not in before:
+                    purge(user, r)  # （A）写的当中新出现的规则：严格
+                elif _due(r, now):
+                    try:
+                        purge_leftovers(user, r)  # （B）本来就有的规则的旧残留：尽力
+                    except Exception:  # noqa: BLE001  purge_leftovers 自己不抛；这里再兜一层，别的窗口的写入不能因它 5xx
+                        pass
     return run
 
 
@@ -223,16 +231,23 @@ def remove(rule_id_: str) -> None:
     ignore_repo.delete(current_tenant(), rule_id_)
 
 
-def drop(user: str, items: list, window) -> tuple[list, int]:
+def gate_incoming(user: str, items: list, window) -> tuple[list, int]:
     """上传：把命中忽略规则的项丢掉，计数器记上（一条 +1 段、+秒）。``window(item)`` = (app, title, 秒)。返回 (留下的, 丢了几个)。"""
     rules_ = rules(user)
     if not rules_:
         return items, 0
     kept, hits = [], {}
     for item in items:
-        app, title, seconds = window(item)
-        if (r := find(rules_, app, title)) is None:
+        try:
+            app, title, seconds = window(item)
+            r = find(rules_, app, title)
+        except Exception:  # noqa: BLE001  拿不准这一项是不是被忽略的窗口 → 当作是：丢，不存（宁可少记，不存下来）
+            r = {"id": None}
+            seconds = 0
+        if r is None:
             kept.append(item)
+        elif r["id"] is None:
+            continue
         else:
             n, s_ = hits.get(r["id"], (0, 0))
             hits[r["id"]] = (n + 1, s_ + seconds)
@@ -242,14 +257,20 @@ def drop(user: str, items: list, window) -> tuple[list, int]:
     return kept, len(items) - len(kept)
 
 
-def mask_beat(user: str, app: str, title: str, guess: dict | None, spans: list[dict] | None) -> tuple:
+def gate_beat(user: str, app: str, title: str, guess: dict | None, spans: list[dict] | None) -> tuple:
     """在场心跳：命中的窗口换成「没有窗口」（app / title 空、不带 guess）。返回 (app, title, guess, spans, 顶层是否命中)。
     人仍然在电脑前；空程序名是已有的「标题被隐私设置整个去掉了」那一种，自动跟踪 / 请人选 / 对会话都会略过它。"""
     rules_ = rules(user)
     if not rules_:
         return app, title, guess, spans, False
-    top = find(rules_, app, title) is not None
+    def ignored(a: str, t: str) -> bool:
+        try:
+            return find(rules_, a, t) is not None
+        except Exception:  # noqa: BLE001  拿不准 → 当作被忽略：整个窗口抹掉，不存
+            return True
+
+    top = ignored(app, title)
     if spans is not None:
         spans = [{**{k: v for k, v in sp.items() if k != "guess"}, "app": "", "title": ""}
-                 if find(rules_, sp["app"], sp["title"]) else sp for sp in spans]
+                 if ignored(sp["app"], sp["title"]) else sp for sp in spans]
     return ("", "", None, spans, True) if top else (app, title, guess, spans, False)

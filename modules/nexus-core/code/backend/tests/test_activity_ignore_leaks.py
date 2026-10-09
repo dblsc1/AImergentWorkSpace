@@ -157,7 +157,7 @@ def test_delete_and_recreate_during_an_upload_still_purges(client, monkeypatch):
     from app.modules.activity import ignore  # noqa: PLC0415
 
     rule = _ignore(client, "code", MARK)
-    real = ignore.drop
+    real = ignore.gate_incoming
 
     def delete_drop_recreate(*args, **kwargs):
         assert client.delete(f"{IGN}/{rule['id']}").status_code == 204
@@ -165,7 +165,7 @@ def test_delete_and_recreate_during_an_upload_still_purges(client, monkeypatch):
         _ignore(client, "code", MARK)  # 同一条规则（同 id）又建回来，清理发生在写入之前
         return out
 
-    monkeypatch.setattr(ignore, "drop", delete_drop_recreate)
+    monkeypatch.setattr(ignore, "gate_incoming", delete_drop_recreate)
     _upload(client, [_seg(10, "code", MARK)])
     assert _dump(MARK) <= {"activity_ignores"}
 
@@ -323,3 +323,42 @@ def test_claim_guard(client, clock, monkeypatch):  # noqa: F811
     monkeypatch.setattr(ask_repo, "claim", create_then_claim)
     assert client.post(f"{API}/activity/ai/claim").status_code == 200
     assert _dump(MARK) <= {"activity_ignores"}
+
+
+# ─────────────────────────────────────────── （A）写入闸门在残留清理永远失败时也不松
+
+def _span(title, ago, seconds, guess=True):
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    sp = {"app": "code", "title": title, "from": (now - timedelta(seconds=ago)).isoformat(), "seconds": seconds}
+    if guess:
+        sp["guess"] = {"projectId": "p_x", "confidence": 0.9, "classifier": "rules"}
+    return now, sp
+
+
+def test_write_gate_holds_while_the_leftover_purge_fails_permanently(client, world, clock, monkeypatch):  # noqa: F811
+    from app.modules.activity import ignore  # noqa: PLC0415
+
+    w = _waiting(client, clock, MARK)  # 规则之前就在场、被 AI 认领的窗口
+    _ignore(client, "code", MARK)
+    _db()["activity_ignores"].update_many({}, {"$set": {"purged": False}})  # 残留清理「永远没做完」
+    monkeypatch.setattr(ignore, "purge_leftovers", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("never works")))
+    # 上传：匹配的丢、不匹配的照常 2xx
+    assert _upload(client, [_seg(10, "code", MARK + " a"), _seg(20, "chrome", "别的")]) == {"accepted": 1, "duplicates": 0, "rejected": [], "ignored": 1}
+    # 心跳：顶层 + 每个 span（含 guess）都抹掉；不匹配的窗口照常 2xx
+    now, s1 = _span(MARK + " b", 30, 10)
+    _, s2 = _span("别的", 15, 10)
+    resp = client.post(f"{API}/activity/presence", json={"deviceId": DEV, "app": "code", "title": MARK + " c", "afk": False,
+                                                          "guess": {"projectId": "p_x", "confidence": 0.9, "classifier": "rules"},
+                                                          "sentAt": now.isoformat(), "spans": [s1, s2]})
+    assert resp.status_code == 200, resp.text
+    doc = _db()["activity_presence"].find_one({"deviceId": DEV})
+    assert (doc["app"], doc["title"]) == ("", "") and not doc.get("guess")
+    blank = [sp for sp in doc["spans"] if sp["app"] == ""]
+    assert blank and all(sp["title"] == "" and "guess" not in sp for sp in blank)
+    assert any(sp["title"] == "别的" for sp in doc["spans"])
+    # AI 回答：窗口已被忽略（问询也被清掉）→ 拒绝，什么都没写
+    out = client.post(f"{API}/activity/ai/suggest", json={"key": w["key"], "taskId": world["a"], "confidence": 0.9, "reason": "r"})
+    assert out.status_code in (404, 409)
+    assert _rules(client)["rules"] == []
+    assert _dump(MARK) <= DECLARED, _dump(MARK)
+    assert _dump(MARK) == {"activity_ignores"}
