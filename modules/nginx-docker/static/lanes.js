@@ -12,6 +12,7 @@
  *   activeSeconds(run, v0, v1, now)  运行在视窗里不空闲的秒数
  *   sortByActivity(agents, v0, v1, now)  计时页卡片的排序（档位：在等你 → 干活 → 出错 → 空闲 → 已结束；同档按活跃秒数、最近转入）
  *   recentRuns(agents, now)        计时页只留在跑的 + 结束不到 3 小时的运行（2026-10-08）
+ *   attentionSeconds(run, v0, v1)  人的注意力在这条运行上、落在视窗里的秒数（nexus-core v2.17 的 agents[].attention）
  *   humanStatus(human, now)        人此刻：在电脑前 / 离开 / 不在线（+ 在计时 / 前台程序；v2.14 + 自动跟踪 auto {text, since}；
  *                                  v2.16 + focus：共享件 focus.js 的 describe() 结果，auto 的字也出自它）
  *   render(root, data, opts)       画一张图；全部 textContent，不用 innerHTML
@@ -50,6 +51,13 @@
     if (m < 1) { return '不到 1 分'; }
     return m < 60 ? m + ' 分' : Math.floor(m / 60) + ' 小时' + (m % 60 ? ' ' + (m % 60) + ' 分' : '');
   };
+  // 短于一分钟的段说到秒（v2.17：在场段细到几秒一段）
+  var hms = function (t) { return hm(t) + ':' + pad2(new Date(t).getSeconds()); };
+  var brief = function (a, b) {
+    return b - a < MIN ? hms(a) + '–' + hms(b) + '（' + Math.max(1, Math.round((b - a) / 1000)) + ' 秒）'
+      : hm(a) + '–' + hm(b) + '（' + dur(a, b) + '）';
+  };
+  var mins = function (sec) { var m = Math.round(sec / 60); return (m < 1 ? '不到 1' : m) + ' 分'; };
   var el = function (tag, cls, text) {
     var n = document.createElement(tag);
     if (cls) { n.className = cls; }
@@ -126,8 +134,19 @@
     segs.forEach(function (g) {
       if (g.phase !== 'idle') { sum += Math.max(0, Math.min(g.e, v1) - Math.max(g.s, v0)); }
     });
-    return { r: r, ph: ph, segs: segs, act: sum / 1000, last: (lastP ? ms(lastP.at) : ms(r.startAt)) || 0,
+    return { r: r, ph: ph, segs: segs, act: sum / 1000, attn: attentionSeconds(r, v0, v1), last: (lastP ? ms(lastP.at) : ms(r.startAt)) || 0,
       tier: r.endAt ? 4 : isWaiting(ph) ? 0 : ph === 'working' ? 1 : ph === 'error' ? 2 : 3 };
+  }
+
+  // 人的注意力在这条运行上的秒数（裁到视窗）。服务端给的 attention 已合并、互不重叠，这里只裁、只加。
+  // 只是这一条运行自己的；人同一时刻只看一个窗口，所以各条运行的这个数加起来不会超过墙上的时间。
+  function attentionSeconds(run, v0, v1) {
+    var sum = 0;
+    (run.attention || []).forEach(function (a) {
+      var s = ms(a.from), e = ms(a.to);
+      if (s !== null && e !== null) { sum += Math.max(0, Math.min(e, v1) - Math.max(s, v0)); }
+    });
+    return sum / 1000;
   }
 
   function activeSeconds(run, v0, v1, nowMs) { return runInfo(run, v0, v1, nowMs).act; }
@@ -156,6 +175,7 @@
   // 有一段不是离开 → 在电脑前（detail = 程序 · 标题，服务端已脱敏）；都是离开 → 离开；没有 → 不在线。
   // 在计时（human.running）时 detail 写计时，优先于前台程序。
   var FRESH_MS = 90000, SKEW_MS = 60000;
+  var ATTN_LIVE_MS = 20000;   // 「你在看」的一段止于这么近之内 = 此刻还在看（心跳 5 秒一拍、泳道 15 秒一拉）
   var HUMAN_WORD = { present: '在电脑前', away: '离开', offline: '不在线' };
   function humanStatus(human, nowMs) {
     human = human || {};
@@ -470,8 +490,10 @@
       (human.presence || []).forEach(function (p) {
         var s = ms(p.from), e = ms(p.to);
         if (s === null || e === null || !inView(s, e)) { return; }
-        var n = seg(hTrack, 'hcl-presence' + (p.afk ? ' is-afk' : ''), s, Math.max(e, s + MIN / 4),
-          (p.afk ? '离开' : (p.app || '前台')) + (p.title ? ' · ' + p.title : '') + ' · ' + hm(s) + '–' + hm(e));
+        // v2.17：段细到几秒一段、互不重叠，照实画（不再把短段撑到 15 秒）；人在看某条代理的那几段染成注意力的蓝
+        // ponytail: 一段一个节点（每设备至多 2000 段）；真嫌多再把落在同一个像素里的相邻段并着画
+        var n = seg(hTrack, 'hcl-presence' + (p.afk ? ' is-afk' : '') + (p.runId ? ' is-on-agent' : ''), s, e,
+          (p.afk ? '离开' : (p.app || '前台')) + (p.title ? ' · ' + p.title : '') + ' · ' + brief(s, e));
         n.style.minWidth = '2px';
       });
     }
@@ -507,6 +529,7 @@
       var track = addRow(i < top ? rows : foldList, 'hcl-row-agent', laneName(r), sub,
         live && !cards ? PHASE_CLASS[ph] : null);
       var card = track.parentNode;
+      track.classList.add('hcl-track-agent');
       card.setAttribute('data-run-id', r.runId || '');
       card.setAttribute('data-phase', live ? ph : 'ended');
       rowOf[r.runId] = cards ? track : i + 1;
@@ -516,6 +539,7 @@
         if (live && isWaiting(ph)) { card.classList.add('is-needs-you'); }
         var act = Math.round(info.act / 60);
         head.appendChild(el('span', 'hcl-stat', '活跃 ' + (act < 1 ? '不到 1' : act) + ' 分 · ' +
+          (info.attn > 0 ? '看了 ' + mins(info.attn) + ' · ' : '') +
           (live ? '最近 ' + when(info.last) : when(ms(r.endAt)) + ' 结束')));
       }
       info.segs.forEach(function (g) {
@@ -527,31 +551,29 @@
           (g.detail ? '（' + g.detail + '）' : '') + ' · ' + hm(g.s) + '–' + (isLive ? '现在' : hm(g.e)) +
           '（' + dur(g.s, g.e) + '）');
       });
+      // 你在看（v2.17）：相位条正下方自己的一小行，蓝条 = 人的注意力在这条运行上的时间。正在变长的那一段右端有一道活边
+      (r.attention || []).forEach(function (a) {
+        var s = ms(a.from), e = ms(a.to);
+        if (s === null || e === null || !inView(s, Math.max(e, s + 1))) { return; }
+        seg(track, 'hcl-attn' + (live && now - e <= ATTN_LIVE_MS ? ' is-live' : ''), s, e,
+          laneName(r) + ' · 你在看 · ' + brief(s, e));
+      });
       nowMark(track);
-      sayLines.push(laneName(r) + '：' + (live ? PHASE_WORD[ph] : '已结束') + (r.overdue ? '（超时未收）' : ''));
+      sayLines.push(laneName(r) + '：' + (live ? PHASE_WORD[ph] : '已结束') + (r.overdue ? '（超时未收）' : '') +
+        (info.attn > 0 ? '，你看了 ' + mins(info.attn) : ''));
     });
 
-    // 连线：reply 实线竖线、attend 半透明竖带。列表式从人那条线落到该代理线；
-    // 卡片式各卡分开放，画在该代理自己的轨道上（竖线 = 人在这一刻回了它的话，带子 = 人在看它）
+    // 连线：reply 实线竖线。列表式从人那条线落到该代理线；卡片式各卡分开放，画在该代理自己的轨道上
+    // （竖线 = 人在这一刻回了它的话）。「人在看它」不再是这里的半透明带子（interactions 的 attend）：
+    // v2.17 起画成上面每条线里的蓝条（agents[].attention）。
     (data.interactions || []).forEach(function (x) {
       var r = rowOf[x.runId], at = ms(x.at);
-      if (!r || at === null) { return; }
-      var host = cards ? r : overlay;
-      if (x.kind === 'reply' && at >= v0 && at <= v1) {
-        var line = el('span', 'hcl-reply');
-        line.style.left = pct(at);
-        if (cards) { line.setAttribute('data-tip', '我回了话 · ' + hm(at)); }
-        else { line.style.setProperty('--hcl-r', r); }
-        host.appendChild(line);
-      } else if (x.kind === 'attend') {
-        var until = ms(x.until) || at;
-        if (!inView(at, Math.max(until, at + 1))) { return; }
-        var band = el('span', 'hcl-attend');
-        place(band, at, Math.max(until, at));
-        if (cards) { band.setAttribute('data-tip', '我在看 · ' + hm(at) + '–' + hm(until)); }
-        else { band.style.setProperty('--hcl-r', r); }
-        host.appendChild(band);
-      }
+      if (!r || at === null || x.kind !== 'reply' || at < v0 || at > v1) { return; }
+      var line = el('span', 'hcl-reply');
+      line.style.left = pct(at);
+      if (cards) { line.setAttribute('data-tip', '我回了话 · ' + hm(at)); }
+      else { line.style.setProperty('--hcl-r', r); }
+      (cards ? r : overlay).appendChild(line);
     });
     if (!cards) {
       if (now >= v0 && now <= v1) {
@@ -585,7 +607,7 @@
     var keys = [['hcl-human hcl-mode-do', '我在计时']];
     if (opts.presence) { keys.push(['hcl-presence', '在电脑前'], ['hcl-presence is-afk', '离开']); }
     keys.concat([['hcl-ph-working', '在干活'], ['hcl-ph-waiting', '在等你'],
-     ['hcl-ph-idle', '空闲'], ['hcl-ph-error', '出错'], ['hcl-key-reply', '回话'], ['hcl-key-attend', '在看']
+     ['hcl-ph-idle', '空闲'], ['hcl-ph-error', '出错'], ['hcl-key-reply', '回话'], ['hcl-attn', '你在看']
     ]).forEach(function (p) {
       var item = el('span', 'hcl-key');
       item.appendChild(el('span', 'hcl-swatch ' + p[0]));
@@ -620,7 +642,7 @@
 
   window.HoneycombLanes = {
     query: query, prevDay: prevDay, segments: segments, currentPhase: currentPhase,
-    pickPreview: pickPreview, activeSeconds: activeSeconds, sortByActivity: sortByActivity, recentRuns: recentRuns,
+    pickPreview: pickPreview, activeSeconds: activeSeconds, attentionSeconds: attentionSeconds, sortByActivity: sortByActivity, recentRuns: recentRuns,
     humanStatus: humanStatus, render: render, PHASE_WORD: PHASE_WORD
   };
 })();

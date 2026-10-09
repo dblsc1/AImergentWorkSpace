@@ -152,7 +152,7 @@
 > 一秒也不多等。** 这是「AI 只能写规则草稿、应用要人点」的**第二条取代条目**（只对被认领的那一个窗口、只在 `autoTrack` 打开时），
 > 见该节末尾；`propose_detector_rules` 仍然只写草稿。既有字段、端点行为一个不改。
 >
-> **v2.19（追加式；v2.17 = 在场时段、v2.18 = 代理心跳，各自的 PR）**：**令牌带范围，没有令牌只能上报。** 仓主 2026-10-09：「token 可以让我们给智能体不同权限：读 / 写 / 只上报进度」「请求没有 token 的话，就只能上报」。认证服务（`auth.gate.v1` v1.4）在门上按范围放行，并经网关多转两个头 `X-Nexus-Scope` / `X-Nexus-Anonymous`；本版据此**再拦一遍**（`report` 只有四个上报端点、`read` 再加 `GET`），并把匿名开的代理运行标成 `unverified`、与验证过的运行隔开。两个头都没有时行为与 v2.18 完全一样；既有字段、端点一个不改，只追加 `views/lanes` 的 `agents[].unverified`。见「调用方范围与匿名上报」节。
+> **v2.19（追加式；v2.18 留给代理心跳那一版）**：**令牌带范围，没有令牌只能上报。** 仓主 2026-10-09：「token 可以让我们给智能体不同权限：读 / 写 / 只上报进度」「请求没有 token 的话，就只能上报」。认证服务（`auth.gate.v1` v1.4）在门上按范围放行，并经网关多转两个头 `X-Nexus-Scope` / `X-Nexus-Anonymous`；本版据此**再拦一遍**（`report` 只有四个上报端点、`read` 再加 `GET`），并把匿名开的代理运行标成 `unverified`、与验证过的运行隔开。两个头都没有时行为与 v2.18 完全一样；既有字段、端点一个不改，只追加 `views/lanes` 的 `agents[].unverified`。见「调用方范围与匿名上报」节。
 >
 > **v2.16（追加式）**：**人此刻在哪个窗口、它多半属于哪个项目 / 任务，说成一句话，哪里都读同一份。** 仓主 2026-10-09：
 > 「蜂巢页和计时页还是没有实时显示人类当前焦点所在窗口或者任务」「要通用，得走 MCP」。在场心跳从 v2.4 起就有，但只在
@@ -162,6 +162,17 @@
 > **只是显示**：不记时间、不改自动记录的任何行为、不多一个端点、不往设备外多送一个字（标题就是心跳已经按隐私设置处理过的）。
 > 页面（顶栏 / 计时页 / 蜂巢）与 MCP（`mcp.tools.v1` v1.10 的 `get_current_timer`）读的是**服务端算好的同一份**，
 > 谁都不各自再认一遍项目 / 任务。既有字段、端点行为一个不改。
+>
+> **v2.17（追加式）**：**人的注意力是严格串行的；检测程序每 5 秒报一次，每次带各个窗口的停留。** 仓主 2026-10-09：
+> 「不要按组计算。把检测程序设置成每 5 秒汇报一次，每次汇报里带各个窗口的停留时间。计时环保持『人的注意力只能串行』这条规矩。
+> 泳道里 AI 需要有蓝色的条，代表人类把注意力放在他们身上的时间。」起因：每 ~3 秒切一次窗口的人，按 15 秒一拍只报
+> 「此刻的窗口」，中间那些短的停留全丢了。本版在场心跳追加可选的 `sentAt` + `spans`（上一拍以来人**依次**在过的窗口与
+> 各自的停留，见「串行的注意力时间线」节）：服务端把它们接成每台设备**一条不重叠的时间线**，只存不合计、不按窗口归组；
+> 段对上了在跑的代理会话（v2.13 同一条相等规则）就给那条运行记「人在看它」的时间。读端只增键：`views/lanes` 的
+> `agents[]` 追加 `attention`（蓝条）、`human.presence[]` 追加 `runId`；`views/agent-time` 的 `open[]` 追加
+> `attentionSeconds`；`focus` 追加 `dwellSeconds`。全部服务端算，页面与 MCP（`mcp.tools.v1` v1.11）读同一份。
+> **不带 `spans` 的老检测程序照旧能用**（仍是「此刻」一拍一个点）。无新端点、无新集合、不进台账；既有字段一个不改。
+> 一条取代条目（`attend` 的判据从「标题包含 `match`」收紧为「窗口就是那条会话」，见该节末）。
 >
 > v1.9：`GET /api/core/export` 产出的快照此前没有任何端点能吃
 > 回去（喂给 import 会被三层拒绝，而那三条拒绝各守一件实事，一条都不该放宽）。
@@ -383,6 +394,14 @@ provides:
       choice / ai）→ 窗口 ↔ 代理会话（agent-session）→ 匹配历史（history）；认不出时五个目标键为 null。
       不写任何东西、无新端点；页面与 MCP 读同一份
     status: 已实现（v2.16），待验证
+  - id: nexus-core.attention.v1
+    summary: 串行的注意力时间线（v2.17，追加式，无新端点）——POST /api/core/activity/presence 追加可选的 sentAt + spans
+      [{app, title, from, seconds, guess?}]（上一拍以来依次在过的窗口，串行、不重叠、至多 32 段、每段 ≤ 120 秒；
+      不合形状整拍 422）；服务端按 sentAt 平移到自己的时钟、接成每设备一条不重叠的时间线（重发 / 往回带的部分裁掉）；
+      段对上在跑的代理会话（归一化标题 == label / match，恰好一条）→ 记进该运行的 attend。读端只增键：views/lanes 的
+      agents[].attention [{from, to}]、human.presence[].runId；views/agent-time 的 open[].attentionSeconds；
+      focus.dwellSeconds。不带 spans 的心跳行为同 v2.16
+    status: 已实现（v2.17），待验证
 consumes:
   - id: yq-event/v1
     contract: ../../contracts/yq-event.v1/contract.md
@@ -442,6 +461,7 @@ consumes:
 | POST | `/api/core/activity/ai/claim` | 无（空体或 `{}`） | `{window: null \| {key, app, title, claimedAt, answerBy}}`（见「让 AI 认窗口」节）；带 Bearer 403 | ✅ 已实现（v2.15） |
 | POST | `/api/core/activity/ai/suggest` | `{key, taskId \| projectId, confidence, reason}` 或 `{key, none: true, reason}` | `SuggestOut`；带 Bearer 403、400、404、409（不在等回答，什么都没写）、422 | ✅ 已实现（v2.15） |
 | POST | `/api/core/activity/choice/reject` | `{key}` | `{key, app, title, ruleRemoved}`；带 Bearer 403、404（不是 AI 认的）、422 | ✅ 已实现（v2.15） |
+| — | （v2.17 追加，无新端点）`POST /api/core/activity/presence` 追加可选的 `sentAt` + `spans`；`views/lanes` 的 `agents[]` 追加 `attention`、`human.presence[]` 追加 `runId`；`views/agent-time` 的 `open[]` 追加 `attentionSeconds`；`focus` 追加 `dwellSeconds` | 见「串行的注意力时间线」节 | | ✅ 已实现（v2.17） |
 | — | （v2.16 追加，无新端点）`views/lanes` 的 `human` 与 `views/current` 顶层追加 `focus`（人此刻的焦点；心跳新鲜就有，与 `autoTrack`、有没有手动计时无关） | 见「此刻的焦点」节 | | ✅ 已实现（v2.16） |
 | — | （v2.15 追加，无新端点）`views/lanes` 的 `human` 与 `views/current` 顶层追加 `aiThinking`；`auto` 追加 `key`、`source` 追加取值 `"ai"`；`GET /api/core/activity/auto` 每条追加 `ai`；规则追加可选的 `author`、`auto` | 见「让 AI 认窗口」节 | | ✅ 已实现（v2.15） |
 | — | （v2.14 追加，无新端点）在场心跳可带 `guess`；`views/lanes` 的 `human` 与 `views/current` 顶层追加 `auto`、`needsChoice`；上传的 `suggestion` 可带 `projectId`、列表每条追加 `auto`；改挂端点放行自动记下的段；`DetectorSettings` 追加 `autoTrack`、规则可用 `projectId` 代替 `taskId` | 见「自动跟踪进行中的任务」节 | | ✅ 已实现（v2.14） |
@@ -1053,6 +1073,8 @@ payload 只删了父、忘了一起删子，既有的**级联保护（409）在 
 - **匿名给的 `taskId` / `projectId` / `match` 不采用**：运行一律落收件箱、不记 `match`。否则「任务不存在回 404」
   就是一个探 id 的口子；`match` 会让一个没验证的调用方把人的窗口认到自己头上（「窗口 ↔ 代理会话」）。
   `agent` / `tool` / `model` / `label` / `phase` / `clientKey` 照收（长度上限照旧）。
+- **未验证的运行不参与注意力的认定**（v2.17「窗口标题 == 会话名」）：它的 `label` 与人的窗口标题相同也不算、
+  也不让同名的真会话变成「对上不止一条」。所以它的 `attention` 恒为空。
 - **`clientKey` 分两个名字空间**：匿名的存成 `anon:<clientKey>`，只在匿名开的运行里找；带令牌 / 人的在其余
   运行里找。所以匿名的 `start` 认领不到、也改不了别人的运行（v2.13 的会话改名同样被隔开）。带令牌 / 人给的
   `clientKey` 以 `anon:` 开头 → `400`（保留前缀）。
@@ -2210,6 +2232,9 @@ hook 没发 stop（终端被关、进程被杀）的运行会永远挂着。超�
   所以 `elapsedSeconds` 不会超过超时上限，被收掉的运行已作为 `timeout` 事实进了汇总。
 - 按当前租户（「按租户分数据」）；`agent` 是 start 时记录的原样字符串，不 join 显示名（任务/项目名
   由调用方按 id 从树里取，同 `events` 档案读端）。
+- **v2.17 追加**：`open[]` 每条多一个键 `attentionSeconds`（整数，≥ 0）：人把注意力放在这条运行的窗口上的秒数
+  （该运行 `attend` 的 `at`–`until` 之和，见「串行的注意力时间线」节）。**同样不计入任何汇总、不是人记下的工时**。
+  已结束运行的汇总（`days` / `agents` / `tasks`）本版不带注意力：投影里没有这一列，要看用 `views/lanes` 的 `agents[].attention`。
 
 ## 人类计时模式（规范性 · v2.1，mode）
 
@@ -2754,6 +2779,11 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
   （`spans[].guess`）；合并相邻心跳的判据多一项「`guess` 的目标相同」。`views/lanes` 的 `human.presence` **不回出**
   `guess`（形状不变），它只喂给 `human.auto`。`afk: true` 的心跳带了也不存。见「自动跟踪进行中的任务」节。
 
+- **v2.17 追加：可选的 `sentAt` + `spans`**（上一拍以来人依次在过的窗口与各自的停留）。带了 `spans` 的心跳不再只是
+  「此刻一个点」：各段原样接到这台设备的时间线末尾；约定的节奏改为约 5 秒一拍；每设备的段数上限从 500 提到 **2000**
+  （每 3 秒切一次窗口约 100 分钟；切得更快的人，时间线短于 2 小时）。不带 `spans` 的心跳上面各条一字不变。
+  形状、校验、时钟、合并与防重见「串行的注意力时间线」节。
+
 ### 连线：人与代理之间（规范性）
 
 连线挂在**代理运行上**（`interactions[]`），跟着那一条 `agent.run.completed` 落账；**只是标记，不是时长**，
@@ -2773,6 +2803,15 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
 - 实现落点：心跳写在 `activity/`，`attend` 由它调代理运行那边 `service.py` 的公开函数写进 `agent_runs`
   （「内部子边界」：跨子边界只走 service，不直碰对方的 repo）。
 - 按 `at` 升序存。
+
+- **v2.17 取代条目**（仓主 2026-10-09：「人的注意力是严格串行的」）。上表与上面几条里关于 `attend` 的三处自 v2.17 起改为：
+  1. **判据**：不再是「标题包含 `match`」，而是 v2.13「窗口 ↔ 代理会话」的同一条相等规则——标题归一化后（≥ 3 个字符）
+     **等于**某条在跑运行的 `label` / `match`（`label` 也认；不要求运行挂着项目）。编辑器标题里碰巧出现那个词不再算在看它。
+  2. **对上不止一条运行 → 都不记**（原「每个都记」）：人同一时刻只看一个，分不清就不算，免得同一秒记给两条运行。
+  3. **上限分开数**：`reply` 至多 500 条、`attend` 至多 **2000** 条（原合计 500）；带 `spans` 的心跳里与上一条 `attend`
+     相距 ≤ 2 秒才延长（不带的仍是 45 秒），早于运行起点的部分钳到起点。
+  `interactions[]` 的形状、落账方式、「只是标记」的地位不变；`attend` 的 `at`–`until` 之和就是「人看了它多久」
+  （`agents[].attention` / `attentionSeconds`，见「串行的注意力时间线」节）。不带 `spans` 的老检测程序同样按新判据认。
 
 ### 读端 `GET /api/core/views/lanes`（`nexus-core.views.lanes.v1`）
 
@@ -2822,6 +2861,11 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
 
 - **v2.14 追加**：`human` 多两个键 `auto`、`needsChoice`（都可为 `null`，键总在），形状与判据见
   「自动跟踪进行中的任务」节。两者只看「此刻」，不按窗口过滤（同 `running`；`from > to` 的空结果里为 `null`）。
+
+- **v2.17 追加**：`agents[]` 每条多一个键 `attention: [{from, to}]`（人把注意力放在这条运行上的时间，键总在，没有为 `[]`）；
+  `human.presence[]` 每段多一个键 `runId`（这一段人在看的那条运行，不是 → `null`）。`interactions` 里每条运行的 `attend`
+  只回出最新的 500 条（一条运行现在能存 2000 条，响应不跟着涨；`reply` 照旧全回）。`presence` 的上限随存储变为每设备 2000 段。
+  见「串行的注意力时间线」节。
 
 ### 投影 `proj_lanes`：每个段 / 每个运行一条区间
 
@@ -3303,6 +3347,104 @@ AI 仍不能改 / 删任何已有规则、不能写匹配范围超出那一个�
 - 第 3 步只看同一个程序最近确认的 200 条：更早确认过的窗口认不出（那时只到「正在用」）。
 - 不为 `focus` 开端点、不推送：读端都是轮询。
 
+## 串行的注意力时间线（规范性 · v2.17，`nexus-core.attention.v1`）
+
+仓主 2026-10-09（原话见本文件头部 v2.17）。三句话：**不按组算；每 5 秒一拍、每拍带各窗口的停留；人的注意力只能串行**，
+外加一条读端的要求：**代理的泳道上要有一条蓝条，表示人把注意力放在它身上的时间。**
+
+**设计原则（规范性）**：
+
+- **一条时间线，不是若干个计数器。** 每台设备一条按时间排、**段与段不重叠**的时间线；服务端只存段，不按窗口 / 程序归组求和。
+  任何「在某个窗口上一共多久」都是读的时候从这条线上数出来的，所以各处的数加起来不会超过墙上的时间。
+- **时间一律是服务端的。** 设备的钟差多少都不要紧（见下「时钟」）。
+- **窗口是不是某条代理会话只有一条规则**：v2.13 的归一化相等（见「连线」节 v2.17 取代条目）。
+- **全部服务端算**：页面（泳道 / 顶栏 / 圆环 / 蜂巢）与 MCP 读的是同一份，谁都不自己再算一遍。
+
+### 心跳的追加：`sentAt` + `spans`
+
+```jsonc
+// POST /api/core/activity/presence —— 追加两个可选键（形状以 ai-detector 契约「在场心跳」节 v1.2 为准）
+{ "deviceId": "dev_…", "app": "ptyxis", "title": "✳ garden", "afk": false,   // 顶层仍是「此刻」= 最后一段
+  "sentAt": "2026-10-09T10:00:05.000+08:00",       // 设备发这一拍的时刻（设备自己的钟）
+  "spans": [                                        // 上一拍以来依次在过的窗口：旧 → 新、互不重叠，离开已扣掉
+    { "app": "code",   "title": "plot.gd — garden", "from": "2026-10-09T10:00:00.000+08:00", "seconds": 2.4 },
+    { "app": "ptyxis", "title": "✳ garden",         "from": "2026-10-09T10:00:02.400+08:00", "seconds": 2.6,
+      "guess": { "projectId": "p_1", "confidence": 0.9, "classifier": "rules" } } ] }   // guess 同顶层（v2.14），每段各自带
+// → 200 { "ok": true }
+```
+
+- **校验（整拍 422，什么都不写）**：带 `spans` 必须带 `sentAt`；`sentAt` 与各段的 `from` 是**带偏移的 ISO 字符串**
+  （数字时间戳、不带偏移的不收）；`spans` 至多 **32** 段（检测程序自己限 12）；每段 `app` / `title` 是字符串（超长截断，同顶层）、
+  `seconds` 是数（布尔不收）、`0 < seconds ≤ 120`；各段按时间排、互不重叠（容 2 秒的取整误差）；最早一段不早于
+  `sentAt` 之前 120 秒、最后一段不晚于 `sentAt`（同样容 2 秒）；`guess` 同顶层的校验。越界到算不了的时刻同样 422。
+  不认识的键忽略（检测程序截断过时带的 `truncated: true` 目前只是说明）。`spans: []` 合法 = 这一拍没有可记的段。
+- **时钟**：服务端只用 `sentAt` 做一件事——`平移量 = 服务端收到的时刻 − sentAt`，各段加上它再存。所以设备的钟快十分钟、
+  慢一年都落在同一处；平移之后晚于服务端此刻的部分裁掉。**请求里的绝对时刻从不直接进库。**
+- **串行（不重叠、不重复计）**：平移后的每一段，早于这台设备时间线末尾的部分裁掉，裁完为空就丢。所以**同一拍重发、
+  上一拍丢了这一拍往回多带一截、检测程序重启后带最近一分钟**，都不会把同一秒记两遍；时间线的 2 小时截止线同样是下界。
+- **合并**：与时间线最后一段是同一个窗口（`app`、`title`、离开与否、`guess` 的目标、对上的运行都相同）且相距 ≤ **2 秒**
+  才延长上一段，否则是新的一段——**切走再回来就是新的一段**。不带 `spans` 的心跳仍按 45 秒合并。
+- **离开**：`afk: true` 的那一拍，`spans`（离开之前的那几段）照上面接，再照旧记一个「此刻离开」的点；离开的点与离开的点
+  仍按 45 秒合并成一轮离开。带了 `spans`（哪怕是空的）且没离开的心跳**不再**另记顶层那个「此刻」的点。
+- **新老混用**：同一台设备先后收到带与不带 `spans` 的心跳都可以，段总是接在末尾、互不重叠。带停留的段内部记
+  `exact: true`（首尾是真的），读端据此不给它「往后延到下一拍」的宽限；这个键不回出。
+
+### 注意力 → 代理运行：`attend`、`attention`、`attentionSeconds`
+
+- 心跳写入时，每个没离开、标题非空的段按「连线」节 v2.17 的判据找**恰好一条**在跑的运行（当前租户的；别的租户的运行、
+  已结束的运行、同名的两条运行都不认）。对上了：这一段在时间线里记 `runId`，并把这一段的 `[起, 止]` 记进该运行的
+  `attend`（延长或新开，见「连线」节）。一拍只读一遍在跑的运行。
+- `attend` 存在运行上、跟着 `agent.run.completed` 落账（形状是 v2.4 的，不变），所以**已结束的运行、过了 2 小时的历史**
+  也有蓝条；时间线本身仍只留 2 小时。
+- 读端三处，都只是把同一份 `attend` 换个形状：
+
+```jsonc
+// GET /api/core/views/lanes
+{ "human":  { "presence": [ { "deviceId": "dev_…", "from": "…", "to": "…", "app": "ptyxis", "title": "✳ garden",
+                              "afk": false, "runId": "run_…" } ] },        // runId：这一段在看的运行；不是 → null
+  "agents": [ { "runId": "run_…", /* …既有的键… */
+                "attention": [ { "from": "…", "to": "…" } ] } ] }           // 按时间排、互不重叠
+// GET /api/core/views/agent-time
+{ "open": [ { "runId": "run_…", /* …既有的键… */ "attentionSeconds": 95 } ] }
+```
+
+- `agents[].attention`：该运行的 `attend` **裁到查询窗口**、首尾相接或重叠的并成一段、换算到 `NEXUS_TZ` 的偏移；
+  每条运行至多回出最新的 **500** 段。键总在，没有为 `[]`。`from == to` 的段可能出现（老检测程序的单个点）。
+- `open[].attentionSeconds`：该运行全部 `attend` 的 `until − at` 之和（整数秒，不裁窗口）。
+- **含义（规范性）**：这是「人看着这条代理的窗口的时间」，**不是人记下的工时**，不进人的任何汇总、不改 `elapsedSeconds`；
+  一台设备上各条运行的注意力互不重叠（因为时间线不重叠）。多台设备各有各的时间线，本版不做设备间去重。
+
+### `focus.dwellSeconds`
+
+`focus`（v2.16）追加一个键 `dwellSeconds`（整数 \| `null`）：这台设备的时间线（最近 2 小时）里，人在**当前这个窗口**
+（v2.14 的窗口键）上一共待了多少秒，含当前这一轮；`state: "afk"` 时为 `null`。`since` 的含义不变——**这一次**切过来的时刻，
+切走再回来重新起算；窗口切得快时它总是几秒，`dwellSeconds` 补的是「同一个窗口累计多久」。两者说的都只是**当前这一个窗口**：
+`focus` 永远只有一个窗口 / 一个目标，不把几个窗口混着写（计时环「人的注意力只能串行」）。
+
+### 自动跟踪的停留（`needsChoice` / `aiThinking`）
+
+判据不变（最近 5 分钟里累计 ≥ 60 秒），但带停留的段按**真的首尾**数：两段之间不在的时间不再算进去（老心跳的段仍往后延到
+下一段开始，至多 45 秒）；只有最后一段延到此刻。认不出的窗口与认得出的窗口每 3 秒来回切时，只有它自己的秒数算数。
+
+### 花费（规范性）
+
+- 每拍：读一遍、写一遍这台设备的在场文档（至多 2000 段）；有没离开的段时读一遍在跑的运行；对上了才对那条运行做一次条件更新。
+- 顶栏改为约 **5 秒**读一次 `views/current`（页面不可见时 60 秒）：在场文档仍只读一遍，`dwellSeconds` 是在内存里走一遍
+  时间线（窗口键按（程序, 标题）只算一次）；时间线满 2000 段时每次读仍是毫秒级（测试里拦的是数量级的退化）。
+
+### 隐私
+
+没有新种类的东西离开设备：各段的 `app` / `title` 与顶层、与上传走**同一条脱敏路径**（黑名单、去标题、换代号）；多出来的只是
+「上一拍以来的那几个窗口」而不止「此刻这一个」，以及各自的秒数。时间线仍是活状态：只留 2 小时，不进台账 / 投影 / 导出 / 快照恢复。
+`attend` 只存时间，不存窗口标题（v2.4 起如此）。
+
+### 本版不做（有意的）
+
+- 不做多设备合并 / 去重（同 v2.14 / v2.16：`focus` 只看最近报心跳的那台；两台设备同时各看一条运行会各记各的）。
+- 不给已结束运行的注意力做按天 / 按任务的汇总（要一张新投影）；要看读 `views/lanes`。
+- 不回填：升级前的 `attend` 仍是老判据记下的，原样留着。
+- 一拍里超过 12 段时检测程序留当前窗口 + 最长的那些（带 `truncated: true`），被丢掉的短停留不补。
+
 ## 入口与路由
 
 - nginx 公开前缀：`/api/core/`（HANDOFF §4 已定死，前端写死地址）
@@ -3336,6 +3478,8 @@ app/modules/
                                       activity_choices 的存取拆到 choice_repo.py；碰 mongo 的仍只有 repo / ask_repo / choice_repo
                                       此刻的焦点（v2.16，focus.py）：只读；在场文档由 service.auto_state 读一遍交给它与 auto.py，
                                       在跑的运行经 session_link.live（timer service 的 list_lane_runs）、去向经 events / planner 的 service 读
+                                      串行的注意力时间线（v2.17，presence.py + session_link.watched）：在跑的运行经 timer service 的
+                                      list_lane_runs 读，attend 经 timer service 的 record_attend(user, run_id, intervals, gap) 写
   detector/   router service repo     检测程序设置（v2.5）：不是事实；设备列表经 activity 的 service 读上传时刻
   projector/  registry handlers/      DISPATCH 显式表 + 各投影 handler
 ```
@@ -3431,6 +3575,10 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 | `ring` 前端（v2.16） | `views.current.v1` 的 `focus`（没在计时时大圆环中心的「正在：项目 / 任务」+ 窗口 + 走秒 + 一键开始计时） | `modules/ring` |
 | `hive` 前端（v2.16） | `views.current.v1` 的 `focus`（中心格的「正在：…」+ 走秒；`focus.projectId` 那个项目格的描边） | `modules/hive` |
 | `mcp`（v2.16） | `views.current.v1` 的 `focus` / `auto` / `needsChoice`（`mcp.tools.v1` v1.10 的 `get_current_timer` 原样带出） | `modules/mcp` |
+| `ai-detector`（v2.17） | `activity.presence.v1` 的 `sentAt` + `spans`（`ai-detector.presence.v1` v1.2：5 秒一拍，每拍带各窗口的停留） | `modules/ai-detector` |
+| 共享 `lanes.js` / `focus.js` / 顶栏（v2.17） | `views.lanes.v1` 的 `agents[].attention`（代理线里的蓝条「你在看」）、`human.presence[].runId`；`focus.dwellSeconds`（悬停里的「近 2 小时在这上面 N 分」）；顶栏改为约 5 秒读一次 `views/current` | `modules/nginx-docker` |
+| `ring` / `hive` 前端（v2.17） | `views.current.v1` 的 `focus.dwellSeconds`（圆环中心走秒下的小字 / 蜂巢中心格的悬停）；计时页约 5 秒读一次 | `modules/ring`、`modules/hive` |
+| `mcp`（v2.17） | `views.agent-time` 的 `open[].attentionSeconds`、`focus.dwellSeconds`（`mcp.tools.v1` v1.11 原样带出） | `modules/mcp` |
 | `assistant` 前端（v2.15） | 规则的 `auto`（「AI 自动」徽标，整套保存时原样带回 `author` / `auto`）；`GET /api/core/activity/auto` 的 `ai` | `modules/assistant` |
 | `assistant` 前端（v2.14） | `activity.auto.v1` 的 `GET /api/core/activity/auto`（「自动记录」面板）+ `sessions.reassign.v1`（改归属，v2.14 起收自动记下的段）；`detector.settings.v1` v1.3 的 `autoTrack`；`detector.rules.v1` v1.1 的 `projectId` | `modules/assistant` |
 | 共享顶栏 `nginx-docker/static/navbar.js`（v2.4，契约先行） | `views.lanes.v1`（计时芯片悬停的精简预览：人 + 至多 4 条代理线、最近 1 小时，只在预览打开时约 15 秒轮询；计时页上不弹） | `modules/nginx-docker` |

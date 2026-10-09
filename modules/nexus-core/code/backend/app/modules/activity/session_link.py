@@ -38,10 +38,27 @@ def norm(text: str, app: str = "") -> str:
     return _LEAD.sub("", text).strip().casefold()
 
 
+def _keys(run: dict) -> set[str]:
+    return {k for k in (norm(run.get(f) or "") for f in ("label", "match")) if len(k) >= _MIN_LEN}
+
+
+def watched(rows: list[dict], app: str, title: str) -> str | None:
+    """这个窗口**就是**哪一条在跑的代理运行（v2.17 注意力；``rows`` = ``timer_service.list_lane_runs`` 的运行）。
+    同一条相等规则：归一化标题 == 归一化 label / match。不要求挂着项目（看的是会话，不是项目）；对上不止一条 → None。
+    匿名开的运行（v2.19 ``unverified``）不算：否则不带凭据的调用方起一个同名的运行，就能把人对真会话的注意力
+    搅成「对上不止一条」，或者认到自己头上。"""
+    key = norm(title, app)
+    if len(key) < _MIN_LEN:
+        return None
+    hits = [run["runId"] for run in rows
+            if run["endTs"] is None and not run.get("unverified") and key in _keys(run)]
+    return hits[0] if len(hits) == 1 else None
+
+
 def _candidates(rows: list[dict], now: datetime) -> list[dict]:
     out = []
     for run in rows:
-        keys = {k for k in (norm(run.get(f) or "") for f in ("label", "match")) if len(k) >= _MIN_LEN}
+        keys = _keys(run)
         project = run.get("projectId")
         if keys and project and project != planner_service.INBOX_PROJECT_ID:
             out.append({"keys": keys, "label": run.get("label") or run.get("match"), "projectId": project,

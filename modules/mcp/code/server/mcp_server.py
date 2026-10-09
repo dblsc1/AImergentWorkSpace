@@ -4,7 +4,7 @@
 initialize、ping、tools/list、tools/call；通知一律 202。不发 Mcp-Session-Id，GET 回 405
 （不提供服务端主动推送流）——两样都是协议允许的。
 
-HTTP 层在 JSON-RPC 之前依次判：Origin（403）→ 调用方范围（403，v1.11）→ 租户（401/400）→ 协议版本头（400）→
+HTTP 层在 JSON-RPC 之前依次判：Origin（403）→ 调用方范围（403，v1.12）→ 租户（401/400）→ 协议版本头（400）→
 请求体大小（413）。日志只记方法、路径、状态码与工具名，不记请求头与工具结果。
 
 环境变量：
@@ -67,7 +67,7 @@ def _error(mid, code: int, message: str) -> dict:
 
 
 def caller_scope(headers) -> str | None:
-    """调用方范围（mcp.tools.v1 v1.11「调用方范围」，唯一的判定处）：网关转来的 X-Nexus-Scope / X-Nexus-Anonymous
+    """调用方范围（mcp.tools.v1 v1.12「调用方范围」，唯一的判定处）：网关转来的 X-Nexus-Scope / X-Nexus-Anonymous
     （总是被网关覆盖，客户端写不进来）。返回 "full"（没有这个头 = 网页会话 / 聊天后端对内直连，或 write）、
     "read"（只读工具）、None（report、匿名、取值不认识、头重复：整个端点 403）。"""
     scopes = headers.get_all("X-Nexus-Scope") or []

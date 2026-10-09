@@ -590,7 +590,8 @@
       var what = document.createElement("span");
       what.className = "hex-center-focus";
       what.textContent = focus.target || focus.window;
-      what.title = focus.lead + (focus.window ? " · " + focus.window : "");
+      // 2026-10-09（nexus-core v2.17）：格子小，「近 2 小时在这上面 N 分」只进悬停的全文
+      what.title = focus.lead + (focus.window ? " · " + focus.window : "") + (focus.dwell ? "（" + focus.dwell + "）" : "");
       if (what.textContent) meta.insertBefore(what, how);
     }
     el.classList.toggle("is-focus", !!focus);

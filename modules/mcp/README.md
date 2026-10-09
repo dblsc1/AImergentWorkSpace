@@ -23,7 +23,7 @@ v1.10：`get_current_timer` 除了「在不在计时」，还带出 `focus`—�
 - 设备令牌（`contracts/auth.gate.v1`）：登录后在「AI助理」页的「Agent 令牌」里发一个，或命令行
   `docker compose exec auth python /app/auth_stub.py token <账号> --scope read`；请求头 `Authorization: Bearer <令牌>`。
 
-令牌的范围决定 MCP 给多少（v1.11）：
+令牌的范围决定 MCP 给多少（v1.12）：
 
 | 范围 | MCP |
 |---|---|

@@ -1,7 +1,7 @@
 /* 泳道（lanes.js 配套，计时页全部泳道 + 顶栏精简预览共用）。
  * 颜色只取 tokens.css 的语义色（design-tokens-v1 §3.2）：人 = 事实青族（按模式深浅），
  * 代理 working = --agent-work、waiting_* = --agent-wait、idle = --ink-3、error = --danger。
- * 连线 reply / attend 同色（--ink-2），attend 半透明。禁裸 hex。 */
+ * 连线 reply = --ink-2；「你在看」（人的注意力在这条代理上，v2.17）= --attn 蓝。禁裸 hex。 */
 .hcl {
   --hcl-row-h: 30px;
   --hcl-label-w: 8.5em;
@@ -70,6 +70,20 @@
   background: repeating-linear-gradient(135deg, var(--ink-3) 0 2px, transparent 2px 4px);
 }
 
+/* 代理那条线也分上下两行（v2.17，nexus-core 的 agents[].attention）：上面是相位条，正下方自己的一小行是「你在看」——
+ * 人的注意力在它身上的时间。蓝 = --attn；不单靠颜色：它只出现在这一小行里，与同一条时间轴对齐。
+ * 人那条线上，在看某条代理的那几段在场带同样染蓝，眼睛能把上下两处连起来。 */
+.hcl-track-agent .hcl-seg[class*="hcl-ph-"] { bottom: 34%; }
+.hcl-seg.hcl-attn, .hcl-swatch.hcl-attn { background: var(--attn); }
+.hcl-track-agent .hcl-seg.hcl-attn { top: 74%; min-width: 2px; border-radius: 1px; }
+.hcl-swatch.hcl-attn { height: 4px; }
+.hcl-seg.hcl-presence.is-on-agent { background: color-mix(in srgb, var(--attn) 60%, transparent); }
+/* 正在变长的那一段：右端一道轻轻呼吸的活边 */
+.hcl-seg.hcl-attn.is-live::after {
+  content: ""; position: absolute; right: -1px; top: -2px; bottom: -2px; width: 3px; border-radius: 2px;
+  background: var(--attn); animation: hcl-blink 1.8s ease-in-out infinite;
+}
+
 /* 只有在跑运行的最后一段闪：绿慢、黄快 */
 .hcl-seg.is-live.hcl-ph-working { animation: hcl-blink 2.4s ease-in-out infinite; }
 .hcl-seg.is-live.hcl-ph-waiting { animation: hcl-blink .9s ease-in-out infinite; }
@@ -81,17 +95,16 @@
 .hcl-st-away, .hcl-st-offline, .is-ended { --hcl-c: var(--ink-3); }
 @keyframes hcl-blink { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) {
-  .hcl-seg.is-live, .hcl-dot { animation: none !important; }
+  .hcl-seg.is-live, .hcl-seg.is-live::after, .hcl-dot { animation: none !important; }
 }
 
 /* 连线层：与轨道同一坐标（左边让出标签列）；第 r 行的中线 = (r + .5) × 行高 */
 .hcl-overlay { position: absolute; top: 0; bottom: 0; left: var(--hcl-label-w); right: 0; pointer-events: none; }
-.hcl-reply, .hcl-attend {
+.hcl-reply {
   position: absolute; top: calc(var(--hcl-row-h) * .5);
   height: calc(var(--hcl-row-h) * var(--hcl-r, 1));
+  width: 0; border-left: 2px solid var(--ink-2);
 }
-.hcl-reply { width: 0; border-left: 2px solid var(--ink-2); }
-.hcl-attend { min-width: 2px; background: var(--ink-2); opacity: .22; border-radius: 2px; }
 .hcl-now { position: absolute; top: 0; bottom: 0; border-left: 1px dashed var(--ink); opacity: .6; }
 
 .hcl-empty, .hcl-more { color: var(--ink-3); }
@@ -106,7 +119,6 @@ a.hcl-more { color: var(--ink-2); }
 .hcl-key { display: inline-flex; align-items: center; gap: var(--sp-1); }
 .hcl-swatch { position: relative; display: inline-block; width: 12px; height: 8px; border-radius: 2px; }
 .hcl-swatch.hcl-key-reply { width: 0; height: 12px; border-left: 2px solid var(--ink-2); border-radius: 0; }
-.hcl-swatch.hcl-key-attend { background: var(--ink-2); opacity: .3; height: 12px; }
 
 /* 悬停提示 */
 .hcl-tip {
@@ -172,8 +184,8 @@ a.hcl-more { color: var(--ink-2); }
 .hcl-cards .hcl-track { flex: none; width: 100%; height: 16px; background: var(--panel); }
 .hcl-cards .hcl-track.hcl-track-human { height: 26px; }
 .hcl-cards .hcl-now { top: -3px; bottom: -3px; }
+.hcl-cards .hcl-track.hcl-track-agent { height: 22px; }
 .hcl-cards .hcl-reply { top: -3px; bottom: -3px; height: auto; pointer-events: auto; }
-.hcl-cards .hcl-attend { top: 0; bottom: 0; height: auto; pointer-events: auto; }
 /* 折叠区：原生 <details>，收起时只露一行「还有 N 个」 */
 .hcl-fold > summary {
   cursor: pointer; padding: var(--sp-1) 0; color: var(--ink-2); font-size: var(--fs-sub);
@@ -182,6 +194,7 @@ a.hcl-more { color: var(--ink-2); }
 .hcl-fold[open] > summary { margin-bottom: var(--sp-2); }
 .hcl-fold .hcl-card { padding-block: var(--sp-1) var(--sp-2); gap: var(--sp-1); }
 .hcl-fold .hcl-track { height: 10px; }
+.hcl-fold .hcl-track.hcl-track-agent { height: 14px; }
 @container (max-width: 480px) {
   .hcl-cards { --hcl-card-pad: var(--sp-2); }
   .hcl-stat { margin-left: 0; flex-basis: 100%; }

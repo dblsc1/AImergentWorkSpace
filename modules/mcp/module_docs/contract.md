@@ -53,7 +53,7 @@ consumes:
   契约明确不拿 `Host` 比）；用到的协议面只有四个方法，手写更小、每一步都看得见。
 - 上限：请求体 256 KiB、批量 16 条、同时处理 8 个请求（再多等 10 秒后 503）、nexus-core 单次响应 8 MiB。
 - 无状态、不缓存：每次工具调用现取 `views/tree` 算路径，不存在跨租户缓存。
-- 调用方范围（`mcp.tools.v1` v1.11）：`mcp_server.caller_scope` 读网关转来的 `X-Nexus-Scope` / `X-Nexus-Anonymous`——
+- 调用方范围（`mcp.tools.v1` v1.12）：`mcp_server.caller_scope` 读网关转来的 `X-Nexus-Scope` / `X-Nexus-Anonymous`——
   `report` / 匿名 / 不认识的取值整个端点 403；`read` 时 `tools/list` 不列 `tools.WRITES`、`tools.call` 拒绝它们。
 - 日志只记请求行、状态码、工具名与结果状态，不记请求头（`Authorization`/`Cookie` 本来也被网关清掉了）、不记工具结果。
 
@@ -100,6 +100,11 @@ v1.10（2026-10-09）：此刻的焦点走 MCP（nexus-core v2.16）。`get_curr
 `focus.title` / `needsChoice.title` 截到 80 个字符；`elapsedSeconds` = MCP 此刻 − `since`。老后端没有这些键 → 三个都是 `null`。
 工具仍是 15 个，说明改写（在计时 / 否则看 focus / 只是提示 / 标题已脱敏）。测试：三种形状（有目标、只到项目、离开）、
 截断、老后端为 `null`、在计时时两样都在、下游请求集合不变。
+
+v1.11（2026-10-09）：人的注意力走 MCP（nexus-core v2.17）。`get_agent_time` 的 `open[]` 每条追加 `attentionSeconds`、
+`get_current_timer` 的 `focus` 追加 `dwellSeconds`，都是下游响应里的同名数字原样带出（`.get()`：老后端没有 → `null`），
+**不多一个下游请求、不自己算**。工具仍是 15 个，两个工具的说明各加一句。没有新的屏幕文字（两个都是数字，不过 `_screen`）。
+测试：有 / 没有这两个键两种下游形状。
 
 v1.10 同版（安全审查）：屏幕来的文字不可信。`tools.py` 的 `_screen()` 是唯一的清洗处——控制字符 / 换行 / 零宽 / 双向控制符
 → 空格并成一行，再截断（`MAX_TITLE` 80 / `MAX_SCREEN_TEXT` 200）；`get_current_timer`、`list_activity_suggestions`、

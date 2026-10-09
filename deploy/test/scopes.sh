@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 令牌的权限范围与匿名上报（auth.gate v1.4、gateway.v1 第九节、nexus-core v2.19、mcp.tools v1.11），
+# 令牌的权限范围与匿名上报（auth.gate v1.4、gateway.v1 第九节、nexus-core v2.19、mcp.tools v1.12），
 # 从门外、经真网关验一遍：
 #
 #   report 令牌  能上报代理运行；读不到任何东西（GET 403）、用不了 MCP（403）、传不了事件（403）

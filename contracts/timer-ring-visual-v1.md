@@ -191,6 +191,7 @@ el.setAttribute("stroke-dasharray", `${lengthPercent} ${100 - lengthPercent}`);
 | ring 页暂停 | `modules/ring/code/frontend/ring-pause.js`（2026-09-12） | 控件区「暂停」+ 空闲态「已暂停：… 继续 / 完成」 |
 
 | 此刻的焦点（2026-10-09） | ring 中心（`ring-focus.js`）、hive 中心格（`hex-app.js` + `hex-focus.css`） | **不是计时**：没有手动计时时显示人此刻的窗口 / 项目（nexus-core v2.16 `focus`）。轨道画成 `--fact` 色虚线并缓慢呼吸、不画贡献弧 / 进度弧，读数是「这个窗口待了多久」；手动计时一开始就让回本规范的画法。两页各自的契约有细节 |
+| 此刻的焦点 · 串行（2026-10-09，nexus-core v2.17） | 同上 | **人的注意力只能串行**：中心永远只写当前这一个窗口 / 目标，读数是这一次切过来之后待了多久（切走再回来从头数）。同一个窗口近 2 小时的累计只作一行小字（ring）/ 悬停的全文（hive），不画进圆环、不与别的窗口相加 |
 
 **新增实现请追加到这张表**，并在自己的 handoff 里写明「实现的是 `timer-ring/v1`」。
 

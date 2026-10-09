@@ -205,3 +205,20 @@ def test_length_limits_still_apply_to_anonymous(client):
     for body in ({"agent": "a" * 65}, {"label": "l" * 65}, {"clientKey": "k" * 129}, {"model": "m" * 65}):
         resp = client.post(f"{AGENTS}/start", json={**RUN, **body}, headers=ANON)
         assert resp.status_code == 422, body
+
+
+def test_unverified_runs_cannot_claim_or_scramble_the_humans_attention(client, seeded):
+    """v2.17 的注意力按「窗口标题 == 会话名」认运行；匿名起一个同名的运行，既认不到自己头上，也搅不乱真的那条。"""
+    from app.modules.activity import session_link  # noqa: PLC0415
+    from app.modules.timer import service as timer_service  # noqa: PLC0415
+
+    mine = _start(client, WRITE, label="cockpit-dev")
+    _now, rows = timer_service.list_lane_runs("u_local")
+    assert session_link.watched(rows, "kitty", "cockpit-dev") == mine["runId"]
+    anon = _start(client, ANON, label="cockpit-dev")
+    lone = _start(client, ANON, label="only-anonymous")
+    _now, rows = timer_service.list_lane_runs("u_local")
+    assert {r["runId"]: r["unverified"] for r in rows} == {mine["runId"]: False, anon["runId"]: True, lone["runId"]: True}
+    assert session_link.watched(rows, "kitty", "cockpit-dev") == mine["runId"]  # 不是「对上不止一条 → None」
+    assert session_link.watched(rows, "kitty", "only-anonymous") is None
+
