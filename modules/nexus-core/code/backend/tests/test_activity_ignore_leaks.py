@@ -29,6 +29,7 @@ def _dump(marker: str) -> set[str]:
 
 
 def test_whole_database_has_the_marker_only_in_declared_places(client, world, clock):  # noqa: F811
+    from app.modules.activity import auto  # noqa: PLC0415
     from test_auto_ai import _claim  # noqa: PLC0415
     from test_auto_track import S, _beat, _run, _track  # noqa: PLC0415
 
@@ -40,6 +41,17 @@ def test_whole_database_has_the_marker_only_in_declared_places(client, world, cl
     _answer(client, w["key"], taskId=task, confidence=0.9)  # AI 代写的规则
     client.post(f"{RULES}/drafts", json={"summary": f"为 {MARK} 起草", "author": "assistant",
                                          "rules": [{"app": "^code$", "title": "^" + MARK + "$", "taskId": task}]})
+    # 记住的选择写的规则（标题带计数前缀）与装饰标题的 AI 规则：它们存的是 src（原始窗口），清理按它走
+    remembered = "(3) " + MARK + " 记住"
+    clock(S + 70)
+    _beat(client, title=remembered)
+    _post(client, f"{API}/activity/choice", {"key": auto.window_key("code", remembered), "taskId": task, "remember": True})
+    decorated = "⠋ " + MARK + " 装饰"
+    _run(client, clock, [(100, decorated, None), (130, decorated, None), (160, decorated, None)])
+    clock(S + 161)
+    _answer(client, _claim(client)["key"], taskId=task, confidence=0.9)
+    stored = _db()["detector_rules"].find_one({"user": "u_local"})
+    assert len([r for r in stored["rules"] if MARK in json.dumps(r, ensure_ascii=False)]) == 3 and "draft" in stored  # 前提
     _post(client, f"{API}/activity/choice/dismiss", {"key": w["key"]}, expect=(200, 404))
     assert {"activity_presence", "activity_ai_asks", "detector_rules"} <= _dump(MARK)  # 前提：它们确实存过
 
@@ -140,13 +152,17 @@ def test_purge_matches_stored_titles_with_odd_whitespace(client):
 
 def test_purge_scans_every_pending_suggestion(client):
     now = datetime.now(timezone.utc)
-    docs = [{"user": "u_local", "id": f"sug_m{i}", "dedupeKey": f"m{i}", "status": "pending", "app": "code", "title": MARK, "durationSeconds": 3,
-             "startTs": now, "endTs": now} for i in range(5)]  # 最早插入的 5 条是命中的
-    docs += [{"user": "u_local", "id": f"sug_o{i}", "dedupeKey": f"o{i}", "status": "pending", "app": "code", "title": "别的", "durationSeconds": 3,
-              "startTs": now, "endTs": now} for i in range(5400)]
+
+    def doc(i, title):
+        return {"user": "u_local", "id": f"sug_{i}", "dedupeKey": f"d{i}", "status": "pending", "app": "code", "title": title,
+                "durationSeconds": 3, "startTs": now, "endTs": now}
+
+    # 命中的散在扫描顺序的中间和**最末尾**（扫描有任何截断 / 预算偷懒都会漏掉最后那些）
+    docs = [doc(i, "别的") for i in range(2700)] + [doc(5000 + i, MARK) for i in range(3)]
+    docs += [doc(6000 + i, "别的") for i in range(2700)] + [doc(9000 + i, MARK) for i in range(4)]
     _db()["activity_suggestions"].insert_many(docs)
     out = _ignore(client, "code", MARK)
-    assert out["removed"] == 5 and _dump(MARK) <= {"activity_ignores"}
+    assert out["removed"] == 7 and _dump(MARK) <= {"activity_ignores"}
     assert _db()["activity_suggestions"].count_documents({}) == 5400
 
 
@@ -328,7 +344,10 @@ def test_claim_guard(client, clock, monkeypatch):  # noqa: F811
 # ─────────────────────────────────────────── （A）写入闸门在残留清理永远失败时也不松
 
 def _span(title, ago, seconds, guess=True):
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    return _span_at(datetime.now(timezone.utc).replace(microsecond=0), title, ago, seconds, guess)
+
+
+def _span_at(now, title, ago, seconds, guess=True):
     sp = {"app": "code", "title": title, "from": (now - timedelta(seconds=ago)).isoformat(), "seconds": seconds}
     if guess:
         sp["guess"] = {"projectId": "p_x", "confidence": 0.9, "classifier": "rules"}
@@ -337,6 +356,7 @@ def _span(title, ago, seconds, guess=True):
 
 def test_write_gate_holds_while_the_leftover_purge_fails_permanently(client, world, clock, monkeypatch):  # noqa: F811
     from app.modules.activity import ignore  # noqa: PLC0415
+    from test_auto_track import S  # noqa: PLC0415
 
     w = _waiting(client, clock, MARK)  # 规则之前就在场、被 AI 认领的窗口
     _ignore(client, "code", MARK)
@@ -344,17 +364,20 @@ def test_write_gate_holds_while_the_leftover_purge_fails_permanently(client, wor
     monkeypatch.setattr(ignore, "purge_leftovers", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("never works")))
     # 上传：匹配的丢、不匹配的照常 2xx
     assert _upload(client, [_seg(10, "code", MARK + " a"), _seg(20, "chrome", "别的")]) == {"accepted": 1, "duplicates": 0, "rejected": [], "ignored": 1}
-    # 心跳：顶层 + 每个 span（含 guess）都抹掉；不匹配的窗口照常 2xx
-    now, s1 = _span(MARK + " b", 30, 10)
-    _, s2 = _span("别的", 15, 10)
+    # 心跳：顶层 + 每个 span（含 guess）都抹掉；不匹配的 span 照常存下标题。beat 用夹具的时钟造：夹具把服务端时钟钉在过去，
+    # 用真实时钟造的 span 都落在已提交时间线的末尾之前，会被丢掉——那样根本没练到 span 闸门
+    now = clock(S + 200)
+    s1, s2 = _span_at(now, MARK + " b", 30, 10)[1], _span_at(now, "别的", 15, 10)[1]
     resp = client.post(f"{API}/activity/presence", json={"deviceId": DEV, "app": "code", "title": MARK + " c", "afk": False,
                                                           "guess": {"projectId": "p_x", "confidence": 0.9, "classifier": "rules"},
                                                           "sentAt": now.isoformat(), "spans": [s1, s2]})
     assert resp.status_code == 200, resp.text
     doc = _db()["activity_presence"].find_one({"deviceId": DEV})
     assert (doc["app"], doc["title"]) == ("", "") and not doc.get("guess")
+    assert any(sp["title"] == "别的" for sp in doc["spans"])  # 不匹配的 span 照常存（混合的一拍：一个抹、一个留）
     blank = [sp for sp in doc["spans"] if sp["app"] == ""]
     assert blank and all(sp["title"] == "" and "guess" not in sp for sp in blank)
+    assert not any(MARK in sp["title"] for sp in doc["spans"])
     # AI 回答：窗口已被忽略（问询也被清掉）→ 拒绝，什么都没写
     out = client.post(f"{API}/activity/ai/suggest", json={"key": w["key"], "taskId": world["a"], "confidence": 0.9, "reason": "r"})
     assert out.status_code in (404, 409)
@@ -520,3 +543,409 @@ def test_a_fragment_beyond_gate_chars_is_not_seen_documented_limit(client):
     title = "q" * ignore.GATE_CHARS + " needle"
     assert _upload(client, [_seg(5, "code", title)]).get("ignored") is None  # 看不到：存下的前缀（512）也装不下它
     assert "needle" not in json.dumps(list(_db()["activity_suggestions"].find({}, {"_id": 0})), default=str)
+
+
+# ─────────────────────────────────────────── 复审：src / 装饰前缀 / 草稿 / 读遮罩 / 草稿闸门 / 折叠 / 并发上限 / 变异
+
+import threading  # noqa: E402
+from concurrent.futures import ThreadPoolExecutor  # noqa: E402
+
+from test_activity_suggestions import BEARER  # noqa: E402
+from test_auto_ai import _claim  # noqa: E402,F811
+
+DECOR_TITLES = ["(3) Inbox Zx9 - Mail", "⠋ Inbox Zx9 - Mail", "[2] Inbox Zx9 - Mail"]  # 计数前缀 / 转圈符号 / 方括号计数
+DECOR = "^(?:[^\\pL\\pN]|\\(\\d+\\)|\\[\\d+\\])*"
+
+
+def _stored_rules():
+    return (_db()["detector_rules"].find_one({"user": "u_local"}) or {}).get("rules") or []
+
+
+def _unpurged_flags():
+    from app.modules.activity import ignore_repo  # noqa: PLC0415
+
+    return [r["purged"] for r in ignore_repo.all_rules("u_local")]
+
+
+def _boom(*_a, **_k):
+    raise RuntimeError("boom")
+
+
+@pytest.mark.parametrize("title", DECOR_TITLES)
+def test_remember_rule_carries_a_server_only_src_and_the_ignore_removes_it(client, world, clock, title):
+    from app.modules.activity import auto  # noqa: PLC0415
+    from test_auto_track import S, _beat  # noqa: PLC0415
+
+    clock(S)
+    _beat(client, title=title)
+    _post(client, f"{API}/activity/choice", {"key": auto.window_key("code", title), "taskId": world["a"], "remember": True})
+    assert _stored_rules()[0]["src"] == {"app": "code", "title": title}   # 存的是原始窗口
+    got = _rules(client)
+    for out in (got, _rules(client, BEARER), client.get(f"{RULES}/drafts/current").json()):   # 任何输出都没有 src
+        assert "src" not in json.dumps(out) and "Zx9" not in json.dumps(out["draft"] if "draft" in out else {}) or "draft" not in out
+    # 人整套回写（请求体里没有 src）：服务端按 id 带过去；草稿 diff 不把它当「修改」
+    assert client.put(RULES, json={"rules": got["rules"]}, headers={"If-Match": f'"{got["version"]}"'}).status_code == 200
+    assert _stored_rules()[0]["src"]["title"] == title
+    draft = client.post(f"{RULES}/drafts", json={"summary": "不变", "rules": _rules(client)["rules"]}).json()
+    assert draft["diff"]["changed"] == [] and "src" not in json.dumps(draft)
+    _ignore(client, "code", title)   # 页面把整个标题（带装饰）填进匹配文字
+    assert _stored_rules() == [] and _dump("Zx9") <= DECLARED
+
+
+@pytest.mark.parametrize("title", DECOR_TITLES)
+def test_ai_rule_from_a_decorated_title_is_purged_by_the_whole_title_fragment(client, world, clock, title):
+    w = _waiting(client, clock, title)
+    _answer(client, w["key"], taskId=world["a"], confidence=0.9)
+    assert _stored_rules()[0]["src"] == {"app": "code", "title": title} and _stored_rules()[0]["title"].startswith(DECOR)
+    client.post(f"{RULES}/drafts", json={"summary": "x", "author": "assistant", "rules": [
+        {"app": "^code$", "title": DECOR + "Inbox Zx9 - Mail$", "taskId": world["a"]}]})   # 旧形状的待批准草稿
+    _ignore(client, "code", title)
+    assert _stored_rules() == [] and client.get(f"{RULES}/drafts/current").json()["draft"] is None
+    assert _dump("Zx9") <= DECLARED
+
+
+def test_legacy_rules_without_src_are_recognised_by_shape_and_decorated_fragments(client):
+    ai = {"author": "assistant", "taskId": "t"}
+    full, core = "(3) Inbox Zx9 - Mail", "Inbox Zx9 - Mail"
+    _raw_rules([
+        {"id": "ai_dec", "app": "^code$", "title": DECOR + core + "$", **ai},                                  # AI，带装饰前缀
+        {"id": "ai_plain", "app": "^code$", "title": "^" + core + "$", **ai},                                   # AI，窗口本来没装饰
+        {"id": "remember_dec", "app": "^code$", "title": DECOR + core + "$", "taskId": "t", "note": "计时页选的：code · " + full},
+        {"id": "page", "app": "^code$", "title": "^" + core + "$", "taskId": "t", "note": "待确认里勾的：code · " + core},
+        {"id": "human_dec", "app": "^code$", "title": DECOR + core + "$", "taskId": "t", "author": "human"},    # 人写的，同形：不动
+        {"id": "hand", "app": "^code$", "title": core, "taskId": "t"},                                          # 人手写：不动
+    ], draft={"id": "drf_x", "author": "assistant", "summary": "为 " + core + " 起草", "createdAt": datetime.now(timezone.utc),
+              "expiresAt": datetime.now(timezone.utc) + timedelta(hours=1), "baseVersion": 1, "rules": []})
+    _ignore(client, "code", full)   # 带装饰的整个标题：认得出带装饰前缀的那些（核心标题 + note 里的原始标题），没装饰的是另一个窗口
+    assert [r["id"] for r in _stored_rules()] == ["ai_plain", "page", "human_dec", "hand"]
+    assert _db()["detector_rules"].find_one({"user": "u_local"}).get("draft") is None   # 摘要里是核心标题
+    _ignore(client, "code", "Zx9")   # 不带装饰的片段：没装饰的也认
+    assert [r["id"] for r in _stored_rules()] == ["human_dec", "hand"]
+
+
+def test_page_generated_rule_put_through_the_api_gets_src(client, world):
+    page = {"app": "^code$", "title": "^" + MARK + "$", "taskId": world["a"], "note": "待确认里勾的：code · " + MARK}
+    r = client.put(RULES, json={"rules": [page, {"id": "hand", "title": "foo", "taskId": world["a"]}]}, headers={"If-Match": '"0"'})
+    assert r.status_code == 200, r.text
+    assert _stored_rules()[0]["src"] == {"app": "code", "title": MARK} and "src" not in _stored_rules()[1]
+    _ignore(client, "code", MARK)
+    assert [r["id"] for r in _stored_rules()] == ["hand"]
+
+
+# ── M3：草稿删不掉不许 purged:true，读也遮草稿
+
+
+def _assistant_draft(client, world, title=MARK):
+    r = client.post(f"{RULES}/drafts", json={"summary": f"为 {title} 起草", "author": "assistant",
+                                             "rules": [{"app": "^code$", "title": "^" + title + "$", "taskId": world["a"]}]})
+    assert r.status_code == 201, r.text
+
+
+def test_a_failing_draft_deletion_fails_the_purge_and_reads_mask_the_draft(client, world, monkeypatch):
+    from datetime import timedelta as td  # noqa: PLC0415
+
+    from app.modules.activity import ignore  # noqa: PLC0415
+    from app.modules.detector import repo as drepo  # noqa: PLC0415
+
+    _assistant_draft(client, world)
+    real = drepo.drop_draft
+    monkeypatch.setattr(drepo, "drop_draft", _boom)
+    assert client.post(IGN, json={"app": "code", "titleContains": MARK}).status_code == 503
+    assert _unpurged_flags() == [False]
+    assert "draft" in _db()["detector_rules"].find_one({"user": "u_local"})   # 库里确有残留
+    assert client.get(f"{RULES}/drafts/current").json()["draft"] is None       # 读（含 MCP get_detector_rules.draft）遮住
+    monkeypatch.setattr(drepo, "drop_draft", real)
+    monkeypatch.setattr(ignore, "PURGE_BACKOFF", timedelta(0))
+    _plain_beat(client, "chrome", "别的")   # 下一次写入补清
+    assert _unpurged_flags() == [True] and "draft" not in _db()["detector_rules"].find_one({"user": "u_local"})
+
+
+def test_purged_is_not_set_while_a_draft_or_an_ai_rule_remains_and_reads_mask_the_rule(client, world, clock, monkeypatch):
+    from app.modules.detector import window_rules  # noqa: PLC0415
+
+    w = _waiting(client, clock, MARK)
+    _answer(client, w["key"], taskId=world["a"], confidence=0.9)
+    _assistant_draft(client, world)
+    human = client.put(RULES, json={"rules": [*_rules(client)["rules"], {"id": "r_human", "app": "^code$", "title": MARK,
+                                                                     "taskId": world["a"], "author": "human"}]},
+                       headers={"If-Match": '"1"'})
+    assert human.status_code == 200, human.text
+    monkeypatch.setattr(window_rules, "drop_ignored", lambda *a, **k: 0)   # 删规则 / 草稿「悄悄没做」：校验要发现
+    assert client.post(IGN, json={"app": "code", "titleContains": MARK}).status_code == 503
+    assert _unpurged_flags() == [False]
+    assert [r["id"] for r in _rules(client)["rules"]] == ["r_human"]               # AI 规则读时遮住，人写的照给
+    assert client.get(f"{RULES}/drafts/current").json()["draft"] is None
+
+
+def test_silently_failing_draft_drop_is_caught_by_the_verification(client, world, monkeypatch):
+    from app.modules.detector import repo as drepo  # noqa: PLC0415
+
+    _assistant_draft(client, world)
+    monkeypatch.setattr(drepo, "drop_draft", lambda *a, **k: None)   # 不抛、也没删
+    assert client.post(IGN, json={"app": "code", "titleContains": MARK}).status_code == 503
+    assert _unpurged_flags() == [False]
+
+
+# ── L4：规则之后写的草稿
+
+
+def test_a_draft_written_after_the_rule_is_refused(client, world):
+    _ignore(client, "code", MARK)
+    body = {"summary": "x", "author": "assistant", "rules": [{"app": "^code$", "title": "^" + MARK + " 二$", "taskId": world["a"]}]}
+    assert client.post(f"{RULES}/drafts", json=body).status_code == 409
+    assert client.post(f"{RULES}/drafts", json={**body, "summary": f"为 {MARK} 起草", "rules": [
+        {"app": "^chrome$", "taskId": world["a"]}]}).status_code == 409                  # 摘要带着被忽略的文字
+    assert client.post(f"{RULES}/drafts", json={**body, "rules": [{"app": "^code$", "title": "^别的$", "taskId": world["a"]}]}).status_code == 201
+    assert client.post(f"{RULES}/drafts", json={**body, "author": "human"}).status_code == 201   # 人写的草稿不碰
+    _ignore(client, "code")   # 整个程序都忽略
+    assert client.post(f"{RULES}/drafts", json={**body, "rules": [{"app": "^code$", "taskId": world["a"]}]}).status_code == 409
+
+
+# ── L5：清理没做完时，认领与报告解析不交出残留
+
+
+def test_claim_and_report_resolve_do_not_hand_out_leftovers_after_a_failed_purge(client, clock, monkeypatch):
+    from app.modules.activity import repo  # noqa: PLC0415
+    from test_activity_reports import REPORTS, _submit  # noqa: PLC0415
+
+    w = _waiting(client, clock, MARK)
+    _upload(client, [_seg(10, "code", MARK)])
+    sid = next(i["id"] for i in client.get(SUG, params={"status": "pending"}).json()["items"] if i["title"] == MARK)
+    rid = _submit(client, [{"kind": "dismiss", "suggestionIds": [sid]}])["reportId"]
+    assert MARK in client.get(f"{REPORTS}/{rid}", params={"resolve": "true"}).text   # 前提：规则之前读得到
+    monkeypatch.setattr(repo, "delete_pending", _boom)
+    assert client.post(IGN, json={"app": "code", "titleContains": MARK}).status_code == 503
+    assert _db()["activity_ai_asks"].count_documents({"key": w["key"]}) == 1   # 前提：问询的残留还在
+    assert _claim(client) is None   # 残留的问询不再经认领交给 AI
+    assert MARK not in client.get(f"{REPORTS}/{rid}", params={"resolve": "true"}).text
+
+
+# ── L6：别的写入和建规则交错，严格清理遇到「又脏了」不 5xx
+
+
+@pytest.mark.parametrize("dirty_times,purged", [(2, True), (99, False)])
+def test_strict_post_write_purge_retries_when_dirty_and_never_5xxs_the_write(client, clock, monkeypatch, dirty_times, purged):
+    from app.modules.activity import auto, ignore  # noqa: PLC0415
+    from test_auto_track import S, _beat  # noqa: PLC0415
+
+    clock(S)
+    _beat(client, title=MARK)
+    real_find, real_check, calls = auto._find, ignore.leftovers_exist, []
+
+    def dirty(user, rule):
+        calls.append(1)
+        return len(calls) <= dirty_times or real_check(user, rule)
+
+    def find_then_ignore(user, key):
+        out = real_find(user, key)
+        assert client.post(IGN, json={"app": "code", "titleContains": MARK}).status_code == 201   # 规则在写的当中出现
+        _db()["activity_ignores"].update_many({}, {"$set": {"purged": False}})   # 建它的那个请求还没清完 / 没标
+        monkeypatch.setattr(ignore, "leftovers_exist", dirty)   # 此后清完到校验之间总有别的写入落进来
+        return out
+
+    monkeypatch.setattr(auto, "_find", find_then_ignore)
+    resp = client.post(f"{API}/activity/choice/dismiss", json={"key": auto.window_key("code", MARK)})
+    assert resp.status_code == 200, resp.text    # 本次写入的正常结果，不是 5xx
+    assert _unpurged_flags() == [purged]
+    assert len(calls) == min(dirty_times + 1, ignore.STRICT_TRIES)
+    assert _dump(MARK) <= DECLARED   # 本次请求自己的数据（刚写的临时选择）已经被清掉
+    if not purged:
+        monkeypatch.undo()
+        _plain_beat(client, "chrome", "别的")   # 下一次写入补清
+        assert _unpurged_flags() == [True]
+
+
+# ── L7：不可见字符
+
+
+INVISIBLES = ["\u00ad", "\u200e", "\u200f", "\u034f", "\ufe0f", "\ufe00", "\u180e", "\u202a", "\u202e", "\u200b", "\u200d",
+              "\u2060", "\ufeff", "\U000e0100", "\U000e01ef", "\u061c", "\u2066"]
+
+
+@pytest.mark.parametrize("cp", INVISIBLES)
+def test_invisible_code_points_inside_the_fragment_do_not_evade_the_rule(client, cp):
+    from app.textfold import fold  # noqa: PLC0415
+
+    assert fold("a" + cp + "b") == "ab"
+    _ignore(client, "code", "needle 7731")
+    title = "x nee" + cp + "dle 77" + cp + "31 y"
+    assert _upload(client, [_seg(10, "code", title)]).get("ignored") == 1
+    _plain_beat(client, "code", title)
+    assert _db()["activity_presence"].find_one({"deviceId": DEV})["title"] == ""
+    assert _dump("7731") <= {"activity_ignores"} and _dump("nee") <= {"activity_ignores"}
+
+
+@pytest.mark.parametrize("cp", INVISIBLES[:6])
+def test_invisible_code_points_in_the_rule_text_match_clean_titles(client, cp):
+    _ignore(client, "code", "nee" + cp + "dle 7731")
+    assert _upload(client, [_seg(10, "code", "x needle 7731")]).get("ignored") == 1
+
+
+# ── L8：折叠次数
+
+
+def test_folds_are_linear_in_strings_plus_rules(client, monkeypatch):
+    from app.modules.activity import ignore, presence  # noqa: PLC0415
+
+    R, now = 200, datetime.now(timezone.utc)
+    _db()["activity_ignores"].insert_many([{"user": "u_local", "id": f"ig_{i}", "app": "code", "titleContains": f"needle{i}",
+                                            "createdAt": now + timedelta(microseconds=i), "hits": 0, "seconds": 0, "purged": True}
+                                           for i in range(R)])
+    seen, real = [], ignore.fold
+    monkeypatch.setattr(ignore, "fold", lambda t: (seen.append(1), real(t))[1])
+    assert _upload(client, [_seg(10 + i, "code", f"title {i}") for i in range(33)])["accepted"] == 33
+    assert len(seen) <= 2 * R + 2 * 33 + 10, len(seen)   # 规则各一次（app + 匹配文字）+ 进来的每个串一次；不是 串数 × 规则数
+    seen.clear()
+    beat_now = datetime.now(timezone.utc).replace(microsecond=0)
+    spans = [{"app": "code", "title": f"t{i}", "from": (beat_now - timedelta(seconds=118 - 3.6 * i)).isoformat(), "seconds": 3}
+             for i in range(presence.MAX_BEAT_SPANS)]
+    _beat_raw(client, "code", "top", spans=spans, sentAt=beat_now.isoformat())
+    assert len(seen) <= 2 * R + 2 * (1 + presence.MAX_BEAT_SPANS) + 10, len(seen)
+
+
+# ── L9：200 条上限在并发下不被顶过
+
+
+def test_rule_cap_holds_under_concurrent_creates(client, monkeypatch):
+    from app.modules.activity import ignore, ignore_repo  # noqa: PLC0415
+
+    n, barrier, real = 8, threading.Barrier(8, timeout=20), ignore_repo.count
+    monkeypatch.setattr(ignore, "MAX_IGNORES", 3)
+
+    def count_after_everyone_inserted(user):   # 把所有创建者都逼到「先看数、再动手」同一刻：检查再插入的写法在这里全部通过
+        out = real(user)
+        barrier.wait()
+        return out
+
+    monkeypatch.setattr(ignore_repo, "count", count_after_everyone_inserted)
+    with ThreadPoolExecutor(n) as pool:
+        codes = list(pool.map(lambda i: client.post(IGN, json={"app": f"app{i}"}).status_code, range(n)))
+    assert set(codes) <= {201, 422}
+    monkeypatch.setattr(ignore_repo, "count", real)
+    assert client.get(IGN).json()["total"] <= 3
+
+
+# ── L10：读不到规则 → 读窗口文字的接口 503；坏文档不挡建规则
+
+
+def test_reads_fail_closed_with_503_when_the_rules_cannot_be_read(client, monkeypatch):
+    from app.modules.activity import ignore_repo  # noqa: PLC0415
+
+    _upload(client, [_seg(10, "code", MARK)])
+    _plain_beat(client, "code", MARK)
+    monkeypatch.setattr(ignore_repo, "all_rules", _boom)
+    for url in (f"{API}/views/current", f"{API}/views/lanes", SUG, RULES, f"{RULES}/drafts/current", IGN):
+        got = client.get(url)
+        assert got.status_code == 503 and MARK not in got.text, url   # 不交出没遮过的数据，也不是 500
+
+
+def test_a_malformed_rules_document_does_not_block_creating_a_rule(client):
+    _db()["detector_rules"].replace_one({"user": "u_local"}, {"user": "u_local", "version": 1, "rules": 7}, upsert=True)
+    assert _ignore(client, "code", MARK)["created"] is True
+    assert _unpurged_flags() == [True]
+
+
+# ── T11：变异存活的每一处
+
+
+def test_gate_beat_drops_top_level_and_span_guess_directly(client):
+    from app.modules.activity import ignore  # noqa: PLC0415
+
+    _ignore(client, "code", MARK)
+    guess = {"projectId": "p_x", "confidence": 0.9, "classifier": "rules"}
+    spans = [{"app": "code", "title": MARK, "guess": guess, "from": "x"}, {"app": "code", "title": "别的", "guess": guess, "from": "y"}]
+    app, title, g, out, top = ignore.gate_beat("u_local", "code", MARK, guess, spans)
+    assert (app, title, g, top) == ("", "", None, True)
+    assert out[0] == {"app": "", "title": "", "from": "x"} and out[1]["guess"] == guess and out[1]["title"] == "别的"
+    assert ignore.gate_beat("u_local", "code", "别的", guess, None) == ("code", "别的", guess, None, False)
+
+
+def test_an_error_inside_the_gates_means_ignored_not_kept(client, monkeypatch):
+    from app.modules.activity import ignore  # noqa: PLC0415
+
+    _ignore(client, "code", MARK)
+    real = ignore.fold
+    monkeypatch.setattr(ignore, "fold", lambda t: _boom() if "BOOM" in (t or "") else real(t))
+    assert _upload(client, [_seg(10, "code", "BOOM 一"), _seg(20, "code", "别的")]).get("ignored") == 1   # 拿不准 → 丢
+    now, sp = _span("BOOM 二", 20, 10)
+    _, ok = _span("别的", 8, 5)
+    _beat_raw(client, "code", "BOOM 三", spans=[sp, ok], sentAt=now.isoformat())
+    doc = _db()["activity_presence"].find_one({"deviceId": DEV})
+    assert (doc["app"], doc["title"]) == ("", "")
+    assert [s["title"] for s in doc["spans"] if s["app"]] == ["别的"] and not any("BOOM" in s["title"] for s in doc["spans"])
+    assert _dump("BOOM") == set()
+
+
+def test_every_state_changing_endpoint_is_guarded():
+    from app.modules.activity import auto, auto_ai, service  # noqa: PLC0415
+    from app.modules.detector import rules  # noqa: PLC0415
+
+    for fn in (service.upload, auto.heartbeat, auto.choose, auto.dismiss, auto_ai.claim, auto_ai.suggest, auto_ai.reject):
+        assert hasattr(fn, "__wrapped__"), fn.__name__   # ignore.guarded 用 functools.wraps：被摘掉就没有 __wrapped__
+    assert rules.create_draft.__name__ == "create_draft"
+
+
+def test_mark_purged_needs_a_clean_pending_suggestion_scan(client, monkeypatch):
+    from app.modules.detector import window_rules  # noqa: PLC0415
+
+    real = window_rules.drop_ignored
+
+    def drop_then_a_pending_one_lands(*a, **k):   # 清完到校验之间，别的上传落进来一条
+        out = real(*a, **k)
+        now = datetime.now(timezone.utc)
+        _db()["activity_suggestions"].insert_one({"user": "u_local", "id": "sug_late", "dedupeKey": "late", "status": "pending",
+                                                  "app": "code", "title": MARK, "durationSeconds": 3, "startTs": now, "endTs": now})
+        return out
+
+    monkeypatch.setattr(window_rules, "drop_ignored", drop_then_a_pending_one_lands)
+    assert client.post(IGN, json={"app": "code", "titleContains": MARK}).status_code == 503
+    assert _unpurged_flags() == [False]
+
+
+def test_backoff_stops_the_purge_from_being_retried_on_every_write(client, monkeypatch):
+    from app.modules.detector import window_rules  # noqa: PLC0415
+
+    calls = []
+    monkeypatch.setattr(window_rules, "drop_ignored", lambda *a, **k: (calls.append(1), _boom())[1])
+    assert client.post(IGN, json={"app": "code", "titleContains": MARK}).status_code == 503
+    first = len(calls)
+    for _ in range(6):   # 默认退避 1 分钟：这期间的写入 / 读都不再试
+        _upload(client, [_seg(10, "chrome", "别的")])
+        _plain_beat(client, "chrome", "别的")
+        client.get(IGN)
+    assert len(calls) == first
+
+
+def test_ignored_windows_are_refused_in_find_and_in_suggest_each_on_its_own(client, world, clock, monkeypatch):
+    from app.modules.activity import auto  # noqa: PLC0415
+    w = _waiting(client, clock, MARK)
+    key = w["key"]
+    # ① 规则已标 purged、但在场里还有这个窗口（赛跑留下的）：_find 自己拒绝
+    _ignore(client, "code", MARK)
+    _plain_beat(client, "code", MARK)
+    _db()["activity_presence"].update_many({}, {"$set": {"app": "code", "title": MARK, "spans": [{
+        "app": "code", "title": MARK, "from": datetime.now(timezone.utc) - timedelta(minutes=1), "to": datetime.now(timezone.utc),
+        "afk": False, "seconds": 60}]}})
+    with pytest.raises(Exception) as exc:   # noqa: PT011
+        auto._find("u_local", key)
+    assert type(exc.value).__name__ == "NotFoundError"
+    assert client.post(f"{API}/activity/choice", json={"key": key, "taskId": world["a"], "remember": True}).status_code == 404
+    assert _stored_rules() == []
+    # ② suggest 自己的拒绝：_find 被绕开时仍然什么都不写
+    ask = {"user": "u_local", "key": key, "app": "code", "title": MARK, "claimedAt": auto._now()}   # noqa: SLF001
+    _db()["activity_ai_asks"].replace_one({"user": "u_local", "key": key}, ask, upsert=True)
+    monkeypatch.setattr(auto, "_find", lambda user, k: ({"app": "code", "title": MARK, "afk": False}, DEV))
+    out = client.post(f"{API}/activity/ai/suggest", json={"key": key, "taskId": world["a"], "confidence": 0.9, "reason": "r"})
+    assert out.status_code == 409 and _stored_rules() == []
+
+
+def test_an_ignored_beat_does_not_renew_a_temporary_choice(client, monkeypatch):
+    from app.modules.activity import choice_repo  # noqa: PLC0415
+
+    seen = []
+    monkeypatch.setattr(choice_repo, "seen", lambda *a, **k: seen.append(a))
+    _ignore(client, "code", MARK)
+    _plain_beat(client, "code", MARK)
+    assert seen == []
+    _plain_beat(client, "code", "别的")
+    assert len(seen) == 1

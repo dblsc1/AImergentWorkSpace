@@ -24,12 +24,16 @@ from __future__ import annotations
 
 import functools
 import hashlib
+import logging
+import re
 from datetime import datetime, timedelta, timezone
 
 from ...tenant import current as current_tenant
 from ...textfold import fold
 from ..planner.errors import InvalidInputError, UnprocessableError
 from . import ignore_repo, repo
+
+log = logging.getLogger(__name__)
 
 MAX_IGNORES = 200  #: 每租户至多这么多条规则
 MAX_APP, MAX_TITLE = 128, 200
@@ -38,12 +42,17 @@ MAX_APP, MAX_TITLE = 128, 200
 #: 所以**存下来的一定是闸门看过的串的前缀**。只出现在 GATE_CHARS 之后的片段看不到（存下的前缀也装不下它）。
 GATE_CHARS = 4096
 PURGE_BACKOFF = timedelta(minutes=1)  #: 清理失败后，同一条规则至多这么久才自动再试一次（写入路径上；不是每次写入都试）
+STRICT_TRIES = 3  #: 写入后严格清理遇到「清完到校验之间又有别的写入落进来」时，重清重验这么多次；还脏就留给退避重试，不 5xx
 PURGE_GIVE_UP = 5  #: 失败这么多次就放弃自动重试，规则标 ``purgeFailed``（人在规则列表里看得到；再建一次同一条规则会重清）
 SCAN_BUDGET = 50_000  #: 一次清理至多扫这么多条待确认建议；超了就留给下一次重试（分批），不在一个请求里无限干活
 
 
 class PurgeIncomplete(RuntimeError):
     """规则已经存下，但清理没做完 → 503（建规则的接口；会自动重试）。"""
+
+
+class RulesUnavailable(RuntimeError):
+    """读不到忽略规则：读窗口文字的接口宁可 503 也不交出没遮过的数据（契约 v2.22）。"""
 
 
 class _Gone(Exception):
@@ -83,18 +92,49 @@ def rules(user: str) -> list[dict]:
     return ignore_repo.all_rules(user)
 
 
+class Prepared:
+    """一次请求内的规则：每条规则的 app / 匹配文字只归一化一次，进来的每个串也只归一化一次（标题懒归一化，app 对不上就不碰它）——
+    总量 O(串数 + 规则数)，不是 O(串数 × 规则数)。**每次请求现建，不跨请求缓存。**"""
+
+    def __init__(self, rules_: list[dict]):
+        self.items = [(r, fold(r.get("app")), fold(r["titleContains"]) if r.get("titleContains") else "") for r in rules_]
+
+    def __bool__(self) -> bool:
+        return bool(self.items)
+
+    def find(self, app: str, title: str) -> dict | None:
+        app, title = (app or "")[:GATE_CHARS], (title or "")[:GATE_CHARS]   # 任何路径都不归一化无界的串
+        fapp, ftitle = fold(app), None
+        for rule, rapp, needle in self.items:
+            if rapp != fapp:
+                continue
+            if needle:
+                ftitle = fold(title) if ftitle is None else ftitle
+                if needle not in ftitle:
+                    continue
+            return rule
+        return None
+
+
+def prepared(user: str) -> Prepared:
+    return Prepared(rules(user))
+
+
+def find(rules_: list[dict] | Prepared, app: str, title: str) -> dict | None:
+    return (rules_ if isinstance(rules_, Prepared) else Prepared(rules_)).find(app, title)
+
+
 def matches(rule: dict, app: str, title: str) -> bool:
-    app, title = (app or "")[:GATE_CHARS], (title or "")[:GATE_CHARS]   # 任何路径都不归一化无界的串
-    return fold(rule.get("app")) == fold(app) and (not rule.get("titleContains") or fold(rule["titleContains"]) in fold(title))
-
-
-def find(rules_: list[dict], app: str, title: str) -> dict | None:
-    return next((r for r in rules_ if matches(r, app, title)), None)
+    return find([rule], app, title) is not None
 
 
 def listing(human: bool = True) -> dict:
     retry_pending()
-    items = [_out(d, human) for d in rules(current_tenant())]
+    try:
+        rows = rules(current_tenant())
+    except Exception as exc:
+        raise RulesUnavailable("忽略规则暂时读不到") from exc
+    items = [_out(d, human) for d in rows]
     return {"total": len(items), "items": items}
 
 
@@ -109,7 +149,11 @@ def add(app: str, title_contains: str | None) -> dict:
     title = title if fold(title) else ""
     doc = {"user": user, "id": rule_id(app, title), "app": app, "titleContains": title or None,
            "createdAt": _now(), "hits": 0, "seconds": 0, "purged": False}
-    created = ignore_repo.insert_if_absent(doc) if ignore_repo.count(user) < MAX_IGNORES else False
+    # 先插、再数、超了撤回（并发的创建者各自插完再数：留下的总是 ≤ MAX_IGNORES；同时顶线时可能一起撤回，宁可少收，调用方重试）
+    created = ignore_repo.insert_if_absent(doc)
+    if created and ignore_repo.count(user) > MAX_IGNORES:
+        ignore_repo.delete(user, doc["id"])
+        created = False
     stored = next((r for r in rules(user) if r["id"] == doc["id"]), None)
     if stored is None:
         raise UnprocessableError(f"忽略规则最多 {MAX_IGNORES} 条")
@@ -123,15 +167,51 @@ def add(app: str, title_contains: str | None) -> dict:
     return {**_out(next(r for r in rules(user) if r["id"] == doc["id"])), "created": created, "removed": removed}
 
 
-def purge(user: str, rule: dict, count: bool = False) -> int:
-    """建规则的当下，把已存下的、带被忽略窗口 app / title 的活状态抹掉（和上传、心跳的入口过滤是同一个判据 ``matches``）：
-    待确认 / 已忽略的建议（**全部**扫，分批；任何一步出错整个 purge 抛出、规则不标 purged）、在场时间线（段、当前窗口、guess、对上的会话 runId）、
-    人的临时选择、AI 问询、AI 代写的规则与草稿。已确认的建议和台账里的事实不动（见契约）。"""
+def _strip_decor(text: str) -> str:
+    """去掉标题开头的装饰（状态符号 / 转圈字符 / ``(3)`` ``[3]`` 计数）：同 ``auto._DECOR``。全是装饰就原样返回。"""
+    return re.sub(r"^(?:\(\d+\)|\[\d+\]|[\W_])*", "", text) or text
+
+
+def judges(rule: dict):
+    """这条规则对窗口 / 文字的三个判据：``hit(app, title)``；``hit_core``（匹配文字去掉开头装饰后再比：旧的、带装饰前缀的 AI 规则只存了
+    去装饰的核心标题，而页面把整个标题带装饰填进了匹配文字）；``text_hit(text)``（草稿的摘要 / 备注）。"""
+    one = Prepared([rule])
+    needle = fold(rule["titleContains"]) if rule.get("titleContains") else ""
+    core = _strip_decor(needle)
+    one_core = Prepared([{**rule, "titleContains": core}]) if needle else one
+    return (lambda app, title: one.find(app or "", title or "") is not None,
+            lambda app, title: one_core.find(app or "", title or "") is not None,
+            lambda text: bool(needle) and (needle in fold(text) or core in fold(text)))   # app 整个忽略时不按文字清草稿，只按窗口
+
+
+def leftovers_exist(user: str, rule: dict) -> bool:
+    """这条规则命中的东西现在还有没有残留：清理（``purge``）动过的每一处——待确认建议、在场、临时选择、AI 问询、AI 规则**与草稿**。
+    校验用的唯一一处（purge 标 purged 之前问它）；读库出错就抛，不当作「没有」。"""
     from ..detector import window_rules  # noqa: PLC0415  detector.rules 经 planner 回到 activity.service：延迟导入
 
-    hit = lambda app, title: matches(rule, app or "", title or "")  # noqa: E731
-    needle = fold(rule["titleContains"]) if rule["titleContains"] else None
+    hit, hit_core, text_hit = judges(rule)
+    scanned = 0
+    for batch in repo.pending_windows(user):
+        scanned += len(batch)
+        if scanned > SCAN_BUDGET:
+            raise _OverBudget
+        if any(hit(p["app"], p["title"]) for p in batch):
+            return True
+    return (any(hit(d.get("app"), d.get("title")) or any(hit(sp.get("app"), sp.get("title")) for sp in d.get("spans") or [])
+                for d in repo.presence_list(user))
+            or ignore_repo.any_window(user, "activity_choices", hit) or ignore_repo.any_window(user, "activity_ai_asks", hit)
+            or window_rules.has_ignored(hit, text_hit, hit_core))
+
+
+def purge(user: str, rule: dict, count: bool = False) -> int:
+    """建规则的当下，把已存下的、带被忽略窗口 app / title 的活状态抹掉（和上传、心跳的入口过滤是同一个判据）：
+    待确认 / 已忽略的建议（**全部**扫，分批；任何一步出错整个 purge 抛出、规则不标 purged）、在场时间线（段、当前窗口、guess、对上的会话 runId）、
+    人的临时选择、AI 问询、AI 代写的规则与草稿、服务端按窗口生成的规则（「记住」的选择）。已确认的建议和台账里的事实不动（见契约）。"""
+    from ..detector import window_rules  # noqa: PLC0415  detector.rules 经 planner 回到 activity.service：延迟导入
+
+    hit, hit_core, text_hit = judges(rule)
     removed = seconds = 0
+
     def alive() -> None:
         if not ignore_repo.exists(user, rule["id"], rule["createdAt"]):
             raise _Gone
@@ -142,7 +222,7 @@ def purge(user: str, rule: dict, count: bool = False) -> int:
         scanned += len(batch)
         if scanned > SCAN_BUDGET:
             raise _OverBudget
-        gone = [p for p in batch if matches(rule, p["app"], p["title"])]
+        gone = [p for p in batch if hit(p["app"], p["title"])]
         if gone:
             removed += repo.delete_pending(user, [p["id"] for p in gone])
             seconds += sum(p["durationSeconds"] for p in gone)
@@ -152,19 +232,9 @@ def purge(user: str, rule: dict, count: bool = False) -> int:
     ignore_repo.drop_windows(user, "activity_choices", hit)
     ignore_repo.drop_windows(user, "activity_ai_asks", hit)
     alive()
-    window_rules.drop_ignored(hit, lambda text: bool(needle) and needle in fold(text))  # app 整个忽略时不按文字清草稿，只按窗口
+    window_rules.drop_ignored(hit, text_hit, hit_core)  # 删规则 / 草稿出错就抛：不能在草稿还在的时候标 purged
     # 校验一遍确实没有残留，才标 purged（读路径的遮罩只看这个标志，标早了残留就露出来）；标的条件带 createdAt
-    scanned = 0
-    for batch in repo.pending_windows(user):
-        scanned += len(batch)
-        if scanned > SCAN_BUDGET:
-            raise _OverBudget
-        if any(matches(rule, p["app"], p["title"]) for p in batch):
-            raise _Dirty
-    if (any(hit(d.get("app"), d.get("title")) or any(hit(sp.get("app"), sp.get("title")) for sp in d.get("spans") or [])
-            for d in repo.presence_list(user))
-            or ignore_repo.any_window(user, "activity_choices", hit) or ignore_repo.any_window(user, "activity_ai_asks", hit)
-            or window_rules.has_ignored(hit)):
+    if leftovers_exist(user, rule):
         raise _Dirty
     ignore_repo.mark_purged(user, rule["id"], rule["createdAt"])
     return removed
@@ -195,13 +265,24 @@ def retry_pending(user: str | None = None) -> None:
     """读路径 / 写路径：有规则清理没做完就按退避补清（不抛）。"""
     user = user or current_tenant()
     now = _now()
-    for r in rules(user):
-        if _due(r, now):
+    try:
+        pending = [r for r in rules(user) if _due(r, now)]
+    except Exception:  # noqa: BLE001  读不到规则：补清这一步算了（读的遮罩那一步会 503，不会交出没遮过的数据）
+        log.warning("读忽略规则失败，这次不补清", exc_info=True)
+        return
+    for r in pending:
+        try:
             purge_leftovers(user, r)
+        except Exception:  # noqa: BLE001  purge_leftovers 自己不抛；再兜一层，读路径不能因补清 5xx
+            log.warning("补清忽略规则残留失败", exc_info=True)
 
 
-def _unpurged(user: str) -> list[dict]:
-    return [r for r in rules(user) if not r.get("purged", True)]
+def unpurged(user: str) -> list[dict]:
+    """没清完的规则（读路径遮罩用）。读不到规则 → ``RulesUnavailable``（503）：读窗口文字的接口不交出没遮过的数据。"""
+    try:
+        return [r for r in rules(user) if not r.get("purged", True)]
+    except Exception as exc:
+        raise RulesUnavailable("忽略规则暂时读不到，窗口文字先不给") from exc
 
 
 def _mask_doc(doc: dict, hit) -> dict:
@@ -217,18 +298,34 @@ def presence_docs(user: str) -> list[dict]:
     清理失败期间读也不会交出被忽略窗口的标题。先按退避补清一次（不抛）。"""
     retry_pending(user)
     docs = repo.presence_list(user)
-    pend = _unpurged(user)
+    pend = unpurged(user)
     if not pend:
         return docs
-    hit = lambda app, title: find(pend, app or "", title or "") is not None  # noqa: E731
+    pp = Prepared(pend)
+    hit = lambda app, title: pp.find(app or "", title or "") is not None  # noqa: E731
     return [_mask_doc(d, hit) for d in docs]
 
 
 def visible(user: str, items: list[dict]) -> list[dict]:
     """建议列表读路径：清理没做完的规则命中的条目先不给（不写库）。"""
     retry_pending(user)
-    pend = _unpurged(user)
-    return [i for i in items if find(pend, i.get("app") or "", i.get("title") or "") is None] if pend else items
+    pend = unpurged(user)
+    pp = Prepared(pend)
+    return [i for i in items if pp.find(i.get("app") or "", i.get("title") or "") is None] if pend else items
+
+
+def _strict(user: str, rule: dict) -> None:
+    """（A）写入后清一遍写的当中新出现的规则：出错照旧让这次请求失败（补不完就不能说这次写入是干净的）。唯一的例外是 ``_Dirty``——
+    清完到校验之间**别的**请求又写进了命中的东西（本次请求自己的数据在 ``purge`` 之前就已经写完、被清掉了；它进来时规则还没出现，
+    闸门拦不到）：重清重验 ``STRICT_TRIES`` 次，还脏就不 5xx，规则留 ``purged: false``，读路径继续遮、下一次写入按退避补清。"""
+    for _ in range(STRICT_TRIES):
+        try:
+            purge(user, rule)
+            return
+        except _Gone:
+            return  # 刚建又被删了：没有什么要守的了
+        except _Dirty:
+            continue
 
 
 def guarded(fn):
@@ -253,10 +350,7 @@ def guarded(fn):
             now = _now()
             for r in rules(user):
                 if (r["id"], r["createdAt"]) not in before:
-                    try:
-                        purge(user, r)  # （A）写的当中新出现的规则：严格
-                    except _Gone:
-                        pass  # 刚建又被删了：没有什么要守的了
+                    _strict(user, r)  # （A）写的当中新出现的规则：严格
                 elif _due(r, now):
                     try:
                         purge_leftovers(user, r)  # （B）本来就有的规则的旧残留：尽力
@@ -272,7 +366,7 @@ def remove(rule_id_: str) -> None:
 
 def gate_incoming(user: str, items: list, window) -> tuple[list, int]:
     """上传：把命中忽略规则的项丢掉，计数器记上（一条 +1 段、+秒）。``window(item)`` = (app, title, 秒)。返回 (留下的, 丢了几个)。"""
-    rules_ = rules(user)
+    rules_ = prepared(user)
     if not rules_:
         return items, 0
     kept, hits = [], {}
@@ -299,7 +393,7 @@ def gate_incoming(user: str, items: list, window) -> tuple[list, int]:
 def gate_beat(user: str, app: str, title: str, guess: dict | None, spans: list[dict] | None) -> tuple:
     """在场心跳：命中的窗口换成「没有窗口」（app / title 空、不带 guess）。返回 (app, title, guess, spans, 顶层是否命中)。
     人仍然在电脑前；空程序名是已有的「标题被隐私设置整个去掉了」那一种，自动跟踪 / 请人选 / 对会话都会略过它。"""
-    rules_ = rules(user)
+    rules_ = prepared(user)
     if not rules_:
         return app, title, guess, spans, False
     def ignored(a: str, t: str) -> bool:

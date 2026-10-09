@@ -190,7 +190,7 @@ def heartbeat(device_id: str, app: str, title: str, afk: bool, guess: dict | Non
 def _find(user: str, key: str) -> tuple[dict, str]:
     """在场记录（最近 2 小时）里这个窗口最近的一段与报它的设备；没有 → 404。写规则用的程序名 / 标题从这里取，不信请求。"""
     best = None
-    rules_ = ignore.rules(user)
+    rules_ = ignore.prepared(user)
     for doc in ignore.presence_docs(user):
         for span in reversed(doc.get("spans") or []):
             if not span["afk"] and window_key(span["app"], span["title"]) == key and not ignore.find(rules_, span["app"], span["title"]):
@@ -213,6 +213,7 @@ def _window_rule(app: str, title: str, target: dict) -> dict | None:
     pattern = _DECOR + _escape(core) + "$" if core != title and title.endswith(core) else "^" + _escape(title) + "$"
     rule = {"app": "^" + _escape(app) + "$", "title": pattern, **target, "confidence": AUTO_CONFIDENCE,
             "note": ("计时页选的：" + app + (" · " + title if title else ""))[:120], "enabled": True}
+    rule = window_rules.with_src(rule, app, title)   # 服务端专用的出处：忽略清理按它走，不从正则里反推（不出库）
     return rule if len(rule["app"]) <= 200 and len(pattern) <= 200 else None
 
 

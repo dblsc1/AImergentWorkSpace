@@ -14,7 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from .config import settings
-from .modules.activity.ignore import PurgeIncomplete
+from .modules.activity.ignore import PurgeIncomplete, RulesUnavailable
 from .modules.activity.ignore_router import router as ignore_router
 from .modules.activity.presence_router import router as presence_router
 from .modules.activity.reports import TooManyReportsError
@@ -219,6 +219,12 @@ def suggestion_conflict(_request: Request, exc: SuggestionConflictError) -> JSON
 @app.exception_handler(PurgeIncomplete)
 def purge_incomplete(_request: Request, exc: PurgeIncomplete) -> JSONResponse:
     """契约 v2.22：忽略规则已存下，但清理没做完。503——会自动重试（下一次写入 / 读时补清）。"""
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+
+@app.exception_handler(RulesUnavailable)
+def rules_unavailable(_request: Request, exc: RulesUnavailable) -> JSONResponse:
+    """契约 v2.22：读窗口文字的接口读不到忽略规则 → 503，不交出没遮过的数据。"""
     return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 

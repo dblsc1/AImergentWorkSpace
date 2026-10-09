@@ -26,7 +26,7 @@ from ...tenant import current as current_tenant
 from ..planner import service as planner_service
 from ..planner.errors import ForbiddenError, InvalidInputError, NotFoundError
 from ..timer.service import UnknownTaskError
-from . import proposals, repo, reports_repo, service
+from . import ignore, proposals, repo, reports_repo, service
 
 log = logging.getLogger("uvicorn.error")
 
@@ -230,6 +230,8 @@ def get(report_id: str, resolve: bool) -> dict:
     user = current_tenant()
     doc = _load(user, report_id)
     docs = reports_repo.suggestions(user, [s for it in doc["items"] for s in it["suggestionIds"]]) if resolve else None
+    if docs:  # v2.22：清理没做完的忽略规则命中的建议，标题不交出去（同建议列表的 visible）
+        docs = {d["id"]: d for d in ignore.visible(user, list(docs.values()))}
     return _view(doc, docs)
 
 

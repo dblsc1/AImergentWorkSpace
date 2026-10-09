@@ -105,6 +105,12 @@ def _window(rec: dict) -> dict:
             "answerBy": (rec["claimedAt"] + AI_ANSWER_WAIT).isoformat()}
 
 
+def _live(user: str, since: datetime) -> dict | None:
+    """``ask_repo.live``，但被忽略规则命中的（清理没清掉的残留）当作没有：标题不能经 ``claim`` 到 AI 手里。"""
+    rec = ask_repo.live(user, since)
+    return None if rec and ignore.find(ignore.prepared(user), rec["app"], rec.get("title") or "") else rec
+
+
 @ignore.guarded
 def claim() -> dict:
     """聊天后端来取：此刻等 AI 认的那个窗口（并认领），没有 → ``{"window": null}``。
@@ -115,7 +121,7 @@ def claim() -> dict:
     要严格「每租户一份」就把在等的那份记到 ``_tenant`` 文档上一起条件更新。"""
     user, now = current_tenant(), auto._now()  # noqa: SLF001
     ask_repo.polled(user, now, now - AI_KEEP)
-    rec = ask_repo.live(user, now - AI_ANSWER_WAIT)
+    rec = _live(user, now - AI_ANSWER_WAIT)
     if rec is None:
         running = timer_service.get_running_state(user) is not None
         w = auto.state(user, now, running, Asks(user, now))["aiThinking"]
@@ -131,7 +137,7 @@ def claim() -> dict:
         if not written:
             if counted:  # 别的认领抢先建了这个窗口的问询：不盖它，名额退回
                 ask_repo.uncount_claim(user, now)
-            rec = ask_repo.live(user, now - AI_ANSWER_WAIT)  # 给此刻在等的那一份（没有 / 已答完 → None）
+            rec = _live(user, now - AI_ANSWER_WAIT)  # 给此刻在等的那一份（没有 / 已答完 → None）
     return {"window": _window(rec) if rec else None}
 
 
