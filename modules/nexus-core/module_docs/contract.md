@@ -3698,6 +3698,15 @@ AI 仍不能改 / 删任何已有规则、不能写匹配范围超出那一个�
 - **出处（规范性）**：入账的 `session.completed` 的 `ai` 块追加选填键 `report: {id, author}`（`confirmed: true`、`confidence` 取建议原来的，与手点的一样）。
   `source: "activity-confirmed"` 的信封从外部入口进来时，`ai.report` 同 `ai.auto` 一样不落库（出处只能由本服务盖）。忽略没有事件，不记出处。
 
+### 评审补记（2026-10-09，PR #92 复审后，只收紧）
+
+- **`assign` / `newTask` 条与 `matches` 同两道闸**（`service.match_refusal`）：建议的 `rejectedTaskIds` 里有这个 `taskId`（用户否掉过）→ 该条被拒，
+  `code: "task_rejected"`；建议已有分类规则给的任务（`classifier` 不是 `assistant`）→ `code: "rule_assigned"`。只到项目的 `assign` 与 `dismiss` 不碰任务，不受影响。
+  提交时查一遍，**批准时再查一遍**：提交之后用户否掉了这个任务，该段记 `stale`（带理由），不套用。
+- **条的状态只由结果推出**（有 `failed` → failed；否则有 `applied` → applied；否则 stale）：并发的两个批准交错时，写完再核对、不一致就按最新结果重写，
+  所以不会出现结果是 `applied` 而条是 `stale`。
+- **批准进行中报告被 TTL 清掉**：不回 404，回已有的逐条结果，报告 `status` 为 `"purged"`（已入账的事实当然还在）。
+
 ### 响应形状（见 `contract-schemas.md`「AI 报告」）
 
 「全部批准」回 `{id, status, applied, stale, failed, items[{id, status, applied, stale, failed, failure}]}`：顶层三个数是**这一次调用处理的条**里各落在哪（再点一次是 0 / 0 / 0），

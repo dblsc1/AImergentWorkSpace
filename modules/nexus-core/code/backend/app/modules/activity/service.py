@@ -383,6 +383,16 @@ def forbid_device_token(authorization: str | None, what: str = "给活动建议�
         raise ForbiddenError(f"设备令牌不能{what}；请在 Cockpit「AI助理」页登录后操作")
 
 
+def match_refusal(doc: dict, task_id: str | None, overwrites_task: bool) -> tuple[str, str] | None:
+    """给建议配任务的两道闸（``match`` 与 AI 报告的 assign 共用，提交时与批准时各查一遍）：
+    用户否掉过这个任务；这条已有分类规则给的任务（助理不覆盖）。返回 ``(code, 理由)`` 或 None。"""
+    if task_id is not None and task_id in doc.get("rejectedTaskIds", []):
+        return "task_rejected", f"用户已经否掉过任务 {task_id!r}，不要再配同一个"
+    if overwrites_task and doc["suggestion"].get("taskId") and doc["suggestion"].get("classifier") != "assistant":
+        return "rule_assigned", "这条已有分类规则给的任务，助理不覆盖（只贴 collection / projectId 可以：别带 taskId / newTask）"
+    return None
+
+
 def match(authorization: str | None, matches: list[Any]) -> dict:
     """助理给待确认的建议配任务。逐条校验，坏的进 rejected；**不确认任何东西**。"""
     forbid_device_token(authorization)
@@ -408,10 +418,8 @@ def match(authorization: str | None, matches: list[Any]) -> dict:
             why = f"活动建议不存在：{m.id!r}"
         elif doc["status"] != "pending":
             why = f"活动建议 {m.id!r} 已{'确认' if doc['status'] == 'confirmed' else '忽略'}，不能再配"
-        elif m.taskId is not None and m.taskId in doc.get("rejectedTaskIds", []):
-            why = f"用户已经否掉过任务 {m.taskId!r}，不要再配同一个"
-        elif not label_only and doc["suggestion"].get("taskId") and doc["suggestion"].get("classifier") != "assistant":
-            why = "这条已有分类规则给的任务，助理不覆盖（只贴 collection / projectId 可以：别带 taskId / newTask）"
+        elif refusal := match_refusal(doc, m.taskId, not label_only):
+            why = refusal[1]
         elif m.taskId is not None and (task := planner_service.get_task(m.taskId)) is None:
             why = f"任务不存在：{m.taskId!r}"
         elif m.projectId is not None and planner_service.get_project(m.projectId) is None:
