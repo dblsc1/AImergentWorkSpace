@@ -924,6 +924,7 @@ def mod(tmp_path, monkeypatch):
     spec = importlib.util.spec_from_file_location("auth_stub_under_test", STUB)
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
+    m.ACCOUNTS.refresh()  # main() 在开始服务前做的那次
     return m
 
 
@@ -1122,3 +1123,466 @@ def test_verify_writes_no_log_but_other_endpoints_do(mod, monkeypatch, capsys):
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+# ── 账号 / 匿名的判定不许往宽的一边漂：任何不确定 = 匿名关（见 Accounts 的文档）──────────────
+
+
+def _anon(mod) -> bool:
+    return mod.verify_access(_headers())[0] == 204
+
+
+def _health(mod):
+    import threading  # noqa: PLC0415
+    from http.server import ThreadingHTTPServer  # noqa: PLC0415
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), mod.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=10)
+        c.request("GET", "/api/auth/health")
+        return c.getresponse().read()
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+@pytest.fixture
+def accts(mod, tmp_path, monkeypatch):
+    f = tmp_path / "users.json"
+    monkeypatch.setattr(mod, "USERS_FILE", str(f))
+    return mod, f
+
+
+def _good_users(f, n=1):
+    f.write_text(json.dumps({"users": {f"u{i}": {"id": f"id{i}", "sess": "ab"} for i in range(n)}}))
+
+
+def test_anonymous_off_when_accounts_file_exists_but_cannot_be_read_at_start(accts):
+    mod, f = accts
+    for junk in ("{坏的", "", '{"users": ', "{}", '{"users": []}', '{"users": {"a": {}}}'):
+        f.write_text(junk)
+        mod.ACCOUNTS.__init__()  # 重新开始：从没读成功过
+        mod.ACCOUNTS.refresh()
+        assert not mod.ACCOUNTS.known and not _anon(mod), junk
+        assert json.loads(_health(mod))["anonymousReport"] is False
+
+
+def test_anonymous_off_when_accounts_path_is_a_directory(accts):
+    mod, f = accts
+    f.mkdir()
+    mod.ACCOUNTS.refresh()
+    assert not mod.ACCOUNTS.known and not _anon(mod)
+
+
+def test_anonymous_off_when_accounts_file_is_unreadable_or_parent_not_a_directory(accts, tmp_path):
+    mod, f = accts
+    _good_users(f)
+    f.chmod(0)
+    try:
+        if not os.access(f, os.R_OK):
+            mod.ACCOUNTS.refresh()
+            assert not mod.ACCOUNTS.known and not _anon(mod)
+    finally:
+        f.chmod(0o600)
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x")
+    mod.USERS_FILE = str(blocker / "users.json")  # ENOTDIR：不是 ENOENT，不算「确定没有」
+    mod.ACCOUNTS.__init__()
+    mod.ACCOUNTS.refresh()
+    assert not mod.ACCOUNTS.known and not _anon(mod)
+
+
+def test_confirmed_absent_file_keeps_single_user_anonymous_until_it_appears(accts):
+    mod, f = accts
+    mod.ACCOUNTS.refresh()
+    assert mod.ACCOUNTS.known and _anon(mod)  # 对照：确定没有账号文件 = 单人模式
+    f.write_text('{"users": {"u": {"id": "i", "sess"')  # 创建到一半：不是「没有」
+    mod.ACCOUNTS.refresh()
+    assert not mod.ACCOUNTS.known and not _anon(mod)
+    _good_users(f)  # 写完：可读了，账号模式，匿名关
+    mod.ACCOUNTS.refresh()
+    assert mod.ACCOUNTS.by_id and not _anon(mod)
+
+
+def test_accounts_view_survives_file_turning_bad_or_vanishing(accts):
+    mod, f = accts
+    _good_users(f, 2)
+    mod.ACCOUNTS.refresh()
+    good = dict(mod.ACCOUNTS.by_id)
+    assert good and not _anon(mod)
+    for bad in ("{坏的", "", "{}"):
+        f.write_text(bad)
+        mod.ACCOUNTS.refresh()
+        assert mod.ACCOUNTS.by_id == good and mod.ACCOUNTS.known and not _anon(mod), bad
+    f.unlink()
+    mod.ACCOUNTS.refresh()
+    assert mod.ACCOUNTS.by_id == good and not _anon(mod)  # 删了也不退回「没有账号」
+    f.mkdir()
+    mod.ACCOUNTS.refresh()
+    assert mod.ACCOUNTS.by_id == good and not _anon(mod)
+
+
+def test_failed_refresh_never_resets_known_to_permissive_nor_half_updates(accts):
+    mod, f = accts
+    _good_users(f)
+    mod.ACCOUNTS.refresh()
+    before = (dict(mod.ACCOUNTS.by_id), mod.ACCOUNTS.known, mod.ACCOUNTS._mtime)
+    f.write_text(json.dumps({"users": {"ok": {"id": "x", "sess": "s"}, "bad": {"id": "y"}}}))  # 第二个缺 sess：整份不用
+    mod.ACCOUNTS.refresh()
+    assert (mod.ACCOUNTS.by_id, mod.ACCOUNTS.known, mod.ACCOUNTS._mtime) == before
+    # 读成功过且账号为空，之后读坏：回到「不知道」，匿名关（不沿用「没有账号」）
+    f.write_text('{"users": {}}')
+    mod.ACCOUNTS.refresh()
+    assert mod.ACCOUNTS.known and not mod.ACCOUNTS.by_id and _anon(mod)
+    f.write_text("{坏的")
+    mod.ACCOUNTS.refresh()
+    assert not mod.ACCOUNTS.known and not _anon(mod)
+
+
+def test_garbage_anonymous_switch_refuses_to_start_but_unset_is_on():
+    base = {k: v for k, v in os.environ.items() if not k.startswith("AUTH_")}
+    for raw in ("maybe", "2", "enabled", "tru"):
+        r = subprocess.run([sys.executable, str(STUB)], env={**base, "AUTH_PASSWORD": PW, "AUTH_ANONYMOUS_REPORT": raw},
+                           capture_output=True, text=True, timeout=10)
+        assert r.returncode != 0 and "AUTH_ANONYMOUS_REPORT" in r.stderr, raw  # 不静默当开，也不起来
+    s = Stub({"AUTH_PASSWORD": PW})  # 没设：缺省开
+    try:
+        assert json.loads(s.req("GET", "/api/auth/health")[2])["anonymousReport"] is True
+    finally:
+        s.stop()
+
+
+def _live_token(mod, scope="report"):
+    tok, meta = mod.issue_device_token("", mod._shared_sess(), scope)
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is not None
+    return tok, meta
+
+
+def _rev(mod) -> int:
+    return json.loads(Path(mod.TOKENS_FILE).read_text())["rev"]
+
+
+def test_token_view_unchanged_file_keeps_cache_changed_unreadable_file_rejects_all_then_recovers(mod):
+    """别的进程（命令行）刚吊销过东西、文件随后读不出：不沿用还留着那个令牌的旧视图；修好后恢复。"""
+    tok, meta = _live_token(mod)
+    other, _ = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is not None  # 对照：没变的文件沿用缓存
+    good = f.read_text()
+    # 「另一个进程」吊销：直接改文件（rev +1），本进程的视图还没刷新
+    data = json.loads(good)
+    del data["tokens"][meta["id"]]
+    data["rev"] += 1
+    revoked = json.dumps(data)
+    f.write_text(revoked)
+    assert mod.device_identity(tok) is not None  # 文档写明的 RELOAD_EVERY 延迟，不是绕过
+    for bad in ("{坏的", "", json.dumps({"gen": "g"}), json.dumps({"gen": "g", "epochs": {}, "rev": -1})):
+        f.write_text(bad)
+        mod.EPOCHS.refresh()
+        assert mod.EPOCHS.state is None and mod.device_identity(tok) is None and mod.device_identity(other) is None, bad
+    f.write_text(revoked)  # 修好了：恢复，被吊销的仍是被吊销的
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is None and mod.device_identity(other) is not None
+
+
+def test_token_file_unreadable_by_permission_rejects_all(mod):
+    tok, _ = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    f.chmod(0)
+    try:
+        if os.access(f, os.R_OK):
+            pytest.skip("root 读得了 0 权限文件")
+        mod.EPOCHS.refresh()
+        assert mod.device_identity(tok) is None
+    finally:
+        f.chmod(0o600)
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is not None
+
+
+def test_token_file_deleted_rejects_all_until_the_next_write_or_good_read(mod):
+    tok, _ = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    saved = f.read_bytes()
+    f.unlink()
+    mod.EPOCHS.refresh()
+    assert mod.EPOCHS.state is None and mod.device_identity(tok) is None
+    f.write_bytes(saved)  # 原样放回（rev 相同）：采用
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is not None
+    # 重启后删文件 = 这一代作废（文件是事实）：新视图读到的是新建的一代
+    f.unlink()
+    mod.EPOCHS.__init__()
+    mod.EPOCHS.refresh()
+    fresh, _ = mod.issue_device_token("", mod._shared_sess(), "report")
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(fresh) is not None and mod.device_identity(tok) is None
+
+
+def test_token_reload_does_not_depend_on_mtime_inode_or_size(mod):
+    """同大小原地重写、时间戳还原、inode 不变：按内容比，照样读到（令牌记录的 id 换成另一个 16 位十六进制）。"""
+    tok, meta = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    st = f.stat()
+    raw = f.read_bytes()
+    with open(f, "r+b") as fh:  # 原地写：inode 不变
+        fh.write(raw.replace(meta["id"].encode(), b"f" * 16))
+    os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns))
+    after = f.stat()
+    assert (after.st_ino, after.st_size, after.st_mtime_ns) == (st.st_ino, st.st_size, st.st_mtime_ns)
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is None  # 记录对不上了：白名单拒绝
+
+
+@pytest.mark.parametrize("new_inode", [False, True])
+def test_restoring_an_older_backup_is_a_rollback_not_adopted(mod, new_inode):
+    """运维把旧备份拷回来（原地写 / 换一个新文件）：rev 倒退 → 不采用，被吊销的不复活，下一次本进程的写重新落盘。"""
+    tok, meta = _live_token(mod)
+    other, _ = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    old = f.read_bytes()
+    assert mod.revoke_token(meta["id"])
+    assert mod.device_identity(tok) is None  # 写的时候就直接换进了内存视图，不用等刷新
+    newer_rev = _rev(mod)
+    if new_inode:
+        tmp = f.with_name("restore.tmp")
+        tmp.write_bytes(old)
+        os.replace(tmp, f)
+    else:
+        f.write_bytes(old)
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is None and mod.device_identity(other) is not None  # 仍用内存里较新的
+    third, _ = mod.issue_device_token("", mod._shared_sess(), "report")  # 下一次写：以内存为底，重新落盘
+    assert _rev(mod) > newer_rev
+    assert meta["id"] not in json.loads(f.read_text())["tokens"]
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(third) is not None and mod.device_identity(tok) is None
+
+
+def _cli_write(mod, change) -> None:
+    """另一个进程（命令行）的写：没有内存视图，信文件——读、改、rev + 1、写回。"""
+    f = Path(mod.TOKENS_FILE)
+    data = json.loads(f.read_text())
+    change(data)
+    data["rev"] = data.get("rev", 0) + 1
+    f.write_text(json.dumps(data))
+
+
+def _fake_record(mod, jti="0" * 16) -> dict:
+    return {jti: {"tenant": "", "name": "cli", "scope": "report", "createdAt": 1, "expiresAt": 2 ** 40}}
+
+
+def test_file_recreated_by_another_process_is_a_new_generation_and_voids_the_old_one(mod):
+    """文件被删、别的进程重建（gen 换了）：采用新的一代——旧一代的令牌一个不留（失败方向是拒绝），吊销过的更不会回来。"""
+    tok, meta = _live_token(mod)
+    assert mod.revoke_token(meta["id"])
+    other, _ = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    f.unlink()
+    f.write_text(json.dumps({"rev": 1, "gen": "somenewgeneration", "epochs": {}, "tokens": {}}))
+    mod.EPOCHS.refresh()
+    assert mod.EPOCHS.state is not None and mod.EPOCHS.state[0] == "somenewgeneration"
+    assert mod.device_identity(tok) is None and mod.device_identity(other) is None
+
+
+def test_backup_from_a_generation_this_process_already_left_is_not_adopted(mod):
+    """跨代的旧备份：本进程离开过的 gen 再出现 → 不认，全部拒绝；本进程下一次写重新落盘。"""
+    tok, _ = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    old_gen_file = f.read_bytes()
+    f.unlink()
+    f.write_text(json.dumps({"rev": 1, "gen": "somenewgeneration", "epochs": {}, "tokens": {}}))
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is None
+    f.write_bytes(old_gen_file)  # 旧一代的备份被拷回来
+    mod.EPOCHS.refresh()
+    assert mod.EPOCHS.state is None and mod.device_identity(tok) is None
+    fresh, _ = mod.issue_device_token("", mod._shared_sess(), "report")
+    assert json.loads(f.read_text())["gen"] == "somenewgeneration"
+    assert mod.device_identity(fresh) is not None and mod.device_identity(tok) is None
+
+
+@pytest.mark.parametrize("new_inode", [False, True])
+def test_cli_revoke_on_a_restored_backup_is_honoured_and_never_undone(mod, new_inode):
+    """审核 C / E：旧备份拷回来之后命令行在那份旧文件上吊销 A（rev 仍比内存小）。A 必须失效，之后的网页写也不能把它写回去。"""
+    a, a_meta = _live_token(mod)
+    b, _ = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    backup = f.read_bytes()
+    later, _ = _live_token(mod)
+    _live_token(mod)
+    if new_inode:
+        tmp = f.with_name("restore.tmp")
+        tmp.write_bytes(backup)
+        os.replace(tmp, f)
+    else:
+        f.write_bytes(backup)
+    _cli_write(mod, lambda d: d["tokens"].pop(a_meta["id"]))  # 命令行 revoke-token A
+    assert _rev(mod) < mod.EPOCHS._good[0]
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(a) is None  # 吊销生效
+    assert mod.device_identity(b) is not None  # 两边都有的照常
+    assert mod.device_identity(later) is None  # 备份之后发的：分叉，保守起见失效
+    mod.EPOCHS.repair()  # 后台线程马上把内存视图重新落盘
+    on_disk = json.loads(f.read_text())
+    assert a_meta["id"] not in on_disk["tokens"] and on_disk["rev"] > mod.EPOCHS._good[0] - 1
+    mod.issue_device_token("", mod._shared_sess(), "report")  # 之后的网页写
+    mod.EPOCHS.refresh()
+    assert a_meta["id"] not in json.loads(f.read_text())["tokens"] and mod.device_identity(a) is None
+
+
+def test_cli_identity_revoke_on_a_restored_backup_is_honoured(mod):
+    """审核 C2：旧备份上做整身份吊销（纪元 +1）：纪元按较大的并进来，之前发的令牌全部失效。"""
+    a, _ = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    backup = f.read_bytes()
+    _live_token(mod)
+    f.write_bytes(backup)
+
+    def revoke_all(d):
+        d["epochs"][""] = d["epochs"].get("", 0) + 1
+        d["tokens"].clear()
+    _cli_write(mod, revoke_all)
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(a) is None and mod.EPOCHS.state[1].get("") == 1
+
+
+def test_equal_rev_with_different_content_cannot_resurrect_a_web_revoked_token(mod):
+    """审核 D：网页吊销 T 之后旧备份拷回来，命令行在旧文件上随便写一次，rev 正好追平内存、内容里还带着 T。"""
+    t, t_meta = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    backup = f.read_bytes()
+    assert mod.revoke_token(t_meta["id"])
+    f.write_bytes(backup)
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(t) is None
+    f.write_bytes(backup)  # 假设修复还没来得及写：命令行看到的仍是旧文件
+    _cli_write(mod, lambda d: d["tokens"].update(_fake_record(mod)))  # 命令行发一个令牌
+    assert _rev(mod) == mod.EPOCHS._good[0]
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(t) is None
+    mod.EPOCHS.repair()
+    assert t_meta["id"] not in json.loads(f.read_text())["tokens"]
+
+
+def test_a_revoked_id_never_comes_back_even_from_a_file_with_a_higher_rev(mod):
+    """分叉的那一支写了很多次、rev 反超内存：照 rev 是「正常前进」，但作废过的 id 仍然不认，并被重新落盘清掉。"""
+    t, t_meta = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    backup = json.loads(f.read_text())
+    assert mod.revoke_token(t_meta["id"])
+    backup["rev"] = mod.EPOCHS._good[0] + 5
+    f.write_text(json.dumps(backup))
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(t) is None and mod.EPOCHS._diverged
+    mod.EPOCHS.repair()
+    assert t_meta["id"] not in json.loads(f.read_text())["tokens"] and not mod.EPOCHS._diverged
+
+
+def test_normal_cli_writes_are_adopted_without_any_repair(mod):
+    """不分叉的日常：命令行在最新文件上发 / 吊销，网关照常读到，不触发重新落盘。"""
+    a, a_meta = _live_token(mod)
+    b, _ = _live_token(mod)
+    _cli_write(mod, lambda d: d["tokens"].pop(a_meta["id"]))
+    before = Path(mod.TOKENS_FILE).read_bytes()
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(a) is None and mod.device_identity(b) is not None and not mod.EPOCHS._diverged
+    mod.EPOCHS.repair()
+    assert Path(mod.TOKENS_FILE).read_bytes() == before
+
+
+def test_background_thread_survives_any_step_failing(mod, monkeypatch):
+    """后台线程不能因为一步抛了就死（视图会停在旧的）：日志写不出、刷新出错都吞掉，下一轮照跑。"""
+    calls = []
+
+    class Stop(BaseException):
+        pass
+
+    def sleep(_):
+        calls.append("tick")
+        if calls.count("tick") > 2:
+            raise Stop
+
+    def boom():
+        calls.append("boom")
+        raise RuntimeError("x")
+    monkeypatch.setattr(mod.time, "sleep", sleep)
+    monkeypatch.setattr(mod.ACCOUNTS, "refresh", boom)
+    monkeypatch.setattr(mod.sys, "stderr", None)  # 连日志都写不出
+    with pytest.raises(Stop):
+        mod._watch()
+    assert calls.count("boom") == 2
+
+
+def test_refresh_that_read_before_an_in_process_revoke_cannot_overwrite_it(mod):
+    """进程内竞争：刷新读到了吊销之前的文件，吊销随后落盘并换进内存，刷新才处理它读到的旧字节。"""
+    tok, meta = _live_token(mod)
+    stale = Path(mod.TOKENS_FILE).read_bytes()  # 刷新线程读到的
+    assert mod.revoke_token(meta["id"])  # 网页吊销：同一把锁里写文件 + 换内存视图
+    with mod.EPOCHS._lock:
+        mod.EPOCHS._adopt_locked(stale)  # 刷新线程这时才拿到锁、处理旧字节
+    assert mod.device_identity(tok) is None
+
+
+def test_legacy_file_without_rev_counts_as_zero_and_is_upgraded_on_first_write(mod):
+    tok, meta = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    data = json.loads(f.read_text())
+    del data["rev"]
+    f.write_text(json.dumps(data))
+    mod.EPOCHS.__init__()  # 重启
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is not None and mod.EPOCHS._good[0] == 0
+    assert mod.revoke_token(meta["id"])
+    assert _rev(mod) == 1  # 升级：写出带 rev 的文件
+
+
+def test_identity_epoch_never_goes_down(mod):
+    tok, _ = _live_token(mod, "write")
+    mod.revoke_identity("")
+    f = Path(mod.TOKENS_FILE)
+    data = json.loads(f.read_text())
+    assert data["epochs"][""] == 1
+    data["epochs"][""] = 0  # 手改 / 回滚：rev 更大但纪元被拉低
+    data["rev"] += 5
+    f.write_text(json.dumps(data))
+    mod.EPOCHS.refresh()
+    assert mod.EPOCHS.state[1][""] == 1 and mod.device_identity(tok) is None
+
+
+def test_every_write_bumps_rev(mod):
+    _, meta = _live_token(mod)
+    revs = [_rev(mod)]
+    mod.revoke_token(meta["id"])
+    revs.append(_rev(mod))
+    mod.revoke_identity("")
+    revs.append(_rev(mod))
+    assert revs == sorted(set(revs)) and len(revs) == 3
+
+
+def test_hct2_needs_its_record_and_hct1_stays_dead_after_epoch_bump_across_restart(mod):
+    tok, meta = _live_token(mod, "write")
+    f = Path(mod.TOKENS_FILE)
+    gen = json.loads(f.read_text())["gen"]
+    # hct1：只验不发，自己按老格式签一个
+    payload = f"{mod.TOKEN_PREFIX}.{int(time.time())}.0."
+    hct1 = f"{payload}.{mod._sign_device(payload, mod._shared_sess(), gen, 'device')}"
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(hct1) == ("", "write")
+    # 记录没了（被清掉 / 表被改）≠ 老令牌放行
+    data = json.loads(f.read_text())
+    del data["tokens"][meta["id"]]
+    data["rev"] += 1
+    f.write_text(json.dumps(data))
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is None
+    # 身份纪元 +1：hct1 死；重启（全新的视图对象读文件）也死
+    mod.revoke_identity("")
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(hct1) is None
+    mod.EPOCHS.__init__()
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(hct1) is None

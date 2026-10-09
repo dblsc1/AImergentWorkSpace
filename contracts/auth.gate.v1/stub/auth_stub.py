@@ -68,6 +68,7 @@
 
 from __future__ import annotations
 
+import copy
 import getpass
 import hashlib
 import hmac
@@ -203,41 +204,96 @@ class TooManyTokens(Exception):
     pass
 
 
-def load_token_state() -> tuple[str, dict, dict] | None:
-    """(gen, epochs, tokens)；文件不存在返回 None。文件坏了照常抛。"""
-    if not TOKENS_FILE or not os.path.exists(TOKENS_FILE):
-        return None
-    with open(TOKENS_FILE, encoding="utf-8") as f:
-        data = json.load(f)
+def _parse_token_state(raw: bytes) -> tuple[int, str, dict, dict]:
+    """(rev, gen, epochs, tokens)。``rev`` 是每次写都 +1 的计数（老文件没有 = 0）：视图按它只进不退。坏了照常抛。"""
+    data = json.loads(raw.decode("utf-8"))
     gen, epochs = data["gen"], data["epochs"]  # 缺哪个都抛：半坏的文件不能把纪元清零
     tokens = data.get("tokens", {})  # v1.2 / v1.3 写的文件没有这个键
-    if not isinstance(gen, str) or not gen or not isinstance(epochs, dict) or not isinstance(tokens, dict):
+    rev = data.get("rev", 0)
+    if (not isinstance(gen, str) or not gen or not isinstance(epochs, dict) or not isinstance(tokens, dict)
+            or type(rev) is not int or rev < 0):
         raise ValueError("tokens file")
     tokens = {str(k): {"tenant": str(t["tenant"]), "name": str(t["name"]), "scope": str(t["scope"]),
                        "createdAt": int(t["createdAt"]), "expiresAt": int(t["expiresAt"])}
               for k, t in tokens.items() if not t.get("revoked")}  # 开发期写过墓碑的文件：墓碑当场丢掉
-    return gen, {str(k): int(v) for k, v in epochs.items()}, tokens
+    return rev, gen, {str(k): int(v) for k, v in epochs.items()}, tokens
+
+
+def _load_token_file() -> tuple[int, str, dict, dict] | None:
+    if not TOKENS_FILE:
+        return None
+    try:
+        with open(TOKENS_FILE, "rb") as f:
+            raw = f.read()
+    except FileNotFoundError:
+        return None
+    return _parse_token_state(raw)
+
+
+def load_token_state() -> tuple[str, dict, dict] | None:
+    """(gen, epochs, tokens)；文件不存在返回 None。文件坏了照常抛。"""
+    full = _load_token_file()
+    return full[1:] if full else None
+
+
+def _merge_epochs(newer: dict, older: dict | None) -> dict:
+    """纪元只增不减：每个身份取两边较大的（手改 / 回滚过的文件不能把纪元拉低、把吊销过的令牌放回来）。"""
+    return {k: max(newer.get(k, 0), (older or {}).get(k, 0)) for k in {*newer, *(older or {})}}
+
+
+def _fsync_dir(path: str) -> None:
+    """rename 之后把目录也落盘：否则断电后可能回到旧文件（= 运维看到「已作废」的那次写丢了）。平台不支持就算了。"""
+    try:
+        fd = os.open(os.path.dirname(os.path.abspath(path)) or ".", os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
 
 
 def token_state(change=None):
     """持锁读—改—写：文件不在就新建一代；change(epochs, tokens) 就地改，返回值原样带出。
-    每次改都顺手清掉到期的条目。原子替换、0600。发令牌也走这里 —— 保证签进令牌的 gen 已经落盘。
-    返回 (gen, change 的返回值)。"""
-    with _locked(TOKENS_FILE):
-        state = load_token_state()
-        gen, epochs, tokens = state if state else (secrets.token_hex(16), {}, {})
+    每次改都顺手清掉到期的条目。写 tmp + fsync + 原子替换（目录也 fsync）、0600，``rev`` +1。发令牌也走这里 —— 保证
+    签进令牌的 gen 已经落盘。返回 (gen, change 的返回值)。
+
+    本进程里写的时候同时持 EPOCHS 的锁：先把读到的文件按 ``Epochs._merge_locked`` 的规则并进内存视图（与后台刷新同一套
+    规则——分叉取保守的交集、作废过的 id 不回来），再在并出来的结果上改；文件读不出 / 缺失就以内存为底。写完把这一份
+    直接换进内存视图，所以并发的后台刷新读到的旧文件盖不掉它。命令行进程没有内存视图，以文件为准。"""
+    with _locked(TOKENS_FILE), EPOCHS._lock:
+        try:
+            state = _load_token_file()
+        except Exception:  # noqa: BLE001 — 文件坏了：有内存里的好视图就以它为底，没有就照常抛给调用方
+            if EPOCHS._good is None:
+                raise
+            state = None
+        if state is not None and EPOCHS._merge_locked(state)[0] is None:
+            state = None  # 文件是本进程已经离开的那一代（旧备份）：不认，以内存为底
+        if state is not None:
+            EPOCHS._install_locked(EPOCHS._merge_locked(state)[0])
+        mem = EPOCHS._good
+        rev, gen, epochs, tokens = copy.deepcopy(mem) if mem else (state or (0, secrets.token_hex(16), {}, {}))
         out = None
         if change is not None:
             now = int(time.time())
             for jti in [j for j, t in tokens.items() if t["expiresAt"] <= now]:
                 del tokens[jti]
             out = change(epochs, tokens)
-        if state is None or change is not None:
-            tmp = f"{TOKENS_FILE}.{os.getpid()}.{threading.get_ident()}.tmp"
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump({"gen": gen, "epochs": epochs, "tokens": tokens}, f, ensure_ascii=False, indent=2)
-            os.replace(tmp, TOKENS_FILE)
+        raw = json.dumps({"rev": rev + 1, "gen": gen, "epochs": epochs, "tokens": tokens},
+                         ensure_ascii=False, indent=2).encode("utf-8")
+        tmp = f"{TOKENS_FILE}.{os.getpid()}.{threading.get_ident()}.tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(raw)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, TOKENS_FILE)
+        _fsync_dir(TOKENS_FILE)
+        EPOCHS._adopt_locked(raw)  # 本进程的视图直接是刚写的这份：之后读到更早的文件也盖不掉
+        EPOCHS._diverged = False
         return gen, out
 
 
@@ -275,40 +331,130 @@ def list_tokens(tokens: dict, tenant: str | None) -> list[dict]:
 
 
 class Epochs:
-    """verify 用的令牌状态内存视图，与 Accounts 同一个套路：后台按 mtime 重读，
-    请求里不碰文件（契约不变量 2）。吊销最多晚 RELOAD_EVERY 秒生效。
+    """verify 用的令牌状态内存视图。后台每 RELOAD_EVERY 秒重读，请求里不碰文件（契约不变量 2）。
+    命令行的吊销最多晚 RELOAD_EVERY 秒生效——写明的延迟，不是绕过。
 
-    state 为 None（文件不在、或一次都没读成功）时所有设备令牌 401（解包 None 抛错 →
-    收成 None）。读过之后文件坏了，沿用旧视图（坏文件不该把吊销过的令牌放回来，也不该
-    把所有人踢掉）；文件被删 = 这一代作废，跟着变 None。
+    威胁模型（见契约）：状态文件在认证容器私有的数据目录里，能写它的人本来就能发令牌，恶意写入者不在范围内；
+    范围内的是意外漂移——写了一半、损坏、被删、**运维拷回一份旧备份（之后命令行还可能在那份旧文件上接着写）**、
+    两个进程（网关 / 命令行）同时写，以及网页吊销与周期刷新的进程内竞争。
+
+    规则（失败方向一律是拒绝；``rev`` 只用来分「正常前进」和「分叉」，**不**拿它当信任依据）：
+    - 文件内容没变 → 什么都不做。变了：读不出 / 解析不了 / 文件没了 → ``state = None``（设备令牌全部 401），直到读到好的
+      或本进程下一次写；
+    - **作废过的 id 不回来**：本进程见过它有效、后来又从视图里消失的 id（网页吊销、命令行吊销被读到、到期清掉、
+      分叉合并时被去掉）记进 ``_dead``，之后任何文件里再出现都不认（到它本来的到期时间为止）；
+    - 读到好的、同一代（gen 相同）：
+        · ``file.rev > 内存 rev`` → 正常前进：采用文件里的令牌表（去掉 ``_dead`` 里的）；
+        · 否则内容与内存一致 → 没事；
+        · 否则 = **分叉**（旧备份被拷回来，或有人在旧文件上接着写）→ 两边谁对无从判断，取保守的**交集**：
+          只有两边都有的 id 继续有效（备份之后发的令牌失效；在旧文件上吊销的也失效），写一行日志；
+      ``file.rev < 内存 rev`` 或分叉时，后台线程**马上**把内存视图重新落盘（rev 取较大的再 +1），之后命令行的写
+      都落在不比内存旧的文件上，不会再被当成回滚忽略；
+    - 换了一代（gen 不同）：没见过的 gen = 文件被删后由别的进程重建 → 采用（旧一代的令牌本来就全部作废）；
+      本进程**已经离开过**的 gen（跨代的旧备份）→ 不认，``state = None``，等本进程的写或重启；
+    - 每个身份的纪元只增不减（与内存里的取较大的）；
+    - 进程重启丢掉内存（rev、``_dead``、离开过的 gen）：之后文件就是事实（部署须知：启动时放进来的旧文件由运维负责）。
     """
 
     def __init__(self) -> None:
-        self.state: tuple[str, dict, dict] | None = None
-        self._mtime = 0  # 不同于任何真实指纹，也不同于"文件不存在"的 None
-        # 后台线程与发令牌 / 吊销的请求线程都会调 refresh：不串行的话，读到旧内容的那个
-        # 可能后写，配上新的 mtime，之后就再也不重读 —— 吊销永久失效（Codex 审核）。
-        # verify 只读 self.state（一次引用赋值），不拿这把锁。
+        self.state: tuple[str, dict, dict] | None = None  # verify 用的；None = 全部拒绝
+        self._good: tuple[int, str, dict, dict] | None = None  # 内存里最新的好视图 (rev, gen, epochs, tokens)
+        self._raw: object = _UNSET  # 上次处理过的文件字节（None = 文件不在）
+        self._dead: dict[str, int] = {}  # 作废过的 hct2 id → 它本来的到期时间（到期后清掉：过期的令牌本来就验不过）
+        self._left: set[str] = set()  # 本进程离开过的 gen
+        self._diverged = False  # 文件落后于内存 / 分叉：后台线程要把内存视图重新落盘
+        # 读和替换、以及 token_state 的整段写都在这把锁里；verify 只读 self.state（一次引用赋值），不拿它。
         self._lock = threading.Lock()
 
     def refresh(self) -> None:
         with self._lock:
-            self._refresh()
-
-    def _refresh(self) -> None:
-        try:
-            # 指纹带 inode 与大小：每次写都是换一个新文件（os.replace），同一个时间戳刻度里连写两次
-            # （吊销紧跟着发令牌）也看得出变了 —— 只比 mtime 的话第二次写可能永远读不到。
-            st = os.stat(TOKENS_FILE) if TOKENS_FILE and os.path.exists(TOKENS_FILE) else None
-            mtime = (st.st_mtime_ns, st.st_ino, st.st_size) if st else None
-            if mtime == self._mtime:
+            raw: bytes | None = None
+            try:
+                if TOKENS_FILE:
+                    try:
+                        with open(TOKENS_FILE, "rb") as f:
+                            raw = f.read()
+                    except FileNotFoundError:
+                        raw = None
+            except Exception as e:  # noqa: BLE001 — 读不出（权限 / IO / 是目录）：当作坏了
+                self.state, self._raw = None, _UNSET
+                _warn(f"令牌文件读不出，设备令牌暂时全部拒绝：{type(e).__name__}")
                 return
-            self.state = load_token_state()
-            self._mtime = mtime
-        except Exception as e:
-            sys.stderr.write(f"[auth-stub] 读令牌文件失败，沿用旧视图：{type(e).__name__}\n")
+            self._adopt_locked(raw)
+
+    def repair(self) -> None:
+        """文件落后于内存 / 分叉过：把内存视图重新落盘（走 token_state：文件锁 + 重读 + 同一套合并）。后台线程调。"""
+        if self._diverged and self._good is not None and TOKENS_FILE:
+            token_state()
+
+    def _merge_locked(self, file: tuple[int, str, dict, dict]) -> tuple[tuple[int, str, dict, dict] | None, bool]:
+        """文件里读到的 ``file`` 并进内存视图 → (新视图 | None = 不认, 要不要重新落盘)。不改任何状态。"""
+        rev, gen, epochs, tokens = file
+        mem = self._good
+        if mem is None:
+            return (rev, gen, dict(epochs), dict(tokens)), False
+        epochs = _merge_epochs(epochs, mem[2])
+        if gen != mem[1]:
+            if gen in self._left:
+                return None, False
+            return (rev, gen, epochs, dict(tokens)), False  # 新的一代：旧一代的令牌验签就过不了
+        alive = {j: t for j, t in tokens.items() if j not in self._dead}
+        if rev > mem[0]:
+            return (rev, gen, epochs, alive), len(alive) != len(tokens)
+        if alive == mem[3] and len(alive) == len(tokens):
+            return (mem[0], gen, epochs, alive), rev < mem[0]
+        both = {j: t for j, t in mem[3].items() if j in alive}
+        return (mem[0], gen, epochs, both), True
+
+    def _install_locked(self, new: tuple[int, str, dict, dict]) -> None:
+        old = self._good
+        if old is not None:
+            if old[1] != new[1]:
+                self._left.add(old[1])
+                gone = old[3]
+            else:
+                gone = {j: t for j, t in old[3].items() if j not in new[3]}
+            now = int(time.time())
+            self._dead.update({j: t["expiresAt"] for j, t in gone.items()})
+            # ponytail: 只按到期清，不设上限——每条都对应一次需要登录 / 命令行的签发，量级有限；要上限时改成「超了就 state=None」
+            self._dead = {j: exp for j, exp in self._dead.items() if exp > now}
+        self._good = new
+        self.state = (new[1], new[2], new[3])
+
+    def _adopt_locked(self, raw: bytes | None) -> None:
+        """处理一份读到的文件字节（持 self._lock）。单独拆出来，测试可以注入「刷新读到旧内容」的交错。"""
+        if raw is not None and raw == self._raw:
+            return
+        self._raw = raw
+        if raw is None:
+            self.state = None  # 文件没了：没有可信的文件；直到读到好的（或本进程下一次写）
+            return
+        try:
+            file = _parse_token_state(raw)
+        except Exception as e:  # noqa: BLE001
+            self.state = None
+            _warn(f"令牌文件变了但解析不了，设备令牌暂时全部拒绝：{type(e).__name__}")
+            return
+        new, rewrite = self._merge_locked(file)
+        if new is None:
+            self.state = None
+            _warn("令牌文件是本进程已经离开的那一代（旧备份？），不认；设备令牌暂时全部拒绝，等下一次写或重启")
+            return
+        if rewrite:
+            self._diverged = True
+            _warn(f"令牌文件 rev={file[0]} 与内存里的 rev={self._good[0] if self._good else 0} 对不上"
+                  "（旧备份被拷回来？）：只认两边都有的令牌、作废过的不回来，并把内存里的状态重新落盘")
+        self._install_locked(new)
 
 
+def _warn(msg: str) -> None:
+    try:
+        sys.stderr.write(f"[auth-stub] {msg}\n")
+    except Exception:  # noqa: BLE001 — 日志写不出不能让视图停在半路
+        pass
+
+
+_UNSET = object()
 EPOCHS = Epochs()
 
 
@@ -316,25 +462,50 @@ class Accounts:
     """verify 用的内存视图：租户 → (名字, 会话盐)。
 
     契约不变量 2：verify 不做 IO。所以不在请求里读文件，而是后台线程每
-    RELOAD_EVERY 秒看一眼文件的 mtime，变了才重读。代价：删账号 / 改密码
+    RELOAD_EVERY 秒看一眼文件的指纹，变了才重读。代价：删账号 / 改密码
     最多晚 RELOAD_EVERY 秒生效。
+
+    ``known``：账号模式「有没有」已经确定——读成功过一次，或确认文件不存在（只认 ENOENT）。
+    匿名上报只在 ``known`` 且没有账号时才开（``anonymous_allowed``）。任何不确定都是 False：文件在但读不出 /
+    解析不了（含写了一半、空文件、目录）/ 权限或 IO 错误 → 匿名关。读成功过的视图，之后文件坏了 / 没了 / 读不了，
+    一律沿用（账号模式不会因此退回「没有账号」）；只有「读成功过且账号为空」之后又读坏，才回到 ``known=False``。
     """
 
     def __init__(self) -> None:
         self.by_id: dict[str, tuple[str, str]] = {}
+        self.known = False
         self._mtime = None
 
     def refresh(self) -> None:
         try:
-            # 只开共享口令时账号文件本来就不存在：当成空，别每 2 秒报一次错（Windows 验收）
-            mtime = os.stat(USERS_FILE).st_mtime_ns if USERS_FILE and os.path.exists(USERS_FILE) else None
+            if not USERS_FILE:
+                self.known = True  # 没配账号文件 = 确定没有账号
+                return
+            try:
+                st = os.stat(USERS_FILE)
+            except FileNotFoundError:
+                # 只开共享口令时账号文件本来就不存在：当成空，别每 2 秒报一次错（Windows 验收）。
+                # 但读成功过账号之后文件没了：沿用旧视图（删文件不能让门退回匿名）
+                if not self.by_id:
+                    self.by_id, self.known, self._mtime = {}, True, None
+                return
+            mtime = (st.st_mtime_ns, st.st_ino, st.st_size)
             if mtime == self._mtime:
                 return
-            users = load_users()
-            self.by_id = {u["id"]: (name, u["sess"]) for name, u in users.items()}
-            self._mtime = mtime
+            with open(USERS_FILE, encoding="utf-8") as f:
+                users = json.load(f)["users"]  # 缺 users 键 / 不是对象都抛：半坏的文件不能当「没有账号」
+            if not isinstance(users, dict):
+                raise ValueError("users file")
+            by_id = {u["id"]: (name, u["sess"]) for name, u in users.items()}
+            self.by_id, self.known, self._mtime = by_id, True, mtime  # 先放账号再放 known：中途被读到也只会更严
         except Exception as e:  # 文件坏了：保留上一份视图，别把所有人踢下线
+            if not self.by_id:
+                self.known = False  # 没有可沿用的账号视图：不知道有没有账号，匿名关
             sys.stderr.write(f"[auth-stub] 读账号文件失败，沿用旧视图：{type(e).__name__}\n")
+
+    def anonymous_allowed(self) -> bool:
+        """匿名上报开不开：开关开着、单人模式（共享口令、确定没有账号）。"""
+        return bool(ANON_REPORT and PASSWORD and self.known and not self.by_id)
 
 
 ACCOUNTS = Accounts()
@@ -343,8 +514,11 @@ ACCOUNTS = Accounts()
 def _watch() -> None:
     while True:
         time.sleep(RELOAD_EVERY)
-        ACCOUNTS.refresh()
-        EPOCHS.refresh()
+        for step in (ACCOUNTS.refresh, EPOCHS.refresh, EPOCHS.repair):
+            try:
+                step()
+            except Exception as e:  # noqa: BLE001 — 这条线程死了视图就停在旧的（失败方向反了）：吞掉、下一轮再来
+                _warn(f"后台刷新出错（{step.__qualname__}）：{type(e).__name__}")
 
 
 # ── 会话令牌 ─────────────────────────────────────────────────────
@@ -549,7 +723,7 @@ def _verify(headers) -> tuple[int, dict]:
         return (401, {}) if tenant is None else (204, {"X-Nexus-Tenant": tenant} if tenant else {})
     # 匿名。单人模式 = 开着共享口令、一个账号都没有：只有这时「不带租户 = u_local」是唯一的那份数据；
     # 有账号就没有可归属的租户，一律 401（宁可拒绝）。
-    if ANON_REPORT and PASSWORD and not ACCOUNTS.by_id and _report_uri(method, uri):
+    if ACCOUNTS.anonymous_allowed() and _report_uri(method, uri):
         return 204, {"X-Nexus-Scope": "report", "X-Nexus-Anonymous": "1"}
     return 401, {}
 
@@ -670,7 +844,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"status": "ok", "accounts": bool(ACCOUNTS.by_id),
                              "sharedPassword": bool(PASSWORD),
                              # v1.4：此刻不带凭据能不能上报（开关开着且是单人模式）
-                             "anonymousReport": bool(ANON_REPORT and PASSWORD and not ACCOUNTS.by_id)})
+                             "anonymousReport": ACCOUNTS.anonymous_allowed()})
         elif self.path == "/api/auth/verify":
             self._status_only(*verify_access(self.headers))
         elif self.path == "/api/auth/tokens":
@@ -1008,7 +1182,7 @@ def main() -> None:
     )
     if ACCOUNTS.by_id and PASSWORD:
         banner += "  ⚠ 两种登录同时开着：知道共享口令的人都进 u_local。多用户部署请去掉 AUTH_PASSWORD\n"
-    if ANON_REPORT and PASSWORD and not ACCOUNTS.by_id:
+    if ACCOUNTS.anonymous_allowed():
         banner += ("  ⚠ 匿名上报开着：能连到这个端口的人不带任何凭据就能往泳道里加代理运行记录（读不到任何东西）。\n"
                    "    端口对外开放时请设 AUTH_ANONYMOUS_REPORT=false\n")
     if not COOKIE_SECURE:
