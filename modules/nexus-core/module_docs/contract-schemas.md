@@ -420,6 +420,7 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
   "order":  [ { "runId": "run_…", "slot": 1 } ] }
 // PUT /api/core/lanes/prefs/agent   { "agent": "claude-code", "label": "garden", "hidden": true }   // hidden / pinned 至少一个，布尔
 // PUT /api/core/lanes/prefs/order   { "runId": "run_…", "index": 1 }                                // 运行不在跑 → 404
+//   可选窗口（v2.24 追加，同 GET views/lanes 的 date / from / to，同校验）：{ …, "from": "2026-10-08", "to": "2026-10-09" }；缺省 = 今天
 
 // GET /api/core/views/lanes —— 追加（既有键不变）
 { "agents": [ { /* 既有的键 */ "pinned": false, "manualOrder": null, "rank": 0 } ],

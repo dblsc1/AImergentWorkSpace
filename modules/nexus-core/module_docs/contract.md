@@ -3785,7 +3785,7 @@ report 令牌与匿名由「调用方范围」放行表挡成 403；放行表还
 |---|---|---|
 | `GET /lanes/prefs` | — | `{agents: [{agent, label, unverified, hidden, pinned, pinnedAt}], order: [{runId, slot}]}`（`unverified` = 这个身份是匿名那一类，和同名的已验证身份互不串） |
 | `PUT /lanes/prefs/agent` | `{agent, label?, unverified?（缺省 false）, hidden?, pinned?}`（至少给一个标志；多出的键 / 非布尔 422） | 幂等：给哪个标志就设成哪个值。再置顶不动 `pinnedAt`。藏 / 置顶都没了的身份顺手删掉。回新的整份偏好 |
-| `PUT /lanes/prefs/order` | `{runId, index}`（`index` 0–1000 的整数） | 把这条**在跑**的运行放到「未置顶的在跑运行」的第 `index` 位；`index` 超出个数夹到最后；运行不存在 / 已结束 / 置顶 / 藏起来 / 匿名 / 是别的租户的 → 404。幂等。写入争用重试用尽（20 次）→ 409（稍后重试） |
+| `PUT /lanes/prefs/order` | `{runId, index, date?, from?, to?}`（`index` 0–1000 的整数；v2.24 追加的 `date` / `from` / `to` = 页面读 `views/lanes` 用的窗口，名字、格式、互斥与跨度校验都同那个 GET，错了同样 422；缺省 = 今天，老客户端不受影响） | 把这条**在跑**的运行放到「未置顶的在跑运行」的第 `index` 位；`index` 超出个数夹到最后；运行不存在 / 已结束 / 置顶 / 藏起来 / 匿名 / 是别的租户的 → 404。幂等。写入争用重试用尽（20 次）→ 409（稍后重试） |
 | `DELETE /lanes/prefs/order/{runId}` | — | 清这一条的排位；没有这条也 200 |
 | `DELETE /lanes/prefs/order` | — | 清全部排位 |
 
@@ -3891,7 +3891,7 @@ AI 写的或「记住」的分类规则与草稿、代理标签（`agent_runs.la
   优先于「刚干过活」；或空闲 / 全部结束已满 1 小时——`reason: "idle"`。更新的在干活的运行会让它自己重新显示。
 - **判定看全部运行**：被在跑封顶（`MAX_LIVE`）丢掉的在跑运行不进 `agents`，但「是否在干活 / 在等人 / 最新一条是否出错」的判定仍把它们算上；该身份若显示，它们留在 `dropped`，若不显示则并入 `inactiveAgents`。
   整条泳道的运行都被封顶丢掉、但其中有在跑的，也照样判定（不活跃的移进 `inactiveAgents`，活跃的留在 `dropped`）；只剩已结束运行被丢的身份没有可判定的数据，留在 `dropped`。
-- **手动排位与本节同一条管线**：`PUT /lanes/prefs/order` 的 `index` 数的是页面上**显示着**的未置顶在跑运行（`inactiveAgents` 里的不占位），`live_order` 与 `get_lanes` 同一条管线：共用同一份输入（默认窗口里已结束的兄弟运行也读进来，它们决定「最新一条是否出错」「最后干活」）与「封顶 → 过滤 → 排序」。
+- **手动排位与本节同一条管线**：`PUT /lanes/prefs/order` 的 `index` 数的是页面上**显示着**的未置顶在跑运行（`inactiveAgents` 里的不占位），`live_order` 与 `get_lanes` 同一条管线：共用同一份输入（**页面读图用的窗口**里已结束的兄弟运行也读进来——`PUT` 带同样的 `date` / `from` / `to`，缺省今天；凌晨页面读「昨天 + 今天」时若不带，两边看的已结束运行不同，会 404 或下标错位；已结束的兄弟运行决定「最新一条是否出错」「最后干活」）与「封顶 → 过滤 → 排序」。
 - **手动隐藏**（`lanes/prefs` 的 hidden）永远隐藏，只在 `hiddenAgents`，不进 `inactiveAgents`；`hiddenWaiting`、`stalePinned` 口径不变（置顶的永远显示，所以不会因本过滤而「没在跑」）。
 - **`inactiveAgents: [{agent, label, unverified, reason, lastWorkAt, runs, elapsedSeconds}]`**（追加，缺省 `[]`，最近干活的在前）：`runs` / `elapsedSeconds` 是该身份窗口里
   全部运行的条数与秒数，**包含**被 v2.23 封顶折掉的（折掉的并入这里，不再出现在 `dropped`，不重复数）。所以窗口里每条运行恰好落在

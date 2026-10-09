@@ -98,3 +98,56 @@ def test_capped_lost_run_dropped_seconds_stop_at_last_seen(client, w, monkeypatc
     w.live("fresh", start_min=10, phases=[(9, "working")])
     _, inactive, _ = _split(client)
     assert inactive["lostone"]["elapsedSeconds"] == 100 * 60  # 开始 300 分钟前 → 最后信号 200 分钟前
+
+
+# ---- 窗口：拖拽按页面查询时的窗口数（页面在 00:00–03:00 查「昨天 + 今天」）----
+
+def _midnight(monkeypatch):
+    import test_lanes_active as base  # noqa: PLC0415
+
+    t = base.datetime.combine(base.datetime.now(base._tz()).date(), base.time(0, 10), base._tz())
+    monkeypatch.setattr(base, "_now", lambda: t)  # 钉在 00:10；World / _ago 都读这个
+    return {"from": (t.date() - base.timedelta(days=1)).isoformat(), "to": t.date().isoformat()}
+
+
+def _two_day_open_order(client, win):
+    return [a["label"] for a in sorted(_get(client, params=win)["agents"], key=lambda a: a["rank"]) if a["endAt"] is None]
+
+
+def test_window_sibling_done_yesterday_shown_in_two_day_page_is_draggable_with_window(client, w, monkeypatch):  # noqa: F811
+    win = _midnight(monkeypatch)
+    a = w.live("a", phases=[(90, "idle")])  # 22:40 起空闲
+    b = w.live("b", phases=[(5, "working")])
+    w.closed("a", 40, 20)  # 23:30–23:50（昨天）：只在两天窗口里
+    assert _two_day_open_order(client, win) == ["b", "a"]
+    assert _put(client, a, 1).status_code == 404  # 缺省 = 今天：不变
+    r = client.put(ORDER, json={"runId": a, "index": 0, "from": win["from"], "to": win["to"]})
+    assert r.status_code == 200
+    assert _two_day_open_order(client, win) == ["a", "b"]
+    assert client.put(ORDER, json={"runId": b, "index": 0, "from": win["from"], "to": win["to"]}).status_code == 200
+    assert _two_day_open_order(client, win) == ["b", "a"]
+
+
+def test_window_failed_sibling_yesterday_collapses_in_two_day_page_404_and_no_offset(client, w, monkeypatch):  # noqa: F811
+    win = _midnight(monkeypatch)
+    w.live("x", start_min=400, phases=[(5, "working")])
+    bad = w.live("bad", start_min=300, phases=[(10, "idle")])
+    y = w.live("y", start_min=200, phases=[(5, "working")])
+    w.closed("bad", 40, 20, outcome="failed")
+    assert _two_day_open_order(client, win) == ["x", "y"]
+    assert client.put(ORDER, json={"runId": bad, "index": 0, **{"from": win["from"], "to": win["to"]}}).status_code == 404
+    assert client.put(ORDER, json={"runId": y, "index": 1, "from": win["from"], "to": win["to"]}).status_code == 200
+    assert _two_day_open_order(client, win) == ["x", "y"]  # 只数显示着的 x、y，没有被 bad 顶偏
+    assert client.put(ORDER, json={"runId": y, "index": 0, "from": win["from"], "to": win["to"]}).status_code == 200
+    assert _two_day_open_order(client, win) == ["y", "x"]
+    # 缺省（今天）：bad 没有昨天的兄弟，显示着 → 可拖（旧客户端行为不变）
+    assert _put(client, bad).status_code == 200
+
+
+@pytest.mark.parametrize("body", [{"from": "x"}, {"date": "2026-01-01", "from": "2026-01-01"},
+                                  {"from": "2026-01-01", "to": "2026-01-20"}])
+def test_window_invalid_params_same_error_as_get(client, w, body):  # noqa: F811
+    rid = w.live("a", phases=[(5, "working")])
+    got = client.get("/api/core/views/lanes", params=body)
+    put = client.put(ORDER, json={"runId": rid, "index": 0, **body})
+    assert got.status_code == put.status_code == 422

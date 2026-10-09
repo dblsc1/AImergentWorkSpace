@@ -152,13 +152,20 @@ def _gather(user: str, start: datetime, end: datetime, now: datetime, open_runs:
     return p, runs, over
 
 
-def live_order(user: str, prefs: dict) -> list[str]:
+def _span(day: str | None, date_from: str | None, date_to: str | None) -> tuple[date, date, datetime, datetime]:
+    """``get_lanes`` 与 ``live_order`` 共用：解析窗口并校验跨度 → (首日, 末日, 起, 止)。"""
+    first, last = _window(day, date_from, date_to)
+    if (last - first).days >= MAX_SPAN_DAYS:
+        raise UnprocessableError(f"跨度超过 {MAX_SPAN_DAYS} 天：{first}…{last}")
+    return first, last, datetime.combine(first, time(), settings.tz), datetime.combine(last + timedelta(days=1), time(), settings.tz)
+
+
+def live_order(user: str, prefs: dict, day: str | None = None, date_from: str | None = None,
+               date_to: str | None = None) -> list[str]:
     """页面上**显示着**的、未置顶、已验证的在跑运行当前的先后（runId）——手动排位的底，拖拽的下标就按它数。
-    与 ``get_lanes`` 同一条管线（同一份输入：含已结束的兄弟运行；封顶 → 只显示在干活的 → 排序），默认（今天）窗口；
+    与 ``get_lanes`` 同一条管线（同一份输入：含已结束的兄弟运行；封顶 → 只显示在干活的 → 排序）；窗口参数同 ``get_lanes``，缺省 = 今天；
     被折进 ``inactiveAgents`` 的泳道不占位。"""
-    first, last = _window(None, None, None)
-    start = datetime.combine(first, time(), settings.tz)
-    end = datetime.combine(last + timedelta(days=1), time(), settings.tz)
+    _, _, start, end = _span(day, date_from, date_to)
     now, open_runs = timer_service.list_lane_runs(user)
     p, runs, _ = _gather(user, start, end, now, open_runs, prefs)
     agents = _finish(p, runs)[0]
@@ -169,11 +176,7 @@ def live_order(user: str, prefs: dict) -> list[str]:
 
 def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str | None = None) -> LanesOut:
     user = current_tenant()
-    first, last = _window(day, date_from, date_to)
-    if (last - first).days >= MAX_SPAN_DAYS:
-        raise UnprocessableError(f"跨度超过 {MAX_SPAN_DAYS} 天：{first}…{last}")
-    start = datetime.combine(first, time(), settings.tz)
-    end = datetime.combine(last + timedelta(days=1), time(), settings.tz)
+    first, last, start, end = _span(day, date_from, date_to)
     now, open_runs = timer_service.list_lane_runs(user)
     empty = first > last  # from > to：空结果，不报错
 
