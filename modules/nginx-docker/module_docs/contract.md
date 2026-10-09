@@ -197,6 +197,13 @@ class 加 `hcl-card hcl-lead`），同一个节点跨重画搬过来（表单状
 `AGENT_UPSTREAM`。本模块的 `gate.inc` 不变。已实现：手写组装两条常驻；生成的组装由模块清单的
 `bridge: true` / `upstreamEnv` 产出（见 gateway.v1 第八节「实现落定」）。
 
+## 调用方范围与匿名上报（v0.4，2026-10-09）
+
+规范在 `contracts/gateway.v1` 第九节。本模块的 `nginx/gate.inc` 多四行：取认证服务 verify 回的
+`X-Nexus-Scope` / `X-Nexus-Anonymous`，覆盖着转给后端（空值不转发，客户端自带的同名头被盖掉）；原来四行不动。
+两份组装（手写的 `deploy/nginx/templates/default.conf.template` 与 `tools/generate.py`）都给门子请求加
+`X-Original-Method`，给 `<前缀>api/core/` 加匿名上报的限速区 `honeycomb_anon`。
+
 ## 对比度校验
 
 `scripts/check-contrast.py` 按 `contracts/design-tokens-v1.md` 的对比度矩阵机械核对
