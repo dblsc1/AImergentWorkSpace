@@ -231,3 +231,13 @@ def test_live_counts_against_total_ceiling(client, monkeypatch):
     body = _get(client)
     assert len(body["agents"]) == 5 and sum(a["endAt"] is None for a in body["agents"]) == 3
     assert [(d["label"], d["runs"]) for d in body["dropped"]] == [("A", 2)]
+
+
+def test_lost_open_run_without_last_seen_stops_at_its_start_when_dropped(monkeypatch):
+    """失联又没有 lastSeenTs：折进 dropped 时止于开始（同 agent_phases.lost_at），不是 now。"""
+    monkeypatch.setattr(lane_cap, "MAX_LIVE", 0)  # 在跑的全部丢进 dropped
+    start, now = _at(9), _at(12)
+    run = {"runId": "r", "agent": "cc", "label": "L", "unverified": False, "open": True, "lost": True,
+           "startTs": start, "endTs": None, "lastSeenTs": None}
+    _, dropped = lane_cap.cap([run], _at(0), _at(0, day=_day() + timedelta(days=1)), now)
+    assert dropped[0]["elapsedSeconds"] == 0

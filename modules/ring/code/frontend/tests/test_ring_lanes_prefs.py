@@ -67,6 +67,7 @@ class PrefsServer:
 
     def __init__(self, body: dict[str, Any]) -> None:
         self.body, self.calls, self.fail, self.lanes_gets, self.unexpected = body, [], False, 0, []
+        self.last_query, self.windows = "", []  # 最近一次读图的查询串；每次 PUT /order 带的窗口键（从 calls 里摘出来）
         self.original = copy.deepcopy(body["agents"])
 
     def _order(self) -> list[dict]:
@@ -80,9 +81,12 @@ class PrefsServer:
         req = route.request
         if "/views/lanes" in req.url:
             self.lanes_gets += 1
+            self.last_query = req.url.partition("?")[2]
             route.fulfill(status=200, content_type="application/json", body=json.dumps(self.body, ensure_ascii=False))
             return
         payload = json.loads(req.post_data) if req.post_data else None
+        if payload and "index" in payload:  # 窗口键单独记，不进 calls / MOVES 的比对
+            self.windows.append({k: payload.pop(k) for k in ("date", "from", "to") if k in payload})
         self.calls.append((req.method, req.url.split("/lanes/prefs")[1], payload))
         if self.fail:
             route.fulfill(status=500, content_type="application/json", body='{"detail":"x"}')
@@ -520,3 +524,18 @@ def test_touch_short_swipe_still_scrolls_and_long_press_then_move_drags(browser,
         waits(page, lambda: server.calls)
         assert server.calls == [("PUT", "/order", {"runId": "run_c", "index": 2})]
         assert order(page)[:3] == ["run_e", "run_a", "run_c"]
+
+
+def test_drag_put_carries_the_window_the_page_queried_with(browser, static_base_url) -> None:
+    from urllib.parse import parse_qsl  # noqa: PLC0415
+
+    with open_prefs(browser, static_base_url, clock=True) as (page, server):
+        n = server.lanes_gets
+        page.clock.run_for(15_500)  # 一次轮询：第二次起带窗口（?date= 或跨零点的 ?from=&to=）
+        waits(page, lambda: server.lanes_gets > n)
+        want = dict(parse_qsl(server.last_query))
+        assert want  # 不是空的，下面的比对才有意义
+        drag(page, "run_c", centre(page, "run_a")[1] + 4)
+        page.mouse.up()
+        waits(page, lambda: server.calls)
+        assert server.windows == [want]

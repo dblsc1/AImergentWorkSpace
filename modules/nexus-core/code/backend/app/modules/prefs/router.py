@@ -14,6 +14,7 @@ from ..activity.service import forbid_device_token
 from . import service
 
 MAX_INDEX = 1000
+_DATE = r"^\d{4}-\d{2}-\d{2}$"
 
 
 def human(authorization: Annotated[str | None, Header()] = None) -> None:
@@ -44,6 +45,10 @@ class OrderIn(BaseModel):
 
     runId: str = Field(min_length=1, max_length=128)
     index: StrictInt = Field(ge=0, le=MAX_INDEX)
+    # 页面读 views/lanes 时用的窗口（同名同校验）；缺省 = 今天
+    date: str | None = Field(None, pattern=_DATE)
+    from_: str | None = Field(None, alias="from", pattern=_DATE)
+    to: str | None = Field(None, pattern=_DATE)
 
 
 @router.get("")
@@ -58,7 +63,7 @@ def put_agent(body: AgentIn) -> dict:
 
 @router.put("/order")
 def put_order(body: OrderIn) -> dict:
-    return service.set_order(body.runId, body.index)
+    return service.set_order(body.runId, body.index, body.date, body.from_, body.to)
 
 
 @router.delete("/order")

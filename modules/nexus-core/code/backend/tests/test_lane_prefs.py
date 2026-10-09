@@ -189,9 +189,10 @@ def test_default_order_is_the_activity_ranking(client):
     _start(client, "waiting", phase="waiting_permission")
     ended = _start(client, "ended")
     _stop(client, ended)
-    assert _order(client) == ["waiting", "working", "error", "idle", "ended"]
+    assert _order(client) == ["waiting", "working", "idle", "ended"]  # v2.24：出错的泳道不显示
+    assert [a["label"] for a in _lanes(client)["inactiveAgents"]] == ["error"]
     ranks = sorted(a["rank"] for a in _lanes(client)["agents"])
-    assert ranks == list(range(5))
+    assert ranks == list(range(4))
 
 
 def test_pinned_then_manual_then_activity_then_ended(client):

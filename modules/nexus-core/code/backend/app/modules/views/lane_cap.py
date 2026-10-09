@@ -27,7 +27,7 @@ def lane_key(run: dict) -> str:
 
 
 def cap(runs: list[dict], start: datetime, end: datetime, now: datetime) -> tuple[list[dict], list[dict]]:
-    """返回 (保留的运行，按开始时间升序；dropped 聚合，最近活动的身份在前，每项带内部键 ``key``)。"""
+    """返回 (保留的运行，按开始时间升序；dropped 聚合，最近活动的身份在前，每项带内部键 ``key`` / ``openRuns``)。"""
     lanes: dict[str, list[dict]] = {}
     for r in sorted(runs, key=lambda r: r["startTs"], reverse=True):
         lanes.setdefault(lane_key(r), []).append(r)
@@ -52,8 +52,12 @@ def cap(runs: list[dict], start: datetime, end: datetime, now: datetime) -> tupl
     for r in gone:
         k = lane_key(r)
         row = agg.setdefault(k, {"key": k, "agent": r.get("agent"), "label": r.get("label"),
-                                 "unverified": bool(r.get("unverified")), "runs": 0, "elapsedSeconds": 0})
+                                 "unverified": bool(r.get("unverified")), "runs": 0, "elapsedSeconds": 0,
+                                 "openRuns": []})
+        if r.get("open"):
+            row["openRuns"].append(r)  # 内部用：丢掉的在跑运行，活跃判定要看见
         row["runs"] += 1
-        row["elapsedSeconds"] += max(0, int((min(r["endTs"] or now, end) - max(r["startTs"], start)).total_seconds()))
+        stop = r["endTs"] or ((r.get("lastSeenTs") or r["startTs"]) if r.get("lost") else now)  # 失联的止于最后一次信号、没有则开始（同 agent_phases.lane_runs）
+        row["elapsedSeconds"] += max(0, int((min(stop, end) - max(r["startTs"], start)).total_seconds()))
     rank = {k: i for i, k in enumerate(order)}
     return sorted(keep, key=lambda r: r["startTs"]), sorted(agg.values(), key=lambda a: rank[a["key"]])

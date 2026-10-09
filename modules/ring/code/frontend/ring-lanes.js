@@ -38,6 +38,7 @@
 
   var hours = 3;       // 0 = 今天
   var last = null;     // 最近一次成功的响应
+  var lastQ = "";      // 它的查询串（?date= / ?from=&to=）
   var gone = false;    // 404：后端没有这个端点，不再拉
   var seq = 0;
   var lead = null;     // 「你在 X，记到哪？」那张卡（没有为 null）
@@ -90,7 +91,12 @@
     onPin: function (r, on) { pref({ type: "pin", agent: r.agent, label: r.label, unverified: r.unverified, on: on }, "PUT", "/agent", { agent: r.agent || "", label: r.label || "", pinned: on }); },
     onHide: function (r) { pref({ type: "hide", agent: r.agent, label: r.label, unverified: r.unverified }, "PUT", "/agent", { agent: r.agent || "", label: r.label || "", hidden: true, unverified: !!r.unverified }); },
     onRestore: function (h) { pref({ type: "restore", agent: h.agent, label: h.label, unverified: h.unverified }, "PUT", "/agent", { agent: h.agent, label: h.label || "", hidden: false, unverified: !!h.unverified }); },
-    onMove: function (r, index) { view.hclReveal = r.runId; pref({ type: "move", runId: r.runId, index: index }, "PUT", "/order", { runId: r.runId, index: index }); }
+    onMove: function (r, index) {
+      view.hclReveal = r.runId;
+      var win = {};   // 拖拽的下标按页面读图用的窗口数（凌晨读「昨天 + 今天」），带上同样的 date / from / to
+      new URLSearchParams(lastQ).forEach(function (v, k) { win[k] = v; });
+      pref({ type: "move", runId: r.runId, index: index }, "PUT", "/order", Object.assign({ runId: r.runId, index: index }, win));
+    }
   };
   view.addEventListener("hcl-idle", function () { if (dirty) { dirty = false; draw(); } });
 
@@ -131,6 +137,11 @@
       else if (k.ph === "error") live.error += 1;
       else if (k.ph !== "idle") live.waiting += 1;
     });
+    // v2.24：出错的泳道已挪进 inactiveAgents（不画成泳道），但出错仍要看得见：今天里出过错的照样亮「N 个出错」
+    var dayStart = Date.parse(last.windowEnd) - DAY;
+    (Array.isArray(last.inactiveAgents) ? last.inactiveAgents : []).forEach(function (x) {
+      if (x.reason === "error" && Date.parse(x.lastWorkAt) >= dayStart) live.error += 1;
+    });
     var bits = [];
     if (live.waiting) bits.push(live.waiting + " 个在等你");
     if (live.working) bits.push(live.working + " 个在干活");
@@ -152,6 +163,7 @@
     } catch (e) { return; }
     if (mine !== seq || !body || !body.now) return;
     last = body;
+    lastQ = q;
     // 第一次不带参只拿到今天；最近 3 小时跨了零点就马上补拉两天的
     var next = hours ? window.HoneycombLanes.query(body, hours) : "";
     if (next && next !== q && next.indexOf("from=") !== -1) { load(); return; }
