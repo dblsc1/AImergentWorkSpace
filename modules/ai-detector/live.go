@@ -94,7 +94,10 @@ const (
 	// 一拍最多往回带这么久的窗口：上一拍没发出去时，下一拍把那段补上（不排队、不重发，只是这一拍看得远一点）。
 	// 也是每拍读 ActivityWatch 的范围。
 	presenceLookback = time.Minute
-	presenceMaxSpans = 12 // 一拍至多带这么多段；超了留当前窗口 + 其余里最长的，并标 truncated
+	// 实际的心跳间隔不超过它（往回看的一半）：间隔再长，两拍之间超出往回看的那截停留就没人报了，
+	// 丢一拍更是整段没了。presenceSeconds 配到 300 仍然合法，只是按它发。
+	presenceMaxInterval = presenceLookback / 2
+	presenceMaxSpans    = 12 // 一拍至多带这么多段；超了留当前窗口 + 其余里最长的，并标 truncated
 	// 短于它的停留不单独成段（标题刚变时记录器写的 0 秒事件之类）；被它隔开的同一个窗口并成一段
 	presenceMinDwell = 500 * time.Millisecond
 )
@@ -104,7 +107,7 @@ func presenceInterval(cfg Config) time.Duration {
 	if s < 5 || s > 300 {
 		s = presenceDefaultSeconds
 	}
-	return time.Duration(s * float64(time.Second))
+	return min(time.Duration(s*float64(time.Second)), presenceMaxInterval)
 }
 
 type presenceBody struct {
@@ -293,10 +296,16 @@ func (p *beater) beat(cfg Config, hc *http.Client, now time.Time) (bool, error) 
 func presenceLoop(p paths, hc *http.Client) {
 	var q quietLog
 	var b beater
+	var warned bool
 	every(func() time.Duration {
 		cfg, err := readConfig(p)
 		if err != nil {
 			return 15 * time.Second
+		}
+		if cfg.PresenceSeconds > presenceMaxInterval.Seconds() && cfg.PresenceSeconds <= 300 && !warned {
+			warned = true
+			log.Printf("presenceSeconds=%v 超过 %v：按 %v 发心跳（一拍只往回带 %v 的停留，间隔再长会丢）",
+				cfg.PresenceSeconds, presenceMaxInterval, presenceMaxInterval, presenceLookback)
 		}
 		if sent, err := b.beat(cfg, hc, time.Now()); err != nil {
 			q.printf("在场心跳没发出去（丢掉，不补发）：%v", err) // 错误里不含标题
