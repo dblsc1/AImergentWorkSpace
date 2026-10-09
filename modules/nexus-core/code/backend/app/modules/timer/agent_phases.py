@@ -22,7 +22,7 @@ from datetime import datetime, timedelta
 from ... import config
 from ..planner.errors import NotFoundError, UnprocessableError
 from . import agents, repo
-from .agent_liveness import AGENT_HEARTBEAT_SECONDS, lost_at
+from .agent_liveness import AGENT_DECLARED_MAX_SECONDS, AGENT_HEARTBEAT_SECONDS, lost_at
 
 MAX_PHASES = 1000
 MAX_INTERACTIONS = 500  #: reply 的条数上限
@@ -94,7 +94,8 @@ def record_phase(
             user, run_id, run.get("v"), {"phases": phases, "interactions": interactions},
         ):
             continue  # 并发写抢先或刚被关闭：重读重算
-        repo.touch_agent_run(user, run_id, right_now.isoformat())  # v2.18：收下的相位（含重复 / 超上限）都是信号
+        if not repo.touch_agent_run(user, run_id, right_now.isoformat()):  # v2.18：收下的相位（含重复 / 超上限）都是信号
+            return _closed_out(user, run_id, repo.get_agent_run(user, run_id))  # 写相位与记信号之间被失联 / 超时关了
         return {"runId": run_id, "phase": agents.current_phase({"phases": phases}),
                 "applied": reason is None, "reason": reason}
     raise RuntimeError(f"相位写入争用未决：{run_id!r}")
@@ -157,7 +158,7 @@ def record_attend(user: str, run_id: str, intervals: list[tuple[datetime, dateti
 
 def lane_runs(user: str, *, now: Callable[[], datetime]) -> tuple[datetime, list[dict]]:
     """``views/lanes`` 的在跑运行。**不写**：不收超时（超过上限的标 overdue、elapsed 封顶）、
-    不收失联（v2.18：标 lost、elapsed 止于最后一次信号；会发心跳的运行不看上限）。
+    不收失联（v2.18：标 lost、elapsed 止于最后一次信号；会发心跳的运行不看遗忘上限，只看 7 天安全上限）。
     「已标记未删除」的运行按标记当已结束画（与它将要落账的那条事实同形）。"""
     right_now = now()
     cap = timedelta(hours=config.settings.agent_run_timeout_hours)
@@ -174,11 +175,11 @@ def lane_runs(user: str, *, now: Callable[[], datetime]) -> tuple[datetime, list
                         "phases": data.get("phases", []), "interactions": data.get("interactions", [])})
             continue
         seen = lost_at(run, right_now)
-        beats = bool(run.get("heartbeat"))
+        run_cap = timedelta(seconds=AGENT_DECLARED_MAX_SECONDS) if run.get("heartbeat") else cap  # 声明过心跳的 7 天
         elapsed = (seen or right_now) - started
         out.append({**base, "startTs": started, "endTs": None, "outcome": None,
-                    "elapsedSeconds": max(int((elapsed if beats else min(elapsed, cap)).total_seconds()), 0),
-                    "overdue": not beats and elapsed > cap, "lost": seen is not None,
+                    "elapsedSeconds": max(int(min(elapsed, run_cap).total_seconds()), 0),
+                    "overdue": elapsed > run_cap, "lost": seen is not None,
                     "lastSeenTs": agents.ts(run["lastSeenAt"]) if run.get("lastSeenAt") else None,
                     "phases": run.get("phases") or [], "interactions": run.get("interactions") or []})
     return right_now, out

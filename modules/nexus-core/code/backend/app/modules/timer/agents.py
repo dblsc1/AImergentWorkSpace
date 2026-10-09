@@ -37,7 +37,7 @@ from ..events.schemas import SPEC
 from ..planner import service as planner_service
 from ..planner.errors import InvalidInputError, NotFoundError
 from . import repo
-from .agent_liveness import AGENT_HEARTBEAT_SECONDS, mark_lost
+from .agent_liveness import AGENT_HEARTBEAT_SECONDS, mark_expired
 
 SOURCE = "agent-hook"
 EVENT_TYPE = "agent.run.completed"
@@ -161,8 +161,8 @@ def _expire(user: str, now: datetime) -> None:
             _finish(run)
             continue
         started = ts(run["startedAt"])
-        if run.get("heartbeat"):  # v2.18：会发心跳的运行活着就不封顶，只看失联
-            if (snap := mark_lost(run, now)) is not None:
+        if run.get("heartbeat"):  # v2.18：会发心跳的运行不看遗忘超时，只看失联与 7 天安全上限
+            if (snap := mark_expired(run, now)) is not None:
                 _finish(snap)
         elif now - started > cap:
             _close(run, "timeout", None, started + cap)

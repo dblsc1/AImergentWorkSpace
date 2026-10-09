@@ -187,7 +187,9 @@
 > 与活性规则（见「心跳与失联」节）：被收下的 start / phase / heartbeat 都更新运行的 `lastSeenAt`；**声明过会发心跳**的运行
 > 超过 30 分钟没有任何信号即**失联**——`views/lanes` 标 `lost: true`（不写），惰性关闭时写 `outcome: "lost"`、
 > **结束 = 最后一次信号的时刻**，代理时长不虚增。没声明过的运行（老适配器、检测程序的状态文件桥）行为一个不变；
-> `NEXUS_AGENT_RUN_TIMEOUT_HOURS` 只剩给它们兜底。`start` / `heartbeat` 的响应带 `heartbeatSeconds`（900）。
+> `NEXUS_AGENT_RUN_TIMEOUT_HOURS` 只剩给它们兜底；声明过的运行另有**安全上限 7 天**（`AGENT_DECLARED_MAX_SECONDS`，按 `timeout`
+> 关、结束 = 开始 + 上限）。**一条泳道的时长是进程寿命，不是活动量**——开着不关的会话照记；分辨「真在干活」
+> 靠 working / waiting / idle 的相位时间。`start` / `heartbeat` 的响应带 `heartbeatSeconds`（900）。
 > 另记 `beatSource` / `beatCount`（谁发的心跳、发了几下），供比较适配器的不同心跳办法。面向适配器的线上协议另成一份
 > 通用契约 `contracts/agent.lane.v1`。既有字段、端点行为、事件形状一个不改。
 >
@@ -2169,7 +2171,12 @@ hook 没发 stop（终端被关、进程被杀）的运行会永远挂着。超�
     打关闭标记之前又来了信号，就不关。
   - 关闭之后与任何已结束的运行一样：迟到的 `phase` / `heartbeat` 回 `closed`，`stop` 回 `duplicate:true`（`outcome`
     是 `lost`）；带原 `clientKey` 再 `start` 开一条**新**运行，`startedAt` 是此刻。
-- **不封顶**：声明过的运行只要一直有信号就一直在跑，`NEXUS_AGENT_RUN_TIMEOUT_HOURS` 对它无效（`overdue` 不会为真）。
+- **安全上限**：声明过的运行不看 `NEXUS_AGENT_RUN_TIMEOUT_HOURS`，但有自己的上限 `AGENT_DECLARED_MAX_SECONDS` = 7 天
+  （具名常量，远小于投影的 31 天坏载荷线，超过 31 天的事件在统计里会被静默丢掉）。到了上限，惰性关闭写 `outcome: "timeout"`、
+  事件 `time` = 开始 + 上限、`durationSeconds` = 上限（同遗忘超时的算法）；与失联同时成立时取结束更早的。
+  `views/lanes`（不写）：`elapsedSeconds` 封顶、`overdue: true`。之后的迟到信号回 `closed`，带原 `clientKey` 再 `start`
+  开新运行（与失联后一样）。**时长含义**：一条泳道的 `durationSeconds` 是**进程寿命**（开着没关也在跑），不是活动量；
+  周末开着的会话会记满到上限。要分辨「真在干活」看相位时间（working / waiting / idle），不要看总时长。
 - **间隔**：`heartbeatSeconds` = 900（`AGENT_HEARTBEAT_SECONDS`，失联线的一半）。两个数是代码里的具名常量，不是环境变量——
   仓主定的值，没有部署要调它的理由；要调时发新版契约。
 - **`stop` 的 `outcome` 仍只收** `done` / `failed` / `cancelled` / `timeout`；`lost` 只由服务端写，客户端发 → 422。

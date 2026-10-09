@@ -188,12 +188,32 @@ class CompanionLoopTests(_LoopCases, _BeatMixin, unittest.TestCase):
         self.assertEqual(len(self.calls), 24 * 4)  # 一天、15 分钟一次；到点自己退，不报 stop
         self.assertEqual(claude_hook._read_run_id("s1"), "run-1")
 
-    def test_unknown_cli_falls_back_to_the_state_file_only(self):
+    def test_unknown_cli_never_beats_and_never_declares(self):
+        """认不出 Claude Code = 看不出它死了：一下都不发（不声明心跳，运行留给 12 小时兜底），不是发到 24 小时。"""
         self._save("s1", "run-1")
         self.procs.clear()
-        clock = _Clock(on_sleep=lambda n: n == 5 and claude_hook._delete_run_id("s1"))
-        self.assertTrue(self._loop(clock, cli=0))
-        self.assertEqual(self.calls, [("beat", "run-1")])
+        self.assertTrue(self._loop(_Clock(), cli=0))
+        self.assertEqual(self.calls, [])
+
+    def test_server_not_knowing_the_run_reopens_once_then_stops(self):
+        """404（库重置 / 换了租户）：用同一个 clientKey 重开一次；重开也不成就停，不是每个间隔都敲。"""
+        self._save("s1", "run-1", "idle", "garden", cwd="/home/u/garden")
+        self.beat_result = (900, cc.BEAT_MISSING)
+        starts = []
+
+        def fail_start(*_a, **_k):
+            starts.append(1)
+            raise cc.CockpitError("连不上")
+
+        with mock.patch.object(cc, "start_run", fail_start):
+            self.assertTrue(self._loop(_Clock()))  # 自己退出了（不是被掐掉的）
+        self.assertEqual((self.calls, len(starts)), ([("beat", "run-1")], 1))
+
+        self._save("s2", "run-2", "idle", "garden", cwd="/home/u/garden")
+        with mock.patch.object(cc, "start_run", return_value={"runId": "run-3"}):  # 重开成了：接着发新的那条
+            self.beat_result = lambda n: (900, cc.BEAT_MISSING) if n < 3 else (900, False)
+            self.assertFalse(self._loop(_Clock(max_sleeps=3), session="s2"))
+        self.assertEqual(self.calls[1:], [("beat", "run-2"), ("beat", "run-3")])
 
     def test_only_one_instance_per_session(self):
         self._save("s1", "run-1")
@@ -314,6 +334,12 @@ class ClientBeatTests(_IsolatedHomeMixin, unittest.TestCase):
             self.assertEqual(cc.beat({}, "r"), (120, False))
         with mock.patch.object(cc, "heartbeat_run", return_value={"applied": False, "reason": "closed"}):
             self.assertEqual(cc.beat({}, "r"), (900, True))
+        err = cc.CockpitError("HTTP 404", code=404, json_body=True)  # cockpit 自己说不认识（库重置 / 换了租户）
+        with mock.patch.object(cc, "heartbeat_run", side_effect=err):
+            self.assertEqual(cc.beat({}, "r"), (900, cc.BEAT_MISSING))
+        html_404 = cc.CockpitError("HTTP 404", code=404, json_body=False)  # 网关的 404：地址配错了，不是运行没了
+        with mock.patch.object(cc, "heartbeat_run", side_effect=html_404):
+            self.assertEqual(cc.beat({}, "r"), (900, False))
 
 
 @unittest.skipIf(os.name == "nt", "伴随进程只在 POSIX 上起")
@@ -333,13 +359,13 @@ class SpawnTests(_IsolatedHomeMixin, unittest.TestCase):
             return spawned[-1][2]
 
         claude_hook._save_run_id("s1", "run-1")
-        with mock.patch.object(subprocess, "Popen", spy), mock.patch.object(claude_hook, "_cli_pid", return_value=0):
+        with mock.patch.object(subprocess, "Popen", spy), mock.patch.object(claude_hook, "_cli_pid", return_value=os.getpid()):  # 一个活着的 CLI
             t0 = time.monotonic()
             claude_hook._spawn_beat("s1", None)
             self.assertLess(time.monotonic() - t0, 2)
             argv, kw, child = spawned[0]
             try:
-                self.assertEqual(argv[0][2:], ["--beat", "--source", "companion", "--session", "s1", "--cli", "0"])
+                self.assertEqual(argv[0][2:], ["--beat", "--source", "companion", "--session", "s1", "--cli", str(os.getpid())])
                 self.assertTrue(kw["start_new_session"])
                 self.assertEqual((kw["stdin"], kw["stdout"], kw["stderr"]), (subprocess.DEVNULL,) * 3)
                 self.assertNotIn("shell", kw)
@@ -359,6 +385,19 @@ class SpawnTests(_IsolatedHomeMixin, unittest.TestCase):
             self.assertEqual(len(spawned), 2)
             spawned[1][2].kill()
             spawned[1][2].wait(timeout=10)
+
+    def test_no_spawn_when_cli_unknown_or_when_the_companion_could_not_beat_anyway(self):
+        """认不出 CLI / 状态里说钩子带了令牌而自己没有：起来也是立刻退——不起，免得每个钩子事件起一个就退的进程。"""
+        claude_hook._save_run_id("s1", "run-1")
+        with mock.patch.object(subprocess, "Popen") as popen:
+            with mock.patch.object(claude_hook, "_cli_pid", return_value=0):
+                claude_hook._spawn_beat("s1", None)
+            self.assertEqual(popen.call_count, 0)
+            with mock.patch.object(claude_hook, "_cli_pid", return_value=4242):
+                claude_hook._spawn_beat("s1", {"runId": "run-1", "auth": True})  # 钩子带了令牌，本进程没有
+                self.assertEqual(popen.call_count, 0)
+                claude_hook._spawn_beat("s1", {"runId": "run-1"})
+                self.assertEqual(popen.call_count, 1)
 
     def test_disabled_by_env_and_never_raises(self):
         claude_hook._save_run_id("s1", "run-1")
@@ -397,6 +436,18 @@ class HookRestartTests(_IsolatedHomeMixin, unittest.TestCase):
         self.assertEqual(claude_hook._read_state("s1")["runId"], "run-2")
 
 
+class StatePermissionTests(_IsolatedHomeMixin, unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "POSIX 权限位")
+    def test_state_dir_is_0700_and_state_file_0600_whatever_the_umask(self):
+        old = os.umask(0)
+        self.addCleanup(os.umask, old)
+        claude_hook._save_run_id("s1", "run-1", "idle", "garden", {"cwd": "/home/u/garden"})
+        path = claude_hook._state_file("s1")
+        self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(claude_hook._read_run_id("s1"), "run-1")
+
+
 class CockpitRunBeatTests(_IsolatedHomeMixin, unittest.TestCase):
     def test_beat_thread_beats_at_once_then_waits_the_server_interval_and_stops(self):
         module = _load_cockpit_run_module()
@@ -410,6 +461,11 @@ class CockpitRunBeatTests(_IsolatedHomeMixin, unittest.TestCase):
         with mock.patch.object(cc, "beat", lambda _c, run_id, beat_source: beats.append((run_id, beat_source)) or (600, False)):
             module._beat_forever({}, "run-1", FakeEvent())
         self.assertEqual((waits, beats), ([0.0, 600, 600, 600], [("run-1", "wrapper")] * 3))
+
+        waits.clear()
+        with mock.patch.object(cc, "beat", return_value=(900, cc.BEAT_MISSING)):  # 服务端不认这个运行：同样不再发
+            module._beat_forever({}, "run-1", FakeEvent())
+        self.assertEqual(waits, [0.0])
 
         waits.clear()
         with mock.patch.object(cc, "beat", return_value=(900, True)):  # 服务端说已结束：不再发
@@ -511,7 +567,7 @@ class BoundsTests(_IsolatedHomeMixin, unittest.TestCase):
         for key in ("COCKPIT_URL", "COCKPIT_TOKEN"):
             os.environ.pop(key, None)
         planted = {"runId": "run-1", "url": "http://evil.invalid", "auth": False}
-        os.environ["COCKPIT_TOKEN"] = "good-token"  # 自己有令牌、没有地址：不许去状态文件里拿地址
+        os.environ["COCKPIT_TOKEN"] = "good-token"  # 自己有令牌、没有地址：不许去状态文件里拿地址（环境变量里的令牌会与它配成对）
         self.assertFalse(claude_hook._usable(planted))
         self.assertNotIn("COCKPIT_URL", os.environ)
         os.environ["COCKPIT_URL"] = "http://real.invalid"  # 自己有地址：状态文件里的那个不看
@@ -552,17 +608,20 @@ class BeatModeTests(_IsolatedHomeMixin, unittest.TestCase):
         self._write_config(url="http://file/", token="file-token")
         os.environ["CLAUDE_PLUGIN_OPTION_COCKPIT_URL"] = "http://plugin/"
         config = cc.load_config()
-        self.assertEqual((config["url"], config["token"]), ("http://plugin", "file-token"))
-        os.environ["COCKPIT_URL"] = "http://env/"
+        self.assertEqual((config["url"], config["token"]), ("http://plugin", ""))  # 文件的令牌不跟去插件设置的地址
         os.environ["CLAUDE_PLUGIN_OPTION_COCKPIT_TOKEN"] = "plugin-token"
         config = cc.load_config()
-        self.assertEqual((config["url"], config["token"]), ("http://env", "plugin-token"))
+        self.assertEqual((config["url"], config["token"]), ("http://plugin", "plugin-token"))
+        os.environ["COCKPIT_URL"] = "http://env/"
+        config = cc.load_config()
+        self.assertEqual((config["url"], config["token"]), ("http://env", ""))  # 环境变量先到先得，令牌也不串
 
     @unittest.skipIf(os.name == "nt", "伴随进程只在 POSIX 上起")
     def test_auto_lets_the_plugin_monitor_go_first_then_falls_back_to_the_companion(self):
         claude_hook._save_run_id("s1", "run-1")
         fresh, stale = {"at": time.time()}, {"at": time.time() - claude_hook.MONITOR_GRACE_SECONDS - 1}
-        with mock.patch.object(subprocess, "Popen") as popen:
+        os.environ["COCKPIT_URL"] = "http://cockpit.invalid"  # 没配地址就发不了：那种情形不起（见 SpawnTests）
+        with mock.patch.object(subprocess, "Popen") as popen, mock.patch.object(claude_hook, "_cli_pid", return_value=4242):
             os.environ["CLAUDE_PLUGIN_ROOT"] = str(HERE)  # 从带 monitor 的插件里跑起来的钩子
             claude_hook._spawn_beat("s1", None)  # SessionStart
             claude_hook._spawn_beat("s1", fresh)  # 宽限之内的事件

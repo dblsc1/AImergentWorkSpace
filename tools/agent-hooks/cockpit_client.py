@@ -98,7 +98,7 @@ def load_config() -> dict[str, Any]:
     """合并出 `{"url", "token", "beat", "tasks", "projects"}`（`beat` 见 `beat_mode`）。
 
     `COCKPIT_URL` / `COCKPIT_TOKEN` 环境变量优先于配置文件里的同名字段，
-    方便 CI / 容器场景不落文件也能用。`tasks` / `projects` 只能来自配置文件
+    方便 CI / 容器场景不落文件也能用；地址与令牌成对取（见下面的注释）。`tasks` / `projects` 只能来自配置文件
     （目录 → taskId / projectId 的映射，环境变量不适合表达一份映射表）。
 
     配置文件形状不对（顶层不是对象、`tasks` / `projects` 不是对象）一律当没配，不崩——
@@ -114,9 +114,18 @@ def load_config() -> dict[str, Any]:
         file_cfg = {}
     # 装成 Claude Code 插件时，地址 / 令牌可以填在插件的设置里（plugin.json 的 userConfig）：Claude Code 把它们
     # 以 CLAUDE_PLUGIN_OPTION_* 交给钩子进程（monitor 进程拿不到，见 claude_hook「心跳」）。排在 COCKPIT_* 之后、文件之前。
+    # 地址与令牌**成对**取：按 环境变量 → 插件设置 → 配置文件 的顺序，第一个给了地址的来源，连它的令牌一起用
+    # （它没配令牌就是没有令牌）。令牌只会发往它被配置的那个地址——否则文件里的令牌可能被发到环境变量 / 插件设置
+    # 里的另一个地址去。只给令牌不给地址的来源，令牌不用。
     env = os.environ.get
-    url = env("COCKPIT_URL") or env("CLAUDE_PLUGIN_OPTION_COCKPIT_URL") or file_cfg.get("url") or ""
-    token = env("COCKPIT_TOKEN") or env("CLAUDE_PLUGIN_OPTION_COCKPIT_TOKEN") or file_cfg.get("token") or ""
+    url, token = next(
+        ((u, t or "") for u, t in (
+            (env("COCKPIT_URL"), env("COCKPIT_TOKEN")),
+            (env("CLAUDE_PLUGIN_OPTION_COCKPIT_URL"), env("CLAUDE_PLUGIN_OPTION_COCKPIT_TOKEN")),
+            (file_cfg.get("url"), file_cfg.get("token")),
+        ) if u),
+        ("", ""),
+    )
     maps = {key: file_cfg[key] if isinstance(file_cfg.get(key), dict) else {} for key in ("tasks", "projects")}
     return {"url": str(url).rstrip("/"), "token": str(token), "beat": file_cfg.get("beat"), **maps}
 
@@ -431,16 +440,23 @@ def heartbeat_interval(response: Any) -> int:
     return clamp_seconds(value, HEARTBEAT_MIN, HEARTBEAT_MAX, HEARTBEAT_SECONDS)
 
 
+BEAT_MISSING = "missing"  # `beat` 的「已结束」位上，服务端不认这个 runId（404）的取值
+
+
 def beat(
     config: dict[str, Any], run_id: str, timeout: float = DEFAULT_TIMEOUT, beat_source: str | None = None,
-) -> tuple[float, bool]:
-    """发一次心跳，**绝不抛**：返回 `(下一次隔多少秒, 运行是否已结束)`。
+) -> tuple[float, bool | str]:
+    """发一次心跳，**绝不抛**：返回 `(下一次隔多少秒, 运行是否已结束)`；已结束位 `True` = 服务端说 closed，
+    `BEAT_MISSING` = 服务端不认这个运行（404 且是应用层的 JSON 错误：库重置 / 换了租户），调用方都当「该重开」，
+    但后者重开不成就别再敲了。
     连不上 / 超时 / 5xx → `HEARTBEAT_MIN` 秒后再试（间隔是失联线的一半，丢一下不补就贴线了）；
-    4xx（老服务端没有这个端点、令牌不对）→ 照常间隔，不猛敲。"""
+    其它 4xx（老服务端没有这个端点、令牌不对）→ 照常间隔，不猛敲。"""
     try:
         response = heartbeat_run(config, run_id, timeout, beat_source)
         return heartbeat_interval(response), response.get("reason") == "closed"  # 间隔已钳
     except CockpitError as e:
+        if e.code == 404 and e.json_body:
+            return HEARTBEAT_SECONDS, BEAT_MISSING
         return (HEARTBEAT_SECONDS if e.code and 400 <= e.code < 500 else HEARTBEAT_MIN), False
     except Exception:  # noqa: BLE001 — 配置读坏了之类：同样只是「这一下没发」
         return HEARTBEAT_SECONDS, False

@@ -64,6 +64,11 @@ def _state_file(session_id: str) -> Path:
     return cc.user_dir("state") / f"session-{digest}.json"
 
 
+def _ensure_dir(path: Path) -> None:
+    """状态目录只给本人：新建时 0700（里面的状态文件记着 cwd、transcript 路径、地址、pid）。已存在的不改。"""
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+
 STATE_MAX_BYTES = 64 * 1024  # 状态文件就几百字节；更大的不是我们写的，不读
 
 
@@ -90,7 +95,7 @@ def _session_lock(session_id: str, wait: float | None = None):
     f = None
     try:
         path = _state_file(session_id).with_suffix(".lock")
-        path.parent.mkdir(parents=True, exist_ok=True)
+        _ensure_dir(path.parent)
         f = open(path, "a+b")
         if os.name == "nt":
             import msvcrt
@@ -137,10 +142,11 @@ def _session_lock(session_id: str, wait: float | None = None):
 def _write_state(session_id: str, state: dict) -> None:
     path = _state_file(session_id)
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        _ensure_dir(path.parent)
         # 每个进程一个临时名：异步相位钩子是并行跑的，共用一个 .tmp 会互相写花
         tmp = path.with_suffix(f".{os.getpid()}.tmp")
-        tmp.write_text(json.dumps(state), encoding="utf-8")
+        with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as f:  # 只给本人
+            f.write(json.dumps(state))
         os.replace(tmp, path)  # 原子替换：不会有人读到"写了一半"的文件
     except OSError:
         pass  # 状态文件写不了也不该拖累会话；下次 SessionEnd 找不到就跳过 stop
@@ -472,7 +478,7 @@ def _beat_lock(session_id: str):
     import fcntl
 
     path = _state_file(session_id).with_suffix(".beat")
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_dir(path.parent)
     f = open(path, "a+", encoding="utf-8")
     try:
         fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -491,13 +497,17 @@ def _spawn_beat(session_id: str, state: dict | None) -> None:
             return
         if mode == "auto" and _plugin_monitor() and (state is None or _in_grace(state.get("at"))):
             return  # 让 monitor 先来
+        cli = _cli_pid()
+        st = state or _read_state(session_id)
+        if not cli or (st and not _usable(st)):
+            return  # 认不出 Claude Code（死了看不出来）/ 发了也发不出去：不起，免得每个钩子事件起一个就退的进程
         probe = _beat_lock(session_id)
         if probe is None:
             return  # 已经有人在发
         probe.close()  # 两个钩子同时走到这里会各起一个：伴随进程自己再抢一次锁，输的那个直接退
         subprocess.Popen(
             [sys.executable, str(Path(__file__).resolve()), "--beat", "--source", "companion",
-             "--session", session_id, "--cli", str(_cli_pid())],
+             "--session", session_id, "--cli", str(cli)],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True, close_fds=True, cwd=str(_state_file(session_id).parent),
         )
@@ -519,28 +529,32 @@ def _usable(state: dict) -> bool:
     状态文件别的进程也写得了，令牌绝不发往从那里读来的地址。"""
     config = cc.load_config()
     remembered = state.get("url")
-    if not config["url"] and not config["token"] and isinstance(remembered, str) and remembered and not state.get("auth"):
+    if (not config["url"] and not config["token"] and not os.environ.get("COCKPIT_TOKEN")  # 环境里的令牌会与补进去的地址配成对
+            and isinstance(remembered, str) and remembered and not state.get("auth")):
         os.environ["COCKPIT_URL"] = remembered  # 只改本进程：下面的 load_config / 重开都读得到
         config = cc.load_config()
     return bool(config["url"]) and (bool(config["token"]) or not state.get("auth"))
 
 
-def _beat_once(session_id: str, state: dict, source: str) -> float:
-    """发一次心跳，返回下一次隔多少秒。服务端说这条运行已结束（机器睡过头被判了失联）而会话还在 → 重开一条。"""
+def _beat_once(session_id: str, state: dict, source: str) -> float | None:
+    """发一次心跳，返回下一次隔多少秒（None = 别再发了）。服务端说这条运行已结束（机器睡过头被判了失联）而会话还在 → 重开一条。"""
     interval, closed = cc.beat(cc.load_config(), state["runId"], BEAT_TIMEOUT, source)
     if closed and state.get("cwd"):
         payload = {"cwd": state["cwd"], "transcript_path": state.get("transcript")}
         _relabel(payload, session_id, state.get("lastPhase") or "idle", cc.session_title(state.get("transcript")), state)
-        # 重开成了：新的那条还没声明心跳，下一轮就发；没成：过一会儿再试
-        return 0 if _read_run_id(session_id) != state["runId"] else cc.HEARTBEAT_MIN
-    return interval
+        # 重开成了：新的那条还没声明心跳，下一轮就发。没成：closed 过一会儿再试；服务端不认这个运行（404，
+        # 库重置 / 换了租户）就只重开这一次，不成就停，等下一个钩子事件再补一个发心跳的（有界，不是每个间隔都敲）
+        if _read_run_id(session_id) != state["runId"]:
+            return 0
+        return None if closed == cc.BEAT_MISSING else cc.HEARTBEAT_MIN
+    return None if closed == cc.BEAT_MISSING else interval
 
 
 def _beat_session(session_id: str, source: str, cli: int, born: str | None, until: float, sleep, clock) -> bool:
     """给一个会话发心跳，直到它结束 / 到 `until` / 轮不到自己。True = Claude Code 没了（已替它收尾）。"""
     state = _read_state(session_id)
-    if not state or not _usable(state):
-        return False
+    if not cli or not state or not _usable(state):
+        return False  # 认不出 Claude Code = 死了也看不出来：不发（agent.lane.v1「发不出死亡就别声明心跳」），运行照旧 12 小时兜底
     lock = _beat_lock(session_id)
     if lock is None:
         return False  # 另一种起法已经在给它发
@@ -558,7 +572,10 @@ def _beat_session(session_id: str, source: str, cli: int, born: str | None, unti
                     _session_end_locked(session_id, GONE_OUTCOME)
                 return True
             if clock() >= next_beat:
-                next_beat = clock() + _beat_once(session_id, state, source)
+                wait = _beat_once(session_id, state, source)
+                if wait is None:
+                    return False  # 重开不成：停，下一个钩子事件再起
+                next_beat = clock() + wait
             sleep(BEAT_CHECK_SECONDS)
     return False
 

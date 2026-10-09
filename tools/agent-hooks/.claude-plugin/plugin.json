@@ -11,8 +11,7 @@
     "cockpit_url": {
       "type": "string",
       "title": "Cockpit URL",
-      "description": "Where your HoneyComb cockpit listens, e.g. http://127.0.0.1:8800/",
-      "default": "http://127.0.0.1:8800/"
+      "description": "Where your HoneyComb cockpit listens, e.g. http://127.0.0.1:8800/. Leave empty to use the COCKPIT_URL environment variable or the config file instead."
     },
     "cockpit_token": {
       "type": "string",

@@ -37,7 +37,7 @@ curl -sb "<你登录时浏览器里的会话 cookie>" -X POST <cockpit 地址>/a
 | 变量 | 作用 |
 |---|---|
 | `COCKPIT_URL` | cockpit 地址，比如 `http://127.0.0.1:8800/` |
-| `COCKPIT_TOKEN` | 设备 token |
+| `COCKPIT_TOKEN` | 设备 token。**要和 `COCKPIT_URL` 一起设**：令牌只发往与它同来源的地址，单独设 `COCKPIT_TOKEN` 而地址在配置文件里，令牌不会用 |
 | `COCKPIT_TASK` | 可选。这次 run 挂在哪个任务上；不设就走目录映射，再不然就是收件箱 |
 | `COCKPIT_PROJECT` | 可选。定不出任务时，这次 run 挂在哪个项目上（见「挂到项目」） |
 | `COCKPIT_BEAT` | 可选。谁来发心跳：`auto`（缺省）/ `companion` / `monitor` / `off`（见「心跳」）。配置文件里同名键是 `beat` |
@@ -305,7 +305,7 @@ cockpit-run phase <working|waiting_input|waiting_permission|idle|error> [--run <
 （`runId`、时刻、地址）都当不可信处理——`runId` 转义后才进路径，令牌绝不发往从状态文件读来的地址。
 
 它只发 `runId` 和一个标签（`beatSource`，见下），**不发任何别的东西**；3 秒时限，失败不管（连不上时一分钟后再试）。
-老服务端没有这个端点 → 404 → 什么都不发生，行为同以前。
+老服务端没有这个端点 → 404（网关的 HTML 页）→ 什么都不发生，行为同以前。cockpit 自己回 JSON 的 404（库重置 / 换了租户，不认这个 `runId`）按「已结束」处理：带同一个 `clientKey` 重开**一次**，重开不成就停发，等下一个钩子事件。
 
 ### 两种起法，同一个循环
 
@@ -325,7 +325,7 @@ cockpit-run phase <working|waiting_input|waiting_permission|idle|error> [--run <
 
 | 值 | 行为 |
 |---|---|
-| `auto`（缺省） | 钩子是从带 monitor 的插件里跑起来的 → 先让 monitor 来，会话开始 90 秒后还没人发心跳就补一个伴随进程；否则直接用伴随进程 |
+| `auto`（缺省） | 钩子是从带 monitor 的插件里跑起来的 → 先让 monitor 来，会话开始 90 秒后还没人发心跳就补一个伴随进程；否则直接用伴随进程。**补伴随进程发生在 90 秒之后的下一个钩子事件里**（没有定时器：会话一直安静就一直不补，心跳靠钩子触发，所以那段时间运行也不声明心跳）；伴随进程发不出去（认不出 CLI、或钩子带了令牌而自己没有）时不起，不会每个事件起一个就退的进程 |
 | `companion` | 只用伴随进程（monitor 起来后立刻退出） |
 | `monitor` | 只用 monitor（钩子不起伴随进程；monitor 没来就没有心跳） |
 | `off` | 不发心跳。运行不声明心跳能力，服务端照旧只有 12 小时的遗忘超时兜底 |
@@ -334,9 +334,10 @@ cockpit-run phase <working|waiting_input|waiting_permission|idle|error> [--run <
 （钩子和 monitor 都是经 `sh -c` 起的）。Linux 上记 pid + 启动时刻（pid 被复用也认得出），macOS 上只记 pid。
 **把钩子包在别的启动器里**（`uv run …`、自己的包装脚本）而 Claude Code 的进程名又不是 `claude`（比如经 `node` 跑）时，
 会把那个启动器错认成 Claude Code，启动器一退就以为会话没了——钩子命令请照本文写成直接的 `python3 …/claude_hook.py`。
-认不出时（返回 0）伴随进程退回「只看状态文件在不在」，monitor 直接退出。
+认不出时（返回 0）**伴随进程不起、monitor 直接退出**：看不出它死了，就不声明心跳（`agent.lane.v1`「六」），这个会话照旧只有
+12 小时的遗忘超时兜底。状态目录新建时是 0700、状态文件 0600（里面有 cwd、transcript 路径、地址、pid）。
 
-**Windows**：两种都不起（没有可靠又不伤人的「这个 pid 还活着吗」——`os.kill(pid, 0)` 在 Windows 上会真的发信号），
+**Windows**：钩子命令与插件清单里写的是 `python3`，Windows 上多半只有 `python` / `py`：装插件前请改成能用的解释器名（或让 `python3` 在 PATH 上）。两种都不起（没有可靠又不伤人的「这个 pid 还活着吗」——`os.kill(pid, 0)` 在 Windows 上会真的发信号），
 运行不声明心跳，行为同以前（12 小时遗忘超时）。`cockpit-run` 的心跳线程在 Windows 上照常工作。
 
 **`cockpit-run`** 包命令期间有一个心跳线程（`beatSource: wrapper`），命令结束即停；`COCKPIT_BEAT=off` 关掉。
@@ -352,9 +353,10 @@ cockpit-run phase <working|waiting_input|waiting_permission|idle|error> [--run <
 /plugin install honeycomb-lanes@honeycomb
 ```
 
-启用时 Claude Code 会问两项设置：**Cockpit URL**（缺省 `http://127.0.0.1:8800/`）和 **Device token**（选填，
+启用时 Claude Code 会问两项设置：**Cockpit URL**（没有缺省值，留空 = 不用插件设置，改用环境变量 / 配置文件）和 **Device token**（选填，
 存进系统的密钥存储；单人部署开了无令牌上报就留空）。它们以 `CLAUDE_PLUGIN_OPTION_COCKPIT_URL` / `_TOKEN` 交给钩子，
-优先级在 `COCKPIT_URL` / `COCKPIT_TOKEN` 之后、配置文件之前。目录 → 任务 / 项目的映射仍然写在配置文件里。
+优先级在 `COCKPIT_URL` / `COCKPIT_TOKEN` 之后、配置文件之前。**地址与令牌成对取**：按 环境变量 → 插件设置 → 配置文件，
+第一个给了地址的来源，连它的令牌一起用（它没配令牌就不带令牌）；只给令牌不给地址的来源，令牌不用——令牌只会发往它被配置的那个地址。目录 → 任务 / 项目的映射仍然写在配置文件里。
 
 **两种装法只留一种**：装了插件就把 `settings.json` 里手配的那几条钩子删掉，否则每个事件报两遍。
 开发时可以不经市场直接加载：`claude --plugin-dir tools/agent-hooks`；改完用 `claude plugin validate tools/agent-hooks` 查一遍。

@@ -151,6 +151,69 @@ def test_beating_run_is_never_lost_and_never_capped(client, shift_clock, monkeyp
     assert _events() == []
 
 
+def test_beating_run_is_closed_at_the_declared_safety_cap_and_reaches_stats(client, shift_clock):
+    """周末没关的会话一直在发心跳：7 天封顶，按 timeout 关、结束 = 开始 + 上限；统计吃得下，restart 开新运行。"""
+    from app.modules.projector.handlers import agent_daily_stats, lanes  # noqa: PLC0415
+    from app.modules.timer import agent_liveness, repo  # noqa: PLC0415
+
+    cap = agent_liveness.AGENT_DECLARED_MAX_SECONDS
+    assert cap == 7 * 86400 and cap < agent_daily_stats._MAX_SECONDS and cap < lanes._MAX_SECONDS
+    run = _start(client, clientKey="weekend", heartbeat=True)
+    t0 = datetime.fromisoformat(run["startedAt"])
+    repo.touch_agent_run("u_local", run["runId"], (t0 + timedelta(seconds=cap - 60)).isoformat())  # 一直有心跳
+
+    shift_clock(seconds=cap - 30)
+    live = _lane(client, run["runId"])  # 上限之内：还在跑
+    assert (live["lost"], live["overdue"], live["endAt"]) == (False, False, None)
+    shift_clock(seconds=cap + 30)
+    over = _lane(client, run["runId"])  # 读端只标不写：封顶 + overdue
+    assert over["overdue"] is True and over["elapsedSeconds"] == cap and "closing" not in _doc(run["runId"])
+
+    assert _beat(client, run["runId"])["reason"] == "closed"  # 写端点先收：迟到的心跳回 closed
+    (event,) = _events()
+    assert event["data"]["outcome"] == "timeout" and event["data"]["durationSeconds"] == cap
+    assert datetime.fromisoformat(event["data"]["startAt"]) == t0
+    stats = client.get(f"{API}/views/agent-time").json()
+    assert (stats["totalSeconds"], stats["runs"]) == (cap, 1)  # 投影收下了，没被静默丢
+    assert max(e["data"]["durationSeconds"] for e in _events()) <= agent_daily_stats._MAX_SECONDS
+
+    again = _start(client, clientKey="weekend", heartbeat=True)  # closed → 照常 re-start
+    assert again["runId"] != run["runId"] and datetime.fromisoformat(again["startedAt"]) > t0 + timedelta(seconds=cap)
+
+
+def test_phase_closed_between_write_and_touch_is_not_reported_applied(client, monkeypatch):
+    """写相位之后、记信号之前运行被关了（失联 / 超时赛跑）：响应回 closed，不是 applied: true。"""
+    from app.modules.timer import repo  # noqa: PLC0415
+
+    run = _start(client, heartbeat=True)
+    mark = repo.mark_agent_run_closing
+
+    def closed_first(*_a, **_k):  # 写相位之后、记信号之前：失联 / 超时的关闭标记抢先打上
+        mark("u_local", run["runId"], {"outcome": "lost", "endedAt": run["startedAt"]})
+        return False
+
+    monkeypatch.setattr(repo, "touch_agent_run", closed_first)
+    body = client.post(f"{AGENTS}/{run['runId']}/phase", json={"phase": "working"}).json()
+    assert (body["applied"], body["reason"]) == (False, "closed")
+
+
+def test_phase_closed_between_write_and_touch_is_not_reported_applied(client, monkeypatch):
+    """写相位之后、记信号之前运行被关了（失联 / 超时赛跑）：响应回 closed，不是 applied: true。"""
+    from app.modules.timer import repo  # noqa: PLC0415
+
+    run = _start(client, heartbeat=True)
+    mark = repo.mark_agent_run_closing
+
+    def closed_first(*_a, **_k):  # 写相位之后、记信号之前：失联 / 超时的关闭标记抢先打上
+        mark("u_local", run["runId"], {"outcome": "lost", "endedAt": run["startedAt"]})
+        return False
+
+    monkeypatch.setattr(repo, "touch_agent_run", closed_first)
+    at = (datetime.fromisoformat(run["startedAt"]) + timedelta(seconds=5)).isoformat()
+    body = client.post(f"{AGENTS}/{run['runId']}/phase", json={"phase": "working", "at": at}).json()
+    assert (body["applied"], body["reason"]) == (False, "closed")
+
+
 # ─────────────────────────────────────────── 失联：惰性关闭，结束 = 最后一次信号
 
 
@@ -187,7 +250,7 @@ def test_signal_between_read_and_close_keeps_the_run(client, shift_clock):
     stale = _doc(run["runId"])
     later = datetime.fromisoformat(run["startedAt"]) + timedelta(hours=1)
     repo.touch_agent_run("u_local", run["runId"], later.isoformat())
-    assert agent_liveness.mark_lost(stale, later) is None
+    assert agent_liveness.mark_expired(stale, later) is None
     assert "closing" not in _doc(run["runId"])
 
 
