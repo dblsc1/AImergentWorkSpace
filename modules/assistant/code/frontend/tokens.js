@@ -81,7 +81,7 @@
   function why(r) {
     var code = r.body && r.body.error;
     if (r.status === 401) return "登录已过期，重新登录后再来。";
-    if (r.status === 409 || code === "too_many_tokens") return "名下的令牌太多了（上限 100 个）：先吊销用不着的。";
+    if (r.status === 409 || code === "too_many_tokens") return "名下的令牌太多了（上限 100 个）：先吊销用不着的（吊销后名额立刻回来）。";
     if (r.status === 503) return "这台服务器现在发不了令牌（没设 AUTH_SECRET，或令牌文件写不了）。";
     if (r.status === 404) return "没有这个令牌（可能已经到期）。";
     if (r.status === 0) return "网络请求失败。";
@@ -138,7 +138,7 @@
     list.textContent = "";
     $("tok-empty").hidden = tokens.length > 0;
     tokens.slice().reverse().forEach(function (t) {
-      var li = el("li", "tok-item" + (t.revoked ? " is-revoked" : ""));
+      var li = el("li", "tok-item");
       li.dataset.id = t.id;
       var main = el("div", "tok-item-main");
       main.appendChild(el("span", "tok-scope tok-scope-" + t.scope, describe(t)));
@@ -146,15 +146,11 @@
       li.appendChild(main);
       li.appendChild(el("span", "tok-item-meta mono",
         t.id + " · " + day(t.createdAt) + " 发 · " + day(t.expiresAt) + " 到期"));
-      if (t.revoked) {
-        li.appendChild(el("span", "tok-revoked", "已吊销"));
-      } else {
-        var b = el("button", "btn btn-ghost danger tok-revoke", "吊销");
-        b.type = "button";
-        b.setAttribute("aria-label", "吊销令牌 " + (t.name || t.id));
-        b.addEventListener("click", function () { revoke(t, b); });
-        li.appendChild(b);
-      }
+      var b = el("button", "btn btn-ghost danger tok-revoke", "吊销");
+      b.type = "button";
+      b.setAttribute("aria-label", "吊销令牌 " + (t.name || t.id));
+      b.addEventListener("click", function () { revoke(t, b); });
+      li.appendChild(b);
       list.appendChild(li);
     });
   }
@@ -177,7 +173,11 @@
     if (!window.confirm("吊销「" + (t.name || t.id) + "」这个" + describe(t) + "令牌？\n用着它的代理会立刻被拒绝，吊销不能撤回。")) return;
     button.disabled = true;
     var r = await request("POST", "tokens/revoke", { tokenId: t.id });
-    if (r.status !== 204) { button.disabled = false; say(why(r), true); return; }
+    if (r.status !== 204) {
+      button.disabled = false; say(why(r), true);
+      if (r.status === 404) await load();   // 已经不在了（别处吊销的 / 到期清掉的）：刷新列表
+      return;
+    }
     say("已吊销。", false);
     await load();
   }

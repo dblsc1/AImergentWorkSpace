@@ -212,7 +212,8 @@ suggestions, reassigning time, ...) stay closed to every token.
 
 - On the web: log in, open the **AI助理** page, section **Agent 令牌**: pick a
   scope, add a note, generate. The token is **shown once**, with ready-to-paste
-  configuration; the list lets you revoke a single token.
+  configuration; the list lets you revoke a single token (revoking removes it
+  and frees its slot: at most 100 live tokens per account).
 - API: `POST /api/auth/tokens` (`Content-Type: application/json`, body
   `{"scope":"report","name":"laptop"}`, both optional, default `write`);
   `GET /api/auth/tokens` lists them (never the token itself);

@@ -140,10 +140,10 @@ v1.1 占位实现追加两个字段（可选，替换实现可以不给）：`ac
 |---|---|
 | 鉴权 | **只认会话 cookie**，不认 Bearer（令牌不能换出新令牌） |
 | 请求 | 必须 `Content-Type: application/json`；body 可空，或 `{"label": "<≤64 字符>"}`。（v1.4）`{"name"?: "<≤64 字符，不含控制字符>", "scope"?: "report" \| "read" \| "write"}`——`name` 与 `label` 同义，`scope` 缺省 `write` |
-| `201` | `{"token": "<令牌>", "tenant": "<租户 id>", "expiresAt": "<UTC ISO 8601>"}`（`application/json`）。`tenant` 与 `/me` 的 `user.id` 同义（共享口令身份为 `"u_local"`）。（v1.4 追加字段）`id`、`name`、`scope`、`createdAt`、`revoked`（恒 `false`），同下面列表里的一条 |
+| `201` | `{"token": "<令牌>", "tenant": "<租户 id>", "expiresAt": "<UTC ISO 8601>"}`（`application/json`）。`tenant` 与 `/me` 的 `user.id` 同义（共享口令身份为 `"u_local"`）。（v1.4 追加字段）`id`、`name`、`scope`、`createdAt`、`expiresAt`，同下面列表里的一条 |
 | `401` | 没有有效会话 cookie（只带 Bearer 也是 `401`）|
 | `400` | body 不是 JSON 对象、`label` 不是字符串或超长；`Content-Length` 不是合法整数（**断开连接**）。（v1.4）`name` 含控制字符、`scope` 不是三个取值之一 |
-| `409` | （v1.4）这个身份名下未到期的令牌已到上限（占位实现 100 个）|
+| `409` | （v1.4）这个身份名下未到期的令牌已到上限（占位实现每个身份 100 个、全部身份合计 1000 个）。**吊销一个就腾出一个名额**（吊销 = 删记录） |
 | `413` | `Content-Length` 为负或超过 4096 字节（**断开连接**）|
 | `415` | `Content-Type` 不是 `application/json` |
 | `503` | 本实例不发令牌（占位实现：没设 `AUTH_SECRET`，或没有令牌文件）、或写令牌文件失败 |
@@ -158,7 +158,7 @@ v1.1 占位实现追加两个字段（可选，替换实现可以不给）：`ac
 | | |
 |---|---|
 | 鉴权 / 请求 | 同 `POST /api/auth/tokens`（cookie、`application/json`、body 可空）|
-| `204` | 调用者这个身份（租户）的**全部**设备令牌作废，无 body。别的身份不受影响。（v1.4）body 带 `{"tokenId": "<令牌 id>"}` 时**只作废这一个**（重复吊销同样 `204`）|
+| `204` | 调用者这个身份（租户）的**全部**设备令牌作废，无 body。别的身份不受影响。（v1.4）body 带 `{"tokenId": "<令牌 id>"}` 时**只作废这一个**（记录随即删掉，名额立刻回来；再吊销同一个 id 回 `404`，同「没有这个令牌」）|
 | `404` | （v1.4）带了 `tokenId`，但自己名下没有这个令牌（别人的、到期清掉的、从没有过的，同一个回答）|
 | 其它 | `401` / `400` / `413` / `415` / `503` 同上；带了 `tokenId` 但不是 16 位十六进制的字符串（含 `null`）→ `400`，不会当成「吊销全部」 |
 
@@ -172,7 +172,7 @@ v1.1 占位实现追加两个字段（可选，替换实现可以不给）：`ac
 | | |
 |---|---|
 | 鉴权 | **只认会话 cookie**（设备令牌看不到令牌列表）|
-| `200` | `{"tokens": [{"id", "name", "scope", "createdAt", "expiresAt", "revoked"}]}`——自己名下未到期的令牌，按签发时间排。时间是 UTC ISO 8601 |
+| `200` | `{"tokens": [{"id", "name", "scope", "createdAt", "expiresAt"}]}`——自己名下未到期、没被吊销的令牌，按签发时间排。时间是 UTC ISO 8601 |
 | `401` / `503` | 同 `POST /api/auth/tokens` |
 
 - **永远没有令牌本身**：它只在签发那一次的响应体里出现，服务端哪里都没存。
@@ -192,6 +192,9 @@ v1.1 占位实现追加两个字段（可选，替换实现可以不给）：`ac
 会话」。占位实现的会话是无状态签名，吊销手段见「占位实现」。
 
 ## 三条不变量
+
+（2026-10-09 补充，不变量 2 的一部分：**verify 路径也不做同步日志 IO**——写日志的管道一堵，所有认证请求跟着卡死。
+占位实现对 `/api/auth/verify` 不记请求日志（200 / 401 / 403 与内部错误→401 都一样）；别的端点照记。）
 
 `verify` 站在 nginx `auth_request` 的关键路径上，对**每一个**受保护请求先做一次内部子
 请求。三条都围绕「它绝不能成为整个受保护面的瓶颈或单点故障」。
@@ -236,7 +239,11 @@ verify 按请求**出示的凭据**把调用方分成四类。**出示了就只�
 | `Authorization: Bearer <令牌>` | 设备令牌，范围 `report` / `read` / `write` | `401`——**不**当成匿名，也不回落到 cookie |
 | 会话 cookie（值非空） | 人 | `401`（过期的会话去登录页，不当成匿名） |
 | 别的 `Authorization` 方案（如 `Basic`），或不止一个 `Authorization` 头 | 不算令牌：前者照旧只看 cookie，后者一律 `401` | `401` |
-| **什么都没带**（没有 `Authorization` 头或其值为空、没有会话 cookie） | 匿名 | —— |
+| **什么都没带**（没有 `Authorization` 头、没有会话 cookie） | 匿名 | —— |
+
+**「出示了」看头在不在，不看值是不是空**（2026-10-09 修订）：`Cookie` 里有 `cockpit_session=`（值为空）、或带了
+`Authorization` 头（值为空 / 全是空白），都算出示了凭据，且是无效的 → `401`，不当成匿名。别的 cookie（如 `theme=dark`）
+不算出示。否则一个因为变量没设而发出空 `Authorization` 的脚本，会被悄悄降成匿名上报。
 
 ### 范围（规范性）
 
@@ -316,12 +323,14 @@ hct2.<签发时间戳>.<到期时间戳>.<纪元>.<范围>.<令牌 id>.<租户>.
 
 ### 单个吊销（规范性）
 
-- 每个 `hct2` 令牌在令牌文件里有一条记录：`{tenant, name, scope, createdAt, expiresAt, revoked}`——
+- 每个 `hct2` 令牌在令牌文件里有一条记录：`{tenant, name, scope, createdAt, expiresAt}`——
   **不含令牌本身**。verify 读的是它的内存视图（与纪元同一个后台重读），所以仍然不做 IO。
-- 这张表是**白名单**：`hct2` 的 id 不在表里、或标了 `revoked`、或记录的租户与令牌里的不一致 → `401`。
-  单个吊销 = 把那一条标成 `revoked`。于是「列得出来的」与「还能用的」是同一张表，手改文件删掉一条等于吊销它。
-- **有界**：每个身份名下未到期的记录（含已吊销的）至多 100 条，满了发新令牌回 `409`；到期的记录在下一次
-  写文件时清掉。吊销整个身份（v1.2，纪元 +1）照旧，并清掉它名下的全部记录。
+- 这张表是**白名单**：`hct2` 的 id 不在表里、或记录的租户与令牌里的不一致 → `401`。
+  单个吊销 = **删掉那一条记录**（不留「已吊销」的墓碑）。于是「列得出来的」与「还能用的」是同一张表，
+  手改文件删掉一条等于吊销它。
+- **有界**：每个身份名下未到期的记录至多 100 条、全部身份合计至多 1000 条（身份数本身无界——含已删账号留下的
+  记录——所以光有前一条不够），满了发新令牌回 `409`；吊销一个就腾出一个名额。到期的记录在下一次写文件时清掉。
+  吊销整个身份（v1.2，纪元 +1）照旧，并清掉它名下的全部记录。
 - 生效时间同 v1.2：网页操作在本进程立即生效；命令行 `RELOAD_EVERY`（2 秒）内。**命令行新发的令牌也一样**——白名单要等重读才有它，发出来的头两秒里是 `401`（v1.3 的 `hct1` 在令牌文件已存在时是立即可用的；脚本里发完请等一下）。重读按文件的
   「修改时间 + inode + 大小」判断变没变——同一个时间刻度里连写两次也不会漏读。
 
@@ -356,6 +365,22 @@ hct2.<签发时间戳>.<到期时间戳>.<纪元>.<范围>.<令牌 id>.<租户>.
   `X-Nexus-Anonymous` 同理——取不到就是空，空值不转发，**同时把客户端自带的同名头盖掉**。只做了前一半
   （转了方法、没覆盖这两个头）的网关会让匿名请求在后端看起来像人的会话：两半必须一起做。
   gateway.v1 的 `gate.inc` 与两份组装都已做好。缺 `X-Original-Method` 时 `report` / `read` / 匿名一律过不了。
+- 不设门、但会转给上游的 location（认证服务自己的 `/api/auth/`、验证子请求、不设门的路由）要把三个 `X-Nexus-*`
+  头都置空（`proxy_set_header X-Nexus-Scope "";` 等）：空值不转发，客户端自带的那份也一并丢掉。两份组装都是这样，
+  `tools/test_install.py` 逐条 location 核对。
+
+### 部署要求：后端不得绕过网关（规范性）
+
+后端（nexus-core、MCP）把**没有** `X-Nexus-Scope` 当成「人的会话 / 对内直连」= 全部权限——这是缺省，不是漏洞，
+但它成立的前提是：**到后端的每一条路都经过网关**，且网关**两半都做了**（转 `X-Original-Method`、覆盖转发范围 /
+匿名头）。因此：
+
+- 后端的端口不映射到宿主、不对外（compose 里它们只在内部网络上）；谁能直连后端，谁就能自己写这几个头。
+- 失败方向（网关这一侧）：老网关不转 `X-Original-Method` → 认证服务对 `report` / `read` / 匿名一律拒绝，放行的
+  只剩 `write`（本来就是全部权限），所以「老网关 + 新后端」不会把低权限请求放成无头请求；`error_page` 与内部重定向
+  只落到 `@to_login` / 降级 JSON 这样不转给后端的命名位置。
+- 唯一没有这层保护的是**转了方法、却没覆盖范围头**的半成品网关：低权限请求会在后端显得像人的会话。上一条的「两半必须
+  一起做」就是为它写的。
 
 ## 换实现要满足什么
 
@@ -519,6 +544,6 @@ docker compose exec auth python /app/auth_stub.py revoke-token 0000000000000000 
 | 2026-09-17 | v1 首版。契约文本从 `stub/auth_stub.py` 的实际行为反推得出 |
 | 2026-09-23 | 站点前缀（`contracts/gateway.v1` 第七节）：cookie `Path` 从固定 `/` 改为站点前缀（缺省仍是 `/`，未挂子路径的部署零变化）；占位实现加 `AUTH_BASE_PATH`；自带登录页从自己的地址推前缀，`next` 只接受前缀内地址 |
 | 2026-09-23 | **v1.1（纯追加）**：verify 的 `204` 可带 `X-Nexus-Tenant`，可回 `403`（登录了但没有可用租户）；新增 `GET /api/auth/me`，冻结最小形状 `{ok, user:{id, name}}`，`user.id` 等于 verify 的租户；login 请求体可带 `username`；login 可回 `429`；health 可带 `accounts` / `sharedPassword`；换实现清单加多用户与限次两条；安全约定加「只存哈希」「限次按网关看到的对端算」。占位实现加账号+密码（scrypt、账号文件、命令行管理、改密码/删账号作废会话），共享口令模式行为不变。引用改为按函数名，不再按行号 |
-| 2026-10-09 | **v1.4（纯追加，契约先行）**：权限范围与匿名上报（仓主 2026-10-09）。① 新令牌格式 `hct2`，签名覆盖身份 + 范围 + 令牌 id + 到期；范围 `report` ⊂ `read` ⊂ `write`，`hct1` 照常可用 = `write`；② verify 读网关转来的 `X-Original-Method`，对 `report` / `read` / 匿名按放行表缺省拒绝，范围不够回 `403`，`204` 多回 `X-Nexus-Scope` / `X-Nexus-Anonymous`；③ 什么凭据都不带的请求在单人模式下只放行上报面（`AUTH_ANONYMOUS_REPORT`，缺省开），出示了坏凭据仍是 `401`；④ `POST /api/auth/tokens` 收 `name` / `scope`、多回 `id` 等字段、可回 `409`；`POST /api/auth/tokens/revoke` 收 `tokenId`（单个吊销，可回 `404`）；新增 `GET /api/auth/tokens`；命令行 `token --scope --name`、`tokens`、`revoke-token`；⑤ health 可带 `anonymousReport`；⑥ 令牌文件多一个键 `tokens`（令牌记录 = 白名单，有界）。三条不变量不变（不变量 1 的措辞补上新的两个头）。消费方（网关）须转 `X-Original-Method` 并覆盖转发两个新头——`gateway.v1` 第九节 |
+| 2026-10-09 | **v1.4（纯追加，契约先行）**：权限范围与匿名上报（仓主 2026-10-09）。① 新令牌格式 `hct2`，签名覆盖身份 + 范围 + 令牌 id + 到期；范围 `report` ⊂ `read` ⊂ `write`，`hct1` 照常可用 = `write`；② verify 读网关转来的 `X-Original-Method`，对 `report` / `read` / 匿名按放行表缺省拒绝，范围不够回 `403`，`204` 多回 `X-Nexus-Scope` / `X-Nexus-Anonymous`；③ 什么凭据都不带的请求在单人模式下只放行上报面（`AUTH_ANONYMOUS_REPORT`，缺省开），出示了坏凭据仍是 `401`；④ `POST /api/auth/tokens` 收 `name` / `scope`、多回 `id` 等字段、可回 `409`；`POST /api/auth/tokens/revoke` 收 `tokenId`（单个吊销，可回 `404`）；新增 `GET /api/auth/tokens`；命令行 `token --scope --name`、`tokens`、`revoke-token`；⑤ health 可带 `anonymousReport`；⑥ 令牌文件多一个键 `tokens`（令牌记录 = 白名单，有界）。**2026-10-09 评审修订（仍是 v1.4）**：单个吊销 = 删记录、不留墓碑（吊销腾出名额，列表与 `201` 不再有 `revoked`，重复吊销回 `404`）；全部身份合计 1000 条的总上限；出示了空的会话 cookie / 空的 `Authorization` = `401`，不再当匿名；verify 路径不记请求日志；网关不设门的 location 也要置空三个 `X-Nexus-*` 头；补「部署要求」一节。三条不变量不变（不变量 1 的措辞补上新的两个头）。消费方（网关）须转 `X-Original-Method` 并覆盖转发两个新头——`gateway.v1` 第九节 |
 | 2026-09-28 | **v1.3（纯追加，契约先行）**：设备令牌认的路径从 `<前缀>api/core/` 扩到再加 `<前缀>api/mcp/`（`contracts/mcp.tools.v1` 的对外入口）。只多开一个只读接口前缀，页面、`api/auth/`、`api/agent/` 照旧 `401`；v1.2 的实现不认它只是少一个能力，失败方向是拒绝。三条不变量不变。占位实现随 v0.3 AI 桥实现 PR 跟上（`_api_uri` 认两个前缀，测试 `test_bearer_opens_mcp_but_not_agent`） |
 | 2026-09-28 | **v1.2（纯追加）**：设备令牌。verify 可读 `Authorization: Bearer`（只在 `X-Original-URI` 落在 `<前缀>api/core/` 下时认，带了 Bearer 不回落到 cookie；原有 cookie 路径行为不变）；新增 `POST /api/auth/tokens`、`POST /api/auth/tokens/revoke`（只认 cookie、须 `application/json`）；消费方须给 verify 子请求带 `X-Original-URI`（gateway.v1 两份组装早已带）；换实现清单加一条可选项；安全约定加第 7 条。占位实现：`hct1.` 无状态令牌、按租户纪元吊销（`AUTH_TOKENS_FILE`）、`AUTH_TOKEN_DAYS`、命令行 `token` / `revoke`；没设 `AUTH_SECRET` 不发令牌。三条不变量不变 |

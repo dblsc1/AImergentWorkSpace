@@ -347,8 +347,6 @@ fieldset.set-field > legend { font-size: var(--fs-sub); color: var(--ink-2); mar
 .tok-item-meta { flex: 1 1 100%; order: 3; font-size: var(--fs-eyebrow); color: var(--ink-3); overflow-wrap: anywhere; }
 .tok-scope { padding: 0 var(--sp-2); border-radius: var(--r-1); border: 1px solid var(--line); font-size: var(--fs-sub); white-space: nowrap; }
 .tok-scope-write { border-color: var(--warn); color: var(--warn); }
-.tok-item.is-revoked .tok-item-main { color: var(--ink-3); text-decoration: line-through; }
-.tok-revoked { font-size: var(--fs-sub); color: var(--ink-3); }
 .tok-offscreen { position: fixed; left: -9999px; top: 0; opacity: 0; }
 
 /* ── 「回顾」：只放入口 ── */

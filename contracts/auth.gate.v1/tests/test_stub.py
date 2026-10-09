@@ -275,7 +275,7 @@ def test_http_issue_and_revoke(stub, users):
     _, cookie = stub.login(username="alice", password=PW)
     status, body = _http_token(stub, cookie, {"label": "laptop"})
     assert status == 201 and {"token", "tenant", "expiresAt"} <= set(body) and body["tenant"].startswith("u_")
-    assert (body["scope"], body["name"], body["revoked"]) == ("write", "laptop", False)  # v1.4：缺省 write，label 存成 name
+    assert (body["scope"], body["name"]) == ("write", "laptop") and "revoked" not in body  # v1.4：缺省 write，label 存成 name
     old = body["token"]
     assert stub.req("GET", "/api/auth/verify", headers=_bearer(old))[0] == 204
     assert stub.req("POST", "/api/auth/tokens/revoke", {}, cookie=cookie)[0] == 204
@@ -527,6 +527,29 @@ def test_scope_matrix(stub, users):
     assert status == 204 and "X-Nexus-Scope" not in h and "X-Nexus-Anonymous" not in h
 
 
+def test_streaming_and_upgrade_requests_get_no_extra_reach(stub, users):
+    """SSE / WebSocket 形的请求（Accept: text/event-stream、Upgrade: websocket）在门里与普通 GET 同一张表：
+    report / 匿名读不到任何 GET（SSE 就是 GET），聊天后端（api/agent/，SSE）任何令牌都是 401；
+    Upgrade / Connection 头不改变判定（nginx 也不透传它们，见 tools/test_install.py）。"""
+    _, cookie = stub.login(username="alice", password=PW)
+    report, read = _mint(stub, cookie, "report")["token"], _mint(stub, cookie, "read")["token"]
+    live = {"Accept": "text/event-stream", "Upgrade": "websocket", "Connection": "Upgrade"}
+    for uri in ("/api/core/views/lanes", "/api/core/events/stream", "/api/core/ws"):
+        assert _v(stub, "GET", uri, report, extra=live)[0] == 403, uri
+        assert _v(stub, "GET", uri, None, extra=live)[0] == 401, uri       # 匿名（这里是多账号，本来就没有）
+        assert _v(stub, "GET", uri, read, extra=live)[0] == _v(stub, "GET", uri, read)[0] == 204  # read 本来就能 GET
+    for uri in ("/api/agent/chat", "/api/agent/chat/stream", "/api/agent/ws", "/api/agent/"):
+        for t in (report, read):
+            assert _v(stub, "GET", uri, t, extra=live)[0] == 401, uri
+            assert _v(stub, "POST", uri, t, extra=live)[0] == 401, uri
+
+
+def test_anonymous_gets_no_stream_or_agent_chat(single):
+    live = {"Accept": "text/event-stream", "Upgrade": "websocket", "Connection": "Upgrade"}
+    for uri in ("/api/core/views/lanes", "/api/agent/chat", "/api/agent/chat/stream", "/api/mcp/"):
+        assert _v(single, "GET", uri, extra=live)[0] == 401, uri
+
+
 def test_allow_table_cannot_be_bypassed(stub, users):
     """上报面按原样字节全匹配：编码、双斜杠、结尾斜杠、大小写、点段、方法覆盖头，全都不在表里。"""
     _, cookie = stub.login(username="alice", password=PW)
@@ -675,10 +698,10 @@ def test_presented_bad_credentials_are_never_downgraded_to_anonymous(single):
     # 坏的会话 cookie 同理（过期的会话去登录页）
     for bad in ("cockpit_session=garbage", "cockpit_session=1.2.3", cookie + "x"):
         assert _v(single, "POST", START, cookie=bad)[0] == 401, bad
-    # 不相干的 cookie、空的会话 cookie、空的 Authorization：等于没带
+    # 不相干的 cookie 等于没带；空的会话 cookie、空的 Authorization 是出示了（空的）凭据 = 401
     assert _v(single, "POST", START, cookie="theme=dark")[0] == 204
-    assert _v(single, "POST", START, cookie="cockpit_session=")[0] == 204
-    assert _v(single, "POST", START, extra={"Authorization": ""})[0] == 204
+    assert _v(single, "POST", START, cookie="cockpit_session=")[0] == 401
+    assert _v(single, "POST", START, extra={"Authorization": ""})[0] == 401
     # 两个 Authorization 头：不猜看哪个
     c = http.client.HTTPConnection("127.0.0.1", single.port, timeout=10)
     c.putrequest("GET", "/api/auth/verify")
@@ -739,9 +762,9 @@ def test_list_and_per_token_revoke(stub, users):
     b1 = _mint(stub, bob, "write")
     status, _, data = stub.req("GET", "/api/auth/tokens", cookie=alice)
     listed = json.loads(data)["tokens"]
-    assert status == 200 and [(t["id"], t["name"], t["scope"], t["revoked"]) for t in listed] == [
-        (a1["id"], "沙箱代理", "report", False), (a2["id"], "mcp", "read", False)]
-    assert all(set(t) == {"id", "name", "scope", "createdAt", "expiresAt", "revoked"} for t in listed)
+    assert status == 200 and [(t["id"], t["name"], t["scope"]) for t in listed] == [
+        (a1["id"], "沙箱代理", "report"), (a2["id"], "mcp", "read")]
+    assert all(set(t) == {"id", "name", "scope", "createdAt", "expiresAt"} for t in listed)
     # 列表、令牌文件里都没有令牌本身，也没有它的签名
     tfile = Path(users["AUTH_USERS_FILE"]).with_name("tokens.json").read_text()
     for minted in (a1, a2, b1):
@@ -766,9 +789,9 @@ def test_list_and_per_token_revoke(stub, users):
     assert _v(stub, "POST", START, a1["token"])[0] == 401
     assert _v(stub, "GET", "/api/core/views/tree", a2["token"])[0] == 204
     assert _v(stub, "POST", "/api/core/events", b1["token"])[0] == 204
-    assert stub.req("POST", "/api/auth/tokens/revoke", {"tokenId": a1["id"]}, cookie=alice)[0] == 204  # 幂等
+    assert stub.req("POST", "/api/auth/tokens/revoke", {"tokenId": a1["id"]}, cookie=alice)[0] == 404  # 记录已删
     listed = json.loads(stub.req("GET", "/api/auth/tokens", cookie=alice)[2])["tokens"]
-    assert [(t["id"], t["revoked"]) for t in listed] == [(a1["id"], True), (a2["id"], False)]
+    assert [t["id"] for t in listed] == [a2["id"]]  # 吊销的不再列出
     # 设备令牌换不出、也吊销不了令牌
     h = {"Authorization": f"Bearer {a2['token']}"}
     assert stub.req("POST", "/api/auth/tokens", {}, headers=h)[0] == 401
@@ -806,11 +829,13 @@ def test_token_table_is_bounded_and_expired_entries_are_pruned(tmp_path):
         status, data = _http_token(s, cookie, {"scope": "report"})
         assert status == 409 and data["error"] == "too_many_tokens"
         assert len(json.loads(tfile.read_text())["tokens"]) == 100
-        # 吊销过的仍占名额（吊销记录要留到它到期）——所以表有界；整个身份吊销清空
-        assert s.req("POST", "/api/auth/tokens/revoke", {"tokenId": first["id"]}, cookie=cookie)[0] == 204
-        assert _http_token(s, cookie, {})[0] == 409
         r = _cli({**env, **SECRET_ENV}, "token")
         assert r.returncode != 0 and not r.stdout and "100" in r.stderr
+        # 单个吊销 = 删记录，名额立即回来（面板与命令行都是这么劝人的）
+        assert s.req("POST", "/api/auth/tokens/revoke", {"tokenId": first["id"]}, cookie=cookie)[0] == 204
+        assert len(json.loads(tfile.read_text())["tokens"]) == 99
+        assert _http_token(s, cookie, {})[0] == 201
+        assert _http_token(s, cookie, {})[0] == 409
         assert s.req("POST", "/api/auth/tokens/revoke", {}, cookie=cookie)[0] == 204
         assert json.loads(tfile.read_text())["tokens"] == {}
         assert _http_token(s, cookie, {})[0] == 201
@@ -851,7 +876,7 @@ def test_cli_scopes_list_and_revoke_token(stub, users):
     time.sleep(2.6)
     assert _v(stub, "POST", START, tok)[0] == 401
     assert _v(stub, "POST", "/api/core/events", write)[0] == 204
-    assert f"{jti}\treport\t已吊销" in _cli(users, "tokens", "alice").stdout
+    assert jti not in _cli(users, "tokens", "alice").stdout  # 吊销 = 删记录
     for args in (("revoke-token", "nope"), ("revoke-token",), ("revoke-token", "0000000000000000"),
                  ("token", "alice", "--scope", "admin"), ("token", "alice", "--scope"),
                  ("token", "alice", "--name", "x" * 65), ("token", "alice", "--name", "a\x1bb"),
@@ -880,7 +905,7 @@ def test_tokens_never_reach_the_log(tmp_path):
     finally:
         s.stop()
     log = s.proc.stderr.read()
-    assert "/api/auth/verify" in log  # 日志确实在记
+    assert "/api/auth/tokens" in log and "/api/auth/verify" not in log  # 别的端点照记，verify 不写日志
     for secret in secrets_seen:
         assert secret not in log
 
@@ -1016,3 +1041,84 @@ def test_token_table_is_an_allowlist(mod):
     assert mod.device_identity(tok, now=int(time.time()) + mod.TOKEN_TTL + 5) is None
     assert mod.device_identity(tok, now=int(time.time()) - 5) is None  # 还没签发
 
+
+
+def test_token_table_has_a_global_bound_and_prunes_expired_entries(mod, monkeypatch):
+    """全部身份合计有硬顶（每个身份各自 100 不够：身份数无界，含已删账号的残留）；到期的在下一次写时清掉。"""
+    monkeypatch.setattr(mod, "MAX_TOKENS_TOTAL", 5)
+    metas = [mod.issue_device_token(f"u_{i}", "s", "report")[1] for i in range(5)]  # 每个身份 1 个：各自的上限碰不到
+    with pytest.raises(mod.TooManyTokens):
+        mod.issue_device_token("u_9", "s", "report")
+    assert len(mod.load_token_state()[2]) == 5
+    assert mod.revoke_token(metas[0]["id"])  # 吊销腾出名额
+    mod.issue_device_token("u_9", "s", "report")
+    with pytest.raises(mod.TooManyTokens):
+        mod.issue_device_token("u_10", "s", "report")
+    # 到期的在下一次写时先清掉：有效期 0 的令牌发多少个都撑不满上限
+    monkeypatch.setattr(mod, "MAX_TOKENS_TOTAL", 1)
+    monkeypatch.setattr(mod, "TOKEN_TTL", 0)
+    for i in range(3):
+        mod.revoke_identity(f"u_{i}"), mod.revoke_identity("u_9")
+    mod.revoke_identity("u_3"), mod.revoke_identity("u_4")
+    assert mod.load_token_state()[2] == {}
+    for i in range(4):
+        mod.issue_device_token("x", "s", "report")
+    assert len(mod.load_token_state()[2]) == 1
+
+
+def test_revoked_token_record_is_removed_not_kept(mod):
+    tok, meta = mod.issue_device_token("", mod._shared_sess(), "write")
+    assert mod.revoke_token(meta["id"]) and not mod.revoke_token(meta["id"])
+    assert meta["id"] not in mod.load_token_state()[2]
+    assert "revoked" not in meta
+    # 老文件里开发期写过的墓碑：读进来就丢
+    gen, epochs, tokens = mod.load_token_state()
+    tokens["0" * 16] = {"tenant": "", "name": "", "scope": "write", "createdAt": 1, "expiresAt": 2 ** 40, "revoked": True}
+    Path(mod.TOKENS_FILE).write_text(json.dumps({"gen": gen, "epochs": epochs, "tokens": tokens}))
+    assert "0" * 16 not in mod.load_token_state()[2]
+
+
+def test_present_but_empty_credentials_are_401_not_anonymous(mod):
+    """出示了就不降级：空的 cockpit_session、空 / 全空白的 Authorization 都是 401，不是「没带」。"""
+    assert mod.verify_access(_headers())[0] == 204  # 对照：真没带 = 匿名上报
+    assert mod.verify_access(_headers(Cookie="theme=dark; other=1"))[0] == 204  # 别的 cookie 不算出示
+    for extra in ({"Cookie": f"{mod.COOKIE_NAME}="}, {"Cookie": f"a=1; {mod.COOKIE_NAME}=; b=2"},
+                  {"Cookie": f"{mod.COOKIE_NAME}"}, {"Authorization": ""}, {"Authorization": "   "},
+                  {"Authorization": " \t"}, {"Authorization": "Bearer"}, {"Authorization": "Basic"}):
+        assert mod.verify_access(_headers(**extra)) == (401, {}), extra
+
+
+def test_verify_writes_no_log_but_other_endpoints_do(mod, monkeypatch, capsys):
+    """不变量 2：verify 不做同步日志 IO（200 / 401 / 403 / 内部错误→401 全部），别的端点照记。"""
+    import threading  # noqa: PLC0415
+    from http.server import ThreadingHTTPServer  # noqa: PLC0415
+
+    report, _ = mod.issue_device_token("", mod._shared_sess(), "report")
+    mod.EPOCHS.refresh()
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), mod.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    def get(path, headers):
+        c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=10)
+        c.request("GET", path, headers=headers)
+        r = c.getresponse()
+        r.read()
+        c.close()
+        return r.status
+
+    api = {"X-Original-Method": "POST", "X-Original-URI": START}
+    try:
+        capsys.readouterr()
+        assert get("/api/auth/verify", {**api, "Authorization": f"Bearer {report}"}) == 204
+        assert get("/api/auth/verify", {**api, "Authorization": "Bearer nope"}) == 401
+        assert get("/api/auth/verify", {"X-Original-Method": "GET", "X-Original-URI": "/api/core/views/tree",
+                                        "Authorization": f"Bearer {report}"}) == 403
+        monkeypatch.setattr(mod, "_verify", lambda _h: 1 / 0)
+        assert get("/api/auth/verify", api) == 401
+        out = capsys.readouterr()
+        assert out.err == "" and out.out == ""
+        assert get("/api/auth/health", {}) == 200 and get("/nope", {}) == 404  # 对照：别的端点照记
+        assert capsys.readouterr().err.count("[auth-stub]") == 2
+    finally:
+        srv.shutdown()
+        srv.server_close()

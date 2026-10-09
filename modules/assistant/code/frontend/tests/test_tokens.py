@@ -14,11 +14,11 @@ from conftest import open_page, overflowing
 FAKE = "hct2.0.0.0.{scope}.0000000000000000..fake-token-for-tests"
 EXISTING = [
     {"id": "aaaaaaaaaaaaaaaa", "name": "笔记本上的 Claude Code", "scope": "report",
-     "createdAt": "2026-10-01T02:00:00Z", "expiresAt": "2027-10-01T02:00:00Z", "revoked": False},
+     "createdAt": "2026-10-01T02:00:00Z", "expiresAt": "2027-10-01T02:00:00Z"},
     {"id": "bbbbbbbbbbbbbbbb", "name": "<img src=x onerror=window.__xss=1>", "scope": "write",
-     "createdAt": "2026-10-02T02:00:00Z", "expiresAt": "2027-10-02T02:00:00Z", "revoked": False},
+     "createdAt": "2026-10-02T02:00:00Z", "expiresAt": "2027-10-02T02:00:00Z"},
     {"id": "cccccccccccccccc", "name": "", "scope": "read",
-     "createdAt": "2026-10-03T02:00:00Z", "expiresAt": "2027-10-03T02:00:00Z", "revoked": True},
+     "createdAt": "2026-10-03T02:00:00Z", "expiresAt": "2027-10-03T02:00:00Z"},
 ]
 # 复制：记下页面想写进剪贴板的东西（无头浏览器里不去碰真剪贴板）
 CLIP = "window.__copied=[];Object.defineProperty(navigator,'clipboard',{value:{writeText:t=>{window.__copied.push(t);return Promise.resolve()}}});"
@@ -49,13 +49,13 @@ class AuthStub:
             if self.mint_reply:
                 return j(*self.mint_reply)
             meta = {"id": "dddddddddddddddd", "name": body.get("name", ""), "scope": body.get("scope", "write"),
-                    "createdAt": "2026-10-09T02:00:00Z", "expiresAt": "2027-10-09T02:00:00Z", "revoked": False}
+                    "createdAt": "2026-10-09T02:00:00Z", "expiresAt": "2027-10-09T02:00:00Z"}
             self.tokens.append(meta)
             return j(201, {"token": FAKE.format(scope=meta["scope"]), "tenant": "u_local", **meta})
         if path == "tokens/revoke" and req.method == "POST":
             for t in self.tokens:
                 if t["id"] == body.get("tokenId"):
-                    t["revoked"] = True
+                    self.tokens.remove(t)   # 吊销 = 记录删掉，列表里不再出现
                     return route.fulfill(status=204)
             return j(404, {"ok": False, "error": "no_such_token"})
         return j(404, {})
@@ -98,17 +98,15 @@ def test_lists_tokens_newest_first_as_text_and_never_mints_on_its_own(browser, s
     stub = AuthStub()
     with page_with(browser, static_base_url, stub) as page:
         ready(page)
-        rows = page.eval_on_selector_all("#tok-list .tok-item", "ls => ls.map(l => [l.dataset.id, l.classList.contains('is-revoked')])")
-        assert rows == [["cccccccccccccccc", True], ["bbbbbbbbbbbbbbbb", False], ["aaaaaaaaaaaaaaaa", False]]
+        rows = page.eval_on_selector_all("#tok-list .tok-item", "ls => ls.map(l => l.dataset.id)")
+        assert rows == ["cccccccccccccccc", "bbbbbbbbbbbbbbbb", "aaaaaaaaaaaaaaaa"]
         first = page.inner_text('.tok-item[data-id="aaaaaaaaaaaaaaaa"]')
         assert "只上报" in first and "笔记本上的 Claude Code" in first and "2026-10-01 发" in first and "2027-10-01 到期" in first
         assert "读写" in page.inner_text('.tok-item[data-id="bbbbbbbbbbbbbbbb"]')
         # 备注是用户写的字：当文本显示，不当 HTML
         assert "<img src=x onerror=window.__xss=1>" in page.inner_text('.tok-item[data-id="bbbbbbbbbbbbbbbb"] .tok-item-name')
         assert page.locator("#tok-list img").count() == 0 and page.evaluate("window.__xss") is None
-        # 已吊销的没有吊销按钮
-        assert page.locator('.tok-item[data-id="cccccccccccccccc"] .tok-revoke').count() == 0
-        assert "已吊销" in page.inner_text('.tok-item[data-id="cccccccccccccccc"]')
+        assert page.locator(".tok-item .tok-revoke").count() == 3  # 列出来的都是有效的，都能吊销
         assert page.is_hidden("#tok-new") and page.is_hidden("#tok-empty") and page.is_hidden("#tok-anon")
         # 三种权限各有一句中文说明，缺省选最小的「只上报」
         assert page.is_checked('input[name="tok-scope"][value="report"]')
@@ -207,14 +205,14 @@ def test_revoke_asks_first_and_only_revokes_that_token(browser, static_base_url)
         assert revokes(stub) == []  # 点了取消：什么都没发
         answer["accept"] = True
         page.click(button)
-        page.wait_for_selector('.tok-item[data-id="aaaaaaaaaaaaaaaa"].is-revoked')
+        page.wait_for_selector('.tok-item[data-id="aaaaaaaaaaaaaaaa"]', state="detached")  # 吊销的不再列出
         assert revokes(stub) == [("POST", "tokens/revoke", {"tokenId": "aaaaaaaaaaaaaaaa"}, "application/json")]
         assert page.inner_text("#tok-message") == "已吊销。"
         assert page.locator('.tok-item[data-id="bbbbbbbbbbbbbbbb"] .tok-revoke').count() == 1  # 别的没动
 
 
 @pytest.mark.parametrize("reply,needle", [
-    ((409, {"ok": False, "error": "too_many_tokens"}), "太多"),
+    ((409, {"ok": False, "error": "too_many_tokens"}), "吊销后名额立刻回来"),
     ((503, {"ok": False, "error": "tokens_unavailable"}), "发不了令牌"),
     ((401, {"ok": False, "error": "not_logged_in"}), "重新登录"),
     ((201, {"tenant": "u_local"}), "没成功"),   # 形状不对：不当成功，也不显示任何「令牌」

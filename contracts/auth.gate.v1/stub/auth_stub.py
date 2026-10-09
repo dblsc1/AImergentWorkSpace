@@ -103,7 +103,8 @@ TOKEN_PREFIX = "hct1"  # 设备令牌的版本前缀；会话 cookie 永远以�
 TOKEN2_PREFIX = "hct2"  # v1.4：签名里带范围、令牌 id、到期时刻。新发的都是它；hct1 只验不发
 SCOPES = ("report", "read", "write")  # 严格嵌套：后一个包含前一个
 MAX_LABEL = 64
-MAX_TOKENS = 100  # 每个身份名下未到期的 hct2 令牌（含已吊销的）上限：令牌表与吊销记录都以它为界
+MAX_TOKENS = 100  # 每个身份名下未到期的 hct2 令牌上限（吊销 = 删记录，立即腾出名额）
+MAX_TOKENS_TOTAL = 1000  # 全部身份加起来的上限：令牌文件与内存视图有硬顶，不随身份数（含已删账号的残留）无限长
 TOKEN_ID_RE = re.compile(r"^[0-9a-f]{16}$")
 
 
@@ -189,14 +190,14 @@ def _locked(path: str):
 
 # ── 令牌文件 ─────────────────────────────────────────────────────
 # {"gen": "<随机 hex>", "epochs": {"<租户，共享口令为 ''>": n},
-#  "tokens": {"<令牌 id>": {tenant, name, scope, createdAt, expiresAt, revoked}}}
+#  "tokens": {"<令牌 id>": {tenant, name, scope, createdAt, expiresAt}}}
 # 令牌签发时记下当时的纪元，verify 时纪元对不上就作废 —— 吊销整个身份 = 纪元 +1。
 # gen 是这份文件的"代"，签进每个令牌的 HMAC：文件被删、重建，gen 就变，旧令牌
 # 全部作废。否则删一下文件（再重启），吊销过的令牌（纪元回到 0）就复活了（Codex 审核）。
 # 所以失败方向一律是拒绝：文件不在 = 没有任何有效令牌。
-# tokens（v1.4）：每个 hct2 令牌一条，**不含令牌本身**（只有 id 与备注）。它同时是列表的数据、
-# 单个吊销的记录、与 verify 的白名单——id 不在表里、或标了 revoked 的 hct2 一律 401。到期的条目
-# 在下一次写文件时清掉，每个身份至多 MAX_TOKENS 条，所以这张表（与吊销记录）有界。
+# tokens（v1.4）：每个 hct2 令牌一条，**不含令牌本身**（只有 id 与备注）。它同时是列表的数据与
+# verify 的白名单——id 不在表里的 hct2 一律 401，所以单个吊销 = 删这条记录（不留墓碑）。到期的条目
+# 在下一次写文件时清掉，每个身份至多 MAX_TOKENS 条、全部合计至多 MAX_TOKENS_TOTAL 条，所以这张表有界。
 
 class TooManyTokens(Exception):
     pass
@@ -213,8 +214,8 @@ def load_token_state() -> tuple[str, dict, dict] | None:
     if not isinstance(gen, str) or not gen or not isinstance(epochs, dict) or not isinstance(tokens, dict):
         raise ValueError("tokens file")
     tokens = {str(k): {"tenant": str(t["tenant"]), "name": str(t["name"]), "scope": str(t["scope"]),
-                       "createdAt": int(t["createdAt"]), "expiresAt": int(t["expiresAt"]),
-                       "revoked": bool(t["revoked"])} for k, t in tokens.items()}
+                       "createdAt": int(t["createdAt"]), "expiresAt": int(t["expiresAt"])}
+              for k, t in tokens.items() if not t.get("revoked")}  # 开发期写过墓碑的文件：墓碑当场丢掉
     return gen, {str(k): int(v) for k, v in epochs.items()}, tokens
 
 
@@ -250,13 +251,13 @@ def revoke_identity(tenant: str) -> None:
 
 
 def revoke_token(jti: str, tenant: str | None = None) -> bool:
-    """只作废这一个 hct2 令牌。tenant 给了就只认这个身份名下的（网页）；None = 命令行，不限。
-    False = 没有这个 id（或不是你的）。"""
+    """只作废这一个 hct2 令牌：删它的记录（白名单里没有 = 401），名额立即回来。tenant 给了就只认这个身份
+    名下的（网页）；None = 命令行，不限。False = 没有这个 id（或不是你的；吊销过的也已经没了）。"""
     def change(_epochs: dict, tokens: dict) -> bool:
         meta = tokens.get(jti)
         if meta is None or (tenant is not None and meta["tenant"] != tenant):
             return False
-        meta["revoked"] = True
+        del tokens[jti]
         return True
     return token_state(change)[1]
 
@@ -268,7 +269,7 @@ def _iso(ts: int) -> str:
 def list_tokens(tokens: dict, tenant: str | None) -> list[dict]:
     """列表用的形状（**没有令牌本身**，它哪里都没存）。tenant=None = 全部。"""
     return [{"id": jti, "name": t["name"], "scope": t["scope"], "createdAt": _iso(t["createdAt"]),
-             "expiresAt": _iso(t["expiresAt"]), "revoked": t["revoked"]}
+             "expiresAt": _iso(t["expiresAt"])}
             for jti, t in sorted(tokens.items(), key=lambda kv: kv[1]["createdAt"])
             if tenant is None or t["tenant"] == tenant]
 
@@ -417,10 +418,10 @@ def issue_device_token(tenant: str, sess: str, scope: str = "write", name: str =
     issued = int(time.time() if now is None else now)
     jti = secrets.token_hex(8)
     meta = {"tenant": tenant, "name": name, "scope": scope, "createdAt": issued,
-            "expiresAt": issued + TOKEN_TTL, "revoked": False}
+            "expiresAt": issued + TOKEN_TTL}
 
     def change(epochs: dict, tokens: dict) -> int:
-        if sum(1 for t in tokens.values() if t["tenant"] == tenant) >= MAX_TOKENS:
+        if len(tokens) >= MAX_TOKENS_TOTAL or sum(1 for t in tokens.values() if t["tenant"] == tenant) >= MAX_TOKENS:
             raise TooManyTokens
         tokens[jti] = meta
         return epochs.get(tenant, 0)
@@ -505,7 +506,7 @@ def device_identity(token: str, now: int | None = None) -> tuple[str, str] | Non
         if jti is None:
             return (tenant, scope) if 0 <= current - issued <= TOKEN_TTL else None
         meta = tokens.get(jti)  # 白名单：不在表里（表被改过）或单个吊销了 → 拒绝
-        if meta is None or meta["revoked"] or meta["tenant"] != tenant:
+        if meta is None or meta["tenant"] != tenant:
             return None
         return (tenant, scope) if issued <= current < int(exp_str) else None
     except Exception:
@@ -530,7 +531,7 @@ def _verify(headers) -> tuple[int, dict]:
     auths = headers.get_all("Authorization") or []
     if len(auths) > 1:  # 两个 Authorization：网关与这里可能各看各的那一个，不猜
         return 401, {}
-    auth = auths[0].strip(" \t") if auths else ""
+    auth = auths[0].strip(" \t") if auths else ""  # 出示了（哪怕是空的）看 auths，不看解析出来的值
     method, uri = headers.get("X-Original-Method"), headers.get("X-Original-URI")
     scheme, _, token = auth.partition(" ")
     if scheme.lower() == "bearer":
@@ -543,7 +544,7 @@ def _verify(headers) -> tuple[int, dict]:
             return 403, {}
         return 204, {"X-Nexus-Scope": scope, **({"X-Nexus-Tenant": tenant} if tenant else {})}
     cookie = _cookie_value(headers.get("Cookie"))
-    if cookie or auth:
+    if cookie or auths or _has_cookie(headers.get("Cookie")):  # 出示了就不降级：空 cookie / 空 Authorization 也是 401，不是匿名
         tenant = token_tenant(cookie)
         return (401, {}) if tenant is None else (204, {"X-Nexus-Tenant": tenant} if tenant else {})
     # 匿名。单人模式 = 开着共享口令、一个账号都没有：只有这时「不带租户 = u_local」是唯一的那份数据；
@@ -614,9 +615,19 @@ def _cookie_value(header: str | None) -> str:
     return ""
 
 
+def _has_cookie(header: str | None) -> bool:
+    """会话 cookie 出现了（值可以是空的）。别的 cookie 不算。"""
+    return any(p.strip().partition("=")[0] == COOKIE_NAME for p in (header or "").split(";"))
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "auth-gate-stub/1.4"
     protocol_version = "HTTP/1.1"
+
+    def log_request(self, code="-", size="-") -> None:
+        # 不变量 2：verify 是每个请求都要过的热路径，不做同步日志 IO（日志管道堵了会拖死所有认证）
+        if getattr(self, "path", "") != "/api/auth/verify":
+            super().log_request(code, size)
 
     # ── 响应助手 ────────────────────────────────────────────────
     def _status_only(self, code: int, headers: dict | None = None) -> None:
@@ -783,7 +794,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _list_tokens(self) -> None:
         """GET /api/auth/tokens（v1.4）：自己名下的 hct2 令牌。只认会话 cookie；回的是 id、备注、范围、
-        时间、是否已吊销 —— **没有令牌本身**（哪里都没存）。hct1 老令牌没有 id，列不出来。"""
+        时间 —— **没有令牌本身**（哪里都没存）。hct1 老令牌没有 id，列不出来。"""
         tenant = self._tenant()
         if tenant is None:
             self._json(401, {"ok": False, "error": "not_logged_in"})
@@ -916,7 +927,7 @@ def _token_cli(cmd: str, args: list[str]) -> None:
         now = int(time.time())
         live = {j: t for j, t in (state[2] if state else {}).items() if t["expiresAt"] > now}
         for t in list_tokens(live, tenant if rest else None):
-            print("\t".join([t["id"], t["scope"], "已吊销" if t["revoked"] else "有效", t["expiresAt"], t["name"]]))
+            print("\t".join([t["id"], t["scope"], "有效", t["expiresAt"], t["name"]]))
         return
     if cmd == "revoke":
         revoke_identity(tenant)
@@ -925,7 +936,8 @@ def _token_cli(cmd: str, args: list[str]) -> None:
     try:
         token, meta = issue_device_token(tenant, sess, scope, label)
     except TooManyTokens:
-        sys.exit(f"❌ {who} 名下已有 {MAX_TOKENS} 个未到期的令牌；先 revoke-token 用不着的，或 revoke 全部作废")
+        sys.exit(f"❌ {who} 名下已有 {MAX_TOKENS} 个未到期的令牌（或全部身份合计已到 {MAX_TOKENS_TOTAL} 个）；"
+                 "先 revoke-token 用不着的（吊销就腾出名额），或 revoke 全部作废")
     print(token)
     sys.stderr.write(f"✅ 上面是 {who} 的设备令牌（id {meta['id']}，范围 {scope}），{meta['expiresAt']} 过期，"
                      f"{RELOAD_EVERY:g} 秒内可用。请求头 Authorization: Bearer <令牌>；"
