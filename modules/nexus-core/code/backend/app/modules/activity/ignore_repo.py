@@ -38,8 +38,20 @@ def insert_if_absent(doc: dict) -> bool:
 
 
 def mark_purged(user: str, rule_id: str) -> None:
-    """清理做完了才标：没标的规则（清理中途出错）会在下一次写入时被补清。"""
-    _col().update_one({"user": user, "id": rule_id}, {"$set": {"purged": True}})
+    """清理做完了才标：没标的规则（清理中途出错）会按退避补清。"""
+    _col().update_one({"user": user, "id": rule_id},
+                      {"$set": {"purged": True}, "$unset": {"purgeTries": "", "purgeLastTry": "", "purgeFailed": ""}})
+
+
+def note_purge_attempt(user: str, rule_id: str, at: datetime, failed: bool, give_up_after: int) -> None:
+    """一次没清完：记下时刻（退避用）；``failed``（出错，不是被预算截断）才算一次失败，满 ``give_up_after`` 次标 ``purgeFailed``（人在列表里看得到）。"""
+    if failed:
+        doc = _col().find_one_and_update({"user": user, "id": rule_id}, {"$inc": {"purgeTries": 1}, "$set": {"purgeLastTry": at}},
+                                         return_document=True)
+        if doc and doc.get("purgeTries", 0) >= give_up_after:
+            _col().update_one({"user": user, "id": rule_id}, {"$set": {"purgeFailed": True}})
+    else:
+        _col().update_one({"user": user, "id": rule_id}, {"$set": {"purgeLastTry": at}})
 
 
 def delete(user: str, rule_id: str) -> bool:

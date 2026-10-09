@@ -22,7 +22,6 @@ from datetime import datetime
 from ...config import settings
 from ...tenant import current as current_tenant
 from ...timeutil import local_date
-from ..activity import ignore as activity_ignore
 from ..activity import service as activity_service
 from ..planner import service as planner_service
 from ..prefs import service as prefs_service
@@ -56,7 +55,6 @@ def _share(part: int, whole: int) -> float:
 def get_current() -> CurrentOut:
     # v2.1：代理泳道与人的泳道各算各的；list_agent_runs 会顺手收掉超时的运行（契约明文）。
     # v2.22：藏起来的代理不在「现在在跑什么」里（只是不显示，时间照记）
-    activity_ignore.ensure_purged(current_tenant())  # v2.22：忽略规则清理没做完就先补清（focus 来自在场记录）
     hidden = prefs_service.hidden_keys(current_tenant())
     runs = timer_service.list_agent_runs(current_tenant())
     shown = [run for run in runs if prefs_service.ident(run["agent"], run["label"], run["unverified"]) not in hidden]

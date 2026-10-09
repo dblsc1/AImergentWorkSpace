@@ -27,7 +27,7 @@ from datetime import datetime, timedelta, timezone
 
 from ...tenant import current as current_tenant
 from ..timer import service as timer_service
-from . import repo, session_link
+from . import ignore, repo, session_link
 
 WINDOW = timedelta(hours=2)
 MERGE_GAP = timedelta(seconds=45)
@@ -172,7 +172,7 @@ def list_spans(user: str, now: datetime, start: datetime, end: datetime) -> list
         # 只裁返回的副本，不写；guess（v2.14）不回出；runId（v2.17）= 这一段人在看的那条代理运行，没有为 null
         {"deviceId": doc["deviceId"], **{k: span[k] for k in ("to", "app", "title", "afk")},
          "runId": span.get("runId"), "from": max(span["from"], cutoff)}
-        for doc in repo.presence_list(user)
+        for doc in ignore.presence_docs(user)
         for span in doc.get("spans") or []
         if span["to"] >= cutoff
     )

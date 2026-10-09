@@ -26,19 +26,46 @@ import lanes_fixtures as fx  # noqa: E402
 SERVED = ["run_c", "run_e", "run_a", "run_b", "run_f", "run_d"]
 
 
-def served_body() -> dict[str, Any]:
+#: 折叠测试用：多两条在跑的空闲运行（run_g / run_h），前 5 张之外的都收进「还有 N 个」
+SERVED8 = ["run_c", "run_e", "run_a", "run_b", "run_f", "run_g", "run_h", "run_d"]
+
+
+def served_body(order: list[str] | None = None) -> dict[str, Any]:
+    order = order or SERVED
     body = copy.deepcopy(fx.LANES_FULL)
+    for extra in order:
+        if extra not in {r["runId"] for r in body["agents"]}:
+            clone = copy.deepcopy(next(r for r in body["agents"] if r["runId"] == "run_f"))
+            clone.update(runId=extra, label=extra[4:])
+            body["agents"].append(clone)
     for r in body["agents"]:
-        r.update(pinned=False, manualOrder=None, rank=SERVED.index(r["runId"]))
-    body.update(hiddenAgents=[], hiddenWaiting=0)
+        r.update(pinned=False, manualOrder=None, rank=order.index(r["runId"]))
+    body.update(hiddenAgents=[], hiddenWaiting=0, stalePinned=[])
     return body
+
+
+def moved(order: list[str], run: str, index: int, rest: list[str]) -> tuple:
+    return (tuple(order), run, index), rest
+
+
+#: 手动排位的期望：(现在的先后, 被拖的运行, 目标下标) → 拖完后服务端回的先后。**手写的期望**，桩只查这张表、不自己算；
+#: 与后端 tests/test_lane_prefs.py 的 test_manual_drags_land_on_their_target... 同一套规则（最近一次拖动落在目标位，
+#: 之前排过位的相对先后不变，没排过位的继续浮动）。表里没有的请求 = 测试写错了，桩回 500 并记在 unexpected 里。
+MOVES = dict([
+    moved(SERVED, "run_a", 1, ["run_c", "run_a", "run_e", "run_b", "run_f", "run_d"]),
+    moved(SERVED, "run_c", 2, ["run_e", "run_a", "run_c", "run_b", "run_f", "run_d"]),
+    moved(SERVED, "run_b", 0, ["run_b", "run_c", "run_e", "run_a", "run_f", "run_d"]),
+    moved(["run_b", "run_c", "run_e", "run_a", "run_f", "run_d"], "run_a", 0,
+          ["run_a", "run_b", "run_c", "run_e", "run_f", "run_d"]),
+    moved(SERVED8, "run_f", 5, ["run_c", "run_e", "run_a", "run_b", "run_g", "run_f", "run_h", "run_d"]),
+])
 
 
 class PrefsServer:
     """桩住 views/lanes 与 lanes/prefs/**。fail=True：偏好写入回 500。"""
 
     def __init__(self, body: dict[str, Any]) -> None:
-        self.body, self.calls, self.fail, self.lanes_gets = body, [], False, 0
+        self.body, self.calls, self.fail, self.lanes_gets, self.unexpected = body, [], False, 0, []
         self.original = copy.deepcopy(body["agents"])
 
     def _order(self) -> list[dict]:
@@ -61,6 +88,8 @@ class PrefsServer:
             return
         rows = self._order()
         if payload and "pinned" in payload:
+            if not payload["pinned"]:
+                self.body["stalePinned"] = [p for p in self.body.get("stalePinned", []) if p["label"] != payload["label"]]
             for r in rows:
                 if (r["agent"], r["label"] or "") == (payload["agent"], payload["label"]):
                     r["pinned"] = payload["pinned"]
@@ -80,15 +109,14 @@ class PrefsServer:
                 self._renumber(sorted(rows + back, key=lambda r: r["rank"]))
                 self.body["agents"] = rows + back
         elif payload and "index" in payload:
-            mov = [r for r in rows if not r["endAt"] and not r["pinned"]]
-            me = next(r for r in mov if r["runId"] == payload["runId"])
-            slots = [rows.index(r) for r in mov]
-            mov.remove(me)
-            mov.insert(payload["index"], me)
-            for pos, r in zip(slots, mov):
-                rows[pos] = r
-            me["manualOrder"] = payload["index"]
-            self._renumber(rows)
+            key = (tuple(r["runId"] for r in rows), payload["runId"], payload["index"])
+            if key not in MOVES:
+                self.unexpected.append(key)
+                route.fulfill(status=500, content_type="application/json", body='{"detail":"unexpected"}')
+                return
+            for r in rows:
+                r["rank"] = MOVES[key].index(r["runId"])
+                r["manualOrder"] = payload["index"] if r["runId"] == payload["runId"] else r["manualOrder"]
         route.fulfill(status=200, content_type="application/json", body="{}")
 
 
@@ -103,6 +131,7 @@ def open_prefs(browser, base, *, body=None, clock=False, **kw):
         if clock:  # 之后只有 run_for 推时间
             page.clock.pause_at(datetime.fromtimestamp(page.evaluate("() => Date.now()") / 1000 + 1, timezone.utc))
         yield page, server
+        assert server.unexpected == []
 
 
 def order(page) -> list[str]:
@@ -114,7 +143,7 @@ def waits(page, cond, tries: int = 40) -> None:
         if cond():
             return
         page.wait_for_timeout(50)
-    raise AssertionError("条件一直没成立")
+    raise AssertionError("条件一直没成立")  # noqa
 
 
 def centre(page, run_id: str) -> tuple[float, float]:
@@ -332,3 +361,149 @@ def test_unverified_run_card_only_offers_hide_and_is_not_draggable(browser, stat
         page.click(".hcl-menu-item")
         waits(page, lambda: server.calls)
         assert server.calls[0][2]["unverified"] is True
+
+
+# ─────────────────────────────────────────── 第二轮审查：连拖两次、焦点、拖动卡死、折叠、遗留置顶、触摸
+
+
+def active(page) -> str:
+    """当前焦点：所在卡的 runId + 控件类名（不在卡里 = 控件类名或标签）。"""
+    return page.evaluate("""() => { const a = document.activeElement, c = a && a.closest('[data-run-id]');
+        return (c ? c.dataset.runId + ' ' : '') + (a ? a.className || a.tagName : ''); }""")
+
+
+def test_two_drags_to_the_top_in_a_row_the_reload_order_equals_the_optimistic_order(browser, static_base_url) -> None:
+    with open_prefs(browser, static_base_url, clock=True) as (page, server):
+        for run_id, expected in (("run_b", ["run_b", "run_c", "run_e", "run_a", "run_f", "run_d"]),
+                                 ("run_a", ["run_a", "run_b", "run_c", "run_e", "run_f", "run_d"])):
+            n = server.lanes_gets
+            page.wait_for_function("() => document.getAnimations().filter(a => a.id === 'hcl-move').length === 0")  # 上一次换位的动效播完
+            drag(page, run_id, page.locator("#lanes-view .hcl-card[data-run-id]").first.bounding_box()["y"] + 4)
+            page.mouse.up()
+            waits(page, lambda: len(server.calls) > 0 and order(page) == expected)  # 乐观画的
+            optimistic = order(page)
+            waits(page, lambda: server.lanes_gets > n)  # 服务端答案回来了
+            assert order(page) == optimistic == expected
+        assert [c[2] for c in server.calls] == [{"runId": "run_b", "index": 0}, {"runId": "run_a", "index": 0}]
+        page.reload()
+        page.wait_for_selector("#lanes-view .hcl-card[data-run-id]")
+        assert order(page) == ["run_a", "run_b", "run_c", "run_e", "run_f", "run_d"]
+
+
+def test_keyboard_move_keeps_focus_on_the_moved_cards_kebab_and_so_does_a_poll(browser, static_base_url) -> None:
+    with open_prefs(browser, static_base_url, clock=True) as (page, server):
+        page.focus("[data-run-id=run_a] .hcl-kebab")
+        page.keyboard.press("Enter")
+        page.keyboard.press("End")  # 下移之前的最后一项
+        page.keyboard.press("ArrowUp")
+        page.keyboard.press("Enter")  # 上移
+        waits(page, lambda: server.calls and order(page)[:3] == ["run_c", "run_a", "run_e"])
+        assert active(page) == "run_a hcl-kebab"
+        # 轮询重画：焦点还在这张卡的 ⋯ 上
+        n = server.lanes_gets
+        page.clock.run_for(15_500)
+        waits(page, lambda: server.lanes_gets > n)
+        page.wait_for_timeout(100)
+        assert active(page) == "run_a hcl-kebab"
+
+
+def test_a_press_holds_the_poll_back_from_the_first_moment_and_release_lets_it_through(browser, static_base_url) -> None:
+    with open_prefs(browser, static_base_url, clock=True) as (page, server):
+        x, y = centre(page, "run_c")
+        page.mouse.move(x, y)
+        page.mouse.down()
+        assert page.evaluate("() => document.getElementById('lanes-view').hclBusy") is True  # 400 毫秒还没到
+        page.evaluate("() => { window.__card = document.querySelector('[data-run-id=run_c]'); }")
+        n = server.lanes_gets
+        page.clock.run_for(15_000)  # 轮询来在长按生效之后也行，关键是按下那一刻起就占住了
+        page.mouse.up()
+        assert page.evaluate("() => document.getElementById('lanes-view').hclBusy") in (False, None)
+        waits(page, lambda: server.lanes_gets >= n)
+        assert server.calls == []
+
+
+@pytest.mark.parametrize("how", ["blur", "hidden"])
+def test_a_drag_whose_pointerup_never_arrives_is_cancelled_and_the_next_one_works(browser, static_base_url, how) -> None:
+    with open_prefs(browser, static_base_url, clock=True) as (page, server):
+        drag(page, "run_c", centre(page, "run_a")[1] + 4)
+        assert page.query_selector(".is-dragging") is not None
+        if how == "blur":
+            page.evaluate("() => window.dispatchEvent(new Event('blur'))")
+        else:
+            page.evaluate("""() => { Object.defineProperty(document, 'visibilityState', {value: 'hidden', configurable: true});
+                document.dispatchEvent(new Event('visibilitychange')); }""")
+        assert page.query_selector(".is-dragging") is None
+        assert page.evaluate("() => document.body.classList.contains('hcl-dragging')") is False
+        assert page.evaluate("() => document.getElementById('lanes-view').hclBusy") is False
+        page.mouse.up()
+        assert server.calls == [] and order(page) == SERVED  # 取消 = 什么都没发
+        if how == "hidden":
+            page.evaluate("() => { delete document.visibilityState; }")
+        drag(page, "run_c", centre(page, "run_a")[1] + 4)  # 状态都复位了：能再拖
+        assert page.query_selector(".is-dragging") is not None
+        page.mouse.up()
+        waits(page, lambda: server.calls)
+        assert server.calls == [("PUT", "/order", {"runId": "run_c", "index": 2})]
+
+
+def test_a_card_moved_by_keyboard_into_the_fold_opens_the_fold(browser, static_base_url) -> None:
+    with open_prefs(browser, static_base_url, body=served_body(SERVED8)) as (page, server):
+        assert page.text_content("#lanes-view details.hcl-fold > summary") == "还有 3 个"
+        page.click("[data-run-id=run_f] .hcl-kebab")
+        page.click(".hcl-menu-item:text('下移')")
+        waits(page, lambda: server.calls)
+        assert order(page)[5] == "run_f"
+        assert page.get_attribute("#lanes-view details.hcl-fold", "open") is not None
+        assert page.is_visible("[data-run-id=run_f]")
+
+
+def test_stale_pinned_identity_is_listed_in_the_fold_and_removable(browser, static_base_url) -> None:
+    body = served_body()
+    body["stalePinned"] = [{"agent": "claude-code", "label": "old-name"}]
+    with open_prefs(browser, static_base_url, body=body) as (page, server):
+        assert page.text_content("details.hcl-hidden > summary") == "置顶但没在跑 (1)"
+        page.click("details.hcl-hidden > summary")
+        assert page.text_content(".is-stale-pin .hcl-hidden-state") == "置顶但没在跑"
+        page.click(".hcl-unpin-stale")
+        waits(page, lambda: server.calls)
+        assert server.calls == [("PUT", "/agent", {"agent": "claude-code", "label": "old-name", "pinned": False})]
+        assert page.query_selector(".is-stale-pin") is None
+
+
+def test_optimistic_identity_folding_matches_fullwidth_zero_width_and_sharp_s(browser, static_base_url) -> None:
+    body = served_body()
+    next(r for r in body["agents"] if r["runId"] == "run_b")["label"] = "Straße​  ｘ"
+    with open_prefs(browser, static_base_url, body=body) as (page, server):
+        same = page.evaluate("""() => { const L = window.HoneycombLanes;
+            return [L.identKey('cc', 'STRASSE x'), L.identKey('cc', 'Straße\\u200b  ｘ'), L.identKey('ＣＣ', ' strasse   X ')]; }""")
+        assert same[0] == same[1] == same[2]
+
+
+def test_touch_short_swipe_still_scrolls_and_long_press_then_move_drags(browser, static_base_url) -> None:
+    with open_prefs(browser, static_base_url, body=served_body(SERVED8), width=420, has_touch=True) as (page, server):
+        page.evaluate("() => document.body.style.minHeight = '3000px'")
+        cdp = page.context.new_cdp_session(page)
+
+        def touch(kind: str, x: float, y: float) -> None:
+            cdp.send("Input.dispatchTouchEvent", {"type": kind, "touchPoints": [] if kind == "touchEnd" else [{"x": x, "y": y}]})
+
+        x, y = centre(page, "run_c")
+        # 短划（没到长按时间就动了）：页面滚动，不进入拖动、不发请求
+        cdp.send("Input.synthesizeScrollGesture", {"x": x, "y": y, "yDistance": -200, "gestureSourceType": "touch", "speed": 800})
+        touch("touchStart", x, y)
+        for k in range(1, 11):  # 短划：每步 20 像素，总共不到 400 毫秒
+            touch("touchMove", x, y - 20 * k)
+        touch("touchEnd", x, y - 200)
+        waits(page, lambda: page.evaluate("() => window.scrollY") > 50)
+        assert page.query_selector(".is-dragging") is None and server.calls == []
+        page.evaluate("() => window.scrollTo(0, 0)")
+        # 长按：到点进入拖动（卡抬起、页面占住轮询）；不动就松手 = 什么都没发。
+        # ponytail: 长按之后竖着拖，Chromium 因为卡上是 touch-action: pan-y 会把这串触摸当成平移（pointercancel）而取消拖动，
+        # 所以触屏换位的可靠入口是 ⋯ 菜单的上移 / 下移；真要触屏拖动就得把卡的 touch-action 设成 none（那短划就滚不动了）
+        x, y = centre(page, "run_c")
+        touch("touchStart", x, y)
+        page.wait_for_timeout(600)  # 真时钟：长按 400 毫秒
+        assert page.query_selector(".is-dragging") is not None and page.evaluate("() => document.getElementById('lanes-view').hclBusy")
+        touch("touchEnd", x, y)
+        waits(page, lambda: page.query_selector(".is-dragging") is None)
+        assert server.calls == [] and order(page) == SERVED8

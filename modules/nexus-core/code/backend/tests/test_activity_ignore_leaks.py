@@ -173,18 +173,100 @@ def test_delete_and_recreate_during_an_upload_still_purges(client, monkeypatch):
 # ─────────────────────────────────────────── I6：清理失败后读也不交出残留
 
 
-def test_failed_purge_blocks_reads_until_it_succeeds(client, monkeypatch):
-    from app.modules.activity import ignore_repo  # noqa: PLC0415
+def test_failed_purge_masks_reads_instead_of_failing_them(client, monkeypatch):
+    from app.modules.activity import repo  # noqa: PLC0415
 
     _upload(client, [_seg(10, "code", MARK)])
-    real = ignore_repo.drop_windows
-    monkeypatch.setattr(ignore_repo, "drop_windows", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    _plain_beat(client, "code", MARK)
+    monkeypatch.setattr(repo, "delete_pending", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     resp = client.post(IGN, json={"app": "code", "titleContains": MARK})
     assert resp.status_code == 503 and "规则已保存" in resp.json()["detail"] and "没有记住" not in resp.text
+    assert {"activity_suggestions", "activity_presence"} <= _dump(MARK)  # 清理没做完：库里确有残留
     for url in (f"{API}/views/current", f"{API}/views/lanes", SUG, IGN):
-        assert client.get(url).status_code == 503, url  # 不交出残留
-    monkeypatch.setattr(ignore_repo, "drop_windows", real)
-    assert client.get(f"{API}/views/current").status_code == 200  # 读时补清
+        got = client.get(url)
+        assert got.status_code == 200, url  # 不因此 5xx
+        assert MARK not in got.text or url == IGN, url  # 读出来的副本里没有残留的标题（规则列表里是人填的匹配文字）
+
+
+# ─────────────────────────────────────────── 安全审查：怪形状的规则 / 草稿、永远清不掉的规则不许拖垮别的写入
+
+
+def _raw_rules(rules, draft=None):
+    doc = {"user": "u_local", "version": 1, "rules": rules}
+    if draft is not None:
+        doc["draft"] = draft
+    _db()["detector_rules"].replace_one({"user": "u_local"}, doc, upsert=True)
+
+
+def test_odd_shaped_rules_and_drafts_never_break_the_purge_and_only_provable_ones_go(client):
+    ai = {"author": "assistant", "taskId": "t"}
+    _raw_rules([
+        {"id": "gen", "app": "^code$", "title": "^" + MARK + "$", **ai},                       # 生成形状：出自被忽略的窗口 → 删
+        {"id": "gen_decor", "app": "^code$", "title": "^(?:[^\\pL\\pN]|\\(\\d+\\)|\\[\\d+\\])*" + MARK + "$", **ai},  # 带前缀 → 删
+        {"id": "apponly", "app": "^code$", **ai},                                              # 只有程序名、没有 title 键 → app 整个忽略时才删
+        {"id": "regex", "app": "^code$", "title": "(a+)+$", **ai},                             # 任意正则：不是生成形状 → 留（也不编译）
+        {"id": "wild", "app": "^code$", "title": ".*", **ai},                                  # 同上
+        {"id": "human", "app": "^code$", "title": "^" + MARK + "$", "taskId": "t", "author": "human"},   # 人写的 → 留
+        {"id": "legacy", "app": "^code$", "title": "^" + MARK + "$", "taskId": "t"},           # 没有 author 的老规则 → 留
+        {"id": "notitle_none", "app": "^code$", "title": None, **ai},
+        {"id": "noapp", "title": "^" + MARK + "$", **ai},                                      # 没有 app → 证明不了 → 留
+        {"id": "typo", "app": 7, "title": ["x"], **ai},                                        # 类型怪 → 留
+        {"id": "long", "app": "^code$", "title": "^" + "a" * 5000 + "$", **ai},
+        "not-a-dict", None,
+    ], draft={"id": "drf_x", "author": "assistant", "summary": None, "rules": None, "createdAt": datetime.now(timezone.utc),
+              "expiresAt": datetime.now(timezone.utc) + timedelta(hours=1), "baseVersion": 1})
+    _ignore(client, "code", MARK)
+    kept = [r["id"] for r in _db()["detector_rules"].find_one({"user": "u_local"})["rules"] if isinstance(r, dict)]
+    assert kept == ["apponly", "regex", "wild", "human", "legacy", "notitle_none", "noapp", "typo", "long"]
+    assert _db()["detector_rules"].find_one({"user": "u_local"}).get("draft") is not None  # 没有规则、摘要为空：不碰
+    _ignore(client, "code")  # 整个程序忽略：只有程序名的 AI 规则也出自它
+    assert "apponly" not in [r["id"] for r in _db()["detector_rules"].find_one({"user": "u_local"})["rules"] if isinstance(r, dict)]
+
+
+def test_a_permanently_failing_purge_does_not_break_other_windows_and_is_visible_to_the_human(client, monkeypatch):
+    from datetime import timedelta as td  # noqa: PLC0415
+
+    from app.modules.activity import ignore  # noqa: PLC0415
+    from app.modules.detector import window_rules  # noqa: PLC0415
+
+    calls = []
+
+    def boom(*a, **k):
+        calls.append(1)
+        raise RuntimeError("bad document")
+
+    monkeypatch.setattr(window_rules, "drop_ignored", boom)
+    monkeypatch.setattr(ignore, "PURGE_BACKOFF", td(0))
+    assert client.post(IGN, json={"app": "code", "titleContains": MARK}).status_code == 503
+    for _ in range(ignore.PURGE_GIVE_UP + 4):  # 别的窗口的上传 / 心跳：永远 200
+        assert _upload(client, [_seg(10, "chrome", "别的窗口")])["accepted"] >= 0
+        _plain_beat(client, "chrome", "别的窗口")
+    assert len(calls) <= ignore.PURGE_GIVE_UP + 1  # 放弃自动重试：不是每次写入都试
+    row = client.get(IGN).json()["items"][0]
+    assert row["purgeFailed"] is True  # 人看得到
+    # 被忽略窗口自己的数据照样存不进去
+    assert _upload(client, [_seg(10, "code", MARK + " 新")]).get("ignored") == 1
+    _plain_beat(client, "code", MARK + " 新")
+    assert _dump(MARK + " 新") == set()
+    # 再建一次同一条规则会重清
+    monkeypatch.undo()
+    assert client.post(IGN, json={"app": "code", "titleContains": MARK}).status_code == 201
+    assert client.get(IGN).json()["items"][0]["purgeFailed"] is False
+
+
+def test_purge_over_budget_is_incomplete_not_failed_and_resumes(client, monkeypatch):
+    from app.modules.activity import ignore  # noqa: PLC0415
+
+    now = datetime.now(timezone.utc)
+    _db()["activity_suggestions"].insert_many([{"user": "u_local", "id": f"s{i}", "dedupeKey": f"k{i}", "status": "pending", "app": "code",
+                                                "title": MARK if i == 7 else "x", "durationSeconds": 1, "startTs": now, "endTs": now}
+                                               for i in range(10)])
+    monkeypatch.setattr(ignore, "SCAN_BUDGET", 5)
+    assert client.post(IGN, json={"app": "code", "titleContains": MARK}).status_code == 503
+    assert client.get(IGN).json()["items"][0]["purgeFailed"] is False  # 预算截断不算失败
+    monkeypatch.setattr(ignore, "SCAN_BUDGET", 50_000)
+    monkeypatch.setattr(ignore, "PURGE_BACKOFF", __import__("datetime").timedelta(0))
+    _plain_beat(client, "chrome", "别的")  # 下一次写入接着清
     assert _dump(MARK) <= {"activity_ignores"}
 
 

@@ -169,8 +169,15 @@
   }
 
   // ── 泳道偏好（v2.22）：身份键与乐观预演。服务端是唯一事实源，这里只是请求在路上时先让界面动起来。
+  // 服务端的归一化（prefs.service / textfold.fold：NFKC、去零宽字符、折叠空白、casefold）的近似：只用来让乐观预演认得同一个身份，
+  // 对不上（极少见的 Unicode 边角）时以服务端随后的答案为准
   function identKey(agent, label, unverified) {
-    var norm = function (t) { return String(t || '').split(/\s+/).filter(Boolean).join(' ').toLowerCase(); };
+    var norm = function (t) {
+      var x = String(t || '');
+      if (x.normalize) { x = x.normalize('NFKC'); }
+      x = x.replace(/[\u200b-\u200d\u2060\ufeff]/g, '').split(/\s+/).filter(Boolean).join(' ').toLowerCase().replace(/\u00df/g, 'ss');
+      return x;
+    };
     return norm(agent) + '\n' + norm(label) + (unverified ? '\n未验证' : '');
   }
   function optimistic(data, op) {
@@ -183,11 +190,12 @@
     d.hiddenAgents = d.hiddenAgents || [];
     if (op.type === 'pin') {
       d.agents.forEach(function (r) { if (isTarget(r)) { r.pinned = op.on; } });
+      if (!op.on) { d.stalePinned = (d.stalePinned || []).filter(function (p) { return identKey(p.agent, p.label) !== key; }); }
       var list = byRank(), top = list.filter(function (r) { return live(r) && r.pinned; });
       if (op.on) { top = top.filter(function (r) { return !isTarget(r); }).concat(top.filter(isTarget)); }   // 新置顶的排在已有置顶后面
       number(top.concat(list.filter(function (r) { return top.indexOf(r) < 0; })));
     } else if (op.type === 'hide') {
-      var gone = d.agents.filter(isTarget), phases = gone.filter(live).map(currentPhase);
+      var gone = d.agents.filter(isTarget), phases = gone.filter(live).map(function (r) { return r.lost ? 'idle' : currentPhase(r); });   // 失联的按空闲算，同服务端
       var waiting = phases.filter(isWaiting).length;
       d.agents = d.agents.filter(function (r) { return !isTarget(r); });
       d.interactions = (d.interactions || []).filter(function (i) { return d.agents.some(function (r) { return r.runId === i.runId; }); });
@@ -290,7 +298,10 @@
       return ph === 'waiting_input' || ph === 'waiting_permission' ? 0 : ph === 'working' ? 1 : 2;
     };
     var list = (agents || []).filter(function (r) { return !r.endAt || ms(r.endAt) > v0; });
+    // v2.22：服务端排好了 rank（置顶 / 手动排位 / 活跃）就照它——计时页与顶栏预览的先后一致；老后端没有才在本地排
+    var served = list.every(function (r) { return typeof r.rank === 'number'; });
     list.sort(function (a, b) {
+      if (served) { return a.rank - b.rank; }
       return (tier(a) - tier(b)) ||
         (tier(a) === 3 ? ms(b.endAt) - ms(a.endAt) : 0) ||
         (lastAt(b) - lastAt(a));
@@ -372,6 +383,11 @@
   var LONG_PRESS_MS = 400, PRESS_SLOP = 8;
   var gesture = null;     // 进行中的长按 / 拖动；同一时刻只有一个
   var menu = null;        // 开着的菜单 {close()}
+  // 拖动期间不许页面跟着滚：监听必须在触摸开始**之前**就以非被动方式挂着（触摸开始时才挂，浏览器那一轮已经按「没人拦」放行滚动，
+  // touchmove 就成了不可取消的）——所以挂在模块加载时，只在有进行中的拖动时才拦
+  document.addEventListener('touchmove', function (e) {
+    if (gesture && gesture.active && e.cancelable) { e.preventDefault(); }
+  }, { capture: true, passive: false });
 
   function setBusy(root, on, quiet) {
     if (!!root.hclBusy === on) { return; }
@@ -455,6 +471,7 @@
       if ((ev.pointerType === 'mouse' && ev.button !== 0) || gesture || ev.target.closest('button, a, summary, input, select, .hcl-menu')) { return; }
       closeMenu(false);
       var g = gesture = { x: ev.clientX, y: ev.clientY, active: false };
+      setBusy(root, true);                                  // 按下的那一刻就占住：400 毫秒里来的轮询也先攒着，别把手里的卡换掉
       var visible = movable.filter(function (m) { return m.node && seenRect(m.node); });
       var from = visible.map(function (m) { return m.r; }).indexOf(r);
 
@@ -470,13 +487,16 @@
       }
       function clear() { visible.forEach(function (m) { m.node.style.transform = ''; m.node.classList.remove('is-dragging', 'is-yielding'); }); }
       function finish(drop) {
+        if (gesture !== g) { return; }                      // 幂等（松手后还会来一个 lostpointercapture）
         clearTimeout(g.timer);
+        window.removeEventListener('blur', onCancel);
+        document.removeEventListener('visibilitychange', onHide);
+        card.removeEventListener('lostpointercapture', onCancel);
         document.removeEventListener('pointermove', onMove, true);
         document.removeEventListener('pointerup', onUp, true);
         document.removeEventListener('pointercancel', onCancel, true);
         document.removeEventListener('keydown', onKey, true);
         document.removeEventListener('contextmenu', stop, true);
-        document.removeEventListener('touchmove', stopScroll, true);
         gesture = null;
         if (g.active) {
           clear();
@@ -484,9 +504,9 @@
           var swallow = function (e2) { e2.stopPropagation(); e2.preventDefault(); };
           document.addEventListener('click', swallow, true);          // 拖完松手会补一个 click：吞掉
           setTimeout(function () { document.removeEventListener('click', swallow, true); }, 0);
-          setBusy(root, false);
-          if (drop && g.to !== from) { P.onMove(r, g.to); }
         }
+        setBusy(root, false);                               // 没到时间就松手 / 取消也要放开
+        if (g.active && drop && g.to !== from) { P.onMove(r, g.to); }
       }
       function onMove(e2) {
         if (!g.active) {
@@ -498,19 +518,20 @@
       }
       function onUp() { finish(true); }
       function onCancel() { finish(false); }
+      function onHide() { if (document.visibilityState === 'hidden') { finish(false); } }
       function onKey(e2) { if (e2.key === 'Escape') { e2.preventDefault(); finish(false); } }
       function stop(e2) { e2.preventDefault(); }                      // 触摸长按会弹系统菜单
-      function stopScroll(e2) { if (g.active && e2.cancelable) { e2.preventDefault(); } }
       document.addEventListener('pointermove', onMove, true);
       document.addEventListener('pointerup', onUp, true);
       document.addEventListener('pointercancel', onCancel, true);
       document.addEventListener('keydown', onKey, true);
       document.addEventListener('contextmenu', stop, true);
-      document.addEventListener('touchmove', stopScroll, { capture: true, passive: false });
+      window.addEventListener('blur', onCancel);              // 切走窗口 / 在窗口外松手：pointerup 可能永远不来
+      document.addEventListener('visibilitychange', onHide);
+      card.addEventListener('lostpointercapture', onCancel);
       g.timer = setTimeout(function () {
         if (from < 0) { finish(false); return; }
         g.active = true;
-        setBusy(root, true);
         var rects = visible.map(function (m) { return m.node.getBoundingClientRect(); });
         g.mids = rects.map(function (b) { return b.top + b.height / 2; });
         g.mid = g.mids[from];
@@ -555,6 +576,9 @@
     // 折叠区开着就还开着
     var a = document.activeElement;
     var refocus = a && root.contains(a) && a.classList.contains('hcl-more');
+    // ⋯ 按钮重画后还给同一张卡的 ⋯（键盘上移 / 置顶 / 轮询都不丢焦点）；卡没了（藏起来）就交给 focusFallback
+    var kebabCard = a && root.contains(a) && a.classList.contains('hcl-kebab') && a.closest('[data-run-id]');
+    var kebabId = kebabCard ? kebabCard.getAttribute('data-run-id') : null;
     // 开合记在 root 上（同一个 root 跨重画）：折叠区这次没了、下次又出现时照旧开着
     if (menu && root.contains(menu.owner)) { closeMenu(false, true); }
     var oldHidden = root.querySelector('details.hcl-hidden');
@@ -736,9 +760,11 @@
     // 在跑且在等你 / 在干活的（档 0–1）不许被折叠：多于 top 个就全展开，折叠从它们之后才开始
     if (cards) { infos.forEach(function (k, i) { if (k.tier <= 1 && i + 1 > top) { top = i + 1; } }); }
     var fold = null, foldList = null;
+    var reveal = P && root.hclReveal;
+    root.hclReveal = null;
     if (agents.length > top) {
       fold = el('details', 'hcl-fold');
-      fold.open = !!root.hclFoldOpen;
+      fold.open = !!root.hclFoldOpen || !!reveal && infos.some(function (k, i) { return i >= top && k.r.runId === reveal; });   // 手动挪进折叠区的卡别消失：展开
       fold.appendChild(el('summary', 'hcl-fold-toggle', '还有 ' + (agents.length - top) + ' 个'));
       foldList = el('div', 'hcl-deck');
       fold.appendChild(foldList);
@@ -824,6 +850,11 @@
     }
     root.appendChild(rows);
     if (leadFocus) { leadFocus.focus(); }
+    if (kebabId !== null) {
+      var kb = Array.prototype.filter.call(root.querySelectorAll('[data-run-id]'), function (n) { return n.getAttribute('data-run-id') === kebabId; })[0];
+      var kebabNow = kb && kb.querySelector('.hcl-kebab');
+      if (kebabNow) { kebabNow.focus(); } else if (opts.focusFallback) { opts.focusFallback.focus(); }
+    }
     if (fold) {
       root.appendChild(fold);
       if (foldFocus) { fold.firstChild.focus(); }
@@ -831,15 +862,18 @@
       opts.focusFallback.focus();                      // 「还有 N 个」没了（≤ top 张）：焦点别掉到 body 上
     }
 
-    if (P && (data.hiddenAgents || []).length) {
+    var stale = P ? data.stalePinned || [] : [];
+    if (P && ((data.hiddenAgents || []).length || stale.length)) {
       // 已隐藏的代理（v2.22）：默认收着，展开后逐个「恢复显示」。SHOW_HIDDEN_WAITING 关掉就没有「N 个在等你」那半句
       var hd = el('details', 'hcl-hidden'), waitingN = SHOW_HIDDEN_WAITING ? data.hiddenWaiting || 0 : 0;
       hd.open = !!root.hclHiddenOpen;
-      var hsum = el('summary', 'hcl-hidden-toggle', '已隐藏 (' + data.hiddenAgents.length + ')' +
-        (waitingN ? ' · ' + waitingN + ' 个在等你' : ''));
+      var nHidden = (data.hiddenAgents || []).length;
+      var hsum = el('summary', 'hcl-hidden-toggle', (nHidden || !stale.length ? '已隐藏 (' + nHidden + ')' : '') +
+        (waitingN ? ' · ' + waitingN + ' 个在等你' : '') +
+        (stale.length ? (nHidden ? ' · ' : '') + '置顶但没在跑 (' + stale.length + ')' : ''));
       hd.appendChild(hsum);
       var hlist = el('ul', 'hcl-hidden-list');
-      data.hiddenAgents.forEach(function (h) {
+      (data.hiddenAgents || []).forEach(function (h) {
         var li = el('li', 'hcl-hidden-item');
         li.appendChild(el('span', 'hcl-hidden-name', h.label || h.agent));
         if (h.label) { li.appendChild(el('span', 'hcl-sub', h.agent)); }
@@ -849,6 +883,18 @@
         back.setAttribute('aria-label', '恢复显示：' + (h.label || h.agent));
         back.addEventListener('click', function () { P.onRestore(h); });
         li.appendChild(back);
+        hlist.appendChild(li);
+      });
+      stale.forEach(function (p) {          // 改名后留下的旧置顶：没有在跑的对得上，列出来让人移除
+        var li = el('li', 'hcl-hidden-item is-stale-pin');
+        li.appendChild(el('span', 'hcl-hidden-name', p.label || p.agent));
+        if (p.label) { li.appendChild(el('span', 'hcl-sub', p.agent)); }
+        li.appendChild(el('span', 'hcl-hidden-state', '置顶但没在跑'));
+        var rm = el('button', 'hcl-hidden-restore hcl-unpin-stale', '移除置顶');
+        rm.type = 'button';
+        rm.setAttribute('aria-label', '移除置顶：' + (p.label || p.agent));
+        rm.addEventListener('click', function () { P.onPin({ agent: p.agent, label: p.label, unverified: false }, false); });
+        li.appendChild(rm);
         hlist.appendChild(li);
       });
       hd.appendChild(hlist);

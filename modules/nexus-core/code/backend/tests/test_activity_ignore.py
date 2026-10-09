@@ -333,7 +333,7 @@ def test_unignore_racing_an_ingest_does_not_resurrect_or_store(client, monkeypat
 
 
 def test_purge_failure_reports_error_keeps_rule_and_retries_on_next_write(client, monkeypatch):
-    from app.modules.activity import ignore_repo  # noqa: PLC0415
+    from app.modules.activity import ignore, ignore_repo  # noqa: PLC0415
 
     _beat(client, "chrome", PRIVATE_TITLE)
     now = datetime.now(timezone.utc)
@@ -341,6 +341,7 @@ def test_purge_failure_reports_error_keeps_rule_and_retries_on_next_write(client
                                           "title": PRIVATE_TITLE, "at": now, "expiresAt": now + timedelta(hours=1)})
     real = ignore_repo.drop_windows
     monkeypatch.setattr(ignore_repo, "drop_windows", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(ignore, "PURGE_BACKOFF", timedelta(0))  # 退避另有测试；这里要的是「下一次写入补清」
     _ignore(client, "chrome", expect=503)  # 规则已保存、清理没做完（会自动重试）
     monkeypatch.setattr(ignore_repo, "all_rules", ignore_repo.all_rules)
     assert [r["purged"] for r in ignore_repo.all_rules("u_local")] == [False]  # 规则留着：以后的写入照样被过滤

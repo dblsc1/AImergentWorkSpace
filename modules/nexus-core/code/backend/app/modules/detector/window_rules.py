@@ -56,30 +56,70 @@ def remove_auto(rule_id: str) -> bool:
     return False
 
 
-def _literal(pattern: str) -> str:
-    """服务端代写的窗口规则（``^转义后的原文$``，标题可能带 ``_DECOR`` 前缀）→ 它当初由什么原文转义而来。"""
-    core = pattern[len("^(?:[^\\pL\\pN]|\\(\\d+\\)|\\[\\d+\\])*"):] if pattern.startswith("^(?:") else pattern.removeprefix("^")
-    return re.sub(r"\\(.)", r"\1", core.removesuffix("$"))
+_SPECIAL = re.compile(r"[.*+?^${}()|\[\]\\]")  # 同 activity/auto.py 的 _escape
+_DECOR = "^(?:[^\\pL\\pN]|\\(\\d+\\)|\\[\\d+\\])*"  # 同 activity/auto.py 的 _DECOR
+_MAX_PATTERN = 400  #: 比这长的不是服务端生成的（生成的 ≤ 200）：不碰
+
+
+def _esc(text: str) -> str:
+    return _SPECIAL.sub(lambda m: "\\" + m.group(), text)
+
+
+def _unesc(core: str) -> str | None:
+    """``^转义后的原文$`` 的中间部分 → 原文；不是「原文转义」的形状（含没转义的正则元字符）→ None。只做字符串比较，不编译、不执行任何正则。"""
+    lit = re.sub(r"\\(.)", r"\1", core)
+    return lit if _esc(lit) == core else None
+
+
+def _literal(pattern: object) -> str | None:
+    """服务端代写的窗口规则字段（``^转义后的原文$``，标题可能带 ``_DECOR`` 前缀）→ 当初的原文。
+    不是这个形状（别的正则、None、非字符串、过长）→ None（调用方当作「不能证明出自被忽略的窗口」，留着）。"""
+    if not isinstance(pattern, str) or len(pattern) > _MAX_PATTERN or not pattern.endswith("$"):
+        return None
+    if pattern.startswith(_DECOR):
+        return _unesc(pattern[len(_DECOR):-1])
+    return _unesc(pattern[1:-1]) if pattern.startswith("^") else None
+
+
+def _derived(rule: object, hit) -> bool:
+    """这条规则是不是 AI 代写的、且能证明出自 ``hit`` 命中的窗口。任何意外的形状 → False，不抛。"""
+    try:
+        if not isinstance(rule, dict) or rule.get("author") != "assistant":
+            return False
+        app = _literal(rule.get("app"))
+        if app is None:
+            return False
+        title = "" if rule.get("title") is None else _literal(rule.get("title"))  # 只有程序名的规则：窗口标题为空
+        return title is not None and bool(hit(app, title))
+    except Exception:  # noqa: BLE001  清理路径不许因为一份怪文档而抛
+        return False
 
 
 def drop_ignored(hit, text_hit) -> int:
-    """「忽略并记住」建规则 / 补清时：AI 代写的（``author: "assistant"``）窗口规则，按它当初转义的原文（程序、标题）过 ``hit(app, title)``，
-    命中的删掉；待批准的 AI 草稿里有命中的规则、或 ``summary`` / 规则的 ``note`` 里带着被忽略的文字（``text_hit(text)``），整份草稿作废。
-    人写的规则不动（那是人自己的配置）。返回删掉的规则数 + 作废的草稿数。"""
+    """「忽略并记住」建规则 / 补清时：AI 代写的（``author: "assistant"``）窗口规则，若是服务端生成的 ``^转义原文$`` 形状、
+    且原文（程序、标题）过 ``hit(app, title)`` 命中，删掉；待批准的 AI 草稿里有这样的规则、或 ``summary`` / 规则 ``note`` 带着被忽略的文字
+    （``text_hit(text)``），整份草稿作废。别的形状（人写的、没有 ``author`` 的老规则、任意正则、缺字段）一概不动、也不抛。
+    返回删掉的规则数 + 作废的草稿数。"""
     user, n = current_tenant(), 0
-    lit = lambda r: hit(_literal(r["app"]), _literal(r["title"]))  # noqa: E731
     for _ in range(_TRIES):
         doc = repo.get_rules(user) or {}
-        old = doc.get("rules", [])
-        rules = [r for r in old if not (r.get("author") == "assistant" and lit(r))]
+        old = doc.get("rules") or []
+        rules = [r for r in old if not _derived(r, hit)]
         if len(rules) == len(old) or repo.replace_rules(user, doc["version"], rules, _now()) is not None:
             n += len(old) - len(rules)
             break
     else:
         raise RuntimeError("AI 规则清理连续撞版本")
     d = (repo.get_rules(user) or {}).get("draft")
-    if d and d.get("author") == "assistant" and (
-            text_hit(d.get("summary", "")) or any(lit(r) or text_hit(r.get("note", "")) for r in d["rules"])):
-        repo.drop_draft(user, d["id"])
-        n += 1
+    if isinstance(d, dict) and d.get("author") == "assistant":
+        try:
+            def says(text: object) -> bool:
+                return isinstance(text, str) and bool(text_hit(text))
+
+            drafted = [r for r in (d.get("rules") or [])[:MAX_RULES] if isinstance(r, dict)]
+            if says(d.get("summary")) or any(_derived({**r, "author": "assistant"}, hit) or says(r.get("note")) for r in drafted):
+                repo.drop_draft(user, d["id"])
+                n += 1
+        except Exception:  # noqa: BLE001
+            pass
     return n

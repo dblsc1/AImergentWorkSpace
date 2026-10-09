@@ -251,14 +251,13 @@ def last_uploads(user: str) -> dict:
 
 def list_suggestions(status: str, limit: int, offset: int) -> dict:
     user = current_tenant()
-    ignore.ensure_purged(user)  # v2.22：忽略规则的清理没做完就先补清，补不成这次读失败（不交出残留的标题）
     _purge(user, _now())
     limit = _DEFAULT_LIMIT if limit <= 0 else min(limit, _MAX_LIMIT)  # 同档案读端口径
     total, docs = repo.page(user, status, limit, max(offset, 0))
     pids = [d["suggestion"]["newTask"]["proposalId"] for d in docs if d["suggestion"].get("newTask")]
     st = proposals.statuses(user, pids) if pids else {}
     open_ids = {k for k, v in st.items() if v in ("pending", "accepted")}
-    return {"total": total, "items": [_item(d, open_ids) for d in docs]}
+    return {"total": total, "items": ignore.visible(user, [_item(d, open_ids) for d in docs])}
 
 
 def _get(user: str, sug_id: str) -> dict:
@@ -494,7 +493,7 @@ def auto_state(user: str, timer_running: bool, now: datetime | None = None) -> d
     from . import auto, auto_ai, focus  # noqa: PLC0415 —— 它们也 import 本文件（confirm），模块级会成环
 
     now = now or auto._now()  # noqa: SLF001
-    docs = repo.presence_list(user)
+    docs = ignore.presence_docs(user)
     out = auto.state(user, now, timer_running, auto_ai.Asks(user, now), docs)
     out["focus"] = focus.state(user, now, docs, out["auto"])
     for part in out.values():

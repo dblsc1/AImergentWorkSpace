@@ -16,15 +16,15 @@
 规则存在检测程序之外、服务端说了算；检测程序不需要知道它。写（建 / 删）只许人：带 Bearer 一律 403。
 
 隐私：**被忽略窗口的标题不再保存**；规则本身保存的是人填的「匹配文字」（``titleContains``），只对登录的人可见（非人的调用方
-只拿到 ``hasTitleFilter``）。清理没做完的规则（``purged: false``）在每次写入、以及读 ``views/current`` / ``views/lanes`` / 建议列表 / 规则列表时重试，
-重试不成就让这次读失败（503），不把残留的标题交出去。
+只拿到 ``hasTitleFilter``）。清理没做完的规则（``purged: false``）在每次写入、以及读 ``views/current`` / ``views/lanes`` / 建议列表 / 规则列表时按退避重试，
+读路径在副本里把它们命中的窗口抹掉；清理失败不拖垮别的写入（见 ``guarded``）。
 """
 
 from __future__ import annotations
 
 import functools
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from ...tenant import current as current_tenant
 from ...textfold import fold
@@ -33,10 +33,17 @@ from . import ignore_repo, repo
 
 MAX_IGNORES = 200  #: 每租户至多这么多条规则
 MAX_APP, MAX_TITLE = 128, 200
+PURGE_BACKOFF = timedelta(minutes=1)  #: 清理失败后，同一条规则至多这么久才自动再试一次（写入路径上；不是每次写入都试）
+PURGE_GIVE_UP = 5  #: 失败这么多次就放弃自动重试，规则标 ``purgeFailed``（人在规则列表里看得到；再建一次同一条规则会重清）
+SCAN_BUDGET = 50_000  #: 一次清理至多扫这么多条待确认建议；超了就留给下一次重试（分批），不在一个请求里无限干活
 
 
 class PurgeIncomplete(RuntimeError):
-    """规则已经存下，但清理没做完 → 503（会自动重试）。"""
+    """规则已经存下，但清理没做完 → 503（建规则的接口；会自动重试）。"""
+
+
+class _OverBudget(Exception):
+    """本次扫描超出预算：不算失败，下次接着清。"""
 
 
 def _now() -> datetime:
@@ -56,7 +63,8 @@ def _out(d: dict, human: bool = True) -> dict:
     title = {"titleContains": d["titleContains"]} if human else {"hasTitleFilter": bool(d["titleContains"])}
     return {"id": d["id"], "app": d["app"], **title,
             "createdAt": d["createdAt"].isoformat(), "hits": d["hits"], "seconds": d["seconds"],
-            "lastHitAt": d["lastHitAt"].isoformat() if d.get("lastHitAt") else None}
+            "lastHitAt": d["lastHitAt"].isoformat() if d.get("lastHitAt") else None,
+            "purgeFailed": bool(d.get("purgeFailed"))}   # 清理多次失败、放弃自动重试：旧数据可能还留着，人要知道
 
 
 def rules(user: str) -> list[dict]:
@@ -64,7 +72,7 @@ def rules(user: str) -> list[dict]:
 
 
 def matches(rule: dict, app: str, title: str) -> bool:
-    return fold(rule["app"]) == fold(app) and (not rule["titleContains"] or fold(rule["titleContains"]) in fold(title))
+    return fold(rule.get("app")) == fold(app) and (not rule.get("titleContains") or fold(rule["titleContains"]) in fold(title))
 
 
 def find(rules_: list[dict], app: str, title: str) -> dict | None:
@@ -72,7 +80,7 @@ def find(rules_: list[dict], app: str, title: str) -> dict | None:
 
 
 def listing(human: bool = True) -> dict:
-    ensure_purged()
+    retry_pending()
     items = [_out(d, human) for d in rules(current_tenant())]
     return {"total": len(items), "items": items}
 
@@ -94,7 +102,8 @@ def add(app: str, title_contains: str | None) -> dict:
         raise UnprocessableError(f"忽略规则最多 {MAX_IGNORES} 条")
     try:
         removed = purge(user, stored, count=True)
-    except Exception as exc:  # 规则已经存下（此后的写入者在写入时都会看到它）、没标 purged，下一次写入 / 读会补清
+    except Exception as exc:  # 规则已经存下（此后的写入者在写入时都会看到它）、没标 purged，之后按退避补清；读路径先遮住
+        ignore_repo.note_purge_attempt(user, stored["id"], _now(), not isinstance(exc, _OverBudget), PURGE_GIVE_UP)
         raise PurgeIncomplete("规则已保存，清理未完成，会自动重试") from exc
     return {**_out(next(r for r in rules(user) if r["id"] == doc["id"])), "created": created, "removed": removed}
 
@@ -108,7 +117,11 @@ def purge(user: str, rule: dict, count: bool = False) -> int:
     hit = lambda app, title: matches(rule, app or "", title or "")  # noqa: E731
     needle = fold(rule["titleContains"]) if rule["titleContains"] else None
     removed = seconds = 0
+    scanned = 0
     for batch in repo.pending_windows(user):
+        scanned += len(batch)
+        if scanned > SCAN_BUDGET:
+            raise _OverBudget
         gone = [p for p in batch if matches(rule, p["app"], p["title"])]
         if gone:
             removed += repo.delete_pending(user, [p["id"] for p in gone])
@@ -123,31 +136,85 @@ def purge(user: str, rule: dict, count: bool = False) -> int:
     return removed
 
 
-def ensure_purged(user: str | None = None) -> None:
-    """读路径的闸：有规则清理没做完就先补清；补不成 → 503，不把残留交出去。"""
+def _due(rule: dict, now: datetime) -> bool:
+    """没清完的规则现在该不该再试：放弃了的不试；刚试过不到 ``PURGE_BACKOFF`` 的不试。"""
+    if rule.get("purged", True) or rule.get("purgeFailed"):
+        return False
+    last = rule.get("purgeLastTry")
+    return last is None or now - last.replace(tzinfo=last.tzinfo or timezone.utc) >= PURGE_BACKOFF
+
+
+def _attempt(user: str, rule: dict) -> None:
+    """清一次；任何错都不往外抛（调用方是写入 / 读路径，别的窗口的数据不能因此 5xx）。失败记下时刻与次数。"""
+    try:
+        purge(user, rule)
+    except Exception as exc:  # noqa: BLE001
+        try:
+            ignore_repo.note_purge_attempt(user, rule["id"], _now(), not isinstance(exc, _OverBudget), PURGE_GIVE_UP)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def retry_pending(user: str | None = None) -> None:
+    """读路径 / 写路径：有规则清理没做完就按退避补清（不抛）。"""
     user = user or current_tenant()
+    now = _now()
     for r in rules(user):
-        if not r.get("purged", True):
-            try:
-                purge(user, r)
-            except Exception as exc:
-                raise PurgeIncomplete("忽略规则的清理未完成，稍后重试") from exc
+        if _due(r, now):
+            _attempt(user, r)
+
+
+def _unpurged(user: str) -> list[dict]:
+    return [r for r in rules(user) if not r.get("purged", True)]
+
+
+def _mask_doc(doc: dict, hit) -> dict:
+    """在场文档里命中的段 / 当前窗口抹成「没有窗口」（读路径用，不写库）。"""
+    spans = [{**{k: v for k, v in sp.items() if k not in ("guess", "runId")}, "app": "", "title": ""}
+             if hit(sp.get("app"), sp.get("title")) else sp for sp in doc.get("spans") or []]
+    top = hit(doc.get("app"), doc.get("title"))
+    return {**doc, "spans": spans, **({"app": "", "title": ""} if top else {})}
+
+
+def presence_docs(user: str) -> list[dict]:
+    """读路径取在场文档的唯一入口：有规则清理没做完（含放弃了的）时，命中的窗口在读出来的副本里先抹掉——
+    清理失败期间读也不会交出被忽略窗口的标题。先按退避补清一次（不抛）。"""
+    retry_pending(user)
+    docs = repo.presence_list(user)
+    pend = _unpurged(user)
+    if not pend:
+        return docs
+    hit = lambda app, title: find(pend, app or "", title or "") is not None  # noqa: E731
+    return [_mask_doc(d, hit) for d in docs]
+
+
+def visible(user: str, items: list[dict]) -> list[dict]:
+    """建议列表读路径：清理没做完的规则命中的条目先不给（不写库）。"""
+    retry_pending(user)
+    pend = _unpurged(user)
+    return [i for i in items if find(pend, i.get("app") or "", i.get("title") or "") is None] if pend else items
 
 
 def guarded(fn):
     """写入口的包装：开始时记下有哪些规则（id + 创建时刻：删了又重建的同一条不算「已知」），写完再看——期间新出现的规则
     （读了旧规则的写入者，写在建规则的清理**之后**）就把它自己写下的再清一遍。规则先存、再清；写入者要么在写入时就看到规则，
-    要么被这里补清。清理是幂等的。"""
+    要么被这里补清。清理是幂等的。
+
+    失败的分工：**查规则出错 = 这次写入整个失败**（开头那一读，瞬时错误，什么都没存）；**清理残留出错 ≠ 写入失败**——别的窗口的上传 / 心跳照常，
+    被忽略窗口的入口过滤（``drop`` / ``mask_beat``）不依赖清理，所以它的数据照样存不进去；失败记在规则上，按 ``PURGE_BACKOFF`` 退避重试、
+    ``PURGE_GIVE_UP`` 次后标 ``purgeFailed``，读路径遮住残留。"""
     @functools.wraps(fn)
     def run(*args, **kwargs):
         user = current_tenant()
-        before = {(r["id"], r["createdAt"]) for r in rules(user) if r.get("purged", True)}  # 没清完的规则也要补清
+        before = {(r["id"], r["createdAt"]) for r in rules(user) if r.get("purged", True)}
         try:
             return fn(*args, **kwargs)
         finally:
+            now = _now()
             for r in rules(user):
-                if (r["id"], r["createdAt"]) not in before:
-                    purge(user, r)
+                if (r["id"], r["createdAt"]) not in before and (r.get("purgeLastTry") is None or _due(r, now)) \
+                        and not r.get("purgeFailed"):
+                    _attempt(user, r)
     return run
 
 

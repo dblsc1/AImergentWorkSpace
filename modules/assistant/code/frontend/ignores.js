@@ -69,7 +69,8 @@
       what.textContent = describe(rule);
       var meta = document.createElement("span");
       meta.className = "ign-meta mono";
-      meta.textContent = "自 " + since(rule.createdAt) + " 起 · 已忽略 " + rule.hits + " 条 · " + minutes(rule.seconds);
+      meta.textContent = "自 " + since(rule.createdAt) + " 起 · 已忽略 " + rule.hits + " 条 · " + minutes(rule.seconds) +
+        (rule.purgeFailed ? " · 旧记录清理多次失败，可能还留着；再点一次「忽略并记住」会重清" : "");
       var undo = document.createElement("button");
       undo.type = "button";
       undo.className = "btn btn-ghost ign-undo";

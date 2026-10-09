@@ -120,7 +120,7 @@ def state(user: str, now: datetime, timer_running: bool, asks: Any, presence_doc
     out: dict = {"auto": None, "needsChoice": None, "aiThinking": None}
     if timer_running:
         return out
-    docs = [d for d in (repo.presence_list(user) if presence_docs is None else presence_docs) if now - d["lastAt"] <= FRESH]
+    docs = [d for d in (ignore.presence_docs(user) if presence_docs is None else presence_docs) if now - d["lastAt"] <= FRESH]
     if not docs:
         return out
     doc = max(docs, key=lambda d: d["lastAt"])  # 只看最近报心跳的那台设备
@@ -190,7 +190,7 @@ def heartbeat(device_id: str, app: str, title: str, afk: bool, guess: dict | Non
 def _find(user: str, key: str) -> tuple[dict, str]:
     """在场记录（最近 2 小时）里这个窗口最近的一段与报它的设备；没有 → 404。写规则用的程序名 / 标题从这里取，不信请求。"""
     best = None
-    for doc in repo.presence_list(user):
+    for doc in ignore.presence_docs(user):
         for span in reversed(doc.get("spans") or []):
             if not span["afk"] and window_key(span["app"], span["title"]) == key:
                 if best is None or span["to"] > best[0]["to"]:
