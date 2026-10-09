@@ -68,6 +68,7 @@
 
 from __future__ import annotations
 
+import copy
 import getpass
 import hashlib
 import hmac
@@ -235,25 +236,48 @@ def load_token_state() -> tuple[str, dict, dict] | None:
     return full[1:] if full else None
 
 
+def _merge_epochs(newer: dict, older: dict | None) -> dict:
+    """纪元只增不减：每个身份取两边较大的（手改 / 回滚过的文件不能把纪元拉低、把吊销过的令牌放回来）。"""
+    return {k: max(newer.get(k, 0), (older or {}).get(k, 0)) for k in {*newer, *(older or {})}}
+
+
 def token_state(change=None):
     """持锁读—改—写：文件不在就新建一代；change(epochs, tokens) 就地改，返回值原样带出。
-    每次改都顺手清掉到期的条目。原子替换、0600。发令牌也走这里 —— 保证签进令牌的 gen 已经落盘。
-    返回 (gen, change 的返回值)。"""
-    with _locked(TOKENS_FILE):
-        state = _load_token_file()
+    每次改都顺手清掉到期的条目。写 tmp + fsync + 原子替换、0600，``rev`` +1。发令牌也走这里 —— 保证签进令牌的 gen 已经落盘。
+    返回 (gen, change 的返回值)。
+
+    本进程里写的时候同时持 EPOCHS 的锁并看内存里的最新视图：文件读不出 / 缺失 / ``rev`` 比内存里的小（旧备份被拷回来）
+    就以内存为底再写一遍（= 把较新的状态重新落盘），``rev`` 取两边较大的再 +1；写完把这一份直接换进内存视图，
+    所以并发的后台刷新读到的旧文件盖不掉它。命令行进程没有内存视图，以文件为准。"""
+    with _locked(TOKENS_FILE), EPOCHS._lock:
+        try:
+            state = _load_token_file()
+        except Exception:  # noqa: BLE001 — 文件坏了：有内存里的好视图就以它为底，没有就照常抛给调用方
+            if EPOCHS._good is None:
+                raise
+            state = None
+        mem = EPOCHS._good
+        if mem is not None and (state is None or state[0] < mem[0]):
+            state = copy.deepcopy(mem)  # 回滚 / 缺失 / 坏了：较新的是内存里的
         rev, gen, epochs, tokens = state if state else (0, secrets.token_hex(16), {}, {})
+        epochs = _merge_epochs(epochs, mem[2] if mem else None)
+        rev = max(rev, mem[0] if mem else 0)
         out = None
         if change is not None:
             now = int(time.time())
             for jti in [j for j, t in tokens.items() if t["expiresAt"] <= now]:
                 del tokens[jti]
             out = change(epochs, tokens)
-        if state is None or change is not None:
-            tmp = f"{TOKENS_FILE}.{os.getpid()}.{threading.get_ident()}.tmp"
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump({"rev": rev + 1, "gen": gen, "epochs": epochs, "tokens": tokens}, f, ensure_ascii=False, indent=2)
-            os.replace(tmp, TOKENS_FILE)
+        raw = json.dumps({"rev": rev + 1, "gen": gen, "epochs": epochs, "tokens": tokens},
+                         ensure_ascii=False, indent=2).encode("utf-8")
+        tmp = f"{TOKENS_FILE}.{os.getpid()}.{threading.get_ident()}.tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(raw)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, TOKENS_FILE)
+        EPOCHS._adopt_locked(raw)  # 本进程的视图直接是刚写的这份：之后读到更早的文件也盖不掉
         return gen, out
 
 
@@ -291,55 +315,71 @@ def list_tokens(tokens: dict, tenant: str | None) -> list[dict]:
 
 
 class Epochs:
-    """verify 用的令牌状态内存视图，与 Accounts 同一个套路：后台每 RELOAD_EVERY 秒重读，请求里不碰文件
-    （契约不变量 2）。吊销最多晚 RELOAD_EVERY 秒生效（文档写明的延迟，不是绕过）。
+    """verify 用的令牌状态内存视图：``(rev, 视图)``。后台每 RELOAD_EVERY 秒重读，请求里不碰文件（契约不变量 2）。
+    命令行的吊销最多晚 RELOAD_EVERY 秒生效——写明的延迟，不是绕过。
 
-    **失败方向是拒绝**（和账号视图相反：账号沿用旧视图是更严的一边，令牌的旧视图里还有已被别的进程吊销的令牌）：
-    state 为 None 时所有设备令牌 401（解包 None 抛错 → 收成 None）。文件内容变了却读不出 / 解析不了 / 版本倒退、
-    或文件没了 → None；文件内容没变才沿用缓存的视图。文件被换成新的一代 → 视图跟着换（旧令牌的签名带着旧一代，对不上）。
-    不看 mtime / inode：每轮读整份（≤ MAX_TOKENS_TOTAL 条）比字节，粗粒度时间戳、同大小重写、inode 复用都漏不掉。
-    ``rev`` 每次写 +1；同一代里 rev 比见过的最大值小 = 回滚到旧内容（比如备份被拷回来），当作读不出。
+    威胁模型（见契约）：状态文件在认证容器私有的数据目录里，能写它的人本来就能发令牌，恶意写入者不在范围内；
+    范围内的是意外漂移——写了一半、损坏、被删、**运维拷回一份旧备份**、两个进程（网关 / 命令行）同时写，
+    以及网页吊销与周期刷新的进程内竞争。
+
+    规则（失败方向是拒绝）：
+    - 文件内容没变 → 什么都不做。变了：读不出 / 解析不了 / 文件没了 → ``state = None``（设备令牌全部 401），直到读到好的；
+    - 读到好的：``file.rev >= 内存 rev`` 才采用。``file.rev < 内存 rev`` = 回滚（旧备份被拷回来、或刷新读到的是吊销之前的文件）
+      → 不采用，继续用内存里最新的好视图，写一行日志；下一次本进程的写会把较新的状态重新落盘。守卫**只看 rev**
+      （不看 inode / gen：删了重建、换了一个文件，rev 倒退照样是回滚）。没有 ``rev`` 的老文件 = 0；
+    - 每个身份的纪元只增不减（采用时与内存里的取较大的）；
+    - 进程重启丢掉内存里的 rev：之后文件就是事实（部署须知：启动时放进来的旧文件由运维负责）。
     """
 
-    _UNSET = object()
-
     def __init__(self) -> None:
-        self.state: tuple[str, dict, dict] | None = None
-        self._raw: object = self._UNSET  # 上次处理过的文件字节（None = 文件不在）
-        self._seen: tuple[str, int] | None = None  # 见过的 (gen, 最大 rev)
-        # 后台线程与发令牌 / 吊销的请求线程都会调 refresh：读和替换在同一把锁里，所以不会有人拿读到的旧内容
-        # 盖掉别人刚换上的新视图。verify 只读 self.state（一次引用赋值），不拿这把锁。
+        self.state: tuple[str, dict, dict] | None = None  # verify 用的；None = 全部拒绝
+        self._good: tuple[int, str, dict, dict] | None = None  # 内存里最新的好视图 (rev, gen, epochs, tokens)
+        self._raw: object = _UNSET  # 上次处理过的文件字节（None = 文件不在）
+        # 读和替换、以及 token_state 的整段写都在这把锁里；verify 只读 self.state（一次引用赋值），不拿它。
         self._lock = threading.Lock()
 
     def refresh(self) -> None:
         with self._lock:
-            self._refresh()
-
-    def _refresh(self) -> None:
-        raw: bytes | None = None
-        try:
-            if TOKENS_FILE:
-                try:
-                    with open(TOKENS_FILE, "rb") as f:
-                        raw = f.read()
-                except FileNotFoundError:
-                    raw = None
-            if raw is not None and raw == self._raw:
-                return  # 没变：沿用（上次读坏的字节没变 = state 仍是 None）
-            if raw is None:
-                self.state, self._raw = None, None  # 文件没了：这一代作废，不复活
+            raw: bytes | None = None
+            try:
+                if TOKENS_FILE:
+                    try:
+                        with open(TOKENS_FILE, "rb") as f:
+                            raw = f.read()
+                    except FileNotFoundError:
+                        raw = None
+            except Exception as e:  # noqa: BLE001 — 读不出（权限 / IO / 是目录）：当作坏了
+                self.state, self._raw = None, _UNSET
+                sys.stderr.write(f"[auth-stub] 令牌文件读不出，设备令牌暂时全部拒绝：{type(e).__name__}\n")
                 return
+            self._adopt_locked(raw)
+
+    def _adopt_locked(self, raw: bytes | None) -> None:
+        """处理一份读到的文件字节（持 self._lock）。单独拆出来，测试可以注入「刷新读到旧内容」的交错。"""
+        if raw is not None and raw == self._raw:
+            return
+        self._raw = raw
+        if raw is None:
+            self.state = None  # 文件没了：没有可信的文件；直到读到好的（或本进程下一次写）
+            return
+        try:
             rev, gen, epochs, tokens = _parse_token_state(raw)
-            if self._seen and self._seen[0] == gen and rev < self._seen[1]:
-                raise ValueError("tokens file rolled back")
-            self._seen = (gen, max(rev, self._seen[1]) if self._seen and self._seen[0] == gen else rev)
-            self.state, self._raw = (gen, epochs, tokens), raw
-        except Exception as e:
-            self.state = None  # 变了却用不了：不再信旧视图（别的进程可能刚吊销过东西）
-            self._raw = raw if raw is not None else self._UNSET
-            sys.stderr.write(f"[auth-stub] 令牌文件变了但读不出，设备令牌暂时全部拒绝：{type(e).__name__}\n")
+        except Exception as e:  # noqa: BLE001
+            self.state = None
+            sys.stderr.write(f"[auth-stub] 令牌文件变了但解析不了，设备令牌暂时全部拒绝：{type(e).__name__}\n")
+            return
+        if self._good is not None and rev < self._good[0]:
+            g = self._good
+            self.state = (g[1], g[2], g[3])  # 不采用旧内容
+            sys.stderr.write(f"[auth-stub] 令牌文件 rev={rev} 比内存里的 rev={g[0]} 旧（回滚？），不采用；"
+                             "下一次写会把较新的状态重新落盘\n")
+            return
+        epochs = _merge_epochs(epochs, self._good[2] if self._good else None)
+        self._good = (rev, gen, epochs, tokens)
+        self.state = (gen, epochs, tokens)
 
 
+_UNSET = object()
 EPOCHS = Epochs()
 
 
