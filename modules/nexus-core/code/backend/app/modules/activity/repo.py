@@ -251,8 +251,16 @@ def presence_get(user: str, device_id: str) -> dict | None:
     return _presence_col().find_one({"user": user, "deviceId": device_id}, {"_id": 0})
 
 
-def presence_put(doc: dict) -> None:
-    _presence_col().replace_one({"user": doc["user"], "deviceId": doc["deviceId"]}, dict(doc), upsert=True)
+def presence_cas(doc: dict, version: int | None) -> bool:
+    """版本号 ``v`` 没变才整份换掉（乐观锁，同 detector/repo 的写法）。False = 同一台设备的另一拍抢先写了，调用方重读再算。
+    ``version`` = 读到的那份的 ``v``（没读到文档 / v2.17.1 之前的文档没有这个键 = None，``{"v": None}`` 恰好匹配缺字段）；
+    文档在而版本对不上时 upsert 撞唯一键 = 冲突。"""
+    try:
+        _presence_col().replace_one({"user": doc["user"], "deviceId": doc["deviceId"], "v": version},
+                                    {**doc, "v": (version or 0) + 1}, upsert=True)
+    except DuplicateKeyError:
+        return False
+    return True
 
 
 def presence_purge(user: str, cutoff: datetime) -> None:

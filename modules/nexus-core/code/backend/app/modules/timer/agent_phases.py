@@ -99,32 +99,38 @@ def record_phase(
 
 
 def record_attend(user: str, run_id: str, intervals: list[tuple[datetime, datetime]], gap: timedelta) -> None:
-    """人在看这条运行的几段时间（按时间排）→ 记 / 延长 attend。哪条运行由 activity 认（v2.17：窗口标题与会话名相等，
-    ``activity/session_link.watched``），经 ``timer/service.py`` 调来（跨子边界只走 service）。
-    与上一条 attend 的 ``until`` 相距 ≤ ``gap`` 就延长，否则开新的一条；早于运行起点的部分钳到起点。"""
+    """人在看这条运行的几段时间 → 并进它的 attend。哪条运行由 activity 认（``activity/session_link``），
+    经 ``timer/service.py`` 调来（跨子边界只走 service）。
+
+    v2.17.1：**真的并集**——新的一段与已有的 attend 重叠、首尾相接（或相距 ≤ ``gap``）就并成一条，往前往后都伸；
+    否则按时间插进去，到得晚的、更早的一段也留着。``gap``：带停留的段是 0（中间看别处的时间不算），
+    老心跳是 45 秒（v2.4）。重记同一段不多算。早于运行起点的部分钳到起点；运行已结束 → 不记。
+    争用重试用尽 → 抛错（调用方的那一拍整个失败，不悄悄丢）。"""
     for _ in range(_CAS_RETRIES):
         run = repo.get_agent_run(user, run_id)
         if run is None or "closing" in run:
             return
         started = agents.ts(run["startedAt"])
-        interactions = list(run.get("interactions") or [])
-        changed = False
+        interactions = run.get("interactions") or []
+        old = sorted((agents.ts(i["at"]), agents.ts(i["until"])) for i in interactions if i["kind"] == "attend")
+        spans = old
         for start, end in intervals:
             start = max(start, started)
             if end < start:
                 continue
-            last = next((i for i in reversed(interactions) if i["kind"] == "attend"), None)
-            if last is not None and start - agents.ts(last["until"]) <= gap:
-                if end <= agents.ts(last["until"]):
-                    continue  # 已覆盖到这一刻
-                interactions[interactions.index(last)] = {**last, "until": end.isoformat()}
-            elif sum(i["kind"] == "attend" for i in interactions) >= MAX_ATTENDS:
-                break  # 超了不再记，不报错
-            else:
-                _insert_sorted(interactions, {"kind": "attend", "at": start.isoformat(), "until": end.isoformat()})
-            changed = True
-        if not changed or repo.cas_agent_run(user, run_id, run.get("v"), {"interactions": interactions}):
+            near = [s for s in spans if s[0] - end <= gap and start - s[1] <= gap]
+            if not near and len(spans) >= MAX_ATTENDS:
+                continue  # 超了不再记，不报错
+            merged = (min([start, *(s[0] for s in near)]), max([end, *(s[1] for s in near)]))
+            spans = sorted([*(s for s in spans if s not in near), merged])
+        if spans == old:
             return
+        attends = [{"kind": "attend", "at": a.isoformat(), "until": b.isoformat()} for a, b in spans]
+        merged_all = sorted([*(i for i in interactions if i["kind"] != "attend"), *attends],
+                            key=lambda i: agents.ts(i["at"]))  # 稳定排序：at 相同时 reply 在前
+        if repo.cas_agent_run(user, run_id, run.get("v"), {"interactions": merged_all}):
+            return
+    raise RuntimeError(f"attend 写入争用未决：{run_id!r}")
 
 
 def lane_runs(user: str, *, now: Callable[[], datetime]) -> tuple[datetime, list[dict]]:

@@ -86,13 +86,17 @@ class PresenceIn(BaseModel):
         if self.sentAt is None:
             raise ValueError("带 spans 必须带 sentAt")
         try:
-            end = self.sentAt - presence.SPAN_LOOKBACK
+            # v2.17.1：**每一段**都得在 [sentAt − SPAN_LOOKBACK, sentAt] 里（容 _SLACK），起点不倒退、
+            # 与上一段的重叠不超过 _SLACK——只看头尾的话，中间的段能一步步漂到界外
+            oldest, latest = self.sentAt - presence.SPAN_LOOKBACK - _SLACK, self.sentAt + _SLACK
+            prev_from = prev_end = oldest
             for span in self.spans:
-                if span.from_ < end - _SLACK:
-                    raise ValueError(f"spans 必须按时间排、互不重叠，且不早于 sentAt 之前 {presence.SPAN_LOOKBACK}")
                 end = span.from_ + timedelta(seconds=span.seconds)
-            if end > self.sentAt + _SLACK:
-                raise ValueError("spans 不能晚于 sentAt")
+                if span.from_ < prev_from or span.from_ < prev_end - _SLACK:
+                    raise ValueError(f"spans 必须按时间排、互不重叠，且不早于 sentAt 之前 {presence.SPAN_LOOKBACK}")
+                if end > latest:
+                    raise ValueError("spans 不能晚于 sentAt")
+                prev_from, prev_end = span.from_, end
         except OverflowError:  # 0001 / 9999 年附近的时刻加减就越界：同样是 422，不是 500
             raise ValueError("时刻越界") from None
         return self

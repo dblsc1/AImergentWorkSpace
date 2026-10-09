@@ -12,7 +12,8 @@
 - 清理只在心跳写入时做（本设备的旧段 + 该租户 2 小时没心跳的设备）；读端只过滤。
 - 每租户至多 20 台设备：``deviceId`` 是客户端自报的，不设上限就是一个无界写入口。
 
-ponytail: 同一设备的两次心跳并发时后写覆盖先写（最多丢一拍的段），同设备串行发，不为它加乐观锁。
+v2.17.1：同一设备的两次心跳并发时按版本号 ``v`` 条件写，不中就重读重算（不再后写覆盖先写）；
+先记 attend 再推进时间线，attend 写不进去这一拍整个失败。
 ponytail: 每拍整份文档读一遍、写一遍（至多 MAX_SPANS 段）；单人自托管够用，真嫌重再把段拆成独立集合。
 """
 
@@ -34,6 +35,8 @@ MAX_BEAT_SPANS = 32  #: 一拍至多带这么多段（检测程序自己限 12�
 #: 每设备的段数上限：每 3 秒切一次窗口约 100 分钟；切得更快的人，时间线短于 2 小时
 MAX_SPANS = 2000
 MAX_DEVICES = 20
+#: 同一设备并发的心跳只会是重发的那一两拍，重试这么多次还不中 = 有 bug，响亮失败
+_CAS_RETRIES = 20
 _MAX_APP, _MAX_TITLE = 128, 512  # 码点，超了截断（同活动建议）
 
 
@@ -52,57 +55,72 @@ def heartbeat(device_id: str, app: str, title: str, afk: bool, guess: dict | Non
     user, now = current_tenant(), _now()
     cutoff = now - WINDOW
     repo.presence_purge(user, cutoff)
-    doc = repo.presence_get(user, device_id)
     app, title = clip(app, title)
-    line: list[dict] = doc["spans"] if doc else []
     runs: list[dict] | None = None
-    attended: dict[str, list] = {}  # runId → [(from, to)]，按时间排
 
     def target(g: dict | None) -> tuple:
         return (g.get("taskId"), g.get("projectId")) if g else (None, None)
 
-    def add(start: datetime, end: datetime, app: str, title: str, afk: bool, guess: dict | None,
-            join: timedelta, exact: bool) -> None:
-        nonlocal runs
-        run_id = None
-        if not afk and title:  # 这个窗口是不是某个在跑的代理会话（v2.13 同一条相等规则；对上不止一个 → 不认）
-            if runs is None:
-                runs = timer_service.list_lane_runs(user)[1]  # 一拍只读一遍
-            run_id = session_link.watched(runs, app, title)
-        last = line[-1] if line else None
-        if (last and (last["app"], last["title"], last["afk"]) == (app, title, afk) and start - last["to"] <= join
-                and target(last.get("guess")) == target(guess) and last.get("runId") == run_id):
-            last["to"] = max(last["to"], end)
-            if guess:
-                last["guess"] = guess  # 把握取最新的
-        else:
-            line.append({"from": start, "to": end, "app": app, "title": title, "afk": afk,
-                         **({"guess": guess} if guess else {}), **({"runId": run_id} if run_id else {}),
-                         **({"exact": True} if exact else {})})
-        if run_id:
-            attended.setdefault(run_id, []).append((start, end))
+    for _ in range(_CAS_RETRIES):
+        doc = repo.presence_get(user, device_id)
+        line: list[dict] = doc["spans"] if doc else []
+        attended: dict[str, list] = {}  # runId → [(from, to)]，按时间排
 
-    if spans is not None:
-        shift = now - sent_at  # 设备的时钟 → 服务端的时钟
-        floor = line[-1]["to"] if line else cutoff  # 串行：新的段不早于时间线的末尾
-        for span in spans:
-            start = max(span["from"] + shift, floor)
-            end = min(span["from"] + timedelta(seconds=span["seconds"]) + shift, now)
-            if end > start:
-                add(start, end, *clip(span["app"], span["title"]), False, span.get("guess"), SPAN_JOIN, True)
-                floor = end
-    if spans is None or afk:  # 老检测程序的心跳；离开那一下
-        add(now, now, app, title, afk, None if afk else guess, MERGE_GAP, False)
-    line = [{**s, "from": max(s["from"], cutoff)} for s in line if s["to"] >= cutoff][-MAX_SPANS:]
-    repo.presence_put({"user": user, "deviceId": device_id, "lastAt": now,
-                       "app": app, "title": title, "afk": afk, "spans": line})
+        def add(start: datetime, end: datetime, app: str, title: str, afk: bool, guess: dict | None,
+                join: timedelta, exact: bool) -> None:
+            nonlocal runs
+            watching: list[str] = []
+            if not afk and title:  # 这个窗口是不是在跑的代理会话
+                if runs is None:
+                    runs = timer_service.list_lane_runs(user)[1]  # 一拍只读一遍
+                if exact:  # 带停留的段：v2.13 的相等规则，恰好一条才认
+                    watching = [hit] if (hit := session_link.watched(runs, app, title)) else []
+                else:  # 老心跳：v2.4 的包含规则，命中几条记几条（v2.17.1）
+                    watching = session_link.contained(runs, title)
+            run_id = watching[0] if len(watching) == 1 else None  # 时间线上只写分得清的那一条
+            last = line[-1] if line else None
+            if (last and (last["app"], last["title"], last["afk"]) == (app, title, afk) and start - last["to"] <= join
+                    and target(last.get("guess")) == target(guess) and last.get("runId") == run_id):
+                if exact:
+                    start = last["to"]  # 接着待：注意力从上一段的末尾接上，与时间线一致
+                last["to"] = max(last["to"], end)
+                if guess:
+                    last["guess"] = guess  # 把握取最新的
+            else:
+                line.append({"from": start, "to": end, "app": app, "title": title, "afk": afk,
+                             **({"guess": guess} if guess else {}), **({"runId": run_id} if run_id else {}),
+                             **({"exact": True} if exact else {})})
+            for hit in watching:
+                attended.setdefault(hit, []).append((start, end))
+
+        if spans is not None:
+            shift = now - sent_at  # 设备的时钟 → 服务端的时钟
+            floor = line[-1]["to"] if line else cutoff  # 串行：新的段不早于时间线的末尾
+            for span in spans:
+                start = max(span["from"] + shift, floor)
+                end = min(span["from"] + timedelta(seconds=span["seconds"]) + shift, now)
+                if end > start:
+                    add(start, end, *clip(span["app"], span["title"]), False, span.get("guess"), SPAN_JOIN, True)
+                    floor = end
+        if spans is None or afk:  # 老检测程序的心跳；离开那一下
+            add(now, now, app, title, afk, None if afk else guess, MERGE_GAP, False)
+        line = [{**s, "from": max(s["from"], cutoff)} for s in line if s["to"] >= cutoff][-MAX_SPANS:]
+
+        # 先记注意力、再推进时间线（v2.17.1）：attend 是并集、重记不多算；它没记上（抛错）这一拍就整个失败、
+        # 时间线没动，检测程序下一拍往回带的那一截不会被裁掉。带停留的段只并首尾相接的；老心跳仍按 45 秒延长。
+        # ponytail: 时间线写入争用后重算时，上一轮算出的 attend 已经记下；同一台设备的并发只会是同一拍的重发
+        # （内容相同），真有两拍内容不同再把 attend 挪到时间线写成之后并补偿。
+        for run_id, intervals in attended.items():
+            timer_service.record_attend(user, run_id, intervals,  # 连线 attend：跨子边界只走 service
+                                        MERGE_GAP if spans is None else timedelta(0))
+        if repo.presence_cas({"user": user, "deviceId": device_id, "lastAt": now,
+                              "app": app, "title": title, "afk": afk, "spans": line}, doc.get("v") if doc else None):
+            break
+    else:
+        raise RuntimeError(f"在场心跳写入争用未决：{device_id!r}")
     # 每次写入**之后**修剪到上限（自己不删）：并发的几次写入各修剪一次，最后一次一定看得见全部写入，
     # 所以请求都结束后上限必然成立（被挤掉的设备下一次心跳会把自己写回来并挤掉别人）。
     repo.presence_delete(user, repo.presence_evictable(user, device_id, MAX_DEVICES))
-
-    join = MERGE_GAP if spans is None else SPAN_JOIN
-    for run_id, intervals in attended.items():
-        timer_service.record_attend(user, run_id, intervals, join)  # 连线 attend：跨子边界只走 service
     return {"ok": True}
 
 
