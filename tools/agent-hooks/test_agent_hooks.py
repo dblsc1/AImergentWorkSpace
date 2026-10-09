@@ -676,22 +676,16 @@ class ClaudeHookTests(_IsolatedHomeMixin, unittest.TestCase):
         self.assertIsNone(claude_hook._read_run_id("nope"))
         claude_hook._delete_run_id("nope")  # 删一个不存在的也不该炸
 
-    # ── P3 #B：文件不存在 ≠ 文件读不出可用内容——后者是垃圾，读的时候顺手清掉 ──
-    def test_unparseable_state_file_is_deleted_not_left_as_litter(self):
-        path = claude_hook._state_file("sess-corrupt")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("not json at all", encoding="utf-8")
-
-        self.assertIsNone(claude_hook._read_run_id("sess-corrupt"))
-        self.assertFalse(path.exists(), "内容不是合法 JSON 的状态文件该被清掉，不然一直是垃圾")
-
-    def test_state_file_with_wrong_shape_is_also_deleted(self):
-        path = claude_hook._state_file("sess-wrong-shape")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"runId": 12345}), encoding="utf-8")  # runId 不是字符串
-
-        self.assertIsNone(claude_hook._read_run_id("sess-wrong-shape"))
-        self.assertFalse(path.exists())
+    # ── 读不出可用内容的状态文件是垃圾：读它不删（删也是改状态，要持锁），持锁的 SessionEnd 清掉 ──
+    def test_unusable_state_files_read_as_none_and_are_cleared_by_session_end_under_the_lock(self):
+        for name, content in (("sess-corrupt", "not json at all"), ("sess-wrong-shape", json.dumps({"runId": 12345}))):
+            path = claude_hook._state_file(name)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+            self.assertIsNone(claude_hook._read_run_id(name))
+            self.assertTrue(path.exists(), "读不改：没有锁不动状态")
+            claude_hook.handle_session_end({"session_id": name})
+            self.assertFalse(path.exists(), "持锁的 SessionEnd 把垃圾清掉")
 
     def test_session_start_then_end_round_trip_against_fake_server(self):
         server, thread, log = _start_server(expect_token="good-token")

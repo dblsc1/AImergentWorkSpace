@@ -13,6 +13,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 import unittest
 import unittest.mock as mock
@@ -80,7 +81,7 @@ class StateDirUpgradeTests(_IsolatedHomeMixin, unittest.TestCase):
         state_dir = cc.user_dir("state")
         state_dir.mkdir(parents=True)
         os.chmod(state_dir, 0o775)
-        for patch in (mock.patch.object(os, "chmod", side_effect=PermissionError),  # 改不了
+        for patch in (mock.patch.object(os, "fchmod", side_effect=PermissionError),  # 改不了
                       mock.patch.object(os, "getuid", return_value=os.getuid() + 1)):  # 别人的
             with patch:
                 _, err = _run_hook(claude_hook.handle_session_start, self.EVENT)
@@ -209,25 +210,57 @@ class SessionStartTests(_SessionCases, unittest.TestCase):
         claude_hook.beat_loop("companion", "s1", CLI, sleep=_Clock().sleep, clock=_Clock().clock, born="born-1", gen=gen)
         self.assertEqual(self.calls, [])
 
-    def test_lock_not_held_never_overwrites_an_existing_state(self):
+    def test_lock_not_held_sends_no_start_and_writes_no_state(self):
+        """锁或者什么都不做：拿不到会话锁 = 不发 /start、不写状态、不起伴随进程；最多一行 stderr。"""
         self._save("s1", "run-1", "working", "old")
         before = claude_hook._read_state("s1")
         self.next_run = "run-2"
         with mock.patch.object(claude_hook, "_session_lock", _no_lock):
-            self._start()
+            _, err = self._start()
+            self._start(session_id="s2")  # 没有旧状态的会话也一样
+        self.assertEqual(self.starts, [])
         self.assertEqual(claude_hook._read_state("s1"), before)
-        self.assertIn(("stop", "run-2", "cancelled"), self.calls)  # 新开的 run 没存下来：补一个 stop
-        self.calls.clear()
-        self.next_run = "run-1"  # 同一条 run（clientKey 幂等）：它是在用的，不能停
-        with mock.patch.object(claude_hook, "_session_lock", _no_lock):
-            self._start()
+        self.assertIsNone(claude_hook._read_state("s2"))
         self.assertEqual(self.calls, [])
+        self.assertEqual(self.popen_mock.call_count, 0)
+        self.assertLessEqual(len(err.strip().splitlines()), 1)
 
     def test_state_that_cannot_be_committed_stops_the_run_it_just_started(self):
         with mock.patch.object(claude_hook, "_write_state", return_value=False):
             self._start()
         self.assertEqual(self.calls, [("stop", "run-1", "cancelled")])
         self.assertIsNone(claude_hook._read_state("s1"))
+
+    def test_the_compensating_stop_happens_inside_the_lock_so_a_concurrent_start_is_never_stopped(self):
+        """start → 落状态失败 → stop 全在一个临界区：stop 时锁还被持着；同一 clientKey 的另一个 SessionStart 只能排在它后面。"""
+        order, lock_held_at_stop = [], []
+
+        def fake_start(*_a, **_k):
+            order.append("start")
+            return {"runId": "run-1"}  # 同一 clientKey → 同一条 run
+
+        def fake_stop(_c, run_id, outcome, **_k):
+            with claude_hook._session_lock("s1", wait=0) as held:
+                lock_held_at_stop.append(held)
+            order.append("stop")
+            time.sleep(0.3)  # 慢 stop：锁外的补偿 stop 会让另一个 start 插进来
+            return {}
+
+        writes = iter([False])  # 只有第一次落状态失败
+        real_write = claude_hook._write_state
+        second = threading.Thread(target=lambda: claude_hook.handle_session_start(self.EVENT))
+        with mock.patch.object(cc, "start_run", fake_start), mock.patch.object(cc, "stop_run", fake_stop), \
+                mock.patch.object(claude_hook, "_write_state", lambda *a: next(writes, None) is None and real_write(*a)):
+            first = threading.Thread(target=lambda: claude_hook.handle_session_start(self.EVENT))
+            first.start()
+            while "stop" not in order:
+                time.sleep(0.01)
+            second.start()  # 第一个正在（慢）stop
+            first.join(5)
+            second.join(5)
+        self.assertEqual(order, ["start", "stop", "start"])  # 第二个的 start 排在 stop 之后，它落下来的 run 没人停
+        self.assertEqual(lock_held_at_stop, [False])  # stop 时锁还在第一个手里
+        self.assertEqual(claude_hook._read_run_id("s1"), "run-1")
 
 
 class UnsupervisedWarningTests(_SessionCases, unittest.TestCase):
@@ -292,7 +325,7 @@ class DoctorTests(_IsolatedHomeMixin, unittest.TestCase):
         self.assertIn("令牌 有", out)
         self.assertIn(str(cc.user_dir("state")), out)
         self.assertIn("心跳方式", out)
-        self.assertIn("没有活着的心跳进程", out)
+        self.assertIn("没有记录", out)
         lock = claude_hook._beat_lock("s1")  # 有人占着 .beat
         self.addCleanup(lock.close)
         lock.write("4321 companion")
@@ -329,26 +362,30 @@ class StaleSnapshotTests(_BeatMixin, unittest.TestCase):
         st = claude_hook._read_state("s1")
         self.assertEqual((st["gen"], st["lastPhase"]), ("new-gen", "idle"))  # 换了会话：旧快照什么都不许写回
 
-    def test_phase_state_is_not_written_without_the_session_lock(self):
+    def test_phase_is_neither_written_nor_sent_without_the_session_lock(self):
         self._save("s1", "run-1", "working", "garden")
         with mock.patch.object(claude_hook, "_session_lock", _no_lock), mock.patch.object(cc, "phase_run", return_value={}) as sent:
             claude_hook.handle_phase({"hook_event_name": "Stop", "session_id": "s1"}, cc.now_iso())
-        sent.assert_called_once()  # 请求照发
+        sent.assert_not_called()  # 依赖状态的改状态请求不发
         self.assertEqual(claude_hook._read_state("s1")["lastPhase"], "working")  # 状态不写
 
-    def test_relabel_does_not_write_back_over_a_new_session(self):
+    def test_relabel_and_reopen_take_the_phase_from_the_fresh_state_and_never_write_last_phase(self):
+        """旧版：重开 / 改名拿调用方的旧参数写 lastPhase，把别处刚写的新相位盖掉。"""
         self._save("s1", "run-1", "idle", "old", cwd="/home/u/garden")
-        state = claude_hook._read_state("s1")
+        stale = claude_hook._read_state("s1")  # lastPhase=idle 的旧快照
+        claude_hook._write_state("s1", {**stale, "lastPhase": "waiting_permission"})  # 之后别处写了更新的相位
+        sent = []
 
-        def start(*_a, **_k):  # 请求飞行中，会话被另一个 CLI 恢复
-            claude_hook._write_state("s1", {**claude_hook._read_state("s1"), "gen": "new-gen"})
+        def start(*_a, **kw):
+            sent.append(kw["phase"])
             return {"runId": "run-2"}
 
         with mock.patch.object(cc, "start_run", start):
-            claude_hook._relabel({"cwd": "/home/u/garden"}, "s1", "idle", None, state)
-        self.assertEqual(claude_hook._read_state("s1")["gen"], "new-gen")
-        self.assertEqual(claude_hook._read_state("s1")["runId"], "run-1")
-        self.assertIn(("stop", "run-2", "cancelled"), self.calls)  # 多出来的那条关掉
+            with claude_hook._session_lock("s1"):
+                claude_hook._relabel_locked({"cwd": "/home/u/garden"}, "s1", "New Name", stale)
+        st = claude_hook._read_state("s1")
+        self.assertEqual(sent, ["waiting_permission"])  # 开跑相位 = 锁内重读的
+        self.assertEqual((st["runId"], st["label"], st["lastPhase"]), ("run-2", "New Name", "waiting_permission"))
 
     def test_unsupported_is_not_recorded_without_the_session_lock(self):
         self._save("s1", "run-1")

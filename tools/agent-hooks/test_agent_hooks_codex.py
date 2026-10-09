@@ -1,5 +1,5 @@
-"""Codex 复审（PR #90 心跳功能）的回归测试：错误体受总时限管、进程身份与归属、备用伴随进程、
-有限寿命、锁失败即关闭、状态目录文件的安全打开、URL 与令牌的配对。
+"""Codex 复审（PR #90 心跳功能）的回归测试：错误体受总时限管、进程身份与归属、
+有限寿命、锁或者什么都不做、状态目录文件的安全打开、URL 与令牌的配对。
 
 跑法同 test_agent_hooks.py：python3 -m pytest -q tools/agent-hooks（纯标准库）。时钟 / sleep / 进程表全是注入的假货；
 真 socket 只有「慢吐错误体」那一条（本机假服务器，硬时限）。
@@ -159,8 +159,8 @@ class _CompanionCase(_BeatMixin, unittest.TestCase):
             claude_hook._beat_main(["--beat", "--source", "companion", "--session", "s1", "--cli", str(CLI)])
             loop.assert_not_called()  # 没有钩子给的启动时刻：不自己事后去取
             claude_hook._beat_main(["--beat", "--source", "companion", "--session", "s1", "--cli", str(CLI), "--born", "born-1",
-                                    "--gen", "g", "--standby"])
-            loop.assert_called_once_with("companion", "s1", CLI, born="born-1", gen="g", standby=True, wait=False)
+                                    "--gen", "g"])
+            loop.assert_called_once_with("companion", "s1", CLI, born="born-1", gen="g", wait=False)
 
 
 class MonitorLifetimeTests(_CompanionCase):
@@ -198,63 +198,31 @@ class MonitorLifetimeTests(_CompanionCase):
         self.assertLessEqual(len(self.calls), 2)
 
 
-# ───────────────────────────────────────────── 7：备用伴随进程
+# ───────────────────────────────────────────── 9：锁或者什么都不做
 
 
-class StandbyTests(_CompanionCase):
-    def test_standby_beats_itself_when_no_monitor_takes_over(self):
-        self._save("s1", "run-1")
-        clock = _Clock(max_sleeps=40)
-        try:
-            claude_hook.beat_loop("companion", "s1", CLI, sleep=clock.sleep, clock=clock.clock, born="born-1", standby=True)
-        except _Done:
-            pass
-        self.assertEqual(self.calls[0], ("beat", "run-1"))  # 宽限一过就自己发——不靠以后的钩子事件
-        self.assertGreaterEqual(clock.sleeps, claude_hook.MONITOR_GRACE_SECONDS // claude_hook.STANDBY_POLL)
-
-    def test_standby_steps_aside_when_the_monitor_takes_the_lock(self):
-        self._save("s1", "run-1")
-        monitor = claude_hook._beat_lock("s1")
-        self.addCleanup(monitor.close)
-        clock = _Clock()
-        claude_hook.beat_loop("companion", "s1", CLI, sleep=clock.sleep, clock=clock.clock, born="born-1", standby=True)
-        self.assertEqual((self.calls, clock.sleeps), ([], 0))  # 一下都没发：exactly one beater
-
-    def test_standby_exits_when_the_session_ends_meanwhile(self):
-        self._save("s1", "run-1")
-        clock = _Clock(on_sleep=lambda n: claude_hook._delete_run_id("s1"))
-        claude_hook.beat_loop("companion", "s1", CLI, sleep=clock.sleep, clock=clock.clock, born="born-1", standby=True)
-        self.assertEqual((self.calls, clock.sleeps), ([], 1))
-
-    def test_only_one_standby_waits_at_a_time(self):
-        self._save("s1", "run-1")
-        other = claude_hook._beat_lock("s1", ".standby")
-        self.addCleanup(other.close)
-        self.assertFalse(claude_hook._standby_wait("s1", _Clock().sleep))
-
-
-# ───────────────────────────────────────────── 9：锁超时失败即关闭
-
-
-class LockFailClosedTests(_IsolatedHomeMixin, unittest.TestCase):
-    def test_relabel_does_nothing_when_the_lock_cannot_be_taken(self):
+class LockOrNothingTests(_IsolatedHomeMixin, unittest.TestCase):
+    def test_relabel_and_phase_do_nothing_when_the_lock_cannot_be_taken(self):
         claude_hook._write_state("s1", {"runId": "run-1", "lastPhase": "idle", "label": "garden"})
-        with mock.patch.object(claude_hook, "LOCK_WAIT", 0.05), mock.patch.object(claude_hook, "_start") as start:
+        with mock.patch.object(claude_hook, "LOCK_WAIT", 0.05), mock.patch.object(claude_hook, "_start") as start, \
+                mock.patch.object(cc, "phase_run") as phase:
             with claude_hook._session_lock("s1") as held:  # 别人（SessionEnd / 另一个钩子）占着锁
                 self.assertTrue(held)
-                claude_hook._relabel({"cwd": "/x"}, "s1", "working", None, claude_hook._read_state("s1"))
-            start.assert_not_called()  # 不改名、不重开：留给下一个事件
+                claude_hook.handle_phase({"hook_event_name": "UserPromptSubmit", "session_id": "s1", "cwd": "/x"}, cc.now_iso())
+            start.assert_not_called()  # 不改名、不重开
+            phase.assert_not_called()  # 依赖状态的改状态请求也不发
         self.assertEqual(claude_hook._read_state("s1")["runId"], "run-1")
+        self.assertEqual(claude_hook._read_state("s1")["lastPhase"], "idle")
 
-    def test_phase_state_write_is_skipped_without_the_lock_but_session_end_still_stops(self):
+    def test_session_end_without_the_lock_neither_stops_nor_deletes(self):
         claude_hook._write_state("s1", {"runId": "run-1", "lastPhase": "idle"})
         with mock.patch.object(claude_hook, "LOCK_WAIT", 0.05), \
                 mock.patch.object(cc, "stop_run", return_value={}) as stop, \
                 mock.patch.object(cc, "load_config", return_value={"url": "http://x.invalid", "token": ""}):
             with claude_hook._session_lock("s1"):
                 claude_hook.handle_session_end({"session_id": "s1", "hook_event_name": "SessionEnd"})
-            stop.assert_called_once()  # 收尾不因拿不到锁而放弃
-        self.assertIsNone(claude_hook._read_run_id("s1"))
+            stop.assert_not_called()  # 没有「不带锁也往下走」的例外：留给服务端的失联 / 遗忘超时
+        self.assertEqual(claude_hook._read_run_id("s1"), "run-1")
 
 
 # ───────────────────────────────────────────── 10：状态目录里的文件当不可信
@@ -320,7 +288,7 @@ class StateFileSafetyTests(_IsolatedHomeMixin, unittest.TestCase):
 
     def test_unrepairable_state_dir_is_refused(self):
         os.chmod(cc.user_dir("state"), 0o775)
-        with mock.patch.object(os, "chmod", side_effect=PermissionError):
+        with mock.patch.object(os, "fchmod", side_effect=PermissionError):
             claude_hook._write_state("s1", {"runId": "run-1"})
             self.assertIsNone(claude_hook._read_state("s1"))
             self.assertIsNone(claude_hook._beat_lock("s1"))

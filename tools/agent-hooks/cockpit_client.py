@@ -20,6 +20,7 @@ import json
 import os
 import platform
 import re
+import stat
 import threading
 import time
 import urllib.error
@@ -107,6 +108,33 @@ def user_dir(purpose: str = "config") -> Path:
     return Path(root) / "honeycomb"
 
 
+# ── 读文件（配置、会话 transcript）：一律当不可信输入 ──────────────────
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)  # Windows 没有
+_O_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
+CONFIG_MAX_BYTES = 64 * 1024
+
+
+def read_regular(path: Any, limit: int, tail: bool = False) -> tuple[bytes, bool]:
+    """`(内容, 是否被截)`：不跟末段符号链接、不因 FIFO 之类阻塞（`O_NONBLOCK`），打开后 `fstat` 必须是普通文件，
+    否则 `OSError`。最多读 `limit` 字节：`tail=False` 读开头（文件更大 → 被截）；`tail=True` 读末尾 `limit` 字节
+    （文件更大 → 被截，内容的第一行可能是半行）。钩子每个事件都读这些文件，挂住 = 挂住会话。"""
+    fd = os.open(path, os.O_RDONLY | _O_NONBLOCK | _O_NOFOLLOW)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError("not a regular file")
+        cut = tail and st.st_size > limit
+        if cut:
+            os.lseek(fd, st.st_size - limit, os.SEEK_SET)
+        with os.fdopen(fd, "rb", closefd=False) as f:
+            data = f.read(limit + 1)
+    finally:
+        os.close(fd)
+    if len(data) > limit:
+        return (data[-limit:] if tail else data[:limit]), True
+    return data, cut
+
+
 # ── 配置：环境变量优先，其次配置文件 ──────────────────────────────
 def load_config() -> dict[str, Any]:
     """合并出 `{"url", "token", "beat", "tasks", "projects"}`（`beat` 见 `beat_mode`）。
@@ -121,10 +149,11 @@ def load_config() -> dict[str, Any]:
     file_cfg: dict[str, Any] = {}
     cfg_path = user_dir("config") / CONFIG_FILENAME
     try:
-        raw = json.loads(cfg_path.read_text(encoding="utf-8"))
+        data, too_big = read_regular(cfg_path, CONFIG_MAX_BYTES)
+        raw = None if too_big else json.loads(data.decode("utf-8"))
         if isinstance(raw, dict):
             file_cfg = raw
-    except (FileNotFoundError, ValueError, OSError):
+    except (ValueError, OSError):  # 含 FileNotFoundError / 符号链接 / FIFO / 坏编码
         file_cfg = {}
     # 装成 Claude Code 插件时，地址 / 令牌可以填在插件的设置里（plugin.json 的 userConfig）：Claude Code 把它们
     # 以 CLAUDE_PLUGIN_OPTION_* 交给钩子进程（monitor 进程拿不到，见 claude_hook「心跳」）。排在 COCKPIT_* 之后、文件之前。
@@ -278,7 +307,10 @@ def _run_with_deadline(fn, timeout: float):
 def _read_capped(resp, end: float) -> bytes:
     """读响应体，最多 `MAX_RESPONSE_BYTES + 1` 字节，且**整段**不超过绝对时刻 `end`（`time.monotonic()`）：
     `read1` 每次只做一次 recv，每片之间核对剩余时间，超了就关连接、按超时算——慢吞吞一字节一字节吐 body 的服务端
-    拖不过 `end`，后台线程随之结束（不会一直占着「卡住的请求」位）。"""
+    拖不过 `end`，后台线程随之结束（不会一直占着「卡住的请求」位）。
+    **限度（如实）**：这个时限是协作式的——只在两次 `read1` 之间核对；单次 `read1` 里卡住（分块编码的帧头、socket 超时叠加）
+    可以超出 `end`。硬上界不在这里，而在两处：调用方的 `join(timeout)` 不等它，以及长命的发心跳进程在
+    「连着几圈请求都卡着」时**整个进程退出**（进程一退，卡住的线程跟着没了）。不为此给每个请求起子进程。"""
     chunks, size = [], 0
     read = getattr(resp, "read1", resp.read)
     while size <= MAX_RESPONSE_BYTES:
@@ -434,14 +466,11 @@ def session_title(transcript_path: Any) -> str | None:
     if not isinstance(transcript_path, str) or not transcript_path:
         return None
     try:
-        with open(transcript_path, "rb") as f:
-            size = f.seek(0, os.SEEK_END)
-            start = max(size - TITLE_TAIL_BYTES, 0)
-            f.seek(start)
-            lines = f.read(TITLE_TAIL_BYTES).split(b"\n")
+        data, cut = read_regular(transcript_path, TITLE_TAIL_BYTES, tail=True)  # 不阻塞（FIFO）、不跟链接、只读普通文件
     except OSError:
         return None
-    if start:
+    lines = data.split(b"\n")
+    if cut:
         lines = lines[1:]  # 从行中间切进来的那半行
     for line in reversed(lines):
         if b"custom-title" not in line:
@@ -527,18 +556,18 @@ def beat(
         return HEARTBEAT_SECONDS, False
 
 
-BEAT_MODES = ("auto", "companion", "monitor", "off")
+BEAT_MODES = ("companion", "monitor", "off")
 
 
 def beat_mode(config: dict[str, Any] | None = None) -> str:
-    """谁来发心跳：环境变量 `COCKPIT_BEAT` > 配置文件的 `beat` > `auto`；认不得的值当 `auto`。
-
-    - `auto`：装成插件且带 monitor 时让 monitor 来，一分半钟没人接手再起伴随进程；否则伴随进程
-    - `companion` / `monitor`：只用这一条路（给「两条路哪条好使」的对比用）
+    """谁来发心跳：环境变量 `COCKPIT_BEAT` > 配置文件的 `beat` > `companion`；认不得的值当 `companion`。
+    **静态配置，没有协商**：
+    - `companion`（缺省）：`SessionStart` 钩子起脱离的伴随进程（装成插件时也一样）；插件的 monitor 一起来就静悄悄退出
+    - `monitor`（显式）：只让插件的 monitor 发，钩子不起伴随进程
     - `off`：不发心跳（运行不声明心跳能力，服务端照旧只有遗忘超时兜底）"""
     cfg = config if config is not None else load_config()
     mode = os.environ.get("COCKPIT_BEAT") or cfg.get("beat")
-    return mode if mode in BEAT_MODES else "auto"
+    return mode if mode in BEAT_MODES else "companion"
 
 
 def stop_run(
