@@ -1,0 +1,12 @@
+{
+  "name": "honeycomb",
+  "description": "HoneyComb: show Claude Code sessions as agent lanes on your own cockpit.",
+  "owner": { "name": "dblsc1" },
+  "plugins": [
+    {
+      "name": "honeycomb-lanes",
+      "source": "./tools/agent-hooks",
+      "description": "Report each Claude Code session to a HoneyComb cockpit as an agent lane (start / phase / heartbeat / stop)."
+    }
+  ]
+}

@@ -85,11 +85,26 @@ def relabel_agent_run(user: str, run_id: str, fields: dict) -> None:
     _agent_col().update_one({"user": user, "runId": run_id, "closing": {"$exists": False}}, {"$set": fields})
 
 
-def mark_agent_run_closing(user: str, run_id: str, marker: dict) -> dict | None:
-    """关闭边界（v2.4）：一次条件更新打上关闭标记，取回**那一刻的整份文档**作快照。
-    None = 不存在或已被别人标记。标记后相位 / attend 的条件更新一律落空。"""
-    return _agent_col().find_one_and_update(
+def touch_agent_run(
+    user: str, run_id: str, seen_at: str, declare: bool = False, beat_source: str | None = None, beat: bool = False,
+) -> bool:
+    """v2.18 活性：未关闭才记 ``lastSeenAt``；``declare`` = 同时记下「这个运行会发心跳」；``beat_source`` 给了就记
+    （谁在发心跳，后来的盖先来的）；``beat`` = 这是一次心跳，``beatCount`` 加一。
+    不碰 ``v``（同 relabel）。False = 不存在或已关闭。"""
+    fields = {"lastSeenAt": seen_at, **({"heartbeat": True} if declare else {}),
+              **({"beatSource": beat_source} if beat_source else {})}
+    return _agent_col().update_one(
         {"user": user, "runId": run_id, "closing": {"$exists": False}},
+        {"$set": fields, **({"$inc": {"beatCount": 1}} if beat else {})},
+    ).matched_count > 0
+
+
+def mark_agent_run_closing(user: str, run_id: str, marker: dict, guard: dict | None = None) -> dict | None:
+    """关闭边界（v2.4）：一次条件更新打上关闭标记，取回**那一刻的整份文档**作快照。
+    None = 不存在或已被别人标记。标记后相位 / attend 的条件更新一律落空。
+    ``guard``（v2.18）：追加的相等条件——失联关闭带着读到的 ``lastSeenAt``，这期间又来了信号就不关。"""
+    return _agent_col().find_one_and_update(
+        {"user": user, "runId": run_id, "closing": {"$exists": False}, **(guard or {})},
         {"$set": {"closing": marker}, "$unset": {"clientKey": ""}},
         projection={"_id": 0},
         return_document=ReturnDocument.AFTER,

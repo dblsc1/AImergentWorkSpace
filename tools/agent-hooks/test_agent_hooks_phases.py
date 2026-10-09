@@ -83,7 +83,11 @@ class ClaudeHookPhaseTests(_ServerMixin, unittest.TestCase):
         self.assertEqual((body["phase"], body["label"], body["match"]), ("idle", "garden", "garden"))
         self.assertEqual(body["clientKey"], hashlib.sha256(b"sess-raw").hexdigest()[:32])
         self.assertNotIn("sess-raw", json.dumps(self.log.requests))
-        self.assertEqual(claude_hook._read_state("sess-raw"), {"runId": "run-1", "lastPhase": "idle", "label": "garden"})  # label：v0.4
+        state = claude_hook._read_state("sess-raw")
+        self.assertEqual({k: state[k] for k in ("runId", "lastPhase", "label", "cwd", "session", "url", "auth")},
+                         {"runId": "run-1", "lastPhase": "idle", "label": "garden", "cwd": "/home/u/garden",  # label：v0.4
+                          "session": "sess-raw", "url": self.url, "auth": True})  # 后四样：心跳用，只存本机
+        self.assertNotIn("good-token", json.dumps(state))  # 令牌不落盘
 
     def test_mapping_table(self):
         claude_hook._save_run_id("s1", "run-1", "idle")

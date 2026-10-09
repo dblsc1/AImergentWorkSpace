@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 from ... import config
 from ..planner.errors import NotFoundError, UnprocessableError
 from . import agents, repo
+from .agent_liveness import AGENT_DECLARED_MAX_SECONDS, AGENT_HEARTBEAT_SECONDS, lost_at
 
 MAX_PHASES = 1000
 MAX_INTERACTIONS = 500  #: reply 的条数上限
@@ -93,9 +94,23 @@ def record_phase(
             user, run_id, run.get("v"), {"phases": phases, "interactions": interactions},
         ):
             continue  # 并发写抢先或刚被关闭：重读重算
+        if not repo.touch_agent_run(user, run_id, right_now.isoformat()):  # v2.18：收下的相位（含重复 / 超上限）都是信号
+            return _closed_out(user, run_id, repo.get_agent_run(user, run_id))  # 写相位与记信号之间被失联 / 超时关了
         return {"runId": run_id, "phase": agents.current_phase({"phases": phases}),
                 "applied": reason is None, "reason": reason}
     raise RuntimeError(f"相位写入争用未决：{run_id!r}")
+
+
+def heartbeat(run_id: str, user: str, beat_source: str | None = None, *, now: Callable[[], datetime]) -> dict:
+    """v2.18「我还活着」：记 ``lastSeenAt``、``beatCount`` 加一，并声明这个运行会发心跳。
+    已结束回 closed（同相位），不存在 404。"""
+    right_now = now()
+    agents._expire(user, right_now)  # 写端点：先收超时 / 失联，迟到的心跳下面回 closed
+    alive = repo.touch_agent_run(user, run_id, right_now.isoformat(), declare=True, beat_source=beat_source, beat=True)
+    if not alive:
+        _closed_out(user, run_id, repo.get_agent_run(user, run_id))  # 从来不存在 → 404
+    return {"runId": run_id, "applied": alive, "reason": None if alive else "closed",
+            "heartbeatSeconds": AGENT_HEARTBEAT_SECONDS}
 
 
 def _union(old: list[tuple], new: list[tuple], gap: timedelta) -> list[tuple]:
@@ -142,14 +157,16 @@ def record_attend(user: str, run_id: str, intervals: list[tuple[datetime, dateti
 
 
 def lane_runs(user: str, *, now: Callable[[], datetime]) -> tuple[datetime, list[dict]]:
-    """``views/lanes`` 的在跑运行。**不写**：不收超时（超过上限的标 overdue、elapsed 封顶）。
+    """``views/lanes`` 的在跑运行。**不写**：不收超时（超过上限的标 overdue、elapsed 封顶）、
+    不收失联（v2.18：标 lost、elapsed 止于最后一次信号；会发心跳的运行不看遗忘上限，只看 7 天安全上限）。
     「已标记未删除」的运行按标记当已结束画（与它将要落账的那条事实同形）。"""
     right_now = now()
     cap = timedelta(hours=config.settings.agent_run_timeout_hours)
     out = []
     for run in repo.list_agent_runs(user):
         started = agents.ts(run["startedAt"])
-        base = {k: run.get(k) for k in ("runId", "agent", "tool", "model", "label", "taskId", "projectId")}
+        base = {k: run.get(k) for k in ("runId", "agent", "tool", "model", "label", "taskId", "projectId",
+                                        "beatSource", "beatCount")}  # 后两个 v2.18
         base["unverified"] = bool(run.get("unverified"))  # v2.19：匿名开的运行
         base["match"] = run.get("match")  # v2.13：activity 的「窗口 ↔ 代理会话」要认它；views/lanes 不回出
         if "closing" in run:
@@ -158,9 +175,12 @@ def lane_runs(user: str, *, now: Callable[[], datetime]) -> tuple[datetime, list
                         "elapsedSeconds": data["durationSeconds"], "overdue": False,
                         "phases": data.get("phases", []), "interactions": data.get("interactions", [])})
             continue
-        elapsed = right_now - started
+        seen = lost_at(run, right_now)
+        run_cap = timedelta(seconds=AGENT_DECLARED_MAX_SECONDS) if run.get("heartbeat") else cap  # 声明过心跳的 7 天
+        elapsed = (seen or right_now) - started
         out.append({**base, "startTs": started, "endTs": None, "outcome": None,
-                    "elapsedSeconds": max(int(min(elapsed, cap).total_seconds()), 0),
-                    "overdue": elapsed > cap,
+                    "elapsedSeconds": max(int(min(elapsed, run_cap).total_seconds()), 0),
+                    "overdue": elapsed > run_cap, "lost": seen is not None,
+                    "lastSeenTs": agents.ts(run["lastSeenAt"]) if run.get("lastSeenAt") else None,
                     "phases": run.get("phases") or [], "interactions": run.get("interactions") or []})
     return right_now, out

@@ -20,12 +20,28 @@ import os
 import platform
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 DEFAULT_TIMEOUT = 3.0
+MAX_RESPONSE_BYTES = 64 * 1024  # 响应体最多读这么多：协议里的响应都是几百字节，更大的一律当「响应格式不对」
+
+
+def clamp_seconds(value: Any, low: int, high: int, default: int) -> int:
+    """外面来的「多少秒」（服务端响应、状态文件、配置）一律过这里再当界限用。
+    只认真正的整数：bool、浮点（含 NaN / inf——`min` / `max` 对 NaN 不起作用，会原样漏过去）、字符串、
+    零和负数都回 `default`；其余钳到 `[low, high]`。"""
+    if type(value) is not int or value <= 0:
+        return default
+    return min(max(value, low), high)
+
+
+def _run_path(run_id: str, action: str) -> str:
+    """runId 可能是从状态文件读回来的：整个转义后才拼进路径，带 `/`、`?`、`..` 也到不了别的端点。"""
+    return f"/api/core/agents/{urllib.parse.quote(str(run_id), safe='')}/{action}"
 CONFIG_FILENAME = "agent-hooks.json"
 
 
@@ -79,10 +95,10 @@ def user_dir(purpose: str = "config") -> Path:
 
 # ── 配置：环境变量优先，其次配置文件 ──────────────────────────────
 def load_config() -> dict[str, Any]:
-    """合并出 `{"url", "token", "tasks", "projects"}`。
+    """合并出 `{"url", "token", "beat", "tasks", "projects"}`（`beat` 见 `beat_mode`）。
 
     `COCKPIT_URL` / `COCKPIT_TOKEN` 环境变量优先于配置文件里的同名字段，
-    方便 CI / 容器场景不落文件也能用。`tasks` / `projects` 只能来自配置文件
+    方便 CI / 容器场景不落文件也能用；地址与令牌成对取（见下面的注释）。`tasks` / `projects` 只能来自配置文件
     （目录 → taskId / projectId 的映射，环境变量不适合表达一份映射表）。
 
     配置文件形状不对（顶层不是对象、`tasks` / `projects` 不是对象）一律当没配，不崩——
@@ -96,10 +112,22 @@ def load_config() -> dict[str, Any]:
             file_cfg = raw
     except (FileNotFoundError, ValueError, OSError):
         file_cfg = {}
-    url = os.environ.get("COCKPIT_URL") or file_cfg.get("url") or ""
-    token = os.environ.get("COCKPIT_TOKEN") or file_cfg.get("token") or ""
+    # 装成 Claude Code 插件时，地址 / 令牌可以填在插件的设置里（plugin.json 的 userConfig）：Claude Code 把它们
+    # 以 CLAUDE_PLUGIN_OPTION_* 交给钩子进程（monitor 进程拿不到，见 claude_hook「心跳」）。排在 COCKPIT_* 之后、文件之前。
+    # 地址与令牌**成对**取：按 环境变量 → 插件设置 → 配置文件 的顺序，第一个给了地址的来源，连它的令牌一起用
+    # （它没配令牌就是没有令牌）。令牌只会发往它被配置的那个地址——否则文件里的令牌可能被发到环境变量 / 插件设置
+    # 里的另一个地址去。只给令牌不给地址的来源，令牌不用。
+    env = os.environ.get
+    url, token = next(
+        ((u, t or "") for u, t in (
+            (env("COCKPIT_URL"), env("COCKPIT_TOKEN")),
+            (env("CLAUDE_PLUGIN_OPTION_COCKPIT_URL"), env("CLAUDE_PLUGIN_OPTION_COCKPIT_TOKEN")),
+            (file_cfg.get("url"), file_cfg.get("token")),
+        ) if u),
+        ("", ""),
+    )
     maps = {key: file_cfg[key] if isinstance(file_cfg.get(key), dict) else {} for key in ("tasks", "projects")}
-    return {"url": str(url).rstrip("/"), "token": str(token), **maps}
+    return {"url": str(url).rstrip("/"), "token": str(token), "beat": file_cfg.get("beat"), **maps}
 
 
 def _is_under(path: str, base: str) -> bool:
@@ -240,9 +268,11 @@ def _request(config: dict[str, Any], method: str, path: str, payload: dict[str, 
         # 抛异常——连同下面的 open()/read() 一起放进同一个 try，让外层统一分类。
         req = urllib.request.Request(url + path, data=data, method=method, headers=headers)
         with _opener.open(req, timeout=timeout) as resp:
-            body = resp.read()
+            body = resp.read(MAX_RESPONSE_BYTES + 1)
         if not body:
             return {}
+        if len(body) > MAX_RESPONSE_BYTES:
+            raise CockpitError("响应格式不对")
         try:
             parsed = json.loads(body)
         except json.JSONDecodeError:
@@ -260,7 +290,7 @@ def _request(config: dict[str, Any], method: str, path: str, payload: dict[str, 
     except urllib.error.HTTPError as e:
         body = b""
         try:
-            body = e.read()
+            body = e.read(MAX_RESPONSE_BYTES + 1)
         except Exception:
             pass
         json_body = False
@@ -388,7 +418,64 @@ def phase_run(
         payload["detail"] = detail[:64]
     if reply:
         payload["reply"] = True
-    return _request(config, "POST", f"/api/core/agents/{run_id}/phase", payload, timeout)
+    return _request(config, "POST", _run_path(run_id, "phase"), payload, timeout)
+
+
+HEARTBEAT_SECONDS = 900  # 服务端没说（老服务端 / 没报成）时的心跳间隔
+HEARTBEAT_MIN, HEARTBEAT_MAX = 60, 3600  # 服务端给的值钳在这个范围里
+
+
+def heartbeat_run(
+    config: dict[str, Any], run_id: str, timeout: float = DEFAULT_TIMEOUT, beat_source: str | None = None,
+) -> dict[str, Any]:
+    """`POST /api/core/agents/{runId}/heartbeat`（v2.18，`contracts/agent.lane.v1`）：「我还活着」。
+    第一次调用即声明这条运行会发心跳。`{applied:false, reason:"closed"}` = 运行已结束。
+    `beat_source`：谁在发（`companion` / `monitor` / `wrapper`），服务端只当标签记下，用来比哪条路更好使。"""
+    payload = {"beatSource": beat_source} if beat_source else None
+    return _request(config, "POST", _run_path(run_id, "heartbeat"), payload, timeout)
+
+
+def heartbeat_interval(response: Any) -> int:
+    """响应里的 `heartbeatSeconds`，过 `clamp_seconds`：钳到 [60, 3600]；没有 / 不是正整数 → 900。
+    这是唯一读它的地方（伴随进程、monitor、cockpit-run 的线程都经 `beat` 到这里），每一下心跳都重新钳一次。"""
+    value = response.get("heartbeatSeconds") if isinstance(response, dict) else None
+    return clamp_seconds(value, HEARTBEAT_MIN, HEARTBEAT_MAX, HEARTBEAT_SECONDS)
+
+
+BEAT_MISSING = "missing"  # `beat` 的「已结束」位上，服务端不认这个 runId（404）的取值
+
+
+def beat(
+    config: dict[str, Any], run_id: str, timeout: float = DEFAULT_TIMEOUT, beat_source: str | None = None,
+) -> tuple[float, bool | str]:
+    """发一次心跳，**绝不抛**：返回 `(下一次隔多少秒, 运行是否已结束)`；已结束位 `True` = 服务端说 closed，
+    `BEAT_MISSING` = 服务端不认这个运行（404 且是应用层的 JSON 错误：库重置 / 换了租户），调用方都当「该重开」，
+    但后者重开不成就别再敲了。
+    连不上 / 超时 / 5xx → `HEARTBEAT_MIN` 秒后再试（间隔是失联线的一半，丢一下不补就贴线了）；
+    其它 4xx（老服务端没有这个端点、令牌不对）→ 照常间隔，不猛敲。"""
+    try:
+        response = heartbeat_run(config, run_id, timeout, beat_source)
+        return heartbeat_interval(response), response.get("reason") == "closed"  # 间隔已钳
+    except CockpitError as e:
+        if e.code == 404 and e.json_body:
+            return HEARTBEAT_SECONDS, BEAT_MISSING
+        return (HEARTBEAT_SECONDS if e.code and 400 <= e.code < 500 else HEARTBEAT_MIN), False
+    except Exception:  # noqa: BLE001 — 配置读坏了之类：同样只是「这一下没发」
+        return HEARTBEAT_SECONDS, False
+
+
+BEAT_MODES = ("auto", "companion", "monitor", "off")
+
+
+def beat_mode(config: dict[str, Any] | None = None) -> str:
+    """谁来发心跳：环境变量 `COCKPIT_BEAT` > 配置文件的 `beat` > `auto`；认不得的值当 `auto`。
+
+    - `auto`：装成插件且带 monitor 时让 monitor 来，一分半钟没人接手再起伴随进程；否则伴随进程
+    - `companion` / `monitor`：只用这一条路（给「两条路哪条好使」的对比用）
+    - `off`：不发心跳（运行不声明心跳能力，服务端照旧只有遗忘超时兜底）"""
+    cfg = config if config is not None else load_config()
+    mode = os.environ.get("COCKPIT_BEAT") or cfg.get("beat")
+    return mode if mode in BEAT_MODES else "auto"
 
 
 def stop_run(
@@ -402,4 +489,4 @@ def stop_run(
     payload: dict[str, Any] = {"outcome": outcome}
     if output is not None:
         payload["output"] = output
-    return _request(config, "POST", f"/api/core/agents/{run_id}/stop", payload, timeout)
+    return _request(config, "POST", _run_path(run_id, "stop"), payload, timeout)

@@ -326,6 +326,25 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
 - `auto.key` 总在（当前窗口的键）；老读方忽略它即可。
 - `ChoiceOut.remembered: false` 且 `pseudonymized: false` = 规则没写成（太长 / 规则已满 / 撞版本），选择本身已生效。
 
+### 心跳与失联：`AgentStartIn/Out`、`AgentHeartbeatIn/Out`、`LaneAgent`（v2.18）
+
+```jsonc
+// AgentStartIn 追加（都选填）          AgentStartOut 追加
+{ "heartbeat": true, "beatSource": "companion" }      { "heartbeatSeconds": 900 }
+// AgentHeartbeatIn：空体、{} 或         AgentHeartbeatOut
+{ "beatSource": "monitor" }                           { "runId": "run_…", "applied": true, "reason": null | "closed",
+                                                        "heartbeatSeconds": 900 }
+// LaneAgent（GET /api/core/views/lanes 的 agents[]）追加四个键，键总在
+{ "lost": false, "lastSeenAt": "<ISO，NEXUS_TZ 的偏移>" | null, "beatSource": "companion" | null, "beatCount": 3 | null }
+// agent.run.completed 的 data：outcome 追加取值 "lost"；追加选填 beatSource、beatCount（没有就不出现）
+```
+
+- `beatSource`：`^[a-z0-9][a-z0-9_-]{0,31}$`，其余 422。`AgentHeartbeatIn` 不收别的键（422）。
+- `lost: true` 只出现在**在跑**的运行上；已结束的看 `outcome`。`lastSeenAt` 只有在跑的运行有。
+- `beatCount` 为 `null` = 一次心跳都没收到过（不是 0）。
+- `CurrentOut.agents[]` 与 `AgentTimeOut.open[]` 不加字段：这两个读端读前已把失联的收掉。
+- 规则见 `contract.md`「心跳与失联」节；线上协议见 `contracts/agent.lane.v1`。
+
 ### `AuditOut` — `GET /api/core/planner/audit`（v1.6，F-ACTOR-2）
 
 记录形状、三种 `outcome` 的语义、append-only 的保证方式见 `contract.md`

@@ -78,7 +78,7 @@
     // 标题红绿灯：复用 render 排好的 runInfo（在跑的运行一定与视窗重叠，都在里面），不再逐个排 phases
     var live = { working: 0, waiting: 0, error: 0 };
     infos.forEach(function (k) {
-      if (k.r.endAt) return;
+      if (k.r.endAt || k.lost) return;   // 失联的（nexus-core v2.18）不算在干活 / 在等你
       if (k.ph === "working") live.working += 1;
       else if (k.ph === "error") live.error += 1;
       else if (k.ph !== "idle") live.waiting += 1;

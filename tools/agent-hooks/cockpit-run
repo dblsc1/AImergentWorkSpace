@@ -22,6 +22,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -70,6 +71,16 @@ def _start(args: argparse.Namespace, command: list[str]) -> tuple[dict, str | No
         category = e if isinstance(e, cc.CockpitError) else "配置错误"
         print(f"cockpit-run: 上报开始状态失败，本次不计时（{category}）", file=sys.stderr)
         return {}, None
+
+
+def _beat_forever(config: dict, run_id: str, stop: threading.Event) -> None:
+    """心跳线程（`contracts/agent.lane.v1`）：马上发第一下（= 声明这条运行会发心跳），之后按服务端给的间隔。
+    失败不管；服务端说运行已结束就不再发（cockpit-run 没有 clientKey，不重开）。"""
+    interval = 0.0
+    while not stop.wait(interval):
+        interval, closed = cc.beat(config, run_id, beat_source="wrapper")
+        if closed:
+            return
 
 
 def _wait_through_ctrl_c(proc: subprocess.Popen) -> tuple[int, bool]:
@@ -140,6 +151,10 @@ def main(argv: list[str] | None = None) -> int:
 
     config, run_id = _start(args, command)
 
+    beat_stop = threading.Event()
+    if run_id and cc.beat_mode(config) != "off":
+        threading.Thread(target=_beat_forever, args=(config, run_id, beat_stop), daemon=True).start()
+
     cancelled = False
     proc: subprocess.Popen | None = None
 
@@ -188,6 +203,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         outcome = "failed"
 
+    beat_stop.set()
     if run_id:
         try:
             cc.stop_run(config, run_id, outcome)
