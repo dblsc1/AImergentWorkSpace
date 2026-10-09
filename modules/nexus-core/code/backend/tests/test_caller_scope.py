@@ -201,6 +201,60 @@ def test_live_anonymous_runs_are_capped_per_tenant(client, seeded, monkeypatch):
     _start(client, ANON)
 
 
+def test_anonymous_cap_holds_when_concurrent_starts_pass_the_precheck(client, seeded, monkeypatch):
+    """count-then-insert 不原子：别的并发 start 在预检之后才插进来。预检被骗过也不能多放。"""
+    from app.modules.timer import agents, repo  # noqa: PLC0415
+
+    monkeypatch.setattr(agents, "MAX_ANONYMOUS_RUNS", 3)
+    for i in range(3):  # 三条「并发者」已经插进去了，而预检只看到 2
+        _start(client, ANON, clientKey=f"c{i}")
+    real = repo.count_unverified_agent_runs
+    calls = []
+    monkeypatch.setattr(repo, "count_unverified_agent_runs", lambda u: (calls.append(1), 2 if len(calls) == 1 else real(u))[1])
+    resp = client.post(f"{AGENTS}/start", json={**RUN, "clientKey": "late"}, headers=ANON)
+    assert resp.status_code == 429
+    assert _db()["agent_runs"].count_documents({"unverified": True}) == 3  # 撤回了自己的那条
+
+
+def test_anonymous_slots_are_released_on_stop_and_on_failure(client, seeded, monkeypatch):
+    from app.modules.timer import agents, repo  # noqa: PLC0415
+
+    monkeypatch.setattr(agents, "MAX_ANONYMOUS_RUNS", 4)
+    runs = [_start(client, ANON, clientKey=f"s{i}") for i in range(4)]
+    for r in runs[:2]:
+        assert client.post(f"{AGENTS}/{r['runId']}/stop", json={"outcome": "done"}, headers=ANON).status_code == 200
+    for i in range(2):
+        _start(client, ANON, clientKey=f"again{i}")  # 停掉 2 个，再开 2 个
+    _start(client, ANON, expect=429)
+    # 插入之后数名额时出错：那条半截的运行不留下（否则名额永久被占）
+    for r in runs[2:]:
+        client.post(f"{AGENTS}/{r['runId']}/stop", json={"outcome": "done"}, headers=ANON)
+    before = _db()["agent_runs"].count_documents({"unverified": True})
+    real = repo.count_unverified_agent_runs
+    state = {"n": 0}
+
+    def boom(u):
+        state["n"] += 1
+        if state["n"] == 2:  # 第 1 次是预检，第 2 次是插入后的复数
+            raise RuntimeError("mongo down")
+        return real(u)
+
+    monkeypatch.setattr(repo, "count_unverified_agent_runs", boom)
+    with pytest.raises(RuntimeError):
+        client.post(f"{AGENTS}/start", json={**RUN, "clientKey": "x"}, headers=ANON)
+    assert _db()["agent_runs"].count_documents({"unverified": True}) == before
+
+
+def test_nexus_core_has_no_websocket_endpoints():
+    """ScopeMiddleware 只管 http（websocket 作用域直接放过）。所以 nexus-core 不能有 WebSocket 端点：
+    哪天加了，这条红——到时要先给 websocket 也做范围拦截（流式 SSE 走的是 http，被拦截；目前也没有）。"""
+    from starlette.routing import WebSocketRoute  # noqa: PLC0415
+
+    from app.main import app  # noqa: PLC0415
+
+    assert [r.path for r in app.routes if isinstance(r, WebSocketRoute)] == []
+
+
 def test_length_limits_still_apply_to_anonymous(client):
     for body in ({"agent": "a" * 65}, {"label": "l" * 65}, {"clientKey": "k" * 129}, {"model": "m" * 65}):
         resp = client.post(f"{AGENTS}/start", json={**RUN, **body}, headers=ANON)

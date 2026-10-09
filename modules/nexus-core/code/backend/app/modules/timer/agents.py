@@ -259,12 +259,28 @@ def start(
         run["unverified"] = True
     for _ in range(3):
         if repo.add_agent_run(run):
+            if unverified:
+                _enforce_anonymous_cap(user, run["runId"])
             return {"runId": run["runId"], "startedAt": run["startedAt"]}, True
         existing = repo.find_agent_run_by_client_key(user, client_key)
         if existing is not None and bool(existing.get("unverified")) == unverified:
             return {"runId": existing["runId"], "startedAt": existing["startedAt"]}, False
         # 撞键后那条又刚被关掉：再插一次
     raise RuntimeError(f"clientKey 争用未决：{client_key!r}")
+
+
+def _enforce_anonymous_cap(user: str, run_id: str) -> None:
+    """先插后数：并发的匿名 start 都看到 19 个时前面的 count 挡不住，这里插完再数，超限就撤回自己的那条。
+    每个幸存者都在自己插入之后数过，最后一个数的看得到全部幸存者，所以幸存者不会超过上限；
+    代价是边界上并发的两个可能都被撤回（429 重试即可），不会多放。名额就是活文档：stop / 超时 / 撤回都是删文档，不会泄漏。"""
+    try:
+        over = repo.count_unverified_agent_runs(user) > MAX_ANONYMOUS_RUNS
+    except BaseException:
+        repo.delete_agent_run(user, run_id)
+        raise
+    if over:
+        repo.delete_agent_run(user, run_id)
+        raise TooManyAnonymousRunsError(f"同时在跑的匿名代理运行已到上限（{MAX_ANONYMOUS_RUNS} 个），稍后再试")
 
 
 def require_unverified(user: str, run_id: str) -> None:
