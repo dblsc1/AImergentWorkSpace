@@ -593,7 +593,10 @@ class MonitorProcessTests(_IsolatedHomeMixin, unittest.TestCase):
     def test_attached_monitor_beats_into_the_void_and_prints_nothing(self):
         os.environ["COCKPIT_URL"] = "http://127.0.0.1:1"
         self.addCleanup(os.environ.pop, "COCKPIT_URL", None)
-        claude_hook._save_run_id("s1", "run-1", "idle", "garden", {"cwd": "/tmp"})  # cli = 本测试进程的那个祖先
+        # 状态里记的 Claude Code 得是**子进程将认出的那个**：它的父进程就是本测试进程，所以从本进程起往上认
+        # （本机在 Claude Code 里跑时是那个 claude，CI 里就是 pytest 自己）。
+        with mock.patch.object(os, "getppid", return_value=os.getpid()):
+            claude_hook._save_run_id("s1", "run-1", "idle", "garden", {"cwd": "/tmp"})
         child = self._monitor("monitor")
         try:
             pidfile = claude_hook._state_file("s1").with_suffix(".beat")
