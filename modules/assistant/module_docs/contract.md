@@ -10,7 +10,7 @@
 ```yaml
 provides:
   - id: assistant.page.v1
-    summary: 「AI助理」页面，静态路由 <站点前缀>assistant/。自上而下六块：AI 对话、待确认建议、待分类（2026-10-08）、自动记录（2026-10-08，nexus-core v2.14）、活动检测设置、回顾。
+    summary: 「AI助理」页面，静态路由 <站点前缀>assistant/。自上而下七块：**AI 报告（2026-10-09，nexus-core v2.20，有待批准的报告时才出现，在页面最上面）**、AI 对话、待确认建议、待分类（2026-10-08）、自动记录（2026-10-08，nexus-core v2.14）、活动检测设置、回顾。
 consumes:
   - id: agent.chat.v1
     contract: ../../../contracts/agent.chat.v1/contract.md
@@ -85,6 +85,19 @@ consumes:
       里有这个任务的不发。逐行报部分失败、成功的不回滚、发完重拉前全部控件禁用，同组确认。勾了「以后这个窗口」而记到未分类的行不加规则（提示一句）。
       **「全部确认」（阈值）含义不变**：只发有任务建议且把握够的行的 `{taskId}`，**从不发 `{projectId}`**。
       集合名、项目名一律 textContent。320 / 390 px 不横滚。
+  - id: nexus-core.activity.reports.v1
+    contract: ../nexus-core/module_docs/contract.md
+    purpose: >
+      「AI 报告」面板（`code/frontend/reports.js`、`#report-panel`，2026-10-09，仓主：「AI 一次提交一份报告，我可以一键批准全部。
+      当然单条编辑还是保留的」）。`GET api/core/activity/reports?status=pending` 取最新一份、`GET …/{id}` 取解析后的条；
+      404 / 没有待批准的报告 / 读取失败 → 整块 hidden。显示：作者 + 提交时间 + 概述、各类条数与覆盖总时长；条目**按目标项目分组**
+      （组内、组间都是时间长的在前，同待分类 / 待确认的排序；`dismiss` 条归「忽略」组），每行 = 做什么 → 去哪、时长、理由，
+      行上「改」（`<select>`，与「自动记录」同样的分项目任务下拉，选了即 `POST …/items/{id}/approve {taskId|projectId}` = 先改再批准）、
+      「批准」（`…/items/{id}/approve`）、「不要」（`…/items/{id}/reject`）；头部「全部批准」（一次点击，`…/approve`，之后显示结果行
+      「已批准 N 条，M 条已过期」，失败的另说「K 条没成」）与「整份不要」（`…/reject`）。批准 / 忽略的请求都由本页发，AI 不能发。
+      `summary`、`reason`、`author`、窗口标题、项目 / 任务名一律 `textContent`（AI 给的文本不解释）。已 `stale` / `applied` /
+      `rejected` / `failed` 的行标状态、按钮禁用（`failed` 可重试）。操作进行中全部控件禁用；做完重拉，并通知「待确认建议」「待分类」
+      「自动记录」三块重拉（`assistant:reports-changed` 事件）。不改「待确认建议」等既有流程。键盘可达（原生 button / select）；320 / 390 px 不横滚。
   - id: nexus-core.views.tree.v1
     contract: ../nexus-core/module_docs/contract.md
     purpose: >
@@ -191,6 +204,7 @@ consumes:
 
 | 日期 | CR | 变更 |
 |---|---|---|
+| 2026-10-09 | 仓主：AI 一次提交一份报告，我可以一键批准全部；单条编辑保留 | 新增「AI 报告」一块（`reports.js`、`#report-panel`，页面最上面，仅在有待批准报告时出现）：作者 / 时间 / 概述 / 条数与总时长，按目标项目分组列出每条（时间长的在前），行上「改」「批准」「不要」，头部「全部批准」「整份不要」，全部批准后显示「已批准 N 条，M 条已过期」。消费 nexus-core v2.20 `activity.reports.v1`；既有各块不动。测试：`tests/test_reports.py` |
 | 2026-10-09 | 仓主：网页上也给一个 Agent 令牌的发放入口 | 新增「Agent 令牌」一块（`tokens.js`，在「活动检测设置」与「回顾」之间）：选范围（只上报 / 只读 / 读写，各一句说明）、选填备注、生成；令牌只显示一次，带复制与可粘贴的配置；列出自己名下的令牌，逐个吊销（先确认）。消费 `auth.gate.v1` v1.4 |
 | 2026-10-09 | 仓主：新建的分区 / 项目（还没有任务）在 AI助理页找不到；待分类、待确认按时长排 | 纯前端、只增不改：待确认建议里**不 scoped** 的行下拉，以及待分类的「其他项目…」，列出**所有**项目（含没有任务的），每个项目第一项「未分类（只记到这个项目）」（值 `p:`+项目 id，不是 taskId）；选它 = 这行 confirm `{projectId}` / reassign `{projectId}`（待分类里不列该组自己的项目），「确认整个集合」同发 `{projectId}`，「全部确认」不含；「以后这个窗口」照旧不加规则。scoped 行的选项不变。排序：待分类的项目组与组内段、待确认建议集合内的窗口行（无操作的仍在后）与窗口内的分段、自动记录列表，都按时长从大到小，一样长的新的在前，再一样保持原顺序。不新增接口，不自动确认任何东西 |
 | 2026-10-08 | 仓主：规则认不出就让 AI 出来写规则，人要能管住它 | nexus-core v2.15 / `detector.rules.v1` v1.2：「规则」分页里带 `auto: true` 的规则行头标「AI 自动」（`rules.js`；照常能改、能删、能停用），整套保存时把读到的 `author` / `auto` 原样带回（`toWire`）；「自动记录」面板里 `ai: true` 的段标「AI 认的」（`auto.js`），改归属照旧。测试：`tests/test_rules.py`、`tests/test_auto.py` 各一条 |

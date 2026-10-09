@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AI助理</title>
   <!-- 「AI助理」页（仓主 2026-09-30 定页面分工：计时 = 现在，任务 = 未来，AI助理 = 回顾与分析）。
-       四块从上到下：AI 对话、待确认建议（两块从计时页搬来）、活动检测设置、回顾。
+       四块从上到下（有待批准的 AI 报告时最上面多一块，v2.20）：AI 对话、待确认建议（两块从计时页搬来）、活动检测设置、回顾。
        顶栏、设计 tokens 由网关注入（modules/nginx-docker），本页只自带兜底 tokens（assistant.css 开头）。 -->
   <link rel="stylesheet" href="assistant.css">
 </head>
@@ -15,6 +15,24 @@
       <h1 class="page-title">AI助理</h1>
       <p class="suggest-sub">回顾与分析：问助手、确认电脑记下的活动、管检测程序记什么。</p>
     </header>
+
+    <!-- 「AI 报告」（nexus-core v2.20，reports.js）：AI 一次交上来的待批准报告。没有待批准的报告、或后端没有这个端点（404）时整块保持 hidden。
+         批准 / 不要只有人在这里点；AI 只能经 MCP 的 propose_report 交报告。 -->
+    <section class="card report-panel" id="report-panel" hidden aria-labelledby="report-title">
+      <div class="suggest-top">
+        <h2 class="suggest-title" id="report-title">AI 报告 <span class="suggest-count mono" id="report-count"></span></h2>
+        <p class="suggest-sub">AI 一次交上来的一整份提议。点「全部批准」就按下面的安排全部记下；也可以逐条「改」目标、「批准」或「不要」。
+          你自己已经处理过的会自动跳过。</p>
+      </div>
+      <p class="suggest-sub mono" id="report-meta"></p>
+      <p class="report-summary" id="report-summary" hidden></p>
+      <div class="suggest-bulk">
+        <button type="button" class="btn btn-fact" id="report-approve-all" hidden>全部批准</button>
+        <button type="button" class="btn btn-ghost danger" id="report-reject-all" hidden>整份不要</button>
+      </div>
+      <p class="suggest-message" id="report-message" role="status" hidden></p>
+      <div class="unc-groups" id="report-groups"></div>
+    </section>
 
     <!-- 「AI 对话」（contracts/agent.chat.v1，chat.js）。聊天后端没装（health 不是 200）时整块保持 hidden。 -->
     <section class="card chat-panel" id="chat-panel" hidden aria-labelledby="chat-title">
@@ -351,6 +369,7 @@
     </section>
   </main>
 
+  <script src="reports.js"></script>
   <script src="chat.js"></script>
   <script src="suggestions.js"></script>
   <script src="unclassified.js"></script>

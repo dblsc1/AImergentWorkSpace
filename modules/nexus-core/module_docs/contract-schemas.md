@@ -409,3 +409,39 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
 
 - 四个读端的键**总在**：`attention` 没有为 `[]`、`runId` 没有为 `null`、`attentionSeconds` 没有为 `0`、`dwellSeconds` 离开时为 `null`。
 - `attention` 按时间排、互不重叠；`from == to` 的段可能出现。
+
+### AI 报告（v2.20，`nexus-core.activity.reports.v1`）
+
+规范性条款只住 `contract.md`「AI 报告」节。形状：
+
+```jsonc
+// POST /api/core/activity/reports —— 只收人（Bearer → 403）。summary ≤ 2000、items ≤ 200，超了整个请求 422
+{ "summary": "把 VS Code 的碎片归到制作区，8 段 Slack 当噪声", "author": "hermes",      // author 选填，≤ 64，自报标签
+  "items": [
+    { "kind": "assign",  "suggestionIds": ["sug_…", "sug_…"], "taskId": "t_a1", "reason": "标题里都是 save.gd" },
+    { "kind": "assign",  "collection": "写文档", "projectId": "p_3c" },                   // 集合名：提交时解析成 id 存下
+    { "kind": "newTask", "suggestionIds": ["sug_…"], "newTask": { "projectId": "p_3c", "name": "重构存档" } },
+    { "kind": "dismiss", "suggestionIds": ["sug_…"], "reason": "后台自动刷新" } ] }
+// → 200（坏的条进 rejected，其余照收；code ∈ invalid_item / unknown_suggestion / unknown_task / unknown_project /
+//        duplicate_suggestion / too_many_refs / newtask_refused；不存在与别的租户的 id 回一样的话，没有存在性预言机）
+{ "reportId": "rp_…" | null, "status": "pending", "accepted": 3,
+  "rejected": [ { "index": 2, "code": "unknown_task", "reason": "任务不存在：t_x" } ] }
+// → 429：已有 5 份 pending；422：形状不对 / 超限
+
+// GET /api/core/activity/reports/{id}（resolve=true；resolve=false 没有 suggestions / seconds / staleNow）
+{ "id": "rp_…", "author": "hermes", "summary": "…", "status": "pending", "createdAt": "<ISO>", "decidedAt": null,
+  "counts": { "items": 4, "pending": 4, "byKind": { "assign": 2, "newTask": 1, "dismiss": 1 }, "seconds": 5400 },
+  "items": [ { "id": "i0", "kind": "assign", "status": "pending", "reason": "…",
+               "taskId": "t_a1", "projectId": null, "newTask": null,                     // newTask: {proposalId, projectId, name}
+               "results": { "sug_…": { "state": "applied" } },                           // 失败时 {state:"failed", reason}
+               "applied": 0, "stale": 0, "failed": 0, "failure": null,                  // 第一个失败段的原因（服务端的话）
+               "seconds": 1200, "staleNow": 0,                                          // 此刻已不是 pending 的建议数
+               "suggestions": [ { "id": "sug_…", "app": "code", "title": "…", "startAt": "…", "durationSeconds": 600,
+                                  "status": "pending" } ] } ] }
+
+// POST …/{id}/approve
+{ "id": "rp_…", "status": "approved", "applied": 3, "stale": 1, "failed": 0,
+  "items": [ { "id": "i0", "status": "applied", "applied": 2, "stale": 0, "failed": 0 },
+             { "id": "i1", "status": "failed",  "applied": 0, "stale": 0, "failed": 1, "failure": "任务不存在：t_x" } ] }
+// POST …/items/{itemId}/approve  请求体可为 {} 或 { "taskId": "t_b" } 或 { "projectId": "p_4d" }（先改再批准）→ 同上单个 item 的形状，外加报告 status
+```
