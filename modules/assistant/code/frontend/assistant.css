@@ -382,3 +382,21 @@ fieldset.set-field > legend { font-size: var(--fs-sub); color: var(--ink-2); mar
 .auto-target { flex: 1 1 10em; min-width: 0; font-size: var(--fs-sub); color: var(--ink-2); overflow-wrap: anywhere; }
 .auto-row .auto-pick { flex: 0 1 12em; min-width: 0; max-width: 100%; background: var(--panel); }
 
+/* ── 「AI 报告」（2026-10-09，reports.js，nexus-core v2.20）：骨架借「待分类」的 .unc-group / .unc-row；这里只有行内的排布与状态 ── */
+.report-panel { display: grid; gap: var(--sp-3); min-width: 0; border-left: 3px solid var(--plan); }
+.report-summary { font-size: var(--fs-body); overflow-wrap: anywhere; white-space: pre-wrap; padding: var(--sp-2) var(--sp-3);
+  background: var(--panel-2); border-radius: var(--r-2); }
+.report-row { justify-content: space-between; }
+.report-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-1) var(--sp-2); flex: 1 1 16em; min-width: 0; }
+.report-main .unc-what { flex: 1 1 100%; }
+.report-dur { font-size: var(--fs-sub); color: var(--ink-2); }
+.report-reason { flex: 1 1 100%; font-size: var(--fs-sub); color: var(--ink-2); overflow-wrap: anywhere; }
+.report-status { margin-right: 0; overflow-wrap: anywhere; }
+.report-row.is-failed .report-status { color: var(--danger); border-color: var(--danger); }
+.report-row.is-applied .report-status { color: var(--fact); border-color: var(--fact); }
+.report-row.is-applied, .report-row.is-stale, .report-row.is-rejected { opacity: .7; }
+.report-acts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-width: 0; }
+.report-acts .report-pick { flex: 0 1 8em; min-width: 0; max-width: 100%; background: var(--panel); }
+.report-acts .btn { flex: 0 0 auto; min-height: var(--tap); }
+.report-acts .btn:disabled { opacity: .5; cursor: not-allowed; filter: none; }
+@media (max-width: 480px) { .report-acts, .report-acts .report-pick { flex: 1 1 100%; } .report-acts .btn { flex: 1 1 6em; } }

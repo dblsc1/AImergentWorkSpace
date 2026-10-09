@@ -97,7 +97,7 @@ check "read 令牌 + 方法覆盖头写不了" \
   "$(code -X POST -H "$(bearer "$READ")" -H 'X-HTTP-Method-Override: GET' "$BASE/api/core/timer/stop")" 403
 check "read 令牌的 MCP：只列只读工具" \
   "$("${C[@]}" -X POST -H "$(bearer "$READ")" -H "$JSON" -d "$LIST" "$MCP" \
-     | py 't=r["result"]["tools"]; print(len(t), [x["name"] for x in t if not x["annotations"]["readOnlyHint"]])')" "11 []"
+     | py 't=r["result"]["tools"]; print(len(t), [x["name"] for x in t if not x["annotations"]["readOnlyHint"]])')" "12 []"
 check "read 令牌的 MCP：只读工具能调" \
   "$("${C[@]}" -X POST -H "$(bearer "$READ")" -H "$JSON" \
      -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_projects","arguments":{}}}' "$MCP" \
@@ -110,8 +110,8 @@ check "read 令牌的 MCP：会写的工具被拒" \
 echo "── write：同以前的设备令牌"
 check "write 令牌读" "$(code -H "$(bearer "$WRITE")" "$TREE")" 200
 check "write 令牌写" "$(code -X POST -H "$(bearer "$WRITE")" "$BASE/api/core/timer/stop")" 200
-check "write 令牌的 MCP：十五个工具" \
-  "$("${C[@]}" -X POST -H "$(bearer "$WRITE")" -H "$JSON" -d "$LIST" "$MCP" | py 'print(len(r["result"]["tools"]))')" 15
+check "write 令牌的 MCP：十七个工具" \
+  "$("${C[@]}" -X POST -H "$(bearer "$WRITE")" -H "$JSON" -d "$LIST" "$MCP" | py 'print(len(r["result"]["tools"]))')" 17
 check "write 令牌改检测设置照旧被拒（只许人）" \
   "$(code -X DELETE -H "$(bearer "$WRITE")" "$BASE/api/core/detector/settings?deviceId=dev_ci")" 403
 check "write 令牌开不了页面、换不出新令牌" \

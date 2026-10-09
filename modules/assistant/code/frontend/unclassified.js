@@ -303,5 +303,6 @@
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState === "visible") refresh();
   });
+  document.addEventListener("assistant:reports-changed", refresh);   // AI 报告批准了一批（reports.js）：桶里多了段
   refresh();
 })();

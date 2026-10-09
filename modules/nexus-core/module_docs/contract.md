@@ -152,6 +152,14 @@
 > 一秒也不多等。** 这是「AI 只能写规则草稿、应用要人点」的**第二条取代条目**（只对被认领的那一个窗口、只在 `autoTrack` 打开时），
 > 见该节末尾；`propose_detector_rules` 仍然只写草稿。既有字段、端点行为一个不改。
 >
+> **v2.20（追加式）**：**AI 一次交一份报告，人一键全批准；单条照样能改。** 仓主 2026-10-09：「增加：AI 一次提交一份报告，我可以一键批准全部。
+> 当然单条编辑还是保留的」。碎片多时，逐条点「是」是剩下的最大痛点。新增 `nexus-core.activity.reports.v1`：AI 交一份**待批准的报告**
+> （一段 `summary` + 若干条，每条是**已有**的某种动作：把一批待确认建议记到项目 / 现成任务、提议新任务并把它们记进去、当噪声忽略），
+> 一律只进新集合 `activity_reports`，**不写任何事实**。人（只收人，同 `matches`）在「AI助理」页看报告：全部批准 / 单条批准（可先改目标）/
+> 单条不要 / 整份不要。批准走的是**同一个** `confirm` / `dismiss` / `proposals.task_for`（不另开写路径），事实与事件跟手点完全一样，
+> 只在事件的 `ai` 块多一个出处 `report {id, author}`。建议在此期间被人处理了的条目记 `stale` 跳过，不算错。MCP 追加 `propose_report` 与
+> `get_report_status`（`mcp.tools.v1` v1.13，十七个工具）。既有字段、端点、事件形状一个不改。见「AI 报告」节。
+>
 > **v2.19（追加式；v2.18 留给代理心跳那一版）**：**令牌带范围，没有令牌只能上报。** 仓主 2026-10-09：「token 可以让我们给智能体不同权限：读 / 写 / 只上报进度」「请求没有 token 的话，就只能上报」。认证服务（`auth.gate.v1` v1.4）在门上按范围放行，并经网关多转两个头 `X-Nexus-Scope` / `X-Nexus-Anonymous`；本版据此**再拦一遍**（`report` 只有四个上报端点、`read` 再加 `GET`），并把匿名开的代理运行标成 `unverified`、与验证过的运行隔开。两个头都没有时行为与 v2.18 完全一样；既有字段、端点一个不改，只追加 `views/lanes` 的 `agents[].unverified`。见「调用方范围与匿名上报」节。
 >
 > **v2.16（追加式）**：**人此刻在哪个窗口、它多半属于哪个项目 / 任务，说成一句话，哪里都读同一份。** 仓主 2026-10-09：
@@ -431,6 +439,14 @@ provides:
       结束 = lastSeenAt；没声明的运行不受影响（仍只有遗忘超时）。start / heartbeat 响应带 heartbeatSeconds=900。
       运行上另记 beatSource / beatCount，views/lanes 与 agent.run.completed 的 data 带出
     status: 已实现（v2.18），待验证
+  - id: nexus-core.activity.reports.v1
+    summary: AI 报告（v2.20，追加式）——AI 一次交一份待批准的报告，人一键全批准、单条仍可改 / 批准 / 不要。
+      POST /api/core/activity/reports {summary, author?, items[]}（每条 assign | newTask | dismiss，选择器 suggestionIds | collection；
+      逐条校验，坏的进 rejected；待批准的报告合计超 5 份 429）、GET activity/reports[?status&limit&items]、
+      GET activity/reports/{id}、POST …/{id}/approve（全部批准）、…/items/{itemId}/approve（可带 taskId | projectId = 先改再批准）、
+      …/items/{itemId}/reject、…/{id}/reject；全部只收人（带 Bearer 403）。批准走同一个 confirm / dismiss / proposals.task_for，
+      逐条结果 applied | stale | failed；事件 ai 块追加选填 report {id, author}。报告不是事实：不进台账 / 导出 / 快照
+    status: 已实现（v2.20），待验证
 consumes:
   - id: yq-event/v1
     contract: ../../contracts/yq-event.v1/contract.md
@@ -3605,6 +3621,76 @@ AI 仍不能改 / 删任何已有规则、不能写匹配范围超出那一个�
 - 不回填：升级前的 `attend` 仍是老判据记下的，原样留着。
 - 一拍里超过 12 段时检测程序留当前窗口 + 最长的那些（带 `truncated: true`），被丢掉的短停留不补。
 
+## AI 报告：一次交一份，人一键全批准（规范性 · v2.20，`nexus-core.activity.reports.v1`）
+
+仓主 2026-10-09（原话见本文件头部 v2.20）。**AI 只提议，一条都不替人定**：报告里的每一条都和已有的单条提议一样，要人批准才入账。
+这一节只加两件事：把「很多条提议」装进一份可以一次批准的单子；批准时逐条走**既有**的确认路径。
+
+### 报告与条（规范性）
+
+一份报告 = `{summary, author, items[]}`。每条 `item` 是下面三种之一，**语义全部沿用已有的，不发明新的**：
+
+| `kind` | 必给 | 批准时做的事（同一个函数，不另写） |
+|---|---|---|
+| `assign` | 选择器 + `taskId` 与 `projectId` **恰好一个** | 每段 `service.confirm(id, taskId)`（v2.2）；只到项目 = `confirm(id, projectId=…)`，记到它的「未分类」桶（v2.9） |
+| `newTask` | 选择器 + `newTask {projectId, name}` | 提交时走 `proposals.propose`（v2.8，同样的校验与去重，生成待定提议）；批准时 `proposals.task_for` 取（或建，**同一提议只建一次**）任务，再对每段 `confirm(id, 那个任务)` |
+| `dismiss` | 选择器 | 每段 `service.dismiss(id)`（v2.2） |
+
+- **选择器**（恰好一个）：`suggestionIds`（1–200 个待确认建议的 id）或 `collection`（集合名，v2.10；**提交时**解析成该集合里此刻所有待确认的建议 id 并存下，
+  之后集合再变这一条不变）。一条里的 id 去重；同一份报告里**同一个建议至多出现在一条**里（后出现的那条被拒，`duplicate_suggestion`）。
+- 可选 `reason`（≤ `MAX_REASON` = 300 个码点，纯文本）。
+- 常量：`MAX_ITEMS` = 200（每份条数，超了整个请求 `422`）、`MAX_ITEM_REFS` = 200（每条建议数）、`MAX_REFS` = 500（每份报告所有条的建议数合计，超出的条被拒，
+  所以一次「全部批准」的工作量有上界）、`MAX_SUMMARY` = 2000（超了 `422`）、`MAX_AUTHOR` = 64、`MAX_PENDING_REPORTS` = 5。
+- **不可信文本（规范性）**：`summary`、`author`、`reason` 是 AI 给的，**只当纯文本**存、原样回给人看（前端只用 `textContent`），不解释、不拼进任何路径 / 查询 / 提示。
+  它们回到 AI 手里（`get_report_status`）之前要过 MCP 的 `_screen`（`mcp.tools.v1` v1.10「屏幕来的文字不可信」同一套）。
+- 报告集合 `activity_reports`（每个 `(user, id)` 一份）**不是事实**：不进台账 / 投影 / 导出 / 快照恢复；过期同建议（`NEXUS_SUGGESTION_TTL_DAYS`，缺省 14 天，惰性清理）。
+
+### 端点（全部只收人：带 `Authorization: Bearer` → `403`，同 `matches`；匿名 / `report` / `read` 范围由 v2.19 的放行表挡）
+
+提交与读取也走这条守卫：MCP 对内直连不带 Bearer，所以过得去；设备令牌（持令牌直连网关的代理）过不去，只能经 MCP。
+
+| 端点 | 说明 |
+|---|---|
+| `POST /api/core/activity/reports` `{summary, author?, items[]}` | 提交。`author`（缺省 `"ai"`，≤ 64 码点）是**自报的标签**，不是身份。整体形状不对 / 条数超限 / `summary` 超长 → `422`。每条逐个校验，坏的进 `rejected`，其余照收。回 `{reportId, status, accepted, rejected[{index, code, reason}]}`；一条都没收下时不建报告、`reportId: null` |
+| `GET /api/core/activity/reports?status=pending\|all&limit=&items=` | 报告列表（新的在前；缺省 `pending`，`limit` 1–50）：`{items[{id, author, summary, status, createdAt, decidedAt, counts}]}`；`items=true` 时每份再带 `items[]`（逐条状态与结果，不带建议明细——MCP 的 `get_report_status` 用） |
+| `GET /api/core/activity/reports/{id}?resolve=true\|false` | 一份报告，条目解析到**当前状态**（`resolve=false` 不带建议明细） |
+| `POST /api/core/activity/reports/{id}/approve` | **全部批准**：对每个 `pending` / `failed` 的条逐条应用，返回逐条结果 |
+| `POST /api/core/activity/reports/{id}/items/{itemId}/approve` `{taskId?\|projectId?}` | 批准单条；请求体给了目标 = **先改再批准**（改的目标先存下，之后批准用的就是它；不给 = 用报告里的） |
+| `POST /api/core/activity/reports/{id}/items/{itemId}/reject` | 这一条不要（`newTask` 条同时把提议标为已否掉，同 `unmatch`，助理不许再提） |
+| `POST /api/core/activity/reports/{id}/reject` | 整份不要：所有还没处理的条记 `rejected`，报告记 `rejected` |
+
+- **改目标**只对 `assign` / `newTask` 条：`taskId` 与 `projectId` 恰好一个，校验同提交（不存在 `404`）；改完这一条就成了 `assign`（`newTask` 丢掉；那个待定提议留着过期）。`dismiss` 条不能改（`400`）。
+  已处理（`applied` / `stale` / `rejected`）的条不能改（`409`）。
+- 报告状态：`pending`（还有 `pending` / `failed` 的条）→ `approved`（条都处理完且不全是 `rejected`）/ `rejected`（整份不要，或每条都被不要）；
+  已 `approved` 的报告再「全部批准」= 什么都不做（幂等）；已 `rejected` 的 → `409`。
+- **身份与上限（规范性）**：`author` 只是调用方自报的显示标签，**不参与任何判定**（不比较、不据此顶掉 / 隐藏 / 放行任何报告）——同一租户里谁交的都一样，
+  身份只有网关覆盖的租户头；MCP 对内直连，nexus-core 看不到是哪个 AI。所以没有「同作者顶掉旧报告」：待批准的报告合计超过 `MAX_PENDING_REPORTS` 份 → 新的提交 `429`（先让人处理旧的）。
+  上限是软的：并发提交最多超出并发数。报告对同租户一视同仁（可读、不可改）。
+
+### 条的状态与逐条结果（规范性）
+
+条 `status`：`pending` → `applied`（至少一段入账 / 忽略成功，且没有失败）/ `stale`（没有一段还能做，全因建议已被处理）/ `failed`（有一段做不成，`reason` 说明；可再批准重试，已成功的不重做）/ `rejected`。
+每个建议在条里有自己的结果 `results[建议 id] = {state: applied|stale|failed, reason?}`；`state` 一旦是 `applied` 不再被改（并发的另一个批准写的 `stale` 盖不掉它）。
+
+- **`stale`**：批准那一刻建议已不是 `pending`（人手点过确认 / 忽略，或被清掉），或 `confirm` 回 `duplicate:true` / `409`（并发的确认抢先了）。跳过，不是错误，不算失败。
+- **`failed`**：目标任务 / 项目刚被删、任务已完成等 `confirm` 抛的域错误；报告里的 `reason` 是服务端的话，不是 AI 的。一条失败不撤销、不阻塞别的条。
+- **幂等 / 并发**：不另加锁，靠两层：每段的结果只增不改（上面）；每段入账靠 `confirm` 自己的防重键 `activity:<建议 id>` 与 `pending→confirmed` 条件占位——并发的「全部批准」与单条批准同一段，只有一个写事实，另一个得到 `duplicate` → `stale`。
+  `newTask` 条的任务由 `proposals.task_for` 保证只建一个。批准一次的工作量以 `MAX_REFS` 为界。
+- **出处（规范性）**：入账的 `session.completed` 的 `ai` 块追加选填键 `report: {id, author}`（`confirmed: true`、`confidence` 取建议原来的，与手点的一样）。
+  `source: "activity-confirmed"` 的信封从外部入口进来时，`ai.report` 同 `ai.auto` 一样不落库（出处只能由本服务盖）。忽略没有事件，不记出处。
+
+### 响应形状（见 `contract-schemas.md`「AI 报告」）
+
+「全部批准」回 `{id, status, applied, stale, failed, items[{id, status, applied, stale, failed, failure}]}`：顶层三个数是**这一次调用处理的条**里各落在哪（再点一次是 0 / 0 / 0），
+`items[]` 里 `applied` / `stale` / `failed` 是该条**建议**的个数。
+
+### 本版不做（有意的）
+
+- 不做「AI 自动批准」或按把握阈值批准：批准永远是人点。
+- 不做报告的编辑（改 `summary` / 增删条）；要换一份就让 AI 再交一份，旧的由人处理。
+- 不让 AI 撤回或顶掉报告，也不按 AI 区分可见性（没有可信的 AI 身份可依）：撤回只有人「整份不要」。
+- 不在批准里做「撤销」：入账后的改归属走 v2.11。
+
 ## 入口与路由
 
 - nginx 公开前缀：`/api/core/`（HANDOFF §4 已定死，前端写死地址）
@@ -3741,6 +3827,8 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 | 共享 `lanes.js` / `focus.js` / 顶栏（v2.17） | `views.lanes.v1` 的 `agents[].attention`（代理线里的蓝条「你在看」）、`human.presence[].runId`；`focus.dwellSeconds`（悬停里的「近 2 小时在这上面 N 分」）；顶栏改为约 5 秒读一次 `views/current` | `modules/nginx-docker` |
 | `ring` / `hive` 前端（v2.17） | `views.current.v1` 的 `focus.dwellSeconds`（圆环中心走秒下的小字 / 蜂巢中心格的悬停）；计时页约 5 秒读一次 | `modules/ring`、`modules/hive` |
 | `mcp`（v2.17） | `views.agent-time` 的 `open[].attentionSeconds`、`focus.dwellSeconds`（`mcp.tools.v1` v1.11 原样带出） | `modules/mcp` |
+| `assistant` 前端（v2.20） | `activity.reports.v1`：顶部「AI 报告」块（读 `GET activity/reports?status=pending` 与 `…/{id}`，批准 / 改 / 不要走 `…/approve`、`…/items/{id}/approve|reject`、`…/reject`） | `modules/assistant` |
+| `mcp`（v2.20） | `activity.reports.v1`：`propose_report`（`POST activity/reports`）、`get_report_status`（`GET activity/reports?status=all&limit=1&items=true`）；批准 / 不要 MCP 永远不调 | `modules/mcp` |
 | `assistant` 前端（v2.15） | 规则的 `auto`（「AI 自动」徽标，整套保存时原样带回 `author` / `auto`）；`GET /api/core/activity/auto` 的 `ai` | `modules/assistant` |
 | `assistant` 前端（v2.14） | `activity.auto.v1` 的 `GET /api/core/activity/auto`（「自动记录」面板）+ `sessions.reassign.v1`（改归属，v2.14 起收自动记下的段）；`detector.settings.v1` v1.3 的 `autoTrack`；`detector.rules.v1` v1.1 的 `projectId` | `modules/assistant` |
 | 共享顶栏 `nginx-docker/static/navbar.js`（v2.4，契约先行） | `views.lanes.v1`（计时芯片悬停的精简预览：人 + 至多 4 条代理线、最近 1 小时，只在预览打开时约 15 秒轮询；计时页上不弹） | `modules/nginx-docker` |

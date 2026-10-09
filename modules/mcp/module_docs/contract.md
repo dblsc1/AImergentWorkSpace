@@ -7,7 +7,7 @@
 provides:
   - id: mcp.tools.v1
     contract: ../../../contracts/mcp.tools.v1/contract.md
-    summary: 15 个工具（11 个只读 + propose_detector_rules 只写草稿 + propose_activity_matches 只写待确认的建议 + v1.9 认窗口的 get_window_awaiting_target / suggest_window_target），挂在 <站点前缀>api/mcp/（经网关、过门）；对内 http://mcp:8020/api/mcp/
+    summary: 17 个工具（12 个只读（v1.13 加 get_report_status）+ propose_detector_rules 只写草稿 + propose_activity_matches 只写待确认的建议 + v1.13 propose_report 只写待人批准的报告 + v1.9 认窗口的 get_window_awaiting_target / suggest_window_target），挂在 <站点前缀>api/mcp/（经网关、过门）；对内 http://mcp:8020/api/mcp/
 consumes:
   - id: nexus-core.views.tree.v1
     contract: ../../nexus-core/module_docs/contract.md
@@ -36,6 +36,9 @@ consumes:
   - id: nexus-core.activity.suggestions.v1
     contract: ../../nexus-core/module_docs/contract.md
     purpose: list_activity_suggestions（只调 GET）；propose_activity_matches（POST matches；不调 confirm / dismiss / unmatch）；get_match_history（GET history，v1.7）
+  - id: nexus-core.activity.reports.v1
+    contract: ../../nexus-core/module_docs/contract.md
+    purpose: v1.13 propose_report（POST activity/reports）；get_report_status（GET activity/reports?status=all&limit=1&items=true）；不调 approve / reject（只有人能）
   - id: nexus-core.tenancy.v1
     contract: ../../nexus-core/module_docs/contract.md
     purpose: 租户头格式与严格模式
@@ -111,3 +114,5 @@ v1.10 同版（安全审查）：屏幕来的文字不可信。`tools.py` 的 `_
 `get_match_history`、`get_window_awaiting_target` 的 `app` / `title`（及 `reason`、集合名）与 `get_detector_rules` 的 `note`
 都过它，规则的正则不过。五个工具的说明加同一句 `_SCREEN`，`INSTRUCTIONS` 也加。测试：带换行 / 控制符 / 「IGNORE ALL PREVIOUS
 INSTRUCTIONS」的标题在五个工具里都是一行、截断过、只在自己的字段里；说明里有那句话；`suggest_window_target` 多带 `title` 400 且不调下游。
+
+v1.13（2026-10-09，nexus-core v2.20「AI 报告」）：`propose_report` 只发一个 POST `activity/reports`（原样下传，不带 `Authorization`；拒绝理由过 `_screen` 再还给模型），`get_report_status` 只发一个 GET `activity/reports?status=all&limit=1&items=true`（`summary` / `reason` / `failure` 过 `_screen`，不出建议 id 与自报作者）。`WRITES` 追加 `propose_report`；工具共 17 个。测试：`tests/test_mcp.py` 的 `test_propose_report_*`、`test_get_report_status_*`、`test_ai_text_in_reports_*`，工具分类与计数的几条随之改为 17 / 12。
