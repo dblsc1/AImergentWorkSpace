@@ -97,7 +97,7 @@ def ingest(payload: dict | list, *, internal: bool = False) -> IngestOut:
         doc = envelope.model_dump()  # extra="allow"：未知字段原样保留（B9）
         doc.pop(CURRENT_SUBJECT, None)  # 例外：读端现算的键不落库，谁带来的都一样
         if not internal and doc["source"] == _AUTO_SOURCE and isinstance(doc.get("ai"), dict):
-            doc["ai"] = {k: v for k, v in doc["ai"].items() if k != "auto"}
+            doc["ai"] = {k: v for k, v in doc["ai"].items() if k not in ("auto", "report")}  # 出处只能由本服务盖
         doc["recordedAt"] = _now_iso()  # 服务端盖章；客户端给的值在这里被覆盖（B6）
         # 租户同样服务端盖章（v2.0）：信封里的 user 客户端必须照填（信封校验不放宽），
         # 但落库的是网关认定的租户——否则一个租户能往另一个租户的台账里写事实。

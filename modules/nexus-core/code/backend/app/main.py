@@ -15,6 +15,8 @@ from fastapi.responses import JSONResponse
 
 from .config import settings
 from .modules.activity.presence_router import router as presence_router
+from .modules.activity.reports import TooManyReportsError
+from .modules.activity.reports_router import router as reports_router
 from .modules.activity.router import router as activity_router
 from .modules.activity.service import ConflictError as SuggestionConflictError
 from .modules.detector import rules as detector_rules
@@ -98,6 +100,7 @@ app.include_router(planner_import_router, prefix=API_PREFIX)
 app.include_router(restore_router, prefix=API_PREFIX)
 app.include_router(activity_router, prefix=API_PREFIX)  # v2.2 活动建议
 app.include_router(presence_router, prefix=API_PREFIX)  # v2.4 在场心跳
+app.include_router(reports_router, prefix=API_PREFIX)  # v2.20 AI 报告
 app.include_router(detector_router, prefix=API_PREFIX)  # v2.5 检测程序设置；v2.6 分类规则
 
 
@@ -210,6 +213,12 @@ def suggestion_conflict(_request: Request, exc: SuggestionConflictError) -> JSON
 @app.exception_handler(TooManyAnonymousRunsError)
 def too_many_anonymous_runs(_request: Request, exc: Exception) -> JSONResponse:
     """契约 v2.19：同时在跑的匿名运行到上限。429——请求本身合法，稍后（有运行结束 / 超时后）再来。"""
+    return JSONResponse(status_code=429, content={"detail": str(exc)})
+
+
+@app.exception_handler(TooManyReportsError)
+def too_many_reports(_request: Request, exc: Exception) -> JSONResponse:
+    """契约 v2.20：别的作者已有 5 份待批准的报告。429——请求合法，等人处理旧的再来。"""
     return JSONResponse(status_code=429, content={"detail": str(exc)})
 
 

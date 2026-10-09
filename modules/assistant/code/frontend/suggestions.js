@@ -716,6 +716,8 @@
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState === "visible" && !busy) load();
   });
+  // AI 报告里批准了一批（reports.js）：待确认的少了，重拉
+  document.addEventListener("assistant:reports-changed", function () { if (!busy) load(); });
 
   load();
 })();
