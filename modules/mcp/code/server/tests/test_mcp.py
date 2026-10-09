@@ -101,7 +101,7 @@ def respond(path, q, tenant):
                      "task": {"id": "t_a1", "key": "k", "name": "写提示词", "totalSeconds": 1, "shareOfProject": 1},
                      "sessionStartAt": start,
                      "agents": [{"runId": "run_1", "taskId": "t_a1", "agent": "claude-code", "tool": "Bash",
-                                 "model": None, "startedAt": start}],
+                                 "model": None, "startedAt": start, "elapsedSeconds": 777}],
                      "auto": None, "needsChoice": None, "aiThinking": None,  # 在计时：focus 照给（nexus-core v2.16）
                      "focus": {"state": "present", "app": "firefox", "title": "邮件", "since": start, "projectId": None,
                                "projectName": None, "taskId": None, "taskName": None, "source": None}}
@@ -632,7 +632,8 @@ def test_get_current_timer_running_and_idle(servers):
     assert r["running"] is True and r["taskId"] == "t_a1" and r["path"] == "学习 / garden / 写提示词"
     assert 1195 <= r["elapsedSeconds"] <= 1260
     assert r["agents"] == [{"runId": "run_1", "agent": "claude-code", "tool": "Bash", "model": None,
-                            "taskId": "t_a1", "path": "学习 / garden / 写提示词", "startedAt": r["sessionStartAt"]}]
+                            "taskId": "t_a1", "path": "学习 / garden / 写提示词", "startedAt": r["sessionStartAt"],
+                            "elapsedSeconds": 777}]  # 服务端算好的，原样带出（以前这里是 null）
     idle = ok(servers, "get_current_timer", headers={"X-Nexus-Tenant": "u_idle"})
     assert {k: idle[k] for k in ("running", "taskId", "path", "sessionStartAt", "elapsedSeconds", "agents")} == \
         {"running": False, "taskId": None, "path": None, "sessionStartAt": None, "elapsedSeconds": None, "agents": []}
@@ -1209,3 +1210,11 @@ def test_write_scope_and_no_header_keep_all_seventeen_tools(servers, headers):
     assert len(rpc(servers, "tools/list", headers=headers)["result"]["tools"]) == 17
     assert ok(servers, "get_window_awaiting_target", headers={**headers, "X-Nexus-Tenant": "u_alice"})["window"]
 
+
+
+def test_every_tool_that_is_not_read_only_is_in_writes():
+    """加了一个会写的工具却没放进 WRITES：read 范围的令牌就能调它。这条红在加的那一刻。"""
+    import tools  # noqa: PLC0415
+
+    not_read_only = {t["name"] for t in tools.TOOL_LIST if t["annotations"].get("readOnlyHint") is not True}
+    assert not_read_only == set(tools.WRITES), not_read_only ^ set(tools.WRITES)

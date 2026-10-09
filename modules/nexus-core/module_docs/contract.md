@@ -162,6 +162,18 @@
 >
 > **v2.19（追加式；v2.18 留给代理心跳那一版）**：**令牌带范围，没有令牌只能上报。** 仓主 2026-10-09：「token 可以让我们给智能体不同权限：读 / 写 / 只上报进度」「请求没有 token 的话，就只能上报」。认证服务（`auth.gate.v1` v1.4）在门上按范围放行，并经网关多转两个头 `X-Nexus-Scope` / `X-Nexus-Anonymous`；本版据此**再拦一遍**（`report` 只有四个上报端点、`read` 再加 `GET`），并把匿名开的代理运行标成 `unverified`、与验证过的运行隔开。两个头都没有时行为与 v2.18 完全一样；既有字段、端点一个不改，只追加 `views/lanes` 的 `agents[].unverified`。见「调用方范围与匿名上报」节。
 >
+> **v2.19.1（2026-10-09，PR #89 / #90 / #91 复审的补记；只补文字与收紧，不加字段）**：① 匿名（`unverified`）运行**不进代理时长**：
+> `proj_agent_daily_stats` 不收它们的 `agent.run.completed`，`views/agent-time` 的 `open[]` 不列它们（契约一直说匿名只写泳道；
+> 泳道里仍看得见、带 `unverified`）。② `ScopeMiddleware` 对 websocket 作用域：带 `X-Nexus-Scope` / `X-Nexus-Anonymous` 头的直接拒绝
+> （目前没有 ws 端点，另有测试盯着）。③ 声明过心跳的匿名运行活得更久，名额占得更久，写明在「本版不做」。④ 「响应里有什么」补上
+> `heartbeatSeconds` 与心跳的响应，`agents/start` 的例子补上 `heartbeatSeconds`，`app/scope.py` 里「心跳留给以后」的旧注释更正。
+> ⑤ 取代 v2.17.2 的一条：`app` / `title` **不再有长度上限、不再因长度 422**，回到 v2.4 的「截断后照收」（含不带 `spans` 的老客户端）；
+> 体积靠网关的请求体上限（`client_max_body_size 1m`，nginx 默认值，现在写明在网关模板里）。⑥ 「总误差有界」说松了，改成真实的界（见「串行的注意力时间线」节）。
+>
+> **v2.21（追加式；v2.20 留给并行的「AI 报告」那一版）**：`views/current` 的 `agents[]` 每项追加 `elapsedSeconds`（整数，服务端算好：此刻 − `startedAt`，
+> ≥ 0；读前已收超时 / 失联，口径同 `views/lanes` 的 `elapsedSeconds`）。以前这里只有 `startedAt`，MCP 的 `get_current_timer` 只能给 `null`。
+> 既有字段、端点一个不改。
+>
 > **v2.16（追加式）**：**人此刻在哪个窗口、它多半属于哪个项目 / 任务，说成一句话，哪里都读同一份。** 仓主 2026-10-09：
 > 「蜂巢页和计时页还是没有实时显示人类当前焦点所在窗口或者任务」「要通用，得走 MCP」。在场心跳从 v2.4 起就有，但只在
 > 计时页人那张卡上留了一行小灰字。本版 `views/current` 顶层与 `views/lanes` 的 `human` 各追加一个键 `focus`
@@ -188,7 +200,7 @@
 >
 > **v2.17.2（2026-10-09，PR #89 复审后、未发布前；同样只收紧 v2.17 / v2.17.1 自己新增的东西）**：「注意力没记上这一拍整个
 > 失败」改为 outbox（注意力只跟着**已提交**的时间线）；时间线只增不倒、当前状态只往新走；`attend` 并集的 `gap` 范围写明且与顺序无关、幂等；
-> `attend` 超上限不丢新的；在场文档加建档代号防 ABA；`app` / `title` 有长度上限。条款见同节末「v2.17.2 修订」。
+> `attend` 超上限不丢新的；在场文档加建档代号防 ABA；`app` / `title` 有长度上限（此条已由 v2.19.1 取代：不设上限，截断后照收）。条款见同节末「v2.17.2 修订」。
 > 一条取代条目（`attend` 的判据从「标题包含 `match`」收紧为「窗口就是那条会话」，见该节末）。
 >
 > **v2.18（追加式）**：**代理泳道不再靠「CLI 记得说 stop」活着。** 仓主 2026-10-09：代理泳道全靠 CLI 触发钩子，
@@ -1137,7 +1149,8 @@ payload 只删了父、忘了一起删子，既有的**级联保护（409）在 
 
 ### 响应里有什么（规范性）
 
-上报面的四个响应只含**调用方自己这一个运行**的东西：`start` 回 `runId` / `startedAt`；`phase` 回 `runId` /
+上报面的四个响应只含**调用方自己这一个运行**的东西：`start` 回 `runId` / `startedAt` / `heartbeatSeconds`（v2.18）；`heartbeat` 回 `runId` /
+`applied` / `reason` / `heartbeatSeconds`（v2.18）；`phase` 回 `runId` /
 `phase` / `applied` / `reason`；`stop` 回 `runId` / `duplicate` / `outcome` / `durationSeconds` / 事件的
 `id` / `dedupeKey` / `type`。没有任务名、项目名、别的运行、人的任何数据。`report` 令牌（不是匿名）可以给
 `taskId` / `projectId`：给错了回 `404` / `400`——持有 `report` 令牌的调用方能据此验证一个它已经知道的 id 存不存在，
@@ -1149,6 +1162,9 @@ payload 只删了父、忘了一起删子，既有的**级联保护（409）在 
   隔离只在「匿名」与「验证过的」之间。
 - 匿名运行反复开了又关，条数只受网关限速约束（每个地址每分钟 120 个请求）。端口对外开放时请关匿名上报
   （`AUTH_ANONYMOUS_REPORT=false`）。
+- **匿名也能占满名额更久（v2.19.1 写明）**：匿名调用方一直发心跳，就能让它的 20 个名额各自活到声明过心跳的安全上限（7 天，
+  `AGENT_DECLARED_MAX_SECONDS`），而不是遗忘超时的 12 小时。界：每租户 20 个（`MAX_ANONYMOUS_RUNS`）+ 网关的匿名限速；代价是别的匿名调用方
+  在这期间 `start` 得 `429`（带令牌的不受影响）。对外开放端口的部署请设 `AUTH_ANONYMOUS_REPORT=false`。
 - 没有「把一条未验证的运行转正」的操作。
 
 ## 快照恢复（规范性 · v1.9）
@@ -2124,7 +2140,8 @@ planner 是**计划状态**，走普通 CRUD，**不进开放事件标准**（�
   "tool": "Bash",                // 必填，1–64 字符
   "model": "opus" }              // 选填，1–64 字符
 // → 201 AgentStartOut
-{ "runId": "run_0123456789ab", "startedAt": "2026-09-28T09:30:00+00:00" }
+{ "runId": "run_0123456789ab", "startedAt": "2026-09-28T09:30:00+00:00",
+  "heartbeatSeconds": 900 }   // v2.18 起（本例是 v2.1 的形状，后加的键见「心跳与失联」节）
 
 // POST /api/core/agents/{runId}/stop   请求 AgentStopIn
 { "outcome": "done",             // 必填：done | failed | cancelled | timeout（响应里还可能是 lost：v2.18，只由服务端写）
@@ -2308,7 +2325,8 @@ hook 没发 stop（终端被关、进程被杀）的运行会永远挂着。超�
 ```jsonc
 "agents": [ { "runId": "run_...", "taskId": "t_a1b2c3",   // 收件箱运行为 null
               "agent": "claude-code", "tool": "Bash", "model": null,   // 未给为 null，键不消失
-              "startedAt": "2026-09-28T09:30:00+00:00" } ]
+              "startedAt": "2026-09-28T09:30:00+00:00",
+              "elapsedSeconds": 1200 } ]   // v2.21 起；另有 v2.4 的 phase / label
 ```
 
 当前租户在跑的运行，按 `startedAt` 升序；没有就是 `[]`。人的部分（`running`/`zone`/`project`/
@@ -3608,11 +3626,12 @@ AI 仍不能改 / 删任何已有规则、不能写匹配范围超出那一个�
 - **`attend` 并集的 `gap` 只是新一段自己够得着的范围**：与新一段相距 ≤ `gap`（带停留的段 0，老心跳 45 秒）的旧段并进来，
   并成的一段**不再顺着往外够**——旧段之间原本分开的，不会因为这次来的是老心跳而被串起来（否则一个点能把几十秒没看的
   时间都算进去）。一次来几段时先按时间排再并，结果与到达顺序无关；同样的输入再记一遍结果不变。
-- **`attend` 超过 2000 条**：不丢新的——把相距最近的相邻两段并拢（多算的只是最小的那些空档，总误差有界），所以总注意力
-  不会悄悄停止增长。
-- **`app` / `title` 的长度**：每个（顶层与每一段）最多 16384 个码点，超了整拍 422；不超过的先截到 1024，存的时候再按
-  128（`app`）/ 512（`title`）截（GNOME Ptyxis 会把整条内联命令放进标题，不能因此拒掉合法的心跳）。请求体上限：本仓的
-  nginx 没设 `client_max_body_size`，用默认的 1 MiB；一拍至多 33 个窗口字段，正常远低于它。
+- **`attend` 超过 2000 条**：不丢新的——把相距最近的相邻两段并拢，所以总注意力不会悄悄停止增长，也只增不减。每并拢一次多算的是当时最小的那个空档
+  （≤ 运行时长 ÷ 2000）；多算的总量随超出的段数线性增长，**没有常数上界**（旧写法「总误差有界」说松了）。
+- **`app` / `title` 的长度（v2.19.1 取代 v2.17.2 的 16384 上限）**：不设上限、**从不因长度拒绝**（顶层与每一段，也包括不带 `spans` 的
+  老客户端）：先截到 1024，存的时候再按 128（`app`）/ 512（`title`）截（GNOME Ptyxis 会把整条内联命令放进标题，不能因此拒掉合法的心跳）。
+  离谱的体积由网关挡：`client_max_body_size 1m`（nginx 的默认值，手写与生成的网关模板里都写明了，有测试盯着），超了回 `413`；
+  一拍至多 33 个窗口字段，正常远低于它。
 
 ### 本版不做（有意的）
 
@@ -3678,6 +3697,15 @@ AI 仍不能改 / 删任何已有规则、不能写匹配范围超出那一个�
   `newTask` 条的任务由 `proposals.task_for` 保证只建一个。批准一次的工作量以 `MAX_REFS` 为界。
 - **出处（规范性）**：入账的 `session.completed` 的 `ai` 块追加选填键 `report: {id, author}`（`confirmed: true`、`confidence` 取建议原来的，与手点的一样）。
   `source: "activity-confirmed"` 的信封从外部入口进来时，`ai.report` 同 `ai.auto` 一样不落库（出处只能由本服务盖）。忽略没有事件，不记出处。
+
+### 评审补记（2026-10-09，PR #92 复审后，只收紧）
+
+- **`assign` / `newTask` 条与 `matches` 同两道闸**（`service.match_refusal`）：建议的 `rejectedTaskIds` 里有这个 `taskId`（用户否掉过）→ 该条被拒，
+  `code: "task_rejected"`；建议已有分类规则给的任务（`classifier` 不是 `assistant`）→ `code: "rule_assigned"`。只到项目的 `assign` 与 `dismiss` 不碰任务，不受影响。
+  提交时查一遍，**批准时再查一遍**：提交之后用户否掉了这个任务，该段记 `stale`（带理由），不套用。
+- **条的状态只由结果推出**（有 `failed` → failed；否则有 `applied` → applied；否则 stale）：并发的两个批准交错时，写完再核对、不一致就按最新结果重写，
+  所以不会出现结果是 `applied` 而条是 `stale`。
+- **批准进行中报告被 TTL 清掉**：不回 404，回已有的逐条结果，报告 `status` 为 `"purged"`（已入账的事实当然还在）。
 
 ### 响应形状（见 `contract-schemas.md`「AI 报告」）
 

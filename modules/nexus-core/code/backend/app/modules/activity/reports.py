@@ -113,6 +113,10 @@ def _check_item(user: str, it: _Item, seen: set[str], now: datetime) -> tuple[di
         return None, _bad("duplicate_suggestion", "同一个建议在这份报告里已出现在别的条里")
     if len(seen) + len(ids) > MAX_REFS:
         return None, _bad("too_many_refs", f"一份报告最多 {MAX_REFS} 个建议，其余请下次再交")
+    if it.kind != "dismiss" and it.projectId is None:  # 配任务（现成的或新建的）：与 service.match 同两道闸
+        for sid in ids:
+            if refusal := service.match_refusal(docs[sid], it.taskId, True):
+                return None, _bad(refusal[0], f"{sid}：{refusal[1]}")
     out = {"kind": it.kind, "suggestionIds": ids, "reason": it.reason, "status": "pending", "results": {}}
     if it.taskId is not None:
         if planner_service.get_task(it.taskId) is None:
@@ -245,17 +249,20 @@ def _why(exc: Exception) -> str:
     return str(exc)[:300]
 
 
-def _apply_item(user: str, report: dict, item: dict, request) -> None:
-    """对条里每个还没入账的建议做一次，结果落库。一段失败不挡别的段。"""
+def _apply_item(user: str, report: dict, item: dict, request) -> dict:
+    """对条里每个还没入账的建议做一次，结果落库。一段失败不挡别的段。返回条的最新样子（状态由结果推出）。"""
     sids = [s for s in item["suggestionIds"] if item["results"].get(s, {}).get("state") != "applied"]
     docs = reports_repo.suggestions(user, sids)
     results: dict[str, dict] = {}
     live = []
     for sid in sids:
-        if sid in docs and docs[sid]["status"] == "pending":
-            live.append(sid)
-        else:
+        if sid not in docs or docs[sid]["status"] != "pending":
             results[sid] = {"state": "stale", "reason": "建议已被处理或已过期"}
+        elif refusal := (service.match_refusal(docs[sid], item.get("taskId"), True)
+                         if item["kind"] != "dismiss" and item.get("projectId") is None else None):
+            results[sid] = {"state": "stale", "reason": refusal[1]}  # 提交之后用户否掉了这个任务 / 规则给了任务：不再套用
+        else:
+            live.append(sid)
     task_id, broken = item.get("taskId"), None
     if live and item["kind"] == "newTask":
         nt = item["newTask"]
@@ -284,8 +291,30 @@ def _apply_item(user: str, report: dict, item: dict, request) -> None:
             log.exception("AI 报告 %s 条 %s 的建议 %s 批准失败", report["id"], item["id"], sid)
             results[sid] = {"state": "failed", "reason": "内部错误"}
     reports_repo.set_results(user, report["id"], item["id"], results)
-    fresh = next(i for i in _load(user, report["id"])["items"] if i["id"] == item["id"])
-    reports_repo.set_item_status(user, report["id"], item["id"], _status_of(fresh))
+    return _sync_status(user, report["id"], item, results)
+
+
+_SETTLED = ("pending", "failed", "stale", "applied")  # 条状态能被结果改写的来源（rejected 永远不动）
+
+
+def _sync_status(user: str, report_id: str, item: dict, local: dict) -> dict:
+    """条的最终状态**只在这里**由结果推出（``_status_of``），不在别处另算：并发的两个批准可能一个先写 stale、另一个后写 applied
+    （``applied`` 不被覆盖，状态却可能已按 stale 定下）——写完再读一遍核对，不一致就按最新的结果重写，直到一致。
+    报告在这期间被 TTL 清掉了：用手里有的结果推出这一条（已入账的事实不会回滚，批准不报 404）。"""
+    fresh = item
+    for _ in range(5):
+        try:
+            doc = _load(user, report_id)
+        except NotFoundError:
+            mine = {s: r for s, r in local.items() if item["results"].get(s, {}).get("state") != "applied"}
+            fresh = {**item, "results": {**item["results"], **mine}}
+            return {**fresh, "status": _status_of(fresh)}
+        fresh = _item_of(doc, item["id"])
+        want = _status_of(fresh)
+        if want == "pending" or fresh["status"] in (want, "rejected"):
+            return fresh
+        reports_repo.set_item_status(user, report_id, item["id"], want, _SETTLED)
+    return fresh
 
 
 def _finalize(user: str, report_id: str) -> dict:
@@ -308,13 +337,17 @@ def approve_all(report_id: str, request) -> dict:
     if doc["status"] not in ("pending", "approved"):
         raise service.ConflictError(f"报告已{'不要' if doc['status'] == 'rejected' else '作废'}，不能批准")
     done = {"applied": 0, "stale": 0, "failed": 0}
+    touched: list[dict] = []
     for it in doc["items"]:
         if it["status"] in reports_repo.OPEN:
-            _apply_item(user, doc, it, request)
-            now_item = next(i for i in _load(user, report_id)["items"] if i["id"] == it["id"])
+            now_item = _apply_item(user, doc, it, request)
+            touched.append(now_item)
             if now_item["status"] in done:
                 done[now_item["status"]] += 1
-    doc = _finalize(user, report_id)
+    try:
+        doc = _finalize(user, report_id)
+    except NotFoundError:  # 批准进行中报告被 TTL 清掉了：给出已有的逐条结果
+        return {"id": report_id, "status": "purged", **done, "items": [_brief(i) for i in touched]}
     return {"id": report_id, "status": doc["status"], **done, "items": [_brief(i) for i in doc["items"]]}
 
 
@@ -352,9 +385,11 @@ def approve_item(report_id: str, item_id: str, task_id: str | None, project_id: 
         it = _item_of(doc, item_id)
     if doc["status"] not in ("pending", "approved"):
         raise service.ConflictError(f"报告已{'不要' if doc['status'] == 'rejected' else '作废'}，不能批准")
-    if it["status"] in reports_repo.OPEN:
-        _apply_item(user, doc, it, request)
-    doc = _finalize(user, report_id)
+    applied = _apply_item(user, doc, it, request) if it["status"] in reports_repo.OPEN else it
+    try:
+        doc = _finalize(user, report_id)
+    except NotFoundError:  # 批准进行中报告被 TTL 清掉了：给出这一条已有的结果
+        return {"reportId": report_id, "reportStatus": "purged", **_brief(applied)}
     return {"reportId": report_id, "reportStatus": doc["status"], **_brief(_item_of(doc, item_id))}
 
 

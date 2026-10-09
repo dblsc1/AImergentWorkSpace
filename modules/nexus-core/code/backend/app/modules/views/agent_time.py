@@ -71,6 +71,6 @@ def get_agent_time(date_from: str | None = None, date_to: str | None = None) -> 
                 ("runId", "agent", "projectId", "taskId", "startedAt", "elapsedSeconds")},
              "attentionSeconds": _attention_seconds(run)}
             for run in open_runs
-            if in_range(run)
+            if in_range(run) and not run.get("unverified")  # v2.19.1：匿名开的运行不进代理时长
         ],
     )

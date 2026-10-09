@@ -20,7 +20,7 @@ from typing import NamedTuple
 SCOPE_HEADER = b"x-nexus-scope"
 ANONYMOUS_HEADER = b"x-nexus-anonymous"
 SCOPES = ("report", "read", "write")
-#: 上报面：恰好这四个 POST，路径全匹配（结尾多一个 / 也不算）。heartbeat 由代理心跳那一版实现，表里先留位。
+#: 上报面：恰好这四个 POST，路径全匹配（结尾多一个 / 也不算）。
 REPORT = re.compile(r"/api/core/agents/(?:start|[^/]+/(?:phase|stop|heartbeat))")
 _EXEMPT = ("/api/core/health",)
 
@@ -53,6 +53,10 @@ class ScopeMiddleware:
         self.app = app
 
     async def __call__(self, scope_, receive, send):
+        if scope_["type"] == "websocket" and any(
+                name.lower() in (SCOPE_HEADER, ANONYMOUS_HEADER) for name, _ in scope_.get("headers") or ()):
+            await send({"type": "websocket.close", "code": 1008})  # 没有 ws 端点（有测试盯着）；万一加了，带范围头的先拒
+            return
         if scope_["type"] != "http" or scope_["path"] in _EXEMPT:
             await self.app(scope_, receive, send)
             return
