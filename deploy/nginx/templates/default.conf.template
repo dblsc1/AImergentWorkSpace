@@ -71,6 +71,9 @@ server {
         proxy_set_header X-Original-URI $request_uri;
         # 子请求自己的方法永远是 GET；认证服务按原始请求的方法判范围（auth.gate v1.4）。
         proxy_set_header X-Original-Method $request_method;
+        # 范围头 / 匿名头只能是认证服务对网关说的：客户端自带的不转给任何上游（verify 本来也不读）。
+        proxy_set_header X-Nexus-Scope "";
+        proxy_set_header X-Nexus-Anonymous "";
     }
     location @to_login {
         return 302 ${HONEYCOMB_BASE_PATH}login/;
@@ -87,6 +90,8 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Nexus-Tenant "";
+        proxy_set_header X-Nexus-Scope "";
+        proxy_set_header X-Nexus-Anonymous "";
     }
 
     # 登录页。目录由 HONEYCOMB_LOGIN_DIR 挂进来（缺省是登录门占位件自带的页面）。

@@ -235,6 +235,10 @@ auth.gate v1.4 让设备令牌带范围（`report` / `read` / `write`），并�
   与租户头同一套纪律：认证服务没给就是空，**空值不转发**；**客户端自己带来的 `X-Nexus-Scope` /
   `X-Nexus-Anonymous` 一律被覆盖**，到不了任何 `include gate.inc` 的后端。`/__cockpit/current` 那条手写了门的
   location 也加了同样四行。
+  **不设门、但转给上游的 location**（认证服务自己的 `/api/auth/`、`/__auth_verify` 子请求、模块声明 `gated: false` 的
+  路由）要把 `X-Nexus-Tenant` / `X-Nexus-Scope` / `X-Nexus-Anonymous` 都置空（`proxy_set_header … "";`）：客户端自带的
+  三个头不转给任何上游。两份组装都是这样，`tools/test_install.py` 逐条 location 核对。后端也不得绕过网关被直连
+  （auth.gate.v1「部署要求」）。
 - **手写门的部署方**：第四节那四行照旧可用。但如果你的 location 自己转给 nexus-core 或 MCP，要把上面四行也写上——
   否则后端看不到范围，只剩认证服务那一道。不带凭据的请求到不了你的路由：认证服务只对
   `<前缀>api/core/agents/…` 的四个上报端点放行匿名。

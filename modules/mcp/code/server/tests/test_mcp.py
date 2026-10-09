@@ -1054,6 +1054,32 @@ WRITE_TOOLS = {"propose_detector_rules", "propose_activity_matches", "get_window
                "suggest_window_target"}
 
 
+READ_TOOLS = {"get_task_tree", "list_projects", "get_current_timer", "list_time_sessions", "get_daily_time",
+              "get_weekly_review", "get_next_actions", "get_agent_time", "list_activity_suggestions",
+              "get_match_history", "get_detector_rules"}
+
+
+def test_every_tool_is_explicitly_classified_read_or_write():
+    """新加一个工具必须在这里（与 tools.WRITES）表态是读还是写：没分类 = 本测试红，不会悄悄成了 read 令牌能调的。"""
+    assert not READ_TOOLS & WRITE_TOOLS
+    assert set(tools.TOOLS) == READ_TOOLS | WRITE_TOOLS, "有工具没分类（或分类里有不存在的名字）"
+    assert tools.WRITES == WRITE_TOOLS
+    # 结构上的底：发出非 GET 请求的只有 _post，而用了 _post 的恰好是 WRITES（别的函数偷偷 POST 就红）
+    import inspect  # noqa: PLC0415
+
+    assert {n for n, (fn, *_r) in tools.TOOLS.items() if "_post(" in inspect.getsource(fn)} == WRITE_TOOLS
+    assert inspect.getsource(tools).count("urllib.request.Request(") == 2   # 只有 _get / _post 两处出请求
+
+
+def test_read_scope_never_makes_a_write_request_to_nexus_core(servers):
+    """read 令牌调每一个读工具、也硬调每一个写工具：nexus-core 那边收到的全是 GET。"""
+    h = {"X-Nexus-Scope": "read", "X-Nexus-Tenant": "u_alice"}
+    for name in sorted(tools.TOOLS):
+        call(servers, name, {}, h)   # 成功或报错都行，只看发出去了什么
+    assert Fake.requests and {r[0] for r in Fake.requests} == {"GET"}, Fake.requests
+    assert not Fake.bodies
+
+
 def test_read_scope_hides_and_rejects_write_tools(servers):
     h = {"X-Nexus-Scope": "read", "X-Nexus-Tenant": "u_alice"}
     names = [t["name"] for t in rpc(servers, "tools/list", headers=h)["result"]["tools"]]

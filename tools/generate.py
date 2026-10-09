@@ -447,6 +447,8 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
             "        proxy_set_header X-Nexus-Tenant \"\";",
             "        proxy_set_header X-Original-URI $request_uri;",
             "        proxy_set_header X-Original-Method $request_method;",
+            "        proxy_set_header X-Nexus-Scope \"\";",
+            "        proxy_set_header X-Nexus-Anonymous \"\";",
             "    }",
             f"    location @to_login {{ return 302 {_b('/login/')}; }}",
             "",
@@ -461,6 +463,8 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
             "        proxy_set_header Host $host;",
             "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
             "        proxy_set_header X-Nexus-Tenant \"\";",
+            "        proxy_set_header X-Nexus-Scope \"\";",
+            "        proxy_set_header X-Nexus-Anonymous \"\";",
             "    }",
         ]
     for st in statics:
@@ -504,7 +508,8 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
                 "        proxy_set_header X-Nexus-Anonymous $honeycomb_anonymous;",
             ]
         else:
-            L += ["        proxy_set_header X-Nexus-Tenant \"\";"]
+            L += ["        proxy_set_header X-Nexus-Tenant \"\";",
+                  "        proxy_set_header X-Nexus-Scope \"\";", "        proxy_set_header X-Nexus-Anonymous \"\";"]
         upstream = r.get("upstream", r["prefix"])
         L += [
             f'        set $honeycomb_up_{i} "{r["service"]}:{r["port"]}";',

@@ -161,6 +161,52 @@ def test_caller_scope_headers_and_anonymous_limit_in_both_assemblies(out):
                 assert "proxy_set_header X-Nexus-Scope $honeycomb_scope;" in block, (name, block[:60])
 
 
+def _proxy_blocks(nginx: str) -> dict[str, str]:
+    """每个带 proxy_pass 的 location → 它的块（命名位置 / 内部子请求也算）。"""
+    blocks = {}
+    for block in nginx.split("\n    location ")[1:]:
+        block = block.split("\n    }", 1)[0]
+        if "proxy_pass " in block:
+            blocks[block.split(" {", 1)[0].strip()] = block
+    return blocks
+
+
+def test_every_proxy_location_sets_tenant_scope_and_anonymous_headers(out, tmp_path):
+    """gateway.v1 第九节：转给任何上游的 location 都不能让客户端自带的 X-Nexus-Tenant / Scope / Anonymous 过去。
+    过了门的（auth_request，直接写或经 gate.inc）用认证服务的答复覆盖；没过门的（认证服务本身、验证子请求、
+    不设门的路由）置空——nginx 不转发空值的头，客户端那份也一并丢掉。逐条枚举，新加的 location 漏了就红。"""
+    _, _, gen = out
+    hand = (install.ROOT / "deploy" / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8")
+    # 不设门的路由：生成器的 else 分支（模块声明 gated: false）
+    mod = tmp_path / "root" / "modules" / "open-api"
+    mod.mkdir(parents=True)
+    (mod / "module.yaml").write_text("kind: backend\nservice: {image: svc, port: 80}\nroutes:\n  - {prefix: /open/, upstream: /open/, gated: false}\n",
+                                     encoding="utf-8")
+    (tmp_path / "root" / "contracts").mkdir()
+    generate.emit(tmp_path / "root", {"modules": ["open-api"], "stubs": []}, tmp_path / "open-out")
+    ungated = (tmp_path / "open-out" / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8")
+    gate = (install.ROOT / "modules" / "nginx-docker" / "nginx" / "gate.inc").read_text(encoding="utf-8")
+    names = ("tenant", "scope", "anonymous")
+    headers = ("X-Nexus-Tenant", "X-Nexus-Scope", "X-Nexus-Anonymous")
+    for name, tpl in (("hand", hand), ("generated", gen), ("ungated", ungated)):
+        blocks = _proxy_blocks(_render(tpl))
+        assert len(blocks) >= (4 if name != "ungated" else 1), (name, list(blocks))
+        for head, block in blocks.items():
+            if "include /etc/nginx/honeycomb/gate.inc;" in block:
+                block += gate
+            if "auth_request /__auth_verify;" in block:
+                for n, h in zip(names, headers):
+                    assert f"proxy_set_header {h} $honeycomb_{n};" in block, (name, head, h)
+                    assert f"auth_request_set $honeycomb_{n} $upstream_http_{h.lower().replace('-', '_')};" in block, (name, head, h)
+            else:
+                for h in headers:
+                    assert f'proxy_set_header {h} "";' in block, (name, head, h)
+    assert "/open/" in _proxy_blocks(_render(ungated)) and "= /__auth_verify" not in _proxy_blocks(_render(ungated))
+    # 没有 WebSocket / Upgrade 透传：范围拦截只管 HTTP，网关不替任何后端把连接升成 WebSocket
+    for tpl in (hand, gen, gate):
+        assert "Upgrade" not in tpl and "upgrade" not in tpl.replace("Upgrade-Insecure", "")
+
+
 def test_auth_upstream_and_extra_routes_are_replaceable(out):
     _, compose, nginx = out
     web = compose["services"]["web"]
