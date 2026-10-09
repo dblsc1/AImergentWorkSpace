@@ -23,6 +23,7 @@ import re
 import stat
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -481,7 +482,8 @@ def session_title(transcript_path: Any) -> str | None:
             continue
         if isinstance(record, dict) and record.get("type") == "custom-title":
             title = record.get("customTitle")
-            title = " ".join(title.split()) if isinstance(title, str) else ""
+            # 标题会当泳道名上报：控制 / 格式字符（Cc / Cf，含 ESC、换行、零宽、双向控制）先去掉
+            title = " ".join("".join(" " if unicodedata.category(c) in ("Cc", "Cf") else c for c in title).split()) if isinstance(title, str) else ""
             return title or None  # 最后一条为准：清空了名字 = 没有名字
     return None
 
@@ -567,6 +569,7 @@ def beat_mode(config: dict[str, Any] | None = None) -> str:
     - `off`：不发心跳（运行不声明心跳能力，服务端照旧只有遗忘超时兜底）"""
     cfg = config if config is not None else load_config()
     mode = os.environ.get("COCKPIT_BEAT") or cfg.get("beat")
+    mode = mode.strip().lower() if isinstance(mode, str) else mode
     return mode if mode in BEAT_MODES else "companion"
 
 

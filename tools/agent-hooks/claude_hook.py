@@ -28,6 +28,10 @@ v0.4 心跳：钩子只在有事件时才跑，会话空着或 Claude Code 崩�
 
 from __future__ import annotations
 
+import time
+
+_T0 = time.monotonic()  # 进程里的第一件事（先于其它 import）：解释器 / 导入的耗时也算进钩子的 3 秒总预算
+
 import argparse
 import contextlib
 import hashlib
@@ -35,9 +39,9 @@ import json
 import os
 import secrets
 import stat
+import re
 import subprocess
 import sys
-import time
 import urllib.parse
 from pathlib import Path
 
@@ -66,6 +70,12 @@ def _http_timeout() -> float:
 # Claude Code 不提供成败信号，缺省当正常完成（done）；只有 prompt_input_exit
 # （在输入框按 Ctrl-C/Ctrl-D 主动退出）算用户中途打断。
 _REASON_TO_OUTCOME = {"prompt_input_exit": "cancelled"}
+
+
+def _printable(value, limit: int = 64) -> str:
+    """外部来源的字符串（文件内容、进程名、地址）打印前先过一遍：保守字符集之外一律换成 `?`，截到 `limit`。
+    doctor 的输出可能被 `!` 命令带进模型上下文，不许夹转义序列 / 换行。"""
+    return re.sub(r"[^A-Za-z0-9_.:@/-]", "?", str(value))[:limit]
 
 
 def _warn(msg: str) -> None:
@@ -755,6 +765,9 @@ def _beat_session(
                 return END_OTHER
             if not _alive(cli, born):  # 先看死活：CLI 一死 monitor 就被收养、再也认不出祖先，先 identify 会静悄悄退掉、谁也不收尾
                 return END_GONE if _stop_gone(session_id, gen, cli, born, sleep) else END_OTHER
+            if (now := _session_of(cli, born)) and now != session_id:  # 同一个 CLI 已经在另一个会话上（/clear、恢复，而 SessionEnd 没拿到锁）：这个会话早结束了
+                _stop_gone(session_id, gen, cli, born, sleep, outcome="done")  # 收的结果同 SessionEnd 的缺省
+                return END_OTHER
             if identify is not None and identify() not in ((cli, born), (0, None)):
                 return END_OTHER  # 认出的是另一个 CLI；认不出但 pid + 启动时刻仍活着 = 没变
             if clock() >= next_beat:
@@ -773,7 +786,7 @@ def _beat_session(
     return END_OTHER
 
 
-def _stop_gone(session_id: str, gen: str | None, cli: int, born: str | None, sleep) -> bool:
+def _stop_gone(session_id: str, gen: str | None, cli: int, born: str | None, sleep, outcome: str = GONE_OUTCOME) -> bool:
     """CLI 没了：持会话锁、核对归属后报 stop。没报成（服务端暂时不可达、没拿到锁）就隔 `STOP_RETRY_SECONDS` 再试，
     最多 `STOP_ATTEMPTS` 次，之后不管了（CLI 都没了，兜底是服务端的失联规则）。会话被别的 CLI 恢复了 → False（不停）。"""
     for attempt in range(STOP_ATTEMPTS):
@@ -783,7 +796,7 @@ def _stop_gone(session_id: str, gen: str | None, cli: int, born: str | None, sle
             if held:
                 if not _owned(_read_state(session_id), gen, cli, born):
                     return False
-                _session_end_locked(session_id, GONE_OUTCOME)
+                _session_end_locked(session_id, outcome)
                 if _read_state(session_id) is None:  # 成了（或服务端说这条早没了）：状态已删
                     return True
     return True
@@ -860,7 +873,7 @@ def _dir_status(path: Path) -> str:
     try:
         st = os.lstat(path)
     except FileNotFoundError:
-        return "（还没有；钩子第一次跑时会建）"
+        return "还没有；钩子第一次跑时会建"
     except OSError:
         return "读不了"
     if stat.S_ISLNK(st.st_mode):
@@ -882,7 +895,7 @@ def _doctor() -> int:
               if env("CLAUDE_PLUGIN_OPTION_COCKPIT_URL") else f"配置文件 {cfg}" if config["url"] else "没配")
     try:
         parts = urllib.parse.urlsplit(config["url"])  # 只取主机和端口：地址里万一带了 user:pass@ 也不外露
-        host = (parts.hostname or "-") + (f":{parts.port}" if parts.port else "")
+        host = _printable((parts.hostname or "-") + (f":{parts.port}" if parts.port else ""))
     except ValueError:
         host = "-"
     print(f"配置来源：{source}；服务器 {host}；令牌 {'有' if config['token'] else '无'}")
@@ -894,38 +907,44 @@ def _doctor() -> int:
         info = _proc(pid) if pid > 1 else None
         if info is None:
             break
-        chain.append(f"{pid}:{info[1]}")
+        chain.append(f"{pid}:{_printable(info[1])}")
         pid = info[0]
     probe = _cli_probe()
     cli = probe[0]
     print(f"祖先进程：{' → '.join(chain) or '（没有）'}")
-    print(f"Claude Code：pid {cli or '认不出'}" + (f"，名字 {(_proc(cli) or (0, '?'))[1]}，启动时刻{'有' if probe[1] else '无'}" if cli else ""))
+    print(f"Claude Code：pid {cli or '认不出'}" + (f"，名字 {_printable((_proc(cli) or (0, '?'))[1])}，启动时刻{'有' if probe[1] else '无'}" if cli else ""))
     mode = cc.beat_mode()
     why = _unsupervised_reason(probe)
     print(f"心跳监督：{'可用' if not why and mode != 'off' else why or '已关（COCKPIT_BEAT=off）'}")
     print(f"心跳方式：{mode}（" + {"companion": "缺省：SessionStart 钩子起伴随进程；插件的 monitor 一起来就退出", "monitor": "显式：只有插件的 monitor 发，钩子不起伴随进程",
                               "off": "不发心跳"}[mode] + "）")
-    newest = None
+    newest, best = None, -1.0
     if state_dir.is_dir() and not state_dir.is_symlink():
-        newest = max(state_dir.glob("session-*.json"), key=lambda p: p.stat().st_mtime, default=None)
+        for p in state_dir.glob("session-*.json"):
+            try:
+                st = p.lstat()  # 不跟链接：悬空链接 / 读不了的条目跳过
+            except OSError:
+                continue
+            if stat.S_ISREG(st.st_mode) and st.st_mtime > best:
+                newest, best = p, st.st_mtime
     if newest is None:
         print("最新会话：还没有")
         return 0
     holder = None
     try:
         data, _cut = cc.read_regular(newest.with_suffix(".beat"), 256)  # 只读已有的 .beat；没有就是没有，不创建、不加锁
-        text = data.decode("utf-8", errors="replace").strip()
-        if text:
-            first = text.split()[0]
-            alive = first.isdigit() and _proc(int(first)) is not None
-            holder = f"记录的持有者 {text}（进程{'还在' if alive else '已不在'}）"
+        words = data.decode("utf-8", errors="replace").split()
+        if words and words[0].isascii() and words[0].isdecimal():  # 文件内容不可信：只认 pid 和两种已知起法
+            pid = int(words[0])
+            kind = f" {words[1]}" if len(words) > 1 and words[1] in ("companion", "monitor") else ""
+            holder = f"记录的持有者 {pid}{kind}（进程{'还在' if _proc(pid) is not None else '已不在'}）"
     except OSError:
         pass
     print(f"最新会话的心跳：{holder or '没有记录（下一个钩子事件会补一个伴随进程）'}")
     return 0
 
 
-def main() -> int:
+def main(start: float | None = None) -> int:
     global _deadline
     if "--doctor" in sys.argv[1:]:
         return _doctor()
@@ -935,7 +954,7 @@ def main() -> int:
         except BaseException:  # noqa: BLE001 — 含 argparse 的 SystemExit：没人看它的输出，出错就是这个会话没有心跳
             pass
         return 0
-    _deadline = time.monotonic() + HOOK_BUDGET  # 钩子调用的总预算从这里起算（只有钩子路径设；心跳进程是长命的）
+    _deadline = (time.monotonic() if start is None else start) + HOOK_BUDGET  # 钩子调用的总预算从这里起算（只有钩子路径设；心跳进程是长命的）
     at = cc.now_iso()  # 事件发生的那一刻，先于读 stdin / 网络
     try:
         payload = json.loads(sys.stdin.read() or "{}")
@@ -957,4 +976,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(_T0))
