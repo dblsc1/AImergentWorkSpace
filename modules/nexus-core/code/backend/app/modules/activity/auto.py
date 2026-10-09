@@ -145,7 +145,11 @@ def state(user: str, now: datetime, timer_running: bool, asks: Any, presence_doc
     asked: dict[str, dict] = {}  # 从新往旧走：先碰到的是这个窗口最近的一段
     for i in range(len(spans) - 1, -1, -1):
         span = spans[i]
-        end = min(span["to"] + presence.MERGE_GAP, spans[i + 1]["from"] if i + 1 < len(spans) else now)
+        last = i + 1 == len(spans)
+        # 老心跳的段止于最后一拍，人其实待到下一段开始（至多 MERGE_GAP）；v2.17 带停留的段（exact）首尾是真的，
+        # 只有最后一段还在长，同样延到此刻
+        grace = timedelta(0) if span.get("exact") and not last else presence.MERGE_GAP
+        end = min(span["to"] + grace, now if last else spans[i + 1]["from"])
         if end <= horizon:
             break
         if span["afk"] or not span["app"]:
@@ -168,8 +172,9 @@ def state(user: str, now: datetime, timer_running: bool, asks: Any, presence_doc
 # ------------------------------------------------ 心跳：续期人的临时选择
 
 
-def heartbeat(device_id: str, app: str, title: str, afk: bool, guess: dict | None) -> dict:
-    out = presence.heartbeat(device_id, app, title, afk, guess)
+def heartbeat(device_id: str, app: str, title: str, afk: bool, guess: dict | None,
+              spans: list[dict] | None = None, sent_at: datetime | None = None) -> dict:
+    out = presence.heartbeat(device_id, app, title, afk, guess, spans, sent_at)
     if not afk:
         now = _now()
         choice_repo.seen(current_tenant(), window_key(*presence.clip(app, title)), now, now + CHOICE_AWAY)
