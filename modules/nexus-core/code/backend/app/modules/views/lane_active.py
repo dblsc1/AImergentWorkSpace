@@ -45,6 +45,7 @@ def split(items: list[dict], gone: list[dict], prefs: dict, now: datetime) -> tu
     返回 (留下的 items，inactiveAgents，剩下的 gone)。不活跃身份被封顶丢掉的运行并入它自己的摘要，不在 gone 里重复数。"""
     hidden = {a["key"] for a in prefs["agents"] if a["hidden"]}
     pinned = {a["key"] for a in prefs["agents"] if a["pinned"] and not a.get("unverified")}
+    extra = {g["key"]: g.get("live", []) for g in gone}  # 封顶丢掉的在跑运行：只参与判定，不计入行数
     lanes: dict[str, list[dict]] = {}
     for it in items:
         lanes.setdefault(ident(it["agent"], it["label"], it["unverified"]), []).append(it)
@@ -53,12 +54,13 @@ def split(items: list[dict], gone: list[dict], prefs: dict, now: datetime) -> tu
     for key, rs in lanes.items():
         if key in hidden or key in pinned:
             continue
-        live = [r for r in rs if r["endAt"] is None and not r["lost"]]
+        every = rs + extra.get(key, [])
+        live = [r for r in every if r["endAt"] is None and not r["lost"]]
         if any(phase_of(r) == "working" or phase_of(r) in WAITING for r in live):
             continue
-        latest = max(rs, key=lambda r: r["startAt"])
+        latest = max(every, key=lambda r: r["startAt"])
         failed = phase_of(latest) == "error" if latest["endAt"] is None else latest["outcome"] == "failed"
-        last = max(_last_work(r, now) for r in rs)
+        last = max(_last_work(r, now) for r in every)
         if failed:
             reason = "error"
         elif (now - last).total_seconds() >= IDLE_HIDE_SECONDS:

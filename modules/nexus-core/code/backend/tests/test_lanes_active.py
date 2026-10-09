@@ -160,6 +160,44 @@ def test_every_run_counted_once_and_dropped_follows_inactive_lane(client, w, mon
     assert shown == {"busy", "work"}
 
 
+def _total(body):
+    return len(body["agents"]) + sum(i["runs"] for i in body["inactiveAgents"]) + sum(d["runs"] for d in body["dropped"])
+
+
+def test_live_cap_dropped_working_run_keeps_lane_shown(client, w, monkeypatch):
+    from app.modules.views import lane_cap  # noqa: PLC0415
+
+    monkeypatch.setattr(lane_cap, "MAX_LIVE", 4)
+    w.live("busy", start_min=400, phases=[(399, "working")])  # 最旧：被在跑封顶丢掉，但还在干活
+    w.live("busy", start_min=200, phases=[(100, "idle")])
+    w.live("busy", start_min=150, phases=[(90, "idle")])
+    w.live("stale", start_min=400, phases=[(300, "idle")])  # 最旧：被丢，空闲
+    w.live("stale", start_min=200, phases=[(100, "idle")])
+    w.live("stale", start_min=150, phases=[(90, "idle")])
+    shown, inactive, body = _split(client)
+    assert shown == {"busy"} and set(inactive) == {"stale"}  # 判定看见被丢的在跑运行
+    assert [d["label"] for d in body["dropped"]] == ["busy"] and body["dropped"][0]["runs"] == 1
+    assert "openRuns" not in body["dropped"][0] and "live" not in body["dropped"][0]
+    assert inactive["stale"]["runs"] == 3  # 被丢的并入不活跃摘要，不在 dropped 重复数
+    assert body["truncated"] is True and _total(body) == 6
+
+
+def test_hidden_lane_in_neither_inactive_nor_dropped_and_prefs_loaded_once(client, w, monkeypatch):
+    from app.modules.prefs import service as prefs_service  # noqa: PLC0415
+    from app.modules.views import lane_cap  # noqa: PLC0415
+
+    monkeypatch.setattr(lane_cap, "MAX_LIVE", 1)
+    for m in (300, 200, 100):
+        w.live("hid", start_min=m, phases=[(m - 1, "idle")])
+    assert client.put(PREFS, json={"agent": "cc", "label": "hid", "hidden": True}).status_code == 200
+    calls = []
+    real = prefs_service.load
+    monkeypatch.setattr(prefs_service, "load", lambda u: calls.append(u) or real(u))
+    _, inactive, body = _split(client)
+    assert inactive == {} and body["dropped"] == [] and [h["label"] for h in body["hiddenAgents"]] == ["hid"]
+    assert len(calls) == 1
+
+
 def test_report_scope_cannot_read_lanes(client, w):
     w.live("x", phases=[(5, "error")])
     assert client.get(LANES, headers={"X-Nexus-Scope": "report", "X-Nexus-Anonymous": "1"}).status_code == 403

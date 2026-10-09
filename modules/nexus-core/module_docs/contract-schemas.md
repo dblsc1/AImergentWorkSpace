@@ -482,7 +482,7 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
   "dropped": [ { "agent": "codex", "label": "rev-billing_services", "unverified": false, "runs": 400, "elapsedSeconds": 12000 } ] }
 ```
 
-- `dropped` 缺省 `[]`；`runs` / `elapsedSeconds` 是被封顶（每身份最新 100 条、最近活动 200 个身份、总数 2000）丢掉的**已结束**运行的条数与**裁到窗口**的秒数。
+- `dropped` 缺省 `[]`；`runs` / `elapsedSeconds` 是被封顶（每身份最新 100 条、最近活动 200 个身份、在跑的最新 500 条、总数 2000）丢掉的运行的条数与**裁到窗口**的秒数。
 - 藏起来的身份不列；report 范围 / 匿名读不到 `views/lanes`（服务端另清空）。`truncated` 在 `dropped` 非空时必为真。
 
 ### `views/lanes` 只显示在干活的（v2.24）
