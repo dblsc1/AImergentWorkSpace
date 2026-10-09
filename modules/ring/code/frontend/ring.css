@@ -39,6 +39,7 @@ html[data-theme="light"] {
   --danger: #C2333B;
   --agent-work: #3B8132;
   --agent-wait: #9A7B00;
+  --attn: #0F6FBF;
   --accent: #0B7A6F;
   --accent-ink: #FFFFFF;
   --accent-soft: #DCF0ED;
@@ -67,6 +68,7 @@ html[data-theme="dark"] {
   --danger: #FF8189;
   --agent-work: #7BD389;
   --agent-wait: #F5C542;
+  --attn: #5CB8FF;
   --accent: #2FD4C2;
   --accent-ink: #04211D;
   --accent-soft: #123B38;
@@ -213,7 +215,8 @@ select.field:disabled { opacity: .7; cursor: not-allowed; }
 .chrono.is-focus { container-type: inline-size; }   /* 两行字的限宽跟着圆环走（cqi = 圆环宽的 1%） */
 .chrono .focus-lead { max-width: 58cqi; }           /* 第一行在圆里更靠上，弦更短 */
 .chrono .focus-window, .chrono .focus-hint { font-size: var(--fs-sub); color: var(--ink-2); }
-.chrono .focus-hint { font-size: var(--fs-eyebrow); color: var(--ink-3); }
+.chrono .focus-hint, .chrono .focus-dwell { font-size: var(--fs-eyebrow); color: var(--ink-3); }
+.chrono .focus-dwell { margin: 0; color: var(--ink-2); }
 .chrono .focus-elapsed { font-size: var(--fs-h2); }
 .chrono.is-afk .focus-window { color: var(--ink-3); }
 .chrono .start-big:disabled { opacity: .5; cursor: not-allowed; }

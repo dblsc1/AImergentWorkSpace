@@ -99,6 +99,11 @@ v1.10（2026-10-09）：此刻的焦点走 MCP（nexus-core v2.16）。`get_curr
 工具仍是 15 个，说明改写（在计时 / 否则看 focus / 只是提示 / 标题已脱敏）。测试：三种形状（有目标、只到项目、离开）、
 截断、老后端为 `null`、在计时时两样都在、下游请求集合不变。
 
+v1.11（2026-10-09）：人的注意力走 MCP（nexus-core v2.17）。`get_agent_time` 的 `open[]` 每条追加 `attentionSeconds`、
+`get_current_timer` 的 `focus` 追加 `dwellSeconds`，都是下游响应里的同名数字原样带出（`.get()`：老后端没有 → `null`），
+**不多一个下游请求、不自己算**。工具仍是 15 个，两个工具的说明各加一句。没有新的屏幕文字（两个都是数字，不过 `_screen`）。
+测试：有 / 没有这两个键两种下游形状。
+
 v1.10 同版（安全审查）：屏幕来的文字不可信。`tools.py` 的 `_screen()` 是唯一的清洗处——控制字符 / 换行 / 零宽 / 双向控制符
 → 空格并成一行，再截断（`MAX_TITLE` 80 / `MAX_SCREEN_TEXT` 200）；`get_current_timer`、`list_activity_suggestions`、
 `get_match_history`、`get_window_awaiting_target` 的 `app` / `title`（及 `reason`、集合名）与 `get_detector_rules` 的 `note`

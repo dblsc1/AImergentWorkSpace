@@ -158,7 +158,7 @@ def test_presence_guess_is_stored_with_the_span_but_not_exposed(client, world, c
     spans = _db()["activity_presence"].find_one({"deviceId": DEV})["spans"]
     assert [s.get("guess") for s in spans] == [
         {"taskId": world["a"], "confidence": 0.9}, {"projectId": world["q"], "confidence": 0.9}, None, None]
-    assert all(set(s) == {"deviceId", "from", "to", "app", "title", "afk"} for s in _human(client)["presence"])
+    assert all(set(s) == {"deviceId", "from", "to", "app", "title", "afk", "runId"} for s in _human(client)["presence"])
 
 
 @pytest.mark.parametrize("guess", [

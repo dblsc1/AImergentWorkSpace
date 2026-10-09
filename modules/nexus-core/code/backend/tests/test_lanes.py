@@ -108,11 +108,11 @@ def test_live_agents_running_human_presence_and_interactions(client, task):
     at = (datetime.fromisoformat(run["startedAt"]) + timedelta(seconds=1)).isoformat()
     client.post(f"{API}/agents/{run['runId']}/phase", json={"phase": "working", "at": at, "reply": True,
                                                               "detail": "Bash"})
-    client.post(f"{API}/activity/presence", json={"deviceId": "dev_1", "app": "code",
-                                                   "title": "garden — VS Code", "afk": False})
+    client.post(f"{API}/activity/presence", json={"deviceId": "dev_1", "app": "ptyxis",
+                                                   "title": "✳ garden", "afk": False})
     body = _lanes(client)
     assert body["human"]["running"]["taskId"] == task["id"]
-    assert [p["title"] for p in body["human"]["presence"]] == ["garden — VS Code"]
+    assert [(p["title"], p["runId"]) for p in body["human"]["presence"]] == [("✳ garden", run["runId"])]
     [agent] = body["agents"]
     assert (agent["runId"], agent["label"], agent["endAt"], agent["outcome"], agent["overdue"]) == (
         run["runId"], "garden", None, None, False)
@@ -121,6 +121,8 @@ def test_live_agents_running_human_presence_and_interactions(client, task):
     attend, reply = body["interactions"]  # 按 at 升序：心跳（此刻）早于 reply（起点 +1s）
     assert reply == {"runId": run["runId"], "kind": "reply", "at": at}  # reply 没有 until 键
     assert attend["kind"] == "attend" and "until" in attend
+    [seen] = agent["attention"]  # v2.17：同一份 attend，按运行给出、裁到窗口
+    assert datetime.fromisoformat(seen["from"]) == datetime.fromisoformat(attend["at"]) and seen["from"] == seen["to"]
 
 
 def test_closed_run_comes_from_projection(client):

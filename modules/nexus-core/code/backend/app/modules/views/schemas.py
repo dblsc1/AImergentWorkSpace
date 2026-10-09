@@ -105,6 +105,8 @@ class LaneFocus(_Strict):
     app: str
     title: str
     since: str  #: 当前窗口（或这一轮离开）从什么时候起
+    #: v2.17：时间线（最近 2 小时）里人在这同一个窗口上一共待了多少秒（含当前这一轮）；离开时为 null
+    dwellSeconds: int | None = None
     projectId: str | None = None
     projectName: str | None = None
     taskId: str | None = None
@@ -377,6 +379,7 @@ class AgentTimeOpen(_Strict):
     taskId: str | None
     startedAt: str
     elapsedSeconds: int
+    attentionSeconds: int = 0  #: v2.17：人把注意力放在这条运行上的秒数（运行上 attend 之和）
 
 
 class AgentTimeOut(_Strict):
@@ -419,6 +422,7 @@ class LanePresence(_Strict):
     app: str
     title: str
     afk: bool
+    runId: str | None = None  #: v2.17：这一段人在看的那条代理运行（窗口就是它的会话）；不是 → null
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)
 
@@ -440,6 +444,14 @@ class LanePhase(_Strict):
     detail: str | None
 
 
+class LaneAttention(_Strict):
+    #: 契约字段名就是 from（Python 关键字），用别名
+    from_: str = Field(alias="from")
+    to: str
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)
+
+
 class LaneAgent(_Strict):
     runId: str
     agent: str | None
@@ -454,6 +466,7 @@ class LaneAgent(_Strict):
     elapsedSeconds: int
     overdue: bool
     phases: list[LanePhase]
+    attention: list[LaneAttention] = []  #: v2.17：人把注意力放在它上面的时间（裁到窗口、已合并）
 
 
 class LaneReply(_Strict):

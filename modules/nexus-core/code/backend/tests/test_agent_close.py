@@ -68,9 +68,9 @@ def test_stop_lands_phases_interactions_label_and_trims_after_end(client, shift_
     _phase(client, run["runId"], "idle", _at(run, 250), reply=True)  # 超前，但在 300s 内：收下
     from app.modules.timer import service  # noqa: PLC0415
 
-    service.record_attend("u_local", "garden — VS Code", datetime.fromisoformat(_at(run, 60)))
-    service.record_attend("u_local", "garden — VS Code", datetime.fromisoformat(_at(run, 90)))
-    service.record_attend("u_local", "garden — VS Code", datetime.fromisoformat(_at(run, 200)))  # 起点在结束后
+    for sec in (60, 90, 200):  # +200：起点在结束后
+        moment = datetime.fromisoformat(_at(run, sec))
+        service.record_attend("u_local", run["runId"], [(moment, moment)], timedelta(seconds=45))
     client.post(f"{AGENTS}/{run['runId']}/stop", json={"outcome": "done"})  # 结束于 ~+100s
 
     data = _event(run["runId"])["data"]
@@ -89,8 +89,9 @@ def test_timeout_close_trims_to_cap_and_clamps_attend(client, shift_clock, monke
     run = _start(client, match="garden")
     cap = 12 * 3600
     shift_clock(seconds=cap + 50)
-    service.record_attend("u_local", "garden", datetime.fromisoformat(_at(run, cap - 10)))
-    service.record_attend("u_local", "garden", datetime.fromisoformat(_at(run, cap + 20)))  # 延长过了上限
+    for sec in (cap - 10, cap + 20):  # 延长过了上限
+        moment = datetime.fromisoformat(_at(run, sec))
+        service.record_attend("u_local", run["runId"], [(moment, moment)], timedelta(seconds=45))
     assert client.get(f"{API}/views/current").json()["agents"] == []  # 读时收超时
     data = _event(run["runId"])["data"]
     assert data["outcome"] == "timeout" and data["durationSeconds"] == cap

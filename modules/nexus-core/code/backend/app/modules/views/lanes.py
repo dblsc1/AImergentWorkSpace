@@ -25,6 +25,7 @@ from .schemas import LanesOut
 MAX_SESSIONS = 1000
 MAX_AGENTS = 200
 MAX_SPAN_DAYS = 7
+MAX_ATTENTION = 500  #: 每条运行至多回出这么多段「人在看」（取最新的）
 
 
 def _iso(moment: datetime) -> str:
@@ -49,13 +50,37 @@ def _window(day: str | None, date_from: str | None, date_to: str | None) -> tupl
     return today, today
 
 
-def _run_item(run: dict) -> dict:
+def _attention(run: dict, start: datetime, end: datetime) -> list[dict]:
+    """v2.17：人把注意力放在这条运行上的时间（运行上的 attend），裁到窗口、首尾相接 / 重叠的并掉。"""
+    out: list[list[datetime]] = []
+    for item in run.get("interactions") or []:  # 存的时候已按 at 排好
+        if item.get("kind") != "attend":
+            continue
+        a, b = max(datetime.fromisoformat(item["at"]), start), min(datetime.fromisoformat(item["until"]), end)
+        if b < a:
+            continue
+        if out and a <= out[-1][1]:
+            out[-1][1] = max(out[-1][1], b)
+        else:
+            out.append([a, b])
+    return [{"from": _iso(a), "to": _iso(b)} for a, b in out[-MAX_ATTENTION:]]
+
+
+def _interactions(run: dict) -> list[dict]:
+    """连线原样回出；attend 每条运行只回最新的 MAX_ATTENTION 条（v2.17 起一条运行能存 2000 条，响应不跟着涨）。"""
+    items = run.get("interactions") or []
+    attends = [i for i in items if i.get("kind") == "attend"]
+    return [i for i in items if i.get("kind") != "attend"] + attends[-MAX_ATTENTION:]
+
+
+def _run_item(run: dict, start: datetime, end: datetime) -> dict:
     return {
         **{k: run.get(k) for k in ("runId", "agent", "tool", "model", "label", "taskId", "projectId",
                                    "outcome", "elapsedSeconds", "overdue")},
         "startAt": _iso(run["startTs"]),
         "endAt": _iso(run["endTs"]) if run["endTs"] is not None else None,
         "phases": [{"at": p["at"], "phase": p["phase"], "detail": p.get("detail")} for p in run["phases"]],
+        "attention": _attention(run, start, end),
     }
 
 
@@ -97,9 +122,9 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
         runs = sorted(closed + live, key=lambda r: r["startTs"], reverse=True)
         truncated = truncated or len(runs) > MAX_AGENTS
         runs = runs[:MAX_AGENTS][::-1]
-        agents = [_run_item(r) for r in runs]
+        agents = [_run_item(r, start, end) for r in runs]
         interactions = [
-            {"runId": r["runId"], **i} for r in runs for i in r.get("interactions") or []
+            {"runId": r["runId"], **i} for r in runs for i in _interactions(r)
         ]
 
         state = timer_service.get_running_state(user)

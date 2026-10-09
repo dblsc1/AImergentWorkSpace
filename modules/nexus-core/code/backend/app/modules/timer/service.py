@@ -32,7 +32,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from ...tenant import current as current_tenant
 from ..events import service as events_service
@@ -241,8 +241,8 @@ def agent_phase(run_id: str, phase: str, at: str, detail: str | None, reply: boo
     return phases_impl.record_phase(run_id, phase, at, detail, reply, current_tenant(), now=_now)
 
 
-def record_attend(user: str, title: str, at: datetime) -> None:
-    phases_impl.record_attend(user, title, at)
+def record_attend(user: str, run_id: str, intervals: list[tuple[datetime, datetime]], gap: timedelta) -> None:
+    phases_impl.record_attend(user, run_id, intervals, gap)
 
 
 def list_lane_runs(user: str | None = None) -> tuple[datetime, list[dict]]:

@@ -27,6 +27,13 @@ def _sum_by(rows: list[dict], key) -> dict:
     return out
 
 
+def _attention_seconds(run: dict) -> int:
+    """v2.17：这条运行上 attend 的秒数之和（人看它看了多久；attend 之间不重叠）。"""
+    return int(sum(
+        (datetime.fromisoformat(i["until"]) - datetime.fromisoformat(i["at"])).total_seconds()
+        for i in run.get("interactions") or [] if i.get("kind") == "attend"))
+
+
 def _desc(groups: dict) -> list:
     """seconds 降序；同秒数按键升序（None 排最前），保证输出稳定。"""
     return sorted(groups.items(), key=lambda kv: (-kv[1][0], repr(kv[0])))
@@ -60,8 +67,9 @@ def get_agent_time(date_from: str | None = None, date_to: str | None = None) -> 
             for (p, t), (s, n) in _desc(tasks)
         ],
         open=[
-            {k: run.get(k) for k in
-             ("runId", "agent", "projectId", "taskId", "startedAt", "elapsedSeconds")}
+            {**{k: run.get(k) for k in
+                ("runId", "agent", "projectId", "taskId", "startedAt", "elapsedSeconds")},
+             "attentionSeconds": _attention_seconds(run)}
             for run in open_runs
             if in_range(run)
         ],

@@ -32,7 +32,10 @@
   var NAV = window.HONEYCOMB_NAV || { home: BASE, timer: null, tabs: [] };
   var STOPS = NAV.tabs || [];
 
-  var POLL_MS = 10000;             // 拉计时状态：views 本身聚合周期就有这么长
+  // 拉计时状态与此刻的焦点。2026-10-09（nexus-core v2.17）：检测程序 5 秒一拍，这里跟到 5 秒——每 3 秒切一次窗口的人，
+  // 10 秒一拉总是晚一两个窗口。页面不可见时退到 60 秒（没人看），回到前台立刻拉一次。
+  var POLL_MS = 5000;
+  var POLL_HIDDEN_MS = 60000;
   var TICK_MS = 1000;              // 本地走秒：用时每秒更新，不依赖网络往返
   var CURRENT_URL = BASE + '__cockpit/current';   // 恒 200 的网关端点，见契约 v0.5/v0.6
   var LOGOUT_URL = BASE + 'api/auth/logout';
@@ -360,7 +363,8 @@
         if (focus.auto) { nav.setAttribute('data-ckpt-auto', ''); } else { nav.setAttribute('data-ckpt-focus', focus.state); }
         liveWord.textContent = focus.chip;
         elapsedNode.textContent = window.HoneycombFocus.clock((Date.now() - focus.since) / 1000);
-        var full = focus.lead + (focus.window ? ' · ' + focus.window : '');   // 字截断了，全文放这里
+        // 字截断了，全文放这里；v2.17 再带一句「近 2 小时在这上面 N 分」（芯片上放不下，只进悬停）
+        var full = focus.lead + (focus.window ? ' · ' + focus.window : '') + (focus.dwell ? '（' + focus.dwell + '）' : '');
         chip.title = asking ? full + ' —— ' + HINT_CHOICE : full;
         return;
       }
@@ -403,7 +407,11 @@
     paint();
   };
 
+  var pollTimer = null;
   var poll = function () {
+    // 自己排下一次：可见 5 秒、不可见 60 秒（setInterval 改不了间隔）
+    clearTimeout(pollTimer);
+    pollTimer = setTimeout(poll, document.visibilityState === 'hidden' ? POLL_HIDDEN_MS : POLL_MS);
     // 同源 + HttpOnly cookie：必须带 credentials，否则网关 auth_request 判未登录。
     // CURRENT_URL 是恒 200 的网关端点，正常情况下 .catch() 不会触发；下面这条兜底
     // 是为「有人把 nginx 改回旧端点」准备的，行为是降级，不是替后端撒谎地回到静止点。
@@ -417,8 +425,14 @@
   };
 
   poll();
-  setInterval(poll, POLL_MS);
-  // 页面里开始 / 停止 / 取消计时后立刻重拉，不等下一个 10 秒（v0.2.1 实测：
+  // 切到后台：下一次改按 60 秒排（不发请求）；回到前台：立刻拉一次
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') {
+      clearTimeout(pollTimer);
+      pollTimer = setTimeout(poll, POLL_HIDDEN_MS);
+    } else { poll(); }
+  });
+  // 页面里开始 / 停止 / 取消计时后立刻重拉，不等下一个 5 秒（v0.2.1 实测：
   // 蜂巢里刚开始计时，顶栏还显示「未在计时」好几秒）。页面发这个事件即可，
   // 顶栏不关心是谁发的（契约 modules/nginx-docker/module_docs/contract.md）。
   window.addEventListener('honeycomb:timer-changed', poll);

@@ -5,6 +5,8 @@
 
 剧情（仓主要的一对多）：garden 在干活 → 等批准 → 人回话 → 接着干；plot 在等人说话 → 人去看（attend）
 → 回话 → plot 接着干 → 又在等；codex 报过一次错；docs 早上跑完了；old-job 超时还挂着；tests 空闲。
+v2.17「你在看」（agents[].attention，蓝条）：人 09:00–09:02 看过 garden、10:00–10:04 看 plot、10:10 起一直在看 garden
+（到「现在」还在看 → 活边）；在场的最后一段因此带着 garden 的 runId。fast_switching() = 每 3 秒切一次窗口的那种人。
 """
 
 from __future__ import annotations
@@ -21,12 +23,14 @@ def at(hm: str, day: str = TODAY) -> str:
 
 
 def run(run_id: str, label: str | None, start: str, *, agent: str = "claude-code", end: str | None = None,
-        phases: list[tuple[str, str, str | None]] = (), overdue: bool = False) -> dict[str, Any]:
+        phases: list[tuple[str, str, str | None]] = (), overdue: bool = False,
+        attention: list[tuple[str, str]] = ()) -> dict[str, Any]:
     return {
         "runId": run_id, "agent": agent, "tool": agent, "model": None, "label": label,
         "taskId": None, "projectId": None, "startAt": start, "endAt": end,
         "outcome": "completed" if end else None, "elapsedSeconds": 1200, "overdue": overdue,
         "phases": [{"at": a, "phase": p, "detail": d} for a, p, d in phases],
+        "attention": [{"from": a, "to": b} for a, b in attention],
     }
 
 
@@ -45,10 +49,11 @@ LANES_FULL: dict[str, Any] = {
         "running": {"startAt": at("10:00"), "taskId": "t_a", "projectId": "p_1"},
         "presence": [
             {"deviceId": "dev_x", "from": at("09:30"), "to": at("10:05"), "app": "code",
-             "title": "<b>plot.gd</b> — garden — VS Code", "afk": False},
-            {"deviceId": "dev_x", "from": at("10:05"), "to": at("10:10"), "app": "", "title": "", "afk": True},
-            {"deviceId": "dev_x", "from": at("10:10"), "to": at("10:20"), "app": "code",
-             "title": "garden", "afk": False},
+             "title": "<b>plot.gd</b> — garden — VS Code", "afk": False, "runId": None},
+            {"deviceId": "dev_x", "from": at("10:05"), "to": at("10:10"), "app": "", "title": "", "afk": True,
+             "runId": None},
+            {"deviceId": "dev_x", "from": at("10:10"), "to": at("10:20"), "app": "ptyxis",
+             "title": "garden", "afk": False, "runId": "run_a"},
         ],
     },
     "agents": [
@@ -57,13 +62,15 @@ LANES_FULL: dict[str, Any] = {
             phases=[(at("07:00"), "working", None), (at("08:00"), "idle", None), (at("08:10"), "working", None)]),
         run("run_a", "garden", at("08:30"),
             phases=[(at("08:30"), "working", None), (at("08:55"), "waiting_permission", "Bash"),
-                    (at("09:00"), "working", None), (at("09:40"), "idle", None), (at("10:00"), "working", None)]),
+                    (at("09:00"), "working", None), (at("09:40"), "idle", None), (at("10:00"), "working", None)],
+            attention=[(at("09:00"), at("09:02")), (at("10:10"), at("10:20"))]),
         run("run_b", None, at("09:10"), agent="codex",
             phases=[(at("09:10"), "working", None), (at("09:20"), "working", None),
                     (at("09:50"), "error", "rate_limit"), (at("09:55"), "working", None)]),
         run("run_c", "plot", at("09:30"),
             phases=[(at("09:30"), "working", None), (at("09:58"), "waiting_input", None),
-                    (at("10:04"), "working", None), (at("10:12"), "waiting_input", None)]),
+                    (at("10:04"), "working", None), (at("10:12"), "waiting_input", None)],
+            attention=[(at("10:00"), at("10:04"))]),
         run("run_f", "tests", at("09:45"),
             phases=[(at("09:45"), "working", None), (at("10:05"), "idle", None)]),
     ],
@@ -94,4 +101,30 @@ def just_after_midnight() -> dict[str, Any]:
     """「现在」00:30：最近 1 / 3 小时都跨过了今天零点，前端要补拉 ?from=昨天&to=今天。"""
     d = copy.deepcopy(LANES_EMPTY)
     d["now"] = at("00:30")
+    return d
+
+
+def fast_switching(rounds: int = 40) -> dict[str, Any]:
+    """每 3 秒切一次窗口的人（nexus-core v2.17）：10:16:00 起 garden → plot → 编辑器轮着来，每个 3 秒，一直切到「现在」。
+    在场是一条不重叠的细时间线；garden / plot 各自的 attention 就是轮到它们的那几段（人同一时刻只看一个）。"""
+    d = copy.deepcopy(LANES_FULL)
+    d["human"]["running"] = None
+    start = 10 * 3600 + 20 * 60 - rounds * 3
+
+    def clock(sec: int) -> str:
+        return f"{TODAY}T{sec // 3600:02d}:{sec % 3600 // 60:02d}:{sec % 60:02d}{TZ}"
+
+    windows = [("ptyxis", "garden", "run_a"), ("ptyxis", "plot", "run_c"), ("code", "notes.md — 编辑器", None)]
+    presence, seen = [], {"run_a": [], "run_c": []}
+    for i in range(rounds):
+        app, title, run_id = windows[i % 3]
+        a, b = clock(start + 3 * i), clock(start + 3 * i + 3)
+        presence.append({"deviceId": "dev_x", "from": a, "to": b, "app": app, "title": title, "afk": False,
+                         "runId": run_id})
+        if run_id:
+            seen[run_id].append({"from": a, "to": b})
+    d["human"]["presence"] = presence
+    for agent in d["agents"]:
+        agent["attention"] = seen.get(agent["runId"], [])
+    d["interactions"] = [i for i in d["interactions"] if i["kind"] == "reply"]
     return d
