@@ -130,6 +130,30 @@ class StuckStopTests(_R3):
         self.assertEqual(clock.sleeps, 2)  # 没有 30 秒后的第二次尝试
 
 
+    def test_heartbeat_worker_finishing_during_a_timed_out_stop_does_not_mask_it(self):
+        self._save("s1", "run-1", "working", "garden")
+        gen = claude_hook._read_state("s1")["gen"]
+        release, beat_done = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+        self.addCleanup(cc._stuck.clear)
+        beat = threading.Thread(target=beat_done.wait, daemon=True)  # 卡着的心跳线程
+        beat.start()
+        cc._stuck.append(beat)
+
+        def slow_stop(_c, run_id, outcome, **_k):
+            t = threading.Thread(target=release.wait, daemon=True)
+            t.start()
+            cc._stuck.append(t)
+            beat_done.set()  # 心跳线程恰在 stop 期间结束：前后数量都是 1
+            beat.join()
+            raise cc.CockpitError("超时")
+
+        self.assertEqual(cc.stuck_requests(), 1)
+        with mock.patch.object(cc, "stop_run", slow_stop):
+            self.assertIsNone(claude_hook._stop_gone("s1", gen, CLI, "born-1", lambda _s: None))
+        self.assertEqual(cc.stuck_requests(), 1)
+
+
 class RespawnAfterEndTests(_R3):
     EVENT = {"session_id": "s1", "cwd": "/tmp/garden", "hook_event_name": "SessionStart"}
 

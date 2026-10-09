@@ -692,14 +692,14 @@ def _beat_facts(session_id: str, payload: dict, prev: dict | None = None, probe:
     return facts
 
 
-def _beat_lock(session_id: str):
+def _beat_lock(session_id: str, suffix: str = ".beat"):
     """「一个会话一个发心跳的」：状态目录里 .beat 文件上的独占 flock，发多久拿多久——进程死了内核放锁，
     没有陈旧 pidfile 要清。拿到 → 打开着的文件（持有者写进自己的 pid 和起法，给人看）；别人拿着 → None。
     拿到锁后核对「路径上现在的文件就是我锁住的这个 inode」：路径被换过（旧的还被别人锁着）就不算拿到，
     否则第二个发心跳的会锁到另一个 inode。这是两种起法之间**唯一**的互斥。"""
     import fcntl
 
-    path = _state_file(session_id).with_suffix(".beat")
+    path = _state_file(session_id).with_suffix(suffix)
     try:
         _ensure_dir(path.parent)
         f = os.fdopen(_open_regular(path, os.O_RDWR | os.O_CREAT | os.O_APPEND), "a+", encoding="utf-8")  # 只给本人
@@ -716,17 +716,6 @@ def _beat_lock(session_id: str):
     return f
 
 
-def _beating_gen(session_id: str, st: dict | None) -> bool:
-    """`.beat` 被占着时：占着的那个发心跳进程（它把 `pid 起法 gen` 写进文件）是不是本代（`st["gen"]`）的、且 pid 还活着。
-    读不出 / 空（刚拿到锁还没写）/ 对不上 → False（宁可多起一个有界的 `--wait` 伴随进程）。"""
-    try:
-        pid, _source, gen = (_read_small(_state_file(session_id).with_suffix(".beat")) or "").split()
-        os.kill(int(pid), 0)
-        return bool(st) and gen == st.get("gen")
-    except (OSError, ValueError):
-        return False
-
-
 def _spawn_beat(session_id: str, state: dict | None, wait: bool = False, probe: tuple[int, str | None] | None = None) -> None:
     """`beat=companion`（缺省）时，没人在发心跳就起一个伴随进程，立刻返回（不等它）。起不来只是「这个会话没有心跳」。
     `state` = 钩子手里的状态（可为 None）。`wait`：另一个 CLI 恢复了这个会话，老的发心跳的还占着锁、
@@ -741,8 +730,8 @@ def _spawn_beat(session_id: str, state: dict | None, wait: bool = False, probe: 
         probe_lock = _beat_lock(session_id)
         if probe_lock is not None:
             probe_lock.close()  # 两个钩子同时走到这里会各起一个：伴随进程自己再抢一次锁，输的那个直接退
-        elif not wait or _beating_gen(session_id, st):
-            return  # 已经有人在发（wait 时只认「本代」在发：占着锁的可能是旧代的，它正要退，或还没拿到锁就会发现换了主人，照样起 --wait）
+        elif not wait:
+            return  # 已经有人在发；wait 时照起：占着锁的可能正要退（哪怕是本代的），不信它——有界的 --wait 伴随进程自己等、自己退
         subprocess.Popen(
             [sys.executable, str(Path(__file__).resolve()), "--beat", "--source", "companion",
              "--session", session_id, "--cli", str(cli), "--born", str(born),
@@ -795,9 +784,8 @@ def _beat_once(session_id: str, state: dict, source: str) -> float | None:
         payload = {"cwd": state["cwd"], "transcript_path": state.get("transcript")}
         with _session_lock(session_id) as held:  # 重开要持锁（拿不到就留给下一圈 / 下一个钩子事件）；相位取锁内状态里的 lastPhase
             if held:
-                stuck_before = cc.stuck_requests()
                 _relabel_locked(payload, session_id, cc.session_title(state.get("transcript")), state)
-                if cc.stuck_requests() > stuck_before:
+                if cc.stuck_requests():  # 任何还活着的工作线程都算（不比前后数量：别的请求恰好结束会掩盖新卡住的）
                     raise _MutationStuck  # /start 超时而线程还活着：它可能在锁放掉之后才到服务端，进程不许接着正常干活
         # 重开成了：新的那条还没声明心跳，下一轮就发。没成：closed 过一会儿再试；服务端不认这个运行（404，
         # 库重置 / 换了租户）就只重开这一次，不成就停，等下一个钩子事件再补一个发心跳的（有界，不是每个间隔都敲）
@@ -837,13 +825,17 @@ def _beat_session(
     if not _owned(state, gen, cli, born):
         return END_OTHER
     lock = _beat_lock(session_id)
-    for _ in range(TAKEOVER_WAIT if wait else 0):  # 另一个 CLI 时代的老发心跳进程一圈内会退，等它放锁；每秒重核对归属，会话没了 / 又换了主人就不等
-        if lock is not None:
-            break
-        sleep(1)
-        if not _owned(_read_state(session_id), gen, cli, born):
+    if lock is None and wait:  # 等的人同一时刻只留一个（`.wait` 锁，等完即放）：反复 SessionStart（compact）堆不出等待进程
+        waiter = _beat_lock(session_id, ".wait")
+        if waiter is None:
             return END_OTHER
-        lock = _beat_lock(session_id)
+        with waiter:
+            for _ in range(TAKEOVER_WAIT):  # 老的发心跳进程一圈内会退，等它放锁；每秒重核对归属，会话没了 / 又换了主人就不等
+                sleep(1)
+                if not _owned(_read_state(session_id), gen, cli, born):
+                    return END_OTHER
+                if (lock := _beat_lock(session_id)) is not None:
+                    break
     if lock is None:
         return END_OTHER  # 另一个已经在给它发
     with lock:
@@ -905,9 +897,8 @@ def _stop_gone(
                     return False
                 if moved and (now := _session_of(cli, born, proven=True)) in (None, session_id):
                     return False  # 这个会话（又）成了该 CLI 的当前会话，或已认不出别的：不停
-                stuck_before = cc.stuck_requests()
                 _session_end_locked(session_id, outcome)
-                if cc.stuck_requests() > stuck_before:
+                if cc.stuck_requests():  # 任何还活着的工作线程都算（不比前后数量：心跳线程恰好结束会掩盖新卡住的 stop）
                     return None
                 if _read_state(session_id) is None:  # 成了（或服务端说这条早没了）：状态已删
                     return True

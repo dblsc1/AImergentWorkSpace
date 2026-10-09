@@ -174,7 +174,7 @@ class _SessionCases(_BeatMixin):
 
 
 class SessionStartTests(_SessionCases, unittest.TestCase):
-    def test_same_cli_keeps_gen_across_compact_and_resume_and_spawns_no_second_beater(self):
+    def test_same_cli_keeps_gen_across_compact_and_resume_and_spawns_only_a_bounded_waiter(self):
         self._start()
         gen = claude_hook._read_state("s1")["gen"]
         beater = claude_hook._beat_lock("s1")  # 本代的发心跳进程在发（锁 + 写着自己的 pid、起法、gen）
@@ -184,7 +184,7 @@ class SessionStartTests(_SessionCases, unittest.TestCase):
         self.popen_mock.reset_mock()
         self._start()  # /compact、恢复：同一个 CLI 再来一次 SessionStart
         self.assertEqual(claude_hook._read_state("s1")["gen"], gen)  # 以前每次都换：在发的老进程就此退出，没人接着发
-        self.popen_mock.assert_not_called()
+        self.assertIn("--wait", self.popen_mock.call_args.args[0])  # 占着的可能正要退：只起有界等待者，不信它
 
     def test_other_cli_gets_a_new_gen_and_a_waiting_beater_even_while_the_old_one_holds_the_lock(self):
         self._start()

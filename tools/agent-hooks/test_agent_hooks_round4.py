@@ -57,23 +57,55 @@ class TakeoverAlwaysHasABeaterTests(_BeatMixin, unittest.TestCase):
             claude_hook._beat_session("s1", "companion", b_cli, "born-2", [5], clock.sleep, clock.clock, gen=gen_b, wait="--wait" in argv)
         self.assertIn(("beat", "run-1"), self.calls)
 
-    def test_probe_skips_the_spawn_only_for_a_live_beater_of_this_generation(self):
+    def test_occupied_beat_always_spawns_a_waiter_even_for_a_live_same_generation_holder(self):
         self._save("s1", "run-1", "idle")
         state = claude_hook._read_state("s1")
         holder = claude_hook._beat_lock("s1")
         self.addCleanup(holder.close)
+        holder.write(f"{os.getpid()} companion {state['gen']}")  # 本代、pid 活着——也不能信它不会马上退
+        holder.flush()
         with mock.patch("subprocess.Popen") as popen:
-            for text, expect_spawn in ((f"{os.getpid()} companion OLD-GEN", True),  # 旧代占着：照起 --wait
-                                       ("", True),  # 刚拿到锁还没写
-                                       (f"{os.getpid()} companion {state['gen']}", False)):  # 本代在发
-                holder.truncate(0)
-                holder.write(text)
-                holder.flush()
-                popen.reset_mock()
-                claude_hook._spawn_beat("s1", state, wait=True, probe=(CLI, "born-1"))
-                self.assertEqual(popen.called, expect_spawn, text)
-                if expect_spawn:
-                    self.assertIn("--wait", popen.call_args.args[0])
+            claude_hook._spawn_beat("s1", state, wait=True, probe=(CLI, "born-1"))
+            self.assertIn("--wait", popen.call_args.args[0])
+            popen.reset_mock()
+            claude_hook._spawn_beat("s1", state, probe=(CLI, "born-1"))  # 非 wait：仍不起
+            self.assertFalse(popen.called)
+
+    def test_same_generation_holder_exits_right_after_the_spawn_decision_and_the_waiter_beats(self):
+        self._save("s1", "run-1", "idle")
+        gen = claude_hook._read_state("s1")["gen"]
+        holder = claude_hook._beat_lock("s1")
+        self.addCleanup(holder.close)
+        holder.write(f"{os.getpid()} companion {gen}")
+        holder.flush()
+        clock = _Clock(max_sleeps=4, on_sleep=lambda n: n == 2 and holder.close())  # 老的（同代）在 spawn 之后退出放锁
+        with self.assertRaises(_Done):
+            claude_hook._beat_session("s1", "companion", CLI, "born-1", [5], clock.sleep, clock.clock, gen=gen, wait=True)
+        self.assertIn(("beat", "run-1"), self.calls)
+
+    def test_only_one_waiter_at_a_time(self):
+        self._save("s1", "run-1", "idle")
+        gen = claude_hook._read_state("s1")["gen"]
+        holder = claude_hook._beat_lock("s1")
+        self.addCleanup(holder.close)
+        first_sleeps, others = [], []
+
+        def first_sleep(_s):  # 第一个等待者睡着时，再来 20 次 SessionStart 的等待者
+            first_sleeps.append(1)
+            if len(first_sleeps) == 1:
+                for _ in range(20):
+                    others.append(claude_hook._beat_session("s1", "companion", CLI, "born-1", [5], lambda _x: others.append("slept"), lambda: 0.0, gen=gen, wait=True))
+            if len(first_sleeps) == 3:
+                holder.close()
+
+        clock = _Clock(max_sleeps=3)
+        with self.assertRaises(_Done):
+            claude_hook._beat_session("s1", "companion", CLI, "born-1", [5], lambda s: (first_sleep(s), clock.sleep(s)), clock.clock, gen=gen, wait=True)
+        self.assertEqual(others, [claude_hook.END_OTHER] * 20)  # 全部立刻退出，没睡过
+        # 等完放了 .wait：下一个 wait 进程可以再来
+        w = claude_hook._beat_lock("s1", ".wait")
+        self.assertIsNotNone(w)
+        w.close()
 
 
 class CliIdentityFromOneObservationTests(_BeatMixin, unittest.TestCase):
