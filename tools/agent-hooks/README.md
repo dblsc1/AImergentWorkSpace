@@ -49,7 +49,7 @@ model（如果拿得到）、开始/结束时间戳、结束状态（`done`/`fai
 | `COCKPIT_TOKEN` | 设备令牌（`report` 范围就够）。留空 = 不带凭据上报（见上）。**要和 `COCKPIT_URL` 一起设**：令牌只发往与它同来源的地址，单独设 `COCKPIT_TOKEN` 而地址在配置文件里，令牌不会用 |
 | `COCKPIT_TASK` | 可选。这次 run 挂在哪个任务上；不设就走目录映射，再不然就是收件箱 |
 | `COCKPIT_PROJECT` | 可选。定不出任务时，这次 run 挂在哪个项目上（见「挂到项目」） |
-| `COCKPIT_BEAT` | 可选。谁来发心跳：`auto`（缺省）/ `companion` / `monitor` / `off`（见「心跳」）。配置文件里同名键是 `beat` |
+| `COCKPIT_BEAT` | 可选。谁来发心跳：`companion`（缺省）/ `monitor`（显式）/ `off`（见「心跳」）。配置文件里同名键是 `beat` |
 
 **配置文件**（跨会话常驻，含目录 → 任务、目录 → 项目的映射）：
 
@@ -273,8 +273,8 @@ Claude Code 给它的默认超时只有 30 秒）。`SessionStart` **保持同�
 - 上表里的事件**每次都发**（一轮对话也就几条；`UserPromptSubmit` 哪怕 Claude 正在干活也要发——那是一次人的回话）。
   唯一按本地状态决定发不发的是 `PostToolUse`/`PostToolUseFailure`：每会话的状态文件里多记一个「上次报的相位」，
   其余钩子**先写状态、再发请求**。并行钩子读到旧状态的极小窗口里，最坏是这盏黄灯留到下一次 `Stop`/`UserPromptSubmit`
-  ——已知上限，不为它加锁。
-- 纪律不变：永远 `exit 0`，网络总时限约 1 秒，失败只在 stderr 留固定分类的一行。
+  ——已知上限（相位写状态本身仍在会话锁内，拿不到锁就这次不写）。
+- 纪律不变：永远 `exit 0`，每次请求至多 1 秒、整次调用在 3 秒总预算内，失败只在 stderr 留固定分类的一行。
 
 事件名与字段核对自 Claude Code 官方文档 <https://code.claude.com/docs/en/hooks>（2026-09-30）：
 `PermissionRequest` 在要请求批准时立即触发，而 `Notification` 的 `permission_prompt` 要等提示挂了约 6 秒才触发；
@@ -310,7 +310,7 @@ cockpit-run phase <working|waiting_input|waiting_permission|idle|error> [--run <
 机器睡了一觉、被判了失联而会话其实还开着：下一次心跳（或下一个钩子事件）发现运行已被收掉，会带同一个 `clientKey`
 重开一条，从那一刻算起。
 
-服务端给的间隔只认正整数、钳在 60–3600 秒里，每一下都重新钳；响应体最多读 64 KB；状态文件里读回来的东西
+服务端给的间隔只认正整数、钳在 60–900 秒里（服务端 1800 秒算失联，适配器至少每 `lostAfterSeconds / 2` 发一次），每一下都重新钳；响应体最多读 64 KB；状态文件里读回来的东西
 （`runId`、时刻、地址）都当不可信处理——`runId` 转义后才进路径，令牌绝不发往从状态文件读来的地址。
 
 它只发 `runId` 和一个标签（`beatSource`，见下），**不发任何别的东西**；3 秒时限，失败不管（连不上时一分钟后再试）。
@@ -320,7 +320,7 @@ cockpit-run phase <working|waiting_input|waiting_permission|idle|error> [--run <
 
 | | 伴随进程 `companion` | 插件 monitor `monitor` |
 |---|---|---|
-| 谁起它 | `SessionStart` 钩子（之后任何事件发现它不在就补一个） | Claude Code 自己（插件的 `monitors/monitors.json`） |
+| 谁起它 | `SessionStart` 钩子（之后任何事件发现它不在就补一个）；装成插件时也一样 | Claude Code 自己（插件的 `monitors/monitors.json`） |
 | 怎么装 | 不用装：照上面在 `settings.json` 里配钩子就有 | 把本目录装成插件（见下「装成插件」） |
 | 谁管它的生死 | 自己：脱离会话（独立 session、stdio 接 `/dev/null`），Claude Code 退出不等它；状态文件没了 / Claude Code 没了就退，最多活 24 小时（到点后下一个事件补一个） | Claude Code：随会话起、随会话停。只在交互式会话里有（`-p` 没有；Bedrock / Vertex / Foundry 上没有） |
 | 怎么认会话 | 钩子把会话号交给它 | Claude Code 不给 monitor 会话号：它按「同一个 Claude Code 进程」到状态目录里认，`/clear` 换了会话就换着跟 |
@@ -330,21 +330,73 @@ cockpit-run phase <working|waiting_input|waiting_permission|idle|error> [--run <
 两种是同一段代码（`claude_hook.py --beat --source …`），一个会话同一时刻**只有一个**在发：它们抢状态目录里同一把
 文件锁（`session-<哈希>.beat`，里面写着持有者的 pid 和起法），先到先得，后到的安静地让开；持有者死了内核自动放锁。
 
-`COCKPIT_BEAT`（或配置文件的 `"beat"`）定用哪条路：
+**静态配置，没有协商**。`COCKPIT_BEAT`（或配置文件的 `"beat"`）定用哪条路，只此一处；没有 `auto`、没有备用进程、没有宽限期：
 
 | 值 | 行为 |
 |---|---|
-| `auto`（缺省） | 钩子是从带 monitor 的插件里跑起来的 → 先让 monitor 来，会话开始 90 秒后还没人发心跳就补一个伴随进程；否则直接用伴随进程。**补伴随进程发生在 90 秒之后的下一个钩子事件里**（没有定时器：会话一直安静就一直不补，心跳靠钩子触发，所以那段时间运行也不声明心跳）；伴随进程发不出去（认不出 CLI、或钩子带了令牌而自己没有）时不起，不会每个事件起一个就退的进程 |
-| `companion` | 只用伴随进程（monitor 起来后立刻退出） |
-| `monitor` | 只用 monitor（钩子不起伴随进程；monitor 没来就没有心跳） |
+| `companion`（缺省） | `SessionStart` 钩子起伴随进程（装成插件时也是）。插件的 monitor 命令一起来就静悄悄退出、什么都不发 |
+| `monitor`（显式） | 只有插件的 monitor 发，钩子不起伴随进程；monitor 没来（`-p`、Bedrock 等）就没有心跳。monitor 拿不到插件设置：地址 / 令牌要放在 `COCKPIT_*` 环境变量或配置文件里它看得到的地方 |
 | `off` | 不发心跳。运行不声明心跳能力，服务端照旧只有 12 小时的遗忘超时兜底 |
 
-**Claude Code 在哪个进程**：两种起法都要知道。从自己的祖先进程里找名字以 `claude` 开头的，找不到就取第一个不是 shell 的
-（钩子和 monitor 都是经 `sh -c` 起的）。Linux 上记 pid + 启动时刻（pid 被复用也认得出），macOS 上只记 pid。
-**把钩子包在别的启动器里**（`uv run …`、自己的包装脚本）而 Claude Code 的进程名又不是 `claude`（比如经 `node` 跑）时，
-会把那个启动器错认成 Claude Code，启动器一退就以为会话没了——钩子命令请照本文写成直接的 `python3 …/claude_hook.py`。
-认不出时（返回 0）**伴随进程不起、monitor 直接退出**：看不出它死了，就不声明心跳（`agent.lane.v1`「六」），这个会话照旧只有
-12 小时的遗忘超时兜底。状态目录新建时是 0700、状态文件 0600（里面有 cwd、transcript 路径、地址、pid）。
+**怎么切换、怎么对比**：对比两条路就隔天改一次 `COCKPIT_BEAT=monitor`（或配置文件 `{"beat": "monitor"}`，需要先装成插件），再看 `beatSource`（见「比较两条路」）。
+`beat` 写在 Claude Code 能传给 monitor 进程的地方（环境变量 / 配置文件）；插件设置里没有这一项，因为 monitor 读不到插件设置。
+两条路之间唯一的互斥是 `.beat` 文件锁；唯一的交接机制是 `--wait`：另一个 CLI 恢复了会话时，新 CLI 的伴随进程在有限时间内（最多 45 秒）等老的放锁，每秒重核对归属号 / CLI 身份。
+
+**Claude Code 在哪个进程**（「确认认出」的定义）：只有两种——环境变量 `COCKPIT_CLI_PID` 明确指了一个活着的进程；或祖先进程（最多 6 层）里
+最近的一个名字以 `claude` 开头（或以 `COCKPIT_CLI_NAMES` 里逗号分隔的某个前缀开头，**不分大小写**）的。**不猜**：祖先是
+`CLI(node) → timeout → shell → 钩子` 这种、没有认得出的名字时回「认不出」，不再退到「第一个不是 shell 的」（那常是个短命的辅助进程，
+它一退就会替还活着的 CLI 收掉泳道）；经 `node` 跑的 CLI 请设 `COCKPIT_CLI_NAMES=node` 或 `COCKPIT_CLI_PID`。
+认不出时**伴随进程不起、monitor 直接退出**：看不出它死了，就不声明心跳（`agent.lane.v1`「六」），这个会话照旧只有 12 小时的遗忘超时兜底。
+身份 = (pid, 启动时刻)，由**钩子（启动者）取**并交给伴随进程，伴随进程不事后再取（否则 pid 被复用有空档）。**没有启动时刻的平台（macOS 的 `ps`）
+分不出 pid 被复用，按认不出算：不监督、不声明心跳**——那里的运行只靠遗忘超时兜底（已知限制）。
+每个会话的状态里有 SessionStart 写下的随机**归属号**（`gen`）和 CLI 身份；发心跳的进程每圈核对、停之前持锁再核对一遍，对不上
+（会话被另一个 CLI 恢复，状态已被换掉）就放手，不停新 CLI 的运行。两种起法都有 24 小时寿命上限（按圈数），monitor 每圈重认 CLI 身份。
+**状态目录**必须属于本人：组 / 其他人有权限位的（v0.3 在 umask 002 下建的 0775，升级的人都是）自动修成 0700 继续用，旧的状态文件头一次碰到时收紧到 0600；
+属于别人、或改不了权限的整个不用，SessionStart 在发 `start` 之前就在 stderr 报一行（哪里不对、怎么修），不会留下没人会关的 run；状态 / 锁文件不跟符号链接、必须是普通文件、
+临时文件名随机且 `O_EXCL`；新建目录 0700、文件 0600（里面有 cwd、transcript 路径、地址、pid）。
+**锁或者什么都不做**：每个改状态的操作（**心跳不算**：它只受 `.beat` 互斥，不持会话锁；服务端的心跳端点只更新未关闭的运行，已关闭 / 关闭中的回 `closed`，不重开也不改它，见 `modules/nexus-core/.../timer/agent_phases.py::heartbeat` 与 `repo.touch_agent_run`）（SessionStart 开 run 并落状态、写相位、改名 / 重开、SessionEnd / 死亡收尾的 stop + 删状态）都先拿会话锁；
+拿到锁之后还要核对**发起这次调用的 CLI**（pid + 启动时刻，每次调用只取一次）就是状态里记的那个 `cli`：锁只串行、不授权，老 CLI 迟到的 SessionEnd / 相位 / 改名撞上「新 CLI 恢复同一会话」后的状态时什么都不做（不停 run、不删状态、不写相位）。
+拿不到（2 秒，且受下面的总预算约束）就不写状态、也不发依赖它的改状态请求——SessionStart 拿不到锁**连 `/start` 都不发**（stderr 至多一行），留给下一个事件或服务端的失联 / 遗忘超时。没有「不带锁也往下走」的例外（SessionEnd 也是）。
+SessionStart 在**一个临界区**里：读状态 → `/start` → 落状态 → 落不下来就 `/stop` 这条 run，全在锁内；SessionEnd 与发心跳进程的收尾拿同一把锁，所以不会停掉别人刚落下的 run。
+改名 / 重开的开跑相位取锁内重读的状态，改名绝不写 `lastPhase`。同一个 CLI 的再一次 SessionStart（`/compact`、恢复）沿用原归属号，在发的进程不受影响。
+**总预算**：每次钩子调用一个 3 秒的单调时钟截止时刻，**从进程启动起算**（解释器 / 导入的耗时也算），但启动之后至少保证 1.5 秒干活时间（`HOOK_MIN_WORK`，够一次拿锁 + 一次请求）；CPU 严重过载时钩子的墙钟时间仍可能超过约 3.5 秒；拿锁等待、`ps`、HTTP 都从里面扣（每步 `min(自己的上限, 剩余)`），用完就跳过剩下的步骤、照常退出码 0；CLI 祖先每次调用最多查一次。
+配置文件和 transcript 用 `O_NONBLOCK|O_NOFOLLOW` 打开、必须是普通文件、有大小上限（FIFO 不会卡住钩子；**符号链接的配置文件会被忽略**）。
+CLI 没了而 `stop` 没报成时，发心跳的进程隔 30 秒再试，共 3 次（约 1 分钟），之后不管了——兜底是服务端的 30 分钟失联规则。
+**卡住是终态**：上一下请求还卡着时跳过这一下心跳；连着 3 圈都跳过，伴随进程与 monitor **都整个退出**（进程一退，卡住的线程跟着没了）。`beat=companion`：下一个钩子事件起新的伴随进程；`beat=monitor`：钩子不起进程，要等 Claude Code 重启 monitor（通常是下次启动 / 重载插件）才会再发。
+
+**已知限制**（不再加机制，靠服务端的失联规则兜底）：
+- 会话锁拿不到时那个事件的相位 / 改名 / 收尾整个不做（不是只少写本地状态）：随后的相位或下一个事件会纠正；SessionEnd 拿不到锁则不停也不删：发心跳的进程在（`companion`，或 `monitor` 还在跑）时，会在 Claude Code 没了之后的一次检查（≤ 30 秒）内按 `cancelled` 收掉这条 run（同一个 CLI 已换到别的会话——`/clear`、恢复——也一样，按 `done` 收旧的）；没有发心跳的进程就一直开着，直到服务端的失联 / 遗忘超时。旧版本留下的 `.standby` 文件无用但无害，可以删。
+- 24 小时寿命上限按循环圈数算，不是墙钟：机器休眠、请求变慢都会把实际时长拉长。
+- 响应体读取的时限是**协作式**的（只在两次 `read1` 之间核对）：单次读里卡住（分块帧头、socket 超时叠加）可以超出。硬上界是两处：调用方的 `join(timeout)` 不等它，和发心跳进程「连着几圈卡着就整个进程退出」。不为此给每个请求起子进程。
+- 状态目录若是符号链接，整个拒绝（stderr 一行，不发 `/start`）。
+- 认不出发起的 CLI（不支持的平台、取不到启动时刻），或状态里没记 CLI：归属核对放行，行为同以前。同一个 CLI **更早一代**的迟到事件（同进程内 `/clear`、`--resume` 的旧会话）没有事件代号就分不出来，不处理。
+- 已发出的改状态请求（`/stop`、`/start`）超时时，工作线程可能还在：它可能在锁放掉、甚至另一个 CLI 恢复了同一条 run（同 `clientKey`）之后才到服务端并生效。本地只做到「超时后进程不再正常干活」（钩子本来就结束；发心跳的进程以 `END_STUCK` 整个退出，不放锁继续）；跨这条边界的严格归属需要服务端栅栏（fencing），本 PR 不加。超时的请求**服务端结果未知**。
+- 异步相位钩子乱序到达，本地不重排（服务端按 `at` 排）；相位的取舍用的是锁内最新的 `lastPhase`。
+- 「这个 CLI 此刻在哪个会话」按 SessionStart 写下的激活戳 `activatedAt`（墙钟）选，不看文件 mtime；停旧会话前在锁内再核对一次。时钟被往回拨时可能选错，下一次 SessionStart 纠正。
+- 下一下心跳从**上一次尝试开始**的时刻按单调钟排（间隔 = 服务端给的 + 至多一个检查圈 `BEAT_CHECK_SECONDS`，30 秒）；单调钟在休眠期间不走，机器睡醒后的下一下可能晚一个间隔以内；调度被拖延（进程被挂起）同理。
+- 事件 JSON 从 stdin 读，最多 1 MiB，受 3 秒总预算约束（POSIX 用 `select`）；超时 / 超限按「没有事件」处理、退出码 0。Windows 退回普通的带上限读取，**没有时限**。文件系统卡住（不健康的网络文件系统）不在 3 秒预算内。
+- stderr / `--doctor` 里打印的路径、地址、进程名都先过滤控制字符并截断（只用于输出，文件操作用原值）。
+- 发心跳的进程最多活 24 小时（按圈数）；到点退出、或终端被关而 CLI 没发 SessionEnd，空闲的会话在下一个钩子事件到来前没人监督（`companion`），`monitor` 能否重启取决于启动它的 Claude Code。
+- `O_NOFOLLOW` 只管路径的**最后一段**：假定上级目录可信（状态目录的父目录不被别人改）。
+- 锁只在**共用同一个状态目录**的进程间协调：两台机器用同一个 `clientKey`（同一会话号）会共用一条 run，互不协调。
+- 进程启动时刻（/proc 里的 starttime）只在**一次开机内**唯一；重启后 pid + 启动时刻可能碰巧重合。
+- **服务器绑定**：状态里记着开这条 run 的服务器（scheme + 主机 + 端口 + 路径前缀，不含 userinfo / 令牌）。会话中途把配置换到另一台服务器后，相位 / 改名 / 重开 / 心跳 / stop 一律不发往新服务器；SessionEnd 与发心跳进程的死亡收尾只清本地状态（stderr 一行），**旧服务器上的 run 只靠它自己的失联 / 遗忘超时收尾**。新的 SessionStart 在新服务器上正常开新 run。校验与请求之间配置再变的毫秒级空档不防。
+- 老格式状态（没记服务器）不做服务器核对，保持原行为：请求发往当前配置的服务器。
+- `.beat` 被占着时，SessionStart（takeover / compact）一律起有界（≤45 秒）的 `--wait` 伴随进程，不判断占着的是不是本代、还活不活（它可能正要退）；同一会话同一时刻只留一个在等（`session-<哈希>.wait` 非阻塞锁，后到的立刻退出）。`.beat` 里的 `pid 起法 gen` 只给 `--doctor` 看。等待者被顶替（会话又换了主人）的最长 1 秒内到的 SessionStart 其等待进程会因 `.wait` 被占而退出，此时下一个钩子事件会补一个发心跳的。
+- 改状态的请求（`/stop`、重开的 `/start`）超时后，只要还有任何存活的卡住线程（不比前后数量）就按卡住处理、整个进程退出。
+
+### 检查心跳有没有在发
+
+SessionStart 时认不出 Claude Code（进程名不以 `claude` 开头：`node …/cli.js`、带版本号的二进制、改名的包装、深于 6 层的祖先；macOS 没有启动时刻；Windows）
+或状态目录用不了，钩子在 stderr 打**一行**提示（原因 + 补救：`COCKPIT_CLI_NAMES=…` / `COCKPIT_CLI_PID`），每个会话只说一次，monitor 从不出声。
+要一屏看清现状，在 Claude Code 里用 `!` 跑（这样祖先进程就是真的那一棵）：
+
+```bash
+python3 tools/agent-hooks/claude_hook.py --doctor
+```
+
+它打印：配置来源（只有地址的主机和端口，令牌只说有没有）、状态目录与权限结论、当前进程树里 Claude Code 怎么被认出（pid / 名字 / 有没有启动时刻）、
+会用哪种发心跳的方式，以及最新一个会话的 `.beat` 里记着的持有者（进程还在不在）。`--doctor` **只读**：不建目录、不改权限、不建 / 不锁任何文件，缺什么就报「还没有」。
 
 **Windows**：钩子命令与插件清单里写的是 `python3`，Windows 上多半只有 `python` / `py`：装插件前请改成能用的解释器名（或让 `python3` 在 PATH 上）。两种都不起（没有可靠又不伤人的「这个 pid 还活着吗」——`os.kill(pid, 0)` 在 Windows 上会真的发信号），
 运行不声明心跳，行为同以前（12 小时遗忘超时）。`cockpit-run` 的心跳线程在 Windows 上照常工作。
@@ -352,7 +404,7 @@ cockpit-run phase <working|waiting_input|waiting_permission|idle|error> [--run <
 **`cockpit-run`** 包命令期间有一个心跳线程（`beatSource: wrapper`），命令结束即停；`COCKPIT_BEAT=off` 关掉。
 它没有 `clientKey`，运行被判失联后不重开。
 
-### 装成插件（monitor 这条路）
+### 装成插件（缺省仍是伴随进程；monitor 要显式开）
 
 本目录同时是一个 Claude Code 插件（`.claude-plugin/plugin.json`、`hooks/hooks.json`、`monitors/monitors.json`——
 三个 JSON 把同一个 `claude_hook.py` 接上去，没有别的逻辑）。仓库根的 `.claude-plugin/marketplace.json` 把它列了出来：
@@ -392,7 +444,7 @@ for source, r in sorted(rows.items()):
 
 怎么读：`lost` 多 = 这条路的进程经常自己没了（或发不出去）；`cancelled` 是它发现 Claude Code 没了、替它收的尾；
 `beats ÷ runs` 对照运行时长看有没有漏发。在跑的运行看 `GET /api/core/views/lanes` 的 `agents[]`
-（`beatSource` / `beatCount` / `lastSeenAt` / `lost`）。想在同一台机器上对比，就隔天换一次 `COCKPIT_BEAT`。
+（`beatSource` / `beatCount` / `lastSeenAt` / `lost`）。想在同一台机器上对比，就隔天在 `companion`（缺省）与 `monitor` 之间换一次 `COCKPIT_BEAT`。
 
 ## 测试
 

@@ -387,3 +387,68 @@ def test_views_current_agents_carry_the_same_elapsed_seconds_as_lanes(client, sh
     lane = _lane(client, run["runId"])
     assert 600 <= cur["elapsedSeconds"] <= 660
     assert abs(cur["elapsedSeconds"] - lane["elapsedSeconds"]) <= 2
+
+
+# ─────────────────────────────────────────── Codex 复审：相位与信号原子 / 超时不压首个心跳 / 信号单调
+
+
+def test_phase_write_carries_last_seen_so_a_stale_cleaner_cannot_close(client, shift_clock, monkeypatch):
+    """清理者读到旧 lastSeenAt、相位随后写入：相位那一次条件更新必须同时推进 lastSeenAt（不靠随后的 touch），
+    清理者带旧值的关闭条件才落空。"""
+    from app.modules.timer import agent_liveness, repo  # noqa: PLC0415
+
+    run = _start(client, heartbeat=True)
+    stale = _doc(run["runId"])
+    shift_clock(minutes=20)
+    monkeypatch.setattr(repo, "touch_agent_run", lambda *a, **k: True)  # 撑开「写相位」与「随后的 touch」之间的窗口
+    at = (datetime.fromisoformat(run["startedAt"]) + timedelta(minutes=20)).isoformat()
+    body = client.post(f"{AGENTS}/{run['runId']}/phase", json={"phase": "working", "at": at}).json()
+    assert body["applied"] is True
+    assert agent_liveness.mark_expired(stale, datetime.fromisoformat(at) + timedelta(minutes=20)) is None  # 旧读数看是失联
+    assert "closing" not in _doc(run["runId"]) and len(_doc(run["runId"])["phases"]) == 1
+
+
+def test_timeout_branch_does_not_override_a_concurrent_first_heartbeat(client, shift_clock, monkeypatch):
+    from app.modules.timer import repo  # noqa: PLC0415
+
+    run = _start(client)  # 没声明过心跳
+    shift_clock(hours=13)
+    listing = repo.list_agent_runs
+    declared = []
+
+    def racy(user):
+        rows = listing(user)  # 清理者先读到「未声明」
+        if not declared:
+            seen = (datetime.fromisoformat(run["startedAt"]) + timedelta(hours=13)).isoformat()
+            declared.append(repo.touch_agent_run(user, run["runId"], seen, declare=True))
+        return rows
+
+    monkeypatch.setattr(repo, "list_agent_runs", racy)
+    client.get(f"{API}/views/current")
+    assert declared == [True] and _events() == [] and "closing" not in _doc(run["runId"])
+
+
+def test_last_seen_never_moves_backward_nor_before_start():
+    from app.modules.timer import repo  # noqa: PLC0415
+
+    now = datetime.fromisoformat("2026-01-01T10:00:00+00:00")
+    newer = (now + timedelta(minutes=5)).isoformat()
+    repo.add_agent_run({"user": "u_mono", "runId": "run_mono000001", "agent": "cc", "tool": "t", "zoneId": "z",
+                        "projectId": "p", "startedAt": now.isoformat(), "lastSeenAt": newer, "heartbeat": True})
+    try:
+        older = (now + timedelta(minutes=1)).isoformat()
+        assert repo.touch_agent_run("u_mono", "run_mono000001", older, beat=True, beat_source="x") is True
+        got = repo.get_agent_run("u_mono", "run_mono000001")
+        assert (got["lastSeenAt"], got["beatCount"], got["beatSource"]) == (newer, 1, "x")
+        repo.touch_agent_run("u_mono", "run_mono000001", (now - timedelta(hours=1)).isoformat())
+        assert repo.get_agent_run("u_mono", "run_mono000001")["lastSeenAt"] == newer  # 迟到的老信号不倒退
+    finally:
+        repo.delete_agent_run("u_mono", "run_mono000001")
+    # 地板：还没有 lastSeenAt 的运行，被一个早于 startedAt 的迟到信号碰到，lastSeenAt 恰好是 startedAt（不是那个更早的时刻）
+    repo.add_agent_run({"user": "u_mono", "runId": "run_mono000002", "agent": "cc", "tool": "t", "zoneId": "z",
+                        "projectId": "p", "startedAt": now.isoformat()})
+    try:
+        assert repo.touch_agent_run("u_mono", "run_mono000002", (now - timedelta(hours=1)).isoformat()) is True
+        assert repo.get_agent_run("u_mono", "run_mono000002")["lastSeenAt"] == now.isoformat()
+    finally:
+        repo.delete_agent_run("u_mono", "run_mono000002")

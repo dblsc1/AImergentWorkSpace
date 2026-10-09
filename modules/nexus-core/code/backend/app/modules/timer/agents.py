@@ -175,7 +175,14 @@ def _expire(user: str, now: datetime) -> None:
             if (snap := mark_expired(run, now)) is not None:
                 _finish(snap)
         elif now - started > cap:
-            _close(run, "timeout", None, started + cap)
+            # 打标记时仍须「没声明过心跳」（原子条件）：读到之后恰有首个心跳进来，它的运行不看遗忘超时；
+            # 落空 = 重读，声明了的按心跳规则（失联 / 7 天上限）判，其余已被别人处理
+            marker = {"outcome": "timeout", "endedAt": (started + cap).isoformat()}
+            if (snap := repo.mark_agent_run_closing(user, run["runId"], marker, {"heartbeat": {"$ne": True}})) is not None:
+                _finish(snap)
+            elif (fresh := repo.get_agent_run(user, run["runId"])) and "closing" not in fresh and fresh.get("heartbeat"):
+                if (snap := mark_expired(fresh, now)) is not None:
+                    _finish(snap)
 
 
 def clean(value: str | None) -> str | None:

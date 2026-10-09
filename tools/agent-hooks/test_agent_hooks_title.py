@@ -25,26 +25,6 @@ def _title(name) -> str:
     return json.dumps({"type": "custom-title", "customTitle": name, "sessionId": "s"})
 
 
-class _SpyFile:
-    """记下每次 read 要了多少字节。"""
-
-    def __init__(self, f, reads: list):
-        self.f, self.reads = f, reads
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        self.f.close()
-
-    def seek(self, *a):
-        return self.f.seek(*a)
-
-    def read(self, n=-1):
-        self.reads.append(n)
-        return self.f.read(n)
-
-
 class _TranscriptMixin(_IsolatedHomeMixin):
     def _transcript(self, *lines: str, raw: bytes | None = None) -> str:
         path = Path(self._home_tmpdir.name) / "transcript.jsonl"
@@ -89,11 +69,11 @@ class SessionTitleTests(_TranscriptMixin, unittest.TestCase):
         recent = head + _title("recent").encode() + b"\n" + filler * 100
         self.assertEqual(cc.session_title(self._transcript(raw=recent)), "recent")
 
-        reads: list = []
-        real_open = open
-        with mock.patch.object(cc, "open", lambda *a, **k: _SpyFile(real_open(*a, **k), reads), create=True):
+        sizes: list = []
+        real = cc.read_regular
+        with mock.patch.object(cc, "read_regular", lambda *a, **k: sizes.append(len(real(*a, **k)[0])) or real(*a, **k)):
             self.assertEqual(cc.session_title(self._transcript(raw=recent)), "recent")
-        self.assertEqual(reads, [cc.TITLE_TAIL_BYTES])  # 一次读、有上限，从不整个读
+        self.assertEqual(sizes, [cc.TITLE_TAIL_BYTES])  # 一次读、有上限，从不整个读
 
     def test_a_huge_single_line_and_a_cut_first_line_are_tolerated(self):
         # 末尾 256 KB 整个落在一行里：切进来的半行丢掉，什么都找不到
@@ -180,21 +160,6 @@ class HookTitleTests(_TranscriptMixin, unittest.TestCase):
         self.assertEqual(self._starts()[-1]["label"], "garden")
         self.assertEqual(claude_hook._read_state("s1")["label"], "garden")
 
-    def test_rename_racing_session_end_never_resurrects_the_run(self):
-        path = self._transcript(_title("New Name"))
-        claude_hook._save_run_id("s1", "run-1", "idle", "garden")
-        real_start = cc.start_run
-
-        def end_then_start(*a, **k):  # SessionEnd 夹在「读状态」和「start」之间：停 run、删状态
-            claude_hook._delete_run_id("s1")
-            real_start(*a, **k)
-            return {"runId": "run-new"}  # 服务端：clientKey 已停 → 新 run
-
-        with mock.patch.object(cc, "start_run", side_effect=end_then_start):
-            claude_hook.handle_phase(self._event("Stop", transcript_path=path), self.AT)
-        self.assertIsNone(claude_hook._read_state("s1"))
-        self.assertEqual([r["path"] for r in self._stops()], ["/api/core/agents/run-new/stop"])
-
     def test_rename_with_state_gone_before_start_sends_nothing(self):
         path = self._transcript(_title("New Name"))
         claude_hook._save_run_id("s1", "run-1", "idle", "garden")
@@ -243,16 +208,17 @@ class HookTitleTests(_TranscriptMixin, unittest.TestCase):
         claude_hook._save_run_id("s1", "run-1", "idle", "garden")
         stale = claude_hook._read_state("s1")
         claude_hook.handle_session_end({"session_id": "s1"})
-        claude_hook._relabel(self._event("Stop"), "s1", "idle", "New Name", stale)
+        with claude_hook._session_lock("s1"):
+            claude_hook._relabel_locked(self._event("Stop"), "s1", "New Name", stale)
         self.assertEqual(self._starts(), [])
         self.assertIsNone(claude_hook._read_state("s1"))
 
-    def test_lock_wait_is_bounded_and_proceeds_without_the_lock(self):
+    def test_lock_wait_is_bounded_and_reports_not_held(self):
         with claude_hook._session_lock("s1"):
             t0 = time.monotonic()
-            with claude_hook._session_lock("s1", wait=0.15):
-                ran = True
-            self.assertTrue(ran and 0.15 <= time.monotonic() - t0 < 2)
+            with claude_hook._session_lock("s1", wait=0.15) as held:
+                self.assertFalse(held)
+            self.assertTrue(0.15 <= time.monotonic() - t0 < 2)
         t0 = time.monotonic()  # 外层放锁后能立刻拿到
         with claude_hook._session_lock("s1", wait=0.15):
             pass
