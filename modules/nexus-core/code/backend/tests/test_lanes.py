@@ -139,6 +139,12 @@ def test_closed_run_comes_from_projection(client):
 def test_overdue_run_listed_but_never_closed(client, shift_clock):
     run = _start(client)
     shift_clock(hours=13)
+    # v2.24：超期的运行在还没过完的窗口里默认不显示（收进 inactiveAgents）；这里关心的是运行本身，先置顶（置顶永远显示）。
+    # 不置顶的话结果随真实时刻变：拨 13 小时后落在今天窗口之内（上午跑）就被收起，之外（下午跑）才照旧列出
+    for x in _lanes(client)["inactiveAgents"]:
+        resp = client.put(f"{API}/lanes/prefs/agent", json={"agent": x["agent"] or "", "label": x["label"] or "",
+                                                             "pinned": True, "unverified": x["unverified"]})
+        assert resp.status_code == 200, resp.text
     [agent] = _lanes(client)["agents"]
     assert agent["runId"] == run["runId"] and agent["overdue"] is True
     assert agent["elapsedSeconds"] == 12 * 3600 and agent["endAt"] is None
