@@ -36,6 +36,9 @@ consumes:
   - id: nexus-core.activity.suggestions.v1
     contract: ../../nexus-core/module_docs/contract.md
     purpose: list_activity_suggestions（只调 GET）；propose_activity_matches（POST matches；不调 confirm / dismiss / unmatch）；get_match_history（GET history，v1.7）
+  - id: nexus-core.activity.ignores.v1
+    contract: ../../nexus-core/module_docs/contract.md
+    purpose: v1.14 get_detector_rules 追加 ignored（GET activity/ignores，只读）
   - id: nexus-core.activity.reports.v1
     contract: ../../nexus-core/module_docs/contract.md
     purpose: v1.13 propose_report（POST activity/reports）；get_report_status（GET activity/reports?status=all&limit=1&items=true）；不调 approve / reject（只有人能）
@@ -116,3 +119,5 @@ v1.10 同版（安全审查）：屏幕来的文字不可信。`tools.py` 的 `_
 INSTRUCTIONS」的标题在五个工具里都是一行、截断过、只在自己的字段里；说明里有那句话；`suggest_window_target` 多带 `title` 400 且不调下游。
 
 v1.13（2026-10-09，nexus-core v2.20「AI 报告」）：`propose_report` 只发一个 POST `activity/reports`（原样下传，不带 `Authorization`；拒绝理由过 `_screen` 再还给模型），`get_report_status` 只发一个 GET `activity/reports?status=all&limit=1&items=true`（`summary` / `reason` / `failure` 过 `_screen`，不出建议 id 与自报作者）。`WRITES` 追加 `propose_report`；工具共 17 个。测试：`tests/test_mcp.py` 的 `test_propose_report_*`、`test_get_report_status_*`、`test_ai_text_in_reports_*`，工具分类与计数的几条随之改为 17 / 12。
+
+v1.14（2026-10-09，nexus-core v2.22「忽略并记住」）：`get_detector_rules` 多读一个 `GET /api/core/activity/ignores`，输出追加 `ignored`（`{id, app, titleContains, since, ignoredRecords, ignoredSeconds}`，`app` / `titleContains` 过 `_screen`；老后端 404 = `[]`）。工具数、写端点不变。`get_current_timer` 的 `agents[]`、`get_agent_time` 的 `open[]` 不列藏起来的代理是 nexus-core 的 views 做的，MCP 原样带出。

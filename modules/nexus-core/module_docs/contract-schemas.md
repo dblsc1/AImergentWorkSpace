@@ -410,6 +410,32 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
 - 四个读端的键**总在**：`attention` 没有为 `[]`、`runId` 没有为 `null`、`attentionSeconds` 没有为 `0`、`dwellSeconds` 离开时为 `null`。
 - `attention` 按时间排、互不重叠；`from == to` 的段可能出现。
 
+### 泳道偏好与忽略并记住（v2.22，`nexus-core.lanes.prefs.v1` / `nexus-core.activity.ignores.v1`）
+
+规范性条款只住 `contract.md`「泳道偏好与忽略并记住」节。形状：
+
+```jsonc
+// GET /api/core/lanes/prefs（也是 PUT …/agent、PUT …/order、DELETE …/order[/{runId}] 的响应）—— 只收人（Bearer → 403）
+{ "agents": [ { "agent": "claude-code", "label": "garden", "hidden": false, "pinned": true, "pinnedAt": "<ISO>" } ],
+  "order":  [ { "runId": "run_…", "slot": 1 } ] }
+// PUT /api/core/lanes/prefs/agent   { "agent": "claude-code", "label": "garden", "hidden": true }   // hidden / pinned 至少一个，布尔
+// PUT /api/core/lanes/prefs/order   { "runId": "run_…", "index": 1 }                                // 运行不在跑 → 404
+
+// GET /api/core/views/lanes —— 追加（既有键不变）
+{ "agents": [ { /* 既有的键 */ "pinned": false, "manualOrder": null, "rank": 0 } ],
+  "hiddenAgents": [ { "agent": "claude-code", "label": "garden", "live": true, "phase": "waiting_input" } ],
+  "hiddenWaiting": 1 }
+
+// GET /api/core/activity/ignores
+{ "total": 1, "items": [ { "id": "ig_…", "app": "chrome", "titleContains": "银行", "createdAt": "<ISO>",
+                           "hits": 3, "seconds": 700, "lastHitAt": "<ISO>" | null } ] }
+// POST /api/core/activity/ignores   { "app": "chrome", "titleContains": "银行" }  → 201 { …规则, "created": true, "removed": 2 }
+// POST /api/core/activity/suggestions → { "accepted": 1, "duplicates": 0, "rejected": [], "ignored": 2 }   // ignored 只在有时才带
+```
+
+- `LaneAgent.pinned` 缺省 `false`、`manualOrder` 缺省 `null`、`rank` 是 `agents[]` 里互不相同的 0 起整数；`hiddenAgents` 缺省 `[]`、`hiddenWaiting` 缺省 `0`。
+- `views/current.agents[]`、`views/agent-time.open[]` 形状不变，只是不列藏起来的代理。
+
 ### AI 报告（v2.20，`nexus-core.activity.reports.v1`）
 
 规范性条款只住 `contract.md`「AI 报告」节。形状：
