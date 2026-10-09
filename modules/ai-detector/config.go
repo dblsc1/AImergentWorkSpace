@@ -49,7 +49,7 @@ type Config struct {
 	ArchiveDays int     `json:"archiveDays,omitempty"`
 	// v0.3：在场心跳（ai-detector.presence.v1）与状态文件桥（ai-detector.agent-status-bridge.v1），都默认关，只在 run 里跑。
 	Presence          bool     `json:"presence"`
-	PresenceSeconds   float64  `json:"presenceSeconds,omitempty"` // 5–300，越界按 15
+	PresenceSeconds   float64  `json:"presenceSeconds,omitempty"` // 5–300，越界按 5
 	AgentStatusFile   string   `json:"agentStatusFile"`           // 空 = 关
 	AgentStatusIgnore []string `json:"agentStatusIgnore"`         // key 前缀，命中的条目整个忽略
 
@@ -221,7 +221,7 @@ func defaultConfig(dir string) (Config, error) {
 		// 把缺省值写出来，用户打开文件就看得见有哪些可选项。
 		Privacy:           Privacy{Paths: "full", Titles: "keep", Browser: "domain"},
 		ArchiveDays:       30,
-		PresenceSeconds:   15,
+		PresenceSeconds:   presenceDefaultSeconds,
 		AgentStatusIgnore: []string{},
 	}, nil
 }
