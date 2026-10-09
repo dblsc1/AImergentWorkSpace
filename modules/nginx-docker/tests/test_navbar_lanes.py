@@ -43,11 +43,13 @@ class Site:
         self.lanes = lanes
         self.status = status
         self.lanes_urls: list[str] = []
+        self.current_polls = 0
         self.current: dict[str, Any] = {"running": False}
 
     def route(self, route: Route) -> None:
         path = route.request.url[len(ORIGIN):].split("?")[0]
         if path.startswith("/__cockpit/current"):
+            self.current_polls += 1
             route.fulfill(status=200, content_type="application/json",
                           body=json.dumps(self.current, ensure_ascii=False))
         elif path.startswith("/__cockpit/"):
@@ -619,3 +621,62 @@ def test_preview_card_line_uses_the_same_words(browser) -> None:
             return [st.focus.lead, st.focus.hint, st.auto];
         }""", d)
         assert got == ["正在：花园", "来自会话", None]
+
+
+# ─────────────────────────────────────────── 5 秒一拉、不可见退避；预览里的蓝条（nexus-core v2.17）
+
+
+def _visibility(page: Page, state: str) -> None:
+    page.evaluate("""s => { Object.defineProperty(document, 'visibilityState', {value: s, configurable: true});
+                            document.dispatchEvent(new Event('visibilitychange')); }""", state)
+
+
+def test_current_is_polled_every_5s_while_visible_and_backs_off_when_hidden(browser) -> None:
+    with open_site(browser) as (page, site):
+        _poll(page)                                   # 对齐：从这一次起数
+        settle(page, 50)
+        n = site.current_polls
+        settle(page, 4900)
+        assert site.current_polls == n, "不到 5 秒不拉"
+        settle(page, 200)
+        assert site.current_polls == n + 1
+        settle(page, 10_000)
+        assert site.current_polls == n + 3
+        _visibility(page, "hidden")                   # 切到后台：不立刻拉，改按 60 秒
+        settle(page, 55_000)
+        assert site.current_polls == n + 3
+        settle(page, 6_000)
+        assert site.current_polls == n + 4
+        _visibility(page, "visible")                  # 回到前台：立刻一次，然后回到 5 秒
+        settle(page, 50)
+        assert site.current_polls == n + 5
+        settle(page, 5_100)
+        assert site.current_polls == n + 6
+        assert site.lanes_urls == [], "预览没打开：泳道一次都不拉"
+
+
+def test_preview_draws_the_attention_bar_and_names_it(browser) -> None:
+    with open_site(browser) as (page, _site):
+        hover_open(page)
+        page.wait_for_selector(f"{POP} .hcl-attn")
+        rows = page.evaluate("""sel => [...document.querySelectorAll(sel + ' .hcl-row-agent')].map(r =>
+            [r.querySelector('.hcl-name').textContent, r.querySelectorAll('.hcl-attn').length])""", POP)
+        assert dict(rows)["plot"] == 1 and dict(rows)["garden"] >= 1
+        assert page.locator(f"{POP} .hcl-attend").count() == 0
+        legend = page.eval_on_selector_all(f"{POP} .hcl-legend .hcl-key", "ns => ns.map(n => n.textContent)")
+        assert "你在看" in legend and "在看" not in legend
+        # 蓝条在相位条的正下方、同一条轨道里
+        box = page.evaluate("""sel => { const t = [...document.querySelectorAll(sel + ' .hcl-row-agent')]
+              .find(r => r.querySelector('.hcl-attn')).querySelector('.hcl-track');
+            const r = n => n.getBoundingClientRect();
+            return { track: [r(t).top, r(t).bottom], bar: [r(t.querySelector('.hcl-attn')).top, r(t.querySelector('.hcl-attn')).bottom],
+                     phase: Math.max(...[...t.querySelectorAll('[class*=hcl-ph-]')].map(n => r(n).bottom)) }; }""", POP)
+        assert box["phase"] <= box["bar"][0] + 0.5 and box["bar"][1] <= box["track"][1] + 0.5
+
+
+def test_chip_tooltip_carries_the_dwell_line(browser) -> None:
+    with open_site(browser) as (page, site):
+        _show(page, site, {"running": False, "focus": {**_focus(page, 3), "dwellSeconds": 754}},
+              "正在：code · plot.gd — <i>garden</i>")
+        assert page.text_content(".ckpt-elapsed") == "00:03"
+        assert page.get_attribute("[data-ckpt-chip]", "title").endswith("（近 2 小时在这上面 12 分）")

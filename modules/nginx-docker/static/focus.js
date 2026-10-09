@@ -8,6 +8,9 @@
  * 对外只挂 window.HoneycombFocus（node 里 require 得到同一个对象，给单测用）：
  *   describe(src)   src = views/current 的响应或 views/lanes 的 human；有没有手动计时由调用方先判
  *   clock(seconds)  走秒的字：MM:SS，满一小时 H:MM:SS
+ * describe() 的结果里 dwell（nexus-core v2.17 的 focus.dwellSeconds）= 「近 2 小时在这上面 N 分」：走秒的钟数的是这一次
+ * 待了多久（切走再回来就从头数——人的注意力是串行的），窗口切得快时它总是几秒；这一句小字说的是同一个窗口累计待了多久。
+ * 仍然只说当前这一个窗口，不是几个窗口的合计。离开 / 老后端没有这个键 → 空串。
  */
 (function (root) {
   'use strict';
@@ -15,6 +18,14 @@
 
   var SOURCE_WORD = { rules: '规则', choice: '你选的', ai: 'AI 认的', 'agent-session': '来自会话', history: '按以往' };
   var WORD_AFK = '离开', WORD_USING = '正在用', LEAD_FOCUS = '正在：', LEAD_AUTO = '自动 · ', WORD_SOMEWHERE = '电脑';
+
+  var DWELL_LEAD = '近 2 小时在这上面 ';          // 服务端的在场时间线只留 2 小时，所以不说「今天」
+
+  function dwellText(seconds) {
+    if (typeof seconds !== 'number' || !(seconds >= 0)) { return ''; }
+    var m = Math.floor(seconds / 60);
+    return DWELL_LEAD + (m < 1 ? '不到 1 分' : m < 60 ? m + ' 分' : Math.floor(m / 60) + ' 小时' + (m % 60 ? ' ' + m % 60 + ' 分' : ''));
+  }
 
   var join = function (parts, sep) { return parts.filter(function (x) { return x; }).join(sep); };
   var pad2 = function (n) { return (n < 10 ? '0' : '') + n; };
@@ -36,6 +47,7 @@
     var out = {
       state: afk ? 'afk' : 'present', auto: !!auto, since: since, target: target, window: win,
       hint: (!afk && SOURCE_WORD[from.source]) || '',
+      dwell: (!afk && focus) ? dwellText(focus.dwellSeconds) : '',
       projectId: (!afk && from.projectId) || null, projectName: (!afk && from.projectName) || null,
       taskId: (!afk && from.taskId) || null, taskName: (!afk && from.taskName) || null
     };

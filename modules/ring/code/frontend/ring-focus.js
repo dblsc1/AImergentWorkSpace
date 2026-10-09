@@ -3,6 +3,9 @@
  *
  * 没有手动计时时，表芯不再只说「当前没有进行中的计时」：写出人此刻在哪个窗口 / 项目 / 任务、待了多久。
  * 字与走秒出自共享件 window.HoneycombFocus（页面直接引 ../__cockpit/focus.js；项目 / 任务是服务端认的，这里不认）。
+ * 2026-10-09（nexus-core v2.17）：表芯永远只写**当前这一个**窗口 / 目标（人的注意力是串行的，不混着写两个）；走秒数的是
+ * 这一次在这个窗口待了多久，切走再回来从头数。窗口切得快时那个钟总是几秒，所以走秒下面另有一行小字
+ * 「近 2 小时在这上面 N 分」（focus.dwell，同一个窗口累计；不是几个窗口的合计）。
  * **不是计时**：轨道换成虚线并呼吸（ring.css 的 .chrono.is-focus），「开始计时」一下才起真的手动计时。
  * 全部 createElement + textContent，没有 innerHTML。
  *
@@ -98,7 +101,8 @@
         btn.addEventListener("click", window.onStartClicked);
         btn.disabled = !taskSelectEl.value;
       }
-      [lead, win, centerNode("span", "elapsed focus-elapsed", "focus-elapsed", ""), hint, btn]
+      [lead, win, centerNode("span", "elapsed focus-elapsed", "focus-elapsed", ""),
+        centerNode("p", "focus-dwell", "focus-dwell", ""), hint, btn]
         .forEach(el => chronoCenterEl.appendChild(el));
       chronoEl.classList.add("is-focus");
       chronoEl.classList.toggle("is-afk", afk);
@@ -106,6 +110,9 @@
       if (!focusTickerHandle) focusTickerHandle = setInterval(tickFocusDisplay, 1000);
     }
     tickFocusDisplay();
+    const dwell = document.getElementById("focus-dwell"); // 每轮都在变，不进上面的 key（不为它重建表芯）
+    dwell.textContent = focus.dwell || "";
+    dwell.hidden = !focus.dwell;
     chronoSvgEl.setAttribute("aria-label", "计时圆环，" + focus.lead +
       (focus.window ? "，" + focus.window : "") + (afk ? "" : "（没有在计时）"));
   }

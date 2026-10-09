@@ -72,7 +72,7 @@ def test_auto_pill_with_ticking_clock_distinct_from_manual_timer(browser, static
         assert page.locator(".hcl-row-human .hcl-st-auto b").count() == 0        # 任务名只当文本
         assert page.text_content(".hcl-row-human .hcl-clock") == "05:00"         # since 10:15，now 10:20
         assert page.eval_on_selector(".hcl-row-human .hcl-st-auto", "n => getComputedStyle(n).borderTopStyle") == "dashed"
-        assert page.text_content(".hcl-row-human .hcl-stat") == "正在用 code · garden"
+        assert page.text_content(".hcl-row-human .hcl-stat") == "正在用 ptyxis · garden"  # 共享夹具里在场的最后一段（v2.17：在看 garden 那条会话）
         assert page.locator(".hcl-row-human .is-running").count() == 0           # 轨道上不画「计时中」的段
         page.clock.pause_at(datetime.fromtimestamp(page.evaluate("() => Date.now()") / 1000 + 1, timezone.utc))
         page.clock.run_for(1000)
