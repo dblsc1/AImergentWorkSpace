@@ -52,6 +52,26 @@ def page(user: str, status: str, limit: int, offset: int) -> tuple[int, list[dic
     return col.count_documents(filt), list(docs)
 
 
+def pending_windows(user: str, batch: int = 1000):
+    """v2.22：还没成为事实的建议（待确认 / 已忽略）的 (id, app, title, 秒)，每批 ``batch`` 条，**扫到底**（不截断），
+    给「忽略并记住」找出命中的那些。"""
+    cur = _col().find({"user": user, "status": {"$in": ["pending", "dismissed"]}},
+                      {"_id": 0, "id": 1, "app": 1, "title": 1, "durationSeconds": 1}).batch_size(batch)
+    buf: list[dict] = []
+    for d in cur:
+        buf.append(d)
+        if len(buf) >= batch:
+            yield buf
+            buf = []
+    if buf:
+        yield buf
+
+
+def delete_pending(user: str, ids: list[str]) -> int:
+    """v2.22：只删仍是 pending / dismissed 的（与确认赛跑时确认赢；已确认的是事实的出处，不动）。"""
+    return _col().delete_many({"user": user, "id": {"$in": ids}, "status": {"$in": ["pending", "dismissed"]}}).deleted_count
+
+
 def confirmed(user: str, cap: int) -> list[dict]:
     """v2.12 匹配历史：已确认的建议，最近处理的在前，至多 ``cap`` 条（只取用得着的字段）。"""
     proj = {"_id": 0, "id": 1, "app": 1, "title": 1, "decidedAt": 1, "suggestion.collection": 1}

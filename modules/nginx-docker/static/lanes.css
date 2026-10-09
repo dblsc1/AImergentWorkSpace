@@ -221,3 +221,49 @@ a.hcl-more { color: var(--ink-2); }
 @media (prefers-reduced-motion: reduce) {
   .hcl-card.is-phase-changed .hcl-pill { animation: none; }
 }
+
+/* ── 泳道偏好（nexus-core v2.22，lanes.js 的 opts.prefs）：⋯ 菜单、置顶标记、长按拖动、可折叠的「已隐藏」。
+ * 颜色只取语义 token；菜单项都是 <button>，键盘与读屏照常。 */
+.hcl-pinmark {
+  flex: none; padding: 0 var(--sp-1); border-radius: var(--r-1); border: 1px solid var(--line);
+  color: var(--ink-2); font-size: var(--fs-eyebrow); line-height: 1.5;
+}
+.hcl-kebab {
+  flex: none; min-width: 32px; min-height: 32px; padding: 0 var(--sp-1);
+  border: 1px solid transparent; border-radius: var(--r-1); background: transparent; color: var(--ink-2);
+  font: inherit; font-weight: 700; line-height: 1; cursor: pointer;
+}
+.hcl-kebab:hover, .hcl-kebab[aria-expanded="true"] { color: var(--ink); border-color: var(--line); background: var(--panel); }
+.hcl-kebab:focus-visible, .hcl-menu-item:focus-visible, .hcl-hidden > summary:focus-visible, .hcl-hidden-restore:focus-visible {
+  outline: 2px solid var(--focus); outline-offset: 2px;
+}
+.hcl-menu {
+  position: absolute; z-index: 6; top: calc(var(--sp-2) + 32px); right: var(--hcl-card-pad);
+  margin: 0; padding: var(--sp-1); list-style: none; min-width: 7em;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-2); box-shadow: var(--shadow);
+}
+.hcl-menu-item {
+  display: block; width: 100%; padding: var(--sp-1) var(--sp-2); border: 0; border-radius: var(--r-1);
+  background: transparent; color: var(--ink); font: inherit; font-size: var(--fs-sub); text-align: left; cursor: pointer;
+}
+.hcl-menu-item:hover, .hcl-menu-item:focus { background: var(--panel-2); }
+/* 长按拖动：能拖的卡不选字、触摸时只让纵向滚动；被拖的卡压在上面、其余让位（让位时的平移是直接操作的一部分；
+ * 减少动态效果时不加过渡）。落下后的换位走 lanes.js 的 motion()，同一套规则。 */
+.hcl-card.is-movable { touch-action: pan-y; }
+body.hcl-dragging { user-select: none; -webkit-user-select: none; cursor: grabbing; }
+.hcl-card.is-dragging { z-index: 4; border-color: var(--ink-2); cursor: grabbing; }
+.hcl-card.is-dragging::before { opacity: 1; }
+@media (prefers-reduced-motion: no-preference) { .hcl-card.is-yielding { transition: transform .15s ease-out; } }
+
+/* 已隐藏：同「还有 N 个」的折叠样式，轻一点 */
+.hcl-hidden > summary { cursor: pointer; padding: var(--sp-1) 0; color: var(--ink-3); font-size: var(--fs-eyebrow); }
+.hcl-hidden[open] > summary { margin-bottom: var(--sp-1); }
+.hcl-hidden-list { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--sp-1); }
+.hcl-hidden-item { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-2); color: var(--ink-2); }
+.hcl-hidden-name { font-weight: 600; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.hcl-hidden-state { font-size: var(--fs-eyebrow); }
+.hcl-hidden-restore {
+  margin-left: auto; min-height: 32px; padding: 0 var(--sp-2); border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink-2); font: inherit; font-size: var(--fs-eyebrow);
+}
+.hcl-hidden-restore:hover { color: var(--ink); border-color: var(--ink-2); }

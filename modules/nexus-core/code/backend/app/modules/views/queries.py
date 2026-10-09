@@ -24,6 +24,7 @@ from ...tenant import current as current_tenant
 from ...timeutil import local_date
 from ..activity import service as activity_service
 from ..planner import service as planner_service
+from ..prefs import service as prefs_service
 from ..projector.handlers import current as current_projection
 from ..projector.handlers import daily_stats as daily_stats_projection
 from ..timer import service as timer_service
@@ -53,12 +54,18 @@ def _share(part: int, whole: int) -> float:
 
 def get_current() -> CurrentOut:
     # v2.1：代理泳道与人的泳道各算各的；list_agent_runs 会顺手收掉超时的运行（契约明文）。
-    agents = [CurrentAgent(**run) for run in timer_service.list_agent_runs(current_tenant())]
+    # v2.22：藏起来的代理不在「现在在跑什么」里（只是不显示，时间照记）
+    hidden = prefs_service.hidden_keys(current_tenant())
+    runs = timer_service.list_agent_runs(current_tenant())
+    shown = [run for run in runs if prefs_service.ident(run["agent"], run["label"], run["unverified"]) not in hidden]
+    agents = [CurrentAgent(**{k: v for k, v in run.items() if k != "unverified"}) for run in shown]
+    n_hidden = len(runs) - len(shown)
     state = timer_service.get_running_state(current_tenant())
     if state is None:
         # v2.14：没在计时才有「自动 · 项目 / 任务」与请人选的窗口（顶栏芯片读这里，与 views/lanes 的 human 同一份）；
         # v2.16 的 focus 也在这一份里
-        return CurrentOut(**_IDLE, agents=agents, **activity_service.auto_state(current_tenant(), False))
+        return CurrentOut(**_IDLE, agents=agents, hiddenCount=n_hidden,
+                          **activity_service.auto_state(current_tenant(), False))
 
     task_doc = planner_service.get_task(state["taskId"])
     project_doc = (
@@ -105,6 +112,7 @@ def get_current() -> CurrentOut:
         else None,
         sessionStartAt=state["startAt"],
         agents=agents,
+        hiddenCount=n_hidden,
         # v2.16：在计时也给焦点（页面仍以手动计时为准；MCP 的客户端两样都看得到）
         focus=activity_service.auto_state(current_tenant(), True)["focus"],
     )

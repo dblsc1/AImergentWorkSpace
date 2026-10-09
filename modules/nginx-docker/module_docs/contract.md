@@ -237,6 +237,19 @@ class 加 `hcl-card hcl-lead`），同一个节点跨重画搬过来（表单状
 两份组装（手写的 `deploy/nginx/templates/default.conf.template` 与 `tools/generate.py`）都给门子请求加
 `X-Original-Method`，给 `<前缀>api/core/` 加匿名上报的限速区 `honeycomb_anon`。
 
+## 泳道偏好（v0.4，2026-10-09）
+
+`static/lanes.js` + `lanes.css` 对 nexus-core v2.22「泳道偏好」（`nexus-core.lanes.prefs.v1`，规范在 nexus-core 契约同名节）的画法——**追加**，既有排序 / 折叠 / 配色 / 换位动效不变：
+
+- `render()` 的 `opts.prefs`（`{onPin(run, on), onHide(run), onMove(run, index), onRestore(hidden)}`）只由计时页（`ring-lanes.js`）传；**顶栏预览不传，所以没有菜单 / 拖动 / 已隐藏**
+  （它读的同一份 `views/lanes` 已不含藏起来的代理）。`lanes.js` 仍然只画、不发请求。
+- 先后：`agents[].rank` 都是数字时按 `rank`（服务端排好的），否则退回本地的「档位 → 活跃秒数 → 最近转入」。
+- 卡上：⋯ 菜单（`role="menu"`，Esc / 方向键 / Home / End / 点外面）、「置顶」标记；在跑且没置顶的卡**长按 400 毫秒**（`LONG_PRESS_MS`，指针事件，不用库）后跟手拖动，
+  别的卡让位，松手给 `onMove(run, 在「未置顶的在跑运行」里的下标)`，Esc / `pointercancel` 放弃，拖后吞掉紧跟的 click；按下后先动超过 8 px 视为滚动 / 选字，不进拖动。
+- 区尾可折叠的「已隐藏 (N)」：每个藏起来的代理一行 +「恢复显示」；`SHOW_HIDDEN_WAITING`（缺省开）控制摘要里「· N 个在等你」那半句。
+- 菜单开着 / 正在拖时 `root.hclBusy` 为真，调用方的轮询重画先攒着；收尾在 `root` 上发 `hcl-idle`。`HoneycombLanes.optimistic(data, op)` 做乐观预演，`identKey` 是与服务端同口径的身份键。
+- 样式只取语义 token（`design-tokens-v1` 不加新 token）；`prefers-reduced-motion` 下让位的卡不加过渡、落下后的换位不平移。
+
 ## 对比度校验
 
 `scripts/check-contrast.py` 按 `contracts/design-tokens-v1.md` 的对比度矩阵机械核对

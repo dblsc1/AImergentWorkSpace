@@ -351,6 +351,7 @@ def get_current_timer(a, tenant):
              "elapsedSeconds": g.get("elapsedSeconds")}  # nexus-core 算好的（v2.21）；老后端没有 = null
             for g in c.get("agents") or []
         ],
+        "hiddenCount": c.get("hiddenCount", 0),   # 用户藏起来的在跑代理个数（nexus-core v2.22；只有个数）
         "focus": {"state": focus.get("state"), "app": _screen(focus.get("app")), "title": _screen(focus.get("title")),
                   **target(focus),
                   # v1.11：近 2 小时在这同一个窗口上一共待了多少秒（nexus-core v2.17；离开 / 老后端 = null）
@@ -446,6 +447,7 @@ def get_agent_time(a, tenant):
         "tasks": [{"projectId": x["projectId"], "taskId": x.get("taskId"),
                    "path": paths(x.get("taskId"), x["projectId"]), "seconds": x["seconds"], "runs": x["runs"]}
                   for x in r["tasks"]],
+        "hiddenCount": r.get("hiddenCount", 0),   # open[] 没列出的、用户藏起来的在跑运行个数（v2.22）
         "open": [{"runId": x["runId"], "agent": x["agent"], "taskId": x.get("taskId"),
                   "path": paths(x.get("taskId"), x.get("projectId")), "startedAt": x["startedAt"],
                   "elapsedSeconds": x["elapsedSeconds"],
@@ -522,12 +524,24 @@ def get_detector_rules(a, tenant):
     r = _get("/api/core/detector/rules", {}, tenant)
     d = _get("/api/core/detector/rules/drafts/current", {}, tenant)["draft"]
     paths = _Paths(_tree(tenant))
+    # v1.13：人说过「忽略并记住」的窗口（nexus-core v2.22）。这些窗口不会产生建议，所以 list_activity_suggestions 里看不到；
+    # 老后端没有这个端点（404）= 空。app 是人写的字，同样过一遍；titleContains（匹配文字，可能就是窗口标题的一部分）只给人，这里只出 hasTitleFilter
+    try:
+        ignored = _get("/api/core/activity/ignores", {}, tenant)["items"]
+    except ToolError as e:
+        if e.status != 404:
+            raise
+        ignored = []
     draft = None
     if d:
         draft = {"draftId": d["id"], "author": d["author"], "summary": d["summary"], "createdAt": d["createdAt"],
                  "expiresAt": d["expiresAt"], "diff": d["diff"], "rules": [_rule_out(x, paths) for x in d["rules"]]}
     return {"version": r["version"], "updatedAt": r["updatedAt"],
-            "rules": [_rule_out(x, paths) for x in r["rules"]], "draft": draft, "truncated": False}
+            "rules": [_rule_out(x, paths) for x in r["rules"]], "draft": draft, "truncated": False,
+            "ignored": [{"id": x["id"], "app": _screen(x["app"], MAX_TITLE), "hasTitleFilter": bool(x.get("hasTitleFilter", x.get("titleContains"))),   # 匹配文字只给人，不出 titleContains
+                         
+                         "since": x["createdAt"], "ignoredRecords": x["hits"], "ignoredSeconds": x["seconds"]}
+                        for x in ignored[:MAX_ITEMS]]}
 
 
 def propose_detector_rules(a, tenant):
@@ -680,7 +694,8 @@ _SPECS = [
     (get_detector_rules, "活动分类规则",
      "桌面活动检测用来把窗口归到任务的分类规则（全部，按顺序第一条命中生效；app / title 是不分大小写的 RE2 正则，"
      "匹配程序名 / 脱敏后的窗口标题），每条带 id、taskId（只到项目的规则是 projectId）与路径；"
-     "draft 是还没应用的规则草稿（没有为 null）。"
+     "draft 是还没应用的规则草稿（没有为 null）。ignored 是用户说过「忽略并记住」的窗口（程序 + 有没有标题片段 hasTitleFilter，片段本身不给，"
+     "不是正则；已累计忽略多少条记录 / 秒）：它们不记为工作、不产生建议，不要再为它们归类或起草规则。"
      "改规则前先读它：propose_detector_rules 要交一整套，改已有规则须带回原 id。"
      "note 里可能抄着窗口标题：" + _SCREEN + _IDS,
      _schema({}), [], {}),

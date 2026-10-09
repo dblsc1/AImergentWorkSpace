@@ -14,11 +14,14 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta
 
 from ...config import settings
+from ...scope import caller
 from ...tenant import current as current_tenant
 from ..activity import service as activity_service
 from ..planner.errors import UnprocessableError
+from ..prefs import service as prefs_service
 from ..projector.handlers import lanes as lanes_projection
 from ..timer import service as timer_service
+from .lane_order import arrange
 from .queries import _today
 from .schemas import LanesOut
 
@@ -89,6 +92,14 @@ def _run_item(run: dict, start: datetime, end: datetime) -> dict:
     }
 
 
+def live_order(user: str, prefs: dict) -> list[str]:
+    """未置顶、已验证、没藏起来、在跑的运行当前的先后（runId）——手动排位的底。与 ``get_lanes`` 同一个 ``arrange``。"""
+    now, open_runs = timer_service.list_lane_runs(user)
+    items = [_run_item(r, now, now) for r in open_runs if r["endTs"] is None]
+    shown = arrange(items, prefs, now)[0]
+    return [a["runId"] for a in sorted(shown, key=lambda a: a["rank"]) if not a["pinned"] and not a["unverified"]]
+
+
 def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str | None = None) -> LanesOut:
     user = current_tenant()
     first, last = _window(day, date_from, date_to)
@@ -101,6 +112,9 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
 
     sessions: list[dict] = []
     agents: list[dict] = []
+    hidden: list[dict] = []
+    hidden_waiting = 0
+    stale_pinned: list[dict] = []
     presence: list[dict] = []
     running = None
     auto = {"auto": None, "needsChoice": None, "aiThinking": None}
@@ -127,9 +141,14 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
         runs = sorted(closed + live, key=lambda r: r["startTs"], reverse=True)
         truncated = truncated or len(runs) > MAX_AGENTS
         runs = runs[:MAX_AGENTS][::-1]
-        agents = [_run_item(r, start, end) for r in runs]
+        # v2.22：藏起来的代理不出现（时间照旧记在账上）；其余加 pinned / manualOrder / rank
+        agents, hidden, hidden_waiting, stale_pinned = arrange([_run_item(r, start, end) for r in runs],
+                                                 prefs_service.load(user), now)
+        if caller().scope == "report":  # 藏起来的摘要只给能读泳道的调用方（report / 匿名本来就读不到，这里再保一道）
+            hidden, hidden_waiting, stale_pinned = [], 0, []
+        shown = {a["runId"] for a in agents}
         interactions = [
-            {"runId": r["runId"], **i} for r in runs for i in _interactions(r)
+            {"runId": r["runId"], **i} for r in runs if r["runId"] in shown for i in _interactions(r)
         ]
 
         state = timer_service.get_running_state(user)
@@ -150,4 +169,5 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
         today=_today(), now=_iso(now), windowStart=_iso(start), windowEnd=_iso(end),
         human={"sessions": sessions, "running": running, "presence": presence, **auto},
         agents=agents, interactions=interactions, truncated=truncated,
+        hiddenAgents=hidden, hiddenWaiting=hidden_waiting, stalePinned=stale_pinned,
     )
