@@ -282,7 +282,8 @@ def test_beat_source_on_start_and_stopped_run_keeps_it(client):
     assert "beatCount" not in event["data"]  # 一下都没发：不出现
     plain = _start(client)
     client.post(f"{AGENTS}/{plain['runId']}/stop", json={"outcome": "done"})
-    assert "beatSource" not in _events()[-1]["data"]  # 不发心跳的运行：事实与 v2.17 逐键相同
+    [bare] = [e for e in _events() if e["dedupeKey"] == f"agent:{plain['runId']}"]  # 按 key 找：台账读出来不保证先后
+    assert "beatSource" not in bare["data"] and "beatCount" not in bare["data"]  # 不发心跳的运行：事实与 v2.17 逐键相同
 
 
 @pytest.mark.parametrize("bad", ["", "Monitor", "has space", "-x", "x" * 33, 7, ["monitor"]])
