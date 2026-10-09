@@ -179,6 +179,7 @@ def _purge(user: str, now: datetime) -> None:
     repo.purge(user, now - timedelta(days=config.settings.suggestion_ttl_days))  # 调用时读，测试可换 settings
 
 
+@ignore.guarded
 def upload(device_id: str, segments: list[Any], inserted: list[dict] | None = None) -> dict:
     """``inserted`` 给了就把**新写入**的建议文档追加进去（v2.14 自动记录只看这些，防重命中的不看）。"""
     user, now = current_tenant(), _now()

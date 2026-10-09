@@ -249,3 +249,66 @@ def test_creating_a_rule_purges_every_store_that_held_the_title(client, seeded):
     client.delete(f"{IGN}/{client.get(IGN).json()['items'][0]['id']}")
     assert _raw_has(title) == left
     assert len(client.get(SUG, params={"status": "pending"}).json()["items"]) == 1
+
+
+# ─────────────────────────────────────────── 并发：读了旧规则的写入者，写在建规则的清理之后，也写不回标题
+
+
+def test_stale_presence_cas_loses_after_the_purge_bumps_the_version(client):
+    from app.modules.activity import repo  # noqa: PLC0415
+
+    _beat(client, "chrome", PRIVATE_TITLE)
+    prev = repo.presence_get("u_local", DEV)
+    _ignore(client, "chrome")  # 清理在这里发生；写入者手里还是清理前读到的那份
+    stale = {k: v for k, v in prev.items() if k not in ("v", "gen", "_id")}
+    assert repo.presence_cas(stale, prev) is None  # 版本已变：条件写写不中，必须重读
+    assert _raw_has(PRIVATE_TITLE) == {}
+
+
+def _create_rule_mid_flight(client, monkeypatch, module, name, **rule):
+    """让 module.name 先照常跑完，然后（在调用方继续往下写之前）建规则——读了旧规则、写在清理之后的交错。"""
+    real = getattr(module, name)
+
+    def wrapper(*args, **kwargs):
+        out = real(*args, **kwargs)
+        assert client.post(IGN, json=rule).status_code == 201
+        return out
+
+    monkeypatch.setattr(module, name, wrapper)
+
+
+def test_heartbeat_that_read_the_rules_before_the_rule_cannot_write_the_title_back(client, monkeypatch):
+    from app.modules.activity import ignore  # noqa: PLC0415
+
+    _create_rule_mid_flight(client, monkeypatch, ignore, "mask_beat", app="chrome")
+    _beat(client, "chrome", PRIVATE_TITLE)
+    assert len(client.get(IGN).json()["items"]) == 1
+    assert _raw_has(PRIVATE_TITLE) == {}
+
+
+def test_upload_that_read_the_rules_before_the_rule_cannot_insert_the_title(client, monkeypatch):
+    from app.modules.activity import ignore  # noqa: PLC0415
+
+    _create_rule_mid_flight(client, monkeypatch, ignore, "drop", app="chrome")
+    _upload(client, [_seg(10, "chrome", PRIVATE_TITLE)])
+    assert _raw_has(PRIVATE_TITLE) == {}
+    assert _pending(client) == []
+
+
+def test_choice_written_after_the_purge_is_removed_again(client, monkeypatch, seeded):
+    from app.modules.activity import auto  # noqa: PLC0415
+
+    task = next(iter(seeded["tasks"].values()))["id"]
+    _beat(client, "chrome", PRIVATE_TITLE)
+    key = auto.window_key("chrome", PRIVATE_TITLE)
+    real = auto._find
+
+    def find_then_rule(user, k):
+        out = real(user, k)  # 窗口是在规则之前找到的
+        assert client.post(IGN, json={"app": "chrome"}).status_code == 201
+        return out
+
+    monkeypatch.setattr(auto, "_find", find_then_rule)
+    resp = client.post(f"{API}/activity/choice", json={"key": key, "taskId": task})
+    assert resp.status_code == 200, resp.text
+    assert _raw_has(PRIVATE_TITLE) == {}

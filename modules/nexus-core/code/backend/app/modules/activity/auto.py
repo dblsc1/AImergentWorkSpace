@@ -172,6 +172,7 @@ def state(user: str, now: datetime, timer_running: bool, asks: Any, presence_doc
 # ------------------------------------------------ 心跳：续期人的临时选择
 
 
+@ignore.guarded
 def heartbeat(device_id: str, app: str, title: str, afk: bool, guess: dict | None,
               spans: list[dict] | None = None, sent_at: datetime | None = None) -> dict:
     # v2.22：命中「忽略并记住」的窗口换成「没有窗口」再存（人仍在电脑前），也不续它的临时选择
@@ -214,6 +215,7 @@ def _window_rule(app: str, title: str, target: dict) -> dict | None:
     return rule if len(rule["app"]) <= 200 and len(pattern) <= 200 else None
 
 
+@ignore.guarded
 def choose(key: str, task_id: str | None, project_id: str | None, remember: bool) -> dict:
     if (task_id is None) == (project_id is None):
         raise InvalidInputError("taskId 与 projectId 必须给一个、且只能给一个")
@@ -237,6 +239,7 @@ def choose(key: str, task_id: str | None, project_id: str | None, remember: bool
             "remembered": remembered, "pseudonymized": pseudonymized}
 
 
+@ignore.guarded
 def dismiss(key: str) -> dict:
     user, now = current_tenant(), _now()
     span, _device = _find(user, key)

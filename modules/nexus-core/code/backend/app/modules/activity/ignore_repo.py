@@ -69,7 +69,8 @@ def mask_presence(user: str, hit) -> int:
             top = hit(doc.get("app", ""), doc.get("title", ""))
             if not changed and not top:
                 break
-            new = {**doc, "spans": spans, **({"app": "", "title": ""} if top else {})}
+            # 像正常写入者一样把 v 加一：读了旧文档、正要条件写的心跳会因此写不中，重读到抹过的这份（不然它会把标题写回来）
+            new = {**doc, "spans": spans, "v": (doc.get("v") or 0) + 1, **({"app": "", "title": ""} if top else {})}
             if col.replace_one({"user": user, "deviceId": doc["deviceId"], "v": doc.get("v"), "gen": doc.get("gen")}, new).matched_count:
                 n += changed + top
                 break

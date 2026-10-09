@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 from datetime import datetime, timezone
 
@@ -76,21 +77,38 @@ def add(app: str, title_contains: str | None) -> dict:
     stored = next((r for r in rules(user) if r["id"] == doc["id"]), None)
     if stored is None:
         raise UnprocessableError(f"忽略规则最多 {MAX_IGNORES} 条")
-    hit = [p for p in repo.pending_windows(user, _PENDING_SCAN) if matches(stored, p["app"], p["title"])]
-    removed = repo.delete_pending(user, [p["id"] for p in hit]) if hit else 0
-    purge(user, stored)
-    if removed:
-        ignore_repo.hit(user, stored["id"], removed, sum(p["durationSeconds"] for p in hit), _now())
+    removed = purge(user, stored, count=True)  # 规则已经存下了（上面）：此后的写入者在写入时都会看到它；这里清的是它之前存下的
     return {**_out(next(r for r in rules(user) if r["id"] == doc["id"])), "created": created, "removed": removed}
 
 
-def purge(user: str, rule: dict) -> None:
+def purge(user: str, rule: dict, count: bool = False) -> int:
     """建规则的当下，把已存下的、带被忽略窗口 app / title 的活状态抹掉（和上传、心跳的入口过滤是同一个判据 ``matches``）：
     在场时间线（段、当前窗口、guess、对上的会话 runId）、人的临时选择、AI 问询。已确认的建议和台账里的事实不动（见契约）。"""
     hit = lambda app, title: matches(rule, app or "", title or "")  # noqa: E731
+    gone = [p for p in repo.pending_windows(user, _PENDING_SCAN) if matches(rule, p["app"], p["title"])]
+    removed = repo.delete_pending(user, [p["id"] for p in gone]) if gone else 0
+    if count and removed:
+        ignore_repo.hit(user, rule["id"], removed, sum(p["durationSeconds"] for p in gone), _now())
     ignore_repo.mask_presence(user, hit)
     ignore_repo.drop_windows(user, "activity_choices", hit)
     ignore_repo.drop_windows(user, "activity_ai_asks", hit)
+    return removed
+
+
+def guarded(fn):
+    """写入口的包装：开始时记下有哪些规则，写完再看——期间新出现的规则（读了旧规则的写入者，写在建规则的清理**之后**）
+    就把它自己写下的再清一遍。规则先存、再清；写入者要么在写入时就看到规则，要么被这里补清。清理是幂等的。"""
+    @functools.wraps(fn)
+    def run(*args, **kwargs):
+        user = current_tenant()
+        before = {r["id"] for r in rules(user)}
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            for r in rules(user):
+                if r["id"] not in before:
+                    purge(user, r)
+    return run
 
 
 def remove(rule_id_: str) -> None:

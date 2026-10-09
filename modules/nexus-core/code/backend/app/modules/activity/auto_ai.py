@@ -25,7 +25,7 @@ from ..detector import window_rules
 from ..planner import service as planner_service
 from ..planner.errors import InvalidInputError, NotFoundError
 from ..timer import service as timer_service
-from . import ask_repo, auto, choice_repo
+from . import ask_repo, auto, choice_repo, ignore
 from .service import ConflictError
 
 #: 最近这么久里有人来认领过，才算「AI 这条路活着」（聊天后端约 25 秒来一次）
@@ -105,6 +105,7 @@ def _window(rec: dict) -> dict:
             "answerBy": (rec["claimedAt"] + AI_ANSWER_WAIT).isoformat()}
 
 
+@ignore.guarded
 def claim() -> dict:
     """聊天后端来取：此刻等 AI 认的那个窗口（并认领），没有 → ``{"window": null}``。
     已认领、还没答、没超时的那个原样再给（工人重启、模型自己再读一遍都拿到同一个）。
@@ -134,6 +135,7 @@ def claim() -> dict:
     return {"window": _window(rec) if rec else None}
 
 
+@ignore.guarded
 def suggest(key: str, task_id: str | None, project_id: str | None, confidence: float | None, reason: str,
             none: bool) -> dict:
     """AI 的回答。只在这个窗口**此刻被认领着等回答**时收；写下的是只认这个窗口的一条规则 + 按窗口的临时选择。"""
@@ -180,6 +182,7 @@ def suggest(key: str, task_id: str | None, project_id: str | None, confidence: f
             "confidence": stored, "autoRecord": written and stored >= auto.AUTO_CONFIDENCE, "ruleWritten": written}
 
 
+@ignore.guarded
 def reject(key: str) -> dict:
     """人说「不对」：删掉 AI 给这个窗口写的规则、清掉临时选择；之后这个窗口照常请人选，``AI_RETRY`` 内不再问 AI。"""
     user, now = current_tenant(), auto._now()  # noqa: SLF001
