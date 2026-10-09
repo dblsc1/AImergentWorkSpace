@@ -235,6 +235,9 @@ class _IsolatedHomeMixin:
     def setUp(self):
         super().setUp()
         self._home_tmpdir = tempfile.TemporaryDirectory()
+        # 测试里直接 mkdir 出来的状态目录要「只有本人可写」（钩子拒绝用组 / 其他人可写的目录）：不依赖机器的 umask
+        old_umask = os.umask(0o077)
+        self.addCleanup(os.umask, old_umask)
         self._old_home = os.environ.get("HONEYCOMB_AGENT_HOOKS_HOME")
         os.environ["HONEYCOMB_AGENT_HOOKS_HOME"] = self._home_tmpdir.name
         # 心跳（伴随进程 / cockpit-run 的线程）缺省关掉：不许测试留下脱离的进程，也不让异步的心跳混进请求记录。

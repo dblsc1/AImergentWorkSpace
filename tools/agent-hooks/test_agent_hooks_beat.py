@@ -90,9 +90,11 @@ class _BeatMixin(_IsolatedHomeMixin):
             claude_hook._save_run_id(session, run_id, phase, label, payload)
 
     def _loop(self, clock, session="s1", cli=CLI):
+        born = (self.procs.get(cli) or (0, "", None))[2]  # companion 的启动时刻由钩子给；monitor 自己取
         try:
             claude_hook.beat_loop(self.SOURCE, None if self.SOURCE == "monitor" else session, cli,
-                                  sleep=clock.sleep, clock=clock.clock)
+                                  sleep=clock.sleep, clock=clock.clock,
+                                  **({"identify": lambda: (cli, born)} if self.SOURCE == "monitor" else {"born": born}))
         except _Done:
             return False  # 被测试掐掉的
         return True  # 自己退出的
@@ -307,15 +309,37 @@ class ProcessLookupTests(_BeatMixin, unittest.TestCase):
             self.procs[pid] = (parent, name, f"born-{pid}")
         return mock.patch.object(os, "getppid", return_value=chain[0][0])
 
-    def test_cli_is_the_ancestor_named_claude_else_the_first_non_shell(self):
+    def test_cli_is_only_a_positively_identified_ancestor_never_a_guessed_helper(self):
         with self._ancestors((10, "sh"), (11, "claude"), (12, "zsh")):
-            self.assertEqual(claude_hook._cli_pid(), 11)
-        with self._ancestors((10, "sh"), (11, "node"), (12, "bash"), (13, "tmux: server")):
             self.assertEqual(claude_hook._cli_pid(), 11)
         with self._ancestors((10, "uv"), (11, "sh"), (12, "claude")):
             self.assertEqual(claude_hook._cli_pid(), 12)
+        # CLI(node) -> timeout -> shell -> 钩子：祖先里没有认得出的名字。不猜短命的辅助进程（它一退出就会替活着的 CLI 收泳道）
+        with self._ancestors((10, "sh"), (11, "timeout"), (12, "node"), (13, "tmux: server")):
+            self.assertEqual(claude_hook._cli_pid(), 0)
         with self._ancestors((10, "bash")):
             self.assertEqual(claude_hook._cli_pid(), 0)  # 认不出：只看状态文件
+
+    def test_cli_can_be_named_by_the_user(self):
+        env = mock.patch.dict(os.environ, {"COCKPIT_CLI_NAMES": "node, my-claude"})
+        env.start()
+        self.addCleanup(env.stop)
+        with self._ancestors((10, "sh"), (11, "timeout"), (12, "node"), (13, "tmux: server")):
+            self.assertEqual(claude_hook._cli_pid(), 12)
+        with self._ancestors((10, "sh"), (11, "timeout")):
+            os.environ["COCKPIT_CLI_PID"] = "11"  # 明确指定（要是活着的进程）
+            self.assertEqual(claude_hook._cli_pid(), 11)
+            os.environ["COCKPIT_CLI_PID"] = "999"
+            self.assertEqual(claude_hook._cli_pid(), 0)
+
+    def test_no_birth_time_means_no_supervision(self):
+        """macOS 的 ps 没有启动时刻：分不出 pid 被复用，按认不出算（身份取不全就不监督、不声明）。"""
+        with self._ancestors((10, "sh"), (11, "claude")):
+            self.procs[11] = (1, "claude", None)
+            self.assertEqual(claude_hook._cli_identity(), (0, None))
+        self.procs[11] = (1, "claude", "b")
+        with mock.patch.object(claude_hook, "_cli_pid", return_value=11):
+            self.assertEqual(claude_hook._cli_identity(), (11, "b"))
 
     def test_alive_checks_pid_and_start_time(self):
         self.assertTrue(claude_hook._alive(CLI, "born-1"))
@@ -397,7 +421,8 @@ class SpawnTests(_IsolatedHomeMixin, unittest.TestCase):
             self.assertLess(time.monotonic() - t0, 2)
             argv, kw, child = spawned[0]
             try:
-                self.assertEqual(argv[0][2:], ["--beat", "--source", "companion", "--session", "s1", "--cli", str(os.getpid())])
+                self.assertEqual(argv[0][2:], ["--beat", "--source", "companion", "--session", "s1", "--cli", str(os.getpid()),
+                                                   "--born", claude_hook._born(os.getpid())])  # 启动时刻由钩子取
                 self.assertTrue(kw["start_new_session"])
                 self.assertEqual((kw["stdin"], kw["stdout"], kw["stderr"]), (subprocess.DEVNULL,) * 3)
                 self.assertNotIn("shell", kw)
@@ -425,7 +450,8 @@ class SpawnTests(_IsolatedHomeMixin, unittest.TestCase):
             with mock.patch.object(claude_hook, "_cli_pid", return_value=0):
                 claude_hook._spawn_beat("s1", None)
             self.assertEqual(popen.call_count, 0)
-            with mock.patch.object(claude_hook, "_cli_pid", return_value=4242):
+            with mock.patch.object(claude_hook, "_cli_pid", return_value=4242), \
+                    mock.patch.object(claude_hook, "_born", return_value="b"):
                 claude_hook._spawn_beat("s1", {"runId": "run-1", "auth": True})  # 钩子带了令牌，本进程没有
                 self.assertEqual(popen.call_count, 0)
                 claude_hook._spawn_beat("s1", {"runId": "run-1"})
@@ -585,13 +611,17 @@ class BoundsTests(_IsolatedHomeMixin, unittest.TestCase):
         server, thread, log = _start_server(expect_token=None)
         try:
             config = {"url": f"http://127.0.0.1:{server.server_address[1]}", "token": ""}
-            cc.beat(config, "x/../../timer/stop?a=1#")
-            cc.stop_run(config, "../../planner/tasks/t_1", "done")
+            for bad in ("x/../../timer/stop?a=1#", "../../planner/tasks/t_1", "..", ".", "a b", "", "x" * 65, None):
+                self.assertEqual(cc.beat(config, bad)[1], False)  # beat 不抛
+                with self.assertRaises(cc.CockpitError):
+                    cc.stop_run(config, bad, "done")  # `quote("..")` 还是 `..`，代理可能把它归一到别的端点：根本不发
+            cc.stop_run(config, "run_0123abcdef01", "done")
         finally:
             _stop_server(server, thread)
-        self.assertEqual([r["path"] for r in log.requests],
-                         ["/api/core/agents/x%2F..%2F..%2Ftimer%2Fstop%3Fa%3D1%23/heartbeat",
-                          "/api/core/agents/..%2F..%2Fplanner%2Ftasks%2Ft_1/stop"])
+        self.assertEqual([r["path"] for r in log.requests], ["/api/core/agents/run_0123abcdef01/stop"])
+        claude_hook._write_state("s9", {"runId": ".."})
+        self.assertIsNone(claude_hook._read_state("s9"))  # 状态里的 runId 不是服务端 id 的样子：丢掉状态
+        self.assertFalse(claude_hook._state_file("s9").exists())
 
     def test_state_file_values_are_untrusted(self):
         now = time.time()
@@ -666,23 +696,29 @@ class BeatModeTests(_IsolatedHomeMixin, unittest.TestCase):
         claude_hook._save_run_id("s1", "run-1")
         fresh, stale = {"at": time.time()}, {"at": time.time() - claude_hook.MONITOR_GRACE_SECONDS - 1}
         os.environ["COCKPIT_URL"] = "http://cockpit.invalid"  # 没配地址就发不了：那种情形不起（见 SpawnTests）
-        with mock.patch.object(subprocess, "Popen") as popen, mock.patch.object(claude_hook, "_cli_pid", return_value=4242):
+        with mock.patch.object(subprocess, "Popen") as popen, mock.patch.object(claude_hook, "_cli_pid", return_value=4242), \
+                mock.patch.object(claude_hook, "_born", return_value="b"):
             os.environ["CLAUDE_PLUGIN_ROOT"] = str(HERE)  # 从带 monitor 的插件里跑起来的钩子
-            claude_hook._spawn_beat("s1", None)  # SessionStart
-            claude_hook._spawn_beat("s1", fresh)  # 宽限之内的事件
-            self.assertEqual(popen.call_count, 0)
+            claude_hook._spawn_beat("s1", None)  # SessionStart：起一个备用伴随进程（不靠以后的事件——空闲会话没有事件）
+            self.assertEqual(popen.call_count, 1)
+            self.assertIn("--standby", popen.call_args.args[0])
+            standby = claude_hook._beat_lock("s1", ".standby")  # 备用的在等：宽限之内的事件不再起第二个
+            claude_hook._spawn_beat("s1", fresh)
+            self.assertEqual(popen.call_count, 1)
+            standby.close()
             taken = claude_hook._beat_lock("s1")  # monitor 接手了
             claude_hook._spawn_beat("s1", stale)
-            self.assertEqual(popen.call_count, 0)
+            self.assertEqual(popen.call_count, 1)
             taken.close()  # monitor 没来 / 不能用（-p、Bedrock、老版本 CLI）
             claude_hook._spawn_beat("s1", stale)
-            self.assertEqual(popen.call_count, 1)
+            self.assertEqual(popen.call_count, 2)
+            self.assertNotIn("--standby", popen.call_args.args[0])
             os.environ["COCKPIT_BEAT"] = "companion"  # 强制伴随进程：不等
             claude_hook._spawn_beat("s1", None)
-            self.assertEqual(popen.call_count, 2)
+            self.assertEqual(popen.call_count, 3)
             del os.environ["COCKPIT_BEAT"], os.environ["CLAUDE_PLUGIN_ROOT"]
             claude_hook._spawn_beat("s1", None)  # 不是插件（settings.json 里配的钩子）：auto = 伴随进程
-            self.assertEqual(popen.call_count, 3)
+            self.assertEqual(popen.call_count, 4)
 
 
 @unittest.skipIf(os.name == "nt", "发心跳的进程只在 POSIX 上起")

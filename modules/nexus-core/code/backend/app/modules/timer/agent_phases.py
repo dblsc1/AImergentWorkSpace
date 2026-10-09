@@ -91,8 +91,8 @@ def record_phase(
         if add_reply:
             _insert_sorted(interactions, {"kind": "reply", "at": at_str})
         if (reason is None or add_reply) and not repo.cas_agent_run(
-            user, run_id, run.get("v"), {"phases": phases, "interactions": interactions},
-        ):
+            user, run_id, run.get("v"), {"phases": phases, "interactions": interactions}, right_now.isoformat(),
+        ):  # 相位与 lastSeenAt 同一次条件更新（下面的 touch 只管没写相位的重复 / 超上限）
             continue  # 并发写抢先或刚被关闭：重读重算
         if not repo.touch_agent_run(user, run_id, right_now.isoformat()):  # v2.18：收下的相位（含重复 / 超上限）都是信号
             return _closed_out(user, run_id, repo.get_agent_run(user, run_id))  # 写相位与记信号之间被失联 / 超时关了

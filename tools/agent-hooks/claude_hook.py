@@ -31,6 +31,8 @@ import hashlib
 import json
 import math
 import os
+import secrets
+import stat
 import subprocess
 import sys
 import time
@@ -65,16 +67,41 @@ def _state_file(session_id: str) -> Path:
 
 
 def _ensure_dir(path: Path) -> None:
-    """状态目录只给本人：新建时 0700（里面的状态文件记着 cwd、transcript 路径、地址、pid）。已存在的不改。"""
+    """状态目录只给本人：新建时 0700（里面的状态文件记着 cwd、transcript 路径、地址、pid）。
+    已存在的不改权限，但**不属于本人、或组 / 其他人可写的就拒绝使用**（`OSError`）：别人能在里面换文件，
+    状态文件就信不得——拒绝 = 没有状态 = 老行为（不计相位、不发心跳）。Windows 没有这套属主 / 模式，跳过。"""
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.name != "nt":
+        st = os.stat(path)
+        if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o022:
+            raise OSError("state dir not private")
+
+
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)  # Windows 没有
+_O_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
+
+
+def _open_regular(path, flags: int, mode: int = 0o600) -> int:
+    """打开状态目录里的文件：不跟符号链接，不因 FIFO 之类阻塞（`O_NONBLOCK`），打开后 `fstat` 必须是普通文件，
+    否则关掉抛 `OSError`。"""
+    fd = os.open(path, flags | _O_NOFOLLOW | _O_NONBLOCK, mode)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError("not a regular file")
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
 
 
 STATE_MAX_BYTES = 64 * 1024  # 状态文件就几百字节；更大的不是我们写的，不读
 
 
 def _read_small(path: Path) -> str:
-    """读状态文件，带大小上限（状态目录里的东西当不可信：别的进程也写得了）。超了按「读不了」算。"""
-    with open(path, "rb") as f:
+    """读状态文件，带大小上限（状态目录里的东西当不可信：别的进程也写得了）。超了按「读不了」算；
+    目录不私有 / 不是普通文件 / 是符号链接也按「读不了」算。"""
+    _ensure_dir(path.parent)
+    with os.fdopen(_open_regular(path, os.O_RDONLY), "rb") as f:
         raw = f.read(STATE_MAX_BYTES + 1)
     if len(raw) > STATE_MAX_BYTES:
         raise OSError("state file too large")
@@ -89,14 +116,16 @@ def _session_lock(session_id: str, wait: float | None = None):
     """每会话一把排他咨询锁（状态文件旁的 .lock）：状态文件的「读→发请求→写/删」整段串行化，
     否则改名的 start 新开的 run 会被夹在 SessionEnd 的 stop 与删状态之间写回状态，再没人关它。
     钩子是互不相干的短命进程，所以用文件锁（POSIX flock / Windows msvcrt.locking）：进程死了内核自动放锁，
-    不会有陈旧锁；锁文件本身留着无害。等锁有上限，超时或锁不了就不带锁继续——钩子绝不能为锁卡住会话
-    （残余：这时回到「检查后写」的窄窗口，最坏是一条要等服务端兜底超时才收的 run）。"""
+    不会有陈旧锁；锁文件本身留着无害。等锁有上限，超时或锁不了就不再等——钩子绝不能为锁卡住会话。
+    **失败即关闭**：`with … as held`，`held` 为 False 时会改状态的操作（改名 / 重开 / 写相位 / 记 unsupported）
+    一律放弃，留给下一个事件；SessionEnd 仍可不带锁往下走去 stop（收尾比不碰状态重要）。
+    残余：持锁的改名恰好卡在「最后检查」与「写」之间超过 SessionEnd 的等待——要等服务端兜底超时才收。"""
     wait = LOCK_WAIT if wait is None else wait
-    f = None
+    f, held = None, False
     try:
         path = _state_file(session_id).with_suffix(".lock")
         _ensure_dir(path.parent)
-        f = os.fdopen(os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o600), "a+b")  # 只给本人（同状态文件）
+        f = os.fdopen(_open_regular(path, os.O_RDWR | os.O_CREAT | os.O_APPEND), "a+b")  # 只给本人（同状态文件）
         if os.name == "nt":
             import msvcrt
 
@@ -123,13 +152,13 @@ def _session_lock(session_id: str, wait: float | None = None):
                 held = True
             except OSError:
                 if time.monotonic() >= deadline:
-                    _warn("状态锁等待超时，不带锁继续")
+                    _warn("状态锁等待超时，不改状态")
                     break
                 time.sleep(0.02)
     except (OSError, ImportError):
         held = False
     try:
-        yield
+        yield held  # False = 没拿到锁：改状态的一方必须放弃（失败即关闭），只有收尾（SessionEnd 的 stop）照旧往下走
     finally:
         if f is not None:
             with contextlib.suppress(Exception):
@@ -143,11 +172,16 @@ def _write_state(session_id: str, state: dict) -> None:
     path = _state_file(session_id)
     try:
         _ensure_dir(path.parent)
-        # 每个进程一个临时名：异步相位钩子是并行跑的，共用一个 .tmp 会互相写花
-        tmp = path.with_suffix(f".{os.getpid()}.tmp")
-        with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as f:  # 只给本人
-            f.write(json.dumps(state))
-        os.replace(tmp, path)  # 原子替换：不会有人读到"写了一半"的文件
+        # 临时名带随机串 + O_EXCL（不跟符号链接、不截断已有文件）：异步相位钩子并行跑，名字也不可预测
+        tmp = path.with_suffix(f".{os.getpid()}.{secrets.token_hex(6)}.tmp")
+        try:
+            with os.fdopen(_open_regular(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL), "w", encoding="utf-8") as f:  # 只给本人
+                f.write(json.dumps(state))
+            os.replace(tmp, path)  # 原子替换：不会有人读到"写了一半"的文件
+        except BaseException:
+            with contextlib.suppress(OSError):
+                tmp.unlink()
+            raise
     except OSError:
         pass  # 状态文件写不了也不该拖累会话；下次 SessionEnd 找不到就跳过 stop
 
@@ -189,7 +223,7 @@ def _read_state(session_id: str) -> dict | None:
     except ValueError:
         _delete_run_id(session_id)
         return None
-    if not isinstance(data, dict) or not isinstance(data.get("runId"), str):
+    if not isinstance(data, dict) or not cc.valid_run_id(data.get("runId")):  # 不是服务端 runId 的样子：不拼进 URL，丢掉
         _delete_run_id(session_id)
         return None
     return data
@@ -295,8 +329,8 @@ def handle_phase(payload: dict, at: str) -> None:
     if decision is None:
         return
     phase, detail, reply = decision
-    with _session_lock(session_id):
-        if _same_live_run(session_id, state["runId"]):  # SessionEnd 已收尾：别把状态写回来
+    with _session_lock(session_id) as held:
+        if held and _same_live_run(session_id, state["runId"]):  # SessionEnd 已收尾：别把状态写回来；没拿到锁：不写
             _write_state(session_id, {**state, "lastPhase": phase})
     closed = False
     try:
@@ -322,8 +356,9 @@ def _relabel(payload: dict, session_id: str, phase: str, title: str | None, stat
     """改名（v0.4 心跳起也用来在原 run 被服务端收掉后重开）。改名只许改名，绝不能新开 run：异步钩子可能在 SessionEnd 停掉 run、删了状态之后才跑到这里，
     这时 start 会（clientKey 已停）新建一条 run，且再没有结束钩子去关它。所以发前发后各查一次状态，
     返回的 runId 不同时：状态还在且仍是原 runId（会话活着、原 run 被服务端收了）就换成新的；状态没了或已是别的 runId 就当会话已结束，关掉多出来的 run、不写状态。"""
-    with _session_lock(session_id):
-        _relabel_locked(payload, session_id, phase, title, state)
+    with _session_lock(session_id) as held:
+        if held:  # 没拿到锁：不改名 / 不重开，留给下一个事件（SessionEnd 可能正在收尾，不能再写回状态）
+            _relabel_locked(payload, session_id, phase, title, state)
 
 
 def _relabel_locked(payload: dict, session_id: str, phase: str, title: str | None, state: dict) -> None:
@@ -391,10 +426,10 @@ def _session_end_locked(session_id: str, outcome: str) -> None:
 BEAT_CHECK_SECONDS = 30
 BEAT_MAX_LIFETIME = 24 * 3600
 BEAT_TIMEOUT = cc.DEFAULT_TIMEOUT
-MONITOR_GRACE_SECONDS = 90  # auto：让 monitor 先来；会话开始这么久还没人发心跳，钩子才补一个伴随进程
+MONITOR_GRACE_SECONDS = 90  # auto：让 monitor 先来；备用伴随进程（--standby）等这么久，还没人发心跳就自己发
+STANDBY_POLL = 5  # 备用伴随进程每隔这么久看一眼 monitor 接手没有
 GONE_OUTCOME = "cancelled"  # Claude Code 没发 SessionEnd 就没了（崩了 / 被杀 / 终端被关）
 ANCESTOR_DEPTH = 6
-_SHELLS = frozenset({"sh", "bash", "dash", "zsh", "fish", "ksh", "ash", "busybox", "env"})
 
 
 def _proc(pid: int) -> tuple[int, str, str | None] | None:
@@ -417,23 +452,38 @@ def _proc(pid: int) -> tuple[int, str, str | None] | None:
 
 
 def _cli_pid() -> int:
-    """本进程的祖先里哪个是 Claude Code：名字以 claude 开头的；没有就取第一个不是 shell 的
-    （钩子与 monitor 都经 shell 起，直接父进程多半是那个 shell）。0 = 认不出。"""
-    pid, first = os.getppid(), 0
+    """本进程的祖先里哪个是 Claude Code。**「确认认出」只有两种**：
+    1. 环境变量 `COCKPIT_CLI_PID` 明确指了一个活着的进程（用户 / 包装脚本说了算）；
+    2. 祖先里（最多 `ANCESTOR_DEPTH` 层）进程名以 `claude` 开头的——或以 `COCKPIT_CLI_NAMES`（逗号分隔的名字前缀）
+       里的某个开头的；取最近的一个。
+    **不猜**：`CLI → timeout / 辅助进程 → shell → 钩子` 这种祖先里没有认得出的名字，就回 0（= 认不出），
+    不再退到「第一个不是 shell 的」——那常常是个短命的辅助进程，它一退出就会替还活着的 CLI 收掉泳道。
+    认不出 = 不发心跳（`agent.lane.v1`：发不出死亡就别声明心跳），运行照旧靠遗忘超时兜底。"""
+    override = os.environ.get("COCKPIT_CLI_PID", "")
+    if override.isdigit() and int(override) > 1:
+        return int(override) if _proc(int(override)) else 0
+    names = ("claude", *(n for n in os.environ.get("COCKPIT_CLI_NAMES", "").split(",") if n.strip()))
+    pid = os.getppid()
     for _ in range(ANCESTOR_DEPTH):
         info = _proc(pid) if pid > 1 else None
         if info is None:
             break
-        if info[1].startswith("claude"):
+        if info[1].startswith(names):
             return pid
-        if not first and info[1] not in _SHELLS:
-            first = pid
         pid = info[0]
-    return first
+    return 0
 
 
 def _born(pid: int) -> str | None:
     return (_proc(pid) or (0, "", None))[2] if pid else None
+
+
+def _cli_identity() -> tuple[int, str | None]:
+    """`(pid, 启动时刻)`，**在钩子里（启动者）取**，再交给伴随进程——它自己事后再取会留下 pid 被复用的空档。
+    没有启动时刻（macOS 的 `ps` 没有）= 分不出「同一个进程」与「复用了这个 pid 的另一个」，按认不出算，不监督。"""
+    pid = _cli_pid()
+    born = _born(pid)
+    return (pid, born) if pid and born is not None else (0, None)
 
 
 def _alive(pid: int, born: str | None) -> bool:
@@ -453,14 +503,16 @@ def _beat_facts(session_id: str, payload: dict) -> dict:
     """SessionStart 时记进状态文件、给发心跳的进程用的几样（**只存本机，不上报**）：
     运行被服务端收掉后重开要的 cwd / transcript；monitor 认会话要的会话号与 Claude Code 的 (pid, 启动时刻)；
     monitor 拿不到插件设置，所以记下钩子用的地址、钩子有没有带令牌（令牌本身不落盘）；`at` 给 auto 的宽限用。"""
-    facts: dict = {"session": session_id, "at": time.time()}
+    # `gen`：这一次 SessionStart 写下状态时随机生成的归属号。发心跳的进程带着它和 CLI 身份，每圈核对；会话被另一个 CLI
+    # 恢复（SessionStart 换了状态）后，老进程对不上就放手，不会去停新 CLI 的运行（见 `_owned`）
+    facts: dict = {"session": session_id, "at": time.time(), "gen": secrets.token_hex(8)}
     for key, source in (("cwd", "cwd"), ("transcript", "transcript_path")):
         if isinstance(payload.get(source), str):
             facts[key] = payload[source]
     try:
-        cli = _cli_pid()
+        cli, born = _cli_identity()
         config = cc.load_config()
-        facts.update(cli=[cli, _born(cli)], url=config["url"], auth=bool(config["token"]))
+        facts.update(cli=[cli, born], url=config["url"], auth=bool(config["token"]))
     except Exception:  # noqa: BLE001 — 少了这几样只是 monitor 认不出这个会话
         pass
     return facts
@@ -472,16 +524,24 @@ def _plugin_monitor() -> bool:
     return bool(root) and (Path(root) / "monitors" / "monitors.json").is_file()
 
 
-def _beat_lock(session_id: str):
+def _beat_lock(session_id: str, suffix: str = ".beat"):
     """「一个会话一个发心跳的」：状态目录里 .beat 文件上的独占 flock，发多久拿多久——进程死了内核放锁，
-    没有陈旧 pidfile 要清。拿到 → 打开着的文件（持有者写进自己的 pid 和起法，给人看）；别人拿着 → None。"""
+    没有陈旧 pidfile 要清。拿到 → 打开着的文件（持有者写进自己的 pid 和起法，给人看）；别人拿着 → None。
+    拿到锁后核对「路径上现在的文件就是我锁住的这个 inode」：路径被换过（旧的还被别人锁着）就不算拿到，
+    否则第二个发心跳的会锁到另一个 inode。`suffix=".standby"`：auto 模式下备用伴随进程等 monitor 期间占的锁。"""
     import fcntl
 
-    path = _state_file(session_id).with_suffix(".beat")
-    _ensure_dir(path.parent)
-    f = os.fdopen(os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o600), "a+", encoding="utf-8")  # 只给本人
+    path = _state_file(session_id).with_suffix(suffix)
+    try:
+        _ensure_dir(path.parent)
+        f = os.fdopen(_open_regular(path, os.O_RDWR | os.O_CREAT | os.O_APPEND), "a+", encoding="utf-8")  # 只给本人
+    except OSError:
+        return None  # 目录不私有 / 是符号链接 / 不是普通文件：不当作拿到锁
     try:
         fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        here, there = os.fstat(f.fileno()), os.lstat(path)
+        if (here.st_dev, here.st_ino) != (there.st_dev, there.st_ino):
+            raise OSError("lock file replaced")
     except OSError:
         f.close()
         return None
@@ -495,19 +555,21 @@ def _spawn_beat(session_id: str, state: dict | None) -> None:
         mode = cc.beat_mode()
         if os.name == "nt" or mode in ("off", "monitor"):
             return
-        if mode == "auto" and _plugin_monitor() and (state is None or _in_grace(state.get("at"))):
-            return  # 让 monitor 先来
-        cli = _cli_pid()
+        # auto + 带 monitor 的插件：让 monitor 先来——但**不靠以后的钩子事件来兜底**（空闲会话没有事件）：这里就起一个
+        # 备用伴随进程（--standby），它等一个宽限期，monitor 没接手（令牌只在插件设置里它认不了、或没起来）就自己发
+        standby = mode == "auto" and _plugin_monitor() and (state is None or _in_grace(state.get("at")))
+        cli, born = _cli_identity()  # 在这里（启动者）取 CLI 的 pid + 启动时刻，交给伴随进程，它不事后再取
         st = state or _read_state(session_id)
-        if not cli or (st and not _usable(st)):
-            return  # 认不出 Claude Code（死了看不出来）/ 发了也发不出去：不起，免得每个钩子事件起一个就退的进程
-        probe = _beat_lock(session_id)
+        if not cli or (st and not (_usable(st) and _owned(st, st.get("gen"), cli, born))):
+            return  # 认不出 Claude Code（死了看不出来）/ 发了也发不出去 / 状态是另一个 CLI 的：不起
+        probe = _beat_lock(session_id, ".standby" if standby else ".beat")
         if probe is None:
-            return  # 已经有人在发
+            return  # 已经有人在发（或已经有备用的在等）
         probe.close()  # 两个钩子同时走到这里会各起一个：伴随进程自己再抢一次锁，输的那个直接退
         subprocess.Popen(
             [sys.executable, str(Path(__file__).resolve()), "--beat", "--source", "companion",
-             "--session", session_id, "--cli", str(cli)],
+             "--session", session_id, "--cli", str(cli), "--born", str(born),
+             *(["--gen", st["gen"]] if st and isinstance(st.get("gen"), str) else []), *(["--standby"] if standby else [])],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True, close_fds=True, cwd=str(_state_file(session_id).parent),
         )
@@ -544,8 +606,8 @@ def _beat_once(session_id: str, state: dict, source: str) -> float | None:
     """发一次心跳，返回下一次隔多少秒（None = 别再发了）。服务端说这条运行已结束（机器睡过头被判了失联）而会话还在 → 重开一条。"""
     interval, closed = cc.beat(cc.load_config(), state["runId"], BEAT_TIMEOUT, source)
     if closed == cc.BEAT_UNSUPPORTED:  # 服务端没有心跳：记进状态，之后钩子事件不再起发心跳的进程；绝不声明、不重开
-        with _session_lock(session_id):
-            st = _read_state(session_id)
+        with _session_lock(session_id) as held:
+            st = _read_state(session_id) if held else None
             if st and st.get("runId") == state["runId"]:
                 _write_state(session_id, {**st, "beat": "unsupported"})
         return None
@@ -560,11 +622,34 @@ def _beat_once(session_id: str, state: dict, source: str) -> float | None:
     return None if closed == cc.BEAT_MISSING else interval
 
 
-def _beat_session(session_id: str, source: str, cli: int, born: str | None, until: float, sleep, clock) -> bool:
-    """给一个会话发心跳，直到它结束 / 到 `until` / 轮不到自己。True = Claude Code 没了（已替它收尾）。"""
+def _lock_current(lock, session_id: str) -> bool:
+    """手里锁着的还是路径上现在的那个 `.beat` 文件吗。路径被换了（旧文件成了孤儿 inode）就该放手，
+    否则换进来的新文件上还能再起一个发心跳的。"""
+    try:
+        here, there = os.fstat(lock.fileno()), os.lstat(_state_file(session_id).with_suffix(".beat"))
+    except OSError:
+        return False
+    return (here.st_dev, here.st_ino) == (there.st_dev, there.st_ino)
+
+
+def _owned(state: dict | None, gen: str | None, cli: int, born: str | None) -> bool:
+    """这份状态还是「我」负责的那次会话吗：SessionStart 写的归属号 `gen` 和 CLI 身份 (pid, 启动时刻) 都对得上。
+    会话被另一个 CLI 恢复（SessionStart 换了状态）后老的发心跳进程对不上——放手，不停也不删新 CLI 的运行。"""
+    return bool(state) and state.get("gen") == gen and state.get("cli", [cli, born]) == [cli, born]
+
+
+def _beat_session(
+    session_id: str, source: str, cli: int, born: str | None, budget: list[int], sleep, clock,
+    gen: str | None = None, identify=None,
+) -> bool:
+    """给一个会话发心跳，直到它结束 / 换了主人 / `budget`（剩余圈数，循环间共享）用尽 / 轮不到自己。
+    True = Claude Code 没了（已替它收尾）。`identify`：monitor 每圈重认一次 CLI，对不上就退。"""
     state = _read_state(session_id)
-    if not cli or not state or not _usable(state):
+    if not cli or born is None or not state or not _usable(state):
         return False  # 认不出 Claude Code = 死了也看不出来：不发（agent.lane.v1「发不出死亡就别声明心跳」），运行照旧 12 小时兜底
+    gen = state.get("gen") if gen is None else gen  # monitor 头一次认会话时取；companion 由启动它的钩子给
+    if not _owned(state, gen, cli, born):
+        return False
     lock = _beat_lock(session_id)
     if lock is None:
         return False  # 另一种起法已经在给它发
@@ -573,14 +658,22 @@ def _beat_session(session_id: str, source: str, cli: int, born: str | None, unti
         lock.write(f"{os.getpid()} {source}")
         lock.flush()
         next_beat = clock()  # 第一下马上发：声明这条运行会发心跳。用墙钟排：机器睡醒后马上补一下
-        while clock() < until:
+        while budget[0] > 0:
+            budget[0] -= 1  # 寿命按圈数算（每圈睡 BEAT_CHECK_SECONDS），不受墙钟跳变影响
             state = _read_state(session_id)
-            if not state:
-                return False  # SessionEnd 收过尾了
-            if cli and not _alive(cli, born):
-                with _session_lock(session_id):
-                    _session_end_locked(session_id, GONE_OUTCOME)
-                return True
+            if not _owned(state, gen, cli, born):
+                return False  # SessionEnd 收过尾了 / 会话被别的 CLI 恢复了：放手，不停
+            if (identify is not None and identify() != (cli, born)) or not _lock_current(lock, session_id):
+                return False
+            if not _alive(cli, born):
+                with _session_lock(session_id) as held:
+                    if held:  # 持锁再核对一遍归属才停：读状态与停之间会话可能刚被恢复
+                        if not _owned(_read_state(session_id), gen, cli, born):
+                            return False
+                        _session_end_locked(session_id, GONE_OUTCOME)
+                        return True
+                sleep(BEAT_CHECK_SECONDS)  # 没拿到锁：不碰状态，下一圈再试
+                continue
             if clock() >= next_beat:
                 wait = _beat_once(session_id, state, source)
                 if wait is None:
@@ -607,15 +700,42 @@ def _session_of(cli: int, born: str | None) -> str | None:
     return best[1] if best else None
 
 
-def beat_loop(source: str, session_id: str | None = None, cli: int = 0, *, sleep=time.sleep, clock=time.time) -> None:
-    """发心跳的进程的主体。`cli` = Claude Code 的 pid（companion 认不出时给 0：只看状态文件）。"""
-    born = _born(cli)
+def _standby_wait(session_id: str, sleep) -> bool:
+    """auto + 插件：等 monitor 一个宽限期。monitor 接手了（`.beat` 锁被占）或会话没了 → False（不用发了）；
+    等满了还没人接手（monitor 认不了令牌 / 没起来）→ True，由本进程自己发。占着 `.standby` 锁，别的钩子事件不再起第二个备用。"""
+    guard = _beat_lock(session_id, ".standby")
+    if guard is None:
+        return False
+    with guard:
+        for _ in range(MONITOR_GRACE_SECONDS // STANDBY_POLL):
+            if not _read_state(session_id):
+                return False
+            probe = _beat_lock(session_id)
+            if probe is None:
+                return False  # monitor 在发了
+            probe.close()
+            sleep(STANDBY_POLL)
+    return True
+
+
+def beat_loop(
+    source: str, session_id: str | None = None, cli: int = 0, *, sleep=time.sleep, clock=time.time,
+    born: str | None = None, gen: str | None = None, standby: bool = False, identify=None,
+) -> None:
+    """发心跳的进程的主体。`cli` = Claude Code 的 pid，`born` = 它的启动时刻（companion 由启动它的钩子给；
+    monitor 自己从刚起它的 CLI 上取）。两种起法都有寿命上限 `BEAT_MAX_LIFETIME`（按圈数）：到了就退，会话还在的话
+    下一个钩子事件补一个伴随进程；monitor 由 CLI 随会话重起。认不出 CLI（pid 或启动时刻缺）就不发。"""
+    born = _born(cli) if born is None and source == "monitor" else born
+    budget = [BEAT_MAX_LIFETIME // BEAT_CHECK_SECONDS]
     if source != "monitor":
-        _beat_session(session_id or "", source, cli, born, clock() + BEAT_MAX_LIFETIME, sleep, clock)
+        if standby and not _standby_wait(session_id or "", sleep):
+            return
+        _beat_session(session_id or "", source, cli, born, budget, sleep, clock, gen)
         return
-    while cli and _alive(cli, born):  # 认不出 Claude Code 就认不出会话：直接退，由伴随进程来
+    while cli and born is not None and budget[0] > 0 and _alive(cli, born):  # 认不出 Claude Code 就认不出会话：直接退，由伴随进程来
+        budget[0] -= 1
         session_id = _session_of(cli, born)
-        if session_id and _beat_session(session_id, source, cli, born, float("inf"), sleep, clock):
+        if session_id and _beat_session(session_id, source, cli, born, budget, sleep, clock, identify=identify):
             return
         sleep(BEAT_CHECK_SECONDS)
 
@@ -633,13 +753,20 @@ def _beat_main(argv: list[str]) -> None:
     parser.add_argument("--source", choices=("companion", "monitor"), default="companion")
     parser.add_argument("--session")
     parser.add_argument("--cli", type=int, default=0)
+    parser.add_argument("--born")  # companion：钩子取的 CLI 启动时刻（没有 = 不监督）
+    parser.add_argument("--gen")  # companion：钩子读到的状态归属号
+    parser.add_argument("--standby", action="store_true")  # auto + 插件：先等 monitor 一个宽限期
     if "monitor" in argv:
         _silence()  # 先于解析参数：argparse 报错也不许出声
     args = parser.parse_args(argv)
     mode = cc.beat_mode()
     if os.name == "nt" or mode == "off" or mode not in ("auto", args.source):
         return
-    beat_loop(args.source, args.session, args.cli if args.source == "companion" else _cli_pid())
+    if args.source == "companion":
+        if args.born:
+            beat_loop("companion", args.session, args.cli, born=args.born, gen=args.gen, standby=args.standby)
+        return
+    beat_loop("monitor", None, _cli_pid(), identify=_cli_identity)
 
 
 def main() -> int:

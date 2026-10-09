@@ -90,13 +90,19 @@ def touch_agent_run(
 ) -> bool:
     """v2.18 活性：未关闭才记 ``lastSeenAt``；``declare`` = 同时记下「这个运行会发心跳」；``beat_source`` 给了就记
     （谁在发心跳，后来的盖先来的）；``beat`` = 这是一次心跳，``beatCount`` 加一。
-    不碰 ``v``（同 relabel）。False = 不存在或已关闭。"""
-    fields = {"lastSeenAt": seen_at, **({"heartbeat": True} if declare else {}),
-              **({"beatSource": beat_source} if beat_source else {})}
+    不碰 ``v``（同 relabel）。False = 不存在或已关闭。
+    ``lastSeenAt`` 单调：只增不减、不早于 ``startedAt``（聚合管道更新，``$max``）——迟到的老请求不会把新信号盖回去，
+    也不会让失联关闭把结束时刻算到起点之前。"""
+    fields = {"lastSeenAt": _seen_max(seen_at), **({"heartbeat": True} if declare else {}),
+              **({"beatSource": {"$literal": beat_source}} if beat_source else {}),
+              **({"beatCount": {"$add": [{"$ifNull": ["$beatCount", 0]}, 1]}} if beat else {})}
     return _agent_col().update_one(
-        {"user": user, "runId": run_id, "closing": {"$exists": False}},
-        {"$set": fields, **({"$inc": {"beatCount": 1}} if beat else {})},
+        {"user": user, "runId": run_id, "closing": {"$exists": False}}, [{"$set": fields}],
     ).matched_count > 0
+
+
+def _seen_max(seen_at: str) -> dict:
+    return {"$max": ["$lastSeenAt", "$startedAt", {"$literal": seen_at}]}
 
 
 def mark_agent_run_closing(user: str, run_id: str, marker: dict, guard: dict | None = None) -> dict | None:
@@ -111,9 +117,17 @@ def mark_agent_run_closing(user: str, run_id: str, marker: dict, guard: dict | N
     )
 
 
-def cas_agent_run(user: str, run_id: str, version: int | None, fields: dict) -> bool:
+def cas_agent_run(user: str, run_id: str, version: int | None, fields: dict, seen_at: str | None = None) -> bool:
     """未关闭 + 版本号没变才写（乐观锁）。False = 被并发写抢先或已关闭，调用方重读再算。
-    v2.4 之前的文档没有 ``v``：``{"v": None}`` 恰好匹配缺字段。"""
+    v2.4 之前的文档没有 ``v``：``{"v": None}`` 恰好匹配缺字段。
+    ``seen_at``（v2.18）：同一次条件更新里一并推进 ``lastSeenAt``（单调）——相位写入与活性信号是一个原子步骤，
+    失联清理带着旧 ``lastSeenAt`` 的关闭条件于是落空，不会出现「相位收下了、随后运行被按旧信号关掉」。"""
+    if seen_at is not None:
+        return _agent_col().update_one(
+            {"user": user, "runId": run_id, "closing": {"$exists": False}, "v": version},
+            [{"$set": {**{k: {"$literal": x} for k, x in fields.items()}, "lastSeenAt": _seen_max(seen_at),
+                       "v": {"$add": [{"$ifNull": ["$v", 0]}, 1]}}}],
+        ).matched_count > 0
     return _agent_col().update_one(
         {"user": user, "runId": run_id, "closing": {"$exists": False}, "v": version},
         {"$set": fields, "$inc": {"v": 1}},

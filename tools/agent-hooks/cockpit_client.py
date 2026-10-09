@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import threading
 import urllib.error
 import urllib.parse
@@ -39,9 +40,19 @@ def clamp_seconds(value: Any, low: int, high: int, default: int) -> int:
     return min(max(value, low), high)
 
 
+RUN_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")  # 服务端的 runId 是 `run_` + 十六进制，是它的子集；`.` 与 `/` 都不在里面
+
+
+def valid_run_id(run_id: Any) -> bool:
+    return isinstance(run_id, str) and RUN_ID_RE.fullmatch(run_id) is not None
+
+
 def _run_path(run_id: str, action: str) -> str:
-    """runId 可能是从状态文件读回来的：整个转义后才拼进路径，带 `/`、`?`、`..` 也到不了别的端点。"""
-    return f"/api/core/agents/{urllib.parse.quote(str(run_id), safe='')}/{action}"
+    """runId 可能是从状态文件读回来的：不是 `RUN_ID_RE` 的一律不发（`quote("..")` 还是 `..`，
+    代理可能把 `/agents/../stop` 归一到别的端点）；合法的字符集里没有需要转义的。"""
+    if not valid_run_id(run_id):
+        raise CockpitError("配置错误")
+    return f"/api/core/agents/{run_id}/{action}"
 CONFIG_FILENAME = "agent-hooks.json"
 
 
@@ -220,6 +231,17 @@ class _DeadlineExceeded(Exception):
     """内部哨兵：后台线程在总时限内没跑完，调用方已经放弃等它了。"""
 
 
+_stuck: list[threading.Thread] = []  # 超时后仍在跑的 daemon 线程
+_stuck_lock = threading.Lock()
+
+
+def stuck_requests() -> int:
+    """还卡在后台的超时请求个数（清掉已结束的）。"""
+    with _stuck_lock:
+        _stuck[:] = [t for t in _stuck if t.is_alive()]
+        return len(_stuck)
+
+
 def _run_with_deadline(fn, timeout: float):
     """在 daemon 线程里跑 `fn()`，最多等 `timeout` 秒就是总时限。
 
@@ -243,10 +265,35 @@ def _run_with_deadline(fn, timeout: float):
     t.start()
     t.join(timeout)
     if t.is_alive():
+        with _stuck_lock:
+            _stuck.append(t)  # 超时放弃的线程还在后台跑：记下来，发心跳的长命进程据此不再叠新的（见 `beat`）
         raise _DeadlineExceeded()
     if "error" in box:
         raise box["error"]
     return box.get("value")
+
+
+def _http_error(e: urllib.error.HTTPError) -> CockpitError:
+    """读错误体并分类成 `CockpitError`。**只在 `_run_with_deadline` 的工作线程里调**（读体受总时限管）。"""
+    body = b""
+    try:
+        body = e.read(MAX_RESPONSE_BYTES + 1)
+    except Exception:  # noqa: BLE001
+        pass
+    json_body, detail = False, None
+    if body:
+        try:
+            parsed = json.loads(body)
+            json_body = True
+            if isinstance(parsed, dict) and isinstance(parsed.get("detail"), str):
+                detail = parsed["detail"][:200]
+        except ValueError:  # 包括 JSONDecodeError 和坏编码的 UnicodeDecodeError
+            json_body = False
+    try:
+        e.close()  # HTTPError 包着底层响应/连接，raise 出来之后没人再帮它关，自己关掉
+    except Exception:  # noqa: BLE001
+        pass
+    return CockpitError(f"HTTP {e.code}", code=e.code, json_body=json_body, detail=detail)
 
 
 def _request(config: dict[str, Any], method: str, path: str, payload: dict[str, Any] | None, timeout: float) -> dict[str, Any]:
@@ -268,8 +315,11 @@ def _request(config: dict[str, Any], method: str, path: str, payload: dict[str, 
         # Request() 本身也可能因为非法 URL / 非法 header 值（比如 token 带换行）
         # 抛异常——连同下面的 open()/read() 一起放进同一个 try，让外层统一分类。
         req = urllib.request.Request(url + path, data=data, method=method, headers=headers)
-        with _opener.open(req, timeout=timeout) as resp:
-            body = resp.read(MAX_RESPONSE_BYTES + 1)
+        try:
+            with _opener.open(req, timeout=timeout) as resp:
+                body = resp.read(MAX_RESPONSE_BYTES + 1)
+        except urllib.error.HTTPError as e:
+            raise _http_error(e) from None  # 错误体也在这个线程里读：受总时限管，慢吐字节的服务器拖不住调用方
         if not body:
             return {}
         if len(body) > MAX_RESPONSE_BYTES:
@@ -288,26 +338,6 @@ def _request(config: dict[str, Any], method: str, path: str, payload: dict[str, 
         raise
     except _DeadlineExceeded:
         raise CockpitError("超时") from None
-    except urllib.error.HTTPError as e:
-        body = b""
-        try:
-            body = e.read(MAX_RESPONSE_BYTES + 1)
-        except Exception:
-            pass
-        json_body, detail = False, None
-        if body:
-            try:
-                parsed = json.loads(body)
-                json_body = True
-                if isinstance(parsed, dict) and isinstance(parsed.get("detail"), str):
-                    detail = parsed["detail"][:200]
-            except ValueError:  # 包括 JSONDecodeError 和坏编码的 UnicodeDecodeError
-                json_body = False
-        try:
-            e.close()  # HTTPError 包着底层响应/连接，raise 出来之后没人再帮它关，自己关掉
-        except Exception:
-            pass
-        raise CockpitError(f"HTTP {e.code}", code=e.code, json_body=json_body, detail=detail) from None
     except urllib.error.URLError as e:
         if isinstance(e.reason, TimeoutError):
             raise CockpitError("超时") from None
@@ -459,6 +489,8 @@ def beat(
     `{"detail":"Not Found"}`）：这个服务端不会有心跳，调用方别再起发心跳的进程，更不要重开。
     连不上 / 超时 / 5xx → `HEARTBEAT_MIN` 秒后再试（间隔是失联线的一半，丢一下不补就贴线了）；
     其它 4xx（老服务端没有这个端点、令牌不对）→ 照常间隔，不猛敲。"""
+    if stuck_requests():  # 上一下还卡在后台没返回：这一下跳过，不叠线程 / 连接（长命的发心跳进程不能越攒越多）
+        return HEARTBEAT_MIN, False
     try:
         response = heartbeat_run(config, run_id, timeout, beat_source)
         return heartbeat_interval(response), response.get("reason") == "closed"  # 间隔已钳
