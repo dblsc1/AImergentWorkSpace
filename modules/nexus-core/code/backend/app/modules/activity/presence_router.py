@@ -9,6 +9,7 @@ from fastapi import APIRouter, Request
 from pydantic import (
     AwareDatetime,
     BaseModel,
+    AfterValidator,
     BeforeValidator,
     ConfigDict,
     Field,
@@ -20,7 +21,7 @@ from pydantic import (
 )
 from starlette.concurrency import run_in_threadpool
 
-from . import auto, auto_ai, presence
+from . import auto, auto_ai, ignore, presence
 from .router import human_body
 
 router = APIRouter(prefix="/activity", tags=["activity"])
@@ -60,7 +61,7 @@ _SLACK = timedelta(seconds=2)  # 段的首尾按毫秒取整、当前窗口可�
 #: app / title：不设长度上限（v2.22 起不在这里截断）——「忽略并记住」的闸门要看**收到的全文**（命中的片段可能在 1024 之后），
 #: 闸门之后才由 presence.clip 按 128 / 512 取——契约 v2.4「截断后照收」，老的不带 spans 的客户端也一样。
 #: 真有长标题：GNOME Ptyxis 把整条内联 python 命令放进标题，拒掉就丢了合法的心跳。乱发的大包由网关的体上限（1m）挡。
-_Text = StrictStr
+_Text = Annotated[StrictStr, AfterValidator(lambda v: v[:ignore.GATE_CHARS])]
 
 
 class Span(BaseModel):

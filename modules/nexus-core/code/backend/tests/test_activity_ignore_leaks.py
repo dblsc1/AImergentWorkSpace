@@ -486,3 +486,37 @@ def test_purged_is_only_set_after_a_clean_verification_and_a_recreated_rule_star
     assert ignore_repo.mark_purged("u_local", rule["id"], rule["createdAt"]) is False
     with pytest.raises(ignore._Gone):
         ignore.purge("u_local", rule)  # 删掉的（旧的）规则：清理到此为止
+
+
+# ─────────────────────────────────────────── 有界：闸门只看前 GATE_CHARS 个码点，存下的是它的前缀
+
+
+def test_gate_work_is_bounded_and_stored_text_is_a_prefix_of_what_the_gate_saw(client, monkeypatch):
+    from app.modules.activity import ignore, presence  # noqa: PLC0415
+
+    seen = []
+    real = ignore.fold
+    monkeypatch.setattr(ignore, "fold", lambda t: (seen.append(len(t or "")), real(t))[1])
+    _ignore(client, "code", "needle")
+    seen.clear()
+    big = "z" * 40_000  # 远超 GATE_CHARS，也远超所有存储上限
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    spans = [{"app": big + str(i), "title": big + "t", "from": (now - timedelta(seconds=118 - 3.6 * i)).isoformat(), "seconds": 3}
+             for i in range(presence.MAX_BEAT_SPANS)]
+    _beat_raw(client, big, big, spans=spans, sentAt=now.isoformat())
+    assert _upload(client, [_seg(5, big, big)])["accepted"] == 1
+    assert max(seen) <= ignore.GATE_CHARS  # 没有任何一次归一化碰过无界的串
+    rules_n, strings = 1, 2 * (1 + presence.MAX_BEAT_SPANS) + 2  # 心跳顶层 + 每个 span 的 app / title，加上传的一段
+    assert len(seen) <= 4 * rules_n * strings  # 每串每条规则至多 4 次 fold：总量由 规则数 × 串数 × GATE_CHARS 封顶
+    doc = _db()["activity_presence"].find_one({"deviceId": DEV})
+    assert len(doc["app"]) <= 128 and len(doc["title"]) <= 512  # 存储上限在闸门之后
+    assert big.startswith(doc["app"]) and big.startswith(doc["title"])  # 存下的是收到的串的前缀
+
+
+def test_a_fragment_beyond_gate_chars_is_not_seen_documented_limit(client):
+    from app.modules.activity import ignore  # noqa: PLC0415
+
+    _ignore(client, "code", "needle")
+    title = "q" * ignore.GATE_CHARS + " needle"
+    assert _upload(client, [_seg(5, "code", title)]).get("ignored") is None  # 看不到：存下的前缀（512）也装不下它
+    assert "needle" not in json.dumps(list(_db()["activity_suggestions"].find({}, {"_id": 0})), default=str)

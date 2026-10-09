@@ -33,6 +33,10 @@ from . import ignore_repo, repo
 
 MAX_IGNORES = 200  #: 每租户至多这么多条规则
 MAX_APP, MAX_TITLE = 128, 200
+#: 闸门最多看一个 app / title 的前这么多个码点：请求模型把收到的字符串截到这里（v2.4：超长截断照收、不拒），
+#: 归一化与匹配都只在这个有界的串上做（每串 O(GATE_CHARS)）；随后存储再按各自的上限（presence 128 / 512，建议 128 / 512）截——
+#: 所以**存下来的一定是闸门看过的串的前缀**。只出现在 GATE_CHARS 之后的片段看不到（存下的前缀也装不下它）。
+GATE_CHARS = 4096
 PURGE_BACKOFF = timedelta(minutes=1)  #: 清理失败后，同一条规则至多这么久才自动再试一次（写入路径上；不是每次写入都试）
 PURGE_GIVE_UP = 5  #: 失败这么多次就放弃自动重试，规则标 ``purgeFailed``（人在规则列表里看得到；再建一次同一条规则会重清）
 SCAN_BUDGET = 50_000  #: 一次清理至多扫这么多条待确认建议；超了就留给下一次重试（分批），不在一个请求里无限干活
@@ -80,6 +84,7 @@ def rules(user: str) -> list[dict]:
 
 
 def matches(rule: dict, app: str, title: str) -> bool:
+    app, title = (app or "")[:GATE_CHARS], (title or "")[:GATE_CHARS]   # 任何路径都不归一化无界的串
     return fold(rule.get("app")) == fold(app) and (not rule.get("titleContains") or fold(rule["titleContains"]) in fold(title))
 
 

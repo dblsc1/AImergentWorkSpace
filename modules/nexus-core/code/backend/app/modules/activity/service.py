@@ -30,6 +30,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Literal
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     Field,
     StrictBool,
@@ -128,8 +129,8 @@ class _Segment(BaseModel):
     endAt: Annotated[StrictStr, Field(max_length=64)]
     durationSeconds: StrictInt
     # 超长不拒、截断（按码点）：标题是展示用的，为几个多余字符丢掉一整段真实活动不划算
-    app: Annotated[StrictStr, Field(min_length=1)]
-    title: StrictStr
+    app: Annotated[StrictStr, Field(min_length=1), AfterValidator(lambda v: v[:ignore.GATE_CHARS])]
+    title: Annotated[StrictStr, AfterValidator(lambda v: v[:ignore.GATE_CHARS])]
     suggestion: _Suggestion
     idle: StrictBool = False  # v2.5：检测程序认为这段「前台没换、但无操作」
 
