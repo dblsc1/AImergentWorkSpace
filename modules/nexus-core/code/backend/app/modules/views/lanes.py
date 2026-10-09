@@ -21,7 +21,7 @@ from ..planner.errors import UnprocessableError
 from ..prefs import service as prefs_service
 from ..projector.handlers import lanes as lanes_projection
 from ..timer import service as timer_service
-from .lane_cap import cap
+from .lane_cap import cap, lane_key
 from .lane_order import arrange
 from .queries import _today
 from .schemas import LanesOut
@@ -139,7 +139,13 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
         seen = {r["runId"] for r in light}
         live = [{**r, "open": True} for r in open_runs if r["runId"] not in seen   # 刚落账、活状态还没删的那一刻两边都有：以事实为准
                 and r["startTs"] < end and (r["endTs"] or now) > start]
-        kept, gone = cap(light + live, start, end, now)
+        prefs = prefs_service.load(user)
+        hidden_keys = {a["key"] for a in prefs["agents"] if a["hidden"]}  # 藏起来的身份：折叠摘要也不露
+        # 藏起来的身份永远不显示：它们已结束的运行不占封顶的名额，也不算「丢了东西」；在跑的照样进 arrange（hiddenAgents / hiddenWaiting）
+        light = [r for r in light if lane_key(r) not in hidden_keys]
+        hidden_live = [r for r in live if lane_key(r) in hidden_keys]
+        kept, gone = cap(light + [r for r in live if lane_key(r) not in hidden_keys], start, end, now)
+        kept += hidden_live
         truncated = truncated or bool(gone)
         full = {r["runId"]: r for r in lanes_projection.read_lanes(
             user, "run", start, end, len(kept), run_ids=[r["runId"] for r in kept if not r.get("open")])}
@@ -147,11 +153,9 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
                 {**full[r["runId"]], "startTs": r["startTs"], "endTs": r["endTs"],
                  "elapsedSeconds": full[r["runId"]]["durationSeconds"], "overdue": False}
                 for r in kept if r.get("open") or r["runId"] in full]
-        prefs = prefs_service.load(user)
         # v2.22：藏起来的代理不出现（时间照旧记在账上）；其余加 pinned / manualOrder / rank
         agents, hidden, hidden_waiting, stale_pinned = arrange([_run_item(r, start, end) for r in runs],
                                                  prefs, now)
-        hidden_keys = {a["key"] for a in prefs["agents"] if a["hidden"]}  # 藏起来的身份：折叠摘要也不露
         dropped = [{k: v for k, v in d.items() if k != "key"} for d in gone if d["key"] not in hidden_keys]
         if caller().scope == "report":  # 藏起来的摘要只给能读泳道的调用方（report / 匿名本来就读不到，这里再保一道）
             hidden, hidden_waiting, stale_pinned, dropped = [], 0, [], []

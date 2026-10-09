@@ -129,3 +129,51 @@ def test_live_runs_are_never_dropped(client, monkeypatch):
         assert resp.status_code == 201
     live = [a for a in client.get(LANES).json()["agents"] if a["endAt"] is None]
     assert len(live) == 2
+
+
+def _fake_live(monkeypatch, runs: list[dict]) -> None:
+    """替换活状态读取：/agents/start 不限开着的个数，直接造几百上千条在跑的运行。"""
+    from app.modules.views import lanes  # noqa: PLC0415
+
+    now = datetime.now(_tz())
+    rows = [{"runId": r["runId"], "agent": "cc", "tool": "t", "label": r["label"], "startTs": r["startTs"], "endTs": None,
+             "phases": r.get("phases", []), "elapsedSeconds": 0, "overdue": False, "unverified": False} for r in runs]
+    monkeypatch.setattr(lanes.timer_service, "list_lane_runs", lambda user=None: (now, rows))
+
+
+def test_live_runs_are_capped_and_rest_goes_to_dropped(client, monkeypatch):
+    start = _at(1)
+    live = [{"runId": f"L{i}", "label": f"lab{i % 300}", "startTs": start + timedelta(seconds=i)} for i in range(1500)]
+    _fake_live(monkeypatch, live)
+    _flood("closed", 5, _at(0, 10))
+    body = _get(client)
+    got = [a for a in body["agents"] if a["endAt"] is None]
+    assert len(got) == lane_cap.MAX_LIVE == 500
+    assert {a["runId"] for a in got} == {f"L{i}" for i in range(1000, 1500)}  # 留的是最新的
+    assert sum(a["label"] == "closed" for a in body["agents"]) == 5  # 已结束的照样有位置
+    assert body["truncated"] is True
+    assert sum(d["runs"] for d in body["dropped"] if d["label"].startswith("lab")) == 1000
+    end = datetime.fromisoformat(body["windowEnd"])  # 昨天的窗口：在跑的算到窗口末尾
+    truth = sum(int((end - r["startTs"]).total_seconds()) for r in live[:1000])
+    assert sum(d["elapsedSeconds"] for d in body["dropped"] if d["label"].startswith("lab")) == truth
+
+
+def test_hidden_flood_does_not_evict_visible_lane(client):
+    _flood("vis", 5, _at(2))  # 比洪水更早
+    before = _get(client)
+    for i in range(25):
+        _flood(f"h{i}", 100, _at(4) + timedelta(seconds=i))
+        assert client.put("/api/core/lanes/prefs/agent", json={"agent": "cc", "label": f"h{i}", "hidden": True}).status_code == 200
+    body = _get(client)
+    assert sum(a["label"] == "vis" for a in body["agents"]) == 5
+    assert body["dropped"] == [] and body["truncated"] is False
+    assert body["hiddenAgents"] != [] and len(body["hiddenAgents"]) == 25 and before["hiddenAgents"] == []
+
+
+def test_hidden_lane_live_waiting_run_still_counted(client, monkeypatch):
+    _fake_live(monkeypatch, [{"runId": "w", "label": "sec", "startTs": _at(1),
+                              "phases": [{"at": _at(2).isoformat(), "phase": "waiting_input"}]}])
+    _flood("sec", 150, _at(8))  # 已结束的把名额填满也不该影响
+    assert client.put("/api/core/lanes/prefs/agent", json={"agent": "cc", "label": "sec", "hidden": True}).status_code == 200
+    body = _get(client)
+    assert body["hiddenWaiting"] == 1 and body["agents"] == [] and body["dropped"] == [] and body["truncated"] is False
