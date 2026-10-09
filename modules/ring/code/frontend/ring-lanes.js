@@ -94,6 +94,13 @@
   };
   view.addEventListener("hcl-idle", function () { if (dirty) { dirty = false; draw(); } });
 
+  // nexus-core v2.23：封顶折叠掉的较早运行按身份汇在 dropped 里；有数就说几段，没有（老后端 / 只是会话超限）退回原话
+  function moreHint(d) {
+    if (!d.truncated) return "";
+    var n = (Array.isArray(d.dropped) ? d.dropped : []).reduce(function (a, x) { return a + (x.runs || 0); }, 0);
+    return n ? "较早的 " + n + " 段已折叠" : "还有更多（只列出了最新的一部分）";
+  }
+
   function draw() {
     var L = window.HoneycombLanes;
     if (!last || !L) return;
@@ -114,7 +121,7 @@
       viewStart: v0, viewEnd: v1, presence: true, cards: true, top: 5, lead: lead, onAutoWrong: autoWrong,
       prefs: Array.isArray(last.hiddenAgents) ? prefs : null,   // 老后端（早于 v2.22）没有这个键：不给入口
       focusFallback: document.getElementById("lanes-title"),   // 「还有 N 个」重画后没了时焦点落这里
-      more: last.truncated ? "还有更多（只列出了最新的一部分）" : ""
+      more: moreHint(last)
     });
     // 标题红绿灯：复用 render 排好的 runInfo（在跑的运行一定与视窗重叠，都在里面），不再逐个排 phases
     var live = { working: 0, waiting: 0, error: 0 };

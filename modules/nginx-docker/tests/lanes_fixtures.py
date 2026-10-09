@@ -97,6 +97,14 @@ def truncated() -> dict[str, Any]:
     return d
 
 
+def folded() -> dict[str, Any]:
+    """nexus-core v2.23：封顶折叠掉了较早的 7 + 5 段（两个身份）。"""
+    d = truncated()
+    d["dropped"] = [{"agent": "claude-code", "label": "plot", "unverified": False, "runs": 7, "elapsedSeconds": 420},
+                    {"agent": "codex", "label": "rev", "unverified": False, "runs": 5, "elapsedSeconds": 150}]
+    return d
+
+
 def just_after_midnight() -> dict[str, Any]:
     """「现在」00:30：最近 1 / 3 小时都跨过了今天零点，前端要补拉 ?from=昨天&to=今天。"""
     d = copy.deepcopy(LANES_EMPTY)

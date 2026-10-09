@@ -160,6 +160,12 @@
 > 只在事件的 `ai` 块多一个出处 `report {id, author}`。建议在此期间被人处理了的条目记 `stale` 跳过，不算错。MCP 追加 `propose_report` 与
 > `get_report_status`（`mcp.tools.v1` v1.13，十七个工具）。既有字段、端点、事件形状一个不改。见「AI 报告」节。
 >
+> **v2.23（追加式）：`views/lanes` 的封顶按代理身份，不再按全局最新。** 事故（2026-10-09 实测栈）：外部上报者给同一个标签刷了几十条短运行，
+> 全局「最新 200 条」在下午就用完，所有代理上午的运行被挤掉，页面看起来「今天的泳道进度归零」。现在：在跑的运行优先保留（至多最新 500 条）；已结束的按
+> 代理身份（与 `lane_order.arrange` 同一个 `ident`）分组，最近活动的 200 个身份、每个身份最新 100 条，总数兜底 2000；丢掉的折进响应追加的
+> `dropped[]`（每个身份的条数与裁到窗口的秒数），`truncated` 只要丢了任何东西（含会话超限）就为真。藏起来的身份的 `dropped` 不给。
+> 既有字段、端点行为一个不改。见「`views/lanes` 的封顶」节。
+>
 > **v2.22（追加式；v2.21 留给评审跟进那一版）**：**泳道上的代理能藏起来、置顶、手动排位；人的窗口能「忽略并记住」。**
 > 仓主 2026-10-09：「增加：不再显示这个智能体、置顶这个智能体；长按手动排列智能体，保持这个位置直到它停止，再被拖到最下面」
 > 「增加：记住：忽略 xx 记录，不进圆环也不进泳道，再放一个可展开的被忽略任务菜单」，以及此前的通用性原则：页面和 MCP 读同一份
@@ -404,7 +410,7 @@ provides:
   - id: nexus-core.views.lanes.v1
     summary: 时间线读端（v2.4）——GET /api/core/views/lanes?date=|from=&to= 回人一条线（计时段 + 在计时 +
       最近在场）、代理多条线（运行 + 相位）、连线（reply/attend）；与窗口有重叠即列出、不求和、不写；
-      读新投影 proj_lanes（session.completed 与 agent.run.completed 各一条区间）
+      读新投影 proj_lanes（session.completed 与 agent.run.completed 各一条区间）；v2.23 起封顶按代理身份、响应追加 dropped[]
     status: 已实现（v2.4），待验证
   - id: detector.settings.v1
     contract: ../../../contracts/detector.settings.v1/contract.md
@@ -3840,6 +3846,28 @@ AI 写的或「记住」的分类规则与草稿、代理标签（`agent_runs.la
 - 新集合 `lane_prefs`、`activity_ignores`，各自只有对应子边界的 `repo.py` / `ignore_repo.py` 碰；`views/` 经 `prefs` 的 `service` 读偏好（不读它的 repo）。
 - **不做**：按标签页 / 窗口标题的正则忽略；按设备忽略；忽略规则的导入导出；拖到「已结束」那一组之后的排位；置顶之间的手动排位（置顶的按置顶先后）；
   把「藏起来」同步到顶栏以外的别的页面（顶栏预览读同一份 `views/lanes`，已经跟着）。
+
+## `views/lanes` 的封顶（规范性 · v2.23）
+
+封顶只为保护响应体积，**不许让一个吵闹的代理挤掉别的代理，也不许挤掉它自己更早的时间**。
+
+- **范围**：窗口内（与窗口有重叠）的代理运行。**在跑的运行（含刚标了结束、还没落账的）优先保留，但最多留开始最晚的 500 条**（`MAX_LIVE`；`/agents/start` 不限开着的个数，
+  不能让一个租户把响应撑大）；超出的进 `dropped`（结束时间按 `now` 算，裁到窗口）。**藏起来的身份**的在跑运行不进 `agents[]` / `dropped`，只为 `hiddenAgents` / `hiddenWaiting` 服务，且同样有界：每次请求只取开始最晚的 500 条（其余静默不计，不进 `dropped`、不影响 `truncated`），并且不为它们解析 attend / interactions。被封顶挤进 `dropped` 的在跑运行，其身份仍算「在跑」（`stalePinned` 不会误报）。
+- **已结束的运行**按代理身份分组（身份 = `(agent, 归一化 label, 已验证 / 未验证)`，与 `lanes/prefs` 和 `rank` 同一个键）：
+  只留**最近活动的 200 个身份**（`MAX_AGENTS`，只数有已结束运行的身份），每个身份只留**最新的 100 条**（`MAX_RUNS_PER_LANE`）；在跑的（≤ 500）先算，总数超 2000（`MAX_RUNS_TOTAL`）时
+  从最旧的已结束运行开始丢（最后兜底）。藏起来的身份**已结束**的运行永远不显示，所以在封顶**之前**就剔掉，不占名额、也不算「丢了东西」。
+  封顶在排序 / 藏起来（`arrange`）**之前**做，所以置顶、手动排位、隐藏的逻辑不变。
+- **读法**：投影先按窗口轻读最多 5000 条已结束运行（只读封顶要用的几列），封顶后再只取保留下来的完整文档。窗口里已结束的运行超过 5000 条时，
+  最旧的超出部分连聚合都没有，只能把 `truncated` 标真。`proj_lanes` 走索引 `(user, kind, startAt)`，run 的 startAt 另加下界「窗口开始 − 31 天」
+  （运行时长上限 31 天），最坏扫描 = 该范围内的 run 数，不会为凑数扫整段历史。
+- **`dropped: [{agent, label, unverified, runs, elapsedSeconds}]`**（追加，缺省 `[]`）：被封顶丢掉的运行按身份汇总，`runs` 是条数，`elapsedSeconds` 是
+  这些运行**裁到窗口之内**的秒数之和——所以 `agents[]` 里某个身份的条数 / 秒数加上 `dropped` 里同一身份的，等于它在窗口里的真实总数
+  （`agents[].elapsedSeconds` 不裁，跨零点的运行请自己裁；`dropped` 已裁）。顺序：最近活动的身份在前。
+- **`truncated`**：只要有任何东西被丢（会话超 1000、`dropped` 非空、轻读超 5000）就为真；藏起来的身份被剔掉的运行不算。
+- **藏起来的身份**不出现在 `dropped`；report 范围 / 匿名读不到 `views/lanes`，服务端另在响应里清空 `dropped` 保一道（同 `hiddenAgents`）。
+- **没有 MCP 工具映射 `views/lanes`**（`mcp.tools.v1` 不动）；`views/current` / `views/agent-time` 不受影响，agent-time 的汇总始终是全量（不读本封顶）。
+- 前端（ring 的泳道、`lanes.js`）不对一个身份求和，所以不需要加 `dropped`；`truncated` 且 `dropped` 有数时区尾提示「较早的 N 段已折叠」，
+  没有（老后端 / 仅会话超限）仍是原话。
 
 ## 入口与路由
 

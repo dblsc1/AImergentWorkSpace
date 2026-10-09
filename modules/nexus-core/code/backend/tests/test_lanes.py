@@ -81,9 +81,9 @@ def test_empty_shape_defaults_to_today(client):
                              "auto": None, "needsChoice": None, "aiThinking": None,  # v2.14 两个 + v2.15 一个
                              "focus": None}  # v2.16
     assert (body["agents"], body["interactions"], body["truncated"]) == ([], [], False)
-    assert (body["hiddenAgents"], body["hiddenWaiting"]) == ([], 0)
+    assert (body["hiddenAgents"], body["hiddenWaiting"], body["dropped"]) == ([], 0, [])
     assert set(body) == {"today", "now", "windowStart", "windowEnd", "human", "agents", "interactions",
-                         "truncated", "hiddenAgents", "hiddenWaiting", "stalePinned"}  # v2.22
+                         "truncated", "hiddenAgents", "hiddenWaiting", "stalePinned", "dropped"}  # v2.22 + v2.23
 
 
 def test_sessions_listed_on_every_overlapping_day_unclipped(client, task):
@@ -177,20 +177,22 @@ def test_seven_days_ok_reverse_empty_single_bound(client, task):
 
 
 def test_caps_keep_newest_and_flag_truncated(client, task, monkeypatch):
-    from app.modules.views import lanes  # noqa: PLC0415
+    from app.modules.views import lane_cap, lanes  # noqa: PLC0415
 
     monkeypatch.setattr(lanes, "MAX_SESSIONS", 2)
-    monkeypatch.setattr(lanes, "MAX_AGENTS", 1)
+    monkeypatch.setattr(lane_cap, "MAX_RUNS_PER_LANE", 1)
     day = _today() - timedelta(days=1)
     for hh in (8, 9, 10):
         _backfill(client, task["id"], _local(day, hh), 600)
     body = _lanes(client, date=day.isoformat())
     assert body["truncated"] is True
     assert [datetime.fromisoformat(s["startAt"]).astimezone(_tz()).hour for s in body["human"]["sessions"]] == [9, 10]
-    _start(client)
-    newest = _start(client)
+    for _ in range(2):  # 同一身份的已结束运行：每个身份只留最新 1 条，其余折进 dropped（v2.23）
+        run = _start(client)
+        client.post(f"{API}/agents/{run['runId']}/stop", json={"outcome": "done"})
     body = _lanes(client)
-    assert body["truncated"] is True and [a["runId"] for a in body["agents"]] == [newest["runId"]]
+    assert body["truncated"] is True and [a["runId"] for a in body["agents"]] == [run["runId"]]
+    assert [d["runs"] for d in body["dropped"]] == [1]
 
 
 def test_tenant_isolation(client, task):
