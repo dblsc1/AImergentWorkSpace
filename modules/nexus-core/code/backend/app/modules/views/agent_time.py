@@ -48,7 +48,8 @@ def get_agent_time(date_from: str | None = None, date_to: str | None = None) -> 
     timer_service.list_open_agent_runs(user)
     rows = agent_projection.read_agent_daily_stats(user, date_from=date_from, date_to=date_to)
     hidden = prefs_service.hidden_keys(user)  # v2.22：藏起来的不列在 open[]（open[] 本来就不计入汇总）
-    open_runs = [r for r in timer_service.list_open_agent_runs(user)
+    every = timer_service.list_open_agent_runs(user)
+    open_runs = [r for r in every
                  if prefs_service.ident(r.get("agent"), r.get("label"), bool(r.get("unverified"))) not in hidden]
 
     days = _sum_by(rows, lambda r: r["date"])
@@ -76,4 +77,5 @@ def get_agent_time(date_from: str | None = None, date_to: str | None = None) -> 
             for run in open_runs
             if in_range(run) and not run.get("unverified")  # v2.19.1：匿名开的运行不进代理时长
         ],
+        hiddenCount=sum(1 for r in every if r not in open_runs and in_range(r) and not r.get("unverified")),
     )

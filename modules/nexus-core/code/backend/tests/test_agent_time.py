@@ -16,7 +16,7 @@ API = "/api/core"
 URL = f"{API}/views/agent-time"
 A = {"X-Nexus-Tenant": "ch_aaaa"}
 B = {"X-Nexus-Tenant": "ch_bbbb"}
-KEYS = {"today", "totalSeconds", "runs", "days", "agents", "tasks", "open"}
+KEYS = {"today", "totalSeconds", "runs", "days", "agents", "tasks", "open", "hiddenCount"}
 SHANGHAI = load_settings(
     {"NEXUS_MONGO_URI": "mongodb://x", "NEXUS_DB_NAME": "nexus_core_test", "NEXUS_TZ": "Asia/Shanghai"}
 )

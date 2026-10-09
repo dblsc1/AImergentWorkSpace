@@ -132,6 +132,7 @@ class CurrentOut(_Strict):
     #: v2.1：当前租户在跑的 AI 代理运行，没有为 []。与上面人的字段互不影响——
     #: 只有代理在跑时 running 仍是 false（人一条泳道，代理很多条）。
     agents: list[CurrentAgent] = Field(default_factory=list)
+    hiddenCount: int = 0  #: v2.22：agents[] 没列出的（藏起来的）在跑代理个数；只有个数，没有名字
     #: v2.14 自动跟踪（与 ``views/lanes`` 的 ``human.auto`` / ``needsChoice`` 同一份）：只在没在计时时可能非 null
     auto: LaneAuto | None = None
     needsChoice: LaneNeedsChoice | None = None
@@ -395,6 +396,7 @@ class AgentTimeOut(_Strict):
     agents: list[AgentTimeAgent]
     tasks: list[AgentTimeTask]
     open: list[AgentTimeOpen]
+    hiddenCount: int = 0  #: v2.22：open[] 没列出的（藏起来的）在跑运行个数
 
 
 # -------------------------------------------------------- LanesOut（v2.4）
@@ -502,6 +504,11 @@ class LaneHidden(_Strict):
     phase: str | None
 
 
+class LaneStalePinned(_Strict):
+    agent: str
+    label: str
+
+
 class LanesOut(_Strict):
     """``GET /api/core/views/lanes``（契约 v2.4）。时间线，不是汇总：**没有任何合计字段**。"""
 
@@ -515,3 +522,4 @@ class LanesOut(_Strict):
     truncated: bool
     hiddenAgents: list[LaneHidden] = []  #: v2.22
     hiddenWaiting: int = 0  #: v2.22：藏起来的在跑运行里正等你的个数（页面只给一个很小的提示）
+    stalePinned: list[LaneStalePinned] = []  #: v2.22：置顶着但没有在跑的运行对得上的身份（改名后留下的），可移除

@@ -83,7 +83,7 @@ def test_empty_shape_defaults_to_today(client):
     assert (body["agents"], body["interactions"], body["truncated"]) == ([], [], False)
     assert (body["hiddenAgents"], body["hiddenWaiting"]) == ([], 0)
     assert set(body) == {"today", "now", "windowStart", "windowEnd", "human", "agents", "interactions",
-                         "truncated", "hiddenAgents", "hiddenWaiting"}  # v2.22
+                         "truncated", "hiddenAgents", "hiddenWaiting", "stalePinned"}  # v2.22
 
 
 def test_sessions_listed_on_every_overlapping_day_unclipped(client, task):

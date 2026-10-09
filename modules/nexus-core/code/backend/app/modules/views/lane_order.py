@@ -1,6 +1,9 @@
 """``views/lanes`` 的代理排序与藏起来（契约 v2.22）。纯函数，不读库。
 
-排法（规范性）：置顶且在跑的（按置顶先后）→ 其余按活跃排，手动排过位的在跑运行插在它的 slot 上 → 已结束的。
+排法（规范性）：置顶且在跑的（按置顶先后）→ 其余按活跃排，手动排过位的在跑运行**固定**在它的 slot（位置）上、没排过位的
+按活跃排填满剩下的位置 → 已结束的。手动的按 slot 升序依次插入（slot 夹在「未置顶的在跑个数」之内；同 slot 只在
+排过位的运行结束后留下空位 / 新运行出现时可能发生，按活跃排先后）。写 slot 的一侧（``prefs.service.set_order``）
+保证 slot 两两不同，所以平时每个手动的恰好落在自己的 slot。
 「活跃排」与计时页 lanes.js 的 ``rankRuns`` 同一个口径：档位（在等你 0 → 干活 1 → 出错 2 → 空闲 3 → 失联 3.5 → 已结束 4），
 同档按近 ``RANK_WINDOW`` 里不空闲的秒数倒序，同分按最近一次相位转入倒序。
 """
@@ -45,9 +48,10 @@ def _key(item: dict, now: datetime) -> tuple:
     return (tier, -active, -last.timestamp())
 
 
-def arrange(items: list[dict], prefs: dict, now: datetime) -> tuple[list[dict], list[dict], int]:
-    """``items`` = ``_run_item`` 的结果。返回 (去掉藏起来的、加了 pinned / manualOrder / rank 的行，hiddenAgents，hiddenWaiting)。
-    行的先后不变（仍按开始时间），先后在 ``rank``。"""
+def arrange(items: list[dict], prefs: dict, now: datetime) -> tuple[list[dict], list[dict], int, list[dict]]:
+    """``items`` = ``_run_item`` 的结果。返回 (去掉藏起来的、加了 pinned / manualOrder / rank 的行，hiddenAgents，hiddenWaiting，
+    stalePinned)。行的先后不变（仍按开始时间），先后在 ``rank``。失联的运行不算「在等你」（hiddenAgents.phase 与 hiddenWaiting 一致）。
+    stalePinned = 置顶着、但现在没有任何在跑的运行对得上的身份（改名后旧置顶就是这样留下的），页面列出来让人移除。"""
     hidden = {a["key"]: a for a in prefs["agents"] if a["hidden"]}
     pinned = {a["key"]: a["pinnedAt"] for a in prefs["agents"] if a["pinned"] and not a.get("unverified")}
     slots = {o["runId"]: o["slot"] for o in prefs["order"]}
@@ -61,11 +65,11 @@ def arrange(items: list[dict], prefs: dict, now: datetime) -> tuple[list[dict], 
             shown.append((key, item))
             continue
         if item["endAt"] is None:  # 在跑（含失联）：藏起来的列表要说它还活着、在什么相位；等你的数进 hiddenWaiting
-            row, phase = summary[key], phase_of(item)
+            row, phase = summary[key], "idle" if item["lost"] else phase_of(item)   # 失联的按空闲算，不抢「在等你」
             row["live"] = True
             if row["phase"] is None or phase in WAITING:
                 row["phase"] = phase
-            waiting += phase in WAITING and not item["lost"]
+            waiting += phase in WAITING
 
     # 未验证（匿名）的运行自成一组，永远排在已验证的后面：不继承置顶、不能手动排位
     ranked = sorted((s for s in shown if not s[1]["unverified"]), key=lambda s: _key(s[1], now))
@@ -85,4 +89,7 @@ def arrange(items: list[dict], prefs: dict, now: datetime) -> tuple[list[dict], 
     placed = {s[1]["runId"] for s in movers}
     out = [{**item, "pinned": key in pinned, "manualOrder": slots[item["runId"]] if item["runId"] in placed else None,
             "rank": rank[id(item)]} for key, item in shown]
-    return out, list(summary.values()), waiting
+    running = {ident(i["agent"], i["label"], i["unverified"]) for i in items if i["endAt"] is None}
+    stale = [{"agent": a["agent"], "label": a["label"]} for a in prefs["agents"]
+             if a["pinned"] and not a.get("unverified") and a["key"] not in running]
+    return out, list(summary.values()), waiting, stale

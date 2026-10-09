@@ -351,6 +351,7 @@ def get_current_timer(a, tenant):
              "elapsedSeconds": g.get("elapsedSeconds")}  # nexus-core 算好的（v2.21）；老后端没有 = null
             for g in c.get("agents") or []
         ],
+        "hiddenCount": c.get("hiddenCount", 0),   # 用户藏起来的在跑代理个数（nexus-core v2.22；只有个数）
         "focus": {"state": focus.get("state"), "app": _screen(focus.get("app")), "title": _screen(focus.get("title")),
                   **target(focus),
                   # v1.11：近 2 小时在这同一个窗口上一共待了多少秒（nexus-core v2.17；离开 / 老后端 = null）
@@ -446,6 +447,7 @@ def get_agent_time(a, tenant):
         "tasks": [{"projectId": x["projectId"], "taskId": x.get("taskId"),
                    "path": paths(x.get("taskId"), x["projectId"]), "seconds": x["seconds"], "runs": x["runs"]}
                   for x in r["tasks"]],
+        "hiddenCount": r.get("hiddenCount", 0),   # open[] 没列出的、用户藏起来的在跑运行个数（v2.22）
         "open": [{"runId": x["runId"], "agent": x["agent"], "taskId": x.get("taskId"),
                   "path": paths(x.get("taskId"), x.get("projectId")), "startedAt": x["startedAt"],
                   "elapsedSeconds": x["elapsedSeconds"],

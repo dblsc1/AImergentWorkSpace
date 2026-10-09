@@ -424,7 +424,9 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
 // GET /api/core/views/lanes —— 追加（既有键不变）
 { "agents": [ { /* 既有的键 */ "pinned": false, "manualOrder": null, "rank": 0 } ],
   "hiddenAgents": [ { "agent": "claude-code", "label": "garden", "unverified": false, "live": true, "phase": "waiting_input" } ],
-  "hiddenWaiting": 1 }
+  "hiddenWaiting": 1,
+  "stalePinned": [ { "agent": "claude-code", "label": "old-name" } ] }
+// GET /api/core/views/current、/views/agent-time —— 追加 "hiddenCount": 1（没列出的、藏起来的在跑运行个数）
 
 // GET /api/core/activity/ignores
 { "total": 1, "items": [ { "id": "ig_…", "app": "chrome", "titleContains": "银行", "createdAt": "<ISO>",
@@ -433,7 +435,7 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
 // POST /api/core/activity/suggestions → { "accepted": 1, "duplicates": 0, "rejected": [], "ignored": 2 }   // ignored 只在有时才带
 ```
 
-- `LaneAgent.pinned` 缺省 `false`、`manualOrder` 缺省 `null`、`rank` 是 `agents[]` 里互不相同的 0 起整数；`hiddenAgents` 缺省 `[]`、`hiddenWaiting` 缺省 `0`。
+- `LaneAgent.pinned` 缺省 `false`、`manualOrder` 缺省 `null`、`rank` 是 `agents[]` 里互不相同的 0 起整数；`hiddenAgents` 缺省 `[]`、`hiddenWaiting` 缺省 `0`；`stalePinned` 缺省 `[]`；`views/current` / `views/agent-time` 的 `hiddenCount` 缺省 `0`。
 - `views/current.agents[]`、`views/agent-time.open[]` 形状不变，只是不列藏起来的代理。
 
 ### AI 报告（v2.20，`nexus-core.activity.reports.v1`）

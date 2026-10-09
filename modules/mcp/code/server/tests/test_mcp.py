@@ -140,7 +140,7 @@ def respond(path, q, tenant):
         return 200, {"today": "2026-09-28", "totalSeconds": 9000, "runs": 4,
                      "days": [{"date": "2026-09-28", "seconds": 9000, "runs": 4}],
                      "agents": [{"agent": "claude-code", "seconds": 9000, "runs": 4}],
-                     "tasks": [{"projectId": "p_3c", "taskId": None, "seconds": 9000, "runs": 4}],
+                     "tasks": [{"projectId": "p_3c", "taskId": None, "seconds": 9000, "runs": 4}], "hiddenCount": 2,
                      "open": [{"runId": "run_9", "agent": "codex", "projectId": "p_3c", "taskId": "t_a1",
                                "startedAt": "2026-09-28T10:00:00+08:00", "elapsedSeconds": 1200,
                                "attentionSeconds": 95},
@@ -518,6 +518,12 @@ FOCUS = {
         "focus": {"state": "afk", "app": "", "title": "", "since": _since(60), "projectId": None,
                   "projectName": None, "taskId": None, "taskName": None, "source": None}},
 }
+
+
+def test_hidden_count_is_passed_through_and_defaults_to_zero(servers):
+    """v1.14：藏起来的在跑代理只带个数（nexus-core v2.22）；老后端没有这个键 = 0。"""
+    assert ok(servers, "get_agent_time", {"fromDate": "2026-09-27", "toDate": "2026-09-28"})["hiddenCount"] == 2
+    assert ok(servers, "get_current_timer", headers={"X-Nexus-Tenant": "u_idle"})["hiddenCount"] == 0
 
 
 def test_get_current_timer_carries_the_server_computed_focus(servers):

@@ -141,7 +141,8 @@ def test_hidden_agent_is_omitted_but_listed_for_restore_and_time_is_unchanged(cl
     # 「现在在跑什么」不列它；汇总（含 open 之外的一切）一个数都没变，open 也不再列
     after = client.get(f"{API}/views/agent-time").json()
     assert {o["runId"] for o in after["open"]} == {shown}
-    assert {k: v for k, v in after.items() if k != "open"} == {k: v for k, v in before.items() if k != "open"}
+    assert {k: v for k, v in after.items() if k not in ("open", "hiddenCount")} == {k: v for k, v in before.items() if k not in ("open", "hiddenCount")}
+    assert after["hiddenCount"] == 1
     assert {a["label"] for a in client.get(f"{API}/views/current").json()["agents"]} == {"shown"}
     # 还在跑的没有被动过
     assert gone  # 运行本身没停
@@ -278,3 +279,120 @@ def test_hiding_is_keyed_per_class(client):
     cur = client.get(f"{API}/views/current").json()["agents"]
     assert [a["runId"] for a in cur] == [real] and "unverified" not in cur[0]
     assert {o["runId"] for o in client.get(f"{API}/views/agent-time").json()["open"]} == {real}
+
+
+# ─────────────────────────────────────────── 手动排位：每次拖动重写所有手动 slot（最近一次拖动一定落在目标位）
+
+
+def _runs(client, *labels):
+    for label in labels:
+        _start(client, label)
+    ids = {a["label"]: a["runId"] for a in _lanes(client)["agents"]}
+    assert _order(client) == list(labels)  # 起点：活跃排 = 开始先后
+    return ids
+
+
+def _drag(client, ids, label, index):
+    _put(client, "order", {"runId": ids[label], "index": index})
+    return "".join(_order(client))
+
+
+@pytest.mark.parametrize("drags,expected", [
+    ([("D", 0)], ["DABC"]),
+    ([("D", 0), ("C", 0)], ["DABC", "CDAB"]),  # 老实现：D:0、C:0 撞槽 → DCAB
+    ([("D", 0), ("C", 1), ("A", 0)], ["DABC", "DCAB", "ADCB"]),  # 老实现：DCAB
+    ([("B", 3), ("A", 3)], ["ACDB", "CDBA"]),
+    ([("A", 99)], ["BCDA"]),  # 超出夹到最后
+])
+def test_manual_drags_land_on_their_target_and_keep_earlier_placements(client, drags, expected):
+    ids = _runs(client, "A", "B", "C", "D")
+    assert [_drag(client, ids, label, index) for label, index in drags] == expected
+    slots = [o["slot"] for o in client.get(PREFS).json()["order"]]
+    assert len(slots) == len(set(slots))  # 存的 slot 两两不同：状态没有歧义
+
+
+def test_random_drags_property(client):
+    import random  # noqa: PLC0415
+
+    rng = random.Random(7)
+    labels = ["A", "B", "C", "D", "E"]
+    ids = _runs(client, *labels)
+    placed: list[str] = []  # 按先后：手动排过位的
+    for _ in range(25):
+        label, index = rng.choice(labels), rng.randrange(0, 5)
+        before = _order(client)
+        _put(client, "order", {"runId": ids[label], "index": index})
+        after = _order(client)
+        assert after.index(label) == index  # 最近一次拖动落在目标位
+        placed = [x for x in placed if x != label] + [label]
+        manual_before = [x for x in before if x in placed and x != label]
+        assert [x for x in after if x in manual_before] == manual_before  # 之前排过位的相对先后不变
+
+
+def test_pinning_a_manually_placed_run_clears_its_slot(client):
+    ids = _runs(client, "A", "B", "C")
+    _drag(client, ids, "C", 0)
+    _pin(client, "C")
+    assert client.get(PREFS).json()["order"] == []
+    _pin(client, "C", False)
+    assert _order(client) == ["A", "B", "C"]  # 取消置顶回到活跃排，不带着旧 slot
+    assert client.put(f"{PREFS}/order", json={"runId": ids["A"], "index": 0}).status_code == 200
+    _pin(client, "A")
+    assert client.put(f"{PREFS}/order", json={"runId": ids["A"], "index": 0}).status_code == 404  # 置顶的不能手动排位
+
+
+def test_cas_exhaustion_is_a_409_not_a_500(client, monkeypatch):
+    from app.modules.prefs import repo  # noqa: PLC0415
+
+    monkeypatch.setattr(repo, "cas", lambda *a, **k: False)
+    resp = client.put(f"{PREFS}/agent", json={"agent": "cc", "label": "x", "hidden": True})
+    assert resp.status_code == 409
+
+
+# ─────────────────────────────────────────── 身份归一化（服务端唯一一份）
+
+
+@pytest.mark.parametrize("a,b", [("Ａｒｔ", "art"), ("ze​ro", "zero"), ("Straße", "STRASSE"), ("a \t b", "A B")])
+def test_identity_folding(client, a, b):
+    _hide(client, a)
+    assert len(_hide(client, b)["agents"]) == 1  # 同一个身份
+    run_a = _start(client, a)
+    assert _lanes(client)["agents"] == [] and run_a
+
+
+# ─────────────────────────────────────────── 置顶但没在跑（改名后留下的）、hiddenCount、失联
+
+
+def test_stale_pinned_is_listed_and_removable(client):
+    r = _start(client, "old")
+    _pin(client, "old")
+    assert _lanes(client)["stalePinned"] == []
+    _stop(client, r)
+    _start(client, "new")  # 改名重启
+    assert _lanes(client)["stalePinned"] == [{"agent": "cc", "label": "old"}]
+    _pin(client, "old", False)
+    assert _lanes(client)["stalePinned"] == []
+
+
+def test_hidden_count_in_current_and_agent_time(client):
+    _start(client, "a")
+    _start(client, "b")
+    assert client.get(f"{API}/views/current").json()["hiddenCount"] == 0
+    _hide(client, "b")
+    assert client.get(f"{API}/views/current").json()["hiddenCount"] == 1
+    body = client.get(f"{API}/views/agent-time").json()
+    assert body["hiddenCount"] == 1 and len(body["open"]) == 1
+
+
+def test_lost_hidden_run_is_not_waiting():
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    from app.modules.views.lane_order import arrange  # noqa: PLC0415
+
+    now = datetime(2026, 1, 1, 12, tzinfo=timezone.utc)
+    t = "2026-01-01T10:00:00+00:00"
+    item = {"runId": "r", "agent": "cc", "label": "x", "unverified": False, "startAt": t, "endAt": None, "lost": True,
+            "lastSeenAt": t, "phases": [{"at": t, "phase": "waiting_input", "detail": None}]}
+    prefs = {"agents": [{"key": "cc\nx", "agent": "cc", "label": "x", "hidden": True, "pinned": False}], "order": []}
+    _, hidden, waiting, _ = arrange([item], prefs, now)
+    assert waiting == 0 and hidden[0]["live"] is True and hidden[0]["phase"] != "waiting_input"

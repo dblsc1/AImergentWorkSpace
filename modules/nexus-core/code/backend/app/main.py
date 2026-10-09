@@ -28,10 +28,11 @@ from .modules.events.service import InvalidQueryError
 from .modules.export.router import router as export_router
 from .modules.planner.errors import ForbiddenError, StalePlanError, UnprocessableError
 from .modules.planner.import_router import router as planner_import_router
-from .modules.prefs.router import router as prefs_router
 from .modules.planner.repo import ensure_tenant_indexes
 from .modules.planner.service import HasChildrenError, InvalidInputError, NotFoundError
 from .modules.planner.unified_router import router as planner_unified_router
+from .modules.prefs.router import router as prefs_router
+from .modules.prefs.service import ConflictError as PrefsConflictError
 from .modules.projector.rebuild import backfill_lanes_if_empty
 from .modules.restore.router import router as restore_router
 from .modules.restore.service import NotEmptyError
@@ -211,6 +212,12 @@ def restore_not_empty(_request: Request, exc: NotEmptyError) -> JSONResponse:
 @app.exception_handler(SuggestionConflictError)
 def suggestion_conflict(_request: Request, exc: SuggestionConflictError) -> JSONResponse:
     """契约 v2.2：请求合法，冲突的是建议的**当前状态**（同 `NoRunningTimerError`）。"""
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(PrefsConflictError)
+def prefs_conflict(_request: Request, exc: PrefsConflictError) -> JSONResponse:
+    """契约 v2.22：泳道偏好写入争用重试用尽。409——请求合法，稍后重试。"""
     return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
