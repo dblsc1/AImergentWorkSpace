@@ -7,10 +7,22 @@
 # 对外冻结的接口（部署方靠这些接自己的东西，不改、不复制本仓文件）见
 # contracts/gateway.v1/contract.md。`./install.sh add hive ring assistant` 生成行为相同的一份
 # （deploy/generated/），CI 两份都起一遍核对。
+# 匿名上报的限速（gateway.v1 第九节）：不带 Authorization 头、POST 到 /api/core/agents/ 下的请求按客户端地址
+# 限速；别的请求键为空 = 不限。$uri 在限速生效时已被下面的 rewrite 去掉站点前缀。只看 Authorization 有没有：
+# 认证服务只在它为空时才可能把请求当匿名（auth.gate v1.4），所以匿名请求一定落在这个区里。
+map "$request_method:$http_authorization:$uri" $honeycomb_anon_key {
+    default "";
+    "~^POST:[ \t]*:/api/core/agents/" $binary_remote_addr;
+}
+limit_req_zone $honeycomb_anon_key zone=honeycomb_anon:1m rate=120r/m;
+
 server {
     listen 80;
     server_name _;
     charset utf-8;
+
+    limit_req zone=honeycomb_anon burst=60 nodelay;
+    limit_req_status 429;
 
     # 跳转一律用相对 Location（2026-09-14 真机 bug）：
     # 默认 absolute_redirect on 时 nginx 会拿 $host 拼绝对 URL，而 $host **不带端口**，
@@ -57,6 +69,11 @@ server {
         proxy_set_header Content-Length "";
         proxy_set_header X-Nexus-Tenant "";
         proxy_set_header X-Original-URI $request_uri;
+        # 子请求自己的方法永远是 GET；认证服务按原始请求的方法判范围（auth.gate v1.4）。
+        proxy_set_header X-Original-Method $request_method;
+        # 范围头 / 匿名头只能是认证服务对网关说的：客户端自带的不转给任何上游（verify 本来也不读）。
+        proxy_set_header X-Nexus-Scope "";
+        proxy_set_header X-Nexus-Anonymous "";
     }
     location @to_login {
         return 302 ${HONEYCOMB_BASE_PATH}login/;
@@ -73,6 +90,8 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Nexus-Tenant "";
+        proxy_set_header X-Nexus-Scope "";
+        proxy_set_header X-Nexus-Anonymous "";
     }
 
     # 登录页。目录由 HONEYCOMB_LOGIN_DIR 挂进来（缺省是登录门占位件自带的页面）。
@@ -106,6 +125,10 @@ server {
         proxy_redirect http://nexus-core:8000/api/core/views/current ${HONEYCOMB_BASE_PATH}__cockpit/current;
         proxy_set_header Host $host;
         proxy_set_header X-Nexus-Tenant $honeycomb_tenant;
+        auth_request_set $honeycomb_scope $upstream_http_x_nexus_scope;
+        auth_request_set $honeycomb_anonymous $upstream_http_x_nexus_anonymous;
+        proxy_set_header X-Nexus-Scope $honeycomb_scope;
+        proxy_set_header X-Nexus-Anonymous $honeycomb_anonymous;
         proxy_connect_timeout 2s;
         proxy_read_timeout 3s;
         proxy_intercept_errors on;

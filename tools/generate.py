@@ -385,10 +385,22 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
         "#",
         "# envsubst 模板：nginx 镜像启动时渲染成 conf.d/default.conf，只替换",
         "# NGINX_ENVSUBST_FILTER 放行的变量（AUTH_UPSTREAM、HONEYCOMB_* 与清单里的 upstreamEnv）。对外冻结接口见 contracts/gateway.v1/contract.md。",
+        '# 匿名上报的限速（gateway.v1 第九节）：不带 Authorization 头、POST 到 /api/core/agents/ 下的请求按客户端地址',
+        '# 限速；别的请求键为空 = 不限。$uri 在限速生效时已被下面的 rewrite 去掉站点前缀。只看 Authorization 有没有：',
+        '# 认证服务只在它为空时才可能把请求当匿名（auth.gate v1.4），所以匿名请求一定落在这个区里。',
+        'map "$request_method:$http_authorization:$uri" $honeycomb_anon_key {',
+        '    default "";',
+        '    "~^POST:[ \\t]*:/api/core/agents/" $binary_remote_addr;',
+        '}',
+        'limit_req_zone $honeycomb_anon_key zone=honeycomb_anon:1m rate=120r/m;',
+        "",
         "server {",
         "    listen 80;",
         "    server_name _;",
         "    charset utf-8;",
+        "",
+        "    limit_req zone=honeycomb_anon burst=60 nodelay;",
+        "    limit_req_status 429;",
         "",
         "    # 跳转一律用相对 Location。默认 absolute_redirect on 时 nginx 会拿 $host",
         "    # 拼绝对 URL，而 $host **不带端口** —— 于是 http://IP:8800/ 的 302 跳到了",
@@ -434,6 +446,9 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
             "        proxy_set_header Content-Length \"\";",
             "        proxy_set_header X-Nexus-Tenant \"\";",
             "        proxy_set_header X-Original-URI $request_uri;",
+            "        proxy_set_header X-Original-Method $request_method;",
+            "        proxy_set_header X-Nexus-Scope \"\";",
+            "        proxy_set_header X-Nexus-Anonymous \"\";",
             "    }",
             f"    location @to_login {{ return 302 {_b('/login/')}; }}",
             "",
@@ -448,6 +463,8 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
             "        proxy_set_header Host $host;",
             "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
             "        proxy_set_header X-Nexus-Tenant \"\";",
+            "        proxy_set_header X-Nexus-Scope \"\";",
+            "        proxy_set_header X-Nexus-Anonymous \"\";",
             "    }",
         ]
     for st in statics:
@@ -485,9 +502,14 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
                 "        auth_request_set $honeycomb_tenant $upstream_http_x_nexus_tenant;",
                 f"        error_page 401 = @degraded_{i};",
                 "        proxy_set_header X-Nexus-Tenant $honeycomb_tenant;",
+                "        auth_request_set $honeycomb_scope $upstream_http_x_nexus_scope;",
+                "        auth_request_set $honeycomb_anonymous $upstream_http_x_nexus_anonymous;",
+                "        proxy_set_header X-Nexus-Scope $honeycomb_scope;",
+                "        proxy_set_header X-Nexus-Anonymous $honeycomb_anonymous;",
             ]
         else:
-            L += ["        proxy_set_header X-Nexus-Tenant \"\";"]
+            L += ["        proxy_set_header X-Nexus-Tenant \"\";",
+                  "        proxy_set_header X-Nexus-Scope \"\";", "        proxy_set_header X-Nexus-Anonymous \"\";"]
         upstream = r.get("upstream", r["prefix"])
         L += [
             f'        set $honeycomb_up_{i} "{r["service"]}:{r["port"]}";',

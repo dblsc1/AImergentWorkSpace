@@ -287,6 +287,59 @@
       </div>
     </section>
 
+    <!-- 「Agent 令牌」（contracts/auth.gate.v1 v1.4，tokens.js）：登录了的人给 AI 代理发访问令牌、单独吊销。
+         认证服务不支持（GET api/auth/tokens 不是 200 / 503）时整块不出现。令牌本身只显示一次，不落任何存储。 -->
+    <section class="card tokens-panel" id="tokens-panel" hidden aria-labelledby="tokens-title">
+      <h2 class="suggest-title" id="tokens-title">Agent 令牌</h2>
+      <p class="suggest-sub">给 AI 代理、同步程序用的访问令牌。<strong>令牌不会自动生成</strong>：你在这里发，再交给你信得过的那一个代理；
+        给多大权限由你选，随时可以单独吊销。</p>
+      <p class="suggest-empty" id="tok-note" hidden></p>
+      <p class="set-hint" id="tok-anon" hidden>这台是单人部署：不带令牌的请求也能上报代理状态（只能往泳道里加记为「未验证」的记录，读不到任何东西）。
+        端口对别人开放时请在 .env 里设 <code>AUTH_ANONYMOUS_REPORT=false</code>，改用「只上报」令牌。</p>
+
+      <form id="tok-form" class="det-form" novalidate>
+        <fieldset class="set-group">
+          <legend>权限</legend>
+          <div class="set-checks">
+            <label class="set-opt"><input type="radio" name="tok-scope" value="report" checked>
+              <span>只上报</span>
+              <span class="eg">只能报告自己「在跑 / 在等你 / 结束了」，读不到你的任何数据。给编码代理的钩子用。</span></label>
+            <label class="set-opt"><input type="radio" name="tok-scope" value="read">
+              <span>只读</span>
+              <span class="eg">能读任务、时间与泳道（含 MCP 的只读工具），也能上报；什么都改不了。给只需要了解情况的助理用。</span></label>
+            <label class="set-opt"><input type="radio" name="tok-scope" value="write">
+              <span>读写</span>
+              <span class="eg">还能上传活动与事件、让 AI 起草建议。给桌面检测程序（ai-detector）或你完全信任的管理代理用。</span></label>
+          </div>
+        </fieldset>
+        <div class="set-field">
+          <label class="set-label" for="tok-name">备注（选填，只给你自己看）</label>
+          <input class="field" type="text" id="tok-name" maxlength="64" autocomplete="off" placeholder="比如：笔记本上的 Claude Code">
+        </div>
+        <div class="det-actions">
+          <button type="submit" class="btn btn-fact" id="tok-mint">生成令牌</button>
+        </div>
+      </form>
+      <p class="suggest-message" id="tok-message" role="status" hidden></p>
+
+      <div class="tok-new" id="tok-new" hidden>
+        <p class="tok-new-head"><span id="tok-new-scope"></span>已生成。<strong>它只显示这一次</strong>——现在就复制走，离开这页就再也看不到了。</p>
+        <div class="tok-secret-row">
+          <code class="tok-secret mono" id="tok-secret"></code>
+          <button type="button" class="btn btn-fact" id="tok-secret-copy">复制令牌</button>
+        </div>
+        <div class="tok-snippets" id="tok-snippets"></div>
+        <div class="det-actions">
+          <button type="button" class="btn btn-ghost" id="tok-done">我已保存好，收起</button>
+        </div>
+      </div>
+
+      <h3 class="det-rules-title">已发的令牌</h3>
+      <p class="suggest-empty" id="tok-empty" hidden>还没有发过令牌。</p>
+      <ul class="tok-list" id="tok-list"></ul>
+      <p class="set-hint">这里从不显示令牌本身。v0.3 发的老令牌（hct1 开头）不在列表里，要作废它们只能在命令行吊销整个账号的令牌。</p>
+    </section>
+
     <!-- 「回顾」：v0.3 只放入口，分析以后做（不加后端）。 -->
     <section class="card review-panel" id="review-panel" aria-labelledby="review-title">
       <h2 class="suggest-title" id="review-title">回顾</h2>
@@ -304,6 +357,7 @@
   <script src="auto.js"></script>
   <script src="settings.js"></script>
   <script src="rules.js"></script>
+  <script src="tokens.js"></script>
   <script src="review.js"></script>
 </body>
 </html>
