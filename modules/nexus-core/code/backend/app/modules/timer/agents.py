@@ -351,6 +351,7 @@ def list_running(user: str, *, now: Callable[[], datetime]) -> list[dict]:
     """``views/current`` 的 ``agents[]``（v2.4 增 phase/label）。"""
     return [
         {**{k: run.get(k) for k in ("runId", "taskId", "agent", "tool", "model", "startedAt", "label")},
-         "phase": current_phase(run), "elapsedSeconds": run["elapsedSeconds"]}  # v2.21：同 views/lanes 的口径
+         "phase": current_phase(run), "elapsedSeconds": run["elapsedSeconds"],  # v2.21：同 views/lanes 的口径
+         "unverified": bool(run.get("unverified"))}  # unverified 只给 views 过滤用，不回出
         for run in list_open(user, now=now)
     ]

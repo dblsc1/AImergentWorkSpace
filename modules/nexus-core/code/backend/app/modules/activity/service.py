@@ -30,6 +30,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Literal
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     Field,
     StrictBool,
@@ -50,7 +51,7 @@ from ..planner import service as planner_service
 from ..planner import unclassified
 from ..planner.errors import ForbiddenError, InvalidInputError, NotFoundError
 from ..timer import service as timer_service
-from . import presence, proposals, repo, session_link
+from . import ignore, presence, proposals, repo, session_link
 from .proposals import ConflictError  # noqa: F401 —— 真身在 proposals.py（v2.8 也要抛它），main.py 照旧从这里取
 
 SOURCE = "activity-confirmed"
@@ -128,8 +129,8 @@ class _Segment(BaseModel):
     endAt: Annotated[StrictStr, Field(max_length=64)]
     durationSeconds: StrictInt
     # 超长不拒、截断（按码点）：标题是展示用的，为几个多余字符丢掉一整段真实活动不划算
-    app: Annotated[StrictStr, Field(min_length=1)]
-    title: StrictStr
+    app: Annotated[StrictStr, Field(min_length=1), AfterValidator(lambda v: v[:ignore.GATE_CHARS])]
+    title: Annotated[StrictStr, AfterValidator(lambda v: v[:ignore.GATE_CHARS])]
     suggestion: _Suggestion
     idle: StrictBool = False  # v2.5：检测程序认为这段「前台没换、但无操作」
 
@@ -194,6 +195,8 @@ def upload(device_id: str, segments: list[Any], inserted: list[dict] | None = No
             rejected.append({"index": index, "reason": _reason(exc)})
         except ValueError as exc:
             rejected.append({"index": index, "reason": str(exc)})
+    # v2.22 忽略并记住：命中规则的段不存，只记在规则的计数器上（读不到规则 → 这里抛，整个上传被拒）
+    valid, ignored = ignore.gate_incoming(user, valid, lambda v: (v[0].app, v[0].title, v[0].durationSeconds))
     # v2.13 窗口 ↔ 代理会话：这批段的总时间窗里的代理运行，只查一次
     runs = session_link.runs(user, min(s for _, s, _ in valid), max(e for _, _, e in valid)) if valid else []
     for seg, start, end in valid:
@@ -222,7 +225,8 @@ def upload(device_id: str, segments: list[Any], inserted: list[dict] | None = No
                 inserted.append(doc)
         else:
             duplicates += 1
-    return {"accepted": accepted, "duplicates": duplicates, "rejected": rejected}
+    return {"accepted": accepted, "duplicates": duplicates, "rejected": rejected,
+            **({"ignored": ignored} if ignored else {})}  # v2.22：只在有被忽略的段时才带这个键
 
 
 _ITEM_KEYS = ("id", "deviceId", "startAt", "endAt", "durationSeconds", "app", "title", "suggestion", "status")

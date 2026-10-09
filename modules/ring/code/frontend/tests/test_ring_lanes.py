@@ -40,9 +40,9 @@ class LanesStub:
 @contextlib.contextmanager
 def open_lanes(browser: Browser, base: str, body: dict[str, Any] | None, *, status: int = 200,
                width: int = 1100, theme: str | None = None, reduced_motion: str | None = None,
-               clock: bool = False) -> Iterator[tuple[Any, LanesStub]]:
+               clock: bool = False, has_touch: bool = False) -> Iterator[tuple[Any, LanesStub]]:
     context = browser.new_context(viewport={"width": width, "height": 900}, timezone_id="Asia/Shanghai",
-                                  reduced_motion=reduced_motion)
+                                  reduced_motion=reduced_motion, has_touch=has_touch)
     page = context.new_page()
     if clock:
         page.clock.install()

@@ -14,6 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from .config import settings
+from .modules.activity.ignore_router import router as ignore_router
 from .modules.activity.presence_router import router as presence_router
 from .modules.activity.reports import TooManyReportsError
 from .modules.activity.reports_router import router as reports_router
@@ -30,6 +31,8 @@ from .modules.planner.import_router import router as planner_import_router
 from .modules.planner.repo import ensure_tenant_indexes
 from .modules.planner.service import HasChildrenError, InvalidInputError, NotFoundError
 from .modules.planner.unified_router import router as planner_unified_router
+from .modules.prefs.router import router as prefs_router
+from .modules.prefs.service import ConflictError as PrefsConflictError
 from .modules.projector.rebuild import backfill_lanes_if_empty
 from .modules.restore.router import router as restore_router
 from .modules.restore.service import NotEmptyError
@@ -101,7 +104,9 @@ app.include_router(restore_router, prefix=API_PREFIX)
 app.include_router(activity_router, prefix=API_PREFIX)  # v2.2 活动建议
 app.include_router(presence_router, prefix=API_PREFIX)  # v2.4 在场心跳
 app.include_router(reports_router, prefix=API_PREFIX)  # v2.20 AI 报告
+app.include_router(ignore_router, prefix=API_PREFIX)  # v2.22 忽略并记住
 app.include_router(detector_router, prefix=API_PREFIX)  # v2.5 检测程序设置；v2.6 分类规则
+app.include_router(prefs_router, prefix=API_PREFIX)  # v2.22 泳道偏好
 
 
 # 域错误 → 状态码的映射只在这里（contract.md v0.4「校验」表 + v0.6「档案读端」）：
@@ -207,6 +212,12 @@ def restore_not_empty(_request: Request, exc: NotEmptyError) -> JSONResponse:
 @app.exception_handler(SuggestionConflictError)
 def suggestion_conflict(_request: Request, exc: SuggestionConflictError) -> JSONResponse:
     """契约 v2.2：请求合法，冲突的是建议的**当前状态**（同 `NoRunningTimerError`）。"""
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(PrefsConflictError)
+def prefs_conflict(_request: Request, exc: PrefsConflictError) -> JSONResponse:
+    """契约 v2.22：泳道偏好写入争用重试用尽。409——请求合法，稍后重试。"""
     return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 

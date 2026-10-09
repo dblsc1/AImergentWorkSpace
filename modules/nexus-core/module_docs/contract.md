@@ -160,6 +160,19 @@
 > 只在事件的 `ai` 块多一个出处 `report {id, author}`。建议在此期间被人处理了的条目记 `stale` 跳过，不算错。MCP 追加 `propose_report` 与
 > `get_report_status`（`mcp.tools.v1` v1.13，十七个工具）。既有字段、端点、事件形状一个不改。见「AI 报告」节。
 >
+> **v2.22（追加式；v2.21 留给评审跟进那一版）**：**泳道上的代理能藏起来、置顶、手动排位；人的窗口能「忽略并记住」。**
+> 仓主 2026-10-09：「增加：不再显示这个智能体、置顶这个智能体；长按手动排列智能体，保持这个位置直到它停止，再被拖到最下面」
+> 「增加：记住：忽略 xx 记录，不进圆环也不进泳道，再放一个可展开的被忽略任务菜单」，以及此前的通用性原则：页面和 MCP 读同一份
+> 服务端算好的数据——偏好存在服务端，**先后也由服务端排**，不只是浏览器里排。① 新增 `nexus-core.lanes.prefs.v1`：每租户一份泳道偏好，
+> 按**代理身份 (agent, 归一化 label)** 记「藏起来 / 置顶」（同名重启后仍然藏着 / 置顶着），按**运行**记手动排位（只在这条运行还在跑时有效）；
+> `GET/PUT/DELETE /api/core/lanes/prefs…` 只收人。`views/lanes` 据此：藏起来的代理不出现在 `agents[]`（时间照记、totals 不变），
+> 每行追加 `pinned` / `manualOrder` / `rank`（服务端排好的先后：置顶 → 手动排位 → 活跃 → 已结束），响应追加 `hiddenAgents[]` 与
+> `hiddenWaiting`；`views/current` 的 `agents[]` 与 `views/agent-time` 的 `open[]` 不列藏起来的。② 新增 `nexus-core.activity.ignores.v1`：
+> 人对一个窗口说「忽略并记住」→ 服务端存一条规则（程序 + 可选的标题片段），以后匹配的窗口**不记为工作**：上传的建议直接丢弃、
+> 在场心跳里换成「没有窗口」（只是显示 / 跟踪过滤，不是隐私擦除）（不成为焦点 / 自动跟踪目标 / 请你选的窗口，也不让「你在看」变长），规则上只有计数器；`GET/POST/DELETE
+> /api/core/activity/ignores` 写只收人。MCP `get_detector_rules` 追加 `ignored`（`mcp.tools.v1` v1.14，工具数不变）。
+> 既有字段、端点行为一个不改。见「泳道偏好与忽略并记住」节。
+>
 > **v2.19（追加式；v2.18 留给代理心跳那一版）**：**令牌带范围，没有令牌只能上报。** 仓主 2026-10-09：「token 可以让我们给智能体不同权限：读 / 写 / 只上报进度」「请求没有 token 的话，就只能上报」。认证服务（`auth.gate.v1` v1.4）在门上按范围放行，并经网关多转两个头 `X-Nexus-Scope` / `X-Nexus-Anonymous`；本版据此**再拦一遍**（`report` 只有四个上报端点、`read` 再加 `GET`），并把匿名开的代理运行标成 `unverified`、与验证过的运行隔开。两个头都没有时行为与 v2.18 完全一样；既有字段、端点一个不改，只追加 `views/lanes` 的 `agents[].unverified`。见「调用方范围与匿名上报」节。
 >
 > **v2.19.1（2026-10-09，PR #89 / #90 / #91 复审的补记；只补文字与收紧，不加字段）**：① 匿名（`unverified`）运行**不进代理时长**：
@@ -459,6 +472,17 @@ provides:
       …/items/{itemId}/reject、…/{id}/reject；全部只收人（带 Bearer 403）。批准走同一个 confirm / dismiss / proposals.task_for，
       逐条结果 applied | stale | failed；事件 ai 块追加选填 report {id, author}。报告不是事实：不进台账 / 导出 / 快照
     status: 已实现（v2.20），待验证
+  - id: nexus-core.lanes.prefs.v1
+    summary: 泳道偏好（v2.22，追加式）——每租户一份：代理身份 (agent, 归一化 label) 的 hidden / pinned（pinnedAt 定先后）、按运行的手动排位
+      slot（只对在跑的运行有效）。GET /api/core/lanes/prefs、PUT …/agent {agent, label?, hidden?, pinned?}、PUT …/order {runId, index}、
+      DELETE …/order[/{runId}]，全部只收人（带 Bearer 403）。views/lanes：藏起来的代理不出现（时间照记）、agents[] 追加
+      pinned / manualOrder / rank（服务端排）、响应追加 hiddenAgents[] / hiddenWaiting；views/current.agents[] 与 views/agent-time.open[] 不列藏起来的
+    status: 已实现（v2.22），待验证
+  - id: nexus-core.activity.ignores.v1
+    summary: 忽略并记住（v2.22，追加式）——GET /api/core/activity/ignores（读不设限；非人的调用方没有 titleContains，只有 hasTitleFilter）、POST {app, titleContains?}（只收人，幂等，顺手删掉待确认 / 已忽略里的匹配建议，尽力而为）、
+      DELETE /{id}（只收人，幂等）。命中（NFKC / 去不可见字符 / 折叠空白 / casefold 之后：程序名相等 + 可选标题子串）的窗口不记为工作：建议上传丢弃（响应有被忽略时追加 ignored）、
+      在场心跳换成「没有窗口」；不是隐私擦除，已记下的不动（规则里存人填的匹配文字，只给人看）。不是 detector.rules.v1 的规则
+    status: 已实现（v2.22），待验证
 consumes:
   - id: yq-event/v1
     contract: ../../contracts/yq-event.v1/contract.md
@@ -3719,6 +3743,104 @@ AI 仍不能改 / 删任何已有规则、不能写匹配范围超出那一个�
 - 不让 AI 撤回或顶掉报告，也不按 AI 区分可见性（没有可信的 AI 身份可依）：撤回只有人「整份不要」。
 - 不在批准里做「撤销」：入账后的改归属走 v2.11。
 
+## 泳道偏好与忽略并记住（规范性 · v2.22，`nexus-core.lanes.prefs.v1` + `nexus-core.activity.ignores.v1`）
+
+仓主 2026-10-09（原话见本文件头部 v2.22）。**两样都只管显示与要不要记，不改任何已记下的事实。**
+
+### 一、泳道偏好（`nexus-core.lanes.prefs.v1`）
+
+**身份与排位是两回事。**
+
+- **代理身份** = (`agent`, 归一化后的 `label`, 类)，**不是** `runId`：归一化（服务端唯一一份，偏好的键与查找都用它）= NFKC（全角字母 = 半角）+ 去不可见字符（Unicode 类别 `Cf` 全部——零宽、软连字符 U+00AD、方向标记 U+200E/F/U+202A–E 等、U+2060、U+FEFF、U+180E——加 U+034F 与变体选择符 U+FE00–FE0F、U+E0100–E01EF）+ 折叠空白 + casefold（`ß` = `ss`）；**类** = 已验证 / 未验证（匿名，`unverified`）。`agent` / `label` 是开运行的人自报的，不能证明身份，所以**匿名运行单独一类**：藏起一个匿名的名字不会藏掉同名的已验证会话，反过来也一样；匿名运行**不继承置顶**、**不能手动排位**（`order` 对它回与不存在 / 已结束相同的 404）、`pinned` 对它回 422，`rank` 永远排在所有已验证运行之后（自成一组，按活跃排）。偏好**只管显示，不参与任何授权或记账判断**。没有 `label` 的运行身份只有 `agent`
+  （藏起来 = 这个代理所有没名字的运行）。「藏起来」「置顶」记在身份上，所以同名代理重启（新的 `runId`）后仍然藏着 / 置顶着。
+- **手动排位**按**运行**：`runId → slot`，`slot` = 这条运行在「未置顶的在跑运行」里的位置（0 起）。只在这条运行**还在跑**时有效；
+  它一结束（`endAt` 非 null）就不再占位（读时忽略，下一次写顺手清掉），掉到已结束那一组；同名重启的新运行没有排位。
+  **每次 `PUT …/order` 由服务端算出「拖完后的完整先后」**（现在的 `rank` 先后里，被拖的那条放到目标位），再把**所有手动排过位的运行**
+  （含这次拖的）的 `slot` 重写成它们在这个先后里的位置——所以存的 `slot` 两两不同，**最近一次拖动一定落在它的目标位**，之前排过位的相对先后不变；
+  没排过位的运行继续按活跃排，**填满手动运行没占的位置**（手动的固定在自己的 slot 上，不随活跃变动，直到它结束）。拖动时不在那个队列里的旧 slot
+  （藏起来的等）顺手丢掉。运行被置顶时它的 slot 作废（取消置顶后回到活跃排）。
+  两个边角（声明）：① 读时 `slot` 夹在在跑运行的个数之内——被夹住的运行显示在最后，等新运行起来、个数变多了，它**弹回**存着的原 `slot`；② 手动排过位、后来被藏起来的运行，再拖别的卡片时它的 `slot` 被丢掉（拖动重写时它不在那个队列里），取消隐藏后回到活跃排。
+- **改名**：身份就是名字，所以改了名的会话是另一个身份——**藏起来**的旧名字留在「已隐藏」里（没在跑，可恢复），新名字照常显示；
+  **置顶**的旧名字同样失效（新名字不继承），响应的 `stalePinned` 把它列出来（「置顶但没在跑」），页面在「已隐藏」折叠里给「移除」（= 取消置顶）。
+- 偏好是显示用的活状态，存独立集合 `lane_prefs`（每租户一个文档，带版本号条件写），**不进台账 / 投影 / 导出 / 快照恢复**。
+
+**端点**（前缀 `/api/core/lanes/prefs`，全部**只收人**：带 `Authorization: Bearer`——设备令牌、read 令牌——一律 403，且在看请求体之前；
+report 令牌与匿名由「调用方范围」放行表挡成 403；放行表还单列挡掉 read 范围对 `/api/core/lanes/prefs` 的一切请求，GET 也不放）：
+
+| 方法 路径 | 请求体 | 说明 |
+|---|---|---|
+| `GET /lanes/prefs` | — | `{agents: [{agent, label, unverified, hidden, pinned, pinnedAt}], order: [{runId, slot}]}`（`unverified` = 这个身份是匿名那一类，和同名的已验证身份互不串） |
+| `PUT /lanes/prefs/agent` | `{agent, label?, unverified?（缺省 false）, hidden?, pinned?}`（至少给一个标志；多出的键 / 非布尔 422） | 幂等：给哪个标志就设成哪个值。再置顶不动 `pinnedAt`。藏 / 置顶都没了的身份顺手删掉。回新的整份偏好 |
+| `PUT /lanes/prefs/order` | `{runId, index}`（`index` 0–1000 的整数） | 把这条**在跑**的运行放到「未置顶的在跑运行」的第 `index` 位；`index` 超出个数夹到最后；运行不存在 / 已结束 / 置顶 / 藏起来 / 匿名 / 是别的租户的 → 404。幂等。写入争用重试用尽（20 次）→ 409（稍后重试） |
+| `DELETE /lanes/prefs/order/{runId}` | — | 清这一条的排位；没有这条也 200 |
+| `DELETE /lanes/prefs/order` | — | 清全部排位 |
+
+**有界**：至多 `MAX_PREFS = 200` 个藏 / 置顶的身份、`MAX_ORDER = 50` 条手动排位（超了 422，不静默丢）；`agent` 1–128、`label` ≤ 200 个字符。
+
+**`views/lanes` 怎么用它**（追加，既有键一个不改）：
+
+- **藏起来的代理不出现在 `agents[]`**，它们运行上的连线（`interactions[]`）一并不出现。**时间照记**：投影、`views/agent-time` 的汇总
+  （`totalSeconds` / `runs` / `days` / `agents` / `tasks`）、导出一个数都不变——藏起来只影响显示。
+- `agents[]` 每行追加：`pinned: bool`（这个身份被置顶）、`manualOrder: int | null`（手动排位的 slot；只对还在跑且没置顶的运行）、
+  `rank: int`（服务端排好的先后，0 = 最前，在 `agents[]` 里互不相同）。**`agents[]` 数组本身仍按开始时间排**（既有形状不变），先后在 `rank`。
+- **`rank` 的排法（规范性）**：① 置顶且在跑的，按置顶先后（`pinnedAt` 早的在前）；② 其余在跑的按下面的「活跃排」排好，
+  再把手动排过位的运行**按 `slot` 升序**插到各自的位置、没排过位的按活跃排填满其余位置（`slot` 夹在在跑运行的个数之内，所以永远不会插到已结束的后面；
+  `slot` 平时两两不同，只在有运行结束 / 新运行出现后才可能出现空位或同 `slot`，同 `slot` 的按活跃排先后）；③ 已结束的按活跃排垫底。**置顶的已结束运行不再占前面**——它掉到已结束那一组，`pinned` 仍为 `true`。
+  「活跃排」= 与计时页 `lanes.js` 的 `rankRuns` 同一口径：档位（在等你 0 → 干活 1 → 出错 2 → 空闲 3 → 失联 3.5 → 已结束 4），
+  同档按**近 3 小时**（服务端的 `now` 往前）里不空闲的秒数倒序，同分按最近一次相位转入倒序。
+  计时页的「最近 3 小时 / 今天」切换只改画的时间范围，**不改先后**（先后以 `rank` 为准）；老后端没有 `rank` 时页面退回本地的活跃排。
+- 响应追加 `hiddenAgents: [{agent, label, unverified, live, phase}]`（每个藏起来的身份一条，**包括当前窗口里没有运行的**，页面据此列「已隐藏」并恢复；
+  `live` = 它此刻有在跑的运行，`phase` = 那些运行里最需要人的相位：有在等人的取等人的，否则取第一条的当前相位，没有在跑的为 `null`）
+  与 `hiddenWaiting: int`（藏起来的、在跑且**没失联**、正在等人（`waiting_input` / `waiting_permission`）的运行个数；失联的运行在 `hiddenAgents[].phase` 里也按 `idle` 算，两处一致）、`stalePinned: [{agent, label}]`（置顶着、但现在没有任何在跑的运行对得上的身份）。
+  藏起来就是藏起来：`hiddenWaiting` 只给页面一个很小的、可去掉的提示（「已隐藏的有 N 个在等你」），不替人把它翻出来。
+  页面的标题计数（几个在等你 / 干活 / 出错）、顶栏预览只数画出来的，所以不含藏起来的。`hiddenAgents` / `hiddenWaiting` 只给能读泳道的调用方（人 / read / write）；report 范围与匿名读不到 `views/lanes`，服务端另在响应里清空这两个键保一道。
+
+**`views/current` / `views/agent-time` / MCP**：两者另追加 `hiddenCount: int`（没列出的、藏起来的在跑运行的个数；只有个数，没有名字），`mcp.tools.v1` 原样带出，让 AI 知道有东西被藏了。`views/current` 的 `agents[]`（「现在在跑什么」）与 `views/agent-time` 的 `open[]`
+（在跑的运行）**不列藏起来的代理**；`views/agent-time` 的汇总、`views/current` 的其余键不变。`mcp.tools.v1` 的 `get_current_timer` /
+`get_agent_time` 原样带出这两处，所以 AI 客户端也看不到藏起来的在跑运行；它们的**时间**仍在 `get_agent_time` 的汇总里。
+
+### 二、忽略并记住（`nexus-core.activity.ignores.v1`）
+
+**这是显示 / 跟踪过滤，不是隐私擦除。** 规则存在之后，匹配的窗口**不再计时、不进圆环和泳道、不再出现在待处理里**；已经记下的东西不受影响（见下「不做的清理」）。
+
+**规则**：`{id, app, titleContains, createdAt, hits, seconds, lastHitAt}`，存独立集合 `activity_ignores`（每租户至多 `MAX_IGNORES = 200` 条，先插入、再数、超了撤回；
+同一条规则再建 = 同一份，幂等；不是事实，不进台账 / 投影 / 导出 / 快照）。
+**匹配**：两边（规则里存的、进来的程序名与窗口标题）都先过**同一个** `textfold.fold`——NFKC、去不可见字符（`Cf` 类 + U+034F + 变体选择符）、折叠所有空白、strip、casefold——再比：
+程序名归一化后**相等**（`code` 与 `code.exe` 不是同一个，不猜后缀），且（`titleContains` 给了的话）归一化后的标题**包含**它；`titleContains` 为 `null` = 这个程序的所有窗口。不是正则。
+每个串只看前 `GATE_CHARS = 4096` 个码点（请求模型把收到的串截到这里：超长截断照收、不拒，v2.4）；存储再按各自的上限（presence 128 / 512、建议 128 / 512）截，存下的是闸门看过的串的前缀。
+它**不是** `detector.rules.v1` 的规则：存在检测程序之外、服务端说了算，`detector.rules.v1` 一个字节不变。
+
+**端点**（前缀 `/api/core/activity/ignores`）：
+
+| 方法 路径 | 说明 |
+|---|---|
+| `GET /activity/ignores` | `{total, items}`，旧的在前。**人**看到完整规则（含 `titleContains`、`lastHitAt`）；**非人的调用方**（任何 Bearer、MCP）每项只有 `{id, app, hasTitleFilter, hits, seconds, createdAt}`，没有 `titleContains` |
+| `POST /activity/ignores` | `{app, titleContains?}`（`app` 去空白后非空 ≤ 128，`titleContains` ≤ 200，多出的键 422；`app` 全空白 400）。**只收人**（带 Bearer / 匿名 403）。201：规则 + `created`（false = 早就有）+ `removed`（见下「建规则时的清理」）。超 200 条 422（并发顶线时可能一起被撤回，稍后重试） |
+| `DELETE /activity/ignores/{id}` | **只收人**。204，幂等。取消后以后的窗口照常；已经丢掉的不会回来 |
+
+**从规则存在的那一刻起，在写入口过滤**（规则每次请求现读，没有缓存）：
+
+1. **活动建议上传**：命中的段直接丢弃，不存；不算 `accepted` / `duplicates` / `rejected`；响应**有被忽略的段时**追加整数键 `ignored`（没有就不带，形状与以前相同）。规则上 `hits` +1 段、`seconds` += 该段时长。
+2. **在场心跳**（含 `spans`）：命中的当前窗口 / 命中的 span 换成「没有窗口」（`app` 与 `title` 空、不带 `guess`、不对会话）再存，**在在场代码看到它之前**——所以它不会成为 `focus`、自动跟踪的目标或「请你选」的窗口，不续人的临时选择，也不让泳道「你在看」变长。人仍是「在电脑前」。心跳不计 `hits`。
+3. 整个程序都忽略时，代理会话在这个程序里的时间，泳道上「你在看」的蓝条也不再记（程序里没有窗口 = 对不上会话）。
+4. `auto._find` 不把已忽略的窗口交给人的选择 / AI（404）：已忽略的窗口以后不会被问 AI、也写不出规则。
+
+**建规则时的清理（只有这一件）**：`POST` 里尽力删掉已在 `pending` / `dismissed` 里、命中规则的建议（分批；至多扫 `SCAN_BUDGET = 50 000` 条），响应 `removed` = 实际删掉的条数，同时记进规则的计数器。
+出错或没扫完：规则照样已创建、`removed` 如实报，**不重试、没有「清理未完成」状态**。已确认的建议不动。
+
+**不做的清理（这不是隐私擦除）**：规则存在之前已经记下的东西一概不动——在场 / 焦点历史（最近 2 小时的在场文档照常自然过期）、已确认的记录与台账事实、已存的自动跟踪选择 / 问询、
+AI 写的或「记住」的分类规则与草稿、代理标签（`agent_runs.label`）、AI 对话记录。想让分类规则不再提到某个窗口，在「AI助理 → 规则」里自己删。规则本身存着人填的 `titleContains`，只对登录的人可见。
+
+**失败方向**：读不到忽略规则 → 被守卫的写入（建议上传、在场心跳）被拒（5xx，检测程序会重试），什么都没存；匹配某一项时出错 → 这一项当作被忽略（丢 / 抹）；
+没有写后复查，也没有任何写成功之后再抛的错。**读接口不依赖忽略规则**（`views/current`、`views/lanes`、建议列表、AI 报告、`GET /detector/rules`、草稿、`GET /activity/ignores` 之外都不读它），行为与没有这个功能时一样。
+`dismiss` / `choose` / `claim` / `reject` / `suggest` / 建草稿也不经闸门（只有上面 4 的 `_find`）。请求模型里每个字符串字段都登记在 `test_activity_ignore_gate.py` 的「闸门 / 随整项丢 / 不是窗口文字」名单里，新增字段不归类测试就红。
+
+### 存储、边界、本版不做
+
+- 新集合 `lane_prefs`、`activity_ignores`，各自只有对应子边界的 `repo.py` / `ignore_repo.py` 碰；`views/` 经 `prefs` 的 `service` 读偏好（不读它的 repo）。
+- **不做**：按标签页 / 窗口标题的正则忽略；按设备忽略；忽略规则的导入导出；拖到「已结束」那一组之后的排位；置顶之间的手动排位（置顶的按置顶先后）；
+  把「藏起来」同步到顶栏以外的别的页面（顶栏预览读同一份 `views/lanes`，已经跟着）。
+
 ## 入口与路由
 
 - nginx 公开前缀：`/api/core/`（HANDOFF §4 已定死，前端写死地址）
@@ -3754,6 +3876,8 @@ app/modules/
                                       在跑的运行经 session_link.live（timer service 的 list_lane_runs）、去向经 events / planner 的 service 读
                                       串行的注意力时间线（v2.17，presence.py + session_link.watched）：在跑的运行经 timer service 的
                                       list_lane_runs 读，attend 经 timer service 的 record_attend(user, run_id, intervals, gap) 写
+  prefs/      router service repo     泳道偏好（v2.22）：藏起来 / 置顶 / 手动排位；views/lanes 经 service.load 读，排序在 views/lane_order.py（纯函数）
+                                      忽略并记住（v2.22，activity/ignore.py + ignore_repo.py + ignore_router.py）：上传与在场心跳经 ignore 的 drop / mask_beat 过一遍
   detector/   router service repo     检测程序设置（v2.5）：不是事实；设备列表经 activity 的 service 读上传时刻
   projector/  registry handlers/      DISPATCH 显式表 + 各投影 handler
 ```
@@ -3794,6 +3918,7 @@ app/modules/
   / **`proj_lanes`（v2.4，时间线区间投影，见「人一条线、代理多条线的时间线」节）**
   / **`_startup_locks`（v2.4，启动期一次性任务的锁，只在 proj_lanes 自动补建时短暂存在）**
   / **`activity_choices`（v2.14）、`activity_ai_asks`（v2.15）：按窗口的临时选择与 AI 问询，活状态，不是事实**。
+  / **`lane_prefs`、`activity_ignores`（v2.22）：泳道偏好与忽略规则，显示 / 过滤用的活状态，不是事实，不进台账 / 导出 / 快照恢复**。
 - **其他模块一律不得直连本模块的 Mongo**。要数据就加读路径，不要绕。
 - `events` 集合**只增不改不删**；修正历史 = 追加修正事件。
   v2.11 的 `session.reassigned` 就是这样一条修正事件（不新增集合）。
@@ -3855,6 +3980,9 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 | 共享 `lanes.js` / `focus.js` / 顶栏（v2.17） | `views.lanes.v1` 的 `agents[].attention`（代理线里的蓝条「你在看」）、`human.presence[].runId`；`focus.dwellSeconds`（悬停里的「近 2 小时在这上面 N 分」）；顶栏改为约 5 秒读一次 `views/current` | `modules/nginx-docker` |
 | `ring` / `hive` 前端（v2.17） | `views.current.v1` 的 `focus.dwellSeconds`（圆环中心走秒下的小字 / 蜂巢中心格的悬停）；计时页约 5 秒读一次 | `modules/ring`、`modules/hive` |
 | `mcp`（v2.17） | `views.agent-time` 的 `open[].attentionSeconds`、`focus.dwellSeconds`（`mcp.tools.v1` v1.11 原样带出） | `modules/mcp` |
+| `ring` 前端 / 共享 `lanes.js`（v2.22） | `lanes.prefs.v1` + `views.lanes.v1` 的 `pinned` / `manualOrder` / `rank` / `hiddenAgents` / `hiddenWaiting`：代理卡的 ⋯ 菜单（置顶 / 不再显示 / 上移 / 下移）、长按拖动换位、可折叠的「已隐藏 (N)」；先后以 `rank` 为准，写偏好先乐观地画、失败退回 | `modules/ring`、`modules/nginx-docker` |
+| `assistant` 前端（v2.22） | `activity.ignores.v1`：待确认建议里每个窗口行 / 集合的「忽略并记住」（`POST activity/ignores`）、可展开的「被忽略任务」（`GET` / `DELETE`） | `modules/assistant` |
+| `mcp`（v2.22） | `activity.ignores.v1`：`get_detector_rules` 追加 `ignored`（`GET activity/ignores`）；`get_current_timer` / `get_agent_time` 因 `views/current` / `views/agent-time` 不列藏起来的代理而不再列它们的在跑运行（汇总不变）（`mcp.tools.v1` v1.14） | `modules/mcp` |
 | `assistant` 前端（v2.20） | `activity.reports.v1`：顶部「AI 报告」块（读 `GET activity/reports?status=pending` 与 `…/{id}`，批准 / 改 / 不要走 `…/approve`、`…/items/{id}/approve|reject`、`…/reject`） | `modules/assistant` |
 | `mcp`（v2.20） | `activity.reports.v1`：`propose_report`（`POST activity/reports`）、`get_report_status`（`GET activity/reports?status=all&limit=1&items=true`）；批准 / 不要 MCP 永远不调 | `modules/mcp` |
 | `assistant` 前端（v2.15） | 规则的 `auto`（「AI 自动」徽标，整套保存时原样带回 `author` / `auto`）；`GET /api/core/activity/auto` 的 `ai` | `modules/assistant` |

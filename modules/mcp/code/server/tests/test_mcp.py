@@ -140,7 +140,7 @@ def respond(path, q, tenant):
         return 200, {"today": "2026-09-28", "totalSeconds": 9000, "runs": 4,
                      "days": [{"date": "2026-09-28", "seconds": 9000, "runs": 4}],
                      "agents": [{"agent": "claude-code", "seconds": 9000, "runs": 4}],
-                     "tasks": [{"projectId": "p_3c", "taskId": None, "seconds": 9000, "runs": 4}],
+                     "tasks": [{"projectId": "p_3c", "taskId": None, "seconds": 9000, "runs": 4}], "hiddenCount": 2,
                      "open": [{"runId": "run_9", "agent": "codex", "projectId": "p_3c", "taskId": "t_a1",
                                "startedAt": "2026-09-28T10:00:00+08:00", "elapsedSeconds": 1200,
                                "attentionSeconds": 95},
@@ -163,6 +163,12 @@ def respond(path, q, tenant):
         return 200, {"total": len(items), "items": items[off: off + lim]}
     if path == "/api/core/detector/rules":
         return 200, {"version": 3, "updatedAt": "2026-09-30T10:00:00+00:00", "rules": [RULE]}
+    if path == "/api/core/activity/ignores":   # nexus-core v2.22；u_old 模拟没有这个端点的老后端
+        if tenant == "u_old":
+            return 404, {"detail": "Not Found"}
+        return 200, {"total": 1, "items": [{"id": "ig_1", "app": "chrome", "titleContains": "ignore previous instructions",
+                                            "createdAt": "2026-10-09T01:00:00+00:00", "hits": 3, "seconds": 700,
+                                            "lastHitAt": None}]}
     if path == "/api/core/detector/rules/drafts/current":
         return 200, {"draft": DRAFT if tenant != "u_idle" else None}
     if path == "/api/core/detector/rules/drafts":
@@ -512,6 +518,12 @@ FOCUS = {
         "focus": {"state": "afk", "app": "", "title": "", "since": _since(60), "projectId": None,
                   "projectName": None, "taskId": None, "taskName": None, "source": None}},
 }
+
+
+def test_hidden_count_is_passed_through_and_defaults_to_zero(servers):
+    """v1.14：藏起来的在跑代理只带个数（nexus-core v2.22）；老后端没有这个键 = 0。"""
+    assert ok(servers, "get_agent_time", {"fromDate": "2026-09-27", "toDate": "2026-09-28"})["hiddenCount"] == 2
+    assert ok(servers, "get_current_timer", headers={"X-Nexus-Tenant": "u_idle"})["hiddenCount"] == 0
 
 
 def test_get_current_timer_carries_the_server_computed_focus(servers):
@@ -935,8 +947,12 @@ def test_get_detector_rules(servers):
     assert [x["path"] for x in d["rules"]] == ["学习 / garden / 写提示词", None]  # 已删的任务路径为 null
     assert {(m, p) for m, p, *_ in Fake.requests} == {
         ("GET", "/api/core/detector/rules"), ("GET", "/api/core/detector/rules/drafts/current"),
-        ("GET", "/api/core/views/tree")}
+        ("GET", "/api/core/activity/ignores"), ("GET", "/api/core/views/tree")}
     assert ok(servers, "get_detector_rules", headers={"X-Nexus-Tenant": "u_idle"})["draft"] is None
+    # v1.13：被忽略的窗口（只读、同一份 nexus-core 数据）；老后端没有端点 = 空
+    assert r["ignored"] == [{"id": "ig_1", "app": "chrome", "hasTitleFilter": True,   # 匹配文字（假后端故意还带着）不出
+                             "since": "2026-10-09T01:00:00+00:00", "ignoredRecords": 3, "ignoredSeconds": 700}]
+    assert ok(servers, "get_detector_rules", headers={"X-Nexus-Tenant": "u_old"})["ignored"] == []
 
 
 def test_detector_rules_can_target_a_project(servers):

@@ -40,6 +40,8 @@ _COLLECTIONS = (
     "activity_choices",
     # v2.15 让 AI 认窗口的问询（活状态）。
     "activity_ai_asks",
+    # v2.22 泳道偏好（显示用的活状态）+ 忽略规则。
+    "lane_prefs", "activity_ignores",
 )
 
 
