@@ -216,7 +216,7 @@ consumes:
 |---|---|---|
 | `get_task_tree` | `GET /api/core/views/tree?includeEphemeral=` | 列表 |
 | `list_projects`（v1.1） | `GET /api/core/views/tree?includeEphemeral=true` | 列表 |
-| `get_current_timer` | `GET /api/core/views/current` | 对象 |
+| `get_current_timer` | `GET /api/core/views/current` | 对象（`agents[]` 每项带 `elapsedSeconds`：nexus-core v2.21 起由服务端算好，原样带出；老后端没有 = `null`） |
 | `list_time_sessions` | `GET /api/core/events?type=session.completed&from=&to=&limit=&offset=` | 列表 |
 | `get_daily_time` | `GET /api/core/views/gantt?from=&to=` | 列表 |
 | `get_weekly_review` | `GET /api/core/views/review` | 对象 |
