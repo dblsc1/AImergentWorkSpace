@@ -21,6 +21,7 @@ from ..planner.errors import UnprocessableError
 from ..prefs import service as prefs_service
 from ..projector.handlers import lanes as lanes_projection
 from ..timer import service as timer_service
+from .lane_active import split
 from .lane_cap import cap
 from .lane_order import arrange
 from .queries import _today
@@ -115,6 +116,7 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
     sessions: list[dict] = []
     agents: list[dict] = []
     hidden: list[dict] = []
+    inactive: list[dict] = []
     hidden_waiting = 0
     stale_pinned: list[dict] = []
     dropped: list[dict] = []
@@ -149,8 +151,10 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
                 for r in kept if r.get("open") or r["runId"] in full]
         prefs = prefs_service.load(user)
         # v2.22：藏起来的代理不出现（时间照旧记在账上）；其余加 pinned / manualOrder / rank
-        agents, hidden, hidden_waiting, stale_pinned = arrange([_run_item(r, start, end) for r in runs],
-                                                 prefs, now)
+        items = [_run_item(r, start, end) for r in runs]
+        if end > now:  # v2.24：只在含「现在」的窗口里按当前活动过滤；过去的日子整天原样
+            items, inactive, gone = split(items, gone, prefs, now)
+        agents, hidden, hidden_waiting, stale_pinned = arrange(items, prefs, now)
         hidden_keys = {a["key"] for a in prefs["agents"] if a["hidden"]}  # 藏起来的身份：折叠摘要也不露
         dropped = [{k: v for k, v in d.items() if k != "key"} for d in gone if d["key"] not in hidden_keys]
         if caller().scope == "report":  # 藏起来的摘要只给能读泳道的调用方（report / 匿名本来就读不到，这里再保一道）
@@ -178,5 +182,5 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
         today=_today(), now=_iso(now), windowStart=_iso(start), windowEnd=_iso(end),
         human={"sessions": sessions, "running": running, "presence": presence, **auto},
         agents=agents, interactions=interactions, truncated=truncated,
-        hiddenAgents=hidden, hiddenWaiting=hidden_waiting, stalePinned=stale_pinned, dropped=dropped,
+        inactiveAgents=inactive, hiddenAgents=hidden, hiddenWaiting=hidden_waiting, stalePinned=stale_pinned, dropped=dropped,
     )

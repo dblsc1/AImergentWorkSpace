@@ -160,6 +160,12 @@
 > 只在事件的 `ai` 块多一个出处 `report {id, author}`。建议在此期间被人处理了的条目记 `stale` 跳过，不算错。MCP 追加 `propose_report` 与
 > `get_report_status`（`mcp.tools.v1` v1.13，十七个工具）。既有字段、端点、事件形状一个不改。见「AI 报告」节。
 >
+> **v2.24（追加式）：`views/lanes` 只显示在干活的泳道。** 仓主 2026-10-09：「泳道，把出错或者长期空闲的都不需要显示，只有在干活的显示出来。
+> 短暂空闲的 agent（1 小时以内）留在泳道内放出来。」服务端在视图里决定（web 与别的读取方一致）：有在跑的运行在干活或在等人、或「最后一次干活」
+> 不到 1 小时（`IDLE_HIDE_SECONDS = 3600`，常量不是设置）、或被置顶的泳道显示；当前出错、或空闲满 1 小时的泳道不显示，改列在追加的
+> `inactiveAgents[]`。只是视图过滤，计时、agent-time、圆环、报告一概不变。过去的日子（窗口整体早于现在）不过滤。既有字段、端点行为一个不改。
+> 见「`views/lanes` 只显示在干活的」节。
+>
 > **v2.23（追加式）：`views/lanes` 的封顶按代理身份，不再按全局最新。** 事故（2026-10-09 实测栈）：外部上报者给同一个标签刷了几十条短运行，
 > 全局「最新 200 条」在下午就用完，所有代理上午的运行被挤掉，页面看起来「今天的泳道进度归零」。现在：在跑的运行永远保留；已结束的按
 > 代理身份（与 `lane_order.arrange` 同一个 `ident`）分组，最近活动的 200 个身份、每个身份最新 100 条，总数兜底 2000；丢掉的折进响应追加的
@@ -3866,6 +3872,24 @@ AI 写的或「记住」的分类规则与草稿、代理标签（`agent_runs.la
 - **没有 MCP 工具映射 `views/lanes`**（`mcp.tools.v1` 不动）；`views/current` / `views/agent-time` 不受影响，agent-time 的汇总始终是全量（不读本封顶）。
 - 前端（ring 的泳道、`lanes.js`）不对一个身份求和，所以不需要加 `dropped`；`truncated` 且 `dropped` 有数时区尾提示「较早的 N 段已折叠」，
   没有（老后端 / 仅会话超限）仍是原话。
+
+## `views/lanes` 只显示在干活的（规范性 · v2.24）
+
+泳道 = 代理身份（`prefs.service.ident`，与 `lane_cap` / `arrange` / `lanes/prefs` 同一个键）。次序：封顶（v2.23）→ 活跃过滤（`lane_active.split`）→ `arrange`。
+
+- **显示**，满足任一：① 有在跑（未失联）的运行处于 `working`；② 有在跑（未失联）的运行在等人（`waiting_input` / `waiting_permission`，人要动手，永不自动藏）；
+  ③ 最后一次干活距现在不到 `IDLE_HIDE_SECONDS`（3600 秒，常量）；④ 人置顶了它（置顶永远显示）。
+- **最后一次干活** = 该身份各运行里 `working` 段的最晚结束时刻（没报过相位的已结束运行 = 它的结束；没报过相位的在跑运行 = 从开始就在干活；
+  失联的在跑运行止于最后一次信号）。**不是**最后心跳——否则停着不动的会话永远不空闲。
+- **不显示**（进 `inactiveAgents`）：当前状态是出错（最新一条运行是在跑且相位 `error`，或已结束且 `outcome = failed`，且没有更新的运行）——`reason: "error"`，
+  优先于「刚干过活」；或空闲 / 全部结束已满 1 小时——`reason: "idle"`。更新的在干活的运行会让它自己重新显示。
+- **手动隐藏**（`lanes/prefs` 的 hidden）永远隐藏，只在 `hiddenAgents`，不进 `inactiveAgents`；`hiddenWaiting`、`stalePinned` 口径不变（置顶的永远显示，所以不会因本过滤而「没在跑」）。
+- **`inactiveAgents: [{agent, label, unverified, reason, lastWorkAt, runs, elapsedSeconds}]`**（追加，缺省 `[]`，最近干活的在前）：`runs` / `elapsedSeconds` 是该身份窗口里
+  全部运行的条数与秒数，**包含**被 v2.23 封顶折掉的（折掉的并入这里，不再出现在 `dropped`，不重复数）。所以窗口里每条运行恰好落在
+  `agents` / `inactiveAgents` / `dropped` / `hiddenAgents`（隐藏的不数）四处之一。不活跃身份的运行与连线（`interactions`）不在 `agents` / `interactions` 里。
+- **过去的日子不过滤**：窗口结束不晚于「现在」（`date` / `from..to` 都在过去）时「当前活动」没有意义，所有泳道照旧显示，`inactiveAgents` 为 `[]`。
+- **可见性**与 `agents` 完全一致（不是机密）；report 范围 / 匿名本来读不到 `views/lanes`。**不动任何计时账**：agent-time、圆环、报告读的是全量。
+- **没有 MCP 工具映射 `views/lanes`**，`mcp.tools.v1` 不动。前端（`lanes.js`）在泳道下方画可展开的「未显示 n 个」，老后端没有该字段则不画。
 
 ## 入口与路由
 
