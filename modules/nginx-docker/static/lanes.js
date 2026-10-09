@@ -583,6 +583,8 @@
     var oldHidden = root.querySelector('details.hcl-hidden');
     if (oldHidden) { root.hclHiddenOpen = oldHidden.open; }
     var hiddenFocus = !!(oldHidden && a && oldHidden.contains(a));
+    var oldInactive = root.querySelector('details.hcl-inactive');
+    if (oldInactive) { root.hclInactiveOpen = oldInactive.open; }
     var oldFold = root.querySelector('details.hcl-fold');
     if (oldFold) { root.hclFoldOpen = oldFold.open; }
     var foldFocus = !!(oldFold && a && oldFold.contains(a) && a.tagName === 'SUMMARY');
@@ -901,6 +903,34 @@
       if (hiddenFocus) { hsum.focus(); }
     } else if (hiddenFocus && opts.focusFallback) {
       opts.focusFallback.focus();
+    }
+
+    // 未显示的泳道（nexus-core v2.24：出错 / 空闲满 1 小时，服务端已挪出 agents）：默认收着；老后端没有该字段就没有这一行。只用 textContent
+    var inactive = P ? data.inactiveAgents || [] : [];
+    if (inactive.length) {
+      var ia = el('details', 'hcl-inactive'), nErr = inactive.filter(function (x) { return x.reason === 'error'; }).length;
+      ia.open = !!root.hclInactiveOpen;
+      ia.appendChild(el('summary', 'hcl-hidden-toggle hcl-inactive-toggle',
+        '未显示 ' + inactive.length + ' 个' + (nErr ? '（' + nErr + ' 个出错）' : '')));
+      var ilist = el('ul', 'hcl-hidden-list');
+      inactive.forEach(function (x) {
+        var li = el('li', 'hcl-hidden-item');
+        li.appendChild(el('span', 'hcl-hidden-name', x.label || x.agent));
+        if (x.label) { li.appendChild(el('span', 'hcl-sub', x.agent)); }
+        var idleH = Math.max(1, Math.floor(((ms(data.now) || Date.now()) - (ms(x.lastWorkAt) || 0)) / (60 * MIN)));
+        li.appendChild(el('span', 'hcl-hidden-state hcl-inactive-reason', x.reason === 'error' ? '出错' : '空闲 ' + idleH + ' 小时'));
+        li.appendChild(el('span', 'hcl-sub hcl-inactive-time', '本窗口 ' + dur(0, (x.elapsedSeconds || 0) * 1000)));
+        if (!x.unverified) {                  // 置顶 = 重新显示（匿名的不能置顶）
+          var pin = el('button', 'hcl-hidden-restore hcl-inactive-pin', '置顶显示');
+          pin.type = 'button';
+          pin.setAttribute('aria-label', '置顶并显示：' + (x.label || x.agent));
+          pin.addEventListener('click', function () { P.onPin({ agent: x.agent, label: x.label, unverified: false }, true); });
+          li.appendChild(pin);
+        }
+        ilist.appendChild(li);
+      });
+      ia.appendChild(ilist);
+      root.appendChild(ia);
     }
 
     if (!agents.length) { root.appendChild(el('p', 'hcl-empty', '这段时间没有代理在跑。')); }

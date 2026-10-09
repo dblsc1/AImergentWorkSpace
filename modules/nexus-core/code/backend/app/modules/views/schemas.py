@@ -519,6 +519,18 @@ class LaneDropped(_Strict):
     elapsedSeconds: int
 
 
+class LaneInactive(_Strict):
+    """v2.24：没显示的泳道（出错 / 空闲满 1 小时）。时间照旧记在账上，只是视图过滤。"""
+
+    agent: str | None
+    label: str | None
+    unverified: bool = False
+    reason: str  #: error | idle
+    lastWorkAt: str
+    runs: int
+    elapsedSeconds: int
+
+
 class LanesOut(_Strict):
     """``GET /api/core/views/lanes``（契约 v2.4）。时间线，不是汇总：**没有任何合计字段**。"""
 
@@ -530,6 +542,7 @@ class LanesOut(_Strict):
     agents: list[LaneAgent]
     interactions: list[LaneReply | LaneAttend]
     truncated: bool
+    inactiveAgents: list[LaneInactive] = []  #: v2.24
     hiddenAgents: list[LaneHidden] = []  #: v2.22
     hiddenWaiting: int = 0  #: v2.22：藏起来的在跑运行里正等你的个数（页面只给一个很小的提示）
     dropped: list[LaneDropped] = []  #: v2.23：封顶折叠掉的较早运行的汇总（藏起来的身份不列）

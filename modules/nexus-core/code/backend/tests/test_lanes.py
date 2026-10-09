@@ -83,7 +83,7 @@ def test_empty_shape_defaults_to_today(client):
     assert (body["agents"], body["interactions"], body["truncated"]) == ([], [], False)
     assert (body["hiddenAgents"], body["hiddenWaiting"], body["dropped"]) == ([], 0, [])
     assert set(body) == {"today", "now", "windowStart", "windowEnd", "human", "agents", "interactions",
-                         "truncated", "hiddenAgents", "hiddenWaiting", "stalePinned", "dropped"}  # v2.22 + v2.23
+                         "truncated", "hiddenAgents", "hiddenWaiting", "stalePinned", "dropped", "inactiveAgents"}  # v2.22 + v2.23 + v2.24
 
 
 def test_sessions_listed_on_every_overlapping_day_unclipped(client, task):
@@ -128,9 +128,9 @@ def test_live_agents_running_human_presence_and_interactions(client, task):
 
 def test_closed_run_comes_from_projection(client):
     run = _start(client, phase="working", label="garden")
-    client.post(f"{API}/agents/{run['runId']}/stop", json={"outcome": "failed"})
+    client.post(f"{API}/agents/{run['runId']}/stop", json={"outcome": "done"})
     [agent] = _lanes(client)["agents"]
-    assert agent["outcome"] == "failed" and agent["endAt"] is not None and agent["overdue"] is False
+    assert agent["outcome"] == "done" and agent["endAt"] is not None and agent["overdue"] is False
     assert agent["elapsedSeconds"] >= 1 and agent["label"] == "garden"
     assert [p["phase"] for p in agent["phases"]] == ["working"]
     assert _db()["proj_lanes"].count_documents({"kind": "run"}) == 1

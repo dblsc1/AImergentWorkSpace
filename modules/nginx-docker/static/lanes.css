@@ -234,7 +234,7 @@ a.hcl-more { color: var(--ink-2); }
   font: inherit; font-weight: 700; line-height: 1; cursor: pointer;
 }
 .hcl-kebab:hover, .hcl-kebab[aria-expanded="true"] { color: var(--ink); border-color: var(--line); background: var(--panel); }
-.hcl-kebab:focus-visible, .hcl-menu-item:focus-visible, .hcl-hidden > summary:focus-visible, .hcl-hidden-restore:focus-visible {
+.hcl-kebab:focus-visible, .hcl-menu-item:focus-visible, .hcl-hidden > summary:focus-visible, .hcl-inactive > summary:focus-visible, .hcl-hidden-restore:focus-visible {
   outline: 2px solid var(--focus); outline-offset: 2px;
 }
 .hcl-menu {
@@ -256,8 +256,8 @@ body.hcl-dragging { user-select: none; -webkit-user-select: none; cursor: grabbi
 @media (prefers-reduced-motion: no-preference) { .hcl-card.is-yielding { transition: transform .15s ease-out; } }
 
 /* 已隐藏：同「还有 N 个」的折叠样式，轻一点 */
-.hcl-hidden > summary { cursor: pointer; padding: var(--sp-1) 0; color: var(--ink-3); font-size: var(--fs-eyebrow); }
-.hcl-hidden[open] > summary { margin-bottom: var(--sp-1); }
+.hcl-hidden > summary, .hcl-inactive > summary { cursor: pointer; padding: var(--sp-1) 0; color: var(--ink-3); font-size: var(--fs-eyebrow); }
+.hcl-hidden[open] > summary, .hcl-inactive[open] > summary { margin-bottom: var(--sp-1); }
 .hcl-hidden-list { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--sp-1); }
 .hcl-hidden-item { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-2); color: var(--ink-2); }
 .hcl-hidden-name { font-weight: 600; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; }

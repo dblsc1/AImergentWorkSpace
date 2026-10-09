@@ -43,7 +43,12 @@ def _beat(client, run_id, expect=200, headers=None, **kw):
 
 
 def _lane(client, run_id):
-    return next(a for a in client.get(f"{API}/views/lanes").json()["agents"] if a["runId"] == run_id)
+    """v2.24：失联 / 早已结束的泳道默认不显示——这里关心的是运行本身，所以先把不显示的置顶（置顶永远显示）。"""
+    body = client.get(f"{API}/views/lanes").json()
+    for x in body["inactiveAgents"]:
+        client.put(f"{API}/lanes/prefs/agent", json={"agent": x["agent"] or "", "label": x["label"] or "", "pinned": True, "unverified": x["unverified"]})
+    body = client.get(f"{API}/views/lanes").json() if body["inactiveAgents"] else body
+    return next(a for a in body["agents"] if a["runId"] == run_id)
 
 
 def _seen(run_id: str) -> datetime:

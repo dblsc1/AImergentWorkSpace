@@ -420,6 +420,7 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
   "order":  [ { "runId": "run_…", "slot": 1 } ] }
 // PUT /api/core/lanes/prefs/agent   { "agent": "claude-code", "label": "garden", "hidden": true }   // hidden / pinned 至少一个，布尔
 // PUT /api/core/lanes/prefs/order   { "runId": "run_…", "index": 1 }                                // 运行不在跑 → 404
+//   可选窗口（v2.24 追加，同 GET views/lanes 的 date / from / to，同校验）：{ …, "from": "2026-10-08", "to": "2026-10-09" }；缺省 = 今天
 
 // GET /api/core/views/lanes —— 追加（既有键不变）
 { "agents": [ { /* 既有的键 */ "pinned": false, "manualOrder": null, "rank": 0 } ],
@@ -484,3 +485,16 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
 
 - `dropped` 缺省 `[]`；`runs` / `elapsedSeconds` 是被封顶（每身份最新 100 条、最近活动 200 个身份、在跑的最新 500 条、总数 2000）丢掉的运行的条数与**裁到窗口**的秒数。
 - 藏起来的身份不列；report 范围 / 匿名读不到 `views/lanes`（服务端另清空）。`truncated` 在 `dropped` 非空时必为真。
+
+### `views/lanes` 只显示在干活的（v2.24）
+
+```jsonc
+// GET /api/core/views/lanes —— 追加（既有键不变）
+{ "agents": [ /* 只含显示的泳道 */ ],
+  "inactiveAgents": [ { "agent": "codex", "label": "rev-billing", "unverified": false,
+                        "reason": "idle",                       // "error" | "idle"
+                        "lastWorkAt": "2026-10-09T09:12:00+08:00", "runs": 3, "elapsedSeconds": 5400 } ] }
+```
+
+- `inactiveAgents` 缺省 `[]`；`reason` 只有 `error`（当前出错）/ `idle`（空闲或全部结束满 `IDLE_HIDE_SECONDS` = 3600 秒）。`lastWorkAt` = 最后一次干活的结束时刻（ISO，本地时区）。
+- `runs` / `elapsedSeconds` 含被 v2.23 封顶折掉的运行（不再进 `dropped`：`dropped` 不含不活跃身份）。置顶的、手动隐藏的身份不在其中。过去的日子永远是 `[]`。

@@ -105,8 +105,9 @@ def set_agent(agent: str, label: str, hidden: bool | None, pinned: bool | None, 
     return _write(current_tenant(), change)
 
 
-def set_order(run_id: str, index: int) -> dict:
-    """把这条在跑的运行放到「未置顶的在跑运行」的第 index 位（0 起，超出夹到最后）。不在那个队列里（已结束 / 不存在 /
+def set_order(run_id: str, index: int, day: str | None = None, date_from: str | None = None,
+              date_to: str | None = None) -> dict:
+    """把这条在跑的运行放到「未置顶的在跑运行」的第 index 位（0 起，超出夹到最后）。「第几位」按页面查询时的窗口（date / from / to，同 views/lanes，缺省今天）数。不在那个队列里（已结束 / 不存在 /
     置顶 / 藏起来 / 匿名）→ 404。服务端算出拖完后的完整先后，重写所有手动排过位的运行的 slot；没排过位的继续按活跃浮动。
     不在队列里的旧 slot（藏起来的等）顺手丢掉。"""
     from ..views.lanes import live_order  # noqa: PLC0415  views 依赖本模块，只能延迟导入
@@ -114,9 +115,9 @@ def set_order(run_id: str, index: int) -> dict:
     user = current_tenant()
 
     def change(agents: list[dict], order: list[dict]) -> None:
-        cur = live_order(user, {"agents": agents, "order": order})
+        cur = live_order(user, {"agents": agents, "order": order}, day, date_from, date_to)
         if run_id not in cur:
-            raise NotFoundError(f"运行不在可排位的队列里（已结束 / 置顶 / 藏起来 / 匿名）：{run_id[:80]!r}")
+            raise NotFoundError(f"运行不在可排位的队列里（未显示 / 已结束 / 置顶 / 藏起来 / 匿名）：{run_id[:80]!r}")
         manual = {o["runId"] for o in order} | {run_id}
         cur.remove(run_id)
         cur.insert(min(index, len(cur)), run_id)
