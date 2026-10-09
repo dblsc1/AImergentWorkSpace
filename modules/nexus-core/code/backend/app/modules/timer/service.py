@@ -227,7 +227,7 @@ def record_session(
 
 
 def agent_start(task_id: str | None, agent: str, tool: str, model: str | None, user: str | None = None, **v24):
-    """返回 ``(AgentStartOut, 是否新开)``；``v24`` = phase/label/match/client_key（v2.4 选填）、project_id（v2.13）。"""
+    """返回 ``(AgentStartOut, 是否新开)``；``v24`` = phase/label/match/client_key（v2.4）、project_id（v2.13）、heartbeat / beat_source（v2.18）。"""
     return agents_impl.start(task_id, agent, tool, model, user or current_tenant(),
                              resolve_chain=_resolve_task_chain, now=_now, **v24)
 
@@ -239,6 +239,10 @@ def agent_stop(run_id: str, outcome: str, output: str | None, user: str | None =
 # v2.4（真身 agent_phases.py）：record_attend = activity 心跳的公开入口；list_lane_runs = views/lanes 读路径，不收超时
 def agent_phase(run_id: str, phase: str, at: str, detail: str | None, reply: bool) -> dict:
     return phases_impl.record_phase(run_id, phase, at, detail, reply, current_tenant(), now=_now)
+
+
+def agent_heartbeat(run_id: str, beat_source: str | None = None) -> dict:
+    return phases_impl.heartbeat(run_id, current_tenant(), beat_source, now=_now)  # v2.18
 
 
 def record_attend(user: str, title: str, at: datetime) -> None:
