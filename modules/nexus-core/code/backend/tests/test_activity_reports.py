@@ -54,7 +54,7 @@ def test_submit_stores_report_and_writes_nothing(client, seeded):
         {"kind": "assign", "suggestionIds": ids[:2], "taskId": task, "reason": EVIL},
         {"kind": "assign", "suggestionIds": [ids[2]], "projectId": project},
         {"kind": "dismiss", "suggestionIds": [ids[3]]}], summary=EVIL, author="hermes")
-    assert out["accepted"] == 3 and out["rejected"] == [] and out["superseded"] is None and out["status"] == "pending"
+    assert out["accepted"] == 3 and out["rejected"] == [] and out["status"] == "pending"
     assert _session_events() == [] and _pending(client)["total"] == 4  # 什么都没入账、没忽略
     rep = _status(client, out["reportId"])
     assert rep["summary"] == EVIL and rep["author"] == "hermes" and rep["items"][0]["reason"] == EVIL  # 纯文本原样
@@ -91,12 +91,12 @@ def test_submit_rejects_bad_items_per_item_and_keeps_the_rest(client, seeded):
     assert reasons[1].replace(other, "X") == reasons[2].replace("sug_nope", "X")  # 别租户的与不存在的同一句话，没有存在性预言机
 
 
-def test_submit_with_no_valid_item_stores_nothing_and_does_not_supersede(client, seeded):
+def test_submit_with_no_valid_item_stores_nothing(client, seeded):
     ids = _ids(client, 2)
     task, _ = _world_ids(seeded)
     first = _submit(client, [{"kind": "assign", "suggestionIds": ids[:1], "taskId": task}], author="a")
     none = _submit(client, [{"kind": "assign", "suggestionIds": ["sug_nope"], "taskId": task}], author="a")
-    assert none["reportId"] is None and none["accepted"] == 0 and none["superseded"] is None
+    assert none["reportId"] is None and none["accepted"] == 0
     assert _status(client, first["reportId"])["status"] == "pending"
 
 
@@ -300,31 +300,69 @@ def test_all_items_rejected_one_by_one_closes_the_report_as_rejected(client, see
 # ─────────────────────────────────────────── 顶掉 / 上限
 
 
-def test_same_author_supersedes_older_pending_report(client, seeded):
-    ids = _ids(client, 2)
+def test_author_is_only_a_label_nobody_can_supersede_or_hide_another_ais_report(client, seeded):
+    """身份只有租户：body 里的 author 不参与任何判定。冒用别人的名字既顶不掉、也看不到更多、改不了什么。"""
+    ids = _ids(client, 3)
     task, _ = _world_ids(seeded)
-    item = [{"kind": "assign", "suggestionIds": ids, "taskId": task}]
-    first = _submit(client, item, author="hermes")["reportId"]
-    other = _submit(client, item, author="opencode")["reportId"]
-    third = _submit(client, item, author="hermes")
-    assert third["superseded"] == first
-    assert _status(client, first)["status"] == "superseded" and _status(client, other)["status"] == "pending"
-    assert client.post(f"{REPORTS}/{first}/approve").status_code == 409
-    assert [r["id"] for r in client.get(REPORTS).json()["items"]] == [third["reportId"], other]
-    assert _session_events() == []
+    item = lambda n: [{"kind": "assign", "suggestionIds": ids[n:n + 1], "taskId": task}]  # noqa: E731
+    b = _submit(client, item(0), author="opencode")
+    a = _submit(client, item(1), author="opencode")           # 同名再交：不顶掉
+    liar = _submit(client, item(2), author="hermes")
+    assert "superseded" not in b and a["reportId"] != b["reportId"]
+    for rid in (b["reportId"], a["reportId"], liar["reportId"]):
+        assert _status(client, rid)["status"] == "pending"
+    assert len(client.get(REPORTS).json()["items"]) == 3 and _session_events() == []
+    # 自报的作者只落进显示字段与出处，不改变谁能做什么
+    assert client.post(REPORTS, json={"summary": "x", "items": [], "author": "opencode", "user": "ch_bbbb"}).status_code == 422
+    assert _status(client, b["reportId"], B).get("id") is None  # 别的租户读不到（404 体）
 
 
-def test_pending_cap_per_tenant_blocks_other_authors_but_not_the_same_one(client, seeded):
+def test_pending_cap_per_tenant_counts_every_report_whoever_the_author_claims_to_be(client, seeded):
     ids = _ids(client, 1)
     task, _ = _world_ids(seeded)
     item = [{"kind": "assign", "suggestionIds": ids, "taskId": task}]
     for n in range(5):
         _submit(client, item, author=f"a{n}")
-    assert "5" in client.post(REPORTS, json={"summary": "x", "items": item, "author": "late"}).json()["detail"]
-    assert client.post(REPORTS, json={"summary": "x", "items": item, "author": "late"}).status_code == 429
-    _submit(client, item, author="a0")  # 同作者顶掉自己的，不占新名额
+    for author in ("late", "a0"):  # 换名字、冒用旧名字，都过不了上限
+        resp = client.post(REPORTS, json={"summary": "x", "items": item, "author": author})
+        assert resp.status_code == 429 and "5" in resp.json()["detail"]
     assert len(client.get(REPORTS).json()["items"]) == 5
-    assert _submit(client, item, author="late", headers=B, expect=200)["accepted"] == 0  # B 租户的 id 看不到 → 一条都收不下，但没被 429
+    # 别的租户有自己的名额（它的 id 看不到 A 的建议 → 一条都收不下，但不是 429）
+    assert _submit(client, item, author="late", headers=B)["accepted"] == 0
+
+
+def test_every_report_route_is_human_only_even_ones_added_later(client, seeded):
+    """结构性的底：路由表里 /activity/reports 下的每一条（含以后加的）带 Bearer / 匿名 / report 范围都 403；
+    read 范围除 GET 外都 403。不靠上面那张手写的清单。"""
+    from app.main import app  # noqa: PLC0415
+
+    routes = [r for r in app.routes if getattr(r, "path", "").startswith(f"{REPORTS}") and getattr(r, "methods", None)]
+    assert len(routes) >= 7
+    for r in routes:
+        url = r.path.replace("{reportId}", "rp_x").replace("{itemId}", "i0")
+        for method in r.methods - {"HEAD", "OPTIONS"}:
+            for headers in (BEARER, {"X-Nexus-Scope": "report"}, {"X-Nexus-Scope": "report", "X-Nexus-Anonymous": "1"},
+                            {"X-Nexus-Scope": "write", "Authorization": "Bearer y"}):
+                assert client.request(method, url, headers=headers, json={}).status_code == 403, (method, url, headers)
+            if method != "GET":
+                assert client.request(method, url, headers={"X-Nexus-Scope": "read"}, json={}).status_code == 403
+
+
+def test_approve_all_cannot_do_more_than_the_single_paths_would(client, seeded):
+    """批准走的就是单条的 confirm / dismiss：单条做不成的（任务已删），批量也做不成，记 failed；
+    已被人手点过的，批量不会再来一次。"""
+    ids = _ids(client, 3)
+    task, project = _world_ids(seeded)
+    doomed = _extra_task(project, "会被删的任务")
+    rid = _submit(client, [{"kind": "assign", "suggestionIds": ids[:1], "taskId": doomed},
+                           {"kind": "dismiss", "suggestionIds": ids[1:2]},
+                           {"kind": "assign", "suggestionIds": ids[2:], "taskId": task}])["reportId"]
+    _db()["tasks"].delete_one({"id": doomed})
+    assert client.post(f"{SUG}/{ids[0]}/confirm", json={"taskId": doomed}).status_code >= 400  # 单条同样做不成
+    assert client.post(f"{SUG}/{ids[1]}/confirm", json={"taskId": task}).status_code == 200      # 人先确认了要被忽略的那段
+    body = client.post(f"{REPORTS}/{rid}/approve").json()
+    assert [i["status"] for i in body["items"]] == ["failed", "stale", "applied"]
+    assert len(_session_events()) == 2 and _pending(client)["total"] == 1
 
 
 # ─────────────────────────────────────────── 并发

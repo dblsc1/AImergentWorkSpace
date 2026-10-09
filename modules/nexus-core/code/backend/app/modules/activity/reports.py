@@ -140,9 +140,8 @@ def _err(exc: ValidationError) -> str:
 def submit(summary: str, author: str, raw_items: list[Any]) -> dict:
     user, now = current_tenant(), _now()
     reports_repo.purge(user, now - timedelta(days=config.settings.suggestion_ttl_days))
-    pending = reports_repo.pending_of(user)
-    mine = [p["id"] for p in pending if p["author"] == author]
-    if len(pending) - len(mine) >= MAX_PENDING_REPORTS:
+    # author 只是自报的显示标签（谁都能写成别人的名字）：不参与任何判定。身份只有租户（网关覆盖的头）
+    if reports_repo.pending_count(user) >= MAX_PENDING_REPORTS:
         raise TooManyReportsError(f"已有 {MAX_PENDING_REPORTS} 份待批准的报告，请先让用户处理旧的")
     items, rejected, seen = [], [], set()
     for index, raw in enumerate(raw_items):
@@ -157,13 +156,11 @@ def submit(summary: str, author: str, raw_items: list[Any]) -> dict:
         else:
             items.append({"id": f"i{index}", **item})  # 条 id 取提交时的下标：AI 能对上 rejected / 结果
     if not items:
-        return {"reportId": None, "status": None, "accepted": 0, "rejected": rejected, "superseded": None}
+        return {"reportId": None, "status": None, "accepted": 0, "rejected": rejected}
     rid = "rp_" + uuid.uuid4().hex[:12]
     reports_repo.insert({"user": user, "id": rid, "author": author, "summary": summary, "status": "pending",
                          "createdAt": now, "decidedAt": None, "items": items})
-    reports_repo.supersede(user, mine, now)  # 同作者更老的待批准报告作废
-    return {"reportId": rid, "status": "pending", "accepted": len(items), "rejected": rejected,
-            "superseded": mine[0] if mine else None}
+    return {"reportId": rid, "status": "pending", "accepted": len(items), "rejected": rejected}
 
 
 # ------------------------------------------------ 读
@@ -309,7 +306,7 @@ def approve_all(report_id: str, request) -> dict:
     user = current_tenant()
     doc = _load(user, report_id)
     if doc["status"] not in ("pending", "approved"):
-        raise service.ConflictError(f"报告已{'不要' if doc['status'] == 'rejected' else '被新报告顶掉'}，不能批准")
+        raise service.ConflictError(f"报告已{'不要' if doc['status'] == 'rejected' else '作废'}，不能批准")
     done = {"applied": 0, "stale": 0, "failed": 0}
     for it in doc["items"]:
         if it["status"] in reports_repo.OPEN:
@@ -354,7 +351,7 @@ def approve_item(report_id: str, item_id: str, task_id: str | None, project_id: 
         doc = _load(user, report_id)
         it = _item_of(doc, item_id)
     if doc["status"] not in ("pending", "approved"):
-        raise service.ConflictError(f"报告已{'不要' if doc['status'] == 'rejected' else '被新报告顶掉'}，不能批准")
+        raise service.ConflictError(f"报告已{'不要' if doc['status'] == 'rejected' else '作废'}，不能批准")
     if it["status"] in reports_repo.OPEN:
         _apply_item(user, doc, it, request)
     doc = _finalize(user, report_id)
@@ -386,7 +383,7 @@ def reject_report(report_id: str) -> dict:
     if doc["status"] == "rejected":
         return {"id": report_id, "status": "rejected"}
     if doc["status"] != "pending":
-        raise service.ConflictError(f"报告已{'批准' if doc['status'] == 'approved' else '被新报告顶掉'}，不能整份不要")
+        raise service.ConflictError(f"报告已{'批准' if doc['status'] == 'approved' else '作废'}，不能整份不要")
     for it in doc["items"]:
         if it["status"] in reports_repo.OPEN:
             _reject_proposal(user, it)

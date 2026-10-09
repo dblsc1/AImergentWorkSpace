@@ -42,15 +42,8 @@ def page(user: str, pending_only: bool, limit: int) -> list[dict]:
     return list(_col().find(filt, {"_id": 0}).sort("createdAt", -1).limit(limit))
 
 
-def pending_of(user: str) -> list[dict]:
-    """该租户所有待批准的报告（只取 id / author）。"""
-    return list(_col().find({"user": user, "status": "pending"}, {"_id": 0, "id": 1, "author": 1}))
-
-
-def supersede(user: str, ids: list[str], at: datetime) -> None:
-    if ids:
-        _col().update_many({"user": user, "id": {"$in": ids}, "status": "pending"},
-                           {"$set": {"status": "superseded", "decidedAt": at}})
+def pending_count(user: str) -> int:
+    return _col().count_documents({"user": user, "status": "pending"})
 
 
 def purge(user: str, cutoff: datetime) -> None:

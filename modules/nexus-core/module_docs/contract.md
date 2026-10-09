@@ -442,7 +442,7 @@ provides:
   - id: nexus-core.activity.reports.v1
     summary: AI 报告（v2.20，追加式）——AI 一次交一份待批准的报告，人一键全批准、单条仍可改 / 批准 / 不要。
       POST /api/core/activity/reports {summary, author?, items[]}（每条 assign | newTask | dismiss，选择器 suggestionIds | collection；
-      逐条校验，坏的进 rejected；同作者新报告顶掉旧的 pending，别的作者合计超 5 份 429）、GET activity/reports[?status&limit&items]、
+      逐条校验，坏的进 rejected；待批准的报告合计超 5 份 429）、GET activity/reports[?status&limit&items]、
       GET activity/reports/{id}、POST …/{id}/approve（全部批准）、…/items/{itemId}/approve（可带 taskId | projectId = 先改再批准）、
       …/items/{itemId}/reject、…/{id}/reject；全部只收人（带 Bearer 403）。批准走同一个 confirm / dismiss / proposals.task_for，
       逐条结果 applied | stale | failed；事件 ai 块追加选填 report {id, author}。报告不是事实：不进台账 / 导出 / 快照
@@ -3651,7 +3651,7 @@ AI 仍不能改 / 删任何已有规则、不能写匹配范围超出那一个�
 
 | 端点 | 说明 |
 |---|---|
-| `POST /api/core/activity/reports` `{summary, author?, items[]}` | 提交。`author`（缺省 `"ai"`，≤ 64 码点）是**自报的标签**，不是身份。整体形状不对 / 条数超限 / `summary` 超长 → `422`。每条逐个校验，坏的进 `rejected`，其余照收。回 `{reportId, status, accepted, rejected[{index, code, reason}], superseded}`；一条都没收下时不建报告、`reportId: null`、也不顶掉旧的 |
+| `POST /api/core/activity/reports` `{summary, author?, items[]}` | 提交。`author`（缺省 `"ai"`，≤ 64 码点）是**自报的标签**，不是身份。整体形状不对 / 条数超限 / `summary` 超长 → `422`。每条逐个校验，坏的进 `rejected`，其余照收。回 `{reportId, status, accepted, rejected[{index, code, reason}]}`；一条都没收下时不建报告、`reportId: null` |
 | `GET /api/core/activity/reports?status=pending\|all&limit=&items=` | 报告列表（新的在前；缺省 `pending`，`limit` 1–50）：`{items[{id, author, summary, status, createdAt, decidedAt, counts}]}`；`items=true` 时每份再带 `items[]`（逐条状态与结果，不带建议明细——MCP 的 `get_report_status` 用） |
 | `GET /api/core/activity/reports/{id}?resolve=true\|false` | 一份报告，条目解析到**当前状态**（`resolve=false` 不带建议明细） |
 | `POST /api/core/activity/reports/{id}/approve` | **全部批准**：对每个 `pending` / `failed` 的条逐条应用，返回逐条结果 |
@@ -3662,9 +3662,10 @@ AI 仍不能改 / 删任何已有规则、不能写匹配范围超出那一个�
 - **改目标**只对 `assign` / `newTask` 条：`taskId` 与 `projectId` 恰好一个，校验同提交（不存在 `404`）；改完这一条就成了 `assign`（`newTask` 丢掉；那个待定提议留着过期）。`dismiss` 条不能改（`400`）。
   已处理（`applied` / `stale` / `rejected`）的条不能改（`409`）。
 - 报告状态：`pending`（还有 `pending` / `failed` 的条）→ `approved`（条都处理完且不全是 `rejected`）/ `rejected`（整份不要，或每条都被不要）；
-  被同一作者的新报告顶掉 → `superseded`。已 `approved` 的报告再「全部批准」= 什么都不做（幂等）；已 `rejected` / `superseded` 的 → `409`。
-- **顶掉与上限（规范性）**：同一 `author` 在同一租户同时至多一份 `pending`——新的报告收下后，那个作者更老的 `pending` 报告记 `superseded`（它没批准的条一律作废）。
-  不同作者合计超过 `MAX_PENDING_REPORTS` 份 `pending` → 新的提交 `429`（先让人处理旧的；不顶掉别人的）。上限是软的：并发提交最多超出并发数。
+  已 `approved` 的报告再「全部批准」= 什么都不做（幂等）；已 `rejected` 的 → `409`。
+- **身份与上限（规范性）**：`author` 只是调用方自报的显示标签，**不参与任何判定**（不比较、不据此顶掉 / 隐藏 / 放行任何报告）——同一租户里谁交的都一样，
+  身份只有网关覆盖的租户头；MCP 对内直连，nexus-core 看不到是哪个 AI。所以没有「同作者顶掉旧报告」：待批准的报告合计超过 `MAX_PENDING_REPORTS` 份 → 新的提交 `429`（先让人处理旧的）。
+  上限是软的：并发提交最多超出并发数。报告对同租户一视同仁（可读、不可改）。
 
 ### 条的状态与逐条结果（规范性）
 
@@ -3686,8 +3687,8 @@ AI 仍不能改 / 删任何已有规则、不能写匹配范围超出那一个�
 ### 本版不做（有意的）
 
 - 不做「AI 自动批准」或按把握阈值批准：批准永远是人点。
-- 不做报告的编辑（改 `summary` / 增删条）与部分顶掉；要换一份就让 AI 再交一份。
-- 不让 AI 撤回自己的报告（读到 `get_report_status` 之后交新的就是顶掉）。
+- 不做报告的编辑（改 `summary` / 增删条）；要换一份就让 AI 再交一份，旧的由人处理。
+- 不让 AI 撤回或顶掉报告，也不按 AI 区分可见性（没有可信的 AI 身份可依）：撤回只有人「整份不要」。
 - 不在批准里做「撤销」：入账后的改归属走 v2.11。
 
 ## 入口与路由

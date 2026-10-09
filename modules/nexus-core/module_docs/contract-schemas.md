@@ -425,8 +425,8 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
 // → 200（坏的条进 rejected，其余照收；code ∈ invalid_item / unknown_suggestion / unknown_task / unknown_project /
 //        duplicate_suggestion / too_many_refs / newtask_refused；不存在与别的租户的 id 回一样的话，没有存在性预言机）
 { "reportId": "rp_…" | null, "status": "pending", "accepted": 3,
-  "rejected": [ { "index": 2, "code": "unknown_task", "reason": "任务不存在：t_x" } ], "superseded": "rp_…" | null }
-// → 429：别的作者已有 5 份 pending；422：形状不对 / 超限
+  "rejected": [ { "index": 2, "code": "unknown_task", "reason": "任务不存在：t_x" } ] }
+// → 429：已有 5 份 pending；422：形状不对 / 超限
 
 // GET /api/core/activity/reports/{id}（resolve=true；resolve=false 没有 suggestions / seconds / staleNow）
 { "id": "rp_…", "author": "hermes", "summary": "…", "status": "pending", "createdAt": "<ISO>", "decidedAt": null,

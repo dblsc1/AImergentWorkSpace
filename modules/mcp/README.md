@@ -10,7 +10,7 @@ HoneyComb 的 MCP 服务器（契约 `contracts/mcp.tools.v1`）：把任务树�
 
 v1.13：碎片很多时，**一次交一份报告**——`propose_report` 把一堆动作（把这些建议记到某个项目 / 任务、提议新任务并把它们记进去、
 这些是噪声忽略）装进一份报告，你在「AI助理 → AI 报告」点「全部批准」就全部入账，也可以逐条改 / 批准 / 不要。
-MCP 只存报告，什么都不确认；同一个 `author` 的新报告顶掉它没被批准的旧报告。`get_report_status` 让代理看到上一份报告的结果
+MCP 只存报告，什么都不确认；`author` 只是显示用的标签，不参与判定。`get_report_status` 让代理看到上一份报告的结果
 （待处理 / 已批准 / 不要 / 每条的入账数、过期数、失败原因），下一份别再交用户不要的。Hermes / opencode 这样交：
 
 ```jsonc
@@ -22,7 +22,7 @@ MCP 只存报告，什么都不确认；同一个 `author` 的新报告顶掉它
     { "kind": "assign",  "collection": "写文档", "projectId": "p_…" },
     { "kind": "newTask", "suggestionIds": ["sug_…"], "newTask": { "projectId": "p_…", "name": "重构存档" } },
     { "kind": "dismiss", "suggestionIds": ["sug_…", "sug_…"], "reason": "后台自动刷新" } ] }
-// → { "reportId": "rp_…", "accepted": 4, "rejected": [], "superseded": null, "applied": false, "next": "…" }
+// → { "reportId": "rp_…", "accepted": 4, "rejected": [], "applied": false, "next": "…" }
 ```
 
 一份最多 200 条；坏的条按下标进 `rejected`（含 `code`），其余照收。

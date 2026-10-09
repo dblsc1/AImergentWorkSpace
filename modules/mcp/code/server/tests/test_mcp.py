@@ -153,7 +153,7 @@ def respond(path, q, tenant):
             return 200, {"items": []}
         if q:
             return 200, {"items": [REPORT]}
-        return 200, {"reportId": "rp_1", "status": "pending", "accepted": 2, "superseded": "rp_0",
+        return 200, {"reportId": "rp_1", "status": "pending", "accepted": 2,
                      "rejected": [{"index": 1, "code": "unknown_task", "reason": "任务不存在：t_x"}]}
     if path == "/api/core/activity/suggestions/matches":
         return 200, {"matched": 1, "rejected": [{"index": 1, "reason": "任务不存在：'t_x'"}]}
@@ -1000,7 +1000,7 @@ def test_propose_report_posts_one_report_and_never_decides(servers):
              {"kind": "dismiss", "collection": "噪声"}]
     r = ok(servers, "propose_report", {"summary": "归类", "author": "hermes", "items": items},
            headers={"X-Nexus-Tenant": "u_alice"})
-    assert r["reportId"] == "rp_1" and r["accepted"] == 2 and r["superseded"] == "rp_0" and r["applied"] is False
+    assert r["reportId"] == "rp_1" and r["accepted"] == 2 and r["applied"] is False
     assert r["rejected"] == [{"index": 1, "code": "unknown_task", "reason": "任务不存在：t_x"}] and "AI 报告" in r["next"]
     # 只发一个请求：POST reports；原样下传、带租户、不带 Authorization；不调任何批准 / 确认端点
     assert [(m, p, t) for m, p, _, t in Fake.requests] == [("POST", "/api/core/activity/reports", "u_alice")]
@@ -1035,7 +1035,7 @@ def test_ai_text_in_reports_is_screened_before_going_back_to_the_model(servers, 
     out = ok(servers, "get_report_status", headers={"X-Nexus-Tenant": "u_evil"})["report"]
     for text in (out["summary"], out["items"][0]["reason"], out["items"][0]["failure"]):
         assert not set(text) & set(_NASTY) and len(text) <= tools.MAX_SCREEN_TEXT
-    nasty_reject = {"reportId": None, "status": None, "accepted": 0, "superseded": None,
+    nasty_reject = {"reportId": None, "status": None, "accepted": 0,
                     "rejected": [{"index": 0, "code": "unknown_task", "reason": nasty}]}
     monkeypatch.setitem(EVIL_BACKEND, "/api/core/activity/reports", nasty_reject)
     got = ok(servers, "propose_report", {"summary": "s", "items": [{"kind": "dismiss"}]}, headers={"X-Nexus-Tenant": "u_evil"})
