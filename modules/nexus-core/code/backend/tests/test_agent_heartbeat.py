@@ -436,6 +436,14 @@ def test_last_seen_never_moves_backward_nor_before_start():
         got = repo.get_agent_run("u_mono", "run_mono000001")
         assert (got["lastSeenAt"], got["beatCount"], got["beatSource"]) == (newer, 1, "x")
         repo.touch_agent_run("u_mono", "run_mono000001", (now - timedelta(hours=1)).isoformat())
-        assert repo.get_agent_run("u_mono", "run_mono000001")["lastSeenAt"] >= now.isoformat()
+        assert repo.get_agent_run("u_mono", "run_mono000001")["lastSeenAt"] == newer  # 迟到的老信号不倒退
     finally:
         repo.delete_agent_run("u_mono", "run_mono000001")
+    # 地板：还没有 lastSeenAt 的运行，被一个早于 startedAt 的迟到信号碰到，lastSeenAt 恰好是 startedAt（不是那个更早的时刻）
+    repo.add_agent_run({"user": "u_mono", "runId": "run_mono000002", "agent": "cc", "tool": "t", "zoneId": "z",
+                        "projectId": "p", "startedAt": now.isoformat()})
+    try:
+        assert repo.touch_agent_run("u_mono", "run_mono000002", (now - timedelta(hours=1)).isoformat()) is True
+        assert repo.get_agent_run("u_mono", "run_mono000002")["lastSeenAt"] == now.isoformat()
+    finally:
+        repo.delete_agent_run("u_mono", "run_mono000002")

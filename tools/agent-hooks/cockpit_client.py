@@ -15,11 +15,13 @@ Windows / mac / Linux 通用。
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import platform
 import re
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -273,11 +275,30 @@ def _run_with_deadline(fn, timeout: float):
     return box.get("value")
 
 
-def _http_error(e: urllib.error.HTTPError) -> CockpitError:
+def _read_capped(resp, end: float) -> bytes:
+    """读响应体，最多 `MAX_RESPONSE_BYTES + 1` 字节，且**整段**不超过绝对时刻 `end`（`time.monotonic()`）：
+    `read1` 每次只做一次 recv，每片之间核对剩余时间，超了就关连接、按超时算——慢吞吞一字节一字节吐 body 的服务端
+    拖不过 `end`，后台线程随之结束（不会一直占着「卡住的请求」位）。"""
+    chunks, size = [], 0
+    read = getattr(resp, "read1", resp.read)
+    while size <= MAX_RESPONSE_BYTES:
+        if time.monotonic() >= end:
+            with contextlib.suppress(Exception):
+                resp.close()
+            raise TimeoutError
+        chunk = read(min(4096, MAX_RESPONSE_BYTES + 1 - size))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        size += len(chunk)
+    return b"".join(chunks)
+
+
+def _http_error(e: urllib.error.HTTPError, end: float) -> CockpitError:
     """读错误体并分类成 `CockpitError`。**只在 `_run_with_deadline` 的工作线程里调**（读体受总时限管）。"""
     body = b""
     try:
-        body = e.read(MAX_RESPONSE_BYTES + 1)
+        body = _read_capped(e, end)
     except Exception:  # noqa: BLE001
         pass
     json_body, detail = False, None
@@ -314,12 +335,13 @@ def _request(config: dict[str, Any], method: str, path: str, payload: dict[str, 
     def _do() -> dict[str, Any]:
         # Request() 本身也可能因为非法 URL / 非法 header 值（比如 token 带换行）
         # 抛异常——连同下面的 open()/read() 一起放进同一个 try，让外层统一分类。
+        end = time.monotonic() + 2 * timeout  # 整次交换（连接 + 头 + 体）的绝对时限：调用方 `timeout` 后就放弃等了，线程最多再活一倍
         req = urllib.request.Request(url + path, data=data, method=method, headers=headers)
         try:
             with _opener.open(req, timeout=timeout) as resp:
-                body = resp.read(MAX_RESPONSE_BYTES + 1)
+                body = _read_capped(resp, end)
         except urllib.error.HTTPError as e:
-            raise _http_error(e) from None  # 错误体也在这个线程里读：受总时限管，慢吐字节的服务器拖不住调用方
+            raise _http_error(e, end) from None  # 错误体也在这个线程里读：受总时限管，慢吐字节的服务器拖不住调用方
         if not body:
             return {}
         if len(body) > MAX_RESPONSE_BYTES:
@@ -455,7 +477,9 @@ def phase_run(
 
 
 HEARTBEAT_SECONDS = 900  # 服务端没说（老服务端 / 没报成）时的心跳间隔
-HEARTBEAT_MIN, HEARTBEAT_MAX = 60, 3600  # 服务端给的值钳在这个范围里
+# 服务端给的值钳在这个范围里。上限 900 = 远低于服务端的失联线（1800 秒，`lostAfterSeconds`；服务端现在建议的也是 900）：
+# 适配器至少每 `lostAfterSeconds / 2` 发一次，丢一两下不会贴线；服务端给了更大的值也按上限用。
+HEARTBEAT_MIN, HEARTBEAT_MAX = 60, 900
 
 
 def heartbeat_run(
@@ -469,7 +493,7 @@ def heartbeat_run(
 
 
 def heartbeat_interval(response: Any) -> int:
-    """响应里的 `heartbeatSeconds`，过 `clamp_seconds`：钳到 [60, 3600]；没有 / 不是正整数 → 900。
+    """响应里的 `heartbeatSeconds`，过 `clamp_seconds`：钳到 [60, 900]；没有 / 不是正整数 → 900。
     这是唯一读它的地方（伴随进程、monitor、cockpit-run 的线程都经 `beat` 到这里），每一下心跳都重新钳一次。"""
     value = response.get("heartbeatSeconds") if isinstance(response, dict) else None
     return clamp_seconds(value, HEARTBEAT_MIN, HEARTBEAT_MAX, HEARTBEAT_SECONDS)

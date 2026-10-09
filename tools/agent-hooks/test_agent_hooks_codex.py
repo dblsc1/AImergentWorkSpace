@@ -160,7 +160,7 @@ class _CompanionCase(_BeatMixin, unittest.TestCase):
             loop.assert_not_called()  # 没有钩子给的启动时刻：不自己事后去取
             claude_hook._beat_main(["--beat", "--source", "companion", "--session", "s1", "--cli", str(CLI), "--born", "born-1",
                                     "--gen", "g", "--standby"])
-            loop.assert_called_once_with("companion", "s1", CLI, born="born-1", gen="g", standby=True)
+            loop.assert_called_once_with("companion", "s1", CLI, born="born-1", gen="g", standby=True, wait=False)
 
 
 class MonitorLifetimeTests(_CompanionCase):
@@ -305,17 +305,26 @@ class StateFileSafetyTests(_IsolatedHomeMixin, unittest.TestCase):
             self.assertFalse(held)
         self.assertEqual(victim.read_text(), "precious")
 
-    def test_group_or_world_writable_state_dir_is_not_used(self):
+    def test_own_group_or_world_writable_state_dir_is_repaired_and_files_tightened(self):
+        """v0.3 在 umask 002 下建的 0775 目录：本人的就修成 0700 继续用（以前被拒绝 = 升级的人全没了相位 / 心跳 / stop）。"""
         state_dir = cc.user_dir("state")
-        os.chmod(state_dir, 0o770)
-        claude_hook._write_state("s1", {"runId": "run-1"})
-        self.assertEqual(list(state_dir.iterdir()), [])  # 没写
-        os.chmod(state_dir, 0o700)
-        claude_hook._write_state("s1", {"runId": "run-1"})
-        os.chmod(state_dir, 0o777)
-        self.assertIsNone(claude_hook._read_state("s1"))
-        self.assertIsNone(claude_hook._beat_lock("s1"))
-        os.chmod(state_dir, 0o700)
+        for mode in (0o770, 0o775, 0o777):
+            os.chmod(state_dir, mode)
+            claude_hook._write_state("s1", {"runId": "run-1"})
+            self.assertEqual(state_dir.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(claude_hook._read_state("s1")["runId"], "run-1")
+        path = claude_hook._state_file("s1")
+        os.chmod(path, 0o664)  # 老版本留下的文件
+        claude_hook._read_state("s1")
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_unrepairable_state_dir_is_refused(self):
+        os.chmod(cc.user_dir("state"), 0o775)
+        with mock.patch.object(os, "chmod", side_effect=PermissionError):
+            claude_hook._write_state("s1", {"runId": "run-1"})
+            self.assertIsNone(claude_hook._read_state("s1"))
+            self.assertIsNone(claude_hook._beat_lock("s1"))
+        self.assertEqual(list(cc.user_dir("state").iterdir()), [])
 
     def test_state_dir_owned_by_someone_else_is_not_used(self):
         with mock.patch.object(os, "getuid", return_value=os.getuid() + 1):

@@ -576,7 +576,8 @@ class BoundsTests(_IsolatedHomeMixin, unittest.TestCase):
                          {"heartbeatSeconds": 1e12}):
             self.assertEqual(cc.heartbeat_interval(response), 900, response)
         self.assertEqual(cc.heartbeat_interval({"heartbeatSeconds": 5}), 60)
-        self.assertEqual(cc.heartbeat_interval({"heartbeatSeconds": 10 ** 12}), 3600)
+        self.assertEqual(cc.heartbeat_interval({"heartbeatSeconds": 10 ** 12}), cc.HEARTBEAT_MAX)  # 服务端给再大也按上限（900，远低于失联线 1800 秒）
+        self.assertEqual(cc.HEARTBEAT_MAX, 900)
 
     def test_nan_from_the_wire_does_not_stop_the_beat(self):
         """原来的写法 `min(max(v, 60), 3600)` 对 NaN 不起作用：JSON 里一个 NaN 就让下一次心跳的时刻变成 NaN，
@@ -593,7 +594,7 @@ class BoundsTests(_IsolatedHomeMixin, unittest.TestCase):
         answers = iter([{"heartbeatSeconds": 120}, {"heartbeatSeconds": float("nan")}, {"heartbeatSeconds": 5},
                         {"heartbeatSeconds": 10 ** 9}, {"heartbeatSeconds": "1"}, {}])
         with mock.patch.object(cc, "heartbeat_run", lambda *_a: next(answers)):
-            self.assertEqual([cc.beat({}, "r")[0] for _ in range(6)], [120, 900, 60, 3600, 900, 900])
+            self.assertEqual([cc.beat({}, "r")[0] for _ in range(6)], [120, 900, 60, 900, 900, 900])
 
     def test_response_body_read_is_bounded(self):
         big = b'{"runId": "' + b"x" * (cc.MAX_RESPONSE_BYTES + 10) + b'"}'
@@ -733,10 +734,11 @@ class MonitorProcessTests(_IsolatedHomeMixin, unittest.TestCase):
     def test_attached_monitor_beats_into_the_void_and_prints_nothing(self):
         os.environ["COCKPIT_URL"] = "http://127.0.0.1:1"
         self.addCleanup(os.environ.pop, "COCKPIT_URL", None)
-        # 状态里记的 Claude Code 得是**子进程将认出的那个**：它的父进程就是本测试进程，所以从本进程起往上认
-        # （本机在 Claude Code 里跑时是那个 claude，CI 里就是 pytest 自己）。
-        with mock.patch.object(os, "getppid", return_value=os.getpid()):
-            claude_hook._save_run_id("s1", "run-1", "idle", "garden", {"cwd": "/tmp"})
+        # 状态里记的 Claude Code 得是**子进程将认出的那个**：明确指给它（本测试进程）。不能靠祖先里碰巧有 claude——
+        # CI 里 `python -m pytest` 的祖先没有一个叫 claude 的，认不出就不发（以前这条测试因此在 CI 里红）。
+        os.environ["COCKPIT_CLI_PID"] = str(os.getpid())
+        self.addCleanup(os.environ.pop, "COCKPIT_CLI_PID", None)
+        claude_hook._save_run_id("s1", "run-1", "idle", "garden", {"cwd": "/tmp"})
         child = self._monitor("monitor")
         try:
             pidfile = claude_hook._state_file("s1").with_suffix(".beat")
