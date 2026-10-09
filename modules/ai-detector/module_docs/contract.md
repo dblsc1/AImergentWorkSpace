@@ -362,7 +362,7 @@ Content-Type: application/json
 | `idle` | 见 `detector.settings.v1`「idle 节」 | 同上 |
 | `archiveDays` | 30 | 本机留档保留天数，< 1 按 30 |
 | `presence` | `false` | 在场心跳（v0.3），见「在场心跳」。网页设置 `presence` 非 null 时以网页为准 |
-| `presenceSeconds` | 5（config.v1 v1.5；此前 15） | 心跳间隔，5–300，越界 / 没有这个键按 5。**老配置文件里写着的 `15` 不会自动改**：每拍带的是整段间隔里的停留，所以 15 秒一拍也不丢短的停留，只是页面晚一点看到；想跟到 5 秒把它改成 5 或删掉这一行 |
+| `presenceSeconds` | 5（config.v1 v1.5；此前 15） | 心跳间隔，5–300，越界 / 没有这个键按 5；**大于 30 的实际按 30 秒发**（presence.v1 v1.2.1，值仍合法、配置文件不动，启动后记一次日志）。**老配置文件里写着的 `15` 不会自动改**：每拍带的是整段间隔里的停留，所以 15 秒一拍也不丢短的停留，只是页面晚一点看到；想跟到 5 秒把它改成 5 或删掉这一行 |
 | （没有本机键）`autoTrack` | — | 「允许 AI 管理进行中的任务」只在网页设置里（`detector.settings.v1` v1.3）：服务端要读它，只写本机没有用 |
 | `agentStatusFile` | `""` | 状态文件桥读的本机路径，空 = 关 |
 | `agentStatusIgnore` | `[]` | `key` 前缀，命中的条目忽略 |
@@ -423,6 +423,9 @@ Authorization: Bearer <deviceToken>
 - 实现：`run` 里单独一个 goroutine，不等 5 分钟一轮的同步；脱敏调用与上传同一段代码（`buildFragments` + `sendTitles`，
   测试逐条比对心跳与上传出去的标题完全相同）。
 - 节奏：`presenceSeconds`（缺省 15，取值 5–300，越界按缺省）。**v1.2：缺省改为 5。**
+  **v1.2.1（2026-10-09）：实际间隔不超过 30 秒**（= 一拍往回带的 60 秒的一半）。`presenceSeconds` 写 31–300 仍然合法，
+  只是按 30 秒发、常驻进程记一次日志：一拍只往回带 60 秒，间隔比它长，两拍之间多出来的停留没人报；取一半是为了
+  丢一拍时下一拍还带得回来。请求的形状不变。
 - 内容：ActivityWatch 窗口桶**最新一条**事件的 `app`/`title` + 离开桶最新状态。**脱敏规则与上传完全相同**
   （标题表、`appOnlyApps`、`browserApps` 须对得上标签页否则按 app-only），在本机做完再发；
   离开时 `app`、`title` 都发 `""`。
@@ -522,6 +525,7 @@ Authorization: Bearer <deviceToken>
 
 | 日期 | 变更 |
 |---|---|
+| 2026-10-09 | presence.v1 v1.2.1（修订，PR #87 审核）：`presenceSeconds` 大于 30 时实际按 30 秒发（值仍合法，记一次日志）。v1.2 起每拍只往回带 60 秒的停留，而配置允许到 300 秒一拍——那样大部分停留没人报。请求的形状、配置文件的键都不变 |
 | 2026-10-09 | presence.v1 v1.2、config.v1 v1.5（追加）：仓主 2026-10-09「每 5 秒汇报一次，每次汇报里带各个窗口的停留时间」「人的注意力只能串行」。`presenceSeconds` 缺省 15 → 5（越界同样按 5；已写进配置文件的值不动）；心跳追加 `sentAt` + `spans [{app, title, from, seconds, guess?}]`：上一次成功的那一拍以来（至多往回 60 秒）人依次在过的窗口，串行、不重叠、离开已扣、短于 0.5 秒的不成段、至多 12 段（超了带 `truncated`）；脱敏与规则匹配同顶层同一条路径。顶层四个键含义不变，没有段时请求体与 v1.1 相同；老 nexus-core 忽略新键。对应 nexus-core v2.17 |
 | 2026-10-08 | upload.v1 v1.3、presence.v1 v1.1、config.v1 v1.4（追加）：仓主 2026-10-08「我的操作自动替代进行中计时」。规则可以只到项目（`projectId`，上传 `suggestion.projectId`）；网页设置 `autoTrack` 打开时在场心跳带规则对当前窗口的猜测 `guess`（同一个匹配函数，本机算，只发目标 id 与把握）。`autoTrack` 关着时两条请求体与此前逐字节相同。**取代条目**：本文件开头「它从不写事实：人在界面上确认了，才由 nexus-core 写 `session.completed`」仍然成立于本程序（它只上传建议）；但设备打开 `autoTrack` 后，nexus-core 会把规则把握 ≥ 0.9 的段直接记成事实（nexus-core v2.14） |
 | 2026-10-02 | upload.v1 v1.2、config.v1 v1.3（追加）：仓主 2026-10-02：终端类程序**按标签页分段**（程序 + 归一化标题各自一条流，`durationSeconds` 只算自己的碎片，段的墙钟跨度可交叠）；新配置 `segmentByTitle`（缺省开）/ `segmentByTitleApps`（缺省内置终端名单），网页设置 `detector.settings.v1` v1.2 可改；短于 1 秒的碎片不参与合并（保证 `startAt` 按秒唯一）；状态文件增 `sent`（游标之后已送达的区间，重算时挖掉，不重发也不重复计）。上传形状不变；关掉 `segmentByTitle` = v1.1 的切法 |

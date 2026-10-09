@@ -446,9 +446,17 @@ func TestPresenceDefaultIsFiveSeconds(t *testing.T) {
 			t.Fatalf("presenceSeconds=%v → %v", s, got)
 		}
 	}
-	c.PresenceSeconds = 300
-	if presenceInterval(c) != 300*time.Second {
-		t.Fatal("clamp upper bound")
+	c.PresenceSeconds = 30
+	if presenceInterval(c) != 30*time.Second {
+		t.Fatal("30 秒以内照配置")
+	}
+	// 一拍只往回带 presenceLookback：间隔比它的一半长，丢一拍（或只是晚了一点）那段停留就没了。
+	// 31–300 仍是合法配置，实际按 presenceMaxInterval 发。
+	for _, s := range []float64{31, 60, 300} {
+		c.PresenceSeconds = s
+		if got := presenceInterval(c); got != presenceMaxInterval || 2*got > presenceLookback {
+			t.Fatalf("presenceSeconds=%v → %v", s, got)
+		}
 	}
 }
 
