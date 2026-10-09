@@ -267,6 +267,7 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
 { "projectId": "p_3c", "projectSource": "agent-session", "collection": { "key": "cfo_agent", "name": "CFO_agent" } }
 ```
 
+- `LaneAgent.unverified: bool`（v2.19 追加，缺省 `false`）：这个运行是不带任何凭据的请求开的（契约「调用方范围与匿名上报」）。
 - `LaneAgent.projectId` / `AgentTimeTask.projectId` 形状不变：只挂项目的运行在这里是那个项目、`taskId` 为 `null`。
 - `projectSource` 只有一个取值 `"agent-session"`；没有这个键 = `projectId`（若有）是助理给的。
 

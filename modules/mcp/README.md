@@ -20,14 +20,24 @@ v1.10：`get_current_timer` 除了「在不在计时」，还带出 `focus`—�
 默认组装（`deploy/docker-compose.yml`）和发布版都自带它，经网关挂在 `<站点前缀>api/mcp/`，要登录：
 
 - 浏览器会话 cookie，或
-- 设备令牌（`contracts/auth.gate.v1`）：命令行 `docker compose exec auth python /app/auth_stub.py token <账号>`，
-  或登录后 `POST /api/auth/tokens`；请求头 `Authorization: Bearer <令牌>`。
+- 设备令牌（`contracts/auth.gate.v1`）：登录后在「AI助理」页的「Agent 令牌」里发一个，或命令行
+  `docker compose exec auth python /app/auth_stub.py token <账号> --scope read`；请求头 `Authorization: Bearer <令牌>`。
+
+令牌的范围决定 MCP 给多少（v1.12）：
+
+| 范围 | MCP |
+|---|---|
+| `read`（只读） | 11 个只读工具。`tools/list` 里看不到会写的 4 个，调了回 `isError` + `status: 403` |
+| `write`（读写） | 全部 15 个 |
+| `report`（只上报）、不带令牌 | 整个端点 403——只能上报的调用方读不到任何东西 |
+
+只想让外部代理「看」，发 `read`；要它也能起草规则 / 建议、认窗口，才发 `write`。
 
 接自己的 MCP 客户端（Streamable HTTP）：
 
 ```jsonc
 { "url": "http://127.0.0.1:8800/api/mcp/",
-  "headers": { "Authorization": "Bearer hct1...." } }
+  "headers": { "Authorization": "Bearer <你的令牌>" } }
 ```
 
 命令行试一下：

@@ -75,6 +75,11 @@ def find_agent_run_by_client_key(user: str, client_key: str) -> dict | None:
     return _agent_col().find_one({"user": user, "clientKey": client_key}, {"_id": 0})
 
 
+def count_unverified_agent_runs(user: str) -> int:
+    """v2.19：该租户还在跑（未打关闭标记）的匿名运行个数。"""
+    return _agent_col().count_documents({"user": user, "unverified": True, "closing": {"$exists": False}})
+
+
 def relabel_agent_run(user: str, run_id: str, fields: dict) -> None:
     """v2.13 会话改名：未关闭才改 ``label`` / ``match``。不碰 ``v``——相位 / 连线的乐观锁管的是那两个数组。"""
     _agent_col().update_one({"user": user, "runId": run_id, "closing": {"$exists": False}}, {"$set": fields})

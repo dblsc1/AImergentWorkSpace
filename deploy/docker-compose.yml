@@ -123,6 +123,9 @@ services:
       # 不设则每次启动随机生成：重启即所有人重新登录，且不发设备令牌（auth.gate v1.2）。
       # 令牌的吊销纪元缺省记在账号文件旁边：/data/tokens.json（同一个数据卷）。
       AUTH_SECRET: ${AUTH_SECRET:-}
+      # 匿名上报（auth.gate v1.4）：单人模式下不带任何凭据的请求可以上报代理运行（只能往泳道里加记录，
+      # 读不到任何东西）。缺省开；端口对外开放时在 .env 里设 false。
+      AUTH_ANONYMOUS_REPORT: ${AUTH_ANONYMOUS_REPORT:-true}
       # 0.0.0.0 在这里是安全的：这台监听只在 honeycomb-net 这个内部 bridge 网里，
       # 本服务在 compose 里根本不映射宿主端口（跟 nexus-core 的 0.0.0.0:8000 同一个道理，
       # 见 modules/nexus-core/code/backend/Dockerfile 的同款注释）。

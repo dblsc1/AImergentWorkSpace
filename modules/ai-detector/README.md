@@ -152,6 +152,9 @@ ai-detector run         # 或者现在就常驻
 令牌由 HoneyComb 的认证服务发放；用自带的占位认证时，在服务器上执行
 `docker compose run --rm -T auth python /app/auth_stub.py token <账号>` 拿一个
 （该功能随 v0.3 的设备令牌一起提供），吊销用 `revoke <账号>`。令牌只能调接口，不能登录网页。
+v0.4 起令牌分范围：检测程序要上传活动、报在场心跳，**需要 `write`（读写）范围**——在网页「AI助理 → Agent 令牌」里选「读写」，
+或命令行 `token <账号> --scope write --name 检测程序`（命令行缺省就是 `write`）。`read` / `report` 令牌上传会被 403。
+单独吊销这一个：网页列表里点「吊销」，或 `revoke-token <令牌 id>`。
 
 自己从源码构建（不用装 Go，有 docker 即可）：
 
@@ -200,7 +203,7 @@ Linux `~/.config/honeycomb/`；设环境变量 `AI_DETECTOR_HOME` 可换目录�
 | `enabled` | `false` | 总开关。关着时不读不发 |
 | `paused` | `false` | 暂停。暂停期间的活动以后也不补传 |
 | `cockpitUrl` | `http://localhost:8800` | HoneyComb 地址；整站挂子路径就带上，如 `https://host/Cockpit/` |
-| `deviceToken` | 空 | 设备令牌 |
+| `deviceToken` | 空 | 设备令牌（`write` 范围） |
 | `deviceId` | `init` 时随机生成 | 本机标识，别改（服务端用它防重） |
 | `activityWatchUrl` | `http://localhost:5600/api/0` | |
 | `intervalMinutes` | 5 | 多久同步一轮 |

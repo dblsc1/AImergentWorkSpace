@@ -78,6 +78,7 @@ def _run_item(run: dict, start: datetime, end: datetime) -> dict:
         **{k: run.get(k) for k in ("runId", "agent", "tool", "model", "label", "taskId", "projectId",
                                    "outcome", "elapsedSeconds", "overdue",
                                    "beatSource", "beatCount")},  # 后两个 v2.18：谁发的心跳、发了几下
+        "unverified": bool(run.get("unverified")),  # v2.19：不带凭据的请求开的运行
         "startAt": _iso(run["startTs"]),
         "endAt": _iso(run["endTs"]) if run["endTs"] is not None else None,
         # v2.18：失联与最后一次信号的时刻只对在跑的运行有意义；已结束的 false / null

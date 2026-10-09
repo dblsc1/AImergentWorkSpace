@@ -37,6 +37,7 @@ services:
       AUTH_PASSWORD: ${HONEYCOMB_PASSWORD:-}
       AUTH_BIND: 0.0.0.0:8010
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
+      AUTH_ANONYMOUS_REPORT: ${AUTH_ANONYMOUS_REPORT:-true}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8010/api/auth/health').status==200 else 1)"]
       interval: 5s

@@ -89,6 +89,7 @@ def handle(envelope: dict) -> None:
             beatCount=data["beatCount"] if type(data.get("beatCount")) is int else None,
             phases=_clean_phases(data.get("phases")),
             interactions=_clean_interactions(data.get("interactions")),
+            **({"unverified": True} if data.get("unverified") is True else {}),  # v2.19：匿名开的运行
         )
     repo.apply_lane(doc)
 

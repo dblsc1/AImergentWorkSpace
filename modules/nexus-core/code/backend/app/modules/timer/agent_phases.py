@@ -167,6 +167,7 @@ def lane_runs(user: str, *, now: Callable[[], datetime]) -> tuple[datetime, list
         started = agents.ts(run["startedAt"])
         base = {k: run.get(k) for k in ("runId", "agent", "tool", "model", "label", "taskId", "projectId",
                                         "beatSource", "beatCount")}  # 后两个 v2.18
+        base["unverified"] = bool(run.get("unverified"))  # v2.19：匿名开的运行
         base["match"] = run.get("match")  # v2.13：activity 的「窗口 ↔ 代理会话」要认它；views/lanes 不回出
         if "closing" in run:
             data, ended = agents.snapshot_data(run)

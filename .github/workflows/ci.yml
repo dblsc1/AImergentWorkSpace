@@ -248,6 +248,8 @@ jobs:
           sed -e 's/^HONEYCOMB_PASSWORD=.*/HONEYCOMB_PASSWORD=ci-smoke-password/' \
               deploy/.env.example > ${{ matrix.dir }}/.env
           echo "HONEYCOMB_BASE_PATH=${{ matrix.base }}" >> ${{ matrix.dir }}/.env
+          # 固定密钥才发设备令牌（下面「权限范围与匿名上报」要用）；发布版安装脚本写的 .env 本来就带它。
+          echo "AUTH_SECRET=$(openssl rand -hex 32)" >> ${{ matrix.dir }}/.env
       - name: 放一个同名的旧镜像
         # 机器上已有同名镜像时，compose 必须照样按源码构建，不许拿旧的跑。
         # 这里用 hello-world 冒充：真被拿去跑，nexus-core 健康检查过不了，up 就红。
@@ -259,6 +261,9 @@ jobs:
         run: docker compose up -d --wait --wait-timeout 300
       - name: 冒烟
         run: deploy/smoke.sh ci-smoke-password
+      - name: 权限范围与匿名上报（auth.gate v1.4，单人模式）
+        # 两份组装 × 两种前缀都从门外验：三种范围各能做什么、匿名只能上报、伪造的头被盖掉、单个吊销、限速。
+        run: deploy/test/scopes.sh ci-smoke-password
       - name: 灌演示数据（照 README）
         run: HONEYCOMB_PASSWORD=ci-smoke-password python3 seed/seed_demo.py --base "http://127.0.0.1:8800${HONEYCOMB_BASE_PATH%/}"
       - name: 后端单独重建（换 IP），网关不重启照常转发
@@ -302,6 +307,8 @@ jobs:
         run: test/tokens.sh ci-accounts-pw
       - name: MCP（mcp.tools.v1，令牌经网关、两个账号互不可见）
         run: test/mcp.sh ci-accounts-pw
+      - name: 权限范围（auth.gate v1.4；多账号下匿名一律被拒）
+        run: test/scopes.sh ci-accounts-pw
       - name: 失败时的日志
         if: failure()
         run: docker compose logs --no-color

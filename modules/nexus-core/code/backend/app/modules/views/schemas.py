@@ -471,6 +471,7 @@ class LaneAgent(_Strict):
     beatCount: int | None = None  # v2.18：收到过几次心跳；没有为 null
     phases: list[LanePhase]
     attention: list[LaneAttention] = []  #: v2.17：人把注意力放在它上面的时间（裁到窗口、已合并）
+    unverified: bool = False  #: v2.19：匿名开的运行（契约「调用方范围与匿名上报」）
 
 
 class LaneReply(_Strict):
