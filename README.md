@@ -225,8 +225,8 @@ suggestions, reassigning time, ...) stay closed to every token.
 
 **A request with no token can only report.** A single-user install (shared
 password only) accepts status reports that carry no credentials at all, so the
-hooks work without a token; runs reported that way are marked "unverified" in
-the lanes and always land in the inbox. The cost, stated plainly: **while this
+hooks work without a token; runs reported that way are flagged unverified (`unverified: true` in
+`views/lanes`) and always land in the inbox. The cost, stated plainly: **while this
 is on, anyone who can reach the port can add entries to your lanes.** They can
 read nothing and change nothing that exists, but they can add (rate-limited at
 the gateway, at most 20 live at a time). With the default loopback binding that

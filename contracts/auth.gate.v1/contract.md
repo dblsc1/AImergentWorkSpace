@@ -160,7 +160,7 @@ v1.1 占位实现追加两个字段（可选，替换实现可以不给）：`ac
 | 鉴权 / 请求 | 同 `POST /api/auth/tokens`（cookie、`application/json`、body 可空）|
 | `204` | 调用者这个身份（租户）的**全部**设备令牌作废，无 body。别的身份不受影响。（v1.4）body 带 `{"tokenId": "<令牌 id>"}` 时**只作废这一个**（重复吊销同样 `204`）|
 | `404` | （v1.4）带了 `tokenId`，但自己名下没有这个令牌（别人的、到期清掉的、从没有过的，同一个回答）|
-| 其它 | `401` / `400` / `413` / `415` / `503` 同上；`tokenId` 不是 16 位十六进制 → `400` |
+| 其它 | `401` / `400` / `413` / `415` / `503` 同上；带了 `tokenId` 但不是 16 位十六进制的字符串（含 `null`）→ `400`，不会当成「吊销全部」 |
 
 吊销之后新发的令牌照常可用。占位实现在本进程立即生效；命令行吊销 `RELOAD_EVERY`（2 秒）
 内生效。
@@ -466,7 +466,7 @@ docker compose exec auth python /app/auth_stub.py revoke         # 作废共享�
 # v1.4：范围、备注、列出、单个吊销
 docker compose exec auth python /app/auth_stub.py token alice --scope report --name 沙箱里的编码代理
 docker compose exec auth python /app/auth_stub.py tokens alice   # id、范围、是否有效、到期、备注（没有令牌本身）
-docker compose exec auth python /app/auth_stub.py revoke-token 0123456789abcdef   # 只作废这一个
+docker compose exec auth python /app/auth_stub.py revoke-token 0000000000000000   # 只作废这一个
 ```
 
 - （v1.4）`--scope report|read|write`，缺省 `write`；新发的都是 `hct2`。令牌打到标准输出，id 与范围打到标准错误。

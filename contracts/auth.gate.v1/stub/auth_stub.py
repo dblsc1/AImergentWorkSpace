@@ -747,8 +747,13 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"ok": False, "error": "bad_label"})
             return
         scope, jti = body.get("scope", "write"), body.get("tokenId")
-        if scope not in SCOPES or (jti is not None and not (isinstance(jti, str) and TOKEN_ID_RE.match(jti))):
-            self._json(400, {"ok": False, "error": "bad_scope" if jti is None else "bad_token_id"})
+        if scope not in SCOPES:
+            self._json(400, {"ok": False, "error": "bad_scope"})
+            return
+        # 给了 tokenId 这个键就必须是一个合格的 id：null / 空串不能悄悄变成「吊销全部」
+        one = "tokenId" in body
+        if one and not (isinstance(jti, str) and TOKEN_ID_RE.match(jti)):
+            self._json(400, {"ok": False, "error": "bad_token_id"})
             return
         if not TOKENS_FILE or not SECRET_FROM_ENV:
             # 没地方记纪元 = 发出去收不回；没固定密钥 = 重启即废。两种都不发，响亮地说。
@@ -757,7 +762,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if revoke:
                 # 带 tokenId = 只作废这一个（v1.4，只认自己名下的）；不带 = 这个身份的全部（v1.2）
-                found = revoke_identity(tenant) if jti is None else revoke_token(jti, tenant)
+                found = revoke_token(jti, tenant) if one else revoke_identity(tenant)
                 EPOCHS.refresh()  # 本进程立即生效，不等后台线程
                 if found is False:
                     self._json(404, {"ok": False, "error": "no_such_token"})

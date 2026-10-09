@@ -752,14 +752,15 @@ def test_list_and_per_token_revoke(stub, users):
     assert stub.req("GET", "/api/auth/tokens", headers={"Authorization": f"Bearer {a2['token']}"})[0] == 401
     assert stub.req("GET", "/api/auth/tokens")[0] == 401
     # 吊销别人的令牌：与「没有这个 id」同一个 404，且没生效
-    for cookie, jti in ((bob, a1["id"]), (alice, "0123456789abcdef")):
+    for cookie, jti in ((bob, a1["id"]), (alice, "0000000000000000")):
         status, _, body = stub.req("POST", "/api/auth/tokens/revoke", {"tokenId": jti}, cookie=cookie)
         assert status == 404 and json.loads(body)["error"] == "no_such_token"
     assert _v(stub, "POST", START, a1["token"])[0] == 204
-    for bad in ("", "xyz", 5, None, "0123456789ABCDEF", "0123456789abcdef0", ["x"]):
-        expect = 204 if bad is None else 400  # null = 没给 = 整个身份吊销（下面单独验）；这里用 bob 试
-        if bad is not None:
-            assert stub.req("POST", "/api/auth/tokens/revoke", {"tokenId": bad}, cookie=bob)[0] == expect, bad
+    # 给了 tokenId 就必须合格：null / 空串不会悄悄变成「吊销全部」
+    for bad in ("", "xyz", 5, None, "AAAAAAAAAAAAAAAA", "00000000000000000", ["x"]):
+        status, _, body = stub.req("POST", "/api/auth/tokens/revoke", {"tokenId": bad}, cookie=bob)
+        assert status == 400 and json.loads(body)["error"] == "bad_token_id", bad
+    assert _v(stub, "POST", "/api/core/events", b1["token"])[0] == 204
     # 吊销自己的一个：立即生效，另一个与别人的不受影响，列表里标出来
     assert stub.req("POST", "/api/auth/tokens/revoke", {"tokenId": a1["id"]}, cookie=alice)[0] == 204
     assert _v(stub, "POST", START, a1["token"])[0] == 401
@@ -851,7 +852,7 @@ def test_cli_scopes_list_and_revoke_token(stub, users):
     assert _v(stub, "POST", START, tok)[0] == 401
     assert _v(stub, "POST", "/api/core/events", write)[0] == 204
     assert f"{jti}\treport\t已吊销" in _cli(users, "tokens", "alice").stdout
-    for args in (("revoke-token", "nope"), ("revoke-token",), ("revoke-token", "0123456789abcdef"),
+    for args in (("revoke-token", "nope"), ("revoke-token",), ("revoke-token", "0000000000000000"),
                  ("token", "alice", "--scope", "admin"), ("token", "alice", "--scope"),
                  ("token", "alice", "--name", "x" * 65), ("token", "alice", "--name", "a\x1bb"),
                  ("revoke", "alice", "--scope", "read")):

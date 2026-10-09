@@ -166,7 +166,7 @@ docker compose up -d
 - 接口：`POST /api/auth/tokens`（`Content-Type: application/json`，body `{"scope":"report","name":"笔记本"}`，都选填，缺省 `write`）；`GET /api/auth/tokens` 列出（没有令牌本身）；`POST /api/auth/tokens/revoke` body `{"tokenId":"…"}` 吊销一个，空 body 吊销自己名下的全部。
 - 命令行（`deploy/` 下）：`docker compose exec auth python /app/auth_stub.py token alice --scope report --name 笔记本`、`tokens alice`、`revoke-token <id>`、`revoke alice`；不带名字 = 共享口令身份。
 
-**不带令牌的请求只能上报。** 单人部署（只开共享口令）缺省接受不带任何凭据的上报：钩子不配令牌也能把状态报上来，这样报的运行在泳道里标着「未验证」、一律落收件箱。照直说它的代价：**开着的时候，能连到这个端口的任何人都能往你的泳道里加记录**——读不到任何东西、改不了已有的，但能加（网关限速、同时在跑的最多 20 个）。缺省只绑本机回环时这没什么；**把端口开到局域网或公网时，在 `.env` 里设 `AUTH_ANONYMOUS_REPORT=false`**，改发 `report` 令牌。带了坏令牌、过期令牌的请求一律被拒，不会被当成匿名。开了账号登录（多用户）时没有匿名上报。
+**不带令牌的请求只能上报。** 单人部署（只开共享口令）缺省接受不带任何凭据的上报：钩子不配令牌也能把状态报上来，这样报的运行记为「未验证」（`views/lanes` 里 `unverified: true`）、一律落收件箱。照直说它的代价：**开着的时候，能连到这个端口的任何人都能往你的泳道里加记录**——读不到任何东西、改不了已有的，但能加（网关限速、同时在跑的最多 20 个）。缺省只绑本机回环时这没什么；**把端口开到局域网或公网时，在 `.env` 里设 `AUTH_ANONYMOUS_REPORT=false`**，改发 `report` 令牌。带了坏令牌、过期令牌的请求一律被拒，不会被当成匿名。开了账号登录（多用户）时没有匿名上报。
 
 要先在 `.env` 里设 `AUTH_SECRET`（发布版安装脚本已写好；`deploy/` 下手搭的自己加一行随机串）——没有固定密钥时令牌重启就废，所以干脆不发。改密码、删账号、换掉或去掉共享口令，对应的令牌跟着作废；吊销两秒内生效。v0.3 发的老令牌（`hct1` 开头）照常可用，等于 `write`，不在列表里。
 
