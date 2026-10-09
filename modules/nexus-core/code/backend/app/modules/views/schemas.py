@@ -71,6 +71,8 @@ class CurrentAgent(_Strict):
     #: v2.4：当前相位（从没报过为 null，读方按 working 画）与泳道名（没给为 null）。键不消失。
     phase: Literal["working", "waiting_input", "waiting_permission", "idle", "error"] | None = None
     label: str | None = None
+    #: v2.21：服务端算好的已跑秒数（此刻 − startedAt，≥ 0；先收了超时 / 失联，所以不会超过上限）。同 ``views/lanes`` 的 ``elapsedSeconds``。
+    elapsedSeconds: int = 0
 
 
 class LaneAuto(_Strict):

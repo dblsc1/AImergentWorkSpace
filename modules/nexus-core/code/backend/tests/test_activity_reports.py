@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 
-from test_activity_suggestions import BEARER, SUG, A, B, _db, _pending, _recent, _seg, _session_events, _upload
+from test_activity_suggestions import BEARER, SUG, A, B, _db, _match, _pending, _recent, _seg, _session_events, _upload
 from test_session_reassign_races import EVENTS, _external, _post, _world
 
 API = "/api/core"
@@ -401,3 +401,71 @@ def test_external_event_ingest_cannot_forge_report_provenance(client):
     assert _post(client, EVENTS, [forged])["accepted"] == 1
     stored = _db()["events"].find_one({"id": "evt_rep1"})["ai"]
     assert stored == {"generated": True, "confidence": 0.9, "confirmed": True}
+
+
+
+# ─────────────────────────────────────────── 评审补记：与单条路径同样的闸、状态由结果推出、批准中报告被清掉
+
+
+def test_assign_refused_when_user_rejected_the_task_or_a_rule_already_assigned_one(client, seeded):
+    ids = _ids(client, 2)
+    task, project = _world_ids(seeded)
+    other = _extra_task(project, "另一个任务")
+    _db()["activity_suggestions"].update_one({"id": ids[0]}, {"$set": {"rejectedTaskIds": [task]}})   # 人否掉过 task
+    _db()["activity_suggestions"].update_one({"id": ids[1]}, {"$set": {"suggestion.taskId": other,
+                                                                       "suggestion.classifier": "rules"}})  # 规则给的任务
+    out = _submit(client, [{"kind": "assign", "suggestionIds": [ids[0]], "taskId": task},
+                           {"kind": "assign", "suggestionIds": [ids[1]], "taskId": task},
+                           {"kind": "assign", "suggestionIds": [ids[0]], "projectId": project}])  # 只到项目：不碰任务，照收
+    assert out["accepted"] == 1 and [(r["index"], r["code"]) for r in out["rejected"]] == [(0, "task_rejected"), (1, "rule_assigned")]
+    # 与单条路径一致：assistant 的 match 同样拒绝这两条
+    assert _match(client, [{"id": ids[0], "taskId": task, "confidence": 0.5}])["matched"] == 0
+
+
+def test_task_rejected_after_submit_is_stale_at_apply_time(client, seeded):
+    ids = _ids(client, 1)
+    task, _ = _world_ids(seeded)
+    rid = _submit(client, [{"kind": "assign", "suggestionIds": ids, "taskId": task}])["reportId"]
+    _db()["activity_suggestions"].update_one({"id": ids[0]}, {"$set": {"rejectedTaskIds": [task]}})  # 提交之后人否掉了
+    body = client.post(f"{REPORTS}/{rid}/approve").json()
+    assert [i["status"] for i in body["items"]] == ["stale"] and body["stale"] == 1
+    assert _session_events() == [] and _pending(client)["total"] == 1
+    result = next(iter(_status(client, rid)["items"][0]["results"].values()))
+    assert result["state"] == "stale" and "否掉" in result["reason"]
+
+
+def test_item_status_is_derived_from_results_even_when_two_approvals_interleave(client, seeded):
+    from app.modules.activity import reports, reports_repo  # noqa: PLC0415
+
+    ids = _ids(client, 1)
+    task, _ = _world_ids(seeded)
+    rid = _submit(client, [{"kind": "assign", "suggestionIds": ids, "taskId": task}])["reportId"]
+    item = reports_repo.get("u_local", rid)["items"][0]
+    # 批准 B 看到「已被别处确认」先写 stale 并定下状态；批准 A 随后才把 applied 写进结果
+    reports_repo.set_results("u_local", rid, "i0", {ids[0]: {"state": "stale", "reason": "已被别处确认"}})
+    assert reports_repo.set_item_status("u_local", rid, "i0", "stale")
+    reports_repo.set_results("u_local", rid, "i0", {ids[0]: {"state": "applied"}})
+    assert reports._sync_status("u_local", rid, item, {ids[0]: {"state": "applied"}})["status"] == "applied"
+    shown = _status(client, rid)["items"][0]
+    assert (shown["status"], shown["applied"], shown["stale"]) == ("applied", 1, 0)
+
+
+def test_report_purged_during_approval_returns_what_was_done_not_404(client, seeded, monkeypatch):
+    from app.modules.activity import reports_repo  # noqa: PLC0415
+
+    ids = _ids(client, 2)
+    task, project = _world_ids(seeded)
+    rid = _submit(client, [{"kind": "assign", "suggestionIds": ids[:1], "taskId": task},
+                           {"kind": "assign", "suggestionIds": ids[1:], "projectId": project}])["reportId"]
+    real = reports_repo.set_results
+
+    def then_purged(*a, **k):
+        real(*a, **k)
+        _db()["activity_reports"].delete_many({"id": rid})  # TTL 清理恰好在批准进行中把它删了
+
+    monkeypatch.setattr(reports_repo, "set_results", then_purged)
+    resp = client.post(f"{REPORTS}/{rid}/approve")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "purged" and body["applied"] == 2 and [i["status"] for i in body["items"]] == ["applied", "applied"]
+    assert len(_session_events()) == 2  # 事实照写，只写一次

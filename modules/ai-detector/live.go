@@ -195,11 +195,15 @@ func beatSpans(cfg Config, d awData, from, to time.Time, rules []rule) ([]presen
 		}
 		out = cut
 	}
-	for i := range out {
-		out[i].From = out[i].start.UTC().Format(time.RFC3339Nano)
-		out[i].Seconds = float64(out[i].end.Sub(out[i].start).Milliseconds()) / 1000
+	kept2 := out[:0]
+	for _, sp := range out {
+		sp.From = sp.start.UTC().Format(time.RFC3339Nano)
+		sp.Seconds = float64(sp.end.Sub(sp.start).Milliseconds()) / 1000
+		if sp.Seconds > 0 { // 不足 1 毫秒的碎片取整成 0，服务端（seconds > 0）会把整拍 422：丢掉它
+			kept2 = append(kept2, sp)
+		}
 	}
-	return out, truncated, nil
+	return kept2, truncated, nil
 }
 
 // beater：心跳跨拍只记一样东西——上一拍成功发出时覆盖到了哪一刻。

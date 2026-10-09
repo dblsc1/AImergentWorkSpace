@@ -118,7 +118,8 @@ def _union(old: list[tuple], new: list[tuple], gap: timedelta) -> list[tuple]:
     ``gap`` 只是**新的一段自己**的够得着的范围：与它相距 ≤ ``gap`` 的旧段并进来，并成的一段不再顺着往外够——
     旧段之间原本分开的，不会因为这次来的是老心跳（45 秒）而被串起来，否则一个点能把几十秒没看的时间都算进去。
     新的几段先排序再并（结果与到达顺序无关）。超过 ``MAX_ATTENDS``：把相距最近的相邻两段并拢
-    （不丢最新的；多算的只是最小的那些空档）。"""
+    （不丢最新的；总量只增不减，每并拢一次多算的是当时最小的那个空档，≤ 运行时长 ÷ ``MAX_ATTENDS``；
+    多算的总量随超出的段数线性增长，没有常数上界）。"""
     spans = sorted(old)
     for a, b in sorted(new):
         near = [s for s in spans if s[0] - b <= gap and a - s[1] <= gap]

@@ -878,3 +878,28 @@ func TestBridgeStatePersistsAcrossRestart(t *testing.T) {
 		t.Fatalf("state %+v", st)
 	}
 }
+
+// 最后一段不足 1 毫秒：取整成 0 秒，服务端（seconds > 0）会把整拍 422——不带这一段，别的段照发。
+func TestPresenceDropsSubMillisecondFragment(t *testing.T) {
+	now := time.Now()
+	aw := fakeAWWeb(t, []awEvent{
+		winEv(now.Add(-20*time.Second), 19.9995, "code", "old"),
+		winEv(now.Add(-500*time.Microsecond), 0, "code", "new"),
+	}, nil, nil)
+	defer aw.Close()
+	ck := newLiveCockpit(t)
+	defer ck.Close()
+	remotePresence.Store(nil)
+	if sent, err := presenceBeat(liveConfig(aw.URL, ck.URL), http.DefaultClient, now); !sent || err != nil {
+		t.Fatalf("sent=%v err=%v", sent, err)
+	}
+	body := ck.posts("/presence")[0].body
+	for _, g := range bodySpans(t, body) {
+		if g.seconds <= 0 {
+			t.Fatalf("zero-second span sent: %+v", g)
+		}
+	}
+	if got := bodySpans(t, body); len(got) != 1 || got[0].title != "old" {
+		t.Fatalf("spans %+v", got)
+	}
+}

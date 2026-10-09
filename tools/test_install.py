@@ -171,6 +171,14 @@ def _proxy_blocks(nginx: str) -> dict[str, str]:
     return blocks
 
 
+def test_request_body_limit_is_explicit_in_both_assemblies(out):
+    """在场心跳的 app / title 不设长度上限（contract v2.17.2），靠网关的体上限兜底：1m 写明，不靠默认值。"""
+    _, _, gen = out
+    hand = _render((install.ROOT / "deploy" / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8"))
+    for conf in (hand, gen):
+        assert "    client_max_body_size 1m;" in conf
+
+
 def test_every_proxy_location_sets_tenant_scope_and_anonymous_headers(out, tmp_path):
     """gateway.v1 第九节：转给任何上游的 location 都不能让客户端自带的 X-Nexus-Tenant / Scope / Anonymous 过去。
     过了门的（auth_request，直接写或经 gate.inc）用认证服务的答复覆盖；没过门的（认证服务本身、验证子请求、

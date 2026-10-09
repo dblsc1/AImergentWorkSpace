@@ -58,10 +58,11 @@ class CockpitError(Exception):
     页——那是 HTML）——只看状态码分不出这两种，配错地址一样会给 404。
     """
 
-    def __init__(self, category: str, code: int | None = None, json_body: bool = False):
+    def __init__(self, category: str, code: int | None = None, json_body: bool = False, detail: str | None = None):
         super().__init__(category)
         self.code = code
         self.json_body = json_body
+        self.detail = detail  # JSON 错误体里的 `detail`（字符串才留）；只用来认「服务端不认这个运行」，不进 str(e)
 
 
 # ── 每用户目录（跨平台） ──────────────────────────────────────────
@@ -293,18 +294,20 @@ def _request(config: dict[str, Any], method: str, path: str, payload: dict[str, 
             body = e.read(MAX_RESPONSE_BYTES + 1)
         except Exception:
             pass
-        json_body = False
+        json_body, detail = False, None
         if body:
             try:
-                json.loads(body)
+                parsed = json.loads(body)
                 json_body = True
+                if isinstance(parsed, dict) and isinstance(parsed.get("detail"), str):
+                    detail = parsed["detail"][:200]
             except ValueError:  # 包括 JSONDecodeError 和坏编码的 UnicodeDecodeError
                 json_body = False
         try:
             e.close()  # HTTPError 包着底层响应/连接，raise 出来之后没人再帮它关，自己关掉
         except Exception:
             pass
-        raise CockpitError(f"HTTP {e.code}", code=e.code, json_body=json_body) from None
+        raise CockpitError(f"HTTP {e.code}", code=e.code, json_body=json_body, detail=detail) from None
     except urllib.error.URLError as e:
         if isinstance(e.reason, TimeoutError):
             raise CockpitError("超时") from None
@@ -443,14 +446,17 @@ def heartbeat_interval(response: Any) -> int:
 
 
 BEAT_MISSING = "missing"  # `beat` 的「已结束」位上，服务端不认这个 runId（404）的取值
+BEAT_UNSUPPORTED = "unsupported"  # 同一位上：服务端没有心跳路由（老服务端的 404 `{"detail":"Not Found"}`）
+RUN_UNKNOWN_DETAIL = "代理运行不存在"  # nexus-core 对「没有这个 runId」的 404 detail 前缀（timer/agents.py）
 
 
 def beat(
     config: dict[str, Any], run_id: str, timeout: float = DEFAULT_TIMEOUT, beat_source: str | None = None,
 ) -> tuple[float, bool | str]:
     """发一次心跳，**绝不抛**：返回 `(下一次隔多少秒, 运行是否已结束)`；已结束位 `True` = 服务端说 closed，
-    `BEAT_MISSING` = 服务端不认这个运行（404 且是应用层的 JSON 错误：库重置 / 换了租户），调用方都当「该重开」，
-    但后者重开不成就别再敲了。
+    `BEAT_MISSING` = 服务端不认这个运行（404，JSON 体的 detail 是 nexus-core 的「代理运行不存在」：库重置 / 换了租户），
+    调用方当「该重开」，但重开不成就别再敲了；`BEAT_UNSUPPORTED` = 404 的 JSON 体是别的（没有心跳路由的老服务端答
+    `{"detail":"Not Found"}`）：这个服务端不会有心跳，调用方别再起发心跳的进程，更不要重开。
     连不上 / 超时 / 5xx → `HEARTBEAT_MIN` 秒后再试（间隔是失联线的一半，丢一下不补就贴线了）；
     其它 4xx（老服务端没有这个端点、令牌不对）→ 照常间隔，不猛敲。"""
     try:
@@ -458,7 +464,8 @@ def beat(
         return heartbeat_interval(response), response.get("reason") == "closed"  # 间隔已钳
     except CockpitError as e:
         if e.code == 404 and e.json_body:
-            return HEARTBEAT_SECONDS, BEAT_MISSING
+            known = isinstance(e.detail, str) and e.detail.startswith(RUN_UNKNOWN_DETAIL)
+            return HEARTBEAT_SECONDS, BEAT_MISSING if known else BEAT_UNSUPPORTED
         return (HEARTBEAT_SECONDS if e.code and 400 <= e.code < 500 else HEARTBEAT_MIN), False
     except Exception:  # noqa: BLE001 — 配置读坏了之类：同样只是「这一下没发」
         return HEARTBEAT_SECONDS, False

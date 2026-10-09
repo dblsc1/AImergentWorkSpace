@@ -96,6 +96,7 @@ def test_views_current_agents_shape_and_idle_human(client, seeded):
     assert body["running"] is False
     for key in ("zone", "project", "task", "sessionStartAt"):
         assert body[key] is None
+    assert all(0 <= a.pop("elapsedSeconds") < 60 for a in body["agents"])  # v2.21：服务端算的（口径另见 test_agent_heartbeat）
     assert body["agents"] == [
         {"runId": run["runId"], "taskId": task["id"], "agent": "claude-code", "tool": "Bash",
          "model": "opus", "startedAt": run["startedAt"], "phase": None, "label": None},

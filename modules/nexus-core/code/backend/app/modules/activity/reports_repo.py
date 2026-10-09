@@ -74,10 +74,10 @@ def set_results(user: str, report_id: str, item_id: str, results: dict[str, dict
         _col().bulk_write(ops, ordered=False)
 
 
-def set_item_status(user: str, report_id: str, item_id: str, status: str) -> bool:
-    """条 pending / failed → status（条件更新，已 applied / stale / rejected 的不动）。"""
+def set_item_status(user: str, report_id: str, item_id: str, status: str, frm: tuple = OPEN) -> bool:
+    """条 ``frm``（缺省 pending / failed）→ status（条件更新；rejected 的永远不动）。"""
     return _col().update_one({"user": user, "id": report_id}, {"$set": {"items.$[i].status": status}},
-                             array_filters=_item_filter(item_id, status={"$in": list(OPEN)})).modified_count > 0
+                             array_filters=_item_filter(item_id, status={"$in": list(frm)})).modified_count > 0
 
 
 def reject_open_items(user: str, report_id: str) -> None:
@@ -97,7 +97,8 @@ def _sugs():
 
 
 def suggestions(user: str, ids: list[str]) -> dict[str, dict]:
-    proj = {"_id": 0, "id": 1, "status": 1, "app": 1, "title": 1, "startAt": 1, "durationSeconds": 1}
+    proj = {"_id": 0, "id": 1, "status": 1, "app": 1, "title": 1, "startAt": 1, "durationSeconds": 1,
+            "rejectedTaskIds": 1, "suggestion.taskId": 1, "suggestion.classifier": 1}  # 后三个给 service.match_refusal
     return {d["id"]: d for d in _sugs().find({"user": user, "id": {"$in": ids}}, proj)}
 
 
