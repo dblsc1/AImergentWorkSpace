@@ -72,12 +72,12 @@ def add(app: str, title_contains: str | None) -> dict:
     if len(app) > MAX_APP or len(title) > MAX_TITLE:
         raise UnprocessableError(f"app 至多 {MAX_APP}、titleContains 至多 {MAX_TITLE} 个字符")
     doc = {"user": user, "id": rule_id(app, title), "app": app, "titleContains": title or None,
-           "createdAt": _now(), "hits": 0, "seconds": 0}
+           "createdAt": _now(), "hits": 0, "seconds": 0, "purged": False}
     created = ignore_repo.insert_if_absent(doc) if ignore_repo.count(user) < MAX_IGNORES else False
     stored = next((r for r in rules(user) if r["id"] == doc["id"]), None)
     if stored is None:
         raise UnprocessableError(f"忽略规则最多 {MAX_IGNORES} 条")
-    removed = purge(user, stored, count=True)  # 规则已经存下了（上面）：此后的写入者在写入时都会看到它；这里清的是它之前存下的
+    removed = purge(user, stored, count=True)  # 出错就让它抛（接口报失败）；规则留着、没标 purged，下一次写入补清。规则已经存下了（上面）：此后的写入者在写入时都会看到它；这里清的是它之前存下的
     return {**_out(next(r for r in rules(user) if r["id"] == doc["id"])), "created": created, "removed": removed}
 
 
@@ -92,6 +92,7 @@ def purge(user: str, rule: dict, count: bool = False) -> int:
     ignore_repo.mask_presence(user, hit)
     ignore_repo.drop_windows(user, "activity_choices", hit)
     ignore_repo.drop_windows(user, "activity_ai_asks", hit)
+    ignore_repo.mark_purged(user, rule["id"])
     return removed
 
 
@@ -101,7 +102,7 @@ def guarded(fn):
     @functools.wraps(fn)
     def run(*args, **kwargs):
         user = current_tenant()
-        before = {r["id"] for r in rules(user)}
+        before = {r["id"] for r in rules(user) if r.get("purged", True)}  # 没清完的规则也要补清
         try:
             return fn(*args, **kwargs)
         finally:

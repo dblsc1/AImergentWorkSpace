@@ -295,6 +295,61 @@ def test_upload_that_read_the_rules_before_the_rule_cannot_insert_the_title(clie
     assert _pending(client) == []
 
 
+def test_rule_lookup_failure_fails_closed_nothing_is_stored(client, monkeypatch):
+    from app.modules.activity import ignore_repo  # noqa: PLC0415
+
+    def boom(user):
+        raise RuntimeError("mongo hiccup")
+
+    monkeypatch.setattr(ignore_repo, "all_rules", boom)
+    with pytest.raises(RuntimeError):
+        _upload(client, [_seg(10, "chrome", PRIVATE_TITLE)])
+    with pytest.raises(RuntimeError):
+        _beat(client, "chrome", PRIVATE_TITLE)
+    assert _raw_has(PRIVATE_TITLE) == {}  # 查不了规则 = 当作忽略：什么都没存
+
+
+def test_rule_applies_immediately_no_cache(client):
+    _ignore(client, "chrome")
+    assert _upload(client, [_seg(10, "chrome", PRIVATE_TITLE)]).get("ignored") == 1
+    _beat(client, "chrome", PRIVATE_TITLE)
+    assert _raw_has(PRIVATE_TITLE) == {}
+
+
+def test_unignore_racing_an_ingest_does_not_resurrect_or_store(client, monkeypatch):
+    from app.modules.activity import ignore  # noqa: PLC0415
+
+    rule = _ignore(client, "chrome")
+    real = ignore.drop
+
+    def drop_then_unignore(*args, **kwargs):
+        out = real(*args, **kwargs)  # 这一批是在规则还在时过滤的
+        assert client.delete(f"{IGN}/{rule['id']}").status_code == 204
+        return out
+
+    monkeypatch.setattr(ignore, "drop", drop_then_unignore)
+    assert _upload(client, [_seg(10, "chrome", PRIVATE_TITLE)])["accepted"] == 0
+    assert _raw_has(PRIVATE_TITLE) == {}
+
+
+def test_purge_failure_reports_error_keeps_rule_and_retries_on_next_write(client, monkeypatch):
+    from app.modules.activity import ignore_repo  # noqa: PLC0415
+
+    _beat(client, "chrome", PRIVATE_TITLE)
+    now = datetime.now(timezone.utc)
+    _db()["activity_choices"].insert_one({"user": "u_local", "key": "wk_" + "c" * 20, "kind": "dismiss", "app": "chrome",
+                                          "title": PRIVATE_TITLE, "at": now, "expiresAt": now + timedelta(hours=1)})
+    real = ignore_repo.drop_windows
+    monkeypatch.setattr(ignore_repo, "drop_windows", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    with pytest.raises(RuntimeError):
+        _ignore(client, "chrome")
+    assert client.get(IGN).json()["total"] == 1  # 规则留着：以后的写入照样被过滤
+    assert _db()["activity_choices"].count_documents({}) == 1  # 清理没做完，残留还在
+    monkeypatch.setattr(ignore_repo, "drop_windows", real)
+    _beat(client, "firefox", "other")  # 下一次写入顺手补清没清完的规则
+    assert _raw_has(PRIVATE_TITLE) == {}
+
+
 def test_choice_written_after_the_purge_is_removed_again(client, monkeypatch, seeded):
     from app.modules.activity import auto  # noqa: PLC0415
 

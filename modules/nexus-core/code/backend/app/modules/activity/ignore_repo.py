@@ -37,6 +37,11 @@ def insert_if_absent(doc: dict) -> bool:
     return True
 
 
+def mark_purged(user: str, rule_id: str) -> None:
+    """清理做完了才标：没标的规则（清理中途出错）会在下一次写入时被补清。"""
+    _col().update_one({"user": user, "id": rule_id}, {"$set": {"purged": True}})
+
+
 def delete(user: str, rule_id: str) -> bool:
     return _col().delete_one({"user": user, "id": rule_id}).deleted_count > 0
 
