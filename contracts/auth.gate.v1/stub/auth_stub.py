@@ -203,20 +203,36 @@ class TooManyTokens(Exception):
     pass
 
 
-def load_token_state() -> tuple[str, dict, dict] | None:
-    """(gen, epochs, tokens)；文件不存在返回 None。文件坏了照常抛。"""
-    if not TOKENS_FILE or not os.path.exists(TOKENS_FILE):
-        return None
-    with open(TOKENS_FILE, encoding="utf-8") as f:
-        data = json.load(f)
+def _parse_token_state(raw: bytes) -> tuple[int, str, dict, dict]:
+    """(rev, gen, epochs, tokens)。``rev`` 是每次写都 +1 的计数（老文件没有 = 0）：视图按它只进不退。坏了照常抛。"""
+    data = json.loads(raw.decode("utf-8"))
     gen, epochs = data["gen"], data["epochs"]  # 缺哪个都抛：半坏的文件不能把纪元清零
     tokens = data.get("tokens", {})  # v1.2 / v1.3 写的文件没有这个键
-    if not isinstance(gen, str) or not gen or not isinstance(epochs, dict) or not isinstance(tokens, dict):
+    rev = data.get("rev", 0)
+    if (not isinstance(gen, str) or not gen or not isinstance(epochs, dict) or not isinstance(tokens, dict)
+            or type(rev) is not int or rev < 0):
         raise ValueError("tokens file")
     tokens = {str(k): {"tenant": str(t["tenant"]), "name": str(t["name"]), "scope": str(t["scope"]),
                        "createdAt": int(t["createdAt"]), "expiresAt": int(t["expiresAt"])}
               for k, t in tokens.items() if not t.get("revoked")}  # 开发期写过墓碑的文件：墓碑当场丢掉
-    return gen, {str(k): int(v) for k, v in epochs.items()}, tokens
+    return rev, gen, {str(k): int(v) for k, v in epochs.items()}, tokens
+
+
+def _load_token_file() -> tuple[int, str, dict, dict] | None:
+    if not TOKENS_FILE:
+        return None
+    try:
+        with open(TOKENS_FILE, "rb") as f:
+            raw = f.read()
+    except FileNotFoundError:
+        return None
+    return _parse_token_state(raw)
+
+
+def load_token_state() -> tuple[str, dict, dict] | None:
+    """(gen, epochs, tokens)；文件不存在返回 None。文件坏了照常抛。"""
+    full = _load_token_file()
+    return full[1:] if full else None
 
 
 def token_state(change=None):
@@ -224,8 +240,8 @@ def token_state(change=None):
     每次改都顺手清掉到期的条目。原子替换、0600。发令牌也走这里 —— 保证签进令牌的 gen 已经落盘。
     返回 (gen, change 的返回值)。"""
     with _locked(TOKENS_FILE):
-        state = load_token_state()
-        gen, epochs, tokens = state if state else (secrets.token_hex(16), {}, {})
+        state = _load_token_file()
+        rev, gen, epochs, tokens = state if state else (0, secrets.token_hex(16), {}, {})
         out = None
         if change is not None:
             now = int(time.time())
@@ -236,7 +252,7 @@ def token_state(change=None):
             tmp = f"{TOKENS_FILE}.{os.getpid()}.{threading.get_ident()}.tmp"
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump({"gen": gen, "epochs": epochs, "tokens": tokens}, f, ensure_ascii=False, indent=2)
+                json.dump({"rev": rev + 1, "gen": gen, "epochs": epochs, "tokens": tokens}, f, ensure_ascii=False, indent=2)
             os.replace(tmp, TOKENS_FILE)
         return gen, out
 
@@ -275,20 +291,24 @@ def list_tokens(tokens: dict, tenant: str | None) -> list[dict]:
 
 
 class Epochs:
-    """verify 用的令牌状态内存视图，与 Accounts 同一个套路：后台按 mtime 重读，
-    请求里不碰文件（契约不变量 2）。吊销最多晚 RELOAD_EVERY 秒生效。
+    """verify 用的令牌状态内存视图，与 Accounts 同一个套路：后台每 RELOAD_EVERY 秒重读，请求里不碰文件
+    （契约不变量 2）。吊销最多晚 RELOAD_EVERY 秒生效（文档写明的延迟，不是绕过）。
 
-    state 为 None（文件不在、或一次都没读成功）时所有设备令牌 401（解包 None 抛错 →
-    收成 None）。读过之后文件坏了，沿用旧视图（坏文件不该把吊销过的令牌放回来，也不该
-    把所有人踢掉）；文件被删 = 这一代作废，跟着变 None。
+    **失败方向是拒绝**（和账号视图相反：账号沿用旧视图是更严的一边，令牌的旧视图里还有已被别的进程吊销的令牌）：
+    state 为 None 时所有设备令牌 401（解包 None 抛错 → 收成 None）。文件内容变了却读不出 / 解析不了 / 版本倒退、
+    或文件没了 → None；文件内容没变才沿用缓存的视图。文件被换成新的一代 → 视图跟着换（旧令牌的签名带着旧一代，对不上）。
+    不看 mtime / inode：每轮读整份（≤ MAX_TOKENS_TOTAL 条）比字节，粗粒度时间戳、同大小重写、inode 复用都漏不掉。
+    ``rev`` 每次写 +1；同一代里 rev 比见过的最大值小 = 回滚到旧内容（比如备份被拷回来），当作读不出。
     """
+
+    _UNSET = object()
 
     def __init__(self) -> None:
         self.state: tuple[str, dict, dict] | None = None
-        self._mtime = 0  # 不同于任何真实指纹，也不同于"文件不存在"的 None
-        # 后台线程与发令牌 / 吊销的请求线程都会调 refresh：不串行的话，读到旧内容的那个
-        # 可能后写，配上新的 mtime，之后就再也不重读 —— 吊销永久失效（Codex 审核）。
-        # verify 只读 self.state（一次引用赋值），不拿这把锁。
+        self._raw: object = self._UNSET  # 上次处理过的文件字节（None = 文件不在）
+        self._seen: tuple[str, int] | None = None  # 见过的 (gen, 最大 rev)
+        # 后台线程与发令牌 / 吊销的请求线程都会调 refresh：读和替换在同一把锁里，所以不会有人拿读到的旧内容
+        # 盖掉别人刚换上的新视图。verify 只读 self.state（一次引用赋值），不拿这把锁。
         self._lock = threading.Lock()
 
     def refresh(self) -> None:
@@ -296,17 +316,28 @@ class Epochs:
             self._refresh()
 
     def _refresh(self) -> None:
+        raw: bytes | None = None
         try:
-            # 指纹带 inode 与大小：每次写都是换一个新文件（os.replace），同一个时间戳刻度里连写两次
-            # （吊销紧跟着发令牌）也看得出变了 —— 只比 mtime 的话第二次写可能永远读不到。
-            st = os.stat(TOKENS_FILE) if TOKENS_FILE and os.path.exists(TOKENS_FILE) else None
-            mtime = (st.st_mtime_ns, st.st_ino, st.st_size) if st else None
-            if mtime == self._mtime:
+            if TOKENS_FILE:
+                try:
+                    with open(TOKENS_FILE, "rb") as f:
+                        raw = f.read()
+                except FileNotFoundError:
+                    raw = None
+            if raw is not None and raw == self._raw:
+                return  # 没变：沿用（上次读坏的字节没变 = state 仍是 None）
+            if raw is None:
+                self.state, self._raw = None, None  # 文件没了：这一代作废，不复活
                 return
-            self.state = load_token_state()
-            self._mtime = mtime
+            rev, gen, epochs, tokens = _parse_token_state(raw)
+            if self._seen and self._seen[0] == gen and rev < self._seen[1]:
+                raise ValueError("tokens file rolled back")
+            self._seen = (gen, max(rev, self._seen[1]) if self._seen and self._seen[0] == gen else rev)
+            self.state, self._raw = (gen, epochs, tokens), raw
         except Exception as e:
-            sys.stderr.write(f"[auth-stub] 读令牌文件失败，沿用旧视图：{type(e).__name__}\n")
+            self.state = None  # 变了却用不了：不再信旧视图（别的进程可能刚吊销过东西）
+            self._raw = raw if raw is not None else self._UNSET
+            sys.stderr.write(f"[auth-stub] 令牌文件变了但读不出，设备令牌暂时全部拒绝：{type(e).__name__}\n")
 
 
 EPOCHS = Epochs()

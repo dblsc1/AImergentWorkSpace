@@ -1253,28 +1253,120 @@ def test_garbage_anonymous_switch_refuses_to_start_but_unset_is_on():
         s.stop()
 
 
-def test_token_state_view_never_goes_permissive(mod):
-    """令牌状态：坏文件沿用旧视图（吊销不会被忘掉、也不会变成「全收」）；从没读成功过 / 被删 = 全部 401。"""
-    tok, meta = mod.issue_device_token("", mod._shared_sess(), "report")
+def _live_token(mod, scope="report"):
+    tok, meta = mod.issue_device_token("", mod._shared_sess(), scope)
     mod.EPOCHS.refresh()
     assert mod.device_identity(tok) is not None
+    return tok, meta
+
+
+def test_token_view_unchanged_file_keeps_cache_changed_unreadable_file_rejects_all(mod):
+    """别的进程（命令行）刚吊销过东西、文件随后读不出：不能沿用还留着那个令牌的旧视图。"""
+    tok, meta = _live_token(mod)
+    other, _ = _live_token(mod)
     f = Path(mod.TOKENS_FILE)
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is not None  # 对照：没变的文件沿用缓存
+    assert mod.revoke_token(meta["id"])  # 「另一个进程」写的：本进程的视图还没刷新
+    assert mod.device_identity(tok) is not None  # 文档写明的 RELOAD_EVERY 延迟，不是绕过
     good = f.read_text()
-    for bad in ("{坏的", "", json.dumps({"gen": "g"})):
+    for bad in ("{坏的", "", json.dumps({"gen": "g"}), json.dumps({"gen": "g", "epochs": {}, "rev": -1})):
         f.write_text(bad)
         mod.EPOCHS.refresh()
-        assert mod.device_identity(tok) is not None, bad  # 沿用旧视图
-    f.write_text(good)
-    assert mod.revoke_token(meta["id"])
+        assert mod.EPOCHS.state is None and mod.device_identity(tok) is None and mod.device_identity(other) is None, bad
+    f.write_text(good)  # 修好了：恢复，被吊销的仍是被吊销的
     mod.EPOCHS.refresh()
-    assert mod.device_identity(tok) is None
-    f.write_text("{坏的")
+    assert mod.device_identity(tok) is None and mod.device_identity(other) is not None
+
+
+def test_token_file_unreadable_by_permission_rejects_all(mod):
+    tok, _ = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    f.chmod(0)
+    try:
+        if os.access(f, os.R_OK):
+            pytest.skip("root 读得了 0 权限文件")
+        mod.EPOCHS.refresh()
+        assert mod.device_identity(tok) is None
+    finally:
+        f.chmod(0o600)
     mod.EPOCHS.refresh()
-    assert mod.device_identity(tok) is None  # 吊销没被「忘掉」
+    assert mod.device_identity(tok) is not None
+
+
+def test_token_file_deleted_rejects_all_and_recreation_reloads(mod):
+    tok, _ = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
     f.unlink()
     mod.EPOCHS.refresh()
     assert mod.EPOCHS.state is None and mod.device_identity(tok) is None
-    mod.EPOCHS.__init__()  # 从没读成功过：什么令牌都不认
-    f.write_text("{坏的")
+    fresh, _ = mod.issue_device_token("", mod._shared_sess(), "report")  # 重建一代（新 gen）
     mod.EPOCHS.refresh()
-    assert mod.EPOCHS.state is None and mod.device_identity(tok) is None
+    assert mod.device_identity(fresh) is not None and mod.device_identity(tok) is None  # 旧令牌签名带旧一代，不复活
+
+
+def test_token_reload_does_not_depend_on_mtime_inode_or_size(mod):
+    """同大小原地重写、时间戳还原、inode 不变：按内容比，照样读到（令牌记录的 id 换成另一个 16 位十六进制）。"""
+    tok, meta = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    st = f.stat()
+    raw = f.read_bytes()
+    with open(f, "r+b") as fh:  # 原地写：inode 不变
+        fh.write(raw.replace(meta["id"].encode(), b"f" * 16))
+    os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns))
+    after = f.stat()
+    assert (after.st_ino, after.st_size, after.st_mtime_ns) == (st.st_ino, st.st_size, st.st_mtime_ns)
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is None  # 记录对不上了：白名单拒绝
+
+
+def test_token_view_never_goes_back_to_an_older_revision(mod):
+    """进程里先刷新读到旧内容、之后才吊销 / 旧备份被拷回来：同一代里 rev 倒退的内容不采用，被吊销的不复活。"""
+    tok, meta = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    old = f.read_bytes()
+    assert mod.revoke_token(meta["id"])
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is None
+    newer = f.read_bytes()
+    f.write_bytes(old)  # 回滚到吊销之前的内容
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is None and mod.EPOCHS.state is None
+    f.write_bytes(newer)  # 换回来（或下一次正常写 rev 更大）：恢复，被吊销的仍然死
+    mod.EPOCHS.refresh()
+    assert mod.EPOCHS.state is not None and mod.device_identity(tok) is None
+
+
+def test_every_write_bumps_rev(mod):
+    _, meta = _live_token(mod)
+    revs = [json.loads(Path(mod.TOKENS_FILE).read_text())["rev"]]
+    mod.revoke_token(meta["id"])
+    revs.append(json.loads(Path(mod.TOKENS_FILE).read_text())["rev"])
+    mod.revoke_identity("")
+    revs.append(json.loads(Path(mod.TOKENS_FILE).read_text())["rev"])
+    assert revs == sorted(set(revs)) and len(revs) == 3
+
+
+def test_hct2_needs_its_record_and_hct1_stays_dead_after_epoch_bump_across_restart(mod):
+    tok, meta = _live_token(mod, "write")
+    f = Path(mod.TOKENS_FILE)
+    gen = json.loads(f.read_text())["gen"]
+    # hct1：只验不发，自己按老格式签一个
+    payload = f"{mod.TOKEN_PREFIX}.{int(time.time())}.0."
+    hct1 = f"{payload}.{mod._sign_device(payload, mod._shared_sess(), gen, 'device')}"
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(hct1) == ("", "write")
+    # 记录没了（被清掉 / 表被改）≠ 老令牌放行
+    data = json.loads(f.read_text())
+    del data["tokens"][meta["id"]]
+    data["rev"] += 1
+    f.write_text(json.dumps(data))
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is None
+    # 身份纪元 +1：hct1 死；重启（全新的视图对象读文件）也死
+    mod.revoke_identity("")
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(hct1) is None
+    mod.EPOCHS.__init__()
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(hct1) is None
