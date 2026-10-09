@@ -509,6 +509,16 @@ class LaneStalePinned(_Strict):
     label: str
 
 
+class LaneDropped(_Strict):
+    """v2.23：封顶时被折叠掉的较早运行，按代理身份汇总（条数 + 裁到窗口的秒数）。"""
+
+    agent: str | None
+    label: str | None
+    unverified: bool = False
+    runs: int
+    elapsedSeconds: int
+
+
 class LanesOut(_Strict):
     """``GET /api/core/views/lanes``（契约 v2.4）。时间线，不是汇总：**没有任何合计字段**。"""
 
@@ -522,4 +532,5 @@ class LanesOut(_Strict):
     truncated: bool
     hiddenAgents: list[LaneHidden] = []  #: v2.22
     hiddenWaiting: int = 0  #: v2.22：藏起来的在跑运行里正等你的个数（页面只给一个很小的提示）
+    dropped: list[LaneDropped] = []  #: v2.23：封顶折叠掉的较早运行的汇总（藏起来的身份不列）
     stalePinned: list[LaneStalePinned] = []  #: v2.22：置顶着但没有在跑的运行对得上的身份（改名后留下的），可移除

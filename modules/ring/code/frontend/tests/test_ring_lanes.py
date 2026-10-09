@@ -225,6 +225,12 @@ def test_truncated_says_there_is_more(browser, static_base_url) -> None:
         assert page.locator("#lanes-view .hcl-more").count() == 0
 
 
+def test_folded_runs_say_how_many_were_folded(browser, static_base_url) -> None:
+    with open_lanes(browser, static_base_url, fx.folded()) as (page, _):
+        page.wait_for_selector("#lanes-view .hcl-more")
+        assert page.text_content("#lanes-view .hcl-more") == "较早的 12 段已折叠"
+
+
 def test_empty_day_still_shows_human_lane(browser, static_base_url) -> None:
     with open_lanes(browser, static_base_url, fx.LANES_EMPTY) as (page, _):
         page.wait_for_selector("#lanes-panel:not([hidden]) .hcl-card")

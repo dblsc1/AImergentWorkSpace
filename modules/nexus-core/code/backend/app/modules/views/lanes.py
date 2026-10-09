@@ -21,12 +21,14 @@ from ..planner.errors import UnprocessableError
 from ..prefs import service as prefs_service
 from ..projector.handlers import lanes as lanes_projection
 from ..timer import service as timer_service
+from .lane_cap import cap
 from .lane_order import arrange
 from .queries import _today
 from .schemas import LanesOut
 
 MAX_SESSIONS = 1000
-MAX_AGENTS = 200
+MAX_CLOSED_READ = 5000  # 已结束的运行一次最多读这么多条「轻」记录（只有封顶用得到的几列），再在内存里按身份封顶
+_LIGHT = ("runId", "startAt", "endAt", "durationSeconds", "agent", "label", "unverified")
 MAX_SPAN_DAYS = 7
 MAX_ATTENTION = 500  #: 每条运行至多回出这么多段「人在看」（取最新的）
 
@@ -115,6 +117,7 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
     hidden: list[dict] = []
     hidden_waiting = 0
     stale_pinned: list[dict] = []
+    dropped: list[dict] = []
     presence: list[dict] = []
     running = None
     auto = {"auto": None, "needsChoice": None, "aiThinking": None}
@@ -129,23 +132,29 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
             for r in reversed(rows[:MAX_SESSIONS])
         ]
 
-        closed = [
-            {**r, "startTs": r["startAt"], "endTs": r["endAt"], "elapsedSeconds": r["durationSeconds"],
-             "overdue": False}
-            for r in lanes_projection.read_lanes(user, "run", start, end, MAX_AGENTS + 1)
-        ]
-        seen = {r["runId"] for r in closed}
-        # 刚落账、活状态还没删的那一刻两边都有：以事实为准
-        live = [r for r in open_runs if r["runId"] not in seen
+        # v2.23：不按全局最新截——先轻读窗口里的已结束运行，按代理身份封顶（lane_cap），再只取保留下来的全文
+        light = lanes_projection.read_lanes(user, "run", start, end, MAX_CLOSED_READ + 1, fields=_LIGHT)
+        truncated = truncated or len(light) > MAX_CLOSED_READ  # 超出的最旧部分连聚合都没有：只能如实标 truncated
+        light = [{**r, "startTs": r["startAt"], "endTs": r["endAt"]} for r in light[:MAX_CLOSED_READ]]
+        seen = {r["runId"] for r in light}
+        live = [{**r, "open": True} for r in open_runs if r["runId"] not in seen   # 刚落账、活状态还没删的那一刻两边都有：以事实为准
                 and r["startTs"] < end and (r["endTs"] or now) > start]
-        runs = sorted(closed + live, key=lambda r: r["startTs"], reverse=True)
-        truncated = truncated or len(runs) > MAX_AGENTS
-        runs = runs[:MAX_AGENTS][::-1]
+        kept, gone = cap(light + live, start, end, now)
+        truncated = truncated or bool(gone)
+        full = {r["runId"]: r for r in lanes_projection.read_lanes(
+            user, "run", start, end, len(kept), run_ids=[r["runId"] for r in kept if not r.get("open")])}
+        runs = [r if r.get("open") else
+                {**full[r["runId"]], "startTs": r["startTs"], "endTs": r["endTs"],
+                 "elapsedSeconds": full[r["runId"]]["durationSeconds"], "overdue": False}
+                for r in kept if r.get("open") or r["runId"] in full]
+        prefs = prefs_service.load(user)
         # v2.22：藏起来的代理不出现（时间照旧记在账上）；其余加 pinned / manualOrder / rank
         agents, hidden, hidden_waiting, stale_pinned = arrange([_run_item(r, start, end) for r in runs],
-                                                 prefs_service.load(user), now)
+                                                 prefs, now)
+        hidden_keys = {a["key"] for a in prefs["agents"] if a["hidden"]}  # 藏起来的身份：折叠摘要也不露
+        dropped = [{k: v for k, v in d.items() if k != "key"} for d in gone if d["key"] not in hidden_keys]
         if caller().scope == "report":  # 藏起来的摘要只给能读泳道的调用方（report / 匿名本来就读不到，这里再保一道）
-            hidden, hidden_waiting, stale_pinned = [], 0, []
+            hidden, hidden_waiting, stale_pinned, dropped = [], 0, [], []
         shown = {a["runId"] for a in agents}
         interactions = [
             {"runId": r["runId"], **i} for r in runs if r["runId"] in shown for i in _interactions(r)
@@ -169,5 +178,5 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
         today=_today(), now=_iso(now), windowStart=_iso(start), windowEnd=_iso(end),
         human={"sessions": sessions, "running": running, "presence": presence, **auto},
         agents=agents, interactions=interactions, truncated=truncated,
-        hiddenAgents=hidden, hiddenWaiting=hidden_waiting, stalePinned=stale_pinned,
+        hiddenAgents=hidden, hiddenWaiting=hidden_waiting, stalePinned=stale_pinned, dropped=dropped,
     )

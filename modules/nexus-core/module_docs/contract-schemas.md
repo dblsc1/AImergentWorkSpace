@@ -473,3 +473,14 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
              { "id": "i1", "status": "failed",  "applied": 0, "stale": 0, "failed": 1, "failure": "任务不存在：t_x" } ] }
 // POST …/items/{itemId}/approve  请求体可为 {} 或 { "taskId": "t_b" } 或 { "projectId": "p_4d" }（先改再批准）→ 同上单个 item 的形状，外加报告 status
 ```
+
+### `views/lanes` 的封顶（v2.23）
+
+```jsonc
+// GET /api/core/views/lanes —— 追加（既有键不变）
+{ "truncated": true,
+  "dropped": [ { "agent": "codex", "label": "rev-billing_services", "unverified": false, "runs": 400, "elapsedSeconds": 12000 } ] }
+```
+
+- `dropped` 缺省 `[]`；`runs` / `elapsedSeconds` 是被封顶（每身份最新 100 条、最近活动 200 个身份、总数 2000）丢掉的**已结束**运行的条数与**裁到窗口**的秒数。
+- 藏起来的身份不列；report 范围 / 匿名读不到 `views/lanes`（服务端另清空）。`truncated` 在 `dropped` 非空时必为真。
