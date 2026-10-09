@@ -96,7 +96,7 @@ def _session_lock(session_id: str, wait: float | None = None):
     try:
         path = _state_file(session_id).with_suffix(".lock")
         _ensure_dir(path.parent)
-        f = open(path, "a+b")
+        f = os.fdopen(os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o600), "a+b")  # 只给本人（同状态文件）
         if os.name == "nt":
             import msvcrt
 
@@ -479,7 +479,7 @@ def _beat_lock(session_id: str):
 
     path = _state_file(session_id).with_suffix(".beat")
     _ensure_dir(path.parent)
-    f = open(path, "a+", encoding="utf-8")
+    f = os.fdopen(os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o600), "a+", encoding="utf-8")  # 只给本人
     try:
         fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
@@ -529,6 +529,10 @@ def _usable(state: dict) -> bool:
     状态文件别的进程也写得了，令牌绝不发往从那里读来的地址。"""
     config = cc.load_config()
     remembered = state.get("url")
+    if state.get("beat") == "unsupported":
+        return False  # 这个会话的服务端没有心跳路由：不再起也不再发
+    if remembered and config["url"] and remembered != config["url"]:
+        return False  # 运行活在别的服务器上：往本进程配的这个发会在那里造出一条野运行
     if (not config["url"] and not config["token"] and not os.environ.get("COCKPIT_TOKEN")  # 环境里的令牌会与补进去的地址配成对
             and isinstance(remembered, str) and remembered and not state.get("auth")):
         os.environ["COCKPIT_URL"] = remembered  # 只改本进程：下面的 load_config / 重开都读得到
@@ -539,6 +543,12 @@ def _usable(state: dict) -> bool:
 def _beat_once(session_id: str, state: dict, source: str) -> float | None:
     """发一次心跳，返回下一次隔多少秒（None = 别再发了）。服务端说这条运行已结束（机器睡过头被判了失联）而会话还在 → 重开一条。"""
     interval, closed = cc.beat(cc.load_config(), state["runId"], BEAT_TIMEOUT, source)
+    if closed == cc.BEAT_UNSUPPORTED:  # 服务端没有心跳：记进状态，之后钩子事件不再起发心跳的进程；绝不声明、不重开
+        with _session_lock(session_id):
+            st = _read_state(session_id)
+            if st and st.get("runId") == state["runId"]:
+                _write_state(session_id, {**st, "beat": "unsupported"})
+        return None
     if closed and state.get("cwd"):
         payload = {"cwd": state["cwd"], "transcript_path": state.get("transcript")}
         _relabel(payload, session_id, state.get("lastPhase") or "idle", cc.session_title(state.get("transcript")), state)

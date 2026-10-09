@@ -276,3 +276,41 @@ def test_unverified_runs_cannot_claim_or_scramble_the_humans_attention(client, s
     assert session_link.watched(rows, "kitty", "cockpit-dev") == mine["runId"]  # 不是「对上不止一条 → None」
     assert session_link.watched(rows, "kitty", "only-anonymous") is None
 
+
+
+def test_anonymous_runs_stay_in_the_lanes_but_not_in_agent_time(client, seeded):
+    """契约：匿名只写泳道。unverified 的运行不进代理时长（投影与 open[]），验证过的照常。"""
+    anon, mine = _start(client, ANON, label="sandbox"), _start(client, {}, label="mine")
+    open_ids = {o["runId"] for o in client.get(f"{API}/views/agent-time").json()["open"]}
+    assert open_ids == {mine["runId"]}
+    lanes = {a["runId"]: a for a in client.get(f"{API}/views/lanes").json()["agents"]}
+    assert lanes[anon["runId"]]["unverified"] is True  # 泳道里还看得见，带标
+    for run in (anon, mine):
+        assert client.post(f"{AGENTS}/{run['runId']}/stop", json={"outcome": "done"}).status_code == 200
+    stats = client.get(f"{API}/views/agent-time").json()
+    assert stats["runs"] == 1 and sum(d["runs"] for d in stats["days"]) == 1
+    assert _db()["events"].count_documents({"type": "agent.run.completed"}) == 2  # 事实两条都在
+    assert {a["runId"]: a["unverified"] for a in client.get(f"{API}/views/lanes").json()["agents"]}[anon["runId"]] is True
+
+
+def test_websocket_scope_with_a_scope_or_anonymous_header_is_rejected():
+    import asyncio  # noqa: PLC0415
+
+    from app.scope import ScopeMiddleware  # noqa: PLC0415
+
+    reached, sent = [], []
+
+    async def app(scope, receive, send):
+        reached.append(scope["type"])
+
+    async def send(msg):
+        sent.append(msg)
+
+    async def run(headers):
+        await ScopeMiddleware(app)({"type": "websocket", "path": "/x", "headers": headers}, None, send)
+
+    for headers in ([(b"x-nexus-anonymous", b"1")], [(b"X-Nexus-Scope", b"report")], [(b"x-nexus-scope", b"write")]):
+        asyncio.run(run(headers))
+    assert reached == [] and [m["type"] for m in sent] == ["websocket.close"] * 3
+    asyncio.run(run([]))  # 对照：没有这两个头的照旧放过（没有 ws 端点，另有测试盯着）
+    assert reached == ["websocket"]

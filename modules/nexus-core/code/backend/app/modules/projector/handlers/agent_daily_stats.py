@@ -37,6 +37,8 @@ def handle(envelope: dict) -> None:
     subject = envelope.get("subject") or {}
     project_id = subject.get("project")
     data = envelope.get("data") or {}
+    if data.get("unverified") is True:
+        return  # v2.19.1：匿名开的运行只写泳道（契约「调用方范围与匿名上报」），不计入代理时长统计
     seconds = data.get("durationSeconds")
     agent = data.get("agent")
     start_at = data.get("startAt")

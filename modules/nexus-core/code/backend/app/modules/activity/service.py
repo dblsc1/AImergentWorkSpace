@@ -274,7 +274,7 @@ def _bucket(project_id: str, request) -> str:
 
 def confirm(sug_id: str, task_id: str | None, mode: str, name: str | None = None, request=None,
             proposal_id: str | None = None, project_id: str | None = None, auto: bool | str = False,
-            still_wanted=None) -> dict:
+            still_wanted=None, report: dict | None = None) -> dict:
     """v2.8：``proposal_id`` = 人在页面上看到并点「是」的那条新任务提议（占位时要求建议的提议仍是它）；
     ``name`` = 人改过的名字；``request`` 给建任务要经的 planner 写入口（判来源、留审计）。
     v2.9：``project_id`` = 只指定项目，记到它的「未分类」时间桶——先取或建出桶的 id，之后与带 ``taskId`` 的确认同一条路
@@ -282,7 +282,8 @@ def confirm(sug_id: str, task_id: str | None, mode: str, name: str | None = None
     v2.14：``auto`` = 不是人点的，是自动记录（``auto_entry.record``）——同一条路径，只有出处不同（信封 ``ai``、建议的 ``auto``）；
     给字符串 ``"rules"`` / ``"choice"`` = 顺带记下是按规则还是按人的临时选择记的（建议的 ``autoSource``）。
     ``still_wanted``（自动记录用）：占着位、写事实之前最后问一次「这个决定还成立吗」——返回 False 就退出占位、
-    409，事实不写（调用方读到决定依据之后，人可能刚否掉了它）。"""
+    409，事实不写（调用方读到决定依据之后，人可能刚否掉了它）。
+    v2.20：``report`` = ``{id, author}``，经 AI 报告里人的批准入账（``reports.py``）：同一条路径，事件的 ``ai`` 块多一个出处 ``report``。"""
     user = current_tenant()
     doc = _get(user, sug_id)
     if doc["status"] == "dismissed":
@@ -347,7 +348,7 @@ def confirm(sug_id: str, task_id: str | None, mode: str, name: str | None = None
             task_id, doc["startAt"], doc["endAt"], doc["durationSeconds"],
             source=SOURCE, dedupe_key=dedupe_key, mode=mode,
             ai={"generated": True, "confidence": doc["suggestion"]["confidence"], "confirmed": not auto,
-                **({"auto": True} if auto else {})},
+                **({"auto": True} if auto else {}), **({"report": report} if report else {})},
         )
     except Exception:
         # 任务不存在等：事实没写成，退出占位；没有别的确认还占着、台账里也没有才放回待确认。
@@ -382,6 +383,16 @@ def forbid_device_token(authorization: str | None, what: str = "给活动建议�
         raise ForbiddenError(f"设备令牌不能{what}；请在 Cockpit「AI助理」页登录后操作")
 
 
+def match_refusal(doc: dict, task_id: str | None, overwrites_task: bool) -> tuple[str, str] | None:
+    """给建议配任务的两道闸（``match`` 与 AI 报告的 assign 共用，提交时与批准时各查一遍）：
+    用户否掉过这个任务；这条已有分类规则给的任务（助理不覆盖）。返回 ``(code, 理由)`` 或 None。"""
+    if task_id is not None and task_id in doc.get("rejectedTaskIds", []):
+        return "task_rejected", f"用户已经否掉过任务 {task_id!r}，不要再配同一个"
+    if overwrites_task and doc["suggestion"].get("taskId") and doc["suggestion"].get("classifier") != "assistant":
+        return "rule_assigned", "这条已有分类规则给的任务，助理不覆盖（只贴 collection / projectId 可以：别带 taskId / newTask）"
+    return None
+
+
 def match(authorization: str | None, matches: list[Any]) -> dict:
     """助理给待确认的建议配任务。逐条校验，坏的进 rejected；**不确认任何东西**。"""
     forbid_device_token(authorization)
@@ -407,10 +418,8 @@ def match(authorization: str | None, matches: list[Any]) -> dict:
             why = f"活动建议不存在：{m.id!r}"
         elif doc["status"] != "pending":
             why = f"活动建议 {m.id!r} 已{'确认' if doc['status'] == 'confirmed' else '忽略'}，不能再配"
-        elif m.taskId is not None and m.taskId in doc.get("rejectedTaskIds", []):
-            why = f"用户已经否掉过任务 {m.taskId!r}，不要再配同一个"
-        elif not label_only and doc["suggestion"].get("taskId") and doc["suggestion"].get("classifier") != "assistant":
-            why = "这条已有分类规则给的任务，助理不覆盖（只贴 collection / projectId 可以：别带 taskId / newTask）"
+        elif refusal := match_refusal(doc, m.taskId, not label_only):
+            why = refusal[1]
         elif m.taskId is not None and (task := planner_service.get_task(m.taskId)) is None:
             why = f"任务不存在：{m.taskId!r}"
         elif m.projectId is not None and planner_service.get_project(m.projectId) is None:

@@ -215,6 +215,23 @@ class CompanionLoopTests(_LoopCases, _BeatMixin, unittest.TestCase):
             self.assertFalse(self._loop(_Clock(max_sleeps=3), session="s2"))
         self.assertEqual(self.calls[1:], [("beat", "run-2"), ("beat", "run-3")])
 
+    def test_server_without_heartbeat_is_remembered_and_never_declared_or_respawned(self):
+        self._save("s1", "run-1", "idle", "garden", cwd="/home/u/garden")
+        self.beat_result = (900, cc.BEAT_UNSUPPORTED)
+        with mock.patch.object(cc, "start_run") as start:
+            self.assertTrue(self._loop(_Clock()))  # 自己退出
+        start.assert_not_called()
+        self.assertEqual(self.calls, [("beat", "run-1")])
+        self.assertEqual(claude_hook._read_state("s1")["beat"], "unsupported")
+        self.assertEqual(claude_hook._read_run_id("s1"), "run-1")
+        with mock.patch.object(subprocess, "Popen") as popen, mock.patch.object(claude_hook, "_cli_pid", return_value=CLI):
+            claude_hook._spawn_beat("s1", None)
+        self.assertEqual(popen.call_count, 0)
+
+    def test_state_on_another_server_is_not_usable(self):
+        self.assertTrue(claude_hook._usable({"runId": "r", "url": "http://cockpit.invalid"}))
+        self.assertFalse(claude_hook._usable({"runId": "r", "url": "http://other.invalid"}))
+
     def test_only_one_instance_per_session(self):
         self._save("s1", "run-1")
         self._save("s2", "run-2")
@@ -315,6 +332,18 @@ class ProcessLookupTests(_BeatMixin, unittest.TestCase):
         self.assertIsNone(claude_hook._proc(2 ** 22 + 12345))  # 超出 pid 上限：不存在
 
 
+class ClientBeatDetailTests(_IsolatedHomeMixin, unittest.TestCase):
+    def test_real_404_bodies_tell_unknown_run_from_missing_route(self):
+        for body, expected in ((b'{"detail":"Not Found"}', cc.BEAT_UNSUPPORTED),
+                               ("{\"detail\":\"代理运行不存在：'r'\"}".encode(), cc.BEAT_MISSING)):
+            server, thread = _start_fixed_response_server(404, body)
+            try:
+                config = {"url": f"http://127.0.0.1:{server.server_address[1]}", "token": ""}
+                self.assertEqual(cc.beat(config, "r"), (900, expected))
+            finally:
+                _stop_server(server, thread)
+
+
 class ClientBeatTests(_IsolatedHomeMixin, unittest.TestCase):
     def test_beat_posts_no_body_and_never_raises(self):
         server, thread, log = _start_server(expect_token="good-token")
@@ -334,9 +363,12 @@ class ClientBeatTests(_IsolatedHomeMixin, unittest.TestCase):
             self.assertEqual(cc.beat({}, "r"), (120, False))
         with mock.patch.object(cc, "heartbeat_run", return_value={"applied": False, "reason": "closed"}):
             self.assertEqual(cc.beat({}, "r"), (900, True))
-        err = cc.CockpitError("HTTP 404", code=404, json_body=True)  # cockpit 自己说不认识（库重置 / 换了租户）
+        err = cc.CockpitError("HTTP 404", code=404, json_body=True, detail="代理运行不存在：'r'")  # cockpit 自己说不认识（库重置 / 换了租户）
         with mock.patch.object(cc, "heartbeat_run", side_effect=err):
             self.assertEqual(cc.beat({}, "r"), (900, cc.BEAT_MISSING))
+        no_route = cc.CockpitError("HTTP 404", code=404, json_body=True, detail="Not Found")  # 老服务端：没有这条路由
+        with mock.patch.object(cc, "heartbeat_run", side_effect=no_route):
+            self.assertEqual(cc.beat({}, "r"), (900, cc.BEAT_UNSUPPORTED))
         html_404 = cc.CockpitError("HTTP 404", code=404, json_body=False)  # 网关的 404：地址配错了，不是运行没了
         with mock.patch.object(cc, "heartbeat_run", side_effect=html_404):
             self.assertEqual(cc.beat({}, "r"), (900, False))
@@ -401,13 +433,25 @@ class SpawnTests(_IsolatedHomeMixin, unittest.TestCase):
 
     def test_disabled_by_env_and_never_raises(self):
         claude_hook._save_run_id("s1", "run-1")
-        with mock.patch.object(subprocess, "Popen", side_effect=OSError("no fork")) as popen:
+        with mock.patch.object(subprocess, "Popen", side_effect=OSError("no fork")) as popen, \
+                mock.patch.object(claude_hook, "_cli_pid", return_value=4242):  # 不依赖真实祖先（docker run 里 ppid 是 0）
             claude_hook._spawn_beat("s1", None)  # 起不来：吞掉
             self.assertEqual(popen.call_count, 1)
             for mode in ("off", "monitor"):  # 关了 / 只许 monitor：钩子不起伴随进程
                 os.environ["COCKPIT_BEAT"] = mode
                 claude_hook._spawn_beat("s1", None)
             self.assertEqual(popen.call_count, 1)
+
+    def test_lock_files_are_owner_only_whatever_the_umask(self):
+        old = os.umask(0)
+        try:
+            claude_hook._beat_lock("s1").close()
+            with claude_hook._session_lock("s1"):
+                pass
+        finally:
+            os.umask(old)
+        for suffix in (".beat", ".lock"):
+            self.assertEqual(claude_hook._state_file("s1").with_suffix(suffix).stat().st_mode & 0o777, 0o600)
 
     def test_beat_entry_point_exits_zero_and_quietly_without_state(self):
         proc = subprocess.run([sys.executable, str(HERE / "claude_hook.py"), "--beat", "--session", "nobody"],
@@ -570,8 +614,9 @@ class BoundsTests(_IsolatedHomeMixin, unittest.TestCase):
         os.environ["COCKPIT_TOKEN"] = "good-token"  # 自己有令牌、没有地址：不许去状态文件里拿地址（环境变量里的令牌会与它配成对）
         self.assertFalse(claude_hook._usable(planted))
         self.assertNotIn("COCKPIT_URL", os.environ)
-        os.environ["COCKPIT_URL"] = "http://real.invalid"  # 自己有地址：状态文件里的那个不看
-        self.assertTrue(claude_hook._usable(planted))
+        os.environ["COCKPIT_URL"] = "http://real.invalid"  # 自己有地址：状态文件里的那个不拿来用；与自己的不同 = 运行在别的服务器上，不发
+        self.assertFalse(claude_hook._usable(planted))
+        self.assertTrue(claude_hook._usable({**planted, "url": "http://real.invalid"}))
         self.assertEqual(cc.load_config()["url"], "http://real.invalid")
         del os.environ["COCKPIT_TOKEN"], os.environ["COCKPIT_URL"]
         self.assertTrue(claude_hook._usable(planted))  # 无令牌上报：只有地址会去那里，没有任何凭据
@@ -645,7 +690,7 @@ class MonitorProcessTests(_IsolatedHomeMixin, unittest.TestCase):
     """真起一个 monitor 进程：它的 stdout / stderr 会被 Claude Code 送进会话，所以必须一个字都没有。"""
 
     def _monitor(self, mode, **popen):
-        env = self._subprocess_env(COCKPIT_BEAT=mode, COCKPIT_URL=f"http://127.0.0.1:{_unused_port()}")
+        env = self._subprocess_env(COCKPIT_BEAT=mode, COCKPIT_URL="http://127.0.0.1:1")  # 与状态里记的同一个地址（别的地址 = 别的服务器，不发）
         return subprocess.Popen([sys.executable, "-W", "always", str(HERE / "claude_hook.py"), "--beat", "--source", "monitor"],
                                 env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **popen)
 

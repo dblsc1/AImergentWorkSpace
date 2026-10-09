@@ -44,6 +44,8 @@ _CAS_RETRIES = 20
 _MAX_APP, _MAX_TITLE = 128, 512  # 码点，超了截断（同活动建议）
 #: outbox 的条数上限：正常只装一拍的量（≤ MAX_BEAT_SPANS + 1 条），留着的旧拍没补上才会叠加
 MAX_PENDING = 64
+#: 同一组 outbox 条目连续这么多拍记不上就丢掉（有日志）
+MAX_ATTEND_FAILS = 5
 _log = logging.getLogger(__name__)
 
 
@@ -55,18 +57,25 @@ def clip(app: str, title: str) -> tuple[str, str]:
     return app[:_MAX_APP], title[:_MAX_TITLE]
 
 
-def _apply(user: str, pending: list[dict]) -> bool:
-    """outbox → ``record_attend``（并集、幂等：重复补不多算）。全部记上返回 True；任何一条失败返回 False（留着下次补）。"""
+def _apply(user: str, pending: list[dict]) -> list[dict]:
+    """outbox → ``record_attend``（并集、幂等：重复补不多算）。按 (runId, gap) 分组、**各组独立**试：返回没记上的条目
+    （留着下次补；条目上的 ``fails`` 是这组连续失败的次数）。一组连续失败 ``MAX_ATTEND_FAILS`` 次就丢掉并记一行日志——
+    一条永远记不上的运行（如已被清掉）不能挡住排在它后面的健康运行、也不能把 outbox 撑到上限而挤掉别人的注意力。"""
     groups: dict[tuple, list] = {}
     for p in pending:  # 旧的先记
-        groups.setdefault((p["runId"], p["gap"]), []).append((p["from"], p["to"]))
-    try:
-        for (run_id, gap), intervals in groups.items():
-            timer_service.record_attend(user, run_id, intervals, timedelta(seconds=gap))  # 连线 attend：跨子边界只走 service
-    except Exception:  # noqa: BLE001 — 时间线已提交，注意力留在 outbox
-        _log.warning("在场心跳：attend 没记上，留在 outbox 等下一拍", exc_info=True)
-        return False
-    return True
+        groups.setdefault((p["runId"], p["gap"]), []).append(p)
+    left: list[dict] = []
+    for (run_id, gap), items in groups.items():
+        try:
+            timer_service.record_attend(user, run_id, [(p["from"], p["to"]) for p in items], timedelta(seconds=gap))  # 连线 attend：跨子边界只走 service
+        except Exception:  # noqa: BLE001 — 时间线已提交，注意力留在 outbox
+            fails = max(p.get("fails", 0) for p in items) + 1
+            if fails >= MAX_ATTEND_FAILS:
+                _log.warning("在场心跳：运行 %s 的 attend 连续 %d 次没记上，丢弃 %d 条", run_id, fails, len(items), exc_info=True)
+                continue
+            _log.warning("在场心跳：运行 %s 的 attend 没记上，留在 outbox 等下一拍", run_id, exc_info=True)
+            left += [{**p, "fails": fails} for p in items]
+    return left
 
 
 def heartbeat(device_id: str, app: str, title: str, afk: bool, guess: dict | None = None,
@@ -87,8 +96,8 @@ def heartbeat(device_id: str, app: str, title: str, afk: bool, guess: dict | Non
         line: list[dict] = doc["spans"] if doc else []
         # 上一拍写中了时间线、但没来得及（或没能）记的 attend：先补上（幂等），补不上就带着走，不丢
         carried = doc.get("pendingAttend") or [] if doc else []
-        if carried and _apply(user, carried):
-            carried = []
+        if carried:
+            carried = _apply(user, carried)  # 没记上的带着走（各组独立，记不上的不挡别的）
         attended: list[dict] = []  # 这一拍要记的 attend（outbox 条目）
         # 老的一拍晚到（先收到的后提交）：不改写当前状态，也不往时间线上补点
         older = bool(doc) and doc["lastAt"] > now
@@ -144,8 +153,12 @@ def heartbeat(device_id: str, app: str, title: str, afk: bool, guess: dict | Non
     else:
         raise RuntimeError(f"在场心跳写入争用未决：{device_id!r}")
     # 时间线已落盘：现在才记注意力。记失败不让这一拍失败（时间线是持久的），outbox 留着等下一拍
-    if pending and _apply(user, pending):
-        repo.presence_cas({k: v for k, v in committed.items() if k not in ("v", "gen")} | {"pendingAttend": []}, committed)
+    # 只试这一拍新产生的（带过来的上面刚试过）；记上的从 outbox 清掉，没记上的带着失败次数留下
+    if attended:
+        left = _apply(user, attended)
+        if left != attended:
+            repo.presence_cas({k: v for k, v in committed.items() if k not in ("v", "gen")}
+                              | {"pendingAttend": [*carried, *left][-MAX_PENDING:]}, committed)
     # 每次写入**之后**修剪到上限（自己不删）：并发的几次写入各修剪一次，最后一次一定看得见全部写入，
     # 所以请求都结束后上限必然成立（被挤掉的设备下一次心跳会把自己写回来并挤掉别人）。
     repo.presence_delete(user, repo.presence_evictable(user, device_id, MAX_DEVICES))

@@ -230,7 +230,9 @@ hooks work without a token; runs reported that way are flagged unverified (`unve
 `views/lanes`) and always land in the inbox. The cost, stated plainly: **while this
 is on, anyone who can reach the port can add entries to your lanes.** They can
 read nothing and change nothing that exists, but they can add (rate-limited at
-the gateway, at most 20 live at a time). With the default loopback binding that
+the gateway, at most 20 live at a time; a caller that keeps sending heartbeats can hold
+those 20 slots for up to 7 days instead of 12 hours, so other anonymous reporters get
+`429` meanwhile). With the default loopback binding that
 is harmless; **if you expose the port to a LAN or the internet, set
 `AUTH_ANONYMOUS_REPORT=false` in `.env`** and hand out `report` tokens instead.
 A request that presents a bad or expired token is always rejected, never

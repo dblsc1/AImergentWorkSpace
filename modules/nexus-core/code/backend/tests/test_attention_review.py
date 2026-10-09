@@ -157,6 +157,7 @@ def test_presence_contention_fails_loudly(client, clock, monkeypatch):
     monkeypatch.setattr(repo, "presence_cas", lambda doc, prev: None)
     with pytest.raises(RuntimeError):
         _send(client, clock(0), [(5, 5, "A")])
+    assert _db()["activity_presence"].find_one({}) is None, "争用没决出来：什么都没落盘"
 
 
 # ─────────────────────────────────────────── 5：注意力跟着已提交的时间线（outbox，v2.17.2 修订）
@@ -200,6 +201,34 @@ def test_attend_failure_never_loses_attention_across_many_beats(client, clock, m
     monkeypatch.setattr(repo, "cas_agent_run", real)
     _send(client, clock(15), [(5, 5, "vim")])
     assert _seconds(_agent(client, run)["attention"]) == [15]
+
+
+def test_one_permanently_failing_run_does_not_block_healthy_runs_and_is_dropped(client, clock, monkeypatch, caplog):
+    """outbox 按 (runId, gap) 分组各自试：坏的那组留着数失败次数、连续 MAX_ATTEND_FAILS 次丢掉（有日志），好的照记。"""
+    from app.modules.activity import presence  # noqa: PLC0415
+
+    clock(-60)
+    bad, good = _run(client, label="aaa"), _run(client, label="bbb")
+    real = presence.timer_service.record_attend
+
+    def picky(user, run_id, *args):
+        if run_id == bad:
+            raise RuntimeError("永远记不上")
+        return real(user, run_id, *args)
+
+    monkeypatch.setattr(presence.timer_service, "record_attend", picky)
+    _send(client, clock(0), [(5, 2, "aaa"), (3, 3, "bbb")])         # 坏的排在前面
+    assert _seconds(_agent(client, good)["attention"]) == [3], "好的不被坏的挡住"
+    pending = _db()["activity_presence"].find_one({})["pendingAttend"]
+    assert [(p["runId"], p["fails"]) for p in pending] == [(bad, 1)], "只有失败的组留着"
+    for i in range(1, presence.MAX_ATTEND_FAILS - 1):
+        _send(client, clock(5 * i), [(5, 5, "vim")])
+        assert [(p["runId"], p["fails"]) for p in _db()["activity_presence"].find_one({})["pendingAttend"]] == [(bad, i + 1)]
+    with caplog.at_level("WARNING", logger=presence.__name__):
+        _send(client, clock(5 * presence.MAX_ATTEND_FAILS), [(5, 5, "vim")])
+    assert _db()["activity_presence"].find_one({})["pendingAttend"] == [], "连续失败够多次：丢掉"
+    assert any("丢弃" in r.getMessage() for r in caplog.records)
+    assert _seconds(_agent(client, good)["attention"]) == [3]
 
 
 def test_cas_loser_does_not_write_attention_for_spans_that_did_not_commit(client, clock, monkeypatch):
@@ -292,7 +321,7 @@ def test_replaying_the_identical_body_cannot_count_more_than_wall_time(client, c
     assert client.post(URL, json=body).status_code == 200
     assert client.post(URL, json=body).status_code == 200        # 同一刻再发：什么都不多算
     total = sum(_seconds(_agent(client, run)["attention"]))
-    assert total <= 10 + 1e-6                                     # ≤ 最早一段的起点到最后一次收到的墙上时间
+    assert total == pytest.approx(10)                             # 恰好 = 最早一段的起点到最后一次收到的墙上时间
     assert total == pytest.approx(sum(_watched(client)[run]))
     line = _line(t0)
     assert all(a[1] <= b[0] + 1e-6 for a, b in zip(line, line[1:])), "时间线仍不重叠"
@@ -365,11 +394,16 @@ def test_attend_cap_coalesces_instead_of_dropping(client, clock, monkeypatch):
     monkeypatch.setattr(agent_phases, "MAX_ATTENDS", 3)
     t0 = clock(-300)
     run = _run(client, label="aaa")
+    total = 0.0
     for a, b in ((0, 1), (10, 11), (20, 21), (100, 101), (200, 201)):
         timer.record_attend(USER, run, [(t0 + timedelta(seconds=a), t0 + timedelta(seconds=b))], timedelta(0))
-    got = _attend_stored(run, t0)
-    assert len(got) == 3 and got[-1] == (200, 201), "最新的一段总是记下"
-    assert got[0] == (0, 21) or got[0] == (0, 11)                # 最近的相邻两段先并拢
+        got = _attend_stored(run, t0)
+        now_total = sum(y - x for x, y in got)
+        assert now_total >= total, "总注意力只增不减（并拢只会多算空档）"
+        assert all(x1 <= y1 < x2 for (x1, y1), (x2, _y2) in zip(got, got[1:])), "按起点排、互不相交"
+        total = now_total
+    # 每次超限先并最近的相邻两段：(0,1)+(10,11) 空档 9 → (0,11)；再来一段时 (0,11)+(20,21) 空档 9 → (0,21)
+    assert _attend_stored(run, t0) == [(0, 21), (100, 101), (200, 201)]
 
 
 # ─────────────────────────────────────────── G：ABA
@@ -402,7 +436,7 @@ def test_replacement_never_upserts():
 # ─────────────────────────────────────────── H：app / title 的长度
 
 
-def test_long_strings_are_truncated_and_absurd_ones_rejected(client, clock):
+def test_long_strings_are_truncated_never_rejected(client, clock):
     now = clock(0)
     long_title = "python3 -c " + "x" * 3000                       # 终端把整条命令放进标题
     body = _body(now, [(5, 5, long_title)])
@@ -410,11 +444,15 @@ def test_long_strings_are_truncated_and_absurd_ones_rejected(client, clock):
     assert client.post(URL, json=body).status_code == 200
     doc = _db()["activity_presence"].find_one({})
     assert len(doc["title"]) <= 512 and all(len(s["title"]) <= 512 for s in doc["spans"])
+    # 契约 v2.4：长度不拒，截断后照收（含老的不带 spans 的客户端）；体积由网关的 client_max_body_size 挡
     huge = {**_body(now, [(5, 5, "x" * 20000)]), "title": "ok"}
-    assert client.post(URL, json=huge).status_code == 422, "span 的 title 过大"
-    assert client.post(URL, json={**_body(now, [(5, 5, "ok")]), "app": "a" * 20000}).status_code == 422
-    assert client.post(URL, json={**_body(now, [(5, 5, "ok")]), "title": "t" * 20000}).status_code == 422
-    assert client.post(URL, json={**_body(now, [(5, 5, "ok")]), "title": "t" * 16384}).status_code == 200
+    assert client.post(URL, json=huge).status_code == 200, "span 的 title 过大"
+    assert client.post(URL, json={**_body(now, [(5, 5, "ok")]), "app": "a" * 20000}).status_code == 200
+    assert client.post(URL, json={**_body(now, [(5, 5, "ok")]), "title": "t" * 20000}).status_code == 200
+    old = {k: v for k, v in _body(now, [(5, 5, "ok")]).items() if k not in ("spans", "sentAt")}
+    assert client.post(URL, json={**old, "app": "a" * 100000, "title": "t" * 100000}).status_code == 200
+    doc = _db()["activity_presence"].find_one({})
+    assert len(doc["app"]) <= 128 and len(doc["title"]) <= 512
 
 
 # ─────────────────────────────────────────── 6：老心跳（不带 spans）仍是 v2.4 的子串规则（另见 test_presence.py）
