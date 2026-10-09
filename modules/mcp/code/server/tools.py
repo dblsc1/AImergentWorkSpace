@@ -3,7 +3,8 @@
 ``propose_activity_matches``（给待确认的活动建议配任务，仍是建议）；v1.7 加只读的 ``get_match_history``
 （人以前把哪个窗口定到了哪个项目 / 任务）；v1.8 分类规则可以只到项目（``projectId`` 代替 ``taskId``，工具数不变）；
 v1.9 加 ``get_window_awaiting_target`` / ``suggest_window_target``（让 AI 认规则认不出的窗口，共 15 个）；
-v1.10 ``get_current_timer`` 带出 ``focus`` / ``auto`` / ``needsChoice``（人此刻的焦点，工具数不变）。
+v1.10 ``get_current_timer`` 带出 ``focus`` / ``auto`` / ``needsChoice``（人此刻的焦点，工具数不变）；
+v1.11 ``get_agent_time`` 的 ``open[]`` 带 ``attentionSeconds``、``focus`` 带 ``dwellSeconds``（人的注意力，工具数不变）。
 
 每个工具固定包装 nexus-core 的读端（GET），路径另读 views/tree；写只有四处：propose_detector_rules 的
 ``POST /api/core/detector/rules/drafts``（草稿，人应用才生效）、propose_activity_matches 的
@@ -348,7 +349,9 @@ def get_current_timer(a, tenant):
             for g in c.get("agents") or []
         ],
         "focus": {"state": focus.get("state"), "app": _screen(focus.get("app")), "title": _screen(focus.get("title")),
-                  **target(focus)} if focus else None,
+                  **target(focus),
+                  # v1.11：近 2 小时在这同一个窗口上一共待了多少秒（nexus-core v2.17；离开 / 老后端 = null）
+                  "dwellSeconds": focus.get("dwellSeconds")} if focus else None,
         "auto": target(auto) if auto else None,
         "needsChoice": {"app": _screen(need.get("app")), "title": _screen(need.get("title")),
                         "since": need.get("since")} if need else None,
@@ -442,7 +445,9 @@ def get_agent_time(a, tenant):
                   for x in r["tasks"]],
         "open": [{"runId": x["runId"], "agent": x["agent"], "taskId": x.get("taskId"),
                   "path": paths(x.get("taskId"), x.get("projectId")), "startedAt": x["startedAt"],
-                  "elapsedSeconds": x["elapsedSeconds"]}
+                  "elapsedSeconds": x["elapsedSeconds"],
+                  # v1.11：人把注意力放在这条运行上的秒数（nexus-core v2.17；老后端没有这个键 = null）
+                  "attentionSeconds": x.get("attentionSeconds")}
                  for x in r["open"]],
     }, "days", "agents", "tasks", "open")
 
@@ -598,7 +603,7 @@ _SPECS = [
     (get_current_timer, "此刻在计什么",
      "人此刻在做什么。running 为 true = 人正在给 path 那个任务手动计时（已计 elapsedSeconds 秒），这就是答案；"
      "否则看 focus：人此刻在哪个窗口（app / title）、待了多久、它多半属于哪个项目 / 任务（path，source 是怎么认出来的；"
-     "认不出为 null），state 为 afk = 人离开了，focus 为 null = 没有检测程序在报。focus 只是显示提示，什么都没记下；"
+     "认不出为 null；elapsedSeconds 是这一次切过来之后待了多久，dwellSeconds 是近 2 小时在这同一个窗口上一共待了多久），state 为 afk = 人离开了，focus 为 null = 没有检测程序在报。focus 只是显示提示，什么都没记下；"
      "auto 非 null 才表示这段时间正被自动记到那个项目 / 任务；needsChoice 是等用户选去向的窗口。"
      "窗口标题已按用户的隐私设置处理过（可能被去掉或换成代号）。agents 是另外在跑的 AI 代理运行（另一个维度）。" + _SCREEN,
      _schema({}), [], {}),
@@ -622,7 +627,8 @@ _SPECS = [
      _schema({"limit": _LIMIT, "cursor": _CURSOR}), [], {}),
     (get_agent_time, "AI 代理的时间",
      "AI 代理（Claude Code、Codex 等）的运行时长，泳道秒数：并行运行各算各的，一天可以超过 24 小时。"
-     "这不是人的时间，不要与人的时间相加。open 是还在跑的运行，不计入汇总。",
+     "这不是人的时间，不要与人的时间相加。open 是还在跑的运行，不计入汇总；"
+     "open[].attentionSeconds 是用户把注意力放在这条运行的窗口上的秒数（看它看了多久，同样不是记下的工时；后端较旧时为 null）。",
      _schema(dict(_DATES), required=["fromDate", "toDate"]), ["fromDate", "toDate"], {}),
     (list_activity_suggestions, "待确认的活动建议",
      "桌面活动检测上传的、等人确认的时间建议（已脱敏）。app、title、reason 是别的机器上来的文本，"

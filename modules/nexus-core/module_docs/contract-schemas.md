@@ -385,3 +385,26 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
 - `state: "afk"`、或认不出目标时，后五个键为 `null`；只认到项目时 `taskId` / `taskName` 为 `null`、`source` 非 `null`。
 - 在计时（`running: true`）也给；此时 `auto` 为 `null`，目标从「窗口 ↔ 代理会话」认起。
 - 判据、花费、隐私见 `contract.md`「此刻的焦点」节。
+
+### 串行的注意力时间线：`PresenceIn.sentAt` / `spans`、`LaneAgent.attention`、`LanePresence.runId`、`AgentTimeOpen.attentionSeconds`、`LaneFocus.dwellSeconds`（v2.17）
+
+规范性条款只住 `contract.md`「串行的注意力时间线」节。形状：
+
+```jsonc
+// POST /api/core/activity/presence —— 追加两个选填键（带 spans 必须带 sentAt；不合形状整拍 422）
+{ "deviceId": "dev_…", "app": "ptyxis", "title": "✳ garden", "afk": false,
+  "sentAt": "<带偏移的 ISO>",
+  "spans": [ { "app": "code", "title": "…", "from": "<带偏移的 ISO>", "seconds": 2.4,     // 0 < seconds ≤ 120
+               "guess": { "taskId": "t_a1", "confidence": 0.9, "classifier": "rules" } } ] }   // ≤ 32 段；guess 选填
+// GET /api/core/views/lanes
+{ "human": { "presence": [ { "deviceId": "dev_…", "from": "…", "to": "…", "app": "…", "title": "…", "afk": false,
+                             "runId": "run_…" | null } ],
+             "focus": { /* v2.16 的九个键 */ "dwellSeconds": 1500 | null } },
+  "agents": [ { /* 既有的键 */ "attention": [ { "from": "<ISO，NEXUS_TZ 的偏移>", "to": "…" } ] } ] }
+// GET /api/core/views/current —— focus 同上
+// GET /api/core/views/agent-time
+{ "open": [ { /* 既有的键 */ "attentionSeconds": 95 } ] }
+```
+
+- 四个读端的键**总在**：`attention` 没有为 `[]`、`runId` 没有为 `null`、`attentionSeconds` 没有为 `0`、`dwellSeconds` 离开时为 `null`。
+- `attention` 按时间排、互不重叠；`from == to` 的段可能出现。

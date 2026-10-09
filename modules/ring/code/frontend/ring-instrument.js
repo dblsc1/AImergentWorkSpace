@@ -39,7 +39,7 @@
   // 所有请求与跳转都从它拼。没注入（单测、直接打开文件）就是 "/"。
   var BASE = (typeof self !== "undefined" && self.HONEYCOMB_BASE) || "/";
 
-  const POLL_INTERVAL_MS = 7000; // 5–10 秒一次，取中间值，沿用既有值
+  const POLL_INTERVAL_MS = 5000; // 2026-10-09：跟上检测程序 5 秒一拍的心跳（此刻的焦点），原 7 秒
 
   // ── DOM 引用 ──────────────────────────────────────────────────────
   const ringWrapEl = document.getElementById("ring-wrap");
@@ -391,6 +391,7 @@
   //    GET /api/core/views/gantt（今天数据，可选，失败静默退回，见上）。
   //    两条互不阻塞：gantt 请求失败绝不能让 current 那一半也显示「连接失败」。
   async function fetchAndRender() {
+    if (document.visibilityState === "hidden") return; // 没人看就不拉；回到前台时下面的监听立刻补一次
     let current;
     try {
       const res = await fetch(BASE + "api/core/views/current");
@@ -429,4 +430,5 @@
 
   fetchAndRender();
   setInterval(fetchAndRender, POLL_INTERVAL_MS);
+  document.addEventListener("visibilitychange", fetchAndRender);
 })();

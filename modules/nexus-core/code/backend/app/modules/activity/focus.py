@@ -46,6 +46,20 @@ def _since(spans: list[dict]) -> datetime:
     return spans[i]["from"]
 
 
+def _dwell(spans: list[dict]) -> int:
+    """时间线（最近 2 小时）里人在**当前这个窗口**上一共待了多少秒：只数同一个窗口键的段，别的窗口一秒不算。"""
+    keys: dict[tuple, tuple] = {}
+
+    def key(span: dict) -> tuple:
+        raw = (span["afk"], span["app"], span["title"])
+        if raw not in keys:
+            keys[raw] = _run_key(span)  # 窗口键要算哈希：同一个（程序, 标题）只算一次
+        return keys[raw]
+
+    cur = key(spans[-1])
+    return int(sum((s["to"] - s["from"]).total_seconds() for s in spans if key(s) == cur))
+
+
 def _project_only(project_id: str, source: str) -> dict | None:
     project = planner_service.get_project(project_id)
     return {**_NO_TARGET, "projectId": project["id"], "projectName": project["name"], "source": source} if project else None
@@ -96,7 +110,7 @@ def state(user: str, now: datetime, docs: list[dict], auto: dict | None) -> dict
     spans = max(fresh, key=lambda d: d["lastAt"])["spans"]  # 只看最近报心跳的那台设备（同自动跟踪）
     cur = spans[-1]
     out = {"state": "afk" if cur["afk"] else "present", "app": cur["app"], "title": cur["title"],
-           "since": _since(spans), **_NO_TARGET}
+           "since": _since(spans), "dwellSeconds": None if cur["afk"] else _dwell(spans), **_NO_TARGET}
     if cur["afk"]:
         return out
     if auto:

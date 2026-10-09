@@ -59,7 +59,7 @@ def open_focus(browser: Browser, base: str, *, width: int = 1100, reduced_motion
 
 
 def show(h: RingHarness, **extra: Any) -> None:
-    """换一份 views/current 并让页面立刻读一遍（不等 7 秒轮询）。"""
+    """换一份 views/current 并让页面立刻读一遍（不等 5 秒轮询）。"""
     h.set_current(_idle(**extra))
     h.page.evaluate("() => window.fetchAndRender()")
 
@@ -269,3 +269,72 @@ def test_no_innerhtml_added() -> None:
               modules / "nginx-docker/static/focus.js": 0, modules / "hive/code/frontend/hex-app.js": 9}
     assert {str(f): f.read_text(encoding="utf-8").count("innerHTML") for f in before} == \
         {str(f): n for f, n in before.items()}
+
+
+# ─────────────────────────────────────────── 串行：永远只写当前这一个窗口（nexus-core v2.17）
+
+WINDOWS = [("ptyxis", "garden", PROJECT), ("code", "notes.md", {}), ("ptyxis", "plot", TASK), ("firefox", "文档", {})]
+
+
+def test_center_shows_exactly_one_window_under_three_second_switching(browser, static_base_url) -> None:
+    """每 3 秒切一次窗口、页面每轮读到的都是另一个窗口：表芯只有一行「在哪」、一行窗口、一个钟——
+    写的是此刻这一个，上一个窗口的字一个不留；钟从这一次切过来起数；下面一行小字是这个窗口自己累计的分钟数。"""
+    with open_focus(browser, static_base_url) as h:
+        page = h.page
+        titles = [t for _a, t, _k in WINDOWS]
+        for i in range(12):
+            app, title, target = WINDOWS[i % len(WINDOWS)]
+            show(h, focus=_focus(page, 3, app=app, title=title, dwellSeconds=600 + 60 * i, **target))
+            page.wait_for_function("t => document.getElementById('focus-window').textContent.endsWith(t)", arg=title)
+            for sel in ("#focus-lead", "#focus-window", "#focus-elapsed", "#focus-dwell", f"{CENTER} button"):
+                assert page.locator(sel).count() == 1, sel
+            center = page.text_content(CENTER)
+            assert [t for t in titles if t in center] == [title], center
+            assert texts(page)["window"] == f"{app} · {title}" and texts(page)["elapsed"] == "00:03"
+            assert page.text_content("#focus-dwell") == f"近 2 小时在这上面 {10 + i} 分"
+            page.clock.run_for(3000)
+            assert texts(page)["elapsed"] == "00:06"       # 没切走就接着数；下一轮切走了，从头数
+        # 老后端（没有 dwellSeconds）/ 离开：那行小字不出现
+        show(h, focus=_focus(page, 3, title="旧后端"))
+        page.wait_for_function("() => document.getElementById('focus-window').textContent.endsWith('旧后端')")
+        assert page.is_hidden("#focus-dwell")
+        show(h, focus=_focus(page, 30, state="afk", app="", title="", dwellSeconds=None))
+        page.wait_for_function("() => document.getElementById('focus-lead').textContent === '离开'")
+        assert page.is_hidden("#focus-dwell")
+
+
+def test_dwell_line_updates_without_rebuilding_the_center(browser, static_base_url) -> None:
+    with open_focus(browser, static_base_url) as h:
+        page = h.page
+        show(h, focus=_focus(page, 40, dwellSeconds=59, **TASK))
+        page.wait_for_selector("#focus-start-btn")
+        assert page.text_content("#focus-dwell") == "近 2 小时在这上面 不到 1 分"
+        page.evaluate("() => { document.getElementById('focus-start-btn').dataset.kept = '1'; }")
+        show(h, focus=_focus(page, 45, dwellSeconds=3700, **TASK))
+        page.wait_for_function("() => document.getElementById('focus-dwell').textContent.endsWith('1 小时 1 分')")
+        assert page.get_attribute("#focus-start-btn", "data-kept") == "1", "只换那行小字，表芯不重建"
+
+
+def _visibility(page: Page, state: str) -> None:
+    page.evaluate("""s => { Object.defineProperty(document, 'visibilityState', {value: s, configurable: true});
+                            document.dispatchEvent(new Event('visibilitychange')); }""", state)
+
+
+def test_current_is_polled_every_five_seconds_and_not_while_hidden(browser, static_base_url) -> None:
+    """在页面里数 fetch（定时器回调里同步发出，与假时钟同步）：任意 30 秒恰好 6 次，与轮询的相位无关。"""
+    with open_focus(browser, static_base_url) as h:
+        page = h.page
+        page.evaluate("""() => { window.__polls = 0; const real = window.fetch;
+            window.fetch = function (url) {
+              if (String(url).indexOf('views/current') >= 0) { window.__polls += 1; }
+              return real.apply(this, arguments);
+            }; }""")
+        polls = lambda: page.evaluate("() => window.__polls")  # noqa: E731
+        page.clock.run_for(30_000)
+        assert polls() == 6
+        _visibility(page, "hidden")
+        assert polls() == 6
+        page.clock.run_for(60_000)
+        assert polls() == 6, "页面不可见：不拉"
+        _visibility(page, "visible")
+        assert polls() == 7, "回到前台：立刻补一次"

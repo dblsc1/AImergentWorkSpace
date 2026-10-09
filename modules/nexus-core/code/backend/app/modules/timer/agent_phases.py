@@ -25,9 +25,10 @@ from . import agents, repo
 from .agent_liveness import AGENT_HEARTBEAT_SECONDS, lost_at
 
 MAX_PHASES = 1000
-MAX_INTERACTIONS = 500
+MAX_INTERACTIONS = 500  #: reply 的条数上限
+#: attend 的条数上限（v2.17 起与 reply 分开数：每 3 秒切一次窗口的人，每次切回来都是新的一条）
+MAX_ATTENDS = 2000
 CLOCK_SKEW = timedelta(seconds=300)  # 同活动建议的时钟误差口径
-ATTEND_GAP = timedelta(seconds=45)
 #: 同一运行的并发写（异步钩子并行到达）只有几条，重试这么多次还不中 = 有 bug，响亮失败
 _CAS_RETRIES = 50
 
@@ -83,7 +84,8 @@ def record_phase(
             _insert_sorted(phases, entry)
         # reply：重复与已结束不记，其余（含 capped：人确实回话了）都记；同一 at 的 reply 只记一条
         add_reply = (
-            reply and reason != "duplicate" and len(interactions) < MAX_INTERACTIONS
+            reply and reason != "duplicate"
+            and sum(i["kind"] == "reply" for i in interactions) < MAX_INTERACTIONS
             and not any(i["kind"] == "reply" and agents.ts(i["at"]) == at_eff for i in interactions)
         )
         if add_reply:
@@ -110,31 +112,33 @@ def heartbeat(run_id: str, user: str, beat_source: str | None = None, *, now: Ca
             "heartbeatSeconds": AGENT_HEARTBEAT_SECONDS}
 
 
-def record_attend(user: str, title: str, at: datetime) -> None:
-    """在场心跳命中在跑运行的 ``match``（不分大小写的子串）→ 给该运行记 / 延长一条 attend。
-    由 activity 子边界的心跳经 ``timer/service.py`` 调来（跨子边界只走 service）。"""
-    haystack = title.casefold()
-    at_str = at.isoformat()
-    for run in repo.list_agent_runs(user):
-        match = run.get("match")
-        if not match or match.casefold() not in haystack:
-            continue
-        for _ in range(_CAS_RETRIES):
-            if run is None or "closing" in run:
-                break
-            interactions = list(run.get("interactions") or [])
+def record_attend(user: str, run_id: str, intervals: list[tuple[datetime, datetime]], gap: timedelta) -> None:
+    """人在看这条运行的几段时间（按时间排）→ 记 / 延长 attend。哪条运行由 activity 认（v2.17：窗口标题与会话名相等，
+    ``activity/session_link.watched``），经 ``timer/service.py`` 调来（跨子边界只走 service）。
+    与上一条 attend 的 ``until`` 相距 ≤ ``gap`` 就延长，否则开新的一条；早于运行起点的部分钳到起点。"""
+    for _ in range(_CAS_RETRIES):
+        run = repo.get_agent_run(user, run_id)
+        if run is None or "closing" in run:
+            return
+        started = agents.ts(run["startedAt"])
+        interactions = list(run.get("interactions") or [])
+        changed = False
+        for start, end in intervals:
+            start = max(start, started)
+            if end < start:
+                continue
             last = next((i for i in reversed(interactions) if i["kind"] == "attend"), None)
-            if last is not None and at - agents.ts(last["until"]) <= ATTEND_GAP:
-                if at <= agents.ts(last["until"]):
-                    break  # 已覆盖到这一刻
-                interactions[interactions.index(last)] = {**last, "until": at_str}
-            elif len(interactions) >= MAX_INTERACTIONS:
+            if last is not None and start - agents.ts(last["until"]) <= gap:
+                if end <= agents.ts(last["until"]):
+                    continue  # 已覆盖到这一刻
+                interactions[interactions.index(last)] = {**last, "until": end.isoformat()}
+            elif sum(i["kind"] == "attend" for i in interactions) >= MAX_ATTENDS:
                 break  # 超了不再记，不报错
             else:
-                _insert_sorted(interactions, {"kind": "attend", "at": at_str, "until": at_str})
-            if repo.cas_agent_run(user, run["runId"], run.get("v"), {"interactions": interactions}):
-                break
-            run = repo.get_agent_run(user, run["runId"])
+                _insert_sorted(interactions, {"kind": "attend", "at": start.isoformat(), "until": end.isoformat()})
+            changed = True
+        if not changed or repo.cas_agent_run(user, run_id, run.get("v"), {"interactions": interactions}):
+            return
 
 
 def lane_runs(user: str, *, now: Callable[[], datetime]) -> tuple[datetime, list[dict]]:

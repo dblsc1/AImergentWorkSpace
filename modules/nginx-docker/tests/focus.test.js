@@ -66,4 +66,14 @@ const src = fs.readFileSync(path.join(__dirname, "../static/focus.js"), "utf8").
 ["innerHTML", "document.", "fetch(", "Date.now", "setInterval", "localStorage"].forEach(word =>
   assert.ok(!src.includes(word), "focus.js 不该出现 " + word));
 
+// v2.17 的 dwell：同一个窗口在时间线（近 2 小时）里累计待了多久；只有在电脑前、服务端给了秒数才有
+assert.strictEqual(F.describe({ focus: focus() }).dwell, "");                       // 老后端
+assert.deepStrictEqual(
+  [0, 59, 60, 754, 3600, 3700].map(dwellSeconds => F.describe({ focus: focus({ dwellSeconds }) }).dwell),
+  ["不到 1 分", "不到 1 分", "1 分", "12 分", "1 小时", "1 小时 1 分"].map(x => "近 2 小时在这上面 " + x));
+assert.strictEqual(F.describe({ focus: focus({ state: "afk", dwellSeconds: null }) }).dwell, "");
+assert.strictEqual(F.describe({ focus: focus({ dwellSeconds: "12" }) }).dwell, "");   // 不是数：不写
+assert.strictEqual(F.describe({ auto: auto(), focus: focus({ dwellSeconds: 120 }) }).dwell, "近 2 小时在这上面 2 分");
+assert.strictEqual(F.describe({ auto: auto() }).dwell, "");
+
 console.log("focus.test.js ok");

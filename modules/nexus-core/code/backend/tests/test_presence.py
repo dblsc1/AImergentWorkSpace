@@ -1,7 +1,7 @@
 """在场心跳 + attend 连线（契约 v2.4「在场心跳」「连线」两节）。
 
 活状态、只留 2 小时、写入时清理、每设备 500 段、每租户 20 台设备、租户隔离、不进导出；
-心跳标题命中在跑运行的 match 记 attend（45 秒内延长）。
+心跳标题（归一化后）等于在跑运行的会话名记 attend（45 秒内延长）。v2.17 带 spans 的心跳见 test_attention.py。
 """
 
 from __future__ import annotations
@@ -27,9 +27,11 @@ def _db():
 def clock(monkeypatch):
     """把心跳的服务端时钟钉在 T0 + 偏移（秒）。"""
     from app.modules.activity import presence  # noqa: PLC0415
+    from app.modules.timer import service as timer  # noqa: PLC0415
 
     state = {"t": T0}
     monkeypatch.setattr(presence, "_now", lambda: state["t"])
+    monkeypatch.setattr(timer, "_now", lambda: state["t"])  # 运行的起点同一个钟：attend 早于起点的部分会被钳掉
 
     def at(seconds):
         state["t"] = T0 + timedelta(seconds=seconds)
@@ -152,35 +154,37 @@ def _inter(run_id):
 
 
 def test_attend_created_extended_and_split(client, clock):
+    """老检测程序（不带 spans）：标题归一化后**等于**会话名才算在看它（v2.17：与 v2.13 同一条规则，不再是子串）。"""
     hit = _start(client, match="Garden")
-    both = _start(client, match="plot.gd")
+    part = _start(client, match="plot.gd")  # 只是标题的一部分：不算（v2.17 之前算）
     none = _start(client)  # 没给 match：永远没有 attend
     miss = _start(client, match="kitchen")
     for sec in (0, 30):
         clock(sec)
-        _beat(client, title="plot.gd — GARDEN — VS Code")  # 不分大小写
+        _beat(client, app="ptyxis", title="✳ GARDEN")  # 不分大小写、开头的状态符号不算
     clock(40)
-    _beat(client, title="plot.gd — garden", afk=True)  # 离开：不算
+    _beat(client, app="ptyxis", title="garden", afk=True)  # 离开：不算
     clock(100)  # 距上次 until 70s：新开一条
-    _beat(client)
+    _beat(client, app="ptyxis", title="garden")
+    clock(110)
+    _beat(client)  # plot.gd — garden：编辑器的窗口，不是会话
     iso = lambda s: _t(s).isoformat()  # noqa: E731
-    expected = [{"kind": "attend", "at": iso(0), "until": iso(30)},
-                {"kind": "attend", "at": iso(100), "until": iso(100)}]
-    assert _inter(hit) == expected and _inter(both) == expected
-    assert _inter(none) == [] and _inter(miss) == []
+    assert _inter(hit) == [{"kind": "attend", "at": iso(0), "until": iso(30)},
+                           {"kind": "attend", "at": iso(100), "until": iso(100)}]
+    assert _inter(part) == [] and _inter(none) == [] and _inter(miss) == []
 
 
 def test_attend_tenant_isolated_and_capped(client, clock, monkeypatch):
     from app.modules.timer import agent_phases  # noqa: PLC0415
 
-    monkeypatch.setattr(agent_phases, "MAX_INTERACTIONS", 1)
+    monkeypatch.setattr(agent_phases, "MAX_ATTENDS", 1)
     a_run = _start(client, headers=A, match="garden")
     clock(0)
-    _beat(client, headers=B)
+    _beat(client, headers=B, title="garden")
     assert _inter(a_run) == []
-    _beat(client, headers=A)
+    _beat(client, headers=A, title="garden")
     clock(500)
-    _beat(client, headers=A)  # 超了不再记，不报错
+    _beat(client, headers=A, title="garden")  # 超了不再记，不报错
     assert len(_inter(a_run)) == 1
 
 

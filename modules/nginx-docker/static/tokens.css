@@ -52,6 +52,8 @@ html[data-theme="light"] {
   /* 泳道相位（v1.2 追加：代理在干活 / 在等人） */
   --agent-work: #3B8132;
   --agent-wait: #9A7B00;
+  /* 泳道：人的注意力在这条代理上（v1.3 追加） */
+  --attn: #0F6FBF;
 
   /* 事实数据序列（同类量走同色渐变） */
   --fact-s1: #0B7A6F;
@@ -90,6 +92,7 @@ html[data-theme="dark"] {
 
   --agent-work: #7BD389;
   --agent-wait: #F5C542;
+  --attn: #5CB8FF;
 
   --fact-s1: #2FD4C2;
   --fact-s2: #6FB8AE;

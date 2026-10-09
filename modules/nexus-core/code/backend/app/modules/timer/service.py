@@ -32,7 +32,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from ...tenant import current as current_tenant
 from ..events import service as events_service
@@ -245,8 +245,8 @@ def agent_heartbeat(run_id: str, beat_source: str | None = None) -> dict:
     return phases_impl.heartbeat(run_id, current_tenant(), beat_source, now=_now)  # v2.18
 
 
-def record_attend(user: str, title: str, at: datetime) -> None:
-    phases_impl.record_attend(user, title, at)
+def record_attend(user: str, run_id: str, intervals: list[tuple[datetime, datetime]], gap: timedelta) -> None:
+    phases_impl.record_attend(user, run_id, intervals, gap)
 
 
 def list_lane_runs(user: str | None = None) -> tuple[datetime, list[dict]]:

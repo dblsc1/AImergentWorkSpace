@@ -80,7 +80,7 @@ def test_lanes_cards_human_pinned_then_waiting_then_by_activity(browser, static_
         assert page.is_visible("[data-run-id=run_d]")
         # 卡头：相位胶囊 + 活跃分钟；在等你的那张单独标出来
         assert page.text_content("[data-run-id=run_c] .hcl-pill") == "等你回话"
-        assert page.text_content("[data-run-id=run_c] .hcl-stat") == "活跃 50 分 · 最近 10:12"
+        assert page.text_content("[data-run-id=run_c] .hcl-stat") == "活跃 50 分 · 看了 4 分 · 最近 10:12"
         assert page.text_content("[data-run-id=run_d] .hcl-pill") == "已结束"
         assert page.text_content("[data-run-id=run_d] .hcl-stat") == "活跃 105 分 · 09:15 结束"
         assert page.text_content("[data-run-id=run_e] .hcl-stat") == "活跃 180 分 · 最近 9/29 21:00"
@@ -102,7 +102,7 @@ def test_lanes_cards_human_pinned_then_waiting_then_by_activity(browser, static_
 
 def seg_classes(page, run_id: str) -> list[str]:
     return page.eval_on_selector_all(
-        f"[data-run-id={run_id}] .hcl-seg", "ns => ns.map(n => n.className)")
+        f"[data-run-id={run_id}] .hcl-seg:not(.hcl-attn)", "ns => ns.map(n => n.className)")
 
 
 def test_phase_segments_merge_and_colour_by_class_and_token(browser, static_base_url) -> None:
@@ -185,19 +185,20 @@ def test_tooltip_names_phase_range_and_duration(browser, static_base_url) -> Non
         assert tip.text_content() == "garden · 等你批准（Bash） · 08:55–09:00（5 分）"
         # 在场细带：程序 + 标题只当文本（标题里的 <b> 原样显示，不是标签）
         page.hover(".hcl-seg.hcl-presence:not(.is-afk)")
-        assert tip.text_content() == "code · <b>plot.gd</b> — garden — VS Code · 09:30–10:05"
+        assert tip.text_content() == "code · <b>plot.gd</b> — garden — VS Code · 09:30–10:05（35 分）"
         assert page.locator("#lanes-view b").count() == 0
 
 
-def test_connectors_reply_lines_and_attend_band(browser, static_base_url) -> None:
+def test_connectors_reply_lines_and_attention_bars(browser, static_base_url) -> None:
     with open_lanes(browser, static_base_url, fx.LANES_FULL) as (page, _):
         page.wait_for_selector("#lanes-view .hcl-reply")
-        # 卡片各自分开：回话 / 在看画在该代理自己的轨道上（garden 两次回话、plot 一次回话 + 一段在看）
+        # 卡片各自分开：回话 / 你在看画在该代理自己的轨道上（garden 两次回话 + 两段在看、plot 一次回话 + 一段在看）
         per_run = page.evaluate("""() => Object.fromEntries([...document.querySelectorAll('#lanes-view [data-run-id]')]
             .map(c => [c.dataset.runId, [c.querySelectorAll('.hcl-track .hcl-reply').length,
-                                         c.querySelectorAll('.hcl-track .hcl-attend').length]]))""")
-        assert per_run == {"run_c": [1, 1], "run_e": [0, 0], "run_d": [0, 0], "run_a": [2, 0],
+                                         c.querySelectorAll('.hcl-track .hcl-attn').length]]))""")
+        assert per_run == {"run_c": [1, 1], "run_e": [0, 0], "run_d": [0, 0], "run_a": [2, 2],
                            "run_b": [0, 0], "run_f": [0, 0]}
+        assert page.locator("#lanes-view .hcl-attend").count() == 0, "v2.17 之前那条半透明的「在看」带子不再画"
         assert page.locator("#lanes-view .hcl-reply").count() == 3
         # 「现在」每张卡的轨道上各一根，横向位置一致（各卡的轨道与顶上的时间轴对齐）
         xs = page.eval_on_selector_all("#lanes-view > .hcl-deck .hcl-now", "ns => ns.map(n => n.getBoundingClientRect().left)")
@@ -644,6 +645,90 @@ def test_new_card_fades_in_and_fold_crossing_only_fades(browser, static_base_url
         # 再画回去：tests 从折叠区里出来（旧位置看不见）→ 只淡入，不飞
         back = {m["id"]: m for m in redraw(page, stub, fx.LANES_FULL)}
         assert back["run_f"]["props"] == ["opacity"], back
+
+
+# ─────────────────────────────────────────── 你在看：注意力的蓝条（nexus-core v2.17 的 agents[].attention）
+
+BAR = "[data-run-id=run_c] .hcl-track .hcl-attn"
+RECT = "n => { const r = n.getBoundingClientRect(); return [r.left, r.right, r.top, r.bottom]; }"
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_attention_bar_is_blue_in_its_own_subrow_on_the_shared_axis(browser, static_base_url, theme) -> None:
+    with open_lanes(browser, static_base_url, fx.LANES_FULL, theme=theme) as (page, _):
+        page.wait_for_selector(BAR)
+        # 横向：与顶上那条时间轴同一把尺（最近 3 小时：07:20 → 10:20，右边留 3%）；plot 的那一段是 10:00–10:04
+        axis = page.eval_on_selector("#lanes-view .hcl-axis", RECT)
+        v0, v1 = 7 * 60 + 20, 10 * 60 + 20 + 180 * 0.03
+
+        def x(minute: float) -> float:
+            return axis[0] + (minute - v0) / (v1 - v0) * (axis[1] - axis[0])
+
+        bar = page.eval_on_selector(BAR, RECT)
+        assert abs(bar[0] - x(600)) < 1 and abs(bar[1] - x(604)) < 1, (bar, x(600), x(604))
+        # 纵向：自己的一小行，在相位条的正下方、仍在这条线的轨道里（不靠颜色也分得出）
+        track = page.eval_on_selector("[data-run-id=run_c] .hcl-track", RECT)
+        phases = page.eval_on_selector_all("[data-run-id=run_c] .hcl-track .hcl-seg[class*='hcl-ph-']", "ns => ns.map(%s)" % RECT)
+        assert max(p[3] for p in phases) <= bar[2] + 0.5 and bar[3] <= track[3] + 0.5 and bar[3] - bar[2] >= 3
+        # 颜色 = 设计 token --attn（亮暗各一个值），与相位的绿 / 黄、人的青都不同
+        colours = page.evaluate("""() => {
+            const probe = document.createElement('i'); document.body.appendChild(probe);
+            const tok = name => { probe.style.background = 'var(' + name + ')'; return getComputedStyle(probe).backgroundColor; };
+            return { bar: getComputedStyle(document.querySelector('%s')).backgroundColor, attn: tok('--attn'),
+                     others: ['--agent-work', '--agent-wait', '--fact', '--focus', '--plan'].map(tok) };
+        }""" % BAR)
+        assert colours["bar"] == colours["attn"] and colours["attn"] not in colours["others"]
+        # 图例与字：「你在看」取代以前的「在看」；卡头多一句「看了 N 分」；读屏摘要也说
+        legend = page.eval_on_selector_all("#lanes-view .hcl-legend .hcl-key", "ns => ns.map(n => n.textContent)")
+        assert "你在看" in legend and "在看" not in legend
+        assert page.eval_on_selector("#lanes-view .hcl-legend .hcl-swatch.hcl-attn",
+                                     "n => getComputedStyle(n).backgroundColor") == colours["attn"]
+        assert page.text_content("[data-run-id=run_a] .hcl-stat") == "活跃 90 分 · 看了 12 分 · 最近 10:00"
+        assert "看了" not in page.text_content("[data-run-id=run_b] .hcl-stat"), "没看过的不写"
+        summary = page.text_content("#lanes-view [data-hcl-summary]")
+        assert "plot：等你回话，你看了 4 分" in summary and "garden：在干活，你看了 12 分" in summary
+        page.hover(BAR)
+        assert page.text_content("#lanes-view .hcl-tip") == "plot · 你在看 · 10:00–10:04（4 分）"
+        # 人那条线上，在看 garden 的那一段在场带染成同一个蓝（半透明），别的段不染
+        marked = page.eval_on_selector_all(".hcl-row-human .hcl-seg.hcl-presence",
+                                           "ns => ns.map(n => n.classList.contains('is-on-agent'))")
+        assert marked == [False, False, True]
+
+
+@pytest.mark.parametrize("reduced", [None, "reduce"])
+def test_growing_attention_span_has_a_live_edge_unless_reduced_motion(browser, static_base_url, reduced) -> None:
+    with open_lanes(browser, static_base_url, fx.LANES_FULL, reduced_motion=reduced) as (page, _):
+        page.wait_for_selector(BAR)
+        # 只有「到此刻还在看」的那一段有活边：garden 的 10:10–10:20；plot 的 10:04 就结束了
+        live = page.eval_on_selector_all("#lanes-view .hcl-attn.is-live", "ns => ns.map(n => n.closest('.hcl-card').dataset.runId)")
+        assert live == ["run_a"]
+        name = page.eval_on_selector("#lanes-view .hcl-attn.is-live", "n => getComputedStyle(n, '::after').animationName")
+        assert (name == "none") is (reduced == "reduce")
+        assert page.eval_on_selector(BAR, "n => getComputedStyle(n, '::after').content") == "none"
+
+
+@pytest.mark.parametrize("width", [320, 390, 1100])
+def test_three_second_switching_draws_a_serial_timeline(browser, static_base_url, width) -> None:
+    """每 3 秒切一次窗口：人那条线是一段接一段、互不重叠的细带；两条代理线上的蓝条此起彼伏，从不同时亮。"""
+    with open_lanes(browser, static_base_url, fx.fast_switching(), width=width) as (page, _):
+        page.wait_for_selector("[data-run-id=run_a] .hcl-attn")
+        # 位置按时间算（left / 右端的百分比）：一段的右端就是下一段的左端。画出来每段至少 2 像素宽（看得见），所以不量像素
+        spans = page.eval_on_selector_all(".hcl-row-human .hcl-seg.hcl-presence",
+                                          "ns => ns.map(n => [parseFloat(n.style.left), parseFloat(n.style.width.slice(5))])")
+        assert len(spans) == 40      # [左端 %, 宽 %]（浏览器把 calc(右% - 左%) 化简成一个百分比，留 6 位有效数字）
+        assert all(a[1] > 0 and a[0] + a[1] <= b[0] + 1e-3 for a, b in zip(spans, spans[1:])), "在场的段不重叠"
+        bars = page.evaluate("""() => ['run_a', 'run_c'].map(id => [...document.querySelectorAll(
+            '[data-run-id=' + id + '] .hcl-attn')].map(n => [n.style.left, n.style.width]))""")
+        assert len(bars[0]) == 14 and len(bars[1]) == 13
+        assert not set(map(tuple, bars[0])) & set(map(tuple, bars[1])), "人同一时刻只看一个"
+        assert page.text_content("[data-run-id=run_a] .hcl-stat").startswith("活跃 90 分 · 看了 1 分 · ")
+        tips = page.eval_on_selector_all(".hcl-row-human .hcl-seg.hcl-presence", "ns => ns.map(n => n.dataset.tip)")
+        assert tips[0] == "ptyxis · garden · 10:18:00–10:18:03（3 秒）"
+        over = page.evaluate("""(w) => [...document.getElementById('lanes-panel').querySelectorAll('*')].filter(n => {
+            const r = n.getBoundingClientRect();
+            return r.width && (r.right > w + 0.5 || r.left < -0.5) && !n.closest('.hcl-tip');
+        }).map(n => n.className)""", width)
+        assert over == []
 
 
 # ── 2026-10-09 失联（nexus-core v2.18）：会发心跳的运行 30 分钟没信号 ─────────────────────────

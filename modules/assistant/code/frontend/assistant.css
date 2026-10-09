@@ -34,6 +34,7 @@ html[data-theme="light"] {
   --danger: #C2333B;
   --agent-work: #3B8132;
   --agent-wait: #9A7B00;
+  --attn: #0F6FBF;
   --accent: #0B7A6F;
   --accent-ink: #FFFFFF;
   --accent-soft: #DCF0ED;
@@ -62,6 +63,7 @@ html[data-theme="dark"] {
   --danger: #FF8189;
   --agent-work: #7BD389;
   --agent-wait: #F5C542;
+  --attn: #5CB8FF;
   --accent: #2FD4C2;
   --accent-ink: #04211D;
   --accent-soft: #123B38;
