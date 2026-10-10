@@ -517,6 +517,10 @@ provides:
       DELETE /{id}（只收人，幂等）。命中（NFKC / 去不可见字符 / 折叠空白 / casefold 之后：程序名相等 + 可选标题子串）的窗口不记为工作：建议上传丢弃（响应有被忽略时追加 ignored）、
       在场心跳换成「没有窗口」；不是隐私擦除，已记下的不动（规则里存人填的匹配文字，只给人看）。不是 detector.rules.v1 的规则
     status: 已实现（v2.22），待验证
+  - id: nexus-core.activity.pending-days.v1
+    summary: 待确认建议按天汇总（v2.26，追加式）——GET /api/core/activity/suggestions/pending-days?from&to（读不设限，只读）：status=pending 的建议按开始时刻的 NEXUS_TZ 本地日汇总
+      {totalSeconds, count, days[{date, seconds, count}]}，只有数字，上界估计、不是工时、不计入已记账的时间；from>to 或超 92 天 422
+    status: 已实现（v2.26），待验证
 consumes:
   - id: yq-event/v1
     contract: ../../contracts/yq-event.v1/contract.md
