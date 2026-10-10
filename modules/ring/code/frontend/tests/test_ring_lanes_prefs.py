@@ -191,7 +191,7 @@ def test_menu_pin_marks_the_card_moves_it_first_and_unpin_removes_the_mark(brows
 
 def test_hide_moves_the_card_into_the_hidden_row_and_restore_brings_it_back(browser, static_base_url) -> None:
     with open_prefs(browser, static_base_url) as (page, server):
-        assert page.query_selector("details.hcl-hidden") is None  # 没有藏起来的就没有这一行
+        assert page.query_selector("details.hcl-foldmenu") is None  # 没有藏起来的就没有这一行
         page.click("[data-run-id=run_c] .hcl-kebab")
         page.click(".hcl-menu-item:text('不再显示')")
         waits(page, lambda: server.calls)
@@ -199,16 +199,16 @@ def test_hide_moves_the_card_into_the_hidden_row_and_restore_brings_it_back(brow
         assert "run_c" not in order(page)
         # 标题上的红绿灯只数画出来的；藏起来的 plot 在等你 → 只在已隐藏那一行轻轻提一句
         assert "在等你" not in page.text_content("#lanes-state")
-        assert page.text_content("details.hcl-hidden > summary") == "已隐藏 (1) · 1 个在等你"
-        assert page.get_attribute("details.hcl-hidden", "open") is None
-        page.click("details.hcl-hidden > summary")
+        assert page.text_content("details.hcl-foldmenu > summary") == "已折叠 1 个 · 1 个在等你"
+        assert page.get_attribute("details.hcl-foldmenu", "open") is None
+        page.click("details.hcl-foldmenu > summary")
         assert page.text_content(".hcl-hidden-item .hcl-hidden-name") == "plot"
         assert page.text_content(".hcl-hidden-state") == "在等你"
         page.click(".hcl-hidden-restore")
         waits(page, lambda: len(server.calls) == 2)
         assert server.calls[1] == ("PUT", "/agent", {"agent": "claude-code", "label": "plot", "hidden": False, "unverified": False})
         waits(page, lambda: "run_c" in order(page))  # 恢复显示没法乐观地画：卡要等服务端重拉才回来
-        assert order(page) == SERVED and page.query_selector("details.hcl-hidden") is None
+        assert order(page) == SERVED and page.query_selector("details.hcl-foldmenu") is None
 
 
 def test_failed_request_rolls_the_screen_back_and_says_so(browser, static_base_url) -> None:
@@ -219,14 +219,14 @@ def test_failed_request_rolls_the_screen_back_and_says_so(browser, static_base_u
         page.click(".hcl-menu-item:text('不再显示')")
         waits(page, lambda: server.calls)
         waits(page, lambda: "没有成功" in page.text_content("#lanes-state"))
-        assert order(page) == before and page.query_selector("details.hcl-hidden") is None
+        assert order(page) == before and page.query_selector("details.hcl-foldmenu") is None
 
 
 def test_old_backend_without_hidden_agents_has_no_entry_points(browser, static_base_url) -> None:
     body = copy.deepcopy(fx.LANES_FULL)
     with open_lanes(browser, static_base_url, body) as (page, _):
         page.wait_for_selector("#lanes-view .hcl-card[data-run-id]")
-        assert page.query_selector(".hcl-kebab") is None and page.query_selector("details.hcl-hidden") is None
+        assert page.query_selector(".hcl-kebab") is None and page.query_selector("details.hcl-foldmenu") is None
 
 
 # ─────────────────────────────────────────── 键盘：菜单里的上移 / 下移
@@ -466,8 +466,8 @@ def test_stale_pinned_identity_is_listed_in_the_fold_and_removable(browser, stat
     body = served_body()
     body["stalePinned"] = [{"agent": "claude-code", "label": "old-name"}]
     with open_prefs(browser, static_base_url, body=body) as (page, server):
-        assert page.text_content("details.hcl-hidden > summary") == "置顶但没在跑 (1)"
-        page.click("details.hcl-hidden > summary")
+        assert page.text_content("details.hcl-foldmenu > summary") == "置顶但没在跑 (1)"
+        page.click("details.hcl-foldmenu > summary")
         assert page.text_content(".is-stale-pin .hcl-hidden-state") == "置顶但没在跑"
         page.click(".hcl-unpin-stale")
         waits(page, lambda: server.calls)
@@ -539,3 +539,21 @@ def test_drag_put_carries_the_window_the_page_queried_with(browser, static_base_
         page.mouse.up()
         waits(page, lambda: server.calls)
         assert server.windows == [want]
+
+
+def test_drag_put_carries_the_window_of_the_rendered_data_not_the_latest_fetch(browser, static_base_url) -> None:
+    """轮询在长按拖动期间落地（lastQ 跑在了页面前面）：PUT 带的窗口必须是页面上**画着的**那份的（shownQ）。"""
+    from urllib.parse import parse_qsl  # noqa: PLC0415
+
+    with open_prefs(browser, static_base_url, clock=True) as (page, server):
+        rendered = server.last_query  # 画着的这份就是最近一次服务端给的（此刻没有未画的）
+        drag(page, "run_c", centre(page, "run_a")[1] + 4)
+        assert page.evaluate("() => document.getElementById('lanes-view').hclBusy")  # 拖着：轮询结果只攒着不画
+        n = server.lanes_gets
+        page.clock.run_for(15_500)
+        waits(page, lambda: server.lanes_gets > n)
+        if rendered == "":  # 第一次不带参，第二次起带窗口：这时 lastQ 已经变了而页面没变
+            assert server.last_query != ""
+        page.mouse.up()
+        waits(page, lambda: server.calls)
+        assert server.windows == [dict(parse_qsl(rendered))]

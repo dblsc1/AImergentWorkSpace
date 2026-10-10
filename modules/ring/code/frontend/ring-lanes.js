@@ -8,7 +8,7 @@
  * 画图交给共享的 <前缀>__cockpit/lanes.js（顶栏芯片的精简预览用的是同一份，配色、段的推法一致）。
  *
  * - 泳道偏好（nexus-core v2.22，ring 契约同名条）：每张代理卡有 ⋯ 菜单（置顶 / 不再显示 / 上移 / 下移）、在跑的卡能长按拖动换位，
- *   区尾有可折叠的「已隐藏 (N)」可恢复。偏好在服务端（PUT api/core/lanes/prefs/…），排序也是服务端算的（agents[].rank）；
+ *   区尾有一个折叠菜单「已折叠 n 个」（v2.25：出错 / 空闲 / 已结束 / 手动隐藏，隐藏的可恢复，折叠的可置顶显示）。偏好在服务端（PUT api/core/lanes/prefs/…），排序也是服务端算的（agents[].rank）；
  *   这里先乐观地画（lanes.js 的 optimistic()），请求失败就退回原来那份并说一声。菜单开着 / 正在拖时轮询只攒着、收尾再画。
  *   后端早于 v2.22（响应没有 hiddenAgents）就没有这些入口。
  * - 约 15 秒轮询，页面不可见时不拉；404（后端早于 v2.4）或共享渲染件加载失败 → 整块不出现。
@@ -39,6 +39,7 @@
   var hours = 3;       // 0 = 今天
   var last = null;     // 最近一次成功的响应
   var lastQ = "";      // 它的查询串（?date= / ?from=&to=）
+  var shownQ = "";     // 此刻**画在页面上**的那份数据的查询串（draw() 画之前记下；拖拽排位要发的是它，不是最近一次拉到的 lastQ）
   var gone = false;    // 404：后端没有这个端点，不再拉
   var seq = 0;
   var lead = null;     // 「你在 X，记到哪？」那张卡（没有为 null）
@@ -93,8 +94,8 @@
     onRestore: function (h) { pref({ type: "restore", agent: h.agent, label: h.label, unverified: h.unverified }, "PUT", "/agent", { agent: h.agent, label: h.label || "", hidden: false, unverified: !!h.unverified }); },
     onMove: function (r, index) {
       view.hclReveal = r.runId;
-      var win = {};   // 拖拽的下标按页面读图用的窗口数（凌晨读「昨天 + 今天」），带上同样的 date / from / to
-      new URLSearchParams(lastQ).forEach(function (v, k) { win[k] = v; });
+      var win = {};   // 拖拽的下标按页面**已画出**的数据的窗口数（凌晨读「昨天 + 今天」），带上同样的 date / from / to
+      new URLSearchParams(shownQ).forEach(function (v, k) { win[k] = v; });
       pref({ type: "move", runId: r.runId, index: index }, "PUT", "/order", Object.assign({ runId: r.runId, index: index }, win));
     }
   };
@@ -114,6 +115,7 @@
     var human = last.human || {};
     if (human.running) lead = null;                         // 手动计时永远优先
     else if (!lead && human.needsChoice && window.RingChoice) lead = window.RingChoice.card(human.needsChoice, closeLead);
+    shownQ = lastQ;                                          // 下面就要画 last 了：它对应的窗口就是页面上的窗口
     var now = Date.parse(last.now);
     var v0, v1;
     if (hours) {

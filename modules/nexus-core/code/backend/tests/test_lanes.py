@@ -83,7 +83,9 @@ def test_empty_shape_defaults_to_today(client):
     assert (body["agents"], body["interactions"], body["truncated"]) == ([], [], False)
     assert (body["hiddenAgents"], body["hiddenWaiting"], body["dropped"]) == ([], 0, [])
     assert set(body) == {"today", "now", "windowStart", "windowEnd", "human", "agents", "interactions",
-                         "truncated", "hiddenAgents", "hiddenWaiting", "stalePinned", "dropped", "inactiveAgents"}  # v2.22 + v2.23 + v2.24
+                         "truncated", "hiddenAgents", "hiddenWaiting", "stalePinned", "dropped", "inactiveAgents",
+                         "expiredAgents", "expired"}  # v2.22 + v2.23 + v2.24 + v2.25
+    assert (body["expiredAgents"], body["expired"]) == (0, {"agents": 0, "runs": 0, "elapsedSeconds": 0})
 
 
 def test_sessions_listed_on_every_overlapping_day_unclipped(client, task):
@@ -158,6 +160,8 @@ def test_marked_but_unfinished_run_is_drawn_as_ended(client):
     from app.modules.timer import repo  # noqa: PLC0415
 
     run = _start(client)
+    # v2.25：刚结束的普通泳道立刻折叠；这里关心的是运行本身，所以先置顶（置顶永远显示）
+    assert client.put(f"{API}/lanes/prefs/agent", json={"agent": "cc", "label": "", "pinned": True}).status_code == 200
     repo.mark_agent_run_closing("u_local", run["runId"],
                                 {"outcome": "cancelled", "endedAt": datetime.now(timezone.utc).isoformat()})
     [agent] = _lanes(client)["agents"]

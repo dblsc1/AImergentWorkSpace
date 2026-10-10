@@ -504,8 +504,9 @@
           document.addEventListener('click', swallow, true);          // 拖完松手会补一个 click：吞掉
           setTimeout(function () { document.removeEventListener('click', swallow, true); }, 0);
         }
-        setBusy(root, false);                               // 没到时间就松手 / 取消也要放开
+        // 先发移动、再放开 busy：放开会立刻补画攒下的轮询结果，那份数据的窗口可能已不是下标所依据的（ring-lanes 的 shownQ）
         if (g.active && drop && g.to !== from) { P.onMove(r, g.to); }
+        setBusy(root, false);                               // 没到时间就松手 / 取消也要放开
       }
       function onMove(e2) {
         if (!g.active) {
@@ -580,11 +581,9 @@
     var kebabId = kebabCard ? kebabCard.getAttribute('data-run-id') : null;
     // 开合记在 root 上（同一个 root 跨重画）：折叠区这次没了、下次又出现时照旧开着
     if (menu && root.contains(menu.owner)) { closeMenu(false, true); }
-    var oldHidden = root.querySelector('details.hcl-hidden');
-    if (oldHidden) { root.hclHiddenOpen = oldHidden.open; }
-    var hiddenFocus = !!(oldHidden && a && oldHidden.contains(a));
-    var oldInactive = root.querySelector('details.hcl-inactive');
-    if (oldInactive) { root.hclInactiveOpen = oldInactive.open; }
+    var oldMenu = root.querySelector('details.hcl-foldmenu');
+    if (oldMenu) { root.hclMenuOpen = oldMenu.open; }
+    var menuFocus = !!(oldMenu && a && oldMenu.contains(a));
     var oldFold = root.querySelector('details.hcl-fold');
     if (oldFold) { root.hclFoldOpen = oldFold.open; }
     var foldFocus = !!(oldFold && a && oldFold.contains(a) && a.tagName === 'SUMMARY');
@@ -863,74 +862,93 @@
       opts.focusFallback.focus();                      // 「还有 N 个」没了（≤ top 张）：焦点别掉到 body 上
     }
 
+    // 折叠菜单（nexus-core v2.25）：原来底部的「已隐藏」「未显示」两个展开条合成一个「已折叠 n 个」，默认收着，开合跨重画保留。
+    // 分组：出错 / 空闲 / 已结束（inactiveAgents 的 reason）/ 手动隐藏（hiddenAgents，可恢复显示）/ 置顶但没在跑（stalePinned，可移除）。
+    // 老后端没有这些键就没有这一块；文字一律 textContent
     var stale = P ? data.stalePinned || [] : [];
-    if (P && ((data.hiddenAgents || []).length || stale.length)) {
-      // 已隐藏的代理（v2.22）：默认收着，展开后逐个「恢复显示」。SHOW_HIDDEN_WAITING 关掉就没有「N 个在等你」那半句
-      var hd = el('details', 'hcl-hidden'), waitingN = SHOW_HIDDEN_WAITING ? data.hiddenWaiting || 0 : 0;
-      hd.open = !!root.hclHiddenOpen;
-      var nHidden = (data.hiddenAgents || []).length;
-      var hsum = el('summary', 'hcl-hidden-toggle', (nHidden || !stale.length ? '已隐藏 (' + nHidden + ')' : '') +
-        (waitingN ? ' · ' + waitingN + ' 个在等你' : '') +
-        (stale.length ? (nHidden ? ' · ' : '') + '置顶但没在跑 (' + stale.length + ')' : ''));
-      hd.appendChild(hsum);
-      var hlist = el('ul', 'hcl-hidden-list');
-      (data.hiddenAgents || []).forEach(function (h) {
-        var li = el('li', 'hcl-hidden-item');
-        li.appendChild(el('span', 'hcl-hidden-name', h.label || h.agent));
-        if (h.label) { li.appendChild(el('span', 'hcl-sub', h.agent)); }
-        li.appendChild(el('span', 'hcl-hidden-state', !h.live ? '没在跑' : isWaiting(h.phase) ? '在等你' : '在跑'));
-        var back = el('button', 'hcl-hidden-restore', '恢复显示');
-        back.type = 'button';
-        back.setAttribute('aria-label', '恢复显示：' + (h.label || h.agent));
-        back.addEventListener('click', function () { P.onRestore(h); });
-        li.appendChild(back);
-        hlist.appendChild(li);
-      });
-      stale.forEach(function (p) {          // 改名后留下的旧置顶：没有在跑的对得上，列出来让人移除
-        var li = el('li', 'hcl-hidden-item is-stale-pin');
-        li.appendChild(el('span', 'hcl-hidden-name', p.label || p.agent));
-        if (p.label) { li.appendChild(el('span', 'hcl-sub', p.agent)); }
-        li.appendChild(el('span', 'hcl-hidden-state', '置顶但没在跑'));
-        var rm = el('button', 'hcl-hidden-restore hcl-unpin-stale', '移除置顶');
-        rm.type = 'button';
-        rm.setAttribute('aria-label', '移除置顶：' + (p.label || p.agent));
-        rm.addEventListener('click', function () { P.onPin({ agent: p.agent, label: p.label, unverified: false }, false); });
-        li.appendChild(rm);
-        hlist.appendChild(li);
-      });
-      hd.appendChild(hlist);
-      root.appendChild(hd);
-      if (hiddenFocus) { hsum.focus(); }
-    } else if (hiddenFocus && opts.focusFallback) {
-      opts.focusFallback.focus();
-    }
-
-    // 未显示的泳道（nexus-core v2.24：出错 / 空闲满 1 小时，服务端已挪出 agents）：默认收着；老后端没有该字段就没有这一行。只用 textContent
     var inactive = P ? data.inactiveAgents || [] : [];
-    if (inactive.length) {
-      var ia = el('details', 'hcl-inactive'), nErr = inactive.filter(function (x) { return x.reason === 'error'; }).length;
-      ia.open = !!root.hclInactiveOpen;
-      ia.appendChild(el('summary', 'hcl-hidden-toggle hcl-inactive-toggle',
-        '未显示 ' + inactive.length + ' 个' + (nErr ? '（' + nErr + ' 个出错）' : '')));
-      var ilist = el('ul', 'hcl-hidden-list');
-      inactive.forEach(function (x) {
-        var li = el('li', 'hcl-hidden-item');
-        li.appendChild(el('span', 'hcl-hidden-name', x.label || x.agent));
-        if (x.label) { li.appendChild(el('span', 'hcl-sub', x.agent)); }
-        var idleH = Math.max(1, Math.floor(((ms(data.now) || Date.now()) - (ms(x.lastWorkAt) || 0)) / (60 * MIN)));
-        li.appendChild(el('span', 'hcl-hidden-state hcl-inactive-reason', x.reason === 'error' ? '出错' : '空闲 ' + idleH + ' 小时'));
-        li.appendChild(el('span', 'hcl-sub hcl-inactive-time', '本窗口 ' + dur(0, (x.elapsedSeconds || 0) * 1000)));
-        if (!x.unverified) {                  // 置顶 = 重新显示（匿名的不能置顶）
-          var pin = el('button', 'hcl-hidden-restore hcl-inactive-pin', '置顶显示');
-          pin.type = 'button';
-          pin.setAttribute('aria-label', '置顶并显示：' + (x.label || x.agent));
-          pin.addEventListener('click', function () { P.onPin({ agent: x.agent, label: x.label, unverified: false }, true); });
-          li.appendChild(pin);
-        }
-        ilist.appendChild(li);
+    var hiddenList = P ? data.hiddenAgents || [] : [];
+    var nExpired = P ? Math.max(0, Number(data.expiredAgents) || 0) : 0;
+    var foot = nExpired ? el('p', 'hcl-foldmenu-expired', '另有 ' + nExpired + ' 个临时会话已过期不再列出') : null;
+    if (P && (inactive.length || hiddenList.length || stale.length)) {
+      var fm = el('details', 'hcl-foldmenu'), nErr = inactive.filter(function (x) { return x.reason === 'error'; }).length;
+      var waitingN = SHOW_HIDDEN_WAITING ? data.hiddenWaiting || 0 : 0, nFold = inactive.length + hiddenList.length;
+      fm.open = !!root.hclMenuOpen;
+      var msum = el('summary', 'hcl-hidden-toggle hcl-foldmenu-toggle', (nFold || !stale.length ? '已折叠 ' + nFold + ' 个' : '') +
+        (nErr ? '（' + nErr + ' 个出错）' : '') + (waitingN ? ' · ' + waitingN + ' 个在等你' : '') +
+        (stale.length ? (nFold ? ' · ' : '') + '置顶但没在跑 (' + stale.length + ')' : ''));
+      fm.appendChild(msum);
+      var group = function (cap, cls) {
+        var g = el('div', 'hcl-foldmenu-group ' + cls);
+        g.appendChild(el('p', 'hcl-foldmenu-cap', cap));
+        var ul = el('ul', 'hcl-hidden-list');
+        g.appendChild(ul);
+        fm.appendChild(g);
+        return ul;
+      };
+      var nowMs = ms(data.now) || Date.now();
+      var ago = function (iso) {
+        var m = Math.max(0, Math.floor((nowMs - (ms(iso) || nowMs)) / MIN));
+        return m < 1 ? '刚刚' : m < 60 ? m + ' 分钟前' : Math.floor(m / 60) + ' 小时前';
+      };
+      var TIER_WORD = { high: '重点', low: '临时' };   // 普通档不标：多数行都是它，标了等于没标
+      [['出错', 'error', 'is-error'], ['空闲', 'idle', 'is-idle'], ['已结束', 'ended', 'is-ended']].forEach(function (g) {
+        var rows = inactive.filter(function (x) { return g[1] === 'idle' ? x.reason !== 'error' && x.reason !== 'ended' : x.reason === g[1]; });
+        if (!rows.length) { return; }
+        var ul = group(g[0] + ' (' + rows.length + ')', g[2]);
+        rows.forEach(function (x) {
+          var li = el('li', 'hcl-hidden-item');
+          li.appendChild(el('span', 'hcl-hidden-name', x.label || x.agent));
+          if (x.label) { li.appendChild(el('span', 'hcl-sub', x.agent)); }
+          if (TIER_WORD[x.tier]) { li.appendChild(el('span', 'hcl-tier hcl-tier-' + x.tier, TIER_WORD[x.tier])); }
+          li.appendChild(el('span', 'hcl-hidden-state hcl-inactive-reason', g[0] + ' · ' + ago(x.lastWorkAt)));
+          li.appendChild(el('span', 'hcl-sub hcl-inactive-time', '本窗口 ' + dur(0, (x.elapsedSeconds || 0) * 1000)));
+          if (!x.unverified) {                  // 置顶 = 重新显示（匿名的不能置顶）
+            var pin = el('button', 'hcl-hidden-restore hcl-inactive-pin', '置顶显示');
+            pin.type = 'button';
+            pin.setAttribute('aria-label', '置顶并显示：' + (x.label || x.agent));
+            pin.addEventListener('click', function () { P.onPin({ agent: x.agent, label: x.label, unverified: false }, true); });
+            li.appendChild(pin);
+          }
+          ul.appendChild(li);
+        });
       });
-      ia.appendChild(ilist);
-      root.appendChild(ia);
+      if (hiddenList.length) {
+        var hl = group('手动隐藏 (' + hiddenList.length + ')', 'is-hidden');
+        hiddenList.forEach(function (h) {
+          var li = el('li', 'hcl-hidden-item');
+          li.appendChild(el('span', 'hcl-hidden-name', h.label || h.agent));
+          if (h.label) { li.appendChild(el('span', 'hcl-sub', h.agent)); }
+          li.appendChild(el('span', 'hcl-hidden-state', !h.live ? '没在跑' : isWaiting(h.phase) ? '在等你' : '在跑'));
+          var back = el('button', 'hcl-hidden-restore', '恢复显示');
+          back.type = 'button';
+          back.setAttribute('aria-label', '恢复显示：' + (h.label || h.agent));
+          back.addEventListener('click', function () { P.onRestore(h); });
+          li.appendChild(back);
+          hl.appendChild(li);
+        });
+      }
+      if (stale.length) {                       // 改名后留下的旧置顶：没有在跑的对得上，列出来让人移除
+        var sl = group('置顶但没在跑 (' + stale.length + ')', 'is-stale');
+        stale.forEach(function (p) {
+          var li = el('li', 'hcl-hidden-item is-stale-pin');
+          li.appendChild(el('span', 'hcl-hidden-name', p.label || p.agent));
+          if (p.label) { li.appendChild(el('span', 'hcl-sub', p.agent)); }
+          li.appendChild(el('span', 'hcl-hidden-state', '置顶但没在跑'));
+          var rm = el('button', 'hcl-hidden-restore hcl-unpin-stale', '移除置顶');
+          rm.type = 'button';
+          rm.setAttribute('aria-label', '移除置顶：' + (p.label || p.agent));
+          rm.addEventListener('click', function () { P.onPin({ agent: p.agent, label: p.label, unverified: false }, false); });
+          li.appendChild(rm);
+          sl.appendChild(li);
+        });
+      }
+      if (foot) { fm.appendChild(foot); }
+      root.appendChild(fm);
+      if (menuFocus) { msum.focus(); }
+    } else {
+      if (foot) { root.appendChild(foot); }       // 只有过期提示、没有折叠项：单独一行
+      if (menuFocus && opts.focusFallback) { opts.focusFallback.focus(); }
     }
 
     if (!agents.length) { root.appendChild(el('p', 'hcl-empty', '这段时间没有代理在跑。')); }

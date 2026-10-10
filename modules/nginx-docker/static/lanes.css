@@ -234,7 +234,7 @@ a.hcl-more { color: var(--ink-2); }
   font: inherit; font-weight: 700; line-height: 1; cursor: pointer;
 }
 .hcl-kebab:hover, .hcl-kebab[aria-expanded="true"] { color: var(--ink); border-color: var(--line); background: var(--panel); }
-.hcl-kebab:focus-visible, .hcl-menu-item:focus-visible, .hcl-hidden > summary:focus-visible, .hcl-inactive > summary:focus-visible, .hcl-hidden-restore:focus-visible {
+.hcl-kebab:focus-visible, .hcl-menu-item:focus-visible, .hcl-foldmenu > summary:focus-visible, .hcl-hidden-restore:focus-visible {
   outline: 2px solid var(--focus); outline-offset: 2px;
 }
 .hcl-menu {
@@ -255,9 +255,14 @@ body.hcl-dragging { user-select: none; -webkit-user-select: none; cursor: grabbi
 .hcl-card.is-dragging::before { opacity: 1; }
 @media (prefers-reduced-motion: no-preference) { .hcl-card.is-yielding { transition: transform .15s ease-out; } }
 
-/* 已隐藏：同「还有 N 个」的折叠样式，轻一点 */
-.hcl-hidden > summary, .hcl-inactive > summary { cursor: pointer; padding: var(--sp-1) 0; color: var(--ink-3); font-size: var(--fs-eyebrow); }
-.hcl-hidden[open] > summary, .hcl-inactive[open] > summary { margin-bottom: var(--sp-1); }
+/* 折叠菜单（v2.25）：同「还有 N 个」的折叠样式，轻一点；内分 出错 / 空闲 / 已结束 / 手动隐藏 组 */
+.hcl-foldmenu > summary { cursor: pointer; padding: var(--sp-1) 0; color: var(--ink-3); font-size: var(--fs-eyebrow); }
+.hcl-foldmenu[open] > summary { margin-bottom: var(--sp-1); }
+.hcl-foldmenu-group { margin-bottom: var(--sp-2); }
+.hcl-foldmenu-cap { margin: 0 0 var(--sp-1); color: var(--ink-3); font-size: var(--fs-eyebrow); }
+.hcl-foldmenu-group.is-error .hcl-foldmenu-cap { color: var(--danger); }
+.hcl-tier { font-size: var(--fs-eyebrow); color: var(--ink-3); border: 1px solid var(--line); border-radius: 999px; padding: 0 var(--sp-1); }
+.hcl-foldmenu-expired { margin: 0; color: var(--ink-3); font-size: var(--fs-eyebrow); }
 .hcl-hidden-list { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--sp-1); }
 .hcl-hidden-item { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-2); color: var(--ink-2); }
 .hcl-hidden-name { font-weight: 600; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
