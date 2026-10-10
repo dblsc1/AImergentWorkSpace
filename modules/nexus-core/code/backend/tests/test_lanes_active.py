@@ -203,9 +203,9 @@ def test_live_cap_dropped_working_run_keeps_lane_shown(client, w, monkeypatch):
     w.live("busy", start_min=400, phases=[(399, "working")])  # 最旧：被在跑封顶丢掉，但还在干活
     w.live("busy", start_min=200, phases=[(100, "idle")])
     w.live("busy", start_min=150, phases=[(90, "idle")])
-    w.live("stale", start_min=400, phases=[(399, "idle")])  # 最旧：被丢，空闲
-    w.live("stale", start_min=200, phases=[(199, "idle")])
-    w.live("stale", start_min=150, phases=[(149, "idle")])
+    w.live("stale", start_min=400, phases=[(394, "idle")])  # 最旧：被丢，空闲
+    w.live("stale", start_min=200, phases=[(194, "idle")])
+    w.live("stale", start_min=150, phases=[(144, "idle")])
     shown, inactive, body = _split(client)
     assert shown == {"busy"} and set(inactive) == {"stale"}  # 判定看见被丢的在跑运行
     assert [d["label"] for d in body["dropped"]] == ["busy"] and body["dropped"][0]["runs"] == 1
@@ -296,7 +296,8 @@ def test_unverified_pin_is_not_honoured(client, w):
 
     now = _now()
     item = {"runId": rid, "agent": "cc", "label": "anon", "unverified": True, "startAt": _ago(300).isoformat(),
-            "endAt": None, "lost": False, "lastSeenAt": None, "phases": [{"at": _ago(300).isoformat(), "phase": "idle"}],
+            "endAt": None, "lost": False, "lastSeenAt": _ago(1).isoformat(), "beatCount": 3,
+            "phases": [{"at": _ago(290).isoformat(), "phase": "idle"}],
             "outcome": None, "elapsedSeconds": 0}
     key = lane_active.ident("cc", "anon", True)
     prefs = {"agents": [{"key": key, "hidden": False, "pinned": True, "unverified": True}], "order": []}
@@ -319,7 +320,7 @@ def test_lane_whose_runs_were_all_dropped_is_still_judged(client, w, monkeypatch
     from app.modules.views import lane_cap  # noqa: PLC0415
 
     monkeypatch.setattr(lane_cap, "MAX_LIVE", 2)
-    w.live("old-idle", start_min=500, phases=[(499, "idle")])
+    w.live("old-idle", start_min=500, phases=[(490, "idle")])
     w.live("old-work", start_min=490, phases=[(489, "working")])
     w.live("new1", start_min=20, phases=[(19, "working")])
     w.live("new2", start_min=10, phases=[(9, "working")])

@@ -34,7 +34,7 @@ def test_work_3600_makes_high(client, w, dur, want):  # noqa: F811
 
 
 @pytest.mark.parametrize(("dur", "want"), [(299, "low"), (300, "normal")])
-def test_elapsed_300_leaves_low(client, w, dur, want):  # noqa: F811
+def test_work_300_leaves_low(client, w, dur, want):  # noqa: F811
     assert _tier_of_closed(client, w, "a", dur) == want
 
 
@@ -182,15 +182,16 @@ def test_expiry_leaves_the_books_alone(client, w):  # noqa: F811
 
 # ---- 纯函数 ----
 
-@pytest.mark.parametrize(("attn", "work", "elapsed", "want"), [
-    (599, 0, 3000, "normal"), (600, 0, 3000, "high"), (0, 3599, 3599, "normal"), (0, 3600, 3600, "high"),
-    (0, 0, 299, "low"), (0, 0, 300, "normal"), (29, 0, 299, "low"), (30, 0, 299, "normal"),
-    (600, 0, 100, "high"),  # high 优先于 low
+@pytest.mark.parametrize(("attn", "work", "dropped", "want"), [
+    (599, 0, 0, "normal"), (600, 0, 0, "high"), (0, 3599, 0, "normal"), (0, 3600, 0, "high"),
+    (0, 299, 0, "low"), (0, 300, 0, "normal"), (29, 299, 0, "low"), (30, 299, 0, "normal"),
+    (600, 100, 0, "high"),  # high 优先于 low
+    (0, 0, 1, "normal"), (0, 3600, 1, "high"),  # 有被封顶丢掉的已结束运行 = 不是临时的，但 high 照旧
 ])
-def test_tier_of_boundaries(attn, work, elapsed, want):
+def test_tier_of_boundaries(attn, work, dropped, want):
     from app.modules.views.lane_tier import tier_of  # noqa: PLC0415
 
-    assert tier_of(attn, work, elapsed) == want
+    assert tier_of(attn, work, dropped) == want
 
 
 @pytest.mark.parametrize(("ago", "folded"), [(599, False), (600, True)])
@@ -212,3 +213,51 @@ def test_constants_are_the_decided_ones():
     assert (t.ATTN_HIGH_SECONDS, t.WORK_HIGH_SECONDS, t.ATTN_LOW_SECONDS, t.EPHEMERAL_SECONDS) == (600, 3600, 30, 300)
     assert (t.IDLE_KEEP, t.ENDED_KEEP, t.FOLD_EXPIRE) == (
         {"high": 7200, "normal": 3600, "low": 600}, {"high": 1800, "normal": 0, "low": 0}, {"low": 7200})
+
+
+# ---- 临时会话：开着不管，只看干活时间（不是时长）----
+
+def _idle_after_2min_work(w, x):
+    """在跑运行干了 2 分钟（120 秒）后转 idle，已空闲 x 秒；最近有心跳，没有任何注意力。"""
+    w.live_s("a", start_s=x + 120, phases=[(x, "idle")], seen_s=5, beats=3)
+
+
+@pytest.mark.parametrize(("x", "state"), [(599, "shown"), (600, "idle")])
+def test_ephemeral_open_session_folds_at_600_idle(client, w, x, state):  # noqa: F811
+    _idle_after_2min_work(w, x)
+    shown, inactive, _ = _view(client)
+    if state == "shown":
+        assert shown == {"a"}
+    else:
+        assert shown == set() and (inactive["a"]["reason"], inactive["a"]["tier"]) == ("idle", "low")
+
+
+@pytest.mark.parametrize(("t", "state"), [(7199, "listed"), (7200, "expired")])
+def test_ephemeral_open_session_expires_7200_after_folding(client, w, t, state):  # noqa: F811
+    _idle_after_2min_work(w, 600 + t)  # 空闲 600 秒折叠，再过 t 秒
+    shown, inactive, body = _view(client)
+    assert shown == set()
+    if state == "listed":
+        assert (inactive["a"]["tier"], body["expiredAgents"]) == ("low", 0)
+    else:
+        assert inactive == {} and body["expiredAgents"] == 1
+
+
+@pytest.mark.parametrize(("work", "tier"), [(299, "low"), (300, "normal")])
+def test_open_session_work_299_vs_300(client, w, work, tier):  # noqa: F811
+    w.live_s("a", start_s=700 + work, phases=[(700, "idle")], seen_s=5, beats=3)  # 空闲 700 秒，已过 low 的 600 秒
+    _, inactive, _ = _view(client)
+    if tier == "low":
+        assert inactive["a"]["tier"] == "low"
+    else:
+        assert "a" not in inactive  # normal 留 3600 秒：仍显示
+
+
+def test_lane_with_capped_closed_runs_is_never_low(client, w, monkeypatch):  # noqa: F811
+    from app.modules.views import lane_cap  # noqa: PLC0415
+
+    monkeypatch.setattr(lane_cap, "MAX_RUNS_PER_LANE", 1)
+    w.closed_s("a", 2100, 2000)  # 保留的，100 秒
+    w.closed_s("a", 4100, 4000)  # 被封顶丢掉，只有轻记录
+    shown, inactive, body = _view(client)
+    assert shown == set() and inactive["a"]["tier"] == "normal" and body["expiredAgents"] == 0

@@ -75,6 +75,7 @@ def split(items: list[dict], gone: list[dict], prefs: dict, now: datetime, start
     pinned = {a["key"] for a in prefs["agents"] if a["pinned"] and not a.get("unverified")}
     extra = {g["key"]: g.get("live", []) for g in gone}  # 封顶丢掉的在跑运行：只参与判定，不计入行数
     drop_secs = {g["key"]: g["elapsedSeconds"] for g in gone}
+    drop_closed = {g["key"]: g["runs"] - len(g.get("live", [])) for g in gone}  # 被封顶丢掉的已结束运行条数（只有轻记录，档位保守 ≥ normal）
     lanes: dict[str, list[dict]] = {}
     for it in items:
         lanes.setdefault(ident(it["agent"], it["label"], it["unverified"]), []).append(it)
@@ -90,7 +91,7 @@ def split(items: list[dict], gone: list[dict], prefs: dict, now: datetime, start
         every = rs + extra.get(key, [])
         if any(_live_shown(r, now) for r in every):
             continue
-        tier = lane_tier(rs, extra.get(key, []), drop_secs.get(key, 0), now, start, end)
+        tier = lane_tier(rs, extra.get(key, []), drop_closed.get(key, 0), now, start, end)
         verdict = _verdict(every, tier, now)
         if verdict is None:
             continue

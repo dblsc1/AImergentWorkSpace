@@ -33,8 +33,8 @@ def _world(rng: random.Random, now: datetime, start: datetime):
         quiet = rng.random() < 0.4  # 临时短运行、没人看：low 档的来源
         for _ in range(rng.randrange(1, 7)):
             n += 1
-            st = now - timedelta(seconds=rng.randrange(60, 9000 if quiet and rng.random() < 0.5 else int((now - start).total_seconds()) - 1))
-            kind = rng.choice(["closed"] * 4 + ["live", "lost", "overdue"])
+            st = now - timedelta(seconds=rng.randrange(60, 20000 if quiet and rng.random() < 0.5 else int((now - start).total_seconds()) - 1))
+            kind = "closed" if quiet and rng.random() < 0.7 else rng.choice(["closed"] * 4 + ["live", "lost", "overdue"])
             phases = [{"at": (st + timedelta(seconds=rng.randrange(0, 4000))).isoformat(), "phase": rng.choice(
                 ["working", "idle", "error", "waiting_input"])} for _ in range(rng.randrange(0, 3))]
             ints = [{"kind": "attend", "at": (a := st + timedelta(seconds=rng.randrange(-900, 600))).isoformat(),

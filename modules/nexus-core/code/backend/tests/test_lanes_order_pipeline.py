@@ -39,7 +39,7 @@ def test_open_idle_90min_but_sibling_done_20min_ago_is_shown_and_draggable(clien
 
 def test_open_idle_10min_but_newer_failed_sibling_collapses_and_does_not_offset_indexes(client, w):  # noqa: F811
     w.live("x", start_min=400, phases=[(5, "working")])
-    bad = w.live("bad", start_min=45, phases=[(10, "idle")])  # 干了 35 分钟 + 兄弟 20 分钟 = normal 档
+    bad = w.live("bad", start_min=45, phases=[(8, "idle")])  # 干了 35 分钟 + 兄弟 20 分钟 = normal 档
     y = w.live("y", start_min=200, phases=[(5, "working")])
     w.closed("bad", 40, 20, outcome="failed")  # 比在跑的更新、已失败 → 泳道折叠成出错
     shown, inactive, _ = _split(client)
@@ -138,7 +138,7 @@ def test_window_sibling_done_yesterday_shown_in_two_day_page_is_draggable_with_w
 def test_window_failed_sibling_yesterday_collapses_in_two_day_page_404_and_no_offset(client, w, monkeypatch):  # noqa: F811
     win = _midnight(monkeypatch)
     w.live("x", start_min=400, phases=[(5, "working")])
-    bad = w.live("bad", start_min=45, phases=[(10, "idle")])
+    bad = w.live("bad", start_min=45, phases=[(8, "idle")])
     y = w.live("y", start_min=200, phases=[(5, "working")])
     w.closed("bad", 40, 20, outcome="failed")
     assert _two_day_open_order(client, win) == ["x", "y"]

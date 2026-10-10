@@ -248,7 +248,7 @@ def test_signal_between_read_and_close_keeps_the_run(client, shift_clock):
 
 def test_run_without_heartbeat_capability_is_unaffected(client, shift_clock):
     run = _start(client, phase="idle")  # 老适配器 / 检测程序的旧桥：不带 heartbeat
-    shift_clock(hours=3)
+    shift_clock(hours=1)  # 过了失联阈值（30 分钟）；再久就是一条没干过活的 low 泳道，折叠 2 小时后视图过期、_lane 找不到它
     lane = _lane(client, run["runId"])
     assert (lane["lost"], lane["overdue"], lane["endAt"]) == (False, False, None)
     assert [a["runId"] for a in client.get(f"{API}/views/current").json()["agents"]] == [run["runId"]]
