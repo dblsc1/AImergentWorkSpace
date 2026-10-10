@@ -322,3 +322,61 @@ def test_lane_with_capped_closed_runs_is_never_low(client, w, monkeypatch):  # n
     w.closed_s("a", 4100, 4000)  # 被封顶丢掉，只有轻记录
     shown, inactive, body = _view(client)
     assert shown == set() and inactive["a"]["tier"] == "normal" and body["expiredAgents"] == 0
+
+
+# ---- 评审跟进：逻辑结束 / 过期钟 / 注意力封顶 ----
+
+@pytest.mark.parametrize(("seen_s", "state"), [(H - 1, "shown"), (H, "ended")])
+def test_unclosed_lost_run_ended_keep_counts_from_when_it_became_lost(client, w, seen_s, state):  # noqa: F811
+    """high 泳道（干活 ≥ 1 小时）的没关账失联运行：ENDED_KEEP 1800 从「最后信号 + 1800」起算，不是最后信号。"""
+    w.live_s("a", start_s=seen_s + 2 * H, lost=True, seen_s=seen_s, beats=3)
+    shown, inactive, _ = _view(client)
+    assert (shown, inactive["a"]["reason"] if inactive else None) == (({"a"}, None) if state == "shown" else (set(), "ended"))
+
+
+@pytest.mark.parametrize(("end_s", "state"), [(7199, "listed"), (7200, "expired")])
+@pytest.mark.parametrize("anchor", ["run_end", "attention"])
+def test_error_folded_low_lane_expiry_clock_uses_last_activity(client, w, end_s, state, anchor):  # noqa: F811
+    """出错立刻折叠，但过期钟不只锚在出错（最新开始）那条运行上：B 早早失败，A（更早开始）后结束 / 人后来看过。"""
+    w.closed_s("a", 8000, end_s if anchor == "run_end" else 7500, phases=[(7900, "idle")],
+               attn=[(end_s, 10)] if anchor == "attention" else ())  # A：更早开始，干活 100 秒后空闲，之后才结束 / 被人看过
+    w.closed_s("a", 7900, 7800, outcome="failed")  # B：最新开始，出错于 7800 秒前（老逻辑只看这个锚 → 都已过期）
+    shown, inactive, body = _view(client)
+    assert shown == set()
+    assert (("a" in inactive), body["expiredAgents"]) == ((True, 0) if state == "listed" else (False, 1))
+    if inactive:
+        assert (inactive["a"]["reason"], inactive["a"]["tier"]) == ("error", "low")
+
+
+def test_attention_end_in_the_future_does_not_keep_a_lane_shown(client, w):  # noqa: F811
+    w.closed_s("a", 4000, 2000, attn=[(-3 * H, 100)])  # normal 档（ENDED_KEEP 0）；注意力结束于 3 小时后（服务端时钟回拨）
+    shown, inactive, _ = _view(client)
+    assert shown == set() and inactive["a"]["reason"] == "ended"
+
+
+def test_high_error_lane_stays_folded_when_attention_ends_now(client, w):  # noqa: F811
+    """出错有自己的锚：注意力不会让 high 的出错泳道在 1801 秒后重新展开。"""
+    w.closed_s("a", 1801 + 4000, 1801, outcome="failed", attn=[(0, 10)])
+    shown, inactive, _ = _view(client)
+    assert shown == set() and (inactive["a"]["reason"], inactive["a"]["tier"]) == ("error", "high")
+
+
+def test_split_many_folded_lanes_with_dropped_aggregates():
+    """3000 条泳道各带一份被封顶丢掉的聚合：runs / 秒数仍是「保留 + 丢掉」，行为同改前（gone 查表 O(1)）。"""
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    from app.modules.prefs.service import ident  # noqa: PLC0415
+    from app.modules.views.lane_active import split  # noqa: PLC0415
+
+    now = datetime(2026, 10, 10, 9, 0, tzinfo=timezone.utc)
+    iso = (now - timedelta(days=1)).isoformat()
+    items, gone = [], []
+    for i in range(3000):
+        items.append({"agent": "cc", "label": f"l{i}", "unverified": False, "startAt": iso, "endAt": iso, "lost": False,
+                      "phases": [], "attention": [], "outcome": "done", "elapsedSeconds": 10, "lastSeenAt": iso})
+        gone.append({"key": ident("cc", f"l{i}", False), "runs": 2, "elapsedSeconds": 5})
+    prefs = {"agents": []}
+    kept, out, rest, expired = split(items, gone, prefs, now, now - timedelta(days=2), now)
+    assert kept == [] and rest == [] and len(out) + expired["agents"] == 3000
+    assert all(a["runs"] == 3 and a["elapsedSeconds"] == 15 for a in out)
+    assert expired["runs"] == 3 * expired["agents"] and expired["elapsedSeconds"] == 15 * expired["agents"]
