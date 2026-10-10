@@ -163,6 +163,10 @@ def respond(path, q, tenant):
         return 200, {"total": len(items), "items": items[off: off + lim]}
     if path == "/api/core/detector/rules":
         return 200, {"version": 3, "updatedAt": "2026-09-30T10:00:00+00:00", "rules": [RULE]}
+    if path == "/api/core/activity/suggestions/pending-days":   # nexus-core v2.26；u_old = 老后端
+        if tenant == "u_old":
+            return 404, {"detail": "Not Found"}
+        return 200, PENDING
     if path == "/api/core/activity/ignores":   # nexus-core v2.22；u_old 模拟没有这个端点的老后端
         if tenant == "u_old":
             return 404, {"detail": "Not Found"}
@@ -198,6 +202,7 @@ HISTORY = {
     "rejected": [{"app": "code", "title": "评审" * 60, "taskId": "t_a0", "taskName": "已完成的"}],
 }
 
+PENDING = {"totalSeconds": 7700, "count": 111, "days": [{"date": "2026-09-28", "seconds": 7700, "count": 111}]}
 RULE = {"id": "r_1", "app": "code", "title": None, "taskId": "t_a1", "confidence": 0.9, "note": "编辑器",
         "enabled": True}
 DRAFT = {"id": "drf_1", "status": "pending", "author": "assistant", "summary": "按标题分",
@@ -448,7 +453,8 @@ def test_only_whitelisted_gets(servers):
         ok(servers, name, args)
     allowed = {"/api/core/views/tree", "/api/core/views/current", "/api/core/events", "/api/core/views/gantt",
                "/api/core/views/review", "/api/core/views/next-actions", "/api/core/views/agent-time",
-               "/api/core/activity/suggestions", "/api/core/activity/suggestions/history"}
+               "/api/core/activity/suggestions", "/api/core/activity/suggestions/history",
+               "/api/core/activity/suggestions/pending-days"}
     assert {m for m, *_ in Fake.requests} == {"GET"}
     assert {p for _, p, *_ in Fake.requests} == allowed
     assert all(q["type"] == ["session.completed"] for _, p, q, _ in Fake.requests if p == "/api/core/events")
@@ -707,9 +713,25 @@ def test_list_time_sessions_cursor_binds_to_and_from(servers):
                                                "cursor": p1["nextCursor"]})["status"] == 400
 
 
+def test_get_daily_time_pending_null_on_old_backend_and_described(servers):
+    r = ok(servers, "get_daily_time", {"fromDate": "2026-09-27", "toDate": "2026-09-28"},
+           headers={"X-Nexus-Tenant": "u_old"})
+    assert r["pending"] is None and r["totalSeconds"] == 4600
+    desc = {t["name"]: t["description"] for t in rpc(servers, "tools/list")["result"]["tools"]}
+    for n in ("get_daily_time", "list_time_sessions"):
+        assert desc[n].startswith("只含已确认、已记账") and "pending" in desc[n] and "list_activity_suggestions" in desc[n]
+    assert "上界估计" in desc["get_daily_time"]
+    assert "只含已确认" not in desc["get_current_timer"]
+    ins = rpc(servers, "initialize", {"protocolVersion": "2025-06-18"})["result"]["instructions"]
+    assert "isError" in ins and "structuredContent.error.detail" in ins
+
+
 def test_get_daily_time(servers):
     r = ok(servers, "get_daily_time", {"fromDate": "2026-09-27", "toDate": "2026-09-28"})
     assert r["today"] == "2026-09-28" and r["totalSeconds"] == 4600
+    assert r["pending"] == PENDING   # v1.15：未确认的另给，不进 totalSeconds / items
+    _, _, pq, _ = next(x for x in Fake.requests if x[1].endswith("/pending-days"))
+    assert pq == {"from": ["2026-09-27"], "to": ["2026-09-28"]}
     no = {"unclassified": False}
     assert r["items"] == [
         {"date": "2026-09-27", "projectId": "p_3c", "taskId": "t_gone", "seconds": 100, "path": None, **no},  # 已删

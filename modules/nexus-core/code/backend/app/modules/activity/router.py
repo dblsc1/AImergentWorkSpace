@@ -7,15 +7,16 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from datetime import date
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from ..timer.router import Mode
-from . import auto_entry, history, service
+from . import auto_entry, history, pending_days, service
 
 router = APIRouter(prefix="/activity/suggestions", tags=["activity"])
 
@@ -130,6 +131,28 @@ def list_suggestions(
     offset: int = 0,
 ) -> dict:
     return service.list_suggestions(status, limit, offset)
+
+
+class PendingDay(BaseModel):
+    date: str
+    seconds: int
+    count: int
+
+
+class PendingDaysOut(BaseModel):
+    """v2.26 待确认建议按天汇总：只有数字。上界估计，不是工时（契约「待确认时间的按天汇总」）。"""
+
+    totalSeconds: int
+    count: int
+    days: list[PendingDay]
+
+
+@router.get("/pending-days", response_model=PendingDaysOut)
+def pending_days_view(
+    from_: Annotated[date, Query(alias="from", description="起始日期（含，NEXUS_TZ 本地日），YYYY-MM-DD")],
+    to: Annotated[date, Query(description="结束日期（含），YYYY-MM-DD")],
+) -> dict:
+    return pending_days.pending_days(from_, to)
 
 
 class HistoryOut(BaseModel):
