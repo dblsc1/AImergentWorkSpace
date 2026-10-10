@@ -1,6 +1,6 @@
 # mcp.tools.v1 —— 给 AI 代理用的只读工具（MCP）
 
-> **契约 id**：`mcp.tools.v1`。**当前版本 v1.14**（2026-10-09 `get_detector_rules` 的输出追加 `ignored`：用户说过「忽略并记住」的窗口，见 nexus-core v2.22；`get_current_timer` / `get_agent_time` 因 nexus-core 不再列藏起来的代理而少列它们的在跑运行（汇总不变）；工具数不变，仍十七个；v1.13 2026-10-09 追加 `propose_report` / `get_report_status`，共十七个：AI 一次交一份报告、人一键全批准，见各工具节与 nexus-core v2.20「AI 报告」；v1.12 2026-10-09 调用方范围：`read` 令牌看不到也调不了会写的工具，`report` 令牌与匿名整个端点 `403`，工具数不变，见「调用方范围」节；v1.11 2026-10-09 `get_agent_time` 的 `open[]` 追加 `attentionSeconds`、`get_current_timer` 的 `focus` 追加 `dwellSeconds`：人的注意力，工具数不变；v1.10 2026-10-09 `get_current_timer` 的输出追加 `focus` / `auto` / `needsChoice`：人此刻在哪个窗口、它多半属于哪个项目 / 任务，工具数不变；v1.9 2026-10-08 追加 `get_window_awaiting_target` / `suggest_window_target`，共十五个；v1.8 2026-10-08 `propose_detector_rules` / `get_detector_rules` 的规则可以只到项目：`projectId` 代替 `taskId`，工具数不变；v1.7 2026-10-08 追加只读工具 `get_match_history`：人以前把哪个窗口定到了哪个项目 / 任务；v1.6 2026-10-08 `propose_activity_matches` 每条可带 `collection`、`projectId`，`list_activity_suggestions` 追加 `collection`、`suggestedProjectId`、`suggestedProjectPath`；v1.5 2026-10-08 认 nexus-core v2.9 的项目「未分类」时间：`list_time_sessions` / `get_daily_time` 的条目追加 `unclassified`；v1.4 2026-10-03 `propose_activity_matches` 每条可提议新任务 `newTask`，`list_activity_suggestions` 追加 `newTask`；v1.3 2026-10-02 加第二个提议工具 `propose_activity_matches`，`list_activity_suggestions` 输出追加 `rejectedTaskIds`；v1.2 2026-09-30 加 `get_detector_rules` 与第一个提议工具 `propose_detector_rules`；v1.1 2026-09-30 加 `list_projects`；v1.0 2026-09-28，v0.3「AI 桥」首版）。实现：`modules/mcp`。
+> **契约 id**：`mcp.tools.v1`。**当前版本 v1.15**（2026-10-11 `get_daily_time` 的输出追加 `pending`：同一区间里还没确认的活动建议按天汇总（数字，上界估计，不是工时，见该工具节与 nexus-core v2.26）；`get_daily_time` / `list_time_sessions` 的描述开头声明只含已确认的时间；服务器 `instructions` 补一句错误约定；工具数不变，仍十七个；v1.14 2026-10-09 `get_detector_rules` 的输出追加 `ignored`：用户说过「忽略并记住」的窗口，见 nexus-core v2.22；`get_current_timer` / `get_agent_time` 因 nexus-core 不再列藏起来的代理而少列它们的在跑运行（汇总不变）；工具数不变，仍十七个；v1.13 2026-10-09 追加 `propose_report` / `get_report_status`，共十七个：AI 一次交一份报告、人一键全批准，见各工具节与 nexus-core v2.20「AI 报告」；v1.12 2026-10-09 调用方范围：`read` 令牌看不到也调不了会写的工具，`report` 令牌与匿名整个端点 `403`，工具数不变，见「调用方范围」节；v1.11 2026-10-09 `get_agent_time` 的 `open[]` 追加 `attentionSeconds`、`get_current_timer` 的 `focus` 追加 `dwellSeconds`：人的注意力，工具数不变；v1.10 2026-10-09 `get_current_timer` 的输出追加 `focus` / `auto` / `needsChoice`：人此刻在哪个窗口、它多半属于哪个项目 / 任务，工具数不变；v1.9 2026-10-08 追加 `get_window_awaiting_target` / `suggest_window_target`，共十五个；v1.8 2026-10-08 `propose_detector_rules` / `get_detector_rules` 的规则可以只到项目：`projectId` 代替 `taskId`，工具数不变；v1.7 2026-10-08 追加只读工具 `get_match_history`：人以前把哪个窗口定到了哪个项目 / 任务；v1.6 2026-10-08 `propose_activity_matches` 每条可带 `collection`、`projectId`，`list_activity_suggestions` 追加 `collection`、`suggestedProjectId`、`suggestedProjectPath`；v1.5 2026-10-08 认 nexus-core v2.9 的项目「未分类」时间：`list_time_sessions` / `get_daily_time` 的条目追加 `unclassified`；v1.4 2026-10-03 `propose_activity_matches` 每条可提议新任务 `newTask`，`list_activity_suggestions` 追加 `newTask`；v1.3 2026-10-02 加第二个提议工具 `propose_activity_matches`，`list_activity_suggestions` 输出追加 `rejectedTaskIds`；v1.2 2026-09-30 加 `get_detector_rules` 与第一个提议工具 `propose_detector_rules`；v1.1 2026-09-30 加 `list_projects`；v1.0 2026-09-28，v0.3「AI 桥」首版）。实现：`modules/mcp`。
 >
 > **是什么**：HoneyComb 以 [MCP](https://modelcontextprotocol.io/)（Model Context Protocol）服务器的
 > 形式，把「任务树、人的时间、代理时间、在跑的计时、待确认的活动建议」读给 AI 代理。
@@ -109,6 +109,9 @@ consumes:
   - id: nexus-core.activity.ignores.v1
     contract: ../../modules/nexus-core/module_docs/contract.md
     purpose: v1.14 get_detector_rules 追加 ignored（GET activity/ignores，只读；建 / 删忽略规则只有人能）
+  - id: nexus-core.activity.pending-days.v1
+    contract: ../../modules/nexus-core/module_docs/contract.md
+    purpose: v1.15 get_daily_time 追加 pending（GET activity/suggestions/pending-days，只读，只有数字）
   - id: nexus-core.lanes.prefs.v1
     contract: ../../modules/nexus-core/module_docs/contract.md
     purpose: v1.14 不调偏好端点；get_current_timer.agents / get_agent_time.open 读的 views 已不列藏起来的代理（时间汇总不变）
@@ -198,7 +201,7 @@ consumes:
   （v1.2：`propose_` 开头的工具例外，注解见第六节；它同样是固定映射，一行一个写端点。）
 - **结果**：成功时 `structuredContent` 是下面写的 JSON 对象，`content` 里同时给一条 `type:"text"`、
   内容为同一对象的 JSON 文本（给不认 `structuredContent` 的客户端）。
-- **错误**：工具执行失败回 `isError: true`，`structuredContent: {"error": {"status": <int>, "detail": "<人话>"}}`：
+- **错误**：工具执行失败回 `isError: true`（v1.15：服务器 `instructions` 与此处同一句——失败时原因在 `structuredContent.error.detail`，例如「区间超过 92 天」，**失败不等于没有数据**），`structuredContent: {"error": {"status": <int>, "detail": "<人话>"}}`：
   - 参数不合规（时间缺偏移、日期格式错、区间过长、cursor 不对）→ `status: 400`，`detail` 点名字段与取值；
   - nexus-core 回的 4xx → 原样带它的状态码与 `detail`（nexus-core「错误响应形状」）；
   - nexus-core 5xx / 连不上 → `status: 502`，`detail` 固定「数据服务暂时不可用」，细节只进 MCP 自己的日志。
@@ -227,7 +230,7 @@ consumes:
 | `list_projects`（v1.1） | `GET /api/core/views/tree?includeEphemeral=true` | 列表 |
 | `get_current_timer` | `GET /api/core/views/current` | 对象（`agents[]` 每项带 `elapsedSeconds`：nexus-core v2.21 起由服务端算好，原样带出；老后端没有 = `null`） |
 | `list_time_sessions` | `GET /api/core/events?type=session.completed&from=&to=&limit=&offset=` | 列表 |
-| `get_daily_time` | `GET /api/core/views/gantt?from=&to=` | 列表 |
+| `get_daily_time` | `GET /api/core/views/gantt?from=&to=` + `GET /api/core/activity/suggestions/pending-days?from=&to=`（v1.15；老后端 404 = `pending: null`） | 列表 |
 | `get_weekly_review` | `GET /api/core/views/review` | 对象 |
 | `get_next_actions` | `GET /api/core/views/next-actions` | 列表 |
 | `get_agent_time` | `GET /api/core/views/agent-time?from=&to=` | 对象 |
@@ -354,7 +357,9 @@ consumes:
 
 ```jsonc
 { "today": "2026-09-28",
-  "totalSeconds": 25200,                 // 整个区间人的总秒数，与分页无关
+  "totalSeconds": 25200,                 // 整个区间人的总秒数（只含已确认、已记账的），与分页无关
+  "pending": { "totalSeconds": 7700, "count": 111,   // v1.15：同一区间、还没确认的活动建议；老后端没有这个端点 = null
+               "days": [ { "date": "2026-09-28", "seconds": 7700, "count": 111 } ] },   // 本地日升序，无数据的日子不出
   "items": [
     { "date": "2026-09-28", "projectId": "p_3c", "taskId": "t_a1", "seconds": 3600, "path": "学习 / garden / 写提示词" },
     { "date": "2026-09-28", "projectId": "p_3c", "taskId": null,   "seconds": 600,  "path": "学习 / garden" },
@@ -366,6 +371,11 @@ consumes:
 - 每行来自甘特任务层 `tasks[].actual[]`；项目层当天数字减去该项目各任务之和若大于 0，另出一行
   `taskId: null`（「有项目、没挂具体任务」的那部分，nexus-core B5）。
 - 按日期升序，同一天内按 `seconds` 降序。只有人的时间；代理时间在 `get_agent_time`，**两者不相加**。
+- **`pending`（v1.15 追加；`totalSeconds`、`items` 一个字不变，仍只有已确认的）**：`GET /api/core/activity/suggestions/pending-days?from=&to=`
+  （nexus-core v2.26）的原样结果。`status=pending` 的活动建议，按建议**开始时刻**换算到服务端 `NEXUS_TZ` 的本地日（与已记账行同一条归日规则）归日，
+  `seconds` 是 `durationSeconds` 之和、`count` 是条数；`confirmed` / `dismissed` 不算。**它是未确认时间的上界估计，不是工时**：待确认的段彼此、
+  与已记账的时间都可能重叠，也含 `idle` 段——**不要加进 `totalSeconds` 当事实**，也不要因为 `items` 没有某天就断言那天没干活（先看 `pending`）。
+  只有数字，没有窗口标题 / 程序名（要看明细用 `list_activity_suggestions`）。端点不存在（老后端 404）→ `pending: null`；其他失败照通用错误形状。
 
 ### `get_weekly_review` —— 本周回顾
 
@@ -793,3 +803,4 @@ JSON-RPC 之前判：
 | 2026-10-09 | v1.12 调用方范围（`auth.gate.v1` v1.4）：读网关转来的 `X-Nexus-Scope` / `X-Nexus-Anonymous`。`read` → `tools/list` 只列只读工具，调会写的四个工具回 `isError` + `{status: 403}`；`report` 或匿名 → 整个端点 `403`；取值不认识 → `403`；没有这个头或 `write` → 与 v1.11 相同。工具、输入输出一个不改 |
 | 2026-10-09 | v1.13 追加两个工具，共 17 个（nexus-core v2.20「AI 报告」，仓主：「AI 一次提交一份报告，我可以一键批准全部」）：`propose_report`（**提议**，`POST /api/core/activity/reports`：`{summary, author?, items[≤200]}`，每条是 `assign` / `newTask` / `dismiss` 之一，选择器 `suggestionIds` 或 `collection`；写的只是待批准的报告，批准 / 不要只有人能；`author` 只是标签、不参与判定）与只读的 `get_report_status`（最近一份的状态与逐条结果；`summary` / `reason` / `failure` 过 `_screen`）。`read` 范围的 `WRITES` 追加 `propose_report`（调用回 403 工具错误）。既有工具、入参、输出一个不改 |
 | 2026-10-09 | v1.14 `get_detector_rules` 的输出追加 `ignored`（nexus-core v2.22「忽略并记住」，仓主：「记住：忽略 xx 记录，不进圆环也不进泳道」）：多读一个 `GET /api/core/activity/ignores`（老后端 404 = 空），每条 `{id, app, titleContains, since, ignoredRecords, ignoredSeconds}`；说明里加一句「这些窗口不记为工作，别再为它们归类」。同时 `get_current_timer` 的 `agents[]` 与 `get_agent_time` 的 `open[]` 因 nexus-core 不列用户在泳道上「不再显示」的代理而少列它们（时间汇总不变）。工具数不变（十七个）、映射只多这一个 GET、写端点不变 |
+| 2026-10-11 | v1.15（追加式；工具数不变，仍 17 个）：AI 代理问「人今天干了多久」，`get_daily_time` 只有已确认的时间，答成「0 分钟」，而当天有 111 条待确认的建议（约 128 分钟）。`get_daily_time` 输出追加 `pending {totalSeconds, count, days[{date, seconds, count}]}`（同区间待确认建议按本地日汇总，上界估计、不是工时，由 nexus-core v2.26 新端点 `GET /activity/suggestions/pending-days` 算，MCP 不自己翻页聚合；老后端 404 = `null`；`totalSeconds` / `items` 含义不变）；`get_daily_time` 与 `list_time_sessions` 的工具描述开头改为声明「只含已确认、已记账」并指向 `pending` / `list_activity_suggestions`；服务器 `instructions` 补一句错误约定（`isError` 为 true、原因在 `structuredContent.error.detail`）。`get_current_timer` 不变。 |

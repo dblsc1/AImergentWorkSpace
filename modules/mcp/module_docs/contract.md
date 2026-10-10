@@ -21,6 +21,9 @@ consumes:
   - id: nexus-core.views.gantt.v1
     contract: ../../nexus-core/module_docs/contract.md
     purpose: get_daily_time
+  - id: nexus-core.activity.pending-days.v1
+    contract: ../../nexus-core/module_docs/contract.md
+    purpose: v1.15 get_daily_time 追加 pending（GET activity/suggestions/pending-days，只读，只有数字）
   - id: nexus-core.views.review.v1
     contract: ../../nexus-core/module_docs/contract.md
     purpose: get_weekly_review

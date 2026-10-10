@@ -403,7 +403,18 @@ def get_daily_time(a, tenant):
                 rows.append({"date": d["date"], "projectId": p["id"], "taskId": None,
                              "seconds": rest, "path": paths(None, p["id"]), "unclassified": False})
     rows.sort(key=lambda r: (r["date"], -r["seconds"]))
-    return {"today": g["today"], "totalSeconds": total, **_page("get_daily_time", rows, a)}
+    return {"today": g["today"], "totalSeconds": total, "pending": _pending(fd, td, tenant),
+            **_page("get_daily_time", rows, a)}
+
+
+def _pending(fd: str, td: str, tenant) -> dict | None:
+    """v1.15：同区间待确认建议的按天汇总（nexus-core v2.26，数字而已）。老后端没有这个端点（404）= null。"""
+    try:
+        return _get("/api/core/activity/suggestions/pending-days", {"from": fd, "to": td}, tenant)
+    except ToolError as e:
+        if e.status == 404:
+            return None
+        raise
 
 
 def get_weekly_review(a, tenant):
@@ -652,6 +663,7 @@ _SPECS = [
      "窗口标题已按用户的隐私设置处理过（可能被去掉或换成代号）。agents 是另外在跑的 AI 代理运行（另一个维度）。" + _SCREEN,
      _schema({}), [], {}),
     (list_time_sessions, "人的时间记录",
+     "只含已确认、已记账的计时段；还没确认的时间不在这里，看 get_daily_time 的 pending 与 list_activity_suggestions。"
      "人完成的计时段（一段一条，新的在前），按结束时刻过滤。from/to 必须是带时区偏移的 ISO 8601 时刻；"
      "to 缺省为现在。source 表示证据强度：timer-backend（计时器）、manual-backfill（补登）、"
      "activity-confirmed（确认的活动建议）。" + _IDS,
@@ -659,7 +671,11 @@ _SPECS = [
               "to": {"type": "string", "description": "止（含），带偏移的 ISO 8601 时刻；缺省 = 现在"},
               "limit": _LIMIT, "cursor": _CURSOR}, required=["from"]), ["from"], {"from": None, "to": None}),
     (get_daily_time, "人的时间按天按任务",
-     "人的时间按天、按任务汇总（taskId 为 null 的行 = 记在项目上、没挂具体任务）。只有人的时间，"
+     "只含已确认、已记账的人的时间（items、totalSeconds）；还没确认的在同一结果的 pending"
+     "（{totalSeconds, count, days:[{date, seconds, count}]}，同一区间、按服务端本地日）和 list_activity_suggestions。"
+     "pending 是未确认时间的上界估计：待确认的段彼此、与已记账的时间都可能重叠，不是工时，不要加进 totalSeconds 当事实，"
+     "也不要因为 items 没有某天就断言那天没干活；老后端 pending 为 null。"
+     "按天、按任务汇总（taskId 为 null 的行 = 记在项目上、没挂具体任务）。只有人的时间，"
      "代理时间在 get_agent_time，两者不要相加。today 是服务端的今天，以它为准。",
      _schema({**_DATES, "limit": _LIMIT, "cursor": _CURSOR}, required=["fromDate", "toDate"]),
      ["fromDate", "toDate"], {"fromDate": None, "toDate": None}),

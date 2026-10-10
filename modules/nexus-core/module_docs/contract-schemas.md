@@ -256,6 +256,16 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
 - 三个数组总在（没有就是 `[]`）。`title` 是归一化之后的标题，不是某一段的原样标题。
 - 读方判「只定到项目」看有没有 `taskId`，不要看 `via`（`reassign` 两种都可能）。
 
+### `PendingDaysOut` — `GET /api/core/activity/suggestions/pending-days`（v2.26）
+
+规范性条款只住 `contract.md`「待确认时间的按天汇总」节。形状：
+
+```jsonc
+// 查询参数：from、to（YYYY-MM-DD，必填，含两端，至多 92 天，否则 422）
+{ "totalSeconds": 7700, "count": 111,
+  "days": [ { "date": "2026-10-09", "seconds": 7700, "count": 111 } ] }   // 日期升序，无数据的日子不出；上界估计，不是工时
+```
+
 ### `AgentStartIn.projectId` 与 `suggestion.projectSource`（v2.13）
 
 规范性条款只住 `contract.md`「只挂项目的运行」「窗口 ↔ 代理会话」两节。形状：

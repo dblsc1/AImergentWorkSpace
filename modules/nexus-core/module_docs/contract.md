@@ -166,6 +166,10 @@
 > （`repo.touch_agent_run` 用聚合管道更新的 `$max`）：只增不减、不早于 `startedAt`，迟到的老请求盖不回新信号，失联的结束时刻不会落到起点之前。
 > 适配器侧的补记见 `contracts/agent.lane.v1` 与 `tools/agent-hooks/README.md`。
 >
+> **v2.26（追加式）：待确认的活动建议按天汇总——`GET /api/core/activity/suggestions/pending-days`。** 事故：AI 代理问「人今天干了多久」，
+> `get_daily_time` 只有已确认（已记账）的时间，今天没有行就答「0 分钟」，而当天有 111 条待确认的建议、合计约 128 分钟。本版只**追加**一个只读端点，
+> 把待确认的量按天给出；既有端点、字段、事件、投影一个不改，待确认的建议仍不是事实。见「待确认时间的按天汇总」节。
+>
 > **v2.25（追加式）：泳道「灵活留存」——按权重档位决定留多久，折叠列表里的临时会话到点永久消失（仅视图）。** 仓主 2026-10-10：「泳道新增一个"灵活留存"机制。
 > 人类关注度高的权重高。自己一直在运行的权重也高，临时短暂运行、没有人类关注的（比如临时 shell 拉起的 ai）权重低，空闲一会被拉下去进入折叠。已结束的更加扣权重，
 > 除了那些关注度高的高权重 agent 在结束后仍能留存一会，其他都折叠。底部下拉菜单改为折叠菜单。权重低的进入折叠菜单达到时长就永久消失。现在总有几个已经结束的占位置。」
@@ -513,6 +517,10 @@ provides:
       DELETE /{id}（只收人，幂等）。命中（NFKC / 去不可见字符 / 折叠空白 / casefold 之后：程序名相等 + 可选标题子串）的窗口不记为工作：建议上传丢弃（响应有被忽略时追加 ignored）、
       在场心跳换成「没有窗口」；不是隐私擦除，已记下的不动（规则里存人填的匹配文字，只给人看）。不是 detector.rules.v1 的规则
     status: 已实现（v2.22），待验证
+  - id: nexus-core.activity.pending-days.v1
+    summary: 待确认建议按天汇总（v2.26，追加式）——GET /api/core/activity/suggestions/pending-days?from&to（读不设限，只读）：status=pending 的建议按开始时刻的 NEXUS_TZ 本地日汇总
+      {totalSeconds, count, days[{date, seconds, count}]}，只有数字，上界估计、不是工时、不计入已记账的时间；from>to 或超 92 天 422
+    status: 已实现（v2.26），待验证
 consumes:
   - id: yq-event/v1
     contract: ../../contracts/yq-event.v1/contract.md
@@ -4129,6 +4137,28 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 就当作那批字段"已经加完了"（同 `contract-schemas.md`「与其他两条读端的对照」）。
 
 同步维护项目级依赖索引的反向索引。
+
+## 待确认时间的按天汇总（规范性 · v2.26）
+
+`GET /api/core/activity/suggestions/pending-days?from=YYYY-MM-DD&to=YYYY-MM-DD`（`from`、`to` 必填，含两端）。**纯只读**，不写任何东西、不碰任何投影；
+读范围能调（与 `GET /activity/suggestions` 同一档），按租户隔离。
+
+```jsonc
+{ "totalSeconds": 7700,   // days 里 seconds 之和
+  "count": 111,           // days 里 count 之和
+  "days": [ { "date": "2026-10-09", "seconds": 7700, "count": 111 } ] }   // 日期升序；没有待确认的日子不出；整个区间都没有 = [] 与两个 0
+```
+
+- **范围**：`status` 为 `pending` 的活动建议；`confirmed` / `dismissed` 不算（确认了就成了事实，已在已记账的时间里；忽略了的不是工作）。
+- **归日**：按建议的**开始时刻**（`startAt`）换算到 `NEXUS_TZ` 的本地日——与已记账时间按 `data.startAt` 归日是同一条规则（契约「日界与时区」）；
+  本地 `23:59` 属前一天、次日 `00:00` 起属后一天，跨日的建议整段算在开始那天。日界换成绝对时刻再比，夏令时那天也对。
+- **`seconds`** = 该日待确认建议的 `durationSeconds` 之和；`count` = 条数。含 `idle` 的段（它们在 `GET /activity/suggestions` 里也在）。
+- **这是未确认时间的上界估计，不是工时**：待确认的建议彼此、与已记账的时间都可能重叠（检测到的窗口时间与手动计时同一时段并存很常见），
+  所以**不要把它加进已记账的总数当事实**；人确认后才进已记账的时间。
+- **只有数字**：没有 `app` / `title` / 任务，所以「忽略并记住」的规则与脱敏不受影响。
+- **输入**：`from` / `to` 不是日期、`from` 晚于 `to`、跨度超过 92 天 → `422`。不做过期清理（读不写）；待确认的建议收到 14 天
+  （`NEXUS_SUGGESTION_TTL_DAYS`）后由列表 / 上传惰性清掉，所以有数据的日子至多约 14 天。
+- **工作量有界**：一次聚合，走 `(user, status, startTs)` 索引，只扫该租户该区间的待确认文档（上传每批 ≤ 200、14 天过期，量级有限）；响应至多 92 行。
 
 ## 变更记录
 
