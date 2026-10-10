@@ -47,7 +47,7 @@ class OrderIn(BaseModel):
     index: StrictInt = Field(ge=0, le=MAX_INDEX)
     # 页面读 views/lanes 时用的窗口（同名同校验）；缺省 = 今天
     date: str | None = Field(None, pattern=_DATE)
-    from_: str | None = Field(None, pattern=_DATE)  # 线上名是 "from"，由下面改名（Field(alias=) 经 FastAPI 的 TypeAdapter 会触发 pydantic 警告）
+    from_: str | None = Field(None, pattern=_DATE)  # 已知：校验错误的 loc 与 OpenAPI 里显示为 from_（契约已记，没有全局错误改写）；线上名是 "from"，由下面改名（Field(alias=) 经 FastAPI 的 TypeAdapter 会触发 pydantic 警告）
     to: str | None = Field(None, pattern=_DATE)
 
     @model_validator(mode="before")

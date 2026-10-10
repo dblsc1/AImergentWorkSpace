@@ -65,6 +65,8 @@ def test_property_random_lanes_with_closed_siblings_follow_reference_model(clien
         ph = rng.choice([(rng.randrange(1, 120), "idle"), (rng.randrange(1, 120), "working"),
                          (rng.randrange(1, 120), "error"), (rng.randrange(1, 120), "waiting_input")])
         watched = rng.random() < 0.35  # 人看过 12 分钟 → high 档：空闲 / 结束后留得更久
+        if rng.random() < 0.2:  # 空闲了几个小时、但人刚看过（注意力结束于 30 秒到 50 分钟前）：靠注意力锚点仍显示
+            start, ph, watched = rng.randrange(260, 700), (rng.randrange(150, 250), "idle"), True
         ids[label] = w.live(label, start_min=start, phases=[ph], seen_min=rng.randrange(1, 100),
                             attn=[(rng.randrange(30, 3000), 720)] if watched else ())
         kind = rng.choice(["none", "recent-done", "newer-failed", "old-failed"])

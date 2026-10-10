@@ -40,6 +40,9 @@ def _world(rng: random.Random, now: datetime, start: datetime):
             ints = [{"kind": "attend", "at": (a := st + timedelta(seconds=rng.randrange(-900, 600))).isoformat(),
                      "until": (a + timedelta(seconds=rng.choice([5, 40, 700]))).isoformat()}
                     for _ in range(rng.randrange(0, 3))]
+            if rng.random() < 0.25:  # 近期注意力：已结束 / 空闲很久的泳道也被人刚看过
+                ints.append({"kind": "attend", "at": (now - timedelta(seconds=rng.randrange(800, 3000))).isoformat(),
+                             "until": (now - timedelta(seconds=rng.randrange(10, 700))).isoformat()})
             if quiet:
                 phases, ints = [], []
             run = {"runId": f"r{n}", "agent": "cc", "tool": "t", "model": None, "label": label, "taskId": None, "projectId": None,
@@ -77,6 +80,7 @@ def test_every_run_is_counted_exactly_once(seed, monkeypatch):
     prefs, closed, live, hidden_keys = _world(rng, now, start)
 
     p = lanes._pipeline(closed, live, prefs, start, end, now, True)
+    p["over"] = rng.random() < 0.2
     agents, hidden, waiting, stale, inactive, dropped, expired = lanes._finish(p, p["kept"])
 
     mine = [r for r in closed + live if r["_key"] not in hidden_keys]

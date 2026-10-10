@@ -232,15 +232,76 @@ def test_ephemeral_open_session_folds_at_600_idle(client, w, x, state):  # noqa:
         assert shown == set() and (inactive["a"]["reason"], inactive["a"]["tier"]) == ("idle", "low")
 
 
-@pytest.mark.parametrize(("t", "state"), [(7199, "listed"), (7200, "expired")])
-def test_ephemeral_open_session_expires_7200_after_folding(client, w, t, state):  # noqa: F811
-    _idle_after_2min_work(w, 600 + t)  # 空闲 600 秒折叠，再过 t 秒
+@pytest.mark.parametrize("t", [7199, 7200, 30000])
+def test_ephemeral_open_session_stays_folded_while_its_run_is_alive(client, w, t):  # noqa: F811
+    _idle_after_2min_work(w, 600 + t)  # 空闲 600 秒折叠，再过 t 秒；运行还开着、没失联 → 永不过期
+    shown, inactive, body = _view(client)
+    assert shown == set() and (inactive["a"]["reason"], inactive["a"]["tier"], body["expiredAgents"]) == ("idle", "low", 0)
+
+
+@pytest.mark.parametrize(("e", "state"), [(7199, "listed"), (7200, "expired")])
+def test_ephemeral_session_expires_7200_after_its_run_ended(client, w, e, state):  # noqa: F811
+    w.closed_s("a", 20000 + e, e, phases=[(19900 + e, "idle")])  # 干了 100 秒就空闲，一直开着到 e 秒前才结束
     shown, inactive, body = _view(client)
     assert shown == set()
     if state == "listed":
         assert (inactive["a"]["tier"], body["expiredAgents"]) == ("low", 0)
     else:
         assert inactive == {} and body["expiredAgents"] == 1
+
+
+@pytest.mark.parametrize("start_s", [6 * H, 9 * H])
+def test_silent_bare_start_open_run_folds_idle_and_never_expires(client, w, start_s):  # noqa: F811
+    w.live_s("a", start_s=start_s, seen_s=start_s)  # 不发心跳、没有相位、开始后没再有信号
+    shown, inactive, body = _view(client)
+    assert shown == set() and (inactive["a"]["reason"], inactive["a"]["tier"], body["expiredAgents"]) == ("idle", "low", 0)
+
+
+def test_heartbeating_bare_run_is_shown_and_closed_bare_3h_run_is_high(client, w):  # noqa: F811
+    w.live_s("b", start_s=6 * H, seen_s=5, beats=3)
+    assert _view(client)[0] == {"b"}
+    assert _tier_of_closed(client, w, "c", 3 * H) == "high"
+
+
+def test_lost_open_run_expiry_counts_from_when_it_became_lost(client, w):  # noqa: F811
+    w.live_s("a", start_s=7400, lost=True, seen_s=7200 + 100, beats=3)  # 最后信号 7300 秒前 → 判出失联在 5500 秒前
+    assert _view(client)[2]["expiredAgents"] == 0
+    w.open.clear()
+    w.live_s("a", start_s=9100, lost=True, seen_s=7200 + 1800, beats=3)  # 判出失联在 7200 秒前
+    assert _view(client)[2]["expiredAgents"] == 1
+
+
+def test_over_truncated_closed_read_makes_every_lane_at_least_normal(client, w, monkeypatch):  # noqa: F811
+    from app.modules.views import lanes  # noqa: PLC0415
+
+    monkeypatch.setattr(lanes, "MAX_CLOSED_READ", 4)
+    w.closed_s("a", 28000 + 3500, 28000)  # 老的 3500 秒干活：只有它在，窗口里 a 合计 3600 = high；轻读被截断后它读不到
+    w.closed_s("a", 8100, 8000)           # 新的 100 秒：读得到；孤零零看是 low，结束已满 7200 秒（本会过期）
+    for i in range(3):  # 别的标签的洪水，比 a 的运行都新
+        w.closed_s(f"x{i}", 300 + i, 200 + i)
+    body = _get(client)
+    assert body["truncated"] and body["expiredAgents"] == 0
+    assert {a["label"]: a["tier"] for a in body["inactiveAgents"]}["a"] == "normal"
+
+
+@pytest.mark.parametrize(("e", "state"), [(7199, "shown"), (7200, "idle")])
+def test_recent_attention_keeps_an_idle_lane_shown(client, w, e, state):  # noqa: F811
+    w.live_s("a", start_s=3 * H + 700, phases=[(3 * H, "idle")], seen_s=5, beats=3, attn=[(e, 700)])  # 3 小时前就空闲，700 秒注意力结束于 e 秒前
+    shown, inactive, _ = _view(client)
+    assert (shown, inactive["a"]["tier"] if inactive else None) == (({"a"}, None) if state == "shown" else (set(), "high"))
+
+
+@pytest.mark.parametrize(("e", "state"), [(1799, "shown"), (1800, "ended")])
+def test_recent_attention_keeps_an_ended_lane_shown(client, w, e, state):  # noqa: F811
+    w.closed_s("a", 4 * H, 3 * H, attn=[(e, 700)])  # 运行 3 小时前结束，注意力结束于 e 秒前
+    shown, inactive, _ = _view(client)
+    assert (shown, inactive["a"]["reason"] if inactive else None) == (({"a"}, None) if state == "shown" else (set(), "ended"))
+
+
+def test_attention_does_not_unfold_a_normal_error_lane(client, w):  # noqa: F811
+    w.live_s("a", start_s=1200, phases=[(300, "error")], seen_s=5, beats=3, attn=[(10, 100)])  # normal 档（注意力 100 秒），出错
+    shown, inactive, _ = _view(client)
+    assert shown == set() and inactive["a"]["reason"] == "error"
 
 
 @pytest.mark.parametrize(("work", "tier"), [(299, "low"), (300, "normal")])

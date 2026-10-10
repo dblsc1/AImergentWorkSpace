@@ -19,12 +19,14 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from ..prefs.service import ident
+from ..timer.agent_liveness import AGENT_LOST_AFTER_SECONDS
 from .lane_order import WAITING, _t, phase_of
 from .lane_tier import ENDED_KEEP, FOLD_EXPIRE, IDLE_KEEP, lane_tier, seen, segments, stop_of
 
 IDLE_HIDE_SECONDS = 3600  #: 干活相位却静默（无心跳）多久就不再算「在干活」
 
 
+# 注意：lost / overdue 的运行即使停在等人相位，也不算「在等人」（见 _live_shown / _alive），按已结束的运行折叠 / 过期（契约 v2.25）。
 def _live_shown(item: dict, now: datetime) -> bool:
     """在跑、没失联、没超上限，且（在等人，或干活且有心跳 / 近 1 小时有信号）。"""
     if item["endAt"] is not None or item["lost"] or item.get("overdue"):
@@ -49,10 +51,17 @@ def _gone_end(item: dict, now: datetime) -> datetime:
     return stop_of(item, now) or _t(item["startAt"])
 
 
+def _attn_end(every: list[dict]) -> datetime | None:
+    """各运行上最晚一段「人在看」的结束时刻（服务端在场记录，代理伪造不了；被封顶丢掉的已结束运行没有这份数据，不算）。"""
+    return max((_t(a["to"]) for r in every for a in r.get("attention") or []), default=None)
+
+
 def _verdict(every: list[dict], tier: str, now: datetime) -> tuple[str, datetime, datetime] | None:
-    """不是「在干活 / 在等人」的泳道：留存期内 → None（继续显示）；否则 (reason, 最后干活, 折叠起算时刻)。"""
+    """不是「在干活 / 在等人」的泳道：留存期内 → None（继续显示）；否则 (reason, 最后干活, 折叠起算时刻)。
+    idle / ended 的起算锚 = 最后活动 = max(最后干活, 最晚一段注意力的结束)：人刚看过的泳道，在他不看之后还留一个 keep；出错有自己的锚，不受注意力影响。"""
     latest = max(every, key=lambda r: r["startAt"])
     last = max(_last_work(r, now) for r in every)
+    attn = _attn_end(every)
     if latest["endAt"] is None and phase_of(latest) == "error":
         mark = max(_t(p["at"]) for p in latest["phases"] if p["phase"] == "error")
         reason, keep = "error", ENDED_KEEP["high"] if tier == "high" else 0
@@ -60,16 +69,17 @@ def _verdict(every: list[dict], tier: str, now: datetime) -> tuple[str, datetime
         mark = _t(latest["endAt"])
         reason, keep = "error", ENDED_KEEP["high"] if tier == "high" else 0
     elif any(_alive(r) for r in every):
-        mark, reason, keep = last, "idle", IDLE_KEEP[tier]
+        mark, reason, keep = max(last, attn or last), "idle", IDLE_KEEP[tier]
     else:
-        mark, reason, keep = max(_gone_end(r, now) for r in every), "ended", ENDED_KEEP[tier]
+        mark, reason, keep = max([_gone_end(r, now) for r in every] + [attn or last]), "ended", ENDED_KEEP[tier]
     since = mark + timedelta(seconds=keep)
     return None if now < since else (reason, last, since)
 
 
-def split(items: list[dict], gone: list[dict], prefs: dict, now: datetime, start: datetime, end: datetime):
+def split(items: list[dict], gone: list[dict], prefs: dict, now: datetime, start: datetime, end: datetime, over: bool = False):
     """``items`` = ``_run_item`` 的结果，``gone`` = ``lane_cap`` 的 dropped 聚合（带内部键 ``key``），``start`` / ``end`` = 查询窗口。
     返回 (留下的 items，inactiveAgents，剩下的 gone，expired 聚合 {agents, runs, elapsedSeconds})。
+    ``over`` = 已结束运行的轻读被截断（窗口里多于 MAX_CLOSED_READ 条）：档位按不全的数据算，保守起见每条泳道至少 normal（不会 low、不会过期）。
     不活跃身份被封顶丢掉的运行并入它自己的摘要（或 expired），不在 gone 里重复数。"""
     hidden = {a["key"] for a in prefs["agents"] if a["hidden"]}
     pinned = {a["key"] for a in prefs["agents"] if a["pinned"] and not a.get("unverified")}
@@ -91,7 +101,7 @@ def split(items: list[dict], gone: list[dict], prefs: dict, now: datetime, start
         every = rs + extra.get(key, [])
         if any(_live_shown(r, now) for r in every):
             continue
-        tier = lane_tier(rs, extra.get(key, []), drop_closed.get(key, 0), now, start, end)
+        tier = lane_tier(rs, extra.get(key, []), drop_closed.get(key, 0) + over, now, start, end)
         verdict = _verdict(every, tier, now)
         if verdict is None:
             continue
@@ -100,7 +110,10 @@ def split(items: list[dict], gone: list[dict], prefs: dict, now: datetime, start
         first = rs[0] if rs else firsts[key]
         runs = len(rs) + next((g["runs"] for g in gone if g["key"] == key), 0)
         secs = sum(r["elapsedSeconds"] or 0 for r in rs) + drop_secs.get(key, 0)
-        if tier in FOLD_EXPIRE and (now - since).total_seconds() >= FOLD_EXPIRE[tier]:  # 视图层过期：只不再列出，什么都没删
+        # 还有活着的运行（开着、没失联、没超上限）的泳道永不过期：静默的光杆开局和死掉的上报者分不开，不猜；运行一结束，since 就是结束 / 失联时刻，从那时起算
+        # 失联但还没被关账的运行：失联是「最后信号 + 30 分钟」才判出来的，过期钟从那时起算，别在判出失联的那一刻就消失
+        clock = max([since] + [seen(r) + timedelta(seconds=AGENT_LOST_AFTER_SECONDS) for r in every if r["lost"] and r["endAt"] is None])
+        if tier in FOLD_EXPIRE and not any(_alive(r) for r in every) and (now - clock).total_seconds() >= FOLD_EXPIRE[tier]:  # 视图层过期：只不再列出，什么都没删
             expired["agents"] += 1
             expired["runs"] += runs
             expired["elapsedSeconds"] += secs

@@ -127,7 +127,7 @@ def _finish(p: dict, runs: list[dict]) -> tuple:
     inactive: list[dict] = []
     expired = {"agents": 0, "runs": 0, "elapsedSeconds": 0}
     if p["today"]:  # v2.24：只在含「现在」的窗口里按当前活动过滤；过去的日子整天原样
-        items, inactive, gone, expired = split(items, gone, prefs, now, p["start"], p["end"])
+        items, inactive, gone, expired = split(items, gone, prefs, now, p["start"], p["end"], p.get("over", False))
     agents, hidden, waiting, stale = arrange(items + p["hidden_items"], prefs, now, p["gone_live"])
     dropped = [{k: v for k, v in d.items() if k not in ("key", "live")} for d in gone if d["key"] not in p["hidden_keys"]]
     return agents, hidden, waiting, stale, inactive, dropped, expired
@@ -143,6 +143,7 @@ def _gather(user: str, start: datetime, end: datetime, now: datetime, open_runs:
     live = [{**r, "open": True} for r in open_runs if r["runId"] not in seen   # 刚落账、活状态还没删的那一刻两边都有：以事实为准
             and r["startTs"] < end and (r["endTs"] or now) > start]
     p = _pipeline(light, live, prefs, start, end, now, end > now)
+    p["over"] = over
     kept = p["kept"]
     full = {r["runId"]: r for r in lanes_projection.read_lanes(
         user, "run", start, end, len(kept), run_ids=[r["runId"] for r in kept if not r.get("open")])}
