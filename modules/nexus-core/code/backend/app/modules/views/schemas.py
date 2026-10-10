@@ -525,10 +525,19 @@ class LaneInactive(_Strict):
     agent: str | None
     label: str | None
     unverified: bool = False
-    reason: str  #: error | idle
+    reason: str  #: error | idle | ended（v2.25 追加 ended：没有在跑的运行）
+    tier: str = "normal"  #: v2.25：high | normal | low
     lastWorkAt: str
     runs: int
     elapsedSeconds: int
+
+
+class LaneExpired(_Strict):
+    """v2.25：折叠满期、不再列出的 low 泳道的汇总（只是不再列出，什么都没删）。"""
+
+    agents: int = 0
+    runs: int = 0
+    elapsedSeconds: int = 0
 
 
 class LanesOut(_Strict):
@@ -543,6 +552,8 @@ class LanesOut(_Strict):
     interactions: list[LaneReply | LaneAttend]
     truncated: bool
     inactiveAgents: list[LaneInactive] = []  #: v2.24
+    expiredAgents: int = 0  #: v2.25：折叠满期、不再列出的泳道个数（只给个数，不给标签）
+    expired: LaneExpired = LaneExpired()  #: v2.25：这些泳道的运行条数与秒数（让账对得上）
     hiddenAgents: list[LaneHidden] = []  #: v2.22
     hiddenWaiting: int = 0  #: v2.22：藏起来的在跑运行里正等你的个数（页面只给一个很小的提示）
     dropped: list[LaneDropped] = []  #: v2.23：封顶折叠掉的较早运行的汇总（藏起来的身份不列）

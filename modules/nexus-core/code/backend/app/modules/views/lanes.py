@@ -119,17 +119,18 @@ def _pipeline(light: list[dict], live: list[dict], prefs: dict, start: datetime,
 
 
 def _finish(p: dict, runs: list[dict]) -> tuple:
-    """``runs`` = 保留下来的全文运行 → (agents, hiddenAgents, hiddenWaiting, stalePinned, inactive, dropped)。"""
+    """``runs`` = 保留下来的全文运行 → (agents, hiddenAgents, hiddenWaiting, stalePinned, inactive, dropped, expired)。"""
     prefs, now, gone = p["prefs"], p["now"], p["gone"]
     items = [_run_item(r, p["start"], p["end"]) for r in runs]
     for g in gone:  # 封顶丢掉的在跑运行也要让「是否在干活」看见（不进 agents，只参与判定）
         g["live"] = [_run_item(r, p["start"], p["end"]) for r in g.pop("openRuns")]
     inactive: list[dict] = []
+    expired = {"agents": 0, "runs": 0, "elapsedSeconds": 0}
     if p["today"]:  # v2.24：只在含「现在」的窗口里按当前活动过滤；过去的日子整天原样
-        items, inactive, gone = split(items, gone, prefs, now)
+        items, inactive, gone, expired = split(items, gone, prefs, now, p["start"], p["end"])
     agents, hidden, waiting, stale = arrange(items + p["hidden_items"], prefs, now, p["gone_live"])
     dropped = [{k: v for k, v in d.items() if k not in ("key", "live")} for d in gone if d["key"] not in p["hidden_keys"]]
-    return agents, hidden, waiting, stale, inactive, dropped
+    return agents, hidden, waiting, stale, inactive, dropped, expired
 
 
 def _gather(user: str, start: datetime, end: datetime, now: datetime, open_runs: list[dict], prefs: dict) -> tuple:
@@ -187,6 +188,7 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
     hidden_waiting = 0
     stale_pinned: list[dict] = []
     dropped: list[dict] = []
+    expired = {"agents": 0, "runs": 0, "elapsedSeconds": 0}
     presence: list[dict] = []
     running = None
     auto = {"auto": None, "needsChoice": None, "aiThinking": None}
@@ -206,7 +208,7 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
         p, runs, over = _gather(user, start, end, now, open_runs, prefs)
         truncated = truncated or over or bool(p["gone"])
         # v2.22：藏起来的代理不出现（时间照旧记在账上）；其余加 pinned / manualOrder / rank
-        agents, hidden, hidden_waiting, stale_pinned, inactive, dropped = _finish(p, runs)
+        agents, hidden, hidden_waiting, stale_pinned, inactive, dropped, expired = _finish(p, runs)
         if caller().scope == "report":  # 藏起来的摘要只给能读泳道的调用方（report / 匿名本来就读不到，这里再保一道）
             hidden, hidden_waiting, stale_pinned, dropped = [], 0, [], []
         shown = {a["runId"] for a in agents}
@@ -232,5 +234,5 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
         today=_today(), now=_iso(now), windowStart=_iso(start), windowEnd=_iso(end),
         human={"sessions": sessions, "running": running, "presence": presence, **auto},
         agents=agents, interactions=interactions, truncated=truncated,
-        inactiveAgents=inactive, hiddenAgents=hidden, hiddenWaiting=hidden_waiting, stalePinned=stale_pinned, dropped=dropped,
+        inactiveAgents=inactive, expiredAgents=expired["agents"], expired=expired, hiddenAgents=hidden, hiddenWaiting=hidden_waiting, stalePinned=stale_pinned, dropped=dropped,
     )

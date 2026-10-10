@@ -56,6 +56,10 @@ def _line(now, device=DEV, user="u_local"):
 
 def _agent(client, run_id, headers=None):
     body = client.get(f"{API}/views/lanes", headers=headers or {}).json()
+    for x in body["inactiveAgents"]:  # v2.25：刚结束的泳道立刻折叠；这里关心的是运行本身，先置顶（置顶永远显示）
+        client.put(f"{API}/lanes/prefs/agent", json={"agent": x["agent"] or "", "label": x["label"] or "", "pinned": True,
+                                                    "unverified": x["unverified"]}, headers=headers or {})
+    body = client.get(f"{API}/views/lanes", headers=headers or {}).json() if body["inactiveAgents"] else body
     return next(a for a in body["agents"] if a["runId"] == run_id)
 
 

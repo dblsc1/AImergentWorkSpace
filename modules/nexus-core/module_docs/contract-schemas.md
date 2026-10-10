@@ -492,9 +492,12 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
 // GET /api/core/views/lanes —— 追加（既有键不变）
 { "agents": [ /* 只含显示的泳道 */ ],
   "inactiveAgents": [ { "agent": "codex", "label": "rev-billing", "unverified": false,
-                        "reason": "idle",                       // "error" | "idle"
-                        "lastWorkAt": "2026-10-09T09:12:00+08:00", "runs": 3, "elapsedSeconds": 5400 } ] }
+                        "reason": "idle",                       // "error" | "idle" | "ended"（ended 与 tier 为 v2.25）
+                        "tier": "normal",                       // "high" | "normal" | "low"
+                        "lastWorkAt": "2026-10-09T09:12:00+08:00", "runs": 3, "elapsedSeconds": 5400 } ],
+  "expiredAgents": 0,                                           // v2.25：折叠满期、不再列出的泳道个数（整数，无标签）
+  "expired": { "agents": 0, "runs": 0, "elapsedSeconds": 0 } }  // v2.25：它们的运行与秒数（只是不再列出，什么都没删）
 ```
 
-- `inactiveAgents` 缺省 `[]`；`reason` 只有 `error`（当前出错）/ `idle`（空闲或全部结束满 `IDLE_HIDE_SECONDS` = 3600 秒）。`lastWorkAt` = 最后一次干活的结束时刻（ISO，本地时区）。
+- `inactiveAgents` 缺省 `[]`；`reason`：`error`（当前出错）/ `idle`（有在跑的运行但空闲太久）/ `ended`（没有在跑的运行，v2.25）；`tier` ∈ `high|normal|low`（v2.25）。留存时长按档位，见 `contract.md`「`views/lanes` 的灵活留存」（v2.25）。`lastWorkAt` = 最后一次干活的结束时刻（ISO，本地时区）。
 - `runs` / `elapsedSeconds` 含被 v2.23 封顶折掉的运行（不再进 `dropped`：`dropped` 不含不活跃身份）。置顶的、手动隐藏的身份不在其中。过去的日子永远是 `[]`。

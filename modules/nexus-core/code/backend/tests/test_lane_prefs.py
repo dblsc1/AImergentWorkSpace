@@ -397,3 +397,20 @@ def test_lost_hidden_run_is_not_waiting():
     prefs = {"agents": [{"key": "cc\nx", "agent": "cc", "label": "x", "hidden": True, "pinned": False}], "order": []}
     _, hidden, waiting, _ = arrange([item], prefs, now)
     assert waiting == 0 and hidden[0]["live"] is True and hidden[0]["phase"] != "waiting_input"
+
+
+@pytest.mark.parametrize("field", ["date", "from", "to"])
+@pytest.mark.parametrize("bad", ["20260101", "2026-01-01\n", "2026-1-1", " 2026-01-01"])
+def test_order_window_dates_must_be_strict_iso(client, field, bad):
+    """PUT order 的窗口日期只收 YYYY-MM-DD：紧凑写法与尾换行都 422（pattern 的 $ 不能放过尾换行）。"""
+    rid = _start(client, "r1")
+    r = client.put(f"{PREFS}/order", json={"runId": rid, "index": 0, field: bad})
+    assert r.status_code == 422, r.text
+
+
+def test_order_window_from_is_accepted_and_from_underscore_is_not(client):
+    rid = _start(client, "r1")
+    day = client.get(LANES).json()["today"]  # 窗口 = 今天，运行才在队列里
+    ok = client.put(f"{PREFS}/order", json={"runId": rid, "index": 0, "from": day, "to": day})
+    assert ok.status_code == 200, ok.text
+    assert client.put(f"{PREFS}/order", json={"runId": rid, "index": 0, "from_": "2026-01-01"}).status_code == 422

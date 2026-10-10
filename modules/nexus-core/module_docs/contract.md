@@ -166,6 +166,16 @@
 > （`repo.touch_agent_run` 用聚合管道更新的 `$max`）：只增不减、不早于 `startedAt`，迟到的老请求盖不回新信号，失联的结束时刻不会落到起点之前。
 > 适配器侧的补记见 `contracts/agent.lane.v1` 与 `tools/agent-hooks/README.md`。
 >
+> **v2.25（追加式）：泳道「灵活留存」——按权重档位决定留多久，折叠列表里的临时会话到点永久消失（仅视图）。** 仓主 2026-10-10：「泳道新增一个"灵活留存"机制。
+> 人类关注度高的权重高。自己一直在运行的权重也高，临时短暂运行、没有人类关注的（比如临时 shell 拉起的 ai）权重低，空闲一会被拉下去进入折叠。已结束的更加扣权重，
+> 除了那些关注度高的高权重 agent 在结束后仍能留存一会，其他都折叠。底部下拉菜单改为折叠菜单。权重低的进入折叠菜单达到时长就永久消失。现在总有几个已经结束的占位置。」
+> 服务端给每条泳道算一个档位 `tier`（`high` / `normal` / `low`），用它取代 v2.24 里唯一的「1 小时」：有在跑但空闲的留 `IDLE_KEEP[档]`，没有在跑的（全结束 / 失联 / 超上限）留
+> `ENDED_KEEP[档]`（只有 high 留 1800 秒），出错只有 high 留 `ENDED_KEEP['high']`；其余折进 `inactiveAgents`，low 折叠满 7200 秒后不再列出，只剩 `expiredAgents` 个数。
+> 新增（全部追加）：`inactiveAgents[].tier`、`inactiveAgents[].reason` 取值多一个 `ended`、响应键 `expiredAgents`（整数）与 `expired {agents, runs, elapsedSeconds}`。
+> **v2.24 尚未发布，所以 `reason` 的新取值 `ended` 原地并入 v2.24 的字段说明（不另起版本），v2.25 只记录规则与行为变化。**
+> **默认行为变化**（相对 v2.24）：已结束的非 high 泳道**立刻**折叠（不再留 1 小时）；low 泳道空闲 10 分钟就折叠；long-running（窗口里干活 ≥ 1 小时）或人盯过（≥ 10 分钟）的 high 泳道空闲留 2 小时、结束后留 30 分钟；
+> 折叠列表里的 low 泳道满 2 小时不再出现在 `inactiveAgents`（**不删任何东西**：计时、agent-time、圆环、报告、投影里的运行一概不动，只是这一个视图不再列出）。见「`views/lanes` 的灵活留存」节。
+>
 > **v2.24（追加式）：`views/lanes` 只显示在干活的泳道。** 仓主 2026-10-09：「泳道，把出错或者长期空闲的都不需要显示，只有在干活的显示出来。
 > 短暂空闲的 agent（1 小时以内）留在泳道内放出来。」服务端在视图里决定（web 与别的读取方一致）：有在跑的运行在干活或在等人、或「最后一次干活」
 > 不到 1 小时（`IDLE_HIDE_SECONDS = 3600`，常量不是设置）、或被置顶的泳道显示；当前出错、或空闲满 1 小时的泳道不显示，改列在追加的
@@ -3904,12 +3914,41 @@ AI 写的或「记住」的分类规则与草稿、代理标签（`agent_runs.la
   整条泳道的运行都被封顶丢掉、但其中有在跑的，也照样判定（不活跃的移进 `inactiveAgents`，活跃的留在 `dropped`）；只剩已结束运行被丢的身份没有可判定的数据，留在 `dropped`。
 - **手动排位与本节同一条管线**：`PUT /lanes/prefs/order` 的 `index` 数的是页面上**显示着**的未置顶在跑运行（`inactiveAgents` 里的不占位），`live_order` 与 `get_lanes` 同一条管线：共用同一份输入（**页面读图用的窗口**里已结束的兄弟运行也读进来——`PUT` 带同样的 `date` / `from` / `to`，缺省今天；凌晨页面读「昨天 + 今天」时若不带，两边看的已结束运行不同，会 404 或下标错位；已结束的兄弟运行决定「最新一条是否出错」「最后干活」）与「封顶 → 过滤 → 排序」。
 - **手动隐藏**（`lanes/prefs` 的 hidden）永远隐藏，只在 `hiddenAgents`，不进 `inactiveAgents`；`hiddenWaiting`、`stalePinned` 口径不变（置顶的永远显示，所以不会因本过滤而「没在跑」）。
-- **`inactiveAgents: [{agent, label, unverified, reason, lastWorkAt, runs, elapsedSeconds}]`**（追加，缺省 `[]`，最近干活的在前）：`runs` / `elapsedSeconds` 是该身份窗口里
+- **`inactiveAgents: [{agent, label, unverified, reason, tier, lastWorkAt, runs, elapsedSeconds}]`**（追加，缺省 `[]`，最近干活的在前；`reason` ∈ `error|idle|ended`、`tier` 为 v2.25 并入，规则见「`views/lanes` 的灵活留存」节，那里取代下面「1 小时」的留存口径）：`runs` / `elapsedSeconds` 是该身份窗口里
   全部运行的条数与秒数，**包含**被 v2.23 封顶折掉的（折掉的并入这里，不再出现在 `dropped`，不重复数）。所以窗口里每条运行恰好落在
   `agents` / `inactiveAgents` / `dropped` / `hiddenAgents`（隐藏的不数）四处之一。不活跃身份的运行与连线（`interactions`）不在 `agents` / `interactions` 里。
 - **过去的日子不过滤**：窗口结束不晚于「现在」（`date` / `from..to` 都在过去）时「当前活动」没有意义，所有泳道照旧显示，`inactiveAgents` 为 `[]`。
 - **可见性**与 `agents` 完全一致（不是机密）；report 范围 / 匿名本来读不到 `views/lanes`。**不动任何计时账**：agent-time、圆环、报告读的是全量。
 - **没有 MCP 工具映射 `views/lanes`**，`mcp.tools.v1` 不动。前端（`lanes.js`）在泳道下方画可展开的「未显示 n 个」，老后端没有该字段则不画。
+
+## `views/lanes` 的灵活留存（规范性 · v2.25）
+
+在 v2.24 的管线（封顶 → `lane_active.split` → `arrange`）里，`split` 对每条泳道多算一个**档位**，再按档位决定留多久。`get_lanes` 与 `live_order` 仍共用同一条管线、同一份输入，
+档位只在 `split` 里算；纯函数在 `views/lane_tier.py`，**所有数字都是该文件里的命名常量**（不是设置）。
+
+- **档位**（窗口 = 本次查询的窗口；按先后第一个命中）：
+  `high` = 窗口里该泳道各运行上的人类注意力之和 ≥ `ATTN_HIGH_SECONDS`（600），或窗口里干活（`working` 相位）时间之和 ≥ `WORK_HIGH_SECONDS`（3600，「自己一直在运行」）；
+  `low` = 注意力 < `ATTN_LOW_SECONDS`（30）且窗口里各运行的时长之和 < `EPHEMERAL_SECONDS`（300，「临时短暂、没人看」）；`normal` = 其余。
+  人置顶的泳道永远显示、不进折叠列表，所以档位里不看置顶。注意力就是 `agents[].attention` 同一份已裁到窗口的区间（不重算在场；每条运行至多最新 `MAX_ATTENTION`=500 段）；
+  时长口径同 v2.23 封顶（在跑的算到现在、失联的止于最后一次信号、已结束的裁到窗口）；干活时间 = 各 `working` 段裁到窗口（超上限的运行 = 0）。
+  **有界的代价**：被 v2.23 封顶丢掉的**已结束**运行只有轻读记录，没有注意力 / 相位——它们只把「已裁到窗口的秒数」计进时长，注意力与干活都按 0（不多读一次库，成本为 0）；
+  被封顶丢掉的**在跑**运行有全文，照常计入注意力与干活。折叠 / 过期的泳道的其余运行本来就在 `agents` 管线里读过全文（封顶保留的），所以档位没有额外的库读取。
+- **显示**，满足任一（①②④ 与 v2.24 完全相同，含「干活相位却静默的在跑运行」的 `IDLE_HIDE_SECONDS`=3600 活性条件、失联 / 超上限处理、被封顶丢掉的在跑运行照样参与判定）：
+  ① 有在跑运行在干活或在等人（等人的在没 `overdue` 前永不折叠）；② 置顶；
+  ③ 有在跑（未结束、未失联、未 `overdue`）的运行但都空闲：`now − 最后干活 < IDLE_KEEP[档]`（high 7200 / normal 3600 / low 600 秒）；
+  ④ **没有**在跑的运行（全部结束 / 失联 / 超上限）：`now − 最后结束 < ENDED_KEEP[档]`（high 1800 / normal 0 / low 0 秒，即只有高权重的结束后还留一会）；
+  ⑤ 出错（最新一条运行是在跑且相位 `error`，或已结束且 `outcome = failed`）：只有 high 在出错后留 `ENDED_KEEP['high']` 秒，其余立刻折叠。
+  「最后结束」= 已结束的运行的结束；失联 / 不发心跳的在跑运行 = 最后一次信号；`overdue` = 开始（早已放弃）。
+- **折叠列表**仍是 `inactiveAgents`：行追加 `tier`（`"high"|"normal"|"low"`），`reason` 增加 `ended`——`ended` = 泳道没有在跑的运行；`idle` 现在专指「有在跑的运行，但空闲太久」；`error` 不变。
+  `lastWorkAt` 仍是最后一次干活的结束时刻。排序仍是最近干活的在前。
+- **过期（仅视图）**：`tier = low` 的泳道，从**不再显示的那一刻**（`foldedSince` = 最后干活 + 留存 / 最后结束 + 留存 / 出错时刻）起满 `FOLD_EXPIRE['low']`（7200 秒），就不再出现在 `inactiveAgents`；
+  `normal` / `high` 在整个窗口里一直留在折叠列表。**过期不是删除**：不动计时、agent-time、圆环、报告、投影里的运行，也不改任何偏好；它的运行只是不再被这一个视图列出，窗口里再有新活动它就按新状态重新出现。
+- **`expiredAgents: int`**（追加，缺省 0）= 本次过期、不再列出的泳道个数——只给个数，**不给标签**；`expired: {agents, runs, elapsedSeconds}`（追加，缺省全 0）= 它们的运行条数与秒数（含被封顶折掉的，秒数口径同 `inactiveAgents`），
+  让记账对得上：窗口里（不含手动隐藏的）每条运行**恰好**落在 `agents` / `inactiveAgents` / `dropped` / `expired` 四处之一。页面据此提示「另有 n 个临时会话已过期不再列出」。
+- **过去的日子不过滤**（同 v2.24）：窗口整体早于现在时没有 `tier`、`expiredAgents` = 0、`expired` 全 0。
+- **手动排位**同一条管线（v2.24 的约定不变）：`inactiveAgents` / 过期的泳道不占位，`PUT /lanes/prefs/order` 带页面读图的窗口。
+- **不动任何计时账**；没有 MCP 工具映射 `views/lanes`，`mcp.tools.v1` 不动。
+- **前端**：泳道下方原来的几个底部展开条合并成一个折叠菜单「已折叠 n 个」（有出错时头部带「m 个出错」），菜单里按 出错 / 空闲 / 已结束 / 手动隐藏 分组；`expiredAgents > 0` 时脚注一行；老后端没有新字段则照常（无 `tier` 不画档位）。
 
 ## 入口与路由
 
