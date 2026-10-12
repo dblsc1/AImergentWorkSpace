@@ -27,6 +27,7 @@ type healthCockpit struct {
 	bodies []map[string]any
 	reply  string
 	status int
+	onPut  func() // 请求到了、回复之前调（模拟「发送期间别处有了新结果」）
 }
 
 func newHealthCockpit() *healthCockpit {
@@ -42,6 +43,9 @@ func newHealthCockpit() *healthCockpit {
 			return
 		}
 		c.bodies = append(c.bodies, m)
+		if c.onPut != nil {
+			c.onPut()
+		}
 		if c.status != 0 {
 			w.WriteHeader(c.status)
 			return
@@ -479,8 +483,13 @@ func TestHealth404StopsAndFailureIsQuiet(t *testing.T) {
 	ck.set("", 503)
 	e2.h.report(cfg, "ok")
 	e2.h.report(cfg, "unreachable")
-	if e2.h.dead || !e2.h.failed || ck.n() != 3 {
+	if e2.h.dead || !e2.h.failed || ck.n() != 2 { // 失败后按 15 秒退避：状态变了也先不立刻重发
 		t.Fatalf("503: dead=%v failed=%v n=%d", e2.h.dead, e2.h.failed, ck.n())
+	}
+	e2.clk.add(15 * time.Second)
+	e2.h.report(cfg, "unreachable")
+	if ck.n() != 3 {
+		t.Fatalf("retry after backoff: n=%d", ck.n())
 	}
 }
 
@@ -866,5 +875,269 @@ func TestStreakResetsOnPausedOrDisabled(t *testing.T) {
 		if sp.n() != 1 {
 			t.Errorf("after %q two consecutive should spawn: %d", mid, sp.n())
 		}
+	}
+}
+
+// 心跳线程说不准 AW 状态（拉网页设置失败）：健康线程自己探一下本机接口，报 ok / unreachable，面板不能因此显示离线。
+// 自动拉起不看这个兜底。
+func TestUnknownStateFallsBackToOwnProbe(t *testing.T) {
+	ck := newHealthCockpit()
+	defer ck.Close()
+	cfg := liveConfig("", ck.URL)
+	cfg.AwStartCommand = []string{"/opt/aw/aw-qt"}
+	sp := &spawnLog{}
+	e := testEnv(t, true, sp)
+	e.h.observe(cfg, "")
+	e.h.flush()
+	if ck.n() != 1 || ck.last()["awState"] != "ok" {
+		t.Fatalf("reachable: n=%d %v", ck.n(), ck.bodies)
+	}
+	e.reach.Store(false)
+	for i := 0; i < 4; i++ {
+		e.clk.add(5 * time.Second)
+		e.h.observe(cfg, "")
+		e.h.flush()
+	}
+	if ck.last()["awState"] != "unreachable" {
+		t.Fatalf("unreachable: %v", ck.last())
+	}
+	e.settle()
+	if sp.n() != 0 {
+		t.Fatal("auto-start fired from the fallback state")
+	}
+}
+
+// 观察超过 60 秒没更新（本机配置读坏了，心跳线程不再 observe）：不再替它续报 ok。
+func TestStaleObservationIsNotRenewed(t *testing.T) {
+	ck := newHealthCockpit()
+	defer ck.Close()
+	cfg := liveConfig("", ck.URL)
+	e := testEnv(t, true, &spawnLog{})
+	e.h.observe(cfg, "ok")
+	e.h.flush()
+	if ck.n() != 1 {
+		t.Fatal("first report missing")
+	}
+	e.clk.add(30 * time.Second)
+	e.h.flush()
+	if ck.n() != 2 { // 30 秒：观察还新鲜，照常 15 秒一报
+		t.Fatalf("fresh observation not reported: %d", ck.n())
+	}
+	e.clk.add(31 * time.Second) // 距观察 61 秒
+	e.h.flush()
+	e.clk.add(20 * time.Second)
+	e.h.flush()
+	if ck.n() != 2 {
+		t.Fatalf("stale observation renewed: %d PUTs", ck.n())
+	}
+	e.h.observe(cfg, "ok") // 心跳线程回来了
+	e.h.flush()
+	if ck.n() != 3 {
+		t.Fatal("reporting did not resume")
+	}
+}
+
+// 「连续连得上」的计时在 paused / disabled / 说不准 时断开：中间隔着停用的两个 ok 不连续。
+func TestUpSinceClearedByPausedDisabledUnknown(t *testing.T) {
+	for _, mid := range []string{"paused", "disabled", ""} {
+		e := testEnv(t, false, &spawnLog{})
+		cfg := Config{Enabled: true}
+		e.h.mu.Lock()
+		e.h.tries, e.h.gaveUp, e.h.autoState = 3, true, "gave_up"
+		e.h.mu.Unlock()
+		e.h.auto(cfg, "ok")
+		e.clk.add(2 * time.Minute)
+		e.h.auto(cfg, mid) // 停用 2 分钟，AW 其实一直是死的
+		e.clk.add(2 * time.Minute)
+		e.h.auto(cfg, "ok") // 恢复后第一拍
+		e.h.mu.Lock()
+		still := e.h.gaveUp && e.h.tries == 3
+		e.h.mu.Unlock()
+		if !still {
+			t.Errorf("%q: cleared without 60s of observed reachability", mid)
+		}
+	}
+}
+
+// 稳定门槛就是 60 秒：连续连得上 59 秒再掉线不清零，61 秒清零。
+func TestStabilityThresholdIs60Seconds(t *testing.T) {
+	cfg := Config{Enabled: true}
+	for _, c := range []struct {
+		up    time.Duration
+		reset bool
+	}{{59 * time.Second, false}, {61 * time.Second, true}} {
+		e := testEnv(t, false, &spawnLog{})
+		e.h.mu.Lock()
+		e.h.tries, e.h.gaveUp = 3, true
+		e.h.mu.Unlock()
+		e.h.auto(cfg, "ok")
+		e.clk.add(c.up)
+		e.h.auto(cfg, "ok")
+		e.h.mu.Lock()
+		cleared := !e.h.gaveUp && e.h.tries == 0
+		e.h.mu.Unlock()
+		if cleared != c.reset {
+			t.Errorf("up %v: cleared=%v want %v", c.up, cleared, c.reset)
+		}
+		if !c.reset { // 59 秒后掉线：计时作废，再亮一拍不能凑数
+			e.h.auto(cfg, "unreachable")
+			e.clk.add(5 * time.Second)
+			e.h.auto(cfg, "ok")
+			e.clk.add(5 * time.Second)
+			e.h.auto(cfg, "ok")
+			e.h.mu.Lock()
+			if !e.h.gaveUp {
+				t.Error("down in between did not restart the timer")
+			}
+			e.h.mu.Unlock()
+		}
+	}
+}
+
+// 被 30 秒限频挡住的 nonce 不必等下一次从服务端取：限频一过，健康线程就接着处理。
+func TestHeldNonceHandledWhenCooldownEnds(t *testing.T) {
+	ck := newHealthCockpit()
+	defer ck.Close()
+	cfg := liveConfig("", ck.URL)
+	cfg.AwStartCommand = []string{"/opt/aw/aw-qt"}
+	sp := &spawnLog{}
+	e := testEnv(t, false, sp)
+	for i := 0; i < 2; i++ {
+		e.h.auto(cfg, "unreachable") // 自动拉起一次
+	}
+	waitFor(t, "auto spawn", func() bool { return sp.n() == 1 })
+	e.clk.add(2 * time.Second)
+	ck.set(`{"restartNonce":"n1"}`, 0)
+	e.h.observe(cfg, "unreachable")
+	e.h.flush() // PUT 响应带回 n1：被限频挡住
+	e.settle()
+	if sp.n() != 1 || e.result() != nil {
+		t.Fatalf("handled inside cooldown: spawns=%d", sp.n())
+	}
+	ck.set(`{"restartNonce":"n1"}`, 0)
+	e.clk.add(27 * time.Second) // 距自动拉起 29 秒
+	e.h.observe(cfg, "unreachable")
+	e.h.flush()
+	if sp.n() != 1 {
+		t.Fatal("handled before the cooldown ended")
+	}
+	e.clk.add(2 * time.Second) // 31 秒
+	e.h.flush()                // 不需要服务端再给 nonce
+	if r := e.waitResult(t); r.nonce != "n1" || sp.n() != 2 {
+		t.Fatalf("result=%+v spawns=%d", r, sp.n())
+	}
+}
+
+// 结果送不出去（服务端一直 500）：按 15 秒退避，5 分钟后丢弃，不再带 restart 字段。
+func TestResultRetryBacksOffAndExpires(t *testing.T) {
+	ck := newHealthCockpit()
+	defer ck.Close()
+	cfg := liveConfig("", ck.URL)
+	e := testEnv(t, true, &spawnLog{})
+	ck.set("", 500)
+	e.h.setResult("n1", "started", "")
+	for i := 0; i < 600; i++ { // 10 分钟，每秒一次 flush（loop 的节拍），心跳线程每 5 秒观察一次
+		e.clk.add(time.Second)
+		if i%5 == 0 {
+			e.h.observe(cfg, "ok")
+		}
+		e.h.flush()
+	}
+	if n := ck.n(); n > 45 || n < 15 {
+		t.Fatalf("%d PUTs in 10 minutes", n)
+	}
+	ck.mu.Lock()
+	defer ck.mu.Unlock()
+	withResult := 0
+	for _, b := range ck.bodies {
+		if _, ok := b["restart"]; ok {
+			withResult++
+		}
+	}
+	if withResult == 0 || withResult > 22 { // 5 分钟 / 15 秒 ≈ 20
+		t.Fatalf("PUTs carrying the result: %d", withResult)
+	}
+	if _, ok := ck.bodies[len(ck.bodies)-1]["restart"]; ok {
+		t.Fatal("expired result still sent")
+	}
+}
+
+// 发送期间别处有了新结果：发完不能把新结果一起清掉。
+func TestNewerResultNotLostWhileSending(t *testing.T) {
+	ck := newHealthCockpit()
+	defer ck.Close()
+	cfg := liveConfig("", ck.URL)
+	e := testEnv(t, true, &spawnLog{})
+	e.h.setResult("n1", "started", "")
+	ck.onPut = func() { e.h.setResult("n2", "failed", "not_up") }
+	e.h.report(cfg, "ok")
+	if r := e.result(); r == nil || r.nonce != "n2" {
+		t.Fatalf("newer result lost: %+v", r)
+	}
+	ck.onPut = nil
+	e.clk.add(time.Second)
+	e.h.report(cfg, "ok")
+	if got := ck.last()["restart"]; !reflect.DeepEqual(got, map[string]any{"nonce": "n2", "result": "failed", "reason": "not_up"}) {
+		t.Fatalf("second send: %v", got)
+	}
+}
+
+// 24 小时上限：「亮 61 秒 / 死 10 秒」的循环一天能拉 700 多次，现在至多 20 次，窗口空出来才继续。
+func TestAutoStartDailyCap(t *testing.T) {
+	sp := &spawnLog{}
+	e := testEnv(t, false, sp)
+	cfg := Config{Enabled: true, AwStartCommand: []string{"/opt/aw/aw-qt"}}
+	step := func() { // 一个周期 75 秒：ok 13 拍（65 秒）、unreachable 2 拍
+		for i := 0; i < 15; i++ {
+			e.clk.add(5 * time.Second)
+			if i < 13 {
+				e.h.auto(cfg, "ok")
+			} else {
+				e.h.auto(cfg, "unreachable")
+			}
+		}
+	}
+	for e.clk.now().Sub(testStart(e)) < 23*time.Hour {
+		step()
+	}
+	e.settle()
+	e.h.mu.Lock()
+	st := e.h.autoState
+	e.h.mu.Unlock()
+	if sp.n() != autoDayMax || st != "gave_up" {
+		t.Fatalf("spawns=%d state=%q", sp.n(), st)
+	}
+	for e.clk.now().Sub(testStart(e)) < 25*time.Hour { // 24 小时的窗口滑过去，又能拉了
+		step()
+	}
+	e.settle()
+	if sp.n() <= autoDayMax || sp.n() > 2*autoDayMax { // 最早那 20 次一起满 24 小时，窗口空出来又能拉 20 次
+
+		t.Fatalf("after the window slid: %d", sp.n())
+	}
+}
+
+var startTimes sync.Map
+
+func testStart(e *env) time.Time {
+	v, _ := startTimes.LoadOrStore(e, e.clk.now())
+	return v.(time.Time)
+}
+
+// 没拉起进程的失败（找不到 / 没桌面 / 状态写不了 / 启动出错）：status 不贴 aw-start.log（那是更早一次的）。
+func TestStatusOmitsLogTailWhenNothingSpawned(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "aw-start.log")
+	_ = os.WriteFile(logPath, []byte("OLD-RUN-OUTPUT\n"), 0o600)
+	for _, reason := range []string{"not_found", "spawn_error", "no_display", "state_unwritable"} {
+		var out strings.Builder
+		printLastStart(&out, &startRecord{At: time.Now(), Trigger: "auto", Argv: []string{"x"}, Outcome: "failed", Reason: reason}, logPath)
+		if strings.Contains(out.String(), "OLD-RUN-OUTPUT") || !strings.Contains(out.String(), "可以试试") {
+			t.Errorf("%s:\n%s", reason, out.String())
+		}
+	}
+	var out strings.Builder
+	printLastStart(&out, &startRecord{At: time.Now(), Trigger: "auto", Argv: []string{"x"}, Outcome: "failed", Reason: "exited_early"}, logPath)
+	if !strings.Contains(out.String(), "OLD-RUN-OUTPUT") {
+		t.Errorf("exited_early should show the log:\n%s", out.String())
 	}
 }

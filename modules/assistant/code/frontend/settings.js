@@ -128,7 +128,9 @@
     not_up: "进程起来了，但 ActivityWatch 接口 20 秒内没起来", no_display: "检测程序不在桌面会话里运行，没法打开图形程序",
     state_unwritable: "检测程序目录写不进去，没有尝试启动" };
   var LOG_HINT = "详细原因和日志在那台电脑上：运行 ai-detector status，或查看检测程序目录下的 aw-start.log。";
-  function reasonText(r) { return REASON_TEXT[r] || "原因未知"; }
+  // 服务端给的值只当键用：自有属性才认（"constructor"、"__proto__" 之类走 Object.prototype 的不算）
+  function own(tbl, k, fallback) { return typeof k === "string" && Object.prototype.hasOwnProperty.call(tbl, k) ? tbl[k] : fallback; }
+  function reasonText(r) { return own(REASON_TEXT, r, "原因未知"); }
   function healthLine(dev, nowMs) {
     var h = dev && dev.health, at = h ? Date.parse(h.at) : NaN;
     if (!h || isNaN(at)) return { text: "检测程序状态：这个版本的检测程序不报告状态", online: null };
@@ -136,9 +138,9 @@
     if (!(age < STALE_MS)) {
       return { text: "检测程序：离线（最近一次报告 " + Math.max(1, Math.floor(age / 60000)) + " 分钟前）", online: false };
     }
-    var auto = AUTO_TEXT[h.autoStart];
+    var auto = own(AUTO_TEXT, h.autoStart, "");
     if (h.autoStart === "gave_up" && h.autoReason) auto += "（" + reasonText(h.autoReason) + "）";
-    return { text: "检测程序：在线 · ActivityWatch：" + (AW_TEXT[h.awState] || "未知") + (auto ? " · " + auto : ""), online: true, gaveUp: h.autoStart === "gave_up" };
+    return { text: "检测程序：在线 · ActivityWatch：" + own(AW_TEXT, h.awState, "未知状态") + (auto ? " · " + auto : ""), online: true, gaveUp: h.autoStart === "gave_up" };
   }
 
   window.assistantSettings = {
@@ -326,7 +328,7 @@
       if (q && q.nonce === mine.nonce && q.result) {
         pending = null;
         showRestart(q.result === "failed" ? "启动失败：" + reasonText(q.reason) + "。" + LOG_HINT
-          : (RESTART_TEXT[q.result] || "检测程序回报了未知结果"));
+          : own(RESTART_TEXT, q.result, "检测程序回报了未知结果"));
         break;
       }
       if (Date.now() >= deadline) { pending = null; showRestart("检测程序没有响应（它可能没在运行）"); break; }

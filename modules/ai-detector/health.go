@@ -37,7 +37,10 @@ const (
 	autoMaxTries = 3                // 连续自动拉起这么多次还没把 ActivityWatch 拉回来就停手
 	probeWait    = 20 * time.Second // 拉起后最多等这么久，接口起来了才算 started
 	probeEvery   = time.Second
-	stableAfter  = time.Minute // ActivityWatch 要连续连得上这么久，才清零「已自动拉起几次 / 已停手」（一闪一灭不算恢复）
+	obsFresh     = time.Minute     // 心跳线程这么久没更新观察（比如本机配置写坏了），就不再替它报，面板上自然显示离线
+	resultTTL    = 5 * time.Minute // 回报不出去的重启结果留这么久（服务端那边请求早已作废）
+	autoDayMax   = 20              // 滚动 24 小时内自动拉起的上限
+	stableAfter  = time.Minute     // ActivityWatch 要连续连得上这么久，才清零「已自动拉起几次 / 已停手」（一闪一灭不算恢复）
 )
 
 // 服务端的 nonce 是 16 位十六进制；这里放宽到 1–64 位字母数字 - _，其余一律不理（也就不会原样回报）。
@@ -169,8 +172,13 @@ type healthReporter struct {
 	// 自动拉起（awAutoStart）：autoState / autoReason 是最近一次自动动作的结果，随健康报告上去（枚举，无自由文本）
 	autoState   string
 	autoReason  string
-	streak      int       // 连续 unreachable 的次数
-	tries       int       // 自动拉起了几次、ActivityWatch 还没回来
+	streak      int         // 连续 unreachable 的次数
+	tries       int         // 自动拉起了几次、ActivityWatch 还没回来
+	autoTimes   []time.Time // 滚动 24 小时内自动拉起的时刻
+	capped      bool        // 当前因为 24 小时上限而停手（窗口空出来就自动解除）
+	staleLogged bool
+	held        string // 被 30 秒限频挡住、等限频过了再处理的 nonce
+	heldCfg     Config
 	gaveUp      bool      // 已停手，直到 ActivityWatch 连续连得上 stableAfter、或进程重启
 	upSince     time.Time // 连续连得上的起点；一次 unreachable 就清空
 	noCmdLogged bool
@@ -188,12 +196,16 @@ type healthReporter struct {
 	probeEvery time.Duration
 }
 
-type restartResult struct{ nonce, result, reason string }
+type restartResult struct {
+	nonce, result, reason string
+	at                    time.Time
+}
 
 type observation struct {
 	cfg Config
 	st  string
 	ok  bool
+	at  time.Time
 }
 
 func newHealthReporter(p paths, hc *http.Client) *healthReporter {
@@ -209,7 +221,7 @@ func newHealthReporter(p paths, hc *http.Client) *healthReporter {
 func (h *healthReporter) observe(cfg Config, awState string) {
 	h.auto(cfg, awState)
 	h.mu.Lock()
-	h.obs = observation{cfg, awState, true}
+	h.obs = observation{cfg, awState, true, h.clock()}
 	h.mu.Unlock()
 	select {
 	case h.wake <- struct{}{}:
@@ -226,13 +238,42 @@ func (h *healthReporter) loop() {
 		case <-h.wake:
 		case <-time.After(time.Second):
 		}
-		h.mu.Lock()
-		o := h.obs
-		h.mu.Unlock()
-		if o.ok {
-			h.report(o.cfg, o.st)
+		h.flush()
+	}
+}
+
+// flush：发最近一次观察到的状态；顺手处理被限频挡住的 nonce。
+//   - 观察超过 obsFresh 没更新（心跳线程没在观察了，比如本机配置读不了）就不再替它报：面板显示离线比一直说「在线」诚实；
+//   - 心跳线程说不准 AW 状态（比如拉网页设置失败）时，这里自己探一下本机接口，报 ok / unreachable，别让面板以为检测程序死了。
+//     自动拉起不看这个兜底的结果（auto 收到的仍是「说不准」，不动）。
+func (h *healthReporter) flush() {
+	now := h.clock()
+	h.mu.Lock()
+	o, held, heldCfg := h.obs, h.held, h.heldCfg
+	if held != "" && !h.canStart(now) {
+		held = ""
+	}
+	stale := o.ok && now.Sub(o.at) > obsFresh
+	first := stale && !h.staleLogged
+	h.staleLogged = stale
+	h.mu.Unlock()
+	if first {
+		log.Print("心跳线程超过 1 分钟没有更新状态（本机配置读不了？），暂停报告健康状态")
+	}
+	if held != "" {
+		h.restart(heldCfg, held)
+	}
+	if !o.ok || stale {
+		return
+	}
+	st := o.st
+	if st == "" {
+		st = "unreachable"
+		if h.reachable(o.cfg) {
+			st = "ok"
 		}
 	}
+	h.report(o.cfg, st)
 }
 
 // report：状态变了、或距上次超过 healthEvery、或有结果要回报时才发。失败只记日志，绝不影响调用方。
@@ -243,8 +284,12 @@ func (h *healthReporter) report(cfg Config, awState string) {
 		h.mu.Unlock()
 		return
 	}
+	if h.result != nil && now.Sub(h.result.at) > resultTTL { // 服务端那边请求早已作废：别无限期带着
+		log.Printf("重启结果 %s 超过 %v 没送出去，丢弃", h.result.result, resultTTL)
+		h.result = nil
+	}
 	key := awState + "/" + h.autoState + "/" + h.autoReason
-	if key == h.last && h.result == nil && now.Sub(h.lastAt) < healthEvery {
+	if now.Sub(h.lastAt) < healthEvery && (h.failed || (key == h.last && h.result == nil)) { // 失败后也按 15 秒退避
 		h.mu.Unlock()
 		return
 	}
@@ -306,7 +351,7 @@ func (h *healthReporter) report(cfg Config, awState string) {
 
 func (h *healthReporter) setResult(nonce, result, reason string) {
 	h.mu.Lock()
-	h.result = &restartResult{nonce, result, reason}
+	h.result = &restartResult{nonce, result, reason, h.clock()}
 	h.mu.Unlock()
 }
 
@@ -321,6 +366,9 @@ func (h *healthReporter) restart(cfg Config, nonce string) {
 	_ = loadJSON(h.state, &st)
 	h.mu.Lock()
 	dup := h.handled == nonce || st.Health.RestartNonce == nonce
+	if h.held == nonce {
+		h.held = "" // 取出来处理了；限频还没过的话下面会再放回去
+	}
 	h.mu.Unlock()
 	if dup {
 		return
@@ -347,13 +395,18 @@ func (h *healthReporter) restart(cfg Config, nonce string) {
 		return
 	}
 	// 按钮在检测程序暂停 / 没开同步时也照样能用：这是人明确点的，而且它只检测并重启 ActivityWatch
-	h.launch(cfg, argv, "button", persist, func(outcome, reason string) {
+	ok := h.launch(cfg, argv, "button", persist, func(outcome, reason string) {
 		if outcome == "started" {
 			h.setResult(nonce, "started", "")
 		} else {
 			h.setResult(nonce, "failed", reason)
 		}
 	})
+	if !ok { // 30 秒限频内：先放着，限频一过 flush 就接着处理（不必等下一次从服务端取）
+		h.mu.Lock()
+		h.held, h.heldCfg = nonce, cfg
+		h.mu.Unlock()
+	}
 }
 
 // command：本机配置的 awStartCommand，没有就按系统缺省找。**只来自本机**，没有服务端的份。
@@ -475,8 +528,9 @@ func (h *healthReporter) auto(cfg Config, awState string) {
 		}
 		h.mu.Unlock()
 		return
-	default: // paused / disabled / 说不准：不动，也不累计
+	default: // paused / disabled / 说不准：不动，也不累计；「连续连得上」的计时也断开
 		h.streak = 0
+		h.upSince = time.Time{}
 		h.mu.Unlock()
 		return
 	}
@@ -499,6 +553,24 @@ func (h *healthReporter) auto(cfg Config, awState string) {
 		h.mu.Unlock()
 		return
 	}
+	now := h.clock()
+	for len(h.autoTimes) > 0 && now.Sub(h.autoTimes[0]) >= 24*time.Hour {
+		h.autoTimes = h.autoTimes[1:]
+	}
+	if len(h.autoTimes) >= autoDayMax { // 24 小时上限：再怎么「恢复又掉线」也不拉了（按钮不受影响）
+		if !h.capped {
+			log.Printf("24 小时内已自动拉起 %d 次 ActivityWatch，今天不再自动拉起（面板上的按钮还能用）", autoDayMax)
+		}
+		h.capped, h.autoState = true, "gave_up"
+		h.mu.Unlock()
+		return
+	}
+	if h.capped {
+		h.capped = false
+		if h.autoState == "gave_up" && !h.gaveUp {
+			h.autoState = "idle"
+		}
+	}
 	if h.tries >= autoMaxTries {
 		h.gaveUp, h.autoState = true, "gave_up"
 		h.mu.Unlock()
@@ -509,6 +581,7 @@ func (h *healthReporter) auto(cfg Config, awState string) {
 	if h.launch(cfg, argv, "auto", nil, h.autoDone) {
 		h.mu.Lock()
 		h.tries++
+		h.autoTimes = append(h.autoTimes, h.clock())
 		h.mu.Unlock()
 	}
 }
@@ -535,6 +608,9 @@ var reasonText = map[string][2]string{ // 原因 → (是怎么回事, 可以试
 	rStateRO:    {"检测程序目录写不进去，没有尝试启动", "检查配置目录的权限和磁盘空间"},
 }
 
+// 这些原因下没有拉起进程，aw-start.log 的内容跟这次无关。
+var noProcess = map[string]bool{rNotFound: true, rSpawnError: true, rNoDisplay: true, rStateRO: true}
+
 // printLastStart：`ai-detector status` 里最近一次拉起 ActivityWatch 的情况（全是本机信息）。
 func printLastStart(out io.Writer, r *startRecord, logPath string) {
 	if r == nil {
@@ -555,7 +631,9 @@ func printLastStart(out io.Writer, r *startRecord, logPath string) {
 		fmt.Fprintf(out, "  退出码  %d\n", *r.ExitCode)
 	}
 	fmt.Fprintf(out, "  日志  %s\n", logPath)
-	if b, err := os.ReadFile(logPath); err == nil {
+	if noProcess[r.Reason] { // 这次根本没拉起进程：aw-start.log 是更早一次的，贴出来会误导
+		fmt.Fprintln(out, "  （这次没有拉起任何进程，所以没有新的输出；aw-start.log 里是更早一次的，不显示）")
+	} else if b, err := os.ReadFile(logPath); err == nil {
 		ls := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
 		if len(ls) > 20 {
 			ls = ls[len(ls)-20:]

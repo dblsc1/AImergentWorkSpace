@@ -741,5 +741,33 @@ def test_hostile_server_strings_are_text_not_markup(browser, static_base_url):
         assert page.evaluate("window.pwned") is None
         assert page.query_selector("#settings-panel img") is None
         # 状态行：未知的枚举值显示成「未知」，deviceId 只出现在下拉选项的文本里
-        assert "未知" in page.inner_text("#det-health")
+        assert "未知状态" in page.inner_text("#det-health")
         assert page.query_selector("#det-health *") is None and page.query_selector("#det-restart-msg *") is None
+
+
+@pytest.mark.parametrize("bad", ["constructor", "__proto__", "toString", "hasOwnProperty"])
+def test_prototype_keys_are_unknown_values(browser, static_base_url, bad):
+    """服务端给的值只是键：走 Object.prototype 的名字不能查出函数来，一律当未知值。"""
+    stub = DetectorStub()
+    stub.devices[0]["health"] = _health(state=bad, auto=bad, auto_reason=bad)
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        t = page.inner_text("#det-health")
+        assert t == "检测程序：在线 · ActivityWatch：未知状态", t
+        assert "function" not in t and "[object" not in t
+    stub = _stub_health(state="unreachable", auto="gave_up", auto_reason=bad)
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        assert "（原因未知）" in page.inner_text("#det-health")
+        page.clock.install()
+        page.click("#det-restart")
+        page.wait_for_function("document.getElementById('det-restart-msg').textContent.includes('等检测程序回报')")
+        stub.devices[0]["restart"].update(result="failed", reason=bad)
+        page.clock.run_for(3100)
+        page.wait_for_function("document.getElementById('det-restart-msg').textContent.includes('启动失败')")
+        assert "原因未知" in page.inner_text("#det-restart-msg")
+        page.click("#det-restart")      # 再来一次：结果值本身是 Object.prototype 上的名字
+        page.wait_for_function("document.getElementById('det-restart-msg').textContent.includes('等检测程序回报')")
+        stub.devices[0]["restart"].update(result=bad, reason=None)
+        page.clock.run_for(3100)
+        page.wait_for_function("document.getElementById('det-restart-msg').textContent.includes('未知结果')")
