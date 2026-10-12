@@ -313,6 +313,7 @@ func status(p paths, out io.Writer) error {
 	if st.Health.AwState != "" {
 		fmt.Fprintf(out, "ActivityWatch  %s（上次报给 HoneyComb：%s）\n", st.Health.AwState, isoTime(st.Health.At))
 	}
+	printLastStart(out, st.Health.LastStart, filepath.Join(filepath.Dir(p.state), "aw-start.log"))
 	if !st.LastRunAt.IsZero() {
 		fmt.Fprintf(out, "上一轮    %s  %s\n", isoTime(st.LastRunAt), st.LastOutcome)
 	}

@@ -30,7 +30,7 @@ def test_health_stored_with_server_clock_and_listed(client):
     assert r.status_code == 200 and r.json() == {"restartNonce": None}
     d = _dev(client)
     assert d["health"]["awState"] == "unreachable" and d["health"]["at"]
-    assert set(d["health"]) == {"awState", "at", "autoStart"} and d["health"]["autoStart"] is None
+    assert set(d["health"]) == {"awState", "at", "autoStart", "autoReason"} and d["health"]["autoStart"] is None
     assert d["restart"] is None
     # 旧字段不变
     assert {"deviceId", "lastUploadAt", "lastFetchAt", "hasSettings", "settingsUpdatedAt"} <= set(d)
@@ -58,6 +58,9 @@ def test_health_schema_strict(client):
         {"awState": "ok", "restart": {"nonce": "", "result": "failed"}},
         {"awState": 1},
         {"awState": "ok", "autoStart": "maybe"},
+        {"awState": "ok", "autoReason": "/home/me/secret"},                       # 原因只收枚举
+        {"awState": "ok", "restart": {"nonce": "n", "result": "failed", "reason": "boom"}},
+        {"awState": "ok", "restart": {"nonce": "n", "result": "failed", "reason": "x" * 500}},
         {"awState": "ok", "autoStart": "started; rm -rf"},
     ):
         assert _health(client, body, BEARER).status_code == 422, body
@@ -122,3 +125,22 @@ def test_auto_start_enum_stored_and_replaced(client):
         assert _dev(client)["health"]["autoStart"] == v
     _health(client, {"awState": "ok"}, BEARER)  # 老检测程序不带：回到 null
     assert _dev(client)["health"]["autoStart"] is None
+
+
+def test_reasons_stored_and_listed(client):
+    _health(client, {"awState": "unreachable"}, BEARER)
+    n = _restart(client).json()["nonce"]
+    assert _dev(client)["restart"]["reason"] is None
+    for reason in ("not_found", "spawn_error", "exited_early", "not_up", "no_display", "state_unwritable"):
+        n = _restart(client).json()["nonce"]
+        r = _health(client, {"awState": "unreachable", "autoStart": "gave_up", "autoReason": reason,
+                             "restart": {"nonce": n, "result": "failed", "reason": reason}}, BEARER)
+        assert r.status_code == 200, (reason, r.text)
+        d = _dev(client)
+        assert d["restart"]["result"] == "failed" and d["restart"]["reason"] == reason
+        assert d["health"]["autoReason"] == reason
+    # 不带 reason（老检测程序 / 成功）：null；autoReason 随下一次报告清掉
+    n = _restart(client).json()["nonce"]
+    _health(client, {"awState": "ok", "restart": {"nonce": n, "result": "started"}}, BEARER)
+    d = _dev(client)
+    assert d["restart"]["reason"] is None and d["health"]["autoReason"] is None

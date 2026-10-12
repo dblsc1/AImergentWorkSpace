@@ -4159,11 +4159,14 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 ```jsonc
 { "awState": "ok" | "unreachable" | "no_window" | "paused" | "disabled",
   "autoStart": "off" | "idle" | "started" | "gave_up" | "unsupported",   // 可选：检测程序最近一次「自动拉起 ActivityWatch」的结果
-  "restart": { "nonce": "<1–64 字符>", "result": "started" | "already_running" | "failed" | "unsupported" } }   // 可选
+  "autoReason": "not_found" | "spawn_error" | "exited_early" | "not_up" | "no_display" | "state_unwritable",   // 可选：自动拉起失败的原因（枚举）
+  "restart": { "nonce": "<1–64 字符>", "result": "started" | "already_running" | "failed" | "unsupported",
+               "reason": "<同 autoReason 的枚举>" } }   // 可选；reason 只在 failed 时有意义
 ```
 
 - **整个请求体里没有任何自由文本**：窗口标题、路径、错误串都到不了服务端。
-- 服务端存 `health: {awState, at, autoStart}`（`at` = 服务端时钟，`autoStart` 缺省 `null`）。`restart` 给了、且 `restart.nonce` 等于这台设备当前待处理的 nonce、
+- 服务端存 `health: {awState, at, autoStart, autoReason}`（`at` = 服务端时钟，后两项缺省 `null`）。`reason` / `autoReason` 是严格枚举（枚举外 422）：
+  详细的错误串和日志**只在那台电脑上**（`ai-detector status`、`aw-start.log`），从不经此端点上来。老检测程序不带这些字段，全部按 `null`。`restart` 给了、且 `restart.nonce` 等于这台设备当前待处理的 nonce、
   而它还没有结果，才记 `result` + `resultAt`；旧 nonce、重复的上报一律忽略（不是错误）。
 - 响应 `{"restartNonce": <还没有结果的待处理 nonce> | null}`。
 
@@ -4171,8 +4174,8 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 设备不存在 `404`。写 `restart: {nonce: <随机>, requestedAt}`（顶掉更早的），返回 `{"nonce": …}`。**服务端不下发命令**：nonce 只是个编号，检测程序据此做什么由它本机的配置决定
 （`ai-detector` 契约「健康报告与拉起 ActivityWatch」）。
 
-**`GET /api/core/detector/devices`** 每台设备追加：`health: {awState, at, autoStart} | null`、
-`restart: {nonce, requestedAt, result | null, resultAt | null} | null`。既有字段不变。
+**`GET /api/core/detector/devices`** 每台设备追加：`health: {awState, at, autoStart, autoReason} | null`、
+`restart: {nonce, requestedAt, result | null, reason | null, resultAt | null} | null`。`result: "started"` 的含义是 ActivityWatch 的接口确实起来了（检测程序拉起后探测过），不只是进程拉起来了。既有字段不变。
 
 ## 待确认时间的按天汇总（规范性 · v2.26）
 

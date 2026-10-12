@@ -14,7 +14,7 @@
  * - 强制脱敏（密码、密钥……）不在文档里，页面上是勾着的灰框，关不掉。
  * - 422 的 detail 形如「privacy.pathWhitelist: …」：按前缀挂到对应那一项下面，对不上就显示在表单底部。
  * - 设备行下面一条状态（v2.27）：检测程序在线 / 离线（health.at 超过 3 分钟没更新算离线）+ ActivityWatch 怎么样；
- *   「检测」重拉一次，「重启 ActivityWatch」POST restart 后每 3 秒拉一次设备，最多 45 秒，等检测程序回报结果。
+ *   「检测」重拉一次，「重启 ActivityWatch」POST restart 后每 3 秒拉一次设备，最多 75 秒，等检测程序回报结果。
  *   服务端的字符串一律只进 textContent。
  * 对外只挂 window.assistantSettings（纯函数，给单测用）。
  */
@@ -117,13 +117,18 @@
   }
 
   // 检测程序状态（nexus-core v2.27）：device.health = {awState, at} | null。返回 {text, online}；online=null 表示没有状态可看
-  var STALE_MS = 3 * 60 * 1000, POLL_MS = 3000, POLL_MAX_MS = 45000;
+  var STALE_MS = 3 * 60 * 1000, POLL_MS = 3000, POLL_MAX_MS = 75000;
   var AW_TEXT = { ok: "正常", unreachable: "连不上 ActivityWatch", no_window: "ActivityWatch 最近一分钟没有窗口记录",
     paused: "已暂停", disabled: "未开启" };
-  var RESTART_TEXT = { started: "已启动，ActivityWatch 起来后点「检测」看看", already_running: "ActivityWatch 本来就在运行",
+  var RESTART_TEXT = { started: "已启动，ActivityWatch 的接口已经起来了", already_running: "ActivityWatch 本来就在运行",
     failed: "启动失败", unsupported: "这台电脑上没配置启动命令" };
   var AUTO_TEXT = { started: "已自动拉起", gave_up: "自动拉起 3 次都没成功，已停止重试",
     unsupported: "这台电脑上没配置启动命令", off: "自动拉起已关闭" };
+  var REASON_TEXT = { not_found: "找不到 ActivityWatch 程序", spawn_error: "启动命令执行出错", exited_early: "启动后马上退出了",
+    not_up: "进程起来了，但 ActivityWatch 接口 20 秒内没起来", no_display: "检测程序不在桌面会话里运行，没法打开图形程序",
+    state_unwritable: "检测程序目录写不进去，没有尝试启动" };
+  var LOG_HINT = "详细原因和日志在那台电脑上：运行 ai-detector status，或查看检测程序目录下的 aw-start.log。";
+  function reasonText(r) { return REASON_TEXT[r] || "原因未知"; }
   function healthLine(dev, nowMs) {
     var h = dev && dev.health;
     if (!h) return { text: "检测程序状态：这个版本的检测程序不报告状态", online: null };
@@ -132,7 +137,8 @@
       return { text: "检测程序：离线（最近一次报告 " + Math.max(1, Math.floor(age / 60000)) + " 分钟前）", online: false };
     }
     var auto = AUTO_TEXT[h.autoStart];
-    return { text: "检测程序：在线 · ActivityWatch：" + (AW_TEXT[h.awState] || "未知") + (auto ? " · " + auto : ""), online: true };
+    if (h.autoStart === "gave_up" && h.autoReason) auto += "（" + reasonText(h.autoReason) + "）";
+    return { text: "检测程序：在线 · ActivityWatch：" + (AW_TEXT[h.awState] || "未知") + (auto ? " · " + auto : ""), online: true, gaveUp: h.autoStart === "gave_up" };
   }
 
   window.assistantSettings = {
@@ -158,6 +164,7 @@
   var checkBtn = document.getElementById("det-check");
   var restartBtn = document.getElementById("det-restart");
   var offlineHintEl = document.getElementById("det-offline-hint");
+  var logHintEl = document.getElementById("det-log-hint");
   var restartMsgEl = document.getElementById("det-restart-msg");
 
   var devices = [];
@@ -280,6 +287,8 @@
     healthEl.textContent = hl.text;
     restartBtn.disabled = hl.online !== true || Boolean(pending);
     offlineHintEl.hidden = hl.online !== false;
+    logHintEl.textContent = hl.gaveUp ? LOG_HINT : "";
+    logHintEl.hidden = !hl.gaveUp;
   }
 
   function showRestart(text) { restartMsgEl.textContent = text; restartMsgEl.hidden = !text; }
@@ -292,16 +301,16 @@
 
   restartBtn.addEventListener("click", async function () {
     if (pending || !device) return;
-    var id = device;
-    pending = { device: id, nonce: null };
+    var id = device, mine = { device: id, nonce: null };
+    pending = mine;   // 之后一律比对象本身：换设备（A→B→A）会把 pending 清掉，旧的请求回来不能认成现在这个
     restartBtn.disabled = true;
     showRestart("正在请求重启……");
     var r = await request("POST", "restart?deviceId=" + encodeURIComponent(id));
-    if (id !== device) return;
+    if (pending !== mine) return;
     if (!r.ok || !r.body || !r.body.nonce) { pending = null; showRestart("请求失败：" + explain(r)); renderMeta(); return; }
-    pending.nonce = r.body.nonce;
-    showRestart("已请求，等检测程序回报（最多 45 秒）……");
-    var deadline = Date.now() + POLL_MAX_MS, mine = pending;
+    mine.nonce = r.body.nonce;
+    showRestart("已请求，等检测程序回报（最多 75 秒）……");
+    var deadline = Date.now() + POLL_MAX_MS;
     while (pending === mine) {
       await new Promise(function (ok) { setTimeout(ok, POLL_MS); });
       if (pending !== mine) return;
@@ -309,7 +318,12 @@
       var dev = devices.filter(function (d) { return d.deviceId === id; })[0];
       var q = dev && dev.restart;
       if (pending !== mine) return;
-      if (q && q.nonce === mine.nonce && q.result) { pending = null; showRestart(RESTART_TEXT[q.result] || "检测程序回报了未知结果"); break; }
+      if (q && q.nonce === mine.nonce && q.result) {
+        pending = null;
+        showRestart(q.result === "failed" ? "启动失败：" + reasonText(q.reason) + "。" + LOG_HINT
+          : (RESTART_TEXT[q.result] || "检测程序回报了未知结果"));
+        break;
+      }
       if (Date.now() >= deadline) { pending = null; showRestart("检测程序没有响应（它可能没在运行）"); break; }
     }
     renderMeta();

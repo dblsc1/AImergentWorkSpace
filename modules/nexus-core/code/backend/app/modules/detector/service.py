@@ -143,15 +143,20 @@ class DetectorSettings(_Strict):
 
 
 # v2.27：检测程序报的健康状态。没有任何自由文本字段——本机的标题、路径、错误串到不了服务端。
+_Reason = Literal["not_found", "spawn_error", "exited_early", "not_up", "no_display", "state_unwritable"]
+
+
 class _Restart(_Strict):
     nonce: Annotated[StrictStr, Field(min_length=1, max_length=64)]
     result: Literal["started", "already_running", "failed", "unsupported"]
+    reason: _Reason | None = None  # 失败原因（枚举）；详细日志只在那台电脑上
 
 
 class Health(_Strict):
     awState: Literal["ok", "unreachable", "no_window", "paused", "disabled"]
     restart: _Restart | None = None
     autoStart: Literal["off", "idle", "started", "gave_up", "unsupported"] | None = None  # 最近一次自动拉起的结果
+    autoReason: _Reason | None = None
 
 
 def _iso(t: datetime | None) -> str | None:
@@ -224,8 +229,9 @@ def put_health(device_id: str, body: bytes) -> dict:
         raise InvalidSettingsError(f"请求体不是合法 JSON：{exc}") from exc
     user, now = current_tenant(), _now()
     if h.restart:
-        repo.set_restart_result(user, device_id, h.restart.nonce, h.restart.result, now)
-    repo.set_health(user, device_id, {"awState": h.awState, "at": now, "autoStart": h.autoStart})
+        repo.set_restart_result(user, device_id, h.restart.nonce, h.restart.result, h.restart.reason, now)
+    repo.set_health(user, device_id, {"awState": h.awState, "at": now, "autoStart": h.autoStart,
+                                       "autoReason": h.autoReason})
     r = (repo.get(user, device_id) or {}).get("restart") or {}
     return {"restartNonce": r.get("nonce") if r.get("result") is None else None}
 
@@ -272,10 +278,12 @@ def list_devices() -> dict:
         if doc.get("settings") is not None:
             r["hasSettings"], r["settingsUpdatedAt"] = True, _iso(doc.get("updatedAt"))
         if h := doc.get("health"):
-            r["health"] = {"awState": h["awState"], "at": _iso(h["at"]), "autoStart": h.get("autoStart")}
+            r["health"] = {"awState": h["awState"], "at": _iso(h["at"]), "autoStart": h.get("autoStart"),
+                           "autoReason": h.get("autoReason")}
         if q := doc.get("restart"):
             r["restart"] = {"nonce": q["nonce"], "requestedAt": _iso(q["requestedAt"]),
-                            "result": q.get("result"), "resultAt": _iso(q.get("resultAt"))}
+                            "result": q.get("result"), "reason": q.get("reason"),
+                            "resultAt": _iso(q.get("resultAt"))}
 
     def recent(r: dict) -> str:
         return max(r["lastUploadAt"] or "", r["lastFetchAt"] or "", r["settingsUpdatedAt"] or "")

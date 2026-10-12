@@ -9,6 +9,9 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
@@ -18,6 +21,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -27,10 +31,12 @@ var (
 )
 
 const (
-	healthEvery  = 60 * time.Second // 状态没变时至多这么久报一次
+	healthEvery  = 15 * time.Second // 状态没变时至多这么久报一次（面板最多等 75 秒，要赶得上取 nonce）
 	restartEvery = 30 * time.Second // 两次拉起 ActivityWatch 至少隔这么久，不管是按钮还是自动、不管 nonce 换了几个
 	autoStreak   = 2                // 连续这么多次心跳尝试都 unreachable 才自动拉起（一次抖动不算）
 	autoMaxTries = 3                // 连续自动拉起这么多次还没把 ActivityWatch 拉回来就停手
+	probeWait    = 20 * time.Second // 拉起后最多等这么久，接口起来了才算 started
+	probeEvery   = time.Second
 )
 
 // 服务端的 nonce 是 16 位十六进制；这里放宽到 1–64 位字母数字 - _，其余一律不理（也就不会原样回报）。
@@ -57,7 +63,8 @@ func awStateOf(cfg Config, beatErr error, sent bool, reachable func() bool) stri
 
 // awReachable：ActivityWatch 的 HTTP 接口有回应就算在（不看状态码、不读内容）。
 func awReachable(cfg Config, hc *http.Client) bool {
-	resp, err := hc.Get(strings.TrimRight(cfg.ActivityWatchURL, "/") + "/info")
+	// 本机接口，要么立刻有回应要么立刻拒绝；超时取短，别让一个卡住的 ActivityWatch 拖住调用方
+	resp, err := withPolicy(hc, 3*time.Second, nil).Get(strings.TrimRight(cfg.ActivityWatchURL, "/") + "/info")
 	if err != nil {
 		return false
 	}
@@ -85,53 +92,158 @@ func defaultAwStart(goos string, getenv func(string) string, lookPath func(strin
 	return nil
 }
 
-// spawnDetached：不经 shell、不继承标准输入输出、脱离本进程（detach_*.go），检测程序退出后它照样活着。
-func spawnDetached(argv []string) error {
-	cmd := exec.Command(argv[0], argv[1:]...)
-	detach(cmd)
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	go cmd.Wait() // 收尸，免得留僵尸进程
-	return nil
+// startRecord：最近一次拉起的记录，只在本机（状态文件、`ai-detector status`），不上服务端。
+type startRecord struct {
+	At       time.Time `json:"at"`
+	Trigger  string    `json:"trigger"` // auto | button
+	Argv     []string  `json:"argv"`
+	Outcome  string    `json:"outcome"` // started | failed
+	Reason   string    `json:"reason,omitempty"`
+	Error    string    `json:"error,omitempty"`
+	ExitCode *int      `json:"exitCode,omitempty"`
 }
 
-type healthReporter struct {
-	hc    *http.Client
-	state string // paths.state
+// 失败原因：严格枚举，随健康报告上去（没有自由文本）。
+const (
+	rNotFound   = "not_found"
+	rSpawnError = "spawn_error"
+	rExited     = "exited_early"
+	rNotUp      = "not_up"
+	rNoDisplay  = "no_display"
+	rStateRO    = "state_unwritable"
+)
 
-	last    string    // 上一次成功报出的 awState
+// spawnDetached：不经 shell、不继承检测程序自己的标准输入输出、脱离本进程（detach_*.go），检测程序退出后它照样活着。
+// 子进程的 stdout / stderr 写到 logPath（0600；每次先把上一份挪成 .1）。返回的通道在子进程退出时给出退出码。
+func spawnDetached(argv []string, logPath string) (<-chan int, error) {
+	cmd := exec.Command(argv[0], argv[1:]...)
+	var f *os.File
+	if logPath != "" {
+		_ = os.Rename(logPath, logPath+".1")
+		var err error
+		if f, err = os.OpenFile(logPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600); err != nil {
+			log.Printf("aw-start.log 开不了（子进程的输出不留）：%v", err)
+			f = nil
+		} else {
+			_ = f.Chmod(0o600)
+			cmd.Stdout, cmd.Stderr = f, f
+		}
+	}
+	detach(cmd)
+	err := cmd.Start()
+	if f != nil {
+		f.Close() // 子进程已经有自己的一份
+	}
+	if err != nil {
+		return nil, err
+	}
+	ch := make(chan int, 1)
+	go func() { // 兼收尸，免得留僵尸进程
+		_ = cmd.Wait()
+		code := -1
+		if cmd.ProcessState != nil {
+			code = cmd.ProcessState.ExitCode()
+		}
+		ch <- code
+	}()
+	return ch, nil
+}
+
+// healthReporter 的字段由三处并发用：心跳 goroutine（observe / auto）、健康 goroutine（report / restart）、
+// 拉起后的探测 goroutine。全部在 mu 里读写；mu 里不做网络请求。
+type healthReporter struct {
+	hc      *http.Client
+	state   string // paths.state
+	logPath string // <检测程序目录>/aw-start.log
+
+	mu      sync.Mutex
+	last    string    // 上一次成功报出的 状态/自动结果
 	lastAt  time.Time // 上一次尝试报的时刻
 	dead    bool      // 老服务端（404）：不再试，直到进程重启
 	failed  bool      // 当前处于失败连续段（只记一次日志）
-	result  *struct{ nonce, result string }
-	lastRun time.Time // 上一次拉起 ActivityWatch 的时刻（按钮和自动共用）
+	result  *restartResult
+	handled string    // 最后处理的 nonce（内存里一份，状态文件里一份）
+	lastRun time.Time // 上一次动手拉起 ActivityWatch 的时刻（按钮和自动共用），取自动手那一刻的时钟
 
-	// 自动拉起（awAutoStart）：autoState 是最近一次自动动作的结果，随健康报告上去（枚举，无自由文本）
+	// 自动拉起（awAutoStart）：autoState / autoReason 是最近一次自动动作的结果，随健康报告上去（枚举，无自由文本）
 	autoState   string
+	autoReason  string
 	streak      int  // 连续 unreachable 的次数
 	tries       int  // 自动拉起了几次、ActivityWatch 还没回来
 	gaveUp      bool // 已停手，直到再看到 ActivityWatch 连得上、或进程重启
 	noCmdLogged bool
 
-	spawn     func(argv []string) error
-	reachable func(Config) bool
-	resolve   func() []string
+	obs  observation
+	wake chan struct{}
+
+	spawn      func(argv []string, logPath string) (<-chan int, error)
+	reachable  func(Config) bool
+	resolve    func() []string
+	clock      func() time.Time
+	goos       string
+	getenv     func(string) string
+	probeWait  time.Duration
+	probeEvery time.Duration
+}
+
+type restartResult struct{ nonce, result, reason string }
+
+type observation struct {
+	cfg Config
+	st  string
+	ok  bool
 }
 
 func newHealthReporter(p paths, hc *http.Client) *healthReporter {
-	return &healthReporter{hc: hc, state: p.state, spawn: spawnDetached,
+	return &healthReporter{hc: hc, state: p.state, logPath: filepath.Join(filepath.Dir(p.state), "aw-start.log"),
+		wake: make(chan struct{}, 1), spawn: spawnDetached, clock: time.Now, goos: runtime.GOOS, getenv: os.Getenv,
+		probeWait: probeWait, probeEvery: probeEvery,
 		reachable: func(c Config) bool { return awReachable(c, hc) },
 		resolve:   func() []string { return defaultAwStart(runtime.GOOS, os.Getenv, exec.LookPath) }}
 }
 
+// observe：心跳 goroutine 每次尝试之后调。只做本地的事（记下最新状态、决定要不要自动拉起），
+// 报告交给 loop 去发——健康服务器卡住也不会拖慢下一拍心跳。
+func (h *healthReporter) observe(cfg Config, awState string) {
+	h.auto(cfg, awState)
+	h.mu.Lock()
+	h.obs = observation{cfg, awState, true}
+	h.mu.Unlock()
+	select {
+	case h.wake <- struct{}{}:
+	default:
+	}
+}
+
+// loop：健康报告自己的 goroutine，发最近一次观察到的状态。
+func (h *healthReporter) loop() {
+	for {
+		select {
+		case <-loopsStop:
+			return
+		case <-h.wake:
+		case <-time.After(time.Second):
+		}
+		h.mu.Lock()
+		o := h.obs
+		h.mu.Unlock()
+		if o.ok {
+			h.report(o.cfg, o.st)
+		}
+	}
+}
+
 // report：状态变了、或距上次超过 healthEvery、或有结果要回报时才发。失败只记日志，绝不影响调用方。
-func (h *healthReporter) report(cfg Config, awState string, now time.Time) {
+func (h *healthReporter) report(cfg Config, awState string) {
+	now := h.clock()
+	h.mu.Lock()
 	if h.dead || awState == "" || cfg.CockpitURL == "" || cfg.DeviceToken == "" || cfg.DeviceID == "" {
+		h.mu.Unlock()
 		return
 	}
-	key := awState + "/" + h.autoState
+	key := awState + "/" + h.autoState + "/" + h.autoReason
 	if key == h.last && h.result == nil && now.Sub(h.lastAt) < healthEvery {
+		h.mu.Unlock()
 		return
 	}
 	h.lastAt = now
@@ -139,63 +251,107 @@ func (h *healthReporter) report(cfg Config, awState string, now time.Time) {
 	if h.autoState != "" {
 		body["autoStart"] = h.autoState
 	}
-	if h.result != nil {
-		body["restart"] = map[string]string{"nonce": h.result.nonce, "result": h.result.result}
+	if h.autoReason != "" {
+		body["autoReason"] = h.autoReason
 	}
+	res := h.result
+	if res != nil {
+		r := map[string]string{"nonce": res.nonce, "result": res.result}
+		if res.reason != "" {
+			r["reason"] = res.reason
+		}
+		body["restart"] = r
+	}
+	h.mu.Unlock()
+
 	b, _ := json.Marshal(body)
 	c := withPolicy(h.hc, h.hc.Timeout, sameHostOnly)
 	req, _ := http.NewRequest(http.MethodPut, strings.TrimRight(cfg.CockpitURL, "/")+"/api/core/detector/health?deviceId="+url.QueryEscape(cfg.DeviceID), strings.NewReader(string(b)))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+cfg.DeviceToken)
 	resp, code, err := do(c, req)
+
+	h.mu.Lock()
 	if code == http.StatusNotFound {
 		h.dead = true
+		h.mu.Unlock()
 		log.Print("服务端不认识 /detector/health（版本较老），不再报告检测程序状态")
 		return
 	}
 	if err != nil {
-		if !h.failed {
+		quiet := h.failed
+		h.failed = true
+		h.mu.Unlock()
+		if !quiet {
 			log.Printf("检测程序状态没报出去（不影响同步 / 心跳）：%v", err)
 		}
-		h.failed = true
 		return
 	}
-	h.failed, h.last, h.result = false, key, nil
+	h.failed, h.last = false, key
+	if h.result == res { // 发的过程中结果可能已经换成新的了
+		h.result = nil
+	}
+	h.mu.Unlock()
 	var r struct {
 		RestartNonce string `json:"restartNonce"`
 	}
 	_ = json.Unmarshal(resp, &r)
-	h.syncStatus(awState)
+	_ = updateState(h.state, func(s *State) { s.Health.AwState, s.Health.At = awState, time.Now() })
 	if r.RestartNonce != "" {
-		h.restart(cfg, r.RestartNonce, now)
+		h.restart(cfg, r.RestartNonce)
 	}
 }
 
-func (h *healthReporter) syncStatus(awState string) {
-	_ = updateState(h.state, func(s *State) { s.Health.AwState, s.Health.At = awState, time.Now() })
+func (h *healthReporter) setResult(nonce, result, reason string) {
+	h.mu.Lock()
+	h.result = &restartResult{nonce, result, reason}
+	h.mu.Unlock()
 }
 
 // restart：只认 nonce。已经处理过的不再理；ActivityWatch 连得上就说「本来就在运行」；
-// 否则用本机命令拉起，30 秒内至多一次。
-func (h *healthReporter) restart(cfg Config, nonce string, now time.Time) {
+// 否则用本机命令拉起（30 秒内已拉过就先不理这个 nonce——服务端会继续给它，限频过了再处理）。
+// 先把 nonce 记进状态文件再动手：记不下来就不拉（否则重启后会重放）。
+func (h *healthReporter) restart(cfg Config, nonce string) {
 	if !nonceRe.MatchString(nonce) {
 		return
 	}
 	var st State
 	_ = loadJSON(h.state, &st)
-	if st.Health.RestartNonce == nonce {
+	h.mu.Lock()
+	dup := h.handled == nonce || st.Health.RestartNonce == nonce
+	h.mu.Unlock()
+	if dup {
 		return
 	}
-	_ = updateState(h.state, func(s *State) { s.Health.RestartNonce = nonce }) // 先记下：崩在中途也不重放
-	res := "already_running"
-	if !h.reachable(cfg) {
-		if argv := h.command(cfg); len(argv) == 0 {
-			res = "unsupported"
-		} else {
-			res = h.start(argv, now)
-		}
+	persist := func() error {
+		h.handled = nonce
+		return updateState(h.state, func(s *State) { s.Health.RestartNonce = nonce })
 	}
-	h.result = &struct{ nonce, result string }{nonce, res}
+	if h.reachable(cfg) {
+		h.mu.Lock()
+		if err := persist(); err != nil {
+			log.Printf("重启请求的 nonce 记不进状态文件（%v）", err)
+		}
+		h.mu.Unlock()
+		h.setResult(nonce, "already_running", "")
+		return
+	}
+	argv := h.command(cfg)
+	if len(argv) == 0 {
+		h.mu.Lock()
+		_ = persist()
+		h.mu.Unlock()
+		h.setResult(nonce, "unsupported", "")
+		return
+	}
+	// 按钮在检测程序暂停 / 没开同步时也照样能用：这是人明确点的，而且它只检测并重启 ActivityWatch
+	h.launch(cfg, argv, "button", persist, func(outcome, reason string) {
+		if outcome == "started" {
+			h.setResult(nonce, "started", "")
+		} else {
+			h.setResult(nonce, "failed", reason)
+		}
+	})
 }
 
 // command：本机配置的 awStartCommand，没有就按系统缺省找。**只来自本机**，没有服务端的份。
@@ -206,29 +362,94 @@ func (h *healthReporter) command(cfg Config) []string {
 	return h.resolve()
 }
 
+// canStart：调用方持有 mu。
 func (h *healthReporter) canStart(now time.Time) bool {
 	return h.lastRun.IsZero() || now.Sub(h.lastRun) >= restartEvery
 }
 
-// start：按钮和自动拉起共用的唯一一条启动路径。30 秒内已经拉过 → failed（不再拉）。
-func (h *healthReporter) start(argv []string, now time.Time) string {
-	if !h.canStart(now) {
-		return "failed"
+// launch：按钮和自动拉起共用的唯一一条启动路径。30 秒限频内返回 false（什么都没做，调用方稍后再试）。
+// 时钟在动手这一刻取（不是更早、网络请求之前的 now）。pre 在动手前（持锁）调，出错 = 不拉、原因 state_unwritable。
+// 拉起之后在单独的 goroutine 里最多等 probeWait 看接口起没起来，完事调 done(outcome, reason)。
+func (h *healthReporter) launch(cfg Config, argv []string, trigger string, pre func() error, done func(outcome, reason string)) bool {
+	h.mu.Lock()
+	t := h.clock()
+	if !h.canStart(t) {
+		h.mu.Unlock()
+		return false
 	}
-	h.lastRun = now
-	if err := h.spawn(argv); err != nil {
-		log.Printf("拉起 ActivityWatch 失败：%v", err)
-		return "failed"
+	rec := &startRecord{At: t, Trigger: trigger, Argv: argv}
+	reason := ""
+	var wait <-chan int
+	if pre != nil {
+		if err := pre(); err != nil {
+			reason, rec.Error = rStateRO, err.Error()
+		}
 	}
-	log.Print("已按本机配置拉起 ActivityWatch")
-	return "started"
+	if reason == "" {
+		h.lastRun = t
+		if h.goos == "linux" && h.getenv("DISPLAY") == "" && h.getenv("WAYLAND_DISPLAY") == "" {
+			reason = rNoDisplay // 不在桌面会话里：拉起的图形程序开不了窗口，不白拉
+		} else {
+			var err error
+			if wait, err = h.spawn(argv, h.logPath); err != nil {
+				reason, rec.Error = rSpawnError, err.Error()
+				if errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
+					reason = rNotFound
+				}
+			}
+		}
+	}
+	h.mu.Unlock()
+	if reason != "" {
+		h.finish(rec, "failed", reason, done)
+		return true
+	}
+	go h.probe(cfg, rec, wait, done)
+	return true
 }
 
-// auto：每次心跳尝试之后调一次（awState 同 report）。连续两次 unreachable 才拉；连拉 3 次没回来就停手，
+// probe：拉起后看接口起来没有。进程提前以非 0 退出 = exited_early；退出码 0（比如 macOS 的 open）继续等接口。
+func (h *healthReporter) probe(cfg Config, rec *startRecord, wait <-chan int, done func(outcome, reason string)) {
+	deadline := time.Now().Add(h.probeWait)
+	for {
+		if h.reachable(cfg) {
+			h.finish(rec, "started", "", done)
+			return
+		}
+		select {
+		case code := <-wait:
+			rec.ExitCode = &code
+			if code != 0 {
+				h.finish(rec, "failed", rExited, done)
+				return
+			}
+			wait = nil
+		case <-time.After(h.probeEvery):
+		}
+		if time.Now().After(deadline) {
+			h.finish(rec, "failed", rNotUp, done)
+			return
+		}
+	}
+}
+
+func (h *healthReporter) finish(rec *startRecord, outcome, reason string, done func(outcome, reason string)) {
+	rec.Outcome, rec.Reason = outcome, reason
+	log.Printf("拉起 ActivityWatch（%s）：命令 %q → %s %s %s", rec.Trigger, rec.Argv, outcome, reason, rec.Error)
+	if err := updateState(h.state, func(s *State) { r := *rec; s.Health.LastStart = &r }); err != nil {
+		log.Printf("拉起记录写不进状态文件：%v", err)
+	}
+	done(outcome, reason)
+}
+
+// auto：每次心跳尝试之后调一次（awState 同 report）。连续两次 unreachable 才拉；连拉 3 次没把它拉回来就停手，
 // 直到又看到 ActivityWatch 连得上；paused / disabled / 配置关掉 / 没有可运行的命令都不拉。
-func (h *healthReporter) auto(cfg Config, awState string, now time.Time) {
+// “拉回来”以拉起后的接口探测为准（launch）。
+func (h *healthReporter) auto(cfg Config, awState string) {
+	h.mu.Lock()
 	if cfg.AwAutoStart != nil && !*cfg.AwAutoStart {
 		h.autoState = "off"
+		h.mu.Unlock()
 		return
 	}
 	if h.autoState == "" || h.autoState == "off" {
@@ -238,37 +459,105 @@ func (h *healthReporter) auto(cfg Config, awState string, now time.Time) {
 	case "unreachable":
 		h.streak++
 	case "ok", "no_window":
-		h.streak, h.tries, h.gaveUp, h.noCmdLogged = 0, 0, false, false
+		h.streak, h.tries, h.gaveUp, h.noCmdLogged, h.autoReason = 0, 0, false, false, ""
 		if h.autoState == "gave_up" || h.autoState == "unsupported" {
 			h.autoState = "idle"
 		}
+		h.mu.Unlock()
 		return
 	default: // paused / disabled / 说不准：不动，也不累计
 		h.streak = 0
+		h.mu.Unlock()
 		return
 	}
 	if h.streak < autoStreak || h.gaveUp {
+		h.mu.Unlock()
 		return
 	}
 	argv := h.command(cfg)
 	if len(argv) == 0 {
 		h.autoState = "unsupported"
-		if !h.noCmdLogged {
-			h.noCmdLogged = true
+		first := !h.noCmdLogged
+		h.noCmdLogged = true
+		h.mu.Unlock()
+		if first {
 			log.Print("ActivityWatch 连不上，但本机没有可运行的启动命令（配置 awStartCommand），不自动拉起")
 		}
 		return
 	}
-	if !h.canStart(now) {
+	if !h.canStart(h.clock()) {
+		h.mu.Unlock()
 		return
 	}
 	if h.tries >= autoMaxTries {
 		h.gaveUp, h.autoState = true, "gave_up"
-		log.Printf("自动拉起了 %d 次 ActivityWatch 仍连不上，不再自动重试（面板上的按钮还能用）", autoMaxTries)
+		h.mu.Unlock()
+		log.Printf("自动拉起了 %d 次 ActivityWatch 仍连不上，不再自动重试（面板上的按钮还能用；原因见 ai-detector status）", autoMaxTries)
 		return
 	}
-	h.tries++
-	if h.start(argv, now) == "started" {
-		h.autoState = "started"
+	h.mu.Unlock()
+	if h.launch(cfg, argv, "auto", nil, h.autoDone) {
+		h.mu.Lock()
+		h.tries++
+		h.mu.Unlock()
+	}
+}
+
+func (h *healthReporter) autoDone(outcome, reason string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if outcome == "started" {
+		h.autoState, h.autoReason = "started", ""
+		return
+	}
+	h.autoReason = reason
+	if h.autoState == "started" {
+		h.autoState = "idle"
+	}
+}
+
+var reasonText = map[string][2]string{ // 原因 → (是怎么回事, 可以试试)
+	rNotFound:   {"找不到启动命令指向的程序", "装 ActivityWatch，或在配置里写 awStartCommand"},
+	rSpawnError: {"启动命令执行出错", "看上面的错误信息；确认 awStartCommand 指向的文件能运行"},
+	rExited:     {"程序启动后马上退出了", "看下面的输出（aw-start.log）"},
+	rNotUp:      {"程序在运行，但 ActivityWatch 的接口 20 秒内没起来", "看 ActivityWatch 自己的日志"},
+	rNoDisplay:  {"检测程序不在桌面会话里运行（没有 DISPLAY / WAYLAND_DISPLAY），没有尝试启动", "开机自启用 ai-detector autostart install，让它跟着桌面登录启动"},
+	rStateRO:    {"检测程序目录写不进去，没有尝试启动", "检查配置目录的权限和磁盘空间"},
+}
+
+// printLastStart：`ai-detector status` 里最近一次拉起 ActivityWatch 的情况（全是本机信息）。
+func printLastStart(out io.Writer, r *startRecord, logPath string) {
+	if r == nil {
+		return
+	}
+	who := map[string]string{"auto": "自动（连不上时检测程序自己拉起）", "button": "网页上的「重启 ActivityWatch」按钮"}[r.Trigger]
+	fmt.Fprintf(out, "上次拉起 ActivityWatch\n  时间  %s\n  触发  %s\n  命令  %q\n", isoTime(r.At), who, r.Argv)
+	if r.Outcome == "started" {
+		fmt.Fprintln(out, "  结果  成功：ActivityWatch 的接口起来了")
+	} else {
+		rt := reasonText[r.Reason]
+		fmt.Fprintf(out, "  结果  失败：%s（%s）\n", rt[0], r.Reason)
+	}
+	if r.Error != "" {
+		fmt.Fprintf(out, "  错误  %s\n", r.Error)
+	}
+	if r.ExitCode != nil {
+		fmt.Fprintf(out, "  退出码  %d\n", *r.ExitCode)
+	}
+	fmt.Fprintf(out, "  日志  %s\n", logPath)
+	if b, err := os.ReadFile(logPath); err == nil {
+		ls := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+		if len(ls) > 20 {
+			ls = ls[len(ls)-20:]
+		}
+		if len(b) > 0 {
+			fmt.Fprintf(out, "  日志最后 %d 行：\n", len(ls))
+			for _, l := range ls {
+				fmt.Fprintf(out, "    | %s\n", l)
+			}
+		}
+	}
+	if rt, ok := reasonText[r.Reason]; ok && r.Outcome != "started" {
+		fmt.Fprintf(out, "  可以试试  %s\n", rt[1])
 	}
 }

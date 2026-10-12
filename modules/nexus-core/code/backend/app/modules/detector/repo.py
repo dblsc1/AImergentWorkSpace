@@ -52,10 +52,10 @@ def set_restart(user: str, device_id: str, restart: dict) -> bool:
     return _col().update_one({"user": user, "deviceId": device_id}, {"$set": {"restart": restart}}).matched_count == 1
 
 
-def set_restart_result(user: str, device_id: str, nonce: str, result: str, at: datetime) -> None:
+def set_restart_result(user: str, device_id: str, nonce: str, result: str, reason: str | None, at: datetime) -> None:
     """nonce 对得上、且还没有结果时才记（旧 nonce、重复上报都落空）。"""
     _col().update_one({"user": user, "deviceId": device_id, "restart.nonce": nonce, "restart.result": None},
-                      {"$set": {"restart.result": result, "restart.resultAt": at}})
+                      {"$set": {"restart.result": result, "restart.reason": reason, "restart.resultAt": at}})
 
 
 def all_devices(user: str) -> list[dict]:

@@ -5,13 +5,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -62,23 +66,86 @@ func (c *healthCockpit) set(reply string, status int) {
 }
 
 type spawnLog struct {
+	mu    sync.Mutex
 	calls [][]string
 	err   error
+	wait  <-chan int // 子进程退出码；nil = 一直不退出
+	onRun func()     // 拉起时的副作用（比如让假的 ActivityWatch 起来）
 }
 
-func (s *spawnLog) spawn(argv []string) error {
+func (s *spawnLog) spawn(argv []string, _ string) (<-chan int, error) {
+	s.mu.Lock()
 	s.calls = append(s.calls, append([]string(nil), argv...))
-	return s.err
+	s.mu.Unlock()
+	if s.onRun != nil {
+		s.onRun()
+	}
+	return s.wait, s.err
 }
 
-func testReporter(t *testing.T, reach bool, sp *spawnLog) (*healthReporter, paths) {
+func (s *spawnLog) n() int { s.mu.Lock(); defer s.mu.Unlock(); return len(s.calls) }
+
+func (s *spawnLog) all() [][]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([][]string(nil), s.calls...)
+}
+
+type fakeClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *fakeClock) now() time.Time      { c.mu.Lock(); defer c.mu.Unlock(); return c.t }
+func (c *fakeClock) add(d time.Duration) { c.mu.Lock(); c.t = c.t.Add(d); c.mu.Unlock() }
+
+type env struct {
+	h     *healthReporter
+	p     paths
+	clk   *fakeClock
+	reach *atomic.Bool
+	sp    *spawnLog
+}
+
+// 假时钟、假拉起、假的「ActivityWatch 连不连得上」；goos 缺省 darwin，免得测试机有没有 DISPLAY 影响结果。
+func testEnv(t *testing.T, reach bool, sp *spawnLog) *env {
 	p := pathsIn(t.TempDir())
 	h := newHealthReporter(p, http.DefaultClient)
+	e := &env{h: h, p: p, clk: &fakeClock{t: time.Now()}, reach: &atomic.Bool{}, sp: sp}
+	e.reach.Store(reach)
+	h.clock, h.goos = e.clk.now, "darwin"
 	h.spawn = sp.spawn
-	h.reachable = func(Config) bool { return reach }
+	h.reachable = func(Config) bool { return e.reach.Load() }
 	h.resolve = func() []string { return []string{"/usr/bin/aw-qt"} }
-	return h, p
+	h.probeWait, h.probeEvery = 40*time.Millisecond, 5*time.Millisecond
+	return e
 }
+
+func (e *env) result() *restartResult { e.h.mu.Lock(); defer e.h.mu.Unlock(); return e.h.result }
+
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	for i := 0; i < 400; i++ {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timeout: %s", what)
+}
+
+func (e *env) waitResult(t *testing.T) restartResult {
+	waitFor(t, "restart result", func() bool { return e.result() != nil })
+	return *e.result()
+}
+
+func (e *env) lastStart(t *testing.T) *startRecord {
+	var st State
+	_ = loadJSON(e.p.state, &st)
+	return st.Health.LastStart
+}
+
+func (e *env) settle() { time.Sleep(150 * time.Millisecond) } // 让在途的探测走完（probeWait 40ms）
 
 func TestAwStateMapping(t *testing.T) {
 	cfg := Config{Enabled: true}
@@ -111,178 +178,286 @@ func TestHealthThrottle(t *testing.T) {
 	ck := newHealthCockpit()
 	defer ck.Close()
 	cfg := liveConfig("", ck.URL)
-	h, _ := testReporter(t, true, &spawnLog{})
-	t0 := time.Now()
-	h.report(cfg, "ok", t0)
-	h.report(cfg, "ok", t0.Add(5*time.Second))
-	h.report(cfg, "ok", t0.Add(59*time.Second))
+	e := testEnv(t, true, &spawnLog{})
+	h := e.h
+	h.report(cfg, "ok")
+	e.clk.add(5 * time.Second)
+	h.report(cfg, "ok")
+	e.clk.add(9 * time.Second)
+	h.report(cfg, "ok")
 	if ck.n() != 1 {
-		t.Fatalf("unchanged state within 60s: %d PUTs", ck.n())
+		t.Fatalf("unchanged state within 15s: %d PUTs", ck.n())
 	}
-	h.report(cfg, "unreachable", t0.Add(10*time.Second)) // 变了立刻报
-	h.report(cfg, "unreachable", t0.Add(71*time.Second))
+	e.clk.add(time.Second)
+	h.report(cfg, "ok")          // 15 秒到了
+	h.report(cfg, "unreachable") // 变了立刻报
 	if ck.n() != 3 {
-		t.Fatalf("change + 60s: %d PUTs", ck.n())
+		t.Fatalf("15s + change: %d PUTs", ck.n())
 	}
-	h.report(cfg, "", t0.Add(200*time.Second)) // 说不准：不报
+	e.clk.add(time.Minute)
+	h.report(cfg, "") // 说不准：不报
 	if ck.n() != 3 || ck.last()["awState"] != "unreachable" {
 		t.Fatal("unknown state must not be reported")
 	}
 }
 
-func TestHealthNonceHandledOnceAcrossProcessRestart(t *testing.T) {
+func TestNonceHandledOnceAcrossProcessRestart(t *testing.T) {
 	ck := newHealthCockpit()
 	defer ck.Close()
 	cfg := liveConfig("", ck.URL)
-	sp := &spawnLog{}
-	h, p := testReporter(t, false, sp)
 	cfg.AwStartCommand = []string{"/opt/aw/aw-qt", "--x"}
+	sp := &spawnLog{}
+	e := testEnv(t, false, sp)
+	sp.onRun = func() { e.reach.Store(true) } // 拉起后接口起来
 	ck.set(`{"restartNonce":"abc123"}`, 0)
-	t0 := time.Now()
-	h.report(cfg, "unreachable", t0)
-	if len(sp.calls) != 1 || !reflect.DeepEqual(sp.calls[0], cfg.AwStartCommand) {
-		t.Fatalf("spawn: %v", sp.calls)
+	e.h.report(cfg, "unreachable")
+	if r := e.waitResult(t); r.result != "started" || r.nonce != "abc123" {
+		t.Fatalf("result: %+v", r)
 	}
-	// 下一次 PUT 带结果，服务端于是不再给 nonce
+	if !reflect.DeepEqual(sp.all(), [][]string{cfg.AwStartCommand}) {
+		t.Fatalf("spawn: %v", sp.all())
+	}
 	ck.set(`{"restartNonce":null}`, 0)
-	h.report(cfg, "unreachable", t0.Add(5*time.Second))
+	e.clk.add(time.Second)
+	e.h.report(cfg, "ok") // 结果在下一次 PUT 里带上去
 	if got := ck.last()["restart"]; !reflect.DeepEqual(got, map[string]any{"nonce": "abc123", "result": "started"}) {
 		t.Fatalf("restart result: %v", got)
 	}
 	n := ck.n()
-	h.report(cfg, "unreachable", t0.Add(10*time.Second))
-	h.report(cfg, "unreachable", t0.Add(70*time.Second))
-	if ck.n() != n+1 {
-		t.Fatal("expected only the throttled periodic PUT")
-	}
-	if _, ok := ck.last()["restart"]; ok {
+	e.h.report(cfg, "ok")
+	if ck.n() != n {
 		t.Fatal("result reported twice")
 	}
 	// 进程重启（新 reporter、同一个状态文件）：服务端还给同一个 nonce，不重放
 	sp2 := &spawnLog{}
-	h2 := newHealthReporter(p, http.DefaultClient)
-	h2.spawn, h2.reachable = sp2.spawn, func(Config) bool { return false }
+	e2 := testEnv(t, false, sp2)
+	e2.h.state = e.p.state
 	ck.set(`{"restartNonce":"abc123"}`, 0)
-	h2.report(cfg, "unreachable", t0.Add(time.Hour))
-	if len(sp2.calls) != 0 {
-		t.Fatalf("replayed: %v", sp2.calls)
+	e2.h.report(cfg, "unreachable")
+	e2.settle()
+	if sp2.n() != 0 || e2.result() != nil {
+		t.Fatalf("replayed: %v %v", sp2.all(), e2.result())
 	}
-	// 状态文件里有最近一次的 awState（status 命令用）
 	var st State
-	_ = loadJSON(p.state, &st)
-	if st.Health.AwState != "unreachable" || st.Health.RestartNonce != "abc123" {
+	_ = loadJSON(e.p.state, &st)
+	if st.Health.RestartNonce != "abc123" {
 		t.Fatalf("state: %+v", st.Health)
 	}
 }
 
-func TestRestartResults(t *testing.T) {
+func TestRestartResultsAndReasons(t *testing.T) {
+	cfg := Config{AwStartCommand: []string{"/opt/aw/aw-qt"}}
+	exit := func(c int) <-chan int { ch := make(chan int, 1); ch <- c; return ch }
 	for _, c := range []struct {
-		name  string
-		reach bool
-		cmd   []string
-		def   []string
-		err   error
-		want  string
-		calls int
+		name         string
+		reach, upNow bool
+		sp           *spawnLog
+		goos         string
+		def          []string
+		cfgCmd       []string
+		want, reason string
 	}{
-		{"already running", true, nil, nil, nil, "already_running", 0},
-		{"started via default", false, nil, []string{"aw-qt"}, nil, "started", 1},
-		{"unsupported", false, nil, nil, nil, "unsupported", 0},
-		{"spawn error", false, []string{"/nope"}, nil, errors.New("not found"), "failed", 1},
+		{"already running", true, false, &spawnLog{}, "darwin", nil, cfg.AwStartCommand, "already_running", ""},
+		{"started", false, true, &spawnLog{}, "darwin", nil, cfg.AwStartCommand, "started", ""},
+		{"started via default", false, true, &spawnLog{}, "darwin", []string{"aw-qt"}, nil, "started", ""},
+		{"unsupported", false, false, &spawnLog{}, "darwin", nil, nil, "unsupported", ""},
+		{"not found", false, false, &spawnLog{err: fmt.Errorf("x: %w", exec.ErrNotFound)}, "darwin", nil, cfg.AwStartCommand, "failed", "not_found"},
+		{"spawn error", false, false, &spawnLog{err: errors.New("permission denied")}, "darwin", nil, cfg.AwStartCommand, "failed", "spawn_error"},
+		{"exited early", false, false, &spawnLog{wait: exit(3)}, "darwin", nil, cfg.AwStartCommand, "failed", "exited_early"},
+		{"exit 0 but never up", false, false, &spawnLog{wait: exit(0)}, "darwin", nil, cfg.AwStartCommand, "failed", "not_up"},
+		{"not up", false, false, &spawnLog{}, "darwin", nil, cfg.AwStartCommand, "failed", "not_up"},
+		{"no display", false, false, &spawnLog{}, "linux", nil, cfg.AwStartCommand, "failed", "no_display"},
 	} {
-		ck := newHealthCockpit()
-		sp := &spawnLog{err: c.err}
-		h, _ := testReporter(t, c.reach, sp)
-		h.resolve = func() []string { return c.def }
-		cfg := liveConfig("", ck.URL)
-		cfg.AwStartCommand = c.cmd
-		ck.set(`{"restartNonce":"n1"}`, 0)
-		h.report(cfg, "ok", time.Now())
-		h.report(cfg, "ok", time.Now())
-		got, _ := ck.last()["restart"].(map[string]any)
-		if got["result"] != c.want || len(sp.calls) != c.calls {
-			t.Errorf("%s: result=%v calls=%d", c.name, got, len(sp.calls))
+		e := testEnv(t, c.reach, c.sp)
+		if c.upNow {
+			c.sp.onRun = func() { e.reach.Store(true) }
 		}
-		ck.Close()
+		e.h.goos, e.h.getenv = c.goos, func(string) string { return "" }
+		e.h.resolve = func() []string { return c.def }
+		cc := Config{AwStartCommand: c.cfgCmd}
+		e.h.restart(cc, "n1")
+		r := e.waitResult(t)
+		if r.result != c.want || r.reason != c.reason || r.nonce != "n1" {
+			t.Errorf("%s: %+v", c.name, r)
+		}
+		wantSpawn := 0
+		if c.want == "started" || c.reason == "not_found" || c.reason == "spawn_error" || c.reason == "exited_early" || c.reason == "not_up" {
+			wantSpawn = 1
+		}
+		if c.sp.n() != wantSpawn {
+			t.Errorf("%s: spawn calls %d", c.name, c.sp.n())
+		}
+		if c.want == "failed" {
+			e.settle()
+			if ls := e.lastStart(t); ls == nil || ls.Outcome != "failed" || ls.Reason != c.reason || ls.Trigger != "button" {
+				t.Errorf("%s: record %+v", c.name, ls)
+			}
+		}
+	}
+	// 退出码记进记录
+	sp := &spawnLog{wait: exit(3)}
+	e := testEnv(t, false, sp)
+	e.h.restart(cfg, "n1")
+	e.waitResult(t)
+	e.settle()
+	if ls := e.lastStart(t); ls.ExitCode == nil || *ls.ExitCode != 3 || !reflect.DeepEqual(ls.Argv, cfg.AwStartCommand) {
+		t.Fatalf("record %+v", ls)
+	}
+	// 有 DISPLAY 就不是 no_display
+	e = testEnv(t, false, &spawnLog{})
+	e.h.goos, e.h.getenv = "linux", func(k string) string { return map[string]string{"WAYLAND_DISPLAY": "wayland-0"}[k] }
+	e.h.restart(cfg, "n1")
+	if r := e.waitResult(t); r.reason != "not_up" {
+		t.Fatalf("with WAYLAND_DISPLAY: %+v", r)
 	}
 }
 
-func TestRestartAtMostOncePer30s(t *testing.T) {
-	ck := newHealthCockpit()
-	defer ck.Close()
+// 状态文件写不进去：nonce 记不下来就不拉，结果 failed / state_unwritable。
+func TestRestartNotSpawnedWhenNonceNotPersisted(t *testing.T) {
 	sp := &spawnLog{}
-	h, _ := testReporter(t, false, sp)
-	cfg := liveConfig("", ck.URL)
-	t0 := time.Now()
-	ck.set(`{"restartNonce":"n1"}`, 0)
-	h.report(cfg, "unreachable", t0)
-	ck.set(`{"restartNonce":"n2"}`, 0)
-	h.report(cfg, "unreachable", t0.Add(5*time.Second)) // 带着 n1 的结果；响应里是新 nonce n2
-	if len(sp.calls) != 1 {
-		t.Fatalf("second nonce within 30s spawned: %v", sp.calls)
+	e := testEnv(t, false, sp)
+	blocker := filepath.Join(t.TempDir(), "file")
+	_ = os.WriteFile(blocker, nil, 0o600)
+	e.h.state = filepath.Join(blocker, "state.json") // 父路径是个普通文件：建不出来
+	e.h.restart(Config{AwStartCommand: []string{"/opt/aw/aw-qt"}}, "n1")
+	r := e.waitResult(t)
+	if r.result != "failed" || r.reason != "state_unwritable" || sp.n() != 0 {
+		t.Fatalf("%+v spawn=%d", r, sp.n())
 	}
-	h.report(cfg, "unreachable", t0.Add(10*time.Second))
-	if got := ck.last()["restart"].(map[string]any); got["nonce"] != "n2" || got["result"] != "failed" {
-		t.Fatalf("throttled result: %v", got)
-	}
-	ck.set(`{"restartNonce":"n3"}`, 0)
-	h.report(cfg, "no_window", t0.Add(31*time.Second))
-	if len(sp.calls) != 2 {
-		t.Fatalf("after 30s should spawn: %v", sp.calls)
+	e.h.restart(Config{AwStartCommand: []string{"/opt/aw/aw-qt"}}, "n1") // 内存里也记着：不重复处理
+	e.settle()
+	if sp.n() != 0 {
+		t.Fatal("spawned on replay")
 	}
 }
 
-// 安全底线：服务端发来的任何东西都不会成为命令，也不会拼进命令。
-func TestServerDataNeverReachesArgv(t *testing.T) {
+// 30 秒内到的 nonce 不回 failed：留着不处理，限频过了再处理。
+func TestNonceInsideCooldownIsLeftUnhandled(t *testing.T) {
+	sp := &spawnLog{}
+	e := testEnv(t, false, sp)
+	cfg := Config{AwStartCommand: []string{"/opt/aw/aw-qt"}}
+	e.h.restart(cfg, "n1")
+	e.waitResult(t)
+	e.clk.add(5 * time.Second)
+	e.h.restart(cfg, "n2")
+	e.settle()
+	var st State
+	_ = loadJSON(e.p.state, &st)
+	if sp.n() != 1 || st.Health.RestartNonce != "n1" || e.result().nonce != "n1" {
+		t.Fatalf("n2 should be untouched: spawn=%d state=%q result=%+v", sp.n(), st.Health.RestartNonce, e.result())
+	}
+	e.clk.add(30 * time.Second)
+	e.h.restart(cfg, "n2")
+	waitFor(t, "n2 handled", func() bool { r := e.result(); return r != nil && r.nonce == "n2" })
+	if sp.n() != 2 {
+		t.Fatalf("spawn after cooldown: %d", sp.n())
+	}
+}
+
+// 冷却用动手那一刻的时钟：拿到 nonce 之后的网络探测很慢，限频照这一刻算，也照这一刻记。
+func TestCooldownUsesClockAtSpawn(t *testing.T) {
+	sp := &spawnLog{}
+	e := testEnv(t, false, sp)
+	cfg := Config{AwStartCommand: []string{"/opt/aw/aw-qt"}}
+	t0 := e.clk.now()
+	e.h.lastRun = t0.Add(-10 * time.Second)
+	e.h.reachable = func(Config) bool { e.clk.add(25 * time.Second); return false } // 慢请求：25 秒过去了
+	e.h.restart(cfg, "n1")
+	waitFor(t, "spawned", func() bool { return sp.n() == 1 })
+	e.h.mu.Lock()
+	got := e.h.lastRun
+	e.h.mu.Unlock()
+	if !got.Equal(t0.Add(25 * time.Second)) {
+		t.Fatalf("lastRun %v, want clock at spawn %v", got.Sub(t0), 25*time.Second)
+	}
+}
+
+// 按钮在暂停 / 没开同步时也能用；自动拉起这时从不动。
+func TestButtonWorksWhenPausedOrDisabledAutoDoesNot(t *testing.T) {
+	for _, c := range []Config{{Paused: true, Enabled: true}, {}} {
+		c.AwStartCommand = []string{"/opt/aw/aw-qt"}
+		sp := &spawnLog{}
+		e := testEnv(t, false, sp)
+		for i := 0; i < 5; i++ {
+			e.clk.add(time.Minute)
+			e.h.auto(c, awStateOf(c, errAWDown, false, func() bool { return false }))
+		}
+		e.settle()
+		if sp.n() != 0 {
+			t.Fatalf("auto spawned with %+v", c)
+		}
+		e.h.restart(c, "n1")
+		if r := e.waitResult(t); r.result != "failed" || sp.n() != 1 { // 假 AW 一直没起来：failed/not_up，但确实拉了
+			t.Fatalf("button %+v spawn=%d", r, sp.n())
+		}
+	}
+}
+
+// 安全底线：服务端发来的任何东西都不会成为命令，也不会拼进命令；本机的输出和错误串也不会发给服务端。
+func TestServerDataNeverReachesArgvAndLocalTextNeverLeaves(t *testing.T) {
 	ck := newHealthCockpit()
 	defer ck.Close()
-	sp := &spawnLog{}
-	h, _ := testReporter(t, false, sp)
+	sp := &spawnLog{err: errors.New("SECRET-ERR-/home/me/x")}
+	e := testEnv(t, false, sp)
+	dir := filepath.Dir(e.p.state)
+	_ = os.WriteFile(filepath.Join(dir, "aw-start.log"), []byte("SECRET-LOG-LINE\n"), 0o600)
 	cfg := liveConfig("", ck.URL)
 	cfg.AwStartCommand = []string{"/opt/aw/aw-qt"}
 	evil := `"command":["/bin/sh","-c","touch /tmp/pwned"],"awStartCommand":["/bin/evil"],"argv":["x"],"cmd":"rm -rf /"`
 	ck.set(`{`+evil+`,"restartNonce":"n-1_ok"}`, 0)
-	h.report(cfg, "unreachable", time.Now())
-	if !reflect.DeepEqual(sp.calls, [][]string{{"/opt/aw/aw-qt"}}) {
-		t.Fatalf("argv: %v", sp.calls)
+	e.h.report(cfg, "unreachable")
+	e.waitResult(t)
+	e.clk.add(time.Minute)
+	e.h.report(cfg, "unreachable") // 带着失败结果
+	// 自动路径
+	for i := 0; i < 2; i++ {
+		e.h.auto(cfg, "unreachable")
 	}
-	// 缺省命令同理：来自 resolve（本机），不含 nonce
-	sp.calls = nil
-	cfg.AwStartCommand = nil
-	h.lastRun = time.Time{}
-	ck.set(`{`+evil+`,"restartNonce":"n-2_ok"}`, 0)
-	h.report(cfg, "unreachable", time.Now())
-	for _, a := range sp.calls[0] {
-		if strings.Contains(a, "n-2") || strings.Contains(a, "evil") || strings.Contains(a, "pwned") {
-			t.Fatalf("server data in argv: %v", sp.calls)
+	e.settle()
+	for _, a := range sp.all() {
+		if !reflect.DeepEqual(a, []string{"/opt/aw/aw-qt"}) {
+			t.Fatalf("argv: %v", a)
 		}
 	}
-	// 形状不对的 nonce 整个不理：不拉起，也不原样回报
-	sp.calls = nil
-	ck.set(`{"restartNonce":null}`, 0)
-	h.report(cfg, "ok", time.Now().Add(30*time.Minute)) // 先把 n-2 的结果送出去
+	// 形状不对的 nonce 整个不理
+	n := sp.n()
 	for _, bad := range []string{"a b", "$(id)", "x;y", strings.Repeat("a", 65)} {
 		b, _ := json.Marshal(map[string]string{"restartNonce": bad})
 		ck.set(string(b), 0)
-		h.lastRun = time.Time{}
-		h.report(cfg, "unreachable", time.Now().Add(time.Hour+time.Duration(len(bad))*time.Minute))
-		if _, ok := ck.last()["restart"]; ok || len(sp.calls) != 0 {
-			t.Fatalf("bad nonce %q accepted", bad)
+		e.clk.add(time.Minute)
+		e.h.report(cfg, "unreachable")
+	}
+	e.settle()
+	if sp.n() != n {
+		t.Fatal("bad nonce spawned")
+	}
+	ck.mu.Lock()
+	defer ck.mu.Unlock()
+	allowed := map[string]bool{"awState": true, "autoStart": true, "autoReason": true, "restart": true}
+	for _, b := range ck.bodies {
+		raw, _ := json.Marshal(b)
+		if strings.Contains(string(raw), "SECRET") || strings.Contains(string(raw), "/opt/aw") {
+			t.Fatalf("local text leaked: %s", raw)
+		}
+		for k := range b {
+			if !allowed[k] {
+				t.Fatalf("unexpected key %q", k)
+			}
 		}
 	}
 }
 
-// awStartCommand 不能从网页设置进来：settings 文档里带它，照样是未知键，也不会改 Config。
-func TestAwStartCommandNotFromWebSettings(t *testing.T) {
+// awStartCommand / awAutoStart 不能从网页设置进来。
+func TestAwKeysNotFromWebSettings(t *testing.T) {
 	ck := newLiveCockpit(t)
 	defer ck.Close()
-	ck.settings = `{"settings":{"awStartCommand":["/bin/evil"],"privacy":{"awStartCommand":["/bin/evil"]},"idle":{}}}`
+	ck.settings = `{"settings":{"awStartCommand":["/bin/evil"],"awAutoStart":false,"privacy":{"awStartCommand":["/bin/evil"]},"idle":{}}}`
 	cfg := Config{CockpitURL: ck.URL, DeviceToken: "t", DeviceID: "d"}
 	if err := applyRemoteSettings(&cfg, http.DefaultClient, ck.URL); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.AwStartCommand != nil {
-		t.Fatalf("web settings set awStartCommand: %v", cfg.AwStartCommand)
+	if cfg.AwStartCommand != nil || cfg.AwAutoStart != nil {
+		t.Fatalf("web settings set local-only keys: %v %v", cfg.AwStartCommand, cfg.AwAutoStart)
 	}
 	if k := unknownKeys([]byte(`{"privacy":{"awStartCommand":["x"]}}`)); !reflect.DeepEqual(k, []string{"privacy.awStartCommand"}) {
 		t.Fatalf("unknown keys: %v", k)
@@ -293,47 +468,63 @@ func TestHealth404StopsAndFailureIsQuiet(t *testing.T) {
 	ck := newHealthCockpit()
 	defer ck.Close()
 	cfg := liveConfig("", ck.URL)
-	h, _ := testReporter(t, true, &spawnLog{})
+	e := testEnv(t, true, &spawnLog{})
 	ck.set("", 404)
-	t0 := time.Now()
-	h.report(cfg, "ok", t0)
-	h.report(cfg, "unreachable", t0.Add(time.Hour))
-	if ck.n() != 1 || !h.dead {
-		t.Fatalf("404 should stop: n=%d dead=%v", ck.n(), h.dead)
+	e.h.report(cfg, "ok")
+	e.h.report(cfg, "unreachable")
+	if ck.n() != 1 || !e.h.dead {
+		t.Fatalf("404 should stop: n=%d dead=%v", ck.n(), e.h.dead)
 	}
-	// 失败不 panic、不置 dead、下一次变化照试
-	h2, _ := testReporter(t, true, &spawnLog{})
+	e2 := testEnv(t, true, &spawnLog{})
 	ck.set("", 503)
-	h2.report(cfg, "ok", t0)
-	h2.report(cfg, "unreachable", t0.Add(time.Second))
-	if h2.dead || !h2.failed || ck.n() != 3 {
-		t.Fatalf("503: dead=%v failed=%v n=%d", h2.dead, h2.failed, ck.n())
+	e2.h.report(cfg, "ok")
+	e2.h.report(cfg, "unreachable")
+	if e2.h.dead || !e2.h.failed || ck.n() != 3 {
+		t.Fatalf("503: dead=%v failed=%v n=%d", e2.h.dead, e2.h.failed, ck.n())
 	}
 }
 
-// 健康报告失败（服务端不通）不影响在场心跳本身：presenceLoop 的两步互相独立，这里验心跳照发、报告 503。
-func TestHealthFailureDoesNotBreakPresence(t *testing.T) {
+// 健康服务器卡住：observe 立刻返回（心跳线程不等它），而且心跳照常按间隔发。
+func TestHangingHealthServerDoesNotDelayPresence(t *testing.T) {
 	now := time.Now()
-	aw := fakeAWWeb(t, []awEvent{{Timestamp: now.Add(-time.Minute), Duration: 55, Data: map[string]any{"app": "code", "title": "x"}}}, nil, nil)
+	aw := fakeAWWeb(t, []awEvent{{Timestamp: now.Add(-time.Hour), Duration: 3600, Data: map[string]any{"app": "code", "title": "x"}}}, nil, nil)
 	defer aw.Close()
 	ck := newLiveCockpit(t)
+	release := make(chan struct{})
 	defer ck.Close()
-	remotePresence.Store(nil)
-	cfg := liveConfig(aw.URL, ck.URL)
+	defer close(release)
 	ck.respond = func(p string) (int, string) {
 		if strings.HasSuffix(p, "/detector/health") {
-			return 503, ""
+			<-release
 		}
 		return 0, ""
 	}
-	hc := &healthReporter{hc: http.DefaultClient, state: filepath.Join(t.TempDir(), "s.json"), reachable: func(Config) bool { return true }}
-	sent, err := presenceBeat(cfg, http.DefaultClient, now)
-	hc.report(cfg, awStateOf(cfg, err, sent, func() bool { return true }), now)
-	if !sent || err != nil || len(ck.posts("/activity/presence")) != 1 {
-		t.Fatalf("presence broke: sent=%v err=%v", sent, err)
+	remotePresence.Store(nil)
+	dir := t.TempDir()
+	p := pathsIn(dir)
+	cfg := liveConfig(aw.URL, ck.URL)
+	cfg.PresenceSeconds = 5
+	if err := saveJSON(p.config, cfg); err != nil {
+		t.Fatal(err)
 	}
-	if !hc.failed {
-		t.Fatal("health failure not noticed")
+	go presenceLoop(p, &http.Client{Timeout: 15 * time.Second})
+	// 第一拍 + 第二拍（间隔 5 秒）都得在健康 PUT 卡着的时候发出来；同步实现要等 15 秒超时
+	waitDeadline := time.Now().Add(9 * time.Second)
+	for time.Now().Before(waitDeadline) && len(ck.posts("/activity/presence")) < 2 {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if n := len(ck.posts("/activity/presence")); n < 2 {
+		t.Fatalf("presence beats while health hangs: %d", n)
+	}
+	// observe 本身不阻塞
+	e := testEnv(t, true, &spawnLog{})
+	go e.h.loop()
+	start := time.Now()
+	for i := 0; i < 3; i++ {
+		e.h.observe(cfg, "ok")
+	}
+	if time.Since(start) > time.Second {
+		t.Fatal("observe blocked")
 	}
 }
 
@@ -363,50 +554,65 @@ func TestDefaultAwStart(t *testing.T) {
 
 func TestAutoStart(t *testing.T) {
 	cfg := Config{Enabled: true, AwStartCommand: []string{"/opt/aw/aw-qt"}}
-	t0 := time.Now()
-	step := func(h *healthReporter, st string, at time.Duration) { h.auto(cfg, st, t0.Add(at)) }
 
-	// 一次抖动不拉，连续两次才拉；中间恢复会清零
+	// 一次抖动不拉，连续两次才拉；探测到接口起来了才算 started
 	sp := &spawnLog{}
-	h, _ := testReporter(t, false, sp)
-	step(h, "unreachable", 0)
-	step(h, "ok", time.Second)
-	step(h, "unreachable", 2*time.Second)
-	if len(sp.calls) != 0 {
-		t.Fatalf("blip spawned: %v", sp.calls)
+	e := testEnv(t, false, sp)
+	sp.onRun = func() { e.reach.Store(true) }
+	e.h.auto(cfg, "unreachable")
+	e.h.auto(cfg, "ok")
+	e.h.auto(cfg, "unreachable")
+	if sp.n() != 0 {
+		t.Fatalf("blip spawned: %v", sp.all())
 	}
-	step(h, "unreachable", 7*time.Second)
-	if len(sp.calls) != 1 || h.autoState != "started" || !reflect.DeepEqual(sp.calls[0], cfg.AwStartCommand) {
-		t.Fatalf("calls=%v state=%q", sp.calls, h.autoState)
+	e.h.auto(cfg, "unreachable")
+	waitFor(t, "auto started", func() bool { e.h.mu.Lock(); defer e.h.mu.Unlock(); return e.h.autoState == "started" })
+	if sp.n() != 1 || !reflect.DeepEqual(sp.all()[0], cfg.AwStartCommand) {
+		t.Fatalf("calls=%v", sp.all())
 	}
 
-	// 与按钮共用 30 秒：刚自动拉过，按钮拉不了；反过来也一样
-	if got := h.start(cfg.AwStartCommand, t0.Add(10*time.Second)); got != "failed" || len(sp.calls) != 1 {
-		t.Fatalf("button within 30s: %q", got)
+	// 与按钮共用 30 秒
+	e.clk.add(10 * time.Second)
+	e.h.restart(cfg, "n1")
+	e.settle()
+	if sp.n() != 1 {
+		t.Fatal("button within 30s of auto spawned")
 	}
 	sp2 := &spawnLog{}
-	h2, _ := testReporter(t, false, sp2)
-	h2.start(cfg.AwStartCommand, t0)
-	step(h2, "unreachable", time.Second)
-	step(h2, "unreachable", 6*time.Second)
-	if len(sp2.calls) != 1 {
-		t.Fatalf("auto within 30s of button spawned: %v", sp2.calls)
+	e2 := testEnv(t, false, sp2)
+	e2.h.restart(cfg, "n1")
+	e2.waitResult(t)
+	e2.clk.add(5 * time.Second)
+	e2.h.auto(cfg, "unreachable")
+	e2.h.auto(cfg, "unreachable")
+	e2.settle()
+	if sp2.n() != 1 {
+		t.Fatalf("auto within 30s of button spawned: %d", sp2.n())
 	}
 
-	// 连拉 3 次没回来：第 4 个可拉的时刻停手；ActivityWatch 回来后恢复
+	// 拉起了但接口没起来 = 失败；连 3 次失败后停手（带原因），AW 回来后恢复
 	sp3 := &spawnLog{}
-	h3, _ := testReporter(t, false, sp3)
-	for i := 0; i < 12; i++ {
-		step(h3, "unreachable", time.Duration(i)*31*time.Second)
+	e3 := testEnv(t, false, sp3)
+	for i := 0; i < 8; i++ {
+		e3.clk.add(31 * time.Second)
+		e3.h.auto(cfg, "unreachable")
+		e3.settle()
 	}
-	if len(sp3.calls) != 3 || !h3.gaveUp || h3.autoState != "gave_up" {
-		t.Fatalf("calls=%d gaveUp=%v state=%q", len(sp3.calls), h3.gaveUp, h3.autoState)
+	e3.h.mu.Lock()
+	gaveUp, st, why := e3.h.gaveUp, e3.h.autoState, e3.h.autoReason
+	e3.h.mu.Unlock()
+	if sp3.n() != 3 || !gaveUp || st != "gave_up" || why != "not_up" {
+		t.Fatalf("calls=%d gaveUp=%v state=%q reason=%q", sp3.n(), gaveUp, st, why)
 	}
-	step(h3, "ok", 20*time.Minute)
-	step(h3, "unreachable", 21*time.Minute)
-	step(h3, "unreachable", 22*time.Minute)
-	if len(sp3.calls) != 4 || h3.gaveUp {
-		t.Fatalf("should resume after reachable: calls=%d", len(sp3.calls))
+	e3.h.auto(cfg, "ok")
+	e3.reach.Store(false)
+	for i := 0; i < 2; i++ {
+		e3.clk.add(31 * time.Second)
+		e3.h.auto(cfg, "unreachable")
+	}
+	e3.settle()
+	if sp3.n() != 4 {
+		t.Fatalf("should resume after reachable: calls=%d", sp3.n())
 	}
 
 	// 关掉 / paused / disabled：从不拉
@@ -421,57 +627,165 @@ func TestAutoStart(t *testing.T) {
 		{"disabled", Config{AwStartCommand: cfg.AwStartCommand}, "disabled"},
 	} {
 		sp := &spawnLog{}
-		h, _ := testReporter(t, false, sp)
+		e := testEnv(t, false, sp)
 		for i := 0; i < 5; i++ {
-			h.auto(c.cfg, c.st, t0.Add(time.Duration(i)*time.Minute))
+			e.clk.add(time.Minute)
+			e.h.auto(c.cfg, c.st)
 		}
-		if len(sp.calls) != 0 {
+		e.settle()
+		if sp.n() != 0 {
 			t.Errorf("%s spawned", c.name)
 		}
-		if c.name == "off" && h.autoState != "off" {
-			t.Errorf("off state %q", h.autoState)
+		if c.name == "off" && e.h.autoState != "off" {
+			t.Errorf("off state %q", e.h.autoState)
 		}
 	}
 
 	// 没有可运行的命令：不拉，报 unsupported
 	sp4 := &spawnLog{}
-	h4, _ := testReporter(t, false, sp4)
-	h4.resolve = func() []string { return nil }
+	e4 := testEnv(t, false, sp4)
+	e4.h.resolve = func() []string { return nil }
 	for i := 0; i < 4; i++ {
-		h4.auto(Config{Enabled: true}, "unreachable", t0.Add(time.Duration(i)*time.Minute))
+		e4.clk.add(time.Minute)
+		e4.h.auto(Config{Enabled: true}, "unreachable")
 	}
-	if len(sp4.calls) != 0 || h4.autoState != "unsupported" {
-		t.Fatalf("calls=%v state=%q", sp4.calls, h4.autoState)
+	if sp4.n() != 0 || e4.h.autoState != "unsupported" {
+		t.Fatalf("calls=%v state=%q", sp4.all(), e4.h.autoState)
+	}
+
+	// 没有桌面会话：不拉，3 次后停手，原因 no_display
+	sp5 := &spawnLog{}
+	e5 := testEnv(t, false, sp5)
+	e5.h.goos, e5.h.getenv = "linux", func(string) string { return "" }
+	for i := 0; i < 6; i++ {
+		e5.clk.add(31 * time.Second)
+		e5.h.auto(cfg, "unreachable")
+		e5.settle()
+	}
+	if sp5.n() != 0 || e5.h.autoState != "gave_up" || e5.h.autoReason != "no_display" {
+		t.Fatalf("no display: calls=%d state=%q reason=%q", sp5.n(), e5.h.autoState, e5.h.autoReason)
 	}
 }
 
-// 自动路径的状态随健康报告上去，且服务端的数据照样到不了 argv。
-func TestAutoStartReportedAndServerDataNeverReachesArgv(t *testing.T) {
+// 自动拉起的状态与原因随健康报告上去。
+func TestAutoStartReported(t *testing.T) {
 	ck := newHealthCockpit()
 	defer ck.Close()
 	sp := &spawnLog{}
-	h, _ := testReporter(t, false, sp)
+	e := testEnv(t, false, sp)
 	cfg := liveConfig("", ck.URL)
 	cfg.AwStartCommand = []string{"/opt/aw/aw-qt"}
-	ck.set(`{"command":["/bin/evil"],"awStartCommand":["/bin/evil"],"autoStart":"x","restartNonce":null}`, 0)
-	t0 := time.Now()
 	for i := 0; i < 2; i++ {
-		at := t0.Add(time.Duration(i) * 5 * time.Second)
-		h.auto(cfg, "unreachable", at)
-		h.report(cfg, "unreachable", at)
+		e.h.auto(cfg, "unreachable")
 	}
-	if !reflect.DeepEqual(sp.calls, [][]string{{"/opt/aw/aw-qt"}}) {
-		t.Fatalf("argv: %v", sp.calls)
-	}
-	if ck.last()["autoStart"] != "started" || ck.last()["awState"] != "unreachable" {
+	waitFor(t, "auto failed", func() bool { e.h.mu.Lock(); defer e.h.mu.Unlock(); return e.h.autoReason != "" })
+	e.h.report(cfg, "unreachable")
+	if ck.last()["autoReason"] != "not_up" || ck.last()["autoStart"] != "idle" || ck.last()["awState"] != "unreachable" {
 		t.Fatalf("body: %v", ck.last())
 	}
-	// awAutoStart 也不能从网页设置进来
-	cs := newLiveCockpit(t)
-	defer cs.Close()
-	cs.settings = `{"settings":{"awAutoStart":false,"privacy":{},"idle":{}}}`
-	c2 := Config{CockpitURL: cs.URL, DeviceToken: "t", DeviceID: "d"}
-	if err := applyRemoteSettings(&c2, http.DefaultClient, cs.URL); err != nil || c2.AwAutoStart != nil {
-		t.Fatalf("web settings set awAutoStart: %v %v", err, c2.AwAutoStart)
+}
+
+// 真的拉一个小命令（测试自己的 argv，不是产品用 shell）：输出进 aw-start.log、权限 0600、轮转成 .1、退出码给出来。
+func TestSpawnDetachedWritesLogAndRotates(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("用 sh")
+	}
+	logPath := filepath.Join(t.TempDir(), "aw-start.log")
+	run := func(script string) int {
+		ch, err := spawnDetached([]string{"sh", "-c", script}, logPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case c := <-ch:
+			return c
+		case <-time.After(5 * time.Second):
+			t.Fatal("child did not exit")
+		}
+		return -1
+	}
+	if c := run("echo first; echo oops >&2; exit 3"); c != 3 {
+		t.Fatalf("exit %d", c)
+	}
+	b, _ := os.ReadFile(logPath)
+	if !strings.Contains(string(b), "first") || !strings.Contains(string(b), "oops") {
+		t.Fatalf("log: %q", b)
+	}
+	if fi, _ := os.Stat(logPath); fi.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v", fi.Mode())
+	}
+	run("echo second")
+	cur, _ := os.ReadFile(logPath)
+	prev, _ := os.ReadFile(logPath + ".1")
+	if strings.Contains(string(cur), "first") || !strings.Contains(string(cur), "second") || !strings.Contains(string(prev), "first") {
+		t.Fatalf("rotation: cur=%q prev=%q", cur, prev)
+	}
+	if _, err := spawnDetached([]string{"/nonexistent/aw-qt"}, logPath); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("missing binary: %v", err)
+	}
+}
+
+// 整条链：真拉一个马上退出的命令 → exited_early + 退出码 + 记录；status 输出里有记录和日志末尾。
+func TestStatusShowsLastStartAndLogTail(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("用 sh")
+	}
+	sp := &spawnLog{}
+	e := testEnv(t, false, sp)
+	e.h.spawn = spawnDetached
+	e.h.probeWait = 2 * time.Second
+	var lines []string
+	for i := 1; i <= 25; i++ {
+		lines = append(lines, fmt.Sprintf("echo line%02d", i))
+	}
+	cfg := Config{AwStartCommand: []string{"sh", "-c", strings.Join(lines, "; ") + "; exit 3"}}
+	e.h.restart(cfg, "n1")
+	if r := e.waitResult(t); r.result != "failed" || r.reason != "exited_early" {
+		t.Fatalf("%+v", r)
+	}
+	e.settle()
+	var out strings.Builder
+	printLastStart(&out, e.lastStart(t), e.h.logPath)
+	s := out.String()
+	for _, want := range []string{"网页上的「重启 ActivityWatch」按钮", "程序启动后马上退出了", "退出码  3", "aw-start.log", "| line25", "| line06", "看下面的输出"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("status lacks %q:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "| line05") {
+		t.Errorf("more than 20 lines:\n%s", s)
+	}
+}
+
+// 状态文件的读—改—写：所有写者经 updateState（一把锁），整份原子落盘（临时文件 + rename）。-race 下并发写不丢字段、读到的永远是完整 JSON。
+func TestStateConcurrentWriters(t *testing.T) {
+	p := pathsIn(t.TempDir())
+	var wg sync.WaitGroup
+	for w := 0; w < 4; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for i := 0; i < 40; i++ {
+				switch w {
+				case 0: // 同步一轮的回写（照 runOnce）
+					st := State{Cursor: time.Unix(int64(i), 0)}
+					_ = updateState(p.state, func(s *State) { ag, hs := s.Agents, s.Health; *s = st; s.Agents, s.Health = ag, hs })
+				case 1: // 状态文件桥
+					_ = updateState(p.state, func(s *State) { s.Agents = map[string]*agentRun{fmt.Sprint(i): {}} })
+				case 2: // 健康报告
+					_ = updateState(p.state, func(s *State) { s.Health.RestartNonce = fmt.Sprint(i) })
+				default: // 读者
+					var st State
+					if err := loadJSON(p.state, &st); err != nil && !errors.Is(err, os.ErrNotExist) {
+						t.Errorf("torn read: %v", err)
+					}
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+	var st State
+	if err := loadJSON(p.state, &st); err != nil || st.Health.RestartNonce != "39" || len(st.Agents) != 1 || st.Cursor.Unix() != 39 {
+		t.Fatalf("lost update: %v %+v", err, st)
 	}
 }

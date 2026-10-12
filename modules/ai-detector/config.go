@@ -305,9 +305,10 @@ type State struct {
 
 // healthState：最近一次报给服务端的 awState，和最后处理过的重启 nonce（检测程序重启后不重放同一个）。
 type healthState struct {
-	AwState      string    `json:"awState,omitempty"`
-	At           time.Time `json:"at"`
-	RestartNonce string    `json:"restartNonce,omitempty"`
+	AwState      string       `json:"awState,omitempty"`
+	At           time.Time    `json:"at"`
+	RestartNonce string       `json:"restartNonce,omitempty"`
+	LastStart    *startRecord `json:"lastStart,omitempty"` // 最近一次拉起 ActivityWatch 的记录（只在本机）
 }
 
 var stateMu sync.Mutex

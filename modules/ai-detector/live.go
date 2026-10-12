@@ -301,6 +301,7 @@ func presenceLoop(p paths, hc *http.Client) {
 	var b beater
 	var warned bool
 	hr := newHealthReporter(p, hc)
+	go hr.loop() // 健康报告自己一个 goroutine：服务器卡住不拖慢心跳
 	every(func() time.Duration {
 		cfg, err := readConfig(p)
 		if err != nil {
@@ -317,9 +318,7 @@ func presenceLoop(p paths, hc *http.Client) {
 		} else if sent {
 			q.last = ""
 		}
-		st, now := awStateOf(cfg, err, sent, func() bool { return hr.reachable(cfg) }), time.Now()
-		hr.auto(cfg, st, now)
-		hr.report(cfg, st, now)
+		hr.observe(cfg, awStateOf(cfg, err, sent, func() bool { return hr.reachable(cfg) }))
 		return presenceInterval(cfg)
 	})
 }
