@@ -37,6 +37,7 @@ const (
 	autoMaxTries = 3                // 连续自动拉起这么多次还没把 ActivityWatch 拉回来就停手
 	probeWait    = 20 * time.Second // 拉起后最多等这么久，接口起来了才算 started
 	probeEvery   = time.Second
+	stableAfter  = time.Minute // ActivityWatch 要连续连得上这么久，才清零「已自动拉起几次 / 已停手」（一闪一灭不算恢复）
 )
 
 // 服务端的 nonce 是 16 位十六进制；这里放宽到 1–64 位字母数字 - _，其余一律不理（也就不会原样回报）。
@@ -168,9 +169,10 @@ type healthReporter struct {
 	// 自动拉起（awAutoStart）：autoState / autoReason 是最近一次自动动作的结果，随健康报告上去（枚举，无自由文本）
 	autoState   string
 	autoReason  string
-	streak      int  // 连续 unreachable 的次数
-	tries       int  // 自动拉起了几次、ActivityWatch 还没回来
-	gaveUp      bool // 已停手，直到再看到 ActivityWatch 连得上、或进程重启
+	streak      int       // 连续 unreachable 的次数
+	tries       int       // 自动拉起了几次、ActivityWatch 还没回来
+	gaveUp      bool      // 已停手，直到 ActivityWatch 连续连得上 stableAfter、或进程重启
+	upSince     time.Time // 连续连得上的起点；一次 unreachable 就清空
 	noCmdLogged bool
 
 	obs  observation
@@ -458,10 +460,18 @@ func (h *healthReporter) auto(cfg Config, awState string) {
 	switch awState {
 	case "unreachable":
 		h.streak++
+		h.upSince = time.Time{}
 	case "ok", "no_window":
-		h.streak, h.tries, h.gaveUp, h.noCmdLogged, h.autoReason = 0, 0, false, false, ""
-		if h.autoState == "gave_up" || h.autoState == "unsupported" {
-			h.autoState = "idle"
+		h.streak = 0
+		now := h.clock()
+		if h.upSince.IsZero() {
+			h.upSince = now
+		}
+		if now.Sub(h.upSince) >= stableAfter {
+			h.tries, h.gaveUp, h.noCmdLogged, h.autoReason = 0, false, false, ""
+			if h.autoState == "gave_up" || h.autoState == "unsupported" {
+				h.autoState = "idle"
+			}
 		}
 		h.mu.Unlock()
 		return

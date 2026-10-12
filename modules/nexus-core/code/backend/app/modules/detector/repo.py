@@ -52,9 +52,11 @@ def set_restart(user: str, device_id: str, restart: dict) -> bool:
     return _col().update_one({"user": user, "deviceId": device_id}, {"$set": {"restart": restart}}).matched_count == 1
 
 
-def set_restart_result(user: str, device_id: str, nonce: str, result: str, reason: str | None, at: datetime) -> None:
-    """nonce 对得上、且还没有结果时才记（旧 nonce、重复上报都落空）。"""
-    _col().update_one({"user": user, "deviceId": device_id, "restart.nonce": nonce, "restart.result": None},
+def set_restart_result(user: str, device_id: str, nonce: str, result: str, reason: str | None, not_before: datetime,
+                       at: datetime) -> None:
+    """nonce 对得上、还没有结果、且请求没过期（requestedAt ≥ not_before）时才记（旧 nonce、重复上报、过期的都落空）。"""
+    _col().update_one({"user": user, "deviceId": device_id, "restart.nonce": nonce, "restart.result": None,
+                       "restart.requestedAt": {"$gte": not_before}},
                       {"$set": {"restart.result": result, "restart.reason": reason, "restart.resultAt": at}})
 
 

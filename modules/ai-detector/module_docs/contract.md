@@ -496,6 +496,7 @@ Authorization: Bearer <deviceToken>
 - **自动拉起**（`ai-detector.config.v1` 追加 `awAutoStart`，布尔，缺省 `true`，只认本机配置）：与按钮是**同一条启动路径**——同样的命令解析、同样的脱离式拉起、**共用**「两次拉起至少隔 30 秒，不管 nonce 换了几个、也不管是按钮还是自动」。
   条件：连续两次心跳尝试都是 `unreachable` 才拉（一次抖动不拉）；`paused` / `disabled` 从不拉；没有可运行的命令 → 不尝试、每段连续失败记一行。
   连续自动拉起 3 次仍没把 ActivityWatch 拉回来 → 记一行并停手，直到再看到 ActivityWatch 连得上（或进程重启）；面板上的按钮在停手期间照样可用（仍受 30 秒限制）。
+  「已自动拉起几次 / 已停手」要等 ActivityWatch **连续连得上 60 秒**才清零——一闪一灭（亮一拍又死）不算恢复，否则会无止境地拉。
   “没把它拉回来”以上面的接口探测为准（`not_up` / `exited_early` 等都算失败，不是「进程拉起来了」就算数）。
   最近一次自动动作的结果随健康报告上去：`autoStart` ∈ `off`（配置关了）/ `idle`（没有拉过）/ `started`（接口确实起来了）/ `gave_up` / `unsupported`；失败时 `autoReason` 带同一套原因枚举（`no_display` 时不拉，3 次尝试后同样停手）。
 - **边界**：按钮和自动拉起都只在检测程序自己活着（在用户的桌面会话里运行）时有效，救不了已经死掉的检测程序——那是 `ai-detector autostart install` 的事；重启后 ActivityWatch 自己开机自启才是根治。

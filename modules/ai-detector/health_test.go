@@ -605,6 +605,8 @@ func TestAutoStart(t *testing.T) {
 		t.Fatalf("calls=%d gaveUp=%v state=%q reason=%q", sp3.n(), gaveUp, st, why)
 	}
 	e3.h.auto(cfg, "ok")
+	e3.clk.add(61 * time.Second)
+	e3.h.auto(cfg, "ok") // 连续连得上超过 60 秒才算恢复
 	e3.reach.Store(false)
 	for i := 0; i < 2; i++ {
 		e3.clk.add(31 * time.Second)
@@ -787,5 +789,82 @@ func TestStateConcurrentWriters(t *testing.T) {
 	var st State
 	if err := loadJSON(p.state, &st); err != nil || st.Health.RestartNonce != "39" || len(st.Agents) != 1 || st.Cursor.Unix() != 39 {
 		t.Fatalf("lost update: %v %+v", err, st)
+	}
+}
+
+// 一闪一灭的 ActivityWatch：每次只亮一拍就死，不能每次都把「已拉起几次」清零（评审里模拟过一小时拉了 90 次）。
+func TestFlappingActivityWatchGivesUp(t *testing.T) {
+	sp := &spawnLog{}
+	e := testEnv(t, false, sp)
+	cfg := Config{Enabled: true, AwStartCommand: []string{"/opt/aw/aw-qt"}}
+	for i := 0; i < 720; i++ { // 一小时，每 5 秒一拍：亮 1 拍、死 5 拍
+		e.clk.add(5 * time.Second)
+		if i%6 == 0 {
+			e.h.auto(cfg, "ok")
+		} else {
+			e.h.auto(cfg, "unreachable")
+		}
+	}
+	e.settle()
+	e.h.mu.Lock()
+	defer e.h.mu.Unlock()
+	if sp.n() > autoMaxTries || !e.h.gaveUp || e.h.autoState != "gave_up" {
+		t.Fatalf("spawns=%d gaveUp=%v state=%q", sp.n(), e.h.gaveUp, e.h.autoState)
+	}
+}
+
+// 被 30 秒限频挡住的拍既不记入尝试次数，也不会提前触发「停手」。
+func TestRateLimitedBeatsDoNotConsumeTries(t *testing.T) {
+	cfg := Config{Enabled: true, AwStartCommand: []string{"/opt/aw/aw-qt"}}
+	sp := &spawnLog{}
+	e := testEnv(t, false, sp)
+	e.h.lastRun = e.clk.now()
+	for i := 0; i < 10; i++ {
+		e.h.auto(cfg, "unreachable")
+	}
+	e.h.mu.Lock()
+	tries := e.h.tries
+	e.h.mu.Unlock()
+	if sp.n() != 0 || tries != 0 {
+		t.Fatalf("rate-limited: spawns=%d tries=%d", sp.n(), tries)
+	}
+	// 已经 3 次了，但限频没过：先别宣布停手（过了限频才判）
+	e.h.mu.Lock()
+	e.h.tries = autoMaxTries
+	e.h.mu.Unlock()
+	e.h.auto(cfg, "unreachable")
+	e.h.mu.Lock()
+	gaveUp := e.h.gaveUp
+	e.h.mu.Unlock()
+	if gaveUp {
+		t.Fatal("gave up inside the cooldown")
+	}
+	e.clk.add(31 * time.Second)
+	e.h.auto(cfg, "unreachable")
+	e.h.mu.Lock()
+	defer e.h.mu.Unlock()
+	if !e.h.gaveUp || sp.n() != 0 {
+		t.Fatalf("should give up after cooldown without spawning: gaveUp=%v spawns=%d", e.h.gaveUp, sp.n())
+	}
+}
+
+// 中间隔了 paused / disabled 的两次 unreachable 不连续：不拉。
+func TestStreakResetsOnPausedOrDisabled(t *testing.T) {
+	for _, mid := range []string{"paused", "disabled", ""} {
+		sp := &spawnLog{}
+		e := testEnv(t, false, sp)
+		cfg := Config{Enabled: true, AwStartCommand: []string{"/opt/aw/aw-qt"}}
+		e.h.auto(cfg, "unreachable")
+		e.h.auto(cfg, mid)
+		e.h.auto(cfg, "unreachable")
+		e.settle()
+		if sp.n() != 0 {
+			t.Errorf("unreachable,%q,unreachable spawned", mid)
+		}
+		e.h.auto(cfg, "unreachable") // 现在才是连续两次
+		e.settle()
+		if sp.n() != 1 {
+			t.Errorf("after %q two consecutive should spawn: %d", mid, sp.n())
+		}
 	}
 }

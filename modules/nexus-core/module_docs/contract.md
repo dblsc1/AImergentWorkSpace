@@ -4168,14 +4168,16 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 - 服务端存 `health: {awState, at, autoStart, autoReason}`（`at` = 服务端时钟，后两项缺省 `null`）。`reason` / `autoReason` 是严格枚举（枚举外 422）：
   详细的错误串和日志**只在那台电脑上**（`ai-detector status`、`aw-start.log`），从不经此端点上来。老检测程序不带这些字段，全部按 `null`。`restart` 给了、且 `restart.nonce` 等于这台设备当前待处理的 nonce、
   而它还没有结果，才记 `result` + `resultAt`；旧 nonce、重复的上报一律忽略（不是错误）。
-- 响应 `{"restartNonce": <还没有结果的待处理 nonce> | null}`。
+- 响应 `{"restartNonce": <还没有结果、且请求还没过期的待处理 nonce> | null}`。**请求 5 分钟（`requestedAt`，服务端时钟）没人理就作废**：不再作为 `restartNonce` 给出，它的结果也不收
+  （离线时点的重启，几小时后检测程序回来不该再把 ActivityWatch 拉起来）；人再点一次就是新请求。
 
 **`POST /api/core/detector/restart?deviceId=`**——**只收人**：带 `Authorization: Bearer` 一律 `403`（与 PUT settings 同一规则、同一机制：被偷的设备令牌触发不了它）。
 设备不存在 `404`。写 `restart: {nonce: <随机>, requestedAt}`（顶掉更早的），返回 `{"nonce": …}`。**服务端不下发命令**：nonce 只是个编号，检测程序据此做什么由它本机的配置决定
 （`ai-detector` 契约「健康报告与拉起 ActivityWatch」）。
 
 **`GET /api/core/detector/devices`** 每台设备追加：`health: {awState, at, autoStart, autoReason} | null`、
-`restart: {nonce, requestedAt, result | null, reason | null, resultAt | null} | null`。`result: "started"` 的含义是 ActivityWatch 的接口确实起来了（检测程序拉起后探测过），不只是进程拉起来了。既有字段不变。
+`restart: {nonce, requestedAt, result | null, reason | null, resultAt | null, expired} | null`（`expired`：没有结果且已过 5 分钟）；
+响应顶层追加 `now`：服务端当前时刻（ISO）——面板用它算 `health.at` 的新旧，浏览器时钟不准也不会误判离线。`result: "started"` 的含义是 ActivityWatch 的接口确实起来了（检测程序拉起后探测过），不只是进程拉起来了。既有字段不变。
 
 ## 待确认时间的按天汇总（规范性 · v2.26）
 

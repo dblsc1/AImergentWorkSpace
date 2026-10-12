@@ -276,7 +276,7 @@ HoneyComb 的时间线页可以把「人一条线、AI 代理多条线」画在�
   `"awStartCommand": ["C:\\Users\\me\\AppData\\Local\\Programs\\ActivityWatch\\aw-qt.exe"]`。不写就按系统缺省：Windows 找
   `%LOCALAPPDATA%\Programs\ActivityWatch\aw-qt.exe`，macOS `open -a ActivityWatch`，Linux 在 PATH 里找 `aw-qt`；都找不到，面板上显示「这台电脑上没配置启动命令」。
 - **自动拉起默认是开的**：ActivityWatch 连续两次心跳都连不上（`paused` / 没开同步时不算）时，检测程序自己用同一条命令拉起它，不用点按钮。
-  两次拉起至少隔 30 秒（按钮和自动共用）；连拉 3 次还没起来就停手，等 ActivityWatch 回来再恢复。不想要就在配置里写 `"awAutoStart": false`（同样只认本机配置）。
+  两次拉起至少隔 30 秒（按钮和自动共用）；连拉 3 次还没起来就停手，等 ActivityWatch 连续稳定 60 秒再恢复。不想要就在配置里写 `"awAutoStart": false`（同样只认本机配置）。
 - **“已启动”是真的起来了**：拉起后检测程序最多等 20 秒看 ActivityWatch 的接口通没通，通了才算成功；没通就是失败，面板会给出大类原因（找不到程序 / 马上退出 / 接口没起来 / 不在桌面会话里 ……）。
   被拉起程序的输出写在配置目录的 `aw-start.log`（上一次的留作 `aw-start.log.1`），`ai-detector status` 会打印最近一次拉起的详情和日志最后 20 行；这些只在你的电脑上，不会发给服务器。
 - 网页上的按钮在检测程序暂停 / 没开同步时也能用（它只检测并重启 ActivityWatch）；自动拉起在暂停 / 没开同步时不会动。

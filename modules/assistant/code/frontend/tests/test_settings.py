@@ -47,6 +47,7 @@ class DetectorStub:
         self.calls: list[tuple[str, str, str | None, Any]] = []   # (方法, 路径, deviceId, body)
         self.put_reply: tuple[int, dict] | None = None             # 非 None = PUT 回这个（422 / 403…）
         self.restart_calls = 0
+        self.now: str | None = None                                # 服务端时钟（GET devices 的 now）；None = 老服务端不给
         self.hold_restart = False                                  # 慢请求：POST restart 先不回
         self.held: Route | None = None
         self.restart_reply: tuple[int, dict] = (200, {"nonce": "n1"})
@@ -64,7 +65,7 @@ class DetectorStub:
         if path == "devices":
             if self.devices is None:
                 return j(404, {"detail": "Not Found"})
-            return j(200, {"devices": self.devices})
+            return j(200, {"devices": self.devices, **({"now": self.now} if self.now else {})})
         if req.method == "POST" and path == "restart":
             self.restart_calls += 1
             self.devices[0]["restart"] = {"nonce": self.restart_reply[1].get("nonce"), "requestedAt": "x",
@@ -543,6 +544,7 @@ def test_health_line_texts(browser, static_base_url):
         ready(page)
         assert "这个版本的检测程序不报告状态" in page.inner_text("#det-health")
         assert page.is_disabled("#det-restart")
+        assert not page.is_visible("#det-offline-hint")   # 状态未知不等于离线
 
 
 def test_button_explanation_always_visible_and_offline_hint(browser, static_base_url):
@@ -672,3 +674,72 @@ def test_slow_restart_post_survives_device_switch(browser, static_base_url):
         page.wait_for_timeout(300)
         assert errors == []
         assert not page.inner_text("#det-restart-msg") and page.is_enabled("#det-restart")
+
+
+def _iso(dt):
+    return dt.astimezone(timezone.utc).isoformat()
+
+
+def test_browser_clock_skew_uses_server_now(browser, static_base_url):
+    """浏览器时钟比服务端快 4 分钟：按浏览器算 health.at 已是 4 分钟前 = 离线；按服务端的 now 算才是 10 秒前 = 在线。"""
+    server_now = datetime.now(timezone.utc) - timedelta(minutes=4)
+    stub = DetectorStub()
+    stub.now = _iso(server_now)
+    stub.devices[0]["health"] = {"awState": "ok", "at": _iso(server_now - timedelta(seconds=10)), "autoStart": None}
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        assert page.inner_text("#det-health") == "检测程序：在线 · ActivityWatch：正常"
+        assert page.is_enabled("#det-restart")
+    stub.now = None   # 老服务端没有 now：退回浏览器时钟
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        assert "离线" in page.inner_text("#det-health")
+
+
+def test_unparseable_health_at_is_no_health(browser, static_base_url):
+    stub = DetectorStub()
+    stub.devices[0]["health"] = {"awState": "ok", "at": "garbage", "autoStart": None}
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        t = page.inner_text("#det-health")
+        assert "NaN" not in t and "这个版本的检测程序不报告状态" in t and page.is_disabled("#det-restart")
+
+
+def test_switching_device_clears_pending_wait(browser, static_base_url):
+    stub = _stub_health(state="unreachable")
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        page.clock.install()
+        page.click("#det-restart")
+        page.wait_for_function("document.getElementById('det-restart-msg').textContent.includes('等检测程序回报')")
+        assert page.is_disabled("#det-restart")           # 等待期间不能再点
+        page.select_option("#det-device", "dev_b")
+        page.wait_for_function("document.getElementById('det-device-meta').textContent.includes('没有，用本机配置文件')")
+        assert not page.inner_text("#det-restart-msg")    # 等待被清掉
+        page.select_option("#det-device", "dev_a")
+        page.wait_for_selector("#det-form:not([hidden])")
+        assert page.is_enabled("#det-restart") and not page.inner_text("#det-restart-msg")
+        stub.devices[0]["restart"]["result"] = "started"   # 旧的等待不会再冒出结果
+        page.clock.run_for(7000)
+        page.wait_for_timeout(200)
+        assert not page.inner_text("#det-restart-msg")
+
+
+def test_hostile_server_strings_are_text_not_markup(browser, static_base_url):
+    evil = "<img src=x onerror=window.pwned=1>"
+    stub = DetectorStub(devices=[{"deviceId": evil, "lastUploadAt": None, "lastFetchAt": None, "hasSettings": False,
+                                  "settingsUpdatedAt": None, "health": _health(state=evil, auto=evil, auto_reason=evil),
+                                  "restart": None}])
+    stub.settings = {evil: None}
+    stub.restart_reply = (500, {"detail": evil})
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        page.click("#det-restart")
+        page.wait_for_function("document.getElementById('det-restart-msg').textContent.includes('请求失败')")
+        assert evil in page.inner_text("#det-restart-msg")                  # 当文本显示
+        page.wait_for_timeout(200)
+        assert page.evaluate("window.pwned") is None
+        assert page.query_selector("#settings-panel img") is None
+        # 状态行：未知的枚举值显示成「未知」，deviceId 只出现在下拉选项的文本里
+        assert "未知" in page.inner_text("#det-health")
+        assert page.query_selector("#det-health *") is None and page.query_selector("#det-restart-msg *") is None

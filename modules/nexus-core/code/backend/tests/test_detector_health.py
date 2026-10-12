@@ -144,3 +144,37 @@ def test_reasons_stored_and_listed(client):
     _health(client, {"awState": "ok", "restart": {"nonce": n, "result": "started"}}, BEARER)
     d = _dev(client)
     assert d["restart"]["reason"] is None and d["health"]["autoReason"] is None
+
+
+def test_stale_restart_request_expires(client, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from app.modules.detector import service
+
+    _health(client, {"awState": "unreachable"}, BEARER)
+    n = _restart(client).json()["nonce"]
+    t0 = datetime.now(timezone.utc)
+    # 4 分钟：还在
+    monkeypatch.setattr(service, "_now", lambda: t0 + timedelta(minutes=4))
+    assert _health(client, {"awState": "unreachable"}, BEARER).json() == {"restartNonce": n}
+    assert _dev(client)["restart"]["expired"] is False
+    # 6 分钟：不再给检测程序；结果也不收；devices 里 result 仍是 null，expired = true
+    monkeypatch.setattr(service, "_now", lambda: t0 + timedelta(minutes=6))
+    assert _health(client, {"awState": "unreachable"}, BEARER).json() == {"restartNonce": None}
+    r = _health(client, {"awState": "ok", "restart": {"nonce": n, "result": "started"}}, BEARER)
+    assert r.json() == {"restartNonce": None}
+    d = _dev(client)["restart"]
+    assert d["nonce"] == n and d["result"] is None and d["resultAt"] is None and d["expired"] is True
+    # 重新点一次：新的请求是新鲜的
+    n2 = _restart(client).json()["nonce"]
+    assert _health(client, {"awState": "unreachable"}, BEARER).json() == {"restartNonce": n2}
+    _health(client, {"awState": "ok", "restart": {"nonce": n2, "result": "started"}}, BEARER)
+    assert _dev(client)["restart"]["result"] == "started" and _dev(client)["restart"]["expired"] is False
+
+
+def test_devices_carry_server_now(client):
+    from datetime import datetime, timezone
+
+    body = client.get(f"{API}/devices").json()
+    assert abs((datetime.fromisoformat(body["now"]) - datetime.now(timezone.utc)).total_seconds()) < 30
+    assert body["devices"] == []

@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -33,6 +33,7 @@ from ..activity import service as activity_service
 from . import repo
 
 MAX_BODY = 64 * 1024
+RESTART_TTL = timedelta(minutes=5)  # v2.27：重启请求过了这么久没人理就作废（离线时点的，几小时后别又把 ActivityWatch 拉起来）
 DEVICE_ID = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 # RE2（Go regexp）不支持、Python re 支持的构造：前后查找、反向引用、条件组、原子组、占有量词。
 # 服务端先拒，免得检测程序那边只能跳过。这是尽力校验：检测程序自己再用 Go 编译一次，
@@ -215,6 +216,13 @@ def put_settings(device_id: str, authorization: str | None, body: bytes) -> dict
     return _out(device_id, repo.get(user, device_id))
 
 
+def _fresh(restart: dict, now: datetime) -> bool:
+    t = restart.get("requestedAt")
+    if t is not None and t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return t is not None and now - t < RESTART_TTL
+
+
 def put_health(device_id: str, body: bytes) -> dict:
     """v2.27：设备令牌与 cookie 都能调（同 GET settings）。"""
     _check_device(device_id)
@@ -229,11 +237,12 @@ def put_health(device_id: str, body: bytes) -> dict:
         raise InvalidSettingsError(f"请求体不是合法 JSON：{exc}") from exc
     user, now = current_tenant(), _now()
     if h.restart:
-        repo.set_restart_result(user, device_id, h.restart.nonce, h.restart.result, h.restart.reason, now)
+        repo.set_restart_result(user, device_id, h.restart.nonce, h.restart.result, h.restart.reason, now - RESTART_TTL, now)
     repo.set_health(user, device_id, {"awState": h.awState, "at": now, "autoStart": h.autoStart,
                                        "autoReason": h.autoReason})
     r = (repo.get(user, device_id) or {}).get("restart") or {}
-    return {"restartNonce": r.get("nonce") if r.get("result") is None else None}
+    pending = r.get("result") is None and r and _fresh(r, now)
+    return {"restartNonce": r["nonce"] if pending else None}
 
 
 def request_restart(device_id: str, authorization: str | None) -> dict:
@@ -262,7 +271,7 @@ def delete_settings(device_id: str, authorization: str | None) -> None:
 
 
 def list_devices() -> dict:
-    user = current_tenant()
+    user, now = current_tenant(), _now()
     rows: dict[str, dict] = {}
 
     def row(dev: str) -> dict:
@@ -283,9 +292,11 @@ def list_devices() -> dict:
         if q := doc.get("restart"):
             r["restart"] = {"nonce": q["nonce"], "requestedAt": _iso(q["requestedAt"]),
                             "result": q.get("result"), "reason": q.get("reason"),
+                            "expired": q.get("result") is None and not _fresh(q, now),
                             "resultAt": _iso(q.get("resultAt"))}
 
     def recent(r: dict) -> str:
         return max(r["lastUploadAt"] or "", r["lastFetchAt"] or "", r["settingsUpdatedAt"] or "")
 
-    return {"devices": sorted(rows.values(), key=recent, reverse=True)}
+    # now：服务端时钟。面板拿它算 health.at 的新旧，不依赖浏览器时钟准不准
+    return {"devices": sorted(rows.values(), key=recent, reverse=True), "now": _iso(now)}

@@ -130,9 +130,9 @@
   var LOG_HINT = "详细原因和日志在那台电脑上：运行 ai-detector status，或查看检测程序目录下的 aw-start.log。";
   function reasonText(r) { return REASON_TEXT[r] || "原因未知"; }
   function healthLine(dev, nowMs) {
-    var h = dev && dev.health;
-    if (!h) return { text: "检测程序状态：这个版本的检测程序不报告状态", online: null };
-    var age = nowMs - new Date(h.at).getTime();
+    var h = dev && dev.health, at = h ? Date.parse(h.at) : NaN;
+    if (!h || isNaN(at)) return { text: "检测程序状态：这个版本的检测程序不报告状态", online: null };
+    var age = nowMs - at;
     if (!(age < STALE_MS)) {
       return { text: "检测程序：离线（最近一次报告 " + Math.max(1, Math.floor(age / 60000)) + " 分钟前）", online: false };
     }
@@ -168,6 +168,11 @@
   var restartMsgEl = document.getElementById("det-restart-msg");
 
   var devices = [];
+  var skew = 0;             // 服务端时钟 − 浏览器时钟（GET devices 的 now）；老服务端没有 now = 0
+  function noteNow(body) {
+    var t = Date.parse(body && body.now);
+    skew = isNaN(t) ? 0 : t - Date.now();
+  }
   var device = null;        // 当前设备 id
   var loaded = null;        // GET 回来的整份响应 {deviceId, settings, updatedAt}
   var base = null;          // 表单的底稿：settings 或 DEFAULTS（未知键从这里原样带回去）
@@ -283,7 +288,7 @@
     var has = loaded && loaded.settings;
     metaEl.textContent = "最近上传建议：" + when(dev.lastUploadAt) + " · 最近拉设置：" + when(dev.lastFetchAt) +
       " · 网页设置：" + (has ? "有（" + when(loaded.updatedAt) + " 更新）" : "没有，用本机配置文件");
-    var hl = healthLine(dev, Date.now());
+    var hl = healthLine(dev, Date.now() + skew);
     healthEl.textContent = hl.text;
     restartBtn.disabled = hl.online !== true || Boolean(pending);
     offlineHintEl.hidden = hl.online !== false;
@@ -369,6 +374,7 @@
       return;
     }
     if (!r.ok) { showMessage("设备列表加载失败：" + explain(r), true); return; }
+    noteNow(r.body);
     devices = (r.body && r.body.devices) || [];
     deviceEl.textContent = "";
     devices.forEach(function (d) {
@@ -444,7 +450,7 @@
   // 保存 / 删除之后设备行的「网页设置」跟着变：重拉一次列表，不换当前设备、不重填表单
   async function refreshDeviceRow() {
     var r = await request("GET", "devices");
-    if (r.ok && r.body && r.body.devices) { devices = r.body.devices; renderMeta(); }
+    if (r.ok && r.body && r.body.devices) { noteNow(r.body); devices = r.body.devices; renderMeta(); }
   }
 
   loadDevices();
