@@ -4161,7 +4161,7 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
   "autoStart": "off" | "idle" | "started" | "gave_up" | "unsupported",   // 可选：检测程序最近一次「自动拉起 ActivityWatch」的结果
   "autoReason": "not_found" | "spawn_error" | "exited_early" | "not_up" | "no_display" | "state_unwritable" | "daily_cap",   // 可选：自动拉起失败的原因（枚举）
   "restart": { "nonce": "<1–64 字符>", "result": "started" | "already_running" | "failed" | "unsupported",
-               "reason": "<同 autoReason 的枚举>" } }   // 可选；reason 只在 failed 时有意义
+               "reason": "<同 autoReason 的枚举，但不含 daily_cap>" } }   // 可选；reason 只在 failed 时有意义
 ```
 
 - **整个请求体里没有任何自由文本**：窗口标题、路径、错误串都到不了服务端。
