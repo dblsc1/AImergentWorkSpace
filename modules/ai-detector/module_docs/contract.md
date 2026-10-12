@@ -471,6 +471,26 @@ Authorization: Bearer <deviceToken>
   （v1.2 补注：顶层仍如此；`spans` 带的是「上一次成功以来」的停留，见上——没发出去的请求本身依旧丢掉。）
 - 服务端只留最近 2 小时、不进导出（nexus-core v2.4「在场心跳」节）；想留成记录的仍走上面的「上传」→ 人确认。
 
+## 健康报告与拉起 ActivityWatch（`ai-detector.health.v1` · 规范性，v0.4 追加）
+
+对应 nexus-core v2.27。只在 `run` 里、跟在每次在场心跳尝试之后（同一个 goroutine），不拖慢同步。
+
+- **报告**：`PUT /api/core/detector/health?deviceId=`（带设备令牌），体 `{awState, autoStart?, restart?}`。`awState`：ActivityWatch 接口连不上 = `unreachable`；
+  连得上但最近一分钟没有窗口记录 = `no_window`；配置 `paused` / 没 `enabled` = `paused` / `disabled`；否则 `ok`（心跳没开时探一下接口有没有回应）。
+  状态变了立刻报，否则至多每 60 秒一次；有重启结果要回报时下一次尝试就报。**报告失败只记一次日志（一段连续失败只记一次），绝不阻塞、不影响心跳与同步**；
+  老服务端答 404 → 本进程不再试，记一行。体里没有任何自由文本。`ai-detector status` 打印最近一次报出去的 `awState`。
+- **按钮拉起**：响应里的 `restartNonce` 与上次处理的不同时：ActivityWatch 连得上 → 结果 `already_running`；否则用**本机**命令拉起。
+  处理过的 nonce 记在状态文件里，检测程序重启后不重放。结果在下一次健康报告里回报：`started` / `already_running` / `failed`（拉起出错，或 30 秒限制内）/ `unsupported`（没有可运行的命令）。
+- **命令只来自本机**（`ai-detector.config.v1` 追加 `awStartCommand`：argv 数组，不经 shell）。没写就按系统缺省：Windows `%LOCALAPPDATA%\Programs\ActivityWatch\aw-qt.exe`（要存在）、
+  macOS `open -a ActivityWatch`、Linux 在 PATH 里找 `aw-qt`；都没有 = `unsupported`。以脱离本进程的方式拉起（Linux/macOS 新会话，Windows 脱离控制台与进程组），不继承标准输入输出。
+- **安全底线（测试锁住）**：服务端发来的任何东西都不是命令，也不拼进命令；它只给一个不透明 nonce（形状 `[A-Za-z0-9_-]{1,64}`，不合的整个不理），程序原样回报。
+  `awStartCommand`、`awAutoStart` 只认本机配置文件；`detector.settings.v1` 不收这两个键（网页设置里带它们仍是未知键，不改变任何行为）。
+- **自动拉起**（`ai-detector.config.v1` 追加 `awAutoStart`，布尔，缺省 `true`，只认本机配置）：与按钮是**同一条启动路径**——同样的命令解析、同样的脱离式拉起、**共用**「两次拉起至少隔 30 秒，不管 nonce 换了几个、也不管是按钮还是自动」。
+  条件：连续两次心跳尝试都是 `unreachable` 才拉（一次抖动不拉）；`paused` / `disabled` 从不拉；没有可运行的命令 → 不尝试、每段连续失败记一行。
+  连续自动拉起 3 次仍没把 ActivityWatch 拉回来 → 记一行并停手，直到再看到 ActivityWatch 连得上（或进程重启）；面板上的按钮在停手期间照样可用（仍受 30 秒限制）。
+  最近一次自动动作的结果随健康报告上去：`autoStart` ∈ `off`（配置关了）/ `idle`（没有拉过）/ `started` / `gave_up` / `unsupported`。
+- **边界**：按钮和自动拉起都只在检测程序自己活着（在用户的桌面会话里运行）时有效，救不了已经死掉的检测程序——那是 `ai-detector autostart install` 的事；重启后 ActivityWatch 自己开机自启才是根治。
+
 ## 状态文件桥（`ai-detector.agent-status-bridge.v1` · 规范性，v0.3 追加）
 
 给**没有钩子**的代理（或已经有一个桌面状态守护进程在看着它们的用户）用：本程序定期读一个本机 JSON 文件，
@@ -525,6 +545,7 @@ Authorization: Bearer <deviceToken>
 
 | 日期 | 变更 |
 |---|---|
+| 2026-10-12 | health.v1 首版、config.v1 追加 `awStartCommand` / `awAutoStart`（均只认本机配置，不进网页设置）：检测程序向 nexus-core v2.27 报告自己与 ActivityWatch 的状态；网页「重启」经不透明 nonce 让它用本机命令拉起 ActivityWatch；ActivityWatch 连续两次连不上时自动拉起（30 秒限频、连拉 3 次不成功停手）。服务端数据不进命令 |
 | 2026-10-09 | presence.v1 v1.2.1（修订，PR #87 审核）：`presenceSeconds` 大于 30 时实际按 30 秒发（值仍合法，记一次日志）。v1.2 起每拍只往回带 60 秒的停留，而配置允许到 300 秒一拍——那样大部分停留没人报。请求的形状、配置文件的键都不变 |
 | 2026-10-09 | presence.v1 v1.2、config.v1 v1.5（追加）：仓主 2026-10-09「每 5 秒汇报一次，每次汇报里带各个窗口的停留时间」「人的注意力只能串行」。`presenceSeconds` 缺省 15 → 5（越界同样按 5；已写进配置文件的值不动）；心跳追加 `sentAt` + `spans [{app, title, from, seconds, guess?}]`：上一次成功的那一拍以来（至多往回 60 秒）人依次在过的窗口，串行、不重叠、离开已扣、短于 0.5 秒的不成段、至多 12 段（超了带 `truncated`）；脱敏与规则匹配同顶层同一条路径。顶层四个键含义不变，没有段时请求体与 v1.1 相同；老 nexus-core 忽略新键。对应 nexus-core v2.17 |
 | 2026-10-08 | upload.v1 v1.3、presence.v1 v1.1、config.v1 v1.4（追加）：仓主 2026-10-08「我的操作自动替代进行中计时」。规则可以只到项目（`projectId`，上传 `suggestion.projectId`）；网页设置 `autoTrack` 打开时在场心跳带规则对当前窗口的猜测 `guess`（同一个匹配函数，本机算，只发目标 id 与把握）。`autoTrack` 关着时两条请求体与此前逐字节相同。**取代条目**：本文件开头「它从不写事实：人在界面上确认了，才由 nexus-core 写 `session.completed`」仍然成立于本程序（它只上传建议）；但设备打开 `autoTrack` 后，nexus-core 会把规则把握 ≥ 0.9 的段直接记成事实（nexus-core v2.14） |

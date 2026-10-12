@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+import secrets
 from datetime import datetime, timezone
 from typing import Annotated, Literal
 
@@ -74,6 +75,10 @@ class InvalidSettingsError(ValueError):
 
 class TooLargeError(ValueError):
     """请求体超过 64 KiB。main.py 映射成 413。"""
+
+
+class NotFoundError(LookupError):
+    """设备不存在（restart）。main.py 映射成 404。"""
 
 
 class _Strict(BaseModel):
@@ -137,6 +142,18 @@ class DetectorSettings(_Strict):
         return v
 
 
+# v2.27：检测程序报的健康状态。没有任何自由文本字段——本机的标题、路径、错误串到不了服务端。
+class _Restart(_Strict):
+    nonce: Annotated[StrictStr, Field(min_length=1, max_length=64)]
+    result: Literal["started", "already_running", "failed", "unsupported"]
+
+
+class Health(_Strict):
+    awState: Literal["ok", "unreachable", "no_window", "paused", "disabled"]
+    restart: _Restart | None = None
+    autoStart: Literal["off", "idle", "started", "gave_up", "unsupported"] | None = None  # 最近一次自动拉起的结果
+
+
 def _iso(t: datetime | None) -> str | None:
     if t is None:
         return None
@@ -193,6 +210,36 @@ def put_settings(device_id: str, authorization: str | None, body: bytes) -> dict
     return _out(device_id, repo.get(user, device_id))
 
 
+def put_health(device_id: str, body: bytes) -> dict:
+    """v2.27：设备令牌与 cookie 都能调（同 GET settings）。"""
+    _check_device(device_id)
+    if len(body) > 1024:
+        raise TooLargeError("请求体超过 1024 字节")
+    try:
+        h = Health.model_validate(json.loads(body))
+    except ValidationError as exc:
+        err = exc.errors()[0]
+        raise InvalidSettingsError(f"{'.'.join(str(p) for p in err['loc']) or '<root>'}: {err['msg']}") from exc
+    except ValueError as exc:
+        raise InvalidSettingsError(f"请求体不是合法 JSON：{exc}") from exc
+    user, now = current_tenant(), _now()
+    if h.restart:
+        repo.set_restart_result(user, device_id, h.restart.nonce, h.restart.result, now)
+    repo.set_health(user, device_id, {"awState": h.awState, "at": now, "autoStart": h.autoStart})
+    r = (repo.get(user, device_id) or {}).get("restart") or {}
+    return {"restartNonce": r.get("nonce") if r.get("result") is None else None}
+
+
+def request_restart(device_id: str, authorization: str | None) -> dict:
+    if _is_device_token(authorization):
+        raise ForbiddenError("设备令牌不能触发重启；请在 Cockpit「AI助理」页登录后操作")
+    _check_device(device_id)
+    nonce = secrets.token_hex(8)
+    if not repo.set_restart(current_tenant(), device_id, {"nonce": nonce, "requestedAt": _now()}):
+        raise NotFoundError(f"没有这台设备：{device_id}")
+    return {"nonce": nonce}
+
+
 def device_flags(user: str, device_id: str) -> dict:
     """activity 子边界的指定读路径（v2.14）：这台设备开没开 autoTrack、标题是不是换成代号上传。
     没在网页上存过设置 = 都是 False。"""
@@ -214,7 +261,8 @@ def list_devices() -> dict:
 
     def row(dev: str) -> dict:
         return rows.setdefault(dev, {"deviceId": dev, "lastUploadAt": None, "lastFetchAt": None,
-                                     "hasSettings": False, "settingsUpdatedAt": None})
+                                     "hasSettings": False, "settingsUpdatedAt": None,
+                                     "health": None, "restart": None})
 
     for dev, at in activity_service.last_uploads(user).items():
         row(dev)["lastUploadAt"] = _iso(at)
@@ -223,6 +271,11 @@ def list_devices() -> dict:
         r["lastFetchAt"] = _iso(doc.get("lastFetchAt"))
         if doc.get("settings") is not None:
             r["hasSettings"], r["settingsUpdatedAt"] = True, _iso(doc.get("updatedAt"))
+        if h := doc.get("health"):
+            r["health"] = {"awState": h["awState"], "at": _iso(h["at"]), "autoStart": h.get("autoStart")}
+        if q := doc.get("restart"):
+            r["restart"] = {"nonce": q["nonce"], "requestedAt": _iso(q["requestedAt"]),
+                            "result": q.get("result"), "resultAt": _iso(q.get("resultAt"))}
 
     def recent(r: dict) -> str:
         return max(r["lastUploadAt"] or "", r["lastFetchAt"] or "", r["settingsUpdatedAt"] or "")

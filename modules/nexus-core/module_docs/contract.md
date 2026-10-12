@@ -166,6 +166,12 @@
 > （`repo.touch_agent_run` 用聚合管道更新的 `$max`）：只增不减、不早于 `startedAt`，迟到的老请求盖不回新信号，失联的结束时刻不会落到起点之前。
 > 适配器侧的补记见 `contracts/agent.lane.v1` 与 `tools/agent-hooks/README.md`。
 >
+> **v2.27（追加式）：面板上看得到检测程序 / ActivityWatch 的状态，并能让检测程序重新拉起 ActivityWatch。** 事故：主机重启后 ActivityWatch 没起来，
+> 检测程序还在跑、每轮日志「连不上 ActivityWatch」，面板上却看不出任何异常，人的活动悄悄断了。仓主：「面板上能加个检测和重启按钮吗？」
+> 本版**追加**两个端点和 `GET /detector/devices` 的两个字段：`PUT /detector/health`（检测程序报状态）、`POST /detector/restart`（人请求重启，
+> 只收人）；既有端点、字段一个不改。服务端**不执行任何东西**：只存一个不透明的 nonce，检测程序用**本机配置**的命令去拉起 ActivityWatch。
+> 见「检测程序健康与重启 ActivityWatch」节。
+>
 > **v2.26（追加式）：待确认的活动建议按天汇总——`GET /api/core/activity/suggestions/pending-days`。** 事故：AI 代理问「人今天干了多久」，
 > `get_daily_time` 只有已确认（已记账）的时间，今天没有行就答「0 分钟」，而当天有 111 条待确认的建议、合计约 128 分钟。本版只**追加**一个只读端点，
 > 把待确认的量按天给出；既有端点、字段、事件、投影一个不改，待确认的建议仍不是事实。见「待确认时间的按天汇总」节。
@@ -521,6 +527,10 @@ provides:
     summary: 待确认建议按天汇总（v2.26，追加式）——GET /api/core/activity/suggestions/pending-days?from&to（读不设限，只读）：status=pending 的建议按开始时刻的 NEXUS_TZ 本地日汇总
       {totalSeconds, count, days[{date, seconds, count}]}，只有数字，上界估计、不是工时、不计入已记账的时间；from>to 或超 92 天 422
     status: 已实现（v2.26），待验证
+  - id: nexus-core.detector.health.v1
+    summary: 检测程序健康与重启 ActivityWatch（v2.27，追加式）——PUT /api/core/detector/health?deviceId=（设备令牌或 cookie；严格 schema，只有枚举与一个不透明 nonce，没有任何自由文本）、
+      POST /api/core/detector/restart?deviceId=（只收人，带 Bearer 403，设备不存在 404）；GET /detector/devices 每台设备追加 health / restart。服务端只存 nonce，不执行、不下发命令
+    status: 已实现（v2.27），待验证
 consumes:
   - id: yq-event/v1
     contract: ../../contracts/yq-event.v1/contract.md
@@ -565,7 +575,9 @@ consumes:
 | GET | `/api/core/detector/settings` | `?deviceId` | `{deviceId, settings\|null, updatedAt\|null}`（见 `contracts/detector.settings.v1`） | ✅ 已实现（v2.5） |
 | PUT | `/api/core/detector/settings` | `?deviceId`，`DetectorSettings` | 同 GET；带 Bearer 403 | ✅ 已实现（v2.5） |
 | DELETE | `/api/core/detector/settings` | `?deviceId` | `204`；带 Bearer 403 | ✅ 已实现（v2.5） |
-| GET | `/api/core/detector/devices` | 无 | `{devices[]}` | ✅ 已实现（v2.5） |
+| GET | `/api/core/detector/devices` | 无 | `{devices[]}`（v2.27 每台追加 `health`、`restart`，见「检测程序健康与重启 ActivityWatch」） | ✅ 已实现（v2.5） |
+| PUT | `/api/core/detector/health` | `?deviceId`，`{awState, restart?, autoStart?}` | `{restartNonce\|null}`；未知键 / 枚举外 422、超 1 KiB 413 | ✅ 已实现（v2.27） |
+| POST | `/api/core/detector/restart` | `?deviceId` | `{nonce}`；带 Bearer 403、设备不存在 404 | ✅ 已实现（v2.27） |
 | GET | `/api/core/detector/rules` | 无 | `{version, updatedAt, rules[]}` + `ETag`（见 `contracts/detector.rules.v1`） | ✅ 已实现（v2.6） |
 | PUT | `/api/core/detector/rules` | `If-Match`，`{rules[]}` | 同 GET；带 Bearer 403、缺 If-Match 428、版本不符 412 | ✅ 已实现（v2.6） |
 | POST | `/api/core/detector/rules/drafts` | `{rules[], summary, author?}` | `201 Draft`（含与生效规则的 `diff`）；带 Bearer 403 | ✅ 已实现（v2.6） |
@@ -4137,6 +4149,30 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 就当作那批字段"已经加完了"（同 `contract-schemas.md`「与其他两条读端的对照」）。
 
 同步维护项目级依赖索引的反向索引。
+
+## 检测程序健康与重启 ActivityWatch（规范性 · v2.27）
+
+存在 `detector_settings` 里设备文档的 `health`、`restart` 两个字段；按租户隔离；**不是事实**，不进台账 / 投影 / 导出 / 快照恢复。
+
+**`PUT /api/core/detector/health?deviceId=`**——鉴权同 `GET /detector/settings`（设备令牌或 cookie 都行）。请求体严格（未知键 422、超过 1 KiB 413）：
+
+```jsonc
+{ "awState": "ok" | "unreachable" | "no_window" | "paused" | "disabled",
+  "autoStart": "off" | "idle" | "started" | "gave_up" | "unsupported",   // 可选：检测程序最近一次「自动拉起 ActivityWatch」的结果
+  "restart": { "nonce": "<1–64 字符>", "result": "started" | "already_running" | "failed" | "unsupported" } }   // 可选
+```
+
+- **整个请求体里没有任何自由文本**：窗口标题、路径、错误串都到不了服务端。
+- 服务端存 `health: {awState, at, autoStart}`（`at` = 服务端时钟，`autoStart` 缺省 `null`）。`restart` 给了、且 `restart.nonce` 等于这台设备当前待处理的 nonce、
+  而它还没有结果，才记 `result` + `resultAt`；旧 nonce、重复的上报一律忽略（不是错误）。
+- 响应 `{"restartNonce": <还没有结果的待处理 nonce> | null}`。
+
+**`POST /api/core/detector/restart?deviceId=`**——**只收人**：带 `Authorization: Bearer` 一律 `403`（与 PUT settings 同一规则、同一机制：被偷的设备令牌触发不了它）。
+设备不存在 `404`。写 `restart: {nonce: <随机>, requestedAt}`（顶掉更早的），返回 `{"nonce": …}`。**服务端不下发命令**：nonce 只是个编号，检测程序据此做什么由它本机的配置决定
+（`ai-detector` 契约「健康报告与拉起 ActivityWatch」）。
+
+**`GET /api/core/detector/devices`** 每台设备追加：`health: {awState, at, autoStart} | null`、
+`restart: {nonce, requestedAt, result | null, resultAt | null} | null`。既有字段不变。
 
 ## 待确认时间的按天汇总（规范性 · v2.26）
 

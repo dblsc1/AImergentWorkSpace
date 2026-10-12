@@ -1,6 +1,6 @@
 """``detector_settings`` / ``detector_rules`` 集合的存取。**本文件是 detector 子边界唯一碰 mongo 的地方。**
 
-设置：一台设备一个文档 ``{user, deviceId, settings?, updatedAt?, lastFetchAt?}``，唯一约束 ``(user, deviceId)``。
+设置：一台设备一个文档 ``{user, deviceId, settings?, updatedAt?, lastFetchAt?, health?, restart?}``，唯一约束 ``(user, deviceId)``。
 规则（detector.rules.v1）：一个租户一个文档，见下半部分。查询一律带 ``user``：别的租户的看不见。
 """
 
@@ -41,6 +41,21 @@ def clear(user: str, device_id: str) -> None:
 
 def touch_fetch(user: str, device_id: str, at: datetime) -> None:
     _col().update_one({"user": user, "deviceId": device_id}, {"$set": {"lastFetchAt": at}}, upsert=True)
+
+
+def set_health(user: str, device_id: str, health: dict) -> None:
+    _col().update_one({"user": user, "deviceId": device_id}, {"$set": {"health": health}}, upsert=True)
+
+
+def set_restart(user: str, device_id: str, restart: dict) -> bool:
+    """只对已有的设备写；设备不存在返回 False（不 upsert）。新的请求整个顶掉旧的。"""
+    return _col().update_one({"user": user, "deviceId": device_id}, {"$set": {"restart": restart}}).matched_count == 1
+
+
+def set_restart_result(user: str, device_id: str, nonce: str, result: str, at: datetime) -> None:
+    """nonce 对得上、且还没有结果时才记（旧 nonce、重复上报都落空）。"""
+    _col().update_one({"user": user, "deviceId": device_id, "restart.nonce": nonce, "restart.result": None},
+                      {"$set": {"restart.result": result, "restart.resultAt": at}})
 
 
 def all_devices(user: str) -> list[dict]:

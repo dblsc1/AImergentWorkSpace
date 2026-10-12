@@ -32,6 +32,17 @@ def delete_settings(deviceId: str, request: Request) -> Response:
     return Response(status_code=204)
 
 
+@router.put("/health")
+async def put_health(deviceId: str, request: Request) -> dict:
+    body = await request.body()
+    return await run_in_threadpool(service.put_health, deviceId, body)
+
+
+@router.post("/restart")
+def request_restart(deviceId: str, request: Request) -> dict:
+    return service.request_restart(deviceId, request.headers.get("authorization"))
+
+
 @router.get("/devices")
 def list_devices() -> dict:
     return service.list_devices()

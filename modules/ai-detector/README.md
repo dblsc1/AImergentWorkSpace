@@ -220,6 +220,8 @@ Linux `~/.config/honeycomb/`；设环境变量 `AI_DETECTOR_HOME` 可换目录�
 | `idle` | 全关 | 见「离开怎么算」 |
 | `archiveDays` | 30 | 本机留档保留天数 |
 
+| `awStartCommand` | 按系统缺省 | 拉起 ActivityWatch 的命令，argv 数组；只认本机配置（见「面板上的状态与「重启 ActivityWatch」」） |
+| `awAutoStart` | `true` | ActivityWatch 连续两次连不上时自动拉起；`false` 关闭 |
 | `presence` | `false` | 在场心跳（见下）。网页「AI助理」页设过就以网页为准 |
 | `presenceSeconds` | 5 | 心跳间隔，5–300 秒；大于 30 的实际按 30 秒发（一拍只往回带最近 60 秒的停留，间隔再长会丢）。旧版本生成的配置文件里是 15，想更跟手就改成 5 |
 | （网页上的）`autoTrack` | 关 | 「允许 AI 管理进行中的任务」。**只在网页「AI助理 → 活动检测设置」里开关**，本机配置没有这个键（见下） |
@@ -263,6 +265,20 @@ HoneyComb 的时间线页可以把「人一条线、AI 代理多条线」画在�
 在跑的代理会话的名字时，这几秒记成「你在看它」。
 
 也可以在网页「AI助理」页打开（`detector.settings.v1` 的 `presence`；那里是「用本机配置」时按上面这个字段）。
+
+### 面板上的状态与「重启 ActivityWatch」（v0.4）
+
+开着 `ai-detector run` 时，它每次心跳之后把「自己在线 + ActivityWatch 怎么样」报给 HoneyComb（正常 / 连不上 / 最近一分钟没有窗口记录 / 已暂停 / 未开启，
+不含任何窗口内容）。网页「AI助理 → 活动检测设置」的设备行下面能看到，还有两个按钮：「检测」刷新状态；「重启 ActivityWatch」让**这台电脑上的检测程序**把 ActivityWatch 再拉起来
+（只重启 ActivityWatch 服务，不重启检测程序，也不重启面板）。`ai-detector status` 也会打印最近一次报告的状态。
+
+- 用什么命令拉起，**只看本机配置**，网页和服务器改不了、也不会下发命令：`awStartCommand`（argv 数组，不经 shell），例如
+  `"awStartCommand": ["C:\\Users\\me\\AppData\\Local\\Programs\\ActivityWatch\\aw-qt.exe"]`。不写就按系统缺省：Windows 找
+  `%LOCALAPPDATA%\Programs\ActivityWatch\aw-qt.exe`，macOS `open -a ActivityWatch`，Linux 在 PATH 里找 `aw-qt`；都找不到，面板上显示「这台电脑上没配置启动命令」。
+- **自动拉起默认是开的**：ActivityWatch 连续两次心跳都连不上（`paused` / 没开同步时不算）时，检测程序自己用同一条命令拉起它，不用点按钮。
+  两次拉起至少隔 30 秒（按钮和自动共用）；连拉 3 次还没起来就停手，等 ActivityWatch 回来再恢复。不想要就在配置里写 `"awAutoStart": false`（同样只认本机配置）。
+- **限制**：按钮和自动拉起都只在检测程序自己正在你的桌面会话里运行时有用——它救不了已经死掉的检测程序（面板会显示「离线」，按钮禁用）。
+  让检测程序开机自启用 `ai-detector autostart install`；重启后 ActivityWatch 自己的开机自启（它的托盘设置里）才是根治。
 
 ### 允许 AI 管理进行中的任务（网页上的 `autoTrack`，默认关）
 

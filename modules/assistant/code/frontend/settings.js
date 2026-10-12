@@ -13,6 +13,9 @@
  *   presence（没设过在场心跳）就一并设成 true——实时的「自动 · 项目 / 任务」靠心跳，页面上的说明写着这一条。
  * - 强制脱敏（密码、密钥……）不在文档里，页面上是勾着的灰框，关不掉。
  * - 422 的 detail 形如「privacy.pathWhitelist: …」：按前缀挂到对应那一项下面，对不上就显示在表单底部。
+ * - 设备行下面一条状态（v2.27）：检测程序在线 / 离线（health.at 超过 3 分钟没更新算离线）+ ActivityWatch 怎么样；
+ *   「检测」重拉一次，「重启 ActivityWatch」POST restart 后每 3 秒拉一次设备，最多 45 秒，等检测程序回报结果。
+ *   服务端的字符串一律只进 textContent。
  * 对外只挂 window.assistantSettings（纯函数，给单测用）。
  */
 (function () {
@@ -113,8 +116,28 @@
     return [dev.lastUploadAt, dev.lastFetchAt].filter(Boolean).sort().pop() || null;
   }
 
+  // 检测程序状态（nexus-core v2.27）：device.health = {awState, at} | null。返回 {text, online}；online=null 表示没有状态可看
+  var STALE_MS = 3 * 60 * 1000, POLL_MS = 3000, POLL_MAX_MS = 45000;
+  var AW_TEXT = { ok: "正常", unreachable: "连不上 ActivityWatch", no_window: "ActivityWatch 最近一分钟没有窗口记录",
+    paused: "已暂停", disabled: "未开启" };
+  var RESTART_TEXT = { started: "已启动，ActivityWatch 起来后点「检测」看看", already_running: "ActivityWatch 本来就在运行",
+    failed: "启动失败", unsupported: "这台电脑上没配置启动命令" };
+  var AUTO_TEXT = { started: "已自动拉起", gave_up: "自动拉起 3 次都没成功，已停止重试",
+    unsupported: "这台电脑上没配置启动命令", off: "自动拉起已关闭" };
+  function healthLine(dev, nowMs) {
+    var h = dev && dev.health;
+    if (!h) return { text: "检测程序状态：这个版本的检测程序不报告状态", online: null };
+    var age = nowMs - new Date(h.at).getTime();
+    if (!(age < STALE_MS)) {
+      return { text: "检测程序：离线（最近一次报告 " + Math.max(1, Math.floor(age / 60000)) + " 分钟前）", online: false };
+    }
+    var auto = AUTO_TEXT[h.autoStart];
+    return { text: "检测程序：在线 · ActivityWatch：" + (AW_TEXT[h.awState] || "未知") + (auto ? " · " + auto : ""), online: true };
+  }
+
   window.assistantSettings = {
     DEFAULTS: DEFAULTS, checkPattern: checkPattern, validate: validate, fieldOf: fieldOf, findPresence: findPresence,
+    healthLine: healthLine,
   };
 
   // ── DOM ─────────────────────────────────────────────────────────────
@@ -131,6 +154,11 @@
   var resetBtn = document.getElementById("det-reset");
   var presenceRow = document.getElementById("det-presence-row");
   var presenceEl = document.getElementById("det-presence");
+  var healthEl = document.getElementById("det-health");
+  var checkBtn = document.getElementById("det-check");
+  var restartBtn = document.getElementById("det-restart");
+  var offlineHintEl = document.getElementById("det-offline-hint");
+  var restartMsgEl = document.getElementById("det-restart-msg");
 
   var devices = [];
   var device = null;        // 当前设备 id
@@ -138,6 +166,7 @@
   var base = null;          // 表单的底稿：settings 或 DEFAULTS（未知键从这里原样带回去）
   var baseline = "";        // 底稿刚填进表单时 read() 的 JSON：不同 = 有没保存的改动
   var busy = false;
+  var pending = null;       // 等回报的重启 {device, nonce}；换设备 / 出结果 / 超时都置回 null
 
   function showMessage(text, isError) {
     msgEl.textContent = text;
@@ -247,7 +276,44 @@
     var has = loaded && loaded.settings;
     metaEl.textContent = "最近上传建议：" + when(dev.lastUploadAt) + " · 最近拉设置：" + when(dev.lastFetchAt) +
       " · 网页设置：" + (has ? "有（" + when(loaded.updatedAt) + " 更新）" : "没有，用本机配置文件");
+    var hl = healthLine(dev, Date.now());
+    healthEl.textContent = hl.text;
+    restartBtn.disabled = hl.online !== true || Boolean(pending);
+    offlineHintEl.hidden = hl.online !== false;
   }
+
+  function showRestart(text) { restartMsgEl.textContent = text; restartMsgEl.hidden = !text; }
+
+  checkBtn.addEventListener("click", async function () {
+    checkBtn.disabled = true;
+    await refreshDeviceRow();
+    checkBtn.disabled = false;
+  });
+
+  restartBtn.addEventListener("click", async function () {
+    if (pending || !device) return;
+    var id = device;
+    pending = { device: id, nonce: null };
+    restartBtn.disabled = true;
+    showRestart("正在请求重启……");
+    var r = await request("POST", "restart?deviceId=" + encodeURIComponent(id));
+    if (id !== device) return;
+    if (!r.ok || !r.body || !r.body.nonce) { pending = null; showRestart("请求失败：" + explain(r)); renderMeta(); return; }
+    pending.nonce = r.body.nonce;
+    showRestart("已请求，等检测程序回报（最多 45 秒）……");
+    var deadline = Date.now() + POLL_MAX_MS, mine = pending;
+    while (pending === mine) {
+      await new Promise(function (ok) { setTimeout(ok, POLL_MS); });
+      if (pending !== mine) return;
+      await refreshDeviceRow();
+      var dev = devices.filter(function (d) { return d.deviceId === id; })[0];
+      var q = dev && dev.restart;
+      if (pending !== mine) return;
+      if (q && q.nonce === mine.nonce && q.result) { pending = null; showRestart(RESTART_TEXT[q.result] || "检测程序回报了未知结果"); break; }
+      if (Date.now() >= deadline) { pending = null; showRestart("检测程序没有响应（它可能没在运行）"); break; }
+    }
+    renderMeta();
+  });
 
   async function request(method, path, body) {
     var init = { method: method };
@@ -268,6 +334,8 @@
 
   async function loadDevice(id) {
     device = id;
+    pending = null;
+    showRestart("");
     busy = true;
     sync();
     showMessage("", false);
