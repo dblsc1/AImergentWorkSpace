@@ -97,7 +97,7 @@ check "read 令牌 + 方法覆盖头写不了" \
   "$(code -X POST -H "$(bearer "$READ")" -H 'X-HTTP-Method-Override: GET' "$BASE/api/core/timer/stop")" 403
 check "read 令牌的 MCP：只列只读工具" \
   "$("${C[@]}" -X POST -H "$(bearer "$READ")" -H "$JSON" -d "$LIST" "$MCP" \
-     | py 't=r["result"]["tools"]; print(len(t), [x["name"] for x in t if not x["annotations"]["readOnlyHint"]])')" "12 []"
+     | py 't=r["result"]["tools"]; print(len(t), [x["name"] for x in t if not x["annotations"]["readOnlyHint"]])')" "13 []"
 check "read 令牌的 MCP：只读工具能调" \
   "$("${C[@]}" -X POST -H "$(bearer "$READ")" -H "$JSON" \
      -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_projects","arguments":{}}}' "$MCP" \
