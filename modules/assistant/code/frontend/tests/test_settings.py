@@ -51,6 +51,9 @@ class DetectorStub:
         self.hold_restart = False                                  # 慢请求：POST restart 先不回
         self.held: Route | None = None
         self.restart_reply: tuple[int, dict] = (200, {"nonce": "n1"})
+        self.incident_gets = 0                                     # GET incidents 的次数（展开才取，不随轮询）
+        self.incidents: tuple[int, dict] = (200, {"deviceId": "dev_a", "events": [], "offline": False, "logUpload": False,
+                                                  "startLog": None, "lastReportAt": None})
         self.get_status = 200                                      # 非 200 = 读设置出错
 
     def route(self, route: Route) -> None:
@@ -66,6 +69,9 @@ class DetectorStub:
             if self.devices is None:
                 return j(404, {"detail": "Not Found"})
             return j(200, {"devices": self.devices, **({"now": self.now} if self.now else {})})
+        if path == "incidents":
+            self.incident_gets += 1
+            return j(*self.incidents)
         if req.method == "POST" and path == "restart":
             self.restart_calls += 1
             self.devices[0]["restart"] = {"nonce": self.restart_reply[1].get("nonce"), "requestedAt": "x",
@@ -785,3 +791,93 @@ def test_daily_cap_text_and_unknown_auto_start(browser, static_base_url):
     with page_with(browser, static_base_url, _stub_health(state="ok", auto="idle")) as page:
         ready(page)
         assert page.inner_text("#det-health") == "检测程序：在线 · ActivityWatch：正常"
+
+
+# ── 最近事故与启动日志上传（nexus-core v2.28）──
+
+HOWTO = '"awLogUpload": true'
+
+
+def test_log_upload_line_off_on_and_no_control_to_turn_it_on(browser, static_base_url):
+    stub = _stub_health()
+    stub.devices[0]["health"]["logUpload"] = False
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        t = page.inner_text("#det-logup")
+        assert "未开启" in t and HOWTO in t and "ai-detector.json" in t and "只能在那台电脑上改" in t
+        assert not page.is_visible("#det-startlog")
+        # 面板上没有任何能打开它的控件（含隐藏的）
+        assert page.query_selector("#settings-panel input[data-key*='og'], #settings-panel [id*='logupload' i]") is None
+        assert not [c for c in stub.calls if c[0] in ("PUT", "POST") and c[1] != "restart"]
+    stub = _stub_health()
+    stub.devices[0]["health"]["logUpload"] = True
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        assert "已在那台电脑上开启" in page.inner_text("#det-logup") and page.is_visible("#det-startlog")
+    with page_with(browser, static_base_url, _stub_health()) as page:   # 老服务端：health 里没有 logUpload
+        ready(page)
+        assert not page.is_visible("#det-logup") and not page.is_visible("#det-startlog")
+
+
+def test_incidents_fetched_on_expand_only_and_rendered_as_text(browser, static_base_url):
+    stub = _stub_health(state="unreachable")
+    evil = "<img src=x onerror=window.pwned=1>"
+    stub.incidents = (200, {"deviceId": "dev_a", "offline": True, "lastReportAt": "2026-10-12T08:00:00+00:00", "logUpload": False,
+                            "startLog": None, "events": [
+        {"kind": "detector_offline", "at": "2026-10-12T01:00:00+00:00", "endAt": "2026-10-12T02:20:00+00:00", "durationSeconds": 4800, "reason": None, "result": None},
+        {"kind": "auto_failed", "at": "2026-10-12T00:50:00+00:00", "endAt": None, "durationSeconds": None, "reason": "not_up", "result": None},
+        {"kind": "restart_result", "at": "2026-10-12T00:40:00+00:00", "endAt": None, "durationSeconds": None, "reason": None, "result": "started"},
+        {"kind": evil, "at": "2026-10-12T00:30:00+00:00", "endAt": None, "durationSeconds": None, "reason": evil, "result": None},
+        {"kind": "constructor", "at": "2026-10-12T00:20:00+00:00", "endAt": None, "durationSeconds": None, "reason": "__proto__", "result": None}]}) 
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        page.wait_for_timeout(300)
+        assert stub.incident_gets == 0   # 没展开就不取
+        page.click("#det-incidents summary")
+        page.wait_for_selector("#det-incidents-list li")
+        assert stub.incident_gets == 1
+        items = page.eval_on_selector_all("#det-incidents-list li", "ns => ns.map(n => n.textContent)")
+        assert "检测程序离线中" in items[0]
+        assert "检测程序离线，持续 1 小时 20 分钟" in items[1]
+        assert "自动拉起失败（进程起来了，但 ActivityWatch 接口 20 秒内没起来）" in items[2]
+        assert "重启 ActivityWatch：已启动" in items[3]
+        assert "未知事件（原因未知）" in items[4] and "未知事件（原因未知）" in items[5]   # 不认识的枚举 / 原型链上的名字
+        assert page.evaluate("window.pwned") is None and page.query_selector("#det-incidents-list img") is None
+        assert ("GET", "incidents", "dev_a", None) in stub.calls
+
+
+def test_incidents_empty_error_and_startlog_text_only(browser, static_base_url):
+    stub = _stub_health()
+    stub.devices[0]["health"]["logUpload"] = True
+    stub.incidents = (200, {"deviceId": "dev_a", "offline": False, "lastReportAt": None, "events": [], "logUpload": True,
+                            "startLog": {"text": "line <b>1</b>\n<script>window.pwned=1</script>", "at": "2026-10-12T01:00:00+00:00"}})
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        page.click("#det-incidents summary")
+        page.wait_for_function("document.getElementById('det-incidents-msg').textContent.includes('没有记录到事故')")
+        page.click("#det-startlog summary")
+        page.wait_for_function("document.getElementById('det-startlog-text').textContent.includes('line')")
+        assert page.inner_text("#det-startlog-text") == "line <b>1</b>\n<script>window.pwned=1</script>"
+        assert page.evaluate("window.pwned") is None and page.query_selector("#det-startlog-text b") is None
+        assert page.eval_on_selector("#det-startlog-text", "n => n.tagName") == "PRE"
+    stub = _stub_health()
+    stub.incidents = (500, {"detail": "数据库暂时连不上"})
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        page.click("#det-incidents summary")
+        page.wait_for_function("document.getElementById('det-incidents-msg').textContent.includes('读取失败')")
+
+
+def test_incidents_hidden_without_health_and_reset_on_device_switch(browser, static_base_url):
+    with page_with(browser, static_base_url, DetectorStub()) as page:   # 老检测程序：没有 health
+        ready(page)
+        assert not page.is_visible("#det-incidents")
+    stub = _stub_health()
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        page.click("#det-incidents summary")
+        page.wait_for_selector("#det-incidents-msg:not([hidden])")
+        page.select_option("#det-device", "dev_b")
+        page.wait_for_function("document.getElementById('det-device').value === 'dev_b'")
+        assert page.eval_on_selector("#det-incidents", "n => n.open") is False
+        assert page.inner_text("#det-incidents-list") == ""

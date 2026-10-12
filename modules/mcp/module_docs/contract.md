@@ -7,7 +7,7 @@
 provides:
   - id: mcp.tools.v1
     contract: ../../../contracts/mcp.tools.v1/contract.md
-    summary: 17 个工具（12 个只读（v1.13 加 get_report_status）+ propose_detector_rules 只写草稿 + propose_activity_matches 只写待确认的建议 + v1.13 propose_report 只写待人批准的报告 + v1.9 认窗口的 get_window_awaiting_target / suggest_window_target），挂在 <站点前缀>api/mcp/（经网关、过门）；对内 http://mcp:8020/api/mcp/
+    summary: 18 个工具（13 个只读（v1.13 加 get_report_status；v1.16 加 get_detector_health：检测程序状态 / 最近事故 / 固定排查提示，开关开着时带不可信的启动日志）+ propose_detector_rules 只写草稿 + propose_activity_matches 只写待确认的建议 + v1.13 propose_report 只写待人批准的报告 + v1.9 认窗口的 get_window_awaiting_target / suggest_window_target），挂在 <站点前缀>api/mcp/（经网关、过门）；对内 http://mcp:8020/api/mcp/
 consumes:
   - id: nexus-core.views.tree.v1
     contract: ../../nexus-core/module_docs/contract.md
@@ -42,6 +42,9 @@ consumes:
   - id: nexus-core.activity.ignores.v1
     contract: ../../nexus-core/module_docs/contract.md
     purpose: v1.14 get_detector_rules 追加 ignored（GET activity/ignores，只读）
+  - id: nexus-core.detector.incidents.v1
+    contract: ../../nexus-core/module_docs/contract.md
+    purpose: v1.16 get_detector_health（GET detector/devices、GET detector/incidents?deviceId=&limit=，只读；只看调用方自己的设备）
   - id: nexus-core.activity.reports.v1
     contract: ../../nexus-core/module_docs/contract.md
     purpose: v1.13 propose_report（POST activity/reports）；get_report_status（GET activity/reports?status=all&limit=1&items=true）；不调 approve / reject（只有人能）
@@ -122,5 +125,7 @@ v1.10 同版（安全审查）：屏幕来的文字不可信。`tools.py` 的 `_
 INSTRUCTIONS」的标题在五个工具里都是一行、截断过、只在自己的字段里；说明里有那句话；`suggest_window_target` 多带 `title` 400 且不调下游。
 
 v1.13（2026-10-09，nexus-core v2.20「AI 报告」）：`propose_report` 只发一个 POST `activity/reports`（原样下传，不带 `Authorization`；拒绝理由过 `_screen` 再还给模型），`get_report_status` 只发一个 GET `activity/reports?status=all&limit=1&items=true`（`summary` / `reason` / `failure` 过 `_screen`，不出建议 id 与自报作者）。`WRITES` 追加 `propose_report`；工具共 17 个。测试：`tests/test_mcp.py` 的 `test_propose_report_*`、`test_get_report_status_*`、`test_ai_text_in_reports_*`，工具分类与计数的几条随之改为 17 / 12。
+
+v1.16（2026-10-12，nexus-core v2.28）：新增只读 `get_detector_health`，只发 `GET detector/devices` 与每台设备的 `GET detector/incidents`（deviceId 只取自前一个响应）；提示表 `HINTS` 与 `ai-detector status` 同一套话（测试读 `health.go` 对照）；启动日志逐行过 `_screen`、整块标 `untrusted`。
 
 v1.14（2026-10-09，nexus-core v2.22「忽略并记住」）：`get_detector_rules` 多读一个 `GET /api/core/activity/ignores`，输出追加 `ignored`（`{id, app, hasTitleFilter, since, ignoredRecords, ignoredSeconds}`，`app` 过 `_screen`；**不出 `titleContains`**——那段匹配文字可能就是被忽略窗口标题的一部分，只给登录的人；老后端 404 = `[]`）。工具数、写端点不变。`get_current_timer` 的 `agents[]`、`get_agent_time` 的 `open[]` 不列藏起来的代理是 nexus-core 的 views 做的，MCP 原样带出。 两处各追加 `hiddenCount`（数字，藏起来的在跑代理个数，不带名字；老后端没有 = 0），让模型知道列表不全。

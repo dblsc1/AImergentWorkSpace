@@ -194,6 +194,12 @@ type healthReporter struct {
 	upSince     time.Time // 连续连得上的起点；一次 unreachable 就清空
 	noCmdLogged bool
 
+	// v0.4 启动日志上传（本机开关 awLogUpload）：sentLog = 上一次成功送出的日志文本；
+	// noLogUntil = 服务端（老版本）把带新字段的报告 422 / 413 了，一小时内不再带 logUpload / startLog
+	sentLog    string
+	noLogUntil time.Time // 老服务端拒了带新字段的报告：这个时刻之前不带 logUpload / startLog（过后再试一次，服务端可能升级了）
+	readLog    func(path string) (string, bool)
+
 	obs  observation
 	wake chan struct{}
 
@@ -222,7 +228,7 @@ type observation struct {
 
 func newHealthReporter(p paths, hc *http.Client) *healthReporter {
 	return &healthReporter{hc: hc, state: p.state, logPath: filepath.Join(filepath.Dir(p.state), "aw-start.log"),
-		wake: make(chan struct{}, 1), spawn: spawnDetached, clock: time.Now, wall: func() time.Time { return time.Now().Round(0) }, goos: runtime.GOOS, getenv: os.Getenv,
+		wake: make(chan struct{}, 1), spawn: spawnDetached, readLog: readStartLog, clock: time.Now, wall: func() time.Time { return time.Now().Round(0) }, goos: runtime.GOOS, getenv: os.Getenv,
 		probeWait: probeWait, probeEvery: probeEvery,
 		reachable: func(c Config) bool { return awReachable(c, hc) },
 		resolve:   func() []string { return defaultAwStart(runtime.GOOS, os.Getenv, exec.LookPath) }}
@@ -300,7 +306,7 @@ func (h *healthReporter) report(cfg Config, awState string) {
 		log.Printf("重启结果 %s 超过 %v 没送出去，丢弃", h.result.result, resultTTL)
 		h.result = nil
 	}
-	key := awState + "/" + h.autoState + "/" + h.autoReason
+	key := awState + "/" + h.autoState + "/" + h.autoReason + "/" + fmt.Sprint(cfg.AwLogUpload)
 	if now.Sub(h.lastAt) < healthEvery && (h.failed || (key == h.last && h.result == nil)) { // 失败后也按 15 秒退避
 		h.mu.Unlock()
 		return
@@ -321,14 +327,41 @@ func (h *healthReporter) report(cfg Config, awState string) {
 		}
 		body["restart"] = r
 	}
+	// 启动日志上传（本机开关）：每次都告诉服务端开关的状态；开着时，脱敏后的日志尾巴变了才带上
+	sendLog, logFields := "", !now.Before(h.noLogUntil)
+	if logFields {
+		body["logUpload"] = cfg.AwLogUpload
+		if cfg.AwLogUpload {
+			if t, ok := h.readLog(h.logPath); ok && t != h.sentLog {
+				sendLog = t
+				body["startLog"] = t
+			}
+		}
+	}
 	h.mu.Unlock()
 
-	b, _ := json.Marshal(body)
 	c := withPolicy(h.hc, h.hc.Timeout, sameHostOnly)
-	req, _ := http.NewRequest(http.MethodPut, strings.TrimRight(cfg.CockpitURL, "/")+"/api/core/detector/health?deviceId="+url.QueryEscape(cfg.DeviceID), strings.NewReader(string(b)))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+cfg.DeviceToken)
-	resp, code, err := do(c, req)
+	put := func() ([]byte, int, error) {
+		b, _ := json.Marshal(body)
+		req, _ := http.NewRequest(http.MethodPut, strings.TrimRight(cfg.CockpitURL, "/")+"/api/core/detector/health?deviceId="+url.QueryEscape(cfg.DeviceID), strings.NewReader(string(b)))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+cfg.DeviceToken)
+		return do(c, req)
+	}
+	resp, code, err := put()
+	// 老服务端不认新字段（严格校验 422），或体超过它的 1 KiB 上限（413，它先量大小）：去掉新字段立即重发，
+	// 一小时内不再带（之后再试一次：服务端可能升级了）
+	if (code == http.StatusUnprocessableEntity || code == http.StatusRequestEntityTooLarge) && logFields {
+		h.mu.Lock()
+		h.noLogUntil = h.clock().Add(time.Hour)
+		h.sentLog = "" // 回退期间发出去的是不带日志字段的报告，新服务端会删掉它那份：之后重试要把日志重新送一遍
+		h.mu.Unlock()
+		log.Printf("服务端不收 logUpload / startLog（HTTP %d，版本较老？），一小时内不再上传启动日志", code)
+		delete(body, "logUpload")
+		delete(body, "startLog")
+		sendLog, logFields = "", false
+		resp, code, err = put()
+	}
 
 	h.mu.Lock()
 	if code == http.StatusNotFound {
@@ -347,6 +380,11 @@ func (h *healthReporter) report(cfg Config, awState string) {
 		return
 	}
 	h.failed, h.last = false, key
+	if sendLog != "" {
+		h.sentLog = sendLog
+	} else if !cfg.AwLogUpload || !logFields {
+		h.sentLog = "" // 开关关了、或这份报告不带日志字段：服务端会删掉那份，之后要重新送
+	}
 	if h.result == res { // 发的过程中结果可能已经换成新的了
 		h.result = nil
 	}

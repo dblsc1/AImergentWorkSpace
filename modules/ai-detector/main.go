@@ -313,6 +313,7 @@ func status(p paths, out io.Writer) error {
 	if st.Health.AwState != "" {
 		fmt.Fprintf(out, "ActivityWatch  %s（上次报给 HoneyComb：%s）\n", st.Health.AwState, isoTime(st.Health.At))
 	}
+	fmt.Fprintf(out, "启动日志上传  %v（配置 awLogUpload；开着时只上传脱敏后的 aw-start.log 末尾，最多 40 行 / 4096 字节）\n", cfg.AwLogUpload)
 	printLastStart(out, st.Health.LastStart, filepath.Join(filepath.Dir(p.state), "aw-start.log"))
 	if !st.LastRunAt.IsZero() {
 		fmt.Fprintf(out, "上一轮    %s  %s\n", isoTime(st.LastRunAt), st.LastOutcome)

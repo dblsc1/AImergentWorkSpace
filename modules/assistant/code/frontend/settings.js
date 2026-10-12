@@ -16,6 +16,8 @@
  * - 设备行下面一条状态（v2.27）：检测程序在线 / 离线（health.at 超过 3 分钟没更新算离线）+ ActivityWatch 怎么样；
  *   「检测」重拉一次，「重启 ActivityWatch」POST restart 后每 3 秒拉一次设备，最多 75 秒，等检测程序回报结果。
  *   服务端的字符串一律只进 textContent。
+ * - v2.28：状态下面一行说明「启动日志上传」开没开（开关只在那台电脑的 ai-detector.json 里，这里**没有**打开它的控件）；
+ *   可折叠的「最近事故」展开时才 GET incidents；开关开着时多一块「查看启动日志」（不可信文本，只进 <pre> 的 textContent）。
  * 对外只挂 window.assistantSettings（纯函数，给单测用）。
  */
 (function () {
@@ -127,10 +129,38 @@
   var REASON_TEXT = { not_found: "找不到 ActivityWatch 程序", spawn_error: "启动命令执行出错", exited_early: "启动后马上退出了",
     not_up: "进程起来了，但 ActivityWatch 接口 20 秒内没起来", no_display: "检测程序不在桌面会话里运行，没法打开图形程序",
     state_unwritable: "检测程序目录写不进去，没有尝试启动" };
+  var KIND_TEXT = { aw_unreachable: "ActivityWatch 连不上了", aw_recovered: "ActivityWatch 恢复正常", aw_no_window: "ActivityWatch 在运行但没有窗口记录",
+    aw_paused: "检测已暂停", aw_disabled: "检测未开启", detector_offline: "检测程序离线", auto_started: "自动拉起了 ActivityWatch",
+    auto_failed: "自动拉起失败", auto_gave_up: "自动拉起已停手", restart_requested: "在网页上请求重启 ActivityWatch",
+    restart_result: "重启请求有结果了", restart_expired: "重启请求没人处理，已过期" };
+  var REASON_EXTRA = { daily_cap: "24 小时内自动拉起已达 20 次上限" };
+  var LOG_HOWTO = "在那台电脑的检测程序配置文件 ai-detector.json（运行 ai-detector status 可看到位置）里加入 \"awLogUpload\": true，" +
+    "只会上传脱敏后的 aw-start.log 末尾（最多 40 行），随时可改回 false 关闭。这个开关只能在那台电脑上改，网页上没有按钮。";
   var LOG_HINT = "详细原因和日志在那台电脑上：运行 ai-detector status，或查看检测程序目录下的 aw-start.log。";
   // 服务端给的值只当键用：自有属性才认（"constructor"、"__proto__" 之类走 Object.prototype 的不算）
   function own(tbl, k, fallback) { return typeof k === "string" && Object.prototype.hasOwnProperty.call(tbl, k) ? tbl[k] : fallback; }
-  function reasonText(r) { return own(REASON_TEXT, r, "原因未知"); }
+  function reasonText(r) { return own(REASON_TEXT, r, own(REASON_EXTRA, r, "原因未知")); }
+  function duration(sec) {
+    if (typeof sec !== "number" || !isFinite(sec) || sec < 0) return "";
+    if (sec < 60) return Math.round(sec) + " 秒";
+    var m = Math.round(sec / 60);
+    return m < 60 ? m + " 分钟" : Math.floor(m / 60) + " 小时" + (m % 60 ? " " + (m % 60) + " 分钟" : "");
+  }
+  // 一条事故 → 一行字（枚举都走自有属性查表，不认识的说「未知事件」）
+  function incidentText(ev) {
+    var t = own(KIND_TEXT, ev && ev.kind, "未知事件");
+    if (ev && ev.kind === "restart_result") t = "重启 ActivityWatch：" + own(RESTART_TEXT, ev.result, "未知结果");
+    var d = ev && ev.endAt ? duration(ev.durationSeconds) : "";
+    if (d) t += "，持续 " + d;
+    if (ev && ev.reason) t += "（" + reasonText(ev.reason) + "）";
+    return t;
+  }
+  function logLine(dev) {
+    var h = dev && dev.health;
+    if (!h || typeof h.logUpload !== "boolean") return "";
+    return h.logUpload ? "启动日志上传：已在那台电脑上开启（只上传脱敏后的 aw-start.log 末尾；在那台电脑上把 awLogUpload 改成 false 即可关闭）。脱敏是尽力而为，请点开「查看启动日志」看一眼实际上传了什么"
+      : "启动日志上传：未开启。需要 AI 助理帮忙排查时，" + LOG_HOWTO;
+  }
   function healthLine(dev, nowMs) {
     var h = dev && dev.health, at = h ? Date.parse(h.at) : NaN;
     if (!h || isNaN(at)) return { text: "检测程序状态：这个版本的检测程序不报告状态", online: null };
@@ -147,7 +177,7 @@
 
   window.assistantSettings = {
     DEFAULTS: DEFAULTS, checkPattern: checkPattern, validate: validate, fieldOf: fieldOf, findPresence: findPresence,
-    healthLine: healthLine,
+    healthLine: healthLine, incidentText: incidentText, logLine: logLine,
   };
 
   // ── DOM ─────────────────────────────────────────────────────────────
@@ -170,6 +200,12 @@
   var offlineHintEl = document.getElementById("det-offline-hint");
   var logHintEl = document.getElementById("det-log-hint");
   var restartMsgEl = document.getElementById("det-restart-msg");
+  var logUpEl = document.getElementById("det-logup");
+  var incEl = document.getElementById("det-incidents");
+  var incListEl = document.getElementById("det-incidents-list");
+  var incMsgEl = document.getElementById("det-incidents-msg");
+  var logBoxEl = document.getElementById("det-startlog");
+  var logTextEl = document.getElementById("det-startlog-text");
 
   var devices = [];
   var skew = 0;             // 服务端时钟 − 浏览器时钟（GET devices 的 now）；老服务端没有 now = 0
@@ -298,7 +334,43 @@
     offlineHintEl.hidden = hl.online !== false;
     logHintEl.textContent = hl.gaveUp ? LOG_HINT : "";
     logHintEl.hidden = !hl.gaveUp;
+    var ll = logLine(dev);
+    logUpEl.textContent = ll;
+    logUpEl.hidden = !ll;
+    incEl.hidden = !(dev.health);   // 没有健康状态 = 老检测程序，没有事故可看
+    logBoxEl.hidden = !(dev.health && dev.health.logUpload === true);
+    if (logBoxEl.hidden) { logBoxEl.open = false; logTextEl.textContent = ""; }
   }
+
+  // 事故列表 / 启动日志：展开时才取（不随每次轮询）；回来晚了、人已换设备就丢掉
+  async function loadIncidents(showLog) {
+    var id = device;
+    if (!id) return;
+    var r = await request("GET", "incidents?deviceId=" + encodeURIComponent(id) + "&limit=50");
+    if (id !== device) return;
+    var b = r.ok && r.body ? r.body : null;
+    if (showLog) {
+      var log = b && b.startLog;
+      logTextEl.textContent = log && typeof log.text === "string" ? log.text : (r.ok ? "（服务器上没有这份日志）" : "读取失败：" + r.detail);
+      return;
+    }
+    incListEl.textContent = "";
+    incMsgEl.hidden = true;
+    if (!b || !Array.isArray(b.events)) { incMsgEl.textContent = "读取失败：" + r.detail; incMsgEl.hidden = false; return; }
+    if (b.offline === true) {   // 此刻静默：服务端读时算出来的，不在事件表里
+      var now = document.createElement("li");
+      now.textContent = "检测程序离线中（最后一次报告：" + when(b.lastReportAt) + "）";
+      incListEl.appendChild(now);
+    }
+    if (!b.events.length && b.offline !== true) { incMsgEl.textContent = "最近没有记录到事故。"; incMsgEl.hidden = false; return; }
+    b.events.forEach(function (ev) {
+      var li = document.createElement("li");
+      li.textContent = when(ev && ev.at) + "  " + incidentText(ev);
+      incListEl.appendChild(li);
+    });
+  }
+  incEl.addEventListener("toggle", function () { if (incEl.open) loadIncidents(false); });
+  logBoxEl.addEventListener("toggle", function () { if (logBoxEl.open) loadIncidents(true); });
 
   function showRestart(text) { restartMsgEl.textContent = text; restartMsgEl.hidden = !text; }
 
@@ -358,6 +430,11 @@
   async function loadDevice(id) {
     device = id;
     pending = null;
+    incEl.open = false;
+    incListEl.textContent = "";
+    incMsgEl.hidden = true;
+    logBoxEl.open = false;
+    logTextEl.textContent = "";
     showRestart("");
     busy = true;
     sync();

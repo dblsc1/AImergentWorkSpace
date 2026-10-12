@@ -57,6 +57,9 @@ type Config struct {
 	AwStartCommand []string `json:"awStartCommand,omitempty"`
 	// AwAutoStart：ActivityWatch 连不上时检测程序自己拉起它。nil = 开；false 关。同样只来自本机配置。
 	AwAutoStart *bool `json:"awAutoStart,omitempty"`
+	// AwLogUpload：把 aw-start.log 脱敏后的末尾几行随健康报告上传，让 AI 助理能帮着排查。缺省关。
+	// **只来自本机配置文件**，服务端 / 网页设置改不了（也读不到它以外的任何本机内容）。
+	AwLogUpload bool `json:"awLogUpload"`
 
 	// autoTrack：「允许 AI 管理进行中的任务」。只来自网页设置（detector.settings.v1 v1.3），本机配置里没有这个键——
 	// 服务端要读它才知道该不该显示 / 直接记。applyRemoteSettings 填。

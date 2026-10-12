@@ -43,8 +43,14 @@ def touch_fetch(user: str, device_id: str, at: datetime) -> None:
     _col().update_one({"user": user, "deviceId": device_id}, {"$set": {"lastFetchAt": at}}, upsert=True)
 
 
-def set_health(user: str, device_id: str, health: dict) -> None:
-    _col().update_one({"user": user, "deviceId": device_id}, {"$set": {"health": health}}, upsert=True)
+def set_health(user: str, device_id: str, health: dict, start_log: str | None = None, clear_log: bool = False) -> None:
+    """start_log 给了就替换存着的启动日志；clear_log（开关关了）就删掉它；都没有 = 不动。"""
+    upd: dict = {"$set": {"health": health}}
+    if start_log is not None:
+        upd["$set"]["startLog"] = {"text": start_log, "at": health["at"]}
+    elif clear_log:
+        upd["$unset"] = {"startLog": ""}
+    _col().update_one({"user": user, "deviceId": device_id}, upd, upsert=True)
 
 
 def set_restart(user: str, device_id: str, restart: dict) -> bool:
@@ -53,11 +59,19 @@ def set_restart(user: str, device_id: str, restart: dict) -> bool:
 
 
 def set_restart_result(user: str, device_id: str, nonce: str, result: str, reason: str | None, not_before: datetime,
-                       at: datetime) -> None:
-    """nonce 对得上、还没有结果、且请求没过期（requestedAt ≥ not_before）时才记（旧 nonce、重复上报、过期的都落空）。"""
-    _col().update_one({"user": user, "deviceId": device_id, "restart.nonce": nonce, "restart.result": None,
+                       at: datetime) -> bool:
+    """nonce 对得上、还没有结果、且请求没过期（requestedAt ≥ not_before）时才记（旧 nonce、重复上报、过期的都落空）。
+    返回这次有没有真的记下（事故时间线只记真的发生了的）。"""
+    return _col().update_one({"user": user, "deviceId": device_id, "restart.nonce": nonce, "restart.result": None,
                        "restart.requestedAt": {"$gte": not_before}},
-                      {"$set": {"restart.result": result, "restart.reason": reason, "restart.resultAt": at}})
+                      {"$set": {"restart.result": result, "restart.reason": reason, "restart.resultAt": at}}).modified_count == 1
+
+
+def mark_restart_expired(user: str, device_id: str, nonce: str) -> bool:
+    """请求过期的事故只记一次：第一次标记成功才返回 True。"""
+    return _col().update_one({"user": user, "deviceId": device_id, "restart.nonce": nonce, "restart.result": None,
+                              "restart.expiredLogged": {"$ne": True}},
+                             {"$set": {"restart.expiredLogged": True}}).modified_count == 1
 
 
 def all_devices(user: str) -> list[dict]:
@@ -110,3 +124,30 @@ def drop_draft(user: str, draft_id: str | None = None) -> None:
     if draft_id is not None:
         q["draft.id"] = draft_id
     _rules_col().update_one(q, {"$unset": {"draft": ""}})
+
+
+# ── 事故时间线（v2.28）：每台设备一个文档 {user, deviceId, events:[{kind, at, endAt?, reason?, result?}]}，最多 200 条 ──
+MAX_EVENTS = 200
+_INCIDENTS = "detector_incidents"
+_incidents_indexes_ready = False
+
+
+def _incidents_col():
+    global _incidents_indexes_ready
+    col = get_db()[_INCIDENTS]
+    if not _incidents_indexes_ready:
+        col.create_index([("user", 1), ("deviceId", 1)], unique=True, name="uniq_user_device")
+        _incidents_indexes_ready = True
+    return col
+
+
+def add_events(user: str, device_id: str, events: list[dict]) -> None:
+    """追加；超过 MAX_EVENTS 时丢最老的（$slice，一条原子更新）。"""
+    if events:
+        _incidents_col().update_one({"user": user, "deviceId": device_id},
+                                    {"$push": {"events": {"$each": events, "$slice": -MAX_EVENTS}}}, upsert=True)
+
+
+def get_events(user: str, device_id: str) -> list[dict]:
+    doc = _incidents_col().find_one({"user": user, "deviceId": device_id}, {"_id": 0, "events": 1})
+    return (doc or {}).get("events", [])

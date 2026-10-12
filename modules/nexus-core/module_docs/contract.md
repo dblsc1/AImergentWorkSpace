@@ -166,6 +166,11 @@
 > （`repo.touch_agent_run` 用聚合管道更新的 `$max`）：只增不减、不早于 `startedAt`，迟到的老请求盖不回新信号，失联的结束时刻不会落到起点之前。
 > 适配器侧的补记见 `contracts/agent.lane.v1` 与 `tools/agent-hooks/README.md`。
 >
+> **v2.28（追加式）：检测程序的事故时间线与（用户自己开了开关才有的）启动日志，AI 助理经 MCP 读来排查。** 事故：主机重启后 ActivityWatch 没起来，
+> 记录丢了 80 分钟没人知道为什么。本版**追加**：`GET /detector/incidents`（只读的事故时间线，只有枚举与时间）、`PUT /detector/health` 两个可选字段
+> （`logUpload` 本机开关的状态、`startLog` 脱敏后的启动日志尾巴）、`GET /detector/devices` 的 `health.logUpload`；MCP 追加只读的 `get_detector_health`
+> （`mcp.tools.v1` v1.16，十八个工具）。既有端点、字段、行为一个不改；老检测程序（不带新字段）照常。见「检测程序事故与启动日志」节。
+>
 > **v2.27（追加式）：面板上看得到检测程序 / ActivityWatch 的状态，并能让检测程序重新拉起 ActivityWatch。** 事故：主机重启后 ActivityWatch 没起来，
 > 检测程序还在跑、每轮日志「连不上 ActivityWatch」，面板上却看不出任何异常，人的活动悄悄断了。仓主：「面板上能加个检测和重启按钮吗？」
 > 本版**追加**两个端点和 `GET /detector/devices` 的两个字段：`PUT /detector/health`（检测程序报状态）、`POST /detector/restart`（人请求重启，
@@ -531,6 +536,10 @@ provides:
     summary: 检测程序健康与重启 ActivityWatch（v2.27，追加式）——PUT /api/core/detector/health?deviceId=（设备令牌或 cookie；严格 schema，只有枚举与一个不透明 nonce，没有任何自由文本）、
       POST /api/core/detector/restart?deviceId=（只收人，带 Bearer 403，设备不存在 404）；GET /detector/devices 每台设备追加 health / restart。服务端只存 nonce，不执行、不下发命令
     status: 已实现（v2.27），待验证
+  - id: nexus-core.detector.incidents.v1
+    summary: 检测程序事故时间线与启动日志（v2.28，追加式）——GET /api/core/detector/incidents?deviceId=&limit=（只读，同 GET /devices；每台设备最近的事故，只有枚举与时间；
+      此刻静默读时算离线）；PUT /detector/health 追加可选 logUpload / startLog（本机开关的状态与脱敏后的启动日志尾巴，严格校验，超限 422 不截断，关开关即删）
+    status: 已实现（v2.28），待验证
 consumes:
   - id: yq-event/v1
     contract: ../../contracts/yq-event.v1/contract.md
@@ -576,7 +585,8 @@ consumes:
 | PUT | `/api/core/detector/settings` | `?deviceId`，`DetectorSettings` | 同 GET；带 Bearer 403 | ✅ 已实现（v2.5） |
 | DELETE | `/api/core/detector/settings` | `?deviceId` | `204`；带 Bearer 403 | ✅ 已实现（v2.5） |
 | GET | `/api/core/detector/devices` | 无 | `{devices[]}`（v2.27 每台追加 `health`、`restart`，见「检测程序健康与重启 ActivityWatch」） | ✅ 已实现（v2.5） |
-| PUT | `/api/core/detector/health` | `?deviceId`，`{awState, autoStart?, autoReason?, restart?}` | `{restartNonce\|null}`；未知键 / 枚举外 422、超 1 KiB 413 | ✅ 已实现（v2.27） |
+| GET | `/api/core/detector/incidents` | `?deviceId&limit`（1–200，缺省 50） | `{deviceId, now, lastReportAt, offline, health, logUpload, startLog, events[]}`；设备不存在 404、limit 越界 422（v2.28） | ✅ 已实现（v2.28） |
+| PUT | `/api/core/detector/health` | `?deviceId`，`{awState, autoStart?, autoReason?, restart?, logUpload?, startLog?}` | `{restartNonce\|null}`；未知键 / 枚举外 422、超 1 KiB 413 | ✅ 已实现（v2.27） |
 | POST | `/api/core/detector/restart` | `?deviceId` | `{nonce}`；带 Bearer 403、设备不存在 404 | ✅ 已实现（v2.27） |
 | GET | `/api/core/detector/rules` | 无 | `{version, updatedAt, rules[]}` + `ETag`（见 `contracts/detector.rules.v1`） | ✅ 已实现（v2.6） |
 | PUT | `/api/core/detector/rules` | `If-Match`，`{rules[]}` | 同 GET；带 Bearer 403、缺 If-Match 428、版本不符 412 | ✅ 已实现（v2.6） |
@@ -4178,6 +4188,49 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 **`GET /api/core/detector/devices`** 每台设备追加：`health: {awState, at, autoStart, autoReason} | null`、
 `restart: {nonce, requestedAt, result | null, reason | null, resultAt | null, expired} | null`（`expired`：没有结果且已过 5 分钟）；
 响应顶层追加 `now`：服务端当前时刻（ISO）——面板用它算 `health.at` 的新旧，浏览器时钟不准也不会误判离线。`result: "started"` 的含义是 ActivityWatch 的接口确实起来了（检测程序拉起后探测过），不只是进程拉起来了。既有字段不变。
+
+## 检测程序事故与启动日志（规范性 · v2.28）
+
+**事故时间线**：每台设备一份，存 `detector_incidents` 集合（`{user, deviceId, events[]}`）；按租户隔离；**不是事实**，不进台账 / 投影 / 导出 / 快照恢复。
+事件**只在变化时记**（不是每次报告一行），**只有枚举与时间，没有任何自由文本**：`{kind, at, endAt?, reason?, result?}`。
+
+| `kind` | 什么时候记 | 附带 |
+|---|---|---|
+| `aw_unreachable` / `aw_no_window` / `aw_paused` / `aw_disabled` | `health.awState` 相对上一份报告变成这个值（第一份报告不是 `ok` 也记） | — |
+| `aw_recovered` | `awState` 从别的值变回 `ok` | — |
+| `detector_offline` | 一份报告到来时，距上一份报告超过 90 秒 | `at` = 上一份报告的时刻，`endAt` = 这一份的时刻（时长 = 两者之差） |
+| `auto_started` | `autoStart` 变成 `started` | — |
+| `auto_failed` | `(autoStart, autoReason)` 变了，`autoReason` 有值且 `autoStart` 不是 `started` / `gave_up` | `reason` = `autoReason`（枚举） |
+| `auto_gave_up` | `autoStart` 变成 `gave_up` | `reason` = `autoReason`（含 `daily_cap`） |
+| `restart_requested` | `POST /detector/restart` 成功 | — |
+| `restart_result` | 检测程序回报了当前 nonce 的结果（重复回报不再记） | `result`（`started` / `already_running` / `failed` / `unsupported`）、`reason`（枚举） |
+| `restart_expired` | 重启请求 5 分钟没人理（在下一份报告到来时记一次，`at` = 请求时刻 + 5 分钟） | — |
+
+- **有界**：每台设备最多 200 条，超过时丢最老的（一条原子更新）；读的时候再滤掉超过 30 天的。
+- **此刻静默**读时算、不存：`offline = now − lastReportAt > 90 秒`（没有任何报告过 `health` 时为 `null`）。
+
+**`GET /api/core/detector/incidents?deviceId=&limit=`**——鉴权与租户同 `GET /detector/devices`（设备令牌或 cookie 都能读；读范围能调）。`limit` 1–200，缺省 50（越界 422）。
+设备不存在 404。响应：
+
+```jsonc
+{ "deviceId": "...", "now": "<服务端时钟>", "lastReportAt": "<ISO>" | null,
+  "offline": true | false | null,
+  "health": { "awState": "...", "autoStart": "..." | null, "autoReason": "..." | null } | null,
+  "logUpload": true | false,                            // 本机开关最近一次报告的状态
+  "startLog": { "text": "<多行>", "at": "<ISO>" } | null,  // 只有 logUpload 为 true 且收到过日志才有
+  "events": [ { "kind": "...", "at": "<ISO>", "endAt": "<ISO>" | null, "durationSeconds": 4800 | null,
+                "reason": "..." | null, "result": "..." | null } ] }   // 新的在前；同一时刻后记的在前
+```
+
+**启动日志（用户自己在本机打开 `awLogUpload` 才有）**——`PUT /detector/health` 追加两个可选字段（既有字段不变；老检测程序不带 = 按「关」）：
+
+- `logUpload`（严格布尔）：本机开关此刻的状态。服务端**不能**设置它；它来自检测程序的本机配置文件。
+- `startLog`（字符串）：脱敏后的 `aw-start.log` 末尾。只能在 `logUpload: true` 时带。**严格校验、不替检测程序截断**：非空；≤ **40 行**；≤ **4096 字节**（UTF-8）；每行 ≤ **300 字符**；
+  除换行外不得含控制 / 格式 / 私用区字符（`Cc Cf Co Cs Zl Zp`）。任何一条不满足 → `422`（报错信息里不带日志内容）。
+  请求体上限仍是 1 KiB，**真的带了非 null `startLog` 的报告放宽到 32 KiB**（JSON 转义后；看解析后的内容，不看字节里有没有这个词）；其余超过 1 KiB、或任何超过 32 KiB 的都是 413（报错信息分别写 1024 字节 / 32 KiB）。
+- 每台设备只存**最新一份**（`{text, at}`，替换而非追加）。报告里不带 `startLog`（内容没变）= 保留已存的。**`logUpload` 不是 `true`（关了，或老检测程序不报）= 删掉存着的日志。**
+- 服务端**不把日志写进任何日志、不进台账 / 投影 / 导出**。它是用户电脑上程序的输出，**不可信**：任何消费方（面板、MCP）都只当数据显示，不当指令、不当 HTML。
+- `GET /detector/devices` 每台设备的 `health` 追加 `logUpload`（布尔；老服务端没有这个键，面板据此不显示这一行）。
 
 ## 待确认时间的按天汇总（规范性 · v2.26）
 
