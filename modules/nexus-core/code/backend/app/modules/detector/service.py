@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -32,6 +33,7 @@ from ..activity import service as activity_service
 from . import repo
 
 MAX_BODY = 64 * 1024
+RESTART_TTL = timedelta(minutes=5)  # v2.27：重启请求过了这么久没人理就作废（离线时点的，几小时后别又把 ActivityWatch 拉起来）
 DEVICE_ID = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 # RE2（Go regexp）不支持、Python re 支持的构造：前后查找、反向引用、条件组、原子组、占有量词。
 # 服务端先拒，免得检测程序那边只能跳过。这是尽力校验：检测程序自己再用 Go 编译一次，
@@ -74,6 +76,10 @@ class InvalidSettingsError(ValueError):
 
 class TooLargeError(ValueError):
     """请求体超过 64 KiB。main.py 映射成 413。"""
+
+
+class NotFoundError(LookupError):
+    """设备不存在（restart）。main.py 映射成 404。"""
 
 
 class _Strict(BaseModel):
@@ -137,6 +143,26 @@ class DetectorSettings(_Strict):
         return v
 
 
+# v2.27：检测程序报的健康状态。没有任何自由文本字段——本机的标题、路径、错误串到不了服务端。
+_Reason = Literal["not_found", "spawn_error", "exited_early", "not_up", "no_display", "state_unwritable"]
+
+
+_AutoReason = Literal["not_found", "spawn_error", "exited_early", "not_up", "no_display", "state_unwritable", "daily_cap"]
+
+
+class _Restart(_Strict):
+    nonce: Annotated[StrictStr, Field(min_length=1, max_length=64)]
+    result: Literal["started", "already_running", "failed", "unsupported"]
+    reason: _Reason | None = None  # 失败原因（枚举）；详细日志只在那台电脑上
+
+
+class Health(_Strict):
+    awState: Literal["ok", "unreachable", "no_window", "paused", "disabled"]
+    restart: _Restart | None = None
+    autoStart: Literal["off", "idle", "started", "gave_up", "unsupported"] | None = None  # 最近一次自动拉起的结果
+    autoReason: _AutoReason | None = None  # 比 restart.reason 多一个 daily_cap：24 小时自动拉起上限
+
+
 def _iso(t: datetime | None) -> str | None:
     if t is None:
         return None
@@ -193,6 +219,45 @@ def put_settings(device_id: str, authorization: str | None, body: bytes) -> dict
     return _out(device_id, repo.get(user, device_id))
 
 
+def _fresh(restart: dict, now: datetime) -> bool:
+    t = restart.get("requestedAt")
+    if t is not None and t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return t is not None and now - t < RESTART_TTL
+
+
+def put_health(device_id: str, body: bytes) -> dict:
+    """v2.27：设备令牌与 cookie 都能调（同 GET settings）。"""
+    _check_device(device_id)
+    if len(body) > 1024:
+        raise TooLargeError("请求体超过 1024 字节")
+    try:
+        h = Health.model_validate(json.loads(body))
+    except ValidationError as exc:
+        err = exc.errors()[0]
+        raise InvalidSettingsError(f"{'.'.join(str(p) for p in err['loc']) or '<root>'}: {err['msg']}") from exc
+    except ValueError as exc:
+        raise InvalidSettingsError(f"请求体不是合法 JSON：{exc}") from exc
+    user, now = current_tenant(), _now()
+    if h.restart:
+        repo.set_restart_result(user, device_id, h.restart.nonce, h.restart.result, h.restart.reason, now - RESTART_TTL, now)
+    repo.set_health(user, device_id, {"awState": h.awState, "at": now, "autoStart": h.autoStart,
+                                       "autoReason": h.autoReason})
+    r = (repo.get(user, device_id) or {}).get("restart") or {}
+    pending = r.get("result") is None and r and _fresh(r, now)
+    return {"restartNonce": r["nonce"] if pending else None}
+
+
+def request_restart(device_id: str, authorization: str | None) -> dict:
+    if _is_device_token(authorization):
+        raise ForbiddenError("设备令牌不能触发重启；请在 Cockpit「AI助理」页登录后操作")
+    _check_device(device_id)
+    nonce = secrets.token_hex(8)
+    if not repo.set_restart(current_tenant(), device_id, {"nonce": nonce, "requestedAt": _now()}):
+        raise NotFoundError(f"没有这台设备：{device_id}")
+    return {"nonce": nonce}
+
+
 def device_flags(user: str, device_id: str) -> dict:
     """activity 子边界的指定读路径（v2.14）：这台设备开没开 autoTrack、标题是不是换成代号上传。
     没在网页上存过设置 = 都是 False。"""
@@ -209,12 +274,13 @@ def delete_settings(device_id: str, authorization: str | None) -> None:
 
 
 def list_devices() -> dict:
-    user = current_tenant()
+    user, now = current_tenant(), _now()
     rows: dict[str, dict] = {}
 
     def row(dev: str) -> dict:
         return rows.setdefault(dev, {"deviceId": dev, "lastUploadAt": None, "lastFetchAt": None,
-                                     "hasSettings": False, "settingsUpdatedAt": None})
+                                     "hasSettings": False, "settingsUpdatedAt": None,
+                                     "health": None, "restart": None})
 
     for dev, at in activity_service.last_uploads(user).items():
         row(dev)["lastUploadAt"] = _iso(at)
@@ -223,8 +289,17 @@ def list_devices() -> dict:
         r["lastFetchAt"] = _iso(doc.get("lastFetchAt"))
         if doc.get("settings") is not None:
             r["hasSettings"], r["settingsUpdatedAt"] = True, _iso(doc.get("updatedAt"))
+        if h := doc.get("health"):
+            r["health"] = {"awState": h["awState"], "at": _iso(h["at"]), "autoStart": h.get("autoStart"),
+                           "autoReason": h.get("autoReason")}
+        if q := doc.get("restart"):
+            r["restart"] = {"nonce": q["nonce"], "requestedAt": _iso(q["requestedAt"]),
+                            "result": q.get("result"), "reason": q.get("reason"),
+                            "expired": q.get("result") is None and not _fresh(q, now),
+                            "resultAt": _iso(q.get("resultAt"))}
 
     def recent(r: dict) -> str:
         return max(r["lastUploadAt"] or "", r["lastFetchAt"] or "", r["settingsUpdatedAt"] or "")
 
-    return {"devices": sorted(rows.values(), key=recent, reverse=True)}
+    # now：服务端时钟。面板拿它算 health.at 的新旧，不依赖浏览器时钟准不准
+    return {"devices": sorted(rows.values(), key=recent, reverse=True), "now": _iso(now)}

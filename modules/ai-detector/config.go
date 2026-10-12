@@ -52,6 +52,11 @@ type Config struct {
 	PresenceSeconds   float64  `json:"presenceSeconds,omitempty"` // 5–300，越界按 5
 	AgentStatusFile   string   `json:"agentStatusFile"`           // 空 = 关
 	AgentStatusIgnore []string `json:"agentStatusIgnore"`         // key 前缀，命中的条目整个忽略
+	// AwStartCommand：网页上点「重启 ActivityWatch」时用的命令（argv 数组，不经 shell）。**只来自本机配置文件**，
+	// 网页设置里没有这个键（写了也是未知键）。空 = 按系统缺省找 aw-qt。
+	AwStartCommand []string `json:"awStartCommand,omitempty"`
+	// AwAutoStart：ActivityWatch 连不上时检测程序自己拉起它。nil = 开；false 关。同样只来自本机配置。
+	AwAutoStart *bool `json:"awAutoStart,omitempty"`
 
 	// autoTrack：「允许 AI 管理进行中的任务」。只来自网页设置（detector.settings.v1 v1.3），本机配置里没有这个键——
 	// 服务端要读它才知道该不该显示 / 直接记。applyRemoteSettings 填。
@@ -294,6 +299,16 @@ type State struct {
 	SentReady bool `json:"sentReady,omitempty"`
 	// Agents：状态文件桥的 key → 运行（v0.3）。与上面的游标由不同的 goroutine 写，都经 updateState。
 	Agents map[string]*agentRun `json:"agents,omitempty"`
+	// Health：检测程序健康状态（v0.4）。由在场心跳那个 goroutine 写，同步一轮回写时原样带过去。
+	Health healthState `json:"health"`
+}
+
+// healthState：最近一次报给服务端的 awState，和最后处理过的重启 nonce（检测程序重启后不重放同一个）。
+type healthState struct {
+	AwState      string       `json:"awState,omitempty"`
+	At           time.Time    `json:"at"`
+	RestartNonce string       `json:"restartNonce,omitempty"`
+	LastStart    *startRecord `json:"lastStart,omitempty"` // 最近一次拉起 ActivityWatch 的记录（只在本机）
 }
 
 var stateMu sync.Mutex

@@ -118,6 +118,16 @@
         <label class="set-label" for="det-device">设备</label>
         <select class="field" id="det-device"></select>
         <p class="set-hint" id="det-device-meta"></p>
+        <!-- 检测程序 / ActivityWatch 状态（nexus-core v2.27）。「重启」只是请求，真正动手的是电脑上的检测程序。 -->
+        <p class="set-hint" id="det-health" role="status"></p>
+        <div class="det-actions det-health-actions">
+          <button type="button" class="btn btn-ghost" id="det-check">检测</button>
+          <button type="button" class="btn btn-ghost" id="det-restart" disabled>重启 ActivityWatch</button>
+        </div>
+        <p class="set-hint" id="det-restart-note">这个按钮只做两件事：检测 ActivityWatch 是否在运行，没在运行就重启它。不会重启检测程序，也不会重启面板。</p>
+        <p class="set-hint" id="det-offline-hint" hidden>检测程序没在运行，按钮无效。请在电脑上启动检测程序（<code>ai-detector autostart install</code> 可设开机自启）。</p>
+        <p class="set-hint" id="det-restart-msg" role="status" hidden></p>
+        <p class="set-hint" id="det-log-hint" hidden></p>
       </div>
       <p class="suggest-empty" id="det-note" hidden></p>
 

@@ -51,7 +51,7 @@ type awClient struct {
 func (c awClient) get(path string, out any) error {
 	resp, err := c.http.Get(strings.TrimRight(c.base, "/") + path)
 	if err != nil {
-		return fmt.Errorf("连不上 ActivityWatch（%s）：%w", c.base, err)
+		return fmt.Errorf("%w（%s）：%w", errAWDown, c.base, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {

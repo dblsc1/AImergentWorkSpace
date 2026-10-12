@@ -227,8 +227,8 @@ func runOnce(p paths, hc *http.Client, out io.Writer) error {
 	} else {
 		st.LastOutcome = msg
 	}
-	// 状态文件桥在另一个 goroutine 里写 Agents：只写回本轮自己的字段。
-	if serr := updateState(p.state, func(s *State) { ag := s.Agents; *s = st; s.Agents = ag }); serr != nil {
+	// 状态文件桥、健康报告在另一个 goroutine 里写 Agents / Health：只写回本轮自己的字段。
+	if serr := updateState(p.state, func(s *State) { ag, hs := s.Agents, s.Health; *s = st; s.Agents, s.Health = ag, hs }); serr != nil {
 		return serr
 	}
 	if out == nil {
@@ -310,6 +310,10 @@ func status(p paths, out io.Writer) error {
 	}
 	fmt.Fprintf(out, "在场心跳  %v（每 %v；网页上设过的话以网页为准）\n状态文件桥 %s（运行中 %d 个）\n",
 		cfg.Presence, presenceInterval(cfg), bridge, len(st.Agents))
+	if st.Health.AwState != "" {
+		fmt.Fprintf(out, "ActivityWatch  %s（上次报给 HoneyComb：%s）\n", st.Health.AwState, isoTime(st.Health.At))
+	}
+	printLastStart(out, st.Health.LastStart, filepath.Join(filepath.Dir(p.state), "aw-start.log"))
 	if !st.LastRunAt.IsZero() {
 		fmt.Fprintf(out, "上一轮    %s  %s\n", isoTime(st.LastRunAt), st.LastOutcome)
 	}

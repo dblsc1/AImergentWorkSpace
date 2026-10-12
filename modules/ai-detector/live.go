@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -281,7 +280,7 @@ func (p *beater) beat(cfg Config, hc *http.Client, now time.Time) (bool, error) 
 	if !body.Afk { // 离开时 app、title 都发 ""
 		// 顶层 = 当前窗口 = 最后一段（它得一直到此刻：当前没有前台窗口——桌面、锁屏——时不发，同以前）
 		if len(spans) == 0 || spans[len(spans)-1].end.Before(to) {
-			return false, errors.New("ActivityWatch 最近一分钟没有窗口记录")
+			return false, errNoWindow
 		}
 		cur := spans[len(spans)-1]
 		body.App, body.Title, body.Guess = cur.App, cur.Title, cur.Guess
@@ -301,6 +300,8 @@ func presenceLoop(p paths, hc *http.Client) {
 	var q quietLog
 	var b beater
 	var warned bool
+	hr := newHealthReporter(p, hc)
+	go hr.loop() // 健康报告自己一个 goroutine：服务器卡住不拖慢心跳
 	every(func() time.Duration {
 		cfg, err := readConfig(p)
 		if err != nil {
@@ -311,11 +312,13 @@ func presenceLoop(p paths, hc *http.Client) {
 			log.Printf("presenceSeconds=%v 超过 %v：按 %v 发心跳（一拍只往回带 %v 的停留，间隔再长会丢）",
 				cfg.PresenceSeconds, presenceMaxInterval, presenceMaxInterval, presenceLookback)
 		}
-		if sent, err := b.beat(cfg, hc, time.Now()); err != nil {
+		sent, err := b.beat(cfg, hc, time.Now())
+		if err != nil {
 			q.printf("在场心跳没发出去（丢掉，不补发）：%v", err) // 错误里不含标题
 		} else if sent {
 			q.last = ""
 		}
+		hr.observe(cfg, awStateOf(cfg, err, sent, func() bool { return hr.reachable(cfg) }))
 		return presenceInterval(cfg)
 	})
 }

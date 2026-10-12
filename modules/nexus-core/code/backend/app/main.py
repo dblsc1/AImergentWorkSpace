@@ -124,6 +124,7 @@ app.include_router(prefs_router, prefix=API_PREFIX)  # v2.22 泳道偏好
 #   detector ForbiddenError → 403（v2.5：设备令牌想改检测设置）
 #   v2.11 改挂复用上面几条：ForbiddenError 403（设备令牌 / actor=ai）、NotFoundError / UnknownTaskError 404、
 #     InvalidInputError 400（taskId / projectId 没二选一、目标是桶）、HasChildrenError 409（不是未分类的段 / 并发没抢到）
+#   detector NotFoundError → 404（v2.27：重启一台不存在的设备）
 #   detector InvalidSettingsError → 422、TooLargeError → 413（v2.5：设置文档不合 schema / 太大）
 #   v2.15 让 AI 认窗口复用上面几条：SuggestionConflictError 409（窗口没在等 AI 认，什么都没写）、NotFoundError 404、
 #     InvalidInputError 400（任务已完成 / 不是普通任务）、ForbiddenError 403（设备令牌）
@@ -138,6 +139,11 @@ def detector_forbidden(_request: Request, exc: Exception) -> JSONResponse:
 @app.exception_handler(detector_service.InvalidSettingsError)
 def detector_invalid(_request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+
+@app.exception_handler(detector_service.NotFoundError)
+def detector_not_found(_request: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(status_code=404, content={"detail": str(exc)})
 
 
 @app.exception_handler(detector_rules.RulesError)

@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -45,6 +46,11 @@ class DetectorStub:
         self.settings = settings if settings is not None else {"dev_a": copy.deepcopy(CUSTOM), "dev_b": None}
         self.calls: list[tuple[str, str, str | None, Any]] = []   # (方法, 路径, deviceId, body)
         self.put_reply: tuple[int, dict] | None = None             # 非 None = PUT 回这个（422 / 403…）
+        self.restart_calls = 0
+        self.now: str | None = None                                # 服务端时钟（GET devices 的 now）；None = 老服务端不给
+        self.hold_restart = False                                  # 慢请求：POST restart 先不回
+        self.held: Route | None = None
+        self.restart_reply: tuple[int, dict] = (200, {"nonce": "n1"})
         self.get_status = 200                                      # 非 200 = 读设置出错
 
     def route(self, route: Route) -> None:
@@ -59,7 +65,15 @@ class DetectorStub:
         if path == "devices":
             if self.devices is None:
                 return j(404, {"detail": "Not Found"})
-            return j(200, {"devices": self.devices})
+            return j(200, {"devices": self.devices, **({"now": self.now} if self.now else {})})
+        if req.method == "POST" and path == "restart":
+            self.restart_calls += 1
+            self.devices[0]["restart"] = {"nonce": self.restart_reply[1].get("nonce"), "requestedAt": "x",
+                                          "result": None, "resultAt": None}
+            if self.hold_restart:
+                self.held = route
+                return
+            return j(*self.restart_reply)
         if req.method == "GET":
             if self.get_status != 200:
                 return j(self.get_status, {"detail": "数据库暂时连不上"})
@@ -490,3 +504,284 @@ def test_auto_track_422_lands_on_its_field(browser, static_base_url):
         page.click("#det-save")
         page.wait_for_selector('[data-field="autoTrack"] .field-error:not([hidden])')
         assert "valid boolean" in page.inner_text('[data-field="autoTrack"] .field-error')
+
+
+# ── 检测程序 / ActivityWatch 状态与重启按钮（nexus-core v2.27）──
+
+def _health(state="ok", age=10, auto=None, auto_reason=None):
+    at = (datetime.now(timezone.utc) - timedelta(seconds=age)).isoformat()
+    return {"awState": state, "at": at, "autoStart": auto, "autoReason": auto_reason}
+
+
+def _stub_health(**kw):
+    stub = DetectorStub()
+    stub.devices[0]["health"] = _health(**kw)
+    return stub
+
+
+def test_health_line_texts(browser, static_base_url):
+    cases = [
+        (dict(state="ok"), "检测程序：在线 · ActivityWatch：正常"),
+        (dict(state="unreachable"), "ActivityWatch：连不上 ActivityWatch"),
+        (dict(state="no_window"), "ActivityWatch 最近一分钟没有窗口记录"),
+        (dict(state="paused"), "ActivityWatch：已暂停"),
+        (dict(state="disabled"), "ActivityWatch：未开启"),
+        (dict(state="unreachable", auto="started"), "· 已自动拉起"),
+        (dict(state="unreachable", auto="gave_up"), "· 自动拉起 3 次都没成功，已停止重试"),
+        (dict(state="unreachable", auto="gave_up", auto_reason="no_display"), "（检测程序不在桌面会话里运行，没法打开图形程序）"),
+        (dict(state="unreachable", auto="unsupported"), "· 这台电脑上没配置启动命令"),
+        (dict(state="ok", auto="off"), "· 自动拉起已关闭"),
+        (dict(state="ok", age=300), "检测程序：离线（最近一次报告 5 分钟前）"),
+    ]
+    for kw, want in cases:
+        with page_with(browser, static_base_url, _stub_health(**kw)) as page:
+            ready(page)
+            assert want in page.inner_text("#det-health"), (kw, page.inner_text("#det-health"))
+    with page_with(browser, static_base_url, _stub_health(state="ok", auto="idle")) as page:
+        ready(page)
+        assert page.inner_text("#det-health") == "检测程序：在线 · ActivityWatch：正常"
+    with page_with(browser, static_base_url, DetectorStub()) as page:   # 老检测程序：没有 health
+        ready(page)
+        assert "这个版本的检测程序不报告状态" in page.inner_text("#det-health")
+        assert page.is_disabled("#det-restart")
+        assert not page.is_visible("#det-offline-hint")   # 状态未知不等于离线
+
+
+def test_button_explanation_always_visible_and_offline_hint(browser, static_base_url):
+    note = "这个按钮只做两件事：检测 ActivityWatch 是否在运行，没在运行就重启它。不会重启检测程序，也不会重启面板。"
+    with page_with(browser, static_base_url, _stub_health(state="unreachable")) as page:
+        ready(page)
+        assert page.is_visible("#det-restart-note") and page.inner_text("#det-restart-note") == note
+        assert page.is_enabled("#det-restart") and not page.is_visible("#det-offline-hint")
+    with page_with(browser, static_base_url, _stub_health(age=600)) as page:
+        ready(page)
+        assert page.is_disabled("#det-restart") and page.is_visible("#det-restart-note")
+        hint = page.inner_text("#det-offline-hint")
+        assert hint == "检测程序没在运行，按钮无效。请在电脑上启动检测程序（ai-detector autostart install 可设开机自启）。"
+
+
+def test_server_strings_are_text_only(browser, static_base_url):
+    stub = _stub_health()
+    stub.devices[0]["health"]["awState"] = "<img src=x onerror=window.pwned=1>"
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        assert page.evaluate("window.pwned") is None and page.query_selector("#det-health img") is None
+
+
+def test_check_button_refetches(browser, static_base_url):
+    stub = _stub_health(state="unreachable")
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        stub.devices[0]["health"] = _health("ok")
+        page.click("#det-check")
+        page.wait_for_function("document.getElementById('det-health').textContent.includes('正常')")
+
+
+@pytest.mark.parametrize("result,text", [
+    ("started", "已启动"), ("already_running", "本来就在运行"), ("failed", "启动失败"),
+    ("unsupported", "这台电脑上没配置启动命令"),
+])
+def test_restart_polls_until_result(browser, static_base_url, result, text):
+    stub = _stub_health(state="unreachable")
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        page.clock.install()
+        page.click("#det-restart")
+        page.wait_for_function("document.getElementById('det-restart-msg').textContent.includes('等检测程序回报')")
+        assert page.is_disabled("#det-restart") and stub.restart_calls == 1
+        page.clock.run_for(3100)       # 第一次轮询：还没结果
+        assert "等检测程序回报" in page.inner_text("#det-restart-msg")
+        stub.devices[0]["restart"]["result"] = result
+        page.clock.run_for(3100)
+        page.wait_for_function(f"document.getElementById('det-restart-msg').textContent.includes({text!r})")
+        assert page.is_enabled("#det-restart")
+
+
+def test_restart_ignores_stale_nonce_and_times_out(browser, static_base_url):
+    stub = _stub_health(state="unreachable")
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        page.clock.install()
+        page.click("#det-restart")
+        page.wait_for_function("document.getElementById('det-restart-msg').textContent.includes('等检测程序回报')")
+        stub.devices[0]["restart"]["nonce"] = "older"        # 别的 nonce 的结果不算
+        stub.devices[0]["restart"]["result"] = "started"
+        page.clock.run_for(70000)   # 75 秒才算超时：70 秒时还在等
+        assert "等检测程序回报" in page.inner_text("#det-restart-msg")
+        for _ in range(3):
+            page.clock.run_for(3100)
+        page.wait_for_function("document.getElementById('det-restart-msg').textContent.includes('检测程序没有响应')")
+        assert "（它可能没在运行）" in page.inner_text("#det-restart-msg")
+        assert page.is_enabled("#det-restart")
+
+
+def test_restart_request_failure(browser, static_base_url):
+    stub = _stub_health(state="unreachable")
+    stub.restart_reply = (403, {"detail": "设备令牌不能触发重启"})
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        page.click("#det-restart")
+        page.wait_for_function("document.getElementById('det-restart-msg').textContent.includes('请求失败')")
+        assert page.is_enabled("#det-restart")
+
+
+LOG_HINT = "详细原因和日志在那台电脑上：运行 ai-detector status，或查看检测程序目录下的 aw-start.log。"
+
+
+def test_gave_up_shows_log_hint_only_then(browser, static_base_url):
+    with page_with(browser, static_base_url, _stub_health(state="unreachable", auto="gave_up", auto_reason="not_up")) as page:
+        ready(page)
+        assert "进程起来了，但 ActivityWatch 接口 20 秒内没起来" in page.inner_text("#det-health")
+        assert page.inner_text("#det-log-hint") == LOG_HINT
+    with page_with(browser, static_base_url, _stub_health(state="unreachable", auto="started")) as page:
+        ready(page)
+        assert not page.is_visible("#det-log-hint")
+
+
+@pytest.mark.parametrize("reason,text", [
+    ("not_found", "找不到 ActivityWatch 程序"), ("spawn_error", "启动命令执行出错"), ("exited_early", "启动后马上退出了"),
+    ("not_up", "接口 20 秒内没起来"), ("no_display", "不在桌面会话里运行"), ("state_unwritable", "检测程序目录写不进去"),
+])
+def test_restart_failed_shows_reason_and_log_hint(browser, static_base_url, reason, text):
+    stub = _stub_health(state="unreachable")
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        page.clock.install()
+        page.click("#det-restart")
+        page.wait_for_function("document.getElementById('det-restart-msg').textContent.includes('等检测程序回报')")
+        stub.devices[0]["restart"].update(result="failed", reason=reason)
+        page.clock.run_for(3100)
+        page.wait_for_function("document.getElementById('det-restart-msg').textContent.includes('启动失败')")
+        msg = page.inner_text("#det-restart-msg")
+        assert text in msg and msg.endswith(LOG_HINT)
+
+
+def test_slow_restart_post_survives_device_switch(browser, static_base_url):
+    """POST restart 还没回来时 A→B→A：回来的那个响应不能再当成现在这个（pending 已被清掉，不抛错）。"""
+    stub = _stub_health(state="unreachable")
+    stub.hold_restart = True
+    with page_with(browser, static_base_url, stub) as page:
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        ready(page)
+        page.click("#det-restart")
+        page.wait_for_function("document.getElementById('det-restart-msg').textContent.includes('正在请求')")
+        page.select_option("#det-device", "dev_b")
+        page.wait_for_function("document.getElementById('det-device-meta').textContent.includes('没有，用本机配置文件')")
+        page.select_option("#det-device", "dev_a")
+        page.wait_for_selector("#det-form:not([hidden])")
+        stub.held.fulfill(status=200, content_type="application/json", body=json.dumps({"nonce": "n1"}))
+        page.wait_for_timeout(300)
+        assert errors == []
+        assert not page.inner_text("#det-restart-msg") and page.is_enabled("#det-restart")
+
+
+def _iso(dt):
+    return dt.astimezone(timezone.utc).isoformat()
+
+
+def test_browser_clock_skew_uses_server_now(browser, static_base_url):
+    """浏览器时钟比服务端快 4 分钟：按浏览器算 health.at 已是 4 分钟前 = 离线；按服务端的 now 算才是 10 秒前 = 在线。"""
+    server_now = datetime.now(timezone.utc) - timedelta(minutes=4)
+    stub = DetectorStub()
+    stub.now = _iso(server_now)
+    stub.devices[0]["health"] = {"awState": "ok", "at": _iso(server_now - timedelta(seconds=10)), "autoStart": None}
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        assert page.inner_text("#det-health") == "检测程序：在线 · ActivityWatch：正常"
+        assert page.is_enabled("#det-restart")
+    stub.now = None   # 老服务端没有 now：退回浏览器时钟
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        assert "离线" in page.inner_text("#det-health")
+
+
+def test_unparseable_health_at_is_no_health(browser, static_base_url):
+    stub = DetectorStub()
+    stub.devices[0]["health"] = {"awState": "ok", "at": "garbage", "autoStart": None}
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        t = page.inner_text("#det-health")
+        assert "NaN" not in t and "这个版本的检测程序不报告状态" in t and page.is_disabled("#det-restart")
+
+
+def test_switching_device_clears_pending_wait(browser, static_base_url):
+    stub = _stub_health(state="unreachable")
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        page.clock.install()
+        page.click("#det-restart")
+        page.wait_for_function("document.getElementById('det-restart-msg').textContent.includes('等检测程序回报')")
+        assert page.is_disabled("#det-restart")           # 等待期间不能再点
+        page.select_option("#det-device", "dev_b")
+        page.wait_for_function("document.getElementById('det-device-meta').textContent.includes('没有，用本机配置文件')")
+        assert not page.inner_text("#det-restart-msg")    # 等待被清掉
+        page.select_option("#det-device", "dev_a")
+        page.wait_for_selector("#det-form:not([hidden])")
+        assert page.is_enabled("#det-restart") and not page.inner_text("#det-restart-msg")
+        stub.devices[0]["restart"]["result"] = "started"   # 旧的等待不会再冒出结果
+        page.clock.run_for(7000)
+        page.wait_for_timeout(200)
+        assert not page.inner_text("#det-restart-msg")
+
+
+def test_hostile_server_strings_are_text_not_markup(browser, static_base_url):
+    evil = "<img src=x onerror=window.pwned=1>"
+    stub = DetectorStub(devices=[{"deviceId": evil, "lastUploadAt": None, "lastFetchAt": None, "hasSettings": False,
+                                  "settingsUpdatedAt": None, "health": _health(state=evil, auto=evil, auto_reason=evil),
+                                  "restart": None}])
+    stub.settings = {evil: None}
+    stub.restart_reply = (500, {"detail": evil})
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        page.click("#det-restart")
+        page.wait_for_function("document.getElementById('det-restart-msg').textContent.includes('请求失败')")
+        assert evil in page.inner_text("#det-restart-msg")                  # 当文本显示
+        page.wait_for_timeout(200)
+        assert page.evaluate("window.pwned") is None
+        assert page.query_selector("#settings-panel img") is None
+        # 状态行：未知的枚举值显示成「未知」，deviceId 只出现在下拉选项的文本里
+        assert "未知状态" in page.inner_text("#det-health")
+        assert page.query_selector("#det-health *") is None and page.query_selector("#det-restart-msg *") is None
+
+
+@pytest.mark.parametrize("bad", ["constructor", "__proto__", "toString", "hasOwnProperty"])
+def test_prototype_keys_are_unknown_values(browser, static_base_url, bad):
+    """服务端给的值只是键：走 Object.prototype 的名字不能查出函数来，一律当未知值。"""
+    stub = DetectorStub()
+    stub.devices[0]["health"] = _health(state=bad, auto=bad, auto_reason=bad)
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        t = page.inner_text("#det-health")
+        assert t == "检测程序：在线 · ActivityWatch：未知状态 · 未知状态", t   # awState、autoStart 都不认识：同一句固定文本
+        assert "function" not in t and "[object" not in t
+    stub = _stub_health(state="unreachable", auto="gave_up", auto_reason=bad)
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        assert "（原因未知）" in page.inner_text("#det-health")
+        page.clock.install()
+        page.click("#det-restart")
+        page.wait_for_function("document.getElementById('det-restart-msg').textContent.includes('等检测程序回报')")
+        stub.devices[0]["restart"].update(result="failed", reason=bad)
+        page.clock.run_for(3100)
+        page.wait_for_function("document.getElementById('det-restart-msg').textContent.includes('启动失败')")
+        assert "原因未知" in page.inner_text("#det-restart-msg")
+        page.click("#det-restart")      # 再来一次：结果值本身是 Object.prototype 上的名字
+        page.wait_for_function("document.getElementById('det-restart-msg').textContent.includes('等检测程序回报')")
+        stub.devices[0]["restart"].update(result=bad, reason=None)
+        page.clock.run_for(3100)
+        page.wait_for_function("document.getElementById('det-restart-msg').textContent.includes('未知结果')")
+
+
+def test_daily_cap_text_and_unknown_auto_start(browser, static_base_url):
+    with page_with(browser, static_base_url, _stub_health(state="unreachable", auto="gave_up", auto_reason="daily_cap")) as page:
+        ready(page)
+        t = page.inner_text("#det-health")
+        assert t.endswith("24 小时内自动拉起已达 20 次上限，已停止自动重试；可以点按钮手动重启"), t
+        assert "3 次" not in t and not page.is_visible("#det-log-hint")   # 不是「拉了 3 次没成功」，也没有日志可看
+    with page_with(browser, static_base_url, _stub_health(state="ok", auto="whatever")) as page:
+        ready(page)
+        assert page.inner_text("#det-health") == "检测程序：在线 · ActivityWatch：正常 · 未知状态"
+    with page_with(browser, static_base_url, _stub_health(state="ok", auto="idle")) as page:
+        ready(page)
+        assert page.inner_text("#det-health") == "检测程序：在线 · ActivityWatch：正常"
