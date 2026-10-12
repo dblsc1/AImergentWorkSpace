@@ -6,7 +6,7 @@ PUT 的请求体按原始字节交给 service：要先量大小（413）、再�
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Query, Request, Response
 from starlette.concurrency import run_in_threadpool
 
 from . import rules, service
@@ -46,6 +46,11 @@ def request_restart(deviceId: str, request: Request) -> dict:
 @router.get("/devices")
 def list_devices() -> dict:
     return service.list_devices()
+
+
+@router.get("/incidents")
+def incidents(deviceId: str, limit: int = Query(50, ge=1, le=200)) -> dict:
+    return service.incidents(deviceId, limit)
 
 
 # ── detector.rules.v1（v2.6）：分类规则与 AI 草稿 ──

@@ -128,6 +128,18 @@
         <p class="set-hint" id="det-offline-hint" hidden>检测程序没在运行，按钮无效。请在电脑上启动检测程序（<code>ai-detector autostart install</code> 可设开机自启）。</p>
         <p class="set-hint" id="det-restart-msg" role="status" hidden></p>
         <p class="set-hint" id="det-log-hint" hidden></p>
+        <!-- 启动日志上传（nexus-core v2.28）：开关只在那台电脑上，这里只显示状态，没有打开它的控件。 -->
+        <p class="set-hint" id="det-logup" hidden></p>
+        <details class="det-details" id="det-incidents" hidden>
+          <summary>最近事故</summary>
+          <ul class="det-incidents" id="det-incidents-list"></ul>
+          <p class="set-hint" id="det-incidents-msg" hidden></p>
+        </details>
+        <details class="det-details" id="det-startlog" hidden>
+          <summary>查看启动日志</summary>
+          <p class="set-hint">这是那台电脑上 ActivityWatch 启动时的输出（已脱敏、只有最后几行），仅供排查，原样显示。</p>
+          <pre class="det-pre" id="det-startlog-text"></pre>
+        </details>
       </div>
       <p class="suggest-empty" id="det-note" hidden></p>
 

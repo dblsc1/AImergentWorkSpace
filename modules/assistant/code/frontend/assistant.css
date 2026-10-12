@@ -284,6 +284,11 @@ fieldset.set-field > legend { font-size: var(--fs-sub); color: var(--ink-2); mar
 .field[aria-invalid="true"] { border-color: var(--danger); }
 .det-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--sp-2); }
 .det-health-actions { justify-content: flex-start; }
+.det-details { font-size: var(--fs-sub); color: var(--ink-2); }
+.det-details summary { cursor: pointer; min-height: var(--tap); display: flex; align-items: center; }
+.det-incidents { margin: 0; padding-left: var(--sp-4); display: grid; gap: var(--sp-1); overflow-wrap: anywhere; }
+.det-pre { margin: 0; padding: var(--sp-2); max-height: 16em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  font-family: var(--font-mono); font-size: var(--fs-sub); background: var(--panel-2); border-radius: var(--r-2); }
 .det-dirty { margin-right: auto; font-size: var(--fs-sub); color: var(--warn); }
 
 .det-rules-title { font-size: var(--fs-body); font-weight: 600; }

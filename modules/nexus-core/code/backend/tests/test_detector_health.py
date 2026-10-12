@@ -30,7 +30,7 @@ def test_health_stored_with_server_clock_and_listed(client):
     assert r.status_code == 200 and r.json() == {"restartNonce": None}
     d = _dev(client)
     assert d["health"]["awState"] == "unreachable" and d["health"]["at"]
-    assert set(d["health"]) == {"awState", "at", "autoStart", "autoReason"} and d["health"]["autoStart"] is None
+    assert set(d["health"]) == {"awState", "at", "autoStart", "autoReason", "logUpload"} and d["health"]["autoStart"] is None
     assert d["restart"] is None
     # 旧字段不变
     assert {"deviceId", "lastUploadAt", "lastFetchAt", "hasSettings", "settingsUpdatedAt"} <= set(d)
