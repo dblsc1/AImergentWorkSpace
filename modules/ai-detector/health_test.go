@@ -500,7 +500,7 @@ func TestHangingHealthServerDoesNotDelayPresence(t *testing.T) {
 		return 0, ""
 	}
 	remotePresence.Store(nil)
-	dir := t.TempDir()
+	dir, _ := os.MkdirTemp("", "hang") // 心跳循环收不到停止信号、测试结束后还会写这里：不用 t.TempDir（它的清理会撞上）
 	p := pathsIn(dir)
 	cfg := liveConfig(aw.URL, ck.URL)
 	cfg.PresenceSeconds = 5
