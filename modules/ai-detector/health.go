@@ -39,6 +39,7 @@ const (
 	probeEvery   = time.Second
 	obsFresh     = time.Minute     // 心跳线程这么久没更新观察（比如本机配置写坏了），就不再替它报，面板上自然显示离线
 	resultTTL    = 5 * time.Minute // 回报不出去的重启结果留这么久（服务端那边请求早已作废）
+	heldMax      = time.Minute     // 被限频挡住的 nonce 最多等这么久（服务端的请求 5 分钟就作废，笔记本睡了一觉回来不该再拉）
 	autoDayMax   = 20              // 滚动 24 小时内自动拉起的上限
 	stableAfter  = time.Minute     // ActivityWatch 要连续连得上这么久，才清零「已自动拉起几次 / 已停手」（一闪一灭不算恢复）
 )
@@ -115,6 +116,7 @@ const (
 	rNotUp      = "not_up"
 	rNoDisplay  = "no_display"
 	rStateRO    = "state_unwritable"
+	rDailyCap   = "daily_cap" // 只出现在 autoReason：24 小时自动拉起上限
 )
 
 // spawnDetached：不经 shell、不继承检测程序自己的标准输入输出、脱离本进程（detach_*.go），检测程序退出后它照样活着。
@@ -122,8 +124,9 @@ const (
 func spawnDetached(argv []string, logPath string) (<-chan int, error) {
 	cmd := exec.Command(argv[0], argv[1:]...)
 	var f *os.File
+	rotated := false
 	if logPath != "" {
-		_ = os.Rename(logPath, logPath+".1")
+		rotated = os.Rename(logPath, logPath+".1") == nil
 		var err error
 		if f, err = os.OpenFile(logPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600); err != nil {
 			log.Printf("aw-start.log 开不了（子进程的输出不留）：%v", err)
@@ -139,6 +142,13 @@ func spawnDetached(argv []string, logPath string) (<-chan int, error) {
 		f.Close() // 子进程已经有自己的一份
 	}
 	if err != nil {
+		// 根本没拉起进程：别让一次失败把上一次有用的日志挤掉——删掉刚建的空文件，把挪走的放回来
+		if f != nil {
+			_ = os.Remove(logPath)
+		}
+		if rotated {
+			_ = os.Rename(logPath+".1", logPath)
+		}
 		return nil, err
 	}
 	ch := make(chan int, 1)
@@ -177,7 +187,8 @@ type healthReporter struct {
 	autoTimes   []time.Time // 滚动 24 小时内自动拉起的时刻
 	capped      bool        // 当前因为 24 小时上限而停手（窗口空出来就自动解除）
 	staleLogged bool
-	held        string // 被 30 秒限频挡住、等限频过了再处理的 nonce
+	heldAt      time.Time // 收到被挡住的 nonce 的墙钟时刻（Round(0) 去掉单调读数：Linux 上挂起期间单调钟不走）
+	held        string    // 被 30 秒限频挡住、等限频过了再处理的 nonce
 	heldCfg     Config
 	gaveUp      bool      // 已停手，直到 ActivityWatch 连续连得上 stableAfter、或进程重启
 	upSince     time.Time // 连续连得上的起点；一次 unreachable 就清空
@@ -190,6 +201,7 @@ type healthReporter struct {
 	reachable  func(Config) bool
 	resolve    func() []string
 	clock      func() time.Time
+	wall       func() time.Time // 墙钟，只用来算 nonce 被挡了多久
 	goos       string
 	getenv     func(string) string
 	probeWait  time.Duration
@@ -210,7 +222,7 @@ type observation struct {
 
 func newHealthReporter(p paths, hc *http.Client) *healthReporter {
 	return &healthReporter{hc: hc, state: p.state, logPath: filepath.Join(filepath.Dir(p.state), "aw-start.log"),
-		wake: make(chan struct{}, 1), spawn: spawnDetached, clock: time.Now, goos: runtime.GOOS, getenv: os.Getenv,
+		wake: make(chan struct{}, 1), spawn: spawnDetached, clock: time.Now, wall: func() time.Time { return time.Now().Round(0) }, goos: runtime.GOOS, getenv: os.Getenv,
 		probeWait: probeWait, probeEvery: probeEvery,
 		reachable: func(c Config) bool { return awReachable(c, hc) },
 		resolve:   func() []string { return defaultAwStart(runtime.GOOS, os.Getenv, exec.LookPath) }}
@@ -366,8 +378,16 @@ func (h *healthReporter) restart(cfg Config, nonce string) {
 	_ = loadJSON(h.state, &st)
 	h.mu.Lock()
 	dup := h.handled == nonce || st.Health.RestartNonce == nonce
-	if h.held == nonce {
+	wasHeld, heldAt := h.held == nonce, h.heldAt
+	if wasHeld {
 		h.held = "" // 取出来处理了；限频还没过的话下面会再放回去
+		if h.wall().Sub(heldAt) > heldMax {
+			h.handled = nonce // 当作处理过：服务端重发也不理
+			h.mu.Unlock()
+			_ = updateState(h.state, func(s *State) { s.Health.RestartNonce = nonce })
+			log.Printf("重启请求被限频挡了超过 %v，已过期，不再拉起", heldMax)
+			return
+		}
 	}
 	h.mu.Unlock()
 	if dup {
@@ -404,7 +424,10 @@ func (h *healthReporter) restart(cfg Config, nonce string) {
 	})
 	if !ok { // 30 秒限频内：先放着，限频一过 flush 就接着处理（不必等下一次从服务端取）
 		h.mu.Lock()
-		h.held, h.heldCfg = nonce, cfg
+		h.held, h.heldCfg, h.heldAt = nonce, cfg, h.wall()
+		if wasHeld {
+			h.heldAt = heldAt // 重新放回去不重置计时
+		}
 		h.mu.Unlock()
 	}
 }
@@ -561,12 +584,15 @@ func (h *healthReporter) auto(cfg Config, awState string) {
 		if !h.capped {
 			log.Printf("24 小时内已自动拉起 %d 次 ActivityWatch，今天不再自动拉起（面板上的按钮还能用）", autoDayMax)
 		}
-		h.capped, h.autoState = true, "gave_up"
+		h.capped, h.autoState, h.autoReason = true, "gave_up", "daily_cap"
 		h.mu.Unlock()
 		return
 	}
 	if h.capped {
 		h.capped = false
+		if h.autoReason == "daily_cap" {
+			h.autoReason = ""
+		}
 		if h.autoState == "gave_up" && !h.gaveUp {
 			h.autoState = "idle"
 		}
@@ -593,7 +619,9 @@ func (h *healthReporter) autoDone(outcome, reason string) {
 		h.autoState, h.autoReason = "started", ""
 		return
 	}
-	h.autoReason = reason
+	if !h.capped { // 上限已经把自动拉起停了：在途那次的失败不要盖掉 daily_cap
+		h.autoReason = reason
+	}
 	if h.autoState == "started" {
 		h.autoState = "idle"
 	}

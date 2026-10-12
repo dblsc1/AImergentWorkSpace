@@ -753,7 +753,7 @@ def test_prototype_keys_are_unknown_values(browser, static_base_url, bad):
     with page_with(browser, static_base_url, stub) as page:
         ready(page)
         t = page.inner_text("#det-health")
-        assert t == "检测程序：在线 · ActivityWatch：未知状态", t
+        assert t == "检测程序：在线 · ActivityWatch：未知状态 · 未知状态", t   # awState、autoStart 都不认识：同一句固定文本
         assert "function" not in t and "[object" not in t
     stub = _stub_health(state="unreachable", auto="gave_up", auto_reason=bad)
     with page_with(browser, static_base_url, stub) as page:
@@ -771,3 +771,17 @@ def test_prototype_keys_are_unknown_values(browser, static_base_url, bad):
         stub.devices[0]["restart"].update(result=bad, reason=None)
         page.clock.run_for(3100)
         page.wait_for_function("document.getElementById('det-restart-msg').textContent.includes('未知结果')")
+
+
+def test_daily_cap_text_and_unknown_auto_start(browser, static_base_url):
+    with page_with(browser, static_base_url, _stub_health(state="unreachable", auto="gave_up", auto_reason="daily_cap")) as page:
+        ready(page)
+        t = page.inner_text("#det-health")
+        assert t.endswith("24 小时内自动拉起已达 20 次上限，已停止自动重试；可以点按钮手动重启"), t
+        assert "3 次" not in t and not page.is_visible("#det-log-hint")   # 不是「拉了 3 次没成功」，也没有日志可看
+    with page_with(browser, static_base_url, _stub_health(state="ok", auto="whatever")) as page:
+        ready(page)
+        assert page.inner_text("#det-health") == "检测程序：在线 · ActivityWatch：正常 · 未知状态"
+    with page_with(browser, static_base_url, _stub_health(state="ok", auto="idle")) as page:
+        ready(page)
+        assert page.inner_text("#det-health") == "检测程序：在线 · ActivityWatch：正常"

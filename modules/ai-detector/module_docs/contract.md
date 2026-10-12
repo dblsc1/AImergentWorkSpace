@@ -477,16 +477,16 @@ Authorization: Bearer <deviceToken>
 
 - **报告**：`PUT /api/core/detector/health?deviceId=`（带设备令牌），体 `{awState, autoStart?, autoReason?, restart?}`。`awState`：ActivityWatch 接口连不上 = `unreachable`；
   连得上但最近一分钟没有窗口记录 = `no_window`；配置 `paused` / 没 `enabled` = `paused` / `disabled`；否则 `ok`（心跳没开、或这一拍说不准——比如拉网页设置失败——时，健康报告自己探一下本机接口有没有回应，报 `ok` / `unreachable`；自动拉起不看这个兜底的结果）。
-  状态变了立刻报，否则每 15 秒一次；有重启结果要回报时下一次就报。观察超过 60 秒没更新（心跳线程没在观察了，比如本机配置读不了）就**停止报告**，让面板显示离线，并记一行日志。**报告失败只记一次日志（一段连续失败只记一次），按 15 秒退避，绝不阻塞、不影响心跳与同步**；回报不出去的重启结果留 5 分钟后丢弃（服务端的请求 5 分钟就作废）；
+  状态变了立刻报（上一次发送失败后例外：按 15 秒退避），否则每 15 秒一次；有重启结果要回报时下一次就报。观察超过 60 秒没更新（心跳线程没在观察了，比如本机配置读不了）就**停止报告**，让面板显示离线，并记一行日志。**报告失败只记一次日志（一段连续失败只记一次），按 15 秒退避，绝不阻塞、不影响心跳与同步**；回报不出去的重启结果留 5 分钟后丢弃（服务端的请求 5 分钟就作废）；
   老服务端答 404 → 本进程不再试，记一行。体里没有任何自由文本。`ai-detector status` 打印最近一次报出去的 `awState`。
 - **独立线程**：健康服务器卡住不影响心跳的节拍。状态没变时也每 15 秒报一次（面板最多等 75 秒，要赶得上取 nonce）。
 - **按钮拉起**：响应里的 `restartNonce` 与上次处理的不同时：ActivityWatch 连得上 → 结果 `already_running`；否则用**本机**命令拉起。
-  **先把 nonce 记进状态文件再动手**，记不下来就不拉：结果 `failed`、原因 `state_unwritable`；检测程序重启后不重放。30 秒限频内到的 nonce **不回 failed**：先放着不处理，限频一过（健康线程每秒查一次，不必等下一次从服务端取）就处理，限频过了再处理。
+  **先把 nonce 记进状态文件再动手**，记不下来就不拉：结果 `failed`、原因 `state_unwritable`；检测程序重启后不重放。30 秒限频内到的 nonce **不回 failed**：先放着不处理，限频一过（健康线程每秒查一次，不必等下一次从服务端取）就处理，但被挡超过 60 秒（按墙钟算，挂起期间也走）就作废、记成已处理，限频过了再处理。
   **按钮在检测程序暂停 / 没开同步时也能用**（仓主定：这是人明确点的动作，它只检测并重启 ActivityWatch）；自动拉起在 `paused` / `disabled` 时仍然从不动。
   结果在下一次健康报告里回报：`started` / `already_running` / `failed`（带 `reason`）/ `unsupported`（没有可运行的命令）。
 - **`started` = ActivityWatch 的接口确实起来了**：拉起后在不阻塞心跳与同步的后台最多探测 20 秒；接口通了 → `started`，进程以非 0 退出 → `failed`/`exited_early`（退出码 0 如 macOS 的 `open` 继续等），20 秒内没通 → `failed`/`not_up`。
   失败原因枚举 `reason`：`not_found`（找不到程序）、`spawn_error`（其他启动错误）、`exited_early`、`not_up`、`no_display`（Linux 且没有 `DISPLAY` 也没有 `WAYLAND_DISPLAY`：拉起前就判定，不拉）、`state_unwritable`。
-- **本机诊断（不上服务端）**：被拉起进程的 stdout / stderr 写到 `<检测程序目录>/aw-start.log`（0600，每次拉起前把上一份挪成 `aw-start.log.1` 再重建；绝不接检测程序自己的标准输入输出）。
+- **本机诊断（不上服务端）**：被拉起进程的 stdout / stderr 写到 `<检测程序目录>/aw-start.log`（0600，每次拉起前把上一份挪成 `aw-start.log.1` 再重建，进程根本没拉起来（找不到程序等）就原样放回，不挤掉上一次有用的日志；绝不接检测程序自己的标准输入输出）。
   每次尝试都往检测程序的日志里记一行，并在状态文件 `health.lastStart` 里存一条记录：时间、触发（`auto` / `button`）、解析出的命令、结果、原因、错误串、探测窗口内进程退出的退出码。
   `ai-detector status` 用中文打印这条记录、`aw-start.log` 的路径和最后 20 行（`not_found` / `spawn_error` / `no_display` / `state_unwritable` 没有拉起进程，不贴日志——那是更早一次的），以及按原因给的「可以试试」。**错误串和日志内容绝不发给服务端**（测试断言 PUT 体里没有）。
 - **命令只来自本机**（`ai-detector.config.v1` 追加 `awStartCommand`：argv 数组，不经 shell）。没写就按系统缺省：Windows `%LOCALAPPDATA%\Programs\ActivityWatch\aw-qt.exe`（要存在）、
@@ -494,12 +494,12 @@ Authorization: Bearer <deviceToken>
 - **安全底线（测试锁住）**：服务端发来的任何东西都不是命令，也不拼进命令；它只给一个不透明 nonce（形状 `[A-Za-z0-9_-]{1,64}`，不合的整个不理），程序原样回报。
   `awStartCommand`、`awAutoStart` 只认本机配置文件；`detector.settings.v1` 不收这两个键（网页设置里带它们仍是未知键，不改变任何行为）。
 - **自动拉起**（`ai-detector.config.v1` 追加 `awAutoStart`，布尔，缺省 `true`，只认本机配置）：与按钮是**同一条启动路径**——同样的命令解析、同样的脱离式拉起、**共用**「两次拉起至少隔 30 秒，不管 nonce 换了几个、也不管是按钮还是自动」。
-  条件：连续两次心跳尝试都是 `unreachable` 才拉（一次抖动不拉）；`paused` / `disabled` 从不拉；没有可运行的命令 → 不尝试、每段连续失败记一行。
+  条件：连续两次心跳尝试都是 `unreachable` 才拉（一次抖动不拉）；`paused` / `disabled` 从不拉；没有可运行的命令 → 不尝试、记一行日志（之后不再记，直到 ActivityWatch 连续稳定 60 秒清零）。
   连续自动拉起 3 次仍没把 ActivityWatch 拉回来 → 记一行并停手，直到 ActivityWatch 连续连得上 60 秒（或进程重启）；面板上的按钮在停手期间照样可用（仍受 30 秒限制）。
   **滚动 24 小时内最多自动拉起 20 次**，超过就 `autoStart: "gave_up"` 到窗口空出来（或进程重启）；按钮不受影响。
   「已自动拉起几次 / 已停手」要等 ActivityWatch **连续连得上 60 秒**才清零——一闪一灭不算恢复；paused / disabled / 状态说不准的时候这段计时也断开。
   “没把它拉回来”以上面的接口探测为准（`not_up` / `exited_early` 等都算失败，不是「进程拉起来了」就算数）。
-  最近一次自动动作的结果随健康报告上去：`autoStart` ∈ `off`（配置关了）/ `idle`（没有拉过）/ `started`（接口确实起来了）/ `gave_up` / `unsupported`；失败时 `autoReason` 带同一套原因枚举（`no_display` 时不拉，3 次尝试后同样停手）。
+  最近一次自动动作的结果随健康报告上去：`autoStart` ∈ `off`（配置关了）/ `idle`（没有拉过，或上一次自动拉起失败但还没到停手——失败时 `autoReason` 带着原因）/ `started`（接口确实起来了）/ `gave_up` / `unsupported`；失败时 `autoReason` 带同一套原因枚举（`no_display` 时不拉，3 次尝试后同样停手），再加 `daily_cap`（滚动 24 小时 20 次上限，此时 `autoStart: gave_up`）。
 - **边界**：按钮和自动拉起都只在检测程序自己活着（在用户的桌面会话里运行）时有效，救不了已经死掉的检测程序——那是 `ai-detector autostart install` 的事；重启后 ActivityWatch 自己开机自启才是根治。
 
 ## 状态文件桥（`ai-detector.agent-status-bridge.v1` · 规范性，v0.3 追加）
@@ -556,6 +556,7 @@ Authorization: Bearer <deviceToken>
 
 | 日期 | 变更 |
 |---|---|
+| 2026-10-12 | health.v1 追加（第三轮评审后）：被限频挡住的 nonce 按墙钟超过 60 秒就作废（笔记本挂起恢复后不拉）；`autoReason` 追加 `daily_cap`（nexus-core 严格枚举同步追加，`restart.reason` 不收）；拉起进程失败不再挤掉上一次的 `aw-start.log`。
 | 2026-10-12 | health.v1 追加（第二轮评审后）：说不准时健康报告自己探接口；观察过期（60 秒）不再续报；失败退避 15 秒、结果 5 分钟丢弃；限频内的 nonce 限频一过就处理；自动拉起滚动 24 小时至多 20 次；稳定计时在 paused / disabled / 说不准时断开；`status` 对没拉起进程的失败不贴旧日志。
 | 2026-10-12 | health.v1 追加（评审后）：健康报告独立线程、15 秒一报；先记 nonce 再拉；冷却取动手时刻的时钟；限频内的 nonce 留着不答 failed；按钮在暂停 / 没开同步时可用；`started` 以拉起后 20 秒内接口真的起来为准；失败原因枚举 `reason` / `autoReason`；本机 `aw-start.log` + `health.lastStart` + `status` 打印。
 | 2026-10-12 | health.v1 首版、config.v1 追加 `awStartCommand` / `awAutoStart`（均只认本机配置，不进网页设置）：检测程序向 nexus-core v2.27 报告自己与 ActivityWatch 的状态；网页「重启」经不透明 nonce 让它用本机命令拉起 ActivityWatch；ActivityWatch 连续两次连不上时自动拉起（30 秒限频、连拉 3 次不成功停手）。服务端数据不进命令 |

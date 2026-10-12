@@ -178,3 +178,13 @@ def test_devices_carry_server_now(client):
     body = client.get(f"{API}/devices").json()
     assert abs((datetime.fromisoformat(body["now"]) - datetime.now(timezone.utc)).total_seconds()) < 30
     assert body["devices"] == []
+
+
+def test_daily_cap_only_valid_as_auto_reason(client):
+    r = _health(client, {"awState": "unreachable", "autoStart": "gave_up", "autoReason": "daily_cap"}, BEARER)
+    assert r.status_code == 200, r.text
+    assert _dev(client)["health"]["autoReason"] == "daily_cap"
+    _restart(client)
+    n = _dev(client)["restart"]["nonce"]
+    r = _health(client, {"awState": "ok", "restart": {"nonce": n, "result": "failed", "reason": "daily_cap"}}, BEARER)
+    assert r.status_code == 422  # 按钮的失败原因里没有它

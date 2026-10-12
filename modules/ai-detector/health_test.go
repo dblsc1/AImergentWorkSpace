@@ -1104,8 +1104,11 @@ func TestAutoStartDailyCap(t *testing.T) {
 	e.h.mu.Lock()
 	st := e.h.autoState
 	e.h.mu.Unlock()
-	if sp.n() != autoDayMax || st != "gave_up" {
-		t.Fatalf("spawns=%d state=%q", sp.n(), st)
+	e.h.mu.Lock()
+	why := e.h.autoReason
+	e.h.mu.Unlock()
+	if sp.n() != autoDayMax || st != "gave_up" || why != "daily_cap" {
+		t.Fatalf("spawns=%d state=%q reason=%q", sp.n(), st, why)
 	}
 	for e.clk.now().Sub(testStart(e)) < 25*time.Hour { // 24 小时的窗口滑过去，又能拉了
 		step()
@@ -1139,5 +1142,111 @@ func TestStatusOmitsLogTailWhenNothingSpawned(t *testing.T) {
 	printLastStart(&out, &startRecord{At: time.Now(), Trigger: "auto", Argv: []string{"x"}, Outcome: "failed", Reason: "exited_early"}, logPath)
 	if !strings.Contains(out.String(), "OLD-RUN-OUTPUT") {
 		t.Errorf("exited_early should show the log:\n%s", out.String())
+	}
+}
+
+// 被限频挡住的 nonce 超过 60 秒（墙钟）就过期：笔记本睡了一觉回来，不能为服务端早已作废的请求去拉 AW。
+func TestHeldNonceExpiresByWallClock(t *testing.T) {
+	cfg := Config{AwStartCommand: []string{"/opt/aw/aw-qt"}}
+	for _, c := range []struct {
+		name  string
+		jump  time.Duration
+		spawn int
+	}{{"40 秒后限频结束", 40 * time.Second, 2}, {"睡了 10 分钟", 10 * time.Minute, 1}} {
+		sp := &spawnLog{}
+		e := testEnv(t, false, sp)
+		wall := time.Now().Round(0)
+		e.h.wall = func() time.Time { return wall }
+		e.h.restart(cfg, "n1")
+		e.waitResult(t)
+		e.clk.add(5 * time.Second)
+		e.h.restart(cfg, "n2")      // 限频内：被留住
+		e.clk.add(26 * time.Second) // 单调钟只走了 31 秒（挂起期间它不走）
+		wall = wall.Add(c.jump)     // 墙钟跳了
+		e.h.mu.Lock()
+		e.h.obs = observation{ok: false}
+		e.h.mu.Unlock()
+		e.h.flush()
+		e.settle()
+		if sp.n() != c.spawn {
+			t.Errorf("%s: spawns=%d want %d", c.name, sp.n(), c.spawn)
+		}
+		if c.spawn == 1 { // 过期的 nonce 记成已处理：服务端再发也不理
+			e.clk.add(time.Minute)
+			e.h.restart(cfg, "n2")
+			e.settle()
+			var st State
+			_ = loadJSON(e.p.state, &st)
+			if sp.n() != 1 || st.Health.RestartNonce != "n2" {
+				t.Errorf("expired nonce re-handled: spawns=%d state=%q", sp.n(), st.Health.RestartNonce)
+			}
+		}
+	}
+}
+
+// 24 小时窗口的边界：满 24 小时整才放行，差 1 纳秒还不行。
+func TestDailyCapWindowEdge(t *testing.T) {
+	sp := &spawnLog{}
+	e := testEnv(t, false, sp)
+	cfg := Config{Enabled: true, AwStartCommand: []string{"/opt/aw/aw-qt"}}
+	t0 := e.clk.now()
+	e.h.mu.Lock()
+	e.h.autoTimes = append(e.h.autoTimes, t0)
+	for i := 1; i < autoDayMax; i++ {
+		e.h.autoTimes = append(e.h.autoTimes, t0.Add(time.Hour))
+	}
+	e.h.mu.Unlock()
+	e.clk.mu.Lock()
+	e.clk.t = t0.Add(24*time.Hour - time.Nanosecond)
+	e.clk.mu.Unlock()
+	e.h.auto(cfg, "unreachable")
+	e.h.auto(cfg, "unreachable")
+	e.settle()
+	e.h.mu.Lock()
+	reason, state := e.h.autoReason, e.h.autoState
+	e.h.mu.Unlock()
+	if sp.n() != 0 || reason != "daily_cap" || state != "gave_up" {
+		t.Fatalf("at 24h-1ns: spawns=%d state=%q reason=%q", sp.n(), state, reason)
+	}
+	e.clk.add(time.Nanosecond)
+	e.h.auto(cfg, "unreachable")
+	e.settle()
+	e.h.mu.Lock()
+	reason = e.h.autoReason
+	e.h.mu.Unlock()
+	if sp.n() != 1 || reason == "daily_cap" {
+		t.Fatalf("at exactly 24h: spawns=%d reason=%q", sp.n(), reason)
+	}
+}
+
+// 没拉起进程的失败不动上一次的日志：内容不变，也不被挤到 .1。
+func TestFailedSpawnKeepsPreviousLog(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "aw-start.log")
+	_ = os.WriteFile(logPath, []byte("REAL-LOG\n"), 0o600)
+	for i := 0; i < 2; i++ {
+		if _, err := spawnDetached([]string{"/nonexistent/aw-qt"}, logPath); err == nil {
+			t.Fatal("spawn should fail")
+		}
+		b, err := os.ReadFile(logPath)
+		if err != nil || string(b) != "REAL-LOG\n" {
+			t.Fatalf("attempt %d: log=%q err=%v", i, b, err)
+		}
+	}
+	if runtime.GOOS != "windows" {
+		if _, err := spawnDetached([]string{"sh", "-c", "echo NEW"}, logPath); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "new log", func() bool { b, _ := os.ReadFile(logPath); return string(b) == "NEW\n" })
+		if b, _ := os.ReadFile(logPath + ".1"); string(b) != "REAL-LOG\n" {
+			t.Fatalf(".1 = %q", b)
+		}
+	}
+}
+
+// 默认的墙钟读数不带单调部分：Linux 上挂起期间单调钟不走，带着它 Sub 会把睡了 10 分钟算成 30 秒。
+func TestDefaultWallClockHasNoMonotonicReading(t *testing.T) {
+	h := newHealthReporter(pathsIn(t.TempDir()), http.DefaultClient)
+	if s := h.wall().String(); strings.Contains(s, "m=") {
+		t.Fatalf("wall clock carries a monotonic reading: %s", s)
 	}
 }

@@ -138,9 +138,11 @@
     if (!(age < STALE_MS)) {
       return { text: "检测程序：离线（最近一次报告 " + Math.max(1, Math.floor(age / 60000)) + " 分钟前）", online: false };
     }
-    var auto = own(AUTO_TEXT, h.autoStart, "");
-    if (h.autoStart === "gave_up" && h.autoReason) auto += "（" + reasonText(h.autoReason) + "）";
-    return { text: "检测程序：在线 · ActivityWatch：" + own(AW_TEXT, h.awState, "未知状态") + (auto ? " · " + auto : ""), online: true, gaveUp: h.autoStart === "gave_up" };
+    var a = h.autoStart, capped = a === "gave_up" && h.autoReason === "daily_cap";
+    var auto = (a == null || a === "idle") ? "" : own(AUTO_TEXT, a, "未知状态");   // 没有 / idle 什么都不说；不认识的值说「未知状态」
+    if (capped) auto = "24 小时内自动拉起已达 20 次上限，已停止自动重试；可以点按钮手动重启";
+    else if (a === "gave_up" && h.autoReason) auto += "（" + reasonText(h.autoReason) + "）";
+    return { text: "检测程序：在线 · ActivityWatch：" + own(AW_TEXT, h.awState, "未知状态") + (auto ? " · " + auto : ""), online: true, gaveUp: a === "gave_up" && !capped };
   }
 
   window.assistantSettings = {

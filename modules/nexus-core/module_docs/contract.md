@@ -576,7 +576,7 @@ consumes:
 | PUT | `/api/core/detector/settings` | `?deviceId`，`DetectorSettings` | 同 GET；带 Bearer 403 | ✅ 已实现（v2.5） |
 | DELETE | `/api/core/detector/settings` | `?deviceId` | `204`；带 Bearer 403 | ✅ 已实现（v2.5） |
 | GET | `/api/core/detector/devices` | 无 | `{devices[]}`（v2.27 每台追加 `health`、`restart`，见「检测程序健康与重启 ActivityWatch」） | ✅ 已实现（v2.5） |
-| PUT | `/api/core/detector/health` | `?deviceId`，`{awState, restart?, autoStart?}` | `{restartNonce\|null}`；未知键 / 枚举外 422、超 1 KiB 413 | ✅ 已实现（v2.27） |
+| PUT | `/api/core/detector/health` | `?deviceId`，`{awState, autoStart?, autoReason?, restart?}` | `{restartNonce\|null}`；未知键 / 枚举外 422、超 1 KiB 413 | ✅ 已实现（v2.27） |
 | POST | `/api/core/detector/restart` | `?deviceId` | `{nonce}`；带 Bearer 403、设备不存在 404 | ✅ 已实现（v2.27） |
 | GET | `/api/core/detector/rules` | 无 | `{version, updatedAt, rules[]}` + `ETag`（见 `contracts/detector.rules.v1`） | ✅ 已实现（v2.6） |
 | PUT | `/api/core/detector/rules` | `If-Match`，`{rules[]}` | 同 GET；带 Bearer 403、缺 If-Match 428、版本不符 412 | ✅ 已实现（v2.6） |
@@ -4159,7 +4159,7 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 ```jsonc
 { "awState": "ok" | "unreachable" | "no_window" | "paused" | "disabled",
   "autoStart": "off" | "idle" | "started" | "gave_up" | "unsupported",   // 可选：检测程序最近一次「自动拉起 ActivityWatch」的结果
-  "autoReason": "not_found" | "spawn_error" | "exited_early" | "not_up" | "no_display" | "state_unwritable",   // 可选：自动拉起失败的原因（枚举）
+  "autoReason": "not_found" | "spawn_error" | "exited_early" | "not_up" | "no_display" | "state_unwritable" | "daily_cap",   // 可选：自动拉起失败的原因（枚举）
   "restart": { "nonce": "<1–64 字符>", "result": "started" | "already_running" | "failed" | "unsupported",
                "reason": "<同 autoReason 的枚举>" } }   // 可选；reason 只在 failed 时有意义
 ```

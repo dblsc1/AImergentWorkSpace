@@ -147,6 +147,9 @@ class DetectorSettings(_Strict):
 _Reason = Literal["not_found", "spawn_error", "exited_early", "not_up", "no_display", "state_unwritable"]
 
 
+_AutoReason = Literal["not_found", "spawn_error", "exited_early", "not_up", "no_display", "state_unwritable", "daily_cap"]
+
+
 class _Restart(_Strict):
     nonce: Annotated[StrictStr, Field(min_length=1, max_length=64)]
     result: Literal["started", "already_running", "failed", "unsupported"]
@@ -157,7 +160,7 @@ class Health(_Strict):
     awState: Literal["ok", "unreachable", "no_window", "paused", "disabled"]
     restart: _Restart | None = None
     autoStart: Literal["off", "idle", "started", "gave_up", "unsupported"] | None = None  # 最近一次自动拉起的结果
-    autoReason: _Reason | None = None
+    autoReason: _AutoReason | None = None  # 比 restart.reason 多一个 daily_cap：24 小时自动拉起上限
 
 
 def _iso(t: datetime | None) -> str | None:
