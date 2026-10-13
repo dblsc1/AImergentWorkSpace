@@ -8,7 +8,7 @@
 | `auth.Dockerfile` | 占位认证服务镜像（`contracts/auth.gate.v1` 的参考实现） |
 | nexus-core 镜像 | 直接用 `modules/nexus-core/code/backend/Dockerfile` |
 | mcp 镜像 | 直接用 `modules/mcp/code/server/Dockerfile`（v0.3 起，`contracts/mcp.tools.v1`） |
-| agent 镜像 | 直接用 `modules/agent/code/backend/Dockerfile`（v0.3 起，`contracts/agent.chat.v1`；opencode 钉死版本在里面） |
+| agent 镜像 | 直接用 `modules/agent/code/backend/Dockerfile`（v0.3 起，`contracts/agent.chat.v1`；opencode 钉死版本在里面）。**v0.4 起内置聊天可选、缺省不起**：发布版 compose 里 `agent` 在 profile `agent` 下，缺省安装不拉这张镜像；`.env` 加两行 `COMPOSE_PROFILES=agent` 和 `AGENT_UPSTREAM=agent:8030` 才开（安装脚本升级时，老 `.env` 里填过 `AGENT_API_KEY` / `AGENT_BASE_URL` 且没提到过 `COMPOSE_PROFILES` 的会自动补上这两行；没开时升级会删掉这个项目里旧版留下的 agent 容器） |
 | `docker-compose.yml` | 发布版组装，镜像标签是 `__VERSION__`，发布时替换 |
 | `honeycomb-install.sh` / `.ps1` | 一键安装 / 升级，`__TAG__` 发布时替换。`.ps1` 必须保留 UTF-8 BOM |
 | `NOTES.md` | Release 页面的说明文字 |

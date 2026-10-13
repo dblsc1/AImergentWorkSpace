@@ -1,5 +1,5 @@
 /**
- * chat.js —— 「AI 对话」聊天面板（contracts/agent.chat.v1；2026-09-30 从计时页搬来「AI助理」页）
+ * chat.js —— 「AI 对话」聊天面板（contracts/agent.chat.v1；2026-09-30 从计时页搬来「待批准」页）
  *
  * 只跟 <站点前缀>api/agent/ 说话：列会话、建会话、删会话、读历史、发消息（POST 回的是 SSE 流，
  * 用 fetch + ReadableStream 自己解析——EventSource 只会 GET）、停止。前端不认识任何代理运行时的形状。

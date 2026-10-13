@@ -4,7 +4,7 @@
 > **唯一事实**。只增不改不删；不兼容的改动发 `detector.settings.v2`，新旧并行。
 >
 > - 提供方：`modules/nexus-core`（按租户、按设备存设置；端点见「二」）。
-> - 消费方：`modules/ai-detector`（每轮拉一次，按「三」生效）；Cockpit「自动记录」页（读写，给人勾选；2026-10-14 前在「AI助理」页）。
+> - 消费方：`modules/ai-detector`（每轮拉一次，按「三」生效）；Cockpit「自动记录」页（读写，给人勾选；2026-10-14 前在「待批准」页）。
 > - **强制脱敏不在本文件里**：密码、密钥、私钥、银行卡号、身份证号在 ai-detector 程序里写死，
 >   任何设置都关不掉——本 schema 里**没有**这些键，发了按未知键 `422`。清单见
 >   `modules/ai-detector/module_docs/contract.md`「强制脱敏」。

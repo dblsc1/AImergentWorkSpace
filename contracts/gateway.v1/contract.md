@@ -36,7 +36,7 @@ docker compose -f docker-compose.yml -f /你的/override.yml up -d
 | `HONEYCOMB_LOGIN_DIR` | 登录门占位件自带的页面 | 登录页静态目录，挂在 `/login/`【冻结】 |
 | `HONEYCOMB_EXTRA_ROUTES_DIR` | `deploy/nginx/extra`（空） | 额外路由目录，见第四节【冻结】 |
 | `HONEYCOMB_BASE_PATH` | `/` | 站点前缀：整站挂在子路径下时设，如 `/Cockpit/`，以 `/` 开头和结尾。见第七节【冻结】 |
-| `AGENT_UPSTREAM` | `agent:8030` | 聊天后端地址（`host:port`），实现 `agent.chat.v1`。见第八节（2026-09-28 追加）|
+| `AGENT_UPSTREAM` | `agent:8030` | 聊天后端地址（`host:port`），实现 `agent.chat.v1`。见第八节（2026-09-28 追加）。**2026-10-14 追加（v0.4）：开源版组装里缺省改为空 = 不转发（见第八节「聊天后端可选」）；契约上的含义不变，要转发就设成 `host:port`** |
 
 路径变量写**绝对路径**最稳；相对路径按 compose 文件所在目录解析。
 
@@ -181,7 +181,7 @@ CI 把手写与生成的两份组装各按 `/` 与 `/Cockpit/` 真起一遍。
 
 | 对外路径 | 转给 | 契约 |
 |---|---|---|
-| `<前缀>api/agent/` | `AGENT_UPSTREAM`（缺省 `agent:8030`）的 `/api/agent/` | `contracts/agent.chat.v1` |
+| `<前缀>api/agent/` | `AGENT_UPSTREAM`（缺省 `agent:8030`；2026-10-14 起缺省为空 = 不转发，过门后回 `502`，见下）的 `/api/agent/` | `contracts/agent.chat.v1` |
 | `<前缀>api/mcp/` | MCP 服务（缺省 `mcp:8020`）的 `/api/mcp/` | `contracts/mcp.tools.v1` |
 
 - **换聊天后端**：同换认证服务——override 里加自己的服务（接到 `honeycomb-agent-net`），`.env` 里设
@@ -198,6 +198,13 @@ CI 把手写与生成的两份组装各按 `/` 与 `/Cockpit/` 真起一遍。
 - **缺了它们网关照常起**：这两条路由的上游用运行期解析（`resolver 127.0.0.11` + 变量写 `proxy_pass`），
   不在启动时解析——否则关掉 `agent` 服务、或 `AGENT_UPSTREAM` 指向的服务还没起，nginx 直接起不来，整站跟着挂。
   连不上时这两条路由回 502；前端按 `agent.chat.v1` 把聊天面板整块藏起来。
+- **聊天后端可选（2026-10-14 追加，接口与上一条不变）**：开源版自 v0.4 起缺省**不起** `agent` 服务（compose profile `agent`；`.env` 设
+  `COMPOSE_PROFILES=agent` 才起，缺省组装不要模型密钥、也不拉 agent 镜像）。**同时 `AGENT_UPSTREAM` 在开源版组装里缺省为空**：
+  空值 = 内置聊天没开，`<前缀>api/agent/` 过门之后（未登录照旧 302）**直接回 502，不解析任何主机名、不转发任何请求**——否则 Docker DNS 会把
+  不认识的名字转给宿主的解析器，局域网 DNS 恰好有个叫 `agent` 的主机时，用户在聊天框里敲的字就发过去了。开内置聊天要 `.env` 里两行：
+  `COMPOSE_PROFILES=agent` 与 `AGENT_UPSTREAM=agent:8030`；用自己的聊天后端只设 `AGENT_UPSTREAM=<host:port>`。
+  没起时 `<前缀>api/agent/*` 过门后回 **502**（仍是上条的「连不上」，不另立 404 / 503）；前端的判据只是 `GET <前缀>api/agent/health`
+  不是 200 + JSON，每次打开页面问一次，不轮询。网关与 `web` 的健康不依赖 `agent`。
 
 
 **实现落定（v0.3 MCP 实现 PR，追加）**：
@@ -271,3 +278,4 @@ auth.gate v1.4 让设备令牌带范围（`report` / `read` / `write`），并�
   仍然只有 web、mcp、agent，nexus-core 不在上面、也不去调聊天后端。「cockpit 主动叫 AI」的方向反过来实现：聊天后端的后台工人
   定时经 MCP 的对内地址去取（`agent.chat.v1` 第十节、`mcp.tools.v1` v1.9），走的是既有的 agent → mcp → nexus-core 这一条，
   带的仍是租户头、不带用户凭据。没有新路由、新变量、新网络。
+- **2026-10-14 · 聊天后端可选，`AGENT_UPSTREAM` 缺省改为空（追加，v0.4）**：第二节表里 `AGENT_UPSTREAM` 的契约含义不变，只是开源版三份组装（手写、发布版、生成）的缺省值从 `agent:8030` 改为空；空值时 `api/agent/` 的 location 把上游改指必连不上的回环地址 `127.0.0.1:1`（用 `if` + `set`，改写阶段，在 `auth_request` 之前只改变量、不 `return`，所以未登录照旧 302），已登录回 502，全程不查 DNS。接口、路径、清头、缓冲、超时一字未改。

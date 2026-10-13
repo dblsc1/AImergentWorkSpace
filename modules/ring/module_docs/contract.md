@@ -91,10 +91,10 @@ consumes:
   - id: nexus-core.activity.suggestions.v1
     contract: ../nexus-core/module_docs/contract.md
     purpose: >
-      计时页「N 条待确认 → AI助理」小链接（2026-09-30，`code/frontend/ring-suggest-link.js`、`#suggest-link`）：
+      计时页「N 条待确认 → 待批准」小链接（2026-09-30，`code/frontend/ring-suggest-link.js`、`#suggest-link`）：
       GET /api/core/activity/suggestions?status=pending&limit=1，只用 `total`。0 条、404（后端早于 v2.2）、出错，
-      或网关注入的 `window.HONEYCOMB_NAV` 里没有 `<前缀>assistant/` 页签（没装「AI助理」）→ 链接不出现。
-      打开页面与标签页重新可见时各拉一次，不轮询。**只读**：确认 / 忽略都在「AI助理」页
+      或网关注入的 `window.HONEYCOMB_NAV` 里没有 `<前缀>assistant/` 页签（没装「待批准」）→ 链接不出现。
+      打开页面与标签页重新可见时各拉一次，不轮询。**只读**：确认 / 忽略都在「待批准」页
       （`modules/assistant`，那里的契约写全了字段）。2026-09-28 至 09-30 这里是完整的「待确认」面板，已整体搬走。
   - id: nexus-core.views.lanes.v1
     contract: ../nexus-core/module_docs/contract.md
@@ -115,8 +115,8 @@ consumes:
       颜色取 `tokens.css` 的语义色（缺的在实现 PR 里按 `contracts/design-tokens-v1.md` 先加 token，不在 JS 里现算），
       与顶栏芯片悬停的精简预览（`modules/nginx-docker` 契约「泳道预览」节）同一套配色。
       页面分工（设计意图，仓主 2026-09-30 定）：**计时页（ring）= 现在**——在跑的计时、全部泳道；
-      **任务 / 项目页（hive）= 未来**——计划；**新页「AI助理」= 回顾与分析**——聊天、待确认的活动建议、检测程序设置、
-      回顾与分析（2026-09-30 已建，`modules/assistant`；聊天与待确认面板已搬过去）。泳道的历史某天视图将来可从「AI助理」链过来，本版不要求。
+      **任务 / 项目页（hive）= 未来**——计划；**新页「待批准」= 回顾与分析**——聊天、待确认的活动建议、检测程序设置、
+      回顾与分析（2026-09-30 已建，`modules/assistant`；聊天与待确认面板已搬过去）。泳道的历史某天视图将来可从「待批准」链过来，本版不要求。
   - id: nexus-core.focus.v1
     contract: ../nexus-core/module_docs/contract.md
     purpose: >

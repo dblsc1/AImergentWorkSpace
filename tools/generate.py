@@ -130,6 +130,9 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
                 "interval": "10s", "timeout": "5s", "retries": 5, "start_period": "15s",
             }
         entry["restart"] = "unless-stopped"
+        # profiles: 可选服务（缺省不起；.env 设 COMPOSE_PROFILES=<名> 才起）。聊天后端 2026-10-14 起就是这样。
+        if svc.get("profiles"):
+            entry["profiles"] = list(svc["profiles"])
         # isolated: 不上 honeycomb-net（够不着 nexus-core / auth / mongo），只在自己声明的网络上。
         # 聊天后端就是这样：它读数据只能经 MCP（agent.chat.v1 第七节）。
         entry["networks"] = [] if svc.get("isolated") else ["honeycomb-net"]
@@ -259,7 +262,8 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
     }
     for r in routes:  # 可由 .env 换掉的上游（如 AGENT_UPSTREAM，gateway.v1 第八节）
         if r.get("upstreamEnv"):
-            web_env[r["upstreamEnv"]] = f"${{{r['upstreamEnv']}:-{r['service']}:{r['port']}}}"
+            # 缺省空：可选服务（内置聊天）没开时不能让网关去 DNS 里找 <服务名>（gateway.v1 第八节，v0.4）
+            web_env[r["upstreamEnv"]] = f"${{{r['upstreamEnv']}:-}}"
     web_env["NGINX_ENVSUBST_FILTER"] = "^(" + "|".join(
         [k for k in web_env if not k.startswith("HONEYCOMB_")] + ["HONEYCOMB_"]) + ")"
 
@@ -359,6 +363,7 @@ def _bridge_route(i: int, r: dict, gate: bool) -> list[str]:
         f"    location {_b(r['prefix'])} {{",
         "        include /etc/nginx/honeycomb/gate.inc;",
         f'        set $honeycomb_up_{i} "{target}";',
+        *([f'        if ($honeycomb_up_{i} = "") {{ set $honeycomb_up_{i} "127.0.0.1:1"; }}   # 缺省空 = 没开：不交给 DNS，门之后回 502'] if env else []),
         f"        rewrite (?s)^\\Q{_b(r['prefix'])}\\E(.*)$ {r.get('upstream', r['prefix'])}$1 break;",
         f"        proxy_pass http://$honeycomb_up_{i};",
         f"        proxy_redirect http://{target}{r.get('upstream', r['prefix'])} {_b(r['prefix'])};",

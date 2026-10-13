@@ -1,4 +1,4 @@
-/* assistant/frontend · assistant.css —— 「AI助理」页（2026-09-30）。
+/* assistant/frontend · assistant.css —— 「待批准」页（2026-09-30）。
  *
  * 颜色只准 var(--…)（design-tokens v1 A2）；开头的 tokens-fallback 块与 ring.css 同一份，
  * 必须与 contracts/design-tokens-v1.md §3 逐字节一致（tests/check_tokens_fallback.py 查这两份）。

@@ -3,7 +3,7 @@
 # 契约（module_docs/contract.md → contracts/agent.chat.v1）说的是「对外行为」，本文件说的是「怎么把它跑起来」。
 
 name: agent
-summary: 聊天后端（agent.chat.v1 的 opencode 适配器）。计时台「问问助手」，只经 MCP 读数据。
+summary: 聊天后端（agent.chat.v1 的 opencode 适配器）。「待批准」页的「AI 对话」，只经 MCP 读数据。可选，缺省不起（compose profile agent，v0.4）。
 kind: backend
 
 service:
@@ -23,6 +23,8 @@ service:
     AGENT_AUTOTRACK: ${AGENT_AUTOTRACK:-1}   # 后台认窗口（第十节）：填了模型就开，0 = 关
     NEXUS_TENANT_STRICT: ${NEXUS_TENANT_STRICT:-0}
   # 只在 AI 桥内网上（gateway.v1 第八节）：够不着 nexus-core / auth / mongo，读数据只能经 MCP
+  # 可选，缺省不起（2026-10-14，v0.4）：.env 设 COMPOSE_PROFILES=agent 与 AGENT_UPSTREAM=agent:8030 才起并转发；没起时网关 /api/agent/* 回 502，页面藏起聊天入口
+  profiles: [agent]
   isolated: true
   networks:
     - honeycomb-agent-net

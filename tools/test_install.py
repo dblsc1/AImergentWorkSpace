@@ -239,17 +239,17 @@ def test_navbar_tabs_follow_installed_frontends(tmp_path):
 
 
 def test_navbar_four_tabs_same_in_hand_written_and_generated(out):
-    """缺省组装的顶栏：任务、计时、AI助理、自动记录，手写与生成的两份逐字相同。"""
+    """缺省组装的顶栏：任务、计时、待批准、自动记录，手写与生成的两份逐字相同。"""
     _, _, nginx = out
     hand = _render((install.ROOT / "deploy" / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8"))
     nav = """set $honeycomb_nav '{"home":"/hive/","timer":"/ring/","tabs":[{"href":"/hive/","label":"任务"},""" \
-          """{"href":"/ring/","label":"计时"},{"href":"/assistant/","label":"AI助理"},""" \
+          """{"href":"/ring/","label":"计时"},{"href":"/assistant/","label":"待批准"},""" \
           """{"href":"/auto/","label":"自动记录"}]}';"""
     assert nav in nginx and nav in hand
 
 
 def test_ring_alone_no_longer_pulls_in_the_chat_backend():
-    """聊天搬去 AI助理页之后，只装 ring 不再带上 agent / mcp；装 assistant 才带。"""
+    """聊天搬去待批准页之后，只装 ring 不再带上 agent / mcp；装 assistant 才带。"""
     assert "agent" not in install.resolve(["ring"])["modules"]
     assert {"agent", "mcp"} <= set(install.resolve(["assistant"])["modules"])
 
@@ -335,6 +335,34 @@ def test_ai_bridge_routes_hand_and_generated(out):
         hand_c["services"]["nexus-core"]["environment"]["NEXUS_TENANT_STRICT"]
 
 
+def test_builtin_chat_is_optional_in_all_three_composes(out):
+    """2026-10-14（v0.4）：内置聊天缺省不起——手写 / 发布版 / 生成的 compose 里 agent 都在 profile agent 下；
+    网关不等它（缺省组装里它根本不存在）；别的服务不能误挂这个 profile。"""
+    _, gen, _ = out
+    hand = yaml.safe_load((install.ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8"))
+    rel = yaml.safe_load((install.ROOT / "release" / "docker-compose.yml").read_text(encoding="utf-8"))
+    for name, c in (("generated", gen), ("hand", hand), ("release", rel)):
+        assert c["services"]["agent"]["profiles"] == ["agent"], name
+        assert [k for k, v in c["services"].items() if "profiles" in v and k != "agent"] == [], name
+        assert "agent" not in c["services"]["web"].get("depends_on", {}), name
+
+
+def test_empty_agent_upstream_never_reaches_dns_but_keeps_the_gate():
+    """v0.4：AGENT_UPSTREAM 缺省为空 = 内置聊天没开。空值渲染出来必须改指回环死地址（不查 DNS、不转发）；
+    且只能用 set——return 会跑在 auth_request 之前，未登录就不再 302。三份 compose 的缺省值都是空。"""
+    hand = (install.ROOT / "deploy" / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8")
+    rendered = _render(hand).replace("${AGENT_UPSTREAM}", "")          # envsubst 把空值换进去
+    block = _location(rendered, "/api/agent/")
+    assert 'set $honeycomb_agent "";' in block
+    assert 'if ($honeycomb_agent = "") { set $honeycomb_agent "127.0.0.1:1"; }' in block
+    assert block.index("gate.inc") < block.index("proxy_pass")
+    assert not [l for l in block.splitlines() if l.strip().startswith("return") or "{ return" in l]
+    for f in ("deploy/docker-compose.yml", "release/docker-compose.yml"):
+        c = yaml.safe_load((install.ROOT / f).read_text(encoding="utf-8"))
+        assert c["services"]["web"]["environment"]["AGENT_UPSTREAM"] == "${AGENT_UPSTREAM:-}", f
+    assert "AGENT_UPSTREAM= " in (install.ROOT / "release" / "web.Dockerfile").read_text(encoding="utf-8")
+
+
 def hand_c_agent_only_on_bridge() -> bool:
     hand_c = yaml.safe_load((install.ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8"))
     rel = yaml.safe_load((install.ROOT / "release" / "docker-compose.yml").read_text(encoding="utf-8"))
@@ -355,11 +383,12 @@ def test_bridge_route_upstream_env(tmp_path):
     generate.emit(tmp_path, {"modules": ["agent"], "stubs": []}, tmp_path / "out")
     compose = yaml.safe_load((tmp_path / "out" / "docker-compose.yml").read_text(encoding="utf-8"))
     env = compose["services"]["web"]["environment"]
-    assert env["AGENT_UPSTREAM"] == "${AGENT_UPSTREAM:-agent:8030}"
+    assert env["AGENT_UPSTREAM"] == "${AGENT_UPSTREAM:-}"   # v0.4：缺省空 = 不转发，不能让网关去 DNS 找 agent
     assert env["NGINX_ENVSUBST_FILTER"] == "^(AUTH_UPSTREAM|AGENT_UPSTREAM|HONEYCOMB_)"
     block = _location(_render((tmp_path / "out" / "nginx" / "templates" / "default.conf.template").read_text(
         encoding="utf-8")), "/api/agent/")
     assert 'set $honeycomb_up_0 "${AGENT_UPSTREAM}";' in block and "proxy_read_timeout 300s;" in block
+    assert 'if ($honeycomb_up_0 = "") { set $honeycomb_up_0 "127.0.0.1:1";' in block
 
 
 def test_bridge_route_must_be_gated(tmp_path):

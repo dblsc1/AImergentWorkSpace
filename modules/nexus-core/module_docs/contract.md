@@ -155,7 +155,7 @@
 > **v2.20（追加式）**：**AI 一次交一份报告，人一键全批准；单条照样能改。** 仓主 2026-10-09：「增加：AI 一次提交一份报告，我可以一键批准全部。
 > 当然单条编辑还是保留的」。碎片多时，逐条点「是」是剩下的最大痛点。新增 `nexus-core.activity.reports.v1`：AI 交一份**待批准的报告**
 > （一段 `summary` + 若干条，每条是**已有**的某种动作：把一批待确认建议记到项目 / 现成任务、提议新任务并把它们记进去、当噪声忽略），
-> 一律只进新集合 `activity_reports`，**不写任何事实**。人（只收人，同 `matches`）在「AI助理」页看报告：全部批准 / 单条批准（可先改目标）/
+> 一律只进新集合 `activity_reports`，**不写任何事实**。人（只收人，同 `matches`）在「待批准」页看报告：全部批准 / 单条批准（可先改目标）/
 > 单条不要 / 整份不要。批准走的是**同一个** `confirm` / `dismiss` / `proposals.task_for`（不另开写路径），事实与事件跟手点完全一样，
 > 只在事件的 `ai` 块多一个出处 `report {id, author}`。建议在此期间被人处理了的条目记 `stale` 跳过，不算错。MCP 追加 `propose_report` 与
 > `get_report_status`（`mcp.tools.v1` v1.13，十七个工具）。既有字段、端点、事件形状一个不改。见「AI 报告」节。
@@ -2805,7 +2805,7 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
   `source=activity-confirmed`、`dedupeKey=activity:<id>` 的那条 `session.completed` 的当前归属——确认时人可以改选别的任务，
   建议上的 `suggestion.taskId` 不一定是它。台账里没有这条（占了位、事实还没写成）的不算。
 - **键 =（`app`, 归一化标题）**。归一化：空白并成一个、去首尾空白，再去掉**开头**的状态符号（Unicode 类别 `So`，
-  以及 `*` `•` `·`）、计数「`(3)`」「`[2]`」与它们之间的空白；去完是空的就用去之前的。与 AI助理页没有集合标签时的归并键
+  以及 `*` `•` `·`）、计数「`(3)`」「`[2]`」与它们之间的空白；去完是空的就用去之前的。与待批准页没有集合标签时的归并键
   是同一个算法（`modules/assistant` 的 `normTitle`）——「✳ Claude Code」「⠂ Claude Code」「(2) Claude Code」是同一个窗口。
 - **一行说的是人最近一次的决定**：同一个键下取最近处理的那条的去向；`count` 是这个键下**去向与它相同**的段数
   （人后来改了主意的，旧去向不计）；`lastConfirmedAt` 是那次确认的时刻（改挂过的仍是确认的时刻，不是改挂的时刻）。
@@ -3372,6 +3372,12 @@ nexus-core 不在 AI 桥内网上，够不着聊天后端（`gateway.v1` 第八�
 没有窗口在等就什么都不发生（不花模型的钱）；有，就跑一轮模型，模型经 MCP（`suggest_window_target`）调 `ai/suggest`。
 **「AI 这条路活着」= 最近 60 秒内有人调过 `ai/claim` 或 `ai/suggest`**——没装、没配模型、关了 `AGENT_AUTOTRACK` 的部署
 从来没人调，于是 `next_step` 永不返回 `"ask_ai"`，行为与 v2.14 逐字相同。
+
+**谁来取不限于内置聊天后端（2026-10-14 追加，行为不变）**：内置聊天后端自 v0.4 起缺省不起（`agent.chat.v1` 开头）；用户自己接的 CLI
+（Claude Code / Codex / opencode）经 MCP 调 `get_window_awaiting_target` 同样算一次认领。**「等 AI」必有尽头**：没人来取 → 60 秒（`AI_CLAIM_GRACE`）
+后这条路不再算活着，新窗口直接请人选；来取过一次又不回答 → 认领起 120 秒（`AI_ANSWER_WAIT`）后 `aiThinking` 变回 `null`、`next_step` 变回
+`"ask_human"`。`aiThinking` 与 `needsChoice` 都是读端按此刻时钟现算的，页面（顶栏芯片、计时页泳道、圆环中心）只画这两个字段，
+所以到点后下一次刷新「AI 正在认这个窗口…」就消失、换成人那张选卡；页面不自己记「在等」。
 
 命名常量（实现里是具名常量，`activity/auto_ai.py`；改它们要改这里）：
 

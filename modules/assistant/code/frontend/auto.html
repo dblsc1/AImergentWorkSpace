@@ -4,9 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>自动记录</title>
-  <!-- 「自动记录」页（仓主 2026-10-14 定：自动记录的一切从「AI助理」页分出来）。
+  <!-- 「自动记录」页（仓主 2026-10-14 定：自动记录的一切从「待批准」页分出来）。
        三块：检测设置与检测程序状态（settings.js）、分类规则（rules.js）、今天自动记下的段（auto.js）。
-       「AI助理」页只留要人批准 / 确认的东西（待确认建议、报告、规则草稿……）。
+       「待批准」页只留要人批准 / 确认的东西（待确认建议、报告、规则草稿……）。
        顶栏、设计 tokens 由网关注入（modules/nginx-docker），本页只自带兜底 tokens（assistant.css 开头）。 -->
   <link rel="stylesheet" href="assistant.css">
 </head>
@@ -15,7 +15,7 @@
     <header class="page-head">
       <h1 class="page-title">自动记录</h1>
       <p class="suggest-sub">让电脑自己记：检测程序记什么、怎么清洗、规则怎么归类，以及今天自动记下了什么。
-        要你确认的建议、AI 的报告和规则草稿在 <a href="../assistant/" data-needs="assistant/">AI助理页</a>。</p>
+        要你确认的建议、AI 的报告和规则草稿在 <a href="../assistant/" data-needs="assistant/">待批准页</a>。</p>
     </header>
 
     <!-- 「活动检测设置」（contracts/detector.settings.v1，settings.js）。data-key / name 与文档的「节.键」一一对应。 -->
@@ -213,17 +213,17 @@
       </form>
       <!-- 在表单外：读取失败（表单藏着）时也看得见 -->
       <p class="suggest-message" id="det-message" role="status" hidden></p>
-      <!-- 「分类规则」（contracts/detector.rules.v1，rules.js）：生效规则的编辑器（AI 起草的草稿在「AI助理」页，那是要人批准的事，见 #rules-draft-panel）。
+      <!-- 「分类规则」（contracts/detector.rules.v1，rules.js）：生效规则的编辑器（AI 起草的草稿在「待批准」页，那是要人批准的事，见 #rules-draft-panel）。
            后端没有这个端点（404，早于 nexus-core v2.6）时只剩 #rules-note 一句说明。 -->
       <div class="set-group det-rules" id="det-rules" aria-labelledby="det-rules-title">
         <h3 class="det-rules-title" id="det-rules-title">分类规则</h3>
         <p class="set-hint">规则把检测到的窗口归到任务：按顺序第一条命中生效，程序名 / 窗口标题是不分大小写的正则。
-          最省事的是让 AI 助理起草——在「AI助理」页的对话里说「帮我按终端标签页整理分类规则」；它只能写草稿，要你在「AI助理」页看过点「应用」才生效。</p>
+          最省事的是让 AI 起草——对你接上的 AI CLI（或开了内置聊天时在「待批准」页的对话里）说「帮我按终端标签页整理分类规则」；它只能写草稿，要你在「待批准」页看过点「应用」才生效。</p>
         <p class="set-hint" id="rules-note" hidden></p>
         <!-- 账号级开关（detector.rules.v1 v1.3，nexus-core v2.29）：不在每台设备的设置里，PUT rules/ai-direct -->
         <div class="set-field" id="rules-aidirect-field" hidden>
           <label class="set-opt"><input type="checkbox" id="rules-aidirect"> 允许 AI 直接改分类规则</label>
-          <p class="set-hint">关着（缺省）：AI 只能起草规则草稿，要你在「AI助理」页点「应用」才生效。打开后：持「读写」令牌的 AI（比如你自己接上的 Claude Code）改的规则马上生效，
+          <p class="set-hint">关着（缺省）：AI 只能起草规则草稿，要你在「待批准」页点「应用」才生效。打开后：持「读写」令牌的 AI（比如你自己接上的 Claude Code）改的规则马上生效，
             并标着「AI 写的」；改之前的整套规则会存下来，「撤回 AI 的上一次改动」一键恢复。这个开关对整个账号生效。</p>
         </div>
         <div class="rules-editor" id="rules-editor" hidden>

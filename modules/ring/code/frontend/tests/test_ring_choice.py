@@ -249,6 +249,18 @@ def test_ai_thinking_is_a_quiet_line_on_my_card_not_a_card(browser, static_base_
         assert page.locator(line).count() == 0
 
 
+def test_waiting_for_ai_ends_when_the_server_gives_up_on_ai(browser, static_base_url) -> None:
+    """没人来取 / 取了不答：服务端到点把 aiThinking 换成 needsChoice（nexus-core test_auto_ai 的两条超时测试）。
+    页面只画服务端给的字段、不自己记「在等」，所以再拉一次后「AI 正在认」消失、换成人那张选卡。"""
+    line = ".hcl-row-human .hcl-ai-thinking"
+    with open_lanes(browser, static_base_url, thinking()) as (page, stub):
+        page.wait_for_selector(line)
+        stub.body["human"]["aiThinking"], stub.body["human"]["needsChoice"] = None, NEED
+        page.evaluate("() => document.dispatchEvent(new Event('visibilitychange'))")   # 可见 = 马上再拉一次
+        page.wait_for_selector(CARD)
+        assert page.locator(line).count() == 0 and deck(page)[0] != "me"
+
+
 def test_only_ai_recognised_targets_get_the_wrong_button(browser, static_base_url) -> None:
     for source in ("rules", "choice"):
         with open_lanes(browser, static_base_url, lanes(auto={**AUTO, "source": source, "key": AI_AUTO["key"]})) as (page, _):

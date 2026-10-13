@@ -4,9 +4,11 @@
 #   未登录：/ 跳 /hive/，/hive/ 与 /api/ 跳 /login/，登录页本身能打开，
 #           顶栏计时芯片回降级 JSON（不跳、不泄露）
 #   登录后：API 通；/hive/、/ring/、/assistant/、/auto/ 四个页面，以及页面里引用的**每一个**资源都是 200；
-#           MCP（/api/mcp/）经网关列得出工具；聊天后端（/api/agent/）health 经网关
+#           MCP（/api/mcp/）经网关列得出工具；聊天后端（/api/agent/）按开 / 关核对（见下）
 #
 # 用法：deploy/smoke.sh <口令> [基址，缺省 http://127.0.0.1:8800]
+# HONEYCOMB_SMOKE_AGENT：缺省 0 = 内置聊天关（v0.4 起的缺省安装）：/api/agent/* 回 502、页面据此藏起聊天；
+#                       1 = 聊天开（COMPOSE_PROFILES=agent + AGENT_UPSTREAM=agent:8030）：health 经网关、configured=false。
 # 整站挂子路径时先 export HONEYCOMB_BASE_PATH=/Cockpit/（与 .env 一致），基址不带前缀。
 # 默认 .env（cookie 带 Secure）即可：curl 与浏览器一样，在 127.0.0.1 上回传 Secure cookie。
 # CI 用它核对手写与生成的两份组装（见 .github/workflows/ci.yml 的 compose-smoke）。
@@ -68,9 +70,15 @@ if [ "${HONEYCOMB_SMOKE_MCP:-1}" = 1 ]; then
   check "18 ['propose_detector_rules', 'propose_activity_matches', 'propose_report', 'get_window_awaiting_target', 'suggest_window_target']" "$(curl -s -b "$jar" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
     -d "$rpc" "$base${bp}api/mcp/" | python3 -c 'import json,sys; t=json.load(sys.stdin)["result"]["tools"]
 print(len(t), [x["name"] for x in t if not x["annotations"]["readOnlyHint"]])')" "MCP tools/list 经网关"
-  # 聊天后端（agent.chat.v1）：过门；没填 AGENT_API_KEY 的缺省组装 configured=false（页面提示去填）
+  # 聊天后端（agent.chat.v1）：过门；不管开不开，未登录都跳登录页
   check "${bp}login/" "$(location "$base${bp}api/agent/health")" "未登录聊天后端跳登录页"
-  check '{"status":"ok","configured":false,"debug":false}' "$(curl -s -b "$jar" "$base${bp}api/agent/health")" "聊天后端 health 经网关"
+  if [ "${HONEYCOMB_SMOKE_AGENT:-0}" = 1 ]; then
+    # 开：没填 AGENT_API_KEY 的组装 configured=false（页面提示去填）
+    check '{"status":"ok","configured":false,"debug":false}' "$(curl -s -b "$jar" "$base${bp}api/agent/health")" "聊天后端 health 经网关"
+  else
+    # 关（缺省）：网关照常起，路由回 502；页面（chat.js 的 health 不是 200）据此把聊天面板和「让 AI 匹配」整块藏起来
+    check 502 "$(code -b "$jar" "$base${bp}api/agent/health")" "聊天后端没起：/api/agent/health 回 502（页面藏起聊天）"
+  fi
 fi
 
 [ "$fail" = 0 ] && echo "✅ 全部通过" || echo "❌ 有失败项"

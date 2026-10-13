@@ -8,7 +8,7 @@
  *
  * - 确定 = POST api/core/activity/choice {key, taskId | projectId, remember}；这次不选 = POST …/choice/dismiss {key}。
  * - 服务端说标题是代号（pseudonymized）/ 规则没写成：留一句说明，人点「知道了」才收卡。窗口已不在记录里（404）同样。
- * - 人一直不答：什么都不发生——那段活动照常进「待确认」，在 AI助理页和别的碎片一起归类。
+ * - 人一直不答：什么都不发生——那段活动照常进「待确认」，在待批准页和别的碎片一起归类。
  * - app / title / 项目名 / 任务名都是数据：一律 textContent / Option 文本，不进 innerHTML。
  * - reject(key)（nexus-core v2.15）：人对「自动 · …（AI 认的）」说「不对」= POST …/choice/reject {key}；之后由
  *   ring-lanes.js 把这张卡摆出来让人自己选。

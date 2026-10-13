@@ -20,7 +20,7 @@ RUN find /usr/share/nginx/html \( -name '*.test.js' -o -name '*.md' \) -delete \
 
 # 与 deploy/docker-compose.yml 的 web 同一组缺省值（contracts/gateway.v1）
 ENV AUTH_UPSTREAM=auth:8010 \
-    AGENT_UPSTREAM=agent:8030 \
+    AGENT_UPSTREAM= \
     HONEYCOMB_BASE_PATH=/ \
     NGINX_ENVSUBST_FILTER=^(AUTH_UPSTREAM|AGENT_UPSTREAM|HONEYCOMB_)
 

@@ -49,7 +49,7 @@ consumes:
 
 来自各前端 `module.yaml` 的 `static[].nav`（页签文字）、`home`、`timer`。没装的前端没有页签。
 页签顺序 = 安装时的模块顺序。缺省组装（手写的 `deploy/` 与 `install.sh add hive ring assistant`）是三个：
-**任务、计时、AI助理、自动记录**（v0.3 追加第三个 AI助理，`modules/assistant`；2026-10-14 追加第四个「自动记录」`/auto/`，同一个模块的第二个 `static:`；两份组装的 `$honeycomb_nav` 逐字相同，`tools/test_install.py` 核对）。
+**任务、计时、待批准、自动记录**（v0.3 追加第三个待批准，`modules/assistant`；2026-10-14 追加第四个「自动记录」`/auto/`，同一个模块的第二个 `static:`；两份组装的 `$honeycomb_nav` 逐字相同，`tools/test_install.py` 核对）。
 
 ## 计时芯片即时刷新（v0.2.1）
 
@@ -227,7 +227,7 @@ class 加 `hcl-card hcl-lead`），同一个节点跨重画搬过来（表单状
 `mcp.tools.v1`）两条受保护路由，规范写在 `contracts/gateway.v1` 第八节：`include gate.inc`、清掉转发的
 `Cookie`/`Authorization`、关缓冲（SSE）、上游运行期解析（缺了这两个服务网关照常起）、新内部网
 `honeycomb-agent-net`。手写组装与 `tools/generate.py` 两份都要加，`NGINX_ENVSUBST_FILTER` 放行
-`AGENT_UPSTREAM`。本模块的 `gate.inc` 不变。已实现：手写组装两条常驻；生成的组装由模块清单的
+`AGENT_UPSTREAM`。本模块的 `gate.inc` 不变。**v0.4 追加**：`AGENT_UPSTREAM` 缺省为空（内置聊天没开）；`api/agent/` location 里 `if ($honeycomb_agent = "") { set … "127.0.0.1:1"; }` 把空值改指回环死地址——不查 DNS、门照旧先拦（所以用 `set` 而不是 `return`，后者跑在 `auth_request` 前），已登录回 502。已实现：手写组装两条常驻；生成的组装由模块清单的
 `bridge: true` / `upstreamEnv` 产出（见 gateway.v1 第八节「实现落定」）。
 
 ## 调用方范围与匿名上报（v0.4，2026-10-09）

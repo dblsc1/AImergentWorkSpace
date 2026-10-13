@@ -71,6 +71,9 @@ jobs:
     # 不要任何密钥。
     name: agent 测试
     runs-on: ubuntu-latest
+    env:
+      # 内置聊天缺省不起（compose profile agent，v0.4）；这个 job 就是测「开了」的样子，logs / down 也得带上它。
+      COMPOSE_PROFILES: agent
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -182,7 +185,7 @@ jobs:
       - name: 顶栏泳道预览（navbar.js + 共享 lanes.js）
         # 顶栏属 nginx-docker，但要浏览器：借本 job 装好的 playwright 跑。
         run: python -m pytest ../../../../nginx-docker/tests/test_navbar_lanes.py -q -rs
-      - name: AI助理页 + 自动记录页（modules/assistant：聊天、待确认建议、检测设置、分类规则）
+      - name: 待批准页 + 自动记录页（modules/assistant：聊天、待确认建议、检测设置、分类规则）
         # 同样要浏览器：借本 job 装好的 playwright 跑，单独一次 pytest（两套 conftest 各管各的）。
         run: python -m pytest ../../../../assistant/code/frontend/tests -q -rs
       - name: 蜂巢页的「此刻的焦点」（中心格 + 项目格描边，要看 DOM）
@@ -216,6 +219,14 @@ jobs:
         run: |
           docker compose -f deploy/docker-compose.yml config -q
           docker compose -f deploy/generated/docker-compose.yml config -q
+          # 内置聊天可选：缺省组装里没有 agent，开了 profile 才有（手写与生成的两份各验）
+          # 先把输出收进变量再 grep：管道里 grep -q 提前退出会让 docker 吃 SIGPIPE，pipefail 下误报
+          for f in deploy/docker-compose.yml deploy/generated/docker-compose.yml; do
+            off=$(docker compose -f $f config --services)
+            on=$(COMPOSE_PROFILES=agent docker compose -f $f config --services)
+            if grep -qx agent <<<"$off"; then echo "$f：缺省不该有 agent"; exit 1; fi
+            grep -qx agent <<<"$on"
+          done
 
   compose-smoke:
     # 真起一遍，从门外走：跳登录、登录、两个前端和它们引用的每个资源。
@@ -259,15 +270,26 @@ jobs:
       - name: 起
         working-directory: ${{ matrix.dir }}
         run: docker compose up -d --wait --wait-timeout 300
-      - name: 冒烟
-        run: deploy/smoke.sh ci-smoke-password
+      - name: 冒烟（缺省安装：内置聊天关）
+        # 缺省 = 不起 agent、不要模型密钥；smoke.sh 核对 /api/agent/health 回 502（页面据此藏起聊天）
+        run: |
+          deploy/smoke.sh ci-smoke-password
+          (cd ${{ matrix.dir }} && test -z "$(docker compose ps -q agent)")
       - name: 权限范围与匿名上报（auth.gate v1.4，单人模式）
         # 两份组装 × 两种前缀都从门外验：三种范围各能做什么、匿名只能上报、伪造的头被盖掉、单个吊销、限速。
         run: deploy/test/scopes.sh ci-smoke-password
       - name: 灌演示数据（照 README）
         run: HONEYCOMB_PASSWORD=ci-smoke-password python3 seed/seed_demo.py --base "http://127.0.0.1:8800${HONEYCOMB_BASE_PATH%/}"
+      - name: 开内置聊天（COMPOSE_PROFILES=agent）再冒烟
+        # 不让 agent 代码烂掉：同一套栈上把 profile 打开（构建并起 agent），smoke.sh 按「开」核对 health。
+        working-directory: ${{ matrix.dir }}
+        run: |
+          printf '%s\n' 'COMPOSE_PROFILES=agent' 'AGENT_UPSTREAM=agent:8030' >> .env   # 缺一不可：起服务 + 告诉网关往哪转
+          docker compose up -d --wait --wait-timeout 600
+          cd "$GITHUB_WORKSPACE" && HONEYCOMB_SMOKE_AGENT=1 deploy/smoke.sh ci-smoke-password
       - name: 后端单独重建（换 IP），网关不重启照常转发
         # 升级时 compose 只重建换了镜像的服务；网关写死主机名时它会一直打旧 IP（2026-09-30 真机）。
+        # 此时 .env 里已有 COMPOSE_PROFILES=agent，所以 mcp、agent 都在重建名单里。
         working-directory: ${{ matrix.dir }}
         run: $GITHUB_WORKSPACE/deploy/test/recreate.sh ci-smoke-password
       - name: 失败时的日志
@@ -346,6 +368,29 @@ jobs:
           pw=$(sed -n 's/^HONEYCOMB_PASSWORD=//p' "$HONEYCOMB_DIR/.env")
           deploy/smoke.sh "$pw"
           echo "PW=$pw" >> "$GITHUB_ENV"
+      - name: 开内置聊天（老安装填过密钥 = 升级自动补开关）再冒烟
+        # 缺省安装不起 agent（上一步冒烟按「关」核对）。这里模拟「老 .env 里填过 AGENT_API_KEY」：
+        # 升级脚本必须补上 COMPOSE_PROFILES=agent 与 AGENT_UPSTREAM=agent:8030 并把 agent（发布版镜像）起来，聊天照旧；
+        # 之后用户注释掉两行再升级，不许被重新打开、旧容器要被清掉。
+        run: |
+          export HONEYCOMB_ASSETS="$RUNNER_TEMP/assets" HONEYCOMB_DIR="$RUNNER_TEMP/sh/honeycomb"
+          ! grep -q '^COMPOSE_PROFILES=' "$HONEYCOMB_DIR/.env"
+          # v0.4 新装的 .env 自带注释掉的两行（= 提到过，脚本不动）；删掉它们才是「v0.4 之前的老 .env」
+          sed -i -e '/COMPOSE_PROFILES/d' -e '/AGENT_UPSTREAM/d' "$HONEYCOMB_DIR/.env"
+          sed -i 's/^AGENT_API_KEY=.*/AGENT_API_KEY=sk-ci-not-real/' "$HONEYCOMB_DIR/.env"
+          sh "$RUNNER_TEMP/assets/honeycomb-install.sh" | tee out.txt
+          grep -qx 'COMPOSE_PROFILES=agent' "$HONEYCOMB_DIR/.env"
+          grep -qx 'AGENT_UPSTREAM=agent:8030' "$HONEYCOMB_DIR/.env"
+          (cd "$HONEYCOMB_DIR" && test -n "$(docker compose ps -q agent)")
+          curl -fsS -c jar.txt -H 'Content-Type: application/json' -d "{\"password\":\"$PW\"}" http://127.0.0.1:8800/api/auth/login -o /dev/null
+          test "$(curl -s -b jar.txt http://127.0.0.1:8800/api/agent/health)" = '{"status":"ok","configured":true,"debug":false}'
+          # 用户把聊天关掉（两行都注释掉，密钥还留着）再升级：不许被重新打开，旧的 agent 容器要被清掉
+          sed -i -e 's/^COMPOSE_PROFILES=/# COMPOSE_PROFILES=/' -e 's/^AGENT_UPSTREAM=/# AGENT_UPSTREAM=/' "$HONEYCOMB_DIR/.env"
+          sh "$RUNNER_TEMP/assets/honeycomb-install.sh" | tee out.txt
+          ! grep -q '^COMPOSE_PROFILES=' "$HONEYCOMB_DIR/.env"
+          (cd "$HONEYCOMB_DIR" && test -z "$(COMPOSE_PROFILES=agent docker compose ps -aq agent)")
+          # 还原成缺省（后面的升级 / 第二份冒烟按「聊天关」核对）
+          sed -i 's/^AGENT_API_KEY=.*/AGENT_API_KEY=/' "$HONEYCOMB_DIR/.env"
       - name: 再跑一次 = 升级（保留 .env 与数据）
         run: |
           export HONEYCOMB_ASSETS="$RUNNER_TEMP/assets" HONEYCOMB_DIR="$RUNNER_TEMP/sh/honeycomb"
@@ -385,6 +430,15 @@ jobs:
           if ($LASTEXITCODE) { exit 1 }
           if ((Get-Location).Path -ne $env:GITHUB_WORKSPACE) { Write-Error '安装脚本改了调用方的当前目录'; exit 1 }
           if ((stat -c %a "$env:HONEYCOMB_DIR/.env") -ne '600') { Write-Error '.env 权限不是 600'; exit 1 }
+          # 升级：老 .env 填过密钥又没提过 COMPOSE_PROFILES → 自动补上两行（ps1 版的同一条规则）
+          $envf = "$env:HONEYCOMB_DIR/.env"
+          # v0.4 新装的 .env 自带注释掉的两行（= 提到过，脚本不动）；删掉它们才是「v0.4 之前的老 .env」
+          (Get-Content $envf) -notmatch 'COMPOSE_PROFILES|AGENT_UPSTREAM' | Set-Content $envf
+          (Get-Content -Raw $envf) -replace '(?m)^AGENT_API_KEY=.*', 'AGENT_API_KEY=sk-ci-not-real' | Set-Content -NoNewline $envf
+          & "$env:RUNNER_TEMP/assets/honeycomb-install.ps1"
+          if ($LASTEXITCODE) { exit 1 }
+          if (-not (Select-String -Path $envf -Pattern '^COMPOSE_PROFILES=agent\s*$' -Quiet)) { Write-Error '升级没补 COMPOSE_PROFILES'; exit 1 }
+          if (-not (Select-String -Path $envf -Pattern '^AGENT_UPSTREAM=agent:8030\s*$' -Quiet)) { Write-Error '升级没补 AGENT_UPSTREAM'; exit 1 }
       - name: 失败时的日志
         if: failure()
         run: |

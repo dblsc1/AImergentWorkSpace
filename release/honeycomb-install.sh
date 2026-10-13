@@ -78,7 +78,10 @@ AUTH_SECRET=$(rand)
 # 只本机能访问。要放到局域网改成 0.0.0.0:8800，但先在前面加 TLS（见 README）。
 HONEYCOMB_BIND=$BIND
 HONEYCOMB_TZ=Asia/Shanghai
-# 计时台「问问助手」用的模型密钥（缺省 DeepSeek；换模型见 README）。填了再 docker compose up -d。
+# 内置 AI 聊天（可选，缺省关）：主路径是用你自己的 AI CLI（见 README「把你的 CLI 接到 HoneyComb」）。
+# 想要页面里自带的聊天：取消下面两行注释、填好下面的模型密钥（缺省 DeepSeek；换模型见 README），再 docker compose up -d。
+# COMPOSE_PROFILES=agent
+# AGENT_UPSTREAM=agent:8030
 AGENT_API_KEY=
 # compose 项目名（容器、数据卷的前缀）。别改：改了等于换成一份新的空数据。
 HONEYCOMB_PROJECT=$project
@@ -89,6 +92,27 @@ EOF
     [ -z "$(tail -c1 .env)" ] || echo >> .env
     printf '%s\n' '# compose 项目名（容器、数据卷的前缀）。别改：改了等于换成一份新的空数据。' \
       "HONEYCOMB_PROJECT=${HONEYCOMB_PROJECT:-honeycomb}" >> .env
+  fi
+  # v0.4 起内置聊天缺省关（compose profile agent + AGENT_UPSTREAM）。升级时：
+  #  1. .env 里一行提到 COMPOSE_PROFILES 的都没有（注释掉的、写空的也算提到——那是用户的决定），
+  #     而且填过模型密钥 / 端点：补上开关两行，聊天照旧；
+  #  2. 聊天没开着：停掉并删掉这个项目里旧版留下的 agent 容器（compose 对不在 profile 里的服务不管，留着它会一直跑）。
+  if [ "$fresh" = 0 ]; then
+    set_in_env() {  # 变量名：.env 里是否有非空值（去掉回车、引号、空白后）
+      [ -n "$(sed -n "s/^$1=//p" .env | tail -1 | tr -d "\r\"' \t")" ]
+    }
+    # 已经把 AGENT_UPSTREAM 指到自己的聊天后端的：不替他起内置的那个
+    if ! grep -q 'COMPOSE_PROFILES' .env && ! set_in_env AGENT_UPSTREAM \
+       && { set_in_env AGENT_API_KEY || set_in_env AGENT_BASE_URL; }; then
+      [ -z "$(tail -c1 .env)" ] || echo >> .env
+      printf '%s\n' '# 内置 AI 聊天（v0.4 起缺省关）：你之前填过模型密钥，所以升级时给你开着。' \
+        '# 要关掉：把下面两行都注释掉（行首加 #），再 docker compose up -d；脚本以后不会再动它们。' \
+        'COMPOSE_PROFILES=agent' 'AGENT_UPSTREAM=agent:8030' >> .env
+    fi
+    case ",$(sed -n 's/^COMPOSE_PROFILES=//p' .env | tail -1 | tr -d '\r \t'|tr -d "\"'")," in
+      *,agent,*) ;;
+      *) docker compose --profile agent rm -sf agent >/dev/null 2>&1 || true ;;
+    esac
   fi
 
   if [ "$fresh" = 1 ]; then say "拉镜像（第一次要几分钟）……"; else say "拉新版镜像……"; fi

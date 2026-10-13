@@ -121,7 +121,7 @@ install.sh    读契约解析依赖，生成 compose 与路由
 | `modules/nexus-core` | 事件溯源内核（FastAPI + MongoDB）。提供 13 个契约：计时、任务 CRUD、事件写入口与档案读端、以及树/圆环/甘特/导出等读端投影 |
 | `modules/hive` | 任务蜂巢（`/hive/`），主界面。纯静态前端，数据全走 `/api/core/` |
 | `modules/ring` | 计时台（`/ring/`）：贡献圆环 + 开始/停止/取消/补登。纯静态前端 |
-| `modules/assistant` | AI助理（`/assistant/`），回顾与分析：和助手聊、确认检测到的活动、批准 AI 的报告和规则草稿。纯静态前端 |
+| `modules/assistant` | 待批准（`/assistant/`，原名「AI助理」）：人批准 AI 提议的——确认检测到的活动、批准 AI 的报告和规则草稿；开了内置聊天时也在这里聊。纯静态前端 |
 | `modules/assistant`（第二页） | 自动记录（`/auto/`，同一个前端目录），检测程序的隐私 / 离开设置、设备状态、生效中的分类规则（含「允许 AI 直接改分类规则」开关）、今天自动记下的段 |
 | `modules/nginx-docker` | 网关的公用件：共享顶栏、设计 tokens、站点图标，以及门片段与注入片段。网关把顶栏注入每个前端，页签按已装的前端生成 |
 | `contracts/yq-event.v1` | 事件信封规范。**整个系统的核心契约** —— 所有写操作都是往这个信封里投事件 |
@@ -163,7 +163,7 @@ docker compose up -d
 
 只许人做的事（改检测设置与规则、确认建议、改挂时间……）对任何令牌都不开放。
 
-- 网页上：登录 →「AI助理」页 →「Agent 令牌」：选范围、写备注、生成。令牌**只显示一次**，同时给出可以直接粘贴的配置；列表里可以单独吊销某一个。
+- 网页上：登录 →「待批准」页 →「Agent 令牌」：选范围、写备注、生成。令牌**只显示一次**，同时给出可以直接粘贴的配置；列表里可以单独吊销某一个。
 - 接口：`POST /api/auth/tokens`（`Content-Type: application/json`，body `{"scope":"report","name":"笔记本"}`，都选填，缺省 `write`）；`GET /api/auth/tokens` 列出（没有令牌本身）；`POST /api/auth/tokens/revoke` body `{"tokenId":"…"}` 吊销一个，空 body 吊销自己名下的全部。
 - 命令行（`deploy/` 下）：`docker compose exec auth python /app/auth_stub.py token alice --scope report --name 笔记本`、`tokens alice`、`revoke-token <id>`、`revoke alice`；不带名字 = 共享口令身份。
 
@@ -178,7 +178,7 @@ docker compose up -d
 HoneyComb 的 MCP 服务器（Streamable HTTP，地址 `<你的站点地址>api/mcp/`，请求头
 `Authorization: Bearer <TOKEN>`）任何 MCP 客户端都能接，直接用你已有的 AI 命令行即可。
 
-1. 登录 →「AI助理」页 →「Agent 令牌」，选范围并生成令牌。默认选 **`read`（只读）**（13 个只读工具）；
+1. 登录 →「待批准」页 →「Agent 令牌」，选范围并生成令牌。默认选 **`read`（只读）**（13 个只读工具）；
    只有想让 AI 起草建议 / 规则时才选 **`write`（读写）**（缺省仍要你本人确认才生效；你打开「允许 AI 直接改分类规则」开关后，AI 才能直接改规则，可一键撤回它的上一次改动）。`report`（只上报）令牌用不了 MCP。
 2. 把它写进客户端的 MCP 配置。`<你的站点地址>` 含子路径、以 `/` 结尾（如 `http://127.0.0.1:8800/`）。
 
@@ -218,11 +218,16 @@ opencode（`opencode.json`）：
 或 `xattr -d com.apple.quarantine <文件>`；Windows：SmartScreen 点「更多信息 → 仍要运行」。
 详见 `modules/ai-detector/README.md`。
 
-### AI 助手（计时台「问问助手」）
+### 内置 AI 聊天（可选，缺省关）
 
-计时台页面下方有个聊天面板，问「这周我在哪个项目上花的时间最多」之类。它只能经 MCP 的只读工具读你的数据，
-什么都不写、不跑命令、不上网。用之前在 `.env` 里填 `AGENT_API_KEY`（缺省模型 `deepseek/deepseek-flash`），
-再 `docker compose up -d`；不填，面板会提示你去填，别的功能不受影响。换模型、接本机 Ollama 或内网里的 OpenAI 兼容服务，
+**缺省路径是用你自己的 AI CLI**（Claude Code / Codex / opencode），见上面「把你的 CLI 接到 HoneyComb」：不需要模型密钥。
+所以缺省安装**不启动聊天服务**（`agent`）、不拉它的镜像，「待批准」页也不显示聊天面板和「让 AI 匹配」按钮。
+
+想用页面里自带的聊天（问「这周我在哪个项目上花的时间最多」之类）：在 `.env` 里加两行 `COMPOSE_PROFILES=agent` 和 `AGENT_UPSTREAM=agent:8030`（前一行起服务，后一行告诉网关往哪转，缺一不可），
+再填 `AGENT_API_KEY`（缺省模型 `deepseek/deepseek-flash`），然后 `docker compose up -d`；
+开了但不填密钥，面板会提示你去填，别的功能不受影响。
+之前在 `.env` 里填过 `AGENT_API_KEY` 的老安装，重跑安装脚本升级时，只要 `.env` 里一行 `COMPOSE_PROFILES` 都没提到，就会自动补上这两行，聊天照旧；想关就把这两行注释掉（脚本以后不会再动），升级时脚本还会删掉旧版留下的 agent 容器。**源码安装**（clone 仓库用 `deploy/`）不走安装脚本：填过密钥的要自己加这两行；要清掉旧容器：`docker compose --profile agent rm -sf agent`。
+它只能经 MCP 的只读工具读你的数据，什么都不写、不跑命令、不上网。换模型、接本机 Ollama 或内网里的 OpenAI 兼容服务，
 见 `deploy/.env.example` 的「AI 助手」一节。接口是 `contracts/agent.chat.v1`，缺省实现（opencode）在 `modules/agent/`。
 想看它每一轮到底发了什么给模型、模型回了什么：`.env` 设 `AGENT_DEBUG=1` 重启，每条回答下面多一个「调试」。
 那些记录就是你的数据（完整提示与工具结果）——**只在自己机器上调试时开**，用完改回 `0`。

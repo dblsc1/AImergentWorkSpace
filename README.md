@@ -154,7 +154,7 @@ never depends on a `pip install`.
 | `modules/nexus-core` | The event-sourced kernel (FastAPI + MongoDB). Provides 13 contracts: timing, task CRUD, the event write entry point and archive read, and read projections for tree / ring / gantt / export. |
 | `modules/hive` | The task hive (`/hive/`), the main screen. A static frontend; all data goes through `/api/core/`. |
 | `modules/ring` | The timer ring (`/ring/`): contribution ring plus start / stop / cancel / backfill. A static frontend. |
-| `modules/assistant` | The AI assistant page (`/assistant/`), for looking back: chat with the assistant, confirm detected activity, and approve the AI's reports and rule drafts. A static frontend. |
+| `modules/assistant` | The 待批准 ("awaiting approval", formerly "AI助理") page (`/assistant/`): where a person approves what the AI proposed — confirm detected activity, approve the AI's reports and rule drafts; the optional built-in chat also lives here. A static frontend. |
 | `modules/assistant` (second page) | The Auto-recording page (`/auto/`, same frontend directory): the detector's privacy / away settings, device status, the live classification rules (with the "let the AI edit rules directly" switch), and today's auto-recorded segments. |
 | `modules/nginx-docker` | The gateway's shared parts: the navbar, design tokens, favicons, and the gate and inject snippets. The gateway injects the navbar into every frontend, with one tab per installed frontend. |
 | `contracts/yq-event.v1` | The event envelope spec. **The core contract of the whole system** — every write is an event posted into this envelope. |
@@ -211,7 +211,7 @@ one, you decide which agent gets it and how much it may do.
 Things only a person may do (changing detector settings and rules, confirming
 suggestions, reassigning time, ...) stay closed to every token.
 
-- On the web: log in, open the **AI助理** page, section **Agent 令牌**: pick a
+- On the web: log in, open the **待批准** page, section **Agent 令牌**: pick a
   scope, add a note, generate. The token is **shown once**, with ready-to-paste
   configuration; the list lets you revoke a single token (revoking removes it
   and frees its slot: at most 100 live tokens per account).
@@ -260,7 +260,7 @@ HoneyComb's MCP server (Streamable HTTP, at `<YOUR_SITE_URL>api/mcp/`, header
 `Authorization: Bearer <TOKEN>`) works with any MCP client, so you can use the AI
 CLI you already have.
 
-1. Log in, open the **AI助理** page, section **Agent 令牌**, pick a scope and generate a token.
+1. Log in, open the **待批准** page, section **Agent 令牌**, pick a scope and generate a token.
    Use **`read`** (read-only, 13 tools) by default; choose **`write`** only if you want the AI to
    draft suggestions / rules (by default a person still has to confirm them; only after you turn on "允许 AI 直接改分类规则" (let AI change classification rules directly) can the AI write rules that take effect at once, and you can undo its last change with one click). A `report` token cannot use MCP.
 2. Put it in your client's MCP config. `<YOUR_SITE_URL>` includes any sub-path and ends with `/`
@@ -303,15 +303,23 @@ The desktop detector (`ai-detector`) binary is unsigned. macOS: System Settings 
 Privacy & Security → "Open Anyway", or `xattr -d com.apple.quarantine <file>`.
 Windows: SmartScreen "More info → Run anyway". Details in `modules/ai-detector/README.md`.
 
-### The AI assistant ("Ask the assistant" on the timer page)
+### The built-in AI chat (optional, off by default)
 
-The timer page has a chat panel for questions like "which project took most of my
-time this week?". The assistant reads your data only through the read-only MCP
-tools — it writes nothing, runs no commands, has no web access. Put your model key
-in `.env` as `AGENT_API_KEY` (default model `deepseek/deepseek-flash`) and run
-`docker compose up -d`; without a key the panel tells you to add one and
-everything else works as before. Other models, a local Ollama or any
-OpenAI-compatible server on your network: see the AI assistant section of
+**The default path is your own AI CLI** (Claude Code / Codex / opencode, see
+"Connect your own AI CLI" above): no model key needed. So a default install does
+**not start the chat service** (`agent`), does not pull its image, and the 待批准
+page shows no chat panel and no "让 AI 匹配" button.
+
+To use the chat built into the page (questions like "which project took most of
+my time this week?"): add two lines to `.env`, `COMPOSE_PROFILES=agent` (starts the service) and `AGENT_UPSTREAM=agent:8030` (tells the gateway where to forward; empty by default = not forwarded, no DNS lookup, 502), set your model key as
+`AGENT_API_KEY` (default model `deepseek/deepseek-flash`) and run
+`docker compose up -d`.
+Enabled without a key, the panel tells you to add one and everything else works
+as before. An older install that already had `AGENT_API_KEY` filled in gets
+the two lines added by the installer on upgrade (only if `.env` does not mention `COMPOSE_PROFILES` at all; comment both lines out to turn it off, the installer will not touch them again, and on upgrade it removes the leftover agent container of this project). A **source install** (`deploy/`) has no installer: add the two lines by hand, and remove an old container with `docker compose --profile agent rm -sf agent`.
+The assistant reads your data only through the read-only MCP tools — it writes
+nothing, runs no commands, has no web access. Other models, a local Ollama or any
+OpenAI-compatible server on your network: see the built-in chat section of
 `deploy/.env.example`. The interface is `contracts/agent.chat.v1`; the default
 implementation (opencode) lives in `modules/agent/`. To see exactly what each
 turn sends to the model and what comes back, set `AGENT_DEBUG=1` in `.env` and

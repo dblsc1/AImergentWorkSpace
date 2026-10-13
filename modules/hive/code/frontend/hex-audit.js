@@ -173,7 +173,7 @@
   // 在「最近完成」里各占一行，叫「临时任务 YYYY-MM-DD HH:MM · N 分钟」（时间 = 这一段的开始）。
   // 带年份不是啰嗦：跨年之后只有「09-08 00:43」就分不清是哪一年的了。
   // 行的形状同 recentCompletions，多一个 session:true（没有 taskId：它不是能撤销 / 能计时的任务）。
-  // 归到具体任务之后（nexus-core v2.11，在「AI助理」页的「待分类」里归）：事件多一个 currentSubject = 现在的归属。
+  // 归到具体任务之后（nexus-core v2.11，在「待批准」页的「待分类」里归）：事件多一个 currentSubject = 现在的归属。
   // 这一行留着，名字换成那个任务的（「任务名 · N 分钟」，挂在任务现在所在的项目下），不再叫「临时任务」；
   // 放回桶的照旧。原本就记在具体任务上的段从来不在这份列表里。
   function tempSessions(events, tree, options) {
