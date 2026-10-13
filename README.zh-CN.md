@@ -172,6 +172,51 @@ docker compose up -d
 
 想自己实现，读 `contracts/auth.gate.v1/contract.md` 的「换实现要满足什么」一节；怎么把它接进网关（`AUTH_UPSTREAM`、换登录页、关掉占位件），读 `contracts/gateway.v1/contract.md`。
 
+### 把你的 CLI 接到 HoneyComb
+
+HoneyComb 的 MCP 服务器（Streamable HTTP，地址 `<你的站点地址>api/mcp/`，请求头
+`Authorization: Bearer <TOKEN>`）任何 MCP 客户端都能接，直接用你已有的 AI 命令行即可。
+
+1. 登录 →「AI助理」页 →「Agent 令牌」，选范围并生成令牌。默认选 **`read`（只读）**（13 个只读工具）；
+   只有想让 AI 起草建议 / 规则时才选 **`write`（读写）**（缺省仍要你本人确认才生效；你打开「允许 AI 直接改分类规则」开关后，AI 才能直接改规则，可一键撤回它的上一次改动）。`report`（只上报）令牌用不了 MCP。
+2. 把它写进客户端的 MCP 配置。`<你的站点地址>` 含子路径、以 `/` 结尾（如 `http://127.0.0.1:8800/`）。
+
+Claude Code：
+
+```sh
+claude mcp add --transport http honeycomb <你的站点地址>api/mcp/ \
+  --header "Authorization: Bearer <TOKEN>"
+```
+
+Codex CLI（`~/.codex/config.toml`，令牌从环境变量读）：
+
+```toml
+[mcp_servers.honeycomb]
+url = "<你的站点地址>api/mcp/"
+bearer_token_env_var = "HONEYCOMB_TOKEN"   # export HONEYCOMB_TOKEN=<TOKEN>
+```
+
+opencode（`opencode.json`）：
+
+```json
+{
+  "mcp": {
+    "honeycomb": {
+      "type": "remote",
+      "url": "<你的站点地址>api/mcp/",
+      "headers": { "Authorization": "Bearer <TOKEN>" }
+    }
+  }
+}
+```
+
+安全提醒：窗口标题等屏幕上的文字是不可信输入（网页标题里可以藏着写给你的 AI 的指令），
+而命令行 AI 能在你的电脑上执行命令。先用 `read` 令牌，需要时再放宽。
+
+桌面检测程序 `ai-detector` 的二进制未签名。macOS：「系统设置 → 隐私与安全性」点「仍要打开」，
+或 `xattr -d com.apple.quarantine <文件>`；Windows：SmartScreen 点「更多信息 → 仍要运行」。
+详见 `modules/ai-detector/README.md`。
+
 ### AI 助手（计时台「问问助手」）
 
 计时台页面下方有个聊天面板，问「这周我在哪个项目上花的时间最多」之类。它只能经 MCP 的只读工具读你的数据，
