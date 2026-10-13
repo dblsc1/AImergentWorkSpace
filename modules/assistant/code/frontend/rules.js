@@ -15,6 +15,8 @@
  * - v1.3（nexus-core v2.29）：账号开关「允许 AI 直接改分类规则」在这一节（勾选框 → PUT ai-direct，值取自 GET 的 aiDirectRules）。账号开了「允许 AI 直接改分类规则」后，AI 经 MCP 写的规则带 aiAt（时间）——
  *   行头标「AI 写的 + 时间」；GET 回的 snapshotCount > 0 时才显示「撤回 AI 的上一次改动」（POST ai-revert，一步一撤）。
  *   aiAt 不进 toWire：服务端对没动过的规则自己保留章，人改过的规则章就没了。
+ * 2026-10-14 页面拆分：生效规则的编辑器 + 账号开关（#det-rules）在「自动记录」页（auto.html），AI 草稿（#rules-draft）在
+ *   「AI助理」页（index.html）——草稿是一次批准。同一份脚本两页都加载，缺的那一半的元素不存在就跳过（下面的 if (editorEl) / if (draftEl)），不分叉逻辑。
  * 对外只挂 window.assistantRules（纯函数，给单测用；外加 prepend：「待确认建议」勾「以后这个窗口都记到这个任务」时用）。
  */
 (function () {
@@ -73,8 +75,9 @@
   window.assistantRules = { toWire: toWire, stampAt: stampAt, counts: counts, paths: paths, projectPaths: projectPaths, describe: describe };
 
   // ── DOM ─────────────────────────────────────────────────────────────
-  var boxEl = document.getElementById("det-rules");
-  if (!boxEl) return;
+  var boxEl = document.getElementById("det-rules");     // 自动记录页
+  var draftEl = document.getElementById("rules-draft"); // AI助理页
+  if (!boxEl && !draftEl) return;
   var editorEl = document.getElementById("rules-editor");
   var noteEl = document.getElementById("rules-note");
   var listEl = document.getElementById("rules-list");
@@ -83,7 +86,7 @@
   var addBtn = document.getElementById("rules-add");
   var saveBtn = document.getElementById("rules-save");
   var msgEl = document.getElementById("rules-message");
-  var draftEl = document.getElementById("rules-draft");
+  var panelEl = document.getElementById("rules-draft-panel");   // 草稿卡片：有草稿或有话要说才出现
   var draftHeadEl = document.getElementById("rules-draft-head");
   var draftSumEl = document.getElementById("rules-draft-summary");
   var draftMetaEl = document.getElementById("rules-draft-meta");
@@ -107,19 +110,24 @@
     msgEl.textContent = text;
     msgEl.hidden = !text;
     msgEl.classList.toggle("is-error", Boolean(isError));
+    showPanel();
   }
+  function showPanel() { if (panelEl) panelEl.hidden = !(draft || !msgEl.hidden); }
   function dirty() {
     return Boolean(server) && JSON.stringify(rules.map(toWire)) !== JSON.stringify(server.rules.map(toWire));
   }
   function sync() {
     var d = dirty();
-    dirtyEl.hidden = !d;
-    saveBtn.disabled = busy || !d;
-    addBtn.disabled = busy;
-    applyBtn.disabled = discardBtn.disabled = revertBtn.disabled = directEl.disabled = busy;
-    revertBtn.hidden = !(server && server.snapshotCount > 0);
-    editorEl.inert = busy;   // 请求在路上时编辑器不可改：回来会用服务端的规则重填，期间的改动会被冲掉
-    emptyEl.hidden = rules.length > 0;
+    if (editorEl) {
+      dirtyEl.hidden = !d;
+      saveBtn.disabled = busy || !d;
+      addBtn.disabled = busy;
+      revertBtn.disabled = directEl.disabled = busy;
+      revertBtn.hidden = !(server && server.snapshotCount > 0);
+      editorEl.inert = busy;   // 请求在路上时编辑器不可改：回来会用服务端的规则重填，期间的改动会被冲掉
+      emptyEl.hidden = rules.length > 0;
+    }
+    if (draftEl) applyBtn.disabled = discardBtn.disabled = busy;
   }
 
   async function request(method, path, opts) {
@@ -159,7 +167,7 @@
       var rest = list.filter(function (r, i) { return i !== same; });
       var r = await request("PUT", "", ifMatch(g.body.version, { rules: [toWire(head)].concat(rest.map(toWire)) }));
       if (r.ok) {
-        if (server && !busy && !dirty()) { setServer(r.body); loadDraft(); }
+        if (server && !busy) { setServer(r.body); loadDraft(); }   // 草稿的「旧值」跟着最新规则（编辑器在另一页）
         return { ok: true };
       }
       if (r.status !== 412) return { ok: false, detail: explain(r) };
@@ -219,6 +227,7 @@
     render();
   }
   function render() {
+    if (!listEl) return sync();
     listEl.textContent = "";
     rules.forEach(function (r, i) {
       var err = errors[i] || {};
@@ -275,8 +284,7 @@
   function setServer(body) {
     server = current = { version: body.version, rules: body.rules || [], snapshotCount: body.snapshotCount || 0,
       snapshotAt: body.snapshotAt || null, aiDirectRules: body.aiDirectRules === true };
-    directFieldEl.hidden = false;
-    directEl.checked = server.aiDirectRules;
+    if (directEl) { directFieldEl.hidden = false; directEl.checked = server.aiDirectRules; }
     rules = JSON.parse(JSON.stringify(server.rules));
     errors = {};
     render();
@@ -284,7 +292,9 @@
 
   // ── AI 草稿 ──
   function renderDraft() {
+    if (!draftEl) return;
     draftEl.hidden = !draft;
+    showPanel();
     if (!draft) return;
     var d = draft.diff;
     draftHeadEl.textContent = (draft.author === "human" ? "草稿：" : "AI 草稿：") + counts(d);
@@ -323,6 +333,7 @@
     });
   }
   async function loadDraft() {
+    if (!draftEl) return;   // 自动记录页不显示草稿
     var r = await request("GET", "/drafts/current");
     var next = r.ok && r.body ? r.body.draft : null;   // 拿齐（草稿 + 对应的生效规则）才换上，期间「应用」仍指旧草稿
     if (next && current && next.currentVersion !== current.version) {
@@ -343,8 +354,10 @@
   async function load() {
     var r = await request("GET", "");
     if (r.status === 404) {   // 后端早于 v2.6
-      noteEl.textContent = "这个版本的后端还不支持在网页上管分类规则（需要 nexus-core v2.6）。";
-      noteEl.hidden = false;
+      if (noteEl) {
+        noteEl.textContent = "这个版本的后端还不支持在网页上管分类规则（需要 nexus-core v2.6）。";
+        noteEl.hidden = false;
+      }
       return;
     }
     if (!r.ok) { showMessage("读取规则失败：" + explain(r), true); return; }
@@ -352,19 +365,19 @@
       var t = await fetch(BASE + "api/core/views/tree");
       if (t.ok) { var tree = await t.json(); tasks = paths(tree); projects = projectPaths(tree); }
     } catch (err) { /* 没有任务树：下拉只剩规则里已有的 taskId */ }
-    editorEl.hidden = false;
+    if (editorEl) editorEl.hidden = false;
     setServer(r.body);
     await loadDraft();
   }
 
-  addBtn.addEventListener("click", function () {
+  if (addBtn) addBtn.addEventListener("click", function () {
     rules.push({ app: "", title: "", taskId: "", confidence: 0.9, note: "", enabled: true });
     render();
     var inputs = listEl.querySelectorAll('[data-f="app"]');
     inputs[inputs.length - 1].focus();
   });
 
-  saveBtn.addEventListener("click", async function () {
+  if (saveBtn) saveBtn.addEventListener("click", async function () {
     if (busy || !server) return;
     busy = true;
     sync();
@@ -397,9 +410,8 @@
     showMessage("保存失败：" + explain(r), true);
   });
 
-  applyBtn.addEventListener("click", async function () {
+  if (applyBtn) applyBtn.addEventListener("click", async function () {
     if (busy || !draft) return;
-    if (dirty() && !window.confirm("你有没保存的规则改动，应用草稿会把它们换掉。继续？")) return;
     busy = true;
     sync();
     showMessage("", false);
@@ -422,7 +434,7 @@
     sync();
   });
 
-  directEl.addEventListener("change", async function () {
+  if (directEl) directEl.addEventListener("change", async function () {
     var want = directEl.checked;
     directEl.disabled = true;   // 请求在路上不让再点
     var r = await request("PUT", "/ai-direct", { h: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: want }) });
@@ -437,7 +449,7 @@
     showMessage("没改成：" + explain(r), true);
   });
 
-  revertBtn.addEventListener("click", async function () {
+  if (revertBtn) revertBtn.addEventListener("click", async function () {
     if (busy || !server) return;
     var at = server.snapshotAt ? stampAt(server.snapshotAt) : "上一次";
     if (!window.confirm("把规则恢复到 " + at + " 的那次 AI 改动之前？" + (dirty() ? "\n你有没保存的改动，也会被换掉。" : ""))) return;
@@ -464,7 +476,7 @@
     sync();
   });
 
-  discardBtn.addEventListener("click", async function () {
+  if (discardBtn) discardBtn.addEventListener("click", async function () {
     if (busy || !draft) return;
     busy = true;
     sync();
@@ -480,8 +492,22 @@
   // AI 刚答完一轮（可能写了草稿）、或标签页重新可见：再看一次有没有草稿。不动编辑中的规则。
   document.addEventListener("assistant:turn-done", function () { if (server) loadDraft(); });
   document.addEventListener("visibilitychange", function () {
-    if (document.visibilityState === "visible" && server) loadDraft();
+    if (document.visibilityState !== "visible") return;
+    // 自动记录页：别处（比如 AI助理页）应用了草稿 / AI 改了规则，回到这页时重读；有没保存的改动就不动（保存时照旧 412 提示）
+    if (editorEl && server) refresh();
+    else if (server) loadDraft();
   });
+
+  /** 回到这页时静悄悄重读：读失败不提示；没变就不重画（不抢焦点）；等待期间人动了手、或有请求在路上就作罢。 */
+  async function refresh() {
+    var idle = function () { return !busy && !dirty() && !(directEl && directEl.disabled); };
+    if (!idle()) return;
+    var r = await request("GET", "");
+    if (!r.ok || !idle()) return;
+    if (r.body.version === server.version && r.body.aiDirectRules === server.aiDirectRules &&
+        r.body.snapshotCount === server.snapshotCount) return;
+    setServer(r.body);
+  }
 
   load();
 })();

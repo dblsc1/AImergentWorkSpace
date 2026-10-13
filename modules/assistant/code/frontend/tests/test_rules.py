@@ -11,7 +11,7 @@ import json
 from typing import Any
 
 import pytest
-from conftest import open_page, overflowing
+from conftest import AUTO_PAGE, PAGE_NAME, open_page, overflowing
 from playwright.sync_api import Route
 
 RULES = [
@@ -94,7 +94,14 @@ class RulesStub:
 
 
 def page_with(browser, base, stub: RulesStub, **kw):
+    """规则编辑器在「自动记录」页（2026-10-14 起）。"""
+    kw.setdefault("page_name", AUTO_PAGE)
     return open_page(browser, base, routes={r"/api/core/detector/rules": stub.route}, **kw)
+
+
+def draft_page(browser, base, stub: RulesStub, **kw):
+    """AI 草稿横幅在「AI助理」页：草稿是一次批准，没有规则编辑器。"""
+    return page_with(browser, base, stub, page_name=PAGE_NAME, **kw)
 
 
 def ready(page) -> None:
@@ -184,8 +191,7 @@ def test_422_errors_attach_to_row_and_field(browser, static_base_url):
 
 def test_draft_banner_diff_and_one_click_apply(browser, static_base_url):
     stub = RulesStub(DRAFT)
-    with page_with(browser, static_base_url, stub) as page:
-        ready(page)
+    with draft_page(browser, static_base_url, stub) as page:
         page.wait_for_selector("#rules-draft:not([hidden])")
         assert page.inner_text("#rules-draft-head") == "AI 草稿：新增 1 / 修改 1 / 删除 1"
         assert EVIL in page.inner_text("#rules-draft-summary")          # AI 写的文本只当文本
@@ -201,26 +207,26 @@ def test_draft_banner_diff_and_one_click_apply(browser, static_base_url):
         apply = [c for c in stub.calls if c[1].endswith("/apply")]
         assert apply == [("POST", "/drafts/drf_1/apply", '"4"', None)]
         assert "已应用" in page.inner_text("#rules-message")
-        assert page.input_value(row(page, 0, "title")) == "garden|plot" and page.locator("#rules-list > li").count() == 3
+        # 规则编辑器不在这一页（在「自动记录」页）：这页只看服务端存下了应用后的整套
+        assert page.locator("#rules-list").count() == 0
+        assert stub.rules[0]["title"] == "garden|plot" and len(stub.rules) == 3
 
 
-def test_apply_with_unsaved_edits_asks_first(browser, static_base_url):
+def test_apply_on_the_draft_page_needs_no_confirm(browser, static_base_url):
     stub = RulesStub(DRAFT)
-    with page_with(browser, static_base_url, stub) as page:
-        ready(page)
+    with draft_page(browser, static_base_url, stub) as page:
         page.wait_for_selector("#rules-draft:not([hidden])")
-        page.fill(row(page, 0, "note"), "没保存")
-        page.once("dialog", lambda d: d.dismiss())
+        # 没有编辑器就不会有「没保存的改动」：不弹确认框，一次点击直接应用（有未保存改动时先问的那一半随编辑器搬去了「自动记录」页，那里没有草稿可应用）
+        page.once("dialog", lambda d: (_ for _ in ()).throw(AssertionError("不该弹确认框")))
         page.click("#rules-apply")
-        page.wait_for_timeout(200)
-        assert not [c for c in stub.calls if c[1].endswith("/apply")]
+        page.wait_for_selector("#rules-draft", state="hidden")
+        assert [c for c in stub.calls if c[1].endswith("/apply")]
 
 
 def test_apply_stale_reloads_draft_and_discard(browser, static_base_url):
     stub = RulesStub(DRAFT)
     stub.apply_reply = (412, {"detail": "stale", "currentVersion": 5})
-    with page_with(browser, static_base_url, stub) as page:
-        ready(page)
+    with draft_page(browser, static_base_url, stub) as page:
         page.wait_for_selector("#rules-draft:not([hidden])")
         before = len([c for c in stub.calls if c[1] == "/drafts/current"])
         page.click("#rules-apply")
@@ -234,8 +240,7 @@ def test_apply_stale_reloads_draft_and_discard(browser, static_base_url):
 
 def test_chat_turn_done_refreshes_draft(browser, static_base_url):
     stub = RulesStub()
-    with page_with(browser, static_base_url, stub) as page:
-        ready(page)
+    with draft_page(browser, static_base_url, stub) as page:
         assert page.is_hidden("#rules-draft")
         stub.draft = copy.deepcopy(DRAFT)     # AI 刚在对话里写了草稿
         page.evaluate("document.dispatchEvent(new Event('assistant:turn-done'))")
@@ -244,24 +249,28 @@ def test_chat_turn_done_refreshes_draft(browser, static_base_url):
 
 @pytest.mark.parametrize("width,theme", [(320, "light"), (390, "dark")])
 def test_narrow_no_horizontal_scroll(browser, static_base_url, width, theme):
-    with page_with(browser, static_base_url, RulesStub(DRAFT), width=width, theme=theme) as page:
-        ready(page)
+    # 草稿横幅（AI助理页）
+    with draft_page(browser, static_base_url, RulesStub(DRAFT), width=width, theme=theme) as page:
         page.wait_for_selector("#rules-draft:not([hidden])")
         page.click(".rules-diff summary")
         page.wait_for_timeout(200)
-        assert overflowing(page, "#det-rules") == []
+        assert overflowing(page, "#rules-draft-panel") == []
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         # 草稿横幅、按钮都用 tokens 上色，暗色下也不是默认黑白
         bg = page.eval_on_selector("#rules-draft", "e => getComputedStyle(e).backgroundColor")
         assert bg not in ("rgba(0, 0, 0, 0)", "rgb(255, 255, 255)")
+    # 规则编辑器（自动记录页）
+    with page_with(browser, static_base_url, RulesStub(DRAFT), width=width, theme=theme) as page:
+        ready(page)
+        assert overflowing(page, "#det-rules") == []
+        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
 
 
 def test_reorder_only_draft_lists_moves(browser, static_base_url):
     d = copy.deepcopy(DRAFT)
     d["rules"] = [RULES[1], RULES[0], RULES[2]]
     d["diff"] = {"added": [], "removed": [], "changed": [], "unchanged": 3, "reordered": True}
-    with page_with(browser, static_base_url, RulesStub(d)) as page:
-        ready(page)
+    with draft_page(browser, static_base_url, RulesStub(d)) as page:
         page.wait_for_selector("#rules-draft:not([hidden])")
         assert page.inner_text("#rules-draft-head") == "AI 草稿：新增 0 / 修改 0 / 删除 0（顺序有变）"
         page.click(".rules-diff summary")
@@ -399,7 +408,7 @@ def test_ai_direct_switch_rolls_back_when_refused(browser, static_base_url):
         if route.request.method == "PUT" and route.request.url.endswith("/ai-direct"):
             return route.fulfill(status=403, content_type="application/json", body=json.dumps({"detail": "不行"}))
         return orig(route)
-    with open_page(browser, static_base_url, routes={r"/api/core/detector/rules": refuse}) as page:
+    with open_page(browser, static_base_url, page_name=AUTO_PAGE, routes={r"/api/core/detector/rules": refuse}) as page:
         ready(page)
         page.click("#rules-aidirect")
         page.wait_for_selector("#rules-message.is-error")
@@ -418,3 +427,40 @@ def test_revert_412_refreshes_and_checkbox_locked_in_flight(browser, static_base
         page.wait_for_selector("#rules-message.is-error")
         assert "刷新" in page.inner_text("#rules-message")
         assert stub.rules == RULES and page.is_visible("#rules-revert")   # 没撤；按钮按新的快照数仍在
+
+
+def test_each_page_has_only_its_half(browser, static_base_url):
+    """同一份 rules.js：AI助理页只有草稿，自动记录页只有编辑器 + 开关（缺的那一半的元素不存在，脚本不报错）。"""
+    errors: list[str] = []
+    with draft_page(browser, static_base_url, RulesStub(DRAFT)) as page:
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.wait_for_selector("#rules-draft:not([hidden])")
+        assert page.is_visible("#rules-draft-panel")
+        assert page.locator("#det-rules, #rules-editor, #rules-aidirect, #rules-revert").count() == 0
+    with page_with(browser, static_base_url, RulesStub(DRAFT)) as page:
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        ready(page)
+        assert page.locator("#rules-draft, #rules-draft-panel, #rules-apply").count() == 0
+        assert page.is_visible("#rules-aidirect")
+    assert errors == []
+
+
+def test_auto_page_rereads_rules_when_tab_becomes_visible(browser, static_base_url):
+    """别处（AI助理页应用了草稿）改了规则：回到「自动记录」页重读；有没保存的改动就不动。"""
+    stub = RulesStub()
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        stub.version += 1
+        stub.rules = copy.deepcopy(stub.rules)
+        stub.rules[0]["note"] = "别处改的"
+        page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+        page.wait_for_function("() => document.querySelector('[data-index=\"0\"] [data-f=\"note\"]').value === '别处改的'")
+        # 有没保存的改动：不重读，不覆盖
+        page.fill(row(page, 1, "note"), "我的改动")
+        gets = len([c for c in stub.calls if c[0] == "GET" and c[1] == ""])
+        stub.rules[0]["note"] = "又被改了"
+        page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+        page.wait_for_timeout(300)
+        assert len([c for c in stub.calls if c[0] == "GET" and c[1] == ""]) == gets
+        assert page.input_value(row(page, 1, "note")) == "我的改动"
+        assert page.input_value(row(page, 0, "note")) == "别处改的"

@@ -15,7 +15,7 @@
 #   nexus-core  事件溯源的计时与任务内核（FastAPI）
 #   mcp    给 AI 代理用的只读工具（mcp.tools.v1），网关的 /api/mcp/ 过门后转给它
 #   auth   auth.gate.v1 的占位实现，单口令登录门（标准库 http.server，零依赖）
-#   web    nginx，唯一入口：serve /hive/、/ring/、/assistant/ 三个前端、反代 /api/ 到
+#   web    nginx，唯一入口：serve /hive/、/ring/、/assistant/、/auto/ 四个前端入口、反代 /api/ 到
 #          nexus-core、/api/auth/ 到 auth，在前端与 /api/ 前面插一道 auth_request 校验
 #
 # 只有 web 映射宿主端口，默认绑 127.0.0.1:8800（局域网/公网部署自己改
@@ -239,6 +239,8 @@ services:
       - ../modules/hive/code/frontend:/usr/share/nginx/html/hive:ro
       - ../modules/ring/code/frontend:/usr/share/nginx/html/ring:ro
       - ../modules/assistant/code/frontend:/usr/share/nginx/html/assistant:ro
+      # 「自动记录」页和「AI助理」同一个目录，另一个入口（auto.html）
+      - ../modules/assistant/code/frontend:/usr/share/nginx/html/auto:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/healthz"]
       interval: 10s

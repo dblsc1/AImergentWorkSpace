@@ -390,7 +390,7 @@ Content-Type: application/json
 `app` / `title` 是正则（不分大小写），空 = 不限，至少写一个；`title` 匹配的是**脱敏后**的标题
 （用户在待确认列表里看到的就是它）。按顺序第一条命中生效；`confidence` 缺省 0.9。
 
-**config.v1 v1.2（追加）**：网页上（Cockpit「AI助理 → 规则」，多由 AI 助理起草、人应用）存过规则后，
+**config.v1 v1.2（追加）**：网页上（Cockpit「自动记录 → 分类规则」；多由 AI 助理起草，草稿在「AI助理 → 分类规则草稿」由人应用）存过规则后，
 以服务端为准，本机 `rules.json` 不再读；服务端从没存过、老 nexus-core、或拉不到时仍用本机文件（离线后备）。
 服务端规则命中的 `reason` 是「网页规则 #N 命中」。规则来源变化时写一行日志。见 `contracts/detector.rules.v1`「四」。
 

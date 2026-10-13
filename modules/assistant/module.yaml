@@ -4,7 +4,7 @@
 # 纯前端：没有进程，只有一个目录交给 nginx serve，数据全走 /api/core/ 与 /api/agent/。
 
 name: assistant
-summary: AI助理。回顾与分析：和助手聊、确认检测到的活动、改检测程序设置。
+summary: AI助理（回顾与分析：和助手聊、确认检测到的活动、批准 AI 的报告与规则草稿）+ 自动记录页（检测程序设置、分类规则、自动记下的段）。
 kind: static
 
 static:
@@ -13,3 +13,11 @@ static:
     index: index.html
     gated: true
     nav: AI助理       # 顶栏页签（排在 任务、计时 之后：按 install.sh add 的模块顺序）
+  # 「自动记录」页（2026-10-14）：同一个目录第二次挂载，换前缀与入口页（auto.html）。
+  # 不另立模块：它和「AI助理」共用 rules.js、assistant.css、review.js，拆成两个模块只会复制脚本；
+  # 页签只能来自 static[]（tools/generate.py），所以要一个自己的前缀。
+  - prefix: /auto/
+    root: code/frontend
+    index: auto.html
+    gated: true
+    nav: 自动记录     # 顶栏页签（紧跟 AI助理）

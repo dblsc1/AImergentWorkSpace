@@ -99,7 +99,7 @@ def _human(authorization: str | None) -> None:
 
 def _forbid(authorization: str | None) -> None:
     if _is_device_token(authorization):
-        raise ForbiddenError("设备令牌只能读分类规则；请在 Cockpit「AI助理 → 规则」登录后修改")
+        raise ForbiddenError("设备令牌只能读分类规则；请在 Cockpit「自动记录 → 分类规则」登录后修改")
 
 
 def _invalid(errors: list[dict]) -> RulesError:
@@ -330,7 +330,7 @@ def discard_draft(authorization: str | None, draft_id: str) -> None:
 
 
 # ── v2.29：AI 直接写规则（账号开关 aiDirectRules 开着才行）与撤回 ──
-SWITCH_OFF = "账号没有开启「允许 AI 直接改分类规则」；请用户在 Cockpit「AI助理 → 规则」页打开它，或先建草稿（propose_detector_rules）"
+SWITCH_OFF = "账号没有开启「允许 AI 直接改分类规则」；请用户在 Cockpit「自动记录 → 分类规则」页打开它，或先建草稿（propose_detector_rules）"
 MAX_SNAPSHOTS = 5
 
 

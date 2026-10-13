@@ -10,7 +10,9 @@
 ```yaml
 provides:
   - id: assistant.page.v1
-    summary: 「AI助理」页面，静态路由 <站点前缀>assistant/。自上而下七块：**AI 报告（2026-10-09，nexus-core v2.20，有待批准的报告时才出现，在页面最上面）**、AI 对话、待确认建议、待分类（2026-10-08）、自动记录（2026-10-08，nexus-core v2.14）、活动检测设置、回顾。
+    summary: 「AI助理」页面，静态路由 <站点前缀>assistant/。自上而下：**AI 报告（2026-10-09，nexus-core v2.20，有待批准的报告时才出现，在页面最上面）**、AI 对话、**分类规则草稿（2026-10-14，有草稿才出现）**、待确认建议、待分类（2026-10-08）、Agent 令牌、回顾。**2026-10-14（仓主定）起，自动记录的一切搬到第二个页面「自动记录」（`assistant.auto.v1`）：活动检测设置、生效中的分类规则、今天自动记下的段不再在本页。**
+  - id: assistant.auto.v1
+    summary: 「自动记录」页面，静态路由 <站点前缀>auto/（同一个前端目录的第二个入口 `auto.html`，顶栏页签「自动记录」，紧跟「AI助理」）。自上而下：活动检测设置（含检测程序 / 设备状态、最近事故、启动日志；`settings.js`、`#settings-panel`）、分类规则（生效规则的编辑器、「允许 AI 直接改分类规则」开关、「AI 自动」「AI 写的」标记、「撤回 AI 的上一次改动」；`rules.js`、`#det-rules`，在活动检测设置面板末尾）、今天自动记下的段（`auto.js`、`#auto-panel`，原「自动记录」面板）。每一块的行为、请求、文案与搬家前逐字相同，只是换了页面。
 consumes:
   - id: agent.chat.v1
     contract: ../../../contracts/agent.chat.v1/contract.md
@@ -97,7 +99,7 @@ consumes:
       「已批准 N 条，M 条已过期」，失败的另说「K 条没成」）与「整份不要」（`…/reject`）。批准 / 忽略的请求都由本页发，AI 不能发。
       `summary`、`reason`、`author`、窗口标题、项目 / 任务名一律 `textContent`（AI 给的文本不解释）。已 `stale` / `applied` /
       `rejected` / `failed` 的行标状态、按钮禁用（`failed` 可重试）。操作进行中全部控件禁用；做完重拉，并通知「待确认建议」「待分类」
-      「自动记录」三块重拉（`assistant:reports-changed` 事件）。不改「待确认建议」等既有流程。键盘可达（原生 button / select）；320 / 390 px 不横滚。
+      两块重拉（`assistant:reports-changed` 事件；这页上才有的事件）。「自动记录」页（2026-10-14 起另一页，不加载 `reports.js`）的「今天自动记下的」不听这个事件，打开页面或标签页重新可见时才重拉。不改「待确认建议」等既有流程。键盘可达（原生 button / select）；320 / 390 px 不横滚。
   - id: nexus-core.views.tree.v1
     contract: ../nexus-core/module_docs/contract.md
     purpose: >
@@ -126,7 +128,7 @@ consumes:
   - id: nexus-core.activity.auto.v1
     contract: ../nexus-core/module_docs/contract.md
     purpose: >
-      「自动记录」面板（`code/frontend/auto.js`、`#auto-panel`，在待分类与活动检测设置之间；nexus-core v2.14 自动跟踪）。
+      「今天自动记下的」面板（`code/frontend/auto.js`、`#auto-panel`；nexus-core v2.14 自动跟踪；2026-10-14 起在「自动记录」页，标题由「自动记录」改为「今天自动记下的」，在活动检测设置之后）。
       读：`GET /api/core/activity/auto`（今天按分类规则直接记下的段，新的在前），用到
       `items[].{eventId, startAt, durationSeconds, app, title, taskId, projectId, reassigned}`；名字取
       `GET /api/core/views/tree?includeEphemeral=true`。每段一行「HH:MM · N 分 · 程序 · 标题」+「→ 分区 / 项目 / 任务」
@@ -139,7 +141,7 @@ consumes:
   - id: detector.settings.v1
     contract: ../../../contracts/detector.settings.v1/contract.md
     purpose: >
-      「活动检测设置」面板（`code/frontend/settings.js`、`#settings-panel`）。GET /api/core/detector/devices 列设备
+      「活动检测设置」面板（`code/frontend/settings.js`、`#settings-panel`；2026-10-14 起在「自动记录」页）。GET /api/core/detector/devices 列设备
       （下拉：deviceId + 最近活动时刻 = max(lastUploadAt, lastFetchAt)；另显示最近上传、最近拉设置、有没有网页设置），
       选中后 GET settings?deviceId=。`settings: null` → 表单显示契约缺省值并注明「用的是本机配置文件」。
       表单逐键对应契约「一」的 privacy / idle 两节（取值、范围与契约一致，例子取契约表格）。
@@ -170,7 +172,7 @@ consumes:
   - id: detector.rules.v1
     contract: ../../../contracts/detector.rules.v1/contract.md
     purpose: >
-      「分类规则」（`code/frontend/rules.js`、`#det-rules`，在活动检测设置面板末尾），按该契约「五」：
+      「分类规则」（`code/frontend/rules.js`、`#det-rules`，2026-10-14 起在「自动记录」页的活动检测设置面板末尾；其中**草稿横幅**留在「AI助理」页，见「入口与路由」），按该契约「五」：
       GET rules 填编辑器（每条一张卡：启用、上移 / 下移、删除、程序名正则、标题正则、任务下拉〔未完成任务的路径；
       规则指向已删任务时单列「任务已删除（id）」〕、把握、备注），「加一条」「保存规则」= PUT 整套 + `If-Match`；
       412 保留人的改动并换到最新版本号，再点保存才覆盖；422 的 `errors[]` 挂到对应行、对应格。
@@ -202,6 +204,13 @@ consumes:
 - 「回顾」块只放入口：计时页的泳道（`../ring/#lanes-panel`）、任务页（`../hive/`）。网关注入了
   `window.HONEYCOMB_NAV` 且其中没有对应页签时，那条链接不出现。分析功能以后做，本版不加后端。
 - 计时页上的「N 条待确认 → AI助理」链接指向本页（见 `modules/ring` 契约）。
+- **「自动记录」页（2026-10-14）**：前缀 `<站点前缀>auto/`（缺省 `/auto/`），入口 `auto.html`，设门、注入共享顶栏。**不另立模块**：
+  它与本页共用同一个前端目录（`module.yaml` 里第二个 `static:`，同一个 `root` 挂在 `/auto/`），`assistant.css`、`rules.js`、`review.js` 两页共用，
+  页签只能来自 `static[].nav`，所以要一个自己的前缀。两页互相有一条链接（页头一句话里；`data-needs` 复用 `review.js`：
+  网关注入了页签且没有对方的页签时，链接不出现）。
+- **`rules.js` 两页共用**：同一份脚本在两页都加载，元素不在就跳过。「自动记录」页有 `#det-rules`（编辑器 + 账号开关 + 撤回），
+  「AI助理」页有 `#rules-draft`（草稿横幅：计数、逐条改动、应用 / 丢弃；外面的卡片 `#rules-draft-panel` 有草稿或有提示时才出现，`#rules-message` 在这张卡里）。
+  草稿是一次批准，所以留在「AI助理」页；两页各自 GET 规则，互不通信（应用草稿后「自动记录」页重新打开、或标签页重新可见时才看到新规则：页面可见且编辑器没有未保存的改动、没有请求在路上时 `rules.js` 重读一遍；有未保存的改动就不动，保存时照旧得到 412 提示）。
 
 ## 数据与存储
 
@@ -215,6 +224,7 @@ consumes:
 
 | 日期 | CR | 变更 |
 |---|---|---|
+| 2026-10-14 | 仓主：「AI助理」页把两件事混在一起，自动记录的东西拆成自己的页 | 新页「自动记录」（`assistant.auto.v1`，`/auto/`，`auto.html`）：活动检测设置（含检测程序状态）、生效中的分类规则（编辑器、AI 直接改开关、撤回）、今天自动记下的段从本页搬过去；「AI助理」留待确认建议、报告、**分类规则草稿**（新卡 `#rules-draft-panel`，是一次批准）、忽略清单、令牌、待分类、对话。`rules.js` 两页共用。纯前端，不动后端与接口；搬家块的行为、请求与文案不变（今天自动记下的面板标题改为「今天自动记下的」，避免与页名重复）。MCP / 后端文案里的「AI助理 → 规则」随之改成「自动记录 → 分类规则」（开关、撤回、编辑）或「AI助理 → 分类规则草稿」（应用草稿）。 |
 | 2026-10-14 | 仓主：用户自己接 CLI，AI 可以直接改分类规则（默认关，撤得回） | 认 `detector.rules.v1` v1.3 / nexus-core v2.29：「分类规则」一节多「允许 AI 直接改分类规则」勾选项（PUT ai-direct）；规则列表标「AI 写的 + 时间」；有快照时出「撤回 AI 的上一次改动」；令牌表单缺省选「只读」、「读写」的说明多一句。只增，既有行为不变 |
 | 2026-10-12 | 仓主：记录丢了 80 分钟，要让 AI 助理能读事故和（用户同意的）启动日志 | 认 nexus-core v2.28（`nexus-core.detector.incidents.v1`）：设备行下多「启动日志上传」状态一行（只显示，不提供打开它的控件——本机开关）、可折叠的「最近事故」（展开时取）与开关打开时的「查看启动日志」（`<pre>` + `textContent`）。见上文「活动检测设置」条。 |
 | 2026-10-12 | 仓主：「面板上能加个检测和重启按钮吗？」（ActivityWatch 没起来，面板上看不出） | 认 nexus-core v2.27（`nexus-core.detector.health.v1`）：「活动检测设置」的设备行下多一条状态（检测程序在线 / 离线——`health.at` 超过 3 分钟没更新算离线；ActivityWatch 正常 / 连不上 / 最近一分钟没有窗口记录 / 已暂停 / 未开启；`autoStart` 是 `started` / `gave_up` / `unsupported` / `off` 时附自动拉起的结果（`gave_up` 带 `autoReason` 的中文原因，`daily_cap` 单独一句「24 小时内自动拉起已达 20 次上限……可以点按钮手动重启」；`idle` 和缺省什么都不显示；不认识的值显示「未知状态」）；老检测程序没有 `health` →「这个版本的检测程序不报告状态」）、「检测」按钮（重拉设备）、「重启 ActivityWatch」按钮（`POST detector/restart?deviceId=` 后每 3 秒拉一次设备、最多 75 秒，等该 nonce 的 `restart.result`，超时显示「检测程序没有响应（它可能没在运行）」）。在线 / 离线按 `GET devices` 的服务端 `now` 算（缺 `now` 的老服务端退回浏览器时钟），`health.at` 解析不了当作没有状态；按钮旁常驻一句说明：「这个按钮只做两件事：检测 ActivityWatch 是否在运行，没在运行就重启它。不会重启检测程序，也不会重启面板」；等结果最多 75 秒（拉取 ≤ 15 秒 + 探测 20 秒 + 回报）；失败（按钮）/ 停手（自动）时给大类原因的中文（枚举 `reason` / `autoReason`）并常驻一句「详细原因和日志在那台电脑上：运行 ai-detector status，或查看检测程序目录下的 aw-start.log」；检测程序离线时按钮禁用并说明怎么办。服务端字符串只进 textContent |

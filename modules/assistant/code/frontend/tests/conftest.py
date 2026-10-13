@@ -22,6 +22,7 @@ from playwright.sync_api import Browser, Page, Route, sync_playwright
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent
 PAGE_NAME = "index.html"
+AUTO_PAGE = "auto.html"   # 「自动记录」页（2026-10-14 从 AI助理页分出）：检测设置、分类规则、今天自动记下的
 
 # 形状照 nexus-core 的 TreeOut（与 ring 套件同一份数据）
 TREE = {
@@ -79,7 +80,8 @@ def _not_found(route: Route) -> None:
 @contextlib.contextmanager
 def open_page(browser: Browser, base: str, *, routes: dict[str, Callable[[Route], None]] | None = None,
               width: int = 1100, theme: str | None = None, init: str | None = None,
-              reduced_motion: str | None = None, expand: bool = True) -> Iterator[Page]:
+              reduced_motion: str | None = None, expand: bool = True,
+              page_name: str = PAGE_NAME) -> Iterator[Page]:
     """``routes``：正则 → 处理函数，盖在缺省的 404 上（Playwright 后注册的先匹配）。"""
     context = browser.new_context(viewport={"width": width, "height": 900}, timezone_id="Asia/Shanghai",
                                   reduced_motion=reduced_motion)
@@ -94,8 +96,8 @@ def open_page(browser: Browser, base: str, *, routes: dict[str, Callable[[Route]
         page.add_init_script(_EXPAND)
     if init:
         page.add_init_script(init)
-    page.goto(f"{base}/{PAGE_NAME}")
-    page.wait_for_selector("#settings-panel", state="attached")
+    page.goto(f"{base}/{page_name}")
+    page.wait_for_selector("#settings-panel" if page_name == AUTO_PAGE else "#review-panel", state="attached")
     if theme:  # 线上由顶栏 navbar.js 设这个属性；本套件不注入顶栏，直接设
         page.evaluate(f"document.documentElement.dataset.theme = {theme!r}")
     try:

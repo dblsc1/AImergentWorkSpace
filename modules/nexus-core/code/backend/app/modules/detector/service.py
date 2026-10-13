@@ -236,7 +236,7 @@ def get_settings(device_id: str, authorization: str | None) -> dict:
 
 def put_settings(device_id: str, authorization: str | None, body: bytes) -> dict:
     if _is_device_token(authorization):
-        raise ForbiddenError("设备令牌只能读检测设置；请在 Cockpit「AI助理」页登录后修改")
+        raise ForbiddenError("设备令牌只能读检测设置；请在 Cockpit「自动记录」页登录后修改")
     _check_device(device_id)
     if len(body) > MAX_BODY:
         raise TooLargeError(f"请求体超过 {MAX_BODY} 字节")
@@ -333,7 +333,7 @@ def _health_events(prev: dict | None, h: Health, now: datetime) -> list[dict]:
 
 def request_restart(device_id: str, authorization: str | None) -> dict:
     if _is_device_token(authorization):
-        raise ForbiddenError("设备令牌不能触发重启；请在 Cockpit「AI助理」页登录后操作")
+        raise ForbiddenError("设备令牌不能触发重启；请在 Cockpit「自动记录」页登录后操作")
     _check_device(device_id)
     nonce = secrets.token_hex(8)
     if not repo.set_restart(current_tenant(), device_id, {"nonce": nonce, "requestedAt": _now()}):
@@ -352,7 +352,7 @@ def device_flags(user: str, device_id: str) -> dict:
 
 def delete_settings(device_id: str, authorization: str | None) -> None:
     if _is_device_token(authorization):
-        raise ForbiddenError("设备令牌只能读检测设置；请在 Cockpit「AI助理」页登录后修改")
+        raise ForbiddenError("设备令牌只能读检测设置；请在 Cockpit「自动记录」页登录后修改")
     _check_device(device_id)
     repo.clear(current_tenant(), device_id)
 

@@ -312,7 +312,7 @@ def open_both(browser: Browser, base: str, items, rules_stub=None):
     with _open(browser, base, routes={r"/api/core/activity/suggestions([/?]|$)": stub.route,
                                       r"/api/core/detector/rules": rules.route}) as page:
         page.wait_for_selector("#suggest-list li")
-        page.wait_for_selector("#rules-editor:not([hidden])", state="attached")
+        page.wait_for_function("() => window.assistantRules && window.assistantRules.prepend")   # 规则编辑器在「自动记录」页；这里只用 prepend
         yield page, stub, rules
 
 
@@ -517,8 +517,8 @@ def test_remember_prepends_window_rule_with_if_match(browser, static_base_url):
         assert put[2] == '"4"'
         assert put[3]["rules"][0] == WANT_RULE                      # 放最前：第一条命中生效
         assert [r["id"] for r in put[3]["rules"][1:]] == ["r_1", "r_2", "r_3"]
-        # 规则编辑器没手改：跟着刷新到新版本
-        page.wait_for_function("() => document.querySelectorAll('#rules-list > li').length === 4")
+        # 规则编辑器在「自动记录」页，这页没有它：服务端存下了新的整套（原来 3 条 + 最前面这条）
+        assert len(rules.rules) == 4 and rules.rules[0]["app"] == "^kitty$"
 
 
 def test_remember_retries_once_on_412(browser, static_base_url):
