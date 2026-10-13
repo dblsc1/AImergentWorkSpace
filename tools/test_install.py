@@ -57,6 +57,7 @@ def test_static_modules_are_mounted_not_run(out):
         "../../modules/hive/code/frontend:/usr/share/nginx/html/hive:ro",
         "../../modules/ring/code/frontend:/usr/share/nginx/html/ring:ro",
         "../../modules/assistant/code/frontend:/usr/share/nginx/html/assistant:ro",
+        "../../modules/assistant/code/frontend:/usr/share/nginx/html/auto:ro",
         "${HONEYCOMB_LOGIN_DIR:-../../contracts/auth.gate.v1/stub/web}:/usr/share/nginx/html/login:ro",
         "../../modules/nginx-docker/static:/usr/share/nginx/html/__cockpit:ro",
     ):
@@ -65,7 +66,7 @@ def test_static_modules_are_mounted_not_run(out):
 
 def test_frontends_are_gated_and_login_is_not(out):
     _, _, nginx = out
-    for prefix in ("/hive/", "/ring/", "/assistant/"):
+    for prefix in ("/hive/", "/ring/", "/assistant/", "/auto/"):
         block = _location(nginx, prefix)
         assert "include /etc/nginx/honeycomb/gate.inc;" in block
         assert "include /etc/nginx/honeycomb/inject.inc;" in block, "前端要被注入共享顶栏"
@@ -237,12 +238,13 @@ def test_navbar_tabs_follow_installed_frontends(tmp_path):
     assert """set $honeycomb_nav '{"home":"/","timer":"/ring/","tabs":[{"href":"/ring/","label":"计时"}]}';""" in nginx
 
 
-def test_navbar_three_tabs_same_in_hand_written_and_generated(out):
-    """缺省组装的顶栏：任务、计时、AI助理，手写与生成的两份逐字相同。"""
+def test_navbar_four_tabs_same_in_hand_written_and_generated(out):
+    """缺省组装的顶栏：任务、计时、AI助理、自动记录，手写与生成的两份逐字相同。"""
     _, _, nginx = out
     hand = _render((install.ROOT / "deploy" / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8"))
     nav = """set $honeycomb_nav '{"home":"/hive/","timer":"/ring/","tabs":[{"href":"/hive/","label":"任务"},""" \
-          """{"href":"/ring/","label":"计时"},{"href":"/assistant/","label":"AI助理"}]}';"""
+          """{"href":"/ring/","label":"计时"},{"href":"/assistant/","label":"AI助理"},""" \
+          """{"href":"/auto/","label":"自动记录"}]}';"""
     assert nav in nginx and nav in hand
 
 

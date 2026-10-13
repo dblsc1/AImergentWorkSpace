@@ -10,7 +10,7 @@ import json
 from typing import Any
 
 import pytest
-from conftest import open_page, overflowing
+from conftest import AUTO_PAGE, open_page, overflowing
 from playwright.sync_api import Route
 
 EVIL = '<img src=x onerror="window.__pwned=1">'
@@ -58,7 +58,7 @@ class Stub:
 
 
 def opened(browser, base, stub: Stub, width: int = 1100):
-    return open_page(browser, base, width=width, routes={
+    return open_page(browser, base, width=width, page_name=AUTO_PAGE, routes={
         r"/api/core/activity/auto$": stub.auto, r"/api/core/sessions/[^/]+/reassign$": stub.reassign})
 
 

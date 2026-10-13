@@ -49,7 +49,7 @@ consumes:
 
 来自各前端 `module.yaml` 的 `static[].nav`（页签文字）、`home`、`timer`。没装的前端没有页签。
 页签顺序 = 安装时的模块顺序。缺省组装（手写的 `deploy/` 与 `install.sh add hive ring assistant`）是三个：
-**任务、计时、AI助理**（v0.3 追加第三个，`modules/assistant`；两份组装的 `$honeycomb_nav` 逐字相同，`tools/test_install.py` 核对）。
+**任务、计时、AI助理、自动记录**（v0.3 追加第三个 AI助理，`modules/assistant`；2026-10-14 追加第四个「自动记录」`/auto/`，同一个模块的第二个 `static:`；两份组装的 `$honeycomb_nav` 逐字相同，`tools/test_install.py` 核对）。
 
 ## 计时芯片即时刷新（v0.2.1）
 

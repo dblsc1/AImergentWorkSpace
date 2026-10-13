@@ -1071,7 +1071,7 @@ def test_apply_detector_rules_switch_off_and_old_backend(servers):
     a = {"rules": [], "summary": "s"}
     e = err(servers, "apply_detector_rules", a, headers={**W, "X-Nexus-Tenant": "u_off"})
     assert e == {"status": 403, "detail": tools.SWITCH_OFF}
-    assert "AI助理 → 规则" in e["detail"] and "propose_detector_rules" in e["detail"]
+    assert "自动记录 → 分类规则" in e["detail"] and "propose_detector_rules" in e["detail"]
     e = err(servers, "apply_detector_rules", a, headers={**W, "X-Nexus-Tenant": "u_old"})
     assert e["status"] == 404 and "太老" in e["detail"]
     Fake.override = (422, {"detail": "x", "errors": [{"index": 0}]})

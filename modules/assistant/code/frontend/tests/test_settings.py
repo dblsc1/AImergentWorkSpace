@@ -14,7 +14,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import pytest
-from conftest import open_page, overflowing
+from conftest import AUTO_PAGE, open_page, overflowing
 from playwright.sync_api import Route
 
 DEFAULTS = {
@@ -97,6 +97,7 @@ class DetectorStub:
 
 
 def page_with(browser, base, stub: DetectorStub, **kw):
+    kw.setdefault("page_name", AUTO_PAGE)   # 检测设置在「自动记录」页（2026-10-14 起）
     return open_page(browser, base, routes={r"/api/core/detector/": stub.route}, **kw)
 
 

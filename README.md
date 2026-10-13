@@ -154,7 +154,8 @@ never depends on a `pip install`.
 | `modules/nexus-core` | The event-sourced kernel (FastAPI + MongoDB). Provides 13 contracts: timing, task CRUD, the event write entry point and archive read, and read projections for tree / ring / gantt / export. |
 | `modules/hive` | The task hive (`/hive/`), the main screen. A static frontend; all data goes through `/api/core/`. |
 | `modules/ring` | The timer ring (`/ring/`): contribution ring plus start / stop / cancel / backfill. A static frontend. |
-| `modules/assistant` | The AI assistant page (`/assistant/`), for looking back: chat with the assistant, confirm detected activity, and edit the activity detector's privacy / away settings. A static frontend. |
+| `modules/assistant` | The AI assistant page (`/assistant/`), for looking back: chat with the assistant, confirm detected activity, and approve the AI's reports and rule drafts. A static frontend. |
+| `modules/assistant` (second page) | The Auto-recording page (`/auto/`, same frontend directory): the detector's privacy / away settings, device status, the live classification rules (with the "let the AI edit rules directly" switch), and today's auto-recorded segments. |
 | `modules/nginx-docker` | The gateway's shared parts: the navbar, design tokens, favicons, and the gate and inject snippets. The gateway injects the navbar into every frontend, with one tab per installed frontend. |
 | `contracts/yq-event.v1` | The event envelope spec. **The core contract of the whole system** — every write is an event posted into this envelope. |
 | `contracts/auth.gate.v1` | The login gate contract, a stub implementation (standard library only, zero dependencies), and a minimal login page. |

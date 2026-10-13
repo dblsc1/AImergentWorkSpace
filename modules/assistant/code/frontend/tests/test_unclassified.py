@@ -267,7 +267,7 @@ def test_everything_classified_keeps_the_message_then_hides_on_reload(browser, s
         assert page.is_visible("#unclassified-panel") and page.locator(".unc-group").count() == 0
         assert page.inner_text("#unc-count") == ""
         page.reload()
-        page.wait_for_selector("#settings-panel", state="attached")
+        page.wait_for_selector("#review-panel", state="attached")
         page.wait_for_timeout(300)
         assert page.is_hidden("#unclassified-panel")
 

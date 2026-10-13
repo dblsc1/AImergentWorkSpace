@@ -66,7 +66,7 @@ def open_page(browser: Browser, base: str, items, *, tree: dict = TREE, rules: b
     with _open(browser, base, routes=routes, width=width, theme=theme, expand=expand) as page:
         page.wait_for_selector(".suggest-coll")
         if rules:
-            page.wait_for_selector("#rules-editor:not([hidden])", state="attached")
+            page.wait_for_function("() => window.assistantRules && window.assistantRules.prepend")   # 规则编辑器在另一页；这里只用 prepend
         yield page, stub
 
 
