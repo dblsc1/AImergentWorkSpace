@@ -108,10 +108,11 @@ def test_lists_tokens_newest_first_as_text_and_never_mints_on_its_own(browser, s
         assert page.locator("#tok-list img").count() == 0 and page.evaluate("window.__xss") is None
         assert page.locator(".tok-item .tok-revoke").count() == 3  # 列出来的都是有效的，都能吊销
         assert page.is_hidden("#tok-new") and page.is_hidden("#tok-empty") and page.is_hidden("#tok-anon")
-        # 三种权限各有一句中文说明，缺省选最小的「只上报」
-        assert page.is_checked('input[name="tok-scope"][value="report"]')
+        # 三种权限各有一句中文说明，缺省选「只读」（v0.4：用户自己接 CLI 的常见选择；读写要自己勾）
+        assert page.is_checked('input[name="tok-scope"][value="read"]')
+        assert not page.is_checked('input[name="tok-scope"][value="write"]')
         text = page.inner_text("#tok-form")
-        for needle in ("只上报", "读不到你的任何数据", "只读", "什么都改不了", "读写", "ai-detector"):
+        for needle in ("只上报", "读不到你的任何数据", "只读", "什么都改不了", "读写", "ai-detector", "允许 AI 直接改分类规则"):
             assert needle in text, needle
     assert mints(stub) == [] and revokes(stub) == []
 
@@ -130,6 +131,7 @@ def test_mint_shows_the_secret_once_with_copy_and_snippets(browser, static_base_
         page.on("console", lambda m: logs.append(m.text))
         ready(page)
         page.fill("#tok-name", "  沙箱里的编码代理  ")
+        page.check('input[name="tok-scope"][value="report"]')
         page.click("#tok-mint")
         page.wait_for_selector("#tok-new:not([hidden])")
         secret = FAKE.format(scope="report")

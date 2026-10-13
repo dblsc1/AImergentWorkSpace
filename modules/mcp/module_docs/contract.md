@@ -1,13 +1,13 @@
 # mcp · 对外接口契约
 
-> 本模块实现 `contracts/mcp.tools.v1`（给 AI 代理用的工具，MCP Streamable HTTP；v1.2 起 10 个只读 + 1 个只写草稿的 propose_；v1.3 再加 1 个只写建议的 propose_activity_matches；v1.7 再加 1 个只读的 get_match_history，共 13 个；v1.9 再加 get_window_awaiting_target 与 suggest_window_target，共 15 个）。行为的唯一事实在
+> 本模块实现 `contracts/mcp.tools.v1`（给 AI 代理用的工具，MCP Streamable HTTP；v1.2 起 10 个只读 + 1 个只写草稿的 propose_；v1.3 再加 1 个只写建议的 propose_activity_matches；v1.7 再加 1 个只读的 get_match_history，共 13 个；v1.9 再加 get_window_awaiting_target 与 suggest_window_target，共 15 个；v1.17 再加 apply_detector_rules，共 19 个；没有范围头的调用方 18 个）。行为的唯一事实在
 > 那份契约里，本文件只登记依赖、说明实现选择。改行为先改那份契约。
 
 ```yaml
 provides:
   - id: mcp.tools.v1
     contract: ../../../contracts/mcp.tools.v1/contract.md
-    summary: 18 个工具（13 个只读（v1.13 加 get_report_status；v1.16 加 get_detector_health：检测程序状态 / 最近事故 / 固定排查提示，开关开着时带不可信的启动日志）+ propose_detector_rules 只写草稿 + propose_activity_matches 只写待确认的建议 + v1.13 propose_report 只写待人批准的报告 + v1.9 认窗口的 get_window_awaiting_target / suggest_window_target），挂在 <站点前缀>api/mcp/（经网关、过门）；对内 http://mcp:8020/api/mcp/
+    summary: 19 个工具（没有范围头的调用方 18 个；v1.17 加 apply_detector_rules：明确的 write 范围、账号开关 aiDirectRules 开着才直接写生效的规则；13 个只读（v1.13 加 get_report_status；v1.16 加 get_detector_health：检测程序状态 / 最近事故 / 固定排查提示，开关开着时带不可信的启动日志）+ propose_detector_rules 只写草稿 + propose_activity_matches 只写待确认的建议 + v1.13 propose_report 只写待人批准的报告 + v1.9 认窗口的 get_window_awaiting_target / suggest_window_target），挂在 <站点前缀>api/mcp/（经网关、过门）；对内 http://mcp:8020/api/mcp/
 consumes:
   - id: nexus-core.views.tree.v1
     contract: ../../nexus-core/module_docs/contract.md
@@ -127,5 +127,7 @@ INSTRUCTIONS」的标题在五个工具里都是一行、截断过、只在自�
 v1.13（2026-10-09，nexus-core v2.20「AI 报告」）：`propose_report` 只发一个 POST `activity/reports`（原样下传，不带 `Authorization`；拒绝理由过 `_screen` 再还给模型），`get_report_status` 只发一个 GET `activity/reports?status=all&limit=1&items=true`（`summary` / `reason` / `failure` 过 `_screen`，不出建议 id 与自报作者）。`WRITES` 追加 `propose_report`；工具共 17 个。测试：`tests/test_mcp.py` 的 `test_propose_report_*`、`test_get_report_status_*`、`test_ai_text_in_reports_*`，工具分类与计数的几条随之改为 17 / 12。
 
 v1.16（2026-10-12，nexus-core v2.28）：新增只读 `get_detector_health`，只发 `GET detector/devices` 与每台设备的 `GET detector/incidents`（deviceId 只取自前一个响应）；提示表 `HINTS` 与 `ai-detector status` 同一套话（测试读 `health.go` 对照）；启动日志逐行过 `_screen`、整块标 `untrusted`。
+
+v1.17（2026-10-14，nexus-core v2.29，仓主决定放宽早先的承诺）：新增 `apply_detector_rules`，入参 schema 与 `propose_detector_rules` 是同一个对象（`_RULES_IN`）；只发一个 `POST detector/rules/ai-apply`（`{rules, summary, author: "assistant"}`，不带 `Authorization`）。`WRITES` 追加它；`mcp_server.caller_scope` 现在区分 `full`（没有范围头）与 `write`，`tools.denied(scope)` 决定看不到 / 调不了什么：`read` 看不到全部写工具，`full`（含聊天后端对内直连）只看不到 `apply_detector_rules`（`tools.WRITE_ONLY`），调了 403；注解 `destructiveHint: true`。nexus-core 回 403 且体里 `reason == "aiDirectOff"`（`ToolError.reason`，`_send` 从错误体里取）→ 工具错误，`detail` 是固定的 `tools.SWITCH_OFF`（叫用户去「AI助理 → 规则」页打开「允许 AI 直接改分类规则」，其间改用 `propose_detector_rules`）；别的 403 原样透传；`INSTRUCTIONS` 里有一句说明 `apply_detector_rules` 不是只读、立即生效、须用户打开开关；回 404（路由不存在，nexus-core 比 v2.29 老）→ 工具错误「服务器太老」。描述里写明规则内容必须来自用户的意图、不许来自屏幕文字。`propose_detector_rules` 不变。测试：`tests/test_mcp.py` 的 `test_apply_detector_rules_*`，工具分类与计数随之改为 19 / 13。
 
 v1.14（2026-10-09，nexus-core v2.22「忽略并记住」）：`get_detector_rules` 多读一个 `GET /api/core/activity/ignores`，输出追加 `ignored`（`{id, app, hasTitleFilter, since, ignoredRecords, ignoredSeconds}`，`app` 过 `_screen`；**不出 `titleContains`**——那段匹配文字可能就是被忽略窗口标题的一部分，只给登录的人；老后端 404 = `[]`）。工具数、写端点不变。`get_current_timer` 的 `agents[]`、`get_agent_time` 的 `open[]` 不列藏起来的代理是 nexus-core 的 views 做的，MCP 原样带出。 两处各追加 `hiddenCount`（数字，藏起来的在跑代理个数，不带名字；老后端没有 = 0），让模型知道列表不全。

@@ -28,7 +28,7 @@ consumes:
       「Agent 令牌」面板（`code/frontend/tokens.js`、`#tokens-panel`，2026-10-09，auth.gate v1.4）。只调认证服务自己的
       三个端点，都靠会话 cookie：`GET <前缀>api/auth/tokens`（200 才出现这一块；503 = 没设 AUTH_SECRET，只出一句说明；
       其余状态码整块不出现——老的或换掉的认证服务）、`POST tokens` `{scope, name}`（`report` / `read` / `write`，缺省选
-      `report`）、`POST tokens/revoke` `{tokenId}`（先 `confirm`）；另读 `GET health` 的 `anonymousReport` 决定出不出
+      `read`（v0.4 起；以前是 `report`），`write` 的说明多一句：打开「允许 AI 直接改分类规则」后，这种令牌还能让 AI 直接改分类规则）、`POST tokens/revoke` `{tokenId}`（先 `confirm`）；另读 `GET health` 的 `anonymousReport` 决定出不出
       「不带令牌也能上报」那句提示。**页面从不自己发令牌**，只在人点「生成令牌」时发。令牌本身只在那一次响应里：
       只放进一个内存变量与一个节点，给「复制」与可粘贴的配置片段（agent-hooks、MCP 客户端、ai-detector）；
       不写任何存储、不进地址栏与 console，点「我已保存好」、再发一个、离开页面时清掉。备注当纯文本渲染。
@@ -155,6 +155,10 @@ consumes:
       下面一段灰字说明关着 / 开着各是什么行为；**总是显示、总是发**（文档里没有这个键按 `false` 填）。勾上保存时，
       文档里还没有布尔的 `presence`（没设过在场心跳）就一并发 `presence: true`——实时显示靠心跳；人明确设过
       `presence` 的不动，取消勾选也不动 `presence`。
+      `aiDirectRules`（账号开关，`detector.rules.v1` v1.3，nexus-core v2.29，2026-10-14）**不在**设备设置表单里（设置是每台设备一份，账号级开关放那里会被旧表单悄悄改回去）：
+      它是「分类规则」一节顶上的勾选项「允许 AI 直接改分类规则」，缺省不勾，值取自 `GET rules` 的 `aiDirectRules`，改动即 `PUT api/core/detector/rules/ai-direct` `{enabled}`（只许人；失败勾回原样并提示）。
+      「分类规则」里：规则带 `aiAt` 时行头标「AI 写的 + 时间」（只进 textContent，不进 toWire——服务端自己保留 / 清除章）；`GET rules` 的 `snapshotCount > 0`
+      时才显示「撤回 AI 的上一次改动」，点了 `POST api/core/detector/rules/ai-revert`（带 `If-Match: "<显示的 version>"`，412 则刷新；先 `confirm`，写明是恢复到哪个时间的 AI 改动之前，有没保存的改动会提醒；404 = 没有可撤回的，按钮收起），成功后用返回的规则整套重填并重读草稿。
       **最近事故与启动日志（nexus-core v2.28）**：设备行的状态下面多三样。① 一行「启动日志上传」：`health.logUpload` 为 `true` 说「已在那台电脑上开启」，
       为 `false` 说「未开启」并写明怎么开（那台电脑的 `ai-detector.json` 里加 `"awLogUpload": true`，只上传脱敏后的末尾、可随时关；开关只能在那台电脑上改）；
       老服务端没有这个布尔就不显示这一行。**面板上没有任何能打开它的控件**（本机开关，网页和服务器都改不了）。② 可折叠的「最近事故」：**展开时**才 `GET incidents?deviceId=&limit=50`
@@ -211,6 +215,7 @@ consumes:
 
 | 日期 | CR | 变更 |
 |---|---|---|
+| 2026-10-14 | 仓主：用户自己接 CLI，AI 可以直接改分类规则（默认关，撤得回） | 认 `detector.rules.v1` v1.3 / nexus-core v2.29：「分类规则」一节多「允许 AI 直接改分类规则」勾选项（PUT ai-direct）；规则列表标「AI 写的 + 时间」；有快照时出「撤回 AI 的上一次改动」；令牌表单缺省选「只读」、「读写」的说明多一句。只增，既有行为不变 |
 | 2026-10-12 | 仓主：记录丢了 80 分钟，要让 AI 助理能读事故和（用户同意的）启动日志 | 认 nexus-core v2.28（`nexus-core.detector.incidents.v1`）：设备行下多「启动日志上传」状态一行（只显示，不提供打开它的控件——本机开关）、可折叠的「最近事故」（展开时取）与开关打开时的「查看启动日志」（`<pre>` + `textContent`）。见上文「活动检测设置」条。 |
 | 2026-10-12 | 仓主：「面板上能加个检测和重启按钮吗？」（ActivityWatch 没起来，面板上看不出） | 认 nexus-core v2.27（`nexus-core.detector.health.v1`）：「活动检测设置」的设备行下多一条状态（检测程序在线 / 离线——`health.at` 超过 3 分钟没更新算离线；ActivityWatch 正常 / 连不上 / 最近一分钟没有窗口记录 / 已暂停 / 未开启；`autoStart` 是 `started` / `gave_up` / `unsupported` / `off` 时附自动拉起的结果（`gave_up` 带 `autoReason` 的中文原因，`daily_cap` 单独一句「24 小时内自动拉起已达 20 次上限……可以点按钮手动重启」；`idle` 和缺省什么都不显示；不认识的值显示「未知状态」）；老检测程序没有 `health` →「这个版本的检测程序不报告状态」）、「检测」按钮（重拉设备）、「重启 ActivityWatch」按钮（`POST detector/restart?deviceId=` 后每 3 秒拉一次设备、最多 75 秒，等该 nonce 的 `restart.result`，超时显示「检测程序没有响应（它可能没在运行）」）。在线 / 离线按 `GET devices` 的服务端 `now` 算（缺 `now` 的老服务端退回浏览器时钟），`health.at` 解析不了当作没有状态；按钮旁常驻一句说明：「这个按钮只做两件事：检测 ActivityWatch 是否在运行，没在运行就重启它。不会重启检测程序，也不会重启面板」；等结果最多 75 秒（拉取 ≤ 15 秒 + 探测 20 秒 + 回报）；失败（按钮）/ 停手（自动）时给大类原因的中文（枚举 `reason` / `autoReason`）并常驻一句「详细原因和日志在那台电脑上：运行 ai-detector status，或查看检测程序目录下的 aw-start.log」；检测程序离线时按钮禁用并说明怎么办。服务端字符串只进 textContent |
 | 2026-10-09 | 仓主：记住「忽略 xx 记录」，不进圆环也不进泳道；放一个可展开的「被忽略任务」菜单 | 认 nexus-core v2.22「忽略并记住」（`nexus-core.activity.ignores.v1`）。待确认建议里每个窗口行、每个集合多一个「忽略并记住」：点开选范围——「忽略 X 的所有窗口」，或「只忽略标题含“…”的」（标题取去掉开头状态符号 / 计数的那段，集合 = 它里面每个不同的窗口各一条规则），发 `POST api/core/activity/ignores {app, titleContains?}`，服务端存规则并清掉已在待确认里的匹配项，页面重拉。待确认建议面板底部多一个可展开的「被忽略任务」（`ignores.js`、`#ignores-panel`）：每条规则写匹配什么、自何时起、已忽略多少条 / 多少分钟（计数器）；面板说明写明「忽略后不再计时、不进圆环和泳道、不再出现在待处理里；已经记下的不受影响」——不承诺删除标题，「取消忽略」= `DELETE api/core/activity/ignores/{id}`。一条规则都没有、或端点 404（后端早于 v2.22）时面板与「忽略并记住」按钮都不出现。**没有**给「待分类」面板加（那里列的是已记下的时间段，不是窗口；忽略只管以后的窗口） |

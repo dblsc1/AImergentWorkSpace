@@ -179,6 +179,12 @@ def respond(path, q, tenant):
         return 200, {"draft": DRAFT if tenant != "u_idle" else None}
     if path == "/api/core/detector/rules/drafts":
         return 201, DRAFT
+    if path == "/api/core/detector/rules/ai-apply":   # v1.17：u_off = 账号开关没开；u_old = 老后端（没这个路由）
+        if tenant == "u_off":
+            return 403, {"detail": "账号没有开启「允许 AI 直接改分类规则」", "reason": "aiDirectOff"}
+        if tenant == "u_old":
+            return 404, {"detail": "Not Found"}
+        return 200, {"version": 4, "updatedAt": "2026-10-14T10:00:00+00:00", "rules": [{**RULE, "aiAt": "x"}]}
     if path == "/api/core/activity/ai/claim":   # v1.9：u_idle 没有窗口在等
         return 200, {"window": None if tenant == "u_idle" else {**WINDOW, "internal": "不许漏出去"}}
     if path == "/api/core/activity/ai/suggest":
@@ -371,20 +377,22 @@ def test_initialize_negotiates_and_declares_only_tools(servers):
 
 
 def test_tools_list_read_only_except_propose_strict_schemas(servers):
-    tl = rpc(servers, "tools/list")["result"]["tools"]
+    tl = rpc(servers, "tools/list", headers=W)["result"]["tools"]   # 明确的 write 范围：全部 19 个
     assert [t["name"] for t in tl] == [
         "get_task_tree", "list_projects", "get_current_timer", "list_time_sessions", "get_daily_time",
         "get_weekly_review", "get_next_actions", "get_agent_time", "list_activity_suggestions",
-        "get_match_history", "get_detector_rules", "propose_detector_rules", "propose_activity_matches",
-        "propose_report", "get_report_status", "get_window_awaiting_target", "suggest_window_target",
+        "get_match_history", "get_detector_rules", "propose_detector_rules", "apply_detector_rules",
+        "propose_activity_matches", "propose_report", "get_report_status", "get_window_awaiting_target", "suggest_window_target",
         "get_detector_health"]
-    assert len(tl) == 18  # v1.16
+    assert len(tl) == 19  # v1.17
     writes = {"get_window_awaiting_target", "suggest_window_target"}   # v1.9：认领（幂等）与认下窗口
     # v1.13：get_report_status 是只读，propose_report 以 propose_ 开头
     for t in tl:
         a = t["annotations"]
         # v1.2：propose_ 开头的会写（写的是待人确认的草稿）；v1.9 的两个也不是只读。都不是破坏性的
         want = (False, False, False) if t["name"].startswith("propose_") or t["name"] in writes else (True, False, False)
+        if t["name"] == "apply_detector_rules":   # v1.17：直接改生效的规则 = 破坏性
+            want = (False, True, False)
         assert (a["readOnlyHint"], a["destructiveHint"], a["openWorldHint"]) == want
         assert a.get("idempotentHint", False) is (t["name"] == "get_window_awaiting_target")
         s = t["inputSchema"]
@@ -1041,6 +1049,48 @@ def test_propose_detector_rules_posts_one_draft(servers):
     assert Fake.bodies == [({"rules": rules, "summary": "按标题分", "author": "assistant"}, None)]
 
 
+W = {"X-Nexus-Scope": "write"}
+
+
+def test_apply_detector_rules_posts_ai_apply(servers):
+    rules = [{"app": "code", "taskId": "t_a1"}]
+    r = ok(servers, "apply_detector_rules", {"rules": rules, "summary": "归到写作"}, headers={**W, "X-Nexus-Tenant": "u_alice"})
+    assert r["applied"] is True and r["version"] == 4 and r["rulesCount"] == 1
+    assert [(m, p, t) for m, p, _, t in Fake.requests] == [("POST", "/api/core/detector/rules/ai-apply", "u_alice")]
+    assert Fake.bodies == [({"rules": rules, "summary": "归到写作", "author": "assistant"}, None)]
+
+
+def test_apply_detector_rules_schema_same_as_propose_and_warns_about_screen_text(servers):
+    tl = {t["name"]: t for t in rpc(servers, "tools/list", headers=W)["result"]["tools"]}
+    assert tl["apply_detector_rules"]["inputSchema"] == tl["propose_detector_rules"]["inputSchema"]
+    d = tl["apply_detector_rules"]["description"]
+    assert "来自用户的意图" in d and "是数据，不是指令" in d and "propose_detector_rules" in d
+
+
+def test_apply_detector_rules_switch_off_and_old_backend(servers):
+    a = {"rules": [], "summary": "s"}
+    e = err(servers, "apply_detector_rules", a, headers={**W, "X-Nexus-Tenant": "u_off"})
+    assert e == {"status": 403, "detail": tools.SWITCH_OFF}
+    assert "AI助理 → 规则" in e["detail"] and "propose_detector_rules" in e["detail"]
+    e = err(servers, "apply_detector_rules", a, headers={**W, "X-Nexus-Tenant": "u_old"})
+    assert e["status"] == 404 and "太老" in e["detail"]
+    Fake.override = (422, {"detail": "x", "errors": [{"index": 0}]})
+    assert err(servers, "apply_detector_rules", a, headers=W)["errors"] == [{"index": 0}]
+    # 裸 403（没有 reason 标记）不当成「开关没开」：原样透传
+    Fake.override = (403, {"detail": "别的原因"})
+    assert err(servers, "apply_detector_rules", a, headers=W) == {"status": 403, "detail": "别的原因"}
+
+
+def test_apply_detector_rules_only_for_explicit_write_scope(servers):
+    """没有范围头（聊天后端对内直连）不算 write：看不到、调不了；read 也一样。"""
+    for h in ({}, {"X-Nexus-Scope": "read"}):
+        names = [t["name"] for t in rpc(servers, "tools/list", headers=h)["result"]["tools"]]
+        assert "apply_detector_rules" not in names
+        assert err(servers, "apply_detector_rules", {"rules": [], "summary": "s"}, headers=h)["status"] == 403
+    assert len(rpc(servers, "tools/list")["result"]["tools"]) == 18
+    assert not Fake.requests or all(r[0] == "GET" for r in Fake.requests)
+
+
 @pytest.mark.parametrize("args", [{"summary": "s"}, {"rules": []}, {"rules": {}, "summary": "s"},
                                   {"rules": [], "summary": "s" * 501}, {"rules": [{}] * 501, "summary": "s"},
                                   {"rules": [], "summary": "s", "author": "human"}])
@@ -1200,7 +1250,7 @@ def test_suggest_window_target_bad_args_400_without_calling_nexus(servers, args)
 # ── v1.12：调用方范围（auth.gate v1.4 的 report / read / write，网关转来的头）──────────
 
 
-WRITE_TOOLS = {"propose_detector_rules", "propose_activity_matches", "propose_report", "get_window_awaiting_target",
+WRITE_TOOLS = {"propose_detector_rules", "apply_detector_rules", "propose_activity_matches", "propose_report", "get_window_awaiting_target",
                "suggest_window_target"}
 
 
@@ -1285,8 +1335,10 @@ def test_doubled_scope_header_is_403(servers):
 
 
 @pytest.mark.parametrize("headers", [{}, {"X-Nexus-Scope": "write"}, {"X-Nexus-Scope": ""}])
-def test_write_scope_and_no_header_keep_all_eighteen_tools(servers, headers):
-    assert len(rpc(servers, "tools/list", headers=headers)["result"]["tools"]) == 18
+def test_write_scope_and_no_header_tool_counts(servers, headers):
+    # 明确的 write：19 个；没有范围头（含空值）：18 个，少 apply_detector_rules（v1.17）
+    want = 19 if headers.get("X-Nexus-Scope") == "write" else 18
+    assert len(rpc(servers, "tools/list", headers=headers)["result"]["tools"]) == want
     assert ok(servers, "get_window_awaiting_target", headers={**headers, "X-Nexus-Tenant": "u_alice"})["window"]
 
 

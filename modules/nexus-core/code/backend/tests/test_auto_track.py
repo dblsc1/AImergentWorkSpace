@@ -364,7 +364,8 @@ def test_choice_without_remember_writes_no_rule(client, world, clock):
     key = _ask(client, clock)
     out = _post(client, f"{API}/activity/choice", {"key": key, "projectId": world["q"]})
     assert out["remembered"] is False and out["pseudonymized"] is False
-    assert _rules(client) == {"version": 0, "updatedAt": None, "rules": []}
+    assert _rules(client) == {"version": 0, "updatedAt": None, "rules": [],
+                              "aiDirectRules": False, "snapshotCount": 0, "snapshotAt": None}  # v2.29 追加的三个键
     assert _human(client)["auto"]["projectId"] == world["q"]
 
 

@@ -33,7 +33,8 @@ def _draft(client, rules, summary="按终端标题分开项目", headers=None):
 
 def test_empty_state(client):
     r = client.get(API)
-    assert r.status_code == 200 and r.json() == {"version": 0, "updatedAt": None, "rules": []}
+    assert r.status_code == 200 and r.json() == {"version": 0, "updatedAt": None, "rules": [], "aiDirectRules": False,
+                                                    "snapshotCount": 0, "snapshotAt": None}
     assert r.headers["ETag"] == '"0"'
     assert client.get(f"{DRAFTS}/current").json() == {"draft": None}
 
@@ -250,3 +251,208 @@ def test_tenant_isolation(client):
 def test_rules_not_exported(client, tid):
     _put(client, [{"title": "secret-rule-marker", "taskId": tid}])
     assert "secret-rule-marker" not in client.get("/api/core/export").text
+
+
+# ── v2.29：AI 直接写规则（aiDirectRules 开关 / 快照 / 撤回 / 章） ──
+AI = f"{API}/ai-apply"
+REVERT = f"{API}/ai-revert"
+DIRECT = f"{API}/ai-direct"
+DEVICE_WRITE = {**BEARER, "X-Nexus-Scope": "write"}
+
+
+def _switch(client, on, headers=None):
+    return client.put(DIRECT, json={"enabled": on}, headers=headers or {})
+
+
+def _rev(client, headers=None, version=None):
+    """撤回须带 If-Match：缺省取此刻的 version。"""
+    h = headers or {}
+    v = client.get(API, headers=h).json()["version"] if version is None else version
+    return client.post(REVERT, headers={**h, "If-Match": f'"{v}"'})
+
+
+def _ai(client, rules, headers=None, summary="AI 改规则"):
+    return client.post(AI, json={"rules": rules, "summary": summary}, headers=headers or DEVICE_WRITE)
+
+
+def test_ai_apply_switch_off_403_writes_nothing(client, tid):
+    r = _ai(client, [{"title": "x", "taskId": tid}])
+    assert r.status_code == 403 and "允许 AI 直接改分类规则" in r.json()["detail"]
+    assert r.json()["reason"] == "aiDirectOff"   # 机器可读标记：MCP 只认它
+    got = client.get(API).json()
+    assert got["version"] == 0 and got["rules"] == [] and got["snapshotCount"] == 0 and got["aiDirectRules"] is False
+
+
+def test_switch_is_human_only_and_strict(client):
+    for h in (BEARER, {"X-Nexus-Scope": "write"}, {"X-Nexus-Scope": "read"}, {"X-Nexus-Anonymous": "1"}):
+        assert _switch(client, True, h).status_code == 403, h
+    assert client.get(API).json()["aiDirectRules"] is False
+    for bad in ({}, {"enabled": 1}, {"enabled": "true"}, {"enabled": True, "x": 1}):
+        assert client.put(DIRECT, json=bad).status_code == 422, bad
+    r = _switch(client, True)
+    assert r.status_code == 200 and r.json()["aiDirectRules"] is True and client.get(API).json()["aiDirectRules"] is True
+    assert _switch(client, False).json()["aiDirectRules"] is False
+    # 设备设置里不再有这个键
+    assert client.put("/api/core/detector/settings", params={"deviceId": "dev_1"},
+                      json={"schemaVersion": 1, "aiDirectRules": True}).status_code == 422
+
+
+def test_ai_apply_requires_switch_in_the_conditional_write(client, tid):
+    """检查之后开关被并发关掉：条件更新里带着开关条件，落空，什么都不写。"""
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    from app.modules.detector import repo  # noqa: PLC0415
+    _switch(client, True)
+    _switch(client, False)
+    done = repo.replace_rules("u_local", 0, [], datetime.now(timezone.utc), snapshots=[], require_ai_direct=True)
+    assert done is None and client.get(API).json()["version"] == 0
+
+
+def test_ai_apply_ignores_author_label(client, tid):
+    _switch(client, True)
+    r = client.post(AI, json={"rules": [{"id": "a", "title": "x", "taskId": tid}], "summary": "s", "author": "human"},
+                    headers=DEVICE_WRITE)
+    rule = r.json()["rules"][0]
+    assert rule["aiAt"] and "aiBy" not in rule
+
+
+def test_ai_apply_effective_snapshot_and_provenance_only_on_changed(client, tid):
+    _switch(client, True)
+    keep = {"id": "keep", "title": "keep", "taskId": tid}
+    assert _put(client, [keep, {"id": "edit", "title": "old", "taskId": tid}]).status_code == 200
+    r = _ai(client, [keep, {"id": "edit", "title": "new", "taskId": tid}, {"id": "add", "app": "code", "taskId": tid}])
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["version"] == 2 and body["snapshotCount"] == 1 and body["snapshotAt"]
+    by = {x["id"]: x for x in body["rules"]}
+    assert "aiAt" not in by["keep"]
+    for i in ("edit", "add"):
+        assert by[i]["aiAt"]
+    assert client.get(API).json()["rules"] == body["rules"]  # 立即生效
+    # 校验与草稿路径同一套
+    bad = _ai(client, [{"title": "(?=x)", "taskId": tid}])
+    assert bad.status_code == 422 and client.get(API).json()["version"] == 2
+    # 人改了 edit：AI 章没了；没改的 add 保留
+    h = [x for x in body["rules"]]
+    h = [{k: v for k, v in x.items()} for x in h]
+    h[1]["title"] = "human"
+    after = {x["id"]: x for x in _put(client, h, 2).json()["rules"]}
+    assert "aiAt" not in after["edit"] and after["add"]["aiAt"] == by["add"]["aiAt"]
+
+
+def test_snapshot_cap_keeps_the_pre_ai_baseline_and_revert_walks_back(client, tid):
+    _switch(client, True)
+    original = [{"id": "h", "title": "human", "taskId": tid}]
+    assert _put(client, original).status_code == 200
+    human = client.get(API).json()["rules"]
+    for i in range(8):
+        assert _ai(client, [{"id": "a", "title": f"t{i}", "taskId": tid}]).status_code == 200
+    assert client.get(API).json()["snapshotCount"] == 5
+    seen = []
+    for _ in range(5):
+        r = _rev(client)
+        assert r.status_code == 200
+        seen.append(r.json()["rules"][0]["title"])
+    assert seen == ["t6", "t5", "t4", "t3", "human"]  # 最后一撤回到人写的原样
+    assert client.get(API).json()["rules"] == human and client.get(API).json()["snapshotCount"] == 0
+    assert _rev(client).status_code == 404
+
+
+def test_revert_restores_and_404_without_snapshot(client, tid):
+    _switch(client, True)
+    assert _rev(client).status_code == 404
+    assert _put(client, [{"id": "k", "title": "k", "taskId": tid}]).status_code == 200
+    before = client.get(API).json()["rules"]
+    _ai(client, [{"id": "z", "title": "z", "taskId": tid}])
+    r = _rev(client)
+    assert r.status_code == 200 and r.json()["rules"] == before and r.json()["snapshotCount"] == 0
+    assert _rev(client).status_code == 404
+
+
+def test_device_token_cannot_revert_and_read_scope_cannot_ai_apply(client, tid):
+    _switch(client, True)
+    _ai(client, [{"title": "x", "taskId": tid}])
+    assert _rev(client, DEVICE_WRITE).status_code == 403
+    assert client.get(API).json()["snapshotCount"] == 1
+    r = _ai(client, [{"title": "y", "taskId": tid}], headers={**BEARER, "X-Nexus-Scope": "read"})
+    assert r.status_code == 403 and client.get(API).json()["version"] == 1
+
+
+def test_ai_apply_tenant_isolation(client):
+    zone = client.post("/api/core/planner/zones", json={"name": "A区"}, headers=A).json()
+    proj = client.post("/api/core/planner/projects", json={"zoneId": zone["id"], "name": "A项目"}, headers=A).json()
+    task = client.post("/api/core/planner/tasks", json={"projectId": proj["id"], "name": "A任务"}, headers=A).json()
+    assert _switch(client, True, A).status_code == 200
+    assert _ai(client, [{"title": "a", "taskId": task["id"]}], headers={**DEVICE_WRITE, **A}).status_code == 200
+    assert client.get(API, headers=B).json()["aiDirectRules"] is False
+    assert _ai(client, [], headers={**DEVICE_WRITE, **B}).status_code == 403  # B 没开
+    assert _rev(client, B).status_code == 404
+    assert client.get(API, headers=B).json()["snapshotCount"] == 0
+    assert _rev(client, A).status_code == 200
+
+
+def test_identical_ai_apply_is_a_noop(client, tid):
+    _switch(client, True)
+    rules = [{"id": "k", "title": "k", "taskId": tid}]
+    _put(client, rules)
+    r = _ai(client, rules)
+    assert r.status_code == 200 and r.json()["version"] == 1 and r.json()["snapshotCount"] == 0
+    _ai(client, [{"id": "k", "title": "k2", "taskId": tid}])
+    again = _ai(client, [{"id": "k", "title": "k2", "taskId": tid}])  # 与刚写的一样（章不算）
+    assert again.json()["version"] == 2 and again.json()["snapshotCount"] == 1
+
+
+def test_human_write_clears_undo_history_so_revert_never_loses_human_edits(client, tid):
+    _switch(client, True)
+    _put(client, [{"id": "h", "title": "R0", "taskId": tid}])
+    _ai(client, [{"id": "h", "title": "ai0", "taskId": tid}])
+    cur = client.get(API).json()
+    r1 = _put(client, [{"id": "h", "title": "R1", "taskId": tid}], cur["version"]).json()["rules"]
+    assert client.get(API).json()["snapshotCount"] == 0
+    for i in range(7):
+        assert _ai(client, [{"id": "h", "title": f"a{i}", "taskId": tid}]).status_code == 200
+    n = 0
+    while _rev(client).status_code == 200:
+        n += 1
+    assert n == 5 and client.get(API).json()["rules"] == r1   # 一路撤回，停在人的 R1，不会更早
+    # 应用草稿同样清空
+    _ai(client, [{"id": "h", "title": "x", "taskId": tid}])
+    d = _draft(client, [{"id": "h", "title": "D", "taskId": tid}]).json()
+    v = client.get(API).json()["version"]
+    assert client.post(f"{DRAFTS}/{d['id']}/apply", headers={"If-Match": f'"{v}"'}).status_code == 200
+    assert client.get(API).json()["snapshotCount"] == 0
+
+
+def test_ai_direct_toggle_and_revert_keep_the_stack(client, tid):
+    _switch(client, True)
+    _ai(client, [{"id": "a", "title": "x", "taskId": tid}])
+    _switch(client, False)
+    _switch(client, True)
+    assert client.get(API).json()["snapshotCount"] == 1
+
+
+def test_revert_requires_fresh_if_match(client, tid):
+    _switch(client, True)
+    _ai(client, [{"id": "a", "title": "x", "taskId": tid}])
+    assert client.post(REVERT).status_code == 428
+    r = _rev(client, version=0)
+    assert r.status_code == 412 and r.json()["currentVersion"] == 1
+    got = client.get(API).json()
+    assert got["version"] == 1 and got["snapshotCount"] == 1
+
+
+def test_ai_apply_defense_in_depth_and_provenance(client, tid):
+    _switch(client, True)
+    body = {"rules": [{"id": "a", "title": "x", "taskId": tid, "auto": True, "author": "human"}], "summary": "s"}
+    r = client.post(AI, json=body, headers={**BEARER, "X-Nexus-Scope": "read"})
+    assert r.status_code == 403 and "reason" not in r.json()
+    r = client.post(AI, json=body, headers=BEARER)   # 带 Bearer 却没有范围头
+    assert r.status_code == 403 and "reason" not in r.json()
+    r = client.post(AI, json=body, headers=DEVICE_WRITE)
+    rule = r.json()["rules"][0]
+    assert rule["author"] == "assistant" and "auto" not in rule and rule["aiAt"]
+    # 没动的规则保留原来的 author/auto；只调换顺序不盖章
+    two = [{"id": "a", "title": "x", "taskId": tid}, {"id": "b", "title": "y", "taskId": tid}]
+    _put(client, two, client.get(API).json()["version"])
+    swapped = client.post(AI, json={"rules": two[::-1], "summary": "s"}, headers=DEVICE_WRITE).json()["rules"]
+    assert [x["id"] for x in swapped] == ["b", "a"] and all("aiAt" not in x for x in swapped)

@@ -59,7 +59,7 @@ for a in $(grep -oE '(src|href)="[^"]*__cockpit/[^"]*"' <<<"$hive" | sed -E 's/^
   check 200 "$(code -b "$jar" "$base$a")" "  注入的 $a"
 done
 
-# AI 桥（mcp.tools.v1，gateway.v1 第八节）：MCP 过门；登录态经网关调得到 18 个工具（v1.16），不是只读的只有 propose_ 那三个（v1.3、v1.13）与认窗口的两个（v1.9）。
+# AI 桥（mcp.tools.v1，gateway.v1 第八节）：MCP 过门；登录态经网关调得到 18 个工具（登录态走 cookie、没有范围头，看不到只给 write 令牌的 apply_detector_rules，v1.17），不是只读的只有 propose_ 那三个（v1.3、v1.13）与认窗口的两个（v1.9）。
 # 部署方把 mcp 关掉的组装（CI 的网关契约 job）设 HONEYCOMB_SMOKE_MCP=0 跳过这一段。
 if [ "${HONEYCOMB_SMOKE_MCP:-1}" = 1 ]; then
   rpc='{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
