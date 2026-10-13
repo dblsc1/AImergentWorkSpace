@@ -324,11 +324,18 @@
             <button type="button" class="btn btn-fact" id="rules-apply">应用</button>
           </div>
         </div>
+        <!-- 账号级开关（detector.rules.v1 v1.3，nexus-core v2.29）：不在每台设备的设置里，PUT rules/ai-direct -->
+        <div class="set-field" id="rules-aidirect-field" hidden>
+          <label class="set-opt"><input type="checkbox" id="rules-aidirect"> 允许 AI 直接改分类规则</label>
+          <p class="set-hint">关着（缺省）：AI 只能起草规则草稿，要你在这里点「应用」才生效。打开后：持「读写」令牌的 AI（比如你自己接上的 Claude Code）改的规则马上生效，
+            并标着「AI 写的」；改之前的整套规则会存下来，「撤回 AI 的上一次改动」一键恢复。这个开关对整个账号生效。</p>
+        </div>
         <div class="rules-editor" id="rules-editor" hidden>
           <ol class="rules-list" id="rules-list"></ol>
           <p class="suggest-empty" id="rules-empty" hidden>还没有规则：检测程序在用它本机的 rules.json（如果有）。</p>
           <div class="det-actions">
             <span class="det-dirty" id="rules-dirty" hidden>有没保存的改动</span>
+            <button type="button" class="btn btn-ghost" id="rules-revert" hidden>撤回 AI 的上一次改动</button>
             <button type="button" class="btn btn-ghost" id="rules-add">加一条</button>
             <button type="button" class="btn btn-fact" id="rules-save" disabled>保存规则</button>
           </div>
@@ -351,15 +358,15 @@
         <fieldset class="set-group">
           <legend>权限</legend>
           <div class="set-checks">
-            <label class="set-opt"><input type="radio" name="tok-scope" value="report" checked>
+            <label class="set-opt"><input type="radio" name="tok-scope" value="report">
               <span>只上报</span>
               <span class="eg">只能报告自己「在跑 / 在等你 / 结束了」，读不到你的任何数据。给编码代理的钩子用。</span></label>
-            <label class="set-opt"><input type="radio" name="tok-scope" value="read">
+            <label class="set-opt"><input type="radio" name="tok-scope" value="read" checked>
               <span>只读</span>
               <span class="eg">能读任务、时间与泳道（含 MCP 的只读工具），也能上报；什么都改不了。给只需要了解情况的助理用。</span></label>
             <label class="set-opt"><input type="radio" name="tok-scope" value="write">
               <span>读写</span>
-              <span class="eg">还能上传活动与事件、让 AI 起草建议。给桌面检测程序（ai-detector）或你完全信任的管理代理用。</span></label>
+              <span class="eg">还能上传活动与事件、让 AI 起草建议。给桌面检测程序（ai-detector）或你完全信任的管理代理用。打开「允许 AI 直接改分类规则」后，这种令牌还能让 AI 直接改分类规则。</span></label>
           </div>
         </fieldset>
         <div class="set-field">

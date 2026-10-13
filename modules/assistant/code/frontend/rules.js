@@ -12,6 +12,9 @@
  * - v1.1（nexus-core v2.14）：规则的目标可以只到项目（projectId 代替 taskId，时间记到该项目的「未分类」）。
  *   「归到」下拉里每个项目多一项「…（只到项目）」，值是 "p:" + 项目 id。
  * - v1.2（nexus-core v2.15）：AI 认窗口时直接写下的规则带 auto: true —— 行头标「AI 自动」，照样能改、能删、能停用。
+ * - v1.3（nexus-core v2.29）：账号开关「允许 AI 直接改分类规则」在这一节（勾选框 → PUT ai-direct，值取自 GET 的 aiDirectRules）。账号开了「允许 AI 直接改分类规则」后，AI 经 MCP 写的规则带 aiAt（时间）——
+ *   行头标「AI 写的 + 时间」；GET 回的 snapshotCount > 0 时才显示「撤回 AI 的上一次改动」（POST ai-revert，一步一撤）。
+ *   aiAt 不进 toWire：服务端对没动过的规则自己保留章，人改过的规则章就没了。
  * 对外只挂 window.assistantRules（纯函数，给单测用；外加 prepend：「待确认建议」勾「以后这个窗口都记到这个任务」时用）。
  */
 (function () {
@@ -30,6 +33,12 @@
     if (r.author) out.author = r.author;
     if (r.auto === true) out.auto = true;
     return out;
+  }
+  function stampAt(iso) {   // 「10-14 09:30」；认不出的原样（服务端的字只进 textContent）
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso);
+    var p = function (n) { return String(n).padStart(2, "0"); };
+    return p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
   }
   function counts(diff) {
     return "新增 " + diff.added.length + " / 修改 " + diff.changed.length + " / 删除 " + diff.removed.length +
@@ -61,7 +70,7 @@
       (r.enabled === false ? " · 停用" : "") + (r.note ? " · " + r.note : "");
   }
 
-  window.assistantRules = { toWire: toWire, counts: counts, paths: paths, projectPaths: projectPaths, describe: describe };
+  window.assistantRules = { toWire: toWire, stampAt: stampAt, counts: counts, paths: paths, projectPaths: projectPaths, describe: describe };
 
   // ── DOM ─────────────────────────────────────────────────────────────
   var boxEl = document.getElementById("det-rules");
@@ -81,6 +90,9 @@
   var diffEl = document.getElementById("rules-diff-list");
   var applyBtn = document.getElementById("rules-apply");
   var discardBtn = document.getElementById("rules-discard");
+  var revertBtn = document.getElementById("rules-revert");
+  var directEl = document.getElementById("rules-aidirect");
+  var directFieldEl = document.getElementById("rules-aidirect-field");
 
   var tasks = {};          // taskId → {path, done}
   var projects = {};       // projectId → 「分区 / 项目」
@@ -104,7 +116,8 @@
     dirtyEl.hidden = !d;
     saveBtn.disabled = busy || !d;
     addBtn.disabled = busy;
-    applyBtn.disabled = discardBtn.disabled = busy;
+    applyBtn.disabled = discardBtn.disabled = revertBtn.disabled = directEl.disabled = busy;
+    revertBtn.hidden = !(server && server.snapshotCount > 0);
     editorEl.inert = busy;   // 请求在路上时编辑器不可改：回来会用服务端的规则重填，期间的改动会被冲掉
     emptyEl.hidden = rules.length > 0;
   }
@@ -218,6 +231,11 @@
         badge.title = "这条是 AI 认窗口时直接写下的（只认这一个窗口）。不对就删掉或改掉。";
         head.appendChild(badge);
       }
+      if (r.aiAt) {
+        var ai = el("span", "suggest-badge rule-ai", "AI 写的 " + stampAt(r.aiAt));
+        ai.title = "这条是 AI 直接写下 / 改过的。你改了它，这个标记就没了；不对可以点「撤回 AI 的上一次改动」。";
+        head.appendChild(ai);
+      }
       var on = el("label", "set-opt rule-on");
       var cb = el("input");
       cb.type = "checkbox";
@@ -255,7 +273,10 @@
     sync();
   }
   function setServer(body) {
-    server = current = { version: body.version, rules: body.rules || [] };
+    server = current = { version: body.version, rules: body.rules || [], snapshotCount: body.snapshotCount || 0,
+      snapshotAt: body.snapshotAt || null, aiDirectRules: body.aiDirectRules === true };
+    directFieldEl.hidden = false;
+    directEl.checked = server.aiDirectRules;
     rules = JSON.parse(JSON.stringify(server.rules));
     errors = {};
     render();
@@ -358,7 +379,8 @@
     }
     if (r.status === 412) {
       // 下面仍是你的版本；再点保存 = 用你的覆盖。新对象：current（草稿旧值的底）不跟着变，下次读草稿会重拉
-      server = { version: r.body.currentVersion, rules: server.rules };
+      // 快照是别处那一版的，这里没读过：先收起撤回按钮（保存成功或刷新后按新的来），免得撤回一个没给人看过的版本
+      server = Object.assign({}, server, { version: r.body.currentVersion, snapshotCount: 0, snapshotAt: null });
       showMessage("规则刚被别处改过（现在是第 " + server.version + " 版，可能是刚应用了草稿）。下面仍是你的改动：" +
         "再点「保存规则」就用它覆盖；想放弃就刷新页面。", true);
       sync();
@@ -397,6 +419,48 @@
       return;
     }
     showMessage("应用失败：" + explain(r), true);
+    sync();
+  });
+
+  directEl.addEventListener("change", async function () {
+    var want = directEl.checked;
+    directEl.disabled = true;   // 请求在路上不让再点
+    var r = await request("PUT", "/ai-direct", { h: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: want }) });
+    directEl.disabled = false;
+    if (r.ok) {
+      server.aiDirectRules = r.body.aiDirectRules === true;
+      directEl.checked = server.aiDirectRules;
+      showMessage(server.aiDirectRules ? "已允许 AI 直接改分类规则。" : "已关闭：AI 又只能起草草稿了。", false);
+      return;
+    }
+    directEl.checked = !want;   // 没成功：勾回原样
+    showMessage("没改成：" + explain(r), true);
+  });
+
+  revertBtn.addEventListener("click", async function () {
+    if (busy || !server) return;
+    var at = server.snapshotAt ? stampAt(server.snapshotAt) : "上一次";
+    if (!window.confirm("把规则恢复到 " + at + " 的那次 AI 改动之前？" + (dirty() ? "\n你有没保存的改动，也会被换掉。" : ""))) return;
+    busy = true;
+    sync();
+    showMessage("", false);
+    var r = await request("POST", "/ai-revert", ifMatch(server.version));
+    busy = false;
+    if (r.status === 412) {   // 规则在你看到之后又变了：刷新到最新，让人再看一眼
+      var g = await request("GET", "");
+      if (g.ok) setServer(g.body);
+      showMessage("规则刚被别处改过，已刷新；请再看一眼再决定要不要撤回。", true);
+      sync();
+      return;
+    }
+    if (r.ok) {
+      setServer(r.body);
+      showMessage("已撤回 AI 的上一次改动。", false);
+      loadDraft();
+      return;
+    }
+    showMessage(r.status === 404 ? "没有可撤回的 AI 改动了。" : "撤回失败：" + explain(r), true);
+    if (r.status === 404) { server.snapshotCount = 0; }
     sync();
   });
 

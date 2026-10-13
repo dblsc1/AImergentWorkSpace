@@ -96,18 +96,34 @@ def get_rules(user: str) -> dict | None:
     return _rules_col().find_one({"user": user}, {"_id": 0})
 
 
+def get_ai_direct(user: str) -> bool:
+    return (_rules_col().find_one({"user": user}, {"aiDirectRules": 1}) or {}).get("aiDirectRules") is True
+
+
+def set_ai_direct(user: str, on: bool) -> None:
+    _rules_col().update_one({"user": user}, {"$set": {"aiDirectRules": on}, "$setOnInsert": {"version": 0, "rules": []}},
+                            upsert=True)
+
+
 def replace_rules(user: str, expected_version: int, rules: list[dict], at: datetime,
-                  draft_id: str | None = None) -> dict | None:
+                  draft_id: str | None = None, snapshots: list | None = None,
+                  require_ai_direct: bool = False) -> dict | None:
     """version == expected（没有文档算 0）时整套换掉并 +1，原子地回写后的文档；给了 draft_id 还要求草稿就是它、
-    并删掉草稿。条件不成立返回 None（调用方再读一次分辨是 412 还是 404）。"""
+    并删掉草稿。snapshots：给了就在同一次更新里整个换成这个快照栈（调用方按读到的同一版本算好，保持原子）；
+    require_ai_direct：条件里再加「账号开关仍开着」（ai-apply 用，开关被并发关掉就落空）。
+    条件不成立返回 None（调用方再读一次分辨是 412 还是 404）。"""
     q: dict = {"user": user, "version": expected_version}
     upd: dict = {"$set": {"rules": rules, "version": expected_version + 1, "updatedAt": at}}
+    if snapshots is not None:
+        upd["$set"]["snapshots"] = snapshots
+    if require_ai_direct:
+        q["aiDirectRules"] = True
     if draft_id is not None:
         q["draft.id"] = draft_id
         upd["$unset"] = {"draft": ""}
     try:
         return _rules_col().find_one_and_update(q, upd, projection={"_id": 0}, return_document=ReturnDocument.AFTER,
-                                                upsert=expected_version == 0 and draft_id is None)
+                                                upsert=expected_version == 0 and draft_id is None and not require_ai_direct)
     except DuplicateKeyError:  # 期望 0、而文档已在（version 不是 0）：upsert 撞唯一键 = 冲突
         return None
 

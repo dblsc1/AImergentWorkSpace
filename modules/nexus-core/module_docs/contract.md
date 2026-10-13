@@ -166,6 +166,14 @@
 > （`repo.touch_agent_run` 用聚合管道更新的 `$max`）：只增不减、不早于 `startedAt`，迟到的老请求盖不回新信号，失联的结束时刻不会落到起点之前。
 > 适配器侧的补记见 `contracts/agent.lane.v1` 与 `tools/agent-hooks/README.md`。
 >
+> **v2.29（追加式）：AI 可以直接写生效的分类规则（账号开关 `aiDirectRules`，缺省关）、旧的一套存快照、人可一键撤回。** 仓主 2026-10-14：用户自己把 CLI
+> （Claude Code / Codex / opencode）接到 MCP，AI 改规则不必再走草稿。本版**追加**：`POST /detector/rules/ai-apply`（非人调用方、`write` 范围；开关没开 403、
+> 什么都不写；校验与建草稿同一段代码；整套立即生效，写前把旧的一套压进快照栈，每租户最近 5 个）、`POST /detector/rules/ai-revert`（只收人，带 Bearer 403；一步一撤，
+> 没快照 404）；规则追加可选的 `aiAt`（AI 新增 / 改过的规则才有，人改过就没有）；`GET /detector/rules` 追加 `aiDirectRules` / `snapshotCount` / `snapshotAt`；
+> `PUT /detector/rules/ai-direct`（只许人，体 `{enabled}`；账号级开关，记在规则文档上，**不在** `detector.settings.v1`）；开关关着的 403 带 `reason: "aiDirectOff"`；快照栈满了丢第二老的、永远留最老的；人的 PUT / 应用草稿清空快照栈；`ai-revert` 须带 If-Match；与现有规则相同的 `ai-apply` 是空操作。MCP 追加 `apply_detector_rules`（`mcp.tools.v1` v1.17，十九个工具）。
+> 开关关着时既有端点、字段、行为一个不改。**取代条目**：「设备令牌只读 / AI 只写草稿」只在 `aiDirectRules` 为 `true` 时被 `ai-apply` 取代；PUT、草稿的 apply / discard、撤回仍只有人能。
+> 见 `contracts/detector.rules.v1` v1.3「AI 直接写与撤回」。
+>
 > **v2.28（追加式）：检测程序的事故时间线与（用户自己开了开关才有的）启动日志，AI 助理经 MCP 读来排查。** 事故：主机重启后 ActivityWatch 没起来，
 > 记录丢了 80 分钟没人知道为什么。本版**追加**：`GET /detector/incidents`（只读的事故时间线，只有枚举与时间）、`PUT /detector/health` 两个可选字段
 > （`logUpload` 本机开关的状态、`startLog` 脱敏后的启动日志尾巴）、`GET /detector/devices` 的 `health.logUpload`；MCP 追加只读的 `get_detector_health`
@@ -540,6 +548,9 @@ provides:
     summary: 检测程序事故时间线与启动日志（v2.28，追加式）——GET /api/core/detector/incidents?deviceId=&limit=（只读，同 GET /devices；每台设备最近的事故，只有枚举与时间；
       此刻静默读时算离线）；PUT /detector/health 追加可选 logUpload / startLog（本机开关的状态与脱敏后的启动日志尾巴，严格校验，超限 422 不截断，关开关即删）
     status: 已实现（v2.28），待验证
+  - id: nexus-core.detector.ai-rules.v1
+    summary: AI 直接写分类规则（v2.29，追加式）——POST /api/core/detector/rules/ai-apply（账号开关 aiDirectRules 开着才行，否则 403；旧的一套存快照最近 5 个）、POST .../ai-revert（只许人）；规则追加 aiAt；PUT .../ai-direct（只许人）；GET rules 追加 aiDirectRules / snapshotCount / snapshotAt
+    status: 已实现（v2.29），待验证
 consumes:
   - id: yq-event/v1
     contract: ../../contracts/yq-event.v1/contract.md
@@ -594,6 +605,9 @@ consumes:
 | GET | `/api/core/detector/rules/drafts/current` | 无 | `{draft\|null}` | ✅ 已实现（v2.6） |
 | POST | `/api/core/detector/rules/drafts/{id}/apply` | `If-Match` | 同 GET rules；带 Bearer 403、404、412、422 | ✅ 已实现（v2.6） |
 | POST | `/api/core/detector/rules/drafts/{id}/discard` | 无 | `204`（幂等）；带 Bearer 403 | ✅ 已实现（v2.6） |
+| PUT | `/api/core/detector/rules/ai-direct` | `{enabled: bool}` | 同 GET rules；带 Bearer / 范围头 / 匿名 403、体不合规 422 | ✅ 已实现（v2.29） |
+| POST | `/api/core/detector/rules/ai-apply` | `{rules[], summary, author?}`，不带 `If-Match` | 同 GET rules；`aiDirectRules` 没开 403（中文说明，什么都不写）、校验 422 同建草稿、`read` / `report` 范围进不来（scope 门） | ✅ 已实现（v2.29） |
+| POST | `/api/core/detector/rules/ai-revert` | 无体；头 `If-Match: "<version>"` | 同 GET rules（回到最近快照，用掉它）；非人（带 Bearer、带范围头或匿名）403、缺 If-Match 428、版本对不上 412、没有快照 404 | ✅ 已实现（v2.29） |
 | POST | `/api/core/sessions/{eventId}/reassign` | `{taskId}` 或 `{projectId}`（二选一） | `SessionReassignOut`（见「改挂未分类时间」节）；带 Bearer / `actor=ai` 403、404、409 | ✅ 已实现（v2.11） |
 | — | （v2.11 追加，无新端点）`GET /api/core/events` 的 `taskId` 过滤按当前归属，改挂过的 `session.completed` 条目追加 `currentSubject`；`POST /api/core/events` 拒收 `session.reassigned` | 见「改挂未分类时间」节 | ✅ 已实现（v2.11） |
 | POST | `/api/core/activity/choice` | `{key, taskId \| projectId, remember?}` | `ChoiceOut`（见「自动跟踪进行中的任务」节）；带 Bearer 403、404、422 | ✅ 已实现（v2.14） |

@@ -41,6 +41,10 @@ class RulesStub:
         self.calls: list[tuple[str, str, str | None, Any]] = []   # (方法, 路径尾, If-Match, body)
         self.put_reply: tuple[int, dict] | None = None
         self.apply_reply: tuple[int, dict] | None = None
+        self.snapshot_count = 0
+        self.snapshot_at = "2026-10-14T12:00:00+00:00"
+        self.ai_direct = False
+        self.snapshot_rules: list[dict] = []
 
     def route(self, route: Route) -> None:
         req = route.request
@@ -49,7 +53,9 @@ class RulesStub:
         self.calls.append((req.method, tail, req.headers.get("if-match"), body))
         j = lambda code, obj: route.fulfill(status=code, content_type="application/json",  # noqa: E731
                                             body=json.dumps(obj, ensure_ascii=False))
-        state = lambda: {"version": self.version, "updatedAt": None, "rules": self.rules}  # noqa: E731
+        state = lambda: {"version": self.version, "updatedAt": None, "rules": self.rules,  # noqa: E731
+                                "snapshotCount": self.snapshot_count,
+                                "snapshotAt": self.snapshot_at, "aiDirectRules": self.ai_direct}
         if tail == "" and req.method == "GET":
             return j(200, state())
         if tail == "" and req.method == "PUT":
@@ -60,6 +66,18 @@ class RulesStub:
             self.version += 1
             self.rules = [{"id": r.get("id") or f"r_srv{i}", **{k: v for k, v in r.items() if k != "id"}}
                           for i, r in enumerate(body["rules"])]
+            return j(200, state())
+        if tail == "/ai-direct" and req.method == "PUT":
+            self.ai_direct = body["enabled"]
+            return j(200, state())
+        if tail == "/ai-revert" and req.method == "POST":
+            if req.headers.get("if-match") != f'"{self.version}"':
+                return j(412, {"detail": "stale", "currentVersion": self.version})
+            if not self.snapshot_count:
+                return j(404, {"detail": "没有可撤回的 AI 改动"})
+            self.version += 1
+            self.snapshot_count -= 1
+            self.rules = self.snapshot_rules
             return j(200, state())
         if tail == "/drafts/current":
             return j(200, {"draft": self.draft})
@@ -324,3 +342,79 @@ def test_ai_written_rule_has_a_badge_and_its_provenance_survives_a_save(browser,
         assert "author" not in put[1] and "auto" not in put[1]     # 普通规则不多带键
         page.click('#rules-list > li[data-index="0"] button[aria-label="删除第 1 条"]')   # 也能删
         assert page.locator("#rules-list .rule-auto").count() == 0
+
+
+def test_ai_written_stamp_and_revert_button(browser, static_base_url):
+    """v1.3（nexus-core v2.29）：aiAt 的规则标「AI 写的 + 时间」（只当文本）；有快照才出「撤回」，点一次回到上一套。"""
+    stub = RulesStub()
+    stamped = {**copy.deepcopy(RULES[0]), "aiAt": "2026-10-14T01:30:00+00:00", "aiBy": "assistant"}
+    stub.rules = [stamped, copy.deepcopy(RULES[1])]
+    stub.snapshot_count = 1
+    stub.snapshot_rules = copy.deepcopy(RULES)
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        assert page.locator("#rules-list .rule-ai").count() == 1
+        assert page.inner_text('#rules-list > li[data-index="0"] .rule-ai').startswith("AI 写的 10-14")
+        assert page.is_visible("#rules-revert")
+        said: list[str] = []
+        page.once("dialog", lambda d: (said.append(d.message), d.accept()))
+        page.click("#rules-revert")
+        page.wait_for_selector("#rules-message:not([hidden])")
+        assert "之前" in said[0] and "10-14" in said[0] and "手动" not in said[0]
+        assert ("POST", "/ai-revert", '"4"', None) in stub.calls     # 带显示着的 version
+        assert page.locator("#rules-list > li").count() == 3 and page.locator("#rules-list .rule-ai").count() == 0
+        assert page.is_hidden("#rules-revert")                       # 快照用掉了
+        page.click("#rules-save") if not page.is_disabled("#rules-save") else None
+        assert all("aiAt" not in c[3]["rules"][0] for c in stub.calls if c[0] == "PUT")   # 章不回传
+
+
+def test_no_revert_button_without_snapshot(browser, static_base_url):
+    stub = RulesStub()
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        assert page.is_hidden("#rules-revert")
+
+
+def test_ai_direct_switch_lives_in_the_rules_section(browser, static_base_url):
+    stub = RulesStub()
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        assert not page.is_checked("#rules-aidirect") and "允许 AI 直接改分类规则" in page.inner_text("#rules-aidirect-field")
+        assert page.locator('[data-key="aiDirectRules"]').count() == 0     # 不在每台设备的设置里
+        page.check("#rules-aidirect")
+        page.wait_for_selector("#rules-message:not([hidden])")
+        assert ("PUT", "/ai-direct", None, {"enabled": True}) in stub.calls and stub.ai_direct is True
+        page.reload()
+        ready(page)
+        assert page.is_checked("#rules-aidirect")                          # 值取自 GET rules
+        page.uncheck("#rules-aidirect")
+        page.wait_for_timeout(300)
+        assert ("PUT", "/ai-direct", None, {"enabled": False}) in stub.calls
+
+
+def test_ai_direct_switch_rolls_back_when_refused(browser, static_base_url):
+    stub = RulesStub()
+    orig = stub.route
+    def refuse(route):
+        if route.request.method == "PUT" and route.request.url.endswith("/ai-direct"):
+            return route.fulfill(status=403, content_type="application/json", body=json.dumps({"detail": "不行"}))
+        return orig(route)
+    with open_page(browser, static_base_url, routes={r"/api/core/detector/rules": refuse}) as page:
+        ready(page)
+        page.click("#rules-aidirect")
+        page.wait_for_selector("#rules-message.is-error")
+        assert not page.is_checked("#rules-aidirect")
+
+
+def test_revert_412_refreshes_and_checkbox_locked_in_flight(browser, static_base_url):
+    stub = RulesStub()
+    stub.snapshot_count, stub.snapshot_rules = 1, copy.deepcopy(RULES)
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        stub.version += 5                                   # 别处改了
+        stub.snapshot_count = 2
+        page.once("dialog", lambda d: d.accept())
+        page.click("#rules-revert")
+        page.wait_for_selector("#rules-message.is-error")
+        assert "刷新" in page.inner_text("#rules-message")
+        assert stub.rules == RULES and page.is_visible("#rules-revert")   # 没撤；按钮按新的快照数仍在

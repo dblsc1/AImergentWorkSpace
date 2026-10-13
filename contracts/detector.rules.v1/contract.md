@@ -21,6 +21,8 @@ provides:
       GET/PUT /api/core/detector/rules（PUT 须 If-Match，冲突 412）；
       草稿 POST /api/core/detector/rules/drafts、GET .../drafts/current、POST .../drafts/{id}/apply|discard。
       PUT、建草稿、应用、丢弃只收不带 Bearer 的请求（带 Bearer 设备令牌 403）。
+      v1.3：POST .../rules/ai-apply（账号开关 aiDirectRules 开着时，write 范围的非人调用方整套直接生效，旧的一套存快照）、
+      POST .../rules/ai-revert（只许人，回到最近一个快照）；GET 追加 aiDirectRules / snapshotCount / snapshotAt；规则追加 aiAt；PUT .../rules/ai-direct（只许人）开关账号开关。
 ```
 
 ## 一、规则 `Rule` 与规则集（规范性）
@@ -49,6 +51,12 @@ nexus-core v2.15「让 AI 认窗口」直接写下的那条窗口规则带 `"aut
 **没给（或 `auto: false`）就不带这两个键**——既有规则存下的与读出的逐字节不变，草稿 diff 不误报「修改」。PUT 与草稿都收这两个键
 （类型不对 422），整套替换的写入方（页面）要把读到的原样带回，否则徽标就丢了。它们**不作任何鉴权依据**（同草稿的 `author`）。
 
+**v1.3 追加：AI 直接写的章**（不影响匹配，检测程序忽略）：规则可带 `aiAt`（ISO 8601 时间）——
+表示这条是 AI 经 `ai-apply` 直接写下或改过的。**只由服务端盖章**：任何写入里客户端自带的 `aiAt` 都被丢掉重算（`ai-apply` 体里的 `author` 只校验、不采用，调用方不能给 AI 写入贴「人」的标）。规则（按 `id`）与上一套相比
+除这两个键外**逐字相同** = 沿用上一套的章（有就有，没有就没有）；不同或新增：`ai-apply` 盖新章，人的写入（PUT、应用草稿）不带章——
+所以「人改过的规则就没有 AI 标记」。没有就不带这个键（既有规则逐字节不变）；草稿 diff 比较时忽略它们。`GET` 另追加三个顶层键：
+`aiDirectRules`（布尔，账号开关，见下节 `ai-direct`）、`snapshotCount`（整数，可撤回的快照数，0–5）、`snapshotAt`（最新快照的时间或 `null`）。
+
 **语义**（与 ai-detector 本机 `rules.json` 相同）：按数组顺序，**第一条**命中（`enabled` 为 `true`、
 `app` 为 null 或匹配程序名、`title` 为 null 或匹配标题）的规则给出建议 `taskId` + `confidence`
 （v1.1：只到项目的规则给出 `projectId` + `confidence`，建议里 `taskId` 为 null）。
@@ -68,7 +76,7 @@ nexus-core v2.15「让 AI 认窗口」直接写下的那条窗口规则带 `"aut
 | `confidence` | 数字，`0 < confidence ≤ 1`，省略 = `0.9`（布尔不收） |
 | `note` | `null`、省略，或 ≤ 120 个字符 |
 | `enabled` | 布尔，省略 = `true` |
-| 每条规则 | 只许上面八个键（v1.1 起含 `projectId`），未知键 422 |
+| 每条规则 | 只许上面八个键（v1.1 起含 `projectId`，v1.3 起另收 `aiAt`，但会被服务端丢掉重算），未知键 422 |
 
 - 请求体超过 **256 KiB** → `413`。不是合法 JSON → `422`。
 - 422 的响应体（规则相关的端点都用这个形状，`detail` 永远是字符串，同 nexus-core 其余端点）：
@@ -165,6 +173,23 @@ PUT 的失败：
   改 / 删已有规则，仍然只能走草稿。人说「不对」（`POST /api/core/activity/choice/reject`）时服务端删掉那一条。
   条件与把关见 nexus-core 契约「让 AI 认窗口」节。
 
+### AI 直接写与撤回（v1.3 追加，规范性）
+
+| 方法 | 路径 | 谁 | 请求 | 成功 |
+|---|---|---|---|---|
+| PUT | `/api/core/detector/rules/ai-direct` | **只许人**（`_human`：不带 Bearer、不带范围头、不是匿名，否则 `403`） | 体严格 `{"enabled": <布尔>}`（别的键、非布尔 `422`） | `200` 规则集（含新的 `aiDirectRules`） |
+| POST | `/api/core/detector/rules/ai-apply` | 非人调用方（`write` 范围的令牌、MCP 对内直连），**且账号开关 `aiDirectRules` 开着** | 体同建草稿：`{"rules": [...], "summary": "…", "author"?}`（`author` 只校验、不采用），**不带 `If-Match`** | `200` 新的规则集 + `ETag`（`version` +1） |
+| POST | `/api/core/detector/rules/ai-revert` | **只许人**（`_human`：不带 Bearer、不带范围头、不是匿名，否则 `403`） | 头 `If-Match: "<version>"`；无体 | `200` 回到快照后的规则集（`version` +1），用掉那个快照 |
+
+- `ai-apply` 的校验与建草稿**完全一致**（同一段代码：键、`summary` 1–500、`author`、逐条规则校验、`422` 带下标、`413`）。
+  `403`：开关没开——`detail` 是一句中文（去「AI助理 → 规则」页打开），体里另带机器可读的 `"reason": "aiDirectOff"`（调用方只认它，不从裸 403 推断）；**先于校验、什么都不写**。条件更新里带着「开关仍开着」，检查之后开关被并发关掉的请求同样 `403`、不写。范围门在 `X-Nexus-Scope`（`read` / `report` / 匿名的 `POST` 进不来，
+  `auth.gate.v1` v1.4）；这里不看 Bearer（`write` 范围的设备令牌可以调，这正是目的）。
+- 写入前把**上一套规则**连同 `version`、时间、`summary` 压进快照栈（每租户最多 **5** 个；满了丢**第二老的**，最老的——AI 第一次动手之前的那套——永远留着，一路撤回能回到原样）；写入是对读到的 `version` 的条件更新，期间被改过 `412`。
+  草稿不受影响（仍待人处理）。
+- `ai-revert`：一次一步，把最近的快照整套写回并**用掉它**；没有快照 `404`（`detail` 中文）；非人（带 Bearer、带范围头或匿名）`403`。
+  `aiAt` 回到快照里原样的样子。**人的任何写入（`PUT rules`、应用草稿）在同一次更新里清空快照栈**（`ai-direct` 开关与 `ai-revert` 本身除外）：于是栈底永远是「人最后一次动规则时」的那一套，撤回不会丢掉人的改动，代价是人一动规则，之前的撤回历史就作废。`ai-revert` 须带 `If-Match: "<version>"`（同 `PUT rules`：缺 `428`、对不上 `412`，什么都不动）。与现有规则（除 `aiAt` 外）一模一样的 `ai-apply` 是空操作：不存快照、不涨 `version`，照常 `200` 回当前规则集。`ai-apply` 里新增 / 改动的规则：`author` 固定为 `assistant`、客户端自带的 `auto` 丢掉；没动的规则原样保留。**只调换顺序不标记任何规则**（顺序决定谁先命中）；这种改动靠页面的撤回按钮与快照时间来察觉。`ai-apply` 另外要求：带 Bearer 的调用方其范围头必须恰为 `write`（纵深防御，普通 `403`）。人的 PUT 不碰快照栈。
+- 快照与规则一样：租户隔离，不进台账、投影、导出、快照恢复。
+
 ## 四、ai-detector 怎么用（规范性）
 
 - **每轮**（同步开着且没暂停、有段要上传时）`GET /api/core/detector/rules`，带设备令牌。
@@ -201,6 +226,7 @@ PUT 的失败：
 
 | 日期 | 版本 | 变更 |
 |---|---|---|
+| 2026-10-14 | v1.3 | 追加（仓主 2026-10-14：用户自己接 CLI，AI 可以直接写规则）：`POST .../rules/ai-apply`、`POST .../rules/ai-revert`；规则追加可选的 `aiAt`；`PUT .../rules/ai-direct`（只许人，账号开关）；`GET` 追加 `aiDirectRules` / `snapshotCount` / `snapshotAt`。账号开关缺省关，关着时与 v1.2 完全一样。鉴权取舍里「AI 只写草稿」的承诺只在开关开着时被取代，见本契约「AI 直接写与撤回」。开关**不在** `detector.settings.v1`（那是每台设备一份，账号级开关放那里会被旧表单悄悄改回去） |
 | 2026-10-08 | v1.2 | 规则追加两个可选的出处键 `author`（`"assistant"` / `"human"`）与 `auto`（布尔），没给就不带（既有规则逐字节不变）；nexus-core v2.15「让 AI 认窗口」直接写下的窗口规则带 `author: "assistant"`、`auto: true`，页面标「AI 自动」。**取代条目**：「AI 只写草稿」对那一条窗口规则不再成立（见「鉴权取舍」末条） |
 | 2026-10-08 | v1.1 | 规则的目标可以是项目：`taskId` 可为 `null`，追加可选键 `projectId`（二选一，须是现存项目）；检测程序命中时上传 `suggestion.projectId`。nexus-core v2.14 的 `POST /api/core/activity/choice` 可往最前面加一条窗口规则。只增：到任务的规则存回的形状与 v1 逐字节相同。**取代条目**：「规则命中只产生待确认的建议」在设备打开 `detector.settings.v1` 的 `autoTrack` 时、对把握 ≥ 0.9 的命中被取代（直接记成时间）；AI 仍然只能写草稿、应用仍要人点 |
 | 2026-09-30 | v1 | 首版。仓主 2026-09-30：分类规则不手写，由 AI 助理写，且能一次写入全部。规则存服务端（按租户一套，≤ 500 条，版本号 + If-Match）；AI 经 MCP `propose_detector_rules` 一次写一整套**草稿**，人在「AI助理 → 规则」一键应用；设备令牌只读；ai-detector 每轮拉，服务端没存过 / 拉不到时用本机 `rules.json` |

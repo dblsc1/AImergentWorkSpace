@@ -184,7 +184,7 @@
 
   form.addEventListener("submit", async function (ev) {
     ev.preventDefault();
-    var scope = (form.querySelector('input[name="tok-scope"]:checked') || {}).value || "report";
+    var scope = (form.querySelector('input[name="tok-scope"]:checked') || {}).value || "read";
     var name = $("tok-name").value.trim();
     var button = $("tok-mint");
     button.disabled = true;

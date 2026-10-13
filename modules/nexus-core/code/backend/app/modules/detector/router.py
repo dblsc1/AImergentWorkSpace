@@ -94,3 +94,21 @@ def apply_draft(draft_id: str, request: Request, response: Response) -> dict:
 def discard_draft(draft_id: str, request: Request) -> Response:
     rules.discard_draft(request.headers.get("authorization"), draft_id)
     return Response(status_code=204)
+
+
+@router.post("/rules/ai-apply")
+async def ai_apply(request: Request, response: Response) -> dict:
+    body = await request.body()
+    return _etag(response, await run_in_threadpool(rules.ai_apply, request.headers.get("authorization"), body))
+
+
+@router.post("/rules/ai-revert")
+def ai_revert(request: Request, response: Response) -> dict:
+    h = request.headers
+    return _etag(response, rules.ai_revert(h.get("authorization"), h.get("if-match")))
+
+
+@router.put("/rules/ai-direct")
+async def set_ai_direct(request: Request, response: Response) -> dict:
+    body = await request.body()
+    return _etag(response, await run_in_threadpool(rules.set_ai_direct, request.headers.get("authorization"), body))
