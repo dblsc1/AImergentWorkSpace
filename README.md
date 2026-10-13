@@ -253,6 +253,55 @@ and three invariants, **the assembly layer needs no changes at all**.
 How to plug it in (`AUTH_UPSTREAM`, your own login page, switching the stub off)
 is in `contracts/gateway.v1/contract.md`.
 
+### Connect your own AI CLI to HoneyComb
+
+HoneyComb's MCP server (Streamable HTTP, at `<YOUR_SITE_URL>api/mcp/`, header
+`Authorization: Bearer <TOKEN>`) works with any MCP client, so you can use the AI
+CLI you already have.
+
+1. Log in, open the **AI助理** page, section **Agent 令牌**, pick a scope and generate a token.
+   Use **`read`** (read-only, 13 tools) by default; choose **`write`** only if you want the AI to
+   draft suggestions / rules (by default a person still has to confirm them; only after you turn on "允许 AI 直接改分类规则" (let AI change classification rules directly) can the AI write rules that take effect at once, and you can undo its last change with one click). A `report` token cannot use MCP.
+2. Put it in your client's MCP config. `<YOUR_SITE_URL>` includes any sub-path and ends with `/`
+   (e.g. `http://127.0.0.1:8800/`).
+
+Claude Code:
+
+```sh
+claude mcp add --transport http honeycomb <YOUR_SITE_URL>api/mcp/ \
+  --header "Authorization: Bearer <TOKEN>"
+```
+
+Codex CLI (`~/.codex/config.toml`; the token is read from an environment variable):
+
+```toml
+[mcp_servers.honeycomb]
+url = "<YOUR_SITE_URL>api/mcp/"
+bearer_token_env_var = "HONEYCOMB_TOKEN"   # export HONEYCOMB_TOKEN=<TOKEN>
+```
+
+opencode (`opencode.json`):
+
+```json
+{
+  "mcp": {
+    "honeycomb": {
+      "type": "remote",
+      "url": "<YOUR_SITE_URL>api/mcp/",
+      "headers": { "Authorization": "Bearer <TOKEN>" }
+    }
+  }
+}
+```
+
+Safety: window titles and other on-screen text are untrusted input (a page title can
+contain instructions aimed at your AI), and a CLI can run commands on your machine.
+Start with a `read` token and only widen it when you need to.
+
+The desktop detector (`ai-detector`) binary is unsigned. macOS: System Settings →
+Privacy & Security → "Open Anyway", or `xattr -d com.apple.quarantine <file>`.
+Windows: SmartScreen "More info → Run anyway". Details in `modules/ai-detector/README.md`.
+
 ### The AI assistant ("Ask the assistant" on the timer page)
 
 The timer page has a chat panel for questions like "which project took most of my

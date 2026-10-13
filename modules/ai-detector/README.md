@@ -130,8 +130,11 @@ macOS 需要在「隐私与安全性」里放行一次），放到固定位置�
 校验完整性（可选）：同一个 Release 里的 `ai-detector-<tag>-SHA256SUMS.txt` 记了四个文件的
 SHA256，下载后 `sha256sum -c --ignore-missing ai-detector-<tag>-SHA256SUMS.txt` 核对。
 
-macOS 下载后先执行一次 `xattr -d com.apple.quarantine ./ai-detector-<tag>-darwin-*`，
-否则会被隔离属性拦下，「隐私与安全性」里放行的是同一件事，命令行更快。
+未签名二进制的放行方式：
+
+- **macOS**：「系统设置 → 隐私与安全性」，拉到底点「仍要打开」（Open Anyway）；或命令行
+  `xattr -d com.apple.quarantine ./ai-detector-<tag>-darwin-*`（同一件事，命令行更快）。
+- **Windows**：SmartScreen 弹窗点「更多信息 → 仍要运行」（More info → Run anyway）。
 
 ```sh
 ai-detector init        # 写默认配置（同步是关的）和规则文件样例
