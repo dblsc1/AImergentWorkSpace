@@ -112,6 +112,6 @@ class Worker:
         return not res.get("isError") and bool((res.get("structuredContent") or {}).get("window"))
 
     def _session(self, tenant: str) -> str:
-        """该租户专用的那个会话（没有就建；人在「AI助理」的会话列表里看得到每一轮）。只找 / 建，不改。"""
+        """该租户专用的那个会话（没有就建；人在「待批准」的会话列表里看得到每一轮）。只找 / 建，不改。"""
         sess = next((x for x in self.store.list(tenant) if x.get("title") == SESSION_TITLE), None)
         return (sess or self.store.create(tenant, SESSION_TITLE))["id"]

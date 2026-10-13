@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AI助理</title>
-  <!-- 「AI助理」页（仓主 2026-09-30 定页面分工：计时 = 现在，任务 = 未来，AI助理 = 回顾与分析）。
+  <title>待批准</title>
+  <!-- 「待批准」页（仓主 2026-09-30 定页面分工：计时 = 现在，任务 = 未来，待批准 = 人批准 AI 提议的；2026-10-14 起内置聊天可选、缺省不开）。
        从上到下（有待批准的 AI 报告时最上面多一块，v2.20）：AI 对话、分类规则草稿、待确认建议、待分类、Agent 令牌、回顾。
        活动检测设置、分类规则编辑器、自动记录三块 2026-10-14 搬去了「自动记录」页（auto.html）。
        顶栏、设计 tokens 由网关注入（modules/nginx-docker），本页只自带兜底 tokens（assistant.css 开头）。 -->
@@ -13,8 +13,8 @@
 <body>
   <main class="page">
     <header class="page-head">
-      <h1 class="page-title">AI助理</h1>
-      <p class="suggest-sub">回顾与分析：问助手、确认电脑记下的活动、批准 AI 的报告和规则草稿。
+      <h1 class="page-title">待批准</h1>
+      <p class="suggest-sub">人在这里批准 AI 提议的：确认电脑记下的活动、批准 AI 的报告和规则草稿（AI 来自你自己接上的 CLI；开了内置聊天也能在页面里问）。
         检测程序记什么、分类规则、今天自动记下的在 <a href="../auto/" data-needs="auto/">自动记录页</a>。</p>
     </header>
 
@@ -36,7 +36,7 @@
       <div class="unc-groups" id="report-groups"></div>
     </section>
 
-    <!-- 「AI 对话」（contracts/agent.chat.v1，chat.js）。聊天后端没装（health 不是 200）时整块保持 hidden。 -->
+    <!-- 「AI 对话」（contracts/agent.chat.v1，chat.js）。内置聊天默认不开（compose profile agent）；聊天后端没起（health 不是 200）时整块保持 hidden。 -->
     <section class="card chat-panel" id="chat-panel" hidden aria-labelledby="chat-title">
       <h2 class="suggest-title" id="chat-title">AI 对话</h2>
       <p class="suggest-sub">它能读你的任务和时间；能写的只有两样建议：分类规则的草稿（要你在下面点「应用」），
@@ -84,7 +84,7 @@
       <div class="suggest-top">
         <h2 class="suggest-title" id="suggest-title">待确认建议 <span class="suggest-count mono" id="suggest-count"></span></h2>
         <p class="suggest-sub">电脑自动记下的活动，确认后才算进你的时间。标「无操作」的是没碰键盘鼠标的时段，只能一条条自己定。
-          没配上任务的可以「让 AI 匹配」：它给建议，你点「是」入账、点「否」自己挑。
+          没配上任务的可以自己挑；开了内置聊天时还有「让 AI 匹配」：它给建议，你点「是」入账、点「否」自己挑。
           同一个窗口的几段并成一行，一次确认；勾「以后这个窗口都记到这个任务」，以后它自动建议这个任务。</p>
       </div>
       <div class="suggest-bulk">

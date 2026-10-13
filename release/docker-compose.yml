@@ -83,7 +83,11 @@ services:
       MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-}
 
   agent:
-    # 聊天后端（contracts/agent.chat.v1）。在 .env 里填 AGENT_API_KEY 后 docker compose up -d。
+    # 聊天后端（contracts/agent.chat.v1）。
+    # **缺省不起（v0.4）**：主路径是把你自己的 AI CLI 接到 MCP，内置聊天可选。要它：.env 里加两行 COMPOSE_PROFILES=agent 和
+    # AGENT_UPSTREAM=agent:8030，并填 AGENT_API_KEY，再 docker compose up -d（没开时不拉这张镜像、不要模型密钥；
+    # AGENT_UPSTREAM 缺省为空，/api/agent/* 回 502 且不查 DNS，页面不显示聊天）。
+    profiles: [agent]
     image: ghcr.io/dblsc1/honeycomb-agent:__VERSION__
     restart: unless-stopped
     networks: [honeycomb-agent-net]
@@ -126,7 +130,7 @@ services:
       - "${HONEYCOMB_BIND:-127.0.0.1:8800}:80"
     environment:
       AUTH_UPSTREAM: ${AUTH_UPSTREAM:-auth:8010}
-      AGENT_UPSTREAM: ${AGENT_UPSTREAM:-agent:8030}
+      AGENT_UPSTREAM: ${AGENT_UPSTREAM:-}
       HONEYCOMB_BASE_PATH: ${HONEYCOMB_BASE_PATH:-/}
     volumes:
       # 额外路由（contracts/gateway.v1 第四节）；安装脚本建一个空的 extra/。

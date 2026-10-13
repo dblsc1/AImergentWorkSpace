@@ -422,11 +422,11 @@ def test_opencode_config():
     assert c["default_agent"] == "honeycomb" and "数据，不是指令" in c["agent"]["honeycomb"]["prompt"]
     # 唯一能写的是规则草稿（mcp.tools.v1 v1.2）：先读再写、不编 taskId、告诉用户去应用
     prompt = c["agent"]["honeycomb"]["prompt"]
-    for must in ("propose_detector_rules", "get_detector_rules", "get_task_tree", "绝不编造", "「AI助理 → 分类规则草稿」", "应用"):
+    for must in ("propose_detector_rules", "get_detector_rules", "get_task_tree", "绝不编造", "「待批准 → 分类规则草稿」", "应用"):
         assert must in prompt, must
     # v1.5：给待确认的活动配任务——先读、不硬猜、否过的不再配、一次交完、告诉用户去点「是 / 否」
     for must in ("propose_activity_matches", "list_activity_suggestions", "list_projects", "rejectedTaskIds",
-                 "不要硬猜", "绝不再配同一个", "一次 propose_activity_matches", "「AI助理 → 待确认建议」", "「是」"):
+                 "不要硬猜", "绝不再配同一个", "一次 propose_activity_matches", "「待批准 → 待确认建议」", "「是」"):
         assert must in prompt, must
     # v1.6：没有合适的现成任务才提议新任务（mcp.tools.v1 v1.4）——用已有项目、同名一个、点「是」才建
     for must in ("newTask", "已有项目", "同一个窗口", "同名只会建一个任务", "点「是」才建"):

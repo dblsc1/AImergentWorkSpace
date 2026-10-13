@@ -1,9 +1,9 @@
 /**
- * ring-suggest-link.js —— 计时页上的「N 条待确认 → AI助理」小链接（nexus-core v2.2 活动建议）
+ * ring-suggest-link.js —— 计时页上的「N 条待确认 → 待批准」小链接（nexus-core v2.2 活动建议）
  *
- * 待确认面板本身 2026-09-30 搬去了「AI助理」页（modules/assistant）；计时页只报个数、给个入口。
+ * 待确认面板本身 2026-09-30 搬去了「待批准」页（modules/assistant）；计时页只报个数、给个入口。
  * GET suggestions?status=pending&limit=1 只为拿 total。0 条、404（后端早于 v2.2）、出错、
- * 或网关注入的页签里没有「AI助理」（没装那一页，链过去是 404）→ 不出现。
+ * 或网关注入的页签里没有「待批准」（没装那一页，链过去是 404）→ 不出现。
  * 打开页面、标签页重新可见时各拉一次，不轮询。
  */
 (function () {
@@ -22,7 +22,7 @@
       var body = res.ok ? await res.json() : null;
       total = body && typeof body.total === "number" ? body.total : 0;
     } catch (err) { total = 0; }
-    linkEl.textContent = total + " 条待确认 → AI助理";
+    linkEl.textContent = total + " 条待确认 → 待批准";
     linkEl.hidden = total <= 0;
   }
 

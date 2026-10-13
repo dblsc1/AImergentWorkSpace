@@ -385,7 +385,7 @@ def dismiss(sug_id: str) -> dict:
 def forbid_device_token(authorization: str | None, what: str = "给活动建议配任务") -> None:
     # auth.gate：带了 Bearer 就是设备令牌（网页会话走 cookie，MCP 对内直连不带）。同 detector 的写。
     if (authorization or "").strip().lower().startswith("bearer "):
-        raise ForbiddenError(f"设备令牌不能{what}；请在 Cockpit「AI助理」页登录后操作")
+        raise ForbiddenError(f"设备令牌不能{what}；请在 Cockpit「待批准」页登录后操作")
 
 
 def match_refusal(doc: dict, task_id: str | None, overwrites_task: bool) -> tuple[str, str] | None:

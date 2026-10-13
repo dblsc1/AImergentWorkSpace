@@ -16,7 +16,7 @@
  *   行头标「AI 写的 + 时间」；GET 回的 snapshotCount > 0 时才显示「撤回 AI 的上一次改动」（POST ai-revert，一步一撤）。
  *   aiAt 不进 toWire：服务端对没动过的规则自己保留章，人改过的规则章就没了。
  * 2026-10-14 页面拆分：生效规则的编辑器 + 账号开关（#det-rules）在「自动记录」页（auto.html），AI 草稿（#rules-draft）在
- *   「AI助理」页（index.html）——草稿是一次批准。同一份脚本两页都加载，缺的那一半的元素不存在就跳过（下面的 if (editorEl) / if (draftEl)），不分叉逻辑。
+ *   「待批准」页（index.html）——草稿是一次批准。同一份脚本两页都加载，缺的那一半的元素不存在就跳过（下面的 if (editorEl) / if (draftEl)），不分叉逻辑。
  * 对外只挂 window.assistantRules（纯函数，给单测用；外加 prepend：「待确认建议」勾「以后这个窗口都记到这个任务」时用）。
  */
 (function () {
@@ -76,7 +76,7 @@
 
   // ── DOM ─────────────────────────────────────────────────────────────
   var boxEl = document.getElementById("det-rules");     // 自动记录页
-  var draftEl = document.getElementById("rules-draft"); // AI助理页
+  var draftEl = document.getElementById("rules-draft"); // 待批准页
   if (!boxEl && !draftEl) return;
   var editorEl = document.getElementById("rules-editor");
   var noteEl = document.getElementById("rules-note");
@@ -493,7 +493,7 @@
   document.addEventListener("assistant:turn-done", function () { if (server) loadDraft(); });
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState !== "visible") return;
-    // 自动记录页：别处（比如 AI助理页）应用了草稿 / AI 改了规则，回到这页时重读；有没保存的改动就不动（保存时照旧 412 提示）
+    // 自动记录页：别处（比如待批准页）应用了草稿 / AI 改了规则，回到这页时重读；有没保存的改动就不动（保存时照旧 412 提示）
     if (editorEl && server) refresh();
     else if (server) loadDraft();
   });

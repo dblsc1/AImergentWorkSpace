@@ -32,7 +32,7 @@ _COUNTER = re.compile(r"\([0-9]+\)|\[[0-9]+\]|\s")
 
 def norm_title(title: str) -> str:
     """去掉标题开头的状态符号（✳ ⠂ ● * 之类）、计数「(3)」「[2]」，空白并成一个；去完是空的就用原样的。
-    与 AI助理页没有集合标签时的归并键同一个算法（``modules/assistant`` suggestions.js 的 normTitle）。"""
+    与待批准页没有集合标签时的归并键同一个算法（``modules/assistant`` suggestions.js 的 normTitle）。"""
     t = " ".join((title or "").split())
     i = 0
     while i < len(t):

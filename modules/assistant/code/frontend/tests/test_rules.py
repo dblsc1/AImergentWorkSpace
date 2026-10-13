@@ -100,7 +100,7 @@ def page_with(browser, base, stub: RulesStub, **kw):
 
 
 def draft_page(browser, base, stub: RulesStub, **kw):
-    """AI 草稿横幅在「AI助理」页：草稿是一次批准，没有规则编辑器。"""
+    """AI 草稿横幅在「待批准」页：草稿是一次批准，没有规则编辑器。"""
     return page_with(browser, base, stub, page_name=PAGE_NAME, **kw)
 
 
@@ -249,7 +249,7 @@ def test_chat_turn_done_refreshes_draft(browser, static_base_url):
 
 @pytest.mark.parametrize("width,theme", [(320, "light"), (390, "dark")])
 def test_narrow_no_horizontal_scroll(browser, static_base_url, width, theme):
-    # 草稿横幅（AI助理页）
+    # 草稿横幅（待批准页）
     with draft_page(browser, static_base_url, RulesStub(DRAFT), width=width, theme=theme) as page:
         page.wait_for_selector("#rules-draft:not([hidden])")
         page.click(".rules-diff summary")
@@ -430,7 +430,7 @@ def test_revert_412_refreshes_and_checkbox_locked_in_flight(browser, static_base
 
 
 def test_each_page_has_only_its_half(browser, static_base_url):
-    """同一份 rules.js：AI助理页只有草稿，自动记录页只有编辑器 + 开关（缺的那一半的元素不存在，脚本不报错）。"""
+    """同一份 rules.js：待批准页只有草稿，自动记录页只有编辑器 + 开关（缺的那一半的元素不存在，脚本不报错）。"""
     errors: list[str] = []
     with draft_page(browser, static_base_url, RulesStub(DRAFT)) as page:
         page.on("pageerror", lambda e: errors.append(str(e)))
@@ -446,7 +446,7 @@ def test_each_page_has_only_its_half(browser, static_base_url):
 
 
 def test_auto_page_rereads_rules_when_tab_becomes_visible(browser, static_base_url):
-    """别处（AI助理页应用了草稿）改了规则：回到「自动记录」页重读；有没保存的改动就不动。"""
+    """别处（待批准页应用了草稿）改了规则：回到「自动记录」页重读；有没保存的改动就不动。"""
     stub = RulesStub()
     with page_with(browser, static_base_url, stub) as page:
         ready(page)

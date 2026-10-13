@@ -50,7 +50,7 @@ server {
     resolver 127.0.0.11 valid=10s ipv6=off;
 
     # 顶栏页签：装了哪些前端就有哪些页签（inject.inc 把它注入页面）。
-    set $honeycomb_nav '{"home":"${HONEYCOMB_BASE_PATH}hive/","timer":"${HONEYCOMB_BASE_PATH}ring/","tabs":[{"href":"${HONEYCOMB_BASE_PATH}hive/","label":"任务"},{"href":"${HONEYCOMB_BASE_PATH}ring/","label":"计时"},{"href":"${HONEYCOMB_BASE_PATH}assistant/","label":"AI助理"},{"href":"${HONEYCOMB_BASE_PATH}auto/","label":"自动记录"}]}';
+    set $honeycomb_nav '{"home":"${HONEYCOMB_BASE_PATH}hive/","timer":"${HONEYCOMB_BASE_PATH}ring/","tabs":[{"href":"${HONEYCOMB_BASE_PATH}hive/","label":"任务"},{"href":"${HONEYCOMB_BASE_PATH}ring/","label":"计时"},{"href":"${HONEYCOMB_BASE_PATH}assistant/","label":"待批准"},{"href":"${HONEYCOMB_BASE_PATH}auto/","label":"自动记录"}]}';
 
     location = /healthz { return 200 "ok\n"; add_header Content-Type text/plain; }
 
@@ -179,6 +179,10 @@ server {
     location ${HONEYCOMB_BASE_PATH}api/agent/ {
         include /etc/nginx/honeycomb/gate.inc;
         set $honeycomb_agent "${AGENT_UPSTREAM}";
+        # v0.4：AGENT_UPSTREAM 缺省为空 = 内置聊天没开。空值不能交给 DNS（Docker DNS 会把不认识的名字转给宿主的解析器，
+        # 局域网里恰好有个叫 agent 的主机就会收到请求），改指一个必连不上的回环地址：门照旧先拦未登录，已登录的回 502。
+        # 只用 set（改写阶段），不用 return——return 会跑在 auth_request 之前，未登录就不再是 302。
+        if ($honeycomb_agent = "") { set $honeycomb_agent "127.0.0.1:1"; }
         rewrite (?s)^\Q${HONEYCOMB_BASE_PATH}api/agent/\E(.*)$ /api/agent/$1 break;
         proxy_pass http://$honeycomb_agent;
         proxy_redirect http://${AGENT_UPSTREAM}/api/agent/ ${HONEYCOMB_BASE_PATH}api/agent/;

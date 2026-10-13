@@ -1,6 +1,7 @@
 # agent · 对外接口契约
 
 > 本模块实现 `contracts/agent.chat.v1`（聊天后端：会话、SSE 流式回答、取消）的缺省实现——opencode 适配器。
+> **可选，自 v0.4 起缺省不起**（compose profile `agent`，见 `module.yaml`；仓主 2026-10-14）。代码、契约、路由都保留。
 > 行为的唯一事实在那份契约里，本文件只登记依赖、说明实现选择。改行为先改那份契约。
 
 ```yaml

@@ -167,6 +167,11 @@ services:
     # 聊天后端（contracts/agent.chat.v1 的 opencode 适配器，modules/agent）。页面上的「问问助手」。
     # 只在 honeycomb-agent-net 上：够不着 nexus-core / auth / mongo，读数据只能经 MCP。
     # 换成自己的聊天后端：override 里给它 profiles: [disabled]，.env 设 AGENT_UPSTREAM（gateway.v1 第八节）。
+    #
+    # **缺省不起（2026-10-14，v0.4）**：用户接自己的 AI CLI 到 MCP 是主路径，内置聊天是可选的——不要模型密钥、不构建这张镜像。
+    # 要它：.env 里两行 COMPOSE_PROFILES=agent 和 AGENT_UPSTREAM=agent:8030（再填 AGENT_API_KEY）。
+    # 没起时（AGENT_UPSTREAM 缺省为空，网关不转发也不查 DNS）/api/agent/* 回 502，页面把聊天入口藏起来（gateway.v1 第八节）。
+    profiles: [agent]
     build:
       context: ../modules/agent/code/backend
     image: ${HONEYCOMB_PROJECT:-honeycomb}-agent:local
@@ -220,9 +225,10 @@ services:
     # .env 或 `-f 自己的 override.yml` 换认证服务、换登录页、加路由，不改本文件。
     environment:
       AUTH_UPSTREAM: ${AUTH_UPSTREAM:-auth:8010}
-      # 聊天后端（agent.chat.v1，gateway.v1 第八节）。网关运行期才解析它，没起也不影响网关。
+      # 聊天后端（agent.chat.v1，gateway.v1 第八节）。缺省空 = 内置聊天没开，/api/agent/* 过门后直接 502（不解析任何主机名）；
+      # 开内置聊天要设成 agent:8030，用自己的聊天后端就设它的 host:port。网关运行期才解析它，没起也不影响网关。
       # MCP 不经这里换：网关固定转 mcp:8020。
-      AGENT_UPSTREAM: ${AGENT_UPSTREAM:-agent:8030}
+      AGENT_UPSTREAM: ${AGENT_UPSTREAM:-}
       # 站点前缀（gateway.v1）：整站挂子路径时设，如 /Cockpit/（以 / 开头和结尾）。
       HONEYCOMB_BASE_PATH: ${HONEYCOMB_BASE_PATH:-/}
       # 模板里只替换这些变量；$host 之类仍是 nginx 自己的。
@@ -239,7 +245,7 @@ services:
       - ../modules/hive/code/frontend:/usr/share/nginx/html/hive:ro
       - ../modules/ring/code/frontend:/usr/share/nginx/html/ring:ro
       - ../modules/assistant/code/frontend:/usr/share/nginx/html/assistant:ro
-      # 「自动记录」页和「AI助理」同一个目录，另一个入口（auto.html）
+      # 「自动记录」页和「待批准」同一个目录，另一个入口（auto.html）
       - ../modules/assistant/code/frontend:/usr/share/nginx/html/auto:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/healthz"]

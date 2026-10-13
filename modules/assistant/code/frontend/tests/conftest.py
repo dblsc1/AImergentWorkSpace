@@ -22,7 +22,7 @@ from playwright.sync_api import Browser, Page, Route, sync_playwright
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent
 PAGE_NAME = "index.html"
-AUTO_PAGE = "auto.html"   # 「自动记录」页（2026-10-14 从 AI助理页分出）：检测设置、分类规则、今天自动记下的
+AUTO_PAGE = "auto.html"   # 「自动记录」页（2026-10-14 从待批准页分出）：检测设置、分类规则、今天自动记下的
 
 # 形状照 nexus-core 的 TreeOut（与 ring 套件同一份数据）
 TREE = {
