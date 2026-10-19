@@ -166,6 +166,12 @@
 > （`repo.touch_agent_run` 用聚合管道更新的 `$max`）：只增不减、不早于 `startedAt`，迟到的老请求盖不回新信号，失联的结束时刻不会落到起点之前。
 > 适配器侧的补记见 `contracts/agent.lane.v1` 与 `tools/agent-hooks/README.md`。
 >
+> **v2.33（追加式）：人可以把报告里一条的一部分建议拆出去、另给去向（待批准页按窗口分组用）。** 仓主 2026-10-19：「一个 ai 会话理论上只对应一个任务。把界面优化成一个窗口 / agent 对话对应的一个项目的任务，点击展开可以单独划分，否则直接全部批准。」
+> 本版**追加** `POST /activity/reports/{id}/items/{itemId}/split` `{suggestionIds[], taskId? | projectId? | dismiss?}`（三者恰好一个；**只收人**，与报告其余端点同一道门，带 Bearer / 范围头 / 匿名 403）：
+> 把这些建议从条里拆出，进一条新条（id 以 `s` 开头，继承 `reason`，目标即所给：任务 / 项目 = `assign`，`dismiss` = 忽略），剩下的留原条原目标；全部拆走 = 原条就地改目标
+> （同「先改再批准」，`newTask` 丢掉）。只改报告，不入账；「全部批准」仍是一个请求、仍幂等。只能拆还 `pending` / `failed` 的条且建议尚未入账（否则 `409`），建议不在该条里 `400`，
+> 任务 / 项目不存在 `404`；报告同时被别处改动 `409`（刷新重来）。`split` 与条上「先改再批准」不同：`dismiss` 条也可以拆去别的去向；`suggestionIds` 为空 `422`；`newTask` 条整条被拆走（任何去向）等于人不要那个新任务——同条 `reject` 把提议记为已否掉；目标任务的 `match_refusal` 不在拆时查，批准时才查（该段记 `stale`），同「改目标」。既有端点、字段、行为一个不改。MCP 输出不变，`propose_report` 描述追加一句「一个窗口 / 会话 ⇒ 一个任务」（`mcp.tools.v1` v1.21）。
+>
 > **v2.30（追加式）：AI 可以提议新项目、项目下的新任务，人批准才建。** 仓主 2026-10-19：「给 mcp 加新增项目（需要人批准）和新增项目下的任务两个接口（都需要人批准）」。
 > 此前 AI 只能在报告里提议任务（`newTask`），没有项目的活动一直停着。本版**追加** `nexus-core.activity.proposals.v1`：`POST /activity/proposals/projects`、
 > `POST /activity/proposals/tasks`（任务挂在现成项目 `projectId`，或还没批准的项目提议 `projectProposalId`，恰好一个）、`GET /activity/proposals`（AI 与页面都读）、
@@ -534,7 +540,7 @@ provides:
       POST /api/core/activity/reports {summary, author?, items[]}（每条 assign | newTask | dismiss，选择器 suggestionIds | collection；
       逐条校验，坏的进 rejected；待批准的报告合计超 5 份 429）、GET activity/reports[?status&limit&items]、
       GET activity/reports/{id}、POST …/{id}/approve（全部批准）、…/items/{itemId}/approve（可带 taskId | projectId = 先改再批准）、
-      …/items/{itemId}/reject、…/{id}/reject；全部只收人（带 Bearer 403）。批准走同一个 confirm / dismiss / proposals.task_for，
+      …/items/{itemId}/reject、…/items/{itemId}/split（v2.33，拆条另给去向）、…/{id}/reject；全部只收人（带 Bearer 403）。批准走同一个 confirm / dismiss / proposals.task_for，
       逐条结果 applied | stale | failed；事件 ai 块追加选填 report {id, author}。报告不是事实：不进台账 / 导出 / 快照
     status: 已实现（v2.20），待验证
   - id: nexus-core.activity.proposals.v1
@@ -3815,6 +3821,7 @@ AI 仍不能改 / 删任何已有规则、不能写匹配范围超出那一个�
 | `GET /api/core/activity/reports/{id}?resolve=true\|false` | 一份报告，条目解析到**当前状态**（`resolve=false` 不带建议明细） |
 | `POST /api/core/activity/reports/{id}/approve` | **全部批准**：对每个 `pending` / `failed` 的条逐条应用，返回逐条结果 |
 | `POST /api/core/activity/reports/{id}/items/{itemId}/approve` `{taskId?\|projectId?}` | 批准单条；请求体给了目标 = **先改再批准**（改的目标先存下，之后批准用的就是它；不给 = 用报告里的） |
+| `POST /api/core/activity/reports/{id}/items/{itemId}/split` `{suggestionIds[], taskId?\|projectId?\|dismiss?}` | **拆条（v2.33，只收人）**：把条里这些建议拆进一条新条（id `s…`）并另给去向，剩下的留原条；全拆走 = 原条就地改目标。返回 `{reportId, itemId, moved}`。不入账；条 / 报告已处理或建议已入账 `409`，建议不在条里或目标给法不对 `400` |
 | `POST /api/core/activity/reports/{id}/items/{itemId}/reject` | 这一条不要（`newTask` 条同时把提议标为已否掉，同 `unmatch`，助理不许再提） |
 | `POST /api/core/activity/reports/{id}/reject` | 整份不要：所有还没处理的条记 `rejected`，报告记 `rejected` |
 

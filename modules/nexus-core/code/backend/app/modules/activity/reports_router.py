@@ -36,6 +36,15 @@ class RetargetIn(BaseModel):
     projectId: Annotated[StrictStr, Field(min_length=1, max_length=128)] | None = None
 
 
+class SplitIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    suggestionIds: list[Annotated[StrictStr, Field(min_length=1, max_length=64)]] = Field(min_length=1, max_length=reports.MAX_ITEM_REFS)
+    taskId: Annotated[StrictStr, Field(min_length=1, max_length=128)] | None = None
+    projectId: Annotated[StrictStr, Field(min_length=1, max_length=128)] | None = None
+    dismiss: bool = False
+
+
 @router.post("")
 def submit(body: SubmitIn) -> dict:
     return reports.submit(body.summary, body.author, body.items)
@@ -70,3 +79,8 @@ def approve_item(reportId: str, itemId: str, request: Request, body: RetargetIn 
 @router.post("/{reportId}/items/{itemId}/reject")
 def reject_item(reportId: str, itemId: str) -> dict:  # noqa: N803
     return reports.reject_item(reportId, itemId)
+
+
+@router.post("/{reportId}/items/{itemId}/split")
+def split_item(reportId: str, itemId: str, body: SplitIn) -> dict:  # noqa: N803
+    return reports.split_item(reportId, itemId, body.suggestionIds, body.taskId, body.projectId, body.dismiss)

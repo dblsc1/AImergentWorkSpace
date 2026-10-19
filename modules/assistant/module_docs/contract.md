@@ -95,10 +95,10 @@ consumes:
     purpose: >
       「AI 报告」面板（`code/frontend/reports.js`、`#report-panel`，2026-10-09，仓主：「AI 一次提交一份报告，我可以一键批准全部。
       当然单条编辑还是保留的」）。`GET api/core/activity/reports?status=pending` 取最新一份、`GET …/{id}` 取解析后的条；
-      404 / 没有待批准的报告 / 读取失败 → 整块 hidden。显示：作者 + 提交时间 + 概述、各类条数与覆盖总时长；条目**按目标项目分组**
-      （组内、组间都是时间长的在前，同待分类 / 待确认的排序；`dismiss` 条归「忽略」组），每行 = 做什么 → 去哪、时长、理由，
-      行上「改」（`<select>`，与「自动记录」同样的分项目任务下拉，选了即 `POST …/items/{id}/approve {taskId|projectId}` = 先改再批准）、
-      「批准」（`…/items/{id}/approve`）、「不要」（`…/items/{id}/reject`）；头部「全部批准」（一次点击，`…/approve`，之后显示结果行
+      404 / 没有待批准的报告 / 读取失败 → 整块 hidden。显示：作者 + 提交时间 + 概述、各类条数与覆盖总时长；条目**按窗口分组**（v2.33，仓主 2026-10-19：一个窗口 / agent 会话对应一个任务，点开才单独划分）：
+      程序 + 归一化标题（`normTitle`）一行、默认收起，显示段数、总时长、报告给的去向（同窗口的段分属不同去向则标「混合」并列出）；时长长的在前，全是「忽略」的最后。
+      点开列出每段（时间、时长、去向）；窗口行与每段行上有「改」（`<select>`，分项目任务下拉，选了即 `POST …/items/{id}/split {suggestionIds, taskId|projectId}`，只改报告、不入账）、
+      「不要」（`split {dismiss:true}` = 忽略）。不再有逐条「批准」；批准只有头部「全部批准」；头部「全部批准」（一次点击，`…/approve`，之后显示结果行
       「已批准 N 条，M 条已过期」，失败的另说「K 条没成」）与「整份不要」（`…/reject`）。批准 / 忽略的请求都由本页发，AI 不能发。
       `summary`、`reason`、`author`、窗口标题、项目 / 任务名一律 `textContent`（AI 给的文本不解释）。已 `stale` / `applied` /
       `rejected` / `failed` 的行标状态、按钮禁用（`failed` 可重试）。操作进行中全部控件禁用；做完重拉，并通知「待确认建议」「待分类」
@@ -256,3 +256,4 @@ consumes:
 | 2026-10-02 | 仓主：AI 先做最简单的活动匹配 + 是 / 否 | 待确认建议加「让 AI 匹配」按钮（借聊天发一轮，答完重拉）；助理配的条目出「AI 建议 + 是 ✓ / 否 ✗」（是 = confirm，否 = nexus-core v2.7 的 unmatch）；`chat.js` 追加 `window.assistantChat.ask` 与 `assistant:chat-state` 事件；聊天副标题改为「能写的只有两样建议」 |
 | 2026-09-30 | 仓主：分类规则由 AI 助理写 | 「分类规则」占位换成编辑器 + AI 草稿横幅（detector.rules.v1）；聊天一轮结束时发 `assistant:turn-done`；聊天副标题改为「唯一能写的是分类规则的草稿」 |
 | 2026-09-30 | 仓主定新页「AI助理」 | 首版：新模块。聊天（agent.chat.v1）与待确认建议（activity.suggestions.v1）从 ring 搬来、行为不变；待确认建议认 v2.5 的 `idle`（徽标、不进全部确认）；新增活动检测设置（detector.settings.v1）与回顾入口 |
+| 2026-10-19 | 仓主：「一个 ai 会话理论上只对应一个任务。把界面优化成一个窗口 / agent 对话对应的一个项目的任务，点击展开可以单独划分，否则直接全部批准。」 | 「AI 报告」改成按窗口（程序 + 归一化标题）一行、默认收起：段数 / 总时长 / 去向（分属多个去向标「混合」）；点开列出每段，窗口或单段可「改」「不要」（消费 nexus-core v2.33 `split`，只改报告）；逐条「批准」去掉，批准只有「全部批准」。测试：`tests/test_reports.py` |
