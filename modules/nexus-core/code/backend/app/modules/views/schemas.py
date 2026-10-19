@@ -383,6 +383,7 @@ class AgentTimeOpen(_Strict):
     startedAt: str
     elapsedSeconds: int
     attentionSeconds: int = 0  #: v2.17：人把注意力放在这条运行上的秒数（运行上 attend 之和）
+    workingSeconds: int = 0  #: v2.31：到此刻为止真正干活（相位 working）的秒数；没报过相位的运行 = elapsedSeconds
 
 
 class AgentTimeOut(_Strict):

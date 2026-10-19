@@ -155,7 +155,7 @@ def respond(path, q, tenant):
                      "tasks": [{"projectId": "p_3c", "taskId": None, "seconds": 9000, "runs": 4}], "hiddenCount": 2,
                      "open": [{"runId": "run_9", "agent": "codex", "projectId": "p_3c", "taskId": "t_a1",
                                "startedAt": "2026-09-28T10:00:00+08:00", "elapsedSeconds": 1200,
-                               "attentionSeconds": 95},
+                               "attentionSeconds": 95, "workingSeconds": 600},
                               {"runId": "run_old", "agent": "codex", "projectId": "p_3c", "taskId": None,   # 老后端的形状
                                "startedAt": "2026-09-28T10:05:00+08:00", "elapsedSeconds": 900}]}
     if path == "/api/core/activity/suggestions/history":
@@ -861,9 +861,11 @@ def test_get_agent_time(servers):
     r = ok(servers, "get_agent_time", {"fromDate": "2026-09-28", "toDate": "2026-09-28"})
     assert r["tasks"] == [{"projectId": "p_3c", "taskId": None, "path": "学习 / garden", "seconds": 9000, "runs": 4}]
     assert r["open"] == [{"runId": "run_9", "agent": "codex", "taskId": "t_a1", "path": "学习 / garden / 写提示词",
-                          "startedAt": "2026-09-28T10:00:00+08:00", "elapsedSeconds": 1200, "attentionSeconds": 95},
+                          "startedAt": "2026-09-28T10:00:00+08:00", "elapsedSeconds": 1200, "attentionSeconds": 95,
+                          "workingSeconds": 600},
                          {"runId": "run_old", "agent": "codex", "taskId": None, "path": "学习 / garden",
-                          "startedAt": "2026-09-28T10:05:00+08:00", "elapsedSeconds": 900, "attentionSeconds": None}]
+                          "startedAt": "2026-09-28T10:05:00+08:00", "elapsedSeconds": 900, "attentionSeconds": None,
+                          "workingSeconds": None}]
     assert r["truncated"] is False and r["totalSeconds"] == 9000
 
 
