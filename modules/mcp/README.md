@@ -1,7 +1,7 @@
 # mcp · 给 AI 代理用的工具（只读 + 只写草稿 / 报告 + 认窗口）
 
 HoneyComb 的 MCP 服务器（契约 `contracts/mcp.tools.v1`）：把任务树、人的时间、代理时间、在跑的计时、
-待确认的活动建议、以前的归类历史、活动分类规则读给 AI 代理。19 个工具（没有范围头的调用方 18 个）：13 个只读（v1.16 加 `get_detector_health`：检测程序 / ActivityWatch 的状态、最近事故和固定排查提示；用户在自己电脑上打开 `awLogUpload` 后还能看到脱敏的启动日志，没开时结果里带一句让你转告用户的提醒；v1.13 加 `get_report_status`；v1.7 加 `get_match_history`：
+待确认的活动建议、以前的归类历史、活动分类规则读给 AI 代理。21 个工具（没有范围头的调用方 20 个；v1.18 加 `propose_project` / `propose_task`：提议新项目 / 项目下的新任务，什么都不创建，用户在「待批准」页批准才建；`list_projects` 带出 `zones` 与 `proposals`）：13 个只读（v1.16 加 `get_detector_health`：检测程序 / ActivityWatch 的状态、最近事故和固定排查提示；用户在自己电脑上打开 `awLogUpload` 后还能看到脱敏的启动日志，没开时结果里带一句让你转告用户的提醒；v1.13 加 `get_report_status`；v1.7 加 `get_match_history`：
 你以前把哪个窗口定到了哪个项目 / 任务，助理归类前先看它）；`propose_detector_rules`（v1.2）
 只写**待人应用的规则草稿**——生效要人在 Cockpit「待批准 → 分类规则草稿」点「应用」（v1.8：规则的目标可以只到项目，
 `projectId` 代替 `taskId`）；`propose_activity_matches`（v1.3）
@@ -46,9 +46,9 @@ v1.10：`get_current_timer` 除了「在不在计时」，还带出 `focus`—�
 
 | 范围 | MCP |
 |---|---|
-| `read`（只读） | 13 个只读工具。`tools/list` 里看不到会写的 6 个，调了回 `isError` + `status: 403` |
-| `write`（读写） | 全部 19 个（含 `apply_detector_rules`） |
-| 没有范围（网页会话、自带聊天后端的内部直连） | 18 个，不含 `apply_detector_rules`，硬调回 403 |
+| `read`（只读） | 13 个只读工具。`tools/list` 里看不到会写的 8 个，调了回 `isError` + `status: 403` |
+| `write`（读写） | 全部 21 个（含 `apply_detector_rules`） |
+| 没有范围（网页会话、自带聊天后端的内部直连） | 20 个，不含 `apply_detector_rules`，硬调回 403 |
 | `report`（只上报）、不带令牌 | 整个端点 403——只能上报的调用方读不到任何东西 |
 
 `apply_detector_rules`（v1.17）：**直接**改生效的分类规则，不经草稿。默认不能用——用户要先在 Cockpit「自动记录 → 分类规则」页打开「允许 AI 直接改分类规则」，

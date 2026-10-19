@@ -28,6 +28,7 @@ _COLLECTIONS = (
     "activity_suggestions",
     # v2.8 AI 提议的新任务（同上，不是事实）。
     "activity_task_proposals", "activity_reports",  # v2.20 AI 报告（同上，不是事实）
+    "activity_new_items",  # v2.30 AI 提议新项目 / 任务（同上）
     # v2.4 在场心跳（活状态）+ 时间线区间投影。
     "activity_presence", "proj_lanes",
     # v2.4 启动期一次性任务的锁（proj_lanes 自动补建）。

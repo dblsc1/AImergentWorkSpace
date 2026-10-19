@@ -123,13 +123,15 @@ def create_project(
     plan: dict | None = None,
     status: str = "active",
     actor: str | None = None,
+    project_id: str | None = None,
 ) -> dict:
+    """``project_id``（v2.30）只给 activity 的「批准 AI 提议的新项目」用：提议时预留的 id，重复建撞唯一索引。"""
     zone = repo.get_zone(zone_id)
     if zone is None:
         raise InvalidInputError(f"zoneId 不存在：{zone_id!r}")
     name = _clean_name(name, "项目")
     project = {
-        "id": f"p_{uuid.uuid4().hex[:6]}",
+        "id": project_id or f"p_{uuid.uuid4().hex[:6]}",
         "key": f"{repo.name_num(zone['name'])}-{repo.name_num(name)}",
         "zoneId": zone_id,
         "name": name,
