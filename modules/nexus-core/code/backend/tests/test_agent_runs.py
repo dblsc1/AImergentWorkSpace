@@ -127,7 +127,9 @@ def test_stop_writes_exactly_one_event_and_double_stop_does_not_duplicate(client
     assert event["data"] == {
         "agent": "claude-code", "tool": "Bash", "model": "opus", "startAt": run["startedAt"],
         "durationSeconds": first["durationSeconds"], "outcome": "done", "output": "PR 已开",
+        "workingSeconds": 0, "days": event["data"]["days"],  # v2.31 追加；起停同秒的运行干活 0 秒（durationSeconds 下限 1，干活秒数没有）
     }
+    assert event["data"]["workingSeconds"] == sum(d["seconds"] for d in event["data"]["days"])
     assert _db()["agent_runs"].count_documents({}) == 0
 
     # 第二次 stop（哪怕换了 outcome）：200、duplicate、回原来那条，不写第二条

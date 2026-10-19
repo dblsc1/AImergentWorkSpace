@@ -511,3 +511,15 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
 
 - `inactiveAgents` 缺省 `[]`；`reason`：`error`（当前出错）/ `idle`（有在跑的运行但空闲太久）/ `ended`（没有在跑的运行，v2.25）；`tier` ∈ `high|normal|low`（v2.25）。留存时长按档位，见 `contract.md`「`views/lanes` 的灵活留存」（v2.25）。`lastWorkAt` = 最后一次干活的结束时刻（ISO，本地时区）。
 - `runs` / `elapsedSeconds` 含被 v2.23 封顶折掉的运行（不再进 `dropped`：`dropped` 不含不活跃身份）。置顶的、手动隐藏的身份不在其中。过去的日子永远是 `[]`。
+
+### 代理只算干活的时间：`agent.run.completed` 追加 `workingSeconds` / `days`、`AgentTimeOpen.workingSeconds`（v2.31）
+
+规范性条款只住 `contract.md`「代理只算干活的时间」节。形状：
+
+```jsonc
+// agent.run.completed 的 data —— 追加两个键（代理子系统自己写的新事件才有；老事件 / 外部 source 没有）
+{ /* 既有的键，durationSeconds 仍是墙钟 */ "workingSeconds": 4500,
+  "days": [ { "date": "2026-10-13", "seconds": 3600 }, { "date": "2026-10-14", "seconds": 900 } ] }   // 本地日升序，≤ 32 条，seconds 为整数 ≥ 0
+// GET /api/core/views/agent-time
+{ "open": [ { /* 既有的键 */ "workingSeconds": 600 } ] }   // 整数 ≥ 0，没有为 0
+```

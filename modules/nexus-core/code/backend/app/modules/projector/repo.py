@@ -222,11 +222,13 @@ def apply_agent_daily_stat(
     task_id: str | None,
     agent: str,
     seconds: int,
+    runs: int = 1,
 ) -> bool:
-    """同 ``apply_daily_stat`` 的原子幂等写法，唯一约束多一个 ``agent``；另计 ``runs`` 次数。"""
+    """同 ``apply_daily_stat`` 的原子幂等写法，唯一约束多一个 ``agent``；另计 ``runs`` 次数。
+    v2.31：一条事件按天写多行，每行各带同一个 dedupe_key，各自幂等；``runs`` 只在首日行记 1，别天 0，汇总才不重复数。"""
     key = {"user": user, "date": date, "projectId": project_id, "taskId": task_id, "agent": agent}
     query = {**key, "appliedKeys": {"$ne": dedupe_key}}
-    update = {"$inc": {"seconds": seconds, "runs": 1}, "$addToSet": {"appliedKeys": dedupe_key}}
+    update = {"$inc": {"seconds": seconds, "runs": runs}, "$addToSet": {"appliedKeys": dedupe_key}}
     try:
         result = _agent_daily_col().update_one(query, {**update, "$setOnInsert": key}, upsert=True)
     except DuplicateKeyError:

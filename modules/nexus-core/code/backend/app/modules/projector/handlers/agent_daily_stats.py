@@ -5,13 +5,15 @@
 泳道各走各的，人的圆环/甘特/回顾结构上看不见代理时长。
 
 铁则同 ``daily_stats.py``：幂等（``appliedKeys``）、只写自己的集合、不发事件；
-归日同样取 ``data.startAt`` 经 ``NEXUS_TZ``（理由见 ``daily_stats.py`` 模块说明）。
+归日：事件带 ``data.days``（v2.31，写事件时已按 ``NEXUS_TZ`` 切好）就按它逐日写；
+没有的老事件 / 外部 source 的事件仍取 ``data.startAt`` 经 ``NEXUS_TZ`` 整段归一天（理由见 ``daily_stats.py``）。
 坏载荷静默跳过不炸投影——事件本身已落库，可事后排查。
 """
 
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 
 from ....config import settings
@@ -33,25 +35,45 @@ def applied_key(envelope: dict) -> str:
     return json.dumps([envelope["source"], envelope["dedupeKey"]], ensure_ascii=False)
 
 
+#: ``days`` 只信代理子系统自己写的事件（= ``timer.agents.SOURCE``；不 import，免得投影依赖 timer）；
+#: 外部 source 的事件即使带 ``days`` 也走旧规则。行数上限 32：合法运行最多 ~8 天（遗忘超时 7 天封顶）。
+_OWN_SOURCE = "agent-hook"
+_MAX_DAY_ROWS = 32
+_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _valid_seconds(value, low: float) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and low <= value <= _MAX_SECONDS
+
+
 def handle(envelope: dict) -> None:
     subject = envelope.get("subject") or {}
     project_id = subject.get("project")
     data = envelope.get("data") or {}
     if data.get("unverified") is True:
         return  # v2.19.1：匿名开的运行只写泳道（契约「调用方范围与匿名上报」），不计入代理时长统计
-    seconds = data.get("durationSeconds")
     agent = data.get("agent")
     start_at = data.get("startAt")
-    if (
-        not project_id
-        or not isinstance(agent, str)
-        or not isinstance(start_at, str)
-        or not isinstance(seconds, (int, float))
-        or isinstance(seconds, bool)
-        # 纯比较、不转 float：NaN 两边都不成立、±Inf 与超大 int（10**400）都超上限——
-        # math.isfinite 会对超大 int 抛 OverflowError，反而重新引入崩溃
-        or not 0 < seconds <= _MAX_SECONDS
-    ):
+    if not project_id or not isinstance(agent, str):
+        return
+    common = dict(user=envelope["user"], dedupe_key=applied_key(envelope), project_id=project_id,
+                  task_id=subject.get("task"), agent=agent)
+    days = data.get("days")
+    if envelope.get("source") == _OWN_SOURCE and isinstance(days, list) and len(days) <= _MAX_DAY_ROWS:  # v2.31：每天一行，首个有效日行记 runs=1，其余 0；各行各自幂等
+        first = True
+        for item in days:
+            # 纯比较、不转 float（理由同下）
+            if not (isinstance(item, dict) and isinstance(item.get("date"), str)
+                    and _DATE.fullmatch(item["date"]) and _valid_seconds(item.get("seconds"), 0)):
+                continue
+            repo.apply_agent_daily_stat(
+                **common, date=item["date"], seconds=int(item["seconds"]), runs=1 if first else 0)
+            first = False
+        return
+    seconds = data.get("durationSeconds")
+    # 纯比较、不转 float：NaN 两边都不成立、±Inf 与超大 int（10**400）都超上限——
+    # math.isfinite 会对超大 int 抛 OverflowError，反而重新引入崩溃
+    if not isinstance(start_at, str) or not _valid_seconds(seconds, 0) or seconds == 0:
         return
     try:
         moment = datetime.fromisoformat(start_at)
@@ -60,15 +82,7 @@ def handle(envelope: dict) -> None:
     if moment.tzinfo is None:
         return
 
-    repo.apply_agent_daily_stat(
-        user=envelope["user"],
-        dedupe_key=applied_key(envelope),
-        date=local_date(moment, settings.tz),
-        project_id=project_id,
-        task_id=subject.get("task"),
-        agent=agent,
-        seconds=int(seconds),
-    )
+    repo.apply_agent_daily_stat(**common, date=local_date(moment, settings.tz), seconds=int(seconds))
 
 
 def read_agent_daily_stats(

@@ -57,7 +57,8 @@ def shift_clock(monkeypatch):
 def test_plain_run_event_data_unchanged_from_v21(client):
     run = _start(client)
     client.post(f"{AGENTS}/{run['runId']}/stop", json={"outcome": "done"})
-    assert set(_event(run["runId"])["data"]) == {"agent", "tool", "startAt", "durationSeconds", "outcome"}
+    assert set(_event(run["runId"])["data"]) == {
+        "agent", "tool", "startAt", "durationSeconds", "outcome", "workingSeconds", "days"}  # 后两个 v2.31 追加
 
 
 def test_stop_lands_phases_interactions_label_and_trims_after_end(client, shift_clock):

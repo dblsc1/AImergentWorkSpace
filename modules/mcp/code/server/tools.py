@@ -483,7 +483,9 @@ def get_agent_time(a, tenant):
                   "path": paths(x.get("taskId"), x.get("projectId")), "startedAt": x["startedAt"],
                   "elapsedSeconds": x["elapsedSeconds"],
                   # v1.11：人把注意力放在这条运行上的秒数（nexus-core v2.17；老后端没有这个键 = null）
-                  "attentionSeconds": x.get("attentionSeconds")}
+                  "attentionSeconds": x.get("attentionSeconds"),
+                  # v1.19：到此刻真在干活（相位 working）的秒数（nexus-core v2.31；老后端没有 = null）
+                  "workingSeconds": x.get("workingSeconds")}
                  for x in r["open"]],
     }, "days", "agents", "tasks", "open")
 
@@ -838,6 +840,7 @@ _SPECS = [
     (get_agent_time, "AI 代理的时间",
      "AI 代理（Claude Code、Codex 等）的运行时长，泳道秒数：并行运行各算各的，一天可以超过 24 小时。"
      "这不是人的时间，不要与人的时间相加。open 是还在跑的运行，不计入汇总；"
+     "秒数只算代理真在干活（working）的时间，开着不动不算，按本地日切分；open[].workingSeconds 是在跑运行到此刻干活的秒数（后端较旧时为 null）。"
      "open[].attentionSeconds 是用户把注意力放在这条运行的窗口上的秒数（看它看了多久，同样不是记下的工时；后端较旧时为 null）。",
      _schema(dict(_DATES), required=["fromDate", "toDate"]), ["fromDate", "toDate"], {}),
     (list_activity_suggestions, "待确认的活动建议",

@@ -224,8 +224,9 @@ def test_lazy_close_ends_at_last_seen_and_agent_time_is_not_inflated(client, shi
     assert 20 * 60 <= event["data"]["durationSeconds"] < 21 * 60
     assert [p["phase"] for p in event["data"]["phases"]] == ["working", "idle"]
 
+    assert event["data"]["workingSeconds"] < event["data"]["durationSeconds"]
     stats = client.get(f"{API}/views/agent-time").json()
-    assert (stats["totalSeconds"], stats["runs"], stats["open"]) == (event["data"]["durationSeconds"], 1, [])
+    assert (stats["totalSeconds"], stats["runs"], stats["open"]) == (event["data"]["workingSeconds"], 1, [])  # v2.31：idle 之后的不算
     closed = _lane(client, run["runId"])  # 已结束：来自投影
     assert closed["outcome"] == "lost" and closed["lost"] is False and closed["lastSeenAt"] is None
     assert abs(datetime.fromisoformat(closed["endAt"]) - seen) < timedelta(seconds=1)  # 投影按整秒时长算终点

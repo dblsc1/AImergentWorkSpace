@@ -38,6 +38,7 @@ from ..planner import service as planner_service
 from ..planner.errors import InvalidInputError, NotFoundError
 from . import repo
 from .agent_liveness import AGENT_HEARTBEAT_SECONDS, mark_expired
+from .agent_working import working_days
 
 SOURCE = "agent-hook"
 EVENT_TYPE = "agent.run.completed"
@@ -87,6 +88,8 @@ def snapshot_data(snap: dict) -> tuple[dict, datetime]:
         "durationSeconds": max(int((ended - started).total_seconds()), 1),
         "outcome": marker["outcome"],
     }
+    # v2.31：只算干活的时间，按本地日切好（durationSeconds 仍是墙钟，不变）
+    data["workingSeconds"], data["days"] = working_days(snap.get("phases"), started, ended, config.settings.tz)
     if snap.get("model"):
         data["model"] = snap["model"]
     if marker.get("output") is not None:
