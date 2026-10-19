@@ -82,6 +82,16 @@ SUGGESTIONS[2]["suggestion"] = {"taskId": None, "confidence": 0.6, "reason": "r"
 SUGGESTIONS[1]["suggestion"].update(collection={"key": "claude code", "name": "Claude Code"}, projectId="p_3c")
 
 
+PROPOSALS = {  # nexus-core v2.30 GET activity/proposals?status=all 的形状
+    "projects": [{"id": "np_1", "kind": "project", "status": "pending", "name": "新项目", "reason": "r", "createdAt": "x",
+                  "createdId": None, "zoneId": "z_7f", "zoneName": "学习",
+                  "tasks": [{"id": "nt_2", "kind": "task", "status": "pending", "name": "子任务", "reason": "r",
+                             "createdAt": "x", "createdId": None, "projectId": None, "projectName": None,
+                             "projectProposalId": "np_1"}]}],
+    "tasks": [{"id": "nt_1", "kind": "task", "status": "accepted", "name": "挂现成", "reason": "r", "createdAt": "x",
+               "createdId": "t_made", "projectId": "p_3c", "projectName": "garden", "projectProposalId": None}]}
+
+
 def respond(path, q, tenant):
     one = lambda k, d=None: q.get(k, [d])[0]  # noqa: E731
     if path in ("/api/core/detector/devices", "/api/core/detector/incidents"):
@@ -157,6 +167,14 @@ def respond(path, q, tenant):
             return 200, {"items": [REPORT]}
         return 200, {"reportId": "rp_1", "status": "pending", "accepted": 2,
                      "rejected": [{"index": 1, "code": "unknown_task", "reason": "任务不存在：t_x"}]}
+    if path == "/api/core/activity/proposals":   # v1.18 我提议过的新项目 / 任务；u_old = 老后端
+        if tenant == "u_old":
+            return 404, {"detail": "Not Found"}
+        return 200, PROPOSALS
+    if path == "/api/core/activity/proposals/projects":
+        return 200, {**PROPOSALS["projects"][0], "name": "新项目\u202e"}
+    if path == "/api/core/activity/proposals/tasks":
+        return 200, PROPOSALS["tasks"][0]
     if path == "/api/core/activity/suggestions/matches":
         return 200, {"matched": 1, "rejected": [{"index": 1, "reason": "任务不存在：'t_x'"}]}
     if path == "/api/core/activity/suggestions":
@@ -377,14 +395,14 @@ def test_initialize_negotiates_and_declares_only_tools(servers):
 
 
 def test_tools_list_read_only_except_propose_strict_schemas(servers):
-    tl = rpc(servers, "tools/list", headers=W)["result"]["tools"]   # 明确的 write 范围：全部 19 个
+    tl = rpc(servers, "tools/list", headers=W)["result"]["tools"]   # 明确的 write 范围：全部 21 个
     assert [t["name"] for t in tl] == [
         "get_task_tree", "list_projects", "get_current_timer", "list_time_sessions", "get_daily_time",
         "get_weekly_review", "get_next_actions", "get_agent_time", "list_activity_suggestions",
         "get_match_history", "get_detector_rules", "propose_detector_rules", "apply_detector_rules",
-        "propose_activity_matches", "propose_report", "get_report_status", "get_window_awaiting_target", "suggest_window_target",
-        "get_detector_health"]
-    assert len(tl) == 19  # v1.17
+        "propose_activity_matches", "propose_report", "propose_project", "propose_task", "get_report_status",
+        "get_window_awaiting_target", "suggest_window_target", "get_detector_health"]
+    assert len(tl) == 21  # v1.18
     writes = {"get_window_awaiting_target", "suggest_window_target"}   # v1.9：认领（幂等）与认下窗口
     # v1.13：get_report_status 是只读，propose_report 以 propose_ 开头
     for t in tl:
@@ -1001,6 +1019,11 @@ def test_list_projects_includes_projects_without_tasks(servers):
                    "progress": 0, "deadline": "2026-10-10", "openTasks": 0, "doneTasks": 0, "path": "学习 / 刚建的"}
     assert (r["items"][0]["openTasks"], r["items"][0]["doneTasks"]) == (6, 1)  # 临时任务不算
     assert r["emptyZones"] == ["空分区"]
+    # v1.18：zoneId 可见；我提议过的新项目 / 任务（含批准结果）可见，名字只当文本
+    assert r["zones"] == [{"zoneId": "z_7f", "name": "学习"}, {"zoneId": "z_e", "name": "空分区"}]
+    assert [(x["proposalId"], x["status"], x["createdId"]) for x in r["proposals"]] == [
+        ("np_1", "pending", None), ("nt_1", "accepted", "t_made"), ("nt_2", "pending", None)]
+    assert ok(servers, "list_projects", headers={"X-Nexus-Tenant": "u_old"})["proposals"] == []   # 老后端：没有端点
     assert [i["projectId"] for i in ok(servers, "list_projects", {"includeDone": True})["items"]][-1] == "p_old"
     p1 = ok(servers, "list_projects", {"limit": 1})
     assert p1["truncated"] is True and ok(servers, "list_projects", {"cursor": p1["nextCursor"]})["items"][0]["projectId"] == "p_new"
@@ -1087,7 +1110,7 @@ def test_apply_detector_rules_only_for_explicit_write_scope(servers):
         names = [t["name"] for t in rpc(servers, "tools/list", headers=h)["result"]["tools"]]
         assert "apply_detector_rules" not in names
         assert err(servers, "apply_detector_rules", {"rules": [], "summary": "s"}, headers=h)["status"] == 403
-    assert len(rpc(servers, "tools/list")["result"]["tools"]) == 18
+    assert len(rpc(servers, "tools/list")["result"]["tools"]) == 20
     assert not Fake.requests or all(r[0] == "GET" for r in Fake.requests)
 
 
@@ -1143,6 +1166,36 @@ def test_propose_report_posts_one_report_and_never_decides(servers):
 def test_propose_report_bad_args_400_without_calling_nexus(servers, args):
     assert err(servers, "propose_report", args)["status"] == 400
     assert not Fake.requests
+
+
+# ── v1.18：提议新项目 / 项目下的新任务（待人批准）──────────────────
+
+
+def test_propose_project_and_task_post_one_proposal_each_and_create_nothing(servers):
+    r = ok(servers, "propose_project", {"zoneId": "z_7f", "name": "新项目", "reason": "窗口没项目"})
+    assert r["proposalId"] == "np_1" and r["created"] is False and "待批准" in r["next"] and "尚未创建" in r["next"]
+    assert "\u202e" not in r["name"]   # 服务器给的名字过 _screen
+    t = ok(servers, "propose_task", {"projectProposalId": "np_1", "name": "子任务", "reason": "r"})
+    assert t["proposalId"] == "nt_1" and t["created"] is False and "待批准" in t["next"]
+    assert [(m, p) for m, p, *_ in Fake.requests] == [
+        ("POST", "/api/core/activity/proposals/projects"), ("POST", "/api/core/activity/proposals/tasks")]
+    assert Fake.bodies == [({"zoneId": "z_7f", "name": "新项目", "reason": "窗口没项目"}, None),
+                           ({"projectProposalId": "np_1", "name": "子任务", "reason": "r"}, None)]
+
+
+@pytest.mark.parametrize("name,args", [
+    ("propose_project", {}), ("propose_project", {"zoneId": "z", "name": "n"}), ("propose_project", {"zoneId": "z", "name": "n" * 65, "reason": "r"}),
+    ("propose_project", {"zoneId": "z", "name": "n", "reason": "r", "x": 1}), ("propose_task", {"name": "n"}),
+    ("propose_task", {"projectId": "p", "name": "n", "reason": "r" * 301}), ("propose_task", {"projectId": 1, "name": "n", "reason": "r"})])
+def test_propose_project_task_bad_args_400_without_calling_nexus(servers, name, args):
+    assert err(servers, name, args)["status"] == 400
+    assert not Fake.requests
+
+
+def test_propose_project_task_upstream_rejection_is_tool_error(servers):
+    Fake.override = (409, {"detail": "分区里已有同名项目 'p_3c'，请直接用它的 projectId"})
+    e = err(servers, "propose_project", {"zoneId": "z_7f", "name": "garden", "reason": "r"})
+    assert e["status"] == 409 and "p_3c" in e["detail"]
 
 
 def test_get_report_status_is_a_single_get_and_screens_text(servers):
@@ -1251,7 +1304,7 @@ def test_suggest_window_target_bad_args_400_without_calling_nexus(servers, args)
 
 
 WRITE_TOOLS = {"propose_detector_rules", "apply_detector_rules", "propose_activity_matches", "propose_report", "get_window_awaiting_target",
-               "suggest_window_target"}
+               "suggest_window_target", "propose_project", "propose_task"}
 
 
 READ_TOOLS = {"get_task_tree", "list_projects", "get_current_timer", "list_time_sessions", "get_daily_time",
@@ -1336,8 +1389,8 @@ def test_doubled_scope_header_is_403(servers):
 
 @pytest.mark.parametrize("headers", [{}, {"X-Nexus-Scope": "write"}, {"X-Nexus-Scope": ""}])
 def test_write_scope_and_no_header_tool_counts(servers, headers):
-    # 明确的 write：19 个；没有范围头（含空值）：18 个，少 apply_detector_rules（v1.17）
-    want = 19 if headers.get("X-Nexus-Scope") == "write" else 18
+    # 明确的 write：21 个；没有范围头（含空值）：20 个，少 apply_detector_rules（v1.17）
+    want = 21 if headers.get("X-Nexus-Scope") == "write" else 20
     assert len(rpc(servers, "tools/list", headers=headers)["result"]["tools"]) == want
     assert ok(servers, "get_window_awaiting_target", headers={**headers, "X-Nexus-Tenant": "u_alice"})["window"]
 

@@ -36,6 +36,17 @@
       <div class="unc-groups" id="report-groups"></div>
     </section>
 
+    <!-- 「新项目与任务」（nexus-core v2.30，newitems.js）：AI 经 MCP 的 propose_project / propose_task 提议的新项目和任务。
+         没有待批准的、或后端没有这个端点（404）时整块保持 hidden。批准 / 不要只有人在这里点。 -->
+    <section class="card report-panel" id="newitems-panel" hidden aria-labelledby="newitems-title">
+      <div class="suggest-top">
+        <h2 class="suggest-title" id="newitems-title">新项目与任务 <span class="suggest-count mono" id="newitems-count"></span></h2>
+        <p class="suggest-sub">AI 提议建的新项目和新任务：点「批准」才会真的建出来，「不要」就不建，AI 也不会再提同一个。新项目下的任务要等项目批准后才能批准。</p>
+      </div>
+      <p class="suggest-message" id="newitems-message" role="status" hidden></p>
+      <div class="unc-groups" id="newitems-groups"></div>
+    </section>
+
     <!-- 「AI 对话」（contracts/agent.chat.v1，chat.js）。内置聊天默认不开（compose profile agent）；聊天后端没起（health 不是 200）时整块保持 hidden。 -->
     <section class="card chat-panel" id="chat-panel" hidden aria-labelledby="chat-title">
       <h2 class="suggest-title" id="chat-title">AI 对话</h2>
@@ -188,6 +199,7 @@
   </main>
 
   <script src="reports.js"></script>
+  <script src="newitems.js"></script>
   <script src="chat.js"></script>
   <script src="ignores.js"></script>
   <script src="suggestions.js"></script>

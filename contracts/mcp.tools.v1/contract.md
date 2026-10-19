@@ -1,6 +1,6 @@
 # mcp.tools.v1 —— 给 AI 代理用的只读工具（MCP）
 
-> **契约 id**：`mcp.tools.v1`。**当前版本 v1.17**（2026-10-14，仓主决定：追加 `apply_detector_rules`——用户自己接 CLI（Claude Code / Codex / opencode）时，AI 可以**直接写生效的分类规则**，不经草稿；**默认关**，用户在 Cockpit「自动记录 → 分类规则」页打开「允许 AI 直接改分类规则」（账号开关 `aiDirectRules`，`detector.rules.v1` v1.3）后才行，且只给**明确是 `write` 范围**的调用方（没有范围头的聊天后端对内直连看不到它）；会写的工具 5 → 6 个，工具数 18 → 19（没有范围头的调用方仍是 18 个），**放宽了第四节「规则的 PUT / apply 永远不调」那句承诺**，见该处与变更记录；v1.16 2026-10-12 追加只读的 `get_detector_health`：检测程序 / ActivityWatch 的状态、最近事故、固定的排查提示，以及用户在本机打开开关后的启动日志（标成不可信数据）；没开开关时带一段固定提醒让助理转告用户；工具数 17 → 18，见该工具节与 nexus-core v2.28；v1.15 2026-10-11 `get_daily_time` 的输出追加 `pending`：同一区间里还没确认的活动建议按天汇总（数字，上界估计，不是工时，见该工具节与 nexus-core v2.26）；`get_daily_time` / `list_time_sessions` 的描述开头声明只含已确认的时间；服务器 `instructions` 补一句错误约定；工具数不变，仍十七个；v1.14 2026-10-09 `get_detector_rules` 的输出追加 `ignored`：用户说过「忽略并记住」的窗口，见 nexus-core v2.22；`get_current_timer` / `get_agent_time` 因 nexus-core 不再列藏起来的代理而少列它们的在跑运行（汇总不变）；工具数不变，仍十七个；v1.13 2026-10-09 追加 `propose_report` / `get_report_status`，共十七个：AI 一次交一份报告、人一键全批准，见各工具节与 nexus-core v2.20「AI 报告」；v1.12 2026-10-09 调用方范围：`read` 令牌看不到也调不了会写的工具，`report` 令牌与匿名整个端点 `403`，工具数不变，见「调用方范围」节；v1.11 2026-10-09 `get_agent_time` 的 `open[]` 追加 `attentionSeconds`、`get_current_timer` 的 `focus` 追加 `dwellSeconds`：人的注意力，工具数不变；v1.10 2026-10-09 `get_current_timer` 的输出追加 `focus` / `auto` / `needsChoice`：人此刻在哪个窗口、它多半属于哪个项目 / 任务，工具数不变；v1.9 2026-10-08 追加 `get_window_awaiting_target` / `suggest_window_target`，共十五个；v1.8 2026-10-08 `propose_detector_rules` / `get_detector_rules` 的规则可以只到项目：`projectId` 代替 `taskId`，工具数不变；v1.7 2026-10-08 追加只读工具 `get_match_history`：人以前把哪个窗口定到了哪个项目 / 任务；v1.6 2026-10-08 `propose_activity_matches` 每条可带 `collection`、`projectId`，`list_activity_suggestions` 追加 `collection`、`suggestedProjectId`、`suggestedProjectPath`；v1.5 2026-10-08 认 nexus-core v2.9 的项目「未分类」时间：`list_time_sessions` / `get_daily_time` 的条目追加 `unclassified`；v1.4 2026-10-03 `propose_activity_matches` 每条可提议新任务 `newTask`，`list_activity_suggestions` 追加 `newTask`；v1.3 2026-10-02 加第二个提议工具 `propose_activity_matches`，`list_activity_suggestions` 输出追加 `rejectedTaskIds`；v1.2 2026-09-30 加 `get_detector_rules` 与第一个提议工具 `propose_detector_rules`；v1.1 2026-09-30 加 `list_projects`；v1.0 2026-09-28，v0.3「AI 桥」首版）。实现：`modules/mcp`。
+> **契约 id**：`mcp.tools.v1`。**当前版本 v1.18**（2026-10-19，仓主决定：追加 `propose_project` / `propose_task`——AI 可以提议新项目、项目下的新任务，**都要人在「待批准」页批准才建**，MCP 自己什么都不创建；`list_projects` 的输出追加 `zones`（分区 id，`propose_project` 要用）与 `proposals`（我提议过的，批准了没有）；会写的工具 6 → 8 个，工具数 19 → 21（没有范围头的调用方 18 → 20 个，`read` 仍 13 个），见两个工具节与 nexus-core v2.30；v1.17 2026-10-14，仓主决定：追加 `apply_detector_rules`——用户自己接 CLI（Claude Code / Codex / opencode）时，AI 可以**直接写生效的分类规则**，不经草稿；**默认关**，用户在 Cockpit「自动记录 → 分类规则」页打开「允许 AI 直接改分类规则」（账号开关 `aiDirectRules`，`detector.rules.v1` v1.3）后才行，且只给**明确是 `write` 范围**的调用方（没有范围头的聊天后端对内直连看不到它）；会写的工具 5 → 6 个，工具数 18 → 19（没有范围头的调用方仍是 18 个），**放宽了第四节「规则的 PUT / apply 永远不调」那句承诺**，见该处与变更记录；v1.16 2026-10-12 追加只读的 `get_detector_health`：检测程序 / ActivityWatch 的状态、最近事故、固定的排查提示，以及用户在本机打开开关后的启动日志（标成不可信数据）；没开开关时带一段固定提醒让助理转告用户；工具数 17 → 18，见该工具节与 nexus-core v2.28；v1.15 2026-10-11 `get_daily_time` 的输出追加 `pending`：同一区间里还没确认的活动建议按天汇总（数字，上界估计，不是工时，见该工具节与 nexus-core v2.26）；`get_daily_time` / `list_time_sessions` 的描述开头声明只含已确认的时间；服务器 `instructions` 补一句错误约定；工具数不变，仍十七个；v1.14 2026-10-09 `get_detector_rules` 的输出追加 `ignored`：用户说过「忽略并记住」的窗口，见 nexus-core v2.22；`get_current_timer` / `get_agent_time` 因 nexus-core 不再列藏起来的代理而少列它们的在跑运行（汇总不变）；工具数不变，仍十七个；v1.13 2026-10-09 追加 `propose_report` / `get_report_status`，共十七个：AI 一次交一份报告、人一键全批准，见各工具节与 nexus-core v2.20「AI 报告」；v1.12 2026-10-09 调用方范围：`read` 令牌看不到也调不了会写的工具，`report` 令牌与匿名整个端点 `403`，工具数不变，见「调用方范围」节；v1.11 2026-10-09 `get_agent_time` 的 `open[]` 追加 `attentionSeconds`、`get_current_timer` 的 `focus` 追加 `dwellSeconds`：人的注意力，工具数不变；v1.10 2026-10-09 `get_current_timer` 的输出追加 `focus` / `auto` / `needsChoice`：人此刻在哪个窗口、它多半属于哪个项目 / 任务，工具数不变；v1.9 2026-10-08 追加 `get_window_awaiting_target` / `suggest_window_target`，共十五个；v1.8 2026-10-08 `propose_detector_rules` / `get_detector_rules` 的规则可以只到项目：`projectId` 代替 `taskId`，工具数不变；v1.7 2026-10-08 追加只读工具 `get_match_history`：人以前把哪个窗口定到了哪个项目 / 任务；v1.6 2026-10-08 `propose_activity_matches` 每条可带 `collection`、`projectId`，`list_activity_suggestions` 追加 `collection`、`suggestedProjectId`、`suggestedProjectPath`；v1.5 2026-10-08 认 nexus-core v2.9 的项目「未分类」时间：`list_time_sessions` / `get_daily_time` 的条目追加 `unclassified`；v1.4 2026-10-03 `propose_activity_matches` 每条可提议新任务 `newTask`，`list_activity_suggestions` 追加 `newTask`；v1.3 2026-10-02 加第二个提议工具 `propose_activity_matches`，`list_activity_suggestions` 输出追加 `rejectedTaskIds`；v1.2 2026-09-30 加 `get_detector_rules` 与第一个提议工具 `propose_detector_rules`；v1.1 2026-09-30 加 `list_projects`；v1.0 2026-09-28，v0.3「AI 桥」首版）。实现：`modules/mcp`。
 >
 > **是什么**：HoneyComb 以 [MCP](https://modelcontextprotocol.io/)（Model Context Protocol）服务器的
 > 形式，把「任务树、人的时间、代理时间、在跑的计时、待确认的活动建议」读给 AI 代理。
@@ -73,7 +73,8 @@ provides:
       （同类窗口的集合）与 projectId（只标到项目），list_activity_suggestions 带出它们；v1.7 十三个：加只读的
       get_match_history（人以前把哪个窗口定到了哪个项目 / 任务）；v1.9 十五个：加 get_window_awaiting_target 与
       suggest_window_target（让 AI 认规则认不出的窗口——唯一直接生效的写，由 nexus-core 的状态把关）；v1.13 十七个；v1.16 十八个；
-      v1.17 十九个（没有范围头的调用方仍是十八个）：加 apply_detector_rules（明确的 write 范围、用户打开 aiDirectRules 后直接写生效的规则，旧的一套存快照、人可撤回）。包装 nexus-core 既有端点；
+      v1.17 十九个（没有范围头的调用方仍是十八个）：加 apply_detector_rules（明确的 write 范围、用户打开 aiDirectRules 后直接写生效的规则，旧的一套存快照、人可撤回）；
+      v1.18 二十一个（没有范围头的调用方二十个）：加 propose_project / propose_task（提议新项目 / 项目下的新任务，人批准才建）。包装 nexus-core 既有端点；
       租户只来自网关的 X-Nexus-Tenant，工具没有任何用户/租户入参。
 consumes:
   # 每个工具固定包装一个读端（第四节映射表）。只调 GET，不调任何写端点
@@ -122,6 +123,9 @@ consumes:
   - id: nexus-core.activity.reports.v1
     contract: ../../modules/nexus-core/module_docs/contract.md
     purpose: v1.13 propose_report（POST activity/reports）、get_report_status（GET activity/reports?status=all&limit=1&items=true）；不调 approve / reject（只有人能）
+  - id: nexus-core.activity.proposals.v1
+    contract: ../../modules/nexus-core/module_docs/contract.md
+    purpose: v1.18 propose_project（POST activity/proposals/projects）、propose_task（POST …/tasks）；list_projects 读 GET activity/proposals?status=all&limit=50（老后端 404 = 空）；批准 / 不要（POST …/{id}/approve|reject）只有人能，MCP 永远不调
   - id: nexus-core.tenancy.v1
     contract: ../../modules/nexus-core/module_docs/contract.md
     purpose: 租户头格式与严格模式，MCP 照抄同一套规则
@@ -231,7 +235,7 @@ consumes:
 | 工具 | 包装的 nexus-core 读端 | 类型 |
 |---|---|---|
 | `get_task_tree` | `GET /api/core/views/tree?includeEphemeral=` | 列表 |
-| `list_projects`（v1.1） | `GET /api/core/views/tree?includeEphemeral=true` | 列表 |
+| `list_projects`（v1.1） | `GET /api/core/views/tree?includeEphemeral=true` + `GET /api/core/activity/proposals?status=all&limit=50`（v1.18；老后端 404 = `proposals` 为空） | 列表 |
 | `get_current_timer` | `GET /api/core/views/current` | 对象（`agents[]` 每项带 `elapsedSeconds`：nexus-core v2.21 起由服务端算好，原样带出；老后端没有 = `null`） |
 | `list_time_sessions` | `GET /api/core/events?type=session.completed&from=&to=&limit=&offset=` | 列表 |
 | `get_daily_time` | `GET /api/core/views/gantt?from=&to=` + `GET /api/core/activity/suggestions/pending-days?from=&to=`（v1.15；老后端 404 = `pending: null`） | 列表 |
@@ -246,6 +250,8 @@ consumes:
 | `apply_detector_rules`（v1.17，**直接生效**，账号开关把关） | `POST /api/core/detector/rules/ai-apply` | 对象 |
 | `propose_activity_matches`（v1.3，**提议**） | `POST /api/core/activity/suggestions/matches` | 对象 |
 | `propose_report`（v1.13，**提议**） | `POST /api/core/activity/reports` | 对象 |
+| `propose_project`（v1.18，**提议**） | `POST /api/core/activity/proposals/projects` | 对象 |
+| `propose_task`（v1.18，**提议**） | `POST /api/core/activity/proposals/tasks` | 对象 |
 | `get_report_status`（v1.13） | `GET /api/core/activity/reports?status=all&limit=1&items=true` | 对象 |
 | `get_detector_health`（v1.16） | `GET /api/core/detector/devices` + 每台设备 `GET /api/core/detector/incidents?deviceId=&limit=`（deviceId 只取自前一个响应，不拼入参） | 对象 |
 | `get_window_awaiting_target`（v1.9，认领） | `POST /api/core/activity/ai/claim` | 对象 |
@@ -533,6 +539,28 @@ MCP 只查类型与 `maxItems`，原样下传 `POST /api/core/activity/reports`�
 - 一条被拒不影响其余（不是 `isError`）；`code` 见 nexus-core `contract-schemas.md`「AI 报告」。一条都没收下时 `reportId` 为 `null`。
 - 已有 5 份待批准报告时回 `429`（工具错误）：先让用户处理旧的。`summary` 超长 / `items` 超 200 → `422`。
 
+### `propose_project` —— 提议新项目，人批准才建（v1.18 追加，第四个提议工具）
+
+仓主 2026-10-19：「给 mcp 加新增项目（需要人批准）和新增项目下的任务两个接口（都需要人批准）」。没有项目的活动只能停着，AI 此前只能在报告里提议任务。
+
+- 入参（`additionalProperties: false`，三个全必填）：`zoneId`（≤ 128，**来自 `list_projects.zones`，不许编**）、`name`（1–64 码点）、`reason`（≤ 300 码点，一句给人看的理由）。
+- 只发一个 `POST /api/core/activity/proposals/projects`（不带 `Authorization`）。**什么都不创建**：结果 `{proposalId, status, name, zoneId, created: false, next}`，`status` 此刻是 `pending`，
+  `next` 明说「尚未创建，用户要在 Cockpit「待批准」页的「新项目与任务」点「批准」」。`name` 过 `_screen`（nexus-core 回的是同一个名字，但统一当数据）。
+- nexus-core 的拒绝原样成工具错误：分区不存在 / 名字不合规 `400`；分区里已有同名项目 `409`（`detail` 里带它的 `projectId`，直接用）；用户不要过的同名提议 `409`（别再提）；待批准的项目提议已有 20 条 `429`。
+- 同一分区同名（归一化）的待批准提议再提 = 同一条，回同一个 `proposalId`。结果（批准了没有）看 `list_projects.proposals`。
+
+### `propose_task` —— 提议新任务，人批准才建（v1.18 追加）
+
+- 入参（`additionalProperties: false`）：`projectId`（≤ 128，现成项目，`list_projects` 给的）与 `projectProposalId`（≤ 128，`propose_project` 返回的、还没批准的 `proposalId`）**恰好给一个**（否则 `400`），`name`（1–64 码点）、`reason`（≤ 300 码点）必填。
+- 只发一个 `POST /api/core/activity/proposals/tasks`。**什么都不创建**：结果 `{proposalId, status, name, projectId, projectProposalId, created: false, next}`（`projectId` 在挂新项目提议下时为 `null`）。
+  挂在新项目提议下的任务，用户要等项目被批准后才能批准它；用户不要那个项目，它下面待批准的任务一并作废。
+- 拒绝原样成工具错误：项目 / 项目提议不存在 `400`；项目里已有同名任务 `409`（带 `taskId`）；项目提议已批准 `409`（`detail` 给真项目 id，改用 `projectId`）；用户不要过 `409`；待批准的任务提议已有 100 条 `429`。
+- `propose_report` 的 `newTask` 条仍只能挂现成项目，不引用新项目提议。
+
+### `list_projects` 的追加（v1.18）
+
+输出追加 `zones`（`[{zoneId, name}]`，全部分区）与 `proposals`（我提议过的最近 50 条，`[{proposalId, kind: project|task, status: pending|accepted|rejected, name（_screen）, createdId（批准后建出的 id，否则 null）, zoneId, projectId, projectProposalId}]`，新的在前；老后端没有端点 = `[]`）。既有键不变。
+
 ### `get_report_status` —— 你上一份报告怎么样了（v1.13 追加）
 
 只读。无入参：永远是**最近一份**（任何状态；固定映射，路径里不拼任何入参）。没有报告 → `{"report": null}`。**这是你得知用户批准了什么的唯一办法**——
@@ -791,9 +819,9 @@ JSON-RPC 之前判：
 
 | `X-Nexus-Scope` | 行为 |
 |---|---|
-| 没有（网页会话、聊天后端对内直连） | 与 v1.12 完全一样：**十八个**工具，**不含** `apply_detector_rules`（v1.17：它只给明确的 `write`；`tools/list` 不列，硬调回 `403`） |
-| `write` | v1.17 起十九个工具（会写的 6 个：`propose_detector_rules`、`apply_detector_rules`、`propose_activity_matches`、`propose_report`、`get_window_awaiting_target`、`suggest_window_target`） |
-| `read` | `tools/list` **只列只读工具**；调会写的工具（`propose_detector_rules`、`apply_detector_rules`（v1.17）、`propose_activity_matches`、`propose_report`、`get_window_awaiting_target`、`suggest_window_target`）回工具执行错误 `isError: true`、`structuredContent.error = {status: 403, detail}`，什么都没写 |
+| 没有（网页会话、聊天后端对内直连） | v1.18 起**二十个**工具（v1.12 是十八个，加 `propose_project` / `propose_task`），**不含** `apply_detector_rules`（v1.17：它只给明确的 `write`；`tools/list` 不列，硬调回 `403`） |
+| `write` | v1.18 起二十一个工具（v1.17 十九个；会写的 8 个：加 `propose_project`、`propose_task`，原 6 个：`propose_detector_rules`、`apply_detector_rules`、`propose_activity_matches`、`propose_report`、`get_window_awaiting_target`、`suggest_window_target`） |
+| `read` | `tools/list` **只列只读工具**；调会写的工具（`propose_project`、`propose_task`（v1.18）、`propose_detector_rules`、`apply_detector_rules`（v1.17）、`propose_activity_matches`、`propose_report`、`get_window_awaiting_target`、`suggest_window_target`）回工具执行错误 `isError: true`、`structuredContent.error = {status: 403, detail}`，什么都没写 |
 | `report`，或 `X-Nexus-Anonymous` 非空 | 整个端点 `403`（`{detail}`），不进 JSON-RPC——只能上报的调用方读不到任何东西 |
 | 别的取值 | `403` |
 
@@ -868,3 +896,4 @@ JSON-RPC 之前判：
 | 2026-10-11 | v1.15（追加式；工具数不变，仍 17 个）：AI 代理问「人今天干了多久」，`get_daily_time` 只有已确认的时间，答成「0 分钟」，而当天有 111 条待确认的建议（约 128 分钟）。`get_daily_time` 输出追加 `pending {totalSeconds, count, days[{date, seconds, count}]}`（同区间待确认建议按本地日汇总，上界估计、不是工时，由 nexus-core v2.26 新端点 `GET /activity/suggestions/pending-days` 算，MCP 不自己翻页聚合；老后端 404 = `null`；`totalSeconds` / `items` 含义不变）；`get_daily_time` 与 `list_time_sessions` 的工具描述开头改为声明「只含已确认、已记账」并指向 `pending` / `list_activity_suggestions`；服务器 `instructions` 补一句错误约定（`isError` 为 true、原因在 `structuredContent.error.detail`）。`get_current_timer` 不变。 |
 | 2026-10-12 | v1.16（追加式；17 → 18 个工具）：主机重启后 ActivityWatch 没起来、记录丢了 80 分钟，仓主要 AI 助理能直接排查：新增只读 `get_detector_health`（nexus-core v2.28）——每台设备的检测程序状态、最近事故（枚举与时间）、固定排查提示（与 `ai-detector status` 同一套话）；用户在本机打开 `awLogUpload` 后多一块不可信的 `startLog`，没开时带固定提醒让助理转告用户去开。只发 GET，不能重启也不能改任何东西。既有工具一个不改。 |
 | 2026-10-14 | v1.17（追加式；18 → 19 个工具；**放宽早先的承诺**）：仓主 2026-10-14 决定——用户自己把 CLI（Claude Code / Codex / opencode）接到 MCP，AI 可以直接写生效的分类规则、不经草稿。新增 `apply_detector_rules`（入参与 `propose_detector_rules` 相同；`destructiveHint: true`；只给**明确的** `write` 范围——没有范围头的调用方也看不到，进 `WRITES`），账号开关 `aiDirectRules`（`detector.rules.v1` v1.3，`PUT .../rules/ai-direct`，只许人）缺省关，没开时 nexus-core 回带 `reason: aiDirectOff` 的 403，工具换成固定中文提示、让助理叫用户去「AI助理 → 规则」页打开。**这放宽了第四节原先的话「规则的 `PUT`、草稿的 `apply` / `discard` MCP 永远不调（只有人能）」**：现改为默认不调；自 v1.17 起仅当用户打开开关，`write` 范围的调用方可经 `apply_detector_rules` 写生效的规则；草稿 `discard`、撤回与其余只有人能的写照旧。`propose_detector_rules` 不变，仍只写草稿。既有工具、既有入参出参一个不改；开关关着时与 v1.16 行为完全一样。nexus-core v2.29、`detector.rules.v1` v1.3。 |
+| 2026-10-19 | v1.18（追加式；19 → 21 个工具，没有范围头的调用方 18 → 20 个，`read` 仍 13 个）：仓主 2026-10-19 要 AI 能提议新项目与项目下的新任务，都要人批准——追加 `propose_project`、`propose_task`（`POST /api/core/activity/proposals/projects|tasks`，nexus-core v2.30），都是提议类工具（`readOnlyHint: false`、`destructiveHint: false`），`read` 范围看不到也调不了；什么都不创建，结果明说「尚未创建」；`list_projects` 输出追加 `zones` 与 `proposals`。既有工具与字段一个不改；批准 / 不要 MCP 永远不调（只有人在「待批准」页点） |

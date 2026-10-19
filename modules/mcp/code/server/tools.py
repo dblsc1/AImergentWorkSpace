@@ -299,7 +299,21 @@ def list_projects(a, tenant):
         })
     page = _page("list_projects", items, a)
     page["emptyZones"] = [z["name"] for z in tree["zones"] if z["id"] not in used]
+    page["zones"] = [{"zoneId": z["id"], "name": z["name"]} for z in tree["zones"]]  # v1.18：propose_project 要 zoneId
+    page["proposals"] = _proposals(tenant)
     return page
+
+
+def _proposals(tenant) -> list:
+    """v1.18：我提议过的新项目 / 新任务，用户批准了没有（最近 50 条，名字与理由过 _screen；老后端没有端点 = 空）。"""
+    try:
+        r = _get("/api/core/activity/proposals", {"status": "all", "limit": 50}, tenant)
+    except ToolError:
+        return []
+    flat = r["projects"] + r["tasks"] + [t for p in r["projects"] for t in p["tasks"]]
+    return [{"proposalId": x["id"], "kind": x["kind"], "status": x["status"], "name": _screen(x["name"]),
+             "createdId": x["createdId"], "zoneId": x.get("zoneId"), "projectId": x.get("projectId"),
+             "projectProposalId": x.get("projectProposalId")} for x in flat]
 
 
 # ── 屏幕来的文字（契约第四节「屏幕来的文字不可信」，v1.10）──────────────
@@ -631,6 +645,26 @@ def propose_report(a, tenant):
                     "之后用 get_report_status 看结果。" if r["reportId"] else "没有一条被收下，见 rejected。"}
 
 
+_APPROVE_NOTE = "尚未创建，什么都没写进任务树。请用户在 Cockpit「待批准」页的「新项目与任务」点「批准」或「不要」；之后用 list_projects 的 proposals 看结果。"
+
+
+def _proposal_out(r: dict) -> dict:
+    return {"proposalId": r["id"], "status": r["status"], "name": _screen(r["name"]), "created": False, "next": _APPROVE_NOTE}
+
+
+def propose_project(a, tenant):
+    """v1.18：提议在某个分区新建项目（待人批准）。"""
+    r = _post("/api/core/activity/proposals/projects", {k: a[k] for k in ("zoneId", "name", "reason") if k in a}, tenant)
+    return {**_proposal_out(r), "zoneId": r["zoneId"]}
+
+
+def propose_task(a, tenant):
+    """v1.18：提议在现成项目（projectId）或还没批准的新项目（projectProposalId）下新建任务（待人批准）。"""
+    r = _post("/api/core/activity/proposals/tasks",
+              {k: a[k] for k in ("projectId", "projectProposalId", "name", "reason") if k in a}, tenant)
+    return {**_proposal_out(r), "projectId": r["projectId"], "projectProposalId": r["projectProposalId"]}
+
+
 def get_report_status(a, tenant):
     """v1.13：最近一份报告怎么样了。summary / reason（AI 自己写的）与 failure（服务端的话，可能带名字）一律过 _screen。"""
     r = _get("/api/core/activity/reports", {"status": "all", "limit": 1, "items": "true"}, tenant)["items"]
@@ -910,6 +944,25 @@ _SPECS = [
                                                                  "name": {"type": "string", "maxLength": 64}}},
                                       "reason": {"type": "string", "maxLength": 300, "description": "≤ 300 字，给人看"}}}}},
              required=["summary", "items"]), ["summary", "items"], {}),
+    (propose_project, "提议新项目",
+     "提议在某个分区（zoneId 来自 list_projects.zones）新建一个项目。**什么都不会创建**：只存一条待批准的提议，用户在 Cockpit「待批准」页点「批准」才建，也可能点「不要」。"
+     "name 1–64 字；reason 一句话（≤ 300 字，给人看）说明为什么需要它。分区里已有同名项目 → 409，错误里是它的 projectId，直接用；"
+     "用户不要过的同名提议不要再提；待批准的项目提议已满 20 条时报 429。提议之后可用 propose_task 的 projectProposalId 往它下面挂任务。"
+     "结果看 list_projects 的 proposals。" + _IDS,
+     _schema({"zoneId": {"type": "string", "maxLength": 128, "description": "list_projects.zones 给的分区 id，不许编"},
+              "name": {"type": "string", "maxLength": 64, "description": "项目名，1–64 字"},
+              "reason": {"type": "string", "maxLength": 300, "description": "一句理由，给人看"}},
+             required=["zoneId", "name", "reason"]), ["zoneId", "name", "reason"], {}),
+    (propose_task, "提议新任务",
+     "提议在一个项目下新建任务。projectId（现成项目，list_projects 给的）与 projectProposalId（propose_project 刚返回的、还没批准的项目提议）恰好给一个。"
+     "**什么都不会创建**：只存一条待批准的提议，用户在 Cockpit「待批准」页点「批准」才建；挂在新项目提议下的，要等项目被批准后才能批准。"
+     "name 1–64 字；reason 一句话（≤ 300 字）。项目里已有同名任务 → 409，错误里是它的 taskId；用户不要过的同名提议不要再提；待批准的任务提议已满 100 条时报 429。"
+     "报告里的 newTask 条（propose_report）是另一条路，不挂在新项目提议下。" + _IDS,
+     _schema({"projectId": {"type": "string", "maxLength": 128, "description": "现成项目；与 projectProposalId 二选一"},
+              "projectProposalId": {"type": "string", "maxLength": 128, "description": "propose_project 返回的 proposalId；与 projectId 二选一"},
+              "name": {"type": "string", "maxLength": 64, "description": "任务名，1–64 字"},
+              "reason": {"type": "string", "maxLength": 300, "description": "一句理由，给人看"}},
+             required=["name", "reason"]), ["name", "reason"], {}),
     (get_report_status, "我上一份报告怎么样了",
      "最近一份报告的状态（pending 等用户处理 / approved / rejected）与逐条结果："
      "applied = 已入账 / 已忽略的建议数，stale = 交上去之后用户自己已经处理了，failed = 没做成（failure 说明），rejected = 用户不要。"
@@ -951,7 +1004,7 @@ _SPECS = [
 #: 会写的工具；其余全部只读。propose_ 两个只写待人确认的草稿 / 建议（第六节）；v1.9 的两个：认领是幂等的状态标记，
 #: suggest_window_target 直接生效，但只在那个窗口被认领着等回答时、只对那一个窗口（第六节「唯一的例外」）
 _PROPOSE = {"propose_detector_rules", "propose_activity_matches", "propose_report", "get_window_awaiting_target",
-            "suggest_window_target"}
+            "suggest_window_target", "propose_project", "propose_task"}
 #: v1.12「调用方范围」：read 范围的令牌看不到也调不了这些
 #: v1.17 apply_detector_rules：直接改生效的规则（账号开关开着才行），同样只给 write 范围；destructiveHint 为 true
 _APPLY = {"apply_detector_rules"}

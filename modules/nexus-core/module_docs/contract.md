@@ -166,6 +166,13 @@
 > （`repo.touch_agent_run` 用聚合管道更新的 `$max`）：只增不减、不早于 `startedAt`，迟到的老请求盖不回新信号，失联的结束时刻不会落到起点之前。
 > 适配器侧的补记见 `contracts/agent.lane.v1` 与 `tools/agent-hooks/README.md`。
 >
+> **v2.30（追加式）：AI 可以提议新项目、项目下的新任务，人批准才建。** 仓主 2026-10-19：「给 mcp 加新增项目（需要人批准）和新增项目下的任务两个接口（都需要人批准）」。
+> 此前 AI 只能在报告里提议任务（`newTask`），没有项目的活动一直停着。本版**追加** `nexus-core.activity.proposals.v1`：`POST /activity/proposals/projects`、
+> `POST /activity/proposals/tasks`（任务挂在现成项目 `projectId`，或还没批准的项目提议 `projectProposalId`，恰好一个）、`GET /activity/proposals`（AI 与页面都读）、
+> `POST /activity/proposals/{id}/approve|reject`（**只许人**）；新集合 `activity_new_items`，不是事实、不进台账 / 导出 / 快照恢复。批准时才经 planner 既有的写入口建
+> （`guard.run_write` → `create_project` / `create_task`，审计一样不少），同一提议只建一次。MCP 追加 `propose_project` / `propose_task`（`mcp.tools.v1` v1.18）。
+> 既有端点、字段、行为一个不改；`planner` 的 `create_project` 追加可选参数 `project_id`（只给批准预留的 id 用，同 v2.8 的 `create_task(task_id=)`）。见「AI 提议新项目与任务」节。
+>
 > **v2.29（追加式）：AI 可以直接写生效的分类规则（账号开关 `aiDirectRules`，缺省关）、旧的一套存快照、人可一键撤回。** 仓主 2026-10-14：用户自己把 CLI
 > （Claude Code / Codex / opencode）接到 MCP，AI 改规则不必再走草稿。本版**追加**：`POST /detector/rules/ai-apply`（非人调用方、`write` 范围；开关没开 403、
 > 什么都不写；校验与建草稿同一段代码；整套立即生效，写前把旧的一套压进快照栈，每租户最近 5 个）、`POST /detector/rules/ai-revert`（只收人，带 Bearer 403；一步一撤，
@@ -525,6 +532,13 @@ provides:
       …/items/{itemId}/reject、…/{id}/reject；全部只收人（带 Bearer 403）。批准走同一个 confirm / dismiss / proposals.task_for，
       逐条结果 applied | stale | failed；事件 ai 块追加选填 report {id, author}。报告不是事实：不进台账 / 导出 / 快照
     status: 已实现（v2.20），待验证
+  - id: nexus-core.activity.proposals.v1
+    summary: AI 提议新项目 / 项目下的新任务（v2.30，追加式）——POST /api/core/activity/proposals/projects {zoneId, name, reason?}、
+      POST …/tasks {projectId | projectProposalId（恰好一个）, name, reason?}、GET …/proposals[?status=pending|all&limit]、
+      POST …/{id}/approve、…/{id}/reject（只许人：Bearer、范围头、匿名一律 403）。提议只存 activity_new_items，批准才经 guard.run_write 建；
+      同（分区 / 项目 / 提议, 归一化名字）一条；活的同名 409 带它的 id；人不要过的 409；待批准项目超 20 / 任务超 100 条 429；
+      项目提议没批准时其下任务提议批准 409，不要项目连带不要其下待批准的任务
+    status: 已实现（v2.30），待验证
   - id: nexus-core.lanes.prefs.v1
     summary: 泳道偏好（v2.22，追加式）——每租户一份：代理身份 (agent, 归一化 label) 的 hidden / pinned（pinnedAt 定先后）、按运行的手动排位
       slot（只对在跑的运行有效）。GET /api/core/lanes/prefs、PUT …/agent {agent, label?, hidden?, pinned?}、PUT …/order {runId, index}、
@@ -3823,6 +3837,27 @@ AI 仍不能改 / 删任何已有规则、不能写匹配范围超出那一个�
 - 不让 AI 撤回或顶掉报告，也不按 AI 区分可见性（没有可信的 AI 身份可依）：撤回只有人「整份不要」。
 - 不在批准里做「撤销」：入账后的改归属走 v2.11。
 
+## AI 提议新项目与任务（规范性 · v2.30，`nexus-core.activity.proposals.v1`）
+
+仓主 2026-10-19（原话见本文件头部 v2.30）。**AI 只提议，人批准才建**；提议本身不碰 planner 一个字节。提议存在 `activity_new_items`（每个 `(user, id)` 一份，
+`kind: project | task`，`status: pending | accepted | rejected`），**不是事实**：不进台账 / 投影 / 导出 / 快照恢复，不过期（被不要的要永远记着）。
+
+| 端点 | 行为 |
+| --- | --- |
+| `POST /api/core/activity/proposals/projects` `{zoneId, name, reason?}` | 提议在分区下建项目。`name` 去首尾空白后 1–64 码点（否则 `400`）、`reason` 超 300 码点截断；分区不存在 `400`。分区里已有同名（归一化：折叠空白、不分大小写）的**活**项目 `409`，`detail` 里带它的 id；同分区同归一化名字的待批准提议 = 同一条（回同一个 `id`）；人不要过的 `409`（AI 不许再提）。待批准的项目提议已有 20 条 `429`。回提议（下表形状） |
+| `POST /api/core/activity/proposals/tasks` `{projectId \| projectProposalId, name, reason?}` | 提议建任务；两个 id **恰好给一个**（否则 `400`）。`projectId`：项目不存在 `400`，项目里已有同名活任务 `409`（带它的 id）。`projectProposalId`：必须是 `pending` 的项目提议（不存在 `400`；已批准 `409` 且 `detail` 里给真项目 id，让 AI 改用 `projectId`；已不要 `409`）。同样的去重 / 不要过的 `409` / 待批准任务提议满 100 条 `429` |
+| `GET /api/core/activity/proposals?status=pending\|all&limit=` | `{projects: [提议 + tasks[]], tasks: [挂在现成项目上的任务提议]}`（新的在前；缺省 `pending`，`limit` 1–200）。提议形状：`{id, kind, status, name, reason, createdAt, createdId}`（`createdId` = 批准后建出的项目 / 任务 id，其余 `null`）；项目另有 `zoneId` / `zoneName`；任务另有 `projectId`（解析到真项目；挂在没批准的项目提议下为 `null`）/ `projectName` / `projectProposalId`。`status=all` 时已批准 / 已不要的也在，AI 据此得知结果 |
+| `POST /api/core/activity/proposals/{id}/approve` | **只许人**。项目提议：建项目（用提议时预留的 id）并记 `accepted`；任务提议：所属项目还是没批准的提议 → `409`（先批准项目），否则在真项目下建任务。已 `accepted` 的再批准 = 回同一个结果（幂等）；`rejected` 的 `409`；不存在 `404` |
+| `POST /api/core/activity/proposals/{id}/reject` | **只许人**。`pending` → `rejected`；项目提议**连带**把它下面 `pending` 的任务提议一起记 `rejected`。已 `accepted` 的 `409`。`rejected` 的留着：同名再提 `409` |
+
+- **「只许人」**同 `activity.ignores.v1`：没有 `Authorization: Bearer`、没有范围头、不是匿名；设备令牌（任何范围）、带范围头的调用方、匿名一律 `403`。MCP 对内直连算「人」，但 MCP 不暴露批准 / 不要。
+  提议两个 POST 与 AI 报告同口径：带 Bearer 的设备令牌 `403`（MCP 对内直连不带）；`GET` 不设限。
+- **只建一次（规范性）**：做法同 v2.8 `proposals.task_for`——id（项目 `p_…`、任务 `t_…`）在提议时预留；批准 = `pending → accepted`（条件更新）+ 持久的「建」占位（`createClaimedAt`，空 → 现在，条件更新），
+  只有占到的那一次去建（`guard.run_write` → `create_project` / `create_task`，带预留 id，审计 `create`），并发批准复用它；占位永不放掉（建失败 = 安全失败，不会再建）。
+- 已批准、但建出的东西后来被删了：同名再提时（活的同名检查通过）换一条新提议，不复活旧 id。
+- 上限是软的：先数后插，并发提交最多超出并发数。
+- 不改的：`propose_report` 的 `newTask` 条仍只能挂现成项目，**不**能引用新项目提议（本版不做）。
+
 ## 泳道偏好与忽略并记住（规范性 · v2.22，`nexus-core.lanes.prefs.v1` + `nexus-core.activity.ignores.v1`）
 
 仓主 2026-10-09（原话见本文件头部 v2.22）。**两样都只管显示与要不要记，不改任何已记下的事实。**
@@ -4149,6 +4184,8 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 | `ring` 前端 / 共享 `lanes.js`（v2.22） | `lanes.prefs.v1` + `views.lanes.v1` 的 `pinned` / `manualOrder` / `rank` / `hiddenAgents` / `hiddenWaiting`：代理卡的 ⋯ 菜单（置顶 / 不再显示 / 上移 / 下移）、长按拖动换位、可折叠的「已隐藏 (N)」；先后以 `rank` 为准，写偏好先乐观地画、失败退回 | `modules/ring`、`modules/nginx-docker` |
 | `assistant` 前端（v2.22） | `activity.ignores.v1`：待确认建议里每个窗口行 / 集合的「忽略并记住」（`POST activity/ignores`）、可展开的「被忽略任务」（`GET` / `DELETE`） | `modules/assistant` |
 | `mcp`（v2.22） | `activity.ignores.v1`：`get_detector_rules` 追加 `ignored`（`GET activity/ignores`）；`get_current_timer` / `get_agent_time` 因 `views/current` / `views/agent-time` 不列藏起来的代理而不再列它们的在跑运行（汇总不变）（`mcp.tools.v1` v1.14） | `modules/mcp` |
+| `assistant` 前端（v2.30） | `activity.proposals.v1`：「待批准」页的「新项目与任务」块（读 `GET activity/proposals?status=pending`，批准 / 不要走 `…/{id}/approve|reject`） | `modules/assistant` |
+| `mcp`（v2.30） | `activity.proposals.v1`：`propose_project`（`POST activity/proposals/projects`）、`propose_task`（`POST …/tasks`）；`list_projects` 读 `GET activity/proposals?status=all&limit=50` 追加 `proposals`；批准 / 不要 MCP 永远不调 | `modules/mcp` |
 | `assistant` 前端（v2.20） | `activity.reports.v1`：顶部「AI 报告」块（读 `GET activity/reports?status=pending` 与 `…/{id}`，批准 / 改 / 不要走 `…/approve`、`…/items/{id}/approve|reject`、`…/reject`） | `modules/assistant` |
 | `mcp`（v2.20） | `activity.reports.v1`：`propose_report`（`POST activity/reports`）、`get_report_status`（`GET activity/reports?status=all&limit=1&items=true`）；批准 / 不要 MCP 永远不调 | `modules/mcp` |
 | `assistant` 前端（v2.15） | 规则的 `auto`（「AI 自动」徽标，整套保存时原样带回 `author` / `auto`）；`GET /api/core/activity/auto` 的 `ai` | `modules/assistant` |
