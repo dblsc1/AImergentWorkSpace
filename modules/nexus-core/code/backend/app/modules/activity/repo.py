@@ -45,8 +45,8 @@ def get(user: str, sug_id: str) -> dict | None:
     return _col().find_one({"user": user, "id": sug_id}, {"_id": 0})
 
 
-def page(user: str, status: str, limit: int, offset: int) -> tuple[int, list[dict]]:
-    filt = {"user": user, "status": status}
+def page(user: str, status: str, limit: int, offset: int, needs_ai: bool = False) -> tuple[int, list[dict]]:
+    filt = {"user": user, "status": status, **({"suggestion.needsAI": True} if needs_ai else {})}
     col = _col()
     docs = col.find(filt, {"_id": 0}).sort("startTs", -1).skip(offset).limit(limit)
     return col.count_documents(filt), list(docs)

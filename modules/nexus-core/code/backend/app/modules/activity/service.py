@@ -78,6 +78,8 @@ class _Suggestion(BaseModel):
     classifier: Literal["rules", "service"]  # "assistant" 只由 match 写，上传不能自称
     # v2.14：规则只到项目（detector.rules.v1 v1.1）。与 taskId 不能同给。
     projectId: Annotated[StrictStr, Field(min_length=1, max_length=128)] | None = None
+    # v2.34：命中 mode "ai" 规则的窗口——不给目标、不自动记，等 AI 软分类。存下来只在为 true 时带这个键
+    needsAI: StrictBool = False
 
     reason_bytes = field_validator("reason")(_reason_bytes)
 
@@ -85,6 +87,8 @@ class _Suggestion(BaseModel):
     def _one_target(self):
         if self.taskId is not None and self.projectId is not None:
             raise ValueError("taskId 与 projectId 不能同给")
+        if self.needsAI and (self.taskId is not None or self.projectId is not None or self.confidence != 0):
+            raise ValueError("needsAI 的建议不能带目标，confidence 须为 0")
         return self
 
 
@@ -200,9 +204,17 @@ def upload(device_id: str, segments: list[Any], inserted: list[dict] | None = No
     valid, ignored = ignore.gate_incoming(user, rules_, valid, lambda v: (v[0].app, v[0].title, v[0].durationSeconds))
     # v2.13 窗口 ↔ 代理会话：这批段的总时间窗里的代理运行，只查一次
     runs = session_link.runs(user, min(s for _, s, _ in valid), max(e for _, _, e in valid)) if valid else []
+    from ..detector import window_rules  # noqa: PLC0415 —— detector 反过来 import activity，顶层 import 成环
+
+    ai_rules = window_rules.ai_matchers(user)  # v2.34：服务端再对一遍 mode ai 的规则（老检测程序 / 规则同步前上传的段）
     for seg, start, end in valid:
         suggestion = seg.suggestion.model_dump()
         project = suggestion.pop("projectId")
+        if suggestion["needsAI"] or window_rules.ai_hit(ai_rules, seg.app, seg.title):
+            suggestion.update(needsAI=True, taskId=None, confidence=0.0)
+            project = None
+        else:
+            del suggestion["needsAI"]
         if suggestion["taskId"] is not None and planner_service.get_task(suggestion["taskId"]) is None:
             # 建议错了不等于活动没发生：照收，任务留给人挑
             suggestion.update(taskId=None, confidence=0.0)
@@ -211,7 +223,7 @@ def upload(device_id: str, segments: list[Any], inserted: list[dict] | None = No
             suggestion.update(confidence=0.0)
         if project is not None:
             suggestion["projectId"] = project  # v2.14 规则只到项目：规则是人定的，不再按代理会话去对
-        elif suggestion["taskId"] is None:
+        elif suggestion["taskId"] is None and not suggestion.get("needsAI"):  # 交给 AI 判断的窗口不按代理会话自动对
             suggestion.update(session_link.link(runs, seg.app, seg.title, start, end))
         dedupe_key = f"aw:{device_id}:{start.astimezone(timezone.utc).isoformat()}"
         doc = {
@@ -250,11 +262,11 @@ def last_uploads(user: str) -> dict:
     return repo.last_received(user)
 
 
-def list_suggestions(status: str, limit: int, offset: int) -> dict:
+def list_suggestions(status: str, limit: int, offset: int, needs_ai: bool = False) -> dict:
     user = current_tenant()
     _purge(user, _now())
     limit = _DEFAULT_LIMIT if limit <= 0 else min(limit, _MAX_LIMIT)  # 同档案读端口径
-    total, docs = repo.page(user, status, limit, max(offset, 0))
+    total, docs = repo.page(user, status, limit, max(offset, 0), needs_ai)
     pids = [d["suggestion"]["newTask"]["proposalId"] for d in docs if d["suggestion"].get("newTask")]
     st = proposals.statuses(user, pids) if pids else {}
     open_ids = {k for k, v in st.items() if v in ("pending", "accepted")}

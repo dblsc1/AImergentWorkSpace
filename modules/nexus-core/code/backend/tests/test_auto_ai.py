@@ -107,7 +107,7 @@ def test_suggest_writes_one_window_rule_and_shows_at_once(client, world, clock):
     w = _waiting(client, clock)
     out = _answer(client, w["key"], taskId=world["a"], confidence=0.95, reason="标题是 notes，历史里记到任务 a")
     assert out == {"key": w["key"], "outcome": "suggested", "taskId": world["a"], "projectId": world["p"],
-                   "confidence": 0.9, "autoRecord": True, "ruleWritten": True}
+                   "confidence": 0.9, "autoRecord": True, "ruleWritten": True, "needsAI": False}
     rules = _rules(client)
     assert rules["version"] == 1
     assert rules["rules"] == [{"id": "r_ai_" + w["key"][3:], "app": "^code$", "title": "^notes$", "taskId": world["a"],
@@ -284,7 +284,7 @@ def test_rule_provenance_keys_round_trip_and_are_validated(client, world):
     r = put([{**base, "author": "assistant", "auto": True}, {"title": "y", "taskId": world["a"]}], 0)
     assert r.status_code == 200, r.text
     marked, plain = r.json()["rules"]
-    assert (marked["author"], marked["auto"]) == ("assistant", True)
+    assert "author" not in marked and "auto" not in marked                     # v2.34：人写入的新规则出处键被清（人接手了它）
     assert "author" not in plain and "auto" not in plain                       # 没给就不带：与旧规则逐字节相同
     assert put([marked, plain], 1).json()["rules"] == [marked, plain]          # 页面整套存回去不丢
     for bad in ({"author": "robot"}, {"auto": "yes"}, {"auto": 1}, {"author": {"$ne": ""}}):

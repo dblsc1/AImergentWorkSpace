@@ -36,14 +36,20 @@ class Guess(BaseModel):
     projectId: _Id | None = None
     confidence: Annotated[StrictFloat | StrictInt, Field(ge=0, le=1)]
     classifier: Literal["rules"]
+    needsAI: StrictBool = False  # v2.34：命中 mode "ai" 的规则——没有目标，窗口交给 AI 判断
 
     @model_validator(mode="after")
     def _one_target(self):
-        if (self.taskId is None) == (self.projectId is None):
+        if self.needsAI:
+            if self.taskId is not None or self.projectId is not None:
+                raise ValueError("needsAI 的 guess 不能带目标")
+        elif (self.taskId is None) == (self.projectId is None):
             raise ValueError("taskId 与 projectId 必须给一个、且只能给一个")
         return self
 
     def stored(self) -> dict:
+        if self.needsAI:
+            return {"needsAI": True, "confidence": float(self.confidence)}
         return {**({"taskId": self.taskId} if self.taskId else {"projectId": self.projectId}),
                 "confidence": float(self.confidence)}
 
@@ -211,6 +217,7 @@ class SuggestOut(BaseModel):
     confidence: float | None
     autoRecord: bool
     ruleWritten: bool
+    needsAI: bool = False  # v2.34：这个窗口被规则标了「交给 AI 判断」——按窗口记下回答，不写规则
 
 
 class RejectOut(BaseModel):

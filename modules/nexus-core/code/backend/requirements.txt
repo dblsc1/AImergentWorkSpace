@@ -5,6 +5,8 @@ fastapi==0.115.12
 uvicorn==0.49.0
 pydantic==2.13.4
 pymongo==4.17.0
+# 服务端对窗口再匹配 mode ai 规则用（RE2 线性时间，与检测程序 Go regexp 同一套语法；Python re 会被 (a+)+$ 这类规则拖死）
+google-re2==1.1.20250805
 
 # 测试（fastapi.testclient.TestClient 依赖 httpx）
 pytest==9.0.2

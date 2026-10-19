@@ -63,13 +63,15 @@ def window_key(app: str, title: str) -> str:
     return "wk_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
 
 
-def next_step(window: dict) -> Literal["rules", "ask_ai", "ask_human"]:
+def next_step(window: dict) -> Literal["rules", "ask_ai", "ask_human", "judge_ai"]:
     """这个窗口下一步找谁——**全系统只有这一处决定**。
 
     ``"rules"``：已经有目标（规则的猜测，或对这个窗口的临时选择）；``"ask_ai"``（v2.15）：此刻归 AI 认
-    （``auto_ai.Asks.wants``：这条路活着、没问过、没超时）；``"ask_human"``：请人选。"""
+    （``auto_ai.Asks.wants``：这条路活着、没问过、没超时）；``"ask_human"``：请人选；``"judge_ai"``（v2.34）：规则标了 mode "ai"，两者都不问。"""
     if window["target"]:
         return "rules"
+    if window["judge"]:  # v2.34：规则标了「交给 AI 判断」——不实时问 AI，也不请人，留在待确认等 AI 批处理
+        return "judge_ai"
     return "ask_ai" if window["ai"] else "ask_human"
 
 
@@ -88,12 +90,12 @@ def _lookup(task_id: Any, project_id: Any) -> dict | None:
 class _Windows:
     """一次读里把在场的段变成窗口：键、目标（规则的猜测优先，其次临时选择）、有没有「这次不选」、归不归 AI 认。带缓存。"""
 
-    def __init__(self, choices: dict[str, dict], asks: Any):
-        self._choices, self._asks = choices, asks
+    def __init__(self, choices: dict[str, dict], asks: Any, ai_rules: list[tuple] | None = None):
+        self._choices, self._asks, self._ai_rules = choices, asks, ai_rules or []
         self._targets: dict[tuple, dict | None] = {}
 
     def _target(self, key: str, ref: dict | None, source: str) -> dict | None:
-        if not ref:
+        if not ref or ref.get("needsAI"):  # needsAI 的猜测没有目标（v2.34）
             return None
         ids = (ref.get("taskId"), ref.get("projectId"))
         if ids not in self._targets:
@@ -103,11 +105,15 @@ class _Windows:
     def __call__(self, span: dict) -> dict:
         key = window_key(span["app"], span["title"])
         choice = self._choices.get(key) or {}
-        target = (self._target(key, self._asks.guess(key, span), "rules")
+        # v2.34：交给 AI 判断 = 心跳 guess 带 needsAI，或服务端按存着的规则自己对一遍命中 mode ai 的规则（窗口在规则同步前 /
+        # 老检测程序报来的也算）；这时规则的猜测作废，只剩人的临时选择
+        judge = bool((span.get("guess") or {}).get("needsAI")) or window_rules.ai_hit(self._ai_rules, span["app"], span["title"])
+        target = (self._target(key, None if judge else self._asks.guess(key, span), "rules")
                   or self._target(key, choice if choice.get("kind") == "choice" else None, "choice"))
         dismissed = choice.get("kind") == "dismiss"
         return {"key": key, "app": span["app"], "title": span["title"], "target": target, "dismissed": dismissed,
-                "ai": target is None and not dismissed and bool(span["app"]) and self._asks.wants(key, span)}
+                "judge": judge, "ai": target is None and not dismissed and not judge and bool(span["app"])
+                and self._asks.wants(key, span)}
 
 
 def _same(a: dict | None, b: dict) -> bool:
@@ -127,7 +133,7 @@ def state(user: str, now: datetime, timer_running: bool, asks: Any, presence_doc
     spans = doc.get("spans") or []
     if doc["afk"] or not spans or not detector_service.device_flags(user, doc["deviceId"])["autoTrack"]:
         return out
-    window = _Windows(choice_repo.live(user, now), asks.on(doc["deviceId"]))
+    window = _Windows(choice_repo.live(user, now), asks.on(doc["deviceId"]), window_rules.ai_matchers(user))
 
     current = window(spans[-1])
     if next_step(current) == "rules":

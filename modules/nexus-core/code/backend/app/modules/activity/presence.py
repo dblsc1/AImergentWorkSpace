@@ -89,7 +89,7 @@ def heartbeat(device_id: str, app: str, title: str, afk: bool, guess: dict | Non
     runs: list[dict] | None = None
 
     def target(g: dict | None) -> tuple:
-        return (g.get("taskId"), g.get("projectId")) if g else (None, None)
+        return (g.get("taskId"), g.get("projectId"), g.get("needsAI")) if g else (None, None, None)
 
     for _ in range(_CAS_RETRIES):
         doc = repo.presence_get(user, device_id)

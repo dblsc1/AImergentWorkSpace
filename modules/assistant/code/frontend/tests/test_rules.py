@@ -464,3 +464,27 @@ def test_auto_page_rereads_rules_when_tab_becomes_visible(browser, static_base_u
         assert len([c for c in stub.calls if c[0] == "GET" and c[1] == ""]) == gets
         assert page.input_value(row(page, 1, "note")) == "我的改动"
         assert page.input_value(row(page, 0, "note")) == "别处改的"
+
+
+def test_ai_judge_rule_shown_distinct_and_round_trips(browser, static_base_url):
+    """v1.4：「交给 AI 判断」——选它的规则 PUT 出去是 {taskId: null, mode: "ai"}，没有把握格；服务端给的 ai 规则带标记显示。"""
+    stub = RulesStub()
+    stub.rules = [{"id": "r_ai", "app": "kitty", "title": None, "taskId": None, "mode": "ai", "confidence": 0.9,
+                   "note": EVIL, "enabled": True}, copy.deepcopy(RULES[0])]
+    with page_with(browser, static_base_url, stub) as page:
+        ready(page)
+        assert page.input_value(row(page, 0, "taskId")) == "ai:"
+        assert page.locator('#rules-list > li[data-index="0"] .rule-judge').inner_text() == "交给 AI 判断"
+        assert page.locator('#rules-list > li[data-index="1"] .rule-judge').count() == 0
+        assert page.locator('#rules-list > li[data-index="0"] [data-f="confidence"]').count() == 0
+        assert page.evaluate("window.__pwned") is None                      # 备注只当文本
+        page.select_option(row(page, 1, "taskId"), "ai:")                    # 普通规则改成交给 AI
+        page.click("#rules-save")
+        page.wait_for_selector("#rules-message:not([hidden])")
+        put = [c for c in stub.calls if c[0] == "PUT"][0][3]["rules"]
+        assert put[0] == {"id": "r_ai", "app": "kitty", "title": None, "taskId": None, "mode": "ai", "confidence": 0.9,
+                          "note": EVIL, "enabled": True}
+        assert put[1]["mode"] == "ai" and put[1]["taskId"] is None and "projectId" not in put[1]
+        said = page.evaluate("""() => [window.assistantRules.describe({app: 'a', title: null, mode: 'ai', confidence: 0.9}, {}, {}),
+            'mode' in window.assistantRules.toWire({app: 'a', title: '', taskId: 't', confidence: '0.5'})]""")
+        assert said == ["程序 /a/ → 交给 AI 判断", False]

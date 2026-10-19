@@ -57,6 +57,7 @@ func remoteRules(cfg Config, c *http.Client, base string) (rules []rule, src str
 			ProjectID  string  `json:"projectId"` // v1.1
 			Confidence float64 `json:"confidence"`
 			Enabled    *bool   `json:"enabled"`
+			Mode       string  `json:"mode"` // v1.4："ai" = 交给 AI 判断，没有 taskId / projectId
 		} `json:"rules"`
 	}
 	if err := json.Unmarshal(b, &r); err != nil {
@@ -70,7 +71,7 @@ func remoteRules(cfg Config, c *http.Client, base string) (rules []rule, src str
 		if !on(x.Enabled) {
 			continue
 		}
-		ru := rule{TaskID: x.TaskID, ProjectID: x.ProjectID, Confidence: x.Confidence, reason: fmt.Sprintf("网页规则 #%d 命中", i+1)}
+		ru := rule{TaskID: x.TaskID, ProjectID: x.ProjectID, Confidence: x.Confidence, AI: x.Mode == "ai", reason: fmt.Sprintf("网页规则 #%d 命中", i+1)}
 		if x.App != nil {
 			ru.App = *x.App
 		}
@@ -80,7 +81,7 @@ func remoteRules(cfg Config, c *http.Client, base string) (rules []rule, src str
 		var e1, e2 error
 		ru.app, e1 = compileCI(ru.App)
 		ru.title, e2 = compileCI(ru.Title)
-		if e1 != nil || e2 != nil || (ru.TaskID == "") == (ru.ProjectID == "") || (ru.App == "" && ru.Title == "") {
+		if e1 != nil || e2 != nil || (!ru.AI && (ru.TaskID == "") == (ru.ProjectID == "")) || (ru.AI && (ru.TaskID != "" || ru.ProjectID != "")) || (ru.App == "" && ru.Title == "") {
 			// 服务端按 Python 校验过，个别写法 Go 仍可能不认：少一条规则 = 少一个建议，跳过并记日志
 			log.Printf("网页规则 #%d 本程序用不了，跳过（app=%v title=%v）", i+1, e1, e2)
 			continue

@@ -127,3 +127,30 @@ func TestProjectTargetRules(t *testing.T) {
 		t.Fatalf("wire %s", b)
 	}
 }
+
+// detector.rules.v1 v1.4：mode "ai" 的规则命中 = 不带目标、把握 0、needsAI；先命中先赢（压过后面更宽的规则）；带目标的 ai 规则跳过。
+func TestAIModeRules(t *testing.T) {
+	body := `{"version":2,"rules":[
+		{"id":"a","app":"kitty","title":null,"taskId":null,"mode":"ai","confidence":0.9,"enabled":true},
+		{"id":"b","app":null,"title":"bad","taskId":"t_x","mode":"ai","confidence":0.9,"enabled":true},
+		{"id":"c","app":null,"title":".","taskId":"t_all","confidence":0.9,"enabled":true}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, body) }))
+	defer srv.Close()
+	rules, err := rulesForRound(Config{DeviceToken: "tok"}, srv.Client(), srv.URL)
+	if err != nil || len(rules) != 2 {
+		t.Fatalf("rules=%v err=%v", rules, err) // 带目标的 ai 规则跳过
+	}
+	sg, ok := matchRules(rules, segment{App: "kitty", Title: "work"})
+	if !ok || !sg.NeedsAI || sg.TaskID != nil || sg.ProjectID != nil || sg.Confidence != 0 {
+		t.Fatalf("got %+v ok=%v", sg, ok)
+	}
+	if b, _ := json.Marshal(sg); !strings.Contains(string(b), `"needsAI":true`) {
+		t.Fatalf("wire %s", b)
+	}
+	if sg, _ := matchRules(rules, segment{App: "code", Title: "x"}); sg.NeedsAI || sg.TaskID == nil {
+		t.Fatalf("普通规则不受影响：%+v", sg)
+	}
+	if b, _ := json.Marshal(suggestion{Classifier: "rules"}); strings.Contains(string(b), "needsAI") {
+		t.Fatalf("wire %s", b)
+	}
+}

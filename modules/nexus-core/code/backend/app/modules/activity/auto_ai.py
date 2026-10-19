@@ -134,24 +134,37 @@ def claim() -> dict:
     return {"window": _window(rec) if rec else None}
 
 
+def _judged(user: str, key: str) -> bool:
+    """这个窗口此刻被规则标了「交给 AI 判断」吗（v2.34：最近一段的 guess 带 needsAI，或按存着的规则服务端自己对出来命中 mode ai）。"""
+    try:
+        span = auto._find(user, key)[0]  # noqa: SLF001
+    except NotFoundError:
+        return False
+    return bool((span.get("guess") or {}).get("needsAI")) or window_rules.ai_hit(
+        window_rules.ai_matchers(user), span["app"], span["title"])
+
+
 def suggest(key: str, task_id: str | None, project_id: str | None, confidence: float | None, reason: str,
             none: bool) -> dict:
-    """AI 的回答。只在这个窗口**此刻被认领着等回答**时收；写下的是只认这个窗口的一条规则 + 按窗口的临时选择。"""
+    """AI 的回答。只在这个窗口**此刻被认领着等回答**时收；写下的是只认这个窗口的一条规则 + 按窗口的临时选择。
+    v2.34：规则标了「交给 AI 判断」的窗口从不被认领——这里不要求认领，也**不写规则、不写问询**，只留按窗口的临时选择。"""
     user, now = current_tenant(), auto._now()  # noqa: SLF001
+    judged = _judged(user, key)
     rec = ask_repo.get(user, key)
-    if not rec or rec.get("answeredAt") is not None or now - rec["claimedAt"] > AI_ANSWER_WAIT:
+    if not judged and (not rec or rec.get("answeredAt") is not None or now - rec["claimedAt"] > AI_ANSWER_WAIT):
         raise ConflictError(f"窗口 {key!r} 现在没在等 AI 认（没认领过、已经答过或超时了）。什么都没写")
-    ask_repo.polled(user, now, now - AI_KEEP)  # 在回答 = 这条路活着
+    if not judged:
+        ask_repo.polled(user, now, now - AI_KEEP)  # 在回答 = 这条路活着
     done = {"answeredAt": now, "reason": reason}
     taken = ConflictError(f"窗口 {key!r} 刚被别的回答抢先了，或人刚对它做了决定。什么都没写")
     if none:
-        if not ask_repo.answer(user, key, rec["claimedAt"], {**done, "outcome": "none"}):
+        if not judged and not ask_repo.answer(user, key, rec["claimedAt"], {**done, "outcome": "none"}):
             raise taken
         return {"key": key, "outcome": "none", "taskId": None, "projectId": None, "confidence": None,
-                "autoRecord": False, "ruleWritten": False}
+                "autoRecord": False, "ruleWritten": False, "needsAI": judged}
     span, device = auto._find(user, key)  # noqa: SLF001
     if (not detector_service.device_flags(user, device)["autoTrack"]
-            or not _writable(user, device, span["app"], span["title"])):
+            or not (judged or _writable(user, device, span["app"], span["title"]))):
         raise ConflictError("这台设备没开「允许 AI 管理进行中的任务」，或这个窗口写不出规则。什么都没写")
     if key in choice_repo.live(user, now):
         raise ConflictError("人已经对这个窗口做了选择（或说了这次不选），不覆盖。什么都没写")
@@ -163,12 +176,18 @@ def suggest(key: str, task_id: str | None, project_id: str | None, confidence: f
         raise InvalidInputError("只能记到没完成的普通任务（定不了任务就只给 projectId）。什么都没写")
     target = {"taskId": task_id} if task_id else {"projectId": project_id}
     stored = auto.AUTO_CONFIDENCE if confidence >= AI_TRUST else float(confidence)
+    if judged:  # 只显示这一次，不写规则、不自动记（by ai 的临时选择不会被自动记录采信）
+        choice_repo.put({"user": user, "key": key, "kind": "choice", "by": "ai", "app": span["app"],
+                         "title": span["title"], **target, "at": now, "expiresAt": now + auto.CHOICE_AWAY},
+                        unless_live=now)
+        return {"key": key, "outcome": "suggested", "taskId": found["taskId"], "projectId": found["projectId"],
+                "confidence": float(confidence), "autoRecord": False, "ruleWritten": False, "needsAI": True}
     # 上面的检查之后人还可能插进来，所以下面每一步都是条件写，写完再看一眼（见本文件头部「人总是赢」）
     if not ask_repo.answer(user, key, rec["claimedAt"], {**done, "outcome": "suggested", **target, "confidence": stored}):
         raise taken
     rule = {**auto._window_rule(span["app"], span["title"], target), "id": _rule_id(key),  # noqa: SLF001
             "confidence": stored, "author": "assistant", "auto": True, "note": ("AI 认的：" + reason)[:120]}
-    written = window_rules.prepend(rule, yield_to_human=True)
+    written = window_rules.prepend(rule, yield_to_human=True, window=(span["app"], span["title"]))
     choice_repo.put({"user": user, "key": key, "kind": "choice", "by": "ai", "app": span["app"], "title": span["title"],
                      **target, "at": now, "expiresAt": now + auto.CHOICE_AWAY}, unless_live=now)
     if ((ask_repo.get(user, key) or {}).get("outcome") != "suggested"

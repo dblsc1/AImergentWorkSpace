@@ -64,6 +64,8 @@ class Rule(_Strict):
     auto: bool | None = None
     # v1.3：AI 经 ai-apply 直接写下 / 改过这条的时间；只由服务端盖章（客户端给的会被覆盖或丢掉，见 _stamp）
     aiAt: StrictStr | None = None
+    # v1.4：mode "ai" = 命中的窗口不硬分，交给 AI 软分类；这种规则不带 taskId / projectId。没给 = 普通规则，不带这个键
+    mode: Literal["ai"] | None = None
 
     @field_validator("app", "title")
     @classmethod
@@ -76,7 +78,10 @@ class Rule(_Strict):
     def _one_of(self) -> Rule:
         if self.app is None and self.title is None:
             raise ValueError("app 与 title 至少写一个")
-        if (self.taskId is None) == (self.projectId is None):
+        if self.mode == "ai":
+            if self.taskId is not None or self.projectId is not None:
+                raise ValueError('mode 是 "ai" 的规则不能带 taskId / projectId（窗口交给 AI 判断，不指定去向）')
+        elif (self.taskId is None) == (self.projectId is None):
             raise ValueError("taskId 与 projectId 必须给一个、且只能给一个")
         return self
 
@@ -144,6 +149,8 @@ def _missing_tasks(rules: list[dict]) -> list[dict]:
     projects = {p["id"] for p in planner_service.list_projects()}
     errors = []
     for i, r in enumerate(rules):
+        if r.get("mode") == "ai":
+            continue
         if r.get("projectId"):
             if r["projectId"] not in projects:
                 errors.append(_err(i, "projectId", f"项目不存在：{r['projectId']}"))
@@ -167,7 +174,7 @@ def _validate(raw: Any) -> list[dict]:
         except ValidationError as exc:
             errors += [_err(i, ".".join(str(p) for p in e["loc"]) or None, e["msg"]) for e in exc.errors()]
             continue
-        for k in ("projectId", "author", "auto", "aiAt"):  # 没给就不带这个键：与 v1 存下的逐字节相同，草稿 diff 不误报「修改」
+        for k in ("projectId", "author", "auto", "aiAt", "mode"):  # 没给就不带这个键：与 v1 存下的逐字节相同，草稿 diff 不误报「修改」
             if not rule[k]:
                 del rule[k]
         if rule["id"] is not None:
@@ -207,8 +214,8 @@ def _stamp(new: list[dict], old: list[dict], at: str | None) -> list[dict]:
             out.append(o if at is not None else {**_core(r), **{k: o[k] for k in _AI_KEYS if k in o}})
         elif at is not None:  # AI 新增 / 改动的：盖章，author 固定 assistant，客户端自带的 auto 丢掉
             out.append({**{k: v for k, v in _core(r).items() if k != "auto"}, "aiAt": at, "author": "assistant"})
-        else:
-            out.append(_core(r))
+        else:  # 人写的：新的或改过的规则，出处键（author / auto）一并清掉——人接手了它（v2.34：否则被人改成 mode ai 的规则仍算「AI 写的」）
+            out.append({k: v for k, v in _core(r).items() if k not in ("author", "auto")})
     return out
 
 
@@ -349,6 +356,26 @@ def set_ai_direct(authorization: str | None, body: bytes) -> dict:
     return _rules_out(_state(user))
 
 
+def _human_ai_lost(old: list[dict], new: list[dict]) -> list[str]:
+    """人写的（author 不是 assistant；人写入时出处键已清）mode "ai" 规则，在新的一套里不在、被改动、
+    或前面多了/换了别的固定目标规则（先命中先赢，会把它架空）的 id。前面只许是：它在旧的一套里本来就在它前面且没改的规则，或 mode ai 的规则。"""
+    cur, before = {r["id"]: r for r in new}, {}
+    for i, r in enumerate(old):
+        before[r["id"]] = {x["id"] for x in old[:i]}
+    lost = []
+    for r in old:
+        if r.get("mode") != "ai" or r.get("author") == "assistant":
+            continue
+        if cur.get(r["id"]) != r:
+            lost.append(r["id"])
+            continue
+        pos = new.index(r)
+        if any(x.get("mode") != "ai" and not (x["id"] in before[r["id"]] and x == next(o for o in old if o["id"] == x["id"]))
+               for x in new[:pos]):
+            lost.append(r["id"])
+    return lost
+
+
 def ai_apply(authorization: str | None, body: bytes) -> dict:
     """非人的调用方（write 范围的令牌、MCP 对内直连）整套写入、立即生效；先把旧的一套压进快照栈。
     范围门（read / report 的 POST 进不来）在 scope.py；这里管开关与校验。body 里的 author 只校验、不采用。"""
@@ -360,6 +387,8 @@ def ai_apply(authorization: str | None, body: bytes) -> dict:
     rules, summary, _author = _draft_body(body)
     doc, now = _state(user), _now()
     old, version = doc.get("rules", []), doc.get("version", 0)
+    if lost := _human_ai_lost(old, _stamp(rules, old, "x")):  # v1.4：人写的「交给 AI 判断」规则 AI 不能删 / 改
+        raise _invalid([_err(None, "rules", f"人写的「交给 AI 判断」规则不能被 AI 删除、改动，前面也不能插入或挪上来别的固定目标规则（会把它架空）：{', '.join(lost)}")])
     if _stamp(rules, old, "x") == old:  # 与现有规则（除章外）一模一样：什么都不做，不占快照、不涨版本
         return _rules_out(doc)
     snaps = [*(doc.get("snapshots") or []), {"rules": old, "version": version, "at": now, "summary": summary}]

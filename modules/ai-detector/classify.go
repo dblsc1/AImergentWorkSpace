@@ -24,6 +24,8 @@ type suggestion struct {
 	Classifier string  `json:"classifier"` // "rules" | "service"
 	// upload.v1 v1.3：命中的规则只到项目时带（这时 TaskID 为 nil）；其余情形没有这个键。
 	ProjectID *string `json:"projectId,omitempty"`
+	// upload.v1 / nexus-core v2.34：命中 mode "ai" 的规则——没有目标、把握 0，窗口交给 AI 判断；其余情形没有这个键。
+	NeedsAI bool `json:"needsAI,omitempty"`
 }
 
 // rule 的目标是任务或项目，恰好写一个（detector.rules.v1 v1.1）。
@@ -33,6 +35,7 @@ type rule struct {
 	TaskID     string  `json:"taskId"`
 	ProjectID  string  `json:"projectId"`
 	Confidence float64 `json:"confidence"`
+	AI         bool    `json:"-"` // detector.rules.v1 v1.4 的 mode "ai"：命中即「交给 AI 判断」，不带目标（只来自网页规则）
 	app, title *regexp.Regexp
 	reason     string // 空 = 「规则 #N 命中」；网页规则填「网页规则 #N 命中」（N 是服务端数组里的位置）
 }
@@ -84,6 +87,9 @@ func matchRules(rules []rule, s segment) (suggestion, bool) {
 			reason := r.reason
 			if reason == "" {
 				reason = fmt.Sprintf("规则 #%d 命中", i+1)
+			}
+			if r.AI { // 先命中先赢：它压过后面的规则，窗口不硬分
+				return suggestion{Reason: reason + "：交给 AI 判断", Classifier: "rules", NeedsAI: true}, true
 			}
 			sg := suggestion{Confidence: r.Confidence, Reason: reason, Classifier: "rules"}
 			if id := r.TaskID; id != "" {

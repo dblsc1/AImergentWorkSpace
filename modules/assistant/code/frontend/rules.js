@@ -17,6 +17,8 @@
  *   aiAt 不进 toWire：服务端对没动过的规则自己保留章，人改过的规则章就没了。
  * 2026-10-14 页面拆分：生效规则的编辑器 + 账号开关（#det-rules）在「自动记录」页（auto.html），AI 草稿（#rules-draft）在
  *   「待批准」页（index.html）——草稿是一次批准。同一份脚本两页都加载，缺的那一半的元素不存在就跳过（下面的 if (editorEl) / if (draftEl)），不分叉逻辑。
+ * - v1.4（nexus-core v2.34）：规则可以不指定去向，选「交给 AI 判断」（mode: "ai"，无 taskId / projectId）：命中的窗口不硬分，
+ *   不自动记、不实时问 AI，留在待确认等 AI 批处理。行头标「交给 AI 判断」，没有「把握」格。
  * 对外只挂 window.assistantRules（纯函数，给单测用；外加 prepend：「待确认建议」勾「以后这个窗口都记到这个任务」时用）。
  */
 (function () {
@@ -29,7 +31,8 @@
   function toWire(r) {
     var out = { app: r.app || null, title: r.title || null, taskId: r.projectId ? null : r.taskId,
       confidence: Number(r.confidence), note: r.note || null, enabled: r.enabled !== false };
-    if (r.projectId) out.projectId = r.projectId;   // 只到项目的规则才有这个键（到任务的与 v1 逐字节相同）
+    if (r.mode === "ai") { out.taskId = null; out.mode = "ai"; }   // v1.4：交给 AI 判断——只有这种规则才带 mode 键
+    else if (r.projectId) out.projectId = r.projectId;   // 只到项目的规则才有这个键（到任务的与 v1 逐字节相同）
     if (r.id) out.id = r.id;
     // v1.2 出处键：服务端替 AI 直接写下的窗口规则带 author / auto（nexus-core v2.15）。整套存回去时原样带着，别弄丢
     if (r.author) out.author = r.author;
@@ -66,9 +69,9 @@
   function describe(r, tasks, projects) {
     var what = [r.app ? "程序 /" + r.app + "/" : "", r.title ? "标题 /" + r.title + "/" : ""].filter(Boolean).join(" 且 ");
     var t = tasks[r.taskId], p = (projects || {})[r.projectId];
-    var to = r.projectId ? (p ? p + " · 未分类" : "项目已删除（" + r.projectId + "）")
+    var to = r.mode === "ai" ? "交给 AI 判断" : r.projectId ? (p ? p + " · 未分类" : "项目已删除（" + r.projectId + "）")
       : (t ? t.path : "任务已删除（" + r.taskId + "）");
-    return what + " → " + to + " · " + Math.round(r.confidence * 100) + "%" +
+    return what + " → " + to + (r.mode === "ai" ? "" : " · " + Math.round(r.confidence * 100) + "%") +
       (r.enabled === false ? " · 停用" : "") + (r.note ? " · " + r.note : "");
   }
 
@@ -205,18 +208,20 @@
     var s = el("select", "field");
     s.dataset.f = "taskId";
     var ids = Object.keys(tasks).filter(function (id) { return !tasks[id].done || id === r.taskId; });
-    var now = r.projectId ? "p:" + r.projectId : (r.taskId || "");
+    var now = r.mode === "ai" ? "ai:" : r.projectId ? "p:" + r.projectId : (r.taskId || "");
     if (!now) s.appendChild(new Option("选一个任务或项目", ""));
+    s.appendChild(new Option("交给 AI 判断（不硬分）", "ai:"));
     if (r.projectId && !projects[r.projectId]) s.appendChild(new Option("项目已删除（" + r.projectId + "）", now));
     if (!r.projectId && r.taskId && !tasks[r.taskId]) s.appendChild(new Option("任务已删除（" + r.taskId + "）", r.taskId));
     ids.forEach(function (id) { s.appendChild(new Option(tasks[id].path + (tasks[id].done ? "（已完成）" : ""), id)); });
     Object.keys(projects).forEach(function (id) { s.appendChild(new Option(projects[id] + " · 未分类（只到项目）", "p:" + id)); });
     s.value = now;
     s.addEventListener("change", function () {
-      var toProject = s.value.indexOf("p:") === 0;
+      var toProject = s.value.indexOf("p:") === 0, toAI = s.value === "ai:";
+      r.mode = toAI ? "ai" : null;
       r.projectId = toProject ? s.value.slice(2) : null;
-      r.taskId = toProject ? null : s.value;
-      sync();
+      r.taskId = toProject || toAI ? null : s.value;
+      render();
     });
     return s;
   }
@@ -231,10 +236,15 @@
     listEl.textContent = "";
     rules.forEach(function (r, i) {
       var err = errors[i] || {};
-      var li = el("li", "rule-item" + (r.enabled === false ? " is-off" : ""));
+      var li = el("li", "rule-item" + (r.enabled === false ? " is-off" : "") + (r.mode === "ai" ? " is-ai" : ""));
       li.dataset.index = String(i);
       var head = el("div", "rule-head");
       head.appendChild(el("span", "rule-no mono", "#" + (i + 1)));
+      if (r.mode === "ai") {
+        var judge = el("span", "suggest-badge rule-judge", "交给 AI 判断");
+        judge.title = "命中的窗口不硬分：不自动记、不实时问 AI，留在待确认等 AI 批处理；AI 的回答只对那个窗口生效，不会写规则。";
+        head.appendChild(judge);
+      }
       if (r.auto === true) {
         var badge = el("span", "suggest-badge rule-auto", "AI 自动");
         badge.title = "这条是 AI 认窗口时直接写下的（只认这一个窗口）。不对就删掉或改掉。";
@@ -272,7 +282,7 @@
       grid.appendChild(field("程序名（正则）", input(r, "app", { maxlength: "200", placeholder: "比如 code|goland" }), err.app));
       grid.appendChild(field("窗口标题（正则）", input(r, "title", { maxlength: "200", placeholder: "比如 garden" }), err.title));
       grid.appendChild(field("归到", taskSelect(r), err.taskId || err.projectId));
-      grid.appendChild(field("把握（0–1）", input(r, "confidence", { type: "number", min: "0.01", max: "1", step: "0.05", inputmode: "decimal" }), err.confidence));
+      if (r.mode !== "ai") grid.appendChild(field("把握（0–1）", input(r, "confidence", { type: "number", min: "0.01", max: "1", step: "0.05", inputmode: "decimal" }), err.confidence));
       grid.appendChild(field("备注", input(r, "note", { maxlength: "120" }), err.note));
       li.appendChild(grid);
       var rest = Object.keys(err).filter(function (k) { return ["app", "title", "taskId", "projectId", "confidence", "note"].indexOf(k) < 0; });
