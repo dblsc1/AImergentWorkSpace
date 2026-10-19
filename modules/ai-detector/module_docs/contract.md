@@ -143,6 +143,9 @@ Content-Type: application/json
   带 `idle: true` 的段 `suggestion.confidence ≤ 0.3`，`reason` 以「无操作，可能在阅读」开头
   （老服务端不存 `idle`，人从 `reason` 也看得出来）。
 
+- **`suggestion.needsAI`（nexus-core v2.34，`detector.rules.v1` v1.4）**：命中网页规则里 `mode: "ai"` 的规则时，建议是 `{taskId: null, confidence: 0, classifier: "rules", needsAI: true}`
+  （没命中的建议不带这个键；先命中先赢，所以 ai 规则能拦住后面更宽的规则；在场心跳的 guess 同带 `needsAI: true`、不带目标）。只来自网页规则，本机 `rules.json` 不支持 `mode`。
+  老服务端不会下发 ai 规则；老检测程序见到无目标的规则会跳过并写日志。
 - **v1.3 `suggestion.projectId`**：命中的规则只到项目（`detector.rules.v1` v1.1，本机 `rules.json` 也能写）时，
   `suggestion` 是 `{taskId: null, projectId: "p_…", confidence, reason, classifier: "rules"}`；到任务的规则、没命中的段
   不带这个键（形状与 v1.2 相同）。v2.14 之前的 nexus-core 忽略它（这段没有任务建议，照收）。

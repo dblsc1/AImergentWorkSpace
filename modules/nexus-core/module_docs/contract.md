@@ -172,6 +172,12 @@
 > （同「先改再批准」，`newTask` 丢掉）。只改报告，不入账；「全部批准」仍是一个请求、仍幂等。只能拆还 `pending` / `failed` 的条且建议尚未入账（否则 `409`），建议不在该条里 `400`，
 > 任务 / 项目不存在 `404`；报告同时被别处改动 `409`（刷新重来）。`split` 与条上「先改再批准」不同：`dismiss` 条也可以拆去别的去向；`suggestionIds` 为空 `422`；`newTask` 条整条被拆走（任何去向）等于人不要那个新任务——同条 `reject` 把提议记为已否掉；目标任务的 `match_refusal` 不在拆时查，批准时才查（该段记 `stale`），同「改目标」。既有端点、字段、行为一个不改。MCP 输出不变，`propose_report` 描述追加一句「一个窗口 / 会话 ⇒ 一个任务」（`mcp.tools.v1` v1.21）。
 >
+> **v2.34（追加式）：规则可以说「这个窗口别硬分，交给 AI 判断」。** 仓主 2026-10-19：「加一条规则：x窗口需要用ai软分类，不能硬分」。
+> 一个终端 / 浏览器窗口什么活都干，规则把它钉死在某个任务上、或 AI 实时认完再自动写一条窗口规则，都是错的。本版**追加**：分类规则可带 `mode: "ai"`
+> （`detector.rules.v1` v1.4，无 taskId / projectId）；命中的窗口见「『交给 AI 判断』的窗口」节：**不自动记、不实时问 AI（不认领）、不弹『请人选』卡**，
+> 上传的建议带 `suggestion.needsAI: true`、留在待确认等 AI 批处理；`GET /activity/suggestions` 追加可选 `needsAI=true` 过滤；AI 经 `ai/suggest`
+> 回答这类窗口**不写规则**（回包 `ruleWritten: false, needsAI: true`）；AI 直接写规则（`ai-apply`）删不掉、改不了人写的 ai 规则。既有端点、字段、行为一个不改。
+>
 > **v2.30（追加式）：AI 可以提议新项目、项目下的新任务，人批准才建。** 仓主 2026-10-19：「给 mcp 加新增项目（需要人批准）和新增项目下的任务两个接口（都需要人批准）」。
 > 此前 AI 只能在报告里提议任务（`newTask`），没有项目的活动一直停着。本版**追加** `nexus-core.activity.proposals.v1`：`POST /activity/proposals/projects`、
 > `POST /activity/proposals/tasks`（任务挂在现成项目 `projectId`，或还没批准的项目提议 `projectProposalId`，恰好一个）、`GET /activity/proposals`（AI 与页面都读）、
@@ -4070,6 +4076,32 @@ AI 写的或「记住」的分类规则与草稿、代理标签（`agent_runs.la
 - **手动排位**同一条管线（v2.24 的约定不变）：`inactiveAgents` / 过期的泳道不占位，`PUT /lanes/prefs/order` 带页面读图的窗口。
 - **不动任何计时账**；没有 MCP 工具映射 `views/lanes`，`mcp.tools.v1` 不动。
 - **前端**：泳道下方原来的几个底部展开条合并成一个折叠菜单「已折叠 n 个」（有出错时头部带「m 个出错」），菜单里按 出错 / 空闲 / 已结束 / 手动隐藏 分组；`expiredAgents > 0` 时脚注一行；老后端没有新字段则照常（无 `tier` 不画档位）。
+
+## 「交给 AI 判断」的窗口（规范性 · v2.34，`detector.rules.v1` v1.4）
+
+**规则**：`Rule.mode = "ai"` 时不得带 `taskId` / `projectId`（422），其余校验（app / title 至少一个、RE2）不变；`mode` 缺省 = 普通规则，读出时不带这个键。
+顺序照旧：第一条命中生效，所以人可以把 ai 规则放在宽泛规则之上。规则的匹配只在检测程序里（服务端没有原始标题），所以 ai 规则**命中在检测程序侧**：
+
+- **上传**（`activity/suggestions`）：命中的段 `suggestion = {taskId: null, confidence: 0, reason, classifier: "rules", needsAI: true}`。`needsAI`（布尔，缺省 false）
+  不能与 `taskId` / `projectId` 同给，`confidence` 须为 0（否则该段 rejected）；存下来**只在为 true 时带这个键**。因 `classifier: "rules"` 且无目标，自动记录
+  （`auto_entry`）永远不采信它；设备开 `autoTrack` 也一样留在待确认。AI 经 `matches`（或报告）给它配任务后，建议被整份换掉，`needsAI` 随之消失。
+- **在场心跳**：`guess` / `spans[].guess` 可为 `{needsAI: true, confidence: 0, classifier: "rules"}`（不带目标；带目标或既无目标也无 needsAI 仍 422）。
+  `next_step` 对这样的窗口返回 `"judge_ai"`：既不是 `ask_ai`（`claim` 不会给出它、`aiThinking` 不出），也不是 `ask_human`（`needsChoice` 不出）。
+  人手选 / 「这次不选」仍照常；人的临时选择仍可让它显示成「自动」。
+- **`GET /activity/suggestions?needsAI=true`**：只列 `suggestion.needsAI` 为真的。缺省 / false = 不过滤。
+- **`POST /activity/ai/suggest`**：key 指向这样的窗口（最近一段的 guess 带 `needsAI`）时**不要求认领**、不写问询、**不写规则**，只留一份 AI 的临时选择
+  （同低把握的 AI 选择：显示、不自动记）；回包 `autoRecord: false, ruleWritten: false, needsAI: true`。`none: true` 什么也不写。其他窗口行为不变。
+  报告里的 assign 批准本来就不写规则，对这类建议同样。
+- **AI 直接写规则**（`ai-apply`）：旧规则里**人写的**（`author` 不是 `assistant`）ai 规则必须原样保留（id 与内容），否则 422 `人写的「交给 AI 判断」规则不能被 AI 删除或改动`。
+  顺序也受保护：它前面不能多出或挪上来别的固定目标规则（见下「人写的 ai 规则」）。服务端代写的单窗口规则（`window_rules.prepend`）不对这类窗口发生（`suggest` 不写，prepend 也拒）。
+  草稿是人应用的，不受此限。
+- **服务端兜底**（v2.34）：上传（`suggestions`）、心跳状态（`next_step`）、`ai/suggest` 都会把窗口收到的 app / title 按存着的规则再对一遍（google-re2，与检测程序同一套语法、线性时间；编不过的规则跳过：不分大小写、搜索、给了的字段都要中、先命中先赢）：
+  第一条命中的是 mode ai → 同样当作「交给 AI 判断」（上传的建议被服务端改成 `needsAI: true`、无目标、把握 0，也不按代理会话自动对；心跳的规则猜测作废）。
+  `window_rules.prepend` 带窗口时同样拒写。检测程序回退到本机 `rules.json`（拉规则失败）时表达不了 ai 规则，由这一层补上。
+- **人写的 ai 规则**（`mode: "ai"` 且 `author` 不是 `assistant`）：人的写入（PUT、应用草稿）对新增 / 改过的规则清掉 `author` / `auto` / `aiAt`，所以 AI 写的规则被人改成 ai 规则后就算人写的。
+  `ai-apply` 不能删 / 改它，**前面也不能插入或挪上来别的固定目标规则**，否则 422（见 `detector.rules.v1` v1.4）。
+- **旧检测程序**：把没有目标的规则当作不可用，**跳过并写日志**（`detector.rules.v1` v1.4）——窗口落到后面的规则或没有规则；旧服务端 + 新检测程序无影响（旧服务端没有 ai 规则）。
+  本机 `rules.json` 不支持 `mode`。
 
 ## 入口与路由
 

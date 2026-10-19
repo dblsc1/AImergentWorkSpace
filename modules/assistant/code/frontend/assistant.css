@@ -315,6 +315,7 @@ fieldset.set-field > legend { font-size: var(--fs-sub); color: var(--ink-2); mar
 .rules-list { list-style: none; padding: 0; display: grid; gap: var(--sp-3); }
 .rule-item { display: grid; gap: var(--sp-2); min-width: 0; padding: var(--sp-3); border: 1px solid var(--line-2); border-radius: var(--r-2); background: var(--panel-2); }
 .rule-item.is-off { opacity: .6; }
+.rule-item.is-ai { border-left: 3px solid var(--plan); }  /* v1.4 交给 AI 判断：与普通规则区分 */
 .rule-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
 .rule-no { color: var(--ink-3); }
 .rule-on { margin-right: auto; }

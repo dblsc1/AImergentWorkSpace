@@ -129,8 +129,9 @@ def list_suggestions(
     status: Literal["pending", "confirmed", "dismissed"] = "pending",
     limit: int = 100,
     offset: int = 0,
+    needsAI: bool = False,  # v2.34：只列规则标了「交给 AI 判断」的窗口
 ) -> dict:
-    return service.list_suggestions(status, limit, offset)
+    return service.list_suggestions(status, limit, offset, needsAI)
 
 
 class PendingDay(BaseModel):

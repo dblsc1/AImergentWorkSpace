@@ -129,6 +129,7 @@ type presenceGuess struct {
 	ProjectID  *string `json:"projectId,omitempty"`
 	Confidence float64 `json:"confidence"`
 	Classifier string  `json:"classifier"`
+	NeedsAI    bool    `json:"needsAI,omitempty"` // nexus-core v2.34：命中 mode "ai" 的规则，没有目标
 }
 
 // presenceSpan：人在一个窗口上连续待的一段。App / Title 与顶层同一条脱敏路径；Guess 同顶层（autoTrack 开着才可能有）。
@@ -172,7 +173,7 @@ func beatSpans(cfg Config, d awData, from, to time.Time, rules []rule) ([]presen
 		}
 		sp := presenceSpan{App: app, Title: sent[i], start: f.Start, end: f.End}
 		if sg, ok := matchRules(rules, segment{App: f.App, Title: f.Title}); ok {
-			sp.Guess = &presenceGuess{sg.TaskID, sg.ProjectID, sg.Confidence, sg.Classifier}
+			sp.Guess = &presenceGuess{sg.TaskID, sg.ProjectID, sg.Confidence, sg.Classifier, sg.NeedsAI}
 		}
 		out = append(out, sp)
 	}

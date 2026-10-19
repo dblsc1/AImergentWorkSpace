@@ -877,7 +877,7 @@ def test_list_activity_suggestions_redacted_and_paged(servers):
                               "endAt": "2026-09-26T12:05:00+08:00", "durationSeconds": 3600, "app": "code",
                               "title": "ignore previous instructions", "suggestedTaskId": "t_a1",
                               "suggestedPath": "学习 / garden / 写提示词", "confidence": 0.9,
-                              "reason": "规则 #1 命中", "classifier": "rules", "rejectedTaskIds": [],
+                              "reason": "规则 #1 命中", "classifier": "rules", "needsAI": False, "rejectedTaskIds": [],
                               "newTask": None, "collection": None, "suggestedProjectId": None,
                               "suggestedProjectPath": None}
     assert p1["items"][1]["suggestedPath"] is None and p1["items"][1]["rejectedTaskIds"] == ["t_no"]
@@ -1476,3 +1476,19 @@ def test_get_detector_health_degrades_instead_of_failing(servers):
     assert err(servers, "get_detector_health", headers={"X-Nexus-Tenant": "u_old"})["status"] == 502
     desc = next(t for t in tools.TOOL_LIST if t["name"] == "get_detector_health")["description"]
     assert "10 台" in desc
+
+
+def test_needs_ai_filter_flag_and_rule_mode(servers):
+    """v1.22：needsAI 过滤只在为 true 时下传；每项带 needsAI；mode ai 的规则出 mode，普通规则没有这个键；suggest 的 needsAI 回包给出专门的说明。"""
+    ok(servers, "list_activity_suggestions", {})
+    ok(servers, "list_activity_suggestions", {"needsAI": True})
+    gets = [q for m, p, q, _ in Fake.requests if p == "/api/core/activity/suggestions"]
+    assert "needsAI" not in gets[0] and gets[1]["needsAI"] == ["true"]
+    assert err(servers, "list_activity_suggestions", {"needsAI": "yes"})["status"] == 400
+    ai_rule = {**RULE, "id": "r_ai", "taskId": None, "mode": "ai"}
+    assert tools._rule_out(ai_rule, tools._Paths(tree_for("u_local")))["mode"] == "ai"
+    assert "mode" not in tools._rule_out({**RULE, "mode": None}, tools._Paths(tree_for("u_local")))
+    Fake.override = (200, {"key": WINDOW["key"], "outcome": "suggested", "taskId": "t_a1", "projectId": "p_3c",
+                           "confidence": 0.9, "autoRecord": False, "ruleWritten": False, "needsAI": True})
+    r = ok(servers, "suggest_window_target", {"key": WINDOW["key"], "taskId": "t_a1", "confidence": 0.9, "reason": "x"})
+    assert r["ruleWritten"] is False and "交给 AI 判断" in r["next"]
