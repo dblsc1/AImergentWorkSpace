@@ -393,6 +393,44 @@ def approve_item(report_id: str, item_id: str, task_id: str | None, project_id: 
     return {"reportId": report_id, "reportStatus": doc["status"], **_brief(_item_of(doc, item_id))}
 
 
+def split_item(report_id: str, item_id: str, sids: list[str], task_id: str | None, project_id: str | None,
+               dismiss: bool) -> dict:
+    """人把条里的一部分建议拆出去，另给目标（v2.33）：拆出的进一条新的（``s…`` id），剩下的留原条原目标。
+    全拆走 = 原条就地改目标（不留空条）。只动还没入账的段；条或报告已处理 409。"""
+    user = current_tenant()
+    doc = _load(user, report_id)
+    it = _item_of(doc, item_id)
+    if sum(x is not None for x in (task_id, project_id)) + bool(dismiss) != 1:
+        raise InvalidInputError("taskId、projectId、dismiss 必须恰好给一个")
+    if it["status"] not in reports_repo.OPEN or doc["status"] != "pending":
+        raise service.ConflictError("这一条已处理，不能再拆")
+    moving = list(dict.fromkeys(sids))
+    if any(s not in it["suggestionIds"] for s in moving):
+        raise InvalidInputError("有建议不在这一条里")
+    if any(it["results"].get(s, {}).get("state") == "applied" for s in moving):
+        raise service.ConflictError("有建议已入账，不能再拆")
+    if task_id is not None and planner_service.get_task(task_id) is None:
+        raise NotFoundError(f"任务不存在：{task_id!r}")
+    if project_id is not None and planner_service.get_project(project_id) is None:
+        raise NotFoundError(f"项目不存在：{project_id!r}")
+    tgt = {"kind": "dismiss"} if dismiss else {"kind": "assign", "taskId": task_id, "projectId": project_id}
+    rest = [s for s in it["suggestionIds"] if s not in moving]
+    if not rest:  # 全拆走：就地改目标（和 approve 带目标的「先改」同一语义）
+        new = {k: v for k, v in it.items() if k not in ("newTask", "taskId", "projectId")} | tgt
+        out_id = item_id
+    else:
+        out_id = "s" + uuid.uuid4().hex[:8]
+        kept = {**it, "suggestionIds": rest, "results": {s: r for s, r in it["results"].items() if s in rest}}
+        kept["status"] = _status_of(kept)
+        new = {"id": out_id, "suggestionIds": moving, "reason": it["reason"], "status": "pending", "results": {}, **tgt}
+    items = [(kept if rest else new) if i["id"] == item_id else i for i in doc["items"]] + ([new] if rest else [])
+    if not reports_repo.replace_items(user, report_id, doc["items"], items):
+        raise service.ConflictError("这份报告刚被改动，请刷新后再拆")
+    if not rest:
+        _reject_proposal(user, it)  # newTask 条整条被拆走（改去向 / 当噪声）= 人不要这个新任务：同 reject，助理不许再提
+    return {"reportId": report_id, "itemId": out_id, "moved": len(moving)}
+
+
 def _reject_proposal(user: str, item: dict) -> None:
     if item["kind"] == "newTask":  # 同 unmatch：人说「不要」就记住，助理不许再提
         repo.proposal_reject_if_unused(user, item["newTask"]["proposalId"], _now())

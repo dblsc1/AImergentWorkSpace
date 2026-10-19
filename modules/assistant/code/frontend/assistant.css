@@ -401,6 +401,10 @@ fieldset.set-field > legend { font-size: var(--fs-sub); color: var(--ink-2); mar
 .report-row.is-failed .report-status { color: var(--danger); border-color: var(--danger); }
 .report-row.is-applied .report-status { color: var(--fact); border-color: var(--fact); }
 .report-row.is-applied, .report-row.is-stale, .report-row.is-rejected { opacity: .7; }
+.report-win { display: grid; gap: var(--sp-1); min-width: 0; }
+.report-segs { margin-left: var(--sp-4); }
+.report-toggle { text-align: left; white-space: normal; overflow-wrap: anywhere; min-height: var(--tap); }
+.report-wintarget.is-mixed { color: var(--plan); }
 .report-acts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-width: 0; }
 .report-acts .report-pick { flex: 0 1 8em; min-width: 0; max-width: 100%; background: var(--panel); }
 .report-acts .btn { flex: 0 0 auto; min-height: var(--tap); }

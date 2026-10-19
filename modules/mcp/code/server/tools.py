@@ -643,7 +643,7 @@ def propose_report(a, tenant):
             "rejected": [{"index": x["index"], "code": x["code"], "reason": _screen(x["reason"], MAX_SCREEN_TEXT)}
                          for x in r["rejected"]],
             "applied": False,
-            "next": "报告已存，尚未入账。请用户在 Cockpit「待批准 → AI 报告」查看并点「全部批准」，或逐条处理；"
+            "next": "报告已存，尚未入账。请用户在 Cockpit「待批准 → AI 报告」查看并点「全部批准」，或按窗口改去向；"
                     "之后用 get_report_status 看结果。" if r["reportId"] else "没有一条被收下，见 rejected。"}
 
 
@@ -920,7 +920,7 @@ _SPECS = [
                                                       "description": "只标到项目（v1.6）"}}}}},
              required=["matches"]), ["matches"], {}),
     (propose_report, "一次交一份报告",
-     "把很多条提议装进**一份报告**一次交上去，用户在 Cockpit「待批准 → AI 报告」点「全部批准」就全部入账（也可以逐条改 / 批准 / 不要）。"
+     "把很多条提议装进**一份报告**一次交上去（一个窗口 / 一个 agent 会话 ⇒ 一个任务：同一窗口的段放进同一条，不要拆给几个任务；用户界面按窗口分组，点开才单独划分），用户在 Cockpit「待批准 → AI 报告」点「全部批准」就全部入账（也可以按窗口展开，把整个窗口或单段改去向、或标成噪声）。"
      "写进去的只是待批准的报告：本工具什么都不确认、不忽略、不建任务。碎片很多时用它；零星几条用 propose_activity_matches。"
      "summary（≤ 2000 字）用几句话说明这份报告做了什么；author（≤ 64 字，选填，显示用的名字，只是标签）。"
      "items 最多 200 条，每条 {kind, suggestionIds 或 collection, 目标, reason?（≤ 300 字，给人看的一句理由）}："

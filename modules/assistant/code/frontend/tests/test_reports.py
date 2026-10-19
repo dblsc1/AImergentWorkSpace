@@ -79,6 +79,21 @@ class Stub:
             route.fulfill(status=409, content_type="application/json",
                           body=json.dumps({"detail": self.fail}, ensure_ascii=False))
             return
+        if path.endswith("/split"):
+            iid = path.split("/items/")[1].split("/")[0]
+            item = next(i for i in self.report["items"] if i["id"] == iid)
+            moved = [x for x in item["suggestions"] if x["id"] in body["suggestionIds"]]
+            tgt = {"kind": "dismiss", "taskId": None, "projectId": None} if body.get("dismiss") else {
+                "kind": "assign", "taskId": body.get("taskId"), "projectId": body.get("projectId")}
+            if len(moved) == len(item["suggestions"]):
+                item.update(tgt, newTask=None)
+            else:
+                item["suggestions"] = [x for x in item["suggestions"] if x not in moved]
+                item["suggestionIds"] = [x["id"] for x in item["suggestions"]]
+                self.report["items"].append({**item, **tgt, "id": "s" + str(len(self.report["items"])), "newTask": None,
+                                             "suggestions": moved})
+            route.fulfill(status=200, content_type="application/json", body=json.dumps({"reportId": RID, "itemId": iid, "moved": len(moved)}))
+            return
         if path.endswith("/approve") and "/items/" not in path:
             self.report["status"] = "approved"
         elif path.endswith("/reject") and "/items/" not in path:
@@ -120,7 +135,7 @@ def test_panel_hidden_without_a_pending_report(browser, static_base_url, mode):
     assert errors == [] and stub.posts == []
 
 
-def test_lists_groups_by_project_longest_first_and_everything_is_text(browser, static_base_url):
+def test_lists_one_collapsed_row_per_window_longest_first_and_everything_is_text(browser, static_base_url):
     stub = Stub(_report())
     with opened(browser, static_base_url, stub) as page:
         page.wait_for_selector("#report-panel:not([hidden])")
@@ -129,25 +144,72 @@ def test_lists_groups_by_project_longest_first_and_everything_is_text(browser, s
         assert "作者 hermes " + EVIL in meta and "共 5 条" in meta and "覆盖约 3 小时 55 分" in meta
         assert "记到项目 / 任务 3 条" in meta and "新建任务 1 条" in meta and "忽略 1 条" in meta
         assert page.inner_text("#report-summary") == "归类 8 段 " + EVIL
-        groups = page.eval_on_selector_all("#report-groups > section", "els => els.map(e => e.dataset.group)")
-        # 考级计划 3000 > 吉他练习 600+1200+300=2100；「忽略」(9000) 放最后
-        assert groups == ["p_book", "p_eng", "__dismiss"]
-        assert page.inner_text('section[data-group="p_book"] .unc-project') == "练琴区 / 考级计划"
-        eng = [r.get_attribute("data-id") for r in page.locator('section[data-group="p_eng"] li').all()]
-        assert eng == ["i3", "i0", "i4"]                      # 组内也是时间长的在前
-        first = page.locator('li[data-id="i0"]')
-        assert first.locator(".unc-what").inner_text() == "code · plot.gd — " + EVIL
-        assert first.locator(".auto-target").inner_text() == "→ 练琴区 / 吉他练习 / 音阶练习"
-        assert first.locator(".report-reason").inner_text() == "理由：理由 " + EVIL
-        assert first.locator(".report-dur").inner_text() == "10 分"
-        assert page.inner_text('li[data-id="i3"] .auto-target') == "→ 新建任务「重构存档」（练琴区 / 吉他练习）"
-        assert page.inner_text('li[data-id="i2"] .unc-what') == "kitty · ssh 等 2 段"
-        assert page.inner_text('li[data-id="i2"] .auto-target') == "→ 练琴区 / 考级计划 · 未分类"
-        assert page.inner_text('li[data-id="i1"] .auto-target') == "→ 忽略（当噪声）"
-        assert "已被你处理过" in page.inner_text('li[data-id="i4"] .report-status')
-        assert page.locator('li[data-id="i1"] .report-pick').count() == 0      # 「忽略」不能改目标
+        wins = page.locator("#report-groups .report-win")
+        assert wins.count() == 5 and page.locator(".report-seg").count() == 0          # 默认全收起
+        # 时长：kitty ssh 3000 > save.gd 1200 > plot 600 > stale 300；全是「忽略」的最后
+        assert page.eval_on_selector_all(".report-win .report-toggle", "els => els.map(e => e.textContent)") == [
+            "▸ kitty · ssh", "▸ code · save.gd", "▸ code · plot.gd — " + EVIL, "▸ code · stale.gd", "▸ slack · 闲聊"]
+        ssh = wins.nth(0)
+        assert ssh.locator(".report-dur").inner_text() == "2 段 · 50 分"
+        assert ssh.locator(".auto-target").inner_text() == "→ 练琴区 / 考级计划 · 未分类"
+        assert wins.nth(1).locator(".auto-target").inner_text() == "→ 新建任务「重构存档」（练琴区 / 吉他练习）"
+        assert wins.nth(2).locator(".auto-target").inner_text() == "→ 练琴区 / 吉他练习 / 音阶练习"
+        assert wins.nth(4).locator(".auto-target").inner_text() == "→ 忽略（当噪声）"
+        assert wins.nth(4).locator(".report-pick").count() == 1 and wins.nth(4).locator(".report-no").is_disabled()
         assert page.locator("#report-panel img").count() == 0 and page.evaluate("window.__pwned") is None
         assert stub.posts == []                                                   # 只是看，什么都没发
+
+
+def test_item_with_no_visible_segments_gets_a_fallback_row(browser, static_base_url):
+    report = _report()
+    report["items"][4].update(suggestions=[], staleNow=2, seconds=0)
+    with opened(browser, static_base_url, Stub(report)) as page:
+        page.wait_for_selector("#report-panel:not([hidden])")
+        row = page.locator(".report-orphan")
+        assert row.count() == 1 and row.locator(".unc-what").inner_text() == "2 条已过期或已处理"
+        assert row.locator(".auto-target").inner_text() == "→ 练琴区 / 吉他练习 / 曲目视奏"
+        assert page.is_enabled("#report-approve-all")
+
+
+def test_partial_move_failure_says_how_far_it_got(browser, static_base_url):
+    report = _report()
+    report["items"].append(_item("i5", "assign", 300, [_sug("s6", "kitty", "ssh", 300)], taskId="t_read"))
+    stub = Stub(report)
+    orig = stub.finish
+
+    def flaky(route, path, body):
+        if "/items/i5/" in path:
+            stub.fail = "这一条刚被改动"
+        orig(route, path, body)
+        stub.fail = None
+
+    stub.finish = flaky
+    with opened(browser, static_base_url, stub) as page:
+        page.wait_for_selector("#report-panel:not([hidden])")
+        page.locator(".report-win").first.locator(".report-row:not(.report-seg) .report-pick").select_option("p:p_eng")
+        page.wait_for_selector("#report-message.is-error")
+        assert page.inner_text("#report-message") == "没成：已挪 1/2 条后失败：这一条刚被改动"
+        assert page.locator(".report-no >> nth=0").inner_text() == "当噪声"
+
+
+def test_expand_lists_segments_and_mixed_targets_are_shown(browser, static_base_url):
+    report = _report()
+    report["items"].append(_item("i5", "assign", 300, [_sug("s6", "KITTY", "✳ ssh", 300)], taskId="t_read"))
+    stub = Stub(report)
+    with opened(browser, static_base_url, stub) as page:
+        page.wait_for_selector("#report-panel:not([hidden])")
+        ssh = page.locator("#report-groups .report-win").first
+        assert "3 段 · 55 分" in ssh.locator(".report-dur").inner_text()           # 大小写、前导符号不同也归一个窗口
+        tgt = ssh.locator(".report-wintarget")
+        assert "混合（2 个去向" in tgt.inner_text() and "is-mixed" in tgt.get_attribute("class")
+        ssh.locator(".report-toggle").click()
+        assert ssh.locator(".report-toggle").get_attribute("aria-expanded") == "true"
+        segs = ssh.locator(".report-seg")
+        assert segs.count() == 3
+        assert sorted(segs.locator(".auto-target").all_inner_texts()) == [
+            "→ 练琴区 / 吉他练习 / 曲目视奏", "→ 练琴区 / 考级计划 · 未分类", "→ 练琴区 / 考级计划 · 未分类"]
+        ssh.locator(".report-toggle").click()
+        assert page.locator(".report-seg").count() == 0 and stub.posts == []
 
 
 def test_approve_all_is_one_click_and_shows_the_result_line(browser, static_base_url):
@@ -175,27 +237,30 @@ def test_reject_report(browser, static_base_url):
         assert stub.posts == [(f"{RID}/reject", {})]
 
 
-def test_row_approve_reject_and_edit_target(browser, static_base_url):
+def test_move_one_segment_then_window_then_drop_only_split_nothing_approved(browser, static_base_url):
     stub = Stub(_report())
     with opened(browser, static_base_url, stub) as page:
         page.wait_for_selector("#report-panel:not([hidden])")
-        page.click('li[data-id="i0"] .report-ok')
-        page.wait_for_selector('li[data-id="i0"].is-applied')
-        assert stub.posts == [(f"{RID}/items/i0/approve", {})]
-        assert page.is_disabled('li[data-id="i0"] .report-ok') and page.is_disabled('li[data-id="i0"] .report-no')
-        page.click('li[data-id="i2"] .report-no')
-        page.wait_for_selector('li[data-id="i2"].is-rejected')
-        assert stub.posts[1] == (f"{RID}/items/i2/reject", {})
-        # 改：选了就是先改目标再批准；任务 = {taskId}，项目的未分类 = {projectId}
+        ssh = page.locator('.report-win').first
+        ssh.locator(".report-toggle").click()
+        ssh.locator(".report-seg").first.locator(".report-pick").select_option("t:t_read")   # 只挪第一段（开始最早的 s2）
+        page.wait_for_function("() => document.getElementById('report-message').textContent.startsWith('已改')")
+        assert stub.posts == [(f"{RID}/items/i2/split", {"suggestionIds": ["s2"], "taskId": "t_read"})]
+        ssh = page.locator('.report-win').first
+        assert ssh.locator(".report-toggle").get_attribute("aria-expanded") == "true"        # 重绘后还展开着
+        assert "混合" in ssh.locator(".report-wintarget").inner_text()
+        # 整窗口改到一个项目：混合的两条各发一个 split；挪走一整条 = 就地改目标
         _idle(page)
-        page.select_option('li[data-id="i3"] .report-pick', "t:t_read")
-        page.wait_for_selector('li[data-id="i3"].is-applied')
-        assert stub.posts[2] == (f"{RID}/items/i3/approve", {"taskId": "t_read"})
-        assert page.inner_text('li[data-id="i3"] .auto-target') == "→ 练琴区 / 吉他练习 / 曲目视奏"
+        ssh.locator(".report-row:not(.report-seg) .report-pick").first.select_option("p:p_eng")
+        page.wait_for_function("() => document.querySelectorAll('.report-win')[0].querySelector('.report-wintarget').textContent.indexOf('混合') < 0")
+        assert len(stub.posts) == 3 and all(b["projectId"] == "p_eng" for _, b in stub.posts[1:])
+        assert sorted(b["suggestionIds"][0] for _, b in stub.posts[1:]) == ["s2", "s3"]
+        # 不要 = 忽略（split dismiss），不是 reject
         _idle(page)
-        page.select_option('li[data-id="i4"] .report-pick', "p:p_book")
-        page.wait_for_selector('li[data-id="i4"].is-applied')
-        assert stub.posts[3] == (f"{RID}/items/i4/approve", {"projectId": "p_book"})
+        page.locator('.report-win').first.locator(".report-row:not(.report-seg) .report-no").click()
+        page.wait_for_function("() => document.querySelectorAll('.report-win .report-wintarget')[4].textContent === '→ 忽略（当噪声）' && document.querySelectorAll('.report-win .report-wintarget')[3].textContent === '→ 忽略（当噪声）'")
+        assert stub.posts[-1][0].endswith("/split") and stub.posts[-1][1]["dismiss"] is True
+        assert not any(p.endswith("/approve") or p.endswith("/reject") for p, _ in stub.posts)
 
 
 def test_failure_is_shown_as_text_and_keeps_the_report(browser, static_base_url):
@@ -208,7 +273,7 @@ def test_failure_is_shown_as_text_and_keeps_the_report(browser, static_base_url)
         assert page.inner_text("#report-message") == "没成：报告已被新报告顶掉 <u>x</u>"
         assert page.locator("#report-message u").count() == 0
         _idle(page)
-        assert page.locator("#report-groups li").count() == 5 and page.is_enabled("#report-approve-all")
+        assert page.locator("#report-groups .report-win").count() == 5 and page.is_enabled("#report-approve-all")
 
 
 def test_controls_are_disabled_while_a_request_is_in_flight(browser, static_base_url):
@@ -218,8 +283,8 @@ def test_controls_are_disabled_while_a_request_is_in_flight(browser, static_base
         page.wait_for_selector("#report-panel:not([hidden])")
         page.click("#report-approve-all")
         page.wait_for_function("() => document.getElementById('report-approve-all').disabled")
-        assert page.is_disabled("#report-reject-all") and page.is_disabled('li[data-id="i0"] .report-ok')
-        assert page.is_disabled('li[data-id="i0"] .report-pick')
+        assert page.is_disabled("#report-reject-all") and page.is_disabled(".report-win .report-no >> nth=0")
+        assert page.is_disabled(".report-win .report-pick >> nth=0")
         page.click("#report-approve-all", force=True)                              # 再点也不会发第二个
         assert len(stub.posts) == 1
         stub.holding = False
@@ -229,7 +294,7 @@ def test_controls_are_disabled_while_a_request_is_in_flight(browser, static_base
         assert len(stub.posts) == 1
 
 
-def test_processed_rows_are_labelled_and_failed_ones_can_be_retried(browser, static_base_url):
+def test_processed_segments_are_labelled_and_cannot_be_moved(browser, static_base_url):
     report = _report()
     report["items"][0].update(status="applied", applied=1)
     report["items"][2].update(status="stale", stale=1)
@@ -237,12 +302,14 @@ def test_processed_rows_are_labelled_and_failed_ones_can_be_retried(browser, sta
     stub = Stub(report)
     with opened(browser, static_base_url, stub) as page:
         page.wait_for_selector("#report-panel:not([hidden])")
-        assert page.inner_text('li[data-id="i0"] .report-status') == "已入账"
-        assert page.inner_text('li[data-id="i2"] .report-status') == "已过期（你已处理过）"
-        assert page.inner_text('li[data-id="i3"] .report-status') == "没成：任务不存在 <b>x</b>"
+        page.evaluate("() => document.querySelectorAll('.report-toggle').forEach(b => b.click())")
+        seg = lambda sid: page.locator(f'.report-seg[data-sid="{sid}"]')
+        assert seg("s0").locator(".report-status").inner_text() == "已入账"
+        assert seg("s2").locator(".report-status").inner_text() == "已过期（你已处理过）"
+        assert seg("s4").locator(".report-status").inner_text() == "没成：任务不存在 <b>x</b>"
         assert page.locator("#report-panel b").count() == 0
-        assert page.is_disabled('li[data-id="i0"] .report-ok') and page.is_enabled('li[data-id="i3"] .report-ok')
-        assert page.locator('li[data-id="i0"] .report-pick').count() == 0       # 已处理的不能再改
+        assert seg("s0").locator(".report-pick").count() == 0                  # 已处理的不能再改
+        assert seg("s4").locator(".report-pick").count() == 1                  # 没成的可以改了重试
 
 
 def test_keyboard_operable(browser, static_base_url):
@@ -256,11 +323,12 @@ def test_keyboard_operable(browser, static_base_url):
     stub = Stub(_report())
     with opened(browser, static_base_url, stub) as page:
         page.wait_for_selector("#report-panel:not([hidden])")
-        label = page.get_attribute('li[data-id="i0"] .report-ok', "aria-label")
-        assert label.startswith("批准：") and page.get_attribute('li[data-id="i0"] .report-pick', "aria-label").startswith("改记到：")
-        page.focus('li[data-id="i0"] .report-ok')
+        tog = page.locator(".report-toggle").first
+        assert tog.get_attribute("aria-label").startswith("展开窗口：")
+        tog.focus()
         page.keyboard.press("Space")
-        page.wait_for_selector('li[data-id="i0"].is-applied')
+        assert page.locator(".report-seg").count() == 2
+        assert page.get_attribute(".report-seg .report-pick", "aria-label").startswith("这一段改记到：")
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
@@ -272,6 +340,7 @@ def test_narrow_screen_no_horizontal_scroll_in_both_themes(browser, static_base_
     report["summary"] = "概述" * 200 + "x" * 200
     with opened(browser, static_base_url, Stub(report), width=width, theme=theme) as page:
         page.wait_for_selector("#report-panel:not([hidden])")
+        page.evaluate("() => document.querySelectorAll('.report-toggle').forEach(b => b.click())")
         assert overflowing(page, "#report-panel") == []
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         # 主按钮在两种主题下颜色取自 token（不是写死的）

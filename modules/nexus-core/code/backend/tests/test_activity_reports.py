@@ -469,3 +469,124 @@ def test_report_purged_during_approval_returns_what_was_done_not_404(client, see
     body = resp.json()
     assert body["status"] == "purged" and body["applied"] == 2 and [i["status"] for i in body["items"]] == ["applied", "applied"]
     assert len(_session_events()) == 2  # 事实照写，只写一次
+
+
+# ─────────────────────────────────────────── 拆条（v2.33）
+
+
+def _split(client, rid, iid, sids, headers=None, expect=200, **target):
+    resp = client.post(f"{REPORTS}/{rid}/items/{iid}/split", json={"suggestionIds": sids, **target}, headers=headers or {})
+    assert resp.status_code == expect, resp.text
+    return resp.json()
+
+
+def test_split_moves_subset_then_approve_all_applies_both_targets(client, seeded):
+    ids = _ids(client, 4)
+    task, project = _world_ids(seeded)
+    other = _extra_task(project, "拆去的任务")
+    rid = _submit(client, [{"kind": "assign", "suggestionIds": ids[:3], "taskId": task, "reason": "r"},
+                           {"kind": "dismiss", "suggestionIds": ids[3:]}])["reportId"]
+    out = _split(client, rid, "i0", ids[1:3], taskId=other)
+    assert out["moved"] == 2 and out["itemId"] not in ("i0", "i1")
+    rep = _status(client, rid)
+    by = {i["id"]: i for i in rep["items"]}
+    assert [s["id"] for s in by["i0"]["suggestions"]] == ids[:1] and by["i0"]["taskId"] == task
+    new = by[out["itemId"]]
+    assert sorted(s["id"] for s in new["suggestions"]) == sorted(ids[1:3]) and new["taskId"] == other
+    assert new["kind"] == "assign" and new["reason"] == "r" and rep["counts"]["items"] == 3
+    assert _session_events() == []                                    # 拆只改报告，不入账
+    body = client.post(f"{REPORTS}/{rid}/approve").json()
+    assert body["status"] == "approved" and (body["applied"], body["stale"], body["failed"]) == (3, 0, 0)
+    tasks = sorted(e["subject"]["task"] for e in _session_events())
+    assert tasks == sorted([task, other, other])
+    again = client.post(f"{REPORTS}/{rid}/approve").json()            # 幂等：再批什么都不多记
+    assert (again["applied"], again["stale"]) == (0, 0) and len(_session_events()) == 3
+
+
+def test_split_all_ids_retargets_in_place_and_split_to_dismiss(client, seeded):
+    ids = _ids(client, 3)
+    task, project = _world_ids(seeded)
+    rid = _submit(client, [{"kind": "newTask", "suggestionIds": ids[:2], "newTask": {"projectId": project, "name": "新的"}},
+                           {"kind": "assign", "suggestionIds": ids[2:], "taskId": task}])["reportId"]
+    assert _split(client, rid, "i0", ids[:2], projectId=project)["itemId"] == "i0"      # 全拆 = 就地改目标
+    i0 = _status(client, rid)["items"][0]
+    assert i0["kind"] == "assign" and i0["projectId"] == project and i0["newTask"] is None and i0["taskId"] is None
+    out = _split(client, rid, "i1", ids[2:], dismiss=True)
+    assert out["itemId"] == "i1" and _status(client, rid)["items"][1]["kind"] == "dismiss"
+    client.post(f"{REPORTS}/{rid}/approve")
+    assert _pending(client, status="dismissed")["total"] == 1 and len(_session_events()) == 2
+    assert _db()["tasks"].count_documents({"name": "新的"}) == 0
+
+
+def test_split_validation_and_decided_items_are_refused(client, seeded):
+    ids = _ids(client, 3)
+    task, project = _world_ids(seeded)
+    rid = _submit(client, [{"kind": "assign", "suggestionIds": ids[:2], "taskId": task},
+                           {"kind": "assign", "suggestionIds": ids[2:], "taskId": task}])["reportId"]
+    _split(client, rid, "i0", ids[:1], expect=400)                                     # 没给目标
+    _split(client, rid, "i0", ids[:1], expect=400, taskId=task, projectId=project)     # 给了两个
+    _split(client, rid, "i0", ids[:1], expect=400, taskId=task, dismiss=True)
+    _split(client, rid, "i0", [], expect=422, taskId=task)
+    _split(client, rid, "i0", [ids[2]], expect=400, taskId=task)                       # 不在这一条里
+    _split(client, rid, "i0", ids[:1], expect=404, taskId="t_nope")
+    _split(client, rid, "i0", ids[:1], expect=404, projectId="p_nope")
+    _split(client, rid, "i9", ids[:1], expect=404, taskId=task)
+    assert client.post(f"{REPORTS}/{rid}/items/i0/approve").status_code == 200
+    _split(client, rid, "i0", ids[:1], expect=409, taskId=task)                        # 已入账的条
+    client.post(f"{REPORTS}/{rid}/items/i1/reject")
+    _split(client, rid, "i1", ids[2:], expect=409, projectId=project)                  # 已不要的条
+    assert len(_status(client, rid)["items"]) == 2
+
+
+def test_split_is_human_only_and_changes_nothing_otherwise(client, seeded):
+    ids = _ids(client, 2)
+    task, _ = _world_ids(seeded)
+    rid = _submit(client, [{"kind": "assign", "suggestionIds": ids, "taskId": task}])["reportId"]
+    for headers in (BEARER, {"X-Nexus-Scope": "read"}, {"X-Nexus-Scope": "report", "X-Nexus-Anonymous": "1"}):
+        _split(client, rid, "i0", ids[:1], headers=headers, expect=403, taskId=task)
+    assert len(_status(client, rid)["items"]) == 1
+
+
+def test_split_away_a_whole_new_task_item_rejects_its_proposal(client, seeded):
+    ids = _ids(client, 3)
+    task, project = _world_ids(seeded)
+    rid = _submit(client, [{"kind": "newTask", "suggestionIds": ids[:1], "newTask": {"projectId": project, "name": "不要的"}},
+                           {"kind": "newTask", "suggestionIds": ids[1:2], "newTask": {"projectId": project, "name": "留着的"}}])["reportId"]
+    _split(client, rid, "i0", ids[:1], dismiss=True)                      # 整条拆走 = 不要这个新任务
+    again = client.post(f"{SUG}/matches", json={"matches": [{"id": ids[2], "confidence": 0.5,
+                        "newTask": {"projectId": project, "name": "不要的"}}]}).json()
+    assert again["matched"] == 0 and "否掉" in again["rejected"][0]["reason"]
+    assert _status(client, rid)["items"][1]["newTask"]["name"] == "留着的"      # 没拆的不受影响
+
+
+def test_split_conflicts_when_report_changes_between_read_and_write(client, seeded, monkeypatch):
+    from app.modules.activity import reports_repo  # noqa: PLC0415
+
+    ids = _ids(client, 3)
+    task, _ = _world_ids(seeded)
+    rid = _submit(client, [{"kind": "assign", "suggestionIds": ids[:2], "taskId": task},
+                           {"kind": "assign", "suggestionIds": ids[2:], "taskId": task}])["reportId"]
+    real = reports_repo.replace_items
+
+    def racing(user, report_id, old, new):
+        assert client.post(f"{REPORTS}/{report_id}/items/i1/reject").status_code == 200  # 读完之后别处改了
+        return real(user, report_id, old, new)
+
+    monkeypatch.setattr(reports_repo, "replace_items", racing)
+    _split(client, rid, "i0", ids[:1], expect=409, projectId=_world_ids(seeded)[1])
+    monkeypatch.undo()
+    rep = _status(client, rid)
+    assert len(rep["items"]) == 2 and rep["items"][0]["suggestions"].__len__() == 2    # 什么都没拆
+
+
+def test_set_results_ignores_suggestions_no_longer_in_the_item(client, seeded):
+    from app.modules.activity import reports_repo  # noqa: PLC0415
+
+    ids = _ids(client, 2)
+    task, _ = _world_ids(seeded)
+    rid = _submit(client, [{"kind": "assign", "suggestionIds": ids, "taskId": task}])["reportId"]
+    out = _split(client, rid, "i0", ids[1:], taskId=task)
+    user = _db()["activity_reports"].find_one({"id": rid})["user"]
+    reports_repo.set_results(user, rid, "i0", {ids[1]: {"state": "applied"}, ids[0]: {"state": "stale", "reason": "x"}})
+    items = {i["id"]: i for i in _db()["activity_reports"].find_one({"id": rid})["items"]}
+    assert list(items["i0"]["results"]) == [ids[0]] and items[out["itemId"]]["results"] == {}

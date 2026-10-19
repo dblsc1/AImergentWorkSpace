@@ -65,10 +65,16 @@ def set_target(user: str, report_id: str, item_id: str, fields: dict, unset: lis
                              array_filters=_item_filter(item_id, status={"$in": list(OPEN)})).modified_count > 0
 
 
+def replace_items(user: str, report_id: str, old: list[dict], new: list[dict]) -> bool:
+    """拆条用：整个 ``items`` 与读到时一样才换（别的条同时被批准 / 改动就不换，调用方 409 让人刷新）。"""
+    return _col().update_one({"user": user, "id": report_id, "status": "pending", "items": old},
+                             {"$set": {"items": new}}).modified_count > 0
+
+
 def set_results(user: str, report_id: str, item_id: str, results: dict[str, dict]) -> None:
-    """写逐段结果。``applied`` 一旦写下不再被改（并发的另一个批准写的 ``stale`` 盖不掉它）。"""
+    """写逐段结果（只写这一条里还有的建议：拆条与批准并发时，已被拆走的段不会把结果写回原条）。``applied`` 一旦写下不再被改（并发的另一个批准写的 ``stale`` 盖不掉它）。"""
     ops = [UpdateOne({"user": user, "id": report_id}, {"$set": {f"items.$[i].results.{sid}": res}},
-                     array_filters=_item_filter(item_id, **{f"results.{sid}.state": {"$ne": "applied"}}))
+                     array_filters=_item_filter(item_id, suggestionIds=sid, **{f"results.{sid}.state": {"$ne": "applied"}}))
            for sid, res in results.items()]
     if ops:
         _col().bulk_write(ops, ordered=False)
