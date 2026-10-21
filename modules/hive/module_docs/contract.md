@@ -116,6 +116,20 @@ consumes:
       才带 dry-run 回的 checksum 发 dryRun=false。**只进空实例**：服务端 409 时如实告诉人
       「这里已经有数据、不会合并」，不在前端做任何合并或清库。
       导入成功后整页刷新（蜂巢、档案、中心格一次全部重拉）。
+
+  - id: nexus-core.activity.proposals.v1
+    contract: ../../nexus-core/module_docs/contract.md
+    purpose: >
+      蜂巢右上角「AI 待批准」浮层（2026-10-22，见下「待批准浮层」节）：读 `GET activity/proposals?status=pending&limit=100`
+      画「新增项目 / 新增任务」卡片；卡片上的「批准」「不要」走 `POST activity/proposals/{id}/approve|reject`
+      （只有人能批；项目提议还没批准时批它的任务回 409，如实提示「先批准它的项目」）。
+
+  - id: nexus-core.activity.reports.v1
+    contract: ../../nexus-core/module_docs/contract.md
+    purpose: >
+      同一浮层：读 `GET activity/reports?status=pending&items=true` 画「新增任务 / 改挂 / 当噪声」卡片；
+      条目批准 / 不要走 `POST …/reports/{id}/items/{itemId}/approve|reject`，整份「全部批准」走 `…/reports/{id}/approve`。
+      只读与批准 / 不要，不拆条、不改去向（那些留在「待批准」页）。
 ```
 
 ## 两条本模块自己定的语义
@@ -182,6 +196,19 @@ consumes:
 **2026-10-09 追加（nexus-core v2.17「串行的注意力时间线」）**：中心格仍然只写**当前这一个**窗口 / 目标、钟数的是这一次
 待了多久（人的注意力是串行的）。`.hex-center-focus` 的 `title`（悬停的全文）末尾多一句共享件给的
 「（近 2 小时在这上面 N 分）」（`describe().dwell`，同一个窗口累计；老后端 / 离开时没有）。格子上的字不变，不多一个请求。
+
+## 待批准浮层（2026-10-22，v0.4）
+
+仓主 2026-10-22：「做一个蜂巢视图的侧边栏，把这些待批准的用图形化卡片栏放在右上角浮动，点击可以直接展开对应的项目和高亮对应任务或虚化显示 AI 建议的新任务 / 项目，直观展示 AI 的增删改查。」
+`hex-pending.js` 在蜂巢上方右上角浮一个面板（没有待批准的就整块不出现；可折叠，折叠态记在 localStorage `hive.pending.collapsed`；每 60 秒、蜂巢重拉后、每次批准后重读）：
+
+- 一张卡 = 一件待批准的事，按动词分色：**新增项目**、**新增任务**（来自 proposals，或报告里的 `newTask` 条，同一任务只画一张）、
+  **改挂**（报告 `assign` 条：目标任务 / 项目 + 窗口数与时长）、**当噪声**（报告 `dismiss` 条）。AI 给的文字一律只当文本。
+  后端没有「AI 改 / 删 / 移动已有对象」的提议类型，这里也不造。
+- 点卡片：目标是现有任务 → 展开它的项目并给那条任务脉冲描边；新增任务 → 展开项目并在列表顶放一条半透明虚线的「AI 建议」；
+  新增项目 → 在它的分区里插一格半透明虚线的幽灵格并展开，列出将建的任务。幽灵格 / 幽灵条目只活到收起或重拉为止，不参与长按计时。
+  其余分区的变灰沿用展开时现成的聚焦效果。
+- 卡片上「批准」「不要」，每份报告一个「全部批准」；成功后重拉蜂巢（真的新项目 / 任务就出现了）。底部「去待批准页」链到 `/assistant/`。
 
 ## 页面分工（设计意图，v0.3）
 
