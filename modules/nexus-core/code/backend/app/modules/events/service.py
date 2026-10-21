@@ -168,9 +168,12 @@ def current_sessions(source: str, dedupe_keys: list[str]) -> dict[str, dict]:
     （事件 id、当前归属的任务 / 项目、改挂过没有）。只读；``dedupe_keys`` 是调用方由自己的 id 拼的，不是请求里的值。"""
     if not dedupe_keys:
         return {}
-    latest = latest_reassignments(repo.query_events(REASSIGNED_TYPE))
+    sessions = repo.query_events(SESSION_TYPE, where={"source": source, "dedupeKey": {"$in": dedupe_keys}})
+    ids = list({d["id"] for d in sessions if isinstance(d.get("id"), str)})  # 只读这些段的改挂，不扫整个租户
+    latest = latest_reassignments(repo.query_events(REASSIGNED_TYPE, where={"data.sessionEventId": {"$in": ids}})
+                                  if ids else [])
     out = {}
-    for doc in repo.query_events(SESSION_TYPE, where={"source": source, "dedupeKey": {"$in": dedupe_keys}}):
+    for doc in sessions:
         moved = _current_subject(doc, latest)
         subject = moved or doc.get("subject") or {}
         if isinstance(subject.get("task"), str):
