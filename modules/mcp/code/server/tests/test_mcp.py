@@ -92,6 +92,9 @@ PROPOSALS = {  # nexus-core v2.30 GET activity/proposals?status=all 的形状
                "createdId": "t_made", "projectId": "p_3c", "projectName": "garden", "projectProposalId": None}]}
 
 
+CONFIRMED: list = []  # v1.23 测试按需填：status=confirmed 的行
+
+
 def respond(path, q, tenant):
     one = lambda k, d=None: q.get(k, [d])[0]  # noqa: E731
     if path in ("/api/core/detector/devices", "/api/core/detector/incidents"):
@@ -179,7 +182,7 @@ def respond(path, q, tenant):
         return 200, {"matched": 1, "rejected": [{"index": 1, "reason": "任务不存在：'t_x'"}]}
     if path == "/api/core/activity/suggestions":
         off, lim = int(one("offset", 0)), int(one("limit", 100))
-        items = SUGGESTIONS if one("status") == "pending" else []
+        items = SUGGESTIONS if one("status") == "pending" else CONFIRMED if one("status") == "confirmed" else []
         return 200, {"total": len(items), "items": items[off: off + lim]}
     if path == "/api/core/detector/rules":
         return 200, {"version": 3, "updatedAt": "2026-09-30T10:00:00+00:00", "rules": [RULE]}
@@ -1492,3 +1495,20 @@ def test_needs_ai_filter_flag_and_rule_mode(servers):
                            "confidence": 0.9, "autoRecord": False, "ruleWritten": False, "needsAI": True})
     r = ok(servers, "suggest_window_target", {"key": WINDOW["key"], "taskId": "t_a1", "confidence": 0.9, "reason": "x"})
     assert r["ruleWritten"] is False and "交给 AI 判断" in r["next"]
+
+
+def test_confirmed_rows_pass_recorded_to_through(servers, monkeypatch):
+    """v1.23：confirmed 行的 recordedTo 原样透传（名字过 _screen）；没有这个键的行（pending）不凭空多出来；描述里写明。"""
+    rec = {"projectId": "p_3c", "projectName": "项目\u202e\n甲", "taskId": None, "taskName": None,
+           "via": "project", "eventId": "evt_1"}
+    row = {"id": "sug_1", "status": "confirmed", "startAt": "2026-10-19T01:00:00+00:00",
+           "endAt": "2026-10-19T01:55:00+00:00", "durationSeconds": 3300, "app": "code", "title": "t",
+           "suggestion": {}, "recordedTo": rec}
+    monkeypatch.setattr(sys.modules[__name__], "CONFIRMED", [row, {k: v for k, v in row.items() if k != "recordedTo"}])
+    items = ok(servers, "list_activity_suggestions", {"status": "confirmed"})["items"]
+    assert items[0]["recordedTo"] == {**rec, "projectName": "项目 甲"}
+    assert "recordedTo" not in items[1]
+    monkeypatch.setattr(sys.modules[__name__], "CONFIRMED", [{**row, "recordedTo": None}])
+    assert ok(servers, "list_activity_suggestions", {"status": "confirmed"})["items"][0]["recordedTo"] is None
+    d = next(t["description"] for t in rpc(servers, "tools/list")["result"]["tools"] if t["name"] == "list_activity_suggestions")
+    assert "recordedTo" in d and "没有丢" in d

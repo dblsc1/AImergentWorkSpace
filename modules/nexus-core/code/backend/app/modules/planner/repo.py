@@ -56,6 +56,11 @@ def list_tasks(project_id: str | None = None) -> list[dict]:
     return list(get_db()["tasks"].find({**scope(), **query}, _HIDE))
 
 
+def by_ids(collection: str, ids: list[str]) -> list[dict]:
+    """当前租户里 ``id`` 在 ids 中的文档（一次查询；批量取名字用）。"""
+    return list(get_db()[collection].find({**scope(), "id": {"$in": ids}}, _HIDE)) if ids else []
+
+
 def list_tasks_by_project(project_id: str) -> list[dict]:
     return list_tasks(project_id)
 

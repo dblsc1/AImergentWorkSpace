@@ -178,6 +178,10 @@
 > 上传的建议带 `suggestion.needsAI: true`、留在待确认等 AI 批处理；`GET /activity/suggestions` 追加可选 `needsAI=true` 过滤；AI 经 `ai/suggest`
 > 回答这类窗口**不写规则**（回包 `ruleWritten: false, needsAI: true`）；AI 直接写规则（`ai-apply`）删不掉、改不了人写的 ai 规则。既有端点、字段、行为一个不改。
 >
+> **v2.35（追加式）：已确认的建议带上「记到了哪」。** 事故（2026-10-22）：AI 经 MCP 列 `status=confirmed` 的建议，看不到去向，就断言 55 分钟「丢了」；
+> 其实确认时已写一条 `session.completed`（防重键 `activity:<id>`），去向还可能被 `session.reassigned` 改过。本版**追加**：`GET /activity/suggestions?status=confirmed`
+> 的每一行多 `recordedTo`，见「已确认建议的去向」节。只读、不改任何写路径；其余状态、其余字段一个不改。
+>
 > **v2.30（追加式）：AI 可以提议新项目、项目下的新任务，人批准才建。** 仓主 2026-10-19：「给 mcp 加新增项目（需要人批准）和新增项目下的任务两个接口（都需要人批准）」。
 > 此前 AI 只能在报告里提议任务（`newTask`），没有项目的活动一直停着。本版**追加** `nexus-core.activity.proposals.v1`：`POST /activity/proposals/projects`、
 > `POST /activity/proposals/tasks`（任务挂在现成项目 `projectId`，或还没批准的项目提议 `projectProposalId`，恰好一个）、`GET /activity/proposals`（AI 与页面都读）、
@@ -4371,6 +4375,25 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 - **输入**：`from` / `to` 不是日期、`from` 晚于 `to`、跨度超过 92 天 → `422`。不做过期清理（读不写）；待确认的建议收到 14 天
   （`NEXUS_SUGGESTION_TTL_DAYS`）后由列表 / 上传惰性清掉，所以有数据的日子至多约 14 天。
 - **工作量有界**：一次聚合，走 `(user, status, startTs)` 索引，只扫该租户该区间的待确认文档（上传每批 ≤ 200、14 天过期，量级有限）；响应至多 92 行。
+
+## 已确认建议的去向（规范性 · v2.35）
+
+`GET /activity/suggestions?status=confirmed` 的每一行追加 `recordedTo`（**只在 `status=confirmed` 的列表里有**；`pending` / `dismissed` 的行没有这个键）：
+
+```jsonc
+"recordedTo": { "projectId": "p_…", "projectName": "…",
+                "taskId": "t_…" | null,      // null = 只记在该项目的「未分类」时间桶（桶不是任务）
+                "taskName": "…" | null,
+                "via": "confirm" | "project" | "reassign",
+                "eventId": "evt_…" }         // 台账里那条 session.completed 的 id（改挂的目标事件也是它）
+// 或 "recordedTo": null
+```
+
+- **当前去向**：台账里防重键 `activity:<建议 id>`、`source=activity-confirmed` 的那条 `session.completed`；改挂过（`nexus-core.sessions.reassign.v1`）取 `seq` 最大的那次
+  （与匹配历史、档案读端同一个算法 `latest_reassignments`）。`via`：改挂过 = `reassign`；没改挂且落在项目「未分类」桶 = `project`；其余 = `confirm`（与 `suggestions/history` 的 `via` 同义）。
+- **`null`**：找不到那条事件（占了位、事实还没写成，或事件被删），或它指向的任务 / 项目已删。不是错误。
+- **租户与成本**：只看当前租户；一页的 `recordedTo` 共用两次事件查询（段一次、改挂一次）、一次任务查询、一次项目查询，不逐条查（不 N+1）。
+- 名字是用户起的文本，按原样给；消费方（MCP）负责清洗。
 
 ## 变更记录
 

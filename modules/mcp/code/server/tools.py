@@ -502,6 +502,15 @@ def _collection(c):
     return {**c, "name": _screen(c.get("name"))} if isinstance(c, dict) else c
 
 
+def _recorded_to(r):
+    """v1.23：已确认的建议当前记在哪（nexus-core v2.35）。项目 / 任务名是用户文本，同样过一遍；找不到去向为 null。"""
+    if not isinstance(r, dict):
+        return None
+    return {"projectId": r["projectId"], "projectName": _screen_or_none(r.get("projectName")),
+            "taskId": r.get("taskId"), "taskName": _screen_or_none(r.get("taskName")),
+            "via": r.get("via"), "eventId": r.get("eventId")}
+
+
 def list_activity_suggestions(a, tenant):
     r = _get("/api/core/activity/suggestions", {"status": a["status"], "limit": a["limit"], "offset": a["_offset"],
                                                 **({"needsAI": "true"} if a.get("needsAI") else {})}, tenant)
@@ -522,6 +531,8 @@ def list_activity_suggestions(a, tenant):
             # v1.6：助理分的集合 {key, name} 与只到项目的建议（没有为 null）
             "collection": _collection(sug.get("collection")),
             "suggestedProjectId": sug.get("projectId"), "suggestedProjectPath": paths(None, sug.get("projectId")),
+            # v1.23：只有 status=confirmed 的行带 recordedTo（pending / dismissed 没有这个键）
+            **({"recordedTo": _recorded_to(s["recordedTo"])} if "recordedTo" in s else {}),
         })
     return {"total": r["total"], **_page("list_activity_suggestions", items, a, total=r["total"])}
 
@@ -855,7 +866,11 @@ _SPECS = [
      "newTask 是助理之前提议、还没建的新任务（没有为 null）；collection 是助理之前分的集合，"
      "suggestedProjectId 是助理之前标的项目（都可能为 null）。"
      "needsAI=true 是分类规则标了「交给 AI 判断」的窗口（不会自动记，等你归类）：needsAI 参数给 true 只列这类，"
-     "用 propose_activity_matches 或 propose_report 处理，不要为它们写固定规则。" + _SCREEN,
+     "用 propose_activity_matches 或 propose_report 处理，不要为它们写固定规则。"
+     "status=confirmed 的行带 recordedTo = 这段时间现在记在哪（已含事后改挂）："
+     "{projectId, projectName, taskId, taskName, via, eventId}，taskId 为 null = 只记在该项目的「未分类」；"
+     "via 是 confirm（确认到任务）、project（只确认到项目）、reassign（事后改过去向）；找不到去向为 null。"
+     "已确认的时间没有丢，别当成没去处。" + _SCREEN,
      _schema({"status": {"type": "string", "enum": ["pending", "confirmed", "dismissed"], "default": "pending",
                          "description": "缺省 pending"},
               "needsAI": {"type": "boolean", "default": False, "description": "true = 只列规则标了「交给 AI 判断」的窗口"},

@@ -270,7 +270,35 @@ def list_suggestions(status: str, limit: int, offset: int, needs_ai: bool = Fals
     pids = [d["suggestion"]["newTask"]["proposalId"] for d in docs if d["suggestion"].get("newTask")]
     st = proposals.statuses(user, pids) if pids else {}
     open_ids = {k for k, v in st.items() if v in ("pending", "accepted")}
-    return {"total": total, "items": [_item(d, open_ids) for d in docs]}
+    items = [_item(d, open_ids) for d in docs]
+    if status == "confirmed":  # v2.35：已确认的带「记到了哪」（只此一处，别的状态不带这个键）
+        rec = _recorded_to(docs)
+        for it in items:
+            it["recordedTo"] = rec.get(it["id"])
+    return {"total": total, "items": items}
+
+
+def _recorded_to(docs: list[dict]) -> dict[str, dict | None]:
+    """v2.35：建议 id → 台账里那条 ``session.completed`` 的**当前**去向（改挂过的取最后一次）。
+    一次取事件（含改挂，复用 ``current_sessions``）+ 一次取任务 + 一次取项目，不逐条查。
+    没找到事件（占了位还没写成 / 事件被删）或任务 / 项目已删 → 不在结果里（调用方当 null）。"""
+    cur = events_service.current_sessions(SOURCE, [f"activity:{d['id']}" for d in docs])
+    tasks = {t["id"]: t for t in planner_service.tasks_by_ids(list({c["task"] for c in cur.values()}))}
+    projects = {p["id"]: p for p in planner_service.projects_by_ids(list({t["projectId"] for t in tasks.values()}))}
+    out: dict[str, dict | None] = {}
+    for d in docs:
+        hit = cur.get(f"activity:{d['id']}")
+        task = tasks.get(hit["task"]) if hit else None
+        project = projects.get(task["projectId"]) if task else None
+        if project is None:
+            continue
+        bucket = unclassified.is_bucket(task)
+        out[d["id"]] = {
+            "projectId": project["id"], "projectName": project["name"],
+            "taskId": None if bucket else task["id"], "taskName": None if bucket else task["name"],
+            "via": "reassign" if hit["moved"] else "project" if bucket else "confirm", "eventId": hit["id"],
+        }
+    return out
 
 
 def _get(user: str, sug_id: str) -> dict:

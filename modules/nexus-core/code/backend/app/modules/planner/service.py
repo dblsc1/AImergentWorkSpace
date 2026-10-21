@@ -76,6 +76,14 @@ def get_task(task_id: str) -> dict | None:
     return repo.get_task(task_id)
 
 
+def tasks_by_ids(ids: list[str]) -> list[dict]:
+    return repo.by_ids("tasks", ids)
+
+
+def projects_by_ids(ids: list[str]) -> list[dict]:
+    return repo.by_ids("projects", ids)
+
+
 def list_zones() -> list[dict]:
     return repo.list_zones()
 

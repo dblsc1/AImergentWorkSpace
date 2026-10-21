@@ -48,6 +48,15 @@ class Suggestion(BaseModel):
     classifier: str
 
 
+class RecordedTo(BaseModel):  # v2.35：已确认的建议当前记在哪
+    projectId: str
+    projectName: str
+    taskId: str | None
+    taskName: str | None
+    via: Literal["confirm", "project", "reassign"]
+    eventId: str
+
+
 class Item(BaseModel):
     id: str
     deviceId: str
@@ -61,6 +70,7 @@ class Item(BaseModel):
     rejectedTaskIds: list[str] = []  # v2.7：人否掉过的任务
     auto: bool = False  # v2.14：不是人确认的，是自动记录记下的
     status: str
+    recordedTo: RecordedTo | None = None  # v2.35：只在 status=confirmed 的列表里有；找不到事件 / 去向已删为 null
 
 
 class ListOut(BaseModel):
@@ -124,7 +134,7 @@ def upload(body: UploadIn, request: Request) -> dict:
     return auto_entry.upload(body.deviceId, body.segments, request)
 
 
-@router.get("", response_model=ListOut)
+@router.get("", response_model=ListOut, response_model_exclude_unset=True)  # v2.35：recordedTo 只在 confirmed 行里出现
 def list_suggestions(
     status: Literal["pending", "confirmed", "dismissed"] = "pending",
     limit: int = 100,

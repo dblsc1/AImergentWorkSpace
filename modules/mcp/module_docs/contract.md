@@ -140,3 +140,5 @@ v1.18（2026-10-19，nexus-core v2.30，仓主：「给 mcp 加新增项目（�
 v1.14（2026-10-09，nexus-core v2.22「忽略并记住」）：`get_detector_rules` 多读一个 `GET /api/core/activity/ignores`，输出追加 `ignored`（`{id, app, hasTitleFilter, since, ignoredRecords, ignoredSeconds}`，`app` 过 `_screen`；**不出 `titleContains`**——那段匹配文字可能就是被忽略窗口标题的一部分，只给登录的人；老后端 404 = `[]`）。工具数、写端点不变。`get_current_timer` 的 `agents[]`、`get_agent_time` 的 `open[]` 不列藏起来的代理是 nexus-core 的 views 做的，MCP 原样带出。 两处各追加 `hiddenCount`（数字，藏起来的在跑代理个数，不带名字；老后端没有 = 0），让模型知道列表不全。
 
 v1.22（2026-10-19，nexus-core v2.34）：`list_activity_suggestions` 追加可选 `needsAI`（true 才下传 `?needsAI=true`；绑进游标）与每项 `needsAI`；`get_detector_rules` 的规则只在 `mode` 是 `ai` 时多一个 `mode` 键；`_RULES_IN` 的规则追加 `mode`；`suggest_window_target` 回包带 `needsAI` 时 `next` 改说「没写规则」。工具数不变。
+
+v1.23（2026-10-22，nexus-core v2.35）：`list_activity_suggestions` 的 `status=confirmed` 行追加 `recordedTo`（`{projectId, projectName, taskId, taskName, via, eventId}`，当前去向、含事后改挂；`taskId` 为 null = 只记在项目的「未分类」；找不到为 null；名字过 `_screen`），pending / dismissed 行没有这个键；工具描述写明「已确认的时间没有丢」。工具数不变，不新增调用路径。
