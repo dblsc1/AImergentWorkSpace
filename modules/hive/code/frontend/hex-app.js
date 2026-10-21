@@ -867,6 +867,8 @@
     collapse: collapse,
     getState: function () { return state; },
     fillCell: fillCell,
+    expand: expand,
+    mount: mount,
     setStatus: setStatus,
     reloadExpanded: function () { return refresh(true); },
     // 建完项目用这条：那一格的身份刚从"占位格"变成"某个项目"，展开态却挂在

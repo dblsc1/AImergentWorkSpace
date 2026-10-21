@@ -4251,6 +4251,7 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 | `mcp`（v2.22） | `activity.ignores.v1`：`get_detector_rules` 追加 `ignored`（`GET activity/ignores`）；`get_current_timer` / `get_agent_time` 因 `views/current` / `views/agent-time` 不列藏起来的代理而不再列它们的在跑运行（汇总不变）（`mcp.tools.v1` v1.14） | `modules/mcp` |
 | `assistant` 前端（v2.30） | `activity.proposals.v1`：「待批准」页的「新项目与任务」块（读 `GET activity/proposals?status=pending`，批准 / 不要走 `…/{id}/approve|reject`） | `modules/assistant` |
 | `mcp`（v2.30） | `activity.proposals.v1`：`propose_project`（`POST activity/proposals/projects`）、`propose_task`（`POST …/tasks`）；`list_projects` 读 `GET activity/proposals?status=all&limit=50` 追加 `proposals`；批准 / 不要 MCP 永远不调 | `modules/mcp` |
+| `hive` 前端（v2.30 / v2.20 的新增消费方） | `activity.proposals.v1` + `activity.reports.v1`：蜂巢右上角「AI 待批准」浮层（读 `GET activity/proposals?status=pending&limit=100`、`GET activity/reports?status=pending&items=true`；批准 / 不要走 `…/proposals/{id}/approve|reject`、`…/reports/{id}/approve`、`…/items/{id}/approve|reject`；不拆条、不改去向） | `modules/hive` |
 | `assistant` 前端（v2.20） | `activity.reports.v1`：顶部「AI 报告」块（读 `GET activity/reports?status=pending` 与 `…/{id}`，批准 / 改 / 不要走 `…/approve`、`…/items/{id}/approve|reject`、`…/reject`） | `modules/assistant` |
 | `mcp`（v2.20） | `activity.reports.v1`：`propose_report`（`POST activity/reports`）、`get_report_status`（`GET activity/reports?status=all&limit=1&items=true`）；批准 / 不要 MCP 永远不调 | `modules/mcp` |
 | `assistant` 前端（v2.15） | 规则的 `auto`（「AI 自动」徽标，整套保存时原样带回 `author` / `auto`）；`GET /api/core/activity/auto` 的 `ai` | `modules/assistant` |
