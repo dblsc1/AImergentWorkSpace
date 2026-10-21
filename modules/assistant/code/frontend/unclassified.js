@@ -12,8 +12,11 @@
  * - 撤回：刚归入成功的那一批可以「撤回」= 逐段 POST …/reassign {projectId: 原项目}（放回原项目的桶；台账里是又一条改挂）。
  *   只管最近一次操作。
  * - 从第一个请求到列表重拉完，面板里的按钮与下拉全部禁用。
- * - 一段都没有、events 404 / 读取失败 → 整块不出现。**归入不是计时**：不发 honeycomb:timer-changed。
+ * - 一段都没有（也没清空过）、events 404 / 读取失败 → 整块不出现。**归入不是计时**：不发 honeycomb:timer-changed。
  * - 名字（项目、任务、source）一律 textContent。不轮询：打开页面、每次操作后、标签页重新可见时拉。
+ * - 「清空列表」（仓主 2026-10-22：留着时间，只清列表）：记下此刻列出的段里最新的记录时刻（服务端的 recordedAt，没有就 time；
+ *   用服务端时刻，不用本机钟，免得钟不准藏错），之后只列比它晚记下的段。时间照旧算在各项目上，台账一条不动；
+ *   存在本浏览器（localStorage，存不了就只管这次打开），「全部显示」撤掉。清空过 → 只剩「全部显示」时面板也在。
  * 对外只挂 window.assistantUnclassified（纯函数，给单测用）。
  */
 (function () {
@@ -63,6 +66,23 @@
     }).sort(function (a, b) { return b.seconds - a.seconds; });
   }
 
+  // 清空列表之后记下的段才列（clearedAt 为空 = 全列）
+  // keep：清空后又撤回放回来的段 id（照样列，不然一撤回就看不见了）
+  function afterClear(items, clearedAt, keep) {
+    var cut = clearedAt ? new Date(clearedAt).getTime() : NaN;
+    if (isNaN(cut)) return items;
+    return items.filter(function (e) { var t = stampOf(e); return isNaN(t) || t > cut || Boolean(keep && keep[e.id]); });  // 读不出时刻的不藏
+  }
+
+  function stampOf(e) { return new Date(e.recordedAt || e.time).getTime(); }
+
+  // 清空的分界：列出的段里最新的记录时刻（服务端钟）；一段都读不出 → ""（不清，不拿本机钟凑）
+  function newestStamp(items) {
+    var max = NaN;
+    items.forEach(function (e) { var t = stampOf(e); if (!isNaN(t) && !(t <= max)) max = t; });
+    return isNaN(max) ? "" : new Date(max).toISOString();
+  }
+
   function taskIn(tree, taskId) {
     return ((tree && tree.projects) || []).some(function (p) {
       return (p.tasks || []).some(function (t) { return t.id === taskId; });
@@ -71,6 +91,7 @@
 
   if (typeof window !== "undefined") {
     window.assistantUnclassified = { rowLabel: rowLabel, sourceLabel: sourceLabel, buildGroups: buildGroups,
+                                     afterClear: afterClear, newestStamp: newestStamp,
                                      formatMinutes: formatMinutes };
   }
   if (typeof document === "undefined") return;
@@ -83,6 +104,30 @@
   var messageEl = document.getElementById("unc-message");
   var undoBtn = document.getElementById("unc-undo");
   var groupsEl = document.getElementById("unc-groups");
+  var clearBtn = document.getElementById("unc-clear");
+  var showAllBtn = document.getElementById("unc-show-all");
+  var CLEAR_KEY = "assistant.unclassified.clearedAt";
+
+  var memCut = null;  // localStorage 用不了时的退路：只管这次打开
+  function clearedAt() {
+    if (memCut !== null) return memCut;
+    try { return localStorage.getItem(CLEAR_KEY) || ""; } catch (err) { return ""; }
+  }
+  function setClearedAt(v) {
+    memCut = v;
+    try { if (v) localStorage.setItem(CLEAR_KEY, v); else localStorage.removeItem(CLEAR_KEY); memCut = null; } catch (err) { /* 留在 memCut */ }
+  }
+  var KEEP_KEY = "assistant.unclassified.keep";  // 清空后撤回放回来的段 id，同样存本浏览器
+  var memKeep = null;
+  function loadKeep() {
+    if (memKeep) return memKeep;
+    try { return JSON.parse(localStorage.getItem(KEEP_KEY) || "{}") || {}; } catch (err) { return {}; }
+  }
+  function saveKeep(k) {
+    memKeep = k;
+    try { if (Object.keys(k).length) localStorage.setItem(KEEP_KEY, JSON.stringify(k)); else localStorage.removeItem(KEEP_KEY); memKeep = null; } catch (err) { /* 留在 memKeep */ }
+  }
+  var hiddenCount = 0, hiddenMore = false, shown = [], keep = loadKeep();
 
   var tree = null, groups = [];
   var choice = {};   // 项目 id → 选中的任务 id
@@ -125,16 +170,26 @@
   // 拉任务树 + 每个桶上的段。任何一步不行 → 当没有（面板不出现），不报错。
   async function load() {
     var t = await getJson(CORE + "views/tree");
-    var lists = {};
+    var lists = {}, cut = clearedAt(), hidden = 0, more = false, all = [];
     var withBucket = ((t && t.projects) || []).filter(function (p) { return p.unclassifiedTaskId; });
     var results = await Promise.all(withBucket.map(function (p) {
       return getJson(CORE + "events?type=session.completed&limit=200&taskId=" + encodeURIComponent(p.unclassifiedTaskId));
     }));
     withBucket.forEach(function (p, i) {
       var r = results[i];
-      if (r && Array.isArray(r.items)) lists[p.id] = { total: r.total, items: r.items };
+      if (!r || !Array.isArray(r.items)) return;
+      var kept = afterClear(r.items, cut, keep), gone = r.items.length - kept.length;
+      hidden += gone;
+      // 清空过、这一页之外还有段：页外藏了几段数不清——只报列出的（不说「还有 N 段」），「全部显示」的数带「+」
+      var paged = cut && (r.total || 0) > r.items.length;
+      if (paged) more = true;
+      lists[p.id] = { total: paged ? kept.length : Math.max((r.total || 0) - gone, kept.length), items: kept };
+      all = all.concat(kept);
     });
     tree = t;
+    hiddenCount = hidden;
+    hiddenMore = more;
+    shown = all;
     groups = buildGroups(tree, lists);
     Object.keys(choice).forEach(function (pid) {
       var c = choice[pid];
@@ -189,7 +244,13 @@
 
   function render() {
     var segments = groups.reduce(function (n, g) { return n + g.total; }, 0);
-    panel.hidden = !groups.length && !messageEl.textContent;
+    var anyHidden = hiddenCount > 0 || hiddenMore;
+    panel.hidden = !groups.length && !messageEl.textContent && !anyHidden;
+    clearBtn.hidden = !groups.length;
+    clearBtn.disabled = busy;
+    showAllBtn.hidden = !anyHidden;
+    showAllBtn.disabled = busy;
+    showAllBtn.textContent = "全部显示（已清空 " + hiddenCount + (hiddenMore ? "+" : "") + " 段）";
     countEl.textContent = segments ? String(segments) : "";
     statusEl.hidden = !messageEl.textContent;
     undoBtn.hidden = !undo;
@@ -288,15 +349,37 @@
     undo = null;
     render();
     var result = await sendAll(batch.ids, { projectId: batch.projectId });
+    result.done.forEach(function (id) { keep[id] = true; });
+    saveKeep(keep);
     say(result.failed
       ? result.failed + " / " + batch.ids.length + " 段没撤回：" + result.detail
       : "已撤回 " + result.done.length + " 段，放回未分类", result.failed > 0);
     await finish();
   });
 
+  clearBtn.addEventListener("click", function () {
+    if (busy) return;
+    var cut = newestStamp(shown);
+    if (!cut) { say("这些段读不出记录时刻，清不了", true); render(); return; }
+    setClearedAt(cut);  // 撤回照旧可用：那一批的去向没变；撤回放回来的段照样列（keep）
+    keep = {};
+    saveKeep(keep);
+    say("列表已清空：时间仍记在各项目上，之后新记的段照常列出");
+    refresh();
+  });
+  showAllBtn.addEventListener("click", function () {
+    if (busy) return;
+    setClearedAt("");
+    keep = {};
+    saveKeep(keep);
+    say("");
+    refresh();
+  });
+
   async function refresh() {
     if (busy) return;
     busy = true;
+    render();
     await finish();
   }
 
