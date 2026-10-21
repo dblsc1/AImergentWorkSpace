@@ -123,13 +123,17 @@
     </section>
 
     <!-- 「待分类」（nexus-core v2.11 改挂未分类时间，unclassified.js）：还记在各项目「未分类」里的每一段，挑任务归进去。
-         没有可归的段、或后端没有这个读端时整块保持 hidden。 -->
+         没有可归的段（也没清空过）、或后端没有这个读端时整块保持 hidden。 -->
     <section class="card unc-panel" id="unclassified-panel" hidden aria-labelledby="unc-title">
       <h2 class="suggest-title" id="unc-title">待分类 <span class="suggest-count mono" id="unc-count"></span></h2>
       <p class="suggest-sub">记在项目「未分类」里的时间。挑个任务归进去——原来的记录不改，只是追加一条「归入」，随时可以再改。</p>
       <div class="unc-status" id="unc-status" hidden>
         <p class="suggest-message" id="unc-message" role="status"></p>
         <button type="button" class="btn btn-ghost" id="unc-undo" hidden>撤回</button>
+      </div>
+      <div class="unc-status">
+        <button type="button" class="btn btn-ghost" id="unc-clear" hidden title="时间照旧算在各项目上，只是不再列出">清空列表</button>
+        <button type="button" class="btn btn-ghost" id="unc-show-all" hidden></button>
       </div>
       <div class="unc-groups" id="unc-groups"></div>
     </section>

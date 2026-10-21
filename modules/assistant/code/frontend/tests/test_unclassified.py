@@ -359,3 +359,67 @@ def test_rows_sorted_longest_first_newest_on_ties_stable_across_reload(browser, 
         page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
         page.wait_for_timeout(300)
         assert _rows(page, ENG) == ["d", "b", "a", "c"]
+
+
+# ------------------------------------------------------------------ 清空列表（仓主 2026-10-22：留着时间，只清列表）
+
+
+def test_clear_list_hides_old_segments_without_writing_and_show_all_brings_them_back(browser, static_base_url):
+    with opened(browser, static_base_url) as (page, stub):
+        page.wait_for_selector(f"{ENG} .unc-row")
+        page.click("#unc-clear")
+        page.wait_for_function("() => !document.querySelector('.unc-row')")
+        assert stub.posts == []  # 一条改挂都不发：时间仍在各项目上
+        assert page.locator("#unc-show-all").inner_text() == "全部显示（已清空 4 段）"
+        assert page.locator("#unc-clear").is_hidden()
+        assert "时间仍记在各项目上" in page.locator("#unc-message").inner_text()
+        page.reload()  # 记在本浏览器：重开还是清空的
+        page.wait_for_selector("#unc-show-all:not([hidden])")
+        assert page.locator(".unc-row").count() == 0
+        page.click("#unc-show-all")
+        page.wait_for_selector(f"{ENG} .unc-row")
+        assert len(_rows(page, ENG)) == 3 and page.locator("#unc-show-all").is_hidden()
+
+
+def test_after_clear_pure(browser, static_base_url):
+    with opened(browser, static_base_url) as (page, _):
+        kept = page.evaluate("""() => window.assistantUnclassified.afterClear([
+            {id: 'old', time: '2026-10-21T10:00:00+08:00'},
+            {id: 'new', time: '2026-10-21T10:00:00+08:00', recordedAt: '2026-10-22T09:00:00+08:00'},
+            {id: 'late', time: '2026-10-22T12:00:00+08:00'}], '2026-10-22T08:00:00+08:00').map(e => e.id)""")
+        assert kept == ["new", "late"]
+        assert page.evaluate("() => window.assistantUnclassified.afterClear([{id: 'x', time: 't'}], '').length") == 1
+
+
+def test_clear_cut_uses_server_stamps_and_keeps_unreadable(browser, static_base_url):
+    with opened(browser, static_base_url) as (page, _):
+        u = "window.assistantUnclassified"
+        assert page.evaluate(f"() => {u}.afterClear([{{id: 'x', time: 'bad'}}], '2026-10-22T08:00:00Z').length") == 1
+        stamp = page.evaluate(f"() => {u}.newestStamp([{{time: '2026-10-21T10:00:00Z'}},"
+                              f" {{time: '2026-10-21T09:00:00Z', recordedAt: '2026-10-22T01:00:00Z'}}])")
+        assert stamp == "2026-10-22T01:00:00.000Z"  # 用服务端记下的时刻，不用本机钟
+
+
+def test_clear_still_works_when_storage_is_unavailable(browser, static_base_url):
+    with opened(browser, static_base_url) as (page, stub):
+        page.wait_for_selector(f"{ENG} .unc-row")
+        page.evaluate("() => { Storage.prototype.setItem = () => { throw new Error('quota'); }; }")
+        page.click("#unc-clear")
+        page.wait_for_function("() => !document.querySelector('.unc-row')")
+        assert page.locator("#unc-show-all").is_visible() and stub.posts == []
+
+
+def test_undo_after_clear_brings_the_batch_back_into_view(browser, static_base_url):
+    with opened(browser, static_base_url) as (page, stub):
+        page.wait_for_selector(f"{ENG} .unc-row")
+        page.select_option(f"{BOOK} .unc-task", "t_theory")
+        page.click(f"{BOOK} .unc-all")
+        _gone(page, "evt_9")
+        _idle(page)
+        page.click("#unc-clear")
+        page.wait_for_function("() => !document.querySelector('.unc-row')")
+        page.click("#unc-undo")
+        page.wait_for_selector('.unc-row[data-id="evt_9"]')  # 撤回放回来的照样列
+        assert page.locator(".unc-row").count() == 1
+        page.reload()  # 重开也照样列
+        page.wait_for_selector('.unc-row[data-id="evt_9"]')
