@@ -38,9 +38,9 @@ check "没登录调 MCP 被拒（302 去登录页）" \
 check "令牌 initialize" \
   "$(mcp "$TOK" initialize '{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}' \
      | py 'print(r["result"]["protocolVersion"], list(r["result"]["capabilities"]))')" "2025-06-18 ['tools']"
-check "tools/list：21 个工具（write 令牌，v1.18），不是只读的只有 propose_ 那五个、apply_detector_rules 与认窗口的两个" \
+check "tools/list：23 个工具（write 令牌，v1.24），不是只读的只有 propose_ 那七个、apply_detector_rules 与认窗口的两个" \
   "$(mcp "$TOK" tools/list '{}' | py 't=r["result"]["tools"]; print(len(t), [x["name"] for x in t if not x["annotations"]["readOnlyHint"]])')" \
-  "21 ['propose_detector_rules', 'apply_detector_rules', 'propose_activity_matches', 'propose_report', 'propose_project', 'propose_task', 'get_window_awaiting_target', 'suggest_window_target']"
+  "23 ['propose_detector_rules', 'apply_detector_rules', 'propose_activity_matches', 'propose_report', 'propose_project', 'propose_task', 'propose_change', 'propose_ignore_rule', 'get_window_awaiting_target', 'suggest_window_target']"
 # detector.rules.v1：经 MCP 起草规则 → 草稿在，但生效规则没变（应用只有人能，令牌直连 403）
 V=$("${C[@]}" -b "$A" "$BASE/api/core/detector/rules" | py 'print(r["version"])')  # tokens.sh 可能已经存过
 check "经 MCP 起草分类规则（草稿，不生效）" \

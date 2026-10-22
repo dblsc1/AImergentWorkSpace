@@ -397,6 +397,8 @@ fieldset.set-field > legend { font-size: var(--fs-sub); color: var(--ink-2); mar
 .report-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-1) var(--sp-2); flex: 1 1 16em; min-width: 0; }
 .report-main .unc-what { flex: 1 1 100%; }
 .report-dur { font-size: var(--fs-sub); color: var(--ink-2); }
+.report-row.is-danger .unc-what { color: var(--danger); font-weight: 600; }
+.report-row.is-danger { border-left: 3px solid var(--danger); }
 .report-reason { flex: 1 1 100%; font-size: var(--fs-sub); color: var(--ink-2); overflow-wrap: anywhere; }
 .report-status { margin-right: 0; overflow-wrap: anywhere; }
 .report-row.is-failed .report-status { color: var(--danger); border-color: var(--danger); }

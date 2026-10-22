@@ -32,15 +32,17 @@ DETAIL = {**_REPORT, "items": [{**_ITEMS[0], "suggestions": [{"id": "a", "durati
                                {**_ITEMS[1], "suggestions": [{"id": "b", "durationSeconds": 60}], "seconds": 60}]}
 
 
-def _install(hive: Any) -> None:
+def _install(hive: Any, proposals: dict = PROPOSALS) -> None:
     def route(r: Route) -> None:
         path = r.request.url.split("/api/core/", 1)[1]
         if path.startswith("activity/proposals?"):
-            r.fulfill(status=200, content_type="application/json", body=json.dumps(PROPOSALS))
+            r.fulfill(status=200, content_type="application/json", body=json.dumps(proposals))
         elif path == "activity/reports/r1" and r.request.method == "GET":
             r.fulfill(status=200, content_type="application/json", body=json.dumps(DETAIL))
         elif path.startswith("activity/reports?"):
             r.fulfill(status=200, content_type="application/json", body=json.dumps(REPORTS))
+        elif r.request.method == "POST" and path.startswith("activity/proposals/ch_409/"):
+            r.fulfill(status=409, content_type="application/json", body=json.dumps({"detail": "目标已经变了"}))
         elif r.request.method == "POST":
             hive.writes.append(path)
             r.fulfill(status=200, content_type="application/json", body="{}")
@@ -96,3 +98,53 @@ def test_click_move_highlights_task_and_new_project_is_ghost(browser, base) -> N
             hive.page.screenshot(path=shot)
         hive.page.keyboard.press("Escape")
         assert hive.page.locator(".hex-cell.is-ghost").count() == 0, "收起后幽灵格消失"
+
+
+_CH = {"kind": "change", "status": "pending", "reason": "", "createdAt": "x", "createdId": None, "name": None, "toId": None, "toName": None}
+EDITS = {"projects": [], "tasks": [], "changes": [
+    {**_CH, "id": "ch_1", "op": "delete", "target": "task", "targetId": "t_p_math", "targetName": "数学的任务", "projectId": "p_math"},
+    {**_CH, "id": "ch_2", "op": "move", "target": "task", "targetId": "t_p_math", "targetName": "数学的任务", "projectId": "p_math",
+     "toId": "p_piano", "toName": "钢琴"},
+    {**_CH, "id": "ch_3", "op": "rename", "target": "project", "targetId": "p_math", "targetName": "数学", "projectId": None, "name": "代数"}],
+    "ignores": [{"id": "ig_1", "kind": "ignore", "status": "pending", "app": "Slack", "titleContains": "闲聊", "reason": "", "createdAt": "x", "createdId": None}]}
+
+
+def test_change_and_ignore_cards(browser, base) -> None:  # noqa: F811
+    with open_hive(browser, base) as hive:
+        _install(hive, EDITS)
+        hive.page.evaluate("() => window.NexusTableHexApp.refresh()")
+        hive.page.wait_for_selector(".hp-card")
+        assert hive.page.locator(".hp-badge").inner_text() == "6"  # 4 条提议 + 报告的 2 条
+        assert "标题含" in hive.page.locator('.hp-card[data-key="ig_1"]').inner_text()
+        hive.page.locator('.hp-card[data-key="ch_1"] .hp-name').click()
+        assert hive.page.locator(".hex-cell.is-expanded").get_attribute("data-project-id") == "p_math"
+        assert hive.page.locator(".is-pending-hl.is-pending-del").get_attribute("data-task-id") == "t_p_math"
+        hive.page.locator('.hp-card[data-key="ch_2"] .hp-name').click()
+        assert hive.page.locator(".is-pending-del").count() == 0, "换卡清掉删除标记"
+        assert hive.page.locator(".hex-cell.is-pending-hl").get_attribute("data-project-id") == "p_piano", "目的项目也点亮"
+        hive.page.wait_for_timeout(500)   # opacity 过渡 300ms
+        assert hive.page.evaluate("getComputedStyle(document.querySelector('.hex-cell.is-pending-hl')).opacity") == "1", "目的格没被调灰"
+        hive.page.locator('.hp-card[data-key="ch_3"] .hp-name').click()
+        assert hive.page.locator(".hex-cell.is-pending-hl").get_attribute("data-project-id") == "p_math"
+        hive.page.keyboard.press("Escape")
+        assert hive.page.locator(".is-pending-hl, .is-pending-del").count() == 0, "收起后高亮清掉"
+        hive.page.locator('.hp-card[data-key="ig_1"] .hp-name').click()
+        hive.page.locator('.hp-card[data-key="ch_3"] [data-hp=approve]').click()
+        hive.page.wait_for_timeout(50)
+        assert hive.writes == ["activity/proposals/ch_3/approve"]
+
+
+def test_project_delete_marks_cell_and_409_shows_detail(browser, base) -> None:  # noqa: F811
+    props = {"projects": [], "tasks": [], "ignores": [], "changes": [
+        {**_CH, "id": "ch_409", "op": "delete", "target": "project", "targetId": "p_math", "targetName": "数学", "projectId": None},
+        {**_CH, "id": "ch_x", "op": "teleport", "target": "task", "targetId": "t", "targetName": "x", "projectId": None}]}
+    with open_hive(browser, base) as hive:
+        _install(hive, props)
+        hive.page.evaluate("() => window.NexusTableHexApp.refresh()")
+        hive.page.wait_for_selector(".hp-card")
+        assert hive.page.locator('.hp-card[data-key="ch_x"]').count() == 0, "未知操作不画"
+        hive.page.locator('.hp-card[data-key="ch_409"] .hp-name').click()
+        assert hive.page.locator(".hex-cell.is-pending-del.is-pending-hl").get_attribute("data-project-id") == "p_math"
+        hive.page.locator('.hp-card[data-key="ch_409"] [data-hp=approve]').click()
+        hive.page.wait_for_selector(".hp-err")
+        assert hive.page.locator(".hp-err").inner_text() == "目标已经变了"

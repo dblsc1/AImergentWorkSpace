@@ -29,7 +29,7 @@
   var countEl = document.getElementById("newitems-count");
   var messageEl = document.getElementById("newitems-message");
   var groupsEl = document.getElementById("newitems-groups");
-  var data = { projects: [], tasks: [] }, busy = false;
+  var data = { projects: [], tasks: [], changes: [], ignores: [] }, busy = false;
 
   function el(tag, cls, text) {
     var node = document.createElement(tag);
@@ -47,7 +47,10 @@
       var res = await fetch(CORE + "activity/proposals?status=pending&limit=100");
       var body = res.ok ? await res.json() : null;
       data = body && Array.isArray(body.projects) && Array.isArray(body.tasks) ? body : { projects: [], tasks: [] };
-    } catch (err) { data = { projects: [], tasks: [] }; }
+      // 老服务端没有这两个键：当空
+      data.changes = Array.isArray(data.changes) ? data.changes : [];
+      data.ignores = Array.isArray(data.ignores) ? data.ignores : [];
+    } catch (err) { data = { projects: [], tasks: [], changes: [], ignores: [] }; }
   }
   // → {ok, detail}
   async function post(id, verb) {
@@ -85,6 +88,46 @@
     return li;
   }
 
+  // AI 提议改名 / 移动 / 删除现有项目或任务（nexus-core 的 changes）；删除不可逆，标成危险色
+  var OPS = { rename: "改名", move: "移动", delete: "删除" };
+  function changeRow(c) {
+    var li = el("li", "unc-row report-row" + (c.op === "delete" ? " is-danger" : ""));
+    li.dataset.id = c.id;
+    var from = c.targetName == null ? "（已不存在）" : c.targetName;
+    var main = el("div", "report-main");
+    main.appendChild(el("span", "unc-what", OPS[c.op] || c.op));
+    main.appendChild(el("span", "auto-target", c.op === "rename" ? from + " 改成 " + (c.name == null ? "？" : c.name) : c.op === "move" ? from + " 移到 " + (c.toName == null ? "（已不存在）" : c.toName) : from));
+    if (c.reason) main.appendChild(el("span", "report-reason", "理由：" + c.reason));
+    li.appendChild(main);
+    return decide(li, c.id, from);
+  }
+  function ignoreRow(g) {
+    var li = el("li", "unc-row report-row");
+    li.dataset.id = g.id;
+    var main = el("div", "report-main");
+    main.appendChild(el("span", "unc-what", "以后都忽略"));
+    main.appendChild(el("span", "auto-target", (g.app == null ? "？" : g.app) + (g.titleContains ? " · 标题含 “" + g.titleContains + "”" : g.hasTitleFilter ? " · 带标题条件" : "")));
+    if (g.reason) main.appendChild(el("span", "report-reason", "理由：" + g.reason));
+    li.appendChild(main);
+    return decide(li, g.id, g.app);
+  }
+  function decide(li, id, label) {
+    var acts = el("div", "report-acts");
+    acts.appendChild(button("批准", "btn btn-fact report-ok", "批准：" + label, function () { run([[id, "approve"]], "已批准「" + label + "」"); }, busy));
+    acts.appendChild(button("不要", "btn btn-ghost report-no", "不要：" + label, function () { run([[id, "reject"]], "已不要「" + label + "」"); }, busy));
+    li.appendChild(acts);
+    return li;
+  }
+  function group(title, rows, make) {
+    if (!rows.length) return;
+    var box = el("section", "unc-group");
+    box.appendChild(el("div", "unc-head")).appendChild(el("h3", "unc-project", title));
+    var list = el("ul", "unc-list");
+    rows.forEach(function (r) { list.appendChild(make(r)); });
+    box.appendChild(list);
+    groupsEl.appendChild(box);
+  }
+
   function projectCard(p) {
     var box = el("section", "unc-group");
     box.dataset.id = p.id;
@@ -110,7 +153,7 @@
   }
 
   function render() {
-    var n = data.projects.length + data.tasks.length;
+    var n = data.projects.length + data.tasks.length + data.changes.length + data.ignores.length;
     panel.hidden = !n && !messageEl.textContent;
     countEl.textContent = n ? String(n) : "";
     groupsEl.textContent = "";
@@ -123,6 +166,8 @@
       box.appendChild(list);
       groupsEl.appendChild(box);
     }
+    group("修改与删除", data.changes, changeRow);
+    group("以后都忽略", data.ignores, ignoreRow);
   }
 
   // steps: [[id, "approve"|"reject"], …] 依次做，失败就停

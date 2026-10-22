@@ -178,6 +178,10 @@
 > 上传的建议带 `suggestion.needsAI: true`、留在待确认等 AI 批处理；`GET /activity/suggestions` 追加可选 `needsAI=true` 过滤；AI 经 `ai/suggest`
 > 回答这类窗口**不写规则**（回包 `ruleWritten: false, needsAI: true`）；AI 直接写规则（`ai-apply`）删不掉、改不了人写的 ai 规则。既有端点、字段、行为一个不改。
 >
+> **v2.36（追加式）：AI 可以提议「改名 / 搬移 / 删除」现成的项目或任务，以及「以后都忽略」某个程序 / 窗口，人批准才生效。** 仓主 2026-10-22 批准。
+> 同 v2.30：**AI 只提议，不直接写**；提议存同一个集合 `activity_new_items`，新增 `kind: change | ignore`。批准才经 `guard.run_write`（改名 / 搬移 / 删除）或 `ignore.add`（忽略规则）落地。
+> `GET activity/proposals` 响应追加 `changes` / `ignores` 两个键；既有端点、字段、行为一个不改。见「AI 提议改动与忽略规则」节。
+>
 > **v2.35（追加式）：已确认的建议带上「记到了哪」。** 事故（2026-10-22）：AI 经 MCP 列 `status=confirmed` 的建议，看不到去向，就断言 55 分钟「丢了」；
 > 其实确认时已写一条 `session.completed`（防重键 `activity:<id>`），去向还可能被 `session.reassigned` 改过。本版**追加**：`GET /activity/suggestions?status=confirmed`
 > 的每一行多 `recordedTo`，见「已确认建议的去向」节。只读、不改任何写路径；其余状态、其余字段一个不改。
@@ -3897,6 +3901,28 @@ AI 仍不能改 / 删任何已有规则、不能写匹配范围超出那一个�
 - 上限是软的：先数后插，并发提交最多超出并发数。
 - 不改的：`propose_report` 的 `newTask` 条仍只能挂现成项目，**不**能引用新项目提议（本版不做）。
 
+## AI 提议改动与忽略规则（规范性 · v2.36，`nexus-core.activity.proposals.v1` 追加）
+
+仓主 2026-10-22 批准。两样都沿用 v2.30 的口径：提议不碰 planner / 忽略规则一个字节；`pending | accepted | rejected`；被不要的永远记着；「只许人」批准 / 不要；提议两个 POST 带 Bearer 的设备令牌 `403`。
+
+| 端点 | 行为 |
+| --- | --- |
+| `POST /api/core/activity/proposals/changes` `{target: project\|task, targetId, op: rename\|move\|delete, name?, toId?, reason?}`（`extra=forbid`） | 提议改动。`name` 当且仅当 `rename`（走 `clean_name`，1–64 码点）；`toId` 当且仅当 `move`（项目 → 分区 id，任务 → 项目 id）；否则 `400`。目标不存在 `400`；`p_inbox` 与「未分类」桶 `400`；rename 与现名（归一化）相同 `400`、同级已有同名 `409`；move 目的地不存在 / 就是现在的位置 `400`；delete 项目：还有非桶任务 `409`（「先提议删掉或移走它的任务」）；delete 任务：被别的任务依赖 `409` |
+| `POST /api/core/activity/proposals/ignores` `{app, titleContains?, reason?}`（`extra=forbid`） | 提议一条忽略规则。长度上限同 `activity.ignores.v1`（`400`）；已有同样的规则 `409` |
+| `GET …/proposals` | 响应追加 `changes: [...]`、`ignores: [...]`（新的在前，同 `status` / `limit`）；`projects` / `tasks` 只含 v2.30 的两种 |
+| `POST …/{id}/approve` / `…/reject` | 同 v2.30，对新 kind 同样有效 |
+
+- **id**：`nc_` + `sha256(target\ntargetId\nop\n<归一化 name \| toId \| 空>)[:20]`；`ni_` + `sha256(fold(app)\nfold(titleContains))[:20]`。同 id 的 `pending` 再提 = 原样返回；`rejected` 再提 `409`「用户已经否掉过…」；`accepted` 再提 = 换成新的一条。
+- **上限**（软的，先数后插）：待批准 `change` 50、`ignore` 20，超了 `429`。
+- **change 视图**：`{id, kind:"change", status, op, target, targetId, targetName, projectId, name, toId, toName, reason, createdAt, createdId: null}`；`targetName` / `toName` 是**现在**的名字（东西没了为 `null`）；`projectId` 仅任务目标有（现属项目）。
+- **ignore 视图**：`{id, kind:"ignore", status, app, reason, createdAt, createdId}`，`createdId` = 批准后建出（或已有）的规则 id。`titleContains` **只对人**给（同 `ignore._out` / `ignore_router.is_human`），其余调用方只拿 `hasTitleFilter: bool`。
+- **快照**：提议时记下目标当时的名字（`snapName`）与所在父级（`snapParent`：项目的分区 / 任务的项目）；批准时 rename 要求名字没变、move 要求父级没变，否则 `409`「目标已被改过，请选「不要」」。
+- **同名**：`planner` 的 `update_project` / `update_task` **不查同级重名**，所以由本节自己查：提议时与批准动手前都查（rename：当前父级下；move：目的地下，用目标现在的名字），撞了 `409`，批准时不动手、提议留在 `pending`。
+- 搬移任务到系统收件箱 `p_inbox` 是允许的（收件箱只是不许被改名 / 搬移 / 删除）。
+- **批准**（只许人）：先复查目标还在（不在 `409`「已不存在，请选「不要」」）与上面的快照 / 同名；再 `pending → accepted` 条件更新并写占位 `applyClaimedAt`，**只有赢的那次动手**；输家等占位放掉（至多 `WAIT_SECONDS`，超时 `409`）后返回实际视图；动手 = `guard.run_write(request, op=update|delete, object_type=projects|tasks, entity_id, …)`（改名 / 搬移走 `update_project` / `update_task`，删除走 `delete_project` / `delete_task`，各自的保护照旧，审计照写；搬移与删除是高风险写，所以必须用人的请求，AI 来源 `403`）或 `ignore.add`；落地抛错 → 仅当占位仍是自己的才回到 `pending` 并重新抛出，人可以再批或不要。落地后记 `createdId` 并放占位，这一步失败不回滚。
+- 占位期间（`applyClaimedAt` 非空且未过 `WAIT_SECONDS`）同 id 的再提 `409`，不会换掉正在落地的那条。
+- `GET` 的 `limit` 对 `projects`+`tasks`、`changes`、`ignores` 三组各自生效，互不挤占。
+
 ## 泳道偏好与忽略并记住（规范性 · v2.22，`nexus-core.lanes.prefs.v1` + `nexus-core.activity.ignores.v1`）
 
 仓主 2026-10-09（原话见本文件头部 v2.22）。**两样都只管显示与要不要记，不改任何已记下的事实。**
@@ -4251,6 +4277,7 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 | `mcp`（v2.22） | `activity.ignores.v1`：`get_detector_rules` 追加 `ignored`（`GET activity/ignores`）；`get_current_timer` / `get_agent_time` 因 `views/current` / `views/agent-time` 不列藏起来的代理而不再列它们的在跑运行（汇总不变）（`mcp.tools.v1` v1.14） | `modules/mcp` |
 | `assistant` 前端（v2.30） | `activity.proposals.v1`：「待批准」页的「新项目与任务」块（读 `GET activity/proposals?status=pending`，批准 / 不要走 `…/{id}/approve|reject`） | `modules/assistant` |
 | `mcp`（v2.30） | `activity.proposals.v1`：`propose_project`（`POST activity/proposals/projects`）、`propose_task`（`POST …/tasks`）；`list_projects` 读 `GET activity/proposals?status=all&limit=50` 追加 `proposals`；批准 / 不要 MCP 永远不调 | `modules/mcp` |
+| `mcp`（v2.36） | `activity.proposals.v1` 追加：`propose_change`（`POST activity/proposals/changes`）、`propose_ignore_rule`（`POST …/ignores`）；`list_projects` 的 `proposals` 带上 `changes` / `ignores`（`titleContains` 不外传，只给 `hasTitleFilter`） | `modules/mcp` |
 | `hive` 前端（v2.30 / v2.20 的新增消费方） | `activity.proposals.v1` + `activity.reports.v1`：蜂巢右上角「AI 待批准」浮层（读 `GET activity/proposals?status=pending&limit=100`、`GET activity/reports?status=pending&items=true`；批准 / 不要走 `…/proposals/{id}/approve|reject`、`…/reports/{id}/approve`、`…/items/{id}/approve|reject`；不拆条、不改去向） | `modules/hive` |
 | `assistant` 前端（v2.20） | `activity.reports.v1`：顶部「AI 报告」块（读 `GET activity/reports?status=pending` 与 `…/{id}`，批准 / 改 / 不要走 `…/approve`、`…/items/{id}/approve|reject`、`…/reject`） | `modules/assistant` |
 | `mcp`（v2.20） | `activity.reports.v1`：`propose_report`（`POST activity/reports`）、`get_report_status`（`GET activity/reports?status=all&limit=1&items=true`）；批准 / 不要 MCP 永远不调 | `modules/mcp` |

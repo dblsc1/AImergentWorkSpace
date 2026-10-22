@@ -48,6 +48,8 @@ class Stub:
             route.fulfill(status=409, content_type="application/json", body='{"detail":"它所属的新项目还没批准"}')
             return
         d = self.data
+        for k in ("changes", "ignores"):
+            d[k] = [x for x in d.get(k, []) if x["id"] != iid]
         if verb == "approve":
             for p in d["projects"][:]:
                 if p["id"] == iid:
@@ -134,3 +136,61 @@ def test_narrow_screen_does_not_scroll_sideways(browser, static_base_url):
     with opened(browser, static_base_url, Stub(_data()), width=360) as page:
         page.wait_for_selector("#newitems-panel:not([hidden])")
         assert overflowing(page, "#newitems-panel") == []
+
+
+def _edits() -> dict:
+    ch = {"kind": "change", "status": "pending", "targetId": "x", "projectId": None, "name": None, "toId": None, "toName": None,
+          "reason": "原因 " + EVIL, "createdAt": "x", "createdId": None}
+    return {"projects": [], "tasks": [], "changes": [
+        {**ch, "id": "ch_1", "op": "rename", "target": "project", "targetName": "旧名", "name": "新名"},
+        {**ch, "id": "ch_2", "op": "move", "target": "task", "targetName": "弹琴", "toId": "p_2", "toName": "音乐"},
+        {**ch, "id": "ch_3", "op": "delete", "target": "task", "targetName": None}],
+        "ignores": [{"id": "ig_1", "kind": "ignore", "status": "pending", "app": "Slack", "titleContains": "闲聊", "reason": "无关", "createdAt": "x", "createdId": None},
+                    {"id": "ig_2", "kind": "ignore", "status": "pending", "app": "Steam", "hasTitleFilter": True, "reason": "", "createdAt": "x", "createdId": None}]}
+
+
+def test_changes_and_ignores_render_and_post(browser, static_base_url):
+    stub = Stub(_edits())
+    with opened(browser, static_base_url, stub) as page:
+        page.wait_for_selector("#newitems-panel:not([hidden])")
+        assert page.inner_text("#newitems-count") == "5"
+        t = lambda i: page.inner_text(f'li[data-id="{i}"]')  # noqa: E731
+        assert "改名" in t("ch_1") and "旧名 改成 新名" in t("ch_1") and "理由：原因 " + EVIL in t("ch_1")
+        assert "移动" in t("ch_2") and "弹琴 移到 音乐" in t("ch_2")
+        assert "删除" in t("ch_3") and "（已不存在）" in t("ch_3")
+        assert page.locator('li[data-id="ch_3"].is-danger').count() == 1 and page.locator('li[data-id="ch_1"].is-danger').count() == 0
+        assert "以后都忽略" in t("ig_1") and "Slack" in t("ig_1") and "标题含 “闲聊”" in t("ig_1")
+        assert "Steam" in t("ig_2") and "带标题条件" in t("ig_2")
+        assert page.evaluate("window.__pwned") is None
+        page.click('li[data-id="ch_1"] .report-ok')
+        page.wait_for_selector('li[data-id="ch_1"]', state="detached")
+        page.click('li[data-id="ig_1"] .report-no')
+        page.wait_for_selector('li[data-id="ig_1"]', state="detached")
+        assert stub.posts == ["ch_1/approve", "ig_1/reject"]
+
+
+def test_only_changes_keeps_section_and_409_detail_shown(browser, static_base_url):
+    stub = Stub(_edits())
+    stub.fail_on = "ch_2"
+    with opened(browser, static_base_url, stub) as page:
+        page.wait_for_selector("#newitems-panel:not([hidden])")
+        page.click('li[data-id="ch_2"] .report-ok')
+        page.wait_for_selector("#newitems-message.is-error")
+        assert "没成：它所属的新项目还没批准" in page.inner_text("#newitems-message")
+        assert page.locator('li[data-id="ch_2"]').count() == 1
+
+
+def test_missing_change_keys_tolerated(browser, static_base_url):
+    with opened(browser, static_base_url, Stub(_data())) as page:   # 老服务端：没有 changes / ignores
+        page.wait_for_selector("#newitems-panel:not([hidden])")
+        assert page.inner_text("#newitems-count") == "2" and page.locator("li[data-id^=ch_], li[data-id^=ig_]").count() == 0
+
+
+def test_null_fields_not_printed_as_null(browser, static_base_url):
+    d = _edits()
+    d["changes"][0]["name"] = None
+    d["ignores"][1].pop("app")
+    with opened(browser, static_base_url, Stub(d)) as page:
+        page.wait_for_selector("#newitems-panel:not([hidden])")
+        txt = page.inner_text("#newitems-panel")
+        assert "null" not in txt and "undefined" not in txt and "旧名 改成 ？" in txt
