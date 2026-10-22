@@ -23,6 +23,9 @@
 .hp-card.is-task { --hp-c: var(--plan); }
 .hp-card.is-move { --hp-c: var(--warn); }
 .hp-card.is-noise { --hp-c: var(--ink-3); }
+.hp-card.is-rename, .hp-card.is-cmove { --hp-c: var(--warn); }
+.hp-card.is-delete { --hp-c: var(--danger); }
+.hp-card.is-ignore { --hp-c: var(--ink-3); }
 .hp-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); }
 .hp-chip { font-size: var(--fs-eyebrow); font-weight: 600; color: var(--hp-c); }
 .hp-meta, .hp-target, .hp-reason { font-size: var(--fs-eyebrow); color: var(--ink-2); }
@@ -42,6 +45,11 @@
   .hex-todo-card.is-pending-hl { animation: hp-pulse 1.2s ease-in-out infinite; }
 }
 @keyframes hp-pulse { 50% { outline-color: transparent; } }
+.hex-cell.is-pending-hl { outline: 2px solid var(--plan); outline-offset: 1px; }
+.hex-cell.is-dimmed.is-pending-hl, .hex-cell.is-mate.is-pending-hl { opacity: 1; }   /* 任务移动的目的格不被聚焦调灰 */
+/* 提议删除的：划掉 + 泛红 */
+.is-pending-del { outline-color: var(--danger) !important; opacity: .65; }
+li.is-pending-del .hex-task-name, .hex-cell.is-pending-del .hex-title { text-decoration: line-through; color: var(--danger); }
 /* AI 建议的新东西：半透明虚线 */
 .hex-todo-card.is-ghost { opacity: .6; border-style: dashed; }
 .hex-cell.is-ghost { opacity: .7; }

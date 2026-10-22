@@ -1,11 +1,12 @@
 // hive · 待批准浮层（右上角卡片栏）——把 AI 提的「新增项目 / 新增任务 / 改挂 / 当噪声」画成卡片，
 // 点一下在蜂巢里展开对应项目：现有任务脉冲描边，AI 建议的新东西用半透明虚线「幽灵」显示；卡片上直接批准 / 不要。
-// 数据只读两个现成端点（nexus-core.activity.proposals.v1 / reports.v1），后端没有 AI 改 / 删 / 移动提议，这里也不造。
+// 数据只读两个现成端点（nexus-core.activity.proposals.v1 / reports.v1）；proposals 的 changes（改名 / 移动 / 删除）与 ignores（以后都忽略）2026-10-22 起也画成卡。
 // 上半是纯函数（build，给 hex-pending.test.js 用），下半是 DOM。
 (function () {
   "use strict";
 
-  var VERBS = { project: ["新增项目", "＋"], task: ["新增任务", "＋"], move: ["改挂", "→"], noise: ["当噪声", "×"] };
+  var VERBS = { project: ["新增项目", "＋"], task: ["新增任务", "＋"], move: ["改挂", "→"], noise: ["当噪声", "×"],
+    rename: ["改名", "✎"], cmove: ["移动", "⇅"], delete: ["删除", "✕"], ignore: ["以后都忽略", "⊘"] };
 
   function clip(s, n) { s = String(s == null ? "" : s); return s.length > n ? s.slice(0, n) + "…" : s; }
   function minutes(sec) { var m = Math.round((Number(sec) || 0) / 60); return m < 1 ? "不到 1 分" : m + " 分"; }
@@ -37,6 +38,19 @@
       taskProps[t.id] = 1;
       cards.push({ key: t.id, verb: "task", name: t.name, reason: t.reason || "", targetLabel: "→ " + (t.projectName || lookup(tree, t.projectId).projectName || ""),
         meta: "", projectId: t.projectId, tasks: [], path: "proposals/" + encodeURIComponent(t.id) });
+    });
+    // changes: 改名 / 移动 / 删除现有项目或任务；target=project → 目标格就是 targetId，task → 目标在 projectId 那个项目里
+    (P.changes || []).forEach(function (c) {
+      if (c.op !== "rename" && c.op !== "move" && c.op !== "delete") return;   // 新服务端的未知操作：不画，也不能抛
+      var from = c.targetName == null ? "（已不存在）" : c.targetName, isTask = c.target === "task";
+      cards.push({ key: c.id, verb: c.op === "move" ? "cmove" : c.op, reason: c.reason || "", targetLabel: "", meta: "", tasks: [], path: "proposals/" + encodeURIComponent(c.id),
+        name: c.op === "rename" ? from + " 改成 " + (c.name == null ? "？" : c.name) : c.op === "move" ? from + " 移到 " + (c.toName == null ? "（已不存在）" : c.toName) : from,
+        projectId: isTask ? c.projectId : c.targetId, taskId: isTask ? c.targetId : null, hlProject: !isTask,
+        destProjectId: c.op === "move" && isTask ? c.toId : null });
+    });
+    (P.ignores || []).forEach(function (g) {
+      cards.push({ key: g.id, verb: "ignore", name: g.app == null ? "？" : g.app, reason: g.reason || "", meta: "", projectId: null, tasks: [], path: "proposals/" + encodeURIComponent(g.id),
+        targetLabel: g.titleContains ? "标题含 “" + g.titleContains + "”" : g.hasTitleFilter ? "带标题条件" : "" });
     });
     (reports || []).forEach(function (r) {
       var n = 0;
@@ -141,17 +155,17 @@
   }
 
   // → 失败时返回错误文案，成功 null
-  function post(path) {
+  function post(path, newItem) {
     return fetch(CORE + path, { method: "POST" }).then(function (res) {
       if (res.ok) return null;
       return res.json().catch(function () { return null; }).then(function (b) {
-        return (res.status === 409 && path.indexOf("proposals/") === 0 && /approve$/.test(path)) ? "先批准它的项目" : ((b && typeof b.detail === "string") ? b.detail : "请求失败（" + res.status + "）");
+        return (newItem && res.status === 409 && /approve$/.test(path)) ? "先批准它的项目" : ((b && typeof b.detail === "string") ? b.detail : "请求失败（" + res.status + "）");
       });
     }).catch(function () { return "连不上服务"; });
   }
-  function act(path, verb, errKey) {
+  function act(path, verb, errKey, newItem) {
     busy = true; render();
-    return post(path + "/" + verb).then(function (err) {
+    return post(path + "/" + verb, newItem).then(function (err) {
       busy = false;
       if (err) { errors[errKey] = err; render(); return; }
       delete errors[errKey];
@@ -203,13 +217,15 @@
     var s = App.getState();
     removeGhosts();
     // expand() 对已展开的项目直接返回，上一次点出来的幽灵行 / 描边要自己清
-    [].forEach.call(document.querySelectorAll(".hex-todo-card.is-ghost, .is-pending-hl"), function (n) {
-      if (n.classList.contains("is-ghost")) n.parentNode.removeChild(n); else n.classList.remove("is-pending-hl");
+    [].forEach.call(document.querySelectorAll(".hex-todo-card.is-ghost, .is-pending-hl, .is-pending-del"), function (n) {
+      if (n.classList.contains("is-ghost")) n.parentNode.removeChild(n); else n.classList.remove("is-pending-hl", "is-pending-del");
     });
     if (c.verb === "project") { ghostProject(c); return; }
     if (!c.projectId || !s.byId[c.projectId]) return;
     App.expand(c.projectId);
-    var el = s.byId[c.projectId].el;
+    if (c.destProjectId && s.byId[c.destProjectId]) s.byId[c.destProjectId].el.classList.add("is-pending-hl");   // 任务移到的项目格（展开之后再点亮，免得被调灰）
+    var el = s.byId[c.projectId].el, del = c.verb === "delete" ? " is-pending-del" : "";
+    if (c.hlProject) { el.classList.add("is-pending-hl"); if (del) el.classList.add("is-pending-del"); return; }
     if (c.verb === "task") {
       var ul = el.querySelector(".hex-next-list");
       if (!ul) { ul = document.createElement("ul"); ul.className = "hex-list hex-next-list"; var g = el.querySelector(".hex-group"); if (g) g.appendChild(ul); }
@@ -220,6 +236,7 @@
       if (!li) return;
       var all = li.closest(".hex-all"); if (all) all.hidden = false;
       li.classList.add("is-pending-hl");
+      if (del) li.classList.add("is-pending-del");
       li.scrollIntoView({ block: "nearest" });
     }
   }
@@ -232,7 +249,7 @@
       collapsed = !collapsed;
       try { window.localStorage.setItem(LS_KEY, collapsed ? "1" : "0"); } catch (e) { /* 同上 */ }
       render();
-    } else if (kind === "approve" || kind === "reject") { if (c) act(c.path, kind, c.key); }
+    } else if (kind === "approve" || kind === "reject") { if (c) act(c.path, kind, c.key, c.verb === "project" || (c.verb === "task" && c.path.indexOf("proposals/") === 0)); }
     else if (kind === "approve-all") {
       var r = model.reports.filter(function (x) { return x.id === b.closest(".hp-report").dataset.report; })[0];
       if (r) act(r.path, "approve", r.id);

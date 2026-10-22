@@ -311,9 +311,17 @@ def _proposals(tenant) -> list:
     except ToolError:
         return []
     flat = r["projects"] + r["tasks"] + [t for p in r["projects"] for t in p["tasks"]]
-    return [{"proposalId": x["id"], "kind": x["kind"], "status": x["status"], "name": _screen(x["name"]),
-             "createdId": x["createdId"], "zoneId": x.get("zoneId"), "projectId": x.get("projectId"),
-             "projectProposalId": x.get("projectProposalId")} for x in flat]
+    out = [{"proposalId": x["id"], "kind": x["kind"], "status": x["status"], "name": _screen(x["name"]),
+            "createdId": x["createdId"], "zoneId": x.get("zoneId"), "projectId": x.get("projectId"),
+            "projectProposalId": x.get("projectProposalId")} for x in flat]
+    # v1.24：改名 / 搬移 / 删除、忽略规则。titleContains 可能是隐私窗口标题的一部分：只给 hasTitleFilter
+    out += [{"proposalId": x["id"], "kind": "change", "status": x["status"], "createdId": None, "op": x.get("op"), "target": x.get("target"),
+             "targetId": x.get("targetId"), "targetName": _screen_or_none(x.get("targetName")), "name": _screen_or_none(x.get("name")),
+             "toId": x.get("toId"), "toName": _screen_or_none(x.get("toName"))} for x in r.get("changes", [])]
+    out += [{"proposalId": x["id"], "kind": "ignore", "status": x["status"], "app": _screen(x["app"]),
+             "hasTitleFilter": bool(x.get("titleContains") or x.get("hasTitleFilter")), "createdId": x["createdId"]}
+            for x in r.get("ignores", [])]
+    return out
 
 
 # ── 屏幕来的文字（契约第四节「屏幕来的文字不可信」，v1.10）──────────────
@@ -665,6 +673,10 @@ def propose_report(a, tenant):
 _APPROVE_NOTE = "尚未创建，什么都没写进任务树。请用户在 Cockpit「待批准」页的「新项目与任务」点「批准」或「不要」；之后用 list_projects 的 proposals 看结果。"
 
 
+_CHANGE_NOTE = "什么都没改，任务树原样。请用户在 Cockpit「待批准」页点「批准」才会改名 / 搬移 / 删除，也可能点「不要」；之后用 list_projects 的 proposals 看结果。"
+_IGNORE_NOTE = "规则尚未生效，窗口照常记录。请用户在 Cockpit「待批准」页点「批准」才会忽略，也可能点「不要」；之后用 list_projects 的 proposals 看结果。"
+
+
 def _proposal_out(r: dict) -> dict:
     return {"proposalId": r["id"], "status": r["status"], "name": _screen(r["name"]), "created": False, "next": _APPROVE_NOTE}
 
@@ -680,6 +692,29 @@ def propose_task(a, tenant):
     r = _post("/api/core/activity/proposals/tasks",
               {k: a[k] for k in ("projectId", "projectProposalId", "name", "reason") if k in a}, tenant)
     return {**_proposal_out(r), "projectId": r["projectId"], "projectProposalId": r["projectProposalId"]}
+
+
+def _need_reason(a):
+    if not str(a.get("reason", "")).strip():
+        raise _bad("reason 不能为空：一句话说明为什么")
+
+
+def propose_change(a, tenant):
+    """v1.24：提议改名 / 搬移 / 删除现成的项目或任务（待人批准）。"""
+    _need_reason(a)
+    r = _post("/api/core/activity/proposals/changes",
+              {k: a[k] for k in ("target", "targetId", "op", "name", "toId", "reason") if k in a}, tenant)
+    return {"proposalId": r["id"], "status": r["status"], "op": r["op"], "target": r["target"], "targetId": r["targetId"],
+            "targetName": _screen_or_none(r["targetName"]), "applied": False, "next": _CHANGE_NOTE}
+
+
+def propose_ignore_rule(a, tenant):
+    """v1.24：提议一条「以后都忽略」规则（待人批准，批准前检测程序照常上报）。"""
+    _need_reason(a)
+    r = _post("/api/core/activity/proposals/ignores",
+              {k: a[k] for k in ("app", "titleContains", "reason") if k in a}, tenant)
+    return {"proposalId": r["id"], "status": r["status"], "app": _screen(r["app"]),
+            "hasTitleFilter": bool(r.get("titleContains") or r.get("hasTitleFilter")), "applied": False, "next": _IGNORE_NOTE}
 
 
 def get_report_status(a, tenant):
@@ -991,6 +1026,26 @@ _SPECS = [
               "name": {"type": "string", "maxLength": 64, "description": "任务名，1–64 字"},
               "reason": {"type": "string", "maxLength": 300, "description": "一句理由，给人看"}},
              required=["name", "reason"]), ["name", "reason"], {}),
+    (propose_change, "提议改名 / 搬移 / 删除",
+     "提议改名、搬移或删除一个现成的项目或任务（targetId 来自 list_projects / get_task_tree，不许编）。**什么都不会改**：只存一条待批准的提议，用户在 Cockpit「待批准」页点「批准」才动手，也可能点「不要」。"
+     "op=rename 要给 name（1–64 字）；op=move 要给 toId（项目搬到哪个分区 zoneId、任务搬到哪个项目 projectId）；op=delete 不给 name / toId，"
+     "且项目下还有任务、任务被别的任务依赖时报 409（先提议删掉或移走它们）。收件箱与「未分类」桶不能动。reason 必填，一句话（≤ 300 字）。"
+     "用户不要过的同样提议不要再提；待批准已满 50 条时报 429。结果看 list_projects 的 proposals。" + _IDS,
+     _schema({"target": {"type": "string", "enum": ["project", "task"], "description": "改项目还是任务"},
+              "targetId": {"type": "string", "maxLength": 128, "description": "项目 / 任务 id"},
+              "op": {"type": "string", "enum": ["rename", "move", "delete"]},
+              "name": {"type": "string", "maxLength": 64, "description": "rename 才给：新名字"},
+              "toId": {"type": "string", "maxLength": 128, "description": "move 才给：项目→分区 zoneId，任务→项目 projectId"},
+              "reason": {"type": "string", "maxLength": 300, "description": "一句理由，给人看"}},
+             required=["target", "targetId", "op", "reason"]), ["target", "targetId", "op", "reason"], {}),
+    (propose_ignore_rule, "提议「以后都忽略」某个程序 / 窗口",
+     "提议一条忽略规则：app 相同（titleContains 给了还要标题包含它）的窗口以后不当作工作，不上报、不计时。**规则不会立刻生效**："
+     "只存一条待批准的提议，用户在 Cockpit「待批准」页点「批准」才生效，也可能点「不要」。已有同样的规则报 409；用户不要过的不要再提；待批准已满 20 条时报 429。"
+     "reason 必填，一句话（≤ 300 字）。结果看 list_projects 的 proposals（只给 hasTitleFilter，不给标题文字）。" + _SCREEN,
+     _schema({"app": {"type": "string", "maxLength": 128, "description": "程序名，如 Chrome"},
+              "titleContains": {"type": "string", "maxLength": 200, "description": "可选：标题包含这段文字才算；不给 = 这个程序的所有窗口"},
+              "reason": {"type": "string", "maxLength": 300, "description": "一句理由，给人看"}},
+             required=["app", "reason"]), ["app", "reason"], {}),
     (get_report_status, "我上一份报告怎么样了",
      "最近一份报告的状态（pending 等用户处理 / approved / rejected）与逐条结果："
      "applied = 已入账 / 已忽略的建议数，stale = 交上去之后用户自己已经处理了，failed = 没做成（failure 说明），rejected = 用户不要。"
@@ -1032,7 +1087,7 @@ _SPECS = [
 #: 会写的工具；其余全部只读。propose_ 两个只写待人确认的草稿 / 建议（第六节）；v1.9 的两个：认领是幂等的状态标记，
 #: suggest_window_target 直接生效，但只在那个窗口被认领着等回答时、只对那一个窗口（第六节「唯一的例外」）
 _PROPOSE = {"propose_detector_rules", "propose_activity_matches", "propose_report", "get_window_awaiting_target",
-            "suggest_window_target", "propose_project", "propose_task"}
+            "suggest_window_target", "propose_project", "propose_task", "propose_change", "propose_ignore_rule"}
 #: v1.12「调用方范围」：read 范围的令牌看不到也调不了这些
 #: v1.17 apply_detector_rules：直接改生效的规则（账号开关开着才行），同样只给 write 范围；destructiveHint 为 true
 _APPLY = {"apply_detector_rules"}

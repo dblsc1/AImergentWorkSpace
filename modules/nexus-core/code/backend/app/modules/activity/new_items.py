@@ -9,6 +9,8 @@
 - 同一（分区 / 项目 / 提议, 归一化名字）一条提议（id 由它派生）；人「不要」过的永远留着，AI 不许再提；
 - 任务可以挂在**还没批准的项目提议**下（``projectProposalId``）：项目批准前它不能单独批准（409），批准后指向真项目；
   不要项目 = 同时不要它下面待批准的任务。
+- v2.36：另两种 kind——``change``（改名 / 搬移 / 删除现成的项目或任务，``nc_`` 前缀）与 ``ignore``（「以后都忽略」规则，``ni_``），
+  同集合同口径：AI 只提议，批准 = pending → accepted（条件更新，只有赢的那次动手）后经 ``guard.run_write`` / ``ignore.add`` 落地，失败回到 pending。
 - ponytail: 「待批准至多 N 条」是先数后插，并发提交最多超出并发数；提议不过期（被不要的要永远记着）。
 """
 
@@ -24,14 +26,16 @@ from pymongo.errors import DuplicateKeyError
 
 from ...repo import get_db
 from ...tenant import current as current_tenant
-from ..planner import audit, guard
+from ...textfold import fold
+from ..planner import audit, guard, inbox, repo as planner_repo, unclassified
 from ..planner import service as planner_service
+from ..planner.actor import with_actor
 from ..planner.errors import InvalidInputError, NotFoundError
-from . import proposals
+from . import ignore, ignore_repo, proposals
 from .proposals import ConflictError
 from .reports import TooManyReportsError
 
-MAX_PENDING = {"project": 20, "task": 100}  # 每租户待批准的条数
+MAX_PENDING = {"project": 20, "task": 100, "change": 50, "ignore": 20}  # 每租户待批准的条数
 MAX_REASON = 300  # 码点
 _COLL = "activity_new_items"
 _ready = False
@@ -139,7 +143,11 @@ def _project_id_of(user: str, d: dict) -> str | None:
     return pp["reservedId"] if ok else None
 
 
-def _view(user: str, d: dict) -> dict:
+def _view(user: str, d: dict, human: bool = False) -> dict:
+    if d["kind"] == "change":
+        return _change_view(d)
+    if d["kind"] == "ignore":
+        return _ignore_view(d, human)
     out = {"id": d["id"], "kind": d["kind"], "status": d["status"], "name": d["name"], "reason": d["reason"],
            "createdAt": d["createdAt"].replace(tzinfo=timezone.utc).isoformat(),
            "createdId": d["reservedId"] if d["status"] == "accepted" else None}
@@ -153,20 +161,25 @@ def _view(user: str, d: dict) -> dict:
     return out
 
 
-def listing(pending_only: bool, limit: int = 100) -> dict:
+def listing(pending_only: bool, limit: int = 100, human: bool = False) -> dict:
     """``{projects: [提议 + tasks[]], tasks: [挂在现成项目上的提议]}``。挂在列出的项目提议下的任务进它的 tasks。"""
     user = current_tenant()
     filt = {"user": user, **({"status": "pending"} if pending_only else {})}
-    rows = list(_col().find(filt, {"_id": 0}).sort("createdAt", -1).limit(limit))
+    def rows_of(kinds):  # 每种各自取 limit 条：一种刷满不会把另一种挤出去
+        return list(_col().find({**filt, "kind": {"$in": kinds}}, {"_id": 0}).sort("createdAt", -1).limit(limit))
+
+    rows = rows_of(["project", "task"])
+    chg, ign = rows_of(["change"]), rows_of(["ignore"])
     projects = {d["id"]: {**_view(user, d), "tasks": []} for d in rows if d["kind"] == "project"}
     tasks = []
     for d in rows:
         if d["kind"] == "task":
             (projects[d["parentId"]]["tasks"] if d.get("parentId") in projects else tasks).append(_view(user, d))
-    return {"projects": list(projects.values()), "tasks": tasks}
+    return {"projects": list(projects.values()), "tasks": tasks,
+            "changes": [_change_view(d) for d in chg], "ignores": [_ignore_view(d, human) for d in ign]}
 
 
-def reject(item_id: str) -> dict:
+def reject(item_id: str, human: bool = False) -> dict:
     user = current_tenant()
     d = _get(user, item_id)
     if d is None:
@@ -179,10 +192,10 @@ def reject(item_id: str) -> dict:
     if d["kind"] == "project" and won:
         _col().update_many({"user": user, "parentId": item_id, "status": "pending"},
                            {"$set": {"status": "rejected", "decidedAt": at}})
-    return _view(user, _get(user, item_id))
+    return _view(user, _get(user, item_id), human)
 
 
-def approve(item_id: str, request) -> dict:
+def approve(item_id: str, request, human: bool = False) -> dict:
     """批准并建出来（幂等）：同一提议只建一次，并发批准复用它（做法同 ``proposals.task_for``）。"""
     user = current_tenant()
     d = _get(user, item_id)
@@ -190,6 +203,8 @@ def approve(item_id: str, request) -> dict:
         raise NotFoundError(f"没有这条提议：{item_id!r}")
     if d["status"] == "rejected":
         raise ConflictError("这条提议已被否掉")
+    if d["kind"] in ("change", "ignore"):
+        return _approve_edit(user, d, request, human)
     project = d["kind"] == "project"
     if project:
         if planner_service.get_zone(d["zoneId"]) is None:
@@ -245,3 +260,252 @@ def _create(project: bool, won: dict, pid: str | None, rid: str, request) -> Non
     guard.run_write(
         request, op=audit.OP_CREATE, object_type="tasks", changes={"projectId": pid, "name": won["name"]},
         action=lambda actor: planner_service.create_task(won["name"], pid, actor=actor, task_id=rid))
+
+
+# ── v2.36：改名 / 搬移 / 删除 / 忽略规则的提议 ─────────────────────────────
+
+def _target(target: str, target_id: str) -> dict | None:
+    return (planner_service.get_project if target == "project" else planner_service.get_task)(target_id)
+
+
+def _put_edit(user: str, kind: str, item_id: str, extra: dict, reason: str) -> dict:
+    """取（或新建）提议：待批准 → 原样返回；被否掉 → 409；已批准 → 换成新的（东西可能又变回去了）。"""
+    d = _get(user, item_id)
+    if d and d["status"] == "rejected":
+        raise ConflictError("用户已经否掉过这个提议，不要再提")
+    if d and d["status"] == "pending":
+        if "snapName" in extra and (d.get("snapName"), d.get("snapParent")) != (extra["snapName"], extra["snapParent"]):
+            snap = {"snapName": extra["snapName"], "snapParent": extra["snapParent"]}  # 目标后来被改过：快照跟着刷新
+            _col().update_one({"user": user, "id": item_id, "status": "pending"}, {"$set": snap})
+            d = {**d, **snap}
+        return d
+    if _col().count_documents({"user": user, "kind": kind, "status": "pending"}) >= MAX_PENDING[kind]:
+        raise TooManyReportsError(f"已有 {MAX_PENDING[kind]} 条待批准的{'修改' if kind == 'change' else '忽略规则'}提议，"
+                                  "请先让用户处理旧的")
+    doc = {"user": user, "id": item_id, "kind": kind, "status": "pending", "reason": reason, "createdAt": _now(),
+           "applyClaimedAt": None, **extra}
+    if d:  # accepted：整条换掉（条件删除，输家撞唯一索引就用先到的）；批准正在落地时不许换
+        claimed = d.get("applyClaimedAt")
+        if claimed is not None and (_now() - claimed.replace(tzinfo=timezone.utc)).total_seconds() < proposals.WAIT_SECONDS:
+            raise ConflictError("这条提议正在批准、落地的过程中，请稍后再试")
+        _col().delete_one({"user": user, "id": item_id, "status": "accepted", "applyClaimedAt": claimed})
+    try:
+        _col().insert_one(dict(doc))
+    except DuplicateKeyError:
+        return _get(user, item_id)
+    return doc
+
+
+def _parent(target: str, cur: dict) -> str:
+    return cur["zoneId"] if target == "project" else cur["projectId"]
+
+
+def _clash(target: str, target_id: str, parent: str, name: str) -> dict | None:
+    """``parent`` 下除自己外同名（归一化）的兄弟。"""
+    sibs = planner_service.list_projects(parent) if target == "project" else planner_service.list_tasks(parent)
+    n = proposals._norm(name)
+    return next((x for x in sibs if x["id"] != target_id and proposals._norm(x["name"]) == n), None)
+
+
+def propose_change(target: str, target_id: str, op: str, name: str | None, to_id: str | None, reason: str) -> dict:
+    user = current_tenant()
+    cur = _target(target, target_id)
+    label = "项目" if target == "project" else "任务"
+    if cur is None:
+        raise InvalidInputError(f"{label}不存在：{target_id!r}")
+    if target == "project" and inbox.is_protected_project(target_id):
+        raise InvalidInputError(f"项目 {target_id!r} 是系统收件箱，不能改")
+    if target == "task" and unclassified.is_bucket(cur):
+        raise InvalidInputError(f"任务 {target_id!r} 是「未分类」时间桶（系统任务），不能改")
+    if (name is not None) != (op == "rename") or (to_id is not None) != (op == "move"):
+        raise InvalidInputError("rename 只给 name，move 只给 toId，delete 都不给")
+    key = ""
+    if op == "rename":
+        name = clean_name(name, f"{label}的 name")
+        n = proposals._norm(name)
+        if n == proposals._norm(cur["name"]):
+            raise InvalidInputError("新名字和现在的一样")
+        same = _clash(target, target_id, _parent(target, cur), name)
+        if same is not None:
+            raise ConflictError(f"同级已有同名{label} {same['id']!r}")
+        key = n
+    elif op == "move":
+        dest, here = (planner_service.get_zone, cur["zoneId"]) if target == "project" else (planner_service.get_project, cur["projectId"])
+        if dest(to_id) is None:
+            raise InvalidInputError(f"{'zoneId' if target == 'project' else 'projectId'} 不存在：{to_id!r}")
+        if to_id == here:
+            raise InvalidInputError("已经在那里了")
+        same = _clash(target, target_id, to_id, cur["name"])
+        if same is not None:
+            raise ConflictError(f"目的地已有同名{label} {same['id']!r}")
+        key = to_id
+    elif target == "project":
+        left = [t for t in planner_service.list_tasks(target_id) if not unclassified.is_bucket(t)]
+        if left:
+            raise ConflictError(f"项目 {target_id!r} 下还有 {len(left)} 个任务，先提议删掉或移走它的任务")
+    else:
+        deps = planner_repo.find_dependents(target_id)
+        if deps:
+            raise ConflictError(f"任务 {target_id!r} 被 {len(deps)} 个任务依赖，不能提议删")
+    item_id = "nc_" + hashlib.sha256(f"{target}\n{target_id}\n{op}\n{key}".encode()).hexdigest()[:20]
+    d = _put_edit(user, "change", item_id, {"target": target, "targetId": target_id, "op": op,
+                                             "name": name, "toId": to_id, "snapName": cur["name"],
+                                             "snapParent": _parent(target, cur)}, _clean_reason(reason))
+    return _change_view(d)
+
+
+def propose_ignore(app: str, title_contains: str | None, reason: str, human: bool = False) -> dict:
+    user = current_tenant()
+    app, title = ignore._clean(app), ignore._clean(title_contains)
+    if not fold(app):
+        raise InvalidInputError("app 不能为空")
+    if len(app) > ignore.MAX_APP or len(title) > ignore.MAX_TITLE:
+        raise InvalidInputError(f"app 至多 {ignore.MAX_APP}、titleContains 至多 {ignore.MAX_TITLE} 个字符")
+    title = title if fold(title) else ""
+    if any(r["id"] == ignore.rule_id(app, title) for r in ignore_repo.all_rules(user)):
+        raise ConflictError("已经有这条忽略规则了")
+    item_id = "ni_" + hashlib.sha256(f"{fold(app)}\n{fold(title)}".encode()).hexdigest()[:20]
+    d = _put_edit(user, "ignore", item_id, {"app": app, "titleContains": title or None, "createdId": None},
+                  _clean_reason(reason))
+    return _ignore_view(d, human)
+
+
+def _change_view(d: dict) -> dict:  # snapName / snapParent 是内部快照，不外露
+    cur = _target(d["target"], d["targetId"])
+    to_name = None
+    if d["op"] == "move":
+        dest = (planner_service.get_zone if d["target"] == "project" else planner_service.get_project)(d["toId"])
+        to_name = dest["name"] if dest else None
+    return {"id": d["id"], "kind": "change", "status": d["status"], "op": d["op"], "target": d["target"],
+            "targetId": d["targetId"], "targetName": cur["name"] if cur else None,
+            "projectId": cur["projectId"] if cur and d["target"] == "task" else None,
+            "name": d["name"], "toId": d["toId"], "toName": to_name, "reason": d["reason"],
+            "createdAt": d["createdAt"].replace(tzinfo=timezone.utc).isoformat(), "createdId": None}
+
+
+def _ignore_view(d: dict, human: bool) -> dict:
+    out = {"id": d["id"], "kind": "ignore", "status": d["status"], "app": d["app"], "reason": d["reason"],
+           "createdAt": d["createdAt"].replace(tzinfo=timezone.utc).isoformat(), "createdId": d.get("createdId")}
+    # 同 ignore._out：非人拿不到匹配文字（可能是隐私窗口标题的一部分）
+    return {**out, "titleContains": d["titleContains"]} if human else {**out, "hasTitleFilter": bool(d["titleContains"])}
+
+
+def _precheck(d: dict) -> None:
+    """批准前的 409 复查（目标还在 / 快照没变 / 没有同名）。"""
+    if d["kind"] != "change":
+        return
+    cur = _target(d["target"], d["targetId"])
+    if cur is None:
+        raise ConflictError("要改的东西已不存在，批不了；请选「不要」")
+    if (d["op"] == "rename" and cur["name"] != d.get("snapName")) or \
+            (d["op"] == "move" and _parent(d["target"], cur) != d.get("snapParent")):
+        raise ConflictError("目标已被改过，请选「不要」")
+    label = "项目" if d["target"] == "project" else "任务"
+    if d["op"] == "rename":
+        same = _clash(d["target"], d["targetId"], _parent(d["target"], cur), d["name"])
+    elif d["op"] == "move":
+        same = _clash(d["target"], d["targetId"], d["toId"], cur["name"])
+    else:
+        same = None
+    if same is not None:  # service 层不查同名：这里查，撞了不动手、留在待批准
+        raise ConflictError(f"同级已有同名{label} {same['id']!r}，批不了；请选「不要」")
+
+
+def _reflected(user: str, d: dict) -> str | None | bool:
+    """崩溃后接手用：提议要的结果是不是已经在了。返回 False = 还没有；ignore 返回规则 id；其余 True。"""
+    if d["kind"] == "ignore":
+        rid = ignore.rule_id(d["app"], d["titleContains"] or "")
+        return rid if any(r["id"] == rid for r in ignore_repo.all_rules(user)) else False
+    cur = _target(d["target"], d["targetId"])
+    if d["op"] == "delete":
+        return cur is None
+    if cur is None:
+        return False
+    return cur["name"] == d["name"] if d["op"] == "rename" else _parent(d["target"], cur) == d["toId"]
+
+
+def _aged(claimed) -> bool:
+    return claimed is not None and (_now() - claimed.replace(tzinfo=timezone.utc)).total_seconds() >= proposals.WAIT_SECONDS
+
+
+def _approve_edit(user: str, d: dict, request, human: bool) -> dict:
+    item_id = d["id"]
+    if d["status"] == "pending":
+        try:
+            _precheck(d)
+        except ConflictError:
+            fresh = _get(user, item_id)  # 复查期间别人已批准并落地了：不是冲突，走输家路径看结果
+            if fresh is None or fresh["status"] != "accepted":
+                raise
+    mark = _now()
+    won = _col().find_one_and_update({"user": user, "id": item_id, "status": "pending"},
+                                     {"$set": {"status": "accepted", "decidedAt": mark, "applyClaimedAt": mark}})
+    if won is None:  # 别人先批了（或刚被否）
+        cur_d = _get(user, item_id)
+        if cur_d is None:
+            raise NotFoundError(f"没有这条提议：{item_id!r}")
+        if cur_d["status"] == "accepted" and _aged(cur_d.get("applyClaimedAt")):  # 上一个批准崩在半路：人再点一次 = 接手
+            taken = _col().find_one_and_update(
+                {"user": user, "id": item_id, "status": "accepted", "applyClaimedAt": cur_d["applyClaimedAt"]},
+                {"$set": {"applyClaimedAt": mark}})
+            if taken is not None:
+                done = _reflected(user, cur_d)
+                if done is not False:  # 其实已经落地了：只放占位、补 createdId
+                    _col().update_one({"user": user, "id": item_id, "applyClaimedAt": mark},
+                                      {"$set": {"applyClaimedAt": None, **({"createdId": done} if isinstance(done, str) else {})}})
+                    return _view(user, _get(user, item_id), human)
+                try:  # 没落地：接手前也要过一遍批准前的复查，不过就放回待批准
+                    _precheck(cur_d)
+                except Exception:
+                    _release(user, item_id, mark)
+                    raise
+                return _apply(user, cur_d, request, mark, human)
+        deadline = time.monotonic() + proposals.WAIT_SECONDS
+        while cur_d is not None and cur_d["status"] == "accepted" and cur_d.get("applyClaimedAt") is not None:
+            if time.monotonic() > deadline:
+                raise ConflictError("这条提议正在批准、落地的过程中，请稍后再看")
+            time.sleep(0.1)
+            cur_d = _get(user, item_id)
+        if cur_d is None:
+            raise NotFoundError(f"没有这条提议：{item_id!r}")
+        return _view(user, cur_d, human)
+    return _apply(user, d, request, mark, human)
+
+
+def _release(user: str, item_id: str, mark) -> None:
+    """放回待批准；只在占位还是 ``mark`` 的时候，不碰别人换上来的新提议。"""
+    _col().update_one({"user": user, "id": item_id, "status": "accepted", "applyClaimedAt": mark},
+                      {"$set": {"status": "pending", "applyClaimedAt": None}, "$unset": {"decidedAt": ""}})
+
+
+def _apply(user: str, d: dict, request, mark, human: bool) -> dict:
+    """占到（或接手）占位之后动手。``mark`` = 本次的占位标记。"""
+    item_id, change = d["id"], d["kind"] == "change"
+    mine = {"user": user, "id": item_id, "status": "accepted", "applyClaimedAt": mark}
+    created = None
+    try:
+        if not change:
+            created = ignore.add(d["app"], d["titleContains"])["id"]
+        elif d["op"] == "delete":
+            guard.run_write(request, op=audit.OP_DELETE, object_type=d["target"] + "s", entity_id=d["targetId"], changes={},
+                            action=lambda actor: (planner_service.delete_project if d["target"] == "project"
+                                                  else planner_service.delete_task)(d["targetId"]))
+        else:
+            fields = {"name": d["name"]} if d["op"] == "rename" else \
+                {"zoneId" if d["target"] == "project" else "projectId": d["toId"]}
+            guard.run_write(request, op=audit.OP_UPDATE, object_type=d["target"] + "s", entity_id=d["targetId"],
+                            changes=fields, action=lambda actor: (planner_service.update_project if d["target"] == "project"
+                                                                  else planner_service.update_task)(
+                                d["targetId"], with_actor(fields, actor)))
+    except Exception:
+        try:  # 抛错但结果其实已经在了（如删除时目标刚好没了）：当作做完
+            done = _reflected(user, d)
+        except Exception:  # noqa: BLE001
+            done = False
+        if done is False:  # 没落地：放回待批准
+            _release(user, item_id, mark)
+            raise
+        created = done if isinstance(done, str) else None
+    # 已落地：记结果、放占位；这一步失败不回滚（东西已经改了）
+    _col().update_one(mine, {"$set": {"applyClaimedAt": None, **({"createdId": created} if created else {})}})
+    return _view(user, _get(user, item_id), human)

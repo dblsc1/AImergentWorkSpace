@@ -110,8 +110,8 @@ check "read 令牌的 MCP：会写的工具被拒" \
 echo "── write：同以前的设备令牌"
 check "write 令牌读" "$(code -H "$(bearer "$WRITE")" "$TREE")" 200
 check "write 令牌写" "$(code -X POST -H "$(bearer "$WRITE")" "$BASE/api/core/timer/stop")" 200
-check "write 令牌的 MCP：二十一个工具" \
-  "$("${C[@]}" -X POST -H "$(bearer "$WRITE")" -H "$JSON" -d "$LIST" "$MCP" | py 'print(len(r["result"]["tools"]))')" 21
+check "write 令牌的 MCP：二十三个工具" \
+  "$("${C[@]}" -X POST -H "$(bearer "$WRITE")" -H "$JSON" -d "$LIST" "$MCP" | py 'print(len(r["result"]["tools"]))')" 23
 check "write 令牌改检测设置照旧被拒（只许人）" \
   "$(code -X DELETE -H "$(bearer "$WRITE")" "$BASE/api/core/detector/settings?deviceId=dev_ci")" 403
 check "write 令牌开不了页面、换不出新令牌" \

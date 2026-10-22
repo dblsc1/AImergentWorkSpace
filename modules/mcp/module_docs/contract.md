@@ -1,17 +1,17 @@
 # mcp · 对外接口契约
 
-> 本模块实现 `contracts/mcp.tools.v1`（给 AI 代理用的工具，MCP Streamable HTTP；v1.2 起 10 个只读 + 1 个只写草稿的 propose_；v1.3 再加 1 个只写建议的 propose_activity_matches；v1.7 再加 1 个只读的 get_match_history，共 13 个；v1.9 再加 get_window_awaiting_target 与 suggest_window_target，共 15 个；v1.17 再加 apply_detector_rules，共 19 个；v1.18 再加 propose_project / propose_task，共 21 个；没有范围头的调用方 20 个）。行为的唯一事实在
+> 本模块实现 `contracts/mcp.tools.v1`（给 AI 代理用的工具，MCP Streamable HTTP；v1.2 起 10 个只读 + 1 个只写草稿的 propose_；v1.3 再加 1 个只写建议的 propose_activity_matches；v1.7 再加 1 个只读的 get_match_history，共 13 个；v1.9 再加 get_window_awaiting_target 与 suggest_window_target，共 15 个；v1.17 再加 apply_detector_rules，共 19 个；v1.18 再加 propose_project / propose_task，共 21 个；v1.24 再加 propose_change / propose_ignore_rule，共 23 个；没有范围头的调用方 22 个）。行为的唯一事实在
 > 那份契约里，本文件只登记依赖、说明实现选择。改行为先改那份契约。
 
 ```yaml
 provides:
   - id: mcp.tools.v1
     contract: ../../../contracts/mcp.tools.v1/contract.md
-    summary: 21 个工具（没有范围头的调用方 20 个；v1.18 加 propose_project / propose_task：提议新项目 / 项目下的新任务，人在「待批准」页批准才建，list_projects 输出追加 zones / proposals；v1.17 加 apply_detector_rules：明确的 write 范围、账号开关 aiDirectRules 开着才直接写生效的规则；13 个只读（v1.13 加 get_report_status；v1.16 加 get_detector_health：检测程序状态 / 最近事故 / 固定排查提示，开关开着时带不可信的启动日志）+ propose_detector_rules 只写草稿 + propose_activity_matches 只写待确认的建议 + v1.13 propose_report 只写待人批准的报告 + v1.9 认窗口的 get_window_awaiting_target / suggest_window_target），挂在 <站点前缀>api/mcp/（经网关、过门）；对内 http://mcp:8020/api/mcp/
+    summary: 23 个工具（没有范围头的调用方 22 个；v1.24 加 propose_change / propose_ignore_rule：提议改名 / 搬移 / 删除、提议「以后都忽略」，人批准才生效；v1.18 加 propose_project / propose_task：提议新项目 / 项目下的新任务，人在「待批准」页批准才建，list_projects 输出追加 zones / proposals；v1.17 加 apply_detector_rules：明确的 write 范围、账号开关 aiDirectRules 开着才直接写生效的规则；13 个只读（v1.13 加 get_report_status；v1.16 加 get_detector_health：检测程序状态 / 最近事故 / 固定排查提示，开关开着时带不可信的启动日志）+ propose_detector_rules 只写草稿 + propose_activity_matches 只写待确认的建议 + v1.13 propose_report 只写待人批准的报告 + v1.9 认窗口的 get_window_awaiting_target / suggest_window_target），挂在 <站点前缀>api/mcp/（经网关、过门）；对内 http://mcp:8020/api/mcp/
 consumes:
   - id: nexus-core.activity.proposals.v1
     contract: ../../nexus-core/module_docs/contract.md
-    purpose: v1.18 propose_project（POST activity/proposals/projects）、propose_task（POST …/tasks）；list_projects 读 GET activity/proposals（老后端 404 = 空）；批准 / 不要 MCP 永远不调
+    purpose: v1.24 propose_change（POST activity/proposals/changes）、propose_ignore_rule（POST …/ignores）；v1.18 propose_project（POST activity/proposals/projects）、propose_task（POST …/tasks）；list_projects 读 GET activity/proposals（老后端 404 = 空）；批准 / 不要 MCP 永远不调
   - id: nexus-core.views.tree.v1
     contract: ../../nexus-core/module_docs/contract.md
     purpose: get_task_tree、list_projects；所有工具的显示路径
@@ -142,3 +142,5 @@ v1.14（2026-10-09，nexus-core v2.22「忽略并记住」）：`get_detector_ru
 v1.22（2026-10-19，nexus-core v2.34）：`list_activity_suggestions` 追加可选 `needsAI`（true 才下传 `?needsAI=true`；绑进游标）与每项 `needsAI`；`get_detector_rules` 的规则只在 `mode` 是 `ai` 时多一个 `mode` 键；`_RULES_IN` 的规则追加 `mode`；`suggest_window_target` 回包带 `needsAI` 时 `next` 改说「没写规则」。工具数不变。
 
 v1.23（2026-10-22，nexus-core v2.35）：`list_activity_suggestions` 的 `status=confirmed` 行追加 `recordedTo`（`{projectId, projectName, taskId, taskName, via, eventId}`，当前去向、含事后改挂；`taskId` 为 null = 只记在项目的「未分类」；找不到为 null；名字过 `_screen`），pending / dismissed 行没有这个键；工具描述写明「已确认的时间没有丢」。工具数不变，不新增调用路径。
+
+v1.24（2026-10-22，nexus-core v2.36，仓主批准）：新增 `propose_change` 与 `propose_ignore_rule`（各发一个 POST、都进 `tools._PROPOSE`）；`reason` 必填且非空白，缺则 `400` 不发请求。`list_projects.proposals` 追加 `kind: change` / `ignore` 条目，`titleContains` 不外传，只给 `hasTitleFilter`。工具分类与计数改为 23 / 22 / 13。测试：`tests/test_mcp.py` 的 `test_propose_change_*`。

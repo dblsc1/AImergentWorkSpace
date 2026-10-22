@@ -31,4 +31,16 @@ assert.strictEqual(out.cards[4].name, "错题本"); assert.strictEqual(out.cards
 assert.strictEqual(out.cards[5].meta, "上次失败");
 assert.deepStrictEqual(out.reports, [{ id: "r1", label: "hermes：整理", n: 5, path: "reports/r1" }]);
 assert.deepStrictEqual(P.build(null, [], null), { cards: [], reports: [] });
+var ed = P.build({ changes: [
+  { id: "c1", op: "rename", target: "project", targetId: "p1", targetName: "数学", name: "代数" },
+  { id: "c2", op: "move", target: "task", targetId: "t1", projectId: "p1", targetName: "刷题", toId: "p2", toName: "英语", reason: "r" },
+  { id: "c3", op: "delete", target: "task", targetId: "t9", projectId: null, targetName: null }],
+  ignores: [{ id: "g1", app: "Slack", titleContains: "闲聊" }, { id: "g2", app: "Steam", hasTitleFilter: true }] }, [], tree).cards;
+assert.deepStrictEqual(ed.map(function (c) { return c.verb; }), ["rename", "cmove", "delete", "ignore", "ignore"]);
+assert.strictEqual(ed[0].name, "数学 改成 代数"); assert.strictEqual(ed[0].projectId, "p1"); assert.strictEqual(ed[0].hlProject, true);
+assert.strictEqual(ed[1].name, "刷题 移到 英语"); assert.strictEqual(ed[1].taskId, "t1"); assert.strictEqual(ed[1].destProjectId, "p2");
+assert.strictEqual(ed[2].name, "（已不存在）"); assert.strictEqual(ed[2].path, "proposals/c3");
+assert.strictEqual(ed[3].targetLabel, "标题含 “闲聊”"); assert.strictEqual(ed[4].targetLabel, "带标题条件");
+assert.deepStrictEqual(P.build({ changes: [{ id: "cx", op: "teleport", target: "task" }, { id: "cy", op: "rename", target: "task", targetId: "t1", projectId: "p1", targetName: "a", name: null }],
+  ignores: [{ id: "gx" }] }, [], tree).cards.map(function (c) { return c.name; }), ["a 改成 ？", "？"]);
 console.log("hex-pending.test.js ok");
