@@ -68,9 +68,12 @@
 .hd-toast-undo { background: none; border: 0; color: inherit; font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
 
 /* 拖历史卡进蜂巢 */
-.hd-ghost { position: fixed; z-index: 70; width: 240px; pointer-events: none; opacity: .92; box-shadow: var(--shadow); }
+.hd-ghost { position: fixed; left: 0; top: 0; will-change: transform; z-index: 70; width: 240px; pointer-events: none; opacity: .92; box-shadow: var(--shadow); }
 .hd-ghost .hd-acts { display: none; }
-body.hd-dragging { cursor: grabbing; user-select: none; }
+/* ⚠️ 不要在 body 上设 cursor / user-select：它俩是继承属性，一挂一摘整页 1200+ 个元素重算样式（4x 降速下各 ~150-220ms）。选中由 selectstart 拦，手势由幽灵体现 */
+body.hd-dragging .hex-cell, body.hd-dragging .hex-cell::before, body.hd-dragging .hex-zone-label { transition: none !important; }
+/* 分区界线层是个整蜂巢大小的 SVG（渐变描边 + 相对色），每次展开要重拼 d 并整片重绘；展开态它本来就压到 .2 不透明度。拖着卡片时先不画（实测首次展开 600ms -> 230ms @4x） */
+body.hd-dragging .hex-borders { display: none; }   /* 拖着卡片扫过时格子的底色 / 透明度过渡不跑 */
 /* 拖历史卡时面板让开：几乎整个滑出右边、半透明、不挡指针，下面的蜂巢格子才够得着 */
 .hd-panel { transition: transform .2s ease-out, opacity .2s; }
 body.hd-dragging .hd-panel { transform: translateX(calc(100% - 28px)); opacity: .35; pointer-events: none; }

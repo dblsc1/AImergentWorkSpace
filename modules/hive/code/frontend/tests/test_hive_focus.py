@@ -120,11 +120,12 @@ class Hive:
 
 @contextlib.contextmanager
 def open_hive(browser: Browser, base: str, *, width: int = 1280, height: int = 900, theme: str = "light",
-              reduced_motion: str | None = None, helper: bool = True) -> Iterator[Hive]:
+              reduced_motion: str | None = None, helper: bool = True, fake_clock: bool = True) -> Iterator[Hive]:
     context = browser.new_context(viewport={"width": width, "height": height}, timezone_id="Asia/Shanghai",
                                   reduced_motion=reduced_motion)
     page = context.new_page()
-    page.clock.install()
+    if fake_clock:
+        page.clock.install()
     hive = Hive(page)
     page.route("**/api/core/**", hive.route)
     if helper:
@@ -135,7 +136,8 @@ def open_hive(browser: Browser, base: str, *, width: int = 1280, height: int = 9
     page.wait_for_selector(CENTER)
     page.wait_for_selector(".hex-cell[data-project-id=p_math]")
     page.evaluate("t => document.documentElement.setAttribute('data-theme', t)", theme)
-    page.clock.pause_at(datetime.fromtimestamp(page.evaluate("() => Date.now()") / 1000 + 1, timezone.utc))
+    if fake_clock:
+        page.clock.pause_at(datetime.fromtimestamp(page.evaluate("() => Date.now()") / 1000 + 1, timezone.utc))
     try:
         yield hive
         assert errors == [], errors

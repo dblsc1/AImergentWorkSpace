@@ -234,8 +234,18 @@ def test_click_card_highlights_in_hive_and_escape_cleans(browser, base) -> None:
         assert hive.page.locator(".is-pending-hl, .is-pending-del").count() == 0
 
 
+def _settle(page: Any) -> None:
+    """指针合并到下一帧才处理，格子要停留 ~180ms 才展开（假时钟暂停着：自己推）。"""
+    page.clock.run_for(50)      # rAF：幽灵 / 命中测试
+    page.clock.run_for(250)     # 停留计时
+    page.clock.run_for(50)      # 展开后补的那次命中测试
+
+
 def _drag_to(page: Any, hist_idx: int, target: Any, steps: int = 4) -> None:
     _until(page, lambda: page.evaluate("getComputedStyle(document.querySelector('.hd-panel')).transform") == "none")   # 上一轮拖拽后面板滑回来
+    if target is not None:   # 路上不再逐格展开（要停留），目标格得自己先在视野里
+        target.evaluate("e => e.scrollIntoView({block: 'center', inline: 'center'})")
+        page.clock.run_for(600); page.wait_for_timeout(500)   # 上一轮收起的 FLIP 还在飞：等它落定再瞄
     box = page.locator(".hd-hcard .hd-face").nth(hist_idx).bounding_box()
     page.mouse.move(box["x"] + 30, box["y"] + 20)
     page.mouse.down()
@@ -243,6 +253,7 @@ def _drag_to(page: Any, hist_idx: int, target: Any, steps: int = 4) -> None:
     if target is not None:
         t = target.bounding_box()
         page.mouse.move(t["x"] + t["width"] / 2, t["y"] + t["height"] / 2, steps=steps)
+    _settle(page)
 
 
 def _onto(page: Any, loc: Any) -> None:
@@ -252,6 +263,7 @@ def _onto(page: Any, loc: Any) -> None:
         loc.evaluate("e => e.scrollIntoView({block: 'center'})")
         t = loc.bounding_box()
         page.mouse.move(t["x"] + 30, t["y"] + t["height"] / 2, steps=3)
+        _settle(page)
 
 
 def test_drag_history_expands_cell_and_drop_on_task_reassigns(browser, base) -> None:  # noqa: F811

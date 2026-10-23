@@ -108,6 +108,13 @@
     el.style.transform = (el.__base || "") + " translate3d(" + dx.toFixed(1) + "px," + dy.toFixed(1) + "px,0)";
   }
 
+  // follow 先写 transform 再量 rect（强制同步布局）：一帧只跟一次，高回报率鼠标一帧好几个 pointermove 不再各布局一遍
+  var followRaf = 0, followEv = null;
+  function followSoon(ev) {
+    followEv = ev;
+    if (!followRaf) followRaf = requestAnimationFrame(function () { followRaf = 0; if (dragging) follow(followEv); });
+  }
+
   // 手里气泡中心的角度：指针减去抓取偏移
   function bubbleAngle(ev) {
     return angleFromCenter(ev.clientX - dragging.grabX, ev.clientY - dragging.grabY);
@@ -144,11 +151,12 @@
     var dx = ev.clientX - dragging.x0, dy = ev.clientY - dragging.y0;
     if (!dragging.moved && Math.abs(dx) + Math.abs(dy) < 3) return;
     dragging.moved = true;
-    follow(ev);
+    followSoon(ev);
     maybeLiveReorder(ev);
   }
 
   function onDragEnd(ev) {
+    if (followRaf) { cancelAnimationFrame(followRaf); followRaf = 0; }
     window.removeEventListener("pointermove", onDragMove);
     window.removeEventListener("pointerup", onDragEnd);
     window.removeEventListener("pointercancel", onDragEnd);

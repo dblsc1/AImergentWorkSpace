@@ -84,6 +84,16 @@
   var EPS = 1;
   var SVG_NS = "http://www.w3.org/2000/svg";
   // ── 布局：一次算清所有格子的中心点与尺寸 ────────────────────
+  // 标签胶囊的尺寸只随文字变：量一次记下来。每次布局都读 offsetWidth = 在刚改完 DOM 的节骨眼上强制同步布局（拖拽里每过一格就一次）
+  // 字体加载完、窗口尺寸变了（@media 字号）都可能改宽度：换一代，缓存全部作废
+  var labelGen = 0;
+  if (document.fonts && document.fonts.addEventListener) document.fonts.addEventListener("loadingdone", function () { labelGen++; });
+  window.addEventListener("resize", function () { labelGen++; });
+  function labelSize(lb) {
+    var key = labelGen + "\n" + lb.el.textContent, m = lb.__size;
+    if (!m || m.key !== key || !m.w) m = lb.__size = { key: key, w: lb.el.offsetWidth || 0, h: lb.el.offsetHeight || 0 };
+    return m;
+  }
   function computeItems(expandedId) {
     var items = state.cells.map(function (it) {
       var p = H.axialToPixel(it.cell, SIZE);
@@ -121,7 +131,7 @@
       items.push({
         el: lb.el, cx: labelR * Math.cos(a), cy: labelR * Math.sin(a),
         bx: labelR * Math.cos(a), by: labelR * Math.sin(a),
-        w: lb.el.offsetWidth || 0, h: lb.el.offsetHeight || 0, isLabel: true, label: lb
+        w: labelSize(lb).w, h: labelSize(lb).h, isLabel: true, label: lb
       });
     });
 
@@ -249,6 +259,8 @@
   function applyLayout(animate, durationMs) {
     var hive = $("#hive"), camEl = state.camEl;
     if (!hive || !camEl) return;
+    // 取景框宽度趁还没写任何样式时读：applyCamera 里在改完全部格子尺寸之后再读 = 强制把整张蜂巢重新布局一遍
+    var wrapW = hive.parentNode ? hive.parentNode.clientWidth : 0;
     var ms = durationMs || ANIM_MS;
     var plan = computeItems(state.expandedId);
     var flip = animate && !reduceMotion();
@@ -288,7 +300,7 @@
     });
 
     state.lastPlan = plan; state.lastCam = plan.cam || 1;
-    applyCamera(hive, camEl, plan, animate);
+    applyCamera(hive, camEl, plan, animate, wrapW);
 
     if (!moved.length) return;
     void hive.offsetWidth;                       // 强制提交反相态，否则下一帧不触发过渡
@@ -323,7 +335,7 @@
   //   · #hive 占位 = plan 尺寸 × cam（滚动区跟着变，放大出去的部分够得着）
   //   · .hive-wrap 高度钉在**未展开时**的高度（它变成取景框，而不是跟着长高）
   // 收起时三件事全部还原，一个不留。
-  function applyCamera(hive, camEl, plan, animate) {
+  function applyCamera(hive, camEl, plan, animate, wrapW) {
     var wrap = hive.parentNode;
     var c = plan.cam || 1;
     var smooth = animate && !reduceMotion();
@@ -358,9 +370,10 @@
     // 这才是相机该干的活：格子的**布局尺寸**不动（EXPAND_MAG 那套咬合关系
     // 一个字节都不能改），装不下就整体缩，和"推近"是同一个旋钮的两个方向。
     // 0.94 / 0.96 留一点边，免得卡片顶着取景框边缘。
-    var fitW = (wrap.clientWidth * 0.94) / (CARD_W * CARD_OVER);
+    var fitW = (wrapW * 0.94) / (CARD_W * CARD_OVER);
     var fitH = (vh * 0.96) / (CARD_H * CARD_OVER);
     c = Math.min(c, fitW, fitH);
+    var wasZoomed = wrap.classList.contains("is-zoomed");
     wrap.classList.add("is-zoomed");
     hive.style.padding = "";
 
@@ -385,14 +398,14 @@
     // （手推 scrollLeft 那一版正是栽在这三层上，实测偏 556px）。
     hive.style.width = (plan.width * c) + "px";
     hive.style.height = (plan.height * c) + "px";
-    var tx = wrap.clientWidth / 2 - plan.focus.x * c;
+    var tx = wrapW / 2 - plan.focus.x * c;
     var ty = vh / 2 - plan.focus.y * c;
     camEl.style.transform =
       "translate3d(" + tx.toFixed(1) + "px," + ty.toFixed(1) + "px,0) scale(" + c + ")";
     // 取景框自己不滚：位置全由 transform 决定，留着滚动位移只会和它打架
     // （收起再展开时，上一次的 scrollTop 会让新的一帧从歪的地方起步）。
-    wrap.scrollLeft = 0;
-    wrap.scrollTop = 0;
+    // 拖拽中只在初次进入时归零（每次写都强制布局）；平时照旧每次归零——focus / scrollIntoView 能滚动 overflow:hidden 的盒子
+    if (!wasZoomed || !document.body.classList.contains("hd-dragging")) { wrap.scrollLeft = 0; wrap.scrollTop = 0; }
   }
 
 
