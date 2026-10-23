@@ -453,7 +453,7 @@
     if (next) { next.el.classList.add("is-expanded"); fillCell(next); }
     clearHover(true);
     T.applyFocus();
-    L.apply(true);
+    L.apply(!DRAGGING());   // 拖「分类历史」卡时展开不做 460ms 的 FLIP / 推镜动画：逐帧样式 + 合成是拖拽卡顿的大头，而且目标在动画里漂着也不好瞄
   }
   function collapse() {
     S.removeSprout();
@@ -482,6 +482,7 @@
   // 格子全是 position:absolute，改一格的尺寸不会把别的格子挤走 —— 这是
   // "悬停不重排"能成立的前提，不是运气。
   var hoverTimer = null;
+  function DRAGGING() { return document.body.classList.contains("hd-dragging"); }
   function setHover(item) {
     if (state.hoverItem === item) return;
     // 悬停一变，格子就开始长大 / 缩回。鼠标不动时浏览器也会因为格子从指针下
@@ -755,7 +756,7 @@
       // 长按接住计时的锁期间不查：queueHover(null) 不看锁，手一抖落在空白处
       // 就会把 3 秒放大掐掉；锁一过由 hoverCenter(false) 按 :hover 接手。
       var locked = state.hoverLock && Date.now() < state.hoverLock;
-      if (wasStill && !locked && isMouse && !state.expandedId) {
+      if (wasStill && !locked && isMouse && !state.expandedId && !DRAGGING()) {
         var under = document.elementFromPoint(ev.clientX, ev.clientY);
         var item = hoverItemFor(under && under.closest && under.closest("#hive .hex-cell"));
         if (item !== state.hoverItem) queueHover(item);
@@ -775,7 +776,7 @@
       // 聚焦态**不进悬停档**（人类 2026-09-08：「禁用放大视图下鼠标放上去放大，
       // 不是禁用点击」）。拦在这里而不是 CSS 的 pointer-events —— 后者会把
       // 点击一起掐死，隔壁的卡片就点不进去了。点击照常：点隔壁 = 换它展开。
-      if (state.expandedId) return;
+      if (state.expandedId || DRAGGING()) return;   // 拖「分类历史」卡时由 hex-decide 自己管悬停（停留才展开）
       // 只认鼠标，且要真的动过（见 setHover：没动过的 mouseover 是格子自己
       // 扫过指针补发的）。触摸的 mouseover 全是点按后的兼容事件和布局补发，
       // 一律不认 —— 它的悬停档由 click 处理器直接 setHover。放它进来的话，

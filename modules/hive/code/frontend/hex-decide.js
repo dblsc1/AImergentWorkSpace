@@ -571,15 +571,16 @@
   var swallow = false;
   document.addEventListener("click", function (ev) { if (swallow) { swallow = false; ev.stopPropagation(); ev.preventDefault(); } }, true);
 
-  var LONG_PRESS_MS = 300;
+  var LONG_PRESS_MS = 300, DWELL_MS = 180;
   function bindDrag(face, it) {
     face.addEventListener("pointerdown", function (ev) {
       if ((ev.button !== undefined && ev.button !== 0) || dragging) return;
       var touch = ev.pointerType === "touch", armed = !touch, pressTimer = null;
       var x0 = ev.clientX, y0 = ev.clientY, ghost = null, cell = null, row = null, newRow = null, over = false;
-      function clearOver() { [].forEach.call(document.querySelectorAll(".hd-over"), function (n) { n.classList.remove("hd-over"); }); }
+      var px = x0, py = y0, raf = 0, dwell = 0, lastHit = null, target = null;
       // 触摸：按住 ~300ms 才开始拖（之前一动就是滚动列表）；武装之后吞掉 touchmove，免得页面跟着滚
       if (touch) pressTimer = window.setTimeout(function () { pressTimer = null; armed = true; face.classList.add("is-armed"); }, LONG_PRESS_MS);
+      function noSel(e) { e.preventDefault(); }   // 代替 body 上的 user-select:none（继承属性，一挂整页重算样式）
       function tm(e) { if (armed && e.cancelable) e.preventDefault(); }
       function mv(e) {
         if (!ghost) {
@@ -588,22 +589,56 @@
           ghost = face.cloneNode(true); ghost.classList.add("hd-ghost");
           ghost.style.setProperty("--zone-raw", face.parentNode.style.getPropertyValue("--zone-raw"));
           ghost.style.setProperty("--zone-mix", face.parentNode.style.getPropertyValue("--zone-mix"));
+          ghost.style.transform = "translate3d(" + (x0 - 40) + "px," + (y0 - 20) + "px,0)";
           document.body.appendChild(ghost); dragging = true; document.body.classList.add("hd-dragging");
         }
-        ghost.style.left = e.clientX - 40 + "px"; ghost.style.top = e.clientY - 20 + "px";
-        var hit = document.elementFromPoint(e.clientX, e.clientY), c = hit && !hit.closest(".hd-panel") && hit.closest(".hex-cell[data-project-id]");
-        if (c && c.classList.contains("is-ghost")) c = null;
-        clearOver(); cell = c || null; row = newRow = null;
-        if (!cell) return;
-        if (App.getState().expandedId !== cell.dataset.projectId) {
-          App.expand(cell.dataset.projectId);
-          cell = App.getState().byId[cell.dataset.projectId].el;
+        px = e.clientX; py = e.clientY;
+        if (!raf) raf = window.requestAnimationFrame(tick);   // 一帧只干一次：pointermove 在高回报率鼠标上一帧好几个
+      }
+      function schedule() { if (!raf && !over) raf = window.requestAnimationFrame(tick); }
+      function clearOver() { [].forEach.call(document.querySelectorAll(".hd-over"), function (n) { n.classList.remove("hd-over"); }); target = null; }
+      // 指针停在格子上 DWELL_MS 才展开（路过的格子不展开）；展开后补一次命中测试，把「新建任务」行 / 任务行点亮
+      // 主线程卡住时定时器会晚到，而 pointermove 已经排在前面：用最新的 px/py 复核一次，指针早走了就不展开
+      function settle(c) {
+        dwell = 0;
+        var h = document.elementFromPoint(px, py);
+        if (!over && cell === c && h && c.contains(h)) enter(c);
+      }
+      function enter(c) {
+        dwell = 0;
+        if (over || cell !== c) return;
+        if (App.getState().expandedId !== c.dataset.projectId) {
+          App.expand(c.dataset.projectId);
+          cell = App.getState().byId[c.dataset.projectId].el;
         }
         ensureRows(cell);
         cell.classList.add("hd-over");
-        newRow = hit.closest && hit.closest(".hd-newtask");
+        lastHit = null; schedule();
+      }
+      function tick() {
+        raf = 0;
+        if (over || !ghost) return;
+        ghost.style.transform = "translate3d(" + (px - 40) + "px," + (py - 20) + "px,0)";
+        var hit = document.elementFromPoint(px, py);
+        if (hit === lastHit) return;   // 指针下还是同一个节点：什么都没变，不碰 DOM
+        lastHit = hit;
+        var c = hit && !hit.closest(".hd-panel") && hit.closest(".hex-cell[data-project-id]");
+        if (c && c.classList.contains("is-ghost")) c = null;
+        c = c || null;
+        if (c !== cell) {
+          window.clearTimeout(dwell); dwell = 0;
+          clearOver(); cell = c; row = newRow = null;
+          if (!cell) return;
+          cell.classList.add("hd-over");
+          if (App.getState().expandedId === cell.dataset.projectId) enter(cell);
+          else dwell = window.setTimeout(settle, DWELL_MS, cell);
+          return;
+        }
+        if (!cell || !cell.classList.contains("is-expanded")) return;
+        newRow = hit.closest(".hd-newtask");
         row = !newRow && hit.closest("li[data-task-id]");
-        var target = newRow || row; if (target) target.classList.add("hd-over");
+        var t = newRow || row;
+        if (t !== target) { if (target) target.classList.remove("hd-over"); target = t; if (t) t.classList.add("hd-over"); }
       }
       function cleanRowsExcept(keep) {
         [].forEach.call(document.querySelectorAll(".hd-newtask"), function (n) { if (n !== keep) n.remove(); });
@@ -611,12 +646,15 @@
       }
       // 唯一的收尾口：松手（ok）/ Esc / 失焦 / 标签页转后台 / 指针丢失（cancel）都走这里，面板 / 影子 / 标记一律复位
       function finish(ok) {
-        if (over) return; over = true;
+        if (over) return;
+        if (raf && ok) { window.cancelAnimationFrame(raf); tick(); }   // 松手前补上最后一次命中，放下的位置 = 最后一个指针位置
+        over = true;
         window.clearTimeout(pressTimer);
-        window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", upH); window.removeEventListener("pointercancel", cancelH);
+        window.removeEventListener("pointermove", mv); window.removeEventListener("selectstart", noSel); window.removeEventListener("pointerup", upH); window.removeEventListener("pointercancel", cancelH);
         window.removeEventListener("touchmove", tm); window.removeEventListener("keydown", keyH, true); window.removeEventListener("blur", cancelH);
         document.removeEventListener("visibilitychange", visH); window.removeEventListener("lostpointercapture", cancelH, true);
         face.classList.remove("is-armed");
+        window.cancelAnimationFrame(raf); window.clearTimeout(dwell);
         if (!ghost) return;
         swallow = true; window.setTimeout(function () { swallow = false; }, 50);
         ghost.remove(); document.body.classList.remove("hd-dragging");
@@ -633,7 +671,7 @@
       function cancelH() { finish(false); }
       function keyH(e) { if (e.key === "Escape" && ghost) { e.stopPropagation(); e.preventDefault(); finish(false); } }
       function visH() { if (document.visibilityState === "hidden") finish(false); }
-      window.addEventListener("pointermove", mv); window.addEventListener("pointerup", upH); window.addEventListener("pointercancel", cancelH);
+      window.addEventListener("pointermove", mv); window.addEventListener("selectstart", noSel); window.addEventListener("pointerup", upH); window.addEventListener("pointercancel", cancelH);
       window.addEventListener("touchmove", tm, { passive: false }); window.addEventListener("keydown", keyH, true); window.addEventListener("blur", cancelH);
       document.addEventListener("visibilitychange", visH); window.addEventListener("lostpointercapture", cancelH, true);
     });
