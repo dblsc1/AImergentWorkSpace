@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Literal
 
 from ... import config
@@ -266,12 +266,13 @@ def _manual_spans(user: str, start: datetime, end: datetime) -> list[tuple[datet
     return out
 
 
-def recorded_today() -> dict:
-    """今天（NEXUS_TZ，按 startAt）自动记下的段，新的在前；归属取台账里的当前归属。只读。
+def recorded_today(day: date | None = None) -> dict:
+    """今天（NEXUS_TZ，按 startAt；v2.37 起 ``day`` 可指定那一天，同一套日界）自动记下的段，新的在前；归属取台账里的当前归属。只读。
     ``source``：按规则记的 ``"rules"``（没记出处的旧段也算它）/ 按人的临时选择记的 ``"choice"``。"""
     user = current_tenant()
     tz = config.settings.tz
-    start = datetime.combine(_now().astimezone(tz).date(), time(), tz)
+    day = day or _now().astimezone(tz).date()
+    start = datetime.combine(day, time(), tz)
     docs = repo.auto_between(user, start, start + timedelta(days=1), _MAX_AUTO)
     current = events_service.current_sessions(service.SOURCE, [f"activity:{d['id']}" for d in docs])
     items = []
@@ -281,4 +282,4 @@ def recorded_today() -> dict:
             items.append({**{k: d[k] for k in ("id", "startAt", "endAt", "durationSeconds", "app", "title")},
                           "eventId": hit["id"], "taskId": hit["task"], "projectId": hit["project"],
                           "reassigned": hit["moved"], "source": d.get("autoSource", "rules")})
-    return {"items": items}
+    return {"items": items, "date": day.isoformat()}

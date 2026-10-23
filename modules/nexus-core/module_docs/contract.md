@@ -178,6 +178,10 @@
 > 上传的建议带 `suggestion.needsAI: true`、留在待确认等 AI 批处理；`GET /activity/suggestions` 追加可选 `needsAI=true` 过滤；AI 经 `ai/suggest`
 > 回答这类窗口**不写规则**（回包 `ruleWritten: false, needsAI: true`）；AI 直接写规则（`ai-apply`）删不掉、改不了人写的 ai 规则。既有端点、字段、行为一个不改。
 >
+> **v2.37（追加式）：`GET /api/core/activity/auto` 可带可选查询参数 `date=YYYY-MM-DD`，看指定那一天自动记下的段。** 仓主 2026-10-23：蜂巢「AI 决策」面板的「分类历史」要显示今天 + 昨天，
+> 而该端点此前只给今天。`date` 缺省 = 今天（行为与 v2.14 / v2.15 完全相同）；指定时按**同一套 `NEXUS_TZ` 日界**取那一天（按 `startAt`），响应形状、`ai`、`source`、至多 200 条都不变；
+> 格式不是 `YYYY-MM-DD`（含不存在的日期）→ 422（`detail` 为字符串）。老服务端会忽略这个参数、只回今天，调用方按 `id` 去重即可。响应**追加** `date`（这批段属于的那一天，`YYYY-MM-DD`，服务端 `NEXUS_TZ` 日界；缺省请求时即服务端的「今天」，调用方据此推「昨天」，不必猜浏览器时区）。既有端点、字段一个不改。见「自动记下的段」节。
+>
 > **v2.36（追加式）：AI 可以提议「改名 / 搬移 / 删除」现成的项目或任务，以及「以后都忽略」某个程序 / 窗口，人批准才生效。** 仓主 2026-10-22 批准。
 > 同 v2.30：**AI 只提议，不直接写**；提议存同一个集合 `activity_new_items`，新增 `kind: change | ignore`。批准才经 `guard.run_write`（改名 / 搬移 / 删除）或 `ignore.add`（忽略规则）落地。
 > `GET activity/proposals` 响应追加 `changes` / `ignores` 两个键；既有端点、字段、行为一个不改。见「AI 提议改动与忽略规则」节。
@@ -651,7 +655,7 @@ consumes:
 | — | （v2.11 追加，无新端点）`GET /api/core/events` 的 `taskId` 过滤按当前归属，改挂过的 `session.completed` 条目追加 `currentSubject`；`POST /api/core/events` 拒收 `session.reassigned` | 见「改挂未分类时间」节 | ✅ 已实现（v2.11） |
 | POST | `/api/core/activity/choice` | `{key, taskId \| projectId, remember?}` | `ChoiceOut`（见「自动跟踪进行中的任务」节）；带 Bearer 403、404、422 | ✅ 已实现（v2.14） |
 | POST | `/api/core/activity/choice/dismiss` | `{key}` | `{key, dismissedUntil}`；带 Bearer 403、404、422 | ✅ 已实现（v2.14） |
-| GET | `/api/core/activity/auto` | 无 | `{items[]}`（今天自动记下的段，新的在前，至多 200 条） | ✅ 已实现（v2.14） |
+| GET | `/api/core/activity/auto` | 无；可选查询 `date=YYYY-MM-DD`（v2.37，缺省今天，坏格式 422） | `{items[]}`（那一天自动记下的段，新的在前，至多 200 条） | ✅ 已实现（v2.14） |
 | POST | `/api/core/activity/ai/claim` | 无（空体或 `{}`） | `{window: null \| {key, app, title, claimedAt, answerBy}}`（见「让 AI 认窗口」节）；带 Bearer 403 | ✅ 已实现（v2.15） |
 | POST | `/api/core/activity/ai/suggest` | `{key, taskId \| projectId, confidence, reason}` 或 `{key, none: true, reason}` | `SuggestOut`；带 Bearer 403、400、404、409（不在等回答，什么都没写）、422 | ✅ 已实现（v2.15） |
 | POST | `/api/core/activity/choice/reject` | `{key}` | `{key, app, title, ruleRemoved}`；带 Bearer 403、404（不是 AI 认的）、422 | ✅ 已实现（v2.15） |
@@ -3379,7 +3383,7 @@ DISPATCH 表：`session.completed` 与 `agent.run.completed` **各追加**路由
                "reassigned": false } ] }                     // 人改过归属没有
 ```
 
-今天（`NEXUS_TZ`，按 `startAt`）自动记下的段，新的在前，至多 200 条；台账里找不到事实的（占位后崩了）不出。
+今天（`NEXUS_TZ`，按 `startAt`）自动记下的段，新的在前，至多 200 条（v2.37：可带 `?date=YYYY-MM-DD` 改看那一天，同一日界，坏格式 422）；台账里找不到事实的（占位后崩了）不出。
 每条另有 `source: "rules" | "choice"`（2026-10-08 波次统一审核追加，见「自动记录」小节末尾）。
 名字不 join。只读，带 Bearer 也能读。改归属 = `POST /api/core/sessions/{eventId}/reassign`（「改挂未分类时间」节
 v2.14 追加）。撤销整段不在本版：改挂到对的任务 / 放回项目的未分类就是修正，台账只追加。

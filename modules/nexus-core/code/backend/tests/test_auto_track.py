@@ -473,6 +473,25 @@ def test_auto_entry_records_task_and_project_with_provenance(client, world):
     assert client.get(f"{API}/activity/suggestions/history").json()["items"] == []
 
 
+def test_auto_list_takes_an_optional_date(client, world):
+    """v2.37：``GET activity/auto?date=YYYY-MM-DD`` 看指定那一天（NEXUS_TZ 日界）；缺省 = 今天；格式不对 422。"""
+    from app import config  # noqa: PLC0415
+
+    _track(client)
+    _upload(client, [_rule_seg(60, task_id=world["a"])], headers=BEARER)
+    items = client.get(f"{API}/activity/auto").json()["items"]
+    assert len(items) == 1
+    day = datetime.fromisoformat(items[0]["startAt"]).astimezone(config.settings.tz).date()
+    body = client.get(f"{API}/activity/auto").json()
+    assert body["date"] == day.isoformat(), "响应带着它覆盖的那一天（服务端日界）"
+    assert client.get(f"{API}/activity/auto", params={"date": day.isoformat()}).json()["items"] == items
+    for other in (day - timedelta(days=1), day + timedelta(days=1)):
+        assert client.get(f"{API}/activity/auto", params={"date": other.isoformat()}).json() == {"items": [], "date": other.isoformat()}
+    for bad in ("2026-13-01", "20261001", "2026-1-1", "yesterday", "", "9999-12-31", "0001-01-01"):
+        resp = client.get(f"{API}/activity/auto", params={"date": bad})
+        assert resp.status_code == 422 and isinstance(resp.json()["detail"], str), bad
+
+
 @pytest.mark.parametrize("why", ["switch_off", "idle", "low_confidence", "service", "task_gone", "agent_session"])
 def test_auto_entry_exceptions_stay_pending(client, world, why):
     _track(client, on=why != "switch_off")
@@ -566,8 +585,7 @@ def test_tenant_isolation(client, world, clock, monkeypatch):
     assert human["auto"] is None and human["needsChoice"] is None and human["presence"] == []
     assert client.post(f"{API}/activity/choice", json={"key": key, "taskId": world["a"]}, headers=B).status_code == 404
     assert client.post(f"{API}/activity/choice/dismiss", json={"key": key}, headers=B).status_code == 404
-    assert _rules(client, headers=B)["rules"] == [] and client.get(f"{API}/activity/auto", headers=B).json() == {
-        "items": []}
+    assert _rules(client, headers=B)["rules"] == [] and client.get(f"{API}/activity/auto", headers=B).json()["items"] == []
     # 同一个窗口在 B 那边出现：A 的选择不跟过去，B 的开关也没开
     _beat(client, title="notes", headers=B)
     assert _human(client, headers=B)["auto"] is None

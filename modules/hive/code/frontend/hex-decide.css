@@ -1,0 +1,105 @@
+[hidden]{display:none!important}
+/* hive · hex-decide.css —— 右上角「AI 决策」面板（分类历史 | 待批准）+ 幽灵（AI 建议）元素。颜色一律 var(--…)。
+   卡片底色 = 蜂巢格子同一份（--zone-raw / --zone-mix 由 JS 从格子抄来）。 */
+.hd-panel {
+  position: absolute; top: var(--sp-3); right: var(--sp-3); z-index: 40;
+  width: min(640px, calc(100% - 2 * var(--sp-3))); max-height: 80vh;
+  display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-3); box-shadow: var(--shadow);
+  font-size: var(--fs-sub); color: var(--ink);
+}
+.hd-head {
+  display: flex; align-items: center; gap: var(--sp-2); width: 100%; padding: var(--sp-2) var(--sp-3);
+  background: none; border: 0; color: inherit; font: inherit; font-weight: 600; cursor: pointer; text-align: left;
+}
+.hd-title { flex: 1; }
+.hd-badge { min-width: 20px; padding: 0 6px; border-radius: 10px; text-align: center; background: var(--plan); color: var(--accent-ink); font-size: var(--fs-eyebrow); line-height: 20px; }
+.hd-tabs { display: none; gap: var(--sp-1); padding: 0 var(--sp-3) var(--sp-2); }
+.hd-tab { font: inherit; font-size: var(--fs-eyebrow); padding: 2px 10px; border: 1px solid var(--line); border-radius: var(--r-1); background: none; color: var(--ink); cursor: pointer; }
+.hd-tab[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
+.hd-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); min-height: 0; border-top: 1px solid var(--line); }
+.hd-col { padding: var(--sp-2); min-width: 0; overflow-y: auto; max-height: calc(80vh - 48px); }
+.hd-col + .hd-col { border-left: 1px solid var(--line); }
+.hd-col h2 { margin: 2px 4px var(--sp-2); font-size: var(--fs-eyebrow); font-weight: 600; color: var(--ink-2); }
+.hd-empty { padding: var(--sp-3); color: var(--ink-3); font-size: var(--fs-eyebrow); }
+@media (max-width: 560px) {
+  .hd-tabs { display: flex; }
+  .hd-cols { grid-template-columns: minmax(0, 1fr); }
+  .hd-col + .hd-col { border-left: 0; }
+  .hd-col { display: none; }
+  .hd-panel[data-tab="pend"] .hd-col-pend, .hd-panel[data-tab="hist"] .hd-col-hist { display: block; }
+}
+
+/* 卡片：外壳负责折叠高度，.hd-face 负责滑动 */
+.hd-card { position: relative; margin-bottom: var(--sp-2); border-radius: var(--r-2); overflow: hidden; outline-offset: 2px; transition: height .25s, margin .25s, opacity .25s; }
+.hd-card.is-gone { margin-bottom: 0; opacity: 0; pointer-events: none; }
+.hd-card:focus-visible { outline: 2px solid var(--focus); }
+.hd-face {
+  position: relative; padding: 10px 12px; border-radius: var(--r-2); touch-action: pan-y; user-select: none; cursor: grab;
+  background: color-mix(in srgb, var(--zone-raw, var(--line)) var(--zone-mix, 30%), var(--panel));
+  border: 1px solid color-mix(in srgb, var(--zone-raw, var(--line)) 52%, transparent);
+}
+.hd-face.anim { transition: transform .22s ease-out; }
+.hd-win { font-size: 17px; font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
+.hd-to { margin-top: 3px; font-size: var(--fs-sub); font-weight: 600; color: color-mix(in srgb, var(--zone-raw, var(--ink-2)) 45%, var(--ink)); overflow-wrap: anywhere; }
+.hd-why { margin-top: 4px; font-size: var(--fs-eyebrow); color: var(--ink-2); line-height: 1.5; }
+.hd-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; font-size: 10px; color: var(--ink-2); font-family: var(--font-mono); }
+.hd-tag { padding: 0 6px; border-radius: 5px; border: 1px solid var(--line); }
+.hd-card.is-ignore .hd-face { background: color-mix(in srgb, var(--ink-3) 22%, var(--panel)); border-color: var(--line); }
+.hd-card.is-ignore .hd-to { color: var(--ink-2); }
+.hd-card.is-del .hd-face { background: color-mix(in srgb, var(--danger) 70%, black); border-color: var(--danger); color: white; }
+.hd-card.is-del .hd-to, .hd-card.is-del .hd-why, .hd-card.is-del .hd-meta { color: white; }
+.hd-under { position: absolute; inset: 0; display: flex; align-items: center; padding: 0 16px; font-weight: 700; color: white; border-radius: var(--r-2); }
+.hd-under.is-ok { background: color-mix(in srgb, var(--fact) 80%, black); justify-content: flex-end; }
+.hd-under.is-no { background: color-mix(in srgb, var(--danger) 80%, black); }
+.hd-err { margin-top: 4px; font-size: var(--fs-eyebrow); color: var(--danger); }
+.hd-card.is-del .hd-err { color: white; font-weight: 700; }
+.hd-acts { display: flex; gap: var(--sp-2); margin-top: var(--sp-2); }
+.hd-btn { padding: 0 8px; border: 1px solid var(--line); border-radius: var(--r-1); background: var(--panel); color: var(--ink); font: inherit; font-size: 11px; cursor: pointer; }
+.hd-btn:disabled { opacity: .5; cursor: default; }
+.hd-report { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); padding-top: var(--sp-2); border-top: 1px dashed var(--line); }
+.hd-foot { display: block; padding-top: var(--sp-2); font-size: var(--fs-eyebrow); color: var(--focus); text-align: right; }
+.hd-hcard .hd-face { cursor: grab; }
+
+/* 提示条 */
+.hd-toasts { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 60; display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
+.hd-toast { pointer-events: auto; display: flex; align-items: center; gap: 12px; background: var(--ink); color: var(--panel); font-size: var(--fs-sub); padding: 7px 12px; border-radius: var(--r-2); box-shadow: var(--shadow); }
+.hd-toast.is-error { background: var(--danger); color: var(--panel); }
+.hd-toast-undo { background: none; border: 0; color: inherit; font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
+
+/* 拖历史卡进蜂巢 */
+.hd-ghost { position: fixed; z-index: 70; width: 240px; pointer-events: none; opacity: .92; box-shadow: var(--shadow); }
+.hd-ghost .hd-acts { display: none; }
+body.hd-dragging { cursor: grabbing; user-select: none; }
+/* 拖历史卡时面板让开：几乎整个滑出右边、半透明、不挡指针，下面的蜂巢格子才够得着 */
+.hd-panel { transition: transform .2s ease-out, opacity .2s; }
+body.hd-dragging .hd-panel { transform: translateX(calc(100% - 28px)); opacity: .35; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .hd-panel { transition: none; } }
+.hex-cell.hd-over { outline: 3px solid var(--plan); outline-offset: 1px; }
+.hex-todo-card.hd-newtask { opacity: .8; border-style: dashed; color: var(--ink-2); }
+.hex-todo-card.hd-newtask input { width: 100%; font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-1); padding: 2px 6px; }
+li.hd-over { outline: 2px solid var(--plan); background: color-mix(in srgb, var(--plan) 25%, var(--panel)); }
+li.hd-flash { animation: hd-flash 1.2s ease-out; }
+@keyframes hd-flash { from { background: color-mix(in srgb, var(--plan) 60%, var(--panel)); } }
+@media (prefers-reduced-motion: reduce) {
+  .hd-card, .hd-face.anim { transition: none; }
+  li.hd-flash { animation: none; outline: 2px solid var(--plan); }
+}
+
+/* 现有任务被点名：脉冲描边 */
+.hex-todo-card.is-pending-hl { outline: 2px solid var(--plan); outline-offset: 1px; }
+@media (prefers-reduced-motion: no-preference) {
+  .hex-todo-card.is-pending-hl { animation: hp-pulse 1.2s ease-in-out infinite; }
+}
+@keyframes hp-pulse { 50% { outline-color: transparent; } }
+.hex-cell.is-pending-hl { outline: 2px solid var(--plan); outline-offset: 1px; }
+.hex-cell.is-dimmed.is-pending-hl, .hex-cell.is-mate.is-pending-hl { opacity: 1; }   /* 任务移动的目的格不被聚焦调灰 */
+/* 提议删除的：划掉 + 泛红 */
+.is-pending-del { outline-color: var(--danger) !important; opacity: .65; }
+li.is-pending-del .hex-task-name, .hex-cell.is-pending-del .hex-title { text-decoration: line-through; color: var(--danger); }
+/* AI 建议的新东西：半透明虚线 */
+.hex-todo-card.is-ghost { opacity: .6; border-style: dashed; }
+.hex-cell.is-ghost { opacity: .7; }
+.hex-cell.is-ghost.is-expanded { opacity: .92; }
+.hd-panel[data-collapsed="1"] { width: auto; min-width: 150px; }
+.hd-face.is-armed { box-shadow: 0 0 0 2px var(--plan); touch-action: none; }

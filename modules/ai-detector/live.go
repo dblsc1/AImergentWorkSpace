@@ -206,28 +206,6 @@ func beatSpans(cfg Config, d awData, from, to time.Time, rules []rule) ([]presen
 	return kept2, truncated, nil
 }
 
-// tabReportSlack：窗口记录器一秒一轮询，窗口事件最多比真实切换晚这么久；标签页记录要在这之后还在报才算当前窗口的。
-// ponytail: 切走前不到一秒刚报过、标题前缀又碰巧对得上的旧标签页仍会被延过去，残余风险已接受。
-const tabReportSlack = time.Second
-
-// latestEvent 返回结束最晚的那条（没有就是 nil）。
-func latestEvent(evts []awEvent) *awEvent {
-	var best *awEvent
-	for i := range evts {
-		if best == nil || evts[i].end().After(best.end()) {
-			best = &evts[i]
-		}
-	}
-	return best
-}
-
-// extendLatest 把结束最晚的那条延到 to（它还没到 to 才延）。
-func extendLatest(evts []awEvent, to time.Time) {
-	if cur := latestEvent(evts); cur != nil && cur.end().Before(to) {
-		cur.Duration = to.Sub(cur.Timestamp).Seconds()
-	}
-}
-
 // beater：心跳跨拍只记一样东西——上一拍成功发出时覆盖到了哪一刻。
 type beater struct{ covered time.Time }
 
@@ -273,17 +251,19 @@ func (p *beater) beat(cfg Config, hc *http.Client, now time.Time) (bool, error) 
 	// 不延的话裁剪后是空的，心跳就误报「没有窗口记录」（标题每秒变的终端几乎每拍都中）。
 	// 开始时刻不早于 now（同一秒、时钟差）时多给一秒，否则区间仍是空的。
 	to := now
-	if cur := latestEvent(d.window); cur != nil && !cur.Timestamp.Before(now) {
-		to = cur.Timestamp.Add(time.Second)
+	win := -1
+	for i := range d.window {
+		if win < 0 || d.window[i].end().After(d.window[win].end()) {
+			win = i
+		}
 	}
-	extendLatest(d.window, to)
-	// 浏览器标签页同理：aw-watcher-web 的心跳常落后一分钟以上，不延的话最后 5 秒的 Chrome 段找不到标签页、标题为空。
-	// 只延「当前窗口开始时还在报」的那条：切到无痕 / 另一个窗口后扩展就不报了，旧标签页停在切换之前，
-	// 延了会把它的域名、标题安到新窗口上（标题前缀碰巧对得上时脱敏也拦不住）。正在出声的不延：它会算作在场。
-	if tab, cur := latestEvent(d.web), latestEvent(d.window); tab != nil && cur != nil &&
-		!tab.end().Before(cur.Timestamp.Add(-tabReportSlack)) {
-		if a, _ := tab.Data["audible"].(bool); !a || !cfg.Idle.AudibleAsPresent {
-			extendLatest(d.web, to)
+	if win >= 0 {
+		cur := &d.window[win]
+		if !cur.Timestamp.Before(now) {
+			to = cur.Timestamp.Add(time.Second)
+		}
+		if cur.end().Before(to) {
+			cur.Duration = to.Sub(cur.Timestamp).Seconds()
 		}
 	}
 	from := now.Add(-presenceLookback)

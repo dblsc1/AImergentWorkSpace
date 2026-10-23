@@ -17,7 +17,7 @@ AI 的回答只在「没答过、人也没留记号」时写得进，它的规�
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from ...tenant import current as current_tenant
 from ..detector import service as detector_service
@@ -234,9 +234,9 @@ def dismiss(key: str) -> dict:
     return out
 
 
-def recorded_today() -> dict:
+def recorded_today(day: date | None = None) -> dict:
     """``GET activity/auto``：每条追加 ``ai``——这一段是按 AI 认的那条规则记下的（窗口与目标都对得上，且没被改挂）。"""
-    out = auto.recorded_today()
+    out = auto.recorded_today(day)
     keys = {id(i): auto.window_key(i["app"], i["title"]) for i in out["items"]}
     recs = ask_repo.by_keys(current_tenant(), sorted(set(keys.values())))
     for i in out["items"]:

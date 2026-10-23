@@ -446,7 +446,7 @@
     if (state.expandedId === key) return;
     var prev = state.expandedId ? state.byId[state.expandedId] : null;
     state.expandedId = key;
-    // 待批准浮层点出来的高亮 / 删除标记（hex-pending.js）只活到换展开 / 收起为止
+    // 待批准浮层点出来的高亮 / 删除标记（hex-decide.js）只活到换展开 / 收起为止
     [].forEach.call(document.querySelectorAll(".hex-cell.is-pending-hl, .hex-cell.is-pending-del"), function (n) { n.classList.remove("is-pending-hl", "is-pending-del"); });
     if (prev) { prev.el.classList.remove("is-expanded"); fillCell(prev); }
     var next = key ? state.byId[key] : null;
