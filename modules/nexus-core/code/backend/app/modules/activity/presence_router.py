@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import (
     AfterValidator,
     AwareDatetime,
@@ -160,6 +160,7 @@ class AutoSessionsOut(BaseModel):
     """今天自动记下的段；条目的键见契约。"""
 
     items: list[dict]
+    date: str  # v2.37：这批段属于的那一天（YYYY-MM-DD，NEXUS_TZ 日界）
 
 
 @router.post("/choice", response_model=ChoiceOut)
@@ -175,8 +176,16 @@ async def dismiss_choice(request: Request) -> dict:
 
 
 @router.get("/auto", response_model=AutoSessionsOut)
-def auto_sessions() -> dict:
-    return auto_ai.recorded_today()  # v2.15：每条追加 ai
+def auto_sessions(date: str | None = None) -> dict:
+    day = None
+    if date is not None:  # v2.37：可选的那一天（YYYY-MM-DD，NEXUS_TZ 的日界）；缺省 = 今天
+        try:
+            day = datetime.strptime(date, "%Y-%m-%d").date() if len(date) == 10 else None
+        except ValueError:
+            day = None
+        if day is None or not 1 < day.year < 9999:  # 首尾年份加减一天会溢出成 500
+            raise HTTPException(422, "date 要写成 YYYY-MM-DD")
+    return auto_ai.recorded_today(day)  # v2.15：每条追加 ai
 
 
 # ------------------------------------------------ v2.15 让 AI 认窗口（契约同名节）
