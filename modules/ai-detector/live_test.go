@@ -903,3 +903,50 @@ func TestPresenceDropsSubMillisecondFragment(t *testing.T) {
 		t.Fatalf("spans %+v", got)
 	}
 }
+
+// 浏览器标签页记录和窗口一样要延到现在：扩展的心跳比窗口晚，最近一条标签页结束在 30 秒前，
+// 不延的话这一拍里 Chrome 的窗口段找不到标签页，标题就空了。
+func TestPresenceBrowserTabExtendedToNow(t *testing.T) {
+	now := time.Now()
+	win := []awEvent{winEv(now.Add(-60*time.Second), 59, "Google Chrome", "Page - Google Chrome")}
+	web := []awEvent{{Timestamp: now.Add(-60 * time.Second), Duration: 30, Data: map[string]any{"url": "https://example.com/x", "title": "Page"}}}
+	if got := presenceTitleFor(t, win, web, now); got != "example.com · Page" {
+		t.Fatalf("title=%q", got)
+	}
+	// 30 秒前切到了无痕窗口（扩展不报），标题前缀碰巧一样：旧标签页停在切换之前，不能延过去。
+	inc := []awEvent{winEv(now.Add(-60*time.Second), 30, "Google Chrome", "Page - Google Chrome"),
+		winEv(now.Add(-20*time.Second), 19, "Google Chrome", "Page - Google Chrome (Incognito)")}
+	if got := presenceTitleFor(t, inc, web, now); got != "" {
+		t.Fatalf("stale tab leaked into incognito window title=%q", got)
+	}
+	// 切走前 2 秒刚报过一拍也一样：不是当前窗口开始后报的。
+	web2 := []awEvent{{Timestamp: now.Add(-60 * time.Second), Duration: 38, Data: map[string]any{"url": "https://example.com/x", "title": "Page"}}}
+	if got := presenceTitleFor(t, inc, web2, now); got != "" {
+		t.Fatalf("tab reported just before switch leaked title=%q", got)
+	}
+	// 刚切到这一页：标签页比窗口事件早一秒开始、只报了一拍，仍算同一个。
+	fresh := []awEvent{winEv(now.Add(-60*time.Second), 40, "code", "x"), winEv(now.Add(-20*time.Second), 19, "Google Chrome", "Page - Google Chrome")}
+	web3 := []awEvent{{Timestamp: now.Add(-21 * time.Second), Duration: 0, Data: map[string]any{"url": "https://example.com/x", "title": "Page"}}}
+	if got := presenceTitleFor(t, fresh, web3, now); got != "example.com · Page" {
+		t.Fatalf("fresh tab title=%q", got)
+	}
+	// 标签页标题对不上窗口标题（无痕窗口 / 同一浏览器的另一个普通窗口）：仍然只留程序名。
+	web[0].Data["title"] = "Other"
+	if got := presenceTitleFor(t, win, web, now); got != "" {
+		t.Fatalf("mismatched tab leaked title=%q", got)
+	}
+}
+
+// presenceTitleFor 跑一拍心跳，返回发出去的顶层 title。
+func presenceTitleFor(t *testing.T, win, web []awEvent, now time.Time) string {
+	t.Helper()
+	aw := fakeAWWeb(t, win, nil, web)
+	defer aw.Close()
+	ck := newLiveCockpit(t)
+	defer ck.Close()
+	remotePresence.Store(nil)
+	if sent, err := presenceBeat(liveConfig(aw.URL, ck.URL), http.DefaultClient, now); !sent || err != nil {
+		t.Fatalf("sent=%v err=%v", sent, err)
+	}
+	return ck.posts("/presence")[0].body["title"].(string)
+}
