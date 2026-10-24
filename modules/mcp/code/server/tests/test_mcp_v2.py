@@ -904,3 +904,11 @@ def test_block_mapping_skips_collisions(servers, monkeypatch):
     monkeypatch.setattr("fake_nexus.BLOCK_RULES", {"items": rules})
     ok(servers, "CRUD_Windowsblock_Classify_Rules", {"ops": [{"op": "delete", "block": "a b"}, {"op": "delete", "block": "c d"}]}, W)
     assert [b["blockKey"] for _, b in posts()] == ["a b", "c d"]   # 两个原样 key 同显示形式 / 显示形式本身是原样 key：都不猜
+
+
+def test_error_detail_caps_long_raw_block_key(servers, monkeypatch):
+    raw = "ECHO " + "x" * 450 + "SECRETTAIL" + "y" * 300
+    monkeypatch.setattr("fake_nexus.BLOCK_RULES", {"items": [{"id": "br_9", "blockKey": raw, "taskId": "t_a1"}]})
+    shown = tools._screen(raw, tools.MAX_BLOCK)
+    out = ok(servers, "CRUD_Windowsblock_Classify_Rules", {"ops": [{"op": "delete", "block": shown}]}, W)
+    assert "SECRETTAIL" not in out["results"][0]["detail"] and "SECRETTAIL" not in shown

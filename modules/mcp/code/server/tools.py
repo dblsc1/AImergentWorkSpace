@@ -289,7 +289,7 @@ def _resolve(spec: dict, args) -> dict:
 # 再截断；并且只放在叫 app / title / window / block 的字段里，绝不拼进 note 这类模型当叙述读的句子。
 MAX_TITLE = 80            # 窗口标题（Get_Now / Get_History）
 MAX_SCREEN_TEXT = 200     # Get_Pending_Classify_Windows 的标题、Get_Proposals 的摘要
-MAX_ERR = 1000            # 下游报错文字：可能带块名 / 窗口标题原样，过 _screen 再给调用方
+MAX_ERR = 400             # 下游报错文字：可能带块名 / 窗口标题原样，和块名同一个上限，过 _screen 再给调用方
 MAX_BLOCK = 400           # 块名只清洗不实质截断：它是 CRUD_Windowsblock 的 block 入参，截了就对不上
 _UNSAFE = {"Cc", "Cf", "Co", "Cs", "Zl", "Zp"}  # 控制符、格式符（零宽 / 双向）、私用区、代理项、行 / 段分隔符
 
