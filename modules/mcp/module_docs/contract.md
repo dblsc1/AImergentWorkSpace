@@ -5,10 +5,25 @@
 
 ```yaml
 provides:
+  - id: mcp.tools.v2
+    contract: ../../../contracts/mcp.tools.v2/contract.md
+    summary: v0.5 工具集：读 9 个、写 6 个，help / note / permissions，address，写工具默认提议、direct_apply 三条件；v1 名字只回迁移说明
   - id: mcp.tools.v1
     contract: ../../../contracts/mcp.tools.v1/contract.md
     summary: 23 个工具（没有范围头的调用方 22 个；v1.24 加 propose_change / propose_ignore_rule：提议改名 / 搬移 / 删除、提议「以后都忽略」，人批准才生效；v1.18 加 propose_project / propose_task：提议新项目 / 项目下的新任务，人在「待批准」页批准才建，list_projects 输出追加 zones / proposals；v1.17 加 apply_detector_rules：明确的 write 范围、账号开关 aiDirectRules 开着才直接写生效的规则；13 个只读（v1.13 加 get_report_status；v1.16 加 get_detector_health：检测程序状态 / 最近事故 / 固定排查提示，开关开着时带不可信的启动日志）+ propose_detector_rules 只写草稿 + propose_activity_matches 只写待确认的建议 + v1.13 propose_report 只写待人批准的报告 + v1.9 认窗口的 get_window_awaiting_target / suggest_window_target），挂在 <站点前缀>api/mcp/（经网关、过门）；对内 http://mcp:8020/api/mcp/
 consumes:
+  - id: nexus-core.views.history.v1
+    contract: ../../nexus-core/module_docs/contract.md
+    purpose: v2 Get_History
+  - id: nexus-core.views.arrangements.v1
+    contract: ../../nexus-core/module_docs/contract.md
+    purpose: v2 Get_Arrangements
+  - id: nexus-core.activity.tiers.v1
+    contract: ../../nexus-core/module_docs/contract.md
+    purpose: v2 Get_Pending_Classify_Windows、Get_Rules、三个窗口分类写工具、Get_Proposals 的直接施加日志、activity/settings 只读
+  - id: nexus-core.activity.secretary.v1
+    contract: ../../nexus-core/module_docs/contract.md
+    purpose: v2 Submit_Report、Submit_Questions_To_Human、CRUD_Honeycomb 的 retime；Get_Proposals 读报告与问题
   - id: nexus-core.activity.proposals.v1
     contract: ../../nexus-core/module_docs/contract.md
     purpose: v1.24 propose_change（POST activity/proposals/changes）、propose_ignore_rule（POST …/ignores）；v1.18 propose_project（POST activity/proposals/projects）、propose_task（POST …/tasks）；list_projects 读 GET activity/proposals（老后端 404 = 空）；批准 / 不要 MCP 永远不调
