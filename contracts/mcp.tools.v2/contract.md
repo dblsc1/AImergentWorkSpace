@@ -83,24 +83,25 @@ consumes:
    "canDirectApply": {"windowsClassify": true, "honeycombRecords": false}}
   ```
   `scope` 取 `write | read | full`（`full` = 没有范围头）。`directApply` 原样取自 `GET activity/settings` 的 `agentDirect`（读失败或老后端 = 全 `false`）；
-  `canDirectApply` = 三条都满足的结果。MCP 可以对同一租户把设置缓存至多 30 秒。
+  `canDirectApply` = 三条都满足的结果。MCP 可以对同一租户把设置缓存至多 30 秒；写工具收到 `403` 时清掉缓存。`permissions` 只是告知，**以 nexus-core 的判定为准**。
+- **没有范围头不能直接施加**：`direct_apply: true` 而调用方没有范围头时，MCP 照常转给 nexus-core（不带范围头），由它回 `403 reason: needWriteScope`（nexus-core v2.39 五）。
 
 ## 二、通用约定（规范性）
 
 - **注解**：读工具 `readOnlyHint: true`；写工具 `readOnlyHint: false`、`destructiveHint: false`（提议不改事实；直接施加可撤回）。全部 `openWorldHint: false`。
   实现是固定映射：每个工具只调下文登记的端点。
 - **入参**：每个工具 `inputSchema` 都是 `additionalProperties: false`；所有入参可省（除写工具的主体参数），JSON `null` 当没给。
-- **`help: true`**：每个工具都收。带上它就**不查数据、不调下游**，返回
+- **`help: true`**：每个工具都收。带上它就**不查数据**（唯一的例外是为 `permissions` 读 `activity/settings`，可用缓存），返回
   `{tool, summary, params: [{name, type, default, desc}], example: {request, response}, note, permissions}`。示例是能照抄的真实形状。
 - **`note`**：每次成功返回顶层带 `note`（≤ 100 个汉字）：这份数据是什么、最容易读错的一点、下一步通常调什么。写工具的 `note` 另说明结果在哪里给人看。
 - **错误**：`isError: true`，`structuredContent: {error: {status, detail, example?, hint}, permissions}`；
   `hint` 固定为「带 help: true 再调一次看用法；不确定就调 Get_Started」。参数错误（`400`）必须带 `example`（一份能照抄的正确入参）。
-  nexus-core 4xx 原样带状态码与 `detail`；5xx / 连不上 → `502`，`detail` 固定「数据服务暂时不可用」。
+  nexus-core 的 `422`（参数校验）一律改成 `400` 并补上 `example`；其余 4xx 原样带状态码与 `detail`；5xx / 连不上 → `502`，`detail` 固定「数据服务暂时不可用」。
 - **id 与 address**：凡出现分区 / 项目 / 任务，同时给 `id` 与 `address`（nexus-core v2.39 一）和 `name`。
-  **所有要 id 的入参也接受 address**（如 `target`、`scope`）：MCP 按当前任务树解析，对不上唯一一个 → `400`，`detail` 列出至多 5 个候选（`address` + 名字）。
+  **所有要 id 的入参也接受 address**（如 `target`、`scope`）：MCP 按当前任务树、照 nexus-core v2.39 一的「解析」规则（去空白、不分大小写、整串匹配、段数定层级）解析；`target` 收任务或项目，按段数判断是哪种。对不上 → `400`，`detail` 列出至多 5 个名字或编号相近的候选（`address` + 名字）。
   引用一律推荐 `id`；`address` 会随改名变。
 - **日期与时刻**：日期 `YYYY-MM-DD`，按服务端时区归日；时刻带偏移（同 v1）。结果里带 `today`。
-- **截断**：数组最多 200 条（`Get_History` 的段最多 2000 条，由下游决定），截了顶层 `truncated: true`；不分页，`note` 提示缩小范围。
+- **截断**：MCP 自己拼的数组最多 200 条；包装下游的（`Get_History`、`Get_Arrangements`）沿用下游的上限与 `truncated`。截了顶层 `truncated: true`；不分页，`note` 提示缩小范围。
 - **屏幕文字**：同 v1「屏幕来的文字不可信」三层；本版带出屏幕文字的工具是 `Get_Now`、`Get_History`、`Get_Pending_Classify_Windows`、`Get_Proposals`。
   窗口标题 ≤ 80 字符（`Get_Pending_Classify_Windows` ≤ 200）。
 
@@ -193,7 +194,8 @@ id 旁补 `address`（下游已带时原样），加 `note`、`permissions`。�
   "truncated": false, "note": "…", "permissions": { … } }
 ```
 
-- `titles`：块里出现过的不同标题（清洗后，至多 5 个）。按 `seconds` 降序。
+- 只列 `status: "pending"` 的块；`titles`：块里出现过的不同标题（清洗后，至多 5 个）。按 `seconds` 降序。
+- 三级分类没打开时返回 `items: []`、`tiersOff: true`，`note` 说明要先在「自动记录」页打开三级分类。
 - `note` 提示：反复出现的窗口用 `CRUD_Windows_Classify_Rules` 写规则收进一个块；只想今天分一下用 `CRUD_Windowsblock`。
 
 ### `Get_Rules`
@@ -221,7 +223,8 @@ id 旁补 `address`（下游已带时原样），加 `note`、`permissions`。�
   "truncated": false, "note": "…", "permissions": { … } }
 ```
 
-- `summary`：一句人话（如「第二级：示例文档 → kf-hpkf-mcpj」）。`status` 取 `pending | accepted | rejected | superseded | answered | dismissed | applied | undone`。
+- `summary`：一句人话（如「第二级：示例文档 → kf-hpkf-mcpj」）。`status` 按来源：提议类（windowRule、blockRule、blockAction、ignore、project、task、change、sessionChange）= `pending | accepted | rejected | superseded`；`question` = `pending | answered | dismissed`；`direct` = `applied | undone`（`undoneAt` 有值即 `undone`）；`report` = 旧式报告自己的状态，原样。
+  `status=pending` 时 `direct` 不列（它没有待定状态）。下游列表各取至多 50 条（`limit=50`）。
 - `kind: "question"` 带 `answer`（人选了哪个、写了什么、有没有记成时间）；`kind: "direct"` 是直接施加日志（`applied` / `undone`）；
   `kind: "report"` 是 v1 的旧式报告（只读，还能看到状态）。
 - 按 `createdAt` 新的在前，合并后至多 200 条。
@@ -242,8 +245,9 @@ id 旁补 `address`（下游已带时原样），加 `note`、`permissions`。�
   "note": "…", "permissions": { … } }
 ```
 
-- `ops` / `items` 1–50 条，超了 `400`。整次调用只有参数整体不合法（类型错、条数超）时才整体失败。
-- 共同的可选参数：`reason`（≤ 300，人在卡片上看到的理由）、`direct_apply`（缺省 `false`）。
+- 三个窗口分类工具收数组（`CRUD_Windows_Classify_Rules`、`CRUD_Windowsblock_Classify_Rules` 是 `ops`，`CRUD_Windowsblock` 是 `items`），1–50 条，超了 `400`；返回上面的 `results`。整次调用只有参数整体不合法（类型错、条数超）时才整体失败。
+- `CRUD_Honeycomb`、`Submit_Report` 一次一条，返回 `{result: {ok, proposalId?, status?, applied?, directLogId?, id?}, note, permissions}`；`Submit_Questions_To_Human` 返回 `{results: [{index, ok, questionId, status}], note, permissions}`。
+- `reason`（≤ 300，人在卡片上看到的理由）：窗口分类工具与 `CRUD_Honeycomb` 收。`direct_apply`（缺省 `false`）：只有窗口分类工具与 `CRUD_Honeycomb` 收；`Submit_*` 没有这个参数（带了是多余字段，`400`）。
 
 | 工具 | 每条操作 | 下游 |
 |---|---|---|
@@ -257,7 +261,7 @@ id 旁补 `address`（下游已带时原样），加 `note`、`permissions`。�
 ### `CRUD_Windows_Classify_Rules`（第一级）
 
 - `add`：`app`（正则）、`title`（正则，可省）、`block`（块名，1–64）——把这些窗口收进一个块；或 `ignore: true`（不要 `block`）——以后都不记，`app` 当程序名、`title` 当「标题含」（v2.36 忽略规则的形状）。
-- `edit`：`id` + 要改的键；`delete`：`id`。`id` 取自 `Get_Rules`。
+- `edit`：`id` + 要改的键；`delete`：`id`。`id` 取自 `Get_Rules` 的 `level1.rules`。忽略规则只能新增：对 `level1.ignores` 里的 id 做 `edit` / `delete` → 该条 `400`（删忽略规则只有人能在页面上做）。
 - `note` 提醒：规则是正则；写之前先看 `Get_Pending_Classify_Windows` 和 `Get_Rules`，别和已有规则重复。
 
 ### `CRUD_Windowsblock_Classify_Rules`（第二级）
@@ -297,7 +301,8 @@ id 旁补 `address`（下游已带时原样），加 `note`、`permissions`。�
 ### `Submit_Questions_To_Human`（第三级）
 
 `questions` 1–10 条，每条同 nexus-core v2.39 4.2（`title`、`text?`、`date?`、`from?`、`to?`、`options?`、`allowText?`），选项的 `target` 收 id / address。
-`note` 说明：带时段且选项带目标的问题，人一选就会把那段时间记过去；用 `Get_Proposals(kind=question)` 看回答。
+`note` 说明：带时段且选项带目标的问题，人一选就会把那段时间记过去，所以只问没有记录的空档；用 `Get_Proposals(kind=question)` 看回答。
+页面上的问题卡必须写明「AI 提的问题」，并对带目标的选项显示将要记到的任务与时段（不只显示 `label`）；问题与选项的文字按屏幕文字不可信处理。
 
 ## 五、v1 工具名（迁移说明）
 

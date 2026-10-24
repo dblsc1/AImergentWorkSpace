@@ -4706,66 +4706,75 @@ AI 不直接调「二」「三」的写端点（那些只许人）。它经 `act
 
 ## MCP v0.5 的后端：位置编号、协作历史、安排、第三级（规范性 · v2.39）
 
-仓主 2026-10-24 批准「蜂巢 MCP v0.5 接口简报」。本节全部只增：既有端点、字段、事件的行为一个不改。读端都不写台账。
+仓主 2026-10-24 批准「蜂巢 MCP v0.5 接口简报」。本节只增：既有端点、字段、事件的行为除「五」列出的两处追加外一个不改。读端都不写台账。
 MCP 侧见 `contracts/mcp.tools.v2`。
 
 ### 一、位置编号 `address`
 
-每个分区、项目、任务在 `id`（给机器，永不变）之外有一个 `address`（给人和 agent 读，改名、搬家后跟着变）。**不存储**，读时现算。
+每个分区、项目、任务在 `id`（给机器，永不变）之外有一个 `address`（给人和 agent 读，改名、搬家、同级增删后可能变）。**不存储**，读时现算。
 
 - **出现在哪**：`views/tree` 的每个分区、项目、任务追加 `address`（含临时任务、已完成任务、收件箱、各项目的「未分类」任务）；本节新增的读端凡出现分区 / 项目 / 任务都带 `address`。
-- **编号**：取名字的首字母，全部小写：
-  - 英文（ASCII 字母数字串）每个词取首字符；中文每个字取拼音首字母（多音字取库的缺省读音）；中英混写按出现顺序混着取；其余字符（标点、空白、表情）只当分隔，不出字母。
-  - 分区取前 2 个，项目前 4 个，任务前 4 个；不够就按实际个数，不补。一个字母都取不出时用 `x`。
-- **撞号**：同一层级里（分区：全部分区；项目：同一分区；任务：同一项目）编号相同的，按创建先后，第一个不加，第二个起加 `2`、`3`……（`cs`、`cs2`、`cs3`）。比较时不分大小写。
-- **拼接**：`分区编号-项目编号-任务编号`，例如 `jy`、`jy-jgsc`、`jy-jgsc-kcdm`。编号本身不含 `-`。
-- 收件箱和「未分类」照普通名字编号（「收件箱」= `sjx`，「未分类」= `wfl`）。
-- 拼音用 `pypinyin`（MIT，纯 Python，进 nexus-core 依赖）。换库导致个别多音字编号变化不算破坏：`address` 本来就会变，引用一律用 `id`。
+- **基础编号**：从名字里按顺序取字母，全部小写：
+  - 词 = 连续的字母或数字（含带重音的拉丁字母，如 é）；每个词取首字符（数字词取首位数字），`HoneyComb` 是一个词 = `h`，`2024计划` = `2` + `j` + `h`。
+  - 中文（含繁体）每个字单独取拼音首字母（`pypinyin` 缺省读音）；其余字符（标点、空白、表情、其他文字）只当分隔。
+  - 分区取前 2 个，项目前 4 个，任务前 4 个；不够就按实际个数，不补。一个都取不出时为 `x`。
+- **撞号**：同一层级（分区：全部分区；项目：同一分区；任务：同一项目）按创建先后（`createdAt` 升序，同刻按 `id`）依次分配：每个取 `基础`、`基础2`、`基础3`……里**第一个还没被前面的同级占用**的（不分大小写比较）。所以名叫「CS2」的项目与第二个「测试」不会撞。
+  同级有删除、搬入搬出时后面的会重新分配，这是预期的。
+- **拼接**：`分区-项目-任务`，如 `jy`、`jy-jgsc`、`jy-jgsc-kcdm`。编号不含 `-`。收件箱和「未分类」照普通名字编号（「收件箱」= `sjx`，「未分类」= `wfl`）。
+- **解析**（给接受 address 的调用方，如 MCP）：去首尾空白、不分大小写、整串精确匹配；1 段 = 分区，2 段 = 项目，3 段 = 任务；不做前缀匹配。已完成与临时的也能解析。
+- `pypinyin`（MIT，纯 Python）进 nexus-core 依赖。换版本导致个别多音字编号变化不算破坏：引用一律用 `id`。
 
 ### 二、协作历史 `GET /api/core/views/history`
 
 一段时间里人和 agent 各干了什么、怎么交接。人和 agent **分开给，永不相加**。
 
-查询：`from`、`to`（`YYYY-MM-DD`，缺省都是今天，含两端，按 `NEXUS_TZ` 归日）、`who`（`human | agent | both`，缺省 `both`）、`detail`（`summary | segments | windows`，缺省 `summary`）、`scope`（分区 / 项目 / 任务 id，选填，只影响人的部分）。
-跨度：`summary` 最多 92 天，`segments` / `windows` 最多 7 天；超了、日期不合法、`from > to` → `422`（`detail` 点名参数）。
+查询：`from`、`to`（`YYYY-MM-DD`，缺省都是今天，含两端，按 `NEXUS_TZ` 归日）、`who`（`human | agent | both`，缺省 `both`）、`detail`（`summary | segments | windows`，缺省 `summary`）、`scope`（分区 / 项目 / 任务 id，选填，只过滤人的已入账部分）。
+跨度：`summary` 最多 92 天，`segments` / `windows` 最多 7 天；超了、日期不合法、`from > to`、取值不在枚举里 → `422`（`detail` 点名参数）。
 
 ```jsonc
 {
   "range": {"from": "2026-10-24", "to": "2026-10-24", "tz": "+08:00", "today": "2026-10-24"},
   "human": {
-    "confirmedSeconds": 5400,          // 已入账（台账，按当前归属）
-    "pendingSeconds": 1200,            // 还没分类：tiers 开 = 待分类窗口块的时长；关 = 待确认建议的时长
-    "byDay": [ {"date": "2026-10-24", "seconds": 5400,
+    "confirmedSeconds": 5400,
+    "pendingSeconds": 1200,
+    "byDay": [ {"date": "2026-10-24", "seconds": 5400, "pendingSeconds": 1200,
                 "byTarget": [ {"taskId": "t_…", "projectId": "p_…", "address": "kf-hpkf-mcpj", "seconds": 3600} ]} ],
     "segments": [ … ],                 // 仅 detail=segments
     "blocks": [ … ]                    // 仅 detail=windows
   },
   "agents": {
-    "workingSeconds": 4310,            // 代理干活秒数（同 views/agent-time 的 workingSeconds 口径）
+    "workingSeconds": 4310,
     "byDay": [ {"date": "2026-10-24", "workingSeconds": 4310} ],
     "byAgent": [ {"agent": "claude-code", "label": "Cockpit-Pub-Coder1", "workingSeconds": 1945, "runs": 2} ],
     "runs": [ … ]                      // 仅 detail=segments
   },
   "handoffs": [ … ],                   // 仅 detail=segments 且 who=both
-  "overlap": { … }                     // 仅 detail=segments 且 who=both
+  "overlap": { … },                    // 仅 detail=segments 且 who=both
+  "truncated": false
 }
 ```
 
 - `who=human` 时没有 `agents`、`handoffs`、`overlap`；`who=agent` 时没有 `human`、`handoffs`、`overlap`。
-- **`human.segments[]`**（按时间升序，最多 2000 条，截了顶层 `truncated: true`）：
-  `{from, to, seconds, status, eventId, taskId, projectId, address, window, onAgentRun}`（`eventId`：`confirmed` 段 = 那条 `session.completed` 的 id，`pending` 段 = `null`）。
-  - `status`：`confirmed`（台账里的段，按当前归属；作废的不出现）、`pending`（tiers 开：待分类窗口块里的记录；关：待确认建议）。
-  - `window`：`"程序 · 标题"`（标题经隐私处理、≤ 80 字符；不是来自窗口的段为 `null`）。
-  - `onAgentRun`：这段时间人的窗口就是某条代理运行的终端（同 v2.17「人在看它」的相等规则，恰好一条）时给那条 `runId`，否则 `null`。
-- **`human.blocks[]`**（`detail=windows`；tiers 关着时为 `[]` 并在顶层给 `tiersOff: true`）：每天的窗口块，形状同 `GET activity/blocks` 的 `items[]`，追加 `date`、`address`（已分类时目标的编号）与 `records`（块里的原始记录 `{from, to, seconds, app, title}`，每块最多 200 条，截了块上 `recordsTruncated: true`）。
+- **口径**：
+  - `confirmedSeconds` / `byTarget` / 已入账段 = 台账里**所有** `session.completed`（任何 `source`，作废的除外），按当前归属（含改挂），按投影的同一口径归日。代理的运行是 `agent.run.completed`，从不进人的部分。
+  - `pendingSeconds` = 还没分类的时间：tiers 开 = 范围内 `pending` 与 `generic`（还没拆完）窗口块里、尚未入账的记录秒数（同一时刻多台设备取并集），含今天还在记的；`ignored` 的不算。tiers 关 = 范围内待确认建议的秒数（同 `activity/suggestions/pending-days` 口径）。
+  - `scope` 只过滤已入账的部分；`pending` 的没有归属，给了 `scope` 时 `pendingSeconds` 为 `null`、不出 pending 段。
+- **`human.segments[]`**（按 `from` 升序）：`{from, to, seconds, status, eventId, taskId, projectId, address, window, onAgentRun}`。
+  - `confirmed` 段：一条 `session.completed` 一段，`eventId` = 它的 id。
+  - `pending` 段：tiers 开 = 每个待分类块的每一段连续记录（按「三级分类」四的 300 秒间隔切段）一段，`window` = 块名；tiers 关 = 每条待确认建议一段。`eventId`、`taskId`、`projectId`、`address` 为 `null`。
+  - 已入账段与 pending 段在时间上可以重叠（例如手动计时期间窗口也在记），两者照实给，不互相扣。
+  - `window`：`"程序 · 标题"`，标题经隐私处理并按「屏幕来的文字」清洗成一行、≤ 80 字符；不是来自窗口的段为 `null`。
+  - `onAgentRun`：这段时间人的窗口就是某条代理运行的终端（v2.17「人在看它」的相等规则，恰好一条）时给那条 `runId`，否则 `null`。
+- **`human.blocks[]`**（`detail=windows`；tiers 关着时为 `[]` 并在顶层给 `tiersOff: true`）：每天的窗口块，形状同 `GET activity/blocks` 的 `items[]`，追加 `date`、`address`（已分类时目标的编号）与 `records`：块里的原始记录 `{from, to, seconds, app, title}`（标题同上清洗、≤ 80 字符），每块最多 50 条（时长最长的 50 条，按时间升序给），截了块上 `recordsTruncated: true`。
 - **`agents.runs[]`**：与范围有交集的每条运行 `{runId, agent, label, startAt, endAt|null, phases: [{from, to, phase, startedBy?, subagents?}], workingSeconds, humanAttentionSeconds}`。
-  - `phases` 按 v2.18「相位」从观测推出（相邻同相位合并），钳到范围之内；`startedBy: "human_reply"` 当这段 `working` 由人的回复（`interactions` 的 reply）开启。
-  - `subagents`：该段内同时在跑的子代理数的最大值（v2.x 子代理计数；没有数据不给）。
-  - `humanAttentionSeconds`：范围内人在看这条运行的秒数（同 v2.17 的 attend）。
-- **`handoffs[]`**（升序）：
-  - `{at, runId, type: "human_to_agent"}`：人回复后代理转入 `working`。
-  - `{at, runId, type: "agent_to_human", waitedSeconds}`：代理转入 `waiting_input`；`waitedSeconds` = 到人下一次回复它、或人的窗口回到它的终端（取先到者）为止的秒数；范围结束还没回来 = `null`。
+  - `phases` 按 v2.18「相位」从观测推出（相邻同相位合并），钳到范围内。一段 `working` 的开头 60 秒内有这条运行的人回复（v2.18 的 `interactions` 里 `reply`）→ 这段带 `startedBy: "human_reply"`。
+  - `subagents`：该段内同时在跑的子代理数的最大值（没有子代理数据不给）。
+  - `workingSeconds`、`humanAttentionSeconds`（v2.17 的 attend）都只算范围内的部分。
+- **`handoffs[]`**（按 `at` 升序，钳到范围内）：
+  - `{at, runId, type: "human_to_agent"}`：每段带 `startedBy: "human_reply"` 的 `working` 的开头一条。没有人回复就开始的 `working` 不算交接。
+  - `{at, runId, type: "agent_to_human", waitedSeconds}`：每次转入 `waiting_input` 一条；`waitedSeconds` = 到这条运行的下一次人回复、或人开始看它（attend 的下一段开头）为止的秒数，取先到者；范围结束前都没有 = `null`。
 - **`overlap`**：`{maxAgentsWorkingAtOnce, secondsWithAgentsWorkingWhileHumanElsewhere}`。后者 = 至少一个代理在 `working`、而人此刻没有在看任何一个 `working` 的代理的总秒数。**不是工时**。
+- **上限**：`segments` 2000、`blocks` 500、`runs` 200、`handoffs` 2000、`byTarget` 每天 200；任一处截了，顶层 `truncated: true`。
 - 带 Bearer 的设备令牌可读（同 `views/lanes`）。
 
 ### 三、安排 `GET /api/core/views/arrangements`
@@ -4776,62 +4785,69 @@ MCP 侧见 `contracts/mcp.tools.v2`。
 {
   "today": "2026-10-24", "range": "today", "from": "2026-10-24", "to": "2026-10-24",
   "scheduled":  [ {"taskId", "projectId", "address", "name", "plan": {"start", "end"},
-                   "spentThisRange": {"humanSeconds": 3600, "agentWorkingSeconds": 5400}, "activeNow": ["run_…" | "human"]} ],
-  "actionable": [ {"taskId", "projectId", "address", "name", "plan": null} ],
-  "blocked":    [ {"taskId", "projectId", "address", "name", "blockedBy": ["<address>"]} ],
-  "overdue":    [ {"taskId", "projectId", "address", "name", "planEnd": "2026-10-20"} ],
+                   "spentThisRange": {"humanSeconds": 3600, "agentWorkingSeconds": 0}, "activeNow": ["human" | "run_…"]} ],
+  "actionable": [ {"taskId", "projectId", "address", "name", "plan": null, "spentThisRange", "activeNow"} ],
+  "blocked":    [ {"taskId", "projectId", "address", "name", "plan", "blockedBy": ["<address>"], "spentThisRange", "activeNow"} ],
+  "overdue":    [ {"taskId", "projectId", "address", "name", "plan", "planEnd": "2026-10-20", "spentThisRange", "activeNow"} ],
   "stale":      [ {"taskId", "projectId", "address", "name", "lastActive": "2026-10-02" | null} ],
-  "review": { … }        // 仅 range=week：同 GET views/review 的响应
+  "review": { … },       // 仅 range=week：同 GET views/review 的响应
+  "truncated": false
 }
 ```
 
-- 只看没完成的普通任务（不含「未分类」桶、临时任务）。一条任务只进一组，优先级：`overdue` > `blocked` > `scheduled` > `actionable`；`stale` 另算（可与其他组重复）。
-  - `overdue`：`plan.end < today`。
+- 只看没完成的普通任务，属于没归档的项目；不含「未分类」桶、临时任务。`plan` 只有 `start` 时按 `end = start`。
+- 一条任务只进 `overdue`、`blocked`、`scheduled`、`actionable` 中的一组，优先级依次往下：
+  - `overdue`：`plan.end < today`（两种 `range` 都按今天判）。
   - `blocked`：`dependsOn` 里有没完成的任务；`blockedBy` 给那些任务的 `address`。
   - `scheduled`：`plan` 与范围有交集。
-  - `actionable`：其余的（同 `views/next-actions` 的「可做」）。
-  - `stale`：所在项目是进行中的，且 14 天以上没有任何记入它的时间（`lastActive` = 最后有时间的本地日，从没有 = `null`）。
-- `spentThisRange`：范围内记到这条任务的人的秒数（台账）与代理干活秒数（只算挂了这条任务的运行）。分开写，不相加。
-- `activeNow`：此刻在做它的：人的手动计时或自动跟踪指向它 = `"human"`；在跑、挂了它的代理运行 = 该 `runId`。
+  - `actionable`：其余的。
+- `stale` 另算，可与上面重复：所属项目 `status` 为 `active`，且 14 天以上没有记入这条任务的时间（`lastActive` = 最后有时间的本地日；从没有 = `null`，并且任务建了 14 天以上才算）。
+- 排序：`overdue` 按 `planEnd` 升序；`scheduled`、`blocked` 按 `plan.start` 升序（没有 plan 的在后）；`actionable` 按项目、任务在树里的顺序；`stale` 按 `lastActive` 升序（`null` 在前）。
+- `spentThisRange`：范围内记到这条任务的人的秒数（台账）与代理干活秒数（只算挂了这条任务的运行；代理多半不挂任务，所以常为 0）。分开写，不相加。
+- `activeNow`：人的手动计时或自动跟踪此刻指向它 = `"human"`；在跑、挂了它的代理运行 = 该 `runId`。
 - 每组最多 200 条，截了顶层 `truncated: true`。带 Bearer 的设备令牌可读。
 
 ### 四、第三级：秘书报告与问人
 
+**提交口径**（4.1、4.2 的 POST 与 4.3）：没有 `Authorization: Bearer` 的调用方（人、MCP 对内直连）可以；带 Bearer 的只有范围 `write` 可以，`read`、`report` 与匿名 `403`。
+
 #### 4.1 秘书报告 `activity_secretary_reports`
 
-- `POST /api/core/activity/secretary-reports` `{date?, text, author?}`：`date` 缺省今天；`text` 1–8000 码点（否则 `400`）；`author` ≤ 64。同一 `date` 只留一份，再交 = 整份替换（`updatedAt` 刷新，`revision` +1）。返回存下的文档。
-- `GET /api/core/activity/secretary-reports?date=` 或 `?from=&to=`（最多 92 天）→ `{items: [{id, date, text, author, createdAt, updatedAt, revision}]}`，新的在前。
-- 不是事实：不进台账、投影、导出的事件流；进导出 / 恢复的集合登记表。
-- 谁能交：同「三级分类」五补充的提交口径（带 Bearer 的只有范围 `write` 可以）。人也可以交（页面以后可编辑）。
+- `POST /api/core/activity/secretary-reports` `{date?, text, author?}`：`date` 缺省今天；`text` 1–8000 码点（否则 `400`）；`author` ≤ 64。同一 `date` 只留一份，再交 = 整份替换（`updatedAt` 刷新，`revision` +1）。返回存下的文档 `{id, date, text, author, createdAt, updatedAt, revision}`。
+- `GET /api/core/activity/secretary-reports?date=` 或 `?from=&to=`（最多 92 天；都不给 = 今天）→ `{items: [...]}`，按 `date` 新的在前。
+- 不是事实：不进台账与投影；进导出 / 恢复的集合登记表。
 
 #### 4.2 问人 `activity_questions`
 
 - `POST /api/core/activity/questions` `{questions: [1..10]}`，每条：
   `{title, text?, date?, from?, to?, options?: [0..6], allowText?: bool}`。
-  - `title` 1–120、`text` ≤ 1000 码点；`from` / `to` 是带偏移的时刻（必须同时给或同时不给，`from < to`，跨度 ≤ 24 小时）。
-  - 每个选项 `{label, target?, ignore?}`：`label` 1–40；`target` = `{taskId}` 或 `{projectId}`（必须存在，否则 `400`）；`ignore: true` = 「这段不记」。`target` 与 `ignore` 至多一个。
-  - id：`aq_` + `sha256(归一化 title \n date \n from \n to)[:20]`。同 id 的 `pending` 再提 = 原样返回；已回答 / 已撤下的再提 = 换新的一条。待回答上限 30，超了 `429`。
-  - 返回 `{items: [问题视图]}`。
-- **问题视图**：`{id, status: pending | answered | dismissed, title, text, date, from, to, options, allowText, createdAt, answer: null | {option, text, at, recorded}}`。
-- `POST /api/core/activity/questions/{id}/answer` `{option?: <选项下标>, text?}`（**只许人**；至少给一个；`text` ≤ 1000）：
-  - 选的选项带 `target`、问题带 `from` / `to` → 按「补登」把这段记到目标（`source: manual-backfill`，`actor` = 人，dedupeKey `question:<id>`，只记一次），`answer.recorded: true`；与已有记录重叠时照补登的规则处理，补登被拒 → `409` 原样带它的 `detail`，问题留 `pending`。
-  - 其余情况只记答案（`recorded: false`）。已回答的再答 `409`。
-- `POST /api/core/activity/questions/{id}/dismiss`（只许人）：`pending → dismissed`。
+  - `title` 1–120、`text` ≤ 1000 码点；`from` / `to` 是带偏移的时刻，必须同时给或同时不给，`from < to ≤ 现在`，跨度 ≤ 24 小时。
+  - 每个选项 `{label, target?, ignore?}`：`label` 1–40；`target` = `{taskId}` 或 `{projectId}`（必须存在，否则 `400`；`{projectId}` 记到该项目的「未分类」任务）；`ignore: true` = 「这段不记」。`target` 与 `ignore` 至多一个。
+  - **去重**：`askKey` = `sha256(归一化 title \n date \n from \n to \n 各选项 label 与目标)`。与一条 `pending` 问题的 `askKey` 相同 = 原样返回那一条；否则新建一条（id `aq_` + 随机 16 位）。待回答上限 30，超了 `429`。
+  - 返回 `{items: [问题视图]}`，顺序同入参。
+- **问题视图**：`{id, status: pending | answered | dismissed, title, text, date, from, to, options, allowText, createdAt, answer: null | {option, text, at, recorded, eventId}}`。
+- `POST /api/core/activity/questions/{id}/answer` `{option?: <选项下标>, text?}`（**只许人**；至少给一个；`text` ≤ 1000；下标越界 `400`）：
+  - 选的选项带 `target`、问题带 `from` / `to` → 按「补登」的代码路径把这段记到目标任务（`source: manual-backfill`，`actor: human`），dedupeKey 特意用 `question:<id>`（不用补登的 `backfill:…` 格式），一个问题只可能记一次；`answer.recorded: true`、`eventId` 为那条事件。
+    补登允许与已有记录重叠（同「补登」），所以 AI 问的应该是没有记录的空档；补登的拒绝（目标任务已删 `404`、时段不合法 `400`）原样返回，问题留 `pending`。
+  - 其余情况只记答案（`recorded: false`、`eventId: null`）。已回答 / 已撤下的再答 `409`。
+- `POST /api/core/activity/questions/{id}/dismiss`（只许人）：`pending → dismissed`，其余 `409`。
 - `GET /api/core/activity/questions?status=pending|all&limit=`（1–200，缺省 50，新的在前）→ `{items: [问题视图]}`。
-- 提交口径同 4.1。不是事实；进集合登记表。
+- MCP 没有回答 / 撤下问题的工具；这两个端点只给页面。不是事实；进集合登记表。
 
 #### 4.3 提议改已记的时间 `sessionChange`
 
 - `POST /api/core/activity/proposals/sessions` `{eventId, op: "reassign", taskId | projectId, reason?, directApply?}`：提议把一段已记的时间改挂到别处。`eventId` 必须是本租户的 `session.completed`（否则 `400`），已作废的 `409`，目标不存在 `400`，目标与当前归属相同 `409`。
-- id `ns_` + `sha256(eventId \n 目标)[:20]`；去重、拒绝后再提、上限（待批准 50）同「三级分类」五补充。`GET …/proposals` 追加 `sessionChanges[]`：`{id, kind: "sessionChange", status, eventId, op, taskId, projectId, fromTaskId, fromProjectId, startAt, durationSeconds, reason, createdAt}`。
-- 批准（只许人，可带 `edit: {taskId | projectId}`）= 走 `POST sessions/{eventId}/reassign` 的同一条代码路径（`actor` 记 `human`；直接施加时记 `ai`）。
-- 直接施加归 `honeycombRecords` 分开关，条件、`403 reason`、`activity_direct_log` 同「三级分类」五补充；撤回 = 再改挂回 `before` 的归属（被后来的改挂覆盖了 `409`）。
+- id `ns_` + `sha256(eventId \n 目标)[:20]`；去重、拒绝后再提、`accepted` / `superseded` 再提换新、上限（待批准 50，`429`）同「三级分类」五补充。`GET …/proposals` 追加 `sessionChanges[]`：`{id, kind: "sessionChange", status, eventId, op, taskId, projectId, fromTaskId, fromProjectId, startAt, durationSeconds, reason, createdAt, corrected}`。
+- 批准（只许人，可带 `edit: {taskId | projectId}`）= 调改挂的**内部函数**，`actor: human`；直接施加时同一个函数，`actor: ai`（`session.reassigned` 的 `data.actor` 追加取值 `"ai"`）。`POST /api/core/sessions/{eventId}/reassign` 端点本身仍只许人，不变。
+- 直接施加归 `honeycombRecords` 分开关，条件、`403 reason`、`activity_direct_log` 同「三级分类」五补充；撤回 = 再改挂回 `before` 的归属（这段之后又被改挂过 `409`）。
 
-### 五、对既有端点的追加
+### 五、对既有端点的追加与澄清
 
-- **`blockAction` 可以改已分类块的去向**：`action: "assign"` 也接受 `status: "assigned"` 的块（换目标，按「三级分类」四对账，已入账的段走 `session.reassigned`）。批准时块已是同一目标 = 空操作，提议记 `accepted`。人的 `POST activity/blocks/assign` 本来就允许改去向，不变。
-- **忽略规则的提议也能直接施加**：v2.36 的 `POST activity/proposals/ignores` 追加 `directApply`，归 `windowsClassify` 分开关，条件与日志同「三级分类」五补充；撤回 = 删掉这条忽略规则（已被人删了 `409`）。
-- **直接施加需要 MCP 转来范围**：MCP 对内直连原本不带 `X-Nexus-Scope`。自 `mcp.tools.v2` 起，网关给 MCP 的范围是 `write` 时，MCP 调 nexus-core 的写端点带 `X-Nexus-Scope: write`（MCP 是受信内网服务，同 `X-Nexus-Tenant` 的信任边界）；其余调用方 MCP 不带。nexus-core 不需要改：现有的 `scope.caller()` 读的就是这个头。
+- **`blockAction` 可以改已分类块的去向**（行为追加）：`action: "assign"` 也接受 `status: "assigned"` 的块（换目标，按「三级分类」四对账，已入账的段走 `session.reassigned`）。批准时块已是同一目标 = 空操作，提议记 `accepted`。人的 `POST activity/blocks/assign` 不变。
+- **忽略规则的提议也能直接施加**（行为追加）：v2.36 的 `POST activity/proposals/ignores` 追加 `directApply`，归 `windowsClassify` 分开关，条件与日志同「三级分类」五补充；撤回 = 删掉这条忽略规则（已被人删了 `409`）。忽略规则的提议只有新增，没有改 / 删。
+- **澄清：v2.36 `change` 的直接施加**已由「三级分类」五（`honeycombRecords` 管 `change`）与其补充规定：经 `guard.run_write`、不可撤回（撤回 `409`）。本版不变。
+- **澄清：没有范围头的调用方不能直接施加**：`directApply: true` 只认范围 `write`；没有 `X-Nexus-Scope` 的调用方（人、MCP 对内直连）一律 `403 reason: needWriteScope`，不当作人放行。
+- **MCP 转发范围**：自 `mcp.tools.v2` 起，网关给 MCP 的范围是 `write` 时，MCP 调 nexus-core 的写端点带 `X-Nexus-Scope: write`（MCP 是受信内网服务，同 `X-Nexus-Tenant` 的信任边界）；其余调用方 MCP 不带。nexus-core 现有的 `scope.caller()` 读的就是这个头，不需要改。
 
 ## 变更记录
 
