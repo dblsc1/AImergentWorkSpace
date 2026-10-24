@@ -174,6 +174,7 @@
   toasts.className = "hd-toasts"; toasts.setAttribute("role", "status"); toasts.setAttribute("aria-live", "polite");
   document.body.appendChild(toasts);
 
+  var hooks = {};   // 三级分类打开时由 hex-tiers.js 填：render / load / busy 换成一栏决策栏的
   var retry = null, model = { cards: [], reports: [] }, raw = { p: null, r: [] }, hist = [], errors = {}, held = {};
   var collapsed = true, tab = "pend", busyAct = false, swiping = 0, dragging = false, dirtyLoad = false;
   try { collapsed = window.localStorage.getItem(LS_KEY) !== "0"; } catch (e) { /* 存不下就每次折叠 */ }
@@ -202,7 +203,7 @@
     });
   }
   function editing() { return !!document.querySelector(".hd-newtask input"); }
-  function busy() { return dragging || swiping > 0 || commits.pending() > 0 || editing(); }
+  function busy() { return dragging || swiping > 0 || commits.pending() > 0 || editing() || !!(hooks.busy && hooks.busy()); }
 
   // 卡片 / 历史段的底色：跟蜂巢格子完全同一份（格子的 --zone-raw / --zone-mix）
   function cellFor(projectId, zoneId) {
@@ -320,6 +321,7 @@
   // ── 渲染 ──────────────────────────────────────────────────────────
   var badgeEl = null;
   function updateBadge() {
+    if (hooks.recount) hooks.recount();
     if (badgeEl) badgeEl.textContent = String(visible().length);
   }
   function btn(cls, text, act) {
@@ -347,7 +349,7 @@
     return n;
   }
 
-  function bindSwipe(card, face, ok, no, c) {
+  function bindSwipe(card, face, ok, no, c, onDecide) {
     var sx = null, sy = 0, dx = 0, on = false;
     face.addEventListener("pointerdown", function (ev) {
       card.__swiped = false;   // 每次按下都清：被取消的滑动不留标记吞掉下一次点按钮
@@ -374,7 +376,7 @@
       if (Math.abs(dx) > card.offsetWidth * 0.3 && ev.type !== "pointercancel") {
         var yes = dx < 0;
         face.style.transform = "translateX(" + (yes ? -120 : 120) + "%)";
-        decide(c, yes ? "approve" : "reject", card);
+        if ((onDecide || decide)(c, yes ? "approve" : "reject", card) === false) { face.style.transform = ""; ok.hidden = no.hidden = true; }   // 处理器说不行：弹回
       } else {
         face.style.transform = ""; ok.hidden = no.hidden = true;
         if (dirtyLoad && !busy()) { dirtyLoad = false; load(); }
@@ -401,6 +403,7 @@
 
   function render() {
     if (dragging || swiping) { dirtyLoad = true; return; }
+    if (hooks.render) return hooks.render();
     var vis = visible(), pc = panel.querySelector(".hd-col-pend"), hc = panel.querySelector(".hd-col-hist");
     var scroll = [pc ? pc.scrollTop : 0, hc ? hc.scrollTop : 0];
     var fc = document.activeElement && panel.contains(document.activeElement) && document.activeElement.closest(".hd-col-pend .hd-card"),
@@ -451,6 +454,7 @@
   // 先读今天（不带参数，响应的 date 是服务端的「今天」），再按它推昨天读 date=（v2.37）；
   // 响应没有 date（老服务端）就退回浏览器本地日期。每次响应本来就只含那一天，不再另按浏览器零点截；老服务端忽略 date 又回今天 → 按 id 去重。
   function loadHist() {
+    if (hooks.render) return Promise.resolve();   // 三级分类：历史来自窗口块，不再读 activity/auto
     return getJson(ACT + "auto").then(function (t) {
       var y = (t && dayBefore(t.date)) || ymd(new Date(Date.now() - 86400000));
       return getJson(ACT + "auto?date=" + y).then(function (yy) {
@@ -465,6 +469,9 @@
   }
   function load() {
     if (busy()) { dirtyLoad = true; return Promise.resolve(); }
+    return hooks.load ? Promise.all([hooks.load(), loadOld()]) : loadOld();
+  }
+  function loadOld() {
     return Promise.all([getJson(ACT + "proposals?status=pending&limit=100"), getJson(ACT + "reports?status=pending&items=true&limit=20"), loadHist()]).then(function (r) {
       var list = (r[1] && Array.isArray(r[1].items)) ? r[1].items : [];
       if (r[0]) raw.p = r[0];   // 取不到（失败）就留着上一份，别把卡片清空
@@ -486,6 +493,7 @@
 
   // ── 分类历史：拖到蜂巢里改归属 ─────────────────────────────────
   function reassign(it, body) {
+    if (it.send) return it.send(body);   // 三级分类的历史卡：改挂 = blocks/assign
     return fetch(CORE + "sessions/" + encodeURIComponent(it.eventId) + "/reassign", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
     }).then(function (res) {
@@ -502,6 +510,7 @@
     window.setTimeout(function () { q.classList.remove("hd-flash"); }, 1400);
   }
   function moved(it, body) {
+    if (it.onMoved) { it.onMoved(body); return; }
     var tree = App.getState().tree, tg = lookup(tree, body.projectId, body.taskId);
     it.reassigned = true; it.taskId = body.taskId || "t_unc_" + body.projectId; it.projectId = tg.projectId || body.projectId;
     toast("已改归属 → " + (tg.projectName ? pathText(tg).slice(2) : "所选的目标"));
@@ -787,5 +796,28 @@
   if (A && A.onTreeChange) A.onTreeChange(function () { window.setTimeout(recompute, 300); });
   window.setInterval(function () { if (!document.hidden) load(); }, 60000);
   document.addEventListener("visibilitychange", function () { if (!document.hidden) load(); });   // 切回来立刻刷新，不等下一个 60 秒
+  // 旧面板立即照常读；账号设置 tiers 开着 → 再换成一栏决策栏（hex-tiers.js）并重载。
+  // 关着 / 取不到 / 一栏的 start 抛错 → 旧面板一个字节不变（抛错时撤掉已挂的钩子再画一遍旧的）。
   load();
+  getJson(ACT + "settings").then(function (st) {
+    if (!st || st.tiers !== true) return;
+    return new Promise(function (ok) {   // hex-tiers.js 还没解析完（settings 先回来了）：等到文档解析完再查
+      if (window.NexusTableHexTiers || document.readyState !== "loading") ok(); else document.addEventListener("DOMContentLoaded", function () { ok(); });
+    }).then(function () {
+      var T = window.NexusTableHexTiers;
+      if (!T || !T.start) return;
+      try {
+        T.start({ hooks: hooks, panel: panel, el: el, btn: btn, toast: toast, tint: tint, cellFor: cellFor, bindDrag: bindDrag, bindSwipe: bindSwipe,
+          pendCard: pendCard, decide: decide, collapseEl: collapseEl, held: held, errors: errors, model: function () { return model; },
+          raw: function () { return raw; }, collapsed: function () { return collapsed; }, render: render, App: App, H: H,
+          ACT: ACT, UNDO_MS: UNDO_MS, getJson: getJson, focusCard: focusCard, refreshAll: refreshAll });
+      } catch (e) {
+        ["render", "load", "busy", "recount"].forEach(function (k) { delete hooks[k]; });
+        delete panel.dataset.tiers;
+        if (window.console) console.warn("hex-tiers 启动失败，退回旧面板", e);
+      }
+      render();
+      return load();
+    });
+  });
 })();

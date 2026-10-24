@@ -142,6 +142,14 @@ consumes:
     purpose: >
       同一栏把历史卡拖到蜂巢里改归属：`POST sessions/{eventId}/reassign {taskId}` 或 `{projectId}`（与助理页「自动记录」同一写法）。
       只有人能改（设备令牌 403）；失败如实显示后端 detail。新建任务另走 planner.crud.v1 的 `POST planner/tasks`（同长按 / 加任务现成的 `createTask`）。
+
+  - id: nexus-core.activity.tiers.v1
+    contract: ../../nexus-core/module_docs/contract.md
+    purpose: >
+      「AI 决策」面板的三级分类决策栏（2026-10-24，见下「三级分类决策栏」节）。启动时读一次 `GET activity/settings`：`tiers` 为 true 才换成一栏；
+      false、缺键或读取失败一律保持两栏旧面板。读 `GET activity/blocks?status=all&limit=500`（今天）与 `GET activity/blocks/records?date=&blockKey=`（拆分时间条）；
+      写 `POST activity/blocks/assign|split|generic|ignore|reset`（除 generic 外带 `ifSeq`，409 = 重读，块仍待处理则用新 seq 自动重试一次；只许人）。
+      另用 proposals 里 `windowRule` / `blockRule` / `blockAction` / `question` 四种新 `kind`，以及 `POST activity/proposals/{id}/approve` 的可选 `edit`（批准时更正）。
 ```
 
 ## 两条本模块自己定的语义
@@ -253,6 +261,29 @@ consumes:
 取不到提议时留着上一份卡片。
 
 保留的保证：未知 `changes.op` 不画也不抛；409 的 detail 如实显示；换展开 / 收起 / Esc 清掉高亮与幽灵；一个重试计时器；文字一律 textContent。
+
+## 三级分类决策栏（2026-10-24，v0.4）
+
+仓主 2026-10-24 批了草稿。`hex-tiers.js` / `hex-tiers.css`（接在 `hex-decide.*` 后面）。启动时读一次 `GET activity/settings`：**`tiers` 不是 `true`（含读取失败）→ 上节两栏面板一个字节不变**；
+`true` → 同一个右上角浮层（同一个角标、同一个折叠键 `hive.decide.collapsed`）换成**一栏**，滑动 / 撤销计时 / 拖到格子 / 提示条都复用上节的。
+按卡片类型分段，顺序固定，没有内容的段不显示，每段标题带计数（角标 = 前四段之和）：
+
+1. **AI 问题**：proposals 里 `kind: "question"` 的项（本版后端还没有）；只画大字问题 + 说明，不带操作。
+2. **待分类窗口块**：`GET activity/blocks` 里 `status: "pending"` 的块，以及 `generic` 且 `parts` 为空的块（带「通用窗口」徽标）。大字块名；第二行「↓ 项目 - 任务」按目标项目着色，没有目标「↓ ？」灰色；
+   一行小字 =「AI：说明 · 时长 · N 段」。建议目标 / 说明来自同一块名、同一天的 `blockAction` 提议（`action: "assign"` 给目标，别的 action 只贡献 `reason`）；「改去向」选出来的优先。
+   按钮：拆分、标为通用窗口（通用窗口上是「取消通用窗口」）、改去向（原生下拉，项目分组、含「项目 - 未分类」），有目标时另有「批准」。
+   **左滑 = 批准当前去向**：立刻 `blocks/assign {date, blockKey, ifSeq, taskId | projectId, remember: true}`（通用窗口 `remember: false`）；没有目标 = 弹回并提示「先选去向」。
+   **右滑 = 忽略**：`blocks/ignore {…, forever: false}`。两者都在底部提示 5 秒「撤销」，撤销 = `blocks/reset`（带响应里的新 `seq`）。注意 reset 不删 `remember` 写下的第二级规则。
+   409（`ifSeq` 冲突）= 重读块列表；该块仍待处理就用新 `seq` 自动重试一次，否则卡片按现状重画并提示「这一块刚被改过，已刷新」。同一块上一步没回来时不发第二个；撤销按「现在」的块 reset，失败提示「撤销失败」。块列表读取失败时隐藏块与历史两段，面板顶给一行「读取失败，稍后重试」。
+   **拆分**：卡片原地展开，`GET blocks/records` 画时间条（每条记录一根竖条，宽度按时长），白色把手可拖（也可方向键），「再加一个拆分点」最多到 20 段，每段一个去向下拉，
+   「确认拆分」→ `blocks/split {parts}`，`fromTs` / `toTs` 是 UTC 毫秒（首段 `fromTs` 与末段 `toTs` 填块里实际的首尾记录时刻，不用 null），拆分点落进无记录的空隙时吸附到记录边界，每段都要有记录、都要选去向；取消 = 收起。**标为通用窗口**：`blocks/generic {blockKey, generic}`，提示里可撤销。
+3. **待批准规则**：proposals 里 `windowRule`（徽标「第一级 · 收纳」，`rule {app, title, block}`）与 `blockRule`（「第二级 · 去向」，`blockKey` + `taskId | projectId`）；`op: "delete"` 画大红。
+   「批准」「忽略」= 既有 `proposals/{id}/approve|reject`，走上节的 5 秒撤销（左滑 / 右滑同）；「更正」= 立即 `approve` 带 `edit`：`blockRule` 为 `{taskId | projectId}`，`windowRule` 为 `{rule: {block}}`。
+   proposals 响应里各键下带 `kind` 的数组一并摊平，按 `kind` 分；没有就不显示。
+4. **待批准日程改动**：上节「待批准」栏的卡片原样（新项目 / 新任务 / 改名 / 移动 / 删除 / 忽略规则 / 报告条目）。
+5. **自动化分类历史**：今天 `status: "assigned"` 且 `via` 为 `rule` / `ai-direct` 的块，新的在前，先 5 条、「展开全部」。「撤销」= `blocks/reset`；卡片可拖到蜂巢里的任务行 / 格子改挂 = `blocks/assign {…, remember: false}`（拖拽 / 新建任务沿用上节）。
+
+三级分类开着时不再读 `GET activity/auto`（历史来自窗口块）。颜色沿用：项目深浅色；灰 = 忽略 / 无目标；大红 = 删除类。
 
 ## 页面分工（设计意图，v0.3）
 
