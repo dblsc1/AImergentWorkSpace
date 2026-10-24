@@ -575,7 +575,7 @@ provides:
       POST …/blocks/assign|split|generic|ignore|reset（带 ifSeq，只许人）、GET/POST/DELETE …/activity/block-rules（写只许人）、
       GET/PUT …/activity/settings（tiers、agentDirect，PUT 只许人带 If-Match）、GET …/activity/input；
       AI 提议 POST …/proposals/window-rules|block-rules|block-actions、GET …/activity/direct-log、POST …/direct-log/{id}/undo（只许人）
-    status: 部分实现（v2.38：records / blocks / block-rules / settings / input 已实现，对账与提议进行中）
+    status: 已实现（v2.38：records / blocks / block-rules / settings / input、对账、window-rules / block-rules / block-actions 提议与直接施加、direct-log 与撤回）
   - id: nexus-core.lanes.prefs.v1
     summary: 泳道偏好（v2.22，追加式）——每租户一份：代理身份 (agent, 归一化 label) 的 hidden / pinned（pinnedAt 定先后）、按运行的手动排位
       slot（只对在跑的运行有效）。GET /api/core/lanes/prefs、PUT …/agent {agent, label?, hidden?, pinned?}、PUT …/order {runId, index}、
@@ -670,7 +670,9 @@ consumes:
 | POST | `/api/core/activity/blocks/assign\|split\|generic\|ignore\|reset` | 见「三级分类」节二（带 `ifSeq`） | 该块的新状态；带 Bearer 403、`ifSeq` 不符或日期已过期 409、目标不存在 404 | ✅ 已实现（v2.38） |
 | GET / POST / DELETE | `/api/core/activity/block-rules[/{id}]` | `{blockKey, taskId \| projectId}` | 见「三级分类」节三；写只许人 | ✅ 已实现（v2.38） |
 | GET / PUT | `/api/core/activity/settings` | `{tiers, agentDirect{enabled, windowsClassify, honeycombRecords}}`，PUT 带 `If-Match` | 同体加 `version`、`tiersSince`；PUT 只许人，版本不符 412，迁移超 500 条 409 | ✅ 已实现（v2.38） |
-| POST | `/api/core/activity/direct-log/{id}/undo` | 无 | 撤回一次直接施加；只许人 | ⏳ 契约已定（v2.38） |
+| POST | `/api/core/activity/direct-log/{id}/undo` | 无 | 撤回一次直接施加；只许人 | ✅ 已实现（v2.38） |
+| GET | `/api/core/activity/direct-log` | 查询 `date?`、`limit?`（1–200，缺省 50） | `{items[]}`（不含 `before`）；人与 MCP 可读 | ✅ 已实现（v2.38） |
+| POST | `/api/core/activity/proposals/window-rules\|block-rules\|block-actions` | 见「三级分类」节五补充 | 提议视图；`directApply` 满足条件时 `{applied, directLogId, result}`，否则 403 带 `reason` | ✅ 已实现（v2.38） |
 | POST / GET | `/api/core/activity/input` | `{deviceId, bins[]}` / 查询 `date` | 见「键盘鼠标活动」节 | ✅ 已实现（v2.38） |
 | POST | `/api/core/activity/ai/claim` | 无（空体或 `{}`） | `{window: null \| {key, app, title, claimedAt, answerBy}}`（见「让 AI 认窗口」节）；带 Bearer 403 | ✅ 已实现（v2.15） |
 | POST | `/api/core/activity/ai/suggest` | `{key, taskId \| projectId, confidence, reason}` 或 `{key, none: true, reason}` | `SuggestOut`；带 Bearer 403、400、404、409（不在等回答，什么都没写）、422 | ✅ 已实现（v2.15） |
@@ -4643,6 +4645,8 @@ AI 不直接调「二」「三」的写端点（那些只许人）。它经 `act
 - **人先动了块**：人对某天某块做任何写操作（「二」的五个端点）后，该 `(date, blockKey)` 上 `pending` 的 `blockAction` 提议记为 `superseded`（新增的状态，只在 `status=all` 里出现，不算被否掉，同样的提议可以再提）。
 - **直接施加的返回**：`{applied: true, directLogId, result}`，`result` 同人调对应写端点的返回。不满足条件的 `403` 带 `reason`：`agentDirectOff`（总开关关）、`windowsClassifyOff` / `honeycombRecordsOff`（分开关关）、`needWriteScope`（不是 `write` 范围的非人调用方）。
 - **直接施加日志读端**：`GET /api/core/activity/direct-log?date=&limit=`（人与 MCP 可读，`limit` 1–200 缺省 50，新的在前）→ `{items: [{id, at, actor, kind, payload, undoneAt}]}`；`before` 不返回。日志保留 90 天。
+- **令牌**（第二部分 B 实现时定下）：三个提交端点与 v2.36 的 `proposals/changes`，带 Bearer 的调用方只有网关给出范围 `write` 的可以提交（直接施加要用）；其余带 Bearer 的仍 `403`。批准、拒绝、撤回仍只许人。
+- **标题不外露**：非人调用方读 `windowRule` 提议、直接施加的返回、direct-log 的 `payload` 时不给 `rule.title`，改给 `hasTitle: bool`（同 v2.36 ignore 视图）。
 
 ### 六、账号设置 `activity_settings`
 

@@ -30,12 +30,15 @@ from ...textfold import fold
 from ..planner import audit, guard, inbox, repo as planner_repo, unclassified
 from ..planner import service as planner_service
 from ..planner.actor import with_actor
-from ..planner.errors import InvalidInputError, NotFoundError
+from ..planner.errors import InvalidInputError, NotFoundError, UnprocessableError
 from . import ignore, ignore_repo, proposals
 from .proposals import ConflictError
 from .reports import TooManyReportsError
 
-MAX_PENDING = {"project": 20, "task": 100, "change": 50, "ignore": 20}  # 每租户待批准的条数
+MAX_PENDING = {"project": 20, "task": 100, "change": 50, "ignore": 20,
+               "windowRule": 50, "blockRule": 50, "blockAction": 200}  # 每租户待批准的条数（后三种：契约 v2.38「五」）
+TIER_KINDS = ("windowRule", "blockRule", "blockAction")
+_LABEL = {"change": "修改", "ignore": "忽略规则", "windowRule": "窗口规则", "blockRule": "块规则", "blockAction": "块操作"}
 MAX_REASON = 300  # 码点
 _COLL = "activity_new_items"
 _ready = False
@@ -144,6 +147,10 @@ def _project_id_of(user: str, d: dict) -> str | None:
 
 
 def _view(user: str, d: dict, human: bool = False) -> dict:
+    if d["kind"] in TIER_KINDS:
+        from . import tier_items  # noqa: PLC0415 —— tier_items 反过来 import 本文件
+
+        return tier_items.view(d, human)
     if d["kind"] == "change":
         return _change_view(d)
     if d["kind"] == "ignore":
@@ -170,13 +177,17 @@ def listing(pending_only: bool, limit: int = 100, human: bool = False) -> dict:
 
     rows = rows_of(["project", "task"])
     chg, ign = rows_of(["change"]), rows_of(["ignore"])
+    from . import tier_items  # noqa: PLC0415
+
+    tier = {k: [tier_items.view(d, human) for d in rows_of([k])] for k in TIER_KINDS}
     projects = {d["id"]: {**_view(user, d), "tasks": []} for d in rows if d["kind"] == "project"}
     tasks = []
     for d in rows:
         if d["kind"] == "task":
             (projects[d["parentId"]]["tasks"] if d.get("parentId") in projects else tasks).append(_view(user, d))
     return {"projects": list(projects.values()), "tasks": tasks,
-            "changes": [_change_view(d) for d in chg], "ignores": [_ignore_view(d, human) for d in ign]}
+            "changes": [_change_view(d) for d in chg], "ignores": [_ignore_view(d, human) for d in ign],
+            "windowRules": tier["windowRule"], "blockRules": tier["blockRule"], "blockActions": tier["blockAction"]}
 
 
 def reject(item_id: str, human: bool = False) -> dict:
@@ -195,12 +206,19 @@ def reject(item_id: str, human: bool = False) -> dict:
     return _view(user, _get(user, item_id), human)
 
 
-def approve(item_id: str, request, human: bool = False) -> dict:
-    """批准并建出来（幂等）：同一提议只建一次，并发批准复用它（做法同 ``proposals.task_for``）。"""
+def approve(item_id: str, request, human: bool = False, edit: dict | None = None) -> dict:
+    """批准并建出来（幂等）：同一提议只建一次，并发批准复用它（做法同 ``proposals.task_for``）。
+    ``edit``（v2.38）只对 windowRule / blockRule / blockAction 有意义：批准时更正，其余 kind 给了 → 422。"""
     user = current_tenant()
     d = _get(user, item_id)
     if d is None:
         raise NotFoundError(f"没有这条提议：{item_id!r}")
+    if d["kind"] in TIER_KINDS:
+        from . import tier_items  # noqa: PLC0415
+
+        return tier_items.approve(user, d, request, edit)
+    if edit is not None:
+        raise UnprocessableError("这种提议不能在批准时更正")
     if d["status"] == "rejected":
         raise ConflictError("这条提议已被否掉")
     if d["kind"] in ("change", "ignore"):
@@ -268,7 +286,7 @@ def _target(target: str, target_id: str) -> dict | None:
     return (planner_service.get_project if target == "project" else planner_service.get_task)(target_id)
 
 
-def _put_edit(user: str, kind: str, item_id: str, extra: dict, reason: str) -> dict:
+def _put_edit(user: str, kind: str, item_id: str, extra: dict, reason: str, capped: bool = True) -> dict:
     """取（或新建）提议：待批准 → 原样返回；被否掉 → 409；已批准 → 换成新的（东西可能又变回去了）。"""
     d = _get(user, item_id)
     if d and d["status"] == "rejected":
@@ -279,8 +297,8 @@ def _put_edit(user: str, kind: str, item_id: str, extra: dict, reason: str) -> d
             _col().update_one({"user": user, "id": item_id, "status": "pending"}, {"$set": snap})
             d = {**d, **snap}
         return d
-    if _col().count_documents({"user": user, "kind": kind, "status": "pending"}) >= MAX_PENDING[kind]:
-        raise TooManyReportsError(f"已有 {MAX_PENDING[kind]} 条待批准的{'修改' if kind == 'change' else '忽略规则'}提议，"
+    if capped and _col().count_documents({"user": user, "kind": kind, "status": "pending"}) >= MAX_PENDING[kind]:  # 直接施加不占待批准名额
+        raise TooManyReportsError(f"已有 {MAX_PENDING[kind]} 条待批准的{_LABEL[kind]}提议，"
                                   "请先让用户处理旧的")
     doc = {"user": user, "id": item_id, "kind": kind, "status": "pending", "reason": reason, "createdAt": _now(),
            "applyClaimedAt": None, **extra}
@@ -288,12 +306,19 @@ def _put_edit(user: str, kind: str, item_id: str, extra: dict, reason: str) -> d
         claimed = d.get("applyClaimedAt")
         if claimed is not None and (_now() - claimed.replace(tzinfo=timezone.utc)).total_seconds() < proposals.WAIT_SECONDS:
             raise ConflictError("这条提议正在批准、落地的过程中，请稍后再试")
-        _col().delete_one({"user": user, "id": item_id, "status": "accepted", "applyClaimedAt": claimed})
+        _col().delete_one({"user": user, "id": item_id, "status": {"$in": ["accepted", "superseded"]}, "applyClaimedAt": claimed})
     try:
         _col().insert_one(dict(doc))
     except DuplicateKeyError:
         return _get(user, item_id)
     return doc
+
+
+def supersede(user: str, date: str | None, block_key: str, except_id: str | None = None) -> None:
+    """人对这个块做了写操作：它上面待批准的 ``blockAction`` 提议记为 ``superseded``（不算被否掉，同样的可以再提）。``date`` 为 None = 各天。"""
+    q = {"user": user, "kind": "blockAction", "status": "pending", "blockKey": block_key, **({"date": date} if date else {}),
+         **({"id": {"$ne": except_id}} if except_id else {})}
+    _col().update_many(q, {"$set": {"status": "superseded", "decidedAt": _now()}})
 
 
 def _parent(target: str, cur: dict) -> str:
@@ -307,7 +332,12 @@ def _clash(target: str, target_id: str, parent: str, name: str) -> dict | None:
     return next((x for x in sibs if x["id"] != target_id and proposals._norm(x["name"]) == n), None)
 
 
-def propose_change(target: str, target_id: str, op: str, name: str | None, to_id: str | None, reason: str) -> dict:
+def propose_change(target: str, target_id: str, op: str, name: str | None, to_id: str | None, reason: str,
+                   direct: bool = False, request=None) -> dict:
+    from . import direct_log  # noqa: PLC0415 —— direct_log 反过来 import 本文件
+
+    if direct:
+        direct_log.gate("honeycombRecords")  # 先过闸门：不满足条件就 403，什么都不做
     user = current_tenant()
     cur = _target(target, target_id)
     label = "项目" if target == "project" else "任务"
@@ -348,9 +378,25 @@ def propose_change(target: str, target_id: str, op: str, name: str | None, to_id
         if deps:
             raise ConflictError(f"任务 {target_id!r} 被 {len(deps)} 个任务依赖，不能提议删")
     item_id = "nc_" + hashlib.sha256(f"{target}\n{target_id}\n{op}\n{key}".encode()).hexdigest()[:20]
+    pre = _get(user, item_id)
+    temp = not (pre and pre["status"] == "pending")
     d = _put_edit(user, "change", item_id, {"target": target, "targetId": target_id, "op": op,
                                              "name": name, "toId": to_id, "snapName": cur["name"],
-                                             "snapParent": _parent(target, cur)}, _clean_reason(reason))
+                                             "snapParent": _parent(target, cur)}, _clean_reason(reason), capped=not direct)
+    if direct:  # 契约「五」：跳过待批准立即落地（仍走 guard.run_write，高风险写的二次设防照旧）
+        if d["status"] == "rejected":
+            raise ConflictError("用户已经否掉过这个提议，不要再提")
+
+        def go():
+            try:
+                return _approve_edit(user, d, request, False), {"name": d["snapName"], "parent": d["snapParent"]}, None
+            except Exception:
+                if temp:  # 临时建的提议不留：落地没成就删掉（原来就有的待批准提议不动）
+                    _col().delete_one({"user": user, "id": item_id, "status": "pending"})
+                raise
+
+        return direct_log.run("change", {"target": target, "targetId": target_id, "op": op, "name": name, "toId": to_id,
+                                         "reason": _clean_reason(reason)}, go)
     return _change_view(d)
 
 

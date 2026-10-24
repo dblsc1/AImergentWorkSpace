@@ -21,6 +21,7 @@ from .modules.activity.ignore_router import router as ignore_router
 from .modules.activity.presence_router import router as presence_router
 from .modules.activity.records_router import router as records_router
 from .modules.activity.reports import TooManyReportsError
+from .modules.activity.direct_log_router import router as direct_log_router
 from .modules.activity.new_items_router import router as new_items_router
 from .modules.activity.reports_router import router as reports_router
 from .modules.activity.router import router as activity_router
@@ -113,6 +114,7 @@ app.include_router(restore_router, prefix=API_PREFIX)
 app.include_router(activity_router, prefix=API_PREFIX)  # v2.2 活动建议
 app.include_router(presence_router, prefix=API_PREFIX)  # v2.4 在场心跳
 app.include_router(reports_router, prefix=API_PREFIX)  # v2.20 AI 报告
+app.include_router(direct_log_router, prefix=API_PREFIX)  # v2.38 直接施加日志 / 撤回
 app.include_router(new_items_router, prefix=API_PREFIX)  # v2.30 AI 提议新项目 / 任务
 app.include_router(ignore_router, prefix=API_PREFIX)  # v2.22 忽略并记住
 app.include_router(records_router, prefix=API_PREFIX)  # v2.38 原始记录、键盘鼠标活动
