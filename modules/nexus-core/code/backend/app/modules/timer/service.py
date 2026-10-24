@@ -182,6 +182,7 @@ def backfill(
     duration_seconds: int,
     user: str | None = None,
     mode: str = DEFAULT_MODE,
+    dedupe_key: str | None = None,
 ) -> dict:
     """补登：给「完成了但没计时」的工作补一条真实 ``session.completed``
     （契约「补登（规范性 · v1.8，backfill）」节，唯一事实源）。
@@ -194,7 +195,7 @@ def backfill(
     user = user or current_tenant()  # v2.0：缺省取请求的租户
     return backfill_impl.backfill(
         task_id, start_at_raw, duration_seconds, user,
-        resolve_chain=_resolve_task_chain, now=_now, mode=mode,
+        resolve_chain=_resolve_task_chain, now=_now, mode=mode, dedupe_key=dedupe_key,
     )
 
 

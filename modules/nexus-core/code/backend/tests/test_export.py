@@ -48,6 +48,8 @@ _COLLECTIONS = (
     # v2.38 三级分类：原始记录 / 窗口块 / 通用窗口 / 第二级规则 / 账号设置 / 直接施加日志 / 键盘鼠标活动。
     "activity_records", "activity_blocks", "activity_generic", "activity_block_rules",
     "activity_settings", "activity_direct_log", "activity_input",
+    # v2.39 秘书报告 / 问人（AI 的话，不是事实）。
+    "activity_secretary_reports", "activity_questions",
 )
 
 

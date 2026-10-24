@@ -62,8 +62,10 @@ def test_direct_block_action_log_and_undo(client, tid, blk):
     assert b["via"] == "ai-direct" and db().activity_new_items.count_documents({}) == 0
     ev = live_sessions()
     assert len(ev) == 1 and ev[0]["ai"]["confirmed"] is False and ev[0]["ai"]["auto"] is True
-    # 已处理的块再直接施加 409
-    assert act(client, taskId=tid).status_code == 409
+    # v2.39：已分类的块再 assign = 改去向（见 test_tier3）；其它动作（ignore / generic）仍 409
+    for body in ({"action": "ignore"}, {"action": "generic"}):
+        r = client.post(f"{P}/block-actions", headers=WRITE, json={**body, "date": D, "blockKey": K, "directApply": True})
+        assert r.status_code == 409, body
     lst = client.get(LOG).json()["items"]
     assert len(lst) == 1 and lst[0]["id"] == out["directLogId"] and lst[0]["kind"] == "blockAction" and lst[0]["actor"] == "ai"
     assert "before" not in lst[0] and lst[0]["undoneAt"] is None and lst[0]["payload"]["blockKey"] == K
