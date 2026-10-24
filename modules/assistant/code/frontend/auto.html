@@ -54,7 +54,7 @@
 
       <form id="det-form" class="det-form" hidden novalidate>
         <!-- 自动跟踪的总开关（detector.settings.v1 v1.3 的 autoTrack，nexus-core v2.14）。缺省关 = 一切照旧。 -->
-        <fieldset class="set-group">
+        <fieldset class="set-group" id="det-autotrack-group">
           <legend>进行中的任务</legend>
           <div class="set-field" data-field="autoTrack">
             <label class="set-opt"><input type="checkbox" data-key="autoTrack"> 允许 AI 管理进行中的任务</label>
@@ -62,6 +62,15 @@
               打开后：你没有手动计时的时候，按分类规则把你正在做的事显示成「自动 · 项目 / 任务」；规则把握 ≥ 90% 的段直接记成时间
               （记错了在「自动记录」里改归属）；规则认不出的窗口停留一会儿，计时页会问你记到哪。你手动计时的时候 AI 不插手。
               实时显示要靠在场心跳——没设过的话保存时会一并打开（约每 15 秒报一次此刻在用的程序与清洗后的标题）。</p>
+            <p class="field-error" hidden></p>
+          </div>
+        </fieldset>
+
+        <!-- 键盘鼠标活动（detector.settings.v1 v1.4 的 inputActivity，缺省关）：三级分类打开时才出现（tiers.js） -->
+        <fieldset class="set-group" id="det-input-group" hidden>
+          <legend>键盘和鼠标</legend>
+          <div class="set-field" data-field="inputActivity">
+            <label class="set-opt"><input type="checkbox" id="det-input"> 记录键盘和鼠标活动时间</label>
             <p class="field-error" hidden></p>
           </div>
         </fieldset>
@@ -213,6 +222,20 @@
       </form>
       <!-- 在表单外：读取失败（表单藏着）时也看得见 -->
       <p class="suggest-message" id="det-message" role="status" hidden></p>
+      <!-- 账号级「三级分类」开关与 agent 权限（activity/settings，tiers.js）。读不到（老后端）时不出现。 -->
+      <div class="set-group tier-settings" id="tier-settings" hidden>
+        <h3 class="det-rules-title">三级分类</h3>
+        <div class="set-field"><label class="set-opt"><input type="checkbox" id="tier-on"> 三级分类</label></div>
+        <fieldset class="set-field tier-agent">
+          <legend>agent 权限</legend>
+          <label class="set-opt"><input type="checkbox" id="tier-direct"> 允许 agent 直接施加</label>
+          <div class="tier-sub">
+            <label class="set-opt"><input type="checkbox" id="tier-windows"> 可以直接施加窗口分类</label>
+            <label class="set-opt"><input type="checkbox" id="tier-records"> 可以直接增删改我的项目记录</label>
+          </div>
+        </fieldset>
+        <p class="suggest-message" id="tier-message" role="status" hidden></p>
+      </div>
       <!-- 「分类规则」（contracts/detector.rules.v1，rules.js）：生效规则的编辑器（AI 起草的草稿在「待批准」页，那是要人批准的事，见 #rules-draft-panel）。
            后端没有这个端点（404，早于 nexus-core v2.6）时只剩 #rules-note 一句说明。 -->
       <div class="set-group det-rules" id="det-rules" aria-labelledby="det-rules-title">
@@ -238,6 +261,30 @@
         </div>
         <p class="suggest-message" id="rules-message" role="status" hidden></p>
       </div>
+      <!-- 三级分类打开时换掉上面的「分类规则」：两级规则栏（tiers.js） -->
+      <div class="set-group tier-rules" id="tier-rules" hidden>
+        <div class="tier-cols">
+          <section class="tier-col" aria-labelledby="tier1-title">
+            <h3 class="det-rules-title" id="tier1-title">第一级 · 收纳规则</h3>
+            <div class="tier-list" id="tier1-pending"></div>
+            <ol class="tier-list" id="tier1-list"></ol>
+            <div class="det-actions">
+              <span class="det-dirty" id="tier1-dirty" hidden>有没保存的改动</span>
+              <button type="button" class="btn btn-ghost" id="tier1-add">加一条</button>
+              <button type="button" class="btn btn-fact" id="tier1-save" disabled>保存规则</button>
+            </div>
+          </section>
+          <section class="tier-col" aria-labelledby="tier2-title">
+            <h3 class="det-rules-title" id="tier2-title">第二级 · 去向规则</h3>
+            <div class="tier-list" id="tier2-pending"></div>
+            <ul class="tier-list" id="tier2-list"></ul>
+            <div class="det-actions">
+              <button type="button" class="btn btn-ghost" id="tier2-add">加一条</button>
+            </div>
+          </section>
+        </div>
+        <p class="suggest-message" id="tier-rules-message" role="status" hidden></p>
+      </div>
     </section>
 
     <!-- 「自动记录」（nexus-core v2.14 自动跟踪，auto.js）：今天按分类规则直接记下的段，可以改归属。
@@ -254,6 +301,7 @@
   <script src="auto.js"></script>
   <script src="settings.js"></script>
   <script src="rules.js"></script>
+  <script src="tiers.js"></script>
   <script src="review.js"></script>
 </body>
 </html>

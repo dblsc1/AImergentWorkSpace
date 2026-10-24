@@ -424,3 +424,29 @@ fieldset.set-field > legend { font-size: var(--fs-sub); color: var(--ink-2); mar
 .ign-what { flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
 .ign-meta { flex: 1 1 12em; min-width: 0; font-size: var(--fs-sub); color: var(--ink-2); }
 
+
+/* ── 三级分类（tiers.js）：账号开关、两级规则栏。--tier-c 由脚本按目的地项目所在分区的颜色设，没有 = 灰 ── */
+.tier-settings { min-width: 0; }
+.tier-sub { display: grid; gap: var(--sp-1); margin-left: var(--sp-5, 24px); padding-left: var(--sp-3); border-left: 2px solid var(--line-2); }
+.tier-rules { min-width: 0; }
+.tier-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-4); min-width: 0; }
+@media (max-width: 760px) { .tier-cols { grid-template-columns: minmax(0, 1fr); } }
+.tier-col { display: grid; gap: var(--sp-2); align-content: start; min-width: 0; }
+.tier-list { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--sp-2); min-width: 0; }
+.tier-rule {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-width: 0; padding: var(--sp-2) var(--sp-3);
+  border: 1px solid color-mix(in srgb, var(--tier-c, var(--ink-3)) 55%, var(--panel));
+  background: color-mix(in srgb, var(--tier-c, var(--ink-3)) 14%, var(--panel));
+  border-radius: var(--r-2);
+}
+.tier-rule.is-off { opacity: .6; }
+.tier-rule.is-ai { border-style: dashed; }
+.tier-rule.is-broken { border-color: var(--danger); }
+.tier-fields { display: flex; flex-wrap: wrap; gap: var(--sp-2); flex: 1 1 100%; min-width: 0; }
+.tier-fields .field { flex: 1 1 8em; min-width: 0; background: var(--panel); }
+.tier-rule > .field { flex: 1 1 10em; min-width: 0; background: var(--panel); }
+.tier-pat { flex: 1 1 10em; min-width: 0; overflow-wrap: anywhere; font-size: var(--fs-sub); }
+.tier-dest { font-weight: 600; overflow-wrap: anywhere; }
+.tier-n { font-size: var(--fs-eyebrow); color: var(--ink-3); }
+.tier-ai-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); flex: 1 1 100%; }
+.tier-broken { color: var(--danger); }
