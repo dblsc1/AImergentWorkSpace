@@ -151,6 +151,7 @@
     // parallel = 页面正在卸载（pagehide）：等不起上一条，全部并行 keepalive；否则（标签页转后台）一条接一条。
     self.flush = function (parallel) {
       var opts = { keepalive: true, parallel: !!parallel }, p = null;
+      if (!parallel) list.forEach(function (e) { o.clearTimer(e.timer); });   // 顺序发：别让排在后面的原计时器抢跑
       list.slice().sort(function (a, b) { return (a.card.verb === "project" ? 0 : 1) - (b.card.verb === "project" ? 0 : 1); }).forEach(function (e) {
         if (parallel) fire(e, opts); else p = p ? p.then(function () { return fire(e, opts); }) : fire(e, opts);
       });

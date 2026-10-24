@@ -186,6 +186,16 @@ class SessionStartTests(_SessionCases, unittest.TestCase):
         self.assertEqual(claude_hook._read_state("s1")["gen"], gen)  # 以前每次都换：在发的老进程就此退出，没人接着发
         self.assertIn("--wait", self.popen_mock.call_args.args[0])  # 占着的可能正要退：只起有界等待者，不信它
 
+    def test_session_start_refresh_keeps_subagent_tracking_of_the_same_run(self):
+        self._start()
+        st = claude_hook._read_state("s1")
+        claude_hook._write_state("s1", {**st, "subagents": {"a1": 123.0}, "mainIdle": True, "stopped": {}})
+        self._start()  # /compact：同一条 run 再来一次 SessionStart
+        cur = claude_hook._read_state("s1")
+        self.assertEqual(cur["runId"], st["runId"])
+        self.assertEqual(cur["subagents"], {"a1": 123.0})
+        self.assertTrue(cur["mainIdle"])
+
     def test_other_cli_gets_a_new_gen_and_a_waiting_beater_even_while_the_old_one_holds_the_lock(self):
         self._start()
         old_gen = claude_hook._read_state("s1")["gen"]

@@ -188,11 +188,11 @@
     // 409 → 重读，块还是待处理就用新 seq 自动重试一次，否则轻提示；别的失败 → {err}。opts.quiet = 409 不提示（撤销自己报错）
     function write(kind, key, extra, opts) {
       opts = opts || {};
-      var date = S.date, bk = date + "|" + key;
+      var date = opts.date || S.date, bk = date + "|" + key;
       if (S.busy[bk]) return Promise.resolve({ ok: false, busy: true, err: "上一步还没完成" });
       S.busy[bk] = 1; writing++;
       function once(attempt) {
-        var it = curItem(key), body = { date: date, blockKey: key, ifSeq: it ? it.seq : 0 };
+        var it = curItem(key), body = { date: date, blockKey: key, ifSeq: opts.ifSeq != null ? opts.ifSeq : it ? it.seq : 0 };
         Object.keys(extra || {}).forEach(function (k) { body[k] = extra[k]; });
         return post("blocks/" + kind, body).then(function (r) {
           if (r.status !== 409) return r;
@@ -207,7 +207,7 @@
         S.busy[bk] = 0; writing--;
         if (r.conflict) { if (!opts.quiet) toast("这一块刚被改过，已刷新"); return { ok: false, err: why(r), conflict: true }; }
         if (!r.ok) return { ok: false, err: why(r) };
-        var b = r.body || {}, item = curItem(key);
+        var b = r.body || {}, item = date === S.date ? curItem(key) : null;
         if (kind === "assign") delete S.chosen[bk];
         if (item && !(typeof b.seq === "number" && item.seq > b.seq)) {
           item.seq = typeof b.seq === "number" ? b.seq : (item.seq || 0) + 1;
@@ -216,16 +216,18 @@
           else if (kind === "assign") { if (item.status !== "generic") item.status = "assigned"; item.via = "human"; item.parts = [Object.assign({ fromTs: null, toTs: null }, extra.taskId ? { taskId: extra.taskId } : {}, extra.projectId ? { projectId: extra.projectId } : {})]; }
           else if (kind === "ignore") { item.status = "ignored"; item.via = "human"; }
         }
-        return { ok: true, body: b };
+        return { ok: true, body: b, date: date };
       });
     }
     function fail(name, r) { if (!r.conflict && !r.busy) toast("没办成：" + name + "：" + r.err, { error: true, ms: 6000 }); X.render(); }
 
     // 撤销 = 按 date+blockKey 取「现在」的块再 reset；失败如实说撤销失败
-    function undoToast(text, key, name) {
+    // ifSeq 取自刚写成功那一刻的 seq：期间别人又改了这块 → 409 → 撤销失败，不会抹掉别人的改动
+    function undoToast(text, key, name, r) {
+      var seq = typeof r.body.seq === "number" ? r.body.seq : null, date = r.date;
       var t = toast(text, { ms: X.UNDO_MS, undo: function () {
         t.remove();
-        write("reset", key, {}, { quiet: true }).then(function (r) {
+        write("reset", key, {}, { quiet: true, ifSeq: seq, date: date }).then(function (r) {
           if (!r.ok) { toast("撤销失败：" + name, { error: true, ms: 6000 }); X.render(); return; }
           return loadBlocks();
         });
@@ -247,7 +249,7 @@
       X.collapseEl(cardEl);
       write("assign", c.name, { taskId: c.target.taskId, projectId: c.target.taskId ? undefined : c.target.projectId, remember: !c.generic }).then(function (r) {
         if (!r.ok) { fail(c.name, r); return; }
-        undoToast("已批准：" + c.name, c.name, c.name); X.render();
+        undoToast("已批准：" + c.name, c.name, c.name, r); X.render();
       });
     }
     function ignoreBlock(c, cardEl) {
@@ -255,7 +257,7 @@
       X.collapseEl(cardEl);
       write("ignore", c.name, { forever: false }).then(function (r) {
         if (!r.ok) { fail(c.name, r); return; }
-        undoToast("已忽略：" + c.name, c.name, c.name); X.render();
+        undoToast("已忽略：" + c.name, c.name, c.name, r); X.render();
       });
     }
     function swipeBlock(c, decision, cardEl) { return decision === "approve" ? approveBlock(c, cardEl) : ignoreBlock(c, cardEl); }
@@ -312,7 +314,8 @@
         var rg = r && api.rangeOf(r.records || r.items);
         if (!rg) { toast("读不到这一块的记录", { error: true }); delete S.open[key]; delete S.splits[key]; X.render(); return; }
         var pts = api.addPoint([], rg.t0, rg.t1, rg.list);
-        S.splits[key] = { rg: rg, points: pts, targets: [c.target ? api.targetValue(c.target) : "", ""] };
+        if (!pts.length) { toast("这一块拆不开", { error: true }); delete S.open[key]; delete S.splits[key]; X.render(); return; }
+        S.splits[key] = { rg: rg, points: pts, targets: pts.map(function (_, i) { return i ? "" : c.target ? api.targetValue(c.target) : ""; }).concat([""]) };
         X.render();
       });
     }
@@ -386,12 +389,12 @@
     function confirmSplit(key) {
       var st = S.splits[key];
       if (!st || !st.rg) return;
-      if (st.targets.some(function (t) { return !t; })) { toast("每一块都要选去向"); return; }
+      if (st.targets.length !== st.points.length + 1 || st.targets.some(function (t) { return !t; })) { toast("每一块都要选去向"); return; }
       if (!api.partsHaveRecords(st.rg.list, st.points, st.rg.t0, st.rg.t1)) { toast("有一段里没有记录，请挪动拆分点"); return; }
       write("split", key, { parts: api.partsFromPoints(st.points, st.targets, st.rg.t0, st.rg.t1) }).then(function (r) {
         if (!r.ok) { if (r.conflict) closeSplit(key); else fail(key, r); return; }
         delete S.open[key]; delete S.splits[key];
-        undoToast("已拆分：" + key, key, key); X.render();
+        undoToast("已拆分：" + key, key, key, r); X.render();
       });
     }
 
@@ -599,7 +602,7 @@
         if (fa.classList.contains("hd-head")) fh = "__head";
       }
       var sum = total(secs), hist = secs[4].count;
-      panel.hidden = !sum && !hist && !S.failed;
+      panel.hidden = !sum && !hist && !S.failed && !S.report;
       panel.textContent = "";
       panel.dataset.collapsed = X.collapsed() ? "1" : "0";
       var head = btn("hd-head", "", "toggle");
@@ -696,7 +699,7 @@
       else if (kind === "split-cancel") closeSplit(key);
       else if (kind === "split-add") {
         var st = S.splits[key];
-        if (st && st.rg) { var np = api.addPoint(st.points, st.rg.t0, st.rg.t1, st.rg.list); if (np.length !== st.points.length) { st.points = np; st.targets.push(""); } X.render(); }
+        if (st && st.rg) { var np = api.addPoint(st.points, st.rg.t0, st.rg.t1, st.rg.list); if (np.length !== st.points.length) { var at = np.findIndex(function (v, j) { return v !== st.points[j]; }); st.points = np; st.targets.splice(at + 1, 0, ""); } X.render(); }
       } else if (kind === "split-ok") confirmSplit(key);
       else if (kind === "generic" || kind === "ungeneric") {
         post("blocks/generic", { blockKey: key, generic: kind === "generic" }).then(function (r) {

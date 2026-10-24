@@ -403,7 +403,8 @@
       b.type = 'button';
       b.setAttribute('role', 'menuitem');
       b.tabIndex = -1;
-      b.addEventListener('click', function (ev) { ev.stopPropagation(); closeMenu(true); e[1](); });
+      // 先发动作、再喊 hcl-idle（同拖动）：补画会改顺序，动作里捕获的下标得在那之前用掉
+      b.addEventListener('click', function (ev) { ev.stopPropagation(); closeMenu(true, true); e[1](); root.dispatchEvent(new Event('hcl-idle')); });
       li.appendChild(b);
       list.appendChild(li);
       return b;
