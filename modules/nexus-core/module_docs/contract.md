@@ -658,14 +658,14 @@ consumes:
 | POST | `/api/core/activity/choice` | `{key, taskId \| projectId, remember?}` | `ChoiceOut`（见「自动跟踪进行中的任务」节）；带 Bearer 403、404、422 | ✅ 已实现（v2.14） |
 | POST | `/api/core/activity/choice/dismiss` | `{key}` | `{key, dismissedUntil}`；带 Bearer 403、404、422 | ✅ 已实现（v2.14） |
 | GET | `/api/core/activity/auto` | 无；可选查询 `date=YYYY-MM-DD`（v2.37，缺省今天，坏格式 422） | `{items[]}`（那一天自动记下的段，新的在前，至多 200 条） | ✅ 已实现（v2.14） |
-| POST | `/api/core/activity/records` | `{deviceId, records[1..500]}` | `{accepted, duplicates, ignored, rejected[]}`（见「三级分类」节一） | ⏳ 契约已定（v2.38） |
-| GET | `/api/core/activity/blocks` | 查询 `date?`、`status?`、`limit?`、`cursor?` | `{date, items[]}`（见「三级分类」节二） | ⏳ 契约已定（v2.38） |
-| GET | `/api/core/activity/blocks/records` | 查询 `date`、`blockKey` | `{items[], truncated}` | ⏳ 契约已定（v2.38） |
-| POST | `/api/core/activity/blocks/assign\|split\|generic\|ignore\|reset` | 见「三级分类」节二（带 `ifSeq`） | 该块的新状态；带 Bearer 403、`ifSeq` 不符或日期已过期 409、目标不存在 404 | ⏳ 契约已定（v2.38） |
-| GET / POST / DELETE | `/api/core/activity/block-rules[/{id}]` | `{blockKey, taskId \| projectId}` | 见「三级分类」节三；写只许人 | ⏳ 契约已定（v2.38） |
-| GET / PUT | `/api/core/activity/settings` | `{tiers, agentDirect{enabled, windowsClassify, honeycombRecords}}`，PUT 带 `If-Match` | 同体加 `version`、`tiersSince`；PUT 只许人，版本不符 412，迁移超 500 条 409 | ⏳ 契约已定（v2.38） |
+| POST | `/api/core/activity/records` | `{deviceId, records[1..500]}` | `{accepted, duplicates, ignored, rejected[]}`（见「三级分类」节一） | ✅ 已实现（v2.38） |
+| GET | `/api/core/activity/blocks` | 查询 `date?`、`status?`、`limit?`、`cursor?` | `{date, items[]}`（见「三级分类」节二） | ✅ 已实现（v2.38） |
+| GET | `/api/core/activity/blocks/records` | 查询 `date`、`blockKey` | `{items[], truncated}` | ✅ 已实现（v2.38） |
+| POST | `/api/core/activity/blocks/assign\|split\|generic\|ignore\|reset` | 见「三级分类」节二（带 `ifSeq`） | 该块的新状态；带 Bearer 403、`ifSeq` 不符或日期已过期 409、目标不存在 404 | ✅ 已实现（v2.38） |
+| GET / POST / DELETE | `/api/core/activity/block-rules[/{id}]` | `{blockKey, taskId \| projectId}` | 见「三级分类」节三；写只许人 | ✅ 已实现（v2.38） |
+| GET / PUT | `/api/core/activity/settings` | `{tiers, agentDirect{enabled, windowsClassify, honeycombRecords}}`，PUT 带 `If-Match` | 同体加 `version`、`tiersSince`；PUT 只许人，版本不符 412，迁移超 500 条 409 | ✅ 已实现（v2.38） |
 | POST | `/api/core/activity/direct-log/{id}/undo` | 无 | 撤回一次直接施加；只许人 | ⏳ 契约已定（v2.38） |
-| POST / GET | `/api/core/activity/input` | `{deviceId, bins[]}` / 查询 `date` | 见「键盘鼠标活动」节 | ⏳ 契约已定（v2.38） |
+| POST / GET | `/api/core/activity/input` | `{deviceId, bins[]}` / 查询 `date` | 见「键盘鼠标活动」节 | ✅ 已实现（v2.38） |
 | POST | `/api/core/activity/ai/claim` | 无（空体或 `{}`） | `{window: null \| {key, app, title, claimedAt, answerBy}}`（见「让 AI 认窗口」节）；带 Bearer 403 | ✅ 已实现（v2.15） |
 | POST | `/api/core/activity/ai/suggest` | `{key, taskId \| projectId, confidence, reason}` 或 `{key, none: true, reason}` | `SuggestOut`；带 Bearer 403、400、404、409（不在等回答，什么都没写）、422 | ✅ 已实现（v2.15） |
 | POST | `/api/core/activity/choice/reject` | `{key}` | `{key, app, title, ruleRemoved}`；带 Bearer 403、404（不是 AI 认的）、422 | ✅ 已实现（v2.15） |
@@ -4470,7 +4470,7 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 - **秒数**：`endAt − startAt`，[1, 86400] 秒内，存成带小数的秒（`float`）；否则该条进 `rejected`，其余照收。
 - **防重**：`rec:<deviceId>:<startAt 的 UTC 毫秒>`，`(user, dedupeKey)` 唯一，**先到的为准**（同起点、不同终点的后到者算重复）。重复计入 `duplicates`。
 - **忽略闸门**：先过「忽略并记住」（v2.22），命中的不存，计入 `ignored`。
-- **日界**：`NEXUS_TZ` 本地日。跨午夜的记录切成两条存（第二条防重键用午夜那一刻）；计数里仍算一条。
+- **日界**：`NEXUS_TZ` 本地日。跨午夜的记录切成两条存（第二条防重键用午夜那一刻）；计数里仍算一条（两半有一半是新写入就算 `accepted`）。
 - **块名** `blockKey` 与来源 `keySource`：
   1. `block` 非空 → `blockKey` = 它（去首尾空白，≤ 64 字符），`keySource: "rule"`；
   2. 否则 → `blockKey = app + " · " + 归一化标题`（归一化同匹配历史的 `normTitle`；标题为空时就是 `app`），`keySource: "auto"`。
@@ -4528,6 +4528,15 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 - 每次写后按「四」对账。
 - **过期日期**：该日的原始记录已过留存期（`expired: true`），写端点一律 `409`（`detail`：「这一天的原始记录已过期，不能再改分类」）；台账里已有的段不受影响。`activity_blocks` 文档与台账一样永久保留。
 
+**补充（实现时定下，2026-10-24）**：
+- `generic` 不带 `ifSeq`；已是通用窗口时再标不改 `since`；响应 `{blockKey, generic, since}`。
+- 通用窗口的块 `assign` 或 `split` 之后，`status` 为 `generic`、带 `parts`。
+- `ignore` 的 `forever` 遇到块里没有记录（定不出程序）→ `422`；块名既不等于程序名、也不是「程序 · …」的形状 → `422`。
+- 写端点先查日期是否过期（`409`），再查目标是否存在（`404`）。`assign` 带 `remember` 时先检查第二级规则的上限，超了 `422`，块不改。
+- `reset`：没有文档时也建一份（`seq` 从 1 起），`parts` 置 `null`。
+- `GET blocks` 的 `cursor` 是不透明字符串（按上一页最后一项的秒数与块名续读），坏值 `422`。
+- 重算不碰标题为空、或标题被截到 512 字符的记录；新规则没命中时保留检测程序给的块名。
+
 ### 三、第二级规则 `activity_block_rules`
 
 块名 → 任务或项目，**精确匹配块名**（不是正则）。没有把握度：存在即生效。
@@ -4540,6 +4549,7 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 - `GET /api/core/activity/block-rules`（人与 MCP）→ `{items}`，≤ 2000 条；目标已删的标 `broken: true`（读时视为没有规则）。
 - `POST /api/core/activity/block-rules {blockKey, taskId?, projectId?}`（只许人）→ 同块名已有规则时**改它的目标**（`author` / `via` / `updatedAt` 换成这次的）。
 - `DELETE /api/core/activity/block-rules/{id}`（只许人）。
+- 删除不存在的规则 → `404`。规则总数上限 2000 条，超了 `422`。
 - **影响范围**：规则的增、改、删、失效，影响**最近 14 天**里没有分类文档（或文档 `status` 为 null）的同名块；更早的日期不重算（读时也按「记下的入账」显示，不按新规则）。受影响的块按「四」对账。
 
 ### 四、写进台账（对账）
@@ -4612,6 +4622,7 @@ AI 不直接调「二」「三」的写端点（那些只许人）。它经 `act
   - 建议上传仍然收（老检测程序不断），但**不再自动记录、也不再接受确认**（v2.14 的自动记录与 `POST suggestions/{id}/confirm` 对该账号回 `409`，`detail`：「已打开三级分类，请在窗口块里分类」），以免同一段时间记两次；待确认列表照常可读、可忽略；
   - 第一次打开时迁移旧规则（见下）。
 - `tiers` 从开到关：停止对账（已入账的不动）；之后恢复旧行为。再打开时 `tiersSince` 更新为新的时刻，关着期间的记录不入账（那段时间由旧方式记）。
+- `PUT` 缺 `If-Match` → `428`，版本不符 → `412`（体里带 `currentVersion`）。迁移时旧规则没有 `confidence` 键视为 `0.9`；第二级规则会超过 2000 条上限时整个 `PUT` `409`。
 - **迁移旧规则**（第一次打开，幂等，按旧规则 `id`）：每条生效的旧式规则（带 `taskId` / `projectId`）紧挨着它后面插一条第一级规则（`kind: "block"`，同样的 `app` / `title`，`block` = 规则 `note` 截到 64 字符；没有 `note` 用「旧规则 <id>」；同名冲突加「 (2)」「 (3)」）；`confidence ≥ 0.9` 的再写一条第二级规则（该块名 → 原目标，`via: "migration"`），低于 0.9 的不写（它们原本也不自动记）。`mode: "ai"` 的规则不迁移、原样保留（三级分类下这类窗口就是普通的待分类块）。旧规则加 `migrated: true`，留给老检测程序。迁移后规则总数超过 500 → 整个打开操作 `409`（`detail` 说清超了多少），`tiers` 不变。
 
 ### 七、杂项

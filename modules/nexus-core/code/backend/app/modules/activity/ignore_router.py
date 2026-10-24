@@ -27,6 +27,18 @@ def human(authorization: Annotated[str | None, Header()] = None) -> None:
         raise ForbiddenError("只有登录的人能改忽略规则；设备令牌、带范围的令牌和匿名上报都不行")
 
 
+def need_bearer(authorization: Annotated[str | None, Header()] = None) -> None:
+    """v2.38：原始记录与键盘鼠标活动的上传只收带 Bearer 的请求（经网关的设备令牌）；人路径与 MCP 对内直连 403。"""
+    if not (authorization or "").strip().lower().startswith("bearer "):
+        raise ForbiddenError("只有设备令牌能上传这个；人路径与 MCP 不行")
+
+
+def no_bearer(authorization: Annotated[str | None, Header()] = None) -> None:
+    """v2.38：原始记录只给不带 Bearer 的调用方（人与 MCP）读；设备令牌 403。"""
+    if (authorization or "").strip().lower().startswith("bearer "):
+        raise ForbiddenError("设备令牌不能读原始记录与窗口块")
+
+
 router = APIRouter(prefix="/activity/ignores", tags=["activity"])
 
 

@@ -31,7 +31,7 @@ def ai_matchers(user: str, rules: list[dict] | None = None) -> list[tuple]:
     用 google-re2，与检测程序的 Go regexp 同一套语法；RE2 编不过的那条跳过（服务端不认它，检测程序那边照旧）。"""
     out = []
     for r in (repo.get_rules(user) or {}).get("rules", []) if rules is None else rules:
-        if r.get("enabled") is False:
+        if r.get("enabled") is False or r.get("kind") == "block":  # 第一级规则不给建议（v1.5），不挡后面的 ai 规则
             continue
         pats = [_re2(r[k]) if r.get(k) else None for k in ("app", "title")]
         if any(r.get(k) and p is None for k, p in zip(("app", "title"), pats)):
@@ -46,6 +46,29 @@ def ai_hit(matchers: list[tuple], app: str, title: str) -> bool:
         if (a is None or a.search(app)) and (t is None or t.search(title)):
             return is_ai
     return False
+
+
+def block_matchers(user: str) -> tuple[int, list[tuple]]:
+    """v1.5：``(规则集版本, [(app 正则, title 正则, 块名)])``——生效中的第一级规则（``kind: "block"``）按顺序编好，给原始记录算 blockKey。
+    RE2 编不过的跳过；一次读库同时给出版本号（重算块名靠它判断「第一级规则变了没有」）。"""
+    doc = repo.get_rules(user) or {}
+    out = []
+    for r in doc.get("rules", []):
+        if r.get("kind") != "block" or r.get("enabled") is False:
+            continue
+        pats = [_re2(r[k]) if r.get(k) else None for k in ("app", "title")]
+        if any(r.get(k) and p is None for k, p in zip(("app", "title"), pats)):
+            continue
+        out.append((pats[0], pats[1], r["block"]))
+    return doc.get("version", 0), out
+
+
+def block_hit(matchers: list[tuple], app: str, title: str) -> str | None:
+    """第一条命中的第一级规则的块名；都没命中 None（先命中先用，不分大小写、不锚定）。"""
+    for a, t, block in matchers:
+        if (a is None or a.search(app)) and (t is None or t.search(title)):
+            return block
+    return None
 
 
 def prepend(rule: dict, yield_to_human: bool = False, window: tuple[str, str] | None = None) -> bool:
@@ -67,10 +90,11 @@ def prepend(rule: dict, yield_to_human: bool = False, window: tuple[str, str] | 
         if old and {**old[0], "id": rule["id"]} == rule:  # 同样的规则已是第一条：不写，version 不动
             return True
         if yield_to_human and any((r["app"], r["title"]) == (rule["app"], rule["title"]) and not r.get("auto")
-                                  for r in old):
+                                  and r.get("kind") != "block" for r in old):
             return False
-        rules = [rule] + [r for r in old
-                          if (r["app"], r["title"]) != (rule["app"], rule["title"]) and r["id"] != rule["id"]]
+        rules = [rule] + [r for r in old  # 同窗口的第一级规则（kind block）是另一类，不去重
+                          if (r.get("kind") == "block" or (r["app"], r["title"]) != (rule["app"], rule["title"]))
+                          and r["id"] != rule["id"]]
         if len(rules) > MAX_RULES:
             return False
         if repo.replace_rules(user, doc.get("version", 0), rules, _now()) is not None:
