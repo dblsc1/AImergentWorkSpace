@@ -222,6 +222,7 @@ func (p *beater) beat(cfg Config, hc *http.Client, now time.Time) (bool, error) 
 		want = *rp
 	}
 	if !active(cfg) || !want {
+		p.covered = now // 关 / 暂停期间的窗口不补传：恢复后的第一拍从这里起算
 		return false, nil // 关 / 暂停 / 没开心跳：零请求
 	}
 	base := strings.TrimRight(cfg.CockpitURL, "/")
@@ -230,6 +231,7 @@ func (p *beater) beat(cfg Config, hc *http.Client, now time.Time) (bool, error) 
 		return false, err
 	}
 	if !cfg.Presence {
+		p.covered = now
 		return false, nil // 网页上刚关掉
 	}
 	if err := cfg.Privacy.check(); err != nil {

@@ -903,3 +903,29 @@ func TestPresenceDropsSubMillisecondFragment(t *testing.T) {
 		t.Fatalf("spans %+v", got)
 	}
 }
+
+// 暂停 / 关闭期间的窗口不补传：恢复后的第一拍从恢复时刻起算，不带暂停前的 covered。
+func TestPresenceNoBackfillAcrossPause(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	aw := fakeAWWeb(t, []awEvent{winEv(now.Add(-10*time.Minute), 3600, "code", "x")}, nil, nil)
+	defer aw.Close()
+	ck := newLiveCockpit(t)
+	defer ck.Close()
+	remotePresence.Store(nil)
+	cfg := liveConfig(aw.URL, ck.URL)
+	b := &beater{}
+	if sent, _ := b.beat(cfg, http.DefaultClient, now); !sent {
+		t.Fatal("first beat")
+	}
+	paused := cfg
+	paused.Paused = true
+	b.beat(paused, http.DefaultClient, now.Add(5*time.Second))
+	ck.take()
+	if sent, _ := b.beat(cfg, http.DefaultClient, now.Add(30*time.Second)); !sent {
+		t.Fatal("resume beat")
+	}
+	sp := bodySpans(t, ck.posts("/presence")[0].body)
+	if len(sp) != 1 || !sp[0].from.Equal(now.Add(5*time.Second)) || sp[0].seconds != 25 {
+		t.Fatalf("resume beat must start at the pause end: %v", sp)
+	}
+}

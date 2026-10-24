@@ -707,3 +707,13 @@ func TestRejectedSegmentsAreLoggedWithoutTitles(t *testing.T) {
 		t.Fatalf("log=%q", out)
 	}
 }
+
+// 刚开启：原始记录游标和段游标一起落在此刻，第一个间隔不丢。
+func TestActivationSeedsRecordsCursor(t *testing.T) {
+	hc := &http.Client{Transport: noNet{t}}
+	cfg := testConfig("http://aw.invalid", "http://ck.invalid")
+	st := &State{}
+	if _, err := tick(cfg, st, at(60), hc); err != nil || !st.RecordsCursor.Equal(at(60)) || !st.Cursor.Equal(at(60)) {
+		t.Fatalf("cursors %v %v %v", st.Cursor, st.RecordsCursor, err)
+	}
+}

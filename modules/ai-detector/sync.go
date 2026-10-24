@@ -72,7 +72,7 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 	}
 	if !wasActive || st.Cursor.IsZero() {
 		st.Cursor = now
-		st.RecordsCursor = time.Time{}
+		st.RecordsCursor = now // 原始记录同样从此刻起记；网页上没开记录时 recordsRound 下一轮会清掉
 		return "刚开启（或刚恢复），从现在开始记录；之前的活动不上传", nil
 	}
 	if back := minutes(cfg.MaxBacklogHours * 60); back > 0 && now.Sub(st.Cursor) > back {
