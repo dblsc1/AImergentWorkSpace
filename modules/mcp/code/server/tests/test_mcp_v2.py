@@ -912,3 +912,11 @@ def test_error_detail_caps_long_raw_block_key(servers, monkeypatch):
     shown = tools._screen(raw, tools.MAX_BLOCK)
     out = ok(servers, "CRUD_Windowsblock_Classify_Rules", {"ops": [{"op": "delete", "block": shown}]}, W)
     assert "SECRETTAIL" not in out["results"][0]["detail"] and "SECRETTAIL" not in shown
+
+
+def test_fail_screens_downstream_errors_list():
+    raw = "a‮" + "x" * 450 + "SECRET"
+    e = tools.ToolError(422, "bad", errors=[{"loc": ["body", "blockKey"], "msg": raw, "input": raw}])
+    errs = tools._screen_all(e.errors)
+    assert "SECRET" not in json.dumps(errs) and "‮" not in json.dumps(errs, ensure_ascii=False)
+    assert errs[0]["loc"] == ["body", "blockKey"]

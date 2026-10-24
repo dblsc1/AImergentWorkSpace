@@ -1173,10 +1173,19 @@ def _result(obj: dict, error: bool = False) -> dict:
             "structuredContent": obj, "isError": error}
 
 
+def _screen_all(o):
+    """下游 errors 列表里的每段文字都过一遍屏蔽：校验错误可能回显原始块名或标题。"""
+    if isinstance(o, dict):
+        return {k: _screen_all(v) for k, v in o.items()}
+    if isinstance(o, list):
+        return [_screen_all(x) for x in o]
+    return _screen(o, MAX_ERR) if isinstance(o, str) else o
+
+
 def _fail(e: ToolError, spec: dict | None, c: Ctx) -> dict:
     err = {"status": e.status, "detail": _screen(e.detail, MAX_ERR)}
     if e.errors is not None:
-        err["errors"] = e.errors
+        err["errors"] = _screen_all(e.errors)
     if e.status == 400 and spec:
         err["example"] = spec["example"]["request"]
     err["hint"] = specs.HINT
