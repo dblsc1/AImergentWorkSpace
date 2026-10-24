@@ -174,3 +174,16 @@ def test_undo_block_conditional_write_refuses_newer_human_change(client, tid, bl
     monkeypatch.setattr(blocks_repo, "get_block", raced)
     assert client.post(f"{LOG}/{lid}/undo").status_code == 409
     assert db().activity_blocks.find_one({"blockKey": K})["status"] == "ignored"
+
+
+def test_undo_block_generic_conflict_leaves_doc_untouched_and_retry_works(client, tid, blk, monkeypatch):
+    from app.modules.activity import blocks_repo
+    direct(client)
+    lid = act(client, action="generic").json()["directLogId"]  # 原来没标记、施加后标上
+    real = blocks_repo.swap_generic
+    monkeypatch.setattr(blocks_repo, "swap_generic", lambda *a: False)
+    assert client.post(f"{LOG}/{lid}/undo").status_code == 409
+    assert db().activity_generic.count_documents({"blockKey": K}) == 1 and db().activity_direct_log.find_one({"id": lid})["undoneAt"] is None
+    monkeypatch.setattr(blocks_repo, "swap_generic", real)
+    assert client.post(f"{LOG}/{lid}/undo").status_code == 200  # 重试能完成
+    assert db().activity_generic.count_documents({"blockKey": K}) == 0

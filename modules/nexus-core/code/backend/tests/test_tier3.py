@@ -573,9 +573,11 @@ def test_session_change_stale_owner_and_undo_conditional(client, monkeypatch):
 
 def test_dismiss_refuses_claimed_question(client, tid):
     item = ask(client, q(options=[{"label": "a", "target": {"taskId": tid}}]))["items"][0]
-    db().activity_questions.update_one({"id": item["id"]}, {"$set": {"claimed": {"option": 0}}})  # answer 已占位
+    db().activity_questions.update_one({"id": item["id"]}, {"$set": {"claimed": {"option": 0, "at": datetime.now(timezone.utc)}}})  # answer 已占位
     assert client.post(f"{A}/questions/{item['id']}/dismiss").status_code == 409
     assert db().activity_questions.find_one({"id": item["id"]})["status"] == "pending"
+    db().activity_questions.update_one({"id": item["id"]}, {"$set": {"claimed.at": datetime.now(timezone.utc) - timedelta(minutes=5)}})  # 崩掉的占位过期
+    assert client.post(f"{A}/questions/{item['id']}/dismiss").status_code == 200
 
 
 def test_submit_duplicate_recovery_when_first_already_closed(client, monkeypatch):

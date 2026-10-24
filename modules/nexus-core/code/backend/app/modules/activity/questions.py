@@ -29,6 +29,7 @@ from .proposals import ConflictError
 from .reports import TooManyReportsError
 
 _COLL, MAX_PENDING, MAX_BATCH, MAX_OPTIONS = "activity_questions", 30, 10, 6
+CLAIM_TTL = timedelta(minutes=2)  # 回答崩在半路留下的占位，过了这么久撤下可以无视
 _ready = False
 
 
@@ -195,7 +196,7 @@ def answer(qid: str, option, text, request) -> dict:
             raise NotFoundError(f"项目不存在：{target['projectId']!r}")
     # 原子地记下所选选项：崩溃后重答必须选同一个，否则 409（补登的 dedupeKey 跟着目标走，换选项可能记两次）
     if _col().update_one({"user": user, "id": qid, "status": "pending", "$or": [{"claimed": None}, {"claimed.option": option}]},
-                         {"$set": {"claimed": {"option": option}}}).matched_count != 1:
+                         {"$set": {"claimed": {"option": option, "at": _now()}}}).matched_count != 1:
         raise ConflictError("这个问题正在回答（或上次回答中断），请选同一个选项；已回答 / 撤下的不能再答")
     event_id = None
     try:
@@ -214,7 +215,8 @@ def answer(qid: str, option, text, request) -> dict:
 
 def dismiss(qid: str) -> dict:
     _get(qid)
-    # claimed 为空才撤：已被 answer 占位（可能正在补登）的不能撤，否则补登照记、回答却 409
-    if _col().update_one({"user": current_tenant(), "id": qid, "status": "pending", "claimed": None}, {"$set": {"status": "dismissed"}}).modified_count != 1:
+    # claimed 为空（或占位已过期）才撤：刚被 answer 占位（可能正在补登）的不能撤，否则补登照记、回答却 409
+    if _col().update_one({"user": current_tenant(), "id": qid, "status": "pending", "$or": [{"claimed": None}, {"claimed.at": {"$lt": _now() - CLAIM_TTL}}, {"claimed.at": {"$exists": False}}]},
+                          {"$set": {"status": "dismissed"}}).modified_count != 1:
         raise ConflictError("这个问题已经回答、撤下，或正在回答")
     return view(_get(qid))

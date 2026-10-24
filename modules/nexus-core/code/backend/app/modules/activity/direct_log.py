@@ -135,19 +135,22 @@ def _undo_rule(user: str, d: dict) -> None:
 
 
 def _undo_block(user: str, d: dict) -> None:
-    """先还原块文档（比较并交换，失败什么都没动），再还原通用窗口标记（还原成原来的 since）。"""
+    """先还原通用窗口标记（还原成原来的 since），再还原块文档（比较并交换；失败则把标记放回去，整体什么都没动）。"""
     date, key, before = d["payload"]["date"], d["payload"]["blockKey"], d["before"]
     old = blocks_repo.get_block(user, date, key)  # 比较与还原用同一份读到的文档（seq 来自它）
     if block_state(user, date, key, old or {}) != d["after"]:
         raise ConflictError("这个块在直接施加之后又被改过，不能撤回")
     if old is None and before["doc"]["status"] is not None:
         raise ConflictError("这个块的文档已不在，不能撤回")
-    if old is not None and blocks_repo.put_block(user, date, key, {**before["doc"], "updatedAt": _now()}, old["seq"], old) is None:
-        raise ConflictError("这个块刚被别处改动，请重试")
-    if before["generic"] != d["after"]["generic"] and not blocks_repo.swap_generic(user, key, d["after"]["generic"], before["generic"]):
+    flip = before["generic"] != d["after"]["generic"]
+    if flip and not blocks_repo.swap_generic(user, key, d["after"]["generic"], before["generic"]):  # 先动标记：失败时块文档没动，可重试
         raise ConflictError("这个块的通用窗口标记刚被别处改动，请重试")
+    if old is not None and blocks_repo.put_block(user, date, key, {**before["doc"], "updatedAt": _now()}, old["seq"], old) is None:
+        if flip:
+            blocks_repo.swap_generic(user, key, before["generic"], d["after"]["generic"])  # 块写不进：标记放回去，整体什么都没动
+        raise ConflictError("这个块刚被别处改动，请重试")
     reconcile.kick(only={(date, key)}, actor="human")
-    if before["generic"] != d["after"]["generic"]:
+    if flip:
         reconcile.kick(key=key, actor="human")
 
 
