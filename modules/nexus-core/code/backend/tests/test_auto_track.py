@@ -473,12 +473,14 @@ def test_auto_entry_records_task_and_project_with_provenance(client, world):
     assert client.get(f"{API}/activity/suggestions/history").json()["items"] == []
 
 
-def test_auto_list_takes_an_optional_date(client, world):
+def test_auto_list_takes_an_optional_date(client, world, monkeypatch):
     """v2.37：``GET activity/auto?date=YYYY-MM-DD`` 看指定那一天（NEXUS_TZ 日界）；缺省 = 今天；格式不对 422。"""
     from app import config  # noqa: PLC0415
 
     _track(client)
-    _upload(client, [_rule_seg(60, task_id=world["a"])], headers=BEARER)
+    start = _recent(60)
+    _upload(client, [_seg(start, task_id=world["a"])], headers=BEARER)
+    _pin_today(monkeypatch, start)
     items = client.get(f"{API}/activity/auto").json()["items"]
     assert len(items) == 1
     day = datetime.fromisoformat(items[0]["startAt"]).astimezone(config.settings.tz).date()

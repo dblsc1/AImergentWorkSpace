@@ -24,7 +24,7 @@ assert.deepStrictEqual(T.proposalKinds(null), { windowRules: [], blockRules: [],
 var qs = T.pendingQuestions({ items: [{ id: "a", title: "t" }, { id: "b", title: "t", status: "answered" }, { id: "c", status: "pending" }, { title: "t" }, null] });
 assert.deepStrictEqual(qs.map(function (q) { return q.id; }), ["a"], "只留待回答、有 id 和标题的");
 assert.deepStrictEqual(T.pendingQuestions(null), []); assert.deepStrictEqual(T.pendingQuestions({ items: "x" }), []);
-assert.strictEqual(T.qRange({ from: "2026-10-24T01:00:00Z", to: "2026-10-24T02:00:00Z" }), T.hhmm(Date.parse("2026-10-24T01:00:00Z")) + "–" + T.hhmm(Date.parse("2026-10-24T02:00:00Z")));
+assert.strictEqual(T.qRange({ from: "2026-10-24T01:00:00Z", to: "2026-10-24T02:00:00Z" }, new Date(Date.parse("2026-10-24T01:30:00Z"))), T.hhmm(Date.parse("2026-10-24T01:00:00Z")) + "–" + T.hhmm(Date.parse("2026-10-24T02:00:00Z")));
 var d9 = new Date(2026, 9, 24, 9, 0), d10 = new Date(2026, 9, 24, 10, 0), noon = new Date(2026, 9, 24, 12, 0);
 var qd = { from: d9.toISOString(), to: d10.toISOString() };
 assert.strictEqual(T.qRange(qd, noon), "09:00–10:00", "今天的不带日期");
