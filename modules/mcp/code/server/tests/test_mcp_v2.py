@@ -875,3 +875,48 @@ def err_plain(url, name, args, headers=None):
     res = call(url, name, args, headers)
     assert res["isError"] is True
     return res["structuredContent"]["error"]
+
+
+def test_edit_rule_can_clear_title_with_empty_string(servers):
+    out = ok(servers, "CRUD_Windows_Classify_Rules", {"ops": [{"op": "edit", "id": "r_1", "title": ""}]}, W)
+    assert out["results"][0]["ok"] is True
+    assert posts()[0][1]["rule"] == {"id": "r_1", "title": ""}
+
+
+def test_block_write_maps_screened_name_back_to_exact_key(servers, monkeypatch):
+    raw = "a  b" + "x" * 5
+    monkeypatch.setattr("fake_nexus.BLOCK_RULES", {"items": [{"id": "br_9", "blockKey": raw, "taskId": "t_a1"}]})
+    ok(servers, "CRUD_Windowsblock_Classify_Rules", {"ops": [{"op": "delete", "block": "a b" + "x" * 5}]}, W)
+    assert posts()[0][1] == {"op": "delete", "blockKey": raw}
+
+
+def test_error_detail_does_not_leak_raw_block_key(servers, monkeypatch):
+    raw = "ECHO  a  b"
+    monkeypatch.setattr("fake_nexus.BLOCK_RULES", {"items": [{"id": "br_9", "blockKey": raw, "taskId": "t_a1"}]})
+    out = ok(servers, "CRUD_Windowsblock_Classify_Rules", {"ops": [{"op": "delete", "block": "ECHO a b"}]}, W)
+    detail = out["results"][0]["detail"]
+    assert out["results"][0]["ok"] is False and raw not in detail and "ECHO a b" in detail
+
+
+def test_block_mapping_skips_collisions(servers, monkeypatch):
+    rules = [{"id": "1", "blockKey": "a  b", "taskId": "t_a1"}, {"id": "2", "blockKey": "a   b", "taskId": "t_a1"},
+             {"id": "3", "blockKey": "c d", "taskId": "t_a1"}, {"id": "4", "blockKey": "c  d", "taskId": "t_a1"}]
+    monkeypatch.setattr("fake_nexus.BLOCK_RULES", {"items": rules})
+    ok(servers, "CRUD_Windowsblock_Classify_Rules", {"ops": [{"op": "delete", "block": "a b"}, {"op": "delete", "block": "c d"}]}, W)
+    assert [b["blockKey"] for _, b in posts()] == ["a b", "c d"]   # 两个原样 key 同显示形式 / 显示形式本身是原样 key：都不猜
+
+
+def test_error_detail_caps_long_raw_block_key(servers, monkeypatch):
+    raw = "ECHO " + "x" * 450 + "SECRETTAIL" + "y" * 300
+    monkeypatch.setattr("fake_nexus.BLOCK_RULES", {"items": [{"id": "br_9", "blockKey": raw, "taskId": "t_a1"}]})
+    shown = tools._screen(raw, tools.MAX_BLOCK)
+    out = ok(servers, "CRUD_Windowsblock_Classify_Rules", {"ops": [{"op": "delete", "block": shown}]}, W)
+    assert "SECRETTAIL" not in out["results"][0]["detail"] and "SECRETTAIL" not in shown
+
+
+def test_fail_screens_downstream_errors_list():
+    raw = "a‮" + "x" * 450 + "SECRET"
+    e = tools.ToolError(422, "bad", errors=[{"loc": ["body", "blockKey"], "msg": raw, "input": raw}])
+    errs = tools._screen_all(e.errors)
+    assert "SECRET" not in json.dumps(errs) and "‮" not in json.dumps(errs, ensure_ascii=False)
+    assert errs[0]["loc"] == ["body", "blockKey"]

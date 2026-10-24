@@ -289,6 +289,7 @@ def _resolve(spec: dict, args) -> dict:
 # 再截断；并且只放在叫 app / title / window / block 的字段里，绝不拼进 note 这类模型当叙述读的句子。
 MAX_TITLE = 80            # 窗口标题（Get_Now / Get_History）
 MAX_SCREEN_TEXT = 200     # Get_Pending_Classify_Windows 的标题、Get_Proposals 的摘要
+MAX_ERR = 400             # 下游报错文字：可能带块名 / 窗口标题原样，和块名同一个上限，过 _screen 再给调用方
 MAX_BLOCK = 400           # 块名只清洗不实质截断：它是 CRUD_Windowsblock 的 block 入参，截了就对不上
 _UNSAFE = {"Cc", "Cf", "Co", "Cs", "Zl", "Zp"}  # 控制符、格式符（零宽 / 双向）、私用区、代理项、行 / 段分隔符
 
@@ -808,7 +809,7 @@ def _run(items: list, fn) -> list[dict]:
         try:
             results.append({"index": i, **fn(it)})
         except ToolError as e:
-            results.append({"index": i, "ok": False, "status": e.status, "detail": e.detail})
+            results.append({"index": i, "ok": False, "status": e.status, "detail": _screen(e.detail, MAX_ERR)})
             if e.status == 403:
                 break
     return results
@@ -862,7 +863,7 @@ def crud_windows_classify_rules(a, c):
                 raise _bad(f"{op} 要 id（取自 Get_Rules 的 level1.rules）")
             if o.get("ignore") or o["id"] in ignores:
                 raise _bad("忽略规则只能新增：改 / 删忽略规则只有人能在页面上做")
-            rule = {"id": o["id"], **({k: o[k] for k in ("app", "title", "block") if o.get(k)} if op == "edit" else {})}
+            rule = {"id": o["id"], **({k: o[k] for k in ("app", "title", "block") if o.get(k) is not None} if op == "edit" else {})}
             if op == "edit" and len(rule) == 1:
                 raise _bad("edit 要带至少一个要改的键（app / title / block）")
         return _outcome(_write("/api/core/activity/proposals/window-rules", _with({"op": op, "rule": rule}, a), c, direct))
@@ -871,13 +872,26 @@ def crud_windows_classify_rules(a, c):
     return {"results": results, "note": _batch_note(results, direct, "规则是正则；写前先看 Get_Pending_Classify_Windows 和 Get_Rules，别重复。")}
 
 
+def _raw_blocks(tenant, day=None) -> dict:
+    """显示用的块名（_screen 压空白 / 截断）→ 下游原样的块名。写入时调用方传的是显示形式，要换回精确的那个。"""
+    keys = [b.get("blockKey") for b in _try_get("/api/core/activity/blocks", {"limit": 1000, **({"date": day} if day else {})}, tenant).get("items", [])]
+    keys += [x.get("blockKey") for x in _try_get("/api/core/activity/block-rules", {}, tenant).get("items", [])]
+    exact, cand = set(keys), {}
+    for k in exact:
+        if isinstance(k, str) and _screen(k, MAX_BLOCK) != k:
+            cand.setdefault(_screen(k, MAX_BLOCK), []).append(k)
+    # 显示形式本身就是某个原样 key、或对应多个原样 key：不猜，原样照发
+    return {d: v[0] for d, v in cand.items() if len(v) == 1 and d not in exact}
+
+
 def crud_windowsblock_classify_rules(a, c):
     direct, ops = bool(a.get("direct_apply")), a["ops"]
     tree = _tree(c.tenant) if any(o.get("target") for o in ops) else None
+    raw = _raw_blocks(c.tenant, a.get("date"))
 
     def one(o):
         op = o["op"]
-        body: dict = {"op": op, "blockKey": o["block"]}
+        body: dict = {"op": op, "blockKey": raw.get(o["block"], o["block"])}
         if op == "delete":
             if o.get("target"):
                 raise _bad("delete 不要 target")
@@ -910,12 +924,15 @@ def _parts(parts: list, tree: Tree) -> list[dict]:
 def crud_windowsblock(a, c):
     direct, items = bool(a.get("direct_apply")), a["items"]
     tree = _tree(c.tenant) if any(i.get("target") or i.get("parts") for i in items) else None
+    raws: dict = {}
 
     def one(it):
         act = it["action"]
         day = it.get("date") or _today()
         _day("date", day)
-        body: dict = {"action": act, "date": day, "blockKey": it["block"]}
+        if day not in raws:
+            raws[day] = _raw_blocks(c.tenant, day)
+        body: dict = {"action": act, "date": day, "blockKey": raws[day].get(it["block"], it["block"])}
         if act == "assign":
             if not it.get("target") or it.get("parts"):
                 raise _bad("assign 要 target，不收 parts")
@@ -1082,7 +1099,7 @@ def _call_live_v1(name: str, args, c: Ctx) -> dict:
         _check(_LIVE_V1[name], a, "")
         out = (get_window_awaiting_target if name == "get_window_awaiting_target" else suggest_window_target)(a, c)
     except ToolError as e:
-        return _result({"error": {"status": e.status, "detail": e.detail}}, error=True)
+        return _result({"error": {"status": e.status, "detail": _screen(e.detail, MAX_ERR)}}, error=True)
     except (KeyError, TypeError, ValueError, AttributeError):
         return _result({"error": {"status": 502, "detail": UNAVAILABLE}}, error=True)
     return _result(out)
@@ -1156,10 +1173,19 @@ def _result(obj: dict, error: bool = False) -> dict:
             "structuredContent": obj, "isError": error}
 
 
+def _screen_all(o):
+    """下游 errors 列表里的每段文字都过一遍屏蔽：校验错误可能回显原始块名或标题。"""
+    if isinstance(o, dict):
+        return {k: _screen_all(v) for k, v in o.items()}
+    if isinstance(o, list):
+        return [_screen_all(x) for x in o]
+    return _screen(o, MAX_ERR) if isinstance(o, str) else o
+
+
 def _fail(e: ToolError, spec: dict | None, c: Ctx) -> dict:
-    err = {"status": e.status, "detail": e.detail}
+    err = {"status": e.status, "detail": _screen(e.detail, MAX_ERR)}
     if e.errors is not None:
-        err["errors"] = e.errors
+        err["errors"] = _screen_all(e.errors)
     if e.status == 400 and spec:
         err["example"] = spec["example"]["request"]
     err["hint"] = specs.HINT

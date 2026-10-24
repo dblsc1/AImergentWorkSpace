@@ -299,6 +299,7 @@
       key.value = newKey;
       key.addEventListener("input", function () { newKey = key.value; });
       var sel = targetSelect(newPick, function (v) { newPick = v; });
+      sel.addEventListener("change", function () { newPick = sel.value; });   // 选回空白也要清掉，别沿用上一个去向
       var ok = el("button", "btn btn-fact", "添加");
       ok.type = "button";
       ok.addEventListener("click", function () {

@@ -249,3 +249,15 @@ def test_actions_do_not_run_concurrently(browser, static_base_url):
         held[0].fulfill(status=204)
         page.wait_for_selector('#tier2-list li[data-id="br_2"]', state="detached")
         assert page.locator('#tier2-list li[data-id="br_1"]').count() == 1
+
+
+def test_level2_new_row_blank_destination_does_not_reuse_previous_pick(browser, static_base_url):
+    acct, tier = AcctStub(tiers=True), TierStub()
+    with tier_page(browser, static_base_url, acct, tier) as page:
+        wait_tiers(page)
+        page.click("#tier2-add")
+        page.fill("#tier2-new input", "未分配")
+        page.select_option("#tier2-new select", "t_exam")
+        page.select_option("#tier2-new select", "")
+        page.click("#tier2-new .btn-fact")
+        assert not [c for c in tier.calls if c[:2] == ("POST", "block-rules") and c[3].get("blockKey") == "未分配"]

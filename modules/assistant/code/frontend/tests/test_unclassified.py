@@ -423,3 +423,19 @@ def test_undo_after_clear_brings_the_batch_back_into_view(browser, static_base_u
         assert page.locator(".unc-row").count() == 1
         page.reload()  # 重开也照样列
         page.wait_for_selector('.unc-row[data-id="evt_9"]')
+
+
+def test_failed_tree_refresh_does_not_leave_the_panel_busy(browser, static_base_url):
+    with opened(browser, static_base_url) as (page, stub):
+        page.wait_for_selector(ENG)
+        tree_ok = json.dumps(UNC_TREE, ensure_ascii=False)
+        refresh = "() => document.dispatchEvent(new Event('assistant:reports-changed'))"
+        page.select_option(f"{ENG} .unc-task", "__other")
+        page.select_option(f"{ENG} .unc-task", "p:p_book")   # 选了别的项目的「未分类」：刷新时要拿新树核对它
+        page.route(re.compile(r"/api/core/views/tree$"), lambda r: r.fulfill(status=500, body="{}"))
+        page.evaluate(refresh)
+        page.wait_for_function("() => !document.querySelector('.unc-row')")   # 树拉不到：面板空了，但不能卡在忙
+        page.route(re.compile(r"/api/core/views/tree$"), lambda r: r.fulfill(
+            status=200, content_type="application/json", body=tree_ok))
+        page.evaluate(refresh)   # busy 卡住的话 refresh 直接返回，面板回不来
+        page.wait_for_selector(BOOK)
