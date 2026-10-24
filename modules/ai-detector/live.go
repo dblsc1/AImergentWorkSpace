@@ -226,7 +226,7 @@ func (p *beater) beat(cfg Config, hc *http.Client, now time.Time) (bool, error) 
 	}
 	if !active(cfg) || !want {
 		p.covered, p.off = now, true // 关 / 暂停期间的窗口不补传
-		return false, nil // 关 / 暂停 / 没开心跳：零请求
+		return false, nil            // 关 / 暂停 / 没开心跳：零请求
 	}
 	base := strings.TrimRight(cfg.CockpitURL, "/")
 	cockpit := withPolicy(hc, hc.Timeout, sameHostOnly)
