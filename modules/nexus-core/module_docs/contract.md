@@ -4592,6 +4592,20 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 - 有界：每轮至多处理 500 个块、2000 个事件；没做完的下一轮继续。一个块的动作没做完时块文档带 `reconciling: true`，`GET blocks` 照样回该块，时长按「应该入账」算（不按台账）。
 - 事件的 `actor`：人的写操作触发的对账 = 那个人；规则、后台循环 = `system`。
 
+**补充（对账实现时定下，2026-10-24）**：
+
+- `actor`：人的块写操作触发的对账 = `human`；规则变化、后台循环、原始记录上传、手动计时、`tiers` 变化触发的 = `system`。
+- 对账给第二级规则管着的块建文档（`via: "rule"`）会让 `seq` +1；拿着旧 `seq` 的写会收到一次 `409`（体里带现状），重读后再写。
+- `via: "rule"` 的块：最近 14 天内跟着第二级规则的变化走；更早的保持当时的去向。规则删除或目标失效时，14 天内的块清回缺省（`status: null`）并作废已入账的段。
+- `runs[]` 里除「二」列出的字段以外都是内部字段（如 `ivs`、`pend`、`bucket`），读端不得依赖。
+- 已作废的段不能再 `session.reassigned`：`POST /api/core/sessions/{eventId}/reassign` 对它回 `409`（`detail`：「这段已作废」）。
+- 「别的来源已记」= 投影里 `source` 为 `timer-backend`、`manual-backfill`、`activity-confirmed` 的段，加上正在跑的手动计时；取数不截断。
+- 事件触发的对账尽力而为：同一账号的对账正在跑时直接跳过，交给后台循环；失败只记日志，不影响触发它的请求。
+- 后台循环只重访要动的块：有新原始记录、`reconciling: true`、有未收口的段，或被规则 / 通用窗口 / 计时 / 设置变化点名的块名。
+- 目标任务或项目已删、段写不出：该段停在待写，直到目标、第二级规则或块本身再变化才重试。
+- `tiers` 关掉：已开始的动作做完收口，不再做新的计划；已入账的段原样保留。
+- 打开 `tiers` 后，AI 报告里批准的「确认」条目不记账，报告结果里该条为 `stale`，`detail` 同 `409` 那句。
+
 ### 五、AI 的提议与直接施加
 
 AI 不直接调「二」「三」的写端点（那些只许人）。它经 `activity_new_items` 提议，人在蜂巢决策栏批准 / 更正 / 拒绝；或在人打开开关后直接施加。
@@ -4604,6 +4618,25 @@ AI 不直接调「二」「三」的写端点（那些只许人）。它经 `act
 - 列表、拒绝、失败回滚沿用 v2.30 / v2.36；上限：`windowRule` 50、`blockRule` 50、`blockAction` 200。
 - **直接施加**：账号设置 `agentDirect`（「六」）的总开关与对应分开关都开、且调用方是 `write` 范围的非人调用方时，提议请求带 `directApply: true` 就跳过待批准立即落地（块的 `via: "ai-direct"`），并记一条 `activity_direct_log {id, at, actor, kind, payload, before}`。分开关：`windowsClassify` 管 `windowRule` / `blockRule` / `blockAction`；`honeycombRecords` 管 v2.36 的 `change`。任一条件不满足 → `403`，`detail` 说清缺哪一条。
 - **撤回**：`POST activity/direct-log/{id}/undo`（只许人）把 `before` 写回（规则集、第二级规则、块文档），再按「四」对账（作废的 `reason: direct-undo`）。`before` 已被后来的改动覆盖时 `409`。
+
+**补充（第二部分 B 实现前定下，2026-10-24）**：
+
+- **提交端点**（口径同 v2.30：带 Bearer 的设备令牌 `403`，MCP 对内直连可用；体 `extra=forbid`，不合规 `400`）：
+
+  | 端点 | 体 |
+  | --- | --- |
+  | `POST /api/core/activity/proposals/window-rules` | `{op: add\|edit\|delete, rule: {id?, app?, title?, block}, reason?, directApply?}`；`edit` / `delete` 必带 `rule.id`，`add` 不带；`delete` 不要 `block` |
+  | `POST /api/core/activity/proposals/block-rules` | `{op, blockKey, taskId \| projectId, reason?, directApply?}`；`delete` 不带目标，其余恰好一个目标 |
+  | `POST /api/core/activity/proposals/block-actions` | `{action: assign\|split\|generic\|ignore, date, blockKey, taskId? \| projectId?, parts?, reason?, directApply?}`；参数要求同「二」对应端点（`ignore` 不许 `forever`） |
+
+  `reason` 超 300 码点截断。目标不存在、块不存在 `400`。
+- **id**：`nw_` / `nb_` / `na_` + `sha256(归一化后的参数)[:20]`。同 id 的 `pending` 再提 = 原样返回；`rejected` 再提 `409`「用户已经否掉过」；`accepted` 再提 = 换一条新的。上限超了 `429`。
+- **列表**：`GET …/proposals` 响应追加 `windowRules[]`、`blockRules[]`、`blockActions[]`（新的在前，同 `status` / `limit`）。视图 = `{id, kind, status, createdAt, reason, corrected}` 加提交时的参数；`blockAction` 另带 `blockTitle`（块的显示名）。
+- **批准时更正** `edit` 的形状：`windowRule` 为 `{rule: {block}}`；`blockRule` 为 `{taskId \| projectId}`；`blockAction` 为 `{taskId \| projectId}` 或 `{parts}`。
+- **批准 `blockAction`**：服务端用块的当前 `seq` 代填 `ifSeq`；块已不在 `pending` / `generic` → `409`「这个块已经处理过」，提议留 `pending` 由人拒绝。
+- **人先动了块**：人对某天某块做任何写操作（「二」的五个端点）后，该 `(date, blockKey)` 上 `pending` 的 `blockAction` 提议记为 `superseded`（新增的状态，只在 `status=all` 里出现，不算被否掉，同样的提议可以再提）。
+- **直接施加的返回**：`{applied: true, directLogId, result}`，`result` 同人调对应写端点的返回。不满足条件的 `403` 带 `reason`：`agentDirectOff`（总开关关）、`windowsClassifyOff` / `honeycombRecordsOff`（分开关关）、`needWriteScope`（不是 `write` 范围的非人调用方）。
+- **直接施加日志读端**：`GET /api/core/activity/direct-log?date=&limit=`（人与 MCP 可读，`limit` 1–200 缺省 50，新的在前）→ `{items: [{id, at, actor, kind, payload, undoneAt}]}`；`before` 不返回。日志保留 90 天。
 
 ### 六、账号设置 `activity_settings`
 
