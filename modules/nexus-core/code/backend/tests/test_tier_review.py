@@ -183,13 +183,28 @@ def test_human_write_during_claim_marks_superseded(client, tid, blk, monkeypatch
     real = tier_items.apply
 
     def racing(*args, **kw):  # 批准占了位之后、落地之前，人动了这个块（人的写看不见占位中的提议）
-        assert client.post(f"{BLK}/assign", json={"date": D, "blockKey": K, "taskId": tid, "ifSeq": 0}).status_code == 200
+        assert client.post(f"{BLK}/ignore", json={"date": D, "blockKey": K, "forever": False, "ifSeq": 0}).status_code == 200  # v2.39：assign 同目标已是空操作，改用 ignore
         return real(*args, **kw)
 
     monkeypatch.setattr(tier_items, "apply", racing)
     r = client.post(f"{P}/{a['id']}/approve")
     assert r.status_code == 409
     assert db().activity_new_items.find_one({"id": a["id"]})["status"] == "superseded"
+
+
+def test_human_assign_other_target_during_claim_marks_superseded(client, tid, blk, monkeypatch, seeded):
+    other = next(t["id"] for n, t in seeded["tasks"].items() if t["id"] != tid)
+    a = ba(client, taskId=tid).json()
+    real = tier_items.apply
+
+    def racing(*args, **kw):  # 占位之后人把块分到了另一个任务：AI 的 assign 不许盖过去
+        assert client.post(f"{BLK}/assign", json={"date": D, "blockKey": K, "taskId": other, "ifSeq": 0}).status_code == 200
+        return real(*args, **kw)
+
+    monkeypatch.setattr(tier_items, "apply", racing)
+    assert client.post(f"{P}/{a['id']}/approve").status_code == 409
+    assert db().activity_new_items.find_one({"id": a["id"]})["status"] == "superseded"
+    assert one(client, D, K)["status"] == "assigned" and db().activity_blocks.find_one({"blockKey": K})["parts"][0]["taskId"] == other
 
 
 def test_undo_reason_survives_skipped_kick(client, tid, blk):

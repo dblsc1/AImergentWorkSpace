@@ -23,7 +23,7 @@ from .proposals import ConflictError
 
 _COLL, RETAIN_DAYS = "activity_direct_log", 90
 _ready = False
-_NEEDS = {"windowRule": "windowsClassify", "blockRule": "windowsClassify", "blockAction": "windowsClassify", "change": "honeycombRecords"}
+_NEEDS = {"windowRule": "windowsClassify", "blockRule": "windowsClassify", "blockAction": "windowsClassify", "change": "honeycombRecords", "sessionChange": "honeycombRecords", "ignore": "windowsClassify"}
 
 
 def _col():
@@ -51,8 +51,10 @@ def gate(switch: str) -> None:
         raise RulesError(403, "直接施加只接受 write 范围的非人调用方（人请直接用对应的写端点）", reason="needWriteScope")
 
 
-def run(kind: str, payload: dict, fn) -> dict:
-    """先写一条 ``pending`` 的记录、再落地 ``fn() -> (结果, before, after)``，成了标完成；落地失败就删掉记录（列表不显示没成的）。"""
+def run(kind: str, payload: dict, fn, finish=None) -> dict:
+    """先写一条 ``pending`` 的记录、再落地 ``fn() -> (结果, before, after)``，成了标完成；落地失败就删掉记录（列表不显示没成的）。
+    落地一成功就先把 ``before`` / ``after`` 写进记录，再调 ``finish()``（如把同样的待批准提议记成已批准）、最后标完成：
+    中途崩了留下的「pending 但已有 after」孤儿行，列表照样显示、可以撤回。"""
     user, lid = current_tenant(), "dl_" + secrets.token_hex(8)
     _col().insert_one({"user": user, "id": lid, "at": _now(), "actor": "ai", "kind": kind, "payload": payload, "state": "pending",
                        "before": None, "after": None, "undoneAt": None})
@@ -61,7 +63,10 @@ def run(kind: str, payload: dict, fn) -> dict:
     except Exception:
         _col().delete_one({"user": user, "id": lid})
         raise
-    _col().update_one({"user": user, "id": lid}, {"$set": {"state": "done", "before": before, "after": after}})
+    _col().update_one({"user": user, "id": lid}, {"$set": {"before": before, "after": after}})
+    if finish is not None:
+        finish()
+    _col().update_one({"user": user, "id": lid}, {"$set": {"state": "done"}})
     return {"applied": True, "directLogId": lid, "result": result}
 
 
@@ -70,12 +75,14 @@ def _out(d: dict, human: bool = True) -> dict:
     payload = d["payload"]
     if not human and isinstance(payload.get("rule"), dict) and "title" in payload["rule"]:  # 窗口标题正则可能含隐私：只有人看得到（同 v2.36 ignore）
         payload = {**payload, "rule": {**{k: v for k, v in payload["rule"].items() if k != "title"}, "hasTitle": bool(payload["rule"]["title"])}}
+    if not human and "titleContains" in payload:  # 忽略规则的匹配文字同样不外露
+        payload = {**{k: v for k, v in payload.items() if k != "titleContains"}, "hasTitleFilter": bool(payload["titleContains"])}
     return {"id": d["id"], "at": d["at"].replace(tzinfo=timezone.utc).isoformat(), "actor": d["actor"], "kind": d["kind"],
             "payload": payload, "undoneAt": u.replace(tzinfo=timezone.utc).isoformat() if u else None}
 
 
 def listing(date: Date | None, limit: int, human: bool = True) -> dict:
-    q: dict = {"user": current_tenant(), "state": {"$ne": "pending"}, "at": {"$gte": _now() - timedelta(days=RETAIN_DAYS)}}
+    q: dict = {"user": current_tenant(), "$or": [{"state": {"$ne": "pending"}}, {"after": {"$ne": None}}], "at": {"$gte": _now() - timedelta(days=RETAIN_DAYS)}}
     if date is not None:
         lo = datetime.combine(date, datetime.min.time(), tzinfo=config.settings.tz)
         q["at"] = {**q["at"], "$gte": max(q["at"]["$gte"], lo.astimezone(timezone.utc)), "$lt": (lo + timedelta(days=1)).astimezone(timezone.utc)}
@@ -144,12 +151,26 @@ def _undo_block(user: str, d: dict) -> None:
         reconcile.kick(key=key, actor="human")
 
 
+def _undo_ignore(user: str, d: dict) -> None:
+    from . import ignore, ignore_repo  # noqa: PLC0415
+
+    rule = next((r for r in ignore_repo.all_rules(user) if r["id"] == d["after"]), None)
+    if rule is None:
+        raise ConflictError("这条忽略规则已被删掉，不能撤回")
+    if rule.get("author") != "ai":
+        raise ConflictError("这条忽略规则不是 AI 加的（人删了又建过？），不能撤回")
+    ignore.remove(d["after"])
+
+
 def undo(log_id: str) -> dict:
     user = current_tenant()
     d = _col().find_one({"user": user, "id": log_id}, {"_id": 0})
     if d is None:
         raise NotFoundError(f"没有这条直接施加记录：{log_id!r}")
-    fn = {"windowRule": _undo_window, "blockRule": _undo_rule, "blockAction": _undo_block}.get(d["kind"])
+    from . import session_items  # noqa: PLC0415
+
+    fn = {"windowRule": _undo_window, "blockRule": _undo_rule, "blockAction": _undo_block, "ignore": _undo_ignore,
+          "sessionChange": session_items.undo}.get(d["kind"])
     if fn is None:
         raise ConflictError("这类直接施加不能撤回，请在蜂巢里手动改回")
     mark = _now()

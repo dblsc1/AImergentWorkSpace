@@ -36,9 +36,9 @@ from .proposals import ConflictError
 from .reports import TooManyReportsError
 
 MAX_PENDING = {"project": 20, "task": 100, "change": 50, "ignore": 20,
-               "windowRule": 50, "blockRule": 50, "blockAction": 200}  # 每租户待批准的条数（后三种：契约 v2.38「五」）
+               "windowRule": 50, "blockRule": 50, "blockAction": 200, "sessionChange": 50}  # 每租户待批准的条数（后三种：契约 v2.38「五」）
 TIER_KINDS = ("windowRule", "blockRule", "blockAction")
-_LABEL = {"change": "修改", "ignore": "忽略规则", "windowRule": "窗口规则", "blockRule": "块规则", "blockAction": "块操作"}
+_LABEL = {"change": "修改", "ignore": "忽略规则", "windowRule": "窗口规则", "blockRule": "块规则", "blockAction": "块操作", "sessionChange": "改时间"}
 MAX_REASON = 300  # 码点
 _COLL = "activity_new_items"
 _ready = False
@@ -151,6 +151,10 @@ def _view(user: str, d: dict, human: bool = False) -> dict:
         from . import tier_items  # noqa: PLC0415 —— tier_items 反过来 import 本文件
 
         return tier_items.view(d, human)
+    if d["kind"] == "sessionChange":
+        from . import session_items  # noqa: PLC0415
+
+        return session_items.view(d)
     if d["kind"] == "change":
         return _change_view(d)
     if d["kind"] == "ignore":
@@ -177,7 +181,7 @@ def listing(pending_only: bool, limit: int = 100, human: bool = False) -> dict:
 
     rows = rows_of(["project", "task"])
     chg, ign = rows_of(["change"]), rows_of(["ignore"])
-    from . import tier_items  # noqa: PLC0415
+    from . import session_items, tier_items  # noqa: PLC0415
 
     tier = {k: [tier_items.view(d, human) for d in rows_of([k])] for k in TIER_KINDS}
     projects = {d["id"]: {**_view(user, d), "tasks": []} for d in rows if d["kind"] == "project"}
@@ -187,7 +191,8 @@ def listing(pending_only: bool, limit: int = 100, human: bool = False) -> dict:
             (projects[d["parentId"]]["tasks"] if d.get("parentId") in projects else tasks).append(_view(user, d))
     return {"projects": list(projects.values()), "tasks": tasks,
             "changes": [_change_view(d) for d in chg], "ignores": [_ignore_view(d, human) for d in ign],
-            "windowRules": tier["windowRule"], "blockRules": tier["blockRule"], "blockActions": tier["blockAction"]}
+            "windowRules": tier["windowRule"], "blockRules": tier["blockRule"], "blockActions": tier["blockAction"],
+            "sessionChanges": [session_items.view(d) for d in rows_of(["sessionChange"])]}
 
 
 def reject(item_id: str, human: bool = False) -> dict:
@@ -217,6 +222,10 @@ def approve(item_id: str, request, human: bool = False, edit: dict | None = None
         from . import tier_items  # noqa: PLC0415
 
         return tier_items.approve(user, d, request, edit)
+    if d["kind"] == "sessionChange":
+        from . import session_items  # noqa: PLC0415
+
+        return session_items.approve(user, d, request, edit)
     if edit is not None:
         raise UnprocessableError("这种提议不能在批准时更正")
     if d["status"] == "rejected":
@@ -400,7 +409,11 @@ def propose_change(target: str, target_id: str, op: str, name: str | None, to_id
     return _change_view(d)
 
 
-def propose_ignore(app: str, title_contains: str | None, reason: str, human: bool = False) -> dict:
+def propose_ignore(app: str, title_contains: str | None, reason: str, human: bool = False, direct: bool = False) -> dict:
+    from . import direct_log  # noqa: PLC0415
+
+    if direct:
+        direct_log.gate("windowsClassify")  # v2.39「五」：忽略规则的直接施加归 windowsClassify
     user = current_tenant()
     app, title = ignore._clean(app), ignore._clean(title_contains)
     if not fold(app):
@@ -411,6 +424,21 @@ def propose_ignore(app: str, title_contains: str | None, reason: str, human: boo
     if any(r["id"] == ignore.rule_id(app, title) for r in ignore_repo.all_rules(user)):
         raise ConflictError("已经有这条忽略规则了")
     item_id = "ni_" + hashlib.sha256(f"{fold(app)}\n{fold(title)}".encode()).hexdigest()[:20]
+    if direct:
+        old = _get(user, item_id)
+        if old and old["status"] == "rejected":
+            raise ConflictError("用户已经否掉过这个提议，不要再提")
+
+        def go():
+            rule = ignore.add(app, title, "ai")
+            shown = {k: v for k, v in rule.items() if k not in ("titleContains", "lastHitAt")}  # 标题不外露
+            return {**shown, "hasTitleFilter": bool(rule["titleContains"])}, None, rule["id"]
+
+        def finish():
+            _col().update_many({"user": user, "id": item_id, "status": "pending"},
+                               {"$set": {"status": "accepted", "decidedAt": _now(), "applyClaimedAt": None}})
+
+        return direct_log.run("ignore", {"app": app, "titleContains": title or None, "reason": _clean_reason(reason)}, go, finish)
     d = _put_edit(user, "ignore", item_id, {"app": app, "titleContains": title or None, "createdId": None},
                   _clean_reason(reason))
     return _ignore_view(d, human)

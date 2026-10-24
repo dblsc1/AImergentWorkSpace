@@ -94,7 +94,7 @@ def listing(human: bool = True) -> dict:
     return {"total": len(items), "items": items}
 
 
-def add(app: str, title_contains: str | None) -> dict:
+def add(app: str, title_contains: str | None, author: str | None = None) -> dict:
     """幂等：同一条规则再建回已有的那条（``created: false, removed: 0``，不再清理）。新建时顺手删掉已在待确认 / 已忽略里的命中项（``removed``，尽力而为）。"""
     user = current_tenant()
     app, title = _clean(app), _clean(title_contains)
@@ -104,7 +104,7 @@ def add(app: str, title_contains: str | None) -> dict:
         raise UnprocessableError(f"app 至多 {MAX_APP}、titleContains 至多 {MAX_TITLE} 个字符")
     title = title if fold(title) else ""
     doc = {"user": user, "id": rule_id(app, title), "app": app, "titleContains": title or None,
-           "createdAt": _now(), "hits": 0, "seconds": 0}
+           "createdAt": _now(), "hits": 0, "seconds": 0, **({"author": author} if author else {})}  # author：AI 直接施加加的规则打 "ai"（撤回只删自己加的）
     # 先插、再数、超了撤回（并发的创建者各自插完再数：留下的总是 ≤ MAX_IGNORES；同时顶线时可能一起撤回，宁可少收，调用方重试）。
     # 插入与撤回之间进程崩了会留下第 201 条：已知、不加事务。数不出来 / 撤回出错 → 尽力把刚插的删掉再报错
     if not ignore_repo.insert_if_absent(doc):

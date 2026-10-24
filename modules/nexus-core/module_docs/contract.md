@@ -690,11 +690,11 @@ consumes:
 | GET | `/api/core/activity/direct-log` | 查询 `date?`、`limit?`（1–200，缺省 50） | `{items[]}`（不含 `before`）；人与 MCP 可读 | ✅ 已实现（v2.38） |
 | GET | `/api/core/views/history` | 查询 `from?`、`to?`、`who?`、`detail?`、`scope?` | 见「MCP v0.5 的后端」二 | ⏳ 契约已定（v2.39） |
 | GET | `/api/core/views/arrangements` | 查询 `range?`、`scope?` | 见「MCP v0.5 的后端」三 | ⏳ 契约已定（v2.39） |
-| POST / GET | `/api/core/activity/secretary-reports` | `{date?, text, author?}` / 查询 `date` 或 `from&to` | 见「MCP v0.5 的后端」4.1 | ⏳ 契约已定（v2.39） |
-| POST / GET | `/api/core/activity/questions` | `{questions[1..10]}` / 查询 `status?`、`limit?` | 见「MCP v0.5 的后端」4.2 | ⏳ 契约已定（v2.39） |
-| POST | `/api/core/activity/questions/{id}/answer\|dismiss` | `{option?, text?}` / 无 | 只许人；见 4.2 | ⏳ 契约已定（v2.39） |
-| POST | `/api/core/activity/proposals/sessions` | `{eventId, op, taskId \| projectId, reason?, directApply?}` | 见 4.3 | ⏳ 契约已定（v2.39） |
-| POST | `/api/core/activity/proposals/window-rules\|block-rules\|block-actions` | 见「三级分类」节五补充 | 提议视图；`directApply` 满足条件时 `{applied, directLogId, result}`，否则 403 带 `reason` | ✅ 已实现（v2.38） |
+| POST / GET | `/api/core/activity/secretary-reports` | `{date?, text, author?}` / 查询 `date` 或 `from&to` | 见「MCP v0.5 的后端」4.1 | ✅ 已实现（v2.39） |
+| POST / GET | `/api/core/activity/questions` | `{questions[1..10]}` / 查询 `status?`、`limit?` | 见「MCP v0.5 的后端」4.2 | ✅ 已实现（v2.39） |
+| POST | `/api/core/activity/questions/{id}/answer\|dismiss` | `{option?, text?}` / 无 | 只许人；见 4.2 | ✅ 已实现（v2.39） |
+| POST | `/api/core/activity/proposals/sessions` | `{eventId, op, taskId \| projectId, reason?, directApply?}` | 见 4.3 | ✅ 已实现（v2.39） |
+| POST | `/api/core/activity/proposals/window-rules\|block-rules\|block-actions` | 见「三级分类」节五补充（v2.39：`block-actions` 的 `assign` 也接受已分类块） | 提议视图；`directApply` 满足条件时 `{applied, directLogId, result}`，否则 403 带 `reason` | ✅ 已实现（v2.38） |
 | POST / GET | `/api/core/activity/input` | `{deviceId, bins[]}` / 查询 `date` | 见「键盘鼠标活动」节 | ✅ 已实现（v2.38） |
 | POST | `/api/core/activity/ai/claim` | 无（空体或 `{}`） | `{window: null \| {key, app, title, claimedAt, answerBy}}`（见「让 AI 认窗口」节）；带 Bearer 403 | ✅ 已实现（v2.15） |
 | POST | `/api/core/activity/ai/suggest` | `{key, taskId \| projectId, confidence, reason}` 或 `{key, none: true, reason}` | `SuggestOut`；带 Bearer 403、400、404、409（不在等回答，什么都没写）、422 | ✅ 已实现（v2.15） |
@@ -4833,6 +4833,8 @@ MCP 侧见 `contracts/mcp.tools.v2`。
 - `POST /api/core/activity/questions/{id}/dismiss`（只许人）：`pending → dismissed`，其余 `409`。
 - `GET /api/core/activity/questions?status=pending|all&limit=`（1–200，缺省 50，新的在前）→ `{items: [问题视图]}`。
 - MCP 没有回答 / 撤下问题的工具；这两个端点只给页面。不是事实；进集合登记表。
+- **补充（实现时定下）**：补登的 dedupeKey 实际为 `question:<id>:<taskId>`；回答时先在问题上原子记下所选选项，崩溃后重答必须选同一个（否则 `409`），补登被拒时放掉，问题仍可改选。待回答问题按 `(user, askKey)` 唯一。
+- **补充**：sessionChange 的提议与直接施加先查这段能否改挂（同 v2.11：只能改挂记在「未分类」或自动记下的时间），不能的 `409`，不进待批准。
 
 #### 4.3 提议改已记的时间 `sessionChange`
 

@@ -86,6 +86,7 @@ class IgnoreIn(BaseModel):
     app: StrictStr = Field(min_length=1, max_length=ignore.MAX_APP * 4)
     titleContains: StrictStr | None = Field(None, max_length=ignore.MAX_TITLE * 4)
     reason: StrictStr = Field("", max_length=new_items.MAX_REASON * 4)
+    directApply: StrictBool = False
 
 
 _Auth = Annotated[str | None, Header()]
@@ -96,9 +97,9 @@ def propose_change(body: ChangeIn, request: Request) -> dict:
     return new_items.propose_change(body.target, body.targetId, body.op, body.name, body.toId, body.reason, body.directApply, request)
 
 
-@router.post("/ignores", dependencies=[Depends(_no_device_token)])
+@router.post("/ignores", dependencies=[Depends(_no_device_token_unless_write)])
 def propose_ignore(body: IgnoreIn, authorization: _Auth = None) -> dict:
-    return new_items.propose_ignore(body.app, body.titleContains, body.reason, is_human(authorization))
+    return new_items.propose_ignore(body.app, body.titleContains, body.reason, is_human(authorization), body.directApply)
 
 
 class _RuleIn(BaseModel):

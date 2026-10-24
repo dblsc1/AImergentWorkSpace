@@ -80,14 +80,19 @@ def _submit(kind: str, params: dict, reason: str, direct: bool, human: bool = Tr
         if d and d["status"] == "rejected":
             raise ConflictError("用户已经否掉过这个提议，不要再提")
 
+        if kind == "blockAction" and params["action"] == "assign":  # v2.39：同目标的 assign 是空操作，不写日志
+            item = _same_target(user, params)
+            if item is not None:
+                return {"applied": False, "directLogId": None, "result": item}
+
         def go():
-            out = apply(kind, params, "ai-direct", "system")
-            # 同样的待批准提议不能再被批一次：落地后记成已批准
+            return apply(kind, params, "ai-direct", "system")
+
+        def finish():  # 同样的待批准提议不能再被批一次：落地后记成已批准
             new_items._col().update_many({"user": user, "id": item_id, "status": "pending"},  # noqa: SLF001
                                          {"$set": {"status": "accepted", "decidedAt": datetime.now(timezone.utc), "applyClaimedAt": None}})
-            return out
 
-        return direct_log.run(kind, {**params, "reason": new_items._clean_reason(reason)}, go)  # noqa: SLF001
+        return direct_log.run(kind, {**params, "reason": new_items._clean_reason(reason)}, go, finish)  # noqa: SLF001
     d = new_items._put_edit(user, kind, item_id, {**params, "corrected": False, "createdId": None}, new_items._clean_reason(reason))  # noqa: SLF001
     return view(d, human)
 
@@ -234,12 +239,27 @@ def _apply_rule(p: dict, via: str):
     return result, before, direct_log.rule_state(user, key)
 
 
+def _same_target(user: str, p: dict) -> dict | None:
+    """v2.39「五」：块已分类（assigned）且已是这个目标 → 返回块现状（assign 此时是空操作）；否则 None。"""
+    item = blocks.block_item(user, Date.fromisoformat(p["date"]), p["blockKey"])
+    if item["status"] != "assigned":
+        return None
+    parts = (direct_log.block_state(user, p["date"], p["blockKey"])["doc"]["parts"]) or []
+    return item if [(x.get("taskId"), x.get("projectId")) for x in parts] == [(p["taskId"], p["projectId"])] else None
+
+
 def _apply_action(p: dict, via: str, actor: str):
     user, key, d = current_tenant(), p["blockKey"], Date.fromisoformat(p["date"])
     item = blocks.block_item(user, d, key)
-    if item["status"] not in ("pending", "generic"):
+    act = p["action"]
+    if p.get("_seq") is not None and item["seq"] != p["_seq"]:
+        raise ConflictError("这个块在批准期间被人动过")
+    # v2.39「五」：assign 也接受已分类（assigned）的块 = 改去向；已是同一目标 = 空操作（提议记 accepted）
+    if item["status"] not in ("pending", "generic") and not (act == "assign" and item["status"] == "assigned"):
         raise ConflictError("这个块已经处理过")
-    before, seq, act = direct_log.block_state(user, p["date"], key), item["seq"], p["action"]
+    before, seq = direct_log.block_state(user, p["date"], key), item["seq"]
+    if act == "assign" and item["status"] == "assigned" and _same_target(user, p) is not None:
+        return item, before, before
     if act == "assign":
         result = blocks_write.assign(d, key, p["taskId"], p["projectId"], False, seq, via, actor)
     elif act == "split":
@@ -370,6 +390,8 @@ def approve(user: str, d: dict, request, edit: dict | None) -> dict:  # noqa: AR
         return view(_wait(user, d["id"]))
     p = {**d, **fields}
     pre = _snap(d["kind"], p)
+    if d["kind"] == "blockAction":  # 占位之后人动了这个块（seq 变了）→ 不覆盖人的决定（assign 现在也能改已分类的块，必须防）
+        p["_seq"] = blocks.block_item(user, Date.fromisoformat(p["date"]), p["blockKey"])["seq"]
     try:
         result = apply(d["kind"], p, "ai", "human")[0]
     except Exception:

@@ -51,8 +51,12 @@ def _guard(request: Any) -> None:
 
 
 def _bucket(project_id: str, request: Any) -> str:
-    """项目的「未分类」时间桶，取或建（同 ``POST /planner/projects/{id}/unclassified``，同一条写入口）。"""
-    task = unclassified.find(project_id) or planner_guard.run_write(
+    """项目的「未分类」时间桶，取或建（同 ``POST /planner/projects/{id}/unclassified``，同一条写入口）。
+    ``request`` 为 None（撤回直接施加时没有）= 只取不建，没有就 409。"""
+    task = unclassified.find(project_id)
+    if task is None and request is None:
+        raise HasChildrenError(f"项目 {project_id!r} 的「未分类」桶已不存在")
+    task = task or planner_guard.run_write(
         request, op=planner_audit.OP_CREATE, object_type="tasks", changes=unclassified.changes(project_id),
         action=lambda actor: unclassified.create(project_id, actor),
     )
@@ -67,8 +71,28 @@ def _out(event_id: str, duplicate: bool, from_task: str, subject: dict, seq: int
     }
 
 
+def check_eligible(session: dict) -> None:
+    """这一段能不能改挂：作废的不行；原本记在项目「未分类」桶上的、或服务端自动记下的（v2.14 ``ai.auto``）才行；不行 409。
+    ``reassign_as`` 与 sessionChange 的提议 / 直接施加共用。"""
+    if events_service.is_voided(session):  # v2.38：作废的段不能改挂（投影会把作废的时间加回来）
+        raise HasChildrenError(f"计时段 {session.get('id')!r} 已被作废（session.voided），不能改挂")
+    # 判据只看台账：桶的 id 由项目 id 派生，项目 / 桶以后删了也判得出「这一段原本记在桶上」
+    origin, ai = session.get("subject") or {}, session.get("ai")
+    auto = session.get("source") == "activity-confirmed" and isinstance(ai, dict) and ai.get("auto") is True
+    if not auto and (not origin.get("project") or origin.get("task") != unclassified.task_id(origin["project"])):
+        raise HasChildrenError(
+            f"计时段 {session.get('id')!r} 原本不是记在项目的「未分类」上的、也不是自动记下的——只能改挂记在未分类或自动记下的时间")
+
+
 def reassign(event_id: str, task_id: str | None, project_id: str | None, request: Any) -> dict:
+    """公开端点的入口：只许人。"""
     _guard(request)
+    return reassign_as(event_id, task_id, project_id, request, planner_guard.ACTOR_HUMAN)
+
+
+def reassign_as(event_id: str, task_id: str | None, project_id: str | None, request: Any, actor: str) -> dict:
+    """内部函数（契约 v2.39 4.3）：不判调用方，``actor`` 写进 ``session.reassigned`` 的 ``data.actor``
+    （人批准 / 撤回 = ``human``，AI 直接施加 = ``ai``）。调用方负责权限。"""
     if (task_id is None) == (project_id is None):
         raise InvalidInputError("taskId 与 projectId 必须给一个、且只能给一个")
 
@@ -78,16 +102,7 @@ def reassign(event_id: str, task_id: str | None, project_id: str | None, request
     if len(sessions) > 1:
         raise HasChildrenError(f"事件 id {event_id!r} 对上了 {len(sessions)} 条计时段（事件 id 不唯一），不猜是哪一条")
     session = sessions[0]
-    if events_service.is_voided(session):  # v2.38：作废的段不能改挂（投影会把作废的时间加回来）
-        raise HasChildrenError(f"计时段 {event_id!r} 已被作废（session.voided），不能改挂")
-    origin = session.get("subject") or {}
-    # 判据只看台账：桶的 id 由项目 id 派生，项目 / 桶以后删了也判得出「这一段原本记在桶上」
-    # v2.14：自动记下的段（规则替人记的，信封 ai.auto）也放行——人要能改
-    ai = session.get("ai")
-    auto = session.get("source") == "activity-confirmed" and isinstance(ai, dict) and ai.get("auto") is True
-    if not auto and (not origin.get("project") or origin.get("task") != unclassified.task_id(origin["project"])):
-        raise HasChildrenError(
-            f"计时段 {event_id!r} 原本不是记在项目的「未分类」上的、也不是自动记下的——只有这两种时间能改挂")
+    check_eligible(session)
 
     to_bucket = task_id is None
     if to_bucket:
@@ -121,7 +136,7 @@ def reassign(event_id: str, task_id: str | None, project_id: str | None, request
                 "seq": seq + 1,
                 "fromTaskId": current.get("task"), "fromProjectId": current.get("project"),
                 "toTaskId": task_id, "toProjectId": to_project,
-                "actor": planner_guard.ACTOR_HUMAN,
+                "actor": actor,
                 # 那一段的抄录：投影的 handler 不回头查台账（它们不许 import events）
                 "session": {"source": session.get("source"), "dedupeKey": session.get("dedupeKey"),
                             "startAt": data.get("startAt"), "durationSeconds": data.get("durationSeconds")},

@@ -24,6 +24,7 @@ from .modules.activity.reports import TooManyReportsError
 from .modules.activity.direct_log_router import router as direct_log_router
 from .modules.activity.new_items_router import router as new_items_router
 from .modules.activity.reports_router import router as reports_router
+from .modules.activity.secretary_router import router as secretary_router
 from .modules.activity.router import router as activity_router
 from .modules.activity.service import ConflictError as SuggestionConflictError
 from .modules.detector import rules as detector_rules
@@ -116,6 +117,7 @@ app.include_router(presence_router, prefix=API_PREFIX)  # v2.4 在场心跳
 app.include_router(reports_router, prefix=API_PREFIX)  # v2.20 AI 报告
 app.include_router(direct_log_router, prefix=API_PREFIX)  # v2.38 直接施加日志 / 撤回
 app.include_router(new_items_router, prefix=API_PREFIX)  # v2.30 AI 提议新项目 / 任务
+app.include_router(secretary_router, prefix=API_PREFIX)  # v2.39 秘书报告 / 问人 / sessionChange 提议
 app.include_router(ignore_router, prefix=API_PREFIX)  # v2.22 忽略并记住
 app.include_router(records_router, prefix=API_PREFIX)  # v2.38 原始记录、键盘鼠标活动
 app.include_router(blocks_router, prefix=API_PREFIX)  # v2.38 窗口块、第二级规则、账号设置
