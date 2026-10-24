@@ -14,8 +14,11 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from .config import settings
+from .modules.activity.blocks import BlockConflict
+from .modules.activity.blocks_router import router as blocks_router
 from .modules.activity.ignore_router import router as ignore_router
 from .modules.activity.presence_router import router as presence_router
+from .modules.activity.records_router import router as records_router
 from .modules.activity.reports import TooManyReportsError
 from .modules.activity.new_items_router import router as new_items_router
 from .modules.activity.reports_router import router as reports_router
@@ -107,6 +110,8 @@ app.include_router(presence_router, prefix=API_PREFIX)  # v2.4 在场心跳
 app.include_router(reports_router, prefix=API_PREFIX)  # v2.20 AI 报告
 app.include_router(new_items_router, prefix=API_PREFIX)  # v2.30 AI 提议新项目 / 任务
 app.include_router(ignore_router, prefix=API_PREFIX)  # v2.22 忽略并记住
+app.include_router(records_router, prefix=API_PREFIX)  # v2.38 原始记录、键盘鼠标活动
+app.include_router(blocks_router, prefix=API_PREFIX)  # v2.38 窗口块、第二级规则、账号设置
 app.include_router(detector_router, prefix=API_PREFIX)  # v2.5 检测程序设置；v2.6 分类规则
 app.include_router(prefs_router, prefix=API_PREFIX)  # v2.22 泳道偏好
 
@@ -221,6 +226,12 @@ def restore_not_empty(_request: Request, exc: NotEmptyError) -> JSONResponse:
 def suggestion_conflict(_request: Request, exc: SuggestionConflictError) -> JSONResponse:
     """契约 v2.2：请求合法，冲突的是建议的**当前状态**（同 `NoRunningTimerError`）。"""
     return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(BlockConflict)
+def block_conflict(_request: Request, exc: BlockConflict) -> JSONResponse:
+    """契约 v2.38：``ifSeq`` 与块的现状不符。409，体里带 ``current``（该块现在的样子）。"""
+    return JSONResponse(status_code=409, content={"detail": str(exc), "current": exc.current})
 
 
 @app.exception_handler(PrefsConflictError)

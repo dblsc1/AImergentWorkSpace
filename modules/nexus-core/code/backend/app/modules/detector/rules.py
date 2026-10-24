@@ -19,7 +19,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, ValidationError, field_validator, model_validator
 
 from ...scope import caller
 from ...tenant import current as current_tenant
@@ -66,6 +66,17 @@ class Rule(_Strict):
     aiAt: StrictStr | None = None
     # v1.4：mode "ai" = 命中的窗口不硬分，交给 AI 软分类；这种规则不带 taskId / projectId。没给 = 普通规则，不带这个键
     mode: Literal["ai"] | None = None
+    # v1.5：kind "block" = 第一级规则（窗口归进哪个窗口块）；block 是块名。migrated：迁移写的出处键，不影响匹配
+    kind: Literal["block"] | None = None
+    block: Annotated[StrictStr, Field(max_length=64)] | None = None
+    migrated: StrictBool | None = None
+
+    @field_validator("block")
+    @classmethod
+    def _block_name(cls, v: str | None) -> str | None:
+        if v is not None and not (v := v.strip()):
+            raise ValueError("block 去掉首尾空白后不能为空")
+        return v
 
     @field_validator("app", "title")
     @classmethod
@@ -78,6 +89,14 @@ class Rule(_Strict):
     def _one_of(self) -> Rule:
         if self.app is None and self.title is None:
             raise ValueError("app 与 title 至少写一个")
+        if self.kind == "block":
+            if self.block is None:
+                raise ValueError("kind 是 \"block\" 的规则必须给 block")
+            if self.taskId is not None or self.projectId is not None or self.mode is not None:
+                raise ValueError("第一级规则（kind \"block\"）不能带 taskId / projectId / mode")
+            return self
+        if self.block is not None:
+            raise ValueError("旧式规则不能带 block（要第一级规则请写 kind: \"block\"）")
         if self.mode == "ai":
             if self.taskId is not None or self.projectId is not None:
                 raise ValueError('mode 是 "ai" 的规则不能带 taskId / projectId（窗口交给 AI 判断，不指定去向）')
@@ -149,7 +168,7 @@ def _missing_tasks(rules: list[dict]) -> list[dict]:
     projects = {p["id"] for p in planner_service.list_projects()}
     errors = []
     for i, r in enumerate(rules):
-        if r.get("mode") == "ai":
+        if r.get("mode") == "ai" or r.get("kind") == "block":
             continue
         if r.get("projectId"):
             if r["projectId"] not in projects:
@@ -174,9 +193,11 @@ def _validate(raw: Any) -> list[dict]:
         except ValidationError as exc:
             errors += [_err(i, ".".join(str(p) for p in e["loc"]) or None, e["msg"]) for e in exc.errors()]
             continue
-        for k in ("projectId", "author", "auto", "aiAt", "mode"):  # 没给就不带这个键：与 v1 存下的逐字节相同，草稿 diff 不误报「修改」
+        for k in ("projectId", "author", "auto", "aiAt", "mode", "kind", "block", "migrated"):  # 没给就不带这个键：与 v1 存下的逐字节相同，草稿 diff 不误报「修改」
             if not rule[k]:
                 del rule[k]
+        if rule.get("kind") == "block":  # v1.5：第一级规则没有目标与把握度（存回时不带）
+            del rule["taskId"], rule["confidence"]
         if rule["id"] is not None:
             if rule["id"] in seen:
                 errors.append(_err(i, "id", f"id 重复：{rule['id']}"))
@@ -206,6 +227,9 @@ def _stamp(new: list[dict], old: list[dict], at: str | None) -> list[dict]:
     """盖 AI 章：与旧规则（按 id）相同 = 沿用旧规则（含它的章）；否则丢掉客户端自带的章，at 给了（AI 写）就盖新章。
     AI 写（at 给了）时「相同」不看出处键 author / auto（那是服务端管的，AI 重发一条没动的规则不算改动）。"""
     prev = {r["id"]: r for r in old}
+    # v1.5：migrated 只由服务端迁移写——客户端给的一律忽略，按 id 沿用已存的值（同 aiAt）
+    new = [{**{k: v for k, v in r.items() if k != "migrated"}, **({"migrated": True} if prev.get(r["id"], {}).get("migrated") else {})}
+           for r in new]
     skip = (*_AI_KEYS, "author", "auto") if at is not None else _AI_KEYS
     out = []
     for r in new:
@@ -370,7 +394,8 @@ def _human_ai_lost(old: list[dict], new: list[dict]) -> list[str]:
             lost.append(r["id"])
             continue
         pos = new.index(r)
-        if any(x.get("mode") != "ai" and not (x["id"] in before[r["id"]] and x == next(o for o in old if o["id"] == x["id"]))
+        if any(x.get("mode") != "ai" and x.get("kind") != "block"  # 第一级规则不参与建议匹配，架空不了谁
+               and not (x["id"] in before[r["id"]] and x == next(o for o in old if o["id"] == x["id"]))
                for x in new[:pos]):
             lost.append(r["id"])
     return lost
