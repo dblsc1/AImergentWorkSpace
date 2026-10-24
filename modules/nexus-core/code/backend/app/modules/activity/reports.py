@@ -250,7 +250,19 @@ def _why(exc: Exception) -> str:
 
 
 def _apply_item(user: str, report: dict, item: dict, request) -> dict:
-    """对条里每个还没入账的建议做一次，结果落库。一段失败不挡别的段。返回条的最新样子（状态由结果推出）。"""
+    """对条里每个还没入账的建议做一次，结果落库。一段失败不挡别的段。返回条的最新样子（状态由结果推出）。
+    先占住读到的这个版本（目标 / 建议集）：期间人改目标、拆条会 409；占不上（刚被改动 / 别的批准占着）= 这次不做，原样返回。"""
+    if not reports_repo.claim_item(user, report["id"], item, _now()):
+        if reports_repo.get(user, report["id"]) is not None:
+            return item
+        # 报告在批准进行中被 TTL 清掉了：没东西可占，照旧做完（已入账的事实不回滚，见 _sync_status）
+    try:
+        return _apply_claimed(user, report, item, request)
+    finally:
+        reports_repo.release_item(user, report["id"], item["id"])
+
+
+def _apply_claimed(user: str, report: dict, item: dict, request) -> dict:
     sids = [s for s in item["suggestionIds"] if item["results"].get(s, {}).get("state") != "applied"]
     docs = reports_repo.suggestions(user, sids)
     results: dict[str, dict] = {}
@@ -371,7 +383,7 @@ def _retarget(user: str, doc: dict, it: dict, task_id: str | None, project_id: s
     if project_id is not None and planner_service.get_project(project_id) is None:
         raise NotFoundError(f"项目不存在：{project_id!r}")
     fields = {"kind": "assign", "taskId": task_id, "projectId": project_id}
-    if not reports_repo.set_target(user, doc["id"], it["id"], fields, ["newTask"]):
+    if not reports_repo.set_target(user, doc["id"], it["id"], fields, ["newTask"], _now()):
         raise service.ConflictError("这一条刚被改动，请刷新后再改")
 
 
@@ -424,7 +436,7 @@ def split_item(report_id: str, item_id: str, sids: list[str], task_id: str | Non
         kept["status"] = _status_of(kept)
         new = {"id": out_id, "suggestionIds": moving, "reason": it["reason"], "status": "pending", "results": {}, **tgt}
     items = [(kept if rest else new) if i["id"] == item_id else i for i in doc["items"]] + ([new] if rest else [])
-    if not reports_repo.replace_items(user, report_id, doc["items"], items):
+    if not reports_repo.replace_items(user, report_id, doc["items"], items, _now()):
         raise service.ConflictError("这份报告刚被改动，请刷新后再拆")
     if not rest:
         _reject_proposal(user, it)  # newTask 条整条被拆走（改去向 / 当噪声）= 人不要这个新任务：同 reject，助理不许再提

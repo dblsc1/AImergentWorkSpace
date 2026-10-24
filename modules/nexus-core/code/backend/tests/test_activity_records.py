@@ -125,11 +125,11 @@ def _rules(client, rules, version):
     assert client.put(RULES, json={"rules": rules}, headers={"If-Match": f'"{version}"'}).status_code == 200
 
 
-def test_recompute_keeps_detector_names_skips_empty_titles_and_stamps_rv_only_for_auto(client):
+def test_recompute_keeps_detector_names_skips_empty_titles_and_stamps_rv_only_after_checking(client):
     upload(client, [rec(D, "09:00:00", "09:01:00", title="周报", block="检测给的"), rec(D, "09:02:00", "09:03:00", title="", app="code"),
                     rec(D, "09:04:00", "09:05:00", title="周报")])
     rvs = {d["keySource"]: d["rv"] for d in db()["activity_records"].find({})}
-    assert rvs["rule"] is None and rvs["auto"] == 0
+    assert rvs["rule"] is None and rvs["auto"] is None
     _rules(client, [{"kind": "block", "app": "zzz", "block": "无关"}], 0)  # 版本 1，没有规则命中任何记录
     got = {i["blockKey"]: i["keySource"] for i in blocks(client, D)}
     assert got == {"检测给的": "rule", "code": "auto", "chrome · 周报": "auto"}  # 检测程序给的名字保留
@@ -153,3 +153,10 @@ def test_truncated_titles_are_not_recomputed(client):
     upload(client, [rec(D, "09:00:00", "09:01:00", title="周" * 600)])
     _rules(client, [{"kind": "block", "title": "周", "block": "命中"}], 0)
     assert [i["blockKey"].startswith("chrome") for i in blocks(client, D)] == [True]
+
+
+def test_upload_never_stamps_a_rule_version_it_did_not_match_against(client):
+    _rules(client, [{"kind": "block", "title": "周报", "block": "新名"}], 0)  # 检测程序还没拉到这条：上传 block=null
+    upload(client, [rec(D, "09:00:00", "09:01:00", title="周报")])
+    assert db()["activity_records"].find_one({})["rv"] is None
+    assert [i["blockKey"] for i in blocks(client, D)] == ["新名"]  # 读时检查：按当前规则重算

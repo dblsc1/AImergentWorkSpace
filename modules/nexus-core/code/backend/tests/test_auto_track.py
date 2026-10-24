@@ -544,6 +544,16 @@ def test_auto_entry_failure_never_fails_the_upload(client, world, monkeypatch):
     assert item["status"] == "pending" and item["auto"] is False  # 占的位退了，auto 标记也摘了
 
 
+def test_auto_entry_failure_before_confirm_never_fails_the_upload(client, world, monkeypatch):
+    from app.modules.activity import auto_entry, choice_repo  # noqa: PLC0415
+
+    _track(client)
+    monkeypatch.setattr(choice_repo, "live", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert _upload(client, [_rule_seg(30, task_id=world["a"])])["accepted"] == 1   # 建议已入库、上传是 2xx
+    assert _pending(client)["items"][0]["status"] == "pending"
+    assert auto_entry.record("d", [], None) is None
+
+
 def test_auto_sessions_list_and_reassign(client, world, monkeypatch):
     _track(client)
     start = _recent(20)

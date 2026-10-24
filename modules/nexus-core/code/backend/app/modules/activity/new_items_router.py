@@ -124,7 +124,7 @@ class BlockRuleIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     op: Literal["add", "edit", "delete"]
-    blockKey: _Id
+    blockKey: Annotated[StrictStr, Field(min_length=1, max_length=1000)]  # 同块接口（blocks_router._Key）
     taskId: _Id | None = None
     projectId: _Id | None = None
     reason: StrictStr = Field("", max_length=new_items.MAX_REASON * 4)
