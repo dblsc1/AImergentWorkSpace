@@ -4600,17 +4600,17 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 
 **补充（对账实现时定下，2026-10-24）**：
 
-- `actor`：人的块写操作触发的对账 = `human`；规则变化、后台循环、原始记录上传、手动计时、`tiers` 变化触发的 = `system`。
+- `actor` 细化：人的块写操作触发的对账 = 那个人（事件 `actor` 记 `human`）；规则变化、后台循环、原始记录上传、手动计时、`tiers` 变化触发的 = `system`。
 - 对账给第二级规则管着的块建文档（`via: "rule"`）会让 `seq` +1；拿着旧 `seq` 的写会收到一次 `409`（体里带现状），重读后再写。
 - `via: "rule"` 的块：最近 14 天内跟着第二级规则的变化走；更早的保持当时的去向。规则删除或目标失效时，14 天内的块清回缺省（`status: null`）并作废已入账的段。
 - `runs[]` 里除「二」列出的字段以外都是内部字段（如 `ivs`、`pend`、`bucket`），读端不得依赖。
 - 已作废的段不能再 `session.reassigned`：`POST /api/core/sessions/{eventId}/reassign` 对它回 `409`（`detail`：「这段已作废」）。
 - 「别的来源已记」= 投影里 `source` 为 `timer-backend`、`manual-backfill`、`activity-confirmed` 的段，加上正在跑的手动计时；取数不截断。
-- 事件触发的对账尽力而为：同一账号的对账正在跑时直接跳过，交给后台循环；失败只记日志，不影响触发它的请求。
+- 事件触发的对账尽力而为：同一账号的对账正在跑时本次不等，下一轮后台循环（≤ 60 秒）对该账号全量补做；失败只记日志，不影响触发它的请求。
 - 后台循环只重访要动的块：有新原始记录、`reconciling: true`、有未收口的段，或被规则 / 通用窗口 / 计时 / 设置变化点名的块名。
 - 目标任务或项目已删、段写不出：该段停在待写，直到目标、第二级规则或块本身再变化才重试。
 - `tiers` 关掉：已开始的动作做完收口，不再做新的计划；已入账的段原样保留。
-- 打开 `tiers` 后，AI 报告里批准的「确认」条目不记账，报告结果里该条为 `stale`，`detail` 同 `409` 那句。
+- 打开 `tiers` 后，AI 报告里批准的「确认」条目不记账，报告结果里该条为 `stale`，`detail`：「已打开三级分类，请在窗口块里分类」。
 
 ### 五、AI 的提议与直接施加
 
@@ -4636,7 +4636,7 @@ AI 不直接调「二」「三」的写端点（那些只许人）。它经 `act
   | `POST /api/core/activity/proposals/block-actions` | `{action: assign\|split\|generic\|ignore, date, blockKey, taskId? \| projectId?, parts?, reason?, directApply?}`；参数要求同「二」对应端点（`ignore` 不许 `forever`） |
 
   `reason` 超 300 码点截断。目标不存在、块不存在 `400`。
-- **id**：`nw_` / `nb_` / `na_` + `sha256(归一化后的参数)[:20]`。同 id 的 `pending` 再提 = 原样返回；`rejected` 再提 `409`「用户已经否掉过」；`accepted` 再提 = 换一条新的。上限超了 `429`。
+- **id**：`nw_` / `nb_` / `na_` + `sha256(归一化后的参数)[:20]`。同 id 的 `pending` 再提 = 原样返回；`rejected` 再提 `409`「用户已经否掉过」；`accepted` 或 `superseded` 再提 = 换一条新的。上限超了 `429`。
 - **列表**：`GET …/proposals` 响应追加 `windowRules[]`、`blockRules[]`、`blockActions[]`（新的在前，同 `status` / `limit`）。视图 = `{id, kind, status, createdAt, reason, corrected}` 加提交时的参数；`blockAction` 另带 `blockTitle`（块的显示名）。
 - **批准时更正** `edit` 的形状：`windowRule` 为 `{rule: {block}}`；`blockRule` 为 `{taskId \| projectId}`；`blockAction` 为 `{taskId \| projectId}` 或 `{parts}`。
 - **批准 `blockAction`**：服务端用块的当前 `seq` 代填 `ifSeq`；块已不在 `pending` / `generic` → `409`「这个块已经处理过」，提议留 `pending` 由人拒绝。
