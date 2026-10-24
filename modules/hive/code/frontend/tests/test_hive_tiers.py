@@ -39,13 +39,19 @@ PROPS = {
     "projects": [], "changes": [], "ignores": [],
     "tasks": [{"id": "nt_2", "kind": "task", "name": "调音", "reason": "钢琴相关", "projectId": "p_piano", "projectName": "钢琴", "projectProposalId": None}],
     "items": [
-        {"id": "q1", "kind": "question", "status": "pending", "title": "14:00 到 17:00 没有任何记录", "reason": "这 3 小时电脑没人用"},
         {"id": "w1", "kind": "windowRule", "status": "pending", "op": "add", "rule": {"app": "Chrome", "title": "docs.example.com", "block": DOC}, "reason": "近 5 天出现 14 次"},
         {"id": "b1", "kind": "blockRule", "status": "pending", "op": "add", "blockKey": DOC, "taskId": "t_p_math", "projectId": "p_math", "reason": "每天都是"},
         {"id": "a1", "kind": "blockAction", "status": "pending", "action": "assign", "date": DATE, "blockKey": DOC, "taskId": "t_p_math", "projectId": "p_math",
          "reason": "页面标题都含「MCP」"},
     ],
 }
+
+
+Q1 = {"id": "aq_1", "status": "pending", "title": "14:00 到 17:00 没有任何记录", "text": "这 3 小时电脑没人用", "date": DATE,
+      "from": "2026-10-24T06:00:00Z", "to": "2026-10-24T09:00:00Z", "allowText": False, "answer": None,
+      "options": [{"label": "在练琴", "target": {"taskId": "t_p_piano"}}, {"label": "这段不记", "ignore": True}]}
+Q2 = {"id": "aq_2", "status": "pending", "title": "上午那段是什么", "text": "", "date": DATE, "from": None, "to": None, "allowText": True,
+      "answer": None, "options": [{"label": "没做事"}]}
 
 
 def tiers_setup(hive: Any, tiers: Any = True, props: dict | None = None) -> None:
@@ -55,6 +61,12 @@ def tiers_setup(hive: Any, tiers: Any = True, props: dict | None = None) -> None
     hive.conflict = {}        # 写端点 -> "pending" | "taken"：下一次回 409 并把服务端 seq 抬高；taken = 同时已被别处分好
     hive.hold = None          # 列表 = 把 assign 的响应扣下，由测试自己放
     hive.blocks_fail = False
+    hive.questions = [dict(Q1)]   # None = 端点不存在（404）
+    hive.report = None
+    hive.answer_fail = None       # (状态码, detail)
+
+    def question(qid: str) -> dict:
+        return next(q for q in hive.questions if q["id"] == qid)
 
     def find(key: str) -> dict:
         return next(b for b in hive.blocks if b["blockKey"] == key)
@@ -68,6 +80,10 @@ def tiers_setup(hive: Any, tiers: Any = True, props: dict | None = None) -> None
         if req.method == "GET":
             if path == "activity/settings":
                 ok({"version": 1, "tiers": tiers}) if tiers != "500" else ok({}, 500)
+            elif path.startswith("activity/questions"):
+                ok({"items": [q for q in hive.questions if q["status"] == "pending"]}) if hive.questions is not None else ok({"detail": "Not Found"}, 404)
+            elif path.startswith("activity/secretary-reports"):
+                ok({"items": [hive.report] if hive.report else []})
             elif path.startswith("activity/blocks/records"):
                 ok({"records": [{"startAt": a, "endAt": b, "seconds": 60, "app": "chrome", "title": "x", "deviceId": "d"} for a, b in REC]})
             elif path.startswith("activity/blocks?") and hive.blocks_fail:
@@ -82,6 +98,16 @@ def tiers_setup(hive: Any, tiers: Any = True, props: dict | None = None) -> None
                 ok({"date": DATE, "items": []})
             else:
                 hive.route(r)
+            return
+        if path.startswith("activity/questions/"):
+            q, act = question(path.split("/")[2]), path.rsplit("/", 1)[1]
+            if act == "answer" and hive.answer_fail:
+                ok({"detail": hive.answer_fail[1]}, hive.answer_fail[0])
+                return
+            q["status"] = "answered" if act == "answer" else "dismissed"
+            opt = q["options"][body["option"]] if body and body.get("option") is not None else {}
+            rec = bool(opt.get("target") and q.get("from"))
+            ok({**q, "answer": {"option": body.get("option"), "text": body.get("text"), "recorded": rec, "eventId": "ev_1" if rec else None}} if act == "answer" else q)
             return
         if path.startswith("activity/blocks/"):
             kind = path.rsplit("/", 1)[1]
@@ -141,6 +167,7 @@ def _block(hive: Any, key: str) -> Any:
 def _swipe(page: Any, key: str, dx: float) -> None:
     """卡片刚重画完（上一次写入后的刷新）就量位置会落空：等它在、再等一小会儿落定。"""
     page.wait_for_selector(f'.hd-card[data-key="{key}"] .hd-face')
+    page.locator(f'.hd-card[data-key="{key}"] .hd-face').scroll_into_view_if_needed()
     page.wait_for_timeout(150)
     _swipe_raw(page, key, dx)
 
@@ -183,8 +210,9 @@ def test_sections_order_and_counts(browser, base) -> None:  # noqa: F811
         assert hive.page.evaluate("document.querySelector('.ht-block[data-block=\"示例文档\"]').style.getPropertyValue('--zone-raw')") != ""
 
 
-def test_empty_sections_are_hidden_and_no_question_without_kind(browser, base) -> None:  # noqa: F811
+def test_empty_sections_are_hidden_and_questions_endpoint_404_is_tolerated(browser, base) -> None:  # noqa: F811
     with open_tiers(browser, base, props={"projects": [], "tasks": []}) as hive:
+        hive.questions = None
         _show(hive)
         assert hive.page.locator(".ht-sec-t").all_inner_texts() == ["待分类窗口块", "自动化分类历史"]
 
@@ -489,3 +517,274 @@ def test_phone_width_fits_and_swipes(browser, base) -> None:  # noqa: F811
         _block(hive, DOC).get_by_role("button", name="取消").click()
         _swipe(hive.page, _bkey(DOC), -300)
         _until(hive.page, lambda: len(_posts(hive, "activity/blocks/assign")) == 1)
+
+
+def _q(hive: Any, qid: str = "aq_1") -> Any:
+    return hive.page.locator(f'.ht-question[data-key="{qid}"]')
+
+
+def _qrange(hive: Any, q: dict) -> str:
+    return hive.page.evaluate("(q) => window.NexusTableHexTiers.qRange(q)", q)
+
+
+def _hhmm(hive: Any, iso: str) -> str:
+    return hive.page.evaluate("(s) => window.NexusTableHexTiers.hhmm(Date.parse(s))", iso)
+
+
+def test_question_card_shows_ai_tag_and_exact_target_and_range(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base) as hive:
+        _show(hive)
+        rg = _qrange(hive, Q1)
+        q = _q(hive)
+        assert q.locator(".ht-badge").inner_text() == "AI 提问" and q.locator(".hd-win").inner_text() == Q1["title"]
+        assert "这 3 小时电脑没人用" in q.inner_text() and rg in q.inner_text()
+        opt = q.locator(".ht-opt").nth(0)
+        assert opt.inner_text().replace("\n", " ") == f"在练琴 ↓ 钢琴 - 钢琴的任务 · {rg}"
+        assert q.locator(".ht-opt").nth(1).inner_text() == "这段不记"
+        assert q.get_by_role("button", name="撤下").count() == 1 and q.locator("input").count() == 0
+
+
+def test_question_text_is_never_html(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base) as hive:
+        hive.questions[0].update(title="<img src=x onerror=window.__x=1>", text="<b>粗</b>")
+        _show(hive)
+        assert hive.page.locator(".ht-question img, .ht-question b").count() == 0
+        assert hive.page.evaluate("window.__x") is None
+
+
+def test_answer_option_records_and_removes_card(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base) as hive:
+        _show(hive)
+        _q(hive).locator(".ht-opt").nth(0).click()
+        _until(hive.page, lambda: len(_posts(hive, "activity/questions/aq_1/answer")) == 1)
+        assert _posts(hive, "activity/questions/aq_1/answer")[0][1] == {"option": 0}
+        _until(hive.page, lambda: hive.page.locator(".hd-toast", has_text="已记到 钢琴 - 钢琴的任务").count() == 1)
+        _until(hive.page, lambda: _q(hive).count() == 0)
+        assert hive.page.locator("section[data-sec=q]").count() == 0 and hive.page.locator(".hd-badge").inner_text() == "6"
+
+
+def test_answer_without_target_says_answered(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base) as hive:
+        _show(hive)
+        _q(hive).locator(".ht-opt").nth(1).click()
+        _until(hive.page, lambda: hive.page.locator(".hd-toast", has_text="已回答：").count() == 1)
+        assert _posts(hive, "activity/questions/aq_1/answer")[0][1] == {"option": 1}
+
+
+def test_answer_error_shows_detail_and_keeps_card(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base) as hive:
+        hive.answer_fail = (404, "目标任务已删除")
+        _show(hive)
+        _q(hive).locator(".ht-opt").nth(0).click()
+        _until(hive.page, lambda: hive.page.locator(".hd-toast", has_text="目标任务已删除").count() == 1)
+        assert _q(hive).count() == 1 and hive.page.locator(".hd-badge").inner_text() == "7"
+        hive.answer_fail = None    # 还能再点
+        _q(hive).locator(".ht-opt").nth(0).click()
+        _until(hive.page, lambda: _q(hive).count() == 0)
+
+
+def test_free_text_answer(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base) as hive:
+        hive.questions.append(dict(Q2))
+        _show(hive)
+        q = _q(hive, "aq_2")
+        assert q.locator(".ht-badge").inner_text() == "AI 提问"
+        q.get_by_role("button", name="提交").click()
+        hive.page.wait_for_timeout(100)
+        assert _posts(hive, "activity/questions/aq_2/answer") == [], "空的不发"
+        q.locator("input").fill("在开会")
+        q.locator("input").press("Enter")
+        _until(hive.page, lambda: len(_posts(hive, "activity/questions/aq_2/answer")) == 1)
+        assert _posts(hive, "activity/questions/aq_2/answer")[0][1] == {"text": "在开会"}
+        _until(hive.page, lambda: _q(hive, "aq_2").count() == 0)
+        assert _q(hive).count() == 1
+
+
+def test_dismiss_question_waits_five_seconds_and_can_be_undone(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base) as hive:
+        _show(hive)
+        _q(hive).get_by_role("button", name="撤下").click()
+        assert hive.page.locator(".hd-toast").last.inner_text().startswith("已撤下：")
+        hive.page.clock.run_for(4900)
+        assert _posts(hive, "activity/questions/aq_1/dismiss") == []
+        hive.page.locator(".hd-toast-undo").last.click()
+        assert _q(hive).count() == 1
+        _q(hive).get_by_role("button", name="撤下").click()
+        hive.page.clock.run_for(5100)
+        _until(hive.page, lambda: len(_posts(hive, "activity/questions/aq_1/dismiss")) == 1)
+        _until(hive.page, lambda: _q(hive).count() == 0)
+
+
+def test_secretary_report_card_collapses_to_three_lines(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base) as hive:
+        hive.report = {"id": "sr_1", "date": DATE, "author": "秘书", "revision": 1, "text": "\n".join(f"第 {i} 行" for i in range(1, 9))}
+        _show(hive)
+        sec = hive.page.locator("section[data-sec=q]")
+        assert sec.locator(".hd-card").first.get_attribute("class").find("ht-report") >= 0, "报告在最上面"
+        txt = hive.page.locator(".ht-rtext")
+        h0 = txt.evaluate("n => n.getBoundingClientRect().height")
+        assert txt.inner_text().startswith("第 1 行") and sec.locator(".ht-cnt").inner_text() == "1", "报告不计数"
+        assert hive.page.locator(".ht-report button").get_attribute("aria-expanded") == "false"
+        hive.page.locator(".ht-report").get_by_role("button", name="展开").click()
+        assert hive.page.locator(".ht-report button").get_attribute("aria-expanded") == "true"
+        assert txt.evaluate("n => n.getBoundingClientRect().height") > h0 * 2
+        hive.page.locator(".ht-report").get_by_role("button", name="收起").click()
+        assert txt.evaluate("n => n.getBoundingClientRect().height") == h0
+
+
+def test_report_alone_shows_without_questions(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base) as hive:
+        hive.questions = []
+        hive.report = {"id": "sr_1", "date": DATE, "text": "今天一切正常"}
+        _show(hive)
+        assert hive.page.locator("section[data-sec=q] .ht-report").count() == 1 and hive.page.locator(".ht-report button").count() == 0, "三行以内不显示展开"
+        assert hive.page.locator("section[data-sec=q] .ht-cnt").count() == 0
+
+
+SESSION = {"id": "ns_1", "kind": "sessionChange", "status": "pending", "eventId": "ev_9", "op": "reassign", "taskId": "t_p_piano", "projectId": "p_piano",
+           "fromTaskId": "t_p_math", "fromProjectId": "p_math", "startAt": "2026-10-24T01:00:00Z", "durationSeconds": 2520, "reason": "其实在练琴", "corrected": False}
+
+
+def test_session_change_card_approve_and_correct(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base, props={**PROPS, "sessionChanges": [SESSION]}) as hive:
+        _show(hive)
+        assert hive.page.locator(".ht-cnt").all_inner_texts() == ["1", "3", "2", "2", "今天 2 条"]
+        c = hive.page.locator('.hd-card[data-key="ns_1"]')
+        t = c.inner_text()
+        assert "数学 - 数学的任务" in t and "↓ 钢琴 - 钢琴的任务" in t and "42 分钟" in t and _hhmm(hive, SESSION["startAt"]) in t and "AI：其实在练琴" in t
+        c.get_by_role("button", name="更正").click()
+        c.locator("select").select_option("t:t_p_math")
+        c.get_by_role("button", name="确定").click()
+        _until(hive.page, lambda: len(_posts(hive, "activity/proposals/ns_1/approve")) == 1)
+        assert _posts(hive, "activity/proposals/ns_1/approve")[0][1] == {"edit": {"taskId": "t_p_math"}}
+
+
+def test_session_change_card_plain_approve_uses_five_second_undo(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base, props={**PROPS, "sessionChanges": [SESSION]}) as hive:
+        _show(hive)
+        hive.page.locator('.hd-card[data-key="ns_1"]').get_by_role("button", name="批准").click()
+        assert hive.page.locator(".hd-toast").last.inner_text().startswith("已批准：")
+        hive.page.clock.run_for(5100)
+        _until(hive.page, lambda: "activity/proposals/ns_1/approve" in hive.writes)
+
+
+def test_ime_composing_enter_does_not_submit(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base) as hive:
+        hive.questions.append(dict(Q2))
+        _show(hive)
+        inp = _q(hive, "aq_2").locator("input")
+        inp.fill("选词中")
+        inp.evaluate("n => n.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', isComposing: true, bubbles: true}))")
+        inp.evaluate("n => n.dispatchEvent(new KeyboardEvent('keydown', {key: 'Process', keyCode: 229, bubbles: true}))")
+        hive.page.wait_for_timeout(200)
+        assert _posts(hive, "activity/questions/aq_2/answer") == []
+        inp.press("Enter")
+        _until(hive.page, lambda: len(_posts(hive, "activity/questions/aq_2/answer")) == 1)
+
+
+def test_stale_option_index_is_not_sent_when_options_changed(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base) as hive:
+        _show(hive)
+        held: list = []
+        hive.page.route("**/api/core/activity/questions?*", lambda r: held.append(r) if not held else r.fallback())   # 第一次读取在途中
+        hive.page.evaluate("() => { window.NexusTableHexApp.refresh(); }")
+        _until(hive.page, lambda: len(held) == 1)
+        _block(hive, DOC).get_by_role("button", name="改去向").click()
+        hive.page.locator(".ht-block select").focus()   # 下拉有焦点 = 重画被推迟
+        new = {**Q1, "options": [{"label": "新的选项"}, {"label": "另一个"}]}
+        hive.questions[0]["options"] = new["options"]
+        held[0].fulfill(status=200, content_type="application/json", body=json.dumps({"items": [new]}))
+        hive.page.wait_for_timeout(300)
+        assert _q(hive).locator(".ht-opt").nth(0).inner_text().startswith("在练琴"), "画面还是旧的"
+        hive.page.evaluate("() => document.querySelector('.ht-question .ht-opt').click()")
+        _until(hive.page, lambda: hive.page.locator(".hd-toast", has_text="问题已更新，请重选").count() == 1)
+        assert _posts(hive, "activity/questions/aq_1/answer") == []
+        hive.page.locator(".ht-block select").blur()
+        hive.page.evaluate("() => window.NexusTableHexApp.refresh()")
+        _until(hive.page, lambda: _q(hive).locator(".ht-opt").first.inner_text() == "新的选项")
+
+
+def test_answer_failure_shows_alert_in_card_and_reloads(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base) as hive:
+        hive.answer_fail = (409, "已经回答过了")
+        _show(hive)
+        hive.questions[0]["status"] = "answered"   # 服务端其实已经答过
+        hive.questions.append(dict(Q2))
+        _q(hive).locator(".ht-opt").nth(1).click()
+        _until(hive.page, lambda: _q(hive).count() == 0 and _q(hive, "aq_2").count() == 1)
+        assert hive.page.locator(".hd-toast", has_text="已经回答过了").count() == 1
+
+
+def test_answer_error_card_has_alert_and_enabled_buttons(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base) as hive:
+        hive.answer_fail = (404, "目标任务已删除")
+        _show(hive)
+        _q(hive).locator(".ht-opt").nth(0).click()
+        _until(hive.page, lambda: _q(hive).locator('[role=alert]').count() == 1)
+        assert "目标任务已删除" in _q(hive).locator('[role=alert]').inner_text()
+        assert _q(hive).locator("button:disabled").count() == 0
+
+
+def test_success_keeps_focus_elsewhere_and_moves_card_focus(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base) as hive:
+        hive.questions.append(dict(Q2))
+        _show(hive)
+        inp = _q(hive, "aq_2").locator("input")
+        inp.fill("好")
+        inp.press("Enter")
+        _until(hive.page, lambda: _q(hive, "aq_2").count() == 0)
+        assert hive.page.evaluate("document.activeElement && document.activeElement.tagName") != "BODY", "焦点没丢到页面上"
+        # 别处的焦点不被抢走：答 Q1 时焦点在另一块的按钮上
+        btn = _block(hive, DOC).get_by_role("button", name="拆分")
+        btn.focus()
+        _q(hive).locator(".ht-opt").nth(1).evaluate("n => n.click()")
+        _until(hive.page, lambda: _q(hive).count() == 0)
+        assert hive.page.evaluate("document.activeElement.dataset.ht") == "split"
+
+
+def test_session_correct_and_rule_correct_ignore_double_click(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base, props={**PROPS, "sessionChanges": [SESSION]}) as hive:
+        _show(hive)
+        c = hive.page.locator('.hd-card[data-key="ns_1"]')
+        c.get_by_role("button", name="更正").click()
+        c.locator("select").select_option("t:t_p_math")
+        c.locator("select").blur()
+        c.get_by_role("button", name="确定").evaluate("n => { n.click(); n.click(); }")
+        _until(hive.page, lambda: len(_posts(hive, "activity/proposals/ns_1/approve")) >= 1)
+        hive.page.wait_for_timeout(300)
+        assert len(_posts(hive, "activity/proposals/ns_1/approve")) == 1
+        b1 = hive.page.locator('.hd-card[data-key="b1"]')
+        b1.get_by_role("button", name="更正").click()
+        b1.locator("select").select_option("t:t_p_piano")
+        b1.locator("select").blur()
+        b1.get_by_role("button", name="确定").evaluate("n => { n.click(); n.click(); }")
+        _until(hive.page, lambda: len(_posts(hive, "activity/proposals/b1/approve")) >= 1)
+        hive.page.wait_for_timeout(300)
+        assert len(_posts(hive, "activity/proposals/b1/approve")) == 1
+
+
+def test_option_without_range_shows_label_only_and_unresolvable_target_is_disabled(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base) as hive:
+        hive.questions.append({**Q2, "id": "aq_3", "title": "没有时间段", "allowText": False, "options": [{"label": "练琴", "target": {"taskId": "t_p_piano"}}]})
+        hive.questions[0]["options"] = [{"label": "已删的任务", "target": {"taskId": "t_gone"}}, {"label": "在练琴", "target": {"taskId": "t_p_piano"}}]
+        _show(hive)
+        assert _q(hive).locator(".ht-opt").nth(0).is_disabled() and not _q(hive).locator(".ht-opt").nth(1).is_disabled()
+        o = _q(hive, "aq_3").locator(".ht-opt")
+        assert o.inner_text() == "练琴" and not o.is_disabled()
+
+
+def test_answering_disables_dismiss(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base) as hive:
+        _show(hive)
+        hive.page.route("**/api/core/activity/questions/aq_1/answer", lambda r: None)   # 不回应：一直在进行中
+        _q(hive).locator(".ht-opt").nth(1).click()
+        _until(hive.page, lambda: _q(hive).get_by_role("button", name="撤下").is_disabled())
+
+
+def test_non_404_read_failure_keeps_previous_questions(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base) as hive:
+        _show(hive)
+        hive.page.route("**/api/core/activity/questions?*", lambda r: r.fulfill(status=500, content_type="application/json", body="{}"))
+        hive.page.evaluate("() => window.NexusTableHexApp.refresh()")
+        hive.page.wait_for_timeout(400)
+        assert _q(hive).count() == 1

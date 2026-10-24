@@ -28,9 +28,9 @@
   }
 
   // proposals 响应里各个键下的数组摊平，按 kind 分（老服务端没有这些 kind = 全空）
-  var KINDS = { question: "questions", windowRule: "windowRules", blockRule: "blockRules", blockAction: "blockActions" };
+  var KINDS = { windowRule: "windowRules", blockRule: "blockRules", blockAction: "blockActions" };
   function proposalKinds(resp) {
-    var out = { questions: [], windowRules: [], blockRules: [], blockActions: [] };
+    var out = { windowRules: [], blockRules: [], blockActions: [] };
     Object.keys(resp || {}).forEach(function (k) {
       if (!Array.isArray(resp[k])) return;
       resp[k].forEach(function (p) {
@@ -39,6 +39,18 @@
     });
     return out;
   }
+
+  // GET activity/questions 的响应 → 待回答的问题（没有这个端点 / 读取失败 = null → 空）
+  function pendingQuestions(resp) {
+    return (resp && Array.isArray(resp.items) ? resp.items : []).filter(function (q) { return q && q.id && q.title && (q.status == null || q.status === "pending"); });
+  }
+  function qRange(q, now) {   // 问题的日期不是今天时，前面加「MM-DD」
+    var a = Date.parse(q.from), b = Date.parse(q.to);
+    if (!a || !b) return "";
+    var d = new Date(a), t = now || new Date(), day = d.getFullYear() !== t.getFullYear() || d.getMonth() !== t.getMonth() || d.getDate() !== t.getDate();
+    return (day ? two(d.getMonth() + 1) + "-" + two(d.getDate()) + " " : "") + hhmm(a) + "–" + hhmm(b);
+  }
+  function optSig(opts) { return JSON.stringify((opts || []).map(function (o) { return [o.label, o.target || null, !!o.ignore]; })); }
 
   // 块的建议：同一天同一块名的 blockAction 提议（assign 给目标；别的动作只贡献说明）
   function suggestion(block, date, actions) {
@@ -121,7 +133,7 @@
     });
   }
 
-  var api = { splitBlocks: splitBlocks, proposalKinds: proposalKinds, suggestion: suggestion, parseTarget: parseTarget, targetValue: targetValue,
+  var api = { optSig: optSig, pendingQuestions: pendingQuestions, qRange: qRange, splitBlocks: splitBlocks, proposalKinds: proposalKinds, suggestion: suggestion, parseTarget: parseTarget, targetValue: targetValue,
     blockTarget: blockTarget, rangeOf: rangeOf, addPoint: addPoint, clampPoint: clampPoint, partsFromPoints: partsFromPoints, snapPoint: snapPoint, partsHaveRecords: partsHaveRecords, dur: dur, hhmm: hhmm };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof document === "undefined" || typeof window === "undefined") return;
@@ -130,8 +142,8 @@
   // ── DOM ───────────────────────────────────────────────────────────
   api.start = function (X) {
     var panel = X.panel, el = X.el, btn = X.btn, toast = X.toast, App = X.App, ACT = X.ACT, DEC = window.NexusTableHexDecide;
-    var S = { res: null, failed: false, date: "", chosen: {}, busy: {}, open: {}, splits: {}, histAll: false };
-    var dragHandle = false, scrollTop = 0, reqN = 0, writing = 0, pendingRender = false;
+    var S = { questions: [], report: null, reportOpen: false, qerr: {}, res: null, failed: false, date: "", chosen: {}, busy: {}, open: {}, splits: {}, histAll: false };
+    var dragHandle = false, scrollTop = 0, reqN = 0, qN = 0, writing = 0, pendingRender = false;
     panel.dataset.tiers = "1";
     panel.setAttribute("aria-label", "AI 决策");
 
@@ -153,6 +165,17 @@
       return X.getJson(ACT + "blocks?status=all&limit=500").then(function (r) {
         if (n !== reqN) return;   // 更晚发出的请求已经回来了：这份是过期的
         if (r && Array.isArray(r.items)) { S.res = r; S.date = r.date || S.date; S.failed = false; } else S.failed = true;
+        X.render();
+      });
+    }
+    // AI 问题 / 秘书报告：404 = 端点不存在 = 什么都没有；别的失败保留旧值
+    function loadAI() {
+      var n = ++qN;
+      return Promise.all([X.getRaw(ACT + "questions?status=pending"), X.getRaw(ACT + "secretary-reports")]).then(function (r) {
+        if (n !== qN) return;
+        if (r[0].status === 404) S.questions = []; else if (r[0].body) S.questions = api.pendingQuestions(r[0].body);
+        if (r[1].status === 404) S.report = null;
+        else if (r[1].body) { var rep = Array.isArray(r[1].body.items) ? r[1].body.items[0] : null; S.report = rep && rep.text ? rep : null; }
         X.render();
       });
     }
@@ -412,24 +435,101 @@
       X.bindSwipe(n, f, ok, no, dcOf(c));
       return n;
     }
+    // 批准时更正（rule-fix / sess-ok 共用）：按 id 防重复点，进行中按钮禁用
+    function approveEdit(id, edit, name, button) {
+      var bk = "fix:" + id;
+      if (S.busy[bk]) return;
+      S.busy[bk] = 1; writing++; if (button) button.disabled = true;
+      post("proposals/" + encodeURIComponent(id) + "/approve", { edit: edit }).then(function (r) {
+        S.busy[bk] = 0; writing--;
+        if (!r.ok) { if (button) button.disabled = false; toast("没办成：" + name + "：" + why(r), { error: true, ms: 6000 }); flushRender(); return; }
+        delete S.open[id]; toast("已批准（更正）：" + name); X.refreshAll();
+      });
+    }
     function fixRule(c, cardEl) {
       var inp = cardEl.querySelector("[data-fix]"), edit;
       if (c.level === 1) { var name = inp.value.trim().slice(0, 64); if (!name) return; edit = { rule: { block: name } }; }
       else { var t = api.parseTarget(inp.value); if (!t) { toast("先选去向"); return; } edit = t; }
-      post("proposals/" + encodeURIComponent(c.key) + "/approve", { edit: edit }).then(function (r) {
-        if (!r.ok) { toast("没办成：" + c.name + "：" + why(r), { error: true, ms: 6000 }); return; }
-        delete S.open[c.key]; toast("已批准（更正）：" + c.name); X.refreshAll();
-      });
+      approveEdit(c.key, edit, c.name, cardEl.querySelector('[data-ht="fix-ok"]'));
     }
 
     // ── 其它卡片 ──
-    function questionCard(p) {
-      var n = el("div", "hd-card ht-question is-ignore"); n.dataset.key = p.id;
-      var f = el("div", "hd-face");
-      f.appendChild(el("div", "hd-win", clip(p.title || p.text || p.question || p.name || "", 120)));
-      var d = p.reason || p.detail || p.summary;
-      if (d) f.appendChild(el("div", "hd-why", clip(d, 200)));
+    function questionCard(q) {
+      var n = el("div", "hd-card ht-question is-ignore"), f = el("div", "hd-face"), rg = api.qRange(q), busy = !!S.busy["q:" + q.id];
+      n.dataset.key = q.id; n.__opts = q.options || []; n.__sig = api.optSig(q.options);   // 渲染时的选项快照：按钮下标对的是它
+      f.appendChild(el("span", "ht-badge", "AI 提问"));
+      f.appendChild(el("div", "hd-win", clip(q.title, 120)));
+      if (q.text) f.appendChild(el("div", "hd-why ht-qtext", clip(q.text, 1000)));
+      if (rg) f.appendChild(el("div", "hd-why", rg));
+      var opts = el("div", "ht-opts");
+      n.__opts.forEach(function (o, i) {
+        var b = tb("", "q-opt", "hd-btn ht-opt"); b.dataset.i = String(i);
+        b.appendChild(el("span", null, clip(o.label, 40)));
+        if (o.target && rg) {   // 没有时间段的问题，回答不会记时间：不写去向
+          b.appendChild(el("span", "ht-opt-to", pathOf(o.target) + " · " + rg));
+          if (!resolve(o.target).projectName) b.disabled = true;
+        }
+        if (busy) b.disabled = true;
+        opts.appendChild(b);
+      });
+      if (opts.firstChild) f.appendChild(opts);
+      if (q.allowText) {
+        var row = el("div", "ht-edit"), inp = document.createElement("input"), go = tb("提交", "q-text");
+        inp.type = "text"; inp.maxLength = 1000; inp.className = "ht-input ht-qinput"; inp.setAttribute("aria-label", "回答");
+        if (busy) go.disabled = true;
+        row.appendChild(inp); row.appendChild(go); f.appendChild(row);
+      }
+      if (S.qerr[q.id]) { var er = el("div", "hd-err", S.qerr[q.id]); er.setAttribute("role", "alert"); f.appendChild(er); }
+      var acts = el("div", "hd-acts"), no = tb("撤下", "q-no"); if (busy) no.disabled = true;
+      acts.appendChild(no); f.appendChild(acts);
       n.appendChild(f); return n;
+    }
+    function answerQ(card, body) {
+      var id = card.dataset.key, bk = "q:" + id, q = S.questions.filter(function (x) { return x.id === id; })[0];
+      if (!q || S.busy[bk] || X.held[id]) return;
+      if (api.optSig(q.options) !== card.__sig) { toast("问题已更新，请重选"); X.render(); return; }
+      var o = body.option != null ? card.__opts[body.option] : null, title = clip(q.title, 40);
+      if (body.option != null && !o) return;
+      S.busy[bk] = 1; writing++; delete S.qerr[id];
+      [].forEach.call(card.querySelectorAll("button"), function (x) { x.disabled = true; });
+      post("questions/" + encodeURIComponent(id) + "/answer", body).then(function (r) {
+        S.busy[bk] = 0; writing--;
+        if (!r.ok) {
+          S.qerr[id] = why(r);
+          toast("没办成：" + title + "：" + S.qerr[id], { error: true, ms: 6000 });
+          if (r.status > 0) loadAI(); else X.render();
+          return;
+        }
+        var a = r.body && r.body.answer;
+        toast(a && a.recorded && o && o.target ? "已记到 " + pathOf(o.target).slice(2) : "已回答：" + title);
+        qN++; S.questions = S.questions.filter(function (x) { return x.id !== id; }); delete S.qerr[id];
+        if (card.contains(document.activeElement)) {   // 焦点在本卡里：交给下一张卡（没有就面板标题）；别的控件的焦点不动
+          var all = [].slice.call(panel.querySelectorAll(".hd-card")), i = all.indexOf(card), nx = all[i + 1] || all[i - 1] || panel.querySelector(".hd-head");
+          if (nx) nx.focus({ preventScroll: true });
+        }
+        X.render();
+      });
+    }
+    function reportCard(r) {
+      var open = S.reportOpen, n = el("div", "hd-card ht-report"), f = el("div", "hd-face");
+      n.dataset.key = "report";
+      f.appendChild(el("span", "ht-badge", "秘书报告"));
+      f.appendChild(el("div", "hd-why ht-rtext" + (open ? " is-open" : ""), clip(r.text, 8000)));
+      var acts = el("div", "hd-acts"), tg = tb(open ? "收起" : "展开", "report-toggle");
+      tg.setAttribute("aria-expanded", String(open)); acts.appendChild(tg); f.appendChild(acts);
+      n.appendChild(f); return n;
+    }
+    // 待批准日程改动里的 sessionChange 卡：pendCard 原样，多一个「更正」（批准时换去向）
+    function sessCard(c) {
+      var n = X.pendCard(c);
+      if (c.verb !== "session") return n;
+      var f = n.querySelector(".hd-face"), acts = n.querySelector(".hd-acts");
+      if (S.open[c.key] === "fix") {
+        var row = el("div", "ht-edit"), sel = targetSelect("", function () { /* 点「确定」才提交 */ });
+        sel.dataset.fix = "1"; row.appendChild(sel); row.appendChild(tb("确定", "sess-ok")); f.insertBefore(row, acts);
+      }
+      acts.appendChild(tb("更正", "sess-fix"));
+      return n;
     }
     function histCard(b) {
       var n = el("div", "hd-card hd-hcard ht-hist"), f = el("div", "hd-face"), t = api.blockTarget(b), tg = resolve(t);
@@ -460,10 +560,10 @@
       S.acts = k.blockActions;
       var held = X.held;
       return [
-        { id: "q", title: "AI 问题", cards: k.questions, make: questionCard, count: k.questions.length },
+        { id: "q", title: "AI 问题", cards: S.questions.filter(function (q) { return !held[q.id]; }), make: questionCard },
         { id: "b", title: "待分类窗口块", cards: blockCards(), make: blockCard },
         { id: "r", title: "待批准规则", cards: ruleCards(k).filter(function (c) { return !held[c.key]; }), make: ruleCard },
-        { id: "s", title: "待批准日程改动", cards: X.model().cards.filter(function (c) { return !held[c.key]; }), make: X.pendCard },
+        { id: "s", title: "待批准日程改动", cards: X.model().cards.filter(function (c) { return !held[c.key]; }), make: sessCard },
         { id: "h", title: "自动化分类历史", cards: sp.hist, make: histCard }
       ].map(function (s) { if (s.count == null) s.count = s.cards.length; return s; });
     }
@@ -473,7 +573,7 @@
       var secs = S.cache;
       if (!secs) return;
       var counts = {};
-      secs.forEach(function (x) { counts[x.id] = (x.id === "r" || x.id === "s") ? x.cards.filter(function (c) { return !X.held[c.key]; }).length : x.count; });
+      secs.forEach(function (x) { counts[x.id] = (x.id === "r" || x.id === "s" || x.id === "q") ? x.cards.filter(function (c) { return !X.held[c.key]; }).length : x.count; });
       [].forEach.call(panel.querySelectorAll(".ht-cnt[data-sec]"), function (n) {
         n.textContent = n.dataset.sec === "h" ? "今天 " + counts.h + " 条" : String(counts[n.dataset.sec]);
       });
@@ -512,12 +612,14 @@
       var body = el("div", "ht-body"), any = false;
       if (S.failed) { var er = el("div", "ht-err", "读取失败，稍后重试"); er.setAttribute("role", "alert"); body.appendChild(er); any = true; }
       secs.forEach(function (s) {
-        if (!s.count) return;
+        var rep = s.id === "q" && S.report;
+        if (!s.count && !rep) return;
         any = true;
         var h = el("div", "ht-sec");
         h.appendChild(el("span", "ht-sec-t", s.title));
-        var cnt = el("span", "ht-cnt", s.id === "h" ? "今天 " + s.count + " 条" : String(s.count)); cnt.dataset.sec = s.id; h.appendChild(cnt);
+        if (s.count) { var cnt = el("span", "ht-cnt", s.id === "h" ? "今天 " + s.count + " 条" : String(s.count)); cnt.dataset.sec = s.id; h.appendChild(cnt); }
         var wrap = el("section", "ht-secbody"); wrap.dataset.sec = s.id; wrap.appendChild(h);
+        if (rep) wrap.appendChild(reportCard(S.report));
         var list = s.id === "h" && !S.histAll ? s.cards.slice(0, 5) : s.cards;
         list.forEach(function (c) { wrap.appendChild(s.make(c)); });
         if (s.id === "h" && s.cards.length > 5 && !S.histAll) { wrap.appendChild(tb("展开全部", "hist-all", "hd-btn ht-more")); }
@@ -525,6 +627,8 @@
       });
       if (!any) body.appendChild(el("div", "hd-empty", "没有待决策的"));
       panel.appendChild(body);
+      var rt = body.querySelector(".ht-rtext");
+      if (rt && !S.reportOpen && rt.scrollHeight <= rt.clientHeight + 1) { var ra = body.querySelector('[data-ht="report-toggle"]'); if (ra) ra.parentNode.remove(); }   // 三行以内不用展开
       body.scrollTop = scrollTop;
       if (fh === "__head") head.focus({ preventScroll: true });
       else if (fk) {   // 重画前焦点在哪张卡（哪个按钮）上，就还给新画出来的那张
@@ -550,6 +654,25 @@
       if (!kind) return;
       var k = blockOf(b);
       if (k.card && k.card.__swiped) { k.card.__swiped = false; return; }
+      if (kind === "report-toggle") { S.reportOpen = !S.reportOpen; X.render(); return; }
+      if (kind.indexOf("q-") === 0) {
+        var qc = b.closest(".ht-question");
+        if (!qc) return;
+        if (kind === "q-opt") answerQ(qc, { option: Number(b.dataset.i) });
+        else if (kind === "q-text") { var tx = qc.querySelector(".ht-qinput").value.trim(); if (tx) answerQ(qc, { text: tx }); }
+        else {
+          var qq = S.questions.filter(function (x) { return x.id === qc.dataset.key; })[0];
+          if (qq && !S.busy["q:" + qq.id]) X.decide({ key: qq.id, name: clip(qq.title, 40), verb: "question", n: 1, items: [{ path: "questions/" + encodeURIComponent(qq.id), newItem: false }] }, "dismiss", qc);
+        }
+        return;
+      }
+      if (kind === "sess-fix") { var sk = b.closest(".hd-card").dataset.key; S.open[sk] = S.open[sk] === "fix" ? null : "fix"; X.render(); return; }
+      if (kind === "sess-ok") {
+        var sc = b.closest(".hd-card"), sid = sc.dataset.key, st0 = api.parseTarget(sc.querySelector("[data-fix]").value);
+        if (!st0) { toast("先选去向"); return; }
+        approveEdit(sid, st0, "日程改动", b);
+        return;
+      }
       if (kind === "hist-all") { S.histAll = true; X.render(); return; }
       if (kind === "undo") {
         var hk = b.closest(".ht-hist").dataset.block;
@@ -587,6 +710,8 @@
       }
     });
     panel.addEventListener("keydown", function (ev) {
+      if (ev.isComposing || ev.keyCode === 229) return;   // 输入法选词的回车不算提交
+      if (ev.key === "Enter" && ev.target.classList && ev.target.classList.contains("ht-qinput")) { var qb = ev.target.closest(".ht-question").querySelector('[data-ht="q-text"]'); qb.click(); return; }
       if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.target.closest("input, select, [role=slider]")) return;
       var kb = blockOf(ev.target);
       if (kb.c && ev.target === kb.card) {
@@ -601,7 +726,7 @@
 
     X.hooks.render = render;
     X.hooks.recount = recount;
-    X.hooks.load = loadBlocks;
+    X.hooks.load = function () { return Promise.all([loadBlocks(), loadAI()]); };
     X.hooks.busy = function () { return uiBusy() || writing > 0; };
   };
 })();

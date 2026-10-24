@@ -18,8 +18,19 @@ assert.deepStrictEqual(T.splitBlocks(null), { pending: [], hist: [] });
 
 var k = T.proposalKinds({ projects: [{ id: "np", kind: "project" }], windowRules: [{ id: "w", kind: "windowRule" }],
   items: [{ id: "q", kind: "question" }, { id: "b", kind: "blockRule", status: "pending" }, { id: "x", kind: "blockAction", status: "rejected" }, { kind: "blockRule" }] });
-assert.deepStrictEqual([k.questions, k.windowRules, k.blockRules, k.blockActions].map(function (l) { return l.map(function (p) { return p.id; }); }), [["q"], ["w"], ["b"], []]);
-assert.deepStrictEqual(T.proposalKinds(null), { questions: [], windowRules: [], blockRules: [], blockActions: [] });
+assert.deepStrictEqual([k.windowRules, k.blockRules, k.blockActions].map(function (l) { return l.map(function (p) { return p.id; }); }), [["w"], ["b"], []], "question 不再从 proposals 来");
+assert.deepStrictEqual(T.proposalKinds(null), { windowRules: [], blockRules: [], blockActions: [] });
+
+var qs = T.pendingQuestions({ items: [{ id: "a", title: "t" }, { id: "b", title: "t", status: "answered" }, { id: "c", status: "pending" }, { title: "t" }, null] });
+assert.deepStrictEqual(qs.map(function (q) { return q.id; }), ["a"], "只留待回答、有 id 和标题的");
+assert.deepStrictEqual(T.pendingQuestions(null), []); assert.deepStrictEqual(T.pendingQuestions({ items: "x" }), []);
+assert.strictEqual(T.qRange({ from: "2026-10-24T01:00:00Z", to: "2026-10-24T02:00:00Z" }), T.hhmm(Date.parse("2026-10-24T01:00:00Z")) + "–" + T.hhmm(Date.parse("2026-10-24T02:00:00Z")));
+var d9 = new Date(2026, 9, 24, 9, 0), d10 = new Date(2026, 9, 24, 10, 0), noon = new Date(2026, 9, 24, 12, 0);
+var qd = { from: d9.toISOString(), to: d10.toISOString() };
+assert.strictEqual(T.qRange(qd, noon), "09:00–10:00", "今天的不带日期");
+assert.strictEqual(T.qRange(qd, new Date(2026, 9, 25, 8, 0)), "10-24 09:00–10:00", "不是今天的前面加 MM-DD");
+assert.notStrictEqual(T.optSig([{ label: "a", target: { taskId: "1" } }]), T.optSig([{ label: "a", target: { taskId: "2" } }]));
+assert.strictEqual(T.qRange({ from: "2026-10-24T01:00:00Z" }), ""); assert.strictEqual(T.qRange({}), "");
 
 var acts = [{ blockKey: "a", date: "2026-10-23", action: "assign", taskId: "old" },
   { blockKey: "a", date: "2026-10-24", action: "split", reason: "上午下午不同" }, { blockKey: "a", date: "2026-10-24", action: "assign", projectId: "p1", reason: "晚来的" }];

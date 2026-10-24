@@ -143,6 +143,13 @@ consumes:
       同一栏把历史卡拖到蜂巢里改归属：`POST sessions/{eventId}/reassign {taskId}` 或 `{projectId}`（与助理页「自动记录」同一写法）。
       只有人能改（设备令牌 403）；失败如实显示后端 detail。新建任务另走 planner.crud.v1 的 `POST planner/tasks`（同长按 / 加任务现成的 `createTask`）。
 
+  - id: nexus-core.activity.secretary.v1
+    contract: ../../nexus-core/module_docs/contract.md
+    purpose: >
+      三级分类决策栏「AI 问题」段（2026-10-24，见「三级分类决策栏」节）：读 `GET activity/questions?status=pending` 与 `GET activity/secretary-reports`（缺省今天）；
+      写 `POST activity/questions/{id}/answer {option?, text?}`、`POST activity/questions/{id}/dismiss`（只许人）。
+      另用 `GET activity/proposals` 的 `sessionChanges[]`（批准 / 拒绝同其它提议，批准可带 `edit: {taskId | projectId}`）。端点不存在（404）= 对应内容不显示。
+
   - id: nexus-core.activity.tiers.v1
     contract: ../../nexus-core/module_docs/contract.md
     purpose: >
@@ -268,7 +275,11 @@ consumes:
 `true` → 同一个右上角浮层（同一个角标、同一个折叠键 `hive.decide.collapsed`）换成**一栏**，滑动 / 撤销计时 / 拖到格子 / 提示条都复用上节的。
 按卡片类型分段，顺序固定，没有内容的段不显示，每段标题带计数（角标 = 前四段之和）：
 
-1. **AI 问题**：proposals 里 `kind: "question"` 的项（本版后端还没有）；只画大字问题 + 说明，不带操作。
+1. **AI 问题**：`GET activity/questions?status=pending` 的待回答问题（取代 proposals 里的 `kind: "question"`；端点 404 / 读取失败 = 不显示）。
+   卡片：小标签「AI 提问」、标题、说明、时间段（有 `from` / `to` 时）；每个选项一个按钮，带目标的选项在标签下写出确切去向「↓ 项目 - 任务」和要记的时间段；`allowText` 时有文字输入与「提交」；「撤下」。
+   点选项 / 提交 = `POST questions/{id}/answer {option}` / `{text}`：成功 → 卡片移除并提示（`answer.recorded` 为真 =「已记到 X」，否则「已回答」）；失败 → 如实提示后端 detail，卡片留着。
+   「撤下」走上节同一个 5 秒撤销窗口，到点才发 `POST questions/{id}/dismiss`。标题、说明、选项文字都来自 AI，一律 `textContent`。
+   今天的秘书报告（`GET activity/secretary-reports`）有的话，作为一张折叠卡放在本段最上面：默认只露前三行，「展开」/「收起」；不计数，只有它时本段也显示。
 2. **待分类窗口块**：`GET activity/blocks` 里 `status: "pending"` 的块，以及 `generic` 且 `parts` 为空的块（带「通用窗口」徽标）。大字块名；第二行「↓ 项目 - 任务」按目标项目着色，没有目标「↓ ？」灰色；
    一行小字 =「AI：说明 · 时长 · N 段」。建议目标 / 说明来自同一块名、同一天的 `blockAction` 提议（`action: "assign"` 给目标，别的 action 只贡献 `reason`）；「改去向」选出来的优先。
    按钮：拆分、标为通用窗口（通用窗口上是「取消通用窗口」）、改去向（原生下拉，项目分组、含「项目 - 未分类」），有目标时另有「批准」。
@@ -280,7 +291,8 @@ consumes:
 3. **待批准规则**：proposals 里 `windowRule`（徽标「第一级 · 收纳」，`rule {app, title, block}`）与 `blockRule`（「第二级 · 去向」，`blockKey` + `taskId | projectId`）；`op: "delete"` 画大红。
    「批准」「忽略」= 既有 `proposals/{id}/approve|reject`，走上节的 5 秒撤销（左滑 / 右滑同）；「更正」= 立即 `approve` 带 `edit`：`blockRule` 为 `{taskId | projectId}`，`windowRule` 为 `{rule: {block}}`。
    proposals 响应里各键下带 `kind` 的数组一并摊平，按 `kind` 分；没有就不显示。
-4. **待批准日程改动**：上节「待批准」栏的卡片原样（新项目 / 新任务 / 改名 / 移动 / 删除 / 忽略规则 / 报告条目）。
+4. **待批准日程改动**：上节「待批准」栏的卡片原样（新项目 / 新任务 / 改名 / 移动 / 删除 / 忽略规则 / 报告条目），加 proposals 里 `sessionChanges[]`：
+   大字原归属「项目 - 任务」，第二行「↓ 新归属」，小字「开始时刻 · 时长 · AI：说明」。批准 / 不要同上节；多一个「更正」= 立即 `approve` 带 `edit: {taskId | projectId}`。
 5. **自动化分类历史**：今天 `status: "assigned"` 且 `via` 为 `rule` / `ai-direct` 的块，新的在前，先 5 条、「展开全部」。「撤销」= `blocks/reset`；卡片可拖到蜂巢里的任务行 / 格子改挂 = `blocks/assign {…, remember: false}`（拖拽 / 新建任务沿用上节）。
 
 三级分类开着时不再读 `GET activity/auto`（历史来自窗口块）。颜色沿用：项目深浅色；灰 = 忽略 / 无目标；大红 = 删除类。

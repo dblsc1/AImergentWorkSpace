@@ -29,3 +29,10 @@
 .ht-part-l { margin-bottom: 4px; font-size: var(--fs-eyebrow); color: var(--ink-2); }
 .ht-part .ht-select { width: 100%; box-sizing: border-box; }
 @media (max-width: 560px) { .hd-panel[data-tiers] { width: calc(100% - 2 * var(--sp-3)); } .ht-parts { grid-template-columns: minmax(0, 1fr); } }
+
+/* AI 提问 / 秘书报告 */
+.ht-opts { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-2); }
+.ht-question .ht-opt { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; min-height: 32px; padding: 6px 10px; }
+.ht-opt-to { font-size: 11px; font-weight: 400; color: var(--ink-2); overflow-wrap: anywhere; }
+.ht-qtext, .ht-rtext { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ht-rtext:not(.is-open) { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }

@@ -75,6 +75,15 @@
         projectId: isTask ? c.projectId : c.targetId, taskId: isTask ? c.targetId : null, hlProject: !isTask,
         destProjectId: c.op === "move" && isTask ? c.toId : null });
     });
+    // sessionChanges: 提议把一段已记的时间改挂到别处（from → to · 开始时刻 · 时长）
+    (P.sessionChanges || []).forEach(function (s) {
+      if (!s || !s.id || (s.op && s.op !== "reassign") || (s.status != null && s.status !== "pending")) return;
+      var fr = lookup(tree, s.fromProjectId, s.fromTaskId), to = lookup(tree, s.projectId, s.taskId), d = new Date(s.startAt);
+      var when = isNaN(d.getTime()) ? "" : ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
+      var mm = minutes(s.durationSeconds), len = mm < 1 ? "不到 1 分钟" : mm + " 分钟";
+      cards.push({ key: s.id, verb: "session", reason: [when, len, s.reason ? "AI：" + s.reason : ""].filter(Boolean).join(" · "), n: 1, min: 0, tasks: [],
+        name: fr.projectName ? fr.projectName + " - " + (fr.taskName || "未分类") : "（原归属）", items: one(s), to: pathText(to), projectId: to.projectId, zoneId: to.zoneId });
+    });
     (P.ignores || []).forEach(function (g) {
       var app = g.app == null ? "？" : g.app;
       cards.push({ key: g.id, verb: "ignore", tone: "ignore", name: g.titleContains ? app + " · " + g.titleContains : app, reason: g.reason || "",
@@ -187,6 +196,11 @@
   }
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]; }); }
   function getJson(url) { return fetch(url).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }); }
+  // 同 getJson，但留下状态码（404 = 端点不存在，别的失败 = 保留旧值）：→ {status, body}
+  function getRaw(url) {
+    return fetch(url).then(function (r) { return r.json().catch(function () { return null; }).then(function (b) { return { status: r.status, body: r.ok ? b : null }; }); })
+      .catch(function () { return { status: 0, body: null }; });
+  }
   function visible() { return model.cards.filter(function (c) { return !held[c.key]; }); }
   // 这份报告里有没有条目正在撤销窗口里（有 → 「全部批准」先别点：它会越过那张卡的决定）
   function reportHeld(r) {
@@ -285,7 +299,7 @@
   function commit(card, decision, cardEl) {
     if (held[card.key]) return;
     held[card.key] = { card: card, el: cardEl };
-    var word = decision === "approve" ? "已批准：" : "已拒绝：";
+    var word = decision === "approve" ? "已批准：" : decision === "dismiss" ? "已撤下：" : "已拒绝：";
     var entry = commits.add(card, decision), t;
     t = toast(word + card.name, { sticky: true, undo: function () {
       if (!commits.undo(entry.id)) return;
@@ -810,7 +824,7 @@
         T.start({ hooks: hooks, panel: panel, el: el, btn: btn, toast: toast, tint: tint, cellFor: cellFor, bindDrag: bindDrag, bindSwipe: bindSwipe,
           pendCard: pendCard, decide: decide, collapseEl: collapseEl, held: held, errors: errors, model: function () { return model; },
           raw: function () { return raw; }, collapsed: function () { return collapsed; }, render: render, App: App, H: H,
-          ACT: ACT, UNDO_MS: UNDO_MS, getJson: getJson, focusCard: focusCard, refreshAll: refreshAll });
+          ACT: ACT, UNDO_MS: UNDO_MS, getJson: getJson, getRaw: getRaw, focusCard: focusCard, refreshAll: refreshAll });
       } catch (e) {
         ["render", "load", "busy", "recount"].forEach(function (k) { delete hooks[k]; });
         delete panel.dataset.tiers;
