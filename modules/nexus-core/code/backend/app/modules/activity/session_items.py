@@ -89,7 +89,7 @@ def propose(event_id: str, task_id, project_id, reason: str, direct: bool, reque
         out = reassign_impl.reassign_as(event_id, task_id, project_id, request, "ai")
         if out["duplicate"]:
             raise ConflictError("目标与这段现在的归属相同")
-        return out, {"taskId": cur_task, "projectId": cur_project}, {"taskId": out["taskId"], "projectId": out["projectId"], "seq": out["seq"]}
+        return out, {"taskId": out["fromTaskId"], "projectId": out["fromProjectId"]}, {"taskId": out["taskId"], "projectId": out["projectId"], "seq": out["seq"]}
 
     def finish():
         new_items._col().update_many({"user": user, "id": item_id, "status": "pending"},  # noqa: SLF001
@@ -159,7 +159,7 @@ def undo(user: str, log: dict) -> None:
     if len(sessions) != 1:
         raise ConflictError("这段已不在台账里，不能撤回")
     if _owner(sessions[0])[2] != log["after"]["seq"]:
-        raise ConflictError("这段在直接施加之后又被改挂过，不能撤回")
+        raise ConflictError("这段在直接施加之后又被改挂过，不能撤回")  # 提前拦一道；真正的保证在 reassign_as 的 expect_seq
     b = log["before"]
     back = b["projectId"] if b["taskId"] == unclassified.task_id(b["projectId"] or "") else None
-    reassign_impl.reassign_as(log["payload"]["eventId"], None if back else b["taskId"], back, None, "human")
+    reassign_impl.reassign_as(log["payload"]["eventId"], None if back else b["taskId"], back, None, "human", expect_seq=log["after"]["seq"])

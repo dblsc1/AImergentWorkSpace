@@ -145,10 +145,17 @@ def submit(questions) -> dict:
         if key not in found:
             found[key] = {"user": user, "id": "aq_" + secrets.token_hex(8), "askKey": key, "status": "pending", "createdAt": _now(),
                           "answer": None, **{k: v for k, v in q.items() if not k.startswith("_")}}
-            try:
-                _col().insert_one(dict(found[key]))
-            except DuplicateKeyError:  # 并发的同一个问题：用先到的
-                found[key] = _col().find_one({"user": user, "askKey": key, "status": "pending"}, {"_id": 0})
+            for _ in range(3):
+                try:
+                    _col().insert_one(dict(found[key]))
+                    break
+                except DuplicateKeyError:  # 并发的同一个问题：用先到的；先到的已被答掉 / 撤下（查不到 pending）就再插一次
+                    first = _col().find_one({"user": user, "askKey": key, "status": "pending"}, {"_id": 0})
+                    if first is not None:
+                        found[key] = first
+                        break
+            else:
+                raise ConflictError("问题正被并发提交，请重试")
         out.append(view(found[key]))
     return {"items": out}
 
@@ -207,6 +214,7 @@ def answer(qid: str, option, text, request) -> dict:
 
 def dismiss(qid: str) -> dict:
     _get(qid)
-    if _col().update_one({"user": current_tenant(), "id": qid, "status": "pending"}, {"$set": {"status": "dismissed"}}).modified_count != 1:
-        raise ConflictError("这个问题已经回答或撤下了")
+    # claimed 为空才撤：已被 answer 占位（可能正在补登）的不能撤，否则补登照记、回答却 409
+    if _col().update_one({"user": current_tenant(), "id": qid, "status": "pending", "claimed": None}, {"$set": {"status": "dismissed"}}).modified_count != 1:
+        raise ConflictError("这个问题已经回答、撤下，或正在回答")
     return view(_get(qid))

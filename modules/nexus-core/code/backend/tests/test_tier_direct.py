@@ -138,3 +138,39 @@ def test_direct_change_and_log_listing(client, tid, blk, seeded):
     old = __import__("datetime").datetime.now(__import__("datetime").timezone.utc) - __import__("datetime").timedelta(days=91)
     db().activity_direct_log.update_one({"id": "dl_x0"}, {"$set": {"at": old}})
     assert len(client.get(LOG).json()["items"]) == 3
+
+
+def test_undo_rule_conditional_write_refuses_newer_human_change(client, tid, blk, monkeypatch):
+    from app.modules.activity import blocks_repo, direct_log
+    direct(client)
+    r = client.post(f"{P}/block-rules", json={"op": "add", "blockKey": K, "taskId": tid, "directApply": True}, headers=WRITE)
+    lid = r.json()["directLogId"]
+    real = direct_log._same_rule
+
+    def raced(a, b):  # 比较通过之后、写之前，人改了规则的去向
+        ok = real(a, b)
+        db().activity_block_rules.update_one({"blockKey": K}, {"$set": {"taskId": "t_human", "via": "human"}})
+        return ok
+
+    monkeypatch.setattr(direct_log, "_same_rule", raced)
+    assert client.post(f"{LOG}/{lid}/undo").status_code == 409
+    assert db().activity_block_rules.find_one({"blockKey": K})["taskId"] == "t_human"
+    assert db().activity_direct_log.find_one({"id": lid})["undoneAt"] is None
+
+
+def test_undo_block_conditional_write_refuses_newer_human_change(client, tid, blk, monkeypatch):
+    from app.modules.activity import blocks_repo
+    direct(client)
+    lid = act(client, taskId=tid).json()["directLogId"]
+    real, n = blocks_repo.get_block, {"n": 0}
+
+    def raced(*a):  # 第一次读之后、写之前，人改了这个块
+        out = real(*a)
+        n["n"] += 1
+        if n["n"] == 1:
+            db().activity_blocks.update_one({"blockKey": K}, {"$set": {"status": "ignored"}, "$inc": {"seq": 1}})
+        return out
+
+    monkeypatch.setattr(blocks_repo, "get_block", raced)
+    assert client.post(f"{LOG}/{lid}/undo").status_code == 409
+    assert db().activity_blocks.find_one({"blockKey": K})["status"] == "ignored"

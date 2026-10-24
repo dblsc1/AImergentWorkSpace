@@ -539,3 +539,62 @@ def test_direct_assign_same_target_is_noop_without_log(client, assigned):
     assert r.status_code == 200 and r.json()["applied"] is False and r.json()["directLogId"] is None and r.json()["result"]["status"] == "assigned"
     assert db().activity_direct_log.count_documents({}) == 0
     assert act(client, taskId=other).json()["applied"] is True and db().activity_direct_log.count_documents({}) == 1
+
+
+def test_session_change_stale_owner_and_undo_conditional(client, monkeypatch):
+    from app.modules.activity import session_items
+    ids = _world(client)
+    eid = _session(client, ids["bucket"])
+    direct(client)
+    real, n = session_items._owner, {"n": 0}
+
+    def raced(s):  # 提议读完归属之后、真正改挂之前，人先把它挪到 a
+        out = real(s)
+        n["n"] += 1
+        if n["n"] == 1:
+            _reassign(client, eid, taskId=ids["a"])
+        return out
+
+    monkeypatch.setattr(session_items, "_owner", raced)
+    out = sc(client, eid, headers=WRITE, taskId=ids["b"], directApply=True).json()
+    assert db().activity_direct_log.find_one({"id": out["directLogId"]})["before"]["taskId"] == ids["a"]  # 前任归属取写下那一刻的
+    # 撤回：_owner 检查通过之后、改挂之前又被人改挂 → 409，不覆盖
+    def raced2(s):
+        res = real(s)
+        if not n.get("done"):
+            n["done"] = True
+            _reassign(client, eid, taskId=ids["c"])
+        return res
+
+    monkeypatch.setattr(session_items, "_owner", raced2)
+    assert client.post(f"{LOG}/{out['directLogId']}/undo").status_code == 409
+    assert owner(eid)[0] == ids["c"] and db().activity_direct_log.find_one({"id": out["directLogId"]})["undoneAt"] is None
+
+
+def test_dismiss_refuses_claimed_question(client, tid):
+    item = ask(client, q(options=[{"label": "a", "target": {"taskId": tid}}]))["items"][0]
+    db().activity_questions.update_one({"id": item["id"]}, {"$set": {"claimed": {"option": 0}}})  # answer 已占位
+    assert client.post(f"{A}/questions/{item['id']}/dismiss").status_code == 409
+    assert db().activity_questions.find_one({"id": item["id"]})["status"] == "pending"
+
+
+def test_submit_duplicate_recovery_when_first_already_closed(client, monkeypatch):
+    from app.modules.activity import questions
+    first = ask(client, q("重复"))["items"][0]
+    real, st = questions._col, {"hit": False}
+
+    class Proxy:
+        def __init__(self, c): self.c = c
+        def __getattr__(self, k): return getattr(self.c, k)
+        def find(self, *a, **k):  # 提交时没看到已有的 pending（并发），随后撞唯一键
+            return iter([]) if not st["hit"] else self.c.find(*a, **k)
+        def find_one(self, *a, **k):  # 恢复查找时，先到的已被答掉
+            if not st["hit"]:
+                st["hit"] = True
+                self.c.update_one({"id": first["id"]}, {"$set": {"status": "answered"}})
+                return None
+            return self.c.find_one(*a, **k)
+
+    monkeypatch.setattr(questions, "_col", lambda: Proxy(real()))
+    got = ask(client, q("重复"))["items"][0]
+    assert got["id"] != first["id"] and got["status"] == "pending"

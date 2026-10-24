@@ -63,9 +63,9 @@ def _bucket(project_id: str, request: Any) -> str:
     return task["id"]
 
 
-def _out(event_id: str, duplicate: bool, from_task: str, subject: dict, seq: int, event: dict | None) -> dict:
+def _out(event_id: str, duplicate: bool, from_task: str, from_project: str | None, subject: dict, seq: int, event: dict | None) -> dict:
     return {
-        "sessionEventId": event_id, "duplicate": duplicate, "fromTaskId": from_task,
+        "sessionEventId": event_id, "duplicate": duplicate, "fromTaskId": from_task, "fromProjectId": from_project,
         "taskId": subject["task"], "projectId": subject["project"], "seq": seq,
         "event": {k: event[k] for k in ("id", "dedupeKey", "type")} if event else None,
     }
@@ -90,9 +90,10 @@ def reassign(event_id: str, task_id: str | None, project_id: str | None, request
     return reassign_as(event_id, task_id, project_id, request, planner_guard.ACTOR_HUMAN)
 
 
-def reassign_as(event_id: str, task_id: str | None, project_id: str | None, request: Any, actor: str) -> dict:
+def reassign_as(event_id: str, task_id: str | None, project_id: str | None, request: Any, actor: str, expect_seq: int | None = None) -> dict:
     """内部函数（契约 v2.39 4.3）：不判调用方，``actor`` 写进 ``session.reassigned`` 的 ``data.actor``
-    （人批准 / 撤回 = ``human``，AI 直接施加 = ``ai``）。调用方负责权限。"""
+    （人批准 / 撤回 = ``human``，AI 直接施加 = ``ai``）。调用方负责权限。
+    ``expect_seq``：给了就要求这段最新一条改挂的 seq 正是它（撤回用），不符 409，不追加。"""
     if (task_id is None) == (project_id is None):
         raise InvalidInputError("taskId 与 projectId 必须给一个、且只能给一个")
 
@@ -119,8 +120,10 @@ def reassign_as(event_id: str, task_id: str | None, project_id: str | None, requ
         last = chain[-1] if chain else None
         current = (last or session)["subject"]
         seq = last["data"]["seq"] if last else 0
+        if expect_seq is not None and seq != expect_seq:
+            raise HasChildrenError(f"计时段 {event_id!r} 在上次读取之后又被改挂过（seq {seq}，预期 {expect_seq}）")
         if current.get("task") == task_id:
-            return _out(event_id, True, task_id, current, seq, last)  # 已经在那儿：幂等，什么都不追加
+            return _out(event_id, True, task_id, current.get("project"), current, seq, last)  # 已经在那儿：幂等，什么都不追加
 
         envelope = {
             "spec": SPEC,
@@ -147,6 +150,6 @@ def reassign_as(event_id: str, task_id: str | None, project_id: str | None, requ
         if result.rejected:
             raise RuntimeError(f"{SOURCE} 组装的信封未过事件校验：{result.rejected[0].reason}")
         if result.accepted:
-            return _out(event_id, False, current.get("task"), target, seq + 1, envelope)
+            return _out(event_id, False, current.get("task"), current.get("project"), target, seq + 1, envelope)
         # duplicate：别的请求抢先写了第 seq+1 条 → 重读，按新的当前归属再来
     raise HasChildrenError(f"计时段 {event_id!r} 正被并发改挂，连续 {_MAX_TRIES} 次没抢到，请重试")
