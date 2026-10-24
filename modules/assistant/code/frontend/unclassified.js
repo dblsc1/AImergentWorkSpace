@@ -315,8 +315,7 @@
   }
 
   async function finish() {
-    try { await load(); } finally { busy = false; }
-    render();
+    try { await load(); } finally { busy = false; render(); }
   }
 
   async function move(g, events) {

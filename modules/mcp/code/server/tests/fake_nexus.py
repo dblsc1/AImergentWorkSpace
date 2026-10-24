@@ -194,6 +194,8 @@ def post_result(path, q, tenant, body, scope):
     text = json.dumps(body, ensure_ascii=False)
     if "CONFLICT" in text:
         return 409, {"detail": "通用窗口不能写第二级规则"}
+    if "ECHO" in str(body.get("blockKey")):   # nexus-core 的报错会把块名原样 !r 回显
+        return 409, {"detail": f"没有这条规则 {body['blockKey']!r}"}
     if "LONGAPP" in text:
         return 422, {"detail": [{"loc": ["body", "rule", "app"], "msg": "too long"}]}
     if "BOOM" in text:

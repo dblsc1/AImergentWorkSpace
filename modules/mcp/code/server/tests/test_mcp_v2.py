@@ -888,3 +888,19 @@ def test_block_write_maps_screened_name_back_to_exact_key(servers, monkeypatch):
     monkeypatch.setattr("fake_nexus.BLOCK_RULES", {"items": [{"id": "br_9", "blockKey": raw, "taskId": "t_a1"}]})
     ok(servers, "CRUD_Windowsblock_Classify_Rules", {"ops": [{"op": "delete", "block": "a b" + "x" * 5}]}, W)
     assert posts()[0][1] == {"op": "delete", "blockKey": raw}
+
+
+def test_error_detail_does_not_leak_raw_block_key(servers, monkeypatch):
+    raw = "ECHO  a  b"
+    monkeypatch.setattr("fake_nexus.BLOCK_RULES", {"items": [{"id": "br_9", "blockKey": raw, "taskId": "t_a1"}]})
+    out = ok(servers, "CRUD_Windowsblock_Classify_Rules", {"ops": [{"op": "delete", "block": "ECHO a b"}]}, W)
+    detail = out["results"][0]["detail"]
+    assert out["results"][0]["ok"] is False and raw not in detail and "ECHO a b" in detail
+
+
+def test_block_mapping_skips_collisions(servers, monkeypatch):
+    rules = [{"id": "1", "blockKey": "a  b", "taskId": "t_a1"}, {"id": "2", "blockKey": "a   b", "taskId": "t_a1"},
+             {"id": "3", "blockKey": "c d", "taskId": "t_a1"}, {"id": "4", "blockKey": "c  d", "taskId": "t_a1"}]
+    monkeypatch.setattr("fake_nexus.BLOCK_RULES", {"items": rules})
+    ok(servers, "CRUD_Windowsblock_Classify_Rules", {"ops": [{"op": "delete", "block": "a b"}, {"op": "delete", "block": "c d"}]}, W)
+    assert [b["blockKey"] for _, b in posts()] == ["a b", "c d"]   # 两个原样 key 同显示形式 / 显示形式本身是原样 key：都不猜
