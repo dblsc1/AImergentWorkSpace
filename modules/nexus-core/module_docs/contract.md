@@ -182,6 +182,8 @@
 > 而该端点此前只给今天。`date` 缺省 = 今天（行为与 v2.14 / v2.15 完全相同）；指定时按**同一套 `NEXUS_TZ` 日界**取那一天（按 `startAt`），响应形状、`ai`、`source`、至多 200 条都不变；
 > 格式不是 `YYYY-MM-DD`（含不存在的日期）→ 422（`detail` 为字符串）。老服务端会忽略这个参数、只回今天，调用方按 `id` 去重即可。响应**追加** `date`（这批段属于的那一天，`YYYY-MM-DD`，服务端 `NEXUS_TZ` 日界；缺省请求时即服务端的「今天」，调用方据此推「昨天」，不必猜浏览器时区）。既有端点、字段一个不改。见「自动记下的段」节。
 >
+> **v2.38（追加式）：三级分类——原始记录、窗口块、两级规则；键盘鼠标活动。** 仓主 2026-10-24 批准。检测程序追加上传 ≥ 1 秒的原始记录（`activity/records`），按块名聚成每天的窗口块（`activity/blocks*`），块由第二级规则（`activity/block-rules`）或人 / AI 分到任务、可拆、可标通用窗口；分好的按段写台账（`source: activity-block`），改分类用 `session.reassigned` / `session.voided`。账号设置 `activity/settings` 的 `tiers` 关着时一切照旧；打开后停止建议的自动记录并迁移旧规则。另加 `activity/input`（只有活动时间格）。见「三级分类：原始记录、窗口块、两级规则」「键盘鼠标活动」节。
+>
 > **v2.36（追加式）：AI 可以提议「改名 / 搬移 / 删除」现成的项目或任务，以及「以后都忽略」某个程序 / 窗口，人批准才生效。** 仓主 2026-10-22 批准。
 > 同 v2.30：**AI 只提议，不直接写**；提议存同一个集合 `activity_new_items`，新增 `kind: change | ignore`。批准才经 `guard.run_write`（改名 / 搬移 / 删除）或 `ignore.add`（忽略规则）落地。
 > `GET activity/proposals` 响应追加 `changes` / `ignores` 两个键；既有端点、字段、行为一个不改。见「AI 提议改动与忽略规则」节。
@@ -656,6 +658,14 @@ consumes:
 | POST | `/api/core/activity/choice` | `{key, taskId \| projectId, remember?}` | `ChoiceOut`（见「自动跟踪进行中的任务」节）；带 Bearer 403、404、422 | ✅ 已实现（v2.14） |
 | POST | `/api/core/activity/choice/dismiss` | `{key}` | `{key, dismissedUntil}`；带 Bearer 403、404、422 | ✅ 已实现（v2.14） |
 | GET | `/api/core/activity/auto` | 无；可选查询 `date=YYYY-MM-DD`（v2.37，缺省今天，坏格式 422） | `{items[]}`（那一天自动记下的段，新的在前，至多 200 条） | ✅ 已实现（v2.14） |
+| POST | `/api/core/activity/records` | `{deviceId, records[1..500]}` | `{accepted, duplicates, ignored, rejected[]}`（见「三级分类」节一） | ⏳ 契约已定（v2.38） |
+| GET | `/api/core/activity/blocks` | 查询 `date?`、`status?`、`limit?`、`cursor?` | `{date, items[]}`（见「三级分类」节二） | ⏳ 契约已定（v2.38） |
+| GET | `/api/core/activity/blocks/records` | 查询 `date`、`blockKey` | `{items[], truncated}` | ⏳ 契约已定（v2.38） |
+| POST | `/api/core/activity/blocks/assign\|split\|generic\|ignore\|reset` | 见「三级分类」节二（带 `ifSeq`） | 该块的新状态；带 Bearer 403、`ifSeq` 不符或日期已过期 409、目标不存在 404 | ⏳ 契约已定（v2.38） |
+| GET / POST / DELETE | `/api/core/activity/block-rules[/{id}]` | `{blockKey, taskId \| projectId}` | 见「三级分类」节三；写只许人 | ⏳ 契约已定（v2.38） |
+| GET / PUT | `/api/core/activity/settings` | `{tiers, agentDirect{enabled, windowsClassify, honeycombRecords}}`，PUT 带 `If-Match` | 同体加 `version`、`tiersSince`；PUT 只许人，版本不符 412，迁移超 500 条 409 | ⏳ 契约已定（v2.38） |
+| POST | `/api/core/activity/direct-log/{id}/undo` | 无 | 撤回一次直接施加；只许人 | ⏳ 契约已定（v2.38） |
+| POST / GET | `/api/core/activity/input` | `{deviceId, bins[]}` / 查询 `date` | 见「键盘鼠标活动」节 | ⏳ 契约已定（v2.38） |
 | POST | `/api/core/activity/ai/claim` | 无（空体或 `{}`） | `{window: null \| {key, app, title, claimedAt, answerBy}}`（见「让 AI 认窗口」节）；带 Bearer 403 | ✅ 已实现（v2.15） |
 | POST | `/api/core/activity/ai/suggest` | `{key, taskId \| projectId, confidence, reason}` 或 `{key, none: true, reason}` | `SuggestOut`；带 Bearer 403、400、404、409（不在等回答，什么都没写）、422 | ✅ 已实现（v2.15） |
 | POST | `/api/core/activity/choice/reject` | `{key}` | `{key, app, title, ruleRemoved}`；带 Bearer 403、404（不是 AI 认的）、422 | ✅ 已实现（v2.15） |
@@ -4426,6 +4436,197 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 - **`null`**：找不到那条事件（占了位、事实还没写成，或事件被删），或它指向的任务 / 项目已删。不是错误。
 - **租户与成本**：只看当前租户；一页的 `recordedTo` 共用两次事件查询（段一次、改挂一次）、一次任务查询、一次项目查询，不逐条查（不 N+1）。
 - 名字是用户起的文本，按原样给；消费方（MCP）负责清洗。
+
+
+## 三级分类：原始记录、窗口块、两级规则（规范性 · v2.38）
+
+仓主 2026-10-24 定。把「每段一张待确认卡片」换成三级：
+
+| 层级 | 是什么 | 谁来分 |
+|---|---|---|
+| 第一级 · 原始记录 | 检测程序报上来的每一小段窗口使用（≥ 1 秒） | 第一级规则（`detector.rules.v1` v1.5 的 `kind: "block"`）决定它属于哪个窗口块；忽略规则（v2.22）决定丢掉 |
+| 第二级 · 窗口块（Windowsblock） | **同一个块名在同一个本地日里**的全部原始记录 | 第二级规则（本节「三」）或人 / AI 决定它记到哪个任务；能拆、能标成通用窗口 |
+| 第三级 · 报告与提问 | AI 看前两级写的总结与问题 | 另节规定（v2.39 起），本节不涉及 |
+
+本节只增：账号没打开三级分类（「六」`tiers`）时，既有的建议上传、待确认列表、规则、自动记录**行为不变**，检测程序也不上传原始记录（ai-detector 契约「原始记录」）。
+
+### 一、原始记录 `activity_records`
+
+`POST /api/core/activity/records`——**只收带 Bearer 的请求**（即经网关的设备令牌；不带 Bearer 的人路径与 MCP 对内直连一律 `403`）。`deviceId` 由客户端声明，同建议上传（令牌不绑定设备，这一点与建议上传一样）。
+
+```jsonc
+{ "deviceId": "dev_…",
+  "records": [                                // 1..500 条
+    { "startAt": "2026-10-24T09:10:03.250+08:00",   // 带偏移的 ISO 时刻，精度到毫秒
+      "endAt":   "2026-10-24T09:10:41.000+08:00",
+      "app": "google-chrome",                 // 1..128 字符，清洗同建议上传
+      "title": "…",                            // 0..512 字符（忽略闸门看全文，之后截断，同 v2.22）
+      "titleIsPseudonym": false,              // 标题是不是代号（titles: "pseudonymize"）；titles: "drop" 时标题为空，填 false
+      "block": "示例文档" | null }             // 检测程序按第一级规则算出的块名；null = 规则没命中。键必须出现
+  ] }
+// 200 → { "accepted": 37, "duplicates": 2, "ignored": 1, "rejected": [ { "index": 5, "reason": "…" } ] }
+```
+
+- **秒数**：`endAt − startAt`，[1, 86400] 秒内，存成带小数的秒（`float`）；否则该条进 `rejected`，其余照收。
+- **防重**：`rec:<deviceId>:<startAt 的 UTC 毫秒>`，`(user, dedupeKey)` 唯一，**先到的为准**（同起点、不同终点的后到者算重复）。重复计入 `duplicates`。
+- **忽略闸门**：先过「忽略并记住」（v2.22），命中的不存，计入 `ignored`。
+- **日界**：`NEXUS_TZ` 本地日。跨午夜的记录切成两条存（第二条防重键用午夜那一刻）；计数里仍算一条。
+- **块名** `blockKey` 与来源 `keySource`：
+  1. `block` 非空 → `blockKey` = 它（去首尾空白，≤ 64 字符），`keySource: "rule"`；
+  2. 否则 → `blockKey = app + " · " + 归一化标题`（归一化同匹配历史的 `normTitle`；标题为空时就是 `app`），`keySource: "auto"`。
+  服务端**不**在上传时自己匹配规则（检测程序已经按规则算过；`block: null` 就是没命中）。
+- **重算**（让新批准的第一级规则管到今天已有的记录）：第一级规则的生效版本变化后，对**最近 14 天**、`titleIsPseudonym: false`、所在块**还没分类**（`pending`，见「二」）的记录，服务端按新规则集（RE2，同 `window_rules` 的匹配语义：不分大小写、不锚定、先命中先用）重算 `blockKey` / `keySource`。标题是代号的记录不重算（规则是按真标题写的）。有界：每次至多 5000 条，余下的下次再做。
+- **文档**：`{user, id: "rec_…", dedupeKey, deviceId, date, startAt, endAt, startTs, endTs, seconds, app, title, titleIsPseudonym, block, blockKey, keySource, receivedAt, ledgerEventId: null}`。`ledgerEventId` 见「四」。
+- **留存**：`NEXUS_RECORD_TTL_DAYS`（缺省 35）天，惰性清理（有界）。过期日期的块见「二」最后一条。
+- **读**：原始记录只经「二」的端点读，只许不带 Bearer 的调用方（人与 MCP）；带 Bearer 的设备令牌 `403`。
+
+### 二、窗口块（Windowsblock）
+
+块 = `(user, date, blockKey)`。时长每次读时由原始记录聚合；分类状态存 `activity_blocks`：
+
+```jsonc
+{ "user": "…", "date": "2026-10-24", "blockKey": "示例文档",
+  "status": "pending" | "assigned" | "generic" | "ignored" | null,   // null = 跟随缺省（reset 后）
+  "parts": [ { "fromTs": null | 1792800000000, "toTs": null | 1792803300000,   // UTC 毫秒；null = 当天开头 / 结尾
+               "taskId": "t_…" | null, "projectId": "p_…" } ],
+  "via": "rule" | "human" | "ai" | "ai-direct" | null,
+  "ruleId": "br_…" | null,
+  "seq": 3,                    // 每次改动 +1，永不回退（reset 也 +1）
+  "gen": 2,                    // 入账代号：生效目标或拆分点每变一次 +1（见「四」）
+  "runs": [ { "eventId": "evt_…", "dedupeKey": "…", "startTs": …, "endTs": …, "partIdx": 0 } ],   // 已写进台账、未作废的段
+  "updatedAt": "…" }
+```
+
+- **生效状态**（读时算）：文档 `status` 非 null → 用它；否则块名是通用窗口且 `date ≥ 标记日` → `generic`（未拆）；否则有可用的第二级规则（「三」）→ `assigned`、`via: "rule"`、一段全天；否则 `pending`。
+- **通用窗口**：`activity_generic {user, blockKey, since: 标记的本地日}`。只管 `since` 当天及以后。通用窗口的块不吃第二级规则；给出 `parts`（拆）之后状态是 `generic`、带 `parts`，算分完了。
+- **parts**：按时间排、不重叠、相接（相邻处 `toTs == 下一段 fromTs`）、覆盖全天；用 UTC 毫秒，不用本地时刻（避开夏令时）。跨拆分点的记录在拆分点处切开计算。
+
+**读**（只许不带 Bearer 的调用方：人与 MCP；带 Bearer 的设备令牌 `403`）：
+
+- `GET /api/core/activity/blocks?date=YYYY-MM-DD&status=pending|assigned|generic|ignored|all&limit=200&cursor=`（缺省今天、`all`、200，上限 1000）：按秒数从多到少排。
+  ```jsonc
+  { "date": "2026-10-24", "nextCursor": null,
+    "items": [ { "blockKey": "示例文档", "keySource": "rule", "status": "assigned", "via": "rule", "ruleId": "br_…",
+                 "generic": false, "seq": 0,
+                 "parts": [ { "fromTs": null, "toTs": null, "taskId": "t_…", "projectId": "p_…", "seconds": 2520 } ],
+                 "seconds": 2520, "records": 14, "firstAt": "…", "lastAt": "…", "apps": ["google-chrome"],
+                 "expired": false } ] }
+  ```
+  `seconds`：**跨设备取并集**（两台设备同时在同一个块上，同一秒只算一次）。
+- `GET /api/core/activity/blocks/records?date=&blockKey=` → 该块的原始记录（`startAt, endAt, seconds, app, title, deviceId`，时间序，≤ 5000 条，多了 `truncated: true`）。
+
+**写**（只许人；AI 走「五」）。每个都带 `ifSeq`（读到的 `seq`，没有文档为 0），不符 → `409` 并给现状；目标任务 / 项目不存在 → `404`。
+
+| 端点 | 请求体 | 效果 |
+|---|---|---|
+| `POST activity/blocks/assign` | `{date, blockKey, ifSeq, taskId?, projectId?, remember: true}` | 整块记到一处。`remember` 为真且不是通用窗口 → 同时写（或替换）一条第二级规则 |
+| `POST activity/blocks/split` | `{date, blockKey, ifSeq, parts: [{fromTs?, toTs?, taskId?, projectId?}]}` | 按时间拆成 2..20 段各记一处 |
+| `POST activity/blocks/generic` | `{blockKey, generic: true\|false}` | 标 / 取消通用窗口（`since` = 今天）。取消后今天起回到缺省 |
+| `POST activity/blocks/ignore` | `{date, blockKey, ifSeq, forever: false}` | 这一天的块不记。`forever: true` 只许 `keySource: "auto"` 的块（另写一条「忽略并记住」：`app` = 块里时长最多的程序，`titleContains` = 块名里「 · 」之后的部分；块名就是程序名时只按程序，此时响应 `scope: "app"` 提示「整个程序都忽略了」）；`keySource: "rule"` 的块 `forever` → `422`，改第一级规则 |
+| `POST activity/blocks/reset` | `{date, blockKey, ifSeq}` | `status`、`parts`、`via` 置 null（回到缺省），`seq` +1；文档保留 |
+
+- 每次写后按「四」对账。
+- **过期日期**：该日的原始记录已过留存期（`expired: true`），写端点一律 `409`（`detail`：「这一天的原始记录已过期，不能再改分类」）；台账里已有的段不受影响。`activity_blocks` 文档与台账一样永久保留。
+
+### 三、第二级规则 `activity_block_rules`
+
+块名 → 任务或项目，**精确匹配块名**（不是正则）。没有把握度：存在即生效。
+
+```jsonc
+{ "id": "br_…", "blockKey": "示例文档", "taskId": "t_…" | null, "projectId": "p_…",
+  "author": "human" | "ai", "via": "assign" | "manual" | "proposal" | "direct" | "migration", "createdAt": "…", "updatedAt": "…" }
+```
+
+- `GET /api/core/activity/block-rules`（人与 MCP）→ `{items}`，≤ 2000 条；目标已删的标 `broken: true`（读时视为没有规则）。
+- `POST /api/core/activity/block-rules {blockKey, taskId?, projectId?}`（只许人）→ 同块名已有规则时**改它的目标**（`author` / `via` / `updatedAt` 换成这次的）。
+- `DELETE /api/core/activity/block-rules/{id}`（只许人）。
+- **影响范围**：规则的增、改、删、失效，影响**最近 14 天**里没有分类文档（或文档 `status` 为 null）的同名块；更早的日期不重算（读时也按「记下的入账」显示，不按新规则）。受影响的块按「四」对账。
+
+### 四、写进台账（对账）
+
+分好的时间要进台账（`events`），否则时长、甘特、周回顾都看不到。做法是**对账**：每个块都有「应该入账什么」与「已经入账什么」（文档的 `runs`），两者不一致就补写或作废，直到一致。
+
+**应该入账什么**：
+
+1. 块的生效状态是 `assigned`，或 `generic` 且有 `parts`；`pending` / `ignored` / 未拆的 `generic` 什么都不该入账。
+2. 只算 `startTs ≥ tiersSince` 的记录（`tiersSince` 见「六」）——打开三级分类之前的时间已经由旧方式记过，不再记。
+3. 去掉已经有别的来源记过的时间：与台账里**其他来源**的 `session.completed`（`timer-backend`、`manual-backfill`、`activity-confirmed`）或正在跑的手动计时重叠的部分，在重叠边界切开、扣掉。
+4. 多台设备在同一块上的时间取并集。
+5. 剩下的时间按 part 分开，同一 part 里相邻间隔 ≤ 300 秒的连成一段（run）；段的秒数 = 段内时间并集的长度，四舍五入到整秒，< 1 秒的段不入账。
+
+**已经入账什么**：块文档的 `runs`（每条一个 `session.completed` 的 id、防重键、起止、part 序号）；原始记录的 `ledgerEventId` 指向覆盖它的那条事件。
+
+**一段什么时候写**：段**收口**（段的最后时刻 + 300 秒 ≤ 现在）才写。收口后再来的记录（离线补传、第二台设备）**不并进已写的段**，单独成新段（规则同上），所以迟到的时间是另一条 `session.completed`，不改旧的。
+
+**对账动作**：
+
+- **补写**：应该有、还没有的段 → 一条 `session.completed`：`source: "activity-block"`，`dedupeKey: "block:<date>:<blockKey 的 sha256 前 12 位>:<gen>:<段起点 UTC 毫秒>"`，`subject` = part 的目标（只给项目落进该项目的「未分类」桶，同确认建议），`data: {startAt, durationSeconds, mode: "do"}`，`time` = 段的结束，`ai`：
+
+  | `via` | `ai` |
+  |---|---|
+  | `rule` | `{generated: true, auto: true, confirmed: false, block}` |
+  | `ai-direct`（AI 直接施加，无人确认） | `{generated: true, auto: true, confirmed: false, block}` |
+  | `human`、`ai`（AI 提议、人批准） | `{generated: true, confirmed: true, block}` |
+
+  `block` = `{date, blockKey}`。写成后把段记进 `runs`、给覆盖到的记录写 `ledgerEventId`。
+- **改目标**：已写的段，它所在 part 的目标变了、拆分点没动 → 追加 `session.reassigned`（v2.11 机制），`runs` 不变。
+- **作废**：已写的段不再应该存在（拆分点变了切到它、块变成 `pending` / `ignored` / 未拆的 `generic`、后来补的手动计时盖住了它、规则删了或失效）→ 追加 `session.voided`，从 `runs` 里拿掉，覆盖记录的 `ledgerEventId` 清空；之后按新的「应该」补写。
+- **`gen`**：生效目标或拆分点每变一次 +1。补写的防重键带 `gen`，所以「拆开 → 撤销拆分 → 再分」这类来回不会撞上已作废那条的防重键。
+
+**`session.voided`**：`{voidedEventId, actor, reason}`，`reason` ∈ `block-split` / `block-ignored` / `block-reset` / `block-rule` / `block-generic` / `manual-overlap` / `direct-undo`；`dedupeKey: "void:<voidedEventId>"`，`subject` 同被作废那条。所有算时长的读端（投影、`views/*`、导出的统计、MCP 的时间工具）**跳过已作废的 `session.completed`**；原事实不删。
+
+**谁来对账、什么时候**：
+
+- 后台循环（nexus-core 进程内，每 60 秒一轮）+ 下列事件触发尽快一轮：原始记录上传、块的写操作、第二级规则变化、通用窗口标记变化、手动计时开始 / 结束 / 补登、`tiers` 变化。读端点**不写台账**。
+- 每个块的对账在块文档上做**比较并交换**（读 `seq` / `gen`，写时 `seq` 不变才提交；变了就重来），所以与人的改动并发也不会写出过时的段。
+- 有界：每轮至多处理 500 个块、2000 个事件；没做完的下一轮继续。一个块的动作没做完时块文档带 `reconciling: true`，`GET blocks` 照样回该块，时长按「应该入账」算（不按台账）。
+- 事件的 `actor`：人的写操作触发的对账 = 那个人；规则、后台循环 = `system`。
+
+### 五、AI 的提议与直接施加
+
+AI 不直接调「二」「三」的写端点（那些只许人）。它经 `activity_new_items` 提议，人在蜂巢决策栏批准 / 更正 / 拒绝；或在人打开开关后直接施加。
+
+- `activity_new_items` 追加三种 `kind`（前缀 `nw_` / `nb_` / `na_`）：
+  - `windowRule`：第一级规则的增 / 改 / 删（`op: add|edit|delete`，`rule: {id?, app?, title?, block}`）。批准 = 按 `detector.rules.v1` 写进生效规则集（服务端代 If-Match；版本冲突时重读重试，至多 3 次，仍冲突回到 pending）。
+  - `blockRule`：第二级规则的增 / 改 / 删（`op`，`blockKey`，`taskId|projectId`）。`add` 遇到同块名已有规则按 `edit` 处理。
+  - `blockAction`：对某天某块的 `assign | split | generic | ignore`，参数同「二」（`ignore` 不许 `forever`）。
+- **批准时更正**：`POST activity/proposals/{id}/approve` 追加可选 `edit`，与该 kind 的参数同形；只许改目标（`taskId` / `projectId`）、块名（`block`）、拆分点（`parts`），不许改 `kind`、`op`、`blockKey`（`422`）。按更正后的落地，提议记 `corrected: true`。
+- 列表、拒绝、失败回滚沿用 v2.30 / v2.36；上限：`windowRule` 50、`blockRule` 50、`blockAction` 200。
+- **直接施加**：账号设置 `agentDirect`（「六」）的总开关与对应分开关都开、且调用方是 `write` 范围的非人调用方时，提议请求带 `directApply: true` 就跳过待批准立即落地（块的 `via: "ai-direct"`），并记一条 `activity_direct_log {id, at, actor, kind, payload, before}`。分开关：`windowsClassify` 管 `windowRule` / `blockRule` / `blockAction`；`honeycombRecords` 管 v2.36 的 `change`。任一条件不满足 → `403`，`detail` 说清缺哪一条。
+- **撤回**：`POST activity/direct-log/{id}/undo`（只许人）把 `before` 写回（规则集、第二级规则、块文档），再按「四」对账（作废的 `reason: direct-undo`）。`before` 已被后来的改动覆盖时 `409`。
+
+### 六、账号设置 `activity_settings`
+
+`GET /api/core/activity/settings`（人、MCP、设备令牌都可读）、`PUT`（只许人，整份替换，须带 `If-Match: "<version>"`，不符 `412`）：
+
+```jsonc
+{ "version": 3,
+  "tiers": false,                          // 打开三级分类
+  "tiersSince": null,                      // 最近一次打开的时刻（服务端写，客户端给的忽略）
+  "agentDirect": { "enabled": false, "windowsClassify": false, "honeycombRecords": false } }
+```
+
+- `tiers: false`（缺省）：检测程序不传原始记录；「四」不对账；块端点照常可读（多半是空的）；建议与自动记录（v2.14）不变。
+- `tiers` 从关到开：`tiersSince` = 此刻；之后
+  - 「四」开始对账，只管 `tiersSince` 之后的记录；
+  - 建议上传仍然收（老检测程序不断），但**不再自动记录、也不再接受确认**（v2.14 的自动记录与 `POST suggestions/{id}/confirm` 对该账号回 `409`，`detail`：「已打开三级分类，请在窗口块里分类」），以免同一段时间记两次；待确认列表照常可读、可忽略；
+  - 第一次打开时迁移旧规则（见下）。
+- `tiers` 从开到关：停止对账（已入账的不动）；之后恢复旧行为。再打开时 `tiersSince` 更新为新的时刻，关着期间的记录不入账（那段时间由旧方式记）。
+- **迁移旧规则**（第一次打开，幂等，按旧规则 `id`）：每条生效的旧式规则（带 `taskId` / `projectId`）紧挨着它后面插一条第一级规则（`kind: "block"`，同样的 `app` / `title`，`block` = 规则 `note` 截到 64 字符；没有 `note` 用「旧规则 <id>」；同名冲突加「 (2)」「 (3)」）；`confidence ≥ 0.9` 的再写一条第二级规则（该块名 → 原目标，`via: "migration"`），低于 0.9 的不写（它们原本也不自动记）。`mode: "ai"` 的规则不迁移、原样保留（三级分类下这类窗口就是普通的待分类块）。旧规则加 `migrated: true`，留给老检测程序。迁移后规则总数超过 500 → 整个打开操作 `409`（`detail` 说清超了多少），`tiers` 不变。
+
+### 七、杂项
+
+- **集合登记**：`activity_records`、`activity_blocks`、`activity_generic`、`activity_block_rules`、`activity_direct_log`、`activity_settings`、`activity_input` 进导出 / 恢复 / 快照的集合登记表。
+- **租户**：全部按租户隔离。
+- **索引**：`activity_records (user, date, blockKey, startTs)`、`(user, dedupeKey)` 唯一、`(user, endTs)`；`activity_blocks (user, date, blockKey)` 唯一。
+
+## 键盘鼠标活动（规范性 · v2.38）
+
+`POST /api/core/activity/input`（只收带 Bearer 的请求，同原始记录）：`{deviceId, bins: [epochSeconds…]}`——**只报有活动的 10 秒格**（每个值是格起点的 UNIX 秒，10 的倍数，落在 [现在 − 7 天, 现在 + 60 秒] 内，否则整个请求 `422`），一次 ≤ 8640 个。服务端按 `(user, deviceId, 本地日)` 用 `$addToSet` 存（并发不丢），留存同原始记录。
+
+`GET /api/core/activity/input?date=YYYY-MM-DD`（人与 MCP）→ `{date, binSeconds: 10, bins: [...]}`（多台设备合并去重、升序）。
+
+**只有时间格，没有任何按键内容。** 本版只用于显示，不影响入账。检测程序侧见 `detector.settings.v1` v1.4 的 `inputActivity` 与 ai-detector 契约「键盘鼠标活动」。
 
 ## 变更记录
 
