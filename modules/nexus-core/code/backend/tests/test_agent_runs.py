@@ -171,10 +171,10 @@ def test_agent_time_only_in_agent_projection(client, seeded, shift_clock):
     assert all(not t.get("actual") for p in gantt["projects"] for t in p.get("tasks", []))
 
     rows = list(db["proj_agent_daily_stats"].find({}, {"_id": 0, "appliedKeys": 0}))
-    assert len(rows) == 1
-    row = rows[0]
-    assert (row["projectId"], row["taskId"], row["agent"]) == (project["id"], task["id"], "claude-code")
-    assert (row["seconds"], row["runs"]) == (stopped["durationSeconds"], 1)
+    # 拨后 2 小时可能跨过本地零点：分到两天，合计不变
+    assert 1 <= len(rows) <= 2
+    assert all((r["projectId"], r["taskId"], r["agent"]) == (project["id"], task["id"], "claude-code") for r in rows)
+    assert sum(r["seconds"] for r in rows) == stopped["durationSeconds"]
 
 
 def test_human_daily_total_unaffected_by_concurrent_agents(client, seeded, shift_clock):
