@@ -475,9 +475,10 @@ def reject_report(report_id: str) -> dict:
     if doc["status"] != "pending":
         raise service.ConflictError(f"报告已{'批准' if doc['status'] == 'approved' else '作废'}，不能整份不要")
     reports_repo.reject_open_items(user, report_id, _now())
-    left = {i["id"] for i in _load(user, report_id)["items"] if i["status"] in reports_repo.OPEN}  # 被批准占着的没动
-    for it in doc["items"]:
-        if it["status"] in reports_repo.OPEN and it["id"] not in left:
+    now_items = _load(user, report_id)["items"]
+    left = {i["id"] for i in now_items if i["status"] in reports_repo.OPEN}  # 被批准占着的没动
+    for it in now_items:  # 所有已拒的都补一次（幂等）：上次中途崩了，重试也能把提议拒掉
+        if it["status"] == "rejected":
             _reject_proposal(user, it)
     if left:
         raise service.ConflictError("有条正被批准，请稍后再整份不要")
