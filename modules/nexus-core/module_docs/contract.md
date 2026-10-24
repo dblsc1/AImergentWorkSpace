@@ -570,6 +570,12 @@ provides:
       同（分区 / 项目 / 提议, 归一化名字）一条；活的同名 409 带它的 id；人不要过的 409；待批准项目超 20 / 任务超 100 条 429；
       项目提议没批准时其下任务提议批准 409，不要项目连带不要其下待批准的任务
     status: 已实现（v2.30），待验证
+  - id: nexus-core.activity.tiers.v1
+    summary: 三级分类（v2.38，追加式）——POST/GET /api/core/activity/records、GET /api/core/activity/blocks[/records]、
+      POST …/blocks/assign|split|generic|ignore|reset（带 ifSeq，只许人）、GET/POST/DELETE …/activity/block-rules（写只许人）、
+      GET/PUT …/activity/settings（tiers、agentDirect，PUT 只许人带 If-Match）、GET …/activity/input；
+      AI 提议 POST …/proposals/window-rules|block-rules|block-actions、GET …/activity/direct-log、POST …/direct-log/{id}/undo（只许人）
+    status: 部分实现（v2.38：records / blocks / block-rules / settings / input 已实现，对账与提议进行中）
   - id: nexus-core.lanes.prefs.v1
     summary: 泳道偏好（v2.22，追加式）——每租户一份：代理身份 (agent, 归一化 label) 的 hidden / pinned（pinnedAt 定先后）、按运行的手动排位
       slot（只对在跑的运行有效）。GET /api/core/lanes/prefs、PUT …/agent {agent, label?, hidden?, pinned?}、PUT …/order {runId, index}、
