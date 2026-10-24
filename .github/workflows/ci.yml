@@ -327,7 +327,7 @@ jobs:
         run: test/accounts.sh ci-accounts-pw
       - name: 设备令牌（auth.gate v1.2）
         run: test/tokens.sh ci-accounts-pw
-      - name: MCP（mcp.tools.v1，令牌经网关、两个账号互不可见）
+      - name: MCP（mcp.tools.v1 传输 + v2 工具集，令牌经网关、两个账号互不可见）
         run: test/mcp.sh ci-accounts-pw
       - name: 权限范围（auth.gate v1.4；多账号下匿名一律被拒）
         run: test/scopes.sh ci-accounts-pw

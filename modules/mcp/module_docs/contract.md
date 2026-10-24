@@ -1,6 +1,8 @@
 # mcp · 对外接口契约
 
-> 本模块实现 `contracts/mcp.tools.v1`（给 AI 代理用的工具，MCP Streamable HTTP；v1.2 起 10 个只读 + 1 个只写草稿的 propose_；v1.3 再加 1 个只写建议的 propose_activity_matches；v1.7 再加 1 个只读的 get_match_history，共 13 个；v1.9 再加 get_window_awaiting_target 与 suggest_window_target，共 15 个；v1.17 再加 apply_detector_rules，共 19 个；v1.18 再加 propose_project / propose_task，共 21 个；v1.24 再加 propose_change / propose_ignore_rule，共 23 个；没有范围头的调用方 22 个）。行为的唯一事实在
+> 本模块实现 `contracts/mcp.tools.v2`（v0.5：15 个工具，读 9 个、写 6 个；`tools/list` 只列这一套）；传输、租户、`Origin`、协议与屏幕文字不可信沿用
+> `contracts/mcp.tools.v1`。v1 的 23 个工具名仍可调，只回迁移说明、不调下游。以下括号里是 v1 的历史（给追溯用）：
+> `contracts/mcp.tools.v1`（给 AI 代理用的工具，MCP Streamable HTTP；v1.2 起 10 个只读 + 1 个只写草稿的 propose_；v1.3 再加 1 个只写建议的 propose_activity_matches；v1.7 再加 1 个只读的 get_match_history，共 13 个；v1.9 再加 get_window_awaiting_target 与 suggest_window_target，共 15 个；v1.17 再加 apply_detector_rules，共 19 个；v1.18 再加 propose_project / propose_task，共 21 个；v1.24 再加 propose_change / propose_ignore_rule，共 23 个；没有范围头的调用方 22 个）。行为的唯一事实在
 > 那份契约里，本文件只登记依赖、说明实现选择。改行为先改那份契约。
 
 ```yaml
@@ -77,12 +79,22 @@ consumes:
 ## 实现
 
 - `code/server/mcp_server.py`：HTTP 层（Origin → 租户 → 协议版本头 → 256 KiB 上限（v1.2 前 64 KiB））与 JSON-RPC
-  （`initialize`、`ping`、`tools/list`、`tools/call`）。`code/server/tools.py`：15 个工具、入参校验、cursor、路径。
+  （`initialize`、`ping`、`tools/list`、`tools/call`）。v2 起的拆分：`tools.py`（下游请求、入参检查、address 解析、`permissions`、
+  15 个工具的实现与分发）、`specs.py`（工具声明：名字、说明、inputSchema、help 示例，以及 `Get_Started` 的说明文档）、
+  `v1_migration.py`（23 个 v1 名字的迁移说明）。
 - **纯标准库，没有用官方 MCP Python SDK。** SDK 能做无状态 Streamable HTTP，但要带进 starlette / pydantic /
   anyio / httpx 一串依赖，Origin 与租户这两道 HTTP 层的门还得另写中间件（SDK 自带的 DNS 重绑定防护比的是 `Host`，
   契约明确不拿 `Host` 比）；用到的协议面只有四个方法，手写更小、每一步都看得见。
 - 上限：请求体 256 KiB、批量 16 条、同时处理 8 个请求（再多等 10 秒后 503）、nexus-core 单次响应 8 MiB。
-- 无状态、不缓存：每次工具调用现取 `views/tree` 算路径，不存在跨租户缓存。
+- 无状态；唯一的缓存是 `activity/settings`（给 `permissions` 用，按租户分开、至多 30 秒、写工具收到 `403` 就清）。其余每次工具调用现取，不存在跨租户缓存。
+- v2（`mcp.tools.v2`）：
+  - 写端点（`POST`）只在调用方范围是 `write` 时带 `X-Nexus-Scope: write`，读端点从不带；`direct_apply` 的判定全在 nexus-core，MCP 只把 `403 reason` 翻成一句话。
+  - 所有 id 入参也收 address：`tools.Tree.resolve` 按当前 `views/tree` 解析（id 优先，再按 address 整串不分大小写匹配），对不上或有歧义 → `400` 列至多 5 个候选。
+  - 批量写工具（`ops` / `items` / `questions`）逐条处理、逐条给结果；`Submit_Questions_To_Human` 一条一个 `POST`，所以可以部分成功。
+  - 「今天」和缺省的 `date`：用 `NEXUS_TZ`（镜像里有时区库时）或进程本地时区算；nexus-core 才是归日的权威，所以缺省日期尽量不传、交给下游。
+  - 契约没写死、实现里定下的几处：`Get_Pending_Classify_Windows` 的 `titles` 取下游给的 `titles`，没有就取自动块名「程序 · 标题」里的标题；
+    `CRUD_Windowsblock` 的 `split` 要求各段首尾相接，发给下游时把首段开头、末段结尾放开成 `null`（覆盖全天）；
+    重名提醒里建议的新名字是「原名 + 数字」（从 2 起第一个同级没占用的）。
 - 调用方范围（`mcp.tools.v1` v1.12）：`mcp_server.caller_scope` 读网关转来的 `X-Nexus-Scope` / `X-Nexus-Anonymous`——
   `report` / 匿名 / 不认识的取值整个端点 403；`read` 时 `tools/list` 不列 `tools.WRITES`、`tools.call` 拒绝它们。
 - 日志只记请求行、状态码、工具名与结果状态，不记请求头（`Authorization`/`Cookie` 本来也被网关清掉了）、不记工具结果。
@@ -95,10 +107,15 @@ consumes:
 | `NEXUS_CORE_URL` | `http://nexus-core:8000` | nexus-core 地址 |
 | `NEXUS_TENANT_STRICT` | `0` | 与 nexus-core 同一个开关（compose 传同一个值）；`1` = 缺租户头 401。看不懂的取值拒绝启动 |
 | `MCP_ALLOWED_ORIGINS` | 空 | 逗号分隔；带 `Origin` 的请求须与其中一项完全相等，否则 403 |
+| `NEXUS_TZ` | 空 | 可选。给了就用它算「今天」（缺省日期、`Get_Started` 的 `today`）；没给或镜像里没有时区库 = 进程本地时区 |
 
 ## 测试
 
-`cd modules/mcp/code/server && python -m pytest -q tests`（CI「mcp 测试」）：真起服务 + 假 nexus-core，
+`cd modules/mcp/code/server && python -m pytest -q tests`（CI「mcp 测试」）。v2：`tests/test_mcp_v2.py`（假 nexus-core 与客户端在 `tests/fake_nexus.py`）覆盖
+契约 `mcp.tools.v2` 第六节全部：三种范围的 `tools/list`（15 / 15 / 9）、15 个工具的 `help`（不取数据）与 happy path、每次返回的 `note`（≤ 100 字）与 `permissions`
+（含缓存与 `403` 清缓存）、参数错误带 `example` 与固定 `hint`、`422` → `400`、address 解析 / 歧义 / 不存在、`X-Nexus-Scope` 只给写端点且只在 `write` 范围、
+`direct_apply` 的几种 `403`、批量写部分成功、`create` 不收 `direct_apply`、`Submit_*` 没有 `direct_apply`、`tiersOff`、23 个 v1 名字逐个迁移且不调下游、
+两个租户互不可见、只调登记的端点。传输层（协议、`Origin`、租户、体积、批量、范围头）在 `tests/test_mcp.py`。以下是 v1 时代的覆盖清单（历史）：真起服务 + 假 nexus-core，
 覆盖每个工具的形状、分页与 cursor 绑定、时间偏移 400、日期区间、租户 401/400/单人/两租户隔离、Origin、413、
 405、只调白名单 GET、下游 4xx 透传 / 5xx 与连不上 502、建议不出 `deviceId`、`tools/list` 除 `propose_` 外全部只读、
 `propose_detector_rules` 只发一个 POST 草稿且不带 `Authorization`、逐条错误原样带回、

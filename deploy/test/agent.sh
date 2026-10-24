@@ -19,11 +19,11 @@ def req(m, p, body=None, tenant="alice"):
 h = json.load(req("GET", "health"))
 assert h == {"status": "ok", "configured": True, "debug": False}, h
 sid = json.load(req("POST", "sessions", {}))["id"]
-body = req("POST", f"sessions/{sid}/messages", {"text": "call:get_task_tree"}).read().decode()
+body = req("POST", f"sessions/{sid}/messages", {"text": "call:Get_View"}).read().decode()
 events = [l[7:] for l in body.splitlines() if l.startswith("event: ")]
 assert events == ["start", "tool", "tool", "delta", "done"], body
 log = json.load(urllib.request.urlopen("http://fake-mcp:8020/_log"))
-assert [e["tenant"] for e in log if e["tool"] == "get_task_tree"][-1] == "alice", log
+assert [e["tenant"] for e in log if e["tool"] == "Get_View"][-1] == "alice", log
 # 后台认窗口的工人（第十节）：配了模型就自己定时经 MCP 问（约 25 秒一次），带的是该租户的头；假 MCP 没有窗口在等，不花模型的钱
 import time
 deadline = time.time() + 90

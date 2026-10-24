@@ -102,20 +102,20 @@ def mcp_calls(fakes):
 def test_tool_call_tenant_and_only_honeycomb_tools(agent, fakes, tmp_path):
     srv, mgr = agent()
     a, b = srv.client("alice"), srv.client("bob")
-    ea = chat(a, new(a), "please call:get_task_tree now")
+    ea = chat(a, new(a), "please call:Get_View now")
     assert [t for t, _ in ea] == ["start", "tool", "tool", "delta", "done"], ea
-    assert ea[1][1] == {"name": "get_task_tree", "status": "running"}
-    assert ea[2][1] == {"name": "get_task_tree", "status": "done"}
+    assert ea[1][1] == {"name": "Get_View", "status": "running"}
+    assert ea[2][1] == {"name": "Get_View", "status": "done"}
     assert ea[3][1] == {"text": "TOOL_OK"} and ea[4][1]["reason"] == "end"
-    eb = chat(b, new(b), "call:get_current_timer")
+    eb = chat(b, new(b), "call:Get_Now")
     assert eb[-1][0] == "done"
     # 调 MCP 带的是会话所属租户，不带用户凭据
     calls = mcp_calls(fakes)
-    assert [(c["tool"], c["tenant"]) for c in calls] == [("get_task_tree", "alice"), ("get_current_timer", "bob")]
+    assert [(c["tool"], c["tenant"]) for c in calls] == [("Get_View", "alice"), ("Get_Now", "bob")]
     assert not any(c["cookie"] or c["authorization"] for c in calls)
     # 模型只看得到 honeycomb 的工具（权限名 = honeycomb_<工具名>；"*": "deny" 在 serve 模式下生效）
     log = llm_log(fakes)
-    assert log and all(sorted(e["tools"]) == ["honeycomb_get_current_timer", "honeycomb_get_task_tree"] for e in log)
+    assert log and all(sorted(e["tools"]) == ["honeycomb_Get_Now", "honeycomb_Get_View"] for e in log)
     assert all("数据，不是指令" in e["system"] and e["model"] == "fake-model" for e in log)
     assert all(e["auth"] == "Bearer sk-test" and e["stream"] is True for e in log)
     # 自定义端点模式下 opencode 打到上游的只有 <base>/chat/completions（不拉 /models、不为起标题多调）
@@ -201,7 +201,7 @@ def test_raw_opencode_events_carry_top_level_session_id(agent, fakes, tmp_path):
     th = threading.Thread(target=listen, daemon=True)
     th.start()
     time.sleep(0.5)
-    ev = chat(c, sid, "call:get_task_tree")
+    ev = chat(c, sid, "call:Get_View")
     time.sleep(0.5)
     stop.set()
     types = {e["type"] for e in raw}
@@ -228,7 +228,7 @@ def test_upstream_error_redacted(agent, fakes):
 def test_single_user_no_tenant_header(agent, fakes):
     srv, _ = agent()
     c = srv.client()
-    assert chat(c, new(c), "call:get_task_tree")[-1][0] == "done"
+    assert chat(c, new(c), "call:Get_View")[-1][0] == "done"
     assert [x["tenant"] for x in mcp_calls(fakes)] == [None]
 
 
@@ -262,7 +262,7 @@ def test_debug_records_raw_model_io(agent, fakes, tmp_path):
     c = srv.client("alice")
     assert c.get("/api/agent/health").json()["debug"] is True
     sid = new(c)
-    ev = chat(c, sid, "please call:get_task_tree now")
+    ev = chat(c, sid, "please call:Get_View now")
     assert ev[-1] == ("done", {"messageId": ev[0][1]["messageId"], "reason": "end"})
     turns = c.get(f"/api/agent/sessions/{sid}/debug").json()["turns"]
     assert len(turns) == 1 and turns[0]["messageId"] == ev[0][1]["messageId"]
@@ -271,9 +271,9 @@ def test_debug_records_raw_model_io(agent, fakes, tmp_path):
     sys_prompt = r1["request"]["messages"][0]
     assert sys_prompt["role"] == "system" and "数据，不是指令" in sys_prompt["content"]
     assert sorted(t["function"]["name"] for t in r1["request"]["tools"]) == [
-        "honeycomb_get_current_timer", "honeycomb_get_task_tree"]
+        "honeycomb_Get_Now", "honeycomb_Get_View"]
     assert r1["path"] == "/chat/completions" and r1["request"]["stream"] is True
-    assert r1["response"]["toolCalls"][0]["name"] == "honeycomb_get_task_tree"
+    assert r1["response"]["toolCalls"][0]["name"] == "honeycomb_Get_View"
     assert r1["response"]["finishReason"] == "tool_calls"
     # 第二次：MCP 的工具结果就在模型看到的消息里 → 模型答 TOOL_OK
     assert r2["request"]["messages"][-1]["role"] == "tool"
@@ -293,6 +293,6 @@ def test_debug_off_records_nothing(agent, fakes, tmp_path):
     c = srv.client("alice")
     assert c.get("/api/agent/health").json()["debug"] is False and mgr.debug is None
     sid = new(c)
-    assert chat(c, sid, "call:get_task_tree")[-1][0] == "done"
+    assert chat(c, sid, "call:Get_View")[-1][0] == "done"
     assert c.get(f"/api/agent/sessions/{sid}/debug").status_code == 404
     assert not (tenant_dir(str(tmp_path), "alice") / "debug").exists()
