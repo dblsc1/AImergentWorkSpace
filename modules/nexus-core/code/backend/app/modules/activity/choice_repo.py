@@ -45,6 +45,12 @@ def drop_ai(user: str, key: str) -> None:
     _col().delete_one({"user": user, "key": key, "by": "ai"})
 
 
+def expire_upto(user: str, key: str, at: datetime) -> None:
+    """人说「不对」：``at`` 及以前写的那份（AI 的 / 人先前的）立刻作废；``at`` 之后才落库的（人刚选的）不动。
+    ponytail: 同一毫秒内的选择算「之前」，要更严就给选择加序号。"""
+    _col().update_one({"user": user, "key": key, "at": {"$lte": at}}, {"$set": {"kind": "rejected", "expiresAt": at}})
+
+
 def live(user: str, now: datetime) -> dict[str, dict]:
     """没过期的：{key: 文档}。"""
     return {d["key"]: d for d in _col().find({"user": user, "expiresAt": {"$gt": now}}, {"_id": 0})}

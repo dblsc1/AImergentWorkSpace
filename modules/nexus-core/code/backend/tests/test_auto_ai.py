@@ -252,6 +252,23 @@ def test_reject_removes_the_ai_rule_clears_the_override_and_asks_the_human(clien
     assert [r.get("auto") for r in _rules(client)["rules"]] == [None, None]
 
 
+def test_reject_does_not_overwrite_a_human_choice_saved_meanwhile(client, world, clock, monkeypatch):
+    from app.modules.activity import auto_ai, choice_repo  # noqa: PLC0415
+
+    w = _waiting(client, clock)
+    _answer(client, w["key"], taskId=world["a"], confidence=0.9)
+    real = auto_ai.window_rules.remove_auto
+
+    def human_chooses_first(rule_id):  # 问询已标 rejected，人的选择此刻才落库（盖掉 AI 那份）
+        choice_repo.put({"user": "u_local", "key": w["key"], "kind": "choice", "app": "code", "title": "notes",
+                         "taskId": world["a"], "at": clock(S + 62), "expiresAt": clock(S + 62) + timedelta(hours=1)})
+        return real(rule_id)
+
+    monkeypatch.setattr(auto_ai.window_rules, "remove_auto", human_chooses_first)
+    _post(client, REJECT, {"key": w["key"]})
+    assert _db()["activity_choices"].find_one({"key": w["key"]})["taskId"] == world["a"]   # 人的选择还在
+
+
 def test_reject_is_for_humans_and_only_for_ai_recognised_windows(client, world, clock):
     key = _waiting(client, clock)["key"]
     assert client.post(REJECT, json={"key": key}).status_code == 404           # 还没答

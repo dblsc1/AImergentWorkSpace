@@ -68,9 +68,6 @@ def upload(device_id: str, records: list[Any]) -> dict:
         except ValueError as exc:
             rejected.append({"index": index, "reason": str(exc)})
     valid, ignored = ignore.gate_incoming(user, rules_, valid, lambda v: (v[0].app, v[0].title, v[3]))
-    from ..detector import window_rules  # noqa: PLC0415 —— 成环，见 block_key.py
-
-    version = window_rules.block_matchers(user)[0]  # 记下算它时的规则集版本（重算靠它，见 block_key.py）
     accepted = duplicates = 0
     touched: set[tuple[str, str]] = set()
     for rec, start, end, _seconds in valid:
@@ -85,7 +82,7 @@ def upload(device_id: str, records: list[Any]) -> dict:
                 "deviceId": device_id, "date": timeutil.local_date(p_start, tz), "startAt": p_start.isoformat(),
                 "endAt": p_end.isoformat(), "startTs": p_start, "endTs": p_end, "seconds": (p_end - p_start).total_seconds(),
                 "app": rec.app[:MAX_APP], "title": rec.title[:MAX_TITLE], "titleIsPseudonym": rec.titleIsPseudonym,
-                "block": given, "blockKey": key, "keySource": source, "rv": version if source == "auto" else None,  # 来自检测程序的不盖：读时检查一次（block_key.py）
+                "block": given, "blockKey": key, "keySource": source, "rv": None,  # 都不盖：上传时没按服务端规则匹配过，读时（块还没分类才）检查一次再盖（block_key.py）
                  "receivedAt": now, "ledgerEventId": None})
         accepted, duplicates = accepted + fresh, duplicates + (not fresh)
     if accepted:

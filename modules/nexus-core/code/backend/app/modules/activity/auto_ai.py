@@ -206,9 +206,7 @@ def reject(key: str) -> dict:
     if not rec or not ask_repo.reject(user, key, now):
         raise NotFoundError(f"窗口 {key!r} 不是 AI 认的（或已经说过不对了）")
     removed = window_rules.remove_auto(_rule_id(key))
-    # 临时选择：盖成一份立刻过期的（repo 没有单删；过期的在下一次心跳清掉）
-    choice_repo.put({"user": user, "key": key, "kind": "rejected", "app": rec["app"], "title": rec["title"],
-                     "at": now, "expiresAt": now})
+    choice_repo.expire_upto(user, key, now)  # reject 之前写的作废；之后才落库的（人刚选的）不动
     return {"key": key, "app": rec["app"], "title": rec["title"], "ruleRemoved": removed}
 
 

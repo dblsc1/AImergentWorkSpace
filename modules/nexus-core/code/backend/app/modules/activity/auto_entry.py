@@ -42,7 +42,15 @@ def _target(doc: dict, end: datetime, rec: dict | None, choice: dict | None) -> 
 
 
 def record(device_id: str, docs: list[dict], request: Any) -> None:
-    """对新写入的建议做自动记录。记不成的留在待确认，**从不抛**——检测程序只在 2xx 后推进游标，这一步不能让上传失败。"""
+    """对新写入的建议做自动记录。记不成的留在待确认，**从不抛**——检测程序只在 2xx 后推进游标，这一步不能让上传失败。
+    读设置 / 问询 / 台账的失败也算（建议已入库，重传只会被当成重复、永远不再自动记；留在待确认由人处理）。"""
+    try:
+        _record(device_id, docs, request)
+    except Exception:  # noqa: BLE001
+        log.exception("自动记录整体失败，这批建议留在待确认")
+
+
+def _record(device_id: str, docs: list[dict], request: Any) -> None:
     from . import activity_settings  # noqa: PLC0415
 
     user = current_tenant()

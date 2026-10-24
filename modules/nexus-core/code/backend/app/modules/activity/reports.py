@@ -249,8 +249,24 @@ def _why(exc: Exception) -> str:
     return str(exc)[:300]
 
 
-def _apply_item(user: str, report: dict, item: dict, request) -> dict:
-    """对条里每个还没入账的建议做一次，结果落库。一段失败不挡别的段。返回条的最新样子（状态由结果推出）。"""
+def _apply_item(user: str, report: dict, item: dict, request, strict: bool = False) -> dict:
+    """对条里每个还没入账的建议做一次，结果落库。一段失败不挡别的段。返回条的最新样子（状态由结果推出）。
+    先占住读到的这个版本（目标 / 建议集）：期间人改目标、拆条、不要会 409；占不上（刚被改动 / 别的批准占着）= 这次不做，
+    原样返回（``strict`` 时抛 409）。"""
+    token = uuid.uuid4().hex
+    if not reports_repo.claim_item(user, report["id"], item, _now(), token):
+        if reports_repo.get(user, report["id"]) is not None:
+            if strict:
+                raise service.ConflictError("这一条正被批准或刚被改动，请刷新后再试")
+            return item
+        # 报告在批准进行中被 TTL 清掉了：没东西可占，照旧做完（已入账的事实不回滚，见 _sync_status）
+    try:
+        return _apply_claimed(user, report, item, request, token)
+    finally:
+        reports_repo.release_item(user, report["id"], item["id"], token)
+
+
+def _apply_claimed(user: str, report: dict, item: dict, request, token: str) -> dict:
     sids = [s for s in item["suggestionIds"] if item["results"].get(s, {}).get("state") != "applied"]
     docs = reports_repo.suggestions(user, sids)
     results: dict[str, dict] = {}
@@ -272,6 +288,7 @@ def _apply_item(user: str, report: dict, item: dict, request) -> dict:
             broken = _why(exc)
     prov = {"id": report["id"], "author": report["author"]}
     for sid in live:
+        reports_repo.refresh_claim(user, report["id"], item["id"], token, _now())  # 一段段做得久：续占
         if broken:
             results[sid] = {"state": "failed", "reason": broken}
             continue
@@ -371,7 +388,7 @@ def _retarget(user: str, doc: dict, it: dict, task_id: str | None, project_id: s
     if project_id is not None and planner_service.get_project(project_id) is None:
         raise NotFoundError(f"项目不存在：{project_id!r}")
     fields = {"kind": "assign", "taskId": task_id, "projectId": project_id}
-    if not reports_repo.set_target(user, doc["id"], it["id"], fields, ["newTask"]):
+    if not reports_repo.set_target(user, doc["id"], it["id"], fields, ["newTask"], _now()):
         raise service.ConflictError("这一条刚被改动，请刷新后再改")
 
 
@@ -385,7 +402,7 @@ def approve_item(report_id: str, item_id: str, task_id: str | None, project_id: 
         it = _item_of(doc, item_id)
     if doc["status"] not in ("pending", "approved"):
         raise service.ConflictError(f"报告已{'不要' if doc['status'] == 'rejected' else '作废'}，不能批准")
-    applied = _apply_item(user, doc, it, request) if it["status"] in reports_repo.OPEN else it
+    applied = _apply_item(user, doc, it, request, strict=True) if it["status"] in reports_repo.OPEN else it
     try:
         doc = _finalize(user, report_id)
     except NotFoundError:  # 批准进行中报告被 TTL 清掉了：给出这一条已有的结果
@@ -416,15 +433,15 @@ def split_item(report_id: str, item_id: str, sids: list[str], task_id: str | Non
     tgt = {"kind": "dismiss"} if dismiss else {"kind": "assign", "taskId": task_id, "projectId": project_id}
     rest = [s for s in it["suggestionIds"] if s not in moving]
     if not rest:  # 全拆走：就地改目标（和 approve 带目标的「先改」同一语义）
-        new = {k: v for k, v in it.items() if k not in ("newTask", "taskId", "projectId")} | tgt
+        new = {k: v for k, v in it.items() if k not in ("newTask", "taskId", "projectId", "claim", "claimBy")} | tgt
         out_id = item_id
     else:
         out_id = "s" + uuid.uuid4().hex[:8]
-        kept = {**it, "suggestionIds": rest, "results": {s: r for s, r in it["results"].items() if s in rest}}
+        kept = {**{k: v for k, v in it.items() if k not in ("claim", "claimBy")}, "suggestionIds": rest, "results": {s: r for s, r in it["results"].items() if s in rest}}
         kept["status"] = _status_of(kept)
         new = {"id": out_id, "suggestionIds": moving, "reason": it["reason"], "status": "pending", "results": {}, **tgt}
     items = [(kept if rest else new) if i["id"] == item_id else i for i in doc["items"]] + ([new] if rest else [])
-    if not reports_repo.replace_items(user, report_id, doc["items"], items):
+    if not reports_repo.replace_items(user, report_id, doc["items"], items, _now()):
         raise service.ConflictError("这份报告刚被改动，请刷新后再拆")
     if not rest:
         _reject_proposal(user, it)  # newTask 条整条被拆走（改去向 / 当噪声）= 人不要这个新任务：同 reject，助理不许再提
@@ -442,10 +459,10 @@ def reject_item(report_id: str, item_id: str) -> dict:
     it = _item_of(doc, item_id)
     if doc["status"] != "pending" and it["status"] != "rejected":
         raise service.ConflictError("报告已处理，不能再不要这一条")
-    if reports_repo.set_item_status(user, report_id, item_id, "rejected"):
+    if reports_repo.set_item_status(user, report_id, item_id, "rejected", unclaimed_at=_now()):
         _reject_proposal(user, it)
     elif it["status"] != "rejected":
-        raise service.ConflictError(f"这一条已{it['status']}，不能再不要")
+        raise service.ConflictError("这一条已处理或正被批准，不能再不要")
     doc = _finalize(user, report_id)
     return {"reportId": report_id, "reportStatus": doc["status"], **_brief(_item_of(doc, item_id))}
 
@@ -457,9 +474,13 @@ def reject_report(report_id: str) -> dict:
         return {"id": report_id, "status": "rejected"}
     if doc["status"] != "pending":
         raise service.ConflictError(f"报告已{'批准' if doc['status'] == 'approved' else '作废'}，不能整份不要")
-    for it in doc["items"]:
-        if it["status"] in reports_repo.OPEN:
+    reports_repo.reject_open_items(user, report_id, _now())
+    now_items = _load(user, report_id)["items"]
+    left = {i["id"] for i in now_items if i["status"] in reports_repo.OPEN}  # 被批准占着的没动
+    for it in now_items:  # 所有已拒的都补一次（幂等）：上次中途崩了，重试也能把提议拒掉
+        if it["status"] == "rejected":
             _reject_proposal(user, it)
-    reports_repo.reject_open_items(user, report_id)
+    if left:
+        raise service.ConflictError("有条正被批准，请稍后再整份不要")
     reports_repo.finish(user, report_id, "rejected", _now())
     return {"id": report_id, "status": _load(user, report_id)["status"]}

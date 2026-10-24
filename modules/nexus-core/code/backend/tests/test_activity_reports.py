@@ -568,9 +568,9 @@ def test_split_conflicts_when_report_changes_between_read_and_write(client, seed
                            {"kind": "assign", "suggestionIds": ids[2:], "taskId": task}])["reportId"]
     real = reports_repo.replace_items
 
-    def racing(user, report_id, old, new):
+    def racing(user, report_id, old, new, now):
         assert client.post(f"{REPORTS}/{report_id}/items/i1/reject").status_code == 200  # 读完之后别处改了
-        return real(user, report_id, old, new)
+        return real(user, report_id, old, new, now)
 
     monkeypatch.setattr(reports_repo, "replace_items", racing)
     _split(client, rid, "i0", ids[:1], expect=409, projectId=_world_ids(seeded)[1])
@@ -590,3 +590,89 @@ def test_set_results_ignores_suggestions_no_longer_in_the_item(client, seeded):
     reports_repo.set_results(user, rid, "i0", {ids[1]: {"state": "applied"}, ids[0]: {"state": "stale", "reason": "x"}})
     items = {i["id"]: i for i in _db()["activity_reports"].find_one({"id": rid})["items"]}
     assert list(items["i0"]["results"]) == [ids[0]] and items[out["itemId"]]["results"] == {}
+
+
+def test_approval_claims_the_item_version_it_read(client, seeded, monkeypatch):
+    from app.modules.activity import reports_repo  # noqa: PLC0415
+
+    ids = _ids(client, 2)
+    task, project = _world_ids(seeded)
+    other = _extra_task(project, "另一个任务")
+    rid = _submit(client, [{"kind": "assign", "suggestionIds": ids, "taskId": task}])["reportId"]
+    real = reports_repo.claim_item
+
+    def retarget_first(u, report_id, item, now, token):  # 批准读完之后、占位之前，人改了目标
+        assert reports_repo.set_target(u, report_id, "i0", {"kind": "assign", "taskId": other, "projectId": None}, ["newTask"], now)
+        return real(u, report_id, item, now, token)
+
+    monkeypatch.setattr(reports_repo, "claim_item", retarget_first)
+    out = client.post(f"{REPORTS}/{rid}/approve").json()
+    monkeypatch.undo()
+    assert out["applied"] == 0 and _session_events() == []  # 旧目标的版本占不上：什么都没记
+    assert client.post(f"{REPORTS}/{rid}/approve").json()["applied"] == 1
+    assert {e["subject"]["task"] for e in _session_events()} == {other}  # 重点一次：按人改后的目标记
+
+
+def _status_raw(rid):
+    return _db()["activity_reports"].find_one({"id": rid})
+
+
+def test_retarget_and_split_are_refused_while_an_item_is_being_approved(client, seeded, monkeypatch):
+    from app.modules.activity import service  # noqa: PLC0415
+
+    ids = _ids(client, 2)
+    task, project = _world_ids(seeded)
+    other = _extra_task(project, "另一个任务")
+    rid = _submit(client, [{"kind": "assign", "suggestionIds": ids, "taskId": task}])["reportId"]
+    real, seen = service.confirm, []
+
+    def confirm_with_edits_racing(*a, **k):
+        seen.append(client.post(f"{REPORTS}/{rid}/items/i0/approve", json={"taskId": other}).status_code)
+        seen.append(client.post(f"{REPORTS}/{rid}/items/i0/split", json={"suggestionIds": ids[:1], "taskId": other}).status_code)
+        return real(*a, **k)
+
+    monkeypatch.setattr(service, "confirm", confirm_with_edits_racing)
+    out = client.post(f"{REPORTS}/{rid}/approve").json()
+    monkeypatch.undo()
+    assert seen[:2] == [409, 409] and out["applied"] == 1
+    assert {e["subject"]["task"] for e in _session_events()} == {task}
+    assert "claim" not in _status_raw(rid)["items"][0]  # 占位放掉了
+
+
+def test_reject_item_and_report_refuse_an_item_being_approved_and_single_approve_signals_it(client, seeded, monkeypatch):
+    from app.modules.activity import service  # noqa: PLC0415
+
+    ids = _ids(client, 2)
+    task, _ = _world_ids(seeded)
+    rid = _submit(client, [{"kind": "assign", "suggestionIds": ids, "taskId": task}])["reportId"]
+    real, seen = service.confirm, []
+
+    def confirm_with_rejects_racing(*a, **k):
+        seen.append(client.post(f"{REPORTS}/{rid}/items/i0/reject").status_code)
+        seen.append(client.post(f"{REPORTS}/{rid}/reject").status_code)
+        seen.append(client.post(f"{REPORTS}/{rid}/items/i0/approve").status_code)  # 另一个批准占不上：单条 409
+        return real(*a, **k)
+
+    monkeypatch.setattr(service, "confirm", confirm_with_rejects_racing)
+    out = client.post(f"{REPORTS}/{rid}/approve").json()
+    monkeypatch.undo()
+    assert seen[:3] == [409, 409, 409] and out["applied"] == 1
+    assert _status(client, rid)["items"][0]["status"] == "applied"
+
+
+def test_claim_is_released_only_by_its_owner_and_split_drops_leftover_claims(client, seeded):
+    from datetime import datetime, timedelta, timezone  # noqa: PLC0415
+
+    from app.modules.activity import reports_repo  # noqa: PLC0415
+
+    ids = _ids(client, 2)
+    task, project = _world_ids(seeded)
+    rid = _submit(client, [{"kind": "assign", "suggestionIds": ids, "taskId": task}])["reportId"]
+    user = _status_raw(rid)["user"]
+    old = datetime.now(timezone.utc) - timedelta(minutes=10)  # 崩了留下的过期占位
+    _db()["activity_reports"].update_one({"id": rid}, {"$set": {"items.0.claim": old, "items.0.claimBy": "dead"}})
+    reports_repo.release_item(user, rid, "i0", "someone-else")
+    assert _status_raw(rid)["items"][0]["claimBy"] == "dead"
+    out = _split(client, rid, "i0", ids[:1], projectId=project)  # 过期占位不挡拆条，也不被抄进新条
+    items = {i["id"]: i for i in _status_raw(rid)["items"]}
+    assert all("claim" not in i and "claimBy" not in i for i in items.values()) and out["moved"] == 1

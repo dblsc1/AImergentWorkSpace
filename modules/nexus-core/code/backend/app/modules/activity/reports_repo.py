@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from pymongo import UpdateOne
 
@@ -17,6 +17,12 @@ _COLLECTION = "activity_reports"
 _indexes_ready = False
 #: 条还能批准 / 不要的状态
 OPEN = ("pending", "failed")
+#: 批准占着一条（``claim`` = 占的时刻）：期间改目标 / 拆条一律让路；崩了没放的占位过这么久自己失效
+CLAIM_TTL = timedelta(minutes=2)
+
+
+def _unclaimed(now: datetime) -> dict:
+    return {"$not": {"$gte": now - CLAIM_TTL}}  # 没有 claim 或已过期
 
 
 def _col():
@@ -56,19 +62,39 @@ def _item_filter(item_id: str, **extra) -> list[dict]:
     return [{"i.id": item_id, **{f"i.{k}": v for k, v in extra.items()}}]
 
 
-def set_target(user: str, report_id: str, item_id: str, fields: dict, unset: list[str]) -> bool:
-    """改目标（只在条还 pending / failed、报告还 pending 时）。"""
+def set_target(user: str, report_id: str, item_id: str, fields: dict, unset: list[str], now: datetime) -> bool:
+    """改目标（只在条还 pending / failed、没被批准占着、报告还 pending 时）。"""
     upd: dict = {"$set": {f"items.$[i].{k}": v for k, v in fields.items()}}
     if unset:
         upd["$unset"] = {f"items.$[i].{k}": "" for k in unset}
     return _col().update_one({"user": user, "id": report_id, "status": "pending"}, upd,
-                             array_filters=_item_filter(item_id, status={"$in": list(OPEN)})).modified_count > 0
+                             array_filters=_item_filter(item_id, status={"$in": list(OPEN)}, claim=_unclaimed(now))).modified_count > 0
 
 
-def replace_items(user: str, report_id: str, old: list[dict], new: list[dict]) -> bool:
-    """拆条用：整个 ``items`` 与读到时一样才换（别的条同时被批准 / 改动就不换，调用方 409 让人刷新）。"""
-    return _col().update_one({"user": user, "id": report_id, "status": "pending", "items": old},
+def replace_items(user: str, report_id: str, old: list[dict], new: list[dict], now: datetime) -> bool:
+    """拆条用：整个 ``items`` 与读到时一样、且没有条被批准占着才换（别的条同时被批准 / 改动就不换，调用方 409 让人刷新）。"""
+    return _col().update_one({"user": user, "id": report_id, "status": "pending", "items": old, "items.claim": _unclaimed(now)},
                              {"$set": {"items": new}}).modified_count > 0
+
+
+def claim_item(user: str, report_id: str, item: dict, now: datetime, token: str) -> bool:
+    """批准前占住这一条的**读到时的版本**（目标、建议集都没变、没被别人占着才占得上）；之后改目标 / 拆条都会被挡。"""
+    return _col().update_one({"user": user, "id": report_id}, {"$set": {"items.$[i].claim": now, "items.$[i].claimBy": token}},
+                             array_filters=_item_filter(item["id"], status={"$in": list(OPEN)}, kind=item["kind"],
+                                                        taskId=item.get("taskId"), projectId=item.get("projectId"),
+                                                        suggestionIds=item["suggestionIds"], claim=_unclaimed(now))).modified_count > 0
+
+
+def refresh_claim(user: str, report_id: str, item_id: str, token: str, now: datetime) -> None:
+    """长批准途中续占（只续自己的）。"""
+    _col().update_one({"user": user, "id": report_id}, {"$set": {"items.$[i].claim": now}},
+                      array_filters=_item_filter(item_id, claimBy=token))
+
+
+def release_item(user: str, report_id: str, item_id: str, token: str) -> None:
+    """只放自己的占位（过期后被别人占了的不动）。"""
+    _col().update_one({"user": user, "id": report_id}, {"$unset": {"items.$[i].claim": "", "items.$[i].claimBy": ""}},
+                      array_filters=_item_filter(item_id, claimBy=token))
 
 
 def set_results(user: str, report_id: str, item_id: str, results: dict[str, dict]) -> None:
@@ -80,15 +106,18 @@ def set_results(user: str, report_id: str, item_id: str, results: dict[str, dict
         _col().bulk_write(ops, ordered=False)
 
 
-def set_item_status(user: str, report_id: str, item_id: str, status: str, frm: tuple = OPEN) -> bool:
-    """条 ``frm``（缺省 pending / failed）→ status（条件更新；rejected 的永远不动）。"""
+def set_item_status(user: str, report_id: str, item_id: str, status: str, frm: tuple = OPEN,
+                    unclaimed_at: datetime | None = None) -> bool:
+    """条 ``frm``（缺省 pending / failed）→ status（条件更新；rejected 的永远不动）。``unclaimed_at`` 给了 = 还要没被批准占着。"""
+    extra = {} if unclaimed_at is None else {"claim": _unclaimed(unclaimed_at)}
     return _col().update_one({"user": user, "id": report_id}, {"$set": {"items.$[i].status": status}},
-                             array_filters=_item_filter(item_id, status={"$in": list(frm)})).modified_count > 0
+                             array_filters=_item_filter(item_id, status={"$in": list(frm)}, **extra)).modified_count > 0
 
 
-def reject_open_items(user: str, report_id: str) -> None:
+def reject_open_items(user: str, report_id: str, now: datetime) -> None:
+    """整份不要：被批准占着的条不动（调用方再查一遍，还有开着的就 409）。"""
     _col().update_one({"user": user, "id": report_id}, {"$set": {"items.$[i].status": "rejected"}},
-                      array_filters=[{"i.status": {"$in": list(OPEN)}}])
+                      array_filters=[{"i.status": {"$in": list(OPEN)}, "i.claim": _unclaimed(now)}])
 
 
 def finish(user: str, report_id: str, status: str, at: datetime) -> bool:

@@ -187,3 +187,9 @@ def test_undo_block_generic_conflict_leaves_doc_untouched_and_retry_works(client
     monkeypatch.setattr(blocks_repo, "swap_generic", real)
     assert client.post(f"{LOG}/{lid}/undo").status_code == 200  # 重试能完成
     assert db().activity_generic.count_documents({"blockKey": K}) == 0
+
+
+def test_block_rule_proposal_accepts_as_long_a_block_key_as_the_block_apis(client, tid):
+    long_key = "x" * 1000
+    assert client.post(f"{P}/block-rules", json={"op": "add", "blockKey": long_key, "taskId": tid}).status_code == 200
+    assert client.post(f"{P}/block-rules", json={"op": "add", "blockKey": long_key + "x", "taskId": tid}).status_code == 422
