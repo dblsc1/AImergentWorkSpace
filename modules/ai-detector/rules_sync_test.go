@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -152,5 +153,44 @@ func TestAIModeRules(t *testing.T) {
 	}
 	if b, _ := json.Marshal(suggestion{Classifier: "rules"}); strings.Contains(string(b), "needsAI") {
 		t.Fatalf("wire %s", b)
+	}
+}
+
+// detector.rules.v1 v1.5：kind "block" 只给原始记录的块名，不参与建议匹配，也不当坏规则刷日志。
+func TestBlockRulesDoNotAffectSuggestions(t *testing.T) {
+	body := `{"version":4,"rules":[
+		{"id":"a","kind":"block","block":" 花园 ","app":null,"title":"garden","enabled":true},
+		{"id":"b","kind":"block","block":"代码","app":"code","title":null,"enabled":true},
+		{"id":"c","kind":"block","block":"","app":"code","title":null,"enabled":true},
+		{"id":"d","kind":null,"app":"code","title":null,"taskId":"t_old","confidence":0.8,"enabled":true}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, body) }))
+	defer srv.Close()
+	var logs strings.Builder
+	log.SetOutput(&logs)
+	defer log.SetOutput(io.Discard)
+	rules, err := rulesForRound(Config{DeviceToken: "tok"}, srv.Client(), srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 旧式规则：第一级规则排在它前面也不抢先；理由里的序号仍是服务端数组位置。
+	sg, ok := matchRules(rules, segment{App: "code", Title: "garden"})
+	if !ok || sg.TaskID == nil || *sg.TaskID != "t_old" || sg.Reason != "网页规则 #4 命中" {
+		t.Fatalf("%+v", sg)
+	}
+	if _, ok := matchRules(rules[:2], segment{App: "code", Title: "garden"}); ok {
+		t.Fatal("block rules matched as suggestions")
+	}
+	// 块名：数组顺序第一条命中；去首尾空白；空块名那条是真坏规则，跳过并记日志。
+	if b := blockFor(rules, "code", "my garden"); b == nil || *b != "花园" {
+		t.Fatalf("%v", b)
+	}
+	if b := blockFor(rules, "code", "x"); b == nil || *b != "代码" {
+		t.Fatalf("%v", b)
+	}
+	if b := blockFor(rules, "firefox", "x"); b != nil {
+		t.Fatalf("%v", *b)
+	}
+	if strings.Count(logs.String(), "本程序用不了") != 1 || strings.Contains(logs.String(), "#1") || strings.Contains(logs.String(), "#2") {
+		t.Fatalf("log: %q", logs.String())
 	}
 }

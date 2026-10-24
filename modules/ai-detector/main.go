@@ -253,9 +253,10 @@ func runLoop(p paths, hc *http.Client) error {
 	// 在场心跳、状态文件桥各自一个 goroutine：同步一轮可能要好几分钟（积压、分类服务慢），不能让它们等。
 	// 同一进程里，仍在 run 拿着的单实例锁之内。
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go func() { defer wg.Done(); presenceLoop(p, hc) }()
 	go func() { defer wg.Done(); bridgeLoop(p, hc) }()
+	go func() { defer wg.Done(); inputLoop(p, hc) }()
 	every(func() time.Duration {
 		_ = runOnce(p, hc, nil) // 失败已写进日志与状态；常驻进程不因一轮失败退出
 		interval := 5.0

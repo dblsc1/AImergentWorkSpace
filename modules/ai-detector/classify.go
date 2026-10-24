@@ -35,6 +35,7 @@ type rule struct {
 	TaskID     string  `json:"taskId"`
 	ProjectID  string  `json:"projectId"`
 	Confidence float64 `json:"confidence"`
+	Block      string  `json:"-"` // detector.rules.v1 v1.5 的 kind "block"：第一级规则，只给原始记录算块名，不参与建议匹配
 	AI         bool    `json:"-"` // detector.rules.v1 v1.4 的 mode "ai"：命中即「交给 AI 判断」，不带目标（只来自网页规则）
 	app, title *regexp.Regexp
 	reason     string // 空 = 「规则 #N 命中」；网页规则填「网页规则 #N 命中」（N 是服务端数组里的位置）
@@ -83,6 +84,9 @@ func compileCI(p string) (*regexp.Regexp, error) {
 
 func matchRules(rules []rule, s segment) (suggestion, bool) {
 	for i, r := range rules {
+		if r.Block != "" {
+			continue
+		}
 		if (r.app == nil || r.app.MatchString(s.App)) && (r.title == nil || r.title.MatchString(s.Title)) {
 			reason := r.reason
 			if reason == "" {
