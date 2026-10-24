@@ -163,7 +163,7 @@ def submit(questions) -> dict:
 
 def listing(status: str, limit: int) -> dict:
     q = {"user": current_tenant(), **({"status": "pending"} if status == "pending" else {})}
-    return {"items": [view(d) for d in _col().find(q, {"_id": 0}).sort("createdAt", -1).limit(limit)]}
+    return {"items": [view(d) for d in _col().find(q, {"_id": 0}).sort([("createdAt", -1), ("_id", -1)]).limit(limit)]}
 
 
 def _get(qid: str) -> dict:

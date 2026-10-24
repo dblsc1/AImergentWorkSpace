@@ -80,11 +80,14 @@ def test_submission_auth_matrix(client, tid, who):
 # ── 4.2 问人 ──
 
 def test_questions_submit_dedupe_cap_validation(client, tid):
-    out = ask(client, q(options=[{"label": "写周报", "target": {"taskId": tid}}, {"label": "不记", "ignore": True}], allowText=True), q("第二个"))
+    # 问题体只生成一次：q() 的时间取自此刻，重算可能跨分钟，变成另一条
+    q1 = q(options=[{"label": "写周报", "target": {"taskId": tid}}, {"label": "不记", "ignore": True}], allowText=True)
+    q2 = q("第二个")
+    out = ask(client, q1, q2)
     a, b = out["items"]
     assert a["id"].startswith("aq_") and a["status"] == "pending" and a["answer"] is None and a["allowText"] is True and len(a["options"]) == 2
     assert a["text"] == "" and b["options"] == [] and b["date"] is None
-    again = ask(client, q(options=[{"label": "写周报", "target": {"taskId": tid}}, {"label": "不记", "ignore": True}], allowText=True), q("第二个 "))
+    again = ask(client, q1, {**q2, "title": "第二个 "})
     assert [i["id"] for i in again["items"]] == [a["id"], b["id"]] and db().activity_questions.count_documents({}) == 2
     assert ask(client, {**q(), "options": []})["items"][0]["id"] != a["id"]  # 选项不同 = 另一条
     assert [i["id"] for i in client.get(f"{A}/questions").json()["items"]][0] != a["id"]  # 新的在前
@@ -105,7 +108,7 @@ def test_questions_submit_dedupe_cap_validation(client, tid):
     for i in range(27):
         ask(client, {"title": f"填 {i}"})
     assert db().activity_questions.count_documents({"status": "pending"}) == 30
-    ask(client, q("第二个"))  # 已有的原样返回，不占名额
+    ask(client, q2)  # 已有的原样返回，不占名额
     ask(client, {"title": "满了"}, expect=429)
     ask(client, {"title": "满了"}, {"title": "也满了"}, expect=429)
 
