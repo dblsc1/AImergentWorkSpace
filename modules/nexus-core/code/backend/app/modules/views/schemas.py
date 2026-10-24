@@ -150,6 +150,7 @@ class Zone(_Strict):
     #: 分区配色是用户设定、是持久化字段，所以留在 API 内（contract.md）。
     color: str
     order: int
+    address: str  #: v2.39 位置编号（读时现算，改名 / 搬家后会变；引用用 id）
 
 
 class Task(_Strict):
@@ -172,6 +173,7 @@ class Task(_Strict):
     plan: GanttPlan | None = None
     #: 前置任务 id 列表，纯表达不排程；默认 []。
     dependsOn: list[str] = Field(default_factory=list)
+    address: str  #: v2.39
 
 
 class Project(_Strict):
@@ -188,6 +190,9 @@ class Project(_Strict):
     deadline: str | None = None
     #: v2.9：本项目「未分类」时间桶的任务 id，还没建过为 ``null``。桶不在 ``tasks`` 里。
     unclassifiedTaskId: str | None = None
+    address: str  #: v2.39
+    #: v2.39：「未分类」桶的编号（桶不在 ``tasks`` 里；还没建过为 ``null``）。契约待定：契约只说 tree 里「各项目的『未分类』任务」带 address，桶不在 tasks 里，故放这里。
+    unclassifiedAddress: str | None = None
     tasks: list[Task]
 
 

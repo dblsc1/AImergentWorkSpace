@@ -154,3 +154,8 @@ def read_daily_stats(
     （``{date, projectId, taskId, seconds}``）；按项目再汇总是 ``views/queries.py`` 的活。
     """
     return repo.read_daily_stats(user, date_from=date_from, date_to=date_to)
+
+
+def last_active_by_task(user: str) -> dict[str, str]:
+    """views 的指定读路径：任务 → 最近有时间的本地日（``views/review``、``views/arrangements`` 的久未动）。"""
+    return repo.last_active_by_task(user)

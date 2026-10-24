@@ -10,7 +10,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query
 
-from . import agent_time, lanes, next_actions, queries, review
+from . import agent_time, arrangements, collab_history, lanes, next_actions, queries, review
 from .schemas import AgentTimeOut, CurrentOut, GanttOut, LanesOut, NextActionsOut, ReviewOut, TreeOut
 
 _DATE = r"^\d{4}-\d{2}-\d{2}$"
@@ -77,3 +77,24 @@ def read_lanes(
 ) -> LanesOut:
     """v2.4 时间线读端。**不写**。互斥 / 跨度超 7 天 → 422（UnprocessableError，映射在 main.py）。"""
     return lanes.get_lanes(date, from_, to)
+
+
+@router.get("/history")
+def read_history(
+    from_: Annotated[str | None, Query(alias="from", description="起始日期（含），YYYY-MM-DD；缺省今天")] = None,
+    to: Annotated[str | None, Query(description="结束日期（含），YYYY-MM-DD；缺省今天")] = None,
+    who: Annotated[str, Query(description="human | agent | both")] = "both",
+    detail: Annotated[str, Query(description="summary | segments | windows")] = "summary",
+    scope: Annotated[str | None, Query(description="分区 / 项目 / 任务 id，只过滤人的已入账部分")] = None,
+) -> dict:
+    """v2.39 协作历史。**不写**；取值 / 跨度不合法 → 422（UnprocessableError，detail 点名参数）。"""
+    return collab_history.get_history(from_, to, who, detail, scope)
+
+
+@router.get("/arrangements")
+def read_arrangements(
+    range: Annotated[str, Query(description="today | week")] = "today",  # noqa: A002 —— 查询参数名即契约
+    scope: Annotated[str | None, Query(description="分区 / 项目 id")] = None,
+) -> dict:
+    """v2.39 安排。**不写**。"""
+    return arrangements.get_arrangements(range, scope)

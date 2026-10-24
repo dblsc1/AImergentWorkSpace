@@ -104,14 +104,15 @@ def test_p3_tree_shape_matches_contract_with_keys(client, seeded):
     """P3 + 字段集无缺无多：三类对象都带 key（M5 语义在单测层的最小保障）。"""
     tree = client.get(f"{API}/views/tree", params={"includeEphemeral": "true"}).json()
     assert set(tree) == {"zones", "projects"}
-    assert set(tree["zones"][0]) == {"id", "key", "name", "color", "order"}
+    assert set(tree["zones"][0]) == {"id", "key", "name", "color", "order", "address"}  # address：v2.39
     project = tree["projects"][0]
     assert set(project) == {
         "id", "key", "zoneId", "name", "status", "progress", "progressSource",
         "deadline", "tasks", "unclassifiedTaskId",  # v2.9
+        "address", "unclassifiedAddress",  # v2.39
     }
     assert set(project["tasks"][0]) == {
-        "id", "key", "name", "done", "kind", "flags", "plan", "dependsOn",
+        "id", "key", "name", "done", "kind", "flags", "plan", "dependsOn", "address",
     }  # plan/dependsOn 是 v1.2 补的集成缝（只读附带，与 TaskOut 同形状）
     # key 是真值不是占位：与库里系统生成的一致
     zone = seeded["zones"]["示例分区二"]

@@ -76,7 +76,11 @@ def handle(envelope: dict) -> None:
         end = _moment(envelope.get("time"))  # endAt = 事件 time
         if end is None or end < start:
             return
-        doc.update(kind="session", endAt=end, mode=data.get("mode") or "do", source=envelope.get("source"))
+        # v2.39 views/history 要：这一段的事件 id、窗口块名（activity-block 的 ai.block；旧行没有这两列，读成 null，重建后补齐）
+        block = (envelope.get("ai") or {}).get("block") if isinstance(envelope.get("ai"), dict) else None
+        doc.update(kind="session", endAt=end, mode=data.get("mode") or "do", source=envelope.get("source"),
+                   eventId=envelope.get("id"),
+                   **({"block": block["blockKey"]} if isinstance(block, dict) and isinstance(block.get("blockKey"), str) else {}))
     else:
         dedupe = envelope.get("dedupeKey") or ""
         doc.update(
