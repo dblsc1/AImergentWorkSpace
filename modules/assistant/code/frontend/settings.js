@@ -97,7 +97,7 @@
 
   // 422 detail「privacy.pathWhitelist: Value error, …」→「privacy.pathWhitelist」；对不上 → null
   function fieldOf(detail) {
-    var m = /^((?:privacy|idle)\.[A-Za-z]+|presence|segmentByTitleApps|segmentByTitle|autoTrack)\b/.exec(String(detail || ""));
+    var m = /^((?:privacy|idle)\.[A-Za-z]+|presence|segmentByTitleApps|segmentByTitle|autoTrack|inputActivity)\b/.exec(String(detail || ""));
     return m ? m[1] : null;
   }
 
@@ -192,6 +192,7 @@
   var dirtyEl = document.getElementById("det-dirty");
   var saveBtn = document.getElementById("det-save");
   var resetBtn = document.getElementById("det-reset");
+  var inputEl = document.getElementById("det-input");
   var presenceRow = document.getElementById("det-presence-row");
   var presenceEl = document.getElementById("det-presence");
   var healthEl = document.getElementById("det-health");
@@ -267,6 +268,8 @@
       var key = t.dataset.list, nul = formEl.querySelector('input[data-null="' + key + '"]');
       setPath(doc, key, nul && nul.checked ? null : lines(t.value, key === "privacy.pathWhitelist"));
     });
+    // v1.4 inputActivity：文档里没有这个键、又没勾 → 不发（与此前的文档逐字节相同）
+    if (doc.inputActivity !== undefined || inputEl.checked) doc.inputActivity = inputEl.checked;
     if (doc.autoTrack === true && !findPresence(doc)) doc.presence = true;   // 自动跟踪要心跳：没设过就一并打开
     return doc;
   }
@@ -278,6 +281,7 @@
       if (n.type === "checkbox") n.checked = v === true;
       else n.value = v == null ? "" : String(v);
     });
+    inputEl.checked = doc.inputActivity === true;
     formEl.querySelectorAll("input[type=radio]").forEach(function (n) { n.checked = getPath(doc, n.name) === n.value; });
     formEl.querySelectorAll("textarea[data-list]").forEach(function (t) {
       var v = getPath(doc, t.dataset.list), nul = formEl.querySelector('input[data-null="' + t.dataset.list + '"]');
@@ -472,6 +476,15 @@
     await loadDevice(want);
   }
 
+  // 键盘鼠标活动：打开前先把仓主要求的说明给人看，不同意就勾回去（保存是另一步）
+  var INPUT_NOTICE = "打开前请看清楚：\n" +
+    "记什么：每 10 秒里有没有碰键盘或鼠标（鼠标在动也算）。\n" +
+    "不记什么：按了哪个键、打了什么字，一概不记。\n" +
+    "存在哪：只在本机的检测程序和你自己的蜂巢里。\n" +
+    "怎么关：随时关掉这个开关。\n\n打开吗？";
+  inputEl.addEventListener("change", function () {
+    if (inputEl.checked && !window.confirm(INPUT_NOTICE)) inputEl.checked = false;
+  });
   formEl.addEventListener("input", function () { syncLists(); sync(); });
   formEl.addEventListener("change", function () { syncLists(); sync(); });
   deviceEl.addEventListener("change", function () {

@@ -207,6 +207,27 @@ consumes:
       规则匹配的是「隐私处理后、换代号前」的标题（该契约「一」），页面上的标题与之相同（`[IP]` 这类占位符两边一样），
       **除了**标题代号（`privacy.titles = pseudonymize` 时上传的 `窗口名N` / `路径N`）：这样的组勾选项禁用并注明原因；
       转义后超过 200 个字符的也禁用。
+  - id: nexus-core.activity.tiers.v1
+    contract: ../nexus-core/module_docs/contract.md
+    purpose: >
+      「三级分类」（nexus-core v2.38「三级分类」节；`code/frontend/tiers.js`，「自动记录」页）。先 `GET /api/core/activity/settings`：
+      `tiers` 关着或读不到（404 / 失败）→ 页面与此前相同（「分类规则」与 autoTrack 照旧）；打开 → 「分类规则」换成两级规则栏、autoTrack 隐藏。
+      账号设置：「三级分类」开关（打开前 `confirm`，写明会多上传每段 ≥ 1 秒的窗口记录——程序名与脱敏标题，脱敏同段）与 agent 权限
+      （`agentDirect`：总开关 + `windowsClassify` / `honeycombRecords` 两个分开关，总开关关着时分开关禁用）都经 `PUT activity/settings`，
+      整份替换（去掉 `version`），带 `If-Match: "<version>"`；`412` 重读并提示再试，`409`（迁移后规则超上限）及其余错误原样显示 `detail`。
+      第一级（左栏）：`GET/PUT detector/rules`（`detector.rules.v1` v1.5）里 `kind: "block"` 的规则（`app` / `title` → `block`），增 / 改 / 删 / 排序；
+      存 = PUT 整套，旧式规则（含 `migrated: true`、`mode: "ai"`）逐字原样带回、第一级规则按原位置填回，`If-Match` / `412` / `422` 同「分类规则」。没有「把握度」。
+      命中数取规则的 `hitCount`（数字才显示，后端没有就不显示）。
+      第二级（右栏）：`GET activity/block-rules`（`broken: true` 的标「失效」）、`POST activity/block-rules {blockKey, taskId | projectId}`（同块名 = 改目标）、
+      `DELETE activity/block-rules/{id}`。两栏按目的地项目所在分区的颜色（`views/tree` 的 `zones[].color`）上色，没有第二级规则 = 灰。
+      待批准：`GET activity/proposals?status=pending` 里 `kind` 为 `windowRule` / `blockRule` 的提议（不论放在响应的哪个数组下）以虚线框显示在各栏顶部：
+      批准 = `POST proposals/{id}/approve`，更正 = 同一端点带 `{edit: {rule: {block}}}`（windowRule）或 `{edit: {taskId | projectId}}`（blockRule），忽略 = `POST proposals/{id}/reject`；没有就不显示。
+  - id: detector.settings.v1
+    contract: ../../../contracts/detector.settings.v1/contract.md
+    purpose: >
+      `detector.settings.v1` v1.4 的 `inputActivity`（缺省关）：三级分类打开时，设备设置表单里多一个「记录键盘和鼠标活动时间」。
+      勾上前弹说明（记什么：每 10 秒有没有碰键盘或鼠标，鼠标移动也算；不记什么：按了哪个键、打了什么字；存在哪：只在本机检测程序和用户自己的蜂巢；怎么关：随时关掉），
+      不同意就勾回；同意后随「保存」一起 PUT。文档里原本没有该键、又没勾时不发这个键（与此前逐字节相同）。`records` 不在页面上设，原样带回。
 ```
 
 ## 入口与路由
@@ -236,6 +257,7 @@ consumes:
 
 | 日期 | CR | 变更 |
 |---|---|---|
+| 2026-10-24 | 仓主：批准三级分类的前端设计草稿 | 认 nexus-core v2.38 / `detector.rules.v1` v1.5 / `detector.settings.v1` v1.4：「自动记录」页读 `activity/settings`，`tiers` 打开时「分类规则」换成两级规则栏（`tiers.js`），账号开关与 agent 权限、键盘鼠标活动开关见 consumes `nexus-core.activity.tiers.v1`。`tiers` 关着或读不到时页面不变。新增 consumes，既有条目不改 |
 | 2026-10-22 | 仓主：AI 可提议「以后都忽略」规则与改名 / 移动 / 删除现有项目和任务，人批准 | 「新项目与任务」块多读 `proposals` 响应的 `changes` / `ignores`（老服务端没有这两个键，当空）：多两组「修改与删除」「以后都忽略」，每条「批准」「不要」，删除标危险色；后端的 409 / 404 / 422 `detail` 原文提示。只增，既有各组不变 |
 | 2026-10-22 | 仓主：待分类几百条，「留着时间，只清列表」，明天从头看 | 「待分类」面板加「清空列表」：记下此刻列出的段里最新的记录时刻（服务端的 `recordedAt`，没有就 `time`，不用本机钟；本浏览器 localStorage `assistant.unclassified.clearedAt`，存不了只管这次打开），之后只列比它晚记下的段（读 `events` 时多用到 `recordedAt`；清空后又「撤回」放回来的段照样列，记在 `assistant.unclassified.keep`）；清空过就有「全部显示（已清空 N 段）」按钮（超过一页时 N 带「+」），点它撤掉。纯前端：不发任何改挂、台账与各项目时间一条不动，不新增接口；没点过时页面与此前相同 |
 | 2026-10-14 | 仓主：用户接自己的 AI CLI，内置聊天可选，「隐藏内置 AI 助手」（别删） | 页面改名「AI助理」→「待批准」（顶栏页签、`<title>`、`<h1>`、各处交叉链接的文字；路由 `assistant/`、模块名、`#` 钩子都不变）。聊天入口的显隐逻辑本来就按 health 一次判定（`chat.js`），契约把它写明：聊天后端缺省不起，面板与「让 AI 匹配」都不出现；`agent.chat.v1` 与 `modules/agent` 原样保留，开了就回来。只改文案与说明，接口不变 |
