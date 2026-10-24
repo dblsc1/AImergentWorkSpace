@@ -97,3 +97,17 @@ def test_events_archive_marks_voided_sessions(client, tid):
     assert all("voided" not in i for i in allv if i["source"] != "activity-block" or i["type"] != "session.completed")
     voided = [i for i in allv if i.get("voided")]
     assert len(voided) == 1 and voided[0]["type"] == "session.completed"
+
+
+def test_void_arriving_before_the_lane_row_is_not_resurrected(client):
+    """终审：作废赶在落账的 lanes.handle 之前到：留墓碑，随后的 apply_lane 不能把这段插进时间线。"""
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    from app.modules.projector import repo  # noqa: PLC0415
+
+    repo.delete_lane("u_local", "ext-tool:1")
+    t = datetime(2026, 10, 23, 9, 59, tzinfo=timezone.utc)
+    repo.apply_lane({"user": "u_local", "key": "ext-tool:1", "kind": "session", "startAt": t, "endAt": t,
+                     "durationSeconds": 60, "taskId": None, "projectId": None})
+    assert repo.read_lanes("u_local", "session", t.replace(hour=0), t.replace(hour=23), 10) == []
+    assert repo.lanes_empty()

@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 
 from ...config import settings
 from ...tenant import current as current_tenant
@@ -54,7 +54,7 @@ def split_days(spans: list[Interval]) -> dict[str, float]:
         while cur < b:
             day = cur.astimezone(settings.tz).date()
             nxt = min(b, midnight(day + timedelta(days=1)))
-            per[day.isoformat()] = per.get(day.isoformat(), 0.0) + (nxt - cur).total_seconds()
+            per[day.isoformat()] = per.get(day.isoformat(), 0.0) + (nxt.astimezone(timezone.utc) - cur.astimezone(timezone.utc)).total_seconds()
             cur = nxt
     return per
 

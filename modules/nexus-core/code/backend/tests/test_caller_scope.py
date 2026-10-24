@@ -314,3 +314,12 @@ def test_websocket_scope_with_a_scope_or_anonymous_header_is_rejected():
     assert reached == [] and [m["type"] for m in sent] == ["websocket.close"] * 3
     asyncio.run(run([]))  # 对照：没有这两个头的照旧放过（没有 ws 端点，另有测试盯着）
     assert reached == ["websocket"]
+
+
+def test_anonymous_run_is_not_listed_in_views_current(client, seeded):
+    """终审：views/current 的 agents 是验证过的代理；匿名运行（可顶着可信代理的名字）只在 views/lanes 里带 unverified。"""
+    anon = _start(client, ANON, label="sandbox")
+    mine = _start(client, {}, label="mine")
+    cur = client.get(f"{API}/views/current").json()
+    assert [a["runId"] for a in cur["agents"]] == [mine["runId"]] and cur["hiddenCount"] == 0
+    assert anon["runId"] in {a["runId"] for a in client.get(f"{API}/views/lanes").json()["agents"]}

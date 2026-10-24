@@ -228,3 +228,22 @@ def test_pathological_stored_regex_matches_in_linear_time(client, world):
     assert window_rules.ai_hit(m, "code", "a" * 5000 + "b") is False       # Python re 在这里指数回溯
     assert window_rules.ai_hit(m, "code", "b" + "a" * 5000) is True
     assert time.monotonic() - t0 < 1
+
+
+def test_window_rule_writes_clear_stale_undo_snapshots(client, world):
+    """终审：prepend / remove_auto 改了规则，之前 ai_apply 留下的撤回快照作废（否则撤回会丢掉这次改动）。"""
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    from app.modules.detector import repo, window_rules  # noqa: PLC0415
+
+    def snaps():
+        return len((repo.get_rules("u_local") or {}).get("snapshots") or [])
+
+    rule = {"app": "^code$", "title": "^notes$", "taskId": world["a"], "confidence": 0.9, "enabled": True}
+    for change in (lambda: window_rules.prepend(rule), lambda: window_rules.remove_auto(rule_id)):
+        rule_id = "w1"
+        repo.replace_rules("u_local", (repo.get_rules("u_local") or {}).get("version", 0),
+                           [{**rule, "id": rule_id, "app": "^vim$", "auto": True}], datetime.now(timezone.utc),
+                           snapshots=[{"rules": [], "version": 0, "at": datetime.now(timezone.utc), "summary": "s"}])
+        assert snaps() == 1
+        assert change() is True and snaps() == 0
