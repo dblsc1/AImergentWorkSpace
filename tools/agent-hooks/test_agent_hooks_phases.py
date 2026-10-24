@@ -5,15 +5,17 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import unittest.mock as mock
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -115,6 +117,139 @@ class ClaudeHookPhaseTests(_ServerMixin, unittest.TestCase):
                 self.assertEqual(claude_hook._read_state("s1")["lastPhase"], phase)  # 先写状态
         self.assertNotIn("SECRET", json.dumps(self.log.requests))
         self.assertNotIn("CMDSECRET", json.dumps(self.log.requests))
+
+    def _phases(self):
+        return [b["phase"] for b in self._bodies("/phase")]
+
+    def test_subagent_lane_stays_working(self):
+        claude_hook._save_run_id("s1", "run-1", "idle")
+        self._hook("UserPromptSubmit")
+        self._hook("SubagentStart", agent_id="a1", agent_type="x")
+        self.assertEqual(self._last()["phase"], "working")
+        self.assertEqual(self._last()["detail"], "subagent")
+        self._hook("Stop")  # 有 subagent 在跑：不报 idle
+        self._hook("Notification", notification_type="idle_prompt")
+        self.assertEqual(self._phases(), ["working", "working"])
+        self.assertEqual(claude_hook._read_state("s1")["lastPhase"], "working")
+        self._hook("SubagentStop", agent_id="a1")  # 最后一个且主会话已 Stop：报 idle
+        self.assertEqual(self._phases(), ["working", "working", "idle"])
+        self.assertEqual(claude_hook._read_state("s1")["subagents"], {})
+
+    def test_subagent_stop_during_main_turn_silent(self):
+        claude_hook._save_run_id("s1", "run-1", "idle")
+        self._hook("UserPromptSubmit")
+        self._hook("SubagentStart", agent_id="a1")
+        self._hook("SubagentStop", agent_id="a1")
+        self.assertEqual(self._phases(), ["working", "working"])
+
+    def test_two_subagents_idle_only_after_last(self):
+        claude_hook._save_run_id("s1", "run-1", "idle")
+        self._hook("SubagentStart", agent_id="a1")
+        self._hook("SubagentStart", agent_id="a2")
+        self._hook("Stop")
+        self._hook("SubagentStop", agent_id="a1")
+        self.assertEqual(self._phases(), ["working", "working"])
+        self._hook("SubagentStop", agent_id="a2")
+        self.assertEqual(self._phases()[-1], "idle")
+
+    def test_stale_subagent_ignored(self):
+        claude_hook._save_run_id("s1", "run-1", "working")
+        st = claude_hook._read_state("s1")
+        claude_hook._write_state("s1", {**st, "subagents": {"old": "2026-09-29T10:00:00+08:00"}})  # 24 小时前
+        self._hook("Stop")
+        self.assertEqual(self._last()["phase"], "idle")
+        self.assertEqual(claude_hook._read_state("s1")["subagents"], {})
+
+    def _subs(self, **entries):
+        st = claude_hook._read_state("s1")
+        claude_hook._write_state("s1", {**st, **entries})
+
+    def test_liveness_by_record_file_mtime(self):
+        now = datetime.now().astimezone()
+        iso = lambda secs: datetime.fromtimestamp(now.timestamp() - secs).astimezone().isoformat()  # noqa: E731
+        d = Path(tempfile.mkdtemp())
+        fresh, old = d / "f.jsonl", d / "o.jsonl"
+        for f, age in ((fresh, 60), (old, 20 * 60)):
+            f.write_text("x")
+            os.utime(f, (now.timestamp() - age,) * 2)
+        live = claude_hook._live_subagents({
+            "fresh": {"at": iso(30 * 60), "path": str(fresh)},   # 文件新：活（即使开始很久）
+            "old": {"at": iso(30 * 60), "path": str(old)},       # 文件 20 分钟没写：结束
+            "missing": {"at": iso(3600), "path": str(d / "none.jsonl")},  # 不存在：6 小时内算活
+            "missing-old": {"at": iso(7 * 3600), "path": str(d / "none.jsonl")},
+            "legacy": iso(60),                                    # 旧格式字符串
+        }, now.timestamp())
+        self.assertEqual(set(live), {"fresh", "missing", "legacy"})
+        self.assertEqual(claude_hook._subagent_path("/p/abc.jsonl", "a1"), "/p/abc/subagents/agent-a1.jsonl")
+        self.assertIsNone(claude_hook._subagent_path("/p/abc.jsonl", "../x"))
+
+    def _beat_env(self, state_extra, live_file=None):
+        claude_hook._save_run_id("s1", "run-1", "idle", payload={"cwd": "/tmp/g"}, probe=(4242, "b"), config=self.config)
+        st = claude_hook._read_state("s1")
+        claude_hook._write_state("s1", {**st, **state_extra})
+        return st["gen"], st["cli"]
+
+    def _scan(self, gen, cli):
+        with mock.patch.object(cc, "load_config", return_value=self.config):
+            claude_hook._scan_subagents("s1", gen, cli[0], cli[1])
+
+    def test_companion_scan_reports_idle_when_all_dead(self):
+        old = (datetime.now().astimezone() - timedelta(minutes=20)).isoformat()
+        f = Path(tempfile.mkdtemp()) / "a.jsonl"
+        f.write_text("x")
+        os.utime(f, (time.time() - 1200,) * 2)
+        gen, cli = self._beat_env({"mainIdle": True, "lastPhase": "working", "subagents": {"a1": {"at": old, "path": str(f)}}})
+        self._scan(gen, cli)
+        self.assertEqual(self._phases(), ["idle"])
+        st = claude_hook._read_state("s1")
+        self.assertEqual((st["subagents"], st["lastPhase"]), ({}, "idle"))
+
+    def test_companion_scan_silent_when_alive_busy_or_lock_missing(self):
+        fresh = (datetime.now().astimezone() - timedelta(minutes=1)).isoformat()
+        dead = (datetime.now().astimezone() - timedelta(hours=7)).isoformat()
+        gen, cli = self._beat_env({"mainIdle": True, "subagents": {"a1": {"at": fresh, "path": None}}})
+        self._scan(gen, cli)  # 有活的
+        self._subs(subagents={"a1": {"at": dead, "path": None}}, mainIdle=False)
+        self._scan(gen, cli)  # 主会话还在回合中
+        self._subs(mainIdle=True)
+        with mock.patch.object(claude_hook, "_session_lock", lambda *a, **k: contextlib.nullcontext(False)):
+            self._scan(gen, cli)  # 拿不到锁
+        self.assertEqual(self._phases(), [])
+        self._scan(gen, cli)  # 对照：锁正常就报
+        self.assertEqual(self._phases(), ["idle"])
+
+    def test_stop_before_start_leaves_no_ghost(self):
+        claude_hook._save_run_id("s1", "run-1", "idle")
+        self._hook("SubagentStop", agent_id="a1")
+        self._hook("SubagentStart", agent_id="a1")
+        st = claude_hook._read_state("s1")
+        self.assertEqual(st["subagents"], {})
+        self.assertIn("a1", st["stopped"])
+        self.assertNotIn("working", self._phases())
+
+    def test_subagent_start_does_not_override_waiting(self):
+        for waiting in ("waiting_permission", "waiting_input"):
+            claude_hook._save_run_id("s1", "run-1", waiting)
+            self._hook("SubagentStart", agent_id="a-" + waiting)
+            self.assertEqual(claude_hook._read_state("s1")["lastPhase"], waiting)
+            self.assertIn("a-" + waiting, claude_hook._read_state("s1")["subagents"])
+        self.assertEqual(self._phases(), [])
+
+    def test_non_dict_state_fields_treated_as_empty(self):
+        claude_hook._save_run_id("s1", "run-1", "working")
+        self._subs(subagents=["x"], stopped="y")
+        self._hook("SubagentStart", agent_id="a1")
+        st = claude_hook._read_state("s1")
+        self.assertEqual(list(st["subagents"]), ["a1"])
+        self.assertEqual(st["stopped"], {})
+
+    def test_main_idle_defaults_false(self):
+        claude_hook._save_run_id("s1", "run-1", "working")
+        self._hook("SubagentStart", agent_id="a1")
+        self._hook("SubagentStop", agent_id="a1")  # 从没 Stop 过：不报 idle
+        self.assertEqual(self._phases(), ["working"])
+        self._hook("Stop")
+        self.assertEqual(self._phases(), ["working", "idle"])
 
     def test_post_tool_use_only_after_waiting(self):
         claude_hook._save_run_id("s1", "run-1", "working")

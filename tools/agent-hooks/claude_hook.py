@@ -43,6 +43,7 @@ import re
 import subprocess
 import sys
 import urllib.parse
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -434,9 +435,110 @@ def _phase_for(payload: dict, last_phase: str | None) -> tuple[str, str | None, 
         return None
     if event == "Stop":
         return "idle", None, False
+    if event == "SubagentStart":  # 只读 agent_id（见 _subagent_step）；是否真报由 _subagent_step 按在跑集合定
+        return "working", "subagent", False
+    if event == "SubagentStop":
+        return "idle", None, False
     if event == "StopFailure":
         return "error", _tag(payload.get("error")), False
     return None
+
+
+SUBAGENT_TTL = 6 * 3600  # 记录文件不存在时的兜底上限（也是墓碑的寿命）
+SUBAGENT_STALE = 15 * 60  # ponytail: subagent 记录文件 15 分钟没写就当结束（Esc 打断收不到 SubagentStop）；单个工具调用 >15 分钟会被提前判结束，已接受；要更准就让 Claude Code 给显式的存活信号
+
+
+def _as_dict(x) -> dict:
+    return x if isinstance(x, dict) else {}
+
+
+def _iso_age(v, now: float) -> float | None:
+    try:
+        return now - datetime.fromisoformat(v).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def _live_subagents(raw, now: float) -> dict:
+    """在跑集合去掉已结束项。项 = {"at": ISO, "path": 记录文件或 None}（旧格式：值直接是 ISO 字符串）。
+    判活：超过 6 小时 → 结束；记录文件 os.stat 在 15 分钟内改过 → 活；更久没改 → 结束；文件不存在 → 看 6 小时上限。只 stat，不读内容。"""
+    live = {}
+    for k, v in _as_dict(raw).items():
+        e = v if isinstance(v, dict) else {"at": v}
+        age = _iso_age(e.get("at"), now)
+        if age is None or age >= SUBAGENT_TTL:
+            continue
+        path = e.get("path") if isinstance(e.get("path"), str) else None
+        try:
+            if path and now - os.stat(path).st_mtime >= SUBAGENT_STALE:
+                continue
+        except OSError:
+            pass
+        live[k] = {"at": e["at"], "path": path}
+    return live
+
+
+def _subagent_path(transcript, aid: str) -> str | None:
+    """主会话 <dir>/<session>.jsonl → subagent 记录 <dir>/<session>/subagents/agent-<id>.jsonl（只推路径，不碰文件）。"""
+    if not isinstance(transcript, str) or not transcript or not re.fullmatch(r"[\w.-]+", aid):
+        return None
+    return f"{os.path.splitext(transcript)[0]}/subagents/agent-{aid}.jsonl"
+
+
+def _subagent_step(payload: dict, cur: dict, at: str, decision):
+    """按 subagent 在跑集合（`subagents`）修正相位。返回 (decision, 要并进状态的字段)。
+    Stop / idle_prompt：有 subagent 在跑就不报 idle；SubagentStop：集合空了且主会话已 Stop 才报 idle，并留墓碑 `stopped`
+    （异步钩子可能先处理 Stop 后处理 Start，遇墓碑的 Start 不加）；SubagentStart 时若在等人批准 / 回答，只入集合不盖掉「等」。"""
+    event = payload.get("hook_event_name")
+    now = time.time()  # 过期按本机时钟，不依赖 at
+    live = _live_subagents(cur.get("subagents"), now)
+    stopped = {k: v for k, v in _as_dict(cur.get("stopped")).items() if (a := _iso_age(v, now)) is not None and a < SUBAGENT_TTL}
+    patch: dict = {"subagents": live, "stopped": stopped}
+    main_idle = cur.get("mainIdle", False)  # 缺省 False：老状态升级中途不误报 idle，主会话下一次 Stop 会设 True
+    is_idle_prompt = event == "Notification" and payload.get("notification_type") == "idle_prompt"
+    if event == "UserPromptSubmit":
+        patch["mainIdle"] = False
+    elif event == "Stop" or is_idle_prompt:
+        patch["mainIdle"] = True
+        if live:
+            decision = None
+    elif event in ("SubagentStart", "SubagentStop"):
+        aid = _tag(payload.get("agent_id"))
+        if not aid:
+            return None, {}
+        if event == "SubagentStart":
+            if aid in stopped:
+                return None, patch  # 已经停过了（乱序）：不留幽灵
+            live[aid] = {"at": cc.now_iso(), "path": _subagent_path(payload.get("transcript_path") or cur.get("transcript"), aid)}
+            if cur.get("lastPhase") in ("waiting_input", "waiting_permission"):
+                decision = None
+        else:
+            live.pop(aid, None)
+            stopped[aid] = cc.now_iso()
+            decision = ("idle", None, False) if not live and main_idle else None
+    return decision, patch
+
+
+def _scan_subagents(session_id: str, gen: str | None, cli: int, born: str | None) -> None:
+    """发心跳的进程每圈（`BEAT_CHECK_SECONDS`）顺带扫一次：主会话已空闲、集合非空、全部按记录文件判已结束
+    （Esc 打断的 subagent 没有 SubagentStop）→ 清空集合并报 idle。非阻塞拿会话锁（拿不到这圈跳过），锁内重读再判一次。"""
+    st = _read_state(session_id)
+    if not st or not st.get("mainIdle") or not _as_dict(st.get("subagents")) or _live_subagents(st["subagents"], time.time()):
+        return
+    with _session_lock(session_id, 0) as held:
+        cur = _read_state(session_id) if held else None
+        if not cur or not _owned(cur, gen, cli, born) or not cur.get("mainIdle"):
+            return
+        if not _as_dict(cur.get("subagents")) or _live_subagents(cur["subagents"], time.time()):
+            return
+        config = cc.load_config()
+        if not _same_server(cur, config):
+            return
+        _write_state(session_id, {**cur, "subagents": {}, "lastPhase": "idle"})
+        try:
+            cc.phase_run(config, cur["runId"], "idle", cc.now_iso(), timeout=BEAT_TIMEOUT)
+        except Exception:  # noqa: BLE001 — 相位只是记录
+            pass
 
 
 def handle_phase(payload: dict, at: str) -> None:
@@ -466,10 +568,13 @@ def handle_phase(payload: dict, at: str) -> None:
         if not _same_server(cur, config):
             return  # 配置换了服务器：这条 run 不在新服务器上，什么都不发（旧的那条靠服务端超时收尾）
         decision = _phase_for(payload, cur.get("lastPhase"))  # 锁内的新状态：锁前读到的 lastPhase 可能已被并发的钩子改过
+        decision, patch = _subagent_step(payload, cur, at, decision) if decision else (decision, {})
         if decision is None:
+            if patch:
+                _write_state(session_id, {**cur, **patch})  # 只改 subagents / mainIdle，lastPhase 不动
             return
         phase, detail, reply = decision
-        _write_state(session_id, {**cur, "lastPhase": phase})  # 在锁内重读的状态上只改 lastPhase：归属字段绝不从锁前快照写
+        _write_state(session_id, {**cur, **patch, "lastPhase": phase})  # 在锁内重读的状态上只改 lastPhase / subagents / mainIdle：归属字段绝不从锁前快照写
         closed = False
         try:
             result = cc.phase_run(config, cur["runId"], phase, at, detail=detail, reply=reply, timeout=_http_timeout())
@@ -875,6 +980,8 @@ def _beat_session(
                     if wait_s is None:
                         return END_OTHER  # 重开不成：停，下一个钩子事件再起
                     next_beat = attempt_at + wait_s
+            with contextlib.suppress(Exception):
+                _scan_subagents(session_id, gen, cli, born)
             sleep(BEAT_CHECK_SECONDS)
     return END_OTHER
 

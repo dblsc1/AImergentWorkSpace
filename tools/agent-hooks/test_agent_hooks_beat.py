@@ -779,7 +779,7 @@ class PluginFilesTests(unittest.TestCase):
     def test_hooks_wire_every_event_the_hook_handles_to_the_one_script(self):
         hooks = self._json(HERE / "hooks" / "hooks.json")["hooks"]  # 文件形式必须有顶层 "hooks"
         self.assertEqual(set(hooks), {"SessionStart", "SessionEnd", "UserPromptSubmit", "PermissionRequest", "Notification",
-                                      "PostToolUse", "PostToolUseFailure", "Stop", "StopFailure"})
+                                      "PostToolUse", "PostToolUseFailure", "Stop", "StopFailure", "SubagentStart", "SubagentStop"})
         for event, matchers in hooks.items():
             [handler] = [h for m in matchers for h in m["hooks"]]
             self.assertEqual((handler["type"], handler["command"]), ("command", 'python3 "${CLAUDE_PLUGIN_ROOT}"/claude_hook.py'))
