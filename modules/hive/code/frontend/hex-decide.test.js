@@ -79,6 +79,7 @@ assert.deepStrictEqual(sent, [["a", "approve", false, false], ["c", "approve", f
 cm.add({ key: "d", verb: "task" }, "reject"); cm.add({ key: "p", verb: "project" }, "approve");
 var fl = cm.flush(false);   // 转后台：一条接一条，项目提议排在任务提议前面
 assert.deepStrictEqual(sent.slice(2), [["p", "approve", true, false]], "第一条同步发出，其余等它");
+tick(60000); assert.deepStrictEqual(sent.slice(2), [["p", "approve", true, false]], "顺序发期间排队项的原计时器不抢跑");
 fl.then(function () { return Promise.resolve(); }).then(function () {
   assert.deepStrictEqual(sent.slice(2, 4), [["p", "approve", true, false], ["d", "reject", true, false]]);
   cm.add({ key: "e" }, "approve"); cm.add({ key: "f", verb: "project" }, "approve");

@@ -246,6 +246,8 @@ def _save_run_id(
     state: dict = {"runId": run_id}
     if payload is not None:
         state.update(_beat_facts(session_id, payload, prev, probe, config))
+    if prev and prev.get("runId") == run_id:  # 同一条 run 的刷新（如 /compact）：别丢后台 subagent 的追踪，否则下次 Stop 误报 idle
+        state.update({k: prev[k] for k in ("subagents", "mainIdle", "stopped") if k in prev})
     if last_phase:
         state["lastPhase"] = last_phase  # v0.3：PostToolUse 靠它决定报不报（见 _phase_for）
     if label:
