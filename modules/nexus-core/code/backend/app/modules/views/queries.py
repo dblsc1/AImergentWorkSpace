@@ -28,6 +28,7 @@ from ..prefs import service as prefs_service
 from ..projector.handlers import current as current_projection
 from ..projector.handlers import daily_stats as daily_stats_projection
 from ..timer import service as timer_service
+from . import address as address_mod
 from .schemas import (
     CurrentAgent,
     CurrentOut,
@@ -131,6 +132,8 @@ def _progress(project: dict, tasks: list[dict]) -> int:
 
 def get_tree(include_ephemeral: bool = False) -> TreeOut:
     zones, projects = planner_service.list_tree()
+    addrs = address_mod.build(zones, projects, [t for p in projects for t in p.get("tasks", [])],
+                              planner_service.creation_order())  # v2.39：撞号要看全部同级（含临时 / 已完成 / 桶）
     shaped = []
     for project in projects:
         bucket = next((t for t in project.get("tasks", []) if t.get("kind") == UNCLASSIFIED_KIND), None)
@@ -153,6 +156,8 @@ def get_tree(include_ephemeral: bool = False) -> TreeOut:
                 # deadline = plan.end 的投影（契约）；无计划则回落到旧存量字段
                 "deadline": plan.get("end") or project.get("deadline"),
                 "unclassifiedTaskId": bucket["id"] if bucket else None,
+                "address": addrs.projects[project["id"]],
+                "unclassifiedAddress": addrs.tasks[bucket["id"]] if bucket else None,
                 "tasks": [
                     {
                         "id": t["id"],
@@ -165,6 +170,7 @@ def get_tree(include_ephemeral: bool = False) -> TreeOut:
                         # 落到 None/[]（同一份默认值口径，见契约「排期与依赖」）。
                         "plan": t.get("plan"),
                         "dependsOn": t.get("dependsOn") or [],
+                        "address": addrs.tasks[t["id"]],
                     }
                     for t in visible
                 ],
@@ -173,7 +179,7 @@ def get_tree(include_ephemeral: bool = False) -> TreeOut:
     return TreeOut(
         zones=[
             {"id": z["id"], "key": z["key"], "name": z["name"],
-             "color": z["color"], "order": z["order"]}
+             "color": z["color"], "order": z["order"], "address": addrs.zones[z["id"]]}
             for z in zones
         ],
         projects=shaped,

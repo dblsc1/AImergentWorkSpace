@@ -582,11 +582,11 @@ provides:
     summary: 协作历史（v2.39）——GET /api/core/views/history?from&to&who=human|agent|both&detail=summary|segments|windows&scope；
       人和 agent 分开、永不相加；segments 带人的时间段（onAgentRun）、代理相位（startedBy）、交接点 handoffs、并行概况 overlap；
       windows 带每天的窗口块与块内记录；summary 最多 92 天，segments / windows 最多 7 天
-    status: 契约已定（v2.39）
+    status: 已实现（v2.39）
   - id: nexus-core.views.arrangements.v1
     summary: 安排（v2.39）——GET /api/core/views/arrangements?range=today|week&scope；scheduled / actionable / blocked / overdue / stale，
       每条带 address、spentThisRange（人与代理分开）、activeNow；week 另带 review
-    status: 契约已定（v2.39）
+    status: 已实现（v2.39）
   - id: nexus-core.activity.secretary.v1
     summary: 第三级（v2.39）——秘书报告 POST/GET /api/core/activity/secretary-reports（每天一份，再交替换）；
       问人 POST/GET /api/core/activity/questions、POST …/{id}/answer|dismiss（只许人；选项带目标且问题带时段 = 补登）；
@@ -635,7 +635,7 @@ consumes:
 | POST | `/api/core/timer/backfill` | `TimerBackfillIn`（见下「补登」节） | `TimerBackfillOut` | ✅ 已实现（v1.8，`69da9d6`，已验证 `f308bdf`） |
 | GET | `/api/core/events` | `?type&from&to&limit&offset` | `{total, items[]}` | ✅ 已实现（v0.6 档案读端）|
 | GET | `/api/core/views/current` | 无 | `CurrentOut` | ✅ 已实现（含 `key` 字段） |
-| GET | `/api/core/views/tree` | `?includeEphemeral=false` | `TreeOut` | ✅ 已实现（含 `key` 字段） |
+| GET | `/api/core/views/tree` | `?includeEphemeral=false` | `TreeOut` | ✅ 已实现（含 `key` 字段；v2.39 起分区 / 项目 / 任务带 `address`，✅ 已实现） |
 | GET | `/api/core/export` | 无 | `ExportOut`（见下「只读全量导出」节） | ✅ 已实现（v1.3） |
 | GET | `/api/core/views/next-actions` | 无 | `NextActionsOut`（见下「下一步行动读端」节） | ✅ 已实现（v1.5） |
 | GET | `/api/core/views/review` | 无 | `ReviewOut`（见下「每周回顾读端」节） | ✅ 已实现（v1.5） |
@@ -688,8 +688,8 @@ consumes:
 | GET / PUT | `/api/core/activity/settings` | `{tiers, agentDirect{enabled, windowsClassify, honeycombRecords}}`，PUT 带 `If-Match` | 同体加 `version`、`tiersSince`；PUT 只许人，版本不符 412，迁移超 500 条 409 | ✅ 已实现（v2.38） |
 | POST | `/api/core/activity/direct-log/{id}/undo` | 无 | 撤回一次直接施加；只许人 | ✅ 已实现（v2.38） |
 | GET | `/api/core/activity/direct-log` | 查询 `date?`、`limit?`（1–200，缺省 50） | `{items[]}`（不含 `before`）；人与 MCP 可读 | ✅ 已实现（v2.38） |
-| GET | `/api/core/views/history` | 查询 `from?`、`to?`、`who?`、`detail?`、`scope?` | 见「MCP v0.5 的后端」二 | ⏳ 契约已定（v2.39） |
-| GET | `/api/core/views/arrangements` | 查询 `range?`、`scope?` | 见「MCP v0.5 的后端」三 | ⏳ 契约已定（v2.39） |
+| GET | `/api/core/views/history` | 查询 `from?`、`to?`、`who?`、`detail?`、`scope?` | 见「MCP v0.5 的后端」二 | ✅ 已实现（v2.39） |
+| GET | `/api/core/views/arrangements` | 查询 `range?`、`scope?` | 见「MCP v0.5 的后端」三 | ✅ 已实现（v2.39） |
 | POST / GET | `/api/core/activity/secretary-reports` | `{date?, text, author?}` / 查询 `date` 或 `from&to` | 见「MCP v0.5 的后端」4.1 | ✅ 已实现（v2.39） |
 | POST / GET | `/api/core/activity/questions` | `{questions[1..10]}` / 查询 `status?`、`limit?` | 见「MCP v0.5 的后端」4.2 | ✅ 已实现（v2.39） |
 | POST | `/api/core/activity/questions/{id}/answer\|dismiss` | `{option?, text?}` / 无 | 只许人；见 4.2 | ✅ 已实现（v2.39） |
@@ -4722,6 +4722,7 @@ MCP 侧见 `contracts/mcp.tools.v2`。
   同级有删除、搬入搬出时后面的会重新分配，这是预期的。
 - **拼接**：`分区-项目-任务`，如 `jy`、`jy-jgsc`、`jy-jgsc-kcdm`。编号不含 `-`。收件箱和「未分类」照普通名字编号（「收件箱」= `sjx`，「未分类」= `wfl`）。
 - **解析**（给接受 address 的调用方，如 MCP）：去首尾空白、不分大小写、整串精确匹配；1 段 = 分区，2 段 = 项目，3 段 = 任务；不做前缀匹配。已完成与临时的也能解析。
+- **补充（实现时定下）**：「创建先后」按文档的 Mongo `_id`（ObjectId 随插入递增），相同再按 `id`。「未分类」桶不在 `views/tree` 的 `tasks[]` 里，项目另带 `unclassifiedAddress`（没建过为 `null`）。缺分区的项目及其任务不参与解析。
 - `pypinyin`（MIT，纯 Python）进 nexus-core 依赖。换版本导致个别多音字编号变化不算破坏：引用一律用 `id`。
 
 ### 二、协作历史 `GET /api/core/views/history`
@@ -4775,6 +4776,7 @@ MCP 侧见 `contracts/mcp.tools.v2`。
   - `{at, runId, type: "agent_to_human", waitedSeconds}`：每次转入 `waiting_input` 一条；`waitedSeconds` = 到这条运行的下一次人回复、或人开始看它（attend 的下一段开头）为止的秒数，取先到者；范围结束前都没有 = `null`。
 - **`overlap`**：`{maxAgentsWorkingAtOnce, secondsWithAgentsWorkingWhileHumanElsewhere}`。后者 = 至少一个代理在 `working`、而人此刻没有在看任何一个 `working` 的代理的总秒数。**不是工时**。
 - **上限**：`segments` 2000、`blocks` 500、`runs` 200、`handoffs` 2000、`byTarget` 每天 200；任一处截了，顶层 `truncated: true`。
+- **补充（实现时定下）**：截断时保留最早的；未知的 `scope` → `422`；已入账段按真实起止给，跨午夜的段 `byDay` 仍按投影归日；`subagents` 没有数据来源时不给。
 - 带 Bearer 的设备令牌可读（同 `views/lanes`）。
 
 ### 三、安排 `GET /api/core/views/arrangements`
@@ -4805,6 +4807,7 @@ MCP 侧见 `contracts/mcp.tools.v2`。
 - 排序：`overdue` 按 `planEnd` 升序；`scheduled`、`blocked` 按 `plan.start` 升序（没有 plan 的在后）；`actionable` 按项目、任务在树里的顺序；`stale` 按 `lastActive` 升序（`null` 在前）。
 - `spentThisRange`：范围内记到这条任务的人的秒数（台账）与代理干活秒数（只算挂了这条任务的运行；代理多半不挂任务，所以常为 0）。分开写，不相加。
 - `activeNow`：人的手动计时或自动跟踪此刻指向它 = `"human"`；在跑、挂了它的代理运行 = 该 `runId`。
+- **补充（实现时定下）**：未知的 `scope` → `422`；`overdue` 的任务同时被卡住时条目追加 `blockedBy`；有排期但不在范围内的任务进 `actionable`，`plan` 照给；「树里的顺序」= 分区 `order`、再 planner 列表里项目与任务的位置（同 `views/tree`）。
 - 每组最多 200 条，截了顶层 `truncated: true`。带 Bearer 的设备令牌可读。
 
 ### 四、第三级：秘书报告与问人

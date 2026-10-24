@@ -104,6 +104,11 @@ def list_tree() -> tuple[list[dict], list[dict]]:
     return repo.list_zones(), projects
 
 
+def creation_order() -> dict[str, dict]:
+    """``{zones|projects|tasks: {id: _id}}``（v2.39 位置编号用；ObjectId 的先后 = 创建先后，其时间 = 创建时间）。"""
+    return {c: repo.creation_ids(c) for c in ("zones", "projects", "tasks")}
+
+
 # ------------------------------------------------------------------ 建
 
 

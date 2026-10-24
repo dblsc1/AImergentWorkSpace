@@ -195,6 +195,14 @@ def read_daily_stats(
     )
 
 
+def last_active_by_task(user: str) -> dict[str, str]:
+    """每个任务最近一次有时间的本地日（一次 $group，不把整张按天表读回来）。"""
+    rows = _daily_col().aggregate([
+        {"$match": {"user": user, "seconds": {"$gt": 0}, "taskId": {"$ne": None}}},
+        {"$group": {"_id": "$taskId", "last": {"$max": "$date"}}}])
+    return {r["_id"]: r["last"] for r in rows}
+
+
 def clear_daily_stats() -> None:
     """重建专用：清空整张 ``proj_daily_stats`` 集合。只碰投影集合，不碰
     ``events``（契约「投影重建」硬约束）。"""
@@ -321,7 +329,7 @@ def reassign_lane(user: str, key: str, task_id: str | None, project_id: str | No
 
 
 def read_lanes(user: str, kind: str, start, end, limit: int, *, fields: tuple | None = None,
-               run_ids: list | None = None, sources: list | None = None) -> list[dict]:
+               run_ids: list | None = None, sources: list | None = None, ascending: bool = False) -> list[dict]:
     """与 [start, end) 有重叠的区间，最新（startAt 大）的在前，至多 ``limit`` 条。
 
     ``fields`` 只取这几列（给「先轻读、再按 runId 取全文」用）；``run_ids`` 只取这些运行。
@@ -335,7 +343,7 @@ def read_lanes(user: str, kind: str, start, end, limit: int, *, fields: tuple | 
     if sources is not None:  # v2.38 对账：只要这几个来源的段（在查询里过滤，不能先截断再筛）
         query["source"] = {"$in": sources}
     proj = {"_id": 0} if fields is None else {"_id": 0, **{f: 1 for f in fields}}
-    return list(_lanes_col().find(query, proj).sort("startAt", -1).limit(limit))
+    return list(_lanes_col().find(query, proj).sort("startAt", 1 if ascending else -1).limit(limit))
 
 
 def delete_lane(user: str, key: str) -> None:
