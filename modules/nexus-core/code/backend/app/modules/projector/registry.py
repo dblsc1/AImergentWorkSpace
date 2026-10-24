@@ -24,10 +24,14 @@ from .handlers import agent_daily_stats, current, daily_stats, lanes
 #:   session.reassigned（v2.11 改挂未分类时间）→ 三个人的投影各自的 handle_reassign：
 #:     current / daily_stats 把那一段的秒数从旧归属减、往新归属加；lanes 换那一段的 taskId / projectId。
 #:     代理的投影不动。**重建不走这一行**：rebuild 按当前归属重放 session.completed（见 rebuild.py）。
+#:   session.voided（v2.38 三级分类对账作废一段）→ 同样三个人的投影各自的 handle_void：
+#:     current / daily_stats 把那一段的秒数从当前归属减掉；lanes 删那一段的区间。**重建同样不走这一行**：
+#:     rebuild 直接不重放被作废的 session.completed（events_service.with_current_subjects）。
 DISPATCH: dict[str, tuple[Callable[[dict], None], ...]] = {
     "session.completed": (current.handle, daily_stats.handle, lanes.handle),
     "agent.run.completed": (agent_daily_stats.handle, lanes.handle),
     "session.reassigned": (current.handle_reassign, daily_stats.handle_reassign, lanes.handle_reassign),
+    "session.voided": (current.handle_void, daily_stats.handle_void, lanes.handle_void),
 }
 
 

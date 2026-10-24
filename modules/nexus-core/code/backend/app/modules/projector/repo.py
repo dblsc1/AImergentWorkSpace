@@ -98,9 +98,16 @@ def move_session(
     return bool(inc) and _inc_current(user, dedupe_key, inc, applied="movedKeys")
 
 
-def _inc_current(user: str, dedupe_key: str, inc: dict[str, int], applied: str = "appliedKeys") -> bool:
+def void_session(user: str, dedupe_key: str, seconds: int, project: str | None, task: str | None, session_key: str) -> bool:
+    """v2.38 作废：一段的秒数从它**当前**归属减掉（``dedupe_key`` 是那条 ``session.voided`` 的，记在 ``movedKeys``，理由同 ``move_session``）。
+    被作废那段的防重键从 ``appliedKeys`` 拿掉：重建不重放它，读出来的文档才与重建的一样。"""
+    inc = {"totalSeconds": -seconds, **({f"projects.{project}": -seconds} if project else {}), **({f"tasks.{task}": -seconds} if task else {})}
+    return _inc_current(user, dedupe_key, inc, applied="movedKeys", pull=session_key)
+
+
+def _inc_current(user: str, dedupe_key: str, inc: dict[str, int], applied: str = "appliedKeys", pull: str | None = None) -> bool:
     query = {"user": user, applied: {"$ne": dedupe_key}}
-    update = {"$inc": inc, "$addToSet": {applied: dedupe_key}}
+    update = {"$inc": inc, "$addToSet": {applied: dedupe_key}, **({"$pull": {"appliedKeys": pull}} if pull else {})}
     try:
         result = _col().update_one(query, {**update, "$setOnInsert": {"user": user}}, upsert=True)
     except DuplicateKeyError:
@@ -120,6 +127,8 @@ def read_current(user: str) -> dict | None:
             # 只摘「是数、且 ≤ 0」的：外部事件的 id 带点时 $inc 写出的是嵌套文档，原样留着，不拿它比大小
             doc[field] = {key: secs for key, secs in doc[field].items()
                           if not (isinstance(secs, (int, float)) and secs <= 0)}
+    if doc and not doc.get("projects") and not doc.get("tasks") and doc.get("totalSeconds", 0) <= 0:
+        return None  # v2.38：段都被作废了——与「从没记过」（重建出来的）读起来一样
     return doc
 
 
@@ -312,7 +321,7 @@ def reassign_lane(user: str, key: str, task_id: str | None, project_id: str | No
 
 
 def read_lanes(user: str, kind: str, start, end, limit: int, *, fields: tuple | None = None,
-               run_ids: list | None = None) -> list[dict]:
+               run_ids: list | None = None, sources: list | None = None) -> list[dict]:
     """与 [start, end) 有重叠的区间，最新（startAt 大）的在前，至多 ``limit`` 条。
 
     ``fields`` 只取这几列（给「先轻读、再按 runId 取全文」用）；``run_ids`` 只取这些运行。
@@ -323,8 +332,15 @@ def read_lanes(user: str, kind: str, start, end, limit: int, *, fields: tuple | 
         query["startAt"]["$gt"] = start - timedelta(days=31)
     if run_ids is not None:
         query["runId"] = {"$in": run_ids}
+    if sources is not None:  # v2.38 对账：只要这几个来源的段（在查询里过滤，不能先截断再筛）
+        query["source"] = {"$in": sources}
     proj = {"_id": 0} if fields is None else {"_id": 0, **{f: 1 for f in fields}}
     return list(_lanes_col().find(query, proj).sort("startAt", -1).limit(limit))
+
+
+def delete_lane(user: str, key: str) -> None:
+    """v2.38 作废：这一段不再进时间线（重建时作废的段本来就不重放，结果一样）。"""
+    _lanes_col().delete_one({"user": user, "key": key, "kind": "session"})
 
 
 def clear_lanes() -> None:

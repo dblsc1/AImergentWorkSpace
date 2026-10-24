@@ -78,6 +78,8 @@ def reassign(event_id: str, task_id: str | None, project_id: str | None, request
     if len(sessions) > 1:
         raise HasChildrenError(f"事件 id {event_id!r} 对上了 {len(sessions)} 条计时段（事件 id 不唯一），不猜是哪一条")
     session = sessions[0]
+    if events_service.is_voided(session):  # v2.38：作废的段不能改挂（投影会把作废的时间加回来）
+        raise HasChildrenError(f"计时段 {event_id!r} 已被作废（session.voided），不能改挂")
     origin = session.get("subject") or {}
     # 判据只看台账：桶的 id 由项目 id 派生，项目 / 桶以后删了也判得出「这一段原本记在桶上」
     # v2.14：自动记下的段（规则替人记的，信封 ai.auto）也放行——人要能改

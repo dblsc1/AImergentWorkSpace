@@ -123,8 +123,8 @@ def upsert_rule(user: str, key: str, fields: dict, keep_existing: bool = False) 
     return doc, res.upserted_id is not None
 
 
-def delete_rule(user: str, rule_id: str) -> bool:
-    return _col(_RULE).delete_one({"user": user, "id": rule_id}).deleted_count > 0
+def delete_rule(user: str, rule_id: str) -> dict | None:
+    return _col(_RULE).find_one_and_delete({"user": user, "id": rule_id}, projection={"_id": 0})
 
 
 # ── 账号设置 ──

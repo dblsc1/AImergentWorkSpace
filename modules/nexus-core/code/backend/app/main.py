@@ -14,6 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from .config import settings
+from .modules.activity import reconcile_loop
 from .modules.activity.blocks import BlockConflict
 from .modules.activity.blocks_router import router as blocks_router
 from .modules.activity.ignore_router import router as ignore_router
@@ -64,7 +65,11 @@ async def lifespan(_app: FastAPI):
     else:
         if replayed:
             log.info("proj_lanes 为空，已从 %d 条事实自动补建（v2.4 升级）", replayed)
-    yield
+    loop = reconcile_loop.start()  # v2.38：窗口块对账，每 60 秒一轮
+    try:
+        yield
+    finally:
+        reconcile_loop.stop(loop)
 
 
 app = FastAPI(

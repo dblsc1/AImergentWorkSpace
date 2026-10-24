@@ -2,7 +2,7 @@
 
 块 = ``(user, date, blockKey)``，不单独存时长，**每次读时由原始记录聚合**（跨设备取时间并集）；分类状态存在 ``activity_blocks``。
 生效状态：文档 ``status`` 非 null → 用它；否则通用窗口（``date ≥ since``）→ ``generic``；否则有可用的第二级规则 → ``assigned`` / ``via: "rule"`` / 一段全天；否则 ``pending``。
-第二级规则只管最近 14 天（契约「三」影响范围）：更早的没文档的块不按规则算，是 ``pending``。本期不写台账。
+第二级规则只管最近 14 天（契约「三」影响范围）：更早的没文档的块不按规则算，是 ``pending``。对账写段时给没有文档的块建文档（``via: "rule"``），之后读时按文档（见 ``resolve``）；写台账见 ``reconcile.py``。
 """
 
 from __future__ import annotations
@@ -82,24 +82,30 @@ def _group(recs: list[dict]) -> dict[str, dict]:
     return out
 
 
-def _item(d: Date, key: str, g: dict, doc: dict | None, since: str | None, rule: dict | None) -> dict:
+def resolve(d: Date, doc: dict | None, since: str | None, rule: dict | None, recent: bool) -> tuple[str, str | None, str | None, list]:
+    """生效状态 ``(status, via, ruleId, parts)``。``rule`` 只在 ``recent``（最近 14 天）时才被调用方给出。
+    对账建的文档（``via: "rule"``）在最近 14 天里仍跟着第二级规则走（规则改了、删了块跟着变）；更早的就按文档记下的入账。"""
+    status = (doc or {}).get("status")
+    if status is not None and doc.get("via") == "rule" and recent:
+        status = None
+    if status is not None:
+        return status, doc["via"], doc.get("ruleId"), doc["parts"]
+    if since is not None and since <= d.isoformat():
+        return "generic", None, None, []
+    if rule is not None:
+        return "assigned", "rule", rule["id"], [{"fromTs": None, "toTs": None, "taskId": rule.get("taskId"), "projectId": rule.get("projectId")}]
+    return "pending", None, None, []
+
+
+def _item(d: Date, key: str, g: dict, doc: dict | None, since: str | None, rule: dict | None, recent: bool = True) -> dict:
     spans = g["spans"]
     total = round(_union(spans))
-    status = (doc or {}).get("status")
     generic = since is not None and since <= d.isoformat()
-    if status is not None:
-        via, rule_id, parts = doc["via"], doc.get("ruleId"), doc["parts"]
-    elif generic:
-        status, via, rule_id, parts = "generic", None, None, []
-    elif rule is not None:
-        status, via, rule_id = "assigned", "rule", rule["id"]
-        parts = [{"fromTs": None, "toTs": None, "taskId": rule.get("taskId"), "projectId": rule.get("projectId")}]
-    else:
-        status, via, rule_id, parts = "pending", None, None, []
+    status, via, rule_id, parts = resolve(d, doc, since, rule, recent)
     tz = config.settings.tz
     first, last = min(s for s, _ in spans) if spans else _midnight(d), max(e for _, e in spans) if spans else _midnight(d)
     return {"blockKey": key, "keySource": g["src"], "status": status, "via": via, "ruleId": rule_id, "generic": generic,
-            "seq": (doc or {}).get("seq", 0),
+            "seq": (doc or {}).get("seq", 0), **({"reconciling": True} if (doc or {}).get("reconciling") else {}),
             "parts": [{**p, "seconds": total if len(parts) == 1 else _part_seconds(d, p, spans)} for p in parts],
             "seconds": total, "records": len(spans), "firstAt": first.astimezone(tz).isoformat(),
             "lastAt": last.astimezone(tz).isoformat(), "apps": sorted(g["apps"]), "expired": expired(d)}
@@ -111,11 +117,11 @@ def _items(user: str, d: Date, only: str | None = None) -> list[dict]:
     if only is not None:
         groups = {only: groups.get(only, {"spans": [], "apps": set(), "src": "auto"})}
     docs, generic = blocks_repo.blocks_of_day(user, ds), blocks_repo.generic_since(user)
-    # 已知，第二部分修：14 天外、只靠第二级规则分类、没有文档的块会从 assigned 翻成 pending——第二部分对账会给它们建文档
-    use_rules = d >= today() - timedelta(days=RULE_DAYS)
-    need = [k for k in groups if (docs.get(k) or {}).get("status") is None and not (k in generic and generic[k] <= ds)]
-    rules = block_rules.effective(user, need) if use_rules else {}
-    return [_item(d, k, g, docs.get(k), generic.get(k), rules.get(k)) for k, g in groups.items()]
+    recent = d >= today() - timedelta(days=RULE_DAYS)
+    need = [k for k in groups if ((docs.get(k) or {}).get("status") is None or docs[k].get("via") == "rule")
+            and not (k in generic and generic[k] <= ds)]
+    rules = block_rules.effective(user, need) if recent else {}
+    return [_item(d, k, g, docs.get(k), generic.get(k), rules.get(k), recent) for k, g in groups.items()]
 
 
 def _decode(cursor: str) -> tuple[int, str]:

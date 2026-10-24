@@ -108,6 +108,13 @@ def handle_reassign(envelope: dict) -> None:
     repo.reassign_lane(envelope["user"], applied_key(session), subject.get("task"), subject.get("project"), seq)
 
 
+def handle_void(envelope: dict) -> None:
+    """吃一条已落库的 ``session.voided``（契约 v2.38）：那一段不再进时间线。"""
+    session = (envelope.get("data") or {}).get("session")
+    if isinstance(session, dict) and isinstance(session.get("source"), str) and isinstance(session.get("dedupeKey"), str):
+        repo.delete_lane(envelope["user"], applied_key(session))
+
+
 def read_lanes(user: str, kind: str, start: datetime, end: datetime, limit: int, **kw) -> list[dict]:
     """views 的指定读路径（v2.4 ``views/lanes``）；``fields`` / ``run_ids`` 见 ``repo.read_lanes``。"""
     return repo.read_lanes(user, kind, start, end, limit, **kw)

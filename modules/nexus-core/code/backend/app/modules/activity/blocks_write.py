@@ -1,7 +1,7 @@
 """窗口块的写（契约 v2.38「三级分类」二、窗口块 · 写）：assign / split / generic / ignore / reset。
 只许人（HTTP 层挡）；每次写带 ``ifSeq``，不符 → ``BlockConflict``（409 并给现状）；目标不存在 → 404（``block_rules.check_target``）；
 该日原始记录已过留存期 → 409。本期只改 ``activity_blocks`` / ``activity_generic`` / ``activity_block_rules`` / ``activity_ignores``，
-**不写台账**（契约「四」对账，第二部分）：``gen`` 只在目标 / 拆分点变时 +1，``runs`` 只建字段。
+写完立刻触发对账（``reconcile.kick``，契约「四」）：``gen`` 在目标 / 拆分点变时 +1。
 契约待定：块里没有记录时 ``ignore`` 的 ``forever`` 没法定「时长最多的程序」→ 422。
 契约待定：``generic`` 标 / 取消无日期、无 ``ifSeq``（块名级）；已是通用窗口再标一次不改 ``since``。
 契约待定：通用窗口的块被 assign（整块记到一处）后状态也是 ``generic``（带一段 parts），与「拆分后是 generic」一致。
@@ -13,7 +13,7 @@ from datetime import date as Date, datetime, timedelta, timezone
 
 from ...tenant import current as current_tenant
 from ..planner.errors import UnprocessableError
-from . import block_rules, blocks, blocks_repo, ignore, records_repo
+from . import block_rules, blocks, blocks_repo, ignore, reconcile, records_repo
 
 MIN_PARTS, MAX_PARTS = 2, 20
 _SEP = " · "
@@ -29,6 +29,7 @@ def _write(user: str, d: Date, key: str, if_seq: int, status: str, parts: list[d
     old = blocks_repo.get_block(user, d.isoformat(), key)
     if (old or {}).get("seq", 0) != if_seq or blocks_repo.put_block(user, d.isoformat(), key, fields, if_seq, old) is None:
         raise blocks.BlockConflict(blocks.block_item(user, d, key))
+    reconcile.kick(only={(d.isoformat(), key)}, actor="human")  # 契约「四」：块的写操作 → 尽快对账（在组装响应之前，响应里的 seq 才是对账后的）
     return blocks.block_item(user, d, key)
 
 
@@ -48,6 +49,7 @@ def assign(d: Date, key: str, task_id: str | None, project_id: str | None, remem
     out = _write(user, d, key, if_seq, status, [{"fromTs": None, "toTs": None, "taskId": task_id, "projectId": project_id}])
     if remember and status != "generic":
         block_rules.create(key, task_id, project_id, via="assign")
+        out = blocks.block_item(user, d, key)  # 规则变化触发的对账可能又动了这个块
     return out
 
 
@@ -86,6 +88,7 @@ def set_generic(key: str, on: bool) -> dict:
     user = current_tenant()
     since = blocks.today().isoformat()
     blocks_repo.set_generic(user, key, on, since)
+    reconcile.kick(key=key, actor="human")
     return {"blockKey": key, "generic": on, **({"since": blocks_repo.generic_since(user).get(key, since)} if on else {})}
 
 
@@ -117,6 +120,7 @@ def reset(d: Date, key: str, if_seq: int) -> dict:
     blocks.check_writable(d)
     if not blocks_repo.reset_block(user, d.isoformat(), key, if_seq, _now()):
         raise blocks.BlockConflict(blocks.block_item(user, d, key))
+    reconcile.kick(only={(d.isoformat(), key)}, actor="human")
     return blocks.block_item(user, d, key)
 
 

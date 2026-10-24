@@ -28,6 +28,8 @@ os.environ.setdefault("NEXUS_DB_NAME", "nexus_core_test")
 # tests/test_timezone_and_rebuild.py，那边直接构造 ZoneInfo/替换的 settings，
 # 不依赖这个全局默认值。
 os.environ.setdefault("NEXUS_TZ", "UTC")
+# 对账后台循环在测试里关掉（测试手动驱动 reconcile.run_round，免得后台线程和断言抢）
+os.environ.setdefault("NEXUS_RECONCILE_LOOP", "0")
 
 # ── 硬拒绝：库名不像测试库就不跑（2026-08-01 事故）──────────────
 # 上面那行 `setdefault` 是**弱防护**：它只在「你什么都没传」时生效，
