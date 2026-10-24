@@ -1450,6 +1450,23 @@ def test_cli_identity_revoke_on_a_restored_backup_is_honoured(mod):
     assert mod.device_identity(a) is None and mod.EPOCHS.state[1].get("") == 1
 
 
+def test_epochs_lifted_by_memory_are_persisted_when_a_stale_file_advances_past_memory(mod):
+    """终审：旧备份拷回来（纪元低），命令行写到 rev 超过内存：正常前进路径也要把更高的纪元补写回文件，否则重启后吊销过的令牌复活。"""
+    mod.token_state()  # 先落一份没有令牌的文件当「旧备份」
+    f = Path(mod.TOKENS_FILE)
+    backup = f.read_bytes()
+    a, _ = _live_token(mod)
+    mod.revoke_identity("")  # 内存与文件纪元 +1
+    assert mod.device_identity(a) is None
+    f.write_bytes(backup)
+    while _rev(mod) <= mod.EPOCHS._good[0]:
+        _cli_write(mod, lambda d: None)
+    mod.EPOCHS.refresh()
+    assert mod.EPOCHS.state[1].get("") == 1 and mod.EPOCHS._diverged
+    mod.EPOCHS.repair()
+    assert json.loads(f.read_text())["epochs"].get("") == 1
+
+
 def test_equal_rev_with_different_content_cannot_resurrect_a_web_revoked_token(mod):
     """审核 D：网页吊销 T 之后旧备份拷回来，命令行在旧文件上随便写一次，rev 正好追平内存、内容里还带着 T。"""
     t, t_meta = _live_token(mod)

@@ -347,8 +347,14 @@ def read_lanes(user: str, kind: str, start, end, limit: int, *, fields: tuple | 
 
 
 def delete_lane(user: str, key: str) -> None:
-    """v2.38 作废：这一段不再进时间线（重建时作废的段本来就不重放，结果一样）。"""
-    _lanes_col().delete_one({"user": user, "key": key, "kind": "session"})
+    """v2.38 作废：这一段不再进时间线（重建时作废的段本来就不重放，结果一样）。
+    留一行 ``kind: "voided"`` 墓碑而不是删行：作废赶在落账的 ``lanes.handle`` 之前到时，``apply_lane`` 见到已有 ``kind`` 就不动，
+    作废过的段不会被随后的插入复活；读端按 ``kind`` 取 session / run，看不见墓碑。运行（run）行不动。"""
+    try:
+        _lanes_col().replace_one({"user": user, "key": key, "kind": {"$in": ["session", None]}},
+                                 {"user": user, "key": key, "kind": "voided"}, upsert=True)
+    except DuplicateKeyError:
+        pass  # 这个 key 是一条运行 / 已经是墓碑：不动
 
 
 def clear_lanes() -> None:
@@ -358,7 +364,7 @@ def clear_lanes() -> None:
 
 def lanes_empty() -> bool:
     """一条区间都没有（改挂留下的占位行没有 ``kind``，不算）。"""
-    return _lanes_col().find_one({"kind": {"$exists": True}}, {"_id": 1}) is None
+    return _lanes_col().find_one({"kind": {"$exists": True, "$ne": "voided"}}, {"_id": 1}) is None
 
 
 # ------------------------------------------------ 启动期一次性任务的锁与进度标记（v2.4：proj_lanes 自动补建）

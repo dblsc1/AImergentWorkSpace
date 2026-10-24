@@ -97,7 +97,7 @@ def prepend(rule: dict, yield_to_human: bool = False, window: tuple[str, str] | 
                           and r["id"] != rule["id"]]
         if len(rules) > MAX_RULES:
             return False
-        if repo.replace_rules(user, doc.get("version", 0), rules, _now()) is not None:
+        if repo.replace_rules(user, doc.get("version", 0), rules, _now(), snapshots=[]) is not None:  # 规则变了：旧撤回快照作废
             return True
     return False
 
@@ -112,6 +112,6 @@ def remove_auto(rule_id: str) -> bool:
         rules = [r for r in old if not (r["id"] == rule_id and r.get("auto"))]
         if len(rules) == len(old):
             return False
-        if repo.replace_rules(user, doc["version"], rules, _now()) is not None:
+        if repo.replace_rules(user, doc["version"], rules, _now(), snapshots=[]) is not None:
             return True
     return False

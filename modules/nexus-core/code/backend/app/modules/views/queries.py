@@ -57,7 +57,7 @@ def get_current() -> CurrentOut:
     # v2.1：代理泳道与人的泳道各算各的；list_agent_runs 会顺手收掉超时的运行（契约明文）。
     # v2.22：藏起来的代理不在「现在在跑什么」里（只是不显示，时间照记）
     hidden = prefs_service.hidden_keys(current_tenant())
-    runs = timer_service.list_agent_runs(current_tenant())
+    runs = [r for r in timer_service.list_agent_runs(current_tenant()) if not r["unverified"]]  # 匿名运行只在泳道里（契约 v2.19）
     shown = [run for run in runs if prefs_service.ident(run["agent"], run["label"], run["unverified"]) not in hidden]
     agents = [CurrentAgent(**{k: v for k, v in run.items() if k != "unverified"}) for run in shown]
     n_hidden = len(runs) - len(shown)

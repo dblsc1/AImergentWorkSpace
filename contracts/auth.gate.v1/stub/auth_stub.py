@@ -393,16 +393,18 @@ class Epochs:
         mem = self._good
         if mem is None:
             return (rev, gen, dict(epochs), dict(tokens)), False
-        epochs = _merge_epochs(epochs, mem[2])
+        merged = _merge_epochs(epochs, mem[2])
+        lifted = merged != epochs  # 内存里的纪元比文件高：文件必须被补写，否则重启会把已吊销的令牌放回来
+        epochs = merged
         if gen != mem[1]:
             if gen in self._left:
                 return None, False
-            return (rev, gen, epochs, dict(tokens)), False  # 新的一代：旧一代的令牌验签就过不了
+            return (rev, gen, epochs, dict(tokens)), lifted  # 新的一代：旧一代的令牌验签就过不了
         alive = {j: t for j, t in tokens.items() if j not in self._dead}
         if rev > mem[0]:
-            return (rev, gen, epochs, alive), len(alive) != len(tokens)
+            return (rev, gen, epochs, alive), len(alive) != len(tokens) or lifted
         if alive == mem[3] and len(alive) == len(tokens):
-            return (mem[0], gen, epochs, alive), rev < mem[0]
+            return (mem[0], gen, epochs, alive), rev < mem[0] or lifted
         both = {j: t for j, t in mem[3].items() if j in alive}
         return (mem[0], gen, epochs, both), True
 

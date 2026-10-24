@@ -168,3 +168,16 @@ def test_partial_apply_then_replay_counts_each_day_once(client):
     agent_daily_stats.handle({**env, "user": "u_local"})
     assert _days(client) == ([{"date": "2026-10-13", "seconds": 3600, "runs": 1},
                               {"date": "2026-10-14", "seconds": 5400, "runs": 0}], 1, 9000)
+
+
+def test_collab_split_days_counts_dst_day_as_23_hours(monkeypatch):
+    """终审：views/collab_runs.split_days 的午夜到午夜不能按墙钟相减（夏令时当天 23 小时）。"""
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from app.modules.views import collab_runs  # noqa: PLC0415
+
+    ny = ZoneInfo("America/New_York")
+    monkeypatch.setattr(collab_runs, "settings", SimpleNamespace(tz=ny))
+    a = datetime.fromisoformat("2026-03-07T12:00:00-05:00")
+    b = datetime.fromisoformat("2026-03-09T12:00:00-04:00")
+    assert collab_runs.split_days([(a, b)]) == {"2026-03-07": 12 * 3600, "2026-03-08": 23 * 3600, "2026-03-09": 12 * 3600}
