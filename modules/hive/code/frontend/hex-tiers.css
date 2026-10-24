@@ -1,0 +1,31 @@
+/* hive · hex-tiers.css —— 三级分类打开时的一栏决策栏（接管 .hd-panel）。颜色一律 var(--…)；卡片底色沿用 hex-decide.css 的 --zone-raw / --zone-mix。 */
+.hd-panel[data-tiers] { width: min(440px, calc(100% - 2 * var(--sp-3))); }
+.ht-body { padding: 0 var(--sp-2) var(--sp-3); overflow-y: auto; max-height: calc(80vh - 48px); border-top: 1px solid var(--line); min-width: 0; }
+.ht-sec { display: flex; align-items: center; gap: var(--sp-2); margin: var(--sp-3) 4px var(--sp-2); font-size: var(--fs-eyebrow); font-weight: 700; color: var(--ink-2); }
+.ht-cnt { padding: 0 7px; border-radius: 10px; background: var(--ink); color: var(--panel); font-family: var(--font-mono); font-size: 11px; font-weight: 600; line-height: 18px; }
+.ht-badge { display: inline-block; margin-bottom: 5px; padding: 1px 7px; border-radius: 5px; background: var(--ink); color: var(--panel); font-size: 10px; font-weight: 700; }
+.ht-rule .ht-badge { background: var(--panel); color: inherit; border: 1px solid color-mix(in srgb, var(--zone-raw, var(--line)) 52%, transparent); }
+.ht-block .hd-btn, .ht-rule .hd-btn { min-height: 32px; padding: 6px 10px; border-radius: 8px; }
+.hd-under.is-skip { background: color-mix(in srgb, var(--ink-3) 80%, black); }
+.ht-edit { display: flex; gap: var(--sp-2); margin-top: var(--sp-2); }
+.ht-select, .ht-input { flex: 1; min-width: 0; font: inherit; font-size: var(--fs-sub); color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-1); padding: 4px 6px; }
+.ht-hist .hd-face { padding: 7px 10px; cursor: grab; }
+.ht-hist .hd-win { font-size: var(--fs-sub); }
+.ht-hist .hd-meta { align-items: center; }
+.ht-hist .hd-btn { margin-left: auto; font-size: 10px; }
+.ht-err { margin: var(--sp-3) 4px 0; font-size: var(--fs-eyebrow); color: var(--danger); }
+.ht-more { margin: var(--sp-1) 4px; }
+
+/* 拆分：时间条 + 把手 + 各段去向 */
+.ht-split { margin-top: var(--sp-2); }
+.ht-bar { position: relative; height: 52px; border-radius: 10px; background: color-mix(in srgb, var(--ink-3) 25%, var(--panel)); overflow: hidden; touch-action: none; }
+.ht-rec { position: absolute; top: 10px; height: 32px; min-width: 3px; background: var(--ink-3); }
+.ht-handle { position: absolute; top: 0; width: 18px; height: 52px; margin-left: -9px; border-radius: 6px; background: var(--panel); box-shadow: 0 1px 6px rgba(0, 0, 0, .35); cursor: ew-resize; touch-action: none; }
+.ht-handle::after { content: ""; position: absolute; top: 0; bottom: 0; left: -7px; right: -7px; }   /* 热区至少 32px，手指够得着 */
+.ht-handle:focus-visible { outline: 2px solid var(--focus); }
+.ht-times { margin-top: 4px; font-family: var(--font-mono); font-size: 11px; color: var(--ink-2); overflow-wrap: anywhere; }
+.ht-parts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: var(--sp-2); margin-top: var(--sp-2); }
+.ht-part { padding: 8px 10px; border-radius: var(--r-2); border: 1px solid var(--line); background: color-mix(in srgb, var(--zone-raw, var(--line)) var(--zone-mix, 30%), var(--panel)); }
+.ht-part-l { margin-bottom: 4px; font-size: var(--fs-eyebrow); color: var(--ink-2); }
+.ht-part .ht-select { width: 100%; box-sizing: border-box; }
+@media (max-width: 560px) { .hd-panel[data-tiers] { width: calc(100% - 2 * var(--sp-3)); } .ht-parts { grid-template-columns: minmax(0, 1fr); } }

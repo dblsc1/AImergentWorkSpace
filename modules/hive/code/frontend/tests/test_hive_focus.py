@@ -16,7 +16,7 @@ import http.server
 import json
 from pathlib import Path
 import threading
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 import pytest
 
@@ -120,7 +120,8 @@ class Hive:
 
 @contextlib.contextmanager
 def open_hive(browser: Browser, base: str, *, width: int = 1280, height: int = 900, theme: str = "light",
-              reduced_motion: str | None = None, helper: bool = True, fake_clock: bool = True) -> Iterator[Hive]:
+              reduced_motion: str | None = None, helper: bool = True, fake_clock: bool = True,
+              setup: Callable[[Hive], None] | None = None) -> Iterator[Hive]:
     context = browser.new_context(viewport={"width": width, "height": height}, timezone_id="Asia/Shanghai",
                                   reduced_motion=reduced_motion)
     page = context.new_page()
@@ -128,6 +129,8 @@ def open_hive(browser: Browser, base: str, *, width: int = 1280, height: int = 9
         page.clock.install()
     hive = Hive(page)
     page.route("**/api/core/**", hive.route)
+    if setup:
+        setup(hive)   # 页面加载前就要桩好的端点（比如启动时读一次的 activity/settings）
     if helper:
         page.add_init_script(path=str(COCKPIT / "focus.js"))
     errors: list[str] = []
