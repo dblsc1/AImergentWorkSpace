@@ -250,7 +250,9 @@ Claude Code 给它的默认超时只有 30 秒）。`SessionStart` **保持同�
     "PostToolUse":        [ { "hooks": [ { "type": "command", "command": "python3 /绝对路径/tools/agent-hooks/claude_hook.py", "async": true } ] } ],
     "PostToolUseFailure": [ { "hooks": [ { "type": "command", "command": "python3 /绝对路径/tools/agent-hooks/claude_hook.py", "async": true } ] } ],
     "Stop":               [ { "hooks": [ { "type": "command", "command": "python3 /绝对路径/tools/agent-hooks/claude_hook.py", "async": true } ] } ],
-    "StopFailure":        [ { "hooks": [ { "type": "command", "command": "python3 /绝对路径/tools/agent-hooks/claude_hook.py", "async": true } ] } ]
+    "StopFailure":        [ { "hooks": [ { "type": "command", "command": "python3 /绝对路径/tools/agent-hooks/claude_hook.py", "async": true } ] } ],
+    "SubagentStart":      [ { "hooks": [ { "type": "command", "command": "python3 /绝对路径/tools/agent-hooks/claude_hook.py", "async": true } ] } ],
+    "SubagentStop":       [ { "hooks": [ { "type": "command", "command": "python3 /绝对路径/tools/agent-hooks/claude_hook.py", "async": true } ] } ]
   }
 }
 ```
@@ -264,9 +266,13 @@ Claude Code 给它的默认超时只有 30 秒）。`SessionStart` **保持同�
 | `PermissionRequest`（`tool_name`） | `waiting_permission`，`detail` = 工具名。这是「要请你批准」那一刻就触发的事件 |
 | `Notification`（`notification_type`，**不读 `message`**） | `permission_prompt` → `waiting_permission`（兜底：沙箱网络请求的批准不触发 `PermissionRequest`）；`elicitation_dialog`/`elicitation_url_dialog`/`agent_needs_input` → `waiting_input`；`idle_prompt` → `idle`（你按 Esc 打断时 `Stop` 不触发，靠它把灯收回来）；其余种类不报。`detail` = 种类名 |
 | `PostToolUse` / `PostToolUseFailure` | **仅当**上次报的是 `waiting_*` 时报 `working`、`reply: true`（你批准 / 回答了，它接着干）；否则不报——不为每次工具调用发一次请求 |
-| `Stop` | `idle` |
+| `Stop` | `idle`；**有 subagent 在跑时不报 idle**（`idle_prompt` 同）——泳道保持 `working`，等最后一个 subagent 结束（见下两行与表后「判活」；兜底上限 6 小时） |
+| `SubagentStart`（只读 `agent_id`） | 记进状态里的「在跑 subagent」集合（连同由 `transcript_path` 推出的 subagent 记录文件路径），报 `working`，`detail` = `subagent`；已在 `stopped` 墓碑里的 id（异步钩子乱序：先处理了 Stop）不加、不报；上次相位是 `waiting_*` 时只入集合、不报（不盖掉「等你批准」） |
+| `SubagentStop`（只读 `agent_id`） | 从集合移除并留墓碑；集合空了且主会话已 `Stop` / `idle_prompt` 才报 `idle`，主会话还在回合中（或还没 `Stop` 过）不报 |
 | `StopFailure`（`error`） | `error`，`detail` = `error` 字段（`rate_limit`、`authentication_failed` 这类固定枚举） |
 | `SessionEnd` | 关 run（不变） |
+
+**判活**（Esc 打断 subagent 时多半不触发 `SubagentStop`）：集合里的项按记录文件 `<transcript 目录>/<会话>/subagents/agent-<id>.jsonl` 的修改时间（只 `os.stat`，不读内容）判——15 分钟内改过算活，更久没改算已结束，文件不存在则退回 6 小时上限；墓碑也是 6 小时过期。发心跳的伴随进程每圈（30 秒）顺带扫一次：主会话已空闲、集合非空且全部判已结束，就非阻塞拿会话锁、锁内重判，然后清空集合并报 `idle`。限度：单个工具调用超过 15 分钟没写记录会被提前判结束。
 
 - `at` 取钩子进程开始处理那一刻。异步钩子是**并行**跑的、到达服务端的顺序不保证，服务端按 `at` 排，所以时间戳必须在
   事件发生时取，不能在发请求时补。
