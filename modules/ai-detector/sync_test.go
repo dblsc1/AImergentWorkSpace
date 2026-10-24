@@ -465,7 +465,7 @@ func TestUploadInBatchesCursorFollowsAckedBatches(t *testing.T) {
 	// 第二批失败：游标停在第 201 段（下标 200）的开始。
 	calls := 0
 	ck.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "detector/") {
+		if strings.Contains(r.URL.Path, "detector/") || strings.HasSuffix(r.URL.Path, "activity/settings") {
 			w.WriteHeader(404) // 老 nexus-core：没有设置 / 规则端点
 			return
 		}
@@ -705,5 +705,15 @@ func TestRejectedSegmentsAreLoggedWithoutTitles(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "拒收 1 段") || !strings.Contains(out, "endAt 在未来") || strings.Contains(out, "secret-title") {
 		t.Fatalf("log=%q", out)
+	}
+}
+
+// 刚开启：原始记录游标和段游标一起落在此刻，第一个间隔不丢。
+func TestActivationSeedsRecordsCursor(t *testing.T) {
+	hc := &http.Client{Transport: noNet{t}}
+	cfg := testConfig("http://aw.invalid", "http://ck.invalid")
+	st := &State{}
+	if _, err := tick(cfg, st, at(60), hc); err != nil || !st.RecordsCursor.Equal(at(60)) || !st.Cursor.Equal(at(60)) {
+		t.Fatalf("cursors %v %v %v", st.Cursor, st.RecordsCursor, err)
 	}
 }

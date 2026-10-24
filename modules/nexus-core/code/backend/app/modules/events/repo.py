@@ -55,14 +55,17 @@ def find_by_dedupe(user: str, source: str, dedupe_key: str) -> dict | None:
     return doc
 
 
-def query_events(type_: str | None = None, *, all_tenants: bool = False) -> list[dict]:
+def query_events(type_: str | None = None, *, all_tenants: bool = False, where: dict | None = None) -> list[dict]:
     """档案读端（contract.md v0.6）的唯一读入口。按 ``type`` 过滤（可选），
 
     剔除 ``_id``，返回全部命中文档——时间范围过滤、排序、分页交给 ``service.py``：
     ``time`` 是带任意时区偏移的 ISO8601 字符串，对它做字典序比较在跨时区时不可靠，
     必须先解析成 ``datetime`` 才能比，这不该下推进 mongo 查询。
+    ``where``（v2.11）是追加的等值条件（按事件 ``id`` / ``data.sessionEventId`` 取那几条），不碰时间。
     """
     filt: dict = {} if all_tenants else scope()
     if type_:
         filt["type"] = type_
+    if where:
+        filt.update(where)
     return list(_col().find(filt, {"_id": 0}))

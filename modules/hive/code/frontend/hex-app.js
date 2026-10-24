@@ -68,6 +68,8 @@
 
   var AUDIT_PATH = BASE + "api/core/planner/audit?limit=300";
   var CURRENT_PATH = BASE + "api/core/views/current";
+  // 最近的计时段：只为从里面挑出记在「未分类」时间桶上的（「最近完成」里的临时任务）
+  var SESSIONS_PATH = BASE + "api/core/events?type=session.completed&limit=200";
 
   // 分区绕圈顺序的存储键。这是**第三版语义**了，每次换 key 且不迁移旧值：
   //   v1 labelOffsets —— 只挪标签（人类否掉：「不只是改变分区名位置」）
@@ -148,7 +150,8 @@
       D.fetchTree(),
       G.fetchNextActions(),
       getJson(AUDIT_PATH),
-      getJson(CURRENT_PATH)
+      getJson(CURRENT_PATH),
+      getJson(SESSIONS_PATH)
     ]).then(function (r) {
       // ⚠️ data.js::fetchTree 的返回形状是 {tree, source, error}，**不是**其余
       // 函数那套 {ok, data}（读端与写端两套约定，本仓既有事实）。照抄 .ok 会
@@ -157,7 +160,9 @@
       if (!treeRes.tree) { setStatus("读取项目树失败：" + (treeRes.error || "")); return false; }
       state.tree = treeRes.tree;
       state.todos = r[1].ok ? H.nextActionsByProject(r[1].data) : {};
-      state.completions = r[2].ok ? H.recentCompletions((r[2].data || {}).items, state.tree) : [];
+      state.completions = H.mergeRecent(
+        r[2].ok ? H.recentCompletions((r[2].data || {}).items, state.tree) : [],
+        r[4].ok ? H.tempSessions((r[4].data || {}).items, state.tree) : []);
       // 热度：按半衰期加权的最近完成次数（人类：「经常有任务被完成的排得更靠近中心」）。
       state.heat = r[2].ok ? H.completionHeat((r[2].data || {}).items, state.tree) : {};
       state.current = r[3].ok ? r[3].data : null;
@@ -441,12 +446,14 @@
     if (state.expandedId === key) return;
     var prev = state.expandedId ? state.byId[state.expandedId] : null;
     state.expandedId = key;
+    // 待批准浮层点出来的高亮 / 删除标记（hex-decide.js）只活到换展开 / 收起为止
+    [].forEach.call(document.querySelectorAll(".hex-cell.is-pending-hl, .hex-cell.is-pending-del"), function (n) { n.classList.remove("is-pending-hl", "is-pending-del"); });
     if (prev) { prev.el.classList.remove("is-expanded"); fillCell(prev); }
     var next = key ? state.byId[key] : null;
     if (next) { next.el.classList.add("is-expanded"); fillCell(next); }
     clearHover(true);
     T.applyFocus();
-    L.apply(true);
+    L.apply(!DRAGGING());   // 拖「分类历史」卡时展开不做 460ms 的 FLIP / 推镜动画：逐帧样式 + 合成是拖拽卡顿的大头，而且目标在动画里漂着也不好瞄
   }
   function collapse() {
     S.removeSprout();
@@ -475,6 +482,7 @@
   // 格子全是 position:absolute，改一格的尺寸不会把别的格子挤走 —— 这是
   // "悬停不重排"能成立的前提，不是运气。
   var hoverTimer = null;
+  function DRAGGING() { return document.body.classList.contains("hd-dragging"); }
   function setHover(item) {
     if (state.hoverItem === item) return;
     // 悬停一变，格子就开始长大 / 缩回。鼠标不动时浏览器也会因为格子从指针下
@@ -529,8 +537,14 @@
     var paused = K.paint(el, state.current);
     // 分针 / 秒针 / 圆心数字都按"继续之前累计的 + 本段"走（人类：「暂停后继续需要继续之前时间」）。
     // 只是显示，入账仍按段。
-    Ring.paint(svg, state.current, Date.now(), K.carried(state.current));
     var running = !!(state.current && state.current.running);
+    // 此刻的焦点（2026-10-09，nexus-core v2.16 的 views/current.focus；契约「此刻的焦点」节）：没在计时、没暂停着时，
+    // 中心格写人此刻在哪个窗口 / 项目、待了多久。字出自共享件 window.HoneycombFocus（网关随顶栏注入；没有就照旧「空闲」）。
+    var F = window.HoneycombFocus;
+    var focus = (!running && !paused && F) ? F.describe(state.current) : null;
+    // 有焦点时圆心读数是「这个窗口待了多久」；交给 Ring.paint 写，只有变了的那几位翻牌
+    Ring.paint(svg, state.current, Date.now(), K.carried(state.current),
+               focus ? F.clock((Date.now() - focus.since) / 1000) : "");
     // 中心格底色 = 正在计的任务所在分区的颜色（人类 2026-09-12：「闪烁结束后，六边形底色还是黑色的，
     // 需要有任务分区的对应颜色……闪烁结束的颜色需要刚好对应分区颜色」）。
     // 浓度取该分区**最深那一档再加一档**（DEPTH_MIX.center；人类 2026-09-12 第四次改）：比紧挨着它的格子深一档，
@@ -541,11 +555,15 @@
     el.style.setProperty("--zone-raw", zone ? zone.color : "var(--line)");
     el.style.setProperty("--zone-mix", H.DEPTH_MIX.center + "%");
     var title = $("#hexCenterTitle"), meta = $("#hexCenterMeta");
-    var name = running ? ((state.current.task && state.current.task.name) || "计时中")
+    // 计的是项目的「未分类」时间桶（长按项目格起的）：只显示项目名，不写「未分类」也不写时间戳
+    // （仓主 2026-10-08）。暂停记忆里存的也已经是项目名（hex-center-ctl.js）。
+    var bucket = running && state.current.task && state.current.task.kind === "unclassified";
+    var name = running ? ((bucket ? (state.current.project && state.current.project.name)
+                                  : (state.current.task && state.current.task.name)) || "计时中")
                        : (paused ? paused.taskName : "");
     // 圆心下半部分（人类 2026-09-12 末轮）：「01:06 在偏上部位置，时分文字去掉，下方是简要标题，
     // 再下方是开始时间以及右下方加一个开始（灰色小字），日期就不要了」。
-    //   · 简要标题：长按建的任务名就是「YYYY-MM-DD HH:MM[ 备注]」（hex-data.js::stampTaskName），
+    //   · 简要标题：2026-10-08 之前长按建的任务名是「YYYY-MM-DD HH:MM[ 备注]」（现在不再建，旧的还在），
     //     这种名字本身只是个时间戳 —— 有备注用备注，没有就退到项目名；别的任务名照原样。
     //   · 开始时间：这件事**最初**几点开始（继续出来的那段沿用暂停前的起点，K.startedAt / 暂停记忆的 startedAt），
     //     不再从任务名里抠。
@@ -566,18 +584,41 @@
     }
     // 这一行只剩空闲态的「空闲」；暂停中靠读数压暗 + 暂停键变「继续」表达（中心格不显示单位小字）。
     meta.innerHTML = (running || paused) ? "" : '<span class="hex-center-idle">空闲</span>';
+    if (focus) {
+      // 圆环下两行：在哪（项目 / 任务，认不出写窗口；一行截断，全文在 title）+ 这是什么（正在 / 自动 / 离开 · 出处）。
+      // 第二行原来写「空闲」的那个节点；静置档格子小，有第一行时第二行只在悬停档露出来（hex-focus.css）。
+      var how = meta.firstChild;
+      how.textContent = [focus.state === "afk" ? "离开" : (focus.auto ? "自动" : "正在"), focus.hint]
+        .filter(function (x) { return x; }).join(" · ");
+      var what = document.createElement("span");
+      what.className = "hex-center-focus";
+      what.textContent = focus.target || focus.window;
+      // 2026-10-09（nexus-core v2.17）：格子小，「近 2 小时在这上面 N 分」只进悬停的全文
+      what.title = focus.lead + (focus.window ? " · " + focus.window : "") + (focus.dwell ? "（" + focus.dwell + "）" : "");
+      if (what.textContent) meta.insertBefore(what, how);
+    }
+    el.classList.toggle("is-focus", !!focus);
+    el.classList.toggle("is-afk", !!focus && focus.state === "afk");
+    // 人此刻在的那个项目格：一圈呼吸的描边（hex-focus.css 的 .is-live-focus）。格子不在页面上就什么都不做。
+    var liveProject = (focus && focus.state === "present" && focus.projectId) || null;
+    state.cells.forEach(function (item) {
+      item.el.classList.toggle("is-live-focus", !!liveProject && item.el.dataset.projectId === liveProject);
+    });
     el.classList.toggle("is-running", running);
     // 2026-09-07 人类改判：中心圆环也要悬停/点击两档，点击直接进计时台。
     // 上一轮的「空闲态不可点」随之作废 —— 空闲态点进去正是要去开始计时。
     // 规范 contracts/timer-ring-visual-v1.md 已同步改（规范先于实现）。
     el.setAttribute("aria-label", running
-      ? ("正在计时：" + ((state.current.task && state.current.task.name) || "") + "，点击进入计时台")
+      ? ("正在计时：" + name + "，点击进入计时台")
+      : focus ? (focus.lead + (focus.window ? "，" + focus.window : "") +
+                 (focus.state === "afk" ? "" : "（没有在计时）") + "，点击进入计时台")
       : "当前空闲，点击进入计时台");
   }
   function startTicking() {
     if (tickHandle) clearInterval(tickHandle);
     tickHandle = setInterval(function () {
-      if (state.current && state.current.running) paintCenter();
+      // 计时中每秒走；有「此刻的焦点」/ 自动跟踪时也走（那个钟也是每秒一跳）
+      if (state.current && (state.current.running || state.current.focus || state.current.auto)) paintCenter();
     }, 1000);
     setInterval(function () {
       getJson(CURRENT_PATH).then(function (r) { if (r.ok) { state.current = r.data; paintCenter(); } });
@@ -715,7 +756,7 @@
       // 长按接住计时的锁期间不查：queueHover(null) 不看锁，手一抖落在空白处
       // 就会把 3 秒放大掐掉；锁一过由 hoverCenter(false) 按 :hover 接手。
       var locked = state.hoverLock && Date.now() < state.hoverLock;
-      if (wasStill && !locked && isMouse && !state.expandedId) {
+      if (wasStill && !locked && isMouse && !state.expandedId && !DRAGGING()) {
         var under = document.elementFromPoint(ev.clientX, ev.clientY);
         var item = hoverItemFor(under && under.closest && under.closest("#hive .hex-cell"));
         if (item !== state.hoverItem) queueHover(item);
@@ -735,7 +776,7 @@
       // 聚焦态**不进悬停档**（人类 2026-09-08：「禁用放大视图下鼠标放上去放大，
       // 不是禁用点击」）。拦在这里而不是 CSS 的 pointer-events —— 后者会把
       // 点击一起掐死，隔壁的卡片就点不进去了。点击照常：点隔壁 = 换它展开。
-      if (state.expandedId) return;
+      if (state.expandedId || DRAGGING()) return;   // 拖「分类历史」卡时由 hex-decide 自己管悬停（停留才展开）
       // 只认鼠标，且要真的动过（见 setHover：没动过的 mouseover 是格子自己
       // 扫过指针补发的）。触摸的 mouseover 全是点按后的兼容事件和布局补发，
       // 一律不认 —— 它的悬停档由 click 处理器直接 setHover。放它进来的话，
@@ -829,6 +870,8 @@
     collapse: collapse,
     getState: function () { return state; },
     fillCell: fillCell,
+    expand: expand,
+    mount: mount,
     setStatus: setStatus,
     reloadExpanded: function () { return refresh(true); },
     // 建完项目用这条：那一格的身份刚从"占位格"变成"某个项目"，展开态却挂在

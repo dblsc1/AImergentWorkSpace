@@ -227,8 +227,8 @@ func runOnce(p paths, hc *http.Client, out io.Writer) error {
 	} else {
 		st.LastOutcome = msg
 	}
-	// 状态文件桥在另一个 goroutine 里写 Agents：只写回本轮自己的字段。
-	if serr := updateState(p.state, func(s *State) { ag := s.Agents; *s = st; s.Agents = ag }); serr != nil {
+	// 状态文件桥、健康报告在另一个 goroutine 里写 Agents / Health：只写回本轮自己的字段。
+	if serr := updateState(p.state, func(s *State) { ag, hs := s.Agents, s.Health; *s = st; s.Agents, s.Health = ag, hs }); serr != nil {
 		return serr
 	}
 	if out == nil {
@@ -253,9 +253,10 @@ func runLoop(p paths, hc *http.Client) error {
 	// 在场心跳、状态文件桥各自一个 goroutine：同步一轮可能要好几分钟（积压、分类服务慢），不能让它们等。
 	// 同一进程里，仍在 run 拿着的单实例锁之内。
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go func() { defer wg.Done(); presenceLoop(p, hc) }()
 	go func() { defer wg.Done(); bridgeLoop(p, hc) }()
+	go func() { defer wg.Done(); inputLoop(p, hc) }()
 	every(func() time.Duration {
 		_ = runOnce(p, hc, nil) // 失败已写进日志与状态；常驻进程不因一轮失败退出
 		interval := 5.0
@@ -310,6 +311,11 @@ func status(p paths, out io.Writer) error {
 	}
 	fmt.Fprintf(out, "在场心跳  %v（每 %v；网页上设过的话以网页为准）\n状态文件桥 %s（运行中 %d 个）\n",
 		cfg.Presence, presenceInterval(cfg), bridge, len(st.Agents))
+	if st.Health.AwState != "" {
+		fmt.Fprintf(out, "ActivityWatch  %s（上次报给 HoneyComb：%s）\n", st.Health.AwState, isoTime(st.Health.At))
+	}
+	fmt.Fprintf(out, "启动日志上传  %v（配置 awLogUpload；开着时只上传脱敏后的 aw-start.log 末尾，最多 40 行 / 4096 字节）\n", cfg.AwLogUpload)
+	printLastStart(out, st.Health.LastStart, filepath.Join(filepath.Dir(p.state), "aw-start.log"))
 	if !st.LastRunAt.IsZero() {
 		fmt.Fprintf(out, "上一轮    %s  %s\n", isoTime(st.LastRunAt), st.LastOutcome)
 	}

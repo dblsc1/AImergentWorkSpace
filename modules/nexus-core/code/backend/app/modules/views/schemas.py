@@ -55,6 +55,8 @@ class CurrentTask(_Strict):
     name: str
     totalSeconds: int
     shareOfProject: float = Field(ge=SHARE_MIN, le=SHARE_MAX)
+    #: v2.9：``normal`` | ``ephemeral`` | ``unclassified``（项目的「未分类」时间桶，显示成「项目名 · 未分类」）。
+    kind: str = "normal"
 
 
 class CurrentAgent(_Strict):
@@ -69,6 +71,50 @@ class CurrentAgent(_Strict):
     #: v2.4：当前相位（从没报过为 null，读方按 working 画）与泳道名（没给为 null）。键不消失。
     phase: Literal["working", "waiting_input", "waiting_permission", "idle", "error"] | None = None
     label: str | None = None
+    #: v2.21：服务端算好的已跑秒数（此刻 − startedAt，≥ 0；先收了超时 / 失联，所以不会超过上限）。同 ``views/lanes`` 的 ``elapsedSeconds``。
+    elapsedSeconds: int = 0
+
+
+class LaneAuto(_Strict):
+    """v2.14：没有手动计时时，「我」当前窗口对上的项目 / 任务。只是显示，不是事实。"""
+
+    taskId: str | None
+    projectId: str
+    taskName: str | None
+    projectName: str
+    since: str
+    app: str
+    title: str
+    #: v2.15 追加 "ai"：这个目标是 AI 认的（人可以说「不对」）
+    source: Literal["rules", "choice", "ai"]
+    key: str  # v2.15：这个窗口的键（「不对」要带它）
+
+
+class LaneNeedsChoice(_Strict):
+    """v2.14：规则认不出、停留够久的窗口——请人选项目 / 任务。v2.15 的 ``aiThinking``（AI 正在认的窗口）同形。"""
+
+    key: str
+    app: str
+    title: str
+    since: str
+
+
+class LaneFocus(_Strict):
+    """v2.16：人此刻的焦点（最新心跳新鲜时非 null，与 autoTrack、有没有手动计时都无关）。只是显示，不是事实。
+    认不出项目 / 任务时五个目标键全为 null（键不消失）。"""
+
+    state: Literal["present", "afk"]
+    app: str
+    title: str
+    since: str  #: 当前窗口（或这一轮离开）从什么时候起
+    #: v2.17：时间线（最近 2 小时）里人在这同一个窗口上一共待了多少秒（含当前这一轮）；离开时为 null
+    dwellSeconds: int | None = None
+    projectId: str | None = None
+    projectName: str | None = None
+    taskId: str | None = None
+    taskName: str | None = None
+    #: 目标是怎么认出来的：自动跟踪的三种出处 / 窗口 ↔ 代理会话 / 按以往确认过的
+    source: Literal["rules", "choice", "ai", "agent-session", "history"] | None = None
 
 
 class CurrentOut(_Strict):
@@ -86,6 +132,12 @@ class CurrentOut(_Strict):
     #: v2.1：当前租户在跑的 AI 代理运行，没有为 []。与上面人的字段互不影响——
     #: 只有代理在跑时 running 仍是 false（人一条泳道，代理很多条）。
     agents: list[CurrentAgent] = Field(default_factory=list)
+    hiddenCount: int = 0  #: v2.22：agents[] 没列出的（藏起来的）在跑代理个数；只有个数，没有名字
+    #: v2.14 自动跟踪（与 ``views/lanes`` 的 ``human.auto`` / ``needsChoice`` 同一份）：只在没在计时时可能非 null
+    auto: LaneAuto | None = None
+    needsChoice: LaneNeedsChoice | None = None
+    aiThinking: LaneNeedsChoice | None = None  #: v2.15：AI 正在认的窗口（这期间它不出现在 needsChoice）
+    focus: LaneFocus | None = None  #: v2.16：人此刻的焦点（在计时也给；契约「此刻的焦点」）
 
 
 # ------------------------------------------------------------------- TreeOut
@@ -98,6 +150,7 @@ class Zone(_Strict):
     #: 分区配色是用户设定、是持久化字段，所以留在 API 内（contract.md）。
     color: str
     order: int
+    address: str  #: v2.39 位置编号（读时现算，改名 / 搬家后会变；引用用 id）
 
 
 class Task(_Strict):
@@ -120,6 +173,7 @@ class Task(_Strict):
     plan: GanttPlan | None = None
     #: 前置任务 id 列表，纯表达不排程；默认 []。
     dependsOn: list[str] = Field(default_factory=list)
+    address: str  #: v2.39
 
 
 class Project(_Strict):
@@ -134,6 +188,11 @@ class Project(_Strict):
     progressSource: Literal["computed", "manual"]
     #: ``projects.plan.end`` 的投影，``YYYY-MM-DD``；无计划则 ``null``。
     deadline: str | None = None
+    #: v2.9：本项目「未分类」时间桶的任务 id，还没建过为 ``null``。桶不在 ``tasks`` 里。
+    unclassifiedTaskId: str | None = None
+    address: str  #: v2.39
+    #: v2.39：「未分类」桶的编号（桶不在 ``tasks`` 里；还没建过为 ``null``）。契约待定：契约只说 tree 里「各项目的『未分类』任务」带 address，桶不在 tasks 里，故放这里。
+    unclassifiedAddress: str | None = None
     tasks: list[Task]
 
 
@@ -174,6 +233,8 @@ class GanttTask(_Strict):
     key: str
     name: str
     done: bool
+    #: v2.9：``unclassified`` = 项目的「未分类」时间桶（这一行是没归到具体任务的时间）。
+    kind: str = "normal"
     #: ``null`` = 未排期。与 ``GanttProject.plan`` 同一个形状，同一份校验。
     plan: GanttPlan | None = None
     #: 前置任务 id 列表，纯表达不排程；默认 []。
@@ -326,6 +387,8 @@ class AgentTimeOpen(_Strict):
     taskId: str | None
     startedAt: str
     elapsedSeconds: int
+    attentionSeconds: int = 0  #: v2.17：人把注意力放在这条运行上的秒数（运行上 attend 之和）
+    workingSeconds: int = 0  #: v2.31：到此刻为止真正干活（相位 working）的秒数；没报过相位的运行 = elapsedSeconds
 
 
 class AgentTimeOut(_Strict):
@@ -339,6 +402,7 @@ class AgentTimeOut(_Strict):
     agents: list[AgentTimeAgent]
     tasks: list[AgentTimeTask]
     open: list[AgentTimeOpen]
+    hiddenCount: int = 0  #: v2.22：open[] 没列出的（藏起来的）在跑运行个数
 
 
 # -------------------------------------------------------- LanesOut（v2.4）
@@ -368,6 +432,7 @@ class LanePresence(_Strict):
     app: str
     title: str
     afk: bool
+    runId: str | None = None  #: v2.17：这一段人在看的那条代理运行（窗口就是它的会话）；不是 → null
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)
 
@@ -376,12 +441,25 @@ class LaneHuman(_Strict):
     sessions: list[LaneSession]
     running: LaneRunning | None
     presence: list[LanePresence]
+    #: v2.14 自动跟踪（契约「自动跟踪进行中的任务」）：键总在，条件不成立为 null
+    auto: LaneAuto | None = None
+    needsChoice: LaneNeedsChoice | None = None
+    aiThinking: LaneNeedsChoice | None = None  #: v2.15：AI 正在认的窗口（这期间它不出现在 needsChoice）
+    focus: LaneFocus | None = None  #: v2.16：人此刻的焦点（在计时也给；契约「此刻的焦点」）
 
 
 class LanePhase(_Strict):
     at: str
     phase: str
     detail: str | None
+
+
+class LaneAttention(_Strict):
+    #: 契约字段名就是 from（Python 关键字），用别名
+    from_: str = Field(alias="from")
+    to: str
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)
 
 
 class LaneAgent(_Strict):
@@ -397,7 +475,16 @@ class LaneAgent(_Strict):
     outcome: str | None
     elapsedSeconds: int
     overdue: bool
+    lost: bool = False  # v2.18：在跑、会发心跳、超过 30 分钟没信号
+    lastSeenAt: str | None = None  # v2.18：在跑的运行最后一次信号的时刻
+    beatSource: str | None = None  # v2.18：谁在发心跳（companion / monitor / …）；没报过为 null
+    beatCount: int | None = None  # v2.18：收到过几次心跳；没有为 null
     phases: list[LanePhase]
+    attention: list[LaneAttention] = []  #: v2.17：人把注意力放在它上面的时间（裁到窗口、已合并）
+    unverified: bool = False  #: v2.19：匿名开的运行（契约「调用方范围与匿名上报」）
+    pinned: bool = False  #: v2.22：这个代理身份被置顶了
+    manualOrder: int | None = None  #: v2.22：手动排位的 slot（只对还在跑的运行；没有为 null）
+    rank: int = 0  #: v2.22：服务端排好的先后（0 = 最前）；agents 数组本身仍按开始时间
 
 
 class LaneReply(_Strict):
@@ -413,6 +500,52 @@ class LaneAttend(_Strict):
     until: str
 
 
+class LaneHidden(_Strict):
+    """v2.22：被藏起来的代理（给页面列「已隐藏」并恢复）。``live``：它现在有在跑的运行；``phase``：那些运行里最需要你的相位。"""
+
+    agent: str
+    label: str
+    unverified: bool = False  #: 匿名（未验证）的那一类；和同名的已验证会话互不串
+    live: bool
+    phase: str | None
+
+
+class LaneStalePinned(_Strict):
+    agent: str
+    label: str
+
+
+class LaneDropped(_Strict):
+    """v2.23：封顶时被折叠掉的较早运行，按代理身份汇总（条数 + 裁到窗口的秒数）。"""
+
+    agent: str | None
+    label: str | None
+    unverified: bool = False
+    runs: int
+    elapsedSeconds: int
+
+
+class LaneInactive(_Strict):
+    """v2.24：没显示的泳道（出错 / 空闲满 1 小时）。时间照旧记在账上，只是视图过滤。"""
+
+    agent: str | None
+    label: str | None
+    unverified: bool = False
+    reason: str  #: error | idle | ended（v2.25 追加 ended：没有在跑的运行）
+    tier: str = "normal"  #: v2.25：high | normal | low
+    lastWorkAt: str
+    runs: int
+    elapsedSeconds: int
+
+
+class LaneExpired(_Strict):
+    """v2.25：折叠满期、不再列出的 low 泳道的汇总（只是不再列出，什么都没删）。"""
+
+    agents: int = 0
+    runs: int = 0
+    elapsedSeconds: int = 0
+
+
 class LanesOut(_Strict):
     """``GET /api/core/views/lanes``（契约 v2.4）。时间线，不是汇总：**没有任何合计字段**。"""
 
@@ -424,3 +557,10 @@ class LanesOut(_Strict):
     agents: list[LaneAgent]
     interactions: list[LaneReply | LaneAttend]
     truncated: bool
+    inactiveAgents: list[LaneInactive] = []  #: v2.24
+    expiredAgents: int = 0  #: v2.25：折叠满期、不再列出的泳道个数（只给个数，不给标签）
+    expired: LaneExpired = LaneExpired()  #: v2.25：这些泳道的运行条数与秒数（让账对得上）
+    hiddenAgents: list[LaneHidden] = []  #: v2.22
+    hiddenWaiting: int = 0  #: v2.22：藏起来的在跑运行里正等你的个数（页面只给一个很小的提示）
+    dropped: list[LaneDropped] = []  #: v2.23：封顶折叠掉的较早运行的汇总（藏起来的身份不列）
+    stalePinned: list[LaneStalePinned] = []  #: v2.22：置顶着但没有在跑的运行对得上的身份（改名后留下的），可移除

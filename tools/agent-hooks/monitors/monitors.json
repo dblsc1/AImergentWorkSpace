@@ -1,0 +1,7 @@
+[
+  {
+    "name": "heartbeat",
+    "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/claude_hook.py --beat --source monitor",
+    "description": "HoneyComb lane heartbeat (silent: never prints)"
+  }
+]

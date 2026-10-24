@@ -9,8 +9,15 @@
  * - 发出去的是「读进来的文档 + 表单改动」：服务端将来追加的键（比如 presence）原样带回去，不会被这页清掉。
  *   presence 只在文档里真有这个布尔时才出现一个勾选项；没有就不出现、也不发。
  * - 分段两项（v1.2 的 segmentByTitle / segmentByTitleApps）总是显示、总是发：文档里没有（v1.1 存下的）就按缺省填。
+ * - autoTrack（v1.3「允许 AI 管理进行中的任务」，缺省关）同样总是显示、总是发。勾上保存时，文档里还没有布尔的
+ *   presence（没设过在场心跳）就一并设成 true——实时的「自动 · 项目 / 任务」靠心跳，页面上的说明写着这一条。
  * - 强制脱敏（密码、密钥……）不在文档里，页面上是勾着的灰框，关不掉。
  * - 422 的 detail 形如「privacy.pathWhitelist: …」：按前缀挂到对应那一项下面，对不上就显示在表单底部。
+ * - 设备行下面一条状态（v2.27）：检测程序在线 / 离线（health.at 超过 3 分钟没更新算离线）+ ActivityWatch 怎么样；
+ *   「检测」重拉一次，「重启 ActivityWatch」POST restart 后每 3 秒拉一次设备，最多 75 秒，等检测程序回报结果。
+ *   服务端的字符串一律只进 textContent。
+ * - v2.28：状态下面一行说明「启动日志上传」开没开（开关只在那台电脑的 ai-detector.json 里，这里**没有**打开它的控件）；
+ *   可折叠的「最近事故」展开时才 GET incidents；开关开着时多一块「查看启动日志」（不可信文本，只进 <pre> 的 textContent）。
  * 对外只挂 window.assistantSettings（纯函数，给单测用）。
  */
 (function () {
@@ -31,6 +38,7 @@
     },
     // v1.2：终端按标签页分段。v1.1 存下的文档没有这两个键——fill() 按这里的缺省补上再填表。
     segmentByTitle: true, segmentByTitleApps: null,
+    autoTrack: false,   // v1.3
   };
   var LIMITS = {   // 契约「校验」：列表条数、每条长度；整数范围
     "privacy.pathWhitelist": [20, 200], "privacy.appOnlyApps": [200, 64], "idle.focusApps": [200, 64],
@@ -89,7 +97,7 @@
 
   // 422 detail「privacy.pathWhitelist: Value error, …」→「privacy.pathWhitelist」；对不上 → null
   function fieldOf(detail) {
-    var m = /^((?:privacy|idle)\.[A-Za-z]+|presence|segmentByTitleApps|segmentByTitle)\b/.exec(String(detail || ""));
+    var m = /^((?:privacy|idle)\.[A-Za-z]+|presence|segmentByTitleApps|segmentByTitle|autoTrack|inputActivity)\b/.exec(String(detail || ""));
     return m ? m[1] : null;
   }
 
@@ -110,8 +118,66 @@
     return [dev.lastUploadAt, dev.lastFetchAt].filter(Boolean).sort().pop() || null;
   }
 
+  // 检测程序状态（nexus-core v2.27）：device.health = {awState, at} | null。返回 {text, online}；online=null 表示没有状态可看
+  var STALE_MS = 3 * 60 * 1000, POLL_MS = 3000, POLL_MAX_MS = 75000;
+  var AW_TEXT = { ok: "正常", unreachable: "连不上 ActivityWatch", no_window: "ActivityWatch 最近一分钟没有窗口记录",
+    paused: "已暂停", disabled: "未开启" };
+  var RESTART_TEXT = { started: "已启动，ActivityWatch 的接口已经起来了", already_running: "ActivityWatch 本来就在运行",
+    failed: "启动失败", unsupported: "这台电脑上没配置启动命令" };
+  var AUTO_TEXT = { started: "已自动拉起", gave_up: "自动拉起 3 次都没成功，已停止重试",
+    unsupported: "这台电脑上没配置启动命令", off: "自动拉起已关闭" };
+  var REASON_TEXT = { not_found: "找不到 ActivityWatch 程序", spawn_error: "启动命令执行出错", exited_early: "启动后马上退出了",
+    not_up: "进程起来了，但 ActivityWatch 接口 20 秒内没起来", no_display: "检测程序不在桌面会话里运行，没法打开图形程序",
+    state_unwritable: "检测程序目录写不进去，没有尝试启动" };
+  var KIND_TEXT = { aw_unreachable: "ActivityWatch 连不上了", aw_recovered: "ActivityWatch 恢复正常", aw_no_window: "ActivityWatch 在运行但没有窗口记录",
+    aw_paused: "检测已暂停", aw_disabled: "检测未开启", detector_offline: "检测程序离线", auto_started: "自动拉起了 ActivityWatch",
+    auto_failed: "自动拉起失败", auto_gave_up: "自动拉起已停手", restart_requested: "在网页上请求重启 ActivityWatch",
+    restart_result: "重启请求有结果了", restart_expired: "重启请求没人处理，已过期" };
+  var REASON_EXTRA = { daily_cap: "24 小时内自动拉起已达 20 次上限" };
+  var LOG_HOWTO = "在那台电脑的检测程序配置文件 ai-detector.json（运行 ai-detector status 可看到位置）里加入 \"awLogUpload\": true，" +
+    "只会上传脱敏后的 aw-start.log 末尾（最多 40 行），随时可改回 false 关闭。这个开关只能在那台电脑上改，网页上没有按钮。";
+  var LOG_HINT = "详细原因和日志在那台电脑上：运行 ai-detector status，或查看检测程序目录下的 aw-start.log。";
+  // 服务端给的值只当键用：自有属性才认（"constructor"、"__proto__" 之类走 Object.prototype 的不算）
+  function own(tbl, k, fallback) { return typeof k === "string" && Object.prototype.hasOwnProperty.call(tbl, k) ? tbl[k] : fallback; }
+  function reasonText(r) { return own(REASON_TEXT, r, own(REASON_EXTRA, r, "原因未知")); }
+  function duration(sec) {
+    if (typeof sec !== "number" || !isFinite(sec) || sec < 0) return "";
+    if (sec < 60) return Math.round(sec) + " 秒";
+    var m = Math.round(sec / 60);
+    return m < 60 ? m + " 分钟" : Math.floor(m / 60) + " 小时" + (m % 60 ? " " + (m % 60) + " 分钟" : "");
+  }
+  // 一条事故 → 一行字（枚举都走自有属性查表，不认识的说「未知事件」）
+  function incidentText(ev) {
+    var t = own(KIND_TEXT, ev && ev.kind, "未知事件");
+    if (ev && ev.kind === "restart_result") t = "重启 ActivityWatch：" + own(RESTART_TEXT, ev.result, "未知结果");
+    var d = ev && ev.endAt ? duration(ev.durationSeconds) : "";
+    if (d) t += "，持续 " + d;
+    if (ev && ev.reason) t += "（" + reasonText(ev.reason) + "）";
+    return t;
+  }
+  function logLine(dev) {
+    var h = dev && dev.health;
+    if (!h || typeof h.logUpload !== "boolean") return "";
+    return h.logUpload ? "启动日志上传：已在那台电脑上开启（只上传脱敏后的 aw-start.log 末尾；在那台电脑上把 awLogUpload 改成 false 即可关闭）。脱敏是尽力而为，请点开「查看启动日志」看一眼实际上传了什么"
+      : "启动日志上传：未开启。需要 AI 助理帮忙排查时，" + LOG_HOWTO;
+  }
+  function healthLine(dev, nowMs) {
+    var h = dev && dev.health, at = h ? Date.parse(h.at) : NaN;
+    if (!h || isNaN(at)) return { text: "检测程序状态：这个版本的检测程序不报告状态", online: null };
+    var age = nowMs - at;
+    if (!(age < STALE_MS)) {
+      return { text: "检测程序：离线（最近一次报告 " + Math.max(1, Math.floor(age / 60000)) + " 分钟前）", online: false };
+    }
+    var a = h.autoStart, capped = a === "gave_up" && h.autoReason === "daily_cap";
+    var auto = (a == null || a === "idle") ? "" : own(AUTO_TEXT, a, "未知状态");   // 没有 / idle 什么都不说；不认识的值说「未知状态」
+    if (capped) auto = "24 小时内自动拉起已达 20 次上限，已停止自动重试；可以点按钮手动重启";
+    else if (a === "gave_up" && h.autoReason) auto += "（" + reasonText(h.autoReason) + "）";
+    return { text: "检测程序：在线 · ActivityWatch：" + own(AW_TEXT, h.awState, "未知状态") + (auto ? " · " + auto : ""), online: true, gaveUp: a === "gave_up" && !capped };
+  }
+
   window.assistantSettings = {
     DEFAULTS: DEFAULTS, checkPattern: checkPattern, validate: validate, fieldOf: fieldOf, findPresence: findPresence,
+    healthLine: healthLine, incidentText: incidentText, logLine: logLine,
   };
 
   // ── DOM ─────────────────────────────────────────────────────────────
@@ -126,15 +192,34 @@
   var dirtyEl = document.getElementById("det-dirty");
   var saveBtn = document.getElementById("det-save");
   var resetBtn = document.getElementById("det-reset");
+  var inputEl = document.getElementById("det-input");
   var presenceRow = document.getElementById("det-presence-row");
   var presenceEl = document.getElementById("det-presence");
+  var healthEl = document.getElementById("det-health");
+  var checkBtn = document.getElementById("det-check");
+  var restartBtn = document.getElementById("det-restart");
+  var offlineHintEl = document.getElementById("det-offline-hint");
+  var logHintEl = document.getElementById("det-log-hint");
+  var restartMsgEl = document.getElementById("det-restart-msg");
+  var logUpEl = document.getElementById("det-logup");
+  var incEl = document.getElementById("det-incidents");
+  var incListEl = document.getElementById("det-incidents-list");
+  var incMsgEl = document.getElementById("det-incidents-msg");
+  var logBoxEl = document.getElementById("det-startlog");
+  var logTextEl = document.getElementById("det-startlog-text");
 
   var devices = [];
+  var skew = 0;             // 服务端时钟 − 浏览器时钟（GET devices 的 now）；老服务端没有 now = 0
+  function noteNow(body) {
+    var t = Date.parse(body && body.now);
+    skew = isNaN(t) ? 0 : t - Date.now();
+  }
   var device = null;        // 当前设备 id
   var loaded = null;        // GET 回来的整份响应 {deviceId, settings, updatedAt}
   var base = null;          // 表单的底稿：settings 或 DEFAULTS（未知键从这里原样带回去）
   var baseline = "";        // 底稿刚填进表单时 read() 的 JSON：不同 = 有没保存的改动
   var busy = false;
+  var pending = null;       // 等回报的重启 {device, nonce}；换设备 / 出结果 / 超时都置回 null
 
   function showMessage(text, isError) {
     msgEl.textContent = text;
@@ -183,6 +268,9 @@
       var key = t.dataset.list, nul = formEl.querySelector('input[data-null="' + key + '"]');
       setPath(doc, key, nul && nul.checked ? null : lines(t.value, key === "privacy.pathWhitelist"));
     });
+    // v1.4 inputActivity：文档里没有这个键、又没勾 → 不发（与此前的文档逐字节相同）
+    if (doc.inputActivity !== undefined || inputEl.checked) doc.inputActivity = inputEl.checked;
+    if (doc.autoTrack === true && !findPresence(doc)) doc.presence = true;   // 自动跟踪要心跳：没设过就一并打开
     return doc;
   }
 
@@ -193,6 +281,7 @@
       if (n.type === "checkbox") n.checked = v === true;
       else n.value = v == null ? "" : String(v);
     });
+    inputEl.checked = doc.inputActivity === true;
     formEl.querySelectorAll("input[type=radio]").forEach(function (n) { n.checked = getPath(doc, n.name) === n.value; });
     formEl.querySelectorAll("textarea[data-list]").forEach(function (t) {
       var v = getPath(doc, t.dataset.list), nul = formEl.querySelector('input[data-null="' + t.dataset.list + '"]');
@@ -224,7 +313,7 @@
   function fill(body) {
     loaded = body;
     base = body.settings ? clone(body.settings) : clone(DEFAULTS);
-    ["segmentByTitle", "segmentByTitleApps"].forEach(function (k) { if (base[k] === undefined) base[k] = DEFAULTS[k]; });
+    ["segmentByTitle", "segmentByTitleApps", "autoTrack"].forEach(function (k) { if (base[k] === undefined) base[k] = DEFAULTS[k]; });
     var pkey = findPresence(base);
     presenceRow.hidden = !pkey;
     if (pkey) presenceEl.dataset.key = pkey; else delete presenceEl.dataset.key;
@@ -243,7 +332,87 @@
     var has = loaded && loaded.settings;
     metaEl.textContent = "最近上传建议：" + when(dev.lastUploadAt) + " · 最近拉设置：" + when(dev.lastFetchAt) +
       " · 网页设置：" + (has ? "有（" + when(loaded.updatedAt) + " 更新）" : "没有，用本机配置文件");
+    var hl = healthLine(dev, Date.now() + skew);
+    healthEl.textContent = hl.text;
+    restartBtn.disabled = hl.online !== true || Boolean(pending);
+    offlineHintEl.hidden = hl.online !== false;
+    logHintEl.textContent = hl.gaveUp ? LOG_HINT : "";
+    logHintEl.hidden = !hl.gaveUp;
+    var ll = logLine(dev);
+    logUpEl.textContent = ll;
+    logUpEl.hidden = !ll;
+    incEl.hidden = !(dev.health);   // 没有健康状态 = 老检测程序，没有事故可看
+    logBoxEl.hidden = !(dev.health && dev.health.logUpload === true);
+    if (logBoxEl.hidden) { logBoxEl.open = false; logTextEl.textContent = ""; }
   }
+
+  // 事故列表 / 启动日志：展开时才取（不随每次轮询）；回来晚了、人已换设备就丢掉
+  async function loadIncidents(showLog) {
+    var id = device;
+    if (!id) return;
+    var r = await request("GET", "incidents?deviceId=" + encodeURIComponent(id) + "&limit=50");
+    if (id !== device) return;
+    var b = r.ok && r.body ? r.body : null;
+    if (showLog) {
+      var log = b && b.startLog;
+      logTextEl.textContent = log && typeof log.text === "string" ? log.text : (r.ok ? "（服务器上没有这份日志）" : "读取失败：" + r.detail);
+      return;
+    }
+    incListEl.textContent = "";
+    incMsgEl.hidden = true;
+    if (!b || !Array.isArray(b.events)) { incMsgEl.textContent = "读取失败：" + r.detail; incMsgEl.hidden = false; return; }
+    if (b.offline === true) {   // 此刻静默：服务端读时算出来的，不在事件表里
+      var now = document.createElement("li");
+      now.textContent = "检测程序离线中（最后一次报告：" + when(b.lastReportAt) + "）";
+      incListEl.appendChild(now);
+    }
+    if (!b.events.length && b.offline !== true) { incMsgEl.textContent = "最近没有记录到事故。"; incMsgEl.hidden = false; return; }
+    b.events.forEach(function (ev) {
+      var li = document.createElement("li");
+      li.textContent = when(ev && ev.at) + "  " + incidentText(ev);
+      incListEl.appendChild(li);
+    });
+  }
+  incEl.addEventListener("toggle", function () { if (incEl.open) loadIncidents(false); });
+  logBoxEl.addEventListener("toggle", function () { if (logBoxEl.open) loadIncidents(true); });
+
+  function showRestart(text) { restartMsgEl.textContent = text; restartMsgEl.hidden = !text; }
+
+  checkBtn.addEventListener("click", async function () {
+    checkBtn.disabled = true;
+    await refreshDeviceRow();
+    checkBtn.disabled = false;
+  });
+
+  restartBtn.addEventListener("click", async function () {
+    if (pending || !device) return;
+    var id = device, mine = { device: id, nonce: null };
+    pending = mine;   // 之后一律比对象本身：换设备（A→B→A）会把 pending 清掉，旧的请求回来不能认成现在这个
+    restartBtn.disabled = true;
+    showRestart("正在请求重启……");
+    var r = await request("POST", "restart?deviceId=" + encodeURIComponent(id));
+    if (pending !== mine) return;
+    if (!r.ok || !r.body || !r.body.nonce) { pending = null; showRestart("请求失败：" + explain(r)); renderMeta(); return; }
+    mine.nonce = r.body.nonce;
+    showRestart("已请求，等检测程序回报（最多 75 秒）……");
+    var deadline = Date.now() + POLL_MAX_MS;
+    while (pending === mine) {
+      await new Promise(function (ok) { setTimeout(ok, POLL_MS); });
+      if (pending !== mine) return;
+      await refreshDeviceRow();
+      var dev = devices.filter(function (d) { return d.deviceId === id; })[0];
+      var q = dev && dev.restart;
+      if (pending !== mine) return;
+      if (q && q.nonce === mine.nonce && q.result) {
+        pending = null;
+        showRestart(q.result === "failed" ? "启动失败：" + reasonText(q.reason) + "。" + LOG_HINT
+          : own(RESTART_TEXT, q.result, "检测程序回报了未知结果"));
+        break;
+      }
+      if (Date.now() >= deadline) { pending = null; showRestart("检测程序没有响应（它可能没在运行）"); break; }
+    }
+    renderMeta();
+  });
 
   async function request(method, path, body) {
     var init = { method: method };
@@ -264,6 +433,13 @@
 
   async function loadDevice(id) {
     device = id;
+    pending = null;
+    incEl.open = false;
+    incListEl.textContent = "";
+    incMsgEl.hidden = true;
+    logBoxEl.open = false;
+    logTextEl.textContent = "";
+    showRestart("");
     busy = true;
     sync();
     showMessage("", false);
@@ -283,6 +459,7 @@
       return;
     }
     if (!r.ok) { showMessage("设备列表加载失败：" + explain(r), true); return; }
+    noteNow(r.body);
     devices = (r.body && r.body.devices) || [];
     deviceEl.textContent = "";
     devices.forEach(function (d) {
@@ -299,6 +476,15 @@
     await loadDevice(want);
   }
 
+  // 键盘鼠标活动：打开前先把仓主要求的说明给人看，不同意就勾回去（保存是另一步）
+  var INPUT_NOTICE = "打开前请看清楚：\n" +
+    "记什么：每 10 秒里有没有碰键盘或鼠标（鼠标在动也算）。\n" +
+    "不记什么：按了哪个键、打了什么字，一概不记。\n" +
+    "存在哪：只在本机的检测程序和你自己的蜂巢里。\n" +
+    "怎么关：随时关掉这个开关。\n\n打开吗？";
+  inputEl.addEventListener("change", function () {
+    if (inputEl.checked && !window.confirm(INPUT_NOTICE)) inputEl.checked = false;
+  });
   formEl.addEventListener("input", function () { syncLists(); sync(); });
   formEl.addEventListener("change", function () { syncLists(); sync(); });
   deviceEl.addEventListener("change", function () {
@@ -358,7 +544,7 @@
   // 保存 / 删除之后设备行的「网页设置」跟着变：重拉一次列表，不换当前设备、不重填表单
   async function refreshDeviceRow() {
     var r = await request("GET", "devices");
-    if (r.ok && r.body && r.body.devices) { devices = r.body.devices; renderMeta(); }
+    if (r.ok && r.body && r.body.devices) { noteNow(r.body); devices = r.body.devices; renderMeta(); }
   }
 
   loadDevices();

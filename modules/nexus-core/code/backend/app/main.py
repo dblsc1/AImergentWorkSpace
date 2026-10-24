@@ -14,7 +14,17 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from .config import settings
+from .modules.activity import reconcile_loop
+from .modules.activity.blocks import BlockConflict
+from .modules.activity.blocks_router import router as blocks_router
+from .modules.activity.ignore_router import router as ignore_router
 from .modules.activity.presence_router import router as presence_router
+from .modules.activity.records_router import router as records_router
+from .modules.activity.reports import TooManyReportsError
+from .modules.activity.direct_log_router import router as direct_log_router
+from .modules.activity.new_items_router import router as new_items_router
+from .modules.activity.reports_router import router as reports_router
+from .modules.activity.secretary_router import router as secretary_router
 from .modules.activity.router import router as activity_router
 from .modules.activity.service import ConflictError as SuggestionConflictError
 from .modules.detector import rules as detector_rules
@@ -28,13 +38,18 @@ from .modules.planner.import_router import router as planner_import_router
 from .modules.planner.repo import ensure_tenant_indexes
 from .modules.planner.service import HasChildrenError, InvalidInputError, NotFoundError
 from .modules.planner.unified_router import router as planner_unified_router
+from .modules.prefs.router import router as prefs_router
+from .modules.prefs.service import ConflictError as PrefsConflictError
 from .modules.projector.rebuild import backfill_lanes_if_empty
 from .modules.restore.router import router as restore_router
 from .modules.restore.service import NotEmptyError
+from .modules.timer.agents import TooManyAnonymousRunsError
 from .modules.timer.router import agents_router
 from .modules.timer.router import router as timer_router
+from .modules.timer.router import sessions_router
 from .modules.timer.service import NoRunningTimerError, UnknownTaskError
 from .modules.views.router import router as views_router
+from .scope import ScopeMiddleware
 from .tenant import TenantMiddleware
 
 API_PREFIX = "/api/core"
@@ -52,7 +67,11 @@ async def lifespan(_app: FastAPI):
     else:
         if replayed:
             log.info("proj_lanes 为空，已从 %d 条事实自动补建（v2.4 升级）", replayed)
-    yield
+    loop = reconcile_loop.start()  # v2.38：窗口块对账，每 60 秒一轮
+    try:
+        yield
+    finally:
+        reconcile_loop.stop(loop)
 
 
 app = FastAPI(
@@ -63,6 +82,8 @@ app = FastAPI(
 )
 # 租户在任何路由之前定下（契约 v2.0「按租户分数据」，app/tenant.py）。
 app.add_middleware(TenantMiddleware)
+# v2.19：调用方范围（report / read / write、匿名）同样在任何路由之前拦（app/scope.py）。
+app.add_middleware(ScopeMiddleware)
 
 
 @app.get(f"{API_PREFIX}/health")
@@ -85,6 +106,7 @@ def health() -> dict[str, str]:
 app.include_router(events_router, prefix=API_PREFIX)
 app.include_router(timer_router, prefix=API_PREFIX)
 app.include_router(agents_router, prefix=API_PREFIX)  # v2.1 AI 代理运行
+app.include_router(sessions_router, prefix=API_PREFIX)  # v2.11 改挂未分类时间
 app.include_router(planner_unified_router, prefix=API_PREFIX)
 app.include_router(views_router, prefix=API_PREFIX)
 app.include_router(export_router, prefix=API_PREFIX)
@@ -92,7 +114,15 @@ app.include_router(planner_import_router, prefix=API_PREFIX)
 app.include_router(restore_router, prefix=API_PREFIX)
 app.include_router(activity_router, prefix=API_PREFIX)  # v2.2 活动建议
 app.include_router(presence_router, prefix=API_PREFIX)  # v2.4 在场心跳
+app.include_router(reports_router, prefix=API_PREFIX)  # v2.20 AI 报告
+app.include_router(direct_log_router, prefix=API_PREFIX)  # v2.38 直接施加日志 / 撤回
+app.include_router(new_items_router, prefix=API_PREFIX)  # v2.30 AI 提议新项目 / 任务
+app.include_router(secretary_router, prefix=API_PREFIX)  # v2.39 秘书报告 / 问人 / sessionChange 提议
+app.include_router(ignore_router, prefix=API_PREFIX)  # v2.22 忽略并记住
+app.include_router(records_router, prefix=API_PREFIX)  # v2.38 原始记录、键盘鼠标活动
+app.include_router(blocks_router, prefix=API_PREFIX)  # v2.38 窗口块、第二级规则、账号设置
 app.include_router(detector_router, prefix=API_PREFIX)  # v2.5 检测程序设置；v2.6 分类规则
+app.include_router(prefs_router, prefix=API_PREFIX)  # v2.22 泳道偏好
 
 
 # 域错误 → 状态码的映射只在这里（contract.md v0.4「校验」表 + v0.6「档案读端」）：
@@ -108,7 +138,12 @@ app.include_router(detector_router, prefix=API_PREFIX)  # v2.5 检测程序设�
 #   SuggestionConflictError → 409（v2.2 活动建议：已忽略的再确认 / 已确认的再忽略）
 #   UnprocessableError → 422（v2.4：相位 at 超前 300 秒；views/lanes 的参数互斥 / 跨度超 7 天）
 #   detector ForbiddenError → 403（v2.5：设备令牌想改检测设置）
+#   v2.11 改挂复用上面几条：ForbiddenError 403（设备令牌 / actor=ai）、NotFoundError / UnknownTaskError 404、
+#     InvalidInputError 400（taskId / projectId 没二选一、目标是桶）、HasChildrenError 409（不是未分类的段 / 并发没抢到）
+#   detector NotFoundError → 404（v2.27：重启一台不存在的设备）
 #   detector InvalidSettingsError → 422、TooLargeError → 413（v2.5：设置文档不合 schema / 太大）
+#   v2.15 让 AI 认窗口复用上面几条：SuggestionConflictError 409（窗口没在等 AI 认，什么都没写）、NotFoundError 404、
+#     InvalidInputError 400（任务已完成 / 不是普通任务）、ForbiddenError 403（设备令牌）
 #   detector RulesError → 自带状态码（v2.6 分类规则：403/404/412/413/422/428，体 {detail, **附加字段}）
 
 
@@ -120,6 +155,11 @@ def detector_forbidden(_request: Request, exc: Exception) -> JSONResponse:
 @app.exception_handler(detector_service.InvalidSettingsError)
 def detector_invalid(_request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+
+@app.exception_handler(detector_service.NotFoundError)
+def detector_not_found(_request: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(status_code=404, content={"detail": str(exc)})
 
 
 @app.exception_handler(detector_rules.RulesError)
@@ -195,6 +235,30 @@ def restore_not_empty(_request: Request, exc: NotEmptyError) -> JSONResponse:
 def suggestion_conflict(_request: Request, exc: SuggestionConflictError) -> JSONResponse:
     """契约 v2.2：请求合法，冲突的是建议的**当前状态**（同 `NoRunningTimerError`）。"""
     return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(BlockConflict)
+def block_conflict(_request: Request, exc: BlockConflict) -> JSONResponse:
+    """契约 v2.38：``ifSeq`` 与块的现状不符。409，体里带 ``current``（该块现在的样子）。"""
+    return JSONResponse(status_code=409, content={"detail": str(exc), "current": exc.current})
+
+
+@app.exception_handler(PrefsConflictError)
+def prefs_conflict(_request: Request, exc: PrefsConflictError) -> JSONResponse:
+    """契约 v2.22：泳道偏好写入争用重试用尽。409——请求合法，稍后重试。"""
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(TooManyAnonymousRunsError)
+def too_many_anonymous_runs(_request: Request, exc: Exception) -> JSONResponse:
+    """契约 v2.19：同时在跑的匿名运行到上限。429——请求本身合法，稍后（有运行结束 / 超时后）再来。"""
+    return JSONResponse(status_code=429, content={"detail": str(exc)})
+
+
+@app.exception_handler(TooManyReportsError)
+def too_many_reports(_request: Request, exc: Exception) -> JSONResponse:
+    """契约 v2.20：别的作者已有 5 份待批准的报告。429——请求合法，等人处理旧的再来。"""
+    return JSONResponse(status_code=429, content={"detail": str(exc)})
 
 
 @app.exception_handler(UnprocessableError)

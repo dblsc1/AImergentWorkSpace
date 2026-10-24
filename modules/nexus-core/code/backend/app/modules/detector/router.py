@@ -6,7 +6,7 @@ PUT 的请求体按原始字节交给 service：要先量大小（413）、再�
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Query, Request, Response
 from starlette.concurrency import run_in_threadpool
 
 from . import rules, service
@@ -32,9 +32,25 @@ def delete_settings(deviceId: str, request: Request) -> Response:
     return Response(status_code=204)
 
 
+@router.put("/health")
+async def put_health(deviceId: str, request: Request) -> dict:
+    body = await request.body()
+    return await run_in_threadpool(service.put_health, deviceId, body)
+
+
+@router.post("/restart")
+def request_restart(deviceId: str, request: Request) -> dict:
+    return service.request_restart(deviceId, request.headers.get("authorization"))
+
+
 @router.get("/devices")
 def list_devices() -> dict:
     return service.list_devices()
+
+
+@router.get("/incidents")
+def incidents(deviceId: str, limit: int = Query(50, ge=1, le=200)) -> dict:
+    return service.incidents(deviceId, limit)
 
 
 # ── detector.rules.v1（v2.6）：分类规则与 AI 草稿 ──
@@ -78,3 +94,21 @@ def apply_draft(draft_id: str, request: Request, response: Response) -> dict:
 def discard_draft(draft_id: str, request: Request) -> Response:
     rules.discard_draft(request.headers.get("authorization"), draft_id)
     return Response(status_code=204)
+
+
+@router.post("/rules/ai-apply")
+async def ai_apply(request: Request, response: Response) -> dict:
+    body = await request.body()
+    return _etag(response, await run_in_threadpool(rules.ai_apply, request.headers.get("authorization"), body))
+
+
+@router.post("/rules/ai-revert")
+def ai_revert(request: Request, response: Response) -> dict:
+    h = request.headers
+    return _etag(response, rules.ai_revert(h.get("authorization"), h.get("if-match")))
+
+
+@router.put("/rules/ai-direct")
+async def set_ai_direct(request: Request, response: Response) -> dict:
+    body = await request.body()
+    return _etag(response, await run_in_threadpool(rules.set_ai_direct, request.headers.get("authorization"), body))

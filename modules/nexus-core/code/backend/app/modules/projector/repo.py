@@ -17,11 +17,14 @@
 
 两张集合的幂等实现都是**原子的**，不是「先查再改」：
 文档带 ``appliedKeys`` 数组，更新条件是 ``appliedKeys $ne dedupe_key``——
-条件不中而 upsert 试图新建时会撞唯一索引（DuplicateKeyError），
-那恰好就是「已应用过」的判定。竞态下两个并发投递也只会累计一次。
+条件不中而 upsert 试图新建时会撞唯一索引（DuplicateKeyError）。撞了**不等于**「已应用过」：
+也可能是并发的另一条写刚把这份文档 / 这一行建出来。所以每个带 upsert 的累计都在撞了之后不带 upsert
+再试一次，由那一次的条件中不中来判——同一条并发投两遍只累计一次，两条不同的各算各的。
 """
 
 from __future__ import annotations
+
+from datetime import timedelta
 
 from pymongo.errors import DuplicateKeyError
 
@@ -67,23 +70,66 @@ def apply_session(
         inc[f"projects.{project_id}"] = seconds
     if task_id:
         inc[f"tasks.{task_id}"] = seconds
+    return _inc_current(user, dedupe_key, inc)
+
+
+def move_session(
+    user: str,
+    dedupe_key: str,
+    seconds: int,
+    from_project: str | None,
+    from_task: str | None,
+    to_project: str | None,
+    to_task: str | None,
+) -> bool:
+    """v2.11 改挂：一段的秒数从旧归属挪到新归属，``totalSeconds`` 不变。``dedupe_key`` 是那条
+    ``session.reassigned`` 的防重键，记在 ``movedKeys``（不读出）——``appliedKeys`` 仍然只是「算进来的段」，
+    所以重建（不重放改挂）出来的文档与实时投影的读出来一样。
+    纯 ``$inc``、带 upsert：与那一段自己的累计、与别的改挂谁先谁后到达，结果都一样。"""
+    inc: dict[str, int] = {}
+    for field, delta in (
+        (f"projects.{from_project}", -seconds if from_project else 0),
+        (f"tasks.{from_task}", -seconds if from_task else 0),
+        (f"projects.{to_project}", seconds if to_project else 0),
+        (f"tasks.{to_task}", seconds if to_task else 0),
+    ):
+        inc[field] = inc.get(field, 0) + delta  # 同项目内改挂：项目那一项一减一加，抵成 0
+    inc = {field: delta for field, delta in inc.items() if delta}
+    return bool(inc) and _inc_current(user, dedupe_key, inc, applied="movedKeys")
+
+
+def void_session(user: str, dedupe_key: str, seconds: int, project: str | None, task: str | None, session_key: str) -> bool:
+    """v2.38 作废：一段的秒数从它**当前**归属减掉（``dedupe_key`` 是那条 ``session.voided`` 的，记在 ``movedKeys``，理由同 ``move_session``）。
+    被作废那段的防重键从 ``appliedKeys`` 拿掉：重建不重放它，读出来的文档才与重建的一样。"""
+    inc = {"totalSeconds": -seconds, **({f"projects.{project}": -seconds} if project else {}), **({f"tasks.{task}": -seconds} if task else {})}
+    return _inc_current(user, dedupe_key, inc, applied="movedKeys", pull=session_key)
+
+
+def _inc_current(user: str, dedupe_key: str, inc: dict[str, int], applied: str = "appliedKeys", pull: str | None = None) -> bool:
+    query = {"user": user, applied: {"$ne": dedupe_key}}
+    update = {"$inc": inc, "$addToSet": {applied: dedupe_key}, **({"$pull": {"appliedKeys": pull}} if pull else {})}
     try:
-        result = _col().update_one(
-            {"user": user, "appliedKeys": {"$ne": dedupe_key}},
-            {
-                "$inc": inc,
-                "$addToSet": {"appliedKeys": dedupe_key},
-                "$setOnInsert": {"user": user},
-            },
-            upsert=True,
-        )
+        result = _col().update_one(query, {**update, "$setOnInsert": {"user": user}}, upsert=True)
     except DuplicateKeyError:
-        return False  # 文档在，但 appliedKeys 已含此键 → 早已应用过
+        # 两种可能：① 本键早已应用过；② 这个租户还没有文档，并发的**另一条**写（另一段落账、或这一段的改挂）
+        # 抢先建了出来。②不能当成「已应用」，否则这一笔就永远丢了。文档此刻一定在，不带 upsert 再试一次：
+        # 条件中 = 本键没应用过（同 apply_daily_stat）。
+        result = _col().update_one(query, update)
+        return result.modified_count > 0
     return result.modified_count > 0 or result.upserted_id is not None
 
 
 def read_current(user: str) -> dict | None:
-    return _col().find_one({"user": user}, {"_id": 0})
+    doc = _col().find_one({"user": user}, {"_id": 0, "movedKeys": 0})
+    for field in ("projects", "tasks"):
+        if doc and field in doc:
+            # v2.11：改挂把旧归属减到 0，那个键不再读出（从没记过和全挪走了，读起来一样）
+            # 只摘「是数、且 ≤ 0」的：外部事件的 id 带点时 $inc 写出的是嵌套文档，原样留着，不拿它比大小
+            doc[field] = {key: secs for key, secs in doc[field].items()
+                          if not (isinstance(secs, (int, float)) and secs <= 0)}
+    if doc and not doc.get("projects") and not doc.get("tasks") and doc.get("totalSeconds", 0) <= 0:
+        return None  # v2.38：段都被作废了——与「从没记过」（重建出来的）读起来一样
+    return doc
 
 
 def clear_current() -> None:
@@ -99,36 +145,30 @@ def apply_daily_stat(
     project_id: str,
     task_id: str | None,
     seconds: int,
+    applied: str = "appliedKeys",
 ) -> bool:
     """``(user, date, projectId, taskId)`` 唯一；同一 ``dedupe_key`` 只累计一次。
 
     ``task_id`` 可以是 ``None``（外部事件可以没有具体任务，B5）——``None`` 作为
     Mongo 字段值参与唯一索引没有问题，同一 ``(user,date,projectId)`` 下所有
     「无任务」的事件会落进同一份文档，语义上等价于「这个项目当天的无任务时长」。
+
+    v2.11：改挂用负的 ``seconds`` 从旧归属那行减（``dedupe_key`` 是那条 ``session.reassigned`` 的，
+    ``applied="movedKeys"``——``appliedKeys`` 里是外部 source 自己定的 dedupeKey，同住一个数组的话，
+    一条 dedupeKey 恰好叫 ``reassign:…`` 的外部事件就能把某次改挂的加减吞掉）。
+    纯 ``$inc``、带 upsert，所以与那一段自己的累计、与别的改挂的到达顺序无关；减到 0 的行读端不出。
     """
+    key = {"user": user, "date": date, "projectId": project_id, "taskId": task_id}
+    query = {**key, applied: {"$ne": dedupe_key}}
+    update = {"$inc": {"seconds": seconds}, "$addToSet": {applied: dedupe_key}}
     try:
-        result = _daily_col().update_one(
-            {
-                "user": user,
-                "date": date,
-                "projectId": project_id,
-                "taskId": task_id,
-                "appliedKeys": {"$ne": dedupe_key},
-            },
-            {
-                "$inc": {"seconds": seconds},
-                "$addToSet": {"appliedKeys": dedupe_key},
-                "$setOnInsert": {
-                    "user": user,
-                    "date": date,
-                    "projectId": project_id,
-                    "taskId": task_id,
-                },
-            },
-            upsert=True,
-        )
+        result = _daily_col().update_one(query, {**update, "$setOnInsert": key}, upsert=True)
     except DuplicateKeyError:
-        return False  # 文档在，但 appliedKeys 已含此键 → 早已应用过
+        # 两种可能：① 本键早已应用过；② 并发的**另一条**事件抢先建出了同一行（v2.11 起会有：两段同时
+        # 归到同一任务同一天）。②不能当成「已应用」，否则这一次的秒数就漏了。行此刻一定在，不带 upsert
+        # 再试一次：条件中 = 本键没应用过（同 apply_agent_daily_stat）。
+        result = _daily_col().update_one(query, update)
+        return result.modified_count > 0
     return result.modified_count > 0 or result.upserted_id is not None
 
 
@@ -142,7 +182,7 @@ def read_daily_stats(
     ``date`` 是 ``YYYY-MM-DD`` 字符串，字典序比较与日期序一致，直接用
     ``$gte``/``$lte`` 过滤不需要先转 ``datetime``。
     """
-    query: dict = {"user": user}
+    query: dict = {"user": user, "seconds": {"$gt": 0}}  # v2.11：改挂减到 0 的行不读出
     date_range: dict = {}
     if date_from:
         date_range["$gte"] = date_from
@@ -151,8 +191,16 @@ def read_daily_stats(
     if date_range:
         query["date"] = date_range
     return list(
-        _daily_col().find(query, {"_id": 0, "user": 0, "appliedKeys": 0}).sort("date", 1)
+        _daily_col().find(query, {"_id": 0, "user": 0, "appliedKeys": 0, "movedKeys": 0}).sort("date", 1)
     )
+
+
+def last_active_by_task(user: str) -> dict[str, str]:
+    """每个任务最近一次有时间的本地日（一次 $group，不把整张按天表读回来）。"""
+    rows = _daily_col().aggregate([
+        {"$match": {"user": user, "seconds": {"$gt": 0}, "taskId": {"$ne": None}}},
+        {"$group": {"_id": "$taskId", "last": {"$max": "$date"}}}])
+    return {r["_id"]: r["last"] for r in rows}
 
 
 def clear_daily_stats() -> None:
@@ -191,11 +239,13 @@ def apply_agent_daily_stat(
     task_id: str | None,
     agent: str,
     seconds: int,
+    runs: int = 1,
 ) -> bool:
-    """同 ``apply_daily_stat`` 的原子幂等写法，唯一约束多一个 ``agent``；另计 ``runs`` 次数。"""
+    """同 ``apply_daily_stat`` 的原子幂等写法，唯一约束多一个 ``agent``；另计 ``runs`` 次数。
+    v2.31：一条事件按天写多行，每行各带同一个 dedupe_key，各自幂等；``runs`` 只在首日行记 1，别天 0，汇总才不重复数。"""
     key = {"user": user, "date": date, "projectId": project_id, "taskId": task_id, "agent": agent}
     query = {**key, "appliedKeys": {"$ne": dedupe_key}}
-    update = {"$inc": {"seconds": seconds, "runs": 1}, "$addToSet": {"appliedKeys": dedupe_key}}
+    update = {"$inc": {"seconds": seconds, "runs": runs}, "$addToSet": {"appliedKeys": dedupe_key}}
     try:
         result = _agent_daily_col().update_one(query, {**update, "$setOnInsert": key}, upsert=True)
     except DuplicateKeyError:
@@ -242,20 +292,69 @@ def _lanes_col():
 
 
 def apply_lane(doc: dict) -> bool:
-    """同一 (user, key) 只写一次；重放 / 重投递是 no-op。"""
+    """同一 (user, key) 只写一次；重放 / 重投递是 no-op。
+
+    那一行可能已经被 ``reassign_lane`` 占了位（只有去向、没有 ``kind``：改挂赶在这一行之前到了）——这时补上其余字段，
+    归属留占位行记下的那个。一条管道更新原子地分三种情况：没有 → 整份写入；只有占位 → 合并；已经写过 → 不动。
+    ``$literal``：文档里以 ``$`` 开头的字符串（外部事件的标签、任务 id）是数据，不是字段引用。
+    """
+    # 占位只对人的段作数（改挂只针对 session.completed）；别的 kind 以自己的文档为准
+    merged = [{"$literal": doc}, "$$ROOT"] if doc.get("kind") == "session" else ["$$ROOT", {"$literal": doc}]
+    query = {"user": doc["user"], "key": doc["key"]}
+    update = [{"$replaceWith": {"$cond": [
+        {"$eq": [{"$type": "$kind"}, "missing"]}, {"$mergeObjects": merged}, "$$ROOT"]}}]
     try:
-        result = _lanes_col().update_one(
-            {"user": doc["user"], "key": doc["key"]}, {"$setOnInsert": doc}, upsert=True,
-        )
+        result = _lanes_col().update_one(query, update, upsert=True)
     except DuplicateKeyError:
-        return False  # 并发的同一条抢先插入
-    return result.upserted_id is not None
+        # 并发的同一条、或一条改挂的占位抢先建出了这一行：行此刻一定在，不带 upsert 再走一遍同样的三分支
+        result = _lanes_col().update_one(query, update)
+    return result.modified_count > 0 or result.upserted_id is not None
 
 
-def read_lanes(user: str, kind: str, start, end, limit: int) -> list[dict]:
-    """与 [start, end) 有重叠的区间，最新（startAt 大）的在前，至多 ``limit`` 条。"""
+def reassign_lane(user: str, key: str, task_id: str | None, project_id: str | None, seq: int) -> bool:
+    """v2.11 改挂：换这一段的归属。按 ``seq`` 只进不退——并发的两条改挂后到的若更旧，不盖新的。
+
+    段的那一行还没写进来（刚落账就改挂，``lanes.handle`` 还没轮到）时先占位：只记去向与 ``assignSeq``、
+    没有 ``kind``，所以读端与 ``lanes_empty`` 都看不见它；``apply_lane`` 随后补上其余字段、归属以占位为准。
+    那一段永远不进时间线（没有 ``startAt`` 的外部段）时占位行就一直留着，重建时清掉。
+    """
+    query = {"user": user, "key": key, "kind": {"$in": ["session", None]}, "assignSeq": {"$not": {"$gte": seq}}}
+    update = {"$set": {"taskId": task_id, "projectId": project_id, "assignSeq": seq}}
+    try:
+        result = _lanes_col().update_one(query, update, upsert=True)
+    except DuplicateKeyError:
+        # 行在但条件不中（已是更新的 seq / 不是人的段），或并发的另一条写刚建出这一行：不带 upsert 再试一次
+        result = _lanes_col().update_one(query, update)
+    return result.modified_count > 0 or result.upserted_id is not None
+
+
+def read_lanes(user: str, kind: str, start, end, limit: int, *, fields: tuple | None = None,
+               run_ids: list | None = None, sources: list | None = None, ascending: bool = False) -> list[dict]:
+    """与 [start, end) 有重叠的区间，最新（startAt 大）的在前，至多 ``limit`` 条。
+
+    ``fields`` 只取这几列（给「先轻读、再按 runId 取全文」用）；``run_ids`` 只取这些运行。
+    run 的 endAt = startAt + 时长 ≤ 31 天（handler 拦坏载荷），所以多一个 startAt 下界：索引
+    ``user_kind_start`` 只扫 [start-31d, end) 这一段，不会为凑不够 limit 而扫整段历史。"""
     query = {"user": user, "kind": kind, "startAt": {"$lt": end}, "endAt": {"$gt": start}}
-    return list(_lanes_col().find(query, {"_id": 0}).sort("startAt", -1).limit(limit))
+    if kind == "run":
+        query["startAt"]["$gt"] = start - timedelta(days=31)
+    if run_ids is not None:
+        query["runId"] = {"$in": run_ids}
+    if sources is not None:  # v2.38 对账：只要这几个来源的段（在查询里过滤，不能先截断再筛）
+        query["source"] = {"$in": sources}
+    proj = {"_id": 0} if fields is None else {"_id": 0, **{f: 1 for f in fields}}
+    return list(_lanes_col().find(query, proj).sort("startAt", 1 if ascending else -1).limit(limit))
+
+
+def delete_lane(user: str, key: str) -> None:
+    """v2.38 作废：这一段不再进时间线（重建时作废的段本来就不重放，结果一样）。
+    留一行 ``kind: "voided"`` 墓碑而不是删行：作废赶在落账的 ``lanes.handle`` 之前到时，``apply_lane`` 见到已有 ``kind`` 就不动，
+    作废过的段不会被随后的插入复活；读端按 ``kind`` 取 session / run，看不见墓碑。运行（run）行不动。"""
+    try:
+        _lanes_col().replace_one({"user": user, "key": key, "kind": {"$in": ["session", None]}},
+                                 {"user": user, "key": key, "kind": "voided"}, upsert=True)
+    except DuplicateKeyError:
+        pass  # 这个 key 是一条运行 / 已经是墓碑：不动
 
 
 def clear_lanes() -> None:
@@ -264,7 +363,8 @@ def clear_lanes() -> None:
 
 
 def lanes_empty() -> bool:
-    return _lanes_col().find_one({}, {"_id": 1}) is None
+    """一条区间都没有（改挂留下的占位行没有 ``kind``，不算）。"""
+    return _lanes_col().find_one({"kind": {"$exists": True, "$ne": "voided"}}, {"_id": 1}) is None
 
 
 # ------------------------------------------------ 启动期一次性任务的锁与进度标记（v2.4：proj_lanes 自动补建）

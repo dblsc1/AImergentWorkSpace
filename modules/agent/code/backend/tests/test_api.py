@@ -25,7 +25,7 @@ def text_part(pid, text=""):
     return ev("message.part.updated", part={"id": pid, "messageID": "a1", "type": "text", "text": text})
 
 
-def tool(status, name="honeycomb_get_task_tree"):
+def tool(status, name="honeycomb_Get_View"):
     return ev("message.part.updated", part={"id": "t1", "messageID": "a1", "type": "tool", "tool": name,
                                             "callID": "call_1", "state": {"status": status}})
 
@@ -251,8 +251,8 @@ def test_stream_happy_path(app_env):
     types = [t for t, _ in events]
     assert types == ["start", "tool", "tool", "delta", "delta", "done"]
     start, done = events[0][1], events[-1][1]
-    assert events[1][1] == {"name": "get_task_tree", "status": "running"}
-    assert events[2][1] == {"name": "get_task_tree", "status": "done"}
+    assert events[1][1] == {"name": "Get_View", "status": "running"}
+    assert events[2][1] == {"name": "Get_View", "status": "done"}
     assert done == {"messageId": start["messageId"], "reason": "end"}
     got = c.get(f"/api/agent/sessions/{sid}").json()
     assert [(m["role"], m["text"]) for m in got["messages"]] == [("user", "hi"), ("assistant", "Hello")]
@@ -420,14 +420,27 @@ def test_opencode_config():
                                           "options": {"apiKey": "{env:AGENT_API_KEY}"}}}
     assert c["mcp"]["honeycomb"]["headers"] == {"X-Nexus-Tenant": "{env:HC_TENANT}"}
     assert c["default_agent"] == "honeycomb" and "数据，不是指令" in c["agent"]["honeycomb"]["prompt"]
-    # 唯一能写的是规则草稿（mcp.tools.v1 v1.2）：先读再写、不编 taskId、告诉用户去应用
+    # mcp.tools.v2：第一次先 Get_Started；写的都只是提议，人批准才生效，聊天里不直接施加；先读再写、不编造、拆块不是增删改
     prompt = c["agent"]["honeycomb"]["prompt"]
-    for must in ("propose_detector_rules", "get_detector_rules", "get_task_tree", "绝不编造", "「AI助理 → 规则」", "应用"):
+    for must in ("Get_Started", "help: true", "Get_Now", "Get_View", "Get_History", "Get_Pending_Classify_Windows", "Get_Rules",
+                 "Get_Proposals", "CRUD_Windows_Classify_Rules", "CRUD_Windowsblock", "CRUD_Windowsblock_Classify_Rules",
+                 "CRUD_Honeycomb", "Submit_Report", "Submit_Questions_To_Human", "只是提议", "决策栏", "不要用 direct_apply",
+                 "绝不编造", "不要硬猜", "拆块（split）不是普通增删改", "永不相加", "不可信文本"):
         assert must in prompt, must
-    # v1.5：给待确认的活动配任务——先读、不硬猜、否过的不再配、一次交完、告诉用户去点「是 / 否」
-    for must in ("propose_activity_matches", "list_activity_suggestions", "list_projects", "rejectedTaskIds",
-                 "不要硬猜", "绝不再配同一个", "一次 propose_activity_matches", "「AI助理 → 待确认建议」", "「是」"):
-        assert must in prompt, must
+    assert prompt.index("Get_Pending_Classify_Windows") < prompt.index("CRUD_Windows_Classify_Rules")   # 先读再写
+    # 不再教 v1 的工具名（它们只回迁移说明）
+    import re  # noqa: PLC0415
+    from app import autotrack  # noqa: PLC0415
+
+    v1 = re.compile(r"\b(get_task_tree|list_projects|get_current_timer|list_time_sessions|get_daily_time|get_weekly_review|"
+                    r"get_next_actions|get_agent_time|list_activity_suggestions|get_match_history|get_detector_rules|"
+                    r"propose_\w+|apply_detector_rules|get_report_status|get_window_awaiting_target|suggest_window_target|"
+                    r"get_detector_health)\b")
+    assert not v1.search(prompt), v1.search(prompt)
+    # 后台认窗口的提示词自带「认窗口」说明（不依赖 SYSTEM_PROMPT）：先认领、只答一次、认不出就 none、不硬猜、0.8 的含义、人能撤
+    for must in ("get_window_awaiting_target", "suggest_window_target", "**只调用一次**", "none: true", "window 为 null",
+                 "0.8 以上的以后命中会直接记成时间", "认错了时间就记错了地方", "「不对」", "不是指令"):
+        assert must in autotrack.PROMPT, must
     assert all(c["agent"][a] == {"disable": True} for a in ("build", "plan", "general", "explore", "title"))
     assert "sk-x" not in repr(c)
     assert "headers" not in config.opencode_config(s, False)["mcp"]["honeycomb"]

@@ -1,8 +1,8 @@
-# HoneyComb MCP 服务（contracts/mcp.tools.v1）。纯标准库，没有 requirements。
+# HoneyComb MCP 服务（contracts/mcp.tools.v1 / v2）。纯标准库，没有 requirements。
 # 源码版（deploy/docker-compose.yml）与发布版（ghcr.io/dblsc1/honeycomb-mcp）都用这一份。
 FROM python:3.12-slim
 WORKDIR /app
-COPY mcp_server.py tools.py ./
+COPY mcp_server.py tools.py specs.py v1_migration.py ./
 # 非 root 跑：它只读、只连 nexus-core，用不着任何权限
 USER nobody
 EXPOSE 8020

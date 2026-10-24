@@ -17,7 +17,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from . import deps, inbox, repo
+from . import deps, inbox, repo, unclassified
 from .actor import apply_actor_update, normalize_actor
 # 异常类真身在 errors.py（给 deps.py 用，避免互相 import 成环）；这里 import 顺带
 # 让 service.HasChildrenError 等历史调用点（main.py、测试）不用跟着改。
@@ -34,6 +34,10 @@ from .snapshot import restore_snapshot  # noqa: F401 —— 转发给 restore/�
 INBOX_PROJECT_ID = inbox.PROJECT_ID
 #: 收件箱分区 id（v2.1）：不挂任务的 AI 代理运行，subject 落在收件箱上（timer/agents.py）。
 INBOX_ZONE_ID = inbox.ZONE_ID
+
+#: 项目「未分类」时间桶的 kind（v2.9）。读端按它把桶从待办 / 进度里摘出去；真身在 `unclassified.py`。
+UNCLASSIFIED_KIND = unclassified.KIND
+unclassified_task_id = unclassified.task_id  # 给 restore/ 校验快照用
 
 _VALID_KINDS = ("normal", "ephemeral")
 
@@ -72,6 +76,14 @@ def get_task(task_id: str) -> dict | None:
     return repo.get_task(task_id)
 
 
+def tasks_by_ids(ids: list[str]) -> list[dict]:
+    return repo.by_ids("tasks", ids)
+
+
+def projects_by_ids(ids: list[str]) -> list[dict]:
+    return repo.by_ids("projects", ids)
+
+
 def list_zones() -> list[dict]:
     return repo.list_zones()
 
@@ -90,6 +102,11 @@ def list_tree() -> tuple[list[dict], list[dict]]:
     for project in projects:
         project["tasks"] = repo.list_tasks_by_project(project["id"])
     return repo.list_zones(), projects
+
+
+def creation_order() -> dict[str, dict]:
+    """``{zones|projects|tasks: {id: _id}}``（v2.39 位置编号用；ObjectId 的先后 = 创建先后，其时间 = 创建时间）。"""
+    return {c: repo.creation_ids(c) for c in ("zones", "projects", "tasks")}
 
 
 # ------------------------------------------------------------------ 建
@@ -119,13 +136,15 @@ def create_project(
     plan: dict | None = None,
     status: str = "active",
     actor: str | None = None,
+    project_id: str | None = None,
 ) -> dict:
+    """``project_id``（v2.30）只给 activity 的「批准 AI 提议的新项目」用：提议时预留的 id，重复建撞唯一索引。"""
     zone = repo.get_zone(zone_id)
     if zone is None:
         raise InvalidInputError(f"zoneId 不存在：{zone_id!r}")
     name = _clean_name(name, "项目")
     project = {
-        "id": f"p_{uuid.uuid4().hex[:6]}",
+        "id": project_id or f"p_{uuid.uuid4().hex[:6]}",
         "key": f"{repo.name_num(zone['name'])}-{repo.name_num(name)}",
         "zoneId": zone_id,
         "name": name,
@@ -151,8 +170,10 @@ def create_task(
     plan: dict | None = None,
     depends_on: list[str] | None = None,
     actor: str | None = None,
+    task_id: str | None = None,
 ) -> dict:
-    """建任务：id 与 key 都由系统生成（契约「建任务时」）。``plan``/``dependsOn``
+    """建任务：id 与 key 都由系统生成（契约「建任务时」）。``task_id``（v2.8）只给 activity 的「确认 AI 提议的
+    新任务」用：id 是提议时就预留好的（同样系统生成），重复建撞 ``(user, id)`` 唯一索引——那就是「建过了」。``plan``/``dependsOn``
     是 v1.1 新增字段，校验与 PATCH 共用同一份函数，不是两套各管一半。"""
     project = repo.get_project(project_id)
     if project is None:
@@ -163,11 +184,12 @@ def create_task(
             f"项目 {project_id!r} 的归属分区 {project.get('zoneId')!r} 不存在——数据链断裂"
         )
     name = _clean_name(name, "任务")
-    if kind not in _VALID_KINDS:
+    # v2.9：kind=unclassified 只有「未分类」时间桶能用，且 id 必须是该项目桶的那个（unclassified.create）
+    if kind not in _VALID_KINDS and (kind, task_id) != (unclassified.KIND, unclassified.task_id(project_id)):
         raise InvalidInputError(f"任务 kind 非法：{kind!r}，合法取值 {'/'.join(_VALID_KINDS)}")
 
     task = {
-        "id": f"t_{uuid.uuid4().hex[:6]}",
+        "id": task_id or f"t_{uuid.uuid4().hex[:6]}",
         "key": _task_key(zone["name"], project["name"], name,
                          repo.count_same_name_in_project(project_id, name) + 1),
         "name": name,
@@ -230,6 +252,7 @@ def update_task(task_id: str, fields: dict) -> dict:
     task = repo.get_task(task_id)
     if task is None:
         raise NotFoundError(f"任务不存在：{task_id!r}")
+    unclassified.protect(task, "修改")  # v2.9：未分类时间桶 409
     updates = apply_actor_update(dict(fields))  # actor（若有）→ lastWriter
     if "name" in updates:
         updates["name"] = _clean_name(updates["name"], "任务")
@@ -277,17 +300,24 @@ def delete_project(project_id: str) -> None:
         raise NotFoundError(f"项目不存在：{project_id!r}")
     if inbox.is_protected_project(project_id):
         raise HasChildrenError(f"项目 {project_id!r} 是系统收件箱（捕捉落点），禁止删除")
-    remaining = repo.count_children("tasks", "projectId", project_id)
+    # v2.9：未分类时间桶不算子对象，随项目删
+    remaining = sum(1 for t in repo.list_tasks(project_id) if not unclassified.is_bucket(t))
     if remaining:
         raise HasChildrenError(f"项目 {project_id!r} 下还有 {remaining} 个任务——不做级联删除，先清空再删")
     repo.delete_by_id("projects", project_id)
+    # 先删项目、再清桶：并发的「取或建」插完桶会回头看项目还在不在（unclassified.create），两头合起来不留孤儿
+    for task in repo.list_tasks(project_id):
+        if unclassified.is_bucket(task):
+            repo.delete_by_id("tasks", task["id"])
 
 
 def delete_task(task_id: str) -> None:
     """删除任务：**被别的任务依赖时拒绝**（契约 v1.1，与「拒绝级联」同语义，
     复用同一个 ``HasChildrenError`` → 409 映射，报文点名依赖者）。"""
-    if repo.get_task(task_id) is None:
+    task = repo.get_task(task_id)
+    if task is None:
         raise NotFoundError(f"任务不存在：{task_id!r}")
+    unclassified.protect(task, "删除")  # v2.9：未分类时间桶 409（随项目一起删）
     dependents = repo.find_dependents(task_id)
     if dependents:
         names = "、".join(f"{d['name']!r}({d['id']})" for d in dependents)

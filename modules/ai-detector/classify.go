@@ -22,13 +22,21 @@ type suggestion struct {
 	Confidence float64 `json:"confidence"`
 	Reason     string  `json:"reason"`
 	Classifier string  `json:"classifier"` // "rules" | "service"
+	// upload.v1 v1.3：命中的规则只到项目时带（这时 TaskID 为 nil）；其余情形没有这个键。
+	ProjectID *string `json:"projectId,omitempty"`
+	// upload.v1 / nexus-core v2.34：命中 mode "ai" 的规则——没有目标、把握 0，窗口交给 AI 判断；其余情形没有这个键。
+	NeedsAI bool `json:"needsAI,omitempty"`
 }
 
+// rule 的目标是任务或项目，恰好写一个（detector.rules.v1 v1.1）。
 type rule struct {
 	App        string  `json:"app"`
 	Title      string  `json:"title"`
 	TaskID     string  `json:"taskId"`
+	ProjectID  string  `json:"projectId"`
 	Confidence float64 `json:"confidence"`
+	Block      string  `json:"-"` // detector.rules.v1 v1.5 的 kind "block"：第一级规则，只给原始记录算块名，不参与建议匹配
+	AI         bool    `json:"-"` // detector.rules.v1 v1.4 的 mode "ai"：命中即「交给 AI 判断」，不带目标（只来自网页规则）
 	app, title *regexp.Regexp
 	reason     string // 空 = 「规则 #N 命中」；网页规则填「网页规则 #N 命中」（N 是服务端数组里的位置）
 }
@@ -51,8 +59,8 @@ func loadRules(path string) ([]rule, error) {
 	}
 	for i := range f.Rules {
 		r := &f.Rules[i]
-		if r.TaskID == "" || (r.App == "" && r.Title == "") {
-			return nil, fmt.Errorf("规则 #%d：要有 taskId，app / title 至少写一个", i+1)
+		if (r.TaskID == "") == (r.ProjectID == "") || (r.App == "" && r.Title == "") {
+			return nil, fmt.Errorf("规则 #%d：taskId 与 projectId 恰好写一个，app / title 至少写一个", i+1)
 		}
 		if r.app, err = compileCI(r.App); err != nil {
 			return nil, fmt.Errorf("规则 #%d 的 app 正则：%w", i+1, err)
@@ -76,12 +84,25 @@ func compileCI(p string) (*regexp.Regexp, error) {
 
 func matchRules(rules []rule, s segment) (suggestion, bool) {
 	for i, r := range rules {
+		if r.Block != "" {
+			continue
+		}
 		if (r.app == nil || r.app.MatchString(s.App)) && (r.title == nil || r.title.MatchString(s.Title)) {
-			id, reason := r.TaskID, r.reason
+			reason := r.reason
 			if reason == "" {
 				reason = fmt.Sprintf("规则 #%d 命中", i+1)
 			}
-			return suggestion{TaskID: &id, Confidence: r.Confidence, Reason: reason, Classifier: "rules"}, true
+			if r.AI { // 先命中先赢：它压过后面的规则，窗口不硬分
+				return suggestion{Reason: reason + "：交给 AI 判断", Classifier: "rules", NeedsAI: true}, true
+			}
+			sg := suggestion{Confidence: r.Confidence, Reason: reason, Classifier: "rules"}
+			if id := r.TaskID; id != "" {
+				sg.TaskID = &id
+			} else {
+				id := r.ProjectID
+				sg.ProjectID = &id
+			}
+			return sg, true
 		}
 	}
 	return suggestion{}, false

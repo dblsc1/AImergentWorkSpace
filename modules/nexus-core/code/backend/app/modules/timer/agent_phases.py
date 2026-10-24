@@ -22,11 +22,13 @@ from datetime import datetime, timedelta
 from ... import config
 from ..planner.errors import NotFoundError, UnprocessableError
 from . import agents, repo
+from .agent_liveness import AGENT_DECLARED_MAX_SECONDS, AGENT_HEARTBEAT_SECONDS, lost_at
 
 MAX_PHASES = 1000
-MAX_INTERACTIONS = 500
+MAX_INTERACTIONS = 500  #: reply 的条数上限
+#: attend 的条数上限（v2.17 起与 reply 分开数：每 3 秒切一次窗口的人，每次切回来都是新的一条）
+MAX_ATTENDS = 2000  #: 超了不丢新的：相距最近的相邻两段并拢（``_union``）
 CLOCK_SKEW = timedelta(seconds=300)  # 同活动建议的时钟误差口径
-ATTEND_GAP = timedelta(seconds=45)
 #: 同一运行的并发写（异步钩子并行到达）只有几条，重试这么多次还不中 = 有 bug，响亮失败
 _CAS_RETRIES = 50
 
@@ -82,65 +84,104 @@ def record_phase(
             _insert_sorted(phases, entry)
         # reply：重复与已结束不记，其余（含 capped：人确实回话了）都记；同一 at 的 reply 只记一条
         add_reply = (
-            reply and reason != "duplicate" and len(interactions) < MAX_INTERACTIONS
+            reply and reason != "duplicate"
+            and sum(i["kind"] == "reply" for i in interactions) < MAX_INTERACTIONS
             and not any(i["kind"] == "reply" and agents.ts(i["at"]) == at_eff for i in interactions)
         )
         if add_reply:
             _insert_sorted(interactions, {"kind": "reply", "at": at_str})
         if (reason is None or add_reply) and not repo.cas_agent_run(
-            user, run_id, run.get("v"), {"phases": phases, "interactions": interactions},
-        ):
+            user, run_id, run.get("v"), {"phases": phases, "interactions": interactions}, right_now.isoformat(),
+        ):  # 相位与 lastSeenAt 同一次条件更新（下面的 touch 只管没写相位的重复 / 超上限）
             continue  # 并发写抢先或刚被关闭：重读重算
+        if not repo.touch_agent_run(user, run_id, right_now.isoformat()):  # v2.18：收下的相位（含重复 / 超上限）都是信号
+            return _closed_out(user, run_id, repo.get_agent_run(user, run_id))  # 写相位与记信号之间被失联 / 超时关了
         return {"runId": run_id, "phase": agents.current_phase({"phases": phases}),
                 "applied": reason is None, "reason": reason}
     raise RuntimeError(f"相位写入争用未决：{run_id!r}")
 
 
-def record_attend(user: str, title: str, at: datetime) -> None:
-    """在场心跳命中在跑运行的 ``match``（不分大小写的子串）→ 给该运行记 / 延长一条 attend。
-    由 activity 子边界的心跳经 ``timer/service.py`` 调来（跨子边界只走 service）。"""
-    haystack = title.casefold()
-    at_str = at.isoformat()
-    for run in repo.list_agent_runs(user):
-        match = run.get("match")
-        if not match or match.casefold() not in haystack:
-            continue
-        for _ in range(_CAS_RETRIES):
-            if run is None or "closing" in run:
-                break
-            interactions = list(run.get("interactions") or [])
-            last = next((i for i in reversed(interactions) if i["kind"] == "attend"), None)
-            if last is not None and at - agents.ts(last["until"]) <= ATTEND_GAP:
-                if at <= agents.ts(last["until"]):
-                    break  # 已覆盖到这一刻
-                interactions[interactions.index(last)] = {**last, "until": at_str}
-            elif len(interactions) >= MAX_INTERACTIONS:
-                break  # 超了不再记，不报错
-            else:
-                _insert_sorted(interactions, {"kind": "attend", "at": at_str, "until": at_str})
-            if repo.cas_agent_run(user, run["runId"], run.get("v"), {"interactions": interactions}):
-                break
-            run = repo.get_agent_run(user, run["runId"])
+def heartbeat(run_id: str, user: str, beat_source: str | None = None, *, now: Callable[[], datetime]) -> dict:
+    """v2.18「我还活着」：记 ``lastSeenAt``、``beatCount`` 加一，并声明这个运行会发心跳。
+    已结束回 closed（同相位），不存在 404。"""
+    right_now = now()
+    agents._expire(user, right_now)  # 写端点：先收超时 / 失联，迟到的心跳下面回 closed
+    alive = repo.touch_agent_run(user, run_id, right_now.isoformat(), declare=True, beat_source=beat_source, beat=True)
+    if not alive:
+        _closed_out(user, run_id, repo.get_agent_run(user, run_id))  # 从来不存在 → 404
+    return {"runId": run_id, "applied": alive, "reason": None if alive else "closed",
+            "heartbeatSeconds": AGENT_HEARTBEAT_SECONDS}
+
+
+def _union(old: list[tuple], new: list[tuple], gap: timedelta) -> list[tuple]:
+    """已有的 attend 并上新的几段，得规范形（互不相交、按起点排；同样的输入再并一遍不变）。
+    ``gap`` 只是**新的一段自己**的够得着的范围：与它相距 ≤ ``gap`` 的旧段并进来，并成的一段不再顺着往外够——
+    旧段之间原本分开的，不会因为这次来的是老心跳（45 秒）而被串起来，否则一个点能把几十秒没看的时间都算进去。
+    新的几段先排序再并（结果与到达顺序无关）。超过 ``MAX_ATTENDS``：把相距最近的相邻两段并拢
+    （不丢最新的；总量只增不减，每并拢一次多算的是当时最小的那个空档，≤ 运行时长 ÷ ``MAX_ATTENDS``；
+    多算的总量随超出的段数线性增长，没有常数上界）。"""
+    spans = sorted(old)
+    for a, b in sorted(new):
+        near = [s for s in spans if s[0] - b <= gap and a - s[1] <= gap]
+        merged = (min([a, *(s[0] for s in near)]), max([b, *(s[1] for s in near)]))
+        spans = sorted([*(s for s in spans if s not in near), merged])
+    while len(spans) > MAX_ATTENDS:
+        i = min(range(len(spans) - 1), key=lambda k: spans[k + 1][0] - spans[k][1])
+        spans[i:i + 2] = [(spans[i][0], spans[i + 1][1])]
+    return spans
+
+
+def record_attend(user: str, run_id: str, intervals: list[tuple[datetime, datetime]], gap: timedelta) -> None:
+    """人在看这条运行的几段时间 → 并进它的 attend。哪条运行由 activity 认（``activity/session_link``），
+    经 ``timer/service.py`` 调来（跨子边界只走 service）。
+
+    v2.17.1：**真的并集**——新的一段与已有的 attend 重叠、首尾相接（或相距 ≤ ``gap``）就并成一条，往前往后都伸；
+    否则按时间插进去，到得晚的、更早的一段也留着（并法见 ``_union``，再记一遍不变）。``gap``：带停留的段是 0（中间看别处的时间不算），
+    老心跳是 45 秒（v2.4）。重记同一段不多算。早于运行起点的部分钳到起点；运行已结束 → 不记。
+    争用重试用尽 → 抛错（调用方的那一拍整个失败，不悄悄丢）。"""
+    for _ in range(_CAS_RETRIES):
+        run = repo.get_agent_run(user, run_id)
+        if run is None or "closing" in run:
+            return
+        started = agents.ts(run["startedAt"])
+        interactions = run.get("interactions") or []
+        old = sorted((agents.ts(i["at"]), agents.ts(i["until"])) for i in interactions if i["kind"] == "attend")
+        spans = _union(old, [(max(a, started), b) for a, b in intervals if b >= max(a, started)], gap)
+        if spans == old:
+            return
+        attends = [{"kind": "attend", "at": a.isoformat(), "until": b.isoformat()} for a, b in spans]
+        merged_all = sorted([*(i for i in interactions if i["kind"] != "attend"), *attends],
+                            key=lambda i: agents.ts(i["at"]))  # 稳定排序：at 相同时 reply 在前
+        if repo.cas_agent_run(user, run_id, run.get("v"), {"interactions": merged_all}):
+            return
+    raise RuntimeError(f"attend 写入争用未决：{run_id!r}")
 
 
 def lane_runs(user: str, *, now: Callable[[], datetime]) -> tuple[datetime, list[dict]]:
-    """``views/lanes`` 的在跑运行。**不写**：不收超时（超过上限的标 overdue、elapsed 封顶）。
+    """``views/lanes`` 的在跑运行。**不写**：不收超时（超过上限的标 overdue、elapsed 封顶）、
+    不收失联（v2.18：标 lost、elapsed 止于最后一次信号；会发心跳的运行不看遗忘上限，只看 7 天安全上限）。
     「已标记未删除」的运行按标记当已结束画（与它将要落账的那条事实同形）。"""
     right_now = now()
     cap = timedelta(hours=config.settings.agent_run_timeout_hours)
     out = []
     for run in repo.list_agent_runs(user):
         started = agents.ts(run["startedAt"])
-        base = {k: run.get(k) for k in ("runId", "agent", "tool", "model", "label", "taskId", "projectId")}
+        base = {k: run.get(k) for k in ("runId", "agent", "tool", "model", "label", "taskId", "projectId",
+                                        "beatSource", "beatCount")}  # 后两个 v2.18
+        base["unverified"] = bool(run.get("unverified"))  # v2.19：匿名开的运行
+        base["match"] = run.get("match")  # v2.13：activity 的「窗口 ↔ 代理会话」要认它；views/lanes 不回出
         if "closing" in run:
             data, ended = agents.snapshot_data(run)
             out.append({**base, "startTs": started, "endTs": ended, "outcome": data["outcome"],
                         "elapsedSeconds": data["durationSeconds"], "overdue": False,
                         "phases": data.get("phases", []), "interactions": data.get("interactions", [])})
             continue
-        elapsed = right_now - started
+        seen = lost_at(run, right_now)
+        run_cap = timedelta(seconds=AGENT_DECLARED_MAX_SECONDS) if run.get("heartbeat") else cap  # 声明过心跳的 7 天
+        elapsed = (seen or right_now) - started
         out.append({**base, "startTs": started, "endTs": None, "outcome": None,
-                    "elapsedSeconds": max(int(min(elapsed, cap).total_seconds()), 0),
-                    "overdue": elapsed > cap,
+                    "elapsedSeconds": max(int(min(elapsed, run_cap).total_seconds()), 0),
+                    "overdue": elapsed > run_cap, "lost": seen is not None,
+                    "lastSeenTs": agents.ts(run["lastSeenAt"]) if run.get("lastSeenAt") else None,
                     "phases": run.get("phases") or [], "interactions": run.get("interactions") or []})
     return right_now, out

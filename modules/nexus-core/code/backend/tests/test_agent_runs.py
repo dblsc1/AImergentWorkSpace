@@ -96,6 +96,7 @@ def test_views_current_agents_shape_and_idle_human(client, seeded):
     assert body["running"] is False
     for key in ("zone", "project", "task", "sessionStartAt"):
         assert body[key] is None
+    assert all(0 <= a.pop("elapsedSeconds") < 60 for a in body["agents"])  # v2.21：服务端算的（口径另见 test_agent_heartbeat）
     assert body["agents"] == [
         {"runId": run["runId"], "taskId": task["id"], "agent": "claude-code", "tool": "Bash",
          "model": "opus", "startedAt": run["startedAt"], "phase": None, "label": None},
@@ -126,7 +127,9 @@ def test_stop_writes_exactly_one_event_and_double_stop_does_not_duplicate(client
     assert event["data"] == {
         "agent": "claude-code", "tool": "Bash", "model": "opus", "startAt": run["startedAt"],
         "durationSeconds": first["durationSeconds"], "outcome": "done", "output": "PR 已开",
+        "workingSeconds": 0, "days": event["data"]["days"],  # v2.31 追加；起停同秒的运行干活 0 秒（durationSeconds 下限 1，干活秒数没有）
     }
+    assert event["data"]["workingSeconds"] == sum(d["seconds"] for d in event["data"]["days"])
     assert _db()["agent_runs"].count_documents({}) == 0
 
     # 第二次 stop（哪怕换了 outcome）：200、duplicate、回原来那条，不写第二条
@@ -168,10 +171,10 @@ def test_agent_time_only_in_agent_projection(client, seeded, shift_clock):
     assert all(not t.get("actual") for p in gantt["projects"] for t in p.get("tasks", []))
 
     rows = list(db["proj_agent_daily_stats"].find({}, {"_id": 0, "appliedKeys": 0}))
-    assert len(rows) == 1
-    row = rows[0]
-    assert (row["projectId"], row["taskId"], row["agent"]) == (project["id"], task["id"], "claude-code")
-    assert (row["seconds"], row["runs"]) == (stopped["durationSeconds"], 1)
+    # 拨后 2 小时可能跨过本地零点：分到两天，合计不变
+    assert 1 <= len(rows) <= 2
+    assert all((r["projectId"], r["taskId"], r["agent"]) == (project["id"], task["id"], "claude-code") for r in rows)
+    assert sum(r["seconds"] for r in rows) == stopped["durationSeconds"]
 
 
 def test_human_daily_total_unaffected_by_concurrent_agents(client, seeded, shift_clock):

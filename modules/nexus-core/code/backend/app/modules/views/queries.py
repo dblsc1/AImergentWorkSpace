@@ -22,10 +22,13 @@ from datetime import datetime
 from ...config import settings
 from ...tenant import current as current_tenant
 from ...timeutil import local_date
+from ..activity import service as activity_service
 from ..planner import service as planner_service
+from ..prefs import service as prefs_service
 from ..projector.handlers import current as current_projection
 from ..projector.handlers import daily_stats as daily_stats_projection
 from ..timer import service as timer_service
+from . import address as address_mod
 from .schemas import (
     CurrentAgent,
     CurrentOut,
@@ -37,6 +40,8 @@ from .schemas import (
 )
 
 EPHEMERAL_KIND = "ephemeral"
+#: v2.9 项目的「未分类」时间桶：不是待办，不进 tree 的 tasks、不算进度（契约「项目未分类时间」）。
+UNCLASSIFIED_KIND = planner_service.UNCLASSIFIED_KIND
 
 _IDLE = {"running": False, "zone": None, "project": None, "task": None, "sessionStartAt": None}
 
@@ -50,10 +55,18 @@ def _share(part: int, whole: int) -> float:
 
 def get_current() -> CurrentOut:
     # v2.1：代理泳道与人的泳道各算各的；list_agent_runs 会顺手收掉超时的运行（契约明文）。
-    agents = [CurrentAgent(**run) for run in timer_service.list_agent_runs(current_tenant())]
+    # v2.22：藏起来的代理不在「现在在跑什么」里（只是不显示，时间照记）
+    hidden = prefs_service.hidden_keys(current_tenant())
+    runs = [r for r in timer_service.list_agent_runs(current_tenant()) if not r["unverified"]]  # 匿名运行只在泳道里（契约 v2.19）
+    shown = [run for run in runs if prefs_service.ident(run["agent"], run["label"], run["unverified"]) not in hidden]
+    agents = [CurrentAgent(**{k: v for k, v in run.items() if k != "unverified"}) for run in shown]
+    n_hidden = len(runs) - len(shown)
     state = timer_service.get_running_state(current_tenant())
     if state is None:
-        return CurrentOut(**_IDLE, agents=agents)
+        # v2.14：没在计时才有「自动 · 项目 / 任务」与请人选的窗口（顶栏芯片读这里，与 views/lanes 的 human 同一份）；
+        # v2.16 的 focus 也在这一份里
+        return CurrentOut(**_IDLE, agents=agents, hiddenCount=n_hidden,
+                          **activity_service.auto_state(current_tenant(), False))
 
     task_doc = planner_service.get_task(state["taskId"])
     project_doc = (
@@ -94,11 +107,15 @@ def get_current() -> CurrentOut:
             name=task_doc["name"],
             totalSeconds=task_seconds,
             shareOfProject=_share(task_seconds, project_seconds),
+            kind=task_doc.get("kind", "normal"),
         )
         if task_doc
         else None,
         sessionStartAt=state["startAt"],
         agents=agents,
+        hiddenCount=n_hidden,
+        # v2.16：在计时也给焦点（页面仍以手动计时为准；MCP 的客户端两样都看得到）
+        focus=activity_service.auto_state(current_tenant(), True)["focus"],
     )
 
 
@@ -115,9 +132,12 @@ def _progress(project: dict, tasks: list[dict]) -> int:
 
 def get_tree(include_ephemeral: bool = False) -> TreeOut:
     zones, projects = planner_service.list_tree()
+    addrs = address_mod.build(zones, projects, [t for p in projects for t in p.get("tasks", [])],
+                              planner_service.creation_order())  # v2.39：撞号要看全部同级（含临时 / 已完成 / 桶）
     shaped = []
     for project in projects:
-        all_tasks = project.get("tasks", [])
+        bucket = next((t for t in project.get("tasks", []) if t.get("kind") == UNCLASSIFIED_KIND), None)
+        all_tasks = [t for t in project.get("tasks", []) if t.get("kind") != UNCLASSIFIED_KIND]
         visible = (
             all_tasks
             if include_ephemeral
@@ -135,6 +155,9 @@ def get_tree(include_ephemeral: bool = False) -> TreeOut:
                 "progressSource": project.get("progressSource", "computed"),
                 # deadline = plan.end 的投影（契约）；无计划则回落到旧存量字段
                 "deadline": plan.get("end") or project.get("deadline"),
+                "unclassifiedTaskId": bucket["id"] if bucket else None,
+                "address": addrs.projects[project["id"]],
+                "unclassifiedAddress": addrs.tasks[bucket["id"]] if bucket else None,
                 "tasks": [
                     {
                         "id": t["id"],
@@ -147,6 +170,7 @@ def get_tree(include_ephemeral: bool = False) -> TreeOut:
                         # 落到 None/[]（同一份默认值口径，见契约「排期与依赖」）。
                         "plan": t.get("plan"),
                         "dependsOn": t.get("dependsOn") or [],
+                        "address": addrs.tasks[t["id"]],
                     }
                     for t in visible
                 ],
@@ -155,7 +179,7 @@ def get_tree(include_ephemeral: bool = False) -> TreeOut:
     return TreeOut(
         zones=[
             {"id": z["id"], "key": z["key"], "name": z["name"],
-             "color": z["color"], "order": z["order"]}
+             "color": z["color"], "order": z["order"], "address": addrs.zones[z["id"]]}
             for z in zones
         ],
         projects=shaped,
@@ -218,6 +242,7 @@ def get_gantt(date_from: str | None = None, date_to: str | None = None) -> Gantt
                     "key": task["key"],
                     "name": task["name"],
                     "done": bool(task.get("done")),
+                    "kind": task.get("kind", "normal"),
                     "plan": task.get("plan"),
                     "dependsOn": task.get("dependsOn") or [],
                     "actual": [

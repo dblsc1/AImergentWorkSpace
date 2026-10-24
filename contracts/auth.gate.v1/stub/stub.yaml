@@ -35,6 +35,9 @@ service:
     # 令牌的吊销纪元缺省记在 AUTH_USERS_FILE 旁边（/data/tokens.json），要换地方设
     # AUTH_TOKENS_FILE；有效期 AUTH_TOKEN_DAYS，缺省 365。
     AUTH_SECRET: ${AUTH_SECRET:-}
+    # 匿名上报（auth.gate v1.4）：单人模式下不带任何凭据的请求可以上报代理运行（只能往泳道里加记录，
+    # 读不到任何东西）。缺省开；端口对外开放时在 .env 里设 false。
+    AUTH_ANONYMOUS_REPORT: ${AUTH_ANONYMOUS_REPORT:-true}
 
 # 登录页（index.html + login.js）。换掉整个 auth 实现时，登录页跟着 stub/web/ 一起换。
 # **不设门**：登录页就是给没登录的人用的，给它设门谁都进不来。

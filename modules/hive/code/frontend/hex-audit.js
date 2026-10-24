@@ -167,15 +167,48 @@
 
   var NO_TODO_TEXT = "无待办";
 
-  // 长按项目格自动建的子任务用什么名字（人类：「标题就弄个日期+时间任务」）。
-  // 放在这一层是因为它是**纯函数**，DOM 层那边一律不做能被钉死的判断。
-  // 带年份不是啰嗦：这条名字会一直躺在计时档案里，跨年之后只有「09-08 00:43」
-  // 就分不清是哪一年的了。
-  function stampTaskName(when) {
-    var d = when || new Date();
-    function p(n) { return n < 10 ? "0" + n : String(n); }
-    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) +
-           " " + p(d.getHours()) + ":" + p(d.getMinutes());
+  // ── 临时任务（仓主 2026-10-08）──────────────────────────────────
+  // 长按项目格不再建「日期 时间」任务：时间记进项目的「未分类」时间桶（nexus-core v2.9，
+  // views/tree 的 project.unclassifiedTaskId）。桶本身不出现在任何任务列表里；记在它上面的**每一段**
+  // 在「最近完成」里各占一行，叫「临时任务 YYYY-MM-DD HH:MM · N 分钟」（时间 = 这一段的开始）。
+  // 带年份不是啰嗦：跨年之后只有「09-08 00:43」就分不清是哪一年的了。
+  // 行的形状同 recentCompletions，多一个 session:true（没有 taskId：它不是能撤销 / 能计时的任务）。
+  // 归到具体任务之后（nexus-core v2.11，在「待批准」页的「待分类」里归）：事件多一个 currentSubject = 现在的归属。
+  // 这一行留着，名字换成那个任务的（「任务名 · N 分钟」，挂在任务现在所在的项目下），不再叫「临时任务」；
+  // 放回桶的照旧。原本就记在具体任务上的段从来不在这份列表里。
+  function tempSessions(events, tree, options) {
+    options = options || {};
+    var zones = {}, byBucket = {}, byTask = {};
+    ((tree && tree.zones) || []).forEach(function (z) { zones[z.id] = z.name; });
+    ((tree && tree.projects) || []).forEach(function (p) {
+      if (p.unclassifiedTaskId) byBucket[p.unclassifiedTaskId] = p;
+      (p.tasks || []).forEach(function (t) { byTask[t.id] = { task: t, project: p }; });
+    });
+    var rows = [];
+    (events || []).forEach(function (e) {
+      if (!e || e.type !== "session.completed" || !e.subject) return;
+      var now = e.currentSubject || e.subject;
+      var moved = !byBucket[now.task] && byBucket[e.subject.task] && byTask[now.task];
+      var p = byBucket[now.task] || (moved && moved.project);
+      if (!p) return;
+      var data = e.data || {};
+      var minutes = Math.round((Number(data.durationSeconds) || 0) / 60);
+      var name = (moved ? moved.task.name : "临时任务 " + formatStamp(data.startAt || e.time, options.offsetMinutes)) +
+                 " · " + (minutes < 1 ? "<1" : minutes) + " 分钟";
+      var zoneName = zones[p.zoneId] || "?";
+      rows.push({
+        taskId: null, session: true, eventId: e.id, at: e.time, stamp: "",
+        taskName: name, projectId: p.id, projectName: p.name, zoneName: zoneName,
+        missing: false, path: zoneName + "/" + p.name + "/" + name
+      });
+    });
+    return rows;
+  }
+
+  // 完成的任务 + 临时任务并成一份「最近完成」，新的在前（完成看勾选时刻，临时任务看这一段的结束）。
+  function mergeRecent(completions, sessions) {
+    function t(r) { var ms = Date.parse((r && r.at) || ""); return isNaN(ms) ? 0 : ms; }
+    return (completions || []).concat(sessions || []).sort(function (a, b) { return t(b) - t(a); });
   }
 
   // hover 只列**最近的一条**待办；一条都没有时给明确文案，不留空白。
@@ -201,7 +234,8 @@
     nextActionsByProject: nextActionsByProject,
     hoverTodoText: hoverTodoText,
     topTodos: topTodos,
-    stampTaskName: stampTaskName,
+    tempSessions: tempSessions,
+    mergeRecent: mergeRecent,
     completionHeat: completionHeat,
     HEAT_HALFLIFE_DAYS: HEAT_HALFLIFE_DAYS
   };

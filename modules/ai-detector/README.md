@@ -32,7 +32,7 @@
 
 ### 隐私选项（可以逐项勾选）
 
-上面是缺省值。每一项都能单独改：在 HoneyComb 的 **「AI助理」页**勾选（推荐，改完下一轮生效），
+上面是缺省值。每一项都能单独改：在 HoneyComb 的 **「自动记录」页**勾选（推荐，改完下一轮生效），
 或者写进本机配置文件的 `privacy` 节。网页上设过的，以网页为准。完整说明、缺省值、改前改后的例子见
 [`contracts/detector.settings.v1`](../../contracts/detector.settings.v1/contract.md)。
 
@@ -130,8 +130,11 @@ macOS 需要在「隐私与安全性」里放行一次），放到固定位置�
 校验完整性（可选）：同一个 Release 里的 `ai-detector-<tag>-SHA256SUMS.txt` 记了四个文件的
 SHA256，下载后 `sha256sum -c --ignore-missing ai-detector-<tag>-SHA256SUMS.txt` 核对。
 
-macOS 下载后先执行一次 `xattr -d com.apple.quarantine ./ai-detector-<tag>-darwin-*`，
-否则会被隔离属性拦下，「隐私与安全性」里放行的是同一件事，命令行更快。
+未签名二进制的放行方式：
+
+- **macOS**：「系统设置 → 隐私与安全性」，拉到底点「仍要打开」（Open Anyway）；或命令行
+  `xattr -d com.apple.quarantine ./ai-detector-<tag>-darwin-*`（同一件事，命令行更快）。
+- **Windows**：SmartScreen 弹窗点「更多信息 → 仍要运行」（More info → Run anyway）。
 
 ```sh
 ai-detector init        # 写默认配置（同步是关的）和规则文件样例
@@ -152,6 +155,9 @@ ai-detector run         # 或者现在就常驻
 令牌由 HoneyComb 的认证服务发放；用自带的占位认证时，在服务器上执行
 `docker compose run --rm -T auth python /app/auth_stub.py token <账号>` 拿一个
 （该功能随 v0.3 的设备令牌一起提供），吊销用 `revoke <账号>`。令牌只能调接口，不能登录网页。
+v0.4 起令牌分范围：检测程序要上传活动、报在场心跳，**需要 `write`（读写）范围**——在网页「待批准 → Agent 令牌」里选「读写」，
+或命令行 `token <账号> --scope write --name 检测程序`（命令行缺省就是 `write`）。`read` / `report` 令牌上传会被 403。
+单独吊销这一个：网页列表里点「吊销」，或 `revoke-token <令牌 id>`。
 
 自己从源码构建（不用装 Go，有 docker 即可）：
 
@@ -170,16 +176,19 @@ docker run --rm -v "$PWD":/src -w /src -e CGO_ENABLED=0 -e GOOS=windows -e GOARC
   "rules": [
     { "app": "code|goland|idea", "title": "garden", "taskId": "t_a1", "confidence": 0.9 },
     { "app": "firefox|chrome", "title": "^github\\.com", "taskId": "t_b2" },
-    { "app": "blender", "taskId": "t_c3", "confidence": 0.7 }
+    { "app": "blender", "taskId": "t_c3", "confidence": 0.7 },
+    { "title": "blog", "projectId": "p_2" }
   ]
 }
 ```
 
+规则的目标可以是任务（`taskId`），也可以只到项目（`projectId`，时间记到该项目的「未分类」，以后再归到具体任务）；两个恰好写一个。
+
 `taskId` 在蜂巢里打开任务就能看到，或看 `GET /api/core/views/tree` 的输出。规则写错
 （JSON 不合法、正则写坏）时**这一轮不上传**，`status` 会告诉你哪条错了，改好后自动补上。
 
-**更省事的办法：让 AI 助理写。** 在 Cockpit「AI助理」里说「帮我按终端标签页整理分类规则」，
-助理读你的项目、任务和最近的窗口标题，写出一整套规则的草稿；你在「AI助理 → 规则」看过改动点「应用」。
+**更省事的办法：让 AI 助理写。** 对你接上 HoneyComb MCP 的 AI CLI（或开了内置聊天时在 Cockpit「待批准」页里）说「帮我按终端标签页整理分类规则」，
+助理读你的项目、任务和最近的窗口标题，写出一整套规则的草稿；你在「待批准 → 分类规则草稿」看过改动点「应用」。
 网页上存过规则后，本程序每轮从服务端拉、**不再读本机 `rules.json`**（服务端没存过或连不上时才用它）。
 
 可选的外部分类服务：配 `classifierUrl`，规则没认出来的段会发给它，接口见
@@ -197,7 +206,7 @@ Linux `~/.config/honeycomb/`；设环境变量 `AI_DETECTOR_HOME` 可换目录�
 | `enabled` | `false` | 总开关。关着时不读不发 |
 | `paused` | `false` | 暂停。暂停期间的活动以后也不补传 |
 | `cockpitUrl` | `http://localhost:8800` | HoneyComb 地址；整站挂子路径就带上，如 `https://host/Cockpit/` |
-| `deviceToken` | 空 | 设备令牌 |
+| `deviceToken` | 空 | 设备令牌（`write` 范围） |
 | `deviceId` | `init` 时随机生成 | 本机标识，别改（服务端用它防重） |
 | `activityWatchUrl` | `http://localhost:5600/api/0` | |
 | `intervalMinutes` | 5 | 多久同步一轮 |
@@ -214,11 +223,15 @@ Linux `~/.config/honeycomb/`；设环境变量 `AI_DETECTOR_HOME` 可换目录�
 | `idle` | 全关 | 见「离开怎么算」 |
 | `archiveDays` | 30 | 本机留档保留天数 |
 
-| `presence` | `false` | 在场心跳（见下）。网页「AI助理」页设过就以网页为准 |
-| `presenceSeconds` | 15 | 心跳间隔，5–300 秒 |
+| `awStartCommand` | 按系统缺省 | 拉起 ActivityWatch 的命令，argv 数组；只认本机配置（见「面板上的状态与「重启 ActivityWatch」」） |
+| `awAutoStart` | `true` | ActivityWatch 连续两次连不上时自动拉起；`false` 关闭 |
+| `awLogUpload` | `false` | 把脱敏后的 `aw-start.log` 末尾随健康报告上传，让 AI 助理能帮着排查；**只认本机配置**（见「启动日志上传」） |
+| `presence` | `false` | 在场心跳（见下）。网页「自动记录」页设过就以网页为准 |
+| `presenceSeconds` | 5 | 心跳间隔，5–300 秒；大于 30 的实际按 30 秒发（一拍只往回带最近 60 秒的停留，间隔再长会丢）。旧版本生成的配置文件里是 15，想更跟手就改成 5 |
+| （网页上的）`autoTrack` | 关 | 「允许 AI 管理进行中的任务」。**只在网页「自动记录 → 活动检测设置」里开关**，本机配置没有这个键（见下） |
 | `agentStatusFile` | 空 | 状态文件桥读的文件路径，空 = 关（见下） |
 | `agentStatusIgnore` | `[]` | 状态文件里 `key` 以这些前缀开头的条目不报 |
-| `segmentByTitle` | `true` | 终端按标签页分段（见下）。网页「AI助理」页设过就以网页为准 |
+| `segmentByTitle` | `true` | 终端按标签页分段（见下）。网页「自动记录」页设过就以网页为准 |
 | `segmentByTitleApps` | 内置终端名单 | 哪些程序按标签页分段；不写 = 内置名单（GNOME Terminal、Ptyxis、kitty、Alacritty、WezTerm、Konsole、iTerm2、Windows Terminal……） |
 
 **终端按标签页分段**：一个终端窗口开很多标签页、每个标签页干一件事（比如各跑一个 AI 代理）时，
@@ -242,16 +255,67 @@ HoneyComb 的时间线页可以把「人一条线、AI 代理多条线」画在�
 
 ### 在场心跳（`presence`）
 
-每 `presenceSeconds` 秒把「此刻前台的程序 + 脱敏后的标题 + 是不是离开了」报给 HoneyComb，
+每 `presenceSeconds` 秒（缺省 5）把「此刻前台的程序 + 脱敏后的标题 + 是不是离开了」报给 HoneyComb，
 页面上的人那条线就是实时的。**脱敏和上传段完全同一套**：强制脱敏、隐私选项（路径、标题代号 / 丢弃、
 聊天程序只留名、浏览器要对得上标签页）、网页上的设置——每次发之前都重新拉一次网页设置。离开时程序名和标题都发空。
 发不出去就丢掉，不重试、不补发；服务端只留最近 2 小时，不进统计、不进导出。
 
 ```json
-{ "presence": true, "presenceSeconds": 15 }
+{ "presence": true, "presenceSeconds": 5 }
 ```
 
-也可以在网页「AI助理」页打开（`detector.settings.v1` 的 `presence`；那里是「用本机配置」时按上面这个字段）。
+每一拍带的不只是「此刻这一个窗口」，而是上一拍以来你依次待过的窗口和各自的秒数（串行、不重叠，离开的时间已扣掉）——
+几秒钟就切一次窗口时，中间那些短的停留也不会丢。页面上代理泳道里的蓝条「你在看」就是从这里来的：窗口标题就是某个
+在跑的代理会话的名字时，这几秒记成「你在看它」。
+
+也可以在网页「自动记录」页打开（`detector.settings.v1` 的 `presence`；那里是「用本机配置」时按上面这个字段）。
+
+### 面板上的状态与「重启 ActivityWatch」（v0.4）
+
+开着 `ai-detector run` 时，它每次心跳之后把「自己在线 + ActivityWatch 怎么样」报给 HoneyComb（正常 / 连不上 / 最近一分钟没有窗口记录 / 已暂停 / 未开启，
+不含任何窗口内容）。网页「自动记录 → 活动检测设置」的设备行下面能看到，还有两个按钮：「检测」刷新状态；「重启 ActivityWatch」让**这台电脑上的检测程序**把 ActivityWatch 再拉起来
+（只重启 ActivityWatch 服务，不重启检测程序，也不重启面板）。`ai-detector status` 也会打印最近一次报告的状态。
+
+- 用什么命令拉起，**只看本机配置**，网页和服务器改不了、也不会下发命令：`awStartCommand`（argv 数组，不经 shell），例如
+  `"awStartCommand": ["C:\\Users\\me\\AppData\\Local\\Programs\\ActivityWatch\\aw-qt.exe"]`。不写就按系统缺省：Windows 找
+  `%LOCALAPPDATA%\Programs\ActivityWatch\aw-qt.exe`，macOS `open -a ActivityWatch`，Linux 在 PATH 里找 `aw-qt`；都找不到，面板上显示「这台电脑上没配置启动命令」。
+- **自动拉起默认是开的**：ActivityWatch 连续两次心跳都连不上（`paused` / 没开同步时不算）时，检测程序自己用同一条命令拉起它，不用点按钮。
+  两次拉起至少隔 30 秒（按钮和自动共用）；滚动 24 小时内自动拉起最多 20 次，超过就不再自动拉（按钮不受影响）；连拉 3 次还没起来就停手，等 ActivityWatch 连续稳定 60 秒再恢复。不想要就在配置里写 `"awAutoStart": false`（同样只认本机配置）。
+- **“已启动”是真的起来了**：拉起后检测程序最多等 20 秒看 ActivityWatch 的接口通没通，通了才算成功；没通就是失败，面板会给出大类原因（找不到程序 / 马上退出 / 接口没起来 / 不在桌面会话里 ……）。
+  被拉起程序的输出写在配置目录的 `aw-start.log`（上一次的留作 `aw-start.log.1`），`ai-detector status` 会打印最近一次拉起的详情和日志最后 20 行；这些只在你的电脑上，不会发给服务器。
+- 网页上的按钮在检测程序暂停 / 没开同步时也能用（它只检测并重启 ActivityWatch）；自动拉起在暂停 / 没开同步时不会动。
+- **限制**：按钮和自动拉起都只在检测程序自己正在你的桌面会话里运行时有用——它救不了已经死掉的检测程序（面板会显示「离线」，按钮禁用）。
+  让检测程序开机自启用 `ai-detector autostart install`；重启后 ActivityWatch 自己的开机自启（它的托盘设置里）才是根治。
+
+### 启动日志上传（`awLogUpload`，v0.4，默认关）
+
+ActivityWatch 起不来时，真正的原因在 `aw-start.log` 里。默认它**只留在你的电脑上**；面板上的「最近事故」和 AI 助理（经 MCP 的 `get_detector_health`）只能看到枚举级的原因。
+想让 AI 助理看到真实的日志来帮你排查，在**这台电脑**的配置文件（`ai-detector status` 会打印它的位置：Linux `~/.config/honeycomb/ai-detector.json`、macOS `~/Library/Application Support/honeycomb/ai-detector.json`、Windows `%APPDATA%\honeycomb\ai-detector.json`）里加一行，保存即可（每轮重读，不用重启）：
+
+```json
+{ "awLogUpload": true }
+```
+
+- **这个开关只能在本机改**：服务器、网页、AI 助理都改不了。网页上只显示它开没开，没有按钮。随时改回 `false`，下一份报告就告诉服务器「关了」，服务器上的那份日志随即被删除。
+- 开着时，每份健康报告多带 `logUpload: true`，以及 `aw-start.log` 的**脱敏尾巴**——只在内容变了才发：最多 40 行、4096 字节、每行 300 字符；
+  先在本机脱敏，策略是**整行盖掉**：含 `password` / `token` / `secret` / `cookie` / `authorization` / `bearer` / `api key` 等词（以及 `key=`、`--key` 这样的写法）的整行换成
+  `[整行已隐藏：可能含凭据]`（行首时间戳保留），这样一行以 `:` 或 `=` 结尾时下一行也一起盖；命令行里的 `-p 值` / `-S 值` 这类短选项**只是尽力而为**，认不全；
+  其余的行里：家目录换成 `~`、你的用户名（不分大小写的子串，短于 3 个字符或 `root` / `user` / `admin` 除外）换成 `<user>`、网址里的 `用户:密码@`、≥ 24 位的十六进制 / 随机串都盖掉，控制字符去掉。
+  拿不准（读不到家目录 / 用户名、脱敏后仍含它们）就整段不发。已知盖不住的：全角 / 形近字 / 变形拼写的关键词、值在关键词**前一行**、既没有关键词也没有固定形状的口令、没有数字的 24 位以上纯字母串。**脱敏是尽力而为，不是保证——打开开关后，请到网页「自动记录 → 活动检测设置 → 查看启动日志」看一眼实际上传了什么**，不放心就改回 `false`。
+- 日志对服务器和 AI 助理都是**不可信的文本**：只当数据显示，不当指令。
+- 连着一台还没升级的服务器（不认这两个新字段，回 422；或日志一长超过它 1 KiB 的体积上限，回 413）时，检测程序会去掉它们重发，一小时内不再上传日志，一小时后再试一次。
+
+### 允许 AI 管理进行中的任务（网页上的 `autoTrack`，默认关）
+
+在网页「自动记录 → 活动检测设置」勾上之后（要同时开着在场心跳）：
+
+- 心跳里多带一样东西：分类规则对**当前窗口**的猜测（哪个任务 / 项目、把握多少）。猜测在本机算，和上传段用的是同一套规则；
+  发出去的只有任务 / 项目的 id 和把握，程序名、标题还是原来那份脱敏过的，没有多发任何内容。规则没命中就不带。
+- 你没有手动计时的时候，计时页把你正在做的事显示成「自动 · 项目 / 任务」；规则认不出的窗口停留一会儿，页面会问你记到哪。
+- 规则把握 ≥ 90% 的段上传后**直接记成时间**，不用再逐条确认；记错了在「自动记录」页里改归属。
+  你手动计时的那段时间 AI 不插手。
+
+关掉（缺省）就和以前完全一样：一切都只是待确认的建议。
 
 ### 状态文件桥（`agentStatusFile`）
 

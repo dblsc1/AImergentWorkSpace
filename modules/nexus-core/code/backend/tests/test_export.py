@@ -26,14 +26,30 @@ _COLLECTIONS = (
     "agent_runs", "proj_agent_daily_stats",
     # v2.2 活动建议（不是事实，但同样要在测试间清空 / 纳入导出只读证明）。
     "activity_suggestions",
+    # v2.8 AI 提议的新任务（同上，不是事实）。
+    "activity_task_proposals", "activity_reports",  # v2.20 AI 报告（同上，不是事实）
+    "activity_new_items",  # v2.30 AI 提议新项目 / 任务（同上）
     # v2.4 在场心跳（活状态）+ 时间线区间投影。
     "activity_presence", "proj_lanes",
     # v2.4 启动期一次性任务的锁（proj_lanes 自动补建）。
     "_startup_locks",
     # v2.5 检测程序设置。
     "detector_settings",
+    # v2.28 检测程序事故时间线。
+    "detector_incidents",
     # v2.6 检测程序分类规则 + AI 草稿。
     "detector_rules",
+    # v2.14 人对某个窗口的临时选择 /「这次不选」（活状态）。
+    "activity_choices",
+    # v2.15 让 AI 认窗口的问询（活状态）。
+    "activity_ai_asks",
+    # v2.22 泳道偏好（显示用的活状态）+ 忽略规则。
+    "lane_prefs", "activity_ignores",
+    # v2.38 三级分类：原始记录 / 窗口块 / 通用窗口 / 第二级规则 / 账号设置 / 直接施加日志 / 键盘鼠标活动。
+    "activity_records", "activity_blocks", "activity_generic", "activity_block_rules",
+    "activity_settings", "activity_direct_log", "activity_input",
+    # v2.39 秘书报告 / 问人（AI 的话，不是事实）。
+    "activity_secretary_reports", "activity_questions",
 )
 
 

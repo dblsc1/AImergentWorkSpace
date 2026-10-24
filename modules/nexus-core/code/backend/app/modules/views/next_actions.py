@@ -89,8 +89,8 @@ def get_next_actions() -> NextActionsOut:
     by_zone: dict[str, dict[str, list[NextActionTask]]] = {}
 
     for task in tasks:
-        if task.get("done"):
-            continue
+        if task.get("done") or task.get("kind") == planner_service.UNCLASSIFIED_KIND:
+            continue  # v2.9：「未分类」时间桶不是待办
         project = projects.get(task.get("projectId"))
         if project is None:
             continue  # 数据完整性假设被破坏（不应发生），防御性跳过而不是炸

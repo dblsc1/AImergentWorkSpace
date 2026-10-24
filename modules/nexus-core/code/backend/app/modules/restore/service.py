@@ -81,6 +81,14 @@ def _check_planner(snapshot: dict[str, list[dict]]) -> None:
                     f"{_LABEL[parent_type]}：{ref!r}"
                 )
     for task in snapshot["tasks"]:
+        # v2.9：桶的 kind 与 id 必须成对——占着桶的 id 却不是桶，会被当成桶用而没有任何保护；
+        # 是桶却不是它项目的那个 id，取或建时会另建一个，一个项目两个桶
+        is_bucket = task.get("kind") == planner_service.UNCLASSIFIED_KIND
+        if is_bucket != (task["id"] == planner_service.unclassified_task_id(task["projectId"])):
+            raise InvalidInputError(
+                f"任务 {task['id']!r} 不是合法的「未分类」时间桶：kind 为 unclassified 的任务 id 必须是 "
+                f"t_unc_<projectId>，别的任务不能用这个 id"
+            )
         deps = task.get("dependsOn") or []
         if not isinstance(deps, list):
             raise InvalidInputError(f"任务 {task['id']!r} 的 dependsOn 必须是数组")

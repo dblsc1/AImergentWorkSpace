@@ -75,20 +75,59 @@ def find_agent_run_by_client_key(user: str, client_key: str) -> dict | None:
     return _agent_col().find_one({"user": user, "clientKey": client_key}, {"_id": 0})
 
 
-def mark_agent_run_closing(user: str, run_id: str, marker: dict) -> dict | None:
+def count_unverified_agent_runs(user: str) -> int:
+    """v2.19：该租户还在跑（未打关闭标记）的匿名运行个数。"""
+    return _agent_col().count_documents({"user": user, "unverified": True, "closing": {"$exists": False}})
+
+
+def relabel_agent_run(user: str, run_id: str, fields: dict) -> None:
+    """v2.13 会话改名：未关闭才改 ``label`` / ``match``。不碰 ``v``——相位 / 连线的乐观锁管的是那两个数组。"""
+    _agent_col().update_one({"user": user, "runId": run_id, "closing": {"$exists": False}}, {"$set": fields})
+
+
+def touch_agent_run(
+    user: str, run_id: str, seen_at: str, declare: bool = False, beat_source: str | None = None, beat: bool = False,
+) -> bool:
+    """v2.18 活性：未关闭才记 ``lastSeenAt``；``declare`` = 同时记下「这个运行会发心跳」；``beat_source`` 给了就记
+    （谁在发心跳，后来的盖先来的）；``beat`` = 这是一次心跳，``beatCount`` 加一。
+    不碰 ``v``（同 relabel）。False = 不存在或已关闭。
+    ``lastSeenAt`` 单调：只增不减、不早于 ``startedAt``（聚合管道更新，``$max``）——迟到的老请求不会把新信号盖回去，
+    也不会让失联关闭把结束时刻算到起点之前。"""
+    fields = {"lastSeenAt": _seen_max(seen_at), **({"heartbeat": True} if declare else {}),
+              **({"beatSource": {"$literal": beat_source}} if beat_source else {}),
+              **({"beatCount": {"$add": [{"$ifNull": ["$beatCount", 0]}, 1]}} if beat else {})}
+    return _agent_col().update_one(
+        {"user": user, "runId": run_id, "closing": {"$exists": False}}, [{"$set": fields}],
+    ).matched_count > 0
+
+
+def _seen_max(seen_at: str) -> dict:
+    return {"$max": ["$lastSeenAt", "$startedAt", {"$literal": seen_at}]}
+
+
+def mark_agent_run_closing(user: str, run_id: str, marker: dict, guard: dict | None = None) -> dict | None:
     """关闭边界（v2.4）：一次条件更新打上关闭标记，取回**那一刻的整份文档**作快照。
-    None = 不存在或已被别人标记。标记后相位 / attend 的条件更新一律落空。"""
+    None = 不存在或已被别人标记。标记后相位 / attend 的条件更新一律落空。
+    ``guard``（v2.18）：追加的相等条件——失联关闭带着读到的 ``lastSeenAt``，这期间又来了信号就不关。"""
     return _agent_col().find_one_and_update(
-        {"user": user, "runId": run_id, "closing": {"$exists": False}},
+        {"user": user, "runId": run_id, "closing": {"$exists": False}, **(guard or {})},
         {"$set": {"closing": marker}, "$unset": {"clientKey": ""}},
         projection={"_id": 0},
         return_document=ReturnDocument.AFTER,
     )
 
 
-def cas_agent_run(user: str, run_id: str, version: int | None, fields: dict) -> bool:
+def cas_agent_run(user: str, run_id: str, version: int | None, fields: dict, seen_at: str | None = None) -> bool:
     """未关闭 + 版本号没变才写（乐观锁）。False = 被并发写抢先或已关闭，调用方重读再算。
-    v2.4 之前的文档没有 ``v``：``{"v": None}`` 恰好匹配缺字段。"""
+    v2.4 之前的文档没有 ``v``：``{"v": None}`` 恰好匹配缺字段。
+    ``seen_at``（v2.18）：同一次条件更新里一并推进 ``lastSeenAt``（单调）——相位写入与活性信号是一个原子步骤，
+    失联清理带着旧 ``lastSeenAt`` 的关闭条件于是落空，不会出现「相位收下了、随后运行被按旧信号关掉」。"""
+    if seen_at is not None:
+        return _agent_col().update_one(
+            {"user": user, "runId": run_id, "closing": {"$exists": False}, "v": version},
+            [{"$set": {**{k: {"$literal": x} for k, x in fields.items()}, "lastSeenAt": _seen_max(seen_at),
+                       "v": {"$add": [{"$ifNull": ["$v", 0]}, 1]}}}],
+        ).matched_count > 0
     return _agent_col().update_one(
         {"user": user, "runId": run_id, "closing": {"$exists": False}, "v": version},
         {"$set": fields, "$inc": {"v": 1}},

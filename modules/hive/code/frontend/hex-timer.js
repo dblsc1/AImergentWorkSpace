@@ -1,7 +1,8 @@
 // hive · 蜂巢长按计时（2026-09-08 从 hex-app.js 拆出）
 //
 // 装的是两件在时间轴上连着、在代码上却各自独立的事：
-//   · **长按 → 建任务 → 开始计时 → 飞进中央圆环**（人类 2026-09-08 的要求）
+//   · **长按 → 开始计时 → 飞进中央圆环**（人类 2026-09-08 的要求；2026-10-08 起长按项目
+//     不再建「日期 时间」任务，时间记进项目的「未分类」时间桶）
 //   · **展开态的聚焦/灰度**（同一批要求里的"不要拆开整个蜂巢"）
 // 放一起是因为它们都只**改类名和发请求**，一行布局都不算 —— 布局全在 hex-app.js。
 //
@@ -13,9 +14,6 @@
   // 所有请求与跳转都从它拼。没注入（单测、直接打开文件）就是 "/"。
   var BASE = (typeof self !== "undefined" && self.HONEYCOMB_BASE) || "/";
 
-  var H = window.NexusTableHexData;
-  var D = window.NexusTableData;
-
   // hex-app.js 在 boot() 里注进来的运行时上下文。**不在模块顶层去抓** ——
   // 那些函数定义在 hex-app 的闭包里，外面本来就够不着。
   var ctx = null;
@@ -25,7 +23,11 @@
   // ── 长按开始计时（2026-09-08 人类：「长按某个项目自动创建一个子任务
   // （标题就弄个日期+时间任务）开始计时」「长按子任务也自动开始计时」）──
   //
-  // 全部是前端接线，后端一行不改：建任务走 data.js::createTask，
+  // 2026-10-08 仓主改判：「不能再快捷新建一个只是日期时间的任务，而是直接把时间记录到项目总的
+  // 『项目未分类』时间」。长按项目格 = 取（没有就建）这个项目的「未分类」时间桶（nexus-core v2.9
+  // POST planner/projects/{id}/unclassified → {taskId}），对它计时；计时中中心格只显示项目名，
+  // 这一段结束后在「最近完成」里叫「临时任务 <开始时间>」。以前长按建出来的占位任务原样留着。
+  //
   // 起停走 code/ring 已在用的那两个端点（同一个后端单例 timer_state，
   // 所以这里一按，ring 页和顶栏状态条立刻同步 —— 见 contracts/timer-ring-visual-v1.md
   // 「通用性已经由后端单例保证」）。
@@ -35,6 +37,9 @@
   var SWELL_MS = 3000;      // 圆环膨胀停留多久（人类定的：3 秒）
   var TIMER_START = BASE + "api/core/timer/start";
   var TIMER_STOP = BASE + "api/core/timer/stop";
+  function unclassifiedPath(projectId) {
+    return BASE + "api/core/planner/projects/" + encodeURIComponent(projectId) + "/unclassified";
+  }
 
   // ── 聚焦：展开时本分区亮，其余分区灰 ─────────────────────────
   //
@@ -64,7 +69,7 @@
   // ── 长按 → 开始计时 ────────────────────────────────────────
   //
   // 两个抓手，同一条流水线：
-  //   · 长按**项目格** → 先建一条以「日期 时间」命名的子任务，再对它计时；
+  //   · 长按**项目格** → 取这个项目的「未分类」时间桶（没有就建），对它计时；
   //   · 长按**待办卡片**（悬停面板里那三条，或展开卡「下一步」里那三条）
   //     → 那条任务已经存在，直接计时，不再建。
   //
@@ -154,12 +159,12 @@
     if (ctx.reduceMotion()) swellCenter(ctx.state.centerItem && ctx.state.centerItem.el);
     ctx.setStatus("开始计时：" + label + "…");
     var got = opts.taskId
-      ? Promise.resolve({ ok: true, data: { id: opts.taskId } })
-      : D.createTask(opts.projectId, label);
+      ? Promise.resolve({ ok: true, data: { taskId: opts.taskId } })
+      : ctx.postJson(unclassifiedPath(opts.projectId), undefined);
     got.then(function (r) {
-      if (!r.ok) { ctx.setStatus("建任务失败：" + r.message); return null; }
-      var id = r.data && r.data.id;
-      if (!id) { ctx.setStatus("建任务失败：后端没有返回任务 id"); return null; }
+      if (!r.ok) { ctx.setStatus("开始计时失败：" + r.message); return null; }
+      var id = r.data && r.data.taskId;
+      if (!id) { ctx.setStatus("开始计时失败：后端没有返回任务 id"); return null; }
       return startTimerOn(id);
     }).then(function (r) {
       if (!r) return;
@@ -167,11 +172,16 @@
       return ctx.getJson(ctx.currentPath).then(function (c) {
         if (c.ok) { ctx.state.current = c.data; ctx.paintCenter(); }
         ctx.setStatus("正在计时：" + label);
-        // 新建的子任务要出现在待办里，得重拉一次树；等飞行动画走完再拉，
-        // 否则 mount() 会在动画中途把起点那一格换掉。
+        // 第一次用到时桶才建出来，树上的 unclassifiedTaskId 要重拉才有（「最近完成」靠它认临时任务）；
+        // 等飞行动画走完再拉，否则 mount() 会在动画中途把起点那一格换掉。
         if (!opts.taskId) window.setTimeout(function () { ctx.refresh(true); }, FLY_MS);
       });
     });
+  }
+
+  function projectName(projectId) {
+    var it = ctx.state.byId && ctx.state.byId[projectId];
+    return (it && it.cell && it.cell.project && it.cell.project.name) || "";
   }
 
   // 按下 → 计时 → 到点开火。任何位移/抬起/取消都撤销。
@@ -206,7 +216,7 @@
       : card
       ? { taskId: card.dataset.taskId,
           label: (card.querySelector(".hex-todo-name, .hex-task-name") || card).textContent.trim() }
-      : { projectId: projectId, label: H.stampTaskName() };
+      : { projectId: projectId, label: projectName(projectId) };
     var target = (!isNew && card) || cell;
     press = { el: target, x: ev.clientX, y: ev.clientY, fired: false, timer: null };
     // 充能动画的时长从 JS 注进 CSS。**不许两边各写一个 520** ——

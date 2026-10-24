@@ -49,12 +49,26 @@ type Config struct {
 	ArchiveDays int     `json:"archiveDays,omitempty"`
 	// v0.3：在场心跳（ai-detector.presence.v1）与状态文件桥（ai-detector.agent-status-bridge.v1），都默认关，只在 run 里跑。
 	Presence          bool     `json:"presence"`
-	PresenceSeconds   float64  `json:"presenceSeconds,omitempty"` // 5–300，越界按 15
+	PresenceSeconds   float64  `json:"presenceSeconds,omitempty"` // 5–300，越界按 5
 	AgentStatusFile   string   `json:"agentStatusFile"`           // 空 = 关
 	AgentStatusIgnore []string `json:"agentStatusIgnore"`         // key 前缀，命中的条目整个忽略
+	// AwStartCommand：网页上点「重启 ActivityWatch」时用的命令（argv 数组，不经 shell）。**只来自本机配置文件**，
+	// 网页设置里没有这个键（写了也是未知键）。空 = 按系统缺省找 aw-qt。
+	AwStartCommand []string `json:"awStartCommand,omitempty"`
+	// AwAutoStart：ActivityWatch 连不上时检测程序自己拉起它。nil = 开；false 关。同样只来自本机配置。
+	AwAutoStart *bool `json:"awAutoStart,omitempty"`
+	// AwLogUpload：把 aw-start.log 脱敏后的末尾几行随健康报告上传，让 AI 助理能帮着排查。缺省关。
+	// **只来自本机配置文件**，服务端 / 网页设置改不了（也读不到它以外的任何本机内容）。
+	AwLogUpload bool `json:"awLogUpload"`
 
-	dir      string   // 配置目录；readConfig 填。空（测试直接构造 Config）= 不写留档、代号只在内存里
-	warnings []string // 配置里不认识的 privacy / idle 键（想关强制脱敏也落在这里），readConfig 填
+	// autoTrack：「允许 AI 管理进行中的任务」。只来自网页设置（detector.settings.v1 v1.3），本机配置里没有这个键——
+	// 服务端要读它才知道该不该显示 / 直接记。applyRemoteSettings 填。
+	autoTrack bool
+	// records / inputActivity：同样只来自网页设置（detector.settings.v1 v1.4）。records nil = 检测程序自己决定。
+	records       *bool
+	inputActivity bool
+	dir           string   // 配置目录；readConfig 填。空（测试直接构造 Config）= 不写留档、代号只在内存里
+	warnings      []string // 配置里不认识的 privacy / idle 键（想关强制脱敏也落在这里），readConfig 填
 }
 
 // Privacy：可选隐私项，语义见 contracts/detector.settings.v1「privacy 节」。
@@ -218,7 +232,7 @@ func defaultConfig(dir string) (Config, error) {
 		// 把缺省值写出来，用户打开文件就看得见有哪些可选项。
 		Privacy:           Privacy{Paths: "full", Titles: "keep", Browser: "domain"},
 		ArchiveDays:       30,
-		PresenceSeconds:   15,
+		PresenceSeconds:   presenceDefaultSeconds,
 		AgentStatusIgnore: []string{},
 	}, nil
 }
@@ -291,6 +305,18 @@ type State struct {
 	SentReady bool `json:"sentReady,omitempty"`
 	// Agents：状态文件桥的 key → 运行（v0.3）。与上面的游标由不同的 goroutine 写，都经 updateState。
 	Agents map[string]*agentRun `json:"agents,omitempty"`
+	// Health：检测程序健康状态（v0.4）。由在场心跳那个 goroutine 写，同步一轮回写时原样带过去。
+	Health healthState `json:"health"`
+	// RecordsCursor：原始记录流的游标，独立于 Cursor（契约「原始记录」）。零值 = 没在传，下次开始时从那一刻起记。
+	RecordsCursor time.Time `json:"recordsCursor"`
+}
+
+// healthState：最近一次报给服务端的 awState，和最后处理过的重启 nonce（检测程序重启后不重放同一个）。
+type healthState struct {
+	AwState      string       `json:"awState,omitempty"`
+	At           time.Time    `json:"at"`
+	RestartNonce string       `json:"restartNonce,omitempty"`
+	LastStart    *startRecord `json:"lastStart,omitempty"` // 最近一次拉起 ActivityWatch 的记录（只在本机）
 }
 
 var stateMu sync.Mutex

@@ -20,3 +20,7 @@ deploy/generated/
 # 模块目录里的 venv。nexus-core 与 ai-planner 的脚本约定解释器在
 # code/backend/.venv/bin/python，所以它就长在工作树里，必须忽略。
 .venv/
+
+# ai-detector 本地编出来的程序（go build 在模块目录里会落一个）
+modules/ai-detector/ai-detector
+modules/ai-detector/ai-detector.exe

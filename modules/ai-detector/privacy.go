@@ -129,6 +129,17 @@ type archiveRec struct {
 	Result   string       `json:"result"`
 	Segments []archiveSeg `json:"segments,omitempty"`
 	Tasks    int          `json:"tasks,omitempty"`
+	// 原始记录（kind "record"）：只存实际发出的内容（sent），不存原始标题。
+	Kind    string       `json:"kind,omitempty"`
+	Records []archiveRaw `json:"records,omitempty"`
+}
+
+type archiveRaw struct {
+	StartAt string  `json:"startAt"`
+	EndAt   string  `json:"endAt"`
+	App     string  `json:"app"`
+	Sent    string  `json:"sent"`
+	Block   *string `json:"block"`
 }
 
 func archiveDir(dir string) string { return filepath.Join(dir, "archive") }
@@ -140,8 +151,8 @@ func appendArchive(dir string, now time.Time, rec archiveRec) {
 		return
 	}
 	if !rec.OK {
-		rec.Result = fmt.Sprintf("%s（%d 段，失败的请求不记内容：下一轮原样重发，成功时再记）", rec.Result, len(rec.Segments))
-		rec.Segments = nil
+		rec.Result = fmt.Sprintf("%s（%d 段，失败的请求不记内容：下一轮原样重发，成功时再记）", rec.Result, len(rec.Segments)+len(rec.Records))
+		rec.Segments, rec.Records = nil, nil
 	}
 	rec.At = isoTime(now)
 	b, _ := json.Marshal(rec)
@@ -219,6 +230,13 @@ func printArchive(dir, day string, out io.Writer) error {
 			extra = fmt.Sprintf("，附候选任务 %d 条", r.Tasks)
 		}
 		fmt.Fprintf(out, "%s  %s（%s：%s%s）\n", r.At, to[r.To], ok, r.Result, extra)
+		for _, s := range r.Records {
+			blk := "（无）"
+			if s.Block != nil {
+				blk = *s.Block
+			}
+			fmt.Fprintf(out, "  %s → %s  %s  发出：%s  块：%s\n", s.StartAt, s.EndAt, s.App, s.Sent, blk)
+		}
 		for _, s := range r.Segments {
 			idle := ""
 			if s.Idle {
@@ -293,6 +311,7 @@ func applyRemoteSettings(cfg *Config, c *http.Client, base string) error {
 	b, code, err := do(c, req)
 	if code == http.StatusNotFound {
 		remotePresence.Store(nil)
+		remoteInput.Store(false)
 		return nil
 	}
 	if err != nil {
@@ -307,14 +326,25 @@ func applyRemoteSettings(cfg *Config, c *http.Client, base string) error {
 			// v1.2 追加：没有这个键 / 名单 null = 用本机配置
 			SegmentByTitle     *bool    `json:"segmentByTitle"`
 			SegmentByTitleApps []string `json:"segmentByTitleApps"`
+			// v1.3 追加：没有这个键 = 关
+			AutoTrack bool `json:"autoTrack"`
+			// v1.4 追加：records 缺省 / null = 检测程序自己决定；inputActivity 缺省 = 关
+			Records       *bool `json:"records"`
+			InputActivity bool  `json:"inputActivity"`
 		} `json:"settings"`
 	}
 	if err := json.Unmarshal(b, &r); err != nil {
 		return fmt.Errorf("网页上的检测设置格式不对（%v），这一轮不上传", err)
 	}
-	remotePresence.Store(nil)
+	var presence *bool
 	if r.Settings != nil {
-		cfg.Privacy, cfg.Idle = r.Settings.Privacy, r.Settings.Idle
+		presence = r.Settings.Presence
+	}
+	remotePresence.Store(presence) // 一次 Store：不留「先清空再写」的窗口
+	remoteInput.Store(r.Settings != nil && r.Settings.InputActivity)
+	if r.Settings != nil {
+		cfg.Privacy, cfg.Idle, cfg.autoTrack = r.Settings.Privacy, r.Settings.Idle, r.Settings.AutoTrack
+		cfg.records, cfg.inputActivity = r.Settings.Records, r.Settings.InputActivity
 		if r.Settings.SegmentByTitle != nil {
 			cfg.SegmentByTitle = r.Settings.SegmentByTitle
 		}
@@ -323,7 +353,6 @@ func applyRemoteSettings(cfg *Config, c *http.Client, base string) error {
 		}
 		if p := r.Settings.Presence; p != nil {
 			cfg.Presence = *p
-			remotePresence.Store(p)
 		}
 		// 服务端按 Python 正则校验，个别写法 Go 不认：跳过那一条并写日志（少保留 = 更保守），
 		// 不能因为一条白名单让每一轮都卡住（契约 detector.settings.v1「校验」）。

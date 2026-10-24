@@ -31,6 +31,7 @@ DEFAULTS = {
     "presence": None,
     "segmentByTitle": True,
     "segmentByTitleApps": None,
+    "autoTrack": False,  # v1.3
 }
 
 
@@ -133,7 +134,7 @@ def test_delete_returns_to_local(client):
 def test_tenant_isolation(client):
     _put(client, {"schemaVersion": 1, "privacy": {"titles": "drop"}}, headers=A)
     assert client.get(S, params={"deviceId": DEV}, headers=B).json()["settings"] is None
-    assert client.get(f"{API}/detector/devices", headers=B).json() == {"devices": []}
+    assert client.get(f"{API}/detector/devices", headers=B).json()["devices"] == []  # v2.27 起响应还有 now
 
 
 def test_devices_list(client):

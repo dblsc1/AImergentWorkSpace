@@ -1,4 +1,4 @@
-# HoneyComb 网关镜像（发布版）：nginx + 网关模板 + 顶栏 + 登录页 + hive / ring / assistant 三个前端。
+# HoneyComb 网关镜像（发布版）：nginx + 网关模板 + 顶栏 + 登录页 + hive / ring / assistant 三个前端目录（assistant 目录烤两份：/assistant/ 与 /auto/「自动记录」页，同一批文件）。
 #
 # 源码版（deploy/docker-compose.yml）是只读挂载这些目录、不 build 的；发布版把同一批
 # 文件烤进镜像，下载的人不用 clone 仓库。两边用的是**同一份文件**，不是复制出来的另一份。
@@ -12,14 +12,15 @@ COPY contracts/auth.gate.v1/stub/web /usr/share/nginx/html/login
 COPY modules/hive/code/frontend /usr/share/nginx/html/hive
 COPY modules/ring/code/frontend /usr/share/nginx/html/ring
 COPY modules/assistant/code/frontend /usr/share/nginx/html/assistant
+COPY modules/assistant/code/frontend /usr/share/nginx/html/auto
 # 单测与测试工具不进镜像
 RUN find /usr/share/nginx/html \( -name '*.test.js' -o -name '*.md' \) -delete \
- && rm -rf /usr/share/nginx/html/ring/tests /usr/share/nginx/html/assistant/tests /usr/share/nginx/html/hive/run_tests.sh \
+ && rm -rf /usr/share/nginx/html/ring/tests /usr/share/nginx/html/assistant/tests /usr/share/nginx/html/auto/tests /usr/share/nginx/html/hive/run_tests.sh \
  && mkdir -p /etc/nginx/templates/extra
 
 # 与 deploy/docker-compose.yml 的 web 同一组缺省值（contracts/gateway.v1）
 ENV AUTH_UPSTREAM=auth:8010 \
-    AGENT_UPSTREAM=agent:8030 \
+    AGENT_UPSTREAM= \
     HONEYCOMB_BASE_PATH=/ \
     NGINX_ENVSUBST_FILTER=^(AUTH_UPSTREAM|AGENT_UPSTREAM|HONEYCOMB_)
 

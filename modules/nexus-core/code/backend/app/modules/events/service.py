@@ -26,10 +26,30 @@ from datetime import datetime, timezone
 
 from pydantic import ValidationError
 
+from ...config import LOCAL_USER
 from ...tenant import current as current_tenant
 from ..projector import registry
 from . import repo
 from .schemas import Envelope, IngestOut, RejectedItem
+
+SESSION_TYPE = "session.completed"
+#: v2.11 改挂事实（契约「改挂未分类时间」）。**只由 ``timer/reassign.py`` 经 ``ingest(internal=True)`` 写**：
+#: 公开入口对设备令牌 / 外部 source 开放，放行就绕过了「只有人能改挂」与链的连续性。
+REASSIGNED_TYPE = "session.reassigned"
+#: 改挂端点写台账用的 source。公开入口同样不收自称它的信封（不论 type）：防重身份是 (user, source, dedupeKey)，
+#: 放行的话一条别的类型的外部事件能先占住 ``reassign:<段>:<n>``，那一段就再也改挂不了。
+REASSIGN_SOURCE = "session-reassign"
+
+#: v2.38 作废事实（契约「三级分类」四）。同样**只由服务端自己的对账经 ``ingest(internal=True)`` 写**：
+#: 公开入口拒收 ``session.voided`` 与自称 ``activity-block`` 的信封（该 source 的防重身份只属于对账），外部信封里的 ``ai.block`` 不落库。
+VOIDED_TYPE = "session.voided"
+BLOCK_SOURCE = "activity-block"
+
+#: 读端现算的键（v2.11）：只从改挂链来。信封 ``extra="allow"``，客户端自带的同名键入口摘掉、读端不认。
+CURRENT_SUBJECT = "currentSubject"
+#: 服务端「自动记录」（v2.14）写事实用的 source。公开入口上自称它的信封，``ai.auto`` 摘掉——那是改挂的判据之一，
+#: 只有服务端自己写的才作数（别的 source 自报 ``ai.auto`` 是开放标准允许的，原样留）。
+_AUTO_SOURCE = "activity-confirmed"
 
 _ARCHIVE_DEFAULT_LIMIT = 100
 _ARCHIVE_MAX_LIMIT = 1000
@@ -56,9 +76,11 @@ def _reason(exc: ValidationError) -> str:
     return "；".join(parts)
 
 
-def ingest(payload: dict | list) -> IngestOut:
+def ingest(payload: dict | list, *, internal: bool = False) -> IngestOut:
     """单条或数组。返回 IngestOut；HTTP 状态码永远由 router 给 200——
     拒绝逐条写进 ``rejected``，重复逐条计入 ``duplicate``，都不是 4xx。
+    ``internal`` = 信封是服务端自己组的（改挂端点、补登 / 确认 / 自动记录），不是从公开入口进来的：
+    ``session.reassigned`` 从别处来一律拒（v2.11）；服务端才能写的标记从别处来一律摘掉（见 ``_AUTO_SOURCE``）。
     """
     items = payload if isinstance(payload, list) else [payload]
     accepted = 0
@@ -71,8 +93,23 @@ def ingest(payload: dict | list) -> IngestOut:
         except ValidationError as exc:
             rejected.append(RejectedItem(index=index, reason=_reason(exc)))
             continue
+        if not internal and (envelope.type == REASSIGNED_TYPE or envelope.source == REASSIGN_SOURCE):
+            rejected.append(RejectedItem(index=index, reason=(
+                f"{REASSIGNED_TYPE} / source {REASSIGN_SOURCE!r} 只能经 "
+                f"POST /api/core/sessions/{{eventId}}/reassign 写（契约 v2.11）")))
+            continue
+
+        if not internal and (envelope.type == VOIDED_TYPE or envelope.source == BLOCK_SOURCE):
+            rejected.append(RejectedItem(index=index, reason=(
+                f"{VOIDED_TYPE} / source {BLOCK_SOURCE!r} 只由服务端的窗口块对账写（契约 v2.38），公开入口不收")))
+            continue
 
         doc = envelope.model_dump()  # extra="allow"：未知字段原样保留（B9）
+        doc.pop(CURRENT_SUBJECT, None)  # 例外：读端现算的键不落库，谁带来的都一样
+        if not internal and doc["source"] == _AUTO_SOURCE and isinstance(doc.get("ai"), dict):
+            doc["ai"] = {k: v for k, v in doc["ai"].items() if k not in ("auto", "report")}  # 出处只能由本服务盖
+        if not internal and isinstance(doc.get("ai"), dict):
+            doc["ai"] = {k: v for k, v in doc["ai"].items() if k != "block"}  # v2.38：窗口块的出处只能由对账盖
         doc["recordedAt"] = _now_iso()  # 服务端盖章；客户端给的值在这里被覆盖（B6）
         # 租户同样服务端盖章（v2.0）：信封里的 user 客户端必须照填（信封校验不放宽），
         # 但落库的是网关认定的租户——否则一个租户能往另一个租户的台账里写事实。
@@ -99,6 +136,110 @@ def find_by_dedupe(user: str, source: str, dedupe_key: str) -> dict | None:
     这两个既有只读函数一致——``events/repo.py`` 是唯一碰 mongo 的地方。
     """
     return repo.find_by_dedupe(user, source, dedupe_key)
+
+
+# ------------------------------------------------------------- 改挂后的当前归属（v2.11）
+
+
+def _identity(user, event_id, source, dedupe_key) -> tuple | None:
+    """一段计时的身份：租户 + 事件 id + 入口的防重身份 (source, dedupeKey)。事件 id 不唯一（外部 source 可以
+    再投一条同 id 的段），所以改挂只认它抄录的那一段。不信载荷的类型——快照恢复搬进来的事实没过改挂端点，
+    不是字符串的一律当没有（不进 dict 键、不进查询）。"""
+    if not all(isinstance(part, str) and part for part in (event_id, source, dedupe_key)):
+        return None
+    return (user or LOCAL_USER, event_id, source, dedupe_key)
+
+
+def latest_reassignments(docs: list[dict]) -> dict[tuple, dict]:
+    """段的身份 → 那一段 ``seq`` 最大的 ``session.reassigned``。纯函数。
+
+    「一段时间当前算在谁头上」只有这一个算法：档案读端、改挂端点、投影重建都从这里来。
+    """
+    latest: dict[tuple, dict] = {}
+    for doc in docs:
+        data = doc.get("data")
+        copied = data.get("session") if isinstance(data, dict) else None
+        if doc.get("type") != REASSIGNED_TYPE or not isinstance(copied, dict) or type(data.get("seq")) is not int:
+            continue
+        key = _identity(doc.get("user"), data.get("sessionEventId"), copied.get("source"), copied.get("dedupeKey"))
+        if key is not None and (key not in latest or data["seq"] > latest[key]["data"]["seq"]):
+            latest[key] = doc
+    return latest
+
+
+def voided_identities(docs: list[dict]) -> set[tuple]:
+    """被 ``session.voided`` 作废了的段的身份（同改挂：认抄录在作废事实里的那一段）。纯函数。"""
+    out = set()
+    for doc in docs:
+        data = doc.get("data")
+        copied = data.get("session") if isinstance(data, dict) else None
+        if doc.get("type") == VOIDED_TYPE and isinstance(copied, dict):
+            key = _identity(doc.get("user"), data.get("voidedEventId"), copied.get("source"), copied.get("dedupeKey"))
+            if key is not None:
+                out.add(key)
+    return out
+
+
+def _is_voided(doc: dict, voided: set[tuple]) -> bool:
+    return doc.get("type") == SESSION_TYPE and _identity(doc.get("user"), doc.get("id"), doc.get("source"), doc.get("dedupeKey")) in voided
+
+
+def _current_subject(doc: dict, latest: dict[tuple, dict]) -> dict | None:
+    """改挂过的 ``session.completed`` → 最后一次改挂的去向；没改挂过 / 不是计时段 → None。"""
+    if doc.get("type") != SESSION_TYPE:
+        return None
+    hit = latest.get(_identity(doc.get("user"), doc.get("id"), doc.get("source"), doc.get("dedupeKey")))
+    return hit["subject"] if hit else None
+
+
+def current_sessions(source: str, dedupe_keys: list[str]) -> dict[str, dict]:
+    """当前租户里某个 ``source`` 的这些 ``session.completed``：防重键 → ``{id, task, project, moved}``
+    （事件 id、当前归属的任务 / 项目、改挂过没有）。只读；``dedupe_keys`` 是调用方由自己的 id 拼的，不是请求里的值。"""
+    if not dedupe_keys:
+        return {}
+    sessions = repo.query_events(SESSION_TYPE, where={"source": source, "dedupeKey": {"$in": dedupe_keys}})
+    ids = list({d["id"] for d in sessions if isinstance(d.get("id"), str)})  # 只读这些段的改挂，不扫整个租户
+    latest = latest_reassignments(repo.query_events(REASSIGNED_TYPE, where={"data.sessionEventId": {"$in": ids}})
+                                  if ids else [])
+    out = {}
+    for doc in sessions:
+        moved = _current_subject(doc, latest)
+        subject = moved or doc.get("subject") or {}
+        if isinstance(subject.get("task"), str):
+            out[doc["dedupeKey"]] = {"id": doc["id"], "task": subject["task"], "project": subject.get("project"),
+                                     "moved": moved is not None}
+    return out
+
+
+def current_tasks(source: str, dedupe_keys: list[str]) -> dict[str, tuple[str, bool]]:
+    """v2.12 匹配历史用：防重键 → (当前归属的任务 id, 改挂过没有)。"""
+    return {k: (v["task"], v["moved"]) for k, v in current_sessions(source, dedupe_keys).items()}
+
+
+def with_current_subjects(docs: list[dict]) -> list[dict]:
+    """给投影重建用：改挂过的 ``session.completed`` 的 ``subject`` 换成当前归属，其余原样；
+    被 ``session.voided`` 作废了的 ``session.completed`` 不重放（v2.38：原事实不删，算时长的一律跳过）。
+    指向台账里已经没有的段的 ``session.reassigned`` 自然不起作用。"""
+    latest, voided = latest_reassignments(docs), voided_identities(docs)
+    return [{**d, "subject": cur} if (cur := _current_subject(d, latest)) else d for d in docs if not _is_voided(d, voided)]
+
+
+def is_voided(session: dict) -> bool:
+    """这一段被 ``session.voided`` 作废了吗（v2.38）。"""
+    return _is_voided(session, voided_identities(repo.query_events(VOIDED_TYPE, where={"data.voidedEventId": session.get("id")})))
+
+
+def find_sessions(event_id: str) -> list[dict]:
+    """当前租户里 ``id`` 是它的 ``session.completed``（事件 ``id`` 不唯一，可能不止一条）。"""
+    return repo.query_events(SESSION_TYPE, where={"id": event_id})
+
+
+def reassignments_of(session: dict) -> list[dict]:
+    """当前租户里这一段的全部改挂，按 ``seq`` 升序（最后一条 = 当前归属）。同 id 的别的段的改挂不算。"""
+    mine = _identity(session.get("user"), session.get("id"), session.get("source"), session.get("dedupeKey"))
+    docs = [d for d in repo.query_events(REASSIGNED_TYPE, where={"data.sessionEventId": session["id"]})
+            if latest_reassignments([d]).get(mine) is d]  # 同一套身份与类型判据，不另写一份
+    return sorted(docs, key=lambda d: d["data"]["seq"])
 
 
 # ------------------------------------------------------------- 档案读端（v0.6）
@@ -140,8 +281,10 @@ def list_events(
     to: str | None = None,
     limit: int = _ARCHIVE_DEFAULT_LIMIT,
     offset: int = 0,
+    task_id: str | None = None,
 ) -> tuple[int, list[dict]]:
-    """``GET /api/core/events`` 档案读端（contract.md v0.6）。
+    """``GET /api/core/events`` 档案读端（contract.md v0.6；v2.9 加 ``taskId`` 过滤）。
+    v2.11：改挂过的 ``session.completed`` 追加 ``currentSubject``（读时现算，不落库），``taskId`` 比当前归属。
 
     只读，不改变事实的产生方式：不碰 ``ingest``、不碰 DISPATCH 表。
     按 ``time`` 倒序（最近的在前，R7）；``total`` 是过滤后、分页前的总数（R9 空结果 total=0）。
@@ -149,6 +292,17 @@ def list_events(
     消费方拿 id 去 planner 查当前名字。
     """
     docs = repo.query_events(type_)
+    for doc in docs:
+        # 只从改挂链现算：台账里已经带着这个键的（快照恢复 / 入口摘它之前落的）一律不认，
+        # 否则一条外部事件能自报一个与投影对不上的归属，还带偏下面的 taskId 过滤
+        doc.pop(CURRENT_SUBJECT, None)
+    if type_ in (None, SESSION_TYPE):
+        latest = latest_reassignments(docs if type_ is None else repo.query_events(REASSIGNED_TYPE))
+        docs = [{**d, CURRENT_SUBJECT: cur} if (cur := _current_subject(d, latest)) else d for d in docs]
+        voided = voided_identities(docs if type_ is None else repo.query_events(VOIDED_TYPE))
+        docs = [{**d, "voided": True} if _is_voided(d, voided) else d for d in docs]  # v2.38：作废的段标出来，读方跳过
+    if task_id:
+        docs = [d for d in docs if (d.get(CURRENT_SUBJECT) or d.get("subject") or {}).get("task") == task_id]
 
     lo = _parse_bound(from_, "from") if from_ else None
     hi = _parse_bound(to, "to") if to else None

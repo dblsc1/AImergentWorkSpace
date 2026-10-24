@@ -18,6 +18,7 @@
   抖动时一定会重试，409 会让它以为没停成再试一遍。
 - **遗忘超时惰性关闭**：没有调度器。事件的 ``time``/``durationSeconds`` 按「开始 + 上限」
   算，不按被发现的时刻，所以关得晚不影响任何数字。
+- **失联同样惰性关闭（v2.18）**：会发心跳的运行不看遗忘超时，看 ``agent_liveness``（关在最后一次信号的时刻）。
 - **关闭是一道原子边界（v2.4）**：``_close`` 先用一次条件更新打关闭标记（定死结束时刻与 outcome）
   并取回整份文档作快照，再按快照组装、ingest、删活状态；相位 / attend 的写入都带「未关闭」条件
   （``agent_phases.py``）。标记后崩溃留下的「已标记未删除」由下一次清理按快照补完。
@@ -34,11 +35,21 @@ from ... import config
 from ..events import service as events_service
 from ..events.schemas import SPEC
 from ..planner import service as planner_service
-from ..planner.errors import NotFoundError
+from ..planner.errors import InvalidInputError, NotFoundError
 from . import repo
+from .agent_liveness import AGENT_HEARTBEAT_SECONDS, mark_expired
+from .agent_working import working_days
 
 SOURCE = "agent-hook"
 EVENT_TYPE = "agent.run.completed"
+#: v2.19 匿名上报（契约「调用方范围与匿名上报」）：匿名的 clientKey 存成这个前缀 + 原值，自成一个名字空间
+ANON_KEY_PREFIX = "anon:"
+#: 每个租户同时在跑的匿名运行上限。ponytail: 先数后插不是原子的，并发时可能多出几个；网关限速兜着，够用
+MAX_ANONYMOUS_RUNS = 20
+
+
+class TooManyAnonymousRunsError(Exception):
+    """同时在跑的匿名运行到上限（main.py 映射成 429）。"""
 
 
 def _dedupe_key(run_id: str) -> str:
@@ -77,12 +88,19 @@ def snapshot_data(snap: dict) -> tuple[dict, datetime]:
         "durationSeconds": max(int((ended - started).total_seconds()), 1),
         "outcome": marker["outcome"],
     }
+    # v2.31：只算干活的时间，按本地日切好（durationSeconds 仍是墙钟，不变）
+    data["workingSeconds"], data["days"] = working_days(snap.get("phases"), started, ended, config.settings.tz)
     if snap.get("model"):
         data["model"] = snap["model"]
     if marker.get("output") is not None:
         data["output"] = marker["output"]
     if snap.get("label"):
         data["label"] = snap["label"]
+    for key in ("beatSource", "beatCount"):  # v2.18：谁发的心跳、发了几下（没有就不出现）
+        if snap.get(key):
+            data[key] = snap[key]
+    if snap.get("unverified"):  # v2.19：匿名开的运行；没有就不出现
+        data["unverified"] = True
     phases = [p for p in snap.get("phases") or [] if ts(p["at"]) <= ended]
     if phases:
         data["phases"] = phases
@@ -156,8 +174,18 @@ def _expire(user: str, now: datetime) -> None:
             _finish(run)
             continue
         started = ts(run["startedAt"])
-        if now - started > cap:
-            _close(run, "timeout", None, started + cap)
+        if run.get("heartbeat"):  # v2.18：会发心跳的运行不看遗忘超时，只看失联与 7 天安全上限
+            if (snap := mark_expired(run, now)) is not None:
+                _finish(snap)
+        elif now - started > cap:
+            # 打标记时仍须「没声明过心跳」（原子条件）：读到之后恰有首个心跳进来，它的运行不看遗忘超时；
+            # 落空 = 重读，声明了的按心跳规则（失联 / 7 天上限）判，其余已被别人处理
+            marker = {"outcome": "timeout", "endedAt": (started + cap).isoformat()}
+            if (snap := repo.mark_agent_run_closing(user, run["runId"], marker, {"heartbeat": {"$ne": True}})) is not None:
+                _finish(snap)
+            elif (fresh := repo.get_agent_run(user, run["runId"])) and "closing" not in fresh and fresh.get("heartbeat"):
+                if (snap := mark_expired(fresh, now)) is not None:
+                    _finish(snap)
 
 
 def clean(value: str | None) -> str | None:
@@ -166,6 +194,10 @@ def clean(value: str | None) -> str | None:
         return None
     cleaned = "".join(ch for ch in value if unicodedata.category(ch) != "Cc")
     return cleaned or None
+
+
+def _started(run: dict) -> dict:
+    return {"runId": run["runId"], "startedAt": run["startedAt"], "heartbeatSeconds": AGENT_HEARTBEAT_SECONDS}
 
 
 def start(
@@ -181,23 +213,52 @@ def start(
     label: str | None = None,
     match: str | None = None,
     client_key: str | None = None,
+    project_id: str | None = None,
+    heartbeat: bool = False,
+    beat_source: str | None = None,
+    unverified: bool = False,
 ) -> tuple[dict, bool]:
     """开一个代理运行。**不碰 timer_state，不关任何在跑的运行。**
 
-    返回 ``(响应, 是否新开)``：带 ``clientKey`` 且同租户同 key 的运行还在跑时回原来那个（v2.4）。"""
+    返回 ``(响应, 是否新开)``：带 ``clientKey`` 且同租户同 key 的运行还在跑时回原来那个（v2.4）。
+    ``unverified``（v2.19）= 这个请求什么凭据都没带：不采用它给的任务 / 项目 / match，clientKey 另起名字空间。"""
     right_now = now()
     _expire(user, right_now)  # 超时的同 key 运行先收掉，下面才开得出新的
+    if unverified:
+        # 任务 / 项目存不存在会从状态码漏出去；match 会把人的窗口认到一个没验证的调用方头上
+        task_id = project_id = match = None
+        client_key = ANON_KEY_PREFIX + client_key if client_key else None
+    elif client_key and client_key.startswith(ANON_KEY_PREFIX):
+        raise InvalidInputError(f"clientKey 不能以 {ANON_KEY_PREFIX!r} 开头（保留给匿名上报）")
     if client_key:
         # 先认原运行，再校验只对新建有意义的字段：原任务后来被删了，重试照样回原运行
         existing = repo.find_agent_run_by_client_key(user, client_key)
-        if existing is not None:
-            return {"runId": existing["runId"], "startedAt": existing["startedAt"]}, False
-    if task_id is None:
-        # 不挂任务 → 收件箱（同人的「先记下来再理清」）。只用 well-known id，不代建收件箱：
+        if existing is not None and bool(existing.get("unverified")) == unverified:  # 两类运行互不认领
+            # v2.13 会话改名：这次给了且不同的 label / match 换掉存着的，其余不动
+            names = {k: v for k, v in (("label", clean(label)), ("match", clean(match))) if v and v != existing.get(k)}
+            if names:
+                repo.relabel_agent_run(user, existing["runId"], names)
+            repo.touch_agent_run(user, existing["runId"], right_now.isoformat(),  # v2.18
+                                 declare=heartbeat, beat_source=beat_source)
+            return _started(existing), False
+    if task_id is not None:
+        _task, chain_project, zone_id = resolve_chain(task_id, action="拒绝开始代理运行")
+        if project_id not in (None, chain_project):  # v2.13：自相矛盾的不收，不替它挑一个
+            raise InvalidInputError(f"projectId {project_id!r} 不是任务 {task_id!r} 所在的项目")
+        project_id = chain_project
+    elif project_id is not None:
+        # v2.13 只挂项目：subject 与收件箱运行同形（无 task），项目是真的
+        project = planner_service.get_project(project_id)
+        if project is None or not project.get("zoneId"):
+            raise NotFoundError(f"项目不存在：{project_id!r}")
+        zone_id = project["zoneId"]
+    else:
+        # 都不挂 → 收件箱（同人的「先记下来再理清」）。只用 well-known id，不代建收件箱：
         # 事件 subject 只存 opaque id，收件箱哪天被种子建出来，名字自然 join 得上。
         zone_id, project_id = planner_service.INBOX_ZONE_ID, planner_service.INBOX_PROJECT_ID
-    else:
-        _task, project_id, zone_id = resolve_chain(task_id, action="拒绝开始代理运行")
+
+    if unverified and repo.count_unverified_agent_runs(user) >= MAX_ANONYMOUS_RUNS:
+        raise TooManyAnonymousRunsError(f"同时在跑的匿名代理运行已到上限（{MAX_ANONYMOUS_RUNS} 个），稍后再试")
 
     run = {
         "user": user,
@@ -209,6 +270,9 @@ def start(
         "tool": tool,
         "model": model,
         "startedAt": right_now.isoformat(),
+        "lastSeenAt": right_now.isoformat(),  # v2.18：start / phase / heartbeat 都更新它
+        **({"heartbeat": True} if heartbeat else {}),  # 声明会发心跳：活性规则只管这样的运行
+        **({"beatSource": beat_source} if beat_source else {}),
     }
     # v2.4 选填键：没给就不写，老读方看到的文档与 v2.1 一样
     label, match = clean(label), clean(match)
@@ -220,14 +284,43 @@ def start(
         run["phases"] = [{"at": run["startedAt"], "phase": phase}]
     if client_key:
         run["clientKey"] = client_key
+    if unverified:
+        run["unverified"] = True
     for _ in range(3):
         if repo.add_agent_run(run):
-            return {"runId": run["runId"], "startedAt": run["startedAt"]}, True
+            if unverified:
+                _enforce_anonymous_cap(user, run["runId"])
+            return _started(run), True
         existing = repo.find_agent_run_by_client_key(user, client_key)
-        if existing is not None:
-            return {"runId": existing["runId"], "startedAt": existing["startedAt"]}, False
+        if existing is not None and bool(existing.get("unverified")) == unverified:
+            return _started(existing), False
         # 撞键后那条又刚被关掉：再插一次
     raise RuntimeError(f"clientKey 争用未决：{client_key!r}")
+
+
+def _enforce_anonymous_cap(user: str, run_id: str) -> None:
+    """先插后数：并发的匿名 start 都看到 19 个时前面的 count 挡不住，这里插完再数，超限就撤回自己的那条。
+    每个幸存者都在自己插入之后数过，最后一个数的看得到全部幸存者，所以幸存者不会超过上限；
+    代价是边界上并发的两个可能都被撤回（429 重试即可），不会多放。名额就是活文档：stop / 超时 / 撤回都是删文档，不会泄漏。"""
+    try:
+        over = repo.count_unverified_agent_runs(user) > MAX_ANONYMOUS_RUNS
+    except BaseException:
+        repo.delete_agent_run(user, run_id)
+        raise
+    if over:
+        repo.delete_agent_run(user, run_id)
+        raise TooManyAnonymousRunsError(f"同时在跑的匿名代理运行已到上限（{MAX_ANONYMOUS_RUNS} 个），稍后再试")
+
+
+def require_unverified(user: str, run_id: str) -> None:
+    """v2.19：匿名调用方只能动匿名开的运行。不是的（在跑的看文档，已结束的看那条事实）与不存在的
+    回同一个 404、同一句话——匿名分不出「没有」与「不是你的」。"""
+    run = repo.get_agent_run(user, run_id)
+    if run is None:
+        stored = events_service.find_by_dedupe(user, SOURCE, _dedupe_key(run_id))
+        run = (stored or {}).get("data") or {}
+    if run.get("unverified") is not True:
+        raise NotFoundError(f"代理运行不存在：{run_id!r}")
 
 
 def stop(
@@ -268,6 +361,7 @@ def list_running(user: str, *, now: Callable[[], datetime]) -> list[dict]:
     """``views/current`` 的 ``agents[]``（v2.4 增 phase/label）。"""
     return [
         {**{k: run.get(k) for k in ("runId", "taskId", "agent", "tool", "model", "startedAt", "label")},
-         "phase": current_phase(run)}
+         "phase": current_phase(run), "elapsedSeconds": run["elapsedSeconds"],  # v2.21：同 views/lanes 的口径
+         "unverified": bool(run.get("unverified"))}  # unverified 只给 views 过滤用，不回出
         for run in list_open(user, now=now)
     ]

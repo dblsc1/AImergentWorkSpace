@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -89,12 +88,25 @@ func every(f func() time.Duration) {
 
 // ── 在场心跳 ─────────────────────────────────────────────────────────────
 
+const (
+	presenceDefaultSeconds = 5 // presence.v1 v1.2（仓主 2026-10-09）：5 秒一拍
+	// 一拍最多往回带这么久的窗口：上一拍没发出去时，下一拍把那段补上（不排队、不重发，只是这一拍看得远一点）。
+	// 也是每拍读 ActivityWatch 的范围。
+	presenceLookback = time.Minute
+	// 实际的心跳间隔不超过它（往回看的一半）：间隔再长，两拍之间超出往回看的那截停留就没人报了，
+	// 丢一拍更是整段没了。presenceSeconds 配到 300 仍然合法，只是按它发。
+	presenceMaxInterval = presenceLookback / 2
+	presenceMaxSpans    = 12 // 一拍至多带这么多段；超了留当前窗口 + 其余里最长的，并标 truncated
+	// 短于它的停留不单独成段（标题刚变时记录器写的 0 秒事件之类）；被它隔开的同一个窗口并成一段
+	presenceMinDwell = 500 * time.Millisecond
+)
+
 func presenceInterval(cfg Config) time.Duration {
 	s := cfg.PresenceSeconds
 	if s < 5 || s > 300 {
-		s = 15
+		s = presenceDefaultSeconds
 	}
-	return time.Duration(s * float64(time.Second))
+	return min(time.Duration(s*float64(time.Second)), presenceMaxInterval)
 }
 
 type presenceBody struct {
@@ -102,16 +114,119 @@ type presenceBody struct {
 	App      string `json:"app"`
 	Title    string `json:"title"`
 	Afk      bool   `json:"afk"`
+	// presence.v1 v1.1：网页设置 autoTrack 开着、规则命中当前窗口时才带。
+	Guess *presenceGuess `json:"guess,omitempty"`
+	// presence.v1 v1.2：上一拍以来人依次在过的窗口（串行、不重叠、旧→新，离开已扣掉）。SentAt = 本机发这一拍的时刻，
+	// 服务端用它把各段换到自己的时钟上（不需要对时）。没有段（一直离开）时两个键都不带。
+	SentAt    string         `json:"sentAt,omitempty"`
+	Spans     []presenceSpan `json:"spans,omitempty"`
+	Truncated bool           `json:"truncated,omitempty"`
 }
 
-// presenceBeat 发一次心跳。返回 (是否发了, 错误)。失败就丢：不重试、不排队。
+// presenceGuess：规则对当前窗口的猜测。TaskID / ProjectID 恰好一个。
+type presenceGuess struct {
+	TaskID     *string `json:"taskId,omitempty"`
+	ProjectID  *string `json:"projectId,omitempty"`
+	Confidence float64 `json:"confidence"`
+	Classifier string  `json:"classifier"`
+	NeedsAI    bool    `json:"needsAI,omitempty"` // nexus-core v2.34：命中 mode "ai" 的规则，没有目标
+}
+
+// presenceSpan：人在一个窗口上连续待的一段。App / Title 与顶层同一条脱敏路径；Guess 同顶层（autoTrack 开着才可能有）。
+type presenceSpan struct {
+	App     string         `json:"app"`
+	Title   string         `json:"title"`
+	From    string         `json:"from"`
+	Seconds float64        `json:"seconds"`
+	Guess   *presenceGuess `json:"guess,omitempty"`
+
+	start, end time.Time
+}
+
+// beatSpans：[from, to] 里人依次在过的窗口。脱敏走和上传**同一条路**：buildFragments（强制脱敏 → 隐私选项 →
+// app-only / 浏览器对标签页；离开按 idle 节扣掉）再 sendTitles（代号 → 强制脱敏）。rules 为空 = 不带 guess。
+// 规则匹配的是「隐私选项处理后、换代号前」的标题（同上传）。返回（段, 是否截断过）。
+func beatSpans(cfg Config, d awData, from, to time.Time, rules []rule) ([]presenceSpan, bool, error) {
+	r := newRedactor(cfg)
+	r.idle.IdleSuggestions = false // 无操作碎片是上传那边的建议；这里离开就是不在
+	frags := buildFragments(d, from, to, r)
+	kept := frags[:0]
+	for i, f := range frags {
+		if f.End.Sub(f.Start) >= presenceMinDwell || i == len(frags)-1 { // 最后一段是当前窗口，再短也留
+			kept = append(kept, f)
+		}
+	}
+	titles := make([]string, len(kept))
+	for i, f := range kept {
+		titles[i] = f.Title
+	}
+	sent, err := sendTitles(cfg, titles)
+	if err != nil {
+		return nil, false, err
+	}
+	var out []presenceSpan
+	for i, f := range kept {
+		app := scrubSecrets(f.App)
+		if n := len(out); n > 0 && out[n-1].App == app && out[n-1].Title == sent[i] && f.Start.Sub(out[n-1].end) <= presenceMinDwell {
+			out[n-1].end = f.End // 同一个窗口接着待（中间至多隔一次被丢掉的闪现）
+			continue
+		}
+		sp := presenceSpan{App: app, Title: sent[i], start: f.Start, end: f.End}
+		if sg, ok := matchRules(rules, segment{App: f.App, Title: f.Title}); ok {
+			sp.Guess = &presenceGuess{sg.TaskID, sg.ProjectID, sg.Confidence, sg.Classifier, sg.NeedsAI}
+		}
+		out = append(out, sp)
+	}
+	truncated := len(out) > presenceMaxSpans
+	if truncated {
+		// 留最后一段（当前窗口）+ 其余里最长的，仍按时间排
+		rest := make([]int, len(out)-1)
+		for i := range rest {
+			rest[i] = i
+		}
+		sort.SliceStable(rest, func(a, b int) bool {
+			return out[rest[a]].end.Sub(out[rest[a]].start) > out[rest[b]].end.Sub(out[rest[b]].start)
+		})
+		keep := append(rest[:presenceMaxSpans-1], len(out)-1)
+		sort.Ints(keep)
+		cut := make([]presenceSpan, len(keep))
+		for i, k := range keep {
+			cut[i] = out[k]
+		}
+		out = cut
+	}
+	kept2 := out[:0]
+	for _, sp := range out {
+		sp.From = sp.start.UTC().Format(time.RFC3339Nano)
+		sp.Seconds = float64(sp.end.Sub(sp.start).Milliseconds()) / 1000
+		if sp.Seconds > 0 { // 不足 1 毫秒的碎片取整成 0，服务端（seconds > 0）会把整拍 422：丢掉它
+			kept2 = append(kept2, sp)
+		}
+	}
+	return kept2, truncated, nil
+}
+
+// beater：心跳跨拍只记一样东西——上一拍成功发出时覆盖到了哪一刻。
+type beater struct {
+	covered time.Time
+	off     bool // 上一次检查时是关 / 暂停
+}
+
+// presenceBeat 发一次心跳（没有上一拍：带最近 presenceLookback 的窗口）。
 func presenceBeat(cfg Config, hc *http.Client, now time.Time) (bool, error) {
+	return (&beater{}).beat(cfg, hc, now)
+}
+
+// beat 发一次心跳。返回 (是否发了, 错误)。失败就丢：不重试、不排队——下一拍从上一次**成功**的地方接着带
+// （至多往回 presenceLookback），所以丢一拍不会在时间线上留洞。
+func (p *beater) beat(cfg Config, hc *http.Client, now time.Time) (bool, error) {
 	want := cfg.Presence
-	if p := remotePresence.Load(); p != nil {
-		want = *p
+	if rp := remotePresence.Load(); rp != nil {
+		want = *rp
 	}
 	if !active(cfg) || !want {
-		return false, nil // 关 / 暂停 / 没开心跳：零请求
+		p.covered, p.off = now, true // 关 / 暂停期间的窗口不补传
+		return false, nil            // 关 / 暂停 / 没开心跳：零请求
 	}
 	base := strings.TrimRight(cfg.CockpitURL, "/")
 	cockpit := withPolicy(hc, hc.Timeout, sameHostOnly)
@@ -119,13 +234,17 @@ func presenceBeat(cfg Config, hc *http.Client, now time.Time) (bool, error) {
 		return false, err
 	}
 	if !cfg.Presence {
+		p.covered, p.off = now, true
 		return false, nil // 网页上刚关掉
+	}
+	if p.off { // 刚恢复：这一拍不发，下一拍从恢复时刻起带（暂停那一拍间隔里看的窗口也不上传）
+		p.off, p.covered = false, now
+		return false, nil
 	}
 	if err := cfg.Privacy.check(); err != nil {
 		return false, err
 	}
-	from := now.Add(-time.Minute)
-	d, err := awClient{base: cfg.ActivityWatchURL, http: hc}.fetch(from, now, cfg.WindowBucket, cfg.AfkBucket)
+	d, err := awClient{base: cfg.ActivityWatchURL, http: hc}.fetch(now.Add(-presenceLookback), now, cfg.WindowBucket, cfg.AfkBucket)
 	if err != nil {
 		return false, err
 	}
@@ -137,58 +256,79 @@ func presenceBeat(cfg Config, hc *http.Client, now time.Time) (bool, error) {
 		}
 	}
 	body.Afk = lastAfk != nil && lastAfk.str("status") == "afk"
-	if !body.Afk { // 离开时 app、title 都发 ""
-		var win *awEvent
-		for i := range d.window {
-			if win == nil || d.window[i].end().After(win.end()) {
-				win = &d.window[i]
-			}
+	// 最新这条就是当前窗口，延到现在：标题刚变时记录器先写一条 0 秒的事件，
+	// 不延的话裁剪后是空的，心跳就误报「没有窗口记录」（标题每秒变的终端几乎每拍都中）。
+	// 开始时刻不早于 now（同一秒、时钟差）时多给一秒，否则区间仍是空的。
+	to := now
+	win := -1
+	for i := range d.window {
+		if win < 0 || d.window[i].end().After(d.window[win].end()) {
+			win = i
 		}
-		if win == nil {
-			return false, errors.New("ActivityWatch 最近一分钟没有窗口记录")
-		}
-		// 最新这条就是当前窗口，延到现在：标题刚变时记录器先写一条 0 秒的事件，
-		// 不延的话裁剪后是空的，心跳就误报「没有窗口记录」（标题每秒变的终端几乎每拍都中）。
-		// 开始时刻不早于 now（同一秒、时钟差）时多给一秒，否则区间仍是空的。
-		cur, to := *win, now
+	}
+	if win >= 0 {
+		cur := &d.window[win]
 		if !cur.Timestamp.Before(now) {
 			to = cur.Timestamp.Add(time.Second)
 		}
 		if cur.end().Before(to) {
 			cur.Duration = to.Sub(cur.Timestamp).Seconds()
 		}
-		// 脱敏走和上传**同一条路**：buildFragments（强制脱敏 → 隐私选项 → app-only / 浏览器对标签页）
-		// 再 sendTitles（代号 → 强制脱敏）。只喂最新这一条窗口事件、不扣离开（离开已经单独看过）。
-		frags := buildFragments(awData{window: []awEvent{cur}, web: d.web}, from, to, newRedactor(cfg))
-		if len(frags) == 0 {
-			return false, errors.New("ActivityWatch 最近一分钟没有窗口记录")
+	}
+	from := now.Add(-presenceLookback)
+	if p.covered.After(from) && p.covered.Before(now) {
+		from = p.covered
+	}
+	var rules []rule
+	if cfg.autoTrack {
+		rules = rulesForBeat(cfg, cockpit, base, now)
+	}
+	spans, truncated, err := beatSpans(cfg, d, from, to, rules)
+	if err != nil {
+		return false, err
+	}
+	if !body.Afk { // 离开时 app、title 都发 ""
+		// 顶层 = 当前窗口 = 最后一段（它得一直到此刻：当前没有前台窗口——桌面、锁屏——时不发，同以前）
+		if len(spans) == 0 || spans[len(spans)-1].end.Before(to) {
+			return false, errNoWindow
 		}
-		f := frags[len(frags)-1]
-		t, err := sendTitles(cfg, []string{f.Title})
-		if err != nil {
-			return false, err
-		}
-		body.App, body.Title = scrubSecrets(f.App), t[0]
+		cur := spans[len(spans)-1]
+		body.App, body.Title, body.Guess = cur.App, cur.Title, cur.Guess
+	}
+	if len(spans) > 0 {
+		body.SentAt, body.Spans, body.Truncated = to.UTC().Format(time.RFC3339Nano), spans, truncated
 	}
 	b, _ := json.Marshal(body)
 	if _, _, err := postJSON(cockpit, cfg.DeviceToken, base+"/api/core/activity/presence", b); err != nil {
 		return false, err
 	}
+	p.covered = to
 	return true, nil
 }
 
 func presenceLoop(p paths, hc *http.Client) {
 	var q quietLog
+	var b beater
+	var warned bool
+	hr := newHealthReporter(p, hc)
+	go hr.loop() // 健康报告自己一个 goroutine：服务器卡住不拖慢心跳
 	every(func() time.Duration {
 		cfg, err := readConfig(p)
 		if err != nil {
 			return 15 * time.Second
 		}
-		if sent, err := presenceBeat(cfg, hc, time.Now()); err != nil {
+		if cfg.PresenceSeconds > presenceMaxInterval.Seconds() && cfg.PresenceSeconds <= 300 && !warned {
+			warned = true
+			log.Printf("presenceSeconds=%v 超过 %v：按 %v 发心跳（一拍只往回带 %v 的停留，间隔再长会丢）",
+				cfg.PresenceSeconds, presenceMaxInterval, presenceMaxInterval, presenceLookback)
+		}
+		sent, err := b.beat(cfg, hc, time.Now())
+		if err != nil {
 			q.printf("在场心跳没发出去（丢掉，不补发）：%v", err) // 错误里不含标题
 		} else if sent {
 			q.last = ""
 		}
+		hr.observe(cfg, awStateOf(cfg, err, sent, func() bool { return hr.reachable(cfg) }))
 		return presenceInterval(cfg)
 	})
 }

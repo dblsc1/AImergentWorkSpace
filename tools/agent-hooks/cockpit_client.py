@@ -15,17 +15,48 @@ Windows / mac / Linux 通用。
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import platform
+import re
+import stat
 import threading
+import time
+import unicodedata
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 DEFAULT_TIMEOUT = 3.0
+MAX_RESPONSE_BYTES = 64 * 1024  # 响应体最多读这么多：协议里的响应都是几百字节，更大的一律当「响应格式不对」
+
+
+def clamp_seconds(value: Any, low: int, high: int, default: int) -> int:
+    """外面来的「多少秒」（服务端响应、状态文件、配置）一律过这里再当界限用。
+    只认真正的整数：bool、浮点（含 NaN / inf——`min` / `max` 对 NaN 不起作用，会原样漏过去）、字符串、
+    零和负数都回 `default`；其余钳到 `[low, high]`。"""
+    if type(value) is not int or value <= 0:
+        return default
+    return min(max(value, low), high)
+
+
+RUN_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")  # 服务端的 runId 是 `run_` + 十六进制，是它的子集；`.` 与 `/` 都不在里面
+
+
+def valid_run_id(run_id: Any) -> bool:
+    return isinstance(run_id, str) and RUN_ID_RE.fullmatch(run_id) is not None
+
+
+def _run_path(run_id: str, action: str) -> str:
+    """runId 可能是从状态文件读回来的：不是 `RUN_ID_RE` 的一律不发（`quote("..")` 还是 `..`，
+    代理可能把 `/agents/../stop` 归一到别的端点）；合法的字符集里没有需要转义的。"""
+    if not valid_run_id(run_id):
+        raise CockpitError("配置错误")
+    return f"/api/core/agents/{run_id}/{action}"
 CONFIG_FILENAME = "agent-hooks.json"
 
 
@@ -42,10 +73,11 @@ class CockpitError(Exception):
     页——那是 HTML）——只看状态码分不出这两种，配错地址一样会给 404。
     """
 
-    def __init__(self, category: str, code: int | None = None, json_body: bool = False):
+    def __init__(self, category: str, code: int | None = None, json_body: bool = False, detail: str | None = None):
         super().__init__(category)
         self.code = code
         self.json_body = json_body
+        self.detail = detail  # JSON 错误体里的 `detail`（字符串才留）；只用来认「服务端不认这个运行」，不进 str(e)
 
 
 # ── 每用户目录（跨平台） ──────────────────────────────────────────
@@ -77,31 +109,69 @@ def user_dir(purpose: str = "config") -> Path:
     return Path(root) / "honeycomb"
 
 
+# ── 读文件（配置、会话 transcript）：一律当不可信输入 ──────────────────
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)  # Windows 没有
+_O_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
+CONFIG_MAX_BYTES = 64 * 1024
+
+
+def read_regular(path: Any, limit: int, tail: bool = False) -> tuple[bytes, bool]:
+    """`(内容, 是否被截)`：不跟末段符号链接、不因 FIFO 之类阻塞（`O_NONBLOCK`），打开后 `fstat` 必须是普通文件，
+    否则 `OSError`。最多读 `limit` 字节：`tail=False` 读开头（文件更大 → 被截）；`tail=True` 读末尾 `limit` 字节
+    （文件更大 → 被截，内容的第一行可能是半行）。钩子每个事件都读这些文件，挂住 = 挂住会话。"""
+    fd = os.open(path, os.O_RDONLY | _O_NONBLOCK | _O_NOFOLLOW)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError("not a regular file")
+        cut = tail and st.st_size > limit
+        if cut:
+            os.lseek(fd, st.st_size - limit, os.SEEK_SET)
+        with os.fdopen(fd, "rb", closefd=False) as f:
+            data = f.read(limit + 1)
+    finally:
+        os.close(fd)
+    if len(data) > limit:
+        return (data[-limit:] if tail else data[:limit]), True
+    return data, cut
+
+
 # ── 配置：环境变量优先，其次配置文件 ──────────────────────────────
 def load_config() -> dict[str, Any]:
-    """合并出 `{"url", "token", "tasks"}`。
+    """合并出 `{"url", "token", "beat", "tasks", "projects"}`（`beat` 见 `beat_mode`）。
 
     `COCKPIT_URL` / `COCKPIT_TOKEN` 环境变量优先于配置文件里的同名字段，
-    方便 CI / 容器场景不落文件也能用。`tasks` 只能来自配置文件
-    （目录 → taskId 的映射，环境变量不适合表达一份映射表）。
+    方便 CI / 容器场景不落文件也能用；地址与令牌成对取（见下面的注释）。`tasks` / `projects` 只能来自配置文件
+    （目录 → taskId / projectId 的映射，环境变量不适合表达一份映射表）。
 
-    配置文件形状不对（顶层不是对象、`tasks` 不是对象）一律当没配，不崩——
+    配置文件形状不对（顶层不是对象、`tasks` / `projects` 不是对象）一律当没配，不崩——
     读一份手改坏了的配置文件不该让所有调用方跟着炸。
     """
     file_cfg: dict[str, Any] = {}
     cfg_path = user_dir("config") / CONFIG_FILENAME
     try:
-        raw = json.loads(cfg_path.read_text(encoding="utf-8"))
+        data, too_big = read_regular(cfg_path, CONFIG_MAX_BYTES)
+        raw = None if too_big else json.loads(data.decode("utf-8"))
         if isinstance(raw, dict):
             file_cfg = raw
-    except (FileNotFoundError, ValueError, OSError):
+    except (ValueError, OSError):  # 含 FileNotFoundError / 符号链接 / FIFO / 坏编码
         file_cfg = {}
-    url = os.environ.get("COCKPIT_URL") or file_cfg.get("url") or ""
-    token = os.environ.get("COCKPIT_TOKEN") or file_cfg.get("token") or ""
-    tasks = file_cfg.get("tasks")
-    if not isinstance(tasks, dict):
-        tasks = {}
-    return {"url": str(url).rstrip("/"), "token": str(token), "tasks": tasks}
+    # 装成 Claude Code 插件时，地址 / 令牌可以填在插件的设置里（plugin.json 的 userConfig）：Claude Code 把它们
+    # 以 CLAUDE_PLUGIN_OPTION_* 交给钩子进程（monitor 进程拿不到，见 claude_hook「心跳」）。排在 COCKPIT_* 之后、文件之前。
+    # 地址与令牌**成对**取：按 环境变量 → 插件设置 → 配置文件 的顺序，第一个给了地址的来源，连它的令牌一起用
+    # （它没配令牌就是没有令牌）。令牌只会发往它被配置的那个地址——否则文件里的令牌可能被发到环境变量 / 插件设置
+    # 里的另一个地址去。只给令牌不给地址的来源，令牌不用。
+    env = os.environ.get
+    url, token = next(
+        ((u, t or "") for u, t in (
+            (env("COCKPIT_URL"), env("COCKPIT_TOKEN")),
+            (env("CLAUDE_PLUGIN_OPTION_COCKPIT_URL"), env("CLAUDE_PLUGIN_OPTION_COCKPIT_TOKEN")),
+            (file_cfg.get("url"), file_cfg.get("token")),
+        ) if u),
+        ("", ""),
+    )
+    maps = {key: file_cfg[key] if isinstance(file_cfg.get(key), dict) else {} for key in ("tasks", "projects")}
+    return {"url": str(url).rstrip("/"), "token": str(token), "beat": file_cfg.get("beat"), **maps}
 
 
 def _is_under(path: str, base: str) -> bool:
@@ -124,17 +194,38 @@ def resolve_task(explicit: str | None = None, cwd: str | None = None, config: di
     if env_task:
         return env_task
     cfg = config if config is not None else load_config()
-    cwd = cwd or os.getcwd()
-    tasks = cfg.get("tasks")
-    if not isinstance(tasks, dict):
-        tasks = {}
-    best_task: str | None = None
+    return _longest_prefix(cfg.get("tasks"), cwd or os.getcwd())
+
+
+def _longest_prefix(mapping: Any, cwd: str) -> str | None:
+    """`{目录: id}` 里包含 `cwd` 的那些目录中最长的一条；值不是非空字符串的条目不算。"""
+    best: str | None = None
     best_len = -1
-    for dir_path, task_id in tasks.items():
-        if _is_under(cwd, dir_path) and len(os.path.normpath(dir_path)) > best_len:
-            best_task = task_id
-            best_len = len(os.path.normpath(dir_path))
-    return best_task
+    for dir_path, target in (mapping if isinstance(mapping, dict) else {}).items():
+        if isinstance(target, str) and target and _is_under(cwd, dir_path) and len(os.path.normpath(dir_path)) > best_len:
+            best, best_len = target, len(os.path.normpath(dir_path))
+    return best
+
+
+def resolve_target(
+    task: str | None = None, project: str | None = None, cwd: str | None = None, config: dict[str, Any] | None = None,
+) -> tuple[str | None, str | None]:
+    """`(taskId, projectId)`，至多一个非空（先到先得）：
+
+    1–3. 任务：显式 `task` > `COCKPIT_TASK` > 配置文件 `tasks` 映射（同 `resolve_task`）
+    4. 显式 `project`（`cockpit-run --project`）
+    5. `COCKPIT_PROJECT` 环境变量
+    6. 配置文件 `projects` 映射里，当前目录最长匹配的那条目录前缀
+    7. 都没有 → `(None, None)`（收件箱）
+
+    定得出任务就不带项目：任务本身就在某个项目里，服务端自己取。
+    """
+    cfg = config if config is not None else load_config()
+    cwd = cwd or os.getcwd()
+    task_id = resolve_task(task, cwd, cfg)
+    if task_id:
+        return task_id, None
+    return None, project or os.environ.get("COCKPIT_PROJECT") or _longest_prefix(cfg.get("projects"), cwd)
 
 
 def default_agent_name(cwd: str | None = None) -> str:
@@ -172,6 +263,17 @@ class _DeadlineExceeded(Exception):
     """内部哨兵：后台线程在总时限内没跑完，调用方已经放弃等它了。"""
 
 
+_stuck: list[threading.Thread] = []  # 超时后仍在跑的 daemon 线程
+_stuck_lock = threading.Lock()
+
+
+def stuck_requests() -> int:
+    """还卡在后台的超时请求个数（清掉已结束的）。"""
+    with _stuck_lock:
+        _stuck[:] = [t for t in _stuck if t.is_alive()]
+        return len(_stuck)
+
+
 def _run_with_deadline(fn, timeout: float):
     """在 daemon 线程里跑 `fn()`，最多等 `timeout` 秒就是总时限。
 
@@ -195,10 +297,57 @@ def _run_with_deadline(fn, timeout: float):
     t.start()
     t.join(timeout)
     if t.is_alive():
+        with _stuck_lock:
+            _stuck.append(t)  # 超时放弃的线程还在后台跑：记下来，发心跳的长命进程据此不再叠新的（见 `beat`）
         raise _DeadlineExceeded()
     if "error" in box:
         raise box["error"]
     return box.get("value")
+
+
+def _read_capped(resp, end: float) -> bytes:
+    """读响应体，最多 `MAX_RESPONSE_BYTES + 1` 字节，且**整段**不超过绝对时刻 `end`（`time.monotonic()`）：
+    `read1` 每次只做一次 recv，每片之间核对剩余时间，超了就关连接、按超时算——慢吞吞一字节一字节吐 body 的服务端
+    拖不过 `end`，后台线程随之结束（不会一直占着「卡住的请求」位）。
+    **限度（如实）**：这个时限是协作式的——只在两次 `read1` 之间核对；单次 `read1` 里卡住（分块编码的帧头、socket 超时叠加）
+    可以超出 `end`。硬上界不在这里，而在两处：调用方的 `join(timeout)` 不等它，以及长命的发心跳进程在
+    「连着几圈请求都卡着」时**整个进程退出**（进程一退，卡住的线程跟着没了）。不为此给每个请求起子进程。"""
+    chunks, size = [], 0
+    read = getattr(resp, "read1", resp.read)
+    while size <= MAX_RESPONSE_BYTES:
+        if time.monotonic() >= end:
+            with contextlib.suppress(Exception):
+                resp.close()
+            raise TimeoutError
+        chunk = read(min(4096, MAX_RESPONSE_BYTES + 1 - size))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        size += len(chunk)
+    return b"".join(chunks)
+
+
+def _http_error(e: urllib.error.HTTPError, end: float) -> CockpitError:
+    """读错误体并分类成 `CockpitError`。**只在 `_run_with_deadline` 的工作线程里调**（读体受总时限管）。"""
+    body = b""
+    try:
+        body = _read_capped(e, end)
+    except Exception:  # noqa: BLE001
+        pass
+    json_body, detail = False, None
+    if body:
+        try:
+            parsed = json.loads(body)
+            json_body = True
+            if isinstance(parsed, dict) and isinstance(parsed.get("detail"), str):
+                detail = parsed["detail"][:200]
+        except ValueError:  # 包括 JSONDecodeError 和坏编码的 UnicodeDecodeError
+            json_body = False
+    try:
+        e.close()  # HTTPError 包着底层响应/连接，raise 出来之后没人再帮它关，自己关掉
+    except Exception:  # noqa: BLE001
+        pass
+    return CockpitError(f"HTTP {e.code}", code=e.code, json_body=json_body, detail=detail)
 
 
 def _request(config: dict[str, Any], method: str, path: str, payload: dict[str, Any] | None, timeout: float) -> dict[str, Any]:
@@ -209,18 +358,27 @@ def _request(config: dict[str, Any], method: str, path: str, payload: dict[str, 
         data = json.dumps(payload).encode("utf-8") if payload is not None else None
     except (TypeError, ValueError):
         raise CockpitError("配置错误") from None
-    headers = {"Authorization": f"Bearer {config.get('token', '')}"}
+    # 没配令牌就不带 Authorization：单人部署的 cockpit 收不带凭据的上报（auth.gate v1.4「匿名只能上报」）。
+    # 带一个空的 Bearer 反而是「出示了坏令牌」，会被 401。
+    token = config.get("token") or ""
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
     if data is not None:
         headers["Content-Type"] = "application/json"
 
     def _do() -> dict[str, Any]:
         # Request() 本身也可能因为非法 URL / 非法 header 值（比如 token 带换行）
         # 抛异常——连同下面的 open()/read() 一起放进同一个 try，让外层统一分类。
+        end = time.monotonic() + 2 * timeout  # 整次交换（连接 + 头 + 体）的绝对时限：调用方 `timeout` 后就放弃等了，线程最多再活一倍
         req = urllib.request.Request(url + path, data=data, method=method, headers=headers)
-        with _opener.open(req, timeout=timeout) as resp:
-            body = resp.read()
+        try:
+            with _opener.open(req, timeout=timeout) as resp:
+                body = _read_capped(resp, end)
+        except urllib.error.HTTPError as e:
+            raise _http_error(e, end) from None  # 错误体也在这个线程里读：受总时限管，慢吐字节的服务器拖不住调用方
         if not body:
             return {}
+        if len(body) > MAX_RESPONSE_BYTES:
+            raise CockpitError("响应格式不对")
         try:
             parsed = json.loads(body)
         except json.JSONDecodeError:
@@ -235,24 +393,6 @@ def _request(config: dict[str, Any], method: str, path: str, payload: dict[str, 
         raise
     except _DeadlineExceeded:
         raise CockpitError("超时") from None
-    except urllib.error.HTTPError as e:
-        body = b""
-        try:
-            body = e.read()
-        except Exception:
-            pass
-        json_body = False
-        if body:
-            try:
-                json.loads(body)
-                json_body = True
-            except ValueError:  # 包括 JSONDecodeError 和坏编码的 UnicodeDecodeError
-                json_body = False
-        try:
-            e.close()  # HTTPError 包着底层响应/连接，raise 出来之后没人再帮它关，自己关掉
-        except Exception:
-            pass
-        raise CockpitError(f"HTTP {e.code}", code=e.code, json_body=json_body) from None
     except urllib.error.URLError as e:
         if isinstance(e.reason, TimeoutError):
             raise CockpitError("超时") from None
@@ -277,14 +417,19 @@ def start_run(
     label: str | None = None,
     match: str | None = None,
     client_key: str | None = None,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     """`POST /api/core/agents/start` → `{runId, startedAt}`。taskId 缺省 = 收件箱。
+
+    `project_id`（nexus-core v2.13）：没有任务时只挂项目；有任务就不发（任务定项目）。
 
     v2.4 选填：`phase`（开跑时的相位）、`label`/`match`（目录名这一级，见 `lane_names`）、
     `client_key`（不透明哈希：同 key 的运行还在跑时服务端回原运行，重试不多开一条泳道）。没给的键不发。"""
     payload: dict[str, Any] = {"agent": agent, "tool": tool}
     if task_id:
         payload["taskId"] = task_id
+    elif project_id:
+        payload["projectId"] = project_id
     if model:
         payload["model"] = model
     for key, value in (("phase", phase), ("label", label), ("match", match), ("clientKey", client_key)):
@@ -301,11 +446,46 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat()
 
 
-def lane_names(cwd: str | None = None) -> tuple[str, str | None]:
-    """`(label, match)`：都是工作目录名（不是完整路径）；label 截到 64 码点，
-    match 截到 128、不足 3 个字符不带（契约：match 3–128 码点）。"""
-    name = default_agent_name(cwd)
+def lane_names(cwd: str | None = None, title: str | None = None) -> tuple[str, str | None]:
+    """`(label, match)`：缺省都是工作目录名（不是完整路径）；`title`（会话的名字，见 `session_title`）
+    给了就用它。label 截到 64 码点，match 截到 128、不足 3 个字符不带（契约：match 3–128 码点）。"""
+    name = title or default_agent_name(cwd)
     return name[:64], (name[:128] if len(name) >= 3 else None)
+
+
+TITLE_TAIL_BYTES = 256 * 1024
+
+
+def session_title(transcript_path: Any) -> str | None:
+    """Claude Code 会话的名字：transcript（JSONL）里**最后一条** `{"type":"custom-title","customTitle":…}`
+    （用户 `/rename` 起的，终端标签页显示的就是它）。没有 / 读不了 → None，调用方退回目录名。
+
+    只读文件末尾 `TITLE_TAIL_BYTES`、从后往前找：transcript 动辄几十 MB，钩子每个事件都跑；Claude Code 会把
+    标题记录在文件里反复重写，末尾找得到。截断的第一行、坏 JSON、别的记录一律跳过。不读 `ai-title`
+    （自动标题：改过名的标签页不显示它）。**只取这一个字段**，对话内容不读、不上报。
+    """
+    if not isinstance(transcript_path, str) or not transcript_path:
+        return None
+    try:
+        data, cut = read_regular(transcript_path, TITLE_TAIL_BYTES, tail=True)  # 不阻塞（FIFO）、不跟链接、只读普通文件
+    except OSError:
+        return None
+    lines = data.split(b"\n")
+    if cut:
+        lines = lines[1:]  # 从行中间切进来的那半行
+    for line in reversed(lines):
+        if b"custom-title" not in line:
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError:  # 含坏编码的 UnicodeDecodeError
+            continue
+        if isinstance(record, dict) and record.get("type") == "custom-title":
+            title = record.get("customTitle")
+            # 标题会当泳道名上报：控制 / 格式字符（Cc / Cf，含 ESC、换行、零宽、双向控制）先去掉
+            title = " ".join("".join(" " if unicodedata.category(c) in ("Cc", "Cf") else c for c in title).split()) if isinstance(title, str) else ""
+            return title or None  # 最后一条为准：清空了名字 = 没有名字
+    return None
 
 
 def phase_run(
@@ -324,7 +504,73 @@ def phase_run(
         payload["detail"] = detail[:64]
     if reply:
         payload["reply"] = True
-    return _request(config, "POST", f"/api/core/agents/{run_id}/phase", payload, timeout)
+    return _request(config, "POST", _run_path(run_id, "phase"), payload, timeout)
+
+
+HEARTBEAT_SECONDS = 900  # 服务端没说（老服务端 / 没报成）时的心跳间隔
+# 服务端给的值钳在这个范围里。上限 900 = 远低于服务端的失联线（1800 秒，`lostAfterSeconds`；服务端现在建议的也是 900）：
+# 适配器至少每 `lostAfterSeconds / 2` 发一次，丢一两下不会贴线；服务端给了更大的值也按上限用。
+HEARTBEAT_MIN, HEARTBEAT_MAX = 60, 900
+
+
+def heartbeat_run(
+    config: dict[str, Any], run_id: str, timeout: float = DEFAULT_TIMEOUT, beat_source: str | None = None,
+) -> dict[str, Any]:
+    """`POST /api/core/agents/{runId}/heartbeat`（v2.18，`contracts/agent.lane.v1`）：「我还活着」。
+    第一次调用即声明这条运行会发心跳。`{applied:false, reason:"closed"}` = 运行已结束。
+    `beat_source`：谁在发（`companion` / `monitor` / `wrapper`），服务端只当标签记下，用来比哪条路更好使。"""
+    payload = {"beatSource": beat_source} if beat_source else None
+    return _request(config, "POST", _run_path(run_id, "heartbeat"), payload, timeout)
+
+
+def heartbeat_interval(response: Any) -> int:
+    """响应里的 `heartbeatSeconds`，过 `clamp_seconds`：钳到 [60, 900]；没有 / 不是正整数 → 900。
+    这是唯一读它的地方（伴随进程、monitor、cockpit-run 的线程都经 `beat` 到这里），每一下心跳都重新钳一次。"""
+    value = response.get("heartbeatSeconds") if isinstance(response, dict) else None
+    return clamp_seconds(value, HEARTBEAT_MIN, HEARTBEAT_MAX, HEARTBEAT_SECONDS)
+
+
+BEAT_MISSING = "missing"  # `beat` 的「已结束」位上，服务端不认这个 runId（404）的取值
+BEAT_UNSUPPORTED = "unsupported"  # 同一位上：服务端没有心跳路由（老服务端的 404 `{"detail":"Not Found"}`）
+RUN_UNKNOWN_DETAIL = "代理运行不存在"  # nexus-core 对「没有这个 runId」的 404 detail 前缀（timer/agents.py）
+
+
+def beat(
+    config: dict[str, Any], run_id: str, timeout: float = DEFAULT_TIMEOUT, beat_source: str | None = None,
+) -> tuple[float, bool | str]:
+    """发一次心跳，**绝不抛**：返回 `(下一次隔多少秒, 运行是否已结束)`；已结束位 `True` = 服务端说 closed，
+    `BEAT_MISSING` = 服务端不认这个运行（404，JSON 体的 detail 是 nexus-core 的「代理运行不存在」：库重置 / 换了租户），
+    调用方当「该重开」，但重开不成就别再敲了；`BEAT_UNSUPPORTED` = 404 的 JSON 体是别的（没有心跳路由的老服务端答
+    `{"detail":"Not Found"}`）：这个服务端不会有心跳，调用方别再起发心跳的进程，更不要重开。
+    连不上 / 超时 / 5xx → `HEARTBEAT_MIN` 秒后再试（间隔是失联线的一半，丢一下不补就贴线了）；
+    其它 4xx（老服务端没有这个端点、令牌不对）→ 照常间隔，不猛敲。"""
+    if stuck_requests():  # 上一下还卡在后台没返回：这一下跳过，不叠线程 / 连接（长命的发心跳进程不能越攒越多）
+        return HEARTBEAT_MIN, False
+    try:
+        response = heartbeat_run(config, run_id, timeout, beat_source)
+        return heartbeat_interval(response), response.get("reason") == "closed"  # 间隔已钳
+    except CockpitError as e:
+        if e.code == 404 and e.json_body:
+            known = isinstance(e.detail, str) and e.detail.startswith(RUN_UNKNOWN_DETAIL)
+            return HEARTBEAT_SECONDS, BEAT_MISSING if known else BEAT_UNSUPPORTED
+        return (HEARTBEAT_SECONDS if e.code and 400 <= e.code < 500 else HEARTBEAT_MIN), False
+    except Exception:  # noqa: BLE001 — 配置读坏了之类：同样只是「这一下没发」
+        return HEARTBEAT_SECONDS, False
+
+
+BEAT_MODES = ("companion", "monitor", "off")
+
+
+def beat_mode(config: dict[str, Any] | None = None) -> str:
+    """谁来发心跳：环境变量 `COCKPIT_BEAT` > 配置文件的 `beat` > `companion`；认不得的值当 `companion`。
+    **静态配置，没有协商**：
+    - `companion`（缺省）：`SessionStart` 钩子起脱离的伴随进程（装成插件时也一样）；插件的 monitor 一起来就静悄悄退出
+    - `monitor`（显式）：只让插件的 monitor 发，钩子不起伴随进程
+    - `off`：不发心跳（运行不声明心跳能力，服务端照旧只有遗忘超时兜底）"""
+    cfg = config if config is not None else load_config()
+    mode = os.environ.get("COCKPIT_BEAT") or cfg.get("beat")
+    mode = mode.strip().lower() if isinstance(mode, str) else mode
+    return mode if mode in BEAT_MODES else "companion"
 
 
 def stop_run(
@@ -338,4 +584,4 @@ def stop_run(
     payload: dict[str, Any] = {"outcome": outcome}
     if output is not None:
         payload["output"] = output
-    return _request(config, "POST", f"/api/core/agents/{run_id}/stop", payload, timeout)
+    return _request(config, "POST", _run_path(run_id, "stop"), payload, timeout)

@@ -71,6 +71,7 @@ def backfill(
     resolve_chain: Callable[..., tuple[dict, str, str]],
     now: Callable[[], datetime],
     mode: str = DEFAULT_MODE,
+    dedupe_key: str | None = None,
 ) -> dict:
     """补登：给「完成了但没计时」的工作补一条真实 ``session.completed``。
 
@@ -117,7 +118,7 @@ def backfill(
         ended.isoformat(),  # 会话结束时刻，与 stop() 的 time 语义对齐
         duration_seconds,
         source=BACKFILL_SOURCE,
-        dedupe_key=f"backfill:{task_id}:{normalized}:{duration_seconds}",
+        dedupe_key=dedupe_key or f"backfill:{task_id}:{normalized}:{duration_seconds}",  # v2.39：问人的回答自带 question:<id>
         mode=mode,
     )
 
@@ -156,7 +157,7 @@ def record_session(
     if ai is not None:
         envelope["ai"] = ai
 
-    result = events_service.ingest(envelope)
+    result = events_service.ingest(envelope, internal=True)  # 服务端自己组的：ai.auto 作数
     if result.rejected:
         # 自己组的信封被自己的校验拒了 = 实现 bug，响亮失败，不吞
         raise RuntimeError(f"{source} 组装的信封未过事件校验：{result.rejected[0].reason}")

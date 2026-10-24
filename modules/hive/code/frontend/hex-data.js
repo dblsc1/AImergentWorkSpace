@@ -932,7 +932,8 @@
     nextActionsByProject: A.nextActionsByProject,
     hoverTodoText: A.hoverTodoText,
     topTodos: A.topTodos,
-    stampTaskName: A.stampTaskName,
+    tempSessions: A.tempSessions,
+    mergeRecent: A.mergeRecent,
     completionHeat: A.completionHeat,
     HEAT_HALFLIFE_DAYS: A.HEAT_HALFLIFE_DAYS   // 分区规划面板的说明文字要和算法同一个数
   };

@@ -76,7 +76,11 @@ def handle(envelope: dict) -> None:
         end = _moment(envelope.get("time"))  # endAt = 事件 time
         if end is None or end < start:
             return
-        doc.update(kind="session", endAt=end, mode=data.get("mode") or "do", source=envelope.get("source"))
+        # v2.39 views/history 要：这一段的事件 id、窗口块名（activity-block 的 ai.block；旧行没有这两列，读成 null，重建后补齐）
+        block = (envelope.get("ai") or {}).get("block") if isinstance(envelope.get("ai"), dict) else None
+        doc.update(kind="session", endAt=end, mode=data.get("mode") or "do", source=envelope.get("source"),
+                   eventId=envelope.get("id"),
+                   **({"block": block["blockKey"]} if isinstance(block, dict) and isinstance(block.get("blockKey"), str) else {}))
     else:
         dedupe = envelope.get("dedupeKey") or ""
         doc.update(
@@ -84,12 +88,37 @@ def handle(envelope: dict) -> None:
             runId=dedupe.removeprefix("agent:"),
             agent=data.get("agent"), tool=data.get("tool"), model=data.get("model"),
             label=data.get("label"), outcome=data.get("outcome"),
+            # v2.18：外部 source 也能写这类事件，形状不对的当没有
+            beatSource=data["beatSource"] if isinstance(data.get("beatSource"), str) else None,
+            beatCount=data["beatCount"] if type(data.get("beatCount")) is int else None,
             phases=_clean_phases(data.get("phases")),
             interactions=_clean_interactions(data.get("interactions")),
+            **({"unverified": True} if data.get("unverified") is True else {}),  # v2.19：匿名开的运行
         )
     repo.apply_lane(doc)
 
 
-def read_lanes(user: str, kind: str, start: datetime, end: datetime, limit: int) -> list[dict]:
-    """views 的指定读路径（v2.4 ``views/lanes``）。"""
-    return repo.read_lanes(user, kind, start, end, limit)
+def handle_reassign(envelope: dict) -> None:
+    """吃一条已落库的 ``session.reassigned``（契约 v2.11）：换那一段的 taskId / projectId，其余不动。"""
+    data = envelope.get("data") or {}
+    subject = envelope.get("subject") or {}
+    session = data.get("session")
+    seq = data.get("seq")
+    if (
+        type(seq) is not int or not isinstance(session, dict)
+        or not isinstance(session.get("source"), str) or not isinstance(session.get("dedupeKey"), str)
+    ):
+        return
+    repo.reassign_lane(envelope["user"], applied_key(session), subject.get("task"), subject.get("project"), seq)
+
+
+def handle_void(envelope: dict) -> None:
+    """吃一条已落库的 ``session.voided``（契约 v2.38）：那一段不再进时间线。"""
+    session = (envelope.get("data") or {}).get("session")
+    if isinstance(session, dict) and isinstance(session.get("source"), str) and isinstance(session.get("dedupeKey"), str):
+        repo.delete_lane(envelope["user"], applied_key(session))
+
+
+def read_lanes(user: str, kind: str, start: datetime, end: datetime, limit: int, **kw) -> list[dict]:
+    """views 的指定读路径（v2.4 ``views/lanes``）；``fields`` / ``run_ids`` 见 ``repo.read_lanes``。"""
+    return repo.read_lanes(user, kind, start, end, limit, **kw)

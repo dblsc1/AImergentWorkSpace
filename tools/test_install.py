@@ -57,6 +57,7 @@ def test_static_modules_are_mounted_not_run(out):
         "../../modules/hive/code/frontend:/usr/share/nginx/html/hive:ro",
         "../../modules/ring/code/frontend:/usr/share/nginx/html/ring:ro",
         "../../modules/assistant/code/frontend:/usr/share/nginx/html/assistant:ro",
+        "../../modules/assistant/code/frontend:/usr/share/nginx/html/auto:ro",
         "${HONEYCOMB_LOGIN_DIR:-../../contracts/auth.gate.v1/stub/web}:/usr/share/nginx/html/login:ro",
         "../../modules/nginx-docker/static:/usr/share/nginx/html/__cockpit:ro",
     ):
@@ -65,7 +66,7 @@ def test_static_modules_are_mounted_not_run(out):
 
 def test_frontends_are_gated_and_login_is_not(out):
     _, _, nginx = out
-    for prefix in ("/hive/", "/ring/", "/assistant/"):
+    for prefix in ("/hive/", "/ring/", "/assistant/", "/auto/"):
         block = _location(nginx, prefix)
         assert "include /etc/nginx/honeycomb/gate.inc;" in block
         assert "include /etc/nginx/honeycomb/inject.inc;" in block, "前端要被注入共享顶栏"
@@ -130,6 +131,91 @@ def test_backend_tenant_header_is_always_set_by_the_gateway(out):
     assert "proxy_set_header X-Nexus-Tenant $honeycomb_tenant;" in gate
 
 
+def test_caller_scope_headers_and_anonymous_limit_in_both_assemblies(out):
+    """gateway.v1 第九节：门子请求带原始方法；范围头 / 匿名头由网关覆盖（客户端写不进去）；
+    匿名上报有专用限速区。手写的与生成的两份组装都要有，写法一致。"""
+    _, _, gen = out
+    hand = _render((install.ROOT / "deploy" / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8"))
+    gate = (install.ROOT / "modules" / "nginx-docker" / "nginx" / "gate.inc").read_text(encoding="utf-8")
+    overwrite = ("auth_request_set $honeycomb_scope $upstream_http_x_nexus_scope;",
+                 "auth_request_set $honeycomb_anonymous $upstream_http_x_nexus_anonymous;",
+                 "proxy_set_header X-Nexus-Scope $honeycomb_scope;",
+                 "proxy_set_header X-Nexus-Anonymous $honeycomb_anonymous;")
+    for line in overwrite:
+        assert line in gate, line
+    for name, nginx in (("hand", hand), ("generated", _render(gen) if "${HONEYCOMB_BASE_PATH}" in gen else gen)):
+        verify = _location(nginx, "= /__auth_verify")
+        assert "proxy_set_header X-Original-Method $request_method;" in verify, name
+        assert "proxy_set_header X-Original-URI $request_uri;" in verify, name
+        chip = _location(nginx, "= /__cockpit/current")  # 这条手写了门，没 include gate.inc
+        for line in overwrite:
+            assert line in chip, (name, line)
+        # 限速：键只在「POST + 没有 Authorization + /api/core/agents/ 下」时非空；server 级生效、超了回 429
+        assert 'map "$request_method:$http_authorization:$uri" $honeycomb_anon_key {' in nginx, name
+        assert '"~^POST:[ \\t]*:/api/core/agents/" $binary_remote_addr;' in nginx, name
+        assert "limit_req_zone $honeycomb_anon_key zone=honeycomb_anon:1m rate=120r/m;" in nginx, name
+        assert nginx.index("limit_req_zone") < nginx.index("server {"), name
+        assert "    limit_req zone=honeycomb_anon burst=60 nodelay;\n    limit_req_status 429;" in nginx, name
+        # 每条转给后端的受保护路由都走 gate.inc（或上面那条手写的）：没有哪条漏掉覆盖
+        for block in nginx.split("\n    location ")[1:]:
+            if "auth_request /__auth_verify;" in block:
+                assert "proxy_set_header X-Nexus-Scope $honeycomb_scope;" in block, (name, block[:60])
+
+
+def _proxy_blocks(nginx: str) -> dict[str, str]:
+    """每个带 proxy_pass 的 location → 它的块（命名位置 / 内部子请求也算）。"""
+    blocks = {}
+    for block in nginx.split("\n    location ")[1:]:
+        block = block.split("\n    }", 1)[0]
+        if "proxy_pass " in block:
+            blocks[block.split(" {", 1)[0].strip()] = block
+    return blocks
+
+
+def test_request_body_limit_is_explicit_in_both_assemblies(out):
+    """在场心跳的 app / title 不设长度上限（contract v2.17.2），靠网关的体上限兜底：1m 写明，不靠默认值。"""
+    _, _, gen = out
+    hand = _render((install.ROOT / "deploy" / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8"))
+    for conf in (hand, gen):
+        assert "    client_max_body_size 1m;" in conf
+
+
+def test_every_proxy_location_sets_tenant_scope_and_anonymous_headers(out, tmp_path):
+    """gateway.v1 第九节：转给任何上游的 location 都不能让客户端自带的 X-Nexus-Tenant / Scope / Anonymous 过去。
+    过了门的（auth_request，直接写或经 gate.inc）用认证服务的答复覆盖；没过门的（认证服务本身、验证子请求、
+    不设门的路由）置空——nginx 不转发空值的头，客户端那份也一并丢掉。逐条枚举，新加的 location 漏了就红。"""
+    _, _, gen = out
+    hand = (install.ROOT / "deploy" / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8")
+    # 不设门的路由：生成器的 else 分支（模块声明 gated: false）
+    mod = tmp_path / "root" / "modules" / "open-api"
+    mod.mkdir(parents=True)
+    (mod / "module.yaml").write_text("kind: backend\nservice: {image: svc, port: 80}\nroutes:\n  - {prefix: /open/, upstream: /open/, gated: false}\n",
+                                     encoding="utf-8")
+    (tmp_path / "root" / "contracts").mkdir()
+    generate.emit(tmp_path / "root", {"modules": ["open-api"], "stubs": []}, tmp_path / "open-out")
+    ungated = (tmp_path / "open-out" / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8")
+    gate = (install.ROOT / "modules" / "nginx-docker" / "nginx" / "gate.inc").read_text(encoding="utf-8")
+    names = ("tenant", "scope", "anonymous")
+    headers = ("X-Nexus-Tenant", "X-Nexus-Scope", "X-Nexus-Anonymous")
+    for name, tpl in (("hand", hand), ("generated", gen), ("ungated", ungated)):
+        blocks = _proxy_blocks(_render(tpl))
+        assert len(blocks) >= (4 if name != "ungated" else 1), (name, list(blocks))
+        for head, block in blocks.items():
+            if "include /etc/nginx/honeycomb/gate.inc;" in block:
+                block += gate
+            if "auth_request /__auth_verify;" in block:
+                for n, h in zip(names, headers):
+                    assert f"proxy_set_header {h} $honeycomb_{n};" in block, (name, head, h)
+                    assert f"auth_request_set $honeycomb_{n} $upstream_http_{h.lower().replace('-', '_')};" in block, (name, head, h)
+            else:
+                for h in headers:
+                    assert f'proxy_set_header {h} "";' in block, (name, head, h)
+    assert "/open/" in _proxy_blocks(_render(ungated)) and "= /__auth_verify" not in _proxy_blocks(_render(ungated))
+    # 没有 WebSocket / Upgrade 透传：范围拦截只管 HTTP，网关不替任何后端把连接升成 WebSocket
+    for tpl in (hand, gen, gate):
+        assert "Upgrade" not in tpl and "upgrade" not in tpl.replace("Upgrade-Insecure", "")
+
+
 def test_auth_upstream_and_extra_routes_are_replaceable(out):
     _, compose, nginx = out
     web = compose["services"]["web"]
@@ -152,17 +238,18 @@ def test_navbar_tabs_follow_installed_frontends(tmp_path):
     assert """set $honeycomb_nav '{"home":"/","timer":"/ring/","tabs":[{"href":"/ring/","label":"计时"}]}';""" in nginx
 
 
-def test_navbar_three_tabs_same_in_hand_written_and_generated(out):
-    """缺省组装的顶栏：任务、计时、AI助理，手写与生成的两份逐字相同。"""
+def test_navbar_four_tabs_same_in_hand_written_and_generated(out):
+    """缺省组装的顶栏：任务、计时、待批准、自动记录，手写与生成的两份逐字相同。"""
     _, _, nginx = out
     hand = _render((install.ROOT / "deploy" / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8"))
     nav = """set $honeycomb_nav '{"home":"/hive/","timer":"/ring/","tabs":[{"href":"/hive/","label":"任务"},""" \
-          """{"href":"/ring/","label":"计时"},{"href":"/assistant/","label":"AI助理"}]}';"""
+          """{"href":"/ring/","label":"计时"},{"href":"/assistant/","label":"待批准"},""" \
+          """{"href":"/auto/","label":"自动记录"}]}';"""
     assert nav in nginx and nav in hand
 
 
 def test_ring_alone_no_longer_pulls_in_the_chat_backend():
-    """聊天搬去 AI助理页之后，只装 ring 不再带上 agent / mcp；装 assistant 才带。"""
+    """聊天搬去待批准页之后，只装 ring 不再带上 agent / mcp；装 assistant 才带。"""
     assert "agent" not in install.resolve(["ring"])["modules"]
     assert {"agent", "mcp"} <= set(install.resolve(["assistant"])["modules"])
 
@@ -248,6 +335,34 @@ def test_ai_bridge_routes_hand_and_generated(out):
         hand_c["services"]["nexus-core"]["environment"]["NEXUS_TENANT_STRICT"]
 
 
+def test_builtin_chat_is_optional_in_all_three_composes(out):
+    """2026-10-14（v0.4）：内置聊天缺省不起——手写 / 发布版 / 生成的 compose 里 agent 都在 profile agent 下；
+    网关不等它（缺省组装里它根本不存在）；别的服务不能误挂这个 profile。"""
+    _, gen, _ = out
+    hand = yaml.safe_load((install.ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8"))
+    rel = yaml.safe_load((install.ROOT / "release" / "docker-compose.yml").read_text(encoding="utf-8"))
+    for name, c in (("generated", gen), ("hand", hand), ("release", rel)):
+        assert c["services"]["agent"]["profiles"] == ["agent"], name
+        assert [k for k, v in c["services"].items() if "profiles" in v and k != "agent"] == [], name
+        assert "agent" not in c["services"]["web"].get("depends_on", {}), name
+
+
+def test_empty_agent_upstream_never_reaches_dns_but_keeps_the_gate():
+    """v0.4：AGENT_UPSTREAM 缺省为空 = 内置聊天没开。空值渲染出来必须改指回环死地址（不查 DNS、不转发）；
+    且只能用 set——return 会跑在 auth_request 之前，未登录就不再 302。三份 compose 的缺省值都是空。"""
+    hand = (install.ROOT / "deploy" / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8")
+    rendered = _render(hand).replace("${AGENT_UPSTREAM}", "")          # envsubst 把空值换进去
+    block = _location(rendered, "/api/agent/")
+    assert 'set $honeycomb_agent "";' in block
+    assert 'if ($honeycomb_agent = "") { set $honeycomb_agent "127.0.0.1:1"; }' in block
+    assert block.index("gate.inc") < block.index("proxy_pass")
+    assert not [l for l in block.splitlines() if l.strip().startswith("return") or "{ return" in l]
+    for f in ("deploy/docker-compose.yml", "release/docker-compose.yml"):
+        c = yaml.safe_load((install.ROOT / f).read_text(encoding="utf-8"))
+        assert c["services"]["web"]["environment"]["AGENT_UPSTREAM"] == "${AGENT_UPSTREAM:-}", f
+    assert "AGENT_UPSTREAM= " in (install.ROOT / "release" / "web.Dockerfile").read_text(encoding="utf-8")
+
+
 def hand_c_agent_only_on_bridge() -> bool:
     hand_c = yaml.safe_load((install.ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8"))
     rel = yaml.safe_load((install.ROOT / "release" / "docker-compose.yml").read_text(encoding="utf-8"))
@@ -268,11 +383,12 @@ def test_bridge_route_upstream_env(tmp_path):
     generate.emit(tmp_path, {"modules": ["agent"], "stubs": []}, tmp_path / "out")
     compose = yaml.safe_load((tmp_path / "out" / "docker-compose.yml").read_text(encoding="utf-8"))
     env = compose["services"]["web"]["environment"]
-    assert env["AGENT_UPSTREAM"] == "${AGENT_UPSTREAM:-agent:8030}"
+    assert env["AGENT_UPSTREAM"] == "${AGENT_UPSTREAM:-}"   # v0.4：缺省空 = 不转发，不能让网关去 DNS 找 agent
     assert env["NGINX_ENVSUBST_FILTER"] == "^(AUTH_UPSTREAM|AGENT_UPSTREAM|HONEYCOMB_)"
     block = _location(_render((tmp_path / "out" / "nginx" / "templates" / "default.conf.template").read_text(
         encoding="utf-8")), "/api/agent/")
     assert 'set $honeycomb_up_0 "${AGENT_UPSTREAM}";' in block and "proxy_read_timeout 300s;" in block
+    assert 'if ($honeycomb_up_0 = "") { set $honeycomb_up_0 "127.0.0.1:1";' in block
 
 
 def test_bridge_route_must_be_gated(tmp_path):

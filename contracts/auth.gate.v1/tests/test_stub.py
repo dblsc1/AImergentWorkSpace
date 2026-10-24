@@ -1,4 +1,4 @@
-"""auth.gate.v1.2 占位实现：真起进程、真发 HTTP，按契约逐条核对。"""
+"""auth.gate.v1.4 占位实现：真起进程、真发 HTTP，按契约逐条核对。"""
 
 from __future__ import annotations
 
@@ -140,7 +140,7 @@ def test_shared_password_mode_gives_no_tenant(tmp_path):
         assert status == 204 and "X-Nexus-Tenant" not in h
         assert json.loads(s.req("GET", "/api/auth/me", cookie=cookie)[2])["user"]["id"] == "u_local"
         health = json.loads(s.req("GET", "/api/auth/health")[2])
-        assert health == {"status": "ok", "accounts": False, "sharedPassword": True}
+        assert health == {"status": "ok", "accounts": False, "sharedPassword": True, "anonymousReport": True}
     finally:
         s.stop()
 
@@ -274,7 +274,8 @@ def test_garbage_and_huge_authorization_is_401(stub):
 def test_http_issue_and_revoke(stub, users):
     _, cookie = stub.login(username="alice", password=PW)
     status, body = _http_token(stub, cookie, {"label": "laptop"})
-    assert status == 201 and set(body) == {"token", "tenant", "expiresAt"} and body["tenant"].startswith("u_")
+    assert status == 201 and {"token", "tenant", "expiresAt"} <= set(body) and body["tenant"].startswith("u_")
+    assert (body["scope"], body["name"]) == ("write", "laptop") and "revoked" not in body  # v1.4：缺省 write，label 存成 name
     old = body["token"]
     assert stub.req("GET", "/api/auth/verify", headers=_bearer(old))[0] == 204
     assert stub.req("POST", "/api/auth/tokens/revoke", {}, cookie=cookie)[0] == 204
@@ -448,3 +449,1157 @@ def test_shared_password_with_absent_users_file_does_not_spam_log(tmp_path):
     finally:
         s.stop()
     assert "读账号文件失败" not in s.proc.stderr.read()
+
+
+# ── v1.4：权限范围、匿名上报、单个吊销 ─────────────────────────────────────────────
+
+import hashlib  # noqa: E402
+import hmac  # noqa: E402
+import importlib.util  # noqa: E402
+
+START = "/api/core/agents/start"
+REPORT_URIS = (START, "/api/core/agents/run_0123abcd/phase", "/api/core/agents/run_0123abcd/stop",
+               "/api/core/agents/run_0123abcd/heartbeat", START + "?x=1&y=../../hive")
+
+
+def _v(stub, method, uri, token=None, cookie="", extra=None):
+    """像网关那样问 verify：原始方法与 URI 放在 X-Original-* 里。返回 (状态码, 响应头)。"""
+    h = {"X-Original-Method": method, "X-Original-URI": uri, **(extra or {})}
+    if token is not None:
+        h["Authorization"] = f"Bearer {token}"
+    status, headers, body = stub.req("GET", "/api/auth/verify", cookie=cookie, headers=h)
+    assert body == b""  # 不变量 1
+    return status, headers
+
+
+def _mint(stub, cookie, scope=None, name=None):
+    body = {k: v for k, v in (("scope", scope), ("name", name)) if v is not None}
+    status, data = _http_token(stub, cookie, body)
+    assert status == 201, data
+    return data
+
+
+@pytest.fixture
+def single(tmp_path):
+    """单人模式：只开共享口令。"""
+    s = Stub({"AUTH_PASSWORD": PW, "AUTH_TOKENS_FILE": str(tmp_path / "t.json")})
+    yield s
+    s.stop()
+
+
+def test_scope_matrix(stub, users):
+    """契约「放行表」：三种范围各能过哪些「方法 + 路径」，过的时候回什么范围头。"""
+    alice = json.loads(Path(users["AUTH_USERS_FILE"]).read_text())["users"]["alice"]["id"]
+    _, cookie = stub.login(username="alice", password=PW)
+    tok = {sc: _mint(stub, cookie, sc)["token"] for sc in ("report", "read", "write")}
+    assert all(t.startswith("hct2.") for t in tok.values())
+    for sc, t in tok.items():
+        for uri in REPORT_URIS:  # 上报面：三种都行
+            status, h = _v(stub, "POST", uri, t)
+            assert (status, h.get("X-Nexus-Scope"), h.get("X-Nexus-Tenant")) == (204, sc, alice), (sc, uri)
+            assert "X-Nexus-Anonymous" not in h
+    cases = [  # (方法, 路径, report, read, write)
+        ("GET", "/api/core/views/tree", 403, 204, 204),
+        ("GET", "/api/core/views/lanes?date=2026-10-09", 403, 204, 204),
+        ("GET", "/api/core/events", 403, 204, 204),
+        ("GET", START, 403, 204, 204),                       # 上报端点的 GET 不是上报
+        ("POST", "/api/core/events", 403, 403, 204),         # 上传事件
+        ("POST", "/api/core/activity/presence", 403, 403, 204),
+        ("POST", "/api/core/timer/start", 403, 403, 204),
+        ("PUT", "/api/core/detector/settings", 403, 403, 204),
+        ("DELETE", "/api/core/views/tree", 403, 403, 204),
+        ("HEAD", "/api/core/views/tree", 403, 403, 204),
+        ("OPTIONS", START, 403, 403, 204),
+        ("get", "/api/core/views/tree", 403, 403, 204),      # 方法大小写：不在表里
+        ("POST", "/api/mcp/", 403, 204, 204),                # MCP：report 整个不行
+        ("GET", "/api/mcp/", 403, 403, 204),
+        ("DELETE", "/api/mcp/", 403, 403, 204),
+    ]
+    for method, uri, *want in cases:
+        for sc, expected in zip(("report", "read", "write"), want):
+            assert _v(stub, method, uri, tok[sc])[0] == expected, (sc, method, uri)
+    # 页面、api/auth、api/agent：任何范围都是 401（令牌只开接口，v1.2）
+    for uri in ("/hive/", "/api/auth/tokens", "/api/agent/x", "/"):
+        for t in tok.values():
+            assert _v(stub, "POST", uri, t)[0] == 401 and _v(stub, "GET", uri, t)[0] == 401
+    # 人的会话：不带范围头，哪儿都行
+    status, h = _v(stub, "DELETE", "/hive/", cookie=cookie)
+    assert status == 204 and "X-Nexus-Scope" not in h and "X-Nexus-Anonymous" not in h
+
+
+def test_streaming_and_upgrade_requests_get_no_extra_reach(stub, users):
+    """SSE / WebSocket 形的请求（Accept: text/event-stream、Upgrade: websocket）在门里与普通 GET 同一张表：
+    report / 匿名读不到任何 GET（SSE 就是 GET），聊天后端（api/agent/，SSE）任何令牌都是 401；
+    Upgrade / Connection 头不改变判定（nginx 也不透传它们，见 tools/test_install.py）。"""
+    _, cookie = stub.login(username="alice", password=PW)
+    report, read = _mint(stub, cookie, "report")["token"], _mint(stub, cookie, "read")["token"]
+    live = {"Accept": "text/event-stream", "Upgrade": "websocket", "Connection": "Upgrade"}
+    for uri in ("/api/core/views/lanes", "/api/core/events/stream", "/api/core/ws"):
+        assert _v(stub, "GET", uri, report, extra=live)[0] == 403, uri
+        assert _v(stub, "GET", uri, None, extra=live)[0] == 401, uri       # 匿名（这里是多账号，本来就没有）
+        assert _v(stub, "GET", uri, read, extra=live)[0] == _v(stub, "GET", uri, read)[0] == 204  # read 本来就能 GET
+    for uri in ("/api/agent/chat", "/api/agent/chat/stream", "/api/agent/ws", "/api/agent/"):
+        for t in (report, read):
+            assert _v(stub, "GET", uri, t, extra=live)[0] == 401, uri
+            assert _v(stub, "POST", uri, t, extra=live)[0] == 401, uri
+
+
+def test_anonymous_gets_no_stream_or_agent_chat(single):
+    live = {"Accept": "text/event-stream", "Upgrade": "websocket", "Connection": "Upgrade"}
+    for uri in ("/api/core/views/lanes", "/api/agent/chat", "/api/agent/chat/stream", "/api/mcp/"):
+        assert _v(single, "GET", uri, extra=live)[0] == 401, uri
+
+
+def test_allow_table_cannot_be_bypassed(stub, users):
+    """上报面按原样字节全匹配：编码、双斜杠、结尾斜杠、大小写、点段、方法覆盖头，全都不在表里。"""
+    _, cookie = stub.login(username="alice", password=PW)
+    report, read = _mint(stub, cookie, "report")["token"], _mint(stub, cookie, "read")["token"]
+    bad = [
+        START + "/", "/api/core/agents//start", "//api/core/agents/start", "/api/core//agents/start",
+        "/api/core/agents/start/.", "/api/core/agents/./start", "/api/core/agents/x/../start",
+        "/api/core/agents/%73tart", "/api/core/agents%2Fstart", "/api/core/agents/start%2F",
+        "/api/core/agents/start%3F", "/api/core/agents/start%00", "/api/core/agents/start;x=1",
+        "/api/core/agents/Start", "/API/core/agents/start", "/api/core/Agents/start",
+        "/api/core/agents/run_1/phase/", "/api/core/agents/run_1/Phase", "/api/core/agents/run_1/stop/extra",
+        "/api/core/agents/run_1/cancel", "/api/core/agents/run%201/stop", "/api/core/agents/a.b/stop",
+        "/api/core/agents/" + "r" * 65 + "/stop", "/api/core/agents//stop", "/api/core/agents/run_1//stop",
+        "/api/core/agents/start#x", "/api/core/agents/start\\", "/api/core/timer/start",
+        "/api/core/agents/..%2ftimer/start", "/api/core/agents/%2e%2e/timer/start",
+        "/Cockpit/api/core/agents/start", "/api/corex/agents/start", "http://x/api/core/agents/start",
+    ]
+    for uri in bad:
+        for t in (report, None):  # report 令牌与（多账号下的）匿名都过不了
+            assert _v(stub, "POST", uri, t)[0] in (401, 403), uri
+        assert _v(stub, "POST", uri, report)[0] != 204, uri
+        assert _v(stub, "POST", uri, read)[0] != 204, uri  # read 也没有别的 POST
+    # read 的 GET 沿用 v1.2 的判法：点段 / 编码的点段 / 反斜杠出不了 api/core
+    for uri in ("/api/core/%2e%2e/hive/", "/api/core/../hive/", "/api/core/..%2Fhive/", "/api/mcp/..%2f..%2fhive/",
+                "/api/core/%5c..%5chive/"):
+        assert _v(stub, "GET", uri, read)[0] == 401, uri
+    # 方法只认 X-Original-Method：覆盖头不读，缺了头就什么都过不了
+    for name in ("X-HTTP-Method-Override", "X-Method-Override", "X-HTTP-Method"):
+        assert _v(stub, "POST", "/api/core/events", read, extra={name: "GET"})[0] == 403
+        assert _v(stub, "GET", START, report, extra={name: "POST"})[0] == 403
+    for t in (report, read):
+        status, _, _ = stub.req("GET", "/api/auth/verify", headers=_bearer(t, START))  # 老网关：没有 X-Original-Method
+        assert status == 403
+    # verify 自己的请求方法不算数（子请求永远是 GET）
+    assert _v(stub, "POST", "/api/core/views/tree", read)[0] == 403
+
+
+def test_forged_or_edited_tokens_are_rejected(stub, users):
+    """范围、令牌 id、到期、租户都在签名里：改任何一段都是 401。"""
+    _, cookie = stub.login(username="alice", password=PW)
+    minted = _mint(stub, cookie, "report")
+    tok = minted["token"]
+    prefix, issued, exp, epoch, scope, jti, rest = tok.split(".", 6)
+    tenant, sig = rest.rsplit(".", 1)
+    assert (prefix, scope, jti) == ("hct2", "report", minted["id"])
+    other = _mint(stub, cookie, "write")
+    o = other["token"].split(".")
+    forged = [
+        ".".join([prefix, issued, exp, epoch, "write", jti, tenant, sig]),          # 改范围
+        ".".join([prefix, issued, exp, epoch, "read", jti, tenant, sig]),
+        ".".join([prefix, issued, exp, epoch, "admin", jti, tenant, sig]),
+        ".".join([prefix, issued, exp, epoch, "", jti, tenant, sig]),
+        ".".join([prefix, issued, str(int(exp) + 9), epoch, scope, jti, tenant, sig]),  # 延期
+        ".".join([prefix, issued, exp, epoch, scope, other["id"], tenant, sig]),      # 换成另一个有效令牌的 id
+        ".".join([prefix, issued, exp, epoch, scope, jti, "u_local", sig]),           # 换租户
+        ".".join([prefix, issued, exp, epoch, "write", jti, tenant, o[-1]]),          # 拼别的令牌的签名
+        ".".join([prefix, issued, exp, epoch, scope, jti, tenant, sig[:-1] + ("0" if sig[-1] != "0" else "1")]),
+        ".".join([prefix, issued, exp, epoch, scope, jti, tenant, ""]),
+        ".".join([prefix, issued, exp, epoch, scope, jti, tenant]),
+        tok + ".", tok[:-8], "hct3" + tok[4:], "hct1" + tok[4:],
+        ".".join(["hct1", issued, epoch, tenant, sig]),                                # 把各段挪进 hct1 的外壳
+        ".".join(["hct1", issued, epoch, f"write.{jti}.{tenant}", sig]),
+    ]
+    for f in forged:
+        for method, uri in (("POST", START), ("GET", "/api/core/views/tree")):
+            assert _v(stub, method, uri, f)[0] == 401, f[:40]
+    assert _v(stub, "POST", START, tok)[0] == 204  # 原样的那个照常
+
+
+def test_hct1_tokens_keep_working_as_write(tmp_path):
+    """老格式照常可用 = write；hct1 与 hct2 的签名域不同，互相冒充不了。"""
+    tfile = tmp_path / "t.json"
+    env = {"AUTH_PASSWORD": PW, "AUTH_TOKENS_FILE": str(tfile)}
+    s = Stub(env)
+    try:
+        _, cookie = s.login(password=PW)
+        new = _mint(s, cookie, "report")["token"]  # 顺带把令牌文件建出来
+        gen = json.loads(tfile.read_text())["gen"]
+        sess = hashlib.sha256(f"shared|{PW}".encode()).hexdigest()
+        sign = lambda domain, payload: hmac.new(("s" * 32).encode(), f"{domain}|{payload}|{sess}|{gen}".encode(),  # noqa: E731
+                                                hashlib.sha256).hexdigest()
+        payload = f"hct1.{int(time.time())}.0."
+        old = f"{payload}.{sign('device', payload)}"
+        status, h = _v(s, "POST", "/api/core/events", old)
+        assert (status, h.get("X-Nexus-Scope")) == (204, "write") and "X-Nexus-Tenant" not in h
+        assert s.req("GET", "/api/auth/verify", headers=_bearer(old))[0] == 204  # 老网关（不转方法）也行
+        # 用 hct1 的签名域签一个 hct2 形状的载荷（或反过来）：不认
+        p2 = new.rsplit(".", 1)[0].replace(".report.", ".write.")
+        assert _v(s, "POST", "/api/core/events", f"{p2}.{sign('device', p2)}")[0] == 401
+        assert _v(s, "POST", "/api/core/events", f"{payload}.{sign('device2', payload)}")[0] == 401
+        # hct1 列不出来、也没有 id
+        tokens = json.loads(s.req("GET", "/api/auth/tokens", cookie=cookie)[2])["tokens"]
+        assert [t["scope"] for t in tokens] == ["report"]
+        # 整个身份吊销照样作废 hct1
+        assert s.req("POST", "/api/auth/tokens/revoke", {}, cookie=cookie)[0] == 204
+        assert _v(s, "POST", "/api/core/events", old)[0] == 401
+    finally:
+        s.stop()
+
+
+def test_client_supplied_headers_do_not_reach_the_decision(stub, users):
+    """客户端自己写的范围 / 匿名 / 租户头：verify 一个都不读。"""
+    _, cookie = stub.login(username="alice", password=PW)
+    report = _mint(stub, cookie, "report")["token"]
+    lies = {"X-Nexus-Scope": "write", "X-Nexus-Anonymous": "1", "X-Nexus-Tenant": "u_local"}
+    status, h = _v(stub, "GET", "/api/core/views/tree", report, extra=lies)
+    assert status == 403
+    status, h = _v(stub, "POST", START, report, extra=lies)
+    assert status == 204 and h["X-Nexus-Scope"] == "report" and h["X-Nexus-Tenant"] != "u_local"
+    assert "X-Nexus-Anonymous" not in h
+    assert _v(stub, "POST", START, extra=lies)[0] == 401  # 多账号下没有匿名，自称匿名也没用
+
+
+def test_anonymous_can_only_report_in_single_user_mode(single):
+    for uri in REPORT_URIS:
+        status, h = _v(single, "POST", uri)
+        assert status == 204, uri
+        assert (h.get("X-Nexus-Scope"), h.get("X-Nexus-Anonymous")) == ("report", "1")
+        assert "X-Nexus-Tenant" not in h  # = u_local
+    # 读不到任何东西、写不了别的、开不了页面
+    for method, uri in (("GET", START), ("GET", "/api/core/views/tree"), ("GET", "/api/core/views/lanes"),
+                        ("GET", "/api/core/events"), ("POST", "/api/mcp/"), ("GET", "/api/mcp/"),
+                        ("POST", "/api/core/events"), ("POST", "/api/core/activity/presence"),
+                        ("POST", "/api/core/timer/start"), ("HEAD", START), ("OPTIONS", START), ("PUT", START),
+                        ("GET", "/hive/"), ("GET", "/"), ("POST", "/api/agent/x"), ("GET", "/__cockpit/current"),
+                        ("POST", START + "/"), ("POST", "/api/core/agents//start"), ("POST", "/api/core/agents/%73tart")):
+        assert _v(single, method, uri)[0] == 401, (method, uri)
+    assert single.req("GET", "/api/auth/verify")[0] == 401  # 老网关（不转方法 / URI）：没有匿名
+    assert single.req("GET", "/api/auth/verify", headers={"X-Original-URI": START})[0] == 401
+    assert _v(single, "POST", START, extra={"X-HTTP-Method-Override": "GET"})[0] == 204  # 覆盖头不读，照常是 POST
+    assert _v(single, "GET", START, extra={"X-HTTP-Method-Override": "POST"})[0] == 401
+
+
+def test_presented_bad_credentials_are_never_downgraded_to_anonymous(single):
+    """出示了坏凭据 = 401，哪怕不带它本来能匿名上报。否则吊销一个令牌只是把它降成匿名。"""
+    _, cookie = single.login(password=PW)
+    tok = _mint(single, cookie, "report")
+    assert _v(single, "POST", START, tok["token"])[0] == 204
+    assert single.req("POST", "/api/auth/tokens/revoke", {"tokenId": tok["id"]}, cookie=cookie)[0] == 204
+    assert _v(single, "POST", START, tok["token"])[0] == 401  # 吊销了的令牌：不是「那就当匿名」
+    for auth in ("Bearer", "Bearer ", "Bearer garbage", "bearer x.y", "Bearer hct2.1.2.0.report.00.x", "Basic Zm9vOmJhcg==",
+                 "Digest x", "x", "Bearer " + "a" * 5000):
+        status, h, _ = single.req("GET", "/api/auth/verify", headers={
+            "X-Original-Method": "POST", "X-Original-URI": START, "Authorization": auth})
+        assert status == 401 and "X-Nexus-Anonymous" not in h, auth[:20]
+    # 坏的会话 cookie 同理（过期的会话去登录页）
+    for bad in ("cockpit_session=garbage", "cockpit_session=1.2.3", cookie + "x"):
+        assert _v(single, "POST", START, cookie=bad)[0] == 401, bad
+    # 不相干的 cookie 等于没带；空的会话 cookie、空的 Authorization 是出示了（空的）凭据 = 401
+    assert _v(single, "POST", START, cookie="theme=dark")[0] == 204
+    assert _v(single, "POST", START, cookie="cockpit_session=")[0] == 401
+    assert _v(single, "POST", START, extra={"Authorization": ""})[0] == 401
+    # 两个 Authorization 头：不猜看哪个
+    c = http.client.HTTPConnection("127.0.0.1", single.port, timeout=10)
+    c.putrequest("GET", "/api/auth/verify")
+    for k, v in (("X-Original-Method", "POST"), ("X-Original-URI", START), ("Authorization", ""),
+                 ("Authorization", "")):
+        c.putheader(k, v)
+    c.endheaders()
+    assert c.getresponse().status == 401
+    c.close()
+    # 有效的人的会话照常，不被标成匿名
+    status, h = _v(single, "POST", START, cookie=cookie)
+    assert status == 204 and "X-Nexus-Anonymous" not in h and "X-Nexus-Scope" not in h
+
+
+def test_anonymous_is_off_with_accounts_and_with_the_switch(stub, tmp_path, users):
+    # 多账号：没有可归属的租户
+    assert _v(stub, "POST", START)[0] == 401
+    assert json.loads(stub.req("GET", "/api/auth/health")[2])["anonymousReport"] is False
+    # 共享口令 + 账号同时开：同样不放
+    mixed = Stub({**users, "AUTH_PASSWORD": PW})
+    try:
+        assert _v(mixed, "POST", START)[0] == 401
+        assert json.loads(mixed.req("GET", "/api/auth/health")[2])["anonymousReport"] is False
+    finally:
+        mixed.stop()
+    # 单人模式但开关关掉
+    off = Stub({"AUTH_PASSWORD": PW, "AUTH_ANONYMOUS_REPORT": "false", "AUTH_TOKENS_FILE": str(tmp_path / "t.json")})
+    try:
+        assert _v(off, "POST", START)[0] == 401
+        assert json.loads(off.req("GET", "/api/auth/health")[2])["anonymousReport"] is False
+        _, cookie = off.login(password=PW)  # 令牌不受开关影响
+        assert _v(off, "POST", START, _mint(off, cookie, "report")["token"])[0] == 204
+    finally:
+        off.stop()
+    assert "匿名上报开着" not in off.proc.stderr.read()
+    r = subprocess.run([sys.executable, str(STUB)], env={**os.environ, "AUTH_PASSWORD": PW, "AUTH_ANONYMOUS_REPORT": "maybe"},
+                       capture_output=True, text=True, timeout=10)
+    assert r.returncode != 0 and "AUTH_ANONYMOUS_REPORT" in r.stderr  # 看不懂的取值拒绝启动，不静默当开
+
+
+def test_anonymous_follows_base_path(tmp_path):
+    s = Stub({"AUTH_PASSWORD": PW, "AUTH_BASE_PATH": "/Cockpit/"})
+    try:
+        assert _v(s, "POST", "/Cockpit" + START)[0] == 204
+        assert _v(s, "POST", START)[0] == 401
+        assert _v(s, "POST", "/Cockpit/Cockpit" + START)[0] == 401
+        assert _v(s, "POST", "/cockpit" + START)[0] == 401
+        assert _v(s, "GET", "/Cockpit/api/core/views/tree")[0] == 401
+    finally:
+        s.stop()
+    assert "匿名上报开着" in s.proc.stderr.read()  # 启动横幅照直说
+
+
+def test_list_and_per_token_revoke(stub, users):
+    _, alice = stub.login(username="alice", password=PW)
+    _, bob = stub.login(username="bob", password=PW)
+    a1, a2 = _mint(stub, alice, "report", "沙箱代理"), _mint(stub, alice, "read", "mcp")
+    b1 = _mint(stub, bob, "write")
+    status, _, data = stub.req("GET", "/api/auth/tokens", cookie=alice)
+    listed = json.loads(data)["tokens"]
+    assert status == 200 and [(t["id"], t["name"], t["scope"]) for t in listed] == [
+        (a1["id"], "沙箱代理", "report"), (a2["id"], "mcp", "read")]
+    assert all(set(t) == {"id", "name", "scope", "createdAt", "expiresAt"} for t in listed)
+    # 列表、令牌文件里都没有令牌本身，也没有它的签名
+    tfile = Path(users["AUTH_USERS_FILE"]).with_name("tokens.json").read_text()
+    for minted in (a1, a2, b1):
+        sig = minted["token"].rsplit(".", 1)[1]
+        assert minted["token"] not in data.decode() and sig not in data.decode()
+        assert minted["token"] not in tfile and sig not in tfile
+    # 列表只认会话 cookie：设备令牌（哪怕 write）、没登录都看不到
+    assert stub.req("GET", "/api/auth/tokens", headers={"Authorization": f"Bearer {a2['token']}"})[0] == 401
+    assert stub.req("GET", "/api/auth/tokens")[0] == 401
+    # 吊销别人的令牌：与「没有这个 id」同一个 404，且没生效
+    for cookie, jti in ((bob, a1["id"]), (alice, "0000000000000000")):
+        status, _, body = stub.req("POST", "/api/auth/tokens/revoke", {"tokenId": jti}, cookie=cookie)
+        assert status == 404 and json.loads(body)["error"] == "no_such_token"
+    assert _v(stub, "POST", START, a1["token"])[0] == 204
+    # 给了 tokenId 就必须合格：null / 空串不会悄悄变成「吊销全部」
+    for bad in ("", "xyz", 5, None, "AAAAAAAAAAAAAAAA", "00000000000000000", ["x"]):
+        status, _, body = stub.req("POST", "/api/auth/tokens/revoke", {"tokenId": bad}, cookie=bob)
+        assert status == 400 and json.loads(body)["error"] == "bad_token_id", bad
+    assert _v(stub, "POST", "/api/core/events", b1["token"])[0] == 204
+    # 吊销自己的一个：立即生效，另一个与别人的不受影响，列表里标出来
+    assert stub.req("POST", "/api/auth/tokens/revoke", {"tokenId": a1["id"]}, cookie=alice)[0] == 204
+    assert _v(stub, "POST", START, a1["token"])[0] == 401
+    assert _v(stub, "GET", "/api/core/views/tree", a2["token"])[0] == 204
+    assert _v(stub, "POST", "/api/core/events", b1["token"])[0] == 204
+    assert stub.req("POST", "/api/auth/tokens/revoke", {"tokenId": a1["id"]}, cookie=alice)[0] == 404  # 记录已删
+    listed = json.loads(stub.req("GET", "/api/auth/tokens", cookie=alice)[2])["tokens"]
+    assert [t["id"] for t in listed] == [a2["id"]]  # 吊销的不再列出
+    # 设备令牌换不出、也吊销不了令牌
+    h = {"Authorization": f"Bearer {a2['token']}"}
+    assert stub.req("POST", "/api/auth/tokens", {}, headers=h)[0] == 401
+    assert stub.req("POST", "/api/auth/tokens/revoke", {"tokenId": a2["id"]}, headers=h)[0] == 401
+    # 整个身份吊销：全部作废，记录清空；别人的还在
+    assert stub.req("POST", "/api/auth/tokens/revoke", {}, cookie=alice)[0] == 204
+    assert _v(stub, "GET", "/api/core/views/tree", a2["token"])[0] == 401
+    assert json.loads(stub.req("GET", "/api/auth/tokens", cookie=alice)[2])["tokens"] == []
+    assert _v(stub, "POST", "/api/core/events", b1["token"])[0] == 204
+
+
+def test_mint_validation(stub, users):
+    _, cookie = stub.login(username="alice", password=PW)
+    for body, error in (({"scope": "admin"}, "bad_scope"), ({"scope": ""}, "bad_scope"), ({"scope": None}, "bad_scope"),
+                        ({"scope": ["write"]}, "bad_scope"), ({"scope": "Write"}, "bad_scope"),
+                        ({"name": "x" * 65}, "bad_label"), ({"name": 5}, "bad_label"),
+                        ({"name": "a\nb"}, "bad_label"), ({"name": "a\x1b[31m"}, "bad_label"),
+                        ({"name": "a\x7f"}, "bad_label")):
+        status, data = _http_token(stub, cookie, body)
+        assert status == 400 and data["error"] == error, body
+    assert json.loads(stub.req("GET", "/api/auth/tokens", cookie=cookie)[2])["tokens"] == []  # 一个都没发出去
+    assert _mint(stub, cookie)["scope"] == "write"  # 缺省 write：老脚本不用改
+    assert _mint(stub, cookie, name="<b>名字</b>")["name"] == "<b>名字</b>"  # 原样存，转义是显示方的事
+
+
+def test_token_table_is_bounded_and_expired_entries_are_pruned(tmp_path):
+    tfile = tmp_path / "t.json"
+    env = {"AUTH_PASSWORD": PW, "AUTH_TOKENS_FILE": str(tfile)}
+    s = Stub(env)
+    try:
+        _, cookie = s.login(password=PW)
+        first = _mint(s, cookie, "report")
+        for _ in range(99):
+            _mint(s, cookie, "report")
+        status, data = _http_token(s, cookie, {"scope": "report"})
+        assert status == 409 and data["error"] == "too_many_tokens"
+        assert len(json.loads(tfile.read_text())["tokens"]) == 100
+        r = _cli({**env, **SECRET_ENV}, "token")
+        assert r.returncode != 0 and not r.stdout and "100" in r.stderr
+        # 单个吊销 = 删记录，名额立即回来（面板与命令行都是这么劝人的）
+        assert s.req("POST", "/api/auth/tokens/revoke", {"tokenId": first["id"]}, cookie=cookie)[0] == 204
+        assert len(json.loads(tfile.read_text())["tokens"]) == 99
+        assert _http_token(s, cookie, {})[0] == 201
+        assert _http_token(s, cookie, {})[0] == 409
+        assert s.req("POST", "/api/auth/tokens/revoke", {}, cookie=cookie)[0] == 204
+        assert json.loads(tfile.read_text())["tokens"] == {}
+        assert _http_token(s, cookie, {})[0] == 201
+    finally:
+        s.stop()
+    # 到期的条目在下一次写文件时清掉，列表里也不出现
+    tfile2 = tmp_path / "t2.json"
+    env2 = {"AUTH_PASSWORD": PW, "AUTH_TOKENS_FILE": str(tfile2), "AUTH_TOKEN_DAYS": "0"}
+    s = Stub(env2)
+    try:
+        _, cookie = s.login(password=PW)
+        old = [_mint(s, cookie)["id"] for _ in range(5)]  # 有效期 0：一发出来就到期
+        time.sleep(1.1)
+        assert json.loads(s.req("GET", "/api/auth/tokens", cookie=cookie)[2])["tokens"] == []
+        fresh = _mint(s, cookie)["id"]
+        assert set(json.loads(tfile2.read_text())["tokens"]) == {fresh} and fresh not in old
+    finally:
+        s.stop()
+
+
+def test_cli_scopes_list_and_revoke_token(stub, users):
+    r = _cli({**users, **SECRET_ENV}, "token", "alice", "--scope", "report", "--name", "ci agent")
+    assert r.returncode == 0 and r.stdout.startswith("hct2.") and ".report." in r.stdout
+    tok = r.stdout.strip()
+    assert tok not in r.stderr and tok.rsplit(".", 1)[1] not in r.stderr  # 令牌只在标准输出
+    jti = tok.split(".")[5]
+    assert jti in r.stderr and "report" in r.stderr
+    write = _token_cli(users, "alice")  # 缺省 write
+    assert ".write." in write
+    time.sleep(2.6)
+    assert _v(stub, "POST", START, tok)[0] == 204 and _v(stub, "GET", "/api/core/views/tree", tok)[0] == 403
+    listing = _cli(users, "tokens", "alice")
+    assert listing.returncode == 0 and f"{jti}\treport\t有效" in listing.stdout and "ci agent" in listing.stdout
+    assert tok not in listing.stdout and tok.rsplit(".", 1)[1] not in listing.stdout
+    assert _cli(users, "tokens", "bob").stdout == ""
+    assert jti in _cli(users, "tokens").stdout  # 不给名字 = 全部身份
+    assert _cli(users, "revoke-token", jti).returncode == 0
+    time.sleep(2.6)
+    assert _v(stub, "POST", START, tok)[0] == 401
+    assert _v(stub, "POST", "/api/core/events", write)[0] == 204
+    assert jti not in _cli(users, "tokens", "alice").stdout  # 吊销 = 删记录
+    for args in (("revoke-token", "nope"), ("revoke-token",), ("revoke-token", "0000000000000000"),
+                 ("token", "alice", "--scope", "admin"), ("token", "alice", "--scope"),
+                 ("token", "alice", "--name", "x" * 65), ("token", "alice", "--name", "a\x1bb"),
+                 ("revoke", "alice", "--scope", "read")):
+        r = _cli({**users, **SECRET_ENV}, *args)
+        assert r.returncode != 0 and not r.stdout, args
+
+
+def test_tokens_never_reach_the_log(tmp_path):
+    env = {"AUTH_PASSWORD": PW, "AUTH_TOKENS_FILE": str(tmp_path / "t.json")}
+    s = Stub(env)
+    secrets_seen = []
+    try:
+        _, cookie = s.login(password=PW)
+        for scope in ("report", "read", "write"):
+            tok = _mint(s, cookie, scope, "log-check")
+            secrets_seen += [tok["token"], tok["token"].rsplit(".", 1)[1]]
+            _v(s, "POST", START, tok["token"])
+            _v(s, "GET", "/api/core/views/tree", tok["token"])
+            s.req("POST", "/api/auth/tokens", {}, headers={"Authorization": f"Bearer {tok['token']}"})
+            s.req("POST", "/api/auth/tokens/revoke", {"tokenId": tok["id"]}, cookie=cookie)
+            _v(s, "POST", START, tok["token"])
+        s.req("GET", "/api/auth/tokens", cookie=cookie)
+        _v(s, "POST", START)
+        secrets_seen.append(cookie.partition("=")[2])
+    finally:
+        s.stop()
+    log = s.proc.stderr.read()
+    assert "/api/auth/tokens" in log and "/api/auth/verify" not in log  # 别的端点照记，verify 不写日志
+    for secret in secrets_seen:
+        assert secret not in log
+
+
+# ── 进程内：verify 不碰磁盘、不抛、比较是定时安全的、重读不漏 ────────────────────────
+
+
+@pytest.fixture
+def mod(tmp_path, monkeypatch):
+    """把占位件当模块导入（配置在导入时读环境变量）。"""
+    for k in [k for k in os.environ if k.startswith("AUTH_")]:
+        monkeypatch.delenv(k)
+    monkeypatch.setenv("AUTH_PASSWORD", PW)
+    monkeypatch.setenv("AUTH_SECRET", "s" * 32)
+    monkeypatch.setenv("AUTH_TOKENS_FILE", str(tmp_path / "t.json"))
+    spec = importlib.util.spec_from_file_location("auth_stub_under_test", STUB)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    m.ACCOUNTS.refresh()  # main() 在开始服务前做的那次
+    return m
+
+
+def _headers(method="POST", uri=START, **extra):
+    h = http.client.HTTPMessage()
+    h["X-Original-Method"], h["X-Original-URI"] = method, uri
+    for k, v in extra.items():
+        h[k] = v
+    return h
+
+
+def test_verify_never_touches_the_disk(mod, monkeypatch):
+    """不变量 2：令牌、范围、单个吊销、匿名——verify 的每条路径都只读内存。"""
+    report, meta = mod.issue_device_token("", mod._shared_sess(), "report", "x")
+    revoked, rmeta = mod.issue_device_token("", mod._shared_sess(), "write", "y")
+    assert mod.revoke_token(rmeta["id"])
+    mod.EPOCHS.refresh()
+    cookie = f"{mod.COOKIE_NAME}={mod.issue_token()}"
+
+    def boom(*_a, **_k):
+        raise AssertionError("verify 碰了磁盘")
+
+    import builtins  # noqa: PLC0415
+    for target, name in ((builtins, "open"), (os, "open"), (os, "stat"), (os, "replace"), (os, "listdir"),
+                         (os.path, "exists"), (os.path, "getsize"), (mod, "load_token_state"),
+                         (mod, "token_state"), (mod, "load_users"), (mod, "_locked")):
+        monkeypatch.setattr(target, name, boom)
+    assert mod.verify_access(_headers(Authorization=f"Bearer {report}")) == (204, {"X-Nexus-Scope": "report"})
+    assert mod.verify_access(_headers("GET", "/api/core/views/tree", Authorization=f"Bearer {report}")) == (403, {})
+    assert mod.verify_access(_headers(Authorization=f"Bearer {revoked}")) == (401, {})
+    assert mod.verify_access(_headers(Authorization="Bearer garbage")) == (401, {})
+    assert mod.verify_access(_headers("GET", "/hive/", Cookie=cookie)) == (204, {})
+    assert mod.verify_access(_headers()) == (204, {"X-Nexus-Scope": "report", "X-Nexus-Anonymous": "1"})
+    assert mod.verify_access(_headers("GET")) == (401, {})
+
+
+def test_verify_turns_any_internal_error_into_401(mod, monkeypatch):
+    """不变量 3：里面哪一步抛了都是 401，不是 500。"""
+    tok, _ = mod.issue_device_token("", mod._shared_sess(), "read")
+    mod.EPOCHS.refresh()
+    assert mod.verify_access(_headers("GET", "/api/core/x", Authorization=f"Bearer {tok}"))[0] == 204
+
+    def boom(*_a, **_k):
+        raise RuntimeError("内部错误")
+
+    for name in ("scope_allows", "device_identity", "_api_area", "_report_uri", "token_tenant", "_cookie_value"):
+        with monkeypatch.context() as m:
+            m.setattr(mod, name, boom)
+            for h in (_headers("GET", "/api/core/x", Authorization=f"Bearer {tok}"), _headers(),
+                      _headers(Cookie="cockpit_session=1.x")):
+                status, extra = mod.verify_access(h)
+                assert status in (204, 401, 403) and (status == 204 or extra == {}), name
+            assert mod.verify_access(_headers("GET", "/api/core/x", Authorization=f"Bearer {tok}"))[0] in (401, 204)
+    # 令牌状态坏了（None / 形状不对）：令牌 401，别的不受影响
+    for state in (None, ("gen",), ("gen", {}, None), "x"):
+        mod.EPOCHS.state = state
+        assert mod.verify_access(_headers("GET", "/api/core/x", Authorization=f"Bearer {tok}")) == (401, {})
+        assert mod.verify_access(_headers())[0] == 204
+    assert mod.verify_access(None) == (401, {})  # 连请求头对象都不对
+    for weird in ("Bearer \x00", "Bearer " + "é" * 40, "Bearer hct2." + "." * 5000, "Bearer hct2.a.b.c.d.e.f.g"):
+        assert mod.verify_access(_headers(Authorization=weird)) == (401, {})
+
+
+def test_signatures_are_compared_in_constant_time(mod, monkeypatch):
+    """签名不对的令牌（hct1、hct2）与会话 cookie 都经 hmac.compare_digest，不是 ==。"""
+    tok, _ = mod.issue_device_token("", mod._shared_sess(), "report")
+    mod.EPOCHS.refresh()
+    calls = []
+    real = hmac.compare_digest
+
+    def spy(a, b):
+        calls.append((a, b))
+        return real(a, b)
+
+    monkeypatch.setattr(mod.hmac, "compare_digest", spy)
+    bad = tok[:-1] + ("0" if tok[-1] != "0" else "1")
+    for candidate, n in ((bad, 1), (tok, 2), (f"hct1.{int(time.time())}.0..deadbeef", 3)):
+        mod.verify_access(_headers(Authorization=f"Bearer {candidate}"))
+        assert len(calls) == n
+    mod.verify_access(_headers("GET", "/hive/", Cookie=f"{mod.COOKIE_NAME}=1.deadbeef"))
+    assert len(calls) == 4
+    # 范围不对 / 已吊销是在签名**之后**才看的：没有密钥的人分不出这些情形
+    forged = tok.replace(".report.", ".write.")
+    assert mod.device_identity(forged) is None and calls[-1][0] == forged.rsplit(".", 1)[1]
+
+
+def test_reload_notices_a_second_write_in_the_same_timestamp_tick(mod):
+    """吊销紧跟着发令牌、两次写落在同一个 mtime 刻度里：重读不能漏（否则吊销永远不生效）。"""
+    tok, meta = mod.issue_device_token("", mod._shared_sess(), "write")
+    mod.EPOCHS.refresh()
+    before = os.stat(mod.TOKENS_FILE)
+    assert mod.verify_access(_headers(Authorization=f"Bearer {tok}"))[0] == 204
+    assert mod.revoke_token(meta["id"])
+    os.utime(mod.TOKENS_FILE, ns=(before.st_atime_ns, before.st_mtime_ns))  # 把时间戳拨回上一次写的那一刻
+    assert os.stat(mod.TOKENS_FILE).st_mtime_ns == before.st_mtime_ns
+    mod.EPOCHS.refresh()
+    assert mod.verify_access(_headers(Authorization=f"Bearer {tok}")) == (401, {})
+
+
+def test_token_table_is_an_allowlist(mod):
+    """记录被删（手改文件）= 吊销；记录的租户与令牌里的不一致 = 拒绝。吊销记录回滚不了范围。"""
+    tok, meta = mod.issue_device_token("", mod._shared_sess(), "read")
+    mod.EPOCHS.refresh()
+    gen, epochs, tokens = mod.EPOCHS.state
+    ok = _headers("GET", "/api/core/x", Authorization=f"Bearer {tok}")
+    assert mod.verify_access(ok)[0] == 204
+    mod.EPOCHS.state = (gen, epochs, {})
+    assert mod.verify_access(ok) == (401, {})
+    mod.EPOCHS.state = (gen, epochs, {meta["id"]: {**tokens[meta["id"]], "tenant": "u_other"}})
+    assert mod.verify_access(ok) == (401, {})
+    # 表里把范围改成 write 也没用：范围以令牌签名里的为准
+    mod.EPOCHS.state = (gen, epochs, {meta["id"]: {**tokens[meta["id"]], "scope": "write"}})
+    assert mod.verify_access(_headers("POST", "/api/core/events", Authorization=f"Bearer {tok}")) == (403, {})
+    # 到期：看签名里的到期时刻
+    assert mod.device_identity(tok, now=int(time.time()) + mod.TOKEN_TTL + 5) is None
+    assert mod.device_identity(tok, now=int(time.time()) - 5) is None  # 还没签发
+
+
+
+def test_token_table_has_a_global_bound_and_prunes_expired_entries(mod, monkeypatch):
+    """全部身份合计有硬顶（每个身份各自 100 不够：身份数无界，含已删账号的残留）；到期的在下一次写时清掉。"""
+    monkeypatch.setattr(mod, "MAX_TOKENS_TOTAL", 5)
+    metas = [mod.issue_device_token(f"u_{i}", "s", "report")[1] for i in range(5)]  # 每个身份 1 个：各自的上限碰不到
+    with pytest.raises(mod.TooManyTokens):
+        mod.issue_device_token("u_9", "s", "report")
+    assert len(mod.load_token_state()[2]) == 5
+    assert mod.revoke_token(metas[0]["id"])  # 吊销腾出名额
+    mod.issue_device_token("u_9", "s", "report")
+    with pytest.raises(mod.TooManyTokens):
+        mod.issue_device_token("u_10", "s", "report")
+    # 到期的在下一次写时先清掉：有效期 0 的令牌发多少个都撑不满上限
+    monkeypatch.setattr(mod, "MAX_TOKENS_TOTAL", 1)
+    monkeypatch.setattr(mod, "TOKEN_TTL", 0)
+    for i in range(3):
+        mod.revoke_identity(f"u_{i}"), mod.revoke_identity("u_9")
+    mod.revoke_identity("u_3"), mod.revoke_identity("u_4")
+    assert mod.load_token_state()[2] == {}
+    for i in range(4):
+        mod.issue_device_token("x", "s", "report")
+    assert len(mod.load_token_state()[2]) == 1
+
+
+def test_revoked_token_record_is_removed_not_kept(mod):
+    tok, meta = mod.issue_device_token("", mod._shared_sess(), "write")
+    assert mod.revoke_token(meta["id"]) and not mod.revoke_token(meta["id"])
+    assert meta["id"] not in mod.load_token_state()[2]
+    assert "revoked" not in meta
+    # 老文件里开发期写过的墓碑：读进来就丢
+    gen, epochs, tokens = mod.load_token_state()
+    tokens["0" * 16] = {"tenant": "", "name": "", "scope": "write", "createdAt": 1, "expiresAt": 2 ** 40, "revoked": True}
+    Path(mod.TOKENS_FILE).write_text(json.dumps({"gen": gen, "epochs": epochs, "tokens": tokens}))
+    assert "0" * 16 not in mod.load_token_state()[2]
+
+
+def test_present_but_empty_credentials_are_401_not_anonymous(mod):
+    """出示了就不降级：空的 cockpit_session、空 / 全空白的 Authorization 都是 401，不是「没带」。"""
+    assert mod.verify_access(_headers())[0] == 204  # 对照：真没带 = 匿名上报
+    assert mod.verify_access(_headers(Cookie="theme=dark; other=1"))[0] == 204  # 别的 cookie 不算出示
+    for extra in ({"Cookie": f"{mod.COOKIE_NAME}="}, {"Cookie": f"a=1; {mod.COOKIE_NAME}=; b=2"},
+                  {"Cookie": f"{mod.COOKIE_NAME}"}, {"Authorization": ""}, {"Authorization": "   "},
+                  {"Authorization": " \t"}, {"Authorization": "Bearer"}, {"Authorization": "Basic"}):
+        assert mod.verify_access(_headers(**extra)) == (401, {}), extra
+
+
+def test_verify_writes_no_log_but_other_endpoints_do(mod, monkeypatch, capsys):
+    """不变量 2：verify 不做同步日志 IO（200 / 401 / 403 / 内部错误→401 全部），别的端点照记。"""
+    import threading  # noqa: PLC0415
+    from http.server import ThreadingHTTPServer  # noqa: PLC0415
+
+    report, _ = mod.issue_device_token("", mod._shared_sess(), "report")
+    mod.EPOCHS.refresh()
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), mod.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    def get(path, headers):
+        c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=10)
+        c.request("GET", path, headers=headers)
+        r = c.getresponse()
+        r.read()
+        c.close()
+        return r.status
+
+    api = {"X-Original-Method": "POST", "X-Original-URI": START}
+    try:
+        capsys.readouterr()
+        assert get("/api/auth/verify", {**api, "Authorization": f"Bearer {report}"}) == 204
+        assert get("/api/auth/verify", {**api, "Authorization": "Bearer nope"}) == 401
+        assert get("/api/auth/verify", {"X-Original-Method": "GET", "X-Original-URI": "/api/core/views/tree",
+                                        "Authorization": f"Bearer {report}"}) == 403
+        monkeypatch.setattr(mod, "_verify", lambda _h: 1 / 0)
+        assert get("/api/auth/verify", api) == 401
+        out = capsys.readouterr()
+        assert out.err == "" and out.out == ""
+        assert get("/api/auth/health", {}) == 200 and get("/nope", {}) == 404  # 对照：别的端点照记
+        assert capsys.readouterr().err.count("[auth-stub]") == 2
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+# ── 账号 / 匿名的判定不许往宽的一边漂：任何不确定 = 匿名关（见 Accounts 的文档）──────────────
+
+
+def _anon(mod) -> bool:
+    return mod.verify_access(_headers())[0] == 204
+
+
+def _health(mod):
+    import threading  # noqa: PLC0415
+    from http.server import ThreadingHTTPServer  # noqa: PLC0415
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), mod.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=10)
+        c.request("GET", "/api/auth/health")
+        return c.getresponse().read()
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+@pytest.fixture
+def accts(mod, tmp_path, monkeypatch):
+    f = tmp_path / "users.json"
+    monkeypatch.setattr(mod, "USERS_FILE", str(f))
+    return mod, f
+
+
+def _good_users(f, n=1):
+    f.write_text(json.dumps({"users": {f"u{i}": {"id": f"id{i}", "sess": "ab"} for i in range(n)}}))
+
+
+def test_anonymous_off_when_accounts_file_exists_but_cannot_be_read_at_start(accts):
+    mod, f = accts
+    for junk in ("{坏的", "", '{"users": ', "{}", '{"users": []}', '{"users": {"a": {}}}'):
+        f.write_text(junk)
+        mod.ACCOUNTS.__init__()  # 重新开始：从没读成功过
+        mod.ACCOUNTS.refresh()
+        assert not mod.ACCOUNTS.known and not _anon(mod), junk
+        assert json.loads(_health(mod))["anonymousReport"] is False
+
+
+def test_anonymous_off_when_accounts_path_is_a_directory(accts):
+    mod, f = accts
+    f.mkdir()
+    mod.ACCOUNTS.refresh()
+    assert not mod.ACCOUNTS.known and not _anon(mod)
+
+
+def test_anonymous_off_when_accounts_file_is_unreadable_or_parent_not_a_directory(accts, tmp_path):
+    mod, f = accts
+    _good_users(f)
+    f.chmod(0)
+    try:
+        if not os.access(f, os.R_OK):
+            mod.ACCOUNTS.refresh()
+            assert not mod.ACCOUNTS.known and not _anon(mod)
+    finally:
+        f.chmod(0o600)
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x")
+    mod.USERS_FILE = str(blocker / "users.json")  # ENOTDIR：不是 ENOENT，不算「确定没有」
+    mod.ACCOUNTS.__init__()
+    mod.ACCOUNTS.refresh()
+    assert not mod.ACCOUNTS.known and not _anon(mod)
+
+
+def test_confirmed_absent_file_keeps_single_user_anonymous_until_it_appears(accts):
+    mod, f = accts
+    mod.ACCOUNTS.refresh()
+    assert mod.ACCOUNTS.known and _anon(mod)  # 对照：确定没有账号文件 = 单人模式
+    f.write_text('{"users": {"u": {"id": "i", "sess"')  # 创建到一半：不是「没有」
+    mod.ACCOUNTS.refresh()
+    assert not mod.ACCOUNTS.known and not _anon(mod)
+    _good_users(f)  # 写完：可读了，账号模式，匿名关
+    mod.ACCOUNTS.refresh()
+    assert mod.ACCOUNTS.by_id and not _anon(mod)
+
+
+def test_accounts_view_survives_file_turning_bad_or_vanishing(accts):
+    mod, f = accts
+    _good_users(f, 2)
+    mod.ACCOUNTS.refresh()
+    good = dict(mod.ACCOUNTS.by_id)
+    assert good and not _anon(mod)
+    for bad in ("{坏的", "", "{}"):
+        f.write_text(bad)
+        mod.ACCOUNTS.refresh()
+        assert mod.ACCOUNTS.by_id == good and mod.ACCOUNTS.known and not _anon(mod), bad
+    f.unlink()
+    mod.ACCOUNTS.refresh()
+    assert mod.ACCOUNTS.by_id == good and not _anon(mod)  # 删了也不退回「没有账号」
+    f.mkdir()
+    mod.ACCOUNTS.refresh()
+    assert mod.ACCOUNTS.by_id == good and not _anon(mod)
+
+
+def test_failed_refresh_never_resets_known_to_permissive_nor_half_updates(accts):
+    mod, f = accts
+    _good_users(f)
+    mod.ACCOUNTS.refresh()
+    before = (dict(mod.ACCOUNTS.by_id), mod.ACCOUNTS.known, mod.ACCOUNTS._mtime)
+    f.write_text(json.dumps({"users": {"ok": {"id": "x", "sess": "s"}, "bad": {"id": "y"}}}))  # 第二个缺 sess：整份不用
+    mod.ACCOUNTS.refresh()
+    assert (mod.ACCOUNTS.by_id, mod.ACCOUNTS.known, mod.ACCOUNTS._mtime) == before
+    # 读成功过且账号为空，之后读坏：回到「不知道」，匿名关（不沿用「没有账号」）
+    f.write_text('{"users": {}}')
+    mod.ACCOUNTS.refresh()
+    assert mod.ACCOUNTS.known and not mod.ACCOUNTS.by_id and _anon(mod)
+    f.write_text("{坏的")
+    mod.ACCOUNTS.refresh()
+    assert not mod.ACCOUNTS.known and not _anon(mod)
+
+
+def test_garbage_anonymous_switch_refuses_to_start_but_unset_is_on():
+    base = {k: v for k, v in os.environ.items() if not k.startswith("AUTH_")}
+    for raw in ("maybe", "2", "enabled", "tru"):
+        r = subprocess.run([sys.executable, str(STUB)], env={**base, "AUTH_PASSWORD": PW, "AUTH_ANONYMOUS_REPORT": raw},
+                           capture_output=True, text=True, timeout=10)
+        assert r.returncode != 0 and "AUTH_ANONYMOUS_REPORT" in r.stderr, raw  # 不静默当开，也不起来
+    s = Stub({"AUTH_PASSWORD": PW})  # 没设：缺省开
+    try:
+        assert json.loads(s.req("GET", "/api/auth/health")[2])["anonymousReport"] is True
+    finally:
+        s.stop()
+
+
+def _live_token(mod, scope="report"):
+    tok, meta = mod.issue_device_token("", mod._shared_sess(), scope)
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is not None
+    return tok, meta
+
+
+def _rev(mod) -> int:
+    return json.loads(Path(mod.TOKENS_FILE).read_text())["rev"]
+
+
+def test_token_view_unchanged_file_keeps_cache_changed_unreadable_file_rejects_all_then_recovers(mod):
+    """别的进程（命令行）刚吊销过东西、文件随后读不出：不沿用还留着那个令牌的旧视图；修好后恢复。"""
+    tok, meta = _live_token(mod)
+    other, _ = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is not None  # 对照：没变的文件沿用缓存
+    good = f.read_text()
+    # 「另一个进程」吊销：直接改文件（rev +1），本进程的视图还没刷新
+    data = json.loads(good)
+    del data["tokens"][meta["id"]]
+    data["rev"] += 1
+    revoked = json.dumps(data)
+    f.write_text(revoked)
+    assert mod.device_identity(tok) is not None  # 文档写明的 RELOAD_EVERY 延迟，不是绕过
+    for bad in ("{坏的", "", json.dumps({"gen": "g"}), json.dumps({"gen": "g", "epochs": {}, "rev": -1})):
+        f.write_text(bad)
+        mod.EPOCHS.refresh()
+        assert mod.EPOCHS.state is None and mod.device_identity(tok) is None and mod.device_identity(other) is None, bad
+    f.write_text(revoked)  # 修好了：恢复，被吊销的仍是被吊销的
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is None and mod.device_identity(other) is not None
+
+
+def test_token_file_unreadable_by_permission_rejects_all(mod):
+    tok, _ = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    f.chmod(0)
+    try:
+        if os.access(f, os.R_OK):
+            pytest.skip("root 读得了 0 权限文件")
+        mod.EPOCHS.refresh()
+        assert mod.device_identity(tok) is None
+    finally:
+        f.chmod(0o600)
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is not None
+
+
+def test_token_file_deleted_rejects_all_until_the_next_write_or_good_read(mod):
+    tok, _ = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    saved = f.read_bytes()
+    f.unlink()
+    mod.EPOCHS.refresh()
+    assert mod.EPOCHS.state is None and mod.device_identity(tok) is None
+    f.write_bytes(saved)  # 原样放回（rev 相同）：采用
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is not None
+    # 重启后删文件 = 这一代作废（文件是事实）：新视图读到的是新建的一代
+    f.unlink()
+    mod.EPOCHS.__init__()
+    mod.EPOCHS.refresh()
+    fresh, _ = mod.issue_device_token("", mod._shared_sess(), "report")
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(fresh) is not None and mod.device_identity(tok) is None
+
+
+def test_token_reload_does_not_depend_on_mtime_inode_or_size(mod):
+    """同大小原地重写、时间戳还原、inode 不变：按内容比，照样读到（令牌记录的 id 换成另一个 16 位十六进制）。"""
+    tok, meta = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    st = f.stat()
+    raw = f.read_bytes()
+    with open(f, "r+b") as fh:  # 原地写：inode 不变
+        fh.write(raw.replace(meta["id"].encode(), b"f" * 16))
+    os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns))
+    after = f.stat()
+    assert (after.st_ino, after.st_size, after.st_mtime_ns) == (st.st_ino, st.st_size, st.st_mtime_ns)
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is None  # 记录对不上了：白名单拒绝
+
+
+@pytest.mark.parametrize("new_inode", [False, True])
+def test_restoring_an_older_backup_is_a_rollback_not_adopted(mod, new_inode):
+    """运维把旧备份拷回来（原地写 / 换一个新文件）：rev 倒退 → 不采用，被吊销的不复活，下一次本进程的写重新落盘。"""
+    tok, meta = _live_token(mod)
+    other, _ = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    old = f.read_bytes()
+    assert mod.revoke_token(meta["id"])
+    assert mod.device_identity(tok) is None  # 写的时候就直接换进了内存视图，不用等刷新
+    newer_rev = _rev(mod)
+    if new_inode:
+        tmp = f.with_name("restore.tmp")
+        tmp.write_bytes(old)
+        os.replace(tmp, f)
+    else:
+        f.write_bytes(old)
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is None and mod.device_identity(other) is not None  # 仍用内存里较新的
+    third, _ = mod.issue_device_token("", mod._shared_sess(), "report")  # 下一次写：以内存为底，重新落盘
+    assert _rev(mod) > newer_rev
+    assert meta["id"] not in json.loads(f.read_text())["tokens"]
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(third) is not None and mod.device_identity(tok) is None
+
+
+def _cli_write(mod, change) -> None:
+    """另一个进程（命令行）的写：没有内存视图，信文件——读、改、rev + 1、写回。"""
+    f = Path(mod.TOKENS_FILE)
+    data = json.loads(f.read_text())
+    change(data)
+    data["rev"] = data.get("rev", 0) + 1
+    f.write_text(json.dumps(data))
+
+
+def _fake_record(mod, jti="0" * 16) -> dict:
+    return {jti: {"tenant": "", "name": "cli", "scope": "report", "createdAt": 1, "expiresAt": 2 ** 40}}
+
+
+def test_file_recreated_by_another_process_is_a_new_generation_and_voids_the_old_one(mod):
+    """文件被删、别的进程重建（gen 换了）：采用新的一代——旧一代的令牌一个不留（失败方向是拒绝），吊销过的更不会回来。"""
+    tok, meta = _live_token(mod)
+    assert mod.revoke_token(meta["id"])
+    other, _ = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    f.unlink()
+    f.write_text(json.dumps({"rev": 1, "gen": "somenewgeneration", "epochs": {}, "tokens": {}}))
+    mod.EPOCHS.refresh()
+    assert mod.EPOCHS.state is not None and mod.EPOCHS.state[0] == "somenewgeneration"
+    assert mod.device_identity(tok) is None and mod.device_identity(other) is None
+
+
+def test_backup_from_a_generation_this_process_already_left_is_not_adopted(mod):
+    """跨代的旧备份：本进程离开过的 gen 再出现 → 不认，全部拒绝；本进程下一次写重新落盘。"""
+    tok, _ = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    old_gen_file = f.read_bytes()
+    f.unlink()
+    f.write_text(json.dumps({"rev": 1, "gen": "somenewgeneration", "epochs": {}, "tokens": {}}))
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is None
+    f.write_bytes(old_gen_file)  # 旧一代的备份被拷回来
+    mod.EPOCHS.refresh()
+    assert mod.EPOCHS.state is None and mod.device_identity(tok) is None
+    fresh, _ = mod.issue_device_token("", mod._shared_sess(), "report")
+    assert json.loads(f.read_text())["gen"] == "somenewgeneration"
+    assert mod.device_identity(fresh) is not None and mod.device_identity(tok) is None
+
+
+@pytest.mark.parametrize("new_inode", [False, True])
+def test_cli_revoke_on_a_restored_backup_is_honoured_and_never_undone(mod, new_inode):
+    """审核 C / E：旧备份拷回来之后命令行在那份旧文件上吊销 A（rev 仍比内存小）。A 必须失效，之后的网页写也不能把它写回去。"""
+    a, a_meta = _live_token(mod)
+    b, _ = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    backup = f.read_bytes()
+    later, _ = _live_token(mod)
+    _live_token(mod)
+    if new_inode:
+        tmp = f.with_name("restore.tmp")
+        tmp.write_bytes(backup)
+        os.replace(tmp, f)
+    else:
+        f.write_bytes(backup)
+    _cli_write(mod, lambda d: d["tokens"].pop(a_meta["id"]))  # 命令行 revoke-token A
+    assert _rev(mod) < mod.EPOCHS._good[0]
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(a) is None  # 吊销生效
+    assert mod.device_identity(b) is not None  # 两边都有的照常
+    assert mod.device_identity(later) is None  # 备份之后发的：分叉，保守起见失效
+    mod.EPOCHS.repair()  # 后台线程马上把内存视图重新落盘
+    on_disk = json.loads(f.read_text())
+    assert a_meta["id"] not in on_disk["tokens"] and on_disk["rev"] > mod.EPOCHS._good[0] - 1
+    mod.issue_device_token("", mod._shared_sess(), "report")  # 之后的网页写
+    mod.EPOCHS.refresh()
+    assert a_meta["id"] not in json.loads(f.read_text())["tokens"] and mod.device_identity(a) is None
+
+
+def test_cli_identity_revoke_on_a_restored_backup_is_honoured(mod):
+    """审核 C2：旧备份上做整身份吊销（纪元 +1）：纪元按较大的并进来，之前发的令牌全部失效。"""
+    a, _ = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    backup = f.read_bytes()
+    _live_token(mod)
+    f.write_bytes(backup)
+
+    def revoke_all(d):
+        d["epochs"][""] = d["epochs"].get("", 0) + 1
+        d["tokens"].clear()
+    _cli_write(mod, revoke_all)
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(a) is None and mod.EPOCHS.state[1].get("") == 1
+
+
+def test_epochs_lifted_by_memory_are_persisted_when_a_stale_file_advances_past_memory(mod):
+    """终审：旧备份拷回来（纪元低），命令行写到 rev 超过内存：正常前进路径也要把更高的纪元补写回文件，否则重启后吊销过的令牌复活。"""
+    mod.token_state()  # 先落一份没有令牌的文件当「旧备份」
+    f = Path(mod.TOKENS_FILE)
+    backup = f.read_bytes()
+    a, _ = _live_token(mod)
+    mod.revoke_identity("")  # 内存与文件纪元 +1
+    assert mod.device_identity(a) is None
+    f.write_bytes(backup)
+    while _rev(mod) <= mod.EPOCHS._good[0]:
+        _cli_write(mod, lambda d: None)
+    mod.EPOCHS.refresh()
+    assert mod.EPOCHS.state[1].get("") == 1 and mod.EPOCHS._diverged
+    mod.EPOCHS.repair()
+    assert json.loads(f.read_text())["epochs"].get("") == 1
+
+
+def test_equal_rev_with_different_content_cannot_resurrect_a_web_revoked_token(mod):
+    """审核 D：网页吊销 T 之后旧备份拷回来，命令行在旧文件上随便写一次，rev 正好追平内存、内容里还带着 T。"""
+    t, t_meta = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    backup = f.read_bytes()
+    assert mod.revoke_token(t_meta["id"])
+    f.write_bytes(backup)
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(t) is None
+    f.write_bytes(backup)  # 假设修复还没来得及写：命令行看到的仍是旧文件
+    _cli_write(mod, lambda d: d["tokens"].update(_fake_record(mod)))  # 命令行发一个令牌
+    assert _rev(mod) == mod.EPOCHS._good[0]
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(t) is None
+    mod.EPOCHS.repair()
+    assert t_meta["id"] not in json.loads(f.read_text())["tokens"]
+
+
+def test_a_revoked_id_never_comes_back_even_from_a_file_with_a_higher_rev(mod):
+    """分叉的那一支写了很多次、rev 反超内存：照 rev 是「正常前进」，但作废过的 id 仍然不认，并被重新落盘清掉。"""
+    t, t_meta = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    backup = json.loads(f.read_text())
+    assert mod.revoke_token(t_meta["id"])
+    backup["rev"] = mod.EPOCHS._good[0] + 5
+    f.write_text(json.dumps(backup))
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(t) is None and mod.EPOCHS._diverged
+    mod.EPOCHS.repair()
+    assert t_meta["id"] not in json.loads(f.read_text())["tokens"] and not mod.EPOCHS._diverged
+
+
+def test_normal_cli_writes_are_adopted_without_any_repair(mod):
+    """不分叉的日常：命令行在最新文件上发 / 吊销，网关照常读到，不触发重新落盘。"""
+    a, a_meta = _live_token(mod)
+    b, _ = _live_token(mod)
+    _cli_write(mod, lambda d: d["tokens"].pop(a_meta["id"]))
+    before = Path(mod.TOKENS_FILE).read_bytes()
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(a) is None and mod.device_identity(b) is not None and not mod.EPOCHS._diverged
+    mod.EPOCHS.repair()
+    assert Path(mod.TOKENS_FILE).read_bytes() == before
+
+
+def test_background_thread_survives_any_step_failing(mod, monkeypatch):
+    """后台线程不能因为一步抛了就死（视图会停在旧的）：日志写不出、刷新出错都吞掉，下一轮照跑。"""
+    calls = []
+
+    class Stop(BaseException):
+        pass
+
+    def sleep(_):
+        calls.append("tick")
+        if calls.count("tick") > 2:
+            raise Stop
+
+    def boom():
+        calls.append("boom")
+        raise RuntimeError("x")
+    monkeypatch.setattr(mod.time, "sleep", sleep)
+    monkeypatch.setattr(mod.ACCOUNTS, "refresh", boom)
+    monkeypatch.setattr(mod.sys, "stderr", None)  # 连日志都写不出
+    with pytest.raises(Stop):
+        mod._watch()
+    assert calls.count("boom") == 2
+
+
+def test_refresh_that_read_before_an_in_process_revoke_cannot_overwrite_it(mod):
+    """进程内竞争：刷新读到了吊销之前的文件，吊销随后落盘并换进内存，刷新才处理它读到的旧字节。"""
+    tok, meta = _live_token(mod)
+    stale = Path(mod.TOKENS_FILE).read_bytes()  # 刷新线程读到的
+    assert mod.revoke_token(meta["id"])  # 网页吊销：同一把锁里写文件 + 换内存视图
+    with mod.EPOCHS._lock:
+        mod.EPOCHS._adopt_locked(stale)  # 刷新线程这时才拿到锁、处理旧字节
+    assert mod.device_identity(tok) is None
+
+
+def test_legacy_file_without_rev_counts_as_zero_and_is_upgraded_on_first_write(mod):
+    tok, meta = _live_token(mod)
+    f = Path(mod.TOKENS_FILE)
+    data = json.loads(f.read_text())
+    del data["rev"]
+    f.write_text(json.dumps(data))
+    mod.EPOCHS.__init__()  # 重启
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is not None and mod.EPOCHS._good[0] == 0
+    assert mod.revoke_token(meta["id"])
+    assert _rev(mod) == 1  # 升级：写出带 rev 的文件
+
+
+def test_identity_epoch_never_goes_down(mod):
+    tok, _ = _live_token(mod, "write")
+    mod.revoke_identity("")
+    f = Path(mod.TOKENS_FILE)
+    data = json.loads(f.read_text())
+    assert data["epochs"][""] == 1
+    data["epochs"][""] = 0  # 手改 / 回滚：rev 更大但纪元被拉低
+    data["rev"] += 5
+    f.write_text(json.dumps(data))
+    mod.EPOCHS.refresh()
+    assert mod.EPOCHS.state[1][""] == 1 and mod.device_identity(tok) is None
+
+
+def test_every_write_bumps_rev(mod):
+    _, meta = _live_token(mod)
+    revs = [_rev(mod)]
+    mod.revoke_token(meta["id"])
+    revs.append(_rev(mod))
+    mod.revoke_identity("")
+    revs.append(_rev(mod))
+    assert revs == sorted(set(revs)) and len(revs) == 3
+
+
+def test_hct2_needs_its_record_and_hct1_stays_dead_after_epoch_bump_across_restart(mod):
+    tok, meta = _live_token(mod, "write")
+    f = Path(mod.TOKENS_FILE)
+    gen = json.loads(f.read_text())["gen"]
+    # hct1：只验不发，自己按老格式签一个
+    payload = f"{mod.TOKEN_PREFIX}.{int(time.time())}.0."
+    hct1 = f"{payload}.{mod._sign_device(payload, mod._shared_sess(), gen, 'device')}"
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(hct1) == ("", "write")
+    # 记录没了（被清掉 / 表被改）≠ 老令牌放行
+    data = json.loads(f.read_text())
+    del data["tokens"][meta["id"]]
+    data["rev"] += 1
+    f.write_text(json.dumps(data))
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(tok) is None
+    # 身份纪元 +1：hct1 死；重启（全新的视图对象读文件）也死
+    mod.revoke_identity("")
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(hct1) is None
+    mod.EPOCHS.__init__()
+    mod.EPOCHS.refresh()
+    assert mod.device_identity(hct1) is None

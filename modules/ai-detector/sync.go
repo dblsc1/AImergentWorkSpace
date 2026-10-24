@@ -57,6 +57,7 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 	wasActive := st.Active
 	st.Active = active
 	if !active {
+		st.RecordsCursor = time.Time{} // 关 / 暂停期间的活动以后也不补传（原始记录流同理）
 		// 这里之前不许有任何网络请求（连本机 ActivityWatch 都不读）——测试锁住。
 		if !cfg.Enabled {
 			return "同步未开启（enabled=false），不读取、不上传", nil
@@ -66,10 +67,12 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 	if cfg.CockpitURL == "" || cfg.DeviceToken == "" || cfg.DeviceID == "" {
 		// 配不全等于还没真正开起来：记成不活跃，配好之后从那一刻开始记，不补传之前的。
 		st.Active = false
+		st.RecordsCursor = time.Time{}
 		return "", fmt.Errorf("配置不全：cockpitUrl / deviceToken / deviceId 都要有，不上传")
 	}
 	if !wasActive || st.Cursor.IsZero() {
 		st.Cursor = now
+		st.RecordsCursor = now // 原始记录同样从此刻起记；网页上没开记录时 recordsRound 下一轮会清掉
 		return "刚开启（或刚恢复），从现在开始记录；之前的活动不上传", nil
 	}
 	if back := minutes(cfg.MaxBacklogHours * 60); back > 0 && now.Sub(st.Cursor) > back {
@@ -91,6 +94,7 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 	if err := cfg.Privacy.check(); err != nil {
 		return "", err
 	}
+	recCfg := cfg // 原始记录不受「升级后第一轮按老切法」影响
 	legacy := !st.SentReady
 	if legacy {
 		// 升级后的第一轮按老切法（不按标签页分、短碎片也留着）：见 State.SentReady。
@@ -117,10 +121,18 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 	if cfg.Idle.FocusAppsEnabled {
 		lookback = max(lookback, minutes(focusMax(cfg.Idle)))
 	}
-	data, err := aw.fetch(st.Cursor.Add(-lookback), now, cfg.WindowBucket, cfg.AfkBucket)
+	from := st.Cursor
+	if rc := st.RecordsCursor; !rc.IsZero() && rc.Before(from) {
+		from = rc
+	}
+	data, err := aw.fetch(from.Add(-lookback), now, cfg.WindowBucket, cfg.AfkBucket)
 	if err != nil {
 		return "", err
 	}
+	// 网页上存过规则就用网页的（detector.rules.v1），否则 / 拉不到用本机 rules.json。段与原始记录共用，需要时才拉。
+	rulesOnce := sync.OnceValues(func() ([]rule, error) { return rulesForRound(cfg, cockpit, base) })
+	// 原始记录是独立的一条流：它的成败不影响下面段的上传，反之亦然（它只在这里写 st.RecordsCursor，日志里报错）。
+	recordsRound(recCfg, st, now, data, rulesOnce, withPolicy(hc, uploadTimeout, sameHostOnly), base)
 	// 游标之后已经送达的活动先挖掉（几条流交叠、游标停在没收口的段的开始处时才会有，见 State.Sent）。
 	frags := unsent(buildFragments(data, st.Cursor, now, newRedactor(cfg)), st.Sent)
 	// 普通、无操作、各标签页的流各自合并，段的墙钟跨度彼此可能交叠。
@@ -135,8 +147,7 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 		return fmt.Sprintf("没有收口的段（%d 个碎片）", len(frags)), nil
 	}
 
-	// 网页上存过规则就用网页的（detector.rules.v1），否则 / 拉不到用本机 rules.json。
-	rules, err := rulesForRound(cfg, cockpit, base)
+	rules, err := rulesOnce()
 	if err != nil {
 		// 本机规则写坏了就不上传：带着「全部认不出」上传不丢数据，但用户会以为规则失效了还没察觉。
 		// 停在这里，日志里天天报，游标不动，改好规则后一次补上。

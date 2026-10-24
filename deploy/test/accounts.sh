@@ -20,7 +20,7 @@ login() {  # jar 账号 密码 → 状态码
 }
 
 check "登录页知道开了账号登录" \
-  "$("${C[@]}" "$BASE/api/auth/health")" '{"status":"ok","accounts":true,"sharedPassword":false}'
+  "$("${C[@]}" "$BASE/api/auth/health")" '{"status":"ok","accounts":true,"sharedPassword":false,"anonymousReport":false}'
 check "alice 登录" "$(login "$A" alice "$PW")" 204
 check "bob 登录" "$(login "$B" bob "$PW")" 204
 check "密码错 401" "$(login /dev/null alice wrong-password)" 401

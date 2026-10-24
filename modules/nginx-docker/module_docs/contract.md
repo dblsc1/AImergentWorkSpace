@@ -49,13 +49,116 @@ consumes:
 
 来自各前端 `module.yaml` 的 `static[].nav`（页签文字）、`home`、`timer`。没装的前端没有页签。
 页签顺序 = 安装时的模块顺序。缺省组装（手写的 `deploy/` 与 `install.sh add hive ring assistant`）是三个：
-**任务、计时、AI助理**（v0.3 追加第三个，`modules/assistant`；两份组装的 `$honeycomb_nav` 逐字相同，`tools/test_install.py` 核对）。
+**任务、计时、待批准、自动记录**（v0.3 追加第三个待批准，`modules/assistant`；2026-10-14 追加第四个「自动记录」`/auto/`，同一个模块的第二个 `static:`；两份组装的 `$honeycomb_nav` 逐字相同，`tools/test_install.py` 核对）。
 
 ## 计时芯片即时刷新（v0.2.1）
 
 芯片每 10 秒拉一次 `<前缀>__cockpit/current`。页面自己开始 / 停止 / 取消计时成功后，
 在 `window` 上发一个 `honeycomb:timer-changed` 事件（无 detail），顶栏立刻重拉一次，
 不必等下一个 10 秒。hive 与 ring 都发；自己接进来的前端要芯片跟得上，也发这一个。
+
+## 芯片上写什么名字（v0.4，2026-10-08）
+
+计时中芯片写任务名。**例外**：`task.kind === "unclassified"`（nexus-core v2.9，项目的「未分类」时间桶，
+蜂巢长按项目格起的计时）时只写**项目名**，不写「未分类」（仓主 2026-10-08）。老后端没有 `kind` 键 = 照旧写任务名。
+
+## 自动跟踪（v0.4，2026-10-08）
+
+nexus-core v2.14「自动跟踪进行中的任务」在 `views.current.v1`（也就是 `/__cockpit/current`）上追加了两个可空键
+`auto` / `needsChoice`（只在没在计时时可能非 null；开关缺省关 = 恒为 null；老后端没有这两个键 = 当 null）。
+顶栏只读这同一份响应，**不多发任何请求**（预览没打开时仍然一次泳道都不拉）：
+
+- **`auto` 非 null、没在计时、本机也没有暂停记忆**：`nav` 上加 `data-ckpt-auto`，芯片的字写
+  「自动 · 项目 / 任务」（只到项目时「自动 · 项目」），读数从 `auto.since` 起每秒走。样子与手动计时分得开：
+  `--plan` 色虚线边 + 空心点、不呼吸；`data-ckpt-timer` 仍是 `idle`（它不是手动计时）。
+- **`needsChoice` 非 null、没在计时**：`nav` 上加 `data-ckpt-choice`，芯片末尾出一个 `--warn` 小点（`.ckpt-need`，
+  `aria-hidden`），芯片的 `title` 与 `aria-label` 追加「有个窗口不知道记到哪 —— 去计时页选」；芯片本来就是去计时页的
+  链接，那张卡在计时页（`modules/ring` 契约 2026-10-08 条）。可以与 `auto` 同时出现。
+- **手动计时永远优先**：`running` 为真时两样都不出现（服务端此时也给 null）；本机「已暂停」不被 `auto` 顶掉；
+  降级体（`degraded`）时两样都收掉。
+- 项目名 / 任务名只当文本渲染。
+
+共享件 `lanes.js` 同版追加（两个调用方都用）：`humanStatus()` 的返回多一个 `auto {text, since}`（没在计时且
+`human.auto` 非 null 时）；列表式（顶栏预览）最上面那行换成「我：自动 · 项目 / 任务」+ 走秒的钟，卡片式（计时页）
+在人那张卡的卡头多一粒 `hcl-st-auto` 胶囊 + 钟；钟是带 `data-hcl-since` 的 `.hcl-clock`，全页一个一秒一次的定时器
+只改这些钟的字。`render` 新增 `opts.lead`（卡片式）：调用方的一张置顶卡，摆在人那张卡之前（`data-run-id="lead"`、
+class 加 `hcl-card hcl-lead`），同一个节点跨重画搬过来（表单状态、焦点不丢），换位动效把它当一张卡。
+
+**2026-10-08 追加（nexus-core v2.15「让 AI 认窗口」）**：共享的 `static/lanes.js` 的 `humanStatus` 多回两样——
+`auto.ai`（`human.auto.source` 为 `"ai"`，`auto.text` 末尾带「（AI 认的）」，另带 `key` / `app` / `title`）与
+`thinking`（`human.aiThinking` 的窗口叫法，没有为 `null`）。卡片式（计时页）下：`thinking` 画成人那张卡头上一行小字
+「AI 正在认这个窗口…」（`.hcl-ai-thinking`，轻微呼吸，`prefers-reduced-motion` 下不动）；调用方给了 `opts.onAutoWrong`
+且 `auto.ai` 时，胶囊后面多一个「不对」按钮（`.hcl-auto-wrong`），点了调 `opts.onAutoWrong(auto)`。顶栏预览不给这个回调，
+所以没有按钮；芯片的文字、小点与请求数不变（`views/current` 的 `aiThinking` 顶栏不读）。
+
+## 此刻的焦点（v0.4，2026-10-09）
+
+仓主 2026-10-09：「蜂巢页和计时页还是没有实时显示人类当前焦点所在窗口或者任务。」nexus-core v2.16 在
+`views.current.v1`（`/__cockpit/current`）与 `views.lanes.v1` 的 `human` 上追加了可空键 `focus`（见该契约「此刻的焦点」节：
+心跳新鲜就有，与自动跟踪的开关无关；项目 / 任务由服务端认，页面**不自己认**）。
+
+**共享件 `static/focus.js`**（新文件，`window.HoneycombFocus`，纯函数、不发请求、不碰 DOM；顶栏、计时页、蜂巢三处的字
+都从它出，谁也不自己拼）。`inject.inc` 在 `navbar.js` 之前注入它（同样 `defer`，先后有保证）；计时页另在页面里直接引一次
+（重复加载是空操作）。没加载到时三处都退回本条之前的样子。
+
+- `describe(src)`：`src` 是 `views/current` 的响应或 `views/lanes` 的 `human`（只读其中的 `auto` / `focus`；
+  **有没有手动计时由调用方先判**，手动计时永远优先）。两样都没有 → `null`。否则回
+  `{state, auto, lead, target, window, chip, since, hint, projectId, projectName, taskId, taskName}`：
+  - `auto` 非 null（自动跟踪正跟着）：`auto: true`，`lead` = `chip` =「自动 · 项目 / 任务」，`since` = `auto.since`
+    （与此前的芯片、人那张卡完全一样；老后端只有 `auto` 没有 `focus` 时也走这一支）；
+  - 否则 `focus.state` 为 `"present"`：认得出目标 → `lead`「正在：项目 / 任务」（只到项目时「正在：项目」），
+    认不出 → `lead`「正在用」；`chip` =「正在：」+ 项目名（没有就用窗口，再没有就「电脑」）；`since` = `focus.since`；
+  - `focus.state` 为 `"afk"`：`lead` = `chip` =「离开」，不带目标。
+  - `target`「项目 / 任务」、`window`「程序 · 标题」（缺哪样省哪样）、`since` 是毫秒时间戳；
+    `hint` 是出处的叫法：`rules` 规则、`choice` 你选的、`ai` AI 认的、`agent-session` 来自会话、`history` 按以往，认不出为空串。
+- `clock(seconds)`：走秒的字，`MM:SS`，满一小时 `H:MM:SS`，负数按 0。
+
+**芯片**（只读已经在拉的那一份 `/__cockpit/current`，**零新增请求**）。**取代**「空闲时芯片只写『未在计时』」
+（「暂停与累计」节第一条的后半句）与上面「自动跟踪」节里芯片自己拼「自动 · …」的写法——三种字现在走同一段代码：
+
+- 手动计时在跑、本机「已暂停」、降级：**都不变**，`focus` / `auto` 不出现。
+- 否则 `describe()` 非 null：
+  - `auto`：`nav` 上 `data-ckpt-auto`，字与读数同「自动跟踪」节（不变）；
+  - 在电脑前：`nav` 上 `data-ckpt-focus="present"`，字「正在：<项目名或窗口>」，读数从 `since` 起每秒走；
+    边是 `--fact` 色**虚线**、点是 `--fact` 色实心并缓慢呼吸（`prefers-reduced-motion` 下不动）——与手动计时
+    （`--accent` 实线边）和自动跟踪（`--plan` 虚线 + 空心点）都分得开；
+  - 离开：`data-ckpt-focus="afk"`，字「离开」，读数从离开那一刻起走，整粒压暗（`--ink-3`）。
+  - 字照旧截到 22 个字宽；芯片的 `title` 是完整的一句（`lead` + 窗口），与 `needsChoice` 的提示同时有时两句都在。
+  - `data-ckpt-timer` 仍是 `idle`（这不是手动计时）；`needsChoice` 的小点照旧。
+- 都没有 →「未在计时」`00:00`，同以前。
+- 项目名 / 任务名 / 程序名 / 标题只当文本渲染。
+
+**共享件 `lanes.js`**：`humanStatus()` 的 `auto` 改由 `describe()` 出（字段与字不变）；多回一个 `focus`
+（`describe()` 的结果，在计时为 `null`）。人那张卡那行字：认得出目标且不是自动跟踪时写「正在：项目 / 任务 · 程序 · 标题」，
+否则照旧「正在用 程序 · 标题」。
+
+## 串行的注意力：蓝条「你在看」、5 秒一拉（v0.4，2026-10-09）
+
+仓主 2026-10-09：「不要按组计算。检测程序每 5 秒汇报一次，每次汇报里带各个窗口的停留时间。计时环保持『人的注意力只能串行』。
+泳道里 AI 需要有蓝色的条，代表人类把注意力放在他们身上的时间。」数据全部是 nexus-core v2.17 算好的
+（「串行的注意力时间线」节：`views.lanes.v1` 的 `agents[].attention`、`human.presence[].runId`，`focus.dwellSeconds`），
+本模块只画，**不自己合计、不自己认窗口是哪条代理**。
+
+- **顶栏轮询**：`<前缀>__cockpit/current` 从每 10 秒改为每 **5 秒**拉一次（检测程序 5 秒一拍；每 3 秒切一次窗口的人，
+  10 秒一拉总是晚一两个窗口）。页面不可见时退到每 **60 秒**，回到前台立刻拉一次。**取代**「计时芯片即时刷新」节里的
+  「每 10 秒」；`honeycomb:timer-changed` 立刻重拉不变。泳道预览仍只在打开时约 15 秒一拉。
+- **共享件 `lanes.js` / `lanes.css`**（计时页全部泳道与顶栏预览同一套）：
+  - 每条代理线分上下两小行：上面是相位条，正下方自己的一小行是**你在看**——`agents[].attention` 的每一段画一条蓝条，
+    位置按时间、与同一条时间轴对齐。蓝 = token `--attn`（`contracts/design-tokens-v1.md` v1.3）；**不单靠颜色**：它只出现在
+    这一小行里，图例写「你在看」。此刻还在变长的那一段（止于 20 秒之内、运行还在跑）右端有一道轻轻呼吸的活边，
+    `prefers-reduced-motion` 下不动。悬停：「<名字> · 你在看 · 起–止（时长）」。
+  - **取代** `interactions` 里 `attend` 的画法（半透明竖带、图例「在看」）：不再画；`reply` 的竖线不变。
+    老后端没有 `attention` → 那一小行是空的，别的照旧。
+  - 人那条线的在场细带照实画（段细到几秒一段、互不重叠，不再把短段撑到 15 秒）；`runId` 非 null 的段染成半透明的 `--attn`，
+    眼睛能把上下两处连起来。短于一分钟的段悬停说到秒（「10:18:00–10:18:03（3 秒）」）。
+  - 卡片头的统计多一句「看了 N 分」（`attentionSeconds(run, v0, v1)`：`attention` 裁到视窗后的秒数之和；没看过的不写），
+    读屏摘要同样带「，你看了 N 分」。**它是看了多久，不是记下的时间**；人同一时刻只看一个窗口，各条线的这个数不重叠。
+  - `window.HoneycombLanes` 多导出 `attentionSeconds`。全部 `textContent`，没有 `innerHTML`。
+- **共享件 `focus.js`**：`describe()` 的结果多一个键 `dwell`——`focus.dwellSeconds` 说成一句「近 2 小时在这上面 N 分」
+  （不到 1 分 / N 分 / N 小时 M 分；离开、老后端没有这个键、不是数 → 空串）。走秒的钟数的仍是**这一次**在这个窗口待了多久
+  （切走再回来从头数）；`dwell` 说的是同一个窗口累计多久。**始终只说当前这一个窗口**，不是几个窗口的合计。
+  芯片上放不下：只进芯片的 `title`（「…（近 2 小时在这上面 12 分）」）。
+- **`tokens.css`**：加 `--attn`（亮 `#0F6FBF` / 暗 `#5CB8FF`），对比度由 `scripts/check-contrast.py` 按契约核对。
 
 ## 暂停与累计（v0.2.5）
 
@@ -95,6 +198,13 @@ consumes:
   `<前缀>__cockpit/` 下服出（不设门、不含数据）。顶栏在预览**第一次打开**时才加载它；计时页（`modules/ring`
   的 `ring-lanes.js`）按 `HONEYCOMB_BASE` 加载同一份——两处的配色、段的推法、连线画法因此只有一处实现。
   对外只挂 `window.HoneycombLanes`；本文件不发请求，全部 `textContent`。
+- **换位动效**（2026-10-08 追加；仓主：「往上走的略放大、排队上去，其余飘下来」）：共享件 `lanes.js` 的 `render` 在同一个
+  容器**第二次起**的重画里，按 `data-run-id` 把位置变了的行 / 卡从旧位置滑到新位置（细则见 `modules/ring` 契约同日条）。
+  预览（列表式）因此也有：行只平移、**不放大**、没有阴影；第一次打开不动，`prefers-reduced-motion` 时不平移，
+  页面不可见时不动；不抢焦点，不引起布局位移（只动 `transform` / `opacity`）。
+- **计时页只画近的**（2026-10-08 追加；仓主：「结束超过 3 小时的不要显示」）：共享件新增导出的纯函数
+  `recentRuns(agents, now)`——在跑的都留，已结束的只留 `endAt` 距 `now` 不到 3 小时的；`render` 只在卡片式
+  （`opts.cards`，计时页）排序前用它筛。预览（列表式）照旧按「最近 1 小时」挑，**不受影响**。
 - **在场与人此刻的状态**（2026-10-03 追加，**取代**上面「不画在场细带」那半句；仓主：「我正在干活，为什么不显示」）：
   预览也画 `human.presence`——人那条线分上下两半，上半是计时记下的段（实心），下半是在场（同色系浅填，离开画斜线），
   图例加「在电脑前」「离开」。预览最上加一行人此刻的状态，与计时页人那张卡同一个判定（共享件纯函数 `humanStatus`）：
@@ -102,6 +212,14 @@ consumes:
   都没有 →「我：不在线」；在计时时改写「计时中 · HH:MM 起」，优先于前台程序。仍不写任何秒数合计；挑法、至多 4 条、
   列表式（不是计时页的卡片）都不变。共享件另导出 `sortByActivity`/`activeSeconds`/`humanStatus` 与 `render` 的
   `opts.cards`/`opts.top`（计时页卡片式用，见 `modules/ring` 契约 2026-10-03 条），预览不传、行为不变。
+- **计时页卡片排序（2026-10-08 追加，取代上条与 `modules/ring` 契约 2026-10-03 条②的排序说法）**：档位——在跑且在等你 →
+  在跑且干活 → 在跑出错 → 在跑空闲 → 已结束；同档按视窗内活跃秒数、再按最近相位转入倒序；档 ①② 永不折叠
+  （详见 `modules/ring` 契约 2026-10-08 条）。顶栏预览 `pickPreview`（≤ 4 个）的次序本就是在等 → 干活 → 其他在跑 → 已结束，不变。
+- **失联（2026-10-09 追加，nexus-core v2.18「心跳与失联」）**：`views/lanes` 里 `lost: true` 的在跑运行（会发心跳、
+  30 分钟没信号）不按「在跑」画——卡片式的胶囊是灰色「失联」（复用 `.is-ended` 的灰，不加样式），末段止于 `lastSeenAt`、
+  不闪，右边写「最后信号 HH:MM」，`data-phase="lost"`，不加 `is-needs-you`；`runInfo` 多回 `lost`，档位排在在跑空闲之后、
+  已结束之前（卡片 3.5，预览 `pickPreview` 2.5）。`outcome: "lost"` 的已结束运行胶囊写「失联结束」。读屏摘要同词。
+  顶栏芯片读的是 `views/current`，那里读前已把失联的收掉，不用改。
 
 ## AI 桥路由（v0.3）
 
@@ -109,8 +227,28 @@ consumes:
 `mcp.tools.v1`）两条受保护路由，规范写在 `contracts/gateway.v1` 第八节：`include gate.inc`、清掉转发的
 `Cookie`/`Authorization`、关缓冲（SSE）、上游运行期解析（缺了这两个服务网关照常起）、新内部网
 `honeycomb-agent-net`。手写组装与 `tools/generate.py` 两份都要加，`NGINX_ENVSUBST_FILTER` 放行
-`AGENT_UPSTREAM`。本模块的 `gate.inc` 不变。已实现：手写组装两条常驻；生成的组装由模块清单的
+`AGENT_UPSTREAM`。本模块的 `gate.inc` 不变。**v0.4 追加**：`AGENT_UPSTREAM` 缺省为空（内置聊天没开）；`api/agent/` location 里 `if ($honeycomb_agent = "") { set … "127.0.0.1:1"; }` 把空值改指回环死地址——不查 DNS、门照旧先拦（所以用 `set` 而不是 `return`，后者跑在 `auth_request` 前），已登录回 502。已实现：手写组装两条常驻；生成的组装由模块清单的
 `bridge: true` / `upstreamEnv` 产出（见 gateway.v1 第八节「实现落定」）。
+
+## 调用方范围与匿名上报（v0.4，2026-10-09）
+
+规范在 `contracts/gateway.v1` 第九节。本模块的 `nginx/gate.inc` 多四行：取认证服务 verify 回的
+`X-Nexus-Scope` / `X-Nexus-Anonymous`，覆盖着转给后端（空值不转发，客户端自带的同名头被盖掉）；原来四行不动。
+两份组装（手写的 `deploy/nginx/templates/default.conf.template` 与 `tools/generate.py`）都给门子请求加
+`X-Original-Method`，给 `<前缀>api/core/` 加匿名上报的限速区 `honeycomb_anon`。
+
+## 泳道偏好（v0.4，2026-10-09）
+
+`static/lanes.js` + `lanes.css` 对 nexus-core v2.22「泳道偏好」（`nexus-core.lanes.prefs.v1`，规范在 nexus-core 契约同名节）的画法——**追加**，既有排序 / 折叠 / 配色 / 换位动效不变：
+
+- `render()` 的 `opts.prefs`（`{onPin(run, on), onHide(run), onMove(run, index), onRestore(hidden)}`）只由计时页（`ring-lanes.js`）传；**顶栏预览不传，所以没有菜单 / 拖动 / 已隐藏**
+  （它读的同一份 `views/lanes` 已不含藏起来的代理）。`lanes.js` 仍然只画、不发请求。
+- 先后：`agents[].rank` 都是数字时按 `rank`（服务端排好的），否则退回本地的「档位 → 活跃秒数 → 最近转入」。
+- 卡上：⋯ 菜单（`role="menu"`，Esc / 方向键 / Home / End / 点外面）、「置顶」标记；在跑且没置顶的卡**长按 400 毫秒**（`LONG_PRESS_MS`，指针事件，不用库）后跟手拖动，
+  别的卡让位，松手给 `onMove(run, 在「未置顶的在跑运行」里的下标)`，Esc / `pointercancel` 放弃，拖后吞掉紧跟的 click；按下后先动超过 8 px 视为滚动 / 选字，不进拖动。
+- 区尾可折叠的「已隐藏 (N)」：每个藏起来的代理一行 +「恢复显示」；`SHOW_HIDDEN_WAITING`（缺省开）控制摘要里「· N 个在等你」那半句。
+- 菜单开着 / 正在拖时 `root.hclBusy` 为真，调用方的轮询重画先攒着；收尾在 `root` 上发 `hcl-idle`。`HoneycombLanes.optimistic(data, op)` 做乐观预演，`identKey` 是与服务端同口径的身份键。
+- 样式只取语义 token（`design-tokens-v1` 不加新 token）；`prefers-reduced-motion` 下让位的卡不加过渡、落下后的换位不平移。
 
 ## 对比度校验
 

@@ -71,6 +71,256 @@
 > 两个新端点带 `Authorization: Bearer` 一律 403。只能配到**任务**，不能只配到项目（确认必须挂具体任务，同补登）。
 > 上传端点的 `classifier` 仍只收 `rules` / `service`。见「活动建议」节「AI 匹配」。
 >
+> **v2.8（追加式）**：**AI 助理可以提议新建任务，人点「是」才建。** 仓主 2026-10-03：「AI 应该能自动加新任务」，
+> 定为「草稿 + 一键确认」——AI 从不直接写任务。`matches` 的每条可以用 `newTask: {projectId, name}` 代替 `taskId`
+> （现成任务里没有合适的时）：服务端按（租户, 项目, 归一化名字）去重成一条**新任务提议**（独立集合
+> `activity_task_proposals`，不进台账 / 投影 / 导出 / 快照恢复），建议里存 `suggestion.newTask {proposalId, projectId, name}`，
+> `taskId` 仍是 `null`。人对这条建议 `confirm`（不带 `taskId`，带 `proposalId`，可带改过的 `name`）时，才经 planner
+> **既有的建任务路径**（`guard.run_write` → `create_task`，与 `POST /api/core/planner/tasks` 同一条，留审计）用提议预留的
+> 任务 id 建任务——同一提议只建**一次**，其余段复用；`unmatch` 清掉提议并记进 `rejectedProposalIds`。confirm 响应追加 `taskId`。带 `Authorization: Bearer`
+> 的 confirm 碰到提议一律 403（设备令牌不能建任务）。既有字段、端点行为一个不改。见「活动建议」节「AI 提议新任务」。
+>
+> **v2.9（追加式）**：**每个项目一个「未分类」时间桶。** 仓主 2026-10-08：不再快捷新建只有日期时间的占位任务，
+> 时间直接记进所在项目的「未分类」总量；AI 汇总的东西在归到具体任务（或用户指定）之前也记在这里。
+> 桶是一个**系统任务**：`kind: "unclassified"`、id 由项目 id 派生（`t_unc_<projectId>`）、名字「未分类」，
+> 每个项目至多一个、第一次用到时才建——计时 / 补登 / 确认 / 台账 / 投影仍然只认 `taskId`，**没有不挂任务的时间**。
+> 新端点 `POST /api/core/planner/projects/{id}/unclassified` → `{taskId}`（取或建，幂等）；活动建议的 confirm
+> 可只带 `projectId`（服务端取或建该项目的桶，记到它上面）。桶不能经任务端点改 / 删（409），不算待办、不算进度，
+> 时间照常计入项目合计；`views.tree.v1` 的项目加 `unclassifiedTaskId`、`views.current.v1` 的 `task` 与
+> `views.gantt.v1` 的任务加 `kind`；档案读端 `GET /api/core/events` 加可选过滤 `taskId`（列出记在某个桶上的每一段）。
+> 既有字段、端点行为一个不改。见「项目未分类时间」节。
+> **v2.10（追加式）**：**AI 助理把同类的零碎窗口归成集合，并可以只把建议标到项目。** 仓主 2026-10-08：「碎片太多。
+> 让 AI 把同类型的碎片窗口放在一个集合中，按总时间自上而下排列；人可以设置集合的项目。」`matches` 的每条追加两个可选键：
+> `collection: {name}`（集合标签，服务端归一出 `key`）与 `projectId`（只到项目的建议）；给了其中之一时 `taskId` / `newTask`
+> 可以都不给（**只贴标签，不动建议的任务**，规则给了任务的建议也能贴），这时 `confidence` 也可省。两者存进
+> `suggestion.collection {key, name}` / `suggestion.projectId`，列表原样回出。**只是给页面分组、预选项目用的提示**：
+> 不新建集合、不进台账 / 投影 / 导出，confirm / unmatch / dismiss 的语义一个字不改（人说「否」不清集合标签）。
+> 上传端点不收这两个键。见「活动建议」节「AI 分集合」。
+>
+> **v2.11（追加式；v2.10 由并行的「AI 分集合」占用）**：**记在「未分类」里的一段时间可以归到具体任务，台账一个字不改。**
+> 仓主 2026-10-08：「时间记录到未分类以后，能不能追加记录『归入 xxx 任务』？不能破坏可追溯性。」新增
+> `nexus-core.sessions.reassign.v1`（`POST /api/core/sessions/{eventId}/reassign`，见「改挂未分类时间」节）：
+> 每次改挂往台账**追加**一条新事实 `session.reassigned`（哪一段、从哪个任务、到哪个任务、第几次），原来那条
+> `session.completed` 永不修改；可以再改、可以放回某个项目的「未分类」，最后一次为准，全部历史都在台账里。
+> 这一段的秒数从此算在当前归属的任务 / 项目上（圆环、甘特、回顾、时间线、MCP），投影重建与快照恢复得到同样的结果。
+> 档案读端 `GET /api/core/events` 的 `taskId` 过滤改按**当前归属**，改挂过的段追加 `currentSubject`。
+> `session.reassigned` 只由该端点写：`POST /api/core/events` 收到它一律进 `rejected`。带 `Authorization: Bearer` 403。
+> 既有字段、端点行为一个不改。
+>
+> **v2.12（追加式）**：**助理配任务之前，先看人以前是怎么定的。** 仓主 2026-10-08：「学历史是要的」「直接历史加入 AI 的上下文」
+> （不做项目别名 / 关键词表）。新增只读端点 `GET /api/core/activity/suggestions/history`（见「活动建议」节「匹配历史」）：
+> 把已确认的建议按（程序, 归一化标题）去重成「这个窗口 → 这个项目 / 任务」，最近定的在前；确认到项目「未分类」的只给项目，
+> 那一段后来被改挂过（v2.11）的给**当前**归属，任务 / 项目已删的不出。另带以前用过的集合名最近落在哪个项目、
+> 人否掉过的（窗口, 任务）。只读，不写任何东西、不自动确认任何东西；既有字段、端点行为一个不改。
+> **v2.13（追加式；v2.12 由并行的「建议历史读端」占用）**：**代理会话在源头就说出自己属于哪个项目，人的窗口跟着它走。**
+> 仓主 2026-10-08：「Claude 钩子可以做了」——不再让 AI 从窗口标题猜项目。两处追加：
+> ① `POST /api/core/agents/start` 增可选 `projectId`（不带 `taskId` 时用）：运行**只挂项目、不挂任务**，
+> 信封 `subject` 为 `{zone, project}`、无 `task`（与收件箱运行同形，只是项目是真的），代理时长照常按项目记进
+> `proj_agent_daily_stats`（`taskId: null` 那一行），`views/lanes`、`views/agent-time` 既有的 `projectId` 键回出它。
+> ② 活动建议**上传时**：一段没有任务猜测的活动，窗口标题（归一化后）与同租户、时间上有重叠的代理运行的
+> `label` / `match` **完全相等**时，服务端给它写上 `suggestion.projectId`（= 那次运行的项目）、
+> `suggestion.projectSource: "agent-session"` 与 `suggestion.collection`（以会话 `label` 命名）。
+> **只是提示**：不确认任何东西，不动任务、把握、`classifier`，不覆盖规则 / 助理 / 人的选择。
+> ③ 带同一 `clientKey` 再 start（原运行还在跑）时，这次给的 `label` / `match` 换掉存着的——会话中途改名，泳道的名字跟上。
+> 既有字段、端点行为一个不改。见「AI 代理运行」节「只挂项目的运行」「会话改名」与「活动建议」节「窗口 ↔ 代理会话」。
+>
+> **v2.14（追加式）**：**「我」此刻在做的事自动顶替进行中的计时——开关在人手里，默认关。** 仓主 2026-10-08：
+> 「保留开关：允许 / 不允许 AI 管理进行中的任务。人手动开始计时时，不要 AI 计时。人在操作但没有计时：先试死规则；
+> 规则认不出，让 AI 写规则；写不出规则、也没有现成任务对得上，提醒人选项目和任务；到这段活动结束人还没选，
+> 就走碎片流程一起归类。」本版是**第一步：除了「让 AI 写规则」之外的全部**。新增 `nexus-core.activity.auto.v1`
+> （见「自动跟踪进行中的任务」节），全部挂在 `detector.settings.v1` v1.3 的 `autoTrack`（按设备，缺省 `false`）下——
+> **关着时本版的一切行为与 v2.13 完全相同**：① 在场心跳可带 `guess`（检测程序用同一套规则对当前窗口的猜测）；
+> ② `views/lanes` 的 `human` 追加 `auto`（没有手动计时、人在电脑前、当前窗口规则认得出 → 「自动 · 项目 / 任务」）
+> 与 `needsChoice`（规则认不出的窗口停留够久 → 请人选），`views/current` 顶层追加同样的两个键（给顶栏芯片）；③ 新端点 `POST /api/core/activity/choice`、
+> `POST /api/core/activity/choice/dismiss`（人答 / 这次不选）、`GET /api/core/activity/auto`（今天自动记下的段）；
+> ④ 上传的段规则把握够高时**直接记成事实**（`ai.auto: true`，建议 `auto: true`），与人的手动计时重叠 / 无操作 /
+> 把握不够 / 目标不存在的照旧待确认；⑤ 自动记下的段可经 v2.11 的改挂端点归到别处；⑥ 规则可以只到项目
+> （`detector.rules.v1` v1.1），上传的 `suggestion` 可带 `projectId`。**「自动检测到的活动只是建议，人确认了才是事实」
+> 只在 `autoTrack` 打开时、只对规则高把握命中的段被取代**（那条规则是人写的或人点了应用的），取代条目见该节末尾。
+> 手动计时永远优先。既有字段、端点行为一个不改。
+>
+> **v2.15（追加式）**：**规则认不出的窗口，先让 AI 认一下，认不出再请人选。** 仓主 2026-10-08：「认不出，让 AI 出来写规则；
+> 写不出规则、也没有现成任务对得上，提醒人选项目和任务」「cockpit 能不能主动调 opencode 做匹配」。这是 v2.14 留的第二步，
+> 插在 `next_step` 的 `"ask_ai"` 上（见「让 AI 认窗口」节）。nexus-core 够不着聊天后端（`gateway.v1` 第八节），所以是
+> **对方来取**：聊天后端的后台工人经 MCP 定时调 ① `POST /api/core/activity/ai/claim`（此刻等 AI 认的那一个窗口，并认领），
+> 有窗口就跑一轮模型、经 MCP 调 ② `POST /api/core/activity/ai/suggest`（`{key, taskId | projectId, confidence, reason}` 或
+> `{key, none: true, reason}`）——**只在那个窗口此刻被认领着等回答时收，写下的是只认这一个窗口的一条规则**
+> （`detector.rules.v1` v1.2：带 `author: "assistant"`、`auto: true`）+ 按窗口的临时选择，`auto` 立刻显示、`source: "ai"`。
+> ③ `views/lanes` 的 `human` 与 `views/current` 顶层追加 `aiThinking`（AI 正在认的窗口，这期间它不出现在 `needsChoice`），
+> `auto` 追加 `key`、`source` 追加取值 `"ai"`；④ 人说「不对」：`POST /api/core/activity/choice/reject {key}`（只收人）撤掉 AI 写的
+> 规则与临时选择；⑤ `GET /api/core/activity/auto` 每条追加 `ai`。**没人来认领（没装 / 没配聊天后端）时一切与 v2.14 完全相同，
+> 一秒也不多等。** 这是「AI 只能写规则草稿、应用要人点」的**第二条取代条目**（只对被认领的那一个窗口、只在 `autoTrack` 打开时），
+> 见该节末尾；`propose_detector_rules` 仍然只写草稿。既有字段、端点行为一个不改。
+>
+> **v2.20（追加式）**：**AI 一次交一份报告，人一键全批准；单条照样能改。** 仓主 2026-10-09：「增加：AI 一次提交一份报告，我可以一键批准全部。
+> 当然单条编辑还是保留的」。碎片多时，逐条点「是」是剩下的最大痛点。新增 `nexus-core.activity.reports.v1`：AI 交一份**待批准的报告**
+> （一段 `summary` + 若干条，每条是**已有**的某种动作：把一批待确认建议记到项目 / 现成任务、提议新任务并把它们记进去、当噪声忽略），
+> 一律只进新集合 `activity_reports`，**不写任何事实**。人（只收人，同 `matches`）在「待批准」页看报告：全部批准 / 单条批准（可先改目标）/
+> 单条不要 / 整份不要。批准走的是**同一个** `confirm` / `dismiss` / `proposals.task_for`（不另开写路径），事实与事件跟手点完全一样，
+> 只在事件的 `ai` 块多一个出处 `report {id, author}`。建议在此期间被人处理了的条目记 `stale` 跳过，不算错。MCP 追加 `propose_report` 与
+> `get_report_status`（`mcp.tools.v1` v1.13，十七个工具）。既有字段、端点、事件形状一个不改。见「AI 报告」节。
+>
+> **v2.18.1（2026-10-09，PR #90 Codex 复审的补记；只收紧，不加字段、不改线上协议）**：① 相位写入与 `lastSeenAt` 在**同一次条件更新**里完成
+> （`repo.cas_agent_run(..., seen_at)`），失联清理带着旧 `lastSeenAt` 的关闭条件于是落空，不会出现「相位收下了、运行随后被按旧信号关掉」。② 遗忘超时分支
+> （没声明过心跳的运行）打关闭标记时加条件「仍没声明心跳」，与首个心跳并发时心跳赢；落空即重读，声明了的按心跳规则判。③ `lastSeenAt` **单调**
+> （`repo.touch_agent_run` 用聚合管道更新的 `$max`）：只增不减、不早于 `startedAt`，迟到的老请求盖不回新信号，失联的结束时刻不会落到起点之前。
+> 适配器侧的补记见 `contracts/agent.lane.v1` 与 `tools/agent-hooks/README.md`。
+>
+> **v2.33（追加式）：人可以把报告里一条的一部分建议拆出去、另给去向（待批准页按窗口分组用）。** 仓主 2026-10-19：「一个 ai 会话理论上只对应一个任务。把界面优化成一个窗口 / agent 对话对应的一个项目的任务，点击展开可以单独划分，否则直接全部批准。」
+> 本版**追加** `POST /activity/reports/{id}/items/{itemId}/split` `{suggestionIds[], taskId? | projectId? | dismiss?}`（三者恰好一个；**只收人**，与报告其余端点同一道门，带 Bearer / 范围头 / 匿名 403）：
+> 把这些建议从条里拆出，进一条新条（id 以 `s` 开头，继承 `reason`，目标即所给：任务 / 项目 = `assign`，`dismiss` = 忽略），剩下的留原条原目标；全部拆走 = 原条就地改目标
+> （同「先改再批准」，`newTask` 丢掉）。只改报告，不入账；「全部批准」仍是一个请求、仍幂等。只能拆还 `pending` / `failed` 的条且建议尚未入账（否则 `409`），建议不在该条里 `400`，
+> 任务 / 项目不存在 `404`；报告同时被别处改动 `409`（刷新重来）。`split` 与条上「先改再批准」不同：`dismiss` 条也可以拆去别的去向；`suggestionIds` 为空 `422`；`newTask` 条整条被拆走（任何去向）等于人不要那个新任务——同条 `reject` 把提议记为已否掉；目标任务的 `match_refusal` 不在拆时查，批准时才查（该段记 `stale`），同「改目标」。既有端点、字段、行为一个不改。MCP 输出不变，`propose_report` 描述追加一句「一个窗口 / 会话 ⇒ 一个任务」（`mcp.tools.v1` v1.21）。
+>
+> **v2.34（追加式）：规则可以说「这个窗口别硬分，交给 AI 判断」。** 仓主 2026-10-19：「加一条规则：x窗口需要用ai软分类，不能硬分」。
+> 一个终端 / 浏览器窗口什么活都干，规则把它钉死在某个任务上、或 AI 实时认完再自动写一条窗口规则，都是错的。本版**追加**：分类规则可带 `mode: "ai"`
+> （`detector.rules.v1` v1.4，无 taskId / projectId）；命中的窗口见「『交给 AI 判断』的窗口」节：**不自动记、不实时问 AI（不认领）、不弹『请人选』卡**，
+> 上传的建议带 `suggestion.needsAI: true`、留在待确认等 AI 批处理；`GET /activity/suggestions` 追加可选 `needsAI=true` 过滤；AI 经 `ai/suggest`
+> 回答这类窗口**不写规则**（回包 `ruleWritten: false, needsAI: true`）；AI 直接写规则（`ai-apply`）删不掉、改不了人写的 ai 规则。既有端点、字段、行为一个不改。
+>
+> **v2.37（追加式）：`GET /api/core/activity/auto` 可带可选查询参数 `date=YYYY-MM-DD`，看指定那一天自动记下的段。** 仓主 2026-10-23：蜂巢「AI 决策」面板的「分类历史」要显示今天 + 昨天，
+> 而该端点此前只给今天。`date` 缺省 = 今天（行为与 v2.14 / v2.15 完全相同）；指定时按**同一套 `NEXUS_TZ` 日界**取那一天（按 `startAt`），响应形状、`ai`、`source`、至多 200 条都不变；
+> 格式不是 `YYYY-MM-DD`（含不存在的日期）→ 422（`detail` 为字符串）。老服务端会忽略这个参数、只回今天，调用方按 `id` 去重即可。响应**追加** `date`（这批段属于的那一天，`YYYY-MM-DD`，服务端 `NEXUS_TZ` 日界；缺省请求时即服务端的「今天」，调用方据此推「昨天」，不必猜浏览器时区）。既有端点、字段一个不改。见「自动记下的段」节。
+>
+> **v2.38（追加式）：三级分类——原始记录、窗口块、两级规则；键盘鼠标活动。** 仓主 2026-10-24 批准。检测程序追加上传 ≥ 1 秒的原始记录（`activity/records`），按块名聚成每天的窗口块（`activity/blocks*`），块由第二级规则（`activity/block-rules`）或人 / AI 分到任务、可拆、可标通用窗口；分好的按段写台账（`source: activity-block`），改分类用 `session.reassigned` / `session.voided`。账号设置 `activity/settings` 的 `tiers` 关着时一切照旧；打开后停止建议的自动记录并迁移旧规则。另加 `activity/input`（只有活动时间格）。见「三级分类：原始记录、窗口块、两级规则」「键盘鼠标活动」节。
+>
+> **v2.39（追加式）：MCP v0.5 的后端。** 仓主 2026-10-24 批准「蜂巢 MCP v0.5 接口简报」。① 分区 / 项目 / 任务读时现算 `address`（名字首字母 / 拼音首字母，2-4-4 位，撞号按创建先后加 2、3，用「-」连），`views/tree` 带出；② 新读端 `GET views/history`（人和 agent 分开的协作历史：汇总、时间段与相位、交接点、并行概况，`detail=windows` 给窗口块）与 `GET views/arrangements`（排好的、能做的、卡住的、过期的、久没动的，及谁在做）；③ 第三级：秘书报告 `activity/secretary-reports`、问人 `activity/questions`（人回答可直接补登）、提议改已记的时间 `proposals/sessions`；④ `blockAction` 可改已分类块的去向、忽略规则提议可直接施加；MCP 对 write 范围的调用方转发 `X-Nexus-Scope: write`。见「MCP v0.5 的后端」节。
+>
+> **v2.36（追加式）：AI 可以提议「改名 / 搬移 / 删除」现成的项目或任务，以及「以后都忽略」某个程序 / 窗口，人批准才生效。** 仓主 2026-10-22 批准。
+> 同 v2.30：**AI 只提议，不直接写**；提议存同一个集合 `activity_new_items`，新增 `kind: change | ignore`。批准才经 `guard.run_write`（改名 / 搬移 / 删除）或 `ignore.add`（忽略规则）落地。
+> `GET activity/proposals` 响应追加 `changes` / `ignores` 两个键；既有端点、字段、行为一个不改。见「AI 提议改动与忽略规则」节。
+>
+> **v2.35（追加式）：已确认的建议带上「记到了哪」。** 事故（2026-10-22）：AI 经 MCP 列 `status=confirmed` 的建议，看不到去向，就断言 55 分钟「丢了」；
+> 其实确认时已写一条 `session.completed`（防重键 `activity:<id>`），去向还可能被 `session.reassigned` 改过。本版**追加**：`GET /activity/suggestions?status=confirmed`
+> 的每一行多 `recordedTo`，见「已确认建议的去向」节。只读、不改任何写路径；其余状态、其余字段一个不改。
+>
+> **v2.30（追加式）：AI 可以提议新项目、项目下的新任务，人批准才建。** 仓主 2026-10-19：「给 mcp 加新增项目（需要人批准）和新增项目下的任务两个接口（都需要人批准）」。
+> 此前 AI 只能在报告里提议任务（`newTask`），没有项目的活动一直停着。本版**追加** `nexus-core.activity.proposals.v1`：`POST /activity/proposals/projects`、
+> `POST /activity/proposals/tasks`（任务挂在现成项目 `projectId`，或还没批准的项目提议 `projectProposalId`，恰好一个）、`GET /activity/proposals`（AI 与页面都读）、
+> `POST /activity/proposals/{id}/approve|reject`（**只许人**）；新集合 `activity_new_items`，不是事实、不进台账 / 导出 / 快照恢复。批准时才经 planner 既有的写入口建
+> （`guard.run_write` → `create_project` / `create_task`，审计一样不少），同一提议只建一次。MCP 追加 `propose_project` / `propose_task`（`mcp.tools.v1` v1.18）。
+> 既有端点、字段、行为一个不改；`planner` 的 `create_project` 追加可选参数 `project_id`（只给批准预留的 id 用，同 v2.8 的 `create_task(task_id=)`）。见「AI 提议新项目与任务」节。
+>
+> **v2.31（追加式）：AI 代理只算「真在干活」的时间，并按本地日切分。** 仓主 2026-10-19：「代理不在干活，只是开着……光开着不动，确实不该算时间。」
+> `agent.run.completed` 的 `data` **追加**两个键：`workingSeconds`（整数，干活秒数）与 `days`（`[{date, seconds}]`，每个本地日一条，升序，`date` 经 `NEXUS_TZ`
+> 在**写事件时**算好）。`durationSeconds` 仍是墙钟、含义一个字节不改。投影 `proj_agent_daily_stats` 见 `days` 就逐日写，没有 `days` 的事件（老事件、外部 source）
+> 仍按 v2.3 旧规则整段归 `startAt` 那天。见「代理只算干活的时间」节。
+>
+> **v2.29（追加式）：AI 可以直接写生效的分类规则（账号开关 `aiDirectRules`，缺省关）、旧的一套存快照、人可一键撤回。** 仓主 2026-10-14：用户自己把 CLI
+> （Claude Code / Codex / opencode）接到 MCP，AI 改规则不必再走草稿。本版**追加**：`POST /detector/rules/ai-apply`（非人调用方、`write` 范围；开关没开 403、
+> 什么都不写；校验与建草稿同一段代码；整套立即生效，写前把旧的一套压进快照栈，每租户最近 5 个）、`POST /detector/rules/ai-revert`（只收人，带 Bearer 403；一步一撤，
+> 没快照 404）；规则追加可选的 `aiAt`（AI 新增 / 改过的规则才有，人改过就没有）；`GET /detector/rules` 追加 `aiDirectRules` / `snapshotCount` / `snapshotAt`；
+> `PUT /detector/rules/ai-direct`（只许人，体 `{enabled}`；账号级开关，记在规则文档上，**不在** `detector.settings.v1`）；开关关着的 403 带 `reason: "aiDirectOff"`；快照栈满了丢第二老的、永远留最老的；人的 PUT / 应用草稿清空快照栈；`ai-revert` 须带 If-Match；与现有规则相同的 `ai-apply` 是空操作。MCP 追加 `apply_detector_rules`（`mcp.tools.v1` v1.17，十九个工具）。
+> 开关关着时既有端点、字段、行为一个不改。**取代条目**：「设备令牌只读 / AI 只写草稿」只在 `aiDirectRules` 为 `true` 时被 `ai-apply` 取代；PUT、草稿的 apply / discard、撤回仍只有人能。
+> 见 `contracts/detector.rules.v1` v1.3「AI 直接写与撤回」。
+>
+> **v2.28（追加式）：检测程序的事故时间线与（用户自己开了开关才有的）启动日志，AI 助理经 MCP 读来排查。** 事故：主机重启后 ActivityWatch 没起来，
+> 记录丢了 80 分钟没人知道为什么。本版**追加**：`GET /detector/incidents`（只读的事故时间线，只有枚举与时间）、`PUT /detector/health` 两个可选字段
+> （`logUpload` 本机开关的状态、`startLog` 脱敏后的启动日志尾巴）、`GET /detector/devices` 的 `health.logUpload`；MCP 追加只读的 `get_detector_health`
+> （`mcp.tools.v1` v1.16，十八个工具）。既有端点、字段、行为一个不改；老检测程序（不带新字段）照常。见「检测程序事故与启动日志」节。
+>
+> **v2.27（追加式）：面板上看得到检测程序 / ActivityWatch 的状态，并能让检测程序重新拉起 ActivityWatch。** 事故：主机重启后 ActivityWatch 没起来，
+> 检测程序还在跑、每轮日志「连不上 ActivityWatch」，面板上却看不出任何异常，人的活动悄悄断了。仓主：「面板上能加个检测和重启按钮吗？」
+> 本版**追加**两个端点和 `GET /detector/devices` 的两个字段：`PUT /detector/health`（检测程序报状态）、`POST /detector/restart`（人请求重启，
+> 只收人）；既有端点、字段一个不改。服务端**不执行任何东西**：只存一个不透明的 nonce，检测程序用**本机配置**的命令去拉起 ActivityWatch。
+> 见「检测程序健康与重启 ActivityWatch」节。
+>
+> **v2.26（追加式）：待确认的活动建议按天汇总——`GET /api/core/activity/suggestions/pending-days`。** 事故：AI 代理问「人今天干了多久」，
+> `get_daily_time` 只有已确认（已记账）的时间，今天没有行就答「0 分钟」，而当天有 111 条待确认的建议、合计约 128 分钟。本版只**追加**一个只读端点，
+> 把待确认的量按天给出；既有端点、字段、事件、投影一个不改，待确认的建议仍不是事实。见「待确认时间的按天汇总」节。
+>
+> **v2.25（追加式）：泳道「灵活留存」——按权重档位决定留多久，折叠列表里的临时会话到点永久消失（仅视图）。** 仓主 2026-10-10：「泳道新增一个"灵活留存"机制。
+> 人类关注度高的权重高。自己一直在运行的权重也高，临时短暂运行、没有人类关注的（比如临时 shell 拉起的 ai）权重低，空闲一会被拉下去进入折叠。已结束的更加扣权重，
+> 除了那些关注度高的高权重 agent 在结束后仍能留存一会，其他都折叠。底部下拉菜单改为折叠菜单。权重低的进入折叠菜单达到时长就永久消失。现在总有几个已经结束的占位置。」
+> 服务端给每条泳道算一个档位 `tier`（`high` / `normal` / `low`），用它取代 v2.24 里唯一的「1 小时」：有在跑但空闲的留 `IDLE_KEEP[档]`，没有在跑的（全结束 / 失联 / 超上限）留
+> `ENDED_KEEP[档]`（只有 high 留 1800 秒），出错只有 high 留 `ENDED_KEEP['high']`；其余折进 `inactiveAgents`，low 折叠满 7200 秒后不再列出，只剩 `expiredAgents` 个数。
+> 新增（全部追加）：`inactiveAgents[].tier`、`inactiveAgents[].reason` 取值多一个 `ended`、响应键 `expiredAgents`（整数）与 `expired {agents, runs, elapsedSeconds}`。
+> **v2.24 尚未发布，所以 `reason` 的新取值 `ended` 原地并入 v2.24 的字段说明（不另起版本），v2.25 只记录规则与行为变化。**
+> **默认行为变化**（相对 v2.24）：已结束的非 high 泳道**立刻**折叠（不再留 1 小时）；low 泳道空闲 10 分钟就折叠；long-running（窗口里干活 ≥ 1 小时）或人盯过（≥ 10 分钟）的 high 泳道空闲留 2 小时、结束后留 30 分钟；
+> 折叠列表里的 low 泳道满 2 小时不再出现在 `inactiveAgents`（**不删任何东西**：计时、agent-time、圆环、报告、投影里的运行一概不动，只是这一个视图不再列出）。见「`views/lanes` 的灵活留存」节。
+>
+> **v2.24（追加式）：`views/lanes` 只显示在干活的泳道。** 仓主 2026-10-09：「泳道，把出错或者长期空闲的都不需要显示，只有在干活的显示出来。
+> 短暂空闲的 agent（1 小时以内）留在泳道内放出来。」服务端在视图里决定（web 与别的读取方一致）：有在跑的运行在干活或在等人、或「最后一次干活」
+> 不到 1 小时（`IDLE_HIDE_SECONDS = 3600`，常量不是设置）、或被置顶的泳道显示；当前出错、或空闲满 1 小时的泳道不显示，改列在追加的
+> `inactiveAgents[]`。只是视图过滤，计时、agent-time、圆环、报告一概不变。过去的日子（窗口整体早于现在）不过滤。
+> **默认行为变化**：不带任何参数读今天时，出错 / 空闲满 1 小时的泳道**默认离开 `agents`**、出现在 `inactiveAgents`，所以既有读取方（顶栏预览、圆环泳道面板）
+> 不再把它们当泳道画（圆环标题的「n 个出错」改读 `inactiveAgents` 里今天出的错，红灯照亮）；`dropped` 同理——不活跃身份被封顶折掉的运行并入 `inactiveAgents` 的行、不再出现在 `dropped`。
+> 其余字段形状、端点一个不改。见「`views/lanes` 只显示在干活的」节。
+>
+> **v2.23（追加式）：`views/lanes` 的封顶按代理身份，不再按全局最新。** 事故（2026-10-09 实测栈）：外部上报者给同一个标签刷了几十条短运行，
+> 全局「最新 200 条」在下午就用完，所有代理上午的运行被挤掉，页面看起来「今天的泳道进度归零」。现在：在跑的运行优先保留（至多最新 500 条）；已结束的按
+> 代理身份（与 `lane_order.arrange` 同一个 `ident`）分组，最近活动的 200 个身份、每个身份最新 100 条，总数兜底 2000；丢掉的折进响应追加的
+> `dropped[]`（每个身份的条数与裁到窗口的秒数），`truncated` 只要丢了任何东西（含会话超限）就为真。藏起来的身份的 `dropped` 不给。
+> 既有字段、端点行为一个不改。见「`views/lanes` 的封顶」节。
+>
+> **v2.22（追加式；v2.21 留给评审跟进那一版）**：**泳道上的代理能藏起来、置顶、手动排位；人的窗口能「忽略并记住」。**
+> 仓主 2026-10-09：「增加：不再显示这个智能体、置顶这个智能体；长按手动排列智能体，保持这个位置直到它停止，再被拖到最下面」
+> 「增加：记住：忽略 xx 记录，不进圆环也不进泳道，再放一个可展开的被忽略任务菜单」，以及此前的通用性原则：页面和 MCP 读同一份
+> 服务端算好的数据——偏好存在服务端，**先后也由服务端排**，不只是浏览器里排。① 新增 `nexus-core.lanes.prefs.v1`：每租户一份泳道偏好，
+> 按**代理身份 (agent, 归一化 label)** 记「藏起来 / 置顶」（同名重启后仍然藏着 / 置顶着），按**运行**记手动排位（只在这条运行还在跑时有效）；
+> `GET/PUT/DELETE /api/core/lanes/prefs…` 只收人。`views/lanes` 据此：藏起来的代理不出现在 `agents[]`（时间照记、totals 不变），
+> 每行追加 `pinned` / `manualOrder` / `rank`（服务端排好的先后：置顶 → 手动排位 → 活跃 → 已结束），响应追加 `hiddenAgents[]` 与
+> `hiddenWaiting`；`views/current` 的 `agents[]` 与 `views/agent-time` 的 `open[]` 不列藏起来的。② 新增 `nexus-core.activity.ignores.v1`：
+> 人对一个窗口说「忽略并记住」→ 服务端存一条规则（程序 + 可选的标题片段），以后匹配的窗口**不记为工作**：上传的建议直接丢弃、
+> 在场心跳里换成「没有窗口」（只是显示 / 跟踪过滤，不是隐私擦除）（不成为焦点 / 自动跟踪目标 / 请你选的窗口，也不让「你在看」变长），规则上只有计数器；`GET/POST/DELETE
+> /api/core/activity/ignores` 写只收人。MCP `get_detector_rules` 追加 `ignored`（`mcp.tools.v1` v1.14，工具数不变）。
+> 既有字段、端点行为一个不改。见「泳道偏好与忽略并记住」节。
+>
+> **v2.19（追加式；v2.18 留给代理心跳那一版）**：**令牌带范围，没有令牌只能上报。** 仓主 2026-10-09：「token 可以让我们给智能体不同权限：读 / 写 / 只上报进度」「请求没有 token 的话，就只能上报」。认证服务（`auth.gate.v1` v1.4）在门上按范围放行，并经网关多转两个头 `X-Nexus-Scope` / `X-Nexus-Anonymous`；本版据此**再拦一遍**（`report` 只有四个上报端点、`read` 再加 `GET`），并把匿名开的代理运行标成 `unverified`、与验证过的运行隔开。两个头都没有时行为与 v2.18 完全一样；既有字段、端点一个不改，只追加 `views/lanes` 的 `agents[].unverified`。见「调用方范围与匿名上报」节。
+>
+> **v2.19.1（2026-10-09，PR #89 / #90 / #91 复审的补记；只补文字与收紧，不加字段）**：① 匿名（`unverified`）运行**不进代理时长**：
+> `proj_agent_daily_stats` 不收它们的 `agent.run.completed`，`views/agent-time` 的 `open[]` 不列它们（契约一直说匿名只写泳道；
+> 泳道里仍看得见、带 `unverified`）。② `ScopeMiddleware` 对 websocket 作用域：带 `X-Nexus-Scope` / `X-Nexus-Anonymous` 头的直接拒绝
+> （目前没有 ws 端点，另有测试盯着）。③ 声明过心跳的匿名运行活得更久，名额占得更久，写明在「本版不做」。④ 「响应里有什么」补上
+> `heartbeatSeconds` 与心跳的响应，`agents/start` 的例子补上 `heartbeatSeconds`，`app/scope.py` 里「心跳留给以后」的旧注释更正。
+> ⑤ 取代 v2.17.2 的一条：`app` / `title` **不再有长度上限、不再因长度 422**，回到 v2.4 的「截断后照收」（含不带 `spans` 的老客户端）；
+> 体积靠网关的请求体上限（`client_max_body_size 1m`，nginx 默认值，现在写明在网关模板里）。⑥ 「总误差有界」说松了，改成真实的界（见「串行的注意力时间线」节）。
+>
+> **v2.21（追加式；v2.20 留给并行的「AI 报告」那一版）**：`views/current` 的 `agents[]` 每项追加 `elapsedSeconds`（整数，服务端算好：此刻 − `startedAt`，
+> ≥ 0；读前已收超时 / 失联，口径同 `views/lanes` 的 `elapsedSeconds`）。以前这里只有 `startedAt`，MCP 的 `get_current_timer` 只能给 `null`。
+> 既有字段、端点一个不改。
+>
+> **v2.16（追加式）**：**人此刻在哪个窗口、它多半属于哪个项目 / 任务，说成一句话，哪里都读同一份。** 仓主 2026-10-09：
+> 「蜂巢页和计时页还是没有实时显示人类当前焦点所在窗口或者任务」「要通用，得走 MCP」。在场心跳从 v2.4 起就有，但只在
+> 计时页人那张卡上留了一行小灰字。本版 `views/current` 顶层与 `views/lanes` 的 `human` 各追加一个键 `focus`
+> （见「此刻的焦点」节）：最新心跳新鲜（≤ 90 秒）就非 `null`，**与 `autoTrack` 开关无关、在计时也给**；带当前窗口、
+> 这个窗口从什么时候起（`since`），以及认得出时的项目 / 任务与出处（自动跟踪的目标 → 窗口 ↔ 代理会话 → 匹配历史，先中先用）。
+> **只是显示**：不记时间、不改自动记录的任何行为、不多一个端点、不往设备外多送一个字（标题就是心跳已经按隐私设置处理过的）。
+> 页面（顶栏 / 计时页 / 蜂巢）与 MCP（`mcp.tools.v1` v1.10 的 `get_current_timer`）读的是**服务端算好的同一份**，
+> 谁都不各自再认一遍项目 / 任务。既有字段、端点行为一个不改。
+>
+> **v2.17（追加式）**：**人的注意力是严格串行的；检测程序每 5 秒报一次，每次带各个窗口的停留。** 仓主 2026-10-09：
+> 「不要按组计算。把检测程序设置成每 5 秒汇报一次，每次汇报里带各个窗口的停留时间。计时环保持『人的注意力只能串行』这条规矩。
+> 泳道里 AI 需要有蓝色的条，代表人类把注意力放在他们身上的时间。」起因：每 ~3 秒切一次窗口的人，按 15 秒一拍只报
+> 「此刻的窗口」，中间那些短的停留全丢了。本版在场心跳追加可选的 `sentAt` + `spans`（上一拍以来人**依次**在过的窗口与
+> 各自的停留，见「串行的注意力时间线」节）：服务端把它们接成每台设备**一条不重叠的时间线**，只存不合计、不按窗口归组；
+> 段对上了在跑的代理会话（v2.13 同一条相等规则）就给那条运行记「人在看它」的时间。读端只增键：`views/lanes` 的
+> `agents[]` 追加 `attention`（蓝条）、`human.presence[]` 追加 `runId`；`views/agent-time` 的 `open[]` 追加
+> `attentionSeconds`；`focus` 追加 `dwellSeconds`。全部服务端算，页面与 MCP（`mcp.tools.v1` v1.11）读同一份。
+> **不带 `spans` 的老检测程序照旧能用**（仍是「此刻」一拍一个点）。无新端点、无新集合、不进台账；既有字段一个不改。
+>
+> **v2.17.1（2026-10-09 修订，PR #87 审核后、未发布前；只收紧 v2.17 自己新增的东西）**：不带 `spans` 的心跳的 `attend`
+> **退回 v2.4 的规则一字不变**（相等规则只管带 `spans` 的心跳）；带 `spans` 的注意力严格跟着时间线（不再靠 2 秒宽限
+> 把看别处的时间并进来）、`attend` 是真的并集；`spans` 每一段都校验；同一设备并发的心跳不再后写覆盖先写；注意力没记上
+> 这一拍整个失败。条款见「串行的注意力时间线」节末「v2.17.1 修订」。
+>
+> **v2.17.2（2026-10-09，PR #89 复审后、未发布前；同样只收紧 v2.17 / v2.17.1 自己新增的东西）**：「注意力没记上这一拍整个
+> 失败」改为 outbox（注意力只跟着**已提交**的时间线）；时间线只增不倒、当前状态只往新走；`attend` 并集的 `gap` 范围写明且与顺序无关、幂等；
+> `attend` 超上限不丢新的；在场文档加建档代号防 ABA；`app` / `title` 有长度上限（此条已由 v2.19.1 取代：不设上限，截断后照收）。条款见同节末「v2.17.2 修订」。
+> 一条取代条目（`attend` 的判据从「标题包含 `match`」收紧为「窗口就是那条会话」，见该节末）。
+>
+> **v2.18（追加式）**：**代理泳道不再靠「CLI 记得说 stop」活着。** 仓主 2026-10-09：代理泳道全靠 CLI 触发钩子，
+> CLI 崩了 / 卡死 / 被杀就没人说 stop，泳道停在最后的相位上，要等 12 小时的遗忘超时——「同意加心跳。12 小时太长，
+> 改成 30 分钟；15 分钟一次心跳」「要通用，走 HTTP，哪个 CLI 都能用」。本版新增 `POST /api/core/agents/{runId}/heartbeat`
+> 与活性规则（见「心跳与失联」节）：被收下的 start / phase / heartbeat 都更新运行的 `lastSeenAt`；**声明过会发心跳**的运行
+> 超过 30 分钟没有任何信号即**失联**——`views/lanes` 标 `lost: true`（不写），惰性关闭时写 `outcome: "lost"`、
+> **结束 = 最后一次信号的时刻**，代理时长不虚增。没声明过的运行（老适配器、检测程序的状态文件桥）行为一个不变；
+> `NEXUS_AGENT_RUN_TIMEOUT_HOURS` 只剩给它们兜底；声明过的运行另有**安全上限 7 天**（`AGENT_DECLARED_MAX_SECONDS`，按 `timeout`
+> 关、结束 = 开始 + 上限）。**一条泳道的时长是进程寿命，不是活动量**——开着不关的会话照记；分辨「真在干活」
+> 靠 working / waiting / idle 的相位时间。`start` / `heartbeat` 的响应带 `heartbeatSeconds`（900）。
+> 另记 `beatSource` / `beatCount`（谁发的心跳、发了几下），供比较适配器的不同心跳办法。面向适配器的线上协议另成一份
+> 通用契约 `contracts/agent.lane.v1`。既有字段、端点行为、事件形状一个不改。
+>
 > v1.9：`GET /api/core/export` 产出的快照此前没有任何端点能吃
 > 回去（喂给 import 会被三层拒绝，而那三条拒绝各守一件实事，一条都不该放宽）。
 > 新增 `nexus-core.restore.v1`（`POST /api/core/restore`，见「快照恢复」节）：
@@ -219,6 +469,14 @@ provides:
       投影、导出；超过 NEXUS_SUGGESTION_TTL_DAYS 的在下一次上传/读取时惰性清掉
       v2.7 追加：POST .../suggestions/matches（AI 助理给待确认的建议配任务，classifier=assistant，逐条校验、
       不确认任何东西）、POST .../{id}/unmatch（人说「否」：清掉任务并记 rejectedTaskIds）；列表每条追加 rejectedTaskIds
+      v2.8 追加：matches 每条可给 newTask {projectId, name} 代替 taskId（新任务提议，按项目 + 归一化名字去重，存
+      activity_task_proposals）；confirm 这样的建议（带 proposalId，可带 name）经 planner 建任务路径只建一次、其余段复用；
+      unmatch 记 rejectedProposalIds；confirm 响应追加 taskId
+      v2.10 追加：matches 每条可带 collection {name}（集合标签，存 suggestion.collection {key, name}）与 projectId
+      （只到项目的建议，存 suggestion.projectId）；只带这两样时不动建议的任务。列表原样回出；只是展示提示，不进台账
+      v2.12 追加：GET .../suggestions/history?limit=（匹配历史，只读）——已确认的建议按（程序, 归一化标题）去重成
+      「窗口 → 项目 / 任务」（去向取台账里的当前归属：确认到桶只给项目、改挂过给改挂后的、已删的不出），
+      另带集合名最近落在的项目与人否掉过的（窗口, 任务）
     status: 已实现（v2.2），待验证
   - id: nexus-core.views.agent-time.v1
     summary: AI 代理时长读端（v2.3）——GET /api/core/views/agent-time?from=&to= 读
@@ -239,7 +497,7 @@ provides:
   - id: nexus-core.views.lanes.v1
     summary: 时间线读端（v2.4）——GET /api/core/views/lanes?date=|from=&to= 回人一条线（计时段 + 在计时 +
       最近在场）、代理多条线（运行 + 相位）、连线（reply/attend）；与窗口有重叠即列出、不求和、不写；
-      读新投影 proj_lanes（session.completed 与 agent.run.completed 各一条区间）
+      读新投影 proj_lanes（session.completed 与 agent.run.completed 各一条区间）；v2.23 起封顶按代理身份、响应追加 dropped[]
     status: 已实现（v2.4），待验证
   - id: detector.settings.v1
     contract: ../../../contracts/detector.settings.v1/contract.md
@@ -253,6 +511,113 @@ provides:
       POST .../rules/drafts、GET .../drafts/current、POST .../drafts/{id}/apply|discard；按租户存 detector_rules；
       PUT/建草稿/应用/丢弃带 Bearer 403
     status: 已实现（v2.6），待验证
+  - id: nexus-core.sessions.reassign.v1
+    summary: 改挂未分类时间（v2.11）——POST /api/core/sessions/{eventId}/reassign {taskId} | {projectId}：把原本记在
+      项目「未分类」时间桶上的一段 session.completed 归到具体任务（或放回某项目的桶），往台账追加一条
+      session.reassigned（原事实不改，可再改，最后一次为准）；各投影把这段秒数挪到当前归属，重建 / 恢复结果相同；
+      events.read.v1 的 taskId 过滤按当前归属、改挂过的段追加 currentSubject。带 Bearer 403；actor=ai 403
+    status: 已实现（v2.11），待验证
+  - id: nexus-core.activity.auto.v1
+    summary: 自动跟踪进行中的任务（v2.14，全部挂在 detector.settings.v1 的 autoTrack 下，缺省关）——在场心跳可带
+      guess {taskId | projectId, confidence, classifier}；views/lanes 的 human 追加 auto（当前窗口规则认得出、没有手动计时）
+      与 needsChoice（规则认不出的窗口请人选），views/current 顶层追加同样两个键；POST /api/core/activity/choice {key, taskId | projectId, remember}、
+      POST /api/core/activity/choice/dismiss {key}（带 Bearer 403）；GET /api/core/activity/auto（今天自动记下的段）；
+      上传的段规则把握 ≥ 0.9 时直接记成 session.completed（ai.auto=true），与手动计时重叠 / 无操作 / 目标不存在的仍待确认；
+      sessions.reassign.v1 追加放行自动记下的段；上传的 suggestion 可带 projectId（规则只到项目）
+    status: 已实现（v2.14），待验证
+  - id: nexus-core.activity.auto-ai.v1
+    summary: 让 AI 认规则认不出的窗口（v2.15，activity.auto.v1 的第二步，同样挂在 autoTrack 下）——
+      POST /api/core/activity/ai/claim（聊天后端经 MCP 来取此刻等 AI 认的那一个窗口并认领；没有 → window null）、
+      POST /api/core/activity/ai/suggest {key, taskId | projectId, confidence, reason} | {key, none: true, reason}
+      （只在该窗口被认领着等回答时收；写一条只认这个窗口的规则 author=assistant auto=true + 临时选择）、
+      POST /api/core/activity/choice/reject {key}（人说「不对」，带 Bearer 403）；三个端点带 Bearer 一律 403；
+      views/lanes 的 human 与 views/current 顶层追加 aiThinking，auto 追加 key、source 追加 "ai"；
+      GET /api/core/activity/auto 每条追加 ai。没人认领 = 与 v2.14 完全相同
+    status: 已实现（v2.15），待验证
+  - id: nexus-core.focus.v1
+    summary: 此刻的焦点（v2.16，只读、只是显示）——views/current 顶层与 views/lanes 的 human 追加 focus：
+      最新在场心跳新鲜（≤ 90 秒）时为 {state: present | afk, app, title, since, projectId, projectName, taskId,
+      taskName, source}，否则 null；与 autoTrack 无关、在计时也给。目标先中先用：自动跟踪的 auto（source rules /
+      choice / ai）→ 窗口 ↔ 代理会话（agent-session）→ 匹配历史（history）；认不出时五个目标键为 null。
+      不写任何东西、无新端点；页面与 MCP 读同一份
+    status: 已实现（v2.16），待验证
+  - id: nexus-core.attention.v1
+    summary: 串行的注意力时间线（v2.17，追加式，无新端点）——POST /api/core/activity/presence 追加可选的 sentAt + spans
+      [{app, title, from, seconds, guess?}]（上一拍以来依次在过的窗口，串行、不重叠、至多 32 段、每段 ≤ 120 秒；
+      不合形状整拍 422）；服务端按 sentAt 平移到自己的时钟、接成每设备一条不重叠的时间线（重发 / 往回带的部分裁掉）；
+      段对上在跑的代理会话（归一化标题 == label / match，恰好一条）→ 记进该运行的 attend。读端只增键：views/lanes 的
+      agents[].attention [{from, to}]、human.presence[].runId；views/agent-time 的 open[].attentionSeconds；
+      focus.dwellSeconds。不带 spans 的心跳行为同 v2.16
+    status: 已实现（v2.17），待验证
+  - id: nexus-core.agents.liveness.v1
+    summary: 代理运行的心跳与失联（v2.18，agents.v1 的追加；线上协议见 contracts/agent.lane.v1）——
+      POST /api/core/agents/{runId}/heartbeat（空体或 {beatSource?}，回 {runId, applied, reason, heartbeatSeconds}）；
+      start / phase / heartbeat 都更新 lastSeenAt；start 可带 heartbeat: true 声明会发心跳（第一次 heartbeat 同样算声明）；
+      声明过的运行 1800 秒没信号即失联：views/lanes 标 lost + lastSeenAt（不写），惰性关闭写 outcome=lost、
+      结束 = lastSeenAt；没声明的运行不受影响（仍只有遗忘超时）。start / heartbeat 响应带 heartbeatSeconds=900。
+      运行上另记 beatSource / beatCount，views/lanes 与 agent.run.completed 的 data 带出
+    status: 已实现（v2.18），待验证
+  - id: nexus-core.activity.reports.v1
+    summary: AI 报告（v2.20，追加式）——AI 一次交一份待批准的报告，人一键全批准、单条仍可改 / 批准 / 不要。
+      POST /api/core/activity/reports {summary, author?, items[]}（每条 assign | newTask | dismiss，选择器 suggestionIds | collection；
+      逐条校验，坏的进 rejected；待批准的报告合计超 5 份 429）、GET activity/reports[?status&limit&items]、
+      GET activity/reports/{id}、POST …/{id}/approve（全部批准）、…/items/{itemId}/approve（可带 taskId | projectId = 先改再批准）、
+      …/items/{itemId}/reject、…/items/{itemId}/split（v2.33，拆条另给去向）、…/{id}/reject；全部只收人（带 Bearer 403）。批准走同一个 confirm / dismiss / proposals.task_for，
+      逐条结果 applied | stale | failed；事件 ai 块追加选填 report {id, author}。报告不是事实：不进台账 / 导出 / 快照
+    status: 已实现（v2.20），待验证
+  - id: nexus-core.activity.proposals.v1
+    summary: AI 提议新项目 / 项目下的新任务（v2.30，追加式）——POST /api/core/activity/proposals/projects {zoneId, name, reason?}、
+      POST …/tasks {projectId | projectProposalId（恰好一个）, name, reason?}、GET …/proposals[?status=pending|all&limit]、
+      POST …/{id}/approve、…/{id}/reject（只许人：Bearer、范围头、匿名一律 403）。提议只存 activity_new_items，批准才经 guard.run_write 建；
+      同（分区 / 项目 / 提议, 归一化名字）一条；活的同名 409 带它的 id；人不要过的 409；待批准项目超 20 / 任务超 100 条 429；
+      项目提议没批准时其下任务提议批准 409，不要项目连带不要其下待批准的任务
+    status: 已实现（v2.30），待验证
+  - id: nexus-core.activity.tiers.v1
+    summary: 三级分类（v2.38，追加式）——POST/GET /api/core/activity/records、GET /api/core/activity/blocks[/records]、
+      POST …/blocks/assign|split|generic|ignore|reset（带 ifSeq，只许人）、GET/POST/DELETE …/activity/block-rules（写只许人）、
+      GET/PUT …/activity/settings（tiers、agentDirect，PUT 只许人带 If-Match）、GET …/activity/input；
+      AI 提议 POST …/proposals/window-rules|block-rules|block-actions、GET …/activity/direct-log、POST …/direct-log/{id}/undo（只许人）
+    status: 已实现（v2.38：records / blocks / block-rules / settings / input、对账、window-rules / block-rules / block-actions 提议与直接施加、direct-log 与撤回）
+  - id: nexus-core.views.history.v1
+    summary: 协作历史（v2.39）——GET /api/core/views/history?from&to&who=human|agent|both&detail=summary|segments|windows&scope；
+      人和 agent 分开、永不相加；segments 带人的时间段（onAgentRun）、代理相位（startedBy）、交接点 handoffs、并行概况 overlap；
+      windows 带每天的窗口块与块内记录；summary 最多 92 天，segments / windows 最多 7 天
+    status: 已实现（v2.39）
+  - id: nexus-core.views.arrangements.v1
+    summary: 安排（v2.39）——GET /api/core/views/arrangements?range=today|week&scope；scheduled / actionable / blocked / overdue / stale，
+      每条带 address、spentThisRange（人与代理分开）、activeNow；week 另带 review
+    status: 已实现（v2.39）
+  - id: nexus-core.activity.secretary.v1
+    summary: 第三级（v2.39）——秘书报告 POST/GET /api/core/activity/secretary-reports（每天一份，再交替换）；
+      问人 POST/GET /api/core/activity/questions、POST …/{id}/answer|dismiss（只许人；选项带目标且问题带时段 = 补登）；
+      提议改已记的时间 POST /api/core/activity/proposals/sessions（sessionChange，批准 = 改挂，可直接施加归 honeycombRecords）
+    status: 契约已定（v2.39）
+  - id: nexus-core.lanes.prefs.v1
+    summary: 泳道偏好（v2.22，追加式）——每租户一份：代理身份 (agent, 归一化 label) 的 hidden / pinned（pinnedAt 定先后）、按运行的手动排位
+      slot（只对在跑的运行有效）。GET /api/core/lanes/prefs、PUT …/agent {agent, label?, hidden?, pinned?}、PUT …/order {runId, index}、
+      DELETE …/order[/{runId}]，全部只收人（带 Bearer 403）。views/lanes：藏起来的代理不出现（时间照记）、agents[] 追加
+      pinned / manualOrder / rank（服务端排）、响应追加 hiddenAgents[] / hiddenWaiting；views/current.agents[] 与 views/agent-time.open[] 不列藏起来的
+    status: 已实现（v2.22），待验证
+  - id: nexus-core.activity.ignores.v1
+    summary: 忽略并记住（v2.22，追加式）——GET /api/core/activity/ignores（读不设限；非人的调用方没有 titleContains，只有 hasTitleFilter）、POST {app, titleContains?}（只收人，幂等，顺手删掉待确认 / 已忽略里的匹配建议，尽力而为）、
+      DELETE /{id}（只收人，幂等）。命中（NFKC / 去不可见字符 / 折叠空白 / casefold 之后：程序名相等 + 可选标题子串）的窗口不记为工作：建议上传丢弃（响应有被忽略时追加 ignored）、
+      在场心跳换成「没有窗口」；不是隐私擦除，已记下的不动（规则里存人填的匹配文字，只给人看）。不是 detector.rules.v1 的规则
+    status: 已实现（v2.22），待验证
+  - id: nexus-core.activity.pending-days.v1
+    summary: 待确认建议按天汇总（v2.26，追加式）——GET /api/core/activity/suggestions/pending-days?from&to（读不设限，只读）：status=pending 的建议按开始时刻的 NEXUS_TZ 本地日汇总
+      {totalSeconds, count, days[{date, seconds, count}]}，只有数字，上界估计、不是工时、不计入已记账的时间；from>to 或超 92 天 422
+    status: 已实现（v2.26），待验证
+  - id: nexus-core.detector.health.v1
+    summary: 检测程序健康与重启 ActivityWatch（v2.27，追加式）——PUT /api/core/detector/health?deviceId=（设备令牌或 cookie；严格 schema，只有枚举与一个不透明 nonce，没有任何自由文本）、
+      POST /api/core/detector/restart?deviceId=（只收人，带 Bearer 403，设备不存在 404）；GET /detector/devices 每台设备追加 health / restart。服务端只存 nonce，不执行、不下发命令
+    status: 已实现（v2.27），待验证
+  - id: nexus-core.detector.incidents.v1
+    summary: 检测程序事故时间线与启动日志（v2.28，追加式）——GET /api/core/detector/incidents?deviceId=&limit=（只读，同 GET /devices；每台设备最近的事故，只有枚举与时间；
+      此刻静默读时算离线）；PUT /detector/health 追加可选 logUpload / startLog（本机开关的状态与脱敏后的启动日志尾巴，严格校验，超限 422 不截断，关开关即删）
+    status: 已实现（v2.28），待验证
+  - id: nexus-core.detector.ai-rules.v1
+    summary: AI 直接写分类规则（v2.29，追加式）——POST /api/core/detector/rules/ai-apply（账号开关 aiDirectRules 开着才行，否则 403；旧的一套存快照最近 5 个）、POST .../ai-revert（只许人）；规则追加 aiAt；PUT .../ai-direct（只许人）；GET rules 追加 aiDirectRules / snapshotCount / snapshotAt
+    status: 已实现（v2.29），待验证
 consumes:
   - id: yq-event/v1
     contract: ../../contracts/yq-event.v1/contract.md
@@ -270,7 +635,7 @@ consumes:
 | POST | `/api/core/timer/backfill` | `TimerBackfillIn`（见下「补登」节） | `TimerBackfillOut` | ✅ 已实现（v1.8，`69da9d6`，已验证 `f308bdf`） |
 | GET | `/api/core/events` | `?type&from&to&limit&offset` | `{total, items[]}` | ✅ 已实现（v0.6 档案读端）|
 | GET | `/api/core/views/current` | 无 | `CurrentOut` | ✅ 已实现（含 `key` 字段） |
-| GET | `/api/core/views/tree` | `?includeEphemeral=false` | `TreeOut` | ✅ 已实现（含 `key` 字段） |
+| GET | `/api/core/views/tree` | `?includeEphemeral=false` | `TreeOut` | ✅ 已实现（含 `key` 字段；v2.39 起分区 / 项目 / 任务带 `address`，✅ 已实现） |
 | GET | `/api/core/export` | 无 | `ExportOut`（见下「只读全量导出」节） | ✅ 已实现（v1.3） |
 | GET | `/api/core/views/next-actions` | 无 | `NextActionsOut`（见下「下一步行动读端」节） | ✅ 已实现（v1.5） |
 | GET | `/api/core/views/review` | 无 | `ReviewOut`（见下「每周回顾读端」节） | ✅ 已实现（v1.5） |
@@ -289,16 +654,57 @@ consumes:
 | POST | `/api/core/activity/suggestions/{id}/dismiss` | 无 | `{id, status}` | ✅ 已实现（v2.2） |
 | POST | `/api/core/activity/suggestions/matches` | `{matches[]}`（≤ 200，见「活动建议」节「AI 匹配」） | `{matched, rejected[]}`；带 Bearer 403 | ✅ 已实现（v2.7） |
 | POST | `/api/core/activity/suggestions/{id}/unmatch` | `{taskId?}` | `{id, status, rejectedTaskIds[]}`；带 Bearer 403 | ✅ 已实现（v2.7） |
+| — | （v2.8 追加，无新端点）matches 每条可给 `newTask`；confirm 带 `proposalId`（可带 `name`）、响应加 `taskId`；unmatch 可带 `proposalId` | 见「活动建议」节「AI 提议新任务」 | | ✅ 已实现（v2.8） |
+| POST | `/api/core/planner/projects/{id}/unclassified` | 无 | `{taskId}`（该项目的「未分类」时间桶，取或建，幂等；见「项目未分类时间」节） | ✅ 已实现（v2.9） |
+| — | （v2.9 追加，无新端点）confirm 可只带 `projectId`（与 `taskId` / `proposalId` / `name` 互斥）；`views/tree` 项目加 `unclassifiedTaskId`，`views/current` 的 `task`、`views/gantt` 的任务加 `kind` | 见「项目未分类时间」节 | | ✅ 已实现（v2.9） |
+| — | （v2.10 追加，无新端点）matches 每条可带 `collection {name}`、`projectId`（这时 `taskId` / `newTask` / `confidence` 可省）；列表的 `suggestion` 追加 `collection {key, name}`、`projectId` | 见「活动建议」节「AI 分集合」 | | ✅ 已实现（v2.10） |
+| GET | `/api/core/activity/suggestions/history` | `?limit`（缺省 60，上限 200） | `{items[], collections[], rejected[]}`（见「活动建议」节「匹配历史」）；只读，带 Bearer 也能读 | ✅ 已实现（v2.12） |
 | GET | `/api/core/detector/settings` | `?deviceId` | `{deviceId, settings\|null, updatedAt\|null}`（见 `contracts/detector.settings.v1`） | ✅ 已实现（v2.5） |
 | PUT | `/api/core/detector/settings` | `?deviceId`，`DetectorSettings` | 同 GET；带 Bearer 403 | ✅ 已实现（v2.5） |
 | DELETE | `/api/core/detector/settings` | `?deviceId` | `204`；带 Bearer 403 | ✅ 已实现（v2.5） |
-| GET | `/api/core/detector/devices` | 无 | `{devices[]}` | ✅ 已实现（v2.5） |
+| GET | `/api/core/detector/devices` | 无 | `{devices[]}`（v2.27 每台追加 `health`、`restart`，见「检测程序健康与重启 ActivityWatch」） | ✅ 已实现（v2.5） |
+| GET | `/api/core/detector/incidents` | `?deviceId&limit`（1–200，缺省 50） | `{deviceId, now, lastReportAt, offline, health, logUpload, startLog, events[]}`；设备不存在 404、limit 越界 422（v2.28） | ✅ 已实现（v2.28） |
+| PUT | `/api/core/detector/health` | `?deviceId`，`{awState, autoStart?, autoReason?, restart?, logUpload?, startLog?}` | `{restartNonce\|null}`；未知键 / 枚举外 422、超 1 KiB 413 | ✅ 已实现（v2.27） |
+| POST | `/api/core/detector/restart` | `?deviceId` | `{nonce}`；带 Bearer 403、设备不存在 404 | ✅ 已实现（v2.27） |
 | GET | `/api/core/detector/rules` | 无 | `{version, updatedAt, rules[]}` + `ETag`（见 `contracts/detector.rules.v1`） | ✅ 已实现（v2.6） |
 | PUT | `/api/core/detector/rules` | `If-Match`，`{rules[]}` | 同 GET；带 Bearer 403、缺 If-Match 428、版本不符 412 | ✅ 已实现（v2.6） |
 | POST | `/api/core/detector/rules/drafts` | `{rules[], summary, author?}` | `201 Draft`（含与生效规则的 `diff`）；带 Bearer 403 | ✅ 已实现（v2.6） |
 | GET | `/api/core/detector/rules/drafts/current` | 无 | `{draft\|null}` | ✅ 已实现（v2.6） |
 | POST | `/api/core/detector/rules/drafts/{id}/apply` | `If-Match` | 同 GET rules；带 Bearer 403、404、412、422 | ✅ 已实现（v2.6） |
 | POST | `/api/core/detector/rules/drafts/{id}/discard` | 无 | `204`（幂等）；带 Bearer 403 | ✅ 已实现（v2.6） |
+| PUT | `/api/core/detector/rules/ai-direct` | `{enabled: bool}` | 同 GET rules；带 Bearer / 范围头 / 匿名 403、体不合规 422 | ✅ 已实现（v2.29） |
+| POST | `/api/core/detector/rules/ai-apply` | `{rules[], summary, author?}`，不带 `If-Match` | 同 GET rules；`aiDirectRules` 没开 403（中文说明，什么都不写）、校验 422 同建草稿、`read` / `report` 范围进不来（scope 门） | ✅ 已实现（v2.29） |
+| POST | `/api/core/detector/rules/ai-revert` | 无体；头 `If-Match: "<version>"` | 同 GET rules（回到最近快照，用掉它）；非人（带 Bearer、带范围头或匿名）403、缺 If-Match 428、版本对不上 412、没有快照 404 | ✅ 已实现（v2.29） |
+| POST | `/api/core/sessions/{eventId}/reassign` | `{taskId}` 或 `{projectId}`（二选一） | `SessionReassignOut`（见「改挂未分类时间」节）；带 Bearer / `actor=ai` 403、404、409 | ✅ 已实现（v2.11） |
+| — | （v2.11 追加，无新端点）`GET /api/core/events` 的 `taskId` 过滤按当前归属，改挂过的 `session.completed` 条目追加 `currentSubject`；`POST /api/core/events` 拒收 `session.reassigned` | 见「改挂未分类时间」节 | ✅ 已实现（v2.11） |
+| POST | `/api/core/activity/choice` | `{key, taskId \| projectId, remember?}` | `ChoiceOut`（见「自动跟踪进行中的任务」节）；带 Bearer 403、404、422 | ✅ 已实现（v2.14） |
+| POST | `/api/core/activity/choice/dismiss` | `{key}` | `{key, dismissedUntil}`；带 Bearer 403、404、422 | ✅ 已实现（v2.14） |
+| GET | `/api/core/activity/auto` | 无；可选查询 `date=YYYY-MM-DD`（v2.37，缺省今天，坏格式 422） | `{items[]}`（那一天自动记下的段，新的在前，至多 200 条） | ✅ 已实现（v2.14） |
+| POST | `/api/core/activity/records` | `{deviceId, records[1..500]}` | `{accepted, duplicates, ignored, rejected[]}`（见「三级分类」节一） | ✅ 已实现（v2.38） |
+| GET | `/api/core/activity/blocks` | 查询 `date?`、`status?`、`limit?`、`cursor?` | `{date, items[]}`（见「三级分类」节二） | ✅ 已实现（v2.38） |
+| GET | `/api/core/activity/blocks/records` | 查询 `date`、`blockKey` | `{items[], truncated}` | ✅ 已实现（v2.38） |
+| POST | `/api/core/activity/blocks/assign\|split\|generic\|ignore\|reset` | 见「三级分类」节二（带 `ifSeq`） | 该块的新状态；带 Bearer 403、`ifSeq` 不符或日期已过期 409、目标不存在 404 | ✅ 已实现（v2.38） |
+| GET / POST / DELETE | `/api/core/activity/block-rules[/{id}]` | `{blockKey, taskId \| projectId}` | 见「三级分类」节三；写只许人 | ✅ 已实现（v2.38） |
+| GET / PUT | `/api/core/activity/settings` | `{tiers, agentDirect{enabled, windowsClassify, honeycombRecords}}`，PUT 带 `If-Match` | 同体加 `version`、`tiersSince`；PUT 只许人，版本不符 412，迁移超 500 条 409 | ✅ 已实现（v2.38） |
+| POST | `/api/core/activity/direct-log/{id}/undo` | 无 | 撤回一次直接施加；只许人 | ✅ 已实现（v2.38） |
+| GET | `/api/core/activity/direct-log` | 查询 `date?`、`limit?`（1–200，缺省 50） | `{items[]}`（不含 `before`）；人与 MCP 可读 | ✅ 已实现（v2.38） |
+| GET | `/api/core/views/history` | 查询 `from?`、`to?`、`who?`、`detail?`、`scope?` | 见「MCP v0.5 的后端」二 | ✅ 已实现（v2.39） |
+| GET | `/api/core/views/arrangements` | 查询 `range?`、`scope?` | 见「MCP v0.5 的后端」三 | ✅ 已实现（v2.39） |
+| POST / GET | `/api/core/activity/secretary-reports` | `{date?, text, author?}` / 查询 `date` 或 `from&to` | 见「MCP v0.5 的后端」4.1 | ✅ 已实现（v2.39） |
+| POST / GET | `/api/core/activity/questions` | `{questions[1..10]}` / 查询 `status?`、`limit?` | 见「MCP v0.5 的后端」4.2 | ✅ 已实现（v2.39） |
+| POST | `/api/core/activity/questions/{id}/answer\|dismiss` | `{option?, text?}` / 无 | 只许人；见 4.2 | ✅ 已实现（v2.39） |
+| POST | `/api/core/activity/proposals/sessions` | `{eventId, op, taskId \| projectId, reason?, directApply?}` | 见 4.3 | ✅ 已实现（v2.39） |
+| POST | `/api/core/activity/proposals/window-rules\|block-rules\|block-actions` | 见「三级分类」节五补充（v2.39：`block-actions` 的 `assign` 也接受已分类块） | 提议视图；`directApply` 满足条件时 `{applied, directLogId, result}`，否则 403 带 `reason` | ✅ 已实现（v2.38） |
+| POST / GET | `/api/core/activity/input` | `{deviceId, bins[]}` / 查询 `date` | 见「键盘鼠标活动」节 | ✅ 已实现（v2.38） |
+| POST | `/api/core/activity/ai/claim` | 无（空体或 `{}`） | `{window: null \| {key, app, title, claimedAt, answerBy}}`（见「让 AI 认窗口」节）；带 Bearer 403 | ✅ 已实现（v2.15） |
+| POST | `/api/core/activity/ai/suggest` | `{key, taskId \| projectId, confidence, reason}` 或 `{key, none: true, reason}` | `SuggestOut`；带 Bearer 403、400、404、409（不在等回答，什么都没写）、422 | ✅ 已实现（v2.15） |
+| POST | `/api/core/activity/choice/reject` | `{key}` | `{key, app, title, ruleRemoved}`；带 Bearer 403、404（不是 AI 认的）、422 | ✅ 已实现（v2.15） |
+| — | （v2.17 追加，无新端点）`POST /api/core/activity/presence` 追加可选的 `sentAt` + `spans`；`views/lanes` 的 `agents[]` 追加 `attention`、`human.presence[]` 追加 `runId`；`views/agent-time` 的 `open[]` 追加 `attentionSeconds`；`focus` 追加 `dwellSeconds` | 见「串行的注意力时间线」节 | | ✅ 已实现（v2.17） |
+| POST | `/api/core/agents/{runId}/heartbeat` | 无（空体、`{}` 或 `{beatSource?}`） | `{runId, applied, reason, heartbeatSeconds}`（见「心跳与失联」节）；404、422 | ✅ 已实现（v2.18） |
+| — | （v2.18 追加）`agents/start` 请求追加 `heartbeat?`、`beatSource?`，响应追加 `heartbeatSeconds`；`views/lanes` 的 `agents[]` 追加 `lost`、`lastSeenAt`、`beatSource`、`beatCount`；`agent.run.completed` 的 `outcome` 追加取值 `lost`、`data` 追加 `beatSource?`、`beatCount?` | 见「心跳与失联」节 | | ✅ 已实现（v2.18） |
+| — | （v2.16 追加，无新端点）`views/lanes` 的 `human` 与 `views/current` 顶层追加 `focus`（人此刻的焦点；心跳新鲜就有，与 `autoTrack`、有没有手动计时无关） | 见「此刻的焦点」节 | | ✅ 已实现（v2.16） |
+| — | （v2.15 追加，无新端点）`views/lanes` 的 `human` 与 `views/current` 顶层追加 `aiThinking`；`auto` 追加 `key`、`source` 追加取值 `"ai"`；`GET /api/core/activity/auto` 每条追加 `ai`；规则追加可选的 `author`、`auto` | 见「让 AI 认窗口」节 | | ✅ 已实现（v2.15） |
+| — | （v2.14 追加，无新端点）在场心跳可带 `guess`；`views/lanes` 的 `human` 与 `views/current` 顶层追加 `auto`、`needsChoice`；上传的 `suggestion` 可带 `projectId`、列表每条追加 `auto`；改挂端点放行自动记下的段；`DetectorSettings` 追加 `autoTrack`、规则可用 `projectId` 代替 `taskId` | 见「自动跟踪进行中的任务」节 | | ✅ 已实现（v2.14） |
 | ~~GET~~ | ~~`/api/core/zones`~~ | 无 | `[ZoneOut]` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
 | ~~POST~~ | ~~`/api/core/zones`~~ | `{name, color?, order?}` | `ZoneOut` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
 | ~~PATCH~~ | ~~`/api/core/zones/{id}`~~ | `{name?, color?, order?}` | `ZoneOut` | **v0.6 已删除**，改走 `/api/core/planner/{type}` |
@@ -626,6 +1032,9 @@ x时x分–x时x分完成了 xx 任务」就是从这里来的。
 | `from` / `to` | ❌ | ISO8601 日期或日期时间，按 `time` 过滤 |
 | `limit` | ❌ | 默认 100，上限 1000 |
 | `offset` | ❌ | 默认 0 |
+| `taskId` | ❌ | v2.9：只回 `subject.task` 等于它的事件（过滤后再排序、分页） |
+
+v2.11：`taskId` 对 `session.completed` 比的是这一段**当前**的归属，改挂过的条目追加 `currentSubject`（见「改挂未分类时间」节「读端」）。
 
 ```jsonc
 { "total": 42, "items": [ /* 事件信封原样，剔除 _id */ ] }
@@ -864,6 +1273,82 @@ payload 只删了父、忘了一起删子，既有的**级联保护（409）在 
 认证服务哪天出 bug 漏带了租户头，不开严格模式的后果是：所有人的请求悄悄落进同一份
 `u_local` 数据，**而且不报错**。开了之后是 401，响亮失败。
 
+## 调用方范围与匿名上报（规范性 · v2.19，`nexus-core.caller-scope.v1`）
+
+仓主 2026-10-09（原话见本文件头部 v2.19）。门在认证服务（`contracts/auth.gate.v1` v1.4「权限范围与匿名上报」，
+放行表在那里）；本节是 nexus-core 这一道——**同一张表再拦一遍**，外加只有后端做得了的事：匿名运行的隔离。
+
+### 两个请求头（只来自网关）
+
+| 头 | 值 | 含义 |
+|---|---|---|
+| `X-Nexus-Scope` | `report` / `read` / `write` | 设备令牌的范围（匿名 = `report`）。**人的会话没有这个头** |
+| `X-Nexus-Anonymous` | `1` | 这个请求什么凭据都没带 |
+
+与 `X-Nexus-Tenant` 同一个来路：网关用认证服务 verify 的结果覆盖客户端自带的同名头（`contracts/gateway.v1` 第九节）。
+
+- 两个头都没有 = 与 v2.18 完全一样：带 `Authorization: Bearer` 的是设备令牌（= `write`），不带的是人的会话
+  或对内直连（MCP）。**不经新网关的部署行为不变。**
+- `X-Nexus-Scope` 取值不认识 → `403`（不猜）。`X-Nexus-Anonymous` 非空 → 按匿名处理，范围一律当 `report`。
+
+### 放行（规范性）
+
+在任何路由之前判（纯 ASGI 中间件 `app/scope.py`，同租户中间件）：
+
+| 范围 | 放行 | 其余 |
+|---|---|---|
+| 没有范围头 / `write` | 全部（既有的「只许人」守卫照旧对带 Bearer 的请求生效） | —— |
+| `read` | 上报面 + 任何 `GET` | `403` |
+| `report`（含匿名） | 上报面 | `403` |
+
+**上报面** = `POST /api/core/agents/start`、`POST /api/core/agents/{runId}/phase`、`…/stop`、`…/heartbeat`，
+路径全匹配（结尾多一个 `/` 也不算）。`/api/core/health` 不判（容器健康检查直连）。`403` 的体是
+`{detail: "…"}`，同别的拒绝。
+
+### 匿名开的运行：`unverified`（规范性）
+
+- 匿名的 `agents/start` 开出来的运行带 `unverified: true`，结束时写进那条 `agent.run.completed` 的
+  `data.unverified`（`contracts/yq-event.v1` 追加的选填键），`proj_lanes` 与 `views/lanes` 的每个
+  `agents[]` 元素追加 `unverified: bool`（带令牌 / 人开的为 `false`）。页面拿它标出「这条没人担保」。
+- **匿名给的 `taskId` / `projectId` / `match` 不采用**：运行一律落收件箱、不记 `match`。否则「任务不存在回 404」
+  就是一个探 id 的口子；`match` 会让一个没验证的调用方把人的窗口认到自己头上（「窗口 ↔ 代理会话」）。
+  `agent` / `tool` / `model` / `label` / `phase` / `clientKey` 照收（长度上限照旧）。
+- **未验证的运行不参与注意力的认定**（v2.17「窗口标题 == 会话名」）：它的 `label` 与人的窗口标题相同也不算、
+  也不让同名的真会话变成「对上不止一条」。所以它的 `attention` 恒为空。
+- **`clientKey` 分两个名字空间**：匿名的存成 `anon:<clientKey>`，只在匿名开的运行里找；带令牌 / 人的在其余
+  运行里找。所以匿名的 `start` 认领不到、也改不了别人的运行（v2.13 的会话改名同样被隔开）。带令牌 / 人给的
+  `clientKey` 以 `anon:` 开头 → `400`（保留前缀）。
+- **匿名只能动匿名开的运行**：`phase` / `stop` / `heartbeat` 的 `runId` 不是匿名开的（在跑的看文档，已结束的看
+  那条事实的 `data.unverified`）→ `404`，文案与「不存在」逐字相同。挂在 `agents` 路由上（所有带 `{runId}` 的
+  端点，含以后加的），不靠每个端点各自记得。
+- **同时在跑的匿名运行有上限**：每个租户 `MAX_ANONYMOUS_RUNS = 20` 个，满了匿名的 `start` 回 `429`
+  （`{detail}`）。同 `clientKey` 的重试不占新名额。超时照旧由 `NEXUS_AGENT_RUN_TIMEOUT_HOURS` 收。
+  上限在并发下也成立：`start` 先插入、再数一遍，超了就撤回自己的那条并回 `429`（边界上同时到的两个可能都被撤回，
+  重试即可，不会多放）。名额就是「还在跑的匿名运行」这些文档，`stop` / 超时收尾 / 撤回都是删文档，不会泄漏。
+- 匿名之间没有身份可分：知道另一个匿名运行的 `runId`（随机 12 位十六进制）就能替它报相位 / 结束。响应里从不
+  回出别的运行的 `runId`。
+- **终审补记（追加，v0.4）**：`views/current` 的 `agents[]` 只列验证过的运行，匿名开的运行不在其中（也不计入 `hiddenCount`）——它们只出现在 `views/lanes`，带 `unverified: true`；匿名运行可以顶着可信代理的名字，不能借 `current` 冒充。
+
+### 响应里有什么（规范性）
+
+上报面的四个响应只含**调用方自己这一个运行**的东西：`start` 回 `runId` / `startedAt` / `heartbeatSeconds`（v2.18）；`heartbeat` 回 `runId` /
+`applied` / `reason` / `heartbeatSeconds`（v2.18）；`phase` 回 `runId` /
+`phase` / `applied` / `reason`；`stop` 回 `runId` / `duplicate` / `outcome` / `durationSeconds` / 事件的
+`id` / `dedupeKey` / `type`。没有任务名、项目名、别的运行、人的任何数据。`report` 令牌（不是匿名）可以给
+`taskId` / `projectId`：给错了回 `404` / `400`——持有 `report` 令牌的调用方能据此验证一个它已经知道的 id 存不存在，
+仅此而已（id 是不透明的随机串）。
+
+### 本版不做（有意的）
+
+- 不按令牌分运行：同一个身份的几个 `report` 令牌共用一个运行名字空间（知道 `runId` / `clientKey` 就能动）。
+  隔离只在「匿名」与「验证过的」之间。
+- 匿名运行反复开了又关，条数只受网关限速约束（每个地址每分钟 120 个请求）。端口对外开放时请关匿名上报
+  （`AUTH_ANONYMOUS_REPORT=false`）。
+- **匿名也能占满名额更久（v2.19.1 写明）**：匿名调用方一直发心跳，就能让它的 20 个名额各自活到声明过心跳的安全上限（7 天，
+  `AGENT_DECLARED_MAX_SECONDS`），而不是遗忘超时的 12 小时。界：每租户 20 个（`MAX_ANONYMOUS_RUNS`）+ 网关的匿名限速；代价是别的匿名调用方
+  在这期间 `start` 得 `429`（带令牌的不受影响）。对外开放端口的部署请设 `AUTH_ANONYMOUS_REPORT=false`。
+- 没有「把一条未验证的运行转正」的操作。
+
 ## 快照恢复（规范性 · v1.9）
 
 `POST /api/core/restore` —— `GET /api/core/export` 的逆操作：把一份导出快照原样
@@ -995,6 +1480,276 @@ uuid 生成——它们是系统单例，不是用户建的对象，固定 id �
 任务仍可以正常从 `p_inbox` 搬走（`PATCH .../tasks/{id}` 改 `projectId`，
 J10 已有的能力，不新增写路径）——禁删保护的是**容器本身**，不限制容器
 里的任务流动，这正是 F-INBOX-3「理清」要用到的既有能力。
+
+## 项目未分类时间（规范性 · v2.9）
+
+仓主 2026-10-08：「之前的快捷新建时间占位任务改成：不能再快捷新建一个只是日期时间的任务，而是直接把时间记录到
+项目总的『项目未分类』时间。AI 汇总的东西也是汇总到这个里面，直到分类到这个项目的某个具体任务，或者用户指定。」
+
+### 桶是一个系统任务
+
+每个项目至多一个「未分类」时间桶，它是 `tasks` 集合里的一个任务：
+
+```jsonc
+{ "id": "t_unc_p_ab12cd",        // 由项目 id 派生：t_unc_<projectId>，同一项目永远是同一个 id
+  "key": "1-2-7-1", "name": "未分类", "projectId": "p_ab12cd",
+  "kind": "unclassified",          // 任务 kind 的第三个取值；只由本节的取或建路径写
+  "done": false, "doneAt": null, "flags": [], "plannedWeight": 100, "plan": null, "dependsOn": [],
+  "lastWriter": "human" }
+```
+
+**为什么是任务而不是「不挂任务的时间」**：计时活状态、补登、活动建议确认、`session.completed` 的 `subject`、
+`proj_current` / `proj_daily_stats` / `proj_lanes` 三张投影、导出 / 恢复，全都按 `taskId` 归。开一条「只有项目」的
+时间要把这些逐个改一遍（补登与确认的契约还明文要求「必须挂具体任务」）；把桶做成一个任务，这些一行不改。
+
+- **懒建、幂等**：第一次用到才建（不是每个项目预建一个）。并发的首建撞 `(user, id)` 唯一索引，后到者直接用
+  先到者建的那一个——同一项目结构上不可能有两个桶。
+- **取或建**：`POST /api/core/planner/projects/{id}/unclassified`，无请求体，回 `200 {"taskId": "t_unc_…"}`。
+  项目不存在 404。真的要建时走 planner **既有的写入口**（`guard.run_write` → `create_task`，同
+  `POST /api/core/planner/tasks`）：来源判定、留一条 `create` 审计；建任务不是高风险写，`actor=ai` 也能建。
+  桶已存在时这次调用是纯读取，不留审计。带 `Authorization: Bearer`（设备令牌）与其他 planner 写同样对待（不拦）。
+- 拿到 `taskId` 之后，`timer/start`、`timer/backfill`、`agents/start`、confirm 的 `taskId` 原样用它，没有特殊路径。
+
+### 保护（规范性）
+
+| 操作 | 结果 |
+|---|---|
+| `PATCH /api/core/planner/tasks/{桶}`（任何字段：改名、`done`、`projectId`、`kind`、`plan`…） | **409**，`detail` 说明这是项目的「未分类」时间桶 |
+| `DELETE /api/core/planner/tasks/{桶}` | **409**（同上） |
+| `POST` / `PATCH` 任务时 `kind: "unclassified"` | **400**（合法取值仍只有 `normal` / `ephemeral`） |
+| 别的任务 `dependsOn` 里写桶的 id | **400**（桶永远不会完成，依赖它等于永远等待） |
+| `DELETE /api/core/planner/projects/{id}`，项目下只剩桶 | 204，**桶随项目一起删**（桶不算「还有子对象」；还有别的任务照旧 409） |
+| JSON 导入（`/api/core/import`） | 桶不参与 diff：payload 里带着它不产生 `update`，少了它不产生 `delete`（也不进 `skippedDeletes`）。payload 里 `kind: "unclassified"` 而库里没有这个 id 的条目（导出方有桶、这边还没懒建；或没带 id）同样**跳过**，不报「id 不存在」也不新建——桶只由取或建懒建 |
+| 桶的 id 上是一个不是桶的任务（只有快照恢复 / 种子写得出来） | 取或建、confirm `{projectId}` 一律 **409**，绝不把它当桶用 |
+| 快照恢复（`/api/core/restore`） | `kind: "unclassified"` 与 id `t_unc_<projectId>` 必须成对出现，否则 **400**、一个字节不写 |
+
+409 而不是 400 / 403：请求本身合法，冲突的是「这个对象是系统单例」（同 `p_inbox` 禁删）。桶删掉后台账里的事实
+照旧保留（与删任何有时间的任务相同）；项目 id 不复用，所以桶的 id 也不会被复用。
+删项目的顺序是「删项目文档 → 再清桶」，取或建则在插入桶之后回头确认项目还在（不在就自己删掉、回 404）：
+两者并发也不会留下没有项目的桶。
+
+### 读端怎么对待桶（规范性）
+
+| 读端 | 桶 |
+|---|---|
+| `views/tree` | **不进** `tasks[]`（`includeEphemeral=true` 也不进）；项目多一个键 `unclassifiedTaskId`（还没建过为 `null`）。`progress`（`computed`）的分子分母都不含桶 |
+| `views/next-actions` | 不出现（不是待办） |
+| `views/review` | 不进 `staleTasks`，不计入 `inboxPendingCount`；`planVsActual[].actualSecondsThisWeek` 照常含桶的时间 |
+| `views/current` | 正在计的是桶时照常返回，`task.kind` 为 `"unclassified"`、`task.name` 为「未分类」。`task` 多一个键 `kind`（其余任务是 `normal` / `ephemeral`） |
+| `views/gantt` | 项目层 `actual` 照常含桶的时间；任务层 `tasks[]` **含**桶这一行（它就是「这个项目未分类的时间」），每个任务多一个键 `kind` 供读方区分 |
+| `views/lanes` | 段照常带桶的 `taskId`，不特殊处理 |
+| `GET /api/core/events` | 段照常带桶的 `taskId`。**追加可选查询参数 `taskId`**：只回 `subject.task` 等于它的事件（过滤后再排序、分页，`total` 是过滤后的总数）。列出某项目记在桶上的每一段 = `?type=session.completed&taskId=<unclassifiedTaskId>`，每条有 `id`、`source`、`time`（结束）、`data.startAt`、`data.durationSeconds`——给「待分类」一类的界面用 |
+| `GET /api/core/planner/tasks`、`GET /api/core/export` | 原样含桶（`kind` 可辨）；导出再经 `/api/core/restore` 恢复后 id 不变，取或建拿到的还是它 |
+| `proj_current` / `proj_daily_stats` | 不改：桶的秒数在 `tasks[桶 id]` 下，也在所属项目的合计里 |
+
+显示约定（仓主 2026-10-08 定，给前端）：
+
+- **正在计桶**：只显示**项目名**（不写「未分类」、不写时间戳），不提供改名入口。
+- **记在桶上的一段**（最近完成、计时档案等逐段列出的地方）：叫「临时任务 YYYY-MM-DD HH:MM」，时间是这一段的开始
+  （`data.startAt`，与所在列表同一套时区规则），后面照常跟时长。桶这个任务本身不出现在任何任务列表 / 下拉里。
+- **项目级的合计**（按任务汇总的那一行）仍可叫「未分类」。
+
+### 活动建议：只指定项目的确认
+
+`POST /api/core/activity/suggestions/{id}/confirm` 的请求体追加可选 `projectId`：
+
+- 与 `taskId`、`proposalId`、`name` **互斥**，同给 400；
+- 服务端取或建该项目的桶（同上面的端点，同一条写入口），把这一段记到桶上；响应的 `taskId` 是桶的 id；
+- 项目不存在 404，建议放回待确认（同「任务不存在」）；
+- 其余（先占位再写事实、`activity:<id>` 防重、重复确认 `duplicate:true`、信封形状）与带 `taskId` 的确认完全相同；
+- 带 `Authorization: Bearer` 不拦（与带 `taskId` 的确认相同；v2.8 的 403 只针对确认新任务提议）。
+
+v2.7「只能配到任务，不能只配到项目」说的是 `matches`（助理的建议），本版不改：助理仍只能配任务或提议新任务；
+「只记到项目」是人确认时的选择。
+
+### 本版不做
+
+- 把已经记在桶里的时间**改挂**到具体任务（改 `subject` 要动 append-only 台账，另行设计）。
+  （v2.11 已做：不改 `subject`，追加 `session.reassigned`，见下一节「改挂未分类时间」。）
+- `matches` 只配到项目。
+- 旧版长按建出来的「日期 时间」占位任务不迁移，仍是普通任务。
+
+## 改挂未分类时间（规范性 · v2.11，`nexus-core.sessions.reassign.v1`）
+
+仓主 2026-10-08：「时间记录到未分类以后，能不能追加记录『归入 xxx 任务』？不能破坏可追溯性。」
+
+**做法：只追加，不改写。** 记在桶上的那条 `session.completed` 永远原样留在台账里；每次改挂追加一条
+`session.reassigned`，说清「哪一段、从哪、到哪、第几次、什么时候」。一段时间**当前**算在谁头上 = 它最后一次改挂的去向
+（没改挂过 = 原来的 `subject`）。全部历史用 `GET /api/core/events?type=session.reassigned` 读得到。
+
+### 新事实 `session.reassigned`
+
+```jsonc
+{ "spec": "yq-event/v1", "id": "evt_…", "type": "session.reassigned",
+  "dedupeKey": "reassign:<sessionEventId>:<seq>",     // 同一段的第 seq 次改挂只可能落一条
+  "user": "<租户>", "source": "session-reassign",
+  "time": "<服务端收到请求的时刻>",
+  "subject": { "zone": "z_…", "project": "p_…", "task": "t_…" },   // 改挂之后的归属（去向）
+  "data": {
+    "sessionEventId": "evt_…",          // 被改挂的那条 session.completed 的 id
+    "seq": 1,                            // 这一段的第几次改挂，从 1 起、连续
+    "fromTaskId": "t_unc_p_ab12cd", "fromProjectId": "p_ab12cd",   // 改挂之前的归属
+    "toTaskId": "t_9f8e7d", "toProjectId": "p_ab12cd",             // = subject.task / subject.project
+    "actor": "human",                    // 只有人能改挂（见「谁能调」）
+    "session": {                         // 被改挂那一段的抄录：这条事实单独拿出来也读得懂、投影不必回头查台账
+      "source": "timer-backend", "dedupeKey": "timer:sess_…",
+      "startAt": "2026-10-08T09:00:00+08:00", "durationSeconds": 1920 } },
+  "flags": [] }
+```
+
+- **只由本节的端点写。** `POST /api/core/events` 收到 `type: "session.reassigned"` 的信封一律不落库，进 `rejected`
+  （理由：改挂是人的决定，事件入口对设备令牌 / 外部 source 开放，放行就绕过了下面的全部规则）。
+  快照恢复（`/api/core/restore`）照常原样搬它——那是同一份台账。
+- **链是连续的**：同一段的 `seq` 为 1、2、3…，第 n+1 条的 `from*` 一定等于第 n 条的 `to*`
+  （防重唯一索引上的 `dedupeKey` 保证同一个 `seq` 只落一条，见「并发」）。
+- `data.session` 是抄录，不是第二份事实：**投影重建只认原来那条 `session.completed`**（见「投影」）。
+
+### 端点
+
+`POST /api/core/sessions/{eventId}/reassign`，`eventId` = 那条 `session.completed` 的 `id`。请求体二选一：
+
+```jsonc
+{ "taskId": "t_9f8e7d" }      // 归到这个任务（任何项目的都行；跨项目就是把这段时间挪到那个项目的合计里）
+{ "projectId": "p_ab12cd" }   // 放回这个项目的「未分类」时间桶（取或建，同 POST /planner/projects/{id}/unclassified）——点错了用它撤回
+```
+
+`200 SessionReassignOut`：
+
+```jsonc
+{ "sessionEventId": "evt_…",
+  "duplicate": false,                    // true = 这一段此刻已经在目标任务上，什么都没追加
+  "fromTaskId": "t_unc_p_ab12cd",        // 这次改挂之前的归属（duplicate 时 = taskId）
+  "taskId": "t_9f8e7d", "projectId": "p_ab12cd",   // 现在的归属
+  "seq": 1,                              // 现在的改挂次数（从没改挂过又 duplicate 时为 0）
+  "event": { "id": "evt_…", "dedupeKey": "reassign:evt_…:1", "type": "session.reassigned" } }
+  // event = 决定当前归属的那条 session.reassigned；从没改挂过（duplicate 且 seq 0）时为 null
+```
+
+| 情形 | 结果 |
+|---|---|
+| `eventId` 在当前租户的台账里不是一条 `session.completed` | **404** |
+| 同一个 `id` 对上不止一条 `session.completed`（事件 `id` 不唯一，见 yq-event/v1 §3） | **409**，不猜 |
+| 这一段**原本**不是记在「未分类」时间桶上的（`subject.task` ≠ `t_unc_<subject.project>`） | **409**——只有未分类的时间能改挂；直接记在具体任务上的时间不在本版范围 |
+| 请求体 `taskId` / `projectId` 都没给或都给了 | **400**；多了别的键、类型不对 **422**（pydantic） |
+| `taskId` 不存在，或它的项目 / 分区链断了 | **404**（与 `timer/start` 同一套归属链判据） |
+| `taskId` 是某个「未分类」时间桶 | **400**——放回未分类请用 `{projectId}` |
+| `projectId` 不存在 | **404**；桶的 id 被不是桶的任务占着 **409**（同 v2.9） |
+| 目标就是这一段当前的归属 | **200**，`duplicate: true`，台账、投影都不动（幂等：重试、连点两下都安全） |
+| 带 `Authorization: Bearer`（设备令牌） | **403** |
+| 有效 actor 为 `ai`（带 AI 来源凭据），或严格模式下没带人路径凭据 | **403**（与 v1.6 的高风险写同一套判据：改挂是搬移时间） |
+| 并发改挂连续 5 次都没抢到下一个 `seq` | **409**，重试即可 |
+
+规则：
+
+- **能改挂的** = 原本记在桶上的段。改挂过的可以**再改**（去别的任务、换项目、放回任何项目的桶），次数不限，最后一次为准。
+- **目标** = 任何存在的任务（`normal` / `ephemeral`，完成与否都行），或 `{projectId}` 指的那个项目的桶。
+- 目标任务以后被删 / 被搬到别的项目：这一段留在改挂时写下的 `task` / `project` 上（与任何记在已删任务上的时间相同，
+  「搬移不污染历史」），仍可再改挂。
+- **不留 planner 审计**：台账里那条 `session.reassigned` 本身就是留痕（`{projectId}` 真的要建桶时照旧留一条 `create` 审计）。
+
+**v2.14 追加（只增）**：除了原本记在桶上的段，**自动记下的段**（`source: "activity-confirmed"` 且信封 `ai.auto === true`，
+见「自动跟踪进行中的任务」节「自动记录」）也能改挂——那是规则替人记的，人要能改。判据同样只看台账里那条
+`session.completed`；目标、幂等、并发、谁能调、投影全部同上。上表「原本不是记在桶上的 → 409」对这类段不适用；
+人自己确认的（`ai.auto` 不是 `true`）、手动计时的、补登的仍然 409。
+
+### 谁能调
+
+改挂是人的决定。设备令牌（`Authorization: Bearer`）403，理由同检测设置（auth.gate v1.2「带了 Bearer 就只看令牌」）。
+来源凭据按 v1.6：`actor=ai` 403；`NEXUS_ACTOR_STRICT=1` 时须带人路径凭据。MCP 没有对应工具（`mcp.tools.v1` 不变）。
+
+判定顺序：**先过门，再读任何东西**。两种请求体、以及「目标已是当前归属」的幂等早退都一样——被拒的调用方拿到的
+永远是 403，探不出某个事件 id 在不在；403 时台账、任务表（`{projectId}` 的懒建桶）一个字节不写。
+
+### 一段时间的身份、载荷的类型（规范性）
+
+- **改挂认的是那一段，不只是事件 `id`。** 事件 `id` 不唯一，外部 source 可以再投一条同 `id` 的段。一条
+  `session.reassigned` 只对「同租户、`id` = `data.sessionEventId`、且 `(source, dedupeKey)` = `data.session` 里抄录的那一对」
+  的那条 `session.completed` 生效（读端的 `currentSubject`、`taskId` 过滤、投影重建同一口径）；后来的同 `id` 段不跟着走。
+- **不信载荷的类型。** `session.reassigned` 也会经快照恢复原样进台账（没过本端点）。`data` 不是对象、`seq` 不是整数
+  （布尔也不算）、`sessionEventId` / 抄录的 `source` / `dedupeKey` 不是非空字符串的，一律**当没有这条改挂**——读端与重建
+  跳过它，不报错、不中断。请求体的 `taskId` / `projectId` 只收 1–128 字符的字符串，别的 422。
+- **幂等键不与客户端可控的键同住。** 汇总投影记「这条改挂应用过没有」用单独的 `movedKeys`，不放进 `appliedKeys`
+  （那里是各 source 自己定的 `dedupeKey`）——否则一条 `dedupeKey` 恰好叫 `reassign:…` 的外部事件能把某次改挂的加减吞掉。
+  `movedKeys` 不读出、不进导出。
+- **服务端才能写的东西，客户端带来的不作数**（2026-10-08 波次统一审核；信封 `extra="allow"`、`source` / `ai` 都是
+  外部 source 自报的，所以逐条说清）：
+  - `currentSubject` 只从改挂链现算。`POST /api/core/events` 收到的信封带着这个键 → **摘掉再落库**（B9「未知字段原样保留」
+    的唯一例外，整条照收）；台账里已经带着它的（快照恢复、摘它之前落的）读端同样不认——`GET /api/core/events` 的每个条目、
+    `taskId` 过滤都只看改挂链，与各投影说的是同一个归属。
+  - 「自动记下的段」这个判据（`source: "activity-confirmed"` 且 `ai.auto === true`）只认服务端自己写的：公开入口收到
+    自称 `source: "activity-confirmed"` 的信封，`ai.auto` 摘掉（其余照收、照落）。别的 source 自报 `ai.auto` 是
+    yq-event/v1 §2 允许的，原样保留——它本来也不满足判据。于是外部 source 能造出的「可改挂的段」仍然只有记在桶上的那种
+    （它本来就能往桶上记时间）。
+  - `source: "session-reassign"` 与 `type: "session.reassigned"` 一样只由本节的端点写：公开入口收到自称它的信封（不论
+    `type`）进 `rejected`。防重身份是 `(user, source, dedupeKey)`，放行的话一条别的类型的外部事件能先占住
+    `reassign:<段>:<n>`，那一段就再也改挂不了。
+  - 仍然开放、登记在案：`source` 的其余取值是自报的（yq-event/v1 的既有性质），外部 source 可以自称
+    `activity-confirmed` / `timer-backend` 记一段时间——它得到的只是一条普通的 `session.completed`，改挂资格、
+    当前归属都伪造不了。
+- 快照恢复搬进来的改挂可以指向本租户里不存在的任务（与恢复一条指向不存在任务的 `session.completed` 相同：
+  时间算在那个 id 上，读端显示「任务已删除」）；投影行按租户分，碰不到别的租户的数据。
+
+### 并发
+
+两个并发的改挂各自读到「当前第 n 次」，都想写第 n+1 条——`dedupeKey` 相同，唯一索引只放进一条；没抢到的那个重新读、
+按新的当前归属再试（这时目标若已是当前归属就回 `duplicate: true`）。所以台账里永远是一条连续的链，
+**链的最后一条 = 各投影的状态**：汇总类投影按每条 `session.reassigned` 做「从旧归属减、往新归属加」，加减可交换、
+各自按 `dedupeKey` 幂等，先后到达顺序不影响结果；时间线投影按 `seq` 只进不退。
+
+**首建不丢**（2026-10-08 波次统一审核）：租户的 `proj_current` 文档 / 某一天的那一行 / 时间线的那一行还不存在时，
+两条**不同**的写（一段落账与它的改挂、两段同时落账）会同时去建。撞了唯一索引的那个不能当成「早已应用过」——
+它不带 upsert 再试一次，由那一次的幂等条件来判：同一条投两遍仍只算一次，两条不同的各算各的。
+
+### 投影
+
+一段时间的秒数、归日（`data.startAt` 经 `NEXUS_TZ`）、时刻都不变，变的只是算在哪个任务 / 项目上：
+
+| 投影 / 读端 | 改挂之后 |
+|---|---|
+| `proj_current`（`views/current` 的 `totalSeconds` / 占比） | `tasks[旧]`、`projects[旧]` 减，`tasks[新]`、`projects[新]` 加；`totalSeconds` 不变。减到 0 的键不再读出 |
+| `proj_daily_stats`（`views/gantt` 的 `actual`、`views/review` 的本周实际 / 久未动） | 同一天：`(旧项目, 旧任务)` 那行减、`(新项目, 新任务)` 那行加。减到 0 的行不再读出（不出 `seconds: 0` 的条目，也不算「最近动过」） |
+| `proj_lanes`（`views/lanes` 的 `human.sessions[]`） | 这一段的 `taskId` / `projectId` 换成新的，其余不变 |
+| `proj_agent_daily_stats` | 不相干（改挂只针对人的 `session.completed`） |
+| `GET /api/core/export` | `events` 原样含 `session.completed` 与全部 `session.reassigned`；`projections` 是改挂之后的数 |
+
+- **DISPATCH**：`session.reassigned` → `handlers/current.py`、`handlers/daily_stats.py`、`handlers/lanes.py` 各一个
+  `handle_reassign`（只动自己的投影、幂等、不发事件）。
+- **投影重建 / 快照恢复**：不重放 `session.reassigned` 的加减，而是先从台账算出每一段最后一次改挂的去向（同租户、
+  同 `sessionEventId` 里 `seq` 最大的那条），重放 `session.completed` 时把 `subject` 换成它。结果与事件到达顺序无关；
+  指向台账里已经没有的段的 `session.reassigned` 不起作用（不会凭空减出负数）。**重建结果 = 逐条实时投影的结果**
+  （各读端的响应相同）。`proj_lanes` 的启动补建同一口径。
+- **改挂赶在时间线那一行之前到**（2026-10-08 波次统一审核，取代原先「等下一次重建」的已知窗口）：一段刚落账、
+  `proj_lanes` 里它那一行还没写时就改挂，`handle_reassign` 先在 `(user, key)` 上占位——只记去向与 `assignSeq`、没有
+  `kind`，读端与「集合为空」的启动补建判定都看不见它；那一行随后写入时补上其余字段，归属以占位为准（占位同样按 `seq`
+  只进不退）。时间线不用等重建就跟到最后一次改挂。那一段永远不进时间线（没有 `startAt` 的外部段）时占位行留着，重建时清掉。
+
+### 读端：`GET /api/core/events`
+
+- **`taskId` 过滤按当前归属**（v2.9 的「`subject.task` 等于它」对没改挂过的段不变）：对 `session.completed`，
+  比的是这一段当前的任务。所以 `?type=session.completed&taskId=<某项目的桶>` 只回**此刻还在桶上**的段——归走一段，
+  「待分类」就少一段；`taskId=<某任务>` 则包含改挂进来的段。其它类型的事件（含 `session.reassigned` 自己）仍比 `subject.task`。
+- **改挂过的 `session.completed` 条目追加一个键 `currentSubject`**，形状同 `subject`：
+
+  ```jsonc
+  { "id": "evt_…", "type": "session.completed",
+    "subject":        { "zone": "z_1", "project": "p_ab12cd", "task": "t_unc_p_ab12cd" },   // 原样，永不变
+    "currentSubject": { "zone": "z_1", "project": "p_ab12cd", "task": "t_9f8e7d" },          // 现在算在谁头上
+    … }
+  ```
+
+  没改挂过的条目**没有**这个键（读方写 `currentSubject || subject`）；放回桶的条目有这个键、值是桶。
+  它是读的时候现算的，不存进台账，`GET /api/core/export` 的 `events` 里也没有。
+- 改挂历史：`?type=session.reassigned`（按 `time` 倒序），一段的全部改挂 = `data.sessionEventId` 相同的那些，按 `data.seq` 排。
+
+### 运维脚本
+
+`scripts/prune_orphan_events.py` 判孤儿时同样按当前归属：原项目已删、但已改挂到现存任务的段不是孤儿，不删。
+
+### 本版不做
+
+- 改挂**原本就记在具体任务上**的时间（记错任务的更正）——规则与界面另行设计。
+- 拆分一段时间、改时长 / 起止时刻。
+- 给 AI 的改挂工具（MCP 只读到改挂后的结果）。
 
 ## 下一步行动读端（规范性 · v1.5，F-TODO-1）
 
@@ -1567,10 +2322,11 @@ planner 是**计划状态**，走普通 CRUD，**不进开放事件标准**（�
   "tool": "Bash",                // 必填，1–64 字符
   "model": "opus" }              // 选填，1–64 字符
 // → 201 AgentStartOut
-{ "runId": "run_0123456789ab", "startedAt": "2026-09-28T09:30:00+00:00" }
+{ "runId": "run_0123456789ab", "startedAt": "2026-09-28T09:30:00+00:00",
+  "heartbeatSeconds": 900 }   // v2.18 起（本例是 v2.1 的形状，后加的键见「心跳与失联」节）
 
 // POST /api/core/agents/{runId}/stop   请求 AgentStopIn
-{ "outcome": "done",             // 必填：done | failed | cancelled | timeout
+{ "outcome": "done",             // 必填：done | failed | cancelled | timeout（响应里还可能是 lost：v2.18，只由服务端写）
   "output": "PR #31 已开" }      // 选填，≤512 字符
 // → 200 AgentStopOut
 { "runId": "run_0123456789ab",
@@ -1599,6 +2355,45 @@ planner 是**计划状态**，走普通 CRUD，**不进开放事件标准**（�
 | `data` | `{agent, tool, model?, startAt, durationSeconds, outcome, output?}`——`model`/`output` 没给就不出现；`durationSeconds` 秒级下限 1（同 timer）；超时关闭时封顶为超时上限 |
 | `flags` | `[]` |
 
+### 只挂项目的运行（规范性 · v2.13）
+
+仓主 2026-10-08：代理会话在某个目录里开起来，就属于那个目录对应的**项目**，不必先指定任务
+（`tools/agent-hooks` 的 `projects` 目录映射）。
+
+```jsonc
+// POST /api/core/agents/start   AgentStartIn 追加一个选填字段（其余字段、响应一个不改）
+{ "agent": "CFO_agent", "tool": "claude-code",
+  "projectId": "p_3c" }          // 选填，1–128 字符：不带 taskId 时，运行挂在这个项目上
+```
+
+| 情形 | 结果 |
+|---|---|
+| 只给 `projectId` | 运行挂该项目：`agent_runs` 存 `projectId` / `zoneId`（开跑时从 planner 取的快照，同带任务的运行）、`taskId: null` |
+| `projectId` 不存在 / 项目没有归属分区 | 404（同 `taskId` 不存在） |
+| `taskId` 与 `projectId` 同给，且项目就是任务所在的项目 | 照带任务的运行处理（`projectId` 多余但不矛盾） |
+| `taskId` 与 `projectId` 同给，项目不是任务所在的项目 | 400——自相矛盾的不收，不替它挑一个（同 v2.10 matches） |
+| 都不给 | 收件箱（v2.1 不变） |
+| 带 `clientKey` 且原运行还在跑 | 回原运行（v2.4 不变；这时不校验 `projectId`，同 `taskId`）；`label` / `match` 见下「会话改名」 |
+
+- **信封**：`subject` = `{zone, project}`、**无 `task`**——与收件箱运行同形，`data` 一个键不加。
+  所以投影零改动：`proj_agent_daily_stats` 本来就按 `(date, projectId, taskId, agent)` 记，这类运行落在
+  `taskId: null` 那一行；`views/agent-time` 的 `tasks[]` 里是 `{projectId, taskId: null}`，`views/lanes` 的
+  `agents[].projectId` 是这个项目（带任务的运行一直回任务所在的项目，不变）。
+- **不碰人的时间**：没有「不挂任务的人的时间」（v2.9）。只挂项目的是**代理**运行，它本来就不进人的任何投影；
+  本版不为它建「未分类」时间桶，也不写任何 `session.completed`。
+- 老客户端不发这个键 = 行为与 v2.12 完全一样；新客户端打到老服务端，多出的键被忽略（落收件箱）。
+
+### 会话改名：同 `clientKey` 再 start 更新 `label` / `match`（规范性 · v2.13）
+
+代理会话的名字会在中途变（Claude Code 里 `/rename`），而终端标签页显示的是新名字——泳道的 `label` 得跟上，
+否则「窗口 ↔ 代理会话」对不上。不为它加端点：**带同一 `clientKey` 再 `POST /api/core/agents/start`**，原运行还在跑时
+照旧回原运行（200，不开新的），并且这次请求里**给了**的 `label` / `match` 若与存着的不同，就换成这次的。
+
+- 只动 `label` / `match`：`agent`、`tool`、`model`、任务 / 项目、`startedAt`、相位、连线一个不动；没给的那个键不动。
+- 条件更新（运行未关闭）；与关闭赛跑输了就不改——那条 `agent.run.completed` 里是关闭那一刻的 `label`。
+- 结束时落账的 `data.label` 是**最后**的名字（一条运行一个名字，不记改名史）。
+- 老服务端（v2.4–v2.12）对同样的请求只回原运行、不改名——客户端不必分辨版本。原运行已结束时，同 key 的 start 开一条新运行（v2.4 不变）。
+
 ### 在跑的运行：独立集合 `agent_runs`，不是事实
 
 - 在跑的运行只是**活状态**（同 `timer_state`），不进台账、**不进导出**（导出的是事实与投影；
@@ -1617,6 +2412,74 @@ hook 没发 stop（终端被关、进程被杀）的运行会永远挂着。超�
 这意味着 `GET /views/current` 可能写事件——这是本节明文允许的唯一例外，写的只是
 「早该写的那一条」。
 （v2.3：`GET /views/agent-time` 读前同样收超时，是这条例外的第二个读端，见「AI 代理时长读端」节。）
+
+（v2.18：遗忘超时只管**没声明过心跳**的运行。声明过的运行看下一节的活性规则，不看这个上限——
+`NEXUS_AGENT_RUN_TIMEOUT_HOURS` 从「每条运行的寿命上限」退成「不发心跳的运行的安全网」。）
+
+### 心跳与失联（规范性 · v2.18，`nexus-core.agents.liveness.v1`）
+
+仓主 2026-10-09（原话见本文件头部 v2.18）。面向适配器的线上协议（认证、幂等、对适配器的要求、例子）在
+`contracts/agent.lane.v1`；本节是服务端这一侧的唯一事实。
+
+```jsonc
+// POST /api/core/agents/start   AgentStartIn 追加两个选填字段、响应追加一个键
+{ "agent": "garden", "tool": "claude-code",
+  "heartbeat": true,             // 选填，缺省 false：声明这条运行会发心跳
+  "beatSource": "companion" }    // 选填，^[a-z0-9][a-z0-9_-]{0,31}$：谁来发心跳（只是标签）
+// → 201 / 200
+{ "runId": "run_…", "startedAt": "…", "heartbeatSeconds": 900 }
+
+// POST /api/core/agents/{runId}/heartbeat   请求：空体、{} 或 { "beatSource": "monitor" }
+// → 200 AgentHeartbeatOut
+{ "runId": "run_…",
+  "applied": true,               // false = 运行已结束，reason 为 "closed"（同相位端点的 closed）
+  "reason": null,
+  "heartbeatSeconds": 900 }
+```
+
+| 情形 | 状态码 |
+|---|---|
+| `runId` 不存在（或属于别的租户，同形状不暴露） | 404 |
+| 体里有 `beatSource` 以外的键、体不是对象、`beatSource` 不合格式；`start` 的 `heartbeat` 不是布尔 | 422 |
+| 运行已结束（stop 过、超时、失联） | **200，`applied:false, reason:"closed"`** |
+
+规则：
+
+- **信号**：被收下的 `start`（含同 `clientKey` 回原运行的那种）、`phase`（含 `duplicate` / `capped`）、`heartbeat`
+  都把运行的 `lastSeenAt` 更新成服务端此刻。新开的运行 `lastSeenAt` = `startedAt`。`stop` 不算（它直接结束运行）。
+  在场心跳命中 `match` 记的 attend **不算**——那是人在看，不是代理活着。
+- **声明**：`start` 带 `heartbeat: true`，或对这条运行发过一次 `heartbeat`（含同 `clientKey` 再 `start` 时带上）。
+  声明不可撤回。**没声明的运行本节其余各条一概不适用**——v2.17 及以前的适配器、`modules/ai-detector` 的状态文件桥
+  今天怎样还怎样。
+- **失联**：声明过的运行，`服务端此刻 − lastSeenAt > 1800 秒`（`AGENT_LOST_AFTER_SECONDS`）即失联。
+  - `GET /views/lanes`（不写）：该运行 `lost: true`，`elapsedSeconds` 止于 `lastSeenAt`（不再随时间涨），`overdue` 恒 `false`。
+  - 惰性关闭：与遗忘超时同一批时机（该租户下一次 `agents/start`、`stop`、`phase`、`heartbeat`、`views/current`、
+    `views/agent-time`）。写 `outcome: "lost"`，事件的 `time` = `lastSeenAt`、`durationSeconds` = `lastSeenAt − startedAt`
+    （下限 1）——**不是**被发现的时刻，也不是「开始 + 上限」。关闭带着读到的 `lastSeenAt` 作条件：读到「失联」之后、
+    打关闭标记之前又来了信号，就不关。
+  - 关闭之后与任何已结束的运行一样：迟到的 `phase` / `heartbeat` 回 `closed`，`stop` 回 `duplicate:true`（`outcome`
+    是 `lost`）；带原 `clientKey` 再 `start` 开一条**新**运行，`startedAt` 是此刻。
+- **安全上限**：声明过的运行不看 `NEXUS_AGENT_RUN_TIMEOUT_HOURS`，但有自己的上限 `AGENT_DECLARED_MAX_SECONDS` = 7 天
+  （具名常量，远小于投影的 31 天坏载荷线，超过 31 天的事件在统计里会被静默丢掉）。到了上限，惰性关闭写 `outcome: "timeout"`、
+  事件 `time` = 开始 + 上限、`durationSeconds` = 上限（同遗忘超时的算法）；与失联同时成立时取结束更早的。
+  `views/lanes`（不写）：`elapsedSeconds` 封顶、`overdue: true`。之后的迟到信号回 `closed`，带原 `clientKey` 再 `start`
+  开新运行（与失联后一样）。**时长含义**：一条泳道的 `durationSeconds` 是**进程寿命**（开着没关也在跑），不是活动量；
+  周末开着的会话会记满到上限。要分辨「真在干活」看相位时间（working / waiting / idle），不要看总时长。
+- **间隔**：`heartbeatSeconds` = 900（`AGENT_HEARTBEAT_SECONDS`，失联线的一半）。两个数是代码里的具名常量，不是环境变量——
+  仓主定的值，没有部署要调它的理由；要调时发新版契约。
+- **`stop` 的 `outcome` 仍只收** `done` / `failed` / `cancelled` / `timeout`；`lost` 只由服务端写，客户端发 → 422。
+- **`beatSource` / `beatCount`**（只为比较，不参与任何判定）：`beatSource` 是适配器自报的标签，`start` / `heartbeat` 里
+  给了就记，后来的盖先来的；`beatCount` 是这条运行收到的 `heartbeat` 次数（`start` / `phase` 不计）。两者在跑时由
+  `views/lanes` 带出，结束时写进 `agent.run.completed` 的 `data`（没有就不出现——不发心跳的运行写出的事实与 v2.17
+  逐键相同），之后由 `proj_lanes` 带出。按 `beatSource` 分组看 `outcome`（`lost` 对 `cancelled` / `done`）与
+  `beatCount`，就能比较两种心跳办法；查询写法见 `tools/agent-hooks/README.md`「比较两条路」。
+- **`views/agent-time` 与 `views/current`** 读前收失联（同收超时），所以 `open[]` / `agents[]` 里不会有失联的运行；
+  被收掉的那条按 `lastSeenAt − startedAt` 进汇总。
+- 存储：`agent_runs` 文档追加 `lastSeenAt`、`heartbeat?`、`beatSource?`、`beatCount?`；无迁移——升级前就在跑的运行
+  没有 `heartbeat`，按「没声明」处理，第一次心跳时补上 `lastSeenAt`。
+
+本版不做：`modules/ai-detector` 的状态文件桥不声明心跳（它在状态文件过期时有意不动运行，改成发心跳要重定那条语义）；
+失联的运行不自动「复活」成同一条（适配器重开的是新运行，两段之间的空白就是事实）。
 
 ### 投影：`proj_agent_daily_stats`，与人的投影零交集
 
@@ -1644,7 +2507,8 @@ hook 没发 stop（终端被关、进程被杀）的运行会永远挂着。超�
 ```jsonc
 "agents": [ { "runId": "run_...", "taskId": "t_a1b2c3",   // 收件箱运行为 null
               "agent": "claude-code", "tool": "Bash", "model": null,   // 未给为 null，键不消失
-              "startedAt": "2026-09-28T09:30:00+00:00" } ]
+              "startedAt": "2026-09-28T09:30:00+00:00",
+              "elapsedSeconds": 1200 } ]   // v2.21 起；另有 v2.4 的 phase / label
 ```
 
 当前租户在跑的运行，按 `startedAt` 升序；没有就是 `[]`。人的部分（`running`/`zone`/`project`/
@@ -1675,7 +2539,7 @@ hook 没发 stop（终端被关、进程被杀）的运行会永远挂着。超�
   是一条泳道，`seconds` 是泳道长度之和，所以一天可以超过 86400。「这段时间里至少有一个代理在跑」的
   墙钟覆盖时长与并行峰值**本版不给**：投影里没有每个运行的起止，要算得读 `events`，而 views 不读台账
   （「内部子边界」红线）；真需要时加一张按运行存区间的投影再开字段。
-- **归日同人**：整段运行归 `data.startAt`（经 `NEXUS_TZ`）所在那天，**跨零点不切分**——与
+- **归日同人**（v2.31 起仅适用于没带 `days` 的老事件，新事件逐日切分，见「代理只算干活的时间」）：整段运行归 `data.startAt`（经 `NEXUS_TZ`）所在那天，**跨零点不切分**——与
   `proj_daily_stats` 同一口径（理由见 `daily_stats.py`），这样同一天的人和代理两个数说的是同一个「那天」；
   单个运行被遗忘超时封顶在 `NEXUS_AGENT_RUN_TIMEOUT_HOURS`，溢出到次日的量有上界。
   不接受 `tz` 参数：「那天」是服务端的 `NEXUS_TZ` 定的（「日界与时区」节），不许每个调用方一个答案。
@@ -1685,6 +2549,26 @@ hook 没发 stop（终端被关、进程被杀）的运行会永远挂着。超�
   所以 `elapsedSeconds` 不会超过超时上限，被收掉的运行已作为 `timeout` 事实进了汇总。
 - 按当前租户（「按租户分数据」）；`agent` 是 start 时记录的原样字符串，不 join 显示名（任务/项目名
   由调用方按 id 从树里取，同 `events` 档案读端）。
+- **v2.17 追加**：`open[]` 每条多一个键 `attentionSeconds`（整数，≥ 0）：人把注意力放在这条运行的窗口上的秒数
+  （该运行 `attend` 的 `at`–`until` 之和，见「串行的注意力时间线」节）。**同样不计入任何汇总、不是人记下的工时**。
+  已结束运行的汇总（`days` / `agents` / `tasks`）本版不带注意力：投影里没有这一列，要看用 `views/lanes` 的 `agents[].attention`。
+
+
+## 代理只算干活的时间（规范性 · v2.31）
+
+**干活秒数（`workingSeconds`）**：运行期间代理处于 `working` 相位的总时长。区间 = **运行开始**（或一条 `working` 相位）到**下一条非 working 相位**（开始到第一条相位也算干活，与 `views/lanes` 的画法一致）（`idle` / `error` / 其他任何相位）；
+连续的 `working` 并成一段；最后一条是 `working` 则算到运行结束（失联关闭的结束 = 最后一次信号，遗忘超时的结束 = 开始 + 上限，都是既有规则）。
+相位 `at` 偏移可以混用（`+00:00` 与 `+08:00`），**一律按时刻比较**；早于起点的钳到起点，晚于结束的丢掉（既有裁剪）。
+
+- **没报过相位的运行**（hermes / codex 等 API 起停、没有 `phases`）：整段墙钟都算干活，与旧行为相同；相位全在结束之后的同理（相位先钳到起止之内）。**报过相位但从没 working**：0 秒。
+- **相位上限**：一个运行最多存 1000 条相位（`MAX_PHASES`），之后到的被丢弃；所以超长运行里最后一条被存下的 `working` 会一直算到结束。不补偿。
+- **按本地日切分**：干活区间在 `NEXUS_TZ` 的本地午夜切开，区间与每天长度都在 UTC 里相减（夏令时当天是 23 / 25 小时），每天秒数四舍五入成整数，总数不超过干活秒数的整数部分（多出的从最后一天扣），`workingSeconds` = 各天之和且不超过 `durationSeconds`；没有干活秒数的日子不出现，全为 0 时给 `startAt` 那天一条 `seconds: 0`
+  （运行次数仍要记；`durationSeconds` 的下限 1 秒不带到干活秒数，起停同秒的运行干活 0 秒）。跨一整天的运行把那一天记满 86400。
+- **事件**：`data.workingSeconds` 与 `data.days` 只有代理子系统自己写的新事件带；**没带这两个键的事件含义不变**（旧规则）。`days` 在写事件时定死，之后改 `NEXUS_TZ` 不改写已有事件，重建与首次投影结果一致。
+- **投影**：事件**由代理子系统自己写**（`source` 为 `agent-hook`）、带 `days` 且不超过 32 条，才逐日写；外部 source 的事件带 `days` 也按旧规则。逐日写时每个日期一行（唯一键不变）。一条事件写多行的幂等：每一行各自带同一个 `appliedKeys` 身份，各行独立判重，写到一半崩了重放只补没写的行；
+  `runs` 只在首日那行 +1、其余 +0，所以汇总的运行次数不会因为跨天而多数。`days` 里坏条目（日期不合法、秒数为负 / 非数 / 超 31 天）静默跳过。
+- **`views/agent-time`**：`open[]` 每条追加 `workingSeconds`（到此刻为止同口径的干活秒数；整数，≥ 0；不计入汇总、不是工时）。其余形状不变；`days[]` 的天数现在是干活秒数，不再是「整段归开始那天」。
+- 仍是另一条泳道：不进任何人的投影。
 
 ## 人类计时模式（规范性 · v2.1，mode）
 
@@ -1764,6 +2648,14 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
   这是有意的：服务端分不清是两台电脑各干了一段还是同一件事，由确认的人判断。
 - **`id` 由防重键确定性派生**（`sug_` + SHA-256 前 20 位十六进制）：同一段即使过期被清、之后又被重传，
   拿到的还是同一个 `id`，于是 `activity:<id>` 防重照样命中——**同一段活动全系统至多一条事实**。
+
+- **v2.14 追加：`suggestion.projectId`（规则只到项目）。** 上传的 `suggestion` 可以带 `projectId`（1–128 字符的字符串）
+  且 `taskId` 为 `null`——检测程序的规则只定到项目时这样报（`detector.rules.v1` v1.1）。项目存在 → 原样存进
+  `suggestion.projectId`（与 v2.10 助理标的是同一个键，页面照旧拿它预选项目），`confidence` / `reason` / `classifier`
+  照存，**没有 `projectSource`**；项目不存在 → 同任务不存在：`projectId` 不存、`confidence: 0`，照收。
+  `taskId` 与 `projectId` 都给了 / `projectId` 不是字符串 → 该段进 `rejected`。带了规则给的项目的段不再做
+  v2.13 的「窗口 ↔ 代理会话」（规则是人定的，优先）。这一条**取代** v2.13「上传的 `suggestion` 里自带 `projectId` …
+  仍然不存」中关于 `projectId` 的那半句；`projectSource` / `collection` 仍然不收。老检测程序不发这个键，行为不变。
 
 ### 确认：与补登同一条路径（规范性）
 
@@ -1856,6 +2748,230 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
   **先于请求体校验**：带 Bearer 的坏请求体也是 403，不是 422。
   MCP 走对内地址不带 Bearer；它按固定映射只调 matches，**不调 unmatch / confirm / dismiss**。
 - `rejectedTaskIds` 随建议过期一起清；不进导出、不进快照恢复（同建议本身）。
+
+### AI 提议新任务：人点「是」才建（规范性 · v2.8）
+
+仓主 2026-10-03：「AI 应该能自动加新任务。」定为**草稿 + 一键确认**（同分类规则草稿：AI 起草、人应用）：
+助理匹配时发现现成任务里没有合适的，可以提议「在项目 P 下建任务 N，把这些段记进去」。**人点「是」之前什么都不建**。
+
+```jsonc
+// POST /api/core/activity/suggestions/matches —— 每条 taskId 与 newTask 二选一
+{ "matches": [
+    { "id": "sug_…", "newTask": { "projectId": "p_3c", "name": "重构存档" },
+      "confidence": 0.6, "reason": "标题里反复出现 save.gd，现有任务里没有对应的" } ] }
+
+// GET 列表：带提议的建议，suggestion 追加 newTask（没有提议的建议没有这个键）
+{ "suggestion": { "taskId": null, "confidence": 0.6, "reason": "…", "classifier": "assistant",
+                  "newTask": { "proposalId": "tp_…", "projectId": "p_3c", "name": "重构存档" } } }
+
+// POST /api/core/activity/suggestions/{id}/confirm   请求 { "proposalId": "tp_…", "name"?: "重构存档系统", "mode"?: … }（不带 taskId）
+{ "id": "sug_…", "status": "confirmed", "duplicate": false, "date": "…", "event": { … },
+  "taskId": "t_9a1b2c3d4e5f" }                   // v2.8 追加：台账里这段真正记到的任务（所有 confirm 都回）
+
+// POST /api/core/activity/suggestions/{id}/unmatch   请求 { "proposalId"?: "tp_…" }
+{ "id": "sug_…", "status": "pending", "rejectedTaskIds": [] }
+```
+
+**提议**住独立集合 `activity_task_proposals`，每租户按（`projectId`, 归一化名字）唯一——同一个窗口的十几段、
+或几轮匹配提的同一个名字，都是**同一条提议**，只会建一个任务。归一化 = 去首尾空白、连续空白并成一个、不分大小写。
+`proposalId` 由（项目, 归一化名字）确定性派生（`tp_` + SHA-256 前 20 位）。`newTask.name` 是这条提议第一次提出时的写法。
+提议第一次提出时就**预留好任务 id**（`t_` + 12 位随机十六进制，存在提议上），建任务只用它；提议过期后再被提出拿到的是新号，
+所以人删掉的任务 id 永远不会被再用（planner「id 不可复用」）。
+**列表**：建议指着的提议已被否掉或已过期 → 当作没有建议回出（不出 `newTask`，`confidence: 0`、`reason: ""`）。
+提议不是事实，也不是计划：不进台账、投影、导出、快照恢复；最后一次被提 / 被处理之后超过 `NEXUS_SUGGESTION_TTL_DAYS`
+惰性清掉（总比指着它的建议活得久）。
+
+**matches 里的 `newTask`**（逐条校验，坏的进 `rejected`，同 v2.7）：
+
+| 情形 | 结果 |
+|---|---|
+| `taskId` 与 `newTask` 都给 / 都没给 | 该条进 `rejected` |
+| `newTask.projectId` 不存在 | 该条进 `rejected` |
+| `newTask.name` 去首尾空白后为空，或超过 64 个码点 | 该条进 `rejected` |
+| 项目里已有同名任务（归一化后相同，含已完成的） | 该条进 `rejected`，理由点名那个任务的 id——**有现成的就用 `taskId`** |
+| 这条提议已经建成任务 | 该条进 `rejected`（同上，用 `taskId`） |
+| 这条建议的 `rejectedProposalIds` 里有它，或这条提议已被否掉 | 该条进 `rejected`——人说过「否」的不许再提 |
+| 建议不存在 / 不是 pending / 已有规则给的任务 | 同 v2.7 |
+| 其余 | 取（或新建）提议；`suggestion` 整个换成 `{taskId: null, confidence, reason, classifier: "assistant", newTask}`，计入 `matched` |
+
+**confirm 一条带提议的建议**（请求体带 `proposalId`、**不带** `taskId`；带了 `taskId` = 人在下拉里挑了现成任务，就是 v2.7 的普通确认）：
+
+1. 带 `Authorization: Bearer` → **403**（设备令牌不能建任务），任何写入之前。
+2. `proposalId` = 人在页面上看到并点「是」的那条提议；`taskId` 与 `proposalId` / `name` 同给 → **400**；
+   只给 `name` 不给 `proposalId` → **400**；什么都不给而建议只有提议 → **400**（同「没有可确认的任务」，老页面建不出任务）。
+   `name`（可选）= 人改过的名字，校验同上（去空白、1–64 码点），不合规 **400**。
+3. 先占位（同 v2.2，条件追加「建议**当前**的 `newTask.proposalId` 就是请求里的那个」；页面显示之后被否掉 / 换掉 → **409**）。
+4. 取任务——**不靠锁，结构上只建一个**：
+   - 提议 pending → accepted（条件更新），同时定下名字：**第一位确认的人改的名字为准**，后到的确认带的 `name` 不起作用。
+     「否」把提议标为已否掉也只从 pending 转，两者二选一：**已否掉的提议 → 409，永远建不出任务**。
+   - 预留 id 的任务已在 → 直接用。不在 → 先在提议上**持久地**占「建」（`createClaimedAt` 空 → 现在，条件更新；
+     条件里带读到的预留 id——提议 id 是派生的，过期清掉又被同名提出时 id 相同、预留 id 不同，拿旧读数的占不到新的那份；
+     建只用占到的那份里的 id 与名字），
+     **只有占到的那一次**用预留的 id 经 planner **既有建任务路径**建（`guard.run_write` → `create_task`，与
+     `POST /api/core/planner/tasks` 同一条：actor 按来源判定、留一条审计；`create_task` 为此追加一个只给本路径用的 `task_id` 入参）。
+     占位**永不放掉**：占到的那一次建任务报错（项目已删等）也不放——报错时可能其实已经插进去、又被并发地删掉了，
+     放掉就可能建回来。这条提议从此建不出任务（之后的确认 404），人改选现成任务，或等它过期后助理再提（新提议、新 id）。
+   - 没占到的：等任务出现（≤ 10 秒，同一组几段并发确认时）复用；等不到 → **404**——占过「建」而任务不在，只可能是
+     建过又被删了（planner 的删除是硬删除，任务表里不留痕，所以「建过没有」记在提议上，删任务也不清），或建的那一次崩了：
+     **绝不用同一个 id 再建**（planner「id 不可复用」）。代价同上：建的那一次崩在建成之前，这条提议就再也建不出任务，
+     人改选现成任务即可（安全失败）。
+   - 在「接受」与「占建」之间崩掉：重试照样占、用已定下的名字建。
+   - **所以同一提议无论多少段、多少次并发确认，只建一次任务；人删掉之后也不会被建回来。**
+5. 取任务失败（项目已删 → 400、提议过期没了 / 已否掉 → 409 等）放回占位，同 v2.2。之后同 v2.2 写事实。
+6. 响应的 `taskId` 取台账里这段**真正落下**的那条事实的任务（同一段并发确认、各带不同任务时，后到的是重复，回的是先写成的那个）。
+
+**unmatch 一条带提议的建议**（人说「否」）：`proposalId` 给了且与建议当前的不同 → **409**；给了 `taskId` → **409**
+（页面上看到的不是提议）。其余：清掉 `newTask`（`confidence: 0`、`reason: ""`），提议记进这条建议的
+`rejectedProposalIds`（去重，不在列表里回出）；状态仍 `pending`。之后若已没有待确认的建议还指着这条提议、且还没人点过「是」，
+提议标为**已否掉**：助理再提同一（项目, 名字）一律被拒，指着它的段也确认不了（409）。
+
+**挂提议与否掉的赛跑**：提议在另一个集合，挂到建议上与「看提议还在不在」不是一个原子操作。matches 挂上之后再看一眼，
+提议恰好被否掉了就摘下来、该条进 `rejected`。剩下极窄的窗口（那一眼之后才被否掉）留着一条指着已否掉提议的段——
+**安全失败**：列表把它当没有建议，确认 409，建不出任务。
+
+- 「全部确认」类批量操作**不许**替人建任务：提议的建议 `taskId` 是 `null`，本来就不满足「有任务才批量确认」（前端契约另行写明）。
+- MCP 照旧只调 matches，不调 confirm / unmatch。提议从提出到建成，planner 里一个字节都不动。
+
+### AI 分集合：同类窗口归到一起，可以只标到项目（规范性 · v2.10）
+
+仓主 2026-10-08：「最后一个痛点：碎片太多。让 AI 在输出中，把同类型的碎片窗口（如同一个 agent 名字）放在一个集合中，
+集合按总时间自上而下排列。打开集合就能看到所有类似的窗口操作。人可以设置集合的项目，并方便地在集合里选项目的任务。」
+分组与排序是页面的事（`modules/assistant` 契约）；本节只管**助理怎么把标签交进来、列表怎么回出去**。
+
+```jsonc
+// POST /api/core/activity/suggestions/matches —— 每条追加两个可选键
+{ "matches": [
+    { "id": "sug_…", "collection": { "name": "Claude Code · cockpit" }, "projectId": "p_3c" },   // 只贴标签：不动任务
+    { "id": "sug_…", "taskId": "t_a1", "confidence": 0.8, "reason": "…",
+      "collection": { "name": "Claude Code · cockpit" } } ] }                                    // 配任务，顺带归集合
+
+// GET 列表：suggestion 追加（没有标签的建议没有这两个键）
+{ "suggestion": { "taskId": null, "confidence": 0, "reason": "", "classifier": "rules",
+                  "collection": { "key": "claude code · cockpit", "name": "Claude Code · cockpit" },
+                  "projectId": "p_3c" } }
+```
+
+- **`collection.name`**：助理给这一类窗口起的名字，去首尾空白后 1–64 个码点。**`collection.key`** = 归一化的名字
+  （去首尾空白、连续空白并成一个、不分大小写，同新任务提议的归一）——`key` 相同的建议是同一个集合；`name` 存这条交来时的写法。
+  服务端**不存集合本身**（没有集合表、没有成员表）：集合就是「`key` 相同的那些待确认建议」，建议处理完 / 过期，集合自然没了。
+- **`projectId`**：只到项目的建议——看得出项目、但定不了任务。必须是已有项目。**它不让任何东西可确认**：
+  确认要记到哪里仍由 confirm 的请求体决定。这条建议另有 `taskId` / `newTask` 时，读方以任务 / 新任务所在的项目为准。
+- **只贴标签**（`taskId`、`newTask` 都不给）：只写 `suggestion.collection` / `suggestion.projectId`，
+  `taskId`、`confidence`、`reason`、`classifier` **一个不动**——所以规则已经给了任务的建议也能贴（v2.7「助理不盖规则的结果」
+  管的是任务，不是标签）。`confidence` 可省（给了也不用）。
+- **与 `taskId` / `newTask` 同给**：照 v2.7 / v2.8 换掉 `suggestion`，并带上这次给的标签。这次没给 `collection` 而建议原来有 →
+  **保留原来的集合**（助理改主意换任务不该把它踢出集合）；`projectId` 只存这次给的。
+- **人说「否」不清标签**：unmatch 清的是任务 / 提议（v2.7 / v2.8 不变），`collection`、`projectId` 留着。
+  助理可以再交一次换掉标签；没有「去掉标签」的操作（不需要：标签只影响页面怎么分组）。
+
+**matches 里新增的拒绝情形**（逐条，坏的进 `rejected`，其余照写，同 v2.7）：
+
+| 情形 | 结果 |
+|---|---|
+| `taskId`、`newTask`、`collection`、`projectId` 一个都没给 | 该条进 `rejected` |
+| 给了 `taskId` / `newTask` 却没给 `confidence` | 该条进 `rejected`（v2.7 / v2.8 的必填不变） |
+| `collection` 不是对象 / 缺 `name` / `name` 去空白后为空或超过 64 个码点 | 该条进 `rejected` |
+| `projectId` 不存在（或类型不对） | 该条进 `rejected` |
+| `projectId` 与 `taskId` 所在的项目 / `newTask.projectId` 不同 | 该条进 `rejected`——自相矛盾的不收，不替它挑一个 |
+| 建议不存在 / 不是 `pending` | 同 v2.7 |
+| 只贴标签，建议已有规则给的任务 | **收**（只写标签） |
+
+- 两个键**只由 matches 写**：上传端点的 `suggestion` 里带了也不存（检测程序不能自己分集合）。带 `Authorization: Bearer` 照旧 403。
+- 仍然**什么都不确认**：状态、台账、投影、导出一个字节不动；重复交同一批幂等。只贴标签的写入是条件更新（仍 `pending`）。
+- 标签随建议一起过期；不进导出、不进快照恢复。老读方忽略这两个键即可（`suggestion` 自 v2.8 起就是开放对象）。
+
+### 匹配历史：人以前是怎么定的（规范性 · v2.12）
+
+仓主 2026-10-08：「学历史是要的」——助理不该每次从零猜；人已经确认过「这个窗口算这个项目 / 任务」，下一次同样的窗口就照办。
+「直接历史加入 AI 的上下文」：**不做**项目别名 / 关键词表，历史本身就是例子。实测的起因：v2.10 之后助理几乎从不填 `projectId`，
+连「ShareGPU 开发」「成长花园v0.2 开发」这种一眼看得出项目的集合也不填。本节只管**读端**；怎么用是助理提示词的事
+（`agent.chat.v1` v1.8 补注），经 `mcp.tools.v1` v1.7 的 `get_match_history` 读。
+
+```jsonc
+// GET /api/core/activity/suggestions/history?limit=60        —— 只读；limit 缺省 60、上限 200、非正数按缺省
+{ "items": [                                                   // 一个窗口一行，最近定的在前
+    { "app": "kitty", "title": "Claude Code · cockpit",        // title 是归一化之后的（见下）
+      "collection": "Claude Code · cockpit",                   // 这个窗口最近一次所在的集合名；没分过集合没有这个键
+      "projectId": "p_3c", "projectPath": "学习 / garden",     // 当前名字拼的「分区 / 项目」
+      "taskId": "t_a1", "taskName": "写提示词", "taskDone": false,   // 只定到项目的没有这三个键
+      "count": 7, "lastConfirmedAt": "2026-10-08T03:12:00+00:00",
+      "via": "confirm" } ],                                    // confirm | project | reassign
+  "collections": [                                             // 以前用过的集合名 → 它最近落在的项目（至多 30 个）
+    { "name": "ShareGPU 开发", "projectId": "p_9d", "projectPath": "工作 / ShareGPU", "count": 12 } ],
+  "rejected": [                                                // 人否掉过的（窗口, 任务），新的在前（至多 30 条）
+    { "app": "code", "title": "plot.gd — garden", "taskId": "t_b2", "taskName": "修存档" } ] }
+```
+
+- **来源**：状态是 `confirmed` 的建议（还没过期的），按处理时刻从新到旧。**去向不取建议上存的任务，取台账**：
+  `source=activity-confirmed`、`dedupeKey=activity:<id>` 的那条 `session.completed` 的当前归属——确认时人可以改选别的任务，
+  建议上的 `suggestion.taskId` 不一定是它。台账里没有这条（占了位、事实还没写成）的不算。
+- **键 =（`app`, 归一化标题）**。归一化：空白并成一个、去首尾空白，再去掉**开头**的状态符号（Unicode 类别 `So`，
+  以及 `*` `•` `·`）、计数「`(3)`」「`[2]`」与它们之间的空白；去完是空的就用去之前的。与待批准页没有集合标签时的归并键
+  是同一个算法（`modules/assistant` 的 `normTitle`）——「✳ Claude Code」「⠂ Claude Code」「(2) Claude Code」是同一个窗口。
+- **一行说的是人最近一次的决定**：同一个键下取最近处理的那条的去向；`count` 是这个键下**去向与它相同**的段数
+  （人后来改了主意的，旧去向不计）；`lastConfirmedAt` 是那次确认的时刻（改挂过的仍是确认的时刻，不是改挂的时刻）。
+- **`via`**：`confirm` = 确认到了具体任务；`project` = 只确认到项目（记在它的「未分类」时间桶上，v2.9）——
+  **桶不是任务**，这一行没有 `taskId` / `taskName` / `taskDone`；`reassign` = 那一段后来被改挂过（v2.11），
+  给的是**当前**归属（改到具体任务就带任务，放回某个项目的桶就只有项目）。
+- **不存在的去向不出**：当前归属的任务已删、或它的项目已删 → 这条建议不参与（同一个键下更早的、去向还在的那条顶上来）。
+  任务完成了照出，`taskDone: true`（读方自己决定还配不配它）。
+- **`collections`**：已确认建议上的集合标签（v2.10 `suggestion.collection`）按 `key` 归并，`name` 与项目取最近那条的，
+  `count` 是落在这个项目的段数。给助理两样东西：以前用过的集合名（沿用，不要每次换名字）、这个集合一般属于哪个项目。
+- **`rejected`**：`rejectedTaskIds`（v2.7 人说「否」）非空的建议，不论状态，按（`app`, 归一化标题, `taskId`）去重；任务已删的不出；
+  这个窗口在 `items` 里现在的去向就是这个任务的也不出（人后来还是确认到了它，最近的决定为准）。
+  否掉的**新任务提议**（v2.8 `rejectedProposalIds`）不在这里——matches 自己会拒，理由里写着。
+- **上限**：`items` 至多 `limit` 行（缺省 60，上限 200，非正数按缺省，不是整数 422）；只看最近处理的 5000 条已确认建议、
+  最近 500 条被否过的建议。超出的静默不看：这是给模型当例子的，不是台账。
+- **能看多远 = `NEXUS_SUGGESTION_TTL_DAYS`**（默认 14 天）：已确认的建议过期即删，历史随之变短；台账里的事实不带窗口标题，
+  补不回来。想让助理记得更久就调大这个值。读本端点同样会惰性清掉过期的（同列表）。
+- **只读**：不写台账、投影、建议、提议，**不确认、不预填任何东西**（上传时按历史自动配不在本版——那是分类规则的事）。
+- **租户与凭据**：只看当前租户的；带 `Authorization: Bearer`（设备令牌）也能读——与 `GET .../suggestions` 是同一类数据。
+- **隐私**：没有新的暴露面。`app` / `title` 就是上传时已经脱敏过的那两个字段（`ai-detector`「上传」节），列表端点本来就回；
+  本端点只是把它们与人自己选的任务 / 项目并排列出来，不出 `deviceId`、不出时刻段。它们仍是**别的机器上来的文本**，
+  交给模型时照旧当数据、不当指令（`mcp.tools.v1` 第四节）。
+
+### 窗口 ↔ 代理会话：标题对上了，项目跟着会话走（规范性 · v2.13）
+
+仓主 2026-10-08：终端标签页的标题就是代理会话的名字（标签页「✳ CFO_agent - Ptyxis」↔ 钩子报的泳道 `label`
+「CFO_agent」）。钩子已经在源头说了这个会话属于哪个项目（见「只挂项目的运行」与任务映射），人看着这个窗口的那段时间
+就不用再让 AI 从标题猜项目。
+
+**做在上传那一刻**（`POST /api/core/activity/suggestions`，逐段，写入前）。一段满足下面全部条件时，服务端在它的
+`suggestion` 里追加三个键：
+
+```jsonc
+// GET 列表里的样子（上传时 suggestion.taskId 为 null 的那些段才可能有）
+{ "suggestion": { "taskId": null, "confidence": 0, "reason": "", "classifier": "rules",
+                  "projectId": "p_3c",                    // 那次代理运行的项目
+                  "projectSource": "agent-session",       // 来历标记：这个 projectId 是按会话对上的，不是助理 / 人给的
+                  "collection": { "key": "cfo_agent", "name": "CFO_agent" } } }   // 以会话 label 命名（归一同 v2.10）
+```
+
+1. 这段**没有任务猜测**：`suggestion.taskId` 为 `null`（规则没给，或给的任务不存在被清掉了）。规则给了任务的段不碰。
+2. 标题归一化后**至少 3 个码点**，且与某次代理运行的 `label` 或 `match`（同样归一化）**完全相等**——不做子串、不做模糊。
+3. 那次运行与这段**时间上有重叠**（运行开始 < 段的 `endAt`，且运行结束（在跑的取「现在」）> 段的 `startAt`），同一租户。
+4. 那次运行挂在一个**真项目**上（带任务的运行取任务所在的项目；收件箱运行不算），且该项目此刻还在。
+5. 满足 2–4 的运行指向的项目**只有一个**。指向两个不同的项目 → 不写（不替人挑）。
+
+**归一化**（与 `modules/ai-detector` 的标签页合并键 `tabKey` 同一个思路，标题与 `label` / `match` 用同一个函数）：
+连续空白并成一个 → 若最后一个「空白 + `-`/`—`/`–`/`|` + 空白」后面那截（不分大小写、≥3 个码点）出现在这段的 `app` 里，
+去掉它（终端加的「 - Ptyxis」后缀；`label` / `match` 不做这一步）→ 去掉开头的状态符号 / 转圈符号 / `(N)` 计数
+（开头所有非字母数字的字符）→ 去首尾空白 → 不分大小写。
+
+- **只是提示，不是事实**：状态仍是 `pending`，`taskId` / `confidence` / `reason` / `classifier` 一个不动；
+  确认要记到哪里仍由 confirm 的请求体决定（页面拿 `suggestion.projectId` 预选集合的项目，v2.10 不变）。
+  **不自动确认任何东西**，不进台账 / 投影 / 导出。
+- **不覆盖任何人的选择**：只在新写入一段时做；重传（防重命中）什么都不改。之后助理经 matches 给了 `projectId`
+  → 换成助理的并去掉 `projectSource`；助理配了任务 / 提议了新任务 → `suggestion` 照 v2.7 / v2.8 换掉
+  （集合保留，`projectId` / `projectSource` 不保留——项目由任务定）。
+- **数据从哪来**：在跑的运行读 `agent_runs`（`label` 与 `match` 都认）；已结束的读 `proj_lanes`（只有 `label`——
+  `match` 是活状态，不进事实）。`tools/agent-hooks` 的钩子两者报的是同一个名字（会话标题，没起名时是目录名；改名后经「会话改名」跟上），所以没有差别。
+  一批上传只查一次（这批段的总时间窗），已结束的最多看最近 500 次运行。
+- **隐私**：标题在检测程序那边已按用户的隐私设置处理过。标题被去掉（`""`）或换成代号（「窗口名3」）时什么都对不上
+  ——这是对的：服务端不拿、也不该拿原始标题。想用这条连线，就得让终端的标题原样上传。
+- 上传带设备令牌（Bearer）照常工作：这是服务端自己写的提示，不是「设备给建议配项目」——上传的 `suggestion`
+  里自带 `projectId` / `projectSource` / `collection` 仍然不存。
+- 老读方忽略 `projectSource` 即可（`suggestion` 自 v2.8 起是开放对象）。
 
 ### 过期（惰性，无调度器）
 
@@ -1990,6 +3106,18 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
 - 请求体不是对象 / `deviceId` 不合格式 / `afk` 不是布尔 / `app`、`title` 不是字符串 → 422。
   不限频（每次只改一份文档、`spans` 有上限）；客户端约定的节奏见 ai-detector 契约。
 
+- **v2.14 追加：可选的 `guess`。** `{ "taskId": "t_a1" | "projectId": "p_1", "confidence": 0.9, "classifier": "rules" }`
+  ——检测程序在 `autoTrack` 打开、人没离开时，用**与上传同一套规则**对当前窗口的猜测；规则没命中就**没有这个键**。
+  `taskId` / `projectId` 恰好给一个（1–128 字符的字符串），`confidence` 是 0–1 的数（布尔不收），`classifier` 只能是
+  `"rules"`；不合形状 → 422（整次心跳不收）。服务端把 `{taskId | projectId, confidence}` 跟着这一段存
+  （`spans[].guess`）；合并相邻心跳的判据多一项「`guess` 的目标相同」。`views/lanes` 的 `human.presence` **不回出**
+  `guess`（形状不变），它只喂给 `human.auto`。`afk: true` 的心跳带了也不存。见「自动跟踪进行中的任务」节。
+
+- **v2.17 追加：可选的 `sentAt` + `spans`**（上一拍以来人依次在过的窗口与各自的停留）。带了 `spans` 的心跳不再只是
+  「此刻一个点」：各段原样接到这台设备的时间线末尾；约定的节奏改为约 5 秒一拍；每设备的段数上限从 500 提到 **2000**
+  （每 3 秒切一次窗口约 100 分钟；切得更快的人，时间线短于 2 小时）。不带 `spans` 的心跳上面各条一字不变。
+  形状、校验、时钟、合并与防重见「串行的注意力时间线」节。
+
 ### 连线：人与代理之间（规范性）
 
 连线挂在**代理运行上**（`interactions[]`），跟着那一条 `agent.run.completed` 落账；**只是标记，不是时长**，
@@ -2009,6 +3137,19 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
 - 实现落点：心跳写在 `activity/`，`attend` 由它调代理运行那边 `service.py` 的公开函数写进 `agent_runs`
   （「内部子边界」：跨子边界只走 service，不直碰对方的 repo）。
 - 按 `at` 升序存。
+
+- **v2.17 取代条目**（仓主 2026-10-09：「人的注意力是严格串行的」）。上表与上面几条里关于 `attend` 的三处自 v2.17 起改为：
+  1. **判据**：不再是「标题包含 `match`」，而是 v2.13「窗口 ↔ 代理会话」的同一条相等规则——标题归一化后（≥ 3 个字符）
+     **等于**某条在跑运行的 `label` / `match`（`label` 也认；不要求运行挂着项目）。编辑器标题里碰巧出现那个词不再算在看它。
+  2. **对上不止一条运行 → 都不记**（原「每个都记」）：人同一时刻只看一个，分不清就不算，免得同一秒记给两条运行。
+  3. **上限分开数**：`reply` 至多 500 条、`attend` 至多 **2000** 条（原合计 500）；带 `spans` 的心跳里与上一条 `attend`
+     相距 ≤ 2 秒才延长（不带的仍是 45 秒），早于运行起点的部分钳到起点。
+  `interactions[]` 的形状、落账方式、「只是标记」的地位不变；`attend` 的 `at`–`until` 之和就是「人看了它多久」
+  （`agents[].attention` / `attentionSeconds`，见「串行的注意力时间线」节）。~~不带 `spans` 的老检测程序同样按新判据认。~~
+  **v2.17.1 修订**：这三条**只管带 `spans` 的心跳**。不带 `spans` 的心跳（老检测程序）仍按上表与上面几条的 v2.4 原文认
+  ——标题不分大小写**包含** `match`、命中几条记几条、45 秒内延长、`label` 不认——老客户端对着新服务端行为不变
+  （契约只增不改）；只有上限沿用第 3 条的分开数。第 3 条的「相距 ≤ 2 秒才延长」改为跟着时间线走，见
+  「串行的注意力时间线」节末「v2.17.1 修订」。
 
 ### 读端 `GET /api/core/views/lanes`（`nexus-core.views.lanes.v1`）
 
@@ -2032,6 +3173,10 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
                 "outcome": null,                      // 在跑的为 null
                 "elapsedSeconds": 1200,               // 在跑的：现在 − startAt，封顶超时上限；已结束的为 durationSeconds
                 "overdue": false,                     // 在跑且已超过超时上限（本端点不收它，见下）
+                "lost": false,                        // v2.18：在跑、声明过心跳、超过 30 分钟没信号（本端点不收它）
+                "lastSeenAt": "…",                    // v2.18：在跑的运行最后一次信号的时刻；已结束的 / 老运行为 null
+                "beatSource": "companion",            // v2.18：谁在发心跳；没报过为 null
+                "beatCount": 3,                       // v2.18：收到过几次心跳；没有为 null
                 "phases": [ { "at": "…", "phase": "working", "detail": null } ] } ],   // 按 startAt 升序
   "interactions": [ { "runId": "run_…", "kind": "reply",  "at": "…" },
                     { "runId": "run_…", "kind": "attend", "at": "…", "until": "…" } ],  // 按 at 升序
@@ -2052,9 +3197,20 @@ ActivityWatch）能看见「11:05–12:07 在 VS Code 里开着 garden 项目」
   `truncated: true`；`interactions` 只含列出的运行的。`presence` 本身有上限（每设备 500 段）。
 - **本端点不写**：不收超时运行（v2.1「读时写」例外已明文止于 `agent-time`）。超过上限还挂着的运行照列，
   `overdue: true`、`elapsedSeconds` 封顶；下一次 `views/current`/start/stop/phase 会把它收成 `timeout` 事实。
+- **v2.18**：失联的运行同样照列不收：`lost: true`、`endAt` / `outcome` 仍为 `null`、`elapsedSeconds` 止于 `lastSeenAt`；
+  下一次写端点 / `views/current` / `views/agent-time` 把它收成 `outcome: "lost"` 的事实，`endAt` = 原来的 `lastSeenAt`。
+  已结束的运行 `lost` 恒 `false`、`lastSeenAt` 为 `null`（是不是失联结束的看 `outcome`）。
 - 数据来源：已结束的人的段与代理运行读新投影 `proj_lanes`（下）；在跑的运行读 `agent_runs`；
   `running` 与 `views/current` 的人部分同源；`presence` 读 `activity_presence`。**不读 `events`**（「内部子边界」红线不破）。
 - 按当前租户；名字不 join（同 agent-time）。
+
+- **v2.14 追加**：`human` 多两个键 `auto`、`needsChoice`（都可为 `null`，键总在），形状与判据见
+  「自动跟踪进行中的任务」节。两者只看「此刻」，不按窗口过滤（同 `running`；`from > to` 的空结果里为 `null`）。
+
+- **v2.17 追加**：`agents[]` 每条多一个键 `attention: [{from, to}]`（人把注意力放在这条运行上的时间，键总在，没有为 `[]`）；
+  `human.presence[]` 每段多一个键 `runId`（这一段人在看的那条运行，不是 → `null`）。`interactions` 里每条运行的 `attend`
+  只回出最新的 500 条（一条运行现在能存 2000 条，响应不跟着涨；`reply` 照旧全回）。`presence` 的上限随存储变为每设备 2000 段。
+  见「串行的注意力时间线」节。
 
 ### 投影 `proj_lanes`：每个段 / 每个运行一条区间
 
@@ -2096,6 +3252,932 @@ DISPATCH 表：`session.completed` 与 `agent.run.completed` **各追加**路由
 - **不从窗口活动反推代理相位**、不做服务端对时、不做多设备在场合并（每台设备一条细带子，照实画）。
 - `attend` 只认 `title` 子串，不做模糊匹配 / 学习；认错了只是多一根虚线，不影响任何数字。
 
+## 自动跟踪进行中的任务（规范性 · v2.14，`nexus-core.activity.auto.v1`）
+
+仓主 2026-10-08（原话见本文件头部 v2.14）。一句话：**「我」此刻在做的事自动顶替进行中的计时。** 本版是第一步——
+除了「让 AI 写规则」之外的全部；那一步以后插在下面 `next_step` 的 `"ask_ai"` 上，别处不用动。
+
+**总开关**：`detector.settings.v1` v1.3 的 `autoTrack`（按设备，缺省 `false`，人在「自动记录 → 活动检测设置」里勾）。
+本节的每一条都要求「报这次心跳 / 这批上传的那台设备 `autoTrack` 为 `true`」；关着（或这台设备没在网页上存过设置）时
+`auto` / `needsChoice` 恒为 `null`、上传的段全部照旧待确认——**与 v2.13 完全相同**。
+
+命名常量（实现里是具名常量，改它们要改这里）：
+
+| 常量 | 值 | 用在哪 |
+|---|---|---|
+| 在场新鲜 | **90 秒** | 最新一次心跳距今不超过它才算「人在电脑前」（与页面画「在电脑前」同一个口径） |
+| 自动记录的把握门槛 | **0.9** | 规则的 `confidence` ≥ 它才直接记（= 页面「以后这个窗口都记到…」写出的规则的把握） |
+| 请人选的停留 | **60 秒**，在最近 **5 分钟**里累计 | 规则认不出的窗口累计在前台这么久才提醒（来回切标签页不清零） |
+| 人的临时选择保留 | 那个窗口离开 **30 分钟**后失效 | `choice` 写下的按窗口的覆盖 |
+| 「这次不选」的静默 | **4 小时** | `choice/dismiss` |
+
+### 窗口的键与 `next_step`
+
+- **窗口的键** `key` = `"wk_"` + SHA-256(`app` 小写 + `"\n"` + 归一化标题小写) 的前 20 位十六进制。标题归一化与
+  「匹配历史」同一个函数（去开头的状态符号 / 计数、空白并成一个）——转圈符号在变的终端标签页是同一个窗口。
+  `app`、`title` 是在场心跳里的（已在本机脱敏）。
+- **下一步由一个函数定**：`next_step(window) -> "rules" | "ask_ai" | "ask_human"`（`activity/auto.py`）。
+  窗口有目标（心跳带的 `guess`，或人的临时选择）→ `"rules"`；否则 → `"ask_human"`。**本版永不返回 `"ask_ai"`**——
+  第二步在「规则没认出」与「请人选」之间插进它。`auto` 只出 `"rules"` 的窗口，`needsChoice` 只出 `"ask_human"` 的窗口。
+- **目标的取法**：先看心跳的 `guess`（规则），没有再看人对这个窗口的临时选择（下「人答」）。目标必须此刻还在
+  （任务及其项目存在 / 项目存在），不在就当没有目标。
+
+### `human.auto`：自动 · 项目 / 任务
+
+```jsonc
+"auto": { "taskId": "t_a1" | null,        // 只到项目（含规则指到「未分类」桶）时为 null
+          "projectId": "p_1",
+          "taskName": "写提示词" | null, "projectName": "garden",
+          "since": "2026-10-08T10:02:00+08:00",   // 这一轮连续在同一目标上的开始
+          "app": "code", "title": "plot.gd — garden",   // 当前窗口（心跳里的，已脱敏）
+          "source": "rules" | "choice" }          // 规则猜的 / 人刚才选的
+```
+
+非 `null` 当且仅当**全部**成立：
+
+1. 当前租户**没有手动计时在跑**（`human.running` 为 `null`）——手动计时永远优先，它在跑时不出 `auto`；
+2. 该租户各设备里**最近一次心跳**距今 ≤ 90 秒，且不是 `afk`；
+3. 那台设备 `autoTrack` 为 `true`；
+4. 当前窗口 `next_step` 为 `"rules"`，且目标还在。
+
+`since`：从最新一段往回数，相邻两段间隔 ≤ 45 秒（心跳的合并间隔）、不是 `afk`、目标相同就继续，否则停；
+再与「这段时间里最近一条手动计时段（`source: "timer-backend"`）的结束时刻」取较晚的——刚停表不会把表测过的那段算进来。
+切到别的窗口再切回来会重新起算（那一小会儿不是这个目标）；在场只留 2 小时，`since` 最早也就是 2 小时前。
+`auto` **只是显示**：它不是事实、不写任何东西、不占 `timer_state`；事实仍然只从「自动记录」（下）或人的确认来。
+
+**`views/current` 也带**：`GET /api/core/views/current` 顶层追加 `auto` 与 `needsChoice`，与 `views/lanes` 的 `human`
+里那两个是**同一份**（同一个函数算的，形状、判据、`since` 都相同）；`running: true` 时两者恒为 `null`，键总在。
+顶栏芯片每 10 秒已经在读 `views/current`，不必为了这两样再多读一个端点。时刻换算到 `NEXUS_TZ` 的偏移。
+
+### `human.needsChoice`：规则认不出，请人选
+
+```jsonc
+"needsChoice": { "key": "wk_3f9a…", "app": "kitty", "title": "✳ notes",   // 标题取该窗口最近一段的原样
+                 "since": "2026-10-08T10:02:00+08:00" }                   // 最近 5 分钟里它第一次出现
+```
+
+非 `null` 当且仅当：上面的 1–3 成立，且最近 5 分钟里（同一台设备）存在这样的窗口：不是 `afk`、`app` 非空、
+`next_step` 为 `"ask_human"`、累计在前台 ≥ 60 秒、没有未过期的「这次不选」。有几个就取累计最久的（一样久取最近出现的）。
+一段的时长算到下一段开始（最后一段算到现在），至多比它最后一次心跳多 45 秒。
+
+- **不要求它是此刻在前台的那个窗口**（对设计稿的偏离，有意的）：人要回答就得切到浏览器，那一刻前台已经是 Cockpit
+  自己；只认「此刻的窗口」的话卡片一出来就消失。所以 `auto` 与 `needsChoice` 可以同时非 `null`。
+- 人一直不答：什么都不发生。那段活动照常随上传进待确认，走集合 / 确认的既有流程（v2.2 / v2.10）。
+
+### 人答：`POST /api/core/activity/choice`
+
+```jsonc
+// 请求
+{ "key": "wk_0a0a0a0a0a0a0a0a0a0a",       // needsChoice.key；^wk_[0-9a-f]{20}$
+  "taskId": "t_a1",                       // 与 projectId 恰好给一个（1–128 字符的字符串）；projectId = 记到该项目的「未分类」
+  "remember": true }                      // 布尔，缺省 false：以后这个窗口都这样记（写一条规则）
+// 200 ChoiceOut
+{ "key": "wk_…", "taskId": "t_a1" | null, "projectId": "p_1",
+  "remembered": true,                     // 规则已在（刚写的，或本来就有同样的）
+  "pseudonymized": false }                // true = 这台设备把标题换成代号上传，规则认的是换代号之前的标题 → 没写规则
+```
+
+- **只收人**：带 `Authorization: Bearer`（设备令牌）一律 403，先于读请求体（同 v2.7 的 matches）。
+- `key` 必须是该租户在场记录（最近 2 小时）里出现过的窗口，否则 404；`taskId` / `projectId` 不存在 404；
+  都给 / 都没给 400；类型不对、多了未知键 422。
+- **不管 `remember`**：记下「这个窗口 → 这个目标」的临时选择（集合 `activity_choices`，每租户每个 `key` 一份），
+  `auto` 立刻按它显示（`source: "choice"`）。它跟着窗口走：该窗口每次心跳把有效期续到 30 分钟后，离开满 30 分钟失效。
+  规则优先——心跳带了 `guess` 就用规则的。
+- **`remember: true`** → 往该租户的分类规则**最前面**加一条只认这个窗口的规则（与「待确认建议」页勾
+  「以后这个窗口都记到…」写的同形：`app`、`title` 各是整串匹配的转义正则，`confidence: 0.9`，`enabled: true`，
+  `note` 写明来历；目标是 `taskId` 或 `projectId`）；`app` / `title` 相同的旧规则先去掉，所以同一个窗口**至多一条**。
+  检测程序下一次拉规则起生效。走 `detector.rules.v1` 的整套替换（`version` +1，撞版本重读重试）。
+  下列情形不写规则、`remembered: false`，选择本身照样生效：标题是代号（`窗口名N` / `路径N`，或该设备设置
+  `privacy.titles` 为 `"pseudonymize"`）→ `pseudonymized: true`；转义后的正则超过 200 字符、规则已满 500 条、
+  连续撞版本。
+- 不写台账、不确认任何建议：这段活动的事实仍由「自动记录」在下一次上传时落（规则写成了的话），或人去待确认里点。
+  （2026-10-08 波次统一审核追加：临时选择有效期间上传的、这个窗口的段也由「自动记录」落，不必写成规则，见该小节末尾。）
+- 2026-10-08 波次统一审核追加：这个窗口若有 AI 认的目标（「让 AI 认窗口」节），人在这里选了**别的**目标 = 同时说了「不对」
+  （AI 那条规则撤掉、问询记 `rejected`）；选的就是 AI 认的那个 → AI 的规则留着。`choice/dismiss` 同理（没有目标 = 别的）。
+
+### 这次不选：`POST /api/core/activity/choice/dismiss`
+
+请求 `{ "key": "wk_…" }` → `200 { "key": "wk_…", "dismissedUntil": "<UTC ISO>" }`。该窗口 4 小时内不再出现在
+`needsChoice`（盖掉之前对它的临时选择）。带 Bearer 403；`key` 不在在场记录里 404；形状不对 422。
+
+### 自动记录：规则高把握命中的段直接记成事实
+
+`POST /api/core/activity/suggestions` 收下一批之后，对其中**新写入**的每一段（防重命中的不看），全部成立就立刻记：
+
+1. 上传的 `deviceId` 那台设备 `autoTrack` 为 `true`；
+2. 不是无操作段（`idle` 不是 `true`）；
+3. `suggestion.classifier` 是 `"rules"`，`confidence` ≥ 0.9；
+4. 有目标且还在：`suggestion.taskId`（记到它），或 `suggestion.projectId` 且没有 `projectSource`
+   （记到该项目的「未分类」桶，取或建，同 v2.9）；
+5. 这段的 `[startAt, endAt]` **不与人的手动计时重叠**——已落账的 `source: "timer-backend"` 的段、以及此刻在跑的计时。
+   人自己掐着表的那段时间，AI 不插手（那一段照旧待确认，由人判断算不算重复）。
+
+记 = 走**确认的同一条路径**（「确认：与补登同一条路径」的全部规则：占位、防重键 `activity:<id>`、
+`source: "activity-confirmed"`、归属链），只有出处不同：
+
+| 哪里 | 人确认的 | 自动记下的 |
+|---|---|---|
+| 信封 `ai` | `{generated: true, confidence, confirmed: true}` | `{generated: true, confidence, confirmed: false, auto: true}` |
+| 建议文档 | `status: "confirmed"` | `status: "confirmed"`，另有 `auto: true`（列表每条回出 `auto`，缺省 `false`） |
+
+- 重传同一段 = 防重命中，什么都不做（不会记第二遍）；之后人再点确认 = `duplicate: true`（同已确认的再确认）。
+- 任何一步失败（任务刚被删、桶的 id 被占……）：这一段留在待确认，**上传照样 200**——自动记录不能让检测程序的游标卡住。
+- 带设备令牌的上传照常触发：这是服务端按人打开的开关、人认可的规则做的，不是「设备确认建议」
+  （`confirm` 端点对设备令牌的行为不变）。要建桶时照 v2.9 留一条 `create` 审计。
+- 「匹配历史」（v2.12）**不含**自动记下的段：那不是人的决定，喂回给助理只会自我强化。
+- 计入人的时间（它就是一条 `session.completed`）。两台设备各报一段 = 记两段（同 v2.2「两台设备」）。
+
+**2026-10-08 波次统一审核追加（同版修订，只增）**——一段的目标与页面上 `human.auto` **同一个取法**（规则优先，其次人的临时选择），
+条件 1、2、5 不变，条件 3、4 的「目标」改成下面两条里先成立的那条：
+
+- **规则的猜测**：`suggestion.classifier` 是 `"rules"` 且有目标（条件 4 的取法）。但**人说过「不对」的那个 AI 目标不算**
+  （该窗口的问询 `outcome: "rejected"` 且目标相同——与心跳的 `guess` 同一条过滤，见「让 AI 认窗口」节「人说『不对』」第 3 点）：
+  检测程序拉到新规则之前上传的段不再按旧规则记下。人后来自己又选了同一个目标（`choice`）→ 那是人的决定，过滤解除。
+  规则的猜测在、把握 < 0.9 → 留在待确认，**不**退到临时选择（页面此刻显示的也是规则的目标）。
+- **人的临时选择**：没有（算数的）规则猜测，而这一段的窗口（`window_key(app, title)`，与心跳同一个键）此刻有未过期的
+  `kind: "choice"`、且是**人**写的（AI 认到时写的那份不算——AI 的把握走它那条规则的 `confidence`），且这一段的 `endAt`
+  晚于人做选择的时刻（补传的积压不追认）→ 记到选的任务 / 该项目的「未分类」桶。所以**没勾「以后这个窗口都这样记」的选择，
+  在它有效期间同样让那个窗口的段自动记下**——页面写着「自动 · …」，落账就跟着它。
+
+出处：建议文档另存 `autoSource: "rules" | "choice"`；`GET /api/core/activity/auto` 每条追加 `source`（同样两个取值；
+本次追加之前记下的段没有 `autoSource`，回 `"rules"`）。信封 `ai` 不变（`auto: true`，改挂照旧）。
+
+**2026-10-08 波次统一审核第二轮追加（同版修订，只增）**：
+
+- **占位之后、写事实之前再定一次。** 上面的依据（问询里被否掉的目标、临时选择）是先读下来的。给这一段占位
+  （pending → confirmed）之后、写 `session.completed` 之前**重读一遍、按同样的取法再定一次**：目标与先前定的不一样了
+  （人刚说了「不对」、选了别的、说了这次不选、临时选择刚过期）→ 退出占位，这一段留在待确认，事实不写。
+  所以人的决定做完之后才开始写的段不会再按旧依据记下。仍有一条极窄的缝（重读与写台账之间隔着几次读库，台账与问询不在
+  同一个文档里，做不成一次原子写）：落在缝里的那一段会按旧依据记下，用「改归属」修。
+- **被否掉的目标跟着窗口走，不跟着某一次问询走。** 问询另存 `rejected: [{taskId, projectId, at}]`（最近 8 个，「不对」时
+  与 `outcome: "rejected"` 同一次更新写进去）。同一个窗口 6 小时后再问 AI、上一次的回答被清掉，`rejected` **留着**——
+  迟到的、还带着旧规则猜测的心跳 `guess` 与上传的段照样不算，不论新问询答没答。人后来自己选了其中某个目标（`choice`）→
+  从 `rejected` 里拿掉它（取代上一轮说的 `humanChose`：那个键不再写、不再读）。保留期同问询（距最近一次认领 30 天）。
+
+### 自动记下的段：`GET /api/core/activity/auto`
+
+```jsonc
+{ "items": [ { "id": "sug_…", "eventId": "evt_…",          // eventId 给改挂端点用
+               "startAt": "…", "endAt": "…", "durationSeconds": 1500,
+               "app": "code", "title": "plot.gd — garden",
+               "taskId": "t_a1", "projectId": "p_1",        // 这一段**当前**的归属（改挂过的取最后一次）
+               "reassigned": false } ] }                     // 人改过归属没有
+```
+
+今天（`NEXUS_TZ`，按 `startAt`）自动记下的段，新的在前，至多 200 条（v2.37：可带 `?date=YYYY-MM-DD` 改看那一天，同一日界，坏格式 422）；台账里找不到事实的（占位后崩了）不出。
+每条另有 `source: "rules" | "choice"`（2026-10-08 波次统一审核追加，见「自动记录」小节末尾）。
+名字不 join。只读，带 Bearer 也能读。改归属 = `POST /api/core/sessions/{eventId}/reassign`（「改挂未分类时间」节
+v2.14 追加）。撤销整段不在本版：改挂到对的任务 / 放回项目的未分类就是修正，台账只追加。
+
+### 隐私
+
+`guess` 在检测程序本机算（规则匹配的是本机脱敏后、换代号前的标题），发出去的只有目标 id 与把握；心跳的 `app` /
+`title` 与 v2.4 完全一样（同一条脱敏路径）。服务端不拿、也拿不到原始标题：`remember` 写规则用的是心跳里那份。
+
+### 存储与边界
+
+- 新集合 `activity_choices`：`{user, key, kind: "choice" | "dismiss", app, title, taskId?, projectId?, at, expiresAt}`，
+  唯一约束 `(user, key)`；过期的在心跳写入时清。**活状态，不是事实**：不进台账 / 投影 / 导出 / 快照恢复 /「空实例」判据。
+  2026-10-08 波次统一审核追加：AI 认到时写的那份带 `by: "ai"`（人写的没有这个键），它只在该窗口没有未过期的那一份时
+  才写得进；存取住 `activity/choice_repo.py`，上传的入口与自动记录住 `activity/auto_entry.py`（都是从贴着行数预算的文件里拆出来的）。
+- `views/lanes` 仍然**不写**；续期与清理都在心跳的写路径上。
+- 实现落点：`activity/auto.py`（`next_step`、`auto` / `needsChoice`、choice、自动记录）；读开关经 detector 的
+  service，写规则经 `detector/rules.py` 的公开函数，写事实经 `service.confirm`（跨子边界只走 service）。
+
+### 被本版取代的旧承诺（只在 `autoTrack` 打开时）
+
+**2026-10-08 取代条目**。下面的承诺此前无条件成立；自 v2.14 起，**仅当那台设备的 `autoTrack` 为 `true`、且只对
+「规则高把握命中」的段**不再成立，其余情形（开关关着、助理配的、分类服务配的、把握不够的、人还没应用的规则草稿）一个字不变：
+
+1. v2.2「自动检测到的活动只是建议，人确认了才是事实」「只有人点『确认』，才……写一条 `session.completed`」；
+2. `detector.rules.v1` / `mcp.tools.v1`「规则 / AI 只起草，人应用 / 确认」里「规则命中只产生建议」的那一层
+   （**AI 仍然只能写规则草稿，应用仍要人点**——被取代的只是「已生效的规则命中之后还要人再点一次确认」）。
+
+v2.4「心跳不会变成建议，建议也不读心跳」仍成立；新增的只是心跳带的 `guess` 会变成页面上的 `auto` 显示（不是事实）。
+
+### 本版不做（有意的）
+
+- **不叫 AI**（第二步）；不在服务端跑规则（规则只在检测程序里匹配，服务端没有原始标题）。
+- 不做「撤销自动记下的段」（删事实）；不做多设备合并（只看最近报心跳的那台）。
+- `auto` 不产生事实、不代替上传：检测程序没在跑同步（只开了心跳）时页面有「自动 · …」却不会落账。
+
+## 让 AI 认窗口（规范性 · v2.15，`nexus-core.activity.auto-ai.v1`）
+
+仓主 2026-10-08（原话见本文件头部 v2.15）。v2.14 的 `next_step` 在「规则没认出」与「请人选」之间留的那一步。
+**全部仍挂在那台设备的 `autoTrack` 下；手动计时永远优先（在计时就没有窗口在等 AI）。**
+
+### 谁来叫 AI：对方来取，不是我们去推
+
+nexus-core 不在 AI 桥内网上，够不着聊天后端（`gateway.v1` 第八节，不为此加网络通路）。所以由聊天后端的后台工人
+（`agent.chat.v1` 第十节）约每 25 秒经 MCP（`mcp.tools.v1` v1.9 `get_window_awaiting_target`）调一次 `ai/claim`：
+没有窗口在等就什么都不发生（不花模型的钱）；有，就跑一轮模型，模型经 MCP（`suggest_window_target`）调 `ai/suggest`。
+**「AI 这条路活着」= 最近 60 秒内有人调过 `ai/claim` 或 `ai/suggest`**——没装、没配模型、关了 `AGENT_AUTOTRACK` 的部署
+从来没人调，于是 `next_step` 永不返回 `"ask_ai"`，行为与 v2.14 逐字相同。
+
+**谁来取不限于内置聊天后端（2026-10-14 追加，行为不变）**：内置聊天后端自 v0.4 起缺省不起（`agent.chat.v1` 开头）；用户自己接的 CLI
+（Claude Code / Codex / opencode）经 MCP 调 `get_window_awaiting_target` 同样算一次认领。**「等 AI」必有尽头**：没人来取 → 60 秒（`AI_CLAIM_GRACE`）
+后这条路不再算活着，新窗口直接请人选；来取过一次又不回答 → 认领起 120 秒（`AI_ANSWER_WAIT`）后 `aiThinking` 变回 `null`、`next_step` 变回
+`"ask_human"`。`aiThinking` 与 `needsChoice` 都是读端按此刻时钟现算的，页面（顶栏芯片、计时页泳道、圆环中心）只画这两个字段，
+所以到点后下一次刷新「AI 正在认这个窗口…」就消失、换成人那张选卡；页面不自己记「在等」。
+
+命名常量（实现里是具名常量，`activity/auto_ai.py`；改它们要改这里）：
+
+| 常量 | 值 | 含义 |
+|---|---|---|
+| `AI_CLAIM_GRACE` | **60 秒** | 距最近一次认领 / 回答不超过它，才算这条路活着（没有问询的窗口才会等 AI） |
+| `AI_ANSWER_WAIT` | **120 秒** | 认领后这么久没回答 → 转去请人选；迟到的回答 409 |
+| `AI_RETRY` | **6 小时** | 同一个窗口问过一次（不论结果）后，这么久不再问 AI |
+| `AI_MAX_PER_HOUR` | **12** | 每租户每小时至多认领这么多次（满了的窗口直接请人选） |
+| `AI_TRUST` | **0.8** | AI 自报的把握 ≥ 它，写下的规则才给到自动记录的门槛 0.9；低于它按自报的存 |
+| `AI_KEEP` | **30 天** | 问询保留这么久（`source: "ai"`、「不对」、被否掉的猜测靠它认） |
+
+### `next_step` 的 `"ask_ai"` 与 `human.aiThinking`
+
+一个没有目标、没有「这次不选」的窗口，`next_step` 为 `"ask_ai"` 当且仅当：
+
+- 它有一份 6 小时内的问询、已认领、**还没回答、认领至今 ≤ 120 秒**；或
+- 它没有 6 小时内的问询，且：这条路活着、这一小时认领数 < 12、**写得出规则**（标题不是代号 `窗口名N` / `路径N`，
+  该设备 `privacy.titles` 不是 `"pseudonymize"`，转义后的正则 ≤ 200 字符——同 v2.14 `remember` 的条件）。
+
+其余都是 `"ask_human"`：没人来认领、认领后超时、AI 说认不出（`none`）、6 小时内问过、人说过「不对」、写不出规则、问满了。
+读端**仍然不写**：问询只在 `ai/claim` 时建。
+
+```jsonc
+"aiThinking": { "key": "wk_0a0a0a0a0a0a0a0a0a0a", "app": "kitty", "title": "✳ notes",
+                "since": "2026-10-08T10:02:00+08:00" }            // 与 needsChoice 同形
+```
+
+`aiThinking` 非 `null` 当且仅当 v2.14 `needsChoice` 的条件成立、只是把其中的 `"ask_human"` 换成 `"ask_ai"`（同样的 60 秒
+停留、同样的 5 分钟窗口、同样取停留最久的）。**同一个窗口不会同时出现在两处**；两个键可以同时非 `null`（说的是不同的窗口）。
+`views/current` 顶层同一份。页面在人那张卡上写一行「AI 正在认这个窗口…」，不出选卡。
+
+### 认领：`POST /api/core/activity/ai/claim`
+
+无请求体（空体或 `{}`）。`200 { "window": null }` 或：
+
+```jsonc
+{ "window": { "key": "wk_0a0a0a0a0a0a0a0a0a0a", "app": "kitty", "title": "✳ notes",   // 心跳里的原样（已在本机脱敏）
+              "claimedAt": "2026-10-08T02:03:00+00:00", "answerBy": "2026-10-08T02:05:00+00:00" } }
+```
+
+- 每次调用都记一次「这条路活着」，并清掉该租户 30 天前的问询。
+- **同一时刻每租户至多一个窗口在等**：有已认领、没回答、没超时的问询就原样再给它（重复调用幂等——工人重启、模型自己再读
+  一遍、另一个代理也来取，拿到的都是同一个）；否则取 `aiThinking` 的那个窗口，这一小时的认领数原子地 +1（满 12 → `null`），
+  写下问询 `{key, app, title, claimedAt}`（同一个窗口以前的问询整份换掉）。
+- **按租户**：只看、只认领调用方租户的窗口。
+- **2026-10-08 波次统一审核追加：认领是一次条件写。** 「写下问询」只在该窗口没有问询、或那份已早于 `AI_RETRY`（6 小时）时
+  写得进（单个条件 upsert，唯一约束 `(user, key)` 兜底）；几个认领同时到，只有一个写得进，其余的重读并回同一份
+  （那份已经答完 → `window: null`）。**已有的问询不会被并发的认领换掉**——答过的不会变回「没答」。这一小时的认领数
+  只由写进去的那一个 +1（名额恰好在这期间用完 → 撤回刚写的那份，回 `null`）。人已经抢先做了决定的问询（见「回答」）不再给出。
+  两个同时的认领各自看中不同的窗口时可能短暂有两份在等：之后只再给最新的那份，另一份超时后转去请人选。
+- **2026-10-08 波次统一审核第二轮追加：先占名额，再让问询露面。** 次序改成「这一小时的认领数原子地 +1（满 12 → 不写问询）
+  → 条件 upsert 写问询 → 没写进去（别的认领抢先）就把刚占的那一个名额退回（恰好一个）」。问询只有在名额占到之后才存在，
+  所以不会有「别的调用方取到并答了一份问询，而它其实没占到名额」；上一条里「撤回刚写的那份」的做法作废。
+  再问同一个窗口时清掉的是上一次的回答（`answeredAt`、`outcome`、目标、`confidence`、`reason`、`rejectedAt`、`humanAt`），
+  `rejected` 不清。
+- 带 `Authorization: Bearer` 一律 403，先于读请求体——AI 这两个端点只经 MCP（对内直连、不带 Bearer）调，同 v2.7 的 matches。
+
+### 回答：`POST /api/core/activity/ai/suggest`
+
+```jsonc
+// 认到了
+{ "key": "wk_0a0a0a0a0a0a0a0a0a0a",      // ^wk_[0-9a-f]{20}$，必须是此刻被认领着等回答的那个
+  "taskId": "t_a1",                       // 与 projectId 恰好给一个（1–128 字符）；projectId = 只到项目（记到它的「未分类」）
+  "confidence": 0.85,                     // 数字，0 < c ≤ 1
+  "reason": "历史里同一个窗口确认到这个任务" }   // 1–200 字符，给人看
+// 认不出
+{ "key": "wk_…", "none": true, "reason": "历史和任务树里都对不上" }
+// 200 SuggestOut
+{ "key": "wk_…", "outcome": "suggested" | "none", "taskId": "t_a1" | null, "projectId": "p_1" | null,
+  "confidence": 0.9 | null,               // 写进规则的把握（见下）
+  "autoRecord": true,                     // 规则写成了、且把握到了自动记录的门槛
+  "ruleWritten": true }                   // false = 规则没写成（已满 500 条 / 连续撞版本），临时选择照样生效
+```
+
+- **状态把关（唯一让这个写安全的东西）**：`key` 没有问询、已回答过、认领超过 120 秒 → **409，什么都没写**（`detail` 以
+  「什么都没写」结尾）。调用方**不能指定 `app` / `title`**——规则用的程序名与标题取自在场记录里那个窗口最近的一段，
+  请求体里多任何键都是 422。所以它只能给「此刻服务端认定在等 AI 的那一个窗口」写规则，写不了任意标题。
+- 还要求：那台设备 `autoTrack` 仍开着、窗口仍写得出规则、**人没有抢先对它做选择 / 说这次不选**（否则 409，不覆盖人）；
+  目标此刻存在（否则 404）；`taskId` 必须是**没完成的普通任务**（已完成、临时任务、「未分类」桶 → 400）。
+  404 / 400 不算回答：120 秒内可以改了再答。成功的回答（含 `none`）每次问询**恰好一次**（条件更新），再答 409。
+- **`none: true`** → 问询记 `outcome: "none"`，该窗口立刻转去 `needsChoice`。不带 `taskId` / `projectId` / `confidence`。
+- **认到了** → ① 往规则**最前面**加一条只认这个窗口的规则：与 v2.14 `remember` 写的同形（`app`、`title` 整串匹配的转义正则，
+  开头的状态符号 / 计数不钉死），外加 `id: "r_ai_" + key 去掉 "wk_"`、`author: "assistant"`、`auto: true`、
+  `note: "AI 认的：" + reason`（截到 120 字）、`confidence` = **自报 ≥ 0.8 → 0.9（自动记录的门槛），否则按自报的存**
+  （低于门槛：规则照样让 `auto` 显示、让上传的段带上建议，但不直接记成时间）。同 `app`/`title` 或同 `id` 的旧规则先去掉——
+  一个窗口至多一条。② 写下与人的选择同样的按窗口临时选择，所以 `auto` **立刻**显示。③ 问询记
+  `outcome: "suggested"` 与目标。
+- 带 Bearer 一律 403，先于读请求体。类型不对、多了未知键、`none` 与目标同给 → 422。
+- **2026-10-08 波次统一审核追加：人与 AI 抢同一个窗口，人总是赢**——不靠上面那次「先看人选了没有」的检查，靠条件写与次序：
+  ① 人的 `choice` / `choice/dismiss` 在该窗口的问询上留记号（`humanAt`）；回答的条件更新除了「没答过」还要求没有这个记号，
+  于是人的决定先到 → 409，什么都没写（`none` 同）。② AI 写规则时**不换掉人的规则**：这个窗口已有一条不带 `auto` 的规则 →
+  `ruleWritten: false`；AI 的临时选择只在该窗口没有未过期的那一份（人的选择 /「这次不选」）时才写得进。③ 全写完之后再看一眼
+  问询：已经被人否掉（「不对」，或人选了别的 / 说了这次不选），或那台设备的 `autoTrack` 刚被关掉 → **撤回**刚写的规则与
+  临时选择，回 409（`detail` 仍以「什么都没写」结尾；这次问询算答过，6 小时内不再问）。人的端点先写自己的、再留记号、
+  再撤 AI 的规则，所以两边无论怎么交错，结束时都没有 AI 写的规则 / 选择留下，人写的原样在。
+
+### 出处：`auto.source: "ai"`、`auto.key`、`GET activity/auto` 的 `ai`
+
+- `human.auto`（`views/current` 的 `auto` 同）追加 `key`（当前窗口的键，总在）。`source` 追加取值 `"ai"`：这个窗口有
+  `outcome: "suggested"` 的问询、且此刻的目标（不论来自心跳的 `guess` 还是临时选择）就是 AI 给的那个。人后来自己选了别的 →
+  `"choice"`；别的规则给了别的目标 → `"rules"`。问询保留 30 天，之后它就是一条普通规则（规则页仍标着「AI 自动」）。
+- `GET /api/core/activity/auto` 每条追加 `ai`（布尔）：这一段的窗口有 `suggested` 的问询、当前归属就是 AI 给的目标、没被改挂过。
+
+### 人说「不对」：`POST /api/core/activity/choice/reject`
+
+请求 `{ "key": "wk_…" }` → `200 { "key", "app", "title", "ruleRemoved": true }`。**只收人**（带 Bearer 403，先于读请求体）。
+窗口没有 `suggested` 的问询（不是 AI 认的、或已经说过不对）→ 404；形状不对 422。效果：
+
+1. 删掉 `id` 为 `r_ai_…` 且带 `auto: true` 的那条规则（没有了 → `ruleRemoved: false`，其余照做）；
+2. 清掉该窗口的临时选择；问询记 `outcome: "rejected"`；
+3. 此后心跳带来的、目标与 AI 给的相同的 `guess` **不算**（检测程序拉到新规则之前还会带着它，最多 5 分钟），
+   于是这个窗口回到 `"ask_human"`——页面随即摆出「你在 X，记到哪？」，人照 v2.14 自己选。6 小时内不再问 AI。
+   2026-10-08 波次统一审核追加：**上传的段同样不算**（「自动记录」小节末尾）；人之后自己选了同一个目标 → 过滤解除。
+
+人也可以不点「不对」：那条规则在「自动记录 → 分类规则」里标着「AI 自动」，照常能改、能删、能停用。
+
+### 存储与边界
+
+- 新集合 `activity_ai_asks`：每个 (user, key) 一份问询 `{user, key, app, title, claimedAt, answeredAt?, outcome?,
+  taskId?, projectId?, confidence?, reason?, rejectedAt?}`；每租户另有一份 `key: "_tenant"` 的 `{polledAt, claims[]}`。
+  2026-10-08 波次统一审核追加两个可选键：`humanAt`（这次问询期间人自己对这个窗口做了决定的时刻）、`humanChose`
+  （人选的 `[taskId, projectId]`，「这次不选」为 `null`，「不对」时清掉）。
+  第二轮追加：`rejected: [{taskId, projectId, at}]`（人对这个窗口否掉过的目标，最近 8 个，不随再问清掉）；`humanChose` 不再使用。
+  唯一约束 `(user, key)`。**活状态，不是事实**：不进台账 / 投影 / 导出 / 快照恢复 /「空实例」判据。
+- 实现落点：`activity/auto_ai.py`（状态机、三个端点的业务）、`activity/ask_repo.py`（存取）、`detector/window_rules.py`
+  （单条窗口规则的加 / 删，走 `detector.rules.v1` 的整套替换）；`auto.py` 的 `next_step` 仍是唯一的决定处。
+- 安全：`ai/suggest` 任何能经 MCP 说话的调用方（含拿设备令牌的外部代理）都够得着——可以接受**只因为**上面的状态把关：
+  一次问询一个窗口、目标必须已存在、每租户每小时至多 12 次认领、全部按租户。设备令牌仍调不了任何只收人的端点。
+  这样的调用方最坏能做的：把此刻在等的那一个窗口认到一个错的现存项目 / 任务上（页面标着「AI 认的」，人一键「不对」），
+  或者认领了不答，让那张选卡晚出来至多 120 秒（每小时至多 12 次）。写不了别的标题的规则，改不了、删不了已有规则。
+
+### 被本版取代的旧承诺（只在 `autoTrack` 打开时、只对被认领的那一个窗口）
+
+**2026-10-08 第二条取代条目**。v2.14 取代条目第 2 点括号里的「AI 仍然只能写规则草稿，应用仍要人点」，自 v2.15 起对
+**`ai/suggest` 写的那一条窗口规则**不再成立：它不经草稿、直接生效。其余一个字不变——`propose_detector_rules` 仍只写草稿、
+AI 仍不能改 / 删任何已有规则、不能写匹配范围超出那一个窗口的规则、不能确认建议；把握够高的段直接记成事实仍是 v2.14 的
+「自动记录」，条件没有放宽。人随时能撤（「不对」/ 规则页），自动记下的段随时能改挂。
+
+### 本版不做（有意的）
+
+- **不做「任务变了就重问」**：6 小时内同一个窗口只问一次。人刚建了任务回来要选时，卡不会被「AI 正在认」顶掉。
+- 「不对」之后检测程序拉到新规则之前（≤ 5 分钟）上传的段仍可能按旧规则自动记下——用「改归属」修。
+  **（2026-10-08 波次统一审核取代：不再成立——这样的段留在待确认，见「自动记录」小节末尾。）**
+- 不做多设备合并（同 v2.14：只看最近报心跳的那台）；不在服务端跑规则。
+
+## 此刻的焦点（规范性 · v2.16，`nexus-core.focus.v1`）
+
+仓主 2026-10-09（原话见本文件头部 v2.16）。一句话：**人此刻在哪个窗口、它多半属于哪个项目 / 任务。**
+
+**设计原则（规范性）**：`focus` 由服务端的**一个函数**算（`activity/focus.py` 的 `state`），`views/current`、
+`views/lanes` 的 `human`、MCP 的 `get_current_timer` 都原样转它。**页面与 AI 客户端不许各自再认一遍项目 / 任务**——
+认的规则以后变了，只改这一处。
+
+### 形状
+
+```jsonc
+// GET /api/core/views/current 顶层、GET /api/core/views/lanes 的 human：同一份
+"focus": {
+  "state": "present",                     // "present" 在电脑前 | "afk" 离开
+  "app": "code", "title": "plot.gd — garden",   // 当前窗口：心跳带来的原样（已按设备的隐私设置处理过）
+  "since": "2026-10-09T10:12:30+08:00",   // 这个窗口（或这一轮离开）从什么时候起，NEXUS_TZ 的偏移
+  "projectId": "p_3c98de", "projectName": "garden",   // 认不出 → null
+  "taskId": "t_a1b2c3", "taskName": "写提示词",        // 只认到项目 → null
+  "source": "history"                     // "rules" | "choice" | "ai" | "agent-session" | "history"；认不出 → null
+} | null
+```
+
+键总在：`focus` 为 `null` = 没有新鲜的心跳；非 `null` 时九个键都在，认不出目标时后五个为 `null`。
+
+### 判据（规范性）
+
+- **有没有**：该租户各设备里，最新一次心跳距服务端此刻 ≤ 90 秒（与 `auto`、页面的「在电脑前」同一个口径）才非 `null`；
+  只看**最近报心跳的那台**设备（同 v2.14）。**不看 `autoTrack`，不看有没有手动计时**——在计时也照样返回
+  （页面仍以手动计时为准；`auto` / `needsChoice` / `aiThinking` 在计时为 `null` 的规矩不变）。
+- **`state`**：那台设备最新一段是离开 → `"afk"`，否则 `"present"`。`"afk"` 时不认目标（五个键为 `null`）。
+- **`since`**：从最新一段往回，把**同一个窗口**（`app` 不分大小写相同、标题按「匹配历史」的 `norm_title` 归一后相同——
+  与 v2.14 的窗口键同一个算法，标题开头的转圈符号 / 计数在变也算同一个）、且中间没断过（相邻段间隔 ≤ 45 秒）的段并起来，
+  取最早那段的起点。切到别的窗口再切回来、或中间断过，都重新起算。离开同理（一轮连续的离开）。
+  它说的是「这个窗口待了多久」，**不是**记了多久的时间——与 `auto.since`（同一个目标连续了多久、且不早于刚停的手动计时）不是一回事。
+- **目标**，按顺序、先中先用，每一步都只在当前租户里找、且目标此刻还在：
+  1. **自动跟踪的目标**：同一次读里 `auto` 非 `null` → 原样用它的 `projectId` / `projectName` / `taskId` / `taskName` /
+     `source`（`"rules"` / `"choice"` / `"ai"`）。在计时时 `auto` 恒为 `null`，于是从第 2 步认起。
+  2. **窗口 ↔ 代理会话**（v2.13 同一套归一化）：标题归一化后（≥ 3 个字符）等于某条**此刻还在跑**的代理运行的
+     `label` / `match`，且对上的运行指向**恰好一个**真项目（收件箱不算）、项目还在 → 只到项目，`source: "agent-session"`。
+  3. **匹配历史**（v2.12 同一个口径）：这个窗口（同上的窗口键）**最近一次**被人确认到的去向——取台账里那条
+     `session.completed` 的**当前**归属（改挂过的取改挂后的；自动记下的不算）。任务还在、没完成、不是「未分类」桶 →
+     到任务；否则（任务完成了 / 删了 / 是桶）→ 只到项目；项目已删 → 看更早的一次确认；都没有 → 不认。
+     `source: "history"`。标题为空（隐私设置把标题整个去掉了）时不走这一步：只凭程序名不够认。
+  4. 都没中 → 五个目标键为 `null`。
+
+### 只是显示（规范性）
+
+`focus` **不写任何东西**：不记时间、不产生建议、不写规则、不续期临时选择，也不改变 `auto` / `needsChoice` / 自动记录的
+任何判据。它认出的项目 / 任务只是给人和 AI 看的提示——要记时间，仍然是手动计时或 v2.14 的自动跟踪。
+
+### 花费（规范性）
+
+顶栏在每个页面约 10 秒读一次 `views/current`，所以 `focus` 不许让这条读端随数据量变贵：
+
+- 在场文档一次读里只读一遍（`auto` 与 `focus` 共用）；
+- 第 2 步读的是在跑的运行（活状态，每租户有上限）；
+- 第 3 步是一条**有界的索引查询**：`activity_suggestions` 上 `(user, status, app, decidedAt desc)`
+  （`user_status_app_decided`），只取这个程序最近确认的 200 条在内存里比窗口键；随后读台账里的当前归属
+  （含全部改挂）。这一步的结果按（租户, 窗口）在进程内存 30 秒（至多 512 个窗口，满了整个清掉）——
+  **存的只是台账里的去向**，任务 / 项目还在不在每次现查，所以删掉 / 完成的目标立刻不再显示；新确认的去向最迟 30 秒后生效。
+- 实测（5000 条已确认建议、500 段在场记录）：`views/current` 每次约多 0.3 毫秒；缓存没中的那一次约多 5 毫秒。
+
+### 隐私
+
+没有任何新东西离开设备：`app` / `title` 就是在场心跳已经带来、`human.presence` 已经回出的那两个值，已按该设备的
+`detector.settings.v1` 隐私设置（黑名单、去标题、换代号）处理过。`focus` 不进台账 / 投影 / 导出 / 快照恢复。
+
+### 本版不做（有意的）
+
+- 不做多设备合并（同 v2.14：只看最近报心跳的那台）。
+- 第 3 步只看同一个程序最近确认的 200 条：更早确认过的窗口认不出（那时只到「正在用」）。
+- 不为 `focus` 开端点、不推送：读端都是轮询。
+
+## 串行的注意力时间线（规范性 · v2.17，`nexus-core.attention.v1`）
+
+仓主 2026-10-09（原话见本文件头部 v2.17）。三句话：**不按组算；每 5 秒一拍、每拍带各窗口的停留；人的注意力只能串行**，
+外加一条读端的要求：**代理的泳道上要有一条蓝条，表示人把注意力放在它身上的时间。**
+
+**设计原则（规范性）**：
+
+- **一条时间线，不是若干个计数器。** 每台设备一条按时间排、**段与段不重叠**的时间线；服务端只存段，不按窗口 / 程序归组求和。
+  任何「在某个窗口上一共多久」都是读的时候从这条线上数出来的，所以各处的数加起来不会超过墙上的时间。
+- **时间一律是服务端的。** 设备的钟差多少都不要紧（见下「时钟」）。
+- **窗口是不是某条代理会话只有一条规则**：v2.13 的归一化相等（见「连线」节 v2.17 取代条目）。
+  （v2.17.1：说的是带 `spans` 的心跳；不带的仍是 v2.4 的包含规则，见节末。）
+- **全部服务端算**：页面（泳道 / 顶栏 / 圆环 / 蜂巢）与 MCP 读的是同一份，谁都不自己再算一遍。
+
+### 心跳的追加：`sentAt` + `spans`
+
+```jsonc
+// POST /api/core/activity/presence —— 追加两个可选键（形状以 ai-detector 契约「在场心跳」节 v1.2 为准）
+{ "deviceId": "dev_…", "app": "ptyxis", "title": "✳ garden", "afk": false,   // 顶层仍是「此刻」= 最后一段
+  "sentAt": "2026-10-09T10:00:05.000+08:00",       // 设备发这一拍的时刻（设备自己的钟）
+  "spans": [                                        // 上一拍以来依次在过的窗口：旧 → 新、互不重叠，离开已扣掉
+    { "app": "code",   "title": "plot.gd — garden", "from": "2026-10-09T10:00:00.000+08:00", "seconds": 2.4 },
+    { "app": "ptyxis", "title": "✳ garden",         "from": "2026-10-09T10:00:02.400+08:00", "seconds": 2.6,
+      "guess": { "projectId": "p_1", "confidence": 0.9, "classifier": "rules" } } ] }   // guess 同顶层（v2.14），每段各自带
+// → 200 { "ok": true }
+```
+
+- **校验（整拍 422，什么都不写）**：带 `spans` 必须带 `sentAt`；`sentAt` 与各段的 `from` 是**带偏移的 ISO 字符串**
+  （数字时间戳、不带偏移的不收）；`spans` 至多 **32** 段（检测程序自己限 12）；每段 `app` / `title` 是字符串（超长截断，同顶层）、
+  `seconds` 是数（布尔不收）、`0 < seconds ≤ 120`；各段按时间排、互不重叠（容 2 秒的取整误差）；最早一段不早于
+  `sentAt` 之前 120 秒、最后一段不晚于 `sentAt`（同样容 2 秒）；`guess` 同顶层的校验。越界到算不了的时刻同样 422。
+  不认识的键忽略（检测程序截断过时带的 `truncated: true` 目前只是说明）。`spans: []` 合法 = 这一拍没有可记的段。
+- **时钟**：服务端只用 `sentAt` 做一件事——`平移量 = 服务端收到的时刻 − sentAt`，各段加上它再存。所以设备的钟快十分钟、
+  慢一年都落在同一处；平移之后晚于服务端此刻的部分裁掉。**请求里的绝对时刻从不直接进库。**
+- **串行（不重叠、不重复计）**：平移后的每一段，早于这台设备时间线末尾的部分裁掉，裁完为空就丢。所以**同一拍重发、
+  上一拍丢了这一拍往回多带一截、检测程序重启后带最近一分钟**，都不会把同一秒记两遍；时间线的 2 小时截止线同样是下界。
+- **合并**：与时间线最后一段是同一个窗口（`app`、`title`、离开与否、`guess` 的目标、对上的运行都相同）且相距 ≤ **2 秒**
+  才延长上一段，否则是新的一段——**切走再回来就是新的一段**。不带 `spans` 的心跳仍按 45 秒合并。
+- **离开**：`afk: true` 的那一拍，`spans`（离开之前的那几段）照上面接，再照旧记一个「此刻离开」的点；离开的点与离开的点
+  仍按 45 秒合并成一轮离开。带了 `spans`（哪怕是空的）且没离开的心跳**不再**另记顶层那个「此刻」的点。
+- **新老混用**：同一台设备先后收到带与不带 `spans` 的心跳都可以，段总是接在末尾、互不重叠。带停留的段内部记
+  `exact: true`（首尾是真的），读端据此不给它「往后延到下一拍」的宽限；这个键不回出。
+
+### 注意力 → 代理运行：`attend`、`attention`、`attentionSeconds`
+
+- 心跳写入时，每个没离开、标题非空的段按「连线」节 v2.17 的判据找**恰好一条**在跑的运行（当前租户的；别的租户的运行、
+  已结束的运行、同名的两条运行都不认）。对上了：这一段在时间线里记 `runId`，并把这一段的 `[起, 止]` 记进该运行的
+  `attend`（延长或新开，见「连线」节）。一拍只读一遍在跑的运行。
+- `attend` 存在运行上、跟着 `agent.run.completed` 落账（形状是 v2.4 的，不变），所以**已结束的运行、过了 2 小时的历史**
+  也有蓝条；时间线本身仍只留 2 小时。
+- 读端三处，都只是把同一份 `attend` 换个形状：
+
+```jsonc
+// GET /api/core/views/lanes
+{ "human":  { "presence": [ { "deviceId": "dev_…", "from": "…", "to": "…", "app": "ptyxis", "title": "✳ garden",
+                              "afk": false, "runId": "run_…" } ] },        // runId：这一段在看的运行；不是 → null
+  "agents": [ { "runId": "run_…", /* …既有的键… */
+                "attention": [ { "from": "…", "to": "…" } ] } ] }           // 按时间排、互不重叠
+// GET /api/core/views/agent-time
+{ "open": [ { "runId": "run_…", /* …既有的键… */ "attentionSeconds": 95 } ] }
+```
+
+- `agents[].attention`：该运行的 `attend` **裁到查询窗口**、首尾相接或重叠的并成一段、换算到 `NEXUS_TZ` 的偏移；
+  每条运行至多回出最新的 **500** 段。键总在，没有为 `[]`。`from == to` 的段可能出现（老检测程序的单个点）。
+- `open[].attentionSeconds`：该运行全部 `attend` 的 `until − at` 之和（整数秒，不裁窗口）。
+- **含义（规范性）**：这是「人看着这条代理的窗口的时间」，**不是人记下的工时**，不进人的任何汇总、不改 `elapsedSeconds`；
+  一台设备上各条运行的注意力互不重叠（因为时间线不重叠）。多台设备各有各的时间线，本版不做设备间去重。
+
+### `focus.dwellSeconds`
+
+`focus`（v2.16）追加一个键 `dwellSeconds`（整数 \| `null`）：这台设备的时间线（最近 2 小时）里，人在**当前这个窗口**
+（v2.14 的窗口键）上一共待了多少秒，含当前这一轮；`state: "afk"` 时为 `null`。`since` 的含义不变——**这一次**切过来的时刻，
+切走再回来重新起算；窗口切得快时它总是几秒，`dwellSeconds` 补的是「同一个窗口累计多久」。两者说的都只是**当前这一个窗口**：
+`focus` 永远只有一个窗口 / 一个目标，不把几个窗口混着写（计时环「人的注意力只能串行」）。
+
+### 自动跟踪的停留（`needsChoice` / `aiThinking`）
+
+判据不变（最近 5 分钟里累计 ≥ 60 秒），但带停留的段按**真的首尾**数：两段之间不在的时间不再算进去（老心跳的段仍往后延到
+下一段开始，至多 45 秒）；只有最后一段延到此刻。认不出的窗口与认得出的窗口每 3 秒来回切时，只有它自己的秒数算数。
+
+### 花费（规范性）
+
+- 每拍：读一遍、写一遍这台设备的在场文档（至多 2000 段）；有没离开的段时读一遍在跑的运行；对上了才对那条运行做一次条件更新。
+- 顶栏改为约 **5 秒**读一次 `views/current`（页面不可见时 60 秒）：在场文档仍只读一遍，`dwellSeconds` 是在内存里走一遍
+  时间线（窗口键按（程序, 标题）只算一次）；时间线满 2000 段时每次读仍是毫秒级（测试里拦的是数量级的退化）。
+
+### 隐私
+
+没有新种类的东西离开设备：各段的 `app` / `title` 与顶层、与上传走**同一条脱敏路径**（黑名单、去标题、换代号）；多出来的只是
+「上一拍以来的那几个窗口」而不止「此刻这一个」，以及各自的秒数。时间线仍是活状态：只留 2 小时，不进台账 / 投影 / 导出 / 快照恢复。
+`attend` 只存时间，不存窗口标题（v2.4 起如此）。
+
+### v2.17.1 修订（2026-10-09，PR #87 审核后、未发布前）
+
+与上文冲突处以本小节为准。v2.17 之前就有的行为一处不改；改的都是 v2.17 自己新增的。
+
+- **老心跳的判据不变**：不带 `spans` 的心跳，`attend` 仍按 v2.4「连线」节原文——标题不分大小写包含在跑运行的
+  `match`，命中几条记几条，同一运行上一条 `attend` 的 `until` 距这一拍 ≤ 45 秒就延长。时间线上这一段的 `runId`
+  只在恰好命中一条时写。「各条运行的注意力互不重叠、加起来不超过墙上的时间」**只对带 `spans` 的心跳成立**。
+- **带 `spans` 的注意力 = 时间线上对上这条运行的那几段**，不多不少：一段并进了时间线的上一段（同一个窗口、相距 ≤ 2 秒、
+  中间没有别的段），`attend` 就从上一段的末尾接着延长；否则是新的一条。中间看过别处（哪怕 1 秒），前后就是两条，
+  那 1 秒不算在这条运行上。（取代 v2.17「与上一条 `attend` 相距 ≤ 2 秒才延长」。）
+- **`attend` 是并集**：新的一段与已有的 `attend` 重叠或首尾相接就并成一条（往前、往后都伸），否则按 `at` 插进去——
+  到得晚的、更早的一段也留着；重记同一段不多算。
+- **`spans` 的校验是逐段的**：**每一段**的起点不早于 `sentAt` 之前 120 秒、终点不晚于 `sentAt`（各容 2 秒）；
+  起点不早于上一段的起点；与上一段的重叠不超过 2 秒。任何一段不合 → 整拍 422。
+- **空的 `spans`**：`spans: []` 且没离开 = 这一拍没有可记的段，时间线不动（新设备就是一条空的时间线），顶层的
+  `app` / `title` 不另记成一个点。读端把空的时间线当「这台设备此刻没有可显示的」：`focus` 不看它（`null`，或别的
+  设备的），`human.presence` 里没有它的段。
+- **同一设备并发的两拍**：时间线按版本号条件写，没写中的那一拍重读重算，谁的段都不丢（v2.17 是后写覆盖先写）。
+- **先记注意力、再推进时间线**：`attend` 没写进去（存储出错、争用重试用尽）这一拍**整个失败（5xx）**，时间线没动；
+  检测程序下一拍往回带的那一截不会被裁掉，注意力补得回来。运行已结束的不算失败（照旧不记）。
+- 检测程序侧：`presenceSeconds` 大于 30 时实际按 30 秒发（`ai-detector.presence.v1` v1.2.1），否则一拍带不全。
+
+### v2.17.2 修订（2026-10-09，PR #89 复审后、未发布前）
+
+与上文冲突处以本小节为准（取代 v2.17.1「先记注意力、再推进时间线……这一拍整个失败」一条；其余不动）。
+
+- **注意力只跟着已提交的时间线（outbox）**：一拍要记的 `attend` 先作为 `pendingAttend` 列表与时间线**同一份文档**一起条件写
+  （`v` + 建档代号 `gen`）；写中之后才逐条并进运行的 `attend`（并集、幂等），再清掉 `pendingAttend`。写不中的一拍
+  （同设备另一拍抢先）重读重算，**从没写过任何 `attend`**——两拍并发各说看了不同的运行 `[0,10]`，只有先提交的那拍算数。
+  写中之后记 `attend` 失败（存储出错、争用用尽）或进程崩了：时间线是持久的，这一拍仍返回 2xx，`pendingAttend` 留在文档里，
+  同一设备的**下一拍**先补上再做自己的事（幂等，重复补不多算）；`pendingAttend` 至多 64 条（正常只装一拍的量，≤ 33 条）。
+  运行已结束的照旧不记。`pendingAttend` / `gen` 是在场文档的内部键，不出现在任何响应里。
+- **时间线只增不倒（有意的定义）**：一拍只贡献**同设备已提交末尾之后**的时间；乱序 / 并发到达的更早一拍对已被覆盖的时间
+  什么都不贡献（不往中间插，守「串行、不重叠」）。检测程序串行发、失败往回多带一截，正常情况不会触发。
+  同一份请求体事后重放：各段按「收到时刻 − `sentAt`」重新换算，同样只算已提交末尾之后的，所以任何重放加起来也不会超过
+  「最早一段的起点 → 最后一次收到」的墙上时间，时间线仍不重叠（检测程序每拍都带新的 `sentAt`，从不重放同一份体）。
+- **当前状态只往新走**：`lastAt`、`app`、`title`、`afk` 取收到时刻更晚的那一拍；更早收到的一拍（不带 `spans` 的点、
+  离开的标记）晚到提交时不改写它们、也不往时间线末尾之后补一个更早的点。
+- **`attend` 并集的 `gap` 只是新一段自己够得着的范围**：与新一段相距 ≤ `gap`（带停留的段 0，老心跳 45 秒）的旧段并进来，
+  并成的一段**不再顺着往外够**——旧段之间原本分开的，不会因为这次来的是老心跳而被串起来（否则一个点能把几十秒没看的
+  时间都算进去）。一次来几段时先按时间排再并，结果与到达顺序无关；同样的输入再记一遍结果不变。
+- **`attend` 超过 2000 条**：不丢新的——把相距最近的相邻两段并拢，所以总注意力不会悄悄停止增长，也只增不减。每并拢一次多算的是当时最小的那个空档
+  （≤ 运行时长 ÷ 2000）；多算的总量随超出的段数线性增长，**没有常数上界**（旧写法「总误差有界」说松了）。
+- **`app` / `title` 的长度（v2.19.1 取代 v2.17.2 的 16384 上限）**：不设上限、**从不因长度拒绝**（顶层与每一段，也包括不带 `spans` 的
+  老客户端）：先截到 1024，存的时候再按 128（`app`）/ 512（`title`）截（GNOME Ptyxis 会把整条内联命令放进标题，不能因此拒掉合法的心跳）。
+  离谱的体积由网关挡：`client_max_body_size 1m`（nginx 的默认值，手写与生成的网关模板里都写明了，有测试盯着），超了回 `413`；
+  一拍至多 33 个窗口字段，正常远低于它。
+
+### 本版不做（有意的）
+
+- 不做多设备合并 / 去重（同 v2.14 / v2.16：`focus` 只看最近报心跳的那台；两台设备同时各看一条运行会各记各的）。
+- 不给已结束运行的注意力做按天 / 按任务的汇总（要一张新投影）；要看读 `views/lanes`。
+- 不回填：升级前的 `attend` 仍是老判据记下的，原样留着。
+- 一拍里超过 12 段时检测程序留当前窗口 + 最长的那些（带 `truncated: true`），被丢掉的短停留不补。
+
+## AI 报告：一次交一份，人一键全批准（规范性 · v2.20，`nexus-core.activity.reports.v1`）
+
+仓主 2026-10-09（原话见本文件头部 v2.20）。**AI 只提议，一条都不替人定**：报告里的每一条都和已有的单条提议一样，要人批准才入账。
+这一节只加两件事：把「很多条提议」装进一份可以一次批准的单子；批准时逐条走**既有**的确认路径。
+
+### 报告与条（规范性）
+
+一份报告 = `{summary, author, items[]}`。每条 `item` 是下面三种之一，**语义全部沿用已有的，不发明新的**：
+
+| `kind` | 必给 | 批准时做的事（同一个函数，不另写） |
+|---|---|---|
+| `assign` | 选择器 + `taskId` 与 `projectId` **恰好一个** | 每段 `service.confirm(id, taskId)`（v2.2）；只到项目 = `confirm(id, projectId=…)`，记到它的「未分类」桶（v2.9） |
+| `newTask` | 选择器 + `newTask {projectId, name}` | 提交时走 `proposals.propose`（v2.8，同样的校验与去重，生成待定提议）；批准时 `proposals.task_for` 取（或建，**同一提议只建一次**）任务，再对每段 `confirm(id, 那个任务)` |
+| `dismiss` | 选择器 | 每段 `service.dismiss(id)`（v2.2） |
+
+- **选择器**（恰好一个）：`suggestionIds`（1–200 个待确认建议的 id）或 `collection`（集合名，v2.10；**提交时**解析成该集合里此刻所有待确认的建议 id 并存下，
+  之后集合再变这一条不变）。一条里的 id 去重；同一份报告里**同一个建议至多出现在一条**里（后出现的那条被拒，`duplicate_suggestion`）。
+- 可选 `reason`（≤ `MAX_REASON` = 300 个码点，纯文本）。
+- 常量：`MAX_ITEMS` = 200（每份条数，超了整个请求 `422`）、`MAX_ITEM_REFS` = 200（每条建议数）、`MAX_REFS` = 500（每份报告所有条的建议数合计，超出的条被拒，
+  所以一次「全部批准」的工作量有上界）、`MAX_SUMMARY` = 2000（超了 `422`）、`MAX_AUTHOR` = 64、`MAX_PENDING_REPORTS` = 5。
+- **不可信文本（规范性）**：`summary`、`author`、`reason` 是 AI 给的，**只当纯文本**存、原样回给人看（前端只用 `textContent`），不解释、不拼进任何路径 / 查询 / 提示。
+  它们回到 AI 手里（`get_report_status`）之前要过 MCP 的 `_screen`（`mcp.tools.v1` v1.10「屏幕来的文字不可信」同一套）。
+- 报告集合 `activity_reports`（每个 `(user, id)` 一份）**不是事实**：不进台账 / 投影 / 导出 / 快照恢复；过期同建议（`NEXUS_SUGGESTION_TTL_DAYS`，缺省 14 天，惰性清理）。
+
+### 端点（全部只收人：带 `Authorization: Bearer` → `403`，同 `matches`；匿名 / `report` / `read` 范围由 v2.19 的放行表挡）
+
+提交与读取也走这条守卫：MCP 对内直连不带 Bearer，所以过得去；设备令牌（持令牌直连网关的代理）过不去，只能经 MCP。
+
+| 端点 | 说明 |
+|---|---|
+| `POST /api/core/activity/reports` `{summary, author?, items[]}` | 提交。`author`（缺省 `"ai"`，≤ 64 码点）是**自报的标签**，不是身份。整体形状不对 / 条数超限 / `summary` 超长 → `422`。每条逐个校验，坏的进 `rejected`，其余照收。回 `{reportId, status, accepted, rejected[{index, code, reason}]}`；一条都没收下时不建报告、`reportId: null` |
+| `GET /api/core/activity/reports?status=pending\|all&limit=&items=` | 报告列表（新的在前；缺省 `pending`，`limit` 1–50）：`{items[{id, author, summary, status, createdAt, decidedAt, counts}]}`；`items=true` 时每份再带 `items[]`（逐条状态与结果，不带建议明细——MCP 的 `get_report_status` 用） |
+| `GET /api/core/activity/reports/{id}?resolve=true\|false` | 一份报告，条目解析到**当前状态**（`resolve=false` 不带建议明细） |
+| `POST /api/core/activity/reports/{id}/approve` | **全部批准**：对每个 `pending` / `failed` 的条逐条应用，返回逐条结果 |
+| `POST /api/core/activity/reports/{id}/items/{itemId}/approve` `{taskId?\|projectId?}` | 批准单条；请求体给了目标 = **先改再批准**（改的目标先存下，之后批准用的就是它；不给 = 用报告里的） |
+| `POST /api/core/activity/reports/{id}/items/{itemId}/split` `{suggestionIds[], taskId?\|projectId?\|dismiss?}` | **拆条（v2.33，只收人）**：把条里这些建议拆进一条新条（id `s…`）并另给去向，剩下的留原条；全拆走 = 原条就地改目标。返回 `{reportId, itemId, moved}`。不入账；条 / 报告已处理或建议已入账 `409`，建议不在条里或目标给法不对 `400` |
+| `POST /api/core/activity/reports/{id}/items/{itemId}/reject` | 这一条不要（`newTask` 条同时把提议标为已否掉，同 `unmatch`，助理不许再提） |
+| `POST /api/core/activity/reports/{id}/reject` | 整份不要：所有还没处理的条记 `rejected`，报告记 `rejected` |
+
+- **改目标**只对 `assign` / `newTask` 条：`taskId` 与 `projectId` 恰好一个，校验同提交（不存在 `404`）；改完这一条就成了 `assign`（`newTask` 丢掉；那个待定提议留着过期）。`dismiss` 条不能改（`400`）。
+  已处理（`applied` / `stale` / `rejected`）的条不能改（`409`）。
+- 报告状态：`pending`（还有 `pending` / `failed` 的条）→ `approved`（条都处理完且不全是 `rejected`）/ `rejected`（整份不要，或每条都被不要）；
+  已 `approved` 的报告再「全部批准」= 什么都不做（幂等）；已 `rejected` 的 → `409`。
+- **身份与上限（规范性）**：`author` 只是调用方自报的显示标签，**不参与任何判定**（不比较、不据此顶掉 / 隐藏 / 放行任何报告）——同一租户里谁交的都一样，
+  身份只有网关覆盖的租户头；MCP 对内直连，nexus-core 看不到是哪个 AI。所以没有「同作者顶掉旧报告」：待批准的报告合计超过 `MAX_PENDING_REPORTS` 份 → 新的提交 `429`（先让人处理旧的）。
+  上限是软的：并发提交最多超出并发数。报告对同租户一视同仁（可读、不可改）。
+
+### 条的状态与逐条结果（规范性）
+
+条 `status`：`pending` → `applied`（至少一段入账 / 忽略成功，且没有失败）/ `stale`（没有一段还能做，全因建议已被处理）/ `failed`（有一段做不成，`reason` 说明；可再批准重试，已成功的不重做）/ `rejected`。
+每个建议在条里有自己的结果 `results[建议 id] = {state: applied|stale|failed, reason?}`；`state` 一旦是 `applied` 不再被改（并发的另一个批准写的 `stale` 盖不掉它）。
+
+- **`stale`**：批准那一刻建议已不是 `pending`（人手点过确认 / 忽略，或被清掉），或 `confirm` 回 `duplicate:true` / `409`（并发的确认抢先了）。跳过，不是错误，不算失败。
+- **`failed`**：目标任务 / 项目刚被删、任务已完成等 `confirm` 抛的域错误；报告里的 `reason` 是服务端的话，不是 AI 的。一条失败不撤销、不阻塞别的条。
+- **幂等 / 并发**：不另加锁，靠两层：每段的结果只增不改（上面）；每段入账靠 `confirm` 自己的防重键 `activity:<建议 id>` 与 `pending→confirmed` 条件占位——并发的「全部批准」与单条批准同一段，只有一个写事实，另一个得到 `duplicate` → `stale`。
+  `newTask` 条的任务由 `proposals.task_for` 保证只建一个。批准一次的工作量以 `MAX_REFS` 为界。
+- **出处（规范性）**：入账的 `session.completed` 的 `ai` 块追加选填键 `report: {id, author}`（`confirmed: true`、`confidence` 取建议原来的，与手点的一样）。
+  `source: "activity-confirmed"` 的信封从外部入口进来时，`ai.report` 同 `ai.auto` 一样不落库（出处只能由本服务盖）。忽略没有事件，不记出处。
+
+### 评审补记（2026-10-09，PR #92 复审后，只收紧）
+
+- **`assign` / `newTask` 条与 `matches` 同两道闸**（`service.match_refusal`）：建议的 `rejectedTaskIds` 里有这个 `taskId`（用户否掉过）→ 该条被拒，
+  `code: "task_rejected"`；建议已有分类规则给的任务（`classifier` 不是 `assistant`）→ `code: "rule_assigned"`。只到项目的 `assign` 与 `dismiss` 不碰任务，不受影响。
+  提交时查一遍，**批准时再查一遍**：提交之后用户否掉了这个任务，该段记 `stale`（带理由），不套用。
+- **条的状态只由结果推出**（有 `failed` → failed；否则有 `applied` → applied；否则 stale）：并发的两个批准交错时，写完再核对、不一致就按最新结果重写，
+  所以不会出现结果是 `applied` 而条是 `stale`。
+- **批准进行中报告被 TTL 清掉**：不回 404，回已有的逐条结果，报告 `status` 为 `"purged"`（已入账的事实当然还在）。
+
+### 响应形状（见 `contract-schemas.md`「AI 报告」）
+
+「全部批准」回 `{id, status, applied, stale, failed, items[{id, status, applied, stale, failed, failure}]}`：顶层三个数是**这一次调用处理的条**里各落在哪（再点一次是 0 / 0 / 0），
+`items[]` 里 `applied` / `stale` / `failed` 是该条**建议**的个数。
+
+### 本版不做（有意的）
+
+- 不做「AI 自动批准」或按把握阈值批准：批准永远是人点。
+- 不做报告的编辑（改 `summary` / 增删条）；要换一份就让 AI 再交一份，旧的由人处理。
+- 不让 AI 撤回或顶掉报告，也不按 AI 区分可见性（没有可信的 AI 身份可依）：撤回只有人「整份不要」。
+- 不在批准里做「撤销」：入账后的改归属走 v2.11。
+
+## AI 提议新项目与任务（规范性 · v2.30，`nexus-core.activity.proposals.v1`）
+
+仓主 2026-10-19（原话见本文件头部 v2.30）。**AI 只提议，人批准才建**；提议本身不碰 planner 一个字节。提议存在 `activity_new_items`（每个 `(user, id)` 一份，
+`kind: project | task`，`status: pending | accepted | rejected`），**不是事实**：不进台账 / 投影 / 导出 / 快照恢复，不过期（被不要的要永远记着）。
+
+| 端点 | 行为 |
+| --- | --- |
+| `POST /api/core/activity/proposals/projects` `{zoneId, name, reason?}` | 提议在分区下建项目。`name` 去首尾空白后 1–64 码点（否则 `400`）、`reason` 超 300 码点截断；分区不存在 `400`。分区里已有同名（归一化：折叠空白、不分大小写）的**活**项目 `409`，`detail` 里带它的 id；同分区同归一化名字的待批准提议 = 同一条（回同一个 `id`）；人不要过的 `409`（AI 不许再提）。待批准的项目提议已有 20 条 `429`。回提议（下表形状） |
+| `POST /api/core/activity/proposals/tasks` `{projectId \| projectProposalId, name, reason?}` | 提议建任务；两个 id **恰好给一个**（否则 `400`）。`projectId`：项目不存在 `400`，项目里已有同名活任务 `409`（带它的 id）。`projectProposalId`：必须是 `pending` 的项目提议（不存在 `400`；已批准 `409` 且 `detail` 里给真项目 id，让 AI 改用 `projectId`；已不要 `409`）。同样的去重 / 不要过的 `409` / 待批准任务提议满 100 条 `429` |
+| `GET /api/core/activity/proposals?status=pending\|all&limit=` | `{projects: [提议 + tasks[]], tasks: [挂在现成项目上的任务提议]}`（新的在前；缺省 `pending`，`limit` 1–200）。提议形状：`{id, kind, status, name, reason, createdAt, createdId}`（`createdId` = 批准后建出的项目 / 任务 id，其余 `null`）；项目另有 `zoneId` / `zoneName`；任务另有 `projectId`（解析到真项目；挂在没批准的项目提议下为 `null`）/ `projectName` / `projectProposalId`。`status=all` 时已批准 / 已不要的也在，AI 据此得知结果 |
+| `POST /api/core/activity/proposals/{id}/approve` | **只许人**。项目提议：建项目（用提议时预留的 id）并记 `accepted`；任务提议：所属项目还是没批准的提议 → `409`（先批准项目），否则在真项目下建任务。已 `accepted` 的再批准 = 回同一个结果（幂等）；`rejected` 的 `409`；不存在 `404` |
+| `POST /api/core/activity/proposals/{id}/reject` | **只许人**。`pending` → `rejected`；项目提议**连带**把它下面 `pending` 的任务提议一起记 `rejected`。已 `accepted` 的 `409`。`rejected` 的留着：同名再提 `409` |
+
+- **「只许人」**同 `activity.ignores.v1`：没有 `Authorization: Bearer`、没有范围头、不是匿名；设备令牌（任何范围）、带范围头的调用方、匿名一律 `403`。MCP 对内直连算「人」，但 MCP 不暴露批准 / 不要。
+  提议两个 POST 与 AI 报告同口径：带 Bearer 的设备令牌 `403`（MCP 对内直连不带）；`GET` 不设限。
+- **只建一次（规范性）**：做法同 v2.8 `proposals.task_for`——id（项目 `p_…`、任务 `t_…`）在提议时预留；批准 = `pending → accepted`（条件更新）+ 持久的「建」占位（`createClaimedAt`，空 → 现在，条件更新），
+  只有占到的那一次去建（`guard.run_write` → `create_project` / `create_task`，带预留 id，审计 `create`），并发批准复用它；占位永不放掉（建失败 = 安全失败，不会再建）。
+- 已批准、但建出的东西后来被删了：同名再提时（活的同名检查通过）换一条新提议，不复活旧 id。
+- 上限是软的：先数后插，并发提交最多超出并发数。
+- 不改的：`propose_report` 的 `newTask` 条仍只能挂现成项目，**不**能引用新项目提议（本版不做）。
+
+## AI 提议改动与忽略规则（规范性 · v2.36，`nexus-core.activity.proposals.v1` 追加）
+
+仓主 2026-10-22 批准。两样都沿用 v2.30 的口径：提议不碰 planner / 忽略规则一个字节；`pending | accepted | rejected`；被不要的永远记着；「只许人」批准 / 不要；提议两个 POST 带 Bearer 的设备令牌 `403`。
+
+| 端点 | 行为 |
+| --- | --- |
+| `POST /api/core/activity/proposals/changes` `{target: project\|task, targetId, op: rename\|move\|delete, name?, toId?, reason?}`（`extra=forbid`） | 提议改动。`name` 当且仅当 `rename`（走 `clean_name`，1–64 码点）；`toId` 当且仅当 `move`（项目 → 分区 id，任务 → 项目 id）；否则 `400`。目标不存在 `400`；`p_inbox` 与「未分类」桶 `400`；rename 与现名（归一化）相同 `400`、同级已有同名 `409`；move 目的地不存在 / 就是现在的位置 `400`；delete 项目：还有非桶任务 `409`（「先提议删掉或移走它的任务」）；delete 任务：被别的任务依赖 `409` |
+| `POST /api/core/activity/proposals/ignores` `{app, titleContains?, reason?}`（`extra=forbid`） | 提议一条忽略规则。长度上限同 `activity.ignores.v1`（`400`）；已有同样的规则 `409` |
+| `GET …/proposals` | 响应追加 `changes: [...]`、`ignores: [...]`（新的在前，同 `status` / `limit`）；`projects` / `tasks` 只含 v2.30 的两种 |
+| `POST …/{id}/approve` / `…/reject` | 同 v2.30，对新 kind 同样有效 |
+
+- **id**：`nc_` + `sha256(target\ntargetId\nop\n<归一化 name \| toId \| 空>)[:20]`；`ni_` + `sha256(fold(app)\nfold(titleContains))[:20]`。同 id 的 `pending` 再提 = 原样返回；`rejected` 再提 `409`「用户已经否掉过…」；`accepted` 再提 = 换成新的一条。
+- **上限**（软的，先数后插）：待批准 `change` 50、`ignore` 20，超了 `429`。
+- **change 视图**：`{id, kind:"change", status, op, target, targetId, targetName, projectId, name, toId, toName, reason, createdAt, createdId: null}`；`targetName` / `toName` 是**现在**的名字（东西没了为 `null`）；`projectId` 仅任务目标有（现属项目）。
+- **ignore 视图**：`{id, kind:"ignore", status, app, reason, createdAt, createdId}`，`createdId` = 批准后建出（或已有）的规则 id。`titleContains` **只对人**给（同 `ignore._out` / `ignore_router.is_human`），其余调用方只拿 `hasTitleFilter: bool`。
+- **快照**：提议时记下目标当时的名字（`snapName`）与所在父级（`snapParent`：项目的分区 / 任务的项目）；批准时 rename 要求名字没变、move 要求父级没变，否则 `409`「目标已被改过，请选「不要」」。
+- **同名**：`planner` 的 `update_project` / `update_task` **不查同级重名**，所以由本节自己查：提议时与批准动手前都查（rename：当前父级下；move：目的地下，用目标现在的名字），撞了 `409`，批准时不动手、提议留在 `pending`。
+- 搬移任务到系统收件箱 `p_inbox` 是允许的（收件箱只是不许被改名 / 搬移 / 删除）。
+- **批准**（只许人）：先复查目标还在（不在 `409`「已不存在，请选「不要」」）与上面的快照 / 同名；再 `pending → accepted` 条件更新并写占位 `applyClaimedAt`，**只有赢的那次动手**；输家等占位放掉（至多 `WAIT_SECONDS`，超时 `409`）后返回实际视图；动手 = `guard.run_write(request, op=update|delete, object_type=projects|tasks, entity_id, …)`（改名 / 搬移走 `update_project` / `update_task`，删除走 `delete_project` / `delete_task`，各自的保护照旧，审计照写；搬移与删除是高风险写，所以必须用人的请求，AI 来源 `403`）或 `ignore.add`；落地抛错 → 仅当占位仍是自己的才回到 `pending` 并重新抛出，人可以再批或不要。落地后记 `createdId` 并放占位，这一步失败不回滚。
+- 占位期间（`applyClaimedAt` 非空且未过 `WAIT_SECONDS`）同 id 的再提 `409`，不会换掉正在落地的那条。
+- `GET` 的 `limit` 对 `projects`+`tasks`、`changes`、`ignores` 三组各自生效，互不挤占。
+
+## 泳道偏好与忽略并记住（规范性 · v2.22，`nexus-core.lanes.prefs.v1` + `nexus-core.activity.ignores.v1`）
+
+仓主 2026-10-09（原话见本文件头部 v2.22）。**两样都只管显示与要不要记，不改任何已记下的事实。**
+
+### 一、泳道偏好（`nexus-core.lanes.prefs.v1`）
+
+**身份与排位是两回事。**
+
+- **代理身份** = (`agent`, 归一化后的 `label`, 类)，**不是** `runId`：归一化（服务端唯一一份，偏好的键与查找都用它）= NFKC（全角字母 = 半角）+ 去不可见字符（Unicode 类别 `Cf` 全部——零宽、软连字符 U+00AD、方向标记 U+200E/F/U+202A–E 等、U+2060、U+FEFF、U+180E——加 U+034F 与变体选择符 U+FE00–FE0F、U+E0100–E01EF）+ 折叠空白 + casefold（`ß` = `ss`）；**类** = 已验证 / 未验证（匿名，`unverified`）。`agent` / `label` 是开运行的人自报的，不能证明身份，所以**匿名运行单独一类**：藏起一个匿名的名字不会藏掉同名的已验证会话，反过来也一样；匿名运行**不继承置顶**、**不能手动排位**（`order` 对它回与不存在 / 已结束相同的 404）、`pinned` 对它回 422，`rank` 永远排在所有已验证运行之后（自成一组，按活跃排）。偏好**只管显示，不参与任何授权或记账判断**。没有 `label` 的运行身份只有 `agent`
+  （藏起来 = 这个代理所有没名字的运行）。「藏起来」「置顶」记在身份上，所以同名代理重启（新的 `runId`）后仍然藏着 / 置顶着。
+- **手动排位**按**运行**：`runId → slot`，`slot` = 这条运行在「未置顶的在跑运行」里的位置（0 起）。只在这条运行**还在跑**时有效；
+  它一结束（`endAt` 非 null）就不再占位（读时忽略，下一次写顺手清掉），掉到已结束那一组；同名重启的新运行没有排位。
+  **每次 `PUT …/order` 由服务端算出「拖完后的完整先后」**（现在的 `rank` 先后里，被拖的那条放到目标位），再把**所有手动排过位的运行**
+  （含这次拖的）的 `slot` 重写成它们在这个先后里的位置——所以存的 `slot` 两两不同，**最近一次拖动一定落在它的目标位**，之前排过位的相对先后不变；
+  没排过位的运行继续按活跃排，**填满手动运行没占的位置**（手动的固定在自己的 slot 上，不随活跃变动，直到它结束）。拖动时不在那个队列里的旧 slot
+  （藏起来的等）顺手丢掉。运行被置顶时它的 slot 作废（取消置顶后回到活跃排）。
+  两个边角（声明）：① 读时 `slot` 夹在在跑运行的个数之内——被夹住的运行显示在最后，等新运行起来、个数变多了，它**弹回**存着的原 `slot`；② 手动排过位、后来被藏起来的运行，再拖别的卡片时它的 `slot` 被丢掉（拖动重写时它不在那个队列里），取消隐藏后回到活跃排。
+- **改名**：身份就是名字，所以改了名的会话是另一个身份——**藏起来**的旧名字留在「已隐藏」里（没在跑，可恢复），新名字照常显示；
+  **置顶**的旧名字同样失效（新名字不继承），响应的 `stalePinned` 把它列出来（「置顶但没在跑」），页面在「已隐藏」折叠里给「移除」（= 取消置顶）。
+- 偏好是显示用的活状态，存独立集合 `lane_prefs`（每租户一个文档，带版本号条件写），**不进台账 / 投影 / 导出 / 快照恢复**。
+
+**端点**（前缀 `/api/core/lanes/prefs`，全部**只收人**：带 `Authorization: Bearer`——设备令牌、read 令牌——一律 403，且在看请求体之前；
+report 令牌与匿名由「调用方范围」放行表挡成 403；放行表还单列挡掉 read 范围对 `/api/core/lanes/prefs` 的一切请求，GET 也不放）：
+
+| 方法 路径 | 请求体 | 说明 |
+|---|---|---|
+| `GET /lanes/prefs` | — | `{agents: [{agent, label, unverified, hidden, pinned, pinnedAt}], order: [{runId, slot}]}`（`unverified` = 这个身份是匿名那一类，和同名的已验证身份互不串） |
+| `PUT /lanes/prefs/agent` | `{agent, label?, unverified?（缺省 false）, hidden?, pinned?}`（至少给一个标志；多出的键 / 非布尔 422） | 幂等：给哪个标志就设成哪个值。再置顶不动 `pinnedAt`。藏 / 置顶都没了的身份顺手删掉。回新的整份偏好 |
+| `PUT /lanes/prefs/order` | `{runId, index, date?, from?, to?}`（`index` 0–1000 的整数；v2.24 追加的 `date` / `from` / `to` = 页面读 `views/lanes` 用的窗口，名字、格式、互斥与跨度校验都同那个 GET，错了同样 422——**注意**：校验错误的 `loc` 与 OpenAPI 里该字段显示为 `from_`（线上请求仍写 `from`，请求里写 `from_` 会被拒）；缺省 = 今天，老客户端不受影响） | 把这条**在跑**的运行放到「未置顶的在跑运行」的第 `index` 位；`index` 超出个数夹到最后；运行不存在 / 已结束 / 置顶 / 藏起来 / 匿名 / 是别的租户的 → 404。幂等。写入争用重试用尽（20 次）→ 409（稍后重试） |
+| `DELETE /lanes/prefs/order/{runId}` | — | 清这一条的排位；没有这条也 200 |
+| `DELETE /lanes/prefs/order` | — | 清全部排位 |
+
+**有界**：至多 `MAX_PREFS = 200` 个藏 / 置顶的身份、`MAX_ORDER = 50` 条手动排位（超了 422，不静默丢）；`agent` 1–128、`label` ≤ 200 个字符。
+
+**`views/lanes` 怎么用它**（追加，既有键一个不改）：
+
+- **藏起来的代理不出现在 `agents[]`**，它们运行上的连线（`interactions[]`）一并不出现。**时间照记**：投影、`views/agent-time` 的汇总
+  （`totalSeconds` / `runs` / `days` / `agents` / `tasks`）、导出一个数都不变——藏起来只影响显示。
+- `agents[]` 每行追加：`pinned: bool`（这个身份被置顶）、`manualOrder: int | null`（手动排位的 slot；只对还在跑且没置顶的运行）、
+  `rank: int`（服务端排好的先后，0 = 最前，在 `agents[]` 里互不相同）。**`agents[]` 数组本身仍按开始时间排**（既有形状不变），先后在 `rank`。
+- **`rank` 的排法（规范性）**：① 置顶且在跑的，按置顶先后（`pinnedAt` 早的在前）；② 其余在跑的按下面的「活跃排」排好，
+  再把手动排过位的运行**按 `slot` 升序**插到各自的位置、没排过位的按活跃排填满其余位置（`slot` 夹在在跑运行的个数之内，所以永远不会插到已结束的后面；
+  `slot` 平时两两不同，只在有运行结束 / 新运行出现后才可能出现空位或同 `slot`，同 `slot` 的按活跃排先后）；③ 已结束的按活跃排垫底。**置顶的已结束运行不再占前面**——它掉到已结束那一组，`pinned` 仍为 `true`。
+  「活跃排」= 与计时页 `lanes.js` 的 `rankRuns` 同一口径：档位（在等你 0 → 干活 1 → 出错 2 → 空闲 3 → 失联 3.5 → 已结束 4），
+  同档按**近 3 小时**（服务端的 `now` 往前）里不空闲的秒数倒序，同分按最近一次相位转入倒序。
+  计时页的「最近 3 小时 / 今天」切换只改画的时间范围，**不改先后**（先后以 `rank` 为准）；老后端没有 `rank` 时页面退回本地的活跃排。
+- 响应追加 `hiddenAgents: [{agent, label, unverified, live, phase}]`（每个藏起来的身份一条，**包括当前窗口里没有运行的**，页面据此列「已隐藏」并恢复；
+  `live` = 它此刻有在跑的运行，`phase` = 那些运行里最需要人的相位：有在等人的取等人的，否则取第一条的当前相位，没有在跑的为 `null`）
+  与 `hiddenWaiting: int`（藏起来的、在跑且**没失联**、正在等人（`waiting_input` / `waiting_permission`）的运行个数；失联的运行在 `hiddenAgents[].phase` 里也按 `idle` 算，两处一致）、`stalePinned: [{agent, label}]`（置顶着、但现在没有任何在跑的运行对得上的身份）。
+  藏起来就是藏起来：`hiddenWaiting` 只给页面一个很小的、可去掉的提示（「已隐藏的有 N 个在等你」），不替人把它翻出来。
+  页面的标题计数（几个在等你 / 干活 / 出错）、顶栏预览只数画出来的，所以不含藏起来的。`hiddenAgents` / `hiddenWaiting` 只给能读泳道的调用方（人 / read / write）；report 范围与匿名读不到 `views/lanes`，服务端另在响应里清空这两个键保一道。
+
+**`views/current` / `views/agent-time` / MCP**：两者另追加 `hiddenCount: int`（没列出的、藏起来的在跑运行的个数；只有个数，没有名字），`mcp.tools.v1` 原样带出，让 AI 知道有东西被藏了。`views/current` 的 `agents[]`（「现在在跑什么」）与 `views/agent-time` 的 `open[]`
+（在跑的运行）**不列藏起来的代理**；`views/agent-time` 的汇总、`views/current` 的其余键不变。`mcp.tools.v1` 的 `get_current_timer` /
+`get_agent_time` 原样带出这两处，所以 AI 客户端也看不到藏起来的在跑运行；它们的**时间**仍在 `get_agent_time` 的汇总里。
+
+### 二、忽略并记住（`nexus-core.activity.ignores.v1`）
+
+**这是显示 / 跟踪过滤，不是隐私擦除。** 规则存在之后，匹配的窗口**不再计时、不进圆环和泳道、不再出现在待处理里**；已经记下的东西不受影响（见下「不做的清理」）。
+
+**规则**：`{id, app, titleContains, createdAt, hits, seconds, lastHitAt}`，存独立集合 `activity_ignores`（每租户至多 `MAX_IGNORES = 200` 条，先插入、再数、超了撤回；
+同一条规则再建 = 同一份，幂等；不是事实，不进台账 / 投影 / 导出 / 快照）。
+**匹配**：两边（规则里存的、进来的程序名与窗口标题）都先过**同一个** `textfold.fold`——NFKC、去不可见字符（`Cf` 类 + U+034F + 变体选择符）、折叠所有空白、strip、casefold——再比：
+程序名归一化后**相等**（`code` 与 `code.exe` 不是同一个，不猜后缀），且（`titleContains` 给了的话）归一化后的标题**包含**它；`titleContains` 为 `null` = 这个程序的所有窗口。不是正则。
+每个串只看前 `GATE_CHARS = 4096` 个码点（请求模型把收到的串截到这里：超长截断照收、不拒，v2.4）；存储再按各自的上限（presence 128 / 512、建议 128 / 512）截，存下的是闸门看过的串的前缀。**匹配时收到的串与「按存储上限截后」的串任一命中就算命中**（填充折叠掉的差不能把窗口漏成存下来的样子）；标题片段若只出现在 4096 个码点之后，仍看不到（已知上限）。
+它**不是** `detector.rules.v1` 的规则：存在检测程序之外、服务端说了算，`detector.rules.v1` 一个字节不变。
+
+**端点**（前缀 `/api/core/activity/ignores`）：
+
+| 方法 路径 | 说明 |
+|---|---|
+| `GET /activity/ignores` | `{total, items}`，旧的在前。**人**看到完整规则（含 `titleContains`、`lastHitAt`）；**非人的调用方**每项只有 `{id, app, hasTitleFilter, hits, seconds, createdAt}`，没有 `titleContains` |
+| `POST /activity/ignores` | `{app, titleContains?}`（`app` 去空白后非空 ≤ 128，`titleContains` ≤ 200，多出的键 422；`app` 全空白 400）。**只收人**（见下「谁是人」，其余 403）。201：规则 + `created`（false = 早就有，此时 `removed` 恒为 0、**不再清理**；想重扫就先删后建）+ `removed`（见下「建规则时的清理」）。超 200 条 422（并发顶线时可能一起被撤回，稍后重试） |
+| `DELETE /activity/ignores/{id}` | **只收人**。204，幂等。取消后以后的窗口照常；已经丢掉的不会回来 |
+
+**谁是人**：读（完整规则 vs 投影）与写（建 / 删）共用**一个**判据——没有 `Authorization: Bearer`、没有 `X-Nexus-Scope`（任何取值）、没有 `X-Nexus-Anonymous`。其余一律：写 403、读只拿投影。
+MCP 对内直连 nexus-core，不带 Bearer 也不带范围头，所以在 nexus-core 眼里**算「人」**、`GET` 会拿到 `titleContains`；它不把片段交给 MCP 客户端，**靠的只是 MCP 自己的投影**（`get_detector_rules` 只给 `hasTitleFilter`）。本版不改 MCP 的认证。
+
+**从规则存在的那一刻起，在写入口过滤**（规则每次请求现读，没有缓存）：
+
+1. **活动建议上传**：命中的段直接丢弃，不存；不算 `accepted` / `duplicates` / `rejected`；响应**有被忽略的段时**追加整数键 `ignored`（没有就不带，形状与以前相同）。规则上 `hits` +1 段、`seconds` += 该段时长。
+2. **在场心跳**（含 `spans`）：命中的当前窗口 / 命中的 span 换成「没有窗口」（`app` 与 `title` 空、不带 `guess`、不对会话）再存，**在在场代码看到它之前**——所以它不会成为 `focus`、自动跟踪的目标或「请你选」的窗口，不续人的临时选择，也不让泳道「你在看」变长。人仍是「在电脑前」。心跳不计 `hits`。
+3. 整个程序都忽略时，代理会话在这个程序里的时间，泳道上「你在看」的蓝条也不再记（程序里没有窗口 = 对不上会话）。
+4. `auto._find` 不把已忽略的窗口交给人的选择 / AI（404）：已忽略的窗口以后不会被问 AI、也写不出规则。
+
+**建规则时的清理（只有这一件）**：`POST` 里尽力删掉已在 `pending` / `dismissed` 里、命中规则的建议（分批；至多扫 `SCAN_BUDGET = 50 000` 条），响应 `removed` = 实际删掉的条数，同时记进规则的计数器。
+出错或没扫完：规则照样已创建、`removed` 如实报，**不重试、没有「清理未完成」状态**。计数器每批删完就记（`seconds` 只算这批确实删掉的），后面出错不丢前面的。
+**已知的窄窗口**：规则创建的瞬间在途的一次上传 / 心跳（读规则时规则还没存在）可能漏过——它在清理结束后才写入一条匹配的建议；下一次就被拦。不加锁。
+**200 条上限**靠「先插、再数、超了撤回」：插入与撤回之间进程崩了可能留下第 201 条；不加事务。数不出来 / 撤回出错时尽力把刚插的删掉再报错；插入之后的读回失败不报错（用手上这份）。已确认的建议不动。
+
+**不做的清理（这不是隐私擦除）**：规则存在之前已经记下的东西一概不动——在场 / 焦点历史（最近 2 小时的在场文档照常自然过期）、已确认的记录与台账事实、已存的自动跟踪选择 / 问询、
+AI 写的或「记住」的分类规则与草稿、代理标签（`agent_runs.label`）、AI 对话记录。想让分类规则不再提到某个窗口，在「自动记录 → 分类规则」里自己删。规则本身存着人填的 `titleContains`，只对登录的人可见。
+
+**失败方向**：读不到忽略规则 → 被守卫的写入（建议上传、在场心跳）被拒（5xx，检测程序会重试），什么都没存**也什么都没删**（上传先读规则、再清过期建议）；规则计数器写不进去不影响入库（只是统计）；匹配某一项时出错 → 这一项当作被忽略（丢 / 抹）；
+没有写后复查，也没有任何写成功之后再抛的错。**读接口不依赖忽略规则**（`views/current`、`views/lanes`、建议列表、AI 报告、`GET /detector/rules`、草稿、`GET /activity/ignores` 之外都不读它），行为与没有这个功能时一样。
+`dismiss` / `choose` / `claim` / `reject` / `suggest` / 建草稿也不经闸门（只有上面 4 的 `_find`）。请求模型里每个字符串字段都登记在 `test_activity_ignore_gate.py` 的「闸门 / 随整项丢 / 不是窗口文字」名单里，新增字段不归类测试就红。
+
+### 存储、边界、本版不做
+
+- 新集合 `lane_prefs`、`activity_ignores`，各自只有对应子边界的 `repo.py` / `ignore_repo.py` 碰；`views/` 经 `prefs` 的 `service` 读偏好（不读它的 repo）。
+- **不做**：按标签页 / 窗口标题的正则忽略；按设备忽略；忽略规则的导入导出；拖到「已结束」那一组之后的排位；置顶之间的手动排位（置顶的按置顶先后）；
+  把「藏起来」同步到顶栏以外的别的页面（顶栏预览读同一份 `views/lanes`，已经跟着）。
+
+## `views/lanes` 的封顶（规范性 · v2.23）
+
+封顶只为保护响应体积，**不许让一个吵闹的代理挤掉别的代理，也不许挤掉它自己更早的时间**。
+
+- **范围**：窗口内（与窗口有重叠）的代理运行。**在跑的运行（含刚标了结束、还没落账的）优先保留，但最多留开始最晚的 500 条**（`MAX_LIVE`；`/agents/start` 不限开着的个数，
+  不能让一个租户把响应撑大）；超出的进 `dropped`（结束时间按 `now` 算，裁到窗口）。**藏起来的身份**的在跑运行不进 `agents[]` / `dropped`，只为 `hiddenAgents` / `hiddenWaiting` 服务，且同样有界：每次请求只取开始最晚的 500 条（其余静默不计，不进 `dropped`、不影响 `truncated`），并且不为它们解析 attend / interactions。被封顶挤进 `dropped` 的在跑运行，其身份仍算「在跑」（`stalePinned` 不会误报）。
+- **已结束的运行**按代理身份分组（身份 = `(agent, 归一化 label, 已验证 / 未验证)`，与 `lanes/prefs` 和 `rank` 同一个键）：
+  只留**最近活动的 200 个身份**（`MAX_AGENTS`，只数有已结束运行的身份），每个身份只留**最新的 100 条**（`MAX_RUNS_PER_LANE`）；在跑的（≤ 500）先算，总数超 2000（`MAX_RUNS_TOTAL`）时
+  从最旧的已结束运行开始丢（最后兜底）。藏起来的身份**已结束**的运行永远不显示，所以在封顶**之前**就剔掉，不占名额、也不算「丢了东西」。
+  封顶在排序 / 藏起来（`arrange`）**之前**做，所以置顶、手动排位、隐藏的逻辑不变。
+- **读法**：投影先按窗口轻读最多 5000 条已结束运行（只读封顶要用的几列），封顶后再只取保留下来的完整文档。窗口里已结束的运行超过 5000 条时，
+  最旧的超出部分连聚合都没有，只能把 `truncated` 标真。`proj_lanes` 走索引 `(user, kind, startAt)`，run 的 startAt 另加下界「窗口开始 − 31 天」
+  （运行时长上限 31 天），最坏扫描 = 该范围内的 run 数，不会为凑数扫整段历史。
+- **`dropped: [{agent, label, unverified, runs, elapsedSeconds}]`**（追加，缺省 `[]`）：被封顶丢掉的运行按身份汇总，`runs` 是条数，`elapsedSeconds` 是
+  这些运行**裁到窗口之内**的秒数之和——所以 `agents[]` 里某个身份的条数 / 秒数加上 `dropped` 里同一身份的，等于它在窗口里的真实总数
+  （`agents[].elapsedSeconds` 不裁，跨零点的运行请自己裁；`dropped` 已裁）。顺序：最近活动的身份在前。
+- **`truncated`**：只要有任何东西被丢（会话超 1000、`dropped` 非空、轻读超 5000）就为真；藏起来的身份被剔掉的运行不算。
+- **藏起来的身份**不出现在 `dropped`；report 范围 / 匿名读不到 `views/lanes`，服务端另在响应里清空 `dropped` 保一道（同 `hiddenAgents`）。
+- **没有 MCP 工具映射 `views/lanes`**（`mcp.tools.v1` 不动）；`views/current` / `views/agent-time` 不受影响，agent-time 的汇总始终是全量（不读本封顶）。
+- 前端（ring 的泳道、`lanes.js`）不对一个身份求和，所以不需要加 `dropped`；`truncated` 且 `dropped` 有数时区尾提示「较早的 N 段已折叠」，
+  没有（老后端 / 仅会话超限）仍是原话。
+
+## `views/lanes` 只显示在干活的（规范性 · v2.24）
+
+泳道 = 代理身份（`prefs.service.ident`，与 `lane_cap` / `arrange` / `lanes/prefs` 同一个键）。次序：封顶（v2.23）→ 活跃过滤（`lane_active.split`）→ `arrange`。
+
+- **显示**，满足任一：① 有在跑、未失联、未超上限（`overdue`）的运行处于 `working`，且（声明过心跳——`beatCount > 0`，失联检测已管着它——
+  或距 `lastSeenAt` 不到 `IDLE_HIDE_SECONDS`）；② 有在跑、未失联、未 `overdue` 的运行在等人（`waiting_input` / `waiting_permission`，人要动手，
+  等多久都不自动藏，**只要没 `overdue`**）；③ 最后一次干活距现在不到 `IDLE_HIDE_SECONDS`（3600 秒，常量）；④ 人置顶了它（置顶永远显示）。
+  **代价**：不发心跳的工具，静默（没有任何事件）超过 1 小时就折叠，直到它的下一个事件；`overdue` 的运行一律不算在干活 / 在等人。
+- **最后一次干活** = 该身份各运行里 `working` 段的最晚结束时刻（没报过相位的已结束运行 = 它的结束；没报过相位的在跑运行 = 从开始就在干活；
+  失联的、不发心跳的在跑运行止于最后一次信号 `lastSeenAt`；`overdue` 的在跑运行 = 它的开始，当作早已放弃）。**不是**最后心跳——否则停着不动的会话永远不空闲。
+- **不显示**（进 `inactiveAgents`）：当前状态是出错（最新一条运行是在跑且相位 `error`，或已结束且 `outcome = failed`，且没有更新的运行）——`reason: "error"`，
+  优先于「刚干过活」；或空闲 / 全部结束已满 1 小时——`reason: "idle"`。更新的在干活的运行会让它自己重新显示。
+- **判定看全部运行**：被在跑封顶（`MAX_LIVE`）丢掉的在跑运行不进 `agents`，但「是否在干活 / 在等人 / 最新一条是否出错」的判定仍把它们算上；该身份若显示，它们留在 `dropped`，若不显示则并入 `inactiveAgents`。
+  整条泳道的运行都被封顶丢掉、但其中有在跑的，也照样判定（不活跃的移进 `inactiveAgents`，活跃的留在 `dropped`）；只剩已结束运行被丢的身份没有可判定的数据，留在 `dropped`。
+- **手动排位与本节同一条管线**：`PUT /lanes/prefs/order` 的 `index` 数的是页面上**显示着**的未置顶在跑运行（`inactiveAgents` 里的不占位），`live_order` 与 `get_lanes` 同一条管线：共用同一份输入（**页面读图用的窗口**里已结束的兄弟运行也读进来——`PUT` 带同样的 `date` / `from` / `to`，缺省今天；凌晨页面读「昨天 + 今天」时若不带，两边看的已结束运行不同，会 404 或下标错位；已结束的兄弟运行决定「最新一条是否出错」「最后干活」）与「封顶 → 过滤 → 排序」。
+- **手动隐藏**（`lanes/prefs` 的 hidden）永远隐藏，只在 `hiddenAgents`，不进 `inactiveAgents`；`hiddenWaiting`、`stalePinned` 口径不变（置顶的永远显示，所以不会因本过滤而「没在跑」）。
+- **`inactiveAgents: [{agent, label, unverified, reason, tier, lastWorkAt, runs, elapsedSeconds}]`**（追加，缺省 `[]`，最近干活的在前；`reason` ∈ `error|idle|ended`、`tier` 为 v2.25 并入，规则见「`views/lanes` 的灵活留存」节，那里取代下面「1 小时」的留存口径）：`runs` / `elapsedSeconds` 是该身份窗口里
+  全部运行的条数与秒数，**包含**被 v2.23 封顶折掉的（折掉的并入这里，不再出现在 `dropped`，不重复数）。所以窗口里每条运行恰好落在
+  `agents` / `inactiveAgents` / `dropped` / `hiddenAgents`（隐藏的不数）四处之一。不活跃身份的运行与连线（`interactions`）不在 `agents` / `interactions` 里。
+- **过去的日子不过滤**：窗口结束不晚于「现在」（`date` / `from..to` 都在过去）时「当前活动」没有意义，所有泳道照旧显示，`inactiveAgents` 为 `[]`。
+- **可见性**与 `agents` 完全一致（不是机密）；report 范围 / 匿名本来读不到 `views/lanes`。**不动任何计时账**：agent-time、圆环、报告读的是全量。
+- **没有 MCP 工具映射 `views/lanes`**，`mcp.tools.v1` 不动。前端（`lanes.js`）在泳道下方画可展开的「未显示 n 个」，老后端没有该字段则不画。
+
+## `views/lanes` 的灵活留存（规范性 · v2.25）
+
+在 v2.24 的管线（封顶 → `lane_active.split` → `arrange`）里，`split` 对每条泳道多算一个**档位**，再按档位决定留多久。`get_lanes` 与 `live_order` 仍共用同一条管线、同一份输入，
+档位只在 `split` 里算；纯函数在 `views/lane_tier.py`，**所有数字都是该文件里的命名常量**（不是设置）。
+
+- **档位**（窗口 = 本次查询的窗口；按先后第一个命中）：
+  `high` = 窗口里该泳道各运行上的人类注意力之和 ≥ `ATTN_HIGH_SECONDS`（600），或窗口里干活（`working` 相位）时间之和 ≥ `WORK_HIGH_SECONDS`（3600，「自己一直在运行」）；
+  `low` = 注意力 < `ATTN_LOW_SECONDS`（30）且窗口里干活时间之和 < `EPHEMERAL_SECONDS`（300，「临时短暂、没人看」；与 `high` 的干活时间同一口径，**不是**运行的时长——在跑运行的时长会一直长到现在，开着不管的临时会话会因此变成 normal、永远等不到 low 的 600 秒折叠）；`normal` = 其余。
+  人置顶的泳道永远显示、不进折叠列表，所以档位里不看置顶。注意力就是 `agents[].attention` 同一份已裁到窗口的区间（不重算在场；每条运行至多最新 `MAX_ATTENTION`=500 段）；
+  干活时间 = 各 `working` 段裁到窗口（没报过相位 = 全程干活；失联 / 不发心跳的在跑运行止于最后一次信号；超上限的运行 = 0）。
+  **有界的代价**：被 v2.23 封顶丢掉的**已结束**运行只有轻读记录，没有注意力 / 相位——没有数据可算干活，所以保守处理：**有这种运行的泳道不是临时的，档位至少 `normal`（绝不是 `low`）**，宁可多留，也不因缺数据而从折叠列表过期（不多读一次库，成本为 0）；
+  **同样的保守规则**：已结束运行的轻读被截断（窗口里多于 `MAX_CLOSED_READ`=5000 条，最旧的部分连聚合都没有）时，档位是按不全的数据算的，**每条泳道至少 `normal`**（别的标签的洪水不能把 high 泳道误判成 low 并过期）。
+  **窗口口径**：档位按**本次查询的窗口**算——只查今天时，长跑泳道的权重从 00:00 重新起算，昨天结束的运行也不在列；环面板在 03:00 前用的两天窗口则会带过来（代码里 `lane_tier.py` 同注）。
+  被封顶丢掉的**在跑**运行有全文，照常计入注意力与干活。折叠 / 过期的泳道的其余运行本来就在 `agents` 管线里读过全文（封顶保留的），所以档位没有额外的库读取。
+- **显示**，满足任一（①②④ 与 v2.24 完全相同，含「干活相位却静默的在跑运行」的 `IDLE_HIDE_SECONDS`=3600 活性条件、失联 / 超上限处理、被封顶丢掉的在跑运行照样参与判定）：
+  ① 有在跑运行在干活或在等人（等人的在没 `overdue` 前永不折叠）；② 置顶；
+  ③ 有在跑（未结束、未失联、未 `overdue`）的运行但都空闲：`now − 最后活动 < IDLE_KEEP[档]`（high 7200 / normal 3600 / low 600 秒）；
+  ④ **没有**在跑的运行（全部结束 / 失联 / 超上限）：`now − max(逻辑结束, 最晚一段注意力的结束) < ENDED_KEEP[档]`（high 1800 / normal 0 / low 0 秒，即只有高权重的结束后还留一会）；
+  ⑤ 出错（最新一条运行是在跑且相位 `error`，或已结束且 `outcome = failed`）：只有 high 在出错后留 `ENDED_KEEP['high']` 秒，其余立刻折叠。
+  **最后活动** = `max(最后干活, 该泳道各运行上最晚一段注意力的结束)`（「人类关注度高的权重高」：人刚看过的泳道，在他不看之后还留一个 keep；注意力来自服务端在场记录，代理伪造不了；被封顶丢掉的已结束运行没有注意力数据，不算）。③④ 与 `foldedSince` 都以它为锚；⑤ 出错用自己的锚（出错时刻），**注意力不会让非 high 的出错泳道重新展开**。`lastWorkAt` 仍是纯干活时刻。
+  **等人的例外**：`lost` 或 `overdue` 的运行即使停在等人相位，也不再算「在等人」（v2.24 起的规则：只有在跑、未失联、未超上限的才算），按已结束的运行折叠 / 过期。
+  「逻辑结束」= 已结束的运行的结束；没关账的失联运行 = 最后一次信号 + 30 分钟（判出失联的时刻）；不发心跳的在跑运行 = 最后一次信号；`overdue` = 开始（早已放弃）。
+- **折叠列表**仍是 `inactiveAgents`：行追加 `tier`（`"high"|"normal"|"low"`），`reason` 增加 `ended`——`ended` = 泳道没有在跑的运行；`idle` 现在专指「有在跑的运行，但空闲太久」；`error` 不变。
+  `lastWorkAt` 仍是最后一次干活的结束时刻。排序仍是最近干活的在前。
+- **过期（仅视图）**：`tier = low` 的泳道，从**不再显示的那一刻**（`foldedSince` = 最后活动 + 留存 / 逻辑结束 + 留存 / 出错时刻）起满 `FOLD_EXPIRE['low']`（7200 秒），就不再出现在 `inactiveAgents`；**例外：只要泳道还有活着的运行（开着、未失联、未 `overdue`，即上面 ③ 的「在跑」），就永不过期**（折叠原因 `idle`，带档位）——静默的光杆开局运行（不发心跳、没有相位、开始后没再发过信号）干活时间为 0 因而是 low，但它和死掉的上报者分不开，所以不猜；代价：临时会话一直开着就一直留在折叠菜单里，直到它的运行结束（被钩子 / 心跳关掉）、失联或被停掉。没有活着的运行之后，7200 秒的钟照旧，钟的锚 = `max(折叠起点, 最后活动, 各运行的逻辑结束)`（出错立刻折叠，但钟不只锚在出错那条运行上），所以泳道不会在运行结束的瞬间消失；
+  **逻辑结束**只有一个口径，留存（④）与过期钟共用：已结束 = 结束时刻；没关账的失联 = 最后一次信号 + 30 分钟（判出失联的时刻）；超上限 = 开始。干活 / 经过时间的截止仍是最后一次信号，不延长。注意力区间封顶到 `now`（结束在未来的不算）。
+  **④ 从逻辑结束起算，不是最后干活**：09:00–10:00 干活、闲着、12:00 才被关的 high 泳道留到 12:30——有意（「结束后仍能留存一会」）。
+  **没分相位的已结束运行整段都算干活**：长时间静默后被停掉的运行成 normal / high，之后一直留在折叠列表；只有干活 < 300 秒且注意力 < 30 秒的泳道才会过期（并非「结束后 7200 秒都会消失」）；
+  `normal` / `high` 在整个窗口里一直留在折叠列表。**过期不是删除**：不动计时、agent-time、圆环、报告、投影里的运行，也不改任何偏好；它的运行只是不再被这一个视图列出，窗口里再有新活动它就按新状态重新出现。
+- **`expiredAgents: int`**（追加，缺省 0）= 本次过期、不再列出的泳道个数——只给个数，**不给标签**；`expired: {agents, runs, elapsedSeconds}`（追加，缺省全 0）= 它们的运行条数与秒数（含被封顶折掉的，秒数口径同 `inactiveAgents`），
+  让记账对得上：窗口里（不含手动隐藏的）每条运行**恰好**落在 `agents` / `inactiveAgents` / `dropped` / `expired` 四处之一。页面据此提示「另有 n 个临时会话已过期不再列出」。
+- **过去的日子不过滤**（同 v2.24）：窗口整体早于现在时没有 `tier`、`expiredAgents` = 0、`expired` 全 0。
+- **手动排位**同一条管线（v2.24 的约定不变）：`inactiveAgents` / 过期的泳道不占位，`PUT /lanes/prefs/order` 带页面读图的窗口。
+- **不动任何计时账**；没有 MCP 工具映射 `views/lanes`，`mcp.tools.v1` 不动。
+- **前端**：泳道下方原来的几个底部展开条合并成一个折叠菜单「已折叠 n 个」（有出错时头部带「m 个出错」），菜单里按 出错 / 空闲 / 已结束 / 手动隐藏 分组；`expiredAgents > 0` 时脚注一行；老后端没有新字段则照常（无 `tier` 不画档位）。
+
+## 「交给 AI 判断」的窗口（规范性 · v2.34，`detector.rules.v1` v1.4）
+
+**规则**：`Rule.mode = "ai"` 时不得带 `taskId` / `projectId`（422），其余校验（app / title 至少一个、RE2）不变；`mode` 缺省 = 普通规则，读出时不带这个键。
+顺序照旧：第一条命中生效，所以人可以把 ai 规则放在宽泛规则之上。规则的匹配只在检测程序里（服务端没有原始标题），所以 ai 规则**命中在检测程序侧**：
+
+- **上传**（`activity/suggestions`）：命中的段 `suggestion = {taskId: null, confidence: 0, reason, classifier: "rules", needsAI: true}`。`needsAI`（布尔，缺省 false）
+  不能与 `taskId` / `projectId` 同给，`confidence` 须为 0（否则该段 rejected）；存下来**只在为 true 时带这个键**。因 `classifier: "rules"` 且无目标，自动记录
+  （`auto_entry`）永远不采信它；设备开 `autoTrack` 也一样留在待确认。AI 经 `matches`（或报告）给它配任务后，建议被整份换掉，`needsAI` 随之消失。
+- **在场心跳**：`guess` / `spans[].guess` 可为 `{needsAI: true, confidence: 0, classifier: "rules"}`（不带目标；带目标或既无目标也无 needsAI 仍 422）。
+  `next_step` 对这样的窗口返回 `"judge_ai"`：既不是 `ask_ai`（`claim` 不会给出它、`aiThinking` 不出），也不是 `ask_human`（`needsChoice` 不出）。
+  人手选 / 「这次不选」仍照常；人的临时选择仍可让它显示成「自动」。
+- **`GET /activity/suggestions?needsAI=true`**：只列 `suggestion.needsAI` 为真的。缺省 / false = 不过滤。
+- **`POST /activity/ai/suggest`**：key 指向这样的窗口（最近一段的 guess 带 `needsAI`）时**不要求认领**、不写问询、**不写规则**，只留一份 AI 的临时选择
+  （同低把握的 AI 选择：显示、不自动记）；回包 `autoRecord: false, ruleWritten: false, needsAI: true`。`none: true` 什么也不写。其他窗口行为不变。
+  报告里的 assign 批准本来就不写规则，对这类建议同样。
+- **AI 直接写规则**（`ai-apply`）：旧规则里**人写的**（`author` 不是 `assistant`）ai 规则必须原样保留（id 与内容），否则 422 `人写的「交给 AI 判断」规则不能被 AI 删除或改动`。
+  顺序也受保护：它前面不能多出或挪上来别的固定目标规则（见下「人写的 ai 规则」）。服务端代写的单窗口规则（`window_rules.prepend`）不对这类窗口发生（`suggest` 不写，prepend 也拒）。
+  草稿是人应用的，不受此限。
+- **服务端兜底**（v2.34）：上传（`suggestions`）、心跳状态（`next_step`）、`ai/suggest` 都会把窗口收到的 app / title 按存着的规则再对一遍（google-re2，与检测程序同一套语法、线性时间；编不过的规则跳过：不分大小写、搜索、给了的字段都要中、先命中先赢）：
+  第一条命中的是 mode ai → 同样当作「交给 AI 判断」（上传的建议被服务端改成 `needsAI: true`、无目标、把握 0，也不按代理会话自动对；心跳的规则猜测作废）。
+  `window_rules.prepend` 带窗口时同样拒写。检测程序回退到本机 `rules.json`（拉规则失败）时表达不了 ai 规则，由这一层补上。
+- **人写的 ai 规则**（`mode: "ai"` 且 `author` 不是 `assistant`）：人的写入（PUT、应用草稿）对新增 / 改过的规则清掉 `author` / `auto` / `aiAt`，所以 AI 写的规则被人改成 ai 规则后就算人写的。
+  `ai-apply` 不能删 / 改它，**前面也不能插入或挪上来别的固定目标规则**，否则 422（见 `detector.rules.v1` v1.4）。
+- **旧检测程序**：把没有目标的规则当作不可用，**跳过并写日志**（`detector.rules.v1` v1.4）——窗口落到后面的规则或没有规则；旧服务端 + 新检测程序无影响（旧服务端没有 ai 规则）。
+  本机 `rules.json` 不支持 `mode`。
+
 ## 入口与路由
 
 - nginx 公开前缀：`/api/core/`（HANDOFF §4 已定死，前端写死地址）
@@ -2111,11 +4193,28 @@ DISPATCH 表：`session.completed` 与 `agent.run.completed` **各追加**路由
 app/modules/
   events/     router service repo     事实写入口、dedupe、落库
   timer/      router service          活状态；stop 时组装 session.completed
+                                      v2.11 reassign.py：改挂未分类时间，组装 session.reassigned（同样只经 events 的 service 写）
   planner/    router service repo     zones/projects/tasks 的 CRUD 状态
   proposals/  router service          AI 与人的交接台
   views/      router queries          纯只读，本契约两条读端住在这里
   activity/   router service repo     活动建议（v2.2）：不是事实；确认时调 timer 的 record_session
                                       在场心跳（v2.4，presence.py）：活状态；attend 经 timer service 的 record_attend 写
+                                      匹配历史（v2.12，history.py）：只读；去向经 events / planner 的 service 读
+                                      窗口 ↔ 代理会话（v2.13，session_link.py）：在跑的运行经 timer service 的 list_lane_runs 读，
+                                      已结束的经 proj_lanes 的指定读路径 read_lanes 读（同 views/lanes）；只读
+                                      自动跟踪（v2.14，auto.py）：开关经 detector 的 service（device_flags）读，窗口规则经
+                                      detector/rules.py 的 prepend 写，事实经本子边界 service.confirm 写；手动计时经 timer service
+                                      与 proj_lanes 的 read_lanes 读；views/lanes 经 activity service 的 auto_state 读它
+                                      让 AI 认窗口（v2.15，auto_ai.py + ask_repo.py）：接在 auto.py 的 next_step 上；窗口规则经
+                                      detector/window_rules.py 的 prepend / remove_auto 写（v2.14 的 prepend 也挪到了这里）
+                                      2026-10-08 波次统一审核：自动记录拆到 auto_entry.py（上传的入口，读问询与临时选择）、
+                                      activity_choices 的存取拆到 choice_repo.py；碰 mongo 的仍只有 repo / ask_repo / choice_repo
+                                      此刻的焦点（v2.16，focus.py）：只读；在场文档由 service.auto_state 读一遍交给它与 auto.py，
+                                      在跑的运行经 session_link.live（timer service 的 list_lane_runs）、去向经 events / planner 的 service 读
+                                      串行的注意力时间线（v2.17，presence.py + session_link.watched）：在跑的运行经 timer service 的
+                                      list_lane_runs 读，attend 经 timer service 的 record_attend(user, run_id, intervals, gap) 写
+  prefs/      router service repo     泳道偏好（v2.22）：藏起来 / 置顶 / 手动排位；views/lanes 经 service.load 读，排序在 views/lane_order.py（纯函数）
+                                      忽略并记住（v2.22，activity/ignore.py + ignore_repo.py + ignore_router.py）：上传与在场心跳经 ignore 的 drop / mask_beat 过一遍
   detector/   router service repo     检测程序设置（v2.5）：不是事实；设备列表经 activity 的 service 读上传时刻
   projector/  registry handlers/      DISPATCH 显式表 + 各投影 handler
 ```
@@ -2151,11 +4250,15 @@ app/modules/
   / **`agent_runs`（v2.1，在跑的 AI 代理运行，活状态，不是事实）**
   / **`proj_agent_daily_stats`（v2.1，AI 代理时长投影，见「AI 代理运行」节）**
   / **`activity_suggestions`（v2.2，活动建议，不是事实，见「活动建议」节）**
+  / **`activity_task_proposals`（v2.8，AI 提议的新任务，不是事实，见「活动建议」节「AI 提议新任务」）**
   / **`activity_presence`（v2.4，在场心跳，活状态，不是事实）**
   / **`proj_lanes`（v2.4，时间线区间投影，见「人一条线、代理多条线的时间线」节）**
-  / **`_startup_locks`（v2.4，启动期一次性任务的锁，只在 proj_lanes 自动补建时短暂存在）**。
+  / **`_startup_locks`（v2.4，启动期一次性任务的锁，只在 proj_lanes 自动补建时短暂存在）**
+  / **`activity_choices`（v2.14）、`activity_ai_asks`（v2.15）：按窗口的临时选择与 AI 问询，活状态，不是事实**。
+  / **`lane_prefs`、`activity_ignores`（v2.22）：泳道偏好与忽略规则，显示 / 过滤用的活状态，不是事实，不进台账 / 导出 / 快照恢复**。
 - **其他模块一律不得直连本模块的 Mongo**。要数据就加读路径，不要绕。
 - `events` 集合**只增不改不删**；修正历史 = 追加修正事件。
+  v2.11 的 `session.reassigned` 就是这样一条修正事件（不新增集合）。
 - data root 由 env 指定，位于 Git 工作树之外。
 
 ## 配置与密钥
@@ -2170,7 +4273,7 @@ app/modules/
 | `NEXUS_TENANT_STRICT` | 否 | 租户严格模式，默认 `0`（v2.0） | 取值只认 `0`/`1`/`true`/`false`；置 1 时缺 `X-Nexus-Tenant` 的请求一律 401。**多用户部署必开**，见「按租户分数据」节 |
 | `NEXUS_ACTOR_STRICT` | 否 | 严格模式，默认 `0`（v1.6） | 取值只认 `0`/`1`/`true`/`false`（其余立即失败）；置 1 时 `NEXUS_HUMAN_CLIENT_TOKEN` 必填，否则启动失败——**开了严格模式却没有人路径凭据 = 把前端写路径全打死，这种配置必须炸在启动那一刻，不是炸在用户点删除那一刻** |
 | `NEXUS_SUGGESTION_TTL_DAYS` | 否 | 活动建议的保留天数，默认 `14`（v2.2） | 正整数，其余立即失败。见「活动建议」节「过期」 |
-| `NEXUS_AGENT_RUN_TIMEOUT_HOURS` | 否 | AI 代理运行的遗忘超时（小时），默认 `12`（v2.1） | 正整数，其余立即失败。超时的运行在下一次 start/stop/`views/current` 读时以 `outcome:"timeout"` 关闭，时长封顶为该值 |
+| `NEXUS_AGENT_RUN_TIMEOUT_HOURS` | 否 | AI 代理运行的遗忘超时（小时），默认 `12`（v2.1） | 正整数，其余立即失败。超时的运行在下一次 start/stop/`views/current` 读时以 `outcome:"timeout"` 关闭，时长封顶为该值。v2.18 起只管没声明过心跳的运行（声明过的看「心跳与失联」，30 分钟没信号即失联，该值对它无效） |
 
 本模块**不持有任何 LLM 密钥**——那是 ai-gateway 的事，物理隔离是设计的一部分。
 v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_request`），
@@ -2186,8 +4289,45 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 | `ai-detector` 桌面程序（v2.2） | `activity.suggestions.v1` 的 `POST /api/core/activity/suggestions`（带设备令牌，经网关） | `modules/ai-detector` |
 | `assistant` 前端（v2.7） | `activity.suggestions.v1` 的 GET / confirm / dismiss / **unmatch**（「待确认建议」面板：助理配的建议出「是 / 否」，否 = unmatch）；读 `suggestion.classifier`、`rejectedTaskIds` | `modules/assistant` |
 | MCP 服务（v2.7） | `activity.suggestions.v1` 的 `POST .../suggestions/matches`（`propose_activity_matches`，`mcp.tools.v1` v1.3）；GET 多读 `rejectedTaskIds` | `contracts/mcp.tools.v1` |
+| `assistant` 前端（v2.8） | 带提议的建议（`suggestion.newTask`）出「新建任务：项目 / 名称」，名字可改；「是」= confirm `{name, proposalId}`（不带 `taskId`），组里每一段都这样发，响应的 `taskId` 用于「以后这个窗口」的规则；「否」= unmatch `{proposalId}`；「全部确认」不含提议 | `modules/assistant` |
+| MCP 服务（v2.8） | `propose_activity_matches` 每条可给 `newTask`（`mcp.tools.v1` v1.4）；GET 多读 `suggestion.newTask` | `contracts/mcp.tools.v1` |
+| `hive` 前端（v2.9） | `planner.crud.v1` 的 `POST /api/core/planner/projects/{id}/unclassified`（长按项目格：取或建桶再 `timer/start`，不再建「日期 时间」任务）；`views.current.v1` 的 `task.kind`；`views.tree.v1` 的 `unclassifiedTaskId` + `events.read.v1`（记在桶上的段在「最近完成」与计时档案里叫「临时任务 <开始时间>」） | `modules/hive` |
+| `ring` 前端、共享顶栏（v2.9） | `views.current.v1` 的 `task.kind`（正在计桶时只显示项目名，计时台不给它改名）；`ring` 另经 `views.gantt.v1` 的任务层读到桶当天的秒数 | `modules/ring`、`modules/nginx-docker` |
+| `assistant` 前端（v2.9） | confirm 只带 `projectId`（集合有项目时的「未分类」，随 v2.10 实现）；**待后续 PR**：`GET /api/core/events?type=session.completed&taskId=`（「待分类」） | `modules/assistant` |
+| MCP 服务（v2.9） | `views.tree.v1` 的 `unclassifiedTaskId`（桶的路径「分区 / 项目 / 未分类」）；`views.gantt.v1` 任务的 `kind`（`mcp.tools.v1` v1.5） | `contracts/mcp.tools.v1` |
+| `assistant` 前端（v2.10） | 读 `suggestion.collection.{key,name}`、`suggestion.projectId`：待确认建议按集合分组、按总时长排序，集合的项目预选 | `modules/assistant` |
+| MCP 服务（v2.10） | `propose_activity_matches` 每条可带 `collection`、`projectId`（`mcp.tools.v1` v1.6）；GET 多读 `suggestion.collection`、`suggestion.projectId` | `contracts/mcp.tools.v1` |
 | `ai-detector` 桌面程序（v2.4） | `activity.presence.v1` 的 POST（在场心跳）；可选「状态文件桥」经 `agents.v1` 的 start/stop 与 `agents.phase.v1` 报没有钩子的代理（带设备令牌） | `modules/ai-detector` |
 | `tools/agent-hooks`（v2.1 起，v2.4 追加） | `agents.v1` 的 start/stop；v2.4 起 `agents.phase.v1`（Claude Code 钩子与 `cockpit-run phase`） | `tools/agent-hooks` |
+| `assistant` 前端（v2.11） | 「待分类」面板：`views.tree.v1` 的 `unclassifiedTaskId` → 每个桶 `GET /api/core/events?type=session.completed&taskId=<桶>&limit=200`（只回还在桶上的段），逐段 `POST /api/core/sessions/{eventId}/reassign {taskId}`；events 404 时整块隐藏 | `modules/assistant` |
+| `hive` 前端（v2.11） | `events.read.v1` 的 `currentSubject`：「最近完成」与计时档案按当前归属认段——归走的段不再叫「临时任务」，档案里显示新任务名 | `modules/hive` |
+| MCP 服务（v2.11） | `events.read.v1` 的 `currentSubject`：`list_time_sessions` 的 `taskId` / `projectId` / `zoneId` / `path` / `unclassified` 按当前归属（`mcp.tools.v1` 不加字段） | `contracts/mcp.tools.v1` |
+| MCP 服务（v2.12） | `activity.suggestions.v1` 的 `GET .../suggestions/history`（`get_match_history`，`mcp.tools.v1` v1.7）：助理配任务前读人以前的决定 | `contracts/mcp.tools.v1` |
+| `ring` 前端（v2.14） | `views.lanes.v1` 的 `human.auto`（人那张卡上的「自动 · 项目 / 任务」+ 走秒）与 `human.needsChoice`（泳道最上面的「你在 X，记到哪？」）；`activity.auto.v1` 的 `POST /api/core/activity/choice`、`POST /api/core/activity/choice/dismiss` | `modules/ring` |
+| 共享顶栏 `nginx-docker/static/navbar.js`（v2.14） | `views.current.v1` 的 `auto` / `needsChoice`（芯片上的「自动 · 项目 / 任务」+ 走秒、等人选的小点；不多发请求）；共享件 `lanes.js` 画 `views.lanes.v1` 的 `human.auto` | `modules/nginx-docker` |
+| `mcp`（v2.15） | `activity.auto-ai.v1` 的 `POST /api/core/activity/ai/claim`、`POST /api/core/activity/ai/suggest`（`mcp.tools.v1` v1.9 的两个工具，对内直连、不带 Bearer） | `modules/mcp` |
+| `ring` 前端 / 共享 `lanes.js`（v2.15） | `views.lanes.v1` 的 `human.aiThinking`、`human.auto.source: "ai"` / `auto.key`；`POST /api/core/activity/choice/reject` | `modules/ring`、`modules/nginx-docker` |
+| 共享顶栏 `nginx-docker/static/navbar.js` + 共享件 `focus.js` / `lanes.js`（v2.16） | `views.current.v1` 的 `focus`（芯片上的「正在：项目 / 窗口」+ 走秒、「离开」；不多发请求）；`views.lanes.v1` 的 `human.focus`（人那张卡那行字） | `modules/nginx-docker` |
+| `tools/agent-hooks`（v2.18） | `agents.liveness.v1`：Claude Code 钩子的心跳伴随进程 / 插件 monitor 与 `cockpit-run` 的心跳线程发 `heartbeat`（带 `beatSource`）；`phase` / `heartbeat` 回 `closed` 时带原 `clientKey` 再 `start` | `tools/agent-hooks`、`contracts/agent.lane.v1` |
+| `ring` 前端 / 共享 `lanes.js`（v2.18） | `views.lanes.v1` 的 `lost` / `lastSeenAt`（灰色「失联」、段止于最后一次信号、不计入标题的在干活 / 在等你）与 `outcome: "lost"`（「失联结束」） | `modules/ring`、`modules/nginx-docker` |
+| `ring` 前端（v2.16） | `views.current.v1` 的 `focus`（没在计时时大圆环中心的「正在：项目 / 任务」+ 窗口 + 走秒 + 一键开始计时） | `modules/ring` |
+| `hive` 前端（v2.16） | `views.current.v1` 的 `focus`（中心格的「正在：…」+ 走秒；`focus.projectId` 那个项目格的描边） | `modules/hive` |
+| `mcp`（v2.16） | `views.current.v1` 的 `focus` / `auto` / `needsChoice`（`mcp.tools.v1` v1.10 的 `get_current_timer` 原样带出） | `modules/mcp` |
+| `ai-detector`（v2.17） | `activity.presence.v1` 的 `sentAt` + `spans`（`ai-detector.presence.v1` v1.2：5 秒一拍，每拍带各窗口的停留） | `modules/ai-detector` |
+| 共享 `lanes.js` / `focus.js` / 顶栏（v2.17） | `views.lanes.v1` 的 `agents[].attention`（代理线里的蓝条「你在看」）、`human.presence[].runId`；`focus.dwellSeconds`（悬停里的「近 2 小时在这上面 N 分」）；顶栏改为约 5 秒读一次 `views/current` | `modules/nginx-docker` |
+| `ring` / `hive` 前端（v2.17） | `views.current.v1` 的 `focus.dwellSeconds`（圆环中心走秒下的小字 / 蜂巢中心格的悬停）；计时页约 5 秒读一次 | `modules/ring`、`modules/hive` |
+| `mcp`（v2.17） | `views.agent-time` 的 `open[].attentionSeconds`、`focus.dwellSeconds`（`mcp.tools.v1` v1.11 原样带出） | `modules/mcp` |
+| `ring` 前端 / 共享 `lanes.js`（v2.22） | `lanes.prefs.v1` + `views.lanes.v1` 的 `pinned` / `manualOrder` / `rank` / `hiddenAgents` / `hiddenWaiting`：代理卡的 ⋯ 菜单（置顶 / 不再显示 / 上移 / 下移）、长按拖动换位、可折叠的「已隐藏 (N)」；先后以 `rank` 为准，写偏好先乐观地画、失败退回 | `modules/ring`、`modules/nginx-docker` |
+| `assistant` 前端（v2.22） | `activity.ignores.v1`：待确认建议里每个窗口行 / 集合的「忽略并记住」（`POST activity/ignores`）、可展开的「被忽略任务」（`GET` / `DELETE`） | `modules/assistant` |
+| `mcp`（v2.22） | `activity.ignores.v1`：`get_detector_rules` 追加 `ignored`（`GET activity/ignores`）；`get_current_timer` / `get_agent_time` 因 `views/current` / `views/agent-time` 不列藏起来的代理而不再列它们的在跑运行（汇总不变）（`mcp.tools.v1` v1.14） | `modules/mcp` |
+| `assistant` 前端（v2.30） | `activity.proposals.v1`：「待批准」页的「新项目与任务」块（读 `GET activity/proposals?status=pending`，批准 / 不要走 `…/{id}/approve|reject`） | `modules/assistant` |
+| `mcp`（v2.30） | `activity.proposals.v1`：`propose_project`（`POST activity/proposals/projects`）、`propose_task`（`POST …/tasks`）；`list_projects` 读 `GET activity/proposals?status=all&limit=50` 追加 `proposals`；批准 / 不要 MCP 永远不调 | `modules/mcp` |
+| `mcp`（v2.36） | `activity.proposals.v1` 追加：`propose_change`（`POST activity/proposals/changes`）、`propose_ignore_rule`（`POST …/ignores`）；`list_projects` 的 `proposals` 带上 `changes` / `ignores`（`titleContains` 不外传，只给 `hasTitleFilter`） | `modules/mcp` |
+| `hive` 前端（v2.30 / v2.20 的新增消费方） | `activity.proposals.v1` + `activity.reports.v1`：蜂巢右上角「AI 待批准」浮层（读 `GET activity/proposals?status=pending&limit=100`、`GET activity/reports?status=pending&items=true`；批准 / 不要走 `…/proposals/{id}/approve|reject`、`…/reports/{id}/approve`、`…/items/{id}/approve|reject`；不拆条、不改去向） | `modules/hive` |
+| `assistant` 前端（v2.20） | `activity.reports.v1`：顶部「AI 报告」块（读 `GET activity/reports?status=pending` 与 `…/{id}`，批准 / 改 / 不要走 `…/approve`、`…/items/{id}/approve|reject`、`…/reject`） | `modules/assistant` |
+| `mcp`（v2.20） | `activity.reports.v1`：`propose_report`（`POST activity/reports`）、`get_report_status`（`GET activity/reports?status=all&limit=1&items=true`）；批准 / 不要 MCP 永远不调 | `modules/mcp` |
+| `assistant` 前端（v2.15） | 规则的 `auto`（「AI 自动」徽标，整套保存时原样带回 `author` / `auto`）；`GET /api/core/activity/auto` 的 `ai` | `modules/assistant` |
+| `assistant` 前端（v2.14） | `activity.auto.v1` 的 `GET /api/core/activity/auto`（「自动记录」面板）+ `sessions.reassign.v1`（改归属，v2.14 起收自动记下的段）；`detector.settings.v1` v1.3 的 `autoTrack`；`detector.rules.v1` v1.1 的 `projectId` | `modules/assistant` |
 | 共享顶栏 `nginx-docker/static/navbar.js`（v2.4，契约先行） | `views.lanes.v1`（计时芯片悬停的精简预览：人 + 至多 4 条代理线、最近 1 小时，只在预览打开时约 15 秒轮询；计时页上不弹） | `modules/nginx-docker` |
 | `ring` 前端（v2.4，契约先行） | `views.lanes.v1`（计时页默认展开的「泳道」主视图，全部泳道，约 15 秒轮询）；`views.current.v1` 的 `agents[].phase`/`label` | `modules/ring` |
 | MCP 服务（v0.3 AI 桥，契约先行，待建） | **只读**：`views.tree.v1`、`views.current.v1`、`events.read.v1`（仅 `type=session.completed`）、`views.gantt.v1`、`views.review.v1`、`views.next-actions.v1`、`views.agent-time.v1`、`activity.suggestions.v1` 的 GET。带网关给的 `X-Nexus-Tenant` 原样转来；不调任何写端点、不调 `export`/`planner/audit`。映射表见 `contracts/mcp.tools.v1` 第四节。本模块零改动 | `contracts/mcp.tools.v1` |
@@ -2214,6 +4354,509 @@ v1.6 新增的两个 token **不是**认证凭据（认证仍归网关的 `auth_
 就当作那批字段"已经加完了"（同 `contract-schemas.md`「与其他两条读端的对照」）。
 
 同步维护项目级依赖索引的反向索引。
+
+## 检测程序健康与重启 ActivityWatch（规范性 · v2.27）
+
+存在 `detector_settings` 里设备文档的 `health`、`restart` 两个字段；按租户隔离；**不是事实**，不进台账 / 投影 / 导出 / 快照恢复。
+
+**`PUT /api/core/detector/health?deviceId=`**——鉴权同 `GET /detector/settings`（设备令牌或 cookie 都行）。请求体严格（未知键 422、超过 1 KiB 413）：
+
+```jsonc
+{ "awState": "ok" | "unreachable" | "no_window" | "paused" | "disabled",
+  "autoStart": "off" | "idle" | "started" | "gave_up" | "unsupported",   // 可选：检测程序最近一次「自动拉起 ActivityWatch」的结果
+  "autoReason": "not_found" | "spawn_error" | "exited_early" | "not_up" | "no_display" | "state_unwritable" | "daily_cap",   // 可选：自动拉起失败的原因（枚举）
+  "restart": { "nonce": "<1–64 字符>", "result": "started" | "already_running" | "failed" | "unsupported",
+               "reason": "<同 autoReason 的枚举，但不含 daily_cap>" } }   // 可选；reason 只在 failed 时有意义
+```
+
+- **整个请求体里没有任何自由文本**：窗口标题、路径、错误串都到不了服务端。
+- 服务端存 `health: {awState, at, autoStart, autoReason}`（`at` = 服务端时钟，后两项缺省 `null`）。`reason` / `autoReason` 是严格枚举（枚举外 422）：
+  详细的错误串和日志**只在那台电脑上**（`ai-detector status`、`aw-start.log`），从不经此端点上来。老检测程序不带这些字段，全部按 `null`。`restart` 给了、且 `restart.nonce` 等于这台设备当前待处理的 nonce、
+  而它还没有结果，才记 `result` + `resultAt`；旧 nonce、重复的上报一律忽略（不是错误）。
+- 响应 `{"restartNonce": <还没有结果、且请求还没过期的待处理 nonce> | null}`。**请求 5 分钟（`requestedAt`，服务端时钟）没人理就作废**：不再作为 `restartNonce` 给出，它的结果也不收
+  （离线时点的重启，几小时后检测程序回来不该再把 ActivityWatch 拉起来）；人再点一次就是新请求。
+
+**`POST /api/core/detector/restart?deviceId=`**——**只收人**：带 `Authorization: Bearer` 一律 `403`（与 PUT settings 同一规则、同一机制：被偷的设备令牌触发不了它）。
+设备不存在 `404`。写 `restart: {nonce: <随机>, requestedAt}`（顶掉更早的），返回 `{"nonce": …}`。**服务端不下发命令**：nonce 只是个编号，检测程序据此做什么由它本机的配置决定
+（`ai-detector` 契约「健康报告与拉起 ActivityWatch」）。
+
+**`GET /api/core/detector/devices`** 每台设备追加：`health: {awState, at, autoStart, autoReason} | null`、
+`restart: {nonce, requestedAt, result | null, reason | null, resultAt | null, expired} | null`（`expired`：没有结果且已过 5 分钟）；
+响应顶层追加 `now`：服务端当前时刻（ISO）——面板用它算 `health.at` 的新旧，浏览器时钟不准也不会误判离线。`result: "started"` 的含义是 ActivityWatch 的接口确实起来了（检测程序拉起后探测过），不只是进程拉起来了。既有字段不变。
+
+## 检测程序事故与启动日志（规范性 · v2.28）
+
+**事故时间线**：每台设备一份，存 `detector_incidents` 集合（`{user, deviceId, events[]}`）；按租户隔离；**不是事实**，不进台账 / 投影 / 导出 / 快照恢复。
+事件**只在变化时记**（不是每次报告一行），**只有枚举与时间，没有任何自由文本**：`{kind, at, endAt?, reason?, result?}`。
+
+| `kind` | 什么时候记 | 附带 |
+|---|---|---|
+| `aw_unreachable` / `aw_no_window` / `aw_paused` / `aw_disabled` | `health.awState` 相对上一份报告变成这个值（第一份报告不是 `ok` 也记） | — |
+| `aw_recovered` | `awState` 从别的值变回 `ok` | — |
+| `detector_offline` | 一份报告到来时，距上一份报告超过 90 秒 | `at` = 上一份报告的时刻，`endAt` = 这一份的时刻（时长 = 两者之差） |
+| `auto_started` | `autoStart` 变成 `started` | — |
+| `auto_failed` | `(autoStart, autoReason)` 变了，`autoReason` 有值且 `autoStart` 不是 `started` / `gave_up` | `reason` = `autoReason`（枚举） |
+| `auto_gave_up` | `autoStart` 变成 `gave_up` | `reason` = `autoReason`（含 `daily_cap`） |
+| `restart_requested` | `POST /detector/restart` 成功 | — |
+| `restart_result` | 检测程序回报了当前 nonce 的结果（重复回报不再记） | `result`（`started` / `already_running` / `failed` / `unsupported`）、`reason`（枚举） |
+| `restart_expired` | 重启请求 5 分钟没人理（在下一份报告到来时记一次，`at` = 请求时刻 + 5 分钟） | — |
+
+- **有界**：每台设备最多 200 条，超过时丢最老的（一条原子更新）；读的时候再滤掉超过 30 天的。
+- **此刻静默**读时算、不存：`offline = now − lastReportAt > 90 秒`（没有任何报告过 `health` 时为 `null`）。
+
+**`GET /api/core/detector/incidents?deviceId=&limit=`**——鉴权与租户同 `GET /detector/devices`（设备令牌或 cookie 都能读；读范围能调）。`limit` 1–200，缺省 50（越界 422）。
+设备不存在 404。响应：
+
+```jsonc
+{ "deviceId": "...", "now": "<服务端时钟>", "lastReportAt": "<ISO>" | null,
+  "offline": true | false | null,
+  "health": { "awState": "...", "autoStart": "..." | null, "autoReason": "..." | null } | null,
+  "logUpload": true | false,                            // 本机开关最近一次报告的状态
+  "startLog": { "text": "<多行>", "at": "<ISO>" } | null,  // 只有 logUpload 为 true 且收到过日志才有
+  "events": [ { "kind": "...", "at": "<ISO>", "endAt": "<ISO>" | null, "durationSeconds": 4800 | null,
+                "reason": "..." | null, "result": "..." | null } ] }   // 新的在前；同一时刻后记的在前
+```
+
+**启动日志（用户自己在本机打开 `awLogUpload` 才有）**——`PUT /detector/health` 追加两个可选字段（既有字段不变；老检测程序不带 = 按「关」）：
+
+- `logUpload`（严格布尔）：本机开关此刻的状态。服务端**不能**设置它；它来自检测程序的本机配置文件。
+- `startLog`（字符串）：脱敏后的 `aw-start.log` 末尾。只能在 `logUpload: true` 时带。**严格校验、不替检测程序截断**：非空；≤ **40 行**；≤ **4096 字节**（UTF-8）；每行 ≤ **300 字符**；
+  除换行外不得含控制 / 格式 / 私用区字符（`Cc Cf Co Cs Zl Zp`）。任何一条不满足 → `422`（报错信息里不带日志内容）。
+  请求体上限仍是 1 KiB，**真的带了非 null `startLog` 的报告放宽到 32 KiB**（JSON 转义后；看解析后的内容，不看字节里有没有这个词）；其余超过 1 KiB、或任何超过 32 KiB 的都是 413（报错信息分别写 1024 字节 / 32 KiB）。
+- 每台设备只存**最新一份**（`{text, at}`，替换而非追加）。报告里不带 `startLog`（内容没变）= 保留已存的。**`logUpload` 不是 `true`（关了，或老检测程序不报）= 删掉存着的日志。**
+- 服务端**不把日志写进任何日志、不进台账 / 投影 / 导出**。它是用户电脑上程序的输出，**不可信**：任何消费方（面板、MCP）都只当数据显示，不当指令、不当 HTML。
+- `GET /detector/devices` 每台设备的 `health` 追加 `logUpload`（布尔；老服务端没有这个键，面板据此不显示这一行）。
+
+## 待确认时间的按天汇总（规范性 · v2.26）
+
+`GET /api/core/activity/suggestions/pending-days?from=YYYY-MM-DD&to=YYYY-MM-DD`（`from`、`to` 必填，含两端）。**纯只读**，不写任何东西、不碰任何投影；
+读范围能调（与 `GET /activity/suggestions` 同一档），按租户隔离。
+
+```jsonc
+{ "totalSeconds": 7700,   // days 里 seconds 之和
+  "count": 111,           // days 里 count 之和
+  "days": [ { "date": "2026-10-09", "seconds": 7700, "count": 111 } ] }   // 日期升序；没有待确认的日子不出；整个区间都没有 = [] 与两个 0
+```
+
+- **范围**：`status` 为 `pending` 的活动建议；`confirmed` / `dismissed` 不算（确认了就成了事实，已在已记账的时间里；忽略了的不是工作）。
+- **归日**：按建议的**开始时刻**（`startAt`）换算到 `NEXUS_TZ` 的本地日——与已记账时间按 `data.startAt` 归日是同一条规则（契约「日界与时区」）；
+  本地 `23:59` 属前一天、次日 `00:00` 起属后一天，跨日的建议整段算在开始那天。日界换成绝对时刻再比，夏令时那天也对。
+- **`seconds`** = 该日待确认建议的 `durationSeconds` 之和；`count` = 条数。含 `idle` 的段（它们在 `GET /activity/suggestions` 里也在）。
+- **这是未确认时间的上界估计，不是工时**：待确认的建议彼此、与已记账的时间都可能重叠（检测到的窗口时间与手动计时同一时段并存很常见），
+  所以**不要把它加进已记账的总数当事实**；人确认后才进已记账的时间。
+- **只有数字**：没有 `app` / `title` / 任务，所以「忽略并记住」的规则与脱敏不受影响。
+- **输入**：`from` / `to` 不是日期、`from` 晚于 `to`、跨度超过 92 天 → `422`。不做过期清理（读不写）；待确认的建议收到 14 天
+  （`NEXUS_SUGGESTION_TTL_DAYS`）后由列表 / 上传惰性清掉，所以有数据的日子至多约 14 天。
+- **工作量有界**：一次聚合，走 `(user, status, startTs)` 索引，只扫该租户该区间的待确认文档（上传每批 ≤ 200、14 天过期，量级有限）；响应至多 92 行。
+
+## 已确认建议的去向（规范性 · v2.35）
+
+`GET /activity/suggestions?status=confirmed` 的每一行追加 `recordedTo`（**只在 `status=confirmed` 的列表里有**；`pending` / `dismissed` 的行没有这个键）：
+
+```jsonc
+"recordedTo": { "projectId": "p_…", "projectName": "…",
+                "taskId": "t_…" | null,      // null = 只记在该项目的「未分类」时间桶（桶不是任务）
+                "taskName": "…" | null,
+                "via": "confirm" | "project" | "reassign",
+                "eventId": "evt_…" }         // 台账里那条 session.completed 的 id（改挂的目标事件也是它）
+// 或 "recordedTo": null
+```
+
+- **当前去向**：台账里防重键 `activity:<建议 id>`、`source=activity-confirmed` 的那条 `session.completed`；改挂过（`nexus-core.sessions.reassign.v1`）取 `seq` 最大的那次
+  （与匹配历史、档案读端同一个算法 `latest_reassignments`）。`via`：改挂过 = `reassign`；没改挂且落在项目「未分类」桶 = `project`；其余 = `confirm`（与 `suggestions/history` 的 `via` 同义）。
+- **`null`**：找不到那条事件（占了位、事实还没写成，或事件被删），或它指向的任务 / 项目已删。不是错误。
+- **租户与成本**：只看当前租户；一页的 `recordedTo` 共用两次事件查询（段一次、改挂一次）、一次任务查询、一次项目查询，不逐条查（不 N+1）。
+- 名字是用户起的文本，按原样给；消费方（MCP）负责清洗。
+
+
+## 三级分类：原始记录、窗口块、两级规则（规范性 · v2.38）
+
+仓主 2026-10-24 定。把「每段一张待确认卡片」换成三级：
+
+| 层级 | 是什么 | 谁来分 |
+|---|---|---|
+| 第一级 · 原始记录 | 检测程序报上来的每一小段窗口使用（≥ 1 秒） | 第一级规则（`detector.rules.v1` v1.5 的 `kind: "block"`）决定它属于哪个窗口块；忽略规则（v2.22）决定丢掉 |
+| 第二级 · 窗口块（Windowsblock） | **同一个块名在同一个本地日里**的全部原始记录 | 第二级规则（本节「三」）或人 / AI 决定它记到哪个任务；能拆、能标成通用窗口 |
+| 第三级 · 报告与提问 | AI 看前两级写的总结与问题 | 另节规定（v2.39 起），本节不涉及 |
+
+本节只增：账号没打开三级分类（「六」`tiers`）时，既有的建议上传、待确认列表、规则、自动记录**行为不变**，检测程序也不上传原始记录（ai-detector 契约「原始记录」）。
+
+### 一、原始记录 `activity_records`
+
+`POST /api/core/activity/records`——**只收带 Bearer 的请求**（即经网关的设备令牌；不带 Bearer 的人路径与 MCP 对内直连一律 `403`）。`deviceId` 由客户端声明，同建议上传（令牌不绑定设备，这一点与建议上传一样）。
+
+```jsonc
+{ "deviceId": "dev_…",
+  "records": [                                // 1..500 条
+    { "startAt": "2026-10-24T09:10:03.250+08:00",   // 带偏移的 ISO 时刻，精度到毫秒
+      "endAt":   "2026-10-24T09:10:41.000+08:00",
+      "app": "google-chrome",                 // 1..128 字符，清洗同建议上传
+      "title": "…",                            // 0..512 字符（忽略闸门看全文，之后截断，同 v2.22）
+      "titleIsPseudonym": false,              // 标题是不是代号（titles: "pseudonymize"）；titles: "drop" 时标题为空，填 false
+      "block": "示例文档" | null }             // 检测程序按第一级规则算出的块名；null = 规则没命中。键必须出现
+  ] }
+// 200 → { "accepted": 37, "duplicates": 2, "ignored": 1, "rejected": [ { "index": 5, "reason": "…" } ] }
+```
+
+- **秒数**：`endAt − startAt`，[1, 86400] 秒内，存成带小数的秒（`float`）；否则该条进 `rejected`，其余照收。
+- **防重**：`rec:<deviceId>:<startAt 的 UTC 毫秒>`，`(user, dedupeKey)` 唯一，**先到的为准**（同起点、不同终点的后到者算重复）。重复计入 `duplicates`。
+- **忽略闸门**：先过「忽略并记住」（v2.22），命中的不存，计入 `ignored`。
+- **日界**：`NEXUS_TZ` 本地日。跨午夜的记录切成两条存（第二条防重键用午夜那一刻）；计数里仍算一条（两半有一半是新写入就算 `accepted`）。
+- **块名** `blockKey` 与来源 `keySource`：
+  1. `block` 非空 → `blockKey` = 它（去首尾空白，≤ 64 字符），`keySource: "rule"`；
+  2. 否则 → `blockKey = app + " · " + 归一化标题`（归一化同匹配历史的 `normTitle`；标题为空时就是 `app`），`keySource: "auto"`。
+  服务端**不**在上传时自己匹配规则（检测程序已经按规则算过；`block: null` 就是没命中）。
+- **重算**（让新批准的第一级规则管到今天已有的记录）：第一级规则的生效版本变化后，对**最近 14 天**、`titleIsPseudonym: false`、所在块**还没分类**（`pending`，见「二」）的记录，服务端按新规则集（RE2，同 `window_rules` 的匹配语义：不分大小写、不锚定、先命中先用）重算 `blockKey` / `keySource`。标题是代号的记录不重算（规则是按真标题写的）。有界：每次至多 5000 条，余下的下次再做。
+- **文档**：`{user, id: "rec_…", dedupeKey, deviceId, date, startAt, endAt, startTs, endTs, seconds, app, title, titleIsPseudonym, block, blockKey, keySource, receivedAt, ledgerEventId: null}`。`ledgerEventId` 见「四」。
+- **留存**：`NEXUS_RECORD_TTL_DAYS`（缺省 35）天，惰性清理（有界）。过期日期的块见「二」最后一条。
+- **读**：原始记录只经「二」的端点读，只许不带 Bearer 的调用方（人与 MCP）；带 Bearer 的设备令牌 `403`。
+
+### 二、窗口块（Windowsblock）
+
+块 = `(user, date, blockKey)`。时长每次读时由原始记录聚合；分类状态存 `activity_blocks`：
+
+```jsonc
+{ "user": "…", "date": "2026-10-24", "blockKey": "示例文档",
+  "status": "pending" | "assigned" | "generic" | "ignored" | null,   // null = 跟随缺省（reset 后）
+  "parts": [ { "fromTs": null | 1792800000000, "toTs": null | 1792803300000,   // UTC 毫秒；null = 当天开头 / 结尾
+               "taskId": "t_…" | null, "projectId": "p_…" } ],
+  "via": "rule" | "human" | "ai" | "ai-direct" | null,
+  "ruleId": "br_…" | null,
+  "seq": 3,                    // 每次改动 +1，永不回退（reset 也 +1）
+  "gen": 2,                    // 入账代号：生效目标或拆分点每变一次 +1（见「四」）
+  "runs": [ { "eventId": "evt_…", "dedupeKey": "…", "startTs": …, "endTs": …, "partIdx": 0 } ],   // 已写进台账、未作废的段
+  "updatedAt": "…" }
+```
+
+- **生效状态**（读时算）：文档 `status` 非 null → 用它；否则块名是通用窗口且 `date ≥ 标记日` → `generic`（未拆）；否则有可用的第二级规则（「三」）→ `assigned`、`via: "rule"`、一段全天；否则 `pending`。
+- **通用窗口**：`activity_generic {user, blockKey, since: 标记的本地日}`。只管 `since` 当天及以后。通用窗口的块不吃第二级规则；给出 `parts`（拆）之后状态是 `generic`、带 `parts`，算分完了。
+- **parts**：按时间排、不重叠、相接（相邻处 `toTs == 下一段 fromTs`）、覆盖全天；用 UTC 毫秒，不用本地时刻（避开夏令时）。跨拆分点的记录在拆分点处切开计算。
+
+**读**（只许不带 Bearer 的调用方：人与 MCP；带 Bearer 的设备令牌 `403`）：
+
+- `GET /api/core/activity/blocks?date=YYYY-MM-DD&status=pending|assigned|generic|ignored|all&limit=200&cursor=`（缺省今天、`all`、200，上限 1000）：按秒数从多到少排。
+  ```jsonc
+  { "date": "2026-10-24", "nextCursor": null,
+    "items": [ { "blockKey": "示例文档", "keySource": "rule", "status": "assigned", "via": "rule", "ruleId": "br_…",
+                 "generic": false, "seq": 0,
+                 "parts": [ { "fromTs": null, "toTs": null, "taskId": "t_…", "projectId": "p_…", "seconds": 2520 } ],
+                 "seconds": 2520, "records": 14, "firstAt": "…", "lastAt": "…", "apps": ["google-chrome"],
+                 "expired": false } ] }
+  ```
+  `seconds`：**跨设备取并集**（两台设备同时在同一个块上，同一秒只算一次）。
+- `GET /api/core/activity/blocks/records?date=&blockKey=` → 该块的原始记录（`startAt, endAt, seconds, app, title, deviceId`，时间序，≤ 5000 条，多了 `truncated: true`）。
+
+**写**（只许人；AI 走「五」）。每个都带 `ifSeq`（读到的 `seq`，没有文档为 0），不符 → `409` 并给现状；目标任务 / 项目不存在 → `404`。
+
+| 端点 | 请求体 | 效果 |
+|---|---|---|
+| `POST activity/blocks/assign` | `{date, blockKey, ifSeq, taskId?, projectId?, remember: true}` | 整块记到一处。`remember` 为真且不是通用窗口 → 同时写（或替换）一条第二级规则 |
+| `POST activity/blocks/split` | `{date, blockKey, ifSeq, parts: [{fromTs?, toTs?, taskId?, projectId?}]}` | 按时间拆成 2..20 段各记一处 |
+| `POST activity/blocks/generic` | `{blockKey, generic: true\|false}` | 标 / 取消通用窗口（`since` = 今天）。取消后今天起回到缺省 |
+| `POST activity/blocks/ignore` | `{date, blockKey, ifSeq, forever: false}` | 这一天的块不记。`forever: true` 只许 `keySource: "auto"` 的块（另写一条「忽略并记住」：`app` = 块里时长最多的程序，`titleContains` = 块名里「 · 」之后的部分；块名就是程序名时只按程序，此时响应 `scope: "app"` 提示「整个程序都忽略了」）；`keySource: "rule"` 的块 `forever` → `422`，改第一级规则 |
+| `POST activity/blocks/reset` | `{date, blockKey, ifSeq}` | `status`、`parts`、`via` 置 null（回到缺省），`seq` +1；文档保留 |
+
+- 每次写后按「四」对账。
+- **过期日期**：该日的原始记录已过留存期（`expired: true`），写端点一律 `409`（`detail`：「这一天的原始记录已过期，不能再改分类」）；台账里已有的段不受影响。`activity_blocks` 文档与台账一样永久保留。
+
+**补充（实现时定下，2026-10-24）**：
+- `generic` 不带 `ifSeq`；已是通用窗口时再标不改 `since`；响应 `{blockKey, generic, since}`。
+- 通用窗口的块 `assign` 或 `split` 之后，`status` 为 `generic`、带 `parts`。
+- `ignore` 的 `forever` 遇到块里没有记录（定不出程序）→ `422`；块名既不等于程序名、也不是「程序 · …」的形状 → `422`。
+- 写端点先查日期是否过期（`409`），再查目标是否存在（`404`）。`assign` 带 `remember` 时先检查第二级规则的上限，超了 `422`，块不改。
+- `reset`：没有文档时也建一份（`seq` 从 1 起），`parts` 置 `null`。
+- `GET blocks` 的 `cursor` 是不透明字符串（按上一页最后一项的秒数与块名续读），坏值 `422`。
+- 重算不碰标题为空、或标题被截到 512 字符的记录；新规则没命中时保留检测程序给的块名。
+
+### 三、第二级规则 `activity_block_rules`
+
+块名 → 任务或项目，**精确匹配块名**（不是正则）。没有把握度：存在即生效。
+
+```jsonc
+{ "id": "br_…", "blockKey": "示例文档", "taskId": "t_…" | null, "projectId": "p_…",
+  "author": "human" | "ai", "via": "assign" | "manual" | "proposal" | "direct" | "migration", "createdAt": "…", "updatedAt": "…" }
+```
+
+- `GET /api/core/activity/block-rules`（人与 MCP）→ `{items}`，≤ 2000 条；目标已删的标 `broken: true`（读时视为没有规则）。
+- `POST /api/core/activity/block-rules {blockKey, taskId?, projectId?}`（只许人）→ 同块名已有规则时**改它的目标**（`author` / `via` / `updatedAt` 换成这次的）。
+- `DELETE /api/core/activity/block-rules/{id}`（只许人）。
+- 删除不存在的规则 → `404`。规则总数上限 2000 条，超了 `422`。
+- **影响范围**：规则的增、改、删、失效，影响**最近 14 天**里没有分类文档（或文档 `status` 为 null）的同名块；更早的日期不重算（读时也按「记下的入账」显示，不按新规则）。受影响的块按「四」对账。
+
+### 四、写进台账（对账）
+
+分好的时间要进台账（`events`），否则时长、甘特、周回顾都看不到。做法是**对账**：每个块都有「应该入账什么」与「已经入账什么」（文档的 `runs`），两者不一致就补写或作废，直到一致。
+
+**应该入账什么**：
+
+1. 块的生效状态是 `assigned`，或 `generic` 且有 `parts`；`pending` / `ignored` / 未拆的 `generic` 什么都不该入账。
+2. 只算 `startTs ≥ tiersSince` 的记录（`tiersSince` 见「六」）——打开三级分类之前的时间已经由旧方式记过，不再记。
+3. 去掉已经有别的来源记过的时间：与台账里**其他来源**的 `session.completed`（`timer-backend`、`manual-backfill`、`activity-confirmed`）或正在跑的手动计时重叠的部分，在重叠边界切开、扣掉。
+4. 多台设备在同一块上的时间取并集。
+5. 剩下的时间按 part 分开，同一 part 里相邻间隔 ≤ 300 秒的连成一段（run）；段的秒数 = 段内时间并集的长度，四舍五入到整秒，< 1 秒的段不入账。
+
+**已经入账什么**：块文档的 `runs`（每条一个 `session.completed` 的 id、防重键、起止、part 序号）；原始记录的 `ledgerEventId` 指向覆盖它的那条事件。
+
+**一段什么时候写**：段**收口**（段的最后时刻 + 300 秒 ≤ 现在）才写。收口后再来的记录（离线补传、第二台设备）**不并进已写的段**，单独成新段（规则同上），所以迟到的时间是另一条 `session.completed`，不改旧的。
+
+**对账动作**：
+
+- **补写**：应该有、还没有的段 → 一条 `session.completed`：`source: "activity-block"`，`dedupeKey: "block:<date>:<blockKey 的 sha256 前 12 位>:<gen>:<段起点 UTC 毫秒>"`，`subject` = part 的目标（只给项目落进该项目的「未分类」桶，同确认建议），`data: {startAt, durationSeconds, mode: "do"}`，`time` = 段的结束，`ai`：
+
+  | `via` | `ai` |
+  |---|---|
+  | `rule` | `{generated: true, auto: true, confirmed: false, block}` |
+  | `ai-direct`（AI 直接施加，无人确认） | `{generated: true, auto: true, confirmed: false, block}` |
+  | `human`、`ai`（AI 提议、人批准） | `{generated: true, confirmed: true, block}` |
+
+  `block` = `{date, blockKey}`。写成后把段记进 `runs`、给覆盖到的记录写 `ledgerEventId`。
+- **改目标**：已写的段，它所在 part 的目标变了、拆分点没动 → 追加 `session.reassigned`（v2.11 机制），`runs` 不变。
+- **作废**：已写的段不再应该存在（拆分点变了切到它、块变成 `pending` / `ignored` / 未拆的 `generic`、后来补的手动计时盖住了它、规则删了或失效）→ 追加 `session.voided`，从 `runs` 里拿掉，覆盖记录的 `ledgerEventId` 清空；之后按新的「应该」补写。
+- **`gen`**：生效目标或拆分点每变一次 +1。补写的防重键带 `gen`，所以「拆开 → 撤销拆分 → 再分」这类来回不会撞上已作废那条的防重键。
+
+**`session.voided`**：`{voidedEventId, actor, reason}`，`reason` ∈ `block-split` / `block-ignored` / `block-reset` / `block-rule` / `block-generic` / `manual-overlap` / `direct-undo`；`dedupeKey: "void:<voidedEventId>"`，`subject` 同被作废那条。所有算时长的读端（投影、`views/*`、导出的统计、MCP 的时间工具）**跳过已作废的 `session.completed`**；原事实不删。
+
+**谁来对账、什么时候**：
+
+- 后台循环（nexus-core 进程内，每 60 秒一轮）+ 下列事件触发尽快一轮：原始记录上传、块的写操作、第二级规则变化、通用窗口标记变化、手动计时开始 / 结束 / 补登、`tiers` 变化。读端点**不写台账**。
+- 每个块的对账在块文档上做**比较并交换**（读 `seq` / `gen`，写时 `seq` 不变才提交；变了就重来），所以与人的改动并发也不会写出过时的段。
+- 有界：每轮至多处理 500 个块、2000 个事件；没做完的下一轮继续。一个块的动作没做完时块文档带 `reconciling: true`，`GET blocks` 照样回该块，时长按「应该入账」算（不按台账）。
+- 事件的 `actor`：人的写操作触发的对账 = 那个人；规则、后台循环 = `system`。
+
+**补充（对账实现时定下，2026-10-24）**：
+
+- `actor` 细化：人的块写操作触发的对账 = 那个人（事件 `actor` 记 `human`）；规则变化、后台循环、原始记录上传、手动计时、`tiers` 变化触发的 = `system`。
+- 对账给第二级规则管着的块建文档（`via: "rule"`）会让 `seq` +1；拿着旧 `seq` 的写会收到一次 `409`（体里带现状），重读后再写。
+- `via: "rule"` 的块：最近 14 天内跟着第二级规则的变化走；更早的保持当时的去向。规则删除或目标失效时，14 天内的块清回缺省（`status: null`）并作废已入账的段。
+- `runs[]` 里除「二」列出的字段以外都是内部字段（如 `ivs`、`pend`、`bucket`），读端不得依赖。
+- 已作废的段不能再 `session.reassigned`：`POST /api/core/sessions/{eventId}/reassign` 对它回 `409`（`detail`：「这段已作废」）。
+- 「别的来源已记」= 投影里 `source` 为 `timer-backend`、`manual-backfill`、`activity-confirmed` 的段，加上正在跑的手动计时；取数不截断。
+- 事件触发的对账尽力而为：同一账号的对账正在跑时本次不等，下一轮后台循环（≤ 60 秒）对该账号全量补做；失败只记日志，不影响触发它的请求。
+- 后台循环只重访要动的块：有新原始记录、`reconciling: true`、有未收口的段，或被规则 / 通用窗口 / 计时 / 设置变化点名的块名。
+- 目标任务或项目已删、段写不出：该段停在待写，直到目标、第二级规则或块本身再变化才重试。
+- `tiers` 关掉：已开始的动作做完收口，不再做新的计划；已入账的段原样保留。
+- 打开 `tiers` 后，AI 报告里批准的「确认」条目不记账，报告结果里该条为 `stale`，`detail`：「已打开三级分类，请在窗口块里分类」。
+
+### 五、AI 的提议与直接施加
+
+AI 不直接调「二」「三」的写端点（那些只许人）。它经 `activity_new_items` 提议，人在蜂巢决策栏批准 / 更正 / 拒绝；或在人打开开关后直接施加。
+
+- `activity_new_items` 追加三种 `kind`（前缀 `nw_` / `nb_` / `na_`）：
+  - `windowRule`：第一级规则的增 / 改 / 删（`op: add|edit|delete`，`rule: {id?, app?, title?, block}`）。批准 = 按 `detector.rules.v1` 写进生效规则集（服务端代 If-Match；版本冲突时重读重试，至多 3 次，仍冲突回到 pending）。
+  - `blockRule`：第二级规则的增 / 改 / 删（`op`，`blockKey`，`taskId|projectId`）。`add` 遇到同块名已有规则按 `edit` 处理。
+  - `blockAction`：对某天某块的 `assign | split | generic | ignore`，参数同「二」（`ignore` 不许 `forever`）。
+- **批准时更正**：`POST activity/proposals/{id}/approve` 追加可选 `edit`，与该 kind 的参数同形；只许改目标（`taskId` / `projectId`）、块名（`block`）、拆分点（`parts`），不许改 `kind`、`op`、`blockKey`（`422`）。按更正后的落地，提议记 `corrected: true`。
+- 列表、拒绝、失败回滚沿用 v2.30 / v2.36；上限：`windowRule` 50、`blockRule` 50、`blockAction` 200。
+- **直接施加**：账号设置 `agentDirect`（「六」）的总开关与对应分开关都开、且调用方是 `write` 范围的非人调用方时，提议请求带 `directApply: true` 就跳过待批准立即落地（块的 `via: "ai-direct"`），并记一条 `activity_direct_log {id, at, actor, kind, payload, before}`。分开关：`windowsClassify` 管 `windowRule` / `blockRule` / `blockAction`；`honeycombRecords` 管 v2.36 的 `change`。任一条件不满足 → `403`，`detail` 说清缺哪一条。
+- **撤回**：`POST activity/direct-log/{id}/undo`（只许人）把 `before` 写回（规则集、第二级规则、块文档），再按「四」对账（作废的 `reason: direct-undo`）。`before` 已被后来的改动覆盖时 `409`。
+
+**补充（第二部分 B 实现前定下，2026-10-24）**：
+
+- **提交端点**（口径同 v2.30：带 Bearer 的设备令牌 `403`，MCP 对内直连可用；体 `extra=forbid`，不合规 `400`）：
+
+  | 端点 | 体 |
+  | --- | --- |
+  | `POST /api/core/activity/proposals/window-rules` | `{op: add\|edit\|delete, rule: {id?, app?, title?, block}, reason?, directApply?}`；`edit` / `delete` 必带 `rule.id`，`add` 不带；`delete` 不要 `block` |
+  | `POST /api/core/activity/proposals/block-rules` | `{op, blockKey, taskId \| projectId, reason?, directApply?}`；`delete` 不带目标，其余恰好一个目标 |
+  | `POST /api/core/activity/proposals/block-actions` | `{action: assign\|split\|generic\|ignore, date, blockKey, taskId? \| projectId?, parts?, reason?, directApply?}`；参数要求同「二」对应端点（`ignore` 不许 `forever`） |
+
+  `reason` 超 300 码点截断。目标不存在、块不存在 `400`。
+- **id**：`nw_` / `nb_` / `na_` + `sha256(归一化后的参数)[:20]`。同 id 的 `pending` 再提 = 原样返回；`rejected` 再提 `409`「用户已经否掉过」；`accepted` 或 `superseded` 再提 = 换一条新的。上限超了 `429`。
+- **列表**：`GET …/proposals` 响应追加 `windowRules[]`、`blockRules[]`、`blockActions[]`（新的在前，同 `status` / `limit`）。视图 = `{id, kind, status, createdAt, reason, corrected}` 加提交时的参数；`blockAction` 另带 `blockTitle`（块的显示名）。
+- **批准时更正** `edit` 的形状：`windowRule` 为 `{rule: {block}}`；`blockRule` 为 `{taskId \| projectId}`；`blockAction` 为 `{taskId \| projectId}` 或 `{parts}`。
+- **批准 `blockAction`**：服务端用块的当前 `seq` 代填 `ifSeq`；块已不在 `pending` / `generic` → `409`「这个块已经处理过」，提议留 `pending` 由人拒绝。
+- **人先动了块**：人对某天某块做任何写操作（「二」的五个端点）后，该 `(date, blockKey)` 上 `pending` 的 `blockAction` 提议记为 `superseded`（新增的状态，只在 `status=all` 里出现，不算被否掉，同样的提议可以再提）。
+- **直接施加的返回**：`{applied: true, directLogId, result}`，`result` 同人调对应写端点的返回。不满足条件的 `403` 带 `reason`：`agentDirectOff`（总开关关）、`windowsClassifyOff` / `honeycombRecordsOff`（分开关关）、`needWriteScope`（不是 `write` 范围的非人调用方）。
+- **直接施加日志读端**：`GET /api/core/activity/direct-log?date=&limit=`（人与 MCP 可读，`limit` 1–200 缺省 50，新的在前）→ `{items: [{id, at, actor, kind, payload, undoneAt}]}`；`before` 不返回。日志保留 90 天。
+- **令牌**（第二部分 B 实现时定下）：三个提交端点与 v2.36 的 `proposals/changes`，带 Bearer 的调用方只有网关给出范围 `write` 的可以提交（直接施加要用）；其余带 Bearer 的仍 `403`。批准、拒绝、撤回仍只许人。
+- **标题不外露**：非人调用方读 `windowRule` 提议、直接施加的返回、direct-log 的 `payload` 时不给 `rule.title`，改给 `hasTitle: bool`（同 v2.36 ignore 视图）。
+
+### 六、账号设置 `activity_settings`
+
+`GET /api/core/activity/settings`（人、MCP、设备令牌都可读）、`PUT`（只许人，整份替换，须带 `If-Match: "<version>"`，不符 `412`）：
+
+```jsonc
+{ "version": 3,
+  "tiers": false,                          // 打开三级分类
+  "tiersSince": null,                      // 最近一次打开的时刻（服务端写，客户端给的忽略）
+  "agentDirect": { "enabled": false, "windowsClassify": false, "honeycombRecords": false } }
+```
+
+- `tiers: false`（缺省）：检测程序不传原始记录；「四」不对账；块端点照常可读（多半是空的）；建议与自动记录（v2.14）不变。
+- `tiers` 从关到开：`tiersSince` = 此刻；之后
+  - 「四」开始对账，只管 `tiersSince` 之后的记录；
+  - 建议上传仍然收（老检测程序不断），但**不再自动记录、也不再接受确认**（v2.14 的自动记录与 `POST suggestions/{id}/confirm` 对该账号回 `409`，`detail`：「已打开三级分类，请在窗口块里分类」），以免同一段时间记两次；待确认列表照常可读、可忽略；
+  - 第一次打开时迁移旧规则（见下）。
+- `tiers` 从开到关：停止对账（已入账的不动）；之后恢复旧行为。再打开时 `tiersSince` 更新为新的时刻，关着期间的记录不入账（那段时间由旧方式记）。
+- `PUT` 缺 `If-Match` → `428`，版本不符 → `412`（体里带 `currentVersion`）。迁移时旧规则没有 `confidence` 键视为 `0.9`；第二级规则会超过 2000 条上限时整个 `PUT` `409`。
+- **迁移旧规则**（第一次打开，幂等，按旧规则 `id`）：每条生效的旧式规则（带 `taskId` / `projectId`）紧挨着它后面插一条第一级规则（`kind: "block"`，同样的 `app` / `title`，`block` = 规则 `note` 截到 64 字符；没有 `note` 用「旧规则 <id>」；同名冲突加「 (2)」「 (3)」）；`confidence ≥ 0.9` 的再写一条第二级规则（该块名 → 原目标，`via: "migration"`），低于 0.9 的不写（它们原本也不自动记）。`mode: "ai"` 的规则不迁移、原样保留（三级分类下这类窗口就是普通的待分类块）。旧规则加 `migrated: true`，留给老检测程序。迁移后规则总数超过 500 → 整个打开操作 `409`（`detail` 说清超了多少），`tiers` 不变。
+
+### 七、杂项
+
+- **集合登记**：`activity_records`、`activity_blocks`、`activity_generic`、`activity_block_rules`、`activity_direct_log`、`activity_settings`、`activity_input` 进导出 / 恢复 / 快照的集合登记表。
+- **租户**：全部按租户隔离。
+- **索引**：`activity_records (user, date, blockKey, startTs)`、`(user, dedupeKey)` 唯一、`(user, endTs)`；`activity_blocks (user, date, blockKey)` 唯一。
+
+## 键盘鼠标活动（规范性 · v2.38）
+
+`POST /api/core/activity/input`（只收带 Bearer 的请求，同原始记录）：`{deviceId, bins: [epochSeconds…]}`——**只报有活动的 10 秒格**（每个值是格起点的 UNIX 秒，10 的倍数，落在 [现在 − 7 天, 现在 + 60 秒] 内，否则整个请求 `422`），一次 ≤ 8640 个。服务端按 `(user, deviceId, 本地日)` 用 `$addToSet` 存（并发不丢），留存同原始记录。
+
+`GET /api/core/activity/input?date=YYYY-MM-DD`（人与 MCP）→ `{date, binSeconds: 10, bins: [...]}`（多台设备合并去重、升序）。
+
+**只有时间格，没有任何按键内容。** 本版只用于显示，不影响入账。检测程序侧见 `detector.settings.v1` v1.4 的 `inputActivity` 与 ai-detector 契约「键盘鼠标活动」。
+
+## MCP v0.5 的后端：位置编号、协作历史、安排、第三级（规范性 · v2.39）
+
+仓主 2026-10-24 批准「蜂巢 MCP v0.5 接口简报」。本节只增：既有端点、字段、事件的行为除「五」列出的两处追加外一个不改。读端都不写台账。
+MCP 侧见 `contracts/mcp.tools.v2`。
+
+### 一、位置编号 `address`
+
+每个分区、项目、任务在 `id`（给机器，永不变）之外有一个 `address`（给人和 agent 读，改名、搬家、同级增删后可能变）。**不存储**，读时现算。
+
+- **出现在哪**：`views/tree` 的每个分区、项目、任务追加 `address`（含临时任务、已完成任务、收件箱、各项目的「未分类」任务）；本节新增的读端凡出现分区 / 项目 / 任务都带 `address`。
+- **基础编号**：从名字里按顺序取字母，全部小写：
+  - 词 = 连续的字母或数字（含带重音的拉丁字母，如 é）；每个词取首字符（数字词取首位数字），`HoneyComb` 是一个词 = `h`，`2024计划` = `2` + `j` + `h`。
+  - 中文（含繁体）每个字单独取拼音首字母（`pypinyin` 缺省读音）；其余字符（标点、空白、表情、其他文字）只当分隔。
+  - 分区取前 2 个，项目前 4 个，任务前 4 个；不够就按实际个数，不补。一个都取不出时为 `x`。
+- **撞号**：同一层级（分区：全部分区；项目：同一分区；任务：同一项目）按创建先后（`createdAt` 升序，同刻按 `id`）依次分配：每个取 `基础`、`基础2`、`基础3`……里**第一个还没被前面的同级占用**的（不分大小写比较）。所以名叫「CS2」的项目与第二个「测试」不会撞。
+  同级有删除、搬入搬出时后面的会重新分配，这是预期的。
+- **拼接**：`分区-项目-任务`，如 `jy`、`jy-jgsc`、`jy-jgsc-kcdm`。编号不含 `-`。收件箱和「未分类」照普通名字编号（「收件箱」= `sjx`，「未分类」= `wfl`）。
+- **解析**（给接受 address 的调用方，如 MCP）：去首尾空白、不分大小写、整串精确匹配；1 段 = 分区，2 段 = 项目，3 段 = 任务；不做前缀匹配。已完成与临时的也能解析。
+- **补充（实现时定下）**：「创建先后」按文档的 Mongo `_id`（ObjectId 随插入递增），相同再按 `id`。「未分类」桶不在 `views/tree` 的 `tasks[]` 里，项目另带 `unclassifiedAddress`（没建过为 `null`）。缺分区的项目及其任务不参与解析。
+- `pypinyin`（MIT，纯 Python）进 nexus-core 依赖。换版本导致个别多音字编号变化不算破坏：引用一律用 `id`。
+
+### 二、协作历史 `GET /api/core/views/history`
+
+一段时间里人和 agent 各干了什么、怎么交接。人和 agent **分开给，永不相加**。
+
+查询：`from`、`to`（`YYYY-MM-DD`，缺省都是今天，含两端，按 `NEXUS_TZ` 归日）、`who`（`human | agent | both`，缺省 `both`）、`detail`（`summary | segments | windows`，缺省 `summary`）、`scope`（分区 / 项目 / 任务 id，选填，只过滤人的已入账部分）。
+跨度：`summary` 最多 92 天，`segments` / `windows` 最多 7 天；超了、日期不合法、`from > to`、取值不在枚举里 → `422`（`detail` 点名参数）。
+
+```jsonc
+{
+  "range": {"from": "2026-10-24", "to": "2026-10-24", "tz": "+08:00", "today": "2026-10-24"},
+  "human": {
+    "confirmedSeconds": 5400,
+    "pendingSeconds": 1200,
+    "byDay": [ {"date": "2026-10-24", "seconds": 5400, "pendingSeconds": 1200,
+                "byTarget": [ {"taskId": "t_…", "projectId": "p_…", "address": "kf-hpkf-mcpj", "seconds": 3600} ]} ],
+    "segments": [ … ],                 // 仅 detail=segments
+    "blocks": [ … ]                    // 仅 detail=windows
+  },
+  "agents": {
+    "workingSeconds": 4310,
+    "byDay": [ {"date": "2026-10-24", "workingSeconds": 4310} ],
+    "byAgent": [ {"agent": "claude-code", "label": "Cockpit-Pub-Coder1", "workingSeconds": 1945, "runs": 2} ],
+    "runs": [ … ]                      // 仅 detail=segments
+  },
+  "handoffs": [ … ],                   // 仅 detail=segments 且 who=both
+  "overlap": { … },                    // 仅 detail=segments 且 who=both
+  "truncated": false
+}
+```
+
+- `who=human` 时没有 `agents`、`handoffs`、`overlap`；`who=agent` 时没有 `human`、`handoffs`、`overlap`。
+- **口径**：
+  - `confirmedSeconds` / `byTarget` / 已入账段 = 台账里**所有** `session.completed`（任何 `source`，作废的除外），按当前归属（含改挂），按投影的同一口径归日。代理的运行是 `agent.run.completed`，从不进人的部分。
+  - `pendingSeconds` = 还没分类的时间：tiers 开 = 范围内 `pending` 与 `generic`（还没拆完）窗口块里、尚未入账的记录秒数（同一时刻多台设备取并集），含今天还在记的；`ignored` 的不算。tiers 关 = 范围内待确认建议的秒数（同 `activity/suggestions/pending-days` 口径）。
+  - `scope` 只过滤已入账的部分；`pending` 的没有归属，给了 `scope` 时 `pendingSeconds` 为 `null`、不出 pending 段。
+- **`human.segments[]`**（按 `from` 升序）：`{from, to, seconds, status, eventId, taskId, projectId, address, window, onAgentRun}`。
+  - `confirmed` 段：一条 `session.completed` 一段，`eventId` = 它的 id。
+  - `pending` 段：tiers 开 = 每个待分类块的每一段连续记录（按「三级分类」四的 300 秒间隔切段）一段，`window` = 块名；tiers 关 = 每条待确认建议一段。`eventId`、`taskId`、`projectId`、`address` 为 `null`。
+  - 已入账段与 pending 段在时间上可以重叠（例如手动计时期间窗口也在记），两者照实给，不互相扣。
+  - `window`：`"程序 · 标题"`，标题经隐私处理并按「屏幕来的文字」清洗成一行、≤ 80 字符；不是来自窗口的段为 `null`。
+  - `onAgentRun`：这段时间人的窗口就是某条代理运行的终端（v2.17「人在看它」的相等规则，恰好一条）时给那条 `runId`，否则 `null`。
+- **`human.blocks[]`**（`detail=windows`；tiers 关着时为 `[]` 并在顶层给 `tiersOff: true`）：每天的窗口块，形状同 `GET activity/blocks` 的 `items[]`，追加 `date`、`address`（已分类时目标的编号）与 `records`：块里的原始记录 `{from, to, seconds, app, title}`（标题同上清洗、≤ 80 字符），每块最多 50 条（时长最长的 50 条，按时间升序给），截了块上 `recordsTruncated: true`。
+- **`agents.runs[]`**：与范围有交集的每条运行 `{runId, agent, label, startAt, endAt|null, phases: [{from, to, phase, startedBy?, subagents?}], workingSeconds, humanAttentionSeconds}`。
+  - `phases` 按 v2.18「相位」从观测推出（相邻同相位合并），钳到范围内。一段 `working` 的开头 60 秒内有这条运行的人回复（v2.18 的 `interactions` 里 `reply`）→ 这段带 `startedBy: "human_reply"`。
+  - `subagents`：该段内同时在跑的子代理数的最大值（没有子代理数据不给）。
+  - `workingSeconds`、`humanAttentionSeconds`（v2.17 的 attend）都只算范围内的部分。
+- **`handoffs[]`**（按 `at` 升序，钳到范围内）：
+  - `{at, runId, type: "human_to_agent"}`：每段带 `startedBy: "human_reply"` 的 `working` 的开头一条。没有人回复就开始的 `working` 不算交接。
+  - `{at, runId, type: "agent_to_human", waitedSeconds}`：每次转入 `waiting_input` 一条；`waitedSeconds` = 到这条运行的下一次人回复、或人开始看它（attend 的下一段开头）为止的秒数，取先到者；范围结束前都没有 = `null`。
+- **`overlap`**：`{maxAgentsWorkingAtOnce, secondsWithAgentsWorkingWhileHumanElsewhere}`。后者 = 至少一个代理在 `working`、而人此刻没有在看任何一个 `working` 的代理的总秒数。**不是工时**。
+- **上限**：`segments` 2000、`blocks` 500、`runs` 200、`handoffs` 2000、`byTarget` 每天 200；任一处截了，顶层 `truncated: true`。
+- **补充（实现时定下）**：截断时保留最早的；未知的 `scope` → `422`；已入账段按真实起止给，跨午夜的段 `byDay` 仍按投影归日；`subagents` 没有数据来源时不给。
+- 带 Bearer 的设备令牌可读（同 `views/lanes`）。
+
+### 三、安排 `GET /api/core/views/arrangements`
+
+接下来该做什么、谁在做。查询：`range`（`today | week`，缺省 `today`；`week` = 本地周一到周日）、`scope`（分区 / 项目 id，选填）。
+
+```jsonc
+{
+  "today": "2026-10-24", "range": "today", "from": "2026-10-24", "to": "2026-10-24",
+  "scheduled":  [ {"taskId", "projectId", "address", "name", "plan": {"start", "end"},
+                   "spentThisRange": {"humanSeconds": 3600, "agentWorkingSeconds": 0}, "activeNow": ["human" | "run_…"]} ],
+  "actionable": [ {"taskId", "projectId", "address", "name", "plan": null, "spentThisRange", "activeNow"} ],
+  "blocked":    [ {"taskId", "projectId", "address", "name", "plan", "blockedBy": ["<address>"], "spentThisRange", "activeNow"} ],
+  "overdue":    [ {"taskId", "projectId", "address", "name", "plan", "planEnd": "2026-10-20", "spentThisRange", "activeNow"} ],
+  "stale":      [ {"taskId", "projectId", "address", "name", "lastActive": "2026-10-02" | null} ],
+  "review": { … },       // 仅 range=week：同 GET views/review 的响应
+  "truncated": false
+}
+```
+
+- 只看没完成的普通任务，属于没归档的项目；不含「未分类」桶、临时任务。`plan` 只有 `start` 时按 `end = start`。
+- 一条任务只进 `overdue`、`blocked`、`scheduled`、`actionable` 中的一组，优先级依次往下：
+  - `overdue`：`plan.end < today`（两种 `range` 都按今天判）。
+  - `blocked`：`dependsOn` 里有没完成的任务；`blockedBy` 给那些任务的 `address`。
+  - `scheduled`：`plan` 与范围有交集。
+  - `actionable`：其余的。
+- `stale` 另算，可与上面重复：所属项目 `status` 为 `active`，且 14 天以上没有记入这条任务的时间（`lastActive` = 最后有时间的本地日；从没有 = `null`，并且任务建了 14 天以上才算）。
+- 排序：`overdue` 按 `planEnd` 升序；`scheduled`、`blocked` 按 `plan.start` 升序（没有 plan 的在后）；`actionable` 按项目、任务在树里的顺序；`stale` 按 `lastActive` 升序（`null` 在前）。
+- `spentThisRange`：范围内记到这条任务的人的秒数（台账）与代理干活秒数（只算挂了这条任务的运行；代理多半不挂任务，所以常为 0）。分开写，不相加。
+- `activeNow`：人的手动计时或自动跟踪此刻指向它 = `"human"`；在跑、挂了它的代理运行 = 该 `runId`。
+- **补充（实现时定下）**：未知的 `scope` → `422`；`overdue` 的任务同时被卡住时条目追加 `blockedBy`；有排期但不在范围内的任务进 `actionable`，`plan` 照给；「树里的顺序」= 分区 `order`、再 planner 列表里项目与任务的位置（同 `views/tree`）。
+- 每组最多 200 条，截了顶层 `truncated: true`。带 Bearer 的设备令牌可读。
+
+### 四、第三级：秘书报告与问人
+
+**提交口径**（4.1、4.2 的 POST 与 4.3）：没有 `Authorization: Bearer` 的调用方（人、MCP 对内直连）可以；带 Bearer 的只有范围 `write` 可以，`read`、`report` 与匿名 `403`。
+
+#### 4.1 秘书报告 `activity_secretary_reports`
+
+- `POST /api/core/activity/secretary-reports` `{date?, text, author?}`：`date` 缺省今天；`text` 1–8000 码点（否则 `400`）；`author` ≤ 64。同一 `date` 只留一份，再交 = 整份替换（`updatedAt` 刷新，`revision` +1）。返回存下的文档 `{id, date, text, author, createdAt, updatedAt, revision}`。
+- `GET /api/core/activity/secretary-reports?date=` 或 `?from=&to=`（最多 92 天；都不给 = 今天）→ `{items: [...]}`，按 `date` 新的在前。
+- 不是事实：不进台账与投影；进导出 / 恢复的集合登记表。
+
+#### 4.2 问人 `activity_questions`
+
+- `POST /api/core/activity/questions` `{questions: [1..10]}`，每条：
+  `{title, text?, date?, from?, to?, options?: [0..6], allowText?: bool}`。
+  - `title` 1–120、`text` ≤ 1000 码点；`from` / `to` 是带偏移的时刻，必须同时给或同时不给，`from < to ≤ 现在`，跨度 ≤ 24 小时。
+  - 每个选项 `{label, target?, ignore?}`：`label` 1–40；`target` = `{taskId}` 或 `{projectId}`（必须存在，否则 `400`；`{projectId}` 记到该项目的「未分类」任务）；`ignore: true` = 「这段不记」。`target` 与 `ignore` 至多一个。
+  - **去重**：`askKey` = `sha256(归一化 title \n date \n from \n to \n 各选项 label 与目标)`。与一条 `pending` 问题的 `askKey` 相同 = 原样返回那一条；否则新建一条（id `aq_` + 随机 16 位）。待回答上限 30，超了 `429`。
+  - 返回 `{items: [问题视图]}`，顺序同入参。
+- **问题视图**：`{id, status: pending | answered | dismissed, title, text, date, from, to, options, allowText, createdAt, answer: null | {option, text, at, recorded, eventId}}`。
+- `POST /api/core/activity/questions/{id}/answer` `{option?: <选项下标>, text?}`（**只许人**；至少给一个；`text` ≤ 1000；下标越界 `400`）：
+  - 选的选项带 `target`、问题带 `from` / `to` → 按「补登」的代码路径把这段记到目标任务（`source: manual-backfill`，`actor: human`），dedupeKey 特意用 `question:<id>`（不用补登的 `backfill:…` 格式），一个问题只可能记一次；`answer.recorded: true`、`eventId` 为那条事件。
+    补登允许与已有记录重叠（同「补登」），所以 AI 问的应该是没有记录的空档；补登的拒绝（目标任务已删 `404`、时段不合法 `400`）原样返回，问题留 `pending`。
+  - 其余情况只记答案（`recorded: false`、`eventId: null`）。已回答 / 已撤下的再答 `409`。
+- `POST /api/core/activity/questions/{id}/dismiss`（只许人）：`pending → dismissed`，其余 `409`。
+- `GET /api/core/activity/questions?status=pending|all&limit=`（1–200，缺省 50，新的在前）→ `{items: [问题视图]}`。
+- MCP 没有回答 / 撤下问题的工具；这两个端点只给页面。不是事实；进集合登记表。
+- **补充（实现时定下）**：补登的 dedupeKey 实际为 `question:<id>:<taskId>`；回答时先在问题上原子记下所选选项，崩溃后重答必须选同一个（否则 `409`），补登被拒时放掉，问题仍可改选。待回答问题按 `(user, askKey)` 唯一。
+- **补充**：sessionChange 的提议与直接施加先查这段能否改挂（同 v2.11：只能改挂记在「未分类」或自动记下的时间），不能的 `409`，不进待批准。
+
+#### 4.3 提议改已记的时间 `sessionChange`
+
+- `POST /api/core/activity/proposals/sessions` `{eventId, op: "reassign", taskId | projectId, reason?, directApply?}`：提议把一段已记的时间改挂到别处。`eventId` 必须是本租户的 `session.completed`（否则 `400`），已作废的 `409`，目标不存在 `400`，目标与当前归属相同 `409`。
+- id `ns_` + `sha256(eventId \n 目标)[:20]`；去重、拒绝后再提、`accepted` / `superseded` 再提换新、上限（待批准 50，`429`）同「三级分类」五补充。`GET …/proposals` 追加 `sessionChanges[]`：`{id, kind: "sessionChange", status, eventId, op, taskId, projectId, fromTaskId, fromProjectId, startAt, durationSeconds, reason, createdAt, corrected}`。
+- 批准（只许人，可带 `edit: {taskId | projectId}`）= 调改挂的**内部函数**，`actor: human`；直接施加时同一个函数，`actor: ai`（`session.reassigned` 的 `data.actor` 追加取值 `"ai"`）。`POST /api/core/sessions/{eventId}/reassign` 端点本身仍只许人，不变。
+- 直接施加归 `honeycombRecords` 分开关，条件、`403 reason`、`activity_direct_log` 同「三级分类」五补充；撤回 = 再改挂回 `before` 的归属（这段之后又被改挂过 `409`）。
+
+### 五、对既有端点的追加与澄清
+
+- **`blockAction` 可以改已分类块的去向**（行为追加）：`action: "assign"` 也接受 `status: "assigned"` 的块（换目标，按「三级分类」四对账，已入账的段走 `session.reassigned`）。批准时块已是同一目标 = 空操作，提议记 `accepted`。人的 `POST activity/blocks/assign` 不变。
+- **忽略规则的提议也能直接施加**（行为追加）：v2.36 的 `POST activity/proposals/ignores` 追加 `directApply`，归 `windowsClassify` 分开关，条件与日志同「三级分类」五补充；撤回 = 删掉这条忽略规则（已被人删了 `409`）。忽略规则的提议只有新增，没有改 / 删。
+- **澄清：v2.36 `change` 的直接施加**已由「三级分类」五（`honeycombRecords` 管 `change`）与其补充规定：经 `guard.run_write`、不可撤回（撤回 `409`）。本版不变。
+- **澄清：没有范围头的调用方不能直接施加**：`directApply: true` 只认范围 `write`；没有 `X-Nexus-Scope` 的调用方（人、MCP 对内直连）一律 `403 reason: needWriteScope`，不当作人放行。
+- **MCP 转发范围**：自 `mcp.tools.v2` 起，网关给 MCP 的范围是 `write` 时，MCP 调 nexus-core 的写端点带 `X-Nexus-Scope: write`（MCP 是受信内网服务，同 `X-Nexus-Tenant` 的信任边界）；其余调用方 MCP 不带。nexus-core 现有的 `scope.caller()` 读的就是这个头，不需要改。
+
+- **直接施加撤回的并发（补充，不改行为定义）**：撤回的「之后又被改过」判断与还原写入是同一次条件写（第二级规则按 taskId/projectId、块文档按读到的 seq、通用窗口标记按 since、改挂按最新 `seq`）；比较之后、写入之前又有人改动 → 409，不覆盖较新的决定。直接施加改挂记下的 `before` 为改挂实际写下那一刻的前任归属。问人：已被回答占位（`claimed`）的问题不能撤下（409）。
+- **澄清：v0.4 终审的并发与长度补充（只增不改）**：AI 报告的批准会先占住这一条读到时的版本，期间改目标 / 拆条 `409`；占不上（刚被改动 / 别的批准占着）则这次不做、条原样返回。`POST activity/proposals/block-rules` 的 `blockKey` 上限与块接口一致（1000）。原始记录上传的 `rv` 一律不盖，读块时按当前规则检查一次再盖。
 
 ## 变更记录
 

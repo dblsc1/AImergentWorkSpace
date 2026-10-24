@@ -4,7 +4,7 @@
 #
 # 在 compose 目录下跑：deploy/test/recreate.sh <口令> [基址，缺省 http://127.0.0.1:8800]
 # 整站挂子路径时同 smoke.sh 先 export HONEYCOMB_BASE_PATH。逐个重建 nexus-core、auth，
-# 以及组装里有的 mcp、agent（AI 桥），不碰 web。
+# 以及组装里有的 mcp、agent（AI 桥；agent 缺省不起，要在 .env 设 COMPOSE_PROFILES=agent 它才在名单里（网关另需 AGENT_UPSTREAM=agent:8030）），不碰 web。
 set -uo pipefail
 
 pw=${1:?用法: deploy/test/recreate.sh <口令> [基址]}

@@ -13,9 +13,9 @@ LOG = []
 LOCK = threading.Lock()
 RO = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False}
 TOOLS = [
-    {"name": "get_task_tree", "description": "任务树", "annotations": RO,
+    {"name": "Get_View", "description": "任务树", "annotations": RO,
      "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False}},
-    {"name": "get_current_timer", "description": "此刻在计什么", "annotations": RO,
+    {"name": "Get_Now", "description": "此刻在计什么", "annotations": RO,
      "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False}},
 ]
 

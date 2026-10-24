@@ -140,9 +140,9 @@
         </div>
       </div>
     </div>
-    <!-- 「待确认」与「问问助手」两块 2026-09-30 搬去「AI助理」页（modules/assistant）。这里只留一个
-         小链接（ring-suggest-link.js）：有待确认的活动时显示「N 条待确认 → AI助理」，0 条、端点 404、
-         或没装「AI助理」页时不出现。 -->
+    <!-- 「待确认」与「问问助手」两块 2026-09-30 搬去「待批准」页（modules/assistant）。这里只留一个
+         小链接（ring-suggest-link.js）：有待确认的活动时显示「N 条待确认 → 待批准」，0 条、端点 404、
+         或没装「待批准」页时不出现。 -->
     <a class="suggest-link" id="suggest-link" href="../assistant/" hidden></a>
     <!-- 「泳道」主视图（nexus-core v2.4 views.lanes.v1，ring-lanes.js）：圆环下方整宽、默认展开，
          人一条线 + 每个代理运行一条线。画图用共享的 __cockpit/lanes.js（顶栏预览同一份）。
@@ -204,13 +204,18 @@
        挂名字那一行）。ring-backfill.js（2026-08-19）放最后——只依赖
        ring-controls.js 挂的 window.postCore，与倒计时模块互不相关，顺序
        只要晚于 ring-controls.js 即可。 -->
+  <!-- 此刻的焦点的共享文案件（网关在 <前缀>__cockpit/ 下服出；顶栏、蜂巢用的同一份）。网关也会随顶栏
+       再注入一次，重复加载是空操作；这里直接引是为了表芯第一次画的时候它一定已经在。 -->
+  <script src="../__cockpit/focus.js"></script>
   <script src="ring-controls.js"></script>
+  <script src="ring-focus.js"></script>
   <script src="ring-instrument.js"></script>
   <script src="ring-countdown.js"></script>
   <script src="ring-backfill.js"></script>
   <script src="ring-rename.js"></script>
   <script src="ring-pause.js"></script>
   <script src="ring-suggest-link.js"></script>
+  <script src="ring-choice.js"></script>
   <script src="ring-lanes.js"></script>
 </body>
 </html>

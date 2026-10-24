@@ -235,10 +235,21 @@ class _IsolatedHomeMixin:
     def setUp(self):
         super().setUp()
         self._home_tmpdir = tempfile.TemporaryDirectory()
+        # 测试里直接 mkdir 出来的状态目录要「只有本人可写」（钩子拒绝用组 / 其他人可写的目录）：不依赖机器的 umask
+        old_umask = os.umask(0o077)
+        self.addCleanup(os.umask, old_umask)
         self._old_home = os.environ.get("HONEYCOMB_AGENT_HOOKS_HOME")
         os.environ["HONEYCOMB_AGENT_HOOKS_HOME"] = self._home_tmpdir.name
+        # 心跳（伴随进程 / cockpit-run 的线程）缺省关掉：不许测试留下脱离的进程，也不让异步的心跳混进请求记录。
+        # 心跳自己的测试在 test_agent_hooks_beat.py 里按需打开。
+        self._old_beat = os.environ.get("COCKPIT_BEAT")
+        os.environ["COCKPIT_BEAT"] = "off"
 
     def tearDown(self):
+        if self._old_beat is None:
+            os.environ.pop("COCKPIT_BEAT", None)
+        else:
+            os.environ["COCKPIT_BEAT"] = self._old_beat
         if self._old_home is None:
             os.environ.pop("HONEYCOMB_AGENT_HOOKS_HOME", None)
         else:
@@ -299,22 +310,41 @@ class LoadConfigTests(_IsolatedHomeMixin, unittest.TestCase):
         cfg_dir.mkdir(parents=True, exist_ok=True)
         (cfg_dir / cc.CONFIG_FILENAME).write_text(content, encoding="utf-8")
 
+    def _load(self, **env):
+        keys = ("COCKPIT_URL", "COCKPIT_TOKEN", "CLAUDE_PLUGIN_OPTION_COCKPIT_URL", "CLAUDE_PLUGIN_OPTION_COCKPIT_TOKEN")
+        clean = {k: v for k, v in os.environ.items() if k not in keys}
+        with mock.patch.dict(os.environ, {**clean, **env}, clear=True):
+            return cc.load_config()
+
     def test_env_overrides_file(self):
         self._write_config(json.dumps({"url": "http://file-url/", "token": "file-token", "tasks": {"/x": "t"}}))
-        old_env = {k: os.environ.get(k) for k in ("COCKPIT_URL", "COCKPIT_TOKEN")}
-        try:
-            os.environ["COCKPIT_URL"] = "http://env-url/"
-            os.environ.pop("COCKPIT_TOKEN", None)
-            cfg = cc.load_config()
-            self.assertEqual(cfg["url"], "http://env-url")  # 环境变量赢，且去掉了结尾斜杠
-            self.assertEqual(cfg["token"], "file-token")  # 没设环境变量，落到文件
-            self.assertEqual(cfg["tasks"], {"/x": "t"})
-        finally:
-            for k, v in old_env.items():
-                if v is None:
-                    os.environ.pop(k, None)
-                else:
-                    os.environ[k] = v
+        cfg = self._load(COCKPIT_URL="http://env-url/", COCKPIT_TOKEN="env-token")
+        self.assertEqual((cfg["url"], cfg["token"]), ("http://env-url", "env-token"))  # 环境变量赢，且去掉了结尾斜杠
+        self.assertEqual(cfg["tasks"], {"/x": "t"})
+
+    def test_token_only_goes_with_the_url_it_was_configured_with(self):
+        """地址与令牌成对取：别的来源的令牌不跟着另一个来源的地址走（文件令牌不能发去插件设置 / 环境变量的地址）。"""
+        self._write_config(json.dumps({"url": "http://file-url/", "token": "file-token"}))
+        plugin_url = "CLAUDE_PLUGIN_OPTION_COCKPIT_URL"
+        plugin_token = "CLAUDE_PLUGIN_OPTION_COCKPIT_TOKEN"
+        cases = [
+            (dict(COCKPIT_URL="http://env-url/"), ("http://env-url", "")),  # 环境变量只给地址：文件令牌不跟
+            (dict(COCKPIT_TOKEN="env-token"), ("http://file-url", "file-token")),  # 只给令牌的来源：令牌不用
+            (dict(**{plugin_url: "http://plugin-url/"}), ("http://plugin-url", "")),
+            (dict(**{plugin_url: "http://plugin-url/", plugin_token: "plugin-token"}), ("http://plugin-url", "plugin-token")),
+            (dict(**{plugin_token: "plugin-token"}), ("http://file-url", "file-token")),  # 插件只填了令牌（地址留空）
+            (dict(COCKPIT_URL="http://env-url/", **{plugin_url: "http://plugin-url/", plugin_token: "plugin-token"}),
+             ("http://env-url", "")),  # 先到先得：插件的令牌不跟环境变量的地址
+            ({}, ("http://file-url", "file-token")),
+        ]
+        for env, expected in cases:
+            with self.subTest(env=sorted(env)):
+                cfg = self._load(**env)
+                self.assertEqual((cfg["url"], cfg["token"]), expected)
+
+    def test_plugin_manifest_has_no_default_url(self):
+        manifest = json.loads((Path(__file__).parent / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        self.assertNotIn("default", manifest["userConfig"]["cockpit_url"])
 
     def test_missing_config_file_is_tolerated(self):
         cfg = cc.load_config()  # 临时目录里压根没有 agent-hooks.json
@@ -363,6 +393,17 @@ class ClientHttpTests(unittest.TestCase):
         self.assertEqual(req["method"], "POST")
         self.assertEqual(req["path"], "/api/core/agents/run-1/stop")
         self.assertEqual(req["body"], {"outcome": "done", "output": "http://x/output"})
+
+    def test_no_token_sends_no_authorization_header(self):
+        # 没配令牌 = 匿名上报（auth.gate v1.4）：不能带一个空的 Bearer，那是「出示了坏令牌」
+        server, thread, log = _start_server(expect_token=None)
+        try:
+            port = server.server_address[1]
+            for config in ({"url": f"http://127.0.0.1:{port}"}, {"url": f"http://127.0.0.1:{port}", "token": ""}):
+                self.assertEqual(cc.start_run(config, None, "a", "t")["runId"], "run-1")
+                self.assertEqual(log.requests[-1]["auth"], "")
+        finally:
+            _stop_server(server, thread)
 
     def test_bad_token_raises_cockpit_error(self):
         bad_config = dict(self.config, token="wrong")
@@ -635,22 +676,16 @@ class ClaudeHookTests(_IsolatedHomeMixin, unittest.TestCase):
         self.assertIsNone(claude_hook._read_run_id("nope"))
         claude_hook._delete_run_id("nope")  # 删一个不存在的也不该炸
 
-    # ── P3 #B：文件不存在 ≠ 文件读不出可用内容——后者是垃圾，读的时候顺手清掉 ──
-    def test_unparseable_state_file_is_deleted_not_left_as_litter(self):
-        path = claude_hook._state_file("sess-corrupt")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("not json at all", encoding="utf-8")
-
-        self.assertIsNone(claude_hook._read_run_id("sess-corrupt"))
-        self.assertFalse(path.exists(), "内容不是合法 JSON 的状态文件该被清掉，不然一直是垃圾")
-
-    def test_state_file_with_wrong_shape_is_also_deleted(self):
-        path = claude_hook._state_file("sess-wrong-shape")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"runId": 12345}), encoding="utf-8")  # runId 不是字符串
-
-        self.assertIsNone(claude_hook._read_run_id("sess-wrong-shape"))
-        self.assertFalse(path.exists())
+    # ── 读不出可用内容的状态文件是垃圾：读它不删（删也是改状态，要持锁），持锁的 SessionEnd 清掉 ──
+    def test_unusable_state_files_read_as_none_and_are_cleared_by_session_end_under_the_lock(self):
+        for name, content in (("sess-corrupt", "not json at all"), ("sess-wrong-shape", json.dumps({"runId": 12345}))):
+            path = claude_hook._state_file(name)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+            self.assertIsNone(claude_hook._read_run_id(name))
+            self.assertTrue(path.exists(), "读不改：没有锁不动状态")
+            claude_hook.handle_session_end({"session_id": name})
+            self.assertFalse(path.exists(), "持锁的 SessionEnd 把垃圾清掉")
 
     def test_session_start_then_end_round_trip_against_fake_server(self):
         server, thread, log = _start_server(expect_token="good-token")

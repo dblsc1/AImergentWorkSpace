@@ -40,9 +40,9 @@ class LanesStub:
 @contextlib.contextmanager
 def open_lanes(browser: Browser, base: str, body: dict[str, Any] | None, *, status: int = 200,
                width: int = 1100, theme: str | None = None, reduced_motion: str | None = None,
-               clock: bool = False) -> Iterator[tuple[Any, LanesStub]]:
+               clock: bool = False, has_touch: bool = False) -> Iterator[tuple[Any, LanesStub]]:
     context = browser.new_context(viewport={"width": width, "height": 900}, timezone_id="Asia/Shanghai",
-                                  reduced_motion=reduced_motion)
+                                  reduced_motion=reduced_motion, has_touch=has_touch)
     page = context.new_page()
     if clock:
         page.clock.install()
@@ -68,19 +68,19 @@ def rows(page) -> list[str]:
 def test_lanes_cards_human_pinned_then_waiting_then_by_activity(browser, static_base_url) -> None:
     with open_lanes(browser, static_base_url, fx.LANES_FULL) as (page, stub):
         page.wait_for_selector("#lanes-panel:not([hidden]) .hcl-card")
-        # 最近 3 小时（07:20–10:20），2026-10-03 起按卡片排：人钉在最前；在等你的 plot 浮上来；
-        # 其余按视窗内活跃分钟倒序：old-job 180 > docs 105 > garden 90 > codex 70 > tests 20
-        assert rows(page) == ["我", "plot", "old-job", "docs", "garden", "codex", "tests"]
+        # 最近 3 小时（07:20–10:20），卡片排：人钉在最前；2026-10-08 起按档位：在等你的 plot → 在跑干活
+        # （old-job 180 > garden 90 > codex 70 分）→ 在跑空闲 tests → 已结束 docs（105 分也垫底）
+        assert rows(page) == ["我", "plot", "old-job", "garden", "codex", "tests", "docs"]
         # 前 5 张代理卡展开（+ 人那张），第 6 张收进「还有 1 个」，默认收着
         top = page.eval_on_selector_all("#lanes-view > .hcl-deck > .hcl-card", "ns => ns.map(n => n.dataset.runId || 'me')")
-        assert top == ["me", "run_c", "run_e", "run_d", "run_a", "run_b"]
+        assert top == ["me", "run_c", "run_e", "run_a", "run_b", "run_f"]
         assert page.text_content("#lanes-view details.hcl-fold > summary") == "还有 1 个"
-        assert not page.is_visible("[data-run-id=run_f]")
+        assert not page.is_visible("[data-run-id=run_d]")
         page.click("#lanes-view details.hcl-fold > summary")
-        assert page.is_visible("[data-run-id=run_f]")
+        assert page.is_visible("[data-run-id=run_d]")
         # 卡头：相位胶囊 + 活跃分钟；在等你的那张单独标出来
         assert page.text_content("[data-run-id=run_c] .hcl-pill") == "等你回话"
-        assert page.text_content("[data-run-id=run_c] .hcl-stat") == "活跃 50 分 · 最近 10:12"
+        assert page.text_content("[data-run-id=run_c] .hcl-stat") == "活跃 50 分 · 看了 4 分 · 最近 10:12"
         assert page.text_content("[data-run-id=run_d] .hcl-pill") == "已结束"
         assert page.text_content("[data-run-id=run_d] .hcl-stat") == "活跃 105 分 · 09:15 结束"
         assert page.text_content("[data-run-id=run_e] .hcl-stat") == "活跃 180 分 · 最近 9/29 21:00"
@@ -102,7 +102,7 @@ def test_lanes_cards_human_pinned_then_waiting_then_by_activity(browser, static_
 
 def seg_classes(page, run_id: str) -> list[str]:
     return page.eval_on_selector_all(
-        f"[data-run-id={run_id}] .hcl-seg", "ns => ns.map(n => n.className)")
+        f"[data-run-id={run_id}] .hcl-seg:not(.hcl-attn)", "ns => ns.map(n => n.className)")
 
 
 def test_phase_segments_merge_and_colour_by_class_and_token(browser, static_base_url) -> None:
@@ -185,19 +185,20 @@ def test_tooltip_names_phase_range_and_duration(browser, static_base_url) -> Non
         assert tip.text_content() == "garden · 等你批准（Bash） · 08:55–09:00（5 分）"
         # 在场细带：程序 + 标题只当文本（标题里的 <b> 原样显示，不是标签）
         page.hover(".hcl-seg.hcl-presence:not(.is-afk)")
-        assert tip.text_content() == "code · <b>plot.gd</b> — garden — VS Code · 09:30–10:05"
+        assert tip.text_content() == "code · <b>plot.gd</b> — garden — VS Code · 09:30–10:05（35 分）"
         assert page.locator("#lanes-view b").count() == 0
 
 
-def test_connectors_reply_lines_and_attend_band(browser, static_base_url) -> None:
+def test_connectors_reply_lines_and_attention_bars(browser, static_base_url) -> None:
     with open_lanes(browser, static_base_url, fx.LANES_FULL) as (page, _):
         page.wait_for_selector("#lanes-view .hcl-reply")
-        # 卡片各自分开：回话 / 在看画在该代理自己的轨道上（garden 两次回话、plot 一次回话 + 一段在看）
+        # 卡片各自分开：回话 / 你在看画在该代理自己的轨道上（garden 两次回话 + 两段在看、plot 一次回话 + 一段在看）
         per_run = page.evaluate("""() => Object.fromEntries([...document.querySelectorAll('#lanes-view [data-run-id]')]
             .map(c => [c.dataset.runId, [c.querySelectorAll('.hcl-track .hcl-reply').length,
-                                         c.querySelectorAll('.hcl-track .hcl-attend').length]]))""")
-        assert per_run == {"run_c": [1, 1], "run_e": [0, 0], "run_d": [0, 0], "run_a": [2, 0],
+                                         c.querySelectorAll('.hcl-track .hcl-attn').length]]))""")
+        assert per_run == {"run_c": [1, 1], "run_e": [0, 0], "run_d": [0, 0], "run_a": [2, 2],
                            "run_b": [0, 0], "run_f": [0, 0]}
+        assert page.locator("#lanes-view .hcl-attend").count() == 0, "v2.17 之前那条半透明的「在看」带子不再画"
         assert page.locator("#lanes-view .hcl-reply").count() == 3
         # 「现在」每张卡的轨道上各一根，横向位置一致（各卡的轨道与顶上的时间轴对齐）
         xs = page.eval_on_selector_all("#lanes-view > .hcl-deck .hcl-now", "ns => ns.map(n => n.getBoundingClientRect().left)")
@@ -222,6 +223,12 @@ def test_truncated_says_there_is_more(browser, static_base_url) -> None:
     with open_lanes(browser, static_base_url, fx.LANES_FULL) as (page, _):
         page.wait_for_selector("#lanes-view .hcl-card")
         assert page.locator("#lanes-view .hcl-more").count() == 0
+
+
+def test_folded_runs_say_how_many_were_folded(browser, static_base_url) -> None:
+    with open_lanes(browser, static_base_url, fx.folded()) as (page, _):
+        page.wait_for_selector("#lanes-view .hcl-more")
+        assert page.text_content("#lanes-view .hcl-more") == "较早的 12 段已折叠"
 
 
 def test_empty_day_still_shows_human_lane(browser, static_base_url) -> None:
@@ -328,10 +335,44 @@ def test_sort_waiting_first_then_activity_then_recency(browser, static_base_url)
     with open_lanes(browser, static_base_url, fx.LANES_EMPTY) as (page, _):
         page.wait_for_function("() => window.HoneycombLanes && window.HoneycombLanes.sortByActivity")
         r = page.evaluate(SORT_JS)
-        # 在等你的两条在最前（之间也按活跃：ask 20 分 > perm 2 分）；其余按活跃；30 分打平的按最近转入
-        assert r["got"] == ["ask", "perm", "busy", "tieNew2", "tieOld", "tieNew", "endedWait", "idle"]
+        # 在等你的两条在最前；再在跑干活、在跑空闲（按活跃；30 分打平的按最近转入）；已结束的垫底
+        assert r["got"] == ["ask", "perm", "busy", "tieNew2", "tieOld", "tieNew", "idle", "endedWait"]
         assert r["untouched"], "不许改入参"
         assert r["act"] == 1800 and r["clipped"] == 1800, "活跃秒数只算视窗内、不算空闲"
+
+
+TIER_JS = """() => {
+  const L = window.HoneycombLanes, at = s => '2026-09-30T' + s + ':00+08:00';
+  const now = Date.parse(at('10:00')), v0 = Date.parse(at('09:00'));
+  const run = (id, start, phases, end) => ({runId: id, startAt: at(start), endAt: end ? at(end) : null,
+    phases: phases.map(([t, p]) => ({at: at(t), phase: p}))});
+  const agents = [
+    run('endedHeavy', '09:00', [['09:00', 'working']], '09:55'),                  // 55 分但已结束
+    run('idleLive', '09:00', [['09:00', 'working'], ['09:50', 'idle']]),           // 50 分，空闲
+    run('errLive', '09:30', [['09:30', 'working'], ['09:55', 'error']]),           // 30 分，出错
+    run('workLight', '09:58', [['09:58', 'working']]),                             // 2 分，干活
+    run('waitLight', '09:59', [['09:59', 'waiting_input']]),                       // 1 分，在等
+  ];
+  return L.sortByActivity(agents, v0, now, now).map(r => r.runId);
+}"""
+
+
+def test_sort_tiers_live_working_beats_ended_heavy(browser, static_base_url) -> None:
+    with open_lanes(browser, static_base_url, fx.LANES_EMPTY) as (page, _):
+        page.wait_for_function("() => window.HoneycombLanes && window.HoneycombLanes.sortByActivity")
+        assert page.evaluate(TIER_JS) == ["waitLight", "workLight", "errLive", "idleLive", "endedHeavy"]
+
+
+def test_live_working_never_folded_even_beyond_five(browser, static_base_url) -> None:
+    d = copy.deepcopy(fx.LANES_FULL)
+    d["agents"] = [fx.run(f"w{i}", f"w{i}", fx.at("09:00"), phases=[(fx.at("09:00"), "working", None)])
+                   for i in range(7)] + \
+                  [fx.run("old", "old", fx.at("08:00"), end=fx.at("09:50"), phases=[(fx.at("08:00"), "working", None)])]
+    d["interactions"] = []
+    with open_lanes(browser, static_base_url, d, clock=True) as (page, _):
+        page.wait_for_selector("#lanes-view .hcl-card")
+        assert page.locator("#lanes-view > .hcl-deck > .hcl-card[data-run-id^=w]").count() == 7
+        assert page.eval_on_selector_all("#lanes-view .hcl-fold .hcl-card", "ns => ns.map(n => n.dataset.runId)") == ["old"]
 
 
 STATUS_JS = """() => {
@@ -432,3 +473,295 @@ def test_fold_disappearing_moves_focus_to_heading_and_open_state_comes_back(brow
         poll()
         assert page.text_content("#lanes-view .hcl-fold > summary") == "还有 2 个"
         assert page.get_attribute("#lanes-view .hcl-fold", "open") is not None
+
+
+# ── 2026-10-08 结束超过 3 小时的运行不画（lanes.js recentRuns），与选的窗口无关 ─────────
+
+def aged() -> dict[str, Any]:
+    """现在 10:20。stale 06:10 结束（4 小时多）、edge 07:20 结束（整 3 小时）→ 不画；recent 08:20 结束（2 小时）→ 画；
+    在跑的 6 个（含昨晚起、超时挂着的 old-job）都画。"""
+    d = copy.deepcopy(fx.LANES_FULL)
+    work = lambda t: [(fx.at(t), "working", None)]  # noqa: E731
+    d["agents"] = [fx.run("stale", "stale", fx.at("05:00"), end=fx.at("06:10"), phases=work("05:00")),
+                   fx.run("edge", "edge", fx.at("06:00"), end=fx.at("07:20"), phases=work("06:00")),
+                   fx.run("recent", "recent", fx.at("07:30"), end=fx.at("08:20"), phases=work("07:30")),
+                   fx.run("run_e", "old-job", fx.at("21:00", "2026-09-29"), overdue=True)] + \
+                  [fx.run(f"w{i}", f"w{i}", fx.at("09:00"), phases=work("09:00")) for i in range(5)]
+    d["interactions"] = []
+    return d
+
+
+@pytest.mark.parametrize("hours", ["3", "0"])
+def test_runs_ended_over_three_hours_ago_are_hidden_in_both_windows(browser, static_base_url, hours) -> None:
+    with open_lanes(browser, static_base_url, aged()) as (page, stub):
+        page.wait_for_selector("#lanes-view .hcl-card")
+        if hours == "0":
+            page.click(".lanes-range [data-hours='0']")
+            page.wait_for_function("() => document.querySelectorAll('#lanes-view .hcl-tick-label')[0].textContent === '00:00'")
+        ids = page.eval_on_selector_all("#lanes-view [data-run-id]", "ns => ns.map(n => n.dataset.runId)")
+        assert sorted(ids) == ["recent", "run_e", "w0", "w1", "w2", "w3", "w4"]
+        # 数的也只是画出来的：6 个在干活（都不折叠），折叠区里只有刚结束的那一个
+        assert page.text_content("#lanes-state") == "6 个在干活"
+        assert page.text_content("#lanes-view .hcl-fold > summary") == "还有 1 个"
+        assert page.eval_on_selector_all("#lanes-view .hcl-fold [data-run-id]", "ns => ns.map(n => n.dataset.runId)") == ["recent"]
+        said = page.text_content("#lanes-view [data-hcl-summary]")
+        assert "recent：已结束" in said and "stale" not in said and "edge" not in said
+
+
+def test_only_long_ended_runs_left_shows_the_empty_state(browser, static_base_url) -> None:
+    d = aged()
+    d["agents"] = d["agents"][:2]
+    with open_lanes(browser, static_base_url, d) as (page, _):
+        page.wait_for_selector("#lanes-view .hcl-card")
+        page.click(".lanes-range [data-hours='0']")
+        page.wait_for_function("() => document.querySelectorAll('#lanes-view .hcl-tick-label')[0].textContent === '00:00'")
+        assert rows(page) == ["我"]
+        assert page.text_content("#lanes-view .hcl-empty") == "这段时间没有代理在跑。"
+        assert page.locator("#lanes-view .hcl-fold").count() == 0 and page.text_content("#lanes-state") == ""
+        # 纯函数：不改入参
+        assert page.evaluate("""(a) => { const before = JSON.stringify(a);
+            const got = window.HoneycombLanes.recentRuns(a, Date.parse('2026-09-30T10:20:00+08:00')).map(r => r.runId);
+            return [got, JSON.stringify(a) === before]; }""", aged()["agents"]) == \
+            [["recent", "run_e", "w0", "w1", "w2", "w3", "w4"], True]
+
+
+# ── 2026-10-08 换位动效（lanes.js motion()）。不看时间：重画那一刻同步抓动画对象，再等它们的 finished ─────────
+
+# 包一层 render：每次画完当场记下「谁身上挂着换位动画」（此刻一定还在跑），并留着入参给测试自己再画一次
+SPY_JS = """() => {
+  const L = window.HoneycombLanes, real = L.render;
+  window.__draws = [];
+  L.render = function (root, data, opts) {
+    const out = real.apply(this, arguments);
+    window.__args = [root, data, opts];
+    window.__draws.push(document.getAnimations().filter(a => a.id === 'hcl-move').map(a => {
+      const n = a.effect.target, kf = a.effect.getKeyframes(), t = a.effect.getTiming();
+      return {id: n.dataset.runId, state: a.playState, delay: t.delay, duration: t.duration,
+              props: [...new Set(kf.flatMap(k => Object.keys(k)))].filter(k => k === 'transform' || k === 'opacity').sort(),
+              from: kf[0].transform || '', scaled: kf.some(k => /scale\\(1\\.0[1-9]/.test(k.transform || '')),
+              rising: n.classList.contains('is-rising'), now: getComputedStyle(n).transform};
+    }));
+    return out;
+  };
+}"""
+SETTLE_JS = """async () => {
+  await Promise.all(document.getAnimations().filter(a => a.id === 'hcl-move').map(a => a.finished));
+  const cards = [...document.querySelectorAll('#lanes-view [data-run-id]')];
+  return {left: document.getAnimations().filter(a => a.id === 'hcl-move').length,
+          transforms: [...new Set(cards.map(n => getComputedStyle(n).transform))],
+          rising: document.querySelectorAll('#lanes-view .is-rising').length,
+          order: cards.map(n => n.dataset.runId),
+          rank: window.HoneycombLanes.sortByActivity(window.__args[1].agents, window.__args[2].viewStart,
+                    Date.parse(window.__args[1].now), Date.parse(window.__args[1].now)).map(r => r.runId)};
+}"""
+REPOLL_JS = "() => document.dispatchEvent(new Event('visibilitychange'))"    # 页面可见时 = 马上再拉一次
+
+
+def reordered() -> dict[str, Any]:
+    """codex、tests 都转成在等你：codex（70 分）、plot（50）、tests（25）→ 两张往上走，其余往下让。"""
+    d = copy.deepcopy(fx.LANES_FULL)
+    by = {r["runId"]: r for r in d["agents"]}
+    by["run_b"]["phases"].append({"at": fx.at("10:18"), "phase": "waiting_permission", "detail": "Bash"})
+    by["run_f"]["phases"].append({"at": fx.at("10:15"), "phase": "waiting_input", "detail": None})
+    return d
+
+
+def redraw(page, stub: LanesStub, body: dict[str, Any]) -> list[dict[str, Any]]:
+    page.evaluate(SPY_JS)
+    stub.body = body
+    page.evaluate(REPOLL_JS)
+    page.wait_for_function("() => window.__draws.length > 0")
+    return page.evaluate("() => window.__draws[0]")
+
+
+def dy(move: dict[str, Any]) -> float:
+    """动画起点的竖向位移（translate(Xpx, Ypx) …）：> 0 = 从下面上来。"""
+    return float(move["from"].split(",")[1].split("px")[0])
+
+
+def test_first_paint_has_no_reorder_motion(browser, static_base_url) -> None:
+    with open_lanes(browser, static_base_url, fx.LANES_FULL) as (page, _):
+        page.wait_for_selector("#lanes-view .hcl-card")
+        assert page.evaluate("() => document.getAnimations().filter(a => a.id === 'hcl-move').length") == 0
+        assert page.locator("#lanes-view .is-phase-changed, #lanes-view .is-rising").count() == 0
+
+
+def test_reorder_moves_up_scaled_and_staggered_others_float_down(browser, static_base_url) -> None:
+    with open_lanes(browser, static_base_url, fx.LANES_FULL) as (page, stub):
+        page.wait_for_selector("#lanes-view .hcl-fold")
+        page.focus("#lanes-view .hcl-fold > summary")
+        page.keyboard.press("Enter")
+        moves = {m["id"]: m for m in redraw(page, stub, reordered())}
+        # 往上走的两张：在跑、从下面的旧位置出发、略放大、压在上面；排队：靠上的先走
+        for rid in ("run_b", "run_f"):
+            m = moves[rid]
+            assert m["state"] == "running" and m["props"] == ["transform"] and m["scaled"] and m["rising"], m
+            assert dy(m) > 1, m
+        assert moves["run_b"]["now"] not in ("none", "matrix(1, 0, 0, 1, 0, 0)"), "此刻还在旧位置上"
+        assert (moves["run_b"]["delay"], moves["run_f"]["delay"]) == (0, 50)
+        # 被挤下去的：只平移（不放大、不抬起），比往上的慢一点
+        for rid in ("run_c", "run_e", "run_a"):
+            m = moves[rid]
+            assert m["state"] == "running" and not m["scaled"] and not m["rising"], m
+            assert dy(m) < -1, m
+            assert m["duration"] > moves["run_b"]["duration"]
+        assert "run_d" not in moves, "没换位置的不动"
+        assert all(250 <= m["duration"] <= 450 for m in moves.values())
+        # 相位变了的两张：胶囊与卡边闪一下（别的不闪）
+        assert sorted(page.eval_on_selector_all("#lanes-view .is-phase-changed", "ns => ns.map(n => n.dataset.runId)")) == \
+            ["run_b", "run_f"]
+        assert page.eval_on_selector("[data-run-id=run_b] .hcl-pill", "n => getComputedStyle(n).animationName") == "hcl-pop"
+        # 走完：都回到原位（没有残留的 transform），DOM 顺序 = 排名顺序
+        end = page.evaluate(SETTLE_JS)
+        assert end["left"] == 0 and end["transforms"] == ["none"] and end["rising"] == 0, end
+        assert end["order"] == end["rank"] == ["run_b", "run_c", "run_f", "run_e", "run_a", "run_d"]
+        # 折叠区照旧开着、焦点还在开关上
+        assert page.get_attribute("#lanes-view .hcl-fold", "open") is not None
+        assert page.evaluate("() => document.activeElement.classList.contains('hcl-fold-toggle')")
+        # 页面不可见时重画不动（轮询本来就停了；这里直接再画一次）
+        hidden = page.evaluate("""(body) => {
+            Object.defineProperty(document, 'visibilityState', {value: 'hidden', configurable: true});
+            window.HoneycombLanes.render(window.__args[0], body, window.__args[2]);
+            return document.getAnimations().filter(a => a.id === 'hcl-move').length;
+        }""", fx.LANES_FULL)
+        assert hidden == 0
+        assert page.eval_on_selector("#lanes-view [data-run-id]", "n => n.dataset.runId") == "run_c"
+
+
+def test_reduced_motion_reorders_instantly(browser, static_base_url) -> None:
+    with open_lanes(browser, static_base_url, fx.LANES_FULL, reduced_motion="reduce") as (page, stub):
+        page.wait_for_selector("#lanes-view .hcl-card")
+        moves = redraw(page, stub, reordered())
+        assert [m for m in moves if "transform" in m["props"]] == [], moves
+        end = page.evaluate(SETTLE_JS)
+        assert end["transforms"] == ["none"] and end["order"] == end["rank"]
+        assert page.eval_on_selector("[data-run-id=run_b] .hcl-pill", "n => getComputedStyle(n).animationName") == "none"
+
+
+def test_new_card_fades_in_and_fold_crossing_only_fades(browser, static_base_url) -> None:
+    with open_lanes(browser, static_base_url, fx.LANES_FULL) as (page, stub):
+        page.wait_for_selector("#lanes-view .hcl-card")
+        # 新来一个在干活的 → 它淡入 + 上浮；空闲的 tests 被挤进收着的折叠区（看不见了）→ 不动
+        d = copy.deepcopy(fx.LANES_FULL)
+        d["agents"].append(fx.run("run_g", "fresh", fx.at("10:10"), phases=[(fx.at("10:10"), "working", None)]))
+        moves = {m["id"]: m for m in redraw(page, stub, d)}
+        assert moves["run_g"]["props"] == ["opacity", "transform"] and moves["run_g"]["state"] == "running"
+        assert "run_f" not in moves and not page.is_visible("[data-run-id=run_f]")
+        assert page.evaluate(SETTLE_JS)["transforms"] == ["none"]
+        # 再画回去：tests 从折叠区里出来（旧位置看不见）→ 只淡入，不飞
+        back = {m["id"]: m for m in redraw(page, stub, fx.LANES_FULL)}
+        assert back["run_f"]["props"] == ["opacity"], back
+
+
+# ─────────────────────────────────────────── 你在看：注意力的蓝条（nexus-core v2.17 的 agents[].attention）
+
+BAR = "[data-run-id=run_c] .hcl-track .hcl-attn"
+RECT = "n => { const r = n.getBoundingClientRect(); return [r.left, r.right, r.top, r.bottom]; }"
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_attention_bar_is_blue_in_its_own_subrow_on_the_shared_axis(browser, static_base_url, theme) -> None:
+    with open_lanes(browser, static_base_url, fx.LANES_FULL, theme=theme) as (page, _):
+        page.wait_for_selector(BAR)
+        # 横向：与顶上那条时间轴同一把尺（最近 3 小时：07:20 → 10:20，右边留 3%）；plot 的那一段是 10:00–10:04
+        axis = page.eval_on_selector("#lanes-view .hcl-axis", RECT)
+        v0, v1 = 7 * 60 + 20, 10 * 60 + 20 + 180 * 0.03
+
+        def x(minute: float) -> float:
+            return axis[0] + (minute - v0) / (v1 - v0) * (axis[1] - axis[0])
+
+        bar = page.eval_on_selector(BAR, RECT)
+        assert abs(bar[0] - x(600)) < 1 and abs(bar[1] - x(604)) < 1, (bar, x(600), x(604))
+        # 纵向：自己的一小行，在相位条的正下方、仍在这条线的轨道里（不靠颜色也分得出）
+        track = page.eval_on_selector("[data-run-id=run_c] .hcl-track", RECT)
+        phases = page.eval_on_selector_all("[data-run-id=run_c] .hcl-track .hcl-seg[class*='hcl-ph-']", "ns => ns.map(%s)" % RECT)
+        assert max(p[3] for p in phases) <= bar[2] + 0.5 and bar[3] <= track[3] + 0.5 and bar[3] - bar[2] >= 3
+        # 颜色 = 设计 token --attn（亮暗各一个值），与相位的绿 / 黄、人的青都不同
+        colours = page.evaluate("""() => {
+            const probe = document.createElement('i'); document.body.appendChild(probe);
+            const tok = name => { probe.style.background = 'var(' + name + ')'; return getComputedStyle(probe).backgroundColor; };
+            return { bar: getComputedStyle(document.querySelector('%s')).backgroundColor, attn: tok('--attn'),
+                     others: ['--agent-work', '--agent-wait', '--fact', '--focus', '--plan'].map(tok) };
+        }""" % BAR)
+        assert colours["bar"] == colours["attn"] and colours["attn"] not in colours["others"]
+        # 图例与字：「你在看」取代以前的「在看」；卡头多一句「看了 N 分」；读屏摘要也说
+        legend = page.eval_on_selector_all("#lanes-view .hcl-legend .hcl-key", "ns => ns.map(n => n.textContent)")
+        assert "你在看" in legend and "在看" not in legend
+        assert page.eval_on_selector("#lanes-view .hcl-legend .hcl-swatch.hcl-attn",
+                                     "n => getComputedStyle(n).backgroundColor") == colours["attn"]
+        assert page.text_content("[data-run-id=run_a] .hcl-stat") == "活跃 90 分 · 看了 12 分 · 最近 10:00"
+        assert "看了" not in page.text_content("[data-run-id=run_b] .hcl-stat"), "没看过的不写"
+        summary = page.text_content("#lanes-view [data-hcl-summary]")
+        assert "plot：等你回话，你看了 4 分" in summary and "garden：在干活，你看了 12 分" in summary
+        page.hover(BAR)
+        assert page.text_content("#lanes-view .hcl-tip") == "plot · 你在看 · 10:00–10:04（4 分）"
+        # 人那条线上，在看 garden 的那一段在场带染成同一个蓝（半透明），别的段不染
+        marked = page.eval_on_selector_all(".hcl-row-human .hcl-seg.hcl-presence",
+                                           "ns => ns.map(n => n.classList.contains('is-on-agent'))")
+        assert marked == [False, False, True]
+
+
+@pytest.mark.parametrize("reduced", [None, "reduce"])
+def test_growing_attention_span_has_a_live_edge_unless_reduced_motion(browser, static_base_url, reduced) -> None:
+    with open_lanes(browser, static_base_url, fx.LANES_FULL, reduced_motion=reduced) as (page, _):
+        page.wait_for_selector(BAR)
+        # 只有「到此刻还在看」的那一段有活边：garden 的 10:10–10:20；plot 的 10:04 就结束了
+        live = page.eval_on_selector_all("#lanes-view .hcl-attn.is-live", "ns => ns.map(n => n.closest('.hcl-card').dataset.runId)")
+        assert live == ["run_a"]
+        name = page.eval_on_selector("#lanes-view .hcl-attn.is-live", "n => getComputedStyle(n, '::after').animationName")
+        assert (name == "none") is (reduced == "reduce")
+        assert page.eval_on_selector(BAR, "n => getComputedStyle(n, '::after').content") == "none"
+
+
+@pytest.mark.parametrize("width", [320, 390, 1100])
+def test_three_second_switching_draws_a_serial_timeline(browser, static_base_url, width) -> None:
+    """每 3 秒切一次窗口：人那条线是一段接一段、互不重叠的细带；两条代理线上的蓝条此起彼伏，从不同时亮。"""
+    with open_lanes(browser, static_base_url, fx.fast_switching(), width=width) as (page, _):
+        page.wait_for_selector("[data-run-id=run_a] .hcl-attn")
+        # 位置按时间算（left / 右端的百分比）：一段的右端就是下一段的左端。画出来每段至少 2 像素宽（看得见），所以不量像素
+        spans = page.eval_on_selector_all(".hcl-row-human .hcl-seg.hcl-presence",
+                                          "ns => ns.map(n => [parseFloat(n.style.left), parseFloat(n.style.width.slice(5))])")
+        assert len(spans) == 40      # [左端 %, 宽 %]（浏览器把 calc(右% - 左%) 化简成一个百分比，留 6 位有效数字）
+        assert all(a[1] > 0 and a[0] + a[1] <= b[0] + 1e-3 for a, b in zip(spans, spans[1:])), "在场的段不重叠"
+        bars = page.evaluate("""() => ['run_a', 'run_c'].map(id => [...document.querySelectorAll(
+            '[data-run-id=' + id + '] .hcl-attn')].map(n => [n.style.left, n.style.width]))""")
+        assert len(bars[0]) == 14 and len(bars[1]) == 13
+        assert not set(map(tuple, bars[0])) & set(map(tuple, bars[1])), "人同一时刻只看一个"
+        assert page.text_content("[data-run-id=run_a] .hcl-stat").startswith("活跃 90 分 · 看了 1 分 · ")
+        tips = page.eval_on_selector_all(".hcl-row-human .hcl-seg.hcl-presence", "ns => ns.map(n => n.dataset.tip)")
+        assert tips[0] == "ptyxis · garden · 10:18:00–10:18:03（3 秒）"
+        over = page.evaluate("""(w) => [...document.getElementById('lanes-panel').querySelectorAll('*')].filter(n => {
+            const r = n.getBoundingClientRect();
+            return r.width && (r.right > w + 0.5 || r.left < -0.5) && !n.closest('.hcl-tip');
+        }).map(n => n.className)""", width)
+        assert over == []
+
+
+# ── 2026-10-09 失联（nexus-core v2.18）：会发心跳的运行 30 分钟没信号 ─────────────────────────
+
+def test_lost_runs_are_grey_rank_after_live_idle_and_are_not_counted(browser, static_base_url) -> None:
+    d = copy.deepcopy(fx.LANES_FULL)
+    work = lambda t: [(fx.at(t), "working", None)]  # noqa: E731
+    gone = {**fx.run("gone", "gone", fx.at("09:00"), phases=work("09:00")), "lost": True, "lastSeenAt": fx.at("09:40")}
+    dead = {**fx.run("dead", "dead", fx.at("08:00"), end=fx.at("09:00"), phases=work("08:00")), "outcome": "lost"}
+    d["agents"] = [gone, dead, fx.run("busy", "busy", fx.at("09:30"), phases=work("09:30")),
+                   fx.run("idle", "idle", fx.at("09:00"), phases=work("09:00") + [(fx.at("09:05"), "idle", None)])]
+    d["interactions"] = []
+    with open_lanes(browser, static_base_url, d) as (page, _):
+        page.wait_for_selector("#lanes-view [data-run-id=gone]")
+        ids = page.eval_on_selector_all("#lanes-view [data-run-id]", "ns => ns.map(n => n.dataset.runId)")
+        assert ids == ["busy", "idle", "gone", "dead"]  # 在跑的 → 失联 → 已结束
+        pill = lambda rid: page.eval_on_selector(  # noqa: E731
+            f"[data-run-id={rid}] .hcl-pill", "n => [n.textContent, n.classList.contains('is-ended')]")
+        assert pill("gone") == ["失联", True] and pill("dead") == ["失联结束", True]
+        assert page.get_attribute("[data-run-id=gone]", "data-phase") == "lost"
+        # 段止于最后一次信号（09:40），不再跟着「现在」闪
+        assert seg_classes(page, "gone") == ["hcl-seg hcl-ph-working"]
+        page.hover("[data-run-id=gone] .hcl-seg")
+        tip = page.locator("#lanes-view .hcl-tip")
+        tip.wait_for(state="visible")
+        assert tip.text_content() == "gone · 在干活 · 09:00–09:40（40 分）"
+        assert "最后信号" in page.text_content("[data-run-id=gone] .hcl-stat")
+        assert page.text_content("#lanes-state") == "1 个在干活"  # 失联的那个不算
+        said = page.text_content("#lanes-view [data-hcl-summary]")
+        assert "gone：失联" in said and "dead：失联结束" in said

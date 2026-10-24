@@ -1,7 +1,7 @@
 """在场心跳 + attend 连线（契约 v2.4「在场心跳」「连线」两节）。
 
 活状态、只留 2 小时、写入时清理、每设备 500 段、每租户 20 台设备、租户隔离、不进导出；
-心跳标题命中在跑运行的 match 记 attend（45 秒内延长）。
+心跳标题包含在跑运行的 match 记 attend（45 秒内延长）。v2.17 带 spans 的心跳见 test_attention.py。
 """
 
 from __future__ import annotations
@@ -27,9 +27,11 @@ def _db():
 def clock(monkeypatch):
     """把心跳的服务端时钟钉在 T0 + 偏移（秒）。"""
     from app.modules.activity import presence  # noqa: PLC0415
+    from app.modules.timer import service as timer  # noqa: PLC0415
 
     state = {"t": T0}
     monkeypatch.setattr(presence, "_now", lambda: state["t"])
+    monkeypatch.setattr(timer, "_now", lambda: state["t"])  # 运行的起点同一个钟：attend 早于起点的部分会被钳掉
 
     def at(seconds):
         state["t"] = T0 + timedelta(seconds=seconds)
@@ -152,9 +154,11 @@ def _inter(run_id):
 
 
 def test_attend_created_extended_and_split(client, clock):
+    """老检测程序（不带 spans）：仍是 v2.4 的规则——标题不分大小写**包含**运行的 match，命中几条记几条
+    （v2.17.1：相等规则只管带 spans 的心跳，见 test_attention.py）。"""
     hit = _start(client, match="Garden")
     both = _start(client, match="plot.gd")
-    none = _start(client)  # 没给 match：永远没有 attend
+    none = _start(client, label="plot.gd — garden")  # 没给 match：老规则下永远没有 attend（label 不认）
     miss = _start(client, match="kitchen")
     for sec in (0, 30):
         clock(sec)
@@ -168,19 +172,21 @@ def test_attend_created_extended_and_split(client, clock):
                 {"kind": "attend", "at": iso(100), "until": iso(100)}]
     assert _inter(hit) == expected and _inter(both) == expected
     assert _inter(none) == [] and _inter(miss) == []
+    spans = _db()["activity_presence"].find_one({"deviceId": "dev_1"})["spans"]
+    assert not any("runId" in s for s in spans), "同时包含两条运行的 match：分不清，时间线上不写 runId"
 
 
 def test_attend_tenant_isolated_and_capped(client, clock, monkeypatch):
     from app.modules.timer import agent_phases  # noqa: PLC0415
 
-    monkeypatch.setattr(agent_phases, "MAX_INTERACTIONS", 1)
+    monkeypatch.setattr(agent_phases, "MAX_ATTENDS", 1)
     a_run = _start(client, headers=A, match="garden")
     clock(0)
-    _beat(client, headers=B)
+    _beat(client, headers=B, title="garden")
     assert _inter(a_run) == []
-    _beat(client, headers=A)
+    _beat(client, headers=A, title="garden")
     clock(500)
-    _beat(client, headers=A)  # 超了不再记，不报错
+    _beat(client, headers=A, title="garden")  # 超了不再记，不报错
     assert len(_inter(a_run)) == 1
 
 

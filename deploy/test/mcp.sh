@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# MCP 只读工具（contracts/mcp.tools.v1）从门外验：设备令牌（auth.gate v1.3）经网关调 MCP，
+# MCP 工具（contracts/mcp.tools.v1 传输 + mcp.tools.v2 工具集）从门外验：设备令牌（auth.gate v1.3）经网关调 MCP，
 # 两个账号的数据互相看不见；令牌开不了聊天后端；带陌生 Origin 403；时间缺偏移 400。
 # 前提：同 tokens.sh（alice、bob 两个账号，密码都是 $1，严格租户，设了 AUTH_SECRET，站点已起好）。
 # 在 deploy/ 下跑（命令行发令牌要用 compose）。
@@ -38,24 +38,18 @@ check "没登录调 MCP 被拒（302 去登录页）" \
 check "令牌 initialize" \
   "$(mcp "$TOK" initialize '{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}' \
      | py 'print(r["result"]["protocolVersion"], list(r["result"]["capabilities"]))')" "2025-06-18 ['tools']"
-check "tools/list：12 个工具，只有 propose_ 那两个不是只读" \
+check "tools/list：15 个工具（write 令牌，mcp.tools.v2），不是只读的只有 6 个写工具" \
   "$(mcp "$TOK" tools/list '{}' | py 't=r["result"]["tools"]; print(len(t), [x["name"] for x in t if not x["annotations"]["readOnlyHint"]])')" \
-  "12 ['propose_detector_rules', 'propose_activity_matches']"
-# detector.rules.v1：经 MCP 起草规则 → 草稿在，但生效规则没变（应用只有人能，令牌直连 403）
-V=$("${C[@]}" -b "$A" "$BASE/api/core/detector/rules" | py 'print(r["version"])')  # tokens.sh 可能已经存过
-check "经 MCP 起草分类规则（草稿，不生效）" \
-  "$(mcp "$TOK" tools/call "{\"name\":\"propose_detector_rules\",\"arguments\":{\"rules\":[{\"title\":\"mcp-ci\",\"taskId\":\"$T\"}],\"summary\":\"ci\"}}" \
-     | py 's=r["result"]["structuredContent"]; print(r["result"]["isError"], s["applied"], s["diff"]["added"] != [])')" "False False True"
-check "起草后生效规则没变" \
-  "$("${C[@]}" -b "$A" "$BASE/api/core/detector/rules" | py 'print(r["version"])')" "$V"
-D=$("${C[@]}" -b "$A" "$BASE/api/core/detector/rules/drafts/current" | py 'print(r["draft"]["id"])')
-check "令牌应用草稿被拒" "$(post "/api/core/detector/rules/drafts/$D/apply" '' -H "Authorization: Bearer $TOK" \
-  -H "If-Match: \"$V\"" -o /dev/null -w '%{http_code}')" 403
-check "网页会话应用草稿" "$(post "/api/core/detector/rules/drafts/$D/apply" '' -b "$A" -H "If-Match: \"$V\"" \
-  | py 'print(r["version"], [x["title"] for x in r["rules"]])')" "$((V + 1)) ['mcp-ci']"
-check "bob 看不到 alice 的规则" \
-  "$(mcp "$BOB" tools/call '{"name":"get_detector_rules","arguments":{}}' | py 'print(r["result"]["structuredContent"]["rules"])')" "[]"
-# nexus-core v2.7 AI 匹配：设备令牌上传一段活动 → 经 MCP 配任务（只是建议）→ 令牌直连 matches / unmatch 403
+  "15 ['CRUD_Windows_Classify_Rules', 'CRUD_Windowsblock_Classify_Rules', 'CRUD_Windowsblock', 'CRUD_Honeycomb', 'Submit_Report', 'Submit_Questions_To_Human']"
+check "initialize 的 instructions 只有一句" \
+  "$(mcp "$TOK" initialize '{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}' \
+     | py 'print(r["result"]["instructions"])')" "第一次用先调 Get_Started"
+check "v1 工具名只回迁移说明" \
+  "$(mcp "$TOK" tools/call '{"name":"get_task_tree","arguments":{}}' \
+     | py 's=r["result"]["structuredContent"]; print(r["result"]["isError"], s["deprecated"], s["use"])')" "False True Get_View"
+check "bob 看不到 alice 的第一级规则" \
+  "$(mcp "$BOB" tools/call '{"name":"Get_Rules","arguments":{"level":1}}' | py 'print(r["result"]["structuredContent"]["level1"]["rules"])')" "[]"
+# nexus-core v2.7 AI 匹配：设备令牌上传一段活动 → 令牌直连 matches / unmatch 403（MCP v2 不再包装它们）
 SEG=$(python3 -c "
 import json; from datetime import datetime, timedelta, timezone
 e = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=5)
@@ -66,32 +60,42 @@ S=$("${C[@]}" -b "$A" "$BASE/api/core/activity/suggestions" | py 'print([i["id"]
 M="{\"matches\":[{\"id\":\"$S\",\"taskId\":\"$T\",\"confidence\":0.5}]}"
 check "令牌直连 matches 被拒" "$(post /api/core/activity/suggestions/matches "$M" -H "Authorization: Bearer $TOK" -o /dev/null -w '%{http_code}')" 403
 check "令牌直连 unmatch 被拒" "$(post "/api/core/activity/suggestions/$S/unmatch" '' -H "Authorization: Bearer $TOK" -o /dev/null -w '%{http_code}')" 403
-check "经 MCP 给活动配任务（只是建议，不入账）" \
-  "$(mcp "$TOK" tools/call "{\"name\":\"propose_activity_matches\",\"arguments\":{\"matches\":[{\"suggestionId\":\"$S\",\"taskId\":\"$T\",\"confidence\":0.6,\"reason\":\"ci\"}]}}" \
-     | py 's=r["result"]["structuredContent"]; print(r["result"]["isError"], s["matched"], s["rejected"], s["confirmed"])')" "False 1 [] False"
-check "配完仍是 pending，classifier=assistant" \
-  "$("${C[@]}" -b "$A" "$BASE/api/core/activity/suggestions" | py "print([(i['status'], i['suggestion']['taskId'] == '$T', i['suggestion']['classifier']) for i in r['items'] if i['id'] == '$S'])")" \
-  "[('pending', True, 'assistant')]"
-check "网页会话说「否」→ 任务清掉并记住" \
-  "$(post "/api/core/activity/suggestions/$S/unmatch" "{\"taskId\":\"$T\"}" -b "$A" | py "print(r['status'], r['rejectedTaskIds'] == ['$T'])")" "pending True"
-check "bob 经 MCP 配不了 alice 的建议" \
-  "$(mcp "$BOB" tools/call "{\"name\":\"propose_activity_matches\",\"arguments\":{\"matches\":[{\"suggestionId\":\"$S\",\"taskId\":\"$T\",\"confidence\":0.6}]}}" \
-     | py 's=r["result"]["structuredContent"]; print(s["matched"], len(s["rejected"]))')" "0 1"
-check "alice 经 MCP 看得到自己的任务与路径" \
-  "$(mcp "$TOK" tools/call '{"name":"get_task_tree","arguments":{}}' \
-     | py "print([i['path'] for i in r['result']['structuredContent']['items'] if i['taskId']=='$T'])")" \
-  "['mcp-zone / mcp-proj / alice-mcp-task']"
+check "令牌直连也读得到历史（只读，同建议列表）" \
+  "$("${C[@]}" -H "Authorization: Bearer $TOK" "$BASE/api/core/activity/suggestions/history" -o /dev/null -w '%{http_code}')" 200
+check "alice 经 MCP 看得到自己的任务" \
+  "$(mcp "$TOK" tools/call '{"name":"Get_View","arguments":{"depth":"task"}}' \
+     | py "print([i['name'] for z in r['result']['structuredContent']['tree'] for p in z.get('children', []) for i in p.get('children', []) if i['id']=='$T'])")" \
+  "['alice-mcp-task']"
 check "bob 经 MCP 看不到 alice 的任务" \
-  "$(mcp "$BOB" tools/call '{"name":"get_task_tree","arguments":{"includeDone":true,"includeEphemeral":true}}' \
+  "$(mcp "$BOB" tools/call '{"name":"Get_View","arguments":{"depth":"task"}}' \
      | grep -c alice-mcp-task || true)" 0
+check "经 MCP 提议新任务（只是提议，什么都没建）" \
+  "$(mcp "$TOK" tools/call "{\"name\":\"CRUD_Honeycomb\",\"arguments\":{\"op\":\"create\",\"kind\":\"task\",\"name\":\"mcp-ci-new\",\"to\":\"$P\",\"reason\":\"ci\"}}" \
+     | py 's=r["result"]; print(s["isError"], s["structuredContent"]["result"]["ok"], s["structuredContent"]["result"]["status"])')" "False True pending"
+check "提议没有直接施加（总开关没开 → 403）" \
+  "$(mcp "$TOK" tools/call "{\"name\":\"CRUD_Honeycomb\",\"arguments\":{\"op\":\"rename\",\"target\":\"$T\",\"name\":\"mcp-ci-renamed\",\"direct_apply\":true}}" \
+     | py 's=r["result"]; print(s["isError"], s["structuredContent"]["error"]["status"])')" "True 403"
+check "任务名没变" \
+  "$("${C[@]}" -b "$A" "$BASE/api/core/views/tree" | py "print([t['name'] for p in r['projects'] for t in p['tasks'] if t['id']=='$T'])")" "['alice-mcp-task']"
+check "bob 经 MCP 提议不了 alice 的项目（对不上）" \
+  "$(mcp "$BOB" tools/call "{\"name\":\"CRUD_Honeycomb\",\"arguments\":{\"op\":\"create\",\"kind\":\"task\",\"name\":\"x\",\"to\":\"$P\"}}" \
+     | py 's=r["result"]; print(s["isError"], s["structuredContent"]["error"]["status"])')" "True 400"
 check "会话 cookie 也能调 MCP" \
   "$(post /api/mcp/ '{"jsonrpc":"2.0","id":1,"method":"ping"}' -b "$A" | py 'print(r["result"])')" "{}"
-check "时间不带偏移 → isError 400" \
-  "$(mcp "$TOK" tools/call '{"name":"list_time_sessions","arguments":{"from":"2026-09-01"}}' \
-     | py 's=r["result"]; print(s["isError"], s["structuredContent"]["error"]["status"])')" "True 400"
+check "日期格式不对 → isError 400（带 example）" \
+  "$(mcp "$TOK" tools/call '{"name":"Get_History","arguments":{"fromDate":"2026/09/01"}}' \
+     | py 's=r["result"]; print(s["isError"], s["structuredContent"]["error"]["status"], "example" in s["structuredContent"]["error"])')" "True 400 True"
 check "带陌生 Origin → 403" \
   "$(mcp "$TOK" ping '{}' -H 'Origin: https://evil.example' -o /dev/null -w '%{http_code}')" 403
 check "令牌开不了聊天后端 /api/agent/（只认会话）" \
   "$("${C[@]}" -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOK" "$BASE/api/agent/sessions")" 302
+# nexus-core v2.15 让 AI 认窗口：令牌直连那三个端点都 403（MCP v2 不再包装它们）
+K=wk_00000000000000000000
+RV=$("${C[@]}" -b "$A" "$BASE/api/core/detector/rules" | py 'print(r["version"])')
+check "规则版本没变" "$("${C[@]}" -b "$A" "$BASE/api/core/detector/rules" | py 'print(r["version"])')" "$RV"
+check "令牌直连认领被拒" "$(post /api/core/activity/ai/claim '{}' -H "Authorization: Bearer $TOK" -o /dev/null -w '%{http_code}')" 403
+check "令牌直连回答被拒" "$(post /api/core/activity/ai/suggest "{\"key\":\"$K\",\"none\":true,\"reason\":\"ci\"}" -H "Authorization: Bearer $TOK" -o /dev/null -w '%{http_code}')" 403
+check "令牌替人说「不对」被拒" "$(post /api/core/activity/choice/reject "{\"key\":\"$K\"}" -H "Authorization: Bearer $TOK" -o /dev/null -w '%{http_code}')" 403
+check "网页会话对不是 AI 认的窗口说「不对」→ 404" "$(post /api/core/activity/choice/reject "{\"key\":\"$K\"}" -b "$A" -o /dev/null -w '%{http_code}')" 404
 
 [ "$fail" = 0 ] && echo "✅ MCP 全部通过" || { echo "❌ 有失败"; exit 1; }

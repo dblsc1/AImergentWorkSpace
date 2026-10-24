@@ -39,7 +39,7 @@
   // 所有请求与跳转都从它拼。没注入（单测、直接打开文件）就是 "/"。
   var BASE = (typeof self !== "undefined" && self.HONEYCOMB_BASE) || "/";
 
-  const POLL_INTERVAL_MS = 7000; // 5–10 秒一次，取中间值，沿用既有值
+  const POLL_INTERVAL_MS = 5000; // 2026-10-09：跟上检测程序 5 秒一拍的心跳（此刻的焦点），原 7 秒
 
   // ── DOM 引用 ──────────────────────────────────────────────────────
   const ringWrapEl = document.getElementById("ring-wrap");
@@ -230,9 +230,21 @@
     return `今天 · ${Math.round(seconds / 60)} 分`;
   }
 
+  // ── 此刻的焦点（2026-10-09）：没有手动计时、心跳新鲜时表芯写人此刻在哪——画法在 ring-focus.js（window.ringFocus），
+  // 这里只管切换：进（centerMode = "focus"）与出（leaveFocus）。
+  function leaveFocus() { window.ringFocus.leave(); }
+  function renderFocusCenter(focus) {
+    if (centerMode !== "focus") {
+      centerMode = "focus";
+      stopElapsedTicker();
+    }
+    window.ringFocus.render(focus);
+  }
+
   function renderIdleCenter() {
     if (centerMode === "idle") return;
     centerMode = "idle";
+    leaveFocus();
     stopElapsedTicker();
     chronoCenterEl.innerHTML =
       '<p class="idle-total" id="idle-total" hidden></p>' +
@@ -262,16 +274,22 @@
   function renderRunningCenter(current) {
     if (centerMode !== "running") {
       centerMode = "running";
+      leaveFocus();
       chronoCenterEl.innerHTML =
         '<span class="elapsed" id="elapsed-display">00:00:00</span>' +
         '<span class="task-name" id="running-task-name"></span>';
     }
+    // 计的是项目的「未分类」时间桶（nexus-core v2.9，蜂巢长按项目格起的）：只显示项目名，
+    // 不写「未分类」（仓主 2026-10-08）；它不是人起名的任务，「改任务名」按钮一并藏掉。
+    const bucket = current.task.kind === "unclassified";
     document.getElementById("running-task-name").textContent =
-      `${current.task.name} · ${current.project.name}`;
+      bucket ? current.project.name : `${current.task.name} · ${current.project.name}`;
+    const renameBtnEl = document.getElementById("rename-open-btn");
+    if (renameBtnEl) renameBtnEl.hidden = bucket;
     startElapsedTicker(current.sessionStartAt);
     chronoSvgEl.setAttribute(
       "aria-label",
-      `计时圆环，正在为『${current.task.name}』计时，占项目累计 ${current.task.shareOfProject}%`
+      `计时圆环，正在为『${bucket ? current.project.name : current.task.name}』计时，占项目累计 ${current.task.shareOfProject}%`
     );
   }
 
@@ -296,8 +314,14 @@
     const running = Boolean(current && current.running && current.project && current.task);
     if (!running) {
       lastRingKey = null;
-      renderIdleCenter();
-      refreshIdleTodayDisplay(); // 每次轮询都刷新一遍数字（renderIdleCenter 已挂载时会早退）
+      // 没在计时：心跳新鲜就写「此刻的焦点」，否则照旧「今天 · N 分 / 当前没有进行中的计时」
+      const focus = window.HoneycombFocus ? window.HoneycombFocus.describe(current) : null;
+      if (focus) {
+        renderFocusCenter(focus);
+      } else {
+        renderIdleCenter();
+        refreshIdleTodayDisplay(); // 每次轮询都刷新一遍数字（renderIdleCenter 已挂载时会早退）
+      }
       controlsRowEl.hidden = true;
       legendEl.hidden = true;
       projectSelectEl.disabled = false;
@@ -367,6 +391,7 @@
   //    GET /api/core/views/gantt（今天数据，可选，失败静默退回，见上）。
   //    两条互不阻塞：gantt 请求失败绝不能让 current 那一半也显示「连接失败」。
   async function fetchAndRender() {
+    if (document.visibilityState === "hidden") return; // 没人看就不拉；回到前台时下面的监听立刻补一次
     let current;
     try {
       const res = await fetch(BASE + "api/core/views/current");
@@ -405,4 +430,5 @@
 
   fetchAndRender();
   setInterval(fetchAndRender, POLL_INTERVAL_MS);
+  document.addEventListener("visibilitychange", fetchAndRender);
 })();

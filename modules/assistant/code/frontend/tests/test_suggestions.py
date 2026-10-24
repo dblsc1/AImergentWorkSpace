@@ -1,6 +1,6 @@
 """「待确认建议」面板（suggestions.js，nexus-core v2.2 活动建议 + v2.5 idle 段）。
 
-2026-09-30 连同本文件从 ring 搬来「AI助理」页：断言照旧，只少了「确认后刷新圆环」（这页没有圆环），
+2026-09-30 连同本文件从 ring 搬来「待批准」页：断言照旧，只少了「确认后刷新圆环」（这页没有圆环），
 多了 idle 段的几条。
 
 同本套件其余文件：真浏览器、接口全在浏览器侧桩掉，一个字节都不写库。
@@ -70,6 +70,13 @@ class SuggestStub:
             route.fulfill(status=404, content_type="application/json",
                           body=json.dumps({"detail": "任务不存在：'t_gone'"}, ensure_ascii=False))
             return
+        body = json.loads(req.post_data) if req.post_data else {}
+        if action == "unmatch" and "proposalId" in body:  # v2.8 否掉提议的新任务：去掉提议
+            item = next(i for i in self.items if i["id"] == sug_id)
+            item["suggestion"] = {k: v for k, v in item["suggestion"].items() if k != "newTask"}
+            route.fulfill(status=200, content_type="application/json", body=json.dumps(
+                {"id": sug_id, "status": "pending", "rejectedTaskIds": []}))
+            return
         if action == "unmatch":  # v2.7 人说「否」：条目留在待确认里，任务清掉并记住
             item = next(i for i in self.items if i["id"] == sug_id)
             item["rejectedTaskIds"] = [item["suggestion"]["taskId"]]
@@ -78,8 +85,10 @@ class SuggestStub:
                 {"id": sug_id, "status": "pending", "rejectedTaskIds": item["rejectedTaskIds"]}))
             return
         self.items = [i for i in self.items if i["id"] != sug_id]
-        route.fulfill(status=200, content_type="application/json",
-                      body=json.dumps({"id": sug_id, "status": action + "ed"}))
+        out = {"id": sug_id, "status": action + "ed"}
+        if action == "confirm":  # v2.8 响应带 taskId；确认提议的新任务（带 name）= 后端建了 t_new
+            out["taskId"] = body.get("taskId") or ("t_new" if "name" in body else None)
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(out))
 
 
 @contextlib.contextmanager
@@ -303,7 +312,7 @@ def open_both(browser: Browser, base: str, items, rules_stub=None):
     with _open(browser, base, routes={r"/api/core/activity/suggestions([/?]|$)": stub.route,
                                       r"/api/core/detector/rules": rules.route}) as page:
         page.wait_for_selector("#suggest-list li")
-        page.wait_for_selector("#rules-editor:not([hidden])", state="attached")
+        page.wait_for_function("() => window.assistantRules && window.assistantRules.prepend")   # 规则编辑器在「自动记录」页；这里只用 prepend
         yield page, stub, rules
 
 
@@ -361,14 +370,21 @@ def test_group_dismiss_and_ai_unmatch(browser, static_base_url):
 
 @pytest.mark.parametrize("other", [{"task": "t_read"}, {"task": None, "conf": 0}])
 def test_disagreeing_suggestions_leave_picker_empty(browser, static_base_url, other):
-    # 指向别的任务、或有的段没建议：都算不一致，要人挑
-    with open_both(browser, static_base_url, [_seg(1), _seg(2, **other)]) as (page, _stub, _rules):
+    # 指向别的任务、或有的段没建议：都算不一致，不预选任务，「全部确认」不碰
+    with open_both(browser, static_base_url, [_seg(1), _seg(2, **other)]) as (page, stub, _rules):
         li = page.locator('li[data-id="seg_1"]')
         assert "建议不一致" in li.inner_text()
         assert li.locator("select").input_value() == ""
-        assert li.locator(".suggest-confirm").is_disabled()
         page.fill("#suggest-threshold", "0")
         assert page.locator("#suggest-confirm-all").is_disabled()
+        # v2.10：建议都在同一个项目里 → 集合预选这个项目，空着的下拉 = 记到项目的「未分类」
+        assert page.locator(".suggest-project").input_value() == "p_eng"
+        assert li.locator("select option").first.inner_text() == "未分类（只记到这个项目）"
+        # 集合不选项目 → 回到原来的样子：没选任务不能确认
+        page.locator(".suggest-project").select_option("")
+        li = page.locator('li[data-id="seg_1"]')
+        assert "建议不一致，请自己选任务" in li.inner_text() and li.locator(".suggest-confirm").is_disabled()
+        assert stub.posts == []
 
 
 def test_partial_unmatch_requires_manual_pick_and_never_sends_rejected(browser, static_base_url):
@@ -501,8 +517,8 @@ def test_remember_prepends_window_rule_with_if_match(browser, static_base_url):
         assert put[2] == '"4"'
         assert put[3]["rules"][0] == WANT_RULE                      # 放最前：第一条命中生效
         assert [r["id"] for r in put[3]["rules"][1:]] == ["r_1", "r_2", "r_3"]
-        # 规则编辑器没手改：跟着刷新到新版本
-        page.wait_for_function("() => document.querySelectorAll('#rules-list > li').length === 4")
+        # 规则编辑器在「自动记录」页，这页没有它：服务端存下了新的整套（原来 3 条 + 最前面这条）
+        assert len(rules.rules) == 4 and rules.rules[0]["app"] == "^kitty$"
 
 
 def test_remember_retries_once_on_412(browser, static_base_url):

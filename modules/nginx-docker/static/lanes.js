@@ -10,9 +10,16 @@
  *   currentPhase(run)              按 at 排最后的那条相位，null → working
  *   pickPreview(agents, v0, max)   顶栏预览的挑法与排序（契约「泳道预览」）
  *   activeSeconds(run, v0, v1, now)  运行在视窗里不空闲的秒数
- *   sortByActivity(agents, v0, v1, now)  计时页卡片的排序（在等你的在前，再按活跃秒数、最近转入）
- *   humanStatus(human, now)        人此刻：在电脑前 / 离开 / 不在线（+ 在计时 / 前台程序）
+ *   sortByActivity(agents, v0, v1, now)  计时页卡片的排序（档位：在等你 → 干活 → 出错 → 空闲 → 已结束；同档按活跃秒数、最近转入）
+ *   recentRuns(agents, now)        计时页只留在跑的 + 结束不到 3 小时的运行（2026-10-08）
+ *   attentionSeconds(run, v0, v1)  人的注意力在这条运行上、落在视窗里的秒数（nexus-core v2.17 的 agents[].attention）
+ *   humanStatus(human, now)        人此刻：在电脑前 / 离开 / 不在线（+ 在计时 / 前台程序；v2.14 + 自动跟踪 auto {text, since}；
+ *                                  v2.16 + focus：共享件 focus.js 的 describe() 结果，auto 的字也出自它）
  *   render(root, data, opts)       画一张图；全部 textContent，不用 innerHTML
+ *                                  同一个 root 第二次起的重画带换位动效（2026-10-08，见 motion()）
+ *   optimistic(data, op)           泳道偏好（nexus-core v2.22）的乐观预演：返回改过的副本（置顶 / 不再显示 / 恢复 / 手动排位），
+ *                                  调用方先画它、请求失败就退回原来的 data
+ *   identKey(agent, label)         代理身份的键（服务端同一个口径：折叠空白、不分大小写）
  */
 (function () {
   'use strict';
@@ -47,6 +54,13 @@
     if (m < 1) { return '不到 1 分'; }
     return m < 60 ? m + ' 分' : Math.floor(m / 60) + ' 小时' + (m % 60 ? ' ' + (m % 60) + ' 分' : '');
   };
+  // 短于一分钟的段说到秒（v2.17：在场段细到几秒一段）
+  var hms = function (t) { return hm(t) + ':' + pad2(new Date(t).getSeconds()); };
+  var brief = function (a, b) {
+    return b - a < MIN ? hms(a) + '–' + hms(b) + '（' + Math.max(1, Math.round((b - a) / 1000)) + ' 秒）'
+      : hm(a) + '–' + hm(b) + '（' + dur(a, b) + '）';
+  };
+  var mins = function (sec) { var m = Math.round(sec / 60); return (m < 1 ? '不到 1' : m) + ' 分'; };
   var el = function (tag, cls, text) {
     var n = document.createElement(tag);
     if (cls) { n.className = cls; }
@@ -119,22 +133,103 @@
   function runInfo(r, v0, v1, nowMs) {
     var p = sortedPhases(r), lastP = p.length ? p[p.length - 1] : null;
     var ph = lastP && PHASE_WORD[lastP.phase] ? lastP.phase : 'working';
-    var segs = segments(r, nowMs, p), sum = 0;
+    // 失联（nexus-core v2.18）：在跑、会发心跳、30 分钟没信号。段止于最后一次信号，不再往「现在」画
+    var lost = !r.endAt && !!r.lost;
+    var segs = segments(r, lost ? ms(r.lastSeenAt) || nowMs : nowMs, p), sum = 0;
     segs.forEach(function (g) {
       if (g.phase !== 'idle') { sum += Math.max(0, Math.min(g.e, v1) - Math.max(g.s, v0)); }
     });
-    return { r: r, ph: ph, segs: segs, act: sum / 1000, last: (lastP ? ms(lastP.at) : ms(r.startAt)) || 0,
-      wait: !r.endAt && isWaiting(ph) ? 0 : 1 };
+    return { r: r, ph: ph, lost: lost, segs: segs, act: sum / 1000, attn: attentionSeconds(r, v0, v1), last: (lastP ? ms(lastP.at) : ms(r.startAt)) || 0,
+      tier: r.endAt ? 4 : lost ? 3.5 : isWaiting(ph) ? 0 : ph === 'working' ? 1 : ph === 'error' ? 2 : 3 };
+  }
+
+  // 人的注意力在这条运行上的秒数（裁到视窗）。服务端给的 attention 已合并、互不重叠，这里只裁、只加。
+  // 只是这一条运行自己的；人同一时刻只看一个窗口，所以各条运行的这个数加起来不会超过墙上的时间。
+  function attentionSeconds(run, v0, v1) {
+    var sum = 0;
+    (run.attention || []).forEach(function (a) {
+      var s = ms(a.from), e = ms(a.to);
+      if (s !== null && e !== null) { sum += Math.max(0, Math.min(e, v1) - Math.max(s, v0)); }
+    });
+    return sum / 1000;
   }
 
   function activeSeconds(run, v0, v1, nowMs) { return runInfo(run, v0, v1, nowMs).act; }
 
-  // 计时页卡片的排序（ring 契约 2026-10-03）：在跑且在等你（waiting_input / waiting_permission）的浮到最前，
-  // 其余按视窗内活跃秒数倒序，同分按最近一次相位转入倒序。纯函数，不改入参。返回 runInfo 列表（render 复用）。
+  // 计时页卡片的排序（ring 契约 2026-10-08，取代 10-03 的排法）：档位 在跑且在等你（waiting_input / waiting_permission）
+  // → 在跑且干活 → 在跑出错 → 在跑空闲 → 已结束；同档按视窗内活跃秒数倒序，同分按最近一次相位转入倒序。
+  // 纯函数，不改入参。返回 runInfo 列表（render 复用）。
+  // v2.22：服务端排好的 rank（置顶 → 手动排位 → 活跃 → 已结束）是唯一的先后；老后端没有 rank 才在本地按上面的档位排。
   function rankRuns(agents, v0, v1, nowMs) {
-    return (agents || []).map(function (r) { return runInfo(r, v0, v1, nowMs); }).sort(function (a, b) {
-      return (a.wait - b.wait) || (b.act - a.act) || (b.last - a.last);
+    var infos = (agents || []).map(function (r) { return runInfo(r, v0, v1, nowMs); });
+    var served = infos.every(function (k) { return typeof k.r.rank === 'number'; });
+    return infos.sort(function (a, b) {
+      return served ? a.r.rank - b.r.rank : (a.tier - b.tier) || (b.act - a.act) || (b.last - a.last);
     });
+  }
+
+  // ── 泳道偏好（v2.22）：身份键与乐观预演。服务端是唯一事实源，这里只是请求在路上时先让界面动起来。
+  // 服务端的归一化（prefs.service / textfold.fold：NFKC、去零宽字符、折叠空白、casefold）的近似：只用来让乐观预演认得同一个身份，
+  // 对不上（极少见的 Unicode 边角）时以服务端随后的答案为准
+  function identKey(agent, label, unverified) {
+    var norm = function (t) {
+      var x = String(t || '');
+      if (x.normalize) { x = x.normalize('NFKC'); }
+      x = x.replace(/[\u200b-\u200d\u2060\ufeff]/g, '').split(/\s+/).filter(Boolean).join(' ').toLowerCase().replace(/\u00df/g, 'ss');
+      return x;
+    };
+    return norm(agent) + '\n' + norm(label) + (unverified ? '\n未验证' : '');
+  }
+  function optimistic(data, op) {
+    var d = JSON.parse(JSON.stringify(data));
+    var key = op.agent !== undefined ? identKey(op.agent, op.label, op.unverified) : null;
+    var isTarget = function (r) { return identKey(r.agent, r.label, r.unverified) === key; };
+    var live = function (r) { return !r.endAt; };
+    var byRank = function () { return (d.agents || []).slice().sort(function (a, b) { return (a.rank || 0) - (b.rank || 0); }); };
+    var number = function (list) { list.forEach(function (r, i) { r.rank = i; }); };
+    d.hiddenAgents = d.hiddenAgents || [];
+    if (op.type === 'pin') {
+      d.agents.forEach(function (r) { if (isTarget(r)) { r.pinned = op.on; } });
+      if (!op.on) { d.stalePinned = (d.stalePinned || []).filter(function (p) { return identKey(p.agent, p.label) !== key; }); }
+      var list = byRank(), top = list.filter(function (r) { return live(r) && r.pinned; });
+      if (op.on) { top = top.filter(function (r) { return !isTarget(r); }).concat(top.filter(isTarget)); }   // 新置顶的排在已有置顶后面
+      number(top.concat(list.filter(function (r) { return top.indexOf(r) < 0; })));
+    } else if (op.type === 'hide') {
+      var gone = d.agents.filter(isTarget), phases = gone.filter(live).map(function (r) { return r.lost ? 'idle' : currentPhase(r); });   // 失联的按空闲算，同服务端
+      var waiting = phases.filter(isWaiting).length;
+      d.agents = d.agents.filter(function (r) { return !isTarget(r); });
+      d.interactions = (d.interactions || []).filter(function (i) { return d.agents.some(function (r) { return r.runId === i.runId; }); });
+      d.hiddenAgents.push({ agent: op.agent, label: op.label || '', unverified: !!op.unverified, live: phases.length > 0,
+        phase: phases.filter(isWaiting)[0] || phases[0] || null });
+      d.hiddenWaiting = (d.hiddenWaiting || 0) + waiting;
+      number(byRank());
+    } else if (op.type === 'restore') {
+      d.hiddenAgents = d.hiddenAgents.filter(function (h) {
+        var hit = identKey(h.agent, h.label, h.unverified) === key;
+        if (hit && isWaiting(h.phase)) { d.hiddenWaiting = Math.max(0, (d.hiddenWaiting || 0) - 1); }
+        return !hit;
+      });
+    } else if (op.type === 'move') {
+      var all = byRank(), mov = all.filter(function (r) { return live(r) && !r.pinned; });
+      var slots = mov.map(function (r) { return all.indexOf(r); });
+      var me = mov.filter(function (r) { return r.runId === op.runId; })[0];
+      if (me) {
+        mov.splice(mov.indexOf(me), 1);
+        mov.splice(Math.min(op.index, mov.length), 0, me);
+        slots.forEach(function (pos, i) { all[pos] = mov[i]; });
+        number(all);
+        me.manualOrder = op.index;
+      }
+    }
+    return d;
+  }
+
+  // 计时页的卡片只留「还开着的」和「刚结束的」（ring 契约 2026-10-08）：在跑的都留；已结束的只留 endAt 距
+  // now（服务端的 now）不到 ENDED_KEEP_MS 的。与选的窗口（最近 3 小时 / 今天）无关。纯函数，不改入参。
+  var ENDED_KEEP_MS = 3 * HOUR;
+  var SHOW_HIDDEN_WAITING = true;   // 「已隐藏的有 N 个在等你」那半句（仓主还没定要不要；关掉这一个常量就没了）
+  function recentRuns(agents, nowMs) {
+    return (agents || []).filter(function (r) { return !r.endAt || nowMs - ms(r.endAt) < ENDED_KEEP_MS; });
   }
 
   function sortByActivity(agents, v0, v1, nowMs) {
@@ -145,6 +240,7 @@
   // 有一段不是离开 → 在电脑前（detail = 程序 · 标题，服务端已脱敏）；都是离开 → 离开；没有 → 不在线。
   // 在计时（human.running）时 detail 写计时，优先于前台程序。
   var FRESH_MS = 90000, SKEW_MS = 60000;
+  var ATTN_LIVE_MS = 20000;   // 「你在看」的一段止于这么近之内 = 此刻还在看（心跳 5 秒一拍、泳道 15 秒一拉）
   var HUMAN_WORD = { present: '在电脑前', away: '离开', offline: '不在线' };
   function humanStatus(human, nowMs) {
     human = human || {};
@@ -159,8 +255,37 @@
     var state = seen ? 'present' : away ? 'away' : 'offline';
     var run = human.running && ms(human.running.startAt);
     var doing = seen ? [seen.app, seen.title].filter(function (s) { return s; }).join(' · ') : '';
-    return { state: state, word: HUMAN_WORD[state], running: !!run,
-      detail: run ? '计时中 · ' + hm(run) + ' 起' : doing };
+    // 自动跟踪（nexus-core v2.14）：没在计时、服务端说「我」当前的窗口对上了项目 / 任务。手动计时永远优先。
+    // v2.15：source 是 "ai" = 这个目标是 AI 认的（后面标出来，计时页给一个「不对」）；aiThinking = AI 正在认的窗口。
+    // v2.16：字出自共享件 focus.js（顶栏芯片、圆环中心、蜂巢同一份）；focus = 此刻的焦点（自动跟踪 / 在某个窗口 / 离开）。
+    var F = window.HoneycombFocus, f = (!run && F) ? F.describe(human) : null;
+    var a = f && f.auto ? human.auto : null, ai = !!a && a.source === 'ai';
+    var th = !run && human.aiThinking;
+    return { state: state, word: HUMAN_WORD[state], running: !!run, focus: f,
+      detail: run ? '计时中 · ' + hm(run) + ' 起' : doing,
+      thinking: th ? [th.app, th.title].filter(function (x) { return x; }).join(' · ') || '窗口' : null,
+      auto: !a ? null : { since: f.since, ai: ai, key: a.key, app: a.app, title: a.title,
+        text: f.lead + (ai ? '（AI 认的）' : '') } };
+  }
+
+  // 从 since 起走秒的钟（「自动 · …」后面那个）。本文件唯一的定时器：一秒一次，只改这些钟的字。
+  // 节点上记的是换到本机时钟上的起点（服务端的 now 与本机的差在画的那一刻扣掉），之后每秒只读 Date.now()。
+  var ticking = null;
+  function clockText(sec) {
+    sec = Math.max(0, Math.floor(sec));
+    var h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60);
+    return (h ? h + ':' + pad2(m) : pad2(m)) + ':' + pad2(sec % 60);
+  }
+  function tick() {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-hcl-since]'), function (n) {
+      n.textContent = clockText((Date.now() - Number(n.getAttribute('data-hcl-since'))) / 1000);
+    });
+  }
+  function clock(since, nowMs) {
+    var n = el('span', 'hcl-clock', clockText((nowMs - since) / 1000));
+    n.setAttribute('data-hcl-since', String(since - (nowMs - Date.now())));
+    if (!ticking) { ticking = setInterval(tick, 1000); }
+    return n;
   }
 
   // 顶栏预览：只看与 [v0, now] 有重叠的运行；在跑且在等 → 在跑且干活 → 在跑其他 → 已结束（结束晚的在前），
@@ -168,11 +293,15 @@
   function pickPreview(agents, v0, max) {
     var tier = function (r) {
       if (r.endAt) { return 3; }
+      if (r.lost) { return 2.5; }                   // 失联：排在在跑的之后、已结束的之前
       var ph = currentPhase(r);
       return ph === 'waiting_input' || ph === 'waiting_permission' ? 0 : ph === 'working' ? 1 : 2;
     };
     var list = (agents || []).filter(function (r) { return !r.endAt || ms(r.endAt) > v0; });
+    // v2.22：服务端排好了 rank（置顶 / 手动排位 / 活跃）就照它——计时页与顶栏预览的先后一致；老后端没有才在本地排
+    var served = list.every(function (r) { return typeof r.rank === 'number'; });
     list.sort(function (a, b) {
+      if (served) { return a.rank - b.rank; }
       return (tier(a) - tier(b)) ||
         (tier(a) === 3 ? ms(b.endAt) - ms(a.endAt) : 0) ||
         (lastAt(b) - lastAt(a));
@@ -189,13 +318,246 @@
     return 3 * HOUR;
   }
 
+  /* 换位动效（2026-10-08）。重画照旧整棵换掉，动效只靠「按 runId 记的旧位置」做 FLIP：
+   * before = 重画前各行 / 卡的 {rect（看不见 = null）, ph}，重画后一次读完新位置、再一次写完动画（不来回量）。
+   *   往上走：略放大（只卡片式）+ 抬起的阴影 + 压在别的卡上面，ease-out，几张一起上时自上而下各晚 50 毫秒（排队）
+   *   往下走：只平移，稍慢稍软
+   *   新出现：淡入 + 上浮；从折叠区里出来 / 进去（一头看不见）：只淡入
+   *   相位变了：is-phase-changed（胶囊与卡边闪一下，样式在 lanes.css）
+   * 只动 transform / opacity；prefers-reduced-motion 时不平移不放大，只留淡入。第一次画、页面不可见时不动。 */
+  var MOVE_ID = 'hcl-move';
+  // 看得见才有位置。收着的 <details> 里的卡在新浏览器里仍有盒子（content-visibility），所以另看一眼祖先
+  function seenRect(n) {
+    return n.getClientRects().length && !n.closest('details:not([open])') ? n.getBoundingClientRect() : null;
+  }
+  function snapshot(root) {
+    var map = {};
+    Array.prototype.forEach.call(root.querySelectorAll('[data-run-id]'), function (n) {
+      var id = n.getAttribute('data-run-id');
+      if (id) { map[id] = { rect: seenRect(n), ph: n.getAttribute('data-phase') }; }
+    });
+    return map;
+  }
+  function motion(root, before, cards) {
+    if (!before || !root.animate || document.visibilityState === 'hidden') { return; }
+    var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var jobs = [];
+    Array.prototype.forEach.call(root.querySelectorAll('[data-run-id]'), function (n) {      // 先全部读
+      var old = before[n.getAttribute('data-run-id')];
+      var rect = seenRect(n);
+      if (old && old.ph !== n.getAttribute('data-phase')) { n.classList.add('is-phase-changed'); }
+      if (!rect) { return; }
+      if (!old || !old.rect) { jobs.push({ n: n, top: rect.top, fresh: !old }); return; }
+      var dx = old.rect.left - rect.left, dy = old.rect.top - rect.top;
+      if (Math.abs(dx) > 1 || Math.abs(dy) > 1) { jobs.push({ n: n, top: rect.top, dx: dx, dy: dy }); }
+    });
+    var fade = { duration: 280, easing: 'ease-out', id: MOVE_ID }, ups = 0;
+    jobs.sort(function (a, b) { return a.top - b.top; }).forEach(function (j) {              // 再全部写
+      var n = j.n, at = function (k, sc) {
+        return 'translate(' + j.dx * k + 'px,' + j.dy * k + 'px) scale(' + sc + ')';
+      };
+      if (j.dy === undefined) {
+        n.animate(j.fresh && !still ? [{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }]
+          : [{ opacity: 0 }, { opacity: 1 }], fade);
+      } else if (still) {
+        return;                                        // 减少动态效果：直接到位
+      } else if (j.dy > 0) {
+        var t = { duration: 360, delay: 50 * ups++, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'backwards', id: MOVE_ID };
+        n.classList.add('is-rising');
+        n.animate([{ transform: at(1, 1) }, { transform: at(.6, cards ? 1.025 : 1), offset: .4 }, { transform: at(0, 1) }], t)
+          .onfinish = function () { n.classList.remove('is-rising'); };
+        // 抬起的阴影画在 ::before 上、只动它的 opacity（不动 box-shadow 本身）
+        if (cards) { try { n.animate([{ opacity: 0 }, { opacity: 1, offset: .4 }, { opacity: 0 }], { duration: t.duration, delay: t.delay, easing: 'ease-out', pseudoElement: '::before' }); } catch (e) { /* 老浏览器没有 pseudoElement：不要阴影 */ } }
+      } else {
+        n.animate([{ transform: at(1, 1) }, { transform: at(0, 1) }],
+          { duration: 440, easing: 'cubic-bezier(.4,0,.2,1)', id: MOVE_ID });
+      }
+    });
+  }
+
+  /* 卡片上的偏好交互（nexus-core v2.22，只在 opts.prefs 给了时才有；lanes.js 仍然不发请求，动作交给调用方）：
+   *   ⋯ 菜单：置顶 / 取消置顶、不再显示、上移 / 下移（键盘能用的手动排位）；方向键 / Home / End 走菜单项，Esc 关并把焦点还给 ⋯
+   *   长按（LONG_PRESS_MS，鼠标与触摸）：在跑且没置顶的卡拖着换位，松手按落点给 onMove(run, 在「未置顶的在跑运行」里的下标)；
+   *          Esc / 指针取消 = 放弃。普通点击不受影响（没到时间就松手 = 什么都没发生；拖过之后吞掉紧跟着的那一下 click）
+   * 菜单开着 / 正在拖时 root.hclBusy 为真：轮询的重画先攒着（调用方看这个标志），收尾时在 root 上发 hcl-idle。 */
+  var LONG_PRESS_MS = 400, PRESS_SLOP = 8;
+  var gesture = null;     // 进行中的长按 / 拖动；同一时刻只有一个
+  var menu = null;        // 开着的菜单 {close()}
+  function setBusy(root, on, quiet) {
+    if (!!root.hclBusy === on) { return; }
+    root.hclBusy = on;
+    if (!on && !quiet) { root.dispatchEvent(new Event('hcl-idle')); }
+  }
+
+  // quiet：重画开头顺手收菜单，不再喊 hcl-idle（调用方正在画）
+  function closeMenu(refocus, quiet) {
+    if (menu) { var m = menu; menu = null; m.close(refocus, quiet); }
+  }
+
+  function openMenu(root, card, kebab, entries) {
+    closeMenu(false);
+    var list = el('ul', 'hcl-menu');
+    list.setAttribute('role', 'menu');
+    var buttons = entries.map(function (e) {
+      var li = el('li'), b = el('button', 'hcl-menu-item', e[0]);
+      b.type = 'button';
+      b.setAttribute('role', 'menuitem');
+      b.tabIndex = -1;
+      // 先发动作、再喊 hcl-idle（同拖动）：补画会改顺序，动作里捕获的下标得在那之前用掉
+      b.addEventListener('click', function (ev) { ev.stopPropagation(); closeMenu(true, true); e[1](); root.dispatchEvent(new Event('hcl-idle')); });
+      li.appendChild(b);
+      list.appendChild(li);
+      return b;
+    });
+    card.appendChild(list);
+    kebab.setAttribute('aria-expanded', 'true');
+    setBusy(root, true);
+    var onKey = function (ev) {
+      var i = buttons.indexOf(document.activeElement), n = buttons.length;
+      if (ev.key === 'Escape') { ev.preventDefault(); closeMenu(true); }
+      else if (ev.key === 'Tab') { closeMenu(false); }
+      else if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp' || ev.key === 'Home' || ev.key === 'End') {
+        ev.preventDefault();
+        buttons[ev.key === 'Home' ? 0 : ev.key === 'End' ? n - 1 : (i + (ev.key === 'ArrowDown' ? 1 : n - 1)) % n].focus();
+      }
+    };
+    var onDown = function (ev) { if (!list.contains(ev.target) && ev.target !== kebab) { closeMenu(false); } };
+    document.addEventListener('keydown', onKey, true);
+    document.addEventListener('pointerdown', onDown, true);
+    menu = {
+      owner: kebab,
+      close: function (refocus, quiet) {
+        document.removeEventListener('keydown', onKey, true);
+        document.removeEventListener('pointerdown', onDown, true);
+        kebab.setAttribute('aria-expanded', 'false');
+        if (list.parentNode) { list.parentNode.removeChild(list); }
+        if (refocus && kebab.isConnected) { kebab.focus(); }
+        setBusy(root, false, quiet);
+      }
+    };
+    buttons[0].focus();
+  }
+
+  // 一张卡的 ⋯ 按钮与菜单。pos / total：这张卡在「未置顶的在跑运行」里的位置（只有它们能手动排位；pos < 0 = 不能）
+  function addKebab(root, P, card, head, r, pos, total) {
+    var kebab = el('button', 'hcl-kebab', '⋯');
+    kebab.type = 'button';
+    kebab.setAttribute('aria-haspopup', 'menu');
+    kebab.setAttribute('aria-expanded', 'false');
+    kebab.setAttribute('aria-label', '更多操作：' + laneName(r));
+    kebab.title = '更多操作';
+    kebab.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      if (kebab.getAttribute('aria-expanded') === 'true') { closeMenu(true); return; }
+      // 未验证（匿名）的运行不能置顶、不能手动排位（服务端也拒），只能「不再显示」
+      var entries = (r.unverified ? [] : [[r.pinned ? '取消置顶' : '置顶', function () { P.onPin(r, !r.pinned); }]])
+        .concat([['不再显示', function () { P.onHide(r); }]]);
+      if (pos > 0) { entries.push(['上移', function () { P.onMove(r, pos - 1); }]); }
+      if (pos >= 0 && pos < total - 1) { entries.push(['下移', function () { P.onMove(r, pos + 1); }]); }
+      openMenu(root, card, kebab, entries);
+    });
+    head.appendChild(kebab);
+  }
+
+  // 长按拖动。movable = [{node, r}]（在跑且没置顶的卡，按显示顺序）；只有看得见的卡参与量位置。
+  function addDrag(root, P, card, r, movable) {
+    card.classList.add('is-movable');
+    // 拖动期间不许页面跟着滚：非被动的 touchmove 监听必须在触摸开始**之前**就挂着（触摸开始时才挂，浏览器那一轮已经按「没人拦」放行滚动，
+    // touchmove 就成了不可取消的）——所以随卡片在画的时候就挂在卡上（不挂 document、不在模块加载时挂），只在有进行中的拖动时才拦
+    card.addEventListener('touchmove', function (e) {
+      if (gesture && gesture.active && e.cancelable) { e.preventDefault(); }
+    }, { passive: false });
+    card.addEventListener('pointerdown', function (ev) {
+      if ((ev.pointerType === 'mouse' && ev.button !== 0) || gesture || ev.target.closest('button, a, summary, input, select, .hcl-menu')) { return; }
+      closeMenu(false);
+      var g = gesture = { x: ev.clientX, y: ev.clientY, active: false };
+      setBusy(root, true);                                  // 按下的那一刻就占住：400 毫秒里来的轮询也先攒着，别把手里的卡换掉
+      var visible = movable.filter(function (m) { return m.node && seenRect(m.node); });
+      var from = visible.map(function (m) { return m.r; }).indexOf(r);
+
+      function shift(dy) {                                  // 被拖的卡跟手，别的卡让位
+        var mid = g.mid + dy, to = 0;
+        visible.forEach(function (m, i) { if (i !== from && g.mids[i] < mid) { to += 1; } });
+        g.to = to;
+        visible.forEach(function (m, i) {
+          if (i === from) { m.node.style.transform = 'translateY(' + dy + 'px)'; return; }
+          var by = (from < to && i > from && i <= to) ? -g.step : (to < from && i >= to && i < from) ? g.step : 0;
+          m.node.style.transform = by ? 'translateY(' + by + 'px)' : '';
+        });
+      }
+      function clear() { visible.forEach(function (m) { m.node.style.transform = ''; m.node.classList.remove('is-dragging', 'is-yielding'); }); }
+      function finish(drop) {
+        if (gesture !== g) { return; }                      // 幂等（松手后还会来一个 lostpointercapture）
+        clearTimeout(g.timer);
+        window.removeEventListener('blur', onCancel);
+        document.removeEventListener('visibilitychange', onHide);
+        card.removeEventListener('lostpointercapture', onCancel);
+        document.removeEventListener('pointermove', onMove, true);
+        document.removeEventListener('pointerup', onUp, true);
+        document.removeEventListener('pointercancel', onCancel, true);
+        document.removeEventListener('keydown', onKey, true);
+        document.removeEventListener('contextmenu', stop, true);
+        gesture = null;
+        if (g.active) {
+          clear();
+          document.body.classList.remove('hcl-dragging');
+          var swallow = function (e2) { e2.stopPropagation(); e2.preventDefault(); };
+          document.addEventListener('click', swallow, true);          // 拖完松手会补一个 click：吞掉
+          setTimeout(function () { document.removeEventListener('click', swallow, true); }, 0);
+        }
+        // 先发移动、再放开 busy：放开会立刻补画攒下的轮询结果，那份数据的窗口可能已不是下标所依据的（ring-lanes 的 shownQ）
+        if (g.active && drop && g.to !== from) { P.onMove(r, g.to); }
+        setBusy(root, false);                               // 没到时间就松手 / 取消也要放开
+      }
+      function onMove(e2) {
+        if (!g.active) {
+          if (Math.abs(e2.clientX - g.x) > PRESS_SLOP || Math.abs(e2.clientY - g.y) > PRESS_SLOP) { finish(false); }   // 是在滚动 / 选字
+          return;
+        }
+        e2.preventDefault();
+        shift(e2.clientY - g.y);
+      }
+      function onUp() { finish(true); }
+      function onCancel() { finish(false); }
+      function onHide() { if (document.visibilityState === 'hidden') { finish(false); } }
+      function onKey(e2) { if (e2.key === 'Escape') { e2.preventDefault(); finish(false); } }
+      function stop(e2) { e2.preventDefault(); }                      // 触摸长按会弹系统菜单
+      document.addEventListener('pointermove', onMove, true);
+      document.addEventListener('pointerup', onUp, true);
+      document.addEventListener('pointercancel', onCancel, true);
+      document.addEventListener('keydown', onKey, true);
+      document.addEventListener('contextmenu', stop, true);
+      window.addEventListener('blur', onCancel);              // 切走窗口 / 在窗口外松手：pointerup 可能永远不来
+      document.addEventListener('visibilitychange', onHide);
+      card.addEventListener('lostpointercapture', onCancel);
+      g.timer = setTimeout(function () {
+        if (from < 0) { finish(false); return; }
+        g.active = true;
+        var rects = visible.map(function (m) { return m.node.getBoundingClientRect(); });
+        g.mids = rects.map(function (b) { return b.top + b.height / 2; });
+        g.mid = g.mids[from];
+        g.step = rects[from].height + (rects.length > 1 ? Math.max(0, (rects[1].top - rects[0].bottom)) : 0);
+        g.to = from;
+        visible.forEach(function (m, i) { m.node.classList.add(i === from ? 'is-dragging' : 'is-yielding'); });
+        document.body.classList.add('hcl-dragging');
+      }, LONG_PRESS_MS);
+    });
+  }
+
   /* render(root, data, opts)
    *   opts.viewStart / viewEnd  ms，画的时间范围（段裁到这里）
    *   opts.agents               要画的运行（缺省 data.agents 里与视窗有重叠的）
    *   opts.presence             画人的在场带（计时页与顶栏预览都画，2026-10-03 起）
    *   opts.compact              顶栏预览的紧凑尺寸
-   *   opts.cards / top          计时页的卡片布局：人一张卡钉在最前，代理按 sortByActivity 排，
-   *                             前 top 张（缺省 5）展开，其余收进 <details>「还有 N 个」
+   *   opts.cards / top          计时页的卡片布局（只画 recentRuns：结束超过 3 小时的不画）：人一张卡钉在最前，代理按 sortByActivity 排，
+   *                             前 top 张（缺省 5；在等你 / 干活的卡永不折叠，多于 top 就全展开）展开，其余收进 <details>「还有 N 个」
+   *   opts.lead                 卡片式：调用方的一张置顶卡（计时页的「你在 X，记到哪？」），放在人那张卡之前。同一个节点
+   *                             跨重画搬过来（表单状态不丢、焦点还回去）；换位动效把它当一张卡，第一次出现淡入上浮
+   *   opts.onAutoWrong(auto)    卡片式：人那张卡上「自动 · …（AI 认的）」后面给一个「不对」按钮，点了调它（auto 带 key / app / title）。
+   *                             不给就没有按钮（顶栏预览不给）
+   *   opts.prefs                卡片式：泳道偏好动作 {onPin(run, on), onHide(run), onMove(run, index), onRestore(hidden)}（nexus-core v2.22）。
+   *                             给了：每张代理卡有 ⋯ 菜单与置顶标记、在跑的卡能长按拖动，区尾多一行可折叠的「已隐藏 (N)」
+   *                             （data.hiddenAgents；N 个在等你的提示来自 data.hiddenWaiting）。不给（顶栏预览）就一概没有
    *   opts.more / moreHref      区尾一行（「还有更多」/「还有 N 个 → 计时页」）
    *   opts.focusFallback        焦点在区尾链接上、重画后链接没了时，焦点交给它
    * 返回画了的代理运行的 runInfo 列表（按画的顺序；r / ph / act / last …），调用方拿来数状态，不必再排一遍 phases。
@@ -203,7 +565,7 @@
   function render(root, data, opts) {
     var v0 = opts.viewStart, v1 = opts.viewEnd, span = v1 - v0;
     var now = ms(data.now) || Date.now();
-    var cards = !!opts.cards;
+    var cards = !!opts.cards, P = cards ? opts.prefs : null;
     var pct = function (t) { return ((Math.min(Math.max(t, v0), v1) - v0) / span * 100) + '%'; };
     var place = function (node, s, e) {
       node.style.left = pct(s);
@@ -215,10 +577,21 @@
     // 折叠区开着就还开着
     var a = document.activeElement;
     var refocus = a && root.contains(a) && a.classList.contains('hcl-more');
+    // ⋯ 按钮重画后还给同一张卡的 ⋯（键盘上移 / 置顶 / 轮询都不丢焦点）；卡没了（藏起来）就交给 focusFallback
+    var kebabCard = a && root.contains(a) && a.classList.contains('hcl-kebab') && a.closest('[data-run-id]');
+    var kebabId = kebabCard ? kebabCard.getAttribute('data-run-id') : null;
     // 开合记在 root 上（同一个 root 跨重画）：折叠区这次没了、下次又出现时照旧开着
+    if (menu && root.contains(menu.owner)) { closeMenu(false, true); }
+    var oldMenu = root.querySelector('details.hcl-foldmenu');
+    if (oldMenu) { root.hclMenuOpen = oldMenu.open; }
+    var menuFocus = !!(oldMenu && a && oldMenu.contains(a));
     var oldFold = root.querySelector('details.hcl-fold');
     if (oldFold) { root.hclFoldOpen = oldFold.open; }
     var foldFocus = !!(oldFold && a && oldFold.contains(a) && a.tagName === 'SUMMARY');
+    var lead = cards ? opts.lead : null, leadFocus = lead && a && lead.contains(a) ? a : null;
+    // 换位动效要的旧位置（第一次画没有 → 不动）；同一个 root 换了布局（卡片 ↔ 列表）也当第一次
+    var before = root.hclDrawn === cards ? snapshot(root) : null;
+    root.hclDrawn = cards;
     root.textContent = '';
     root.className = 'hcl' + (opts.compact ? ' hcl-compact' : '') + (cards ? ' hcl-cards' : '');
 
@@ -232,6 +605,13 @@
     if (!cards) {
       var stLine = el('p', 'hcl-status hcl-st-' + st.state, '我：' + st.word + (st.detail ? ' · ' + st.detail : ''));
       stLine.title = stLine.textContent;
+      if (st.auto) {                                   // 自动跟踪：换成「我：自动 · 项目 / 任务」+ 走秒的钟
+        stLine.textContent = '我：';
+        stLine.appendChild(el('span', 'hcl-auto-text', st.auto.text));
+        stLine.appendChild(clock(st.auto.since, now));
+        stLine.classList.add('hcl-st-auto');
+        stLine.title = '我：' + st.auto.text + (st.detail ? '（' + st.detail + '）' : '');
+      }
       root.appendChild(stLine);
     }
 
@@ -278,6 +658,7 @@
       p.appendChild(el('span', 'hcl-dot ' + cls));
       p.appendChild(document.createTextNode(text));
       head.appendChild(p);
+      return p;
     };
     var seg = function (track, cls, s, e, tip) {
       var n = el('span', 'hcl-seg ' + cls);
@@ -300,6 +681,11 @@
       }
     };
 
+    if (lead) {
+      lead.classList.add('hcl-card', 'hcl-lead');
+      lead.setAttribute('data-run-id', 'lead');
+      rows.appendChild(lead);
+    }
     // 人那条线（卡片式：钉在最前的一张卡，不算进 top）
     var running = human.running && ms(human.running.startAt);
     var hTrack = cards ? addRow(rows, 'hcl-row-human', '我', '', null)
@@ -309,8 +695,28 @@
       var hHead = hTrack.previousSibling;
       pill(hHead, 'hcl-st-' + st.state, st.word);
       if (running) { pill(hHead, 'hcl-ph-human', '计时中'); }
+      if (st.auto) {                                   // 虚线边 + 走秒的钟：一眼看得出不是手动计时
+        var ap = pill(hHead, 'hcl-st-auto', '');
+        ap.appendChild(el('span', 'hcl-auto-text', st.auto.text));
+        ap.appendChild(clock(st.auto.since, now));
+        ap.title = st.auto.text + ' —— 按分类规则自动跟着你当前的窗口，不是手动计时';
+        if (st.auto.ai && opts.onAutoWrong) {          // AI 认的：一键「不对」（撤掉 AI 的规则，换人来选）
+          var wrong = el('button', 'hcl-auto-wrong', '不对');
+          wrong.type = 'button';
+          wrong.title = '这个窗口不是 AI 认的那个项目 / 任务：撤掉 AI 写的规则，我自己选';
+          wrong.addEventListener('click', function () { wrong.disabled = true; opts.onAutoWrong(st.auto); });
+          hHead.appendChild(wrong);
+        }
+      }
+      if (st.thinking) {                               // AI 正在认某个窗口：小字 + 轻微的呼吸，不另起一张卡
+        var thinking = el('span', 'hcl-ai-thinking', 'AI 正在认这个窗口…');
+        thinking.title = 'AI 正在认：' + st.thinking + '（认不出会请你选）';
+        hHead.appendChild(thinking);
+      }
       if (st.detail) {
-        var hStat = el('span', 'hcl-stat', st.running ? st.detail : '正在用 ' + st.detail);
+        // 认得出项目 / 任务（且不是自动跟踪——那已经有胶囊了）：「正在：项目 / 任务 · 窗口」，否则照旧「正在用 窗口」
+        var known = st.focus && !st.focus.auto && st.focus.target;
+        var hStat = el('span', 'hcl-stat', st.running ? st.detail : (known ? st.focus.lead + ' · ' : '正在用 ') + st.detail);
         hStat.title = hStat.textContent;
         hHead.appendChild(hStat);
       }
@@ -326,13 +732,16 @@
       seg(hTrack, 'hcl-human hcl-mode-do is-running', running, now,
         '计时中 · ' + hm(running) + '–现在（' + dur(running, now) + '）');
     }
-    sayLines.push('我：' + st.word + '，' + (running ? '计时中' : '没在计时'));
+    sayLines.push('我：' + st.word + '，' + (running ? '计时中' : st.auto ? st.auto.text : '没在计时') +
+      (st.thinking ? '，AI 正在认窗口 ' + st.thinking : ''));
     if (opts.presence) {
       (human.presence || []).forEach(function (p) {
         var s = ms(p.from), e = ms(p.to);
         if (s === null || e === null || !inView(s, e)) { return; }
-        var n = seg(hTrack, 'hcl-presence' + (p.afk ? ' is-afk' : ''), s, Math.max(e, s + MIN / 4),
-          (p.afk ? '离开' : (p.app || '前台')) + (p.title ? ' · ' + p.title : '') + ' · ' + hm(s) + '–' + hm(e));
+        // v2.17：段细到几秒一段、互不重叠，照实画（不再把短段撑到 15 秒）；人在看某条代理的那几段染成注意力的蓝
+        // ponytail: 一段一个节点（每设备至多 2000 段）；真嫌多再把落在同一个像素里的相邻段并着画
+        var n = seg(hTrack, 'hcl-presence' + (p.afk ? ' is-afk' : '') + (p.runId ? ' is-on-agent' : ''), s, e,
+          (p.afk ? '离开' : (p.app || '前台')) + (p.title ? ' · ' + p.title : '') + ' · ' + brief(s, e));
         n.style.minWidth = '2px';
       });
     }
@@ -342,38 +751,62 @@
     var agents = opts.agents || (data.agents || []).filter(function (r) {
       return inView(ms(r.startAt), r.endAt ? ms(r.endAt) : now);
     });
+    if (cards) { agents = recentRuns(agents, now); }
     var vEnd = Math.min(v1, now);
     var infos = cards ? rankRuns(agents, v0, vEnd, now)
       : agents.map(function (r) { return runInfo(r, v0, vEnd, now); });
     // ponytail: 折叠区里的卡也整张建好（只是收着）；几十个运行无所谓，真到读端上限 200 个嫌慢再改成展开时才建
     agents = infos.map(function (k) { return k.r; });
     var top = cards ? (opts.top || 5) : agents.length;
+    // 在跑且在等你 / 在干活的（档 0–1）不许被折叠：多于 top 个就全展开，折叠从它们之后才开始
+    if (cards) { infos.forEach(function (k, i) { if (k.tier <= 1 && i + 1 > top) { top = i + 1; } }); }
     var fold = null, foldList = null;
+    var reveal = P && root.hclReveal;
+    root.hclReveal = null;
     if (agents.length > top) {
       fold = el('details', 'hcl-fold');
-      fold.open = !!root.hclFoldOpen;
+      fold.open = !!root.hclFoldOpen || !!reveal && infos.some(function (k, i) { return i >= top && k.r.runId === reveal; });   // 手动挪进折叠区的卡别消失：展开
       fold.appendChild(el('summary', 'hcl-fold-toggle', '还有 ' + (agents.length - top) + ' 个'));
       foldList = el('div', 'hcl-deck');
       fold.appendChild(foldList);
     }
     var rowOf = {};
+    // 能手动排位的卡：在跑且没置顶的（按显示顺序）；node 在建卡时补上，addDrag 要用到全体
+    var movable = [];
+    infos.forEach(function (k) { if (P && !k.r.endAt && !k.r.pinned && !k.r.unverified) { movable.push({ r: k.r, node: null }); } });
     infos.forEach(function (info, i) {
-      var r = info.r, live = !r.endAt;
+      var r = info.r, live = !r.endAt && !info.lost;   // 失联的不按「在跑」画：灰、不闪、不算在等你
       var ph = info.ph;
+      var word = info.lost ? '失联' : live ? PHASE_WORD[ph] : r.outcome === 'lost' ? '失联结束' : '已结束';
       var sub = r.agent && r.label ? r.agent : (r.tool || '');
       if (r.overdue) { sub = '超时未收'; }
       var track = addRow(i < top ? rows : foldList, 'hcl-row-agent', laneName(r), sub,
         live && !cards ? PHASE_CLASS[ph] : null);
       var card = track.parentNode;
+      track.classList.add('hcl-track-agent');
       card.setAttribute('data-run-id', r.runId || '');
+      card.setAttribute('data-phase', live ? ph : info.lost ? 'lost' : 'ended');
       rowOf[r.runId] = cards ? track : i + 1;
       if (cards) {
         var head = track.previousSibling;
-        pill(head, live ? 'hcl-ph-' + PHASE_CLASS[ph] : 'is-ended', live ? PHASE_WORD[ph] : '已结束');
+        pill(head, live ? 'hcl-ph-' + PHASE_CLASS[ph] : 'is-ended', word);
+        if (r.pinned) {
+          var pinMark = el('span', 'hcl-pinmark', '置顶');
+          pinMark.title = '已置顶';
+          head.appendChild(pinMark);
+        }
         if (live && isWaiting(ph)) { card.classList.add('is-needs-you'); }
         var act = Math.round(info.act / 60);
         head.appendChild(el('span', 'hcl-stat', '活跃 ' + (act < 1 ? '不到 1' : act) + ' 分 · ' +
-          (live ? '最近 ' + when(info.last) : when(ms(r.endAt)) + ' 结束')));
+          (info.attn > 0 ? '看了 ' + mins(info.attn) + ' · ' : '') +
+          (live ? '最近 ' + when(info.last) : info.lost ? '最后信号 ' + when(ms(r.lastSeenAt))
+            : when(ms(r.endAt)) + ' 结束')));
+        if (P) {
+          var pos = movable.map(function (m) { return m.r; }).indexOf(r);
+          if (pos >= 0) { movable[pos].node = card; }
+          addKebab(root, P, card, head, r, pos, movable.length);
+          if (pos >= 0) { addDrag(root, P, card, r, movable); }
+        }
       }
       info.segs.forEach(function (g) {
         if (!inView(g.s, g.e)) { return; }
@@ -384,31 +817,29 @@
           (g.detail ? '（' + g.detail + '）' : '') + ' · ' + hm(g.s) + '–' + (isLive ? '现在' : hm(g.e)) +
           '（' + dur(g.s, g.e) + '）');
       });
+      // 你在看（v2.17）：相位条正下方自己的一小行，蓝条 = 人的注意力在这条运行上的时间。正在变长的那一段右端有一道活边
+      (r.attention || []).forEach(function (a) {
+        var s = ms(a.from), e = ms(a.to);
+        if (s === null || e === null || !inView(s, Math.max(e, s + 1))) { return; }
+        seg(track, 'hcl-attn' + (live && now - e <= ATTN_LIVE_MS ? ' is-live' : ''), s, e,
+          laneName(r) + ' · 你在看 · ' + brief(s, e));
+      });
       nowMark(track);
-      sayLines.push(laneName(r) + '：' + (live ? PHASE_WORD[ph] : '已结束') + (r.overdue ? '（超时未收）' : ''));
+      sayLines.push(laneName(r) + '：' + word + (r.overdue ? '（超时未收）' : '') +
+        (info.attn > 0 ? '，你看了 ' + mins(info.attn) : ''));
     });
 
-    // 连线：reply 实线竖线、attend 半透明竖带。列表式从人那条线落到该代理线；
-    // 卡片式各卡分开放，画在该代理自己的轨道上（竖线 = 人在这一刻回了它的话，带子 = 人在看它）
+    // 连线：reply 实线竖线。列表式从人那条线落到该代理线；卡片式各卡分开放，画在该代理自己的轨道上
+    // （竖线 = 人在这一刻回了它的话）。「人在看它」不再是这里的半透明带子（interactions 的 attend）：
+    // v2.17 起画成上面每条线里的蓝条（agents[].attention）。
     (data.interactions || []).forEach(function (x) {
       var r = rowOf[x.runId], at = ms(x.at);
-      if (!r || at === null) { return; }
-      var host = cards ? r : overlay;
-      if (x.kind === 'reply' && at >= v0 && at <= v1) {
-        var line = el('span', 'hcl-reply');
-        line.style.left = pct(at);
-        if (cards) { line.setAttribute('data-tip', '我回了话 · ' + hm(at)); }
-        else { line.style.setProperty('--hcl-r', r); }
-        host.appendChild(line);
-      } else if (x.kind === 'attend') {
-        var until = ms(x.until) || at;
-        if (!inView(at, Math.max(until, at + 1))) { return; }
-        var band = el('span', 'hcl-attend');
-        place(band, at, Math.max(until, at));
-        if (cards) { band.setAttribute('data-tip', '我在看 · ' + hm(at) + '–' + hm(until)); }
-        else { band.style.setProperty('--hcl-r', r); }
-        host.appendChild(band);
-      }
+      if (!r || at === null || x.kind !== 'reply' || at < v0 || at > v1) { return; }
+      var line = el('span', 'hcl-reply');
+      line.style.left = pct(at);
+      if (cards) { line.setAttribute('data-tip', '我回了话 · ' + hm(at)); }
+      else { line.style.setProperty('--hcl-r', r); }
+      (cards ? r : overlay).appendChild(line);
     });
     if (!cards) {
       if (now >= v0 && now <= v1) {
@@ -419,11 +850,106 @@
       rows.appendChild(overlay);
     }
     root.appendChild(rows);
+    if (leadFocus) { leadFocus.focus(); }
+    if (kebabId !== null) {
+      var kb = Array.prototype.filter.call(root.querySelectorAll('[data-run-id]'), function (n) { return n.getAttribute('data-run-id') === kebabId; })[0];
+      var kebabNow = kb && kb.querySelector('.hcl-kebab');
+      if (kebabNow) { kebabNow.focus(); } else if (opts.focusFallback) { opts.focusFallback.focus(); }
+    }
     if (fold) {
       root.appendChild(fold);
       if (foldFocus) { fold.firstChild.focus(); }
     } else if (foldFocus && opts.focusFallback) {
       opts.focusFallback.focus();                      // 「还有 N 个」没了（≤ top 张）：焦点别掉到 body 上
+    }
+
+    // 折叠菜单（nexus-core v2.25）：原来底部的「已隐藏」「未显示」两个展开条合成一个「已折叠 n 个」，默认收着，开合跨重画保留。
+    // 分组：出错 / 空闲 / 已结束（inactiveAgents 的 reason）/ 手动隐藏（hiddenAgents，可恢复显示）/ 置顶但没在跑（stalePinned，可移除）。
+    // 老后端没有这些键就没有这一块；文字一律 textContent
+    var stale = P ? data.stalePinned || [] : [];
+    var inactive = P ? data.inactiveAgents || [] : [];
+    var hiddenList = P ? data.hiddenAgents || [] : [];
+    var nExpired = P ? Math.max(0, Number(data.expiredAgents) || 0) : 0;
+    var foot = nExpired ? el('p', 'hcl-foldmenu-expired', '另有 ' + nExpired + ' 个临时会话已过期不再列出') : null;
+    if (P && (inactive.length || hiddenList.length || stale.length)) {
+      var fm = el('details', 'hcl-foldmenu'), nErr = inactive.filter(function (x) { return x.reason === 'error'; }).length;
+      var waitingN = SHOW_HIDDEN_WAITING ? data.hiddenWaiting || 0 : 0, nFold = inactive.length + hiddenList.length;
+      fm.open = !!root.hclMenuOpen;
+      var msum = el('summary', 'hcl-hidden-toggle hcl-foldmenu-toggle', (nFold || !stale.length ? '已折叠 ' + nFold + ' 个' : '') +
+        (nErr ? '（' + nErr + ' 个出错）' : '') + (waitingN ? ' · ' + waitingN + ' 个在等你' : '') +
+        (stale.length ? (nFold ? ' · ' : '') + '置顶但没在跑 (' + stale.length + ')' : ''));
+      fm.appendChild(msum);
+      var group = function (cap, cls) {
+        var g = el('div', 'hcl-foldmenu-group ' + cls);
+        g.appendChild(el('p', 'hcl-foldmenu-cap', cap));
+        var ul = el('ul', 'hcl-hidden-list');
+        g.appendChild(ul);
+        fm.appendChild(g);
+        return ul;
+      };
+      var nowMs = ms(data.now) || Date.now();
+      var ago = function (iso) {
+        var m = Math.max(0, Math.floor((nowMs - (ms(iso) || nowMs)) / MIN));
+        return m < 1 ? '刚刚' : m < 60 ? m + ' 分钟前' : Math.floor(m / 60) + ' 小时前';
+      };
+      var TIER_WORD = { high: '重点', low: '临时' };   // 普通档不标：多数行都是它，标了等于没标
+      [['出错', 'error', 'is-error'], ['空闲', 'idle', 'is-idle'], ['已结束', 'ended', 'is-ended']].forEach(function (g) {
+        var rows = inactive.filter(function (x) { return g[1] === 'idle' ? x.reason !== 'error' && x.reason !== 'ended' : x.reason === g[1]; });
+        if (!rows.length) { return; }
+        var ul = group(g[0] + ' (' + rows.length + ')', g[2]);
+        rows.forEach(function (x) {
+          var li = el('li', 'hcl-hidden-item');
+          li.appendChild(el('span', 'hcl-hidden-name', x.label || x.agent));
+          if (x.label) { li.appendChild(el('span', 'hcl-sub', x.agent)); }
+          if (TIER_WORD[x.tier]) { li.appendChild(el('span', 'hcl-tier hcl-tier-' + x.tier, TIER_WORD[x.tier])); }
+          li.appendChild(el('span', 'hcl-hidden-state hcl-inactive-reason', g[0] + ' · ' + ago(x.lastWorkAt)));
+          li.appendChild(el('span', 'hcl-sub hcl-inactive-time', '本窗口 ' + dur(0, (x.elapsedSeconds || 0) * 1000)));
+          if (!x.unverified) {                  // 置顶 = 重新显示（匿名的不能置顶）
+            var pin = el('button', 'hcl-hidden-restore hcl-inactive-pin', '置顶显示');
+            pin.type = 'button';
+            pin.setAttribute('aria-label', '置顶并显示：' + (x.label || x.agent));
+            pin.addEventListener('click', function () { P.onPin({ agent: x.agent, label: x.label, unverified: false }, true); });
+            li.appendChild(pin);
+          }
+          ul.appendChild(li);
+        });
+      });
+      if (hiddenList.length) {
+        var hl = group('手动隐藏 (' + hiddenList.length + ')', 'is-hidden');
+        hiddenList.forEach(function (h) {
+          var li = el('li', 'hcl-hidden-item');
+          li.appendChild(el('span', 'hcl-hidden-name', h.label || h.agent));
+          if (h.label) { li.appendChild(el('span', 'hcl-sub', h.agent)); }
+          li.appendChild(el('span', 'hcl-hidden-state', !h.live ? '没在跑' : isWaiting(h.phase) ? '在等你' : '在跑'));
+          var back = el('button', 'hcl-hidden-restore', '恢复显示');
+          back.type = 'button';
+          back.setAttribute('aria-label', '恢复显示：' + (h.label || h.agent));
+          back.addEventListener('click', function () { P.onRestore(h); });
+          li.appendChild(back);
+          hl.appendChild(li);
+        });
+      }
+      if (stale.length) {                       // 改名后留下的旧置顶：没有在跑的对得上，列出来让人移除
+        var sl = group('置顶但没在跑 (' + stale.length + ')', 'is-stale');
+        stale.forEach(function (p) {
+          var li = el('li', 'hcl-hidden-item is-stale-pin');
+          li.appendChild(el('span', 'hcl-hidden-name', p.label || p.agent));
+          if (p.label) { li.appendChild(el('span', 'hcl-sub', p.agent)); }
+          li.appendChild(el('span', 'hcl-hidden-state', '置顶但没在跑'));
+          var rm = el('button', 'hcl-hidden-restore hcl-unpin-stale', '移除置顶');
+          rm.type = 'button';
+          rm.setAttribute('aria-label', '移除置顶：' + (p.label || p.agent));
+          rm.addEventListener('click', function () { P.onPin({ agent: p.agent, label: p.label, unverified: false }, false); });
+          li.appendChild(rm);
+          sl.appendChild(li);
+        });
+      }
+      if (foot) { fm.appendChild(foot); }
+      root.appendChild(fm);
+      if (menuFocus) { msum.focus(); }
+    } else {
+      if (foot) { root.appendChild(foot); }       // 只有过期提示、没有折叠项：单独一行
+      if (menuFocus && opts.focusFallback) { opts.focusFallback.focus(); }
     }
 
     if (!agents.length) { root.appendChild(el('p', 'hcl-empty', '这段时间没有代理在跑。')); }
@@ -441,7 +967,7 @@
     var keys = [['hcl-human hcl-mode-do', '我在计时']];
     if (opts.presence) { keys.push(['hcl-presence', '在电脑前'], ['hcl-presence is-afk', '离开']); }
     keys.concat([['hcl-ph-working', '在干活'], ['hcl-ph-waiting', '在等你'],
-     ['hcl-ph-idle', '空闲'], ['hcl-ph-error', '出错'], ['hcl-key-reply', '回话'], ['hcl-key-attend', '在看']
+     ['hcl-ph-idle', '空闲'], ['hcl-ph-error', '出错'], ['hcl-key-reply', '回话'], ['hcl-attn', '你在看']
     ]).forEach(function (p) {
       var item = el('span', 'hcl-key');
       item.appendChild(el('span', 'hcl-swatch ' + p[0]));
@@ -470,12 +996,14 @@
       tip.style.top = (r.bottom - box.top + 4) + 'px';
     };
     root.onmouseleave = hideTip;
+    motion(root, before, cards);
     return infos;
   }
 
   window.HoneycombLanes = {
     query: query, prevDay: prevDay, segments: segments, currentPhase: currentPhase,
-    pickPreview: pickPreview, activeSeconds: activeSeconds, sortByActivity: sortByActivity,
-    humanStatus: humanStatus, render: render, PHASE_WORD: PHASE_WORD
+    pickPreview: pickPreview, activeSeconds: activeSeconds, attentionSeconds: attentionSeconds, sortByActivity: sortByActivity, recentRuns: recentRuns,
+    humanStatus: humanStatus, render: render, PHASE_WORD: PHASE_WORD,
+    optimistic: optimistic, identKey: identKey
   };
 })();

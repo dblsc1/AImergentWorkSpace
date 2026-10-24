@@ -194,8 +194,13 @@ func TestPresenceRedactionParityWithUpload(t *testing.T) {
 			}
 			seg := up[0].body["segments"].([]any)[0].(map[string]any)
 			p := pr[0].body
-			if p["app"] != seg["app"] || p["title"] != seg["title"] || p["afk"] != false || p["deviceId"] != "dev_test" || len(p) != 4 {
+			if p["app"] != seg["app"] || p["title"] != seg["title"] || p["afk"] != false || p["deviceId"] != "dev_test" || len(p) != 6 {
 				t.Fatalf("presence %v\nupload app=%v title=%v", p, seg["app"], seg["title"])
+			}
+			// v1.2：段里的 app / title 是同一条脱敏路径出来的同一份（最后一段 = 当前窗口 = 顶层）
+			spans := p["spans"].([]any)
+			if last := spans[len(spans)-1].(map[string]any); len(spans) != 1 || last["app"] != seg["app"] || last["title"] != seg["title"] {
+				t.Fatalf("spans %v", spans)
 			}
 			if b, _ := json.Marshal(p); strings.Contains(string(b), secret) || strings.Contains(string(b), "alice") || strings.Contains(string(b), "bob@") {
 				t.Fatalf("leaked: %s", b)
@@ -265,6 +270,118 @@ func TestPresenceOffAfkAndRemoteToggle(t *testing.T) {
 	}
 }
 
+// presence.v1 v1.1：网页设置 autoTrack 开着时，心跳带的 guess 与同一个窗口上传出去的建议是同一个目标、同一个把握
+// （同一个 matchRules，匹配换代号之前的标题）；关着、没设过、没命中、离开时没有这个键（请求体与 v1.0 相同）。
+func TestPresenceGuessParityWithUpload(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	rules := filepath.Join(t.TempDir(), "rules.json")
+	os.WriteFile(rules, []byte(`{"rules":[{"title":"garden","taskId":"t_a1"},{"app":"firefox","projectId":"p_2","confidence":0.7}]}`), 0o600)
+	settings := func(extra string) string {
+		return `{"settings":{"privacy":{` + extra + `},"idle":{},"presence":true,"autoTrack":true}}`
+	}
+	cases := []struct {
+		name, app, title, settings string
+		key, id                    string // 期望 guess 的目标键与 id；key 为空 = 不带 guess
+		conf                       float64
+	}{
+		{"task rule", "code", "plot.gd — garden — Code", settings(""), "taskId", "t_a1", 0.9},
+		{"project rule", "firefox", "Docs - Mozilla Firefox", settings(""), "projectId", "p_2", 0.7},
+		{"matches the title before pseudonymization", "code", "plot.gd — garden — Code", settings(`"titles":"pseudonymize"`), "taskId", "t_a1", 0.9},
+		{"no rule", "vim", "notes", settings(""), "", "", 0},
+		{"switch off", "code", "plot.gd — garden — Code", `{"settings":{"privacy":{},"idle":{},"presence":true,"autoTrack":false}}`, "", "", 0},
+		{"old settings doc without the key", "code", "plot.gd — garden — Code", `{"settings":{"privacy":{},"idle":{}}}`, "", "", 0},
+		{"never set on the web", "code", "plot.gd — garden — Code", "", "", "", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ev := awEvent{Timestamp: now.Add(-5 * time.Minute), Duration: 290, Data: map[string]any{"app": tc.app, "title": tc.title}}
+			aw := fakeAWWeb(t, []awEvent{ev}, nil, nil)
+			defer aw.Close()
+			ck := newLiveCockpit(t)
+			defer ck.Close()
+			defer remotePresence.Store(nil)
+			ck.settings = tc.settings
+			cfg := liveConfig(aw.URL, ck.URL)
+			cfg.RulesFile, cfg.dir = rules, t.TempDir()
+
+			if _, err := tick(cfg, &State{Active: true, Cursor: now.Add(-10 * time.Minute)}, now, http.DefaultClient); err != nil {
+				t.Fatal(err)
+			}
+			if sent, err := presenceBeat(cfg, http.DefaultClient, now); err != nil || !sent {
+				t.Fatalf("beat sent=%v err=%v", sent, err)
+			}
+			sug := ck.posts("/activity/suggestions")[0].body["segments"].([]any)[0].(map[string]any)["suggestion"].(map[string]any)
+			p := ck.posts("/activity/presence")[0].body
+			g, has := p["guess"].(map[string]any)
+			if tc.key == "" {
+				if _, onSpan := p["spans"].([]any)[0].(map[string]any)["guess"]; has || onSpan || len(p) != 6 {
+					t.Fatalf("unexpected guess: %v", p)
+				}
+				return
+			}
+			if !has || len(g) != 3 || g[tc.key] != tc.id || g["confidence"] != tc.conf || g["classifier"] != "rules" {
+				t.Fatalf("guess %v", p["guess"])
+			}
+			if sug[tc.key] != g[tc.key] || sug["confidence"] != g["confidence"] || sug["classifier"] != g["classifier"] {
+				t.Fatalf("guess %v != upload suggestion %v", g, sug)
+			}
+			if sg, _ := p["spans"].([]any)[0].(map[string]any)["guess"].(map[string]any); sg[tc.key] != tc.id || sg["confidence"] != tc.conf {
+				t.Fatalf("span guess %v != %v", sg, g)
+			}
+			if tc.key == "projectId" && sug["taskId"] != nil {
+				t.Fatalf("project-only rule uploaded a task: %v", sug)
+			}
+			if tc.settings != settings("") && p["title"] == tc.title {
+				t.Fatalf("title not pseudonymized: %v", p)
+			}
+		})
+	}
+
+	// 离开：不带 guess（app / title 都是空的，没有窗口可猜）。
+	ev := awEvent{Timestamp: now.Add(-time.Minute), Duration: 55, Data: map[string]any{"app": "code", "title": "garden"}}
+	aw := fakeAWWeb(t, []awEvent{ev}, []awEvent{{Timestamp: now.Add(-30 * time.Second), Duration: 25, Data: map[string]any{"status": "afk"}}}, nil)
+	defer aw.Close()
+	ck := newLiveCockpit(t)
+	defer ck.Close()
+	defer remotePresence.Store(nil)
+	ck.settings = settings("")
+	cfg := liveConfig(aw.URL, ck.URL)
+	cfg.RulesFile = rules
+	if sent, err := presenceBeat(cfg, http.DefaultClient, now); !sent || err != nil {
+		t.Fatalf("afk beat sent=%v err=%v", sent, err)
+	}
+	if p := ck.posts("/activity/presence")[0].body; p["afk"] != true || p["guess"] != nil || p["app"] != "" {
+		t.Fatalf("afk body %v", p)
+	}
+}
+
+// 心跳用的规则每 60 秒才重拉一次；拉不到 / 本机规则写坏 = 这次没有规则（不带 guess），心跳照发。
+func TestRulesForBeatCachesAndSurvivesBrokenRules(t *testing.T) {
+	var hits int
+	body := `{"version":1,"rules":[{"id":"a","app":"code","title":null,"taskId":"t_1","confidence":0.9,"enabled":true}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		io.WriteString(w, body)
+	}))
+	defer srv.Close()
+	now := time.Now()
+	cfg := Config{DeviceToken: "tok"}
+	for i, at := range []time.Duration{0, 30 * time.Second, 59 * time.Second, 60 * time.Second} {
+		if rs := rulesForBeat(cfg, srv.Client(), srv.URL, now.Add(at)); len(rs) != 1 {
+			t.Fatalf("#%d rules=%v", i, rs)
+		}
+	}
+	if hits != 2 {
+		t.Fatalf("fetched %d times, want 2", hits)
+	}
+	body = `{"version":0,"rules":[]}` // 服务端没存过 → 本机 rules.json，而它写坏了
+	cfg.RulesFile = filepath.Join(t.TempDir(), "rules.json")
+	os.WriteFile(cfg.RulesFile, []byte(`{broken`), 0o600)
+	if rs := rulesForBeat(cfg, srv.Client(), srv.URL, now); rs != nil {
+		t.Fatalf("broken rules must mean no rules, got %v", rs)
+	}
+}
+
 // 标题刚变：最新事件 0 秒（记录器还没续上），心跳照发最新标题，不报「没有窗口记录」。
 func TestPresenceZeroDurationLatest(t *testing.T) {
 	now := time.Now()
@@ -291,6 +408,186 @@ func TestPresenceZeroDurationLatest(t *testing.T) {
 	}
 	if p := ck.posts("/presence")[0].body; p["title"] != "edge" {
 		t.Fatalf("edge presence %v", p)
+	}
+}
+
+// ── presence.v1 v1.2：每拍带上一拍以来各窗口的停留 ─────────────────────────
+
+func winEv(at time.Time, sec float64, app, title string) awEvent {
+	return awEvent{Timestamp: at, Duration: sec, Data: map[string]any{"app": app, "title": title}}
+}
+
+type gotSpan struct {
+	app, title string
+	from       time.Time
+	seconds    float64
+}
+
+func bodySpans(t *testing.T, body map[string]any) []gotSpan {
+	t.Helper()
+	raw, _ := body["spans"].([]any)
+	out := make([]gotSpan, len(raw))
+	for i, x := range raw {
+		m := x.(map[string]any)
+		from, err := time.Parse(time.RFC3339Nano, m["from"].(string))
+		if err != nil {
+			t.Fatal(err)
+		}
+		out[i] = gotSpan{m["app"].(string), m["title"].(string), from, m["seconds"].(float64)}
+	}
+	return out
+}
+
+func TestPresenceDefaultIsFiveSeconds(t *testing.T) {
+	c, _ := defaultConfig(t.TempDir())
+	for _, s := range []float64{c.PresenceSeconds, 0, 4, 301} {
+		c.PresenceSeconds = s
+		if got := presenceInterval(c); got != 5*time.Second {
+			t.Fatalf("presenceSeconds=%v → %v", s, got)
+		}
+	}
+	c.PresenceSeconds = 30
+	if presenceInterval(c) != 30*time.Second {
+		t.Fatal("30 秒以内照配置")
+	}
+	// 一拍只往回带 presenceLookback：间隔比它的一半长，丢一拍（或只是晚了一点）那段停留就没了。
+	// 31–300 仍是合法配置，实际按 presenceMaxInterval 发。
+	for _, s := range []float64{31, 60, 300} {
+		c.PresenceSeconds = s
+		if got := presenceInterval(c); got != presenceMaxInterval || 2*got > presenceLookback {
+			t.Fatalf("presenceSeconds=%v → %v", s, got)
+		}
+	}
+}
+
+// 每 3 秒切一次窗口（记录器 1 秒一条）：每个窗口一段、按时间排、互不重叠；离开的那几秒不算；
+// 0 秒的闪现不成段，被它隔开的同一个窗口并成一段。
+func TestPresenceSpansSerialUnderFastSwitching(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	t0 := now.Add(-12 * time.Second)
+	var win []awEvent
+	for i := 0; i < 12; i++ { // 0–3 A，3–6 B，6–9 A，9–12 B；每秒一条
+		title := []string{"A", "B"}[i/3%2]
+		win = append(win, winEv(t0.Add(time.Duration(i)*time.Second), 1, "ptyxis", title))
+	}
+	win = append(win, winEv(t0.Add(10*time.Second), 0, "ptyxis", "blip")) // B 中间闪一下
+	afk := []awEvent{{Timestamp: t0.Add(4 * time.Second), Duration: 1, Data: map[string]any{"status": "afk"}},
+		{Timestamp: t0.Add(5 * time.Second), Duration: 7, Data: map[string]any{"status": "not-afk"}}}
+	aw := fakeAWWeb(t, win, afk, nil)
+	defer aw.Close()
+	ck := newLiveCockpit(t)
+	defer ck.Close()
+	remotePresence.Store(nil)
+	cfg := liveConfig(aw.URL, ck.URL)
+	cfg.SegmentByTitleApps = []string{"ptyxis"}
+	b := &beater{covered: t0}
+	if sent, err := b.beat(cfg, http.DefaultClient, now); !sent || err != nil {
+		t.Fatalf("sent=%v err=%v", sent, err)
+	}
+	body := ck.posts("/presence")[0].body
+	got := bodySpans(t, body)
+	want := []struct {
+		title    string
+		at, secs float64
+	}{{"A", 0, 3}, {"B", 3, 1}, {"B", 5, 1}, {"A", 6, 3}, {"B", 9, 3}}
+	if len(got) != len(want) {
+		t.Fatalf("spans %v", got)
+	}
+	for i, w := range want {
+		g := got[i]
+		if g.app != "ptyxis" || g.title != w.title || !g.from.Equal(t0.Add(time.Duration(w.at*float64(time.Second)))) || g.seconds != w.secs {
+			t.Fatalf("span %d = %+v, want %+v", i, g, w)
+		}
+		if i > 0 && g.from.Before(got[i-1].from.Add(time.Duration(got[i-1].seconds*float64(time.Second)))) {
+			t.Fatalf("span %d overlaps the previous one: %v", i, got)
+		}
+	}
+	if body["title"] != "B" || body["truncated"] != nil || body["sentAt"] != now.UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("top level %v", body)
+	}
+	if !b.covered.Equal(now) {
+		t.Fatalf("covered %v", b.covered)
+	}
+}
+
+// 一拍至多 12 段：超了留当前窗口 + 其余里最长的，仍按时间排，并标 truncated。
+func TestPresenceSpansCap(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	t0 := now.Add(-40 * time.Second)
+	var win []awEvent
+	for i := 0; i < 20; i++ { // 20 个窗口各 2 秒；偶数号的前一秒让给一个 1 秒的短窗口 → 偶数号只剩 1 秒
+		at := t0.Add(time.Duration(2*i) * time.Second)
+		if i%2 == 0 {
+			win = append(win, winEv(at, 1, "code", fmt.Sprintf("short-%d", i)), winEv(at.Add(time.Second), 1, "code", fmt.Sprintf("w%d", i)))
+		} else {
+			win = append(win, winEv(at, 2, "code", fmt.Sprintf("w%d", i)))
+		}
+	}
+	aw := fakeAWWeb(t, win, nil, nil)
+	defer aw.Close()
+	ck := newLiveCockpit(t)
+	defer ck.Close()
+	remotePresence.Store(nil)
+	if sent, err := presenceBeat(liveConfig(aw.URL, ck.URL), http.DefaultClient, now); !sent || err != nil {
+		t.Fatalf("sent=%v err=%v", sent, err)
+	}
+	body := ck.posts("/presence")[0].body
+	got := bodySpans(t, body)
+	if len(got) != presenceMaxSpans || body["truncated"] != true {
+		t.Fatalf("%d spans truncated=%v", len(got), body["truncated"])
+	}
+	if last := got[len(got)-1]; last.title != "w19" || body["title"] != "w19" {
+		t.Fatalf("current window must survive: %+v", last)
+	}
+	long := 0
+	for i, g := range got {
+		if g.seconds == 2 {
+			long++
+		}
+		if i > 0 && !g.from.After(got[i-1].from) {
+			t.Fatalf("not in time order: %v", got)
+		}
+	}
+	if long != 10 { // 10 个 2 秒的全留下
+		t.Fatalf("kept %d of the 10 longest: %v", long, got)
+	}
+}
+
+// 一拍没发出去：不排队、不重发；下一拍从上一次成功的地方接着带（所以时间线上没有洞），最多往回 presenceLookback。
+func TestPresenceLookbackAfterFailedBeat(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	t0 := now.Add(-10 * time.Minute)
+	aw := fakeAWWeb(t, []awEvent{winEv(t0, 3600, "code", "x")}, nil, nil)
+	defer aw.Close()
+	ck := newLiveCockpit(t)
+	defer ck.Close()
+	remotePresence.Store(nil)
+	cfg := liveConfig(aw.URL, ck.URL)
+	b := &beater{}
+	beat := func(at time.Time) (bool, []gotSpan) {
+		ck.take()
+		sent, _ := b.beat(cfg, http.DefaultClient, at)
+		if !sent {
+			return false, nil
+		}
+		return true, bodySpans(t, ck.posts("/presence")[0].body)
+	}
+	if ok, sp := beat(now); !ok || len(sp) != 1 || sp[0].seconds != 60 { // 第一拍：没有上一拍，带最近一分钟
+		t.Fatalf("first beat %v", sp)
+	}
+	ck.respond = func(string) (int, string) { return 503, "" }
+	if ok, _ := beat(now.Add(5 * time.Second)); ok {
+		t.Fatal("failed beat reported as sent")
+	}
+	ck.respond = nil
+	if ok, sp := beat(now.Add(10 * time.Second)); !ok || len(sp) != 1 || !sp[0].from.Equal(now) || sp[0].seconds != 10 {
+		t.Fatalf("beat after a failure should cover from the last success: %v", sp)
+	}
+	if ok, sp := beat(now.Add(15 * time.Second)); !ok || !sp[0].from.Equal(now.Add(10*time.Second)) || sp[0].seconds != 5 {
+		t.Fatalf("steady beat %v", sp)
+	}
+	if ok, sp := beat(now.Add(5 * time.Minute)); !ok || sp[0].seconds != 60 { // 断了很久：只带 presenceLookback
+		t.Fatalf("bounded lookback %v", sp)
 	}
 }
 
@@ -579,5 +876,59 @@ func TestBridgeStatePersistsAcrossRestart(t *testing.T) {
 	loadJSON(e.state, &st)
 	if st.Cursor.IsZero() || st.Agents["codex:1"].RunID != "run_1" || len(st.Agents["codex:1"].Pending) != 0 {
 		t.Fatalf("state %+v", st)
+	}
+}
+
+// 最后一段不足 1 毫秒：取整成 0 秒，服务端（seconds > 0）会把整拍 422——不带这一段，别的段照发。
+func TestPresenceDropsSubMillisecondFragment(t *testing.T) {
+	now := time.Now()
+	aw := fakeAWWeb(t, []awEvent{
+		winEv(now.Add(-20*time.Second), 19.9995, "code", "old"),
+		winEv(now.Add(-500*time.Microsecond), 0, "code", "new"),
+	}, nil, nil)
+	defer aw.Close()
+	ck := newLiveCockpit(t)
+	defer ck.Close()
+	remotePresence.Store(nil)
+	if sent, err := presenceBeat(liveConfig(aw.URL, ck.URL), http.DefaultClient, now); !sent || err != nil {
+		t.Fatalf("sent=%v err=%v", sent, err)
+	}
+	body := ck.posts("/presence")[0].body
+	for _, g := range bodySpans(t, body) {
+		if g.seconds <= 0 {
+			t.Fatalf("zero-second span sent: %+v", g)
+		}
+	}
+	if got := bodySpans(t, body); len(got) != 1 || got[0].title != "old" {
+		t.Fatalf("spans %+v", got)
+	}
+}
+
+// 暂停 / 关闭期间的窗口不补传：恢复后的第一拍从恢复时刻起算，不带暂停前的 covered。
+func TestPresenceNoBackfillAcrossPause(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	aw := fakeAWWeb(t, []awEvent{winEv(now.Add(-10*time.Minute), 3600, "code", "x")}, nil, nil)
+	defer aw.Close()
+	ck := newLiveCockpit(t)
+	defer ck.Close()
+	remotePresence.Store(nil)
+	cfg := liveConfig(aw.URL, ck.URL)
+	b := &beater{}
+	if sent, _ := b.beat(cfg, http.DefaultClient, now); !sent {
+		t.Fatal("first beat")
+	}
+	paused := cfg
+	paused.Paused = true
+	b.beat(paused, http.DefaultClient, now.Add(5*time.Second))
+	ck.take()
+	if sent, _ := b.beat(cfg, http.DefaultClient, now.Add(8*time.Second)); sent || len(ck.posts("/presence")) != 0 {
+		t.Fatal("resume beat must not upload anything")
+	}
+	if sent, _ := b.beat(cfg, http.DefaultClient, now.Add(13*time.Second)); !sent {
+		t.Fatal("beat after resume")
+	}
+	sp := bodySpans(t, ck.posts("/presence")[0].body)
+	if len(sp) != 1 || !sp[0].from.Equal(now.Add(8*time.Second)) || sp[0].seconds != 5 {
+		t.Fatalf("must start at the resume moment, not the last paused tick: %v", sp)
 	}
 }

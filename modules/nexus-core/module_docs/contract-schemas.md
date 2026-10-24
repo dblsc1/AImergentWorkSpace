@@ -92,6 +92,10 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
   发现永远读不到 `dependsOn` 键。**教训**：加字段时要过一遍**全部**读取同一
   实体的端点，不能改完一个就当作那批字段"已经加完了"。
 
+- **`unclassifiedTaskId`（v2.9，项目上）**：该项目「未分类」时间桶的任务 id，还没建过为 `null`。桶本身
+  **不在** `tasks[]` 里（带 `includeEphemeral=true` 也不在），`progress` 也不算它。同版 `CurrentOut.task` 与
+  `GanttOut` 的任务各多一个 `kind`（`normal` / `ephemeral` / `unclassified`）。规则见 `contract.md`「项目未分类时间」节。
+
 #### 与其他两条读端的对照（v1.2 新增，防止再漏第三处）
 
 | 读端 | 任务节点带 `plan`/`dependsOn` | 用途 |
@@ -218,6 +222,139 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
   从未出现过任何一行则为 `null`（不是"从很久以前"，是"压根没有过"，两者在
   UI 上应该有不同文案）。
 
+### `SessionReassignOut` — `POST /api/core/sessions/{eventId}/reassign`（v2.11）
+
+规范性条款只住 `contract.md`「改挂未分类时间」节。形状：
+
+```jsonc
+// 请求体（二选一，多余的键 422）
+{ "taskId": "t_…" }  |  { "projectId": "p_…" }
+// 200
+{ "sessionEventId": "evt_…", "duplicate": false, "fromTaskId": "t_unc_p_…",
+  "taskId": "t_…", "projectId": "p_…", "seq": 1,
+  "event": { "id": "evt_…", "dedupeKey": "reassign:evt_…:1", "type": "session.reassigned" } }   // 从没改挂过又 duplicate 时为 null
+```
+
+- `duplicate: true` 时界面应当把它当成功（这一段已经在那个任务上），不是报错。
+- `GET /api/core/events` 的条目在改挂过之后多一个 `currentSubject {zone, project, task}`；没有这个键 = 没改挂过，
+  读方一律写 `currentSubject || subject`。
+
+### `MatchHistoryOut` — `GET /api/core/activity/suggestions/history`（v2.12）
+
+规范性条款只住 `contract.md`「活动建议」节「匹配历史」。形状：
+
+```jsonc
+// 查询参数：limit（整数，缺省 60，上限 200，非正数按缺省）
+{ "items": [ { "app": "kitty", "title": "Claude Code · cockpit", "collection": "Claude Code · cockpit",   // collection 可缺
+               "projectId": "p_…", "projectPath": "分区 / 项目",
+               "taskId": "t_…", "taskName": "…", "taskDone": false,                                      // 只定到项目时三个键都没有
+               "count": 7, "lastConfirmedAt": "2026-10-08T03:12:00+00:00", "via": "confirm" } ],          // confirm | project | reassign
+  "collections": [ { "name": "…", "projectId": "p_…", "projectPath": "分区 / 项目", "count": 12 } ],
+  "rejected": [ { "app": "…", "title": "…", "taskId": "t_…", "taskName": "…" } ] }
+```
+
+- 三个数组总在（没有就是 `[]`）。`title` 是归一化之后的标题，不是某一段的原样标题。
+- 读方判「只定到项目」看有没有 `taskId`，不要看 `via`（`reassign` 两种都可能）。
+
+### `PendingDaysOut` — `GET /api/core/activity/suggestions/pending-days`（v2.26）
+
+规范性条款只住 `contract.md`「待确认时间的按天汇总」节。形状：
+
+```jsonc
+// 查询参数：from、to（YYYY-MM-DD，必填，含两端，至多 92 天，否则 422）
+{ "totalSeconds": 7700, "count": 111,
+  "days": [ { "date": "2026-10-09", "seconds": 7700, "count": 111 } ] }   // 日期升序，无数据的日子不出；上界估计，不是工时
+```
+
+### `AgentStartIn.projectId` 与 `suggestion.projectSource`（v2.13）
+
+规范性条款只住 `contract.md`「只挂项目的运行」「窗口 ↔ 代理会话」两节。形状：
+
+```jsonc
+// POST /api/core/agents/start —— 追加选填 projectId（1–128 字符；不带 taskId 时用）
+{ "agent": "CFO_agent", "tool": "claude-code", "projectId": "p_3c" }
+// GET /api/core/activity/suggestions —— suggestion 可能多出（服务端按代理会话对上的）
+{ "projectId": "p_3c", "projectSource": "agent-session", "collection": { "key": "cfo_agent", "name": "CFO_agent" } }
+```
+
+- `LaneAgent.unverified: bool`（v2.19 追加，缺省 `false`）：这个运行是不带任何凭据的请求开的（契约「调用方范围与匿名上报」）。
+- `LaneAgent.projectId` / `AgentTimeTask.projectId` 形状不变：只挂项目的运行在这里是那个项目、`taskId` 为 `null`。
+- `projectSource` 只有一个取值 `"agent-session"`；没有这个键 = `projectId`（若有）是助理给的。
+
+### 自动跟踪：`LaneHuman.auto` / `needsChoice`、`PresenceIn.guess`、`ChoiceIn/Out`、`AutoSessionsOut`（v2.14）
+
+规范性条款只住 `contract.md`「自动跟踪进行中的任务」节。形状：
+
+```jsonc
+// POST /api/core/activity/presence —— 追加选填 guess（taskId / projectId 恰好一个；不合形状 422）
+{ "deviceId": "dev_…", "app": "code", "title": "…", "afk": false,
+  "guess": { "taskId": "t_a1", "confidence": 0.9, "classifier": "rules" } }
+// GET /api/core/views/lanes —— human 追加两个键（总在，可为 null）
+{ "human": { "sessions": [], "running": null, "presence": [],
+             "auto": { "taskId": "t_a1", "projectId": "p_1", "taskName": "写提示词", "projectName": "garden",
+                       "since": "…", "app": "code", "title": "…", "source": "rules" },     // rules | choice
+             "needsChoice": { "key": "wk_…", "app": "kitty", "title": "…", "since": "…" } } }
+// GET /api/core/views/current —— 顶层追加同样的两个键（总在；running: true 时都是 null）
+{ "running": false, "zone": null, "project": null, "task": null, "sessionStartAt": null, "agents": [],
+  "auto": { /* 同上 */ }, "needsChoice": null }
+// POST /api/core/activity/choice
+{ "key": "wk_…", "taskId": "t_a1", "remember": true }        // 或 "projectId": "p_1"；多余的键 422
+{ "key": "wk_…", "taskId": "t_a1", "projectId": "p_1", "remembered": true, "pseudonymized": false }
+// POST /api/core/activity/choice/dismiss
+{ "key": "wk_…" }  →  { "key": "wk_…", "dismissedUntil": "2026-10-08T06:00:00+00:00" }
+// GET /api/core/activity/auto
+{ "items": [ { "id": "sug_…", "eventId": "evt_…", "startAt": "…", "endAt": "…", "durationSeconds": 1500,
+               "app": "code", "title": "…", "taskId": "t_a1", "projectId": "p_1", "reassigned": false } ] }
+// GET /api/core/activity/suggestions —— 每条追加 auto（布尔，缺省 false）；suggestion 可能带规则给的 projectId
+```
+
+- `auto.taskId` / `auto.taskName` 在只到项目时为 `null`（键不消失）；读方画「自动 · 项目」或「自动 · 项目 / 任务」。
+- `auto` 与 `needsChoice` 可以同时非 `null`（说的不一定是同一个窗口）。`human.running` 非 `null` 时两者都是 `null`。
+
+### 让 AI 认窗口：`LaneHuman.aiThinking`、`auto.key` / `source: "ai"`、`ClaimOut`、`SuggestIn/Out`、`RejectOut`（v2.15）
+
+```jsonc
+// GET /api/core/views/lanes 的 human（v2.15 追加）；GET /api/core/views/current 顶层同样追加 aiThinking
+"human": { /* …v2.14 的键… */
+           "auto": { /* …v2.14 的键… */ "source": "rules" | "choice" | "ai", "key": "wk_0a0a0a0a0a0a0a0a0a0a" },
+           "aiThinking": { "key": "wk_…", "app": "kitty", "title": "✳ notes", "since": "<ISO>" } | null }
+// POST /api/core/activity/ai/claim → 200
+{ "window": { "key": "wk_…", "app": "kitty", "title": "✳ notes", "claimedAt": "<UTC ISO>", "answerBy": "<UTC ISO>" } | null }
+// POST /api/core/activity/ai/suggest  SuggestIn（多余的键 422）
+{ "key": "wk_…", "taskId": "t_a1" /* 或 "projectId" */, "confidence": 0.85, "reason": "…" }   // 或 { key, "none": true, reason }
+// 200 SuggestOut
+{ "key": "wk_…", "outcome": "suggested" | "none", "taskId": "t_a1" | null, "projectId": "p_1" | null,
+  "confidence": 0.9 | null, "autoRecord": true, "ruleWritten": true }
+// POST /api/core/activity/choice/reject {key} → 200 RejectOut
+{ "key": "wk_…", "app": "kitty", "title": "✳ notes", "ruleRemoved": true }
+// GET /api/core/activity/auto —— 每条追加 ai（布尔）
+// GET /api/core/activity/auto —— 每条再追加 source: "rules" | "choice"（2026-10-08 波次统一审核：按规则 / 按人的临时选择记下的）
+// 规则（detector.rules.v1 v1.2）可带 "author": "assistant" | "human"、"auto": true；没有就不带这两个键
+```
+
+- `aiThinking` 的窗口不会同时是 `needsChoice` 的窗口；`human.running` 非 `null` 时也是 `null`。
+- `auto.key` 总在（当前窗口的键）；老读方忽略它即可。
+- `ChoiceOut.remembered: false` 且 `pseudonymized: false` = 规则没写成（太长 / 规则已满 / 撞版本），选择本身已生效。
+
+### 心跳与失联：`AgentStartIn/Out`、`AgentHeartbeatIn/Out`、`LaneAgent`（v2.18）
+
+```jsonc
+// AgentStartIn 追加（都选填）          AgentStartOut 追加
+{ "heartbeat": true, "beatSource": "companion" }      { "heartbeatSeconds": 900 }
+// AgentHeartbeatIn：空体、{} 或         AgentHeartbeatOut
+{ "beatSource": "monitor" }                           { "runId": "run_…", "applied": true, "reason": null | "closed",
+                                                        "heartbeatSeconds": 900 }
+// LaneAgent（GET /api/core/views/lanes 的 agents[]）追加四个键，键总在
+{ "lost": false, "lastSeenAt": "<ISO，NEXUS_TZ 的偏移>" | null, "beatSource": "companion" | null, "beatCount": 3 | null }
+// agent.run.completed 的 data：outcome 追加取值 "lost"；追加选填 beatSource、beatCount（没有就不出现）
+```
+
+- `beatSource`：`^[a-z0-9][a-z0-9_-]{0,31}$`，其余 422。`AgentHeartbeatIn` 不收别的键（422）。
+- `lost: true` 只出现在**在跑**的运行上；已结束的看 `outcome`。`lastSeenAt` 只有在跑的运行有。
+- `beatCount` 为 `null` = 一次心跳都没收到过（不是 0）。
+- `CurrentOut.agents[]` 与 `AgentTimeOut.open[]` 不加字段：这两个读端读前已把失联的收掉。
+- 规则见 `contract.md`「心跳与失联」节；线上协议见 `contracts/agent.lane.v1`。
+
 ### `AuditOut` — `GET /api/core/planner/audit`（v1.6，F-ACTOR-2）
 
 记录形状、三种 `outcome` 的语义、append-only 的保证方式见 `contract.md`
@@ -243,3 +380,146 @@ v2.4 追加：每项再加 `phase`（`working`/`waiting_input`/`waiting_permissi
 - 种子数据从哪来：本版允许一次性 seed 脚本落 `code/backend/`，
   **不得**在 `views/` 里硬编码名字——那会让前端看到的名字与库里的漂移。
 
+### 此刻的焦点：`CurrentOut.focus` / `LaneHuman.focus`（v2.16）
+
+```jsonc
+// GET /api/core/views/current 顶层与 GET /api/core/views/lanes 的 human 各追加一个键，同一份
+{ "focus": { "state": "present" | "afk",
+             "app": "code", "title": "plot.gd — garden",      // 心跳带来的原样（已按隐私设置处理）
+             "since": "<ISO，NEXUS_TZ 的偏移>",                 // 这个窗口（或这一轮离开）的起点
+             "projectId": "p_…" | null, "projectName": "garden" | null,
+             "taskId": "t_…" | null, "taskName": "写提示词" | null,
+             "source": "rules" | "choice" | "ai" | "agent-session" | "history" | null } | null }
+```
+
+- `focus` 为 `null` = 没有新鲜（≤ 90 秒）的心跳；非 `null` 时九个键都在。
+- `state: "afk"`、或认不出目标时，后五个键为 `null`；只认到项目时 `taskId` / `taskName` 为 `null`、`source` 非 `null`。
+- 在计时（`running: true`）也给；此时 `auto` 为 `null`，目标从「窗口 ↔ 代理会话」认起。
+- 判据、花费、隐私见 `contract.md`「此刻的焦点」节。
+
+### 串行的注意力时间线：`PresenceIn.sentAt` / `spans`、`LaneAgent.attention`、`LanePresence.runId`、`AgentTimeOpen.attentionSeconds`、`LaneFocus.dwellSeconds`（v2.17）
+
+规范性条款只住 `contract.md`「串行的注意力时间线」节。形状：
+
+```jsonc
+// POST /api/core/activity/presence —— 追加两个选填键（带 spans 必须带 sentAt；不合形状整拍 422）
+{ "deviceId": "dev_…", "app": "ptyxis", "title": "✳ garden", "afk": false,
+  "sentAt": "<带偏移的 ISO>",
+  "spans": [ { "app": "code", "title": "…", "from": "<带偏移的 ISO>", "seconds": 2.4,     // 0 < seconds ≤ 120
+               "guess": { "taskId": "t_a1", "confidence": 0.9, "classifier": "rules" } } ] }   // ≤ 32 段；guess 选填
+// GET /api/core/views/lanes
+{ "human": { "presence": [ { "deviceId": "dev_…", "from": "…", "to": "…", "app": "…", "title": "…", "afk": false,
+                             "runId": "run_…" | null } ],
+             "focus": { /* v2.16 的九个键 */ "dwellSeconds": 1500 | null } },
+  "agents": [ { /* 既有的键 */ "attention": [ { "from": "<ISO，NEXUS_TZ 的偏移>", "to": "…" } ] } ] }
+// GET /api/core/views/current —— focus 同上
+// GET /api/core/views/agent-time
+{ "open": [ { /* 既有的键 */ "attentionSeconds": 95 } ] }
+```
+
+- 四个读端的键**总在**：`attention` 没有为 `[]`、`runId` 没有为 `null`、`attentionSeconds` 没有为 `0`、`dwellSeconds` 离开时为 `null`。
+- `attention` 按时间排、互不重叠；`from == to` 的段可能出现。
+
+### 泳道偏好与忽略并记住（v2.22，`nexus-core.lanes.prefs.v1` / `nexus-core.activity.ignores.v1`）
+
+规范性条款只住 `contract.md`「泳道偏好与忽略并记住」节。形状：
+
+```jsonc
+// GET /api/core/lanes/prefs（也是 PUT …/agent、PUT …/order、DELETE …/order[/{runId}] 的响应）—— 只收人（Bearer → 403）
+{ "agents": [ { "agent": "claude-code", "label": "garden", "unverified": false, "hidden": false, "pinned": true, "pinnedAt": "<ISO>" } ],
+  "order":  [ { "runId": "run_…", "slot": 1 } ] }
+// PUT /api/core/lanes/prefs/agent   { "agent": "claude-code", "label": "garden", "hidden": true }   // hidden / pinned 至少一个，布尔
+// PUT /api/core/lanes/prefs/order   { "runId": "run_…", "index": 1 }                                // 运行不在跑 → 404
+//   可选窗口（v2.24 追加，同 GET views/lanes 的 date / from / to，同校验）：{ …, "from": "2026-10-08", "to": "2026-10-09" }；缺省 = 今天
+
+// GET /api/core/views/lanes —— 追加（既有键不变）
+{ "agents": [ { /* 既有的键 */ "pinned": false, "manualOrder": null, "rank": 0 } ],
+  "hiddenAgents": [ { "agent": "claude-code", "label": "garden", "unverified": false, "live": true, "phase": "waiting_input" } ],
+  "hiddenWaiting": 1,
+  "stalePinned": [ { "agent": "claude-code", "label": "old-name" } ] }
+// GET /api/core/views/current、/views/agent-time —— 追加 "hiddenCount": 1（没列出的、藏起来的在跑运行个数）
+
+// GET /api/core/activity/ignores
+{ "total": 1, "items": [ { "id": "ig_…", "app": "chrome", "titleContains": "银行", "createdAt": "<ISO>",
+                           "hits": 3, "seconds": 700, "lastHitAt": "<ISO>" | null } ] }   // 非人的调用方每项只有 id / app / hasTitleFilter / hits / seconds / createdAt
+// POST /api/core/activity/ignores   { "app": "chrome", "titleContains": "银行" }  → 201 { …规则, "created": true, "removed": 2 }   // removed = 顺手删掉的待确认 / 已忽略的匹配建议数（尽力而为）
+// POST /api/core/activity/suggestions → { "accepted": 1, "duplicates": 0, "rejected": [], "ignored": 2 }   // ignored 只在有时才带
+```
+
+- `LaneAgent.pinned` 缺省 `false`、`manualOrder` 缺省 `null`、`rank` 是 `agents[]` 里互不相同的 0 起整数；`hiddenAgents` 缺省 `[]`、`hiddenWaiting` 缺省 `0`；`stalePinned` 缺省 `[]`；`views/current` / `views/agent-time` 的 `hiddenCount` 缺省 `0`。
+- `views/current.agents[]`、`views/agent-time.open[]` 形状不变，只是不列藏起来的代理。
+
+### AI 报告（v2.20，`nexus-core.activity.reports.v1`）
+
+规范性条款只住 `contract.md`「AI 报告」节。形状：
+
+```jsonc
+// POST /api/core/activity/reports —— 只收人（Bearer → 403）。summary ≤ 2000、items ≤ 200，超了整个请求 422
+{ "summary": "把 VS Code 的碎片归到制作区，8 段 Slack 当噪声", "author": "hermes",      // author 选填，≤ 64，自报标签
+  "items": [
+    { "kind": "assign",  "suggestionIds": ["sug_…", "sug_…"], "taskId": "t_a1", "reason": "标题里都是 save.gd" },
+    { "kind": "assign",  "collection": "写文档", "projectId": "p_3c" },                   // 集合名：提交时解析成 id 存下
+    { "kind": "newTask", "suggestionIds": ["sug_…"], "newTask": { "projectId": "p_3c", "name": "重构存档" } },
+    { "kind": "dismiss", "suggestionIds": ["sug_…"], "reason": "后台自动刷新" } ] }
+// → 200（坏的条进 rejected，其余照收；code ∈ invalid_item / unknown_suggestion / unknown_task / unknown_project /
+//        duplicate_suggestion / too_many_refs / newtask_refused；不存在与别的租户的 id 回一样的话，没有存在性预言机）
+{ "reportId": "rp_…" | null, "status": "pending", "accepted": 3,
+  "rejected": [ { "index": 2, "code": "unknown_task", "reason": "任务不存在：t_x" } ] }
+// → 429：已有 5 份 pending；422：形状不对 / 超限
+
+// GET /api/core/activity/reports/{id}（resolve=true；resolve=false 没有 suggestions / seconds / staleNow）
+{ "id": "rp_…", "author": "hermes", "summary": "…", "status": "pending", "createdAt": "<ISO>", "decidedAt": null,
+  "counts": { "items": 4, "pending": 4, "byKind": { "assign": 2, "newTask": 1, "dismiss": 1 }, "seconds": 5400 },
+  "items": [ { "id": "i0", "kind": "assign", "status": "pending", "reason": "…",
+               "taskId": "t_a1", "projectId": null, "newTask": null,                     // newTask: {proposalId, projectId, name}
+               "results": { "sug_…": { "state": "applied" } },                           // 失败时 {state:"failed", reason}
+               "applied": 0, "stale": 0, "failed": 0, "failure": null,                  // 第一个失败段的原因（服务端的话）
+               "seconds": 1200, "staleNow": 0,                                          // 此刻已不是 pending 的建议数
+               "suggestions": [ { "id": "sug_…", "app": "code", "title": "…", "startAt": "…", "durationSeconds": 600,
+                                  "status": "pending" } ] } ] }
+
+// POST …/{id}/approve
+{ "id": "rp_…", "status": "approved", "applied": 3, "stale": 1, "failed": 0,
+  "items": [ { "id": "i0", "status": "applied", "applied": 2, "stale": 0, "failed": 0 },
+             { "id": "i1", "status": "failed",  "applied": 0, "stale": 0, "failed": 1, "failure": "任务不存在：t_x" } ] }
+// POST …/items/{itemId}/approve  请求体可为 {} 或 { "taskId": "t_b" } 或 { "projectId": "p_4d" }（先改再批准）→ 同上单个 item 的形状，外加报告 status
+```
+
+### `views/lanes` 的封顶（v2.23）
+
+```jsonc
+// GET /api/core/views/lanes —— 追加（既有键不变）
+{ "truncated": true,
+  "dropped": [ { "agent": "codex", "label": "rev-billing_services", "unverified": false, "runs": 400, "elapsedSeconds": 12000 } ] }
+```
+
+- `dropped` 缺省 `[]`；`runs` / `elapsedSeconds` 是被封顶（每身份最新 100 条、最近活动 200 个身份、在跑的最新 500 条、总数 2000）丢掉的运行的条数与**裁到窗口**的秒数。
+- 藏起来的身份不列；report 范围 / 匿名读不到 `views/lanes`（服务端另清空）。`truncated` 在 `dropped` 非空时必为真。
+
+### `views/lanes` 只显示在干活的（v2.24）
+
+```jsonc
+// GET /api/core/views/lanes —— 追加（既有键不变）
+{ "agents": [ /* 只含显示的泳道 */ ],
+  "inactiveAgents": [ { "agent": "codex", "label": "rev-billing", "unverified": false,
+                        "reason": "idle",                       // "error" | "idle" | "ended"（ended 与 tier 为 v2.25）
+                        "tier": "normal",                       // "high" | "normal" | "low"
+                        "lastWorkAt": "2026-10-09T09:12:00+08:00", "runs": 3, "elapsedSeconds": 5400 } ],
+  "expiredAgents": 0,                                           // v2.25：折叠满期、不再列出的泳道个数（整数，无标签）
+  "expired": { "agents": 0, "runs": 0, "elapsedSeconds": 0 } }  // v2.25：它们的运行与秒数（只是不再列出，什么都没删）
+```
+
+- `inactiveAgents` 缺省 `[]`；`reason`：`error`（当前出错）/ `idle`（有在跑的运行但空闲太久）/ `ended`（没有在跑的运行，v2.25）；`tier` ∈ `high|normal|low`（v2.25）。留存时长按档位，见 `contract.md`「`views/lanes` 的灵活留存」（v2.25）。`lastWorkAt` = 最后一次干活的结束时刻（ISO，本地时区）。
+- `runs` / `elapsedSeconds` 含被 v2.23 封顶折掉的运行（不再进 `dropped`：`dropped` 不含不活跃身份）。置顶的、手动隐藏的身份不在其中。过去的日子永远是 `[]`。
+
+### 代理只算干活的时间：`agent.run.completed` 追加 `workingSeconds` / `days`、`AgentTimeOpen.workingSeconds`（v2.31）
+
+规范性条款只住 `contract.md`「代理只算干活的时间」节。形状：
+
+```jsonc
+// agent.run.completed 的 data —— 追加两个键（代理子系统自己写的新事件才有；老事件 / 外部 source 没有）
+{ /* 既有的键，durationSeconds 仍是墙钟 */ "workingSeconds": 4500,
+  "days": [ { "date": "2026-10-13", "seconds": 3600 }, { "date": "2026-10-14", "seconds": 900 } ] }   // 本地日升序，≤ 32 条，seconds 为整数 ≥ 0
+// GET /api/core/views/agent-time
+{ "open": [ { /* 既有的键 */ "workingSeconds": 600 } ] }   // 整数 ≥ 0，没有为 0
+```

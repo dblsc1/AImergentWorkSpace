@@ -82,7 +82,7 @@ async def _with_rec(tmp_path, llm, fn, **kw):
 def _post(base, oc_id, text, **extra):
     body = {"model": "fake-model", "stream": True, "messages": [
         {"role": "system", "content": "SYS"}, {"role": "user", "content": text}],
-        "tools": [{"type": "function", "function": {"name": "honeycomb_get_task_tree", "parameters": {}}}], **extra}
+        "tools": [{"type": "function", "function": {"name": "honeycomb_Get_View", "parameters": {}}}], **extra}
     return body, {"Authorization": f"Bearer {KEY}", "x-session-id": oc_id, "Content-Type": "application/json"}
 
 
@@ -99,7 +99,7 @@ def test_proxy_records_turn_strips_key_and_isolates_tenants(tmp_path, llm):
         rec.begin("alice", "ocA", sa, "msg_a1", "msg_u1")
         ba, bb = rec.base_for("alice"), rec.base_for("bob")
         # 1) 工具调用一轮：上游照常收到密钥（透传），应答原样回给 opencode
-        st, text = await _send(ba, "ocA", "call:get_task_tree")
+        st, text = await _send(ba, "ocA", "call:Get_View")
         assert st == 200 and "tool_calls" in text
         # 2) bob 的进程拿 alice 的 opencode 会话 id 也写不进 alice 的轮次
         assert (await _send(bb, "ocA", "hi"))[0] == 200
@@ -121,8 +121,8 @@ def test_proxy_records_turn_strips_key_and_isolates_tenants(tmp_path, llm):
     assert [r["n"] for r in reqs] == [1, 2] and [r["status"] for r in reqs] == [200, 401]
     r1 = reqs[0]
     assert r1["request"]["messages"][0] == {"role": "system", "content": "SYS"}
-    assert r1["request"]["tools"][0]["function"]["name"] == "honeycomb_get_task_tree"
-    assert r1["response"]["toolCalls"] == [{"id": "call_1", "name": "honeycomb_get_task_tree", "arguments": "{}"}]
+    assert r1["request"]["tools"][0]["function"]["name"] == "honeycomb_Get_View"
+    assert r1["response"]["toolCalls"] == [{"id": "call_1", "name": "honeycomb_Get_View", "arguments": "{}"}]
     assert r1["response"]["finishReason"] == "tool_calls" and r1["aborted"] is False
     assert reqs[1]["response"]["body"]["error"]["message"] == "invalid api key [已隐去]"
     raw = "".join(p.read_text() for p in tmp_path.rglob("*") if p.is_file())

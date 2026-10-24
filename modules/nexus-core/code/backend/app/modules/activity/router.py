@@ -7,15 +7,16 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from datetime import date
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.exceptions import RequestValidationError
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from ..timer.router import Mode
-from . import service
+from . import auto_entry, history, pending_days, service
 
 router = APIRouter(prefix="/activity/suggestions", tags=["activity"])
 
@@ -35,13 +36,25 @@ class UploadOut(BaseModel):
     accepted: int
     duplicates: int
     rejected: list[Rejected]
+    ignored: int | None = None  # v2.22：命中「忽略并记住」而没存的段数；没有就不带这个键
 
 
 class Suggestion(BaseModel):
+    model_config = ConfigDict(extra="allow")  # v2.8 newTask {proposalId, projectId, name}：只在有提议时出现
+
     taskId: str | None
     confidence: float
     reason: str
     classifier: str
+
+
+class RecordedTo(BaseModel):  # v2.35：已确认的建议当前记在哪
+    projectId: str
+    projectName: str
+    taskId: str | None
+    taskName: str | None
+    via: Literal["confirm", "project", "reassign"]
+    eventId: str
 
 
 class Item(BaseModel):
@@ -55,7 +68,9 @@ class Item(BaseModel):
     suggestion: Suggestion
     idle: bool = False  # v2.5
     rejectedTaskIds: list[str] = []  # v2.7：人否掉过的任务
+    auto: bool = False  # v2.14：不是人确认的，是自动记录记下的
     status: str
+    recordedTo: RecordedTo | None = None  # v2.35：只在 status=confirmed 的列表里有；找不到事件 / 去向已删为 null
 
 
 class ListOut(BaseModel):
@@ -66,6 +81,9 @@ class ListOut(BaseModel):
 class ConfirmIn(BaseModel):
     taskId: str | None = None  # 缺省 = 用建议里的任务
     mode: Mode = "do"
+    name: str | None = None  # v2.8：确认 AI 提议的新任务时人改过的名字
+    proposalId: str | None = None  # v2.8：人看到并点「是」的那条新任务提议（变了 → 409）
+    projectId: str | None = None  # v2.9：只指定项目 → 记到该项目的「未分类」时间桶（与上面三个互斥）
 
 
 class EventRef(BaseModel):
@@ -82,6 +100,7 @@ class ConfirmOut(BaseModel):
     duplicate: bool
     date: str
     event: EventRef
+    taskId: str  # v2.8：这次确认记到的任务
 
 
 class DismissOut(BaseModel):
@@ -100,6 +119,7 @@ class MatchesOut(BaseModel):
 
 class UnmatchIn(BaseModel):
     taskId: str | None = None  # 人否掉的是哪个任务；给了且与当前建议不同 → 409
+    proposalId: str | None = None  # v2.8 人否掉的是哪条新任务提议；同上
 
 
 class UnmatchOut(BaseModel):
@@ -108,24 +128,62 @@ class UnmatchOut(BaseModel):
     rejectedTaskIds: list[str]
 
 
-@router.post("", response_model=UploadOut)
-def upload(body: UploadIn) -> dict:
-    return service.upload(body.deviceId, body.segments)
+@router.post("", response_model=UploadOut, response_model_exclude_none=True)
+def upload(body: UploadIn, request: Request) -> dict:
+    # v2.14：收下之后，开了 autoTrack 的设备规则高把握命中的段直接记（request：要建「未分类」桶时经 planner 写入口）
+    return auto_entry.upload(body.deviceId, body.segments, request)
 
 
-@router.get("", response_model=ListOut)
+@router.get("", response_model=ListOut, response_model_exclude_unset=True)  # v2.35：recordedTo 只在 confirmed 行里出现
 def list_suggestions(
     status: Literal["pending", "confirmed", "dismissed"] = "pending",
     limit: int = 100,
     offset: int = 0,
+    needsAI: bool = False,  # v2.34：只列规则标了「交给 AI 判断」的窗口
 ) -> dict:
-    return service.list_suggestions(status, limit, offset)
+    return service.list_suggestions(status, limit, offset, needsAI)
+
+
+class PendingDay(BaseModel):
+    date: str
+    seconds: int
+    count: int
+
+
+class PendingDaysOut(BaseModel):
+    """v2.26 待确认建议按天汇总：只有数字。上界估计，不是工时（契约「待确认时间的按天汇总」）。"""
+
+    totalSeconds: int
+    count: int
+    days: list[PendingDay]
+
+
+@router.get("/pending-days", response_model=PendingDaysOut)
+def pending_days_view(
+    from_: Annotated[date, Query(alias="from", description="起始日期（含，NEXUS_TZ 本地日），YYYY-MM-DD")],
+    to: Annotated[date, Query(description="结束日期（含），YYYY-MM-DD")],
+) -> dict:
+    return pending_days.pending_days(from_, to)
+
+
+class HistoryOut(BaseModel):
+    """v2.12 匹配历史（契约「活动建议」节「匹配历史」）。条目的键见契约：只定到项目的没有 task* 三个键。"""
+
+    items: list[dict]
+    collections: list[dict]
+    rejected: list[dict]
+
+
+@router.get("/history", response_model=HistoryOut)
+def match_history(limit: int = 60) -> dict:
+    return history.history(limit)
 
 
 @router.post("/{sugId}/confirm", response_model=ConfirmOut)
-def confirm(sugId: str, body: ConfirmIn | None = None) -> dict:  # noqa: N803 —— 路径参数名即契约
+def confirm(sugId: str, request: Request, body: ConfirmIn | None = None) -> dict:  # noqa: N803 —— 路径参数名即契约
     body = body or ConfirmIn()
-    return service.confirm(sugId, body.taskId, body.mode)
+    # request：v2.8 确认提议的新任务时要判设备令牌、经 planner 写入口建任务
+    return service.confirm(sugId, body.taskId, body.mode, body.name, request, body.proposalId, body.projectId)
 
 
 @router.post("/{sugId}/dismiss", response_model=DismissOut)
@@ -133,11 +191,11 @@ def dismiss(sugId: str) -> dict:  # noqa: N803
     return service.dismiss(sugId)
 
 
-# v2.7 的两个端点自己读请求体：设备令牌要在**看请求体之前**就 403（让 FastAPI 先解析的话，
+# v2.7 的两个端点（v2.14 的 choice 两个同）自己读请求体：设备令牌要在**看请求体之前**就 403（让 FastAPI 先解析的话，
 # 带 Bearer 的坏请求体会得到 422 而不是 403）。请求体不合形状仍是标准的 422。
-async def _body(request: Request, model: type[BaseModel]):
+async def human_body(request: Request, model: type[BaseModel], what: str = "给活动建议配任务"):
     auth = request.headers.get("authorization")
-    service.forbid_device_token(auth)
+    service.forbid_device_token(auth, what)
     raw = (await request.body()).strip()
     try:
         return auth, model() if raw in (b"", b"null") else model.model_validate_json(raw)
@@ -147,11 +205,11 @@ async def _body(request: Request, model: type[BaseModel]):
 
 @router.post("/matches", response_model=MatchesOut)
 async def match(request: Request) -> dict:
-    auth, body = await _body(request, MatchesIn)
+    auth, body = await human_body(request, MatchesIn)
     return await run_in_threadpool(service.match, auth, body.matches)
 
 
 @router.post("/{sugId}/unmatch", response_model=UnmatchOut)
 async def unmatch(sugId: str, request: Request) -> dict:  # noqa: N803
-    auth, body = await _body(request, UnmatchIn)
-    return await run_in_threadpool(service.unmatch, auth, sugId, body.taskId)
+    auth, body = await human_body(request, UnmatchIn)
+    return await run_in_threadpool(service.unmatch, auth, sugId, body.taskId, body.proposalId)

@@ -85,7 +85,10 @@ if (-not (Test-Path '.env')) {
     '# 只本机能访问。要放到局域网改成 0.0.0.0:8800，但先在前面加 TLS（见 README）。',
     "HONEYCOMB_BIND=$Bind",
     'HONEYCOMB_TZ=Asia/Shanghai',
-    '# 计时台「问问助手」用的模型密钥（缺省 DeepSeek；换模型见 README）。填了再 docker compose up -d。',
+    '# 内置 AI 聊天（可选，缺省关）：主路径是用你自己的 AI CLI（见 README「把你的 CLI 接到 HoneyComb」）。',
+    '# 想要页面里自带的聊天：取消下面两行注释、填好下面的模型密钥（缺省 DeepSeek；换模型见 README），再 docker compose up -d。',
+    '# COMPOSE_PROFILES=agent',
+    '# AGENT_UPSTREAM=agent:8030',
     'AGENT_API_KEY=',
     '# compose 项目名（容器、数据卷的前缀）。别改：改了等于换成一份新的空数据。',
     "HONEYCOMB_PROJECT=$project"
@@ -106,6 +109,27 @@ if (-not (Test-Path '.env')) {
   $add = "# compose 项目名（容器、数据卷的前缀）。别改：改了等于换成一份新的空数据。`nHONEYCOMB_PROJECT=$project`n"
   if ($old -and -not $old.EndsWith("`n")) { $add = "`n" + $add }
   [System.IO.File]::AppendAllText((Join-Path (Get-Location) '.env'), $add, (New-Object System.Text.UTF8Encoding($false)))
+}
+# v0.4 起内置聊天缺省关（compose profile agent + AGENT_UPSTREAM）。升级时：
+#  1. .env 里一行提到 COMPOSE_PROFILES 的都没有（注释掉的、写空的也算提到——那是用户的决定），
+#     而且填过模型密钥 / 端点：补上开关两行，聊天照旧；
+#  2. 聊天没开着：停掉并删掉这个项目里旧版留下的 agent 容器（compose 对不在 profile 里的服务不管，留着它会一直跑）。
+if (-not $fresh) {
+  function Test-EnvSet([string]$Name) {   # .env 里是否有非空值（去掉回车、引号、空白后）
+    $m = Select-String -Path '.env' -Pattern "^$Name=(.*)$" | Select-Object -Last 1
+    return [bool]($m -and (($m.Matches[0].Groups[1].Value -replace "[\s`"']", '') -ne ''))
+  }
+  # 已经把 AGENT_UPSTREAM 指到自己的聊天后端的：不替他起内置的那个
+  if (-not (Select-String -Path '.env' -Pattern 'COMPOSE_PROFILES' -Quiet) -and -not (Test-EnvSet 'AGENT_UPSTREAM') -and
+      ((Test-EnvSet 'AGENT_API_KEY') -or (Test-EnvSet 'AGENT_BASE_URL'))) {
+    $old = [System.IO.File]::ReadAllText((Join-Path (Get-Location) '.env'))
+    $add = "# 内置 AI 聊天（v0.4 起缺省关）：你之前填过模型密钥，所以升级时给你开着。`n# 要关掉：把下面两行都注释掉（行首加 #），再 docker compose up -d；脚本以后不会再动它们。`nCOMPOSE_PROFILES=agent`nAGENT_UPSTREAM=agent:8030`n"
+    if ($old -and -not $old.EndsWith("`n")) { $add = "`n" + $add }
+    [System.IO.File]::AppendAllText((Join-Path (Get-Location) '.env'), $add, (New-Object System.Text.UTF8Encoding($false)))
+  }
+  $pm = Select-String -Path '.env' -Pattern '^COMPOSE_PROFILES=(.*)$' | Select-Object -Last 1
+  $profiles = if ($pm) { ($pm.Matches[0].Groups[1].Value -replace "[\s`"']", '').Split(',') } else { @() }
+  if ($profiles -notcontains 'agent') { $null = Invoke-Native { docker compose --profile agent rm -sf agent } }
 }
 
 if ($fresh) { Write-Host '拉镜像（第一次要几分钟）……' } else { Write-Host '拉新版镜像……' }

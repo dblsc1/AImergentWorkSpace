@@ -67,6 +67,9 @@ services:
       AUTH_PASSWORD: ${HONEYCOMB_PASSWORD:-}
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
       AUTH_SECRET: ${AUTH_SECRET:-}
+      # 匿名上报（auth.gate v1.4）：单人模式下不带任何凭据的请求可以上报代理运行（只能往泳道里加记录，
+      # 读不到任何东西）。缺省开；端口对外开放时在 .env 里设 false。
+      AUTH_ANONYMOUS_REPORT: ${AUTH_ANONYMOUS_REPORT:-true}
       AUTH_BASE_PATH: ${HONEYCOMB_BASE_PATH:-/}
 
   mcp:
@@ -80,7 +83,11 @@ services:
       MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-}
 
   agent:
-    # 聊天后端（contracts/agent.chat.v1）。在 .env 里填 AGENT_API_KEY 后 docker compose up -d。
+    # 聊天后端（contracts/agent.chat.v1）。
+    # **缺省不起（v0.4）**：主路径是把你自己的 AI CLI 接到 MCP，内置聊天可选。要它：.env 里加两行 COMPOSE_PROFILES=agent 和
+    # AGENT_UPSTREAM=agent:8030，并填 AGENT_API_KEY，再 docker compose up -d（没开时不拉这张镜像、不要模型密钥；
+    # AGENT_UPSTREAM 缺省为空，/api/agent/* 回 502 且不查 DNS，页面不显示聊天）。
+    profiles: [agent]
     image: ghcr.io/dblsc1/honeycomb-agent:__VERSION__
     restart: unless-stopped
     networks: [honeycomb-agent-net]
@@ -99,6 +106,8 @@ services:
       AGENT_MAX_TURN_SECONDS: ${AGENT_MAX_TURN_SECONDS:-300}
       # 调试窗口：=1 时录下每轮发给模型 / 模型回来的原文，面板里每条回答下多一个「调试」。只在自己机器上调试时开
       AGENT_DEBUG: ${AGENT_DEBUG:-0}
+      # 后台认窗口（agent.chat.v1 第十节）：填了模型就开；=0 关掉（AI 不再自己去认规则认不出的窗口）
+      AGENT_AUTOTRACK: ${AGENT_AUTOTRACK:-1}
       NEXUS_TENANT_STRICT: ${NEXUS_TENANT_STRICT:-0}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8030/api/agent/health').status==200 else 1)"]
@@ -121,7 +130,7 @@ services:
       - "${HONEYCOMB_BIND:-127.0.0.1:8800}:80"
     environment:
       AUTH_UPSTREAM: ${AUTH_UPSTREAM:-auth:8010}
-      AGENT_UPSTREAM: ${AGENT_UPSTREAM:-agent:8030}
+      AGENT_UPSTREAM: ${AGENT_UPSTREAM:-}
       HONEYCOMB_BASE_PATH: ${HONEYCOMB_BASE_PATH:-/}
     volumes:
       # 额外路由（contracts/gateway.v1 第四节）；安装脚本建一个空的 extra/。

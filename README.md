@@ -83,6 +83,11 @@ as a secure origin. **Over plain HTTP on a LAN IP, browsers will not store it**:
 put TLS in front, and only for LAN debugging set `AUTH_COOKIE_SECURE=false`.
 Never set that on a public host.
 
+One more thing before you expose the port: a single-user install accepts agent
+status reports that carry **no credentials** (they can only add lane entries and read
+nothing). Set `AUTH_ANONYMOUS_REPORT=false` in `.env` when anyone else can reach the
+port; see "Tokens for desktop programs and AI agents" below.
+
 ### Upgrading
 
 After `git pull`, run `docker compose up -d` as usual. nexus-core is rebuilt from
@@ -149,7 +154,8 @@ never depends on a `pip install`.
 | `modules/nexus-core` | The event-sourced kernel (FastAPI + MongoDB). Provides 13 contracts: timing, task CRUD, the event write entry point and archive read, and read projections for tree / ring / gantt / export. |
 | `modules/hive` | The task hive (`/hive/`), the main screen. A static frontend; all data goes through `/api/core/`. |
 | `modules/ring` | The timer ring (`/ring/`): contribution ring plus start / stop / cancel / backfill. A static frontend. |
-| `modules/assistant` | The AI assistant page (`/assistant/`), for looking back: chat with the assistant, confirm detected activity, and edit the activity detector's privacy / away settings. A static frontend. |
+| `modules/assistant` | The 待批准 ("awaiting approval", formerly "AI助理") page (`/assistant/`): where a person approves what the AI proposed — confirm detected activity, approve the AI's reports and rule drafts; the optional built-in chat also lives here. A static frontend. |
+| `modules/assistant` (second page) | The Auto-recording page (`/auto/`, same frontend directory): the detector's privacy / away settings, device status, the live classification rules (with the "let the AI edit rules directly" switch), and today's auto-recorded segments. |
 | `modules/nginx-docker` | The gateway's shared parts: the navbar, design tokens, favicons, and the gate and inject snippets. The gateway injects the navbar into every frontend, with one tab per installed frontend. |
 | `contracts/yq-event.v1` | The event envelope spec. **The core contract of the whole system** — every write is an event posted into this envelope. |
 | `contracts/auth.gate.v1` | The login gate contract, a stub implementation (standard library only, zero dependencies), and a minimal login page. |
@@ -189,25 +195,57 @@ Switching from the shared password and want to keep your existing data?
 `NEXUS_TENANT_STRICT=1` makes the backend refuse any request that arrives
 without an account instead of quietly dropping it into the shared data.
 
-### Device tokens for desktop programs and AI agents
+### Tokens for desktop programs and AI agents: read / write / report-only
 
-A sync program or an agent hook has no browser cookie. Give it a device token
-and send `Authorization: Bearer <token>` to `/api/core/...`. Tokens **open the
-API only, never pages**, and last a year by default.
+A sync program or an agent hook has no browser cookie. Give it a token and send
+`Authorization: Bearer <token>`. Tokens **open the API only, never pages**, and
+last a year by default. **Tokens are never minted automatically**: you issue
+one, you decide which agent gets it and how much it may do.
 
-- On the web: once logged in, `POST /api/auth/tokens`
-  (`Content-Type: application/json`, body `{}` or `{"label":"laptop"}`) returns
-  `{"token", "tenant", "expiresAt"}`; `POST /api/auth/tokens/revoke` kills every
-  token of your own account.
+| Scope | What it can do | Give it to |
+|---|---|---|
+| `report` | Only report an agent run's start / phase / heartbeat / stop. **Reads nothing**, writes nothing else | A coding agent's hooks (`tools/agent-hooks`) |
+| `read` | Report, plus read `/api/core/` and the read-only MCP tools. Changes nothing | An assistant that only needs to know what is going on; your own MCP client |
+| `write` | Everything a device token could do before: also upload activity and events, let the AI draft suggestions | The desktop detector (`modules/ai-detector`), a management agent you fully trust |
+
+Things only a person may do (changing detector settings and rules, confirming
+suggestions, reassigning time, ...) stay closed to every token.
+
+- On the web: log in, open the **待批准** page, section **Agent 令牌**: pick a
+  scope, add a note, generate. The token is **shown once**, with ready-to-paste
+  configuration; the list lets you revoke a single token (revoking removes it
+  and frees its slot: at most 100 live tokens per account).
+- API: `POST /api/auth/tokens` (`Content-Type: application/json`, body
+  `{"scope":"report","name":"laptop"}`, both optional, default `write`);
+  `GET /api/auth/tokens` lists them (never the token itself);
+  `POST /api/auth/tokens/revoke` with `{"tokenId":"..."}` revokes one, with an
+  empty body every token of your own account.
 - From the CLI (in `deploy/`):
-  `docker compose exec auth python /app/auth_stub.py token alice` issues one,
-  `revoke alice` kills them all; no name = the shared-password identity.
+  `docker compose exec auth python /app/auth_stub.py token alice --scope report --name laptop`,
+  `tokens alice`, `revoke-token <id>`, `revoke alice`; no name = the
+  shared-password identity.
+
+**A request with no token can only report.** A single-user install (shared
+password only) accepts status reports that carry no credentials at all, so the
+hooks work without a token; runs reported that way are flagged unverified (`unverified: true` in
+`views/lanes`) and always land in the inbox. The cost, stated plainly: **while this
+is on, anyone who can reach the port can add entries to your lanes.** They can
+read nothing and change nothing that exists, but they can add (rate-limited at
+the gateway, at most 20 live at a time; a caller that keeps sending heartbeats can hold
+those 20 slots for up to 7 days instead of 12 hours, so other anonymous reporters get
+`429` meanwhile). With the default loopback binding that
+is harmless; **if you expose the port to a LAN or the internet, set
+`AUTH_ANONYMOUS_REPORT=false` in `.env`** and hand out `report` tokens instead.
+A request that presents a bad or expired token is always rejected, never
+treated as anonymous. With accounts enabled (multi-user) there is no anonymous
+reporting.
 
 `AUTH_SECRET` must be set in `.env` (the release installer already writes one;
 for a hand-built `deploy/` add a random string yourself) — without a fixed key a
 token would die on restart, so none are issued. Changing or deleting an account,
 or changing or removing the shared password, kills the matching tokens; revocation takes
-effect within two seconds.
+effect within two seconds. Tokens issued by v0.3 (starting with `hct1`) keep
+working as `write` and do not appear in the list.
 
 The reason for drawing the line there: an open-source release should not ship a
 real account system bolted on. If you need more, replace that one
@@ -216,21 +254,82 @@ and three invariants, **the assembly layer needs no changes at all**.
 How to plug it in (`AUTH_UPSTREAM`, your own login page, switching the stub off)
 is in `contracts/gateway.v1/contract.md`.
 
-### The AI assistant ("Ask the assistant" on the timer page)
+### Connect your own AI CLI to HoneyComb
 
-The timer page has a chat panel for questions like "which project took most of my
-time this week?". The assistant reads your data only through the read-only MCP
-tools — it writes nothing, runs no commands, has no web access. Put your model key
-in `.env` as `AGENT_API_KEY` (default model `deepseek/deepseek-flash`) and run
-`docker compose up -d`; without a key the panel tells you to add one and
-everything else works as before. Other models, a local Ollama or any
-OpenAI-compatible server on your network: see the AI assistant section of
+HoneyComb's MCP server (Streamable HTTP, at `<YOUR_SITE_URL>api/mcp/`, header
+`Authorization: Bearer <TOKEN>`) works with any MCP client, so you can use the AI
+CLI you already have.
+
+1. Log in, open the **待批准** page, section **Agent 令牌**, pick a scope and generate a token.
+   Use **`read`** (read-only, 13 tools) by default; choose **`write`** only if you want the AI to
+   draft suggestions / rules (by default a person still has to confirm them; only after you turn on "允许 AI 直接改分类规则" (let AI change classification rules directly) can the AI write rules that take effect at once, and you can undo its last change with one click). A `report` token cannot use MCP.
+2. Put it in your client's MCP config. `<YOUR_SITE_URL>` includes any sub-path and ends with `/`
+   (e.g. `http://127.0.0.1:8800/`).
+
+Claude Code:
+
+```sh
+claude mcp add --transport http honeycomb <YOUR_SITE_URL>api/mcp/ \
+  --header "Authorization: Bearer <TOKEN>"
+```
+
+Codex CLI (`~/.codex/config.toml`; the token is read from an environment variable):
+
+```toml
+[mcp_servers.honeycomb]
+url = "<YOUR_SITE_URL>api/mcp/"
+bearer_token_env_var = "HONEYCOMB_TOKEN"   # export HONEYCOMB_TOKEN=<TOKEN>
+```
+
+opencode (`opencode.json`):
+
+```json
+{
+  "mcp": {
+    "honeycomb": {
+      "type": "remote",
+      "url": "<YOUR_SITE_URL>api/mcp/",
+      "headers": { "Authorization": "Bearer <TOKEN>" }
+    }
+  }
+}
+```
+
+Safety: window titles and other on-screen text are untrusted input (a page title can
+contain instructions aimed at your AI), and a CLI can run commands on your machine.
+Start with a `read` token and only widen it when you need to.
+
+The desktop detector (`ai-detector`) binary is unsigned. macOS: System Settings →
+Privacy & Security → "Open Anyway", or `xattr -d com.apple.quarantine <file>`.
+Windows: SmartScreen "More info → Run anyway". Details in `modules/ai-detector/README.md`.
+
+### The built-in AI chat (optional, off by default)
+
+**The default path is your own AI CLI** (Claude Code / Codex / opencode, see
+"Connect your own AI CLI" above): no model key needed. So a default install does
+**not start the chat service** (`agent`), does not pull its image, and the 待批准
+page shows no chat panel and no "让 AI 匹配" button.
+
+To use the chat built into the page (questions like "which project took most of
+my time this week?"): add two lines to `.env`, `COMPOSE_PROFILES=agent` (starts the service) and `AGENT_UPSTREAM=agent:8030` (tells the gateway where to forward; empty by default = not forwarded, no DNS lookup, 502), set your model key as
+`AGENT_API_KEY` (default model `deepseek/deepseek-flash`) and run
+`docker compose up -d`.
+Enabled without a key, the panel tells you to add one and everything else works
+as before. An older install that already had `AGENT_API_KEY` filled in gets
+the two lines added by the installer on upgrade (only if `.env` does not mention `COMPOSE_PROFILES` at all; comment both lines out to turn it off, the installer will not touch them again, and on upgrade it removes the leftover agent container of this project). A **source install** (`deploy/`) has no installer: add the two lines by hand, and remove an old container with `docker compose --profile agent rm -sf agent`.
+The assistant reads your data only through the read-only MCP tools — it writes
+nothing, runs no commands, has no web access. Other models, a local Ollama or any
+OpenAI-compatible server on your network: see the built-in chat section of
 `deploy/.env.example`. The interface is `contracts/agent.chat.v1`; the default
 implementation (opencode) lives in `modules/agent/`. To see exactly what each
 turn sends to the model and what comes back, set `AGENT_DEBUG=1` in `.env` and
 restart: every answer gets a collapsed "调试" (debug) section. Those records are
 your data (full prompts and tool results) — only turn it on while debugging on
-your own machine, and set it back to `0` afterwards.
+your own machine, and set it back to `0` afterwards. With "allow the AI to manage
+the in-progress task" switched on, the assistant also looks at windows your rules
+cannot place and writes a rule for that one window in the background (the timer
+page shows "自动 · … (AI 认的)" with a one-click "不对" to undo; at most 12 an
+hour). Set `AGENT_AUTOTRACK=0` in `.env` to turn that off.
 
 ### Serving it under a sub-path
 

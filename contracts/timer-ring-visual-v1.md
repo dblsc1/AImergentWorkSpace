@@ -126,6 +126,10 @@ el.setAttribute("stroke-dasharray", `${lengthPercent} ${100 - lengthPercent}`);
 
 读数与分针都按「暂停前累计 + 本段」算（`nexus.timer.carry.v1`，见下节），只影响显示。
 
+**简要标题写什么（2026-10-08 仓主）**：计的是项目的「未分类」时间桶（`views/current` 的 `task.kind === "unclassified"`，
+蜂巢长按项目格起的）时，标题**只写项目名**——不写「未分类」、不写时间戳；ring 页主仪表与顶栏芯片同此。
+其余任务写任务名；2026-10-08 之前长按建出来的「YYYY-MM-DD HH:MM[ 备注]」占位任务仍按「有备注用备注，没有退到项目名」。
+
 **长按接住时的闪烁**（人类 2026-09-12 四改后定稿：「闪烁颜色也需要是对应的分区色去闪烁的，闪烁完就是
 对应的分区最浓颜色再加一档」）：中心格进悬停态 3 秒，底色在**中心格底色 ↔ 分区色本身**
 （`color-mix(分区色 86%, --panel)`）之间闪 1.5 次，第 3 秒起从峰值渐变回中心格底色 —— 收尾关键帧与常态底色是
@@ -185,6 +189,9 @@ el.setAttribute("stroke-dasharray", `${lengthPercent} ${100 - lengthPercent}`);
 | ring 页倒计时弧 | `modules/ring/code/frontend/ring-countdown.js` | `r=86` 那条 |
 | hive 蜂巢中心格 | `modules/hive/code/frontend/`（2026-09-07 新增） | 标题 + 圆环；悬停/点击两档，点击进 `/ring/`；2026-09-12 起悬停档下部按六边形轮廓切出的三块按钮（`hex-center-ctl.js` + `.css`，几何写在 css 文件头） |
 | ring 页暂停 | `modules/ring/code/frontend/ring-pause.js`（2026-09-12） | 控件区「暂停」+ 空闲态「已暂停：… 继续 / 完成」 |
+
+| 此刻的焦点（2026-10-09） | ring 中心（`ring-focus.js`）、hive 中心格（`hex-app.js` + `hex-focus.css`） | **不是计时**：没有手动计时时显示人此刻的窗口 / 项目（nexus-core v2.16 `focus`）。轨道画成 `--fact` 色虚线并缓慢呼吸、不画贡献弧 / 进度弧，读数是「这个窗口待了多久」；手动计时一开始就让回本规范的画法。两页各自的契约有细节 |
+| 此刻的焦点 · 串行（2026-10-09，nexus-core v2.17） | 同上 | **人的注意力只能串行**：中心永远只写当前这一个窗口 / 目标，读数是这一次切过来之后待了多久（切走再回来从头数）。同一个窗口近 2 小时的累计只作一行小字（ring）/ 悬停的全文（hive），不画进圆环、不与别的窗口相加 |
 
 **新增实现请追加到这张表**，并在自己的 handoff 里写明「实现的是 `timer-ring/v1`」。
 

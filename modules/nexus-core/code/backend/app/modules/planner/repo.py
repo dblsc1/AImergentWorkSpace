@@ -56,6 +56,16 @@ def list_tasks(project_id: str | None = None) -> list[dict]:
     return list(get_db()["tasks"].find({**scope(), **query}, _HIDE))
 
 
+def by_ids(collection: str, ids: list[str]) -> list[dict]:
+    """当前租户里 ``id`` 在 ids 中的文档（一次查询；批量取名字用）。"""
+    return list(get_db()[collection].find({**scope(), "id": {"$in": ids}}, _HIDE)) if ids else []
+
+
+def creation_ids(collection: str) -> dict[str, object]:
+    """``id`` → Mongo ``_id``（ObjectId，按插入先后单调）：位置编号撞号时「创建先后」的依据（文档没存 createdAt）。"""
+    return {d["id"]: d["_id"] for d in get_db()[collection].find(scope(), {"_id": 1, "id": 1})}
+
+
 def list_tasks_by_project(project_id: str) -> list[dict]:
     return list_tasks(project_id)
 

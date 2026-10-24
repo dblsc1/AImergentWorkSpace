@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import re
+from contextlib import contextmanager
 from contextvars import ContextVar
 
 from . import config
@@ -33,6 +34,16 @@ _current: ContextVar[str] = ContextVar("tenant", default=LOCAL_USER)
 
 def current() -> str:
     return _current.get()
+
+
+@contextmanager
+def as_tenant(user: str):
+    """后台线程（没有请求）临时当某个租户（v2.38 对账循环）。"""
+    token = _current.set(user)
+    try:
+        yield
+    finally:
+        _current.reset(token)
 
 
 def scope() -> dict:

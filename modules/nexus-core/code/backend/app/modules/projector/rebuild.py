@@ -13,6 +13,10 @@
 - **幂等**：连跑两次结果必须相同——本实现「先清后放」天然保证这一点，
   因为每次都是从同一份不变的事实集合重新算起，不依赖上一次跑到哪。
 
+**改挂（v2.11）不重放加减**：重放前先把每段 ``session.completed`` 的 ``subject`` 换成它最后一次改挂的去向
+（``events_service.with_current_subjects``），``session.reassigned`` 自己的 handler 不在 ``_TARGETS`` 里、
+重建时不喂。这样结果与事件在台账里的先后无关，也不会被指向已删段的改挂减出负数。
+
 **不改 DISPATCH 表**（规格明文不做）。``--only`` 需要按投影名单独重放，
 所以本文件自带一张「投影名 → (handler, clear 函数)」的小映射；它只是
 DISPATCH 表的一个**只读**投影（用 handler 是否在 ``DISPATCH[type]`` 里
@@ -58,7 +62,8 @@ def rebuild(only: str | None = None) -> dict[str, int]:
         clear()  # 先清目标投影再重放（契约硬约束），不在已有计数上累加
 
     counts = dict.fromkeys(names, 0)
-    for envelope in events_service.iter_all_events(all_tenants=True):  # 全体租户，见该函数
+    events = events_service.iter_all_events(all_tenants=True)  # 全体租户，见该函数
+    for envelope in events_service.with_current_subjects(events):  # v2.11：按当前归属重放
         routed = DISPATCH.get(envelope.get("type", ""), ())  # 只读 DISPATCH，不改它
         for name in names:
             handler, _ = _TARGETS[name]
@@ -90,7 +95,8 @@ def backfill_lanes_if_empty() -> int:
     try:
         projector_repo.set_pending("proj_lanes", True)
         count = 0
-        for envelope in events_service.iter_all_events(all_tenants=True):
+        events = events_service.iter_all_events(all_tenants=True)
+        for envelope in events_service.with_current_subjects(events):  # v2.11：同 rebuild
             if envelope.get("type") in _LANES_TYPES:
                 lanes.handle(envelope)
                 count += 1

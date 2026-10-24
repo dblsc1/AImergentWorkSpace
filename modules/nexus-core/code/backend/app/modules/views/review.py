@@ -40,26 +40,18 @@ def _plans_overlap(plan: dict | None, start: str, end: str) -> bool:
 
 
 def _last_active_by_task() -> dict[str, str]:
-    """全量按天投影里，每个 taskId 最近一次出现的日期。复用全量读取
-    （不限日期范围），避免另开一条按 taskId 查询的路径——同「甘特读端」
-    O1 节的判断标准：这份数据已经在 `proj_daily_stats` 里，不必新加口子。
-    """
-    last_active: dict[str, str] = {}
-    for row in daily_stats_projection.read_daily_stats(current_tenant()):
-        task_id = row.get("taskId")
-        if not task_id:
-            continue
-        if task_id not in last_active or row["date"] > last_active[task_id]:
-            last_active[task_id] = row["date"]
-    return last_active
+    """每个 taskId 最近一次出现的日期（一次 $group）。"""
+    return daily_stats_projection.last_active_by_task(current_tenant())
 
 
-def get_review() -> ReviewOut:
+def get_review(last_active: dict[str, str] | None = None) -> ReviewOut:
+    """``last_active`` 给了就不再查（``views/arrangements`` 的 week 与自己共用一份）。"""
     today = _today()
     week_start, week_end = _week_bounds(today)
 
     projects = planner_service.list_projects()
-    tasks = planner_service.list_tasks()
+    # v2.9：「未分类」时间桶不是待办——不进久未动、不算收件箱待理清
+    tasks = [t for t in planner_service.list_tasks() if t.get("kind") != planner_service.UNCLASSIFIED_KIND]
     week_rows = daily_stats_projection.read_daily_stats(
         current_tenant(), date_from=week_start, date_to=week_end
     )
@@ -88,7 +80,7 @@ def get_review() -> ReviewOut:
         and p.get("plan") and p["plan"].get("end") and p["plan"]["end"] < today
     ]
 
-    last_active = _last_active_by_task()
+    last_active = _last_active_by_task() if last_active is None else last_active
     stale_cutoff = (
         datetime.strptime(today, "%Y-%m-%d").date() - timedelta(days=STALE_TASK_DAYS)
     ).isoformat()

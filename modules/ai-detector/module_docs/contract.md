@@ -15,6 +15,14 @@
 > （`detector.settings.v1`）；离开判定四个可选项；本机留档。上传形状只多一个可选字段 `idle`。
 > **2026-10-02 追加**：`ai-detector.upload.v1` **v1.2**、`ai-detector.config.v1` **v1.3**——终端类程序
 > **按标签页（程序 + 标题）各自成段**（见「合并」的「按标签页分段」）。上传形状一个字段不改，变的只是段怎么切。
+> **2026-10-08 追加**：`ai-detector.upload.v1` **v1.3**、`ai-detector.presence.v1` **v1.1**、`ai-detector.config.v1` **v1.4**——
+> 规则可以只到项目（`suggestion.projectId`）；网页设置 `autoTrack` 打开时在场心跳带规则对当前窗口的猜测 `guess`。
+> 都是追加，`autoTrack` 关着时发出去的内容与此前逐字节相同。打开之后 nexus-core 会把规则高把握命中的段直接记成事实
+> （nexus-core v2.14）——上面「人在界面上确认了，才……写」那句从此只在 `autoTrack` 关着时无条件成立。
+> **2026-10-09 追加**：`ai-detector.presence.v1` **v1.2**、`ai-detector.config.v1` **v1.5**——在场心跳缺省改为
+> **每 5 秒一拍**，每拍带上一拍以来人**依次**在过的窗口与各自的停留（`sentAt` + `spans`，串行、不重叠）。
+> 仓主 2026-10-09：「把检测程序设置成每 5 秒汇报一次，每次汇报里带各个窗口的停留时间」「人的注意力只能串行」。
+> 顶层的 `app` / `title` / `afk` / `guess` 含义不变（= 此刻），老 nexus-core 忽略多出来的键。
 
 ## 契约索引声明（provides / consumes）
 
@@ -23,9 +31,9 @@ provides:
   - id: ai-detector.upload.v1
     summary: >
       「什么会离开这台电脑」的承诺：只有脱敏后的段（程序名、脱敏标题、起止、时长、建议），
-      原始窗口切换记录永不上传。形状见「上传」节。隐私默认值（默认关、可暂停、脱敏规则）
+      原始窗口切换记录不上传（v1.4：用户打开三级分类后，另传同样脱敏的 ≥ 1 秒原始记录）。形状见「上传」节。隐私默认值（默认关、可暂停、脱敏规则）
       是本条的一部分，由测试锁住。v1.1：强制脱敏（关不掉）+ 可选隐私项（detector.settings.v1）、
-      段增可选 idle。
+      段增可选 idle。v1.4：另传 ≥ 1 秒的原始记录（同样脱敏，见「原始记录」节）与只有时间格的键盘鼠标活动（见「键盘鼠标活动」节）。
   - id: ai-detector.archive.v1
     summary: >
       本机留档 `<配置目录>/archive/YYYY-MM-DD.jsonl`：每次发给 cockpit / 分类服务的内容
@@ -39,6 +47,7 @@ provides:
     summary: >
       （v0.3 追加，**已实现** 2026-09-30）在场心跳：默认关；开了之后约每 15 秒把「此刻前台的程序 + 脱敏标题 + 是否离开」
       报给 nexus-core，只给页面画实时的人那条线。脱敏同上传。见「在场心跳」节。
+      v1.2（2026-10-09）：缺省每 5 秒一拍，每拍追加 sentAt + spans（上一拍以来依次在过的窗口与各自的停留，串行、不重叠）。
   - id: ai-detector.agent-status-bridge.v1
     summary: >
       （v0.3 追加，**已实现** 2026-09-30）状态文件桥：默认关；指向一个本机状态文件（通用格式，见「状态文件桥」节，
@@ -124,7 +133,7 @@ Content-Type: application/json
         "taskId": "t_a1",                         // 或 null
         "confidence": 0.9,                        // 0..1
         "reason": "规则 #1 命中",
-        "classifier": "rules" },                  // "rules" | "service"
+        "classifier": "rules" },                  // "rules" | "service"；v1.3：规则只到项目时 taskId 为 null、多一个 "projectId"
       "idle": true }                              // v1.1 可选：只在 idle.idleSuggestions 开着、这段是「无操作但前台没换」时出现
   ]
 }
@@ -133,6 +142,13 @@ Content-Type: application/json
 - **v1.1 `idle`**：只有 `true` 时才带；普通段不带这个键（v2.5 之前的 nexus-core 会忽略它，照收）。
   带 `idle: true` 的段 `suggestion.confidence ≤ 0.3`，`reason` 以「无操作，可能在阅读」开头
   （老服务端不存 `idle`，人从 `reason` 也看得出来）。
+
+- **`suggestion.needsAI`（nexus-core v2.34，`detector.rules.v1` v1.4）**：命中网页规则里 `mode: "ai"` 的规则时，建议是 `{taskId: null, confidence: 0, classifier: "rules", needsAI: true}`
+  （没命中的建议不带这个键；先命中先赢，所以 ai 规则能拦住后面更宽的规则；在场心跳的 guess 同带 `needsAI: true`、不带目标）。只来自网页规则，本机 `rules.json` 不支持 `mode`。
+  老服务端不会下发 ai 规则；老检测程序见到无目标的规则会跳过并写日志。
+- **v1.3 `suggestion.projectId`**：命中的规则只到项目（`detector.rules.v1` v1.1，本机 `rules.json` 也能写）时，
+  `suggestion` 是 `{taskId: null, projectId: "p_…", confidence, reason, classifier: "rules"}`；到任务的规则、没命中的段
+  不带这个键（形状与 v1.2 相同）。v2.14 之前的 nexus-core 忽略它（这段没有任务建议，照收）。
 
 - **每段都带 `suggestion` 对象**，认不出时 `taskId: null, confidence: 0`，形状不变。
 - `durationSeconds` 是段内**在电脑前**的秒数（扣掉离开），`endAt - startAt` 是墙钟跨度，
@@ -291,6 +307,35 @@ Content-Type: application/json
   几个没起名字的 shell 标签页分不开（键都是「`用户@主机:`」），段的标题取其中停留最久的那条；`usernames` 开着（缺省）时
   提示符已被换成「`[用户]@[主机]:`」，所以 ssh 到不同主机的 shell 标签页也并在一起——键只能用脱敏后的标题算。
 
+## 原始记录（upload.v1 v1.4 · 规范性，**已实现** 2026-10-24）
+
+nexus-core v2.38「三级分类」要每个窗口块里有细到 1 秒的使用记录。段（上一节）只有 ≥ 3 分钟、跨窗口吸收过的合并结果，不够。所以另起一条流：
+
+- **是什么**：「合并」之前的片段（`buildFragments` 的产物：已裁到游标与现在之间、已去掉离开与空闲、已做强制脱敏与隐私处理），
+  **不跨窗口吸收**：只把同一合并键、首尾间隔 ≤ 1 秒的相邻片段接起来。时长 < 1 秒的丢掉。按标签页分段的程序，键同「按标签页分段」。
+  同一台设备的原始记录**在墙钟上不重叠**。
+- **标题**：与段完全相同的处理——强制脱敏、隐私选项、换代号（`titles: "pseudonymize"` 时上传的是代号）。**不多传任何东西。**
+- **代号标记**：每条带 `titleIsPseudonym`（标题是不是代号），服务端据此决定能不能按新规则重算块名。
+- **块名**：每条用服务端规则集里的第一级规则（`detector.rules.v1` v1.5 `kind: "block"`）匹配，规则匹配的标题与旧式规则相同
+  （隐私处理后、换代号前）。第一条命中的给出 `block`；没命中给 `null`。本机 `rules.json` 不含第一级规则。
+- **忽略**：「忽略并记住」只在服务端（v2.22）；检测程序不另做。
+- **何时传**：`detector.settings.v1` v1.4 的 `records` 为 `true`；或为 `null` 且账号的三级分类开着（每轮随设置一起 `GET /api/core/activity/settings`，`tiers` 为 `true`；
+  拿不到、404 = 不传）。为 `false` 不传。第一次 `POST` 回 `404` 就记下，这次运行内不再传（进程重启再试）。**缺省不传**：没打开三级分类的用户什么都不多上传。
+- **怎么传**：`POST /api/core/activity/records`，每批 ≤ 500 条，形状见 nexus-core 契约「三级分类」节一；`startAt` / `endAt` 带偏移、到毫秒。
+  游标独立于段的游标（`State.RecordsCursor`）：只在 2xx 后前进；`rejected` 写日志、不重传；片段收口（结束 + 1 秒 ≤ 现在）才传。
+  与段的上传互不影响：一边失败不挡另一边。
+- **本机留档**（`ai-detector.archive.v1`）：原始记录也进留档（同一个按天文件，每行 `kind: "record"`，只存实际发出的 `sent`），同样按 `archiveDays` 清理——「发出去的东西本机都查得到」的承诺不变。
+
+## 键盘鼠标活动（upload.v1 v1.4 · 规范性，**已实现** 2026-10-24，仅 Linux GNOME）
+
+- **默认关**。只有网页设置 `inputActivity` 为 `true` 才采集（`detector.settings.v1` v1.4）。
+- **只有时间格**：每 10 秒一格，这一格里碰过键盘或鼠标（移动也算）= 有活动。**不记、不传任何按键内容、按键次数或鼠标位置。**
+- **怎么知道有没有活动**：
+  - Linux GNOME（Wayland 与 X11）：每 10 秒读一次 `org.gnome.Mutter.IdleMonitor` 的 `GetIdletime`（会话总线，`gdbus` 或等价调用），空闲 < 10 秒 = 这一格有活动。不需要额外权限。
+  - 其他桌面 / 系统：本版不采集（日志写一次「此系统暂不支持键盘鼠标活动」）。以后可接 ActivityWatch 的 `aw-watcher-input`（只在 X11 有效）。
+- **怎么传**：`POST /api/core/activity/input {deviceId, bins}`，`bins` 是有活动的格的起点（UNIX 秒，10 的倍数），每分钟传一次，失败的格留在内存里下次再传（至多保留 6 小时）。
+  服务端 `404` → 这次运行内不再传。
+
 ## 本机留档（`ai-detector.archive.v1`，规范性）
 
 「原始的 AI 抓的数据留档可查」：每次真的把段发出去（上传给 cockpit、发给分类服务），在本机追加一行 JSON 到
@@ -349,7 +394,8 @@ Content-Type: application/json
 | `idle` | 见 `detector.settings.v1`「idle 节」 | 同上 |
 | `archiveDays` | 30 | 本机留档保留天数，< 1 按 30 |
 | `presence` | `false` | 在场心跳（v0.3），见「在场心跳」。网页设置 `presence` 非 null 时以网页为准 |
-| `presenceSeconds` | 15 | 心跳间隔，5–300，越界按 15 |
+| `presenceSeconds` | 5（config.v1 v1.5；此前 15） | 心跳间隔，5–300，越界 / 没有这个键按 5；**大于 30 的实际按 30 秒发**（presence.v1 v1.2.1，值仍合法、配置文件不动，启动后记一次日志）。**老配置文件里写着的 `15` 不会自动改**：每拍带的是整段间隔里的停留，所以 15 秒一拍也不丢短的停留，只是页面晚一点看到；想跟到 5 秒把它改成 5 或删掉这一行 |
+| （没有本机键）`autoTrack` | — | 「允许 AI 管理进行中的任务」只在网页设置里（`detector.settings.v1` v1.3）：服务端要读它，只写本机没有用 |
 | `agentStatusFile` | `""` | 状态文件桥读的本机路径，空 = 关 |
 | `agentStatusIgnore` | `[]` | `key` 前缀，命中的条目忽略 |
 
@@ -368,14 +414,15 @@ Content-Type: application/json
 
 ```jsonc
 { "rules": [
-    { "app": "code|goland", "title": "garden", "taskId": "t_a1", "confidence": 0.9 }
+    { "app": "code|goland", "title": "garden", "taskId": "t_a1", "confidence": 0.9 },
+    { "title": "blog", "projectId": "p_2" }      // config.v1 v1.4：只到项目；taskId 与 projectId 恰好写一个
 ] }
 ```
 
 `app` / `title` 是正则（不分大小写），空 = 不限，至少写一个；`title` 匹配的是**脱敏后**的标题
 （用户在待确认列表里看到的就是它）。按顺序第一条命中生效；`confidence` 缺省 0.9。
 
-**config.v1 v1.2（追加）**：网页上（Cockpit「AI助理 → 规则」，多由 AI 助理起草、人应用）存过规则后，
+**config.v1 v1.2（追加）**：网页上（Cockpit「自动记录 → 分类规则」；多由 AI 助理起草，草稿在「待批准 → 分类规则草稿」由人应用）存过规则后，
 以服务端为准，本机 `rules.json` 不再读；服务端从没存过、老 nexus-core、或拉不到时仍用本机文件（离线后备）。
 服务端规则命中的 `reason` 是「网页规则 #N 命中」。规则来源变化时写一行日志。见 `contracts/detector.rules.v1`「四」。
 
@@ -407,13 +454,110 @@ Authorization: Bearer <deviceToken>
   （同步一轮每 5 分钟拉一次）判断；**要发之前再拉一次设置**，用此刻的隐私选项脱敏，拉不到（404 以外的失败）这次就不发。
 - 实现：`run` 里单独一个 goroutine，不等 5 分钟一轮的同步；脱敏调用与上传同一段代码（`buildFragments` + `sendTitles`，
   测试逐条比对心跳与上传出去的标题完全相同）。
-- 节奏：`presenceSeconds`（缺省 15，取值 5–300，越界按缺省）。
+- 节奏：`presenceSeconds`（缺省 15，取值 5–300，越界按缺省）。**v1.2：缺省改为 5。**
+  **v1.2.1（2026-10-09）：实际间隔不超过 30 秒**（= 一拍往回带的 60 秒的一半）。`presenceSeconds` 写 31–300 仍然合法，
+  只是按 30 秒发、常驻进程记一次日志：一拍只往回带 60 秒，间隔比它长，两拍之间多出来的停留没人报；取一半是为了
+  丢一拍时下一拍还带得回来。请求的形状不变。
 - 内容：ActivityWatch 窗口桶**最新一条**事件的 `app`/`title` + 离开桶最新状态。**脱敏规则与上传完全相同**
   （标题表、`appOnlyApps`、`browserApps` 须对得上标签页否则按 app-only），在本机做完再发；
   离开时 `app`、`title` 都发 `""`。
+- **`guess`（presence.v1 v1.1，追加）**：网页设置 `autoTrack`（`detector.settings.v1` v1.3）为 `true`、人没离开时，
+  对当前窗口跑**与上传同一个规则匹配函数**（匹配的是隐私选项处理后、换代号前的标题与程序名，同上传），命中就在心跳里加
+  `"guess": {"taskId": "t_a1", "confidence": 0.9, "classifier": "rules"}`（只到项目的规则是 `"projectId"`）；
+  **没命中、`autoTrack` 关着、离开时都没有这个键**（请求体与 v1.0 逐字节相同）。规则与上传同源（网页存过用网页的，否则本机
+  `rules.json`），心跳这边每 60 秒重拉一次；拉不到 / 本机规则写坏 → 这次不带 `guess`，心跳照发。
+  **隐私**：猜测在本机算，发出去的只有目标 id 与把握；`app` / `title` 仍是同一条脱敏路径出来的那份，一个字符不多。
+  老 nexus-core 忽略这个键。
+- **`sentAt` + `spans`（presence.v1 v1.2，追加）**：每拍带上一拍以来人依次在过的窗口，而不只是「此刻这一个」——
+  每 3 秒切一次窗口的人，中间那些短的停留不再丢。
+
+  ```jsonc
+  { "deviceId": "dev_…", "app": "ptyxis", "title": "✳ garden", "afk": false,      // 顶层仍是此刻 = 最后一段
+    "sentAt": "2026-10-09T02:00:05Z",                 // 本机发这一拍的时刻（本机的钟，UTC，RFC 3339）
+    "spans": [ { "app": "code",   "title": "plot.gd — garden", "from": "2026-10-09T02:00:00Z",     "seconds": 2.4 },
+               { "app": "ptyxis", "title": "✳ garden",         "from": "2026-10-09T02:00:02.4Z",   "seconds": 2.6,
+                 "guess": { "projectId": "p_1", "confidence": 0.9, "classifier": "rules" } } ],
+    "truncated": true }                               // 只在这一拍被截断过时才有
+  ```
+
+  - **取哪一段时间**：从上一次**成功**发出的那一拍覆盖到的时刻起、到此刻；没有上一拍（刚启动）或隔得太久时只往回
+    **60 秒**。所以一拍没发出去，下一拍会把那一段带上——仍然**不重试、不排队**，只是这一拍看得远一点；服务端把
+    已经记过的部分裁掉，同一秒不会记两遍。
+  - **串行**：段来自 ActivityWatch 窗口桶的事件，按时间排、互不重叠（记录器重叠的事件按上传同一段代码裁开），
+    **离开的时间已扣掉**（按 `idle` 节的四个选项，同上传；无操作碎片不算在内）。旧 → 新；人没离开时最后一段就是当前窗口、
+    一直到此刻，顶层的 `app` / `title` / `guess` 取自它。
+  - **太短的不单独成段**：短于 0.5 秒的停留丢掉（标题刚变时记录器写的 0 秒事件之类；最后一段再短也留）；同一个窗口被
+    这样的闪现隔开时并回一段。`seconds` 精确到毫秒。
+  - **上限**：一拍至多 **12** 段；超了留当前窗口 + 其余里最长的 11 段（仍按时间排），并带 `"truncated": true`。
+  - **脱敏**：每一段的 `app` / `title` 走与顶层、与上传**同一条路径**（`buildFragments` + `sendTitles`）；测试比对
+    最后一段与顶层、与上传出去的逐字相同。每段的 `guess` 是同一个规则匹配函数对那一段的结果（`autoTrack` 开着才可能有）。
+  - **没有段时**（这段时间一直离开）`sentAt` / `spans` 两个键都不带，请求体与 v1.1 相同。离开的那一拍顶层
+    `app` / `title` 仍发 `""`，`spans` 是离开之前的那几段。
+  - **时钟**：`sentAt` 与各段的 `from` 是本机的钟；服务端只拿 `sentAt` 与自己收到的时刻的差把各段平移过去，
+    本机的钟不准也无妨（nexus-core v2.17「串行的注意力时间线」节）。
+  - **隐私**：多离开设备的是「上一拍以来的那几个窗口（已脱敏）与各自的秒数」，不再只是此刻这一个；别的一个字不多。
+    每拍之前仍重拉一次网页设置，用此刻的隐私选项。
+
 - 不带时间：服务端按收到的时刻算。**失败就丢**：不重试、不排队、不补发——心跳只描述「现在」，
   补发一条过去的「现在」没有意义。日志只记失败分类，不记标题。
+  （v1.2 补注：顶层仍如此；`spans` 带的是「上一次成功以来」的停留，见上——没发出去的请求本身依旧丢掉。）
 - 服务端只留最近 2 小时、不进导出（nexus-core v2.4「在场心跳」节）；想留成记录的仍走上面的「上传」→ 人确认。
+
+## 健康报告与拉起 ActivityWatch（`ai-detector.health.v1` · 规范性，v0.4 追加）
+
+对应 nexus-core v2.27。只在 `run` 里：在场心跳的 goroutine 每次尝试之后把最新的 AW 状态交给健康报告（自己另有一个 goroutine 去发），不拖慢心跳与同步。
+
+- **报告**：`PUT /api/core/detector/health?deviceId=`（带设备令牌），体 `{awState, autoStart?, autoReason?, restart?}`。`awState`：ActivityWatch 接口连不上 = `unreachable`；
+  连得上但最近一分钟没有窗口记录 = `no_window`；配置 `paused` / 没 `enabled` = `paused` / `disabled`；否则 `ok`（心跳没开、或这一拍说不准——比如拉网页设置失败——时，健康报告自己探一下本机接口有没有回应，报 `ok` / `unreachable`；自动拉起不看这个兜底的结果）。
+  状态变了立刻报（上一次发送失败后例外：按 15 秒退避），否则每 15 秒一次；有重启结果要回报时下一次就报。观察超过 60 秒没更新（心跳线程没在观察了，比如本机配置读不了）就**停止报告**，让面板显示离线，并记一行日志。**报告失败只记一次日志（一段连续失败只记一次），按 15 秒退避，绝不阻塞、不影响心跳与同步**；回报不出去的重启结果留 5 分钟后丢弃（服务端的请求 5 分钟就作废）；
+  老服务端答 404 → 本进程不再试，记一行。体里没有任何自由文本。`ai-detector status` 打印最近一次报出去的 `awState`。
+- **独立线程**：健康服务器卡住不影响心跳的节拍。状态没变时也每 15 秒报一次（面板最多等 75 秒，要赶得上取 nonce）。
+- **按钮拉起**：响应里的 `restartNonce` 与上次处理的不同时：ActivityWatch 连得上 → 结果 `already_running`；否则用**本机**命令拉起。
+  **先把 nonce 记进状态文件再动手**，记不下来就不拉：结果 `failed`、原因 `state_unwritable`；检测程序重启后不重放。30 秒限频内到的 nonce **不回 failed**：先放着不处理，限频一过（健康线程每秒查一次，不必等下一次从服务端取）就处理，但被挡超过 60 秒（按墙钟算，挂起期间也走）就作废、记成已处理，限频过了再处理。
+  **按钮在检测程序暂停 / 没开同步时也能用**（仓主定：这是人明确点的动作，它只检测并重启 ActivityWatch）；自动拉起在 `paused` / `disabled` 时仍然从不动。
+  结果在下一次健康报告里回报：`started` / `already_running` / `failed`（带 `reason`）/ `unsupported`（没有可运行的命令）。
+- **`started` = ActivityWatch 的接口确实起来了**：拉起后在不阻塞心跳与同步的后台最多探测 20 秒；接口通了 → `started`，进程以非 0 退出 → `failed`/`exited_early`（退出码 0 如 macOS 的 `open` 继续等），20 秒内没通 → `failed`/`not_up`。
+  失败原因枚举 `reason`：`not_found`（找不到程序）、`spawn_error`（其他启动错误）、`exited_early`、`not_up`、`no_display`（Linux 且没有 `DISPLAY` 也没有 `WAYLAND_DISPLAY`：拉起前就判定，不拉）、`state_unwritable`。
+- **本机诊断（不上服务端）**：被拉起进程的 stdout / stderr 写到 `<检测程序目录>/aw-start.log`（0600，每次拉起前把上一份挪成 `aw-start.log.1` 再重建，进程根本没拉起来（找不到程序等）就原样放回，不挤掉上一次有用的日志；绝不接检测程序自己的标准输入输出）。
+  每次尝试都往检测程序的日志里记一行，并在状态文件 `health.lastStart` 里存一条记录：时间、触发（`auto` / `button`）、解析出的命令、结果、原因、错误串、探测窗口内进程退出的退出码。
+  `ai-detector status` 用中文打印这条记录、`aw-start.log` 的路径和最后 20 行（`not_found` / `spawn_error` / `no_display` / `state_unwritable` 没有拉起进程，不贴日志——那是更早一次的），以及按原因给的「可以试试」。**错误串和日志内容绝不发给服务端**（测试断言 PUT 体里没有）。
+- **命令只来自本机**（`ai-detector.config.v1` 追加 `awStartCommand`：argv 数组，不经 shell）。没写就按系统缺省：Windows `%LOCALAPPDATA%\Programs\ActivityWatch\aw-qt.exe`（要存在）、
+  macOS `open -a ActivityWatch`、Linux 在 PATH 里找 `aw-qt`；都没有 = `unsupported`。以脱离本进程的方式拉起（Linux/macOS 新会话，Windows 脱离控制台与进程组），不继承标准输入输出。
+- **安全底线（测试锁住）**：服务端发来的任何东西都不是命令，也不拼进命令；它只给一个不透明 nonce（形状 `[A-Za-z0-9_-]{1,64}`，不合的整个不理），程序原样回报。
+  `awStartCommand`、`awAutoStart` 只认本机配置文件；`detector.settings.v1` 不收这两个键（网页设置里带它们仍是未知键，不改变任何行为）。
+- **自动拉起**（`ai-detector.config.v1` 追加 `awAutoStart`，布尔，缺省 `true`，只认本机配置）：与按钮是**同一条启动路径**——同样的命令解析、同样的脱离式拉起、**共用**「两次拉起至少隔 30 秒，不管 nonce 换了几个、也不管是按钮还是自动」。
+  条件：连续两次心跳尝试都是 `unreachable` 才拉（一次抖动不拉）；`paused` / `disabled` 从不拉；没有可运行的命令 → 不尝试、记一行日志（之后不再记，直到 ActivityWatch 连续稳定 60 秒清零）。
+  连续自动拉起 3 次仍没把 ActivityWatch 拉回来 → 记一行并停手，直到 ActivityWatch 连续连得上 60 秒（或进程重启）；面板上的按钮在停手期间照样可用（仍受 30 秒限制）。
+  **滚动 24 小时内最多自动拉起 20 次**，超过就 `autoStart: "gave_up"` 到窗口空出来（或进程重启）；按钮不受影响。
+  「已自动拉起几次 / 已停手」要等 ActivityWatch **连续连得上 60 秒**才清零——一闪一灭不算恢复；paused / disabled / 状态说不准的时候这段计时也断开。
+  “没把它拉回来”以上面的接口探测为准（`not_up` / `exited_early` 等都算失败，不是「进程拉起来了」就算数）。
+  最近一次自动动作的结果随健康报告上去：`autoStart` ∈ `off`（配置关了）/ `idle`（没有拉过，或上一次自动拉起失败但还没到停手——失败时 `autoReason` 带着原因）/ `started`（接口确实起来了）/ `gave_up` / `unsupported`；失败时 `autoReason` 带同一套原因枚举（`no_display` 时不拉，3 次尝试后同样停手），再加 `daily_cap`（滚动 24 小时 20 次上限，此时 `autoStart: gave_up`）。
+- **边界**：按钮和自动拉起都只在检测程序自己活着（在用户的桌面会话里运行）时有效，救不了已经死掉的检测程序——那是 `ai-detector autostart install` 的事；重启后 ActivityWatch 自己开机自启才是根治。
+
+### 启动日志上传（`ai-detector.config.v1` 追加 `awLogUpload` · 规范性，v0.4 追加）
+
+对应 nexus-core v2.28。**这是上面「体里没有任何自由文本」的唯一例外，而且默认关、只由用户在本机打开。**
+
+- **开关**：`awLogUpload`（布尔，缺省 `false`），**只认本机配置文件** `ai-detector.json`（用户手改；`ai-detector status` 会打印它的当前值）。服务端、网页设置（`detector.settings.v1` 不收这个键）、
+  MCP 都改不了它。每轮配置重读，改了稍后自动生效，不用重启检测程序。
+- **每份健康报告都带 `logUpload`（布尔）**：服务端据此知道开关此刻的状态；变化（开 ↔ 关）立刻报，不等 15 秒。
+- **开着时**，报告还带 `startLog`：`aw-start.log` 的**脱敏尾巴**。只在**内容比上一次成功送出的有变化**时带（没变就不再发，但 `logUpload: true` 每次都报）；开关关了再打开会重新送一次。
+- **硬上限**：最多 **40 行**、总共 **4096 字节**、每行 **300 字符**（超字节从最老的一行开始整行丢，不截断单行）。只读文件最后 32 KiB。
+- **脱敏（发出前在本机做；规则有单测；尽力而为，不是保证）**：策略是**整行盖掉**，不去猜凭据的写法。
+  - 含这些词（不分大小写）的整行换成固定占位 `[整行已隐藏：可能含凭据]`（行首的时间戳保留）：`password` / `passwd` / `pwd` / `passphrase` / `token` / `secret` / `credential` / `api key`（`api-key`、`api_key`）/ `authorization` / `bearer` / `private key` / `cookie` / `session id`；
+    单独的 `key` 只认 `key=` / `key:` / `--key` / `-key` 的写法。这样一行以 `:` 或 `=` 结尾（值在下一行）时，**下一行也整行盖掉**。
+  - 命令行里的短选项 `-p <值>` / `-S <值>`（`mysql -p x`、`sudo -S x`）：整行盖掉，尽力而为，认不全。
+  - 其余的行：家目录换成 `~`；网址里 `://` 到最后一个 `@`（在下一个 `/` 或空白之前）的 userinfo 盖掉；沿用「强制脱敏」的全部规则（已知密钥格式、银行卡、身份证……）；
+    ≥ 24 字符的十六进制串、字母数字混合的长串盖掉；操作系统用户名（不分大小写的子串，非 ASCII 也行）在任何位置换成 `<user>`——短于 3 字符、或 `root` / `user` / `admin` 这类满篇都是的名字不按用户名替换（家目录照换）；
+    控制 / 格式 / 私用区字符（含 ANSI 转义、零宽、双向控制）去掉。
+  - **文件从中间读起时**（只读最后 32 KiB），第一个换行之前的半截行整段丢掉（否则 `password=` 后被切开的值会成为一整行）。
+  - **拿不准就不发**：读不到家目录或用户名、脱敏后仍含家目录 / 用户名子串、文件读不了、没有内容。
+  - **已知盖不住的**：全角 / 形近字 / 变形拼写的关键词、值在关键词前一行、既没有关键词也没有固定形状的口令、没有数字的 24 位以上纯字母串。
+  - 补充规则：被整行盖掉的行、超长行（> 4000 字节，关键词可能在没读到的部分）都会让**下一行**也被盖；空行不改变这个状态；从文件中间读起丢掉半截行后，第一整行也盖；`key` / `auth` / `pass` / `login` 只认后面紧跟 `=` 或 `:` 的写法；用户名按不分大小写的子串替换（非 ASCII 也行）；空白类字符（tab、不间断空格、行分隔符）变成普通空格，其余只保留 `unicode.IsPrint` 的字符；长串先于用户名替换盖掉；`scrubSecrets` 认出已知格式密钥的行也整行盖（网址 userinfo 除外，只盖 userinfo）。
+  - 用户打开开关后应当在面板的「查看启动日志」里看一眼实际上传的文字。
+- **兼容老服务端**：`PUT /detector/health` 的体是严格的，不认 `logUpload` / `startLog` 的老服务端会回 422。检测程序遇到带新字段的报告被 422、或 413（老服务端先量 1 KiB 的体积，日志一长就超）时，**去掉新字段立即重发**，一小时内不再带它们（本机日志记一行）；
+  **一小时后再试一次**（服务端可能升级了），仍被拒就再退回去；老检测程序对新服务端不受影响（新字段都可选，不带 = 按「关」，服务端删掉已存的日志）。
+- 关掉开关：下一份报告 `logUpload: false` 且不带日志，服务端**删除**这台设备存着的日志。
 
 ## 状态文件桥（`ai-detector.agent-status-bridge.v1` · 规范性，v0.3 追加）
 
@@ -469,6 +613,15 @@ Authorization: Bearer <deviceToken>
 
 | 日期 | 变更 |
 |---|---|
+| 2026-10-24 | upload.v1 v1.4（追加）：仓主批准三级分类（nexus-core v2.38）：另传 ≥ 1 秒、不跨窗口吸收的原始记录（`POST activity/records`，带按第一级规则算出的 `block`，脱敏同段，独立游标，`records` 设置控制）；键盘鼠标活动（默认关，GNOME 读空闲时间，只传有活动的 10 秒格）。段的上传与形状不变 |
+| 2026-10-12 | health.v1 追加、config.v1 追加 `awLogUpload`（仓主：记录丢了 80 分钟，要让 AI 助理能读真实的启动日志排查，但必须是本机开关）：缺省关；开着时健康报告带 `logUpload` 与脱敏后的 `aw-start.log` 末尾（≤ 40 行 / 4096 字节 / 每行 300 字符，变了才发），强制脱敏、拿不准不发；老服务端 422 时去掉新字段重发并不再带。对应 nexus-core v2.28。 |
+| 2026-10-12 | health.v1 追加（第三轮评审后）：被限频挡住的 nonce 按墙钟超过 60 秒就作废（笔记本挂起恢复后不拉）；`autoReason` 追加 `daily_cap`（nexus-core 严格枚举同步追加，`restart.reason` 不收）；拉起进程失败不再挤掉上一次的 `aw-start.log`。
+| 2026-10-12 | health.v1 追加（第二轮评审后）：说不准时健康报告自己探接口；观察过期（60 秒）不再续报；失败退避 15 秒、结果 5 分钟丢弃；限频内的 nonce 限频一过就处理；自动拉起滚动 24 小时至多 20 次；稳定计时在 paused / disabled / 说不准时断开；`status` 对没拉起进程的失败不贴旧日志。
+| 2026-10-12 | health.v1 追加（评审后）：健康报告独立线程、15 秒一报；先记 nonce 再拉；冷却取动手时刻的时钟；限频内的 nonce 留着不答 failed；按钮在暂停 / 没开同步时可用；`started` 以拉起后 20 秒内接口真的起来为准；失败原因枚举 `reason` / `autoReason`；本机 `aw-start.log` + `health.lastStart` + `status` 打印。
+| 2026-10-12 | health.v1 首版、config.v1 追加 `awStartCommand` / `awAutoStart`（均只认本机配置，不进网页设置）：检测程序向 nexus-core v2.27 报告自己与 ActivityWatch 的状态；网页「重启」经不透明 nonce 让它用本机命令拉起 ActivityWatch；ActivityWatch 连续两次连不上时自动拉起（30 秒限频、连拉 3 次不成功停手）。服务端数据不进命令 |
+| 2026-10-09 | presence.v1 v1.2.1（修订，PR #87 审核）：`presenceSeconds` 大于 30 时实际按 30 秒发（值仍合法，记一次日志）。v1.2 起每拍只往回带 60 秒的停留，而配置允许到 300 秒一拍——那样大部分停留没人报。请求的形状、配置文件的键都不变 |
+| 2026-10-09 | presence.v1 v1.2、config.v1 v1.5（追加）：仓主 2026-10-09「每 5 秒汇报一次，每次汇报里带各个窗口的停留时间」「人的注意力只能串行」。`presenceSeconds` 缺省 15 → 5（越界同样按 5；已写进配置文件的值不动）；心跳追加 `sentAt` + `spans [{app, title, from, seconds, guess?}]`：上一次成功的那一拍以来（至多往回 60 秒）人依次在过的窗口，串行、不重叠、离开已扣、短于 0.5 秒的不成段、至多 12 段（超了带 `truncated`）；脱敏与规则匹配同顶层同一条路径。顶层四个键含义不变，没有段时请求体与 v1.1 相同；老 nexus-core 忽略新键。对应 nexus-core v2.17 |
+| 2026-10-08 | upload.v1 v1.3、presence.v1 v1.1、config.v1 v1.4（追加）：仓主 2026-10-08「我的操作自动替代进行中计时」。规则可以只到项目（`projectId`，上传 `suggestion.projectId`）；网页设置 `autoTrack` 打开时在场心跳带规则对当前窗口的猜测 `guess`（同一个匹配函数，本机算，只发目标 id 与把握）。`autoTrack` 关着时两条请求体与此前逐字节相同。**取代条目**：本文件开头「它从不写事实：人在界面上确认了，才由 nexus-core 写 `session.completed`」仍然成立于本程序（它只上传建议）；但设备打开 `autoTrack` 后，nexus-core 会把规则把握 ≥ 0.9 的段直接记成事实（nexus-core v2.14） |
 | 2026-10-02 | upload.v1 v1.2、config.v1 v1.3（追加）：仓主 2026-10-02：终端类程序**按标签页分段**（程序 + 归一化标题各自一条流，`durationSeconds` 只算自己的碎片，段的墙钟跨度可交叠）；新配置 `segmentByTitle`（缺省开）/ `segmentByTitleApps`（缺省内置终端名单），网页设置 `detector.settings.v1` v1.2 可改；短于 1 秒的碎片不参与合并（保证 `startAt` 按秒唯一）；状态文件增 `sent`（游标之后已送达的区间，重算时挖掉，不重发也不重复计）。上传形状不变；关掉 `segmentByTitle` = v1.1 的切法 |
 | 2026-09-30 | 实现在场心跳与状态文件桥（状态改为已实现）；在场心跳可由网页设置 `presence`（`detector.settings.v1` v1.1）开关；`agentStatusIgnore` 缺省维持 `[]`。单实例锁改为系统建议锁（修容器里 pid 1 重启后永远拒绝），`ai-detector.lock` 的对外语义（`once` 在 `run` 跑着时拒绝）不变 |
 | 2026-09-30 | config.v1 v1.2（追加）：分类规则可以存在 nexus-core（`detector.rules.v1`），每轮拉；服务端存过就以它为准，本机 `rules.json` 变成没存过 / 拉不到时的后备。上传形状不变 |

@@ -1,20 +1,25 @@
 # assistant · 对外接口契约
 
-> 本文件是「AI助理」页对外行为的**唯一事实**。改本文件先改这里、再改代码；破坏性变更必须先评估消费方并留变更记录。
+> 本文件是「待批准」页对外行为的**唯一事实**。改本文件先改这里、再改代码；破坏性变更必须先评估消费方并留变更记录。
 
-页面分工（仓主 2026-09-30 定）：计时页（ring）= 现在；任务 / 项目页（hive）= 未来；**「AI助理」= 回顾与分析**。
-顶栏页签顺序：任务、计时、AI助理。
+页面分工（仓主 2026-09-30 定）：计时页（ring）= 现在；任务 / 项目页（hive）= 未来；**「待批准」= 人批准 AI 提议的**（2026-10-14 由「AI助理」改名；路由 `assistant/` 与模块名不变；AI 来自用户自己接上的 CLI，内置聊天可选）。
+顶栏页签顺序：任务、计时、待批准。
 
 ## 契约索引声明（provides / consumes）
 
 ```yaml
 provides:
   - id: assistant.page.v1
-    summary: 「AI助理」页面，静态路由 <站点前缀>assistant/。自上而下四块：AI 对话、待确认建议、活动检测设置、回顾。
+    summary: 「待批准」页面，静态路由 <站点前缀>assistant/。自上而下：**AI 报告（2026-10-09，nexus-core v2.20，有待批准的报告时才出现，在页面最上面）**、新项目与任务（2026-10-19，nexus-core v2.30，有待批准的 AI 提议时才出现，紧跟 AI 报告）、AI 对话、**分类规则草稿（2026-10-14，有草稿才出现）**、待确认建议、待分类（2026-10-08）、Agent 令牌、回顾。**2026-10-14（仓主定）起，自动记录的一切搬到第二个页面「自动记录」（`assistant.auto.v1`）：活动检测设置、生效中的分类规则、今天自动记下的段不再在本页。**
+  - id: assistant.auto.v1
+    summary: 「自动记录」页面，静态路由 <站点前缀>auto/（同一个前端目录的第二个入口 `auto.html`，顶栏页签「自动记录」，紧跟「待批准」）。自上而下：活动检测设置（含检测程序 / 设备状态、最近事故、启动日志；`settings.js`、`#settings-panel`）、分类规则（生效规则的编辑器、「允许 AI 直接改分类规则」开关、「AI 自动」「AI 写的」标记、「撤回 AI 的上一次改动」；`rules.js`、`#det-rules`，在活动检测设置面板末尾）、今天自动记下的段（`auto.js`、`#auto-panel`，原「自动记录」面板）。每一块的行为、请求、文案与搬家前逐字相同，只是换了页面。
 consumes:
   - id: agent.chat.v1
     contract: ../../../contracts/agent.chat.v1/contract.md
     purpose: >
+      **可选（2026-10-14 起缺省不开）**：聊天后端没起时 `GET health` 不是 200（网关回 502，见 `gateway.v1` 第八节），下面所有入口
+      （「AI 对话」面板、待确认建议里的「让 AI 匹配」）保持 hidden、不是显示成坏的；每次打开页面只问这一次 health，不轮询，
+      开了（`.env` 设 `COMPOSE_PROFILES=agent` 与 `AGENT_UPSTREAM=agent:8030`）再打开页面就出现。
       「AI 对话」面板（`code/frontend/chat.js`、`#chat-panel`；2026-09-30 从 ring 原样搬来，行为不变）。
       只调 `<前缀>api/agent/`，**从不调任何代理运行时（opencode）自己的接口**。用到：`GET health`（非 200 / 不是 JSON →
       聊天整块不出现；`configured:false` → 显示「去 .env 填 AGENT_API_KEY」；`debug:true` → 每条回答下多一个折叠的
@@ -22,6 +27,16 @@ consumes:
       `POST messages` 读 SSE（`start`/`delta`/`tool`/`done`/`error`，不认识的事件忽略；`tool` 只显示「正在查：…」）、
       `cancel`（「停止」按钮）。POST 一律 `Content-Type: application/json`。失败原样显示 `detail`。
       回答正文**当纯文本渲染**（textContent）。Enter 发送、Shift+Enter 换行。
+  - id: auth.gate.v1
+    contract: ../../../contracts/auth.gate.v1/contract.md
+    purpose: >
+      「Agent 令牌」面板（`code/frontend/tokens.js`、`#tokens-panel`，2026-10-09，auth.gate v1.4）。只调认证服务自己的
+      三个端点，都靠会话 cookie：`GET <前缀>api/auth/tokens`（200 才出现这一块；503 = 没设 AUTH_SECRET，只出一句说明；
+      其余状态码整块不出现——老的或换掉的认证服务）、`POST tokens` `{scope, name}`（`report` / `read` / `write`，缺省选
+      `read`（v0.4 起；以前是 `report`），`write` 的说明多一句：打开「允许 AI 直接改分类规则」后，这种令牌还能让 AI 直接改分类规则）、`POST tokens/revoke` `{tokenId}`（先 `confirm`）；另读 `GET health` 的 `anonymousReport` 决定出不出
+      「不带令牌也能上报」那句提示。**页面从不自己发令牌**，只在人点「生成令牌」时发。令牌本身只在那一次响应里：
+      只放进一个内存变量与一个节点，给「复制」与可粘贴的配置片段（agent-hooks、MCP 客户端、ai-detector）；
+      不写任何存储、不进地址栏与 console，点「我已保存好」、再发一个、离开页面时清掉。备注当纯文本渲染。
   - id: nexus-core.activity.suggestions.v1
     contract: ../nexus-core/module_docs/contract.md
     purpose: >
@@ -51,14 +66,94 @@ consumes:
       否掉（unmatch）成功的段仍待确认，留在页面上并在本地清掉建议、记进 `rejectedTaskIds`，等人手动挑。idle 段单独成组，
       照旧不进「全部确认」。界面上的条数（计数、「全部确认 · N」「已确认 N 条」）仍按段数。
       每组一个勾选项「以后这个窗口都记到这个任务」，确认成功后经 `detector.rules.v1` 加一条规则（见下一条的 2026-10-03 段）。
+      **提议新任务（nexus-core v2.8，仓主 2026-10-03「AI 能自动加新任务」，草稿 + 一键确认）**：组里每一段的
+      `suggestion.newTask.proposalId` 都相同（`classifier == "assistant"`、项目还在任务树里）时，行上出「AI 建议新建任务 · 把握 · 理由」、
+      「新建任务：分区 / 项目 /」+ 可改的名字框（≤ 64 字，预填 `newTask.name`），下拉缺省「不选现成任务（新建上面这个）」、仍可改选现成任务。
+      **「是 ✓」**：没选现成任务 → 第一段 POST {id}/confirm `{name: 去空白的名字, proposalId}`（名字空则按钮禁用；提议在页面显示后变了 → 409，按组报），后端建任务并在响应里回 `taskId`，
+      组里其余段同样 POST confirm `{name, proposalId}`（后端只建一次、其余复用；提议变了的段 409，按组报）；选了现成任务 → 同普通确认。**「否 ✗」**= 对带这个提议的每段 POST {id}/unmatch `{proposalId}`，
+      条目留下、换成下拉 + 确认 / 忽略。段的提议不一致、或有段指向任务 →「建议不一致」。项目已不在树里 → 当没有建议。
+      **「全部确认」永远不含提议新任务的组**（建任务必须人逐组点）。勾了「以后这个窗口」时规则用建好的 `taskId`。
+      **集合（nexus-core v2.10 + v2.9，仓主 2026-10-08「碎片太多」）**：列表最上面一层是**集合**，按集合里各段 `durationSeconds`
+      之和从大到小排（一样长的先出现的在前）。归集合：`suggestion.collection.key` 相同的段是一个集合（名字用 `collection.name`）；
+      没有这个键的段按「`app` + 归一化的 `title`」归——归一化 = 空白并成一个，去掉**开头**的状态符号（Unicode So 类与 `*` `•` `·`）
+      与计数 `(N)` / `[N]`，去完为空则用原标题——所以不用 AI 也能把只差转圈符号 / 计数的窗口并到一起。集合里仍是上面说的窗口行
+      （idle 段照旧单独成行、带徽标）。集合头：名字、「共 N 分 · N 个窗口 · N 段 · 起止」、**项目下拉**、**「确认整个集合」**、
+      一行说明这一下会怎么记；窗口行收在原生 `<details>` 里（只有一个窗口的集合缺省展开，人展开 / 收起过的重绘后保持）。
+      **集合的项目**：集合里有建议的段（`suggestion.taskId` 所在的项目、`suggestion.newTask.projectId`、`suggestion.projectId`，
+      且项目还在任务树里）都指向同一个项目时预选它，否则空着让人挑；人挑的只记在页面上（按集合键；集合没了就丢），不发任何请求。
+      **集合有项目时**，里面每行的任务下拉只列这个项目的任务，第一项「未分类（只记到这个项目）」是缺省：这样确认 =
+      POST {id}/confirm `{projectId}`（nexus-core v2.9，记进项目的未分类；与 `taskId` / `proposalId` 互斥）。规则建议的任务在这个项目里
+      → 预选它；在别的项目里 → 这行保留建议、列全部任务。下拉末尾「其他项目…」退回全部任务（没选不能确认），「← 只看集合的项目」退回来。
+      助理配的行（是 / 否）与提议新任务的行不受集合项目影响。集合没项目时行同以前（全部任务，没选不能确认）。
+      **「确认整个集合」**：对集合里每个窗口行、每一段依次发——行上此刻选了任务的 `{taskId}`，没选而集合有项目的 `{projectId}`；
+      **不含** idle 行（由人逐条定）、没东西可发的行（提议新任务而没改选现成任务的、没项目也没选任务的）；某段的 `rejectedTaskIds`
+      里有这个任务的不发。逐行报部分失败、成功的不回滚、发完重拉前全部控件禁用，同组确认。勾了「以后这个窗口」而记到未分类的行不加规则（提示一句）。
+      **「全部确认」（阈值）含义不变**：只发有任务建议且把握够的行的 `{taskId}`，**从不发 `{projectId}`**。
+      集合名、项目名一律 textContent。320 / 390 px 不横滚。
+  - id: nexus-core.activity.reports.v1
+    contract: ../nexus-core/module_docs/contract.md
+    purpose: >
+      「AI 报告」面板（`code/frontend/reports.js`、`#report-panel`，2026-10-09，仓主：「AI 一次提交一份报告，我可以一键批准全部。
+      当然单条编辑还是保留的」）。`GET api/core/activity/reports?status=pending` 取最新一份、`GET …/{id}` 取解析后的条；
+      404 / 没有待批准的报告 / 读取失败 → 整块 hidden。显示：作者 + 提交时间 + 概述、各类条数与覆盖总时长；条目**按窗口分组**（v2.33，仓主 2026-10-19：一个窗口 / agent 会话对应一个任务，点开才单独划分）：
+      程序 + 归一化标题（`normTitle`）一行、默认收起，显示段数、总时长、报告给的去向（同窗口的段分属不同去向则标「混合」并列出）；时长长的在前，全是「忽略」的最后。
+      点开列出每段（时间、时长、去向）；窗口行与每段行上有「改」（`<select>`，分项目任务下拉，选了即 `POST …/items/{id}/split {suggestionIds, taskId|projectId}`，只改报告、不入账）、
+      「不要」（`split {dismiss:true}` = 忽略）。不再有逐条「批准」；批准只有头部「全部批准」；头部「全部批准」（一次点击，`…/approve`，之后显示结果行
+      「已批准 N 条，M 条已过期」，失败的另说「K 条没成」）与「整份不要」（`…/reject`）。批准 / 忽略的请求都由本页发，AI 不能发。
+      `summary`、`reason`、`author`、窗口标题、项目 / 任务名一律 `textContent`（AI 给的文本不解释）。已 `stale` / `applied` /
+      `rejected` / `failed` 的行标状态、按钮禁用（`failed` 可重试）。操作进行中全部控件禁用；做完重拉，并通知「待确认建议」「待分类」
+      两块重拉（`assistant:reports-changed` 事件；这页上才有的事件）。「自动记录」页（2026-10-14 起另一页，不加载 `reports.js`）的「今天自动记下的」不听这个事件，打开页面或标签页重新可见时才重拉。不改「待确认建议」等既有流程。键盘可达（原生 button / select）；320 / 390 px 不横滚。
+  - id: nexus-core.activity.proposals.v1
+    contract: ../nexus-core/module_docs/contract.md
+    purpose: >
+      「新项目与任务」面板（`code/frontend/newitems.js`、`#newitems-panel`，2026-10-19，仓主：给 MCP 加新增项目、新增项目下的任务，都要人批准）。
+      `GET api/core/activity/proposals?status=pending` 列出待批准的项目提议（带其下的任务提议）与挂在现成项目上的任务提议；
+      「批准」「不要」走 `POST …/{id}/approve|reject`（后端只许人）。项目卡的「批准项目和任务」= 先批准项目、再逐条批准它的任务（某步失败就停并报出原因）；
+      项目没批准时其下任务的「批准」禁用；「不要」项目连带不要其下任务。AI 给的名字、理由、分区 / 项目名一律 `textContent`。
+      2026-10-22 起另读响应里的 `changes`（AI 提议改名 / 移动 / 删除现有项目或任务）与 `ignores`（「以后都忽略」规则）两个键，分别画成「修改与删除」「以后都忽略」两组，批准 / 不要同走上面的 POST；键缺失当空，删除用危险色。
+      没有待批准的 / 端点 404 / 读取失败 → 整块不出现。不轮询：打开页面、每次操作后、标签页重新可见时拉
   - id: nexus-core.views.tree.v1
     contract: ../nexus-core/module_docs/contract.md
     purpose: >
       待确认建议的任务下拉与「分区 / 项目 / 任务」路径显示：zones/projects/tasks 的 id、name、zoneId。
+  - id: nexus-core.sessions.reassign.v1
+    contract: ../nexus-core/module_docs/contract.md
+    purpose: >
+      「待分类」面板（`code/frontend/unclassified.js`、`#unclassified-panel`，仓主 2026-10-08：记进未分类的时间要能
+      「归入 xxx 任务」）。列出**此刻还记在各项目「未分类」时间桶上**的每一段，人挑任务归进去。
+      读：`views.tree.v1` 里每个带 `unclassifiedTaskId` 的项目各发一次
+      `GET /api/core/events?type=session.completed&taskId=<桶>&limit=200`（`events.read.v1`，nexus-core v2.11 起只回当前还在
+      桶上的段）；用到 `total`、`items[].{id, source, time, data.startAt, data.durationSeconds}`。
+      按项目分组（时间多的项目在前）：组头「分区 / 项目」+「N 段 · 共 M 分」（`total` 大于页上条数时注明还有几段没列）；
+      每段一行「临时任务 MM-DD HH:MM · N 分」（时间 = `data.startAt`，没有则 `time`；浏览器本地时区）+ 来源徽标
+      （`timer-backend` 计时、`manual-backfill` 补登、`activity-confirmed` 电脑检测，其余原样显示 source）。
+      每组一个任务下拉：缺省只列**本项目**的任务（已完成的标「（已完成）」），末尾「其他项目…」换成全部项目的任务
+      （按「分区 / 项目」分组，可「只看本项目」换回）。没选任务时归入按钮禁用。
+      写：行上的「归入」= `POST /api/core/sessions/{eventId}/reassign {taskId}`；组上的「全部归入所选任务」对组里每一段逐个发
+      （一个接一个，不并发）。成功（含 `duplicate: true`）的行立即从页面上拿掉；部分失败报「N / M 段没归入：第一条 `detail`」，
+      已成功的不回滚；全部成功报「已归入 N 段 → 任务路径」。从第一个请求到列表重拉完，面板里所有按钮与下拉禁用。
+      一段都没有、或 events 端点 404（后端早于 v0.6）/ 读取失败 → 面板整块不出现；reassign 404（后端早于 v2.11）按失败原样显示。
+      **归入不是计时**：不发 `honeycomb:timer-changed`。只在打开页面、每次操作后、标签页重新可见时拉，不轮询。
+      **撤回**：刚归入成功的那一批在提示旁出一个「撤回」按钮 = 对其中每一段 `POST …/reassign {projectId: 原项目}`（放回原项目的桶，
+      台账里追加的是又一条改挂，不是删除）；只管最近一次操作，做了下一次操作或重新打开页面就没有了。
+      所有名字只当文本渲染。
+  - id: nexus-core.activity.auto.v1
+    contract: ../nexus-core/module_docs/contract.md
+    purpose: >
+      「今天自动记下的」面板（`code/frontend/auto.js`、`#auto-panel`；nexus-core v2.14 自动跟踪；2026-10-14 起在「自动记录」页，标题由「自动记录」改为「今天自动记下的」，在活动检测设置之后）。
+      读：`GET /api/core/activity/auto`（今天按分类规则直接记下的段，新的在前），用到
+      `items[].{eventId, startAt, durationSeconds, app, title, taskId, projectId, reassigned}`；名字取
+      `GET /api/core/views/tree?includeEphemeral=true`。每段一行「HH:MM · N 分 · 程序 · 标题」+「→ 分区 / 项目 / 任务」
+      （记在项目的未分类桶上写「分区 / 项目 · 未分类」；改过归属的带「已改」）+ 一个「改归属…」下拉
+      （每个项目一组：「未分类」+ 它的任务）。选了就发 `POST /api/core/sessions/{eventId}/reassign`
+      `{taskId}` 或 `{projectId}`（`sessions.reassign.v1`，v2.14 起也收自动记下的段），发完重拉；失败原样显示 `detail`。
+      一段都没有、端点 404（后端早于 v2.14）/ 读取失败 → 面板整块不出现。**改归属不是计时**：不发
+      `honeycomb:timer-changed`。只在打开页面、每次操作后、标签页重新可见时拉，不轮询。窗口标题与名字只当文本渲染。
+      本页**不**提供「你在 X，记到哪？」那张卡（在计时页，`modules/ring` 契约 2026-10-08 条）。
   - id: detector.settings.v1
     contract: ../../../contracts/detector.settings.v1/contract.md
     purpose: >
-      「活动检测设置」面板（`code/frontend/settings.js`、`#settings-panel`）。GET /api/core/detector/devices 列设备
+      「活动检测设置」面板（`code/frontend/settings.js`、`#settings-panel`；2026-10-14 起在「自动记录」页）。GET /api/core/detector/devices 列设备
       （下拉：deviceId + 最近活动时刻 = max(lastUploadAt, lastFetchAt)；另显示最近上传、最近拉设置、有没有网页设置），
       选中后 GET settings?deviceId=。`settings: null` → 表单显示契约缺省值并注明「用的是本机配置文件」。
       表单逐键对应契约「一」的 privacy / idle 两节（取值、范围与契约一致，例子取契约表格）。
@@ -70,11 +165,26 @@ consumes:
       显示为勾着的灰框（disabled），注明「不能关；需要改源码重新编译」——它们不在文档里，本页从不发。
       `presence`：文档里（顶层、privacy 或 idle 节）有布尔 `presence` 时才多出一个勾选项，读写同一位置；没有就不出现、不发。
       devices 404（后端早于 v2.5）→ 面板说明「后端还不支持」，不出表单。页面提示「检测程序下一轮（≤ 5 分钟）生效」。
+      `autoTrack`（v1.3，2026-10-08）：表单最上面一组「进行中的任务」里的勾选项「允许 AI 管理进行中的任务」，缺省不勾，
+      下面一段灰字说明关着 / 开着各是什么行为；**总是显示、总是发**（文档里没有这个键按 `false` 填）。勾上保存时，
+      文档里还没有布尔的 `presence`（没设过在场心跳）就一并发 `presence: true`——实时显示靠心跳；人明确设过
+      `presence` 的不动，取消勾选也不动 `presence`。
+      `aiDirectRules`（账号开关，`detector.rules.v1` v1.3，nexus-core v2.29，2026-10-14）**不在**设备设置表单里（设置是每台设备一份，账号级开关放那里会被旧表单悄悄改回去）：
+      它是「分类规则」一节顶上的勾选项「允许 AI 直接改分类规则」，缺省不勾，值取自 `GET rules` 的 `aiDirectRules`，改动即 `PUT api/core/detector/rules/ai-direct` `{enabled}`（只许人；失败勾回原样并提示）。
+      「分类规则」里：规则带 `aiAt` 时行头标「AI 写的 + 时间」（只进 textContent，不进 toWire——服务端自己保留 / 清除章）；`GET rules` 的 `snapshotCount > 0`
+      时才显示「撤回 AI 的上一次改动」，点了 `POST api/core/detector/rules/ai-revert`（带 `If-Match: "<显示的 version>"`，412 则刷新；先 `confirm`，写明是恢复到哪个时间的 AI 改动之前，有没保存的改动会提醒；404 = 没有可撤回的，按钮收起），成功后用返回的规则整套重填并重读草稿。
+      **最近事故与启动日志（nexus-core v2.28）**：设备行的状态下面多三样。① 一行「启动日志上传」：`health.logUpload` 为 `true` 说「已在那台电脑上开启」，
+      为 `false` 说「未开启」并写明怎么开（那台电脑的 `ai-detector.json` 里加 `"awLogUpload": true`，只上传脱敏后的末尾、可随时关；开关只能在那台电脑上改）；
+      老服务端没有这个布尔就不显示这一行。**面板上没有任何能打开它的控件**（本机开关，网页和服务器都改不了）。② 可折叠的「最近事故」：**展开时**才 `GET incidents?deviceId=&limit=50`
+      （不随设备轮询），一条一行：时刻 + 中文标签（枚举 `kind` 查表，离线类附持续时长，有 `reason` 附中文原因，`restart_result` 附结果）；此刻静默（`offline: true`）在最前加一条
+      「检测程序离线中」；不认识的枚举 / 原型链上的名字（`constructor`）显示「未知事件」「原因未知」；没有事故说明一句；取失败显示原因。没有 `health` 的设备（老检测程序）不出这一块。
+      ③ 仅当 `health.logUpload` 为 `true`：可折叠的「查看启动日志」，展开时取 `incidents` 的 `startLog.text`，**只进 `<pre>` 的 `textContent`**（它是用户电脑上程序的输出，不可信）。
+      换设备时两个折叠块收起并清空。
       面板末尾是「分类规则」（见下一条）。
   - id: detector.rules.v1
     contract: ../../../contracts/detector.rules.v1/contract.md
     purpose: >
-      「分类规则」（`code/frontend/rules.js`、`#det-rules`，在活动检测设置面板末尾），按该契约「五」：
+      「分类规则」（`code/frontend/rules.js`、`#det-rules`，2026-10-14 起在「自动记录」页的活动检测设置面板末尾；其中**草稿横幅**留在「待批准」页，见「入口与路由」），按该契约「五」：
       GET rules 填编辑器（每条一张卡：启用、上移 / 下移、删除、程序名正则、标题正则、任务下拉〔未完成任务的路径；
       规则指向已删任务时单列「任务已删除（id）」〕、把握、备注），「加一条」「保存规则」= PUT 整套 + `If-Match`；
       412 保留人的改动并换到最新版本号，再点保存才覆盖；422 的 `errors[]` 挂到对应行、对应格。
@@ -82,6 +192,10 @@ consumes:
       （新增 / 修改〔旧 → 新〕/ 删除），「应用」一次点击 = POST apply（`If-Match: currentVersion`；有没保存的手改先确认），
       「丢弃」= POST discard；412 / 404 重新拉草稿并提示。聊天一轮结束（`assistant:turn-done` 事件，chat.js 发）、
       标签页重新可见时重拉草稿。所有规则 / AI 文本只当文本渲染。rules 404（早于 nexus-core v2.6）→ 只留一句说明。
+      **只到项目的规则（v1.1，2026-10-08）**：下拉标题改为「归到」，任务之后每个项目多一项「分区 / 项目 · 未分类（只到项目）」；
+      选它 = 这条规则发 `taskId: null` + `projectId`，选任务 = 发 `taskId`、**不带** `projectId` 键（与 v1 逐字节相同）。
+      规则指向已删项目时单列「项目已删除（id）」；422 的 `field: "projectId"` 挂在同一格下；草稿逐条改动里写
+      「→ 分区 / 项目 · 未分类」。`prepend` 判「已有相同规则」时连 `projectId` 一起比。
       **待确认建议也写规则（2026-10-03）**：`suggestions.js` 的组勾了「以后这个窗口都记到这个任务」且至少一段确认成功时，
       经 `rules.js` 暴露的 `window.assistantRules.prepend(rule)`：GET rules → PUT `{rules: [新规则, ...原有规则]}`、
       `If-Match: "<读到的 version>"`（与 `ETag` 同值）。新规则放**最前**（第一条命中生效，放最后会被更宽的旧规则挡住）：
@@ -93,6 +207,27 @@ consumes:
       规则匹配的是「隐私处理后、换代号前」的标题（该契约「一」），页面上的标题与之相同（`[IP]` 这类占位符两边一样），
       **除了**标题代号（`privacy.titles = pseudonymize` 时上传的 `窗口名N` / `路径N`）：这样的组勾选项禁用并注明原因；
       转义后超过 200 个字符的也禁用。
+  - id: nexus-core.activity.tiers.v1
+    contract: ../nexus-core/module_docs/contract.md
+    purpose: >
+      「三级分类」（nexus-core v2.38「三级分类」节；`code/frontend/tiers.js`，「自动记录」页）。先 `GET /api/core/activity/settings`：
+      `tiers` 关着或读不到（404 / 失败）→ 页面与此前相同（「分类规则」与 autoTrack 照旧）；打开 → 「分类规则」换成两级规则栏、autoTrack 隐藏。
+      账号设置：「三级分类」开关（打开前 `confirm`，写明会多上传每段 ≥ 1 秒的窗口记录——程序名与脱敏标题，脱敏同段）与 agent 权限
+      （`agentDirect`：总开关 + `windowsClassify` / `honeycombRecords` 两个分开关，总开关关着时分开关禁用）都经 `PUT activity/settings`，
+      整份替换（去掉 `version`），带 `If-Match: "<version>"`；`412` 重读并提示再试，`409`（迁移后规则超上限）及其余错误原样显示 `detail`。
+      第一级（左栏）：`GET/PUT detector/rules`（`detector.rules.v1` v1.5）里 `kind: "block"` 的规则（`app` / `title` → `block`），增 / 改 / 删 / 排序；
+      存 = PUT 整套，旧式规则（含 `migrated: true`、`mode: "ai"`）逐字原样带回、第一级规则按原位置填回，`If-Match` / `412` / `422` 同「分类规则」。没有「把握度」。
+      命中数取规则的 `hitCount`（数字才显示，后端没有就不显示）。
+      第二级（右栏）：`GET activity/block-rules`（`broken: true` 的标「失效」）、`POST activity/block-rules {blockKey, taskId | projectId}`（同块名 = 改目标）、
+      `DELETE activity/block-rules/{id}`。两栏按目的地项目所在分区的颜色（`views/tree` 的 `zones[].color`）上色，没有第二级规则 = 灰。
+      待批准：`GET activity/proposals?status=pending` 里 `kind` 为 `windowRule` / `blockRule` 的提议（不论放在响应的哪个数组下）以虚线框显示在各栏顶部：
+      批准 = `POST proposals/{id}/approve`，更正 = 同一端点带 `{edit: {rule: {block}}}`（windowRule）或 `{edit: {taskId | projectId}}`（blockRule），忽略 = `POST proposals/{id}/reject`；没有就不显示。
+  - id: detector.settings.v1
+    contract: ../../../contracts/detector.settings.v1/contract.md
+    purpose: >
+      `detector.settings.v1` v1.4 的 `inputActivity`（缺省关）：三级分类打开时，设备设置表单里多一个「记录键盘和鼠标活动时间」。
+      勾上前弹说明（记什么：每 10 秒有没有碰键盘或鼠标，鼠标移动也算；不记什么：按了哪个键、打了什么字；存在哪：只在本机检测程序和用户自己的蜂巢；怎么关：随时关掉），
+      不同意就勾回；同意后随「保存」一起 PUT。文档里原本没有该键、又没勾时不发这个键（与此前逐字节相同）。`records` 不在页面上设，原样带回。
 ```
 
 ## 入口与路由
@@ -101,7 +236,14 @@ consumes:
   `window.HONEYCOMB_BASE` 拼（`contracts/gateway.v1` 第七节）。
 - 「回顾」块只放入口：计时页的泳道（`../ring/#lanes-panel`）、任务页（`../hive/`）。网关注入了
   `window.HONEYCOMB_NAV` 且其中没有对应页签时，那条链接不出现。分析功能以后做，本版不加后端。
-- 计时页上的「N 条待确认 → AI助理」链接指向本页（见 `modules/ring` 契约）。
+- 计时页上的「N 条待确认 → 待批准」链接指向本页（见 `modules/ring` 契约）。
+- **「自动记录」页（2026-10-14）**：前缀 `<站点前缀>auto/`（缺省 `/auto/`），入口 `auto.html`，设门、注入共享顶栏。**不另立模块**：
+  它与本页共用同一个前端目录（`module.yaml` 里第二个 `static:`，同一个 `root` 挂在 `/auto/`），`assistant.css`、`rules.js`、`review.js` 两页共用，
+  页签只能来自 `static[].nav`，所以要一个自己的前缀。两页互相有一条链接（页头一句话里；`data-needs` 复用 `review.js`：
+  网关注入了页签且没有对方的页签时，链接不出现）。
+- **`rules.js` 两页共用**：同一份脚本在两页都加载，元素不在就跳过。「自动记录」页有 `#det-rules`（编辑器 + 账号开关 + 撤回），
+  「待批准」页有 `#rules-draft`（草稿横幅：计数、逐条改动、应用 / 丢弃；外面的卡片 `#rules-draft-panel` 有草稿或有提示时才出现，`#rules-message` 在这张卡里）。
+  草稿是一次批准，所以留在「待批准」页；两页各自 GET 规则，互不通信（应用草稿后「自动记录」页重新打开、或标签页重新可见时才看到新规则：页面可见且编辑器没有未保存的改动、没有请求在路上时 `rules.js` 重读一遍；有未保存的改动就不动，保存时照旧得到 412 提示）。
 
 ## 数据与存储
 
@@ -115,8 +257,29 @@ consumes:
 
 | 日期 | CR | 变更 |
 |---|---|---|
+| 2026-10-24 | 仓主：批准三级分类的前端设计草稿 | 认 nexus-core v2.38 / `detector.rules.v1` v1.5 / `detector.settings.v1` v1.4：「自动记录」页读 `activity/settings`，`tiers` 打开时「分类规则」换成两级规则栏（`tiers.js`），账号开关与 agent 权限、键盘鼠标活动开关见 consumes `nexus-core.activity.tiers.v1`。`tiers` 关着或读不到时页面不变。新增 consumes，既有条目不改 |
+| 2026-10-22 | 仓主：AI 可提议「以后都忽略」规则与改名 / 移动 / 删除现有项目和任务，人批准 | 「新项目与任务」块多读 `proposals` 响应的 `changes` / `ignores`（老服务端没有这两个键，当空）：多两组「修改与删除」「以后都忽略」，每条「批准」「不要」，删除标危险色；后端的 409 / 404 / 422 `detail` 原文提示。只增，既有各组不变 |
+| 2026-10-22 | 仓主：待分类几百条，「留着时间，只清列表」，明天从头看 | 「待分类」面板加「清空列表」：记下此刻列出的段里最新的记录时刻（服务端的 `recordedAt`，没有就 `time`，不用本机钟；本浏览器 localStorage `assistant.unclassified.clearedAt`，存不了只管这次打开），之后只列比它晚记下的段（读 `events` 时多用到 `recordedAt`；清空后又「撤回」放回来的段照样列，记在 `assistant.unclassified.keep`）；清空过就有「全部显示（已清空 N 段）」按钮（超过一页时 N 带「+」），点它撤掉。纯前端：不发任何改挂、台账与各项目时间一条不动，不新增接口；没点过时页面与此前相同 |
+| 2026-10-14 | 仓主：用户接自己的 AI CLI，内置聊天可选，「隐藏内置 AI 助手」（别删） | 页面改名「AI助理」→「待批准」（顶栏页签、`<title>`、`<h1>`、各处交叉链接的文字；路由 `assistant/`、模块名、`#` 钩子都不变）。聊天入口的显隐逻辑本来就按 health 一次判定（`chat.js`），契约把它写明：聊天后端缺省不起，面板与「让 AI 匹配」都不出现；`agent.chat.v1` 与 `modules/agent` 原样保留，开了就回来。只改文案与说明，接口不变 |
+| 2026-10-14 | 仓主：「AI助理」页把两件事混在一起，自动记录的东西拆成自己的页 | 新页「自动记录」（`assistant.auto.v1`，`/auto/`，`auto.html`）：活动检测设置（含检测程序状态）、生效中的分类规则（编辑器、AI 直接改开关、撤回）、今天自动记下的段从本页搬过去；「AI助理」留待确认建议、报告、**分类规则草稿**（新卡 `#rules-draft-panel`，是一次批准）、忽略清单、令牌、待分类、对话。`rules.js` 两页共用。纯前端，不动后端与接口；搬家块的行为、请求与文案不变（今天自动记下的面板标题改为「今天自动记下的」，避免与页名重复）。MCP / 后端文案里的「AI助理 → 规则」随之改成「自动记录 → 分类规则」（开关、撤回、编辑）或「AI助理 → 分类规则草稿」（应用草稿）。 |
+| 2026-10-19 | 仓主：给 MCP 加新增项目、新增项目下的任务，都要人批准 | 认 `nexus-core.activity.proposals.v1`（nexus-core v2.30）：「待批准」页在 AI 报告下面多一块「新项目与任务」（`newitems.js`、`#newitems-panel`，有待批准的提议才出现）：项目卡（分区、理由、其下任务）与现有项目下的任务，每条「批准」「不要」，项目卡另有「批准项目和任务」「只批准项目」；项目没批准时其下任务的「批准」禁用。只增，既有各块不变 |
+| 2026-10-19 | 仓主：「加一条规则：x窗口需要用ai软分类，不能硬分」 | 认 `detector.rules.v1` v1.4 / nexus-core v2.34：「分类规则」编辑器的「归到」下拉多一项「交给 AI 判断（不硬分）」（值 `ai:`，保存为 `{taskId: null, mode: "ai"}`，普通规则仍不带 `mode` 键）；这样的规则行头标「交给 AI 判断」、左侧色条区分、没有「把握」格；`describe` 显示「→ 交给 AI 判断」。AI 写的备注 / 标题仍只进 `textContent` / `value` |
+| 2026-10-14 | 仓主：用户自己接 CLI，AI 可以直接改分类规则（默认关，撤得回） | 认 `detector.rules.v1` v1.3 / nexus-core v2.29：「分类规则」一节多「允许 AI 直接改分类规则」勾选项（PUT ai-direct）；规则列表标「AI 写的 + 时间」；有快照时出「撤回 AI 的上一次改动」；令牌表单缺省选「只读」、「读写」的说明多一句。只增，既有行为不变 |
+| 2026-10-12 | 仓主：记录丢了 80 分钟，要让 AI 助理能读事故和（用户同意的）启动日志 | 认 nexus-core v2.28（`nexus-core.detector.incidents.v1`）：设备行下多「启动日志上传」状态一行（只显示，不提供打开它的控件——本机开关）、可折叠的「最近事故」（展开时取）与开关打开时的「查看启动日志」（`<pre>` + `textContent`）。见上文「活动检测设置」条。 |
+| 2026-10-12 | 仓主：「面板上能加个检测和重启按钮吗？」（ActivityWatch 没起来，面板上看不出） | 认 nexus-core v2.27（`nexus-core.detector.health.v1`）：「活动检测设置」的设备行下多一条状态（检测程序在线 / 离线——`health.at` 超过 3 分钟没更新算离线；ActivityWatch 正常 / 连不上 / 最近一分钟没有窗口记录 / 已暂停 / 未开启；`autoStart` 是 `started` / `gave_up` / `unsupported` / `off` 时附自动拉起的结果（`gave_up` 带 `autoReason` 的中文原因，`daily_cap` 单独一句「24 小时内自动拉起已达 20 次上限……可以点按钮手动重启」；`idle` 和缺省什么都不显示；不认识的值显示「未知状态」）；老检测程序没有 `health` →「这个版本的检测程序不报告状态」）、「检测」按钮（重拉设备）、「重启 ActivityWatch」按钮（`POST detector/restart?deviceId=` 后每 3 秒拉一次设备、最多 75 秒，等该 nonce 的 `restart.result`，超时显示「检测程序没有响应（它可能没在运行）」）。在线 / 离线按 `GET devices` 的服务端 `now` 算（缺 `now` 的老服务端退回浏览器时钟），`health.at` 解析不了当作没有状态；按钮旁常驻一句说明：「这个按钮只做两件事：检测 ActivityWatch 是否在运行，没在运行就重启它。不会重启检测程序，也不会重启面板」；等结果最多 75 秒（拉取 ≤ 15 秒 + 探测 20 秒 + 回报）；失败（按钮）/ 停手（自动）时给大类原因的中文（枚举 `reason` / `autoReason`）并常驻一句「详细原因和日志在那台电脑上：运行 ai-detector status，或查看检测程序目录下的 aw-start.log」；检测程序离线时按钮禁用并说明怎么办。服务端字符串只进 textContent |
+| 2026-10-09 | 仓主：记住「忽略 xx 记录」，不进圆环也不进泳道；放一个可展开的「被忽略任务」菜单 | 认 nexus-core v2.22「忽略并记住」（`nexus-core.activity.ignores.v1`）。待确认建议里每个窗口行、每个集合多一个「忽略并记住」：点开选范围——「忽略 X 的所有窗口」，或「只忽略标题含“…”的」（标题取去掉开头状态符号 / 计数的那段，集合 = 它里面每个不同的窗口各一条规则），发 `POST api/core/activity/ignores {app, titleContains?}`，服务端存规则并清掉已在待确认里的匹配项，页面重拉。待确认建议面板底部多一个可展开的「被忽略任务」（`ignores.js`、`#ignores-panel`）：每条规则写匹配什么、自何时起、已忽略多少条 / 多少分钟（计数器）；面板说明写明「忽略后不再计时、不进圆环和泳道、不再出现在待处理里；已经记下的不受影响」——不承诺删除标题，「取消忽略」= `DELETE api/core/activity/ignores/{id}`。一条规则都没有、或端点 404（后端早于 v2.22）时面板与「忽略并记住」按钮都不出现。**没有**给「待分类」面板加（那里列的是已记下的时间段，不是窗口；忽略只管以后的窗口） |
+| 2026-10-09 | 仓主：AI 一次提交一份报告，我可以一键批准全部；单条编辑保留 | 新增「AI 报告」一块（`reports.js`、`#report-panel`，页面最上面，仅在有待批准报告时出现）：作者 / 时间 / 概述 / 条数与总时长，按目标项目分组列出每条（时间长的在前），行上「改」「批准」「不要」，头部「全部批准」「整份不要」，全部批准后显示「已批准 N 条，M 条已过期」。消费 nexus-core v2.20 `activity.reports.v1`；既有各块不动。测试：`tests/test_reports.py` |
+| 2026-10-09 | 仓主：网页上也给一个 Agent 令牌的发放入口 | 新增「Agent 令牌」一块（`tokens.js`，在「活动检测设置」与「回顾」之间）：选范围（只上报 / 只读 / 读写，各一句说明）、选填备注、生成；令牌只显示一次，带复制与可粘贴的配置；列出自己名下的令牌，逐个吊销（先确认）。消费 `auth.gate.v1` v1.4 |
+| 2026-10-09 | 仓主：新建的分区 / 项目（还没有任务）在 AI助理页找不到；待分类、待确认按时长排 | 纯前端、只增不改：待确认建议里**不 scoped** 的行下拉，以及待分类的「其他项目…」，列出**所有**项目（含没有任务的），每个项目第一项「未分类（只记到这个项目）」（值 `p:`+项目 id，不是 taskId）；选它 = 这行 confirm `{projectId}` / reassign `{projectId}`（待分类里不列该组自己的项目），「确认整个集合」同发 `{projectId}`，「全部确认」不含；「以后这个窗口」照旧不加规则。scoped 行的选项不变。排序：待分类的项目组与组内段、待确认建议集合内的窗口行（无操作的仍在后）与窗口内的分段、自动记录列表，都按时长从大到小，一样长的新的在前，再一样保持原顺序。不新增接口，不自动确认任何东西 |
+| 2026-10-08 | 仓主：规则认不出就让 AI 出来写规则，人要能管住它 | nexus-core v2.15 / `detector.rules.v1` v1.2：「规则」分页里带 `auto: true` 的规则行头标「AI 自动」（`rules.js`；照常能改、能删、能停用），整套保存时把读到的 `author` / `auto` 原样带回（`toWire`）；「自动记录」面板里 `ai: true` 的段标「AI 认的」（`auto.js`），改归属照旧。测试：`tests/test_rules.py`、`tests/test_auto.py` 各一条 |
+| 2026-10-08 | 仓主：留一个开关——允许 / 不允许 AI 管理进行中的任务（自动跟踪第一步） | ① 活动检测设置最上面新增一组「进行中的任务」：勾选项「允许 AI 管理进行中的任务」（`detector.settings.v1` v1.3 的 `autoTrack`，缺省关）+ 灰字说明；勾上保存且没设过 `presence` 时一并发 `presence: true`。② 分类规则编辑器认只到项目的规则（`detector.rules.v1` v1.1 的 `projectId`）：「归到」下拉多出每个项目的「· 未分类（只到项目）」。③ 新增第四块「自动记录」（`auto.js`、`#auto-panel`，在待分类与活动检测设置之间）：今天自动记下的每一段 + 「改归属…」下拉（nexus-core v2.14 的 `GET /api/core/activity/auto` 与扩了范围的 reassign）；没有段 / 端点 404 时整块不出现。新增 consumes `nexus-core.activity.auto.v1`。只增：开关关着、没有只到项目的规则时页面与此前逐像素相同（多一组开关除外）。**须与 nexus-core v2.14 同版发布** |
+| 2026-10-08 | 仓主：学历史是要的，直接把历史加进 AI 的上下文 | 「让 AI 匹配」发的那句固定的话加上「先看我以前是怎么归类的（同类窗口照以前的定）」「看得出项目的一定标上项目」：助理经 `mcp.tools.v1` v1.7 的 `get_match_history` 读匹配历史（nexus-core v2.12）。本页自己不读历史端点，不新增 consumes，界面零改动 |
+| 2026-10-08 | 仓主：记进未分类的时间能不能追加「归入 xxx 任务」 | 新增第三块「待分类」（`unclassified.js`、`#unclassified-panel`，在待确认建议与检测设置之间）：按项目列出还记在「未分类」时间桶上的每一段，下拉限本项目任务（+「其他项目…」），逐段「归入」或「全部归入所选任务」= nexus-core v2.11 的 `POST /api/core/sessions/{eventId}/reassign`；没有可归的段 / 端点 404 时整块不出现 |
+| 2026-10-08 | 仓主：碎片太多，同类窗口归成集合、给集合选项目 | 待确认建议最上面一层改为**集合**，按总时长从大到小排：认 nexus-core v2.10 的 `suggestion.collection` / `suggestion.projectId`，没有的按程序 + 去掉开头状态符号 / 计数的标题归并。集合头有项目下拉（建议一致时预选）与「确认整个集合」；集合有项目时行的下拉只列这个项目的任务、缺省「未分类」= confirm `{projectId}`（nexus-core v2.9），「其他项目…」退回全部任务。「确认整个集合」不含 idle 行与提议新任务的行；「全部确认」含义不变、不发 `{projectId}`。`#suggest-list` 由 `<ul>` 改为 `<div>`（行仍是 `li.suggest-item`）。「让 AI 匹配」那句话加「先归集合、标项目」。**须与 nexus-core v2.9（confirm `{projectId}`）同版发布** |
+| 2026-10-03 | 仓主：AI 能自动加新任务（草稿 + 一键确认） | 待确认建议认 nexus-core v2.8 的 `suggestion.newTask`：组上出「新建任务：项目 / 名称」（名字可改），「是」= 组里每一段 confirm `{name, proposalId}`（后端只建一次），「否」= unmatch `{proposalId}`；下拉仍可改选现成任务；「全部确认」不含提议的组。「让 AI 匹配」那句话加「现成任务都不合适时可以提议新任务」 |
 | 2026-10-03 | 仓主：一个窗口对应一个任务（短段太多挑不过来） | 待确认建议按 `(app, title, idle)` 分组，一组一行、一次挑任务，确认 / 忽略 / 是 / 否对组里每段逐个发，部分失败按组报；有建议的段指向不同任务时提示「建议不一致」。每组勾选项「以后这个窗口都记到这个任务」：确认后往分类规则**最前面**加一条精确匹配这个窗口的规则（`detector.rules.v1` PUT + If-Match，412 重试一次，相同规则不重复加；标题是代号时禁用）。`rules.js` 追加 `window.assistantRules.prepend`。纯前端，不动后端 |
 | 2026-10-02 | 仓主：终端按标签页分段 | 活动检测设置面板增「分段」一组：复选框「终端按标签页分段」+ 可改的程序名单（`detector.settings.v1` v1.2 的 `segmentByTitle` / `segmentByTitleApps`）。v1.1 存下的文档没有这两个键时按缺省（开 + 本机名单）显示，保存时带上；所以保存需要 nexus-core 认 v1.2（同版发布） |
 | 2026-10-02 | 仓主：AI 先做最简单的活动匹配 + 是 / 否 | 待确认建议加「让 AI 匹配」按钮（借聊天发一轮，答完重拉）；助理配的条目出「AI 建议 + 是 ✓ / 否 ✗」（是 = confirm，否 = nexus-core v2.7 的 unmatch）；`chat.js` 追加 `window.assistantChat.ask` 与 `assistant:chat-state` 事件；聊天副标题改为「能写的只有两样建议」 |
 | 2026-09-30 | 仓主：分类规则由 AI 助理写 | 「分类规则」占位换成编辑器 + AI 草稿横幅（detector.rules.v1）；聊天一轮结束时发 `assistant:turn-done`；聊天副标题改为「唯一能写的是分类规则的草稿」 |
 | 2026-09-30 | 仓主定新页「AI助理」 | 首版：新模块。聊天（agent.chat.v1）与待确认建议（activity.suggestions.v1）从 ring 搬来、行为不变；待确认建议认 v2.5 的 `idle`（徽标、不进全部确认）；新增活动检测设置（detector.settings.v1）与回顾入口 |
+| 2026-10-19 | 仓主：「一个 ai 会话理论上只对应一个任务。把界面优化成一个窗口 / agent 对话对应的一个项目的任务，点击展开可以单独划分，否则直接全部批准。」 | 「AI 报告」改成按窗口（程序 + 归一化标题）一行、默认收起：段数 / 总时长 / 去向（分属多个去向标「混合」）；点开列出每段，窗口或单段可「改」「不要」（消费 nexus-core v2.33 `split`，只改报告）；逐条「批准」去掉，批准只有「全部批准」。测试：`tests/test_reports.py` |

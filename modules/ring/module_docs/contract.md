@@ -91,10 +91,10 @@ consumes:
   - id: nexus-core.activity.suggestions.v1
     contract: ../nexus-core/module_docs/contract.md
     purpose: >
-      计时页「N 条待确认 → AI助理」小链接（2026-09-30，`code/frontend/ring-suggest-link.js`、`#suggest-link`）：
+      计时页「N 条待确认 → 待批准」小链接（2026-09-30，`code/frontend/ring-suggest-link.js`、`#suggest-link`）：
       GET /api/core/activity/suggestions?status=pending&limit=1，只用 `total`。0 条、404（后端早于 v2.2）、出错，
-      或网关注入的 `window.HONEYCOMB_NAV` 里没有 `<前缀>assistant/` 页签（没装「AI助理」）→ 链接不出现。
-      打开页面与标签页重新可见时各拉一次，不轮询。**只读**：确认 / 忽略都在「AI助理」页
+      或网关注入的 `window.HONEYCOMB_NAV` 里没有 `<前缀>assistant/` 页签（没装「待批准」）→ 链接不出现。
+      打开页面与标签页重新可见时各拉一次，不轮询。**只读**：确认 / 忽略都在「待批准」页
       （`modules/assistant`，那里的契约写全了字段）。2026-09-28 至 09-30 这里是完整的「待确认」面板，已整体搬走。
   - id: nexus-core.views.lanes.v1
     contract: ../nexus-core/module_docs/contract.md
@@ -115,8 +115,31 @@ consumes:
       颜色取 `tokens.css` 的语义色（缺的在实现 PR 里按 `contracts/design-tokens-v1.md` 先加 token，不在 JS 里现算），
       与顶栏芯片悬停的精简预览（`modules/nginx-docker` 契约「泳道预览」节）同一套配色。
       页面分工（设计意图，仓主 2026-09-30 定）：**计时页（ring）= 现在**——在跑的计时、全部泳道；
-      **任务 / 项目页（hive）= 未来**——计划；**新页「AI助理」= 回顾与分析**——聊天、待确认的活动建议、检测程序设置、
-      回顾与分析（2026-09-30 已建，`modules/assistant`；聊天与待确认面板已搬过去）。泳道的历史某天视图将来可从「AI助理」链过来，本版不要求。
+      **任务 / 项目页（hive）= 未来**——计划；**新页「待批准」= 回顾与分析**——聊天、待确认的活动建议、检测程序设置、
+      回顾与分析（2026-09-30 已建，`modules/assistant`；聊天与待确认面板已搬过去）。泳道的历史某天视图将来可从「待批准」链过来，本版不要求。
+  - id: nexus-core.focus.v1
+    contract: ../nexus-core/module_docs/contract.md
+    purpose: >
+      没在计时时圆环中心的「此刻的焦点」（2026-10-09，nexus-core v2.16；数据在已经在拉的 `views.current.v1` 响应里）。
+      字与走秒出自共享件 `HoneycombFocus`（`modules/nginx-docker` 契约「此刻的焦点」节）；画法见变更记录 2026-10-09 条。
+      一键开始计时走已有的 `timer.v1` start 与 `POST /api/core/planner/projects/{id}/unclassified`（v2.9）。
+  - id: nexus-core.activity.auto.v1
+    contract: ../nexus-core/module_docs/contract.md
+    purpose: >
+      自动跟踪在计时页上的两样东西（2026-10-08，nexus-core v2.14；数据都在已经在拉的 `views.lanes.v1` 响应里，不多一个轮询）。
+      ① `human.auto` 非 null 且 `human.running` 为 null：人那张卡的卡头多一粒胶囊「自动 · 项目 / 任务」（只到项目时
+      「自动 · 项目」）+ 从 `since` 起走秒的钟（`MM:SS` / `H:MM:SS`，一秒一跳）；`--plan` 色虚线边，与「计时中」（实线）
+      和「在电脑前」分得开；轨道上**不画**计时段（它不是手动计时）。② `human.needsChoice` 非 null 且没在计时：泳道
+      最上面（人那张卡之前）一张卡「你在 <程序 · 标题>，记到哪？」（`code/frontend/ring-choice.js`）：项目下拉
+      （`views.tree.v1`，不列 `status: "done"` 的项目）→ 任务下拉（缺省「未分类」，不列已完成的任务）、勾选项
+      「以后这个窗口都这样记」（缺省勾）、按钮「确定」（没选项目时禁用）与「这次不选」。
+      「确定」= `POST /api/core/activity/choice {key, taskId | projectId, remember}`；「这次不选」=
+      `POST /api/core/activity/choice/dismiss {key}`。成功即收卡，并发 `honeycomb:timer-changed`（顶栏芯片上的小点跟着收）；
+      例外先留一句说明、人点「知道了」才收：响应 `pseudonymized: true`（标题是代号，没法记住）、勾了记住但
+      `remembered: false`（规则没写成）、404 且是窗口已不在在场记录里。其他失败（含选的任务 / 项目刚被删的 404）
+      卡留着、显示「没记上：detail」。**卡是粘的**：出现后留到人答 / 说这次不选——之后的轮询换了别的窗口或不再报，
+      卡不换、表单与焦点不丢；手动开始计时（`running` 非 null）就收。人一直不答 = 什么都不发生（那段活动照常进
+      「待确认」）。程序名、标题、项目名、任务名只当文本渲染。
 ```
 
 ## 对外 API
@@ -149,6 +172,11 @@ consumes:
 
 | 日期 | CR | 变更 |
 |---|---|---|
+| 2026-10-09 | 仓主：CLI 崩了泳道还挂着——加心跳，30 分钟没信号算失联 | 认 nexus-core v2.18 在 `views.lanes.v1` 的 `agents[]` 上追加的 `lost` / `lastSeenAt` 与 `outcome: "lost"`：失联的在跑运行卡片上是灰色「失联」胶囊、段止于最后一次信号、不闪，排在在跑空闲之后、已结束之前，**不计入**标题的「N 个在干活 / 在等你」；失联结束的运行胶囊写「失联结束」。画法在共享件 `lanes.js`（`modules/nginx-docker` 契约同日条），本页只在数标题时跳过 `lost`。不多发请求、不加样式 |
+| 2026-10-09 | 仓主：不按组算；检测程序 5 秒一拍、每拍带各窗口的停留；计时环保持「人的注意力只能串行」；泳道里 AI 要有蓝条表示人把注意力放在它身上的时间 | 认 nexus-core v2.17（「串行的注意力时间线」）。① **圆环 / 表芯：串行不变**——没在计时时中心仍然**只写当前这一个**窗口 / 目标（一行「在哪」、一行窗口、一个钟），上一个窗口的字一个不留；钟数的是**这一次**切过来之后待了多久，切走再回来从头数。走秒下面追加一行小字 `#focus-dwell`「近 2 小时在这上面 N 分」（共享件 `HoneycombFocus.describe()` 的 `dwell`，同一个窗口累计；老后端 / 离开时这一行不出现；只换这一行字、不重建表芯）。不把几个窗口的时间加在一起，也不改手动计时的任何画法。② `views.current.v1` 的轮询从 7 秒改为 **5 秒**；页面不可见时不拉，回到前台立刻补一次。③ 泳道（共享件 `lanes.js`，`modules/nginx-docker` 契约「串行的注意力」节）：每条代理线在相位条正下方多一小行蓝条**你在看**（`agents[].attention`，token `--attn`），卡片头多「看了 N 分」；**取代** `nexus-core.views.lanes.v1` 条里「`attend` 画同色半透明的竖向带子」与图例「在看」——`attend` 不再画，`reply` 竖线不变；人那条线的在场细带照实画到几秒一段，在看某条代理的段染蓝。「面板里不出现任何秒数合计」那句对注意力让一步：卡片头的「看了 N 分」是该运行自己的注意力秒数（服务端给的段裁到视窗后相加），仍然不是人记下的时间，人的数字仍只在圆环上。`ring.css` 的兜底块加 `--attn`。测试：`tests/test_ring_focus.py`（3 秒切窗时表芯只有一个窗口、小字、5 秒轮询 / 不可见不拉）、`tests/test_ring_lanes.py`（蓝条的位置 / 颜色 / 活边 / 3 秒切窗的串行时间线，320 / 390 / 1100 三个宽度） |
+| 2026-10-09 | 仓主：蜂巢页和计时页还是没有实时显示人此刻的焦点窗口 / 任务 | 认 nexus-core v2.16 在 `views.current.v1` 上追加的 `focus`（本页已经在 7 秒轮询这条读端，不多一个请求；新增 consumes `nexus-core.focus.v1`）。**取代**「没在计时时圆环中心只写『当前没有进行中的计时』」：没有手动计时、共享件 `HoneycombFocus.describe()`（`modules/nginx-docker` 契约「此刻的焦点」节，页面直接引 `../__cockpit/focus.js`）非 null 时，中心换成**此刻的焦点**（`#chrono-center[data-focus]`）：第一行 `#focus-lead`「正在：项目 / 任务」（认不出时「正在用」，自动跟踪时「自动 · 项目 / 任务」），第二行 `#focus-window`「程序 · 标题」（一行截断，`title` 给全文），`#focus-elapsed` 从 `since` 起每秒走的钟，`#focus-hint` 小字写出处（规则 / 你选的 / AI 认的 / 来自会话 / 按以往）+「未计时」（自动跟踪时「自动跟踪中」）。圆环轨道（`.chrono.is-focus .track`）换成 `--fact` 色**虚线**并缓慢呼吸——比手动计时的实心贡献弧轻，一眼分得开；`prefers-reduced-motion` 下不动。认得出项目时按钮是 `#focus-start-btn`「开始计时」：一下就对那个任务起**真的手动计时**（只到项目时先 `POST /api/core/planner/projects/{id}/unclassified` 取「未分类」桶），并把项目 / 任务下拉预选好；认不出时仍是原来的 `#start-big-btn`（计选中的任务）。倒计时页签下两个按钮都藏。`focus.state` 为 `afk` → 第一行「离开」、整块压暗、不给焦点按钮。没有新鲜心跳 / 老后端 / 共享件没加载到 → 与本条之前完全一样（「今天 · N 分」+「当前没有进行中的计时」）。手动计时在跑时中心不变。项目 / 任务由服务端认，本页不自己认；全部 textContent。泳道里人那张卡那行字同版改由同一个共享件出（见 `modules/nginx-docker` 契约）。 |
+| 2026-10-08 | 仓主：规则认不出就让 AI 出来写规则；认错了人要一键撤 | nexus-core v2.15「让 AI 认窗口」在计时页上的三样（都画在人那张卡上，不另起卡）：① `human.aiThinking` → 一行小字「AI 正在认这个窗口…」+ 轻微的呼吸（`prefers-reduced-motion` 下不动），这期间不出「你在 X，记到哪？」；② `human.auto.source` 为 `"ai"` → 胶囊写「自动 · 项目 / 任务（AI 认的）」，后面一个「不对」；③ 点「不对」= `POST api/core/activity/choice/reject {key}`（`ring-choice.js` 的 `reject`），成功后 `ring-lanes.js` 立刻把那张「你在 X，记到哪？」摆到最上面让人自己选，失败就重拉、按服务端此刻的说法画。画法在共享的 `lanes.js`（`opts.onAutoWrong`），本模块只接动作。测试：`tests/test_ring_choice.py` 追加四条 |
+| 2026-10-08 | 仓主：留一个开关——允许 / 不允许 AI 管理进行中的任务；规则认不出时提醒人选项目 / 任务（自动跟踪第一步） | 认 nexus-core v2.14 在 `views.lanes.v1` 的 `human` 上追加的 `auto` / `needsChoice`（新增 consumes `nexus-core.activity.auto.v1`，写全了行为）：没在计时时人那张卡上出「自动 · 项目 / 任务」胶囊 + 走秒的钟（共享件 `lanes.js` 画）；规则认不出的窗口停留够久时泳道最上面出一张「你在 X，记到哪？」（新文件 `ring-choice.js`，经 `lanes.js` 的 `opts.lead` 摆在人那张卡之前，随换位动效浮上来），选项目 →（可选）任务，缺省勾「以后这个窗口都这样记」，「确定」/「这次不选」。**手动计时永远优先**：在计时时两样都不出现，圆环、开始 / 暂停 / 停止的行为一概不变。开关关着（缺省）时服务端不给这两个键，页面与此前相同。只增 |
 | 2026-07-31 | 无（首次填实，非破坏性变更） | 契约从模板占位填实：provides（渲染入口 + 静态路由）、consumes（nexus-core views/current，字段级列明）；对应代码见 `code/frontend/` 提交 `7b34679` |
 | 2026-08-01 | 产品决定：四前端做成完整页面，可写但走统一入口 | v0.2：ring 由纯只读改为**可控制计时**。新增 consumes `timer.v1`（start/stop）与 `views.tree.v1`（任务选择器数据源）。**仍不直接写事实**——events 不向前端开放，计时由 timer 代劳 |
 | 2026-08-08 | 无（**代码先行的追平**，非新变更——两项能力已在 `code/frontend/` 落地并有测试覆盖，本文件此前没跟上，不是先批后做） | v0.3：`timer.v1` 的 purpose 补上 `POST /api/core/timer/cancel`（F-RING-2 取消按钮，对应代码 commit `27c506d` 之前的 `696112d`）；新增 consumes `nexus-core.views.gantt.v1`（F-RING-1"今天"数据源，产品决定不新开端点、复用甘特既有读端，字段级列明 `today`/`projects[].tasks[].id`/`actual[].{date,seconds}`，对应代码 commit `27c506d`）；`views.current.v1` 的 purpose 同步注明 `totalSeconds`/`shareOfPlan` 已让位给 `views.gantt.v1`、仅作不可达兜底；「依赖的外部契约」表拆成 views/timer 两行、覆盖 `GanttOut`/`TimerCancelOut`。本轮同时要求：module_docs/contract.md 的 `consumes` 缺口是本次唯一改动面，**不动代码**（本轮无对应代码 commit） |
@@ -163,3 +191,11 @@ consumes:
 | 2026-09-30 | v0.3 泳道前端实现 | `views.lanes.v1` 落地：`ring-lanes.js`（新文件）、HTML `#lanes-panel`（圆环卡下方）、`ring.css` 末段；画图用 nginx-docker 的共享件 `<前缀>__cockpit/lanes.js`（顶栏预览同一份）。缺省最近 3 小时、可切「今天」；标题红绿灯取同一份响应里在跑运行的当前相位（与 `views.current` 的 `agents[].phase` 同源，不另拉）。配色 token `--agent-work`/`--agent-wait` 按 design-tokens v1.2 追加，兜底块同步 |
 | 2026-09-30 | 仓主定新页「AI助理」 | 「问问助手」聊天（`ring-chat.js`、`#chat-panel`）与「待确认」面板（`ring-suggestions.js`、`#suggest-panel`）连同样式、测试原样搬到 `modules/assistant`（行为与承诺由那边的契约接着兑现）；本页**不再 consume `agent.chat.v1`**（装 ring 不再带上聊天后端，装 assistant 才带）；`activity.suggestions.v1` 改为只读个数的小链接「N 条待确认 → AI助理」（0 条、404、没装 AI助理页时不出现） |
 | 2026-10-03 | 仓主：泳道改卡片式、按活跃排、只展开前 5；人那条线要看得出「我在」 | `views.lanes.v1` 的画法追加如下，**取代** `nexus-core.views.lanes.v1` 条里与之冲突的三处说法（其余承诺不变：配色、闪烁、轮询、404 隐藏、textContent、读端上限与「还有更多」）。① **卡片**：每条泳道一张卡（卡头：名字、当前相位胶囊、摘要；卡身：该线的时间条），所有卡共用最上面一条时间轴、左右对齐。人那张卡**钉在最前**、不算进 5 张。② **排序与折叠**（取代「按响应顺序」）：代理按共享件 `lanes.js` 的纯函数 `sortByActivity` 排——在跑且当前相位是 `waiting_input`/`waiting_permission` 的浮到最前（它们在等人），其余按**视窗内不空闲（working / waiting_* / error）的秒数**倒序，同分按最近一次相位转入倒序；前 **5** 张展开，其余收进原生 `<details>`「还有 N 个」（仍是窗口里的**全部**泳道，只是收着；轮询重画保持开合与焦点；折叠区因只剩 ≤ 5 张而消失时，焦点交给面板标题，开合记着、再出现时照旧）。在等你的卡另加黄色左边与底色。③ **代理卡头写活跃分钟**（「活跃 N 分 · 最近 HH:MM」/「HH:MM 结束」，不是今天的时刻带日期）：这是**代理**运行的、排序依据的数字，取代「面板里不出现任何秒数合计」对代理的那一半；**人**的时间仍不出现任何合计，人的数字仍只在圆环上。④ **连线**（取代「从人那条线落到该代理线的竖线」）：卡片之间分开放，`reply` 画成该代理自己时间条上的一根竖线、`attend` 画成该条上的半透明带子，悬停写「我回了话 · HH:MM」/「我在看 · HH:MM–HH:MM」；「现在」在每张卡的条上各一根。⑤ **人此刻的状态**（取代「在场细带」）：人那张卡的卡头放状态胶囊——各设备里 `to` 落在 `[now − 90 秒, now + 60 秒]`（容设备时钟快一点，再往后的不算）的 `human.presence` 段中有一段 `afk:false` → 「在电脑前」，只有 `afk:true` → 「离开」，都没有 → 「不在线」（灰）；摘要写前台「程序 · 标题」（服务端已脱敏，原样当文本、CSS 截断），在计时（`human.running`）时改写「计时中 · HH:MM 起」并另加「计时中」胶囊，优先于前台程序（共享件纯函数 `humanStatus`）。在场不再是细带：人那条时间条分上下两半，上半是计时记下的段（实心），下半是在场（同色系浅填 = 在电脑前，与上半各占一行、不扣掉计时的时段；离开画斜线），图例加「在电脑前」「离开」。窄屏卡片纵排、条随宽度缩放、不出横向滚动。代码：共享件 `lanes.js`（`render` 加 `opts.cards`/`opts.top`，新增导出 `sortByActivity`/`activeSeconds`/`humanStatus`）、`lanes.css` 末段；`ring-lanes.js` 传 `cards: true, top: 5` |
+| 2026-10-08 | 仓主：正在干活的代理没排在最前，被折进「还有 N 个」 | **取代** 2026-10-03 条②里的排序与折叠说法（其余不变）。`sortByActivity` 改按**档位**排：① 在跑且当前相位 `waiting_input`/`waiting_permission` → ② 在跑且 `working` → ③ 在跑且 `error` → ④ 在跑且 `idle` → ⑤ 已结束；同档按视窗内不空闲秒数倒序，同分按最近一次相位转入倒序（已结束的高活跃运行不再压过正在干活的）。仍展开前 **5** 张、其余收进「还有 N 个」，但档 ①② 的卡**永不折叠**：多于 5 张时全部展开，折叠从它们之后才开始。纯前端排法，无接口变化；导出不变 |
+| 2026-10-08 | 仓主：长按项目不再建「日期 时间」任务，时间记进项目的「未分类」 | 认 nexus-core v2.9 的 `views.current.v1` `task.kind`：计的是项目的「未分类」时间桶（`kind: "unclassified"`）时，圆环中心、倒计时层、桌面通知、暂停记忆的 `taskName` **只写项目名**（不写「未分类」）；「改任务名」按钮藏掉、点圆环里的名字也不开编辑层（桶是系统任务，后端 409）。图例里它作为项目内的一档仍叫「未分类」（来自 `views.gantt.v1` 任务层）。**取代** 2026-09-08 那条里「蜂巢长按会建一条名字是『日期 时间』占位串的任务，要能在这里改成人话」的前提——新的长按不再建这种任务；旧的占位任务还在，照旧能改名。本页不提供「把未分类的时间归到某个任务」（后续 PR） |
+| 2026-10-08 | 仓主：泳道卡片换位要有动效——往上走的略放大、排队上去，其余飘下来 | `views.lanes.v1` 的画法**追加**（排序、折叠、配色、轮询等既有承诺不变）：卡片按 `runId` 认。同一块泳道**第二次起**的重画里位置变了的卡从旧位置滑到新位置——**往上走的**略放大（约 1.025）、带抬起的阴影、压在别的卡上面，ease-out 360 毫秒，几张一起上时自上而下各晚 50 毫秒（排队）；**往下让的**只平移，440 毫秒、稍软；**新出现的**淡入 + 上浮；进出收着的折叠区（旧位置或新位置看不见）只淡入、不飞；消失的直接没有。**相位变了**的卡（如 在干活 → 等你回话）相位胶囊弹一下、卡边亮一圈，各一次。只动 `transform` / `opacity`，先读完位置再一次写完；不抢焦点、不改折叠区开合；**第一次画不动**、页面不可见时不动；`prefers-reduced-motion: reduce` 时不平移不放大（直接到位），只留淡入与卡边那一圈的透明度。实现：共享件 `lanes.js` 的 `motion()`（Web Animations，动画 id `hcl-move`；重画仍整棵换掉，只按 `runId` 记旧位置）、`lanes.css` 末段；卡上新增 `data-phase`（当前相位 / `ended`）。本版不做：消失的卡淡出、「现在」那一端另加呼吸（在跑末段原有的闪烁不变） |
+| 2026-10-08 | 仓主：结束超过 3 小时的运行不要再显示，只看还开着的和刚结束的 | **取代** `nexus-core.views.lanes.v1` 条与 2026-09-30 / 10-03 条里「画窗口里的**全部**泳道」对已结束运行的那一半（其余不变）：计时页的泳道卡片只画**在跑的**运行（一律画，超时挂着的也画）和 `endAt` 距响应的 `now` **不到 3 小时**的已结束运行；更早结束的不画，**与选的窗口无关**（「最近 3 小时」「今天」都一样）。面板标题的红绿灯、「还有 N 个」、读屏摘要只数画出来的；筛完一个不剩时照旧写「这段时间没有代理在跑。」。实现：共享件 `lanes.js` 新增导出的纯函数 `recentRuns(agents, now)`（常量 `ENDED_KEEP_MS` = 3 小时），`render` 在 `opts.cards` 时排序前先筛；顶栏预览（列表式，本来就只看最近 1 小时）不受影响 |
+| 2026-10-09 | 仓主：不再显示 / 置顶这个智能体；长按手动排位，保持到它停止、再掉到最下面 | 认 nexus-core v2.22「泳道偏好」（`nexus-core.lanes.prefs.v1` + `views.lanes.v1` 的追加键）。`ring-lanes.js` 在响应带 `hiddenAgents`（= 后端支持）时给共享 `lanes.js` 传 `opts.prefs`：代理卡多一个 ⋯ 菜单（置顶 / 取消置顶、不再显示、上移 / 下移——键盘能用的手动排位，方向键 / Esc）、置顶卡的小「置顶」标记、在跑且没置顶的卡**长按 400 毫秒**（鼠标与触摸，普通点击不变）后拖动换位（Esc / 指针取消放弃；松手按落点发 `PUT lanes/prefs/order {runId, index}`），区尾一行可折叠的「已隐藏 (N)」逐个「恢复显示」（`hiddenWaiting` > 0 时摘要多半句「N 个在等你」，仓主还没定要不要，`lanes.js` 的 `SHOW_HIDDEN_WAITING` 一个常量就能去掉）。**先后以服务端的 `rank` 为准**（取代本地「档位 → 活跃秒数」的排法；响应没有 `rank` 的老后端才退回本地排法）：计时页的「最近 3 小时 / 今天」只改画的范围。写偏好先乐观地画（`HoneycombLanes.optimistic`）再发请求，失败退回原来那份并在标题旁说一声「没有成功，已恢复」；菜单开着 / 正在拖时轮询只攒着，收尾（`hcl-idle`）再画。落下后的换位走既有的换位动效（往上走略放大 + 排队，其余飘下来；`prefers-reduced-motion` 不平移）。标题的红绿灯只数画出来的代理 |
+| 2026-10-09 | 实测栈上「今天的泳道进度归零」（同标签短运行刷满全局 200 条上限，上午的运行被挤掉） | 认 nexus-core v2.23：`views/lanes` 的封顶改为按代理身份，响应追加 `dropped[]`（折叠掉的较早运行按身份的条数与秒数）。`ring-lanes.js` 的区尾提示：`truncated` 且 `dropped` 有数时写「较早的 N 段已折叠」，否则（老后端 / 仅会话超限）仍是「还有更多（只列出了最新的一部分）」。泳道不对一个身份求和，所以没有别的改动 |
+| 2026-10-09 | 仓主：泳道里出错或长期空闲的不用显示，只显示在干活的；短暂空闲（1 小时内）的留着 | 认 nexus-core v2.24：服务端把不活跃的泳道（当前出错 / 空闲满 1 小时）从 `agents[]` 挪到 `inactiveAgents[]`；泳道下方加可展开的「未显示 n 个」（有出错的在展开条里带「n 个出错」；面板标题的「n 个出错」也数 `inactiveAgents` 里今天出的错，红灯不因折叠而灭），逐行 标签 / 原因 / 本窗口的时长，置顶即重新显示；老后端没有该字段则不画。 |
+| 2026-10-10 | 仓主：泳道「灵活留存」，底部下拉改折叠菜单，低权重的折叠到时就永久消失 | 认 nexus-core v2.25：泳道下方的几个展开条（未显示 n 个 / 手动隐藏的 / 较早 N 段已折叠）合并成**一个**折叠菜单「已折叠 n 个」（有出错时头部带「m 个出错」，默认收起，轮询刷新不改展开状态），内按 出错 / 空闲 / 已结束 / 手动隐藏 分组，行内 标签 / 档位 / 原因 + 多久前 / 本窗口时长，置顶即重新显示、手动隐藏的仍可取消隐藏；`expiredAgents` > 0 时脚注「另有 n 个临时会话已过期不再列出」；老后端没有新字段则照常；面板标题的「n 个出错」口径不变。拖拽排位发的窗口改为**已渲染**数据的窗口（`shownQ`，不再是最近一次拉取的）。 |

@@ -5,6 +5,11 @@
  *   · 根元素是 nav.ckpt-nav[data-ckpt-nav]，全部 class 以 ckpt- 起头；
  *   · 对 /__cockpit/current 发 GET（约 10s 一次），先判 degraded 再读 running，
  *     退出发 POST /api/auth/logout 后跳 /login/，不发任何其它非 GET 请求；
+ *   · 自动跟踪（nexus-core v2.14）：没在计时、同一份响应带 auto 时芯片显示「自动 · 项目 / 任务」+ 走秒
+ *     （data-ckpt-auto）；带 needsChoice 时芯片上多一个小点（data-ckpt-choice，点芯片去计时页选）。不多发请求；
+ *   · 此刻的焦点（nexus-core v2.16）：没在计时、没有 auto、同一份响应带 focus 时芯片显示「正在：项目或窗口」+ 走秒
+ *     （data-ckpt-focus="present"），离开时「离开」（"afk"）。字出自共享件 focus.js（网关先于本文件注入），
+ *     与 auto 是同一段代码；不多发请求；
  *   · 泳道预览（v0.3，契约「泳道预览」节）：只在预览打开、页面可见时约 15s GET 一次
  *     api/core/views/lanes，并在第一次打开时加载同目录的 lanes.js（计时页上整段不启用）；
  *   · 顶栏自己的网络失败不写 console.error——这条由网关侧 /__cockpit/current
@@ -27,7 +32,10 @@
   var NAV = window.HONEYCOMB_NAV || { home: BASE, timer: null, tabs: [] };
   var STOPS = NAV.tabs || [];
 
-  var POLL_MS = 10000;             // 拉计时状态：views 本身聚合周期就有这么长
+  // 拉计时状态与此刻的焦点。2026-10-09（nexus-core v2.17）：检测程序 5 秒一拍，这里跟到 5 秒——每 3 秒切一次窗口的人，
+  // 10 秒一拉总是晚一两个窗口。页面不可见时退到 60 秒（没人看），回到前台立刻拉一次。
+  var POLL_MS = 5000;
+  var POLL_HIDDEN_MS = 60000;
   var TICK_MS = 1000;              // 本地走秒：用时每秒更新，不依赖网络往返
   var CURRENT_URL = BASE + '__cockpit/current';   // 恒 200 的网关端点，见契约 v0.5/v0.6
   var LOGOUT_URL = BASE + 'api/auth/logout';
@@ -198,6 +206,9 @@
   var elapsedNode = el('span', 'ckpt-elapsed', '00:00');
   elapsedNode.setAttribute('aria-live', 'off');  // 每秒变化，告诉读屏软件安静更新
   chip.appendChild(elapsedNode);
+  var needDot = el('span', 'ckpt-need');         // 有个窗口等人选记到哪（data-ckpt-choice 时才显示）
+  needDot.setAttribute('aria-hidden', 'true');
+  chip.appendChild(needDot);
   right.appendChild(chip);
 
   // 主题按钮 + 面板
@@ -311,6 +322,12 @@
   var startMs = null;
   var taskId = null;     // 在计的任务：每秒对一次累计记忆（见 paint）
   var state = DEGRADED;
+  // 自动跟踪（nexus-core v2.14 的 auto / needsChoice）与此刻的焦点（v2.16 的 focus）：只在没在计时时用。
+  // focus = 共享件 HoneycombFocus.describe() 的结果（自动跟踪 / 在某个窗口 / 离开），没有为 null
+  var focus = null;
+  var needsChoice = false;
+  var CHIP_LABEL = chip.getAttribute('aria-label');
+  var HINT_CHOICE = '有个窗口不知道记到哪 —— 去计时页选';
 
   var two = function (n) { return (n < 10 ? '0' : '') + n; };
   var fmt = function (totalSec) {
@@ -324,17 +341,33 @@
   var paint = function () {
     nav.setAttribute('data-ckpt-timer', state);
     nav.removeAttribute('data-ckpt-paused');
+    nav.removeAttribute('data-ckpt-auto');
+    nav.removeAttribute('data-ckpt-focus');
+    var asking = state === IDLE && needsChoice;
+    if (asking) { nav.setAttribute('data-ckpt-choice', ''); } else { nav.removeAttribute('data-ckpt-choice'); }
+    chip.setAttribute('aria-label', CHIP_LABEL + (asking ? '；' + HINT_CHOICE : ''));
     if (state === DEGRADED) {
       liveWord.textContent = WORD_DEGRADED;
       chip.title = HINT_DEGRADED;
       return;
     }
-    chip.title = '';
+    chip.title = asking ? HINT_CHOICE : '';
     if (state === IDLE) {
       // 以前空闲时读数停在上一段的最后一秒（「未在计时 · 03:47」，Windows 验收）。
       // 已知天花板：暂停记忆按契约只在本机。在别的浏览器继续并结束了，这里仍显示
       // 「已暂停」—— 与 hive 中心格 / 计时台同一语义，要根治得把暂停搬到后端。
       var paused = readKey(PAUSED_KEY);
+      if (focus && !paused) {
+        // 没在计时、也没暂停着：「我」此刻在做的事顶上来——自动跟踪（虚线边 + 空心点）、在某个窗口（「正在：…」）、
+        // 离开（压暗）。三种都和手动计时的实线边分得开。
+        if (focus.auto) { nav.setAttribute('data-ckpt-auto', ''); } else { nav.setAttribute('data-ckpt-focus', focus.state); }
+        liveWord.textContent = focus.chip;
+        elapsedNode.textContent = window.HoneycombFocus.clock((Date.now() - focus.since) / 1000);
+        // 字截断了，全文放这里；v2.17 再带一句「近 2 小时在这上面 N 分」（芯片上放不下，只进悬停）
+        var full = focus.lead + (focus.window ? ' · ' + focus.window : '') + (focus.dwell ? '（' + focus.dwell + '）' : '');
+        chip.title = asking ? full + ' —— ' + HINT_CHOICE : full;
+        return;
+      }
       liveWord.textContent = paused ? WORD_PAUSED : WORD_IDLE;
       // 窄屏把字藏了，只剩圆点 + 读数：暂停和空闲得靠点本身分开（Windows 验收）
       if (paused) nav.setAttribute('data-ckpt-paused', '');
@@ -351,7 +384,7 @@
     elapsedNode.textContent = fmt(Math.floor((Date.now() - startMs) / 1000) + carrySec);
   };
 
-  var degrade = function () { startMs = null; state = DEGRADED; paint(); };
+  var degrade = function () { startMs = null; focus = null; needsChoice = false; state = DEGRADED; paint(); };
 
   var apply = function (data) {
     // 网关的降级体：恒 200 但明说了自己不可信，必须先判。降级体里 running 恒为
@@ -359,17 +392,26 @@
     if (!data || data.degraded) { degrade(); return; }
 
     var running = !!data.running && data.sessionStartAt;
+    // 手动计时永远优先：在计时就不看 auto / focus / needsChoice
+    focus = (!running && window.HoneycombFocus) ? window.HoneycombFocus.describe(data) : null;
+    needsChoice = !running && !!data.needsChoice;
     if (!running) { startMs = null; state = IDLE; paint(); return; }
     var t = Date.parse(data.sessionStartAt);
     if (isNaN(t)) { degrade(); return; }   // 有 sessionStartAt 但解析不出来 = 数据坏了，同样是「不知道」
     startMs = t;
     state = RUNNING;
-    taskNode = (data.task && data.task.name) ? data.task.name : '';
+    // 计的是项目的「未分类」时间桶（nexus-core v2.9）：只显示项目名
+    var bucket = data.task && data.task.kind === 'unclassified';
+    taskNode = (bucket ? (data.project && data.project.name) : (data.task && data.task.name)) || '';
     taskId = (data.task && data.task.id) || null;
     paint();
   };
 
+  var pollTimer = null;
   var poll = function () {
+    // 自己排下一次：可见 5 秒、不可见 60 秒（setInterval 改不了间隔）
+    clearTimeout(pollTimer);
+    pollTimer = setTimeout(poll, document.visibilityState === 'hidden' ? POLL_HIDDEN_MS : POLL_MS);
     // 同源 + HttpOnly cookie：必须带 credentials，否则网关 auth_request 判未登录。
     // CURRENT_URL 是恒 200 的网关端点，正常情况下 .catch() 不会触发；下面这条兜底
     // 是为「有人把 nginx 改回旧端点」准备的，行为是降级，不是替后端撒谎地回到静止点。
@@ -383,8 +425,14 @@
   };
 
   poll();
-  setInterval(poll, POLL_MS);
-  // 页面里开始 / 停止 / 取消计时后立刻重拉，不等下一个 10 秒（v0.2.1 实测：
+  // 切到后台：下一次改按 60 秒排（不发请求）；回到前台：立刻拉一次
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') {
+      clearTimeout(pollTimer);
+      pollTimer = setTimeout(poll, POLL_HIDDEN_MS);
+    } else { poll(); }
+  });
+  // 页面里开始 / 停止 / 取消计时后立刻重拉，不等下一个 5 秒（v0.2.1 实测：
   // 蜂巢里刚开始计时，顶栏还显示「未在计时」好几秒）。页面发这个事件即可，
   // 顶栏不关心是谁发的（契约 modules/nginx-docker/module_docs/contract.md）。
   window.addEventListener('honeycomb:timer-changed', poll);

@@ -14,17 +14,21 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+import secrets
+import unicodedata
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
     StrictInt,
     StrictStr,
     ValidationError,
     field_validator,
+    model_validator,
 )
 
 from ...tenant import current as current_tenant
@@ -32,6 +36,12 @@ from ..activity import service as activity_service
 from . import repo
 
 MAX_BODY = 64 * 1024
+RESTART_TTL = timedelta(minutes=5)  # v2.27：重启请求过了这么久没人理就作废（离线时点的，几小时后别又把 ActivityWatch 拉起来）
+GAP = timedelta(seconds=90)  # v2.28：health 之间隔了这么久 = 检测程序这段时间没在报告（离线）
+MAX_LOG_BYTES, MAX_LOG_LINES, MAX_LOG_LINE = 4096, 40, 300
+MAX_BODY_WITH_LOG = 32 * 1024  # 带 startLog 的健康报告（JSON 转义后）最多这么大；不带的仍是 1024
+EVENT_TTL = timedelta(days=30)
+_UNSAFE = {"Cc", "Cf", "Co", "Cs", "Zl", "Zp"}
 DEVICE_ID = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 # RE2（Go regexp）不支持、Python re 支持的构造：前后查找、反向引用、条件组、原子组、占有量词。
 # 服务端先拒，免得检测程序那边只能跳过。这是尽力校验：检测程序自己再用 Go 编译一次，
@@ -74,6 +84,10 @@ class InvalidSettingsError(ValueError):
 
 class TooLargeError(ValueError):
     """请求体超过 64 KiB。main.py 映射成 413。"""
+
+
+class NotFoundError(LookupError):
+    """设备不存在（restart）。main.py 映射成 404。"""
 
 
 class _Strict(BaseModel):
@@ -126,6 +140,8 @@ class DetectorSettings(_Strict):
     # v1.2 追加（只增）：终端按标签页分段。名单 null = 用检测程序本机配置的名单（缺省内置终端名单）。
     segmentByTitle: bool = True
     segmentByTitleApps: Annotated[list[_Name], Field(max_length=200)] | None = None
+    # v1.3 追加（只增）：「允许 AI 管理进行中的任务」，行为见 nexus-core 契约 v2.14。只在网页上有。
+    autoTrack: bool = False
 
     @field_validator("schemaVersion")
     @classmethod
@@ -133,6 +149,54 @@ class DetectorSettings(_Strict):
         if v != 1:
             raise ValueError("本端点只收 schemaVersion 1")
         return v
+
+
+# v2.27：检测程序报的健康状态。没有任何自由文本字段——本机的标题、路径、错误串到不了服务端。
+_Reason = Literal["not_found", "spawn_error", "exited_early", "not_up", "no_display", "state_unwritable"]
+
+
+_AutoReason = Literal["not_found", "spawn_error", "exited_early", "not_up", "no_display", "state_unwritable", "daily_cap"]
+
+
+class _Restart(_Strict):
+    nonce: Annotated[StrictStr, Field(min_length=1, max_length=64)]
+    result: Literal["started", "already_running", "failed", "unsupported"]
+    reason: _Reason | None = None  # 失败原因（枚举）；详细日志只在那台电脑上
+
+
+class Health(_Strict):
+    awState: Literal["ok", "unreachable", "no_window", "paused", "disabled"]
+    restart: _Restart | None = None
+    autoStart: Literal["off", "idle", "started", "gave_up", "unsupported"] | None = None  # 最近一次自动拉起的结果
+    autoReason: _AutoReason | None = None  # 比 restart.reason 多一个 daily_cap：24 小时自动拉起上限
+    # v2.28：本机开关 awLogUpload 的状态（不报 = 老检测程序 = 按关处理）与脱敏后的启动日志尾巴（不可信文本）
+    logUpload: StrictBool | None = None
+    startLog: StrictStr | None = None
+
+    @field_validator("startLog")
+    @classmethod
+    def _log(cls, v: str | None) -> str | None:
+        # 报错信息里不带日志内容（也不进任何日志）；超限一律拒绝，不替检测程序截断
+        if v is None:
+            return v
+        lines = v.split("\n")
+        if not v.strip():
+            raise ValueError("startLog 不能为空")
+        if len(v.encode("utf-8")) > MAX_LOG_BYTES:
+            raise ValueError(f"startLog 超过 {MAX_LOG_BYTES} 字节")
+        if len(lines) > MAX_LOG_LINES:
+            raise ValueError(f"startLog 超过 {MAX_LOG_LINES} 行")
+        if any(len(ln) > MAX_LOG_LINE for ln in lines):
+            raise ValueError(f"startLog 有行超过 {MAX_LOG_LINE} 字符")
+        if any(ch != "\n" and unicodedata.category(ch) in _UNSAFE for ch in v):
+            raise ValueError("startLog 含控制字符")
+        return v
+
+    @model_validator(mode="after")
+    def _log_needs_switch(self) -> "Health":
+        if self.startLog is not None and self.logUpload is not True:
+            raise ValueError("startLog 只能在 logUpload 为 true 时带")
+        return self
 
 
 def _iso(t: datetime | None) -> str | None:
@@ -172,7 +236,7 @@ def get_settings(device_id: str, authorization: str | None) -> dict:
 
 def put_settings(device_id: str, authorization: str | None, body: bytes) -> dict:
     if _is_device_token(authorization):
-        raise ForbiddenError("设备令牌只能读检测设置；请在 Cockpit「AI助理」页登录后修改")
+        raise ForbiddenError("设备令牌只能读检测设置；请在 Cockpit「自动记录」页登录后修改")
     _check_device(device_id)
     if len(body) > MAX_BODY:
         raise TooLargeError(f"请求体超过 {MAX_BODY} 字节")
@@ -191,20 +255,116 @@ def put_settings(device_id: str, authorization: str | None, body: bytes) -> dict
     return _out(device_id, repo.get(user, device_id))
 
 
+def _fresh(restart: dict, now: datetime) -> bool:
+    t = restart.get("requestedAt")
+    if t is not None and t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return t is not None and now - t < RESTART_TTL
+
+
+def put_health(device_id: str, body: bytes) -> dict:
+    """v2.27：设备令牌与 cookie 都能调（同 GET settings）。"""
+    _check_device(device_id)
+    if len(body) > MAX_BODY_WITH_LOG:
+        raise TooLargeError(f"请求体超过 {MAX_BODY_WITH_LOG // 1024} KiB")
+    try:
+        raw = json.loads(body)
+    except ValueError as exc:
+        if len(body) > 1024:
+            raise TooLargeError("请求体超过 1024 字节") from exc
+        raise InvalidSettingsError(f"请求体不是合法 JSON：{exc}") from exc
+    # 超过 1 KiB 只放行真的带了非 null startLog 的报告（看解析后的内容，不看原始字节里有没有这个词）
+    if len(body) > 1024 and not (isinstance(raw, dict) and raw.get("startLog") is not None):
+        raise TooLargeError("请求体超过 1024 字节")
+    try:
+        h = Health.model_validate(raw)
+    except ValidationError as exc:
+        err = exc.errors()[0]
+        raise InvalidSettingsError(f"{'.'.join(str(p) for p in err['loc']) or '<root>'}: {err['msg']}") from exc
+    user, now = current_tenant(), _now()
+    prev = (repo.get(user, device_id) or {}).get("health")
+    events = _health_events(prev, h, now)
+    if h.restart and repo.set_restart_result(user, device_id, h.restart.nonce, h.restart.result, h.restart.reason,
+                                              now - RESTART_TTL, now):
+        events.append(_ev("restart_result", now, reason=h.restart.reason, result=h.restart.result))
+    # 关了开关（或老检测程序不报）= 删掉存着的日志
+    repo.set_health(user, device_id, {"awState": h.awState, "at": now, "autoStart": h.autoStart,
+                                       "autoReason": h.autoReason, "logUpload": h.logUpload is True},
+                    start_log=h.startLog, clear_log=h.logUpload is not True)
+    r = (repo.get(user, device_id) or {}).get("restart") or {}
+    if r.get("result") is None and r and not _fresh(r, now) and repo.mark_restart_expired(user, device_id, r["nonce"]):
+        events.append(_ev("restart_expired", _aware(r["requestedAt"]) + RESTART_TTL))
+    repo.add_events(user, device_id, events)
+    pending = r.get("result") is None and r and _fresh(r, now)
+    return {"restartNonce": r["nonce"] if pending else None}
+
+
+def _ev(kind: str, at: datetime, end: datetime | None = None, reason: str | None = None,
+        result: str | None = None) -> dict:
+    return {"kind": kind, "at": at, **({"endAt": end} if end else {}), **({"reason": reason} if reason else {}),
+            **({"result": result} if result else {})}
+
+
+_AW_EVENT = {"unreachable": "aw_unreachable", "no_window": "aw_no_window", "paused": "aw_paused", "disabled": "aw_disabled"}
+
+
+def _aware(t: datetime) -> datetime:
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def _health_events(prev: dict | None, h: Health, now: datetime) -> list[dict]:
+    """这份报告相对上一份的**变化**（不是每份都记）：静默过久、ActivityWatch 状态变了、自动拉起的结果变了。
+    第一份报告：状态不是 ok 才记一条（没有「变了」可说）。"""
+    out: list[dict] = []
+    if prev and now - _aware(prev["at"]) > GAP:
+        out.append(_ev("detector_offline", _aware(prev["at"]), now))
+    before = prev["awState"] if prev else "ok"
+    if h.awState != before:
+        out.append(_ev(_AW_EVENT.get(h.awState, "aw_recovered"), now))
+    if (h.autoStart, h.autoReason) != ((prev or {}).get("autoStart"), (prev or {}).get("autoReason")):
+        if h.autoStart == "gave_up":
+            out.append(_ev("auto_gave_up", now, reason=h.autoReason))
+        elif h.autoStart == "started" and (prev or {}).get("autoStart") != "started":
+            out.append(_ev("auto_started", now))
+        elif h.autoReason and h.autoStart != "started":
+            out.append(_ev("auto_failed", now, reason=h.autoReason))
+    return out
+
+
+def request_restart(device_id: str, authorization: str | None) -> dict:
+    if _is_device_token(authorization):
+        raise ForbiddenError("设备令牌不能触发重启；请在 Cockpit「自动记录」页登录后操作")
+    _check_device(device_id)
+    nonce = secrets.token_hex(8)
+    if not repo.set_restart(current_tenant(), device_id, {"nonce": nonce, "requestedAt": _now()}):
+        raise NotFoundError(f"没有这台设备：{device_id}")
+    repo.add_events(current_tenant(), device_id, [_ev("restart_requested", _now())])
+    return {"nonce": nonce}
+
+
+def device_flags(user: str, device_id: str) -> dict:
+    """activity 子边界的指定读路径（v2.14）：这台设备开没开 autoTrack、标题是不是换成代号上传。
+    没在网页上存过设置 = 都是 False。"""
+    s = (repo.get(user, device_id) or {}).get("settings") or {}
+    return {"autoTrack": s.get("autoTrack") is True,
+            "pseudonymize": (s.get("privacy") or {}).get("titles") == "pseudonymize"}
+
+
 def delete_settings(device_id: str, authorization: str | None) -> None:
     if _is_device_token(authorization):
-        raise ForbiddenError("设备令牌只能读检测设置；请在 Cockpit「AI助理」页登录后修改")
+        raise ForbiddenError("设备令牌只能读检测设置；请在 Cockpit「自动记录」页登录后修改")
     _check_device(device_id)
     repo.clear(current_tenant(), device_id)
 
 
 def list_devices() -> dict:
-    user = current_tenant()
+    user, now = current_tenant(), _now()
     rows: dict[str, dict] = {}
 
     def row(dev: str) -> dict:
         return rows.setdefault(dev, {"deviceId": dev, "lastUploadAt": None, "lastFetchAt": None,
-                                     "hasSettings": False, "settingsUpdatedAt": None})
+                                     "hasSettings": False, "settingsUpdatedAt": None,
+                                     "health": None, "restart": None})
 
     for dev, at in activity_service.last_uploads(user).items():
         row(dev)["lastUploadAt"] = _iso(at)
@@ -213,8 +373,44 @@ def list_devices() -> dict:
         r["lastFetchAt"] = _iso(doc.get("lastFetchAt"))
         if doc.get("settings") is not None:
             r["hasSettings"], r["settingsUpdatedAt"] = True, _iso(doc.get("updatedAt"))
+        if h := doc.get("health"):
+            r["health"] = {"awState": h["awState"], "at": _iso(h["at"]), "autoStart": h.get("autoStart"),
+                           "autoReason": h.get("autoReason"), "logUpload": h.get("logUpload") is True}
+        if q := doc.get("restart"):
+            r["restart"] = {"nonce": q["nonce"], "requestedAt": _iso(q["requestedAt"]),
+                            "result": q.get("result"), "reason": q.get("reason"),
+                            "expired": q.get("result") is None and not _fresh(q, now),
+                            "resultAt": _iso(q.get("resultAt"))}
 
     def recent(r: dict) -> str:
         return max(r["lastUploadAt"] or "", r["lastFetchAt"] or "", r["settingsUpdatedAt"] or "")
 
-    return {"devices": sorted(rows.values(), key=recent, reverse=True)}
+    # now：服务端时钟。面板拿它算 health.at 的新旧，不依赖浏览器时钟准不准
+    return {"devices": sorted(rows.values(), key=recent, reverse=True), "now": _iso(now)}
+
+
+def incidents(device_id: str, limit: int) -> dict:
+    """v2.28：这台设备最近的事故（新的在前，≤ 30 天）+ 此刻是否离线（读时算，不存）+ 启动日志开关与（开着时的）文本。
+    没有这台设备 404。事件只有枚举与时间，没有自由文本；startLog 是检测程序脱敏后上传的不可信文本，原样转交。"""
+    _check_device(device_id)
+    user, now = current_tenant(), _now()
+    doc = repo.get(user, device_id)
+    if doc is None:
+        raise NotFoundError(f"没有这台设备：{device_id}")
+    h = doc.get("health")
+    seen = _aware(h["at"]) if h else None
+    # 同一时刻的事件后记的在前（反过来排再稳定排序）
+    evs = sorted((e for e in reversed(repo.get_events(user, device_id)) if now - _aware(e["at"]) < EVENT_TTL),
+                 key=lambda e: _aware(e["at"]), reverse=True)[:limit]
+    log = doc.get("startLog") if h and h.get("logUpload") is True else None
+    return {
+        "deviceId": device_id, "now": _iso(now), "lastReportAt": _iso(seen),
+        "offline": None if seen is None else now - seen > GAP,
+        "health": None if h is None else {"awState": h["awState"], "autoStart": h.get("autoStart"),
+                                          "autoReason": h.get("autoReason")},
+        "logUpload": bool(h and h.get("logUpload") is True),
+        "startLog": None if not log else {"text": log["text"], "at": _iso(log["at"])},
+        "events": [{"kind": e["kind"], "at": _iso(e["at"]), "endAt": _iso(e.get("endAt")),
+                    "durationSeconds": int((_aware(e["endAt"]) - _aware(e["at"])).total_seconds()) if e.get("endAt") else None,
+                    "reason": e.get("reason"), "result": e.get("result")} for e in evs],
+    }

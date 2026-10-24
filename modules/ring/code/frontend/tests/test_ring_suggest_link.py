@@ -1,7 +1,7 @@
-"""计时页「N 条待确认 → AI助理」小链接（ring-suggest-link.js）。
+"""计时页「N 条待确认 → 待批准」小链接（ring-suggest-link.js）。
 
-待确认面板与聊天 2026-09-30 搬去「AI助理」页（modules/assistant，那边的测试跟着搬走了）；
-这里只剩一个报个数的链接：0 条、404、没装 AI助理页时不出现。
+待确认面板与聊天 2026-09-30 搬去「待批准」页（modules/assistant，那边的测试跟着搬走了）；
+这里只剩一个报个数的链接：0 条、404、没装待批准页时不出现。
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from conftest import CURRENT_IDLE, PAGE_NAME, RingHarness, _install_stub_routes
 from playwright.sync_api import Browser
 
 NAV_WITH = {"home": "/hive/", "timer": "/ring/", "tabs": [
-    {"href": "/hive/", "label": "任务"}, {"href": "/ring/", "label": "计时"}, {"href": "/assistant/", "label": "AI助理"}]}
+    {"href": "/hive/", "label": "任务"}, {"href": "/ring/", "label": "计时"}, {"href": "/assistant/", "label": "待批准"}]}
 NAV_WITHOUT = {"home": "/", "timer": "/ring/", "tabs": [{"href": "/ring/", "label": "计时"}]}
 
 
@@ -46,7 +46,7 @@ def open_page(browser: Browser, base: str, status: int, total: int, nav: dict | 
 def test_link_shows_count_and_points_to_assistant(browser, static_base_url):
     with open_page(browser, static_base_url, 200, 3, NAV_WITH) as (page, urls):
         page.wait_for_selector("#suggest-link:not([hidden])")
-        assert page.inner_text("#suggest-link") == "3 条待确认 → AI助理"
+        assert page.inner_text("#suggest-link") == "3 条待确认 → 待批准"
         assert page.get_attribute("#suggest-link", "href") == "../assistant/"
         assert all("status=pending" in u and "limit=1" in u for u in urls) and urls
         # 两块面板已经搬走，计时页上不再有
@@ -66,4 +66,4 @@ def test_link_visible_without_gateway_nav(browser, static_base_url):
     """没注入页签配置（直接打开文件、单测）时不猜，照常显示。"""
     with open_page(browser, static_base_url, 200, 1) as (page, _urls):
         page.wait_for_selector("#suggest-link:not([hidden])")
-        assert page.inner_text("#suggest-link") == "1 条待确认 → AI助理"
+        assert page.inner_text("#suggest-link") == "1 条待确认 → 待批准"

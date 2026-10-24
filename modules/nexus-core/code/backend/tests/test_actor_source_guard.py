@@ -439,4 +439,5 @@ def test_every_write_route_goes_through_guard():
     assert not unguarded, f"这些写路由没经过 guard.run_write（＝没有二次设防）：{unguarded}"
     # 断言"找到了东西"：解析不到路由时上面那条 assert 会空转变绿——
     # 静默跳过后报成功，正是这里要防的反模式。
-    assert len(guarded) == 9, f"期望 3 类对象 × 3 种写方法 = 9 条写路由，实际 {guarded}"
+    # v2.9：+1 = POST /projects/{id}/unclassified（取或建「未分类」时间桶，要建时经 run_write）
+    assert len(guarded) == 10, f"期望 3 类对象 × 3 种写方法 + 未分类桶 = 10 条写路由，实际 {guarded}"

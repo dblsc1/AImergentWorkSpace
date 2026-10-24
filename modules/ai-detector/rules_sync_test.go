@@ -1,11 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -82,5 +85,112 @@ func TestRulesForRoundLocalBrokenOnlyMattersWithoutServer(t *testing.T) {
 	body = `{"version":0,"rules":[]}`
 	if _, err := rulesForRound(cfg, srv.Client(), srv.URL); err == nil {
 		t.Fatal("broken local rules.json must still be an error when the server has none")
+	}
+}
+
+// detector.rules.v1 v1.1：规则的目标可以是项目——taskId 与 projectId 恰好一个；命中时建议带 projectId、不带 taskId。
+func TestProjectTargetRules(t *testing.T) {
+	local := filepath.Join(t.TempDir(), "rules.json")
+	for _, bad := range []string{
+		`{"rules":[{"app":"code"}]}`,
+		`{"rules":[{"app":"code","taskId":"t_1","projectId":"p_1"}]}`,
+	} {
+		os.WriteFile(local, []byte(bad), 0o600)
+		if _, err := loadRules(local); err == nil {
+			t.Fatalf("want error for %s", bad)
+		}
+	}
+	os.WriteFile(local, []byte(`{"rules":[{"title":"blog","projectId":"p_local"}]}`), 0o600)
+	body := `{"version":2,"rules":[
+		{"id":"a","app":null,"title":"both","taskId":"t_x","projectId":"p_x","confidence":0.9,"enabled":true},
+		{"id":"b","app":null,"title":"neither","taskId":null,"confidence":0.9,"enabled":true},
+		{"id":"c","app":null,"title":"blog","taskId":null,"projectId":"p_srv","confidence":0.8,"enabled":true}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, body) }))
+	defer srv.Close()
+	for _, want := range []string{"p_srv", "p_local"} {
+		rules, err := rulesForRound(Config{DeviceToken: "tok", RulesFile: local}, srv.Client(), srv.URL)
+		if err != nil || len(rules) != 1 {
+			t.Fatalf("rules=%v err=%v", rules, err) // 两个目标都有 / 都没有的网页规则跳过
+		}
+		sg, ok := matchRules(rules, segment{App: "firefox", Title: "my blog"})
+		if !ok || sg.TaskID != nil || sg.ProjectID == nil || *sg.ProjectID != want || sg.Classifier != "rules" {
+			t.Fatalf("got %+v ok=%v", sg, ok)
+		}
+		b, _ := json.Marshal(sg)
+		if got := string(b); !strings.Contains(got, `"taskId":null`) || !strings.Contains(got, `"projectId":"`+want+`"`) {
+			t.Fatalf("wire %s", got)
+		}
+		body = `{"version":0,"rules":[]}` // 第二轮：服务端没存过，用本机的
+	}
+	// 到任务的建议不带 projectId 这个键（与 v1.2 的上传逐字节相同）
+	id := "t_1"
+	if b, _ := json.Marshal(suggestion{TaskID: &id, Classifier: "rules"}); strings.Contains(string(b), "projectId") {
+		t.Fatalf("wire %s", b)
+	}
+}
+
+// detector.rules.v1 v1.4：mode "ai" 的规则命中 = 不带目标、把握 0、needsAI；先命中先赢（压过后面更宽的规则）；带目标的 ai 规则跳过。
+func TestAIModeRules(t *testing.T) {
+	body := `{"version":2,"rules":[
+		{"id":"a","app":"kitty","title":null,"taskId":null,"mode":"ai","confidence":0.9,"enabled":true},
+		{"id":"b","app":null,"title":"bad","taskId":"t_x","mode":"ai","confidence":0.9,"enabled":true},
+		{"id":"c","app":null,"title":".","taskId":"t_all","confidence":0.9,"enabled":true}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, body) }))
+	defer srv.Close()
+	rules, err := rulesForRound(Config{DeviceToken: "tok"}, srv.Client(), srv.URL)
+	if err != nil || len(rules) != 2 {
+		t.Fatalf("rules=%v err=%v", rules, err) // 带目标的 ai 规则跳过
+	}
+	sg, ok := matchRules(rules, segment{App: "kitty", Title: "work"})
+	if !ok || !sg.NeedsAI || sg.TaskID != nil || sg.ProjectID != nil || sg.Confidence != 0 {
+		t.Fatalf("got %+v ok=%v", sg, ok)
+	}
+	if b, _ := json.Marshal(sg); !strings.Contains(string(b), `"needsAI":true`) {
+		t.Fatalf("wire %s", b)
+	}
+	if sg, _ := matchRules(rules, segment{App: "code", Title: "x"}); sg.NeedsAI || sg.TaskID == nil {
+		t.Fatalf("普通规则不受影响：%+v", sg)
+	}
+	if b, _ := json.Marshal(suggestion{Classifier: "rules"}); strings.Contains(string(b), "needsAI") {
+		t.Fatalf("wire %s", b)
+	}
+}
+
+// detector.rules.v1 v1.5：kind "block" 只给原始记录的块名，不参与建议匹配，也不当坏规则刷日志。
+func TestBlockRulesDoNotAffectSuggestions(t *testing.T) {
+	body := `{"version":4,"rules":[
+		{"id":"a","kind":"block","block":" 花园 ","app":null,"title":"garden","enabled":true},
+		{"id":"b","kind":"block","block":"代码","app":"code","title":null,"enabled":true},
+		{"id":"c","kind":"block","block":"","app":"code","title":null,"enabled":true},
+		{"id":"d","kind":null,"app":"code","title":null,"taskId":"t_old","confidence":0.8,"enabled":true}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, body) }))
+	defer srv.Close()
+	var logs strings.Builder
+	log.SetOutput(&logs)
+	defer log.SetOutput(io.Discard)
+	rules, err := rulesForRound(Config{DeviceToken: "tok"}, srv.Client(), srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 旧式规则：第一级规则排在它前面也不抢先；理由里的序号仍是服务端数组位置。
+	sg, ok := matchRules(rules, segment{App: "code", Title: "garden"})
+	if !ok || sg.TaskID == nil || *sg.TaskID != "t_old" || sg.Reason != "网页规则 #4 命中" {
+		t.Fatalf("%+v", sg)
+	}
+	if _, ok := matchRules(rules[:2], segment{App: "code", Title: "garden"}); ok {
+		t.Fatal("block rules matched as suggestions")
+	}
+	// 块名：数组顺序第一条命中；去首尾空白；空块名那条是真坏规则，跳过并记日志。
+	if b := blockFor(rules, "code", "my garden"); b == nil || *b != "花园" {
+		t.Fatalf("%v", b)
+	}
+	if b := blockFor(rules, "code", "x"); b == nil || *b != "代码" {
+		t.Fatalf("%v", b)
+	}
+	if b := blockFor(rules, "firefox", "x"); b != nil {
+		t.Fatalf("%v", *b)
+	}
+	if strings.Count(logs.String(), "本程序用不了") != 1 || strings.Contains(logs.String(), "#1") || strings.Contains(logs.String(), "#2") {
+		t.Fatalf("log: %q", logs.String())
 	}
 }

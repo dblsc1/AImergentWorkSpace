@@ -1,0 +1,33 @@
+/* hive · hex-focus.css —— 「此刻的焦点」（2026-10-09，契约同名节；逻辑在 hex-app.js 的 paintCenter）。
+ * 单独一个文件：hex.css 已到 1000 行。只用自己的三个类（.is-focus / .is-afk / .is-live-focus）与 .hex-center-focus，
+ * 加载顺序放在 hex.css 之后。颜色一律 var(--…)。 */
+
+/* ── 此刻的焦点（2026-10-09，契约「此刻的焦点」节）：没在计时，只是显示人此刻在哪个窗口 / 项目。
+ * 中心格：圆环轨道换成 --fact 色虚线并缓慢呼吸（不是计时，所以没有进度弧和秒针）；离开时整格压暗、不呼吸。
+ * 项目格：.is-live-focus = 人此刻在的那个项目。格子自己的底色就是那圈边（::before 往里收 3px 露出来），
+ * 让它在 --fact 与原色之间呼吸；不碰 transform / clip-path，不触发布局。 */
+.hex-center.is-focus .tring-track {
+  stroke: var(--fact); stroke-width: 6; stroke-dasharray: 2.2 2.2; opacity: .55;
+}
+.hex-center.is-focus.is-afk .tring-track { stroke: var(--ink-3); opacity: .4; }
+.hex-center.is-focus.is-afk .tring-num { color: var(--ink-3); }
+/* 圆环下两行：在哪（一行，放不下省略号，全文在 title 里）+ 这是什么。六边形往下是收口的，所以限宽。 */
+.hex-center.is-focus .hex-center-meta {
+  display: flex; flex-direction: column; align-items: center; gap: 3px; max-width: 72%;
+}
+.hex-center-focus {
+  max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  font-size: var(--fs-eyebrow); font-weight: 600; line-height: 1.2; color: var(--ink);
+}
+.hex-center.is-focus:not(.is-hover) .hex-center-focus + .hex-center-idle { display: none; }
+.hex-center.is-focus:not(.is-hover) .hex-ring-slot { width: 64%; }
+.hex-cell.is-live-focus { background: var(--fact); }
+.hex-cell.is-live-focus::before { inset: 3px; }
+@media (prefers-reduced-motion: no-preference) {
+  .hex-center.is-focus:not(.is-afk) .tring-track { animation: hex-focus-breathe 3.2s ease-in-out infinite; }
+  .hex-cell.is-live-focus:not(.is-hover):not(.is-expanded) { animation: hex-live-focus 3.2s ease-in-out infinite; }
+}
+@keyframes hex-focus-breathe { 50% { opacity: .22; } }
+@keyframes hex-live-focus {
+  50% { background: color-mix(in srgb, var(--fact) 35%, var(--zone-color)); }
+}

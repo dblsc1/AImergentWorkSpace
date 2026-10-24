@@ -63,6 +63,10 @@ class Settings:
     agent_run_timeout_hours: int = 12
     #: 活动建议的保留天数（v2.2）。建议不是事实，过期惰性删除。
     suggestion_ttl_days: int = 14
+    #: 原始记录与键盘鼠标活动的保留天数（v2.38 三级分类），惰性清理。
+    record_ttl_days: int = 35
+    #: 对账后台循环（v2.38 三级分类「四」，每 60 秒一轮）。关掉后只剩事件触发的对账（测试用）。
+    reconcile_loop: bool = True
 
     @property
     def bind(self) -> str:
@@ -220,6 +224,14 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         source, "NEXUS_SUGGESTION_TTL_DAYS", "14",
         "活动建议的保留天数，契约 v2.2「活动建议」",
     )
+    record_ttl = _parse_positive_int(
+        source, "NEXUS_RECORD_TTL_DAYS", "35",
+        "原始记录与键盘鼠标活动的保留天数，契约 v2.38「三级分类」",
+    )
+    reconcile_loop = _parse_bool(
+        source, "NEXUS_RECONCILE_LOOP", "1",
+        "对账后台循环开关（每 60 秒一轮），契约 v2.38「三级分类」四",
+    )
     return Settings(
         bind_host=host,
         bind_port=port,
@@ -232,6 +244,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         tenant_strict=tenant_strict,
         agent_run_timeout_hours=agent_timeout,
         suggestion_ttl_days=suggestion_ttl,
+        record_ttl_days=record_ttl,
+        reconcile_loop=reconcile_loop,
     )
 
 

@@ -69,7 +69,7 @@
     var projects = ((st.tree && st.tree.projects) || []).filter(function (p) { return p.zoneId === zoneId; });
     var rows = projects.map(function (p) {
       var done7 = (st.completions || []).filter(function (c) {
-        return c.projectId === p.id && now - Date.parse(c.at) < 7 * DAY;
+        return c.projectId === p.id && !c.session && now - Date.parse(c.at) < 7 * DAY;  // 临时任务不算「完成」
       }).length;
       var g = gi ? gi[p.id] : null;
       return {
@@ -139,7 +139,7 @@
     }).join("") : '<li class="zp-muted">没有待办</li>';
     var recent = m.recent.length ? m.recent.map(function (c) {
       return "<li>" + esc(c.taskName || "（已删除的任务）") +
-        '<span class="zp-muted"> · ' + esc(c.projectName || "") + " · " + esc(c.stamp || "") + "</span></li>";
+        '<span class="zp-muted"> · ' + esc(c.projectName || "") + (c.stamp ? " · " + esc(c.stamp) : "") + "</span></li>";
     }).join("") : '<li class="zp-muted">最近没有完成记录</li>';
     var tile = function (label, val) {
       return '<div class="zp-tile"><span class="zp-eyebrow">' + label + '</span><b class="zp-num">' + val + "</b></div>";

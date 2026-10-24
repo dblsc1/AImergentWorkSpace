@@ -22,8 +22,8 @@ def sse(*events: tuple[str, dict]) -> str:
 
 
 REPLY = sse(("start", {"userMessageId": "m_u", "messageId": "m_a"}),
-            ("tool", {"name": "get_task_tree", "status": "running"}),
-            ("tool", {"name": "get_task_tree", "status": "done"}),
+            ("tool", {"name": "Get_View", "status": "running"}),
+            ("tool", {"name": "Get_View", "status": "done"}),
             ("future_event", {"whatever": 1}),
             ("delta", {"text": "这周 <b>吉他</b>"}),
             ("delta", {"text": " 最多。"}),
@@ -235,9 +235,9 @@ DEBUG_TURN = {"messageId": "m_a", "userMessageId": "m_u", "startedAt": "…", "o
      "request": {"model": "deepseek-flash", "stream": True, "messages": [
          {"role": "system", "content": "你是 HoneyComb 的时间助手。<b>x</b>" + LONG},
          {"role": "user", "content": "这周？"}],
-         "tools": [{"type": "function", "function": {"name": "honeycomb_get_task_tree"}}]},
+         "tools": [{"type": "function", "function": {"name": "honeycomb_Get_View"}}]},
      "response": {"stream": True, "content": "", "reasoning": "先查任务树", "finishReason": "tool_calls", "chunks": 4,
-                  "toolCalls": [{"id": "c1", "name": "honeycomb_get_task_tree", "arguments": "{}"}],
+                  "toolCalls": [{"id": "c1", "name": "honeycomb_Get_View", "arguments": "{}"}],
                   "usage": {"prompt_tokens": 900, "completion_tokens": 12}}},
     {"n": 2, "status": 200, "ms": 400, "aborted": False, "path": "/chat/completions",
      "request": {"model": "deepseek-flash", "messages": [{"role": "tool", "content": "[任务树 JSON]"}]},
@@ -280,7 +280,7 @@ def test_debug_toggle_shows_raw_io(browser, static_base_url, width, theme):
         # 只有「应答」默认展开；展开系统提示看到原文（<b> 只当文本）
         resp = page.locator(".chat-debug details").nth(4)
         assert resp.get_attribute("open") is not None
-        assert "【思考】\n先查任务树" in resp.inner_text() and "honeycomb_get_task_tree" in resp.inner_text()
+        assert "【思考】\n先查任务树" in resp.inner_text() and "honeycomb_Get_View" in resp.inner_text()
         assert "【结束原因】tool_calls" in resp.inner_text()
         page.locator(".chat-debug details > summary").first.click()
         assert page.locator(".chat-debug pre").first.inner_text().startswith("你是 HoneyComb 的时间助手。<b>x</b>")

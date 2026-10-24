@@ -77,10 +77,15 @@ def test_empty_shape_defaults_to_today(client):
     assert body["today"] == today.isoformat()
     assert body["windowStart"] == _local(today, 0)
     assert body["windowEnd"] == datetime.combine(today + timedelta(days=1), time(), _tz()).isoformat()
-    assert body["human"] == {"sessions": [], "running": None, "presence": []}
+    assert body["human"] == {"sessions": [], "running": None, "presence": [],
+                             "auto": None, "needsChoice": None, "aiThinking": None,  # v2.14 两个 + v2.15 一个
+                             "focus": None}  # v2.16
     assert (body["agents"], body["interactions"], body["truncated"]) == ([], [], False)
+    assert (body["hiddenAgents"], body["hiddenWaiting"], body["dropped"]) == ([], 0, [])
     assert set(body) == {"today", "now", "windowStart", "windowEnd", "human", "agents", "interactions",
-                         "truncated"}
+                         "truncated", "hiddenAgents", "hiddenWaiting", "stalePinned", "dropped", "inactiveAgents",
+                         "expiredAgents", "expired"}  # v2.22 + v2.23 + v2.24 + v2.25
+    assert (body["expiredAgents"], body["expired"]) == (0, {"agents": 0, "runs": 0, "elapsedSeconds": 0})
 
 
 def test_sessions_listed_on_every_overlapping_day_unclipped(client, task):
@@ -106,11 +111,11 @@ def test_live_agents_running_human_presence_and_interactions(client, task):
     at = (datetime.fromisoformat(run["startedAt"]) + timedelta(seconds=1)).isoformat()
     client.post(f"{API}/agents/{run['runId']}/phase", json={"phase": "working", "at": at, "reply": True,
                                                               "detail": "Bash"})
-    client.post(f"{API}/activity/presence", json={"deviceId": "dev_1", "app": "code",
-                                                   "title": "garden — VS Code", "afk": False})
+    client.post(f"{API}/activity/presence", json={"deviceId": "dev_1", "app": "ptyxis",
+                                                   "title": "✳ garden", "afk": False})
     body = _lanes(client)
     assert body["human"]["running"]["taskId"] == task["id"]
-    assert [p["title"] for p in body["human"]["presence"]] == ["garden — VS Code"]
+    assert [(p["title"], p["runId"]) for p in body["human"]["presence"]] == [("✳ garden", run["runId"])]
     [agent] = body["agents"]
     assert (agent["runId"], agent["label"], agent["endAt"], agent["outcome"], agent["overdue"]) == (
         run["runId"], "garden", None, None, False)
@@ -119,13 +124,15 @@ def test_live_agents_running_human_presence_and_interactions(client, task):
     attend, reply = body["interactions"]  # 按 at 升序：心跳（此刻）早于 reply（起点 +1s）
     assert reply == {"runId": run["runId"], "kind": "reply", "at": at}  # reply 没有 until 键
     assert attend["kind"] == "attend" and "until" in attend
+    [seen] = agent["attention"]  # v2.17：同一份 attend，按运行给出、裁到窗口
+    assert datetime.fromisoformat(seen["from"]) == datetime.fromisoformat(attend["at"]) and seen["from"] == seen["to"]
 
 
 def test_closed_run_comes_from_projection(client):
     run = _start(client, phase="working", label="garden")
-    client.post(f"{API}/agents/{run['runId']}/stop", json={"outcome": "failed"})
+    client.post(f"{API}/agents/{run['runId']}/stop", json={"outcome": "done"})
     [agent] = _lanes(client)["agents"]
-    assert agent["outcome"] == "failed" and agent["endAt"] is not None and agent["overdue"] is False
+    assert agent["outcome"] == "done" and agent["endAt"] is not None and agent["overdue"] is False
     assert agent["elapsedSeconds"] >= 1 and agent["label"] == "garden"
     assert [p["phase"] for p in agent["phases"]] == ["working"]
     assert _db()["proj_lanes"].count_documents({"kind": "run"}) == 1
@@ -134,6 +141,12 @@ def test_closed_run_comes_from_projection(client):
 def test_overdue_run_listed_but_never_closed(client, shift_clock):
     run = _start(client)
     shift_clock(hours=13)
+    # v2.24：超期的运行在还没过完的窗口里默认不显示（收进 inactiveAgents）；这里关心的是运行本身，先置顶（置顶永远显示）。
+    # 不置顶的话结果随真实时刻变：拨 13 小时后落在今天窗口之内（上午跑）就被收起，之外（下午跑）才照旧列出
+    for x in _lanes(client)["inactiveAgents"]:
+        resp = client.put(f"{API}/lanes/prefs/agent", json={"agent": x["agent"] or "", "label": x["label"] or "",
+                                                             "pinned": True, "unverified": x["unverified"]})
+        assert resp.status_code == 200, resp.text
     [agent] = _lanes(client)["agents"]
     assert agent["runId"] == run["runId"] and agent["overdue"] is True
     assert agent["elapsedSeconds"] == 12 * 3600 and agent["endAt"] is None
@@ -147,6 +160,8 @@ def test_marked_but_unfinished_run_is_drawn_as_ended(client):
     from app.modules.timer import repo  # noqa: PLC0415
 
     run = _start(client)
+    # v2.25：刚结束的普通泳道立刻折叠；这里关心的是运行本身，所以先置顶（置顶永远显示）
+    assert client.put(f"{API}/lanes/prefs/agent", json={"agent": "cc", "label": "", "pinned": True}).status_code == 200
     repo.mark_agent_run_closing("u_local", run["runId"],
                                 {"outcome": "cancelled", "endedAt": datetime.now(timezone.utc).isoformat()})
     [agent] = _lanes(client)["agents"]
@@ -172,20 +187,22 @@ def test_seven_days_ok_reverse_empty_single_bound(client, task):
 
 
 def test_caps_keep_newest_and_flag_truncated(client, task, monkeypatch):
-    from app.modules.views import lanes  # noqa: PLC0415
+    from app.modules.views import lane_cap, lanes  # noqa: PLC0415
 
     monkeypatch.setattr(lanes, "MAX_SESSIONS", 2)
-    monkeypatch.setattr(lanes, "MAX_AGENTS", 1)
+    monkeypatch.setattr(lane_cap, "MAX_RUNS_PER_LANE", 1)
     day = _today() - timedelta(days=1)
     for hh in (8, 9, 10):
         _backfill(client, task["id"], _local(day, hh), 600)
     body = _lanes(client, date=day.isoformat())
     assert body["truncated"] is True
     assert [datetime.fromisoformat(s["startAt"]).astimezone(_tz()).hour for s in body["human"]["sessions"]] == [9, 10]
-    _start(client)
-    newest = _start(client)
+    for _ in range(2):  # 同一身份的已结束运行：每个身份只留最新 1 条，其余折进 dropped（v2.23）
+        run = _start(client)
+        client.post(f"{API}/agents/{run['runId']}/stop", json={"outcome": "done"})
     body = _lanes(client)
-    assert body["truncated"] is True and [a["runId"] for a in body["agents"]] == [newest["runId"]]
+    assert body["truncated"] is True and [a["runId"] for a in body["agents"]] == [run["runId"]]
+    assert [d["runs"] for d in body["dropped"]] == [1]
 
 
 def test_tenant_isolation(client, task):

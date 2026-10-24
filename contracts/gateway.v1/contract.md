@@ -36,7 +36,7 @@ docker compose -f docker-compose.yml -f /你的/override.yml up -d
 | `HONEYCOMB_LOGIN_DIR` | 登录门占位件自带的页面 | 登录页静态目录，挂在 `/login/`【冻结】 |
 | `HONEYCOMB_EXTRA_ROUTES_DIR` | `deploy/nginx/extra`（空） | 额外路由目录，见第四节【冻结】 |
 | `HONEYCOMB_BASE_PATH` | `/` | 站点前缀：整站挂在子路径下时设，如 `/Cockpit/`，以 `/` 开头和结尾。见第七节【冻结】 |
-| `AGENT_UPSTREAM` | `agent:8030` | 聊天后端地址（`host:port`），实现 `agent.chat.v1`。见第八节（2026-09-28 追加）|
+| `AGENT_UPSTREAM` | `agent:8030` | 聊天后端地址（`host:port`），实现 `agent.chat.v1`。见第八节（2026-09-28 追加）。**2026-10-14 追加（v0.4）：开源版组装里缺省改为空 = 不转发（见第八节「聊天后端可选」）；契约上的含义不变，要转发就设成 `host:port`** |
 
 路径变量写**绝对路径**最稳；相对路径按 compose 文件所在目录解析。
 
@@ -117,7 +117,7 @@ location ${HONEYCOMB_BASE_PATH}my-app/ {
 }
 ```
 
-`gate.inc` 展开后就是下面四行，名字【冻结】，也可以直接手写：
+`gate.inc` 展开后就是下面四行，名字【冻结】，也可以直接手写（2026-10-09 起文件里还多四行转发调用方范围，见第九节）：
 
 ```nginx
 auth_request /__auth_verify;
@@ -181,7 +181,7 @@ CI 把手写与生成的两份组装各按 `/` 与 `/Cockpit/` 真起一遍。
 
 | 对外路径 | 转给 | 契约 |
 |---|---|---|
-| `<前缀>api/agent/` | `AGENT_UPSTREAM`（缺省 `agent:8030`）的 `/api/agent/` | `contracts/agent.chat.v1` |
+| `<前缀>api/agent/` | `AGENT_UPSTREAM`（缺省 `agent:8030`；2026-10-14 起缺省为空 = 不转发，过门后回 `502`，见下）的 `/api/agent/` | `contracts/agent.chat.v1` |
 | `<前缀>api/mcp/` | MCP 服务（缺省 `mcp:8020`）的 `/api/mcp/` | `contracts/mcp.tools.v1` |
 
 - **换聊天后端**：同换认证服务——override 里加自己的服务（接到 `honeycomb-agent-net`），`.env` 里设
@@ -198,6 +198,13 @@ CI 把手写与生成的两份组装各按 `/` 与 `/Cockpit/` 真起一遍。
 - **缺了它们网关照常起**：这两条路由的上游用运行期解析（`resolver 127.0.0.11` + 变量写 `proxy_pass`），
   不在启动时解析——否则关掉 `agent` 服务、或 `AGENT_UPSTREAM` 指向的服务还没起，nginx 直接起不来，整站跟着挂。
   连不上时这两条路由回 502；前端按 `agent.chat.v1` 把聊天面板整块藏起来。
+- **聊天后端可选（2026-10-14 追加，接口与上一条不变）**：开源版自 v0.4 起缺省**不起** `agent` 服务（compose profile `agent`；`.env` 设
+  `COMPOSE_PROFILES=agent` 才起，缺省组装不要模型密钥、也不拉 agent 镜像）。**同时 `AGENT_UPSTREAM` 在开源版组装里缺省为空**：
+  空值 = 内置聊天没开，`<前缀>api/agent/` 过门之后（未登录照旧 302）**直接回 502，不解析任何主机名、不转发任何请求**——否则 Docker DNS 会把
+  不认识的名字转给宿主的解析器，局域网 DNS 恰好有个叫 `agent` 的主机时，用户在聊天框里敲的字就发过去了。开内置聊天要 `.env` 里两行：
+  `COMPOSE_PROFILES=agent` 与 `AGENT_UPSTREAM=agent:8030`；用自己的聊天后端只设 `AGENT_UPSTREAM=<host:port>`。
+  没起时 `<前缀>api/agent/*` 过门后回 **502**（仍是上条的「连不上」，不另立 404 / 503）；前端的判据只是 `GET <前缀>api/agent/health`
+  不是 200 + JSON，每次打开页面问一次，不轮询。网关与 `web` 的健康不依赖 `agent`。
 
 
 **实现落定（v0.3 MCP 实现 PR，追加）**：
@@ -216,6 +223,42 @@ CI 把手写与生成的两份组装各按 `/` 与 `/Cockpit/` 真起一遍。
 - 验证：CI「网关契约」job 把 `mcp` 用 profiles 关掉（网关照常起、`/api/mcp/` 回 502），聊天后端换成回显请求头的
   小服务（收不到 `Cookie` / `Authorization` / 伪造的租户头）；「多账号」job 用设备令牌经网关调 MCP。
 
+## 九、调用方范围与匿名上报（2026-10-09 追加，v0.4）
+
+auth.gate v1.4 让设备令牌带范围（`report` / `read` / `write`），并让不带凭据的请求只能上报。网关这边四件事：
+
+- **门子请求多带一个头**：`/__auth_verify` 加 `proxy_set_header X-Original-Method $request_method;`
+  （子请求自己的方法永远是 `GET`，`$request_method` 给的是原始请求的）。认证服务据「方法 + `X-Original-URI`」
+  判断范围够不够。这一句同时盖掉客户端自带的同名头。
+- **`gate.inc` 多四行**（原来四行不动，名字照旧【冻结】）：
+
+  ```nginx
+  auth_request_set $honeycomb_scope $upstream_http_x_nexus_scope;
+  auth_request_set $honeycomb_anonymous $upstream_http_x_nexus_anonymous;
+  proxy_set_header X-Nexus-Scope $honeycomb_scope;
+  proxy_set_header X-Nexus-Anonymous $honeycomb_anonymous;
+  ```
+
+  与租户头同一套纪律：认证服务没给就是空，**空值不转发**；**客户端自己带来的 `X-Nexus-Scope` /
+  `X-Nexus-Anonymous` 一律被覆盖**，到不了任何 `include gate.inc` 的后端。`/__cockpit/current` 那条手写了门的
+  location 也加了同样四行。
+  **不设门、但转给上游的 location**（认证服务自己的 `/api/auth/`、`/__auth_verify` 子请求、模块声明 `gated: false` 的
+  路由）要把 `X-Nexus-Tenant` / `X-Nexus-Scope` / `X-Nexus-Anonymous` 都置空（`proxy_set_header … "";`）：客户端自带的
+  三个头不转给任何上游。两份组装都是这样，`tools/test_install.py` 逐条 location 核对。后端也不得绕过网关被直连
+  （auth.gate.v1「部署要求」）。
+- **手写门的部署方**：第四节那四行照旧可用。但如果你的 location 自己转给 nexus-core 或 MCP，要把上面四行也写上——
+  否则后端看不到范围，只剩认证服务那一道。不带凭据的请求到不了你的路由：认证服务只对
+  `<前缀>api/core/agents/…` 的四个上报端点放行匿名。
+- **匿名上报的限速**：`<前缀>api/core/` 这条 location 上有一个专用的限速区 `honeycomb_anon`：
+  **不带 `Authorization` 头**、`POST` 到 `/api/core/agents/` 下的请求，按客户端地址每分钟 120 个、突发 60 个，
+  超了回 `429`。带令牌的请求不进这个区（网页会话的这类请求也算在内——页面不发这种请求）。前面还有一层反代时，
+  所有人共用一个地址的额度（同登录限次的天花板，`auth.gate.v1` 安全约定 6）：这种部署请在外层限速，或关掉匿名上报。
+
+状态码：认证服务回 `403`（令牌有效但范围不够）→ 网关回 `403`；回 `401`（没登录、坏令牌、匿名不许）→ 照旧跳登录页。
+
+验证：CI「组装冒烟」四格（两份组装 × 两种前缀）与「多账号」跑 `deploy/test/scopes.sh`：三种范围各能做什么、
+匿名只能上报、单个吊销、伪造的三个头都被盖掉、限速回 `429`。
+
 ## 实现说明（不改接口）
 
 - **2026-09-30 · 上游运行期解析**（0.2.x 修复）：以前 `proxy_pass` 写死主机名，nginx 只在启动时解析一次；
@@ -231,3 +274,8 @@ CI 把手写与生成的两份组装各按 `/` 与 `/Cockpit/` 真起一遍。
 - **2026-09-30 · 并入 v0.3**：第八节两条 AI 桥路由（手写与生成的 `bridge: true`）改成同一写法：共用 server 级
   `resolver`（不再每个 location 各写一条），`rewrite` 用 `\Q…\E` 按字面匹配站点前缀并带 `(?s)`，补写与普通路由
   同形的 `proxy_redirect`；生成组装里的变量名统一为 `$honeycomb_up_<序号>`。`recreate.sh` 同样逐个重建 `mcp`、`agent`。
+- **2026-10-08 · 让 AI 认窗口（nexus-core v2.15）不动本契约**：第八节的网络划分一个字不改——`honeycomb-agent-net` 上
+  仍然只有 web、mcp、agent，nexus-core 不在上面、也不去调聊天后端。「cockpit 主动叫 AI」的方向反过来实现：聊天后端的后台工人
+  定时经 MCP 的对内地址去取（`agent.chat.v1` 第十节、`mcp.tools.v1` v1.9），走的是既有的 agent → mcp → nexus-core 这一条，
+  带的仍是租户头、不带用户凭据。没有新路由、新变量、新网络。
+- **2026-10-14 · 聊天后端可选，`AGENT_UPSTREAM` 缺省改为空（追加，v0.4）**：第二节表里 `AGENT_UPSTREAM` 的契约含义不变，只是开源版三份组装（手写、发布版、生成）的缺省值从 `agent:8030` 改为空；空值时 `api/agent/` 的 location 把上游改指必连不上的回环地址 `127.0.0.1:1`（用 `if` + `set`，改写阶段，在 `auth_request` 之前只改变量、不 `return`，所以未登录照旧 302），已登录回 502，全程不查 DNS。接口、路径、清头、缓冲、超时一字未改。

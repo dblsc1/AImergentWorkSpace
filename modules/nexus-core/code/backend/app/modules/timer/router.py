@@ -7,16 +7,21 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from ..activity import reconcile
+from . import reassign as reassign_impl
 from . import service
 
 router = APIRouter(prefix="/timer", tags=["timer"])
 #: v2.1「AI 代理运行」：与人的计时同住 timer 子边界（同一类活状态），路径另起前缀。
-agents_router = APIRouter(prefix="/agents", tags=["agents"])
+#: v2.19：匿名调用方只能动匿名开的运行——对这个路由上每个带 {runId} 的端点生效（判断在 service 里）。
+agents_router = APIRouter(prefix="/agents", tags=["agents"], dependencies=[Depends(service.anonymous_run_guard)])
+#: v2.11「改挂未分类时间」：对象是一段已落账的 session.completed，路径按它起前缀。
+sessions_router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 #: v2.1 人类计时模式。取值不在枚举内 → 422（pydantic 先拦，同 actor 字段口径）。
 Mode = Literal["do", "prompt", "review"]
@@ -49,7 +54,9 @@ class TimerStopOut(BaseModel):
 
 @router.post("/start", response_model=TimerOut)
 def start(body: StartIn) -> dict:
-    return service.start(body.taskId, mode=body.mode)
+    out = service.start(body.taskId, mode=body.mode)
+    reconcile.kick()  # v2.38：手动计时开始 / 结束 / 补登 → 窗口块尽快对账（没打开三级分类什么都不做）
+    return out
 
 
 class CancelledSession(BaseModel):
@@ -74,13 +81,17 @@ class TimerCancelOut(BaseModel):
 
 @router.post("/stop", response_model=TimerStopOut)
 def stop() -> dict:
-    return service.stop()
+    out = service.stop()
+    reconcile.kick()
+    return out
 
 
 @router.post("/cancel", response_model=TimerCancelOut)
 def cancel() -> dict:
     """取消当前计时，不记账。没在计时 → ``NoRunningTimerError`` → 409（映射在 main.py）。"""
-    return service.cancel()
+    out = service.cancel()
+    reconcile.kick()
+    return out
 
 
 class BackfillIn(BaseModel):
@@ -119,7 +130,9 @@ def backfill(body: BackfillIn) -> dict:
     活状态计时的关系」）。拒绝规则见 ``service.backfill``：404/400 的映射在
     ``main.py``（``UnknownTaskError``/``InvalidInputError``，router 不许有
     业务判断）。"""
-    return service.backfill(body.taskId, body.startAt, body.durationSeconds, mode=body.mode)
+    out = service.backfill(body.taskId, body.startAt, body.durationSeconds, mode=body.mode)
+    reconcile.kick()
+    return out
 
 
 # ------------------------------------------------ AI 代理运行（v2.1，契约「AI 代理运行」节）
@@ -128,8 +141,13 @@ def backfill(body: BackfillIn) -> dict:
 Phase = Literal["working", "waiting_input", "waiting_permission", "idle", "error"]
 
 
+#: v2.18：谁在发心跳（``companion`` / ``monitor`` / 适配器自己起的短名字）。只是标签，服务端不解释。
+BeatSource = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,31}$")]
+
+
 class AgentStartIn(BaseModel):
     taskId: str | None = None  # 缺省 = 挂收件箱
+    projectId: str | None = Field(default=None, min_length=1, max_length=128)  # v2.13：不带 taskId 时只挂项目
     agent: str = Field(min_length=1, max_length=64)
     tool: str = Field(min_length=1, max_length=64)
     model: str | None = Field(default=None, min_length=1, max_length=64)
@@ -138,11 +156,14 @@ class AgentStartIn(BaseModel):
     label: str | None = Field(default=None, min_length=1, max_length=64)
     match: str | None = Field(default=None, min_length=3, max_length=128)
     clientKey: str | None = Field(default=None, min_length=1, max_length=128)
+    heartbeat: bool = False  # v2.18：true = 这个适配器会发心跳，运行受活性规则管（契约「心跳与失联」）
+    beatSource: BeatSource | None = None  # v2.18：选填
 
 
 class AgentStartOut(BaseModel):
     runId: str
     startedAt: str
+    heartbeatSeconds: int  # v2.18：建议的心跳间隔（适配器不必写死）
 
 
 class AgentStopIn(BaseModel):
@@ -163,11 +184,12 @@ class AgentStopOut(BaseModel):
 
 @agents_router.post("/start", response_model=AgentStartOut, status_code=201)
 def agent_start(body: AgentStartIn, response: Response) -> dict:
-    """不碰人的计时器；可与任意多个运行并发。taskId 不存在 → 404（映射在 main.py）。
+    """不碰人的计时器；可与任意多个运行并发。taskId / projectId 不存在 → 404，两者矛盾 → 400（映射在 main.py）。
     v2.4：同 clientKey 的运行还在跑 → 200 回原运行（不是新建，所以不是 201）。"""
     out, created = service.agent_start(
         body.taskId, body.agent, body.tool, body.model,
         phase=body.phase, label=body.label, match=body.match, client_key=body.clientKey,
+        project_id=body.projectId, heartbeat=body.heartbeat, beat_source=body.beatSource,
     )
     if not created:
         response.status_code = 200
@@ -211,7 +233,60 @@ def agent_phase(runId: str, body: AgentPhaseIn) -> dict:  # noqa: N803 —— �
     return service.agent_phase(runId, body.phase, body.at, body.detail, body.reply)
 
 
+class AgentHeartbeatIn(BaseModel):
+    """v2.18。空体或 ``{}`` 都收；只有一个选填字段，多了未知字段 → 422。"""
+
+    model_config = ConfigDict(extra="forbid")
+    beatSource: BeatSource | None = None
+
+
+class AgentHeartbeatOut(BaseModel):
+    """``applied:false, reason:"closed"`` = 运行已结束（同相位的 closed）：适配器带原 clientKey 再 start。"""
+
+    runId: str
+    applied: bool
+    reason: Literal["closed"] | None
+    heartbeatSeconds: int
+
+
+@agents_router.post("/{runId}/heartbeat", response_model=AgentHeartbeatOut)
+def agent_heartbeat(runId: str, body: AgentHeartbeatIn | None = None) -> dict:  # noqa: N803 —— 路径参数名即契约
+    """「我还活着」。runId 不存在 → 404（映射在 main.py）。"""
+    return service.agent_heartbeat(runId, body.beatSource if body else None)
+
+
 @agents_router.post("/{runId}/stop", response_model=AgentStopOut)
 def agent_stop(runId: str, body: AgentStopIn) -> dict:  # noqa: N803 —— 路径参数名即契约
     """runId 不存在 → 404（NotFoundError，映射在 main.py）。"""
     return service.agent_stop(runId, body.outcome, body.output)
+
+
+# ------------------------------------------------ 改挂未分类时间（v2.11，契约「改挂未分类时间」节）
+
+
+class ReassignIn(BaseModel):
+    """``taskId``（归到这个任务）与 ``projectId``（放回这个项目的未分类）二选一；多了未知字段 → 422。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    taskId: str | None = Field(default=None, min_length=1, max_length=128)
+    projectId: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class SessionReassignOut(BaseModel):
+    """``duplicate:true`` = 这一段此刻已经在目标上，什么都没追加；``event`` 是决定当前归属的那条
+    ``session.reassigned``（从没改挂过时为 null）。"""
+
+    sessionEventId: str
+    duplicate: bool
+    fromTaskId: str
+    taskId: str
+    projectId: str
+    seq: int
+    event: StopEvent | None
+
+
+@sessions_router.post("/{eventId}/reassign", response_model=SessionReassignOut)
+def reassign_session(eventId: str, body: ReassignIn, request: Request) -> dict:  # noqa: N803 —— 路径参数名即契约
+    """带 Bearer / actor=ai → 403；段或目标不存在 → 404；不是未分类的段 → 409（映射都在 main.py）。"""
+    return reassign_impl.reassign(eventId, body.taskId, body.projectId, request)

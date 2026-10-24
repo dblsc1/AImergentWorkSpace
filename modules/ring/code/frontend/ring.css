@@ -39,6 +39,7 @@ html[data-theme="light"] {
   --danger: #C2333B;
   --agent-work: #3B8132;
   --agent-wait: #9A7B00;
+  --attn: #0F6FBF;
   --accent: #0B7A6F;
   --accent-ink: #FFFFFF;
   --accent-soft: #DCF0ED;
@@ -67,6 +68,7 @@ html[data-theme="dark"] {
   --danger: #FF8189;
   --agent-work: #7BD389;
   --agent-wait: #F5C542;
+  --attn: #5CB8FF;
   --accent: #2FD4C2;
   --accent-ink: #04211D;
   --accent-soft: #123B38;
@@ -196,6 +198,27 @@ select.field:disabled { opacity: .7; cursor: not-allowed; }
   border-radius: 999px; border: 1px solid transparent;
   background: var(--fact); color: var(--fact-ink); font-weight: 600; font-size: var(--fs-body);
 }
+/* ── 此刻的焦点（2026-10-09）：没在计时，只是显示人此刻在哪个窗口 / 项目。轨道换成 --fact 色虚线并缓慢呼吸，
+ * 比手动计时的实心贡献弧轻，一眼看得出「这不是在计时」；贡献弧这时不画。离开：整块压暗、不呼吸。 ── */
+.chrono.is-focus .seg { visibility: hidden; }
+.chrono.is-focus .track { stroke: var(--fact); stroke-width: 4; stroke-dasharray: 3 7; opacity: .6; }
+@media (prefers-reduced-motion: no-preference) {
+  .chrono.is-focus:not(.is-afk) .track { animation: ring-focus-breathe 3.2s ease-in-out infinite; }
+}
+@keyframes ring-focus-breathe { 50% { opacity: .25; } }
+.chrono.is-afk .track { stroke: var(--ink-3); opacity: .35; }
+.chrono.is-afk .center { color: var(--ink-3); }
+.chrono .focus-lead { font-size: var(--fs-body); font-weight: 600; }
+.chrono .focus-lead, .chrono .focus-window {
+  max-width: 64cqi; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chrono.is-focus { container-type: inline-size; }   /* 两行字的限宽跟着圆环走（cqi = 圆环宽的 1%） */
+.chrono .focus-lead { max-width: 58cqi; }           /* 第一行在圆里更靠上，弦更短 */
+.chrono .focus-window, .chrono .focus-hint { font-size: var(--fs-sub); color: var(--ink-2); }
+.chrono .focus-hint, .chrono .focus-dwell { font-size: var(--fs-eyebrow); color: var(--ink-3); }
+.chrono .focus-dwell { margin: 0; color: var(--ink-2); }
+.chrono .focus-elapsed { font-size: var(--fs-h2); }
+.chrono.is-afk .focus-window { color: var(--ink-3); }
 .chrono .start-big:disabled { opacity: .5; cursor: not-allowed; }
 .chrono .start-big:not(:disabled):hover { filter: brightness(1.08); }
 
@@ -338,8 +361,8 @@ select.field:disabled { opacity: .7; cursor: not-allowed; }
 /* ── 390px 一等公民：不横滚（F-RING-5） ──────────────────────────────── */
 html, body { max-width: 100%; overflow-x: hidden; }
 
-/* 「待确认」「问问助手」两块 2026-09-30 搬去「AI助理」页（modules/assistant）；泳道标题还借用 .suggest-title。
- * 这里只剩计时页上那条「N 条待确认 → AI助理」的小链接。 */
+/* 「待确认」「问问助手」两块 2026-09-30 搬去「待批准」页（modules/assistant）；泳道标题还借用 .suggest-title。
+ * 这里只剩计时页上那条「N 条待确认 → 待批准」的小链接。 */
 .suggest-title { font-size: var(--fs-h2); font-weight: 600; }
 .suggest-link {
   justify-self: start; display: inline-flex; align-items: center; min-height: var(--tap);
@@ -356,3 +379,18 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .lanes-state { font-size: var(--fs-sub); font-weight: 400; color: var(--ink-2); margin-left: var(--sp-1); }
 .lanes-range { display: flex; gap: var(--sp-2); }
 .lanes-range .mode-tab { flex: 0 1 auto; font-size: var(--fs-sub); }
+
+/* ── 「你在 X，记到哪？」（2026-10-08，ring-choice.js，nexus-core v2.14 自动跟踪）──
+ * 卡的壳（边、底、浮上来的动效）是共享 lanes.css 的 .hcl-card / .hcl-lead；这里只管卡里的表单。
+ * 窄屏每个控件独占一行（flex 换行 + 最小宽度），窗口标题再长也不撑破卡。 */
+.choice-card { display: grid; gap: var(--sp-2); min-width: 0; }
+.choice-title { font-size: var(--fs-body); overflow-wrap: anywhere; }
+.choice-window { font-weight: 600; }
+.choice-form { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-width: 0; }
+.choice-form .field { flex: 1 1 11em; min-width: 0; max-width: 100%; }
+.choice-remember { flex: 1 1 100%; display: flex; align-items: center; gap: var(--sp-1); min-height: var(--tap);
+  font-size: var(--fs-sub); color: var(--ink-2); }
+.choice-form .btn { flex: 0 1 auto; }
+.choice-message { font-size: var(--fs-sub); color: var(--ink-2); overflow-wrap: anywhere; }
+.choice-message.is-error { color: var(--danger); }
+

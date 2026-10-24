@@ -3,10 +3,12 @@
 #
 #   未登录：/ 跳 /hive/，/hive/ 与 /api/ 跳 /login/，登录页本身能打开，
 #           顶栏计时芯片回降级 JSON（不跳、不泄露）
-#   登录后：API 通；/hive/、/ring/、/assistant/ 三个页面，以及页面里引用的**每一个**资源都是 200；
-#           MCP（/api/mcp/）经网关列得出工具；聊天后端（/api/agent/）health 经网关
+#   登录后：API 通；/hive/、/ring/、/assistant/、/auto/ 四个页面，以及页面里引用的**每一个**资源都是 200；
+#           MCP（/api/mcp/）经网关列得出工具；聊天后端（/api/agent/）按开 / 关核对（见下）
 #
 # 用法：deploy/smoke.sh <口令> [基址，缺省 http://127.0.0.1:8800]
+# HONEYCOMB_SMOKE_AGENT：缺省 0 = 内置聊天关（v0.4 起的缺省安装）：/api/agent/* 回 502、页面据此藏起聊天；
+#                       1 = 聊天开（COMPOSE_PROFILES=agent + AGENT_UPSTREAM=agent:8030）：health 经网关、configured=false。
 # 整站挂子路径时先 export HONEYCOMB_BASE_PATH=/Cockpit/（与 .env 一致），基址不带前缀。
 # 默认 .env（cookie 带 Secure）即可：curl 与浏览器一样，在 127.0.0.1 上回传 Secure cookie。
 # CI 用它核对手写与生成的两份组装（见 .github/workflows/ci.yml 的 compose-smoke）。
@@ -52,6 +54,7 @@ page() {  # 前缀 页面文件：页面 + 它引用的每个资源都得 200
 page "${bp}hive/" modules/hive/code/frontend/index.html
 page "${bp}ring/" modules/ring/code/frontend/project-task-contribution-ring.html
 page "${bp}assistant/" modules/assistant/code/frontend/index.html
+page "${bp}auto/" modules/assistant/code/frontend/auto.html
 # 网关注入给页面的前缀、页签与顶栏资源都在前缀下
 hive=$(curl -s -b "$jar" "$base${bp}hive/")
 check 1 "$(grep -c "window.HONEYCOMB_BASE=\"$bp\"" <<<"$hive")" "页面拿到站点前缀"
@@ -59,17 +62,23 @@ for a in $(grep -oE '(src|href)="[^"]*__cockpit/[^"]*"' <<<"$hive" | sed -E 's/^
   check 200 "$(code -b "$jar" "$base$a")" "  注入的 $a"
 done
 
-# AI 桥（mcp.tools.v1，gateway.v1 第八节）：MCP 过门；登录态经网关调得到 12 个工具，只有 propose_ 那两个不是只读（v1.3）。
+# AI 桥（mcp.tools.v1 传输 + mcp.tools.v2 工具，gateway.v1 第八节）：MCP 过门；登录态经网关（cookie、没有范围头）调得到 17 个工具（15 + 自动跟踪的两个），不是只读的只有 6 个写工具与自动跟踪的两个。
 # 部署方把 mcp 关掉的组装（CI 的网关契约 job）设 HONEYCOMB_SMOKE_MCP=0 跳过这一段。
 if [ "${HONEYCOMB_SMOKE_MCP:-1}" = 1 ]; then
   rpc='{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
   check "${bp}login/" "$(location -H 'Content-Type: application/json' -d "$rpc" "$base${bp}api/mcp/")" "未登录 MCP 跳登录页"
-  check "12 ['propose_detector_rules', 'propose_activity_matches']" "$(curl -s -b "$jar" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+  check "17 ['CRUD_Windows_Classify_Rules', 'CRUD_Windowsblock_Classify_Rules', 'CRUD_Windowsblock', 'CRUD_Honeycomb', 'Submit_Report', 'Submit_Questions_To_Human', 'get_window_awaiting_target', 'suggest_window_target']" "$(curl -s -b "$jar" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
     -d "$rpc" "$base${bp}api/mcp/" | python3 -c 'import json,sys; t=json.load(sys.stdin)["result"]["tools"]
 print(len(t), [x["name"] for x in t if not x["annotations"]["readOnlyHint"]])')" "MCP tools/list 经网关"
-  # 聊天后端（agent.chat.v1）：过门；没填 AGENT_API_KEY 的缺省组装 configured=false（页面提示去填）
+  # 聊天后端（agent.chat.v1）：过门；不管开不开，未登录都跳登录页
   check "${bp}login/" "$(location "$base${bp}api/agent/health")" "未登录聊天后端跳登录页"
-  check '{"status":"ok","configured":false,"debug":false}' "$(curl -s -b "$jar" "$base${bp}api/agent/health")" "聊天后端 health 经网关"
+  if [ "${HONEYCOMB_SMOKE_AGENT:-0}" = 1 ]; then
+    # 开：没填 AGENT_API_KEY 的组装 configured=false（页面提示去填）
+    check '{"status":"ok","configured":false,"debug":false}' "$(curl -s -b "$jar" "$base${bp}api/agent/health")" "聊天后端 health 经网关"
+  else
+    # 关（缺省）：网关照常起，路由回 502；页面（chat.js 的 health 不是 200）据此把聊天面板和「让 AI 匹配」整块藏起来
+    check 502 "$(code -b "$jar" "$base${bp}api/agent/health")" "聊天后端没起：/api/agent/health 回 502（页面藏起聊天）"
+  fi
 fi
 
 [ "$fail" = 0 ] && echo "✅ 全部通过" || echo "❌ 有失败项"
