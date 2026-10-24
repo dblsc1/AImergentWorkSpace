@@ -16,6 +16,8 @@ from __future__ import annotations
 import hashlib
 import logging
 import threading
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date as Date, datetime, timedelta, timezone
 
 from ...tenant import as_tenant, current as current_tenant
@@ -32,12 +34,26 @@ _locks: dict[str, threading.Lock] = {}
 _cursor: dict[str, tuple] = {}
 _mark: dict[str, datetime] = {}  # 租户 → 上次完整做完一轮的起点（只重访这以后脏了的块）
 _force_full: set[str] = set()  # kick 没拿到锁被跳过的租户：下一轮循环全量
+#: 租户 → kick 没拿到锁被跳过时带着的作废原因 ``(原因, only, key)``，下一轮（循环接手）只对点名的块用
+_pending_reason: dict[str, list[tuple]] = {}
 _rounds = 0
+#: 撤回直接施加时临时指定的作废原因（契约「五」：``direct-undo``）；只对本线程里同步的 ``kick`` 生效
+_void_reason: ContextVar[str | None] = ContextVar("void_reason", default=None)
 _guard = threading.Lock()
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+@contextmanager
+def voiding(reason: str):
+    """块里作废已入账的段时一律记这个 ``reason``（撤回直接施加用）。"""
+    token = _void_reason.set(reason)
+    try:
+        yield
+    finally:
+        _void_reason.reset(token)
 
 
 def _ms(t: datetime) -> int:
@@ -70,8 +86,13 @@ def _load_others(user: str, since: datetime) -> list | None:
 class _Ctx:
     def __init__(self, user: str, since: datetime | None, actor: str):
         self.user, self.actor, self.left = user, actor, MAX_EVENTS
+        self.void_for: list[tuple] = []  # ``(原因, only, key)``：只 only 里的块 / 这个块名；两个都是 None = 全部
         self.since_ms, self.now_ms = (_ms(since) if since else 0), _ms(_now())
         self.others = _load_others(user, since) if since else []  # since 为 None = 只收口（tiers 关了），不算计划
+
+
+def _void_reason_of(ctx: _Ctx, ds: str, key: str) -> str | None:
+    return next((r for r, only, k in ctx.void_for if (only is None and k is None) or (only and (ds, key) in only) or (k is not None and k == key)), None)
 
 
 def _tgt(part: dict) -> str:
@@ -143,7 +164,8 @@ def run_block(ctx: _Ctx, d: Date, key: str) -> None:
             continue
         status, via, rule_id, parts, recent = _effective(user, d, key, doc)
         live = status == "assigned" or (status == "generic" and bool(parts))
-        reason = {"ignored": "block-ignored", "generic": "block-generic"}.get(status, "block-rule" if (doc or {}).get("via") == "rule" else "block-reset")
+        reason = _void_reason_of(ctx, ds, key) or {"ignored": "block-ignored", "generic": "block-generic"}.get(
+            status, "block-rule" if (doc or {}).get("via") == "rule" else "block-reset")
         recs = [(_ms(r["startTs"]), _ms(r["endTs"])) for r in records_repo.block_records(user, ds, key, _MAX_RECS) if _ms(r["startTs"]) >= ctx.since_ms]
         runs = list((doc or {}).get("runs") or [])
         plan = rc.plan(live=live, reason=reason, parts=parts, runs=runs, recs=recs, others=ctx.others, now_ms=ctx.now_ms,
@@ -203,8 +225,11 @@ def run_round(user: str | None = None, *, only: set | None = None, key: str | No
     user = user or current_tenant()
     with _guard:
         lock = _locks.setdefault(user, threading.Lock())
+    want = _void_reason.get()
     if not lock.acquire(blocking=blocking):
         _force_full.add(user)
+        if want:  # 契约「五」的 direct-undo 不能因为这次被跳过就丢：交给下一轮，只对点名的块用
+            _pending_reason.setdefault(user, []).append((want, only, key))
         return 0
     try:
         with as_tenant(user):
@@ -222,6 +247,7 @@ def run_round(user: str | None = None, *, only: set | None = None, key: str | No
                     _mark[user] = started
                 return 0
             ctx = _Ctx(user, st["tiersSince"], actor)
+            ctx.void_for = [*([(want, only, key)] if want else []), *_pending_reason.pop(user, [])]
             if not targeted and _cursor.get(user):  # 轮着来：从上次停下的下一个开始
                 at = next((i for i, c in enumerate(cands) if c < _cursor[user]), 0)
                 cands = cands[at:] + cands[:at]

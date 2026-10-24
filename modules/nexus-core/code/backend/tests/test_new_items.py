@@ -144,7 +144,7 @@ def test_task_for_existing_project_and_reject_cascade(client, seeded):
     st = {i["id"]: i["status"] for i in _db()["activity_new_items"].find({})}
     assert st[t1] == st[t2] == "rejected"
     assert _pt(client, "甲", projectProposalId=pid).status_code == 409
-    assert client.get(API).json() == {"projects": [], "tasks": [], "changes": [], "ignores": []}
+    assert client.get(API).json() == {"projects": [], "tasks": [], "changes": [], "ignores": [], "windowRules": [], "blockRules": [], "blockActions": []}
 
 
 def test_approve_after_target_deleted_stays_pending_and_can_be_rejected(client, seeded):
@@ -214,7 +214,7 @@ def test_other_tenant_cannot_see_or_approve(client, seeded):
     z = _zone(seeded)
     pid = _pp(client, z).json()["id"]
     b = {"X-Nexus-Tenant": "u_other"}
-    assert client.get(API, headers=b).json() == {"projects": [], "tasks": [], "changes": [], "ignores": []}
+    assert client.get(API, headers=b).json() == {"projects": [], "tasks": [], "changes": [], "ignores": [], "windowRules": [], "blockRules": [], "blockActions": []}
     assert client.post(f"{API}/{pid}/approve", headers=b).status_code == 404
     assert client.post(f"{API}/{pid}/reject", headers=b).status_code == 404
     assert _pt(client, projectProposalId=pid, headers=b).status_code == 400
