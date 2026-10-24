@@ -921,11 +921,14 @@ func TestPresenceNoBackfillAcrossPause(t *testing.T) {
 	paused.Paused = true
 	b.beat(paused, http.DefaultClient, now.Add(5*time.Second))
 	ck.take()
-	if sent, _ := b.beat(cfg, http.DefaultClient, now.Add(30*time.Second)); !sent {
-		t.Fatal("resume beat")
+	if sent, _ := b.beat(cfg, http.DefaultClient, now.Add(8*time.Second)); sent || len(ck.posts("/presence")) != 0 {
+		t.Fatal("resume beat must not upload anything")
+	}
+	if sent, _ := b.beat(cfg, http.DefaultClient, now.Add(13*time.Second)); !sent {
+		t.Fatal("beat after resume")
 	}
 	sp := bodySpans(t, ck.posts("/presence")[0].body)
-	if len(sp) != 1 || !sp[0].from.Equal(now.Add(5*time.Second)) || sp[0].seconds != 25 {
-		t.Fatalf("resume beat must start at the pause end: %v", sp)
+	if len(sp) != 1 || !sp[0].from.Equal(now.Add(8*time.Second)) || sp[0].seconds != 5 {
+		t.Fatalf("must start at the resume moment, not the last paused tick: %v", sp)
 	}
 }

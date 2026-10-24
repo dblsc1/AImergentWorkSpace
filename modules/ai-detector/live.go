@@ -207,7 +207,10 @@ func beatSpans(cfg Config, d awData, from, to time.Time, rules []rule) ([]presen
 }
 
 // beater：心跳跨拍只记一样东西——上一拍成功发出时覆盖到了哪一刻。
-type beater struct{ covered time.Time }
+type beater struct {
+	covered time.Time
+	off     bool // 上一次检查时是关 / 暂停
+}
 
 // presenceBeat 发一次心跳（没有上一拍：带最近 presenceLookback 的窗口）。
 func presenceBeat(cfg Config, hc *http.Client, now time.Time) (bool, error) {
@@ -222,7 +225,7 @@ func (p *beater) beat(cfg Config, hc *http.Client, now time.Time) (bool, error) 
 		want = *rp
 	}
 	if !active(cfg) || !want {
-		p.covered = now // 关 / 暂停期间的窗口不补传：恢复后的第一拍从这里起算
+		p.covered, p.off = now, true // 关 / 暂停期间的窗口不补传
 		return false, nil // 关 / 暂停 / 没开心跳：零请求
 	}
 	base := strings.TrimRight(cfg.CockpitURL, "/")
@@ -231,8 +234,12 @@ func (p *beater) beat(cfg Config, hc *http.Client, now time.Time) (bool, error) 
 		return false, err
 	}
 	if !cfg.Presence {
-		p.covered = now
+		p.covered, p.off = now, true
 		return false, nil // 网页上刚关掉
+	}
+	if p.off { // 刚恢复：这一拍不发，下一拍从恢复时刻起带（暂停那一拍间隔里看的窗口也不上传）
+		p.off, p.covered = false, now
+		return false, nil
 	}
 	if err := cfg.Privacy.check(); err != nil {
 		return false, err
