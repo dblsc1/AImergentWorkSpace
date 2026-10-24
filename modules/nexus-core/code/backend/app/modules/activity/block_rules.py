@@ -64,9 +64,19 @@ def create(block_key: str, task_id: str | None, project_id: str | None, via: str
     rule, created = blocks_repo.upsert_rule(user, block_key, {
         "user": user, "blockKey": block_key, "taskId": task_id, "projectId": project_id, "author": author,
         "updatedAt": datetime.now(timezone.utc), "via": via}, keep_existing)
+    _kick(block_key)
     return _out(rule, False), created
 
 
+def _kick(block_key: str) -> None:
+    """第二级规则变化 → 尽快对账这个块名的各天（契约「四」）。"""
+    from . import reconcile  # noqa: PLC0415 —— reconcile 反过来 import 本文件
+
+    reconcile.kick(key=block_key)
+
+
 def remove(rule_id: str) -> None:
-    if not blocks_repo.delete_rule(current_tenant(), rule_id):
+    gone = blocks_repo.delete_rule(current_tenant(), rule_id)
+    if gone is None:
         raise NotFoundError(f"第二级规则不存在：{rule_id!r}")
+    _kick(gone["blockKey"])

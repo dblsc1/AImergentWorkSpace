@@ -40,6 +40,11 @@ REASSIGNED_TYPE = "session.reassigned"
 #: 放行的话一条别的类型的外部事件能先占住 ``reassign:<段>:<n>``，那一段就再也改挂不了。
 REASSIGN_SOURCE = "session-reassign"
 
+#: v2.38 作废事实（契约「三级分类」四）。同样**只由服务端自己的对账经 ``ingest(internal=True)`` 写**：
+#: 公开入口拒收 ``session.voided`` 与自称 ``activity-block`` 的信封（该 source 的防重身份只属于对账），外部信封里的 ``ai.block`` 不落库。
+VOIDED_TYPE = "session.voided"
+BLOCK_SOURCE = "activity-block"
+
 #: 读端现算的键（v2.11）：只从改挂链来。信封 ``extra="allow"``，客户端自带的同名键入口摘掉、读端不认。
 CURRENT_SUBJECT = "currentSubject"
 #: 服务端「自动记录」（v2.14）写事实用的 source。公开入口上自称它的信封，``ai.auto`` 摘掉——那是改挂的判据之一，
@@ -94,10 +99,17 @@ def ingest(payload: dict | list, *, internal: bool = False) -> IngestOut:
                 f"POST /api/core/sessions/{{eventId}}/reassign 写（契约 v2.11）")))
             continue
 
+        if not internal and (envelope.type == VOIDED_TYPE or envelope.source == BLOCK_SOURCE):
+            rejected.append(RejectedItem(index=index, reason=(
+                f"{VOIDED_TYPE} / source {BLOCK_SOURCE!r} 只由服务端的窗口块对账写（契约 v2.38），公开入口不收")))
+            continue
+
         doc = envelope.model_dump()  # extra="allow"：未知字段原样保留（B9）
         doc.pop(CURRENT_SUBJECT, None)  # 例外：读端现算的键不落库，谁带来的都一样
         if not internal and doc["source"] == _AUTO_SOURCE and isinstance(doc.get("ai"), dict):
             doc["ai"] = {k: v for k, v in doc["ai"].items() if k not in ("auto", "report")}  # 出处只能由本服务盖
+        if not internal and isinstance(doc.get("ai"), dict):
+            doc["ai"] = {k: v for k, v in doc["ai"].items() if k != "block"}  # v2.38：窗口块的出处只能由对账盖
         doc["recordedAt"] = _now_iso()  # 服务端盖章；客户端给的值在这里被覆盖（B6）
         # 租户同样服务端盖章（v2.0）：信封里的 user 客户端必须照填（信封校验不放宽），
         # 但落库的是网关认定的租户——否则一个租户能往另一个租户的台账里写事实。
@@ -155,6 +167,23 @@ def latest_reassignments(docs: list[dict]) -> dict[tuple, dict]:
     return latest
 
 
+def voided_identities(docs: list[dict]) -> set[tuple]:
+    """被 ``session.voided`` 作废了的段的身份（同改挂：认抄录在作废事实里的那一段）。纯函数。"""
+    out = set()
+    for doc in docs:
+        data = doc.get("data")
+        copied = data.get("session") if isinstance(data, dict) else None
+        if doc.get("type") == VOIDED_TYPE and isinstance(copied, dict):
+            key = _identity(doc.get("user"), data.get("voidedEventId"), copied.get("source"), copied.get("dedupeKey"))
+            if key is not None:
+                out.add(key)
+    return out
+
+
+def _is_voided(doc: dict, voided: set[tuple]) -> bool:
+    return doc.get("type") == SESSION_TYPE and _identity(doc.get("user"), doc.get("id"), doc.get("source"), doc.get("dedupeKey")) in voided
+
+
 def _current_subject(doc: dict, latest: dict[tuple, dict]) -> dict | None:
     """改挂过的 ``session.completed`` → 最后一次改挂的去向；没改挂过 / 不是计时段 → None。"""
     if doc.get("type") != SESSION_TYPE:
@@ -188,10 +217,16 @@ def current_tasks(source: str, dedupe_keys: list[str]) -> dict[str, tuple[str, b
 
 
 def with_current_subjects(docs: list[dict]) -> list[dict]:
-    """给投影重建用：改挂过的 ``session.completed`` 的 ``subject`` 换成当前归属，其余原样。
+    """给投影重建用：改挂过的 ``session.completed`` 的 ``subject`` 换成当前归属，其余原样；
+    被 ``session.voided`` 作废了的 ``session.completed`` 不重放（v2.38：原事实不删，算时长的一律跳过）。
     指向台账里已经没有的段的 ``session.reassigned`` 自然不起作用。"""
-    latest = latest_reassignments(docs)
-    return [{**d, "subject": cur} if (cur := _current_subject(d, latest)) else d for d in docs]
+    latest, voided = latest_reassignments(docs), voided_identities(docs)
+    return [{**d, "subject": cur} if (cur := _current_subject(d, latest)) else d for d in docs if not _is_voided(d, voided)]
+
+
+def is_voided(session: dict) -> bool:
+    """这一段被 ``session.voided`` 作废了吗（v2.38）。"""
+    return _is_voided(session, voided_identities(repo.query_events(VOIDED_TYPE, where={"data.voidedEventId": session.get("id")})))
 
 
 def find_sessions(event_id: str) -> list[dict]:
@@ -264,6 +299,8 @@ def list_events(
     if type_ in (None, SESSION_TYPE):
         latest = latest_reassignments(docs if type_ is None else repo.query_events(REASSIGNED_TYPE))
         docs = [{**d, CURRENT_SUBJECT: cur} if (cur := _current_subject(d, latest)) else d for d in docs]
+        voided = voided_identities(docs if type_ is None else repo.query_events(VOIDED_TYPE))
+        docs = [{**d, "voided": True} if _is_voided(d, voided) else d for d in docs]  # v2.38：作废的段标出来，读方跳过
     if task_id:
         docs = [d for d in docs if (d.get(CURRENT_SUBJECT) or d.get("subject") or {}).get("task") == task_id]
 

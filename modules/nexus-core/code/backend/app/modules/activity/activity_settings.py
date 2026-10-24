@@ -2,7 +2,7 @@
 
 没有文档 = 缺省（``version: 0``，``tiers: false``，``tiersSince: null``，``agentDirect`` 全 false）。``PUT`` 整份替换（严格校验在 HTTP 层，422），
 只许人，须带 ``If-Match: "<version>"``（缺 428、不符 412，同 detector 规则）；``tiersSince`` 与 ``version`` 由服务端写，客户端给的忽略。
-``tiers`` 从关到开：``tiersSince`` = 此刻。本期不改 ``auto_entry`` / 确认建议的行为，也不对账（第二部分）。
+``tiers`` 从关到开：``tiersSince`` = 此刻。``tiers`` 开着时 ``auto_entry`` 不再自动记录、``service.confirm`` 回 409（见 ``tiers_on``），并按契约「四」对账（``reconcile.py``）。
 
 迁移（第一次打开，幂等，按旧规则 id）：每条生效的旧式规则（``enabled`` 不为 false、带 ``taskId`` / ``projectId``、``mode`` 不是 ai、还没 ``migrated``）
 紧挨着它后面插一条第一级规则（``kind: "block"``，同 ``app`` / ``title``，``block`` = ``note`` 截到 64 字符，没有就用「旧规则 <id>」，重名加「 (2)」「 (3)」；
@@ -28,6 +28,11 @@ def get() -> dict:
             "agentDirect": {**AGENT_OFF, **doc.get("agentDirect", {})}}
 
 
+def tiers_on() -> bool:
+    """当前租户打开了三级分类吗（契约「六」）。"""
+    return bool((blocks_repo.get_settings(current_tenant()) or {}).get("tiers"))
+
+
 def put(if_match: str | None, tiers: bool, agent_direct: dict) -> dict:
     from ..detector.rules import RulesError, _if_match  # noqa: PLC0415 —— detector 反过来 import activity，顶层 import 成环
 
@@ -45,6 +50,9 @@ def put(if_match: str | None, tiers: bool, agent_direct: dict) -> dict:
         fields["migratedAt"] = now
     if not blocks_repo.put_settings(user, expected, fields):
         raise RulesError(412, "设置刚被别处改过：请重新读取后再改", currentVersion=(blocks_repo.get_settings(user) or {}).get("version", 0))
+    from . import reconcile  # noqa: PLC0415 —— 对账 import 的东西多，放到用时
+
+    reconcile.kick()  # 契约「四」：tiers 变化 → 尽快对账（关着 / 刚关掉什么都不做）
     return get()
 
 

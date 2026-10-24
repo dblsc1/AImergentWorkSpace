@@ -12,6 +12,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from ..activity import reconcile
 from . import reassign as reassign_impl
 from . import service
 
@@ -53,7 +54,9 @@ class TimerStopOut(BaseModel):
 
 @router.post("/start", response_model=TimerOut)
 def start(body: StartIn) -> dict:
-    return service.start(body.taskId, mode=body.mode)
+    out = service.start(body.taskId, mode=body.mode)
+    reconcile.kick()  # v2.38：手动计时开始 / 结束 / 补登 → 窗口块尽快对账（没打开三级分类什么都不做）
+    return out
 
 
 class CancelledSession(BaseModel):
@@ -78,13 +81,17 @@ class TimerCancelOut(BaseModel):
 
 @router.post("/stop", response_model=TimerStopOut)
 def stop() -> dict:
-    return service.stop()
+    out = service.stop()
+    reconcile.kick()
+    return out
 
 
 @router.post("/cancel", response_model=TimerCancelOut)
 def cancel() -> dict:
     """取消当前计时，不记账。没在计时 → ``NoRunningTimerError`` → 409（映射在 main.py）。"""
-    return service.cancel()
+    out = service.cancel()
+    reconcile.kick()
+    return out
 
 
 class BackfillIn(BaseModel):
@@ -123,7 +130,9 @@ def backfill(body: BackfillIn) -> dict:
     活状态计时的关系」）。拒绝规则见 ``service.backfill``：404/400 的映射在
     ``main.py``（``UnknownTaskError``/``InvalidInputError``，router 不许有
     业务判断）。"""
-    return service.backfill(body.taskId, body.startAt, body.durationSeconds, mode=body.mode)
+    out = service.backfill(body.taskId, body.startAt, body.durationSeconds, mode=body.mode)
+    reconcile.kick()
+    return out
 
 
 # ------------------------------------------------ AI 代理运行（v2.1，契约「AI 代理运行」节）

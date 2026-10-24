@@ -317,6 +317,9 @@ def _bucket(project_id: str, request) -> str:
     return task["id"]
 
 
+TIERS_ON = "已打开三级分类，请在窗口块里分类"
+
+
 def confirm(sug_id: str, task_id: str | None, mode: str, name: str | None = None, request=None,
             proposal_id: str | None = None, project_id: str | None = None, auto: bool | str = False,
             still_wanted=None, report: dict | None = None) -> dict:
@@ -329,6 +332,10 @@ def confirm(sug_id: str, task_id: str | None, mode: str, name: str | None = None
     ``still_wanted``（自动记录用）：占着位、写事实之前最后问一次「这个决定还成立吗」——返回 False 就退出占位、
     409，事实不写（调用方读到决定依据之后，人可能刚否掉了它）。
     v2.20：``report`` = ``{id, author}``，经 AI 报告里人的批准入账（``reports.py``）：同一条路径，事件的 ``ai`` 块多一个出处 ``report``。"""
+    from . import activity_settings  # noqa: PLC0415 —— 设置模块 import 的东西多，放到用时
+
+    if activity_settings.tiers_on():  # v2.38「六」：打开三级分类后不再接受确认（手点、AI 报告批准、自动记录同走这里），免得同一段时间记两次
+        raise ConflictError(TIERS_ON)
     user = current_tenant()
     doc = _get(user, sug_id)
     if doc["status"] == "dismissed":

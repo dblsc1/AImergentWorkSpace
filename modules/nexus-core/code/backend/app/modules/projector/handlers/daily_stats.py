@@ -130,6 +130,23 @@ def handle_reassign(envelope: dict) -> None:
         )
 
 
+def handle_void(envelope: dict) -> None:
+    """吃一条已落库的 ``session.voided``（契约 v2.38）：那一段归日的那天、当前归属那行减掉它的秒数。"""
+    data = envelope.get("data") or {}
+    session = data.get("session")
+    if not isinstance(session, dict):
+        return
+    seconds, date = session.get("durationSeconds"), _day(session.get("startAt"))
+    project, task = data.get("fromProjectId"), data.get("fromTaskId")
+    if (
+        not isinstance(seconds, (int, float)) or isinstance(seconds, bool) or seconds <= 0
+        or date is None or not isinstance(project, str) or not project or not (task is None or isinstance(task, str))
+    ):
+        return
+    repo.apply_daily_stat(user=envelope["user"], dedupe_key=envelope["dedupeKey"], date=date, project_id=project,
+                          task_id=task, seconds=-int(seconds), applied="movedKeys")
+
+
 def read_daily_stats(
     user: str, date_from: str | None = None, date_to: str | None = None
 ) -> list[dict]:

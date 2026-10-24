@@ -43,9 +43,11 @@ def _target(doc: dict, end: datetime, rec: dict | None, choice: dict | None) -> 
 
 def record(device_id: str, docs: list[dict], request: Any) -> None:
     """对新写入的建议做自动记录。记不成的留在待确认，**从不抛**——检测程序只在 2xx 后推进游标，这一步不能让上传失败。"""
+    from . import activity_settings  # noqa: PLC0415
+
     user = current_tenant()
     docs = [d for d in docs if not d["idle"]]
-    if not docs or not detector_service.device_flags(user, device_id)["autoTrack"]:
+    if not docs or activity_settings.tiers_on() or not detector_service.device_flags(user, device_id)["autoTrack"]:
         return
     keys = {d["id"]: auto.window_key(d["app"], d["title"]) for d in docs}
     recs = ask_repo.by_keys(user, sorted(set(keys.values())))

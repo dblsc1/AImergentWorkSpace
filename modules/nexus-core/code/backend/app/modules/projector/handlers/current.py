@@ -68,6 +68,24 @@ def handle_reassign(envelope: dict) -> None:
     )
 
 
+def applied_key_of(session: dict) -> str:
+    return session.get("dedupeKey") if isinstance(session.get("dedupeKey"), str) else ""
+
+
+def handle_void(envelope: dict) -> None:
+    """吃一条已落库的 ``session.voided``（契约 v2.38）：那一段的秒数从它当前的归属减掉。判据同 ``handle_reassign``。"""
+    data = envelope.get("data") or {}
+    session = data.get("session")
+    seconds = session.get("durationSeconds") if isinstance(session, dict) else None
+    ids = (data.get("fromProjectId"), data.get("fromTaskId"))
+    if (
+        not isinstance(seconds, (int, float)) or isinstance(seconds, bool) or seconds <= 0
+        or not all(i is None or isinstance(i, str) for i in ids) or not any(ids)
+    ):
+        return
+    repo.void_session(envelope["user"], envelope["dedupeKey"], int(seconds), *ids, applied_key_of(session))
+
+
 def read_current(user: str) -> dict | None:
     """views 的指定读路径（rules.md §7.4 公开接口）。"""
     return repo.read_current(user)

@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from pymongo import UpdateOne
 from pymongo.errors import DuplicateKeyError
@@ -52,6 +52,35 @@ def day_records(user: str, date: str) -> list[dict]:
     """一天的记录（聚合在 Python 里做：秒数要跨设备取时间并集；一天的记录数量级在万以内，契约「七」）。"""
     return list(_col().find({"user": user, "date": date},
                             {"_id": 0, "blockKey": 1, "keySource": 1, "startTs": 1, "endTs": 1, "app": 1, "seconds": 1}))
+
+
+def touched_blocks(user: str, since: datetime) -> list[tuple[str, str]]:
+    """``startTs ≥ since`` 的记录所在的 ``(date, blockKey)``（对账的候选块）。"""
+    rows = _col().aggregate([{"$match": {"user": user, "startTs": {"$gte": since}}},
+                             {"$group": {"_id": {"d": "$date", "k": "$blockKey"}}}])
+    return [(r["_id"]["d"], r["_id"]["k"]) for r in rows]
+
+
+def dirty_blocks(user: str, since: datetime, mark: datetime, slack: timedelta) -> list[tuple[str, str]]:
+    """上次对账（``mark``）以后有新记录、或上次还没收口（记录结束在 ``mark - slack`` 之后）的块——已收口且没有新数据的块不在里面。"""
+    rows = _col().aggregate([{"$match": {"user": user, "startTs": {"$gte": since},
+                                         "$or": [{"receivedAt": {"$gt": mark}}, {"endTs": {"$gt": mark - slack}}]}},
+                             {"$group": {"_id": {"d": "$date", "k": "$blockKey"}}}])
+    return [(r["_id"]["d"], r["_id"]["k"]) for r in rows]
+
+
+def mark_ledger(user: str, date: str, block_key: str, event_id: str, ivs: list, to_dt) -> None:
+    """覆盖到的记录（与 ``ivs`` 有重叠、还没指向别的事件）写 ``ledgerEventId``（契约「四」）。"""
+    lo, hi = to_dt(min(s for s, _ in ivs)), to_dt(max(e for _, e in ivs))
+    rows = _col().find({"user": user, "date": date, "blockKey": block_key, "ledgerEventId": None,
+                        "startTs": {"$lt": hi}, "endTs": {"$gt": lo}}, {"id": 1, "startTs": 1, "endTs": 1})
+    ids = [r["id"] for r in rows if any(r["startTs"] < to_dt(e) and r["endTs"] > to_dt(s) for s, e in ivs)]
+    if ids:
+        _col().update_many({"user": user, "id": {"$in": ids}, "ledgerEventId": None}, {"$set": {"ledgerEventId": event_id}})
+
+
+def clear_ledger(user: str, event_id: str) -> None:
+    _col().update_many({"user": user, "ledgerEventId": event_id}, {"$set": {"ledgerEventId": None}})
 
 
 def top_app(user: str, date: str, block_key: str) -> str | None:

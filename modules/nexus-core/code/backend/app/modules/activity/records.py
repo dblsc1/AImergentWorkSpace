@@ -2,7 +2,7 @@
 
 逐条校验，坏的进 ``rejected``（部分成功，同建议上传：检测程序只在 2xx 后推进游标，整批 4xx 会永远卡住）。
 一条跨午夜的记录（``NEXUS_TZ`` 本地日）切成两条存，第二条防重键用午夜那一刻。
-本期不写台账（契约「四」，第二部分）。
+上传完触发一次对账（契约「四」）。
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from pydantic import AfterValidator, BaseModel, Field, StrictBool, StrictStr, Va
 
 from ... import config, timeutil
 from ...tenant import current as current_tenant
-from . import block_key, ignore, records_repo
+from . import block_key, ignore, reconcile, records_repo
 from .service import _parse, _reason
 
 MAX_APP, MAX_TITLE = 128, 512
@@ -72,12 +72,14 @@ def upload(device_id: str, records: list[Any]) -> dict:
 
     version = window_rules.block_matchers(user)[0]  # 记下算它时的规则集版本（重算靠它，见 block_key.py）
     accepted = duplicates = 0
+    touched: set[tuple[str, str]] = set()
     for rec, start, end, _seconds in valid:
         given = (rec.block or "").strip()[:block_key.MAX_BLOCK] or None
         key, source = (given, "rule") if given else (block_key.default_key(rec.app[:MAX_APP], rec.title[:MAX_TITLE]), "auto")
         fresh = False
         for p_start, p_end in _pieces(start, end):
             dedupe = f"rec:{device_id}:{_ms(p_start)}"
+            touched.add((timeutil.local_date(p_start, tz), key))
             fresh |= records_repo.insert_if_absent({
                 "user": user, "id": "rec_" + hashlib.sha256(dedupe.encode()).hexdigest()[:20], "dedupeKey": dedupe,
                 "deviceId": device_id, "date": timeutil.local_date(p_start, tz), "startAt": p_start.isoformat(),
@@ -86,4 +88,6 @@ def upload(device_id: str, records: list[Any]) -> dict:
                 "block": given, "blockKey": key, "keySource": source, "rv": version if source == "auto" else None,  # 来自检测程序的不盖：读时检查一次（block_key.py）
                  "receivedAt": now, "ledgerEventId": None})
         accepted, duplicates = accepted + fresh, duplicates + (not fresh)
+    if accepted:
+        reconcile.kick(only=touched)
     return {"accepted": accepted, "duplicates": duplicates, "ignored": ignored, "rejected": rejected}
