@@ -64,8 +64,11 @@ type Config struct {
 	// autoTrack：「允许 AI 管理进行中的任务」。只来自网页设置（detector.settings.v1 v1.3），本机配置里没有这个键——
 	// 服务端要读它才知道该不该显示 / 直接记。applyRemoteSettings 填。
 	autoTrack bool
-	dir       string   // 配置目录；readConfig 填。空（测试直接构造 Config）= 不写留档、代号只在内存里
-	warnings  []string // 配置里不认识的 privacy / idle 键（想关强制脱敏也落在这里），readConfig 填
+	// records / inputActivity：同样只来自网页设置（detector.settings.v1 v1.4）。records nil = 检测程序自己决定。
+	records       *bool
+	inputActivity bool
+	dir           string   // 配置目录；readConfig 填。空（测试直接构造 Config）= 不写留档、代号只在内存里
+	warnings      []string // 配置里不认识的 privacy / idle 键（想关强制脱敏也落在这里），readConfig 填
 }
 
 // Privacy：可选隐私项，语义见 contracts/detector.settings.v1「privacy 节」。
@@ -304,6 +307,8 @@ type State struct {
 	Agents map[string]*agentRun `json:"agents,omitempty"`
 	// Health：检测程序健康状态（v0.4）。由在场心跳那个 goroutine 写，同步一轮回写时原样带过去。
 	Health healthState `json:"health"`
+	// RecordsCursor：原始记录流的游标，独立于 Cursor（契约「原始记录」）。零值 = 没在传，下次开始时从那一刻起记。
+	RecordsCursor time.Time `json:"recordsCursor"`
 }
 
 // healthState：最近一次报给服务端的 awState，和最后处理过的重启 nonce（检测程序重启后不重放同一个）。

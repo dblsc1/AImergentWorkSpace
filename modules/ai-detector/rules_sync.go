@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // 分类规则从 nexus-core 拉（contracts/detector.rules.v1「四」）：服务端存过（version > 0，哪怕是空集）就只用它；
@@ -58,6 +60,8 @@ func remoteRules(cfg Config, c *http.Client, base string) (rules []rule, src str
 			Confidence float64 `json:"confidence"`
 			Enabled    *bool   `json:"enabled"`
 			Mode       string  `json:"mode"` // v1.4："ai" = 交给 AI 判断，没有 taskId / projectId
+			Kind       *string `json:"kind"` // v1.5："block" = 第一级规则（带 block，没有目标）；省略 / null = 旧式规则
+			Block      string  `json:"block"`
 		} `json:"rules"`
 	}
 	if err := json.Unmarshal(b, &r); err != nil {
@@ -69,6 +73,25 @@ func remoteRules(cfg Config, c *http.Client, base string) (rules []rule, src str
 	rules = []rule{}
 	for i, x := range r.Rules {
 		if !on(x.Enabled) {
+			continue
+		}
+		if x.Kind != nil && *x.Kind == "block" {
+			name := strings.TrimSpace(x.Block)
+			ru := rule{Block: name}
+			if x.App != nil {
+				ru.App = *x.App
+			}
+			if x.Title != nil {
+				ru.Title = *x.Title
+			}
+			var e1, e2 error
+			ru.app, e1 = compileCI(ru.App)
+			ru.title, e2 = compileCI(ru.Title)
+			if n := utf8.RuneCountInString(name); n == 0 || n > 64 || e1 != nil || e2 != nil || (ru.App == "" && ru.Title == "") {
+				log.Printf("网页第一级规则 #%d 本程序用不了，跳过（app=%v title=%v）", i+1, e1, e2)
+				continue
+			}
+			rules = append(rules, ru)
 			continue
 		}
 		ru := rule{TaskID: x.TaskID, ProjectID: x.ProjectID, Confidence: x.Confidence, AI: x.Mode == "ai", reason: fmt.Sprintf("网页规则 #%d 命中", i+1)}
