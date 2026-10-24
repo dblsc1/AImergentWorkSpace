@@ -188,7 +188,7 @@
     // 409 → 重读，块还是待处理就用新 seq 自动重试一次，否则轻提示；别的失败 → {err}。opts.quiet = 409 不提示（撤销自己报错）
     function write(kind, key, extra, opts) {
       opts = opts || {};
-      var date = S.date, bk = date + "|" + key;
+      var date = opts.date || S.date, bk = date + "|" + key;
       if (S.busy[bk]) return Promise.resolve({ ok: false, busy: true, err: "上一步还没完成" });
       S.busy[bk] = 1; writing++;
       function once(attempt) {
@@ -207,7 +207,7 @@
         S.busy[bk] = 0; writing--;
         if (r.conflict) { if (!opts.quiet) toast("这一块刚被改过，已刷新"); return { ok: false, err: why(r), conflict: true }; }
         if (!r.ok) return { ok: false, err: why(r) };
-        var b = r.body || {}, item = curItem(key);
+        var b = r.body || {}, item = date === S.date ? curItem(key) : null;
         if (kind === "assign") delete S.chosen[bk];
         if (item && !(typeof b.seq === "number" && item.seq > b.seq)) {
           item.seq = typeof b.seq === "number" ? b.seq : (item.seq || 0) + 1;
@@ -216,18 +216,18 @@
           else if (kind === "assign") { if (item.status !== "generic") item.status = "assigned"; item.via = "human"; item.parts = [Object.assign({ fromTs: null, toTs: null }, extra.taskId ? { taskId: extra.taskId } : {}, extra.projectId ? { projectId: extra.projectId } : {})]; }
           else if (kind === "ignore") { item.status = "ignored"; item.via = "human"; }
         }
-        return { ok: true, body: b };
+        return { ok: true, body: b, date: date };
       });
     }
     function fail(name, r) { if (!r.conflict && !r.busy) toast("没办成：" + name + "：" + r.err, { error: true, ms: 6000 }); X.render(); }
 
     // 撤销 = 按 date+blockKey 取「现在」的块再 reset；失败如实说撤销失败
     // ifSeq 取自刚写成功那一刻的 seq：期间别人又改了这块 → 409 → 撤销失败，不会抹掉别人的改动
-    function undoToast(text, key, name) {
-      var cur = curItem(key), seq = cur ? cur.seq : null;
+    function undoToast(text, key, name, r) {
+      var seq = typeof r.body.seq === "number" ? r.body.seq : null, date = r.date;
       var t = toast(text, { ms: X.UNDO_MS, undo: function () {
         t.remove();
-        write("reset", key, {}, { quiet: true, ifSeq: seq }).then(function (r) {
+        write("reset", key, {}, { quiet: true, ifSeq: seq, date: date }).then(function (r) {
           if (!r.ok) { toast("撤销失败：" + name, { error: true, ms: 6000 }); X.render(); return; }
           return loadBlocks();
         });
@@ -249,7 +249,7 @@
       X.collapseEl(cardEl);
       write("assign", c.name, { taskId: c.target.taskId, projectId: c.target.taskId ? undefined : c.target.projectId, remember: !c.generic }).then(function (r) {
         if (!r.ok) { fail(c.name, r); return; }
-        undoToast("已批准：" + c.name, c.name, c.name); X.render();
+        undoToast("已批准：" + c.name, c.name, c.name, r); X.render();
       });
     }
     function ignoreBlock(c, cardEl) {
@@ -257,7 +257,7 @@
       X.collapseEl(cardEl);
       write("ignore", c.name, { forever: false }).then(function (r) {
         if (!r.ok) { fail(c.name, r); return; }
-        undoToast("已忽略：" + c.name, c.name, c.name); X.render();
+        undoToast("已忽略：" + c.name, c.name, c.name, r); X.render();
       });
     }
     function swipeBlock(c, decision, cardEl) { return decision === "approve" ? approveBlock(c, cardEl) : ignoreBlock(c, cardEl); }
@@ -394,7 +394,7 @@
       write("split", key, { parts: api.partsFromPoints(st.points, st.targets, st.rg.t0, st.rg.t1) }).then(function (r) {
         if (!r.ok) { if (r.conflict) closeSplit(key); else fail(key, r); return; }
         delete S.open[key]; delete S.splits[key];
-        undoToast("已拆分：" + key, key, key); X.render();
+        undoToast("已拆分：" + key, key, key, r); X.render();
       });
     }
 
