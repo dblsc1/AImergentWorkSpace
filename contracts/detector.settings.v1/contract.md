@@ -49,13 +49,15 @@ provides:
   "presence": null,             // v1.1 追加：null | true | false
   "segmentByTitle": true,       // v1.2 追加
   "segmentByTitleApps": null,   // v1.2 追加：null | 字符串数组
-  "autoTrack": false            // v1.3 追加：允许 AI 管理进行中的任务
+  "autoTrack": false,           // v1.3 追加：允许 AI 管理进行中的任务
+  "records": null,              // v1.4 追加：null | true | false
+  "inputActivity": false        // v1.4 追加：记录键盘鼠标活动时间
 }
 ```
 
 **校验（服务端写入时，全部 `422`）**：
 
-- 顶层只许 `schemaVersion`、`privacy`、`idle`、`presence`（v1.1）、`segmentByTitle`、`segmentByTitleApps`（v1.2）、`autoTrack`（v1.3）这几个键；`privacy`、`idle` 里只许下表列出的键。
+- 顶层只许 `schemaVersion`、`privacy`、`idle`、`presence`（v1.1）、`segmentByTitle`、`segmentByTitleApps`（v1.2）、`autoTrack`（v1.3）、`records`、`inputActivity`（v1.4）这几个键；`privacy`、`idle` 里只许下表列出的键。
   **任何未知键 → 422**（包括想关强制脱敏的键，如 `secrets`、`passwords`、`bankCards`）。
 - `schemaVersion` 必填，必须是整数 `1`。`privacy` / `idle` 及其中每个键都**可省略**，省略 = 取缺省值；
   服务端存、回的永远是**补齐缺省值后的完整文档**。
@@ -134,6 +136,15 @@ ActivityWatch 的离开记录（`afkstatus` 桶的 `afk` 区间）缺省从「�
 - **取代条目（2026-10-08）**：本契约与 `detector.rules.v1`、nexus-core v2.2 里「规则 / AI 只给建议，人确认才入账」的承诺，
   **只在这台设备 `autoTrack` 为 `true` 时**、只对已生效规则高把握命中的段被取代；`false` 时一个字不变。
 
+### records 与 inputActivity（v1.4 追加）
+
+| 键 | 缺省 | 含义 |
+|---|---|---|
+| `records` | `null` | 上传原始记录（ai-detector 契约「原始记录」，nexus-core v2.38）。`null` = 跟随账号的三级分类开关（`GET /api/core/activity/settings` 的 `tiers` 为 `true` 才传；拿不到该设置或 404 = 不传）；`false` = 不传；`true` = 传（仍要服务端有这个端点）。严格布尔或 `null`。网页打开三级分类时须向用户说明：会多上传每段 ≥ 1 秒的窗口记录（程序名与脱敏标题，脱敏同段） |
+| `inputActivity` | `false` | 记录键盘鼠标活动时间（ai-detector 契约「键盘鼠标活动」）。**默认关**；网页打开前必须向用户说明：只记每 10 秒有没有碰键盘或鼠标（鼠标移动也算），不记任何按键内容，只存在本机检测程序与用户自己的服务端，随时可关。严格布尔 |
+
+只增的键：v1.3 及更早的检测程序读到会忽略；v1.3 存下的文档没有这两个键，读方按缺省处理。
+
 ## 二、端点（nexus-core 实现，规范性）
 
 均在 `/api/core/` 下，经网关登录门，**按租户隔离**（`X-Nexus-Tenant`，同 nexus-core 其余端点）。
@@ -196,6 +207,7 @@ ActivityWatch 的离开记录（`afkstatus` 桶的 `afk` 区间）缺省从「�
 
 | 日期 | 版本 | 变更 |
 |---|---|---|
+| 2026-10-24 | v1.4（追加式） | 仓主批准三级分类与键盘鼠标活动：追加 `records`（原始记录上传开关，`null` = 自动探测）与 `inputActivity`（缺省关，打开前须说明）。既有键不变 |
 | 2026-10-08 | v1.3 | 追加顶层可选键 `autoTrack`（布尔，缺省 `false`）：「允许 AI 管理进行中的任务」的总开关（仓主 2026-10-08），行为见 nexus-core v2.14。只增，`schemaVersion` 仍为 `1`。附取代条目：「规则只给建议，人确认才入账」仅在本键为 `true` 时被取代 |
 | 2026-10-02 | v1.2 | 追加顶层可选键 `segmentByTitle`（布尔，缺省 `true`）、`segmentByTitleApps`（`null` / 字符串数组，缺省 `null`）：终端按标签页分段可在 Cockpit 设置里开关、改名单。只增，`schemaVersion` 仍为 `1` |
 | 2026-09-30 | v1.1 | 追加顶层可选键 `presence`（`null` / 布尔，缺省 `null`）：在场心跳可在 Cockpit 设置里开关。只增，`schemaVersion` 仍为 `1` |
