@@ -95,6 +95,22 @@ def set_generic(user: str, key: str, on: bool, since: str) -> None:
         _col(_GEN).delete_one({"user": user, "blockKey": key})
 
 
+def swap_generic(user: str, key: str, expect: str | None, new: str | None) -> bool:
+    """撤回用的比较并交换：通用窗口标记的 since 仍是 ``expect``（None = 没标）才改成 ``new``（None = 去掉）；不符 False。"""
+    c = _col(_GEN)
+    if expect is None:
+        if new is None:
+            return c.find_one({"user": user, "blockKey": key}) is None
+        try:
+            c.insert_one({"user": user, "blockKey": key, "since": new})
+        except DuplicateKeyError:
+            return False
+        return True
+    if new is None:
+        return c.delete_one({"user": user, "blockKey": key, "since": expect}).deleted_count == 1
+    return c.update_one({"user": user, "blockKey": key, "since": expect}, {"$set": {"since": new}}).matched_count == 1
+
+
 # ── 第二级规则 ──
 
 
@@ -121,6 +137,14 @@ def upsert_rule(user: str, key: str, fields: dict, keep_existing: bool = False) 
         res = _col(_RULE).update_one({"user": user, "blockKey": key}, upd, upsert=True)
     doc = _col(_RULE).find_one({"user": user, "blockKey": key}, {"_id": 0})
     return doc, res.upserted_id is not None
+
+
+def swap_rule(user: str, key: str, expect: tuple, fields: dict | None) -> bool:
+    """撤回用的比较并交换：这条规则的 (taskId, projectId) 仍是 ``expect`` 才还原（``fields`` 为 None = 删掉）；不符 False。"""
+    q = {"user": user, "blockKey": key, "taskId": expect[0], "projectId": expect[1]}
+    if fields is None:
+        return _col(_RULE).delete_one(q).deleted_count == 1
+    return _col(_RULE).update_one(q, {"$set": fields}).matched_count == 1
 
 
 def delete_rule(user: str, rule_id: str) -> dict | None:

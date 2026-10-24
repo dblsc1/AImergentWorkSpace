@@ -4855,6 +4855,8 @@ MCP 侧见 `contracts/mcp.tools.v2`。
 - **澄清：没有范围头的调用方不能直接施加**：`directApply: true` 只认范围 `write`；没有 `X-Nexus-Scope` 的调用方（人、MCP 对内直连）一律 `403 reason: needWriteScope`，不当作人放行。
 - **MCP 转发范围**：自 `mcp.tools.v2` 起，网关给 MCP 的范围是 `write` 时，MCP 调 nexus-core 的写端点带 `X-Nexus-Scope: write`（MCP 是受信内网服务，同 `X-Nexus-Tenant` 的信任边界）；其余调用方 MCP 不带。nexus-core 现有的 `scope.caller()` 读的就是这个头，不需要改。
 
+- **直接施加撤回的并发（补充，不改行为定义）**：撤回的「之后又被改过」判断与还原写入是同一次条件写（第二级规则按 taskId/projectId、块文档按读到的 seq、通用窗口标记按 since、改挂按最新 `seq`）；比较之后、写入之前又有人改动 → 409，不覆盖较新的决定。直接施加改挂记下的 `before` 为改挂实际写下那一刻的前任归属。问人：已被回答占位（`claimed`）的问题不能撤下（409）。
+
 ## 变更记录
 
 见 `module_docs/contract-changelog.md`（从本文件拆出，只记历史不含规范）。

@@ -96,8 +96,8 @@ def rule_state(user: str, key: str) -> dict | None:
     return None if r is None else {"taskId": r.get("taskId"), "projectId": r.get("projectId"), "via": r["via"], "author": r["author"]}
 
 
-def block_state(user: str, date: str, key: str) -> dict:
-    d = blocks_repo.get_block(user, date, key) or {}
+def block_state(user: str, date: str, key: str, doc: dict | None = None) -> dict:
+    d = (doc if doc is not None else blocks_repo.get_block(user, date, key)) or {}
     return {"doc": {k: d.get(k) for k in ("status", "parts", "via", "ruleId")}, "generic": blocks_repo.generic_since(user).get(key)}  # generic = 标记的 since 日期或 None
 
 
@@ -122,32 +122,35 @@ def _undo_rule(user: str, d: dict) -> None:
     key, before = d["payload"]["blockKey"], d["before"]
     if not _same_rule(rule_state(user, key), d["after"]):
         raise ConflictError("第二级规则在直接施加之后又被改过，不能撤回")
-    cur = blocks_repo.rules_by_keys(user, [key]).get(key)
-    if before is None:
-        if cur:
-            blocks_repo.delete_rule(user, cur["id"])
+    after = d["after"]  # 条件写：规则在比较之后又被改 / 删了，这里落空 → 409，不覆盖更新的决定
+    fields = None if before is None else {"user": user, "blockKey": key, "taskId": before["taskId"], "projectId": before["projectId"],
+                                          "author": before["author"], "via": before["via"], "updatedAt": _now()}
+    if after is None:  # 施加时把规则删了：只在现在仍没有规则时重建
+        ok = fields is None or blocks_repo.upsert_rule(user, key, fields, keep_existing=True)[1]
     else:
-        blocks_repo.upsert_rule(user, key, {"user": user, "blockKey": key, "taskId": before["taskId"], "projectId": before["projectId"],
-                                            "author": before["author"], "via": before["via"], "updatedAt": _now()})
+        ok = blocks_repo.swap_rule(user, key, (after["taskId"], after["projectId"]), fields)
+    if not ok:
+        raise ConflictError("第二级规则刚被别处改动，请重试")
     reconcile.kick(key=key)
 
 
 def _undo_block(user: str, d: dict) -> None:
-    """先还原块文档（比较并交换，失败什么都没动），再还原通用窗口标记（还原成原来的 since）。"""
+    """先还原通用窗口标记（还原成原来的 since），再还原块文档（比较并交换；失败则把标记放回去，整体什么都没动）。"""
     date, key, before = d["payload"]["date"], d["payload"]["blockKey"], d["before"]
-    if block_state(user, date, key) != d["after"]:
+    old = blocks_repo.get_block(user, date, key)  # 比较与还原用同一份读到的文档（seq 来自它）
+    if block_state(user, date, key, old or {}) != d["after"]:
         raise ConflictError("这个块在直接施加之后又被改过，不能撤回")
-    old = blocks_repo.get_block(user, date, key)
     if old is None and before["doc"]["status"] is not None:
         raise ConflictError("这个块的文档已不在，不能撤回")
+    flip = before["generic"] != d["after"]["generic"]
+    if flip and not blocks_repo.swap_generic(user, key, d["after"]["generic"], before["generic"]):  # 先动标记：失败时块文档没动，可重试
+        raise ConflictError("这个块的通用窗口标记刚被别处改动，请重试")
     if old is not None and blocks_repo.put_block(user, date, key, {**before["doc"], "updatedAt": _now()}, old["seq"], old) is None:
+        if flip:
+            blocks_repo.swap_generic(user, key, before["generic"], d["after"]["generic"])  # 块写不进：标记放回去，整体什么都没动
         raise ConflictError("这个块刚被别处改动，请重试")
-    if before["generic"] != d["after"]["generic"]:
-        blocks_repo.set_generic(user, key, False, "")
-        if before["generic"] is not None:
-            blocks_repo.set_generic(user, key, True, before["generic"])
     reconcile.kick(only={(date, key)}, actor="human")
-    if before["generic"] != d["after"]["generic"]:
+    if flip:
         reconcile.kick(key=key, actor="human")
 
 
