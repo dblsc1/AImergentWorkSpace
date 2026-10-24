@@ -1,5 +1,11 @@
 # mcp · 给 AI 代理用的工具（只读 + 只写草稿 / 报告 + 认窗口）
 
+**v0.5（契约 `contracts/mcp.tools.v2`）：** 工具收成 15 个——读 9 个（`Get_Started`、`Get_View`、`Get_Arrangements`、`Get_Now`、`Get_History`、
+`Get_Pending_Classify_Windows`、`Get_Rules`、`Get_Proposals`、`Get_Device_Health`），写 6 个（`CRUD_Windows_Classify_Rules`、`CRUD_Windowsblock_Classify_Rules`、
+`CRUD_Windowsblock`、`CRUD_Honeycomb`、`Submit_Report`、`Submit_Questions_To_Human`）。第一次用先调 `Get_Started`；每个工具带 `help: true` 看用法；
+每次返回带 `note` 与 `permissions`。写工具默认只提议，人在蜂巢旁的决策栏批准；`direct_apply` 要 write 令牌 + 总开关 + 分开关。
+下面是 v1 的说明（v1 的 23 个工具名仍可调，只回迁移说明）。
+
 HoneyComb 的 MCP 服务器（契约 `contracts/mcp.tools.v1`）：把任务树、人的时间、代理时间、在跑的计时、
 待确认的活动建议、以前的归类历史、活动分类规则读给 AI 代理。21 个工具（没有范围头的调用方 20 个；v1.18 加 `propose_project` / `propose_task`：提议新项目 / 项目下的新任务，什么都不创建，用户在「待批准」页批准才建；`list_projects` 带出 `zones` 与 `proposals`）：13 个只读（v1.16 加 `get_detector_health`：检测程序 / ActivityWatch 的状态、最近事故和固定排查提示；用户在自己电脑上打开 `awLogUpload` 后还能看到脱敏的启动日志，没开时结果里带一句让你转告用户的提醒；v1.13 加 `get_report_status`；v1.7 加 `get_match_history`：
 你以前把哪个窗口定到了哪个项目 / 任务，助理归类前先看它）；`propose_detector_rules`（v1.2）

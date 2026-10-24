@@ -70,7 +70,7 @@ consumes:
 
 | 范围 | `tools/list` | 能调 |
 |---|---|---|
-| 没有范围头 | 15 个 | 全部；写工具只能提议，`direct_apply: true` 得 `403`（`reason: needWriteScope`） |
+| 没有范围头 | 15 个 + 2 个自动跟踪工具（`get_window_awaiting_target`、`suggest_window_target`，共 17 个） |
 | `write` | 15 个 | 全部；`direct_apply` 照下面三条判 |
 | `read` | 只列 9 个读工具 | 调写工具 `403`（工具错误，`detail` 说明需要可写令牌） |
 
@@ -212,6 +212,7 @@ id 旁补 `address`（下游已带时原样），加 `note`、`permissions`。�
 
 - 第一级只列 `kind: "block"` 的规则；旧式规则（三级分类前的）不列，`note` 说明有多少条旧规则留着给老检测程序。
 - 规则的 `app` / `title` 是正则，原样带回（同 v1 例外）。
+- `level1.ignores` 的 `titleContains` 只给没有范围头的调用方；`read` / `write` 调用方只给 `hasTitleFilter: bool`（匹配文字可能就是窗口标题的一部分）。
 
 ### `Get_Proposals`
 
@@ -273,7 +274,7 @@ id 旁补 `address`（下游已带时原样），加 `note`、`permissions`。�
 
 - `date` 缺省今天；`block` 块名。
 - `assign`：`target` 必填——块记到哪；对已分类的块 = 改去向。
-- `split`：`parts: [{from, to, target}]`（时刻带偏移，覆盖块的全部时长、不重叠，2–10 段）——**拆块**：一个块前后是两件事时按时间点拆开，分别记。
+- `split`：`parts: [{from, to, target}]`（时刻带偏移，覆盖块的全部时长、不重叠，2–10 段）——**拆块**：一个块前后是两件事时按时间点拆开，分别记。首段开头与末段结尾按当天开头 / 结尾处理，只有中间的切点起作用。
 - `generic`：标成通用窗口（以后每天都要拆，不再问规则）。
 - `ignore`：这一天的这个块不记。
 - `note` 必须提醒两件事：拆块不是普通增删改；同一个窗口反复要分就去改规则。
@@ -327,6 +328,8 @@ v1 的 23 个工具名不出现在 `tools/list`，但仍能调：**不调下游�
 | `propose_project`、`propose_task`、`propose_change` | `CRUD_Honeycomb` |
 
 例：`get_daily_time(fromDate="2026-10-24", toDate="2026-10-24")` → `call: {"name": "Get_History", "arguments": {"fromDate": "2026-10-24", "toDate": "2026-10-24", "who": "human"}}`。
+
+**例外**：`get_window_awaiting_target`、`suggest_window_target` 两个对**没有范围头**的调用方（聊天后端对内直连，给它的自动跟踪）照旧可用并列出（`tools/list` 共 17 个，行为同 v1）；对 `read` / `write` 的外部调用方不列出，调了仍只回迁移说明。
 
 自带聊天后端（`agent.chat.v1`）的系统提示与 opencode 配置同步改用 v2 工具名。
 

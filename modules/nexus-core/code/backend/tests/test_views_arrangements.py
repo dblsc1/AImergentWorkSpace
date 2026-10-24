@@ -78,7 +78,7 @@ def test_each_group_and_priority(client, w):
     assert sorted(g["scheduled"]) == ["今天", "今天结束"]
     assert sorted(g["actionable"]) == sorted(["前置", "下个月", "后继"])
     assert "已完成" not in sum(g.values(), []) and "临时" not in sum(g.values(), []) and "未分类" not in sum(g.values(), [])
-    one = body["overdue"][0]
+    one = next(x for x in body["overdue"] if x["name"] == "逾期")
     assert one["planEnd"] == d(-1) and one["plan"] == plan(-5, -1) and one["address"] == "jy-jgsc-yq"
     assert set(one) == {"taskId", "projectId", "address", "name", "plan", "planEnd", "spentThisRange", "activeNow"}
     stuck = next(x for x in body["overdue"] if x["name"] == "逾期又被卡")
