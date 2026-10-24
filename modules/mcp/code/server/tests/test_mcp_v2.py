@@ -875,3 +875,16 @@ def err_plain(url, name, args, headers=None):
     res = call(url, name, args, headers)
     assert res["isError"] is True
     return res["structuredContent"]["error"]
+
+
+def test_edit_rule_can_clear_title_with_empty_string(servers):
+    out = ok(servers, "CRUD_Windows_Classify_Rules", {"ops": [{"op": "edit", "id": "r_1", "title": ""}]}, W)
+    assert out["results"][0]["ok"] is True
+    assert posts()[0][1]["rule"] == {"id": "r_1", "title": ""}
+
+
+def test_block_write_maps_screened_name_back_to_exact_key(servers, monkeypatch):
+    raw = "a  b" + "x" * 5
+    monkeypatch.setattr("fake_nexus.BLOCK_RULES", {"items": [{"id": "br_9", "blockKey": raw, "taskId": "t_a1"}]})
+    ok(servers, "CRUD_Windowsblock_Classify_Rules", {"ops": [{"op": "delete", "block": "a b" + "x" * 5}]}, W)
+    assert posts()[0][1] == {"op": "delete", "blockKey": raw}

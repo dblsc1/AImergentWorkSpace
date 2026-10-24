@@ -193,7 +193,7 @@
     groups = buildGroups(tree, lists);
     Object.keys(choice).forEach(function (pid) {
       var c = choice[pid];
-      if (c.indexOf(PFX) === 0 ? !((tree.projects || []).some(function (p) { return p.id === c.slice(2); })) : !taskIn(tree, c)) delete choice[pid];
+      if (c.indexOf(PFX) === 0 ? !(((tree && tree.projects) || []).some(function (p) { return p.id === c.slice(2); })) : !taskIn(tree, c)) delete choice[pid];
     });
   }
 
@@ -315,8 +315,7 @@
   }
 
   async function finish() {
-    await load();
-    busy = false;
+    try { await load(); } finally { busy = false; }
     render();
   }
 

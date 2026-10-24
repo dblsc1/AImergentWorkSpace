@@ -862,7 +862,7 @@ def crud_windows_classify_rules(a, c):
                 raise _bad(f"{op} 要 id（取自 Get_Rules 的 level1.rules）")
             if o.get("ignore") or o["id"] in ignores:
                 raise _bad("忽略规则只能新增：改 / 删忽略规则只有人能在页面上做")
-            rule = {"id": o["id"], **({k: o[k] for k in ("app", "title", "block") if o.get(k)} if op == "edit" else {})}
+            rule = {"id": o["id"], **({k: o[k] for k in ("app", "title", "block") if o.get(k) is not None} if op == "edit" else {})}
             if op == "edit" and len(rule) == 1:
                 raise _bad("edit 要带至少一个要改的键（app / title / block）")
         return _outcome(_write("/api/core/activity/proposals/window-rules", _with({"op": op, "rule": rule}, a), c, direct))
@@ -871,13 +871,21 @@ def crud_windows_classify_rules(a, c):
     return {"results": results, "note": _batch_note(results, direct, "规则是正则；写前先看 Get_Pending_Classify_Windows 和 Get_Rules，别重复。")}
 
 
+def _raw_blocks(tenant, day=None) -> dict:
+    """显示用的块名（_screen 压空白 / 截断）→ 下游原样的块名。写入时调用方传的是显示形式，要换回精确的那个。"""
+    keys = [b.get("blockKey") for b in _try_get("/api/core/activity/blocks", {"limit": 1000, **({"date": day} if day else {})}, tenant).get("items", [])]
+    keys += [x.get("blockKey") for x in _try_get("/api/core/activity/block-rules", {}, tenant).get("items", [])]
+    return {_screen(k, MAX_BLOCK): k for k in keys if isinstance(k, str) and _screen(k, MAX_BLOCK) != k}
+
+
 def crud_windowsblock_classify_rules(a, c):
     direct, ops = bool(a.get("direct_apply")), a["ops"]
     tree = _tree(c.tenant) if any(o.get("target") for o in ops) else None
+    raw = _raw_blocks(c.tenant)
 
     def one(o):
         op = o["op"]
-        body: dict = {"op": op, "blockKey": o["block"]}
+        body: dict = {"op": op, "blockKey": raw.get(o["block"], o["block"])}
         if op == "delete":
             if o.get("target"):
                 raise _bad("delete 不要 target")
@@ -910,12 +918,15 @@ def _parts(parts: list, tree: Tree) -> list[dict]:
 def crud_windowsblock(a, c):
     direct, items = bool(a.get("direct_apply")), a["items"]
     tree = _tree(c.tenant) if any(i.get("target") or i.get("parts") for i in items) else None
+    raws: dict = {}
 
     def one(it):
         act = it["action"]
         day = it.get("date") or _today()
         _day("date", day)
-        body: dict = {"action": act, "date": day, "blockKey": it["block"]}
+        if day not in raws:
+            raws[day] = _raw_blocks(c.tenant, day)
+        body: dict = {"action": act, "date": day, "blockKey": raws[day].get(it["block"], it["block"])}
         if act == "assign":
             if not it.get("target") or it.get("parts"):
                 raise _bad("assign 要 target，不收 parts")

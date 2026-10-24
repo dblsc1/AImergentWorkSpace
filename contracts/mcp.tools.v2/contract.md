@@ -351,3 +351,9 @@ v1 的 23 个工具名不出现在 `tools/list`，但仍能调：**不调下游�
 | 日期 | 版本 | 变更 |
 |---|---|---|
 | 2026-10-24 | v2.0 | 仓主批准「蜂巢 MCP v0.5 接口简报」：23 个工具收成 15 个（读 9 写 6）；help / note / permissions；address；写工具默认提议、direct_apply 三条件；v1 名字只回迁移说明 |
+
+### 补充（v0.4 终审，只增不改）
+
+- `CRUD_Windowsblock` / `CRUD_Windowsblock_Classify_Rules` 的 `block` 入参：读出来给调用方的块名是清洗后的显示形式（压空白、超长截断）；写入时服务器把它对回下游原样的块名（当天的块 + 现有第二级规则），对得上就用原样的，对不上就按传入值照发。
+- `CRUD_Windows_Classify_Rules` 的 `edit`：`app` / `title` / `block` 传空字符串也算「要改」（例如 `title: ""` 去掉标题限制），不再被当成没传。
+
