@@ -175,6 +175,7 @@ def permissions(tenant: str | None, scope: str) -> dict:
 # ── 日期与时刻 ─────────────────────────────────────────────────────
 
 
+_CTX = threading.local()   # 当前调用的租户，给懒学时区用
 _LEARNED: tuple[float, timezone | None] = (0.0, None)   # (下次可再问的时刻, 从 nexus-core 学到的时区)
 TZ_TTL = 3600.0
 
@@ -183,7 +184,8 @@ def _tz():
     try:
         import zoneinfo
         return zoneinfo.ZoneInfo(os.environ["NEXUS_TZ"])
-    except Exception:   # 没设 / 镜像里没有时区库：用从 nexus-core 学到的，再不行用进程本地时区
+    except Exception:   # 没设 / 镜像里没有时区库：用从 nexus-core 学到的（要用到时才去问），再不行用进程本地时区
+        _learn_tz(getattr(_CTX, "tenant", None))
         return _LEARNED[1]
 
 
@@ -397,8 +399,9 @@ class Tree:
 
     def candidates(self, text: str) -> list[dict]:
         key = text.strip().lower()
-        by_a = {n["address"].lower(): n for n in self.nodes if n["address"]}
-        by_n = {n["name"].lower(): n for n in self.nodes if isinstance(n["name"], str)}
+        nodes = [n for n in self.nodes if n["raw"].get("kind") != "unclassified"]
+        by_a = {n["address"].lower(): n for n in nodes if n["address"]}
+        by_n = {n["name"].lower(): n for n in nodes if isinstance(n["name"], str)}
         found: list[dict] = []
         for pool, q in ((by_a, key), (by_n, key)):
             for k in difflib.get_close_matches(q, list(pool), n=5, cutoff=0.4):
@@ -409,8 +412,9 @@ class Tree:
     def describe(self, nodes: list[dict]) -> str:
         return "、".join(f"{n['address'] or n['id']}（{_screen(n['name'], 40)}）" for n in nodes)
 
-    def resolve(self, ref, kinds=("zone", "project", "task"), label: str = "") -> dict:
-        """id 或 address → 节点。对不上唯一一个 → 400，列至多 5 个相近的候选。"""
+    def resolve(self, ref, kinds=("zone", "project", "task"), label: str = "", placement: bool = False) -> dict:
+        """id 或 address → 节点。对不上唯一一个 → 400，列至多 5 个相近的候选。
+        项目的「未分类」桶是系统任务：只有 placement（记时间的目标）收，其余一律 400。"""
         if not isinstance(ref, str) or not ref.strip():
             raise _bad(f"{label}不能为空")
         text = ref.strip()
@@ -423,6 +427,8 @@ class Tree:
         if n is None:
             cands = self.candidates(text)
             raise _bad(f"{label}{_clip(text)} 找不到对应的分区 / 项目 / 任务" + (f"。相近的：{self.describe(cands)}" if cands else ""))
+        if n["raw"].get("kind") == "unclassified" and not placement:
+            raise _bad(f"{label}{_clip(text)} 是项目的「未分类」系统桶，只能当记时间的目标（target），不能当别的用；要动请用它所在的项目")
         if n["kind"] not in kinds:
             names = {"zone": "分区", "project": "项目", "task": "任务"}
             raise _bad(f"{label}{_clip(text)} 是{names[n['kind']]}，这里只收{'或'.join(names[k] for k in kinds)}")
@@ -463,7 +469,7 @@ def _enrich(obj, tree: Tree | None):
 
 def _target(tree: Tree, ref, label: str = "target ") -> tuple[str, dict]:
     """任务或项目 → (taskId | projectId, 节点)。「未分类」桶 = 记到它所在的项目（下游对项目目标本来就进桶）。"""
-    n = tree.resolve(ref, ("task", "project"), label)
+    n = tree.resolve(ref, ("task", "project"), label, placement=True)
     if n["raw"].get("kind") == "unclassified":
         n = n["parent"]
     return ("taskId" if n["kind"] == "task" else "projectId"), n
@@ -693,7 +699,8 @@ def get_pending_classify_windows(a, c):
         _day("date", day)
     on = bool((_settings(c.tenant, fresh=True) or {}).get("tiers"))
     if not on:
-        return {"date": day or _today(), "items": [], "tiersOff": True, "truncated": False,
+        return {"date": day or _today(), "items": [], "unassigned": [], "uncaughtSeconds": 0, "unassignedSeconds": 0,
+                "tiersOff": True, "truncated": False,
                 "note": _note("三级分类没打开：请人先在「自动记录」页打开，再来看没有规则收的窗口。")}
     r = _get("/api/core/activity/blocks", {"status": "pending", "limit": 1000, **({"date": day} if day else {})}, c.tenant)
     pend = [b for b in r.get("items", []) if b.get("status") == "pending"]
@@ -1023,7 +1030,7 @@ def crud_honeycomb(a, c):
     dup = None   # (种类, 重名的名字, 同级已占用的名字集合)
 
     def siblings(parent, kind, skip=None):
-        return {_norm(k["name"]) for k in tree.kids[parent["id"]] if k["kind"] == kind and k["id"] != skip}
+        return {_norm(k["name"]) for k in tree.kids[parent["id"]] if k["kind"] == kind and k["id"] != skip and k["raw"].get("kind") != "unclassified"}
 
     if op == "create":
         _need(a, "kind", "name", "to")
@@ -1233,13 +1240,15 @@ def _real_example(req, c: Ctx):
     if not any(k in json.dumps(req) for k in keys):
         return req
     tree = _tree_try(c.tenant)
-    node = next((n for n in tree.nodes if n["kind"] == "project" and n["address"]), None) if tree else None
+    ps = [n for n in tree.nodes if n["kind"] == "project" and n["address"]] if tree else []
+    node = next((n for n in ps if n["raw"].get("status", "active") == "active"), ps[0] if ps else None)
     if node is None:
         return req
+    addr = _screen(node["address"], 64)
 
     def sub(o):
         if isinstance(o, dict):
-            return {k: node["address"] if k in keys and isinstance(v, str) else sub(v) for k, v in o.items()}
+            return {k: addr if k in keys and isinstance(v, str) else sub(v) for k, v in o.items()}
         return [sub(x) for x in o] if isinstance(o, list) else o
     return sub(req)
 
@@ -1265,7 +1274,7 @@ def call(name: str, args, tenant: str | None, scope: str = "write") -> dict:
         return _result(v1_migration.migrate(name, args))
     spec, c = TOOLS[name], Ctx(tenant, scope)
     try:
-        _learn_tz(tenant)
+        _CTX.tenant = tenant
         if name in denied(scope):
             log.info("tool %s -> 403（%s 范围）", name, scope)
             raise ToolError(403, "这个令牌是只读范围（read），不能调写工具；需要可写令牌（write）")

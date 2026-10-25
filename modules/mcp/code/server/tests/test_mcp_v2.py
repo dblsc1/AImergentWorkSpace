@@ -976,3 +976,29 @@ def test_v041_timezone_learned_from_nexus_and_times_localised(servers, monkeypat
     assert inc["at"] == "2026-10-12T17:58:00+08:00"
     assert ok(servers, "Get_Rules", {"level": 1})["level1"]["rules"][0]["aiAt"] == "2026-10-24T09:00:00+08:00"
     assert ok(servers, "Get_Proposals", {"status": "all"})["items"][0]["createdAt"].endswith("+08:00")
+
+
+def test_v041_tz_learning_is_lazy_no_history_call_for_help_or_denied(servers, monkeypatch):
+    monkeypatch.delenv("NEXUS_TZ", raising=False)
+    monkeypatch.setattr(tools, "_LEARNED", (0.0, None))
+    ok(servers, "Get_Now", {"help": True})
+    ok(servers, "CRUD_Honeycomb", {"help": True}, W)
+    call(servers, "CRUD_Honeycomb", {"op": "create"}, R)   # read 范围被拒
+    assert not [1 for _, p, *_ in Fake.requests if p.endswith("views/history")]
+    ok(servers, "Get_Now")
+    assert [1 for _, p, *_ in Fake.requests if p.endswith("views/history")]
+
+
+def test_v041_bucket_only_accepted_as_placement_target(servers):
+    for name, args in [("CRUD_Honeycomb", {"op": "rename", "target": "t_unc_p_3c", "name": "x"}),
+                       ("CRUD_Honeycomb", {"op": "delete", "target": "xx-g-wfl"}),
+                       ("Get_History", {"scope": "t_unc_p_3c"})]:
+        e = err(servers, name, args, W)
+        assert e["status"] == 400 and "系统桶" in e["detail"]
+    out = ok(servers, "CRUD_Honeycomb", {"op": "create", "kind": "task", "name": "未分类", "to": "xx-g"}, W)
+    assert "同名" not in out["note"]   # 桶不算同级重名
+
+
+def test_v041_tiers_off_pending_has_new_fields(servers):
+    r = ok(servers, "Get_Pending_Classify_Windows", headers={"X-Nexus-Tenant": "u_tiersoff"})
+    assert r["unassigned"] == [] and r["uncaughtSeconds"] == 0 and r["unassignedSeconds"] == 0
