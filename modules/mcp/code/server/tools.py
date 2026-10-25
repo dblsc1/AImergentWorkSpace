@@ -1,4 +1,4 @@
-"""mcp.tools.v2 的工具（contracts/mcp.tools.v2）：读 9 个、写 6 个；声明与示例在 specs.py，v1 名字的迁移在 v1_migration.py。
+"""mcp.tools.v2 的工具（contracts/mcp.tools.v2）：读 11 个、写 6 个；声明与示例在 specs.py，v1 名字的迁移在 v1_migration.py。
 
 nexus-core 的路径只在各工具里以字面量出现（没有按参数拼路径的代码路径）：读端用 ``_get``，写端用 ``_write``（POST）。
 租户由 HTTP 层给，原样设到每个下游请求上。除 ``activity/settings``（给 permissions 用，缓存至多 30 秒，按租户分开）外
@@ -175,12 +175,42 @@ def permissions(tenant: str | None, scope: str) -> dict:
 # ── 日期与时刻 ─────────────────────────────────────────────────────
 
 
+_CTX = threading.local()   # 当前调用的租户，给懒学时区用
+_LEARNED: tuple[float, timezone | None] = (0.0, None)   # (下次可再问的时刻, 从 nexus-core 学到的时区)
+TZ_TTL = 3600.0
+
+
 def _tz():
     try:
         import zoneinfo
         return zoneinfo.ZoneInfo(os.environ["NEXUS_TZ"])
-    except Exception:   # 没设 / 镜像里没有时区库：用进程本地时区
-        return None
+    except Exception:   # 没设 / 镜像里没有时区库：用从 nexus-core 学到的（要用到时才去问），再不行用进程本地时区
+        _learn_tz(getattr(_CTX, "tenant", None))
+        return _LEARNED[1]
+
+
+def _learn_tz(tenant) -> None:
+    """MCP 没配 NEXUS_TZ 时，从 nexus-core 的 views/history 的 range.tz（+HH:MM）学它的时区，缓存 TZ_TTL 秒。
+    ponytail: 固定偏移，不跟夏令时；要跟就配 NEXUS_TZ。"""
+    global _LEARNED
+    if os.environ.get("NEXUS_TZ") or _clock() < _LEARNED[0]:
+        return
+    tz = None
+    try:
+        off = _get("/api/core/views/history", {"who": "agent"}, tenant)["range"]["tz"]
+        tz = timezone(timedelta(hours=int(off[:3]), minutes=int(off[0] + off[4:6])))
+    except (ToolError, KeyError, TypeError, ValueError, IndexError):
+        pass
+    _LEARNED = (_clock() + (TZ_TTL if tz else FAIL_TTL), tz or _LEARNED[1])
+
+
+def _loc(ts):
+    """带偏移的时刻文字 → 同一瞬间、本地偏移；不是时刻 / 不带偏移的原样返回。"""
+    try:
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except (AttributeError, ValueError):
+        return ts
+    return dt.astimezone(_tz()).isoformat() if dt.tzinfo else ts   # astimezone(None) = 进程本地时区
 
 
 def _now_local() -> datetime:
@@ -340,6 +370,9 @@ class Tree:
             pn = self._add("project", p, zones.get(p["zoneId"]))
             for t in p.get("tasks") or []:
                 self._add("task", t, pn)
+            if p.get("unclassifiedTaskId") and p["unclassifiedTaskId"] not in self.by_id:   # v0.4.1：「未分类」桶作为任务节点列出
+                self._add("task", {"id": p["unclassifiedTaskId"], "name": "未分类", "address": p.get("unclassifiedAddress"),
+                                   "kind": "unclassified", "done": False}, pn)
 
     def _add(self, kind: str, raw: dict, parent: dict | None) -> dict:
         n = {"kind": kind, "id": raw["id"], "address": raw.get("address"), "name": raw.get("name"), "raw": raw,
@@ -366,8 +399,9 @@ class Tree:
 
     def candidates(self, text: str) -> list[dict]:
         key = text.strip().lower()
-        by_a = {n["address"].lower(): n for n in self.nodes if n["address"]}
-        by_n = {n["name"].lower(): n for n in self.nodes if isinstance(n["name"], str)}
+        nodes = [n for n in self.nodes if n["raw"].get("kind") != "unclassified"]
+        by_a = {n["address"].lower(): n for n in nodes if n["address"]}
+        by_n = {n["name"].lower(): n for n in nodes if isinstance(n["name"], str)}
         found: list[dict] = []
         for pool, q in ((by_a, key), (by_n, key)):
             for k in difflib.get_close_matches(q, list(pool), n=5, cutoff=0.4):
@@ -378,8 +412,9 @@ class Tree:
     def describe(self, nodes: list[dict]) -> str:
         return "、".join(f"{n['address'] or n['id']}（{_screen(n['name'], 40)}）" for n in nodes)
 
-    def resolve(self, ref, kinds=("zone", "project", "task"), label: str = "") -> dict:
-        """id 或 address → 节点。对不上唯一一个 → 400，列至多 5 个相近的候选。"""
+    def resolve(self, ref, kinds=("zone", "project", "task"), label: str = "", placement: bool = False) -> dict:
+        """id 或 address → 节点。对不上唯一一个 → 400，列至多 5 个相近的候选。
+        项目的「未分类」桶是系统任务：只有 placement（记时间的目标）收，其余一律 400。"""
         if not isinstance(ref, str) or not ref.strip():
             raise _bad(f"{label}不能为空")
         text = ref.strip()
@@ -392,6 +427,8 @@ class Tree:
         if n is None:
             cands = self.candidates(text)
             raise _bad(f"{label}{_clip(text)} 找不到对应的分区 / 项目 / 任务" + (f"。相近的：{self.describe(cands)}" if cands else ""))
+        if n["raw"].get("kind") == "unclassified" and not placement:
+            raise _bad(f"{label}{_clip(text)} 是项目的「未分类」系统桶，只能当记时间的目标（target），不能当别的用；要动请用它所在的项目")
         if n["kind"] not in kinds:
             names = {"zone": "分区", "project": "项目", "task": "任务"}
             raise _bad(f"{label}{_clip(text)} 是{names[n['kind']]}，这里只收{'或'.join(names[k] for k in kinds)}")
@@ -431,8 +468,10 @@ def _enrich(obj, tree: Tree | None):
 
 
 def _target(tree: Tree, ref, label: str = "target ") -> tuple[str, dict]:
-    """任务或项目 → (taskId | projectId, 节点)。"""
-    n = tree.resolve(ref, ("task", "project"), label)
+    """任务或项目 → (taskId | projectId, 节点)。「未分类」桶 = 记到它所在的项目（下游对项目目标本来就进桶）。"""
+    n = tree.resolve(ref, ("task", "project"), label, placement=True)
+    if n["raw"].get("kind") == "unclassified":
+        n = n["parent"]
     return ("taskId" if n["kind"] == "task" else "projectId"), n
 
 
@@ -493,7 +532,7 @@ def get_device_health(a, c):
         enums = set()
         events = []
         for e in inc.get("events") or []:
-            events.append({"kind": _screen(e["kind"], 32), "at": e["at"], "endAt": e.get("endAt"),
+            events.append({"kind": _screen(e["kind"], 32), "at": _loc(e["at"]), "endAt": _loc(e.get("endAt")),
                            "durationSeconds": e.get("durationSeconds"),
                            "reason": _screen_or_none(e.get("reason"), 32), "result": _screen_or_none(e.get("result"), 32)})
             enums.add(events[-1]["reason"])
@@ -551,12 +590,13 @@ def get_view(a, c):
         raw, out = n["raw"], {"kind": n["kind"], "id": n["id"], "address": n["address"], "name": n["name"]}
         kids = tree.kids[n["id"]]
         if n["kind"] == "project":
-            tasks = [k["raw"] for k in kids]
+            tasks = [k["raw"] for k in kids if k["raw"].get("kind") != "unclassified"]
             out.update(status=raw.get("status"), progress=raw.get("progress"), deadline=raw.get("deadline"),
                        openTasks=sum(1 for t in tasks if not t.get("done")), doneTasks=sum(1 for t in tasks if t.get("done")))
         elif n["kind"] == "task":
             out.update(done=bool(raw.get("done")), plan=raw.get("plan"),
-                       dependsOn=[tree.address(d) or d for d in raw.get("dependsOn") or []])
+                       dependsOn=[tree.address(d) or d for d in raw.get("dependsOn") or []],
+                       **({"unclassified": True} if raw.get("kind") == "unclassified" else {}))
         if _RANK[n["kind"]] < _RANK[depth]:
             vis = []
             for k in kids:
@@ -646,6 +686,9 @@ def get_history(a, c):
     if a.get("scope"):
         params["scope"] = tree.resolve(a["scope"], label="scope ")["id"]
     r = _get("/api/core/views/history", params, c.tenant)
+    if a.get("records") is False and isinstance((r.get("human") or {}).get("blocks"), list):
+        r["human"]["blocks"] = [{**{k: v for k, v in b.items() if k != "records"}, "recordCount": len(b.get("records") or [])}
+                                for b in r["human"]["blocks"]]
     return {**_screen_tree(_enrich(r, tree)),
             "note": _note("人和 agent 的秒数不能相加；overlap 不是工时；pendingSeconds 是还没分类的时间。")}
 
@@ -656,11 +699,15 @@ def get_pending_classify_windows(a, c):
         _day("date", day)
     on = bool((_settings(c.tenant, fresh=True) or {}).get("tiers"))
     if not on:
-        return {"date": day or _today(), "items": [], "tiersOff": True, "truncated": False,
+        return {"date": day or _today(), "items": [], "unassigned": [], "uncaughtSeconds": 0, "unassignedSeconds": 0,
+                "tiersOff": True, "truncated": False,
                 "note": _note("三级分类没打开：请人先在「自动记录」页打开，再来看没有规则收的窗口。")}
     r = _get("/api/core/activity/blocks", {"status": "pending", "limit": 1000, **({"date": day} if day else {})}, c.tenant)
-    rows = [b for b in r.get("items", []) if b.get("status") == "pending" and b.get("keySource") == "auto"]
+    pend = [b for b in r.get("items", []) if b.get("status") == "pending"]
+    rows = [b for b in pend if b.get("keySource") == "auto"]
+    ua = [b for b in pend if b.get("keySource") != "auto"]
     rows.sort(key=lambda b: -(b.get("seconds") or 0))
+    ua.sort(key=lambda b: -(b.get("seconds") or 0))
     items = []
     for b in rows:
         key = b.get("blockKey") or ""
@@ -670,9 +717,14 @@ def get_pending_classify_windows(a, c):
         apps = b.get("apps") or []
         items.append({"block": _screen(key, MAX_BLOCK), "app": _screen(apps[0] if apps else key.split(" · ", 1)[0]),
                       "titles": titles, "seconds": b.get("seconds"), "records": b.get("records"), "status": "pending"})
+    unassigned = [{"block": _screen(b.get("blockKey") or "", MAX_BLOCK), "seconds": b.get("seconds"), "records": b.get("records"),
+                   **({"ruleId": b["ruleId"]} if b.get("ruleId") else {})} for b in ua]
+    sums = (sum(b.get("seconds") or 0 for b in rows), sum(b.get("seconds") or 0 for b in ua))
     items, cut = _cap(items)
-    return {"date": r.get("date") or day or _today(), "items": items, "truncated": cut,
-            "note": _note("反复出现的窗口用 CRUD_Windows_Classify_Rules 写规则收进一个块；只想今天分一下用 CRUD_Windowsblock。")}
+    unassigned, cut2 = _cap(unassigned)
+    return {"date": r.get("date") or day or _today(), "items": items, "unassigned": unassigned, "uncaughtSeconds": sums[0],
+            "unassignedSeconds": sums[1], "truncated": cut or cut2,
+            "note": _note("items 没规则收，用 CRUD_Windows_Classify_Rules 写规则；unassigned 已被收但没定去向，用 CRUD_Windowsblock 分；两种都要处理。")}
 
 
 def _summary(kind: str, x: dict, tree: Tree | None) -> str:
@@ -732,7 +784,7 @@ def get_rules(a, c):
         out["level1"] = {"version": r.get("version"),
                          "rules": [{"id": x.get("id"), "app": x.get("app"), "title": x.get("title"),
                                     "block": _screen(x.get("block"), MAX_BLOCK), "author": _screen_or_none(x.get("author"), 64),
-                                    "aiAt": x.get("aiAt")} for x in rules[:MAX_ITEMS]],
+                                    "aiAt": _loc(x.get("aiAt"))} for x in rules[:MAX_ITEMS]],
                          "ignores": [{"id": x.get("id"), "app": _screen(x.get("app")),
                                       # 匹配文字可能就是窗口标题的一部分：只给没有范围头的调用方（聊天后端），外部令牌只知道有没有
                                       **({"titleContains": _screen_or_none(x.get("titleContains"), MAX_SCREEN_TEXT)} if c.scope == "full" else
@@ -767,26 +819,26 @@ def get_proposals(a, c):
         for k, x in _flat(r):
             if kind in ("all", k):
                 items.append({"id": x["id"], "kind": k, "status": x.get("status"), "summary": _summary(k, x, tree),
-                              "createdAt": x.get("createdAt"), "decidedAt": x.get("decidedAt"), "answer": None})
+                              "createdAt": _loc(x.get("createdAt")), "decidedAt": _loc(x.get("decidedAt")), "answer": None})
     if kind in ("all", "question"):
         for x in _try_get("/api/core/activity/questions", {"status": status, "limit": 50}, c.tenant).get("items", []):
             ans = x.get("answer")
-            ans = {**ans, "text": _screen_or_none(ans.get("text"), 1000)} if isinstance(ans, dict) else None
+            ans = {**ans, "text": _screen_or_none(ans.get("text"), 1000), **({"at": _loc(ans["at"])} if "at" in ans else {})} if isinstance(ans, dict) else None
             items.append({"id": x["id"], "kind": "question", "status": x.get("status"), "summary": _summary("question", x, tree),
-                          "createdAt": x.get("createdAt"), "decidedAt": (ans or {}).get("at"), "answer": ans})
+                          "createdAt": _loc(x.get("createdAt")), "decidedAt": (ans or {}).get("at"), "answer": ans})
     if kind in ("all", "report"):
         for x in _try_get("/api/core/activity/reports", {"status": status, "limit": 50}, c.tenant).get("items", []):
             items.append({"id": x["id"], "kind": "report", "status": x.get("status"), "summary": _summary("report", x, tree),
-                          "createdAt": x.get("createdAt"), "decidedAt": x.get("decidedAt"), "answer": None})
+                          "createdAt": _loc(x.get("createdAt")), "decidedAt": _loc(x.get("decidedAt")), "answer": None})
         today = _now_local().date()
-        secretary = [{"date": x.get("date"), "updatedAt": x.get("updatedAt"), "revision": x.get("revision")}
+        secretary = [{"date": x.get("date"), "updatedAt": _loc(x.get("updatedAt")), "revision": x.get("revision")}
                      for x in _try_get("/api/core/activity/secretary-reports",
                                        {"from": (today - timedelta(days=6)).isoformat(), "to": today.isoformat()},
                                        c.tenant).get("items", [])]
     if kind in ("all", "direct") and status == "all":   # direct 没有待定状态：status=pending 时不列
         for x in _try_get("/api/core/activity/direct-log", {"limit": 50}, c.tenant).get("items", []):
             items.append({"id": x["id"], "kind": "direct", "status": "undone" if x.get("undoneAt") else "applied",
-                          "summary": _summary("direct", x, tree), "createdAt": x.get("at"), "decidedAt": x.get("undoneAt"),
+                          "summary": _summary("direct", x, tree), "createdAt": _loc(x.get("at")), "decidedAt": _loc(x.get("undoneAt")),
                           "answer": None})
     items.sort(key=lambda i: i.get("createdAt") or "", reverse=True)   # ponytail: 按字符串比较，混着不同偏移时只近似有序
     items, cut = _cap(items)
@@ -818,7 +870,9 @@ def _run(items: list, fn) -> list[dict]:
 def _outcome(r: dict) -> dict:
     """一次 POST 的返回 → 一条结果。直接施加：{applied, directLogId, result}；提议：提议视图。"""
     if r.get("applied"):
-        return {"ok": True, "applied": True, "directLogId": r.get("directLogId")}
+        res = r.get("result")
+        oid = res.get("id") or res.get("ruleId") if isinstance(res, dict) else None   # 新建 / 改动的对象 id；下游没给就不带
+        return {"ok": True, "applied": True, "directLogId": r.get("directLogId"), **({"id": oid} if oid else {})}
     return {"ok": True, "proposalId": r["id"], "status": r["status"]}
 
 
@@ -976,7 +1030,7 @@ def crud_honeycomb(a, c):
     dup = None   # (种类, 重名的名字, 同级已占用的名字集合)
 
     def siblings(parent, kind, skip=None):
-        return {_norm(k["name"]) for k in tree.kids[parent["id"]] if k["kind"] == kind and k["id"] != skip}
+        return {_norm(k["name"]) for k in tree.kids[parent["id"]] if k["kind"] == kind and k["id"] != skip and k["raw"].get("kind") != "unclassified"}
 
     if op == "create":
         _need(a, "kind", "name", "to")
@@ -1012,8 +1066,6 @@ def crud_honeycomb(a, c):
     res = _outcome(r)
     if res.get("applied"):
         note = "已直接施加；人可以在蜂巢旁的决策栏撤回。"
-        if isinstance(r.get("result"), dict) and r["result"].get("id"):
-            res["id"] = r["result"]["id"]
     if dup:
         kind, name, taken = dup
         word = "项目" if kind == "project" else "任务"
@@ -1105,6 +1157,50 @@ def _call_live_v1(name: str, args, c: Ctx) -> dict:
     return _result(out)
 
 
+# ── v2.1 · v0.4.2：Get_Today / Get_Match_History ──────────────────
+
+
+def get_today(a, c):
+    day = a.get("date")
+    if day:
+        _day("date", day)
+    day = day or _today()
+    on = bool((_settings(c.tenant, fresh=True) or {}).get("tiers"))
+    uncaught = unassigned = {"blocks": 0, "seconds": 0}
+    more = False
+    if on:   # 三级分类没开 = 没有块可数
+        r = _get("/api/core/activity/blocks", {"status": "pending", "limit": 1000, "date": day}, c.tenant)
+        rows, more = r.get("items", []), bool(r.get("nextCursor"))   # ponytail: 超过 1000 块只标 truncated，不翻页
+        pend = [b for b in rows if b.get("status") == "pending"]
+        sums = lambda xs: {"blocks": len(xs), "seconds": sum(b.get("seconds") or 0 for b in xs)}  # noqa: E731
+        uncaught = sums([b for b in pend if b.get("keySource") == "auto"])
+        unassigned = sums([b for b in pend if b.get("keySource") != "auto"])
+    gaps = _try_get("/api/core/activity/gaps", {"date": day}, c.tenant).get("gaps", [])   # 老后端没有 = 空
+    proposals = sum(1 for _, x in _flat(_try_get("/api/core/activity/proposals", {"status": "pending", "limit": 200}, c.tenant))
+                    if x.get("status") == "pending")
+    questions = sum(1 for x in _try_get("/api/core/activity/questions", {"status": "pending", "limit": 200}, c.tenant).get("items", [])
+                    if x.get("status") == "pending")
+    submitted = any(x.get("date") == day for x in _try_get("/api/core/activity/secretary-reports", {"from": day, "to": day},
+                                                          c.tenant).get("items", []))
+    clear = on and not more and not (uncaught["blocks"] or unassigned["blocks"] or proposals or questions) and submitted
+    return {"date": day, "uncaught": uncaught, "unassigned": unassigned, "gaps": gaps[:50], "proposalsPending": proposals,
+            "questionsOpen": questions, "reportSubmitted": submitted, "allClear": clear, **({} if on else {"tiersOff": True}),
+            **({"truncated": True} if more else {}),
+            "note": _note("三级分类没打开，块没法数，allClear 恒为 false。" if not on else
+                          "提议和问题数是当前积压，不分日期；allClear 不看 gaps；offline 为 false 的空洞多半是人不在电脑前。")}
+
+
+def get_match_history(a, c):
+    block, app, title = a.get("block"), a.get("app"), a.get("title")
+    if (block is None) == (app is None and title is None) or (block is None and (app is None or title is None)):
+        raise _bad("block 与 app+title 二选一：要么给 block，要么 app 和 title 同时给")
+    days = a.get("days", 30)
+    r = _get("/api/core/activity/blocks/history", {**({"block": block} if block is not None else {"app": app, "title": title}),
+                                                  "days": days}, c.tenant)
+    return {**_screen_tree({"query": r.get("query"), "days": days, "destinations": r.get("destinations", [])}),
+            "note": _note("只列已经定下来的去向，不猜；destinations 为空 = 这段时间里没有归过类。times 是归过几次。")}
+
+
 # ── 声明与分发 ─────────────────────────────────────────────────────
 
 _HANDLERS = {
@@ -1115,6 +1211,7 @@ _HANDLERS = {
     "CRUD_Windowsblock_Classify_Rules": crud_windowsblock_classify_rules, "CRUD_Windowsblock": crud_windowsblock,
     "CRUD_Honeycomb": crud_honeycomb, "Submit_Report": submit_report,
     "Submit_Questions_To_Human": submit_questions_to_human,
+    "Get_Today": get_today, "Get_Match_History": get_match_history,
 }
 #: 工具名 → 声明（specs.py）
 TOOLS = {t["name"]: t for t in specs.SPECS}
@@ -1144,7 +1241,7 @@ _V1_LIVE_LIST = [
 
 
 def listed(scope: str) -> list:
-    """tools/list：read 范围 9 个读工具；write 15 个；没有范围头 15 个 + 自动跟踪的两个 v1 工具（共 17）。"""
+    """tools/list：read 范围 11 个读工具；write 17 个；没有范围头 17 个 + 自动跟踪的两个 v1 工具（共 19）。"""
     hidden = denied(scope)
     return [t for t in TOOL_LIST if t["name"] not in hidden] + (_V1_LIVE_LIST if scope == "full" else [])
 
@@ -1182,12 +1279,31 @@ def _screen_all(o):
     return _screen(o, MAX_ERR) if isinstance(o, str) else o
 
 
+def _real_example(req, c: Ctx):
+    """示例里的 scope / target 占位换成调用方树里真实的一个地址（读不到树就留着占位）。"""
+    keys = {"scope", "target"}
+    if not any(k in json.dumps(req) for k in keys):
+        return req
+    tree = _tree_try(c.tenant)
+    ps = [n for n in tree.nodes if n["kind"] == "project" and n["address"]] if tree else []
+    node = next((n for n in ps if n["raw"].get("status", "active") == "active"), ps[0] if ps else None)
+    if node is None:
+        return req
+    addr = _screen(node["address"], 64)
+
+    def sub(o):
+        if isinstance(o, dict):
+            return {k: addr if k in keys and isinstance(v, str) else sub(v) for k, v in o.items()}
+        return [sub(x) for x in o] if isinstance(o, list) else o
+    return sub(req)
+
+
 def _fail(e: ToolError, spec: dict | None, c: Ctx) -> dict:
     err = {"status": e.status, "detail": _screen(e.detail, MAX_ERR)}
     if e.errors is not None:
         err["errors"] = _screen_all(e.errors)
     if e.status == 400 and spec:
-        err["example"] = spec["example"]["request"]
+        err["example"] = _real_example(spec["example"]["request"], c)
     err["hint"] = specs.HINT
     return _result({"error": err, "permissions": permissions(c.tenant, c.scope)}, error=True)
 
@@ -1203,6 +1319,7 @@ def call(name: str, args, tenant: str | None, scope: str = "write") -> dict:
         return _result(v1_migration.migrate(name, args))
     spec, c = TOOLS[name], Ctx(tenant, scope)
     try:
+        _CTX.tenant = tenant
         if name in denied(scope):
             log.info("tool %s -> 403（%s 范围）", name, scope)
             raise ToolError(403, "这个令牌是只读范围（read），不能调写工具；需要可写令牌（write）")

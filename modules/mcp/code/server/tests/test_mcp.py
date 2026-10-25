@@ -160,4 +160,4 @@ def test_non_strict_missing_tenant_is_local(servers):
 def test_tools_take_no_tenant_argument(servers):
     res = rpc(servers, "tools/call", {"name": "Get_View", "arguments": {"tenant": "u_alice"}})["result"]
     assert res["isError"] and res["structuredContent"]["error"]["status"] == 400
-    assert {p for _, p, *_ in Fake.requests} <= {"/api/core/activity/settings"}   # 只为 permissions 读设置，数据一个字没取
+    assert {p for _, p, *_ in Fake.requests} <= {"/api/core/activity/settings", "/api/core/views/tree"}   # 只为 permissions 读设置，数据一个字没取

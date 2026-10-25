@@ -152,6 +152,7 @@ services:
     networks: [honeycomb-net, honeycomb-agent-net]
     environment:
       NEXUS_CORE_URL: http://nexus-core:8000
+      NEXUS_TZ: ${HONEYCOMB_TZ:-Asia/Shanghai}   # 与 nexus-core 同一个时区（没配时 MCP 取 nexus-core 返回里带的）
       # 与 nexus-core 同一个开关：多用户部署缺租户头即 401（mcp.tools.v1 第二节）
       NEXUS_TENANT_STRICT: ${NEXUS_TENANT_STRICT:-0}
       # 浏览器 Origin 白名单（逗号分隔、完全相等，如 https://example.com:8443）。缺省空 = 浏览器一律 403

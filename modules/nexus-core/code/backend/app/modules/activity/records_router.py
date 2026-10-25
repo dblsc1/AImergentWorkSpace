@@ -10,10 +10,10 @@ from __future__ import annotations
 from datetime import date
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field, StrictInt, field_validator
 
-from . import input_activity, records
+from . import gaps, input_activity, records
 from .ignore_router import need_bearer, no_bearer
 
 router = APIRouter(prefix="/activity", tags=["activity"])
@@ -57,3 +57,14 @@ def upload_input(body: InputIn) -> dict:
 @router.get("/input", dependencies=[Depends(no_bearer)])
 def get_input(date: date) -> dict:  # noqa: A002 —— 查询参数名即契约
     return input_activity.day(date.isoformat())
+
+
+@router.get("/gaps", dependencies=[Depends(no_bearer)])
+def get_gaps(date: date | None = None) -> dict:  # noqa: A002
+    return gaps.gaps(date)
+
+
+@router.get("/blocks/history", dependencies=[Depends(no_bearer)])
+def blocks_history(block: Annotated[str | None, Query(min_length=1, max_length=1000)] = None, app: str | None = None,
+                   title: str | None = None, days: Annotated[int, Query(ge=1, le=90)] = 30) -> dict:
+    return gaps.match_history(block, app, title, days)

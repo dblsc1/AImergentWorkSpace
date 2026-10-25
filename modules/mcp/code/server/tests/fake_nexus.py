@@ -46,7 +46,7 @@ def tree_for(tenant):
     zones = [_n("z_7f", "Z01", "学习", "xx"), _n("z_e", "Z02", "空分区", "kf")]
     projects = [
         _n("p_3c", "Z01-P01", "garden", "xx-g", zoneId="z_7f", status="active", progress=0.5, deadline=None, tasks=tasks,
-           unclassifiedTaskId="t_unc_p_3c"),
+           unclassifiedTaskId="t_unc_p_3c", unclassifiedAddress="xx-g-wfl"),
         _n("p_new", "Z01-P02", "刚建的", "xx-gjd", zoneId="z_7f", status="active", progress=0, deadline="2026-10-10", tasks=[]),
         _n("p_old", "Z01-P03", "做完了", "xx-zwl", zoneId="z_7f", status="done", progress=1, deadline=None, tasks=[]),
     ]
@@ -126,6 +126,8 @@ HISTORY = {
               "segments": [{"from": "x", "to": "y", "seconds": 60, "status": "pending", "eventId": None, "taskId": None,
                             "projectId": None, "address": None, "window": EVIL, "onAgentRun": None}]},
     "agents": {"workingSeconds": 4310, "byDay": [], "byAgent": []}, "truncated": False}
+WIN_BLOCKS = [{"blockKey": "示例文档", "seconds": 90, "records": [{"from": "a", "to": "b", "seconds": 60, "app": "x", "title": "y"},
+                                                              {"from": "c", "to": "d", "seconds": 30, "app": "x", "title": "y"}]}]
 ARRANGEMENTS = {"today": "2026-10-24", "range": "today", "from": "2026-10-24", "to": "2026-10-24", "scheduled": [], "actionable": [],
                 "blocked": [], "overdue": [], "stale": [], "truncated": False}
 DET_DEVICES = {
@@ -142,6 +144,22 @@ INC_BASE = {"now": "2026-10-12T10:00:00+00:00", "lastReportAt": "2026-10-12T09:5
                         "reason": "daily_cap", "result": None},
                        {"kind": "restart_result", "at": "2026-10-12T09:50:00+00:00", "endAt": None, "durationSeconds": None,
                         "reason": "not_up", "result": "failed"}]}
+
+
+GAPS = {"date": "2026-10-24", "gaps": [{"from": "2026-10-24T12:00:00+08:00", "to": "2026-10-24T13:25:00+08:00", "seconds": 5100,
+                                          "detectorOffline": True}]}
+MATCH = {"query": {"block": "示例文档"}, "days": 30, "destinations": [
+    {"taskId": "t_a1", "projectId": "p_3c", "address": "xx-g-xtsc", "name": "写提示词", "times": 5, "seconds": 3600,
+     "lastAt": "2026-10-23T11:00:00+08:00", "via": "rule"}]}
+
+
+def match_for(q):
+    """blocks/history：按 app+title 查时 query 回 {app, title}（同 nexus-core）。"""
+    out = dict(MATCH)
+    if "block" not in q:
+        out["query"] = {"app": q["app"][0], "title": q["title"][0]}
+    out["days"] = int(q.get("days", ["30"])[0])
+    return out
 
 
 class Fake:
@@ -190,7 +208,7 @@ def post_result(path, q, tenant, body, scope):
             return 403, {"detail": "总开关没开", "reason": "agentDirectOff"}
         if scope != "write":
             return 403, {"detail": "needs write", "reason": "needWriteScope"}
-        return 200, {"applied": True, "directLogId": f"dl_{Fake.counter}", "result": {}}
+        return 200, {"applied": True, "directLogId": f"dl_{Fake.counter}", "result": {"ruleId": "r_new1"} if path.endswith("window-rules") else {}}
     text = json.dumps(body, ensure_ascii=False)
     if "CONFLICT" in text:
         return 409, {"detail": "通用窗口不能写第二级规则"}
@@ -207,7 +225,7 @@ def post_result(path, q, tenant, body, scope):
 def respond(method, path, q, tenant, body, scope):
     one = lambda k, d=None: q.get(k, [d])[0]  # noqa: E731
     if tenant == "u_old" and path.startswith("/api/core/activity/") and path.split("/")[4] in (
-            "settings", "blocks", "block-rules", "questions", "secretary-reports", "direct-log", "ignores", "proposals"):
+            "settings", "gaps", "blocks", "block-rules", "questions", "secretary-reports", "direct-log", "ignores", "proposals"):
         return 404, {"detail": "Not Found"}
     if method == "POST":
         return post_result(path, q, tenant, body, scope)
@@ -230,9 +248,12 @@ def respond(method, path, q, tenant, body, scope):
         "/api/core/views/current": lambda: current_for(tenant),
         "/api/core/views/agent-time": lambda: {"today": "2026-10-24", "open": [
             {"runId": "run_9", "agent": "codex", "workingSeconds": 600, "elapsedSeconds": 1200}]},
-        "/api/core/views/history": lambda: HISTORY,
+        "/api/core/views/history": lambda: ({**HISTORY, "human": {**HISTORY["human"], "blocks": WIN_BLOCKS}}
+                                            if one("detail") == "windows" and "blocks" not in HISTORY["human"] else HISTORY),
         "/api/core/views/arrangements": lambda: ARRANGEMENTS,
         "/api/core/activity/blocks": lambda: BLOCKS,
+        "/api/core/activity/gaps": lambda: GAPS,
+        "/api/core/activity/blocks/history": lambda: match_for(q),
         "/api/core/detector/rules": lambda: RULES,
         "/api/core/activity/block-rules": lambda: BLOCK_RULES,
         "/api/core/activity/ignores": lambda: IGNORES,

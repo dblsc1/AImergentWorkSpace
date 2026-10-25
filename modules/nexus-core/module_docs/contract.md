@@ -690,6 +690,8 @@ consumes:
 | GET | `/api/core/activity/direct-log` | 查询 `date?`、`limit?`（1–200，缺省 50） | `{items[]}`（不含 `before`）；人与 MCP 可读 | ✅ 已实现（v2.38） |
 | GET | `/api/core/views/history` | 查询 `from?`、`to?`、`who?`、`detail?`、`scope?` | 见「MCP v0.5 的后端」二 | ✅ 已实现（v2.39） |
 | GET | `/api/core/views/arrangements` | 查询 `range?`、`scope?` | 见「MCP v0.5 的后端」三 | ✅ 已实现（v2.39） |
+| GET | `/api/core/activity/gaps` | 查询 `date?` | `{date, gaps[]}`（见「v0.4.2：空洞与匹配历史」） | ✅ 已实现（v2.40） |
+| GET | `/api/core/activity/blocks/history` | 查询 `block` 或 `app`+`title`、`days?`（1..90，缺省 30） | `{query, days, destinations[]}`（同上） | ✅ 已实现（v2.40） |
 | POST / GET | `/api/core/activity/secretary-reports` | `{date?, text, author?}` / 查询 `date` 或 `from&to` | 见「MCP v0.5 的后端」4.1 | ✅ 已实现（v2.39） |
 | POST / GET | `/api/core/activity/questions` | `{questions[1..10]}` / 查询 `status?`、`limit?` | 见「MCP v0.5 的后端」4.2 | ✅ 已实现（v2.39） |
 | POST | `/api/core/activity/questions/{id}/answer\|dismiss` | `{option?, text?}` / 无 | 只许人；见 4.2 | ✅ 已实现（v2.39） |
@@ -4761,6 +4763,7 @@ MCP 侧见 `contracts/mcp.tools.v2`。
   - `confirmedSeconds` / `byTarget` / 已入账段 = 台账里**所有** `session.completed`（任何 `source`，作废的除外），按当前归属（含改挂），按投影的同一口径归日。代理的运行是 `agent.run.completed`，从不进人的部分。
   - `pendingSeconds` = 还没分类的时间：tiers 开 = 范围内 `pending` 与 `generic`（还没拆完）窗口块里、尚未入账的记录秒数（同一时刻多台设备取并集），含今天还在记的；`ignored` 的不算。tiers 关 = 范围内待确认建议的秒数（同 `activity/suggestions/pending-days` 口径）。
   - `scope` 只过滤已入账的部分；`pending` 的没有归属，给了 `scope` 时 `pendingSeconds` 为 `null`、不出 pending 段。
+  - **v0.4.1（追加）**：`human` 追加 `pendingUncaughtSeconds`（还没分类的时间里，第一级规则没收的块，即 `keySource: auto`）与 `pendingUnassignedSeconds`（第一级收了、第二级还没定去向的块）；两者之和 = `pendingSeconds`。tiers 关时前者等于 `pendingSeconds`、后者为 0；给了 `scope` 时不出这两项。
 - **`human.segments[]`**（按 `from` 升序）：`{from, to, seconds, status, eventId, taskId, projectId, address, window, onAgentRun}`。
   - `confirmed` 段：一条 `session.completed` 一段，`eventId` = 它的 id。
   - `pending` 段：tiers 开 = 每个待分类块的每一段连续记录（按「三级分类」四的 300 秒间隔切段）一段，`window` = 块名；tiers 关 = 每条待确认建议一段。`eventId`、`taskId`、`projectId`、`address` 为 `null`。
@@ -4857,6 +4860,19 @@ MCP 侧见 `contracts/mcp.tools.v2`。
 
 - **直接施加撤回的并发（补充，不改行为定义）**：撤回的「之后又被改过」判断与还原写入是同一次条件写（第二级规则按 taskId/projectId、块文档按读到的 seq、通用窗口标记按 since、改挂按最新 `seq`）；比较之后、写入之前又有人改动 → 409，不覆盖较新的决定。直接施加改挂记下的 `before` 为改挂实际写下那一刻的前任归属。问人：已被回答占位（`claimed`）的问题不能撤下（409）。
 - **澄清：v0.4 终审的并发与长度补充（只增不改）**：AI 报告的批准会先占住这一条读到时的版本，期间改目标 / 拆条 `409`；占不上（刚被改动 / 别的批准占着）则这次不做、条原样返回。`POST activity/proposals/block-rules` 的 `blockKey` 上限与块接口一致（1000）。原始记录上传的 `rv` 一律不盖，读块时按当前规则检查一次再盖。
+
+## v0.4.2：空洞与匹配历史（v2.40，追加式）
+
+两个只读端点，租户隔离同其他 `activity/*`；日界、所有时刻都按 `NEXUS_TZ`，带偏移。
+
+- `GET activity/gaps?date=`（缺省今天）→ `{date, gaps: [{from, to, seconds, detectorOffline}]}`。区间是当天 08:00 到现在（过去的日子到当天结束）；
+  依据原始记录（`activity_records`）与已入账的段（`session` 段：手动计时、旧自动记录，没有原始记录）的时间并集，**两者都没有且长于 10 分钟**的空档（含 08:00 到第一条记录之间、最后一条到现在之间），按时间升序、至多 50 段。
+  `detectorOffline`：与该租户任一设备的 `detector_offline` 事故区间（`at`…`endAt`）有交集。空洞不依赖事故（掉线期间的记录事后补传，可能仍有记录）。
+  `views/history` 的 `human` 在 `detail=segments` 且没给 `scope` 时追加同一口径的 `gaps`（范围内各天依次拼接，至多 50 段；空洞不属于任何任务，给了 `scope` 就不出这个键）。
+  掉线区间还包括此刻正在静默的（健康报告停了超过 90 秒，事故要等下一份报告才写）：`(最后一份报告, 现在)`。
+- `GET activity/blocks/history?block=|app=&title=&days=` → `{query, days, destinations: [{taskId, projectId, address, name, times, seconds, lastAt, via}]}`。
+  `block` 与 `app`+`title` 二选一（否则 422）；`days` 1..90（越界 422）。取过去 `days` 天里命中的窗口块（`app`/`title` 与记录完全相同）中状态为 `assigned` 的，
+  按 `parts` 汇总去向（只聚合命中的块）：`times` = 块数、`seconds` = 该去向的秒数、`lastAt`/`via` 取最近一块的；`times` 降序，至多 20 条；任务 / 项目已删的不出；查不到给 `[]`。
 
 ## 变更记录
 

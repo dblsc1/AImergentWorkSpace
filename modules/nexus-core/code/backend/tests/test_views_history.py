@@ -189,6 +189,15 @@ def test_pending_blocks_when_tiers_on(client):
     assert sum(s["seconds"] for s in h["segments"] if s["status"] == "pending") == 120
 
 
+def test_pending_split_uncaught_vs_unassigned(client):
+    tiers(client)
+    upload(client, [rec(D, "09:00:00", "09:10:00", title="doc"),
+                    rec(D, "10:00:00", "10:03:00", title="x", block="香草")])   # 带 block = 第一级收了、第二级没定
+    for detail in ("summary", "segments"):
+        h = get(client, HIST, **span(detail=detail))["human"]
+        assert (h["pendingUncaughtSeconds"], h["pendingUnassignedSeconds"], h["pendingSeconds"]) == (600, 180, 780)
+
+
 def test_pending_union_across_devices(client):
     tiers(client)
     upload(client, [rec(D, "09:00:00", "09:10:00", title="doc")], device="dev_aaaa")

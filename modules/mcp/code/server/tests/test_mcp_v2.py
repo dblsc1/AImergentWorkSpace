@@ -16,7 +16,7 @@ from fake_nexus import EVIL, W, R, Fake, call, err, ok, post, rpc
 
 ALICE = {"X-Nexus-Tenant": "u_alice"}
 READS = ["Get_Started", "Get_View", "Get_Arrangements", "Get_Now", "Get_History", "Get_Pending_Classify_Windows", "Get_Rules",
-         "Get_Proposals", "Get_Device_Health"]
+         "Get_Proposals", "Get_Device_Health", "Get_Today", "Get_Match_History"]
 WRITES = ["CRUD_Windows_Classify_Rules", "CRUD_Windowsblock_Classify_Rules", "CRUD_Windowsblock", "CRUD_Honeycomb",
           "Submit_Report", "Submit_Questions_To_Human"]
 HINT = "带 help: true 再调一次看用法；不确定就调 Get_Started"
@@ -26,7 +26,8 @@ REGISTERED = {
             "/api/core/views/agent-time", "/api/core/views/history", "/api/core/activity/blocks", "/api/core/detector/rules",
             "/api/core/activity/block-rules", "/api/core/activity/ignores", "/api/core/activity/proposals",
             "/api/core/activity/questions", "/api/core/activity/secretary-reports", "/api/core/activity/reports",
-            "/api/core/activity/direct-log", "/api/core/detector/devices", "/api/core/detector/incidents"},
+            "/api/core/activity/direct-log", "/api/core/detector/devices", "/api/core/detector/incidents", "/api/core/activity/gaps",
+            "/api/core/activity/blocks/history"},
     "POST": {"/api/core/activity/proposals/window-rules", "/api/core/activity/proposals/ignores",
              "/api/core/activity/proposals/block-rules", "/api/core/activity/proposals/block-actions",
              "/api/core/activity/proposals/projects", "/api/core/activity/proposals/tasks",
@@ -49,11 +50,11 @@ def posts():
 LIVE = ["get_window_awaiting_target", "suggest_window_target"]
 
 
-@pytest.mark.parametrize("headers,want", [({}, 17), (W, 15), (R, 9), ({"X-Nexus-Scope": ""}, 17)])
+@pytest.mark.parametrize("headers,want", [({}, 19), (W, 17), (R, 11), ({"X-Nexus-Scope": ""}, 19)])
 def test_tools_list_by_scope(servers, headers, want):
     got = names(servers, headers)
     assert len(got) == want
-    assert got == (READS if want == 9 else READS + WRITES + (LIVE if want == 17 else []))
+    assert got == (READS if want == 11 else READS + WRITES + (LIVE if want == 19 else []))
 
 
 def test_tools_list_schemas_and_annotations(servers):
@@ -68,7 +69,7 @@ def test_tools_list_schemas_and_annotations(servers):
         else:
             assert a["readOnlyHint"] is True
         assert t["description"]
-    assert len(specs.SPECS) == 15 and set(tools.WRITES) == set(WRITES)
+    assert len(specs.SPECS) == 17 and set(tools.WRITES) == set(WRITES)
 
 
 def test_server_instructions_is_one_sentence(servers):
@@ -100,6 +101,7 @@ def test_help_ignores_other_args_but_checks_help_type(servers):
 def test_every_success_has_note_and_permissions(servers):
     cases = [("Get_Started", {}), ("Get_View", {}), ("Get_Arrangements", {}), ("Get_Now", {}), ("Get_History", {}),
              ("Get_Pending_Classify_Windows", {}), ("Get_Rules", {}), ("Get_Proposals", {}), ("Get_Device_Health", {}),
+             ("Get_Today", {}), ("Get_Match_History", {"block": "示例文档"}),
              ("CRUD_Windows_Classify_Rules", {"ops": [{"op": "add", "app": "a", "block": "b"}]}),
              ("CRUD_Windowsblock_Classify_Rules", {"ops": [{"op": "add", "block": "b", "target": "xx-g"}]}),
              ("CRUD_Windowsblock", {"items": [{"action": "generic", "block": "b"}]}),
@@ -170,7 +172,8 @@ def test_403_on_write_clears_settings_cache(servers):
 def test_bad_args_400_with_example_and_fixed_hint(servers, name, args):
     e = err(servers, name, args, W)
     assert e["status"] == 400 and e["detail"]
-    assert e["example"] == tools.TOOLS[name]["example"]["request"]
+    req = tools.TOOLS[name]["example"]["request"]
+    assert e["example"] == tools._real_example(req, tools.Ctx(None, "write"))   # scope / target 换成真地址，其余不动
     tools._check(tools.TOOLS[name]["inputSchema"], e["example"], "")   # 示例本身合法
     assert not Fake.bodies
 
@@ -396,8 +399,8 @@ def test_get_proposals_kinds_status_and_order(servers):
     assert st["aq_1"] == "answered" and st["rp_1"] == "approved"
     q = next(i for i in r["items"] if i["kind"] == "question")
     assert q["answer"]["recorded"] is True and q["answer"]["eventId"] == "evt_9" and "‮" not in q["answer"]["text"]
-    assert q["decidedAt"] == "2026-10-24T10:05:00+08:00"
-    assert r["secretaryReports"] == [{"date": "2026-10-24", "updatedAt": "2026-10-24T12:00:00+08:00", "revision": 2}]
+    assert q["decidedAt"] == "2026-10-24T02:05:00+00:00"   # 同一瞬间，换成 MCP 的时区（测试里是 UTC）
+    assert r["secretaryReports"] == [{"date": "2026-10-24", "updatedAt": "2026-10-24T04:00:00+00:00", "revision": 2}]
     nt = next(i for i in r["items"] if i["id"] == "nt_2")   # 项目提议下挂的任务提议也摊平
     assert nt["kind"] == "task"
     assert next(i for i in r["items"] if i["id"] == "nb_1")["summary"] == "第二级：示例文档 → xx-g-xtsc"
@@ -920,3 +923,144 @@ def test_fail_screens_downstream_errors_list():
     errs = tools._screen_all(e.errors)
     assert "SECRET" not in json.dumps(errs) and "‮" not in json.dumps(errs, ensure_ascii=False)
     assert errs[0]["loc"] == ["body", "blockKey"]
+
+
+# ── v0.4.1 ────────────────────────────────────────────────────────
+
+
+def test_v041_pending_unassigned_split(servers):
+    r = ok(servers, "Get_Pending_Classify_Windows")
+    assert [i["seconds"] for i in r["items"]] == [2520, 60]   # items 不变
+    assert r["unassigned"] == [{"block": "示例文档", "seconds": 9000, "records": 9}]
+    assert (r["uncaughtSeconds"], r["unassignedSeconds"]) == (2580, 9000)
+
+
+def test_v041_history_records_false(servers):
+    full = ok(servers, "Get_History", {"detail": "windows"})["human"]["blocks"]
+    assert len(full[0]["records"]) == 2 and "recordCount" not in full[0]
+    b = ok(servers, "Get_History", {"detail": "windows", "records": False})["human"]["blocks"][0]
+    assert "records" not in b and b["recordCount"] == 2 and b["seconds"] == 90
+
+
+def test_v041_direct_apply_returns_object_id(servers):
+    r = ok(servers, "CRUD_Windows_Classify_Rules", {**RULE_ADD, "direct_apply": True}, W)["results"][0]
+    assert r["id"] == "r_new1" and r["directLogId"].startswith("dl_")
+    r = ok(servers, "CRUD_Windowsblock_Classify_Rules",
+           {"ops": [{"op": "add", "block": "b", "target": "xx-g"}], "direct_apply": True}, W)["results"][0]
+    assert "id" not in r   # 下游没给就不带
+
+
+def test_v041_error_example_uses_real_address(servers):
+    e = err(servers, "CRUD_Windowsblock_Classify_Rules", {}, W)
+    assert "xx-g" in json.dumps(e["example"]) and '"kf"' not in json.dumps(e["example"])
+    n = len(Fake.requests)
+    Fake.override = (404, {"detail": "没有"})
+    err(servers, "Get_Arrangements")
+    assert len(Fake.requests) == n + 1   # 非 400 不多读树
+
+
+def test_v041_view_lists_unclassified_bucket_and_target_maps_to_project(servers):
+    p = ok(servers, "Get_View", {"scope": "xx-g"})["tree"][0]
+    bucket = [c for c in p["children"] if c["id"] == "t_unc_p_3c"][0]
+    assert bucket["kind"] == "task" and bucket["unclassified"] is True and bucket["address"] == "xx-g-wfl"
+    assert p["openTasks"] == 7   # 桶不算待办
+    ok(servers, "CRUD_Windowsblock", {"items": [{"action": "assign", "block": "示例文档", "target": "t_unc_p_3c"}]}, W)
+    assert posts()[-1][1]["projectId"] == "p_3c" and "taskId" not in posts()[-1][1]
+
+
+def test_v041_timezone_learned_from_nexus_and_times_localised(servers, monkeypatch):
+    monkeypatch.delenv("NEXUS_TZ", raising=False)
+    monkeypatch.setattr(tools, "_LEARNED", (0.0, None))
+    assert ok(servers, "Get_Started")["tz"] == "+08:00"
+    assert ok(servers, "Get_Now")["at"].endswith("+08:00")
+    assert tools._LEARNED[1] is not None
+    inc = ok(servers, "Get_Device_Health", headers=ALICE)["devices"][0]["incidents"][0]
+    assert inc["at"] == "2026-10-12T17:58:00+08:00"
+    assert ok(servers, "Get_Rules", {"level": 1})["level1"]["rules"][0]["aiAt"] == "2026-10-24T09:00:00+08:00"
+    assert ok(servers, "Get_Proposals", {"status": "all"})["items"][0]["createdAt"].endswith("+08:00")
+
+
+def test_v041_tz_learning_is_lazy_no_history_call_for_help_or_denied(servers, monkeypatch):
+    monkeypatch.delenv("NEXUS_TZ", raising=False)
+    monkeypatch.setattr(tools, "_LEARNED", (0.0, None))
+    ok(servers, "Get_Now", {"help": True})
+    ok(servers, "CRUD_Honeycomb", {"help": True}, W)
+    call(servers, "CRUD_Honeycomb", {"op": "create"}, R)   # read 范围被拒
+    assert not [1 for _, p, *_ in Fake.requests if p.endswith("views/history")]
+    ok(servers, "Get_Now")
+    assert [1 for _, p, *_ in Fake.requests if p.endswith("views/history")]
+
+
+def test_v041_bucket_only_accepted_as_placement_target(servers):
+    for name, args in [("CRUD_Honeycomb", {"op": "rename", "target": "t_unc_p_3c", "name": "x"}),
+                       ("CRUD_Honeycomb", {"op": "delete", "target": "xx-g-wfl"}),
+                       ("Get_History", {"scope": "t_unc_p_3c"})]:
+        e = err(servers, name, args, W)
+        assert e["status"] == 400 and "系统桶" in e["detail"]
+    out = ok(servers, "CRUD_Honeycomb", {"op": "create", "kind": "task", "name": "未分类", "to": "xx-g"}, W)
+    assert "同名" not in out["note"]   # 桶不算同级重名
+
+
+def test_v041_tiers_off_pending_has_new_fields(servers):
+    r = ok(servers, "Get_Pending_Classify_Windows", headers={"X-Nexus-Tenant": "u_tiersoff"})
+    assert r["unassigned"] == [] and r["uncaughtSeconds"] == 0 and r["unassignedSeconds"] == 0
+# ── v2.1 · v0.4.2：Get_Today / Get_Match_History ──────────────────────
+
+
+def test_get_today_counts_and_all_clear_logic(servers):
+    out = ok(servers, "Get_Today", {"date": "2026-10-24"}, R)
+    assert out["date"] == "2026-10-24"
+    assert out["uncaught"] == {"blocks": 2, "seconds": 2580}      # keySource auto 的待处理块
+    assert out["unassigned"] == {"blocks": 1, "seconds": 9000}    # 被第一级收了、第二级没定
+    assert out["gaps"][0]["detectorOffline"] is True and out["gaps"][0]["seconds"] == 5100
+    assert (out["proposalsPending"], out["questionsOpen"], out["reportSubmitted"], out["allClear"]) == (6, 0, True, False)
+    assert len(out["note"]) <= 100 and out["permissions"]["scope"] == "read"
+    gets = {p: q for m, p, q, _ in Fake.requests if m == "GET"}
+    assert gets["/api/core/activity/gaps"] == {"date": ["2026-10-24"]}
+    assert gets["/api/core/activity/blocks"]["status"] == ["pending"]
+    # 总结没交（日期对不上）：reportSubmitted false
+    assert ok(servers, "Get_Today", {"date": "2026-10-23"}, R)["reportSubmitted"] is False
+
+
+def test_get_today_all_clear_true_when_nothing_left(servers, monkeypatch):
+    import fake_nexus
+    monkeypatch.setattr(fake_nexus, "BLOCKS", {"items": [{"blockKey": "x", "keySource": "auto", "status": "assigned", "seconds": 5}]})
+    monkeypatch.setattr(fake_nexus, "PROPOSALS", {})
+    monkeypatch.setattr(fake_nexus, "QUESTIONS", {"items": []})
+    out = ok(servers, "Get_Today", {"date": "2026-10-24"}, W)
+    assert out["uncaught"]["blocks"] == out["unassigned"]["blocks"] == out["proposalsPending"] == out["questionsOpen"] == 0
+    assert out["allClear"] is True and out["gaps"]   # 空洞不影响 allClear
+
+
+def test_get_today_truncated_when_more_blocks(servers, monkeypatch):
+    import fake_nexus
+    monkeypatch.setattr(fake_nexus, "BLOCKS", {**fake_nexus.BLOCKS, "nextCursor": "abc"})
+    out = ok(servers, "Get_Today", {"date": "2026-10-24"})
+    assert out["truncated"] is True and out["allClear"] is False and len(out["note"]) <= 100
+
+
+def test_get_today_old_backend_tiers_off_and_bad_date(servers):
+    old = ok(servers, "Get_Today", {"date": "2026-10-24"}, {**R, "X-Nexus-Tenant": "u_old"})
+    assert old["gaps"] == [] and old["allClear"] is False and old["tiersOff"] is True   # 老后端没有设置 = 没开三级分类
+    off = ok(servers, "Get_Today", {"date": "2026-10-24"}, {**R, "X-Nexus-Tenant": "u_tiersoff"})
+    assert off["tiersOff"] is True and off["allClear"] is False and off["uncaught"]["blocks"] == 0
+    assert err(servers, "Get_Today", {"date": "10-24"})["status"] == 400
+
+
+def test_get_match_history_by_block_and_by_window(servers):
+    out = ok(servers, "Get_Match_History", {"block": "示例文档", "days": 7}, R)
+    assert out["query"] == {"block": "示例文档"} and out["days"] == 7
+    d = out["destinations"][0]
+    assert (d["taskId"], d["address"], d["times"], d["seconds"], d["via"]) == ("t_a1", "xx-g-xtsc", 5, 3600, "rule")
+    assert len(out["note"]) <= 100 and out["permissions"]["scope"] == "read"
+    q = [q for m, p, q, _ in Fake.requests if p.endswith("/blocks/history")][-1]
+    assert q == {"block": ["示例文档"], "days": ["7"]}
+    w = ok(servers, "Get_Match_History", {"app": "chrome", "title": "周报"})
+    assert w["query"] == {"app": "chrome", "title": "周报"} and w["days"] == 30
+
+
+@pytest.mark.parametrize("args", [{}, {"app": "chrome"}, {"title": "x"}, {"block": "b", "app": "a", "title": "t"}, {"block": "b", "days": 91},
+                                  {"block": "b", "days": 0}, {"block": "b", "days": "7"}, {"block": ""}])
+def test_get_match_history_bad_args_400_with_example(servers, args):
+    e = err(servers, "Get_Match_History", args)
+    assert e["status"] == 400 and e["example"] == {"block": "示例文档", "days": 30}
