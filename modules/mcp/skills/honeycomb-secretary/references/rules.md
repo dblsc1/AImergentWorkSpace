@@ -28,7 +28,7 @@ CRUD_Windowsblock_Classify_Rules
 {"ops": [{"op": "add", "block": "示例文档", "target": "kf-hpkf-mcpj"}]}
 ```
 
-5. `edit` / `delete` 的 `id` 取自 `Get_Rules` 的 `level1.rules`（第二级取 `level2` 的 `id`）。`edit` 传空字符串也算要改（`title: ""` 去掉标题限制）。
+5. 第一级 `edit` / `delete` 的 `id` 取自 `Get_Rules` 的 `level1.rules`；`edit` 至少带 `app`、`title`、`block` 之一，传空字符串也算要改（`title: ""` 去掉标题限制）。第二级没有 `id`，`edit` / `delete` 用块名（`block`）定位，`edit` 要 `target`。
 
 ## 别写太宽
 
@@ -40,7 +40,7 @@ CRUD_Windowsblock_Classify_Rules
 
 ## 提议还是直接
 
-默认提议。`direct_apply: true` 只在 `permissions.canDirectApply.windowsClassify` 为 true、规则范围窄、无争议时用，`reason` 写依据。直接施加成功的那一条返回 `applied: true`、`directLogId`、`id`，人可撤回。缺开关整次失败，去掉 `direct_apply` 重发。
+默认提议。`direct_apply: true` 只在 `permissions.canDirectApply.windowsClassify` 为 true、规则范围窄、无争议时用，`reason` 写依据。直接施加成功的那一条返回 `applied: true`、`directLogId`、`id`，人可撤回。缺开关返回 403，该条和后面的都不做，去掉 `direct_apply` 重发。
 
 ## 坑
 

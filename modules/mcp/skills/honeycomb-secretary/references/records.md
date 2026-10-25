@@ -27,18 +27,18 @@ CRUD_Windowsblock
 ## AI 可以改什么
 
 - 未分类、未定去向的块：可以提议 `assign` / `split`。
-- 已入账的段、人手动计时的段：只提议，`reason` 写依据。
+- `retime` 只接受原本记在项目「未分类」桶、或检测程序自动记下的段，其他段（例如人手动计时记在具体任务上的）提议和直接施加都返回 409；已作废的段、目标与现归属相同也是 409。
 - 一个块前后明显是两件事才 `split`；否则 `assign`。
 
 ## 什么时候只提议
 
-- `retime`（动已入账的时间）：默认提议；直接施加要 `honeycombRecords` 分开关。
+- `retime`：默认提议；直接施加要 `honeycombRecords` 分开关。
 - 拿不准去向、或要动的段很长：提议，或用 `Submit_Questions_To_Human` 问人，读 report.md。
 - `permissions.canDirectApply` 里对应项为 false：只能提议。
 
 ## 坑
 
-- `split` 的段没覆盖全部时长或重叠，该条失败。
+- `split` 的段有空隙或重叠，该条失败。
 - `create` / `rename` 在同一父级下已有同名时，结果 `note` 会提示；提议照常提交，别重复建。
 - 删除前先 `Get_View` 看下面有没有子节点。
 - 同一个窗口反复要分，改规则，不要天天手动改。

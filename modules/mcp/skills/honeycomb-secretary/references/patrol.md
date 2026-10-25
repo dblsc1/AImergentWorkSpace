@@ -10,7 +10,7 @@
 4. `unassigned.blocks > 0`：同一次返回里的 `unassigned`，这些块已被第一级收了，缺第二级去向。归类前先 `Get_Match_History`（块名）；去向稳定就写第二级规则，否则 `assign`。读 rules.md。
 5. `gaps`：`detectorOffline: true` 是检测程序没在报，先 `Get_Device_Health`，别问人。`false` 多半是人不在电脑前，需要时才用 `Submit_Questions_To_Human`。读 troubleshoot.md。
 6. `proposalsPending`、`questionsOpen`：`Get_Proposals`（缺省 `status: pending`）。已在等人的不重复提；`kind: question` 里 `answered` 的要跟进，读 report.md。
-7. `reportSubmitted: false` 且到了当天傍晚或人要求：交 `Submit_Report`，读 report.md。
+7. `reportSubmitted: false`：交 `Submit_Report`，读 report.md。建议傍晚交一次，人要求时随时交。
 
 ## 例
 
@@ -31,7 +31,7 @@ Get_Today {"date": "2026-10-24"}
 
 ## 不要碰
 
-- 人手动计时的记录和已确认的段，除非人要求，见 records.md。
+- 已入账的段，除非人要求；`retime` 只能动记在未分类或自动记下的段，见 records.md。
 - 忽略规则：只能新增，edit / delete 会 400，删除只有人能做。
 - 已有待批提议的块，不要再提一次。
 - 通用窗口不写第二级规则。
