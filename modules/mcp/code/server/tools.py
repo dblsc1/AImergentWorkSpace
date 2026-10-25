@@ -1,4 +1,4 @@
-"""mcp.tools.v2 的工具（contracts/mcp.tools.v2）：读 9 个、写 6 个；声明与示例在 specs.py，v1 名字的迁移在 v1_migration.py。
+"""mcp.tools.v2 的工具（contracts/mcp.tools.v2）：读 11 个、写 6 个；声明与示例在 specs.py，v1 名字的迁移在 v1_migration.py。
 
 nexus-core 的路径只在各工具里以字面量出现（没有按参数拼路径的代码路径）：读端用 ``_get``，写端用 ``_write``（POST）。
 租户由 HTTP 层给，原样设到每个下游请求上。除 ``activity/settings``（给 permissions 用，缓存至多 30 秒，按租户分开）外
@@ -1157,6 +1157,47 @@ def _call_live_v1(name: str, args, c: Ctx) -> dict:
     return _result(out)
 
 
+# ── v2.1 · v0.4.2：Get_Today / Get_Match_History ──────────────────
+
+
+def get_today(a, c):
+    day = a.get("date")
+    if day:
+        _day("date", day)
+    day = day or _today()
+    on = bool((_settings(c.tenant, fresh=True) or {}).get("tiers"))
+    uncaught = unassigned = {"blocks": 0, "seconds": 0}
+    if on:   # 三级分类没开 = 没有块可数
+        rows = _get("/api/core/activity/blocks", {"status": "pending", "limit": 1000, "date": day}, c.tenant).get("items", [])
+        pend = [b for b in rows if b.get("status") == "pending"]
+        sums = lambda xs: {"blocks": len(xs), "seconds": sum(b.get("seconds") or 0 for b in xs)}  # noqa: E731
+        uncaught = sums([b for b in pend if b.get("keySource") == "auto"])
+        unassigned = sums([b for b in pend if b.get("keySource") != "auto"])
+    gaps = _try_get("/api/core/activity/gaps", {"date": day}, c.tenant).get("gaps", [])   # 老后端没有 = 空
+    proposals = sum(1 for _, x in _flat(_try_get("/api/core/activity/proposals", {"status": "pending", "limit": 200}, c.tenant))
+                    if x.get("status") == "pending")
+    questions = sum(1 for x in _try_get("/api/core/activity/questions", {"status": "pending", "limit": 200}, c.tenant).get("items", [])
+                    if x.get("status") == "pending")
+    submitted = any(x.get("date") == day for x in _try_get("/api/core/activity/secretary-reports", {"from": day, "to": day},
+                                                          c.tenant).get("items", []))
+    clear = on and not (uncaught["blocks"] or unassigned["blocks"] or proposals or questions) and submitted
+    return {"date": day, "uncaught": uncaught, "unassigned": unassigned, "gaps": gaps[:50], "proposalsPending": proposals,
+            "questionsOpen": questions, "reportSubmitted": submitted, "allClear": clear, **({} if on else {"tiersOff": True}),
+            "note": _note("三级分类没打开，块没法数，allClear 恒为 false。" if not on else
+                          "allClear 不看 gaps（空洞是事实不是待办）；detectorOffline 为 false 的空洞多半是人不在电脑前。")}
+
+
+def get_match_history(a, c):
+    block, app, title = a.get("block"), a.get("app"), a.get("title")
+    if (block is None) == (app is None and title is None) or (block is None and (app is None or title is None)):
+        raise _bad("block 与 app+title 二选一：要么给 block，要么 app 和 title 同时给")
+    days = a.get("days", 30)
+    r = _get("/api/core/activity/blocks/history", {**({"block": block} if block is not None else {"app": app, "title": title}),
+                                                  "days": days}, c.tenant)
+    return {**_screen_tree({"query": r.get("query"), "days": days, "destinations": r.get("destinations", [])}),
+            "note": _note("只列已经定下来的去向，不猜；destinations 为空 = 这段时间里没有归过类。times 是归过几次。")}
+
+
 # ── 声明与分发 ─────────────────────────────────────────────────────
 
 _HANDLERS = {
@@ -1167,6 +1208,7 @@ _HANDLERS = {
     "CRUD_Windowsblock_Classify_Rules": crud_windowsblock_classify_rules, "CRUD_Windowsblock": crud_windowsblock,
     "CRUD_Honeycomb": crud_honeycomb, "Submit_Report": submit_report,
     "Submit_Questions_To_Human": submit_questions_to_human,
+    "Get_Today": get_today, "Get_Match_History": get_match_history,
 }
 #: 工具名 → 声明（specs.py）
 TOOLS = {t["name"]: t for t in specs.SPECS}
@@ -1196,7 +1238,7 @@ _V1_LIVE_LIST = [
 
 
 def listed(scope: str) -> list:
-    """tools/list：read 范围 9 个读工具；write 15 个；没有范围头 15 个 + 自动跟踪的两个 v1 工具（共 17）。"""
+    """tools/list：read 范围 11 个读工具；write 17 个；没有范围头 17 个 + 自动跟踪的两个 v1 工具（共 19）。"""
     hidden = denied(scope)
     return [t for t in TOOL_LIST if t["name"] not in hidden] + (_V1_LIVE_LIST if scope == "full" else [])
 
