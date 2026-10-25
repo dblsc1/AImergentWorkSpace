@@ -27,6 +27,7 @@ def _col(name: str = _REC):
         r.create_index([("user", 1), ("date", 1), ("blockKey", 1), ("startTs", 1)], name="user_date_block_start")
         r.create_index([("user", 1), ("startTs", 1)], name="user_start")
         r.create_index([("user", 1), ("endTs", 1)], name="user_end")  # 第二部分对账按它查
+        r.create_index([("user", 1), ("app", 1), ("title", 1), ("date", 1)], name="user_app_title_date")  # 匹配历史按窗口查
         db[_INP].create_index([("user", 1), ("deviceId", 1), ("date", 1)], unique=True, name="uniq_user_dev_date")
         _ready = True
     return db[name]

@@ -405,7 +405,8 @@ def get_history(date_from: str | None, date_to: str | None, who: str, detail: st
                 h.truncated = True
                 segs = segs[:CAP_SEGMENTS]  # 契约待定：超上限时留最早的（按范围升序读，丢的是最晚的）
             human["segments"] = [{k: v for k, v in s.items() if k != "_t"} for s in segs]
-            human["gaps"] = [g for d in _days(first, last) for g in gaps_mod.day_gaps(d)][:gaps_mod.MAX_GAPS]  # v2.40 原始记录的空洞
+            if not h.scope:  # v2.40 原始记录的空洞；不属于任何任务，按 scope 过滤时不给
+                human["gaps"] = gaps_mod.range_gaps(list(_days(first, last)))
         if detail == "windows":
             human["blocks"] = h.windows()
             if not h.tiers:

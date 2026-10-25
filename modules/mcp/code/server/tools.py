@@ -1167,8 +1167,10 @@ def get_today(a, c):
     day = day or _today()
     on = bool((_settings(c.tenant, fresh=True) or {}).get("tiers"))
     uncaught = unassigned = {"blocks": 0, "seconds": 0}
+    more = False
     if on:   # 三级分类没开 = 没有块可数
-        rows = _get("/api/core/activity/blocks", {"status": "pending", "limit": 1000, "date": day}, c.tenant).get("items", [])
+        r = _get("/api/core/activity/blocks", {"status": "pending", "limit": 1000, "date": day}, c.tenant)
+        rows, more = r.get("items", []), bool(r.get("nextCursor"))   # ponytail: 超过 1000 块只标 truncated，不翻页
         pend = [b for b in rows if b.get("status") == "pending"]
         sums = lambda xs: {"blocks": len(xs), "seconds": sum(b.get("seconds") or 0 for b in xs)}  # noqa: E731
         uncaught = sums([b for b in pend if b.get("keySource") == "auto"])
@@ -1180,11 +1182,12 @@ def get_today(a, c):
                     if x.get("status") == "pending")
     submitted = any(x.get("date") == day for x in _try_get("/api/core/activity/secretary-reports", {"from": day, "to": day},
                                                           c.tenant).get("items", []))
-    clear = on and not (uncaught["blocks"] or unassigned["blocks"] or proposals or questions) and submitted
+    clear = on and not more and not (uncaught["blocks"] or unassigned["blocks"] or proposals or questions) and submitted
     return {"date": day, "uncaught": uncaught, "unassigned": unassigned, "gaps": gaps[:50], "proposalsPending": proposals,
             "questionsOpen": questions, "reportSubmitted": submitted, "allClear": clear, **({} if on else {"tiersOff": True}),
+            **({"truncated": True} if more else {}),
             "note": _note("三级分类没打开，块没法数，allClear 恒为 false。" if not on else
-                          "allClear 不看 gaps（空洞是事实不是待办）；detectorOffline 为 false 的空洞多半是人不在电脑前。")}
+                          "提议和问题数是当前积压，不分日期；allClear 不看 gaps；offline 为 false 的空洞多半是人不在电脑前。")}
 
 
 def get_match_history(a, c):

@@ -4868,10 +4868,11 @@ MCP 侧见 `contracts/mcp.tools.v2`。
 - `GET activity/gaps?date=`（缺省今天）→ `{date, gaps: [{from, to, seconds, detectorOffline}]}`。区间是当天 08:00 到现在（过去的日子到当天结束）；
   依据 `activity_records` 的时间并集，**没有任何记录且长于 10 分钟**的空档（含 08:00 到第一条记录之间、最后一条到现在之间），按时间升序、至多 50 段。
   `detectorOffline`：与该租户任一设备的 `detector_offline` 事故区间（`at`…`endAt`）有交集。空洞不依赖事故（掉线期间的记录事后补传，可能仍有记录）。
-  `views/history` 的 `human` 在 `detail=segments` 时追加同一口径的 `gaps`（范围内各天依次拼接，至多 50 段）。
+  `views/history` 的 `human` 在 `detail=segments` 且没给 `scope` 时追加同一口径的 `gaps`（范围内各天依次拼接，至多 50 段；空洞不属于任何任务，给了 `scope` 就不出这个键）。
+  掉线区间还包括此刻正在静默的（健康报告停了超过 90 秒，事故要等下一份报告才写）：`(最后一份报告, 现在)`。
 - `GET activity/blocks/history?block=|app=&title=&days=` → `{query, days, destinations: [{taskId, projectId, address, name, times, seconds, lastAt, via}]}`。
   `block` 与 `app`+`title` 二选一（否则 422）；`days` 1..90（越界 422）。取过去 `days` 天里命中的窗口块（`app`/`title` 与记录完全相同）中状态为 `assigned` 的，
-  按 `parts` 汇总去向：`times` = 块数、`seconds` = 该去向的秒数、`lastAt`/`via` 取最近一块的；`times` 降序，至多 20 条；任务 / 项目已删的不出；查不到给 `[]`。
+  按 `parts` 汇总去向（只聚合命中的块）：`times` = 块数、`seconds` = 该去向的秒数、`lastAt`/`via` 取最近一块的；`times` 降序，至多 20 条；任务 / 项目已删的不出；查不到给 `[]`。
 
 ## 变更记录
 

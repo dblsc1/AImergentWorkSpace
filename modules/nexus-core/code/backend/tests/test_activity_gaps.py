@@ -75,3 +75,19 @@ def test_match_history_by_app_title_pending_empty_and_errors(client, tasks):
         assert client.get(H, params=bad).status_code == 422, bad
     assert client.get(H, params={"block": K, "days": 91}).status_code == 422
     assert client.get(H, params={"block": K, "days": 0}).status_code == 422
+
+
+def test_live_silent_detector_counts_as_offline_and_history_gaps_skip_scope(client, seeded):
+    from datetime import datetime, timedelta, timezone
+
+    from app.modules.activity import gaps as gaps_mod
+
+    now = datetime.now(timezone.utc)
+    detector_repo.set_health("u_local", "dev_live", {"awState": "ok", "at": now - timedelta(hours=1)})
+    spans = gaps_mod.offline_spans("u_local")
+    assert len(spans) == 1 and abs((spans[0][0] - (now - timedelta(hours=1))).total_seconds()) < 1
+    detector_repo.set_health("u_local", "dev_live", {"awState": "ok", "at": now})  # 刚报过：不算掉线
+    assert gaps_mod.offline_spans("u_local") == []
+    pid = next(iter(seeded["projects"].values()))["id"]
+    h = client.get(f"{API}/views/history", params={"from": D, "to": D, "who": "human", "detail": "segments", "scope": pid}).json()
+    assert "gaps" not in h["human"]

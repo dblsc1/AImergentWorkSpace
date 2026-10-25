@@ -1032,6 +1032,13 @@ def test_get_today_all_clear_true_when_nothing_left(servers, monkeypatch):
     assert out["allClear"] is True and out["gaps"]   # 空洞不影响 allClear
 
 
+def test_get_today_truncated_when_more_blocks(servers, monkeypatch):
+    import fake_nexus
+    monkeypatch.setattr(fake_nexus, "BLOCKS", {**fake_nexus.BLOCKS, "nextCursor": "abc"})
+    out = ok(servers, "Get_Today", {"date": "2026-10-24"})
+    assert out["truncated"] is True and out["allClear"] is False and len(out["note"]) <= 100
+
+
 def test_get_today_old_backend_tiers_off_and_bad_date(servers):
     old = ok(servers, "Get_Today", {"date": "2026-10-24"}, {**R, "X-Nexus-Tenant": "u_old"})
     assert old["gaps"] == [] and old["allClear"] is False and old["tiersOff"] is True   # 老后端没有设置 = 没开三级分类
