@@ -21,6 +21,8 @@ def _reset(monkeypatch):
     Fake.scopes.clear()
     Fake.bodies.clear()
     Fake.override = None
+    monkeypatch.setenv("NEXUS_TZ", "UTC")
+    monkeypatch.setattr(tools, "_LEARNED", (float("inf"), None))   # 默认不去 nexus-core 学时区（免得多一条请求）；要测的用例自己放开
     tools._SETTINGS.clear()   # permissions 的设置缓存按租户，测试之间不留
     monkeypatch.setattr(mcp_server, "STRICT", False)
     monkeypatch.setattr(mcp_server, "ALLOWED_ORIGINS", set())

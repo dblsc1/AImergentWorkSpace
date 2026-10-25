@@ -46,7 +46,7 @@ def tree_for(tenant):
     zones = [_n("z_7f", "Z01", "学习", "xx"), _n("z_e", "Z02", "空分区", "kf")]
     projects = [
         _n("p_3c", "Z01-P01", "garden", "xx-g", zoneId="z_7f", status="active", progress=0.5, deadline=None, tasks=tasks,
-           unclassifiedTaskId="t_unc_p_3c"),
+           unclassifiedTaskId="t_unc_p_3c", unclassifiedAddress="xx-g-wfl"),
         _n("p_new", "Z01-P02", "刚建的", "xx-gjd", zoneId="z_7f", status="active", progress=0, deadline="2026-10-10", tasks=[]),
         _n("p_old", "Z01-P03", "做完了", "xx-zwl", zoneId="z_7f", status="done", progress=1, deadline=None, tasks=[]),
     ]
@@ -126,6 +126,8 @@ HISTORY = {
               "segments": [{"from": "x", "to": "y", "seconds": 60, "status": "pending", "eventId": None, "taskId": None,
                             "projectId": None, "address": None, "window": EVIL, "onAgentRun": None}]},
     "agents": {"workingSeconds": 4310, "byDay": [], "byAgent": []}, "truncated": False}
+WIN_BLOCKS = [{"blockKey": "示例文档", "seconds": 90, "records": [{"from": "a", "to": "b", "seconds": 60, "app": "x", "title": "y"},
+                                                              {"from": "c", "to": "d", "seconds": 30, "app": "x", "title": "y"}]}]
 ARRANGEMENTS = {"today": "2026-10-24", "range": "today", "from": "2026-10-24", "to": "2026-10-24", "scheduled": [], "actionable": [],
                 "blocked": [], "overdue": [], "stale": [], "truncated": False}
 DET_DEVICES = {
@@ -190,7 +192,7 @@ def post_result(path, q, tenant, body, scope):
             return 403, {"detail": "总开关没开", "reason": "agentDirectOff"}
         if scope != "write":
             return 403, {"detail": "needs write", "reason": "needWriteScope"}
-        return 200, {"applied": True, "directLogId": f"dl_{Fake.counter}", "result": {}}
+        return 200, {"applied": True, "directLogId": f"dl_{Fake.counter}", "result": {"ruleId": "r_new1"} if path.endswith("window-rules") else {}}
     text = json.dumps(body, ensure_ascii=False)
     if "CONFLICT" in text:
         return 409, {"detail": "通用窗口不能写第二级规则"}
@@ -230,7 +232,8 @@ def respond(method, path, q, tenant, body, scope):
         "/api/core/views/current": lambda: current_for(tenant),
         "/api/core/views/agent-time": lambda: {"today": "2026-10-24", "open": [
             {"runId": "run_9", "agent": "codex", "workingSeconds": 600, "elapsedSeconds": 1200}]},
-        "/api/core/views/history": lambda: HISTORY,
+        "/api/core/views/history": lambda: ({**HISTORY, "human": {**HISTORY["human"], "blocks": WIN_BLOCKS}}
+                                            if one("detail") == "windows" and "blocks" not in HISTORY["human"] else HISTORY),
         "/api/core/views/arrangements": lambda: ARRANGEMENTS,
         "/api/core/activity/blocks": lambda: BLOCKS,
         "/api/core/detector/rules": lambda: RULES,

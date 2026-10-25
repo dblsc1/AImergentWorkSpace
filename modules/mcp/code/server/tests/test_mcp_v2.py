@@ -170,7 +170,8 @@ def test_403_on_write_clears_settings_cache(servers):
 def test_bad_args_400_with_example_and_fixed_hint(servers, name, args):
     e = err(servers, name, args, W)
     assert e["status"] == 400 and e["detail"]
-    assert e["example"] == tools.TOOLS[name]["example"]["request"]
+    req = tools.TOOLS[name]["example"]["request"]
+    assert e["example"] == tools._real_example(req, tools.Ctx(None, "write"))   # scope / target 换成真地址，其余不动
     tools._check(tools.TOOLS[name]["inputSchema"], e["example"], "")   # 示例本身合法
     assert not Fake.bodies
 
@@ -396,8 +397,8 @@ def test_get_proposals_kinds_status_and_order(servers):
     assert st["aq_1"] == "answered" and st["rp_1"] == "approved"
     q = next(i for i in r["items"] if i["kind"] == "question")
     assert q["answer"]["recorded"] is True and q["answer"]["eventId"] == "evt_9" and "‮" not in q["answer"]["text"]
-    assert q["decidedAt"] == "2026-10-24T10:05:00+08:00"
-    assert r["secretaryReports"] == [{"date": "2026-10-24", "updatedAt": "2026-10-24T12:00:00+08:00", "revision": 2}]
+    assert q["decidedAt"] == "2026-10-24T02:05:00+00:00"   # 同一瞬间，换成 MCP 的时区（测试里是 UTC）
+    assert r["secretaryReports"] == [{"date": "2026-10-24", "updatedAt": "2026-10-24T04:00:00+00:00", "revision": 2}]
     nt = next(i for i in r["items"] if i["id"] == "nt_2")   # 项目提议下挂的任务提议也摊平
     assert nt["kind"] == "task"
     assert next(i for i in r["items"] if i["id"] == "nb_1")["summary"] == "第二级：示例文档 → xx-g-xtsc"
@@ -920,3 +921,58 @@ def test_fail_screens_downstream_errors_list():
     errs = tools._screen_all(e.errors)
     assert "SECRET" not in json.dumps(errs) and "‮" not in json.dumps(errs, ensure_ascii=False)
     assert errs[0]["loc"] == ["body", "blockKey"]
+
+
+# ── v0.4.1 ────────────────────────────────────────────────────────
+
+
+def test_v041_pending_unassigned_split(servers):
+    r = ok(servers, "Get_Pending_Classify_Windows")
+    assert [i["seconds"] for i in r["items"]] == [2520, 60]   # items 不变
+    assert r["unassigned"] == [{"block": "示例文档", "seconds": 9000, "records": 9}]
+    assert (r["uncaughtSeconds"], r["unassignedSeconds"]) == (2580, 9000)
+
+
+def test_v041_history_records_false(servers):
+    full = ok(servers, "Get_History", {"detail": "windows"})["human"]["blocks"]
+    assert len(full[0]["records"]) == 2 and "recordCount" not in full[0]
+    b = ok(servers, "Get_History", {"detail": "windows", "records": False})["human"]["blocks"][0]
+    assert "records" not in b and b["recordCount"] == 2 and b["seconds"] == 90
+
+
+def test_v041_direct_apply_returns_object_id(servers):
+    r = ok(servers, "CRUD_Windows_Classify_Rules", {**RULE_ADD, "direct_apply": True}, W)["results"][0]
+    assert r["id"] == "r_new1" and r["directLogId"].startswith("dl_")
+    r = ok(servers, "CRUD_Windowsblock_Classify_Rules",
+           {"ops": [{"op": "add", "block": "b", "target": "xx-g"}], "direct_apply": True}, W)["results"][0]
+    assert "id" not in r   # 下游没给就不带
+
+
+def test_v041_error_example_uses_real_address(servers):
+    e = err(servers, "CRUD_Windowsblock_Classify_Rules", {}, W)
+    assert "xx-g" in json.dumps(e["example"]) and '"kf"' not in json.dumps(e["example"])
+    n = len(Fake.requests)
+    Fake.override = (404, {"detail": "没有"})
+    err(servers, "Get_Arrangements")
+    assert len(Fake.requests) == n + 1   # 非 400 不多读树
+
+
+def test_v041_view_lists_unclassified_bucket_and_target_maps_to_project(servers):
+    p = ok(servers, "Get_View", {"scope": "xx-g"})["tree"][0]
+    bucket = [c for c in p["children"] if c["id"] == "t_unc_p_3c"][0]
+    assert bucket["kind"] == "task" and bucket["unclassified"] is True and bucket["address"] == "xx-g-wfl"
+    assert p["openTasks"] == 7   # 桶不算待办
+    ok(servers, "CRUD_Windowsblock", {"items": [{"action": "assign", "block": "示例文档", "target": "t_unc_p_3c"}]}, W)
+    assert posts()[-1][1]["projectId"] == "p_3c" and "taskId" not in posts()[-1][1]
+
+
+def test_v041_timezone_learned_from_nexus_and_times_localised(servers, monkeypatch):
+    monkeypatch.delenv("NEXUS_TZ", raising=False)
+    monkeypatch.setattr(tools, "_LEARNED", (0.0, None))
+    assert ok(servers, "Get_Started")["tz"] == "+08:00"
+    assert ok(servers, "Get_Now")["at"].endswith("+08:00")
+    assert tools._LEARNED[1] is not None
+    inc = ok(servers, "Get_Device_Health", headers=ALICE)["devices"][0]["incidents"][0]
+    assert inc["at"] == "2026-10-12T17:58:00+08:00"
+    assert ok(servers, "Get_Rules", {"level": 1})["level1"]["rules"][0]["aiAt"] == "2026-10-24T09:00:00+08:00"
+    assert ok(servers, "Get_Proposals", {"status": "all"})["items"][0]["createdAt"].endswith("+08:00")
