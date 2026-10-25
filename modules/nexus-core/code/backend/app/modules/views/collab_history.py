@@ -13,6 +13,7 @@ from datetime import date as Date, datetime, timedelta
 from ...config import settings
 from ...tenant import current as current_tenant
 from ..activity import activity_settings, block_rules, blocks, blocks_repo, collab_repo, pending_days
+from ..activity import gaps as gaps_mod
 from ..planner import service as planner_service
 from ..planner.errors import UnprocessableError
 from ..projector.handlers import daily_stats as daily_stats_projection
@@ -404,6 +405,7 @@ def get_history(date_from: str | None, date_to: str | None, who: str, detail: st
                 h.truncated = True
                 segs = segs[:CAP_SEGMENTS]  # 契约待定：超上限时留最早的（按范围升序读，丢的是最晚的）
             human["segments"] = [{k: v for k, v in s.items() if k != "_t"} for s in segs]
+            human["gaps"] = [g for d in _days(first, last) for g in gaps_mod.day_gaps(d)][:gaps_mod.MAX_GAPS]  # v2.40 原始记录的空洞
         if detail == "windows":
             human["blocks"] = h.windows()
             if not h.tiers:

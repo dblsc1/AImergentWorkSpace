@@ -95,6 +95,12 @@ def block_records(user: str, date: str, block_key: str, limit: int) -> list[dict
                 .sort("startTs", 1).limit(limit))
 
 
+def match_blocks(user: str, from_date: str, block: str | None, app: str | None, title: str | None) -> set[tuple[str, str]]:
+    """``date ≥ from_date`` 里，块名（或 app + title 完全相同）命中的 ``(date, blockKey)``。"""
+    q = {"user": user, "date": {"$gte": from_date}, **({"blockKey": block} if block is not None else {"app": app, "title": title})}
+    return {(d["date"], d["blockKey"]) for d in _col().find(q, {"_id": 0, "date": 1, "blockKey": 1})}
+
+
 def stale(user: str, from_date: str, version: int, limit: int) -> list[dict]:
     """重算候选：标题不是代号、不是空标题、``rv`` 不是当前版本的记录（所在块是不是待分类由调用方判）。"""
     return list(_col().find({"user": user, "date": {"$gte": from_date}, "titleIsPseudonym": False, "title": {"$ne": ""}, "rv": {"$ne": version}},
