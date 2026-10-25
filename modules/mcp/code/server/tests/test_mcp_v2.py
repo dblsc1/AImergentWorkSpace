@@ -16,7 +16,7 @@ from fake_nexus import EVIL, W, R, Fake, call, err, ok, post, rpc
 
 ALICE = {"X-Nexus-Tenant": "u_alice"}
 READS = ["Get_Started", "Get_View", "Get_Arrangements", "Get_Now", "Get_History", "Get_Pending_Classify_Windows", "Get_Rules",
-         "Get_Proposals", "Get_Device_Health"]
+         "Get_Proposals", "Get_Device_Health", "Get_Today", "Get_Match_History"]
 WRITES = ["CRUD_Windows_Classify_Rules", "CRUD_Windowsblock_Classify_Rules", "CRUD_Windowsblock", "CRUD_Honeycomb",
           "Submit_Report", "Submit_Questions_To_Human"]
 HINT = "带 help: true 再调一次看用法；不确定就调 Get_Started"
@@ -26,7 +26,8 @@ REGISTERED = {
             "/api/core/views/agent-time", "/api/core/views/history", "/api/core/activity/blocks", "/api/core/detector/rules",
             "/api/core/activity/block-rules", "/api/core/activity/ignores", "/api/core/activity/proposals",
             "/api/core/activity/questions", "/api/core/activity/secretary-reports", "/api/core/activity/reports",
-            "/api/core/activity/direct-log", "/api/core/detector/devices", "/api/core/detector/incidents"},
+            "/api/core/activity/direct-log", "/api/core/detector/devices", "/api/core/detector/incidents", "/api/core/activity/gaps",
+            "/api/core/activity/blocks/history"},
     "POST": {"/api/core/activity/proposals/window-rules", "/api/core/activity/proposals/ignores",
              "/api/core/activity/proposals/block-rules", "/api/core/activity/proposals/block-actions",
              "/api/core/activity/proposals/projects", "/api/core/activity/proposals/tasks",
@@ -49,11 +50,11 @@ def posts():
 LIVE = ["get_window_awaiting_target", "suggest_window_target"]
 
 
-@pytest.mark.parametrize("headers,want", [({}, 17), (W, 15), (R, 9), ({"X-Nexus-Scope": ""}, 17)])
+@pytest.mark.parametrize("headers,want", [({}, 19), (W, 17), (R, 11), ({"X-Nexus-Scope": ""}, 19)])
 def test_tools_list_by_scope(servers, headers, want):
     got = names(servers, headers)
     assert len(got) == want
-    assert got == (READS if want == 9 else READS + WRITES + (LIVE if want == 17 else []))
+    assert got == (READS if want == 11 else READS + WRITES + (LIVE if want == 19 else []))
 
 
 def test_tools_list_schemas_and_annotations(servers):
@@ -68,7 +69,7 @@ def test_tools_list_schemas_and_annotations(servers):
         else:
             assert a["readOnlyHint"] is True
         assert t["description"]
-    assert len(specs.SPECS) == 15 and set(tools.WRITES) == set(WRITES)
+    assert len(specs.SPECS) == 17 and set(tools.WRITES) == set(WRITES)
 
 
 def test_server_instructions_is_one_sentence(servers):
@@ -100,6 +101,7 @@ def test_help_ignores_other_args_but_checks_help_type(servers):
 def test_every_success_has_note_and_permissions(servers):
     cases = [("Get_Started", {}), ("Get_View", {}), ("Get_Arrangements", {}), ("Get_Now", {}), ("Get_History", {}),
              ("Get_Pending_Classify_Windows", {}), ("Get_Rules", {}), ("Get_Proposals", {}), ("Get_Device_Health", {}),
+             ("Get_Today", {}), ("Get_Match_History", {"block": "示例文档"}),
              ("CRUD_Windows_Classify_Rules", {"ops": [{"op": "add", "app": "a", "block": "b"}]}),
              ("CRUD_Windowsblock_Classify_Rules", {"ops": [{"op": "add", "block": "b", "target": "xx-g"}]}),
              ("CRUD_Windowsblock", {"items": [{"action": "generic", "block": "b"}]}),
@@ -1002,3 +1004,63 @@ def test_v041_bucket_only_accepted_as_placement_target(servers):
 def test_v041_tiers_off_pending_has_new_fields(servers):
     r = ok(servers, "Get_Pending_Classify_Windows", headers={"X-Nexus-Tenant": "u_tiersoff"})
     assert r["unassigned"] == [] and r["uncaughtSeconds"] == 0 and r["unassignedSeconds"] == 0
+# ── v2.1 · v0.4.2：Get_Today / Get_Match_History ──────────────────────
+
+
+def test_get_today_counts_and_all_clear_logic(servers):
+    out = ok(servers, "Get_Today", {"date": "2026-10-24"}, R)
+    assert out["date"] == "2026-10-24"
+    assert out["uncaught"] == {"blocks": 2, "seconds": 2580}      # keySource auto 的待处理块
+    assert out["unassigned"] == {"blocks": 1, "seconds": 9000}    # 被第一级收了、第二级没定
+    assert out["gaps"][0]["detectorOffline"] is True and out["gaps"][0]["seconds"] == 5100
+    assert (out["proposalsPending"], out["questionsOpen"], out["reportSubmitted"], out["allClear"]) == (6, 0, True, False)
+    assert len(out["note"]) <= 100 and out["permissions"]["scope"] == "read"
+    gets = {p: q for m, p, q, _ in Fake.requests if m == "GET"}
+    assert gets["/api/core/activity/gaps"] == {"date": ["2026-10-24"]}
+    assert gets["/api/core/activity/blocks"]["status"] == ["pending"]
+    # 总结没交（日期对不上）：reportSubmitted false
+    assert ok(servers, "Get_Today", {"date": "2026-10-23"}, R)["reportSubmitted"] is False
+
+
+def test_get_today_all_clear_true_when_nothing_left(servers, monkeypatch):
+    import fake_nexus
+    monkeypatch.setattr(fake_nexus, "BLOCKS", {"items": [{"blockKey": "x", "keySource": "auto", "status": "assigned", "seconds": 5}]})
+    monkeypatch.setattr(fake_nexus, "PROPOSALS", {})
+    monkeypatch.setattr(fake_nexus, "QUESTIONS", {"items": []})
+    out = ok(servers, "Get_Today", {"date": "2026-10-24"}, W)
+    assert out["uncaught"]["blocks"] == out["unassigned"]["blocks"] == out["proposalsPending"] == out["questionsOpen"] == 0
+    assert out["allClear"] is True and out["gaps"]   # 空洞不影响 allClear
+
+
+def test_get_today_truncated_when_more_blocks(servers, monkeypatch):
+    import fake_nexus
+    monkeypatch.setattr(fake_nexus, "BLOCKS", {**fake_nexus.BLOCKS, "nextCursor": "abc"})
+    out = ok(servers, "Get_Today", {"date": "2026-10-24"})
+    assert out["truncated"] is True and out["allClear"] is False and len(out["note"]) <= 100
+
+
+def test_get_today_old_backend_tiers_off_and_bad_date(servers):
+    old = ok(servers, "Get_Today", {"date": "2026-10-24"}, {**R, "X-Nexus-Tenant": "u_old"})
+    assert old["gaps"] == [] and old["allClear"] is False and old["tiersOff"] is True   # 老后端没有设置 = 没开三级分类
+    off = ok(servers, "Get_Today", {"date": "2026-10-24"}, {**R, "X-Nexus-Tenant": "u_tiersoff"})
+    assert off["tiersOff"] is True and off["allClear"] is False and off["uncaught"]["blocks"] == 0
+    assert err(servers, "Get_Today", {"date": "10-24"})["status"] == 400
+
+
+def test_get_match_history_by_block_and_by_window(servers):
+    out = ok(servers, "Get_Match_History", {"block": "示例文档", "days": 7}, R)
+    assert out["query"] == {"block": "示例文档"} and out["days"] == 7
+    d = out["destinations"][0]
+    assert (d["taskId"], d["address"], d["times"], d["seconds"], d["via"]) == ("t_a1", "xx-g-xtsc", 5, 3600, "rule")
+    assert len(out["note"]) <= 100 and out["permissions"]["scope"] == "read"
+    q = [q for m, p, q, _ in Fake.requests if p.endswith("/blocks/history")][-1]
+    assert q == {"block": ["示例文档"], "days": ["7"]}
+    w = ok(servers, "Get_Match_History", {"app": "chrome", "title": "周报"})
+    assert w["query"] == {"app": "chrome", "title": "周报"} and w["days"] == 30
+
+
+@pytest.mark.parametrize("args", [{}, {"app": "chrome"}, {"title": "x"}, {"block": "b", "app": "a", "title": "t"}, {"block": "b", "days": 91},
+                                  {"block": "b", "days": 0}, {"block": "b", "days": "7"}, {"block": ""}])
+def test_get_match_history_bad_args_400_with_example(servers, args):
+    e = err(servers, "Get_Match_History", args)
+    assert e["status"] == 400 and e["example"] == {"block": "示例文档", "days": 30}

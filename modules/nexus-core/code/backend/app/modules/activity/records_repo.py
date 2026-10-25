@@ -27,6 +27,7 @@ def _col(name: str = _REC):
         r.create_index([("user", 1), ("date", 1), ("blockKey", 1), ("startTs", 1)], name="user_date_block_start")
         r.create_index([("user", 1), ("startTs", 1)], name="user_start")
         r.create_index([("user", 1), ("endTs", 1)], name="user_end")  # 第二部分对账按它查
+        r.create_index([("user", 1), ("app", 1), ("title", 1), ("date", 1)], name="user_app_title_date")  # 匹配历史按窗口查
         db[_INP].create_index([("user", 1), ("deviceId", 1), ("date", 1)], unique=True, name="uniq_user_dev_date")
         _ready = True
     return db[name]
@@ -93,6 +94,12 @@ def top_app(user: str, date: str, block_key: str) -> str | None:
 def block_records(user: str, date: str, block_key: str, limit: int) -> list[dict]:
     return list(_col().find({"user": user, "date": date, "blockKey": block_key}, {"_id": 0})
                 .sort("startTs", 1).limit(limit))
+
+
+def match_blocks(user: str, from_date: str, block: str | None, app: str | None, title: str | None) -> set[tuple[str, str]]:
+    """``date ≥ from_date`` 里，块名（或 app + title 完全相同）命中的 ``(date, blockKey)``。"""
+    q = {"user": user, "date": {"$gte": from_date}, **({"blockKey": block} if block is not None else {"app": app, "title": title})}
+    return {(d["date"], d["blockKey"]) for d in _col().find(q, {"_id": 0, "date": 1, "blockKey": 1})}
 
 
 def stale(user: str, from_date: str, version: int, limit: int) -> list[dict]:

@@ -146,6 +146,22 @@ INC_BASE = {"now": "2026-10-12T10:00:00+00:00", "lastReportAt": "2026-10-12T09:5
                         "reason": "not_up", "result": "failed"}]}
 
 
+GAPS = {"date": "2026-10-24", "gaps": [{"from": "2026-10-24T12:00:00+08:00", "to": "2026-10-24T13:25:00+08:00", "seconds": 5100,
+                                          "detectorOffline": True}]}
+MATCH = {"query": {"block": "示例文档"}, "days": 30, "destinations": [
+    {"taskId": "t_a1", "projectId": "p_3c", "address": "xx-g-xtsc", "name": "写提示词", "times": 5, "seconds": 3600,
+     "lastAt": "2026-10-23T11:00:00+08:00", "via": "rule"}]}
+
+
+def match_for(q):
+    """blocks/history：按 app+title 查时 query 回 {app, title}（同 nexus-core）。"""
+    out = dict(MATCH)
+    if "block" not in q:
+        out["query"] = {"app": q["app"][0], "title": q["title"][0]}
+    out["days"] = int(q.get("days", ["30"])[0])
+    return out
+
+
 class Fake:
     requests: list = []   # (方法, 路径, 查询, 租户头)
     scopes: list = []     # 与 requests 同序：X-Nexus-Scope 头（没有 = None）
@@ -209,7 +225,7 @@ def post_result(path, q, tenant, body, scope):
 def respond(method, path, q, tenant, body, scope):
     one = lambda k, d=None: q.get(k, [d])[0]  # noqa: E731
     if tenant == "u_old" and path.startswith("/api/core/activity/") and path.split("/")[4] in (
-            "settings", "blocks", "block-rules", "questions", "secretary-reports", "direct-log", "ignores", "proposals"):
+            "settings", "gaps", "blocks", "block-rules", "questions", "secretary-reports", "direct-log", "ignores", "proposals"):
         return 404, {"detail": "Not Found"}
     if method == "POST":
         return post_result(path, q, tenant, body, scope)
@@ -236,6 +252,8 @@ def respond(method, path, q, tenant, body, scope):
                                             if one("detail") == "windows" and "blocks" not in HISTORY["human"] else HISTORY),
         "/api/core/views/arrangements": lambda: ARRANGEMENTS,
         "/api/core/activity/blocks": lambda: BLOCKS,
+        "/api/core/activity/gaps": lambda: GAPS,
+        "/api/core/activity/blocks/history": lambda: match_for(q),
         "/api/core/detector/rules": lambda: RULES,
         "/api/core/activity/block-rules": lambda: BLOCK_RULES,
         "/api/core/activity/ignores": lambda: IGNORES,

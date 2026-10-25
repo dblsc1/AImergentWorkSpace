@@ -164,6 +164,11 @@ def add_events(user: str, device_id: str, events: list[dict]) -> None:
                                     {"$push": {"events": {"$each": events, "$slice": -MAX_EVENTS}}}, upsert=True)
 
 
+def user_events(user: str) -> list[dict]:
+    """该租户所有设备的事故事件（不分设备）。"""
+    return [e for d in _incidents_col().find({"user": user}, {"_id": 0, "events": 1}) for e in d.get("events", [])]
+
+
 def get_events(user: str, device_id: str) -> list[dict]:
     doc = _incidents_col().find_one({"user": user, "deviceId": device_id}, {"_id": 0, "events": 1})
     return (doc or {}).get("events", [])
