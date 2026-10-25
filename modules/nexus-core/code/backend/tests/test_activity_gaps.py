@@ -35,6 +35,16 @@ def test_gaps_leading_hole_and_empty_day_and_history_segments(client):
     assert "gaps" not in client.get(f"{API}/views/history", params={"from": D, "to": D, "who": "human"}).json()["human"]
 
 
+def test_confirmed_session_lane_without_records_is_not_a_gap(client):
+    from app.modules.projector import repo as projector_repo
+
+    upload(client, [rec(D, "08:00:00", "09:00:00"), rec(D, "12:00:00", "23:55:00")])
+    assert [(g["from"][11:16], g["to"][11:16]) for g in client.get(G, params={"date": D}).json()["gaps"]] == [("09:00", "12:00")]
+    projector_repo._lanes_col().insert_one({"user": "u_local", "key": "k_manual", "kind": "session", "startAt": at(D, "09:00:00"),
+                               "endAt": at(D, "12:00:00"), "durationSeconds": 10800, "taskId": None, "projectId": None})
+    assert client.get(G, params={"date": D}).json()["gaps"] == []  # 手动计时 / 旧自动记录的已入账段也算有活动
+
+
 @pytest.fixture()
 def tasks(seeded):
     t = seeded["tasks"]

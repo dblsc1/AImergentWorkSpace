@@ -410,3 +410,7 @@ v1 的 23 个工具名不出现在 `tools/list`，但仍能调：**不调下游�
 - 只读已经定下来的归属，不猜。查不到给 `destinations: []`。
 
 后端：nexus-core 追加两个只读端点 `GET /api/core/activity/gaps?date=`、`GET /api/core/activity/blocks/history?block=|app=&title=&days=`，形状同上（不含 `note` / `permissions`），租户隔离同其他 `activity/*`。
+
+### 补充（v0.4.2 修正，只增不改）
+
+- `gaps` 的依据除原始记录外还包括已入账的段（手动计时、开三级分类以前的自动记录没有原始记录，但算有活动）；正在跑的计时暂不计入。

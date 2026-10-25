@@ -4866,7 +4866,7 @@ MCP 侧见 `contracts/mcp.tools.v2`。
 两个只读端点，租户隔离同其他 `activity/*`；日界、所有时刻都按 `NEXUS_TZ`，带偏移。
 
 - `GET activity/gaps?date=`（缺省今天）→ `{date, gaps: [{from, to, seconds, detectorOffline}]}`。区间是当天 08:00 到现在（过去的日子到当天结束）；
-  依据 `activity_records` 的时间并集，**没有任何记录且长于 10 分钟**的空档（含 08:00 到第一条记录之间、最后一条到现在之间），按时间升序、至多 50 段。
+  依据原始记录（`activity_records`）与已入账的段（`session` 段：手动计时、旧自动记录，没有原始记录）的时间并集，**两者都没有且长于 10 分钟**的空档（含 08:00 到第一条记录之间、最后一条到现在之间），按时间升序、至多 50 段。
   `detectorOffline`：与该租户任一设备的 `detector_offline` 事故区间（`at`…`endAt`）有交集。空洞不依赖事故（掉线期间的记录事后补传，可能仍有记录）。
   `views/history` 的 `human` 在 `detail=segments` 且没给 `scope` 时追加同一口径的 `gaps`（范围内各天依次拼接，至多 50 段；空洞不属于任何任务，给了 `scope` 就不出这个键）。
   掉线区间还包括此刻正在静默的（健康报告停了超过 90 秒，事故要等下一份报告才写）：`(最后一份报告, 现在)`。
