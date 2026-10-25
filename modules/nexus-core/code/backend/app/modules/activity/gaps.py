@@ -1,6 +1,6 @@
 """v2.40 / v0.4.2：``GET activity/gaps``（当天原始记录的空洞）与 ``GET activity/blocks/history``（窗口以前归到哪）。**只读**。
 
-空洞只依据原始记录算；与检测程序掉线区间有交集的只是加标注（掉线期间的记录事后会从 ActivityWatch 补传）。
+空洞只依据原始记录与已入账的段算；与检测程序掉线区间有交集的只是加标注（掉线期间的记录事后会从 ActivityWatch 补传）。
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from datetime import date as Date, datetime, time, timedelta
 from ... import config
 from ...tenant import current as current_tenant
 from ..planner import service as planner_service
+from ..projector.handlers import lanes as lanes_projection
 from ..planner.errors import UnprocessableError
 from ..views import address as address_mod
 from . import blocks, records_repo
@@ -32,8 +33,10 @@ def day_gaps(d: Date, off: list | None = None) -> list[dict]:
     user, tz = current_tenant(), config.settings.tz
     lo = datetime.combine(d, time(GAP_FROM_HOUR), tzinfo=tz)
     hi = min(datetime.now(tz), datetime.combine(d + timedelta(days=1), time(0), tzinfo=tz))
-    spans = sorted((max(r["startTs"], lo), min(r["endTs"], hi)) for r in records_repo.day_records(user, d.isoformat())
-                   if min(r["endTs"], hi) > max(r["startTs"], lo))
+    cover = [(r["startTs"], r["endTs"]) for r in records_repo.day_records(user, d.isoformat())]
+    # 已入账的段（旧自动记录、手动计时）没有原始记录，也算有活动
+    cover += [(r["startAt"], r["endAt"]) for r in lanes_projection.read_lanes(user, "session", lo, hi, 5000, ascending=True)]
+    spans = sorted((max(s, lo), min(e, hi)) for s, e in cover if min(e, hi) > max(s, lo))
     holes, cur = [], lo
     for s, e in spans + [(hi, hi)]:
         if (s - cur).total_seconds() > GAP_MIN:
