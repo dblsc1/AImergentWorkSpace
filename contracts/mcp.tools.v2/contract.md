@@ -357,3 +357,56 @@ v1 的 23 个工具名不出现在 `tools/list`，但仍能调：**不调下游�
 - `CRUD_Windowsblock` / `CRUD_Windowsblock_Classify_Rules` 的 `block` 入参：读出来给调用方的块名是清洗后的显示形式（压空白、超长截断）；写入时服务器把它对回下游原样的块名（当天的块 + 现有第二级规则），对得上就用原样的，对不上就按传入值照发。
 - `CRUD_Windows_Classify_Rules` 的 `edit`：`app` / `title` / `block` 传空字符串也算「要改」（例如 `title: ""` 去掉标题限制），不再被当成没传。
 
+
+### 补充（v0.4.1，只增不改）
+
+依据：Hermes 2026-10-24 实测报告。以下均为修正或追加字段，原有字段与行为不变。
+
+- **时区**：MCP 服务与 nexus-core 用同一个时区（部署时同一个 `NEXUS_TZ`；没配时 MCP 取 nexus-core 返回里带的时区）。`Get_Started.tz` 报这个时区的偏移。
+  MCP 自己生成或转发的时刻一律带这个时区的偏移输出：`Get_Now.at`、`Get_Device_Health` 的 `incidents[].at` / `endAt`、`Get_Rules` 的 `aiAt`、`Get_Proposals` 里的时刻。表示的瞬间不变，只换偏移。
+- **`Get_Pending_Classify_Windows`**：`items` 不变（第一级没收的块）。追加：
+  - `unassigned: [{block, seconds, records, ruleId?}]`：第一级规则收进了块、但第二级还没定去向的块（`keySource` 不是 `auto`、`status: "pending"`）。按 `seconds` 降序，同样清洗。
+  - `uncaughtSeconds`（`items` 秒数和）、`unassignedSeconds`（`unassigned` 秒数和）。两者之和等于 `Get_History` 当天的 `pendingSeconds`。
+  - `note` 提示两种都要处理。
+- **`Get_History`**：`human` 追加 `pendingUncaughtSeconds`、`pendingUnassignedSeconds`（`pendingSeconds` 照旧是两者之和）。
+  入参追加 `records`（布尔，缺省 `true`）：`detail=windows` 时传 `false` 则每个块不带 `records` 明细，只留 `recordCount`。
+- **写工具的结果**：直接施加成功的那一条追加 `id`（新建或改动的对象 id：规则 `r_…` / `br_…`、忽略规则、任务、项目），下游没给时省略。
+- **参数错误的 `example`**：示例里的地址字段（`scope`、`target`）用调用方任务树里真实存在的一个地址替换占位；树读不到时保留占位。
+- **`Get_View`**：按本契约原文「未分类照常列出」：项目下的「未分类」时间桶作为任务节点列出（`kind: "task"`，追加 `unclassified: true`），它的 id / address 可以当 `target` 用，等同把时间记到该项目。
+
+### 补充（v2.1 · v0.4.2：两个新工具，只增不改）
+
+工具数 15 → 17（读 11、写 6）；`read` 范围 9 → 11。两个都是读工具，收 `help: true`，带 `note`、`permissions`。
+
+#### `Get_Today`：今天还有没有没处理完的
+
+入参：`date`（缺省今天）。返回：
+
+```jsonc
+{ "date": "2026-10-24",
+  "uncaught":   {"blocks": 12, "seconds": 270},   // 第一级没收
+  "unassigned": {"blocks": 1,  "seconds": 190},   // 第二级没定
+  "gaps": [ {"from": "…+08:00", "to": "…+08:00", "seconds": 5100, "detectorOffline": true} ],
+  "proposalsPending": 3, "questionsOpen": 1, "reportSubmitted": true,
+  "allClear": false, "note": "…", "permissions": { … } }
+```
+
+- `gaps`：当天 08:00 起到现在（或当天结束）之间，**没有任何原始记录**且长于 10 分钟的时间段；与检测程序掉线区间有交集的标 `detectorOffline: true`，否则是「没活动」（人可能不在电脑前）。
+  依据原始记录（`activity_records`）算，不依据段的首尾，也不依据掉线事故本身。至多 50 段。
+- `allClear`：`uncaught` 与 `unassigned` 都为 0、没有待批提议和待答问题、当天报告已交。不看 `gaps`（空洞是事实，不是待办）。
+- `Get_History` 的 `human` 同时追加同一口径的 `gaps`（只在 `detail=segments` 时给）。
+
+#### `Get_Match_History`：这个窗口以前归到哪
+
+入参：`block`（块名）或 `app` + `title`（窗口），二选一；`days`（缺省 30，最多 90）。返回：
+
+```jsonc
+{ "query": {"block": "…"}, "days": 30,
+  "destinations": [ {"taskId", "projectId", "address", "name", "times": 5, "seconds": 3600, "lastAt": "…", "via": "rule|human|ai"} ],
+  "note": "…", "permissions": { … } }
+```
+
+- 来源：过去 `days` 天里已归类的窗口块（`assigned`，按 `parts`）；按窗口查时匹配块里记录的 `app` 与 `title`（完全相同）。按 `times` 降序，至多 20 条。
+- 只读已经定下来的归属，不猜。查不到给 `destinations: []`。
+
+后端：nexus-core 追加两个只读端点 `GET /api/core/activity/gaps?date=`、`GET /api/core/activity/blocks/history?block=|app=&title=&days=`，形状同上（不含 `note` / `permissions`），租户隔离同其他 `activity/*`。

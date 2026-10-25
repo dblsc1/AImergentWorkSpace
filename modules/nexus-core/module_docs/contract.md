@@ -4761,6 +4761,7 @@ MCP 侧见 `contracts/mcp.tools.v2`。
   - `confirmedSeconds` / `byTarget` / 已入账段 = 台账里**所有** `session.completed`（任何 `source`，作废的除外），按当前归属（含改挂），按投影的同一口径归日。代理的运行是 `agent.run.completed`，从不进人的部分。
   - `pendingSeconds` = 还没分类的时间：tiers 开 = 范围内 `pending` 与 `generic`（还没拆完）窗口块里、尚未入账的记录秒数（同一时刻多台设备取并集），含今天还在记的；`ignored` 的不算。tiers 关 = 范围内待确认建议的秒数（同 `activity/suggestions/pending-days` 口径）。
   - `scope` 只过滤已入账的部分；`pending` 的没有归属，给了 `scope` 时 `pendingSeconds` 为 `null`、不出 pending 段。
+  - **v0.4.1（追加）**：`human` 追加 `pendingUncaughtSeconds`（还没分类的时间里，第一级规则没收的块，即 `keySource: auto`）与 `pendingUnassignedSeconds`（第一级收了、第二级还没定去向的块）；两者之和 = `pendingSeconds`。tiers 关时前者等于 `pendingSeconds`、后者为 0；给了 `scope` 时不出这两项。
 - **`human.segments[]`**（按 `from` 升序）：`{from, to, seconds, status, eventId, taskId, projectId, address, window, onAgentRun}`。
   - `confirmed` 段：一条 `session.completed` 一段，`eventId` = 它的 id。
   - `pending` 段：tiers 开 = 每个待分类块的每一段连续记录（按「三级分类」四的 300 秒间隔切段）一段，`window` = 块名；tiers 关 = 每条待确认建议一段。`eventId`、`taskId`、`projectId`、`address` 为 `null`。

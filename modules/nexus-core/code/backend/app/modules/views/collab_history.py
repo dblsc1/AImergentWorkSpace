@@ -96,6 +96,7 @@ class _Human:
         self._plan: tuple | None = None
         self._tiers: bool | None = None
         self._rows: list[dict] | None = None
+        self.uncaught = 0  # v0.4.1：还没分类的秒数里「第一级没收」的部分（其余是第一级收了、第二级没定）
 
     @property
     def planner(self) -> tuple[address_mod.Addresses, dict, dict, set]:
@@ -168,6 +169,7 @@ class _Human:
             return self._pending_tiers()
         days = pending_days.pending_days(self.first, self.last)["days"]
         per_day = {d["date"]: int(d["seconds"]) for d in days}
+        self.uncaught = sum(per_day.values())  # tiers 关：没有第二级，都算第一级没收
         segs = []
         if self.detail == "segments":
             rows = collab_repo.pending_suggestions(self.user, self.start, self.end, CAP_SEGMENTS + 1)
@@ -208,9 +210,11 @@ class _Human:
                 if r.get("ledgerEventId") is None:
                     by_pair.setdefault((r["date"], r["blockKey"]), []).append(r)
             spans = {p: [(r["startTs"], r["endTs"]) for r in rs] for p, rs in by_pair.items()}
+            ruled = {p for p, rs in by_pair.items() if any(r.get("keySource") == "rule" for r in rs)}
         else:
             rows = collab_repo.pending_spans(self.user, self.first.isoformat(), self.last.isoformat(), CAP_PENDING_BLOCKS + 1)
             spans = {(r["date"], r["blockKey"]): r["spans"] for r in rows}
+            ruled = {(r["date"], r["blockKey"]) for r in rows if r.get("rule")}
             by_pair = {}
         states = self._classify(spans)
         open_pairs = sorted(p for p, st in states.items() if st[4][0] == "pending" or (st[4][0] == "generic" and not st[4][3]))
@@ -221,6 +225,11 @@ class _Human:
         for ds, k in open_pairs:
             per_day.setdefault(ds, []).extend(spans[(ds, k)])
         out_day = {d.isoformat(): round(cr.seconds(cr.union(per_day.get(d.isoformat(), [])))) for d in _days(self.first, self.last)}
+        auto_day: dict[str, list] = {}
+        for ds, k in open_pairs:
+            if (ds, k) not in ruled:
+                auto_day.setdefault(ds, []).extend(spans[(ds, k)])
+        self.uncaught = sum(round(cr.seconds(cr.union(v))) for v in auto_day.values())
         segs = [(s["from"], s["to"], one_line(k), s["seconds"]) for ds, k in open_pairs for s in _cluster(by_pair.get((ds, k), []))]
         return out_day, segs
 
@@ -378,6 +387,8 @@ def get_history(date_from: str | None, date_to: str | None, who: str, detail: st
         human: dict = {
             "confirmedSeconds": total,
             "pendingSeconds": None if h.scope else sum(pend_day.values()),
+            **({} if h.scope else {"pendingUncaughtSeconds": min(h.uncaught, sum(pend_day.values())),
+                                   "pendingUnassignedSeconds": sum(pend_day.values()) - min(h.uncaught, sum(pend_day.values()))}),
             "byDay": [{"date": d.isoformat(), "seconds": per_day.get(d.isoformat(), 0),
                        "pendingSeconds": None if h.scope else pend_day.get(d.isoformat(), 0),
                        "byTarget": by_target.get(d.isoformat(), [])} for d in _days(first, last)],

@@ -79,6 +79,7 @@ services:
     networks: [honeycomb-net, honeycomb-agent-net]
     environment:
       NEXUS_CORE_URL: http://nexus-core:8000
+      NEXUS_TZ: ${HONEYCOMB_TZ:-Asia/Shanghai}
       NEXUS_TENANT_STRICT: ${NEXUS_TENANT_STRICT:-0}
       MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-}
 

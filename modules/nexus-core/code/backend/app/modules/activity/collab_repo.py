@@ -25,9 +25,11 @@ def pending_spans(user: str, first: str, last: str, limit: int) -> list[dict]:
     """[first, last] 日里还没入账的原始记录，按 (日, 块名) 一次聚合成时间区间列表；至多 ``limit`` 个块（调用方多要 1 个判截断）。"""
     rows = records_repo._col().aggregate([  # noqa: SLF001
         {"$match": {"user": user, "date": {"$gte": first, "$lte": last}, "ledgerEventId": None}},
-        {"$group": {"_id": {"d": "$date", "k": "$blockKey"}, "spans": {"$push": {"s": "$startTs", "e": "$endTs"}}}},
+        {"$group": {"_id": {"d": "$date", "k": "$blockKey"}, "spans": {"$push": {"s": "$startTs", "e": "$endTs"}},
+                    "rule": {"$max": {"$cond": [{"$eq": ["$keySource", "rule"]}, 1, 0]}}}},
         {"$limit": limit}])
-    return [{"date": r["_id"]["d"], "blockKey": r["_id"]["k"], "spans": [(x["s"], x["e"]) for x in r["spans"]]} for r in rows]
+    return [{"date": r["_id"]["d"], "blockKey": r["_id"]["k"], "spans": [(x["s"], x["e"]) for x in r["spans"]],
+             "rule": bool(r.get("rule"))} for r in rows]
 
 
 def range_records(user: str, first: str, last: str) -> list[dict]:
