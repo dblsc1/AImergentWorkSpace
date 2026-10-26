@@ -166,6 +166,9 @@ func flushAliases(cfg Config) error {
 }
 
 func (a *aliases) printUsed(out io.Writer) {
+	if a == nil {
+		return
+	}
 	type row struct {
 		kind, tok, orig string
 		n               int
@@ -259,8 +262,12 @@ func (r *redactor) initAliases(c Config) {
 	for k, masked := range map[string]bool{"ips": on(c.Privacy.IPs), "emails": on(c.Privacy.Emails), "users": on(c.Privacy.Usernames), "hosts": on(c.Privacy.Usernames), "domains": true} {
 		r.num[k] = set[k] && masked
 	}
-	if c.dir == "" {
-		r.al = newAliases("")
+	r.al = newAliases("")
+	anyOn := false
+	for _, v := range r.num {
+		anyOn = anyOn || v
+	}
+	if c.dir == "" || !anyOn { // 没有要编号的类型：不碰 aliases.json
 		return
 	}
 	a, err := sharedAliases(filepath.Join(c.dir, "aliases.json"))

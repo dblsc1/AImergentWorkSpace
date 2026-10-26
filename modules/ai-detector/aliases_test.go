@@ -206,3 +206,22 @@ func TestNumberedAliasPreviewDoesNotPersist(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestNumberedAliasPreviewEmptyListIgnoresCorruptTable(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "aliases.json"), []byte("{"), 0o600)
+	cfg := Config{Privacy: Privacy{NumberedAliases: []string{}}}
+	cfg.dir = dir
+	pr, err := newPreviewRedactor(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := pr.text("8.8.8.8"); got != "[IP]" {
+		t.Fatal(got)
+	}
+	var out bytes.Buffer
+	pr.al.printUsed(&out)
+	if err := flushAliases(cfg); err != nil {
+		t.Fatal(err)
+	}
+}
