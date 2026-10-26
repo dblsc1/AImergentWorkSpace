@@ -633,6 +633,7 @@ Authorization: Bearer <deviceToken>
 - 显示文件：`~/.agent-traffic-light/agents.json`，格式同「状态文件桥」的文件格式（`updated_at` + `agents[{key, label, state, detail}]`），先写临时文件再改名。显示文件只在本机，不上传。
 - 上报：在 `agentLightsReport` 里的那几类，按「状态文件桥」同样的规则开运行、报相位、结束（`key` 用 `<类>:<会话或配置名>`，`label` 照常脱敏）。同一个 `key` 不会同时被状态文件桥和红绿灯各报一遍：红绿灯开着时，状态文件桥跳过 `agentLightsReport` 里的那几类。
 - 离开本机的只有：类名、`clientKey`（哈希）、脱敏后的显示名、相位、时刻、结束状态。`detail`、文件路径、会话内容都不上传。
+- Codex 的实现取舍：读 `~/.codex/sessions` 下最近 12 小时内改过的那份会话记录（JSONL，只看事件类型，不读内容），不读数据库。
 
 ## 变更记录
 

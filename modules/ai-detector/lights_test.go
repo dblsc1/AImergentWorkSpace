@@ -1,7 +1,6 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -118,76 +117,84 @@ func TestLightsClaudeStates(t *testing.T) {
 	}
 }
 
-func execAll(t *testing.T, path string, stmts ...string) {
+// codexFixture 写一份会话记录：lines 为事件（type, payload.type），mtime 设成 now-age。
+func codexFixture(t *testing.T, home string, now time.Time, age time.Duration, name string, cwd string, lines ...[2]string) string {
 	t.Helper()
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
+	d := now.Add(-age)
+	p := filepath.Join(home, ".codex", "sessions", d.Format("2006"), d.Format("01"), d.Format("02"), name)
+	body := ""
+	if cwd != "" {
+		body = fmt.Sprintf(`{"type":"session_meta","payload":{"type":"x","cwd":%q,"instructions":"SECRET"}}`, cwd) + "\n"
+	}
+	for _, l := range lines {
+		body += fmt.Sprintf(`{"type":%q,"payload":{"type":%q,"message":"SECRET"}}`, l[0], l[1]) + "\n"
+	}
+	lwrite(t, p, body)
+	if err := os.Chtimes(p, d, d); err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	for _, s := range stmts {
-		if _, err := db.Exec(s); err != nil {
-			t.Fatalf("%s: %v", s, err)
-		}
-	}
-}
-
-func codexFixture(t *testing.T, home string, updated time.Time, bodies ...string) { // bodies 从旧到新
-	t.Helper()
-	d := filepath.Join(home, ".codex")
-	os.MkdirAll(d, 0o700)
-	execAll(t, filepath.Join(d, "state_5.sqlite"),
-		`create table threads (id text, title text, cwd text, updated_at integer, updated_at_ms integer)`,
-		fmt.Sprintf(`insert into threads values ('old-thread','old','/o/older',%d,%d)`, updated.Unix()-100, (updated.Unix()-100)*1000),
-		fmt.Sprintf(`insert into threads values ('thread-1234567890','title line\nsecond','/x/garden',%d,%d)`, updated.Unix(), updated.Unix()*1000))
-	st := []string{`create table logs (id integer primary key autoincrement, ts integer, target text, thread_id text, feedback_log_body text)`,
-		`insert into logs (thread_id, feedback_log_body) values ('other','response.in_progress')`}
-	for _, b := range bodies {
-		st = append(st, fmt.Sprintf(`insert into logs (thread_id, feedback_log_body) values ('thread-1234567890','%s')`, b))
-	}
-	execAll(t, filepath.Join(d, "logs_2.sqlite"), st...)
+	return p
 }
 
 func TestLightsCodexStates(t *testing.T) {
 	now := time.Now()
+	const name = "rollout-2026-10-27T10-00-00-0192abcd-1234.jsonl"
+	ev := func(ty string) [2]string { return [2]string{"event_msg", ty} }
 	cases := []struct {
-		name    string
-		age     time.Duration
-		bodies  []string
-		want    string
-		wantNil bool
+		name   string
+		age    time.Duration
+		lines  [][2]string
+		want   string
+		absent bool
 	}{
-		{"recent update, no logs", 5 * time.Second, nil, "working", false},
-		{"older update, no logs", 60 * time.Second, nil, "complete", false},
-		{"in_progress within 30s", 25 * time.Second, []string{"x", "RESPONSE.IN_PROGRESS"}, "working", false},
-		{"in_progress too old", 40 * time.Second, []string{"response.in_progress"}, "complete", false},
-		{"approval pending", 60 * time.Second, []string{"call", `{"sandbox_permissions":"require_escalated"}`}, "waiting_permission", false},
-		{"approval then completion", 60 * time.Second, []string{`require_escalated`, "function_call_output"}, "complete", false},
-		{"completion before approval still waits", 60 * time.Second, []string{"tool_result", "request_user_input", "noise"}, "waiting_permission", false},
-		{"older than 12h", 13 * time.Hour, nil, "", true},
+		{"started", time.Minute, [][2]string{ev("task_started")}, "working", false},
+		{"started then complete", time.Minute, [][2]string{ev("task_started"), ev("task_complete")}, "complete", false},
+		{"complete then started", time.Minute, [][2]string{ev("task_complete"), ev("task_started")}, "working", false},
+		{"approval pending", time.Minute, [][2]string{ev("task_started"), ev("exec_approval_request")}, "waiting_permission", false},
+		{"patch approval", time.Minute, [][2]string{ev("apply_patch_approval_request")}, "waiting_permission", false},
+		{"user input", time.Minute, [][2]string{ev("task_started"), ev("request_user_input")}, "waiting_permission", false},
+		{"approval then later event", time.Minute, [][2]string{ev("task_started"), ev("exec_approval_request"), ev("exec_command_end")}, "working", false},
+		{"recent mtime only", 5 * time.Second, [][2]string{ev("agent_message")}, "working", false},
+		{"idle", time.Minute, [][2]string{ev("agent_message")}, "complete", false},
+		{"older than 12h", 13 * time.Hour, [][2]string{ev("task_started")}, "", true},
 	}
 	for _, c := range cases {
 		home := t.TempDir()
-		codexFixture(t, home, now.Add(-c.age), c.bodies...)
+		codexFixture(t, home, now, c.age, name, "/x/garden", c.lines...)
 		got := discoverCodex(home, now)
-		if c.wantNil {
+		if c.absent {
 			if len(got) != 0 {
 				t.Errorf("%s: want none, got %v", c.name, got)
 			}
 			continue
 		}
-		if len(got) != 1 || got[0].State != c.want || got[0].Key != "codex:thread-1234567890" || got[0].Label != "Codex garden" {
+		if len(got) != 1 || got[0].State != c.want || got[0].Key != "codex:0192abcd-1234" || got[0].Label != "Codex garden" {
 			t.Errorf("%s: %+v want %s", c.name, got, c.want)
 		}
+		if b, _ := json.Marshal(got); strings.Contains(string(b), "SECRET") {
+			t.Errorf("%s: content leaked", c.name)
+		}
+	}
+	// 没有 session_meta：标签用会话号前 8 位。
+	home := t.TempDir()
+	codexFixture(t, home, now, time.Minute, name, "", ev("task_started"))
+	if got := discoverCodex(home, now); len(got) != 1 || got[0].Label != "Codex 0192abcd" {
+		t.Errorf("no meta: %+v", got)
+	}
+	// 取最近改过的那份；只尾部大文件也能读（半行被丢）。
+	home = t.TempDir()
+	codexFixture(t, home, now, time.Hour, "rollout-2026-10-27T08-00-00-old.jsonl", "/o/older", ev("task_started"))
+	p := codexFixture(t, home, now, time.Minute, name, "/x/garden")
+	f, _ := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0o600)
+	f.WriteString(strings.Repeat(`{"type":"response_item","payload":{"type":"x"}}`+"\n", 3000))
+	f.WriteString(`{"type":"event_msg","payload":{"type":"task_started"}}` + "\n")
+	f.Close()
+	os.Chtimes(p, now.Add(-time.Minute), now.Add(-time.Minute))
+	if got := discoverCodex(home, now); len(got) != 1 || got[0].Key != "codex:0192abcd-1234" || got[0].State != "working" {
+		t.Errorf("newest/tail: %+v", got)
 	}
 	if got := discoverCodex(t.TempDir(), now); len(got) != 0 {
-		t.Fatalf("no db: %v", got)
-	}
-	// 库是只读打开的：不会在没有库的地方建出文件。
-	home := t.TempDir()
-	discoverCodex(home, now)
-	if _, err := os.Stat(filepath.Join(home, ".codex")); err == nil {
-		t.Fatal("created .codex")
+		t.Fatalf("no sessions: %v", got)
 	}
 }
 

@@ -4,19 +4,15 @@ package main
 // 写显示文件，并把 agentLightsReport 里的几类交给状态文件桥同一套上报。
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
-
-	_ "modernc.org/sqlite" // 纯 Go，无 CGO；只以 mode=ro 打开
 )
 
 const (
@@ -141,108 +137,105 @@ func discoverClaude(home string) []lightAgent {
 	return out
 }
 
-// sqliteRows 以只读方式打开库跑一条查询；任何失败都当「没有」。
-func sqliteRows(path, query string, args []any, scan func(*sql.Rows) error) {
-	if _, err := os.Stat(path); err != nil {
-		return
-	}
-	p := filepath.ToSlash(path)
-	if !strings.HasPrefix(p, "/") {
-		p = "/" + p // Windows 盘符路径
-	}
-	db, err := sql.Open("sqlite", "file:"+(&url.URL{Path: p}).EscapedPath()+"?mode=ro&_pragma=busy_timeout(200)")
-	if err != nil {
-		return
-	}
-	defer db.Close()
-	rows, err := db.Query(query, args...)
-	if err != nil {
-		return
-	}
-	defer rows.Close()
-	for rows.Next() {
-		if scan(rows) != nil {
-			return
+const codexTail = 64 << 10
+
+// codexSession 找最近两天的目录里改动最晚的 rollout-*.jsonl（只按修改时间，不读内容）。
+func codexSession(home string, now time.Time) (string, time.Time) {
+	var best string
+	var bestT time.Time
+	for _, d := range []time.Time{now, now.AddDate(0, 0, -1)} {
+		fs, _ := filepath.Glob(filepath.Join(home, ".codex", "sessions", d.Format("2006"), d.Format("01"), d.Format("02"), "rollout-*.jsonl"))
+		for _, f := range fs {
+			if fi, err := os.Stat(f); err == nil && fi.ModTime().After(bestT) {
+				best, bestT = f, fi.ModTime()
+			}
 		}
 	}
+	return best, bestT
 }
 
-var (
-	codexApproval   = []string{`"sandbox_permissions":"require_escalated"`, `'sandbox_permissions': 'require_escalated'`, "require_escalated", "request_user_input"}
-	codexCompletion = []string{"function_call_output", "response.function_call_arguments.done", `"type":"response.completed"`, "response.completed", "tool_result"}
-)
-
-func containsAny(s string, subs []string) bool {
-	for _, x := range subs {
-		if strings.Contains(s, x) {
-			return true
-		}
-	}
-	return false
-}
-
+// discoverCodex 读最近一份会话记录的尾部，只看事件的 type / payload.type，不读内容。
 func discoverCodex(home string, now time.Time) []lightAgent {
-	var id, title, cwd string
-	var updated int64
-	found := false
-	sqliteRows(filepath.Join(home, ".codex", "state_5.sqlite"),
-		`select id, title, cwd, updated_at from threads order by coalesce(updated_at_ms, updated_at * 1000) desc limit 1`, nil,
-		func(r *sql.Rows) error {
-			var t, c sql.NullString
-			var u sql.NullInt64
-			found = true
-			err := r.Scan(&id, &t, &c, &u)
-			title, cwd, updated = t.String, c.String, u.Int64
-			return err
-		})
-	if !found || id == "" {
+	path, mt := codexSession(home, now)
+	if path == "" || now.Sub(mt) > lightsCodexRecent {
 		return nil
 	}
-	age := now.Sub(time.Unix(updated, 0))
-	if age > lightsCodexRecent {
+	f, err := os.Open(path)
+	if err != nil {
 		return nil
 	}
-	if age < 0 {
-		age = 0
+	defer f.Close()
+	type ev struct {
+		Type    string `json:"type"`
+		Payload struct {
+			Type string `json:"type"`
+			Cwd  string `json:"cwd"`
+		} `json:"payload"`
 	}
-	var bodies []string // 最新在前
-	sqliteRows(filepath.Join(home, ".codex", "logs_2.sqlite"),
-		`select feedback_log_body from logs where thread_id = ? or thread_id is null order by id desc limit 80`, []any{id},
-		func(r *sql.Rows) error {
-			var b sql.NullString
-			err := r.Scan(&b)
-			bodies = append(bodies, strings.ToLower(b.String))
-			return err
-		})
-	if len(bodies) > 60 {
-		bodies = bodies[:60]
-	}
-	secs := int(age.Seconds())
-	state, detail := "complete", fmt.Sprintf("updated %ds ago", secs)
-	newest := -1
-	for i, b := range bodies {
-		if containsAny(b, codexApproval) {
-			newest = i
-			break
+	// 第一行 session_meta 带 cwd：只取 cwd，最多读 1 MB。
+	var cwd string
+	head := make([]byte, 1<<20)
+	n, _ := f.Read(head)
+	if line, _, _ := strings.Cut(string(head[:n]), "\n"); line != "" {
+		var e ev
+		if json.Unmarshal([]byte(line), &e) == nil && e.Type == "session_meta" {
+			cwd = e.Payload.Cwd
 		}
 	}
-	recent := strings.Join(bodies[:min(len(bodies), 40)], "\n")
+	fi, err := f.Stat()
+	if err != nil {
+		return nil
+	}
+	off := max(0, fi.Size()-codexTail)
+	buf := make([]byte, fi.Size()-off)
+	m, _ := f.ReadAt(buf, off)
+	lines := strings.Split(string(buf[:m]), "\n")
+	if off > 0 && len(lines) > 0 {
+		lines = lines[1:] // 开头可能是半行
+	}
+	started, completed, approval, lastMsg := -1, -1, -1, -1
+	for i, l := range lines {
+		var e ev
+		if json.Unmarshal([]byte(l), &e) != nil {
+			continue
+		}
+		pt := e.Payload.Type
+		if strings.HasSuffix(pt, "_approval_request") || pt == "request_user_input" {
+			approval = i
+		}
+		if e.Type != "event_msg" {
+			continue
+		}
+		lastMsg = i
+		switch pt {
+		case "task_started":
+			started = i
+		case "task_complete":
+			completed = i
+		}
+	}
+	secs := int(max(0, now.Sub(mt)) / time.Second)
+	state, detail := "complete", fmt.Sprintf("updated %ds ago", secs)
 	switch {
-	case newest >= 0 && !containsAny(strings.Join(bodies[:newest], "\n"), codexCompletion):
-		state, detail = "waiting_permission", fmt.Sprintf("approval/input marker, %ds ago", secs)
-	case (strings.Contains(recent, "response.in_progress") || strings.Contains(recent, `"status":"in_progress"`)) && age <= 2*lightsWorkingRecent:
-		state, detail = "working", fmt.Sprintf("active logs, %ds ago", secs)
-	case age <= lightsWorkingRecent:
+	case approval >= 0 && approval >= lastMsg:
+		state, detail = "waiting_permission", "approval request"
+	case started > completed:
+		state, detail = "working", "task started"
+	case now.Sub(mt) <= lightsWorkingRecent:
 		state, detail = "working", fmt.Sprintf("updated %ds ago", secs)
 	}
-	name := shortCwd(cwd)
-	if name == "" {
-		name = truncRunes(strings.SplitN(title, "\n", 2)[0], 22)
+	stem := strings.TrimSuffix(filepath.Base(path), ".jsonl")
+	id := strings.TrimPrefix(stem, "rollout-")
+	if len(id) > 20 {
+		id = id[20:] // 去掉 YYYY-MM-DDTHH-MM-SS-
 	}
-	if name == "" {
-		name = truncRunes(id, 8)
+	label := "Codex"
+	if c := shortCwd(cwd); c != "" {
+		label += " " + c
+	} else {
+		label += " " + truncRunes(id, 8)
 	}
-	return []lightAgent{{"codex:" + id, "Codex " + name, state, detail}}
+	return []lightAgent{{"codex:" + id, label, state, detail}}
 }
 
 func discoverHermes(home string) []lightAgent {

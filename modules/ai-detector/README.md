@@ -322,7 +322,7 @@ ActivityWatch 起不来时，真正的原因在 `aw-start.log` 里。默认它**
 
 ### 红绿灯（`agentLights`，v0.5）
 
-只读 `~/.claude/sessions/*.json`、`~/.codex/*.sqlite`（只读打开）、`~/.hermes` 下的 `gateway_state.json`，把状态写进
+只读 `~/.claude/sessions/*.json`、`~/.codex/sessions` 下最近的会话记录（只看事件类型）、`~/.hermes` 下的 `gateway_state.json`，把状态写进
 `~/.agent-traffic-light/agents.json`（格式同下面的状态文件）。`agentLightsReport` 里的类按状态文件桥同样的规则上报，
 状态文件桥会跳过这几类。Claude Code 有钩子，所以缺省只上报 Hermes。网关进程已不在的 Hermes 配置不显示也不上报。
 
