@@ -525,8 +525,7 @@ class AgentActor {
         const dy = stageY - this.drag.stageY;
         let {x, y, width, height} = this.drag;
         if (this.drag.type === 'move') {
-            x += dx;
-            y += dy;
+            [x, y] = onStage(x + dx, y + dy);   // 和载入、MiniBar 同一个夹法，不让灯拖出屏幕
         } else {
             const edge = this.drag.edge;
             let newWidth = width;
@@ -543,15 +542,21 @@ class AgentActor {
             newWidth = Math.max(48, Math.round(newWidth));
             newHeight = Math.max(24, Math.round(newHeight));
 
-            if (edge.includes('w'))
-                x += width - newWidth;
-            if (edge.includes('n'))
-                y += height - newHeight;
+            // 拉 W / N 边：夹动的那条边，另一条边（锚点）不动，尺寸由锚点重算
+            if (edge.includes('w')) {
+                const right = x + width;
+                x = clamp(right - newWidth, 0, right - 48);
+                newWidth = right - x;
+            }
+            if (edge.includes('n')) {
+                const bottom = y + height;
+                y = clamp(bottom - newHeight, 0, bottom - 24);
+                newHeight = bottom - y;
+            }
 
             width = newWidth;
             height = newHeight;
         }
-        [x, y] = onStage(x, y);   // 和载入、MiniBar 同一个夹法，不让灯拖出屏幕
         this.actor.set_position(x, y);
         this.actor.set_size(width, height);
         this._layout();
