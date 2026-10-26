@@ -41,7 +41,7 @@ def mask_rule(rule: dict | None, human: bool) -> dict | None:
 
 def view(d: dict, human: bool = True) -> dict:
     out = {"id": d["id"], "kind": d["kind"], "status": d["status"], "createdAt": _iso(d["createdAt"]), "reason": d["reason"],
-           "corrected": bool(d.get("corrected")), **{k: d.get(k) for k in _FIELDS[d["kind"]]}}
+           "corrected": bool(d.get("corrected")), "confidencePercent": d.get("confidencePercent"), **{k: d.get(k) for k in _FIELDS[d["kind"]]}}
     if d["kind"] == "windowRule":
         out["rule"] = mask_rule(d["rule"], human)
     if d["kind"] == "windowRule":
@@ -73,7 +73,7 @@ def _id(kind: str, params: dict) -> str:
     return _PREFIX[kind] + hashlib.sha256(json.dumps({"k": kind, **params}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:20]
 
 
-def _submit(kind: str, params: dict, reason: str, direct: bool, human: bool = True) -> dict:
+def _submit(kind: str, params: dict, reason: str, direct: bool, human: bool = True, confidence: int | None = None) -> dict:
     user, item_id = current_tenant(), _id(kind, params)
     if direct:
         d = new_items._get(user, item_id)  # noqa: SLF001
@@ -92,12 +92,12 @@ def _submit(kind: str, params: dict, reason: str, direct: bool, human: bool = Tr
             new_items._col().update_many({"user": user, "id": item_id, "status": "pending"},  # noqa: SLF001
                                          {"$set": {"status": "accepted", "decidedAt": datetime.now(timezone.utc), "applyClaimedAt": None}})
 
-        return direct_log.run(kind, {**params, "reason": new_items._clean_reason(reason)}, go, finish)  # noqa: SLF001
-    d = new_items._put_edit(user, kind, item_id, {**params, "corrected": False, "createdId": None}, new_items._clean_reason(reason))  # noqa: SLF001
+        return direct_log.run(kind, {**params, "reason": new_items._clean_reason(reason), "confidencePercent": confidence}, go, finish)  # noqa: SLF001
+    d = new_items._put_edit(user, kind, item_id, {**params, "corrected": False, "createdId": None, "confidencePercent": confidence}, new_items._clean_reason(reason))  # noqa: SLF001
     return view(d, human)
 
 
-def propose_window_rule(op: str, rule: dict, reason: str, direct: bool, human: bool = True) -> dict:
+def propose_window_rule(op: str, rule: dict, reason: str, direct: bool, human: bool = True, confidence: int | None = None) -> dict:
     if direct:
         direct_log.gate("windowsClassify")
     rule = {k: v.strip() for k, v in rule.items() if v is not None}
@@ -120,10 +120,10 @@ def propose_window_rule(op: str, rule: dict, reason: str, direct: bool, human: b
             if len(rule) < 2:
                 raise InvalidInputError("edit 须至少给一个要改的字段（app / title / block）")
             _check_rule({**cur, **rule})
-    return _submit("windowRule", {"op": op, "rule": rule}, reason, direct, human)
+    return _submit("windowRule", {"op": op, "rule": rule}, reason, direct, human, confidence)
 
 
-def propose_block_rule(op: str, key: str, task_id, project_id, reason: str, direct: bool) -> dict:
+def propose_block_rule(op: str, key: str, task_id, project_id, reason: str, direct: bool, confidence: int | None = None) -> dict:
     if direct:
         direct_log.gate("windowsClassify")
     key = key.strip()
@@ -139,10 +139,10 @@ def propose_block_rule(op: str, key: str, task_id, project_id, reason: str, dire
         _one_target(task_id, project_id)
         if op == "edit" and not exists:
             raise InvalidInputError(f"没有这个块名的第二级规则：{key!r}（要新建请用 add）")
-    return _submit("blockRule", {"op": op, "blockKey": key, "taskId": task_id, "projectId": project_id}, reason, direct)
+    return _submit("blockRule", {"op": op, "blockKey": key, "taskId": task_id, "projectId": project_id}, reason, direct, confidence=confidence)
 
 
-def propose_block_action(action: str, date: Date, key: str, task_id, project_id, parts, forever: bool, reason: str, direct: bool) -> dict:
+def propose_block_action(action: str, date: Date, key: str, task_id, project_id, parts, forever: bool, reason: str, direct: bool, confidence: int | None = None) -> dict:
     if direct:
         direct_log.gate("windowsClassify")
     user = current_tenant()
@@ -160,7 +160,7 @@ def propose_block_action(action: str, date: Date, key: str, task_id, project_id,
     if parts is not None:
         parts = _norm_parts(date, parts, InvalidInputError)
     return _submit("blockAction", {"action": action, "date": date.isoformat(), "blockKey": key, "taskId": task_id,
-                                   "projectId": project_id, "parts": parts}, reason, direct)
+                                   "projectId": project_id, "parts": parts}, reason, direct, confidence=confidence)
 
 
 def _norm_parts(date: Date, parts: list, exc) -> list:

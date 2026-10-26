@@ -165,6 +165,7 @@ class SettingsIn(BaseModel):
 
     tiers: StrictBool
     agentDirect: _AgentDirect
+    highConfidenceThresholdPercent: Annotated[StrictInt, Field(ge=0, le=100)] | None = None  # 省 = 保留原值
 
 
 def _etag(response: Response, out: dict) -> dict:
@@ -181,4 +182,4 @@ def get_settings(response: Response) -> dict:
 async def put_settings(request: Request, response: Response) -> dict:
     b = await _human(request, SettingsIn, "改账号设置")
     return _etag(response, await run_in_threadpool(activity_settings.put, request.headers.get("if-match"),
-                                                   b.tiers, b.agentDirect.model_dump()))
+                                                   b.tiers, b.agentDirect.model_dump(), b.highConfidenceThresholdPercent))

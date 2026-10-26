@@ -41,4 +41,5 @@ CRUD_Windowsblock
 - `split` 的段有空隙或重叠，该条失败。
 - `create` / `rename` 在同一父级下已有同名时，结果 `note` 会提示；提议照常提交，别重复建。
 - 删除前先 `Get_View` 看下面有没有子节点。
+- 可带 `confidencePercent`（0–100）：如实给把握；拿不准给低值或不给。
 - 同一个窗口反复要分，改规则，不要天天手动改。

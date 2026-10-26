@@ -66,7 +66,8 @@ EVIL_APP = "fire\nfox​"
 
 def settings_for(tenant):
     s = {"version": 3, "tiers": True, "tiersSince": "2026-10-20T00:00:00+08:00",
-         "agentDirect": {"enabled": True, "windowsClassify": True, "honeycombRecords": False}}
+         "agentDirect": {"enabled": True, "windowsClassify": True, "honeycombRecords": False},
+         "highConfidenceThresholdPercent": 65 if tenant == "u_alice" else 80}
     if tenant == "u_tiersoff":
         s.update(tiers=False, agentDirect={"enabled": False, "windowsClassify": False, "honeycombRecords": False})
     if tenant == "u_off":
@@ -93,7 +94,7 @@ IGNORES = {"total": 1, "items": [{"id": "ig_1", "app": "chrome", "titleContains"
                                   "hits": 3, "seconds": 700}]}
 PROPOSALS = {
     "projects": [{"id": "np_1", "kind": "project", "status": "pending", "name": "新项目", "createdAt": "2026-10-24T09:00:00+08:00",
-                  "zoneId": "z_7f", "tasks": [{"id": "nt_2", "kind": "task", "status": "pending", "name": "子任务",
+                  "zoneId": "z_7f", "confidencePercent": 90, "tasks": [{"id": "nt_2", "kind": "task", "status": "pending", "name": "子任务",
                                                "createdAt": "2026-10-24T09:01:00+08:00", "projectProposalId": "np_1"}]}],
     "tasks": [{"id": "nt_1", "kind": "task", "status": "accepted", "name": "挂现成", "createdAt": "2026-10-23T09:00:00+08:00",
                "decidedAt": "2026-10-23T10:00:00+08:00", "projectId": "p_3c"}],
@@ -103,7 +104,7 @@ PROPOSALS = {
                  "createdAt": "2026-10-24T07:00:00+08:00"}],
     "windowRules": [{"id": "nw_1", "kind": "windowRule", "status": "pending", "op": "add",
                      "rule": {"app": "google-chrome", "hasTitle": True, "block": "示例文档"}, "createdAt": "2026-10-24T10:00:00+08:00"}],
-    "blockRules": [{"id": "nb_1", "kind": "blockRule", "status": "pending", "op": "add", "blockKey": "示例文档", "taskId": "t_a1",
+    "blockRules": [{"id": "nb_1", "kind": "blockRule", "status": "pending", "op": "add", "blockKey": "示例文档", "taskId": "t_a1", "confidencePercent": 40,
                     "createdAt": "2026-10-24T10:01:00+08:00"}],
     "blockActions": [{"id": "na_1", "kind": "blockAction", "status": "rejected", "action": "assign", "date": "2026-10-24",
                       "blockKey": "x", "blockTitle": "x", "projectId": "p_3c", "createdAt": "2026-10-24T10:02:00+08:00"}],

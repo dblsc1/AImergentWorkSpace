@@ -1110,3 +1110,49 @@ def test_get_blocks_match_history_by_title_and_contains(servers, monkeypatch):
 def test_get_blocks_match_history_bad_args_400_with_example(servers, args):
     e = err(servers, "Get_Blocks_Match_History", args)
     assert e["status"] == 400 and e["example"] == {"app": "chrome", "titleContains": "周报", "days": 30}
+
+
+# ── v0.5 置信度 ──
+
+
+def test_confidence_forwarded_per_op_item_and_honeycomb(servers):
+    ok(servers, "CRUD_Windows_Classify_Rules", {"ops": [
+        {"op": "add", "app": "chrome", "block": "甲", "confidencePercent": 90}, {"op": "add", "app": "code", "block": "乙"},
+        {"op": "add", "app": "x", "ignore": True, "confidencePercent": 0}]}, W)
+    ok(servers, "CRUD_Windowsblock_Classify_Rules", {"ops": [{"op": "add", "block": "示例文档", "target": "xx-g-xtsc", "confidencePercent": 55}]}, W)
+    ok(servers, "CRUD_Windowsblock", {"items": [{"action": "generic", "date": "2026-10-24", "block": "示例文档", "confidencePercent": 100}]}, W)
+    ok(servers, "CRUD_Honeycomb", {"op": "rename", "target": "xx-g-xtsc", "name": "新名", "confidencePercent": 70}, W)
+    ok(servers, "CRUD_Honeycomb", {"op": "retime", "eventId": "evt_7", "to": "xx-g-xtsc", "confidencePercent": 20, "direct_apply": True}, W)
+    got = [(p.rsplit("/", 1)[1], b.get("confidencePercent", "absent")) for p, b in posts()]
+    assert got == [("window-rules", 90), ("window-rules", "absent"), ("ignores", "absent"), ("block-rules", 55), ("block-actions", 100),
+                   ("changes", 70), ("sessions", 20)]
+
+
+def test_get_started_threshold_falls_back_to_80_unless_real_int(servers, monkeypatch):
+    for bad in (None, True, "70", 7.5):
+        monkeypatch.setattr(tools, "_settings", lambda *a, _b=bad, **k: {"tiers": True, "highConfidenceThresholdPercent": _b})
+        assert ok(servers, "Get_Started", {}, W)["highConfidenceThresholdPercent"] == 80, bad
+
+
+def test_confidence_not_forwarded_for_ignore(servers):
+    r = ok(servers, "CRUD_Windows_Classify_Rules", {"ops": [{"op": "add", "app": "x", "ignore": True, "confidencePercent": 50}]}, W)
+    assert r["results"][0]["ok"] is True
+    assert posts() == [("/api/core/activity/proposals/ignores", {"app": "x"})]
+
+
+def test_confidence_bad_value_is_400_and_nothing_sent(servers):
+    for bad in (101, -1, 5.5, "80", True):
+        e = err(servers, "CRUD_Windows_Classify_Rules", {"ops": [{"op": "add", "app": "a", "block": "b", "confidencePercent": bad}]}, W)
+        assert e["status"] == 400 and "confidencePercent" in e["detail"], bad
+        assert err(servers, "CRUD_Honeycomb", {"op": "rename", "target": "xx-g-xtsc", "name": "n", "confidencePercent": bad}, W)["status"] == 400
+    assert not Fake.bodies
+
+
+def test_get_proposals_carries_confidence_and_get_started_threshold(servers):
+    r = ok(servers, "Get_Proposals", {"status": "all"})
+    by = {i["id"]: i for i in r["items"] if i["kind"] not in ("question", "report", "direct")}
+    assert by["np_1"]["confidencePercent"] == 90 and by["nb_1"]["confidencePercent"] == 40
+    assert by["nw_1"]["confidencePercent"] is None and by["nt_2"]["confidencePercent"] is None
+    assert ok(servers, "Get_Started", {}, W)["highConfidenceThresholdPercent"] == 80
+    assert ok(servers, "Get_Started", {}, ALICE)["highConfidenceThresholdPercent"] == 65
+    assert ok(servers, "Get_Started", {}, {"X-Nexus-Tenant": "u_old"})["highConfidenceThresholdPercent"] == 80   # 老后端：缺省
