@@ -151,10 +151,15 @@
   function reduced() { return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches); }
 
   // 底图（所有格子 + 任务点）按「蜂巢对象 + 树对象」缓存：同一批数据下几十张小卡共用一份，只克隆
-  var base = null;
+  // 底图作为 <symbol> 放在文档级隐藏 <svg><defs> 里，每张小卡只 <use> 它，自己只画标记
+  var base = null, symbol = null;
   function baseLayer(st) {
     if (base && base.hive === st.hive && base.tree === st.tree) return base;
     var g = geom(st.hive.cells, SIZE, PX), layer = sv("g");
+    if (!symbol) {
+      var host = sv("svg", { width: "0", height: "0", "aria-hidden": "true", style: "position:absolute" }), defs = sv("defs");
+      symbol = sv("symbol", { id: "hm-base" }); defs.appendChild(symbol); host.appendChild(defs); document.body.appendChild(host);
+    }
     g.cells.forEach(function (c) {
       var poly = sv("polygon", { points: hexPoints(c.cx, c.cy, SIZE) }, "hm-cell" + (c.empty ? " is-empty" : ""));
       if (c.color) poly.style.setProperty("--zone-raw", c.color);
@@ -165,7 +170,8 @@
         taskDots(c.cx, c.cy, SIZE, ts.length).forEach(function (d) { layer.appendChild(sv("circle", { cx: d.x.toFixed(2), cy: d.y.toFixed(2), r: (SIZE * 0.13).toFixed(2) }, "hm-dot")); });
       }
     });
-    base = { hive: st.hive, tree: st.tree, g: g, layer: layer };
+    symbol.textContent = ""; symbol.setAttribute("viewBox", g.vb.map(function (v) { return v.toFixed(1); }).join(" ")); symbol.appendChild(layer);
+    base = { hive: st.hive, tree: st.tree, g: g };
     return base;
   }
   function mark(pt, style, g) {
@@ -184,7 +190,7 @@
     div.textContent = "";
     if (!st || !st.hive || !st.tree) return { missing: false };
     var res = resolveSlot(st.tree, slot), b = baseLayer(st), svg = sv("svg", { viewBox: b.g.vb.map(function (v) { return v.toFixed(1); }).join(" "), "aria-hidden": "true" }, "hm-svg");
-    svg.appendChild(b.layer.cloneNode(true));
+    svg.appendChild(sv("use", { href: "#hm-base", x: b.g.vb[0].toFixed(1), y: b.g.vb[1].toFixed(1), width: b.g.vb[2].toFixed(1), height: b.g.vb[3].toFixed(1) }));
     var pl = plan(slot, res);
     if (pl) {
       var dp = pointOf(b.g, st.tree, pl.dest, st.hive.cells), op = pointOf(b.g, st.tree, pl.origin, st.hive.cells);
@@ -209,8 +215,14 @@
       if (miss) { b.disabled = true; b.dataset.hmOff = "1"; } else if (b.dataset.hmOff) { b.disabled = false; delete b.dataset.hmOff; }
     });
   }
+  // 只画看得见的（折起的大卡 / 分组里的跳过，展开时整栏重画会补上）
   api.paintAll = function (root) {
-    [].forEach.call((root || document).querySelectorAll(".hd-minihive"), function (d) { setMissing(d.closest(".hd-card"), paint(d).missing); });
+    [].forEach.call((root || document).querySelectorAll(".hd-minihive"), function (d) { if (d.offsetParent !== null) setMissing(d.closest(".hd-card"), paint(d).missing); });
+  };
+  // 批准那一刻按现在的树重新算（不信卡上的标记）
+  api.isMissing = function (card) {
+    var d = card && card.querySelector(".hd-minihive"), A = app(), st = A && A.getState();
+    return !!(d && st && st.tree && resolveSlot(st.tree, slotFromDataset(d.dataset)).missing);
   };
 
   // ── 悬停：主蜂巢推近目标并打同样的标记 ───────────────────────────
@@ -267,7 +279,7 @@
       if (!view) view = { expanded: st.expandedId, changed: false };
       var zoomed = false, mc = pl.ghost && X.modelCard(card.dataset.key);
       if (pl.ghost) {
-        if (mc && mc.verb === "project") { restore(); view.changed = zoomed = true; X.focusCard(mc); }
+        if (mc && mc.verb === "project") { restore(); view.changed = zoomed = true; X.focusCard(mc); } else restore();
       } else if (pl.zoom && st.byId[pl.zoom]) {
         if (st.hive.cells.some(function (c) { return c.__sprout; })) { A.collapse(); view.changed = true; }
         if (st.expandedId !== pl.zoom) { view.changed = zoomed = true; A.expand(pl.zoom); }
@@ -303,6 +315,8 @@
     panel.addEventListener("mouseover", function (e) { schedule(cardOf(e.target)); });
     panel.addEventListener("mouseleave", function () { schedule(null); });
     // 当前被指着的元素（批准时飞过去的落点）：标记优先，其次按计划找
+    api.cancelHover = function () { window.clearTimeout(tm); tm = null; want = null; show(null); };
+    api.checkHover = function () { if (cur && !cur.isConnected) show(null); };
     api.current = function () { return cur && marks.length ? marks[0][0] : null; };
     api.hovering = function (card) { return card === cur; };
   };
@@ -334,7 +348,6 @@
     } catch (e) { /* 动效出错不能挡住批准 */ }
   };
 
-  // 树变了：小蜂巢原地重画（不等整栏重画）
-  var Ap = window.NexusTableApp;
-  if (Ap && Ap.onTreeChange) Ap.onTreeChange(function () { window.setTimeout(function () { api.paintAll(document.querySelector(".hd-panel")); }, 400); });
+  // 树重拉完：小蜂巢原地重画（不等整栏重画）
+  window.addEventListener("hive:refreshed", function () { api.paintAll(document.querySelector(".hd-panel")); });
 })();

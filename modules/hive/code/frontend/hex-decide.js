@@ -354,7 +354,7 @@
   // 按钮 / 键盘 / 滑动共用：焦点先挪到下一张卡，再收起
   function decide(c, decision, cardEl) {
     if (held[c.key]) return;
-    if (decision === "approve" && cardEl.classList.contains("is-missing")) return false;   // 目标已不存在：不能批准（按钮 / 键盘 / 滑动都走这里）
+    if (decision === "approve" && window.NexusTableHexMini && window.NexusTableHexMini.isMissing(cardEl)) return false;   // 目标已不存在：不能批准（按钮 / 键盘 / 滑动都走这里）
     if (cardEl.contains(document.activeElement)) {
       var n = cardEl.nextElementSibling, ok = function (x) { return x && !(x.classList.contains("hd-card") && !x.classList.contains("is-gone")); };
       while (ok(n)) n = n.nextElementSibling;
@@ -367,8 +367,13 @@
   }
   // 一批卡一起批准 / 拒绝：每张照走 commit（各自的撤销计时、held），只出一条汇总提示；撤销 = 整批撤回。→ 实际处理的张数
   function decideMany(list, decision) {
-    var todo = list.filter(function (x) { return x.el && !held[x.c.key] && !(decision === "approve" && x.el.classList.contains("is-missing")); }), done = [];
-    if (!todo.length) return 0;
+    var M = window.NexusTableHexMini, gone = 0;
+    var todo = list.filter(function (x) {
+      if (!x.el || held[x.c.key]) return false;
+      if (decision === "approve" && M && M.isMissing(x.el)) { gone++; return false; }
+      return true;
+    }), done = [];
+    if (!todo.length) { if (gone) toast("目标已不存在，没有批准"); return 0; }
     var batch = { left: todo.length, bad: 0, why: "" };
     if (decision === "approve" && window.NexusTableHexBar) window.NexusTableHexBar.bumpApprovals();   // 一批算一次
     todo.forEach(function (x) { collapseEl(x.el); var en = commit(x.c, decision, x.el, true); en.batch = batch; done.push({ el: x.el, entry: en }); });
@@ -612,6 +617,7 @@
     [].forEach.call(document.querySelectorAll(".hd-over"), function (n) { n.classList.remove("hd-over"); });
   }
 
+  var creating = {};   // 正在按块名建任务的块：防重复建
   function newTaskInput(row, cell, it, auto) {   // auto = 按块名直接建，不等人敲回车（建好了人还能改名）
     var pid = cell.dataset.projectId, input = document.createElement("input"), inflight = false;
     input.type = "text"; input.maxLength = 64; input.value = clip(it.title || it.app || "", 64).replace(/…$/, "");
@@ -629,11 +635,12 @@
     });
     function submit() {
         var name = input.value.trim().slice(0, 64);
-        if (!name || inflight) return;
+        if (!name || inflight || (it.eventId && creating[it.eventId])) return;
+        if (it.eventId) creating[it.eventId] = 1;
         inflight = true; input.readOnly = true; input.setAttribute("aria-busy", "true");   // readOnly 不丢焦点：disabled 会让 Esc 落到蜂巢的全局 Esc 上把格子收起
         D.createTask(pid, name).then(function (r) {
           if (!r.ok || !r.data || !r.data.id) {
-            inflight = false; input.readOnly = false; input.removeAttribute("aria-busy"); input.focus();
+            inflight = false; if (it.eventId) delete creating[it.eventId]; input.readOnly = false; input.removeAttribute("aria-busy"); input.focus();
             toast("没建成：" + (r.message || "写入失败"), { error: true, ms: 6000 }); return;
           }
           var tid = r.data.id;
@@ -644,7 +651,7 @@
             else moved(it, { taskId: tid });
             return App.reloadExpanded().then(function () { flash(tid); });
           });
-        }).then(function () { inflight = false; idle(); }, function () { inflight = false; idle(); });
+        }).then(function () { inflight = false; if (it.eventId) delete creating[it.eventId]; idle(); }, function () { inflight = false; if (it.eventId) delete creating[it.eventId]; idle(); });
     }
     input.focus(); input.select();
     if (auto) submit();
@@ -661,6 +668,7 @@
       if ((ev.button !== undefined && ev.button !== 0) || dragging) return;
       if (handle) ev.stopPropagation();
       var touch = ev.pointerType === "touch", armed = !touch, pressTimer = null;
+      if (window.NexusTableHexMini && window.NexusTableHexMini.cancelHover) window.NexusTableHexMini.cancelHover();   // 先收掉悬停推近的视图，拖拽回去时才是真正的原视图
       var x0 = ev.clientX, y0 = ev.clientY, ghost = null, cell = null, row = null, newRow = null, over = false;
       var px = x0, py = y0, raf = 0, dwell = 0, lastHit = null, target = null, Mi = window.NexusTableHexMini, startExp = App.getState().expandedId, zoomed = false;
       var dw = it.dwellMs && Mi ? Mi.Dwell({ ms: it.dwellMs, slop: 12, set: function (f, ms) { return window.setTimeout(f, ms); }, clear: function (t) { window.clearTimeout(t); },

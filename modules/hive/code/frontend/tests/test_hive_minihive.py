@@ -50,7 +50,10 @@ def test_minihive_draws_the_whole_hive_with_a_mark_per_op(browser, base) -> None
         _show(hive)
         n = _state(hive, "s.hive.cells.filter(c => !c.__sprout).length")
         for key in ("nt_2", "cd1", "cm1", "cp1"):
-            assert _card(hive, key).locator(".hd-minihive svg .hm-cell").count() == n, "整张蜂巢：每一格都画"
+            assert _card(hive, key).locator('.hd-minihive svg use[href="#hm-base"]').count() == 1, "底图共用一份 symbol"
+        assert hive.page.locator("symbol#hm-base .hm-cell").count() == n, "整张蜂巢：每一格都画"
+        for key in ("nt_2", "cd1", "cm1", "cp1"):
+            assert _card(hive, key).locator(".hd-minihive svg .hm-cell").count() == 0
         mk = lambda key, sel: _card(hive, key).locator(f".hd-minihive {sel}").count()  # noqa: E731
         assert mk("nt_2", ".hm-m.is-frame") == 1 and mk("nt_2", ".hm-line") == 0, "新建任务：目标项目格上虚线框"
         assert mk("cd1", ".hm-m.is-del") == 1, "删除：红框"
@@ -270,3 +273,23 @@ def test_drop_block_on_new_task_row_creates_task_named_after_block_and_assigns(b
         _until(hive.page, lambda: len(_posts(hive, "activity/blocks/assign")) == 1)
         assert hive.created == [{"projectId": "p_math", "name": DOC}], "按块名直接建，不等输入"
         assert _posts(hive, "activity/blocks/assign")[0][1]["taskId"] == "t_new"
+
+
+def test_batch_approve_with_only_missing_targets_says_so(browser, base) -> None:  # noqa: F811
+    only = {**PROPS, "tasks": [], "changes": [CH[1]]}
+    with open_tiers(browser, base, props=only, width=1900) as hive:
+        _show(hive)
+        hive.page.locator('.hb-big[data-sec="s"] [data-ht="batch-ok"]').click()
+        _until(hive.page, lambda: "目标已不存在，没有批准" in " ".join(hive.page.locator(".hd-toast").all_inner_texts()))
+        hive.page.clock.run_for(6000)
+        assert _posts(hive, "activity/proposals/cd2") == []
+
+
+def test_approve_rechecks_the_tree_instead_of_trusting_the_card_class(browser, base) -> None:  # noqa: F811
+    with _open(browser, base, width=1900) as hive:
+        _show(hive)
+        hive.page.evaluate("() => { const t = window.NexusTableHexApp.getState().tree; t.projects = t.projects.filter(p => p.id !== 'p_piano'); }")
+        assert "is-missing" not in _card(hive, "nt_2").get_attribute("class")
+        _card(hive, "nt_2").locator('[data-hd="approve"]').click()
+        hive.page.clock.run_for(6000)
+        assert _posts(hive, "activity/proposals/nt_2") == []

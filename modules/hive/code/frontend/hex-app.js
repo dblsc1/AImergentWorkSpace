@@ -861,6 +861,7 @@
       mount(true);
       L.apply(false);
       if (want && state.byId[want]) { expand(want); }
+      window.dispatchEvent(new Event("hive:refreshed"));   // 小蜂巢据此按新树重画
       return true;
     });
   }

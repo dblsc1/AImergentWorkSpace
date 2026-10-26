@@ -248,7 +248,7 @@
     }
     function approveBlock(c, cardEl) {
       if (!c.target) { toast("先选去向"); return false; }
-      if (cardEl.classList.contains("is-missing") || S.busy[S.date + "|" + c.name]) return false;
+      if ((window.NexusTableHexMini && window.NexusTableHexMini.isMissing(cardEl)) || S.busy[S.date + "|" + c.name]) return false;
       if (window.NexusTableHexMini) window.NexusTableHexMini.fly(cardEl);
       X.collapseEl(cardEl); B.bumpApprovals();
       write("assign", c.name, { taskId: c.target.taskId, projectId: c.target.taskId ? undefined : c.target.projectId, remember: !c.generic }).then(function (r) {
@@ -691,6 +691,7 @@
         if (tgt && tgt.focus) tgt.focus({ preventScroll: true });
       }
       window.NexusTableHexMini.paintAll(panel);
+      window.NexusTableHexMini.checkHover();
       if (S.jump) {   // 刚展开的大卡 / 分组：里面看得见的小卡跳一跳
         var jr = panel.querySelector(S.jump.grp ? '.hb-group[data-grp="' + S.jump.grp + '"]' : '.hb-big[data-sec="' + S.jump.sec + '"]');
         S.jump = null; B.hint(jr);
