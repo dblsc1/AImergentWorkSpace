@@ -2,14 +2,18 @@
 
 ## 两级
 
-- 第一级 `CRUD_Windows_Classify_Rules`：`app`、`title` 是正则，把窗口收进块（`block`，1–64 字）。`ignore: true` 的 add 是以后都不记（`app` 当程序名，`title` 当「标题含」，不要 `block`）。
-- 第二级 `CRUD_Windowsblock_Classify_Rules`：块名精确匹配（不是正则），`target` 是任务或项目的 id / address。`delete` 不要 `target`。通用窗口不能写第二级规则（409）。
+- 第一级 `CRUD_Windows_Classify_Rules`（窗口到块）：`app`、`title` 是正则，把窗口收进块（`block`，1–64 字）。`ignore: true` 的 add 是以后都不记（`app` 当程序名，`title` 当「标题含」，不要 `block`）。
+- 第二级 `CRUD_Windowsblock_Classify_Rules`（块到任务）：块名精确匹配（不是正则），`target` 是任务或项目的 id / address。`delete` 不要 `target`。通用窗口不能写第二级规则（409）。
 
 ## 步骤
 
 1. `Get_Rules`（`level`: `1`、`2`、`all`）：已有规则，和 `pending` 里待批的。不重复，不冲突。
 2. `Get_Pending_Classify_Windows`：要收的窗口和块名。块名取这里或 `Get_History(detail=windows)`，原样用。
-3. `Get_Match_History`：
+3. 写第一级规则前 `Get_Blocks_Match_History`（窗口到块）：
+   - `{"app": "google-chrome", "titleContains": "docs.example.com", "days": 30}`；`titleContains` 不分大小写、按字面匹配，不是正则；要标题完全相同用 `title`；两个都不给是该 app 的全部窗口。
+   返回 `blocks`：`block`、`keySource`、`days`、`seconds`、`records`、`lastAt`。`keySource: "auto"` 是当时没有规则收、按标题自动成块；`rule` 是规则收的。
+   这个窗口已经稳定落在某个 `rule` 块里，别再写重复的规则；全是 `auto`、标题很多变，规则的 `title` 才需要写成正则。
+   写第二级规则或归块前 `Get_Tasks_Match_History`（块到任务）：
    - 查块：`{"block": "示例文档", "days": 30}`。
    - 查窗口：`{"app": "google-chrome", "title": "完全相同的标题"}`。
    返回 `destinations`：`taskId`、`address`、`name`、`times`、`seconds`、`lastAt`、`via`。只含已定下来的；空数组就是没有历史，不要猜。

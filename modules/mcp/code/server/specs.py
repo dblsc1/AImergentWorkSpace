@@ -33,7 +33,7 @@ def _tool(name, title, desc, props, example, response, required=(), note=""):
 
 READS = [
     _tool("Get_Started", "先看这里：项目、工具、权限",
-          "第一次用先调它：蜂巢是什么、三级分类、17 个工具各回答什么问题、你现在有什么权限。不教具体怎么调（各工具带 help: true 看用法）。",
+          "第一次用先调它：蜂巢是什么、三级分类、18 个工具各回答什么问题、你现在有什么权限。不教具体怎么调（各工具带 help: true 看用法）。",
           {}, {}, {"about": "蜂巢（HoneyComb）……", "tiers": [], "tools": [], "tiersOn": True, "today": "2026-10-24"}),
     _tool("Get_View", "任务结构",
           "分区 → 项目 → 任务的树，每个节点同时给 id 与 address。scope 缺省 = 全部；depth 缺省：没给 scope 时 project，给了时 task。",
@@ -109,9 +109,9 @@ READS = [
           {"devices": [{"deviceId": "dev_1", "awState": "ok", "incidents": [], "hints": {}}]}),
 ]
 
-# v2.1 · v0.4.2 追加的两个读工具（READS 的末尾）
+# v2.1 · v0.4.2 追加的两个读工具、v2.2 · v0.4.3 追加的一个（READS 的末尾）
 READS += [
-    _tool("Get_Today", "今天还有没有没处理完的",
+    _tool("Get_Today_Todo", "今天还有没有没处理完的",
           "一次回答「今天还有没有没处理完的」：第一级没收的窗口块、第二级没定去向的块、没有任何记录的空档（gaps）、待批提议、待答问题、当天总结交了没有。"
           "allClear = 前两项为 0、没有待批和待答、总结已交；不看 gaps。detectorOffline 为 true 的空档是检测程序掉线，false 的多半是人不在电脑前。",
           {"date": dict(_DAY, description="缺省今天")},
@@ -119,9 +119,9 @@ READS += [
           {"date": "2026-10-24", "uncaught": {"blocks": 12, "seconds": 270}, "unassigned": {"blocks": 1, "seconds": 190},
            "gaps": [{"from": "2026-10-24T12:00:00+08:00", "to": "2026-10-24T13:25:00+08:00", "seconds": 5100, "detectorOffline": True}],
            "proposalsPending": 3, "questionsOpen": 1, "reportSubmitted": True, "allClear": False}),
-    _tool("Get_Match_History", "这个窗口以前归到哪",
+    _tool("Get_Tasks_Match_History", "这个块以前归到哪些任务（第二级）",
           "查一个块（block）或一个窗口（app + title，完全相同）过去 days 天（缺省 30，最多 90）已经归到哪些任务：次数、秒数、最近一次、怎么归的。"
-          "只读已定下来的，不猜；查不到 destinations 为空。归类前先看它。",
+          "只读已定下来的，不猜；查不到 destinations 为空。写第二级规则或归块前先看它；窗口以前被收进哪些块用 Get_Blocks_Match_History。",
           {"block": {"type": "string", "minLength": 1, "maxLength": 700, "description": "块名；与 app+title 二选一"},
            "app": {"type": "string", "minLength": 1, "maxLength": 256, "description": "程序名；与 title 同给"},
            "title": {"type": "string", "minLength": 1, "maxLength": 512, "description": "窗口标题（完全相同）；与 app 同给"},
@@ -130,6 +130,19 @@ READS += [
           {"query": {"block": "示例文档"}, "days": 30,
            "destinations": [{"taskId": "t_1", "projectId": "p_1", "address": "kf-hpkf-mcpj", "name": "写测试", "times": 5,
                              "seconds": 3600, "lastAt": "2026-10-23T11:00:00+08:00", "via": "rule"}]}),
+    _tool("Get_Blocks_Match_History", "这个窗口以前被收进哪些块（第一级）",
+          "查一个窗口（app 完全相同；title 完全相同，或 titleContains 标题片段，不分大小写、按字面匹配不是正则；都不给 = 该 app 的全部窗口）"
+          "过去 days 天（缺省 30，最多 90）被收进哪些块：天数、秒数、记录数、最近一次、是规则收的还是自动成块（keySource）。"
+          "写第一级规则前先看它；块后来归到哪个任务用 Get_Tasks_Match_History。",
+          {"app": {"type": "string", "minLength": 1, "maxLength": 256, "description": "程序名（完全相同）"},
+           "title": {"type": "string", "minLength": 1, "maxLength": 512, "description": "窗口标题（完全相同）；与 titleContains 二选一"},
+           "titleContains": {"type": "string", "minLength": 1, "maxLength": 128, "description": "标题片段，不分大小写，字面匹配；与 title 二选一"},
+           "days": {"type": "integer", "minimum": 1, "maximum": 90, "default": 30, "description": "往前看几天，1–90"}},
+          {"app": "chrome", "titleContains": "周报", "days": 30},
+          {"query": {"app": "chrome", "titleContains": "周报"}, "days": 30,
+           "blocks": [{"block": "chrome · 周报", "keySource": "auto", "days": 4, "seconds": 1800, "records": 37,
+                       "lastAt": "2026-10-23T11:00:00+08:00"}]},
+          required=("app",)),
 ]
 
 # ── 写 ─────────────────────────────────────────────────────────────
@@ -239,9 +252,9 @@ ABOUT = (
     "你的写入默认只是提议，人在蜂巢旁的决策栏批准、更正或拒绝；人打开开关后才能直接施加。")
 
 TIERS = [
-    {"level": 1, "name": "原始窗口", "read": ["Get_Pending_Classify_Windows", "Get_Rules"],
+    {"level": 1, "name": "原始窗口", "read": ["Get_Pending_Classify_Windows", "Get_Blocks_Match_History", "Get_Rules"],
      "write": ["CRUD_Windows_Classify_Rules"], "humanSees": "自动记录 → 窗口分类规则栏"},
-    {"level": 2, "name": "Windowsblock", "read": ["Get_History(detail=windows)", "Get_Rules"],
+    {"level": 2, "name": "Windowsblock", "read": ["Get_History(detail=windows)", "Get_Tasks_Match_History", "Get_Rules"],
      "write": ["CRUD_Windowsblock", "CRUD_Windowsblock_Classify_Rules"], "humanSees": "蜂巢旁的决策栏"},
     {"level": 3, "name": "秘书总结", "read": ["Get_History", "Get_Arrangements", "Get_Now"],
      "write": ["Submit_Report", "Submit_Questions_To_Human", "CRUD_Honeycomb"], "humanSees": "蜂巢旁的决策栏"},
@@ -257,8 +270,9 @@ ANSWERS = {
     "Get_Rules": "两级规则、忽略规则、待批的规则",
     "Get_Proposals": "我提过的东西批了没有、人怎么答的",
     "Get_Device_Health": "检测程序在不在线",
-    "Get_Today": "今天还有没有没处理完的（没收的块、没定的块、空档、待批、待答、总结交了没）",
-    "Get_Match_History": "这个块 / 窗口以前归到哪些任务",
+    "Get_Today_Todo": "今天还有没有没处理完的（没收的块、没定的块、空档、待批、待答、总结交了没）",
+    "Get_Tasks_Match_History": "第二级：这个块 / 窗口以前归到哪些任务",
+    "Get_Blocks_Match_History": "第一级：这个窗口以前被收进哪些块",
     "CRUD_Windows_Classify_Rules": "提议改第一级规则（窗口 → 块）",
     "CRUD_Windowsblock_Classify_Rules": "提议改第二级规则（块 → 任务）",
     "CRUD_Windowsblock": "把某天的某个块记到哪、拆开、标通用或忽略",

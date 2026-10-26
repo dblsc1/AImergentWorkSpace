@@ -101,3 +101,54 @@ def test_live_silent_detector_counts_as_offline_and_history_gaps_skip_scope(clie
     pid = next(iter(seeded["projects"].values()))["id"]
     h = client.get(f"{API}/views/history", params={"from": D, "to": D, "who": "human", "detail": "segments", "scope": pid}).json()
     assert "gaps" not in h["human"]
+
+
+# ── v2.41 / v0.4.3：activity/windows/history ──────────────────────────
+
+WH = f"{API}/activity/windows/history"
+
+
+def test_windows_history_groups_by_block_and_key_source(client):
+    upload(client, [rec(day(-1), "09:00:00", "09:10:00", title="周报"), rec(day(-1), "10:00:00", "10:05:00", title="周报"),
+                    rec(day(-2), "09:00:00", "09:10:00", title="周报"), rec(day(-1), "11:00:00", "11:01:00", title="别的"),
+                    rec(day(-1), "12:00:00", "12:30:00", title="周报", app="firefox"),
+                    rec(day(-1), "13:00:00", "13:20:00", title="周报", block="归档")])
+    upload(client, [rec(day(-40), "09:00:00", "09:10:00", title="周报")])  # 超出 days
+    r = client.get(WH, params={"app": "chrome", "title": "周报"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["query"] == {"app": "chrome", "title": "周报"} and body["days"] == 30
+    by = {b["block"]: b for b in body["blocks"]}
+    assert len(by) == len(body["blocks"]) == 2 and K in by
+    top = by[K]
+    assert (top["days"], top["seconds"], top["records"], top["keySource"]) == (2, 1500, 3, "auto")
+    assert top["lastAt"] == at(day(-1), "10:05:00").isoformat()  # 用户时区、带偏移
+    other = next(b for b in body["blocks"] if b["block"] != K)
+    assert (other["seconds"], other["keySource"]) == (1200, "rule")
+    assert [b["seconds"] for b in body["blocks"]] == [1500, 1200]  # 秒数降序
+    assert len(client.get(WH, params={"app": "chrome"}).json()["blocks"]) == 3  # 只给 app：该 app 全部窗口
+    assert client.get(WH, params={"app": "chrome", "days": 1}).json()["blocks"] == []  # 今天没有
+    assert client.get(WH, params={"app": "nope"}).json()["blocks"] == []
+
+
+def test_windows_history_title_contains_is_literal_and_case_insensitive(client):
+    upload(client, [rec(D, "09:00:00", "09:10:00", title="Notes a.*b"), rec(D, "10:00:00", "10:10:00", title="Notes axxb"),
+                    rec(D, "11:00:00", "11:10:00", title="周报 Draft")])
+
+    def n(q):
+        return len(client.get(WH, params={"app": "chrome", "titleContains": q}).json()["blocks"])
+    assert n("a.*b") == 1  # 点和星按字面，不是正则
+    assert n("NOTES") == 2 and n("draft") == 1 and n("(") == 0
+    assert client.get(WH, params={"app": "chrome", "titleContains": "x"}).json()["query"] == {"app": "chrome", "titleContains": "x"}
+
+
+def test_windows_history_tenant_isolation_and_422(client):
+    from _tier_common import BEARER
+
+    ha, hb = {"X-Nexus-Tenant": "ch_aaaa"}, {"X-Nexus-Tenant": "ch_bbbb"}
+    upload(client, [rec(D, "09:00:00", "09:10:00", title="周报")], headers={**BEARER, **ha})
+    assert len(client.get(WH, params={"app": "chrome"}, headers=ha).json()["blocks"]) == 1
+    assert client.get(WH, params={"app": "chrome"}, headers=hb).json()["blocks"] == []
+    for bad in ({}, {"app": ""}, {"app": "chrome", "title": "x", "titleContains": "y"}, {"app": "chrome", "titleContains": ""},
+                {"app": "chrome", "titleContains": "x" * 129}, {"app": "chrome", "days": 0}, {"app": "chrome", "days": 91}):
+        assert client.get(WH, params=bad).status_code == 422, bad

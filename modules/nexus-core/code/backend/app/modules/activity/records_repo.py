@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 
 from pymongo import UpdateOne
@@ -100,6 +101,20 @@ def match_blocks(user: str, from_date: str, block: str | None, app: str | None, 
     """``date ≥ from_date`` 里，块名（或 app + title 完全相同）命中的 ``(date, blockKey)``。"""
     q = {"user": user, "date": {"$gte": from_date}, **({"blockKey": block} if block is not None else {"app": app, "title": title})}
     return {(d["date"], d["blockKey"]) for d in _col().find(q, {"_id": 0, "date": 1, "blockKey": 1})}
+
+
+def window_blocks(user: str, from_date: str, app: str, title: str | None, contains: str | None, limit: int) -> list[dict]:
+    """``date ≥ from_date``、``app`` 完全相同（``title`` 完全相同或 ``contains`` 字面不分大小写）的记录，按 ``(blockKey, keySource)`` 分组，秒数降序。"""
+    q: dict = {"user": user, "date": {"$gte": from_date}, "app": app}
+    if title is not None:
+        q["title"] = title
+    elif contains is not None:
+        q["title"] = {"$regex": re.escape(contains), "$options": "i"}
+    return list(_col().aggregate([
+        {"$match": q},
+        {"$group": {"_id": {"k": "$blockKey", "s": "$keySource"}, "dates": {"$addToSet": "$date"}, "seconds": {"$sum": "$seconds"},
+                    "records": {"$sum": 1}, "lastAt": {"$max": "$endTs"}}},
+        {"$sort": {"seconds": -1, "_id.k": 1}}, {"$limit": limit}]))
 
 
 def stale(user: str, from_date: str, version: int, limit: int) -> list[dict]:

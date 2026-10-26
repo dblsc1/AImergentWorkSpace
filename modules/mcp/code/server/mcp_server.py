@@ -1,4 +1,4 @@
-"""HoneyComb MCP 服务（传输 contracts/mcp.tools.v1，工具 contracts/mcp.tools.v2）：Streamable HTTP，无状态；17 个工具，写工具默认只提议。
+"""HoneyComb MCP 服务（传输 contracts/mcp.tools.v1，工具 contracts/mcp.tools.v2）：Streamable HTTP，无状态；18 个工具，写工具默认只提议。
 
 标准库实现（http.server），零第三方依赖。只做 MCP 里用得到的那一小块 JSON-RPC：
 initialize、ping、tools/list、tools/call；通知一律 202。不发 Mcp-Session-Id，GET 回 405
@@ -99,7 +99,7 @@ def _handle(msg, tenant: str | None, scope: str) -> dict | None:
     elif method == "ping":
         result = {}
     elif method == "tools/list":
-        # read 范围：写工具不列出来（11 个）；write 17 个；没有范围头 17 + 自动跟踪的两个 v1 工具（19）。其余 v1 名字不列，但仍可调
+        # read 范围：写工具不列出来（12 个）；write 18 个；没有范围头 18 + 自动跟踪的两个 v1 工具（20）。其余 v1 名字不列，但仍可调
         result = {"tools": tools.listed(scope)}
     elif method == "tools/call":
         name = params.get("name")
