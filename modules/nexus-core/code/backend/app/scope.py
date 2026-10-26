@@ -85,7 +85,7 @@ class ScopeMiddleware:
                           + ("只能上报代理运行（POST /api/core/agents/...）" if scope == "report"
                              else "只读：只能 GET，或上报代理运行"))
             return
-        token = _current.set(Caller(scope, anonymous, same_host))
+        token = _current.set(Caller(scope, anonymous, anonymous and same_host))  # 只有匿名才认「本机」
         try:
             await self.app(scope_, receive, send)
         finally:
