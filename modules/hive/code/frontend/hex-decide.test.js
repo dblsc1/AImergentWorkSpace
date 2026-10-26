@@ -95,11 +95,11 @@ var nb = P.build({ projects: [{ id: "np", name: "新书", zoneId: "z1", confiden
   sessionChanges: [{ id: "s1", projectId: "p1", taskId: "t1", fromProjectId: "p1", startAt: "2026-10-24T01:00:00Z", durationSeconds: 600, reason: "r", confidencePercent: 80 }] }, [], tree).cards;
 assert.deepStrictEqual(nb.map(function (c) { return c.conf; }), [91, null, 12, null, null, 80]);
 assert.deepStrictEqual(nb[0].meta, { op: "create", kind: "project", name: "新书", zoneName: "学习", why: "" });
-assert.deepStrictEqual(nb[1].slot, { op: "create", kind: "task", tProject: "p1", tZone: "z1" });
+assert.deepStrictEqual(nb[1].slot, { op: "create", kind: "task", name: "复习", tProject: "p1", tZone: "z1" });
 assert.strictEqual(nb[2].meta.toKind, "project"); assert.strictEqual(nb[2].meta.projectName, "数学"); assert.strictEqual(nb[2].meta.toName, "英语");
 assert.strictEqual(nb[2].slot.oProject, "p1"); assert.strictEqual(nb[2].slot.oTask, "t1"); assert.strictEqual(nb[2].slot.tProject, "p2");
 assert.strictEqual(nb[3].meta.toKind, "zone"); assert.strictEqual(nb[3].slot.tZone, "z1"); assert.strictEqual(nb[3].slot.oProject, "p1");
-assert.deepStrictEqual(nb[4].slot, { op: "delete", kind: "project", tZone: "z1", tProject: "p1", tTask: null });
+assert.deepStrictEqual(nb[4].slot, { op: "delete", kind: "project", name: "数学", tZone: "z1", tProject: "p1", tTask: null });
 assert.strictEqual(nb[5].meta.op, "session"); assert.strictEqual(nb[5].meta.toTaskName, "刷题"); assert.strictEqual(nb[5].meta.why, "r");
   // 到点同时发：新任务条等项目条先发完（批量 / 单卡路径都一样）；项目条被撤销也放行
   var c2 = mk(), n0 = sent.length;

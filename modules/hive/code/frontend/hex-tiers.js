@@ -248,7 +248,8 @@
     }
     function approveBlock(c, cardEl) {
       if (!c.target) { toast("先选去向"); return false; }
-      if (S.busy[S.date + "|" + c.name]) return false;
+      if ((window.NexusTableHexMini && window.NexusTableHexMini.isMissing(cardEl)) || S.busy[S.date + "|" + c.name]) return false;
+      if (window.NexusTableHexMini) window.NexusTableHexMini.fly(cardEl);
       X.collapseEl(cardEl); B.bumpApprovals();
       write("assign", c.name, { taskId: c.target.taskId, projectId: c.target.taskId ? undefined : c.target.projectId, remember: !c.generic }).then(function (r) {
         if (!r.ok) { fail(c.name, r); return; }
@@ -286,12 +287,16 @@
       n.setAttribute("aria-label", key + "，按 A 批准，按 R 忽略");
       var ok = el("div", "hd-under is-ok", "批准"), no = el("div", "hd-under is-no is-skip", "忽略");
       ok.hidden = no.hidden = true;
-      var f = el("div", "hd-face");
-      if (c.generic) f.appendChild(el("span", "ht-badge", "通用窗口"));
-      f.appendChild(el("div", "hd-win", clip(key, 80)));
-      f.appendChild(el("div", "hd-to", clip(pathOf(c.target), 100)));
+      var f = el("div", "hd-face"), rw = el("div", "hb-row"), mn = el("div", "hb-main"), grip = el("span", "ht-grip", "⠿"), tg0 = c.target ? resolve(c.target) : null;
+      if (c.generic) mn.appendChild(el("span", "ht-badge", "通用窗口"));
+      mn.appendChild(el("div", "hd-win", clip(key, 80)));
+      mn.appendChild(el("div", "hd-to", clip(pathOf(c.target), 100)));
       var line = dur(b.seconds) + (b.records > 1 ? " · " + b.records + " 段" : "");
-      f.appendChild(el("div", "hd-why", c.reason ? "AI：" + clip(c.reason, 100) + " · " + line : line));
+      mn.appendChild(el("div", "hd-why", c.reason ? "AI：" + clip(c.reason, 100) + " · " + line : line));
+      grip.setAttribute("aria-label", "拖到蜂巢里分类");
+      rw.appendChild(grip); rw.appendChild(mn);
+      rw.appendChild(B.slotEl({ op: "block", kind: c.target && c.target.taskId ? "task" : "project", block: key, tProject: c.target ? (c.target.projectId || tg0.projectId || null) : null, tTask: c.target && c.target.taskId || null, tZone: tg0 && tg0.zoneId }));
+      f.appendChild(rw);
       var acts = el("div", "hd-acts");
       [["split", "拆分"], [c.generic ? "ungeneric" : "generic", c.generic ? "取消通用窗口" : "标为通用窗口"], ["dest", "改去向"]].concat(c.target ? [["approve", "批准"]] : [])
         .forEach(function (a) { acts.appendChild(tb(a[1], a[0])); });
@@ -305,6 +310,13 @@
       n.appendChild(ok); n.appendChild(no); n.appendChild(f);
       if (c.target) { var tg = resolve(c.target); X.tint(n, tg.projectId, tg.zoneId); }
       X.bindSwipe(n, f, ok, no, c, swipeBlock);
+      // 拖把手 = 把这一块丢到蜂巢里：落在任务上改挂到它，落在「新建任务」上按块名建一个再改挂；停 2 秒才推近
+      var last = null, di = { title: key, app: "", eventId: "blk:" + key, dwellMs: 2000 };
+      di.send = function (body) {
+        return write("assign", key, { taskId: body.taskId, projectId: body.taskId ? undefined : body.projectId, remember: !c.generic }).then(function (r) { last = r; return r.ok ? null : r.err; });
+      };
+      di.onMoved = function () { if (last && last.ok) undoToast("已批准：" + key, key, key, last); X.render(); };
+      X.bindDrag(f, di, grip);
       return n;
     }
 
@@ -415,7 +427,7 @@
         var tg = resolve(t), tn = p.taskId && tg.taskName !== "未分类" ? tg.taskName : "";
         out.push({ key: p.id, p: p, level: 2, tone: del ? "del" : "", name: "窗口块「" + (p.blockKey || "") + "」", reason: p.reason, target: t, conf: B.confOf(p.confidencePercent),
           to: B.ruleLine({ kind: "blockRule", op: p.op, taskName: tn, projectName: tg.projectName }),
-          slot: { op: "blockRule", kind: tn ? "task" : "project", block: p.blockKey || "", tProject: tg.projectId, tTask: p.taskId || null, tZone: tg.zoneId } });
+          slot: { op: "blockRule", kind: tn ? "task" : "project", block: p.blockKey || "", tProject: tg.projectId || p.projectId || null, tTask: p.taskId || null, tZone: tg.zoneId } });
       });
       return out;
     }
@@ -678,6 +690,8 @@
         var tgt = nc && ((fh && nc.querySelector('[data-ht="' + fh + '"]')) || nc);
         if (tgt && tgt.focus) tgt.focus({ preventScroll: true });
       }
+      window.NexusTableHexMini.paintAll(panel);
+      window.NexusTableHexMini.checkHover();
       if (S.jump) {   // 刚展开的大卡 / 分组：里面看得见的小卡跳一跳
         var jr = panel.querySelector(S.jump.grp ? '.hb-group[data-grp="' + S.jump.grp + '"]' : '.hb-big[data-sec="' + S.jump.sec + '"]');
         S.jump = null; B.hint(jr);
@@ -685,6 +699,7 @@
     }
     function flushRender() { window.setTimeout(function () { if (pendingRender && !uiBusy()) X.render(); }, 0); }
     panel.addEventListener("focusout", flushRender);
+    window.NexusTableHexMini.bindHover(panel, { focusCard: X.focusCard, modelCard: function (k) { return X.model().cards.filter(function (c) { return c.key === k; })[0]; } });
 
     // ── 事件 ──
     function blockOf(node) {

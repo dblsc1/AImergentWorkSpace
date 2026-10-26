@@ -84,7 +84,7 @@
 
   // ── DOM ───────────────────────────────────────────────────────────
   function el(tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
-  var SLOT = { tZone: "targetZoneId", tProject: "targetProjectId", tTask: "targetTaskId", oZone: "originZoneId", oProject: "originProjectId", oTask: "originTaskId", op: "op", kind: "kind", block: "block" };
+  var SLOT = { tZone: "targetZoneId", tProject: "targetProjectId", tTask: "targetTaskId", oZone: "originZoneId", oProject: "originProjectId", oTask: "originTaskId", op: "op", kind: "kind", block: "block", name: "name" };
   // 右侧留给第二部分画小蜂巢的空位：固定大小、空的，只带目标 / 原位置的 id 和操作种类
   api.slotEl = function (slot) {
     var n = el("div", "hd-minihive");
