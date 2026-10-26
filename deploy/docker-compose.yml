@@ -232,12 +232,16 @@ services:
       AGENT_UPSTREAM: ${AGENT_UPSTREAM:-}
       # 站点前缀（gateway.v1）：整站挂子路径时设，如 /Cockpit/（以 / 开头和结尾）。
       HONEYCOMB_BASE_PATH: ${HONEYCOMB_BASE_PATH:-/}
+      # 本机请求标记（gateway.v1 第十节）：宿主机本身发来的请求带 X-Nexus-Same-Host: 1。前面还有同机反代时设 false。
+      # Docker Desktop、rootless Docker、同机反代下所有请求都像本机发来的：设 false。
+      HONEYCOMB_SAME_HOST_TRUSTED: ${HONEYCOMB_SAME_HOST_TRUSTED:-true}
       # 模板里只替换这些变量；$host 之类仍是 nginx 自己的。
       NGINX_ENVSUBST_FILTER: ^(AUTH_UPSTREAM|AGENT_UPSTREAM|HONEYCOMB_)
     volumes:
       - ./nginx/templates/default.conf.template:/etc/nginx/templates/default.conf.template:ro
       - ${HONEYCOMB_EXTRA_ROUTES_DIR:-./nginx/extra}:/etc/nginx/templates/extra:ro
       - ../modules/nginx-docker/nginx:/etc/nginx/honeycomb:ro
+      - ../modules/nginx-docker/nginx/same-host.sh:/docker-entrypoint.d/15-honeycomb-same-host.sh:ro
       - ../modules/nginx-docker/static:/usr/share/nginx/html/__cockpit:ro
       # 登录页，缺省是登录门占位件自带的；换成自己的就设 HONEYCOMB_LOGIN_DIR。
       - ${HONEYCOMB_LOGIN_DIR:-../contracts/auth.gate.v1/stub/web}:/usr/share/nginx/html/login:ro

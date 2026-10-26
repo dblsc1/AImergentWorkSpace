@@ -133,6 +133,8 @@ services:
       AUTH_UPSTREAM: ${AUTH_UPSTREAM:-auth:8010}
       AGENT_UPSTREAM: ${AGENT_UPSTREAM:-}
       HONEYCOMB_BASE_PATH: ${HONEYCOMB_BASE_PATH:-/}
+      # Docker Desktop、rootless Docker、同机反代下所有请求都像本机发来的：设 false。
+      HONEYCOMB_SAME_HOST_TRUSTED: ${HONEYCOMB_SAME_HOST_TRUSTED:-true}
     volumes:
       # 额外路由（contracts/gateway.v1 第四节）；安装脚本建一个空的 extra/。
       - ${HONEYCOMB_EXTRA_ROUTES_DIR:-./extra}:/etc/nginx/templates/extra:ro
