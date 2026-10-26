@@ -20,6 +20,7 @@ from .ignore_router import is_human
 from .proposals import MAX_NAME
 
 _Id = Annotated[StrictStr, Field(min_length=1, max_length=128)]
+_Conf = Annotated[StrictInt, Field(ge=0, le=100)] | None
 
 
 def _no_device_token(request: Request) -> None:
@@ -47,6 +48,7 @@ class ProjectIn(BaseModel):
     zoneId: _Id
     name: StrictStr = Field(max_length=MAX_NAME * 4)  # 超长在 clean_name 里拒，这里只拦乱发的
     reason: StrictStr = Field("", max_length=new_items.MAX_REASON * 4)
+    confidencePercent: _Conf = None
 
 
 class TaskIn(BaseModel):
@@ -56,16 +58,17 @@ class TaskIn(BaseModel):
     projectProposalId: _Id | None = None
     name: StrictStr = Field(max_length=MAX_NAME * 4)
     reason: StrictStr = Field("", max_length=new_items.MAX_REASON * 4)
+    confidencePercent: _Conf = None
 
 
 @router.post("/projects", dependencies=[Depends(_no_device_token)])
 def propose_project(body: ProjectIn) -> dict:
-    return new_items.propose_project(body.zoneId, body.name, body.reason)
+    return new_items.propose_project(body.zoneId, body.name, body.reason, body.confidencePercent)
 
 
 @router.post("/tasks", dependencies=[Depends(_no_device_token)])
 def propose_task(body: TaskIn) -> dict:
-    return new_items.propose_task(body.projectId, body.projectProposalId, body.name, body.reason)
+    return new_items.propose_task(body.projectId, body.projectProposalId, body.name, body.reason, body.confidencePercent)
 
 
 class ChangeIn(BaseModel):
@@ -78,6 +81,7 @@ class ChangeIn(BaseModel):
     toId: _Id | None = None
     reason: StrictStr = Field("", max_length=new_items.MAX_REASON * 4)
     directApply: StrictBool = False
+    confidencePercent: _Conf = None
 
 
 class IgnoreIn(BaseModel):
@@ -94,7 +98,7 @@ _Auth = Annotated[str | None, Header()]
 
 @router.post("/changes", dependencies=[Depends(_no_device_token_unless_write)])
 def propose_change(body: ChangeIn, request: Request) -> dict:
-    return new_items.propose_change(body.target, body.targetId, body.op, body.name, body.toId, body.reason, body.directApply, request)
+    return new_items.propose_change(body.target, body.targetId, body.op, body.name, body.toId, body.reason, body.directApply, request, body.confidencePercent)
 
 
 @router.post("/ignores", dependencies=[Depends(_no_device_token_unless_write)])
@@ -118,6 +122,7 @@ class WindowRuleIn(BaseModel):
     rule: _RuleIn
     reason: StrictStr = Field("", max_length=new_items.MAX_REASON * 4)
     directApply: StrictBool = False
+    confidencePercent: _Conf = None
 
 
 class BlockRuleIn(BaseModel):
@@ -129,6 +134,7 @@ class BlockRuleIn(BaseModel):
     projectId: _Id | None = None
     reason: StrictStr = Field("", max_length=new_items.MAX_REASON * 4)
     directApply: StrictBool = False
+    confidencePercent: _Conf = None
 
 
 class PartIn(BaseModel):
@@ -152,23 +158,24 @@ class BlockActionIn(BaseModel):
     forever: StrictBool = False  # 给了 true → 400（AI 的 ignore 不许 forever）
     reason: StrictStr = Field("", max_length=new_items.MAX_REASON * 4)
     directApply: StrictBool = False
+    confidencePercent: _Conf = None
 
 
 @router.post("/window-rules", dependencies=[Depends(_no_device_token_unless_write)])
 def propose_window_rule(body: WindowRuleIn, authorization: _Auth = None) -> dict:
-    return tier_items.propose_window_rule(body.op, body.rule.model_dump(), body.reason, body.directApply, is_human(authorization))
+    return tier_items.propose_window_rule(body.op, body.rule.model_dump(), body.reason, body.directApply, is_human(authorization), body.confidencePercent)
 
 
 @router.post("/block-rules", dependencies=[Depends(_no_device_token_unless_write)])
 def propose_block_rule(body: BlockRuleIn) -> dict:
-    return tier_items.propose_block_rule(body.op, body.blockKey, body.taskId, body.projectId, body.reason, body.directApply)
+    return tier_items.propose_block_rule(body.op, body.blockKey, body.taskId, body.projectId, body.reason, body.directApply, body.confidencePercent)
 
 
 @router.post("/block-actions", dependencies=[Depends(_no_device_token_unless_write)])
 def propose_block_action(body: BlockActionIn) -> dict:
     parts = None if body.parts is None else [p.model_dump() for p in body.parts]
     return tier_items.propose_block_action(body.action, body.date, body.blockKey, body.taskId, body.projectId, parts,
-                                           body.forever, body.reason, body.directApply)
+                                           body.forever, body.reason, body.directApply, body.confidencePercent)
 
 
 class ApproveIn(BaseModel):

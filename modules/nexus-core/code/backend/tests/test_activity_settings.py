@@ -7,7 +7,7 @@ import json
 import pytest
 from _tier_common import BEARER, BR, RULES, SET, db
 
-DEFAULT = {"version": 0, "tiers": False, "tiersSince": None,
+DEFAULT = {"version": 0, "tiers": False, "tiersSince": None, "highConfidenceThresholdPercent": 80,
            "agentDirect": {"enabled": False, "windowsClassify": False, "honeycombRecords": False}}
 
 

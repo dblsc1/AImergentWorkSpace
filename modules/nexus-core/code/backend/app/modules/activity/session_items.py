@@ -54,10 +54,11 @@ def view(d: dict) -> dict:
     return {"id": d["id"], "kind": "sessionChange", "status": d["status"], "eventId": d["eventId"], "op": d["op"],
             "taskId": d["taskId"], "projectId": d["projectId"], "fromTaskId": from_task, "fromProjectId": from_project,
             "startAt": d["startAt"], "durationSeconds": d["durationSeconds"], "reason": d["reason"],
-            "createdAt": d["createdAt"].replace(tzinfo=timezone.utc).isoformat(), "corrected": bool(d.get("corrected"))}
+            "createdAt": d["createdAt"].replace(tzinfo=timezone.utc).isoformat(), "corrected": bool(d.get("corrected")),
+            "confidencePercent": d.get("confidencePercent")}
 
 
-def propose(event_id: str, task_id, project_id, reason: str, direct: bool, request) -> dict:
+def propose(event_id: str, task_id, project_id, reason: str, direct: bool, request, confidence: int | None = None) -> dict:
     if direct:
         direct_log.gate("honeycombRecords")  # 先过闸门：不满足条件就 403，什么都不做
     user = current_tenant()
@@ -78,7 +79,8 @@ def propose(event_id: str, task_id, project_id, reason: str, direct: bool, reque
     reason = new_items._clean_reason(reason)  # noqa: SLF001
     data = session.get("data") or {}
     extra = {"eventId": event_id, "op": "reassign", "taskId": task_id, "projectId": project_id, "fromTaskId": cur_task,
-             "fromProjectId": cur_project, "startAt": data.get("startAt"), "durationSeconds": data.get("durationSeconds"), "corrected": False}
+             "fromProjectId": cur_project, "startAt": data.get("startAt"), "durationSeconds": data.get("durationSeconds"), "corrected": False,
+             "confidencePercent": confidence}
     if not direct:
         return view(new_items._put_edit(user, "sessionChange", item_id, extra, reason))  # noqa: SLF001
     old = new_items._get(user, item_id)  # noqa: SLF001
@@ -95,7 +97,7 @@ def propose(event_id: str, task_id, project_id, reason: str, direct: bool, reque
         new_items._col().update_many({"user": user, "id": item_id, "status": "pending"},  # noqa: SLF001
                                      {"$set": {"status": "accepted", "decidedAt": datetime.now(timezone.utc), "applyClaimedAt": None}})
 
-    return direct_log.run("sessionChange", {"eventId": event_id, "op": "reassign", "taskId": task_id, "projectId": project_id, "reason": reason}, go, finish)
+    return direct_log.run("sessionChange", {"eventId": event_id, "op": "reassign", "taskId": task_id, "projectId": project_id, "reason": reason, "confidencePercent": confidence}, go, finish)
 
 
 def _edited(edit) -> dict:
