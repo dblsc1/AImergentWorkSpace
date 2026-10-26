@@ -113,7 +113,12 @@ func cli(args []string, out io.Writer) error {
 		}
 		if *title != "" || *app != "" {
 			ps, _ := loadPseudonyms("")
-			fmt.Fprintf(out, "原始（强制脱敏后）：%s\n发出：%s\n", scrubSecrets(*title), previewOne(newRedactor(cfg), ps, *app, *title))
+			r, err := newPreviewRedactor(cfg)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "原始（强制脱敏后）：%s\n发出：%s\n", scrubSecrets(*title), previewOne(r, ps, *app, *title))
+			r.al.printUsed(out)
 			return nil
 		}
 		n := 20

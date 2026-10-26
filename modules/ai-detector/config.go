@@ -87,6 +87,8 @@ type Privacy struct {
 	IPs           *bool    `json:"ips,omitempty"`
 	Usernames     *bool    `json:"usernames,omitempty"`
 	LongNumbers   *bool    `json:"longNumbers,omitempty"`
+	// 编号代号（契约「编号代号」）：nil = 缺省 ips/emails/users/hosts；[] = 都用方括号。只认本机配置，网页设置不带它。
+	NumberedAliases []string `json:"numberedAliases"`
 }
 
 // Idle：离开判定，语义见 contracts/detector.settings.v1「idle 节」。零值 = 全关 = 按 ActivityWatch 原样。
@@ -128,6 +130,9 @@ func (p Privacy) check() error {
 		return err
 	}
 	if err := enum("browser", p.Browser, "domain", "full", "off"); err != nil {
+		return err
+	}
+	if err := p.checkNumbered(); err != nil {
 		return err
 	}
 	for i, w := range p.PathWhitelist {

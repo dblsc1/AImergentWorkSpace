@@ -454,3 +454,10 @@ v1 的 23 个工具名不出现在 `tools/list`，但仍能调：**不调下游�
 
 - `CRUD_Honeycomb` 一次一条，`confidencePercent` 是顶层参数。
 - `ignore: true` 的条目可带 `confidencePercent` 但不转发（忽略提议不存置信度）。
+
+### 补充（v2.4 · v0.5：Agent 运行翻页与小修正，只增不改）
+
+- `Get_History` 收 `runsCursor`，原样转给 nexus-core（v2.43）；返回带 `agents.nextRunsCursor`、`agents.runs[].turns`、`handoffs[].reason`。
+- `Get_Today_Todo`（及旧名 `Get_Today`）的 `uncaught` 与 `Get_History` 口径一致：「标成通用窗口、还没拆分」的块也算第一级没收。
+- `Get_Blocks_Match_History` 返回带 `truncated`：结果超过 20 条被截断时为 `true`。
+
