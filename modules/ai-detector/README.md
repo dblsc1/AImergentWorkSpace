@@ -232,6 +232,8 @@ Linux `~/.config/honeycomb/`；设环境变量 `AI_DETECTOR_HOME` 可换目录�
 | （网页上的）`autoTrack` | 关 | 「允许 AI 管理进行中的任务」。**只在网页「自动记录 → 活动检测设置」里开关**，本机配置没有这个键（见下） |
 | `agentStatusFile` | 空 | 状态文件桥读的文件路径，空 = 关（见下） |
 | `agentStatusIgnore` | `[]` | 状态文件里 `key` 以这些前缀开头的条目不报 |
+| `agentLights` | `true` | 红绿灯（见下）：约每秒看本机 Claude Code / Codex / Hermes，写 `~/.agent-traffic-light/agents.json` |
+| `agentLightsReport` | `["hermes"]` | 红绿灯替哪几类上报（`claude` / `codex` / `hermes`）；其余只显示。写错值红绿灯不工作并写日志 |
 | `segmentByTitle` | `true` | 终端按标签页分段（见下）。网页「自动记录」页设过就以网页为准 |
 | `segmentByTitleApps` | 内置终端名单 | 哪些程序按标签页分段；不写 = 内置名单（GNOME Terminal、Ptyxis、kitty、Alacritty、WezTerm、Konsole、iTerm2、Windows Terminal……） |
 
@@ -317,6 +319,16 @@ ActivityWatch 起不来时，真正的原因在 `aw-start.log` 里。默认它**
   你手动计时的那段时间 AI 不插手。
 
 关掉（缺省）就和以前完全一样：一切都只是待确认的建议。
+
+### 红绿灯（`agentLights`，v0.5）
+
+只读 `~/.claude/sessions/*.json`、`~/.codex/*.sqlite`（只读打开）、`~/.hermes` 下的 `gateway_state.json`，把状态写进
+`~/.agent-traffic-light/agents.json`（格式同下面的状态文件）。`agentLightsReport` 里的类按状态文件桥同样的规则上报，
+状态文件桥会跳过这几类。Claude Code 有钩子，所以缺省只上报 Hermes。网关进程已不在的 Hermes 配置不显示也不上报。
+
+```json
+{ "agentLights": true, "agentLightsReport": ["hermes"] }
+```
 
 ### 状态文件桥（`agentStatusFile`）
 
