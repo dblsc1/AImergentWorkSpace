@@ -59,6 +59,8 @@
   // （含未排期、无事实的），本文件只是多读一条已经存在的只读端点。
   // ⚠️ 契约缺口：module_docs/contract.md 尚未把这条登记进 consumes（待补）。
   var GANTT_PATH = BASE + "api/core/views/gantt";
+  // AI 代理时长读端（nexus-core contract「AI 代理时长读端」）：与人的时长并行记、永不相加。
+  var AGENT_TIME_PATH = BASE + "api/core/views/agent-time";
 
   // 只读全量导出（nexus-core contract.md v1.3「只读全量导出」，
   // GET /api/core/export）。给顶栏「导出数据」按钮用——用户要看/下载自己的
@@ -350,6 +352,31 @@
     return request(resolveFetch(options), "GET", GANTT_PATH);
   }
 
+  function fetchAgentTime(from, to, options) {
+    var q = from && to ? "?from=" + from + "&to=" + to : "";
+    return request(resolveFetch(options), "GET", AGENT_TIME_PATH + q);
+  }
+
+  // 与分区规划面板「近 7 天」同口径：today（服务端给的）往前数 6 天含 today。
+  function weekRange(today) {
+    var t = Date.parse(today + "T00:00:00Z");
+    return { from: new Date(t - 6 * 86400000).toISOString().slice(0, 10), to: today };
+  }
+
+  // agent-time 响应 → { projectId: 代理秒数 }（泳道秒数；tasks[] 按项目归并，taskId 为 null 的也算项目）。
+  function agentSecondsByProject(resp) {
+    var out = {};
+    ((resp && resp.tasks) || []).forEach(function (t) {
+      if (t && t.projectId && t.seconds > 0) out[t.projectId] = (out[t.projectId] || 0) + t.seconds;
+    });
+    return out;
+  }
+
+  // 人的时长文案 + 代理时长（有才拼）：「人 1 时 20 分 · Agent 3 时 5 分」；没有代理时长保持原样。
+  function withAgentTime(humanText, agentSeconds, fmt) {
+    return agentSeconds > 0 ? "人 " + humanText + " · Agent " + fmt(agentSeconds) : humanText;
+  }
+
   // ── 只读全量导出（顶栏「导出数据」按钮）───────────────────────────
   // 复用 request()：404（端点未上线）与网络错误同样归一化成 {ok:false,...}，
   // 调用方（app.js）不需要区分"没上线"和"打不通"，只要给出统一的
@@ -502,6 +529,10 @@
     hasScheduleFields: hasScheduleFields,
     listOtherTasks: listOtherTasks,
     fetchGantt: fetchGantt,
+    fetchAgentTime: fetchAgentTime,
+    weekRange: weekRange,
+    agentSecondsByProject: agentSecondsByProject,
+    withAgentTime: withAgentTime,
     fetchExport: fetchExport,
     restoreSnapshot: restoreSnapshot,
     exportFileName: exportFileName,

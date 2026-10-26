@@ -25,7 +25,7 @@
   "use strict";
 
   var DAY = 86400000;
-  var ctx = null;   // { state, fetchGantt, createProject, openProject, reload, halfLifeDays }
+  var ctx = null;   // { state, fetchGantt, fetchAgentTime, weekRange, agentSecondsByProject, withAgentTime, createProject, openProject, reload, halfLifeDays }
   var dlg = null;
 
   function esc(s) {
@@ -37,6 +37,9 @@
     if (seconds == null) return "—";
     var m = Math.round(seconds / 60);
     return m < 60 ? m + " 分" : Math.floor(m / 60) + " 时 " + (m % 60) + " 分";
+  }
+  function withAgent(text, agentSeconds) {
+    return ctx.withAgentTime(text, agentSeconds, hm);
   }
   function heatText(v) { return (v || 0).toFixed(1); }
 
@@ -59,7 +62,7 @@
     return out;
   }
 
-  function model(zoneId, gi) {
+  function model(zoneId, gi, agent) {
     var st = ctx.state;
     var zone = st.hive.zones.filter(function (z) { return z.id === zoneId; })[0];
     if (!zone) return null;
@@ -75,7 +78,7 @@
       return {
         id: p.id, name: p.name, heat: (st.heat || {})[p.id] || 0,
         todos: (st.todos[p.id] || []).length, done7: done7,
-        d7: g ? g.d7 : null, today: g ? g.today : null, plan: g ? g.plan : null
+        a7: (agent || {})[p.id] || 0, d7: g ? g.d7 : null, today: g ? g.today : null, plan: g ? g.plan : null
       };
     });
     // 与 buildHoneycomb 同一个排序：热度降序，并列按项目 order —— 所以这张表的顺序
@@ -97,7 +100,7 @@
     return {
       zone: zone, rank: rank, zoneCount: ranked.length, rows: rows,
       next: next.slice(0, 5), recent: recent.slice(0, 5),
-      d7: sum("d7"), today: sum("today"),
+      d7: sum("d7"), a7: rows.reduce(function (s, r) { return s + r.a7; }, 0), today: sum("today"),
       done7: rows.reduce(function (s, r) { return s + r.done7; }, 0),
       todos: rows.reduce(function (s, r) { return s + r.todos; }, 0),
       maxHeat: rows.reduce(function (m, r) { return Math.max(m, r.heat); }, 0),
@@ -122,7 +125,7 @@
         '<td class="zp-name">' + esc(r.name) + "</td>" +
         '<td class="zp-heat"><span class="zp-bar"><i style="width:' + w + '%"></i></span>' +
           '<span class="zp-num">' + heatText(r.heat) + "</span></td>" +
-        '<td class="zp-num">' + (dash || (m.ganttOk ? hm(r.d7) : "—")) + "</td>" +
+        '<td class="zp-num">' + (dash || (m.ganttOk ? withAgent(hm(r.d7), r.a7) : "—")) + "</td>" +
         '<td class="zp-num">' + r.done7 + "</td>" +
         '<td class="zp-num">' + r.todos + "</td>" +
         "<td>" + (dash || (m.ganttOk ? planCell(r, m.todayStr) : "—")) + "</td>" +
@@ -157,7 +160,7 @@
         "</span>" +
         '<button class="zp-close" value="close" aria-label="关闭">×</button></form>' +
       '<div class="zp-tiles">' +
-        tile("近 7 天投入", dash || (m.ganttOk ? hm(m.d7) : "读取失败")) +
+        tile("近 7 天投入", dash || (m.ganttOk ? withAgent(hm(m.d7), m.a7) : "读取失败")) +
         tile("今天", dash || (m.ganttOk ? hm(m.today) : "—")) +
         tile("近 7 天完成", m.done7 + " 条") +
         tile("待办", m.todos + " 条") +
@@ -345,10 +348,19 @@
 
   // 拉一次 gantt 再画实数。拿不到就把依赖它的格子写成"读取失败 / —"，其余照常。
   function paint(zoneId) {
+    // 代理时长要和「近 7 天」同区间，区间的 today 来自 gantt，所以接在它后面取；
+    // 取不到只是不显示代理时长，不影响面板。
     ctx.fetchGantt().then(function (r) {
-      if (!dlg || !dlg.open || dlg.dataset.zoneId !== zoneId) return;
       var gi = r && r.ok ? ganttIndex(r.data) : null;
-      var m = model(zoneId, gi);
+      if (!gi) return [r, gi, null];
+      var w = ctx.weekRange(gi.__today);
+      return Promise.resolve(ctx.fetchAgentTime(w.from, w.to)).then(function (a) {
+        return [r, gi, a && a.ok ? ctx.agentSecondsByProject(a.data) : null];
+      }, function () { return [r, gi, null]; });
+    }).then(function (res) {
+      if (!dlg || !dlg.open || dlg.dataset.zoneId !== zoneId) return;
+      var gi = res[1];
+      var m = model(zoneId, gi, res[2]);
       if (m) {
         var keep = dlg.querySelector("[data-zp-new] input");
         var typed = keep ? keep.value : "";

@@ -316,6 +316,26 @@ Promise.resolve()
       assert.ok(r.message.indexOf("field required") >= 0, r.message);
     });
   }); })
+  .then(function () { return test("agent-time：区间 = today 往前 6 天；按项目归并；文案只在有代理时长时拼", function () {
+    assert.deepStrictEqual(D.weekRange("2026-10-27"), { from: "2026-10-21", to: "2026-10-27" });
+    assert.deepStrictEqual(D.weekRange("2026-03-02"), { from: "2026-02-24", to: "2026-03-02" });
+    var by = D.agentSecondsByProject({ tasks: [
+      { projectId: "p1", taskId: "t1", seconds: 600, runs: 1 },
+      { projectId: "p1", taskId: null, seconds: 60, runs: 1 },
+      { projectId: "p2", taskId: "t9", seconds: 0, runs: 1 }
+    ] });
+    assert.deepStrictEqual(by, { p1: 660 });
+    assert.deepStrictEqual(D.agentSecondsByProject(null), {});
+    var fmt = function (s) { return Math.round(s / 60) + "分"; };
+    assert.strictEqual(D.withAgentTime("80分", 660, fmt), "人 80分 · Agent 11分");
+    assert.strictEqual(D.withAgentTime("80分", 0, fmt), "80分");
+    var seen;
+    return D.fetchAgentTime("2026-10-21", "2026-10-27", { fetchImpl: function (u) { seen = u; return Promise.reject(new Error("x")); } })
+      .then(function (r) {
+        assert.strictEqual(seen, "/api/core/views/agent-time?from=2026-10-21&to=2026-10-27");
+        assert.strictEqual(r.ok, false);
+      });
+  }); })
   .then(function () {
     console.log(passed + " passed");
   })

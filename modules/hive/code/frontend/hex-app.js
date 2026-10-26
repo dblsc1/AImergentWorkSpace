@@ -900,7 +900,9 @@
              longPressMs: T.LONGPRESS_MS,
              // 短按 = 分区规划面板（人类 2026-09-12）。
              onShortPress: function (zoneId) { ZP.open(zoneId); } });
-    ZP.init({ state: state, fetchGantt: D.fetchGantt, createProject: D.createProject,
+    ZP.init({ state: state, fetchGantt: D.fetchGantt, fetchAgentTime: D.fetchAgentTime,
+              weekRange: D.weekRange, agentSecondsByProject: D.agentSecondsByProject,
+              withAgentTime: D.withAgentTime, createProject: D.createProject,
               halfLifeDays: H.HEAT_HALFLIFE_DAYS,
               // 分区/项目的写路径（2026-09-14）：经典列表去掉之后，它独有的这几条
               // 搬进分区规划面板。**原样递 data.js 的函数**，不在这儿包一层。
