@@ -22,3 +22,5 @@ auth_request_set $honeycomb_scope $upstream_http_x_nexus_scope;
 auth_request_set $honeycomb_anonymous $upstream_http_x_nexus_anonymous;
 proxy_set_header X-Nexus-Scope $honeycomb_scope;
 proxy_set_header X-Nexus-Anonymous $honeycomb_anonymous;
+# 本机标记（第十节）：网关自己按 TCP 对端算（$honeycomb_same_host 来自启动时生成的 geo），同样覆盖客户端自带的。
+proxy_set_header X-Nexus-Same-Host $honeycomb_same_host;

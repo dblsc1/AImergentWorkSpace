@@ -683,7 +683,7 @@ def get_history(a, c):
         if span > limit:
             raise _bad(f"detail={detail} 最多 {limit} 天，这次 {span} 天")
     tree = _tree(c.tenant) if a.get("scope") else _tree_try(c.tenant)
-    params = {k: a[k] for k in ("who", "detail") if k in a}
+    params = {k: a[k] for k in ("who", "detail", "runsCursor") if k in a}
     params.update({dst: a[src] for src, dst in (("fromDate", "from"), ("toDate", "to")) if src in a})
     if a.get("scope"):
         params["scope"] = tree.resolve(a["scope"], label="scope ")["id"]
@@ -1176,7 +1176,11 @@ def get_today(a, c):
     if on:   # 三级分类没开 = 没有块可数
         r = _get("/api/core/activity/blocks", {"status": "pending", "limit": 1000, "date": day}, c.tenant)
         rows, more = r.get("items", []), bool(r.get("nextCursor"))   # ponytail: 超过 1000 块只标 truncated，不翻页
-        pend = [b for b in rows if b.get("status") == "pending"]
+        # 与 views/history 同口径：标成通用窗口、还没拆分（没有 parts）的块也算还没处理
+        g = _get("/api/core/activity/blocks", {"status": "generic", "limit": 1000, "date": day}, c.tenant)
+        more = more or bool(g.get("nextCursor"))
+        pend = [b for b in rows if b.get("status") == "pending"] + [
+            b for b in g.get("items", []) if b.get("status") == "generic" and not b.get("parts")]
         sums = lambda xs: {"blocks": len(xs), "seconds": sum(b.get("seconds") or 0 for b in xs)}  # noqa: E731
         uncaught = sums([b for b in pend if b.get("keySource") == "auto"])
         unassigned = sums([b for b in pend if b.get("keySource") != "auto"])
@@ -1215,7 +1219,7 @@ def get_blocks_match_history(a, c):
              {"app": app, "days": days, **({"title": title} if title is not None else {}),
               **({"titleContains": part} if part is not None else {})}, c.tenant)
     blocks = [{**b, "lastAt": _loc(b.get("lastAt"))} for b in r.get("blocks", [])]
-    return {**_screen_tree({"query": r.get("query"), "days": days, "blocks": blocks}),
+    return {**_screen_tree({"query": r.get("query"), "days": days, "blocks": blocks}), "truncated": bool(r.get("truncated")),
             "note": _note("只到块为止；keySource 为 auto = 当时没有第一级规则收。块归到哪个任务用 Get_Tasks_Match_History。blocks 为空 = 这段时间没出现过。")}
 
 

@@ -86,9 +86,10 @@ def read_history(
     who: Annotated[str, Query(description="human | agent | both")] = "both",
     detail: Annotated[str, Query(description="summary | segments | windows")] = "summary",
     scope: Annotated[str | None, Query(description="分区 / 项目 / 任务 id，只过滤人的已入账部分")] = None,
+    runs_cursor: Annotated[str | None, Query(alias="runsCursor", description="detail=segments：Agent 运行的下一页，取自上一页的 agents.nextRunsCursor")] = None,
 ) -> dict:
     """v2.39 协作历史。**不写**；取值 / 跨度不合法 → 422（UnprocessableError，detail 点名参数）。"""
-    return collab_history.get_history(from_, to, who, detail, scope)
+    return collab_history.get_history(from_, to, who, detail, scope, runs_cursor)
 
 
 @router.get("/arrangements")

@@ -7,6 +7,7 @@
 3. `uncaught.blocks > 0`：调 `Get_Pending_Classify_Windows`，看 `items`（按时长降序，从大的做起）。
    - 反复出现的窗口：写第一级规则，读 rules.md。
    - 只有今天一次的：`CRUD_Windowsblock` 的 `assign`。
+   - `uncaught` 也数标成通用窗口、还没拆分的块；它们不在 `Get_Pending_Classify_Windows` 里，到 `Get_History(detail=windows)` 找 `status: generic` 的块。
 4. `unassigned.blocks > 0`：同一次返回里的 `unassigned`，这些块已被第一级收了，缺第二级去向。归类前先 `Get_Tasks_Match_History`（块名）；去向稳定就写第二级规则，否则 `assign`。读 rules.md。
 5. `gaps`：`detectorOffline: true` 是检测程序没在报，先 `Get_Device_Health`，别问人。`false` 多半是人不在电脑前，需要时才用 `Submit_Questions_To_Human`。读 troubleshoot.md。
 6. `proposalsPending`、`questionsOpen`：`Get_Proposals`（缺省 `status: pending`）。已在等人的不重复提；`kind: question` 里 `answered` 的要跟进，读 report.md。

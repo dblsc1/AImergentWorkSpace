@@ -86,6 +86,9 @@ BLOCKS = {"date": "2026-10-24", "nextCursor": None, "items": [
      "apps": ["google-chrome"]},
     {"blockKey": "示例文档", "keySource": "rule", "status": "pending", "seconds": 9000, "records": 9, "apps": ["google-chrome"]},
     {"blockKey": "已分类", "keySource": "auto", "status": "assigned", "seconds": 8000, "records": 9, "apps": ["code"]},
+    {"blockKey": "通用窗口", "keySource": "auto", "status": "generic", "parts": [], "seconds": 300, "records": 2, "apps": ["term"]},
+    {"blockKey": "通用已拆", "keySource": "auto", "status": "generic", "parts": [{"taskId": "t_a1"}], "seconds": 700, "records": 2,
+     "apps": ["term"]},
 ]}
 BLOCK_RULES = {"items": [
     {"id": "br_1", "blockKey": "示例文档", "taskId": "t_a1", "projectId": "p_3c", "author": "ai", "via": "assign"},
@@ -166,6 +169,7 @@ def match_for(q):
 def windows_for(q):
     """windows/history：query 回收到的 app + title / titleContains（同 nexus-core）。"""
     return {"query": {k: q[k][0] for k in ("app", "title", "titleContains") if k in q}, "days": int(q.get("days", ["30"])[0]),
+            "truncated": q["app"][0] == "many",
             "blocks": [{"block": "chrome · 周报", "keySource": "auto", "days": 4, "seconds": 1800, "records": 37,
                         "lastAt": "2026-10-23T03:00:00+00:00"}]}
 
@@ -259,7 +263,7 @@ def respond(method, path, q, tenant, body, scope):
         "/api/core/views/history": lambda: ({**HISTORY, "human": {**HISTORY["human"], "blocks": WIN_BLOCKS}}
                                             if one("detail") == "windows" and "blocks" not in HISTORY["human"] else HISTORY),
         "/api/core/views/arrangements": lambda: ARRANGEMENTS,
-        "/api/core/activity/blocks": lambda: BLOCKS,
+        "/api/core/activity/blocks": lambda: {**BLOCKS, "items": [i for i in BLOCKS["items"] if one("status", "all") in ("all", i["status"])]},
         "/api/core/activity/gaps": lambda: GAPS,
         "/api/core/activity/blocks/history": lambda: match_for(q),
         "/api/core/activity/windows/history": lambda: windows_for(q),

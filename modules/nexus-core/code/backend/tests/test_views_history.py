@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -317,7 +319,7 @@ def test_handoffs_and_waited_seconds(client):
 def test_waited_is_null_when_reply_after_range_end(client):
     run(client, 1, "09:00:00", "10:00:00", phases=[("09:00:00", "working"), ("09:20:00", "waiting_input")])
     h = get(client, HIST, **span(detail="segments"))["handoffs"]
-    assert h == [{"at": h[0]["at"], "runId": "cv-1", "type": "agent_to_human", "waitedSeconds": None}]
+    assert h == [{"at": h[0]["at"], "runId": "cv-1", "type": "agent_to_human", "reason": "input", "waitedSeconds": None}]
 
 
 def test_overlap(client):
@@ -356,7 +358,7 @@ def test_caps_set_truncated(client, monkeypatch):
     run(client, 1, "09:00:00", "10:00:00", phases=[("09:00:00", "working"), ("09:20:00", "waiting_input")])
     run(client, 2, "09:00:00", "10:00:00", phases=[("09:00:00", "working"), ("09:20:00", "waiting_input")])
     assert get(client, HIST, **span(detail="segments"))["truncated"] is False
-    for name, kw in (("CAP_SEGMENTS", {"detail": "segments"}), ("CAP_RUNS", {"detail": "segments"}), ("CAP_HANDOFFS", {"detail": "segments"}),
+    for name, kw in (("CAP_SEGMENTS", {"detail": "segments"}), ("CAP_HANDOFFS", {"detail": "segments"}),
                      ("CAP_BY_TARGET", {})):
         monkeypatch.setattr(collab_history, name, 1)
         body = get(client, HIST, **span(**kw))
@@ -366,9 +368,10 @@ def test_caps_set_truncated(client, monkeypatch):
     body = get(client, HIST, **span(detail="segments"))
     assert len(body["human"]["segments"]) == 1 and body["human"]["confirmedSeconds"] == 120  # 汇总不受段上限影响
     monkeypatch.undo()
-    monkeypatch.setattr(collab_history, "CAP_RUNS", 1)
+    monkeypatch.setattr(collab_history, "RUNS_PAGE", 1)
     body = get(client, HIST, **span(detail="segments"))
-    assert len(body["agents"]["runs"]) == 1 and body["agents"]["workingSeconds"] == 2400  # 汇总不受 runs 上限影响
+    assert len(body["agents"]["runs"]) == 1 and body["agents"]["workingSeconds"] == 2400  # 汇总不受翻页影响
+    assert body["agents"]["nextRunsCursor"] and body["truncated"] is False  # runs 超一页不再算 truncated
     assert len(body["agents"]["byAgent"]) == 1 and body["agents"]["byAgent"][0]["runs"] == 2
 
 
@@ -469,3 +472,95 @@ def test_lanes_view_does_not_leak_new_projection_keys(client):
     lanes = get(client, f"{API}/views/lanes", date=D)
     assert lanes["human"]["sessions"] and all(set(s) == {"startAt", "endAt", "durationSeconds", "taskId", "projectId", "mode", "source"}
                                               for s in lanes["human"]["sessions"])
+
+
+# ------------------------------------------------------------------ v2.43：运行翻页 / turns / 权限交接
+
+
+def _page(client, cursor=None, **kw):
+    params = span(detail="segments", who="agent", **kw)
+    if cursor:
+        params["runsCursor"] = cursor
+    return get(client, HIST, **params)
+
+
+def test_runs_paging_over_200_with_cursor_round_trip(client, monkeypatch):
+    monkeypatch.setattr(collab_history, "RUNS_PAGE", 3)  # 同一条代码路径；真 200 条太慢，上限另有一条下面的用例
+    for n in range(8):  # startAt 升序：n=0 最早；其中两条同一刻开始，靠 runId 定顺序
+        hh = 8 + n // 2
+        run(client, n, f"{hh:02d}:00:00", f"{hh:02d}:30:00", phases=[(f"{hh:02d}:00:00", "working")])
+    seen, cursor, pages = [], None, 0
+    while True:
+        body = _page(client, cursor)
+        pages += 1
+        a = body["agents"]
+        assert a["workingSeconds"] == 8 * 1800 and sum(r["runs"] for r in a["byAgent"]) == 8  # 每页都是全部运行的汇总
+        assert body["truncated"] is False
+        seen += [r["runId"] for r in a["runs"]]
+        cursor = a["nextRunsCursor"]
+        if cursor is None:
+            break
+    assert pages == 3 and seen == [f"cv-{n}" for n in range(8)]
+    assert len(set(seen)) == 8
+    assert "nextRunsCursor" not in get(client, HIST, **span(who="agent"))["agents"]  # summary 不翻页
+    assert get(client, HIST, expect=422, **span(detail="segments", runsCursor="not-a-cursor"))
+    naive = base64.urlsafe_b64encode(json.dumps(["2026-10-01T09:00:00", "cv-1"]).encode()).decode()  # 没有时区：422，不是 500
+    assert get(client, HIST, expect=422, **span(detail="segments", runsCursor=naive))
+
+
+def test_runs_default_page_is_200(client):
+    assert collab_history.RUNS_PAGE == 200
+    for n in range(205):
+        m = 8 * 60 + n
+        run(client, n, f"{m // 60:02d}:{m % 60:02d}:00", f"{m // 60:02d}:{m % 60:02d}:30", phases=[(f"{m // 60:02d}:{m % 60:02d}:00", "working")])
+    first = _page(client)
+    assert len(first["agents"]["runs"]) == 200 and first["agents"]["nextRunsCursor"] and first["truncated"] is False
+    assert first["agents"]["workingSeconds"] == 205 * 30
+    last = _page(client, first["agents"]["nextRunsCursor"])
+    assert [r["runId"] for r in last["agents"]["runs"]] == [f"cv-{n}" for n in range(200, 205)]
+    assert last["agents"]["nextRunsCursor"] is None and last["agents"]["workingSeconds"] == 205 * 30
+
+
+def _turns(client, n):
+    runs = {r["runId"]: r for r in _page(client)["agents"]["runs"]}
+    return [(datetime.fromisoformat(x["from"]).astimezone(t("00:00:00").tzinfo).strftime("%H:%M"),
+             datetime.fromisoformat(x["to"]).astimezone(t("00:00:00").tzinfo).strftime("%H:%M"), x["workingSeconds"], x["startedBy"])
+            for x in runs[f"cv-{n}"]["turns"]]
+
+
+def test_turns_split_by_human_reply(client):
+    # 09:00 干活到 09:20（回复之前：startedBy null）；09:30 回复后干活到 09:50；10:10 再回复，干活到 10:30
+    run(client, 1, "09:00:00", "10:40:00", phases=[
+        ("09:00:00", "working"), ("09:20:00", "waiting_input"), ("09:30:00", "working"), ("09:50:00", "waiting_input"),
+        ("10:10:00", "working"), ("10:30:00", "idle")],
+        interactions=[("reply", "09:30:00"), ("reply", "10:10:00")])
+    assert _turns(client, 1) == [("09:00", "09:20", 1200, None), ("09:30", "09:50", 1200, "human_reply"),
+                                 ("10:10", "10:30", 1200, "human_reply")]
+
+
+def test_turns_without_reply_and_with_midway_reply_and_permission_resume(client):
+    run(client, 1, "09:00:00", "10:00:00", phases=[("09:00:00", "working"), ("09:20:00", "waiting_permission"), ("09:25:00", "working")])
+    # 没有回复：一段 null，中间等权限的空档不计 workingSeconds，from..to 跨过它
+    assert _turns(client, 1) == [("09:00", "10:00", 3300, None)]
+    # 回复落在 working 中间（离开头超过 60 秒）：在回复处切开
+    run(client, 2, "09:00:00", "09:30:00", phases=[("09:00:00", "working")], interactions=[("reply", "09:10:00")])
+    assert _turns(client, 2) == [("09:00", "09:10", 600, None), ("09:10", "09:30", 1200, "human_reply")]
+    # 只有回复没有 working：不成段
+    run(client, 3, "09:00:00", "09:30:00", phases=[("09:00:00", "waiting_input")], interactions=[("reply", "09:10:00")])
+    assert _turns(client, 3) == []
+
+
+def test_turns_clipped_to_range(client):
+    d2 = day(0)
+    run(client, 1, "23:00:00", "01:00:00", end_date=d2, phases=[("23:00:00", "working")])
+    runs = get(client, HIST, **{"from": D, "to": D, "detail": "segments", "who": "agent"})["agents"]["runs"]
+    assert [x["workingSeconds"] for x in runs[0]["turns"]] == [3600]
+    assert datetime.fromisoformat(runs[0]["turns"][0]["to"]) == t("00:00:00", d2)
+
+
+def test_permission_wait_is_a_handoff_with_reason(client):
+    run(client, 1, "09:00:00", "10:00:00", phases=[("09:00:00", "working"), ("09:20:00", "waiting_permission"), ("09:30:00", "working"),
+                                                    ("09:40:00", "waiting_input")],
+        interactions=[("attend", "09:25:00", "09:28:00")])
+    h = [x for x in get(client, HIST, **span(detail="segments"))["handoffs"] if x["type"] == "agent_to_human"]
+    assert [(x["reason"], x["waitedSeconds"]) for x in h] == [("permission", 300), ("input", None)]

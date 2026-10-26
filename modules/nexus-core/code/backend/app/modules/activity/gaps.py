@@ -101,8 +101,9 @@ def windows_history(app: str, title: str | None, contains: str | None, days: int
     if contains is not None and not 1 <= len(contains) <= 128:
         raise UnprocessableError("titleContains 长度须在 1..128")
     first = (blocks.today() - timedelta(days=days - 1)).isoformat()
-    rows = records_repo.window_blocks(current_tenant(), first, app, title, contains, MAX_DEST)
+    rows = records_repo.window_blocks(current_tenant(), first, app, title, contains, MAX_DEST + 1)
     q = {"app": app, **({"title": title} if title is not None else {"titleContains": contains} if contains is not None else {})}
-    return {"query": q, "days": days, "blocks": [
+    over, rows = len(rows) > MAX_DEST, rows[:MAX_DEST]
+    return {"query": q, "days": days, "truncated": over, "blocks": [
         {"block": r["_id"]["k"], "keySource": r["_id"]["s"], "days": len(r["dates"]), "seconds": round(r["seconds"]),
          "records": r["records"], "lastAt": r["lastAt"].astimezone(config.settings.tz).isoformat()} for r in rows]}

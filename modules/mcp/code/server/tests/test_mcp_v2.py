@@ -1011,14 +1011,14 @@ def test_v041_tiers_off_pending_has_new_fields(servers):
 def test_get_today_counts_and_all_clear_logic(servers):
     out = ok(servers, "Get_Today_Todo", {"date": "2026-10-24"}, R)
     assert out["date"] == "2026-10-24"
-    assert out["uncaught"] == {"blocks": 2, "seconds": 2580}      # keySource auto 的待处理块
+    assert out["uncaught"] == {"blocks": 3, "seconds": 2880}      # keySource auto 的待处理块，加标成通用窗口、还没拆分的（已拆的不算）
     assert out["unassigned"] == {"blocks": 1, "seconds": 9000}    # 被第一级收了、第二级没定
     assert out["gaps"][0]["detectorOffline"] is True and out["gaps"][0]["seconds"] == 5100
     assert (out["proposalsPending"], out["questionsOpen"], out["reportSubmitted"], out["allClear"]) == (6, 0, True, False)
     assert len(out["note"]) <= 100 and out["permissions"]["scope"] == "read"
     gets = {p: q for m, p, q, _ in Fake.requests if m == "GET"}
     assert gets["/api/core/activity/gaps"] == {"date": ["2026-10-24"]}
-    assert gets["/api/core/activity/blocks"]["status"] == ["pending"]
+    assert {q["status"][0] for m, p, q, _ in Fake.requests if p == "/api/core/activity/blocks"} == {"pending", "generic"}
     # 总结没交（日期对不上）：reportSubmitted false
     assert ok(servers, "Get_Today_Todo", {"date": "2026-10-23"}, R)["reportSubmitted"] is False
 
@@ -1156,3 +1156,26 @@ def test_get_proposals_carries_confidence_and_get_started_threshold(servers):
     assert ok(servers, "Get_Started", {}, W)["highConfidenceThresholdPercent"] == 80
     assert ok(servers, "Get_Started", {}, ALICE)["highConfidenceThresholdPercent"] == 65
     assert ok(servers, "Get_Started", {}, {"X-Nexus-Tenant": "u_old"})["highConfidenceThresholdPercent"] == 80   # 老后端：缺省
+
+# ── v2.4 · v0.5：runsCursor、uncaught 含通用窗口、Get_Blocks_Match_History 的 truncated ──────
+
+
+def test_get_history_forwards_runs_cursor(servers):
+    ok(servers, "Get_History", {"detail": "segments", "who": "agent", "runsCursor": "abc_-"}, R)
+    q = [q for m, p, q, _ in Fake.requests if p == "/api/core/views/history"][-1]
+    assert q["runsCursor"] == ["abc_-"] and q["detail"] == ["segments"]
+    ok(servers, "Get_History", {"detail": "segments"}, R)
+    assert "runsCursor" not in [q for m, p, q, _ in Fake.requests if p == "/api/core/views/history"][-1]
+    assert err(servers, "Get_History", {"runsCursor": 5}, R)["status"] == 400
+
+
+def test_today_todo_alias_counts_generic_blocks_too(servers):
+    for name in ("Get_Today_Todo", "Get_Today"):
+        assert ok(servers, name, {"date": "2026-10-24"}, R)["uncaught"] == {"blocks": 3, "seconds": 2880}
+    statuses = {q["status"][0] for m, p, q, _ in Fake.requests if p == "/api/core/activity/blocks"}
+    assert statuses == {"pending", "generic"}
+
+
+def test_blocks_match_history_reports_truncated(servers):
+    assert ok(servers, "Get_Blocks_Match_History", {"app": "chrome"}, R)["truncated"] is False
+    assert ok(servers, "Get_Blocks_Match_History", {"app": "many"}, R)["truncated"] is True
