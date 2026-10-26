@@ -280,13 +280,17 @@ def test_reject_is_for_humans_and_only_for_ai_recognised_windows(client, world, 
     assert len(_rules(client)["rules"]) == 1
 
 
-def test_auto_recorded_segments_say_when_the_ai_recognised_them(client, world, clock):
+def test_auto_recorded_segments_say_when_the_ai_recognised_them(client, world, clock, monkeypatch):
     from test_activity_suggestions import _recent  # noqa: PLC0415
+    from test_auto_track import _pin_today  # noqa: PLC0415
 
+    # 锚在当地正午：两段同一天，且不会因零点前后而跨日
+    start = _recent(30).replace(hour=12, minute=0, second=0)
     w = _waiting(client, clock)
     _answer(client, w["key"], taskId=world["a"], confidence=0.9)
     sug = {"taskId": world["a"], "confidence": 0.9, "reason": "网页规则 #1 命中", "classifier": "rules"}
-    _upload(client, [_seg(_recent(30), suggestion=sug, title="notes"), _seg(_recent(20), suggestion=sug, title="别的窗口")])
+    _upload(client, [_seg(start, suggestion=sug, title="notes"), _seg(start + timedelta(minutes=10), suggestion=sug, title="别的窗口")])
+    _pin_today(monkeypatch, start)
     clock(0)
     items = client.get(f"{API}/activity/auto").json()["items"]
     assert sorted((i["title"], i["ai"]) for i in items) == [("notes", True), ("别的窗口", False)]
