@@ -1,5 +1,6 @@
 // hive · hex-tiers.js —— 三级分类打开时（activity/settings.tiers === true）「AI 决策」面板换成一栏决策栏。
-// 一栏按卡片类型分段，顺序固定：AI 问题、待分类窗口块、待批准规则、待批准日程改动、自动化分类历史；没有的段不显示。
+// 顶部是秘书日报（有才显示），下面是大卡：AI 问题、待批准日程改动、窗口分类规则、待分类窗口块、自动化历史（默认收起，可拖标题换顺序，顺序记在 localStorage）；
+// 日程改动 / 窗口分类规则里再按置信度分「高 / 低」两组。没有的大卡不显示。文案 / 分组 / 跳一跳 / 顺序的纯逻辑在 hex-tiers-cards.js。
 // 由 hex-decide.js 在读到 tiers 之后调 start(ctx)：这里只接管 render / load（hooks），滑动 / 拖拽 / 撤销计时 / 提示条都复用 hex-decide 的。
 // 数据端点：activity/blocks、blocks/records、blocks/assign|split|generic|ignore|reset、proposals（windowRule / blockRule / blockAction / question）。
 // 上半是纯函数（给 hex-tiers.test.js 用），下半是 DOM（文字一律 textContent）。
@@ -142,7 +143,8 @@
   // ── DOM ───────────────────────────────────────────────────────────
   api.start = function (X) {
     var panel = X.panel, el = X.el, btn = X.btn, toast = X.toast, App = X.App, ACT = X.ACT, DEC = window.NexusTableHexDecide;
-    var S = { questions: [], report: null, reportOpen: false, qerr: {}, res: null, failed: false, date: "", chosen: {}, busy: {}, open: {}, splits: {}, histAll: false };
+    var B = window.NexusTableHexBar;
+    var S = { th: B.thresholdOf(X.settings), order: B.loadOrder(), bigOpen: {}, grpOpen: {}, jump: null, drag: null, questions: [], report: null, reportOpen: false, qerr: {}, res: null, failed: false, date: "", chosen: {}, busy: {}, open: {}, splits: {}, histAll: false };
     var dragHandle = false, scrollTop = 0, reqN = 0, qN = 0, writing = 0, pendingRender = false;
     panel.dataset.tiers = "1";
     panel.setAttribute("aria-label", "AI 决策");
@@ -171,8 +173,9 @@
     // AI 问题 / 秘书报告：404 = 端点不存在 = 什么都没有；别的失败保留旧值
     function loadAI() {
       var n = ++qN;
-      return Promise.all([X.getRaw(ACT + "questions?status=pending"), X.getRaw(ACT + "secretary-reports")]).then(function (r) {
+      return Promise.all([X.getRaw(ACT + "questions?status=pending"), X.getRaw(ACT + "secretary-reports"), X.getJson(ACT + "settings")]).then(function (r) {
         if (n !== qN) return;
+        if (r[2]) S.th = B.thresholdOf(r[2]);
         if (r[0].status === 404) S.questions = []; else if (r[0].body) S.questions = api.pendingQuestions(r[0].body);
         if (r[1].status === 404) S.report = null;
         else if (r[1].body) { var rep = Array.isArray(r[1].body.items) ? r[1].body.items[0] : null; S.report = rep && rep.text ? rep : null; }
@@ -246,7 +249,7 @@
     function approveBlock(c, cardEl) {
       if (!c.target) { toast("先选去向"); return false; }
       if (S.busy[S.date + "|" + c.name]) return false;
-      X.collapseEl(cardEl);
+      X.collapseEl(cardEl); B.bumpApprovals();
       write("assign", c.name, { taskId: c.target.taskId, projectId: c.target.taskId ? undefined : c.target.projectId, remember: !c.generic }).then(function (r) {
         if (!r.ok) { fail(c.name, r); return; }
         undoToast("已批准：" + c.name, c.name, c.name, r); X.render();
@@ -404,11 +407,15 @@
       k.windowRules.forEach(function (p) {
         var r = p.rule || {}, del = p.op === "delete";
         out.push({ key: p.id, p: p, level: 1, tone: del ? "del" : "", name: (r.app || "") + (r.title ? (r.app ? " 标题含「" : "标题含「") + r.title + "」" : "") || "窗口规则",
-          to: del ? "↓ 删除这条规则" : "↓ 收进窗口块「" + (r.block || "") + "」", reason: p.reason, target: null, block: r.block || "" });
+          to: B.ruleLine({ kind: "windowRule", op: p.op, block: r.block }), reason: p.reason, target: null, block: r.block || "", conf: B.confOf(p.confidencePercent),
+          slot: { op: "windowRule", kind: "window", block: r.block || "" } });
       });
       k.blockRules.forEach(function (p) {
         var del = p.op === "delete", t = p.taskId ? { taskId: p.taskId } : p.projectId ? { projectId: p.projectId } : null;
-        out.push({ key: p.id, p: p, level: 2, tone: del ? "del" : "", name: "窗口块「" + (p.blockKey || "") + "」", to: del ? "↓ 删除这条规则" : pathOf(t), reason: p.reason, target: t });
+        var tg = resolve(t), tn = p.taskId && tg.taskName !== "未分类" ? tg.taskName : "";
+        out.push({ key: p.id, p: p, level: 2, tone: del ? "del" : "", name: "窗口块「" + (p.blockKey || "") + "」", reason: p.reason, target: t, conf: B.confOf(p.confidencePercent),
+          to: B.ruleLine({ kind: "blockRule", op: p.op, taskName: tn, projectName: tg.projectName }),
+          slot: { op: "blockRule", kind: tn ? "task" : "project", block: p.blockKey || "", tProject: tg.projectId, tTask: p.taskId || null, tZone: tg.zoneId } });
       });
       return out;
     }
@@ -419,10 +426,11 @@
       var ok = el("div", "hd-under is-ok", "批准"), no = el("div", "hd-under is-no is-skip", "忽略");
       ok.hidden = no.hidden = true;
       var f = el("div", "hd-face");
-      f.appendChild(el("span", "ht-badge", c.level === 1 ? "第一级 · 收纳" : "第二级 · 去向"));
-      f.appendChild(el("div", "hd-win", clip(c.name, 80)));
-      f.appendChild(el("div", "hd-to", clip(c.to, 100)));
-      if (c.reason) f.appendChild(el("div", "hd-why", clip("AI：" + c.reason, 140)));
+      var rw = el("div", "hb-row"), mn = el("div", "hb-main");
+      mn.appendChild(el("div", "hd-win", clip(c.name, 80)));
+      mn.appendChild(el("div", "hd-to", clip(c.to, 100)));
+      if (c.reason) mn.appendChild(el("div", "hd-why", clip(c.reason, 140)));
+      rw.appendChild(mn); rw.appendChild(B.slotEl(c.slot)); f.appendChild(rw);
       if (S.open[c.key] === "fix") {
         var row = el("div", "ht-edit"), go = tb("确定", "fix-ok"), inp;
         if (c.level === 1) { inp = document.createElement("input"); inp.type = "text"; inp.maxLength = 64; inp.value = c.block; inp.setAttribute("aria-label", "块名"); inp.className = "ht-input"; }
@@ -446,7 +454,7 @@
       post("proposals/" + encodeURIComponent(id) + "/approve", { edit: edit }).then(function (r) {
         S.busy[bk] = 0; writing--;
         if (!r.ok) { if (button) button.disabled = false; toast("没办成：" + name + "：" + why(r), { error: true, ms: 6000 }); flushRender(); return; }
-        delete S.open[id]; toast("已批准（更正）：" + name); X.refreshAll();
+        delete S.open[id]; B.bumpApprovals(); toast("已批准（更正）：" + name); X.refreshAll();
       });
     }
     function fixRule(c, cardEl) {
@@ -513,18 +521,17 @@
         X.render();
       });
     }
+    // 秘书日报：整张卡可点，收起时显示头两行
     function reportCard(r) {
-      var open = S.reportOpen, n = el("div", "hd-card ht-report"), f = el("div", "hd-face");
-      n.dataset.key = "report";
-      f.appendChild(el("span", "ht-badge", "秘书报告"));
-      f.appendChild(el("div", "hd-why ht-rtext" + (open ? " is-open" : ""), clip(r.text, 8000)));
-      var acts = el("div", "hd-acts"), tg = tb(open ? "收起" : "展开", "report-toggle");
-      tg.setAttribute("aria-expanded", String(open)); acts.appendChild(tg); f.appendChild(acts);
-      n.appendChild(f); return n;
+      var open = S.reportOpen, n = el("div", "hb-report" + (open ? " is-open" : ""));
+      n.dataset.ht = "report-toggle"; n.dataset.ftok = "report"; n.tabIndex = 0; n.setAttribute("role", "button"); n.setAttribute("aria-expanded", String(open));
+      n.appendChild(el("div", "hb-rtitle", "秘书日报"));
+      n.appendChild(el("div", "ht-rtext", clip(r.text, 8000)));
+      return n;
     }
     // 待批准日程改动里的 sessionChange 卡：pendCard 原样，多一个「更正」（批准时换去向）
     function sessCard(c) {
-      var n = X.pendCard(c);
+      var n = c.meta ? B.crudCard({ btn: btn, tint: X.tint, bindSwipe: X.bindSwipe, errors: X.errors }, c) : X.pendCard(c);
       if (c.verb !== "session") return n;
       var f = n.querySelector(".hd-face"), acts = n.querySelector(".hd-acts");
       if (S.open[c.key] === "fix") {
@@ -558,36 +565,77 @@
     }
 
     // ── 汇总 / 渲染 ──
+    var TITLES = { q: "AI 问题", s: "待批准日程改动", r: "窗口分类规则", b: "待分类窗口块", h: "自动化历史" };
+    var GROUPS = [["high", "高置信度"], ["low", "低置信度"]];
     function compute() {
       var k = api.proposalKinds(X.raw().p), sp = api.splitBlocks(items());
       S.acts = k.blockActions;
-      var held = X.held;
-      return [
-        { id: "q", title: "AI 问题", cards: S.questions.filter(function (q) { return !held[q.id]; }), make: questionCard },
-        { id: "b", title: "待分类窗口块", cards: blockCards(), make: blockCard },
-        { id: "r", title: "待批准规则", cards: ruleCards(k).filter(function (c) { return !held[c.key]; }), make: ruleCard },
-        { id: "s", title: "待批准日程改动", cards: X.model().cards.filter(function (c) { return !held[c.key]; }), make: sessCard },
-        { id: "h", title: "自动化分类历史", cards: sp.hist, make: histCard }
-      ].map(function (s) { if (s.count == null) s.count = s.cards.length; return s; });
+      var held = X.held, secs = {
+        q: { cards: S.questions.filter(function (q) { return !held[q.id]; }), make: questionCard },
+        s: { cards: X.model().cards.filter(function (c) { return !held[c.key]; }), make: sessCard },
+        r: { cards: ruleCards(k).filter(function (c) { return !held[c.key]; }), make: ruleCard },
+        b: { cards: blockCards(), make: blockCard },
+        h: { cards: sp.hist, make: histCard }
+      };
+      Object.keys(secs).forEach(function (id) { secs[id].id = id; secs[id].title = TITLES[id]; secs[id].count = secs[id].cards.length; });
+      return secs;
     }
-    function total(secs) { return secs.reduce(function (n, s) { return n + (s.id === "h" ? 0 : s.count); }, 0); }
-    // 计数用 render 时算好的那份（每次 updateBadge 不再全量重算）；只把撤销窗口里的规则 / 日程卡再扣一遍
+    function grouped(sec) { return B.groupByConfidence(sec.cards, function (c) { return c.conf; }, S.th); }
+    function total(secs) { return secs.q.count + secs.b.count + secs.r.count + secs.s.count; }
+    // 计数用 render 时算好的那份；只把撤销窗口里的卡再扣一遍。data-cnt = "s" / "s:high" / "s:low"
     function recount() {
       var secs = S.cache;
       if (!secs) return;
-      var counts = {};
-      secs.forEach(function (x) { counts[x.id] = (x.id === "r" || x.id === "s" || x.id === "q") ? x.cards.filter(function (c) { return !X.held[c.key]; }).length : x.count; });
-      [].forEach.call(panel.querySelectorAll(".ht-cnt[data-sec]"), function (n) {
-        n.textContent = n.dataset.sec === "h" ? "今天 " + counts.h + " 条" : String(counts[n.dataset.sec]);
+      function live(l) { return l.filter(function (c) { return !X.held[c.key]; }).length; }
+      var sum = 0;
+      ["q", "s", "r", "b"].forEach(function (id) { sum += id === "b" ? secs.b.count : live(secs[id].cards); });
+      [].forEach.call(panel.querySelectorAll("[data-cnt]"), function (n) {
+        var p = n.dataset.cnt.split(":"), sec = secs[p[0]];
+        n.textContent = String(p[1] ? live(grouped(sec)[p[1]]) : p[0] === "b" || p[0] === "h" ? sec.count : live(sec.cards));
       });
-      var b = panel.querySelector(".hd-badge");
-      if (b) b.textContent = String(counts.q + counts.b + counts.r + counts.s);
+      var bg = panel.querySelector(".hd-badge");
+      if (bg) bg.textContent = String(sum);
     }
     function uiBusy() {
       var a = document.activeElement;
-      return dragHandle || !!(a && panel.contains(a) && /^(SELECT|INPUT)$/.test(a.tagName));
+      return dragHandle || !!S.drag || !!(a && panel.contains(a) && /^(SELECT|INPUT)$/.test(a.tagName));
     }
     function keyOf(n) { return n.dataset.key || n.dataset.block; }
+
+    function cnt(id, n) { var c = el("span", "hb-cnt", String(n)); c.dataset.cnt = id; return c; }
+    function groupEl(sec, g, list, make) {
+      var gid = sec.id + ":" + g[0], open = S.grpOpen[gid] != null ? S.grpOpen[gid] : g[0] === "low";
+      var w = el("div", "hb-group"), h = el("div", "hb-ghead");
+      w.dataset.grp = gid; h.dataset.ht = "grp-toggle"; h.dataset.grp = gid; h.dataset.ftok = "grp:" + gid; h.tabIndex = 0; h.setAttribute("role", "button"); h.setAttribute("aria-expanded", String(open));
+      h.appendChild(el("span", "hb-gtitle", g[1])); h.appendChild(cnt(gid, list.length));
+      if (g[0] === "high") { var ok = tb("全部批准", "batch-grp"); ok.dataset.grp = gid; h.appendChild(ok); }
+      var body = el("div", "hb-gbody"); body.hidden = !open;
+      list.forEach(function (c) { body.appendChild(make(c)); });
+      w.appendChild(h); w.appendChild(body);
+      return w;
+    }
+    function bigEl(sec) {
+      var id = sec.id, open = S.bigOpen[id] != null ? S.bigOpen[id] : id === "q";
+      var w = el("section", "hb-big"), h = el("div", "hb-head"), body = el("div", "hb-body");
+      w.dataset.sec = id; h.dataset.ht = "big-toggle"; h.dataset.sec = id; h.dataset.ftok = "big:" + id; h.tabIndex = 0; h.draggable = true;
+      h.setAttribute("role", "button"); h.setAttribute("aria-expanded", String(open));
+      h.appendChild(el("span", "hb-title", sec.title));
+      if (id !== "h") h.appendChild(cnt(id, sec.count));
+      h.appendChild(el("span", "hd-chev", open ? "▴" : "▾"));
+      body.hidden = !open;
+      if (id === "s" || id === "r") {
+        var gr = grouped(sec);
+        GROUPS.forEach(function (g) { if (gr[g[0]].length) body.appendChild(groupEl(sec, g, gr[g[0]], sec.make)); });
+        var foot = el("div", "hb-foot"), ok = tb("全部批准", "batch-ok"), no = tb("全部拒绝", "batch-no");
+        ok.dataset.sec = no.dataset.sec = id; foot.appendChild(ok); foot.appendChild(no); body.appendChild(foot);
+      } else {
+        var list = id === "h" && !S.histAll ? sec.cards.slice(0, 5) : sec.cards;
+        list.forEach(function (c) { body.appendChild(sec.make(c)); });
+        if (id === "h" && sec.cards.length > 5 && !S.histAll) body.appendChild(tb("展开全部", "hist-all", "hd-btn ht-more"));
+      }
+      w.appendChild(h); w.appendChild(body);
+      return w;
+    }
 
     function render() {
       if (uiBusy()) { pendingRender = true; return; }   // 下拉开着 / 正在拖把手：别整栏重画，结束后补一次
@@ -595,13 +643,13 @@
       var secs = compute(), body0 = panel.querySelector(".ht-body");
       S.cache = secs;
       if (body0) scrollTop = body0.scrollTop;
-      var fa = document.activeElement, fk = null, fh = null;
+      var fa = document.activeElement, fk = null, fh = null, ft = null;
       if (fa && panel.contains(fa)) {
         var fc = fa.closest("[data-key],[data-block]");
-        fk = fc && keyOf(fc); fh = fa.dataset && fa.dataset.ht;
+        fk = fc && keyOf(fc); fh = fa.dataset && fa.dataset.ht; ft = fa.dataset && fa.dataset.ftok;
         if (fa.classList.contains("hd-head")) fh = "__head";
       }
-      var sum = total(secs), hist = secs[4].count;
+      var sum = total(secs), hist = secs.h.count;
       panel.hidden = !sum && !hist && !S.failed && !S.report;
       panel.textContent = "";
       panel.dataset.collapsed = X.collapsed() ? "1" : "0";
@@ -614,30 +662,24 @@
       if (X.collapsed()) { if (fh === "__head") head.focus({ preventScroll: true }); return; }
       var body = el("div", "ht-body"), any = false;
       if (S.failed) { var er = el("div", "ht-err", "读取失败，稍后重试"); er.setAttribute("role", "alert"); body.appendChild(er); any = true; }
-      secs.forEach(function (s) {
-        var rep = s.id === "q" && S.report;
-        if (!s.count && !rep) return;
-        any = true;
-        var h = el("div", "ht-sec");
-        h.appendChild(el("span", "ht-sec-t", s.title));
-        if (s.count) { var cnt = el("span", "ht-cnt", s.id === "h" ? "今天 " + s.count + " 条" : String(s.count)); cnt.dataset.sec = s.id; h.appendChild(cnt); }
-        var wrap = el("section", "ht-secbody"); wrap.dataset.sec = s.id; wrap.appendChild(h);
-        if (rep) wrap.appendChild(reportCard(S.report));
-        var list = s.id === "h" && !S.histAll ? s.cards.slice(0, 5) : s.cards;
-        list.forEach(function (c) { wrap.appendChild(s.make(c)); });
-        if (s.id === "h" && s.cards.length > 5 && !S.histAll) { wrap.appendChild(tb("展开全部", "hist-all", "hd-btn ht-more")); }
-        body.appendChild(wrap);
+      if (S.report) { body.appendChild(reportCard(S.report)); any = true; }
+      B.normOrder(S.order).forEach(function (id) {
+        if (!secs[id].count) return;
+        any = true; body.appendChild(bigEl(secs[id]));
       });
       if (!any) body.appendChild(el("div", "hd-empty", "没有待决策的"));
       panel.appendChild(body);
-      var rt = body.querySelector(".ht-rtext");
-      if (rt && !S.reportOpen && rt.scrollHeight <= rt.clientHeight + 1) { var ra = body.querySelector('[data-ht="report-toggle"]'); if (ra) ra.parentNode.remove(); }   // 三行以内不用展开
       body.scrollTop = scrollTop;
       if (fh === "__head") head.focus({ preventScroll: true });
+      else if (ft) { var tn = [].filter.call(panel.querySelectorAll("[data-ftok]"), function (n) { return n.dataset.ftok === ft; })[0]; if (tn) tn.focus({ preventScroll: true }); }
       else if (fk) {   // 重画前焦点在哪张卡（哪个按钮）上，就还给新画出来的那张
         var nc = [].filter.call(panel.querySelectorAll("[data-key],[data-block]"), function (n) { return keyOf(n) === fk; })[0];
         var tgt = nc && ((fh && nc.querySelector('[data-ht="' + fh + '"]')) || nc);
         if (tgt && tgt.focus) tgt.focus({ preventScroll: true });
+      }
+      if (S.jump) {   // 刚展开的大卡 / 分组：里面看得见的小卡跳一跳
+        var jr = panel.querySelector(S.jump.grp ? '.hb-group[data-grp="' + S.jump.grp + '"]' : '.hb-big[data-sec="' + S.jump.sec + '"]');
+        S.jump = null; B.hint(jr);
       }
     }
     function flushRender() { window.setTimeout(function () { if (pendingRender && !uiBusy()) X.render(); }, 0); }
@@ -652,12 +694,28 @@
       var card = node.closest(".ht-rule"), key = card && card.dataset.key;
       return { card: card, c: key && ruleCards(api.proposalKinds(X.raw().p)).filter(function (x) { return x.key === key; })[0] };
     }
+    // 大卡 / 分组里所有还没决定的卡，逐张走 hex-decide 的 decide / 撤销窗口（跳过撤销窗口里的），只出一条汇总提示
+    function batch(sec, grp, decision) {
+      var s = S.cache && S.cache[sec], scope = panel.querySelector('.hb-big[data-sec="' + sec + '"]');
+      if (!s || !scope) return;
+      var list = grp ? grouped(s)[grp.split(":")[1]] : s.cards, nodes = {};
+      [].forEach.call(scope.querySelectorAll(".hd-card[data-key]"), function (n) { nodes[n.dataset.key] = n; });
+      X.decideMany(list.map(function (c) { return { c: dcOf(c), el: nodes[c.key] }; }), decision);
+    }
     panel.addEventListener("click", function (ev) {
       var b = ev.target.closest("[data-ht]"), kind = b && b.dataset.ht;
       if (!kind) return;
       var k = blockOf(b);
       if (k.card && k.card.__swiped) { k.card.__swiped = false; return; }
       if (kind === "report-toggle") { S.reportOpen = !S.reportOpen; X.render(); return; }
+      if (kind === "big-toggle" || kind === "grp-toggle") {
+        var tk = kind === "big-toggle" ? S.bigOpen : S.grpOpen, id = kind === "big-toggle" ? b.dataset.sec : b.dataset.grp;
+        var was = tk[id] != null ? tk[id] : kind === "big-toggle" ? id === "q" : /:low$/.test(id);
+        tk[id] = !was; S.jump = was ? null : kind === "big-toggle" ? { sec: id } : { sec: id.split(":")[0], grp: id };
+        X.render(); return;
+      }
+      if (kind === "batch-ok" || kind === "batch-no") { batch(b.dataset.sec, null, kind === "batch-ok" ? "approve" : "reject"); return; }
+      if (kind === "batch-grp") { batch(b.dataset.grp.split(":")[0], b.dataset.grp, "approve"); return; }
       if (kind.indexOf("q-") === 0) {
         var qc = b.closest(".ht-question");
         if (!qc) return;
@@ -714,6 +772,7 @@
     });
     panel.addEventListener("keydown", function (ev) {
       if (ev.isComposing || ev.keyCode === 229) return;   // 输入法选词的回车不算提交
+      if ((ev.key === "Enter" || ev.key === " ") && ev.target.getAttribute("role") === "button" && ev.target.dataset.ht) { ev.preventDefault(); ev.target.click(); return; }
       if (ev.key === "Enter" && ev.target.classList && ev.target.classList.contains("ht-qinput")) { var qb = ev.target.closest(".ht-question").querySelector('[data-ht="q-text"]'); qb.click(); return; }
       if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.target.closest("input, select, [role=slider]")) return;
       var kb = blockOf(ev.target);
@@ -726,6 +785,23 @@
         X.decide(dcOf(kr.c), /a/i.test(ev.key) ? "approve" : "reject", kr.card);
       }
     });
+
+    // 拖大卡标题换顺序（原生拖放）：落在哪张大卡上就占它的位置，顺序存 localStorage
+    panel.addEventListener("dragstart", function (ev) {
+      var h = ev.target.closest && ev.target.closest(".hb-head");
+      if (!h) return;
+      S.drag = h.dataset.sec; ev.dataTransfer.effectAllowed = "move";
+      try { ev.dataTransfer.setData("text/plain", S.drag); } catch (e) { /* 取不到就算了 */ }
+    });
+    panel.addEventListener("dragover", function (ev) { if (S.drag && ev.target.closest(".hb-big")) ev.preventDefault(); });
+    panel.addEventListener("drop", function (ev) {
+      var t = ev.target.closest(".hb-big");
+      if (!S.drag || !t) return;
+      ev.preventDefault();
+      S.order = B.moveOnto(B.normOrder(S.order), S.drag, t.dataset.sec); B.saveOrder(S.order);
+      S.drag = null; X.render();
+    });
+    panel.addEventListener("dragend", function () { S.drag = null; flushRender(); });
 
     X.hooks.render = render;
     X.hooks.recount = recount;

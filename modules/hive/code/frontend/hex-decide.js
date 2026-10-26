@@ -48,6 +48,8 @@
   // proposals: GET activity/proposals 的 body；reports: 报告数组（items=true，已带明细）；tree: views/tree
   // → { cards:[{key, verb, tone, name, obj, to, reason, n, min, projectId, taskId, zoneId, items:[{path, newItem}], ...}], reports:[{id,label,n,path}] }
   // 报告条按「种类 + 去向 + 标准化窗口标题」合并成一张卡，items 里每条底层项各有自己的批准 / 拒绝路径。
+  function zoneName(tree, id) { var z = ((tree && tree.zones) || []).filter(function (x) { return x.id === id; })[0]; return z ? z.name : ""; }
+  function conf(p) { var v = p && p.confidencePercent; return typeof v === "number" && isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : null; }
   function build(proposals, reports, tree) {
     var cards = [], taskProps = {}, repList = [], merged = {};
     var P = proposals || {};
@@ -55,17 +57,37 @@
     (P.projects || []).forEach(function (p) {
       cards.push({ key: p.id, verb: "project", name: p.name, obj: p.name, reason: p.reason || "", n: 1, min: 0,
         to: "↓ 新建项目" + (p.zoneName ? "（分区：" + p.zoneName + "）" : "") + ((p.tasks || []).length ? " · " + p.tasks.length + " 个任务" : ""),
-        projectId: null, zoneId: p.zoneId || null, tasks: (p.tasks || []).map(function (t) { return t.name; }),
+        projectId: null, zoneId: p.zoneId || null, tasks: (p.tasks || []).map(function (t) { return t.name; }), conf: conf(p),
+        meta: { op: "create", kind: "project", name: p.name, zoneName: p.zoneName || zoneName(tree, p.zoneId), why: p.reason || "" },
+        slot: { op: "create", kind: "project", tZone: p.zoneId || null },
         items: [{ path: "proposals/" + encodeURIComponent(p.id), newItem: true }] });
     });
     (P.tasks || []).forEach(function (t) {
       taskProps[t.id] = 1;
       var pn = t.projectName || lookup(tree, t.projectId).projectName || "";
       cards.push({ key: t.id, verb: "task", name: t.name, obj: t.name, reason: t.reason || "", n: 1, min: 0,
-        to: "↓ " + pn + " - ＋ " + t.name + "（新任务）", projectId: t.projectId, tasks: [],
+        to: "↓ " + pn + " - ＋ " + t.name + "（新任务）", projectId: t.projectId, tasks: [], conf: conf(t),
+        meta: { op: "create", kind: "task", name: t.name, projectName: pn, why: t.reason || "" },
+        slot: { op: "create", kind: "task", tProject: t.projectId, tZone: lookup(tree, t.projectId).zoneId },
         items: [{ path: "proposals/" + encodeURIComponent(t.id), newItem: true }] });
     });
-    // changes: 改名 / 移动 / 删除现有项目或任务；target=project → 目标格就是 targetId，task → 目标在 projectId 那个项目里
+    function changeMeta(c, from, isTask, tree) {
+    var m = { op: c.op === "move" ? "change" : c.op, kind: isTask ? "task" : "project", name: from, why: c.reason || "" };
+    if (isTask) m.projectName = lookup(tree, c.projectId).projectName;
+    if (c.op === "rename") m.newName = c.name;
+    if (c.op === "move") { m.toName = c.toName == null ? "（已不存在）" : c.toName; m.toKind = isTask ? "project" : "zone"; }
+    return m;
+  }
+  // 小蜂巢的位置数据：origin = 现在在哪（改 / 删 / 改名），target = 去哪（新建 / 移到）；改名、删除的目标就是它自己
+  function changeSlot(c, isTask, tree) {
+    var lk = lookup(tree, isTask ? c.projectId : c.targetId), s = { op: c.op === "move" ? "change" : c.op, kind: isTask ? "task" : "project" };
+    var here = { oZone: lk.zoneId, oProject: lk.projectId || (isTask ? c.projectId : c.targetId), oTask: isTask ? c.targetId : null };
+    if (c.op !== "move") return Object.assign(s, { tZone: here.oZone, tProject: here.oProject, tTask: here.oTask });
+    Object.assign(s, here);
+    if (isTask) { s.tProject = c.toId; s.tZone = lookup(tree, c.toId).zoneId; } else s.tZone = c.toId;
+    return s;
+  }
+  // changes: 改名 / 移动 / 删除现有项目或任务；target=project → 目标格就是 targetId，task → 目标在 projectId 那个项目里
     (P.changes || []).forEach(function (c) {
       if (c.op !== "rename" && c.op !== "move" && c.op !== "delete") return;   // 新服务端的未知操作：不画，也不能抛
       var from = c.targetName == null ? "（已不存在）" : c.targetName, isTask = c.target === "task";
@@ -73,7 +95,7 @@
         name: from, items: one(c),
         to: c.op === "rename" ? "↓ 改名为 " + (c.name == null ? "？" : c.name) : c.op === "move" ? "↓ 移到 " + (c.toName == null ? "（已不存在）" : c.toName) : "↓ 删除",
         projectId: isTask ? c.projectId : c.targetId, taskId: isTask ? c.targetId : null, hlProject: !isTask,
-        destProjectId: c.op === "move" && isTask ? c.toId : null });
+        destProjectId: c.op === "move" && isTask ? c.toId : null, conf: conf(c), meta: changeMeta(c, from, isTask, tree), slot: changeSlot(c, isTask, tree) });
     });
     // sessionChanges: 提议把一段已记的时间改挂到别处（from → to · 开始时刻 · 时长）
     (P.sessionChanges || []).forEach(function (s) {
@@ -82,7 +104,9 @@
       var when = isNaN(d.getTime()) ? "" : ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
       var mm = minutes(s.durationSeconds), len = mm < 1 ? "不到 1 分钟" : mm + " 分钟";
       cards.push({ key: s.id, verb: "session", reason: [when, len, s.reason ? "AI：" + s.reason : ""].filter(Boolean).join(" · "), n: 1, min: 0, tasks: [],
-        name: fr.projectName ? fr.projectName + " - " + (fr.taskName || "未分类") : "（原归属）", items: one(s), to: pathText(to), projectId: to.projectId, zoneId: to.zoneId });
+        name: fr.projectName ? fr.projectName + " - " + (fr.taskName || "未分类") : "（原归属）", items: one(s), to: pathText(to), projectId: to.projectId, zoneId: to.zoneId, conf: conf(s),
+        meta: { op: "session", kind: "task", startAt: s.startAt, durationSeconds: s.durationSeconds, toTaskName: to.taskName === "未分类" ? "" : to.taskName, toProjectName: to.projectName, why: s.reason || "" },
+        slot: { op: "session", kind: "task", tProject: to.projectId, tZone: to.zoneId, tTask: s.taskId || null, oProject: fr.projectId, oZone: fr.zoneId, oTask: s.fromTaskId || null } });
     });
     (P.ignores || []).forEach(function (g) {
       var app = g.app == null ? "？" : g.app;
@@ -102,7 +126,9 @@
           if (taskProps[it.newTask.proposalId]) return;   // 同一条任务提议已经有卡了
           var tg = lookup(tree, it.newTask.projectId);
           card = { mk: ["task", it.newTask.projectId, it.newTask.name, mk].join("|"), verb: "task", name: win || it.newTask.name, obj: it.newTask.name, reason: reason,
-            to: "↓ " + tg.projectName + " - ＋ " + it.newTask.name + "（新任务）", projectId: it.newTask.projectId, tasks: [] };
+            to: "↓ " + tg.projectName + " - ＋ " + it.newTask.name + "（新任务）", projectId: it.newTask.projectId, tasks: [], conf: null,
+            meta: { op: "create", kind: "task", name: it.newTask.name, projectName: tg.projectName, why: reason },
+            slot: { op: "create", kind: "task", tProject: it.newTask.projectId, tZone: tg.zoneId } };
         } else if (it.kind === "dismiss") {
           cnt++;
           card = { mk: ["noise", mk].join("|"), verb: "noise", tone: "ignore", name: win || "这些窗口", reason: reason, to: "↓ 当噪声，不记录", projectId: null, tasks: [] };
@@ -297,9 +323,11 @@
     [].forEach.call(c.querySelectorAll(".hd-under"), function (u) { u.hidden = true; });
     return true;
   }
-  function commit(card, decision, cardEl) {
+  function commit(card, decision, cardEl, quiet) {
     if (held[card.key]) return;
     held[card.key] = { card: card, el: cardEl };
+    if (decision === "approve" && window.NexusTableHexBar) window.NexusTableHexBar.bumpApprovals();   // 「跳一跳」的概率跟着批准次数降
+    if (quiet) return commits.add(card, decision);
     var word = decision === "approve" ? "已批准：" : decision === "dismiss" ? "已撤下：" : "已拒绝：";
     var entry = commits.add(card, decision), t;
     t = toast(word + card.name, { sticky: true, undo: function () {
@@ -324,6 +352,22 @@
     }
     collapseEl(cardEl);
     commit(c, decision, cardEl);
+  }
+  // 一批卡一起批准 / 拒绝：每张照走 commit（各自的撤销计时、held），只出一条汇总提示；撤销 = 整批撤回。→ 实际处理的张数
+  function decideMany(list, decision) {
+    var todo = list.filter(function (x) { return x.el && !held[x.c.key]; }), done = [];
+    if (!todo.length) return 0;
+    todo.forEach(function (x) { collapseEl(x.el); done.push({ el: x.el, entry: commit(x.c, decision, x.el, true) }); });
+    var t = toast((decision === "approve" ? "已批准 " : "已拒绝 ") + done.length + " 项", { sticky: true, undo: function () {
+      done.forEach(function (d) { if (commits.undo(d.entry.id)) { delete held[d.entry.card.key]; restoreEl(d.el); } });
+      t.remove();
+      if (dragging || swiping) dirtyLoad = true; else render();
+      updateBadge(); syncApproveAll();
+    } });
+    done.forEach(function (d) { d.entry.toast = t; });
+    window.setTimeout(function () { t.remove(); }, UNDO_MS + 200);
+    updateBadge(); syncApproveAll();
+    return done.length;
   }
   // 动画：卡片收起（高度归零），下面的卡片自然上移
   function collapseEl(c) {
@@ -823,7 +867,7 @@
       if (!T || !T.start) return;
       try {
         T.start({ hooks: hooks, panel: panel, el: el, btn: btn, toast: toast, tint: tint, cellFor: cellFor, bindDrag: bindDrag, bindSwipe: bindSwipe,
-          pendCard: pendCard, decide: decide, collapseEl: collapseEl, held: held, errors: errors, model: function () { return model; },
+          pendCard: pendCard, decide: decide, decideMany: decideMany, settings: st, collapseEl: collapseEl, held: held, errors: errors, model: function () { return model; },
           raw: function () { return raw; }, collapsed: function () { return collapsed; }, render: render, App: App, H: H,
           ACT: ACT, UNDO_MS: UNDO_MS, getJson: getJson, getRaw: getRaw, focusCard: focusCard, refreshAll: refreshAll });
       } catch (e) {

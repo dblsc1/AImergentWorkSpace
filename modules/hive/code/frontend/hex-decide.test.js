@@ -88,5 +88,18 @@ fl.then(function () { return Promise.resolve(); }).then(function () {
   return Promise.resolve().then(function () { return Promise.resolve(); });
 }).then(function () {
   assert.deepStrictEqual(done.sort(), ["a", "c", "d", "e", "f", "p"]); assert.strictEqual(cm.pending(), 0);
-  console.log("hex-decide.test.js ok");
+  // 决策栏新增：置信度、文案元数据、小蜂巢位置数据（缺字段 = null / 不抛）
+var nb = P.build({ projects: [{ id: "np", name: "新书", zoneId: "z1", confidencePercent: 91 }], tasks: [{ id: "nt", name: "复习", projectId: "p1", projectName: "数学" }],
+  changes: [{ id: "cm", op: "move", target: "task", targetId: "t1", projectId: "p1", targetName: "刷题", toId: "p2", toName: "英语", confidencePercent: 12 },
+    { id: "cp", op: "move", target: "project", targetId: "p1", targetName: "数学", toId: "z1", toName: "学习" }, { id: "cd", op: "delete", target: "project", targetId: "p1", targetName: "数学" }],
+  sessionChanges: [{ id: "s1", projectId: "p1", taskId: "t1", fromProjectId: "p1", startAt: "2026-10-24T01:00:00Z", durationSeconds: 600, reason: "r", confidencePercent: 80 }] }, [], tree).cards;
+assert.deepStrictEqual(nb.map(function (c) { return c.conf; }), [91, null, 12, null, null, 80]);
+assert.deepStrictEqual(nb[0].meta, { op: "create", kind: "project", name: "新书", zoneName: "学习", why: "" });
+assert.deepStrictEqual(nb[1].slot, { op: "create", kind: "task", tProject: "p1", tZone: "z1" });
+assert.strictEqual(nb[2].meta.toKind, "project"); assert.strictEqual(nb[2].meta.projectName, "数学"); assert.strictEqual(nb[2].meta.toName, "英语");
+assert.strictEqual(nb[2].slot.oProject, "p1"); assert.strictEqual(nb[2].slot.oTask, "t1"); assert.strictEqual(nb[2].slot.tProject, "p2");
+assert.strictEqual(nb[3].meta.toKind, "zone"); assert.strictEqual(nb[3].slot.tZone, "z1"); assert.strictEqual(nb[3].slot.oProject, "p1");
+assert.deepStrictEqual(nb[4].slot, { op: "delete", kind: "project", tZone: "z1", tProject: "p1", tTask: null });
+assert.strictEqual(nb[5].meta.op, "session"); assert.strictEqual(nb[5].meta.toTaskName, "刷题"); assert.strictEqual(nb[5].meta.why, "r");
+console.log("hex-decide.test.js ok");
 });
