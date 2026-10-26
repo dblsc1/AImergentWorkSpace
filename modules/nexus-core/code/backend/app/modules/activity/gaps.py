@@ -92,3 +92,17 @@ def match_history(block: str | None, app: str | None, title: str | None, days: i
                     row["lastAt"], row["via"] = it["lastAt"], it["via"]
     out = sorted(sorted(dest.values(), key=lambda r: r["lastAt"], reverse=True), key=lambda r: -r["times"])[:MAX_DEST]  # 次数多的在前，同次数近的在前
     return {"query": {"block": block} if block is not None else {"app": app, "title": title}, "days": days, "destinations": out}
+
+
+def windows_history(app: str, title: str | None, contains: str | None, days: int) -> dict:
+    """窗口以前被收进哪些块（第一级）：只读原始记录，不看块后来归到哪。"""
+    if title is not None and contains is not None:
+        raise UnprocessableError("title 与 titleContains 二选一")
+    if contains is not None and not 1 <= len(contains) <= 128:
+        raise UnprocessableError("titleContains 长度须在 1..128")
+    first = (blocks.today() - timedelta(days=days - 1)).isoformat()
+    rows = records_repo.window_blocks(current_tenant(), first, app, title, contains, MAX_DEST)
+    q = {"app": app, **({"title": title} if title is not None else {"titleContains": contains} if contains is not None else {})}
+    return {"query": q, "days": days, "blocks": [
+        {"block": r["_id"]["k"], "keySource": r["_id"]["s"], "days": len(r["dates"]), "seconds": round(r["seconds"]),
+         "records": r["records"], "lastAt": r["lastAt"].astimezone(config.settings.tz).isoformat()} for r in rows]}

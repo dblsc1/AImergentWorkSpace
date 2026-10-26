@@ -13,7 +13,7 @@
 ## 步骤
 
 1. `Get_History {"fromDate": "2026-10-24", "toDate": "2026-10-24", "who": "human", "detail": "windows", "records": false}` 看块和归类状态；要块内细节把 `records` 设 true。改已入账的段用 `detail: "segments"`。
-2. 决定去向前 `Get_Match_History`，读 rules.md。
+2. 决定去向前 `Get_Tasks_Match_History`，读 rules.md。
 3. 调写工具，多条放同一个 `items`。
 
 ## 例

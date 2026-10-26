@@ -2,12 +2,12 @@
 
 ## 步骤
 
-1. `Get_Today`（缺省今天）。看 `uncaught`、`unassigned`、`gaps`、`proposalsPending`、`questionsOpen`、`reportSubmitted`、`allClear`。
+1. `Get_Today_Todo`（缺省今天）。看 `uncaught`、`unassigned`、`gaps`、`proposalsPending`、`questionsOpen`、`reportSubmitted`、`allClear`。
 2. `allClear: true`：结束，不写任何东西。
 3. `uncaught.blocks > 0`：调 `Get_Pending_Classify_Windows`，看 `items`（按时长降序，从大的做起）。
    - 反复出现的窗口：写第一级规则，读 rules.md。
    - 只有今天一次的：`CRUD_Windowsblock` 的 `assign`。
-4. `unassigned.blocks > 0`：同一次返回里的 `unassigned`，这些块已被第一级收了，缺第二级去向。归类前先 `Get_Match_History`（块名）；去向稳定就写第二级规则，否则 `assign`。读 rules.md。
+4. `unassigned.blocks > 0`：同一次返回里的 `unassigned`，这些块已被第一级收了，缺第二级去向。归类前先 `Get_Tasks_Match_History`（块名）；去向稳定就写第二级规则，否则 `assign`。读 rules.md。
 5. `gaps`：`detectorOffline: true` 是检测程序没在报，先 `Get_Device_Health`，别问人。`false` 多半是人不在电脑前，需要时才用 `Submit_Questions_To_Human`。读 troubleshoot.md。
 6. `proposalsPending`、`questionsOpen`：`Get_Proposals`（缺省 `status: pending`）。已在等人的不重复提；`kind: question` 里 `answered` 的要跟进，读 report.md。
 7. `reportSubmitted: false`：交 `Submit_Report`，读 report.md。建议傍晚交一次，人要求时随时交。
@@ -15,7 +15,7 @@
 ## 例
 
 ```
-Get_Today {"date": "2026-10-24"}
+Get_Today_Todo {"date": "2026-10-24"}
 ```
 关键返回：`uncaught {blocks, seconds}`、`unassigned {blocks, seconds}`、`gaps [{from, to, seconds, detectorOffline}]`、`proposalsPending`、`questionsOpen`、`reportSubmitted`、`allClear`。
 

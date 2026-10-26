@@ -38,9 +38,9 @@ check "没登录调 MCP 被拒（302 去登录页）" \
 check "令牌 initialize" \
   "$(mcp "$TOK" initialize '{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}' \
      | py 'print(r["result"]["protocolVersion"], list(r["result"]["capabilities"]))')" "2025-06-18 ['tools']"
-check "tools/list：17 个工具（write 令牌，mcp.tools.v2），不是只读的只有 6 个写工具" \
+check "tools/list：18 个工具（write 令牌，mcp.tools.v2），不是只读的只有 6 个写工具" \
   "$(mcp "$TOK" tools/list '{}' | py 't=r["result"]["tools"]; print(len(t), [x["name"] for x in t if not x["annotations"]["readOnlyHint"]])')" \
-  "17 ['CRUD_Windows_Classify_Rules', 'CRUD_Windowsblock_Classify_Rules', 'CRUD_Windowsblock', 'CRUD_Honeycomb', 'Submit_Report', 'Submit_Questions_To_Human']"
+  "18 ['CRUD_Windows_Classify_Rules', 'CRUD_Windowsblock_Classify_Rules', 'CRUD_Windowsblock', 'CRUD_Honeycomb', 'Submit_Report', 'Submit_Questions_To_Human']"
 check "initialize 的 instructions 只有一句" \
   "$(mcp "$TOK" initialize '{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}' \
      | py 'print(r["result"]["instructions"])')" "第一次用先调 Get_Started"

@@ -23,7 +23,7 @@
 
 ## 检测程序掉线还是没活动
 
-- `Get_Today.gaps[].detectorOffline: true`：与掉线区间有交集，检测程序没在报。`Get_Device_Health`（可带 `deviceId`）看 `awState`、`incidents`、`hints`。只读，你不能重启；把现象和 `hints` 转告人。不要拿这种空档问人。
+- `Get_Today_Todo.gaps[].detectorOffline: true`：与掉线区间有交集，检测程序没在报。`Get_Device_Health`（可带 `deviceId`）看 `awState`、`incidents`、`hints`。只读，你不能重启；把现象和 `hints` 转告人。不要拿这种空档问人。
 - `detectorOffline: false`：没有活动，多半人不在电脑前。
 - 记录整体丢了：`Get_Device_Health`，再看 `Get_Started.tiersOn`。
 

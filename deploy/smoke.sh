@@ -62,12 +62,12 @@ for a in $(grep -oE '(src|href)="[^"]*__cockpit/[^"]*"' <<<"$hive" | sed -E 's/^
   check 200 "$(code -b "$jar" "$base$a")" "  注入的 $a"
 done
 
-# AI 桥（mcp.tools.v1 传输 + mcp.tools.v2 工具，gateway.v1 第八节）：MCP 过门；登录态经网关（cookie、没有范围头）调得到 19 个工具（17 + 自动跟踪的两个），不是只读的只有 6 个写工具与自动跟踪的两个。
+# AI 桥（mcp.tools.v1 传输 + mcp.tools.v2 工具，gateway.v1 第八节）：MCP 过门；登录态经网关（cookie、没有范围头）调得到 20 个工具（18 + 自动跟踪的两个），不是只读的只有 6 个写工具与自动跟踪的两个。
 # 部署方把 mcp 关掉的组装（CI 的网关契约 job）设 HONEYCOMB_SMOKE_MCP=0 跳过这一段。
 if [ "${HONEYCOMB_SMOKE_MCP:-1}" = 1 ]; then
   rpc='{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
   check "${bp}login/" "$(location -H 'Content-Type: application/json' -d "$rpc" "$base${bp}api/mcp/")" "未登录 MCP 跳登录页"
-  check "19 ['CRUD_Windows_Classify_Rules', 'CRUD_Windowsblock_Classify_Rules', 'CRUD_Windowsblock', 'CRUD_Honeycomb', 'Submit_Report', 'Submit_Questions_To_Human', 'get_window_awaiting_target', 'suggest_window_target']" "$(curl -s -b "$jar" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+  check "20 ['CRUD_Windows_Classify_Rules', 'CRUD_Windowsblock_Classify_Rules', 'CRUD_Windowsblock', 'CRUD_Honeycomb', 'Submit_Report', 'Submit_Questions_To_Human', 'get_window_awaiting_target', 'suggest_window_target']" "$(curl -s -b "$jar" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
     -d "$rpc" "$base${bp}api/mcp/" | python3 -c 'import json,sys; t=json.load(sys.stdin)["result"]["tools"]
 print(len(t), [x["name"] for x in t if not x["annotations"]["readOnlyHint"]])')" "MCP tools/list 经网关"
   # 聊天后端（agent.chat.v1）：过门；不管开不开，未登录都跳登录页

@@ -68,3 +68,10 @@ def get_gaps(date: date | None = None) -> dict:  # noqa: A002
 def blocks_history(block: Annotated[str | None, Query(min_length=1, max_length=1000)] = None, app: str | None = None,
                    title: str | None = None, days: Annotated[int, Query(ge=1, le=90)] = 30) -> dict:
     return gaps.match_history(block, app, title, days)
+
+
+@router.get("/windows/history", dependencies=[Depends(no_bearer)])
+def windows_history(app: Annotated[str, Query(min_length=1)], title: str | None = None,
+                    titleContains: Annotated[str | None, Query(min_length=1, max_length=128)] = None,  # noqa: N803 —— 查询参数名即契约
+                    days: Annotated[int, Query(ge=1, le=90)] = 30) -> dict:
+    return gaps.windows_history(app, title, titleContains, days)
