@@ -10,8 +10,9 @@ import pytest
 
 from _collab_common import D, HIST, API, backfill, get, iso, run, t, world
 from _reconcile_common import assign, rnd, tiers
-from _tier_common import day, rec, upload
+from _tier_common import BLK, day, rec, upload
 from app.modules.views import collab_history
+from app.modules.activity import blocks_repo
 from app.repo import get_db
 
 
@@ -198,6 +199,22 @@ def test_pending_split_uncaught_vs_unassigned(client):
     for detail in ("summary", "segments"):
         h = get(client, HIST, **span(detail=detail))["human"]
         assert (h["pendingUncaughtSeconds"], h["pendingUnassignedSeconds"], h["pendingSeconds"]) == (600, 180, 780)
+
+
+def test_pending_split_generic_blocks_agrees_with_blocks_endpoint(client):
+    """未拆分的通用窗口：keySource auto → 第一级没收；keySource rule → 算二级没定。MCP Get_Today_Todo 用的块端点口径须一致。"""
+    tiers(client)
+    upload(client, [rec(D, "09:00:00", "09:10:00", title="doc"),
+                    rec(D, "10:00:00", "10:03:00", title="x", block="香草")])
+    for key in ("chrome · doc", "香草"):
+        blocks_repo.set_generic("u_local", key, True, D)
+    items = client.get(BLK, params={"date": D, "status": "generic", "limit": 1000}).json()["items"]
+    assert {b["blockKey"]: (b["status"], b["keySource"]) for b in items} == {"chrome · doc": ("generic", "auto"), "香草": ("generic", "rule")}
+    auto = sum(b["seconds"] for b in items if b["keySource"] == "auto")      # MCP 的 uncaught
+    other = sum(b["seconds"] for b in items if b["keySource"] != "auto")     # MCP 的 unassigned
+    for detail in ("summary", "segments"):
+        h = get(client, HIST, **span(detail=detail))["human"]
+        assert (h["pendingUncaughtSeconds"], h["pendingUnassignedSeconds"]) == (auto, other) == (600, 180)
 
 
 def test_pending_union_across_devices(client):
@@ -564,3 +581,24 @@ def test_permission_wait_is_a_handoff_with_reason(client):
         interactions=[("attend", "09:25:00", "09:28:00")])
     h = [x for x in get(client, HIST, **span(detail="segments"))["handoffs"] if x["type"] == "agent_to_human"]
     assert [(x["reason"], x["waitedSeconds"]) for x in h] == [("permission", 300), ("input", None)]
+
+
+def test_turns_reply_during_wait_after_finished_work_starts_new_turn(client):
+    # 干活 09:00–09:00:20 就结束；09:00:40 回复（落在等待里，离开头 < 60 秒）；09:30 再干活。两段不能并
+    run(client, 1, "09:00:00", "10:00:00", phases=[
+        ("09:00:00", "working"), ("09:00:20", "waiting_input"), ("09:30:00", "working"), ("09:50:00", "idle")],
+        interactions=[("reply", "09:00:40")])
+    assert _turns(client, 1) == [("09:00", "09:00", 20, None), ("09:30", "09:50", 1200, "human_reply")]
+
+
+def test_turns_reply_near_working_start_still_snaps(client):
+    run(client, 1, "09:00:00", "10:00:00", phases=[
+        ("09:00:00", "working"), ("09:20:00", "waiting_input"), ("09:30:00", "working"), ("09:50:00", "idle")],
+        interactions=[("reply", "09:29:40")])  # 紧挨在 working 开头之前：这一段的开头
+    assert _turns(client, 1) == [("09:00", "09:20", 1200, None), ("09:30", "09:50", 1200, "human_reply")]
+    run(client, 2, "09:00:00", "10:00:00", phases=[
+        ("09:00:00", "working"), ("09:20:00", "waiting_input"), ("09:30:00", "working"), ("09:50:00", "idle")],
+        interactions=[("reply", "09:30:20")])  # 开头之后 20 秒、段还在跑：并入这一段，不在 09:30:20 处切开
+    assert _turns(client, 2) == [("09:00", "09:20", 1200, None), ("09:30", "09:50", 1200, "human_reply")]
+    started = [x for x in _page(client)["agents"]["runs"][1]["phases"] if x["phase"] == "working"]
+    assert [x.get("startedBy") for x in started] == [None, "human_reply"]

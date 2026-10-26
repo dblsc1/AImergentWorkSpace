@@ -334,16 +334,21 @@ def _agents(runs: list[dict], work: dict[str, list], start: datetime, end: datet
     return out, truncated
 
 
-def _started_by(run: dict, a: datetime) -> bool:
-    return any(a <= t <= a + timedelta(seconds=REPLY_WINDOW) for t in run["replies"])
+def _snaps(t: datetime, a: datetime, b: datetime) -> bool:
+    """回复 t 算 working 段 [a, b) 开的头：落在开头 REPLY_WINDOW 秒内且段还没结束；已结束的段不回头认。"""
+    return a <= t <= a + timedelta(seconds=REPLY_WINDOW) and t < b
+
+
+def _started_by(run: dict, a: datetime, b: datetime) -> bool:
+    return any(_snaps(t, a, b) for t in run["replies"])
 
 
 def _turns(run: dict, start: datetime, end: datetime) -> list[dict]:
     """按指令切段（v2.43）：一段从一次人回复开始，到下一次回复之前最后一个 working 相位结束；
-    第一次回复之前的 working 归一段 startedBy=None。回复落在 working 开头 REPLY_WINDOW 秒内算它开的头（同 startedBy）。
+    第一次回复之前的 working 归一段 startedBy=None。回复落在 working 开头 REPLY_WINDOW 秒内且该段还没结束，才算它开的头（同 startedBy）；落在等待里的回复开新段，不回头并入已结束的段。
     working 跨过回复时在回复处切开。只含与 [start, end) 相交的部分，没有 working 的回复不成段。"""
     works = cr.working(run)
-    cuts = sorted({next((a for a, _ in works if a <= t <= a + timedelta(seconds=REPLY_WINDOW)), t) for t in run["replies"]})
+    cuts = sorted({next((a for a, b in works if _snaps(t, a, b)), t) for t in run["replies"]})
     turns: dict[int, list] = {}
     for a, b in works:
         pts = [a, *(c for c in cuts if a < c < b), b]
@@ -361,7 +366,7 @@ def _run_view(run: dict, clipped: list, start: datetime, end: datetime) -> dict:
         c = cr.clip(a, b, start, end)
         if c:
             phases.append({"from": cr.iso(c[0]), "to": cr.iso(c[1]), "phase": ph,
-                           **({"startedBy": "human_reply"} if ph == "working" and _started_by(run, a) else {})})
+                           **({"startedBy": "human_reply"} if ph == "working" and _started_by(run, a, b) else {})})
             # 契约待定：subagents——运行里没有子代理数据，不给该键
     attn = [c for a, b in run["attend"] if (c := cr.clip(a, b, start, end))]
     return {"runId": run["runId"], "agent": run["agent"], "label": run["label"], "startAt": cr.iso(run["startAt"]),
@@ -372,10 +377,10 @@ def _run_view(run: dict, clipped: list, start: datetime, end: datetime) -> dict:
 def _handoffs(runs: list[dict], start: datetime, end: datetime) -> tuple[list[dict], bool]:
     out = []
     for run in runs:
-        for a, _b, ph in run["segs"]:
+        for a, b, ph in run["segs"]:
             if not start <= a < end:
                 continue
-            if ph == "working" and _started_by(run, a):
+            if ph == "working" and _started_by(run, a, b):
                 out.append({"at": cr.iso(a), "runId": run["runId"], "type": "human_to_agent", "_t": a})
             elif ph in ("waiting_input", "waiting_permission"):
                 # 到下一次人回复、或人开始看它（attend 的下一段开头；已经在看 = 马上）为止，先到者；范围结束前没有 = null

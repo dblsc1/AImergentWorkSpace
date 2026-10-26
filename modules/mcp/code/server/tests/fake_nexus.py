@@ -87,6 +87,7 @@ BLOCKS = {"date": "2026-10-24", "nextCursor": None, "items": [
     {"blockKey": "示例文档", "keySource": "rule", "status": "pending", "seconds": 9000, "records": 9, "apps": ["google-chrome"]},
     {"blockKey": "已分类", "keySource": "auto", "status": "assigned", "seconds": 8000, "records": 9, "apps": ["code"]},
     {"blockKey": "通用窗口", "keySource": "auto", "status": "generic", "parts": [], "seconds": 300, "records": 2, "apps": ["term"]},
+    {"blockKey": "通用规则", "keySource": "rule", "status": "generic", "parts": [], "seconds": 400, "records": 1, "apps": ["term"]},
     {"blockKey": "通用已拆", "keySource": "auto", "status": "generic", "parts": [{"taskId": "t_a1"}], "seconds": 700, "records": 2,
      "apps": ["term"]},
 ]}

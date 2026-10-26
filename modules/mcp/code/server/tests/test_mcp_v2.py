@@ -1012,7 +1012,7 @@ def test_get_today_counts_and_all_clear_logic(servers):
     out = ok(servers, "Get_Today_Todo", {"date": "2026-10-24"}, R)
     assert out["date"] == "2026-10-24"
     assert out["uncaught"] == {"blocks": 3, "seconds": 2880}      # keySource auto 的待处理块，加标成通用窗口、还没拆分的（已拆的不算）
-    assert out["unassigned"] == {"blocks": 1, "seconds": 9000}    # 被第一级收了、第二级没定
+    assert out["unassigned"] == {"blocks": 2, "seconds": 9400}    # 被第一级规则收了、第二级没定（含 keySource 为 rule 的未拆分通用窗口，与 history 一致）
     assert out["gaps"][0]["detectorOffline"] is True and out["gaps"][0]["seconds"] == 5100
     assert (out["proposalsPending"], out["questionsOpen"], out["reportSubmitted"], out["allClear"]) == (6, 0, True, False)
     assert len(out["note"]) <= 100 and out["permissions"]["scope"] == "read"

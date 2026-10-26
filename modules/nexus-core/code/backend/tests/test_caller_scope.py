@@ -379,3 +379,23 @@ def test_same_host_anonymous_cannot_touch_or_take_over_token_runs(client, seeded
     # 标记是内部的：不在任何读出里
     lanes = client.get(f"{API}/views/lanes").text
     assert "anonymousOpened" not in lanes
+
+
+def test_same_host_only_true_for_anonymous_callers():
+    import asyncio
+    from app import scope
+
+    seen = []
+
+    async def app(s, receive, send):
+        seen.append(scope.caller())
+
+    async def call(headers):
+        await scope.ScopeMiddleware(app)({"type": "http", "path": "/api/core/agents/start", "method": "POST",
+                                          "headers": [(k.encode(), v.encode()) for k, v in headers]}, None, None)
+
+    for headers in ([("x-nexus-same-host", "1")], [("x-nexus-scope", "write"), ("x-nexus-same-host", "1")],
+                    [("x-nexus-scope", "report"), ("x-nexus-same-host", "1")]):
+        asyncio.run(call(headers))
+    asyncio.run(call([("x-nexus-anonymous", "1"), ("x-nexus-same-host", "1")]))
+    assert [c.same_host for c in seen] == [False, False, False, True]
