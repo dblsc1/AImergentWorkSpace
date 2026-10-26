@@ -1124,8 +1124,14 @@ def test_confidence_forwarded_per_op_item_and_honeycomb(servers):
     ok(servers, "CRUD_Honeycomb", {"op": "rename", "target": "xx-g-xtsc", "name": "新名", "confidencePercent": 70}, W)
     ok(servers, "CRUD_Honeycomb", {"op": "retime", "eventId": "evt_7", "to": "xx-g-xtsc", "confidencePercent": 20, "direct_apply": True}, W)
     got = [(p.rsplit("/", 1)[1], b.get("confidencePercent", "absent")) for p, b in posts()]
-    assert got == [("window-rules", 90), ("window-rules", "absent"), ("ignores", 0), ("block-rules", 55), ("block-actions", 100),
+    assert got == [("window-rules", 90), ("window-rules", "absent"), ("ignores", "absent"), ("block-rules", 55), ("block-actions", 100),
                    ("changes", 70), ("sessions", 20)]
+
+
+def test_confidence_not_forwarded_for_ignore(servers):
+    r = ok(servers, "CRUD_Windows_Classify_Rules", {"ops": [{"op": "add", "app": "x", "ignore": True, "confidencePercent": 50}]}, W)
+    assert r["results"][0]["ok"] is True
+    assert posts() == [("/api/core/activity/proposals/ignores", {"app": "x"})]
 
 
 def test_confidence_bad_value_is_400_and_nothing_sent(servers):

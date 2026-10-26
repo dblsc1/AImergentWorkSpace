@@ -452,3 +452,5 @@ v1 的 23 个工具名不出现在 `tools/list`，但仍能调：**不调下游�
 - `Get_Started` 带出 `highConfidenceThresholdPercent`（高置信度阈值，人在设置里调，缺省 80）。口径：`confidencePercent ≥` 阈值为高置信度，人可在决策栏一键批准；`null` 或低于阈值为低置信度。
 - AI 应当如实估计；拿不准就给低值或不给，不要为了一键批准而抬高。
 
+- `CRUD_Honeycomb` 一次一条，`confidencePercent` 是顶层参数。
+- `ignore: true` 的条目可带 `confidencePercent` 但不转发（忽略提议不存置信度）。

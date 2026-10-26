@@ -910,7 +910,7 @@ def crud_windows_classify_rules(a, c):
                 if not o.get("app"):
                     raise _bad("忽略规则要 app（程序名）")
                 body = {"app": o["app"], **({"titleContains": o["title"]} if o.get("title") else {})}
-                return _outcome(_write("/api/core/activity/proposals/ignores", _with(body, a, o), c, direct))
+                return _outcome(_write("/api/core/activity/proposals/ignores", _with(body, a), c, direct))   # 忽略提议不存置信度：不转发
             if not o.get("block"):
                 raise _bad("add 要 block（块名，1–64）")
             if not (o.get("app") or o.get("title")):
