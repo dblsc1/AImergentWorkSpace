@@ -61,6 +61,15 @@ def _get(user: str, item_id: str) -> dict | None:
     return _col().find_one({"user": user, "id": item_id}, {"_id": 0})
 
 
+def _latest_conf(user: str, d: dict, extra: dict) -> dict:
+    """去重命中待批的那条：再提交带了 confidencePercent 就以最新的为准。"""
+    conf = extra.get("confidencePercent")
+    if conf is None or d.get("status") != "pending" or d.get("confidencePercent") == conf:
+        return d
+    _col().update_one({"user": user, "id": d["id"], "status": "pending"}, {"$set": {"confidencePercent": conf}})
+    return {**d, "confidencePercent": conf}
+
+
 def _put(user: str, kind: str, parent: str, name: str, reason: str, extra: dict) -> dict:
     """取（或新建）提议。已批准但东西后来被删了（调用方已确认没有同名活的）→ 换一条新的。"""
     item_id = ("np_" if kind == "project" else "nt_") + hashlib.sha256(
@@ -77,7 +86,7 @@ def _put(user: str, kind: str, parent: str, name: str, reason: str, extra: dict)
     if d:
         if d["status"] == "rejected":
             raise ConflictError("用户已经否掉过这个提议，不要再提")
-        return d
+        return _latest_conf(user, d, extra)
     if _col().count_documents({"user": user, "kind": kind, "status": "pending"}) >= MAX_PENDING[kind]:
         raise TooManyReportsError(f"已有 {MAX_PENDING[kind]} 条待批准的{'项目' if kind == 'project' else '任务'}提议，"
                                   "请先让用户处理旧的")
@@ -305,7 +314,7 @@ def _put_edit(user: str, kind: str, item_id: str, extra: dict, reason: str, capp
             snap = {"snapName": extra["snapName"], "snapParent": extra["snapParent"]}  # 目标后来被改过：快照跟着刷新
             _col().update_one({"user": user, "id": item_id, "status": "pending"}, {"$set": snap})
             d = {**d, **snap}
-        return d
+        return _latest_conf(user, d, extra)
     if capped and _col().count_documents({"user": user, "kind": kind, "status": "pending"}) >= MAX_PENDING[kind]:  # 直接施加不占待批准名额
         raise TooManyReportsError(f"已有 {MAX_PENDING[kind]} 条待批准的{_LABEL[kind]}提议，"
                                   "请先让用户处理旧的")

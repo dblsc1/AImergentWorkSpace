@@ -563,13 +563,14 @@ def get_device_health(a, c):
 def get_started(a, c):
     st = _settings(c.tenant, fresh=True)
     on = bool(st and st.get("tiers"))
+    thr = (st or {}).get("highConfidenceThresholdPercent")
     now = _now_local()
     off = now.strftime("%z")
     return {
         "about": specs.ABOUT, "tiers": specs.TIERS,
         "tools": [{"name": t["name"], "answers": specs.ANSWERS[t["name"]]} for t in specs.SPECS],
         "addressing": specs.ADDRESSING, "rules": specs.RULES,
-        "tiersOn": on, "highConfidenceThresholdPercent": (st or {}).get("highConfidenceThresholdPercent", 80),
+        "tiersOn": on, "highConfidenceThresholdPercent": thr if type(thr) is int else 80,
         "today": now.date().isoformat(), "tz": f"{off[:3]}:{off[3:]}" if off else "+00:00",
         "note": _note("先看 permissions 和 tiers；具体怎么调，各工具带 help: true。" if on else
                       "三级分类没打开，分类类工具会被拒；请人先在「自动记录」页打开。其余工具照常。"),

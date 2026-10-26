@@ -1128,6 +1128,12 @@ def test_confidence_forwarded_per_op_item_and_honeycomb(servers):
                    ("changes", 70), ("sessions", 20)]
 
 
+def test_get_started_threshold_falls_back_to_80_unless_real_int(servers, monkeypatch):
+    for bad in (None, True, "70", 7.5):
+        monkeypatch.setattr(tools, "_settings", lambda *a, _b=bad, **k: {"tiers": True, "highConfidenceThresholdPercent": _b})
+        assert ok(servers, "Get_Started", {}, W)["highConfidenceThresholdPercent"] == 80, bad
+
+
 def test_confidence_not_forwarded_for_ignore(servers):
     r = ok(servers, "CRUD_Windows_Classify_Rules", {"ops": [{"op": "add", "app": "x", "ignore": True, "confidencePercent": 50}]}, W)
     assert r["results"][0]["ok"] is True

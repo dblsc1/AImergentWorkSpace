@@ -4889,6 +4889,7 @@ MCP 侧见 `contracts/mcp.tools.v2`。
 - **AI 提议带置信度**：提议类写端点（第一级规则 `windowRule`、第二级规则 `blockRule`、块的单日操作 `blockAction`、提议改已记的时间 `sessionChange`、AI 提议新项目 / 任务及改名 / 移动 / 删除）的请求体每条提议可带 `confidencePercent`：整数 0–100，可省。越界或非整数 422。原样存在提议上，所有返回提议的读端点带出（没给的提议返回 `null`）。直接施加的写入同样收下并记进直接施加日志。
 - **高置信度阈值**：账号设置 `activity/settings` 追加 `highConfidenceThresholdPercent`：整数 0–100，缺省 80，中文名「高置信度阈值」。`GET` 总带出。`PUT` 里可省，省了保留原值（不是回到缺省），给了就校验（越界 422）。
 - 判定口径：`confidencePercent ≥ highConfidenceThresholdPercent` 为高置信度；`null` 或低于阈值为低置信度。服务端不按置信度改变任何行为，只存只读；分组由前端和 AI 自己按这个口径做。
+- 同一条提议再次提交（去重命中待批的那条）时，带了 `confidencePercent` 就以最新的为准。
 
 ## 变更记录
 

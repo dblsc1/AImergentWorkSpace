@@ -57,6 +57,19 @@ def test_round_trip_every_kind_and_null_when_absent(client, world):
     assert r.status_code == 200 and r.json()["confidencePercent"] is None
 
 
+def test_resubmit_pending_latest_confidence_wins(client, world):
+    for path, body, _ in world:
+        client.post(f"{P}/{path}", json={**body, "confidencePercent": 73})
+    for path, body, _ in world:
+        r = client.post(f"{P}/{path}", json={**body, "confidencePercent": 20})
+        assert r.status_code == 200 and r.json()["confidencePercent"] == 20, path
+    for path, body, _ in world:  # 没带：保留最新的
+        assert client.post(f"{P}/{path}", json=body).json()["confidencePercent"] == 20, path
+    listed = client.get(P).json()
+    for _, _, key in world:
+        assert [i["confidencePercent"] for i in listed[key]] == [20], key
+
+
 def test_direct_apply_records_confidence_in_log(client, world):
     v = client.get(SET).json()["version"]
     ok = client.put(SET, json={"tiers": True, "agentDirect": {"enabled": True, "windowsClassify": True, "honeycombRecords": True}},
