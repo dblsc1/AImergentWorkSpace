@@ -133,3 +133,26 @@ def test_settings_412_keeps_unsaved_level1_edits(browser, static_base_url):
         page.wait_for_selector("#tier-message.is-error")
         assert page.input_value('#tier1-list li[data-index="0"] [data-f=block]') == "没存的"
         assert page.is_enabled("#tier1-save")
+
+
+def test_high_confidence_threshold_saved_with_put_and_validated(browser, static_base_url):
+    acct = AcctStub(tiers=False)
+    acct.doc["highConfidenceThresholdPercent"] = 80
+    with tier_page(browser, static_base_url, acct, TierStub()) as page:
+        page.wait_for_selector("#tier-settings:not([hidden])")
+        assert page.input_value("#tier-threshold") == "80" and "高置信度阈值" in page.inner_text("#tier-threshold-field")
+        page.fill("#tier-threshold", "150")
+        page.dispatch_event("#tier-threshold", "change")
+        page.wait_for_selector("#tier-message.is-error")
+        assert acct.puts() == [] and page.input_value("#tier-threshold") == "80"
+        page.fill("#tier-threshold", "65")
+        page.dispatch_event("#tier-threshold", "change")
+        page.wait_for_function("document.querySelector('#tier-message').textContent.includes('已保存')")
+        assert acct.puts()[0][1] == '"3"' and acct.puts()[0][2]["highConfidenceThresholdPercent"] == 65
+        assert acct.doc["highConfidenceThresholdPercent"] == 65
+
+
+def test_threshold_field_hidden_when_backend_lacks_it(browser, static_base_url):
+    with tier_page(browser, static_base_url, AcctStub(tiers=False), TierStub()) as page:
+        page.wait_for_selector("#tier-settings:not([hidden])")
+        assert page.is_hidden("#tier-threshold-field")

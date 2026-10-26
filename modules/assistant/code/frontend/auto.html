@@ -234,6 +234,10 @@
             <label class="set-opt"><input type="checkbox" id="tier-records"> 可以直接增删改我的项目记录</label>
           </div>
         </fieldset>
+        <div class="set-field" id="tier-threshold-field" hidden>
+          <label class="set-label" for="tier-threshold">高置信度阈值</label>
+          <div><input class="field set-num" id="tier-threshold" type="number" min="0" max="100" step="1" inputmode="numeric"> %</div>
+        </div>
         <p class="suggest-message" id="tier-message" role="status" hidden></p>
       </div>
       <!-- 「分类规则」（contracts/detector.rules.v1，rules.js）：生效规则的编辑器（AI 起草的草稿在「待批准」页，那是要人批准的事，见 #rules-draft-panel）。
