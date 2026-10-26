@@ -323,3 +323,22 @@ def test_anonymous_run_is_not_listed_in_views_current(client, seeded):
     cur = client.get(f"{API}/views/current").json()
     assert [a["runId"] for a in cur["agents"]] == [mine["runId"]] and cur["hiddenCount"] == 0
     assert anon["runId"] in {a["runId"] for a in client.get(f"{API}/views/lanes").json()["agents"]}
+
+
+def test_same_host_anonymous_run_is_verified_and_later_calls_work(client, seeded):
+    """v2.43：匿名 + X-Nexus-Same-Host: 1 = 开已核实的运行；之后的 phase / stop 照常；没有这个头仍是未核实。"""
+    host = {**ANON, "X-Nexus-Same-Host": "1"}
+    local = _start(client, host, label="local")
+    remote = _start(client, ANON, label="remote")
+    odd = _start(client, {**ANON, "X-Nexus-Same-Host": "true"}, label="odd")  # 只认 "1"
+    live = {a["runId"]: a for a in client.get(f"{API}/views/lanes").json()["agents"]}
+    assert live[local["runId"]]["unverified"] is False
+    assert live[remote["runId"]]["unverified"] is True and live[odd["runId"]]["unverified"] is True
+    assert client.post(f"{AGENTS}/{local['runId']}/phase", headers=host,
+                       json={"phase": "working", "at": NOW}).status_code == 200
+    assert client.post(f"{AGENTS}/{local['runId']}/stop", headers=host, json={"outcome": "done"}).status_code == 200
+    # 本机头不给别人的未核实运行更多权限：不带它的匿名照旧碰不到已核实的运行
+    mine = _start(client, {}, label="mine")
+    assert client.post(f"{AGENTS}/{mine['runId']}/stop", headers=ANON, json={"outcome": "done"}).status_code == 404
+    facts = {e["dedupeKey"]: e["data"] for e in _db()["events"].find({"type": "agent.run.completed"})}
+    assert "unverified" not in facts[f"agent:{local['runId']}"]
