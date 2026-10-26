@@ -241,6 +241,13 @@ function makeButton(text, onClick) {
     return b;
 }
 
+function showButtons(buttons, on) {
+    buttons.opacity = on ? 255 : 0;
+    buttons.reactive = on;
+    for (const b of buttons.get_children())
+        b.reactive = on;
+}
+
 class Store {
     constructor() {
         this.data = readJson(CONFIG_PATH, {});
@@ -330,7 +337,8 @@ class AgentActor {
 
         this.titleRow = new St.BoxLayout({style_class: 'atl-title-row'});
         this.title = new St.Label({style_class: 'atl-title', x_expand: true});
-        this.buttons = new St.BoxLayout({style_class: 'atl-btns', opacity: 0});
+        this.buttons = new St.BoxLayout({style_class: 'atl-btns'});
+        showButtons(this.buttons, false);
         this.buttons.add_child(makeButton('−', () => owner.setMinimized(true)));
         this.buttons.add_child(makeButton('×', () => owner.setVisible(this.key, false)));
         this.titleRow.add_child(this.title);
@@ -356,7 +364,7 @@ class AgentActor {
         this.body.add_child(this.info);
 
         this.actor.connect('notify::hover', () => {
-            this.buttons.opacity = this.actor.hover && !this.drag ? 255 : 0;
+            this._syncHover();
         });
         this.actor.connect('button-press-event', (_a, event) => this._onPress(event));
         this.actor.connect('motion-event', (_a, event) => this._onMotion(event));
@@ -369,6 +377,10 @@ class AgentActor {
 
     destroy() {
         this.actor.destroy();
+    }
+
+    _syncHover() {
+        showButtons(this.buttons, this.actor.hover && !this.drag);
     }
 
     _place(index) {
@@ -423,6 +435,9 @@ class AgentActor {
 
     _applyLights() {
         const lit = litColor(this.item.state, this.tick);
+        if (this._lit !== undefined && this._lit === lit)
+            return;
+        this._lit = lit;
         for (const [color, light] of Object.entries(this.lights)) {
             if (color === lit)
                 light.add_style_class_name('on');
@@ -542,15 +557,20 @@ class AgentActor {
     }
 
     endDrag() {
+        const start = this.drag;
         this.drag = null;
         setCursor(this.actor);
+        this._syncHover();
         const [x, y] = this.actor.get_position();
-        this.owner.store.setGeometry(this.key, x, y, this.actor.width, this.actor.height);
+        const {width, height} = this.actor;
+        if (!start || x !== start.x || y !== start.y || width !== start.width || height !== start.height)
+            this.owner.store.setGeometry(this.key, x, y, width, height);
     }
 
     cancelDrag() {
         this.drag = null;
         setCursor(this.actor);
+        this._syncHover();
     }
 }
 
@@ -570,13 +590,14 @@ class MiniBar {
             style_class: 'atl-mini',
         });
         this.row = new St.BoxLayout({style_class: 'atl-mini-row'});
-        this.buttons = new St.BoxLayout({style_class: 'atl-btns', opacity: 0});
+        this.buttons = new St.BoxLayout({style_class: 'atl-btns'});
+        showButtons(this.buttons, false);
         this.buttons.add_child(makeButton('+', () => owner.setMinimized(false)));
         this.actor.add_child(this.row);
         this.actor.add_child(this.buttons);
 
         this.actor.connect('notify::hover', () => {
-            this.buttons.opacity = this.actor.hover && !this.drag ? 255 : 0;
+            this._syncHover();
         });
         this.actor.connect('button-press-event', (_a, event) => this._onPress(event));
         owner.layer.add_child(this.actor);
@@ -584,6 +605,10 @@ class MiniBar {
         const p = owner.store.miniPos();
         const [x, y] = onStage(p?.x ?? 18, p?.y ?? 42);
         this.actor.set_position(x, y);
+    }
+
+    _syncHover() {
+        showButtons(this.buttons, (this.actor.hover && !this.drag) || this.dots.size === 0);
     }
 
     update(items) {
@@ -605,6 +630,7 @@ class MiniBar {
             }
         }
         this._apply();
+        this._syncHover();
     }
 
     animate() {
@@ -614,9 +640,13 @@ class MiniBar {
 
     // 熄灭的一拍保留颜色（暗色），一行不跳动。
     _apply() {
-        for (const {item, widget} of this.dots.values()) {
+        for (const dot of this.dots.values()) {
+            const {item, widget} = dot;
             const lit = litColor(item.state, this.tick);
             const base = lit ?? (item.state === 'working' ? 'green' : 'yellow');
+            if (dot.sig === `${base}|${lit}`)
+                continue;
+            dot.sig = `${base}|${lit}`;
             for (const c of ['red', 'yellow', 'green'])
                 widget.remove_style_class_name(`atl-dot-${c}`);
             widget.add_style_class_name(`atl-dot-${base}`);
@@ -654,13 +684,17 @@ class MiniBar {
     }
 
     endDrag() {
+        const start = this.drag;
         this.drag = null;
+        this._syncHover();
         const [x, y] = this.actor.get_position();
-        this.owner.store.setMiniPos(x, y);
+        if (!start || x !== start.x || y !== start.y)
+            this.owner.store.setMiniPos(x, y);
     }
 
     cancelDrag() {
         this.drag = null;
+        this._syncHover();
     }
 }
 
@@ -928,7 +962,7 @@ export default class AgentTrafficLightExtension extends Extension {
                 this.actors.delete(key);
             }
         }
-        this.mini.actor.visible = minimized && visible.length > 0;
+        this.mini.actor.visible = minimized;
         this.mini.update(visible);
         this.panel.update(items);
     }
@@ -940,6 +974,9 @@ export default class AgentTrafficLightExtension extends Extension {
 
     setMinimized(minimized) {
         this.store.minimized = minimized;
+        // 最小化时全被隐藏：还原同时恢复显示，保证总有路回来。
+        if (!minimized && !(this._lastItems ?? []).some(i => this.store.visible(i.key)))
+            this.store.showAll();
         this._refresh();
     }
 
