@@ -4884,6 +4884,12 @@ MCP 侧见 `contracts/mcp.tools.v2`。
   取过去 `days` 天的原始记录（`activity_records`），按 `blockKey` + `keySource` 分组：`days` = 出现在几个不同日期、`seconds` = 秒数和、`records` = 记录条数、`lastAt` = 最近一条的结束时刻；`seconds` 降序，至多 20 条；查不到给 `[]`。
   只到块为止，不看块后来归到哪（那是 `activity/blocks/history`）。
 
+## v0.5：置信度与高置信度阈值（v2.42，追加式）
+
+- **AI 提议带置信度**：提议类写端点（第一级规则 `windowRule`、第二级规则 `blockRule`、块的单日操作 `blockAction`、提议改已记的时间 `sessionChange`、AI 提议新项目 / 任务及改名 / 移动 / 删除）的请求体每条提议可带 `confidencePercent`：整数 0–100，可省。越界或非整数 422。原样存在提议上，所有返回提议的读端点带出（没给的提议返回 `null`）。直接施加的写入同样收下并记进直接施加日志。
+- **高置信度阈值**：账号设置 `activity/settings` 追加 `highConfidenceThresholdPercent`：整数 0–100，缺省 80，中文名「高置信度阈值」。`GET` 总带出。`PUT` 里可省，省了保留原值（不是回到缺省），给了就校验（越界 422）。
+- 判定口径：`confidencePercent ≥ highConfidenceThresholdPercent` 为高置信度；`null` 或低于阈值为低置信度。服务端不按置信度改变任何行为，只存只读；分组由前端和 AI 自己按这个口径做。
+
 ## 变更记录
 
 见 `module_docs/contract-changelog.md`（从本文件拆出，只记历史不含规范）。

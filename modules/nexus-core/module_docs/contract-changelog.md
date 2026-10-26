@@ -91,3 +91,4 @@
 | 2026-10-24 | 仓主批准「蜂巢 MCP v0.5 接口简报」 | v2.39（追加式）：`address` 位置编号（`views/tree` 带出）；新读端 `views/history`、`views/arrangements`；第三级 `activity/secretary-reports`、`activity/questions`（answer / dismiss）、`proposals/sessions`；`blockAction` 可改已分类块去向；忽略规则提议可直接施加；MCP 对 write 调用方转发范围头。 |
 | 2026-10-25 | MCP v0.4.2 两个新读工具的后端 | v2.40（追加式）：`GET activity/gaps?date=`（当天原始记录的空洞）、`GET activity/blocks/history`（窗口以前归到哪）；`views/history` 的 `human` 在 `detail=segments` 时追加 `gaps`。见「v0.4.2：空洞与匹配历史」节。 |
 | 2026-10-26 | MCP v0.4.3 新读工具 `Get_Blocks_Match_History` 的后端 | v2.41（追加式）：`GET activity/windows/history?app=&title=|titleContains=&days=`（窗口以前被收进哪些块，第一级）。见「v0.4.3：窗口历史」节。 |
+| 2026-10-27 | 仓主批准 v0.5：置信度与高置信度阈值 | v2.42（追加式）：提议带 `confidencePercent`（0–100，可省）；账号设置追加 `highConfidenceThresholdPercent`（缺省 80，PUT 省了保留原值） |
