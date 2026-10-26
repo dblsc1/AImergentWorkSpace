@@ -258,7 +258,10 @@ func printArchive(dir, day string, out io.Writer) error {
 
 // preview：最近 n 段留档的 raw 按当前隐私选项重新处理，与当时发出的 sent 并排。只在本机终端。
 func preview(cfg Config, n int, out io.Writer) error {
-	r := newRedactor(cfg)
+	r, err := newPreviewRedactor(cfg) // 代号表是副本，预览不分配真代号
+	if err != nil {
+		return err
+	}
 	ps, err := loadPseudonyms("") // 预览不给新标题分配真代号：只在内存里试编
 	if err != nil {
 		return err
@@ -290,6 +293,7 @@ func preview(cfg Config, n int, out io.Writer) error {
 	for _, s := range segs {
 		fmt.Fprintf(out, "%s  %s\n  原始：%s\n  当时：%s\n  现在：%s\n", s.StartAt, s.App, s.Raw, s.Sent, previewOne(r, ps, s.App, s.Raw))
 	}
+	r.al.printUsed(out)
 	return nil
 }
 
@@ -343,7 +347,9 @@ func applyRemoteSettings(cfg *Config, c *http.Client, base string) error {
 	remotePresence.Store(presence) // 一次 Store：不留「先清空再写」的窗口
 	remoteInput.Store(r.Settings != nil && r.Settings.InputActivity)
 	if r.Settings != nil {
+		na := cfg.Privacy.NumberedAliases // 网页设置没有这一项，沿用本机的
 		cfg.Privacy, cfg.Idle, cfg.autoTrack = r.Settings.Privacy, r.Settings.Idle, r.Settings.AutoTrack
+		cfg.Privacy.NumberedAliases = na
 		cfg.records, cfg.inputActivity = r.Settings.Records, r.Settings.InputActivity
 		if r.Settings.SegmentByTitle != nil {
 			cfg.SegmentByTitle = r.Settings.SegmentByTitle

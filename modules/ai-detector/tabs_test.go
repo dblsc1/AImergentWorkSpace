@@ -433,7 +433,7 @@ func TestShellPromptTabsCollapseAcrossCwd(t *testing.T) {
 		win(0, 2, term, "alice@thinkpad: ~"), win(2, 2, term, "alice@thinkpad: ~/work/garden"),
 		win(4, 4, term, "Cockpit-Pub-Coder1 "), win(8, 2, term, "alice@thinkpad: /srv/data"),
 	}, Config{}, 60)
-	if !same(brief(s), []string{"[用户]@[主机]: ~|0.00|10.00|360", "Cockpit-Pub-Coder1|4.00|8.00|240"}) {
+	if !same(brief(s), []string{"用户1@主机1: ~|0.00|10.00|360", "Cockpit-Pub-Coder1|4.00|8.00|240"}) {
 		t.Fatalf("%q", brief(s))
 	}
 }

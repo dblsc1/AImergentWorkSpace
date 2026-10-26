@@ -40,6 +40,9 @@ func sendTitles(cfg Config, titles []string) ([]string, error) {
 			return nil, err
 		}
 	}
+	if err := flushAliases(cfg); err != nil { // 编号代号在脱敏时已分配：存盘失败 / 表读不了都不上传
+		return nil, err
+	}
 	out := make([]string, len(titles))
 	for i, t := range titles {
 		if ps != nil {

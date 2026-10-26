@@ -6,7 +6,9 @@ import (
 )
 
 // scrub：缺省隐私选项下一段文字的完整处理（强制脱敏 + 可选项）。
-func scrub(s string) string { return newRedactor(Config{}).text(scrubSecrets(s)) }
+func scrub(s string) string {
+	return newRedactor(Config{Privacy: Privacy{NumberedAliases: []string{}}}).text(scrubSecrets(s))
+}
 
 func TestScrub(t *testing.T) {
 	cases := []struct{ in, want string }{
@@ -45,7 +47,7 @@ func TestScrub(t *testing.T) {
 }
 
 func TestAppOnlyKeepsOnlyAppName(t *testing.T) {
-	r := newRedactor(Config{AppOnlyApps: defaultAppOnly, BrowserApps: defaultBrowsers})
+	r := newRedactor(Config{AppOnlyApps: defaultAppOnly, BrowserApps: defaultBrowsers, Privacy: Privacy{NumberedAliases: []string{}}})
 	for _, app := range []string{"WeChat.exe", "TelegramDesktop", "OUTLOOK.EXE", "Microsoft Outlook", "KeePassXC", "1Password", "钉钉", "ms-teams.exe"} {
 		title, key := r.window(app, "张三：明天把合同发我 zhang@corp.com", nil)
 		if title != "" || strings.Contains(key, "张三") {
@@ -59,7 +61,7 @@ func TestAppOnlyKeepsOnlyAppName(t *testing.T) {
 }
 
 func TestBrowserKeepsDomainAndTitleOnly(t *testing.T) {
-	r := newRedactor(Config{AppOnlyApps: defaultAppOnly, BrowserApps: defaultBrowsers})
+	r := newRedactor(Config{AppOnlyApps: defaultAppOnly, BrowserApps: defaultBrowsers, Privacy: Privacy{NumberedAliases: []string{}}})
 	tab := &webTab{URL: "https://github.com/dblsc1/repo/pull/12?diff=split&token=xyz", Title: "Fix merge by someone@x.io"}
 	title, key := r.window("firefox", "Fix merge by someone@x.io — Mozilla Firefox", tab)
 	if title != "github.com · Fix merge by [邮箱]" {
