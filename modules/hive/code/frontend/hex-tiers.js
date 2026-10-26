@@ -427,7 +427,7 @@
         var tg = resolve(t), tn = p.taskId && tg.taskName !== "未分类" ? tg.taskName : "";
         out.push({ key: p.id, p: p, level: 2, tone: del ? "del" : "", name: "窗口块「" + (p.blockKey || "") + "」", reason: p.reason, target: t, conf: B.confOf(p.confidencePercent),
           to: B.ruleLine({ kind: "blockRule", op: p.op, taskName: tn, projectName: tg.projectName }),
-          slot: { op: "blockRule", kind: tn ? "task" : "project", block: p.blockKey || "", tProject: tg.projectId || p.projectId || null, tTask: p.taskId || null, tZone: tg.zoneId } });
+          slot: { op: "blockRule", kind: tn ? "task" : "project", block: p.blockKey || "", tProject: tg.projectId || p.projectId || null, tTask: p.taskId || null, tZone: tg.zoneId, del: del ? "1" : null } });
       });
       return out;
     }

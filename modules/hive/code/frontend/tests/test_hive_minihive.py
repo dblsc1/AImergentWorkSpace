@@ -293,3 +293,32 @@ def test_approve_rechecks_the_tree_instead_of_trusting_the_card_class(browser, b
         _card(hive, "nt_2").locator('[data-hd="approve"]').click()
         hive.page.clock.run_for(6000)
         assert _posts(hive, "activity/proposals/nt_2") == []
+
+P3 = {**PROPS, "projects": [{"id": "np_1", "kind": "project", "name": "新项目", "zoneId": "z_a", "zoneName": "学习", "reason": "", "tasks": [{"name": n} for n in "ABCDEFG"]},
+                            {"id": "np_2", "kind": "project", "name": "小项目", "zoneId": "z_a", "zoneName": "学习", "reason": "", "tasks": [{"name": "甲"}, {"name": "乙"}]}],
+      "items": [*PROPS["items"],
+                {"id": "bd1", "kind": "blockRule", "status": "pending", "op": "delete", "blockKey": "旧块", "taskId": "t_gone", "projectId": "p_gone", "reason": "规则作废"},
+                {"id": "bd2", "kind": "blockRule", "status": "pending", "op": "delete", "blockKey": "在的块", "taskId": "t_p_math", "projectId": "p_math", "reason": "清理"},
+                {"id": "wd1", "kind": "windowRule", "status": "pending", "op": "delete", "rule": {"app": "Chrome", "title": "x", "block": "旧块"}, "reason": "清理"}]}
+
+
+def test_rule_delete_stays_approvable_when_target_is_gone(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base, props=P3, width=1900) as hive:
+        _show(hive)
+        gone = _card(hive, "bd1")
+        assert "is-missing" not in (gone.get_attribute("class") or "") and gone.locator(".hm-gone").count() == 0
+        assert gone.locator('[data-ht="rule-ok"]').is_enabled()
+        assert gone.locator(".hd-minihive .hm-m").count() == 0, "目标没了不标"
+        assert _card(hive, "wd1").locator('[data-ht="rule-ok"]').is_enabled()
+        assert _card(hive, "bd2").locator(".hd-minihive .hm-m").count() >= 1, "目标在还是标出来"
+        gone.focus()
+        gone.press("a")
+        hive.page.clock.run_for(6000)
+        _until(hive.page, lambda: len(_posts(hive, "activity/proposals/bd1/approve")) == 1)
+
+
+def test_project_create_card_lists_bundled_tasks(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base, props=P3, width=1900) as hive:
+        _show(hive)
+        assert _card(hive, "np_1").locator(".hb-tasks").inner_text() == "含任务：A、B、C、D、E 等 7 个"
+        assert _card(hive, "np_2").locator(".hb-tasks").inner_text() == "含任务：甲、乙"
