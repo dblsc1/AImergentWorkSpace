@@ -68,7 +68,7 @@
       cards.push({ key: t.id, verb: "task", name: t.name, obj: t.name, reason: t.reason || "", n: 1, min: 0,
         to: "↓ " + pn + " - ＋ " + t.name + "（新任务）", projectId: t.projectId, tasks: [], conf: conf(t),
         meta: { op: "create", kind: "task", name: t.name, projectName: pn, why: t.reason || "" },
-        slot: { op: "create", kind: "task", tProject: t.projectId, tZone: lookup(tree, t.projectId).zoneId },
+        slot: { op: "create", kind: "task", name: t.name, tProject: t.projectProposalId ? null : t.projectId, tZone: lookup(tree, t.projectId).zoneId },
         items: [{ path: "proposals/" + encodeURIComponent(t.id), newItem: true }] });
     });
     function changeMeta(c, from, isTask, tree) {
@@ -80,7 +80,7 @@
   }
   // 小蜂巢的位置数据：origin = 现在在哪（改 / 删 / 改名），target = 去哪（新建 / 移到）；改名、删除的目标就是它自己
   function changeSlot(c, isTask, tree) {
-    var lk = lookup(tree, isTask ? c.projectId : c.targetId), s = { op: c.op === "move" ? "change" : c.op, kind: isTask ? "task" : "project" };
+    var lk = lookup(tree, isTask ? c.projectId : c.targetId), s = { op: c.op === "move" ? "change" : c.op, kind: isTask ? "task" : "project", name: c.targetName };
     var here = { oZone: lk.zoneId, oProject: lk.projectId || (isTask ? c.projectId : c.targetId), oTask: isTask ? c.targetId : null };
     if (c.op !== "move") return Object.assign(s, { tZone: here.oZone, tProject: here.oProject, tTask: here.oTask });
     Object.assign(s, here);
@@ -106,7 +106,7 @@
       cards.push({ key: s.id, verb: "session", reason: [when, len, s.reason ? "AI：" + s.reason : ""].filter(Boolean).join(" · "), n: 1, min: 0, tasks: [],
         name: fr.projectName ? fr.projectName + " - " + (fr.taskName || "未分类") : "（原归属）", items: one(s), to: pathText(to), projectId: to.projectId, zoneId: to.zoneId, conf: conf(s),
         meta: { op: "session", kind: "task", startAt: s.startAt, durationSeconds: s.durationSeconds, toTaskName: to.taskName === "未分类" ? "" : to.taskName, toProjectName: to.projectName, why: s.reason || "" },
-        slot: { op: "session", kind: "task", tProject: to.projectId, tZone: to.zoneId, tTask: s.taskId || null, oProject: fr.projectId, oZone: fr.zoneId, oTask: s.fromTaskId || null } });
+        slot: { op: "session", kind: "task", tProject: to.projectId || s.projectId || null, tZone: to.zoneId, tTask: s.taskId || null, oProject: fr.projectId, oZone: fr.zoneId, oTask: s.fromTaskId || null } });
     });
     (P.ignores || []).forEach(function (g) {
       var app = g.app == null ? "？" : g.app;
@@ -128,7 +128,7 @@
           card = { mk: ["task", it.newTask.projectId, it.newTask.name, mk].join("|"), verb: "task", name: win || it.newTask.name, obj: it.newTask.name, reason: reason,
             to: "↓ " + tg.projectName + " - ＋ " + it.newTask.name + "（新任务）", projectId: it.newTask.projectId, tasks: [], conf: null,
             meta: { op: "create", kind: "task", name: it.newTask.name, projectName: tg.projectName, why: reason },
-            slot: { op: "create", kind: "task", tProject: it.newTask.projectId, tZone: tg.zoneId } };
+            slot: { op: "create", kind: "task", name: it.newTask.name, tProject: it.newTask.projectId, tZone: tg.zoneId } };
         } else if (it.kind === "dismiss") {
           cnt++;
           card = { mk: ["noise", mk].join("|"), verb: "noise", tone: "ignore", name: win || "这些窗口", reason: reason, to: "↓ 当噪声，不记录", projectId: null, tasks: [] };
@@ -354,18 +354,20 @@
   // 按钮 / 键盘 / 滑动共用：焦点先挪到下一张卡，再收起
   function decide(c, decision, cardEl) {
     if (held[c.key]) return;
+    if (decision === "approve" && cardEl.classList.contains("is-missing")) return false;   // 目标已不存在：不能批准（按钮 / 键盘 / 滑动都走这里）
     if (cardEl.contains(document.activeElement)) {
       var n = cardEl.nextElementSibling, ok = function (x) { return x && !(x.classList.contains("hd-card") && !x.classList.contains("is-gone")); };
       while (ok(n)) n = n.nextElementSibling;
       if (!n) { n = cardEl.previousElementSibling; while (ok(n)) n = n.previousElementSibling; }
       if (n && n.focus) n.focus({ preventScroll: true });
     }
+    if (decision === "approve" && window.NexusTableHexMini) window.NexusTableHexMini.fly(cardEl);
     collapseEl(cardEl);
     commit(c, decision, cardEl);
   }
   // 一批卡一起批准 / 拒绝：每张照走 commit（各自的撤销计时、held），只出一条汇总提示；撤销 = 整批撤回。→ 实际处理的张数
   function decideMany(list, decision) {
-    var todo = list.filter(function (x) { return x.el && !held[x.c.key]; }), done = [];
+    var todo = list.filter(function (x) { return x.el && !held[x.c.key] && !(decision === "approve" && x.el.classList.contains("is-missing")); }), done = [];
     if (!todo.length) return 0;
     var batch = { left: todo.length, bad: 0, why: "" };
     if (decision === "approve" && window.NexusTableHexBar) window.NexusTableHexBar.bumpApprovals();   // 一批算一次
@@ -610,7 +612,7 @@
     [].forEach.call(document.querySelectorAll(".hd-over"), function (n) { n.classList.remove("hd-over"); });
   }
 
-  function newTaskInput(row, cell, it) {
+  function newTaskInput(row, cell, it, auto) {   // auto = 按块名直接建，不等人敲回车（建好了人还能改名）
     var pid = cell.dataset.projectId, input = document.createElement("input"), inflight = false;
     input.type = "text"; input.maxLength = 64; input.value = clip(it.title || it.app || "", 64).replace(/…$/, "");
     input.setAttribute("aria-label", "新任务名");
@@ -623,8 +625,9 @@
       ev.stopPropagation();
       if (ev.isComposing || ev.keyCode === 229) return;   // 输入法选字的回车 / Esc 不算
       if (ev.key === "Escape") { ev.preventDefault(); cancel(); }
-      else if (ev.key === "Enter") {
-        ev.preventDefault();
+      else if (ev.key === "Enter") { ev.preventDefault(); submit(); }
+    });
+    function submit() {
         var name = input.value.trim().slice(0, 64);
         if (!name || inflight) return;
         inflight = true; input.readOnly = true; input.setAttribute("aria-busy", "true");   // readOnly 不丢焦点：disabled 会让 Esc 落到蜂巢的全局 Esc 上把格子收起
@@ -642,21 +645,26 @@
             return App.reloadExpanded().then(function () { flash(tid); });
           });
         }).then(function () { inflight = false; idle(); }, function () { inflight = false; idle(); });
-      }
-    });
+    }
     input.focus(); input.select();
+    if (auto) submit();
   }
 
   var swallow = false;
   document.addEventListener("click", function (ev) { if (swallow) { swallow = false; ev.stopPropagation(); ev.preventDefault(); } }, true);
 
   var LONG_PRESS_MS = 300, DWELL_MS = 180;
-  function bindDrag(face, it) {
-    face.addEventListener("pointerdown", function (ev) {
+  // handle = 只有按在这个把手上才开始拖（待分类块的整张卡要留给左右滑）。it.dwellMs = 悬停多久才推近（默认 180ms，且路过不推近）；
+  // 有 dwellMs 的拖法：格子只描框、停够时间才推近，拖出蜂巢 / 取消就回到原来的视图，落在「新建任务」行上直接按块名建任务
+  function bindDrag(face, it, handle) {
+    (handle || face).addEventListener("pointerdown", function (ev) {
       if ((ev.button !== undefined && ev.button !== 0) || dragging) return;
+      if (handle) ev.stopPropagation();
       var touch = ev.pointerType === "touch", armed = !touch, pressTimer = null;
       var x0 = ev.clientX, y0 = ev.clientY, ghost = null, cell = null, row = null, newRow = null, over = false;
-      var px = x0, py = y0, raf = 0, dwell = 0, lastHit = null, target = null;
+      var px = x0, py = y0, raf = 0, dwell = 0, lastHit = null, target = null, Mi = window.NexusTableHexMini, startExp = App.getState().expandedId, zoomed = false;
+      var dw = it.dwellMs && Mi ? Mi.Dwell({ ms: it.dwellMs, slop: 12, set: function (f, ms) { return window.setTimeout(f, ms); }, clear: function (t) { window.clearTimeout(t); },
+        fire: function (k) { if (cell && !over && cell.dataset.projectId === k && App.getState().expandedId !== k) settle(cell); } }) : null;
       // 触摸：按住 ~300ms 才开始拖（之前一动就是滚动列表）；武装之后吞掉 touchmove，免得页面跟着滚
       if (touch) pressTimer = window.setTimeout(function () { pressTimer = null; armed = true; face.classList.add("is-armed"); }, LONG_PRESS_MS);
       function noSel(e) { e.preventDefault(); }   // 代替 body 上的 user-select:none（继承属性，一挂整页重算样式）
@@ -687,6 +695,7 @@
         dwell = 0;
         if (over || cell !== c) return;
         if (App.getState().expandedId !== c.dataset.projectId) {
+          zoomed = true;
           App.expand(c.dataset.projectId);
           cell = App.getState().byId[c.dataset.projectId].el;
         }
@@ -698,18 +707,21 @@
         raf = 0;
         if (over || !ghost) return;
         ghost.style.transform = "translate3d(" + (px - 40) + "px," + (py - 20) + "px,0)";
+        if (dw && cell) dw.at(cell.dataset.projectId, px, py);   // 指针在格子里挪出一点就重新数停留
         var hit = document.elementFromPoint(px, py);
         if (hit === lastHit) return;   // 指针下还是同一个节点：什么都没变，不碰 DOM
         lastHit = hit;
+        if (dw && zoomed && !(hit && hit.closest("#hive"))) { back(); return; }   // 拖出蜂巢：回到原来的视图
         var c = hit && !hit.closest(".hd-panel") && hit.closest(".hex-cell[data-project-id]");
         if (c && c.classList.contains("is-ghost")) c = null;
         c = c || null;
         if (c !== cell) {
-          window.clearTimeout(dwell); dwell = 0;
+          window.clearTimeout(dwell); dwell = 0; if (dw) dw.stop();
           clearOver(); cell = c; row = newRow = null;
           if (!cell) return;
           cell.classList.add("hd-over");
           if (App.getState().expandedId === cell.dataset.projectId) enter(cell);
+          else if (dw) dw.at(cell.dataset.projectId, px, py);
           else dwell = window.setTimeout(settle, DWELL_MS, cell);
           return;
         }
@@ -718,6 +730,12 @@
         row = !newRow && hit.closest("li[data-task-id]");
         var t = newRow || row;
         if (t !== target) { if (target) target.classList.remove("hd-over"); target = t; if (t) t.classList.add("hd-over"); }
+      }
+      function back() {
+        zoomed = false; if (dw) dw.stop();
+        cleanRows(); clearOver(); cell = row = newRow = null; lastHit = null;
+        var s = App.getState();
+        if (s.expandedId !== startExp) { if (startExp && s.byId[startExp]) App.expand(startExp); else App.collapse(); }
       }
       function cleanRowsExcept(keep) {
         [].forEach.call(document.querySelectorAll(".hd-newtask"), function (n) { if (n !== keep) n.remove(); });
@@ -733,7 +751,7 @@
         window.removeEventListener("touchmove", tm); window.removeEventListener("keydown", keyH, true); window.removeEventListener("blur", cancelH);
         document.removeEventListener("visibilitychange", visH); window.removeEventListener("lostpointercapture", cancelH, true);
         face.classList.remove("is-armed");
-        window.cancelAnimationFrame(raf); window.clearTimeout(dwell);
+        window.cancelAnimationFrame(raf); window.clearTimeout(dwell); if (dw) dw.stop();
         if (!ghost) return;
         swallow = true; window.setTimeout(function () { swallow = false; }, 50);
         ghost.remove(); document.body.classList.remove("hd-dragging");
@@ -741,10 +759,10 @@
         clearOver();
         dragging = false;
         if (ok && pid) {
-          if (nr) { cleanRowsExcept(nr); newTaskInput(nr, cell, it); return; }
+          if (nr) { cleanRowsExcept(nr); newTaskInput(nr, cell, it, !!dw); return; }
           cleanRows();
           doReassign(it, tr ? { taskId: tr.dataset.taskId } : { projectId: pid }).then(idle);
-        } else { cleanRows(); idle(); }
+        } else { if (dw && zoomed) back(); else cleanRows(); idle(); }
       }
       function upH(e) { finish(e.type === "pointerup"); }
       function cancelH() { finish(false); }
@@ -770,14 +788,7 @@
   function ghostProject(c) {
     var s = App.getState(), cells = s.hive.cells, zc = cells.filter(function (x) { return x.zoneId === c.zoneId; })[0];
     if (!zc) return false;
-    var taken = {}; cells.forEach(function (x) { taken[x.q + "," + x.r] = 1; }); taken["0,0"] = 1;
-    var best = null;
-    cells.filter(function (x) { return x.zoneId === c.zoneId; }).forEach(function (x) {
-      [[1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1]].forEach(function (d) {
-        var q = x.q + d[0], r = x.r + d[1], ring = (Math.abs(q) + Math.abs(r) + Math.abs(q + r)) / 2;
-        if (!taken[q + "," + r] && (!best || ring < best.ring)) best = { q: q, r: r, ring: ring };
-      });
-    });
+    var best = window.NexusTableHexMini.freeSlot(cells, c.zoneId);
     if (!best) return false;
     var id = "ghost_" + c.key;
     s.hive.cells.push({ q: best.q, r: best.r, ring: best.ring, angleDeg: H.cellAngle(best), zoneId: zc.zoneId, zoneName: zc.zoneName,

@@ -60,10 +60,41 @@
 /* 小卡：左边内容 + 右边留给小蜂巢的空位 */
 .hb-row { display: flex; align-items: flex-start; gap: var(--sp-2); }
 .hb-main { flex: 1; min-width: 0; }
-.hd-minihive { flex: none; width: 72px; height: 72px; }
+.hd-minihive { flex: none; width: 88px; height: 88px; }
 .hb-tag { display: inline-block; margin-bottom: 4px; padding: 1px 7px; border-radius: 5px; color: var(--panel); font-size: 10px; font-weight: 700; }
 .hb-tag.is-create { background: var(--fact); }
 .hb-tag.is-change { background: var(--plan); }
 .hb-tag.is-delete { background: var(--danger); }
 .hb-proj { font-size: var(--fs-sub); font-weight: 600; color: var(--ink-2); }
 .hb-mv { min-width: 26px; min-height: 26px; padding: 0 6px; }
+
+/* 小蜂巢（hex-minihive.js）：整张蜂巢缩小；底色沿用格子的 --zone-raw / --zone-mix */
+.hm-svg { display: block; width: 100%; height: 100%; }
+.hm-cell { fill: color-mix(in srgb, var(--zone-raw, var(--line)) var(--zone-mix, 40%), var(--panel)); stroke: var(--panel); stroke-width: .8px; vector-effect: non-scaling-stroke; }
+.hm-cell.is-empty { fill-opacity: .4; }
+.hm-dot { fill: var(--panel); opacity: .85; }
+.hm-m { fill: none; stroke-width: 1.8px; vector-effect: non-scaling-stroke; }
+.hm-m.is-frame { stroke: var(--plan); stroke-dasharray: 3 2; }
+.hm-m.is-frame.is-slot { fill: color-mix(in srgb, var(--plan) 18%, transparent); }
+.hm-m.is-hl { stroke: var(--plan); }
+.hm-m.is-del { stroke: var(--danger); stroke-width: 2.4px; }
+.hm-line { stroke: var(--plan); stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
+.hm-origin { fill: var(--plan); }
+
+/* 目标已不存在：整张卡标红，批准不可用 */
+.hd-card.is-missing { outline: 2px solid var(--danger); }
+.hd-card.is-missing .hd-face { background: color-mix(in srgb, var(--danger) 16%, var(--panel)); border-color: var(--danger); }
+.hm-gone { margin-top: 4px; font-size: var(--fs-eyebrow); font-weight: 700; color: var(--danger); }
+
+/* 悬停卡片：主蜂巢里的标记（虚线框 / 红框 / 实线框）和从原位置来的连线 */
+.hm-frame { outline: 2px dashed var(--plan); outline-offset: 1px; }
+.hm-hl { outline: 2px solid var(--plan); outline-offset: 1px; }
+.hm-del { outline: 3px solid var(--danger); outline-offset: 1px; }
+.hex-cell.hm-frame, .hex-cell.hm-hl, .hex-cell.hm-del { opacity: 1; }
+.hm-line-layer { position: fixed; left: 0; top: 0; width: 100%; height: 100%; z-index: 35; pointer-events: none; }
+.hm-line-layer line { stroke: var(--plan); stroke-width: 2.5px; stroke-dasharray: 7 5; }
+.hm-line-layer circle { fill: var(--plan); }
+.hm-fly { transform-origin: 0 0; }
+
+/* 待分类块卡片左边的拖动把手 */
+.ht-grip { flex: none; align-self: stretch; display: flex; align-items: center; padding: 0 2px; color: var(--ink-3); cursor: grab; touch-action: none; user-select: none; }
