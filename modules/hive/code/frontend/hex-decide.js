@@ -157,12 +157,17 @@
 
   // 撤销计时器：commit 之后 ms 毫秒才真发；期间 undo 取消；flush（转后台 / pagehide）立刻发出所有。时钟 / 发送都注入，好测。
   function Commits(o) {
-    var list = [], inflight = 0, seq = 0, self = {};
+    var list = [], inflight = 0, projFlight = 0, seq = 0, self = {};
+    // 新任务提议要等项目提议：有项目条还在撤销窗口里 / 在发，任务条到点也先等着（留在 list 里），项目那边收尾时再放行
+    function projBusy() { return projFlight > 0 || list.some(function (x) { return x.card.verb === "project"; }); }
+    function drain() { list.filter(function (x) { return x.waiting; }).forEach(function (x) { fire(x); }); }
     function fire(e, opts) {
       var i = list.indexOf(e); if (i < 0) return Promise.resolve();
-      list.splice(i, 1); o.clearTimer(e.timer);
-      inflight++;
-      return Promise.resolve(o.send(e, opts)).then(function (res) { inflight--; o.onDone(e, res); }, function () { inflight--; o.onDone(e, null); });
+      if (e.card.verb === "task" && !(opts && opts.parallel) && projBusy()) { e.waiting = true; o.clearTimer(e.timer); return Promise.resolve(); }
+      list.splice(i, 1); o.clearTimer(e.timer); e.waiting = false;
+      inflight++; var pj = e.card.verb === "project"; if (pj) projFlight++;
+      function done(res) { inflight--; if (pj) projFlight--; o.onDone(e, res); drain(); }
+      return Promise.resolve(o.send(e, opts)).then(done, function () { done(null); });
     }
     self.add = function (card, decision) {
       var e = { id: ++seq, card: card, decision: decision };
@@ -170,7 +175,7 @@
       list.push(e); return e;
     };
     self.undo = function (id) {
-      for (var i = 0; i < list.length; i++) if (list[i].id === id) { o.clearTimer(list[i].timer); return list.splice(i, 1)[0]; }
+      for (var i = 0; i < list.length; i++) if (list[i].id === id) { o.clearTimer(list[i].timer); var e = list.splice(i, 1)[0]; drain(); return e; }
       return null;
     };
     // 立刻发出所有待发的。新项目提议排在它的任务提议前面（先批项目，任务才批得动）。
@@ -302,7 +307,12 @@
       var key = e.card.key;
       delete held[key]; syncApproveAll();
       if (e.toast) e.toast.remove();
-      if (fails && fails.length) {
+      var b = e.batch;
+      if (b) {   // 整批的：失败攒成一条提示；汇总提示不随第一条收尾被撤走
+        b.left--;
+        if (fails && fails.length) { errors[key] = fails[0].err; e.card.items = fails.map(function (f) { return f.item; }); b.bad++; b.why = b.why || fails[0].err; } else if (fails) delete errors[key];
+        if (b.left === 0 && b.bad) toast(b.bad + " 项没办成：" + b.why, { error: true, ms: 6000 });
+      } else if (fails && fails.length) {
         errors[key] = fails[0].err;
         e.card.items = fails.map(function (f) { return f.item; });   // 没发成的留在卡上，刷新前也能再点
         toast("没办成：" + e.card.name + "：" + fails[0].err, { error: true, ms: 6000 });
@@ -326,8 +336,8 @@
   function commit(card, decision, cardEl, quiet) {
     if (held[card.key]) return;
     held[card.key] = { card: card, el: cardEl };
-    if (decision === "approve" && window.NexusTableHexBar) window.NexusTableHexBar.bumpApprovals();   // 「跳一跳」的概率跟着批准次数降
     if (quiet) return commits.add(card, decision);
+    if (decision === "approve" && window.NexusTableHexBar) window.NexusTableHexBar.bumpApprovals();   // 「跳一跳」的概率跟着批准次数降
     var word = decision === "approve" ? "已批准：" : decision === "dismiss" ? "已撤下：" : "已拒绝：";
     var entry = commits.add(card, decision), t;
     t = toast(word + card.name, { sticky: true, undo: function () {
@@ -357,14 +367,15 @@
   function decideMany(list, decision) {
     var todo = list.filter(function (x) { return x.el && !held[x.c.key]; }), done = [];
     if (!todo.length) return 0;
-    todo.forEach(function (x) { collapseEl(x.el); done.push({ el: x.el, entry: commit(x.c, decision, x.el, true) }); });
+    var batch = { left: todo.length, bad: 0, why: "" };
+    if (decision === "approve" && window.NexusTableHexBar) window.NexusTableHexBar.bumpApprovals();   // 一批算一次
+    todo.forEach(function (x) { collapseEl(x.el); var en = commit(x.c, decision, x.el, true); en.batch = batch; done.push({ el: x.el, entry: en }); });
     var t = toast((decision === "approve" ? "已批准 " : "已拒绝 ") + done.length + " 项", { sticky: true, undo: function () {
-      done.forEach(function (d) { if (commits.undo(d.entry.id)) { delete held[d.entry.card.key]; restoreEl(d.el); } });
+      done.forEach(function (d) { if (commits.undo(d.entry.id)) { delete held[d.entry.card.key]; restoreEl(d.el); batch.left--; } });
       t.remove();
       if (dragging || swiping) dirtyLoad = true; else render();
       updateBadge(); syncApproveAll();
     } });
-    done.forEach(function (d) { d.entry.toast = t; });
     window.setTimeout(function () { t.remove(); }, UNDO_MS + 200);
     updateBadge(); syncApproveAll();
     return done.length;

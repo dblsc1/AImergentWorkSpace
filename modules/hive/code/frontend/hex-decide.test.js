@@ -101,5 +101,17 @@ assert.strictEqual(nb[2].slot.oProject, "p1"); assert.strictEqual(nb[2].slot.oTa
 assert.strictEqual(nb[3].meta.toKind, "zone"); assert.strictEqual(nb[3].slot.tZone, "z1"); assert.strictEqual(nb[3].slot.oProject, "p1");
 assert.deepStrictEqual(nb[4].slot, { op: "delete", kind: "project", tZone: "z1", tProject: "p1", tTask: null });
 assert.strictEqual(nb[5].meta.op, "session"); assert.strictEqual(nb[5].meta.toTaskName, "刷题"); assert.strictEqual(nb[5].meta.why, "r");
-console.log("hex-decide.test.js ok");
+  // 到点同时发：新任务条等项目条先发完（批量 / 单卡路径都一样）；项目条被撤销也放行
+  var c2 = mk(), n0 = sent.length;
+  c2.add({ key: "t9", verb: "task" }, "approve"); var ep = c2.add({ key: "p9", verb: "project" }, "approve"); c2.add({ key: "t8", verb: "task" }, "approve");
+  tick(5000);
+  assert.deepStrictEqual(sent.slice(n0).map(function (x) { return x[0]; }), ["p9"], "项目先发，任务等着");
+  return Promise.resolve().then(function () { return Promise.resolve(); }).then(function () { return Promise.resolve(); }).then(function () {
+    assert.deepStrictEqual(sent.slice(n0).map(function (x) { return x[0]; }), ["p9", "t9", "t8"], "项目收尾后任务才发");
+    var c3 = mk(), n1 = sent.length, p3 = c3.add({ key: "p3", verb: "project" }, "approve");
+    c3.add({ key: "t3", verb: "task" }, "approve"); tick(100); c3.undo(p3.id);
+    tick(5000);
+    assert.deepStrictEqual(sent.slice(n1).map(function (x) { return x[0]; }), ["t3"], "项目撤销后任务不卡住");
+    console.log("hex-decide.test.js ok");
+  });
 });

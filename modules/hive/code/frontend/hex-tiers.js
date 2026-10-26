@@ -614,13 +614,16 @@
       w.appendChild(h); w.appendChild(body);
       return w;
     }
-    function bigEl(sec) {
+    function bigEl(sec, pos, last) {
       var id = sec.id, open = S.bigOpen[id] != null ? S.bigOpen[id] : id === "q";
       var w = el("section", "hb-big"), h = el("div", "hb-head"), body = el("div", "hb-body");
       w.dataset.sec = id; h.dataset.ht = "big-toggle"; h.dataset.sec = id; h.dataset.ftok = "big:" + id; h.tabIndex = 0; h.draggable = true;
       h.setAttribute("role", "button"); h.setAttribute("aria-expanded", String(open));
       h.appendChild(el("span", "hb-title", sec.title));
       if (id !== "h") h.appendChild(cnt(id, sec.count));
+      [["up", "↑", "上移", pos === 0], ["down", "↓", "下移", last]].forEach(function (m) {   // 触屏 / 键盘换顺序
+        var mb = tb(m[1], "big-" + m[0], "hd-btn hb-mv"); mb.dataset.sec = id; mb.dataset.ftok = "mv:" + m[0] + ":" + id; mb.setAttribute("aria-label", m[2]); mb.disabled = m[3]; h.appendChild(mb);
+      });
       h.appendChild(el("span", "hd-chev", open ? "▴" : "▾"));
       body.hidden = !open;
       if (id === "s" || id === "r") {
@@ -663,10 +666,8 @@
       var body = el("div", "ht-body"), any = false;
       if (S.failed) { var er = el("div", "ht-err", "读取失败，稍后重试"); er.setAttribute("role", "alert"); body.appendChild(er); any = true; }
       if (S.report) { body.appendChild(reportCard(S.report)); any = true; }
-      B.normOrder(S.order).forEach(function (id) {
-        if (!secs[id].count) return;
-        any = true; body.appendChild(bigEl(secs[id]));
-      });
+      var vis = B.normOrder(S.order).filter(function (id) { return secs[id].count; });
+      vis.forEach(function (id, i) { any = true; body.appendChild(bigEl(secs[id], i, i === vis.length - 1)); });
       if (!any) body.appendChild(el("div", "hd-empty", "没有待决策的"));
       panel.appendChild(body);
       body.scrollTop = scrollTop;
@@ -713,6 +714,11 @@
         var was = tk[id] != null ? tk[id] : kind === "big-toggle" ? id === "q" : /:low$/.test(id);
         tk[id] = !was; S.jump = was ? null : kind === "big-toggle" ? { sec: id } : { sec: id.split(":")[0], grp: id };
         X.render(); return;
+      }
+      if (kind === "big-up" || kind === "big-down") {
+        var ord = B.normOrder(S.order), vs = ord.filter(function (x) { return S.cache[x].count; }), vi = vs.indexOf(b.dataset.sec), nb = vs[vi + (kind === "big-up" ? -1 : 1)];
+        if (nb) { S.order = B.moveOnto(ord, b.dataset.sec, nb); B.saveOrder(S.order); X.render(); }
+        return;
       }
       if (kind === "batch-ok" || kind === "batch-no") { batch(b.dataset.sec, null, kind === "batch-ok" ? "approve" : "reject"); return; }
       if (kind === "batch-grp") { batch(b.dataset.grp.split(":")[0], b.dataset.grp, "approve"); return; }

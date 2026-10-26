@@ -66,3 +66,4 @@
 .hb-tag.is-change { background: var(--plan); }
 .hb-tag.is-delete { background: var(--danger); }
 .hb-proj { font-size: var(--fs-sub); font-weight: 600; color: var(--ink-2); }
+.hb-mv { min-width: 26px; min-height: 26px; padding: 0 6px; }

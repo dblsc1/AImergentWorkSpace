@@ -680,6 +680,19 @@ def test_big_card_order_is_draggable_and_remembered(browser, base) -> None:  # n
         assert json.loads(hive.page.evaluate("localStorage.getItem('hive.decide.order')"))[:3] == ["q", "h", "s"]
 
 
+def test_big_card_order_buttons(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base) as hive:
+        hive.page.evaluate("() => window.NexusTableHexApp.refresh()")
+        hive.page.wait_for_selector(".hd-head")
+        hive.page.locator(".hd-head").click()
+        hive.page.wait_for_selector(".hb-head")
+        assert hive.page.locator(".hb-big[data-sec=q] [data-ht=big-up]").is_disabled() and hive.page.locator(".hb-big[data-sec=h] [data-ht=big-down]").is_disabled()
+        hive.page.locator(".hb-big[data-sec=b] [data-ht=big-up]").click()
+        assert hive.page.locator(".hb-title").all_inner_texts()[2:4] == ["待分类窗口块", "窗口分类规则"]
+        assert json.loads(hive.page.evaluate("localStorage.getItem('hive.decide.order')"))[:4] == ["q", "s", "b", "r"]
+        assert hive.page.evaluate("document.activeElement.dataset.ftok") == "mv:up:b", "重画后焦点还在按钮上"
+
+
 SESSION = {"id": "ns_1", "kind": "sessionChange", "status": "pending", "eventId": "ev_9", "op": "reassign", "taskId": "t_p_piano", "projectId": "p_piano",
            "fromTaskId": "t_p_math", "fromProjectId": "p_math", "startAt": "2026-10-24T01:00:00Z", "durationSeconds": 2520, "reason": "其实在练琴", "corrected": False}
 

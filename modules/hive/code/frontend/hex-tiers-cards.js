@@ -113,7 +113,8 @@
     acts.appendChild(X.btn("hd-btn", "批准", "approve")); acts.appendChild(X.btn("hd-btn", "不要", "reject"));
     f.appendChild(acts);
     n.appendChild(ok); n.appendChild(no); n.appendChild(f);
-    X.tint(n, c.projectId, c.zoneId);
+    var o = sess && c.slot && (c.slot.oProject || c.slot.oZone) ? { p: c.slot.oProject, z: c.slot.oZone } : { p: c.projectId, z: c.zoneId };   // 更改按原位置着色
+    X.tint(n, o.p, o.z);
     X.bindSwipe(n, f, ok, no, c);
     return n;
   };
