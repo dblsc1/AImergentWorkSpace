@@ -29,6 +29,7 @@
     var type = markType(slot.op);
     if (!tree) return { type: type, missing: false, T: ref(null), O: ref(null) };
     var T = ref(tree, slot.tZone, slot.tProject, slot.tTask), O = ref(tree, slot.oZone, slot.oProject, slot.oTask);
+    if (slot.del && !T.ok) T = ref(null);   // 删规则 = 清理：目标没了照样能批准，只是不标
     var missing = !T.ok || (slot.op === "change" && !O.ok);
     return { type: type, missing: missing, T: T, O: O };
   }
@@ -51,7 +52,7 @@
     return { type: type, style: type === "delete" ? "del" : type === "hl" ? "hl" : "frame", dest: dest, origin: origin, zoom: zoom, ghost: dest.level === "newProject" };
   }
   function slotFromDataset(ds) {
-    var m = { targetZoneId: "tZone", targetProjectId: "tProject", targetTaskId: "tTask", originZoneId: "oZone", originProjectId: "oProject", originTaskId: "oTask", op: "op", kind: "kind", block: "block", name: "name" }, s = {};
+    var m = { targetZoneId: "tZone", targetProjectId: "tProject", targetTaskId: "tTask", originZoneId: "oZone", originProjectId: "oProject", originTaskId: "oTask", op: "op", kind: "kind", block: "block", name: "name", del: "del" }, s = {};
     Object.keys(m).forEach(function (k) { if (ds && ds[k] != null) s[m[k]] = ds[k]; });
     return s;
   }

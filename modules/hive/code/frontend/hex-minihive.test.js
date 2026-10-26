@@ -59,6 +59,13 @@ assert.deepStrictEqual([p.dest.taskId, p.origin.taskId], ["t_unc_p_math", "t1"])
 assert.strictEqual(P({ op: "windowRule", block: "x" }), null, "窗口规则不标");
 assert.strictEqual(P({ op: "delete", kind: "task", tProject: "p_math", tTask: "gone" }), null, "目标没了不标");
 
+// 删规则 = 清理：目标没了照样能批准（不标）；目标在就照常标
+var rs = M.resolveSlot({ zones: [], projects: [{ id: "p_math", zoneId: "z_a", tasks: [] }] }, { op: "blockRule", kind: "project", tProject: "p_gone", del: "1" });
+assert.strictEqual(rs.missing, false); assert.strictEqual(M.plan({ op: "blockRule", kind: "project", tProject: "p_gone", del: "1" }, rs), null);
+assert.strictEqual(M.resolveSlot({ projects: [] }, { op: "blockRule", kind: "project", tProject: "p_gone" }).missing, true, "非删除照旧");
+assert.strictEqual(M.resolveSlot({ projects: [{ id: "p_math", tasks: [] }] }, { op: "blockRule", tProject: "p_math", del: "1" }).T.ok, true, "目标在就保留");
+assert.deepStrictEqual(M.slotFromDataset({ op: "blockRule", del: "1" }), { op: "blockRule", del: "1" });
+
 // dataset → slot
 assert.deepStrictEqual(M.slotFromDataset({ op: "create", targetProjectId: "p_math", originTaskId: "t1", name: "x", other: 1 }), { op: "create", tProject: "p_math", oTask: "t1", name: "x" });
 

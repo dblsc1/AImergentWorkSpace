@@ -551,6 +551,7 @@ class AgentActor {
             width = newWidth;
             height = newHeight;
         }
+        [x, y] = onStage(x, y);   // 和载入、MiniBar 同一个夹法，不让灯拖出屏幕
         this.actor.set_position(x, y);
         this.actor.set_size(width, height);
         this._layout();

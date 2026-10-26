@@ -84,7 +84,7 @@
 
   // ── DOM ───────────────────────────────────────────────────────────
   function el(tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
-  var SLOT = { tZone: "targetZoneId", tProject: "targetProjectId", tTask: "targetTaskId", oZone: "originZoneId", oProject: "originProjectId", oTask: "originTaskId", op: "op", kind: "kind", block: "block", name: "name" };
+  var SLOT = { tZone: "targetZoneId", tProject: "targetProjectId", tTask: "targetTaskId", oZone: "originZoneId", oProject: "originProjectId", oTask: "originTaskId", op: "op", kind: "kind", block: "block", name: "name", del: "del" };
   // 右侧留给第二部分画小蜂巢的空位：固定大小、空的，只带目标 / 原位置的 id 和操作种类
   api.slotEl = function (slot) {
     var n = el("div", "hd-minihive");
@@ -106,6 +106,10 @@
     if (!sess) { if (tp.proj) t.appendChild(el("span", "hb-proj", " " + tp.proj)); t.appendChild(document.createTextNode(tp.suffix)); }
     main.appendChild(t);
     main.appendChild(el("div", "hd-to", subtitle(m)));
+    if (m.kind === "project" && m.op === "create" && c.tasks && c.tasks.length) {
+      var tl = c.tasks.slice(0, 5).join("、") + (c.tasks.length > 5 ? " 等 " + c.tasks.length + " 个" : "");
+      main.appendChild(el("div", "hd-why hb-tasks", "含任务：" + (tl.length > 60 ? tl.slice(0, 60) + "…" : tl)));
+    }
     if (m.why) main.appendChild(el("div", "hd-why", m.why));
     if (X.errors[c.key]) { var er = el("div", "hd-err", X.errors[c.key]); er.setAttribute("role", "alert"); main.appendChild(er); }
     row.appendChild(main); row.appendChild(api.slotEl(c.slot)); f.appendChild(row);
