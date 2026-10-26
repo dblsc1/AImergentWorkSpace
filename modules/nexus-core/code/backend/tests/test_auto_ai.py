@@ -284,8 +284,9 @@ def test_auto_recorded_segments_say_when_the_ai_recognised_them(client, world, c
     from test_activity_suggestions import _recent  # noqa: PLC0415
     from test_auto_track import _pin_today  # noqa: PLC0415
 
-    # 锚在当地正午：两段同一天，且不会因零点前后而跨日
-    start = _recent(30).replace(hour=12, minute=0, second=0)
+    # 两段都在过去、同一天：零点后一小时内跑就锚在当天零点
+    base = _recent(40)
+    start = base.replace(hour=0, minute=0, second=0) if base.hour == 0 else base - timedelta(minutes=10)
     w = _waiting(client, clock)
     _answer(client, w["key"], taskId=world["a"], confidence=0.9)
     sug = {"taskId": world["a"], "confidence": 0.9, "reason": "网页规则 #1 命中", "classifier": "rules"}
