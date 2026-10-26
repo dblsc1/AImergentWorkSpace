@@ -1,6 +1,6 @@
 ---
 name: honeycomb-secretary
-description: 通过 HoneyComb（蜂巢）MCP 服务器当「秘书」：定时巡检并分类用户的时间记录、写分类规则、改已记的时间、交总结和向人提问。处理蜂巢 / HoneyComb 的窗口记录、第一级与第二级规则、块（Windowsblock）、未分类、提议与直接施加、日报时加载。
+description: 蜂巢 HoneyComb MCP 秘书：巡检时间记录、写分类规则、改记录、交总结和提问时加载
 ---
 
 # 蜂巢秘书
