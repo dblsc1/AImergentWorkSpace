@@ -345,10 +345,15 @@ def _started_by(run: dict, a: datetime, b: datetime) -> bool:
 
 def _turns(run: dict, start: datetime, end: datetime) -> list[dict]:
     """按指令切段（v2.43）：一段从一次人回复开始，到下一次回复之前最后一个 working 相位结束；
-    第一次回复之前的 working 归一段 startedBy=None。回复落在 working 开头 REPLY_WINDOW 秒内且该段还没结束，才算它开的头（同 startedBy）；落在等待里的回复开新段，不回头并入已结束的段。
+    第一次回复之前的 working 归一段 startedBy=None。回复落在 working 开头 REPLY_WINDOW 秒内且该段还没结束，才算它开的头（同 startedBy）；落在等待里没贴上的回复也切段，但该段 startedBy 为 null（与相位、handoffs 口径一致）。
     working 跨过回复时在回复处切开。只含与 [start, end) 相交的部分，没有 working 的回复不成段。"""
     works = cr.working(run)
-    cuts = sorted({next((a for a, b in works if _snaps(t, a, b)), t) for t in run["replies"]})
+    opened: dict[datetime, bool] = {}  # 切点 → 是不是「开头」：贴着 working 开头（_snaps）或落在 working 中间；落在等待空档里没贴上的不是
+    for t in run["replies"]:
+        snap = next((a for a, b in works if _snaps(t, a, b)), None)
+        cut = snap or t
+        opened[cut] = opened.get(cut, False) or snap is not None or any(a < t < b for a, b in works)
+    cuts = sorted(opened)
     turns: dict[int, list] = {}
     for a, b in works:
         pts = [a, *(c for c in cuts if a < c < b), b]
@@ -356,7 +361,7 @@ def _turns(run: dict, start: datetime, end: datetime) -> list[dict]:
             if c := cr.clip(x, y, start, end):
                 t = turns.setdefault(bisect_right(cuts, x), [c[0], c[1], 0.0])
                 t[0], t[1], t[2] = min(t[0], c[0]), max(t[1], c[1]), t[2] + (c[1] - c[0]).total_seconds()
-    return [{"from": cr.iso(f), "to": cr.iso(t), "workingSeconds": round(s), "startedBy": "human_reply" if i else None}
+    return [{"from": cr.iso(f), "to": cr.iso(t), "workingSeconds": round(s), "startedBy": "human_reply" if i and opened[cuts[i - 1]] else None}
             for i, (f, t, s) in sorted(turns.items())]
 
 

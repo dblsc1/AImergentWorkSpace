@@ -588,17 +588,20 @@ def test_turns_reply_during_wait_after_finished_work_starts_new_turn(client):
     run(client, 1, "09:00:00", "10:00:00", phases=[
         ("09:00:00", "working"), ("09:00:20", "waiting_input"), ("09:30:00", "working"), ("09:50:00", "idle")],
         interactions=[("reply", "09:00:40")])
-    assert _turns(client, 1) == [("09:00", "09:00", 20, None), ("09:30", "09:50", 1200, "human_reply")]
+    assert _turns(client, 1) == [("09:00", "09:00", 20, None), ("09:30", "09:50", 1200, None)]  # 没贴上：不冒充 human_reply
+    r = {x["runId"]: x for x in _page(client)["agents"]["runs"]}["cv-1"]
+    assert all("startedBy" not in p for p in r["phases"])
+    assert not [h for h in get(client, HIST, **span(detail="segments"))["handoffs"] if h["type"] == "human_to_agent"]
 
 
 def test_turns_reply_near_working_start_still_snaps(client):
-    run(client, 1, "09:00:00", "10:00:00", phases=[
-        ("09:00:00", "working"), ("09:20:00", "waiting_input"), ("09:30:00", "working"), ("09:50:00", "idle")],
-        interactions=[("reply", "09:29:40")])  # 紧挨在 working 开头之前：这一段的开头
-    assert _turns(client, 1) == [("09:00", "09:20", 1200, None), ("09:30", "09:50", 1200, "human_reply")]
-    run(client, 2, "09:00:00", "10:00:00", phases=[
-        ("09:00:00", "working"), ("09:20:00", "waiting_input"), ("09:30:00", "working"), ("09:50:00", "idle")],
-        interactions=[("reply", "09:30:20")])  # 开头之后 20 秒、段还在跑：并入这一段，不在 09:30:20 处切开
+    phases = [("09:00:00", "working"), ("09:20:00", "waiting_input"), ("09:30:00", "working"), ("09:50:00", "idle")]
+    run(client, 1, "09:00:00", "10:00:00", phases=phases, interactions=[("reply", "09:29:40")])  # 在开头之前：不贴（同相位口径）
+    run(client, 2, "09:00:00", "10:00:00", phases=phases, interactions=[("reply", "09:30:20")])  # 开头之后 20 秒、段在跑：贴上
+    assert _turns(client, 1) == [("09:00", "09:20", 1200, None), ("09:30", "09:50", 1200, None)]
     assert _turns(client, 2) == [("09:00", "09:20", 1200, None), ("09:30", "09:50", 1200, "human_reply")]
-    started = [x for x in _page(client)["agents"]["runs"][1]["phases"] if x["phase"] == "working"]
-    assert [x.get("startedBy") for x in started] == [None, "human_reply"]
+    by = {x["runId"]: x for x in _page(client)["agents"]["runs"]}
+    started = lambda n: [x.get("startedBy") for x in by[f"cv-{n}"]["phases"] if x["phase"] == "working"]  # noqa: E731
+    assert started(1) == [None, None] and started(2) == [None, "human_reply"]
+    h2a = {x["runId"] for x in get(client, HIST, **span(detail="segments"))["handoffs"] if x["type"] == "human_to_agent"}
+    assert h2a == {"cv-2"}
