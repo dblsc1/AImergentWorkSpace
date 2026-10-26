@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -69,13 +70,31 @@ func loadAliases(path string) (*aliases, error) {
 	if a.m == nil {
 		a.m = map[string]map[string]string{}
 	}
+	if err := a.validate(); err != nil {
+		return nil, fmt.Errorf("编号代号对照表 %s 内容不合法（删掉它会从 1 重新编号）：%w", path, err)
+	}
+	return a, nil
+}
+
+var aliasKinds = []string{"本机IP", "局域网IP", "组网IP", "公网IP", "邮箱", "用户", "主机", "网站"}
+
+// validate：只认已知类型；代号必须是「类型前缀 + 正整数」、同类型内不重复、原值非空；顺便定下一个号。
+func (a *aliases) validate() error {
 	for kind, t := range a.m {
-		for _, tok := range t {
-			_, n := splitToken(tok)
+		if !slices.Contains(aliasKinds, kind) {
+			return fmt.Errorf("未知类型 %q", kind)
+		}
+		seen := map[string]bool{}
+		for orig, tok := range t {
+			n, err := strconv.Atoi(strings.TrimPrefix(tok, kind))
+			if orig == "" || !strings.HasPrefix(tok, kind) || err != nil || n <= 0 || strconv.Itoa(n) != strings.TrimPrefix(tok, kind) || seen[tok] {
+				return fmt.Errorf("%s 里有不合法的代号（或原值为空）", kind) // 代号字段可能本身就是原值，不回显
+			}
+			seen[tok] = true
 			a.next[kind] = max(a.next[kind], n)
 		}
 	}
-	return a, nil
+	return nil
 }
 
 // 一个进程里所有脱敏器（同步、在场心跳、状态桥）共用同一张内存表，免得各读各的磁盘、分到同一个号。

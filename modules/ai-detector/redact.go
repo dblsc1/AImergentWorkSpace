@@ -336,7 +336,7 @@ func (r redactor) window(app, title string, tab *webTab) (string, string) {
 		}
 		host, loc := "", ""
 		if p, err := url.Parse(tab.URL); err == nil {
-			host, loc = p.Hostname(), r.domainAlias(p.Hostname(), "")
+			host, loc = p.Hostname(), r.domainAlias(p.Hostname(), colon(p.Port()))
 			if r.p.Browser == "full" && host != "" {
 				p.User = nil
 				if r.num["domains"] {

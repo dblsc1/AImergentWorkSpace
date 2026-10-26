@@ -150,19 +150,65 @@ func discoverClaude(home string) []lightAgent {
 
 const codexTail = 64 << 10
 
-// codexSession 找最近两天的目录里改动最晚的 rollout-*.jsonl（只按修改时间，不读内容）。
+// codexSession 找改动最晚的 rollout-*.jsonl（只按修改时间，不读内容）。恢复的旧会话文件还在旧日期目录里，
+// 所以不只看今天昨天，而是按目录名取最近 30 个日期目录；目录清单缓存 30 秒，每次只 stat 文件。
+// 限制：放在最近 30 个日期目录之外的恢复会话找不到。
 func codexSession(home string, now time.Time) (string, time.Time) {
 	var best string
 	var bestT time.Time
-	for _, d := range []time.Time{now, now.AddDate(0, 0, -1)} {
-		fs, _ := filepath.Glob(filepath.Join(home, ".codex", "sessions", d.Format("2006"), d.Format("01"), d.Format("02"), "rollout-*.jsonl"))
-		for _, f := range fs {
-			if fi, err := os.Stat(f); err == nil && fi.ModTime().After(bestT) {
-				best, bestT = f, fi.ModTime()
-			}
+	for _, f := range codexFiles(home, now) {
+		if fi, err := os.Stat(f); err == nil && fi.ModTime().After(bestT) {
+			best, bestT = f, fi.ModTime()
 		}
 	}
 	return best, bestT
+}
+
+const codexDays = 30
+
+var codexList struct {
+	sync.Mutex
+	home  string
+	at    time.Time
+	files []string
+}
+
+func codexFiles(home string, now time.Time) []string {
+	c := &codexList
+	c.Lock()
+	defer c.Unlock()
+	if c.home == home && now.Sub(c.at) < 30*time.Second && now.Sub(c.at) >= 0 {
+		return c.files
+	}
+	var files []string
+	n := 0
+	root := filepath.Join(home, ".codex", "sessions")
+scan:
+	for _, y := range subdirsDesc(root) {
+		for _, m := range subdirsDesc(filepath.Join(root, y)) {
+			for _, d := range subdirsDesc(filepath.Join(root, y, m)) {
+				if n++; n > codexDays {
+					break scan
+				}
+				fs, _ := filepath.Glob(filepath.Join(root, y, m, d, "rollout-*.jsonl"))
+				files = append(files, fs...)
+			}
+		}
+	}
+	c.home, c.at, c.files = home, now, files
+	return files
+}
+
+// subdirsDesc：目录名降序（YYYY / MM / DD 定长，字符串序即时间序）。
+func subdirsDesc(dir string) []string {
+	es, _ := os.ReadDir(dir)
+	var out []string
+	for i := len(es) - 1; i >= 0; i-- {
+		if es[i].IsDir() {
+			out = append(out, es[i].Name())
+		}
+	}
+	return out
 }
 
 type codexSummary struct {
