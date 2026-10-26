@@ -233,7 +233,7 @@ services:
       # 站点前缀（gateway.v1）：整站挂子路径时设，如 /Cockpit/（以 / 开头和结尾）。
       HONEYCOMB_BASE_PATH: ${HONEYCOMB_BASE_PATH:-/}
       # 本机请求标记（gateway.v1 第十节）：宿主机本身发来的请求带 X-Nexus-Same-Host: 1。前面还有同机反代时设 false。
-      # Docker Desktop、rootless Docker、同机反代下所有请求都像本机发来的：设 false。
+      # Docker Desktop、rootless Docker、同机反代、发布了 IPv6 端口（没有 ip6tables 时请求从网关地址进来）下所有请求都像本机发来的：设 false。
       HONEYCOMB_SAME_HOST_TRUSTED: ${HONEYCOMB_SAME_HOST_TRUSTED:-true}
       # 模板里只替换这些变量；$host 之类仍是 nginx 自己的。
       NGINX_ENVSUBST_FILTER: ^(AUTH_UPSTREAM|AGENT_UPSTREAM|HONEYCOMB_)

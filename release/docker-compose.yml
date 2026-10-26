@@ -133,7 +133,7 @@ services:
       AUTH_UPSTREAM: ${AUTH_UPSTREAM:-auth:8010}
       AGENT_UPSTREAM: ${AGENT_UPSTREAM:-}
       HONEYCOMB_BASE_PATH: ${HONEYCOMB_BASE_PATH:-/}
-      # Docker Desktop、rootless Docker、同机反代下所有请求都像本机发来的：设 false。
+      # Docker Desktop、rootless Docker、同机反代、发布了 IPv6 端口（没有 ip6tables 时请求从网关地址进来）下所有请求都像本机发来的：设 false。
       HONEYCOMB_SAME_HOST_TRUSTED: ${HONEYCOMB_SAME_HOST_TRUSTED:-true}
     volumes:
       # 额外路由（contracts/gateway.v1 第四节）；安装脚本建一个空的 extra/。

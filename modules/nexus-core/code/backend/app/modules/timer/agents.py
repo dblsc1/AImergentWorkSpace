@@ -44,6 +44,8 @@ SOURCE = "agent-hook"
 EVENT_TYPE = "agent.run.completed"
 #: v2.19 匿名上报（契约「调用方范围与匿名上报」）：匿名的 clientKey 存成这个前缀 + 原值，自成一个名字空间
 ANON_KEY_PREFIX = "anon:"
+#: v2.43：本机来的匿名上报（算已核实）用另一个前缀：与别处来的匿名（未核实）互不认领，唯一索引上也不撞
+LOCAL_ANON_KEY_PREFIX = "anonl:"
 #: 每个租户同时在跑的匿名运行上限。ponytail: 先数后插不是原子的，并发时可能多出几个；网关限速兜着，够用
 MAX_ANONYMOUS_RUNS = 20
 
@@ -101,6 +103,8 @@ def snapshot_data(snap: dict) -> tuple[dict, datetime]:
             data[key] = snap[key]
     if snap.get("unverified"):  # v2.19：匿名开的运行；没有就不出现
         data["unverified"] = True
+    if snap.get("anonymousOpened"):  # v2.43：内部标记，结束后匿名调用方认「自己的」运行靠它
+        data["anonymousOpened"] = True
     phases = [p for p in snap.get("phases") or [] if ts(p["at"]) <= ended]
     if phases:
         data["phases"] = phases
@@ -217,6 +221,7 @@ def start(
     heartbeat: bool = False,
     beat_source: str | None = None,
     unverified: bool = False,
+    anonymous: bool = False,
 ) -> tuple[dict, bool]:
     """开一个代理运行。**不碰 timer_state，不关任何在跑的运行。**
 
@@ -224,16 +229,20 @@ def start(
     ``unverified``（v2.19）= 这个请求什么凭据都没带：不采用它给的任务 / 项目 / match，clientKey 另起名字空间。"""
     right_now = now()
     _expire(user, right_now)  # 超时的同 key 运行先收掉，下面才开得出新的
+    # v2.43：``anonymous`` = 调用方没带令牌（含本机来的、算已核实的）；``unverified`` ⊆ anonymous。
+    # 匿名开的运行记内部标记 anonymousOpened（不回出）：clientKey 另起名字空间，也只有匿名调用方够得着它们。
+    anonymous = anonymous or unverified
     if unverified:
         # 任务 / 项目存不存在会从状态码漏出去；match 会把人的窗口认到一个没验证的调用方头上
         task_id = project_id = match = None
-        client_key = ANON_KEY_PREFIX + client_key if client_key else None
-    elif client_key and client_key.startswith(ANON_KEY_PREFIX):
-        raise InvalidInputError(f"clientKey 不能以 {ANON_KEY_PREFIX!r} 开头（保留给匿名上报）")
+    if anonymous:
+        client_key = (ANON_KEY_PREFIX if unverified else LOCAL_ANON_KEY_PREFIX) + client_key if client_key else None
+    elif client_key and client_key.startswith((ANON_KEY_PREFIX, LOCAL_ANON_KEY_PREFIX)):
+        raise InvalidInputError(f"clientKey 不能以 {ANON_KEY_PREFIX!r} 或 {LOCAL_ANON_KEY_PREFIX!r} 开头（保留给匿名上报）")
     if client_key:
         # 先认原运行，再校验只对新建有意义的字段：原任务后来被删了，重试照样回原运行
         existing = repo.find_agent_run_by_client_key(user, client_key)
-        if existing is not None and bool(existing.get("unverified")) == unverified:  # 两类运行互不认领
+        if existing is not None and _anon_opened(existing) == anonymous and bool(existing.get("unverified")) == unverified:  # 两类运行互不认领
             # v2.13 会话改名：这次给了且不同的 label / match 换掉存着的，其余不动
             names = {k: v for k, v in (("label", clean(label)), ("match", clean(match))) if v and v != existing.get(k)}
             if names:
@@ -286,13 +295,15 @@ def start(
         run["clientKey"] = client_key
     if unverified:
         run["unverified"] = True
+    if anonymous:
+        run["anonymousOpened"] = True
     for _ in range(3):
         if repo.add_agent_run(run):
             if unverified:
                 _enforce_anonymous_cap(user, run["runId"])
             return _started(run), True
         existing = repo.find_agent_run_by_client_key(user, client_key)
-        if existing is not None and bool(existing.get("unverified")) == unverified:
+        if existing is not None and _anon_opened(existing) == anonymous and bool(existing.get("unverified")) == unverified:
             return _started(existing), False
         # 撞键后那条又刚被关掉：再插一次
     raise RuntimeError(f"clientKey 争用未决：{client_key!r}")
@@ -312,14 +323,18 @@ def _enforce_anonymous_cap(user: str, run_id: str) -> None:
         raise TooManyAnonymousRunsError(f"同时在跑的匿名代理运行已到上限（{MAX_ANONYMOUS_RUNS} 个），稍后再试")
 
 
-def require_unverified(user: str, run_id: str) -> None:
-    """v2.19：匿名调用方只能动匿名开的运行。不是的（在跑的看文档，已结束的看那条事实）与不存在的
+def _anon_opened(run: dict) -> bool:
+    return run.get("anonymousOpened") is True or run.get("unverified") is True  # 老文档只有 unverified
+
+
+def require_anonymous_opened(user: str, run_id: str, same_host: bool = False) -> None:
+    """v2.19 / v2.43：匿名调用方只能动匿名开的运行；本机来的认 anonymousOpened（含算已核实的），别处来的只认 unverified。不是的（在跑的看文档，已结束的看那条事实）与不存在的
     回同一个 404、同一句话——匿名分不出「没有」与「不是你的」。"""
     run = repo.get_agent_run(user, run_id)
     if run is None:
         stored = events_service.find_by_dedupe(user, SOURCE, _dedupe_key(run_id))
         run = (stored or {}).get("data") or {}
-    if run.get("unverified") is not True:
+    if not (_anon_opened(run) if same_host else run.get("unverified") is True):
         raise NotFoundError(f"代理运行不存在：{run_id!r}")
 
 

@@ -151,10 +151,9 @@ else
   fi
   check "匿名自称 write / 抹掉匿名头没用" \
     "$(code -H 'X-Nexus-Scope: write' -H 'X-Nexus-Anonymous;' "$TREE")" 302
-  if [ "$WANT" = "[True]" ]; then   # 本机匿名上报本来就算已核实，这条只在关着本机标记时成立
-    check "匿名碰不到验证过的运行（与不存在同一个 404）" \
-      "$(code -X POST -H "$JSON" -d '{"outcome":"failed"}' "$BASE/api/core/agents/$HID/stop") $(code -X POST -H "$JSON" -d '{"outcome":"failed"}' "$BASE/api/core/agents/run_000000000000/stop")" "404 404"
-  fi
+  # 本机的匿名上报只是新运行算已核实，不放宽能碰谁：网页会话 / 令牌开的运行照旧碰不到（两种开关下都一样）
+  check "匿名碰不到验证过的运行（与不存在同一个 404）" \
+    "$(code -X POST -H "$JSON" -d '{"outcome":"failed"}' "$BASE/api/core/agents/$HID/stop") $(code -X POST -H "$JSON" -d '{"outcome":"failed"}' "$BASE/api/core/agents/run_000000000000/stop")" "404 404"
   check "匿名 POST 上报端点带结尾斜杠被拒" "$(code -X POST -H "$JSON" -d "$RUN" "$START/")" 302
   check "匿名结束自己的运行" "$(code -X POST -H "$JSON" -d '{"outcome":"done"}' "$BASE/api/core/agents/$AID/stop")" 200
   check "验证过的那个运行没被动过" \

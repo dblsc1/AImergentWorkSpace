@@ -264,6 +264,7 @@ auth.gate v1.4 让设备令牌带范围（`report` / `read` / `write`），并�
 - 网关对每个转给上游的请求设 `X-Nexus-Same-Host`：TCP 对端是回环地址，或是网关容器所在网络的网关地址（即宿主机本身发来的请求）时为 `1`，否则置空。客户端自带的同名头一律被覆盖，规矩同第九节的三个头。
 - 用途：nexus-core 把本机发来的匿名上报当作已核实（nexus-core v2.43）。令牌只用于别的机器。
 - 开关：`.env` 里 `HONEYCOMB_SAME_HOST_TRUSTED`，缺省 `true`；设 `false` 时一律置空。网关前面还有一层同机反代时，所有请求都像本机发来的：这种部署请设 `false`。
+- 同样请设 `false` 的还有：Docker Desktop、rootless Docker，以及发布了 IPv6 端口而没有 ip6tables 的主机（经 docker-proxy 进来的请求对端就是网关地址）。
 
 ## 实现说明（不改接口）
 

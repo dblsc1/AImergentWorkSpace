@@ -234,7 +234,7 @@ def agent_start(task_id: str | None, agent: str, tool: str, model: str | None, u
     """返回 ``(AgentStartOut, 是否新开)``；``v24`` = phase/label/match/client_key（v2.4）、project_id（v2.13）、heartbeat / beat_source（v2.18）。"""
     return agents_impl.start(task_id, agent, tool, model, user or current_tenant(),
                              resolve_chain=_resolve_task_chain, now=_now,
-                             unverified=_unverified_caller(), **v24)
+                             unverified=_unverified_caller(), anonymous=caller_scope().anonymous, **v24)
 
 
 def _unverified_caller() -> bool:
@@ -247,8 +247,9 @@ def anonymous_run_guard(request: Request) -> None:
     """v2.19：挂在整个 agents 路由上的依赖——匿名调用方碰带 ``{runId}`` 的端点（phase / stop / 以后加的）时，
     那个运行必须是匿名开的，否则与不存在同一个 404。挂在路由上而不是每个端点里：新加的端点漏不掉。"""
     run_id = request.path_params.get("runId")
-    if run_id is not None and _unverified_caller():
-        agents_impl.require_unverified(current_tenant(), run_id)
+    c = caller_scope()
+    if run_id is not None and c.anonymous:  # 本机来的只多认「本机匿名开的」运行，令牌开的谁都碰不到
+        agents_impl.require_anonymous_opened(current_tenant(), run_id, c.same_host)
 
 
 def agent_stop(run_id: str, outcome: str, output: str | None, user: str | None = None) -> dict:

@@ -278,6 +278,16 @@ jobs:
       - name: 权限范围与匿名上报（auth.gate v1.4，单人模式）
         # 两份组装 × 两种前缀都从门外验：三种范围各能做什么、匿名只能上报、伪造的头被盖掉、单个吊销、限速。
         run: deploy/test/scopes.sh ci-smoke-password
+      - name: 权限范围与匿名上报（关掉本机标记：匿名名额上限、伪造本机头、碰不到已核实的运行）
+        # HONEYCOMB_SAME_HOST_TRUSTED=false 时本机来的匿名上报也是 unverified，scopes.sh 走完整的匿名检查。只跑根前缀，省时间。
+        if: matrix.base == '/'
+        env:
+          HONEYCOMB_SAME_HOST_TRUSTED: 'false'
+        run: |
+          echo "HONEYCOMB_SAME_HOST_TRUSTED=false" >> ${{ matrix.dir }}/.env
+          (cd ${{ matrix.dir }} && docker compose up -d --wait --wait-timeout 120 web)
+          sleep 40   # 上一轮把匿名限速区打满了，等额度回来
+          deploy/test/scopes.sh ci-smoke-password
       - name: 灌演示数据（照 README）
         run: HONEYCOMB_PASSWORD=ci-smoke-password python3 seed/seed_demo.py --base "http://127.0.0.1:8800${HONEYCOMB_BASE_PATH%/}"
       - name: 开内置聊天（COMPOSE_PROFILES=agent）再冒烟

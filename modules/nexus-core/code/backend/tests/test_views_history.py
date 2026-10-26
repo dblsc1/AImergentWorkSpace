@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -502,6 +504,8 @@ def test_runs_paging_over_200_with_cursor_round_trip(client, monkeypatch):
     assert len(set(seen)) == 8
     assert "nextRunsCursor" not in get(client, HIST, **span(who="agent"))["agents"]  # summary 不翻页
     assert get(client, HIST, expect=422, **span(detail="segments", runsCursor="not-a-cursor"))
+    naive = base64.urlsafe_b64encode(json.dumps(["2026-10-01T09:00:00", "cv-1"]).encode()).decode()  # 没有时区：422，不是 500
+    assert get(client, HIST, expect=422, **span(detail="segments", runsCursor=naive))
 
 
 def test_runs_default_page_is_200(client):

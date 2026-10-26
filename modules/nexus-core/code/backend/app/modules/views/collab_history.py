@@ -295,7 +295,10 @@ def _cursor_of(run: dict) -> str:
 def _cursor_key(cursor: str) -> tuple[datetime, str]:
     try:
         at, run_id = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
-        return datetime.fromisoformat(at), str(run_id)
+        moment = datetime.fromisoformat(at)
+        if moment.tzinfo is None:
+            raise ValueError("naive")
+        return moment, str(run_id)
     except (ValueError, TypeError, binascii.Error) as exc:
         raise UnprocessableError(f"参数 runsCursor 不是上一页给的游标：{cursor[:40]!r}") from exc
 
