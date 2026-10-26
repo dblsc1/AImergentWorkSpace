@@ -18,14 +18,15 @@
  * 一个新的请求面都不开，和 hex-crud.js 当初的判断一致。
  *
  * **后端零改动**：数据全是蜂巢已经拿着的（tree / heat / todos / completions），
- * 只多拉一次 views/gantt（打开时拉，拿不到就那一栏写"读取失败"，其余照常）。
+ * 多拉一次 views/gantt（打开时拉，拿不到就那一栏写"读取失败"，其余照常），
+ * 再按同一个 7 天区间拉一次 views/agent-time 把 Agent 时长并排显示（拿不到就不显示，不影响其余）。
  * 热度口径与 hex-data.js::completionHeat 同一份：近期完成次数按 7 天半衰期加权。
  */
 (function () {
   "use strict";
 
   var DAY = 86400000;
-  var ctx = null;   // { state, fetchGantt, createProject, openProject, reload, halfLifeDays }
+  var ctx = null;   // { state, fetchGantt, fetchAgentByProject, withAgentTime, createProject, openProject, reload, halfLifeDays }
   var dlg = null;
 
   function esc(s) {
@@ -37,6 +38,9 @@
     if (seconds == null) return "—";
     var m = Math.round(seconds / 60);
     return m < 60 ? m + " 分" : Math.floor(m / 60) + " 时 " + (m % 60) + " 分";
+  }
+  function withAgent(text, agentSeconds) {
+    return ctx.withAgentTime(text, agentSeconds, hm);
   }
   function heatText(v) { return (v || 0).toFixed(1); }
 
@@ -59,7 +63,7 @@
     return out;
   }
 
-  function model(zoneId, gi) {
+  function model(zoneId, gi, agent) {
     var st = ctx.state;
     var zone = st.hive.zones.filter(function (z) { return z.id === zoneId; })[0];
     if (!zone) return null;
@@ -75,7 +79,7 @@
       return {
         id: p.id, name: p.name, heat: (st.heat || {})[p.id] || 0,
         todos: (st.todos[p.id] || []).length, done7: done7,
-        d7: g ? g.d7 : null, today: g ? g.today : null, plan: g ? g.plan : null
+        a7: (agent || {})[p.id] || 0, d7: g ? g.d7 : null, today: g ? g.today : null, plan: g ? g.plan : null
       };
     });
     // 与 buildHoneycomb 同一个排序：热度降序，并列按项目 order —— 所以这张表的顺序
@@ -97,7 +101,7 @@
     return {
       zone: zone, rank: rank, zoneCount: ranked.length, rows: rows,
       next: next.slice(0, 5), recent: recent.slice(0, 5),
-      d7: sum("d7"), today: sum("today"),
+      d7: sum("d7"), a7: rows.reduce(function (s, r) { return s + r.a7; }, 0), today: sum("today"),
       done7: rows.reduce(function (s, r) { return s + r.done7; }, 0),
       todos: rows.reduce(function (s, r) { return s + r.todos; }, 0),
       maxHeat: rows.reduce(function (m, r) { return Math.max(m, r.heat); }, 0),
@@ -122,7 +126,7 @@
         '<td class="zp-name">' + esc(r.name) + "</td>" +
         '<td class="zp-heat"><span class="zp-bar"><i style="width:' + w + '%"></i></span>' +
           '<span class="zp-num">' + heatText(r.heat) + "</span></td>" +
-        '<td class="zp-num">' + (dash || (m.ganttOk ? hm(r.d7) : "—")) + "</td>" +
+        '<td class="zp-num">' + (dash || (m.ganttOk ? withAgent(hm(r.d7), r.a7) : "—")) + "</td>" +
         '<td class="zp-num">' + r.done7 + "</td>" +
         '<td class="zp-num">' + r.todos + "</td>" +
         "<td>" + (dash || (m.ganttOk ? planCell(r, m.todayStr) : "—")) + "</td>" +
@@ -157,7 +161,7 @@
         "</span>" +
         '<button class="zp-close" value="close" aria-label="关闭">×</button></form>' +
       '<div class="zp-tiles">' +
-        tile("近 7 天投入", dash || (m.ganttOk ? hm(m.d7) : "读取失败")) +
+        tile("近 7 天投入", dash || (m.ganttOk ? withAgent(hm(m.d7), m.a7) : "读取失败")) +
         tile("今天", dash || (m.ganttOk ? hm(m.today) : "—")) +
         tile("近 7 天完成", m.done7 + " 条") +
         tile("待办", m.todos + " 条") +
@@ -344,19 +348,28 @@
   }
 
   // 拉一次 gantt 再画实数。拿不到就把依赖它的格子写成"读取失败 / —"，其余照常。
+  // 代理时长的区间（今天往前 6 天）要用 gantt 的 today，所以接在 gantt 后面取；
+  // 人的时长先画，代理时长回来再补，取不到 / 卡住 / 抛错都只是不显示。
+  function repaint(zoneId, gi, agent) {
+    if (!dlg || !dlg.open || dlg.dataset.zoneId !== zoneId) return;
+    var m = model(zoneId, gi, agent);
+    if (!m) return;
+    var keep = dlg.querySelector("[data-zp-new] input");
+    var typed = keep ? keep.value : "";
+    dlg.innerHTML = render(m, false);
+    var input = dlg.querySelector("[data-zp-new] input");
+    if (input && typed) input.value = typed;
+  }
+
   function paint(zoneId) {
     ctx.fetchGantt().then(function (r) {
-      if (!dlg || !dlg.open || dlg.dataset.zoneId !== zoneId) return;
       var gi = r && r.ok ? ganttIndex(r.data) : null;
-      var m = model(zoneId, gi);
-      if (m) {
-        var keep = dlg.querySelector("[data-zp-new] input");
-        var typed = keep ? keep.value : "";
-        dlg.innerHTML = render(m, false);
-        var input = dlg.querySelector("[data-zp-new] input");
-        if (input && typed) input.value = typed;
-      }
-    });
+      repaint(zoneId, gi, null);
+      if (!gi) return;
+      return ctx.fetchAgentByProject(gi.__today).then(function (agent) {
+        if (agent) repaint(zoneId, gi, agent);
+      });
+    }).catch(function () {});
   }
 
   function init(c) { ctx = c; }

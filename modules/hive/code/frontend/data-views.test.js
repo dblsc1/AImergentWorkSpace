@@ -316,6 +316,43 @@ Promise.resolve()
       assert.ok(r.message.indexOf("field required") >= 0, r.message);
     });
   }); })
+  .then(function () { return test("agent-time：区间 = today 往前 6 天；按项目归并；文案只在有代理时长时拼", function () {
+    assert.deepStrictEqual(D.weekRange("2026-10-27"), { from: "2026-10-21", to: "2026-10-27" });
+    assert.deepStrictEqual(D.weekRange("2026-03-02"), { from: "2026-02-24", to: "2026-03-02" });
+    var by = D.agentSecondsByProject({ tasks: [
+      { projectId: "p1", taskId: "t1", seconds: 600, runs: 1 },
+      { projectId: "p1", taskId: null, seconds: 60, runs: 1 },
+      { projectId: "p2", taskId: "t9", seconds: 0, runs: 1 }
+    ] });
+    assert.deepStrictEqual(by, { p1: 660 });
+    assert.deepStrictEqual(D.agentSecondsByProject(null), {});
+    var fmt = function (s) { return Math.round(s / 60) + "分"; };
+    assert.strictEqual(D.withAgentTime("80分", 660, fmt), "人 80分 · Agent 11分");
+    assert.strictEqual(D.withAgentTime("80分", 0, fmt), "80分");
+    var seen;
+    return D.fetchAgentTime("2026-10-21", "2026-10-27", { fetchImpl: function (u) { seen = u; return Promise.reject(new Error("x")); } })
+      .then(function (r) {
+        assert.strictEqual(seen, "/api/core/views/agent-time?from=2026-10-21&to=2026-10-27");
+        assert.strictEqual(r.ok, false);
+      });
+  }); })
+  .then(function () { return test("agent-time 失败（reject / 同步抛 / 非 2xx）→ 得 null，人的文案不变、代理秒数不并进人的时长", function () {
+    var fmt = function (s) { return Math.round(s / 60) + "分"; };
+    var cases = [
+      function () { return Promise.reject(new Error("x")); },
+      function () { throw new Error("sync"); },
+      function () { return Promise.resolve({ ok: false, status: 500, json: function () { return Promise.resolve({}); } }); }
+    ];
+    return cases.reduce(function (p, fi) {
+      return p.then(function () { return D.fetchAgentByProject("2026-10-27", { fetchImpl: fi }); })
+        .then(function (agent) {
+          assert.strictEqual(agent, null);
+          var d7 = 4800;  // 人 80 分，面板里的 d7 只来自 gantt
+          assert.strictEqual(D.withAgentTime(fmt(d7), (agent || {}).p1 || 0, fmt), "80分");
+          assert.strictEqual(d7, 4800);
+        });
+    }, Promise.resolve());
+  }); })
   .then(function () {
     console.log(passed + " passed");
   })

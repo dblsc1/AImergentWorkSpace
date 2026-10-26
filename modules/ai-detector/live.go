@@ -40,6 +40,9 @@ func sendTitles(cfg Config, titles []string) ([]string, error) {
 			return nil, err
 		}
 	}
+	if err := flushAliases(cfg); err != nil { // 编号代号在脱敏时已分配：存盘失败 / 表读不了都不上传
+		return nil, err
+	}
 	out := make([]string, len(titles))
 	for i, t := range titles {
 		if ps != nil {
@@ -433,10 +436,13 @@ const (
 )
 
 type bridge struct {
-	agents map[string]*agentRun
-	loaded bool
-	dirty  bool // 上次写状态文件失败：下一轮就算没变化也再写
-	q      quietLog
+	agents     map[string]*agentRun
+	loaded     bool
+	dirty      bool      // 上次写状态文件失败：下一轮就算没变化也再写
+	nextReport time.Time // 红绿灯那份：下次最早上报时刻
+	failed     bool      // 最近一次 report 碰到网络失败
+	light      bool      // true = 红绿灯那一份（存 State.LightAgents），false = 状态文件桥（State.Agents）
+	q          quietLog
 }
 
 // poll 读一次状态文件并上报变化；映射有变就写回状态文件。
@@ -444,17 +450,25 @@ func (b *bridge) poll(cfg Config, hc *http.Client, now time.Time, statePath stri
 	if !active(cfg) || cfg.AgentStatusFile == "" {
 		return // 关 / 暂停：不读文件、零请求
 	}
+	file, fresh := readStatusFile(cfg.AgentStatusFile, now, append(append([]string{}, cfg.AgentStatusIgnore...), lightsIgnore(cfg)...))
+	if !fresh {
+		return // 过期：不编转入、不 stop，在跑的运行留给服务端的遗忘超时
+	}
+	b.report(cfg, hc, now, statePath, file)
+}
+
+// report 把一份新鲜的代理列表对到运行上：开运行、报相位、结束。状态文件桥与红绿灯共用。
+func (b *bridge) report(cfg Config, hc *http.Client, now time.Time, statePath string, file []fileAgent) {
 	if !b.loaded {
 		var st State
 		_ = loadJSON(statePath, &st)
 		b.agents, b.loaded = st.Agents, true
+		if b.light {
+			b.agents = st.LightAgents
+		}
 	}
 	if b.agents == nil {
 		b.agents = map[string]*agentRun{}
-	}
-	file, fresh := readStatusFile(cfg.AgentStatusFile, now, cfg.AgentStatusIgnore)
-	if !fresh {
-		return // 过期：不编转入、不 stop，在跑的运行留给服务端的遗忘超时
 	}
 	before, _ := json.Marshal(b.agents)
 	base := strings.TrimRight(cfg.CockpitURL, "/")
@@ -605,13 +619,20 @@ func (b *bridge) poll(cfg Config, hc *http.Client, now time.Time, statePath stri
 		}
 		b.agents[a.key] = &agentRun{RunID: r.RunID, Phase: a.phase}
 	}
+	b.failed = down
 	if !down {
 		b.q.last = ""
 	}
 	if after, _ := json.Marshal(b.agents); b.dirty || string(before) != string(after) {
 		snap := map[string]*agentRun{}
 		_ = json.Unmarshal(after, &snap)
-		err := updateState(statePath, func(s *State) { s.Agents = snap })
+		err := updateState(statePath, func(s *State) {
+			if b.light {
+				s.LightAgents = snap
+			} else {
+				s.Agents = snap
+			}
+		})
 		if b.dirty = err != nil; b.dirty {
 			b.q.printf("状态文件桥：状态文件写不了：%v", err)
 		}

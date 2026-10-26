@@ -1,0 +1,7 @@
+{
+  "uuid": "agent-traffic-light@local",
+  "name": "Agent Traffic Light",
+  "description": "Traffic lights for AI coding agents, driven by ~/.agent-traffic-light/agents.json",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "version": 3
+}

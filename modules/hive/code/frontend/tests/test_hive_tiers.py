@@ -149,10 +149,20 @@ def open_tiers(browser: Any, base: str, tiers: Any = True, props: dict | None = 
     return open_hive(browser, base, setup=lambda h: tiers_setup(h, tiers, props), **kw)
 
 
+def _expand_all(hive: Any) -> None:
+    """大卡 / 分组默认收起（分组里只有低置信度默认展开）：测试要看里面的卡，全点开，再等「跳一跳」跳完。"""
+    for sel in (".hb-head[aria-expanded=false]", ".hb-ghead[aria-expanded=false]"):
+        while hive.page.locator(sel).count():
+            hive.page.locator(sel).first.click()
+    hive.page.wait_for_timeout(450)
+
+
 def _show(hive: Any) -> None:
     hive.page.evaluate("() => window.NexusTableHexApp.refresh()")
     hive.page.wait_for_selector(".hd-head")
     hive.page.locator(".hd-head").click()
+    hive.page.wait_for_selector(".hb-head")
+    _expand_all(hive)
     hive.page.wait_for_selector(".ht-block")
 
 
@@ -191,9 +201,9 @@ def test_tiers_off_keeps_old_panel(browser, base) -> None:  # noqa: F811
 def test_sections_order_and_counts(browser, base) -> None:  # noqa: F811
     with open_tiers(browser, base) as hive:
         _show(hive)
-        titles = hive.page.locator(".ht-sec-t").all_inner_texts()
-        assert titles == ["AI 问题", "待分类窗口块", "待批准规则", "待批准日程改动", "自动化分类历史"]
-        assert hive.page.locator(".ht-cnt").all_inner_texts() == ["1", "3", "2", "1", "今天 2 条"]
+        titles = hive.page.locator(".hb-title").all_inner_texts()
+        assert titles == ["AI 问题", "待批准日程改动", "窗口分类规则", "待分类窗口块", "自动化历史"]
+        assert hive.page.locator(".hb-head .hb-cnt").all_inner_texts() == ["1", "1", "2", "3"], "自动化历史没有红圈"
         assert hive.page.locator(".hd-badge").inner_text() == "7"
         assert hive.page.locator(".hd-cols").count() == 0, "一栏，没有旧的两栏"
         assert hive.page.locator("section[data-sec=q] .hd-win").inner_text() == "14:00 到 17:00 没有任何记录"
@@ -203,7 +213,7 @@ def test_sections_order_and_counts(browser, base) -> None:  # noqa: F811
         assert "is-ignore" in _block(hive, ZOOM).get_attribute("class"), "没有目标 = 灰色"
         assert _block(hive, DOC).locator("button").all_inner_texts() == ["拆分", "标为通用窗口", "改去向", "批准"]
         assert "批准" not in _block(hive, ZOOM).locator("button").all_inner_texts()
-        assert hive.page.locator("section[data-sec=r] .ht-badge").all_inner_texts() == ["第一级 · 收纳", "第二级 · 去向"]
+        assert hive.page.locator("section[data-sec=r] .hd-minihive").count() == 2
         assert hive.page.locator("section[data-sec=h] .hd-hcard").count() == 2
         assert hive.page.locator("section[data-sec=h]").inner_text().count("撤销") == 2
         # 项目深浅色沿用
@@ -214,7 +224,7 @@ def test_empty_sections_are_hidden_and_questions_endpoint_404_is_tolerated(brows
     with open_tiers(browser, base, props={"projects": [], "tasks": []}) as hive:
         hive.questions = None
         _show(hive)
-        assert hive.page.locator(".ht-sec-t").all_inner_texts() == ["待分类窗口块", "自动化分类历史"]
+        assert hive.page.locator(".hb-title").all_inner_texts() == ["待分类窗口块", "自动化历史"]
 
 
 def test_swipe_left_assigns_with_remember_and_undo_resets(browser, base) -> None:  # noqa: F811
@@ -225,7 +235,7 @@ def test_swipe_left_assigns_with_remember_and_undo_resets(browser, base) -> None
         assert _posts(hive, "activity/blocks/assign")[0][1] == {"date": DATE, "blockKey": DOC, "ifSeq": 3, "taskId": "t_p_math", "remember": True}
         _until(hive.page, lambda: hive.page.locator(".hd-toast", has_text="已批准：" + DOC).count() == 1)
         _until(hive.page, lambda: _block(hive, DOC).count() == 0)
-        assert hive.page.locator(".ht-cnt").nth(1).inner_text() == "2" and hive.page.locator(".hd-badge").inner_text() == "6"
+        assert hive.page.locator(".hb-head .hb-cnt").nth(3).inner_text() == "2" and hive.page.locator(".hd-badge").inner_text() == "6"
         hive.page.locator(".hd-toast-undo").click()
         _until(hive.page, lambda: len(_posts(hive, "activity/blocks/reset")) == 1)
         assert _posts(hive, "activity/blocks/reset")[0][1] == {"date": DATE, "blockKey": DOC, "ifSeq": 4}, "撤销 = reset，带新 seq"
@@ -317,7 +327,7 @@ def test_blocks_read_failure_hides_the_block_sections(browser, base) -> None:  #
         hive.page.wait_for_selector(".ht-err")
         assert hive.page.locator(".ht-err").inner_text() == "读取失败，稍后重试"
         assert hive.page.locator(".ht-block, .ht-hist").count() == 0
-        assert hive.page.locator(".ht-sec-t").all_inner_texts() == ["AI 问题", "待批准规则", "待批准日程改动"]
+        assert hive.page.locator(".hb-title").all_inner_texts() == ["AI 问题", "待批准日程改动", "窗口分类规则"]
 
 
 def test_rerender_keeps_focus_and_an_open_select(browser, base) -> None:  # noqa: F811
@@ -433,8 +443,8 @@ def test_rule_cards_approve_correct_ignore(browser, base) -> None:  # noqa: F811
     with open_tiers(browser, base) as hive:
         _show(hive)
         w1, b1 = hive.page.locator('.hd-card[data-key="w1"]'), hive.page.locator('.hd-card[data-key="b1"]')
-        assert "Chrome 标题含「docs.example.com」" in w1.inner_text() and f"↓ 收进窗口块「{DOC}」" in w1.inner_text()
-        assert f"窗口块「{DOC}」" in b1.inner_text() and "↓ 数学 - 数学的任务" in b1.inner_text()
+        assert "Chrome 标题含「docs.example.com」" in w1.inner_text() and f"收进「{DOC}」" in w1.inner_text()
+        assert f"窗口块「{DOC}」" in b1.inner_text() and "记到 数学的任务 任务（数学）" in b1.inner_text()
         # 更正第二级：换去向
         b1.get_by_role("button", name="更正").click()
         b1.locator("select").select_option("t:t_p_piano")
@@ -454,7 +464,7 @@ def test_rule_cards_button_and_swipe_use_the_five_second_undo(browser, base) -> 
         _show(hive)
         hive.page.locator('.hd-card[data-key="w1"]').get_by_role("button", name="批准").click()
         assert hive.page.locator(".hd-toast").inner_text().startswith("已批准：")
-        assert hive.page.locator(".ht-cnt").nth(2).inner_text() == "1" and hive.page.locator(".hd-badge").inner_text() == "6"
+        assert hive.page.locator(".hb-head .hb-cnt").nth(2).inner_text() == "1" and hive.page.locator(".hd-badge").inner_text() == "6"
         hive.page.clock.run_for(4900)
         assert hive.writes == [], "5 秒前不发"
         hive.page.clock.run_for(200)
@@ -615,20 +625,17 @@ def test_dismiss_question_waits_five_seconds_and_can_be_undone(browser, base) ->
         _until(hive.page, lambda: _q(hive).count() == 0)
 
 
-def test_secretary_report_card_collapses_to_three_lines(browser, base) -> None:  # noqa: F811
+def test_secretary_report_card_is_pinned_and_toggles(browser, base) -> None:  # noqa: F811
     with open_tiers(browser, base) as hive:
         hive.report = {"id": "sr_1", "date": DATE, "author": "秘书", "revision": 1, "text": "\n".join(f"第 {i} 行" for i in range(1, 9))}
         _show(hive)
-        sec = hive.page.locator("section[data-sec=q]")
-        assert sec.locator(".hd-card").first.get_attribute("class").find("ht-report") >= 0, "报告在最上面"
-        txt = hive.page.locator(".ht-rtext")
+        assert hive.page.evaluate("document.querySelector('.ht-body').firstElementChild.className") .startswith("hb-report"), "日报在最上面"
+        txt, card = hive.page.locator(".ht-rtext"), hive.page.locator(".hb-report")
         h0 = txt.evaluate("n => n.getBoundingClientRect().height")
-        assert txt.inner_text().startswith("第 1 行") and sec.locator(".ht-cnt").inner_text() == "1", "报告不计数"
-        assert hive.page.locator(".ht-report button").get_attribute("aria-expanded") == "false"
-        hive.page.locator(".ht-report").get_by_role("button", name="展开").click()
-        assert hive.page.locator(".ht-report button").get_attribute("aria-expanded") == "true"
-        assert txt.evaluate("n => n.getBoundingClientRect().height") > h0 * 2
-        hive.page.locator(".ht-report").get_by_role("button", name="收起").click()
+        assert txt.inner_text().startswith("第 1 行") and card.get_attribute("aria-expanded") == "false"
+        card.click()
+        assert card.get_attribute("aria-expanded") == "true" and txt.evaluate("n => n.getBoundingClientRect().height") > h0 * 2
+        card.click()
         assert txt.evaluate("n => n.getBoundingClientRect().height") == h0
 
 
@@ -637,8 +644,53 @@ def test_report_alone_shows_without_questions(browser, base) -> None:  # noqa: F
         hive.questions = []
         hive.report = {"id": "sr_1", "date": DATE, "text": "今天一切正常"}
         _show(hive)
-        assert hive.page.locator("section[data-sec=q] .ht-report").count() == 1 and hive.page.locator(".ht-report button").count() == 0, "三行以内不显示展开"
-        assert hive.page.locator("section[data-sec=q] .ht-cnt").count() == 0
+        assert hive.page.locator(".hb-report").count() == 1 and hive.page.locator(".hb-big[data-sec=q]").count() == 0
+
+
+def test_big_cards_collapsed_by_default_and_groups_by_confidence(browser, base) -> None:  # noqa: F811
+    props = {**PROPS, "items": [{**PROPS["items"][0], "confidencePercent": 90}, {**PROPS["items"][1], "confidencePercent": 79}, PROPS["items"][2]]}
+    with open_tiers(browser, base, props=props) as hive:
+        hive.page.evaluate("() => window.NexusTableHexApp.refresh()")
+        hive.page.wait_for_selector(".hd-head")
+        hive.page.locator(".hd-head").click()
+        hive.page.wait_for_selector(".hb-head")
+        r = hive.page.locator(".hb-big[data-sec=r]")
+        assert r.locator(".hb-body").is_hidden() and hive.page.locator(".hb-big[data-sec=q] .hb-body").is_visible()
+        r.locator(".hb-head").click()
+        assert r.locator(".hb-gbody").count() == 2 and r.locator(".hb-ghead").all_inner_texts()[0].startswith("高置信度")
+        assert r.locator(".hb-group[data-grp='r:high'] .hb-gbody").is_hidden() and r.locator(".hb-group[data-grp='r:low'] .hb-gbody").is_visible()
+        assert r.locator(".hb-group[data-grp='r:high'] [data-key=w1]").count() == 1 and r.locator(".hb-group[data-grp='r:low'] [data-key=b1]").count() == 1
+        r.locator(".hb-group[data-grp='r:high'] .hb-ghead").click()
+        r.locator(".hb-group[data-grp='r:high'] [data-ht=batch-grp]").click()
+        assert hive.page.locator(".hd-toast").inner_text().startswith("已批准 1 项")
+        hive.page.clock.run_for(5200)
+        _until(hive.page, lambda: hive.writes == ["activity/proposals/w1/approve"])
+        r.locator("[data-ht=batch-no]").click()
+        assert hive.page.locator(".hd-toast").last.inner_text().startswith("已拒绝 ")
+
+
+def test_big_card_order_is_draggable_and_remembered(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base) as hive:
+        hive.page.evaluate("() => window.NexusTableHexApp.refresh()")
+        hive.page.wait_for_selector(".hd-head")
+        hive.page.locator(".hd-head").click()
+        hive.page.wait_for_selector(".hb-head")
+        hive.page.locator(".hb-big[data-sec=h] .hb-head").drag_to(hive.page.locator(".hb-big[data-sec=s] .hb-head"))
+        assert hive.page.locator(".hb-title").all_inner_texts()[1] == "自动化历史"
+        assert json.loads(hive.page.evaluate("localStorage.getItem('hive.decide.order')"))[:3] == ["q", "h", "s"]
+
+
+def test_big_card_order_buttons(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base) as hive:
+        hive.page.evaluate("() => window.NexusTableHexApp.refresh()")
+        hive.page.wait_for_selector(".hd-head")
+        hive.page.locator(".hd-head").click()
+        hive.page.wait_for_selector(".hb-head")
+        assert hive.page.locator(".hb-big[data-sec=q] [data-ht=big-up]").is_disabled() and hive.page.locator(".hb-big[data-sec=h] [data-ht=big-down]").is_disabled()
+        hive.page.locator(".hb-big[data-sec=b] [data-ht=big-up]").click()
+        assert hive.page.locator(".hb-title").all_inner_texts()[2:4] == ["待分类窗口块", "窗口分类规则"]
+        assert json.loads(hive.page.evaluate("localStorage.getItem('hive.decide.order')"))[:4] == ["q", "s", "b", "r"]
+        assert hive.page.evaluate("document.activeElement.dataset.ftok") == "mv:up:b", "重画后焦点还在按钮上"
 
 
 SESSION = {"id": "ns_1", "kind": "sessionChange", "status": "pending", "eventId": "ev_9", "op": "reassign", "taskId": "t_p_piano", "projectId": "p_piano",
@@ -648,10 +700,10 @@ SESSION = {"id": "ns_1", "kind": "sessionChange", "status": "pending", "eventId"
 def test_session_change_card_approve_and_correct(browser, base) -> None:  # noqa: F811
     with open_tiers(browser, base, props={**PROPS, "sessionChanges": [SESSION]}) as hive:
         _show(hive)
-        assert hive.page.locator(".ht-cnt").all_inner_texts() == ["1", "3", "2", "2", "今天 2 条"]
+        assert hive.page.locator(".hb-head .hb-cnt").all_inner_texts() == ["1", "2", "2", "3"]
         c = hive.page.locator('.hd-card[data-key="ns_1"]')
         t = c.inner_text()
-        assert "数学 - 数学的任务" in t and "↓ 钢琴 - 钢琴的任务" in t and "42 分钟" in t and _hhmm(hive, SESSION["startAt"]) in t and "AI：其实在练琴" in t
+        assert "更改" in t and "改挂到 钢琴的任务 任务" in t and "42 分钟" in t and _hhmm(hive, SESSION["startAt"]) in t and "其实在练琴" in t
         c.get_by_role("button", name="更正").click()
         c.locator("select").select_option("t:t_p_math")
         c.get_by_role("button", name="确定").click()

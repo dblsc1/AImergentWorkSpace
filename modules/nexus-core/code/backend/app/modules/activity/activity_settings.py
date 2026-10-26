@@ -19,13 +19,15 @@ from ...tenant import current as current_tenant
 from . import block_rules, blocks_repo
 from .proposals import ConflictError
 
+DEFAULT_THRESHOLD = 80
 AGENT_OFF = {"enabled": False, "windowsClassify": False, "honeycombRecords": False}
 
 
 def get() -> dict:
     doc = blocks_repo.get_settings(current_tenant()) or {}
     return {"version": doc.get("version", 0), "tiers": doc.get("tiers", False), "tiersSince": doc.get("tiersSince"),
-            "agentDirect": {**AGENT_OFF, **doc.get("agentDirect", {})}}
+            "agentDirect": {**AGENT_OFF, **doc.get("agentDirect", {})},
+            "highConfidenceThresholdPercent": doc.get("highConfidenceThresholdPercent", DEFAULT_THRESHOLD)}
 
 
 def tiers_on() -> bool:
@@ -33,7 +35,7 @@ def tiers_on() -> bool:
     return bool((blocks_repo.get_settings(current_tenant()) or {}).get("tiers"))
 
 
-def put(if_match: str | None, tiers: bool, agent_direct: dict) -> dict:
+def put(if_match: str | None, tiers: bool, agent_direct: dict, threshold: int | None = None) -> dict:
     from ..detector.rules import RulesError, _if_match  # noqa: PLC0415 —— detector 反过来 import activity，顶层 import 成环
 
     expected = _if_match(if_match)
@@ -41,6 +43,8 @@ def put(if_match: str | None, tiers: bool, agent_direct: dict) -> dict:
     doc = blocks_repo.get_settings(user) or {}
     fields = {"tiers": tiers, "agentDirect": agent_direct, "updatedAt": now,
               "tiersSince": now if tiers and not doc.get("tiers") else doc.get("tiersSince")}
+    if threshold is not None:  # 省了保留原值
+        fields["highConfidenceThresholdPercent"] = threshold
     if doc.get("version", 0) != expected:
         raise RulesError(412, f"设置已被改过（你基于 v{expected}，现在是 v{doc.get('version', 0)}）：请重新读取后再改", currentVersion=doc.get("version", 0))
     if tiers and not doc.get("migratedAt"):

@@ -6,6 +6,7 @@
 
 内容只放：
 - 这天时间主要去了哪些项目 / 任务（取自 `Get_History`；人和 agent 的时间分开写）。
+- agent 的运行用 `Get_History(detail=segments, who=agent)`：`agents.runs` 每页 200 条，`agents.nextRunsCursor` 不为 null 就带 `runsCursor` 取下一页；汇总（`workingSeconds`、`byAgent`）每页都是全部运行的，不要把各页加起来。每条运行的 `turns` 是按人的指令切出的段（`startedBy: "human_reply"` 是人回复后开的，`null` 是第一次回复之前的），`handoffs` 里 `reason` 为 `input` 是等人回答，`permission` 是等人批权限。
 - 你做了什么：写了哪些规则、改了哪些记录、哪些还在等人批。
 - 没解决的：未分类时长、掉线造成的空档。
 

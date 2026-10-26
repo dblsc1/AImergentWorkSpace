@@ -138,10 +138,20 @@ if [ "$MULTI" = 1 ]; then
 else
   AID=$("${C[@]}" -X POST -H "$JSON" -d "$RUN" "$START" | py 'print(r["runId"])')
   check "单人：匿名开一个运行" "${AID:0:4}" "run_"
-  check "它在泳道里标着 unverified" \
-    "$("${C[@]}" -b "$J" "$BASE/api/core/views/lanes" | py "print([a['unverified'] for a in r['agents'] if a['runId'] == '$AID'])")" "[True]"
+  # v0.5（gateway.v1 第十节）：从本机（回环或网关地址）发来的匿名上报算已核实；HONEYCOMB_SAME_HOST_TRUSTED=false 时仍是 unverified。
+  # 自带的 X-Nexus-Same-Host 一律被网关覆盖：关着时伪造 1 也没用。
+  if [ "${HONEYCOMB_SAME_HOST_TRUSTED:-true}" = false ]; then WANT="[True]"; else WANT="[False]"; fi
+  check "它在泳道里的 unverified 与本机开关一致" \
+    "$("${C[@]}" -b "$J" "$BASE/api/core/views/lanes" | py "print([a['unverified'] for a in r['agents'] if a['runId'] == '$AID'])")" "$WANT"
+  if [ "$WANT" = "[True]" ]; then
+    FID=$("${C[@]}" -X POST -H "$JSON" -H 'X-Nexus-Same-Host: 1' -d "$RUN" "$START" | py 'print(r["runId"])')
+    check "关着时伪造本机头没用" \
+      "$("${C[@]}" -b "$J" "$BASE/api/core/views/lanes" | py "print([a['unverified'] for a in r['agents'] if a['runId'] == '$FID'])")" "[True]"
+    code -X POST -H "$JSON" -d '{"outcome":"done"}' "$BASE/api/core/agents/$FID/stop" > /dev/null
+  fi
   check "匿名自称 write / 抹掉匿名头没用" \
     "$(code -H 'X-Nexus-Scope: write' -H 'X-Nexus-Anonymous;' "$TREE")" 302
+  # 本机的匿名上报只是新运行算已核实，不放宽能碰谁：网页会话 / 令牌开的运行照旧碰不到（两种开关下都一样）
   check "匿名碰不到验证过的运行（与不存在同一个 404）" \
     "$(code -X POST -H "$JSON" -d '{"outcome":"failed"}' "$BASE/api/core/agents/$HID/stop") $(code -X POST -H "$JSON" -d '{"outcome":"failed"}' "$BASE/api/core/agents/run_000000000000/stop")" "404 404"
   check "匿名 POST 上报端点带结尾斜杠被拒" "$(code -X POST -H "$JSON" -d "$RUN" "$START/")" 302
@@ -166,7 +176,11 @@ else
     esac
   done
   echo "      匿名连发 100 个：新开 $created，撞上限 $capped，被限速 $limited"
-  check "同时在跑的匿名运行有上限（≤ 20）" "$([ "$created" -le 20 ] && [ "$capped" -ge 1 ] && echo yes)" yes
+  if [ "$WANT" = "[True]" ]; then   # 本机的匿名上报算已核实，不占匿名名额；只有关着本机标记时才撞这个上限
+    check "同时在跑的匿名运行有上限（≤ 20）" "$([ "$created" -le 20 ] && [ "$capped" -ge 1 ] && echo yes)" yes
+  else
+    check "本机的匿名上报不占匿名名额（只受限速）" "$([ "$capped" -eq 0 ] && echo yes)" yes
+  fi
   check "匿名上报有限速（429）" "$([ "$limited" -ge 1 ] && echo yes)" yes
   check "限速不影响带凭据的请求" "$(code -b "$J" "$TREE") $(code -H "$(bearer "$READ")" "$TREE")" "200 200"
 fi

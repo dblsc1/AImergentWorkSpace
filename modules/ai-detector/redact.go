@@ -79,12 +79,18 @@ func (r redactor) text(s string) string {
 
 // redact 按 privacy 各项处理一段文字。顺序有讲究：先各种网址 / 路径（里面可能有邮箱、长数字），
 // 再用户名、邮箱、IP、地址、电话，最后长数字——反过来的话，长数字规则会先把电话号吃成 [数字]。
+// 编号代号（privacy.numberedAliases）只是把对应的 [IP] / [邮箱] / [用户] / [主机] 换成 公网IP1 这样的写法，替换顺序不变；
+// domains 在网址 / 域名路径这一步把主机部分换成 网站N（端口保留），仍在邮箱、IP 之前。
 func (r redactor) redact(s string) string {
 	paths := r.p.Paths
 	s = reURL.ReplaceAllStringFunc(s, func(u string) string {
 		p, err := url.Parse(u)
 		if err == nil && p.Hostname() != "" && !strings.EqualFold(p.Scheme, "file") {
-			return p.Hostname()
+			port := ""
+			if p.Port() != "" {
+				port = ":" + p.Port()
+			}
+			return r.domainAlias(p.Hostname(), port)
 		}
 		switch {
 		case paths == "off":
@@ -102,7 +108,13 @@ func (r redactor) redact(s string) string {
 			return "[路径]"
 		})
 	}
-	s = reHostPath.ReplaceAllString(s, "$1")
+	s = reHostPath.ReplaceAllStringFunc(s, func(m string) string {
+		host, port, _ := strings.Cut(reHostPath.FindStringSubmatch(m)[1], ":")
+		if port != "" {
+			port = ":" + port
+		}
+		return r.domainAlias(host, port)
+	})
 	if paths != "off" {
 		s = rePath.ReplaceAllStringFunc(s, func(m string) string {
 			g := rePath.FindStringSubmatch(m)
@@ -121,17 +133,26 @@ func (r redactor) redact(s string) string {
 // pii：邮箱、电话、地址、IP、用户名、长数字这些与「网址 / 路径形状」无关的选项。
 func (r redactor) pii(s string) string {
 	if on(r.p.Usernames) {
-		s = reHomeUser.ReplaceAllString(s, "${1}[用户]")
-		s = rePrompt.ReplaceAllString(s, "[用户]@[主机]:")
+		s = reHomeUser.ReplaceAllStringFunc(s, func(m string) string {
+			g := reHomeUser.FindStringSubmatch(m)
+			return g[1] + r.userAlias(m[len(g[1]):])
+		})
+		s = rePrompt.ReplaceAllStringFunc(s, func(m string) string {
+			u, h, _ := strings.Cut(strings.TrimSuffix(m, ":"), "@")
+			return r.userAlias(u) + "@" + r.hostAlias(h) + ":"
+		})
 		for _, l := range r.literals {
-			s = l.re.ReplaceAllString(s, "${1}"+l.to+"${2}")
+			s = l.re.ReplaceAllStringFunc(s, func(m string) string {
+				g := l.re.FindStringSubmatch(m)
+				return g[1] + l.alias(r) + g[2]
+			})
 		}
 	}
 	if on(r.p.Emails) {
-		s = reEmail.ReplaceAllString(s, "[邮箱]")
+		s = reEmail.ReplaceAllStringFunc(s, r.emailAlias)
 	}
 	if on(r.p.IPs) {
-		s = hideIPs(s)
+		s = r.hideIPs(s)
 	}
 	if on(r.p.Addresses) {
 		s = reAddrStreet.ReplaceAllString(s, "[地址]")
@@ -146,18 +167,18 @@ func (r redactor) pii(s string) string {
 	return s
 }
 
-func hideIPs(s string) string {
+func (r redactor) hideIPs(s string) string {
 	s = reIPv4.ReplaceAllStringFunc(s, func(m string) string {
 		for _, part := range strings.Split(m, ".") {
 			if n, _ := strconv.Atoi(part); n > 255 {
 				return m
 			}
 		}
-		return "[IP]"
+		return r.ipAlias(m)
 	})
 	return reIPv6.ReplaceAllStringFunc(s, func(m string) string {
 		if net.ParseIP(m) != nil && strings.ContainsAny(m, "0123456789") {
-			return "[IP]"
+			return r.ipAlias(m)
 		}
 		return m
 	})
@@ -210,7 +231,9 @@ type redactor struct {
 	browsers map[string]bool
 	tabs     map[string]bool // 按标签页分段的程序（已去掉浏览器）；segmentByTitle 关 = 空
 	white    []*regexp.Regexp
-	literals []literal // 本机用户名、主机名（usernames 选项）
+	literals []literal       // 本机用户名、主机名（usernames 选项）
+	num      map[string]bool // 换成编号代号的类型（aliases.go initAliases）
+	al       *aliases
 	// 离开判定（idle 节）也放这里：buildFragments 只收一个 redactor，它们和隐私项一样都是「这一轮的设置」。
 	idle  Idle
 	focus map[string]bool
@@ -218,7 +241,15 @@ type redactor struct {
 
 type literal struct {
 	re *regexp.Regexp
-	to string
+	to string // "[用户]" | "[主机]"
+	v  string
+}
+
+func (l literal) alias(r redactor) string {
+	if l.to == "[主机]" {
+		return r.hostAlias(l.v)
+	}
+	return r.userAlias(l.v)
 }
 
 func newRedactor(c Config) redactor {
@@ -250,12 +281,13 @@ func newRedactor(c Config) redactor {
 			r.white = append(r.white, re)
 		}
 	}
+	r.initAliases(c)
 	host, _ := os.Hostname()
 	name := ""
 	if u, err := user.Current(); err == nil {
 		name = u.Username[strings.LastIndex(u.Username, "\\")+1:] // Windows 报 DOMAIN\user
 	}
-	for _, l := range []literal{{nil, "[用户]"}, {nil, "[主机]"}} {
+	for _, l := range []literal{{to: "[用户]"}, {to: "[主机]"}} {
 		v := name
 		if l.to == "[主机]" {
 			v = host
@@ -263,6 +295,7 @@ func newRedactor(c Config) redactor {
 		if len([]rune(v)) < 4 { // 太短的名字（如 xia、pi）当词替换误伤太大
 			continue
 		}
+		l.v = v
 		l.re = regexp.MustCompile(`(?i)(^|[^\p{L}\p{N}_])` + regexp.QuoteMeta(v) + `($|[^\p{L}\p{N}_])`)
 		r.literals = append(r.literals, l)
 	}
@@ -303,9 +336,12 @@ func (r redactor) window(app, title string, tab *webTab) (string, string) {
 		}
 		host, loc := "", ""
 		if p, err := url.Parse(tab.URL); err == nil {
-			host, loc = p.Hostname(), p.Hostname()
+			host, loc = p.Hostname(), r.domainAlias(p.Hostname(), colon(p.Port()))
 			if r.p.Browser == "full" && host != "" {
 				p.User = nil
+				if r.num["domains"] {
+					p.Host = r.domainAlias(p.Hostname(), colon(p.Port()))
+				}
 				if on(r.p.QueryStrings) {
 					p.RawQuery, p.Fragment, p.RawFragment, p.ForceQuery = "", "", "", false
 				}
@@ -315,7 +351,7 @@ func (r redactor) window(app, title string, tab *webTab) (string, string) {
 		if loc != host {
 			loc = r.pii(loc) // 完整网址里的邮箱、电话、用户名、长数字……照样按选项处理
 		} else if on(r.p.IPs) {
-			loc = hideIPs(loc)
+			loc = r.hideIPs(loc)
 		}
 		t := r.text(tab.Title)
 		if host == "" {

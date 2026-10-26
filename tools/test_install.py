@@ -140,7 +140,8 @@ def test_caller_scope_headers_and_anonymous_limit_in_both_assemblies(out):
     overwrite = ("auth_request_set $honeycomb_scope $upstream_http_x_nexus_scope;",
                  "auth_request_set $honeycomb_anonymous $upstream_http_x_nexus_anonymous;",
                  "proxy_set_header X-Nexus-Scope $honeycomb_scope;",
-                 "proxy_set_header X-Nexus-Anonymous $honeycomb_anonymous;")
+                 "proxy_set_header X-Nexus-Anonymous $honeycomb_anonymous;",
+                 "proxy_set_header X-Nexus-Same-Host $honeycomb_same_host;")
     for line in overwrite:
         assert line in gate, line
     for name, nginx in (("hand", hand), ("generated", _render(gen) if "${HONEYCOMB_BASE_PATH}" in gen else gen)):
@@ -197,6 +198,7 @@ def test_every_proxy_location_sets_tenant_scope_and_anonymous_headers(out, tmp_p
     gate = (install.ROOT / "modules" / "nginx-docker" / "nginx" / "gate.inc").read_text(encoding="utf-8")
     names = ("tenant", "scope", "anonymous")
     headers = ("X-Nexus-Tenant", "X-Nexus-Scope", "X-Nexus-Anonymous")
+    same_host = "proxy_set_header X-Nexus-Same-Host $honeycomb_same_host;"   # 网关自己算的，不经 auth_request_set
     for name, tpl in (("hand", hand), ("generated", gen), ("ungated", ungated)):
         blocks = _proxy_blocks(_render(tpl))
         assert len(blocks) >= (4 if name != "ungated" else 1), (name, list(blocks))
@@ -207,8 +209,9 @@ def test_every_proxy_location_sets_tenant_scope_and_anonymous_headers(out, tmp_p
                 for n, h in zip(names, headers):
                     assert f"proxy_set_header {h} $honeycomb_{n};" in block, (name, head, h)
                     assert f"auth_request_set $honeycomb_{n} $upstream_http_{h.lower().replace('-', '_')};" in block, (name, head, h)
+                assert same_host in block, (name, head)
             else:
-                for h in headers:
+                for h in (*headers, "X-Nexus-Same-Host"):
                     assert f'proxy_set_header {h} "";' in block, (name, head, h)
     assert "/open/" in _proxy_blocks(_render(ungated)) and "= /__auth_verify" not in _proxy_blocks(_render(ungated))
     # 没有 WebSocket / Upgrade 透传：范围拦截只管 HTTP，网关不替任何后端把连接升成 WebSocket
@@ -416,3 +419,49 @@ def test_every_upstream_is_resolved_at_runtime(tmp_path):
         assert len(passes) >= 4, (name, passes)
         for t in passes:
             assert re.fullmatch(r"proxy_pass http://\$honeycomb_\w+;", t), (name, t)
+
+
+def test_same_host_marker_in_every_assembly(out, tmp_path):
+    """gateway.v1 第十节：X-Nexus-Same-Host 由网关按对端地址算（geo），开关 HONEYCOMB_SAME_HOST_TRUSTED；
+    手写、生成、发布三份组装都要挂上同一个脚本、带同一个开关。"""
+    import subprocess
+    _, compose, _ = out
+    mount = "same-host.sh:/docker-entrypoint.d/15-honeycomb-same-host.sh:ro"
+    hand = yaml.safe_load((install.ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8"))["services"]["web"]
+    rel = yaml.safe_load((install.ROOT / "release" / "docker-compose.yml").read_text(encoding="utf-8"))["services"]["web"]
+    for name, web in (("hand", hand), ("generated", compose["services"]["web"]), ("release", rel)):
+        assert web["environment"]["HONEYCOMB_SAME_HOST_TRUSTED"] == "${HONEYCOMB_SAME_HOST_TRUSTED:-true}", name
+    for name, web in (("hand", hand), ("generated", compose["services"]["web"])):
+        assert any(v.endswith(mount) for v in web["volumes"]), name
+    assert "/docker-entrypoint.d/15-honeycomb-same-host.sh" in (install.ROOT / "release" / "web.Dockerfile").read_text(encoding="utf-8")
+    # 脚本本身：缺省认回环（网关地址取决于容器里的路由），false 时只剩 default ""
+    script = install.ROOT / "modules" / "nginx-docker" / "nginx" / "same-host.sh"
+    text = script.read_text(encoding="utf-8").replace("/etc/nginx/conf.d/00-honeycomb-same-host.conf", str(tmp_path / "geo.conf"))
+    (tmp_path / "sh.sh").write_text(text, encoding="utf-8")
+    for env, want in (("true", True), ("false", False)):
+        subprocess.run(["sh", str(tmp_path / "sh.sh")], check=True, env={"HONEYCOMB_SAME_HOST_TRUSTED": env, "PATH": "/usr/bin:/bin"})
+        geo = (tmp_path / "geo.conf").read_text(encoding="utf-8")
+        assert "geo $remote_addr $honeycomb_same_host {" in geo and 'default "";' in geo
+        assert ("127.0.0.0/8 1;" in geo) is want, env
+
+
+def test_same_host_trusts_only_loopback_and_exact_default_gateway(tmp_path):
+    """不猜子网的 .1：只认默认路由 via 的确切地址；读不到就只剩回环；别的私网地址（如 172.18.0.5）不标。"""
+    import subprocess
+    script = install.ROOT / "modules" / "nginx-docker" / "nginx" / "same-host.sh"
+    text = script.read_text(encoding="utf-8").replace("/etc/nginx/conf.d/00-honeycomb-same-host.conf", str(tmp_path / "geo.conf"))
+    (tmp_path / "sh.sh").write_text(text, encoding="utf-8")
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "ip").write_text("#!/bin/sh\ncase \"$*\" in\n *default*) echo 'default via 172.18.0.254 dev eth0';;\n"
+                             " *) echo '172.18.0.0/16 dev eth0 scope link src 172.18.0.9';;\nesac\n", encoding="utf-8")
+    (fake / "ip").chmod(0o755)
+    run = lambda path: subprocess.run(["/bin/sh", str(tmp_path / "sh.sh")], check=True,
+                                      env={"PATH": path}) and (tmp_path / "geo.conf").read_text(encoding="utf-8")
+    geo = run(f"{fake}:/usr/bin:/bin")
+    assert "172.18.0.254 1;" in geo and "127.0.0.0/8 1;" in geo
+    for other in ("172.18.0.1 ", "172.18.0.5 ", "172.18.0.9 ", "172.18.0.0"):
+        assert other not in geo, other
+    (fake / "ip").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")   # 读不到默认网关：失败即关
+    geo = run(f"{fake}:/usr/bin:/bin")
+    assert "127.0.0.0/8 1;" in geo and "172." not in geo

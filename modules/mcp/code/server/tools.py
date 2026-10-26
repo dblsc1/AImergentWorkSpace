@@ -563,13 +563,15 @@ def get_device_health(a, c):
 def get_started(a, c):
     st = _settings(c.tenant, fresh=True)
     on = bool(st and st.get("tiers"))
+    thr = (st or {}).get("highConfidenceThresholdPercent")
     now = _now_local()
     off = now.strftime("%z")
     return {
         "about": specs.ABOUT, "tiers": specs.TIERS,
         "tools": [{"name": t["name"], "answers": specs.ANSWERS[t["name"]]} for t in specs.SPECS],
         "addressing": specs.ADDRESSING, "rules": specs.RULES,
-        "tiersOn": on, "today": now.date().isoformat(), "tz": f"{off[:3]}:{off[3:]}" if off else "+00:00",
+        "tiersOn": on, "highConfidenceThresholdPercent": thr if type(thr) is int else 80,
+        "today": now.date().isoformat(), "tz": f"{off[:3]}:{off[3:]}" if off else "+00:00",
         "note": _note("先看 permissions 和 tiers；具体怎么调，各工具带 help: true。" if on else
                       "三级分类没打开，分类类工具会被拒；请人先在「自动记录」页打开。其余工具照常。"),
     }
@@ -681,7 +683,7 @@ def get_history(a, c):
         if span > limit:
             raise _bad(f"detail={detail} 最多 {limit} 天，这次 {span} 天")
     tree = _tree(c.tenant) if a.get("scope") else _tree_try(c.tenant)
-    params = {k: a[k] for k in ("who", "detail") if k in a}
+    params = {k: a[k] for k in ("who", "detail", "runsCursor") if k in a}
     params.update({dst: a[src] for src, dst in (("fromDate", "from"), ("toDate", "to")) if src in a})
     if a.get("scope"):
         params["scope"] = tree.resolve(a["scope"], label="scope ")["id"]
@@ -819,7 +821,8 @@ def get_proposals(a, c):
         for k, x in _flat(r):
             if kind in ("all", k):
                 items.append({"id": x["id"], "kind": k, "status": x.get("status"), "summary": _summary(k, x, tree),
-                              "createdAt": _loc(x.get("createdAt")), "decidedAt": _loc(x.get("decidedAt")), "answer": None})
+                              "createdAt": _loc(x.get("createdAt")), "decidedAt": _loc(x.get("decidedAt")), "answer": None,
+                              "confidencePercent": x.get("confidencePercent")})
     if kind in ("all", "question"):
         for x in _try_get("/api/core/activity/questions", {"status": status, "limit": 50}, c.tenant).get("items", []):
             ans = x.get("answer")
@@ -885,8 +888,10 @@ def _batch_note(results: list[dict], direct: bool, extra: str) -> str:
     return _note(f"{head}。{extra}")
 
 
-def _with(body: dict, a: dict) -> dict:
-    return {**body, **({"reason": a["reason"]} if a.get("reason") else {})}
+def _with(body: dict, a: dict, o: dict | None = None) -> dict:
+    """带上 reason（顶层）与 confidencePercent（有 ``o`` 取这一条的，否则取 ``a`` 本身——CRUD_Honeycomb 一次一条）。"""
+    conf = (o if o is not None else a).get("confidencePercent")
+    return {**body, **({"reason": a["reason"]} if a.get("reason") else {}), **({"confidencePercent": conf} if conf is not None else {})}
 
 
 def crud_windows_classify_rules(a, c):
@@ -906,7 +911,7 @@ def crud_windows_classify_rules(a, c):
                 if not o.get("app"):
                     raise _bad("忽略规则要 app（程序名）")
                 body = {"app": o["app"], **({"titleContains": o["title"]} if o.get("title") else {})}
-                return _outcome(_write("/api/core/activity/proposals/ignores", _with(body, a), c, direct))
+                return _outcome(_write("/api/core/activity/proposals/ignores", _with(body, a), c, direct))   # 忽略提议不存置信度：不转发
             if not o.get("block"):
                 raise _bad("add 要 block（块名，1–64）")
             if not (o.get("app") or o.get("title")):
@@ -920,7 +925,7 @@ def crud_windows_classify_rules(a, c):
             rule = {"id": o["id"], **({k: o[k] for k in ("app", "title", "block") if o.get(k) is not None} if op == "edit" else {})}
             if op == "edit" and len(rule) == 1:
                 raise _bad("edit 要带至少一个要改的键（app / title / block）")
-        return _outcome(_write("/api/core/activity/proposals/window-rules", _with({"op": op, "rule": rule}, a), c, direct))
+        return _outcome(_write("/api/core/activity/proposals/window-rules", _with({"op": op, "rule": rule}, a, o), c, direct))
 
     results = _run(ops, one)
     return {"results": results, "note": _batch_note(results, direct, "规则是正则；写前先看 Get_Pending_Classify_Windows 和 Get_Rules，别重复。")}
@@ -954,7 +959,7 @@ def crud_windowsblock_classify_rules(a, c):
                 raise _bad(f"{op} 要 target（任务或项目的 id / address）")
             key, n = _target(tree, o["target"])
             body[key] = n["id"]
-        return _outcome(_write("/api/core/activity/proposals/block-rules", _with(body, a), c, direct))
+        return _outcome(_write("/api/core/activity/proposals/block-rules", _with(body, a, o), c, direct))
 
     results = _run(ops, one)
     return {"results": results, "note": _batch_note(results, direct, "块名精确匹配；通用窗口不能写第二级规则。")}
@@ -998,7 +1003,7 @@ def crud_windowsblock(a, c):
             body["parts"] = _parts(it["parts"], tree)
         elif it.get("target") or it.get("parts"):
             raise _bad(f"{act} 不收 target / parts")
-        return _outcome(_write("/api/core/activity/proposals/block-actions", _with(body, a), c, direct))
+        return _outcome(_write("/api/core/activity/proposals/block-actions", _with(body, a, it), c, direct))
 
     results = _run(items, one)
     extra = ("split：首段开头、末段结尾按当天开头 / 结尾算，只中间切点起作用。拆块不是普通增删改。"
@@ -1171,7 +1176,11 @@ def get_today(a, c):
     if on:   # 三级分类没开 = 没有块可数
         r = _get("/api/core/activity/blocks", {"status": "pending", "limit": 1000, "date": day}, c.tenant)
         rows, more = r.get("items", []), bool(r.get("nextCursor"))   # ponytail: 超过 1000 块只标 truncated，不翻页
-        pend = [b for b in rows if b.get("status") == "pending"]
+        # 与 views/history 同口径：标成通用窗口、还没拆分（没有 parts）的块也算还没处理
+        g = _get("/api/core/activity/blocks", {"status": "generic", "limit": 1000, "date": day}, c.tenant)
+        more = more or bool(g.get("nextCursor"))
+        pend = [b for b in rows if b.get("status") == "pending"] + [
+            b for b in g.get("items", []) if b.get("status") == "generic" and not b.get("parts")]
         sums = lambda xs: {"blocks": len(xs), "seconds": sum(b.get("seconds") or 0 for b in xs)}  # noqa: E731
         uncaught = sums([b for b in pend if b.get("keySource") == "auto"])
         unassigned = sums([b for b in pend if b.get("keySource") != "auto"])
@@ -1210,7 +1219,7 @@ def get_blocks_match_history(a, c):
              {"app": app, "days": days, **({"title": title} if title is not None else {}),
               **({"titleContains": part} if part is not None else {})}, c.tenant)
     blocks = [{**b, "lastAt": _loc(b.get("lastAt"))} for b in r.get("blocks", [])]
-    return {**_screen_tree({"query": r.get("query"), "days": days, "blocks": blocks}),
+    return {**_screen_tree({"query": r.get("query"), "days": days, "blocks": blocks}), "truncated": bool(r.get("truncated")),
             "note": _note("只到块为止；keySource 为 auto = 当时没有第一级规则收。块归到哪个任务用 Get_Tasks_Match_History。blocks 为空 = 这段时间没出现过。")}
 
 

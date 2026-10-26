@@ -4884,6 +4884,21 @@ MCP 侧见 `contracts/mcp.tools.v2`。
   取过去 `days` 天的原始记录（`activity_records`），按 `blockKey` + `keySource` 分组：`days` = 出现在几个不同日期、`seconds` = 秒数和、`records` = 记录条数、`lastAt` = 最近一条的结束时刻；`seconds` 降序，至多 20 条；查不到给 `[]`。
   只到块为止，不看块后来归到哪（那是 `activity/blocks/history`）。
 
+## v0.5：置信度与高置信度阈值（v2.42，追加式）
+
+- **AI 提议带置信度**：提议类写端点（第一级规则 `windowRule`、第二级规则 `blockRule`、块的单日操作 `blockAction`、提议改已记的时间 `sessionChange`、AI 提议新项目 / 任务及改名 / 移动 / 删除）的请求体每条提议可带 `confidencePercent`：整数 0–100，可省。越界或非整数 422。原样存在提议上，所有返回提议的读端点带出（没给的提议返回 `null`）。直接施加的写入同样收下并记进直接施加日志。
+- **高置信度阈值**：账号设置 `activity/settings` 追加 `highConfidenceThresholdPercent`：整数 0–100，缺省 80，中文名「高置信度阈值」。`GET` 总带出。`PUT` 里可省，省了保留原值（不是回到缺省），给了就校验（越界 422）。
+- 判定口径：`confidencePercent ≥ highConfidenceThresholdPercent` 为高置信度；`null` 或低于阈值为低置信度。服务端不按置信度改变任何行为，只存只读；分组由前端和 AI 自己按这个口径做。
+- 同一条提议再次提交（去重命中待批的那条）时，带了 `confidencePercent` 就以最新的为准。
+
+## v0.5：本机上报算已核实、Agent 运行翻页与按指令切段（v2.43，追加式）
+
+- **本机匿名上报算已核实**：网关转来 `X-Nexus-Same-Host: 1`（gateway.v1 第十节）且请求是匿名上报（`X-Nexus-Anonymous`）时，开出的运行 `unverified: false`。其余匿名上报照旧 `unverified: true`。只影响新开的运行，已有的不改。
+- **`views/history` 的 Agent 运行翻页**：`detail=segments` 时 `agents.runs[]` 按 `startAt` 升序，每页至多 200 条；入参 `runsCursor`（不透明字符串，取自上一页），返回 `agents.nextRunsCursor`（没有下一页为 `null`）。不带 `runsCursor` 就是第一页（范围内最早的运行）。`agents.workingSeconds` / `byDay` / `byAgent` 每页都按全部运行算。`truncated` 不再因为 runs 超 200 而为 true。
+- **按指令切段 `turns`**：`agents.runs[]` 每条加 `turns: [{from, to, workingSeconds, startedBy}]`。一段从一次人回复（`reply`）开始，到下一次回复之前最后一个 working 相位结束为止；第一次回复之前的 working 归一段 `startedBy: null`，其余 `startedBy: "human_reply"`。只含与查询范围相交的部分。
+- **Agent 交回给人**：`handoffs[]` 里 `type: "agent_to_human"` 追加字段 `reason`：`"input"`（等人回答，原有的 `waiting_input`）或 `"permission"`（等人批权限，`waiting_permission` 相位开始时，新增）。`waitedSeconds` 口径同原有。
+- 单人部署读路径不变：`unverified` 的运行照旧只在泳道里。
+
 ## 变更记录
 
 见 `module_docs/contract-changelog.md`（从本文件拆出，只记历史不含规范）。

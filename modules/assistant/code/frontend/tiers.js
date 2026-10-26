@@ -65,6 +65,7 @@
   var directEl = document.getElementById("tier-direct");
   var windowsEl = document.getElementById("tier-windows");
   var recordsEl = document.getElementById("tier-records");
+  var thrEl = document.getElementById("tier-threshold"), thrField = document.getElementById("tier-threshold-field");
   var acctMsg = document.getElementById("tier-message");
   var msgEl = document.getElementById("tier-rules-message");
   var oldRules = document.getElementById("det-rules");
@@ -124,10 +125,13 @@
     directEl.checked = d.enabled === true;
     windowsEl.checked = d.windowsClassify === true;
     recordsEl.checked = d.honeycombRecords === true;
+    var thr = acct.highConfidenceThresholdPercent;
+    thrField.hidden = typeof thr !== "number";   // 老后端没有这一项：不出现
+    if (typeof thr === "number") thrEl.value = String(thr);
     lockAcct();
   }
   function lockAcct() {   // 请求在路上只锁、不重置勾选（结果回来再按服务端的画）
-    onEl.disabled = directEl.disabled = acctBusy;
+    onEl.disabled = directEl.disabled = thrEl.disabled = acctBusy;
     windowsEl.disabled = recordsEl.disabled = acctBusy || !directEl.checked;   // 总开关关着，分开关不可改
   }
   async function putAcct(patch, okText) {
@@ -140,6 +144,7 @@
     delete doc.tiersSince;   // 服务端字段，客户端给的忽略
     doc.agentDirect = Object.assign({}, doc.agentDirect, patch.agentDirect || {});
     if ("tiers" in patch) doc.tiers = patch.tiers;
+    if ("highConfidenceThresholdPercent" in patch) doc.highConfidenceThresholdPercent = patch.highConfidenceThresholdPercent;
     var r = await call("PUT", "activity/settings", doc, { "If-Match": '"' + acct.version + '"' });
     acctBusy = false;
     if (r.ok) {
@@ -167,6 +172,11 @@
   directEl.addEventListener("change", function () { putAcct({ agentDirect: { enabled: directEl.checked } }); });
   windowsEl.addEventListener("change", function () { putAcct({ agentDirect: { windowsClassify: windowsEl.checked } }); });
   recordsEl.addEventListener("change", function () { putAcct({ agentDirect: { honeycombRecords: recordsEl.checked } }); });
+  thrEl.addEventListener("change", function () {
+    var v = thrEl.value.trim();
+    if (!/^\d{1,3}$/.test(v) || Number(v) > 100) { renderAcct(); say(acctMsg, "高置信度阈值要填 0–100 的整数。", true); return; }
+    putAcct({ highConfidenceThresholdPercent: Number(v) });
+  });
 
   async function loadAcct() {
     var r = await call("GET", "activity/settings");

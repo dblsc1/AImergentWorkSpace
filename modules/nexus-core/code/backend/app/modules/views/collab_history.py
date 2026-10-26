@@ -6,8 +6,12 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 import re
 import unicodedata
+from bisect import bisect_right
 from datetime import date as Date, datetime, timedelta
 
 from ...config import settings
@@ -25,7 +29,7 @@ from .queries import _today
 WHO = ("human", "agent", "both")
 DETAIL = ("summary", "segments", "windows")
 MAX_DAYS = {"summary": 92, "segments": 7, "windows": 7}
-CAP_SEGMENTS, CAP_BLOCKS, CAP_RUNS, CAP_HANDOFFS, CAP_BY_TARGET, CAP_RECORDS = 2000, 500, 200, 2000, 200, 50
+CAP_SEGMENTS, CAP_BLOCKS, RUNS_PAGE, CAP_HANDOFFS, CAP_BY_TARGET, CAP_RECORDS = 2000, 500, 200, 2000, 200, 50
 CAP_PENDING_BLOCKS = 20000  # 待分类块（日 × 块名）至多这么多，超了 truncated
 GAP = 300  # 「三级分类」四：相邻记录间隔 ≤ 300 秒连成一段
 TEXT_MAX = 80
@@ -283,7 +287,24 @@ def _clip_working(runs: list[dict], start: datetime, end: datetime) -> dict[str,
     return {r["runId"]: [c for a, b in cr.working(r) if (c := cr.clip(a, b, start, end))] for r in runs}
 
 
-def _agents(runs: list[dict], work: dict[str, list], start: datetime, end: datetime, detail: str, over: bool) -> tuple[dict, bool]:
+def _cursor_of(run: dict) -> str:
+    raw = json.dumps([run["startAt"].isoformat(), run["runId"]], separators=(",", ":"))
+    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+
+
+def _cursor_key(cursor: str) -> tuple[datetime, str]:
+    try:
+        at, run_id = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
+        moment = datetime.fromisoformat(at)
+        if moment.tzinfo is None:
+            raise ValueError("naive")
+        return moment, str(run_id)
+    except (ValueError, TypeError, binascii.Error) as exc:
+        raise UnprocessableError(f"参数 runsCursor 不是上一页给的游标：{cursor[:40]!r}") from exc
+
+
+def _agents(runs: list[dict], work: dict[str, list], start: datetime, end: datetime, detail: str, over: bool,
+            cursor: str | None = None) -> tuple[dict, bool]:
     per_day: dict[str, float] = {}
     by_agent: dict[tuple, list] = {}
     for run in runs:
@@ -302,14 +323,46 @@ def _agents(runs: list[dict], work: dict[str, list], start: datetime, end: datet
     }
     truncated = over
     if detail == "segments":
-        newest = sorted(runs, key=lambda r: r["startAt"], reverse=True)
-        truncated |= len(newest) > CAP_RUNS
-        out["runs"] = [_run_view(r, work[r["runId"]], start, end) for r in sorted(newest[:CAP_RUNS], key=lambda r: r["startAt"])]
+        # v2.43：startAt 升序翻页（同刻按 runId），每页 RUNS_PAGE 条；汇总上面已按全部运行算。
+        ordered = sorted(runs, key=lambda r: (r["startAt"], r["runId"]))
+        if cursor:
+            after = _cursor_key(cursor)
+            ordered = [r for r in ordered if (r["startAt"], r["runId"]) > after]
+        page = ordered[:RUNS_PAGE]
+        out["runs"] = [_run_view(r, work[r["runId"]], start, end) for r in page]
+        out["nextRunsCursor"] = _cursor_of(page[-1]) if len(ordered) > RUNS_PAGE else None
     return out, truncated
 
 
-def _started_by(run: dict, a: datetime) -> bool:
-    return any(a <= t <= a + timedelta(seconds=REPLY_WINDOW) for t in run["replies"])
+def _snaps(t: datetime, a: datetime, b: datetime) -> bool:
+    """回复 t 算 working 段 [a, b) 开的头：落在开头 REPLY_WINDOW 秒内且段还没结束；已结束的段不回头认。"""
+    return a <= t <= a + timedelta(seconds=REPLY_WINDOW) and t < b
+
+
+def _started_by(run: dict, a: datetime, b: datetime) -> bool:
+    return any(_snaps(t, a, b) for t in run["replies"])
+
+
+def _turns(run: dict, start: datetime, end: datetime) -> list[dict]:
+    """按指令切段（v2.43）：一段从一次人回复开始，到下一次回复之前最后一个 working 相位结束；
+    第一次回复之前的 working 归一段 startedBy=None。回复落在 working 开头 REPLY_WINDOW 秒内且该段还没结束，才算它开的头（同 startedBy）；落在等待里没贴上的回复也切段，但该段 startedBy 为 null（与相位、handoffs 口径一致）。
+    working 跨过回复时在回复处切开。只含与 [start, end) 相交的部分，没有 working 的回复不成段。"""
+    works = cr.working(run)
+    opened: dict[datetime, bool] = {}  # 切点 → 是不是「开头」：贴着 working 开头（_snaps）或落在 working 中间；落在等待空档里没贴上的不是
+    for t in run["replies"]:
+        snap = next((a for a, b in works if _snaps(t, a, b)), None)
+        cut = snap or t
+        opened[cut] = opened.get(cut, False) or snap is not None or any(a < t < b for a, b in works)
+    cuts = sorted(opened)
+    turns: dict[int, list] = {}
+    for a, b in works:
+        pts = [a, *(c for c in cuts if a < c < b), b]
+        for x, y in zip(pts, pts[1:]):
+            if c := cr.clip(x, y, start, end):
+                t = turns.setdefault(bisect_right(cuts, x), [c[0], c[1], 0.0])
+                t[0], t[1], t[2] = min(t[0], c[0]), max(t[1], c[1]), t[2] + (c[1] - c[0]).total_seconds()
+    return [{"from": cr.iso(f), "to": cr.iso(t), "workingSeconds": round(s), "startedBy": "human_reply" if i and opened[cuts[i - 1]] else None}
+            for i, (f, t, s) in sorted(turns.items())]
 
 
 def _run_view(run: dict, clipped: list, start: datetime, end: datetime) -> dict:
@@ -318,27 +371,28 @@ def _run_view(run: dict, clipped: list, start: datetime, end: datetime) -> dict:
         c = cr.clip(a, b, start, end)
         if c:
             phases.append({"from": cr.iso(c[0]), "to": cr.iso(c[1]), "phase": ph,
-                           **({"startedBy": "human_reply"} if ph == "working" and _started_by(run, a) else {})})
+                           **({"startedBy": "human_reply"} if ph == "working" and _started_by(run, a, b) else {})})
             # 契约待定：subagents——运行里没有子代理数据，不给该键
     attn = [c for a, b in run["attend"] if (c := cr.clip(a, b, start, end))]
     return {"runId": run["runId"], "agent": run["agent"], "label": run["label"], "startAt": cr.iso(run["startAt"]),
-            "endAt": cr.iso(run["endAt"]) if run["endAt"] else None, "phases": phases,
+            "endAt": cr.iso(run["endAt"]) if run["endAt"] else None, "phases": phases, "turns": _turns(run, start, end),
             "workingSeconds": round(cr.seconds(clipped)), "humanAttentionSeconds": round(cr.seconds(attn))}
 
 
 def _handoffs(runs: list[dict], start: datetime, end: datetime) -> tuple[list[dict], bool]:
     out = []
     for run in runs:
-        for a, _b, ph in run["segs"]:
+        for a, b, ph in run["segs"]:
             if not start <= a < end:
                 continue
-            if ph == "working" and _started_by(run, a):
+            if ph == "working" and _started_by(run, a, b):
                 out.append({"at": cr.iso(a), "runId": run["runId"], "type": "human_to_agent", "_t": a})
-            elif ph == "waiting_input":
+            elif ph in ("waiting_input", "waiting_permission"):
                 # 到下一次人回复、或人开始看它（attend 的下一段开头；已经在看 = 马上）为止，先到者；范围结束前没有 = null
                 cands = [t for t in run["replies"] if t > a] + [max(x, a) for x, y in run["attend"] if y > a]
                 nxt = min(cands, default=None)
                 out.append({"at": cr.iso(a), "runId": run["runId"], "type": "agent_to_human", "_t": a,
+                            "reason": "permission" if ph == "waiting_permission" else "input",
                             "waitedSeconds": round((nxt - a).total_seconds()) if nxt is not None and nxt < end else None})
     out.sort(key=lambda h: h["_t"])
     cut = len(out) > CAP_HANDOFFS
@@ -361,9 +415,12 @@ def _overlap(runs: list[dict], work: dict[str, list]) -> dict:
 # ------------------------------------------------------------------ 入口
 
 
-def get_history(date_from: str | None, date_to: str | None, who: str, detail: str, scope: str | None) -> dict:
+def get_history(date_from: str | None, date_to: str | None, who: str, detail: str, scope: str | None,
+                runs_cursor: str | None = None) -> dict:
     _enum(who, "who", WHO)
     _enum(detail, "detail", DETAIL)
+    if runs_cursor:
+        _cursor_key(runs_cursor)  # 先验：游标不对即使 who=human 也 422
     today = Date.fromisoformat(_today())
     first, last = _day(date_from, "from", today), _day(date_to, "to", today)
     if first > last:
@@ -415,7 +472,7 @@ def get_history(date_from: str | None, date_to: str | None, who: str, detail: st
     truncated = h.truncated
     if want_a:
         work = _clip_working(runs, h.start, h.end)
-        out["agents"], cut = _agents(runs, work, h.start, h.end, detail, over)
+        out["agents"], cut = _agents(runs, work, h.start, h.end, detail, over, runs_cursor)
         truncated |= cut
         if segs_mode and who == "both":
             out["handoffs"], cut = _handoffs(runs, h.start, h.end)

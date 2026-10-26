@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Request
-from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
 
 from . import questions, secretary, session_items
 from .new_items_router import _no_device_token_unless_write as submitter
@@ -47,6 +47,7 @@ class SessionChangeIn(BaseModel):
     projectId: StrictStr | None = None
     reason: StrictStr = ""
     directApply: StrictBool = False
+    confidencePercent: Annotated[StrictInt, Field(ge=0, le=100)] | None = None
 
 
 @router.post("/secretary-reports", dependencies=[Depends(submitter)])
@@ -81,4 +82,4 @@ def dismiss(qid: str) -> dict:
 
 @router.post("/proposals/sessions", dependencies=[Depends(submitter)])
 def propose_session(body: SessionChangeIn, request: Request) -> dict:
-    return session_items.propose(body.eventId, body.taskId, body.projectId, body.reason, body.directApply, request)
+    return session_items.propose(body.eventId, body.taskId, body.projectId, body.reason, body.directApply, request, body.confidencePercent)

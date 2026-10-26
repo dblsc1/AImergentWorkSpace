@@ -59,14 +59,17 @@ READS = [
            "human": {"state": "active", "timer": None, "focus": None}, "agents": [], "hiddenAgents": 0}),
     _tool("Get_History", "人和 agent 怎么协作",
           "一段时间里人和 agent 各干了什么、怎么交接（分开给，不相加）。detail=windows 给第二级的窗口块（含归类状态）。"
-          "summary 最多 92 天，segments / windows 最多 7 天。detail=windows 篇幅大，不要明细时 records: false。",
+          "summary 最多 92 天，segments / windows 最多 7 天。detail=windows 篇幅大，不要明细时 records: false。"
+          "detail=segments 时 agents.runs 每页 200 条，agents.nextRunsCursor 不为 null 就带 runsCursor 取下一页（汇总每页都是全部运行的）。",
           {"fromDate": dict(_DAY, description="起（含），缺省今天"), "toDate": dict(_DAY, description="止（含），缺省今天"),
            "who": {"type": "string", "enum": ["human", "agent", "both"], "default": "both", "description": "看谁"},
            "detail": {"type": "string", "enum": ["summary", "segments", "windows"], "default": "summary",
                       "description": "summary 汇总；segments 时间段与相位；windows 窗口块"},
            "scope": {"type": "string", "maxLength": 128, "description": "分区 / 项目 / 任务的" + REF + "，只过滤人的已入账部分"},
            "records": {"type": "boolean", "default": True,
-                       "description": "detail=windows 时是否带每个块的 records 明细；false 只留 recordCount（省篇幅）"}},
+                       "description": "detail=windows 时是否带每个块的 records 明细；false 只留 recordCount（省篇幅）"},
+           "runsCursor": {"type": "string", "maxLength": 512,
+                          "description": "detail=segments 时 agents.runs 的下一页：取上一页的 agents.nextRunsCursor，不要自己拼"}},
           {"fromDate": "2026-10-24", "toDate": "2026-10-24", "detail": "summary"},
           {"range": {"from": "2026-10-24", "to": "2026-10-24", "tz": "+08:00", "today": "2026-10-24"},
            "human": {"confirmedSeconds": 5400, "pendingSeconds": 1200, "pendingUncaughtSeconds": 1000,
@@ -148,6 +151,7 @@ READS += [
 # ── 写 ─────────────────────────────────────────────────────────────
 
 _TARGET = {"type": "string", "maxLength": 128, "description": "任务或项目的" + REF}
+_CONF = {"type": "integer", "minimum": 0, "maximum": 100, "description": "你对这一条有多大把握，0–100；如实估计，拿不准给低值或不给"}
 _BLOCK = {"type": "string", "minLength": 1, "maxLength": 700, "description": "块名（取自 Get_Pending_Classify_Windows / Get_History）"}
 
 WRITES = [
@@ -162,7 +166,8 @@ WRITES = [
                                  "app": {"type": "string", "maxLength": 256, "description": "程序名正则（ignore 时是程序名）"},
                                  "title": {"type": "string", "maxLength": 512, "description": "窗口标题正则（ignore 时是「标题含」）"},
                                  "block": {"type": "string", "minLength": 1, "maxLength": 64, "description": "块名，1–64"},
-                                 "ignore": {"type": "boolean", "description": "true = 以后都不记（add 才行，不要 block）"}}}},
+                                 "ignore": {"type": "boolean", "description": "true = 以后都不记（add 才行，不要 block）"},
+                                 "confidencePercent": _CONF}}},
            "reason": _REASON, "direct_apply": _DIRECT},
           {"ops": [{"op": "add", "app": "google-chrome", "title": "docs\\.example\\.com", "block": "示例文档"}],
            "reason": "这个文档每天都开"},
@@ -173,7 +178,7 @@ WRITES = [
           {"ops": {"type": "array", "minItems": 1, "maxItems": 50, "description": "要做的操作，1–50 条",
                    "items": {"type": "object", "additionalProperties": False, "required": ["op", "block"],
                              "properties": {"op": {"type": "string", "enum": ["add", "edit", "delete"]},
-                                            "block": _BLOCK, "target": _TARGET}}},
+                                            "block": _BLOCK, "target": _TARGET, "confidencePercent": _CONF}}},
            "reason": _REASON, "direct_apply": _DIRECT},
           {"ops": [{"op": "add", "block": "示例文档", "target": "kf-hpkf-mcpj"}]},
           {"results": [{"index": 0, "ok": True, "proposalId": "nb_1", "status": "pending"}], "note": "…"},
@@ -192,7 +197,8 @@ WRITES = [
                                                        "required": ["from", "to", "target"],
                                                        "properties": {"from": {"type": "string", "description": "带偏移的时刻"},
                                                                       "to": {"type": "string", "description": "带偏移的时刻"},
-                                                                      "target": _TARGET}}}}}},
+                                                                      "target": _TARGET}}},
+                                   "confidencePercent": _CONF}}},
            "reason": _REASON, "direct_apply": _DIRECT},
           {"items": [{"action": "assign", "date": "2026-10-24", "block": "示例文档", "target": "kf-hpkf-mcpj"}]},
           {"results": [{"index": 0, "ok": True, "proposalId": "na_1", "status": "pending"}], "note": "…"},
@@ -206,7 +212,7 @@ WRITES = [
            "target": {"type": "string", "maxLength": 128, "description": "rename / move / delete：项目或任务的" + REF},
            "to": {"type": "string", "maxLength": 128, "description": "create / move / retime：去处的" + REF},
            "eventId": {"type": "string", "maxLength": 128, "description": "retime：Get_History(detail=segments) 里 confirmed 段的 eventId"},
-           "reason": _REASON, "direct_apply": _DIRECT},
+           "confidencePercent": _CONF, "reason": _REASON, "direct_apply": _DIRECT},
           {"op": "create", "kind": "task", "name": "写测试", "to": "kf-hpkf", "reason": "拆出一个任务"},
           {"result": {"ok": True, "proposalId": "nt_1", "status": "pending"}, "note": "…"},
           required=["op"]),

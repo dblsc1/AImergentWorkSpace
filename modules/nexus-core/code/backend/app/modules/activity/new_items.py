@@ -61,6 +61,15 @@ def _get(user: str, item_id: str) -> dict | None:
     return _col().find_one({"user": user, "id": item_id}, {"_id": 0})
 
 
+def _latest_conf(user: str, d: dict, extra: dict) -> dict:
+    """去重命中待批的那条：再提交带了 confidencePercent 就以最新的为准。"""
+    conf = extra.get("confidencePercent")
+    if conf is None or d.get("status") != "pending" or d.get("confidencePercent") == conf:
+        return d
+    _col().update_one({"user": user, "id": d["id"], "status": "pending"}, {"$set": {"confidencePercent": conf}})
+    return {**d, "confidencePercent": conf}
+
+
 def _put(user: str, kind: str, parent: str, name: str, reason: str, extra: dict) -> dict:
     """取（或新建）提议。已批准但东西后来被删了（调用方已确认没有同名活的）→ 换一条新的。"""
     item_id = ("np_" if kind == "project" else "nt_") + hashlib.sha256(
@@ -77,7 +86,7 @@ def _put(user: str, kind: str, parent: str, name: str, reason: str, extra: dict)
     if d:
         if d["status"] == "rejected":
             raise ConflictError("用户已经否掉过这个提议，不要再提")
-        return d
+        return _latest_conf(user, d, extra)
     if _col().count_documents({"user": user, "kind": kind, "status": "pending"}) >= MAX_PENDING[kind]:
         raise TooManyReportsError(f"已有 {MAX_PENDING[kind]} 条待批准的{'项目' if kind == 'project' else '任务'}提议，"
                                   "请先让用户处理旧的")
@@ -102,7 +111,7 @@ def _clean_reason(reason: str) -> str:
     return " ".join((reason or "").split())[:MAX_REASON]
 
 
-def propose_project(zone_id: str, name: str, reason: str) -> dict:
+def propose_project(zone_id: str, name: str, reason: str, confidence: int | None = None) -> dict:
     user = current_tenant()
     name = clean_name(name, "项目的 name")
     if planner_service.get_zone(zone_id) is None:
@@ -111,10 +120,10 @@ def propose_project(zone_id: str, name: str, reason: str) -> dict:
     same = next((p for p in planner_service.list_projects(zone_id) if proposals._norm(p["name"]) == n), None)
     if same is not None:
         raise ConflictError(f"分区里已有同名项目 {same['id']!r}，请直接用它的 projectId")
-    return _view(user, _put(user, "project", zone_id, name, _clean_reason(reason), {"zoneId": zone_id}))
+    return _view(user, _put(user, "project", zone_id, name, _clean_reason(reason), {"zoneId": zone_id, "confidencePercent": confidence}))
 
 
-def propose_task(project_id: str | None, project_proposal_id: str | None, name: str, reason: str) -> dict:
+def propose_task(project_id: str | None, project_proposal_id: str | None, name: str, reason: str, confidence: int | None = None) -> dict:
     user = current_tenant()
     if (project_id is None) == (project_proposal_id is None):
         raise InvalidInputError("projectId 与 projectProposalId 须恰好给一个")
@@ -125,7 +134,7 @@ def propose_task(project_id: str | None, project_proposal_id: str | None, name: 
         same = proposals._same_name_task(project_id, name)
         if same is not None:
             raise ConflictError(f"项目里已有同名任务 {same['id']!r}，请直接用它的 taskId")
-        parent, extra = project_id, {"projectId": project_id, "parentId": None}
+        parent, extra = project_id, {"projectId": project_id, "parentId": None, "confidencePercent": confidence}
     else:
         pp = _get(user, project_proposal_id)
         if pp is None or pp["kind"] != "project":
@@ -133,7 +142,7 @@ def propose_task(project_id: str | None, project_proposal_id: str | None, name: 
         if pp["status"] != "pending":
             real = f"；已批准，请改用 projectId={pp['reservedId']!r}" if pp["status"] == "accepted" else ""
             raise ConflictError(f"这个项目提议已{'批准' if real else '被否掉'}，不能再往下挂{real}")
-        parent, extra = "pp:" + pp["id"], {"projectId": None, "parentId": pp["id"]}
+        parent, extra = "pp:" + pp["id"], {"projectId": None, "parentId": pp["id"], "confidencePercent": confidence}
     return _view(user, _put(user, "task", parent, name, _clean_reason(reason), extra))
 
 
@@ -161,7 +170,7 @@ def _view(user: str, d: dict, human: bool = False) -> dict:
         return _ignore_view(d, human)
     out = {"id": d["id"], "kind": d["kind"], "status": d["status"], "name": d["name"], "reason": d["reason"],
            "createdAt": d["createdAt"].replace(tzinfo=timezone.utc).isoformat(),
-           "createdId": d["reservedId"] if d["status"] == "accepted" else None}
+           "createdId": d["reservedId"] if d["status"] == "accepted" else None, "confidencePercent": d.get("confidencePercent")}
     if d["kind"] == "project":
         zone = planner_service.get_zone(d["zoneId"])
         out.update(zoneId=d["zoneId"], zoneName=zone["name"] if zone else None)
@@ -305,7 +314,7 @@ def _put_edit(user: str, kind: str, item_id: str, extra: dict, reason: str, capp
             snap = {"snapName": extra["snapName"], "snapParent": extra["snapParent"]}  # 目标后来被改过：快照跟着刷新
             _col().update_one({"user": user, "id": item_id, "status": "pending"}, {"$set": snap})
             d = {**d, **snap}
-        return d
+        return _latest_conf(user, d, extra)
     if capped and _col().count_documents({"user": user, "kind": kind, "status": "pending"}) >= MAX_PENDING[kind]:  # 直接施加不占待批准名额
         raise TooManyReportsError(f"已有 {MAX_PENDING[kind]} 条待批准的{_LABEL[kind]}提议，"
                                   "请先让用户处理旧的")
@@ -342,7 +351,7 @@ def _clash(target: str, target_id: str, parent: str, name: str) -> dict | None:
 
 
 def propose_change(target: str, target_id: str, op: str, name: str | None, to_id: str | None, reason: str,
-                   direct: bool = False, request=None) -> dict:
+                   direct: bool = False, request=None, confidence: int | None = None) -> dict:
     from . import direct_log  # noqa: PLC0415 —— direct_log 反过来 import 本文件
 
     if direct:
@@ -391,7 +400,8 @@ def propose_change(target: str, target_id: str, op: str, name: str | None, to_id
     temp = not (pre and pre["status"] == "pending")
     d = _put_edit(user, "change", item_id, {"target": target, "targetId": target_id, "op": op,
                                              "name": name, "toId": to_id, "snapName": cur["name"],
-                                             "snapParent": _parent(target, cur)}, _clean_reason(reason), capped=not direct)
+                                             "snapParent": _parent(target, cur), "confidencePercent": confidence},
+                  _clean_reason(reason), capped=not direct)
     if direct:  # 契约「五」：跳过待批准立即落地（仍走 guard.run_write，高风险写的二次设防照旧）
         if d["status"] == "rejected":
             raise ConflictError("用户已经否掉过这个提议，不要再提")
@@ -405,7 +415,7 @@ def propose_change(target: str, target_id: str, op: str, name: str | None, to_id
                 raise
 
         return direct_log.run("change", {"target": target, "targetId": target_id, "op": op, "name": name, "toId": to_id,
-                                         "reason": _clean_reason(reason)}, go)
+                                         "reason": _clean_reason(reason), "confidencePercent": confidence}, go)
     return _change_view(d)
 
 
@@ -454,7 +464,8 @@ def _change_view(d: dict) -> dict:  # snapName / snapParent 是内部快照，�
             "targetId": d["targetId"], "targetName": cur["name"] if cur else None,
             "projectId": cur["projectId"] if cur and d["target"] == "task" else None,
             "name": d["name"], "toId": d["toId"], "toName": to_name, "reason": d["reason"],
-            "createdAt": d["createdAt"].replace(tzinfo=timezone.utc).isoformat(), "createdId": None}
+            "createdAt": d["createdAt"].replace(tzinfo=timezone.utc).isoformat(), "createdId": None,
+            "confidencePercent": d.get("confidencePercent")}
 
 
 def _ignore_view(d: dict, human: bool) -> dict:

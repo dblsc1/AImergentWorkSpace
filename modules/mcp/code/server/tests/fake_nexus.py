@@ -66,7 +66,8 @@ EVIL_APP = "fire\nfox​"
 
 def settings_for(tenant):
     s = {"version": 3, "tiers": True, "tiersSince": "2026-10-20T00:00:00+08:00",
-         "agentDirect": {"enabled": True, "windowsClassify": True, "honeycombRecords": False}}
+         "agentDirect": {"enabled": True, "windowsClassify": True, "honeycombRecords": False},
+         "highConfidenceThresholdPercent": 65 if tenant == "u_alice" else 80}
     if tenant == "u_tiersoff":
         s.update(tiers=False, agentDirect={"enabled": False, "windowsClassify": False, "honeycombRecords": False})
     if tenant == "u_off":
@@ -85,6 +86,10 @@ BLOCKS = {"date": "2026-10-24", "nextCursor": None, "items": [
      "apps": ["google-chrome"]},
     {"blockKey": "示例文档", "keySource": "rule", "status": "pending", "seconds": 9000, "records": 9, "apps": ["google-chrome"]},
     {"blockKey": "已分类", "keySource": "auto", "status": "assigned", "seconds": 8000, "records": 9, "apps": ["code"]},
+    {"blockKey": "通用窗口", "keySource": "auto", "status": "generic", "parts": [], "seconds": 300, "records": 2, "apps": ["term"]},
+    {"blockKey": "通用规则", "keySource": "rule", "status": "generic", "parts": [], "seconds": 400, "records": 1, "apps": ["term"]},
+    {"blockKey": "通用已拆", "keySource": "auto", "status": "generic", "parts": [{"taskId": "t_a1"}], "seconds": 700, "records": 2,
+     "apps": ["term"]},
 ]}
 BLOCK_RULES = {"items": [
     {"id": "br_1", "blockKey": "示例文档", "taskId": "t_a1", "projectId": "p_3c", "author": "ai", "via": "assign"},
@@ -93,7 +98,7 @@ IGNORES = {"total": 1, "items": [{"id": "ig_1", "app": "chrome", "titleContains"
                                   "hits": 3, "seconds": 700}]}
 PROPOSALS = {
     "projects": [{"id": "np_1", "kind": "project", "status": "pending", "name": "新项目", "createdAt": "2026-10-24T09:00:00+08:00",
-                  "zoneId": "z_7f", "tasks": [{"id": "nt_2", "kind": "task", "status": "pending", "name": "子任务",
+                  "zoneId": "z_7f", "confidencePercent": 90, "tasks": [{"id": "nt_2", "kind": "task", "status": "pending", "name": "子任务",
                                                "createdAt": "2026-10-24T09:01:00+08:00", "projectProposalId": "np_1"}]}],
     "tasks": [{"id": "nt_1", "kind": "task", "status": "accepted", "name": "挂现成", "createdAt": "2026-10-23T09:00:00+08:00",
                "decidedAt": "2026-10-23T10:00:00+08:00", "projectId": "p_3c"}],
@@ -103,7 +108,7 @@ PROPOSALS = {
                  "createdAt": "2026-10-24T07:00:00+08:00"}],
     "windowRules": [{"id": "nw_1", "kind": "windowRule", "status": "pending", "op": "add",
                      "rule": {"app": "google-chrome", "hasTitle": True, "block": "示例文档"}, "createdAt": "2026-10-24T10:00:00+08:00"}],
-    "blockRules": [{"id": "nb_1", "kind": "blockRule", "status": "pending", "op": "add", "blockKey": "示例文档", "taskId": "t_a1",
+    "blockRules": [{"id": "nb_1", "kind": "blockRule", "status": "pending", "op": "add", "blockKey": "示例文档", "taskId": "t_a1", "confidencePercent": 40,
                     "createdAt": "2026-10-24T10:01:00+08:00"}],
     "blockActions": [{"id": "na_1", "kind": "blockAction", "status": "rejected", "action": "assign", "date": "2026-10-24",
                       "blockKey": "x", "blockTitle": "x", "projectId": "p_3c", "createdAt": "2026-10-24T10:02:00+08:00"}],
@@ -165,6 +170,7 @@ def match_for(q):
 def windows_for(q):
     """windows/history：query 回收到的 app + title / titleContains（同 nexus-core）。"""
     return {"query": {k: q[k][0] for k in ("app", "title", "titleContains") if k in q}, "days": int(q.get("days", ["30"])[0]),
+            "truncated": q["app"][0] == "many",
             "blocks": [{"block": "chrome · 周报", "keySource": "auto", "days": 4, "seconds": 1800, "records": 37,
                         "lastAt": "2026-10-23T03:00:00+00:00"}]}
 
@@ -258,7 +264,7 @@ def respond(method, path, q, tenant, body, scope):
         "/api/core/views/history": lambda: ({**HISTORY, "human": {**HISTORY["human"], "blocks": WIN_BLOCKS}}
                                             if one("detail") == "windows" and "blocks" not in HISTORY["human"] else HISTORY),
         "/api/core/views/arrangements": lambda: ARRANGEMENTS,
-        "/api/core/activity/blocks": lambda: BLOCKS,
+        "/api/core/activity/blocks": lambda: {**BLOCKS, "items": [i for i in BLOCKS["items"] if one("status", "all") in ("all", i["status"])]},
         "/api/core/activity/gaps": lambda: GAPS,
         "/api/core/activity/blocks/history": lambda: match_for(q),
         "/api/core/activity/windows/history": lambda: windows_for(q),

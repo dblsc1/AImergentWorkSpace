@@ -152,3 +152,13 @@ def test_windows_history_tenant_isolation_and_422(client):
     for bad in ({}, {"app": ""}, {"app": "chrome", "title": "x", "titleContains": "y"}, {"app": "chrome", "titleContains": ""},
                 {"app": "chrome", "titleContains": "x" * 129}, {"app": "chrome", "days": 0}, {"app": "chrome", "days": 91}):
         assert client.get(WH, params=bad).status_code == 422, bad
+
+
+def test_windows_history_truncated_flag(client, monkeypatch):
+    from app.modules.activity import gaps as gaps_mod
+
+    upload(client, [rec(D, "09:00:00", "09:10:00", title="a"), rec(D, "10:00:00", "10:10:00", title="b")])
+    assert client.get(WH, params={"app": "chrome"}).json()["truncated"] is False
+    monkeypatch.setattr(gaps_mod, "MAX_DEST", 1)
+    body = client.get(WH, params={"app": "chrome"}).json()
+    assert body["truncated"] is True and len(body["blocks"]) == 1

@@ -444,3 +444,21 @@ v1 的 23 个工具名不出现在 `tools/list`，但仍能调：**不调下游�
 - 原始记录不存是哪条规则收的，所以不按 `ruleId` 查。
 
 后端：nexus-core 追加只读端点 `GET /api/core/activity/windows/history?app=&title=|titleContains=&days=`，形状同上（不含 `note` / `permissions`），租户隔离同其他 `activity/*`。
+
+### 补充（v2.3 · v0.5：置信度，只增不改）
+
+- 所有写工具（`CRUD_Windows_Classify_Rules`、`CRUD_Windowsblock_Classify_Rules`、`CRUD_Windowsblock`、`CRUD_Honeycomb`）的每条 `ops[]` 可带 `confidencePercent`：整数 0–100，可省，表示 AI 对这一条有多大把握。原样转给 nexus-core（v2.42），越界或非整数 400。
+- `Get_Proposals` 每条提议带 `confidencePercent`（没给是 `null`）。
+- `Get_Started` 带出 `highConfidenceThresholdPercent`（高置信度阈值，人在设置里调，缺省 80）。口径：`confidencePercent ≥` 阈值为高置信度，人可在决策栏一键批准；`null` 或低于阈值为低置信度。
+- AI 应当如实估计；拿不准就给低值或不给，不要为了一键批准而抬高。
+
+- `CRUD_Honeycomb` 一次一条，`confidencePercent` 是顶层参数。
+- `ignore: true` 的条目可带 `confidencePercent` 但不转发（忽略提议不存置信度）。
+
+### 补充（v2.4 · v0.5：Agent 运行翻页与小修正，只增不改）
+
+- `Get_History` 收 `runsCursor`，原样转给 nexus-core（v2.43）；返回带 `agents.nextRunsCursor`、`agents.runs[].turns`、`handoffs[].reason`。
+- `Get_Today_Todo`（及旧名 `Get_Today`）的 `uncaught` 与 `Get_History` 口径一致：「标成通用窗口、还没拆分」的块也算第一级没收。
+- `Get_Blocks_Match_History` 返回带 `truncated`：结果超过 20 条被截断时为 `true`。
+- 一级没收 = 没被第一级规则收的待处理块（含标成通用窗口、还没拆分的）；被规则收了但没定去向（含通用窗口未拆分的）算二级没定。
+

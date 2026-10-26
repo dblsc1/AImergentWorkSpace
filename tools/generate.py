@@ -259,6 +259,8 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
         "AUTH_UPSTREAM": "${AUTH_UPSTREAM:-auth:8010}",
         # 站点前缀（gateway.v1），以 / 开头、以 / 结尾，如 /Cockpit/。
         "HONEYCOMB_BASE_PATH": "${HONEYCOMB_BASE_PATH:-/}",
+        # 本机请求标记（gateway.v1 第十节）；前面有同机反代时设 false。
+        "HONEYCOMB_SAME_HOST_TRUSTED": "${HONEYCOMB_SAME_HOST_TRUSTED:-true}",
     }
     for r in routes:  # 可由 .env 换掉的上游（如 AGENT_UPSTREAM，gateway.v1 第八节）
         if r.get("upstreamEnv"):
@@ -281,6 +283,7 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
             "./nginx/templates/default.conf.template:/etc/nginx/templates/default.conf.template:ro",
             "${HONEYCOMB_EXTRA_ROUTES_DIR:-../nginx/extra}:/etc/nginx/templates/extra:ro",
             "../../modules/nginx-docker/nginx:/etc/nginx/honeycomb:ro",
+            "../../modules/nginx-docker/nginx/same-host.sh:/docker-entrypoint.d/15-honeycomb-same-host.sh:ro",
             "../../modules/nginx-docker/static:/usr/share/nginx/html/__cockpit:ro",
         ] + [_mount(st) for st in statics],
         # 占位件的依赖是可选的：部署方用 override 把它关掉（profiles），
@@ -457,6 +460,7 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
             "        proxy_set_header X-Original-Method $request_method;",
             "        proxy_set_header X-Nexus-Scope \"\";",
             "        proxy_set_header X-Nexus-Anonymous \"\";",
+            "        proxy_set_header X-Nexus-Same-Host \"\";",
             "    }",
             f"    location @to_login {{ return 302 {_b('/login/')}; }}",
             "",
@@ -473,6 +477,7 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
             "        proxy_set_header X-Nexus-Tenant \"\";",
             "        proxy_set_header X-Nexus-Scope \"\";",
             "        proxy_set_header X-Nexus-Anonymous \"\";",
+            "        proxy_set_header X-Nexus-Same-Host \"\";",
             "    }",
         ]
     for st in statics:
@@ -514,10 +519,12 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
                 "        auth_request_set $honeycomb_anonymous $upstream_http_x_nexus_anonymous;",
                 "        proxy_set_header X-Nexus-Scope $honeycomb_scope;",
                 "        proxy_set_header X-Nexus-Anonymous $honeycomb_anonymous;",
+                "        proxy_set_header X-Nexus-Same-Host $honeycomb_same_host;",
             ]
         else:
             L += ["        proxy_set_header X-Nexus-Tenant \"\";",
-                  "        proxy_set_header X-Nexus-Scope \"\";", "        proxy_set_header X-Nexus-Anonymous \"\";"]
+                  "        proxy_set_header X-Nexus-Scope \"\";", "        proxy_set_header X-Nexus-Anonymous \"\";",
+                  "        proxy_set_header X-Nexus-Same-Host \"\";"]
         upstream = r.get("upstream", r["prefix"])
         L += [
             f'        set $honeycomb_up_{i} "{r["service"]}:{r["port"]}";',

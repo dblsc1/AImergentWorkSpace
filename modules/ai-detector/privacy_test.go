@@ -17,6 +17,9 @@ import (
 func bp(b bool) *bool { return &b }
 
 func red(p Privacy) redactor {
+	if p.NumberedAliases == nil {
+		p.NumberedAliases = []string{} // 这里的老用例测的是方括号写法；编号代号在 aliases_test.go
+	}
 	r := newRedactor(Config{Privacy: p})
 	r.literals = nil // 本机用户名 / 主机名因机器而异，单独测
 	return r
@@ -66,8 +69,8 @@ func TestPrivacyOptions(t *testing.T) {
 }
 
 func TestUsernameLiterals(t *testing.T) {
-	r := red(Privacy{})
-	r.literals = []literal{{regexp.MustCompile(`(?i)(^|[^\p{L}\p{N}_])` + regexp.QuoteMeta("zhangsan") + `($|[^\p{L}\p{N}_])`), "[用户]"}}
+	r := red(Privacy{NumberedAliases: []string{}})
+	r.literals = []literal{{regexp.MustCompile(`(?i)(^|[^\p{L}\p{N}_])` + regexp.QuoteMeta("zhangsan") + `($|[^\p{L}\p{N}_])`), "[用户]", "zhangsan"}}
 	if got, _ := r.window("code", "zhangsan 的笔记 — notzhangsan2", nil); got != "[用户] 的笔记 — notzhangsan2" {
 		t.Fatalf("%q", got)
 	}

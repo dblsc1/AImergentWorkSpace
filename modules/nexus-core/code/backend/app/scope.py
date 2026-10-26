@@ -19,6 +19,7 @@ from typing import NamedTuple
 
 SCOPE_HEADER = b"x-nexus-scope"
 ANONYMOUS_HEADER = b"x-nexus-anonymous"
+SAME_HOST_HEADER = b"x-nexus-same-host"  # v2.43：网关说「请求来自本机」（gateway.v1 第十节）
 SCOPES = ("report", "read", "write")
 #: 上报面：恰好这四个 POST，路径全匹配（结尾多一个 / 也不算）。
 REPORT = re.compile(r"/api/core/agents/(?:start|[^/]+/(?:phase|stop|heartbeat))")
@@ -29,6 +30,7 @@ PREFS_PATH = "/api/core/lanes/prefs"
 class Caller(NamedTuple):
     scope: str | None  # None = 没有范围头（人的会话 / 对内直连 / 老网关）
     anonymous: bool
+    same_host: bool = False  # 本机发来的（只看 == "1"）；匿名 + 本机 = 开已核实的运行
 
 
 _current: ContextVar[Caller] = ContextVar("caller", default=Caller(None, False))
@@ -63,12 +65,14 @@ class ScopeMiddleware:
         if scope_["type"] != "http" or scope_["path"] in _EXEMPT:
             await self.app(scope_, receive, send)
             return
-        scopes, anonymous = [], False
+        scopes, anonymous, same_host = [], False, False
         for name, value in scope_.get("headers") or ():
             if name.lower() == SCOPE_HEADER:
                 scopes.append(value.decode("latin-1"))
             elif name.lower() == ANONYMOUS_HEADER:
                 anonymous = anonymous or value != b""
+            elif name.lower() == SAME_HOST_HEADER:
+                same_host = same_host or value == b"1"
         raw = scopes[0] if scopes else ""
         scope = "report" if anonymous else (raw or None)
         # 同一个头出现两次（网关只会给一个）= 有人在网关之外拼请求：不挑，拒绝
@@ -81,7 +85,7 @@ class ScopeMiddleware:
                           + ("只能上报代理运行（POST /api/core/agents/...）" if scope == "report"
                              else "只读：只能 GET，或上报代理运行"))
             return
-        token = _current.set(Caller(scope, anonymous))
+        token = _current.set(Caller(scope, anonymous, anonymous and same_host))  # 只有匿名才认「本机」
         try:
             await self.app(scope_, receive, send)
         finally:

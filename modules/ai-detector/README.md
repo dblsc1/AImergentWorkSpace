@@ -44,6 +44,7 @@
 | 聊天 / 邮件 / 密码管理器只留程序名 `appOnly` | 开 | 名单 `appOnlyApps` 可改 |
 | 浏览器 `browser` | `domain`：域名 · 页面标题 | `full`：完整网址（`queryStrings` 管是否去掉 `?查询`）；`off`：只留程序名 |
 | 邮箱 / 电话 / 中文地址 / IP / 用户名主机名 / 6 位以上数字 | 全开 | 各自单独开关 |
+| 编号代号 `numberedAliases`（只认本机配置） | `["ips","emails","users","hosts"]` | 把对应类型的 `[IP]` / `[邮箱]` / `[用户]` / `[主机]` 换成 `公网IP1`、`邮箱2`、`用户1`、`主机1` 这样的编号（IP 分本机 / 局域网 / 组网 / 公网各自编号）；加 `"domains"` 把网址里的域名换成 `网站1`（端口保留）；`[]` = 都用方括号。对照表 `aliases.json` 只在本机，坏了就不上传；`ai-detector preview` 会列出用到的代号与原值 |
 
 ### 强制脱敏（关不掉）
 
@@ -231,6 +232,8 @@ Linux `~/.config/honeycomb/`；设环境变量 `AI_DETECTOR_HOME` 可换目录�
 | （网页上的）`autoTrack` | 关 | 「允许 AI 管理进行中的任务」。**只在网页「自动记录 → 活动检测设置」里开关**，本机配置没有这个键（见下） |
 | `agentStatusFile` | 空 | 状态文件桥读的文件路径，空 = 关（见下） |
 | `agentStatusIgnore` | `[]` | 状态文件里 `key` 以这些前缀开头的条目不报 |
+| `agentLights` | `true` | 红绿灯（见下）：约每秒看本机 Claude Code / Codex / Hermes，写 `~/.agent-traffic-light/agents.json` |
+| `agentLightsReport` | `["hermes"]` | 红绿灯替哪几类上报（`claude` / `codex` / `hermes`）；其余只显示。写错值红绿灯不工作并写日志 |
 | `segmentByTitle` | `true` | 终端按标签页分段（见下）。网页「自动记录」页设过就以网页为准 |
 | `segmentByTitleApps` | 内置终端名单 | 哪些程序按标签页分段；不写 = 内置名单（GNOME Terminal、Ptyxis、kitty、Alacritty、WezTerm、Konsole、iTerm2、Windows Terminal……） |
 
@@ -316,6 +319,16 @@ ActivityWatch 起不来时，真正的原因在 `aw-start.log` 里。默认它**
   你手动计时的那段时间 AI 不插手。
 
 关掉（缺省）就和以前完全一样：一切都只是待确认的建议。
+
+### 红绿灯（`agentLights`，v0.5）
+
+只读 `~/.claude/sessions/*.json`、`~/.codex/sessions` 下最近的会话记录（只看事件类型）、`~/.hermes` 下的 `gateway_state.json`，把状态写进
+`~/.agent-traffic-light/agents.json`（格式同下面的状态文件）。`agentLightsReport` 里的类按状态文件桥同样的规则上报，
+状态文件桥会跳过这几类。Claude Code 有钩子，所以缺省只上报 Hermes。网关进程已不在的 Hermes 配置不显示也不上报。
+
+```json
+{ "agentLights": true, "agentLightsReport": ["hermes"] }
+```
 
 ### 状态文件桥（`agentStatusFile`）
 

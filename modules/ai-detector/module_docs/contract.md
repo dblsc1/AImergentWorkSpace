@@ -609,6 +609,32 @@ Authorization: Bearer <deviceToken>
 - **离开本机的只有**：`key` 的前缀（合规的代理种类名，作 agent/tool 名）、`clientKey`（哈希）、脱敏后的 `label`、相位、时刻、结束状态。`key` 的其余部分、
   `detail`、文件路径都不上传。
 
+## 编号代号（`ai-detector.config.v1` 追加 `privacy.numberedAliases` · 规范性，v0.5 追加）
+
+- 配置 `privacy.numberedAliases`：字符串数组，列出哪些类型在本该遮盖时改用编号代号。可选值 `ips`、`emails`、`users`、`hosts`、`domains`。缺省 `["ips", "emails", "users", "hosts"]`；`[]` 等于全部照旧遮盖。只对已经开着遮盖的类型生效（例如 `privacy.ips: false` 时 IP 原样，不编号）；`domains` 例外：网站域名本来不遮，列上它才换代号。
+- 代号写法（按类型各自从 1 编号，同一个原值永远同一个代号）：
+  - IP：`127.0.0.0/8`、`::1` 写 `本机IP<n>`；`10/8`、`172.16/12`、`192.168/16`、`169.254/16`、`fc00::/7`、`fe80::/10` 写 `局域网IP<n>`；`100.64.0.0/10` 写 `组网IP<n>`；其余写 `公网IP<n>`。四类各自编号。
+  - 邮箱 `邮箱<n>`；终端提示符里的用户名 `用户<n>`、主机名 `主机<n>`；网站域名 `网站<n>`（网址、`域名/路径` 里的主机部分，端口保留）。
+- 对照表：配置目录里的 `aliases.json`，`{类型: {原值: 代号}}`，只在本机，不上传。读不了（坏了）就报错、不上传，同标题代号（删掉它会从 1 重新编号）。
+- 预览命令同时列出本次用到的代号与原值，方便人写规则时对照。
+- 电话、住址、长数字、路径不编号，照旧遮盖。
+
+## 红绿灯（`ai-detector.agent-lights.v1` · 规范性，v0.5 追加）
+
+检测程序自己看本机各个命令行 AI 的状态：给本机的红绿灯显示用，并替没有钩子的 AI 上报蜂巢。与 `tools/agent-hooks` 的钩子同时工作。
+
+- 配置 `agentLights`（布尔，缺省 `true`）：开着时约每秒看一次，写显示文件；关着时不读任何 AI 的文件、不写显示文件。同样只在 `run` 常驻模式下工作。
+- 配置 `agentLightsReport`（字符串数组，缺省 `["hermes"]`，可选值 `claude`、`codex`、`hermes`）：哪几类由红绿灯上报蜂巢。不在里面的只显示不上报（它们有钩子）。未知值报错。
+- 看哪里（只读，不改这些文件）：
+  - Claude Code：`~/.claude/sessions/*.json`，每个文件一个会话；`pid` 不在了算出错；`waitingFor` 含 permission 算等批权限；`status` 为 busy / running / active 算干活；waiting / idle / done / complete / completed 算闲着。
+  - Codex：`~/.codex` 下的状态与日志库，只看最近 12 小时内更新过的最近一个对话；有待批准标记且其后没有完成标记算等批权限；15 秒内有动静算干活；否则闲着。
+  - Hermes：`~/.hermes/gateway_state.json`（显示名 `Hermes`）与 `~/.hermes/profiles/<名>/gateway_state.json`（显示名 `Hermes <名>`）；网关 `pid` 不在了的配置**不显示、不上报**；`active_agents > 0` 算干活；网关状态正常算闲着；其余算出错。
+  - 读不到、格式不对的跳过，不报错。
+- 显示文件：`~/.agent-traffic-light/agents.json`，格式同「状态文件桥」的文件格式（`updated_at` + `agents[{key, label, state, detail}]`），先写临时文件再改名。显示文件只在本机，不上传。
+- 上报：在 `agentLightsReport` 里的那几类，按「状态文件桥」同样的规则开运行、报相位、结束（`key` 用 `<类>:<会话或配置名>`，`label` 照常脱敏）。同一个 `key` 不会同时被状态文件桥和红绿灯各报一遍：红绿灯开着时，状态文件桥跳过 `agentLightsReport` 里的那几类。
+- 离开本机的只有：类名、`clientKey`（哈希）、脱敏后的显示名、相位、时刻、结束状态。`detail`、文件路径、会话内容都不上传。
+- Codex 的实现取舍：读 `~/.codex/sessions` 下最近 12 小时内改过的那份会话记录（JSONL，只看事件类型，不读内容），不读数据库。
+
 ## 变更记录
 
 | 日期 | 变更 |

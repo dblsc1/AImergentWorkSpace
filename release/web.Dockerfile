@@ -7,6 +7,7 @@ FROM nginx:1.27-alpine
 
 COPY deploy/nginx/templates/default.conf.template /etc/nginx/templates/default.conf.template
 COPY modules/nginx-docker/nginx /etc/nginx/honeycomb
+COPY --chmod=755 modules/nginx-docker/nginx/same-host.sh /docker-entrypoint.d/15-honeycomb-same-host.sh
 COPY modules/nginx-docker/static /usr/share/nginx/html/__cockpit
 COPY contracts/auth.gate.v1/stub/web /usr/share/nginx/html/login
 COPY modules/hive/code/frontend /usr/share/nginx/html/hive
@@ -22,6 +23,7 @@ RUN find /usr/share/nginx/html \( -name '*.test.js' -o -name '*.md' \) -delete \
 ENV AUTH_UPSTREAM=auth:8010 \
     AGENT_UPSTREAM= \
     HONEYCOMB_BASE_PATH=/ \
+    HONEYCOMB_SAME_HOST_TRUSTED=true \
     NGINX_ENVSUBST_FILTER=^(AUTH_UPSTREAM|AGENT_UPSTREAM|HONEYCOMB_)
 
 HEALTHCHECK --interval=10s --timeout=5s --retries=5 --start-period=10s \
