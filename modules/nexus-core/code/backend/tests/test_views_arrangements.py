@@ -228,7 +228,8 @@ def test_spent_this_range(client, w):
     spent = {x["name"]: x["spentThisRange"] for x in body["actionable"]}
     assert spent == {"有时间": {"humanSeconds": 3600, "agentWorkingSeconds": 600}, "没时间": {"humanSeconds": 0, "agentWorkingSeconds": 0}}
     # week 把本周内的也算上
-    stat(a["id"], w["p"]["id"], (TODAY - timedelta(days=TODAY.weekday())).isoformat(), 100)
+    if TODAY.weekday():  # 周一时本周一就是今天，同一 (user,date,project,task) 已有一行，再插会撞唯一索引
+        stat(a["id"], w["p"]["id"], (TODAY - timedelta(days=TODAY.weekday())).isoformat(), 100)
     wk = get(client, ARR, range="week")
     expect = 3600 + (100 if TODAY.weekday() else 0)
     assert {x["name"]: x["spentThisRange"]["humanSeconds"] for x in wk["actionable"]}["有时间"] == expect
