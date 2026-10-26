@@ -18,14 +18,15 @@
  * 一个新的请求面都不开，和 hex-crud.js 当初的判断一致。
  *
  * **后端零改动**：数据全是蜂巢已经拿着的（tree / heat / todos / completions），
- * 只多拉一次 views/gantt（打开时拉，拿不到就那一栏写"读取失败"，其余照常）。
+ * 多拉一次 views/gantt（打开时拉，拿不到就那一栏写"读取失败"，其余照常），
+ * 再按同一个 7 天区间拉一次 views/agent-time 把 Agent 时长并排显示（拿不到就不显示，不影响其余）。
  * 热度口径与 hex-data.js::completionHeat 同一份：近期完成次数按 7 天半衰期加权。
  */
 (function () {
   "use strict";
 
   var DAY = 86400000;
-  var ctx = null;   // { state, fetchGantt, fetchAgentTime, weekRange, agentSecondsByProject, withAgentTime, createProject, openProject, reload, halfLifeDays }
+  var ctx = null;   // { state, fetchGantt, fetchAgentByProject, withAgentTime, createProject, openProject, reload, halfLifeDays }
   var dlg = null;
 
   function esc(s) {
@@ -347,28 +348,28 @@
   }
 
   // 拉一次 gantt 再画实数。拿不到就把依赖它的格子写成"读取失败 / —"，其余照常。
+  // 代理时长的区间（今天往前 6 天）要用 gantt 的 today，所以接在 gantt 后面取；
+  // 人的时长先画，代理时长回来再补，取不到 / 卡住 / 抛错都只是不显示。
+  function repaint(zoneId, gi, agent) {
+    if (!dlg || !dlg.open || dlg.dataset.zoneId !== zoneId) return;
+    var m = model(zoneId, gi, agent);
+    if (!m) return;
+    var keep = dlg.querySelector("[data-zp-new] input");
+    var typed = keep ? keep.value : "";
+    dlg.innerHTML = render(m, false);
+    var input = dlg.querySelector("[data-zp-new] input");
+    if (input && typed) input.value = typed;
+  }
+
   function paint(zoneId) {
-    // 代理时长要和「近 7 天」同区间，区间的 today 来自 gantt，所以接在它后面取；
-    // 取不到只是不显示代理时长，不影响面板。
     ctx.fetchGantt().then(function (r) {
       var gi = r && r.ok ? ganttIndex(r.data) : null;
-      if (!gi) return [r, gi, null];
-      var w = ctx.weekRange(gi.__today);
-      return Promise.resolve(ctx.fetchAgentTime(w.from, w.to)).then(function (a) {
-        return [r, gi, a && a.ok ? ctx.agentSecondsByProject(a.data) : null];
-      }, function () { return [r, gi, null]; });
-    }).then(function (res) {
-      if (!dlg || !dlg.open || dlg.dataset.zoneId !== zoneId) return;
-      var gi = res[1];
-      var m = model(zoneId, gi, res[2]);
-      if (m) {
-        var keep = dlg.querySelector("[data-zp-new] input");
-        var typed = keep ? keep.value : "";
-        dlg.innerHTML = render(m, false);
-        var input = dlg.querySelector("[data-zp-new] input");
-        if (input && typed) input.value = typed;
-      }
-    });
+      repaint(zoneId, gi, null);
+      if (!gi) return;
+      return ctx.fetchAgentByProject(gi.__today).then(function (agent) {
+        if (agent) repaint(zoneId, gi, agent);
+      });
+    }).catch(function () {});
   }
 
   function init(c) { ctx = c; }

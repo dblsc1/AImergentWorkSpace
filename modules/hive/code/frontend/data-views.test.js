@@ -336,6 +336,23 @@ Promise.resolve()
         assert.strictEqual(r.ok, false);
       });
   }); })
+  .then(function () { return test("agent-time 失败（reject / 同步抛 / 非 2xx）→ 得 null，人的文案不变、代理秒数不并进人的时长", function () {
+    var fmt = function (s) { return Math.round(s / 60) + "分"; };
+    var cases = [
+      function () { return Promise.reject(new Error("x")); },
+      function () { throw new Error("sync"); },
+      function () { return Promise.resolve({ ok: false, status: 500, json: function () { return Promise.resolve({}); } }); }
+    ];
+    return cases.reduce(function (p, fi) {
+      return p.then(function () { return D.fetchAgentByProject("2026-10-27", { fetchImpl: fi }); })
+        .then(function (agent) {
+          assert.strictEqual(agent, null);
+          var d7 = 4800;  // 人 80 分，面板里的 d7 只来自 gantt
+          assert.strictEqual(D.withAgentTime(fmt(d7), (agent || {}).p1 || 0, fmt), "80分");
+          assert.strictEqual(d7, 4800);
+        });
+    }, Promise.resolve());
+  }); })
   .then(function () {
     console.log(passed + " passed");
   })

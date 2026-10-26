@@ -900,8 +900,7 @@
              longPressMs: T.LONGPRESS_MS,
              // 短按 = 分区规划面板（人类 2026-09-12）。
              onShortPress: function (zoneId) { ZP.open(zoneId); } });
-    ZP.init({ state: state, fetchGantt: D.fetchGantt, fetchAgentTime: D.fetchAgentTime,
-              weekRange: D.weekRange, agentSecondsByProject: D.agentSecondsByProject,
+    ZP.init({ state: state, fetchGantt: D.fetchGantt, fetchAgentByProject: D.fetchAgentByProject,
               withAgentTime: D.withAgentTime, createProject: D.createProject,
               halfLifeDays: H.HEAT_HALFLIFE_DAYS,
               // 分区/项目的写路径（2026-09-14）：经典列表去掉之后，它独有的这几条

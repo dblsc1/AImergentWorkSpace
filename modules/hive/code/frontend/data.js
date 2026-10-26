@@ -372,6 +372,16 @@
     return out;
   }
 
+  // today → Promise<{projectId: 秒} | null>：永不 reject、同步抛错也吞掉，失败就是 null（只是不显示代理时长）。
+  function fetchAgentByProject(today, options) {
+    return Promise.resolve().then(function () {
+      var w = weekRange(today);
+      return fetchAgentTime(w.from, w.to, options);
+    }).then(function (r) {
+      return r && r.ok ? agentSecondsByProject(r.data) : null;
+    }, function () { return null; });
+  }
+
   // 人的时长文案 + 代理时长（有才拼）：「人 1 时 20 分 · Agent 3 时 5 分」；没有代理时长保持原样。
   function withAgentTime(humanText, agentSeconds, fmt) {
     return agentSeconds > 0 ? "人 " + humanText + " · Agent " + fmt(agentSeconds) : humanText;
@@ -531,6 +541,7 @@
     fetchGantt: fetchGantt,
     fetchAgentTime: fetchAgentTime,
     weekRange: weekRange,
+    fetchAgentByProject: fetchAgentByProject,
     agentSecondsByProject: agentSecondsByProject,
     withAgentTime: withAgentTime,
     fetchExport: fetchExport,

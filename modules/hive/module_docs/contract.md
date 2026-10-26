@@ -68,6 +68,12 @@ consumes:
       本模块只是多读一条已经存在的端点，不要求后端加任何东西。
       「今天」用服务端返回的 today，不用本地时钟——客户端时区/时钟不准会让红线飘。
 
+  - id: nexus-core.views.agent-time.v1
+    contract: ../../nexus-core/module_docs/contract.md
+    purpose: >
+      分区规划面板里 Agent 时长与人的时长并排显示（区间同「近 7 天」：gantt 的 today 往前 6 天）。
+      只读，与人的时长永不相加；读不到就不显示。
+
   - id: nexus-core.views.next-actions.v1
     contract: ../../nexus-core/module_docs/contract.md
     purpose: 六边形卡片里的「下一步行动」。前端只负责忠实渲染，不自己排序、不自己筛。
