@@ -233,7 +233,11 @@ func runOnce(p paths, hc *http.Client, out io.Writer) error {
 		st.LastOutcome = msg
 	}
 	// 状态文件桥、健康报告在另一个 goroutine 里写 Agents / Health：只写回本轮自己的字段。
-	if serr := updateState(p.state, func(s *State) { ag, hs := s.Agents, s.Health; *s = st; s.Agents, s.Health = ag, hs }); serr != nil {
+	if serr := updateState(p.state, func(s *State) {
+		ag, la, hs := s.Agents, s.LightAgents, s.Health
+		*s = st
+		s.Agents, s.LightAgents, s.Health = ag, la, hs
+	}); serr != nil {
 		return serr
 	}
 	if out == nil {
@@ -258,10 +262,11 @@ func runLoop(p paths, hc *http.Client) error {
 	// 在场心跳、状态文件桥各自一个 goroutine：同步一轮可能要好几分钟（积压、分类服务慢），不能让它们等。
 	// 同一进程里，仍在 run 拿着的单实例锁之内。
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(4)
 	go func() { defer wg.Done(); presenceLoop(p, hc) }()
 	go func() { defer wg.Done(); bridgeLoop(p, hc) }()
 	go func() { defer wg.Done(); inputLoop(p, hc) }()
+	go func() { defer wg.Done(); lightsLoop(p, hc) }()
 	every(func() time.Duration {
 		_ = runOnce(p, hc, nil) // 失败已写进日志与状态；常驻进程不因一轮失败退出
 		interval := 5.0
@@ -316,6 +321,11 @@ func status(p paths, out io.Writer) error {
 	}
 	fmt.Fprintf(out, "在场心跳  %v（每 %v；网页上设过的话以网页为准）\n状态文件桥 %s（运行中 %d 个）\n",
 		cfg.Presence, presenceInterval(cfg), bridge, len(st.Agents))
+	if rep, err := cfg.lightsReport(); err != nil {
+		fmt.Fprintf(out, "红绿灯    配置错误：%v\n", err)
+	} else {
+		fmt.Fprintf(out, "红绿灯    %v（上报 %v；运行中 %d 个）\n", on(cfg.AgentLights), rep, len(st.LightAgents))
+	}
 	if st.Health.AwState != "" {
 		fmt.Fprintf(out, "ActivityWatch  %s（上次报给 HoneyComb：%s）\n", st.Health.AwState, isoTime(st.Health.At))
 	}

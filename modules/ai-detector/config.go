@@ -52,6 +52,9 @@ type Config struct {
 	PresenceSeconds   float64  `json:"presenceSeconds,omitempty"` // 5–300，越界按 5
 	AgentStatusFile   string   `json:"agentStatusFile"`           // 空 = 关
 	AgentStatusIgnore []string `json:"agentStatusIgnore"`         // key 前缀，命中的条目整个忽略
+	// v0.5：红绿灯（ai-detector.agent-lights.v1）。AgentLights nil = 开；AgentLightsReport nil = ["hermes"]，[] = 都不上报。
+	AgentLights       *bool    `json:"agentLights,omitempty"`
+	AgentLightsReport []string `json:"agentLightsReport"`
 	// AwStartCommand：网页上点「重启 ActivityWatch」时用的命令（argv 数组，不经 shell）。**只来自本机配置文件**，
 	// 网页设置里没有这个键（写了也是未知键）。空 = 按系统缺省找 aw-qt。
 	AwStartCommand []string `json:"awStartCommand,omitempty"`
@@ -239,6 +242,8 @@ func defaultConfig(dir string) (Config, error) {
 		ArchiveDays:       30,
 		PresenceSeconds:   presenceDefaultSeconds,
 		AgentStatusIgnore: []string{},
+		AgentLights:       func() *bool { t := true; return &t }(),
+		AgentLightsReport: []string{"hermes"},
 	}, nil
 }
 
@@ -310,6 +315,8 @@ type State struct {
 	SentReady bool `json:"sentReady,omitempty"`
 	// Agents：状态文件桥的 key → 运行（v0.3）。与上面的游标由不同的 goroutine 写，都经 updateState。
 	Agents map[string]*agentRun `json:"agents,omitempty"`
+	// LightAgents：红绿灯上报的 key → 运行（v0.5），与 Agents 同理、各自一份。
+	LightAgents map[string]*agentRun `json:"lightAgents,omitempty"`
 	// Health：检测程序健康状态（v0.4）。由在场心跳那个 goroutine 写，同步一轮回写时原样带过去。
 	Health healthState `json:"health"`
 	// RecordsCursor：原始记录流的游标，独立于 Cursor（契约「原始记录」）。零值 = 没在传，下次开始时从那一刻起记。
