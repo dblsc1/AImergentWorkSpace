@@ -54,7 +54,7 @@ type Config struct {
 	AgentStatusIgnore []string `json:"agentStatusIgnore"`         // key 前缀，命中的条目整个忽略
 	// v0.5：红绿灯（ai-detector.agent-lights.v1）。AgentLights nil = 开；AgentLightsReport nil = ["hermes"]，[] = 都不上报。
 	AgentLights       *bool    `json:"agentLights,omitempty"`
-	AgentLightsReport []string `json:"agentLightsReport,omitempty"`
+	AgentLightsReport []string `json:"agentLightsReport"`
 	// AwStartCommand：网页上点「重启 ActivityWatch」时用的命令（argv 数组，不经 shell）。**只来自本机配置文件**，
 	// 网页设置里没有这个键（写了也是未知键）。空 = 按系统缺省找 aw-qt。
 	AwStartCommand []string `json:"awStartCommand,omitempty"`

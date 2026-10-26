@@ -155,6 +155,8 @@ func TestLightsCodexStates(t *testing.T) {
 		{"user input", time.Minute, [][2]string{ev("task_started"), ev("request_user_input")}, "waiting_permission", false},
 		{"approval then later event", time.Minute, [][2]string{ev("task_started"), ev("exec_approval_request"), ev("exec_command_end")}, "working", false},
 		{"recent mtime only", 5 * time.Second, [][2]string{ev("agent_message")}, "working", false},
+		{"turn aborted", time.Minute, [][2]string{ev("task_started"), ev("turn_aborted")}, "complete", false},
+		{"started but log stale", 4 * time.Minute, [][2]string{ev("task_started")}, "complete", false},
 		{"idle", time.Minute, [][2]string{ev("agent_message")}, "complete", false},
 		{"older than 12h", 13 * time.Hour, [][2]string{ev("task_started")}, "", true},
 	}
@@ -277,12 +279,12 @@ func TestLightsDisplayFileAndReportSplit(t *testing.T) {
 	}
 	// 相位变了才再发；网关消失 → stop。
 	lwrite(t, filepath.Join(home, ".hermes", "gateway_state.json"), fmt.Sprintf(`{"pid":%d,"gateway_state":"running"}`, me))
-	lightsTick(cfg, b, http.DefaultClient, home, now.Add(time.Second), state)
+	lightsTick(cfg, b, http.DefaultClient, home, now.Add(4*time.Second), state)
 	if r := ck.take(); len(r) != 1 || !strings.HasSuffix(r[0].path, "/phase") || r[0].body["phase"] != "idle" {
 		t.Fatalf("phase %v", r)
 	}
 	os.Remove(filepath.Join(home, ".hermes", "gateway_state.json"))
-	lightsTick(cfg, b, http.DefaultClient, home, now.Add(2*time.Second), state)
+	lightsTick(cfg, b, http.DefaultClient, home, now.Add(8*time.Second), state)
 	if r := ck.take(); len(r) != 1 || !strings.HasSuffix(r[0].path, "/stop") || r[0].body["outcome"] != "done" {
 		t.Fatalf("stop %v", r)
 	}
@@ -294,26 +296,99 @@ func TestLightsDisplayFileAndReportSplit(t *testing.T) {
 
 	// claude 也列进上报：开运行。
 	cfg.AgentLightsReport = []string{"claude"}
-	lightsTick(cfg, b, http.DefaultClient, home, now.Add(3*time.Second), state)
+	lightsTick(cfg, b, http.DefaultClient, home, now.Add(12*time.Second), state)
 	if r := ck.take(); len(r) != 1 || r[0].body["agent"] != "claude" || r[0].body["label"] != "Claude garden" {
 		t.Fatalf("claude report %v", r)
 	}
 	// 暂停：显示文件照写，不发请求。
 	cfg.Paused = true
-	lightsTick(cfg, b, &http.Client{Transport: noNet{t}}, home, now.Add(4*time.Second), state)
-	// 红绿灯关：不读不写。
+	os.Remove(filepath.Join(home, ".agent-traffic-light", "agents.json"))
+	lightsTick(cfg, b, &http.Client{Transport: noNet{t}}, home, now.Add(16*time.Second), state)
+	if _, err := os.Stat(filepath.Join(home, ".agent-traffic-light", "agents.json")); err != nil {
+		t.Fatal("paused: display file must still be written")
+	}
+	cfg.Paused = false
+	// 红绿灯关：不读不写显示文件，已开的运行收掉。
 	os.Remove(filepath.Join(home, ".agent-traffic-light", "agents.json"))
 	f := false
 	cfg.AgentLights = &f
-	lightsTick(cfg, b, &http.Client{Transport: noNet{t}}, home, now.Add(5*time.Second), state)
+	lightsTick(cfg, b, http.DefaultClient, home, now.Add(20*time.Second), state)
 	if _, err := os.Stat(filepath.Join(home, ".agent-traffic-light", "agents.json")); err == nil {
 		t.Fatal("wrote display file while off")
 	}
+	if r := ck.take(); len(r) != 1 || !strings.HasSuffix(r[0].path, "/stop") {
+		t.Fatalf("turning lights off must stop open runs: %v", r)
+	}
 	// 未知的上报类别：什么都不做。
 	cfg.AgentLights, cfg.AgentLightsReport = nil, []string{"nope"}
-	lightsTick(cfg, b, &http.Client{Transport: noNet{t}}, home, now.Add(6*time.Second), state)
+	lightsTick(cfg, b, &http.Client{Transport: noNet{t}}, home, now.Add(24*time.Second), state)
 	if _, err := os.Stat(filepath.Join(home, ".agent-traffic-light", "agents.json")); err == nil {
 		t.Fatal("wrote display file with invalid config")
+	}
+}
+
+func TestLightsReportListShrinkStopsRuns(t *testing.T) {
+	home := t.TempDir()
+	lwrite(t, filepath.Join(home, ".claude", "sessions", "s1.json"), fmt.Sprintf(`{"pid":%d,"status":"busy"}`, os.Getpid()))
+	ck := newLiveCockpit(t)
+	defer ck.Close()
+	cfg := liveConfig("http://127.0.0.1:1", ck.URL)
+	cfg.AgentLightsReport = []string{"claude"}
+	state := filepath.Join(t.TempDir(), "state.json")
+	b := &bridge{light: true}
+	now := time.Now()
+	lightsTick(cfg, b, http.DefaultClient, home, now, state)
+	if r := ck.take(); len(r) != 1 || !strings.HasSuffix(r[0].path, "/start") {
+		t.Fatalf("start %v", r)
+	}
+	// 3 秒内不再上报。
+	lightsTick(cfg, b, &http.Client{Transport: noNet{t}}, home, now.Add(time.Second), state)
+	cfg.AgentLightsReport = []string{} // 明确不上报任何类
+	lightsTick(cfg, b, http.DefaultClient, home, now.Add(4*time.Second), state)
+	if r := ck.take(); len(r) != 1 || !strings.HasSuffix(r[0].path, "/stop") {
+		t.Fatalf("shrink must stop: %v", r)
+	}
+	var st State
+	loadJSON(state, &st)
+	if len(st.LightAgents) != 0 {
+		t.Fatalf("mapping left %v", st.LightAgents)
+	}
+}
+
+func TestLightsBackoffAfterNetworkFailure(t *testing.T) {
+	home := t.TempDir()
+	lwrite(t, filepath.Join(home, ".hermes", "gateway_state.json"), fmt.Sprintf(`{"pid":%d,"gateway_state":"running","active_agents":1}`, os.Getpid()))
+	ck := newLiveCockpit(t)
+	defer ck.Close()
+	ck.respond = func(string) (int, string) { return 503, "" }
+	cfg := liveConfig("http://127.0.0.1:1", ck.URL)
+	state := filepath.Join(t.TempDir(), "state.json")
+	b := &bridge{light: true}
+	now := time.Now()
+	lightsTick(cfg, b, http.DefaultClient, home, now, state)
+	ck.take()
+	ck.respond = nil
+	lightsTick(cfg, b, http.DefaultClient, home, now.Add(5*time.Second), state)
+	if r := ck.take(); len(r) != 0 {
+		t.Fatalf("inside backoff: %v", r)
+	}
+	lightsTick(cfg, b, http.DefaultClient, home, now.Add(16*time.Second), state)
+	if r := ck.take(); len(r) != 1 {
+		t.Fatalf("after backoff: %v", r)
+	}
+}
+
+func TestLightsConfigRoundTripKeepsEmptyReport(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "c.json")
+	if err := saveJSON(p, Config{AgentLightsReport: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	var c Config
+	if err := loadJSON(p, &c); err != nil {
+		t.Fatal(err)
+	}
+	if rep, err := c.lightsReport(); err != nil || c.AgentLightsReport == nil || len(rep) != 0 {
+		t.Fatalf("[] lost: %v %v", c.AgentLightsReport, err)
 	}
 }
 

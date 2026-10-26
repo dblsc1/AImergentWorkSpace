@@ -4,14 +4,17 @@ package main
 // 写显示文件，并把 agentLightsReport 里的几类交给状态文件桥同一套上报。
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -19,6 +22,9 @@ const (
 	lightsPoll          = time.Second
 	lightsWorkingRecent = 15 * time.Second
 	lightsCodexRecent   = 12 * time.Hour
+	lightsCodexRunning  = 3 * time.Minute // 只信「开始晚于结束」这么久；日志停更更久就当没在跑
+	lightsReportEvery   = 3 * time.Second
+	lightsBackoff       = 15 * time.Second
 )
 
 var lightsKinds = []string{"claude", "codex", "hermes"}
@@ -88,7 +94,12 @@ func jsonStr(v any) string {
 }
 
 func readObj(path string) map[string]any {
-	b, err := os.ReadFile(path)
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, 1<<20))
 	if err != nil {
 		return nil
 	}
@@ -154,37 +165,44 @@ func codexSession(home string, now time.Time) (string, time.Time) {
 	return best, bestT
 }
 
-// discoverCodex 读最近一份会话记录的尾部，只看事件的 type / payload.type，不读内容。
-func discoverCodex(home string, now time.Time) []lightAgent {
-	path, mt := codexSession(home, now)
-	if path == "" || now.Sub(mt) > lightsCodexRecent {
-		return nil
+type codexSummary struct {
+	cwd              string
+	waiting, running bool
+}
+
+var codexCache struct {
+	sync.Mutex
+	path string
+	mod  time.Time
+	size int64
+	sum  codexSummary
+}
+
+type codexEv struct {
+	Type    string `json:"type"`
+	Payload struct {
+		Type string `json:"type"`
+		Cwd  string `json:"cwd"`
+	} `json:"payload"`
+}
+
+// codexParse 读会话记录的第一行（cwd，最多 64 KB）与尾部；结果按 (路径, 修改时间, 大小) 缓存，文件没变就不重读。
+func codexParse(path string, fi os.FileInfo) (codexSummary, bool) {
+	codexCache.Lock()
+	defer codexCache.Unlock()
+	if c := &codexCache; c.path == path && c.mod.Equal(fi.ModTime()) && c.size == fi.Size() {
+		return c.sum, true
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return nil
+		return codexSummary{}, false
 	}
 	defer f.Close()
-	type ev struct {
-		Type    string `json:"type"`
-		Payload struct {
-			Type string `json:"type"`
-			Cwd  string `json:"cwd"`
-		} `json:"payload"`
-	}
-	// 第一行 session_meta 带 cwd：只取 cwd，最多读 1 MB。
-	var cwd string
-	head := make([]byte, 1<<20)
-	n, _ := f.Read(head)
-	if line, _, _ := strings.Cut(string(head[:n]), "\n"); line != "" {
-		var e ev
-		if json.Unmarshal([]byte(line), &e) == nil && e.Type == "session_meta" {
-			cwd = e.Payload.Cwd
-		}
-	}
-	fi, err := f.Stat()
-	if err != nil {
-		return nil
+	var sum codexSummary
+	head, _ := bufio.NewReader(io.LimitReader(f, 64<<10)).ReadString('\n')
+	var h codexEv
+	if json.Unmarshal([]byte(head), &h) == nil && h.Type == "session_meta" {
+		sum.cwd = h.Payload.Cwd
 	}
 	off := max(0, fi.Size()-codexTail)
 	buf := make([]byte, fi.Size()-off)
@@ -195,7 +213,7 @@ func discoverCodex(home string, now time.Time) []lightAgent {
 	}
 	started, completed, approval, lastMsg := -1, -1, -1, -1
 	for i, l := range lines {
-		var e ev
+		var e codexEv
 		if json.Unmarshal([]byte(l), &e) != nil {
 			continue
 		}
@@ -210,20 +228,41 @@ func discoverCodex(home string, now time.Time) []lightAgent {
 		switch pt {
 		case "task_started":
 			started = i
-		case "task_complete":
+		case "task_complete", "turn_aborted":
 			completed = i
 		}
+	}
+	sum.waiting = approval >= 0 && approval >= lastMsg
+	sum.running = started > completed
+	codexCache.path, codexCache.mod, codexCache.size, codexCache.sum = path, fi.ModTime(), fi.Size(), sum
+	return sum, true
+}
+
+// discoverCodex 读最近一份会话记录的尾部，只看事件的 type / payload.type，不读内容。
+func discoverCodex(home string, now time.Time) []lightAgent {
+	path, mt := codexSession(home, now)
+	if path == "" || now.Sub(mt) > lightsCodexRecent {
+		return nil
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil
+	}
+	sum, ok := codexParse(path, fi)
+	if !ok {
+		return nil
 	}
 	secs := int(max(0, now.Sub(mt)) / time.Second)
 	state, detail := "complete", fmt.Sprintf("updated %ds ago", secs)
 	switch {
-	case approval >= 0 && approval >= lastMsg:
+	case sum.waiting:
 		state, detail = "waiting_permission", "approval request"
-	case started > completed:
+	case sum.running && now.Sub(mt) <= lightsCodexRunning:
 		state, detail = "working", "task started"
 	case now.Sub(mt) <= lightsWorkingRecent:
 		state, detail = "working", fmt.Sprintf("updated %ds ago", secs)
 	}
+	cwd := sum.cwd
 	stem := strings.TrimSuffix(filepath.Base(path), ".jsonl")
 	id := strings.TrimPrefix(stem, "rollout-")
 	if len(id) > 20 {
@@ -320,20 +359,27 @@ func lightsFilePath(home string) string {
 
 // lightsTick：一拍。关着什么都不碰；开着写显示文件，再把要上报的交给桥。
 func lightsTick(cfg Config, b *bridge, hc *http.Client, home string, now time.Time, statePath string) {
-	if !on(cfg.AgentLights) {
-		return
+	var report []string // 关了 = nil：已开的运行要收掉
+	var all []lightAgent
+	if on(cfg.AgentLights) {
+		var err error
+		if report, err = cfg.lightsReport(); err != nil {
+			b.q.printf("红绿灯：%v", err)
+			return
+		}
+		all = discoverLights(home, now)
+		if err := saveJSON(lightsFilePath(home), map[string]any{"updated_at": now.Unix(), "agents": all}); err != nil {
+			b.q.printf("红绿灯：显示文件写不了：%v", err)
+		}
 	}
-	report, err := cfg.lightsReport()
-	if err != nil {
-		b.q.printf("红绿灯：%v", err)
-		return
-	}
-	all := discoverLights(home, now)
-	if err := saveJSON(lightsFilePath(home), map[string]any{"updated_at": now.Unix(), "agents": all}); err != nil {
-		b.q.printf("红绿灯：显示文件写不了：%v", err)
-	}
-	if active(cfg) && len(report) > 0 {
+	// 上报最多每 3 秒一次，网络失败后退避 15 秒；显示文件仍是每秒。
+	// active 时即使列表为空也调：不在列表里的运行靠它发 stop。
+	if active(cfg) && !now.Before(b.nextReport) {
 		b.report(cfg, hc, now, statePath, lightsToReport(all, report))
+		b.nextReport = now.Add(lightsReportEvery)
+		if b.failed {
+			b.nextReport = now.Add(lightsBackoff)
+		}
 	}
 }
 

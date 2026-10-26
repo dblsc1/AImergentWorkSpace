@@ -436,11 +436,13 @@ const (
 )
 
 type bridge struct {
-	agents map[string]*agentRun
-	loaded bool
-	dirty  bool // 上次写状态文件失败：下一轮就算没变化也再写
-	light  bool // true = 红绿灯那一份（存 State.LightAgents），false = 状态文件桥（State.Agents）
-	q      quietLog
+	agents     map[string]*agentRun
+	loaded     bool
+	dirty      bool      // 上次写状态文件失败：下一轮就算没变化也再写
+	nextReport time.Time // 红绿灯那份：下次最早上报时刻
+	failed     bool      // 最近一次 report 碰到网络失败
+	light      bool      // true = 红绿灯那一份（存 State.LightAgents），false = 状态文件桥（State.Agents）
+	q          quietLog
 }
 
 // poll 读一次状态文件并上报变化；映射有变就写回状态文件。
@@ -617,6 +619,7 @@ func (b *bridge) report(cfg Config, hc *http.Client, now time.Time, statePath st
 		}
 		b.agents[a.key] = &agentRun{RunID: r.RunID, Phase: a.phase}
 	}
+	b.failed = down
 	if !down {
 		b.q.last = ""
 	}
