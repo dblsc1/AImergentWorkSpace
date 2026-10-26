@@ -88,7 +88,7 @@ func (a *aliases) validate() error {
 		for orig, tok := range t {
 			n, err := strconv.Atoi(strings.TrimPrefix(tok, kind))
 			if orig == "" || !strings.HasPrefix(tok, kind) || err != nil || n <= 0 || strconv.Itoa(n) != strings.TrimPrefix(tok, kind) || seen[tok] {
-				return fmt.Errorf("%s 里的 %q → %q 不合法", kind, orig, tok)
+				return fmt.Errorf("%s 里有不合法的代号（或原值为空）", kind) // 代号字段可能本身就是原值，不回显
 			}
 			seen[tok] = true
 			a.next[kind] = max(a.next[kind], n)

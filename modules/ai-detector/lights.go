@@ -152,6 +152,7 @@ const codexTail = 64 << 10
 
 // codexSession 找改动最晚的 rollout-*.jsonl（只按修改时间，不读内容）。恢复的旧会话文件还在旧日期目录里，
 // 所以不只看今天昨天，而是按目录名取最近 30 个日期目录；目录清单缓存 30 秒，每次只 stat 文件。
+// 限制：放在最近 30 个日期目录之外的恢复会话找不到。
 func codexSession(home string, now time.Time) (string, time.Time) {
 	var best string
 	var bestT time.Time
@@ -182,11 +183,12 @@ func codexFiles(home string, now time.Time) []string {
 	var files []string
 	n := 0
 	root := filepath.Join(home, ".codex", "sessions")
+scan:
 	for _, y := range subdirsDesc(root) {
 		for _, m := range subdirsDesc(filepath.Join(root, y)) {
 			for _, d := range subdirsDesc(filepath.Join(root, y, m)) {
 				if n++; n > codexDays {
-					break
+					break scan
 				}
 				fs, _ := filepath.Glob(filepath.Join(root, y, m, d, "rollout-*.jsonl"))
 				files = append(files, fs...)
