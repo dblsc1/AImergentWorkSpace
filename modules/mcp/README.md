@@ -1,7 +1,7 @@
 # mcp · 给 AI 代理用的工具（只读 + 只写草稿 / 报告 + 认窗口）
 
-**v0.5（契约 `contracts/mcp.tools.v2`）：** 工具收成 17 个——读 11 个（`Get_Started`、`Get_View`、`Get_Arrangements`、`Get_Now`、`Get_History`、
-`Get_Pending_Classify_Windows`、`Get_Rules`、`Get_Proposals`、`Get_Device_Health`，v0.4.2 加 `Get_Today`：今天还有没有没处理完的、`Get_Match_History`：这个窗口以前归到哪），写 6 个（`CRUD_Windows_Classify_Rules`、`CRUD_Windowsblock_Classify_Rules`、
+**v0.5（契约 `contracts/mcp.tools.v2`）：** 工具收成 18 个——读 12 个（`Get_Started`、`Get_View`、`Get_Arrangements`、`Get_Now`、`Get_History`、
+`Get_Pending_Classify_Windows`、`Get_Rules`、`Get_Proposals`、`Get_Device_Health`，v0.4.2 加今天还有没有没处理完的 `Get_Today_Todo`（旧名 `Get_Today`）、`Get_Tasks_Match_History`：这个块以前归到哪些任务（旧名 `Get_Match_History`），v0.4.3 加 `Get_Blocks_Match_History`：这个窗口以前被收进哪些块），写 6 个（`CRUD_Windows_Classify_Rules`、`CRUD_Windowsblock_Classify_Rules`、
 `CRUD_Windowsblock`、`CRUD_Honeycomb`、`Submit_Report`、`Submit_Questions_To_Human`）。第一次用先调 `Get_Started`；每个工具带 `help: true` 看用法；
 每次返回带 `note` 与 `permissions`。写工具默认只提议，人在蜂巢旁的决策栏批准；`direct_apply` 要 write 令牌 + 总开关 + 分开关。
 下面是 v1 的说明（v1 的 23 个工具名仍可调，只回迁移说明）。

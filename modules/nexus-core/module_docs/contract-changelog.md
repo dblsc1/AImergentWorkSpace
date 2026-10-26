@@ -90,3 +90,4 @@
 | 2026-10-24 | 三级分类第二部分实现前补充 | v2.38 补充（追加式）：对账的实现取舍（actor、`via: rule` 跟随 14 天、已作废段不能改挂、只重访要动的块、写不出停在待写、关 tiers 收口）；AI 提议三个提交端点 `proposals/window-rules|block-rules|block-actions`、列表追加三个数组、更正形状、`superseded` 状态、直接施加返回与 `403 reason`、`GET activity/direct-log`。 |
 | 2026-10-24 | 仓主批准「蜂巢 MCP v0.5 接口简报」 | v2.39（追加式）：`address` 位置编号（`views/tree` 带出）；新读端 `views/history`、`views/arrangements`；第三级 `activity/secretary-reports`、`activity/questions`（answer / dismiss）、`proposals/sessions`；`blockAction` 可改已分类块去向；忽略规则提议可直接施加；MCP 对 write 调用方转发范围头。 |
 | 2026-10-25 | MCP v0.4.2 两个新读工具的后端 | v2.40（追加式）：`GET activity/gaps?date=`（当天原始记录的空洞）、`GET activity/blocks/history`（窗口以前归到哪）；`views/history` 的 `human` 在 `detail=segments` 时追加 `gaps`。见「v0.4.2：空洞与匹配历史」节。 |
+| 2026-10-26 | MCP v0.4.3 新读工具 `Get_Blocks_Match_History` 的后端 | v2.41（追加式）：`GET activity/windows/history?app=&title=|titleContains=&days=`（窗口以前被收进哪些块，第一级）。见「v0.4.3：窗口历史」节。 |

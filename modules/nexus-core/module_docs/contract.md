@@ -692,6 +692,7 @@ consumes:
 | GET | `/api/core/views/arrangements` | 查询 `range?`、`scope?` | 见「MCP v0.5 的后端」三 | ✅ 已实现（v2.39） |
 | GET | `/api/core/activity/gaps` | 查询 `date?` | `{date, gaps[]}`（见「v0.4.2：空洞与匹配历史」） | ✅ 已实现（v2.40） |
 | GET | `/api/core/activity/blocks/history` | 查询 `block` 或 `app`+`title`、`days?`（1..90，缺省 30） | `{query, days, destinations[]}`（同上） | ✅ 已实现（v2.40） |
+| GET | `/api/core/activity/windows/history` | 查询 `app`（必填）、`title` 或 `titleContains`（二选一）、`days?`（1..90，缺省 30） | `{query, days, blocks[]}`（见「v0.4.3：窗口历史」） | ✅ 已实现（v2.41） |
 | POST / GET | `/api/core/activity/secretary-reports` | `{date?, text, author?}` / 查询 `date` 或 `from&to` | 见「MCP v0.5 的后端」4.1 | ✅ 已实现（v2.39） |
 | POST / GET | `/api/core/activity/questions` | `{questions[1..10]}` / 查询 `status?`、`limit?` | 见「MCP v0.5 的后端」4.2 | ✅ 已实现（v2.39） |
 | POST | `/api/core/activity/questions/{id}/answer\|dismiss` | `{option?, text?}` / 无 | 只许人；见 4.2 | ✅ 已实现（v2.39） |
@@ -4873,6 +4874,15 @@ MCP 侧见 `contracts/mcp.tools.v2`。
 - `GET activity/blocks/history?block=|app=&title=&days=` → `{query, days, destinations: [{taskId, projectId, address, name, times, seconds, lastAt, via}]}`。
   `block` 与 `app`+`title` 二选一（否则 422）；`days` 1..90（越界 422）。取过去 `days` 天里命中的窗口块（`app`/`title` 与记录完全相同）中状态为 `assigned` 的，
   按 `parts` 汇总去向（只聚合命中的块）：`times` = 块数、`seconds` = 该去向的秒数、`lastAt`/`via` 取最近一块的；`times` 降序，至多 20 条；任务 / 项目已删的不出；查不到给 `[]`。
+
+## v0.4.3：窗口历史（v2.41，追加式）
+
+一个只读端点，租户隔离同其他 `activity/*`；日界、`lastAt` 都按 `NEXUS_TZ`，带偏移。
+
+- `GET activity/windows/history?app=&title=|titleContains=&days=` → `{query, days, blocks: [{block, keySource, days, seconds, records, lastAt}]}`。
+  `app` 必填（缺 → 422）；`title`（完全相同）与 `titleContains`（字面子串，不分大小写，不是正则，1..128）互斥（都给 422），都不给 = 该 app 的全部窗口；`days` 1..90（越界 422）。
+  取过去 `days` 天的原始记录（`activity_records`），按 `blockKey` + `keySource` 分组：`days` = 出现在几个不同日期、`seconds` = 秒数和、`records` = 记录条数、`lastAt` = 最近一条的结束时刻；`seconds` 降序，至多 20 条；查不到给 `[]`。
+  只到块为止，不看块后来归到哪（那是 `activity/blocks/history`）。
 
 ## 变更记录
 

@@ -162,6 +162,13 @@ def match_for(q):
     return out
 
 
+def windows_for(q):
+    """windows/history：query 回收到的 app + title / titleContains（同 nexus-core）。"""
+    return {"query": {k: q[k][0] for k in ("app", "title", "titleContains") if k in q}, "days": int(q.get("days", ["30"])[0]),
+            "blocks": [{"block": "chrome · 周报", "keySource": "auto", "days": 4, "seconds": 1800, "records": 37,
+                        "lastAt": "2026-10-23T03:00:00+00:00"}]}
+
+
 class Fake:
     requests: list = []   # (方法, 路径, 查询, 租户头)
     scopes: list = []     # 与 requests 同序：X-Nexus-Scope 头（没有 = None）
@@ -254,6 +261,7 @@ def respond(method, path, q, tenant, body, scope):
         "/api/core/activity/blocks": lambda: BLOCKS,
         "/api/core/activity/gaps": lambda: GAPS,
         "/api/core/activity/blocks/history": lambda: match_for(q),
+        "/api/core/activity/windows/history": lambda: windows_for(q),
         "/api/core/detector/rules": lambda: RULES,
         "/api/core/activity/block-rules": lambda: BLOCK_RULES,
         "/api/core/activity/ignores": lambda: IGNORES,

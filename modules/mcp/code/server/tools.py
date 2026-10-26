@@ -1,4 +1,4 @@
-"""mcp.tools.v2 的工具（contracts/mcp.tools.v2）：读 11 个、写 6 个；声明与示例在 specs.py，v1 名字的迁移在 v1_migration.py。
+"""mcp.tools.v2 的工具（contracts/mcp.tools.v2）：读 12 个、写 6 个；声明与示例在 specs.py，v1 名字的迁移在 v1_migration.py。
 
 nexus-core 的路径只在各工具里以字面量出现（没有按参数拼路径的代码路径）：读端用 ``_get``，写端用 ``_write``（POST）。
 租户由 HTTP 层给，原样设到每个下游请求上。除 ``activity/settings``（给 permissions 用，缓存至多 30 秒，按租户分开）外
@@ -335,7 +335,7 @@ def _screen_or_none(text, cap: int = MAX_TITLE):
 
 
 _SCREEN_KEYS = {"title": MAX_TITLE, "window": MAX_TITLE, "app": MAX_TITLE, "blockKey": MAX_BLOCK, "block": MAX_BLOCK,
-                "label": 64, "agent": 64}
+                "label": 64, "agent": 64, "titleContains": MAX_TITLE}
 
 
 def _screen_tree(obj):
@@ -1157,7 +1157,7 @@ def _call_live_v1(name: str, args, c: Ctx) -> dict:
     return _result(out)
 
 
-# ── v2.1 · v0.4.2：Get_Today / Get_Match_History ──────────────────
+# ── v2.1 · v0.4.2：Get_Today_Todo / Get_Tasks_Match_History（旧名 Get_Today / Get_Match_History）──────────────────
 
 
 def get_today(a, c):
@@ -1201,6 +1201,19 @@ def get_match_history(a, c):
             "note": _note("只列已经定下来的去向，不猜；destinations 为空 = 这段时间里没有归过类。times 是归过几次。")}
 
 
+def get_blocks_match_history(a, c):
+    app, title, part = a["app"], a.get("title"), a.get("titleContains")
+    if title is not None and part is not None:
+        raise _bad("title 与 titleContains 二选一")
+    days = a.get("days", 30)
+    r = _get("/api/core/activity/windows/history",
+             {"app": app, "days": days, **({"title": title} if title is not None else {}),
+              **({"titleContains": part} if part is not None else {})}, c.tenant)
+    blocks = [{**b, "lastAt": _loc(b.get("lastAt"))} for b in r.get("blocks", [])]
+    return {**_screen_tree({"query": r.get("query"), "days": days, "blocks": blocks}),
+            "note": _note("只到块为止；keySource 为 auto = 当时没有第一级规则收。块归到哪个任务用 Get_Tasks_Match_History。blocks 为空 = 这段时间没出现过。")}
+
+
 # ── 声明与分发 ─────────────────────────────────────────────────────
 
 _HANDLERS = {
@@ -1211,8 +1224,11 @@ _HANDLERS = {
     "CRUD_Windowsblock_Classify_Rules": crud_windowsblock_classify_rules, "CRUD_Windowsblock": crud_windowsblock,
     "CRUD_Honeycomb": crud_honeycomb, "Submit_Report": submit_report,
     "Submit_Questions_To_Human": submit_questions_to_human,
-    "Get_Today": get_today, "Get_Match_History": get_match_history,
+    "Get_Today_Todo": get_today, "Get_Tasks_Match_History": get_match_history,
+    "Get_Blocks_Match_History": get_blocks_match_history,
 }
+#: v2.2 改名：旧名继续可调（行为同新名），不出现在 tools/list；result.note 提示新名。下一个小版本以后删。
+ALIASES = {"Get_Today": "Get_Today_Todo", "Get_Match_History": "Get_Tasks_Match_History"}
 #: 工具名 → 声明（specs.py）
 TOOLS = {t["name"]: t for t in specs.SPECS}
 WRITES = specs.WRITE_NAMES
@@ -1241,13 +1257,13 @@ _V1_LIVE_LIST = [
 
 
 def listed(scope: str) -> list:
-    """tools/list：read 范围 11 个读工具；write 17 个；没有范围头 17 个 + 自动跟踪的两个 v1 工具（共 19）。"""
+    """tools/list：read 范围 12 个读工具；write 18 个；没有范围头 18 个 + 自动跟踪的两个 v1 工具（共 20）。"""
     hidden = denied(scope)
     return [t for t in TOOL_LIST if t["name"] not in hidden] + (_V1_LIVE_LIST if scope == "full" else [])
 
 
 def known(name) -> bool:
-    return name in TOOLS or name in v1_migration.NAMES
+    return name in TOOLS or name in ALIASES or name in v1_migration.NAMES
 
 
 def denied(scope: str) -> frozenset:
@@ -1317,6 +1333,12 @@ def call(name: str, args, tenant: str | None, scope: str = "write") -> dict:
     if name in v1_migration.NAMES:
         log.info("tool %s -> migrated", name)
         return _result(v1_migration.migrate(name, args))
+    if name in ALIASES:   # 范围检查、help、行为全走新名；只在 note 里加一句
+        new = ALIASES[name]
+        out = call(new, args, tenant, scope)
+        obj = out["structuredContent"]
+        hint = f"{name} 已改名为 {new}，下次请用新名。"
+        return _result({**obj, "note": _note(hint + " " + obj.get("note", ""))}, out["isError"])
     spec, c = TOOLS[name], Ctx(tenant, scope)
     try:
         _CTX.tenant = tenant

@@ -1,6 +1,6 @@
 # mcp · 对外接口契约
 
-> 本模块实现 `contracts/mcp.tools.v2`（v0.5：15 个工具，读 9 个、写 6 个；v2.1 / v0.4.2 追加读工具 `Get_Today`、`Get_Match_History`，共 17 个，读 11 个，分别读 nexus-core v2.40 的 `activity/gaps`、`activity/blocks/history`；`tools/list` 只列这一套）；传输、租户、`Origin`、协议与屏幕文字不可信沿用
+> 本模块实现 `contracts/mcp.tools.v2`（v0.5：15 个工具，读 9 个、写 6 个；v2.1 / v0.4.2 追加读工具 `Get_Today_Todo`、`Get_Tasks_Match_History`（旧名 `Get_Today`、`Get_Match_History` 仍可调，不在 `tools/list`），分别读 nexus-core v2.40 的 `activity/gaps`、`activity/blocks/history`；v2.2 / v0.4.3 追加读工具 `Get_Blocks_Match_History`，读 v2.41 的 `activity/windows/history`，共 18 个，读 12 个；`tools/list` 只列这一套）；传输、租户、`Origin`、协议与屏幕文字不可信沿用
 > `contracts/mcp.tools.v1`。v1 的 23 个工具名仍可调，只回迁移说明、不调下游。以下括号里是 v1 的历史（给追溯用）：
 > `contracts/mcp.tools.v1`（给 AI 代理用的工具，MCP Streamable HTTP；v1.2 起 10 个只读 + 1 个只写草稿的 propose_；v1.3 再加 1 个只写建议的 propose_activity_matches；v1.7 再加 1 个只读的 get_match_history，共 13 个；v1.9 再加 get_window_awaiting_target 与 suggest_window_target，共 15 个；v1.17 再加 apply_detector_rules，共 19 个；v1.18 再加 propose_project / propose_task，共 21 个；v1.24 再加 propose_change / propose_ignore_rule，共 23 个；没有范围头的调用方 22 个）。行为的唯一事实在
 > 那份契约里，本文件只登记依赖、说明实现选择。改行为先改那份契约。
@@ -112,7 +112,7 @@ consumes:
 ## 测试
 
 `cd modules/mcp/code/server && python -m pytest -q tests`（CI「mcp 测试」）。v2：`tests/test_mcp_v2.py`（假 nexus-core 与客户端在 `tests/fake_nexus.py`）覆盖
-契约 `mcp.tools.v2` 第六节全部：三种范围的 `tools/list`（写 17 / 读 11；没有范围头 19 = 17 + 自动跟踪的两个 v1 工具）、15 个工具的 `help`（不取数据）与 happy path、每次返回的 `note`（≤ 100 字）与 `permissions`
+契约 `mcp.tools.v2` 第六节全部：三种范围的 `tools/list`（写 18 / 读 12；没有范围头 20 = 18 + 自动跟踪的两个 v1 工具）、15 个工具的 `help`（不取数据）与 happy path、每次返回的 `note`（≤ 100 字）与 `permissions`
 （含缓存与 `403` 清缓存）、参数错误带 `example` 与固定 `hint`、`422` → `400`、address 解析 / 歧义 / 不存在、`X-Nexus-Scope` 只给写端点且只在 `write` 范围、
 `direct_apply` 的几种 `403`、批量写部分成功、`create` 不收 `direct_apply`、`Submit_*` 没有 `direct_apply`、`tiersOff`、23 个 v1 名字逐个迁移且不调下游、
 两个租户互不可见、只调登记的端点。传输层（协议、`Origin`、租户、体积、批量、范围头）在 `tests/test_mcp.py`。以下是 v1 时代的覆盖清单（历史）：真起服务 + 假 nexus-core，

@@ -414,3 +414,33 @@ v1 的 23 个工具名不出现在 `tools/list`，但仍能调：**不调下游�
 ### 补充（v0.4.2 修正，只增不改）
 
 - `gaps` 的依据除原始记录外还包括已入账的段（手动计时、开三级分类以前的自动记录没有原始记录，但算有活动）；正在跑的计时暂不计入。
+
+### 补充（v2.2 · v0.4.3：两级历史分开、改名，只增不改）
+
+工具数 17 → 18（读 12、写 6）；`read` 范围 11 → 12。
+
+改名（旧名继续可调、行为不变，只是不再出现在 `tools/list`；返回的 `note` 提示新名；下一个小版本以后删）：
+
+| 旧名 | 新名 |
+|---|---|
+| `Get_Today` | `Get_Today_Todo` |
+| `Get_Match_History` | `Get_Tasks_Match_History` |
+
+`Get_Today_Todo`、`Get_Tasks_Match_History` 的入参、返回与 v2.1 的 `Get_Today`、`Get_Match_History` 完全相同。
+
+#### `Get_Blocks_Match_History`：这个窗口以前被收进哪些块（第一级）
+
+入参：`app`（必填，完全相同）；`title`（完全相同）或 `titleContains`（标题片段，不分大小写，按字面匹配不是正则，1–128）二选一，都不给就是该 app 的全部窗口；`days`（缺省 30，最多 90）。返回：
+
+```jsonc
+{ "query": {"app": "…", "titleContains": "…"}, "days": 30,
+  "blocks": [ {"block": "…", "keySource": "rule|auto", "days": 4, "seconds": 1800, "records": 37, "lastAt": "…+08:00"} ],
+  "note": "…", "permissions": { … } }
+```
+
+- 来源：过去 `days` 天的原始记录（`activity_records`），按 `blockKey` + `keySource` 分组。`keySource: "auto"` 表示当时没有第一级规则收、按标题自动成块。
+- 按 `seconds` 降序，至多 20 条；查不到给 `blocks: []`。
+- 只到块为止；块后来归到哪个任务用 `Get_Tasks_Match_History` 按 `block` 查。
+- 原始记录不存是哪条规则收的，所以不按 `ruleId` 查。
+
+后端：nexus-core 追加只读端点 `GET /api/core/activity/windows/history?app=&title=|titleContains=&days=`，形状同上（不含 `note` / `permissions`），租户隔离同其他 `activity/*`。
