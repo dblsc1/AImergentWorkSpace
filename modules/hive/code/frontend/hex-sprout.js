@@ -128,6 +128,59 @@
     };
     removeSprout();              // 动画那个替身让位给真格子
     ctx.addSproutCell(cell);
+    return cell;
+  }
+
+  // ── 拖一个窗口块经过空白处：同一格同一段显现动画，但不自己开火 ──
+  // preview(x, y) → 当前那一格的元素（没有就收掉并返回 null）；同一晶格点上重复调用不重播动画
+  function preview(clientX, clientY) {
+    var spot = blankSpotAt(clientX, clientY);
+    if (!spot) { removeSprout(); return null; }
+    if (sprout && sprout.drag && sprout.q === spot.q && sprout.r === spot.r) return sprout.el;
+    removeSprout();
+    return growSprout(spot, false);
+  }
+  // 放手：把预览的那一格真的插进蜂巢、展开成建项目表单，名字预填。建好后 created() 回调 onCreated(新项目)。
+  // 取消 / Esc = 收起这一格，什么都没建（表单本来的行为）。
+  var pending = null;   // { cell, onCreated }
+  function openCreate(o) {
+    if (!sprout || !sprout.drag) return false;
+    var cell = sproutOpen();
+    pending = { cell: cell, onCreated: o.onCreated };
+    var input = ctx.state.camEl.querySelector('.hex-cell.is-expanded .hex-newcard input[name="name"]');
+    if (input) {
+      input.value = String(o.name || "").slice(0, input.maxLength > 0 ? input.maxLength : 120);
+      window.setTimeout(function () { if (input.isConnected) { input.focus(); input.select(); } }, 480);   // 等展开动画（ANIM_MS 460）走完
+    }
+    return true;
+  }
+  // hex-crud.js 建项目成功后调：只认「这一次 openCreate 开出来的那一格」，别处建的项目不算
+  function created(cellEl, project) {
+    var p = pending, item = cellEl && cellEl.__hexItem;
+    if (!p || !item || item.cell !== p.cell) return;
+    pending = null;
+    if (project && project.id && p.onCreated) p.onCreated(project);
+  }
+
+  // 在 spot 上长出那一格（按下长按 / 拖块经过共用）；hold = 长满后自动开火（长按），拖块经过不开火
+  function growSprout(spot, hold) {
+    var el = document.createElement("div");
+    el.className = "hex-sprout";
+    el.style.setProperty("--zone-color", spot.zone.color);
+    // 长出来的这一格在分区外侧 → 长到最外圈那一档浅色（与插进蜂巢后的 cell.mix 同一个值）
+    el.style.setProperty("--zone-mix", H.DEPTH_MIX.min + "%");
+    // 显现时长 = 长按判定时长。长满那一刻正好开火 —— 两个数不同源，
+    // 「长到和别人一样就打开」这句话就不成立了。
+    el.style.setProperty("--press-ms", HOLD_MS + "ms");
+    placeSprout(el, spot, Math.sqrt(3) * DRAW_S, 2 * DRAW_S);
+    ctx.state.camEl.appendChild(el);
+    sprout = { el: el, q: spot.q, r: spot.r, zone: spot.zone, timer: null, fired: false, drag: !hold };
+    void el.offsetWidth;                              // 提交初态，否则没有过渡
+    el.classList.add("is-growing");
+    if (hold) sprout.timer = window.setTimeout(function () {
+      if (sprout) { sprout.timer = null; sproutOpen(); }
+    }, HOLD_MS);
+    return el;
   }
 
   function bindBlankPress(hive) {
@@ -136,27 +189,11 @@
       if (ev.target.closest(".hex-cell")) return;      // 按在格子上 → 归 hex-timer
       removeSprout();
       var spot = blankSpotAt(ev.clientX, ev.clientY);
-      if (!spot) return;
-      var el = document.createElement("div");
-      el.className = "hex-sprout";
-      el.style.setProperty("--zone-color", spot.zone.color);
-      // 长出来的这一格在分区外侧 → 长到最外圈那一档浅色（与插进蜂巢后的 cell.mix 同一个值）
-      el.style.setProperty("--zone-mix", H.DEPTH_MIX.min + "%");
-      // 显现时长 = 长按判定时长。长满那一刻正好开火 —— 两个数不同源，
-      // 「长到和别人一样就打开」这句话就不成立了。
-      el.style.setProperty("--press-ms", HOLD_MS + "ms");
-      placeSprout(el, spot, Math.sqrt(3) * DRAW_S, 2 * DRAW_S);
-      ctx.state.camEl.appendChild(el);
-      sprout = { el: el, q: spot.q, r: spot.r, zone: spot.zone, timer: null, fired: false };
-      void el.offsetWidth;                              // 提交初态，否则没有过渡
-      el.classList.add("is-growing");
-      sprout.timer = window.setTimeout(function () {
-        if (sprout) { sprout.timer = null; sproutOpen(); }
-      }, HOLD_MS);
+      if (spot) growSprout(spot, true);
     });
     // 手抖／滑走／提前松手 → 还没长成就收回去。长成了的不收（那是建项目的卡片）。
     function giveUp(ev) {
-      if (!sprout || sprout.fired) return;
+      if (!sprout || sprout.fired || sprout.drag) return;   // 拖块经过的那一格归拖拽收尾管
       if (ev && ev.type === "pointermove" &&
           Math.abs(ev.movementX || 0) + Math.abs(ev.movementY || 0) < 2) return;
       removeSprout();
@@ -168,6 +205,9 @@
   window.NexusTableHexSprout = {
     init: init,
     bind: bindBlankPress,
-    removeSprout: removeSprout
+    removeSprout: removeSprout,
+    preview: preview,
+    openCreate: openCreate,
+    created: created
   };
 })();

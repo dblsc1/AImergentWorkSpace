@@ -162,6 +162,7 @@
       D.createProject(zoneId, name).then(function (r) {
         if (!r.ok) { showError(form, r.message || "写入失败"); return; }
         input.value = "";
+        if (window.NexusTableHexSprout && window.NexusTableHexSprout.created) window.NexusTableHexSprout.created(cell, r.data);   // 拖块到空白处建的项目：接着把块挂进去
         // 建完必须**收起**再重拉：这一格的身份从"占位格"变成了"某个项目"，
         // 展开态挂在坐标键上，重建之后那个键指向的可能已经是别的格子。
         App.collapseAndReload();

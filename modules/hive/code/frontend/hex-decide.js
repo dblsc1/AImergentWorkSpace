@@ -618,15 +618,21 @@
   }
 
   var creating = {};   // 正在按块名建任务的块：防重复建
-  function newTaskInput(row, cell, it, auto) {   // auto = 按块名直接建，不等人敲回车（建好了人还能改名）
+  function newTaskInput(row, cell, it) {   // 输入框预填块名并全选；点「确定」或回车才建，Esc / 「取消」什么都不建
     var pid = cell.dataset.projectId, input = document.createElement("input"), inflight = false;
     input.type = "text"; input.maxLength = 64; input.value = clip(it.title || it.app || "", 64).replace(/…$/, "");
     input.setAttribute("aria-label", "新任务名");
-    row.textContent = ""; row.classList.remove("hd-over"); row.appendChild(input);
-    ["pointerdown", "click"].forEach(function (t) { input.addEventListener(t, function (e) { e.stopPropagation(); }); });
+    var ops = el("span", "hd-newtask-ops"), okB = el("button", "hd-mini", "确定"), noB = el("button", "hd-mini", "取消");
+    okB.type = noB.type = "button"; okB.dataset.hd = "newtask-ok"; noB.dataset.hd = "newtask-cancel";
+    ops.appendChild(okB); ops.appendChild(noB);
+    row.textContent = ""; row.classList.remove("hd-over"); row.appendChild(input); row.appendChild(ops);
+    ["pointerdown", "click"].forEach(function (t) { row.addEventListener(t, function (e) { e.stopPropagation(); }); });
+    row.addEventListener("mousedown", function (e) { if (e.target !== input) e.preventDefault(); });   // 点按钮不让输入框先失焦（失焦 = 取消）
     var closed = false;
     function cancel() { if (inflight || closed) return; closed = true; row.remove(); idle(); }
-    input.addEventListener("blur", cancel);   // 点到别处 / 失焦 = 取消（请求在路上时不取消）
+    input.addEventListener("blur", function (e) { if (!row.contains(e.relatedTarget)) cancel(); });   // 点到别处 / 失焦 = 取消（请求在路上时不取消）
+    okB.addEventListener("click", function () { submit(); });
+    noB.addEventListener("click", cancel);
     input.addEventListener("keydown", function (ev) {
       ev.stopPropagation();
       if (ev.isComposing || ev.keyCode === 229) return;   // 输入法选字的回车 / Esc 不算
@@ -654,7 +660,34 @@
         }).then(function () { inflight = false; if (it.eventId) delete creating[it.eventId]; idle(); }, function () { inflight = false; if (it.eventId) delete creating[it.eventId]; idle(); });
     }
     input.focus(); input.select();
-    if (auto) submit();
+  }
+
+  // 拖块悬在项目格 / 空白处：慢慢升起、放大一点，周围洒几粒光点（时长 = 停留 2 秒）；减少动效：都不做
+  var rise = null;   // { el, timer, ms }
+  function riseStop() {
+    if (!rise) return;
+    var r = rise; rise = null;
+    window.clearInterval(r.timer);
+    r.el.classList.remove("is-rising");
+    window.setTimeout(function () { r.el.classList.remove("hd-rise"); r.el.style.removeProperty("--rise-ms"); }, 300);
+  }
+  function riseStart(node, ms) {
+    riseStop();
+    if (!node || (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches)) return;
+    node.style.setProperty("--rise-ms", ms + "ms");
+    node.classList.add("hd-rise"); void node.offsetWidth; node.classList.add("is-rising");
+    rise = { el: node, ms: ms, timer: window.setInterval(function () { spark(node); }, 110) };
+  }
+  function riseHold() { if (rise) { rise.el.classList.remove("hd-rise", "is-rising"); rise.el.style.removeProperty("--rise-ms"); window.clearInterval(rise.timer); rise = null; } }   // 展开那一刻：立刻去掉，别和展开动画打架
+  function spark(node) {
+    var r = node.getBoundingClientRect(), d = document.createElement("i"), a = Math.random() * 6.2832, rad = Math.max(r.width, r.height) * 0.5;
+    if (!r.width || !node.isConnected || !d.animate) return;
+    d.className = "hd-spark";
+    d.style.left = (r.left + r.width / 2 + Math.cos(a) * rad) + "px"; d.style.top = (r.top + r.height / 2 + Math.sin(a) * rad) + "px";
+    document.body.appendChild(d);
+    var dx = Math.cos(a) * (14 + Math.random() * 16), dy = Math.sin(a) * (14 + Math.random() * 16) - 8;
+    d.animate([{ transform: "translate(0,0) scale(1)", opacity: .9 }, { transform: "translate(" + dx + "px," + dy + "px) scale(.2)", opacity: 0 }], { duration: 700, easing: "ease-out" }).onfinish = function () { d.remove(); };
+    window.setTimeout(function () { d.remove(); }, 1200);
   }
 
   var swallow = false;
@@ -671,7 +704,9 @@
       if (window.NexusTableHexMini && window.NexusTableHexMini.cancelHover) window.NexusTableHexMini.cancelHover();   // 先收掉悬停推近的视图，拖拽回去时才是真正的原视图
       var x0 = ev.clientX, y0 = ev.clientY, ghost = null, cell = null, row = null, newRow = null, over = false;
       var px = x0, py = y0, raf = 0, dwell = 0, lastHit = null, target = null, Mi = window.NexusTableHexMini, startExp = App.getState().expandedId, zoomed = false;
+      var Sp = window.NexusTableHexSprout, sproutEl = null;
       var dw = it.dwellMs && Mi ? Mi.Dwell({ ms: it.dwellMs, slop: 12, set: function (f, ms) { return window.setTimeout(f, ms); }, clear: function (t) { window.clearTimeout(t); },
+        onArm: function () { if (cell && !over && !cell.classList.contains("is-expanded")) riseStart(cell, it.dwellMs); },   // 每次重新数停留都重新升起
         fire: function (k) { if (cell && !over && cell.dataset.projectId === k && App.getState().expandedId !== k) settle(cell); } }) : null;
       // 触摸：按住 ~300ms 才开始拖（之前一动就是滚动列表）；武装之后吞掉 touchmove，免得页面跟着滚
       if (touch) pressTimer = window.setTimeout(function () { pressTimer = null; armed = true; face.classList.add("is-armed"); }, LONG_PRESS_MS);
@@ -692,6 +727,11 @@
       }
       function schedule() { if (!raf && !over) raf = window.requestAnimationFrame(tick); }
       function clearOver() { [].forEach.call(document.querySelectorAll(".hd-over"), function (n) { n.classList.remove("hd-over"); }); target = null; }
+      // 拖块经过分区的空白处：长出同长按建项目一样的那一格（和升起同一套动效）；离开 / 取消就收掉
+      function sproutHere(hit) {
+        var blank = hit && !hit.closest(".hd-panel, .hex-cell") && hit.closest("#hive"), el = blank ? Sp.preview(px, py) : (Sp.removeSprout(), null);
+        if (el !== sproutEl) { sproutEl = el; if (el) riseStart(el, it.dwellMs); else riseStop(); }
+      }
       // 指针停在格子上 DWELL_MS 才展开（路过的格子不展开）；展开后补一次命中测试，把「新建任务」行 / 任务行点亮
       // 主线程卡住时定时器会晚到，而 pointermove 已经排在前面：用最新的 px/py 复核一次，指针早走了就不展开
       function settle(c) {
@@ -702,6 +742,7 @@
       function enter(c) {
         dwell = 0;
         if (over || cell !== c) return;
+        riseHold();
         if (App.getState().expandedId !== c.dataset.projectId) {
           zoomed = true;
           App.expand(c.dataset.projectId);
@@ -717,6 +758,7 @@
         ghost.style.transform = "translate3d(" + (px - 40) + "px," + (py - 20) + "px,0)";
         if (dw && cell) dw.at(cell.dataset.projectId, px, py);   // 指针在格子里挪出一点就重新数停留
         var hit = document.elementFromPoint(px, py);
+        if (dw && Sp) sproutHere(hit);   // 空白处的晶格点会变而 hit 不变：放在「同一个节点就返回」前面
         if (hit === lastHit) return;   // 指针下还是同一个节点：什么都没变，不碰 DOM
         lastHit = hit;
         if (dw && zoomed && !(hit && hit.closest("#hive"))) { back(); return; }   // 拖出蜂巢：回到原来的视图
@@ -725,6 +767,7 @@
         c = c || null;
         if (c !== cell) {
           window.clearTimeout(dwell); dwell = 0; if (dw) dw.stop();
+          if (rise && rise.el === cell) riseStop();   // 离开的是项目格；空白处那一格的升起不动
           clearOver(); cell = c; row = newRow = null;
           if (!cell) return;
           cell.classList.add("hd-over");
@@ -740,7 +783,7 @@
         if (t !== target) { if (target) target.classList.remove("hd-over"); target = t; if (t) t.classList.add("hd-over"); }
       }
       function back() {
-        zoomed = false; if (dw) dw.stop();
+        zoomed = false; if (dw) dw.stop(); riseStop();
         cleanRows(); clearOver(); cell = row = newRow = null; lastHit = null;
         var s = App.getState();
         if (s.expandedId !== startExp) { if (startExp && s.byId[startExp]) App.expand(startExp); else App.collapse(); }
@@ -761,13 +804,16 @@
         face.classList.remove("is-armed");
         window.cancelAnimationFrame(raf); window.clearTimeout(dwell); if (dw) dw.stop();
         if (!ghost) return;
+        var onBlank = ok && dw && Sp && !cell && sproutEl;   // 松手时落在空白处的预览格上
         swallow = true; window.setTimeout(function () { swallow = false; }, 50);
         ghost.remove(); document.body.classList.remove("hd-dragging");
         var pid = cell && cell.dataset.projectId, nr = newRow, tr = row;
-        clearOver();
+        clearOver(); riseStop();
         dragging = false;
+        if (onBlank) { sproutEl = null; Sp.openCreate({ name: clip(it.title || it.app || "", 120).replace(/…$/, ""), onCreated: function (p) { doReassign(it, { projectId: p.id }).then(idle); } }); idle(); return; }
+        if (Sp) Sp.removeSprout();
         if (ok && pid) {
-          if (nr) { cleanRowsExcept(nr); newTaskInput(nr, cell, it, !!dw); return; }
+          if (nr) { cleanRowsExcept(nr); newTaskInput(nr, cell, it); return; }
           cleanRows();
           doReassign(it, tr ? { taskId: tr.dataset.taskId } : { projectId: pid }).then(idle);
         } else { if (dw && zoomed) back(); else cleanRows(); idle(); }

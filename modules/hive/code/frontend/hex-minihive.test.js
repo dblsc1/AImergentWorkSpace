@@ -35,7 +35,7 @@ assert.strictEqual(R({ op: "session", kind: "task", tProject: "p_math", tTask: "
 assert.strictEqual(M.resolveSlot(null, { op: "delete", tProject: "x" }).missing, false, "树还没读到：不乱标");
 
 // 标记种类
-const types = { create: "create", delete: "delete", change: "change", session: "change", rename: "hl", block: "hl", blockRule: "hl", windowRule: "none", teleport: "hl" };
+const types = { create: "create", delete: "delete", change: "change", session: "change", rename: "hl", block: "block", blockRule: "hl", windowRule: "none", teleport: "hl" };
 Object.keys(types).forEach((op) => assert.strictEqual(M.markType(op), types[op], op));
 
 // 标记计划：缩放目标、框的种类、连线的原位置
@@ -57,6 +57,17 @@ assert.deepStrictEqual([p.style, p.dest.level, p.zoom], ["hl", "task", "p_math"]
 p = P({ op: "session", kind: "task", oProject: "p_math", oTask: "t1", tProject: "p_math", tTask: "t_unc_p_math" });
 assert.deepStrictEqual([p.dest.taskId, p.origin.taskId], ["t_unc_p_math", "t1"]);
 assert.strictEqual(P({ op: "windowRule", block: "x" }), null, "窗口规则不标");
+// 待分类窗口块：没有原位置，线从卡片连到目标、小蜂巢推近；没有目标就没有计划（不画线、不标）
+p = P({ op: "block", kind: "task", block: "文档", tProject: "p_math", tTask: "t1" });
+assert.deepStrictEqual([p.style, p.dest.level, p.zoom, p.origin, p.fromCard], ["hl", "task", "p_math", null, true], "块：任务级目标");
+p = P({ op: "block", kind: "project", block: "文档", tProject: "p_math" });
+assert.deepStrictEqual([p.style, p.dest.level, p.fromCard], ["hl", "project", true], "块：项目级目标");
+assert.strictEqual(P({ op: "block", kind: "project", block: "文档" }), null, "块没有目标：没有计划");
+assert.strictEqual(P({ op: "rename", kind: "project", tProject: "p_math" }).fromCard, false, "别的卡不从卡片连线");
+// 推近窗口：以目标为中心的正方形，不超过整张
+const zv = M.zoomVb([-180, -217, 360, 360], { x: 43, y: -75 }, 50);
+assert.ok(zv[2] === zv[3] && zv[2] < 360 && Math.abs(zv[0] + zv[2] / 2 - 43) < 1e-9 && Math.abs(zv[1] + zv[3] / 2 + 75) < 1e-9, "以目标为中心");
+assert.strictEqual(M.zoomVb([0, 0, 100, 100], { x: 50, y: 50 }, 50)[2], 100, "整张更小就用整张");
 assert.strictEqual(P({ op: "delete", kind: "task", tProject: "p_math", tTask: "gone" }), null, "目标没了不标");
 
 // 删规则 = 清理：目标没了照样能批准（不标）；目标在就照常标
@@ -109,4 +120,9 @@ D.at("a", 130, 100); tick(1999); assert.strictEqual(fired.length, 1, "挪出 slo
 D.at("b", 130, 100); tick(1000); D.at("c", 130, 100); tick(1999); assert.strictEqual(fired.length, 2, "换了 key 重新数"); tick(1); assert.deepStrictEqual(fired.slice(2), ["c"]);
 D.at("d", 0, 0); D.stop(); tick(5000); assert.strictEqual(fired.length, 3, "stop 取消");
 D.at("e", 0, 0); D.at(null, 0, 0); tick(5000); assert.strictEqual(fired.length, 3, "key = null 等于停");
+// onArm：每次（重新）开始数停留都通知一次（拖块的「升起」靠它同步重来）
+const armed = [];
+const D2 = M.Dwell({ ms: 2000, slop: 10, set: (f, ms) => ({ f, on: true }), clear: () => {}, fire: () => {}, onArm: (k) => armed.push(k) });
+D2.at("a", 0, 0); D2.at("a", 3, 3); D2.at("a", 50, 0); D2.at("b", 50, 0);
+assert.deepStrictEqual(armed, ["a", "a", "b"], "slop 内不重数；挪出 / 换 key 才通知");
 console.log("hex-minihive.test.js ok");
