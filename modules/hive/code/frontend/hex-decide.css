@@ -106,3 +106,17 @@ li.is-pending-del .hex-task-name, .hex-cell.is-pending-del .hex-title { text-dec
 .hex-cell.is-ghost.is-expanded { opacity: .92; }
 .hd-panel[data-collapsed="1"] { width: auto; min-width: 150px; }
 .hd-face.is-armed { box-shadow: 0 0 0 2px var(--plan); touch-action: none; }
+
+/* 拖块悬在项目格 / 空白处：慢慢升起、放大一点（时长走 --rise-ms = 停留时长），周围洒光点；松开 / 离开平滑落回 */
+.hd-rise { transition: translate .25s ease-out, scale .25s ease-out; z-index: 8; }
+.hd-rise.is-rising { translate: 0 -6px; scale: 1.08; transition-duration: var(--rise-ms, 2000ms); transition-timing-function: ease-in; filter: drop-shadow(0 6px 8px rgba(0, 0, 0, .35)); }
+.hd-spark { position: fixed; z-index: 71; width: 5px; height: 5px; margin: -2px 0 0 -2px; border-radius: 50%; background: var(--plan); box-shadow: 0 0 6px var(--plan); pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .hd-rise, .hd-rise.is-rising { translate: none; scale: none; filter: none; transition: none; } .hd-spark { display: none; } }
+
+/* 新建任务行：输入框 + 确定 / 取消 */
+.hex-todo-card.hd-newtask { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.hex-todo-card.hd-newtask input { flex: 1 1 100px; width: auto; min-width: 0; }
+.hd-newtask-ops { display: flex; gap: 4px; }
+.hd-newtask-ops .hd-mini { min-height: 24px; padding: 0 8px; font: inherit; font-size: 12px; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-1); cursor: pointer; }
+.hd-newtask-ops .hd-mini:first-child { color: var(--panel); background: var(--plan); border-color: var(--plan); }
+

@@ -246,35 +246,6 @@ def test_drag_block_out_of_the_hive_restores_the_view(browser, base) -> None:  #
         assert _posts(hive, "activity/blocks/assign") == []
 
 
-def test_drop_block_on_new_task_row_creates_task_named_after_block_and_assigns(browser, base) -> None:  # noqa: F811
-    with _open(browser, base, width=1900) as hive:
-        _show(hive)
-        hive.created = []
-
-        def tasks(r: Any) -> None:
-            if r.request.method != "POST":
-                hive.route(r)
-                return
-            hive.writes.append("planner/tasks")
-            hive.created.append(json.loads(r.request.post_data))
-            r.fulfill(status=200, content_type="application/json", body=json.dumps({"id": "t_new", "projectId": "p_math", "name": "x"}))
-
-        hive.page.route("**/api/core/planner/tasks", tasks)
-        cell = hive.page.locator("[data-project-id=p_math].hex-cell")
-        _grip_drag(hive, DOC, cell)
-        hive.page.clock.run_for(2300)
-        hive.page.clock.run_for(600); hive.page.wait_for_timeout(300)
-        row = hive.page.locator(".hex-cell.is-expanded .hd-newtask")
-        row.evaluate("e => e.scrollIntoView({block: 'center'})")
-        t = row.bounding_box()
-        hive.page.mouse.move(t["x"] + 30, t["y"] + t["height"] / 2, steps=3)
-        hive.page.clock.run_for(100)
-        hive.page.mouse.up()
-        _until(hive.page, lambda: len(_posts(hive, "activity/blocks/assign")) == 1)
-        assert hive.created == [{"projectId": "p_math", "name": DOC}], "按块名直接建，不等输入"
-        assert _posts(hive, "activity/blocks/assign")[0][1]["taskId"] == "t_new"
-
-
 def test_batch_approve_with_only_missing_targets_says_so(browser, base) -> None:  # noqa: F811
     only = {**PROPS, "tasks": [], "changes": [CH[1]]}
     with open_tiers(browser, base, props=only, width=1900) as hive:

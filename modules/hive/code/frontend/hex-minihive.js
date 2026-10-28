@@ -22,7 +22,7 @@
     return { kind: null, ok: true, zoneId: null, projectId: null, taskId: null };
   }
   // 标记种类：create 虚线框 / change 虚线框 + 从原位置连线 / delete 红框 / hl 实线框 / none 不标
-  var TYPES = { create: "create", delete: "delete", change: "change", session: "change", rename: "hl", windowRule: "none" };
+  var TYPES = { create: "create", delete: "delete", change: "change", session: "change", rename: "hl", windowRule: "none", block: "block" };   // block = 待分类窗口块：没有原位置，线从卡片连到目标
   function markType(op) { return TYPES[op] || "hl"; }
   function resolveSlot(tree, slot) {
     slot = slot || {};
@@ -49,7 +49,8 @@
     }
     if (!dest) return null;
     var zoom = dest.level === "task" || dest.level === "newTask" ? dest.projectId : null;
-    return { type: type, style: type === "delete" ? "del" : type === "hl" ? "hl" : "frame", dest: dest, origin: origin, zoom: zoom, ghost: dest.level === "newProject" };
+    return { type: type, style: type === "delete" ? "del" : type === "hl" || type === "block" ? "hl" : "frame", dest: dest, origin: origin, zoom: zoom, ghost: dest.level === "newProject",
+      fromCard: type === "block" };   // 没有原位置的卡（待分类块）：连线的起点是卡片自己，小蜂巢推近到目标
   }
   function slotFromDataset(ds) {
     var m = { targetZoneId: "tZone", targetProjectId: "tProject", targetTaskId: "tTask", originZoneId: "oZone", originProjectId: "oProject", originTaskId: "oTask", op: "op", kind: "kind", block: "block", name: "name", del: "del" }, s = {};
@@ -121,10 +122,16 @@
     return { kind: "cell", x: c.cx, y: c.cy };
   }
 
+  // 小蜂巢推近到目标：以目标点为中心裁出约 2.6 格宽的窗口（不超过整张）；→ viewBox 数组
+  function zoomVb(vb, pt, s) {
+    var side = Math.min(vb[2], vb[3], s * SQ3 * 2.6);
+    return [pt.x - side / 2, pt.y - side / 2, side, side];
+  }
+
   // ── 停留计时：同一处（同一个 key，指针没挪出 slop 像素）停满 ms 才触发一次；挪了 / 换了 key 重新数 ──
   function Dwell(o) {
     var key = null, ax = 0, ay = 0, t = null, self = {};
-    function arm() { o.clear(t); t = o.set(function () { t = null; o.fire(key); }, o.ms); }
+    function arm() { o.clear(t); t = o.set(function () { t = null; o.fire(key); }, o.ms); if (o.onArm) o.onArm(key); }
     self.at = function (k, x, y) {
       if (k == null) { self.stop(); return; }
       if (k !== key || Math.hypot(x - ax, y - ay) > o.slop) { key = k; ax = x; ay = y; arm(); }
@@ -134,7 +141,7 @@
   }
 
   var api = { resolveSlot: resolveSlot, markType: markType, plan: plan, slotFromDataset: slotFromDataset, geom: geom, hexPoints: hexPoints, taskDots: taskDots,
-    pointOf: pointOf, freeSlot: freeSlot, Dwell: Dwell, MAX_DOTS: MAX_DOTS };
+    pointOf: pointOf, freeSlot: freeSlot, zoomVb: zoomVb, Dwell: Dwell, MAX_DOTS: MAX_DOTS };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof document === "undefined" || typeof window === "undefined") return;
   window.NexusTableHexMini = api;
@@ -193,6 +200,10 @@
     var res = resolveSlot(st.tree, slot), b = baseLayer(st), svg = sv("svg", { viewBox: b.g.vb.map(function (v) { return v.toFixed(1); }).join(" "), "aria-hidden": "true" }, "hm-svg");
     svg.appendChild(sv("use", { href: "#hm-base", x: b.g.vb[0].toFixed(1), y: b.g.vb[1].toFixed(1), width: b.g.vb[2].toFixed(1), height: b.g.vb[3].toFixed(1) }));
     var pl = plan(slot, res);
+    if (!pl && slot.op === "block" && !res.T.kind) {   // 块还没有去向：不画看不清的整张蜂巢，只放一个「未分类」的位
+      div.appendChild(el("div", "hm-unc", "未分类"));
+      return res;
+    }
     if (pl) {
       var dp = pointOf(b.g, st.tree, pl.dest, st.hive.cells), op = pointOf(b.g, st.tree, pl.origin, st.hive.cells);
       if (dp && op && (dp.x !== op.x || dp.y !== op.y)) {
@@ -201,6 +212,7 @@
       }
       var mk = mark(dp, pl.style, b.g);
       if (mk) svg.appendChild(mk);
+      if (pl.fromCard && dp && dp.kind !== "zone") svg.setAttribute("viewBox", zoomVb(b.g.vb, dp, SIZE).map(function (v) { return v.toFixed(1); }).join(" "));
     }
     div.appendChild(svg);
     return res;
@@ -298,7 +310,7 @@
       } else if (d.level === "task") { target = liEl(d.taskId); reveal(target); target = target || cellEl(st, d.projectId); } else target = levelEl(st, d);
       add(target, cls);
       if (target && target.scrollIntoView && (d.level === "task" || d.level === "newTask")) target.scrollIntoView({ block: "nearest" });
-      var from = pl.origin && levelEl(st, pl.origin);
+      var from = pl.fromCard ? card.querySelector(".hd-minihive") : pl.origin && levelEl(st, pl.origin);
       if (from && target) lineTm = window.setTimeout(function () { lineTm = null; drawLine(from, target); }, zoomed ? 520 : 0);
     }
     function show(card) {

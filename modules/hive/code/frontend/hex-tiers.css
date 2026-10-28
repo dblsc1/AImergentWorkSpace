@@ -96,5 +96,11 @@
 .hm-line-layer circle { fill: var(--plan); }
 .hm-fly { transform-origin: 0 0; }
 
-/* 待分类块卡片左边的拖动把手 */
-.ht-grip { flex: none; align-self: stretch; display: flex; align-items: center; padding: 0 2px; color: var(--ink-3); cursor: grab; touch-action: none; user-select: none; }
+/* 待分类块卡片左边的拖动把手：贴着卡片左边的整条竖带；卡片其余部分留给左右滑 */
+.ht-block .hd-face { position: relative; padding-left: 34px; }
+.ht-grip { position: absolute; left: 0; top: 0; bottom: 0; width: 26px; display: flex; align-items: center; justify-content: center; font-size: 18px; color: var(--ink-2); background: color-mix(in srgb, var(--ink-3) 22%, transparent); border-right: 1px solid var(--line); cursor: grab; touch-action: none; user-select: none; transition: background .15s, color .15s; }
+.ht-grip:hover { background: color-mix(in srgb, var(--plan) 28%, transparent); color: var(--ink); }
+.ht-grip:active { cursor: grabbing; }
+
+/* 还没有去向的块：小蜂巢位置放一个「未分类」的位 */
+.hm-unc { box-sizing: border-box; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; border: 1.5px dashed var(--ink-3); border-radius: var(--r-2); font-size: var(--fs-sub); font-weight: 600; color: var(--ink-2); }
