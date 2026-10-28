@@ -630,7 +630,7 @@
     row.addEventListener("mousedown", function (e) { if (e.target !== input) e.preventDefault(); });   // 点按钮不让输入框先失焦（失焦 = 取消）
     var closed = false;
     function cancel() { if (inflight || closed) return; closed = true; row.remove(); idle(); }
-    input.addEventListener("blur", function (e) { if (!row.contains(e.relatedTarget)) cancel(); });   // 点到别处 / 失焦 = 取消（请求在路上时不取消）
+    row.addEventListener("focusout", function (e) { if (!row.contains(e.relatedTarget)) cancel(); });   // 点到别处 / 失焦 = 取消（请求在路上时不取消）
     okB.addEventListener("click", function () { submit(); });
     noB.addEventListener("click", cancel);
     input.addEventListener("keydown", function (ev) {
@@ -669,10 +669,11 @@
     var r = rise; rise = null;
     window.clearInterval(r.timer);
     r.el.classList.remove("is-rising");
-    window.setTimeout(function () { r.el.classList.remove("hd-rise"); r.el.style.removeProperty("--rise-ms"); }, 300);
+    r.el._riseTm = window.setTimeout(function () { r.el._riseTm = 0; r.el.classList.remove("hd-rise"); r.el.style.removeProperty("--rise-ms"); }, 300);
   }
   function riseStart(node, ms) {
     riseStop();
+    if (node && node._riseTm) { window.clearTimeout(node._riseTm); node._riseTm = 0; }   // 同一格又升起：别让上次收尾的定时器把它摘掉
     if (!node || (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches)) return;
     node.style.setProperty("--rise-ms", ms + "ms");
     node.classList.add("hd-rise"); void node.offsetWidth; node.classList.add("is-rising");
@@ -810,7 +811,7 @@
         var pid = cell && cell.dataset.projectId, nr = newRow, tr = row;
         clearOver(); riseStop();
         dragging = false;
-        if (onBlank) { sproutEl = null; Sp.openCreate({ name: clip(it.title || it.app || "", 120).replace(/…$/, ""), onCreated: function (p) { doReassign(it, { projectId: p.id }).then(idle); } }); idle(); return; }
+        if (onBlank) { sproutEl = null; if (Sp.openCreate({ name: clip(it.title || it.app || "", 120).replace(/…$/, ""), onCreated: function (p) { doReassign(it, { projectId: p.id }).then(idle); } })) { idle(); return; } }
         if (Sp) Sp.removeSprout();
         if (ok && pid) {
           if (nr) { cleanRowsExcept(nr); newTaskInput(nr, cell, it); return; }
