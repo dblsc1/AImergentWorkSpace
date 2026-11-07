@@ -234,19 +234,19 @@ def test_auth_upstream_and_extra_routes_are_replaceable(out):
 
 
 def test_navbar_tabs_follow_installed_frontends(tmp_path):
-    """只装 ring：顶栏只有计时一个页签，不出点了 404 的死页签。"""
-    plan = install.resolve(["ring"])
+    """只装 assistant：顶栏只有待批准、自动记录两个页签，计时芯片无去处，不出点了 404 的死页签。"""
+    plan = install.resolve(["assistant"])
     generate.emit(install.ROOT, plan, tmp_path)
     nginx = _render((tmp_path / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8"))
-    assert """set $honeycomb_nav '{"home":"/","timer":"/ring/","tabs":[{"href":"/ring/","label":"计时"}]}';""" in nginx
+    assert """set $honeycomb_nav '{"home":"/","timer":null,"tabs":[{"href":"/assistant/","label":"待批准"},{"href":"/auto/","label":"自动记录"}]}';""" in nginx
 
 
 def test_navbar_four_tabs_same_in_hand_written_and_generated(out):
-    """缺省组装的顶栏：任务、计时、待批准、自动记录，手写与生成的两份逐字相同。"""
+    """缺省组装的顶栏：任务、待批准、自动记录，手写与生成的两份逐字相同。"""
     _, _, nginx = out
     hand = _render((install.ROOT / "deploy" / "nginx" / "templates" / "default.conf.template").read_text(encoding="utf-8"))
-    nav = """set $honeycomb_nav '{"home":"/hive/","timer":"/ring/","tabs":[{"href":"/hive/","label":"任务"},""" \
-          """{"href":"/ring/","label":"计时"},{"href":"/assistant/","label":"待批准"},""" \
+    nav = """set $honeycomb_nav '{"home":"/hive/","timer":"/hive/","tabs":[{"href":"/hive/","label":"任务"},""" \
+          """{"href":"/assistant/","label":"待批准"},""" \
           """{"href":"/auto/","label":"自动记录"}]}';"""
     assert nav in nginx and nav in hand
 

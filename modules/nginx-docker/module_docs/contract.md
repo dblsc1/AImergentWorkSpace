@@ -53,6 +53,8 @@ consumes:
 页签顺序 = 安装时的模块顺序。缺省组装（手写的 `deploy/` 与 `install.sh add hive ring assistant`）是三个：
 **任务、计时、待批准、自动记录**（v0.3 追加第三个待批准，`modules/assistant`；2026-10-14 追加第四个「自动记录」`/auto/`，同一个模块的第二个 `static:`；两份组装的 `$honeycomb_nav` 逐字相同，`tools/test_install.py` 核对）。
 
+v0.6：计时页签去掉，计时芯片指向 `/hive/`；`/ring/` 页面保留但不进顶栏。
+
 ## 计时芯片即时刷新（v0.2.1）
 
 芯片每 10 秒拉一次 `<前缀>__cockpit/current`。页面自己开始 / 停止 / 取消计时成功后，
