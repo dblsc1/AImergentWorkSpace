@@ -119,8 +119,9 @@
   function getJson(path) {
     return fetch(path).then(function (res) {
       return res.json().catch(function () { return null; }).then(function (body) {
-        return res.ok ? { ok: true, data: body }
-                      : { ok: false, status: res.status, message: (body && body.detail) || ("HTTP " + res.status) };
+        var date = res.headers.get("Date");
+        return res.ok ? { ok: true, data: body, date: date }
+                      : { ok: false, status: res.status, message: (body && body.detail) || ("HTTP " + res.status), date: date };
       });
     }).catch(function (err) { return { ok: false, status: 0, message: String((err && err.message) || err) }; });
   }
