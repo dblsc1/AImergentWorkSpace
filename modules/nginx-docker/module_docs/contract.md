@@ -37,6 +37,8 @@ consumes:
 | `static/tokens.css` | `/__cockpit/tokens.css` | 全站设计 tokens |
 | `static/favicon.*` | `/__cockpit/`，另有 `/favicon.ico` `/favicon.svg` | 站点图标（SVG 是几何的唯一事实源） |
 
+网关另有两条蜂巢页用的路由（v0.6，`hive.stage.v1` / `desktop.pet.v1`「三」，追加）：`/timer` 与 `/timer/` 302 到 `/hive/`；`/hive/pets/` 只读 serve 命名卷 `honeycomb_pets_data`（容器内 `/usr/share/nginx/html/hive-pets/`，安装器往里下载宠物素材 `<种类>/pack.json` 与 webm），不设门、没有的种类 404；`/hive/mini` 落在 `/hive/` 的页面入口上，不被挡。测试：`tests/test_hive_routes.py`。
+
 ## 顶栏页签
 
 `navbar.js` 不写死任何路由：站点前缀读网关注入的 `window.HONEYCOMB_BASE`（缺省 `/`，

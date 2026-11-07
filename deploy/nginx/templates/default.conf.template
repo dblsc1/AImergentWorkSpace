@@ -200,6 +200,18 @@ server {
         proxy_read_timeout 300s;   # 聊天后端每 15 秒发心跳（agent.chat.v1）
     }
 
+    # 计时页并入蜂巢页（hive.stage.v1）：旧地址临时跳转（302，以后可能改）。
+    location = ${HONEYCOMB_BASE_PATH}timer { return 302 ${HONEYCOMB_BASE_PATH}hive/; }
+    location = ${HONEYCOMB_BASE_PATH}timer/ { return 302 ${HONEYCOMB_BASE_PATH}hive/; }
+
+    # 宠物素材（desktop.pet.v1「三」）：安装器下到卷 honeycomb_pets_data，蜂巢页从这里取 <种类>/pack.json 与 webm。
+    # 不含用户数据，不设门（同 __cockpit/）；没有的种类 404，不回落到页面。
+    location ${HONEYCOMB_BASE_PATH}hive/pets/ {
+        alias /usr/share/nginx/html/hive-pets/;
+        try_files $uri =404;
+        add_header Cache-Control "no-cache";
+    }
+
     # 前端页面本身也设门：未登录直接去登录页，而不是先渲染一个空壳、
     # 再让里面每个 /api/ 请求挨个 401。顶栏由网关注入（inject.inc）。
     # 桌宠浮窗里的蜂巢缩略页：同样过门，但不要顶栏（窗口只有 360×420），只注入站点前缀。

@@ -45,6 +45,9 @@ def _req(d: dict, key: str, where: Path):
     return d[key]
 
 
+PETS_VOLUME = "honeycomb_pets_data"
+
+
 def _statics(manifest: dict, base: str, where: Path) -> list[dict]:
     """清单里的 `static:` 列表 → 挂载与 location 需要的全部信息。
 
@@ -285,7 +288,9 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
             "../../modules/nginx-docker/nginx:/etc/nginx/honeycomb:ro",
             "../../modules/nginx-docker/nginx/same-host.sh:/docker-entrypoint.d/15-honeycomb-same-host.sh:ro",
             "../../modules/nginx-docker/static:/usr/share/nginx/html/__cockpit:ro",
-        ] + [_mount(st) for st in statics],
+        ] + [_mount(st) for st in statics] + (
+            # 蜂巢页的宠物素材卷（desktop.pet.v1「三」）：装了 hive 才有
+            [f"{PETS_VOLUME}:/usr/share/nginx/html/hive-pets:ro"] if any(st["prefix"] == "/hive/" for st in statics) else []),
         # 占位件的依赖是可选的：部署方用 override 把它关掉（profiles），
         # 换成自己的认证服务时网关照常起（contracts/gateway.v1）。
         "depends_on": {
@@ -312,6 +317,8 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
         "networks": {n: {"driver": "bridge"} for n in ["honeycomb-net", *extra_nets]},
         "services": services,
     }
+    if any(st["prefix"] == "/hive/" for st in statics):
+        named_volumes.append(PETS_VOLUME)
     if needs_mongo:
         named_volumes.insert(0, "honeycomb_mongo_data")
     if named_volumes:
@@ -481,6 +488,20 @@ def _nginx(routes: list[dict], statics: list[dict], gate: bool, sources: list[st
             "    }",
         ]
     for st in statics:
+        if st["prefix"] == "/hive/":
+            # 计时页并入蜂巢页（302）；宠物素材读命名卷，不设门、没有的种类 404（与 deploy/ 手写那份逐字对应）
+            L += [
+                "",
+                "    # 计时页并入蜂巢页（hive.stage.v1）：旧地址临时跳转（302，以后可能改）。",
+                f"    location = {_b('/timer')} {{ return 302 {_b('/hive/')}; }}",
+                f"    location = {_b('/timer/')} {{ return 302 {_b('/hive/')}; }}",
+                "",
+                f"    location {_b('/hive/pets/')} {{",
+                "        alias /usr/share/nginx/html/hive-pets/;",
+                "        try_files $uri =404;",
+                "        add_header Cache-Control \"no-cache\";",
+                "    }",
+            ]
         L += ["", f"    location {_b(st['prefix'])} {{"]
         if gate and st["gated"]:
             L += [
