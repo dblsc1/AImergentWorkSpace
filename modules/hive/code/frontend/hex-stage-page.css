@@ -32,6 +32,8 @@ body.stage-on .hex-cell:not(.is-expanded) .hex-close { display: none !important;
 .st-clock-proj { font-size: var(--fs-sub); color: var(--ink-2); min-height: 1.4em; }
 .st-bubble { position: absolute; z-index: 30; width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%;
   background: var(--attn, var(--focus)); color: var(--panel); display: grid; place-items: center; box-shadow: var(--shadow); pointer-events: none; }
+.st-bubble.is-timing { pointer-events: auto; cursor: grab; touch-action: none; }
+.st-bubble.st-dragging { cursor: grabbing; z-index: 90; }
 .st-bubble svg { width: 20px; height: 20px; }
 
 /* 白条 */

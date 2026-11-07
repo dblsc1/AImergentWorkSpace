@@ -556,6 +556,19 @@ def test_panel_reads_only_known_endpoints_and_never_agent_usage(browser, base) -
             assert "usage" not in st.page.evaluate("(f) => fetch(f).then(r => r.text())", f)
 
 
+def test_drag_the_bubble_while_timing_places_the_timer_like_the_clock(browser, base) -> None:  # noqa: F811  二·2
+    with open_stage(browser, base, setup=_busy_day) as st:
+        st.drag("#stBubble", st.center(CELL.format("p_piano")))      # 没在计时：拖不动
+        st.settle()
+        assert st.posts == [] and "st-dragging" not in (st.page.locator("#stBubble").get_attribute("class") or "")
+        now = st.now().astimezone(TZ)
+        st.lanes["human"]["running"] = {"startAt": _iso(now), "taskId": None, "projectId": None}
+        st.poll()
+        st.drag("#stBubble", st.center(CELL.format("p_piano")))
+        st.settle()
+        assert st.posts == [("timer/place", {"projectId": "p_piano"})]
+
+
 def test_panel_expand_button_closes_it_and_expands_the_cell(browser, base) -> None:  # noqa: F811
     with open_stage(browser, base, setup=_busy_day) as st:
         st.page.click(CELL.format("p_math"))

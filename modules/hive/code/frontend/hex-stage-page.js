@@ -482,6 +482,7 @@
     var el = $("stBubble"), pid = hostProject(), t = bubbleTarget(pid), key = pid || "clock";
     if (!el.firstChild) el.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
     el.dataset.host = key;
+    el.classList.toggle("is-timing", stage.timerRunning());
     if (bub.host === null) { bub.host = key; bub.x = t.x; bub.y = t.y; place(el, t); return; }
     if (bub.host === key) { if (!bub.raf) { bub.x = t.x; bub.y = t.y; place(el, t); } return; }
     bub.host = key;
@@ -608,12 +609,14 @@
     openPanel(c.dataset.projectId);
   }, true);
 
-  // 点时钟：开始 / 停；拖时钟（计时中）到格子 = 记到该项目
+  // 点时钟：开始 / 停；拖时钟或气泡（计时中）到格子 = 记到该项目
   (function () {
     var el = $("stClock");
+    var clockItem = function () { return { kind: "clock" }; };
+    drag($("stBubble"), { el: $("stBubble"), item: function () { return stage.timerRunning() ? clockItem() : null; } });   // 气泡 = 时钟的延伸，同一段拖动
     drag(el, {
       el: el,
-      item: function () { return { kind: "clock" }; },
+      item: clockItem,
       onClick: function () {
         busy++;
         stage.clickClock().then(function () { busy--; render(); refresh(); });
