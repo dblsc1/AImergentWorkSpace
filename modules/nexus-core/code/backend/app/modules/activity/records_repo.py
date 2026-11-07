@@ -53,7 +53,8 @@ def purge(user: str, cutoff: datetime, cutoff_date: str) -> None:
 def day_records(user: str, date: str) -> list[dict]:
     """一天的记录（聚合在 Python 里做：秒数要跨设备取时间并集；一天的记录数量级在万以内，契约「七」）。"""
     return list(_col().find({"user": user, "date": date},
-                            {"_id": 0, "blockKey": 1, "keySource": 1, "startTs": 1, "endTs": 1, "app": 1, "seconds": 1}))
+                            {"_id": 0, "blockKey": 1, "keySource": 1, "startTs": 1, "endTs": 1, "app": 1, "seconds": 1,
+                                                  "title": 1, "titleIsPseudonym": 1, "folder": 1}))
 
 
 def touched_blocks(user: str, since: datetime) -> list[tuple[str, str]]:
@@ -119,7 +120,8 @@ def window_blocks(user: str, from_date: str, app: str, title: str | None, contai
 
 def stale(user: str, from_date: str, version: int, limit: int) -> list[dict]:
     """重算候选：标题不是代号、不是空标题、``rv`` 不是当前版本的记录（所在块是不是待分类由调用方判）。"""
-    return list(_col().find({"user": user, "date": {"$gte": from_date}, "titleIsPseudonym": False, "title": {"$ne": ""}, "rv": {"$ne": version}},
+    return list(_col().find({"user": user, "date": {"$gte": from_date}, "titleIsPseudonym": False, "title": {"$ne": ""}, "rv": {"$ne": version},
+                             "keySource": {"$ne": "agent"}},
                             {"_id": 1, "date": 1, "app": 1, "title": 1, "blockKey": 1, "keySource": 1}).limit(limit))
 
 
@@ -144,3 +146,10 @@ def day_bins(user: str, date: str) -> list[int]:
     for d in _col(_INP).find({"user": user, "date": date}, {"_id": 0, "bins": 1}):
         out.update(d.get("bins", []))
     return sorted(out)
+
+
+def recent_window(user: str, device_id: str, app: str, since: datetime, limit: int = 50) -> list[dict]:
+    """同一设备、同一程序、结束在 ``since`` 之后的记录，新的在前（live-ask / focus 认当前窗口的块名）。"""
+    return list(_col().find({"user": user, "deviceId": device_id, "app": app, "endTs": {"$gte": since}},
+                            {"_id": 0, "title": 1, "blockKey": 1, "keySource": 1, "titleIsPseudonym": 1, "folder": 1, "seconds": 1, "app": 1})
+                .sort("endTs", -1).limit(limit))

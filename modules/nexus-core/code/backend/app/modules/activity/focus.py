@@ -11,14 +11,17 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 
 from ..events import service as events_service
 from ..planner import service as planner_service
 from ..planner import unclassified
-from . import presence, repo, session_link
+from . import block_display, block_key, history, presence, records_repo, repo, session_link
 from .auto import FRESH, window_key
 from .service import SOURCE
+
+log = logging.getLogger(__name__)
 
 #: 按以往认：只看这个程序最近确认的这么多条（走 ``user_status_app_decided`` 索引，有界）
 # ponytail: 同一个程序下最近 200 条已确认的建议里没有这个窗口就认不出；真不够再给建议存窗口键、按键查
@@ -102,15 +105,37 @@ def _by_history(user: str, app: str, title: str, now: datetime) -> dict | None:
     return None
 
 
+def _display_name(user: str, now: datetime, device_id: str | None, app: str, title: str) -> str | None:
+    """当前窗口的 ``displayName``（onboarding.v1 二，与块同一个函数）；附带字段，查不到（库出错）给 None，不连累 focus。"""
+    try:
+        return _display_name_or_raise(user, now, device_id, app, title)
+    except Exception:  # noqa: BLE001
+        log.warning("focus displayName 没算出来", exc_info=True)
+        return None
+
+
+def _display_name_or_raise(user: str, now: datetime, device_id: str | None, app: str, title: str) -> str | None:
+    """块名：同设备 10 分钟内同程序同归一化标题的最新记录，没有就当 ``app · 标题``。"""
+    norm = history.norm_title(title)
+    near = [r for r in records_repo.recent_window(user, device_id, app, now - timedelta(minutes=10)) if history.norm_title(r["title"]) == norm] if device_id else []
+    if near:
+        key, src, recs = near[0]["blockKey"], near[0]["keySource"], near[:1]
+    else:
+        key, src, recs = block_key.default_key(app, title), "auto", [{"app": app, "title": title, "titleIsPseudonym": False, "seconds": 1}]
+    return block_display.describe(key, src, recs, block_display.domains(user))["displayName"]
+
+
 def state(user: str, now: datetime, docs: list[dict], auto: dict | None) -> dict | None:
     """``focus``：最新心跳新鲜（≤ ``FRESH``）时非 null。``docs`` = 该租户的在场文档，``auto`` = 同一次读里算出的自动跟踪目标。"""
     fresh = [d for d in docs if now - d["lastAt"] <= FRESH and d.get("spans")]
     if not fresh:
         return None
-    spans = max(fresh, key=lambda d: d["lastAt"])["spans"]  # 只看最近报心跳的那台设备（同自动跟踪）
+    latest = max(fresh, key=lambda d: d["lastAt"])  # 只看最近报心跳的那台设备（同自动跟踪）
+    spans = latest["spans"]
     cur = spans[-1]
     out = {"state": "afk" if cur["afk"] else "present", "app": cur["app"], "title": cur["title"],
-           "since": _since(spans), "dwellSeconds": None if cur["afk"] else _dwell(spans), **_NO_TARGET}
+           "since": _since(spans), "dwellSeconds": None if cur["afk"] else _dwell(spans),
+           "displayName": None if cur["afk"] else _display_name(user, now, latest.get("deviceId"), cur["app"], cur["title"]), **_NO_TARGET}
     if cur["afk"]:
         return out
     if auto:

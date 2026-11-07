@@ -13,7 +13,7 @@ from datetime import date as Date, datetime, time, timedelta, timezone
 
 from ... import config
 from ...tenant import current as current_tenant
-from . import block_key, block_rules, blocks_repo, records_repo
+from . import block_display, block_key, block_rules, blocks_repo, records_repo
 from ..planner.errors import UnprocessableError
 from .proposals import ConflictError
 
@@ -74,11 +74,14 @@ def _part_seconds(d: Date, part: dict, spans: list[tuple[datetime, datetime]]) -
 def _group(recs: list[dict]) -> dict[str, dict]:
     out: dict[str, dict] = {}
     for r in recs:
-        g = out.setdefault(r["blockKey"], {"spans": [], "apps": set(), "src": "auto"})
+        g = out.setdefault(r["blockKey"], {"spans": [], "apps": set(), "src": "auto", "recs": []})
         g["spans"].append((r["startTs"], r["endTs"]))
         g["apps"].add(r["app"])
+        g["recs"].append(r)
         if r.get("keySource") == "rule":
             g["src"] = "rule"
+        elif r.get("keySource") == "agent" and g["src"] != "rule":
+            g["src"] = "agent"
     return out
 
 
@@ -115,13 +118,15 @@ def _items(user: str, d: Date, only: str | None = None) -> list[dict]:
     ds = d.isoformat()
     groups = _group(records_repo.day_records(user, ds))
     if only is not None:
-        groups = {only: groups.get(only, {"spans": [], "apps": set(), "src": "auto"})}
+        groups = {only: groups.get(only, {"spans": [], "apps": set(), "src": "auto", "recs": []})}
     docs, generic = blocks_repo.blocks_of_day(user, ds), blocks_repo.generic_since(user)
     recent = d >= today() - timedelta(days=RULE_DAYS)
     need = [k for k in groups if ((docs.get(k) or {}).get("status") is None or docs[k].get("via") == "rule")
             and not (k in generic and generic[k] <= ds)]
     rules = block_rules.effective(user, need) if recent else {}
-    return [_item(d, k, g, docs.get(k), generic.get(k), rules.get(k), recent) for k, g in groups.items()]
+    shown = block_display.domains(user)
+    return [{**_item(d, k, g, docs.get(k), generic.get(k), rules.get(k), recent), **block_display.describe(k, g["src"], g["recs"], shown)}
+            for k, g in groups.items()]
 
 
 def _decode(cursor: str) -> tuple[int, str]:

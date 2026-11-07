@@ -15,6 +15,7 @@ from . import blocks_repo, history, records_repo
 
 MAX_BLOCK, MAX_TITLE = 64, 512
 RECOMPUTE_DAYS, RECOMPUTE_BATCH = 14, 5000
+SEP = " · "
 
 
 def default_key(app: str, title: str) -> str:
