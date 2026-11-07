@@ -488,6 +488,52 @@ jobs:
           if ($LASTEXITCODE -ne 3) { throw "exit code lost: $LASTEXITCODE" }
           'Invoke-Native ok on ' + $PSVersionTable.PSVersion
           exit 0   # the runner exits with $LASTEXITCODE, still 3 from the deliberate failing case above
+      - name: honeycomb-connect.ps1 on 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $src = Get-Content -Raw release/honeycomb-connect.ps1
+          $needle = -join [char[]](0x7EC8, 0x7AEF, 0x6807, 0x9898)   # 4 CJK chars: terminal title
+          if (-not $src.Contains($needle)) { throw 'BOM/encoding wrong in honeycomb-connect.ps1' }
+          $null = [scriptblock]::Create($src)
+          $t = Join-Path $env:RUNNER_TEMP 'hcconnect'
+          New-Item -ItemType Directory -Force -Path "$t\det", "$t\pet" | Out-Null
+          $utf8 = New-Object System.Text.UTF8Encoding($false)
+          $mine = "# mine`r`nSet-Alias ll Get-ChildItem`r`n"
+          [IO.File]::WriteAllText("$t\profile.ps1", $mine, $utf8)
+          [IO.File]::WriteAllText("$t\pet\pet-token", "pettok123`n", $utf8)
+          [IO.File]::WriteAllText("$t\det\ai-detector.json", '{"enabled":true,"zeta":1,"pet":{"enabled":true,"url":"http://127.0.0.1:47340/pet-event"},"alpha":[1,2]}', $utf8)
+          $env:HONEYCOMB_PROFILE = "$t\profile.ps1"
+          $env:HONEYCOMB_PET_HOME = "$t\pet"
+          $env:AI_DETECTOR_HOME = "$t\det"
+          $env:HONEYCOMB_DEVICE_TOKEN = 'dev-token-SECRET'
+          $env:HONEYCOMB_SERVER = 'http://hc.example:8800'
+          $S = '# >>> honeycomb terminal title >>>'
+          function Run-Connect($u) {
+            if ($u) { $o = & powershell -NoProfile -ExecutionPolicy Bypass -File release/honeycomb-connect.ps1 -Uninstall 2>&1 | Out-String }
+            else { $o = & powershell -NoProfile -ExecutionPolicy Bypass -File release/honeycomb-connect.ps1 2>&1 | Out-String }
+            if ($LASTEXITCODE -ne 0) { throw "connect failed: $o" }
+            if ($o -match 'dev-token-SECRET') { throw 'token printed' }
+          }
+          function Count-Marks { @((Get-Content "$t\profile.ps1") | Where-Object { $_ -eq $S }).Count }
+          Run-Connect $false
+          Run-Connect $false
+          if ((Count-Marks) -ne 1) { throw 'profile must have exactly one block' }
+          if (-not ([IO.File]::ReadAllText("$t\profile.ps1")).StartsWith($mine)) { throw 'profile head changed' }
+          $d = [IO.File]::ReadAllText("$t\det\ai-detector.json") | ConvertFrom-Json
+          if ($d.pet.token -ne 'pettok123' -or $d.zeta -ne 1 -or $d.alpha.Count -ne 2 -or $d.pet.enabled -ne $true -or -not $d.pet.url) { throw 'pet.token or other keys wrong' }
+          $c = [IO.File]::ReadAllText("$t\pet\config.json") | ConvertFrom-Json
+          if ($c.server -ne 'http://hc.example:8800' -or $c.deviceToken -ne 'dev-token-SECRET') { throw 'pet config wrong' }
+          if ([IO.File]::ReadAllBytes("$t\det\ai-detector.json")[0] -eq 0xEF) { throw 'BOM written into ai-detector.json' }
+          Run-Connect $true
+          if ((Count-Marks) -ne 0) { throw 'block not removed' }
+          if (([IO.File]::ReadAllText("$t\profile.ps1")) -ne $mine) { throw 'profile not restored' }
+          $d = [IO.File]::ReadAllText("$t\det\ai-detector.json") | ConvertFrom-Json
+          if ($d.pet.PSObject.Properties['token'] -or $d.zeta -ne 1 -or $d.pet.enabled -ne $true) { throw 'pet.token not removed cleanly' }
+          $c = [IO.File]::ReadAllText("$t\pet\config.json") | ConvertFrom-Json
+          if ($c.PSObject.Properties['server'] -or $c.PSObject.Properties['deviceToken']) { throw 'pet config keys not removed' }
+          'connect ok on ' + $PSVersionTable.PSVersion
+          exit 0
 
   gateway-contract:
     # contracts/gateway.v1 的冻结接口，从门外验：部署方只靠 override + .env
