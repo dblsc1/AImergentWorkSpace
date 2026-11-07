@@ -17,6 +17,10 @@ const SIZES = { 小: 140, 中: 200, 大: 280 };
 const dataDir = () => app.getPath('userData');
 const petsDir = () => path.join(dataDir(), 'pets');
 
+function sameOrigin(a, b) {
+  try { return new URL(a).origin === new URL(b).origin; } catch { return false; }
+}
+
 const DEFAULTS = { server: 'http://127.0.0.1:8800', deviceToken: '', pet: 'deepseek', size: 200, autostart: false, downloadAssets: true };
 let config = { ...DEFAULTS };
 const configFile = () => path.join(dataDir(), 'config.json');
@@ -145,10 +149,15 @@ app.whenReady().then(() => {
   // 浮窗里的网页只许用我们给的分区与预加载脚本，不开节点集成，不弹新窗。
   app.on('web-contents-created', (_e, wc) => {
     wc.setWindowOpenHandler(() => ({ action: 'deny' }));
-    wc.on('will-attach-webview', (_ev, prefs) => {
+    wc.on('will-attach-webview', (ev, prefs, params) => {
+      // 只许嵌我们配置的服务器上的 /hive/mini，预加载脚本只能是我们自己的。
+      if (!sameOrigin(params.src, config.server) || !new URL(params.src).pathname.startsWith('/hive/mini')) { ev.preventDefault(); return; }
+      prefs.preload = path.join(__dirname, 'mini-preload.js');
       prefs.nodeIntegration = false; prefs.contextIsolation = true; prefs.sandbox = true;
       prefs.partition = 'persist:hive-mini';
     });
+    // 嵌入页只能在本服务器内跳转（登录页也在同一服务器上）。
+    wc.on('will-navigate', (ev, url) => { if (wc.getType() === 'webview' && !sameOrigin(url, config.server)) ev.preventDefault(); });
   });
 
   buildWindow();
