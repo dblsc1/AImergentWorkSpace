@@ -63,9 +63,9 @@ body.stage-on .hex-cell:not(.is-expanded) .hex-close { display: none !important;
 .st-media { width: 64px; height: 56px; display: grid; place-items: center; pointer-events: none; }
 .st-art { max-width: 64px; max-height: 56px; display: block; pointer-events: none; }
 .st-pet.flip .st-art { transform: scaleX(-1); }
-/* ai-pet-7in1 的 webm 是 1280×720，角色在中间约 352×540（上留 120）：放大后裁到角色 */
-.st-media:has(> video) { width: 56px; height: 84px; overflow: hidden; position: relative; display: block; }
-video.st-art { position: absolute; max-width: none; max-height: none; height: 112px; width: auto; top: -19px; left: 50%; transform: translateX(-50%); }
+/* 素材是 16:9 的大画面，角色只在中间（7in1 1280×720、dsh-pet 640×360）：放大后裁到七个包都装得下的那块（宽 37.5%、高 14%–93%） */
+.st-media:has(> video) { width: 72px; height: 84px; overflow: hidden; position: relative; display: block; }
+video.st-art { position: absolute; max-width: none; max-height: none; height: 106px; width: auto; top: -15px; left: 50%; transform: translateX(-50%); }
 .st-pet.flip video.st-art { transform: translateX(-50%) scaleX(-1); }
 .st-pet.is-work[data-mood="working"] .st-media { animation: st-bob 1.3s ease-in-out infinite; }
 .st-pet[data-mood="idle"] .st-media { animation: st-bob 2.6s ease-in-out infinite; }
