@@ -45,6 +45,11 @@ const idle = P.pickIdle([run("a", { projectId: null }), run("b"), run("c", { pro
 assert.deepStrictEqual(idle.pets.map((p) => p.runId), ["a"]);
 const six = P.pickIdle(Array.from({ length: 6 }, (_, i) => run("i" + i, { projectId: null })));
 assert.strictEqual(six.pets.length, 4); assert.strictEqual(six.plus, 2);
+// 收件箱不是格子：挂 p_inbox（项目或收件箱里的任务）的算左上角
+const inboxOpts = { projectOfTask: (id) => (id === "ti" ? "p_inbox" : "p1") };
+const mixed = [run("w", { projectId: "p1" }), run("x", { projectId: "p_inbox" }), run("y", { projectId: null, taskId: "ti" }), run("z", { projectId: null, taskId: "tp" })];
+assert.deepStrictEqual(P.pickWorkers(mixed, inboxOpts).pets.map((p) => p.runId).sort(), ["w", "z"]);
+assert.deepStrictEqual(P.pickIdle(mixed, inboxOpts).pets.map((p) => p.runId).sort(), ["x", "y"]);
 // HV-P17 走动 600 步不出区域，每步位移 ≤ 速度 × 时间
 let seed = 12345; const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
 const rect = { x: 0, y: 0, w: 200, h: 120 };

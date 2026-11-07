@@ -243,7 +243,7 @@
   function renderPets() {
     var runs = runsOf().map(function (r) {
       var dock = stage.petDock(r.runId);
-      return dock && !r.projectId && !r.taskId ? Object.assign({}, r, { projectId: dock }) : r;
+      return dock && Pk.isLoose(r, { projectOfTask: projectOfTask }) ? Object.assign({}, r, { projectId: dock, taskId: null }) : r;
     });
     var opts = { packsByTool: packsByTool(), projectOfTask: projectOfTask };
     var work = Pk.pickWorkers(runs, opts), idle = Pk.pickIdle(runs, opts), keep = {};

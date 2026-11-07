@@ -4,6 +4,7 @@
   "use strict";
 
   var MAX_PETS = 4;
+  var INBOX = "p_inbox";  // 收件箱不是格子：挂在这里的代理算没去向
   var DEFAULT_PACK = "deepseek";
   var DEFAULT_PACKS_BY_TOOL = { "claude-code": "claude", "codex": "gpt", "gemini-cli": "gemini", "*": DEFAULT_PACK };
 
@@ -37,8 +38,12 @@
   }
 
   function projectOfRun(r, opts) {
-    if (r.projectId) return r.projectId;
-    return (r.taskId && opts && opts.projectOfTask && opts.projectOfTask(r.taskId)) || null;
+    var p = r.projectId || (r.taskId && opts && opts.projectOfTask && opts.projectOfTask(r.taskId)) || null;
+    return p === INBOX ? null : p;
+  }
+  function isLoose(r, opts) {
+    return (!r.projectId || r.projectId === INBOX) &&
+      (!r.taskId || !!(opts && opts.projectOfTask && opts.projectOfTask(r.taskId) === INBOX));
   }
 
   // 格子边：在跑、挂了任务或项目（任务能解出项目）的运行
@@ -47,9 +52,9 @@
     return top(hosted, opts, function (r) { return projectOfRun(r, opts); });
   }
 
-  // 左上角：在跑、taskId 与 projectId 都没有
+  // 左上角：在跑、没有任务也没有项目（或只挂在收件箱）
   function pickIdle(runs, opts) {
-    var loose = (runs || []).filter(function (r) { return isRunning(r) && !r.projectId && !r.taskId; });
+    var loose = (runs || []).filter(function (r) { return isRunning(r) && isLoose(r, opts); });
     return top(loose, opts, function () { return null; });
   }
 
@@ -70,7 +75,7 @@
     };
   }
 
-  var api = { MAX_PETS: MAX_PETS, DEFAULT_PACK: DEFAULT_PACK, DEFAULT_PACKS_BY_TOOL: DEFAULT_PACKS_BY_TOOL, moodOf: moodOf, packOf: packOf, pickWorkers: pickWorkers, pickIdle: pickIdle, initWander: initWander, stepWander: stepWander };
+  var api = { MAX_PETS: MAX_PETS, DEFAULT_PACK: DEFAULT_PACK, DEFAULT_PACKS_BY_TOOL: DEFAULT_PACKS_BY_TOOL, moodOf: moodOf, packOf: packOf, pickWorkers: pickWorkers, pickIdle: pickIdle, isLoose: isLoose, initWander: initWander, stepWander: stepWander };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.NexusTableHexPetPick = api;
 })();
