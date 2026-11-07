@@ -20,8 +20,8 @@ Linux 本版只支持 X11 / XWayland。macOS 不抢焦点、无 Dock 图标。
 | 键 | 缺省 | 说明 |
 |---|---|---|
 | `server` | `http://127.0.0.1:8800` | HoneyComb 服务器；浮窗打开 `<server>/hive/mini` |
-| `deviceToken` | `""` | 本机设备令牌（`read` 范围），只用于每 10 秒读 `live-ask` 亮红点；空 = 不轮询 |
-| `pet` | `deepseek` | 宠物种类；空 = 内置形象 |
+| `deviceToken` | `""` | 本机设备令牌（`read` 范围）：每 10 秒读 `live-ask` 亮红点、读 `views/current` 选宠物包；每 10 分钟读 `activity/settings` 的 `pet.packsByTool`（403 用缺省对照）；空 = 都不读 |
+| `pet` | `deepseek` | 默认宠物（人没在看代理时用，托盘「默认宠物」改）；空 = 内置形象 |
 | `size` | `200` | 宠物边长（像素），托盘菜单可改 |
 | `autostart` | `false` | 开机自启（Windows / macOS） |
 | `downloadAssets` | `true` | 启动时后台下载素材 |
