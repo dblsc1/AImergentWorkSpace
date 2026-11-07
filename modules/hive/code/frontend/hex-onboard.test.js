@@ -45,6 +45,25 @@ const dup = pick([{ target: { taskId: "t1" }, items: [it("a", "agent", 900)] }, 
 assert.deepStrictEqual(dup, [{ taskId: "t1", blockKeys: ["a"], names: { a: "名a" } }, { projectId: "p1", blockKeys: ["b"], names: { b: "名b" } }], "O10 去重，先到先得");
 assert.deepStrictEqual(pick([{ target: { taskId: "t1" }, items: null }, null]), [], "坏数据不炸");
 
+// HV-O16：引导后 AI 直接施加的块
+const T0 = Date.parse("2026-11-08T10:00:00Z");
+const dl = (id, kind, at, extra) => Object.assign({ id, kind, at, actor: "ai", undoneAt: null, payload: { blockKey: "k" + id, date: "2026-11-08" } }, extra);
+const kept = O.pickDirect([
+  dl("1", "blockAction", "2026-11-08T10:00:00Z"),
+  dl("2", "blockRule", "2026-11-08T10:05:00Z", { payload: { blockKey: "kr", op: "add", taskId: "t1" } }),
+  dl("3", "blockAction", "2026-11-08T09:59:59Z"),
+  dl("4", "blockAction", "2026-11-08T10:06:00Z", { undoneAt: "2026-11-08T10:07:00Z" }),
+  dl("5", "windowRule", "2026-11-08T10:06:00Z"),
+  dl("6", "change", "2026-11-08T10:06:00Z"),
+  null,
+], T0);
+assert.deepStrictEqual(kept.map((x) => x.id), ["1", "2"], "O16 引导前 / 已撤回 / 别的 kind 不列");
+const rows = O.directRows(kept, { "2026-11-08": [{ blockKey: "k1", displayName: "周会", seconds: 1200 }] });
+assert.deepStrictEqual(rows.map((r) => [r.directId, r.displayName, r.seconds]), [["1", "周会", 1200], ["2", "kr", 0]], "拿不到块就显示块名、0 秒");
+assert.strictEqual(O.totalSeconds(rows.concat([{ seconds: 600 }])), 1800, "合计含直接施加的");
+assert.strictEqual(O.directDate({ at: "2026-11-08T10:00:00Z", payload: { date: "2026-11-07" } }), "2026-11-07");
+assert.ok(/^\d{4}-\d\d-\d\d$/.test(O.directDate({ at: "2026-11-08T10:00:00Z", payload: {} })));
+
 // 时长文案（onboarding.v1 八·3）
 assert.strictEqual(O.hoursText(9000), "2.5 小时");
 assert.strictEqual(O.hoursText(7200), "2 小时");

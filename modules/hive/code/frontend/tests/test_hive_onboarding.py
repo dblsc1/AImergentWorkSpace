@@ -23,6 +23,8 @@ class Stub:
         self.tree, self.done_at, self.items = tree, done_at, items
         self.reqs: list[tuple[str, str, Any]] = []
         self.n = 0
+        self.direct: list[dict] = []
+        self.undo_status = 200
 
     def posts(self, prefix: str) -> list[Any]:
         return [b for m, p, b in self.reqs if m == "POST" and p.startswith(prefix)]
@@ -52,6 +54,14 @@ class Stub:
                 "totalSeconds": 2400, "skipped": []})
         elif path == "activity/blocks/claim/undo":
             ok({"undone": [{"blockKey": k, "days": 1} for k in body["blockKeys"]]})
+        elif path.startswith("activity/direct-log/") and path.endswith("/undo"):
+            ok({"undone": True} if self.undo_status == 200 else {"detail": "已被后来的改动覆盖"}, self.undo_status)
+            if self.undo_status == 200:
+                self.direct = [d for d in self.direct if d["id"] != path.split("/")[2]]
+        elif path.startswith("activity/direct-log"):
+            ok({"items": self.direct})
+        elif path.startswith("activity/blocks?"):
+            ok({"items": [{"blockKey": "zoom · 周会", "displayName": "周会", "seconds": 3600}]})
         elif req.method == "POST" and path.startswith("planner/"):
             self.n += 1
             ok({"id": f"{path.split('/')[1][0]}_{self.n}", "name": body.get("name")}, 201)
@@ -175,3 +185,71 @@ def test_skip_marks_done(browser, base) -> None:  # noqa: F811
         s.page.wait_for_function("() => document.querySelector('#hive')")
         s.page.wait_for_timeout(300)
         assert s.page.locator(".hob").count() == 0, "刷新后不再出"
+
+
+def _to_result(p: Any) -> None:
+    _add(p, "分区名", "学习")
+    _wait_count(p, ".hob-line", 1)
+    p.locator(".hob-foot .is-primary").click()
+    p.wait_for_selector('.hob-input[placeholder="项目名"]')
+    _add(p, "项目名", "数学")
+    _wait_count(p, ".hob-proj", 1)
+    _add(p, "任务名", "刷题")
+    _wait_count(p, ".hob-task", 1)
+    p.locator(".hob-foot .is-primary").click()
+    p.wait_for_selector(".hob-title:text-is('结果')")
+
+
+def _dl(id_: str, at: str, **kw: Any) -> dict:
+    return {"id": id_, "at": at, "actor": "ai", "kind": "blockAction", "undoneAt": None,
+            "payload": {"action": "assign", "date": "2026-11-08", "blockKey": "zoom · 周会"}, **kw}
+
+
+def test_result_lists_ai_direct_and_undoes(browser, base) -> None:  # noqa: F811
+    with open_onboarding(browser, base) as s:
+        s.direct = [_dl("d1", "2099-01-01T00:00:00Z"), _dl("d2", "2000-01-01T00:00:00Z"),
+                    _dl("d3", "2099-01-01T00:00:00Z", undoneAt="2099-01-02T00:00:00Z")]
+        p = s.page
+        p.wait_for_selector(".hob")
+        _to_result(p)
+        _wait_count(p, ".hob-result", 3)   # 2 个 claim + 1 个直接施加；引导前的、已撤回的不列
+        assert p.locator(".hob-name").all_inner_texts() == ["garden", "刷题", "周会"]
+        assert p.locator(".hob-total").inner_text() == "1.7 小时", "0.7 + 1"
+        p.locator(".hob-result").nth(2).locator("button").click()
+        _wait_count(p, ".hob-result", 2)
+        assert [pa for m, pa, _ in s.reqs if m == "POST" and "direct-log" in pa] == ["activity/direct-log/d1/undo"]
+        assert p.locator(".hob-total").inner_text() == "0.7 小时"
+
+
+def test_direct_undo_conflict_keeps_row(browser, base) -> None:  # noqa: F811
+    with open_onboarding(browser, base) as s:
+        s.direct = [_dl("d1", "2099-01-01T00:00:00Z")]
+        s.undo_status = 409
+        p = s.page
+        p.wait_for_selector(".hob")
+        _to_result(p)
+        _wait_count(p, ".hob-result", 3)
+        p.locator(".hob-result").nth(2).locator("button").click()
+        p.wait_for_selector(".hob-err")
+        assert p.locator(".hob-result").count() == 3
+
+
+def test_result_rereads_direct_log_every_10s(browser, base) -> None:  # noqa: F811
+    with open_onboarding(browser, base) as s:
+        p = s.page
+
+        def reads() -> int:
+            return len([1 for _, pa, _b in s.reqs if pa.startswith("activity/direct-log")])
+
+        p.wait_for_selector(".hob")
+        _to_result(p)
+        _wait_count(p, ".hob-result", 2)
+        n = reads()
+        s.direct = [_dl("d1", "2099-01-01T00:00:00Z")]
+        _wait_count(p, ".hob-result", 3)   # 10 秒内重读到
+        assert reads() > n
+        p.get_by_role("button", name="完成").click()
+        _wait_count(p, ".hob", 0)
+        k = reads()
+        p.wait_for_timeout(11000)
+        assert reads() == k, "离开结果页后停止"

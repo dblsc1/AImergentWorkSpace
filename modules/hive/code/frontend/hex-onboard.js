@@ -67,13 +67,33 @@
     });
     return groups;
   }
+  // direct-log 条目：引导开始后（at ≥ startedMs）AI 直接施加、未被撤回的块动作 / 块规则
+  function pickDirect(items, startedMs) {
+    return (items || []).filter(function (i) {
+      return i && (i.kind === "blockAction" || i.kind === "blockRule") && !i.undoneAt && Date.parse(i.at) >= startedMs && i.payload && i.payload.blockKey;
+    });
+  }
+  // blockAction 带 date；blockRule 没有，取 at 的本地日期
+  function directDate(i) {
+    if (i.payload.date) return i.payload.date;
+    var d = new Date(i.at), p = function (n) { return (n < 10 ? "0" : "") + n; };
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+  }
+  // blocksByDate: {日期: activity/blocks 的 items}；读不到块就显示块名、0 秒
+  function directRows(items, blocksByDate) {
+    return items.map(function (i) {
+      var b = ((blocksByDate || {})[directDate(i)] || []).filter(function (x) { return x.blockKey === i.payload.blockKey; })[0];
+      return { directId: i.id, blockKey: i.payload.blockKey, displayName: (b && b.displayName) || i.payload.blockKey, seconds: b && b.seconds > 0 ? b.seconds : 0 };
+    });
+  }
+  function totalSeconds(rows) { return rows.reduce(function (s, r) { return s + r.seconds; }, 0); }
   function hoursText(seconds) {
     if (seconds < 360) return "不到 6 分钟";
     return String(Math.round(seconds / 360) / 10).replace(/\.0$/, "") + " 小时";
   }
 
   var H = { shouldShowOnboarding: shouldShowOnboarding, newDraft: newDraft, canAddZone: canAddZone, canAddProject: canAddProject,
-    addZone: addZone, addProject: addProject, addTask: addTask, canNext: canNext, targetsOf: targetsOf, pickAutoClaims: pickAutoClaims, hoursText: hoursText };
+    addZone: addZone, addProject: addProject, addTask: addTask, canNext: canNext, targetsOf: targetsOf, pickAutoClaims: pickAutoClaims, pickDirect: pickDirect, directDate: directDate, directRows: directRows, totalSeconds: totalSeconds, hoursText: hoursText };
   if (typeof module !== "undefined" && module.exports) { module.exports = H; return; }
 
   // ── DOM ──
@@ -94,7 +114,7 @@
   }
 
   function open(ctx) {
-    var draft = newDraft(), result = [], busy = false, error = "";
+    var draft = newDraft(), result = [], direct = [], startedMs = Date.now(), timer = null, busy = false, error = "";
     var root = el("div", "hob");
     root.setAttribute("role", "dialog");
     root.setAttribute("aria-modal", "true");
@@ -105,6 +125,7 @@
     function finish() {
       if (busy) return;
       busy = true;
+      clearInterval(timer);
       ctx.postJson(ACT + "onboarding/done").then(function () {
         root.remove();
         if (ctx.refresh) ctx.refresh();
@@ -166,16 +187,18 @@
     function step3() { card.appendChild(el("h2", "hob-title", "AI 放窗口")); }
     function step4() {
       card.appendChild(el("h2", "hob-title", "结果"));
-      var total = result.reduce(function (s, r) { return s + r.seconds; }, 0);
-      result.forEach(function (r) {
+      var rows = result.concat(direct), total = totalSeconds(rows);
+      rows.forEach(function (r) {
         var row = el("div", "hob-row hob-result");
         row.dataset.block = r.blockKey;
         row.appendChild(el("span", "hob-name", r.displayName));
         row.appendChild(el("span", "hob-dur", hoursText(r.seconds)));
         var undo = button("撤销", "", function () {
           undo.disabled = true;
-          ctx.postJson(ACT + "blocks/claim/undo", { blockKeys: [r.blockKey] }).then(function (res) {
-            if (res.ok) result = result.filter(function (x) { return x !== r; });
+          var req = r.directId ? ctx.postJson(ACT + "direct-log/" + encodeURIComponent(r.directId) + "/undo")
+            : ctx.postJson(ACT + "blocks/claim/undo", { blockKeys: [r.blockKey] });
+          req.then(function (res) {
+            if (res.ok) { result = result.filter(function (x) { return x !== r; }); direct = direct.filter(function (x) { return x !== r; }); error = ""; }
             else { error = res.message || "撤销失败"; }
             render();
           });
@@ -212,12 +235,29 @@
       });
     }
 
+    // 读 direct-log，再按日期读块补显示名和秒数；读不到当作没有
+    function loadDirect() {
+      return ctx.getJson(ACT + "direct-log?limit=200").then(function (r) {
+        var items = pickDirect(r.ok && r.data ? r.data.items : [], startedMs), dates = {};
+        items.forEach(function (i) { dates[directDate(i)] = true; });
+        var days = Object.keys(dates);
+        return Promise.all(days.map(function (d) { return ctx.getJson(ACT + "blocks?date=" + d + "&limit=1000"); })).then(function (rs) {
+          var by = {};
+          days.forEach(function (d, k) { by[d] = rs[k].ok && rs[k].data ? rs[k].data.items : []; });
+          direct = directRows(items, by);
+        });
+      });
+    }
+
     function next() {
       if (busy || !canNext(draft)) return;
       draft.step += 1;
       if (draft.step === 3) {
         busy = true; render();
-        placeWindows().then(function () { busy = false; draft.step = 4; render(); });
+        placeWindows().then(loadDirect).then(function () {
+          busy = false; draft.step = 4; render();
+          timer = setInterval(function () { loadDirect().then(function () { if (draft.step === 4 && !busy) render(); }); }, 10000);
+        });
         return;
       }
       render();
