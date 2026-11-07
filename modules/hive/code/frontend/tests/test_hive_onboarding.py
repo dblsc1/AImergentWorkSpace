@@ -23,6 +23,8 @@ class Stub:
         self.tree, self.done_at, self.items = tree, done_at, items
         self.reqs: list[tuple[str, str, Any]] = []
         self.n = 0
+        self.hold_undo = False
+        self.held: list[Any] = []
         self.date_header: str | None = None
         self.direct: list[dict] = []
         self.undo_status = 200
@@ -58,6 +60,9 @@ class Stub:
         elif path == "activity/blocks/claim/undo":
             ok({"undone": [{"blockKey": k, "days": 1} for k in body["blockKeys"]]})
         elif path.startswith("activity/direct-log/") and path.endswith("/undo"):
+            if self.hold_undo:
+                self.held.append(r)
+                return
             status = self.fail_ids.get(path.split("/")[2], self.undo_status)
             ok({"undone": True} if status == 200 else {"detail": "已被后来的改动覆盖"}, status)
             if status == 200:
@@ -302,3 +307,43 @@ def test_started_time_uses_server_date_header(browser, base) -> None:  # noqa: F
         undo.click()
         _wait_count(p, ".hob-result", 2)
         assert [pa for m, pa, _ in s.reqs if m == "POST" and "direct-log" in pa] == ["activity/direct-log/d2/undo"]
+
+
+def test_tick_during_undo_neither_rereads_nor_repeats_undo(browser, base) -> None:  # noqa: F811
+    with open_onboarding(browser, base) as s:
+        s.direct = [_dl("d1", "2099-01-01T00:00:00Z")]
+        p = s.page
+        p.wait_for_selector(".hob")
+        _to_result(p)
+        _wait_count(p, ".hob-result", 3)
+
+        def reads() -> int:
+            return len([1 for m, pa, _ in s.reqs if m == "GET" and pa.startswith("activity/direct-log")])
+
+        s.hold_undo = True
+        p.locator(".hob-result").nth(2).locator("button").click()
+        p.wait_for_function("() => document.querySelectorAll('.hob-result button:disabled').length === 1")
+        k = reads()
+        p.wait_for_timeout(11000)   # 至少一次 tick
+        assert reads() == k, "撤销进行中不重读"
+        assert len([1 for m, pa, _ in s.reqs if m == "POST" and "direct-log" in pa]) == 1
+        s.hold_undo = False
+        s.direct = []
+        s.held[0].fulfill(status=200, content_type="application/json", body='{"undone": true}')
+        _wait_count(p, ".hob-result", 2)
+        assert len([1 for m, pa, _ in s.reqs if m == "POST" and "direct-log" in pa]) == 1
+
+
+def test_claimed_block_also_direct_is_one_row(browser, base) -> None:  # noqa: F811
+    with open_onboarding(browser, base) as s:
+        s.direct = [dict(_dl("d1", "2099-01-01T00:00:00Z"), payload={"action": "assign", "date": "2026-11-08", "blockKey": GOOD["blockKey"]})]
+        p = s.page
+        p.wait_for_selector(".hob")
+        _to_result(p)
+        _wait_count(p, ".hob-result", 2)
+        assert p.locator(".hob-name").all_inner_texts() == ["garden", "刷题"]
+        assert p.locator(".hob-total").inner_text() == "0.7 小时"
+        p.locator(".hob-result").nth(0).locator("button").click()
+        _wait_count(p, ".hob-result", 2)   # claim 撤掉后直接施加的那条露出来
+        assert s.posts("activity/blocks/claim/undo") == [{"blockKeys": [GOOD["blockKey"]]}]
+        assert not [1 for m, pa, _ in s.reqs if m == "POST" and "direct-log" in pa]

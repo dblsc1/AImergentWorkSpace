@@ -119,7 +119,7 @@
   }
 
   function open(ctx, serverDate) {
-    var draft = newDraft(), result = [], direct = [], startedMs = Date.parse(serverDate) || Date.now(), timer = null, busy = false, error = "";
+    var draft = newDraft(), result = [], direct = [], startedMs = Date.parse(serverDate) || Date.now(), timer = null, loading = false, undoing = 0, doneIds = {}, blockCache = {}, busy = false, error = "";
     var root = el("div", "hob");
     root.setAttribute("role", "dialog");
     root.setAttribute("aria-modal", "true");
@@ -192,7 +192,9 @@
     function step3() { card.appendChild(el("h2", "hob-title", "AI 放窗口")); }
     function step4() {
       card.appendChild(el("h2", "hob-title", "结果"));
-      var rows = result.concat(direct), total = totalSeconds(rows);
+      var claimed = {};
+      result.forEach(function (c) { claimed[c.blockKey] = true; });   // 同块已 claim：以 claim 行为主，直接施加的不再单列
+      var rows = result.concat(direct.filter(function (d) { return !claimed[d.blockKey]; })), total = totalSeconds(rows);
       rows.forEach(function (r) {
         var row = el("div", "hob-row hob-result");
         row.dataset.block = r.blockKey;
@@ -200,17 +202,19 @@
         row.appendChild(el("span", "hob-dur", hoursText(r.seconds)));
         var undo = button("撤销", "", function () {
           undo.disabled = true;
+          undoing++;
           if (r.directIds) {   // 新到旧逐条撤；任一条失败就停，行保留
             var step = function () {
-              if (!r.directIds.length) { direct = direct.filter(function (x) { return x !== r; }); error = ""; return render(); }
+              if (!r.directIds.length) { direct = direct.filter(function (x) { return x !== r; }); error = ""; undoing--; return render(); }
               ctx.postJson(ACT + "direct-log/" + encodeURIComponent(r.directIds[0]) + "/undo").then(function (res) {
-                if (res.ok) { r.directIds.shift(); step(); }
-                else { error = res.message || "撤销失败"; render(); }
+                if (res.ok) { doneIds[r.directIds.shift()] = true; step(); }
+                else { error = res.message || "撤销失败"; undoing--; render(); }
               });
             };
             return step();
           }
           ctx.postJson(ACT + "blocks/claim/undo", { blockKeys: [r.blockKey] }).then(function (res) {
+            undoing--;
             if (res.ok) { result = result.filter(function (x) { return x !== r; }); error = ""; }
             else { error = res.message || "撤销失败"; }
             render();
@@ -249,17 +253,24 @@
     }
 
     // 读 direct-log，再按日期读块补显示名和秒数；读不到当作没有
+    // 有撤销在进行或上一轮没回来就不读；读回来时若撤销已开始则丢弃；刚撤掉的 id 不再回来；块按日期缓存
     function loadDirect() {
+      if (loading || undoing) return Promise.resolve(false);
+      loading = true;
       return ctx.getJson(ACT + "direct-log?limit=200").then(function (r) {
-        var items = pickDirect(r.ok && r.data ? r.data.items : [], startedMs), dates = {};
+        var items = pickDirect(r.ok && r.data ? r.data.items : [], startedMs).filter(function (i) { return !doneIds[i.id]; }), dates = {};
         items.forEach(function (i) { dates[directDate(i)] = true; });
         var days = Object.keys(dates);
-        return Promise.all(days.map(function (d) { return ctx.getJson(ACT + "blocks?date=" + d + "&limit=1000"); })).then(function (rs) {
+        days.forEach(function (d) { if (!blockCache[d]) blockCache[d] = ctx.getJson(ACT + "blocks?date=" + d + "&limit=1000").then(function (b) { if (!b.ok) delete blockCache[d]; return b; }); });
+        return Promise.all(days.map(function (d) { return blockCache[d]; })).then(function (rs) {
           var by = {};
           days.forEach(function (d, k) { by[d] = rs[k].ok && rs[k].data ? rs[k].data.items : []; });
+          loading = false;
+          if (undoing) return false;
           direct = directRows(items, by);
+          return true;
         });
-      });
+      }, function () { loading = false; return false; });
     }
 
     function next() {
@@ -269,7 +280,8 @@
         busy = true; render();
         placeWindows().then(loadDirect).then(function () {
           busy = false; draft.step = 4; render();
-          timer = setInterval(function () { loadDirect().then(function () { if (draft.step === 4 && !busy) render(); }); }, 10000);
+          clearInterval(timer);
+          timer = setInterval(function () { loadDirect().then(function (changed) { if (changed && draft.step === 4 && !busy) render(); }); }, 10000);
         });
         return;
       }
