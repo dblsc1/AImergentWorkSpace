@@ -118,6 +118,7 @@ provides:
 3. `focus` 的 `afk` 用 `DELETE /dsh-pet-7340/work-status`。
 
 请求体以上游 `openapi.yaml` 为准（实现时放进 `third_party/dsh-pet/openapi.yaml` 并引用）。任何一步失败就放锁（尽力）并结束这一条。dsh-pet 的本机接口没有鉴权。
+上游约束（`third_party/dsh-pet/openapi.yaml`，dsh-pet 0.4.5）：`work-status` 的 `task` 至多 40 个码点（超了截 39 加 `…`，气泡仍发完整 `text`）；`lock` / `broadcast` 带 `surface: "any"`；`petId` 为 `null` 时先 `GET /dsh-pet-7340/config` 取 `main` 的第一只，取不到用 `main`；上游以 `200 {ok: false}` 表示失败，同样按失败处理。
 
 ### http（商用 / 自定义）
 
@@ -152,3 +153,4 @@ provides:
 | 2026-11-07 | v1 草案二 | 改用 dsh-pet 工作状态接口；素材随包附带并写明许可；宠物包与对照；浮窗独立模块 |
 | 2026-11-07 | v1 草案三 | 按 TDD 澄清（G-01–G-30）补齐边界；手动计时改为先计时后拖放 |
 | 2026-11-07 | v1 | 仓主批准；桌宠改为自己的 Electron 程序 `modules/desktop-pet`，宠物与浮窗同窗；素材 ai-pet-7in1 全套、自动下载、不进仓库 |
+| 2026-11-08 | v1（追加） | dsh-pet 发送按上游 0.4.5 的约束（task 40 码点、surface、petId 缺省、`ok:false`） |

@@ -57,6 +57,7 @@ provides:
    放到空白处 = 回原位，什么都不改。
 5. **左下角桶**：今天（NEXUS_TZ 本地日）「未分类」窗口时间合计。点桶展开抽屉：`legible` 的块按秒数排，可拖；看不懂的按「浏览器（其他网站）」「终端（未认出）」「其他」合成灰色行，不能拖。
    拖块进格子 = `POST activity/blocks/assign {date, blockKey, ifSeq, projectId, remember: true}`；成功后块从抽屉消失、桶上时长减少，提示「已记下：以后 <displayName> 都算 <项目名>」。
+   **拖到分区的空白处 = 建新项目**（仓主 2026-11-08 定，同 #166）：经过空白处时长出与「空白处长按建项目」完全相同的那一格、同样的升起与颜色浮现动效；放下后走同一张建项目确认；建好后把这个块记进新项目（`blocks/assign`，`remember: true`）。离开空白处或取消 = 收掉那一格、块回原位。拖到分区以外 = 回原位。
 6. **拖动**：原生 Pointer Events，鼠标、触控板都能拖。拖动中目标格子高亮；失败（`409` / `422` / 网络）时被拖物回原位并提示原因。
 
 ## 三、代理去向（规范性，nexus-core v2.44）
@@ -90,7 +91,14 @@ provides:
 - `POST timer/stop`（既有）：在跑的计时有目标 → 照旧写 `session.completed`；没有目标 → 不进台账，存一条白条 `timer_unplaced {user, id, startAt, endAt, createdAt}`。`TimerStopOut` 追加 `unplacedId`（有目标时为 `null`）。`timer/cancel`（既有）对无目标的计时同样是「不记录」。
 - `GET /api/core/timer/unplaced` → `{items: [{id, startAt, endAt, durationSeconds}]}`，按 `startAt` 升序。
 - `POST /api/core/timer/unplaced/{id}/place` `{taskId | projectId}`（恰好一个）：按白条的 `startAt` / `endAt` 写一条 `session.completed`（`source: "timer-backend"`，目标同 `timer/place`），删这条白条；`200 {recorded: true, taskId, projectId}`。白条不存在 `404`；目标不存在 `404`。允许与别的已记时间重叠（同 `timer/backfill`）。
-- 白条进导出 / 恢复。
+- 白条进导出 / 恢复：导出顶层键 `timerUnplaced`（有白条才出现），每条只含 `id`、`startAt`、`endAt`、`createdAt`；恢复先校验后落库。
+- 停止与改记同时发生时，以「改记」为准（停止只在条件删除抢到无目标的活状态时才存白条）。
+
+### 三·2 代理去向的事件与投影（追加）
+
+- 事件 `agent.run.placed`（只由服务端写；公开事件入口拒收这个类型与来源 `agent-place`），`data`：`{runId, seq, taskId, projectId, fromTaskId, fromProjectId, at}`；已结束的运行另带 `run`（该运行的起止与按天 `working` 秒数），投影据此搬运，不回查事件库。去重键 `place:<runId>:<seq>`；运行的当前去向取 `seq` 最大的一条。
+- 投影搬运幂等（每行记已搬过的事件键）；原来没有项目的运行改挂到项目时只加到新行。重建与实时投影一致。
+- 代理去向规则进导出 / 恢复：顶层键 `agentPlaceRules`，每条只含 `agent`、`taskId`、`projectId`、`createdAt`；恢复先整批校验（`agent` 非空不重复、≤ 500、目标键恰好一个）后落库。
 
 ## 四、完成记录（规范性）
 
@@ -124,3 +132,4 @@ provides:
 | 2026-11-07 | v1 草案 | 首版，待仓主批准 |
 | 2026-11-07 | v1 草案三 | 按 TDD 澄清（G-01–G-30）补齐边界；手动计时改为先计时后拖放 |
 | 2026-11-07 | v1 | 仓主批准 |
+| 2026-11-08 | v1（追加） | 抽屉里的块拖到分区空白处建新项目；`agent.run.placed` 事件字段；白条与代理去向规则的导出键；停止与改记并发以改记为准 |
