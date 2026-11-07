@@ -23,8 +23,10 @@ class Stub:
         self.tree, self.done_at, self.items = tree, done_at, items
         self.reqs: list[tuple[str, str, Any]] = []
         self.n = 0
+        self.date_header: str | None = None
         self.direct: list[dict] = []
         self.undo_status = 200
+        self.fail_ids: dict[str, int] = {}
 
     def posts(self, prefix: str) -> list[Any]:
         return [b for m, p, b in self.reqs if m == "POST" and p.startswith(prefix)]
@@ -36,7 +38,8 @@ class Stub:
         self.reqs.append((req.method, path, body))
 
         def ok(b: Any, status: int = 200) -> None:
-            r.fulfill(status=status, content_type="application/json", body=json.dumps(b, ensure_ascii=False))
+            r.fulfill(status=status, content_type="application/json", body=json.dumps(b, ensure_ascii=False),
+                      headers={"Date": self.date_header} if self.date_header else None)
 
         if path.startswith("views/tree"):
             ok(self.tree)
@@ -55,8 +58,9 @@ class Stub:
         elif path == "activity/blocks/claim/undo":
             ok({"undone": [{"blockKey": k, "days": 1} for k in body["blockKeys"]]})
         elif path.startswith("activity/direct-log/") and path.endswith("/undo"):
-            ok({"undone": True} if self.undo_status == 200 else {"detail": "已被后来的改动覆盖"}, self.undo_status)
-            if self.undo_status == 200:
+            status = self.fail_ids.get(path.split("/")[2], self.undo_status)
+            ok({"undone": True} if status == 200 else {"detail": "已被后来的改动覆盖"}, status)
+            if status == 200:
                 self.direct = [d for d in self.direct if d["id"] != path.split("/")[2]]
         elif path.startswith("activity/direct-log"):
             ok({"items": self.direct})
@@ -75,8 +79,10 @@ class Stub:
 
 
 @contextlib.contextmanager
-def open_onboarding(browser: Any, base: str, tree: dict = EMPTY, done_at: Any = None, items: list[dict] | None = None) -> Iterator[Stub]:
+def open_onboarding(browser: Any, base: str, tree: dict = EMPTY, done_at: Any = None, items: list[dict] | None = None,
+                    date_header: str | None = None) -> Iterator[Stub]:
     stub = Stub(tree, done_at, items or [])
+    stub.date_header = date_header
     context = browser.new_context(viewport={"width": 1280, "height": 900})
     page = context.new_page()
     stub.page = page
@@ -253,3 +259,46 @@ def test_result_rereads_direct_log_every_10s(browser, base) -> None:  # noqa: F8
         k = reads()
         p.wait_for_timeout(11000)
         assert reads() == k, "离开结果页后停止"
+
+
+def test_same_block_merges_to_one_row_and_undoes_newest_first(browser, base) -> None:  # noqa: F811
+    with open_onboarding(browser, base) as s:
+        s.direct = [_dl("old", "2099-01-01T00:00:00Z"), _dl("new", "2099-01-02T00:00:00Z"), _dl("mid", "2099-01-01T12:00:00Z")]
+        p = s.page
+        p.wait_for_selector(".hob")
+        _to_result(p)
+        _wait_count(p, ".hob-result", 3)   # 2 claim + 合并的 1 行
+        assert p.locator(".hob-total").inner_text() == "1.7 小时", "秒数只算一次"
+        p.locator(".hob-result").nth(2).locator("button").click()
+        _wait_count(p, ".hob-result", 2)
+        assert [pa for m, pa, _ in s.reqs if m == "POST" and "direct-log" in pa] == [f"activity/direct-log/{i}/undo" for i in ("new", "mid", "old")]
+
+
+def test_group_undo_stops_at_409_and_keeps_row(browser, base) -> None:  # noqa: F811
+    with open_onboarding(browser, base) as s:
+        s.direct = [_dl("old", "2099-01-01T00:00:00Z"), _dl("new", "2099-01-02T00:00:00Z")]
+        s.fail_ids = {"old": 409}
+        p = s.page
+        p.wait_for_selector(".hob")
+        _to_result(p)
+        _wait_count(p, ".hob-result", 3)
+        p.locator(".hob-result").nth(2).locator("button").click()
+        p.wait_for_selector(".hob-err")
+        assert p.locator(".hob-result").count() == 3
+        p.locator(".hob-result").nth(2).locator("button").click()   # 再点：new 已撤，不重复
+        p.wait_for_function("() => document.querySelectorAll('.hob-err').length === 1")
+        undos = [pa for m, pa, _ in s.reqs if m == "POST" and "direct-log" in pa]
+        assert undos == ["activity/direct-log/new/undo", "activity/direct-log/old/undo", "activity/direct-log/old/undo"]
+
+
+def test_started_time_uses_server_date_header(browser, base) -> None:  # noqa: F811
+    with open_onboarding(browser, base, tree=EMPTY, date_header="Thu, 01 Jan 2099 00:00:00 GMT") as s:
+        s.direct = [_dl("d1", "2098-12-31T23:59:00Z"), _dl("d2", "2099-01-01T00:00:05Z")]
+        p = s.page
+        p.wait_for_selector(".hob")
+        _to_result(p)
+        _wait_count(p, ".hob-result", 3)   # 浏览器时钟是 2026，但按服务端时间只有 d2 算引导后；同块合一行
+        undo = p.locator(".hob-result").nth(2).locator("button")
+        undo.click()
+        _wait_count(p, ".hob-result", 2)
+        assert [pa for m, pa, _ in s.reqs if m == "POST" and "direct-log" in pa] == ["activity/direct-log/d2/undo"]

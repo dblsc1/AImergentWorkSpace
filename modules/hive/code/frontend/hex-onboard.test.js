@@ -59,7 +59,12 @@ const kept = O.pickDirect([
 ], T0);
 assert.deepStrictEqual(kept.map((x) => x.id), ["1", "2"], "O16 引导前 / 已撤回 / 别的 kind 不列");
 const rows = O.directRows(kept, { "2026-11-08": [{ blockKey: "k1", displayName: "周会", seconds: 1200 }] });
-assert.deepStrictEqual(rows.map((r) => [r.directId, r.displayName, r.seconds]), [["1", "周会", 1200], ["2", "kr", 0]], "拿不到块就显示块名、0 秒");
+assert.deepStrictEqual(rows.map((r) => [r.directIds, r.displayName, r.seconds]), [[["2"], "kr", 0], [["1"], "周会", 1200]], "拿不到块就显示块名、0 秒");
+const grp = O.directRows([dl("a", "blockAction", "2026-11-08T10:01:00Z", { payload: { blockKey: "k1", date: "2026-11-08" } }),
+  dl("b", "blockAction", "2026-11-08T10:09:00Z", { payload: { blockKey: "k1", date: "2026-11-08" } }),
+  dl("c", "blockAction", "2026-11-08T10:05:00Z", { payload: { blockKey: "k1", date: "2026-11-09" } })],
+  { "2026-11-08": [{ blockKey: "k1", displayName: "周会", seconds: 1200 }] });
+assert.deepStrictEqual(grp.map((r) => [r.directIds, r.seconds]), [[["b", "a"], 1200], [["c"], 0]], "同天同块合一行、新到旧、秒数一次");
 assert.strictEqual(O.totalSeconds(rows.concat([{ seconds: 600 }])), 1800, "合计含直接施加的");
 assert.strictEqual(O.directDate({ at: "2026-11-08T10:00:00Z", payload: { date: "2026-11-07" } }), "2026-11-07");
 assert.ok(/^\d{4}-\d\d-\d\d$/.test(O.directDate({ at: "2026-11-08T10:00:00Z", payload: {} })));

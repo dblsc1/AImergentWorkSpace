@@ -79,12 +79,17 @@
     var d = new Date(i.at), p = function (n) { return (n < 10 ? "0" : "") + n; };
     return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
   }
-  // blocksByDate: {日期: activity/blocks 的 items}；读不到块就显示块名、0 秒
+  // blocksByDate: {日期: activity/blocks 的 items}；读不到块就显示块名、0 秒。同一天同一块名的多条合成一行，秒数只算一次
   function directRows(items, blocksByDate) {
-    return items.map(function (i) {
-      var b = ((blocksByDate || {})[directDate(i)] || []).filter(function (x) { return x.blockKey === i.payload.blockKey; })[0];
-      return { directId: i.id, blockKey: i.payload.blockKey, displayName: (b && b.displayName) || i.payload.blockKey, seconds: b && b.seconds > 0 ? b.seconds : 0 };
+    var rows = [], by = {};
+    items.slice().sort(function (a, b) { return Date.parse(b.at) - Date.parse(a.at); }).forEach(function (i) {
+      var date = directDate(i), k = date + "\n" + i.payload.blockKey;
+      if (by[k]) { by[k].directIds.push(i.id); return; }
+      var b = ((blocksByDate || {})[date] || []).filter(function (x) { return x.blockKey === i.payload.blockKey; })[0];
+      by[k] = { directIds: [i.id], blockKey: i.payload.blockKey, displayName: (b && b.displayName) || i.payload.blockKey, seconds: b && b.seconds > 0 ? b.seconds : 0 };
+      rows.push(by[k]);
     });
+    return rows;
   }
   function totalSeconds(rows) { return rows.reduce(function (s, r) { return s + r.seconds; }, 0); }
   function hoursText(seconds) {
@@ -113,8 +118,8 @@
     return b;
   }
 
-  function open(ctx) {
-    var draft = newDraft(), result = [], direct = [], startedMs = Date.now(), timer = null, busy = false, error = "";
+  function open(ctx, serverDate) {
+    var draft = newDraft(), result = [], direct = [], startedMs = Date.parse(serverDate) || Date.now(), timer = null, busy = false, error = "";
     var root = el("div", "hob");
     root.setAttribute("role", "dialog");
     root.setAttribute("aria-modal", "true");
@@ -195,10 +200,18 @@
         row.appendChild(el("span", "hob-dur", hoursText(r.seconds)));
         var undo = button("撤销", "", function () {
           undo.disabled = true;
-          var req = r.directId ? ctx.postJson(ACT + "direct-log/" + encodeURIComponent(r.directId) + "/undo")
-            : ctx.postJson(ACT + "blocks/claim/undo", { blockKeys: [r.blockKey] });
-          req.then(function (res) {
-            if (res.ok) { result = result.filter(function (x) { return x !== r; }); direct = direct.filter(function (x) { return x !== r; }); error = ""; }
+          if (r.directIds) {   // 新到旧逐条撤；任一条失败就停，行保留
+            var step = function () {
+              if (!r.directIds.length) { direct = direct.filter(function (x) { return x !== r; }); error = ""; return render(); }
+              ctx.postJson(ACT + "direct-log/" + encodeURIComponent(r.directIds[0]) + "/undo").then(function (res) {
+                if (res.ok) { r.directIds.shift(); step(); }
+                else { error = res.message || "撤销失败"; render(); }
+              });
+            };
+            return step();
+          }
+          ctx.postJson(ACT + "blocks/claim/undo", { blockKeys: [r.blockKey] }).then(function (res) {
+            if (res.ok) { result = result.filter(function (x) { return x !== r; }); error = ""; }
             else { error = res.message || "撤销失败"; }
             render();
           });
@@ -288,7 +301,7 @@
   function maybeStart(ctx) {
     if (!ctx || !ctx.tree || !Array.isArray(ctx.tree.zones) || ctx.tree.zones.length) return;
     ctx.getJson(ACT + "settings").then(function (r) {
-      if (r.ok && shouldShowOnboarding(r.data, ctx.tree)) open(ctx);
+      if (r.ok && shouldShowOnboarding(r.data, ctx.tree)) open(ctx, r.date);
     });
   }
 
