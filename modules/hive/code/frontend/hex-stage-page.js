@@ -28,6 +28,7 @@
     '<div class="st-toast" id="stToast" role="status" aria-live="polite"></div>' +
     '<div class="st-veil" id="stVeil" hidden><div class="st-panel st-card" id="stPanel" role="dialog" aria-modal="true"></div></div>';
   shell.appendChild(layer);
+  document.body.appendChild(document.getElementById("stVeil"));   // 舞台层自带层级 5，面板要盖住整个蜂巢（含分区描边）
   document.body.classList.add("stage-on");
   var $ = function (id) { return document.getElementById(id); };
 

@@ -544,6 +544,26 @@ def test_panel_left_has_two_timelines_right_has_runs_and_esc_closes(browser, bas
         assert not st.page.locator("#stVeil").is_visible()
 
 
+def test_panel_covers_the_whole_hive_including_zone_outlines(browser, base) -> None:  # noqa: F811  HV-B13
+    with open_stage(browser, base, setup=_busy_day) as st:
+        st.page.click(CELL.format("p_math"))
+        on_top = st.page.evaluate("""() => {
+          const r = document.getElementById('stPanel').getBoundingClientRect(), out = [];
+          const pill = document.querySelector('.hex-zone-label');   // 分区名牌层级高于舞台层：挪到面板正中
+          if (!pill) return 'no zone label';
+          const pr = pill.getBoundingClientRect();
+          pill.style.translate = (r.left + r.width / 2 - pr.left - pr.width / 2) + 'px ' + (r.top + r.height / 2 - pr.top - pr.height / 2) + 'px';
+          const c = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+          out.push(!!(c && c.closest('#stPanel')));
+          for (let i = 1; i < 10; i++) for (let j = 1; j < 6; j++) {
+            const e = document.elementFromPoint(r.left + r.width * i / 10, r.top + r.height * j / 6);
+            out.push(!!(e && e.closest('#stPanel')));
+          }
+          return out.every(Boolean);
+        }""")
+        assert on_top is True
+
+
 def test_panel_reads_only_known_endpoints_and_never_agent_usage(browser, base) -> None:  # noqa: F811  HV-B14 / HV-B15
     with open_stage(browser, base, setup=_busy_day) as st:
         st.api.clear()
