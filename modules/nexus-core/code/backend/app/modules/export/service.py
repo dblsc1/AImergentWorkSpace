@@ -21,6 +21,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from ...tenant import current as current_tenant
+from ..activity import live_ask
 from ..events import service as events_service
 from ..planner import service as planner_service
 from ..projector.handlers import current as current_projection
@@ -36,6 +37,7 @@ def export_all() -> dict:
     没有理由丢字段或按项目分组。
     """
     bars = timer_service.export_unplaced()
+    asked = live_ask.export_asked()
     return {
         "zones": planner_service.list_zones(),
         "projects": planner_service.list_projects(),
@@ -48,4 +50,5 @@ def export_all() -> dict:
         "agentPlaceRules": timer_service.export_place_rules(),  # v2.44
         "exportedAt": datetime.now(timezone.utc).isoformat(),
         **({"timerUnplaced": bars} if bars else {}),  # v2.44 白条；没有就不出这个键
+        **({"activityAsked": asked} if asked else {}),
     }

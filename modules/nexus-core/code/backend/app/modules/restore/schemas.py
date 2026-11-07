@@ -29,6 +29,8 @@ class RestoreRequest(BaseModel):
     timerUnplaced: list[dict[str, Any]] = []
     #: v2.44 代理去向规则；旧快照没有这一键。
     agentPlaceRules: list[dict[str, Any]] | None = None
+    #: onboarding.v1「三」只问一次；旧快照没有这个键。
+    activityAsked: list[dict[str, Any]] = []
     #: 原样接受、忽略。
     exportedAt: str | None = None
 

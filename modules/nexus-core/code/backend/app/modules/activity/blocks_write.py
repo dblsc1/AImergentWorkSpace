@@ -13,7 +13,7 @@ from datetime import date as Date, datetime, timedelta, timezone
 
 from ...tenant import current as current_tenant
 from ..planner.errors import UnprocessableError
-from . import block_rules, blocks, blocks_repo, ignore, new_items, reconcile, records_repo
+from . import block_rules, blocks, blocks_repo, ignore, live_ask, new_items, reconcile, records_repo
 
 MIN_PARTS, MAX_PARTS = 2, 20
 _SEP = " · "
@@ -55,6 +55,8 @@ def assign(d: Date, key: str, task_id: str | None, project_id: str | None, remem
     if remember and status != "generic":
         block_rules.create(key, task_id, project_id, via="assign")
         out = blocks.block_item(user, d, key)  # 规则变化触发的对账可能又动了这个块
+    if actor == "human":
+        live_ask.mark_asked_quietly(key, "assigned")
     return out
 
 
@@ -89,8 +91,10 @@ def normalize_parts(d: Date, parts: list[dict]) -> list[dict]:
 
 def split(d: Date, key: str, parts: list[dict], if_seq: int, via: str = "human", actor: str = "human") -> dict:
     user = current_tenant()
-    out = normalize_parts(d, parts)
-    return _write(user, d, key, if_seq, _assigned_status(user, d, key), out, via, actor)
+    out = _write(user, d, key, if_seq, _assigned_status(user, d, key), normalize_parts(d, parts), via, actor)
+    if actor == "human":
+        live_ask.mark_asked_quietly(key, "split")
+    return out
 
 
 def set_generic(key: str, on: bool, actor: str = "human") -> dict:
@@ -123,6 +127,8 @@ def ignore_block(d: Date, key: str, forever: bool, if_seq: int, via: str = "huma
         ignore.add(*rule)
         if scope:
             out = {**out, "scope": scope}  # 提示「整个程序都忽略了」
+    if actor == "human":
+        live_ask.mark_asked_quietly(key, "ignored")
     return out
 
 

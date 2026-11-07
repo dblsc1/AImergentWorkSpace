@@ -114,14 +114,17 @@ def _display_name(user: str, now: datetime, device_id: str | None, app: str, tit
         return None
 
 
-def _display_name_or_raise(user: str, now: datetime, device_id: str | None, app: str, title: str) -> str | None:
-    """块名：同设备 10 分钟内同程序同归一化标题的最新记录，没有就当 ``app · 标题``。"""
+def current_block(user: str, now: datetime, device_id: str | None, app: str, title: str) -> tuple[str, str, list[dict]]:
+    """当前窗口的块 ``(blockKey, keySource, 记录)``：同设备 10 分钟内同程序同归一化标题的最新记录，没有就当 ``app · 标题``。"""
     norm = history.norm_title(title)
     near = [r for r in records_repo.recent_window(user, device_id, app, now - timedelta(minutes=10)) if history.norm_title(r["title"]) == norm] if device_id else []
     if near:
-        key, src, recs = near[0]["blockKey"], near[0]["keySource"], near[:1]
-    else:
-        key, src, recs = block_key.default_key(app, title), "auto", [{"app": app, "title": title, "titleIsPseudonym": False, "seconds": 1}]
+        return near[0]["blockKey"], near[0]["keySource"], near[:1]
+    return block_key.default_key(app, title), "auto", [{"app": app, "title": title, "titleIsPseudonym": False, "seconds": 1}]
+
+
+def _display_name_or_raise(user: str, now: datetime, device_id: str | None, app: str, title: str) -> str | None:
+    key, src, recs = current_block(user, now, device_id, app, title)
     return block_display.describe(key, src, recs, block_display.domains(user))["displayName"]
 
 
