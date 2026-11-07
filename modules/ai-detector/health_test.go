@@ -1086,6 +1086,7 @@ func TestNewerResultNotLostWhileSending(t *testing.T) {
 func TestAutoStartDailyCap(t *testing.T) {
 	sp := &spawnLog{}
 	e := testEnv(t, false, sp)
+	t.Cleanup(e.h.probes.Wait) // 在 TempDir 清理之前（Cleanup 后注册先跑），等探测写完状态
 	cfg := Config{Enabled: true, AwStartCommand: []string{"/opt/aw/aw-qt"}}
 	step := func() { // 一个周期 75 秒：ok 13 拍（65 秒）、unreachable 2 拍
 		for i := 0; i < 15; i++ {

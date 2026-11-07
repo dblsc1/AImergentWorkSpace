@@ -24,6 +24,7 @@ var recordsGone atomic.Bool
 type record struct {
 	Start, End time.Time
 	App, Title string // Title：隐私选项处理后、换代号前
+	Raw        string // 脱敏前（只过强制脱敏），只用来取 folder，不上传
 }
 
 type uploadRecord struct {
@@ -34,6 +35,7 @@ type uploadRecord struct {
 	// titleIsPseudonym：标题是不是代号（titles: "pseudonymize" 且标题非空）。
 	TitleIsPseudonym bool    `json:"titleIsPseudonym"`
 	Block            *string `json:"block"`
+	Folder           string  `json:"folder,omitempty"` // 终端标题里的目录名，契约 onboarding.v1「二·2」
 }
 
 func isoMs(t time.Time) string { return t.Local().Format("2006-01-02T15:04:05.000-07:00") }
@@ -60,7 +62,7 @@ func joinRecords(frags []fragment) []record {
 		best := time.Duration(-1)
 		for _, f := range frags[i : j+1] {
 			if byTitle[f.Title] > best {
-				r.Title, best = f.Title, byTitle[f.Title]
+				r.Title, r.Raw, best = f.Title, f.Raw, byTitle[f.Title]
 			}
 		}
 		out = append(out, r)
@@ -147,7 +149,8 @@ func recordsRound(cfg Config, st *State, now time.Time, data awData, rules func(
 		st.RecordsCursor = now
 		return
 	}
-	cands := joinRecords(buildFragments(data, st.RecordsCursor, now, newRedactor(cfg)))
+	rd := newRedactor(cfg)
+	cands := joinRecords(buildFragments(data, st.RecordsCursor, now, rd))
 	next := now.Add(-recordGap)
 	var recs []record
 	for _, r := range cands {
@@ -187,6 +190,7 @@ func recordsRound(cfg Config, st *State, now time.Time, data awData, rules func(
 				StartAt: isoMs(r.Start), EndAt: isoMs(r.End),
 				App: scrubSecrets(r.App), Title: scrubSecrets(sent[k+i]), Block: blockFor(rs, r.App, r.Title),
 				TitleIsPseudonym: cfg.Privacy.Titles == "pseudonymize" && r.Title != "",
+				Folder:           rd.folderFor(r.App, r.Raw),
 			}
 			body.Records = append(body.Records, u)
 			arch.Records = append(arch.Records, archiveRaw{u.StartAt, u.EndAt, u.App, u.Title, u.Block})
