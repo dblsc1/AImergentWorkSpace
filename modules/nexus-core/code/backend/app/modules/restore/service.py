@@ -169,4 +169,5 @@ def restore(
     if snapshot.get("timerUnplaced"):
         keep = ("id", "startAt", "endAt", "createdAt")
         timer_service.restore_unplaced([{k: bar[k] for k in keep} for bar in snapshot["timerUnplaced"]])
+    timer_service.restore_place_rules(snapshot.get("agentPlaceRules") or [])
     return {"dryRun": False, "checksum": expected, "summary": summary, "rebuilt": rebuild()}

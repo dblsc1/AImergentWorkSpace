@@ -46,6 +46,32 @@ def _valid_seconds(value, low: float) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and low <= value <= _MAX_SECONDS
 
 
+def _rows(source, data: dict) -> list[tuple[str, int, int]]:
+    """一次运行 → [(本地日, 秒, runs)]；坏载荷空列表。``handle`` 与 ``handle_place`` 共用同一套口径。"""
+    days = data.get("days")
+    if source == _OWN_SOURCE and isinstance(days, list) and len(days) <= _MAX_DAY_ROWS:  # v2.31：每天一行，首个有效日行记 runs=1，其余 0
+        rows = []
+        for item in days:
+            # 纯比较、不转 float（理由同下）
+            if not (isinstance(item, dict) and isinstance(item.get("date"), str)
+                    and _DATE.fullmatch(item["date"]) and _valid_seconds(item.get("seconds"), 0)):
+                continue
+            rows.append((item["date"], int(item["seconds"]), 0 if rows else 1))
+        return rows
+    seconds, start_at = data.get("durationSeconds"), data.get("startAt")
+    # 纯比较、不转 float：NaN 两边都不成立、±Inf 与超大 int（10**400）都超上限——
+    # math.isfinite 会对超大 int 抛 OverflowError，反而重新引入崩溃
+    if not isinstance(start_at, str) or not _valid_seconds(seconds, 0) or seconds == 0:
+        return []
+    try:
+        moment = datetime.fromisoformat(start_at)
+    except ValueError:
+        return []
+    if moment.tzinfo is None:
+        return []
+    return [(local_date(moment, settings.tz), int(seconds), 1)]
+
+
 def handle(envelope: dict) -> None:
     subject = envelope.get("subject") or {}
     project_id = subject.get("project")
@@ -53,36 +79,26 @@ def handle(envelope: dict) -> None:
     if data.get("unverified") is True:
         return  # v2.19.1：匿名开的运行只写泳道（契约「调用方范围与匿名上报」），不计入代理时长统计
     agent = data.get("agent")
-    start_at = data.get("startAt")
     if not project_id or not isinstance(agent, str):
         return
     common = dict(user=envelope["user"], dedupe_key=applied_key(envelope), project_id=project_id,
                   task_id=subject.get("task"), agent=agent)
-    days = data.get("days")
-    if envelope.get("source") == _OWN_SOURCE and isinstance(days, list) and len(days) <= _MAX_DAY_ROWS:  # v2.31：每天一行，首个有效日行记 runs=1，其余 0；各行各自幂等
-        first = True
-        for item in days:
-            # 纯比较、不转 float（理由同下）
-            if not (isinstance(item, dict) and isinstance(item.get("date"), str)
-                    and _DATE.fullmatch(item["date"]) and _valid_seconds(item.get("seconds"), 0)):
-                continue
-            repo.apply_agent_daily_stat(
-                **common, date=item["date"], seconds=int(item["seconds"]), runs=1 if first else 0)
-            first = False
-        return
-    seconds = data.get("durationSeconds")
-    # 纯比较、不转 float：NaN 两边都不成立、±Inf 与超大 int（10**400）都超上限——
-    # math.isfinite 会对超大 int 抛 OverflowError，反而重新引入崩溃
-    if not isinstance(start_at, str) or not _valid_seconds(seconds, 0) or seconds == 0:
-        return
-    try:
-        moment = datetime.fromisoformat(start_at)
-    except ValueError:
-        return
-    if moment.tzinfo is None:
-        return
+    for date, seconds, runs in _rows(envelope.get("source"), data):
+        repo.apply_agent_daily_stat(**common, date=date, seconds=seconds, runs=runs)
 
-    repo.apply_agent_daily_stat(**common, date=local_date(moment, settings.tz), seconds=int(seconds))
+
+def handle_place(envelope: dict) -> None:
+    """``agent.run.placed``（v2.44）：已结束的运行整条秒数从旧去向搬到新去向（事件里抄了那条运行的时长）。
+    在跑的运行没有抄录 → 不动（它还没进这张表）。**重建不走这里**：重建按最后一条去向重放 ``agent.run.completed``。"""
+    data, subject = envelope.get("data") or {}, envelope.get("subject") or {}
+    run = data.get("run")
+    if not isinstance(run, dict) or run.get("unverified") is True or not isinstance(run.get("agent"), str):
+        return
+    old, new = (data.get("fromProjectId"), data.get("fromTaskId")), (subject.get("project"), subject.get("task"))
+    if not old[0] or not new[0] or old == new:
+        return
+    for date, seconds, runs in _rows(run.get("source"), run):
+        repo.move_agent_daily_stat(envelope["user"], date, run["agent"], old, new, seconds, runs)
 
 
 def read_agent_daily_stats(

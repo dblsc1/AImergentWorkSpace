@@ -198,3 +198,57 @@ def list_agent_runs(user: str) -> list[dict]:
 
 def delete_agent_run(user: str, run_id: str) -> None:
     _agent_col().delete_one({"user": user, "runId": run_id})
+
+
+def set_open_run_subject(user: str, run_id: str, task_id: str | None, project_id: str, zone_id: str) -> bool:
+    """v2.44 place：还在跑（未打关闭标记）的运行改挂。False = 已不在跑。"""
+    res = _agent_col().update_one({"user": user, "runId": run_id, "closing": {"$exists": False}},
+                                  {"$set": {"taskId": task_id, "projectId": project_id, "zoneId": zone_id}})
+    return res.matched_count == 1
+
+
+# ── v2.44 代理去向规则 agent_place_rules：(user, agent) 唯一 ──
+_PLACE_RULES = "agent_place_rules"
+_place_rules_ready = False
+
+
+def _place_col():
+    global _place_rules_ready
+    col = get_db()[_PLACE_RULES]
+    if not _place_rules_ready:
+        col.create_index([("user", 1), ("agent", 1)], unique=True, name="uniq_user_agent")
+        _place_rules_ready = True
+    return col
+
+
+def place_rules(user: str) -> list[dict]:
+    return list(_place_col().find({"user": user}, {"_id": 0}).sort("createdAt", 1))
+
+
+def get_place_rule(user: str, agent: str) -> dict | None:
+    return _place_col().find_one({"user": user, "agent": agent}, {"_id": 0})
+
+
+def count_place_rules(user: str) -> int:
+    return _place_col().count_documents({"user": user})
+
+
+def upsert_place_rule(user: str, agent: str, task_id: str | None, project_id: str | None, created_at: str) -> None:
+    """已有的换目标、保留 createdAt；只存给了的那个目标键。"""
+    target = {"taskId": task_id} if task_id else {"projectId": project_id}
+    gone = {"projectId": ""} if task_id else {"taskId": ""}
+    key = {"user": user, "agent": agent}
+    update = {"$set": target, "$unset": gone, "$setOnInsert": {"createdAt": created_at}}
+    try:
+        _place_col().update_one(key, update, upsert=True)
+    except DuplicateKeyError:
+        _place_col().update_one(key, update)
+
+
+def delete_place_rule(user: str, agent: str) -> bool:
+    return _place_col().delete_one({"user": user, "agent": agent}).deleted_count == 1
+
+
+def restore_place_rules(rules: list[dict]) -> None:
+    if rules:
+        _place_col().insert_many([dict(r) for r in rules])

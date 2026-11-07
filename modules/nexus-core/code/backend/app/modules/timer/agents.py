@@ -250,6 +250,10 @@ def start(
             repo.touch_agent_run(user, existing["runId"], right_now.isoformat(),  # v2.18
                                  declare=heartbeat, beat_source=beat_source)
             return _started(existing), False
+    if task_id is None and project_id is None and not unverified:  # v2.44：没给去向 → 按 agent 完全相同查代理去向规则
+        from . import agent_place  # noqa: PLC0415 —— agent_place 反过来 import 本文件
+
+        task_id, project_id = agent_place.rule_target(user, agent, resolve_chain) or (None, None)
     if task_id is not None:
         _task, chain_project, zone_id = resolve_chain(task_id, action="拒绝开始代理运行")
         if project_id not in (None, chain_project):  # v2.13：自相矛盾的不收，不替它挑一个

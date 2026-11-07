@@ -258,6 +258,20 @@ def apply_agent_daily_stat(
     return result.modified_count > 0 or result.upserted_id is not None
 
 
+def move_agent_daily_stat(user: str, date: str, agent: str, old: tuple, new: tuple, seconds: int, runs: int) -> None:
+    """v2.44 place：把一次运行在某天的秒数从旧 (项目, 任务) 行搬到新行；旧行减到空就删。"""
+    def key(project_id, task_id):
+        return {"user": user, "date": date, "projectId": project_id, "taskId": task_id, "agent": agent}
+
+    col = _agent_daily_col()
+    col.update_one(key(*old), {"$inc": {"seconds": -seconds, "runs": -runs}})
+    col.delete_one({**key(*old), "seconds": {"$lte": 0}, "runs": {"$lte": 0}})
+    try:
+        col.update_one(key(*new), {"$inc": {"seconds": seconds, "runs": runs}, "$setOnInsert": key(*new)}, upsert=True)
+    except DuplicateKeyError:  # 并发的另一条刚建出这一行
+        col.update_one(key(*new), {"$inc": {"seconds": seconds, "runs": runs}})
+
+
 def read_agent_daily_stats(user: str, date_from: str | None = None, date_to: str | None = None) -> list[dict]:
     """同 ``read_daily_stats``：按用户、可选闭区间日期过滤（v2.3 读端）。"""
     query: dict = {"user": user}
@@ -344,6 +358,11 @@ def read_lanes(user: str, kind: str, start, end, limit: int, *, fields: tuple | 
         query["source"] = {"$in": sources}
     proj = {"_id": 0} if fields is None else {"_id": 0, **{f: 1 for f in fields}}
     return list(_lanes_col().find(query, proj).sort("startAt", 1 if ascending else -1).limit(limit))
+
+
+def place_lane(user: str, key: str, task_id: str | None, project_id: str | None) -> None:
+    """v2.44 place：换这条运行的去向（只动已有的 run 行）。"""
+    _lanes_col().update_one({"user": user, "key": key, "kind": "run"}, {"$set": {"taskId": task_id, "projectId": project_id}})
 
 
 def delete_lane(user: str, key: str) -> None:

@@ -45,6 +45,7 @@ def export_all() -> dict:
             "proj_current": current_projection.read_current(current_tenant()),
             "proj_daily_stats": daily_stats_projection.read_daily_stats(current_tenant()),
         },
+        "agentPlaceRules": timer_service.export_place_rules(),  # v2.44
         "exportedAt": datetime.now(timezone.utc).isoformat(),
         **({"timerUnplaced": bars} if bars else {}),  # v2.44 白条；没有就不出这个键
     }
