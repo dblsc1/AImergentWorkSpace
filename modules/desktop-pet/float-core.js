@@ -14,7 +14,7 @@ function badgePos(petRect, screen, size = 16) {
 }
 
 // fetchLiveAsk() -> ask 对象或 null，失败 / 401 抛错；assign(body) -> {status}
-// onTick()：每轮轮询结束后调一次（桌宠换包读 views/current 用，和红点共用这一个 10 秒循环）。
+// onTick()：每轮轮询结束后调一次（桌宠换包读 views/lanes 用，和红点共用这一个 10 秒循环）。
 function createFloat({ fetchLiveAsk, assign, timers, miniUrl, onBadge = () => {}, onPanel = () => {}, onCard = () => {},
   onTick = () => {}, pollMs = POLL_MS, collapseMs = COLLAPSE_MS }) {
   const s = { badge: false, open: false, card: 'ask', ask: null, fails: 0 };
@@ -44,7 +44,7 @@ function createFloat({ fetchLiveAsk, assign, timers, miniUrl, onBadge = () => {}
   }
   function loop() {
     if (!running) return;
-    poll().then(() => onTick()).finally(() => { if (running) pollTimer = timers.setTimeout(loop, pollMs); });
+    poll().then(() => onTick()).catch(() => {}).finally(() => { if (running) pollTimer = timers.setTimeout(loop, pollMs); });
   }
 
   async function assignTo(projectId) {

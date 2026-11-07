@@ -30,9 +30,9 @@ function saveConfig() { fs.mkdirSync(dataDir(), { recursive: true }); fs.writeFi
 
 let win = null, tray = null, float = null, panelOpen = false;
 let pack = null, packKind = null, mood = 'idle', lastClip = null, cursorTimer = null, lastCursor = '';
-// 选包用的数据：views/current（每 10 秒）、服务端宠物包对照（每 10 分钟；读不到 = null，用 pack.js 缺省）。
+// 选包用的数据：views/lanes（每 10 秒）、服务端宠物包对照（每 10 分钟；403 = null，用 pack.js 缺省）。
 const PET_SETTINGS_MS = 10 * 60 * 1000;
-let currentView = null, packsByTool = null, settingsReadAt = 0;
+let lanesView = null, packsByTool = null, settingsReadAt = 0;
 
 function send(ch, payload) { if (win && !win.isDestroyed()) win.webContents.send(ch, payload); }
 
@@ -56,22 +56,25 @@ function showPack(kind) {
   if (kind && !next) return;
   packKind = kind; pack = next; play(mood); buildTrayMenu();
 }
-function refreshPack() { showPack(pickPackKind({ current: currentView, packsByTool, configPet: config.pet })); }
+function refreshPack() { showPack(pickPackKind({ lanes: lanesView, packsByTool, configPet: config.pet })); }
 
 function serverBase() { return config.server.replace(/\/+$/, ''); }
-// 设备令牌（read 范围）读服务端；非 2xx 抛错。
+// 设备令牌（read 范围）读服务端；非 2xx 抛错，错误带 status。
 async function readWithDeviceToken(route) {
   const r = await fetch(`${serverBase()}${route}`, { headers: { Authorization: `Bearer ${config.deviceToken}` }, signal: AbortSignal.timeout(8000) });
-  if (!r.ok) throw new Error(`${route} ${r.status}`);
+  if (!r.ok) { const err = new Error(`${route} ${r.status}`); err.status = r.status; throw err; }
   return r.json();
 }
-// 和红点同一个 10 秒循环调用。views/current 读不到就保持当前包；对照读不到（如 403）用缺省，不报错。
+// 和红点同一个 10 秒循环调用。views/lanes 读不到就保持当前包；对照 403 置缺省，其他错误保留旧值、下轮再试。
 async function petTick() {
-  try { currentView = await readWithDeviceToken('/api/core/views/current'); } catch { return; }
+  try { lanesView = await readWithDeviceToken('/api/core/views/lanes'); } catch { return; }
   if (Date.now() - settingsReadAt >= PET_SETTINGS_MS) {
-    settingsReadAt = Date.now();
-    try { packsByTool = (await readWithDeviceToken('/api/core/activity/settings')).pet?.packsByTool ?? null; }
-    catch { packsByTool = null; }
+    try {
+      packsByTool = (await readWithDeviceToken('/api/core/activity/settings')).pet?.packsByTool ?? null;
+      settingsReadAt = Date.now();
+    } catch (e) {
+      if (e.status === 403) { packsByTool = null; settingsReadAt = Date.now(); }
+    }
   }
   refreshPack();
 }
