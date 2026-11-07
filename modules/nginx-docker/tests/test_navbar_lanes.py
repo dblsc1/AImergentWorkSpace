@@ -27,7 +27,7 @@ import lanes_fixtures as fx  # noqa: E402
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
 ORIGIN = "http://hc.test"
-NAV = {"home": "/hive/", "timer": "/ring/", "tabs": [{"href": "/hive/", "label": "蜂巢"}, {"href": "/ring/", "label": "计时"}]}
+NAV = {"home": "/hive/", "timer": "/hive/", "tabs": [{"href": "/hive/", "label": "蜂巢"}]}
 
 PAGE = """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -142,7 +142,7 @@ def test_hover_opens_human_plus_four_agents_in_priority_order(browser) -> None:
         assert names == ["我", "plot", "garden", "codex", "old-job"]
         more = page.locator(f"{POP} a.hcl-more")
         assert more.text_content() == "还有 1 个 → 计时页"
-        assert more.get_attribute("href") == "/ring/"
+        assert more.get_attribute("href") == "/hive/"
         # 同一套配色与段：plot 末段是在等（黄）且在闪
         assert page.eval_on_selector(f"{POP} [data-run-id=run_c] .is-live", "n => n.className") == \
             "hcl-seg hcl-ph-waiting is-live"
@@ -215,7 +215,7 @@ def test_touch_tap_toggles_instead_of_navigating(browser) -> None:
         page.wait_for_selector(f"{POP}.ckpt-open .hcl-row")
         assert page.url == ORIGIN + "/hive/", "第一下点不跳走"
         go = page.locator(f"{POP} .ckpt-lanes-go")
-        assert go.text_content() == "去计时页" and go.get_attribute("href") == "/ring/"
+        assert go.text_content() == "去计时页" and go.get_attribute("href") == "/hive/"
         page.tap("[data-ckpt-chip]")
         settle(page, 50)
         assert not is_open(page)
@@ -463,7 +463,7 @@ def test_needs_choice_dot_on_chip(browser) -> None:
         assert page.get_attribute(NAV_SEL, "data-ckpt-choice") == ""
         assert page.get_attribute("[data-ckpt-chip]", "title") == "有个窗口不知道记到哪 —— 去计时页选"
         assert page.get_attribute("[data-ckpt-chip]", "aria-label") == label + "；有个窗口不知道记到哪 —— 去计时页选"
-        assert page.get_attribute("[data-ckpt-chip]", "href") == "/ring/"
+        assert page.get_attribute("[data-ckpt-chip]", "href") == "/hive/"
         # 可以和 auto 同时有（等人选的不一定是前台窗口）
         site.current = {"running": False, "auto": _auto(page, 5), "needsChoice": need}
         _poll(page)

@@ -26,7 +26,7 @@
 
   // 页签不写死：网关按「装了哪些前端」在 </head> 前注入 window.HONEYCOMB_NAV
   // （各模块 module.yaml 的 nav 字段）。没装的前端就没有页签，不出死链。
-  //   { home: '/hive/', timer: '/ring/', tabs: [{ href, label }, ...] }
+  //   { home: '/hive/', timer: '/hive/', tabs: [{ href, label }, ...] }
   // 站点前缀（gateway.v1）：整站挂子路径时网关注入 HONEYCOMB_BASE，页签 href 已含前缀。
   var BASE = window.HONEYCOMB_BASE || '/';
   var NAV = window.HONEYCOMB_NAV || { home: BASE, timer: null, tabs: [] };
@@ -452,7 +452,7 @@
    * 悬停 / 聚焦 / 触屏点一下计时芯片，弹出人一条线 + 至多 4 条代理线的最近 1 小时。
    * 计时页上不弹（那一页画了全部泳道）。画图交给共享的 lanes.js（计时页同一份），
    * 第一次打开时才加载。非 2xx（含 404 老后端、401）→ 不弹，芯片照旧，不跳登录页。 */
-  if (!(NAV.timer && location.pathname.indexOf(NAV.timer) === 0)) {
+  if (location.pathname.indexOf(BASE + 'ring/') !== 0) {   // /ring/ 页自己画全部泳道
     var LANES_URL = BASE + 'api/core/views/lanes';
     var LANES_JS = BASE + '__cockpit/lanes.js';
     var LANES_POLL_MS = 15000;
