@@ -22,6 +22,8 @@ volumes:
   honeycomb_auth_data:
   # 聊天记录（agent.chat.v1）。down 不删，down -v 删。
   honeycomb_agent_data:
+  # 宠物素材（desktop.pet.v1「三·2」）：pets-download 下进来，网关只读 serve 在 /hive/pets/。
+  honeycomb_pets_data:
 
 services:
   mongo:
@@ -138,3 +140,13 @@ services:
     volumes:
       # 额外路由（contracts/gateway.v1 第四节）；安装脚本建一个空的 extra/。
       - ${HONEYCOMB_EXTRA_ROUTES_DIR:-./extra}:/etc/nginx/templates/extra:ro
+      - honeycomb_pets_data:/usr/share/nginx/html/hive-pets:ro
+
+  pets-download:
+    # 一次性：下宠物素材到卷后退出（web 不等它；下不完的下次 up 续）。./pets-download 由安装脚本从本版 Release 取。
+    image: node:22-alpine
+    restart: "no"
+    command: ["node", "/app/download-server.js"]
+    volumes:
+      - ./pets-download:/app:ro
+      - honeycomb_pets_data:/pets

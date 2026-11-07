@@ -261,3 +261,13 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
+  pets-download:
+    # 一次性：把宠物素材（desktop.pet.v1「三·2」，不进仓库）下到卷 honeycomb_pets_data 后退出。
+    # web 不等它；下不完的下次 up 续，已下的跳过。
+    image: node:22-alpine
+    restart: "no"
+    command: ["node", "/app/download-server.js"]
+    volumes:
+      - ../modules/desktop-pet:/app:ro
+      - honeycomb_pets_data:/pets

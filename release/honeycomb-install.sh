@@ -45,6 +45,14 @@ main() {
     wget -qO docker-compose.yml "$REPO/releases/download/$TAG/docker-compose.yml"
   fi
 
+  # 宠物素材下载器（pets-download 服务挂 ./pets-download；素材本身不在 Release 里，由它起来后下）。
+  mkdir -p pets-download
+  for f in assets-download.js download-server.js manifest.json mood-map.json; do
+    if [ -n "${HONEYCOMB_ASSETS:-}" ]; then cp "$HONEYCOMB_ASSETS/pets-$f" "pets-download/$f"
+    elif command -v curl >/dev/null 2>&1; then curl -fsSL "$REPO/releases/download/$TAG/pets-$f" -o "pets-download/$f"
+    else wget -qO "pets-download/$f" "$REPO/releases/download/$TAG/pets-$f"; fi
+  done
+
   rand() {  # 32 位十六进制，不依赖 openssl
     od -An -N16 -tx1 /dev/urandom | tr -d ' \n'
   }

@@ -299,6 +299,15 @@ def emit(root: Path, plan: dict, out: Path) -> tuple[list[Path], dict]:
         },
     }
 
+    if any(st["prefix"] == "/hive/" for st in statics):
+        # 宠物素材一次性下载（desktop.pet.v1「三·2」）：下完退出，web 不等它，再 up 时重跑并跳过已下的
+        services["pets-download"] = {
+            "image": "node:22-alpine",
+            "restart": "no",
+            "command": ["node", "/app/download-server.js"],
+            "volumes": ["../../modules/desktop-pet:/app:ro", f"{PETS_VOLUME}:/pets"],
+        }
+
     out.mkdir(parents=True, exist_ok=True)
     (out / "nginx" / "templates").mkdir(parents=True, exist_ok=True)
 

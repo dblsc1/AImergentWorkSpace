@@ -47,6 +47,13 @@ if ($env:HONEYCOMB_ASSETS) {
   Invoke-WebRequest -UseBasicParsing "$Repo/releases/download/$Tag/docker-compose.yml" -OutFile 'docker-compose.yml'
 }
 
+# 宠物素材下载器（pets-download 服务挂 ./pets-download；素材本身不在 Release 里，由它起来后下）。
+New-Item -ItemType Directory -Force -Path 'pets-download' | Out-Null
+foreach ($f in 'assets-download.js', 'download-server.js', 'manifest.json', 'mood-map.json') {
+  if ($env:HONEYCOMB_ASSETS) { Copy-Item (Join-Path $env:HONEYCOMB_ASSETS "pets-$f") "pets-download/$f" }
+  else { Invoke-WebRequest -UseBasicParsing "$Repo/releases/download/$Tag/pets-$f" -OutFile "pets-download/$f" }
+}
+
 function Rand {  # 32 位十六进制；这种写法 PowerShell 5.1 与 7 都有
   $b = New-Object byte[] 16
   [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
