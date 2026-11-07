@@ -77,7 +77,7 @@ def test_s10_done_at_ignored(old):
     assert r.status_code == 200 and r.json()["onboardingDoneAt"] is None
 
 
-@pytest.mark.parametrize("v", ["x", 5, "2026-01-01T00:00:00"])
+@pytest.mark.parametrize("v", ["x", "2026-01-01T00:00:00", [1]])
 def test_s11_done_at_bad_422(old, v):
     assert _put(old, 0, onboardingDoneAt=v).status_code == 422
 
