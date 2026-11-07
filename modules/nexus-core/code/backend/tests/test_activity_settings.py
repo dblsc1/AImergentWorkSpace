@@ -8,6 +8,8 @@ import pytest
 from _tier_common import BEARER, BR, RULES, SET, db
 
 DEFAULT = {"version": 0, "tiers": False, "tiersSince": None, "highConfidenceThresholdPercent": 80,
+           "liveAskMinutes": 5, "liveAskEnabled": True, "browserDomains": [], "onboardingDoneAt": None,
+           "pet": {"packsByTool": {"claude-code": "claude", "codex": "gpt", "gemini-cli": "gemini", "*": "deepseek"}},
            "agentDirect": {"enabled": False, "windowsClassify": False, "honeycombRecords": False}}
 
 
@@ -34,6 +36,7 @@ def _put_rules(client, rules, version=0):
 
 
 def test_defaults_and_readers(client):
+    db()["events"].insert_one({"user": "u_local", "seq": 1})  # 老账号：有事件，缺省不变（全新账号见 test_onboarding_settings）
     r = client.get(SET)
     assert r.json() == DEFAULT and r.headers["ETag"] == '"0"'
     assert client.get(SET, headers=BEARER).json() == DEFAULT

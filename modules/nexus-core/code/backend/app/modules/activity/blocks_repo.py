@@ -158,6 +158,13 @@ def get_settings(user: str) -> dict | None:
     return _col(_SET).find_one({"user": user}, {"_id": 0})
 
 
+def insert_settings_if_absent(user: str, fields: dict) -> None:
+    try:
+        _col(_SET).insert_one({**fields, "user": user, "version": 1})
+    except DuplicateKeyError:
+        pass
+
+
 def put_settings(user: str, expected: int, fields: dict) -> bool:
     """``version`` 等于 ``expected`` 才写（0 = 没有文档），写后 +1；不符 False。``fields`` 之外的内部键（``migratedAt``）不动。"""
     if expected == 0:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from _reconcile_common import OFF, tiers
-from _tier_common import SET, day, rec, upload
+from _tier_common import SET, day, db, rec, upload
 from test_session_reassign import _session, _world
 
 P = "/api/core/activity/proposals"
@@ -91,6 +91,7 @@ def _put(client, body, version):
 
 
 def test_threshold_default_keep_on_omit_and_validation(client):
+    db()["events"].insert_one({"user": "u_local", "seq": 1})  # 老账号：全新账号会自动建设置
     assert client.get(SET).json()["highConfidenceThresholdPercent"] == 80
     base = {"tiers": False, "agentDirect": OFF}
     r = _put(client, base, 0)  # 省了、没有原值 = 缺省 80

@@ -367,6 +367,7 @@ def ign(client, headers=None, **kw):
 
 
 def test_ignore_direct_apply_and_undo(client):
+    db()["events"].insert_one({"user": "u_local", "seq": 1})  # 老账号：全新账号会自动打开直接分类
     assert ign(client).json()["status"] == "pending"  # 不带 directApply 照旧
     client.post(f"{P}/{ign(client).json()['id']}/reject")
     assert ign(client, WRITE, directApply=True).status_code == 403
