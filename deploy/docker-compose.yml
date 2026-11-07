@@ -49,6 +49,8 @@ volumes:
   honeycomb_auth_data:
   # 聊天记录（agent.chat.v1）。down 不删，down -v 删。
   honeycomb_agent_data:
+  # 蜂巢页的宠物素材（desktop.pet.v1「三」）：安装器下载进来，网关只读 serve 在 /hive/pets/。
+  honeycomb_pets_data:
 
 services:
   mongo:
@@ -248,6 +250,7 @@ services:
       # 三个前端模块，同样只读挂载、不复制代码：改页面去 modules/<名>/code/frontend/
       # 改，浏览器刷新就生效，不用重建任何镜像。
       - ../modules/hive/code/frontend:/usr/share/nginx/html/hive:ro
+      - honeycomb_pets_data:/usr/share/nginx/html/hive-pets:ro
       - ../modules/ring/code/frontend:/usr/share/nginx/html/ring:ro
       - ../modules/assistant/code/frontend:/usr/share/nginx/html/assistant:ro
       # 「自动记录」页和「待批准」同一个目录，另一个入口（auto.html）
