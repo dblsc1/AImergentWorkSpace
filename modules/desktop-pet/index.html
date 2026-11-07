@@ -55,18 +55,32 @@ window.pet.onPanel(({ open, url, miniPreload }) => {
 mini.addEventListener('ipc-message', e => { if (e.channel === 'hive-mini-done') window.pet.pageDone(); });
 
 const inside = (r, x, y) => x >= r.left && x < r.right && y >= r.top && y < r.bottom;
+// 素材是 16:9 的大画面，角色只在中间（7in1 1280×720、dsh-pet 640×360）：只显示七个包都装得下的那一块
+const CROP_F = { x: 0.3125, y: 0.139, w: 0.375, h: 0.792 };
+let CROP = null;
+clip.addEventListener('loadedmetadata', () => {
+  const W = clip.videoWidth, H = clip.videoHeight;
+  CROP = W && H && Math.abs(W / H - 16 / 9) < 0.01
+    ? { x: Math.round(W * CROP_F.x), y: Math.round(H * CROP_F.y), w: Math.round(W * CROP_F.w), h: Math.round(H * CROP_F.h) } : null;
+  clip.style.objectViewBox = CROP ? `inset(${CROP.y}px ${W - CROP.x - CROP.w}px ${H - CROP.y - CROP.h}px ${CROP.x}px)` : '';
+});
 function petOpaqueAt(x, y) {
   const r = petbox.getBoundingClientRect();
   if (!inside(r, x, y)) return false;
   const el = clip.style.display === 'none' ? ph : clip;
   const w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
   canvas.width = w; canvas.height = h;
-  const nw = el.videoWidth || el.naturalWidth || w, nh = el.videoHeight || el.naturalHeight || h;
-  const k = Math.min(w / nw, h / nh), dw = nw * k, dh = nh * k; // 同 object-fit: contain
-  try { g.drawImage(el, (w - dw) / 2, (h - dh) / 2, dw, dh); return g.getImageData(Math.floor(x - r.left), Math.floor(y - r.top), 1, 1).data[3] > 16; }
+  const c = el === clip ? CROP : null;
+  const sx = c ? c.x : 0, sy = c ? c.y : 0;
+  const nw = c ? c.w : (el.videoWidth || el.naturalWidth || w), nh = c ? c.h : (el.videoHeight || el.naturalHeight || h);
+  const k = Math.min(w / nw, h / nh), dw = nw * k, dh = nh * k; // 同 object-fit: contain（裁过就按裁出的那块）
+  g.clearRect(0, 0, w, h);
+  try { g.drawImage(el, sx, sy, nw, nh, (w - dw) / 2, (h - dh) / 2, dw, dh); return g.getImageData(Math.floor(x - r.left), Math.floor(y - r.top), 1, 1).data[3] > 16; }
   catch { return false; }
 }
-window.pet.onCursor(p => {
+let lastCursor = null;
+function applyCursor(p) {
+  lastCursor = p;
   let hit = false, hover = false;
   if (p) {
     if (inside(badge.getBoundingClientRect(), p.x, p.y) && badge.classList.contains('on')) hit = hover = true;
@@ -75,7 +89,10 @@ window.pet.onCursor(p => {
   }
   if (hit !== hitNow) { hitNow = hit; window.pet.setHit(hit); }
   if (hover !== hoverNow) { hoverNow = hover; window.pet.hover(hover); }
-});
+}
+window.pet.onCursor(applyCursor);
+// 鼠标不动时视频才加载好 / 换了画面，命中也要重算
+clip.addEventListener('loadeddata', () => applyCursor(lastCursor));
 </script>
 </body>
 </html>
