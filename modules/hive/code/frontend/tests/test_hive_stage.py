@@ -642,11 +642,12 @@ def test_drag_a_cell_pet_away_it_waits_three_seconds_then_walks_home_without_wri
         assert _src(st).endswith("/claude/d.webm")
         assert st.page.locator(PET_ART).get_attribute("loop") is not None
         st.page.clock.run_for(1000)      # 拖着的时候轮询不把它拉回去
-        assert abs(st.box(PET + " .st-media")["x"] - 900) < 30
+        b = st.box(PET + " .st-media")
+        assert abs(b["x"] + b["width"] / 2 - 900) < 30   # 按框中心：框宽随裁剪变
         st.page.mouse.up()
         st.page.clock.run_for(1500)
         away = st.box(PET + " .st-media")
-        assert abs(away["x"] - 900) < 30 and _src(st).endswith("/claude/w.webm")
+        assert abs(away["x"] + away["width"] / 2 - 900) < 30 and _src(st).endswith("/claude/w.webm")
         st.page.clock.run_for(2500)      # 3 秒到了：换走路的片、开始动
         assert _src(st).endswith("/claude/k.webm")
         assert st.box(PET + " .st-media")["x"] < away["x"] - 5
