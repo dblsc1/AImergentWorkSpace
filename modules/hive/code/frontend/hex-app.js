@@ -974,7 +974,11 @@
         refresh(true);
       });
     }
-    refresh().then(function () { startTicking(); });
+    refresh().then(function () {
+      startTicking();
+      var OB = window.NexusTableHexOnboard;   // 新手引导（hex-onboard.js）：树里没分区且没走过引导才出
+      if (OB) OB.maybeStart({ tree: state.tree, getJson: getJson, postJson: postJson, refresh: refresh });
+    });
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", boot);
