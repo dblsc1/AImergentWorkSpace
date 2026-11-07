@@ -332,6 +332,13 @@ def _put_edit(user: str, kind: str, item_id: str, extra: dict, reason: str, capp
     return doc
 
 
+def pending_block_targets(user: str) -> list[dict]:
+    """待批的块规则 / 块 assign 提议（补记候选的 ``ai``）：``{blockKey, taskId, projectId}``。"""
+    return list(_col().find({"user": user, "status": "pending", "$or": [{"kind": "blockRule", "op": {"$ne": "delete"}},
+                                                                         {"kind": "blockAction", "action": "assign"}]},
+                            {"_id": 0, "blockKey": 1, "taskId": 1, "projectId": 1}))
+
+
 def supersede(user: str, date: str | None, block_key: str, except_id: str | None = None) -> None:
     """人对这个块做了写操作：它上面待批准的 ``blockAction`` 提议记为 ``superseded``（不算被否掉，同样的可以再提）。``date`` 为 None = 各天。"""
     q = {"user": user, "kind": "blockAction", "status": "pending", "blockKey": block_key, **({"date": date} if date else {}),

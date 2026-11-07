@@ -192,6 +192,10 @@ def get_agent_run(user: str, run_id: str) -> dict | None:
     return _agent_col().find_one({"user": user, "runId": run_id}, {"_id": 0})
 
 
+def agent_runs_by_ids(user: str, run_ids: list[str]) -> list[dict]:
+    return list(_agent_col().find({"user": user, "runId": {"$in": run_ids}}, {"_id": 0, "runId": 1, "taskId": 1, "projectId": 1}))
+
+
 def list_agent_runs(user: str) -> list[dict]:
     return list(_agent_col().find({"user": user}, {"_id": 0}).sort("startedAt", 1))
 

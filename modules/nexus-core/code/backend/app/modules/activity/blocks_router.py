@@ -14,7 +14,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictBool, St
 from starlette.concurrency import run_in_threadpool
 
 from ..planner.errors import ForbiddenError
-from . import activity_settings, block_rules, blocks, blocks_write, live_ask
+from . import activity_settings, block_rules, blocks, blocks_write, claim, live_ask
 from .ignore_router import human, is_human, no_bearer
 from .router import human_body
 
@@ -138,6 +138,38 @@ def get_live_ask() -> dict:
 async def live_ask_answer(request: Request) -> dict:
     b = await _human(request, LiveAskAnswerIn, "答实时询问")
     return await run_in_threadpool(live_ask.answer_unmanaged, b.blockKey)
+
+
+# ── 一次性补记（onboarding.v1「五」）──
+
+
+class ClaimIn(BaseModel):
+    taskId: _Id | None = None
+    projectId: _Id | None = None
+    blockKeys: Annotated[list[_Key], Field(min_length=1, max_length=100)]
+    remember: StrictBool = True
+
+
+class ClaimUndoIn(BaseModel):
+    blockKeys: Annotated[list[_Key], Field(min_length=1, max_length=100)]
+
+
+@router.get("/unclassified/candidates", dependencies=[Depends(no_bearer)])
+def unclassified_candidates(taskId: str | None = None, projectId: str | None = None,  # noqa: N803 —— 查询参数名即契约
+                            days: Annotated[int, Query(ge=1, le=35)] = 35) -> dict:
+    return claim.candidates(taskId, projectId, days)
+
+
+@router.post("/blocks/claim")
+async def claim_blocks(request: Request) -> dict:
+    b = await _human(request, ClaimIn, "补记窗口块")
+    return await run_in_threadpool(claim.claim, b.taskId, b.projectId, b.blockKeys, b.remember)
+
+
+@router.post("/blocks/claim/undo")
+async def claim_undo(request: Request) -> dict:
+    b = await _human(request, ClaimUndoIn, "撤销补记")
+    return await run_in_threadpool(claim.undo, b.blockKeys)
 
 
 # ── 第二级规则 ──

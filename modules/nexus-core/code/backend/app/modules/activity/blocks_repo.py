@@ -74,8 +74,14 @@ def reset_block(user: str, date: str, key: str, if_seq: int, at: datetime) -> bo
             return False
         return True
     return _col(_BLK).update_one({"user": user, "date": date, "blockKey": key, "seq": if_seq},
-                                 {"$set": {"status": None, "parts": None, "via": None, "ruleId": None, "updatedAt": at},
+                                 {"$set": {"status": None, "parts": None, "via": None, "claim": False, "ruleId": None, "updatedAt": at},
                                   "$inc": {"seq": 1, "gen": 1}}).matched_count == 1
+
+
+def claimed_days(user: str, key: str, from_date: str) -> list[dict]:
+    """补记（claim）写下、至今没被别的写动过的日子文档。"""
+    return list(_col(_BLK).find({"user": user, "blockKey": key, "claim": True, "via": "human", "status": {"$ne": None}, "date": {"$gte": from_date}},
+                                {"_id": 0}))
 
 
 def classified_since(user: str, from_date: str) -> set[tuple[str, str]]:

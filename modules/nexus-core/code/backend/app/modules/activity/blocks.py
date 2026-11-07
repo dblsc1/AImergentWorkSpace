@@ -114,9 +114,9 @@ def _item(d: Date, key: str, g: dict, doc: dict | None, since: str | None, rule:
             "lastAt": last.astimezone(tz).isoformat(), "apps": sorted(g["apps"]), "expired": expired(d)}
 
 
-def _items(user: str, d: Date, only: str | None = None) -> list[dict]:
+def _items(user: str, d: Date, only: str | None = None, recs: list[dict] | None = None) -> list[dict]:
     ds = d.isoformat()
-    groups = _group(records_repo.day_records(user, ds))
+    groups = _group(recs if recs is not None else records_repo.day_records(user, ds))
     if only is not None:
         groups = {only: groups.get(only, {"spans": [], "apps": set(), "src": "auto", "recs": []})}
     docs, generic = blocks_repo.blocks_of_day(user, ds), blocks_repo.generic_since(user)

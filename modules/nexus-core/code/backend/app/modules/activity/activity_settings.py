@@ -21,6 +21,7 @@ from . import block_rules, blocks_repo
 from .proposals import ConflictError
 
 DEFAULT_THRESHOLD = 80
+MAX_DOMAINS = 200
 AGENT_OFF = {"enabled": False, "windowsClassify": False, "honeycombRecords": False}
 AGENT_FRESH = {"enabled": True, "windowsClassify": True, "honeycombRecords": False}
 DEFAULT_PACKS = {"claude-code": "claude", "codex": "gpt", "gemini-cli": "gemini", "*": "deepseek"}
@@ -37,6 +38,21 @@ def clean_domains(items: list[str]) -> list[str] | None:
         if d not in out:
             out.append(d)
     return out
+
+
+def add_domain(domain: str) -> None:
+    """onboarding.v1「六」：人对浏览器块 assign / split / claim 后自动加；已在规则里或已满 200 条就不加（不报错）。"""
+    from . import block_display  # noqa: PLC0415
+
+    user = current_tenant()
+    domain = (clean_domains([domain]) or [""])[0]
+    for _ in range(3):
+        cur = get()
+        rules = cur["browserDomains"]
+        if not domain or block_display._allowed(domain, rules) or len(rules) >= MAX_DOMAINS:  # noqa: SLF001
+            return
+        if blocks_repo.put_settings(user, cur["version"], {"browserDomains": [*rules, domain]}):
+            return
 
 
 def _fresh_install(user: str) -> dict | None:
