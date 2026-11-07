@@ -4,12 +4,13 @@
 >
 > - 提供方：`modules/nexus-core`（v2.44，端点见「三」到「七」）。
 > - 消费方：
->   - `modules/hive`：新手引导、决策栏、「未分类」区、新建后补记（「八」）。
+>   - `modules/hive`：新手引导、新建后补记（「八」）；蜂巢布局见 `hive.stage.v1`。
+>   - 桌宠浮窗：实时询问（「三」，见 `desktop.pet.v1`「四」）。
 >   - `modules/ai-detector`：原始记录追加 `folder`（「二」）。
 >   - 安装器 `honeycomb-connect`（v0.6）：终端标题（「九」）。
 >   - `modules/mcp`：不新增工具；AI 照旧经 v2.38「五」的提议端点放窗口。
 >
-> **仓主原话（2026-11-07，节选）**：「新手引导让用户先建立 1-2 个分区，每个分区 1-2 个项目+任务。然后 ai 挑选高把握的窗口放进去，
+> **仓主原话（2026-11-07，节选）**：「桌宠看到主人在一个新窗口聚焦超过 5 分钟但是不确定这个窗口属于哪个时，桌宠右上角显示红点」「新手引导让用户先建立 1-2 个分区，每个分区 1-2 个项目+任务。然后 ai 挑选高把握的窗口放进去，
 > 并且写上记录……其他的记录一律并进未分类」「战略性的灰度隐藏这一块未被分类的窗口块，同时，原始窗口信息非特殊不找用户分类，
 > 同一个窗口绝对不能让用户分类两次」「ptyxis.coder 这种必须优化，不能出现这种抽象字段给用户分类的界面上」
 > 「不纳入 cockpit 管理的，我们做记录，分到窗口块一级，用户以后创建了，直接给建议，可能匹配的窗口块和窗口」。
@@ -23,9 +24,9 @@ provides:
     summary: >
       两类数据：有去向的块进台账，其余块叫「未分类」，只留在窗口块一级、不进台账、不出卡片、不出红点。
       块的显示名 displayName 与「看得懂」legible（服务端一处算）；终端块靠 folder 或连上的代理运行认出。
-      只问特殊的：GET activity/asks（每天至多 askPerDay 张，同一块名一辈子只问一次，activity_asked 记账）、POST activity/asks/answer。
+      实时询问：GET activity/live-ask（人在一个认不出的新窗口连续停留 ≥ liveAskMinutes 才给；同一块名一辈子只问一次，activity_asked 记账）、POST activity/live-ask/answer。
       一次性补记：GET activity/unclassified/candidates?taskId|projectId、POST activity/blocks/claim（多块多天一次记到一处，可写第二级规则）。
-      网站白名单 browserDomains；新手引导状态 onboardingDoneAt；新装缺省打开三级分类与 AI 直接分类。
+      网页分类规则 browserDomains；新手引导状态 onboardingDoneAt；新装缺省打开三级分类与 AI 直接分类。
 ```
 
 ## 一、两类数据（规范性）
@@ -40,17 +41,17 @@ provides:
 
 ## 二、显示名与「看得懂」（规范性）
 
-服务端在 `GET activity/blocks`、`GET activity/asks`、`GET activity/unclassified/candidates` 的每个块上带出两个键，由**一个函数**算
+服务端在 `GET activity/blocks`、`GET activity/live-ask`、`GET activity/unclassified/candidates` 的每个块上带出两个键，由**一个函数**算
 （同 v2.16 `focus` 的原则：页面与 AI 不许各自再算）：
 
 - `displayName`：字符串或 `null`；
-- `legible`：布尔。`false` 的块**永远不出现在让人分类的界面上**（不出询问卡、不出补记候选），只在「未分类」区按类合并成一行。
+- `legible`：布尔。`false` 的块**永远不出现在让人分类的界面上**（不出实时询问、不出补记候选），只在「未分类」区按类合并成一行。
 
 按块的来源依次判：
 
 1. `keySource: "rule"`（第一级规则给的块名）→ `displayName` = 块名，`legible: true`。
 2. **浏览器**（块里时长最多的程序在 ai-detector 的 `browserApps` 名单里；服务端存一份同样的名单，只增）：
-   标题形如 `域名 · 页面标题` → `domain` = 「 · 」之前的部分。`domain` 在网站白名单（「六」）里 → `displayName` = 标题，`legible: true`；
+   标题形如 `域名 · 页面标题` → `domain` = 「 · 」之前的部分。`domain` 在网页分类规则（「六」）里 → `displayName` = 标题，`legible: true`；
    否则 `legible: false`，合并行叫「浏览器（其他网站）」。标题只有程序名（无痕、没装扩展）→ `legible: false`。
 3. **终端**（程序在 ai-detector 的 `defaultTabApps` 名单里；服务端存一份，只增）：
    - 块连上了代理运行（「二·1」）→ `displayName` = 运行的代理名（工作目录名），`legible: true`；
@@ -74,43 +75,42 @@ provides:
 - 隐私：`folder` 与脱敏后标题里留下的「文件名」是同一份信息，不多发；`paths` 选项为 `full` 时照样发（那时标题里本来就有整条路径）。
 - 服务端：记录文档追加 `folder`（可缺）。老检测程序不带这个键，块落回第 3 条的「终端（未认出）」或靠代理运行认出。
 
-## 三、只问特殊的，同一窗口只问一次（规范性）
+## 三、实时询问：同一窗口只问一次（规范性）
 
-**询问** = 决策栏里一张「这个窗口记到哪」的卡。询问只从下面的端点来；`pending` 的块**不再**各自成卡。
+不再有每日询问卡（仓主 2026-11-07「3 去掉」）。只在**人正在用**一个新窗口、又认不出归属时问，由桌宠的浮窗来问（`desktop.pet.v1`「四」）。
 
-`GET /api/core/activity/asks?date=`（人与 MCP；带 Bearer 的设备令牌 `403`；缺省今天）→
+`GET /api/core/activity/live-ask`（人、MCP、带 `read` 范围的设备令牌）→ `200 {ask: null}` 或
 
 ```jsonc
-{ "date": "2026-11-07",
-  "items": [ { "blockKey": "google-chrome · github.com · …", "displayName": "github.com · dblsc1/AImergentWorkSpace",
-               "seconds7d": 5400, "secondsToday": 1800,
-               "guess": { "taskId": "t_…" | null, "projectId": "p_…" | null, "from": "history" | "agent" | "ai" | null } } ] }
+{ "ask": { "blockKey": "google-chrome · figma.com · …", "displayName": "figma.com · 首页改版",
+           "focusedSeconds": 372, "since": "2026-11-07T10:06:00+08:00" } }
 ```
 
-选块的条件（**全部满足**）：
+`ask` 非空的条件（**全部满足**）：
 
-1. 该块今天在，生效状态是 `pending`；
-2. `legible: true`；
-3. 块名不在 `activity_asked` 里（下面）；
-4. 最近 7 个本地日的秒数合计 ≥ `askMinMinutes` × 60（账号设置，缺省 60）。
+1. v2.16 `focus.state` 是 `active`，当前窗口所在的块今天的生效状态是 `pending`；
+2. 该块 `legible: true`；
+3. 块名不在 `activity_asked` 里；
+4. 人在这个块上**连续**停留（中间离开或切走不超过 60 秒）≥ `liveAskMinutes` × 60 秒（账号设置，缺省 5）。
 
-按 `seconds7d` 从多到少，至多 `askPerDay` 张（账号设置，缺省 3）。**一天里已经问过的张数算进上限**：今天已经回答过 2 张、上限 3 → 只再给 1 张。
-`guess` 取自窗口去向历史（v2.40 `blocks/history` 的第一条）、连上的代理运行、或待批的 AI 提议，都没有为 `null`。
+**放进项目**：人把它拖进某个项目格子 = `POST /api/core/activity/blocks/assign {date, blockKey, ifSeq, projectId, remember: true}`（v2.38 既有端点，只给项目；只许人，所以浮窗里的蜂巢缩略图是登录后的 hive 页面，见 `desktop.pet.v1`「四」）。
+`live-ask` 的 `ask` 里追加 `date` 与 `seq`（块的当前序号），给这一步用。
+之后由 AI 把这个块分到项目下的具体任务：走 v2.38「五」的提议（`directApply` 受 `agentDirect` 开关与高置信度阈值管）；没有接 AI 或 AI 拿不准时，块留在该项目的「未分类」。
 
 **只问一次**：`activity_asked {user, blockKey, askedAt, answer}`，`(user, blockKey)` 唯一，**永久保留**，进导出 / 恢复。下列任一发生就写一条（已有就不动）：
 
 - 人对这个块名做了 `blocks/assign`、`blocks/split`、`blocks/ignore`、`blocks/claim`（`answer`：`assigned` / `split` / `ignored` / `assigned`）；
-- 人回答「不管它」：`POST /api/core/activity/asks/answer {blockKey, answer: "unmanaged"}`（只许人；块名不存在 `404`）→ `answer: "unmanaged"`。
+- 人在浮窗上点「不管它」：`POST /api/core/activity/live-ask/answer {blockKey, answer: "unmanaged"}`（只许人；块名不存在 `404`）。
 
-写过的块名**不论回答是什么，以后都不再出询问卡**。「不管它」的块仍留在「未分类」，以后新建任务时仍可出现在补记候选里（「五」）——那是人主动去要的，不算再问。
+写过的块名**以后都不再问**。「不管它」的块仍留在「未分类」，以后新建任务时仍可出现在补记候选里（「五」）——那是人主动去要的，不算再问。
 
 ## 四、账号设置追加（规范性，`activity/settings` 追加式）
 
 | 键 | 类型 | 缺省 | 说明 |
 |---|---|---|---|
-| `askMinMinutes` | 整数 10–600 | 60 | 「三」第 4 条 |
-| `askPerDay` | 整数 0–20 | 3 | 「三」的每日上限；0 = 永远不问 |
-| `browserDomains` | 字符串数组，≤ 200 条 | `[]` | 网站白名单（「六」） |
+| `liveAskMinutes` | 整数 1–60 | 5 | 「三」第 4 条 |
+| `liveAskEnabled` | 布尔 | `true` | `false` = 永远不问 |
+| `browserDomains` | 字符串数组，≤ 200 条 | `[]` | 网页分类规则（「六」） |
 | `onboardingDoneAt` | ISO 时刻或 `null` | `null` | 新手引导走完的时刻（「七」）；只由 `POST activity/onboarding/done` 写，`PUT` 里给的忽略 |
 
 `PUT` 里可省，省了保留原值；给了就校验（越界 / 类型不对 `422`）。
@@ -150,10 +150,13 @@ provides:
 - 入账走 v2.38「四」对账，`via: "human"`。`tiersSince` 之前的记录本来就不入账：只有这种时间的日子计入 `skipped`，`reason: "beforeTiers"`。
 - 返回的 `totalSeconds` 就是界面上「原来花了这么多时间在这上面」的那个数。
 
-## 六、网站白名单（规范性）
+## 六、网页分类规则（规范性）
+
+界面上叫「网页分类规则」，键名 `browserDomains`：列在里面的网站才算看得懂。
+
 
 - `browserDomains` 每条是小写域名（1–253 个字符，不带协议、路径、端口；`*.` 前缀表示含所有子域）。重复的去掉。
-- 人对浏览器块做 `assign` / `split` / `claim` 时，服务端把这个块的域名**自动加进白名单**（满 200 条不加、不报错）。
+- 人对浏览器块做 `assign` / `split` / `claim` 时，服务端把这个块的域名**自动加进网页分类规则**（满 200 条不加、不报错）。
 - 只影响「二」的 `legible`，不影响检测程序上传什么。
 
 ## 七、新手引导（规范性）
@@ -174,11 +177,8 @@ provides:
 
 ## 八、界面（规范性，给 `modules/hive`）
 
-1. **决策栏**：去掉「待分类窗口块」一节；改为「三」的询问卡（至多 `askPerDay` 张），每张三个动作：选任务（`assign`，`remember: true`）、「不管它」、「拆分」。
-   AI 提议照旧。总数只算询问卡与 AI 提议。
-2. **「未分类」区**：蜂巢下方一行，灰色、默认收起，写「未分类 · 今天 X 小时」，**不带红点、不计入任何待办数**。
-   展开：`legible` 的块按秒数排；不可读的按「浏览器（其他网站）」「终端（未认出）」「其他」各合成一行，只显示时长、**不给分类入口**。
-   `legible` 的块可以拖进蜂格（沿用 #166 的拖动），拖进去 = `assign`。
+1. **决策栏**：去掉「待分类窗口块」一节，只留 AI 提议。
+2. **「未分类」**：窗口时间画成蜂巢左下角的一个桶，规则见 `hive.stage.v1`「五」。**不带红点、不计入任何待办数**。
 3. **新建后补记**：新建任务或项目成功后调「五」的候选；`items` 非空时弹一张卡：
    「找到 N 个窗口块，共 X 小时，可能属于它」，列表默认勾选 `match` 为 `agent` / `name` 的，按钮「记进去」= `claim`。成功后提示「已记进 X 小时」。
 4. **显示名**：所有让人分类、补记的地方只显示 `displayName`，不显示原始块名。
@@ -202,3 +202,4 @@ provides:
 | 日期 | 版本 | 变更 |
 |---|---|---|
 | 2026-11-07 | v1 草案 | 首版，待仓主批准 |
+| 2026-11-07 | v1 草案二 | 去掉每日询问卡，改为实时询问 `live-ask`；网站白名单改叫「网页分类规则」；界面改到 `hive.stage.v1` |
