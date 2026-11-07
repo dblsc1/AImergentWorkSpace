@@ -571,7 +571,8 @@
     panelPid = pid; renderPanel(); $("stVeil").hidden = false;
     var x = $("stPanel").querySelector(".st-x"); if (x) x.focus();
   }
-  function closePanel() { panelPid = null; $("stVeil").hidden = true; }
+  var panelHtml = "";
+  function closePanel() { panelPid = null; panelHtml = ""; $("stVeil").hidden = true; }
   function renderPanel() {
     if (!panelPid) return;
     var now = Date.now(), from = dayStart(), pid = panelPid;
@@ -584,11 +585,12 @@
       return '<div class="st-agrow"><b>' + esc(r.name) + '</b><span class="st-d">' + dur(r.workingSeconds) +
         '</span><span class="st-st is-' + mood + '">' + STATUS_TEXT[mood] + "</span></div>";
     }).join("");
-    $("stPanel").innerHTML = '<div class="st-hd"><h2>' + esc(projectName(pid)) + '</h2><button type="button" class="st-expand">展开</button><button type="button" class="st-x" aria-label="关闭">✕</button></div>' +
+    var html = '<div class="st-hd"><h2>' + esc(projectName(pid)) + '</h2><button type="button" class="st-expand">展开</button><button type="button" class="st-x" aria-label="关闭">✕</button></div>' +
       '<div class="st-cols"><div class="st-col-human"><h3>你</h3>' +
       '<div class="st-kind" data-kind="timer"><div class="st-row"><b>计时</b><span>' + dur(timer.total) + '</span></div><div class="st-track">' + timer.html + "</div>" + axis + "</div>" +
       '<div class="st-kind" data-kind="attend"><div class="st-row"><b>对话</b><span>' + dur(talk.total) + '</span></div><div class="st-track">' + talk.html + "</div>" + axis + "</div></div>" +
       '<div class="st-col-agent"><h3>代理</h3>' + rows + '<div class="st-token"><b>token 花费</b><span>—</span></div></div></div>';
+    if (html !== panelHtml) { panelHtml = html; $("stPanel").innerHTML = html; }   // 没变就不重设，免得丢关闭按钮的焦点
   }
   $("stPanel").addEventListener("click", function (ev) {
     if (ev.target.closest(".st-x")) closePanel();
@@ -613,15 +615,12 @@
   (function () {
     var el = $("stClock");
     var clockItem = function () { return { kind: "clock" }; };
-    drag($("stBubble"), { el: $("stBubble"), item: function () { return stage.timerRunning() ? clockItem() : null; } });   // 气泡 = 时钟的延伸，同一段拖动
-    drag(el, {
-      el: el,
-      item: clockItem,
-      onClick: function () {
-        busy++;
-        stage.clickClock().then(function () { busy--; render(); refresh(); });
-      }
-    });
+    var clockClick = function () {
+      busy++;
+      stage.clickClock().then(function () { busy--; render(); refresh(); });
+    };
+    drag($("stBubble"), { el: $("stBubble"), item: function () { return stage.timerRunning() ? clockItem() : null; }, onClick: clockClick });   // 气泡 = 时钟的延伸：拖、点都同时钟
+    drag(el, { el: el, item: clockItem, onClick: clockClick });
     el.addEventListener("keydown", function (ev) {
       if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); stage.clickClock().then(function () { render(); refresh(); }); }
     });

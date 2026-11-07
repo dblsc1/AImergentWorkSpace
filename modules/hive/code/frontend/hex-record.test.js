@@ -35,4 +35,16 @@ assert.strictEqual(rec.attend.total, 300 + 60);
 // 运行行：working 秒数（r1：0–300 + 700–1000 = 600；r2：90 秒到此刻）
 assert.deepStrictEqual(rec.runs.map((r) => [r.name, r.workingSeconds, r.phase]), [["garden", 600, "idle"], ["codex", 90, "working"]]);
 assert.deepStrictEqual(R.projectRecord(null, [], "p1", () => null, NOW).runs, []);
+// 正在进行的计时段补到此刻；until 为空的对话段也到此刻；重叠按并集
+const live = R.projectRecord(Object.assign({}, lanes, {
+  human: { sessions: [], running: { projectId: "p1", startAt: iso(36000 - 600) } },
+  interactions: [
+    { runId: "r1", kind: "attend", at: iso(100), until: iso(400) },
+    { runId: "r2", kind: "attend", at: iso(300), until: iso(500) },
+    { runId: "r1", kind: "attend", at: iso(36000 - 60), until: null }] }), runs, "p1", (t) => (t === "t1" ? "p1" : null), NOW);
+assert.deepStrictEqual(live.timer.spans, [{ from: NOW - 600e3, to: NOW, kind: "timer" }]);
+assert.strictEqual(live.timer.total, 600);
+assert.strictEqual(live.attend.total, 400 + 60);
+const byTask = R.projectRecord({ windowStart: iso(0), human: { running: { taskId: "t1", startAt: iso(36000 - 30) } } }, runs, "p1", (t) => (t === "t1" ? "p1" : null), NOW);
+assert.strictEqual(byTask.timer.total, 30);
 console.log("hex-record.test.js ok");

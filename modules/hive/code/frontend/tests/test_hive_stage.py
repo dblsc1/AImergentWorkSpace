@@ -569,6 +569,27 @@ def test_drag_the_bubble_while_timing_places_the_timer_like_the_clock(browser, b
         assert st.posts == [("timer/place", {"projectId": "p_piano"})]
 
 
+def test_click_the_bubble_on_the_clock_stops_the_timer(browser, base) -> None:  # noqa: F811  二·2
+    with open_stage(browser, base, setup=_busy_day) as st:
+        now = st.now().astimezone(TZ)
+        st.lanes["human"]["running"] = {"startAt": _iso(now), "taskId": None, "projectId": None}
+        st.poll()
+        bx, by = st.center("#stBubble")
+        cx, cy = st.center("#stClock .st-dial")
+        assert abs(bx - cx) < 3 and abs(by - cy) < 3        # 气泡压在表盘中心
+        st.page.mouse.click(bx, by)
+        st.settle()
+        assert st.posts == [("timer/stop", None)]
+
+
+def test_panel_keeps_focus_on_close_button_across_renders(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, setup=_busy_day) as st:
+        st.page.click(CELL.format("p_math"))
+        assert st.page.evaluate("() => document.activeElement.className") == "st-x"
+        st.poll()
+        assert st.page.evaluate("() => document.activeElement.className") == "st-x"
+
+
 def test_panel_expand_button_closes_it_and_expands_the_cell(browser, base) -> None:  # noqa: F811
     with open_stage(browser, base, setup=_busy_day) as st:
         st.page.click(CELL.format("p_math"))
