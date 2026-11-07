@@ -163,7 +163,7 @@ class _AgentDirect(BaseModel):
 class _Pet(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    packsByTool: dict[Annotated[StrictStr, Field(min_length=1)], Annotated[StrictStr, Field(min_length=1)]]
+    packsByTool: Annotated[dict[Annotated[StrictStr, Field(min_length=1, max_length=64)], Annotated[StrictStr, Field(min_length=1, max_length=64)]], Field(max_length=64)]
 
 
 class SettingsIn(BaseModel):

@@ -71,8 +71,8 @@ def onboarding_done() -> dict:
         if cur["onboardingDoneAt"]:
             return cur
         if blocks_repo.put_settings(user, cur["version"], {"onboardingDoneAt": datetime.now(timezone.utc)}):
-            break
-    return get()
+            return get()
+    raise ConflictError("设置一直在被改，没写进去，请重试")
 
 
 def tiers_on() -> bool:
