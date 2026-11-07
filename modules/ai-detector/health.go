@@ -171,10 +171,11 @@ type healthReporter struct {
 	logPath string // <检测程序目录>/aw-start.log
 
 	mu      sync.Mutex
-	last    string    // 上一次成功报出的 状态/自动结果
-	lastAt  time.Time // 上一次尝试报的时刻
-	dead    bool      // 老服务端（404）：不再试，直到进程重启
-	failed  bool      // 当前处于失败连续段（只记一次日志）
+	probes  sync.WaitGroup // 拉起后的探测 goroutine；测试等它们把状态写完再清临时目录
+	last    string         // 上一次成功报出的 状态/自动结果
+	lastAt  time.Time      // 上一次尝试报的时刻
+	dead    bool           // 老服务端（404）：不再试，直到进程重启
+	failed  bool           // 当前处于失败连续段（只记一次日志）
 	result  *restartResult
 	handled string    // 最后处理的 nonce（内存里一份，状态文件里一份）
 	lastRun time.Time // 上一次动手拉起 ActivityWatch 的时刻（按钮和自动共用），取自动手那一刻的时钟
@@ -520,7 +521,11 @@ func (h *healthReporter) launch(cfg Config, argv []string, trigger string, pre f
 		h.finish(rec, "failed", reason, done)
 		return true
 	}
-	go h.probe(cfg, rec, wait, done)
+	h.probes.Add(1)
+	go func() {
+		defer h.probes.Done()
+		h.probe(cfg, rec, wait, done)
+	}()
 	return true
 }
 

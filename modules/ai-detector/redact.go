@@ -226,14 +226,15 @@ func nameSet(names []string) map[string]bool {
 }
 
 type redactor struct {
-	p        Privacy
-	appOnly  map[string]bool
-	browsers map[string]bool
-	tabs     map[string]bool // 按标签页分段的程序（已去掉浏览器）；segmentByTitle 关 = 空
-	white    []*regexp.Regexp
-	literals []literal       // 本机用户名、主机名（usernames 选项）
-	num      map[string]bool // 换成编号代号的类型（aliases.go initAliases）
-	al       *aliases
+	p         Privacy
+	appOnly   map[string]bool
+	browsers  map[string]bool
+	tabs      map[string]bool // 按标签页分段的程序（已去掉浏览器）；segmentByTitle 关 = 空
+	terminals map[string]bool // 终端名单（folder 用，不管 segmentByTitle 开没开）
+	white     []*regexp.Regexp
+	literals  []literal       // 本机用户名、主机名（usernames 选项）
+	num       map[string]bool // 换成编号代号的类型（aliases.go initAliases）
+	al        *aliases
 	// 离开判定（idle 节）也放这里：buildFragments 只收一个 redactor，它们和隐私项一样都是「这一轮的设置」。
 	idle  Idle
 	focus map[string]bool
@@ -268,7 +269,7 @@ func newRedactor(c Config) redactor {
 	if focus == nil {
 		focus = defaultFocusApps
 	}
-	r := redactor{p: c.Privacy, appOnly: nameSet(apps), browsers: nameSet(browsers), idle: c.Idle, focus: nameSet(focus)}
+	r := redactor{p: c.Privacy, appOnly: nameSet(apps), browsers: nameSet(browsers), idle: c.Idle, focus: nameSet(focus), terminals: nameSet(tabApps(c))}
 	if on(c.SegmentByTitle) {
 		r.tabs = nameSet(tabApps(c))
 		for b := range r.browsers {

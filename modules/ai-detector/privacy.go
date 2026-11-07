@@ -140,6 +140,7 @@ type archiveRaw struct {
 	App     string  `json:"app"`
 	Sent    string  `json:"sent"`
 	Block   *string `json:"block"`
+	Folder  string  `json:"folder,omitempty"`
 }
 
 func archiveDir(dir string) string { return filepath.Join(dir, "archive") }
