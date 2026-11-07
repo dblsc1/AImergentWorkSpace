@@ -37,15 +37,16 @@ provides:
 
 | `type` | 什么时候发 | `data` | `text` 的样子 | `mood` |
 |---|---|---|---|---|
-| `focus` | `views/current` 的 `focus` 认出的任务 / 项目变了，或从离开回到电脑前 | `{taskName, projectName, displayName}`（认不出的为 `null`） | 「在写提示词（garden）」；认不出时「在 garden」；只有显示名时「在看 github.com」 | `working` |
+| `focus` | `views/current` 的 `focus` 认出的任务 / 项目变了，或从离开回到电脑前 | `{taskName, projectName, displayName}`（认不出的为 `null`） | 「在写提示词（garden）」；认不出时「在 garden」；只有显示名时「在看 + displayName」，如「在看 figma.com · 首页改版」 | `working` |
 | `focus` | 进入离开（`state: "afk"`） | `{afk: true}` | 「休息一下」 | `idle` |
 | `agentWaiting` | 某条代理运行进入等人（`waiting_input` / `waiting_permission`） | `{agent, reason: "input" \| "permission"}` | 「garden 在等你回话」/「garden 在等你批权限」 | `waiting` |
 | `agentDone` | 某条代理运行结束 | `{agent}` | 「garden 干完了」 | `happy` |
 | `alert` | 检测程序本机出问题：ActivityWatch 连不上、上传连续失败 ≥ 3 轮、服务端连不上 | `{kind: "aw" \| "upload" \| "server"}` | 「记录断了：ActivityWatch 没在跑」等 | `worried` |
 | `alertCleared` | 上一条 `alert` 的问题恢复 | `{kind}` | 「记录恢复了」 | `happy` |
 
-- **不发**：窗口原始标题、网址、路径、任何令牌。`displayName` 用 `onboarding.v1`「二」的同一个值（已脱敏、看得懂的才有）。
-- 同一种 `type` 同样的 `data` 不重复发；`focus` 至少间隔 60 秒（防抖：窗口来回切不刷屏）。
+- **不发**：窗口原始标题、网址、路径、任何令牌。`displayName` 读 `views/current.focus.displayName`（nexus-core v2.44 追加，`onboarding.v1`「二」的同一个值，已脱敏、看得懂的才有）。
+- `text` 超过 60 个字符截到 59 个字符加 `…`。
+- 同一种 `type` 同样的 `data` 不重复发；`focus` 至少间隔 60 秒（防抖：窗口来回切不刷屏；被压掉的 `focus` 事件丢弃，不补发）。
 - 发失败只写本机日志，不重试、不影响检测程序其他功能。
 
 ## 二、桥接（规范性，`modules/ai-detector`）
@@ -58,11 +59,12 @@ provides:
            "url": "http://127.0.0.1:3080",           // dsh-pet：独立模式的地址；http：接收 PetEvent 的地址
            "token": null,                            // 只给 http 用：有就带 Authorization: Bearer <token>
            "petId": null,                            // 只给 dsh-pet 用：哪只宠物，null = 它的第一只
-           "moods": { "working": null, "idle": null, "waiting": null, "happy": null, "worried": null },  // 对 dsh-pet 的工作状态名（取值见其 openapi.yaml）；null = 只换气泡
-           "packsByTool": { "*": "dsh" } }                                                      // 「三」宠物包对照
+           "moods": { "working": null, "idle": null, "waiting": null, "happy": null, "worried": null } }  // 对 dsh-pet 的工作状态名（取值见其 openapi.yaml）；某项为 null = 跳过 work-status，只换气泡
   ```
 
 - 数据来源：每 10 秒 `GET /api/core/views/current`（带本机设备令牌，`read` 范围即可）取 `focus` 与 `agents[]`；`alert` 来自本机健康状态（ai-detector 契约「检测程序健康」）。
+- 状态机：启动后第一轮只建立基线，不发 `agentWaiting` / `agentDone`；运行从 `agents[]` 消失、且最近一次读到的阶段不是失联 → `agentDone`；`views/current` 连续 3 轮失败 → `alert` `server`。
+- 桥接不画宠物，本机配置里没有宠物包对照；宠物包对照只有服务端账号设置 `pet.packsByTool` 一份（「三」）。
 - `url` 必须是本机回环（`localhost` / `127.0.0.0/8` / `::1`）或 `https://`；不合规不发并写日志（同 `activity.classifier.v1` 的规矩）。不跟随重定向。
 - **HoneyComb 的设备令牌绝不发给美术实现**。
 
@@ -72,9 +74,11 @@ provides:
 
 dsh-pet（<https://github.com/PC2005-cloud/dsh-pet>）独立模式：本机 HTTP，前缀 `/dsh-pet-7340`。每条 PetEvent：
 
-1. `POST /dsh-pet-7340/work-status {state, task}`：`state` 由 `mood` 对照（`working`/`waiting`/`idle`/`happy`/`worried` 各对一个 dsh-pet 工作状态，对照表在 `pet.moods`）；`task` = `text`；
+1. `POST /dsh-pet-7340/work-status`：工作状态由 `mood` 对照（`working`/`waiting`/`idle`/`happy`/`worried` 各对一个 dsh-pet 工作状态，对照表在 `pet.moods`），任务文字 = `text`；
 2. 要冒气泡的类型（`agentWaiting`、`agentDone`、`alert`、`alertCleared`）再 `POST /dsh-pet-7340/lock` → `broadcast` → `lock/release` 把 `text` 写进气泡；
 3. `focus` 的 `afk` 用 `DELETE /dsh-pet-7340/work-status` 回空闲。
+
+以上各调用的请求体与 `petId` 的传法以上游 `openapi.yaml` 为准：实现时把上游 `openapi.yaml` 放进 `third_party/dsh-pet/` 并引用，本契约不另定请求体；假 dsh-pet 的测试按那份文件写。
 
 - 任何一步失败就放锁（尽力）并结束这一条。dsh-pet 没在跑 = 连接失败，按「一」的发失败处理。
 - 已知：dsh-pet 的本机接口没有鉴权，本机任何程序都能调。
@@ -87,7 +91,7 @@ dsh-pet（<https://github.com/PC2005-cloud/dsh-pet>）独立模式：本机 HTTP
   - 我们改过的素材（裁剪、调色、新动作）同样按 CC BY-NC-SA 4.0 发；
   - 任何收费产品、收费服务的页面与宣传里**不用**这些素材；
   - 在仓库 `NOTICE` 写明：二次分发本仓用于商业的，须先删掉 `third_party/dsh-pet/` 的素材。
-- 别的形象（龙娘、Claude 娘等）**拿到作者书面授权并写明许可后**才进 `third_party/`；之前只用大肥鱼。
+- 别的形象（龙娘、Claude 娘等）可以进 `third_party/`；每个宠物包的 `honeycomb.credits` / `source` / `license` 必须填（作者、出处链接、许可；许可不明写 `unknown`），并在 `NOTICE` 列出。
 
 ### 宠物包与对照
 
@@ -99,7 +103,7 @@ dsh-pet（<https://github.com/PC2005-cloud/dsh-pet>）独立模式：本机 HTTP
                  "license": "CC BY-NC-SA 4.0", "credits": "…", "source": "https://…" }
   ```
 
-- **宠物包对照**（本机 `config.json` 的 `pet.packsByTool`，蜂巢页同样读服务端账号设置里的同名键）：`{ "claude-code": "…", "codex": "…", "*": "dsh" }`；
+- **宠物包对照**（服务端账号设置 `activity/settings.pet.packsByTool`，`onboarding.v1`「四」；蜂巢页读它）：`{ "claude-code": "…", "codex": "…", "*": "dsh" }`；
   按运行的 `tool` 选包，查不到用 `*`。本版缺省全是 `dsh`。
 
 ### http（商用 / 自定义）
@@ -111,18 +115,22 @@ dsh-pet（<https://github.com/PC2005-cloud/dsh-pet>）独立模式：本机 HTTP
 一个小桌面程序，**只做三件事**：在桌宠旁画红点、鼠标悬停时弹出蜂巢缩略页、关掉。不画宠物（宠物归「三」）。
 
 - **红点**：每 10 秒用本机设备令牌（`read` 范围）调 `GET /api/core/activity/live-ask`（`onboarding.v1`「三」）；`ask` 非空就亮红点，空就灭。
-- **位置**：贴在桌宠窗口右上角；取不到桌宠位置时贴屏幕右下角。
+- **位置**：本版贴屏幕右下角；取桌宠窗口位置（贴在其右上角）留作以后。
 - **悬停**：弹出一个窗口，内容是 HoneyComb 的页面 `/hive/mini`（人登录后的会话，不用设备令牌）：
-  - 顶上一张卡：`displayName` + 已停留时长；两个动作：拖进下面的某个项目格子（= `blocks/assign {projectId, remember: true}`，任务由 AI 分），或「不管它」（= `live-ask/answer`）；
+  - 顶上一张卡：`displayName` + 已停留时长（= `focusedSeconds` 取整分钟，如 `6 分钟`）；两个动作：拖进下面的某个项目格子（= `blocks/assign {projectId, remember: true}`，任务由 AI 分），或「不管它」（= `live-ask/answer`）；
   - 下面是蜂巢缩略图，只有项目名；
   - 做完一件事，红点灭，窗口 2 秒后收起。没登录时页面显示登录。
-- 程序形态（Electron / Tauri / 其他）在实现前定；`/hive/mini` 本身是普通网页，浏览器里也能开。
+- 鼠标移开 800ms（可配）后弹出窗口收起。
+- 窗口开着时 `ask` 变 `null`（人切走了）：卡显示「这个窗口已经离开」，2 秒后收起。
+- `assign` 返回 `409`（`seq` 已变）：重新取 `live-ask`，块还在就用新 `seq` 重试一次，否则收起。
+- 红点轮询连续 3 轮失败（含令牌失效）熄灭，之前保持原状。
+- 「关掉」= 退出程序。
+- 程序形态（Electron / Tauri / 其他）在实现前定：先写与形态无关的 `float-core`，形态定了再加壳；`/hive/mini` 本身是普通网页，浏览器里也能开。
 
 ## 五、本版不做（有意的）
 
 - 桌宠上画泳道。
 - 每日小结、待办提醒。
-- 龙娘、Claude 娘等形象（等授权）。
 
 ## 六、变更记录
 
@@ -131,3 +139,4 @@ dsh-pet（<https://github.com/PC2005-cloud/dsh-pet>）独立模式：本机 HTTP
 |---|---|---|
 | 2026-11-07 | v1 草案 | 首版，待仓主批准 |
 | 2026-11-07 | v1 草案二 | 改用 dsh-pet 工作状态接口；素材随包附带并写明许可；宠物包与对照；浮窗独立模块 |
+| 2026-11-07 | v1 草案三 | 按 TDD 澄清（G-01–G-30）补齐边界；手动计时改为先计时后拖放 |
