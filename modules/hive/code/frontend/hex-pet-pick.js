@@ -4,7 +4,8 @@
   "use strict";
 
   var MAX_PETS = 4;
-  var DEFAULT_PACK = "dsh";
+  var DEFAULT_PACK = "deepseek";
+  var DEFAULT_PACKS_BY_TOOL = { "claude-code": "claude", "codex": "gpt", "gemini-cli": "gemini", "*": DEFAULT_PACK };
 
   function ms(s) { var t = s ? Date.parse(s) : NaN; return isNaN(t) ? 0 : t; }
   function lastActive(r) { return ms(r.lastSeenAt || r.startAt || r.startedAt); }
@@ -18,7 +19,7 @@
   }
 
   function packOf(run, packsByTool) {
-    var m = packsByTool || {};
+    var m = packsByTool || DEFAULT_PACKS_BY_TOOL;
     return m[run.tool] || m["*"] || DEFAULT_PACK;
   }
 
@@ -69,7 +70,7 @@
     };
   }
 
-  var api = { MAX_PETS: MAX_PETS, DEFAULT_PACK: DEFAULT_PACK, moodOf: moodOf, packOf: packOf, pickWorkers: pickWorkers, pickIdle: pickIdle, initWander: initWander, stepWander: stepWander };
+  var api = { MAX_PETS: MAX_PETS, DEFAULT_PACK: DEFAULT_PACK, DEFAULT_PACKS_BY_TOOL: DEFAULT_PACKS_BY_TOOL, moodOf: moodOf, packOf: packOf, pickWorkers: pickWorkers, pickIdle: pickIdle, initWander: initWander, stepWander: stepWander };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.NexusTableHexPetPick = api;
 })();

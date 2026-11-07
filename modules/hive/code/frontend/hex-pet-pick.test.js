@@ -31,8 +31,10 @@ assert.strictEqual(P.moodOf("working", true), "idle"); // 失联
 const packs = { "claude-code": "x", "*": "dsh" };
 assert.strictEqual(P.packOf({ tool: "claude-code" }, packs), "x");
 assert.strictEqual(P.packOf({ tool: "codex" }, packs), "dsh");
-assert.strictEqual(P.packOf({ tool: "codex" }, { "claude-code": "x" }), "dsh");
-assert.strictEqual(P.packOf({ tool: "codex" }, null), "dsh");
+assert.strictEqual(P.packOf({ tool: "codex" }, { "claude-code": "x" }), "deepseek");
+assert.strictEqual(P.packOf({ tool: "codex" }, null), "gpt");
+assert.strictEqual(P.packOf({ tool: "claude-code" }, null), "claude");
+assert.strictEqual(P.packOf({ tool: "aider" }, null), "deepseek");
 // HV-P13 名牌
 const pet = P.pickWorkers([run("n", { label: "整理" })]).pets[0];
 assert.strictEqual(pet.name, "整理");
