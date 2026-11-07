@@ -63,7 +63,7 @@ def test_present_without_switch_and_without_target(client, world, clock):
     clock(0)
     focus = _focus(client)
     assert focus == {"state": "present", "app": "code", "title": TITLE, "since": focus["since"],
-                     "dwellSeconds": 0, **NO_TARGET}
+                     "dwellSeconds": 0, "displayName": TITLE, **NO_TARGET}
     assert _ts(focus["since"]) == t0
     body = client.get(f"{API}/views/current").json()
     assert (body["auto"], body["needsChoice"], body["aiThinking"]) == (None, None, None)

@@ -109,6 +109,7 @@ class LaneFocus(_Strict):
     since: str  #: 当前窗口（或这一轮离开）从什么时候起
     #: v2.17：时间线（最近 2 小时）里人在这同一个窗口上一共待了多少秒（含当前这一轮）；离开时为 null
     dwellSeconds: int | None = None
+    displayName: str | None = None  #: onboarding.v1 二：与 ``GET activity/blocks`` 同一个函数算；离开 / 看不懂为 null
     projectId: str | None = None
     projectName: str | None = None
     taskId: str | None = None
