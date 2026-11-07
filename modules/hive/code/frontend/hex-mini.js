@@ -125,7 +125,8 @@
       if (r.status !== 409 || again) { busy = false; return fail(r.status); }
       call({ method: "GET", path: "activity/live-ask" }).then(function (f) {
         busy = false;
-        var plan = retryPlan(ask, f.ok && f.data ? f.data.ask : null);
+        if (!f.ok) return fail(f.status || 0);   // 重取失败不等于窗口离开
+        var plan = retryPlan(ask, f.data ? f.data.ask : null);
         if (plan.action === "gone") { left = true; renderCard(); finish(); }
         else if (plan.action === "retry") { ask = plan.ask; assign(projectId, true); }
         else fail(409);
