@@ -540,7 +540,7 @@ def test_panel_expand_button_closes_it_and_expands_the_cell(browser, base) -> No
 
 TOUCH_PACK = {"kind": "claude", "name": "Claude", "license": "x", "credits": "x", "source": "x",
               "moods": {"working": ["w.webm"], "waiting": ["wait.webm"], "idle": ["i.webm"], "click": ["c1.webm", "c2.webm"],
-                        "drag": ["d.webm"], "walk": ["k.webm"]}}
+                        "drag": ["d.webm"], "walk": ["k.webm", "k2.webm"]}}
 PET = ".st-pet.is-work"
 PET_ART = PET + " video.st-art"
 
@@ -607,3 +607,20 @@ def test_esc_cancels_a_pet_drag_and_it_walks_home_at_once(browser, base) -> None
         assert _src(st).endswith("/claude/k.webm")
         st.page.clock.run_for(9000)
         assert st.posts == []
+
+
+def test_grab_right_after_a_click_swaps_to_the_drag_clip_and_the_stay_shows_the_normal_clip(browser, base) -> None:  # noqa: F811  hive.stage.v1「二」7
+    with open_stage(browser, base, setup=_one_worker, pets={"claude": TOUCH_PACK}, hold_webm=True) as st:
+        st.page.clock.run_for(600)
+        x, y = st.center(PET + " .st-media")
+        st.page.mouse.click(x, y)
+        assert _src(st).split("/")[-1] in ("c1.webm", "c2.webm")
+        st.page.clock.run_for(300)
+        st.drag(PET + " .st-media", (900, 120), release=False)
+        assert _src(st).endswith("/claude/d.webm")
+        st.page.mouse.up()
+        st.page.clock.run_for(1000)
+        assert _src(st).endswith("/claude/w.webm")
+        assert not st.page.locator(PET).evaluate("e => e.classList.contains('st-walking')")
+        st.page.clock.run_for(2500)
+        assert _src(st).endswith("/claude/k.webm")      # 走路段固定取 walk[0]

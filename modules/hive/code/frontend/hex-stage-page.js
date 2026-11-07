@@ -294,13 +294,13 @@
   function startBack(e, from, afterMs) {
     var s = ixOf(e.dataset.runId);
     s.mode = "back"; s.from = from; s.to = e.__home; s.t0 = Date.now() - (afterMs || 0); s.walking = false;
-    s.walkClip = Pk.pickClip(packMoods(e).walk, null, Math.random);
-    e.classList.add("st-walking"); place(e, from); syncClip(e);
+    s.walkClip = (packMoods(e).walk || [])[0] || null;
+    e.classList.add("st-away"); place(e, from); syncClip(e);
   }
   function endBack(e) {
     var s = ix[e.dataset.runId];
     if (s) { s.mode = null; s.walking = false; }
-    e.classList.remove("st-walking"); setFlip(e, false);
+    e.classList.remove("st-away"); setFlip(e, false);
     if (e.__home) place(e, e.__home);
     syncClip(e);
   }
@@ -347,7 +347,7 @@
       var e = petEl(p.runId); keep[p.runId] = 1;
       var w = wander[p.runId] || (wander[p.runId] = Pk.initWander(WANDER, Math.random));
       if (!e.classList.contains("is-loose")) {
-        delete ix[p.runId]; e.classList.remove("is-work", "st-walking", "flip"); e.classList.add("is-loose"); place(e, w);
+        delete ix[p.runId]; e.classList.remove("is-work", "st-away", "flip"); e.classList.add("is-loose"); place(e, w);
       }
       fillPet(e, p, runById(p.runId));
     });
@@ -375,12 +375,12 @@
       },
       onClick: function () { poke(e); },
       onGrab: function () {
-        var s = ixOf(e.dataset.runId); s.mode = "drag"; s.walking = false;
-        e.classList.remove("st-walking"); syncClip(e);
+        var s = ixOf(e.dataset.runId); s.mode = "drag"; s.walking = false; s.click = null;
+        e.classList.remove("st-away"); syncClip(e);
       },
       onRelease: function (target, cancel, dx, dy) {
         var s = ixOf(e.dataset.runId), at = curPos(e);
-        s.dragEnd = Date.now();
+        s.dragEnd = Date.now(); s.click = null;
         var from = { x: at.x + dx, y: at.y + dy };
         if (!e.classList.contains("is-loose")) {            // 格子边：不改数据，停 3 秒再走回
           e.style.translate = ""; s.mode = null;
