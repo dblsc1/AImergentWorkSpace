@@ -23,6 +23,7 @@ node hex-minihive.test.js
 node hex-claim-card.test.js
 node hex-pet-pick.test.js
 node hex-stage.test.js
+node hex-record.test.js
 node hex-mini.test.js
 node hex-onboard.test.js
 node --check hex-stage-page.js   # 接线层碰 DOM，只查语法；行为由 tests/test_hive_stage.py 管

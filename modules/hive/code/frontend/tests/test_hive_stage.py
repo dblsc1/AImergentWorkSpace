@@ -530,6 +530,66 @@ def test_tiers_off_reads_no_blocks_and_no_extra_settings(browser, base) -> None:
         assert st.page.locator("#stBucketLabel").inner_text() == "未分类 · 今天 0 分"
 
 
+def test_panel_left_has_two_timelines_right_has_runs_and_esc_closes(browser, base) -> None:  # noqa: F811  HV-B13
+    with open_stage(browser, base, setup=_busy_day) as st:
+        st.page.click(CELL.format("p_math"))
+        panel = st.page.locator("#stPanel")
+        assert panel.locator(".st-col-human .st-kind").count() == 2
+        assert panel.locator('[data-kind="timer"] .st-track i').count() == 1
+        assert panel.locator('[data-kind="attend"] .st-row span').inner_text() == "1 分"
+        row = panel.locator(".st-col-agent .st-agrow")
+        assert row.count() == 1 and "garden" in row.inner_text() and "20 分" in row.inner_text()
+        assert panel.locator(".st-col-agent .st-token").inner_text().replace("\n", "") == "token 花费—"
+        st.page.keyboard.press("Escape")
+        assert not st.page.locator("#stVeil").is_visible()
+
+
+def test_panel_reads_only_known_endpoints_and_never_agent_usage(browser, base) -> None:  # noqa: F811  HV-B14 / HV-B15
+    with open_stage(browser, base, setup=_busy_day) as st:
+        st.api.clear()
+        st.page.click(CELL.format("p_math"))
+        st.poll()
+        known = {"views/lanes", "views/current", "views/tree", "activity/blocks", "activity/settings", "timer/unplaced", "views/agent-time", "activity/ledger"}
+        assert set(st.api) <= known, st.api
+        assert not [u for u in st.requests if "/usage" in u or "/agents/" in u], st.requests
+        for f in ("hex-stage-page.js", "hex-record.js"):
+            assert "usage" not in st.page.evaluate("(f) => fetch(f).then(r => r.text())", f)
+
+
+def test_drag_the_bubble_while_timing_places_the_timer_like_the_clock(browser, base) -> None:  # noqa: F811  二·2
+    with open_stage(browser, base, setup=_busy_day) as st:
+        st.drag("#stBubble", st.center(CELL.format("p_piano")))      # 没在计时：拖不动
+        st.settle()
+        assert st.posts == [] and "st-dragging" not in (st.page.locator("#stBubble").get_attribute("class") or "")
+        now = st.now().astimezone(TZ)
+        st.lanes["human"]["running"] = {"startAt": _iso(now), "taskId": None, "projectId": None}
+        st.poll()
+        st.drag("#stBubble", st.center(CELL.format("p_piano")))
+        st.settle()
+        assert st.posts == [("timer/place", {"projectId": "p_piano"})]
+
+
+def test_click_the_bubble_on_the_clock_stops_the_timer(browser, base) -> None:  # noqa: F811  二·2
+    with open_stage(browser, base, setup=_busy_day) as st:
+        now = st.now().astimezone(TZ)
+        st.lanes["human"]["running"] = {"startAt": _iso(now), "taskId": None, "projectId": None}
+        st.poll()
+        bx, by = st.center("#stBubble")
+        cx, cy = st.center("#stClock .st-dial")
+        assert abs(bx - cx) < 3 and abs(by - cy) < 3        # 气泡压在表盘中心
+        st.page.mouse.click(bx, by)
+        st.settle()
+        assert st.posts == [("timer/stop", None)]
+
+
+def test_panel_keeps_focus_on_close_button_across_renders(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, setup=_busy_day) as st:
+        st.page.click(CELL.format("p_math"))
+        assert st.page.evaluate("() => document.activeElement.className") == "st-x"
+        st.poll()
+        assert st.page.evaluate("() => document.activeElement.className") == "st-x"
+
+
 def test_panel_expand_button_closes_it_and_expands_the_cell(browser, base) -> None:  # noqa: F811
     with open_stage(browser, base, setup=_busy_day) as st:
         st.page.click(CELL.format("p_math"))
@@ -592,7 +652,11 @@ def test_drag_a_cell_pet_away_it_waits_three_seconds_then_walks_home_without_wri
         assert st.box(PET + " .st-media")["x"] < away["x"] - 5
         assert st.page.locator(PET).evaluate("e => e.classList.contains('flip')") is False    # 往左走 = 不翻转
         st.page.clock.run_for(9000)
-        back = st.box(PET + " .st-media")
+        for _ in range(40):              # 到家后的 left/top 过渡按真实时间走，不受假时钟控制
+            back = st.box(PET + " .st-media")
+            if abs(back["x"] - home["x"]) < 3 and abs(back["y"] - home["y"]) < 3:
+                break
+            st.page.wait_for_timeout(50)
         assert abs(back["x"] - home["x"]) < 3 and abs(back["y"] - home["y"]) < 3
         assert _src(st).endswith("/claude/w.webm")
         assert st.posts == [] and not any("/place" in u for u in st.requests)
