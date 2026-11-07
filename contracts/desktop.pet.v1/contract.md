@@ -126,6 +126,18 @@ provides:
 
 把 PetEvent 原样 `POST` 到 `url`（`Content-Type: application/json`，有 `pet.token` 就带 `Authorization: Bearer`），`2xx` 算送达。我们的桌宠程序（「三·1」）与仓主以后的日程助手 API 都按本节接入。
 
+
+### 连接脚本 honeycomb-connect（追加，2026-11-08）
+
+- 用户电脑上跑的连接脚本：`release/honeycomb-connect.sh`（Linux / macOS）与 `release/honeycomb-connect.ps1`（Windows），随 Release 发布。
+- 输入：服务器地址、设备令牌。令牌只从环境变量或交互输入读，不收命令行参数。
+- 可重复跑，每次结果相同；做这几件事：
+  1. 终端标题（`onboarding.v1`「九」）；
+  2. 桌宠令牌写进 ai-detector 配置的 `pet.token`（桌宠程序数据目录里已有令牌才写，没有就提示先启动一次桌宠）；
+  3. 服务器地址与设备令牌写进桌宠程序的 `config.json`；
+  4. 不下载、不安装 ai-detector 与桌宠程序本体。
+- `--uninstall`：删掉终端标题那段和它写进的键，别的不动。
+
 ## 四、浮窗（规范性，`modules/desktop-pet` 的 `float` 块）
 
 和宠物在同一个窗口里，**只做三件事**：在宠物右上角画红点、鼠标悬停时展开蜂巢缩略页、收起。
