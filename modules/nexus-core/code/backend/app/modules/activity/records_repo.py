@@ -148,6 +148,11 @@ def day_bins(user: str, date: str) -> list[int]:
     return sorted(out)
 
 
+def has_block(user: str, key: str) -> bool:
+    """留存期内任一天有这个块名的原始记录。"""
+    return _col().find_one({"user": user, "blockKey": key}, {"_id": 1}) is not None
+
+
 def recent_window(user: str, device_id: str, app: str, since: datetime, limit: int = 50) -> list[dict]:
     """同一设备、同一程序、结束在 ``since`` 之后的记录，新的在前（live-ask / focus 认当前窗口的块名）。"""
     return list(_col().find({"user": user, "deviceId": device_id, "app": app, "endTs": {"$gte": since}},

@@ -44,7 +44,7 @@ _COLLECTIONS = (
     # v2.15 让 AI 认窗口的问询（活状态）。
     "activity_ai_asks",
     # v2.22 泳道偏好（显示用的活状态）+ 忽略规则。
-    "lane_prefs", "activity_ignores", "timer_unplaced",
+    "lane_prefs", "activity_ignores", "timer_unplaced", "activity_asked",
     # v2.38 三级分类：原始记录 / 窗口块 / 通用窗口 / 第二级规则 / 账号设置 / 直接施加日志 / 键盘鼠标活动。
     "activity_records", "activity_blocks", "activity_generic", "activity_block_rules",
     "activity_settings", "activity_direct_log", "activity_input",

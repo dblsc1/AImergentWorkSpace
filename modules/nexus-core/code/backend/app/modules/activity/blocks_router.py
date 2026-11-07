@@ -14,7 +14,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictBool, St
 from starlette.concurrency import run_in_threadpool
 
 from ..planner.errors import ForbiddenError
-from . import activity_settings, block_rules, blocks, blocks_write
+from . import activity_settings, block_rules, blocks, blocks_write, live_ask
 from .ignore_router import human, is_human, no_bearer
 from .router import human_body
 
@@ -119,6 +119,25 @@ async def ignore_block(request: Request) -> dict:
 async def reset(request: Request) -> dict:
     b = await _human(request, ResetIn, "改窗口块")
     return await run_in_threadpool(blocks_write.reset, b.date, b.blockKey, b.ifSeq)
+
+
+# ── 实时询问（onboarding.v1「三」）──
+
+
+class LiveAskAnswerIn(BaseModel):
+    blockKey: _Key
+    answer: Literal["unmanaged"]
+
+
+@router.get("/live-ask")
+def get_live_ask() -> dict:
+    return live_ask.ask()
+
+
+@router.post("/live-ask/answer")
+async def live_ask_answer(request: Request) -> dict:
+    b = await _human(request, LiveAskAnswerIn, "答实时询问")
+    return await run_in_threadpool(live_ask.answer_unmanaged, b.blockKey)
 
 
 # ── 第二级规则 ──

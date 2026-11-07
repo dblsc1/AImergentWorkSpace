@@ -44,6 +44,10 @@ def get_block(user: str, date: str, key: str) -> dict | None:
     return _col(_BLK).find_one({"user": user, "date": date, "blockKey": key}, {"_id": 0})
 
 
+def has_block_doc(user: str, key: str) -> bool:
+    return _col(_BLK).find_one({"user": user, "blockKey": key}, {"_id": 1}) is not None
+
+
 def put_block(user: str, date: str, key: str, fields: dict, if_seq: int, old: dict | None) -> dict | None:
     """``seq`` 等于 ``if_seq`` 才写（0 = 现在没有文档），写后 ``seq`` +1 并回写后的文档；不符 → None。
     ``gen``（入账代号）：``fields["parts"]`` 与 ``old`` 的不同（生效目标或拆分点变了）就 +1。``runs`` 第二部分才写，这里只建字段。"""

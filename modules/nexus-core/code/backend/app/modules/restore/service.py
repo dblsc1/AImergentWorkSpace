@@ -23,6 +23,7 @@ import json
 from datetime import datetime
 from typing import Any
 
+from ..activity import live_ask
 from ..events import service as events_service
 from ..planner import service as planner_service
 from ..planner.errors import InvalidInputError, StalePlanError
@@ -50,7 +51,8 @@ def _checksum(snapshot: dict[str, list[dict]]) -> str:
     """
     canonical = json.dumps(
         {name: snapshot[name] for name in (*TYPES, "events")}
-        | ({"timerUnplaced": snapshot["timerUnplaced"]} if snapshot.get("timerUnplaced") else {}),
+        | ({"timerUnplaced": snapshot["timerUnplaced"]} if snapshot.get("timerUnplaced") else {})
+        | ({"activityAsked": snapshot["activityAsked"]} if snapshot.get("activityAsked") else {}),
         sort_keys=True, ensure_ascii=False, separators=(",", ":"),
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -142,6 +144,17 @@ def _check_place_rules(raw: Any) -> list[dict]:
     return out
 
 
+def _check_asked(rows: list[dict]) -> None:
+    for i, row in enumerate(rows):
+        try:
+            ok = all(isinstance(row.get(k), str) and row[k] for k in ("blockKey", "answer", "askedAt"))
+            ok = ok and row["answer"] in live_ask.ANSWERS and datetime.fromisoformat(row["askedAt"]) is not None
+        except ValueError:
+            ok = False
+        if not ok:
+            raise InvalidInputError(f"activityAsked[{i}] 不是合法的询问记录（blockKey / answer / askedAt）")
+
+
 def _ensure_empty() -> None:
     counts = {
         "zones": len(planner_service.list_zones()),
@@ -166,6 +179,7 @@ def restore(
     _check_events(snapshot["events"])
     _check_unplaced(snapshot.get("timerUnplaced") or [])
     place_rules = _check_place_rules(snapshot.get("agentPlaceRules"))
+    _check_asked(snapshot.get("activityAsked") or [])
     _ensure_empty()
 
     expected = _checksum(snapshot)
@@ -191,4 +205,6 @@ def restore(
         keep = ("id", "startAt", "endAt", "createdAt")
         timer_service.restore_unplaced([{k: bar[k] for k in keep} for bar in snapshot["timerUnplaced"]])
     timer_service.restore_place_rules(place_rules)
+    if snapshot.get("activityAsked"):
+        live_ask.restore_asked(snapshot["activityAsked"])
     return {"dryRun": False, "checksum": expected, "summary": summary, "rebuilt": rebuild()}
