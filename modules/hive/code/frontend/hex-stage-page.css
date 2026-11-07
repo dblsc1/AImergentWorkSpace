@@ -49,8 +49,12 @@ body.stage-on .hex-cell:not(.is-expanded) .hex-close { display: none !important;
 .st-pet.is-work { transition: left 900ms cubic-bezier(.4, 0, .2, 1), top 900ms cubic-bezier(.4, 0, .2, 1); }
 .st-pet.is-loose { transition: left 100ms linear, top 100ms linear; }
 .st-pet-in { position: absolute; left: -40px; top: -44px; width: 80px; display: flex; flex-direction: column; align-items: center; }
+.st-pet .st-pet-in { cursor: pointer; transform-origin: 50% 100%; }
 .st-pet.is-loose .st-pet-in { cursor: grab; }
-.st-pet.st-dragging { z-index: 80; transition: none; }
+.st-pet.st-squash .st-pet-in { animation: st-squash 220ms ease-out; }
+@keyframes st-squash { 0% { transform: scaleY(1); } 40% { transform: scaleY(.55); } 100% { transform: scaleY(1); } }
+.st-pet.st-dragging, .st-pet.st-away { transition: none; }
+.st-pet.st-dragging { z-index: 80; }
 .st-pet.st-dragging .st-pet-in { cursor: grabbing; filter: drop-shadow(0 8px 10px rgba(0, 0, 0, .25)); }
 .st-tag { white-space: nowrap; max-width: 110px; overflow: hidden; text-overflow: ellipsis; font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 999px;
   background: var(--panel); border: 1px solid var(--line); color: var(--ink); box-shadow: var(--shadow); margin-bottom: 2px; }
@@ -117,5 +121,6 @@ video.st-art { position: absolute; max-width: none; max-height: none; height: 11
 
 @media (prefers-reduced-motion: reduce) {
   .st-pet.is-work, .st-pet.is-loose { transition: none; }
+  .st-pet.st-squash .st-pet-in { animation: none; }
   .st-strip, .st-media, .st-face.swap { animation: none !important; }
 }

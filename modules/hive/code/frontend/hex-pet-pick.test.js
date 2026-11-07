@@ -60,4 +60,24 @@ for (let i = 0; i < 600; i++) {
   assert.ok(Math.hypot(n.x - s.x, n.y - s.y) <= 30 * 50 / 1000 + 1e-9);
   s = n;
 }
+// 点 / 拖判定、挑点击、走回（hive.stage.v1「二」7）
+assert.strictEqual(P.pressKind(3, 3), "click"); assert.strictEqual(P.pressKind(5, 0), "drag"); assert.strictEqual(P.pressKind(0, 0), "click");
+assert.strictEqual(P.clickCounts(99), false); assert.strictEqual(P.clickCounts(100), true); assert.strictEqual(P.clickCounts(-1), true); assert.strictEqual(P.clickCounts(Infinity), true);
+const cpack = { moods: { click: ["a", "b", "c"], happy: ["h"] } };
+for (let i = 0; i < 50; i++) assert.notStrictEqual(P.clickClip(cpack, "b", Math.random), "b");
+assert.strictEqual(P.clickClip({ moods: { click: ["a"] } }, "a", Math.random), "a");
+assert.strictEqual(P.clickClip({ moods: { click: [], happy: ["h"] } }, null, Math.random), "h");
+assert.strictEqual(P.clickClip({ moods: { happy: ["h"] } }, "h", () => 0.99), "h");
+assert.strictEqual(P.clickClip({ moods: {} }, null, Math.random), null);
+assert.strictEqual(P.clickClip(null, null, Math.random), null);
+assert.strictEqual(P.clickClip(cpack, "a", () => 0), "b"); assert.strictEqual(P.clickClip(cpack, "a", () => 0.99), "c");
+const A = { x: 0, y: 0 }, B = { x: 90, y: 0 };
+let wk = P.walkBack(A, B, 2999); assert.strictEqual(wk.phase, "stay"); assert.strictEqual(wk.x, 0);
+wk = P.walkBack(A, B, 4000); assert.strictEqual(wk.phase, "walk"); assert.ok(Math.abs(wk.x - 45) < 1e-9); assert.strictEqual(wk.flip, true);   // 45px/s
+assert.strictEqual(P.walkBack(A, B, 5000).phase, "done"); assert.strictEqual(P.walkBack(A, B, 5000).x, 90);
+assert.strictEqual(P.walkBack(B, A, 4000).flip, false);
+const far = { x: 0, y: 1000 };                                                   // 远了加速：8 秒到
+assert.strictEqual(P.walkBack(A, far, 3000 + 7999).phase, "walk"); assert.strictEqual(P.walkBack(A, far, 3000 + 8000).phase, "done");
+assert.ok(Math.abs(P.walkBack(A, far, 3000 + 4000).y - 500) < 1e-9);
+assert.strictEqual(P.walkBack(A, A, 0).phase, "done");
 console.log("hex-pet-pick tests ok");
