@@ -4,7 +4,7 @@
   "use strict";
 
   var LS_ORDER = "hive.decide.order", LS_APPROVALS = "hive.decide.approvals";
-  var DEF_ORDER = ["q", "s", "r", "b", "h"];
+  var DEF_ORDER = ["q", "s", "r", "h"];
   var WORD = { zone: "分区", project: "项目", task: "任务" };
 
   function two(n) { return ("0" + n).slice(-2); }

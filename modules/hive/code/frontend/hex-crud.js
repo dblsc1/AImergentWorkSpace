@@ -32,6 +32,10 @@
     App.reloadExpanded();
   }
 
+  function offerClaim(target) {
+    if (window.NexusTableHexClaimCard) window.NexusTableHexClaimCard.offer(target);
+  }
+
   function taskIdOf(node) {
     var li = node.closest("[data-task-id]");
     return li && li.dataset.taskId;
@@ -166,6 +170,7 @@
         // 建完必须**收起**再重拉：这一格的身份从"占位格"变成了"某个项目"，
         // 展开态挂在坐标键上，重建之后那个键指向的可能已经是别的格子。
         App.collapseAndReload();
+        offerClaim({ projectId: r.data && r.data.id });
       });
       return;
     }
@@ -176,6 +181,7 @@
     D.createTask(projectId, name).then(function (r) {
       input.value = "";
       afterWrite(form, r);
+      if (r.ok) offerClaim({ taskId: r.data && r.data.id });
     });
   }
 

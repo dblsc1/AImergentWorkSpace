@@ -54,13 +54,13 @@ var bad = { getItem: function () { throw new Error("blocked"); }, setItem: funct
 assert.strictEqual(B.readApprovals(bad), 0); B.bumpApprovals(bad);   // 存不下不抛
 
 // 顺序：缺的补上、多的丢掉、拖动占目标的位置、存取
-assert.deepStrictEqual(B.normOrder(null), ["q", "s", "r", "b", "h"]);
-assert.deepStrictEqual(B.normOrder(["h", "x", "s", "h"]), ["h", "s", "q", "r", "b"]);
-assert.deepStrictEqual(B.moveOnto(["q", "s", "r", "b", "h"], "q", "r"), ["s", "r", "q", "b", "h"], "往后拖落在目标后面");
-assert.deepStrictEqual(B.moveOnto(["q", "s", "r", "b", "h"], "h", "s"), ["q", "h", "s", "r", "b"], "往前拖落在目标前面");
+assert.deepStrictEqual(B.normOrder(null), ["q", "s", "r", "h"]);
+assert.deepStrictEqual(B.normOrder(["h", "x", "s", "h"]), ["h", "s", "q", "r"]);
+assert.deepStrictEqual(B.moveOnto(["q", "s", "r", "h"], "q", "r"), ["s", "r", "q", "h"], "往后拖落在目标后面");
+assert.deepStrictEqual(B.moveOnto(["q", "s", "r", "h"], "h", "s"), ["q", "h", "s", "r"], "往前拖落在目标前面");
 assert.deepStrictEqual(B.moveOnto(["q", "s"], "q", "q"), ["q", "s"]); assert.deepStrictEqual(B.moveOnto(["q", "s"], "z", "q"), ["q", "s"]);
 var ms = mem(); assert.deepStrictEqual(B.loadOrder(ms), B.DEF_ORDER);
-B.saveOrder(["b", "s"], ms); assert.deepStrictEqual(B.loadOrder(ms), ["b", "s", "q", "r", "h"]);
+B.saveOrder(["r", "s", "b"], ms); assert.deepStrictEqual(B.loadOrder(ms), ["r", "s", "q", "h"]);
 ms.d["hive.decide.order"] = "{坏的"; assert.deepStrictEqual(B.loadOrder(ms), B.DEF_ORDER, "存的是坏数据就用默认");
 assert.deepStrictEqual(B.loadOrder(bad), B.DEF_ORDER); B.saveOrder(["q"], bad);
 console.log("hex-tiers-cards.test.js ok");
