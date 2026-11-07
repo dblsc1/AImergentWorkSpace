@@ -37,6 +37,55 @@ def clear_running(user: str) -> None:
     _col().delete_one({"user": user})
 
 
+def insert_running(doc: dict) -> bool:
+    """只在没有活状态时写；False = 已在计时（唯一索引挡下）。"""
+    try:
+        _col().insert_one(dict(doc))
+    except DuplicateKeyError:
+        return False
+    return True
+
+
+def retarget_running(user: str, session_id: str, fields: dict) -> bool:
+    """把在跑的这一段改挂到新目标；False = 这一段已经不在跑（被并发 stop / 重开）。"""
+    return _col().update_one({"user": user, "sessionId": session_id}, {"$set": fields}).matched_count > 0
+
+
+# ------------------------------------------------ timer_unplaced（白条：停下时没有目标的计时段）
+
+_UNPLACED = "timer_unplaced"
+_unplaced_indexes_ready = False
+
+
+def _unplaced_col():
+    global _unplaced_indexes_ready
+    col = get_db()[_UNPLACED]
+    if not _unplaced_indexes_ready:
+        col.create_index([("user", 1), ("id", 1)], unique=True, name="uniq_user_id")
+        _unplaced_indexes_ready = True
+    return col
+
+
+def add_unplaced(doc: dict) -> None:
+    """同 id 已在（重试）当作写过了。"""
+    try:
+        _unplaced_col().insert_one(dict(doc))
+    except DuplicateKeyError:
+        pass
+
+
+def list_unplaced(user: str) -> list[dict]:
+    return list(_unplaced_col().find({"user": user}, {"_id": 0}).sort("startAt", 1))
+
+
+def get_unplaced(user: str, bar_id: str) -> dict | None:
+    return _unplaced_col().find_one({"user": user, "id": bar_id}, {"_id": 0})
+
+
+def delete_unplaced(user: str, bar_id: str) -> None:
+    _unplaced_col().delete_one({"user": user, "id": bar_id})
+
+
 # ------------------------------------------------ agent_runs（v2.1，AI 代理运行活状态）
 #
 # 与 timer_state 相反：**一个 user 可以有任意多条**（没有 uniq_user）——人一条泳道，

@@ -20,12 +20,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 from typing import Any
 
 from ..events import service as events_service
 from ..planner import service as planner_service
 from ..planner.errors import InvalidInputError, StalePlanError
 from ..projector.rebuild import rebuild
+from ..timer import service as timer_service
 
 TYPES: tuple[str, ...] = ("zones", "projects", "tasks")
 _LABEL = {"zones": "分区", "projects": "项目", "tasks": "任务"}
@@ -47,7 +49,8 @@ def _checksum(snapshot: dict[str, list[dict]]) -> str:
     「dry-run 之后库变了」由 apply 时重判「库必须为空」承担。
     """
     canonical = json.dumps(
-        {name: snapshot[name] for name in (*TYPES, "events")},
+        {name: snapshot[name] for name in (*TYPES, "events")}
+        | ({"timerUnplaced": snapshot["timerUnplaced"]} if snapshot.get("timerUnplaced") else {}),
         sort_keys=True, ensure_ascii=False, separators=(",", ":"),
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -108,6 +111,17 @@ def _check_events(events: list[dict]) -> None:
         )
 
 
+def _check_unplaced(bars: list[dict]) -> None:
+    for i, bar in enumerate(bars):
+        try:
+            ok = all(isinstance(bar.get(k), str) and bar[k] for k in ("id", "startAt", "endAt", "createdAt"))
+            ok = ok and datetime.fromisoformat(bar["startAt"]) <= datetime.fromisoformat(bar["endAt"])
+        except ValueError:
+            ok = False
+        if not ok:
+            raise InvalidInputError(f"timerUnplaced[{i}] 不是合法的白条（id / startAt / endAt / createdAt）")
+
+
 def _ensure_empty() -> None:
     counts = {
         "zones": len(planner_service.list_zones()),
@@ -130,6 +144,7 @@ def restore(
     → checksum（400/409）→ 写 planner → 写台账 → 重建投影。"""
     _check_planner(snapshot)
     _check_events(snapshot["events"])
+    _check_unplaced(snapshot.get("timerUnplaced") or [])
     _ensure_empty()
 
     expected = _checksum(snapshot)
@@ -151,4 +166,6 @@ def restore(
     # 设防（AI 来源 / 严格模式 → 403）在 planner 这一步、任何写入之前判定。
     planner_service.restore_snapshot(request, {t: snapshot[t] for t in TYPES})
     summary["events"] = events_service.restore_bulk(snapshot["events"])
+    if snapshot.get("timerUnplaced"):
+        timer_service.restore_unplaced(snapshot["timerUnplaced"])
     return {"dryRun": False, "checksum": expected, "summary": summary, "rebuilt": rebuild()}

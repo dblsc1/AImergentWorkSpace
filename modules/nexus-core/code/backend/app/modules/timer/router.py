@@ -34,7 +34,8 @@ class StartIn(BaseModel):
 
 class TimerOut(BaseModel):
     running: bool
-    taskId: str
+    taskId: str | None  # v2.44：无项目计时为 null
+    projectId: str | None = None
     startAt: str
     mode: Mode = "do"  # v2.1 回显
 
@@ -50,6 +51,7 @@ class TimerStopOut(BaseModel):
 
     running: bool
     event: StopEvent | None = None
+    unplacedId: str | None = None  # v2.44：停下的是无目标计时 → 白条 id
 
 
 @router.post("/start", response_model=TimerOut)
@@ -62,7 +64,7 @@ def start(body: StartIn) -> dict:
 class CancelledSession(BaseModel):
     """被丢弃那段的摘要。``discardedSeconds`` 是**回显用的派生值，任何地方都没存**。"""
 
-    taskId: str
+    taskId: str | None
     startAt: str
     discardedSeconds: int
 
@@ -79,7 +81,7 @@ class TimerCancelOut(BaseModel):
     cancelled: CancelledSession
 
 
-@router.post("/stop", response_model=TimerStopOut)
+@router.post("/stop", response_model=TimerStopOut, response_model_exclude_unset=True)  # 没在计时：不带 unplacedId
 def stop() -> dict:
     out = service.stop()
     reconcile.kick()
@@ -90,6 +92,56 @@ def stop() -> dict:
 def cancel() -> dict:
     """取消当前计时，不记账。没在计时 → ``NoRunningTimerError`` → 409（映射在 main.py）。"""
     out = service.cancel()
+    reconcile.kick()
+    return out
+
+
+class PlaceIn(BaseModel):
+    """v2.44：``taskId`` 与 ``projectId`` 恰好一个（都给 / 都不给 → 422，判断在 service）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    taskId: str | None = Field(default=None, min_length=1, max_length=128)
+    projectId: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class UnplacedBarOut(BaseModel):
+    id: str
+    startAt: str
+    endAt: str
+    durationSeconds: int
+
+
+class UnplacedListOut(BaseModel):
+    items: list[UnplacedBarOut]
+
+
+class PlacedBarOut(BaseModel):
+    recorded: bool
+    taskId: str
+    projectId: str
+
+
+@router.post("/start-unplaced", response_model=TimerOut)
+def start_unplaced(request: Request) -> dict:
+    out = service.start_unplaced(request)
+    reconcile.kick()
+    return out
+
+
+@router.post("/place", response_model=TimerOut)
+def place(body: PlaceIn, request: Request) -> dict:
+    return service.place_running(body.taskId, body.projectId, request)
+
+
+@router.get("/unplaced", response_model=UnplacedListOut)
+def list_unplaced(request: Request) -> dict:
+    return service.list_unplaced(request)
+
+
+@router.post("/unplaced/{barId}/place", response_model=PlacedBarOut)
+def place_unplaced(barId: str, body: PlaceIn, request: Request) -> dict:  # noqa: N803 —— 路径参数名即契约
+    out = service.place_unplaced(barId, body.taskId, body.projectId, request)
     reconcile.kick()
     return out
 

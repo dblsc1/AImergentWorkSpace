@@ -25,6 +25,8 @@ class RestoreRequest(BaseModel):
     events: list[dict[str, Any]]
     #: 读进来但**不落库**——投影是派生物，落完台账现场重建。
     projections: dict[str, Any] | None = None
+    #: v2.44 白条；旧快照没有这个键。
+    timerUnplaced: list[dict[str, Any]] = []
     #: 原样接受、忽略。
     exportedAt: str | None = None
 
