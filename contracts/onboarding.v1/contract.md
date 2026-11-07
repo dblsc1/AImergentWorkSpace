@@ -197,6 +197,7 @@ provides:
      接了 AI CLI 的用户另可由 AI 按 v2.38「五」带 `directApply` 放（`confidencePercent` ≥ `activity/settings.highConfidenceThresholdPercent` 才放）；
      结果页列出放进去的块与合计时长，每块一个「撤销」（= `POST activity/blocks/claim/undo`，「五」）；
   4. 其余全部留在「未分类」，结束。
+  - 「3」补充（2026-11-08）：结果页另列引导开始后 AI 直接施加的块（`GET activity/direct-log`：`at` ≥ 引导开始、`kind` 为 `blockAction` 或 `blockRule`、`undoneAt` 为空），与 claim 的块同列、计入合计，每条一个「撤销」（`POST activity/direct-log/{id}/undo`）；结果页开着时每 10 秒重读一次。页面不调用 AI。
 - `POST /api/core/activity/onboarding/done`（只许人，无体）→ `onboardingDoneAt` = 此刻（已有就不变），回设置文档。跳过引导也调它。第一次写设置 `version` +1，已有就不动。
 
 **新装缺省**（仓主 2026-11-05「自动入账现在就默认打开」）：账号**从没存过**设置文档、**没有任何分类规则**（`detector.rules` 版本 0）、**且该租户 `events` 里没有任何事件**（全新）时，
