@@ -23,5 +23,6 @@ node hex-minihive.test.js
 node hex-claim-card.test.js
 node hex-pet-pick.test.js
 node hex-stage.test.js
+node hex-mini.test.js
 # 共享件 focus.js（此刻的焦点的文案：顶栏 / 计时页 / 本页中心格共用；文件在 nginx-docker，本页是它的使用方之一）
 node ../../../nginx-docker/tests/focus.test.js
