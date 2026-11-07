@@ -282,6 +282,18 @@ def test_rule_cards_button_and_swipe_use_the_five_second_undo(browser, base) -> 
         _until(hive.page, lambda: "activity/proposals/nt_2/approve" in hive.writes)
 
 
+def test_history_undo_resets(browser, base) -> None:  # noqa: F811
+    with open_tiers(browser, base) as hive:
+        _show(hive)
+        card = hive.page.locator('.ht-hist[data-block="Nautilus"]')
+        assert "↓ 钢琴 - 钢琴的任务" in card.inner_text() and "第二级规则" in card.inner_text()
+        assert "AI 直接施加" in hive.page.locator('.ht-hist[data-block="规则块"]').inner_text()
+        card.get_by_role("button", name="撤销").click()
+        _until(hive.page, lambda: len(_posts(hive, "activity/blocks/reset")) == 1)
+        assert _posts(hive, "activity/blocks/reset")[0][1] == {"date": DATE, "blockKey": "Nautilus", "ifSeq": 5}
+        _until(hive.page, lambda: hive.page.locator(".ht-hist").count() == 1)
+
+
 def test_history_card_dragged_onto_a_task_reassigns(browser, base) -> None:  # noqa: F811
     with open_tiers(browser, base, width=1900) as hive:
         _show(hive)
