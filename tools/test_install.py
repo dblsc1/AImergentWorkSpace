@@ -272,7 +272,7 @@ def test_auth_accounts_file_lives_in_a_declared_named_volume(out):
     auth = compose["services"]["auth"]
     assert "honeycomb_auth_data:/data" in auth["volumes"]
     assert auth["environment"]["AUTH_USERS_FILE"] == "/data/users.json"
-    assert set(compose["volumes"]) == {"honeycomb_mongo_data", "honeycomb_auth_data", "honeycomb_agent_data"}
+    assert set(compose["volumes"]) == {"honeycomb_mongo_data", "honeycomb_auth_data", "honeycomb_agent_data", "honeycomb_pets_data"}
     hand = yaml.safe_load((install.ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8"))
     assert set(hand["volumes"]) == set(compose["volumes"])
     assert compose["services"]["nexus-core"]["environment"]["NEXUS_TENANT_STRICT"] == \
