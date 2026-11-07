@@ -82,6 +82,7 @@ jobs:
           sed "s/__VERSION__/$v/g" release/docker-compose.yml > dist/docker-compose.yml
           sed "s/__TAG__/$GITHUB_REF_NAME/g" release/honeycomb-install.sh > dist/honeycomb-install.sh
           sed "s/__TAG__/$GITHUB_REF_NAME/g" release/honeycomb-install.ps1 > dist/honeycomb-install.ps1
+          cp release/honeycomb-connect.sh release/honeycomb-connect.ps1 dist/
           for f in assets-download.js download-server.js manifest.json mood-map.json; do cp modules/desktop-pet/$f dist/pets-$f; done
           ! grep -l '__VERSION__\|__TAG__' dist/*
       - name: 构建 ai-detector 桌面单文件
