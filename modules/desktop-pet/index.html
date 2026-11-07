@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>HoneyComb 桌宠</title>
+<style>
+  html, body { margin: 0; width: 100%; height: 100%; background: transparent; overflow: hidden; user-select: none; font: 14px system-ui, sans-serif; }
+  #root { display: flex; justify-content: flex-end; align-items: flex-end; width: 100%; height: 100%; }
+  #panel { display: none; flex: 1; height: 100%; margin-right: 8px; border-radius: 12px; overflow: hidden; background: #fff; box-shadow: 0 4px 20px rgba(0,0,0,.35); }
+  #panel.open { display: block; }
+  #panel webview { width: 100%; height: 100%; }
+  #petbox { position: relative; flex: none; width: var(--s, 200px); height: var(--s, 200px); }
+  #petbox video, #petbox img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+  #badge { display: none; position: absolute; top: 0; right: 0; width: 16px; height: 16px; border-radius: 50%; background: #e5352b; border: 2px solid #fff; box-sizing: border-box; }
+  #badge.on { display: block; }
+  #bubble { display: none; position: absolute; right: 0; bottom: 100%; max-width: 220px; padding: 8px 12px; border-radius: 12px; background: #fff; color: #222; box-shadow: 0 2px 10px rgba(0,0,0,.3); }
+  #bubble.on { display: block; }
+</style>
+</head>
+<body>
+<div id="root">
+  <div id="panel"><webview id="mini" partition="persist:hive-mini"></webview></div>
+  <div id="petbox">
+    <div id="bubble"></div>
+    <video id="clip" muted autoplay playsinline style="display:none"></video>
+    <img id="ph" src="placeholder.svg" alt="">
+    <div id="badge"></div>
+  </div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const clip = $('clip'), ph = $('ph'), badge = $('badge'), bubble = $('bubble'), panel = $('panel'), mini = $('mini'), petbox = $('petbox');
+const canvas = document.createElement('canvas');
+const g = canvas.getContext('2d', { willReadFrequently: true });
+let bubbleTimer = null, hitNow = false, hoverNow = false;
+
+function showMedia(src) {
+  if (src) { clip.src = src; clip.style.display = ''; ph.style.display = 'none'; clip.play().catch(() => {}); }
+  else { clip.removeAttribute('src'); clip.style.display = 'none'; ph.style.display = ''; }
+}
+window.pet.onPlay(({ src }) => showMedia(src));
+clip.addEventListener('ended', () => window.pet.clipEnded());
+clip.addEventListener('error', () => showMedia(null));
+window.pet.onBubble(text => {
+  bubble.textContent = text; bubble.classList.add('on');
+  clearTimeout(bubbleTimer); bubbleTimer = setTimeout(() => bubble.classList.remove('on'), 6000);
+});
+window.pet.onSize(px => document.documentElement.style.setProperty('--s', px + 'px'));
+window.pet.onBadge(on => badge.classList.toggle('on', on));
+window.pet.onCard(state => { try { mini.send('card', state); } catch {} });
+window.pet.onPanel(({ open, url, miniPreload }) => {
+  panel.classList.toggle('open', open);
+  if (open) { mini.setAttribute('preload', miniPreload); mini.src = url; }
+});
+mini.addEventListener('ipc-message', e => { if (e.channel === 'hive-mini-done') window.pet.pageDone(); });
+
+const inside = (r, x, y) => x >= r.left && x < r.right && y >= r.top && y < r.bottom;
+function petOpaqueAt(x, y) {
+  const r = petbox.getBoundingClientRect();
+  if (!inside(r, x, y)) return false;
+  const el = clip.style.display === 'none' ? ph : clip;
+  const w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
+  canvas.width = w; canvas.height = h;
+  const nw = el.videoWidth || el.naturalWidth || w, nh = el.videoHeight || el.naturalHeight || h;
+  const k = Math.min(w / nw, h / nh), dw = nw * k, dh = nh * k; // 同 object-fit: contain
+  try { g.drawImage(el, (w - dw) / 2, (h - dh) / 2, dw, dh); return g.getImageData(Math.floor(x - r.left), Math.floor(y - r.top), 1, 1).data[3] > 16; }
+  catch { return false; }
+}
+window.pet.onCursor(p => {
+  let hit = false, hover = false;
+  if (p) {
+    if (inside(badge.getBoundingClientRect(), p.x, p.y) && badge.classList.contains('on')) hit = hover = true;
+    else if (panel.classList.contains('open') && inside(panel.getBoundingClientRect(), p.x, p.y)) hit = hover = true;
+    else if (petOpaqueAt(p.x, p.y)) hit = hover = true;
+  }
+  if (hit !== hitNow) { hitNow = hit; window.pet.setHit(hit); }
+  if (hover !== hoverNow) { hoverNow = hover; window.pet.hover(hover); }
+});
+</script>
+</body>
+</html>
