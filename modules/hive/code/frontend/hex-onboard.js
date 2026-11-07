@@ -183,7 +183,7 @@
         row.appendChild(undo);
         card.appendChild(row);
       });
-      card.appendChild(el("div", "hob-total", hoursText(total)));
+      if (result.length) card.appendChild(el("div", "hob-total", hoursText(total)));
     }
 
     // 对每个项目及其任务调候选，再按目标 claim；候选 / claim 失败的当作没有，不拦引导
@@ -229,7 +229,8 @@
       if (error) card.appendChild(el("div", "hob-err", error));
       var foot = el("div", "hob-foot");
       if (draft.step < 4) {
-        foot.appendChild(button("跳过", "", finish));
+        var skip = foot.appendChild(button("跳过", "", finish));
+        skip.disabled = busy;
         var nx = button("下一步", "is-primary", next);
         nx.disabled = busy || !canNext(draft);
         if (draft.step < 3) foot.appendChild(nx);
