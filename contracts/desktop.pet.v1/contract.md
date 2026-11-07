@@ -1,9 +1,9 @@
 # desktop.pet.v1 —— 桌宠接口
 
-> **状态**：v1 草案，待仓主批准。批准后只增不改不删；不兼容的改动发 `desktop.pet.v2`。
+> **状态**：v1，仓主 2026-11-07 批准。批准后只增不改不删；不兼容的改动发 `desktop.pet.v2`。
 >
-> - 提供方：`modules/ai-detector`（桥接，「二」）；宠物包与 dsh-pet 随发布包附带（「三」）；浮窗是独立的小程序（「四」）。
-> - 美术实现（「三」）：开源版 = dsh-pet 加宠物包；商用版 = 仓主的日程助手 API（以后接，不在本仓）。
+> - 提供方：`modules/ai-detector`（桥接，「二」）；`modules/desktop-pet`（Electron 桌宠程序，宠物与浮窗，「三」「四」）。
+> - 美术实现（「三」）：开源版 = 我们的桌宠程序加 ai-pet-7in1 素材；商用版 = 仓主的日程助手 API（以后接，不在本仓）。
 >
 > **仓主原话（2026-11-07）**：「把美术独立成一个接口就好了，开源版就用 dsh pet，我们商用的部分暂定我们自己做的日程助手 api，
 > 等以后真的商用了，用现在预留的接口改美术就好。」
@@ -19,9 +19,10 @@ provides:
     summary: >
       桌宠事件 PetEvent（focus / agentWaiting / agentDone / alert / alertCleared，带一句现成的中文 text）；
       ai-detector 每 10 秒读一次 GET /api/core/views/current 与本机健康状态，有变化才发；
-      美术实现二选一：dsh-pet（本机 HTTP：工作状态 + 气泡）或 http（把 PetEvent 原样 POST 给配置的地址）。缺省关。
-      宠物包（dsh-pet 的 pet pack 格式）+ 宠物包对照（按代理工具选宠物），蜂巢页与桌面共用。
-      浮窗：桌宠旁的红点，悬停弹出登录后的蜂巢缩略页 /hive/mini，把当前窗口拖进项目。
+      美术实现：http（把 PetEvent POST 给本机桌宠程序或以后的日程助手 API），或可选的 dsh-pet。缺省关。
+      桌宠程序 modules/desktop-pet（Electron，一个透明置顶窗，宠物 + 浮窗）；素材 ai-pet-7in1 全套，自动下载、不进仓库。
+      宠物包 pack.json + 宠物包对照（按代理工具选宠物），蜂巢页与桌面共用。
+      浮窗：宠物右上角红点，悬停展开登录后的蜂巢缩略页 /hive/mini，把当前窗口拖进项目。
 ```
 
 ## 一、桌宠事件 `PetEvent`（规范性）
@@ -55,8 +56,8 @@ provides:
 
   ```jsonc
   "pet": { "enabled": true,
-           "renderer": "dsh-pet",                    // "dsh-pet" | "http"
-           "url": "http://127.0.0.1:3080",           // dsh-pet：独立模式的地址；http：接收 PetEvent 的地址
+           "renderer": "http",                       // "http" | "dsh-pet"
+           "url": "http://127.0.0.1:47340/pet-event", // http：接收 PetEvent 的地址（缺省 = 我们的桌宠程序）；dsh-pet：其独立模式地址，如 http://127.0.0.1:3080
            "token": null,                            // 只给 http 用：有就带 Authorization: Bearer <token>
            "petId": null,                            // 只给 dsh-pet 用：哪只宠物，null = 它的第一只
            "moods": { "working": null, "idle": null, "waiting": null, "happy": null, "worried": null } }  // 对 dsh-pet 的工作状态名（取值见其 openapi.yaml）；某项为 null = 跳过 work-status，只换气泡
@@ -70,62 +71,72 @@ provides:
 
 ## 三、美术实现与宠物包（规范性）
 
-### dsh-pet（开源版缺省）
+仓主 2026-11-07 定：桌宠做成我们自己的 Electron 程序（「三·1」），素材用 Houraiji9/ai-pet-7in1 的全套，安装器自动下载。
 
-dsh-pet（<https://github.com/PC2005-cloud/dsh-pet>）独立模式：本机 HTTP，前缀 `/dsh-pet-7340`。每条 PetEvent：
+### 三·1 桌宠程序 `modules/desktop-pet`（开源版缺省）
 
-1. `POST /dsh-pet-7340/work-status`：工作状态由 `mood` 对照（`working`/`waiting`/`idle`/`happy`/`worried` 各对一个 dsh-pet 工作状态，对照表在 `pet.moods`），任务文字 = `text`；
-2. 要冒气泡的类型（`agentWaiting`、`agentDone`、`alert`、`alertCleared`）再 `POST /dsh-pet-7340/lock` → `broadcast` → `lock/release` 把 `text` 写进气泡；
-3. `focus` 的 `afk` 用 `DELETE /dsh-pet-7340/work-status` 回空闲。
+- Electron。**一个**透明、无边框、置顶的窗口，放宠物和浮窗（「四」）两块；代码分两块（`pet` 与 `float`），窗口共用。
+- 点穿：窗口缺省忽略鼠标；指针落在宠物不透明像素或浮窗上时才接收（前端命中测试后切换）。
+- 平台：Windows、macOS、Linux（Linux 本版只支持 X11 / XWayland）。macOS 做成不抢焦点、无 Dock 图标的常驻程序。
+- 收 PetEvent：只在 `127.0.0.1:47340` 监听 `POST /pet-event`，要 `Authorization: Bearer <本机桌宠令牌>`（程序第一次启动生成，存在程序数据目录；安装器把它写进 ai-detector 的 `pet.token`）。没带或不对 `401`。
+  所以 ai-detector 对它用「http」美术实现：`pet.renderer: "http"`、`pet.url: "http://127.0.0.1:47340/pet-event"`。
+- 收到 PetEvent：按 `mood` 从当前宠物包挑一段动画播（同一 mood 有多段时随机，避开刚播过的）；`text` 显示成头顶气泡 6 秒。
+- 宠物包对照：按 `views/current` 里人此刻在看的那条运行的 `tool` 选包（`pet.packsByTool`，「宠物包与对照」）；没有就用 `*`。
+- 托盘菜单：换宠物、大小、开机自启、退出。
 
-以上各调用的请求体与 `petId` 的传法以上游 `openapi.yaml` 为准：实现时把上游 `openapi.yaml` 放进 `third_party/dsh-pet/` 并引用，本契约不另定请求体；假 dsh-pet 的测试按那份文件写。
+### 三·2 素材：ai-pet-7in1 全套，自动下载
 
-- 任何一步失败就放锁（尽力）并结束这一条。dsh-pet 没在跑 = 连接失败，按「一」的发失败处理。
-- 已知：dsh-pet 的本机接口没有鉴权，本机任何程序都能调。
-
-### 随发布包附带
-
-- dsh-pet 代码（MIT）与「大肥鱼」素材放在 `third_party/dsh-pet/`，**单独**带上游的许可文件，不属于本仓的 AGPL-3.0 授权。
-- 素材许可（上游原文）：代码 MIT；素材允许开源使用、**禁止商用**；形象 CC BY-NC-SA 4.0。所以：
-  - 发布包、仓库 README、官网等公开渠道写明出处：<https://github.com/PC2005-cloud/dsh-pet>、原型作者与设计作者（照上游 README「形象出处」）；
-  - 我们改过的素材（裁剪、调色、新动作）同样按 CC BY-NC-SA 4.0 发；
+- 来源固定到一个提交：<https://github.com/Houraiji9/ai-pet-7in1> `08f2c6f3b2771f2c65ff4d6c14c8dfecba9647bc`，取 `assets/<角色>/webm/`（GPT、Claude、Gemini、GLM、Kimi、Grok）与 DeepSeek 娘（`app/assets/deepseek/`，来自 dsh-pet）。换提交 = 改契约追加一行。
+- **素材不进本仓 git、不进发布包**。用户机器：桌宠程序第一次启动在后台下载全套到程序数据目录 `pets/`；服务端：安装器下载同一套到 `/hive/pets/` 对应的卷，蜂巢页从那里取。下载断了下次续；下完校验每个文件的大小与 SHA-256（清单随程序发布）。
+- 没下完之前：宠物用一个内置的简单占位形象（我们自己画，AGPL），不缺功能。
+- 许可（上游 `LICENSE-ASSETS.md`）：角色素材 CC BY-NC-SA 4.0，原作 ZipZipPipe《大 AI 与小 AI 们》，改编参考图 ApprenTice；DeepSeek 娘动画来自 dsh-pet，禁止商用。所以：
+  - 设置页「关于」、仓库 `NOTICE`、README 写明以上署名与许可链接；
   - 任何收费产品、收费服务的页面与宣传里**不用**这些素材；
-  - 在仓库 `NOTICE` 写明：二次分发本仓用于商业的，须先删掉 `third_party/dsh-pet/` 的素材。
-- 别的形象（龙娘、Claude 娘等）可以进 `third_party/`；每个宠物包的 `honeycomb.credits` / `source` / `license` 必须填（作者、出处链接、许可；许可不明写 `unknown`），并在 `NOTICE` 列出。
+  - 我们改过的素材同样按 CC BY-NC-SA 4.0 发。
 
 ### 宠物包与对照
 
-- **宠物包** = dsh-pet 的 pet pack：`<种类>-config.json` + `<种类>-animation/`。蜂巢页（`hive.stage.v1`）与桌面共用同一批包，页面从 `/hive/pets/<种类>/` 取素材。
-- 每个包追加一个 `honeycomb` 段（dsh-pet 忽略不认识的键）：
+- **宠物包** = 程序数据目录 `pets/<种类>/` 下一个 `pack.json` 加动画文件。下载时由程序按上游目录生成 `pack.json`：
 
   ```jsonc
-  "honeycomb": { "moods": { "working": "work", "waiting": "wait", "idle": "idle" },   // 页面上播哪段动画
-                 "license": "CC BY-NC-SA 4.0", "credits": "…", "source": "https://…" }
+  { "kind": "gpt", "name": "GPT 龙娘",
+    "moods": { "working": ["…webm"], "waiting": ["…"], "idle": ["…"], "happy": ["…"], "worried": ["…"] },
+    "license": "CC BY-NC-SA 4.0", "credits": "ZipZipPipe《大 AI 与小 AI 们》；ApprenTice", "source": "https://github.com/Houraiji9/ai-pet-7in1" }
   ```
 
-- **宠物包对照**（服务端账号设置 `activity/settings.pet.packsByTool`，`onboarding.v1`「四」；蜂巢页读它）：`{ "claude-code": "…", "codex": "…", "*": "dsh" }`；
-  按运行的 `tool` 选包，查不到用 `*`。本版缺省全是 `dsh`。
+  上游动画名到 mood 的对照表随程序发布（`modules/desktop-pet/mood-map.json`），每个 mood 至少一段。
+- 蜂巢页（`hive.stage.v1`）读服务端同样的 `pack.json`。
+- **宠物包对照**（服务端账号设置 `activity/settings.pet.packsByTool`，`onboarding.v1`「四」）：缺省 `{ "claude-code": "claude", "codex": "gpt", "gemini-cli": "gemini", "*": "deepseek" }`；按运行的 `tool` 选包，查不到用 `*`。
+- 每个宠物包的 `license` / `credits` / `source` 必须填（许可不明写 `unknown`）。
+
+### dsh-pet（可选）
+
+已装 dsh-pet 的用户可让 ai-detector 改发给它（`pet.renderer: "dsh-pet"`）。每条 PetEvent：
+
+1. `POST /dsh-pet-7340/work-status`：工作状态由 `mood` 对照（`pet.moods`），任务文字 = `text`；`moods` 为 `null` 时跳过这一步；
+2. 要冒气泡的类型（`agentWaiting`、`agentDone`、`alert`、`alertCleared`）再 `lock` → `broadcast` → `lock/release`；
+3. `focus` 的 `afk` 用 `DELETE /dsh-pet-7340/work-status`。
+
+请求体以上游 `openapi.yaml` 为准（实现时放进 `third_party/dsh-pet/openapi.yaml` 并引用）。任何一步失败就放锁（尽力）并结束这一条。dsh-pet 的本机接口没有鉴权。
 
 ### http（商用 / 自定义）
 
-把 PetEvent 原样 `POST` 到 `url`（`Content-Type: application/json`），`2xx` 算送达。仓主的日程助手 API 以后按本节实现即可接入。
+把 PetEvent 原样 `POST` 到 `url`（`Content-Type: application/json`，有 `pet.token` 就带 `Authorization: Bearer`），`2xx` 算送达。我们的桌宠程序（「三·1」）与仓主以后的日程助手 API 都按本节接入。
 
-## 四、浮窗（独立模块，规范性）
+## 四、浮窗（规范性，`modules/desktop-pet` 的 `float` 块）
 
-一个小桌面程序，**只做三件事**：在桌宠旁画红点、鼠标悬停时弹出蜂巢缩略页、关掉。不画宠物（宠物归「三」）。
+和宠物在同一个窗口里，**只做三件事**：在宠物右上角画红点、鼠标悬停时展开蜂巢缩略页、收起。
 
-- **红点**：每 10 秒用本机设备令牌（`read` 范围）调 `GET /api/core/activity/live-ask`（`onboarding.v1`「三」）；`ask` 非空就亮红点，空就灭。
-- **位置**：本版贴屏幕右下角；取桌宠窗口位置（贴在其右上角）留作以后。
-- **悬停**：弹出一个窗口，内容是 HoneyComb 的页面 `/hive/mini`（人登录后的会话，不用设备令牌）：
+- **红点**：每 10 秒用本机设备令牌（`read` 范围，安装器写进桌宠程序的配置）调 `GET /api/core/activity/live-ask`（`onboarding.v1`「三」）；`ask` 非空就亮红点，空就灭。
+- **悬停**：在宠物旁展开一块面板（窗口按需变大），内容是 HoneyComb 的页面 `/hive/mini`（嵌入的网页，用人登录后的会话，会话存在程序自己的会话分区里；不用设备令牌）：
   - 顶上一张卡：`displayName` + 已停留时长（= `focusedSeconds` 取整分钟，如 `6 分钟`）；两个动作：拖进下面的某个项目格子（= `blocks/assign {projectId, remember: true}`，任务由 AI 分），或「不管它」（= `live-ask/answer`）；
   - 下面是蜂巢缩略图，只有项目名；
-  - 做完一件事，红点灭，窗口 2 秒后收起。没登录时页面显示登录。
-- 鼠标移开 800ms（可配）后弹出窗口收起。
-- 窗口开着时 `ask` 变 `null`（人切走了）：卡显示「这个窗口已经离开」，2 秒后收起。
+  - 做完一件事，红点灭，面板 2 秒后收起。没登录时页面显示登录。
+- 鼠标移开 800ms（可配）后面板收起。
+- 面板开着时 `ask` 变 `null`（人切走了）：卡显示「这个窗口已经离开」，2 秒后收起。
 - `assign` 返回 `409`（`seq` 已变）：重新取 `live-ask`，块还在就用新 `seq` 重试一次，否则收起。
 - 红点轮询连续 3 轮失败（含令牌失效）熄灭，之前保持原状。
-- 「关掉」= 退出程序。
-- 程序形态（Electron / Tauri / 其他）在实现前定：先写与形态无关的 `float-core`，形态定了再加壳；`/hive/mini` 本身是普通网页，浏览器里也能开。
+- 红点、轮询、收起计时这些逻辑写在与 Electron 无关的 `modules/desktop-pet/float-core.js`（纯函数，可单测）；`/hive/mini` 是普通网页，浏览器里也能开。
 
 ## 五、本版不做（有意的）
 
@@ -140,3 +151,4 @@ dsh-pet（<https://github.com/PC2005-cloud/dsh-pet>）独立模式：本机 HTTP
 | 2026-11-07 | v1 草案 | 首版，待仓主批准 |
 | 2026-11-07 | v1 草案二 | 改用 dsh-pet 工作状态接口；素材随包附带并写明许可；宠物包与对照；浮窗独立模块 |
 | 2026-11-07 | v1 草案三 | 按 TDD 澄清（G-01–G-30）补齐边界；手动计时改为先计时后拖放 |
+| 2026-11-07 | v1 | 仓主批准；桌宠改为自己的 Electron 程序 `modules/desktop-pet`，宠物与浮窗同窗；素材 ai-pet-7in1 全套、自动下载、不进仓库 |

@@ -635,6 +635,11 @@ Authorization: Bearer <deviceToken>
 - 离开本机的只有：类名、`clientKey`（哈希）、脱敏后的显示名、相位、时刻、结束状态。`detail`、文件路径、会话内容都不上传。
 - Codex 的实现取舍：读 `~/.codex/sessions` 下最近 12 小时内改过的那份会话记录（JSONL，只看事件类型，不读内容），不读数据库。
 
+## 记录 `folder` 与桌宠桥接（v0.6 追加，规范在契约里）
+
+- 上传记录追加 `folder`（upload v1.5）：`contracts/onboarding.v1`「二·2」。
+- 桌宠桥接（配置 `pet`、PetEvent、http / dsh-pet 两种美术实现）：`contracts/desktop.pet.v1`「一」「二」。
+
 ## 变更记录
 
 | 日期 | 变更 |

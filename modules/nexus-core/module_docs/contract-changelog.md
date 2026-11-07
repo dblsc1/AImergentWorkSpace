@@ -93,3 +93,4 @@
 | 2026-10-26 | MCP v0.4.3 新读工具 `Get_Blocks_Match_History` 的后端 | v2.41（追加式）：`GET activity/windows/history?app=&title=|titleContains=&days=`（窗口以前被收进哪些块，第一级）。见「v0.4.3：窗口历史」节。 |
 | 2026-10-27 | 仓主批准 v0.5：置信度与高置信度阈值 | v2.42（追加式）：提议带 `confidencePercent`（0–100，可省）；账号设置追加 `highConfidenceThresholdPercent`（缺省 80，PUT 省了保留原值） |
 | 2026-10-27 | 仓主批准 v0.5：本机上报算已核实；Agent 运行翻页、按指令切段、等权限算交回 | v2.43（追加式）：`X-Nexus-Same-Host` 下的匿名上报 `unverified: false`；`views/history` `runsCursor` / `nextRunsCursor`、`runs[].turns`、`handoffs[].reason` |
+| 2026-11-07 | 仓主批准 v0.6：新手引导、蜂巢新布局、桌宠 | v2.44（追加式）：见「v0.6：新手引导、实时询问、补记、代理去向、无项目计时」节；规范在 `contracts/onboarding.v1`、`contracts/hive.stage.v1`、`contracts/desktop.pet.v1` |

@@ -1,6 +1,6 @@
 # hive.stage.v1 —— 蜂巢新布局：左边代理，右边人
 
-> **状态**：v1 草案，待仓主批准。中文名「蜂巢新布局」。批准后只增不改不删；不兼容的改动发 `hive.stage.v2`。
+> **状态**：v1，仓主 2026-11-07 批准。中文名「蜂巢新布局」。批准后只增不改不删；不兼容的改动发 `hive.stage.v2`。
 >
 > - 提供方：`modules/hive`（页面）；`modules/nexus-core` v2.44（「三」「四」的端点）。
 > - 依赖：`onboarding.v1`（显示名、未分类、补记）、`desktop.pet.v1`「三」（宠物包）、`agent.lane.v1`、nexus-core v2.16 `focus`、v2.17 `attend`。
@@ -49,7 +49,7 @@ provides:
 3. **干活的宠物**：此刻在跑、挂了任务或项目的运行，每条一只，停在它项目格子的边上，播 `working` / `waiting` / `idle` 动作（`desktop.pet.v1`「一」的 mood）。
    - 动作由运行的 `phase` 定：`working` → `working`，`waiting_input` / `waiting_permission` → `waiting`，`idle`、`error`、失联 → `idle`。
    - 至多 4 只，按最近活动时间（`views/lanes` 的 `agents[].lastSeenAt`，为 `null` 取 `startAt`）从新到旧取，并列按 `runId` 升序；其余在蜂巢边显示一个 `+N`。
-   - 用哪个宠物包：按运行的 `tool` 查「宠物包对照」（`desktop.pet.v1`「三」）；查不到用缺省包 `dsh`。
+   - 用哪个宠物包：按运行的 `tool` 查「宠物包对照」（`desktop.pet.v1`「三」）；查不到用 `*` 对应的包（缺省 `deepseek`）。
    - 只显示宠物与名牌（`label` 或 `agent`）；明细在点开格子后看。
 4. **左上角：没有去向的代理**：此刻在跑、`taskId` 与 `projectId` 都没有的运行，每条一只，在左上角区域慢慢随机走动；最多 4 只，多的显示 `+N`。
    走动由可注入的随机源与时钟驱动；位置始终在左上角区域内，每步位移 ≤ 速度 × 时间。
@@ -123,3 +123,4 @@ provides:
 |---|---|---|
 | 2026-11-07 | v1 草案 | 首版，待仓主批准 |
 | 2026-11-07 | v1 草案三 | 按 TDD 澄清（G-01–G-30）补齐边界；手动计时改为先计时后拖放 |
+| 2026-11-07 | v1 | 仓主批准 |
