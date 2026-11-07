@@ -218,11 +218,9 @@ def test_empty_sections_are_hidden_and_questions_endpoint_404_is_tolerated(brows
 def test_undo_failure_is_reported_as_such(browser, base) -> None:  # noqa: F811
     with open_tiers(browser, base) as hive:
         _show(hive)
-        _swipe(hive.page, _bkey(DOC), -400)
-        _until(hive.page, lambda: hive.page.locator(".hd-toast-undo").count() == 1)
         hive.conflict["reset"] = "pending"
-        hive.page.locator(".hd-toast-undo").click()
-        _until(hive.page, lambda: hive.page.locator(".hd-toast.is-error", has_text="撤销失败：" + DOC).count() == 1)
+        hive.page.locator('.ht-hist[data-block="Nautilus"] [data-ht=undo]').click()
+        _until(hive.page, lambda: hive.page.locator(".hd-toast.is-error", has_text="撤销失败：Nautilus").count() == 1)
         assert hive.page.locator(".hd-toast", has_text="已刷新").count() == 0
 
 
@@ -264,7 +262,7 @@ def test_rule_cards_button_and_swipe_use_the_five_second_undo(browser, base) -> 
         _show(hive)
         hive.page.locator('.hd-card[data-key="w1"]').get_by_role("button", name="批准").click()
         assert hive.page.locator(".hd-toast").inner_text().startswith("已批准：")
-        assert hive.page.locator(".hb-head .hb-cnt").nth(2).inner_text() == "1" and hive.page.locator(".hd-badge").inner_text() == "6"
+        assert hive.page.locator(".hb-head .hb-cnt").nth(2).inner_text() == "1" and hive.page.locator(".hd-badge").inner_text() == "3"
         hive.page.clock.run_for(4900)
         assert hive.writes == [], "5 秒前不发"
         hive.page.clock.run_for(200)
@@ -341,7 +339,7 @@ def test_answer_option_records_and_removes_card(browser, base) -> None:  # noqa:
         assert _posts(hive, "activity/questions/aq_1/answer")[0][1] == {"option": 0}
         _until(hive.page, lambda: hive.page.locator(".hd-toast", has_text="已记到 钢琴 - 钢琴的任务").count() == 1)
         _until(hive.page, lambda: _q(hive).count() == 0)
-        assert hive.page.locator("section[data-sec=q]").count() == 0 and hive.page.locator(".hd-badge").inner_text() == "6"
+        assert hive.page.locator("section[data-sec=q]").count() == 0 and hive.page.locator(".hd-badge").inner_text() == "3"
 
 
 def test_answer_without_target_says_answered(browser, base) -> None:  # noqa: F811
@@ -358,7 +356,7 @@ def test_answer_error_shows_detail_and_keeps_card(browser, base) -> None:  # noq
         _show(hive)
         _q(hive).locator(".ht-opt").nth(0).click()
         _until(hive.page, lambda: hive.page.locator(".hd-toast", has_text="目标任务已删除").count() == 1)
-        assert _q(hive).count() == 1 and hive.page.locator(".hd-badge").inner_text() == "7"
+        assert _q(hive).count() == 1 and hive.page.locator(".hd-badge").inner_text() == "4"
         hive.answer_fail = None    # 还能再点
         _q(hive).locator(".ht-opt").nth(0).click()
         _until(hive.page, lambda: _q(hive).count() == 0)
@@ -471,7 +469,7 @@ SESSION = {"id": "ns_1", "kind": "sessionChange", "status": "pending", "eventId"
 def test_session_change_card_approve_and_correct(browser, base) -> None:  # noqa: F811
     with open_tiers(browser, base, props={**PROPS, "sessionChanges": [SESSION]}) as hive:
         _show(hive)
-        assert hive.page.locator(".hb-head .hb-cnt").all_inner_texts() == ["1", "2", "2", "3"]
+        assert hive.page.locator(".hb-head .hb-cnt").all_inner_texts() == ["1", "2", "2"]
         c = hive.page.locator('.hd-card[data-key="ns_1"]')
         t = c.inner_text()
         assert "更改" in t and "改挂到 钢琴的任务 任务" in t and "42 分钟" in t and _hhmm(hive, SESSION["startAt"]) in t and "其实在练琴" in t
