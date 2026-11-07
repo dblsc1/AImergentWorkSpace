@@ -47,16 +47,33 @@ func TestFolderFor(t *testing.T) {
 	}
 	for _, c := range cases {
 		r := newRedactor(Config{Privacy: c.p})
-		if got := r.folderFor(c.app, "~/garden"); got != c.want {
+		if got := r.folderFor(c.app, "~/garden", "garden"); got != c.want {
 			t.Errorf("%s: folderFor = %q, want %q", c.name, got, c.want)
 		}
 	}
 	// 默认终端名单里的每个程序都按终端处理。
 	r := newRedactor(Config{})
 	for _, app := range defaultTabApps {
-		if got := r.folderFor(app, "~/garden"); got != "garden" {
+		if got := r.folderFor(app, "~/garden", "garden"); got != "garden" {
 			t.Errorf("%s: folderFor = %q", app, got)
 		}
+	}
+}
+
+// 发出的标题是空的（只发程序名 appOnly、titles drop 等）或程序是浏览器：不给 folder；
+// 家目录本身（/home/<用户名>）按 usernames 选项换成代号，不发真用户名。
+func TestFolderForPrivacyGates(t *testing.T) {
+	r := newRedactor(Config{})
+	if got := r.folderFor("ptyxis", "~/garden", ""); got != "" {
+		t.Errorf("empty sent title: folder = %q", got)
+	}
+	for _, b := range defaultBrowsers {
+		if got := r.folderFor(b, "~/garden", "x"); got != "" {
+			t.Errorf("browser %s: folder = %q", b, got)
+		}
+	}
+	if got := r.folderFor("ptyxis", "/home/alice", "x"); got == "alice" {
+		t.Errorf("home dir leaked username: %q", got)
 	}
 }
 

@@ -31,11 +31,13 @@ func folderOf(title string) string {
 	return last
 }
 
-// folderFor：上传记录的 folder（契约「二·2」）。程序不在终端名单，或隐私选项会把文件名也去掉
-// （paths off、titles drop / pseudonymize）时不给。raw 是脱敏前的标题。
-func (r redactor) folderFor(app, raw string) string {
-	if !r.terminals[normApp(app)] || r.p.Paths == "off" || r.p.Titles == "drop" || r.p.Titles == "pseudonymize" {
+// folderFor：上传记录的 folder（契约「二·2」）。程序不在终端名单、是浏览器，隐私选项会把文件名也去掉
+// （paths off、titles drop / pseudonymize），或这条记录实际发出的标题是空的（如只发程序名）时不给。
+// raw 是脱敏前的标题；取目录名前先过用户名 / 主机名代号（同标题的 pii 处理）。
+func (r redactor) folderFor(app, raw, sent string) string {
+	a := normApp(app)
+	if !r.terminals[a] || r.browsers[a] || sent == "" || r.p.Paths == "off" || r.p.Titles == "drop" || r.p.Titles == "pseudonymize" {
 		return ""
 	}
-	return folderOf(raw)
+	return folderOf(r.pii(raw))
 }

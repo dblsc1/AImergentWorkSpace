@@ -190,10 +190,10 @@ func recordsRound(cfg Config, st *State, now time.Time, data awData, rules func(
 				StartAt: isoMs(r.Start), EndAt: isoMs(r.End),
 				App: scrubSecrets(r.App), Title: scrubSecrets(sent[k+i]), Block: blockFor(rs, r.App, r.Title),
 				TitleIsPseudonym: cfg.Privacy.Titles == "pseudonymize" && r.Title != "",
-				Folder:           rd.folderFor(r.App, r.Raw),
+				Folder:           rd.folderFor(r.App, r.Raw, sent[k+i]),
 			}
 			body.Records = append(body.Records, u)
-			arch.Records = append(arch.Records, archiveRaw{u.StartAt, u.EndAt, u.App, u.Title, u.Block})
+			arch.Records = append(arch.Records, archiveRaw{u.StartAt, u.EndAt, u.App, u.Title, u.Block, u.Folder})
 		}
 		b, _ := json.Marshal(body)
 		resp, code, err := postJSON(c, cfg.DeviceToken, base+"/api/core/activity/records", b)
