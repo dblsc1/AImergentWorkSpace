@@ -467,7 +467,7 @@ def test_same_host_trusts_only_loopback_and_exact_default_gateway(tmp_path):
     assert "127.0.0.0/8 1;" in geo and "172." not in geo
 
 
-def test_pets_download_is_one_shot_pinned_and_web_does_not_wait_for_it(out):
+def test_pets_download_is_one_shot_and_web_does_not_wait_for_it(out):
     """desktop.pet.v1「三·2」：一次性下载器，三份 compose 一致；素材只进命名卷，web 不依赖它。"""
     _, gen, _ = out
     hand = yaml.safe_load((install.ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8"))
