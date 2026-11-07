@@ -4899,6 +4899,18 @@ MCP 侧见 `contracts/mcp.tools.v2`。
 - **Agent 交回给人**：`handoffs[]` 里 `type: "agent_to_human"` 追加字段 `reason`：`"input"`（等人回答，原有的 `waiting_input`）或 `"permission"`（等人批权限，`waiting_permission` 相位开始时，新增）。`waitedSeconds` 口径同原有。
 - 单人部署读路径不变：`unverified` 的运行照旧只在泳道里。
 
+## v0.6：新手引导、实时询问、补记、代理去向、无项目计时（v2.44，追加式）
+
+规范全文在三份契约里，本节只列 nexus-core 要提供什么；与契约不一致时以契约为准。
+
+- `contracts/onboarding.v1`：块的 `displayName` / `legible` / `kind`（一个函数算，`activity/blocks`、`views/current.focus` 都带）；原始记录追加 `folder`；终端记录连代理运行（`agentRunId`、`keySource: "agent"`）；
+  `GET activity/live-ask`、`POST activity/live-ask/answer`、集合 `activity_asked`；`GET activity/unclassified/candidates`、`POST activity/blocks/claim`、`POST activity/blocks/claim/undo`；
+  `activity/settings` 追加 `liveAskMinutes`、`liveAskEnabled`、`browserDomains`（网页分类规则）、`onboardingDoneAt`、`pet`；`POST activity/onboarding/done`；新装缺省。
+- `contracts/hive.stage.v1`：`POST agents/{runId}/place`、`GET agents/place-rules`、`DELETE agents/place-rules/{agent}`、集合 `agent_place_rules`、`agents/start` 查表；
+  无项目计时 `POST timer/start-unplaced`、`POST timer/place`、`GET timer/unplaced`、`POST timer/unplaced/{id}/place`、集合 `timer_unplaced`，`timer/stop` 追加 `unplacedId`；预留 `agents/{runId}/usage`（本版不实现）。
+- `contracts/desktop.pet.v1`：只读既有 `views/current` 与 `live-ask`，nexus-core 不新增别的。
+- 新集合 `activity_asked`、`agent_place_rules`、`timer_unplaced` 进导出 / 恢复。
+
 ## 变更记录
 
 见 `module_docs/contract-changelog.md`（从本文件拆出，只记历史不含规范）。
