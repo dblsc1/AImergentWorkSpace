@@ -485,13 +485,21 @@
       return '<div class="st-agrow"><b>' + esc(r.label || r.agent) + '</b><span class="st-d">' + dur(workingSeconds(r, now)) +
         '</span><span class="st-st is-' + mood + '">' + STATUS_TEXT[mood] + "</span></div>";
     }).join("");
-    $("stPanel").innerHTML = '<div class="st-hd"><h2>' + esc(projectName(pid)) + '</h2><button type="button" class="st-x" aria-label="关闭">✕</button></div>' +
+    $("stPanel").innerHTML = '<div class="st-hd"><h2>' + esc(projectName(pid)) + '</h2><button type="button" class="st-expand">展开</button><button type="button" class="st-x" aria-label="关闭">✕</button></div>' +
       '<div class="st-cols"><div class="st-col-human"><h3>你</h3>' +
       '<div class="st-kind" data-kind="timer"><div class="st-row"><b>计时</b><span>' + dur(timer.total) + '</span></div><div class="st-track">' + timer.html + "</div>" + axis + "</div>" +
       '<div class="st-kind" data-kind="attend"><div class="st-row"><b>对话</b><span>' + dur(talk.total) + '</span></div><div class="st-track">' + talk.html + "</div>" + axis + "</div></div>" +
       '<div class="st-col-agent"><h3>代理</h3>' + rows + '<div class="st-token"><b>token 花费</b><span>—</span></div></div></div>';
   }
-  $("stPanel").addEventListener("click", function (ev) { if (ev.target.closest(".st-x")) closePanel(); });
+  $("stPanel").addEventListener("click", function (ev) {
+    if (ev.target.closest(".st-x")) closePanel();
+    else if (ev.target.closest(".st-expand")) {   // 老的格子展开（新建任务、改任务都在里面）
+      var pid = panelPid, App = window.NexusTableHexApp;
+      ev.stopPropagation();   // 不让 hex-app 的「点空白处收起」把刚展开的格子当场收掉
+      closePanel();
+      if (App && pid) App.expand(pid);
+    }
+  });
   $("stVeil").addEventListener("pointerdown", function (ev) { if (ev.target === $("stVeil")) closePanel(); });
   document.addEventListener("keydown", function (ev) { if (ev.key === "Escape" && panelPid) closePanel(); });
   // 点格子 = 完成记录（拦在老的「展开格子」之前；占位格与已展开的格子不拦）

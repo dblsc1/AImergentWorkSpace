@@ -527,3 +527,11 @@ def test_tiers_off_reads_no_blocks_and_no_extra_settings(browser, base) -> None:
         st.poll()
         assert "activity/blocks" not in st.api and st.api.count("activity/settings") == 1   # 那一次是决策栏自己的
         assert st.page.locator("#stBucketLabel").inner_text() == "未分类 · 今天 0 分"
+
+
+def test_panel_expand_button_closes_it_and_expands_the_cell(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, setup=_busy_day) as st:
+        st.page.click(CELL.format("p_math"))
+        st.page.click(".st-expand")
+        assert not st.page.locator("#stVeil").is_visible()
+        st.page.wait_for_selector(".hex-cell.is-expanded[data-project-id=p_math]")

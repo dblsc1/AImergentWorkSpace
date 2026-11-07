@@ -92,6 +92,7 @@ body.stage-on .hex-cell:not(.is-expanded) .hex-close { display: none !important;
 .st-panel { width: min(920px, 94vw); max-height: 80vh; overflow: auto; padding: 22px 24px; }
 .st-hd { display: flex; align-items: center; margin-bottom: 14px; }
 .st-hd h2 { margin: 0; font-size: var(--fs-h2); flex: 1; }
+.st-expand { height: 32px; padding: 0 14px; margin-right: 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel-2); color: var(--ink); cursor: pointer; font: inherit; font-size: var(--fs-sub); }
 .st-x { width: 32px; height: 32px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel-2); color: var(--ink); cursor: pointer; font-size: 16px; }
 .st-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
 .st-panel h3 { margin: 0 0 10px; font-size: var(--fs-sub); color: var(--ink-2); }
