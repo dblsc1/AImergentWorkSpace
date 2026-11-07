@@ -1,7 +1,8 @@
 #!/bin/sh
 # HoneyComb 连接脚本（Linux / macOS）。不下载、不安装任何程序本体。
 #
-#   HONEYCOMB_SERVER=http://127.0.0.1:8800 HONEYCOMB_DEVICE_TOKEN=... sh honeycomb-connect.sh
+#   sh honeycomb-connect.sh                      （交互输入服务器地址与设备令牌，令牌不回显）
+#   read -rs HONEYCOMB_DEVICE_TOKEN; export HONEYCOMB_DEVICE_TOKEN; sh honeycomb-connect.sh   （不要把令牌写在命令前，会进 shell 历史）
 #   sh honeycomb-connect.sh --uninstall
 #
 # 做三件事（可重复跑）：
@@ -47,7 +48,7 @@ for(const x of k.slice(0,-1)){
 const l=k[k.length-1];
 if(op==="set")c[l]=process.env.HC_VAL;else delete c[l];
 if(op==="unset"&&k.length>1&&Object.keys(c).length===0)delete o[k[0]];
-fs.writeFileSync(f,JSON.stringify(o,null,2)+"\n",{mode:0o600});
+fs.writeFileSync(f,JSON.stringify(o,null,2)+"\n",{mode:0o600});fs.chmodSync(f,0o600);
 '
 PY_JSON='
 import json,os,sys
@@ -62,9 +63,8 @@ for x in k[:-1]:
 if op=="set": c[k[-1]]=os.environ["HC_VAL"]
 else: c.pop(k[-1],None)
 if op=="unset" and len(k)>1 and not c: o.pop(k[0],None)
-new=os.path.exists(f)==False
 open(f,"w",encoding="utf-8").write(json.dumps(o,indent=2,ensure_ascii=False)+"\n")
-if new: os.chmod(f,0o600)
+os.chmod(f,0o600)
 '
 if command -v node >/dev/null 2>&1; then JSON_TOOL=node
 elif command -v python3 >/dev/null 2>&1; then JSON_TOOL=python3
@@ -80,7 +80,7 @@ json_edit() {
 bash_block() {
   cat <<'B'
 # >>> honeycomb terminal title >>>
-__hc_title() { __d=$PWD; case $__d in "$HOME"|"$HOME"/*) __d="~${__d#"$HOME"}";; esac; printf '\033]0;%s\007' "$__d"; }
+__hc_title() { __d=$PWD; case $__d in "$HOME"|"$HOME"/*) __d="~${__d#"$HOME"}";; esac; __d=${__d//[[:cntrl:]]/}; printf '\033]0;%s\007' "$__d"; }
 case "${PROMPT_COMMAND:-}" in *__hc_title*) ;; *) PROMPT_COMMAND="${PROMPT_COMMAND%;}${PROMPT_COMMAND:+;}__hc_title";; esac
 # <<< honeycomb terminal title <<<
 B
@@ -88,7 +88,7 @@ B
 zsh_block() {
   cat <<'B'
 # >>> honeycomb terminal title >>>
-__hc_title() { local d=$PWD; case $d in $HOME|$HOME/*) d="~${d#$HOME}";; esac; printf '\033]0;%s\007' "$d"; }
+__hc_title() { local d=$PWD; case $d in $HOME|$HOME/*) d="~${d#$HOME}";; esac; d=${d//[[:cntrl:]]/}; printf '\033]0;%s\007' "$d"; }
 (( ${precmd_functions[(I)__hc_title]} )) || precmd_functions+=(__hc_title)
 # <<< honeycomb terminal title <<<
 B
@@ -160,13 +160,14 @@ pet_config_step() {
   fi
   tok=${HONEYCOMB_DEVICE_TOKEN:-}
   if [ -z "$tok" ] && have_tty; then
-    printf '设备令牌（不回显）：' >/dev/tty; stty -echo </dev/tty; IFS= read -r tok </dev/tty || true; stty echo </dev/tty; echo >/dev/tty
+    printf '设备令牌（不回显）：' >/dev/tty; trap 'stty echo </dev/tty; exit 130' INT TERM HUP
+    stty -echo </dev/tty; IFS= read -r tok </dev/tty || true; stty echo </dev/tty; trap - INT TERM HUP; echo >/dev/tty
   fi
   [ -n "$tok" ] || { say "[跳过] 桌宠 config.json：没有设备令牌（设 HONEYCOMB_DEVICE_TOKEN 或在终端里跑）"; return 0; }
   srv=${HONEYCOMB_SERVER:-}
   if [ -z "$srv" ] && have_tty; then printf '服务器地址 [http://127.0.0.1:8800]：' >/dev/tty; IFS= read -r srv </dev/tty || true; fi
   srv=${srv:-http://127.0.0.1:8800}
-  mkdir -p "$PET_DIR"
+  (umask 077; mkdir -p "$PET_DIR")
   if (umask 077; HC_VAL=$srv json_edit set "$PET_CFG" server && HC_VAL=$tok json_edit set "$PET_CFG" deviceToken); then
     say "桌宠 config.json：已写入 $PET_CFG（server、deviceToken）"
   else say "[跳过] $PET_CFG 不是合法 JSON，没改"; fi

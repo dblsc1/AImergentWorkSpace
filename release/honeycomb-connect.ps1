@@ -1,7 +1,7 @@
 ﻿# HoneyComb 连接脚本（Windows）。不下载、不安装任何程序本体。
 #
-#   $env:HONEYCOMB_SERVER = 'http://127.0.0.1:8800'; $env:HONEYCOMB_DEVICE_TOKEN = '...'
-#   powershell -ExecutionPolicy Bypass -File .\honeycomb-connect.ps1
+#   powershell -ExecutionPolicy Bypass -File .\honeycomb-connect.ps1      （交互输入服务器地址与设备令牌，令牌不回显）
+#   令牌也可先放进环境变量 HONEYCOMB_DEVICE_TOKEN（用 Read-Host -AsSecureString 取，别把令牌直接敲在命令行里，会进历史）
 #   powershell -ExecutionPolicy Bypass -File .\honeycomb-connect.ps1 -Uninstall
 #
 # 本文件带 UTF-8 BOM：Windows PowerShell 5.1 读无 BOM 的文件会按系统代码页（GBK）解，
@@ -33,6 +33,7 @@ if (-not (Test-Path Function:\__hc_orig_prompt)) { Copy-Item Function:\prompt Fu
 function global:prompt {
   $p = $PWD.Path
   if ($p -eq $HOME -or $p.StartsWith($HOME + [IO.Path]::DirectorySeparatorChar)) { $p = '~' + $p.Substring($HOME.Length) }
+  $p = -join ($p.ToCharArray() | Where-Object { [int]$_ -gt 31 -and [int]$_ -ne 127 })
   $Host.UI.RawUI.WindowTitle = $p
   & __hc_orig_prompt
 }
@@ -51,10 +52,11 @@ function Read-Text($path) {
 
 # ---- 1. 终端标题 ----
 function Set-TitleBlock {
+  if ($Uninstall -and -not (Test-Path $ProfilePath)) { return }
   $dir = Split-Path -Parent $ProfilePath
   if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
   $r = Read-Text $ProfilePath
-  $lines = @(); if ($r.Text -ne '') { $lines = $r.Text -split "`r?`n"; if ($lines[-1] -eq '') { $lines = $lines[0..($lines.Count - 2)] } }
+  $lines = @(); if ($r.Text -ne '') { $lines = $r.Text -split "`r?`n"; if ($lines.Count -gt 0 -and $lines[-1] -eq '') { $lines = @($lines | Select-Object -First ($lines.Count - 1)) } }
   $hasStart = $lines -contains $Start; $hasEnd = $lines -contains $End
   if ($hasStart -and -not $hasEnd) { Write-Host "[跳过] $ProfilePath 里有开始标记没有结束标记，不敢动，请手工处理"; return }
   $out = New-Object System.Collections.Generic.List[string]

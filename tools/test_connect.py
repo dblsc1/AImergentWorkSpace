@@ -47,6 +47,7 @@ def env(request, tmp_path):
     pet.mkdir()
     (home / ".bashrc").write_text(BASHRC)
     (det / "ai-detector.json").write_text(json.dumps(DET_CFG, indent=2) + "\n")
+    (det / "ai-detector.json").chmod(0o644)
     (pet / "pet-token").write_text("pettok123\n")
     (pet / "config.json").write_text(json.dumps({"pet": "claude", "size": 280}, indent=2) + "\n")
     path = str(_tools_dir(tmp_path, BASE_TOOLS + [request.param]))
@@ -76,6 +77,9 @@ def test_connect_and_uninstall(env):
     c = json.loads((pet / "config.json").read_text())
     assert c == {"pet": "claude", "size": 280, "server": "http://hc.example:8800", "deviceToken": TOKEN}
 
+    for f in (det / "ai-detector.json", pet / "config.json"):
+        assert f.stat().st_mode & 0o777 == 0o600, f
+
     before = {p: p.read_text() for p in (home / ".bashrc", det / "ai-detector.json", pet / "config.json")}
     assert run(e).returncode == 0
     assert {p: p.read_text() for p in before} == before  # 第二次：一字不差
@@ -96,6 +100,25 @@ def test_bash_title_runs_and_keeps_prompt_command(env):
     assert "\033]0;~/proj\007" in r.stdout
     assert "orig" in r.stdout
     assert "PC=echo orig;__hc_title" in r.stdout
+
+
+def test_title_strips_control_chars(env):
+    e, home, *_ = env
+    run(e)
+    (home / "a\x1bb").mkdir()
+    script = 'cd "$HOME/a"$\'\\033\'"b"; . "$HOME/.bashrc"; eval "$PROMPT_COMMAND"'
+    r = subprocess.run(["bash", "--norc", "-c", script], env=e, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.endswith("\033]0;~/ab\007") and r.stdout.count("\033") == 1
+
+
+def test_new_pet_dir_private(env):
+    e, _, _, pet = env
+    shutil.rmtree(pet)
+    e["HONEYCOMB_PET_HOME"] = str(pet / "sub")
+    run(e)
+    assert (pet / "sub").stat().st_mode & 0o777 == 0o700
+    assert (pet / "sub" / "config.json").stat().st_mode & 0o777 == 0o600
 
 
 def test_no_rc_creates_by_shell(env):
