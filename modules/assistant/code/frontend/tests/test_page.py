@@ -13,9 +13,8 @@ def test_sections_in_order_and_review_links(browser, static_base_url):
         ids = page.eval_on_selector_all("main > section", "ss => ss.map(s => s.id)")
         assert ids == ["report-panel", "newitems-panel", "chat-panel", "rules-draft-panel", "suggest-panel", "unclassified-panel", "tokens-panel", "review-panel"]
         assert page.title() == "待批准"
-        assert page.get_attribute("#review-lanes", "href") == "../ring/#lanes-panel"
         assert page.get_attribute("#review-hive", "href") == "../hive/"
-        assert page.is_visible("#review-lanes") and page.is_visible("#review-hive")
+        assert page.is_visible("#review-hive")
         # 自动记录的东西不在这一页（在「自动记录」页）；草稿卡片没有草稿时是藏着的
         for gone in ("#settings-panel", "#det-form", "#det-health", "#det-restart", "#det-incidents", "#det-startlog",
                      "#det-rules", "#rules-list", "#rules-aidirect", "#rules-revert", "#auto-panel"):
@@ -38,11 +37,10 @@ def test_everything_404_leaves_a_quiet_page(browser, static_base_url):
 
 
 def test_review_link_hidden_when_page_not_installed(browser, static_base_url):
-    nav = {"home": "/", "timer": None, "tabs": [{"href": "/hive/", "label": "任务"},
-                                                  {"href": "/assistant/", "label": "待批准"}]}
+    nav = {"home": "/", "timer": None, "tabs": [{"href": "/assistant/", "label": "待批准"}]}
     init = f"window.HONEYCOMB_BASE='/';window.HONEYCOMB_NAV={json.dumps(nav)};"
     with open_page(browser, static_base_url, init=init) as page:
-        assert page.is_hidden("#review-lanes") and page.is_visible("#review-hive")
+        assert page.is_hidden("#review-hive")
 
 
 def test_auto_page_renders_its_blocks_and_links_back(browser, static_base_url):
