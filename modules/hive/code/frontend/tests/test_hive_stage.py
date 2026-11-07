@@ -126,14 +126,14 @@ class Stage:
 
 @contextlib.contextmanager
 def open_stage(browser: Browser, base: str, *, width: int = 1280, height: int = 900, setup: Any = None,
-               pets: dict[str, Any] | None = None, tiers: bool = True) -> Iterator[Stage]:
+               pets: dict[str, Any] | None = None, tiers: bool = True, hold_webm: bool = False) -> Iterator[Stage]:
     context = browser.new_context(viewport={"width": width, "height": height}, timezone_id="Asia/Shanghai")
     page = context.new_page()
     page.clock.install()
     st = Stage(page)
     st.set_lanes()
     page.route("**/api/core/**", st.route)
-    page.route("**/hive/pets/**", lambda r: (
+    page.route("**/hive/pets/**", lambda r: None if hold_webm and r.request.url.endswith(".webm") else (      # hold_webm：视频请求挂着不答，页面不会因 404 退回占位
         r.fulfill(status=200, content_type="application/json", body=json.dumps(pets[r.request.url.split("/hive/pets/")[1].split("/")[0]]))
         if pets and r.request.url.split("/hive/pets/")[1].split("/")[0] in pets and r.request.url.endswith("pack.json")
         else r.fulfill(status=404, body="")))
@@ -258,7 +258,8 @@ def test_drop_on_blank_sends_nothing_and_pet_returns(browser, base) -> None:  # 
         st.page.wait_for_timeout(300)
         after = st.box(pet)
         assert st.page.locator(pet).evaluate("e => e.style.translate") == ""
-        assert abs(after["x"] - before["x"]) < 20 and abs(after["y"] - before["y"]) < 20      # 回原位（走动每秒 ≤ 18px）
+        assert after["x"] > 300 and after["x"] < 640 and after["y"] < 450      # 从落点（夹进左上角区域）接着走动，不回原位
+        assert abs(after["x"] - before["x"]) > 20 or abs(after["y"] - before["y"]) > 20
 
 
 def test_failed_drop_returns_the_pet_and_says_why(browser, base) -> None:  # noqa: F811  HV-S18
@@ -535,3 +536,74 @@ def test_panel_expand_button_closes_it_and_expands_the_cell(browser, base) -> No
         st.page.click(".st-expand")
         assert not st.page.locator("#stVeil").is_visible()
         st.page.wait_for_selector(".hex-cell.is-expanded[data-project-id=p_math]")
+
+
+TOUCH_PACK = {"kind": "claude", "name": "Claude", "license": "x", "credits": "x", "source": "x",
+              "moods": {"working": ["w.webm"], "waiting": ["wait.webm"], "idle": ["i.webm"], "click": ["c1.webm", "c2.webm"],
+                        "drag": ["d.webm"], "walk": ["k.webm"]}}
+PET = ".st-pet.is-work"
+PET_ART = PET + " video.st-art"
+
+
+def _one_worker(st: Stage) -> None:
+    now = st.now().astimezone(TZ)
+    st.set_lanes(agents=[_run("r1", "claude-code", label="g", projectId="p_math", startAt=_iso(now), lastSeenAt=_iso(now),
+                              phases=[{"at": _iso(now), "phase": "working", "detail": None}])])
+
+
+def _src(st: Stage) -> str:
+    return st.page.locator(PET_ART).get_attribute("src") or ""
+
+
+def test_click_a_pet_plays_a_click_clip_once_with_a_squash_then_returns(browser, base) -> None:  # noqa: F811  hive.stage.v1「二」7
+    with open_stage(browser, base, setup=_one_worker, pets={"claude": TOUCH_PACK}, hold_webm=True) as st:
+        st.page.clock.run_for(600)
+        assert _src(st).endswith("/claude/w.webm")
+        x, y = st.center(PET + " .st-media")
+        st.page.mouse.click(x, y)
+        assert _src(st).split("/")[-1] in ("c1.webm", "c2.webm")
+        assert st.page.locator(PET_ART).get_attribute("loop") is None
+        assert st.page.locator(PET).evaluate("e => e.classList.contains('st-squash')")
+        st.page.clock.run_for(400)
+        assert not st.page.locator(PET).evaluate("e => e.classList.contains('st-squash')")
+        assert _src(st).split("/")[-1] in ("c1.webm", "c2.webm")      # 压扁完了，片子还在播；轮询重画也不换掉它
+        st.page.clock.run_for(6000)
+        assert _src(st).split("/")[-1] in ("c1.webm", "c2.webm")
+        st.page.locator(PET_ART).dispatch_event("ended")
+        assert _src(st).endswith("/claude/w.webm")
+        assert st.posts == []
+
+
+def test_drag_a_cell_pet_away_it_waits_three_seconds_then_walks_home_without_writing(browser, base) -> None:  # noqa: F811  hive.stage.v1「二」7
+    with open_stage(browser, base, setup=_one_worker, pets={"claude": TOUCH_PACK}, hold_webm=True) as st:
+        st.page.clock.run_for(600)
+        home = st.box(PET + " .st-media")
+        st.drag(PET + " .st-media", (900, 120), release=False)
+        assert _src(st).endswith("/claude/d.webm")
+        assert st.page.locator(PET_ART).get_attribute("loop") is not None
+        st.page.clock.run_for(1000)      # 拖着的时候轮询不把它拉回去
+        assert abs(st.box(PET + " .st-media")["x"] - 900) < 30
+        st.page.mouse.up()
+        st.page.clock.run_for(1500)
+        away = st.box(PET + " .st-media")
+        assert abs(away["x"] - 900) < 30 and _src(st).endswith("/claude/w.webm")
+        st.page.clock.run_for(2500)      # 3 秒到了：换走路的片、开始动
+        assert _src(st).endswith("/claude/k.webm")
+        assert st.box(PET + " .st-media")["x"] < away["x"] - 5
+        assert st.page.locator(PET).evaluate("e => e.classList.contains('flip')") is False    # 往左走 = 不翻转
+        st.page.clock.run_for(9000)
+        back = st.box(PET + " .st-media")
+        assert abs(back["x"] - home["x"]) < 3 and abs(back["y"] - home["y"]) < 3
+        assert _src(st).endswith("/claude/w.webm")
+        assert st.posts == [] and not any("/place" in u for u in st.requests)
+
+
+def test_esc_cancels_a_pet_drag_and_it_walks_home_at_once(browser, base) -> None:  # noqa: F811  hive.stage.v1「二」7
+    with open_stage(browser, base, setup=_one_worker, pets={"claude": TOUCH_PACK}, hold_webm=True) as st:
+        st.page.clock.run_for(600)
+        st.drag(PET + " .st-media", (900, 120), release=False)
+        st.page.keyboard.press("Escape")
+        st.page.clock.run_for(500)
+        assert _src(st).endswith("/claude/k.webm")
+        st.page.clock.run_for(9000)
+        assert st.posts == []

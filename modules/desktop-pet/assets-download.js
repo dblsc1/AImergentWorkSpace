@@ -8,13 +8,14 @@ const { pipeline } = require('node:stream/promises');
 
 const DEFAULT_BASE = 'https://media.githubusercontent.com/media/Houraiji9/ai-pet-7in1';
 
-// 每个 mood 至少一段才成包；只收清单里有的文件。
+// 五个 mood 每个至少一段才成包；click / drag / walk 上游缺的段不列，可为空；只收清单里有的文件。
+const CORE_MOODS = ['working', 'idle', 'waiting', 'happy', 'worried'];
 function buildPack(kind, role, moodMap) {
   const have = new Set(role.files.map(f => f.name));
   const moods = {};
   for (const m of Object.keys(moodMap)) {
     moods[m] = moodMap[m].filter(n => have.has(n));
-    if (!moods[m].length) return null;
+    if (!moods[m].length && CORE_MOODS.includes(m)) return null;
   }
   return { kind, name: role.name, moods, license: role.license, credits: role.credits, source: role.source };
 }

@@ -122,7 +122,7 @@
 
   // ── 拖动（Pointer Events）。item() 返回 null = 不可拖，什么都不发生 ──
   function drag(handle, o) {
-    var id = null, sx = 0, sy = 0, moved = false, hot = null, item = null, sprout = null;
+    var id = null, sx = 0, sy = 0, moved = false, hot = null, item = null, sprout = null, lx = 0, ly = 0;
     var Sp = window.NexusTableHexSprout;
     function lit(c) { if (c !== hot) { if (hot) hot.classList.remove("st-hot"); hot = c; if (hot) hot.classList.add("st-hot"); } }
     handle.addEventListener("pointerdown", function (ev) {
@@ -138,10 +138,12 @@
       if (id !== ev.pointerId || !item) return;
       var dx = ev.clientX - sx, dy = ev.clientY - sy;
       if (!moved) {
-        if (Math.hypot(dx, dy) < 4) return;
+        if (Pk.pressKind(dx, dy) === "click") return;
         moved = true; dragging++; o.el.classList.add("st-dragging");
+        if (o.onGrab) o.onGrab();
       }
-      o.el.style.translate = dx / zoom() + "px " + dy / zoom() + "px";
+      lx = dx / zoom(); ly = dy / zoom();
+      o.el.style.translate = lx + "px " + ly + "px";
       lit(cellAt(ev.clientX, ev.clientY));
       if (item.kind === "block" && Sp) sprout = blankSprout(ev.clientX, ev.clientY, sprout);
     });
@@ -156,6 +158,7 @@
       if (!moved) { if (!cancel && o.onClick) o.onClick(); return; }
       var target = cancel ? null : cellAt(ev.clientX, ev.clientY);
       o.el.classList.remove("st-dragging"); dragging--;
+      if (o.onRelease) { var back = o.onRelease(target, cancel, lx, ly); if (back === "keep") return; }
       var pid = target ? target.dataset.projectId : null;
       // 拖块放在分区空白处 = 建新项目（同长按建项目的那一格与表单），建好后把块记进去
       if (!pid && grown && !cancel && Sp.openCreate({ name: item.block.displayName || "", onCreated: function (p) {
@@ -233,12 +236,89 @@
     var m = mediaFor(pet), slot = e.querySelector(".st-media");
     e.querySelector(".st-tag").textContent = pet.name;
     e.dataset.mood = pet.mood;
-    if (slot.dataset.key !== m.key) {
+    e.__pet = pet;
+    if (!slot.dataset.over && slot.dataset.key !== m.key) {
       slot.dataset.key = m.key; slot.innerHTML = m.html;
       var v = slot.querySelector("video");
       if (v) v.addEventListener("error", function () { slot.dataset.key = "svg"; slot.innerHTML = PLACEHOLDER; });
     }
     e.__run = run;
+  }
+
+  // ── 点 / 拖 / 走回：每只宠物的交互状态 ix[runId] = {mode: "drag"|"back"|null, from, to, t0, click, lastClick, walkClip, dragEnd}
+  // renderPets 每轮只更新 e.__home（格子边的家）与名牌；有交互时不挪位置、不换动作，动作由 syncClip 管。
+  var ix = {}, STAY_MS = Pk.STAY_MS, SQUASH_MS = 220;
+  function reduced() { return !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches); }
+  function ixOf(id) { return ix[id] || (ix[id] = { mode: null, click: null, lastClick: null, walkClip: null, dragEnd: -1e9 }); }
+  function packMoods(e) { var p = e.__pet && packs[e.__pet.pack]; return (p && p.moods) || {}; }
+  function wantClip(e) {
+    var s = ix[e.dataset.runId], m = packMoods(e);
+    if (!s || !e.__pet) return null;
+    if (s.click) return { file: s.click, loop: false };
+    if (s.mode === "drag" && m.drag && m.drag.length) return { file: m.drag[0], loop: true };
+    if (s.mode === "back" && s.walking && s.walkClip) return { file: s.walkClip, loop: true };
+    return null;
+  }
+  function syncClip(e) {
+    var slot = e.querySelector(".st-media"), w = wantClip(e);
+    if (!w) {
+      if (slot.dataset.over) { delete slot.dataset.over; slot.dataset.key = ""; fillPet(e, e.__pet, e.__run); }
+      return;
+    }
+    var url = BASE + "hive/pets/" + encodeURIComponent(e.__pet.pack) + "/" + w.file.split("/").map(encodeURIComponent).join("/");
+    var key = "ix:" + (w.loop ? "L:" : "1:") + url;
+    if (slot.dataset.key === key) return;
+    slot.dataset.key = key; slot.dataset.over = "1";
+    slot.innerHTML = '<video class="st-art" src="' + esc(url) + '" autoplay ' + (w.loop ? "loop " : "") + "muted playsinline></video>";
+    var v = slot.querySelector("video"), s = ix[e.dataset.runId];
+    v.addEventListener("error", function () {
+      delete slot.dataset.over; slot.dataset.key = "svg"; slot.innerHTML = PLACEHOLDER;
+      if (s) s.click = null;
+    });
+    if (!w.loop) v.addEventListener("ended", function () { if (s) s.click = null; syncClip(e); });
+  }
+  function squash(e) {
+    if (reduced()) return;
+    e.classList.remove("st-squash"); void e.offsetWidth; e.classList.add("st-squash");
+    window.setTimeout(function () { e.classList.remove("st-squash"); }, SQUASH_MS);
+  }
+  function poke(e) {
+    var id = e.dataset.runId, s = ixOf(id);
+    if (!Pk.clickCounts(Date.now() - s.dragEnd)) return;
+    var file = e.__pet && Pk.clickClip(packs[e.__pet.pack], s.lastClick, Math.random);
+    squash(e);
+    if (file) { s.click = s.lastClick = file; syncClip(e); }
+  }
+  function curPos(e) { return { x: parseFloat(e.style.left) || 0, y: parseFloat(e.style.top) || 0 }; }
+  function setFlip(e, f) { e.classList.toggle("flip", f); }
+  function startBack(e, from, afterMs) {
+    var s = ixOf(e.dataset.runId);
+    s.mode = "back"; s.from = from; s.to = e.__home; s.t0 = Date.now() - (afterMs || 0); s.walking = false;
+    s.walkClip = Pk.pickClip(packMoods(e).walk, null, Math.random);
+    e.classList.add("st-walking"); place(e, from); syncClip(e);
+  }
+  function endBack(e) {
+    var s = ix[e.dataset.runId];
+    if (s) { s.mode = null; s.walking = false; }
+    e.classList.remove("st-walking"); setFlip(e, false);
+    if (e.__home) place(e, e.__home);
+    syncClip(e);
+  }
+  function stepBack(now) {
+    Object.keys(ix).forEach(function (id) {
+      var e = petEls[id], s = ix[id];
+      if (!e || s.mode !== "back" || !e.__home) return;
+      if (e.__home.x !== s.to.x || e.__home.y !== s.to.y) {      // 家挪了：从当前位置走向新家，已在走就接着走
+        var wasWalking = s.walking;
+        s.from = curPos(e); s.to = e.__home; s.t0 = now - (wasWalking ? STAY_MS : now - s.t0);
+      }
+      if (reduced()) { if (now - s.t0 >= STAY_MS) endBack(e); return; }
+      var w = Pk.walkBack(s.from, s.to, now - s.t0);
+      if (w.phase === "done") { endBack(e); return; }
+      var walking = w.phase === "walk";
+      if (walking !== !!s.walking) { s.walking = walking; syncClip(e); }
+      if (walking) { place(e, w); setFlip(e, w.flip); }
+    });
   }
   function renderPets() {
     var runs = runsOf().map(function (r) {
@@ -256,20 +336,24 @@
       var n = byCell[pid].length, r = Math.max(c.w, c.h) / 2 * 0.9 + 26;
       byCell[pid].forEach(function (p, i) {
         var o = (i - (n - 1) / 2) * 58, e = petEl(p.runId);
-        keep[p.runId] = 1; e.className = "st-pet is-work";
+        keep[p.runId] = 1;
+        if (!e.classList.contains("is-work")) { e.classList.remove("is-loose"); e.classList.add("is-work"); }
         fillPet(e, p, runById(p.runId));
-        place(e, { x: c.x + ux * r - uy * o, y: c.y + uy * r + ux * o });
+        e.__home = { x: c.x + ux * r - uy * o, y: c.y + uy * r + ux * o };
+        if (!ix[p.runId] || !ix[p.runId].mode) place(e, e.__home);
       });
     });
     idle.pets.forEach(function (p) {
       var e = petEl(p.runId); keep[p.runId] = 1;
       var w = wander[p.runId] || (wander[p.runId] = Pk.initWander(WANDER, Math.random));
-      if (!e.classList.contains("is-loose")) { e.className = "st-pet is-loose"; place(e, w); }
+      if (!e.classList.contains("is-loose")) {
+        delete ix[p.runId]; e.classList.remove("is-work", "st-walking", "flip"); e.classList.add("is-loose"); place(e, w);
+      }
       fillPet(e, p, runById(p.runId));
     });
     Object.keys(petEls).forEach(function (id) {
       if (keep[id]) return;
-      petEls[id].remove(); delete petEls[id]; delete wander[id];
+      petEls[id].remove(); delete petEls[id]; delete wander[id]; delete ix[id];
     });
     var more = $("stMore"), plus = work.plus;
     more.hidden = !plus; more.textContent = plus ? "+" + plus : "";
@@ -286,11 +370,37 @@
       el: e,
       item: function () {
         var r = e.__run;
-        return r && e.classList.contains("is-loose") ? { kind: "pet", runId: r.runId, agent: r.agent } : null;
+        if (!r) return null;
+        return e.classList.contains("is-loose") ? { kind: "pet", runId: r.runId, agent: r.agent } : { kind: "free" };
+      },
+      onClick: function () { poke(e); },
+      onGrab: function () {
+        var s = ixOf(e.dataset.runId); s.mode = "drag"; s.walking = false;
+        e.classList.remove("st-walking"); syncClip(e);
+      },
+      onRelease: function (target, cancel, dx, dy) {
+        var s = ixOf(e.dataset.runId), at = curPos(e);
+        s.dragEnd = Date.now();
+        var from = { x: at.x + dx, y: at.y + dy };
+        if (!e.classList.contains("is-loose")) {            // 格子边：不改数据，停 3 秒再走回
+          e.style.translate = ""; s.mode = null;
+          startBack(e, from, cancel ? STAY_MS : 0);
+          return "keep";
+        }
+        s.mode = null; syncClip(e);
+        if (target) return;                                  // 落在格子上：照原样建去向规则
+        e.style.translate = "";
+        if (!cancel) {                                       // 空白处：从落点接着随机走动
+          var w = wander[e.dataset.runId], q = Pk.initWander(WANDER, Math.random);
+          if (w) wander[e.dataset.runId] = { x: Math.min(WANDER.x + WANDER.w, Math.max(WANDER.x, from.x)), y: Math.min(WANDER.y + WANDER.h, Math.max(WANDER.y, from.y)), tx: q.tx, ty: q.ty };
+          place(e, wander[e.dataset.runId]);
+        }
+        return "keep";
       }
     });
   }
   function stepPets() {
+    stepBack(Date.now());
     if (dragging) return;
     Object.keys(wander).forEach(function (id) {
       var e = petEls[id]; if (!e || !e.classList.contains("is-loose") || e.classList.contains("st-dragging")) return;

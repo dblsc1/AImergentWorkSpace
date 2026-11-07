@@ -75,7 +75,32 @@
     };
   }
 
-  var api = { MAX_PETS: MAX_PETS, DEFAULT_PACK: DEFAULT_PACK, DEFAULT_PACKS_BY_TOOL: DEFAULT_PACKS_BY_TOOL, moodOf: moodOf, packOf: packOf, pickWorkers: pickWorkers, pickIdle: pickIdle, isLoose: isLoose, initWander: initWander, stepWander: stepWander };
+  // 点宠物、拖宠物（hive.stage.v1「二」7）：判定、挑点击动画、走回
+  var CLICK_PX = 5, AFTER_DRAG_MS = 100, STAY_MS = 3000, WALK_SPEED = 45, WALK_MAX_MS = 8000;
+  function pressKind(dx, dy) { return Math.hypot(dx, dy) < CLICK_PX ? "click" : "drag"; }
+  function clickCounts(sinceDragEndMs) { return !(sinceDragEndMs >= 0 && sinceDragEndMs < AFTER_DRAG_MS); }
+  // 从列表随机挑一段，不挑 last；只有一段就是它；空 = null
+  function pickClip(list, last, rnd) {
+    if (!list || !list.length) return null;
+    var pool = list.length > 1 ? list.filter(function (f) { return f !== last; }) : list;
+    return pool[Math.min(pool.length - 1, Math.floor(rnd() * pool.length))];
+  }
+  function clickClip(pack, last, rnd) {
+    var m = (pack && pack.moods) || {};
+    return pickClip(m.click && m.click.length ? m.click : m.happy, last, rnd);
+  }
+  // 松手后 elapsedMs：先停 STAY_MS，再以 45px/s 走，单程至多 8 秒（远了加快）；往右走 = flip
+  function walkBack(from, to, elapsedMs) {
+    var dx = to.x - from.x, dy = to.y - from.y, d = Math.hypot(dx, dy), flip = dx > 0;
+    var dur = Math.min(WALK_MAX_MS, d / WALK_SPEED * 1000);
+    if (d === 0 || elapsedMs >= STAY_MS + dur) return { x: to.x, y: to.y, phase: "done", flip: flip };
+    if (elapsedMs < STAY_MS) return { x: from.x, y: from.y, phase: "stay", flip: flip };
+    var u = (elapsedMs - STAY_MS) / dur;
+    return { x: from.x + dx * u, y: from.y + dy * u, phase: "walk", flip: flip };
+  }
+
+  var api = { MAX_PETS: MAX_PETS, DEFAULT_PACK: DEFAULT_PACK, DEFAULT_PACKS_BY_TOOL: DEFAULT_PACKS_BY_TOOL, moodOf: moodOf, packOf: packOf, pickWorkers: pickWorkers, pickIdle: pickIdle, isLoose: isLoose, initWander: initWander, stepWander: stepWander,
+    CLICK_PX: CLICK_PX, STAY_MS: STAY_MS, pressKind: pressKind, clickCounts: clickCounts, pickClip: pickClip, clickClip: clickClip, walkBack: walkBack };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.NexusTableHexPetPick = api;
 })();

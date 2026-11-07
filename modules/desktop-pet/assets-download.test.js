@@ -105,6 +105,7 @@ test('buildPack：只收清单里有的文件，每个 mood 至少一段才算�
   const p = buildPack('gpt', role, { ...moodMap, working: ['w.webm', 'nope.webm'] });
   assert.deepEqual(p.moods.working, ['w.webm']);
   assert.equal(buildPack('gpt', role, { ...moodMap, happy: ['nope.webm'] }), null);
+  assert.deepEqual(buildPack('gpt', role, { ...moodMap, click: ['nope.webm'] }).moods.click, []);   // 交互三组可为空
 });
 
 test('随程序发布的 manifest / mood-map：每个角色每个 mood 都有片，大小与 sha 齐全', () => {
