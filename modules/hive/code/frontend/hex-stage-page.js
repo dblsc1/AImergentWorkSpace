@@ -130,6 +130,7 @@
       item = o.item();
       if (!item && !o.onClick) return;
       id = ev.pointerId; sx = ev.clientX; sy = ev.clientY; moved = false;
+      window.addEventListener("keydown", onEsc);
       try { handle.setPointerCapture(id); } catch (e) { /* 合成事件抓不到也照拖 */ }
       ev.preventDefault();
     });
@@ -144,9 +145,11 @@
       lit(cellAt(ev.clientX, ev.clientY));
       if (item.kind === "block" && Sp) sprout = blankSprout(ev.clientX, ev.clientY, sprout);
     });
+    function onEsc(ev) { if (ev.key === "Escape" && id != null && moved) end({ pointerId: id }, true); }
     function end(ev, cancel) {
       if (id !== ev.pointerId) return;
       id = null;
+      window.removeEventListener("keydown", onEsc);
       lit(null);
       var grown = sprout; sprout = null;
       if (moved) { swallow = true; window.setTimeout(function () { swallow = false; }, 50); }   // 松手那下 click 不能落到空白处把刚开的表单收掉
@@ -169,7 +172,6 @@
         if (r && r.ok) refresh();
       });
     }
-    window.addEventListener("keydown", function (ev) { if (ev.key === "Escape" && id != null && moved) end({ pointerId: id }, true); });
     handle.addEventListener("pointerup", function (ev) { end(ev, false); });
     handle.addEventListener("pointercancel", function (ev) { end(ev, true); });
   }
@@ -193,7 +195,12 @@
     fetch(BASE + "hive/pets/" + encodeURIComponent(kind) + "/pack.json").then(function (r) {
       return r.ok ? r.json() : null;
     }).then(function (p) {
-      if (p && p.moods) { packs[kind] = p; renderPets(); }
+      if (p && p.moods && typeof p.moods === "object") {
+        var ok = function (f) { return typeof f === "string" && f !== "" && f.split("/").every(function (seg) { return seg !== "" && seg !== "." && seg !== ".."; }); };
+        var moods = {};
+        Object.keys(p.moods).forEach(function (m) { moods[m] = Array.isArray(p.moods[m]) ? p.moods[m].filter(ok) : []; });
+        packs[kind] = { moods: moods }; renderPets();
+      }
     }).catch(function () { /* 素材还没下：占位形象 */ });
   }
   var PLACEHOLDER = '<svg class="st-art" width="56" height="52" viewBox="0 0 56 52" aria-hidden="true">' +
