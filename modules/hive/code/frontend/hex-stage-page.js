@@ -144,7 +144,7 @@
       }
       lx = dx / zoom(); ly = dy / zoom();
       o.el.style.translate = lx + "px " + ly + "px";
-      lit(cellAt(ev.clientX, ev.clientY));
+      lit(item.kind === "free" ? null : cellAt(ev.clientX, ev.clientY));   // 格子边宠物松手不改数据，不高亮
       if (item.kind === "block" && Sp) sprout = blankSprout(ev.clientX, ev.clientY, sprout);
     });
     function onEsc(ev) { if (ev.key === "Escape" && id != null && moved) end({ pointerId: id }, true); }
@@ -348,11 +348,13 @@
       var w = wander[p.runId] || (wander[p.runId] = Pk.initWander(WANDER, Math.random));
       if (!e.classList.contains("is-loose")) {
         delete ix[p.runId]; e.classList.remove("is-work", "st-away", "flip"); e.classList.add("is-loose"); place(e, w);
+        var sl = e.querySelector(".st-media"); if (sl.dataset.over) { delete sl.dataset.over; sl.dataset.key = ""; }
       }
       fillPet(e, p, runById(p.runId));
     });
     Object.keys(petEls).forEach(function (id) {
       if (keep[id]) return;
+      if (petEls[id].classList.contains("st-dragging")) dragging--;   // 拖着时被移除：收不到 pointerup
       petEls[id].remove(); delete petEls[id]; delete wander[id]; delete ix[id];
     });
     var more = $("stMore"), plus = work.plus;
