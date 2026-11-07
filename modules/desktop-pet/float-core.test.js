@@ -127,6 +127,33 @@ test('assign 409：块没了就收起，不重试；再 409 不再重试', async
   assert.equal(r.log.assign.length, 2); assert.equal(r.f.state().open, false);
 });
 
+test('每轮轮询后调用 onTick（桌宠换包借用同一个 10 秒循环）', async () => {
+  const clock = fakeClock(); let ticks = 0;
+  const f = createFloat({
+    timers: clock, miniUrl: 'http://srv/hive/mini',
+    fetchLiveAsk: async () => { throw new Error('401'); },
+    assign: async () => ({ status: 200 }), onTick: async () => { ticks++; },
+  });
+  f.start(); await clock.tick(0); assert.equal(ticks, 1);
+  await clock.tick(10000); assert.equal(ticks, 2);
+  f.stop();
+});
+
+test('onTick 抛错不产生未处理的 rejection，循环照常继续', async () => {
+  const clock = fakeClock(); let ticks = 0;
+  const f = createFloat({
+    timers: clock, miniUrl: 'http://srv/hive/mini',
+    fetchLiveAsk: async () => null,
+    assign: async () => ({ status: 200 }), onTick: async () => { ticks++; throw new Error('boom'); },
+  });
+  let unhandled = 0; const onUnhandled = () => { unhandled++; }; process.on('unhandledRejection', onUnhandled);
+  f.start(); await clock.tick(0); await clock.tick(10000);
+  await new Promise(r => setImmediate(r));
+  process.off('unhandledRejection', onUnhandled);
+  f.stop();
+  assert.equal(ticks, 2); assert.equal(unhandled, 0);
+});
+
 test('FW-F11 只做三件事：没有宠物绘制 / 事件代码', () => {
   const src = fs.readFileSync(`${__dirname}/float-core.js`, 'utf8');
   assert.ok(!/PetEvent|<video|canvas|mood/i.test(src));

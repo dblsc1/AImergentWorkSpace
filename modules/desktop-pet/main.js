@@ -7,6 +7,7 @@ const { pathToFileURL } = require('node:url');
 const { createFloat } = require('./float-core');
 const { createPetEventServer, loadOrCreateToken, PORT, HOST } = require('./pet-event-server');
 const { loadPack, listPacks, pickClip } = require('./pack');
+const { pickPackKind } = require('./pet-pick');
 const { downloadAll } = require('./assets-download');
 
 if (process.platform === 'linux') app.commandLine.appendSwitch('ozone-platform', 'x11'); // 本版只支持 X11 / XWayland
@@ -28,7 +29,10 @@ function loadConfig() { try { config = { ...DEFAULTS, ...JSON.parse(fs.readFileS
 function saveConfig() { fs.mkdirSync(dataDir(), { recursive: true }); fs.writeFileSync(configFile(), JSON.stringify(config, null, 2) + '\n', { mode: 0o600 }); }
 
 let win = null, tray = null, float = null, panelOpen = false;
-let pack = null, mood = 'idle', lastClip = null, cursorTimer = null, lastCursor = '';
+let pack = null, packKind = null, mood = 'idle', lastClip = null, cursorTimer = null, lastCursor = '';
+// 选包用的数据：views/lanes（每 10 秒）、服务端宠物包对照（每 10 分钟；403 = null，用 pack.js 缺省）。
+const PET_SETTINGS_MS = 10 * 60 * 1000;
+let lanesView = null, packsByTool = null, settingsReadAt = 0;
 
 function send(ch, payload) { if (win && !win.isDestroyed()) win.webContents.send(ch, payload); }
 
@@ -45,7 +49,36 @@ function play(m) {
   lastClip = clip;
   send('play', { src: clipUrl(clip) });
 }
-function loadSelectedPack() { pack = loadPack(petsDir(), config.pet); play(mood); buildTrayMenu(); }
+// 换包：新包没下完（loadPack 为 null）就保持当前包。
+function showPack(kind) {
+  if (kind === packKind) return;
+  const next = kind ? loadPack(petsDir(), kind) : null;
+  if (kind && !next) return;
+  packKind = kind; pack = next; play(mood); buildTrayMenu();
+}
+function refreshPack() { showPack(pickPackKind({ lanes: lanesView, packsByTool, configPet: config.pet })); }
+
+function serverBase() { return config.server.replace(/\/+$/, ''); }
+// 设备令牌（read 范围）读服务端；非 2xx 抛错，错误带 status。
+async function readWithDeviceToken(route) {
+  const r = await fetch(`${serverBase()}${route}`, { headers: { Authorization: `Bearer ${config.deviceToken}` }, signal: AbortSignal.timeout(8000) });
+  if (!r.ok) { const err = new Error(`${route} ${r.status}`); err.status = r.status; throw err; }
+  return r.json();
+}
+// 和红点同一个 10 秒循环调用。views/lanes 读不到就保持当前包；对照 403 置缺省，其他错误保留旧值、下轮再试。
+async function petTick() {
+  try { lanesView = await readWithDeviceToken('/api/core/views/lanes'); } catch { return; }
+  if (Date.now() - settingsReadAt >= PET_SETTINGS_MS) {
+    try {
+      packsByTool = (await readWithDeviceToken('/api/core/activity/settings')).pet?.packsByTool ?? null;
+      settingsReadAt = Date.now();
+    } catch (e) {
+      if (e.status === 403) { packsByTool = null; settingsReadAt = Date.now(); }
+    }
+  }
+  refreshPack();
+}
+function setDefaultPet(kind) { config.pet = kind; saveConfig(); refreshPack(); buildTrayMenu(); }
 
 function onPetEvent(e) {
   if (e.text) send('bubble', e.text);
@@ -78,7 +111,7 @@ function buildWindow() {
 }
 
 function startFloat() {
-  const server = config.server.replace(/\/+$/, '');
+  const server = serverBase();
   try {
     const u = new URL(server);
     if (u.protocol !== 'https:' && !['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname)) console.warn(`服务器 ${u.origin} 不是 https，设备令牌会明文发送`);
@@ -86,13 +119,8 @@ function startFloat() {
   float = createFloat({
     timers: { setTimeout, clearTimeout },
     miniUrl: `${server}/hive/mini`,
-    async fetchLiveAsk() {
-      const r = await fetch(`${server}/api/core/activity/live-ask`, {
-        headers: { Authorization: `Bearer ${config.deviceToken}` }, signal: AbortSignal.timeout(8000),
-      });
-      if (!r.ok) throw new Error(`live-ask ${r.status}`);
-      return (await r.json()).ask || null;
-    },
+    async fetchLiveAsk() { return (await readWithDeviceToken('/api/core/activity/live-ask')).ask || null; },
+    onTick: petTick,
     // 设备令牌只有 read 范围；拖放由 /hive/mini 页面用人的登录会话完成，这里不代发。
     assign: async () => ({ status: 403 }),
     onBadge: on => send('badge', on),
@@ -114,10 +142,10 @@ function startAssetDownload() {
   downloadAll({
     manifest: { ...manifest, roles }, moodMap, destDir: petsDir(),
     onProgress: (id, err) => { if (err) console.error('下载失败', id, err.message); },
-    onRoleDone: kind => { if (kind === config.pet && !pack) loadSelectedPack(); else buildTrayMenu(); },
+    onRoleDone: () => { refreshPack(); buildTrayMenu(); },
   }).then(({ failed }) => {
     if (failed.length) console.error(`素材有 ${failed.length} 个文件没下完，下次启动继续`);
-    if (!pack) loadSelectedPack(); else buildTrayMenu();
+    refreshPack(); buildTrayMenu();
   }).catch(e => console.error('素材下载出错', e));
 }
 
@@ -125,9 +153,9 @@ function buildTrayMenu() {
   if (!tray) return;
   const packs = listPacks(petsDir());
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '换宠物', submenu: [
-      { label: '内置形象', type: 'radio', checked: !pack, click: () => { config.pet = ''; saveConfig(); loadSelectedPack(); } },
-      ...packs.map(p => ({ label: p.name || p.kind, type: 'radio', checked: !!pack && pack.kind === p.kind, click: () => { config.pet = p.kind; saveConfig(); loadSelectedPack(); } })),
+    { label: '默认宠物', submenu: [
+      { label: '内置形象', type: 'radio', checked: config.pet === '', click: () => setDefaultPet('') },
+      ...packs.map(p => ({ label: p.name || p.kind, type: 'radio', checked: config.pet === p.kind, click: () => setDefaultPet(p.kind) })),
     ] },
     { label: '大小', submenu: Object.entries(SIZES).map(([label, px]) => ({
       label, type: 'radio', checked: config.size === px,
@@ -173,7 +201,7 @@ app.whenReady().then(() => {
   buildWindow();
   tray = new Tray(nativeImage.createFromPath(path.join(__dirname, 'tray.png')));
   tray.setToolTip('HoneyComb 桌宠');
-  loadSelectedPack();
+  refreshPack();
   startFloat();
   startAssetDownload();
 
