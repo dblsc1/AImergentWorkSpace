@@ -202,6 +202,14 @@ server {
 
     # 前端页面本身也设门：未登录直接去登录页，而不是先渲染一个空壳、
     # 再让里面每个 /api/ 请求挨个 401。顶栏由网关注入（inject.inc）。
+    # 桌宠浮窗里的蜂巢缩略页：同样过门，但不要顶栏（窗口只有 360×420），只注入站点前缀。
+    location = ${HONEYCOMB_BASE_PATH}hive/mini {
+        include /etc/nginx/honeycomb/gate.inc;
+        gzip off;
+        sub_filter_once on;
+        sub_filter '</head>' '<script>window.HONEYCOMB_BASE="$honeycomb_base";</script></head>';
+        alias /usr/share/nginx/html/hive/mini.html;
+    }
     location ${HONEYCOMB_BASE_PATH}hive/ {
         include /etc/nginx/honeycomb/gate.inc;
         include /etc/nginx/honeycomb/inject.inc;
