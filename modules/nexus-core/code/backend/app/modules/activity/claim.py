@@ -11,7 +11,7 @@ from datetime import date as Date, datetime, timedelta, timezone
 
 from ...tenant import current as current_tenant
 from ..planner import inbox, service as planner_service
-from ..planner.errors import UnprocessableError
+from ..planner.errors import NotFoundError, UnprocessableError
 from ..timer import service as timer_service
 from . import activity_settings, asked_repo, block_display, block_rules, blocks, blocks_repo, blocks_write, live_ask, new_items, records_repo
 from .proposals import ConflictError
@@ -54,7 +54,7 @@ def _words(names: list[str]) -> list[str]:
 # ── 候选 ──
 
 
-def _scan(user: str, days: int) -> dict[str, dict]:
+def _scan(user: str, days: int, since: datetime) -> dict[str, dict]:
     """块名 → 合并多天的 pending、legible 块。"""
     today, out = blocks.today(), {}
     for i in range(days):
@@ -67,9 +67,12 @@ def _scan(user: str, days: int) -> dict[str, dict]:
             if it["status"] != "pending" or not it["legible"] or it["expired"]:
                 continue
             g = groups[it["blockKey"]]
+            live = [(_aware(r["startTs"]), _aware(r["endTs"])) for r in g["recs"] if _aware(r["startTs"]) >= since]
+            if not live:  # 整块都在 tiersSince 之前：不列（口径同 claim）
+                continue
             e = out.setdefault(it["blockKey"], {"displayName": it["displayName"], "days": [], "seconds": 0, "haystack": [], "runs": set()})
             e["days"].append(d.isoformat())
-            e["seconds"] += it["seconds"]
+            e["seconds"] += round(blocks._union(live))  # noqa: SLF001
             e["haystack"] += [it["displayName"], *(r["folder"] for r in g["recs"] if r.get("folder"))]
             e["haystack"] += [x for x in (block_display.domain_of(it["blockKey"], g["src"], g["recs"]),) if x]
             e["runs"] |= {r["agentRunId"] for r in g["recs"] if r.get("agentRunId")}
@@ -82,7 +85,7 @@ def candidates(task_id: str | None, project_id: str | None, days: int) -> dict:
     head = {"target": {k: tgt[k] for k in ("taskId", "projectId", "name", "path")}}
     if not activity_settings.get()["tiers"]:
         return {**head, "totalSeconds": 0, "items": []}
-    found = _scan(user, days)
+    found = _scan(user, days, _aware(activity_settings.get()["tiersSince"] or datetime.now(timezone.utc)))
     runs = timer_service.agent_run_targets(user, sorted({r for e in found.values() for r in e["runs"]}))
     proposed: dict[str, list] = {}
     for p in new_items.pending_block_targets(user):
@@ -134,9 +137,9 @@ def claim(task_id: str | None, project_id: str | None, keys: list[str], remember
     by_key: dict[str, dict[str, list]] = {}
     for r in records_repo.key_records(user, keys):
         by_key.setdefault(r["blockKey"], {}).setdefault(r["date"], []).append((_aware(r["startTs"]), _aware(r["endTs"])))
-    lo, claimed, skipped = blocks.today() - timedelta(days=WINDOW_DAYS), [], []
+    lo, claimed, skipped = blocks.today() - timedelta(days=WINDOW_DAYS - 1), [], []
     for key in keys:
-        why, secs = ({"notFound"} if key not in by_key else set()), []
+        why, secs, last = ({"notFound"} if key not in by_key else set()), [], None
         for ds, spans in sorted(by_key.get(key, {}).items(), reverse=True):
             d = Date.fromisoformat(ds)
             live = [s for s in spans if s[0] >= since]
@@ -146,6 +149,7 @@ def claim(task_id: str | None, project_id: str | None, keys: list[str], remember
                 why.add("beforeTiers")
             elif _claim_day(user, d, key, task_id, project_id):
                 secs.append(round(blocks._union(live)))  # noqa: SLF001
+                last = last or d
             else:
                 why.add("notPending")
         if not secs:
@@ -155,13 +159,14 @@ def claim(task_id: str | None, project_id: str | None, keys: list[str], remember
         if remember:
             block_rules.create(key, task_id, project_id, via="assign")  # 日子都记完再写，免得规则抢先把它们变成「按规则」
         live_ask.mark_asked_quietly(key, "assigned")
+        blocks_write.learn_domain_quietly(user, last, key)
     return {"claimed": claimed, "totalSeconds": sum(c["seconds"] for c in claimed), "skipped": skipped}
 
 
 def undo(keys: list[str]) -> dict:
     user = current_tenant()
     _tiers_on()
-    lo, undone = (blocks.today() - timedelta(days=WINDOW_DAYS)).isoformat(), []
+    lo, undone = (blocks.today() - timedelta(days=WINDOW_DAYS - 1)).isoformat(), []
     for key in dict.fromkeys(keys):
         n, part = 0, None
         for doc in blocks_repo.claimed_days(user, key, lo):
@@ -179,7 +184,10 @@ def undo(keys: list[str]) -> dict:
         if n:
             rule = blocks_repo.rules_by_keys(user, [key]).get(key)
             if rule and (rule.get("taskId"), rule.get("projectId")) == (part["taskId"], part["projectId"]):
-                block_rules.remove(rule["id"])
+                try:
+                    block_rules.remove(rule["id"])
+                except NotFoundError:  # 并发删掉了
+                    pass
             asked_repo.delete(user, key, "assigned")
             undone.append({"blockKey": key, "days": n})
     return {"undone": undone}

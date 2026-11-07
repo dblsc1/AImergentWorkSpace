@@ -74,7 +74,7 @@ def reset_block(user: str, date: str, key: str, if_seq: int, at: datetime) -> bo
             return False
         return True
     return _col(_BLK).update_one({"user": user, "date": date, "blockKey": key, "seq": if_seq},
-                                 {"$set": {"status": None, "parts": None, "via": None, "ruleId": None, "updatedAt": at},
+                                 {"$set": {"status": None, "parts": None, "via": None, "claim": False, "ruleId": None, "updatedAt": at},
                                   "$inc": {"seq": 1, "gen": 1}}).matched_count == 1
 
 

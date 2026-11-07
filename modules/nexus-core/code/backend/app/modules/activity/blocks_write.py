@@ -57,7 +57,7 @@ def assign(d: Date, key: str, task_id: str | None, project_id: str | None, remem
     if remember and status != "generic":
         block_rules.create(key, task_id, project_id, via="assign")
         out = blocks.block_item(user, d, key)  # 规则变化触发的对账可能又动了这个块
-    if actor == "human":
+    if actor == "human" and not claim:  # 补记由 claim() 每个块名只做一次
         live_ask.mark_asked_quietly(key, "assigned")
         learn_domain_quietly(user, d, key)
     return out
