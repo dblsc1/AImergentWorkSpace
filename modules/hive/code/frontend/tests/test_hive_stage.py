@@ -530,6 +530,32 @@ def test_tiers_off_reads_no_blocks_and_no_extra_settings(browser, base) -> None:
         assert st.page.locator("#stBucketLabel").inner_text() == "未分类 · 今天 0 分"
 
 
+def test_panel_left_has_two_timelines_right_has_runs_and_esc_closes(browser, base) -> None:  # noqa: F811  HV-B13
+    with open_stage(browser, base, setup=_busy_day) as st:
+        st.page.click(CELL.format("p_math"))
+        panel = st.page.locator("#stPanel")
+        assert panel.locator(".st-col-human .st-kind").count() == 2
+        assert panel.locator('[data-kind="timer"] .st-track i').count() == 1
+        assert panel.locator('[data-kind="attend"] .st-row span').inner_text() == "1 分"
+        row = panel.locator(".st-col-agent .st-agrow")
+        assert row.count() == 1 and "garden" in row.inner_text() and "20 分" in row.inner_text()
+        assert panel.locator(".st-col-agent .st-token").inner_text().replace("\n", "") == "token 花费—"
+        st.page.keyboard.press("Escape")
+        assert not st.page.locator("#stVeil").is_visible()
+
+
+def test_panel_reads_only_known_endpoints_and_never_agent_usage(browser, base) -> None:  # noqa: F811  HV-B14 / HV-B15
+    with open_stage(browser, base, setup=_busy_day) as st:
+        st.api.clear()
+        st.page.click(CELL.format("p_math"))
+        st.poll()
+        known = {"views/lanes", "views/current", "views/tree", "activity/blocks", "activity/settings", "timer/unplaced", "views/agent-time", "activity/ledger"}
+        assert set(st.api) <= known, st.api
+        assert not [u for u in st.requests if "/usage" in u or "/agents/" in u], st.requests
+        for f in ("hex-stage-page.js", "hex-record.js"):
+            assert "usage" not in st.page.evaluate("(f) => fetch(f).then(r => r.text())", f)
+
+
 def test_panel_expand_button_closes_it_and_expands_the_cell(browser, base) -> None:  # noqa: F811
     with open_stage(browser, base, setup=_busy_day) as st:
         st.page.click(CELL.format("p_math"))

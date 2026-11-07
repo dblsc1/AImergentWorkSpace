@@ -5,9 +5,9 @@
   "use strict";
   var BASE = (typeof self !== "undefined" && self.HONEYCOMB_BASE) || "/";
   var API = BASE + "api/core/";
-  var St = window.NexusTableHexStage, Pk = window.NexusTableHexPetPick;
+  var St = window.NexusTableHexStage, Rec = window.NexusTableHexRecord, Pk = window.NexusTableHexPetPick;
   var shell = document.querySelector(".board-shell");
-  if (!St || !Pk || !shell) return;
+  if (!St || !Rec || !Pk || !shell) return;
 
   var POLL_MS = 5000, TICK_MS = 1000, PET_MS = 100, PET_SPEED = 18;
   var WANDER = { x: 24, y: 70, w: 340, h: 170 };
@@ -559,23 +559,12 @@
 
   // ── 完成记录面板 ─────────────────────────────────────
   function lineHtml(spans, color, from) {
-    var span = DAY_SPAN_H * 3600000, base = from + DAY_FROM_H * 3600000, tot = 0;
-    var html = spans.map(function (s) {
+    var span = DAY_SPAN_H * 3600000, base = from + DAY_FROM_H * 3600000;
+    return spans.map(function (s) {
       var a = Math.max(s.from, base), b = Math.min(s.to, base + span);
       if (b <= a) return "";
-      tot += (b - a) / 1000;
       return '<i style="left:' + (a - base) / span * 100 + "%;width:" + (b - a) / span * 100 + "%;background:" + color + '"></i>';
     }).join("");
-    return { html: html, total: Math.floor(tot) };
-  }
-  function workingSeconds(run, now) {
-    var ph = run.phases || [], end = run.endAt ? ms(run.endAt) : now, sum = 0;
-    ph.forEach(function (p, i) {
-      if (p.phase !== "working") return;
-      var b = i + 1 < ph.length ? ms(ph[i + 1].at) : end;
-      sum += Math.max(0, b - ms(p.at));
-    });
-    return Math.floor(sum / 1000);
   }
   function openPanel(pid) {
     panelPid = pid; renderPanel(); $("stVeil").hidden = false;
@@ -584,17 +573,14 @@
   function closePanel() { panelPid = null; $("stVeil").hidden = true; }
   function renderPanel() {
     if (!panelPid) return;
-    var lanes = data.lanes || {}, now = Date.now(), from = dayStart(), pid = panelPid;
-    var runs = runsOf().filter(function (r) { return r.projectId === pid || (r.taskId && projectOfTask(r.taskId) === pid); });
-    var ids = {}; runs.forEach(function (r) { ids[r.runId] = 1; });
-    var timer = lineHtml(((lanes.human && lanes.human.sessions) || []).filter(function (s) { return s.projectId === pid; })
-      .map(function (s) { return { from: ms(s.startAt), to: ms(s.endAt) }; }), "var(--fact-s1)", from);
-    var talk = lineHtml((lanes.interactions || []).filter(function (a) { return a.kind === "attend" && ids[a.runId]; })
-      .map(function (a) { return { from: ms(a.at), to: ms(a.until) }; }), "var(--attn, var(--focus))", from);
+    var now = Date.now(), from = dayStart(), pid = panelPid;
+    var rec = Rec.projectRecord(data.lanes, runsOf(), pid, projectOfTask, now);
+    var timer = { html: lineHtml(rec.timer.spans, "var(--fact-s1)", from), total: rec.timer.total };
+    var talk = { html: lineHtml(rec.attend.spans, "var(--attn, var(--focus))", from), total: rec.attend.total };
     var axis = '<div class="st-axis"><span>06</span><span>09</span><span>12</span><span>15</span><span>18</span><span>21</span><span>24</span></div>';
-    var rows = runs.map(function (r) {
+    var rows = rec.runs.map(function (r) {
       var mood = Pk.moodOf(r.phase, r.lost);
-      return '<div class="st-agrow"><b>' + esc(r.label || r.agent) + '</b><span class="st-d">' + dur(workingSeconds(r, now)) +
+      return '<div class="st-agrow"><b>' + esc(r.name) + '</b><span class="st-d">' + dur(r.workingSeconds) +
         '</span><span class="st-st is-' + mood + '">' + STATUS_TEXT[mood] + "</span></div>";
     }).join("");
     $("stPanel").innerHTML = '<div class="st-hd"><h2>' + esc(projectName(pid)) + '</h2><button type="button" class="st-expand">展开</button><button type="button" class="st-x" aria-label="关闭">✕</button></div>' +
