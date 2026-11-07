@@ -25,6 +25,7 @@ from ..events import service as events_service
 from ..planner import service as planner_service
 from ..projector.handlers import current as current_projection
 from ..projector.handlers import daily_stats as daily_stats_projection
+from ..timer import service as timer_service
 
 
 def export_all() -> dict:
@@ -34,6 +35,7 @@ def export_all() -> dict:
     塑形后的形状）——导出是给用户自己的数据副本，不是某个 UI 组件的专用视图，
     没有理由丢字段或按项目分组。
     """
+    bars = timer_service.export_unplaced()
     return {
         "zones": planner_service.list_zones(),
         "projects": planner_service.list_projects(),
@@ -44,4 +46,5 @@ def export_all() -> dict:
             "proj_daily_stats": daily_stats_projection.read_daily_stats(current_tenant()),
         },
         "exportedAt": datetime.now(timezone.utc).isoformat(),
+        **({"timerUnplaced": bars} if bars else {}),  # v2.44 白条；没有就不出这个键
     }

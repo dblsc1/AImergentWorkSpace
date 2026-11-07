@@ -45,6 +45,7 @@ from . import agent_phases as phases_impl
 from . import agents as agents_impl
 from . import backfill as backfill_impl
 from . import repo
+from . import unplaced as unplaced_impl
 
 SOURCE = "timer-backend"
 #: 补登信封的 source（契约「补登」节）——``backfill.py`` 里的真身，这里重导出
@@ -126,13 +127,19 @@ def start(task_id: str, user: str | None = None, mode: str = DEFAULT_MODE) -> di
             "mode": mode,  # v2.1：stop 原样带出；v2.1 之前的活状态没有这个键，按 do
         }
     )
-    return {"running": True, "taskId": task_id, "startAt": start_at, "mode": mode}
+    return {"running": True, "taskId": task_id, "projectId": project_id, "startAt": start_at, "mode": mode}
 
 
 def stop(user: str | None = None) -> dict:
     """结束计时：组装 ``session.completed`` → 事件入口 → 清活状态。"""
     user = user or current_tenant()  # v2.0：缺省取请求的租户
     state = repo.get_running(user)
+    while state is not None and state.get("taskId") is None:  # v2.44：没记到项目的计时 → 白条，不进台账
+        # 先抢到删除再存白条：并发的 place 刚把它记到项目时删不到，重读走有目标的正常流程
+        if repo.clear_running_if(user, state["sessionId"], task_id=None):
+            return {"running": False, "event": None,
+                    "unplacedId": unplaced_impl.save_bar(state, _now().isoformat(), user)}
+        state = repo.get_running(user)
     if state is None:
         return {"running": False, "event": None}  # S8：幂等，不报错
 
@@ -173,7 +180,37 @@ def stop(user: str | None = None) -> dict:
             "dedupeKey": envelope["dedupeKey"],
             "type": envelope["type"],
         },
+        "unplacedId": None,
     }
+
+
+def start_unplaced(request: Request) -> dict:
+    return unplaced_impl.start(_now, request)
+
+
+def _timer_out(state: dict) -> dict:
+    return {"running": True, "taskId": state["taskId"], "projectId": state["projectId"],
+            "startAt": state["startAt"], "mode": state.get("mode", DEFAULT_MODE)}
+
+
+def place_running(task_id: str | None, project_id: str | None, request: Request) -> dict:
+    return unplaced_impl.place_running(task_id, project_id, request, _resolve_task_chain, _timer_out)
+
+
+def list_unplaced(request: Request) -> dict:
+    return unplaced_impl.list_bars(request)
+
+
+def place_unplaced(bar_id: str, task_id: str | None, project_id: str | None, request: Request) -> dict:
+    return unplaced_impl.place_bar(bar_id, task_id, project_id, request, _resolve_task_chain)
+
+
+def export_unplaced() -> list[dict]:
+    return unplaced_impl.export_bars()
+
+
+def restore_unplaced(docs: list[dict]) -> int:
+    return unplaced_impl.restore_bars(docs)
 
 
 def backfill(

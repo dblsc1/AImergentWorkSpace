@@ -39,13 +39,14 @@ SOURCE = events_service.REASSIGN_SOURCE  # "session-reassign"；公开入口不�
 _MAX_TRIES = 5
 
 
-def _guard(request: Any) -> None:
-    """改挂是人的决定：设备令牌 403；来源凭据按 v1.6 的高风险写判（actor=ai / 严格模式缺人路径凭据 → 403）。"""
+def guard(request: Any, what: str = "改挂时间段（session.reassigned）") -> None:
+    """改挂是人的决定：设备令牌 403；来源凭据按 v1.6 的高风险写判（actor=ai / 严格模式缺人路径凭据 → 403）。
+    无项目计时的几个端点（``unplaced.py``）也只许人，共用这一道。"""
     if (request.headers.get("authorization") or "").strip().lower().startswith("bearer "):
-        raise ForbiddenError("设备令牌不能改挂时间：这是人的决定，请在 Cockpit 页面上登录后操作")
+        raise ForbiddenError(f"设备令牌不能{what}：这是人的决定，请在 Cockpit 页面上登录后操作")
     source = planner_guard.resolve_source(request.headers)
     denial = planner_guard.denial_reason(
-        planner_guard.resolve_actor(source, None), source, "改挂时间段（session.reassigned）")
+        planner_guard.resolve_actor(source, None), source, what)
     if denial is not None:
         raise HighRiskDeniedError(denial)
 
@@ -86,7 +87,7 @@ def check_eligible(session: dict) -> None:
 
 def reassign(event_id: str, task_id: str | None, project_id: str | None, request: Any) -> dict:
     """公开端点的入口：只许人。"""
-    _guard(request)
+    guard(request)
     return reassign_as(event_id, task_id, project_id, request, planner_guard.ACTOR_HUMAN)
 
 
