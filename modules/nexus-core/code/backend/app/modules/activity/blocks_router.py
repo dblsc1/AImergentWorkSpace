@@ -10,7 +10,7 @@ from datetime import date as Date
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator
 from starlette.concurrency import run_in_threadpool
 
 from ..planner.errors import ForbiddenError
@@ -160,12 +160,30 @@ class _AgentDirect(BaseModel):
     honeycombRecords: StrictBool
 
 
+class _Pet(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    packsByTool: Annotated[dict[Annotated[StrictStr, Field(min_length=1, max_length=64)], Annotated[StrictStr, Field(min_length=1, max_length=64)]], Field(max_length=64)]
+
+
 class SettingsIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tiers: StrictBool
     agentDirect: _AgentDirect
     highConfidenceThresholdPercent: Annotated[StrictInt, Field(ge=0, le=100)] | None = None  # 省 = 保留原值
+    liveAskMinutes: Annotated[StrictInt, Field(ge=1, le=60)] | None = None
+    liveAskEnabled: StrictBool | None = None
+    browserDomains: Annotated[list[StrictStr], Field(max_length=200)] | None = None
+    onboardingDoneAt: AwareDatetime | None = None  # 只由 onboarding/done 写；合格的值忽略，不合格 422（G-17）
+    pet: _Pet | None = None
+
+    @field_validator("browserDomains")
+    @classmethod
+    def _domains(cls, v):
+        if v is not None and (v := activity_settings.clean_domains(v)) is None:
+            raise ValueError("browserDomains 每条须是域名（不带协议、路径、端口，1–253 字符，可用 *. 前缀）")
+        return v
 
 
 def _etag(response: Response, out: dict) -> dict:
@@ -182,4 +200,14 @@ def get_settings(response: Response) -> dict:
 async def put_settings(request: Request, response: Response) -> dict:
     b = await _human(request, SettingsIn, "改账号设置")
     return _etag(response, await run_in_threadpool(activity_settings.put, request.headers.get("if-match"),
-                                                   b.tiers, b.agentDirect.model_dump(), b.highConfidenceThresholdPercent))
+                                                   b.tiers, b.agentDirect.model_dump(), b.highConfidenceThresholdPercent,
+                                                   {k: (v.model_dump() if k == "pet" else v) for k in _NEW_KEYS
+                                                    if k in b.model_fields_set and (v := getattr(b, k)) is not None}))
+
+
+_NEW_KEYS = ("liveAskMinutes", "liveAskEnabled", "browserDomains", "pet")
+
+
+@router.post("/onboarding/done", dependencies=[Depends(human)])
+async def onboarding_done(response: Response) -> dict:
+    return _etag(response, await run_in_threadpool(activity_settings.onboarding_done))

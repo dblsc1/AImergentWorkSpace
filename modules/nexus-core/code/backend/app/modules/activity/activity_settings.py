@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import datetime, timezone
 
 from ...tenant import current as current_tenant
@@ -21,13 +22,57 @@ from .proposals import ConflictError
 
 DEFAULT_THRESHOLD = 80
 AGENT_OFF = {"enabled": False, "windowsClassify": False, "honeycombRecords": False}
+AGENT_FRESH = {"enabled": True, "windowsClassify": True, "honeycombRecords": False}
+DEFAULT_PACKS = {"claude-code": "claude", "codex": "gpt", "gemini-cli": "gemini", "*": "deepseek"}
+_DOMAIN = re.compile(r"^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")
+
+
+def clean_domains(items: list[str]) -> list[str] | None:
+    """onboarding.v1「六」：转小写、去重保序；任何一条不合格 → None。"""
+    out: list[str] = []
+    for raw in items:
+        d = raw.lower()
+        if not 1 <= len(d) <= 253 or not _DOMAIN.match(d):
+            return None
+        if d not in out:
+            out.append(d)
+    return out
+
+
+def _fresh_install(user: str) -> dict | None:
+    """onboarding.v1「七」：没文档、规则版本 0、租户没有任何事件 → upsert 建一份（并发只建一份）。"""
+    from ...repo import get_db  # noqa: PLC0415
+    from ..detector import repo as detector_repo  # noqa: PLC0415
+
+    if (detector_repo.get_rules(user) or {}).get("version", 0) or get_db()["events"].find_one({"user": user}, {"_id": 1}):
+        return None
+    now = datetime.now(timezone.utc)
+    blocks_repo.insert_settings_if_absent(user, {"tiers": True, "tiersSince": now, "agentDirect": AGENT_FRESH,
+                                                 "updatedAt": now, "migratedAt": now})
+    return blocks_repo.get_settings(user)
 
 
 def get() -> dict:
-    doc = blocks_repo.get_settings(current_tenant()) or {}
+    user = current_tenant()
+    doc = blocks_repo.get_settings(user) or _fresh_install(user) or {}
     return {"version": doc.get("version", 0), "tiers": doc.get("tiers", False), "tiersSince": doc.get("tiersSince"),
             "agentDirect": {**AGENT_OFF, **doc.get("agentDirect", {})},
-            "highConfidenceThresholdPercent": doc.get("highConfidenceThresholdPercent", DEFAULT_THRESHOLD)}
+            "highConfidenceThresholdPercent": doc.get("highConfidenceThresholdPercent", DEFAULT_THRESHOLD),
+            "liveAskMinutes": doc.get("liveAskMinutes", 5), "liveAskEnabled": doc.get("liveAskEnabled", True),
+            "browserDomains": doc.get("browserDomains", []), "onboardingDoneAt": doc.get("onboardingDoneAt"),
+            "pet": doc.get("pet", {"packsByTool": DEFAULT_PACKS})}
+
+
+def onboarding_done() -> dict:
+    """``onboardingDoneAt`` = 此刻（已有就不变，也不动 version）。"""
+    user = current_tenant()
+    for _ in range(5):
+        cur = get()
+        if cur["onboardingDoneAt"]:
+            return cur
+        if blocks_repo.put_settings(user, cur["version"], {"onboardingDoneAt": datetime.now(timezone.utc)}):
+            return get()
+    raise ConflictError("设置一直在被改，没写进去，请重试")
 
 
 def tiers_on() -> bool:
@@ -35,7 +80,7 @@ def tiers_on() -> bool:
     return bool((blocks_repo.get_settings(current_tenant()) or {}).get("tiers"))
 
 
-def put(if_match: str | None, tiers: bool, agent_direct: dict, threshold: int | None = None) -> dict:
+def put(if_match: str | None, tiers: bool, agent_direct: dict, threshold: int | None = None, extra: dict | None = None) -> dict:
     from ..detector.rules import RulesError, _if_match  # noqa: PLC0415 —— detector 反过来 import activity，顶层 import 成环
 
     expected = _if_match(if_match)
@@ -45,6 +90,7 @@ def put(if_match: str | None, tiers: bool, agent_direct: dict, threshold: int | 
               "tiersSince": now if tiers and not doc.get("tiers") else doc.get("tiersSince")}
     if threshold is not None:  # 省了保留原值
         fields["highConfidenceThresholdPercent"] = threshold
+    fields.update(extra or {})  # liveAskMinutes / liveAskEnabled / browserDomains / pet：只含请求里给了的
     if doc.get("version", 0) != expected:
         raise RulesError(412, f"设置已被改过（你基于 v{expected}，现在是 v{doc.get('version', 0)}）：请重新读取后再改", currentVersion=doc.get("version", 0))
     if tiers and not doc.get("migratedAt"):
