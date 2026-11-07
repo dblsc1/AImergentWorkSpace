@@ -36,6 +36,10 @@ def add_if_absent(user: str, key: str, answer: str, at: datetime) -> dict:
     return get(user, key)
 
 
+def delete(user: str, key: str, answer: str) -> None:
+    _col().delete_one({"user": user, "blockKey": key, "answer": answer})
+
+
 def list_all(user: str) -> list[dict]:
     return list(_col().find({"user": user}, _SHOW).sort("askedAt", 1))
 

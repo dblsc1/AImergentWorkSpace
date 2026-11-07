@@ -78,6 +78,12 @@ def reset_block(user: str, date: str, key: str, if_seq: int, at: datetime) -> bo
                                   "$inc": {"seq": 1, "gen": 1}}).matched_count == 1
 
 
+def claimed_days(user: str, key: str, from_date: str) -> list[dict]:
+    """补记（claim）写下、至今没被别的写动过的日子文档。"""
+    return list(_col(_BLK).find({"user": user, "blockKey": key, "claim": True, "via": "human", "status": {"$ne": None}, "date": {"$gte": from_date}},
+                                {"_id": 0}))
+
+
 def classified_since(user: str, from_date: str) -> set[tuple[str, str]]:
     """``(date, blockKey)``：已经有分类的（文档 ``status`` 非 null）。"""
     return {(d["date"], d["blockKey"]) for d in _col(_BLK).find({"user": user, "date": {"$gte": from_date}, "status": {"$ne": None}},

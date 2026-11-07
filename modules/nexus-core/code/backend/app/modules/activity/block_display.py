@@ -47,6 +47,25 @@ def _allowed(domain: str, rules: list[str]) -> bool:
     return False
 
 
+def _browser_title(mine: list[dict], rest: str) -> tuple[str, str | None]:
+    """浏览器块的归一化标题与标题里的域名位（没有「 · 」分隔就是 None）。"""
+    title = history.norm_title(max(mine, key=lambda r: r.get("seconds", 0))["title"]) if mine else rest
+    head, sep, _ = title.partition(_SEP)
+    return title, (head if sep else None)
+
+
+def domain_of(key: str, source: str, recs: list[dict]) -> str | None:
+    """浏览器块标题里的域名（给「六」自动加网页分类规则）；不是浏览器块 / 认不出 → None。"""
+    secs: dict[str, float] = {}
+    for r in recs:
+        secs[r["app"]] = secs.get(r["app"], 0) + r.get("seconds", 0)
+    app = min(secs, key=lambda a: (-secs[a], a)) if secs else ""
+    if source == "rule" or kind_of(app) != "browser":
+        return None
+    rest = key[len(app) + len(_SEP):] if key.startswith(app + _SEP) else ""
+    return _browser_title([r for r in recs if r["app"] == app], rest)[1]
+
+
 def describe(key: str, source: str, recs: list[dict], rules: list[str]) -> dict:
     """``recs``：块里的记录 ``{app, title, titleIsPseudonym, seconds, folder?}``。返回 ``{displayName, legible, kind}``。"""
     secs: dict[str, float] = {}
@@ -64,9 +83,8 @@ def describe(key: str, source: str, recs: list[dict], rules: list[str]) -> dict:
         return out(key)
     mine = [r for r in recs if r["app"] == app]
     if kind == "browser":
-        title = history.norm_title(max(mine, key=lambda r: r.get("seconds", 0))["title"]) if mine else rest
-        head, sep, _ = title.partition(_SEP)
-        return out(title if sep and _allowed(head, rules) else None)
+        title, head = _browser_title(mine, rest)
+        return out(title if head and _allowed(head, rules) else None)
     if kind == "terminal":
         if source == "agent":
             return out(key.partition(_SEP)[2])

@@ -54,7 +54,12 @@ def day_records(user: str, date: str) -> list[dict]:
     """一天的记录（聚合在 Python 里做：秒数要跨设备取时间并集；一天的记录数量级在万以内，契约「七」）。"""
     return list(_col().find({"user": user, "date": date},
                             {"_id": 0, "blockKey": 1, "keySource": 1, "startTs": 1, "endTs": 1, "app": 1, "seconds": 1,
-                                                  "title": 1, "titleIsPseudonym": 1, "folder": 1}))
+                                                  "title": 1, "titleIsPseudonym": 1, "folder": 1, "agentRunId": 1}))
+
+
+def key_records(user: str, keys: list[str]) -> list[dict]:
+    """这些块名在留存期内所有天的记录（只取时间与日期；补记 claim 用）。"""
+    return list(_col().find({"user": user, "blockKey": {"$in": keys}}, {"_id": 0, "blockKey": 1, "date": 1, "startTs": 1, "endTs": 1}))
 
 
 def touched_blocks(user: str, since: datetime) -> list[tuple[str, str]]:

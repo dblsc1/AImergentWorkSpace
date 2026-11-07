@@ -335,6 +335,11 @@ def list_lane_runs(user: str | None = None) -> tuple[datetime, list[dict]]:
     return phases_impl.lane_runs(user or current_tenant(), now=_now)
 
 
+def agent_run_targets(user: str, run_ids: list[str]) -> dict[str, tuple[str | None, str | None]]:
+    """补记候选用：运行 id → (taskId, projectId)；已不在库里的运行没有。"""
+    return {r["runId"]: (r.get("taskId"), r.get("projectId")) for r in repo.agent_runs_by_ids(user, run_ids)} if run_ids else {}
+
+
 def list_agent_runs(user: str | None = None) -> list[dict]:
     """views 的指定读路径（``views/current`` 的 ``agents[]``）。"""
     return agents_impl.list_running(user or current_tenant(), now=_now)

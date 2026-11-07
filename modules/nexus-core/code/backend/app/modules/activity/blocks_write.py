@@ -9,12 +9,14 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date as Date, datetime, timedelta, timezone
 
 from ...tenant import current as current_tenant
 from ..planner.errors import UnprocessableError
-from . import block_rules, blocks, blocks_repo, ignore, live_ask, new_items, reconcile, records_repo
+from . import activity_settings, block_display, block_rules, blocks, blocks_repo, ignore, live_ask, new_items, reconcile, records_repo
 
+log = logging.getLogger(__name__)
 MIN_PARTS, MAX_PARTS = 2, 20
 _SEP = " · "
 
@@ -23,11 +25,11 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _write(user: str, d: Date, key: str, if_seq: int, status: str, parts: list[dict], via: str = "human", actor: str = "human") -> dict:
+def _write(user: str, d: Date, key: str, if_seq: int, status: str, parts: list[dict], via: str = "human", actor: str = "human", claim: bool = False) -> dict:
     """``via`` / ``actor``：人写 = ``human`` / ``human``；AI 提议经人批准 = ``ai`` / ``human``；AI 直接施加 = ``ai-direct`` / ``system``（契约「五」）。
     只有人自己的写（``via == "human"``）会让同块上待批准的 AI 提议记为 ``superseded``。"""
     blocks.check_writable(d)
-    fields = {"status": status, "parts": parts, "via": via, "ruleId": None, "updatedAt": _now()}
+    fields = {"status": status, "parts": parts, "via": via, "claim": claim, "ruleId": None, "updatedAt": _now()}  # claim：补记写的，撤销认它
     old = blocks_repo.get_block(user, d.isoformat(), key)
     if (old or {}).get("seq", 0) != if_seq or blocks_repo.put_block(user, d.isoformat(), key, fields, if_seq, old) is None:
         raise blocks.BlockConflict(blocks.block_item(user, d, key))
@@ -44,20 +46,32 @@ def _assigned_status(user: str, d: Date, key: str) -> str:
 
 
 def assign(d: Date, key: str, task_id: str | None, project_id: str | None, remember: bool, if_seq: int,
-           via: str = "human", actor: str = "human") -> dict:
+           via: str = "human", actor: str = "human", claim: bool = False) -> dict:
     user = current_tenant()
     blocks.check_writable(d)  # 过期 409 在目标 404 之前
     block_rules.check_target(task_id, project_id)
     status = _assigned_status(user, d, key)
     if remember and status != "generic":
         block_rules.check_room(key)  # 先问规则放不放得下，再写块
-    out = _write(user, d, key, if_seq, status, [{"fromTs": None, "toTs": None, "taskId": task_id, "projectId": project_id}], via, actor)
+    out = _write(user, d, key, if_seq, status, [{"fromTs": None, "toTs": None, "taskId": task_id, "projectId": project_id}], via, actor, claim)
     if remember and status != "generic":
         block_rules.create(key, task_id, project_id, via="assign")
         out = blocks.block_item(user, d, key)  # 规则变化触发的对账可能又动了这个块
     if actor == "human":
         live_ask.mark_asked_quietly(key, "assigned")
+        learn_domain_quietly(user, d, key)
     return out
+
+
+def learn_domain_quietly(user: str, d: Date, key: str) -> None:
+    """onboarding.v1「六」：浏览器块被人分类后，把它的域名加进网页分类规则；失败只记日志。"""
+    try:
+        recs = records_repo.block_records(user, d.isoformat(), key, 200)
+        src = "rule" if any(r.get("keySource") == "rule" for r in recs) else "auto"
+        if domain := block_display.domain_of(key, src, recs):
+            activity_settings.add_domain(domain)
+    except Exception:  # noqa: BLE001
+        log.warning("网页域名没加成：%r", key, exc_info=True)
 
 
 def _ms(t: datetime) -> int:
@@ -94,6 +108,7 @@ def split(d: Date, key: str, parts: list[dict], if_seq: int, via: str = "human",
     out = _write(user, d, key, if_seq, _assigned_status(user, d, key), normalize_parts(d, parts), via, actor)
     if actor == "human":
         live_ask.mark_asked_quietly(key, "split")
+        learn_domain_quietly(user, d, key)
     return out
 
 
