@@ -45,6 +45,14 @@ main() {
     wget -qO docker-compose.yml "$REPO/releases/download/$TAG/docker-compose.yml"
   fi
 
+  # 宠物素材下载器（pets-download 服务挂 ./pets-download；素材本身不在 Release 里，由它起来后下）。
+  mkdir -p pets-download
+  for f in assets-download.js download-server.js manifest.json mood-map.json; do
+    if [ -n "${HONEYCOMB_ASSETS:-}" ]; then cp "$HONEYCOMB_ASSETS/pets-$f" "pets-download/$f"
+    elif command -v curl >/dev/null 2>&1; then curl -fsSL "$REPO/releases/download/$TAG/pets-$f" -o "pets-download/$f"
+    else wget -qO "pets-download/$f" "$REPO/releases/download/$TAG/pets-$f"; fi
+  done
+
   rand() {  # 32 位十六进制，不依赖 openssl
     od -An -N16 -tx1 /dev/urandom | tr -d ' \n'
   }
@@ -124,6 +132,11 @@ EOF
     cat .up.log; docker compose ps
     die "没起来。看日志：cd $DIR && docker compose logs"
   }
+
+  # 宠物素材：主栈起好后单独起（不等、失败不算安装失败）。HONEYCOMB_ASSETS（CI）下不起，免得 CI 真去下素材。
+  if [ -z "${HONEYCOMB_ASSETS:-}" ]; then
+    docker compose --profile pets up -d pets-download >.pets.log 2>&1 || say "宠物素材没能开始下载（不影响使用），之后可手动：cd $DIR && docker compose --profile pets up -d pets-download"
+  fi
 
   # 升级时以 .env 里的为准（可能改过端口）
   BIND=$(sed -n 's/^HONEYCOMB_BIND=//p' .env | tail -1); BIND=${BIND:-127.0.0.1:8800}

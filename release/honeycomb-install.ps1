@@ -47,6 +47,13 @@ if ($env:HONEYCOMB_ASSETS) {
   Invoke-WebRequest -UseBasicParsing "$Repo/releases/download/$Tag/docker-compose.yml" -OutFile 'docker-compose.yml'
 }
 
+# 宠物素材下载器（pets-download 服务挂 ./pets-download；素材本身不在 Release 里，由它起来后下）。
+New-Item -ItemType Directory -Force -Path 'pets-download' | Out-Null
+foreach ($f in 'assets-download.js', 'download-server.js', 'manifest.json', 'mood-map.json') {
+  if ($env:HONEYCOMB_ASSETS) { Copy-Item (Join-Path $env:HONEYCOMB_ASSETS "pets-$f") "pets-download/$f" }
+  else { Invoke-WebRequest -UseBasicParsing "$Repo/releases/download/$Tag/pets-$f" -OutFile "pets-download/$f" }
+}
+
 function Rand {  # 32 位十六进制；这种写法 PowerShell 5.1 与 7 都有
   $b = New-Object byte[] 16
   [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
@@ -140,6 +147,12 @@ if (-not $env:HONEYCOMB_NO_PULL) {
 }
 $log = Invoke-Native { docker compose up -d --wait --wait-timeout 300 }
 if ($LASTEXITCODE -ne 0) { $log | Write-Host; Invoke-Native { docker compose ps } | Write-Host; Die "没起来。看日志：cd $Dir; docker compose logs" }
+
+# 宠物素材：主栈起好后单独起（不等、失败不算安装失败）。HONEYCOMB_ASSETS（CI）下不起，免得 CI 真去下素材。
+if (-not $env:HONEYCOMB_ASSETS) {
+  $null = Invoke-Native { docker compose --profile pets up -d pets-download }
+  if ($LASTEXITCODE -ne 0) { Write-Host "宠物素材没能开始下载（不影响使用），之后可手动：cd $Dir; docker compose --profile pets up -d pets-download" }
+}
 
 # 升级时以 .env 里的为准（可能改过端口）
 $m = Select-String -Path '.env' -Pattern '^HONEYCOMB_BIND=(.+)$' | Select-Object -Last 1

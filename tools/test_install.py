@@ -51,7 +51,7 @@ def test_static_modules_are_mounted_not_run(out):
     _, compose, _ = out
     services = compose["services"]
     assert not {"hive", "ring", "assistant"} & set(services), "纯前端不该起容器"
-    assert set(services) == {"nexus-core", "agent", "mcp", "auth", "mongo", "web"}
+    assert set(services) == {"nexus-core", "agent", "mcp", "auth", "mongo", "web", "pets-download"}
     volumes = services["web"]["volumes"]
     for mount in (
         "../../modules/hive/code/frontend:/usr/share/nginx/html/hive:ro",
@@ -346,7 +346,7 @@ def test_builtin_chat_is_optional_in_all_three_composes(out):
     rel = yaml.safe_load((install.ROOT / "release" / "docker-compose.yml").read_text(encoding="utf-8"))
     for name, c in (("generated", gen), ("hand", hand), ("release", rel)):
         assert c["services"]["agent"]["profiles"] == ["agent"], name
-        assert [k for k, v in c["services"].items() if "profiles" in v and k != "agent"] == [], name
+        assert [k for k, v in c["services"].items() if "profiles" in v and k not in ("agent", "pets-download")] == [], name
         assert "agent" not in c["services"]["web"].get("depends_on", {}), name
 
 
@@ -465,3 +465,26 @@ def test_same_host_trusts_only_loopback_and_exact_default_gateway(tmp_path):
     (fake / "ip").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")   # 读不到默认网关：失败即关
     geo = run(f"{fake}:/usr/bin:/bin")
     assert "127.0.0.0/8 1;" in geo and "172." not in geo
+
+
+def test_pets_download_is_one_shot_and_web_does_not_wait_for_it(out):
+    """desktop.pet.v1「三·2」：一次性下载器，三份 compose 一致；素材只进命名卷，web 不依赖它。"""
+    _, gen, _ = out
+    hand = yaml.safe_load((install.ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8"))
+    rel = yaml.safe_load((install.ROOT / "release" / "docker-compose.yml").read_text(encoding="utf-8"))
+    for name, c, code in (("generated", gen, "../../modules/desktop-pet"), ("hand", hand, "../modules/desktop-pet"),
+                          ("release", rel, "./pets-download")):
+        svc = c["services"]["pets-download"]
+        assert svc["image"] == "node:22-alpine", name
+        assert svc["restart"] == "no", name
+        assert svc["profiles"] == ["pets"], name
+        assert svc["command"] == ["node", "/app/download-server.js"], name
+        assert svc["volumes"] == [f"{code}:/app:ro", "honeycomb_pets_data:/pets"], name
+        assert "honeycomb_pets_data" in c["volumes"], name
+        assert "pets-download" not in c["services"]["web"].get("depends_on", {}), name
+        assert "honeycomb_pets_data:/usr/share/nginx/html/hive-pets:ro" in c["services"]["web"]["volumes"], name
+    shipped = (install.ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "assets-download.js download-server.js manifest.json mood-map.json" in shipped
+    for f in ("honeycomb-install.sh", "honeycomb-install.ps1"):
+        t = (install.ROOT / "release" / f).read_text(encoding="utf-8")
+        assert t.index("up -d --wait") < t.index("--profile pets up -d pets-download"), f

@@ -371,6 +371,7 @@ jobs:
           sed 's/__VERSION__/ci/g' release/docker-compose.yml > "$RUNNER_TEMP/assets/docker-compose.yml"
           sed 's/__TAG__/ci/g' release/honeycomb-install.sh > "$RUNNER_TEMP/assets/honeycomb-install.sh"
           sed 's/__TAG__/ci/g' release/honeycomb-install.ps1 > "$RUNNER_TEMP/assets/honeycomb-install.ps1"
+          for f in assets-download.js download-server.js manifest.json mood-map.json; do cp modules/desktop-pet/$f "$RUNNER_TEMP/assets"/pets-$f; done
       - name: sh 安装 + 冒烟
         run: |
           export HONEYCOMB_ASSETS="$RUNNER_TEMP/assets" HONEYCOMB_DIR="$RUNNER_TEMP/sh/honeycomb"
