@@ -10,7 +10,10 @@ function loadPack(petsDir, kind) {
   try {
     const p = JSON.parse(fs.readFileSync(path.join(dir, 'pack.json'), 'utf8'));
     if (!p || typeof p.moods !== 'object' || !p.moods) return null;
-    return { ...p, kind, dir };
+    const safe = n => typeof n === 'string' && n !== '' && !/[\\/]/.test(n) && !/^\.+$/.test(n);
+    const moods = {};
+    for (const [m, clips] of Object.entries(p.moods)) moods[m] = Array.isArray(clips) ? clips.filter(safe) : [];
+    return { ...p, moods, kind, dir };
   } catch { return null; }
 }
 

@@ -40,3 +40,10 @@ test('packForTool 按 tool 选，查不到用 *', () => {
   assert.equal(packForTool(DEFAULT_PACKS_BY_TOOL, null), 'deepseek');
   assert.equal(packForTool({ a: 'x' }, 'b'), null);
 });
+
+test('loadPack drops clip names that could leave the pack dir', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pack-'));
+  fs.mkdirSync(path.join(dir, 'x'));
+  fs.writeFileSync(path.join(dir, 'x', 'pack.json'), JSON.stringify({ moods: { idle: ['ok.webm', '../evil.webm', 'a/b.webm', '..', ''] } }));
+  assert.deepStrictEqual(loadPack(dir, 'x').moods.idle, ['ok.webm']);
+});

@@ -39,10 +39,11 @@ function createPetEventServer({ token, onEvent }) {
     if (req.url !== '/pet-event') return end(404);
     if (req.method !== 'POST') return end(405);
     if (!tokenOk(req.headers.authorization, token)) return end(401);
+    if (Number(req.headers['content-length']) > MAX_BODY) { res.writeHead(413, { Connection: 'close' }); res.end(); return req.destroy(); }
     const chunks = []; let n = 0, over = false;
     req.on('data', c => {
       n += c.length;
-      if (n > MAX_BODY) { if (!over) { over = true; end(413); } return; }
+      if (n > MAX_BODY) { if (!over) { over = true; res.writeHead(413, { Connection: 'close' }); res.end(); req.destroy(); } return; }
       chunks.push(c);
     });
     req.on('end', () => {

@@ -1,6 +1,6 @@
 // HoneyComb 桌宠主进程：一个透明置顶窗（宠物 + 浮窗），托盘菜单，收 PetEvent，后台下素材。
 // 点穿思路参考 dsh-pet（MIT，https://github.com/PC2005-cloud/dsh-pet）：窗口缺省忽略鼠标，命中后再接收。
-const { app, BrowserWindow, Tray, Menu, ipcMain, screen, nativeImage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, screen, nativeImage, session } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -79,6 +79,10 @@ function buildWindow() {
 
 function startFloat() {
   const server = config.server.replace(/\/+$/, '');
+  try {
+    const u = new URL(server);
+    if (u.protocol !== 'https:' && !['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname)) console.warn(`服务器 ${u.origin} 不是 https，设备令牌会明文发送`);
+  } catch { /* 地址不合法：下面的请求会失败并熄灭红点 */ }
   float = createFloat({
     timers: { setTimeout, clearTimeout },
     miniUrl: `${server}/hive/mini`,
@@ -139,6 +143,8 @@ function buildTrayMenu() {
 }
 
 app.whenReady().then(() => {
+  // 嵌入页是远程网页：这个分区的权限请求（摄像头、通知、定位……）一律拒绝。
+  session.fromPartition('persist:hive-mini').setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
   if (process.platform === 'darwin') app.dock.hide();
   loadConfig();
   const token = loadOrCreateToken(dataDir());
@@ -151,13 +157,17 @@ app.whenReady().then(() => {
     wc.setWindowOpenHandler(() => ({ action: 'deny' }));
     wc.on('will-attach-webview', (ev, prefs, params) => {
       // 只许嵌我们配置的服务器上的 /hive/mini，预加载脚本只能是我们自己的。
-      if (!sameOrigin(params.src, config.server) || !new URL(params.src).pathname.startsWith('/hive/mini')) { ev.preventDefault(); return; }
+      const p = sameOrigin(params.src, config.server) ? new URL(params.src).pathname : '';
+      if (p !== '/hive/mini' && !p.startsWith('/hive/mini/')) { ev.preventDefault(); return; }
       prefs.preload = path.join(__dirname, 'mini-preload.js');
       prefs.nodeIntegration = false; prefs.contextIsolation = true; prefs.sandbox = true;
       prefs.partition = 'persist:hive-mini';
     });
     // 嵌入页只能在本服务器内跳转（登录页也在同一服务器上）。
-    wc.on('will-navigate', (ev, url) => { if (wc.getType() === 'webview' && !sameOrigin(url, config.server)) ev.preventDefault(); });
+    const stayHome = (ev, url) => { if (wc.getType() === 'webview' && !sameOrigin(url, config.server)) ev.preventDefault(); };
+    wc.on('will-navigate', stayHome);
+    wc.on('will-redirect', stayHome);
+    wc.on('will-frame-navigate', (ev) => stayHome(ev, ev.url));
   });
 
   buildWindow();
