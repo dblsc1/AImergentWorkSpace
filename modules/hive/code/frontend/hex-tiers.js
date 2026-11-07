@@ -1,5 +1,5 @@
 // hive · hex-tiers.js —— 三级分类打开时（activity/settings.tiers === true）「AI 决策」面板换成一栏决策栏。
-// 顶部是秘书日报（有才显示），下面是大卡：AI 问题、待批准日程改动、窗口分类规则、待分类窗口块、自动化历史（默认收起，可拖标题换顺序，顺序记在 localStorage）；
+// 顶部是秘书日报（有才显示），下面是大卡：AI 问题、待批准日程改动、窗口分类规则、自动化历史（默认收起，可拖标题换顺序，顺序记在 localStorage）；
 // 日程改动 / 窗口分类规则里再按置信度分「高 / 低」两组。没有的大卡不显示。文案 / 分组 / 跳一跳 / 顺序的纯逻辑在 hex-tiers-cards.js。
 // 由 hex-decide.js 在读到 tiers 之后调 start(ctx)：这里只接管 render / load（hooks），滑动 / 拖拽 / 撤销计时 / 提示条都复用 hex-decide 的。
 // 数据端点：activity/blocks、blocks/records、blocks/assign|split|generic|ignore|reset、proposals（windowRule / blockRule / blockAction / question）。
@@ -577,7 +577,7 @@
     }
 
     // ── 汇总 / 渲染 ──
-    var TITLES = { q: "AI 问题", s: "待批准日程改动", r: "窗口分类规则", b: "待分类窗口块", h: "自动化历史" };
+    var TITLES = { q: "AI 问题", s: "待批准日程改动", r: "窗口分类规则", h: "自动化历史" };
     var GROUPS = [["high", "高置信度"], ["low", "低置信度"]];
     function compute() {
       var k = api.proposalKinds(X.raw().p), sp = api.splitBlocks(items());
@@ -586,24 +586,23 @@
         q: { cards: S.questions.filter(function (q) { return !held[q.id]; }), make: questionCard },
         s: { cards: X.model().cards.filter(function (c) { return !held[c.key]; }), make: sessCard },
         r: { cards: ruleCards(k).filter(function (c) { return !held[c.key]; }), make: ruleCard },
-        b: { cards: blockCards(), make: blockCard },
         h: { cards: sp.hist, make: histCard }
       };
       Object.keys(secs).forEach(function (id) { secs[id].id = id; secs[id].title = TITLES[id]; secs[id].count = secs[id].cards.length; });
       return secs;
     }
     function grouped(sec) { return B.groupByConfidence(sec.cards, function (c) { return c.conf; }, S.th); }
-    function total(secs) { return secs.q.count + secs.b.count + secs.r.count + secs.s.count; }
+    function total(secs) { return secs.q.count + secs.r.count + secs.s.count; }
     // 计数用 render 时算好的那份；只把撤销窗口里的卡再扣一遍。data-cnt = "s" / "s:high" / "s:low"
     function recount() {
       var secs = S.cache;
       if (!secs) return;
       function live(l) { return l.filter(function (c) { return !X.held[c.key]; }).length; }
       var sum = 0;
-      ["q", "s", "r", "b"].forEach(function (id) { sum += id === "b" ? secs.b.count : live(secs[id].cards); });
+      ["q", "s", "r"].forEach(function (id) { sum += live(secs[id].cards); });
       [].forEach.call(panel.querySelectorAll("[data-cnt]"), function (n) {
         var p = n.dataset.cnt.split(":"), sec = secs[p[0]];
-        n.textContent = String(p[1] ? live(grouped(sec)[p[1]]) : p[0] === "b" || p[0] === "h" ? sec.count : live(sec.cards));
+        n.textContent = String(p[1] ? live(grouped(sec)[p[1]]) : p[0] === "h" ? sec.count : live(sec.cards));
       });
       var bg = panel.querySelector(".hd-badge");
       if (bg) bg.textContent = String(sum);
