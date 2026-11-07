@@ -58,8 +58,7 @@ def test_hive_pets_are_served_from_their_own_volume(base: str) -> None:  # HV-N0
 @pytest.mark.parametrize("base", ["/", "/Cockpit/"])
 def test_hive_mini_is_not_blocked(base: str) -> None:  # HV-N02
     body = _pick(base, base + "hive/mini")
-    assert "alias /usr/share/nginx/html/hive/;" in body
-    assert "gate.inc" in body and "inject.inc" in body
+    assert "mini.html" in body and "gate.inc" in body   # 自己的精确路由（#179），过登录门
 
 
 def test_compose_mounts_pet_volume_read_only_and_declares_it() -> None:
