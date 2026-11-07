@@ -45,6 +45,11 @@ REASSIGN_SOURCE = "session-reassign"
 VOIDED_TYPE = "session.voided"
 BLOCK_SOURCE = "activity-block"
 
+#: v2.44 代理去向事实（契约 hive.stage.v1「三」）。同样**只由 ``timer/agent_place.py`` 经 ``ingest(internal=True)`` 写**。
+PLACED_TYPE = "agent.run.placed"
+PLACE_SOURCE = "agent-place"
+AGENT_RUN_TYPE, AGENT_RUN_SOURCE = "agent.run.completed", "agent-hook"
+
 #: 读端现算的键（v2.11）：只从改挂链来。信封 ``extra="allow"``，客户端自带的同名键入口摘掉、读端不认。
 CURRENT_SUBJECT = "currentSubject"
 #: 服务端「自动记录」（v2.14）写事实用的 source。公开入口上自称它的信封，``ai.auto`` 摘掉——那是改挂的判据之一，
@@ -102,6 +107,11 @@ def ingest(payload: dict | list, *, internal: bool = False) -> IngestOut:
         if not internal and (envelope.type == VOIDED_TYPE or envelope.source == BLOCK_SOURCE):
             rejected.append(RejectedItem(index=index, reason=(
                 f"{VOIDED_TYPE} / source {BLOCK_SOURCE!r} 只由服务端的窗口块对账写（契约 v2.38），公开入口不收")))
+            continue
+
+        if not internal and (envelope.type == PLACED_TYPE or envelope.source == PLACE_SOURCE):
+            rejected.append(RejectedItem(index=index, reason=(
+                f"{PLACED_TYPE} / source {PLACE_SOURCE!r} 只能经 POST /api/core/agents/{{runId}}/place 写（契约 v2.44）")))
             continue
 
         doc = envelope.model_dump()  # extra="allow"：未知字段原样保留（B9）
@@ -216,12 +226,43 @@ def current_tasks(source: str, dedupe_keys: list[str]) -> dict[str, tuple[str, b
     return {k: (v["task"], v["moved"]) for k, v in current_sessions(source, dedupe_keys).items()}
 
 
+def latest_placements(docs: list[dict]) -> dict[tuple, dict]:
+    """(租户, runId) → 那条运行 ``seq`` 最大的 ``agent.run.placed``（v2.44）。纯函数。"""
+    latest: dict[tuple, dict] = {}
+    for doc in docs:
+        data = doc.get("data")
+        if doc.get("type") != PLACED_TYPE or not isinstance(data, dict) or type(data.get("seq")) is not int \
+                or not isinstance(data.get("runId"), str):
+            continue
+        key = (doc.get("user") or LOCAL_USER, data["runId"])
+        if key not in latest or data["seq"] > latest[key]["data"]["seq"]:
+            latest[key] = doc
+    return latest
+
+
+def _placed_subject(doc: dict, latest: dict[tuple, dict]) -> dict | None:
+    dedupe = doc.get("dedupeKey")
+    if doc.get("type") != AGENT_RUN_TYPE or doc.get("source") != AGENT_RUN_SOURCE or not isinstance(dedupe, str):
+        return None
+    hit = latest.get((doc.get("user") or LOCAL_USER, dedupe.removeprefix("agent:")))
+    return hit["subject"] if hit else None
+
+
+def placements_of(run_id: str) -> list[dict]:
+    """当前租户里这条运行的全部去向事实，按 ``seq`` 升序（最后一条 = 当前去向）。"""
+    docs = repo.query_events(PLACED_TYPE, where={"data.runId": run_id, "source": PLACE_SOURCE})
+    return sorted((d for d in docs if type(d.get("data", {}).get("seq")) is int), key=lambda d: d["data"]["seq"])
+
+
 def with_current_subjects(docs: list[dict]) -> list[dict]:
     """给投影重建用：改挂过的 ``session.completed`` 的 ``subject`` 换成当前归属，其余原样；
+    代理运行同理按最后一条 ``agent.run.placed``（v2.44）；
     被 ``session.voided`` 作废了的 ``session.completed`` 不重放（v2.38：原事实不删，算时长的一律跳过）。
     指向台账里已经没有的段的 ``session.reassigned`` 自然不起作用。"""
     latest, voided = latest_reassignments(docs), voided_identities(docs)
-    return [{**d, "subject": cur} if (cur := _current_subject(d, latest)) else d for d in docs if not _is_voided(d, voided)]
+    placed = latest_placements(docs)
+    return [{**d, "subject": cur} if (cur := _current_subject(d, latest) or _placed_subject(d, placed)) else d
+            for d in docs if not _is_voided(d, voided)]
 
 
 def is_voided(session: dict) -> bool:

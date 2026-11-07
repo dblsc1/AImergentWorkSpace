@@ -94,6 +94,8 @@ _COLLECTIONS = (
     "activity_settings", "activity_direct_log", "activity_input",
     # v2.39 秘书报告 / 问人（AI 的话，不是事实）。
     "activity_secretary_reports", "activity_questions",
+    # v2.44 代理去向规则。
+    "agent_place_rules",
 )
 
 

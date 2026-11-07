@@ -42,6 +42,7 @@ from ..events import service as events_service
 from ..events.schemas import SPEC
 from ..planner import service as planner_service
 from . import agent_phases as phases_impl
+from . import agent_place as place_impl
 from . import agents as agents_impl
 from . import backfill as backfill_impl
 from . import repo
@@ -287,6 +288,30 @@ def anonymous_run_guard(request: Request) -> None:
     c = caller_scope()
     if run_id is not None and c.anonymous:  # 本机来的只多认「本机匿名开的」运行，令牌开的谁都碰不到
         agents_impl.require_anonymous_opened(current_tenant(), run_id, c.same_host)
+
+
+def agent_place(run_id: str, task_id: str | None, project_id: str | None, remember: bool) -> dict:
+    return place_impl.place(run_id, task_id, project_id, remember, current_tenant(), resolve_chain=_resolve_task_chain, now=_now)
+
+
+def agent_place_rules() -> list[dict]:
+    return place_impl.list_rules(current_tenant(), _resolve_task_chain)
+
+
+MAX_PLACE_RULES = place_impl.MAX_RULES
+
+
+def export_place_rules() -> list[dict]:
+    return [{k: v for k, v in r.items() if k != "user"} for r in repo.place_rules(current_tenant())]
+
+
+def restore_place_rules(rules: list[dict]) -> None:
+    user = current_tenant()
+    repo.restore_place_rules([{**r, "user": user} for r in rules])
+
+
+def agent_place_rule_delete(agent: str) -> None:
+    place_impl.delete_rule(current_tenant(), agent)
 
 
 def agent_stop(run_id: str, outcome: str, output: str | None, user: str | None = None) -> dict:

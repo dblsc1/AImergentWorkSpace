@@ -27,6 +27,8 @@ class RestoreRequest(BaseModel):
     projections: dict[str, Any] | None = None
     #: v2.44 白条；旧快照没有这个键。
     timerUnplaced: list[dict[str, Any]] = []
+    #: v2.44 代理去向规则；旧快照没有这一键。
+    agentPlaceRules: list[dict[str, Any]] | None = None
     #: 原样接受、忽略。
     exportedAt: str | None = None
 

@@ -258,13 +258,34 @@ def apply_agent_daily_stat(
     return result.modified_count > 0 or result.upserted_id is not None
 
 
+def move_agent_daily_stat(user: str, dedupe_key: str, date: str, agent: str, old: tuple | None, new: tuple,
+                          seconds: int, runs: int) -> None:
+    """v2.44 place：把一次运行在某天的秒数从旧 (项目, 任务) 行搬到新行；``old`` 为 None 只加不减。
+    ``dedupe_key`` 是那条 ``agent.run.placed`` 的，记在各行的 ``movedKeys``（同 v2.11 的 movedKeys，不读出）：重投递不重复搬。
+    旧行减到空就删。"""
+    def key(project_id, task_id):
+        return {"user": user, "date": date, "projectId": project_id, "taskId": task_id, "agent": agent}
+
+    col = _agent_daily_col()
+    if old is not None:
+        col.update_one({**key(*old), "movedKeys": {"$ne": dedupe_key}},
+                       {"$inc": {"seconds": -seconds, "runs": -runs}, "$addToSet": {"movedKeys": dedupe_key}})
+        col.delete_one({**key(*old), "seconds": {"$lte": 0}, "runs": {"$lte": 0}})
+    query = {**key(*new), "movedKeys": {"$ne": dedupe_key}}
+    update = {"$inc": {"seconds": seconds, "runs": runs}, "$addToSet": {"movedKeys": dedupe_key}}
+    try:
+        col.update_one(query, {**update, "$setOnInsert": key(*new)}, upsert=True)
+    except DuplicateKeyError:  # 行已在：要么本键应用过（条件不中），要么并发的另一条刚建出这一行
+        col.update_one(query, update)
+
+
 def read_agent_daily_stats(user: str, date_from: str | None = None, date_to: str | None = None) -> list[dict]:
     """同 ``read_daily_stats``：按用户、可选闭区间日期过滤（v2.3 读端）。"""
     query: dict = {"user": user}
     date_range = {op: v for op, v in (("$gte", date_from), ("$lte", date_to)) if v}
     if date_range:
         query["date"] = date_range
-    return list(_agent_daily_col().find(query, {"_id": 0, "user": 0, "appliedKeys": 0}))
+    return list(_agent_daily_col().find(query, {"_id": 0, "user": 0, "appliedKeys": 0, "movedKeys": 0}))
 
 
 def clear_agent_daily_stats() -> None:
@@ -344,6 +365,11 @@ def read_lanes(user: str, kind: str, start, end, limit: int, *, fields: tuple | 
         query["source"] = {"$in": sources}
     proj = {"_id": 0} if fields is None else {"_id": 0, **{f: 1 for f in fields}}
     return list(_lanes_col().find(query, proj).sort("startAt", 1 if ascending else -1).limit(limit))
+
+
+def place_lane(user: str, key: str, task_id: str | None, project_id: str | None) -> None:
+    """v2.44 place：换这条运行的去向（只动已有的 run 行）。"""
+    _lanes_col().update_one({"user": user, "key": key, "kind": "run"}, {"$set": {"taskId": task_id, "projectId": project_id}})
 
 
 def delete_lane(user: str, key: str) -> None:

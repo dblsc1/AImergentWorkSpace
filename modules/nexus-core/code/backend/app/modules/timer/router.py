@@ -10,9 +10,13 @@ from datetime import datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Request, Response
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 from ..activity import reconcile
+from ..activity.ignore_router import human as ignore_human
+from ..activity.ignore_router import no_bearer
+from ..planner import guard as planner_guard
+from ..planner.errors import ForbiddenError
 from . import reassign as reassign_impl
 from . import service
 
@@ -246,6 +250,45 @@ def agent_start(body: AgentStartIn, response: Response) -> dict:
     if not created:
         response.status_code = 200
     return out
+
+
+def _human_only(request: Request) -> None:
+    """v2.44：设备令牌 / 带范围的令牌 / 匿名 / AI 来源凭据（MCP）都 403。"""
+    ignore_human(request.headers.get("authorization"))
+    if planner_guard.resolve_source(request.headers) == planner_guard.SOURCE_AI:
+        raise ForbiddenError("代理去向只许人改：AI 来源凭据（MCP）不行")
+
+
+class AgentPlaceIn(BaseModel):
+    """v2.44。taskId 与 projectId 恰好一个；remember 缺省 true。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    taskId: str | None = Field(default=None, min_length=1, max_length=128)
+    projectId: str | None = Field(default=None, min_length=1, max_length=128)
+    remember: StrictBool = True
+
+    @model_validator(mode="after")
+    def _exactly_one(self) -> AgentPlaceIn:
+        if (self.taskId is None) == (self.projectId is None):
+            raise ValueError("taskId 与 projectId 必须给一个、且只能给一个")
+        return self
+
+
+@agents_router.post("/{runId}/place", dependencies=[Depends(_human_only)])
+def agent_place(runId: str, body: AgentPlaceIn) -> dict:  # noqa: N803 —— 路径参数名即契约
+    return service.agent_place(runId, body.taskId, body.projectId, body.remember)
+
+
+@agents_router.get("/place-rules", dependencies=[Depends(no_bearer)])
+def agent_place_rules() -> dict:
+    return {"items": service.agent_place_rules()}
+
+
+@agents_router.delete("/place-rules/{agent:path}", status_code=204, dependencies=[Depends(_human_only)])
+def agent_place_rule_delete(agent: str) -> Response:
+    service.agent_place_rule_delete(agent)
+    return Response(status_code=204)
 
 
 class AgentPhaseIn(BaseModel):

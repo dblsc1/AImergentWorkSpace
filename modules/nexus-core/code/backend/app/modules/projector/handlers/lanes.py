@@ -112,6 +112,13 @@ def handle_reassign(envelope: dict) -> None:
     repo.reassign_lane(envelope["user"], applied_key(session), subject.get("task"), subject.get("project"), seq)
 
 
+def handle_place(envelope: dict) -> None:
+    """吃一条已落库的 ``agent.run.placed``（v2.44）：换那条运行的 taskId / projectId。在跑的运行没有抄录，不动。"""
+    run, subject = (envelope.get("data") or {}).get("run"), envelope.get("subject") or {}
+    if isinstance(run, dict) and isinstance(run.get("source"), str) and isinstance(run.get("dedupeKey"), str):
+        repo.place_lane(envelope["user"], applied_key(run), subject.get("task"), subject.get("project"))
+
+
 def handle_void(envelope: dict) -> None:
     """吃一条已落库的 ``session.voided``（契约 v2.38）：那一段不再进时间线。"""
     session = (envelope.get("data") or {}).get("session")
