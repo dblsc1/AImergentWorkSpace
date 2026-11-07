@@ -134,14 +134,16 @@ def stop(user: str | None = None) -> dict:
     """结束计时：组装 ``session.completed`` → 事件入口 → 清活状态。"""
     user = user or current_tenant()  # v2.0：缺省取请求的租户
     state = repo.get_running(user)
+    while state is not None and state.get("taskId") is None:  # v2.44：没记到项目的计时 → 白条，不进台账
+        # 先抢到删除再存白条：并发的 place 刚把它记到项目时删不到，重读走有目标的正常流程
+        if repo.clear_running_if(user, state["sessionId"], task_id=None):
+            return {"running": False, "event": None,
+                    "unplacedId": unplaced_impl.save_bar(state, _now().isoformat(), user)}
+        state = repo.get_running(user)
     if state is None:
         return {"running": False, "event": None}  # S8：幂等，不报错
 
     now = _now()
-    if state.get("taskId") is None:  # v2.44：没记到项目的计时 → 白条，不进台账
-        bar_id = unplaced_impl.save_bar(state, now.isoformat(), user)
-        repo.clear_running(user)
-        return {"running": False, "event": None, "unplacedId": bar_id}
     started = datetime.fromisoformat(state["startAt"])
     duration = max(int((now - started).total_seconds()), 1)  # 秒级下限 1：起停同秒也算一段真实工作
 

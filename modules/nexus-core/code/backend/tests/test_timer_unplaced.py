@@ -209,3 +209,34 @@ def test_bars_round_trip_through_export_and_restore(client):
     again.pop("exportedAt")
     assert again == snap
     assert _db()["timer_unplaced"].count_documents({}) == 1
+
+
+def test_stop_does_not_swallow_a_place_that_lands_after_it_read_state(client, monkeypatch):
+    from app.modules.timer import repo, service  # noqa: PLC0415
+
+    w = _world(client)
+    client.post(f"{TIMER}/start-unplaced")
+    real, raced = repo.get_running, []
+
+    def stale_read(user):
+        state = real(user)
+        if not raced:  # stop 读完 state 之后，place 的效果落地
+            raced.append(1)
+            assert repo.retarget_running(user, state["sessionId"], {"taskId": w["a"], "projectId": w["p"], "zoneId": w["zone"]})
+        return state
+
+    monkeypatch.setattr(service.repo, "get_running", stale_read)
+    out = client.post(f"{TIMER}/stop").json()
+    assert out["unplacedId"] is None and out["event"]["type"] == "session.completed"
+    assert _events(type="session.completed")[0]["subject"]["task"] == w["a"] and _bars(client) == []
+
+
+def test_restore_keeps_only_the_four_bar_keys(client):
+    _bar(30, 60, "unp_k")
+    snap = client.get(f"{API}/export").json()
+    snap["timerUnplaced"][0]["extra"] = "x"
+    _db()["timer_unplaced"].delete_many({})
+    url = f"{API}/restore"
+    chk = client.post(url, json=snap, params={"dryRun": True}).json()["checksum"]
+    assert client.post(url, json=snap, params={"dryRun": False, "checksum": chk}).status_code == 200
+    assert "extra" not in _db()["timer_unplaced"].find_one({"id": "unp_k"})

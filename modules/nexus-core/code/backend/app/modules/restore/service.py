@@ -167,5 +167,6 @@ def restore(
     planner_service.restore_snapshot(request, {t: snapshot[t] for t in TYPES})
     summary["events"] = events_service.restore_bulk(snapshot["events"])
     if snapshot.get("timerUnplaced"):
-        timer_service.restore_unplaced(snapshot["timerUnplaced"])
+        keep = ("id", "startAt", "endAt", "createdAt")
+        timer_service.restore_unplaced([{k: bar[k] for k in keep} for bar in snapshot["timerUnplaced"]])
     return {"dryRun": False, "checksum": expected, "summary": summary, "rebuilt": rebuild()}

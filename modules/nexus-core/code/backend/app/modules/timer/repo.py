@@ -37,6 +37,11 @@ def clear_running(user: str) -> None:
     _col().delete_one({"user": user})
 
 
+def clear_running_if(user: str, session_id: str, task_id: str | None) -> bool:
+    """这一段还在跑、且目标仍是 ``task_id`` 才清；False = 已被并发 place / stop 改动。"""
+    return _col().delete_one({"user": user, "sessionId": session_id, "taskId": task_id}).deleted_count > 0
+
+
 def insert_running(doc: dict) -> bool:
     """只在没有活状态时写；False = 已在计时（唯一索引挡下）。"""
     try:
