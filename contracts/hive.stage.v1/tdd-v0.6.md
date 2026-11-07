@@ -1,4 +1,4 @@
-# onboarding.v1 / hive.stage.v1 / desktop.pet.v1 —— TDD 文档（待仓主确认）
+# onboarding.v1 / hive.stage.v1 / desktop.pet.v1 —— TDD 文档
 
 > v0.6 三份契约（`onboarding.v1`、`hive.stage.v1`、`desktop.pet.v1`）的测试清单。第六节的澄清已写进契约，以契约为准。手动计时（`hive.stage.v1`「三·1」）与桌宠程序 `modules/desktop-pet`（Electron）的用例由实现方按契约补。
 
