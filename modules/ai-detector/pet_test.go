@@ -383,3 +383,44 @@ func TestPetConfigParses(t *testing.T) {
 		t.Fatal("缺省应为 nil = 关")
 	}
 }
+
+func TestPetFirstFetchFailureKeepsBaseline(t *testing.T) { // 审查 #177-1
+	r := newPetRig(t, onPet())
+	r.status = 500
+	r.round("")
+	r.status = 200
+	if ev := r.round(agentsJSON("waiting_input", "garden")); len(ev) != 0 {
+		t.Fatalf("读失败后的第一次成功轮应只建基线：%v", ev)
+	}
+	if ev := r.round(agentsJSON("waiting_input", "garden")); len(ev) != 0 {
+		t.Fatalf("%v", ev)
+	}
+}
+
+func TestPetDshDefaultURL(t *testing.T) { // 审查 #177-3
+	if got := (PetConfig{Renderer: "dsh-pet"}).target(); got != "http://127.0.0.1:3080" {
+		t.Fatal(got)
+	}
+}
+
+func TestUploadFailsCountsOnlyUploads(t *testing.T) { // 审查 #177-2
+	ck := fakeCockpit(t)
+	defer ck.Close()
+	ck.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "detector/") || strings.HasSuffix(r.URL.Path, "activity/settings") {
+			w.WriteHeader(404)
+			return
+		}
+		w.WriteHeader(502)
+	})
+	aw := fakeAW(t, []awEvent{win(0, 600, "code", "x")}, nil)
+	cfg := testConfig(aw.URL, ck.URL)
+	st := activeState()
+	if _, err := tick(cfg, st, at(1000), http.DefaultClient); err == nil || st.UploadFails != 1 {
+		t.Fatalf("上传失败该数 1：err=%v n=%d", err, st.UploadFails)
+	}
+	aw.Close() // ActivityWatch 挂了：tick 出错，但不算上传失败
+	if _, err := tick(cfg, st, at(1100), http.DefaultClient); err == nil || st.UploadFails != 1 {
+		t.Fatalf("AW 挂了不该数：err=%v n=%d", err, st.UploadFails)
+	}
+}

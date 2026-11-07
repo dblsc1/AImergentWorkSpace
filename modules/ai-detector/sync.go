@@ -224,6 +224,7 @@ func tick(cfg Config, st *State, now time.Time, hc *http.Client) (string, error)
 		if err != nil {
 			// 这一批没确认收到：游标停在这一批的开始（已确认的批次之后），下一轮从这里重算重发。
 			st.FailedParams = params
+			st.UploadFails++ // 桌宠桥接的 alert upload：只数真正的上传失败
 			if code == http.StatusUnauthorized || code == http.StatusForbidden {
 				return "", fmt.Errorf("上传被拒（%d）：设备令牌无效或已吊销，请重新生成", code)
 			}

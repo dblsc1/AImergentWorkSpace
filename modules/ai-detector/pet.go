@@ -41,6 +41,9 @@ func (p PetConfig) renderer() string {
 
 func (p PetConfig) target() string {
 	if p.URL == "" {
+		if p.renderer() == "dsh-pet" {
+			return "http://127.0.0.1:3080"
+		}
 		return petDefaultURL
 	}
 	return p.URL
@@ -177,9 +180,9 @@ func (b *petBridge) tick(cfg Config) {
 		b.q.last = ""
 		b.focus(*pc, cur)
 		b.agents(*pc, cur)
+		b.started = true // 基线要等读 views/current 成功一次才算建好
 	}
 	b.alert(*pc)
-	b.started = true
 }
 
 func (b *petBridge) focus(pc PetConfig, cur petCurrent) {
@@ -238,7 +241,7 @@ func (b *petBridge) agents(pc PetConfig, cur petCurrent) {
 			b.emit(pc, "agentWaiting", r.name+" "+ask, "waiting", map[string]any{"agent": r.name, "reason": reason})
 		}
 		for id, r := range b.runs {
-			if _, ok := now[id]; !ok {
+			if _, ok := now[id]; !ok { // 取舍：views/current 已滤掉失联的运行，失联的也会被当成干完了
 				b.emit(pc, "agentDone", r.name+" 干完了", "happy", map[string]any{"agent": r.name})
 			}
 		}

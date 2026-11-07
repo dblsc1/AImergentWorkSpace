@@ -229,7 +229,6 @@ func runOnce(p paths, hc *http.Client, out io.Writer) error {
 	msg, err := tick(cfg, &st, time.Now(), hc)
 	if err != nil {
 		st.LastOutcome = "失败：" + err.Error()
-		st.UploadFails++
 	} else {
 		st.LastOutcome = msg
 		st.UploadFails = 0
