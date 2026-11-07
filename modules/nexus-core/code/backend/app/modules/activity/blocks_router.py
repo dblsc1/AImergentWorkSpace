@@ -7,10 +7,10 @@
 from __future__ import annotations
 
 from datetime import date as Date
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator
 from starlette.concurrency import run_in_threadpool
 
 from ..planner.errors import ForbiddenError
@@ -175,7 +175,7 @@ class SettingsIn(BaseModel):
     liveAskMinutes: Annotated[StrictInt, Field(ge=1, le=60)] | None = None
     liveAskEnabled: StrictBool | None = None
     browserDomains: Annotated[list[StrictStr], Field(max_length=200)] | None = None
-    onboardingDoneAt: Any = None  # 只由 onboarding/done 写；给了就忽略（G-17）
+    onboardingDoneAt: AwareDatetime | None = None  # 只由 onboarding/done 写；合格的值忽略，不合格 422（G-17）
     pet: _Pet | None = None
 
     @field_validator("browserDomains")

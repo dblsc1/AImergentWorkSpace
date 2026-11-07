@@ -72,10 +72,14 @@ def test_s09_omitted_keeps(old):
     assert (s["liveAskMinutes"], s["liveAskEnabled"], s["browserDomains"]) == (10, False, ["a.com"])
 
 
-@pytest.mark.parametrize("v", ["2026-01-01T00:00:00Z", "x"])
-def test_s10_s11_done_at_ignored(old, v):
-    r = _put(old, 0, onboardingDoneAt=v)
+def test_s10_done_at_ignored(old):
+    r = _put(old, 0, onboardingDoneAt="2026-01-01T00:00:00Z")
     assert r.status_code == 200 and r.json()["onboardingDoneAt"] is None
+
+
+@pytest.mark.parametrize("v", ["x", 5, "2026-01-01T00:00:00"])
+def test_s11_done_at_bad_422(old, v):
+    assert _put(old, 0, onboardingDoneAt=v).status_code == 422
 
 
 def test_pet_put(old):
