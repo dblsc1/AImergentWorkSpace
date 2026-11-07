@@ -122,6 +122,26 @@ def _check_unplaced(bars: list[dict]) -> None:
             raise InvalidInputError(f"timerUnplaced[{i}] 不是合法的白条（id / startAt / endAt / createdAt）")
 
 
+def _check_place_rules(raw: Any) -> list[dict]:
+    """v2.44 代理去向规则：整批先验，通过了才落库。返回只含 agent / taskId / projectId / createdAt 的干净文档。"""
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or len(raw) > timer_service.MAX_PLACE_RULES:
+        raise InvalidInputError(f"agentPlaceRules 必须是至多 {timer_service.MAX_PLACE_RULES} 条的数组")
+    seen: set[str] = set()
+    out = []
+    for i, r in enumerate(raw):
+        ok = isinstance(r, dict) and isinstance(r.get("agent"), str) and r["agent"] and r["agent"] not in seen \
+            and isinstance(r.get("createdAt"), str) \
+            and sum(isinstance(r.get(k), str) and bool(r[k]) for k in ("taskId", "projectId")) == 1 \
+            and all(r.get(k) is None or isinstance(r[k], str) for k in ("taskId", "projectId"))
+        if not ok:
+            raise InvalidInputError(f"agentPlaceRules[{i}] 不合法（agent 须非空且不重复；taskId / projectId 恰好一个；createdAt 须是字符串）")
+        seen.add(r["agent"])
+        out.append({k: r[k] for k in ("agent", "taskId", "projectId", "createdAt") if r.get(k) is not None})
+    return out
+
+
 def _ensure_empty() -> None:
     counts = {
         "zones": len(planner_service.list_zones()),
@@ -145,6 +165,7 @@ def restore(
     _check_planner(snapshot)
     _check_events(snapshot["events"])
     _check_unplaced(snapshot.get("timerUnplaced") or [])
+    place_rules = _check_place_rules(snapshot.get("agentPlaceRules"))
     _ensure_empty()
 
     expected = _checksum(snapshot)
@@ -169,5 +190,5 @@ def restore(
     if snapshot.get("timerUnplaced"):
         keep = ("id", "startAt", "endAt", "createdAt")
         timer_service.restore_unplaced([{k: bar[k] for k in keep} for bar in snapshot["timerUnplaced"]])
-    timer_service.restore_place_rules(snapshot.get("agentPlaceRules") or [])
+    timer_service.restore_place_rules(place_rules)
     return {"dryRun": False, "checksum": expected, "summary": summary, "rebuilt": rebuild()}

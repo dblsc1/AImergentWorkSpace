@@ -258,18 +258,25 @@ def apply_agent_daily_stat(
     return result.modified_count > 0 or result.upserted_id is not None
 
 
-def move_agent_daily_stat(user: str, date: str, agent: str, old: tuple, new: tuple, seconds: int, runs: int) -> None:
-    """v2.44 place：把一次运行在某天的秒数从旧 (项目, 任务) 行搬到新行；旧行减到空就删。"""
+def move_agent_daily_stat(user: str, dedupe_key: str, date: str, agent: str, old: tuple | None, new: tuple,
+                          seconds: int, runs: int) -> None:
+    """v2.44 place：把一次运行在某天的秒数从旧 (项目, 任务) 行搬到新行；``old`` 为 None 只加不减。
+    ``dedupe_key`` 是那条 ``agent.run.placed`` 的，记在各行的 ``movedKeys``（同 v2.11 的 movedKeys，不读出）：重投递不重复搬。
+    旧行减到空就删。"""
     def key(project_id, task_id):
         return {"user": user, "date": date, "projectId": project_id, "taskId": task_id, "agent": agent}
 
     col = _agent_daily_col()
-    col.update_one(key(*old), {"$inc": {"seconds": -seconds, "runs": -runs}})
-    col.delete_one({**key(*old), "seconds": {"$lte": 0}, "runs": {"$lte": 0}})
+    if old is not None:
+        col.update_one({**key(*old), "movedKeys": {"$ne": dedupe_key}},
+                       {"$inc": {"seconds": -seconds, "runs": -runs}, "$addToSet": {"movedKeys": dedupe_key}})
+        col.delete_one({**key(*old), "seconds": {"$lte": 0}, "runs": {"$lte": 0}})
+    query = {**key(*new), "movedKeys": {"$ne": dedupe_key}}
+    update = {"$inc": {"seconds": seconds, "runs": runs}, "$addToSet": {"movedKeys": dedupe_key}}
     try:
-        col.update_one(key(*new), {"$inc": {"seconds": seconds, "runs": runs}, "$setOnInsert": key(*new)}, upsert=True)
-    except DuplicateKeyError:  # 并发的另一条刚建出这一行
-        col.update_one(key(*new), {"$inc": {"seconds": seconds, "runs": runs}})
+        col.update_one(query, {**update, "$setOnInsert": key(*new)}, upsert=True)
+    except DuplicateKeyError:  # 行已在：要么本键应用过（条件不中），要么并发的另一条刚建出这一行
+        col.update_one(query, update)
 
 
 def read_agent_daily_stats(user: str, date_from: str | None = None, date_to: str | None = None) -> list[dict]:
@@ -278,7 +285,7 @@ def read_agent_daily_stats(user: str, date_from: str | None = None, date_to: str
     date_range = {op: v for op, v in (("$gte", date_from), ("$lte", date_to)) if v}
     if date_range:
         query["date"] = date_range
-    return list(_agent_daily_col().find(query, {"_id": 0, "user": 0, "appliedKeys": 0}))
+    return list(_agent_daily_col().find(query, {"_id": 0, "user": 0, "appliedKeys": 0, "movedKeys": 0}))
 
 
 def clear_agent_daily_stats() -> None:

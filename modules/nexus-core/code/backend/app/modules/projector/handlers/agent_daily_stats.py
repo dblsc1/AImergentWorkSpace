@@ -95,10 +95,11 @@ def handle_place(envelope: dict) -> None:
     if not isinstance(run, dict) or run.get("unverified") is True or not isinstance(run.get("agent"), str):
         return
     old, new = (data.get("fromProjectId"), data.get("fromTaskId")), (subject.get("project"), subject.get("task"))
-    if not old[0] or not new[0] or old == new:
+    if not new[0] or old == new:
         return
-    for date, seconds, runs in _rows(run.get("source"), run):
-        repo.move_agent_daily_stat(envelope["user"], date, run["agent"], old, new, seconds, runs)
+    for date, seconds, runs in _rows(run.get("source"), run):  # 旧去向没有项目 = 这条运行从没进过本表，只加到新行
+        repo.move_agent_daily_stat(envelope["user"], applied_key(envelope), date, run["agent"], old if old[0] else None,
+                                   new, seconds, runs)
 
 
 def read_agent_daily_stats(

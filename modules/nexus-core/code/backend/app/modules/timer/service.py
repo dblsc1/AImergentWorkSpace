@@ -298,6 +298,9 @@ def agent_place_rules() -> list[dict]:
     return place_impl.list_rules(current_tenant(), _resolve_task_chain)
 
 
+MAX_PLACE_RULES = place_impl.MAX_RULES
+
+
 def export_place_rules() -> list[dict]:
     return [{k: v for k, v in r.items() if k != "user"} for r in repo.place_rules(current_tenant())]
 

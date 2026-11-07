@@ -59,11 +59,11 @@ def _slot():
     return datetime.now(config.settings.tz).replace(hour=10, minute=0, second=0, microsecond=0) - timedelta(days=1)
 
 
-def _finished(client, run_id="run_fin", agent="garden", seconds=1800):
+def _finished(client, run_id="run_fin", agent="garden", seconds=1800, subject=None):
     start = _slot()
     env = {"spec": "yq-event/v1", "id": f"evt_{run_id}", "dedupeKey": f"agent:{run_id}", "type": "agent.run.completed",
            "source": "agent-hook", "user": "u_local", "time": (start + timedelta(seconds=seconds)).isoformat(),
-           "subject": {"zone": "z_inbox", "project": "p_inbox"},
+           "subject": subject or {"zone": "z_inbox", "project": "p_inbox"},
            "data": {"agent": agent, "tool": "x", "startAt": start.isoformat(), "durationSeconds": seconds,
                     "outcome": "done", "workingSeconds": seconds,
                     "days": [{"date": start.date().isoformat(), "seconds": seconds}]}}
@@ -257,3 +257,46 @@ def test_export_restore_and_tenant_isolation(client, projects):
     assert r.status_code == 200, r.text
     assert client.get(RULES).json()["items"] == before
     assert client.get(RULES, headers=B).json()["items"] == []
+
+
+def test_place_with_no_old_project_only_adds_to_new_row(client, projects):
+    p, _ = projects
+    start = _slot()
+    env = {"user": "u_local", "dedupeKey": "place:run_x:1", "source": "agent-place", "subject": {"project": p},
+           "data": {"fromProjectId": None, "fromTaskId": None, "run": {
+               "source": "agent-hook", "dedupeKey": "agent:run_x", "agent": "garden", "startAt": start.isoformat(),
+               "durationSeconds": 1800, "days": [{"date": start.date().isoformat(), "seconds": 1800}]}}}
+    from app.modules.projector.handlers import agent_daily_stats  # noqa: PLC0415
+
+    agent_daily_stats.handle_place(env)
+    body = client.get(f"{API}/views/agent-time").json()
+    assert _stats(client) == ({p: 1800}, 1) and body["days"][0]["seconds"] == 1800
+
+
+def test_place_projection_is_idempotent_on_redelivery(client, projects):
+    p, _ = projects
+    run = _finished(client)
+    _place(client, run, projectId=p, remember=False)
+    from app.modules.projector import registry  # noqa: PLC0415
+
+    ev = _db()["events"].find_one({"type": "agent.run.placed"}, {"_id": 0})
+    registry.dispatch(ev)
+    assert _stats(client) == ({p: 1800}, 1)
+
+
+def _restore_with(client, rules):
+    snap = client.get(f"{API}/export").json()
+    snap["agentPlaceRules"] = rules
+    return client.post(f"{API}/restore", json=snap, params={"dryRun": "true"})
+
+
+@pytest.mark.parametrize("rules", [
+    [{"agent": "", "projectId": "p", "createdAt": "x"}],
+    [{"agent": "a", "projectId": "p", "createdAt": "x"}, {"agent": "a", "projectId": "p", "createdAt": "x"}],
+    [{"agent": "a", "taskId": "t", "projectId": "p", "createdAt": "x"}],
+    [{"agent": "a", "createdAt": "x"}],
+    [{"agent": "a", "projectId": "p", "createdAt": 5}],
+    [{"agent": f"a{i}", "projectId": "p", "createdAt": "x"} for i in range(501)],
+])
+def test_restore_rejects_bad_place_rules_before_writing(client, rules):
+    assert _restore_with(client, rules).status_code == 400
