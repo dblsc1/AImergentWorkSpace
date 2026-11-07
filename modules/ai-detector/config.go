@@ -63,6 +63,8 @@ type Config struct {
 	// AwLogUpload：把 aw-start.log 脱敏后的末尾几行随健康报告上传，让 AI 助理能帮着排查。缺省关。
 	// **只来自本机配置文件**，服务端 / 网页设置改不了（也读不到它以外的任何本机内容）。
 	AwLogUpload bool `json:"awLogUpload"`
+	// v0.6：桌宠桥接（desktop.pet.v1）。nil = 关。
+	Pet *PetConfig `json:"pet,omitempty"`
 
 	// autoTrack：「允许 AI 管理进行中的任务」。只来自网页设置（detector.settings.v1 v1.3），本机配置里没有这个键——
 	// 服务端要读它才知道该不该显示 / 直接记。applyRemoteSettings 填。
@@ -319,6 +321,8 @@ type State struct {
 	LightAgents map[string]*agentRun `json:"lightAgents,omitempty"`
 	// Health：检测程序健康状态（v0.4）。由在场心跳那个 goroutine 写，同步一轮回写时原样带过去。
 	Health healthState `json:"health"`
+	// UploadFails：连续失败的同步轮数（桌宠桥接的 alert upload 用）；成功一轮清零。
+	UploadFails int `json:"uploadFails,omitempty"`
 	// RecordsCursor：原始记录流的游标，独立于 Cursor（契约「原始记录」）。零值 = 没在传，下次开始时从那一刻起记。
 	RecordsCursor time.Time `json:"recordsCursor"`
 }

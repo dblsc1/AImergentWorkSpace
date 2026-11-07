@@ -229,8 +229,10 @@ func runOnce(p paths, hc *http.Client, out io.Writer) error {
 	msg, err := tick(cfg, &st, time.Now(), hc)
 	if err != nil {
 		st.LastOutcome = "失败：" + err.Error()
+		st.UploadFails++
 	} else {
 		st.LastOutcome = msg
+		st.UploadFails = 0
 	}
 	// 状态文件桥、健康报告在另一个 goroutine 里写 Agents / Health：只写回本轮自己的字段。
 	if serr := updateState(p.state, func(s *State) {
@@ -262,7 +264,8 @@ func runLoop(p paths, hc *http.Client) error {
 	// 在场心跳、状态文件桥各自一个 goroutine：同步一轮可能要好几分钟（积压、分类服务慢），不能让它们等。
 	// 同一进程里，仍在 run 拿着的单实例锁之内。
 	var wg sync.WaitGroup
-	wg.Add(4)
+	wg.Add(5)
+	go func() { defer wg.Done(); petLoop(p, hc) }()
 	go func() { defer wg.Done(); presenceLoop(p, hc) }()
 	go func() { defer wg.Done(); bridgeLoop(p, hc) }()
 	go func() { defer wg.Done(); inputLoop(p, hc) }()
