@@ -141,7 +141,7 @@ def test_hover_opens_human_plus_four_agents_in_priority_order(browser) -> None:
         # 空闲的 tests 被挤掉；docs 09:15 已结束、不在最近 1 小时里
         assert names == ["我", "plot", "garden", "codex", "old-job"]
         more = page.locator(f"{POP} a.hcl-more")
-        assert more.text_content() == "还有 1 个 → 计时页"
+        assert more.text_content() == "还有 1 个 → 蜂巢"
         assert more.get_attribute("href") == "/hive/"
         # 同一套配色与段：plot 末段是在等（黄）且在闪
         assert page.eval_on_selector(f"{POP} [data-run-id=run_c] .is-live", "n => n.className") == \
@@ -215,7 +215,7 @@ def test_touch_tap_toggles_instead_of_navigating(browser) -> None:
         page.wait_for_selector(f"{POP}.ckpt-open .hcl-row")
         assert page.url == ORIGIN + "/hive/", "第一下点不跳走"
         go = page.locator(f"{POP} .ckpt-lanes-go")
-        assert go.text_content() == "去计时页" and go.get_attribute("href") == "/hive/"
+        assert go.text_content() == "去蜂巢" and go.get_attribute("href") == "/hive/"
         page.tap("[data-ckpt-chip]")
         settle(page, 50)
         assert not is_open(page)
@@ -461,8 +461,8 @@ def test_needs_choice_dot_on_chip(browser) -> None:
         _poll(page)
         page.wait_for_selector(".ckpt-need", state="visible")
         assert page.get_attribute(NAV_SEL, "data-ckpt-choice") == ""
-        assert page.get_attribute("[data-ckpt-chip]", "title") == "有个窗口不知道记到哪 —— 去计时页选"
-        assert page.get_attribute("[data-ckpt-chip]", "aria-label") == label + "；有个窗口不知道记到哪 —— 去计时页选"
+        assert page.get_attribute("[data-ckpt-chip]", "title") == "有个窗口不知道记到哪 —— 去蜂巢选"
+        assert page.get_attribute("[data-ckpt-chip]", "aria-label") == label + "；有个窗口不知道记到哪 —— 去蜂巢选"
         assert page.get_attribute("[data-ckpt-chip]", "href") == "/hive/"
         # 可以和 auto 同时有（等人选的不一定是前台窗口）
         site.current = {"running": False, "auto": _auto(page, 5), "needsChoice": need}
@@ -567,7 +567,7 @@ def test_auto_and_focus_share_one_path_without_double_text(browser) -> None:
               "正在：code · plot.gd — <i>garden</i>")
         assert page.is_visible(".ckpt-need") and page.get_attribute(NAV_SEL, "data-ckpt-choice") == ""
         assert page.get_attribute("[data-ckpt-chip]", "title") == \
-            "正在用 · code · plot.gd — <i>garden</i> —— 有个窗口不知道记到哪 —— 去计时页选"
+            "正在用 · code · plot.gd — <i>garden</i> —— 有个窗口不知道记到哪 —— 去蜂巢选"
 
 
 def test_manual_timer_pause_and_degraded_hide_focus(browser) -> None:

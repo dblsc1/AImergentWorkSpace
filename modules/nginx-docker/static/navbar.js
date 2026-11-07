@@ -196,7 +196,7 @@
   var chip = el('a', 'ckpt-chip');
   chip.href = NAV.timer || NAV.home || BASE;
   chip.setAttribute('data-ckpt-chip', '');
-  chip.setAttribute('aria-label', '录制状态，点击前往计时页');
+  chip.setAttribute('aria-label', '录制状态，点击前往蜂巢');
   var chipDot = el('span', 'ckpt-dot');
   chipDot.setAttribute('aria-hidden', 'true');
   chip.appendChild(chipDot);
@@ -327,7 +327,7 @@
   var focus = null;
   var needsChoice = false;
   var CHIP_LABEL = chip.getAttribute('aria-label');
-  var HINT_CHOICE = '有个窗口不知道记到哪 —— 去计时页选';
+  var HINT_CHOICE = '有个窗口不知道记到哪 —— 去蜂巢选';
 
   var two = function (n) { return (n < 10 ? '0' : '') + n; };
   var fmt = function (totalSec) {
@@ -466,7 +466,7 @@
     pop.appendChild(el('div', 'ckpt-lanes-head', '最近 1 小时'));
     var popBody = el('div', 'ckpt-lanes-body');
     pop.appendChild(popBody);
-    var popGo = el('a', 'ckpt-lanes-go', '去计时页');
+    var popGo = el('a', 'ckpt-lanes-go', '去蜂巢');
     popGo.href = chip.getAttribute('href');
     pop.appendChild(popGo);
     right.insertBefore(pop, chip.nextSibling);      // 紧跟芯片：Tab 从芯片直接走进预览
@@ -503,7 +503,7 @@
       var pick = L.pickPreview(lanesLast.agents, v0, 4);
       L.render(popBody, lanesLast, {
         viewStart: v0, viewEnd: now + HOUR_MS * 0.03, agents: pick.shown, compact: true, presence: true,
-        more: pick.more ? '还有 ' + pick.more + ' 个 → 计时页' : '', moreHref: chip.getAttribute('href'),
+        more: pick.more ? '还有 ' + pick.more + ' 个 → 蜂巢' : '', moreHref: chip.getAttribute('href'),
         focusFallback: popGo
       });
     };
