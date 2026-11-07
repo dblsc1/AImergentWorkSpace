@@ -652,7 +652,11 @@ def test_drag_a_cell_pet_away_it_waits_three_seconds_then_walks_home_without_wri
         assert st.box(PET + " .st-media")["x"] < away["x"] - 5
         assert st.page.locator(PET).evaluate("e => e.classList.contains('flip')") is False    # 往左走 = 不翻转
         st.page.clock.run_for(9000)
-        back = st.box(PET + " .st-media")
+        for _ in range(40):              # 到家后的 left/top 过渡按真实时间走，不受假时钟控制
+            back = st.box(PET + " .st-media")
+            if abs(back["x"] - home["x"]) < 3 and abs(back["y"] - home["y"]) < 3:
+                break
+            st.page.wait_for_timeout(50)
         assert abs(back["x"] - home["x"]) < 3 and abs(back["y"] - home["y"]) < 3
         assert _src(st).endswith("/claude/w.webm")
         assert st.posts == [] and not any("/place" in u for u in st.requests)
