@@ -98,6 +98,7 @@ video.st-art { position: absolute; max-width: none; max-height: none; height: 10
 @keyframes st-shake { 25% { margin-left: -6px; } 75% { margin-left: 6px; } }
 
 /* 完成记录面板 */
+.st-veil[hidden] { display: none; }
 .st-veil { position: fixed; inset: 0; background: color-mix(in srgb, var(--bg) 62%, transparent); backdrop-filter: blur(2px); display: grid; place-items: center; z-index: 200; }
 .st-panel { width: min(920px, 94vw); max-height: 80vh; overflow: auto; padding: 22px 24px; }
 .st-hd { display: flex; align-items: center; margin-bottom: 14px; }
