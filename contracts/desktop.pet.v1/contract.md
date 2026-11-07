@@ -93,7 +93,7 @@ provides:
   - 设置页「关于」、仓库 `NOTICE`、README 写明以上署名与许可链接；
   - 任何收费产品、收费服务的页面与宣传里**不用**这些素材；
   - 我们改过的素材同样按 CC BY-NC-SA 4.0 发。
-- 服务端下载由 compose 一次性服务 `pets-download` 做，web 不等它。
+- 服务端下载由 compose 一次性服务 `pets-download` 做，在 profile `pets` 里，安装器在主栈起好后单独起它，web 不等它。
 
 ### 宠物包与对照
 

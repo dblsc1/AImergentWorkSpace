@@ -264,7 +264,9 @@ services:
 
   pets-download:
     # 一次性：把宠物素材（desktop.pet.v1「三·2」，不进仓库）下到卷 honeycomb_pets_data 后退出。
-    # web 不等它；下不完的下次 up 续，已下的跳过。
+    # 在 profile pets 里，普通 up 不起它；安装器主栈起好后另起：docker compose --profile pets up -d pets-download
+    # web 不等它；下不完的下次再起续，已下的跳过。
+    profiles: ["pets"]
     image: node:22-alpine
     restart: "no"
     command: ["node", "/app/download-server.js"]

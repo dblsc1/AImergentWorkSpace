@@ -148,6 +148,12 @@ if (-not $env:HONEYCOMB_NO_PULL) {
 $log = Invoke-Native { docker compose up -d --wait --wait-timeout 300 }
 if ($LASTEXITCODE -ne 0) { $log | Write-Host; Invoke-Native { docker compose ps } | Write-Host; Die "没起来。看日志：cd $Dir; docker compose logs" }
 
+# 宠物素材：主栈起好后单独起（不等、失败不算安装失败）。HONEYCOMB_ASSETS（CI）下不起，免得 CI 真去下素材。
+if (-not $env:HONEYCOMB_ASSETS) {
+  $null = Invoke-Native { docker compose --profile pets up -d pets-download }
+  if ($LASTEXITCODE -ne 0) { Write-Host "宠物素材没能开始下载（不影响使用），之后可手动：cd $Dir; docker compose --profile pets up -d pets-download" }
+}
+
 # 升级时以 .env 里的为准（可能改过端口）
 $m = Select-String -Path '.env' -Pattern '^HONEYCOMB_BIND=(.+)$' | Select-Object -Last 1
 if ($m) { $Bind = $m.Matches[0].Groups[1].Value }

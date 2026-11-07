@@ -144,6 +144,7 @@ services:
 
   pets-download:
     # 一次性：下宠物素材到卷后退出（web 不等它；下不完的下次 up 续）。./pets-download 由安装脚本从本版 Release 取。
+    profiles: ["pets"]
     image: node:22-alpine
     restart: "no"
     command: ["node", "/app/download-server.js"]

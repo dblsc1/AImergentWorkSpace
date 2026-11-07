@@ -346,7 +346,7 @@ def test_builtin_chat_is_optional_in_all_three_composes(out):
     rel = yaml.safe_load((install.ROOT / "release" / "docker-compose.yml").read_text(encoding="utf-8"))
     for name, c in (("generated", gen), ("hand", hand), ("release", rel)):
         assert c["services"]["agent"]["profiles"] == ["agent"], name
-        assert [k for k, v in c["services"].items() if "profiles" in v and k != "agent"] == [], name
+        assert [k for k, v in c["services"].items() if "profiles" in v and k not in ("agent", "pets-download")] == [], name
         assert "agent" not in c["services"]["web"].get("depends_on", {}), name
 
 
@@ -477,6 +477,7 @@ def test_pets_download_is_one_shot_pinned_and_web_does_not_wait_for_it(out):
         svc = c["services"]["pets-download"]
         assert svc["image"] == "node:22-alpine", name
         assert svc["restart"] == "no", name
+        assert svc["profiles"] == ["pets"], name
         assert svc["command"] == ["node", "/app/download-server.js"], name
         assert svc["volumes"] == [f"{code}:/app:ro", "honeycomb_pets_data:/pets"], name
         assert "honeycomb_pets_data" in c["volumes"], name
@@ -484,3 +485,6 @@ def test_pets_download_is_one_shot_pinned_and_web_does_not_wait_for_it(out):
         assert "honeycomb_pets_data:/usr/share/nginx/html/hive-pets:ro" in c["services"]["web"]["volumes"], name
     shipped = (install.ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     assert "assets-download.js download-server.js manifest.json mood-map.json" in shipped
+    for f in ("honeycomb-install.sh", "honeycomb-install.ps1"):
+        t = (install.ROOT / "release" / f).read_text(encoding="utf-8")
+        assert t.index("up -d --wait") < t.index("--profile pets up -d pets-download"), f

@@ -133,6 +133,11 @@ EOF
     die "没起来。看日志：cd $DIR && docker compose logs"
   }
 
+  # 宠物素材：主栈起好后单独起（不等、失败不算安装失败）。HONEYCOMB_ASSETS（CI）下不起，免得 CI 真去下素材。
+  if [ -z "${HONEYCOMB_ASSETS:-}" ]; then
+    docker compose --profile pets up -d pets-download >.pets.log 2>&1 || say "宠物素材没能开始下载（不影响使用），之后可手动：cd $DIR && docker compose --profile pets up -d pets-download"
+  fi
+
   # 升级时以 .env 里的为准（可能改过端口）
   BIND=$(sed -n 's/^HONEYCOMB_BIND=//p' .env | tail -1); BIND=${BIND:-127.0.0.1:8800}
   port=${BIND##*:}
