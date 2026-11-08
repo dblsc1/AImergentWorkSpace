@@ -36,7 +36,8 @@ const KEEP = /^\/((main|preload|mini-preload|assets-download|dialog-core|float-c
   if (process.platform === 'darwin') {
     execFileSync('ditto', ['-c', '-k', '--keepParent', path.join(base, `${name}.app`), zip], opts);
   } else if (process.platform === 'win32') {
-    execFileSync('tar', ['-a', '-c', '-f', zip, base], opts);
+    // Windows 自带的 bsdtar（Git Bash 里的 GNU tar 会把「D:」当远程主机）；输出用相对名
+    execFileSync(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe'), ['-a', '-c', '-f', path.basename(zip), base], opts);
   } else {
     execFileSync('zip', ['-qry', zip, base], opts);
   }

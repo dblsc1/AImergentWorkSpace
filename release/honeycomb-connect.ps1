@@ -1,4 +1,4 @@
-﻿﻿# HoneyComb 一键连接脚本（Windows）。在你自己的电脑上一条命令装好客户端这一侧的全部东西，可重复跑。
+﻿# HoneyComb 一键连接脚本（Windows）。在你自己的电脑上一条命令装好客户端这一侧的全部东西，可重复跑。
 #
 #   powershell -ExecutionPolicy Bypass -File .\honeycomb-connect.ps1      （交互输入服务器地址与设备令牌，令牌不回显）
 #   令牌也可先放进环境变量 HONEYCOMB_DEVICE_TOKEN（用 Read-Host -AsSecureString 取，别把令牌直接敲在命令行里，会进历史）
@@ -46,6 +46,7 @@ $Bin = Join-Path $AppDir 'ai-detector.exe'
 $HookDir = Join-Path $AppDir 'agent-hooks'
 $PetAppDir = Join-Path $AppDir 'pet'
 $StartupDir = if ($env:HONEYCOMB_STARTUP_DIR) { $env:HONEYCOMB_STARTUP_DIR } else { [Environment]::GetFolderPath('Startup') }
+if (-not $StartupDir) { $StartupDir = Join-Path $AppDir 'Startup' }   # 非 Windows 的 pwsh 没有启动文件夹
 $DetectorVbs = Join-Path $StartupDir 'honeycomb-ai-detector.vbs'
 $PetVbs = Join-Path $StartupDir 'honeycomb-desktop-pet.vbs'
 $ProfilePath = if ($env:HONEYCOMB_PROFILE) { $env:HONEYCOMB_PROFILE } else { $PROFILE }
