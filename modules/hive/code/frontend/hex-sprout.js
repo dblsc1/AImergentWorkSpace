@@ -146,7 +146,7 @@
   function openCreate(o) {
     if (!sprout || !sprout.drag || !sprout.lit) return false;     // 没亮满就松手 = 不建
     var cell = sproutOpen();
-    pending = { cell: cell, onCreated: o.onCreated };
+    pending = { cell: cell, onCreated: o.onCreated, onCancel: o.onCancel };
     var input = ctx.state.camEl.querySelector('.hex-cell.is-expanded .hex-newcard input[name="name"]');
     if (input) {
       input.value = String(o.name || "").slice(0, input.maxLength > 0 ? input.maxLength : 120);
@@ -154,6 +154,8 @@
     }
     return true;
   }
+  // hex-app.js 收起那一格（取消表单 / Esc）时调：通知 openCreate 的调用方
+  function cancelled() { var p = pending; pending = null; if (p && p.onCancel) p.onCancel(); }
   // hex-crud.js 建项目成功后调：只认「这一次 openCreate 开出来的那一格」，别处建的项目不算
   function created(cellEl, project) {
     var p = pending, item = cellEl && cellEl.__hexItem;
@@ -211,6 +213,7 @@
     removeSprout: removeSprout,
     preview: preview,
     openCreate: openCreate,
-    created: created
+    created: created,
+    cancelled: cancelled
   };
 })();

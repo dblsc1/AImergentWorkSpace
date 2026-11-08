@@ -163,12 +163,12 @@
       var made = !target && !cancel && grown && fileable(item) && Sp.openCreate({ name: createName(item), onCreated: function (p) {
         busy++;
         getJson("views/tree").then(function (t) { if (t) data.tree = t; return stage.drop(item.kind === "free" ? { kind: "pet", runId: item.runId, agent: item.agent } : item, p.id); })
-          .then(function (r) { busy--; render(); if (r && r.ok) refresh(); });
-      } });
-      if (o.onRelease) { var back = o.onRelease(target, cancel, lx, ly); if (back === "keep" || made) return; }
+          .then(function (r) { busy--; render(); return Promise.resolve(r && r.ok ? refresh() : null).then(function () { if (o.afterCreate) o.afterCreate(); }); });
+      }, onCancel: function () { if (o.afterCreate) o.afterCreate(); } });
+      if (!made && Sp) Sp.removeSprout();
+      if (o.onRelease) { var back = o.onRelease(target, cancel, lx, ly, made); if (back === "keep" || made) return; }
       if (made) { o.el.style.translate = ""; return; }
       var pid = target ? target.dataset.projectId : null;
-      if (Sp && fileable(item)) Sp.removeSprout();
       busy++;
       stage.drop(item, pid).then(function (r) {
         o.el.style.translate = "";
@@ -387,10 +387,18 @@
         var s = ixOf(e.dataset.runId); s.mode = "drag"; s.walking = false; s.click = null;
         e.classList.remove("st-away"); syncClip(e);
       },
-      onRelease: function (target, cancel, dx, dy) {
+      afterCreate: function () {                            // 表单走完（建成 / 取消 / 失败）：格子边的宠物这时才走回 / 走向新格子
+        var s = ix[e.dataset.runId];
+        if (s && s.mode === "hold" && e.__home) startBack(e, curPos(e), 0);
+      },
+      onRelease: function (target, cancel, dx, dy, made) {
         var s = ixOf(e.dataset.runId), at = curPos(e);
         s.dragEnd = Date.now(); s.click = null;
         var from = { x: at.x + dx, y: at.y + dy };
+        if (!e.classList.contains("is-loose") && made) {    // 表单开着：原地等，取消 / 建完再走
+          e.style.translate = ""; s.mode = "hold"; place(e, from); syncClip(e);
+          return "keep";
+        }
         if (!e.classList.contains("is-loose")) {            // 格子边：不改数据，停 3 秒再走回
           e.style.translate = ""; s.mode = null;
           startBack(e, from, cancel ? STAY_MS : 0);
@@ -511,8 +519,9 @@
   // 点白条：在白条旁列出分区 → 项目；选中 = 同拖到那一格
   var stripPop = null;
   function closeStripList() { if (stripPop) { stripPop.remove(); stripPop = null; document.removeEventListener("pointerdown", onPopOutside, true); } }
-  function onPopOutside(ev) { if (stripPop && !stripPop.contains(ev.target)) closeStripList(); }
+  function onPopOutside(ev) { if (stripPop && !stripPop.contains(ev.target) && ev.target.closest && ev.target.closest(".st-strip") !== stripPop.__strip) closeStripList(); }
   function openStripList(strip) {
+    if (stripPop && stripPop.__strip === strip) { closeStripList(); return; }   // 再点同一条 = 收起
     closeStripList();
     var id = strip.__u.id, zones = (data.tree && data.tree.zones) || [], pop = document.createElement("div"), r = strip.getBoundingClientRect();
     pop.className = "st-pop st-card"; pop.tabIndex = -1; pop.setAttribute("role", "listbox"); pop.setAttribute("aria-label", "记到哪个项目");
@@ -544,7 +553,7 @@
     document.body.appendChild(pop);
     var w = pop.offsetWidth;
     pop.style.left = Math.max(8, r.left - w - 8) + "px"; pop.style.top = Math.max(8, Math.min(r.top, window.innerHeight - pop.offsetHeight - 8)) + "px";
-    stripPop = pop;
+    stripPop = pop; pop.__strip = strip;
     document.addEventListener("pointerdown", onPopOutside, true);
     (q || pop.querySelector(".st-pop-item") || pop).focus();
   }
@@ -555,15 +564,17 @@
       var e = stripEls[u.id];
       if (!e) {
         e = stripEls[u.id] = document.createElement("div");
-        e.className = "st-strip"; e.dataset.id = u.id; e.style.setProperty("--i", i);
+        e.className = "st-strip"; e.tabIndex = 0; e.setAttribute("role", "button"); e.dataset.id = u.id; e.style.setProperty("--i", i);
         e.__u = u;
         drag(e, { el: e, item: function () { return { kind: "strip", id: e.__u.id }; }, onClick: function () { openStripList(e); } });
+        e.addEventListener("keydown", function (ev) { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openStripList(e); } });
       }
       keep[u.id] = 1; e.__u = u;
       e.textContent = stripLabel(u);
       box.appendChild(e);
     });
     Object.keys(stripEls).forEach(function (id) { if (!keep[id]) { stripEls[id].remove(); delete stripEls[id]; } });
+    if (stripPop && !keep[stripPop.__strip.__u.id]) closeStripList();
     var more = box.querySelector(".st-strip-more");
     if (s.plus) {
       if (!more) { more = document.createElement("div"); more.className = "st-strip-more"; }
