@@ -162,7 +162,8 @@ video.st-art { position: absolute; max-width: none; max-height: none; height: 80
   border-radius: 999px; font-size: var(--fs-sub); cursor: pointer; transition: opacity 250ms; }
 .st-file.is-leaving { opacity: 0; }
 .st-file-ring { width: 24px; height: 24px; flex: none; }
-.st-file-ck { display: flex; align-items: center; gap: 6px; white-space: nowrap; cursor: pointer; }
+.st-file-box { width: 20px; height: 20px; margin: 0; flex: none; cursor: pointer; }
+.st-file-tx { white-space: nowrap; }
 .st-detail { position: fixed; z-index: 100; width: 260px; padding: 12px 14px; font-size: var(--fs-sub); }
 .st-d-title { margin: 0 0 4px; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .st-d-line { color: var(--ink-2); margin-top: 3px; }
