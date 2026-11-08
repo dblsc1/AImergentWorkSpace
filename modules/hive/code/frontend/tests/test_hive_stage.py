@@ -240,10 +240,9 @@ def test_drag_loose_pet_into_a_cell_posts_place_once_and_says_what_was_remembere
         assert st.page.locator(CELL.format("p_piano")).evaluate("e => e.classList.contains('st-hot')")
         st.page.mouse.up()
         st.settle()
-        assert st.posts == [("agents/r2/place", {"projectId": "p_piano", "remember": True})]
-        assert st.toast() == "已记下：以后 codex 都算 钢琴"
-        st.page.clock.run_for(3100)
-        assert st.toast() == ""
+        assert st.posts == [("agents/r2/place", {"projectId": "p_piano", "remember": False})]
+        assert st.toast() == ""        # 旧提示已换成气泡（二·10）
+        assert st.page.locator(".st-file").inner_text() == "以后都算 钢琴"
         assert st.page.locator('.st-pet.is-work[data-run-id="r2"]').count() == 1      # 飞到格子边
 
 
@@ -310,8 +309,8 @@ def test_bucket_drawer_drags_a_block_into_a_cell(browser, base) -> None:  # noqa
         st.drag(".st-chip:not(.nodrag)", st.center(CELL.format("p_math")))
         st.settle()
         today = st.lanes["today"]
-        assert st.posts == [("activity/blocks/assign", {"date": today, "blockKey": "gh", "ifSeq": 3, "projectId": "p_math", "remember": True})]
-        assert st.toast() == "已记下：以后 github.com 都算 数学"
+        assert st.posts == [("activity/blocks/assign", {"date": today, "blockKey": "gh", "ifSeq": 3, "projectId": "p_math", "remember": False})]
+        assert st.toast() == ""
         assert st.page.locator("#stBucketLabel").inner_text() == "未分类 · 今天 5 分"
         assert st.page.locator(".st-chip").count() == 1
 
@@ -333,8 +332,12 @@ def test_grey_row_opens_a_popover_of_same_title_groups_and_a_group_drags_into_a_
         st.blocks = st.blocks[:1]
         st.drag("#stGreyPop .st-chip", st.center(CELL.format("p_math")))
         st.settle()
-        assert st.posts == [("activity/blocks/assign", {"date": st.lanes["today"], "blockKey": "ptyxis · vim a.go", "ifSeq": 2, "projectId": "p_math", "remember": True})]
-        assert st.toast() == "已记下：以后 ptyxis · vim a.go 都算 数学"
+        assert st.posts == [("activity/blocks/assign", {"date": st.lanes["today"], "blockKey": "ptyxis · vim a.go", "ifSeq": 2, "projectId": "p_math", "remember": False})]
+        assert st.toast() == ""
+        assert st.page.locator(".st-file").inner_text() == "以后这个窗口都算 数学"      # 灰行弹窗里拖出的块同样弹气泡
+        st.page.locator(".st-file input").check()
+        st.page.wait_for_timeout(250)
+        assert st.posts[1][1]["remember"] is True and st.posts[1][1]["ifSeq"] == 3
         assert st.page.locator("#stGreyPop .st-chip").all_inner_texts() == ["~/work\n2 分"]
 
 
@@ -454,8 +457,8 @@ def test_1100_wide_scales_the_same_layout_and_dragging_still_hits_cells(browser,
         st.replies["agents/r2/place"] = (200, {"rule": None})
         st.drag('.st-pet.is-loose[data-run-id="r2"]', st.center(CELL.format("p_math")))
         st.settle()
-        assert st.posts == [("agents/r2/place", {"projectId": "p_math", "remember": True})]
-        assert st.toast() == ""        # 没有规则就不说「以后…都算」（HV-S16）
+        assert st.posts == [("agents/r2/place", {"projectId": "p_math", "remember": False})]
+        assert st.toast() == ""
 
 
 def _drag_chip_to_blank(st: Stage, selector: str | None = None) -> None:
@@ -511,7 +514,7 @@ def test_block_dropped_on_blank_opens_the_create_form_then_assigns_the_block(bro
         keys = [k for k, _ in st.posts]
         assert keys == ["planner/projects", "activity/blocks/assign"], keys
         body = st.posts[1][1]
-        assert body == {"date": st.lanes["today"], "blockKey": "gh", "ifSeq": 3, "projectId": "p_new", "remember": True}
+        assert body == {"date": st.lanes["today"], "blockKey": "gh", "ifSeq": 3, "projectId": "p_new", "remember": False}
 
 
 def test_block_blank_drop_cancelled_creates_nothing(browser, base) -> None:  # noqa: F811
@@ -803,7 +806,7 @@ def test_loose_pet_held_on_blank_creates_a_project_and_is_placed_there(browser, 
         _drag_chip_to_blank(st, '.st-pet.is-loose[data-run-id="r2"]')
         st.page.clock.run_for(600)
         st.page.mouse.up()
-        _create_and_check(st, ("agents/r2/place", {"projectId": "p_new", "remember": True}))
+        _create_and_check(st, ("agents/r2/place", {"projectId": "p_new", "remember": False}))
 
 
 def test_timing_clock_held_on_blank_retargets_the_running_timer_to_the_new_project(browser, base) -> None:  # noqa: F811
@@ -893,7 +896,7 @@ def test_cell_pet_held_on_blank_is_placed_after_the_form(browser, base) -> None:
         _drag_chip_to_blank(st, '.st-pet.is-work[data-run-id="r1"]')
         st.page.clock.run_for(600)
         st.page.mouse.up()
-        _create_and_check(st, ("agents/r1/place", {"projectId": "p_new", "remember": True}))
+        _create_and_check(st, ("agents/r1/place", {"projectId": "p_new", "remember": False}))
 
 
 def test_strip_blank_create_then_place_fails_with_409_puts_the_strip_back_with_a_toast(browser, base) -> None:  # noqa: F811
@@ -933,3 +936,115 @@ def test_strip_popover_toggles_opens_from_keyboard_and_closes_when_its_strip_goe
         st.unplaced = [u for u in st.unplaced if u["id"] != "u1"]
         st.poll()
         assert st.page.locator(".st-pop").count() == 0, "白条没了，列表跟着收"
+
+
+# ── 归档气泡与详情卡（hive.stage.v1「二」10，2026-11-08）──
+
+def _named_run(st: Stage) -> None:
+    _busy_day(st)
+    now = st.now().astimezone(TZ)
+    st.lanes["agents"][0].update(conversation="改错题", model="opus", match="ptyxis · garden", humanName=None)
+    st.lanes["agents"][1].update(conversation=None, humanName=None)
+    st.lanes["agents"][0]["phases"].append({"at": _iso(now - timedelta(seconds=300)), "phase": "waiting_input", "detail": None})
+
+
+def _drop_pet(st: Stage) -> None:
+    st.replies["agents/r2/place"] = (200, {"runId": "r2", "projectId": "p_piano", "rule": None})
+    st.drag('.st-pet.is-loose[data-run-id="r2"]', st.center(CELL.format("p_piano")))
+    st.settle()
+    st.page.mouse.move(5, 5)
+
+
+def test_pet_drop_shows_a_bubble_ticking_it_sends_remember_true(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, setup=_busy_day) as st:
+        _drop_pet(st)
+        assert st.page.locator(".st-file").count() == 1
+        assert st.posts == [("agents/r2/place", {"projectId": "p_piano", "remember": False})]
+        st.page.locator(".st-file input").check()
+        st.page.wait_for_timeout(250)
+        assert st.posts[1] == ("agents/r2/place", {"projectId": "p_piano", "remember": True})
+
+
+def test_file_bubble_counts_down_five_seconds_and_hover_pauses_it(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, setup=_busy_day) as st:
+        _drop_pet(st)
+        st.page.clock.run_for(4000)
+        assert st.page.locator(".st-file").count() == 1
+        arc = st.page.locator(".st-file-arc").get_attribute("stroke-dashoffset")
+        assert 0 < float(arc) < 62.9
+        x, y = st.center(".st-file")
+        st.page.mouse.move(x, y)
+        st.page.clock.run_for(6000)
+        assert st.page.locator(".st-file").count() == 1, "悬停时暂停"
+        st.page.mouse.move(5, 5)
+        st.page.clock.run_for(1500)
+        assert st.page.locator(".st-file").count() == 0
+
+
+def test_block_drop_shows_a_bubble_with_the_window_wording(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, setup=_busy_day) as st:
+        st.page.click("#stBucketBtn")
+        st.page.clock.run_for(300)
+        st.replies["activity/blocks/assign"] = (200, {"seq": 4})
+        st.drag(".st-chip:not(.nodrag)", st.center(CELL.format("p_math")))
+        st.settle()
+        st.page.mouse.move(5, 5)
+        assert st.page.locator(".st-file").inner_text() == "以后这个窗口都算 数学"
+        st.page.locator(".st-file input").check()
+        st.page.wait_for_timeout(250)
+        assert st.posts[1][0] == "activity/blocks/assign"
+        assert st.posts[1][1] == {"date": st.lanes["today"], "blockKey": "gh", "ifSeq": 4, "projectId": "p_math", "remember": True}
+
+
+def test_strip_drop_shows_no_bubble(browser, base) -> None:  # noqa: F811
+    def setup(st: Stage) -> None:
+        _busy_day(st)
+        now = st.now().astimezone(TZ)
+        st.unplaced = [{"id": "u1", "startAt": _iso(now - timedelta(minutes=30)), "endAt": _iso(now - timedelta(minutes=10)), "title": "x"}]
+
+    with open_stage(browser, base, setup=setup) as st:
+        st.poll()
+        st.drag(".st-strip", st.center(CELL.format("p_math")))
+        st.settle()
+        assert st.posts == [("timer/unplaced/u1/place", {"projectId": "p_math"})]
+        assert st.page.locator(".st-file").count() == 0
+
+
+def test_click_a_pet_opens_the_card_and_still_plays_the_reaction(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, setup=_named_run, pets={"claude": TOUCH_PACK}, hold_webm=True) as st:
+        st.page.clock.run_for(600)
+        x, y = st.center('.st-pet[data-run-id="r1"] .st-media')
+        st.page.mouse.click(x, y)
+        assert st.page.locator('.st-pet[data-run-id="r1"] video.st-art').get_attribute("src").split("/")[-1] in ("c1.webm", "c2.webm")
+        card = st.page.locator(".st-detail")
+        assert card.count() == 1
+        text = card.inner_text()
+        assert "数学·改错题" in text and "claude-code · opus" in text and "归在 数学" in text and "ptyxis · garden" in text
+        assert st.page.locator('.st-pet[data-run-id="r1"] .st-tag').inner_text() == "数学·改错题"
+        st.page.keyboard.press("Escape")
+        assert st.page.locator(".st-detail").count() == 0
+        st.page.mouse.click(x, y)
+        assert st.page.locator(".st-detail").count() == 1
+        st.page.mouse.click(5, 5)
+        assert st.page.locator(".st-detail").count() == 0
+
+
+def test_rename_in_the_card_puts_the_name_and_the_tag_updates(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, setup=_named_run) as st:
+        x, y = st.center('.st-pet[data-run-id="r1"] .st-media')
+        st.page.mouse.click(x, y)
+        st.replies["agents/r1/name"] = (200, {})
+        st.lanes["agents"][0]["humanName"] = "园丁"      # 桩替服务端记住
+        st.page.locator(".st-d-name").fill("园丁")
+        st.page.locator(".st-d-name").press("Enter")
+        st.page.wait_for_timeout(250)
+        assert st.posts == [("agents/r1/name", {"name": "园丁"})]
+        assert st.page.locator('.st-pet[data-run-id="r1"] .st-tag').inner_text() == "园丁"
+        assert st.page.locator(".st-detail").count() == 0
+
+
+def test_bubble_body_click_opens_the_card(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, setup=_busy_day) as st:
+        _drop_pet(st)
+        st.page.locator(".st-file-ring").click()
+        assert st.page.locator(".st-detail").count() == 1

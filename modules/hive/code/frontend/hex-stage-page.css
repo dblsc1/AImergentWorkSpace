@@ -152,6 +152,23 @@ video.st-art { position: absolute; max-width: none; max-height: none; height: 80
   .st-pet.is-work, .st-pet.is-loose { transition: none; }
   .st-pet.st-squash .st-pet-in { animation: none; }
   .st-strip, .st-media, .st-face.swap { animation: none !important; }
+  .st-file { transition: none; }
   .st-hexchip.st-drop { animation: none; }
   .st-hexchip.st-leave { animation: none; display: none; }
 }
+
+/* 归档气泡与详情卡（2026-11-08） */
+.st-file { position: absolute; z-index: 60; transform: translate(-50%, -100%); display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 8px;
+  border-radius: 999px; font-size: var(--fs-sub); cursor: pointer; transition: opacity 250ms; }
+.st-file.is-leaving { opacity: 0; }
+.st-file-ring { width: 24px; height: 24px; flex: none; }
+.st-file-ck { display: flex; align-items: center; gap: 6px; white-space: nowrap; cursor: pointer; }
+.st-detail { position: fixed; z-index: 100; width: 260px; padding: 12px 14px; font-size: var(--fs-sub); }
+.st-d-title { margin: 0 0 4px; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-d-line { color: var(--ink-2); margin-top: 3px; }
+.st-d-win { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-d-hist { list-style: none; margin: 8px 0 0; padding: 0; max-height: 150px; overflow: auto; }
+.st-d-hist li { display: flex; gap: 8px; padding: 2px 0; border-top: 1px solid var(--line-2); }
+.st-d-hist span { font-family: var(--font-mono); color: var(--ink-3); flex: none; }
+.st-d-name { margin-top: 10px; width: 100%; box-sizing: border-box; font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+.st-d-name.is-bad { border-color: var(--warn); }

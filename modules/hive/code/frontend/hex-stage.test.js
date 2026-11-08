@@ -54,8 +54,16 @@ assert.strictEqual(S.stripList(ups.slice(0, 5)).plus, 0);
 
 // 请求组装
 assert.deepStrictEqual(S.dropRequest({ kind: "block", block: B("g", 60, true, "browser") }, "p1"),
-  { method: "POST", path: "activity/blocks/assign", body: { date: "2026-11-07", blockKey: "g", ifSeq: 3, projectId: "p1", remember: true } });
-assert.deepStrictEqual(S.dropRequest({ kind: "pet", runId: "run_1" }, "p1"), { method: "POST", path: "agents/run_1/place", body: { projectId: "p1", remember: true } });
+  { method: "POST", path: "activity/blocks/assign", body: { date: "2026-11-07", blockKey: "g", ifSeq: 3, projectId: "p1", remember: false } });
+assert.deepStrictEqual(S.dropRequest({ kind: "pet", runId: "run_1" }, "p1"), { method: "POST", path: "agents/run_1/place", body: { projectId: "p1", remember: false } });
+assert.strictEqual(S.dropRequest({ kind: "pet", runId: "run_1" }, "p1", true).body.remember, true);
+assert.strictEqual(S.dropRequest({ kind: "block", block: B("g", 60, true, "browser") }, "p1", true).body.remember, true);
+// 宠物名牌
+assert.strictEqual(S.petTitle({ humanName: "我的", conversation: "c", label: "l", agent: "a" }, "数学"), "我的");
+assert.strictEqual(S.petTitle({ conversation: "改错题", label: "l", agent: "a" }, "数学"), "数学·改错题");
+assert.strictEqual(S.petTitle({ conversation: "改错题", label: "l", agent: "a" }, null), "改错题");
+assert.strictEqual(S.petTitle({ conversation: null, label: "l", agent: "a" }, "数学"), "l");
+assert.strictEqual(S.petTitle({ label: null, agent: "codex" }, null), "codex");
 assert.deepStrictEqual(S.dropRequest({ kind: "strip", id: "u1" }, "p1"), { method: "POST", path: "timer/unplaced/u1/place", body: { projectId: "p1" } });
 assert.deepStrictEqual(S.dropRequest({ kind: "clock" }, "p1"), { method: "POST", path: "timer/place", body: { projectId: "p1" } });
 assert.strictEqual(S.dropRequest({ kind: "pet", runId: "r" }, null), null);
@@ -72,7 +80,7 @@ function mkStage(replies) {
   let r = await k.st.drop({ kind: "block", block: k.st.drawer()[0].block }, "p1");
   assert.strictEqual(k.sent[0].path, "activity/blocks/assign"); assert.strictEqual(r.ok, true);
   assert.strictEqual(k.st.drawer().length, 0); assert.strictEqual(k.st.bucketSeconds(), 1200);
-  assert.strictEqual(k.st.notice(), "已记下：以后 g 都算 数学");
+  assert.strictEqual(k.st.notice(), null); assert.strictEqual(r.ok, true);
   // HV-S13
   for (const bad of [{ status: 409 }, { status: 422 }, new Error("net")]) {
     k = mkStage([bad]);
@@ -84,13 +92,17 @@ function mkStage(replies) {
   // HV-S14 / S15 / S16 / P18
   k = mkStage([{ status: 200, body: { runId: "run_1", projectId: "p1", rule: { agent: "garden", projectId: "p1" } } }]);
   await k.st.drop({ kind: "pet", runId: "run_1", agent: "garden" }, "p1");
-  assert.deepStrictEqual(k.sent[0].body, { projectId: "p1", remember: true });
-  assert.strictEqual(k.st.notice(), "已记下：以后 garden 都算 数学");
-  k.set(1000 + 2999); assert.ok(k.st.notice()); k.set(1000 + 3000); assert.strictEqual(k.st.notice(), null);
-  assert.strictEqual(k.st.petDock("run_1"), "p1");
-  k = mkStage([{ status: 200, body: { runId: "run_1", projectId: "p1", rule: null } }]);
+  assert.deepStrictEqual(k.sent[0].body, { projectId: "p1", remember: false });
+  assert.strictEqual(k.st.notice(), null);
+  k = mkStage([{ status: 200, body: {} }, { status: 200, body: {} }, { status: 409 }]);
   await k.st.drop({ kind: "pet", runId: "run_1", agent: "garden" }, "p1");
-  assert.ok(!/以后/.test(k.st.notice() || ""));
+  assert.strictEqual((await k.st.remember({ kind: "pet", runId: "run_1", agent: "garden" }, "p1")).ok, true);
+  assert.deepStrictEqual(k.sent[1], { method: "POST", path: "agents/run_1/place", body: { projectId: "p1", remember: true } });
+  const b0 = B("g", 60, true, "browser");
+  await k.st.remember({ kind: "block", block: b0 }, "p1", 7);
+  assert.strictEqual(k.sent[2].body.ifSeq, 7); assert.strictEqual(k.sent[2].body.remember, true);
+  assert.ok(k.st.notice());
+  assert.strictEqual(k.st.petDock("run_1"), "p1");
   // HV-S17
   k = mkStage([]);
   r = await k.st.drop({ kind: "pet", runId: "r" }, null);
