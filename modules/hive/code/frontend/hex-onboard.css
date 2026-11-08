@@ -1,7 +1,9 @@
-/* hive · 新手引导（hex-onboard.js）：全屏遮罩 + 一张大卡，颜色全走 tokens */
-.hob { position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center; padding: var(--sp-4);
-  background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(6px); }
-.hob-card { width: min(520px, 100%); max-height: 90vh; overflow-y: auto; padding: var(--sp-5); border-radius: var(--r-3);
+/* hive · 新手引导（hex-onboard.js）：右下角的非阻断卡片，页面照常可用；颜色全走 tokens */
+.hob { position: fixed; right: var(--sp-4); bottom: var(--sp-4); z-index: 200; width: min(380px, calc(100vw - 2 * var(--sp-4))); }
+.hob-close { position: absolute; top: var(--sp-2); right: var(--sp-2); z-index: 1; padding: 0 var(--sp-2); border: 0; background: none; font-size: 20px; line-height: 1.4; color: var(--ink-2); }
+.hob-reopen { position: fixed; left: var(--sp-4); bottom: var(--sp-4); z-index: 200; padding: var(--sp-1) var(--sp-3); box-shadow: var(--shadow); }
+.hob-reopen[hidden] { display: none; }
+.hob-card { max-height: 70vh; overflow-y: auto; padding: var(--sp-5); border-radius: var(--r-3);
   background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); color: var(--ink); font-size: var(--fs-body); }
 .hob-title { margin: 0 0 var(--sp-4); font-size: var(--fs-h2); font-weight: 700; }
 .hob-row { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-2); }

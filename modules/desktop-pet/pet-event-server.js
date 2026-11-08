@@ -7,7 +7,7 @@ const crypto = require('node:crypto');
 const PORT = 47340;
 const HOST = '127.0.0.1';
 const MAX_BODY = 64 * 1024;
-const TYPES = ['focus', 'agentWaiting', 'agentDone', 'alert', 'alertCleared'];
+const TYPES = ['focus', 'agentWaiting', 'agentDone', 'alert', 'alertCleared', 'dialog'];
 const MOODS = ['working', 'idle', 'waiting', 'happy', 'worried'];
 
 function loadOrCreateToken(dataDir) {
@@ -27,9 +27,15 @@ function tokenOk(header, token) {
   return crypto.timingSafeEqual(a, b);
 }
 
+// dialog：data.buttons 至多 3 个 {id, label}，data.input 可选 {placeholder}
+function validDialogData(d) {
+  return d && typeof d === 'object' && (d.buttons === undefined || (Array.isArray(d.buttons) && d.buttons.length <= 3
+    && d.buttons.every(b => b && typeof b.id === 'string' && b.id && typeof b.label === 'string' && b.label)))
+    && (d.input === undefined || (d.input && typeof d.input === 'object'));
+}
 function validEvent(e) {
   return e && typeof e === 'object' && e.v === 1 && TYPES.includes(e.type) && MOODS.includes(e.mood)
-    && typeof e.text === 'string' && [...e.text].length <= 60;
+    && typeof e.text === 'string' && [...e.text].length <= 60 && (e.type !== 'dialog' || validDialogData(e.data));
 }
 
 // 返回未监听的 http.Server；调用方 .listen(PORT, HOST)。

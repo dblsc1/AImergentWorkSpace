@@ -1,4 +1,4 @@
-// hive · hex-onboard.js —— 新手引导（onboarding.v1「七」）：建分区 → 建项目与任务 → AI 放窗口 → 结果。
+// hive · hex-onboard.js —— 新手引导（onboarding.v1「七」，2026-11-08 起非阻断卡片）：建分区 → 建项目与任务 → AI 放窗口 → 结果。
 // 上半是纯函数（显示条件 / 硬限制 / 自动 claim 的挑选，给 hex-onboard.test.js 用），下半是 DOM（文字一律 textContent）。
 // 建分区 / 项目 / 任务走 data.js 现有的 createZone / createProject / createTask；任何一步都能「跳过」，跳过与走完都调 onboarding/done。
 (function () {
@@ -120,19 +120,26 @@
 
   function open(ctx, serverDate) {
     var draft = newDraft(), result = [], direct = [], startedMs = Date.parse(serverDate) || Date.now(), timer = null, loading = false, undoing = 0, doneIds = {}, blockCache = {}, busy = false, error = "";
-    var root = el("div", "hob");
-    root.setAttribute("role", "dialog");
-    root.setAttribute("aria-modal", "true");
+    // 非阻断：右下角一张卡，页面照常能用；× 只收起（不记完成），页面左下角留一个小入口再打开
+    var root = el("div", "hob"), rendered = false;
+    root.setAttribute("role", "region");
+    root.setAttribute("aria-label", "新手引导");
     var card = el("div", "hob-card");
+    var closeBtn = button("×", "hob-close", function () { reopen.hidden = false; root.remove(); });
+    closeBtn.setAttribute("aria-label", "收起新手引导");
+    var reopen = button("新手引导", "hob-reopen", function () { reopen.hidden = true; document.body.appendChild(root); });
+    reopen.hidden = true;
+    root.appendChild(closeBtn);
     root.appendChild(card);
     document.body.appendChild(root);
+    document.body.appendChild(reopen);
 
     function finish() {
       if (busy) return;
       busy = true;
       clearInterval(timer);
       ctx.postJson(ACT + "onboarding/done").then(function () {
-        root.remove();
+        root.remove(); reopen.remove();
         if (ctx.refresh) ctx.refresh();
       });
     }
@@ -304,7 +311,8 @@
       }
       card.appendChild(foot);
       var first = card.querySelector("input:not(:disabled)");
-      if (first && !busy) first.focus();
+      if (first && !busy && rendered) first.focus();   // 第一次出现不抢焦点；用户操作后的重画才聚焦
+      rendered = true;
     }
     render();
   }

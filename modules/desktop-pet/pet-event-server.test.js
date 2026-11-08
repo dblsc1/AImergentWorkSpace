@@ -47,6 +47,18 @@ test('坏请求：404 / 405 / 400 / 413', async () => {
   } finally { srv.close(); }
 });
 
+test('dialog 事件：按钮 ≤3 且有 id / label，坏的 400', async () => {
+  const { srv, got, url } = await boot();
+  try {
+    const A = 'Bearer tok', d = { ...ev, type: 'dialog', mood: 'idle', text: '要不要', data: { buttons: [{ id: 'y', label: '要' }], input: { placeholder: '备注' } } };
+    assert.equal((await post(url, d, A)).status, 204);
+    assert.equal((await post(url, { ...d, data: { buttons: [1, 2, 3, 4].map(n => ({ id: 'b' + n, label: 'b' })) } }, A)).status, 400);
+    assert.equal((await post(url, { ...d, data: { buttons: [{ id: 'y' }] } }, A)).status, 400);
+    assert.equal((await post(url, { ...d, data: null }, A)).status, 400);
+    assert.equal(got.length, 1);
+  } finally { srv.close(); }
+});
+
 test('令牌第一次生成，之后沿用', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pet-'));
   const a = loadOrCreateToken(dir);

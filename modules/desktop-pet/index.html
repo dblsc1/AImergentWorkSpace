@@ -15,6 +15,16 @@
   #badge.on { display: block; }
   #bubble { display: none; position: absolute; right: 0; bottom: 100%; max-width: 220px; padding: 8px 12px; border-radius: 12px; background: #fff; color: #222; box-shadow: 0 2px 10px rgba(0,0,0,.3); }
   #bubble.on { display: block; }
+  #dialog { display: none; position: absolute; right: 0; bottom: 100%; width: 260px; box-sizing: border-box; padding: 12px 14px; border-radius: 14px; background: #fff; color: #222; box-shadow: 0 2px 12px rgba(0,0,0,.35); user-select: text; }
+  #dialog.on { display: block; }
+  #dialog::after { content: ''; position: absolute; right: 36px; bottom: -8px; width: 16px; height: 16px; background: #fff; transform: rotate(45deg); box-shadow: 3px 3px 5px rgba(0,0,0,.12); }
+  #dlg-text { margin: 0 18px 10px 0; line-height: 1.5; overflow-wrap: anywhere; }
+  #dlg-close { position: absolute; top: 4px; right: 6px; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: none; font-size: 18px; line-height: 24px; color: #666; cursor: pointer; }
+  #dlg-input { display: none; width: 100%; box-sizing: border-box; margin-bottom: 8px; padding: 6px 8px; border: 1px solid #ccc; border-radius: 8px; font: inherit; }
+  #dlg-input.on { display: block; }
+  #dlg-buttons { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; position: relative; z-index: 1; }
+  #dlg-buttons button { padding: 5px 12px; border: 1px solid #e0a800; border-radius: 8px; background: #ffc83d; color: #222; font: inherit; cursor: pointer; }
+  #dialog button:focus-visible, #dlg-input:focus-visible { outline: 2px solid #2a6df4; outline-offset: 2px; }
 </style>
 </head>
 <body>
@@ -22,6 +32,12 @@
   <div id="panel"><webview id="mini" partition="persist:hive-mini"></webview></div>
   <div id="petbox">
     <div id="bubble"></div>
+    <div id="dialog" role="dialog" aria-live="polite" aria-labelledby="dlg-text">
+      <button id="dlg-close" type="button" aria-label="关闭">×</button>
+      <p id="dlg-text"></p>
+      <input id="dlg-input" type="text" maxlength="200">
+      <div id="dlg-buttons"></div>
+    </div>
     <video id="clip" muted autoplay playsinline style="display:none"></video>
     <img id="ph" src="placeholder.svg" alt="">
     <div id="badge"></div>
@@ -29,6 +45,7 @@
 </div>
 <script>
 const $ = id => document.getElementById(id);
+const dialog = $('dialog'), dlgText = $('dlg-text'), dlgInput = $('dlg-input'), dlgButtons = $('dlg-buttons'), dlgClose = $('dlg-close');
 const clip = $('clip'), ph = $('ph'), badge = $('badge'), bubble = $('bubble'), panel = $('panel'), mini = $('mini'), petbox = $('petbox');
 const canvas = document.createElement('canvas');
 const g = canvas.getContext('2d', { willReadFrequently: true });
@@ -45,6 +62,26 @@ window.pet.onBubble(text => {
   bubble.textContent = text; bubble.classList.add('on');
   clearTimeout(bubbleTimer); bubbleTimer = setTimeout(() => bubble.classList.remove('on'), 6000);
 });
+// 对话框：文字、至多 3 个按钮、可选单行输入；× / Esc = 关闭（回 null）；Enter 在输入框里 = 提交文字。
+let dlgSeq = null;
+const answer = value => { const seq = dlgSeq; dlgSeq = null; dialog.classList.remove('on'); if (seq !== null) window.pet.answerDialog(seq, value); applyCursor(lastCursor); };
+window.pet.onDialog(p => {
+  if (!p) { dlgSeq = null; dialog.classList.remove('on'); applyCursor(lastCursor); return; }
+  dlgSeq = p.seq; dlgText.textContent = p.text;
+  dlgInput.classList.toggle('on', !!p.input); dlgInput.value = ''; dlgInput.placeholder = p.input ? p.input.placeholder : '';
+  dlgButtons.textContent = '';
+  p.buttons.forEach(b => { const el = document.createElement('button'); el.type = 'button'; el.textContent = b.label; el.addEventListener('click', () => answer({ id: b.id })); dlgButtons.appendChild(el); });
+  dialog.classList.add('on');
+  (p.input ? dlgInput : dlgButtons.firstElementChild || dlgClose).focus({ preventScroll: true });
+  applyCursor(lastCursor);
+});
+dlgClose.addEventListener('click', () => answer(null));
+dlgInput.addEventListener('keydown', e => { if (e.key === 'Enter' && dlgInput.value.trim()) { e.preventDefault(); answer({ text: dlgInput.value }); } });
+dialog.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); answer(null); } });
+// 点宠物（按下到抬起挪动 < 5px）= 打开小菜单；拖动不算
+let down = null;
+petbox.addEventListener('pointerdown', e => { if (!e.target.closest('#dialog')) down = { x: e.clientX, y: e.clientY }; });
+petbox.addEventListener('pointerup', e => { if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 5) window.pet.petClick(); down = null; });
 window.pet.onSize(px => document.documentElement.style.setProperty('--s', px + 'px'));
 window.pet.onBadge(on => badge.classList.toggle('on', on));
 window.pet.onCard(state => { try { mini.send('card', state); } catch {} });
@@ -84,6 +121,7 @@ function applyCursor(p) {
   let hit = false, hover = false;
   if (p) {
     if (inside(badge.getBoundingClientRect(), p.x, p.y) && badge.classList.contains('on')) hit = hover = true;
+    else if (dialog.classList.contains('on') && inside(dialog.getBoundingClientRect(), p.x, p.y)) hit = hover = true;
     else if (panel.classList.contains('open') && inside(panel.getBoundingClientRect(), p.x, p.y)) hit = hover = true;
     else if (petOpaqueAt(p.x, p.y)) hit = hover = true;
   }

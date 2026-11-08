@@ -1,6 +1,6 @@
 // HoneyComb 桌宠主进程：一个透明置顶窗（宠物 + 浮窗），托盘菜单，收 PetEvent，后台下素材。
 // 点穿思路参考 dsh-pet（MIT，https://github.com/PC2005-cloud/dsh-pet）：窗口缺省忽略鼠标，命中后再接收。
-const { app, BrowserWindow, Tray, Menu, ipcMain, screen, nativeImage, session } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, screen, nativeImage, session, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -9,11 +9,13 @@ const { createPetEventServer, loadOrCreateToken, PORT, HOST } = require('./pet-e
 const { loadPack, listPacks, pickClip } = require('./pack');
 const { pickPackKind } = require('./pet-pick');
 const { downloadAll } = require('./assets-download');
+const { createDialogQueue } = require('./dialog-core');
+const { createPetOnboarding } = require('./pet-onboarding');
 
 if (process.platform === 'linux') app.commandLine.appendSwitch('ozone-platform', 'x11'); // 本版只支持 X11 / XWayland
 if (!app.requestSingleInstanceLock()) app.quit();
 
-const MARGIN = 16, BUBBLE_ROOM = 80, PANEL_W = 380, PANEL_H = 560;
+const MARGIN = 16, BUBBLE_ROOM = 80, PANEL_W = 380, PANEL_H = 560, DIALOG_W = 280, DIALOG_ROOM = 220;
 const SIZES = { 小: 140, 中: 200, 大: 280 };
 const dataDir = () => app.getPath('userData');
 const petsDir = () => path.join(dataDir(), 'pets');
@@ -28,7 +30,7 @@ const configFile = () => path.join(dataDir(), 'config.json');
 function loadConfig() { try { config = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(configFile(), 'utf8')) }; } catch { /* 用缺省 */ } }
 function saveConfig() { fs.mkdirSync(dataDir(), { recursive: true }); fs.writeFileSync(configFile(), JSON.stringify(config, null, 2) + '\n', { mode: 0o600 }); }
 
-let win = null, tray = null, float = null, panelOpen = false;
+let win = null, tray = null, float = null, panelOpen = false, dialogOpen = false, onboarding = null;
 let pack = null, packKind = null, mood = 'idle', lastClip = null, cursorTimer = null, lastCursor = '';
 // 选包用的数据：views/lanes（每 10 秒）、服务端宠物包对照（每 10 分钟；403 = null，用 pack.js 缺省）。
 const PET_SETTINGS_MS = 10 * 60 * 1000;
@@ -38,7 +40,8 @@ function send(ch, payload) { if (win && !win.isDestroyed()) win.webContents.send
 
 function placeWindow() {
   const wa = screen.getPrimaryDisplay().workArea, s = config.size;
-  const w = s + (panelOpen ? PANEL_W : 0), h = panelOpen ? Math.max(s + BUBBLE_ROOM, PANEL_H) : s + BUBBLE_ROOM;
+  const w = Math.max(s, dialogOpen ? DIALOG_W : 0) + (panelOpen ? PANEL_W : 0);
+  const room = dialogOpen ? DIALOG_ROOM : BUBBLE_ROOM, h = panelOpen ? Math.max(s + room, PANEL_H) : s + room;
   win.setBounds({ x: wa.x + wa.width - w - MARGIN, y: wa.y + wa.height - h - MARGIN, width: w, height: h });
 }
 
@@ -80,7 +83,37 @@ async function petTick() {
 }
 function setDefaultPet(kind) { config.pet = kind; saveConfig(); refreshPack(); buildTrayMenu(); }
 
+// 对话框：排队的消息一次显示一条；窗口按需变大，mac 上显示期间可聚焦（键盘用）。
+const dialog = createDialogQueue({
+  show: p => { dialogOpen = true; if (process.platform === 'darwin') win.setFocusable(true); placeWindow(); send('dialog', p); },
+  hide: () => { dialogOpen = false; if (process.platform === 'darwin') win.setFocusable(panelOpen); placeWindow(); send('dialog', null); },
+});
+
+// 新手引导完成标记：程序数据目录 onboarding.json
+const onboardingFile = () => path.join(dataDir(), 'onboarding.json');
+const introDone = () => { try { return !!JSON.parse(fs.readFileSync(onboardingFile(), 'utf8')).doneAt; } catch { return false; } };
+function markIntroDone() { fs.mkdirSync(dataDir(), { recursive: true }); fs.writeFileSync(onboardingFile(), JSON.stringify({ doneAt: new Date().toISOString() }) + '\n'); }
+const openHive = () => shell.openExternal(`${serverBase()}/hive/`);
+
+function startOnboarding() {
+  onboarding = createPetOnboarding({
+    readTree: () => readWithDeviceToken('/api/core/views/tree'),
+    say: m => dialog.say(m), withdraw: t => dialog.withdraw(t),
+    openHive, isDone: introDone, markDone: markIntroDone, timers: { setTimeout, clearTimeout },
+  });
+  if (config.deviceToken) onboarding.start();   // 没配设备令牌读不了服务端，不自动引导
+}
+
+// 点宠物：一个小菜单
+async function petClicked() {
+  if (dialog.isOpen()) return;
+  const id = await dialog.say({ text: '要做什么？', buttons: [{ id: 'open', label: '打开蜂巢' }, { id: 'intro', label: '再介绍一遍' }, { id: 'close', label: '关闭' }], tag: 'menu' });
+  if (id === 'open') openHive();
+  else if (id === 'intro') onboarding.replay();
+}
+
 function onPetEvent(e) {
+  if (e.type === 'dialog') { dialog.say({ text: e.text, buttons: e.data.buttons, input: e.data.input }); return; }
   if (e.text) send('bubble', e.text);
   play(e.mood);
 }
@@ -204,9 +237,12 @@ app.whenReady().then(() => {
   refreshPack();
   startFloat();
   startAssetDownload();
+  startOnboarding();
 
   ipcMain.on('hit', (_e, hit) => { if (win) win.setIgnoreMouseEvents(!hit); });
   ipcMain.on('hover', (_e, on) => { if (float) on ? float.hoverEnter() : float.hoverLeave(); });
+  ipcMain.on('dialog-answer', (_e, a) => { if (a && Number.isInteger(a.seq)) dialog.answer(a.seq, a.value); });
+  ipcMain.on('pet-click', petClicked);
   ipcMain.on('page-done', () => { if (float) float.pageDone(); });
   ipcMain.on('clip-ended', () => play(mood === 'happy' || mood === 'worried' ? 'idle' : mood));
 });
