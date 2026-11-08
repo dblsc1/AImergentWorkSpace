@@ -1,7 +1,7 @@
 # 发布：main 上打 vX.Y.Z 标签即触发。
 #
 #   1. 构建五张镜像（nexus-core / web / auth / mcp / agent），amd64 + arm64，推到 ghcr.io/dblsc1/，
-#      标签 X.Y.Z 与 latest；
+#      标签 X.Y.Z 与 latest（带「-」的测试版如 v0.6.0-rc1 不打 latest，Release 标成预发布）；
 #   2. 把 release/ 下的 compose 与两个安装脚本里的 __VERSION__ / __TAG__ 换成本版，
 #      连同 ai-detector 四个平台的单文件（+ SHA256SUMS）、连接脚本需要的 Claude Code 钩子文件（+ SHA256SUMS）一起挂到 GitHub Release。
 #
@@ -51,7 +51,10 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: 版本号
         id: v
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        # 带「-」的测试版（如 v0.6.0-rc1）不打 latest
+        run: |
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          case "$GITHUB_REF_NAME" in *-*) ;; *) echo "latest=latest" >> "$GITHUB_OUTPUT" ;; esac
       - uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.context }}
@@ -60,7 +63,7 @@ jobs:
           push: true
           tags: |
             ghcr.io/dblsc1/${{ matrix.image }}:${{ steps.v.outputs.version }}
-            ghcr.io/dblsc1/${{ matrix.image }}:latest
+            ${{ steps.v.outputs.latest && format('ghcr.io/dblsc1/{0}:latest', matrix.image) || '' }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.version=${{ steps.v.outputs.version }}
@@ -122,7 +125,8 @@ jobs:
           gh release create "$GITHUB_REF_NAME" dist/* \
             --title "HoneyComb $GITHUB_REF_NAME" \
             --notes-file release/NOTES.md \
-            --verify-tag
+            --verify-tag \
+            $(case "$GITHUB_REF_NAME" in *-*) echo --prerelease ;; esac)
 
   public-check:
     # ghcr 新包缺省私有，小白匿名拉不下来（安装脚本在 pull 那一步失败）。
