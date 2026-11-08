@@ -26,6 +26,7 @@ node hex-stage.test.js
 node hex-record.test.js
 node hex-mini.test.js
 node hex-onboard.test.js
+node hex-source-health.test.js
 node --check hex-stage-page.js   # 接线层碰 DOM，只查语法；行为由 tests/test_hive_stage.py 管
 # 共享件 focus.js（此刻的焦点的文案：顶栏 / 计时页 / 本页中心格共用；文件在 nginx-docker，本页是它的使用方之一）
 node ../../../nginx-docker/tests/focus.test.js

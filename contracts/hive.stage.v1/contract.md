@@ -166,8 +166,15 @@ provides:
 | 2026-11-08 | v1（追加） | 块、宠物、计时气泡、白条拖到空白处停住亮满后松手建新项目并记入；白条点开项目列表；白条左侧显示「手动计时 · … · X 分钟」（「二」8、9） |
 | 2026-11-08 | v1（追加） | 点灰行弹出该类窗口列表，每组同名窗口可拖进格子 / 空白处并记规则（「二」5） |
 | 2026-11-08 | v1（追加） | 代理名字：标题取任务或项目 · 对话名，人可改名（nexus-core v2.45） |
+| 2026-11-08 | v1（追加） | 信息源体检：左下角「窗口信息不全 · N 项」提示与修法清单（nexus-core v2.47） |
 | 2026-11-08 | v1（追加） | 拖入格子后默认 `remember:false` 并弹 5 秒归档气泡（可勾「以后都算」）；宠物 / 气泡点开详情卡、可改名；宠物名牌按 `humanName` / `conversation` 取（「二·10」） |
 | 2026-11-08 | v1（追加） | 灰行弹窗里标题是代号（`窗口名N` / `路径N`）的块，标题处显示「标题已隐去」，不显示代号（「二」5） |
+
+## 信息源体检（追加，nexus-core v2.47）
+
+- 左下角桶的右侧一枚小提示 `窗口信息不全 · N 项`（N = 问题数）；点开是问题清单，每项一行说明 + 一行修法 + 链接。没有任何设备报过体检、或最近一次全好（`[]`）时不显示。不挡任何操作，不弹窗。
+- 数据：`GET /api/core/detector/devices` 的 `sourceHealth`（取各设备里 `at` 最新的一份）；随慢速轮询读（与 `views/tree` 同拍），读不到就保持原样。编码未知（新服务端）的项跳过。
+- 编码 → 文案与链接写在 `hex-source-health.js`：`aw_down`、`window_missing`、`window_wayland`（awatcher；GNOME 加扩展 Focused Window D-Bus）、`afk_missing`、`web_extension_missing`（Chrome / Firefox 商店链接）、`titles_pseudonymized`、`terminal_title_no_path`（「连接脚本的终端标题」）。
 
 ## 代理名字（追加，nexus-core v2.45）
 

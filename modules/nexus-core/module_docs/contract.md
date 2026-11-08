@@ -664,7 +664,7 @@ consumes:
 | DELETE | `/api/core/detector/settings` | `?deviceId` | `204`；带 Bearer 403 | ✅ 已实现（v2.5） |
 | GET | `/api/core/detector/devices` | 无 | `{devices[]}`（v2.27 每台追加 `health`、`restart`，见「检测程序健康与重启 ActivityWatch」） | ✅ 已实现（v2.5） |
 | GET | `/api/core/detector/incidents` | `?deviceId&limit`（1–200，缺省 50） | `{deviceId, now, lastReportAt, offline, health, logUpload, startLog, events[]}`；设备不存在 404、limit 越界 422（v2.28） | ✅ 已实现（v2.28） |
-| PUT | `/api/core/detector/health` | `?deviceId`，`{awState, autoStart?, autoReason?, restart?, logUpload?, startLog?}` | `{restartNonce\|null}`；未知键 / 枚举外 422、超 1 KiB 413 | ✅ 已实现（v2.27） |
+| PUT | `/api/core/detector/health` | `?deviceId`，`{awState, autoStart?, autoReason?, restart?, logUpload?, startLog?, sourceIssues?}` | `{restartNonce\|null}`；未知键 / 枚举外 422、超 1 KiB 413 | ✅ 已实现（v2.27） |
 | POST | `/api/core/detector/restart` | `?deviceId` | `{nonce}`；带 Bearer 403、设备不存在 404 | ✅ 已实现（v2.27） |
 | GET | `/api/core/detector/rules` | 无 | `{version, updatedAt, rules[]}` + `ETag`（见 `contracts/detector.rules.v1`） | ✅ 已实现（v2.6） |
 | PUT | `/api/core/detector/rules` | `If-Match`，`{rules[]}` | 同 GET；带 Bearer 403、缺 If-Match 428、版本不符 412 | ✅ 已实现（v2.6） |
@@ -4924,6 +4924,13 @@ MCP 侧见 `contracts/mcp.tools.v2`。
 - 内置数据只在 `activity/window_defaults.py` 一个文件里（只增）：`DEFAULT_DOMAINS`（约 200 个常见网站域名，各含子域名）、`SITE_NAMES`（标题末尾的站点名 → 域名，如「… - YouTube」「… - 知乎」「… | Notion」）、`APP_FAMILIES`（程序标识 → 程序家族名，大小写不分、去掉 `.exe`）。
 - 浏览器块：标题域名位在用户 `browserDomains` **或**内置域名里，或标题末两段（用「 - 」「 – 」「 — 」「 | 」分）里有已知站点名 → 看得懂。用户名单仍照常生效、与内置并用。
 - 其他程序：标题空或是代号时，认得的程序家族名当 `displayName`（`legible: true`）；编辑器（VS Code 系、Cursor、Windsurf、Zed、Sublime、JetBrains）的标题「文件 — 工作区 — 编辑器」取工作区名当 `displayName`（JetBrains「项目 – 文件」取项目）。终端规则不变（要有本地路径）。
+
+## v0.6：信息源体检（v2.47，追加式）
+
+- `PUT /detector/health` 追加可选 `sourceIssues`：枚举数组（至多 16 项，去重排序后存），枚举 `aw_down` / `window_missing` / `window_wayland` / `afk_missing` / `web_extension_missing` / `titles_pseudonymized` / `terminal_title_no_path`；枚举外 / 非数组 422。没有自由文本，体仍受 1 KiB 限制。
+  `[]` = 全好；不带 = 没体检，**保留上一次的结果**（老检测程序、暂停时）。不新增端点：选它是因为鉴权、按设备存储、老服务端回退（422 去字段重发）都已有。
+- 存进设备文档的 `sourceHealth: {issues, at}`（`at` = 服务端收到的时刻，不收客户端时间）；`GET /detector/devices` 每台追加 `sourceHealth: {issues, at} | null`（从没报过 = `null`）。无新集合，导出 / 恢复不变。
+- 编码的含义与检测条件见 `modules/ai-detector/module_docs/contract.md`「信息源体检」；怎么修的文案在网页（`hive.stage.v1`「信息源体检」）。
 
 ## 变更记录
 

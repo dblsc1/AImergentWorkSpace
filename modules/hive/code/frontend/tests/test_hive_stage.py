@@ -40,6 +40,7 @@ class Stage:
         self.settings: dict[str, Any] = {"tiers": True}
         self.blocks: list[dict[str, Any]] = []
         self.unplaced: list[dict[str, Any]] = []
+        self.devices: list[dict[str, Any]] = []
         self.api: list[str] = []
         self.posts: list[tuple[str, Any]] = []
         self.replies: dict[str, tuple[int, Any]] = {}
@@ -81,6 +82,8 @@ class Stage:
             body = self.settings
         elif key == "timer/unplaced":
             body = {"items": self.unplaced}
+        elif key == "detector/devices":
+            body = {"devices": self.devices, "now": _iso(self.now())}
         elif key == "views/agent-time":
             body = {"agents": [{"agent": "claude-code", "seconds": 7380, "runs": 3}]}
         elif key == "views/next-actions":
@@ -599,7 +602,7 @@ def test_panel_reads_only_known_endpoints_and_never_agent_usage(browser, base) -
         st.api.clear()
         st.page.click(CELL.format("p_math"))
         st.poll()
-        known = {"views/lanes", "views/current", "views/tree", "activity/blocks", "activity/settings", "timer/unplaced", "views/agent-time", "activity/ledger"}
+        known = {"views/lanes", "views/current", "views/tree", "activity/blocks", "activity/settings", "timer/unplaced", "views/agent-time", "activity/ledger", "detector/devices"}
         assert set(st.api) <= known, st.api
         assert not [u for u in st.requests if "/usage" in u or "/agents/" in u], st.requests
         for f in ("hex-stage-page.js", "hex-record.js"):
@@ -1067,3 +1070,20 @@ def test_card_shows_week_time_and_stays_live_keeping_the_typed_name(browser, bas
         assert "claude-code · sonnet" in text and "本周 claude-code 共 2 小时 3 分" in text
         assert st.page.locator(".st-d-name").input_value() == "半截"
         assert st.page.evaluate("() => document.activeElement.className") == "st-d-name"
+
+
+def test_source_health_hint_hidden_when_fine_and_lists_fixes_when_not(browser, base) -> None:  # noqa: F811  信息源体检
+    def broken(st: Stage) -> None:
+        st.devices = [{"deviceId": "d1", "sourceHealth": {"issues": ["web_extension_missing", "window_wayland"], "at": "2026-11-08T10:00:00+00:00"}}]
+    for devices_setup, shown in ((lambda st: None, False), (lambda st: setattr(st, "devices", [{"deviceId": "d1", "sourceHealth": {"issues": [], "at": "2026-11-08T10:00:00+00:00"}}]), False), (broken, True)):
+        with open_stage(browser, base, setup=devices_setup) as st:
+            hint = st.page.locator("#stSrcHint")
+            assert hint.is_visible() is shown
+            if shown:
+                assert hint.inner_text() == "窗口信息不全 · 2 项"
+                assert not st.page.locator("#stSrcPop").is_visible()
+                hint.click()
+                pop = st.page.locator("#stSrcPop")
+                assert pop.is_visible() and "awatcher" in pop.inner_text()
+                assert pop.locator("a[href*='addons.mozilla.org']").count() == 1
+                assert st.posts == []

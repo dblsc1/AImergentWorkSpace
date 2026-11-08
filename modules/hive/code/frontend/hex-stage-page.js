@@ -29,6 +29,7 @@
     '<div class="st-toast" id="stToast" role="status" aria-live="polite"></div>' +
     '<div class="st-veil" id="stVeil" hidden><div class="st-panel st-card" id="stPanel" role="dialog" aria-modal="true"></div></div>';
   shell.appendChild(layer);
+  var renderSourceHint = window.HexSourceHealth ? window.HexSourceHealth.mount(layer) : function () {};   // 信息源体检：没数据 / 全好时不显示
   document.body.appendChild(document.getElementById("stVeil"));   // 舞台层自带层级 5，面板要盖住整个蜂巢（含分区描边）
   document.body.classList.add("stage-on");
   var $ = function (id) { return document.getElementById(id); };
@@ -921,7 +922,8 @@
       if (set) data.settings = set;
       return Promise.all([
         getJson("views/lanes"), getJson("views/current"), slow ? getJson("views/tree") : null,
-        tiers ? getJson("activity/blocks?status=pending&limit=1000") : { date: null, items: [] }, getJson("timer/unplaced")
+        tiers ? getJson("activity/blocks?status=pending&limit=1000") : { date: null, items: [] }, getJson("timer/unplaced"),
+        slow ? getJson("detector/devices") : null
       ]);
     }).then(function (r) {
       if (dragging || busy) return;
@@ -931,6 +933,7 @@
       if (r[3]) data.blocks = r[3];
       if (tiers) trayLoaded = true;
       data.unplaced = (r[4] && r[4].items) || [];
+      if (r[5] && window.HexSourceHealth) renderSourceHint(window.HexSourceHealth.problems(r[5].devices));
       applyData(); render();
     });
   }

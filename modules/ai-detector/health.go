@@ -201,6 +201,11 @@ type healthReporter struct {
 	noLogUntil time.Time // 老服务端拒了带新字段的报告：这个时刻之前不带 logUpload / startLog（过后再试一次，服务端可能升级了）
 	readLog    func(path string) (string, bool)
 
+	// v0.6 信息源体检：sourceAt = 上次体检时刻；noSourceUntil = 老服务端 422 了 sourceIssues，这之前不带
+	sourceAt      time.Time
+	sourceList    []string
+	noSourceUntil time.Time
+
 	obs  observation
 	wake chan struct{}
 
@@ -307,7 +312,18 @@ func (h *healthReporter) report(cfg Config, awState string) {
 		log.Printf("重启结果 %s 超过 %v 没送出去，丢弃", h.result.result, resultTTL)
 		h.result = nil
 	}
+	if now.Sub(h.sourceAt) >= sourceEvery && now.After(h.noSourceUntil) && cfg.Enabled && !cfg.Paused {
+		h.sourceAt = now
+		h.mu.Unlock()
+		iss := sourceIssues(cfg, awClient{base: cfg.ActivityWatchURL, http: withPolicy(h.hc, 5*time.Second, nil)}, now, h.goos, h.getenv)
+		h.mu.Lock()
+		h.sourceList = iss
+	}
+	srcOn := h.sourceList != nil && now.After(h.noSourceUntil)
 	key := awState + "/" + h.autoState + "/" + h.autoReason + "/" + fmt.Sprint(cfg.AwLogUpload)
+	if srcOn {
+		key += "/" + strings.Join(h.sourceList, ",")
+	}
 	if now.Sub(h.lastAt) < healthEvery && (h.failed || (key == h.last && h.result == nil)) { // 失败后也按 15 秒退避
 		h.mu.Unlock()
 		return
@@ -319,6 +335,9 @@ func (h *healthReporter) report(cfg Config, awState string) {
 	}
 	if h.autoReason != "" {
 		body["autoReason"] = h.autoReason
+	}
+	if srcOn {
+		body["sourceIssues"] = h.sourceList
 	}
 	res := h.result
 	if res != nil {
@@ -361,6 +380,15 @@ func (h *healthReporter) report(cfg Config, awState string) {
 		delete(body, "logUpload")
 		delete(body, "startLog")
 		sendLog, logFields = "", false
+		resp, code, err = put()
+	}
+
+	if code == http.StatusUnprocessableEntity && srcOn {
+		h.mu.Lock()
+		h.noSourceUntil = h.clock().Add(time.Hour)
+		h.mu.Unlock()
+		log.Printf("服务端不收 sourceIssues（HTTP %d，版本较老？），一小时内不再报信息源体检", code)
+		delete(body, "sourceIssues")
 		resp, code, err = put()
 	}
 

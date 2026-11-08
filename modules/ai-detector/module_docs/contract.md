@@ -640,10 +640,20 @@ Authorization: Bearer <deviceToken>
 - 上传记录追加 `folder`（upload v1.5）：`contracts/onboarding.v1`「二·2」。
 - 桌宠桥接（配置 `pet`、PetEvent、http / dsh-pet 两种美术实现）：`contracts/desktop.pet.v1`「一」「二」。
 
+## 信息源体检（`ai-detector.source-health.v1` · 规范性，v0.6 追加，对应 nexus-core v2.47）
+
+- 在健康报告里追加可选字段 `sourceIssues`：问题编码数组（枚举，无自由文本），`[]` = 全好。**不新增端点**；沿用健康报告的设备令牌与节奏。
+- 体检在健康线程里做（不碰心跳与同步），至多每 5 分钟一次，只读 ActivityWatch（桶列表 + 近 30 分钟事件，只认本机主机名的桶）；检测程序暂停 / 没开同步时不体检、也不带该字段。体检结果变了立刻随下一次报告带上，否则每次报告都带最近一次的结果。
+- 编码（只增）：`aw_down`（连不上 ActivityWatch，此时只报它）、`window_missing`（没有窗口桶，或近 30 分钟没有窗口事件）、`window_wayland`（同上，且 Linux 的 `XDG_SESSION_TYPE=wayland`，需要支持 Wayland 的记录器）、`afk_missing`（没有 afkstatus 桶）、
+  `web_extension_missing`（近 30 分钟见过浏览器窗口、但 `web.tab.current` 桶没有近 30 分钟事件）、`titles_pseudonymized`（`privacy.titles` 为 `pseudonymize`）、`terminal_title_no_path`（近 30 分钟见过终端窗口、标题都不含 `/` `~` `\`）。
+- 老服务端不认 `sourceIssues`（422）：去掉字段立即重发，一小时内不再带，之后再试一次。
+- 怎么修的文字与链接在网页（`hive.stage.v1`「信息源体检」），不在这里、也不随报告上传。
+
 ## 变更记录
 
 | 日期 | 变更 |
 |---|---|
+| 2026-11-08 | source-health.v1（追加）：仓主 2026-11-08「信息源体检」。健康报告追加可选 `sourceIssues`（编码数组），检测程序每 5 分钟读 ActivityWatch 判断窗口 / 离开 / 浏览器扩展 / 标题代号 / 终端标题是否齐全；老服务端 422 即退回。其余键、节奏不变 |
 | 2026-10-24 | upload.v1 v1.4（追加）：仓主批准三级分类（nexus-core v2.38）：另传 ≥ 1 秒、不跨窗口吸收的原始记录（`POST activity/records`，带按第一级规则算出的 `block`，脱敏同段，独立游标，`records` 设置控制）；键盘鼠标活动（默认关，GNOME 读空闲时间，只传有活动的 10 秒格）。段的上传与形状不变 |
 | 2026-10-12 | health.v1 追加、config.v1 追加 `awLogUpload`（仓主：记录丢了 80 分钟，要让 AI 助理能读真实的启动日志排查，但必须是本机开关）：缺省关；开着时健康报告带 `logUpload` 与脱敏后的 `aw-start.log` 末尾（≤ 40 行 / 4096 字节 / 每行 300 字符，变了才发），强制脱敏、拿不准不发；老服务端 422 时去掉新字段重发并不再带。对应 nexus-core v2.28。 |
 | 2026-10-12 | health.v1 追加（第三轮评审后）：被限频挡住的 nonce 按墙钟超过 60 秒就作废（笔记本挂起恢复后不拉）；`autoReason` 追加 `daily_cap`（nexus-core 严格枚举同步追加，`restart.reason` 不收）；拉起进程失败不再挤掉上一次的 `aw-start.log`。

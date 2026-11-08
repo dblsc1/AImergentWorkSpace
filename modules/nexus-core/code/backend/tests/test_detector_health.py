@@ -188,3 +188,22 @@ def test_daily_cap_only_valid_as_auto_reason(client):
     n = _dev(client)["restart"]["nonce"]
     r = _health(client, {"awState": "ok", "restart": {"nonce": n, "result": "failed", "reason": "daily_cap"}}, BEARER)
     assert r.status_code == 422  # 按钮的失败原因里没有它
+
+
+def test_source_issues_stored_listed_and_kept(client):
+    r = _health(client, {"awState": "ok", "sourceIssues": ["web_extension_missing", "window_wayland", "web_extension_missing"]}, BEARER)
+    assert r.status_code == 200
+    sh = _dev(client)["sourceHealth"]
+    assert sh["issues"] == ["web_extension_missing", "window_wayland"] and sh["at"]
+    # 不带 = 保留上一次体检；带 [] = 全好
+    _health(client, {"awState": "ok"}, BEARER)
+    assert _dev(client)["sourceHealth"]["issues"] == ["web_extension_missing", "window_wayland"]
+    _health(client, {"awState": "ok", "sourceIssues": []}, BEARER)
+    assert _dev(client)["sourceHealth"]["issues"] == []
+    # 按租户隔离
+    assert _dev(client, B) is None
+
+
+def test_source_issues_enum_strict(client):
+    assert _health(client, {"awState": "ok", "sourceIssues": ["C:/Users/x"]}).status_code == 422
+    assert _health(client, {"awState": "ok", "sourceIssues": "aw_down"}).status_code == 422

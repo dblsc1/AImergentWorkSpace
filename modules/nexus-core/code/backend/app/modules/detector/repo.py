@@ -43,9 +43,12 @@ def touch_fetch(user: str, device_id: str, at: datetime) -> None:
     _col().update_one({"user": user, "deviceId": device_id}, {"$set": {"lastFetchAt": at}}, upsert=True)
 
 
-def set_health(user: str, device_id: str, health: dict, start_log: str | None = None, clear_log: bool = False) -> None:
+def set_health(user: str, device_id: str, health: dict, start_log: str | None = None, clear_log: bool = False,
+               source_issues: list[str] | None = None) -> None:
     """start_log 给了就替换存着的启动日志；clear_log（开关关了）就删掉它；都没有 = 不动。"""
     upd: dict = {"$set": {"health": health}}
+    if source_issues is not None:  # 不报 = 保留上一次体检
+        upd["$set"]["sourceHealth"] = {"issues": source_issues, "at": health["at"]}
     if start_log is not None:
         upd["$set"]["startLog"] = {"text": start_log, "at": health["at"]}
     elif clear_log:
