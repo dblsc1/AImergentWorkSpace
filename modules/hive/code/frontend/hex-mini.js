@@ -15,7 +15,7 @@
     return { kind: "ask", name: ask.displayName || "未命名窗口", dwell: minutesText(ask.focusedSeconds) };
   }
   function assignRequest(ask, projectId) {
-    return Stage.dropRequest({ kind: "block", block: { date: ask.date, blockKey: ask.blockKey, seq: ask.seq } }, projectId);
+    return Stage.dropRequest({ kind: "block", block: { date: ask.date, blockKey: ask.blockKey, seq: ask.seq } }, projectId, true);
   }
   function answerRequest(ask) { return { method: "POST", path: "activity/live-ask/answer", body: { blockKey: ask.blockKey, answer: "unmanaged" } }; }
   // assign 409 后拿新 live-ask 比：块还在且 seq 变了就重试；块没了 = 离开；seq 没变重试也没用

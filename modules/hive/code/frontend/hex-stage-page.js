@@ -163,7 +163,7 @@
       // 时间元素停在分区空白处、那一格亮满后松手 = 建新项目（同长按建项目的表单），建好后把它记进去（hive.stage.v1「二」8）
       var made = !target && !cancel && grown && fileable(item) && Sp.openCreate({ name: createName(item), onCreated: function (p) {
         busy++;
-        getJson("views/tree").then(function (t) { if (t) data.tree = t; return stage.drop(item.kind === "free" ? { kind: "pet", runId: item.runId, agent: item.agent } : item, p.id); })
+        getJson("views/tree").then(function (t) { if (t) data.tree = t; var it = item.kind === "free" ? { kind: "pet", runId: item.runId, agent: item.agent } : item; return stage.drop(it, p.id).then(function (r) { if (r && r.ok) fileBubble(it, p.id, r); return r; }); })
           .then(function (r) { busy--; render(); return Promise.resolve(r && r.ok ? refresh() : null).then(function () { if (o.afterCreate) o.afterCreate(); }); });
       }, onCancel: function () { if (o.afterCreate) o.afterCreate(); } });
       if (!made && Sp) Sp.removeSprout();
@@ -175,6 +175,7 @@
         o.el.style.translate = "";
         if (r && r.reverted && pid) o.el.classList.add("st-bounce");
         busy--;
+        if (r && r.ok) fileBubble(item, pid, r);
         render();
         if (r && r.ok) refresh();
       });
@@ -196,6 +197,140 @@
       el.classList.add("hd-rise"); void el.offsetWidth; el.classList.add("is-rising");
     }
     return el;
+  }
+
+
+  // ── 宠物名牌与详情卡、归档气泡（hive.stage.v1「二」10，2026-11-08）──
+  function taskOf(id) {
+    var ps = projects();
+    for (var i = 0; i < ps.length; i++) {
+      var t = (ps[i].tasks || []).filter(function (x) { return x.id === id; })[0];
+      if (t) return t;
+    }
+    return null;
+  }
+  function filedUnder(run) {
+    var t = run.taskId && taskOf(run.taskId), pid = run.projectId || (run.taskId && projectOfTask(run.taskId)) || stage.petDock(run.runId);
+    if (pid === "inbox") pid = null;
+    return { task: t ? t.name : null, project: pid ? projectName(pid) : null };
+  }
+  function titleOf(run) {
+    var f = filedUnder(run);
+    return St.petTitle(run, f.task || f.project);
+  }
+
+  var card = null;
+  function closeCard() {
+    if (!card) return;
+    card.remove(); card = null;
+    document.removeEventListener("pointerdown", onCardOutside, true);
+    document.removeEventListener("keydown", onCardKey, true);
+  }
+  function onCardOutside(ev) {
+    if (!card || card.contains(ev.target)) return;
+    if (card.__anchor && card.__anchor.contains(ev.target)) return;   // 点同一只宠物 = 由它的点击切换
+    closeCard();
+  }
+  function onCardKey(ev) { if (ev.key === "Escape") { ev.stopPropagation(); closeCard(); } }
+  function toggleCard(who, anchor) {
+    if (card && card.__key === (who.runId || who.blockKey)) closeCard(); else openCard(who, anchor);
+  }
+  function placeCard(el, anchor) {            // 挂在 body 上用视口坐标：盖得住分区描边
+    var a = (anchor.querySelector(".st-pet-in") || anchor).getBoundingClientRect(), w = el.offsetWidth, x = a.right + 12;
+    if (x + w > window.innerWidth - 8) x = a.left - w - 12;
+    el.style.left = Math.max(8, x) + "px"; el.style.top = Math.max(8, Math.min(a.top - 10, window.innerHeight - el.offsetHeight - 8)) + "px";
+  }
+  function openCard(who, anchor) {
+    closeCard();
+    var el = document.createElement("div");
+    el.className = "st-detail st-card"; el.setAttribute("role", "dialog"); el.__anchor = anchor; el.__key = who.runId || who.blockKey;
+    var now = Date.now();
+    if (who.runId) {
+      var run = runById(who.runId); if (!run) return;
+      var f = filedUnder(run), mood = Pk.moodOf(run.phase, run.lost);
+      var hist = (run.phases || []).slice(-6).reverse().map(function (ph) {
+        var d = new Date(ms(ph.at));
+        return "<li><span>" + pad(d.getHours()) + ":" + pad(d.getMinutes()) + "</span>" + STATUS_TEXT[Pk.moodOf(ph.phase, false)] + "</li>";
+      }).join("");
+      el.innerHTML = '<h3 class="st-d-title" title="' + esc(titleOf(run)) + '">' + esc(titleOf(run)) + "</h3>" +
+        '<div class="st-d-line st-d-tool">' + esc([run.tool || run.agent, run.model].filter(Boolean).join(" · ")) + "</div>" +
+        '<div class="st-d-line st-d-filed">' + (f.project ? "归在 " + esc((f.task ? f.project + " / " + f.task : f.project)) : "还没归到项目") + "</div>" +
+        '<div class="st-d-line st-d-phase">' + STATUS_TEXT[mood] + " · 今天工作 " + dur(Rec.workingSeconds(run, now)) + "</div>" +
+        (hist ? '<ul class="st-d-hist">' + hist + "</ul>" : "") +
+        (run.match ? '<div class="st-d-line st-d-win">窗口：' + esc(run.match) + "</div>" : "") +
+        '<input class="st-d-name" maxlength="64" aria-label="改名字" placeholder="改名字，回车保存" value="' + esc(run.humanName || "") + '">';
+      var inp = el.querySelector(".st-d-name");
+      inp.addEventListener("keydown", function (ev) {
+        if (ev.key !== "Enter") return;
+        ev.preventDefault();
+        var v = inp.value.trim(), name = v === "" ? null : v;
+        send({ method: "PUT", path: "agents/" + encodeURIComponent(who.runId) + "/name", body: { name: name } }).then(function (res) {
+          if (res.status >= 200 && res.status < 300) {
+            var r0 = ((data.lanes && data.lanes.agents) || []).filter(function (x) { return x.runId === who.runId; })[0];
+            if (r0) r0.humanName = name;
+            render(); closeCard(); refresh();
+          } else inp.classList.add("is-bad");
+        });
+      });
+    } else {
+      var b = who.block;
+      el.innerHTML = '<h3 class="st-d-title" title="' + esc(b.displayName) + '">' + esc(b.displayName) + "</h3>" +
+        '<div class="st-d-line">窗口 · ' + dur(b.seconds) + '</div><ul class="st-d-hist st-d-wins"></ul>';
+      getJson("activity/blocks/records?date=" + encodeURIComponent(b.date) + "&blockKey=" + encodeURIComponent(b.blockKey)).then(function (r) {
+        var by = {}; ((r && r.items) || []).forEach(function (x) { var t = x.title || x.app || "—"; by[t] = (by[t] || 0) + Math.max(0, (ms(x.endAt) - ms(x.startAt)) / 1000); });
+        var ul = el.querySelector(".st-d-wins");
+        if (ul) ul.innerHTML = Object.keys(by).sort(function (x, y) { return by[y] - by[x]; }).slice(0, 8).map(function (t) { return "<li><span>" + dur(by[t]) + "</span>" + esc(t) + "</li>"; }).join("");
+      });
+    }
+    document.body.appendChild(el);
+    placeCard(el, anchor);
+    card = el;
+    document.addEventListener("pointerdown", onCardOutside, true);
+    document.addEventListener("keydown", onCardKey, true);
+  }
+
+  // 拖进格子后的小气泡：转圈 5 秒、勾「以后都算」、点气泡开详情；悬停 / 聚焦暂停
+  var FILE_MS = 5000, FILE_TICK = 100, RING_C = 62.83;
+  var fileB = null;
+  function closeFileBubble() { if (!fileB) return; clearInterval(fileB.timer); fileB.el.remove(); fileB = null; }
+  function fileBubble(item, pid, res) {
+    if (item.kind !== "pet" && item.kind !== "block") return;
+    closeFileBubble();
+    var cell = cellEl(pid); if (!cell) return;
+    var c = rectCenter(cell), name = projectName(pid), isPet = item.kind === "pet";
+    var el = document.createElement("div");
+    el.className = "st-file st-card"; el.setAttribute("role", "status");
+    el.innerHTML = '<svg class="st-file-ring" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="none" stroke="var(--panel-2)" stroke-width="3"/>' +
+      '<circle class="st-file-arc" cx="12" cy="12" r="10" fill="none" stroke="var(--fact-s1)" stroke-width="3" stroke-linecap="round" transform="rotate(-90 12 12)" stroke-dasharray="' + RING_C + '" stroke-dashoffset="0"/></svg>' +
+      '<label class="st-file-ck"><input type="checkbox"><span></span></label>';
+    el.querySelector("span").textContent = isPet ? "以后都算 " + name : "以后这个窗口都算 " + name;
+    layer.appendChild(el);
+    place(el, { x: c.x + c.w * 0.1, y: c.y - c.h / 2 - 22 });
+    var st = { el: el, left: FILE_MS, seq: res && res.seq, timer: 0 }, box = el.querySelector("input"), arc = el.querySelector(".st-file-arc"), still = reduced();
+    fileB = st;
+    el.addEventListener("pointerenter", function () { st.hover = true; });
+    el.addEventListener("pointerleave", function () { st.hover = false; });
+    el.addEventListener("focusin", function () { st.focus = true; });
+    el.addEventListener("focusout", function () { st.focus = false; });
+    st.timer = setInterval(function () {
+      if (st.hover || st.focus) return;
+      st.left -= FILE_TICK;
+      if (!still) arc.setAttribute("stroke-dashoffset", String(RING_C * (1 - st.left / FILE_MS)));
+      if (st.left > 0) return;
+      clearInterval(st.timer); el.classList.add("is-leaving");
+      setTimeout(function () { if (fileB === st) closeFileBubble(); }, 250);
+    }, FILE_TICK);
+    box.addEventListener("change", function () {
+      if (!box.checked) return;
+      box.disabled = true;
+      stage.remember(item, pid, st.seq).then(function (r) {
+        if (r && r.ok) { box.blur(); refresh(); } else { box.checked = false; box.disabled = false; renderToast(); }
+      });
+    });
+    el.addEventListener("click", function (ev) {
+      if (ev.target.closest(".st-file-ck")) return;
+      if (isPet) toggleCard({ runId: item.runId }, petEls[item.runId] || el); else toggleCard({ blockKey: item.block.blockKey, block: item.block }, el);
+    });
   }
 
   // ── 宠物素材：pack.json 读不到就用内置占位形象 ─────────
@@ -242,7 +377,8 @@
   function fillPet(e, pet, run) {
     loadPack(pet.pack);
     var m = mediaFor(pet), slot = e.querySelector(".st-media");
-    e.querySelector(".st-tag").textContent = pet.name;
+    var tg = e.querySelector(".st-tag"), ttl = run ? titleOf(run) : pet.name;
+    if (tg.textContent !== ttl) { tg.textContent = ttl; tg.title = ttl; }
     e.dataset.mood = pet.mood;
     e.__pet = pet;
     if (!slot.dataset.over && slot.dataset.key !== m.key) {
@@ -383,7 +519,7 @@
         if (!r) return null;
         return e.classList.contains("is-loose") ? { kind: "pet", runId: r.runId, agent: r.agent } : { kind: "free", runId: r.runId, agent: r.agent };
       },
-      onClick: function () { poke(e); },
+      onClick: function () { poke(e); toggleCard({ runId: e.dataset.runId }, e); },
       onGrab: function () {
         var s = ixOf(e.dataset.runId); s.mode = "drag"; s.walking = false; s.click = null;
         e.classList.remove("st-away"); syncClip(e);

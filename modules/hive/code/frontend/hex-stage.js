@@ -60,13 +60,13 @@
     return { items: sorted.slice(0, MAX_STRIPS), plus: Math.max(0, sorted.length - MAX_STRIPS) };
   }
 
-  // 拖放要发的请求；放到空白处（projectId 为空）= null，什么都不发
-  function dropRequest(item, projectId) {
+  // 拖放要发的请求；放到空白处（projectId 为空）= null，什么都不发。块与宠物默认 remember:false（只这一次），气泡里勾上才传 true（2026-11-08）
+  function dropRequest(item, projectId, remember) {
     if (!projectId) return null;
     var enc = encodeURIComponent;
     switch (item.kind) {
-      case "block": return { method: "POST", path: "activity/blocks/assign", body: { date: item.block.date, blockKey: item.block.blockKey, ifSeq: item.block.seq, projectId: projectId, remember: true } };
-      case "pet": return { method: "POST", path: "agents/" + enc(item.runId) + "/place", body: { projectId: projectId, remember: true } };
+      case "block": return { method: "POST", path: "activity/blocks/assign", body: { date: item.block.date, blockKey: item.block.blockKey, ifSeq: item.block.seq, projectId: projectId, remember: !!remember } };
+      case "pet": return { method: "POST", path: "agents/" + enc(item.runId) + "/place", body: { projectId: projectId, remember: !!remember } };
       case "strip": return { method: "POST", path: "timer/unplaced/" + enc(item.id) + "/place", body: { projectId: projectId } };
       case "clock": return { method: "POST", path: "timer/place", body: { projectId: projectId } };
     }
@@ -100,19 +100,26 @@
       var req = dropRequest(item, projectId);
       if (!req) return { ok: false, reverted: true };
       if (item.kind === "clock" && !timer) return { ok: false, reverted: true };
-      var out = await call(req), name = deps.projectName(projectId);
+      var out = await call(req);
       if (!out.ok) return fail(out);
       if (item.kind === "block") {
         blocks = blocks.filter(function (b) { return b.blockKey !== item.block.blockKey; });
         bucket = Math.max(0, bucket - item.block.seconds);
-        say("已记下：以后 " + item.block.displayName + " 都算 " + name);
       } else if (item.kind === "pet") {
         docks[item.runId] = projectId;
-        if (out.body.rule) say("已记下：以后 " + item.agent + " 都算 " + name);
       } else if (item.kind === "strip") {
         unplaced = unplaced.filter(function (u) { return u.id !== item.id; });
       } else timer.projectId = projectId;
-      return { ok: true };
+      return { ok: true, seq: out.body.seq };
+    }
+
+    // 气泡里勾上「以后都算」：同一目标再发一次 remember:true。块的 ifSeq 用上一次 assign 回的 seq（缺省 +1）
+    async function remember(item, projectId, seq) {
+      var req = dropRequest(item, projectId, true);
+      if (!req) return { ok: false };
+      if (item.kind === "block") req.body.ifSeq = typeof seq === "number" ? seq : item.block.seq + 1;
+      var out = await call(req);
+      return out.ok ? { ok: true } : fail(out);
     }
 
     // 点时钟：没在计时 = 开始（不选项目）；在计时 = 停
@@ -142,11 +149,19 @@
       timerRunning: function () { return !!timer; },
       setTimer: function (t) { timer = t; },
       drop: drop,
+      remember: remember,
       clickClock: clickClock
     };
   }
 
-  var api = { pickRing: pickRing, pickBubbleHost: pickBubbleHost, bucketText: bucketText, drawerRows: drawerRows, greyGroups: greyGroups, stripList: stripList, dropRequest: dropRequest, createStage: createStage };
+  // 宠物名牌：人改的名字 > 「任务或项目名·对话名」 > 对话名 > label || agent（2026-11-08）
+  function petTitle(run, targetName) {
+    if (run.humanName) return run.humanName;
+    if (run.conversation) return targetName ? targetName + "·" + run.conversation : run.conversation;
+    return run.label || run.agent;
+  }
+
+  var api = { petTitle: petTitle, pickRing: pickRing, pickBubbleHost: pickBubbleHost, bucketText: bucketText, drawerRows: drawerRows, greyGroups: greyGroups, stripList: stripList, dropRequest: dropRequest, createStage: createStage };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.NexusTableHexStage = api;
 })();
