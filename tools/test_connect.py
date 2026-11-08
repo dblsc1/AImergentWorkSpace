@@ -377,3 +377,10 @@ def test_ps1_roundtrip(tmp_path):
     assert prof.read_text().replace("\r\n", "\n") == "# mine\nSet-Alias ll Get-ChildItem\n"
     assert json.loads((det / "ai-detector.json").read_text()) == DET_CFG
     assert json.loads((pet / "config.json").read_text()) == {"pet": "claude"}
+
+
+def test_ps1_has_exactly_one_bom():
+    # 两个 BOM 时 PowerShell 把第二个当命令名（「The term '﻿#' …」）
+    for name in ("honeycomb-connect.ps1", "honeycomb-install.ps1"):
+        raw = (REL / name).read_bytes()
+        assert raw.startswith(b"\xef\xbb\xbf") and not raw[3:].startswith(b"\xef\xbb\xbf"), name
