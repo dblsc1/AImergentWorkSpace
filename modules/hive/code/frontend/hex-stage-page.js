@@ -24,6 +24,7 @@
     '<div class="st-bubble" id="stBubble" aria-hidden="true"></div>' +
     '<div class="st-more" id="stMore" hidden></div>' +
     '<div class="st-drawer st-card" id="stDrawer"></div>' +
+    '<div class="st-greypop st-card" id="stGreyPop"></div>' +
     '<div class="st-bucket" id="stBucket"><button type="button" class="st-bucket-btn" id="stBucketBtn" aria-label="未分类"></button><div class="st-bucket-label" id="stBucketLabel"></div></div>' +
     '<div class="st-toast" id="stToast" role="status" aria-live="polite"></div>' +
     '<div class="st-veil" id="stVeil" hidden><div class="st-panel st-card" id="stPanel" role="dialog" aria-modal="true"></div></div>';
@@ -627,6 +628,7 @@
   var drawerSig = "";
   function renderDrawer() {
     var box = $("stDrawer"), rows = stage.drawer(), sig = JSON.stringify(rows.map(function (r) { return [r.name, r.seconds, r.draggable]; }));
+    renderGreyPop(rows);
     if (sig === drawerSig && box.firstChild) return;
     drawerSig = sig;
     box.innerHTML = "";
@@ -637,10 +639,34 @@
       d.firstChild.textContent = r.name; d.lastChild.textContent = dur(r.seconds);
       box.appendChild(d);
       if (r.draggable) drag(d, { el: d, item: function () { return { kind: "block", block: r.block }; } });
+      else if (r.members) {
+        d.classList.add("grey"); d.setAttribute("role", "button"); d.tabIndex = 0;
+        var open = function () { greyKind = greyKind === r.kind ? null : r.kind; renderGreyPop(stage.drawer()); };
+        d.addEventListener("click", open);
+        d.addEventListener("keydown", function (ev) { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); open(); } });
+      }
+    });
+  }
+  // 灰行点开：这一类里每块（同名窗口）一行，可拖进格子 / 空白处（同可拖块）
+  var greyKind = null, greySig = "";
+  function renderGreyPop(rows) {
+    var box = $("stGreyPop"), row = rows.filter(function (r) { return r.kind === greyKind && r.members; })[0];
+    if (!row || !$("stDrawer").classList.contains("open")) { greyKind = row ? greyKind : null; box.classList.remove("open"); greySig = ""; return; }
+    var sig = JSON.stringify(row.members.map(function (m) { return [m.block.blockKey, m.seconds]; }));
+    box.classList.add("open");
+    if (sig === greySig) return;
+    greySig = sig; box.innerHTML = "";
+    var h = document.createElement("div"); h.className = "st-greypop-h"; h.textContent = row.name + " · 拖到项目里"; box.appendChild(h);
+    row.members.forEach(function (m) {
+      var d = document.createElement("div");
+      d.className = "st-chip"; d.innerHTML = "<b></b><span></span>";
+      d.firstChild.textContent = m.title; d.firstChild.title = m.title; d.lastChild.textContent = dur(m.seconds);
+      box.appendChild(d);
+      drag(d, { el: d, item: function () { return { kind: "block", block: m.block }; } });
     });
   }
   $("stBucketBtn").addEventListener("click", function () {
-    var d = $("stDrawer"); d.classList.toggle("open"); if (d.classList.contains("open")) { drawerSig = ""; renderDrawer(); }
+    var d = $("stDrawer"); d.classList.toggle("open"); if (d.classList.contains("open")) { drawerSig = ""; renderDrawer(); } else renderGreyPop(stage.drawer());
   });
 
   // ── 提示 ───────────────────────────────────────────

@@ -316,6 +316,28 @@ def test_bucket_drawer_drags_a_block_into_a_cell(browser, base) -> None:  # noqa
         assert st.page.locator(".st-chip").count() == 1
 
 
+def test_grey_row_opens_a_popover_of_same_title_groups_and_a_group_drags_into_a_cell(browser, base) -> None:  # noqa: F811  hive.stage.v1「二」5
+    def grey(st: Stage) -> None:
+        _busy_day(st)
+        st.blocks = [{"blockKey": f"ptyxis · {t}", "status": "pending", "seconds": s, "seq": i, "displayName": None, "legible": False,
+                      "kind": "terminal", "apps": ["ptyxis"]} for i, (t, s) in enumerate([("~/work", 120), ("vim a.go", 600)], 1)]
+
+    with open_stage(browser, base, setup=grey) as st:
+        st.page.click("#stBucketBtn")
+        st.page.clock.run_for(300)
+        st.page.click(".st-chip.grey")
+        st.page.clock.run_for(300)
+        pop = st.page.locator("#stGreyPop .st-chip")
+        assert pop.all_inner_texts() == ["vim a.go\n10 分", "~/work\n2 分"]
+        st.replies["activity/blocks/assign"] = (200, {})
+        st.blocks = st.blocks[:1]
+        st.drag("#stGreyPop .st-chip", st.center(CELL.format("p_math")))
+        st.settle()
+        assert st.posts == [("activity/blocks/assign", {"date": st.lanes["today"], "blockKey": "ptyxis · vim a.go", "ifSeq": 2, "projectId": "p_math", "remember": True})]
+        assert st.toast() == "已记下：以后 ptyxis · vim a.go 都算 数学"
+        assert st.page.locator("#stGreyPop .st-chip").all_inner_texts() == ["~/work\n2 分"]
+
+
 def test_block_drop_conflict_keeps_the_block(browser, base) -> None:  # noqa: F811  HV-S13
     with open_stage(browser, base, setup=_busy_day) as st:
         st.replies["activity/blocks/assign"] = (409, {})
