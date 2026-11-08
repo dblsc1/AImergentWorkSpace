@@ -4911,6 +4911,13 @@ MCP 侧见 `contracts/mcp.tools.v2`。
 - `contracts/desktop.pet.v1`：只读既有 `views/current` 与 `live-ask`，nexus-core 不新增别的。
 - 新集合 `activity_asked`、`agent_place_rules`、`timer_unplaced` 进导出 / 恢复。
 
+## v0.6：代理名字（v2.45，追加式）
+
+- `PUT agents/{runId}/name`，体 `{"name": 字符串 1..64 码点 | null}`（必给；`null` = 清掉）。只许人：设备令牌、带范围令牌、匿名、AI 来源凭据都 403（同 `place`）；运行不存在 404；名字空白折叠后存。
+  按**与去向规则相同的代理键**（运行的 `agent`）存进集合 `agent_name_rules`（每租户、`(user, agent)` 唯一），对这个代理的过去与以后的运行都生效。回 `{runId, agentKey, name}`。
+- `views/lanes` 的 `agents[]` 追加 `humanName: 字符串|null`（人起的名字，优先于自动标题）与 `conversation: 字符串|null`（对话名：`label` 去控制 / 折叠空白后不是系统工具名就用它，否则 `match`（终端标题）同样处理，都不行为 null；系统工具名单只在 `timer/agent_name.py` 一处）。已结束的运行只存 `label`，其 `conversation` 只能由 `label` 得出。
+- 集合 `agent_name_rules` 进导出（`agentNameRules`，没有就不出这个键）/ 恢复。
+
 ## 变更记录
 
 见 `module_docs/contract-changelog.md`（从本文件拆出，只记历史不含规范）。

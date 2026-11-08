@@ -42,6 +42,7 @@ from ..events import service as events_service
 from ..events.schemas import SPEC
 from ..planner import service as planner_service
 from . import agent_phases as phases_impl
+from . import agent_name as name_impl
 from . import agent_place as place_impl
 from . import agents as agents_impl
 from . import backfill as backfill_impl
@@ -308,6 +309,23 @@ def export_place_rules() -> list[dict]:
 def restore_place_rules(rules: list[dict]) -> None:
     user = current_tenant()
     repo.restore_place_rules([{**r, "user": user} for r in rules])
+
+
+def agent_name_set(run_id: str, name: str | None) -> dict:
+    return name_impl.set_name(run_id, name, current_tenant())
+
+
+def agent_name_rules(user: str) -> dict[str, str]:
+    return name_impl.name_rules(user)
+
+
+def export_name_rules() -> list[dict]:
+    return [{k: v for k, v in r.items() if k != "user"} for r in repo.name_rules(current_tenant())]
+
+
+def restore_name_rules(rules: list[dict]) -> None:
+    user = current_tenant()
+    repo.restore_name_rules([{**r, "user": user} for r in rules])
 
 
 def agent_place_rule_delete(agent: str) -> None:

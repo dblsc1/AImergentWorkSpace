@@ -280,6 +280,17 @@ def agent_place(runId: str, body: AgentPlaceIn) -> dict:  # noqa: N803 —— �
     return service.agent_place(runId, body.taskId, body.projectId, body.remember)
 
 
+class AgentNameIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(min_length=1, max_length=64)  # 必给；null = 清掉
+
+
+@agents_router.put("/{runId}/name", dependencies=[Depends(_human_only)])
+def agent_name(runId: str, body: AgentNameIn) -> dict:  # noqa: N803 —— 路径参数名即契约
+    return service.agent_name_set(runId, body.name)
+
+
 @agents_router.get("/place-rules", dependencies=[Depends(no_bearer)])
 def agent_place_rules() -> dict:
     return {"items": service.agent_place_rules()}
