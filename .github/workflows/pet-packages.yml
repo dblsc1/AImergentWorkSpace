@@ -1,0 +1,57 @@
+# 桌宠安装包（Windows / macOS / Linux）：不签名、不公证、不带宠物素材。
+#   - 手动跑（workflow_dispatch）：只构建并上传 artifact，不发版，用来不打标签就试；
+#   - release.yml 以 workflow_call 复用，tag 传发版标签。
+# 产物名固定：honeycomb-pet-<tag>-{win-x64,mac-arm64,mac-x64,linux-x64}.zip（安装器按此名下载）。
+name: pet-packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '文件名里的版本标签（缺省 v<package.json 版本>-dev）'
+        required: false
+        default: ''
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: 桌宠包 · ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: win-x64,   runner: windows-latest,  platform: win32,  arch: x64 }
+          - { name: mac-arm64, runner: macos-14,        platform: darwin, arch: arm64 }
+          - { name: mac-x64,   runner: macos-15-intel,  platform: darwin, arch: x64 }
+          - { name: linux-x64, runner: ubuntu-latest,   platform: linux,  arch: x64 }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 标签
+        id: t
+        shell: bash
+        run: |
+          t='${{ inputs.tag }}'
+          [ -n "$t" ] || t="v$(node -p "require('./modules/desktop-pet/package.json').version")-dev"
+          echo "tag=$t" >> "$GITHUB_OUTPUT"
+      - name: 装依赖并打包
+        working-directory: modules/desktop-pet
+        shell: bash
+        run: |
+          npm ci
+          npm run package -- --platform=${{ matrix.platform }} --arch=${{ matrix.arch }} --tag=${{ steps.t.outputs.tag }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pet-${{ matrix.name }}
+          path: modules/desktop-pet/dist/honeycomb-pet-*.zip
+          if-no-files-found: error

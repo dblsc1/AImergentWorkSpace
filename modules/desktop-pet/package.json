@@ -7,9 +7,11 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --test"
+    "test": "node --test",
+    "package": "node package.js"
   },
   "devDependencies": {
+    "@electron/packager": "20.3.0",
     "electron": "38.8.6"
   }
 }

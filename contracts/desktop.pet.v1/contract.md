@@ -190,3 +190,21 @@ provides:
 | 2026-11-07 | v1 | 仓主批准；桌宠改为自己的 Electron 程序 `modules/desktop-pet`，宠物与浮窗同窗；素材 ai-pet-7in1 全套、自动下载、不进仓库 |
 | 2026-11-08 | v1（追加） | dsh-pet 发送按上游 0.4.5 的约束（task 40 码点、surface、petId 缺省、`ok:false`） |
 | 2026-11-08 | v1（追加） | 对话框组件（「三·3」）、PetEvent `dialog`（「一」）、点宠物小菜单、桌宠新手引导（「三·4」） |
+| 2026-11-08 | v1（追加） | 桌宠安装包（「七」） |
+
+## 七、桌宠安装包
+
+每个 GitHub Release 附（`<tag>` 即发版标签，如 `v0.6.0`）：
+
+| 文件 | 内容 |
+|---|---|
+| `honeycomb-pet-<tag>-win-x64.zip` | 解压即用的应用目录，内含 `HoneyComb Pet.exe` |
+| `honeycomb-pet-<tag>-mac-arm64.zip` | 内含 `HoneyComb Pet.app`（Apple 芯片） |
+| `honeycomb-pet-<tag>-mac-x64.zip` | 内含 `HoneyComb Pet.app`（Intel） |
+| `honeycomb-pet-<tag>-linux-x64.zip` | 应用目录，内含可执行文件 `HoneyComb Pet` |
+| `honeycomb-pet-<tag>-SHA256SUMS.txt` | 以上 zip 的 sha256 |
+
+- 来源：`.github/workflows/pet-packages.yml` 的矩阵（windows-latest、macos-14、macos-15-intel、ubuntu-latest）用 `modules/desktop-pet` 的 `npm run package -- --platform=<win32|darwin|linux> --arch=<x64|arm64> --tag=<tag>`（`@electron/packager`）生成；`release.yml` 复用该工作流并把产物与 SHA256SUMS 挂到 Release。该工作流也可手动触发，只出 artifact、不发版。
+- 不签名、不公证：系统会弹安全提示，属预期。
+- 不含宠物素材，首次启动照旧下载。
+- 以上文件名是对安装器的接口，只增不改。

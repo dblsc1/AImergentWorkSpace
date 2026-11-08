@@ -65,9 +65,15 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.version=${{ steps.v.outputs.version }}
 
+  pet-packages:
+    name: 桌宠包
+    uses: ./.github/workflows/pet-packages.yml
+    with:
+      tag: ${{ github.ref_name }}
+
   release:
     name: GitHub Release
-    needs: images
+    needs: [images, pet-packages]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -97,6 +103,15 @@ jobs:
             GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$out" .
           done
           ( cd "$GITHUB_WORKSPACE/dist" && sha256sum ai-detector-* > "ai-detector-$GITHUB_REF_NAME-SHA256SUMS.txt" )
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pet-*
+          path: pet-zips
+          merge-multiple: true
+      - name: 桌宠包 + SHA256SUMS
+        run: |
+          cp pet-zips/honeycomb-pet-*.zip dist/
+          ( cd dist && sha256sum honeycomb-pet-*.zip > "honeycomb-pet-$GITHUB_REF_NAME-SHA256SUMS.txt" && cat "honeycomb-pet-$GITHUB_REF_NAME-SHA256SUMS.txt" )
       - name: 建 Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
