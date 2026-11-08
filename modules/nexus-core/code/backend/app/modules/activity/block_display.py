@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
-from . import blocks_repo, history
+import re
+
+from . import blocks_repo, history, window_defaults as wd
 
 _SEP = " · "
 
@@ -47,6 +49,33 @@ def _allowed(domain: str, rules: list[str]) -> bool:
     return False
 
 
+def family_of(app: str) -> str | None:
+    a = app.casefold()
+    return wd.APP_FAMILIES.get(a.removesuffix(".exe"))
+
+
+def _default_domain(domain: str) -> bool:
+    d = domain.strip().casefold().split(" ")[0]
+    labels = d.split(".")
+    return any(".".join(labels[i:]) in wd.DEFAULT_DOMAINS for i in range(len(labels)))
+
+
+_SPLIT = re.compile(r"\s+[-–—|]\s+")
+
+
+def _site_name_in(title: str) -> bool:
+    """标题末尾（或浏览器名之前）是已知站点名。"""
+    return any(p.strip().casefold() in wd.SITE_NAMES for p in _SPLIT.split(title)[-2:]) and bool(_SPLIT.search(title))
+
+
+def _workspace(family: str, title: str) -> str:
+    """编辑器标题「文件 — 工作区 — 编辑器」→ 工作区名；认不出就原标题。"""
+    parts = _SPLIT.split(title)
+    if parts[-1].casefold() in wd.EDITOR_SUFFIXES and len(parts) > 1:
+        parts = parts[:-1]
+    return (parts[0] if family in wd.PROJECT_FIRST_FAMILIES or len(parts) < 2 else parts[-1]) or title
+
+
 def _browser_title(mine: list[dict], rest: str) -> tuple[str, str | None]:
     """浏览器块的归一化标题与标题里的域名位（没有「 · 」分隔就是 None）。"""
     title = history.norm_title(max(mine, key=lambda r: r.get("seconds", 0))["title"]) if mine else rest
@@ -84,7 +113,8 @@ def describe(key: str, source: str, recs: list[dict], rules: list[str]) -> dict:
     mine = [r for r in recs if r["app"] == app]
     if kind == "browser":
         title, head = _browser_title(mine, rest)
-        return out(title if head and _allowed(head, rules) else None)
+        ok = (head and (_allowed(head, rules) or _default_domain(head))) or _site_name_in(title)
+        return out(title if ok else None)
     if kind == "terminal":
         if source == "agent":
             return out(key.partition(_SEP)[2])
@@ -93,4 +123,8 @@ def describe(key: str, source: str, recs: list[dict], rules: list[str]) -> dict:
             if r.get("folder"):
                 by[r["folder"]] = by.get(r["folder"], 0) + r.get("seconds", 0)
         return out(min(by, key=lambda f: (-by[f], f)) if by else None)
-    return out(rest if rest and not all(r.get("titleIsPseudonym") for r in mine) else None)
+    shown = rest if rest and not all(r.get("titleIsPseudonym") for r in mine) else None
+    family = family_of(app)
+    if family and shown and family in {"VS Code", "Cursor", "Windsurf", "Zed", "Sublime Text", "JetBrains"}:
+        shown = _workspace(family, shown)
+    return out(shown or family)

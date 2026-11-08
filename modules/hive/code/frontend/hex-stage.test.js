@@ -45,6 +45,8 @@ const G = (key, sec, apps) => ({ date: "2026-11-07", blockKey: key, seq: 2, disp
 const grey = S.drawerRows([G("ptyxis · ~/work", 60, ["ptyxis"]), G("ptyxis · vim a.go", 300, ["ptyxis"]), G("ptyxis", 10, ["ptyxis"])])[0].members;
 assert.deepStrictEqual(grey.map((m) => [m.title, m.seconds]), [["vim a.go", 300], ["~/work", 60], ["ptyxis", 10]]);
 assert.strictEqual(grey[0].block.blockKey, "ptyxis · vim a.go"); assert.strictEqual(grey[0].block.displayName, "ptyxis · vim a.go");
+const hid = S.drawerRows([G("ptyxis · 窗口名12", 5, ["ptyxis"]), G("ptyxis · 路径3", 4, ["ptyxis"]), G("ptyxis · 窗口名x", 3, ["ptyxis"])])[0].members;
+assert.deepStrictEqual(hid.map((m) => m.hidden), [true, true, false]); assert.strictEqual(grey[0].hidden, false);
 
 // 白条
 const ups = Array.from({ length: 7 }, (_, i) => ({ id: "u" + i, startAt: iso(i) }));

@@ -39,8 +39,8 @@ def test_browser_domain_rules(client):
 
 
 def test_empty_domain_rules(client):
-    upload(client, [rec(D, "09:00:00", "09:01:00", title="figma.com · 首页改版")])
-    assert _disp(client, "chrome · figma.com · 首页改版") == (None, False, "browser")
+    upload(client, [rec(D, "09:00:00", "09:01:00", title="nodefault.example · 首页改版")])
+    assert _disp(client, "chrome · nodefault.example · 首页改版") == (None, False, "browser")
 
 
 def test_unlisted_browser_goes_to_other(client):
@@ -61,11 +61,53 @@ def test_terminal_unrecognized_and_folder(client):
 
 def test_other_apps(client):
     upload(client, [rec(D, "09:00:00", "09:01:00", app="code", title="plot.gd"),
-                    rec(D, "09:02:00", "09:03:00", app="code", title="w_ab12", pseudo=True),
-                    rec(D, "09:04:00", "09:05:00", app="code", title="")])
+                    rec(D, "09:02:00", "09:03:00", app="oddapp", title="w_ab12", pseudo=True),
+                    rec(D, "09:04:00", "09:05:00", app="oddapp", title="")])
     assert _disp(client, "code · plot.gd") == ("plot.gd", True, "other")
-    assert _disp(client, "code · w_ab12") == (None, False, "other")
-    assert _disp(client, "code") == (None, False, "other")
+    assert _disp(client, "oddapp · w_ab12") == (None, False, "other")
+    assert _disp(client, "oddapp") == (None, False, "other")
+
+
+def test_known_app_family_and_editor_workspace(client):
+    upload(client, [rec(D, "09:00:00", "09:01:00", app="code", title="a.py — proj — Visual Studio Code"),
+                    rec(D, "09:02:00", "09:03:00", app="Cursor", title="x.go - svc - Cursor"),
+                    rec(D, "09:04:00", "09:05:00", app="pycharm", title="myapp – main.py"),
+                    rec(D, "09:06:00", "09:07:00", app="WeChat", title="窗口名1", pseudo=True),
+                    rec(D, "09:08:00", "09:09:00", app="WINWORD.EXE", title="")])
+    assert _disp(client, "code · a.py — proj — Visual Studio Code")[:2] == ("proj", True)
+    assert _disp(client, "Cursor · x.go - svc - Cursor")[:2] == ("svc", True)
+    assert _disp(client, "pycharm · myapp – main.py")[:2] == ("myapp", True)
+    assert _disp(client, "WeChat · 窗口名1") == ("微信", True, "other")
+    assert _disp(client, "WINWORD.EXE") == ("Word", True, "other")
+
+
+def test_default_domains_and_site_names(client):
+    upload(client, [rec(D, "09:00:00", "09:01:00", title="github.com · repo"),
+                    rec(D, "09:02:00", "09:03:00", title="foo.readthedocs.io · x"),
+                    rec(D, "09:04:00", "09:05:00", title="视频 - YouTube"),
+                    rec(D, "09:06:00", "09:07:00", title="某问题 - 知乎 - Google Chrome"),
+                    rec(D, "09:08:00", "09:09:00", title="页面 | Notion"),
+                    rec(D, "09:10:00", "09:11:00", title="首页 - 哔哩哔哩"),
+                    rec(D, "09:12:00", "09:13:00", title="evilgithub.com · x"),
+                    rec(D, "09:14:00", "09:15:00", title="随便 - 某站")])
+    for k in ("github.com · repo", "foo.readthedocs.io · x", "视频 - YouTube", "某问题 - 知乎 - Google Chrome", "页面 | Notion", "首页 - 哔哩哔哩"):
+        assert one(client, D, f"chrome · {k}")["legible"] is True, k
+    assert one(client, D, "chrome · evilgithub.com · x")["legible"] is False
+    assert one(client, D, "chrome · 随便 - 某站")["legible"] is False
+
+
+def test_user_domains_extend_defaults(client):
+    set_browser_domains(["myco.internal"])
+    upload(client, [rec(D, "09:00:00", "09:01:00", title="myco.internal · wiki"),
+                    rec(D, "09:02:00", "09:03:00", title="github.com · r")])
+    assert one(client, D, "chrome · myco.internal · wiki")["legible"] is True
+    assert one(client, D, "chrome · github.com · r")["legible"] is True
+
+
+def test_default_list_sizes():
+    from app.modules.activity import window_defaults as wd
+
+    assert len(wd.DEFAULT_DOMAINS) >= 150 and len(wd.SITE_NAMES) >= 80 and len(wd.APP_FAMILIES) >= 80
 
 
 def test_terminal_with_agent_run_beats_folder(client):
