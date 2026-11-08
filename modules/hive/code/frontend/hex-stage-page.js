@@ -207,7 +207,7 @@
       }
     }).catch(function () { /* 素材还没下：占位形象 */ });
   }
-  var PLACEHOLDER = '<svg class="st-art" width="56" height="52" viewBox="0 0 56 52" aria-hidden="true">' +
+  var PLACEHOLDER = '<svg class="st-art" width="42" height="39" viewBox="0 0 56 52" aria-hidden="true">' +
     '<ellipse cx="28" cy="30" rx="22" ry="18" fill="var(--attn, var(--focus))"/>' +
     '<path d="M10 16 L6 4 L19 11Z M46 16 L50 4 L37 11Z" fill="var(--attn, var(--focus))"/>' +
     '<circle cx="20" cy="27" r="3" fill="var(--panel)"/><circle cx="36" cy="27" r="3" fill="var(--panel)"/>' +
