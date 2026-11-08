@@ -125,6 +125,30 @@ def test_shown_only_for_new_account(browser, base) -> None:  # noqa: F811
         assert s.page.locator(".hob").count() == 0
 
 
+def test_card_is_non_blocking_and_closing_does_not_finish(browser, base) -> None:  # noqa: F811
+    with open_onboarding(browser, base) as s:
+        p = s.page
+        p.wait_for_selector(".hob")
+        box = p.locator(".hob").bounding_box()
+        assert box["x"] > 640 and box["width"] < 420, "角落小卡，不是全屏遮罩"
+        assert p.evaluate("() => { const e = document.elementFromPoint(640, 450); return !e.closest('.hob'); }"), "页面中央点得到页面"
+        assert p.evaluate("() => getComputedStyle(document.querySelector('.hob')).position") == "fixed"
+        _add(p, "分区名", "学习")
+        _wait_count(p, ".hob-line", 1)
+        p.locator(".hob-close").click()
+        _wait_count(p, ".hob", 0)
+        assert p.locator(".hob-reopen").is_visible()
+        assert s.posts("activity/onboarding/done") == [], "收起不算完成"
+        p.locator(".hob-reopen").click()
+        _wait_count(p, ".hob", 1)
+        assert p.locator(".hob-line").all_inner_texts() == ["学习"], "再打开还在原来的进度上"
+        assert not p.locator(".hob-reopen").is_visible()
+        p.get_by_role("button", name="跳过").click()
+        _wait_count(p, ".hob", 0)
+        assert p.locator(".hob-reopen").count() == 0
+        assert len(s.posts("activity/onboarding/done")) == 1
+
+
 def test_hard_limits(browser, base) -> None:  # noqa: F811
     with open_onboarding(browser, base) as s:
         p = s.page
