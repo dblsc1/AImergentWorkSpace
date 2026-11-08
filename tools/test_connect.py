@@ -34,7 +34,8 @@ def _tools_dir(tmp: Path, names: list[str]) -> Path:
     return d
 
 
-BASE_TOOLS = ["sh", "bash", "awk", "grep", "tr", "tail", "cat", "mktemp", "rm", "mkdir", "basename", "uname", "stty", "dirname"]
+BASE_TOOLS = ["sh", "bash", "awk", "grep", "tr", "tail", "cat", "mktemp", "rm", "mkdir", "basename", "uname", "stty", "dirname",
+              "cp", "mv", "chmod", "unzip", "sha256sum", "ls", "head", "id", "sleep", "nohup", "cut", "rmdir"]
 
 
 @pytest.fixture(params=["node", "python3"])
@@ -50,7 +51,7 @@ def env(request, tmp_path):
     (det / "ai-detector.json").chmod(0o644)
     (pet / "pet-token").write_text("pettok123\n")
     (pet / "config.json").write_text(json.dumps({"pet": "claude", "size": 280}, indent=2) + "\n")
-    path = str(_tools_dir(tmp_path, BASE_TOOLS + [request.param]))
+    path = str(_tools_dir(tmp_path, BASE_TOOLS + sorted({request.param, "python3"})))
     e = {"HOME": str(home), "PATH": path, "SHELL": "/bin/bash", "AI_DETECTOR_HOME": str(det),
          "HONEYCOMB_PET_HOME": str(pet), "HONEYCOMB_DEVICE_TOKEN": TOKEN, "HONEYCOMB_SERVER": "http://hc.example:8800"}
     return e, home, det, pet
@@ -183,6 +184,157 @@ def test_no_json_tool_degrades(tmp_path):
     assert not (pet / "config.json").exists()
 
 
+# ---- 一键安装（HONEYCOMB_ASSETS 假文件） ----
+
+TAG = "v9.9.9"
+CALLS = "calls.log"
+FAKE_BIN = '#!/bin/sh\necho "$@" >> "$HOME/calls.log"\n'
+FOREIGN = {"permissions": {"allow": ["Bash(ls)"]}, "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo mine"}]}]}}
+
+
+def _sums(d: Path, out: str, names: list[str]):
+    import hashlib
+    (d / out).write_text("".join(f"{hashlib.sha256((d / n).read_bytes()).hexdigest()}  {n}\n" for n in names))
+
+
+@pytest.fixture
+def rel(env, tmp_path):
+    """env + 一份把版本号换成 TAG 的脚本副本 + 假 Release 文件目录。"""
+    e, home, det, pet = env
+    script = tmp_path / "connect.sh"
+    script.write_text(SH.read_text().replace("__TAG__", TAG))
+    a = tmp_path / "assets"
+    a.mkdir()
+    for n in (f"ai-detector-{TAG}-linux-amd64", f"ai-detector-{TAG}-darwin-arm64"):
+        (a / n).write_text(FAKE_BIN)
+    _sums(a, f"ai-detector-{TAG}-SHA256SUMS.txt", [f"ai-detector-{TAG}-linux-amd64", f"ai-detector-{TAG}-darwin-arm64"])
+    for n in ("claude_hook.py", "cockpit_client.py"):
+        (a / f"agent-hooks-{n}").write_text("# fake\n")
+    _sums(a, "agent-hooks-SHA256SUMS.txt", ["agent-hooks-claude_hook.py", "agent-hooks-cockpit_client.py"])
+    import zipfile
+    zn = f"honeycomb-pet-{TAG}-mac-arm64.zip"
+    with zipfile.ZipFile(a / zn, "w") as z:
+        zi = zipfile.ZipInfo("HoneyComb Pet.app/Contents/MacOS/honeycomb-pet")
+        zi.external_attr = 0o755 << 16
+        z.writestr(zi, FAKE_BIN)
+    _sums(a, f"honeycomb-pet-{TAG}-SHA256SUMS.txt", [zn])
+    (home / ".claude").mkdir()
+    (home / ".claude" / "settings.json").write_text(json.dumps(FOREIGN, indent=2))
+    lc = tmp_path / "launchctl"
+    lc.write_text('#!/bin/sh\necho "launchctl $@" >> "$HOME/calls.log"\n')
+    lc.chmod(0o755)
+    (Path(e["PATH"]) / "launchctl").symlink_to(lc)
+    e.update({"HONEYCOMB_ASSETS": str(a), "HONEYCOMB_NO_START": "1", "HONEYCOMB_ARCH": "x86_64"})
+
+    def go(*args, **over):
+        r = subprocess.run(["sh", str(script), *args], env={**e, **over}, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert TOKEN not in r.stdout + r.stderr
+        return r
+
+    return go, e, home, det, pet, a
+
+
+def _our_hooks(home):
+    s = json.loads((home / ".claude" / "settings.json").read_text())
+    return s, {ev: [h for g in gs for h in g["hooks"] if "agent-hooks/claude_hook.py" in h["command"]] for ev, gs in s["hooks"].items()}
+
+
+def test_oneclick_linux_install_idempotent_uninstall(rel):
+    go, e, home, det, pet, a = rel
+    r = go()
+    binp = home / ".local/share/honeycomb/ai-detector"
+    assert binp.stat().st_mode & 0o111
+    calls = (home / CALLS).read_text().splitlines()
+    assert calls == ["init", "enable", "autostart install"]
+    d = json.loads((det / "ai-detector.json").read_text())
+    assert d["cockpitUrl"] == "http://hc.example:8800" and d["deviceToken"] == TOKEN and d["pet"]["token"] == "pettok123"
+    s, ours = _our_hooks(home)
+    assert s["permissions"] == FOREIGN["permissions"]
+    assert s["hooks"]["Stop"][0] == FOREIGN["hooks"]["Stop"][0]
+    assert sorted(ev for ev, v in ours.items() if len(v) == 1) == sorted(
+        ["SessionStart", "SessionEnd", "UserPromptSubmit", "PermissionRequest", "Notification", "PostToolUse",
+         "PostToolUseFailure", "Stop", "StopFailure", "SubagentStart", "SubagentStop"])
+    assert ours["SessionEnd"][0]["timeout"] == 5 and ours["Stop"][0]["async"] is True and "async" not in ours["SessionStart"][0]
+    hc = json.loads((home / ".config/honeycomb/agent-hooks.json").read_text())
+    assert hc == {"url": "http://hc.example:8800", "token": TOKEN}
+    assert (home / ".local/share/honeycomb/agent-hooks/claude_hook.py").is_file()
+    assert "桌宠：这个系统（Linux" in r.stdout and "aw-watcher-web" in r.stdout and START in (home / ".bashrc").read_text()
+    snap = {p: p.read_text() for p in (home / ".bashrc", det / "ai-detector.json", home / ".claude/settings.json", home / ".config/honeycomb/agent-hooks.json")}
+    go()
+    assert {p: p.read_text() for p in snap} == snap
+
+    r = go("--uninstall")
+    assert not binp.exists() and not (home / ".local/share/honeycomb").exists()
+    calls = (home / CALLS).read_text().splitlines()
+    assert "autostart uninstall" in calls and "disable" in calls
+    assert (home / ".bashrc").read_text() == BASHRC
+    assert json.loads((home / ".claude/settings.json").read_text()) == FOREIGN
+    assert json.loads((home / ".config/honeycomb/agent-hooks.json").read_text()) == {}
+    d = json.loads((det / "ai-detector.json").read_text())
+    assert "deviceToken" not in d and "token" not in d["pet"]
+
+
+def test_oneclick_mac_pet_and_launchd(rel):
+    go, e, home, det, pet, a = rel
+    over = {"HONEYCOMB_OS": "Darwin", "HONEYCOMB_ARCH": "arm64"}
+    r = go(**over)
+    app = home / "Applications/HoneyComb Pet.app"
+    assert (app / "Contents/MacOS/honeycomb-pet").stat().st_mode & 0o111
+    la = home / "Library/LaunchAgents/com.honeycomb.desktop-pet.plist"
+    assert str(app / "Contents/MacOS/honeycomb-pet") in la.read_text()
+    assert (home / "Library/Application Support/HoneyComb/ai-detector").is_file()
+    assert "Accessibility" in r.stdout or "辅助功能" in r.stdout
+    c = json.loads((pet / "config.json").read_text())
+    assert c["server"] == "http://hc.example:8800" and c["deviceToken"] == TOKEN
+    snap = (la.read_text(), (pet / "config.json").read_text())
+    go(**over)
+    assert (la.read_text(), (pet / "config.json").read_text()) == snap
+    go("--uninstall", **over)
+    assert not app.exists() and not la.exists()
+    assert json.loads((pet / "config.json").read_text()) == {"pet": "claude", "size": 280}
+
+
+def test_oneclick_checksum_mismatch_refuses(rel):
+    go, e, home, det, pet, a = rel
+    (a / f"ai-detector-{TAG}-linux-amd64").write_text(FAKE_BIN + "# tampered\n")
+    r = go()
+    assert "SHA256 对不上" in r.stdout
+    assert not (home / ".local/share/honeycomb/ai-detector").exists() and not (home / CALLS).exists()
+
+
+def test_oneclick_flags(rel):
+    go, e, home, det, pet, a = rel
+    r = go("--no-detector", "--no-hooks", "--no-pet", "--no-shell")
+    assert not (home / ".local/share/honeycomb").exists()
+    assert json.loads((home / ".claude/settings.json").read_text()) == FOREIGN
+    assert (home / ".bashrc").read_text() == BASHRC
+    assert json.loads((pet / "config.json").read_text()) == {"pet": "claude", "size": 280}
+    go("--no-hooks")
+    assert (home / ".local/share/honeycomb/ai-detector").exists() and json.loads((home / ".claude/settings.json").read_text()) == FOREIGN
+
+
+def test_oneclick_no_python_skips_hooks(rel):
+    go, e, home, *_ = rel
+    py = Path(e["PATH"]) / "python3"
+    if "node" not in os.listdir(e["PATH"]):
+        pytest.skip("json 工具就是 python3")
+    py.unlink()
+    r = go()
+    assert "没找到 python3" in r.stdout and json.loads((home / ".claude/settings.json").read_text()) == FOREIGN
+
+
+def test_oneclick_untagged_script_skips_downloads(env):
+    e, home, *_ = env
+    r = run(e)
+    assert "没有版本号" in r.stdout and not (home / ".local/share/honeycomb").exists()
+
+
+def test_tag_placeholder_only_in_assignment():
+    for f in (SH, PS1):
+        assert f.read_bytes().count(b"__TAG__") == 1, f  # 发布时 sed 全替换：多一处判断就会被一起换掉
+
+
 def test_bad_arg():
     assert run(dict(os.environ), "--token=x").returncode == 2
 
@@ -193,7 +345,7 @@ def test_ps1_static():
     raw = PS1.read_bytes()
     assert raw[:3] == b"\xef\xbb\xbf"
     text = raw.decode("utf-8-sig")
-    for s in (START, END, "-Uninstall", "param([switch]$Uninstall)", "HONEYCOMB_DEVICE_TOKEN", "pet.token", "deviceToken", "-AsSecureString", "honeycomb-desktop-pet"):
+    for s in (START, END, "-Uninstall", "param([switch]$Uninstall", "HONEYCOMB_DEVICE_TOKEN", "pet.token", "deviceToken", "-AsSecureString", "honeycomb-desktop-pet", "HONEYCOMB_ASSETS", "-NoDetector", "-NoHooks", "-NoPet", "-NoShell", "Get-FileHash"):
         assert s in text or s.lstrip("-") in text, s
     assert "Write-Host $tok\n" not in text and "Write-Host $tok " not in text
 

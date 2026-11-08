@@ -159,6 +159,25 @@ provides:
   4. 不下载、不安装 ai-detector 与桌宠程序本体。
 - `--uninstall`：删掉终端标题那段和它写进的键，别的不动。
 
+#### 一键安装（追加，2026-11-08）
+
+上面「不下载、不安装 ai-detector 与桌宠程序本体」由本节取代：同一个脚本现在把客户端这一侧装齐。仍然可重复跑、不要管理员 / sudo、不收令牌命令行参数、任何输出不打印令牌；每步打一行中文结果（已完成 / 跳过 / 该做什么），最后列「已装好」与「还要你手工做」。脚本随 Release 发布，发布时 `__TAG__` 替换成版本标签（与 `honeycomb-install` 同）；没替换（直接从仓库跑）时下载类步骤跳过并说明。
+
+选项：`--no-detector` `--no-hooks` `--no-pet` `--no-shell`（PowerShell：`-NoDetector` `-NoHooks` `-NoPet` `-NoShell`），对安装与 `--uninstall` 同样生效。环境变量 `HONEYCOMB_ASSETS=<目录>`：从该目录按下面的文件名取文件，不联网（测试 / 离线用）。
+
+步骤（顺序固定；一步失败不影响后面）：
+
+1. 终端标题：bash / zsh / PowerShell 写进配置文件的标记段；fish 写独立文件 `~/.config/fish/conf.d/honeycomb-title.fish`；PowerShell 5.1 与 7 的配置文件各写一份（另一份只在其文件夹已存在时）；已有的 `PROMPT_COMMAND` / `prompt` 保留（追加，不覆盖）。Windows 本地脚本策略为 Restricted 时不改策略，只在「还要你手工做」里给命令。
+2. ai-detector：从同标签 Release 下载 `ai-detector-<tag>-<os>-<arch>[.exe]`，按 `ai-detector-<tag>-SHA256SUMS.txt` 校验（对不上就丢弃、不安装）；装到用户目录（Windows `%LOCALAPPDATA%\HoneyComb\ai-detector.exe`；macOS `~/Library/Application Support/HoneyComb/ai-detector`；Linux `~/.local/share/honeycomb/ai-detector`）；`init`；把 `cockpitUrl`、`deviceToken` 写进它的配置后 `enable`；注册自启（Windows：「启动」文件夹里的 `honeycomb-ai-detector.vbs`；macOS：`ai-detector autostart install` 写 LaunchAgent 后 `launchctl bootstrap gui/<uid>`；Linux：`autostart install` 写的 XDG 自启文件）；立刻启动。
+3. ActivityWatch：检测 `localhost:5600` 与常见安装位置；缺就按系统处理（Windows 有 winget、macOS 有 brew 时询问 y/N 再装，否则给 <https://activitywatch.net/downloads/>）；打印 aw-watcher-web 的 Chrome / Firefox 商店链接（只能手工装）；macOS 提示到「隐私与安全性 → 辅助功能」放行 ActivityWatch。
+4. Claude Code 钩子：需要 Python 3（没有就跳过并说明）；从 Release 取 `agent-hooks-claude_hook.py`、`agent-hooks-cockpit_client.py`，按 `agent-hooks-SHA256SUMS.txt` 校验，放到安装目录下 `agent-hooks/`；`url`、`token`（设备令牌）写进 `agent-hooks.json`；把 `tools/agent-hooks/README.md`「Claude Code 钩子」两节的条目（`SessionStart`、`SessionEnd`（`timeout` 5）、其余九个事件 `async: true`）合并进 `~/.claude/settings.json`（或 `$CLAUDE_CONFIG_DIR`）——别人的钩子与别的设置不动；已装过先摘掉我们的再加，所以重复跑结果相同；`~/.claude` 不存在就跳过。Codex 等没有等价钩子，不装。
+5. 桌宠（Windows、macOS）：取 `honeycomb-pet-<tag>-win-x64.zip` / `-mac-arm64.zip` / `-mac-x64.zip`，按 `honeycomb-pet-<tag>-SHA256SUMS.txt` 校验；Windows 解压到 `%LOCALAPPDATA%\HoneyComb\pet\`，macOS 的 `.app` 装成 `~/Applications/HoneyComb Pet.app`；写桌宠 `config.json`（`server`、`deviceToken`）；注册自启（Windows「启动」文件夹的 `honeycomb-desktop-pet.vbs`；macOS `~/Library/LaunchAgents/com.honeycomb.desktop-pet.plist`）；启动；等桌宠生成 `pet-token`（最多 10 秒）后写进 ai-detector 配置的 `pet.token`。Linux 没有安装包，跳过。
+6. 没有设备令牌时：程序照装，但不写令牌类配置、不启用同步，并提示设好令牌再跑一次。
+
+`--uninstall` 逆向撤回上面全部：停进程、删自启文件（含 `launchctl bootout`）、删安装目录里的程序与钩子脚本、摘掉 `settings.json` 里我们加的钩子条目、删各配置里写入的键（`deviceToken`、`pet.token`、桌宠 `server` / `deviceToken`、`agent-hooks.json` 的 `url` / `token`）、删终端标题段。保留：采集数据与桌宠素材（数据目录）、ActivityWatch 与浏览器扩展（用户自己装的）。
+
+Release 附件（连接脚本用的文件名）：`ai-detector-<tag>-<os>-<arch>[.exe]` + `ai-detector-<tag>-SHA256SUMS.txt`；`agent-hooks-claude_hook.py`、`agent-hooks-cockpit_client.py` + `agent-hooks-SHA256SUMS.txt`；`honeycomb-pet-<tag>-<win-x64|mac-arm64|mac-x64>.zip` + `honeycomb-pet-<tag>-SHA256SUMS.txt`。程序未签名：Windows SmartScreen、macOS Gatekeeper 的提示属预期。
+
 ## 四、浮窗（规范性，`modules/desktop-pet` 的 `float` 块）
 
 和宠物在同一个窗口里，**只做三件事**：在宠物右上角画红点、鼠标悬停时展开蜂巢缩略页、收起。
@@ -191,6 +210,7 @@ provides:
 | 2026-11-08 | v1（追加） | dsh-pet 发送按上游 0.4.5 的约束（task 40 码点、surface、petId 缺省、`ok:false`） |
 | 2026-11-08 | v1（追加） | 对话框组件（「三·3」）、PetEvent `dialog`（「一」）、点宠物小菜单、桌宠新手引导（「三·4」） |
 | 2026-11-08 | v1（追加） | 桌宠安装包（「七」） |
+| 2026-11-08 | v1（追加） | 连接脚本一键安装：ai-detector、ActivityWatch 检测、Claude Code 钩子、桌宠的下载校验安装与自启，`--uninstall` 全撤回；选项与 `HONEYCOMB_ASSETS`；Release 附件文件名 |
 
 ## 七、桌宠安装包
 
