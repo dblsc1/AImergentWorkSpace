@@ -462,6 +462,7 @@
     // 建成功的话走的是 collapseAndReload，refresh 会把整棵树重拉，同样不留。
     var hive = state.hive;
     if (hive && hive.cells.some(function (c) { return c.__sprout; })) {
+      S.cancelled();
       hive.cells = hive.cells.filter(function (c) { return !c.__sprout; });
       expand(null);
       mount(true);

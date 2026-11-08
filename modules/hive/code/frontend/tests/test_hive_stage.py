@@ -395,7 +395,7 @@ def test_manual_timer_click_start_drag_to_cell_stop_then_drag_the_strip(browser,
         st.lanes["human"]["running"] = None
         st.poll()
         strip = st.page.locator(".st-strip")
-        assert strip.count() == 1 and strip.inner_text() == "12 分"
+        assert strip.count() == 1 and strip.inner_text().endswith("· 12 分钟")
         # 白条拖进格子
         st.posts.clear()
         st.unplaced = []
@@ -436,11 +436,12 @@ def test_1100_wide_scales_the_same_layout_and_dragging_still_hits_cells(browser,
         assert st.toast() == ""        # 没有规则就不说「以后…都算」（HV-S16）
 
 
-def _drag_chip_to_blank(st: Stage) -> None:
-    """从抽屉里把可拖的块拖出去，在蜂巢画布上扫点，直到出现空白处长出来的那一格（不松手）。"""
-    st.page.click("#stBucketBtn")
-    st.page.clock.run_for(300)
-    x, y = st.center(".st-chip:not(.nodrag)")
+def _drag_chip_to_blank(st: Stage, selector: str | None = None) -> None:
+    """把可拖的块（或 selector 指的元素）拖出去，在蜂巢画布上扫点，直到出现空白处长出来的那一格（不松手）。"""
+    if selector is None:
+        st.page.click("#stBucketBtn")
+        st.page.clock.run_for(300)
+    x, y = st.center(selector or ".st-chip:not(.nodrag)")
     st.page.mouse.move(x, y)
     st.page.mouse.down()
     st.page.mouse.move(x + 20, y - 20, steps=3)
@@ -473,6 +474,7 @@ def test_block_dropped_on_blank_opens_the_create_form_then_assigns_the_block(bro
     with open_stage(browser, base, width=1900, setup=_busy_day) as st:
         st.replies["planner/projects"] = (200, {"id": "p_new", "name": "github.com", "zoneId": "z_a"})
         _drag_chip_to_blank(st)
+        st.page.clock.run_for(600)       # 停住亮满
         st.page.mouse.up()
         form = st.page.locator(".hex-cell.is-expanded .hex-newcard")
         form.wait_for()
@@ -501,6 +503,7 @@ def test_block_blank_drop_cancelled_creates_nothing(browser, base) -> None:  # n
         assert st.posts == [] and st.page.locator(".hex-newcard").count() == 0
     with open_stage(browser, base, width=1900, setup=_busy_day) as st:
         _drag_chip_to_blank(st)
+        st.page.clock.run_for(600)
         st.page.mouse.up()
         st.page.locator(".hex-cell.is-expanded .hex-newcard").wait_for()
         st.page.clock.run_for(600)
@@ -746,3 +749,165 @@ def test_tray_gets_one_hex_chip_per_new_block_and_loses_one_when_filed(browser, 
         st.page.clock.run_for(40000)
         st.page.clock.run_for(600)
         assert len(chips(st)) == 2
+
+# ── 时间元素拖到空白处停住亮满 → 建项目 → 记入；白条点开项目列表与标签（「二」8、9）──
+def _create_and_check(st: Stage, assign: tuple[str, Any]) -> None:
+    st.replies["planner/projects"] = (200, {"id": "p_new", "name": "x", "zoneId": "z_a"})
+    form = st.page.locator(".hex-cell.is-expanded .hex-newcard")
+    form.wait_for()
+    st.page.clock.run_for(600)
+    assert st.posts == [], "没确认什么都不建"
+    form.locator('input[name="name"]').fill("新项目")
+    form.locator('button[type="submit"]').click()
+    st.page.wait_for_timeout(500)
+    st.page.clock.run_for(600)
+    st.page.wait_for_timeout(300)
+    assert [k for k, _ in st.posts] == ["planner/projects", assign[0]], st.posts
+    assert st.posts[1][1] == assign[1]
+
+
+def test_blank_release_before_the_ghost_is_lit_creates_nothing(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, width=1900, setup=_busy_day) as st:
+        _drag_chip_to_blank(st)
+        st.page.clock.run_for(100)
+        st.page.mouse.up()
+        st.settle()
+        assert st.posts == [] and st.page.locator(".hex-newcard").count() == 0
+        assert st.page.locator(".hex-sprout").count() == 0 and st.page.locator(".st-chip").count() == 2
+
+
+def test_loose_pet_held_on_blank_creates_a_project_and_is_placed_there(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, width=1900, setup=_busy_day) as st:
+        _drag_chip_to_blank(st, '.st-pet.is-loose[data-run-id="r2"]')
+        st.page.clock.run_for(600)
+        st.page.mouse.up()
+        _create_and_check(st, ("agents/r2/place", {"projectId": "p_new", "remember": True}))
+
+
+def test_timing_clock_held_on_blank_retargets_the_running_timer_to_the_new_project(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, width=1900, setup=_busy_day) as st:
+        st.lanes["human"]["running"] = {"startAt": _iso(st.now().astimezone(TZ)), "taskId": None, "projectId": None}
+        st.poll()
+        _drag_chip_to_blank(st, "#stBubble")
+        st.page.clock.run_for(600)
+        st.page.mouse.up()
+        _create_and_check(st, ("timer/place", {"projectId": "p_new"}))
+
+
+def _with_strip(st: Stage) -> None:
+    _busy_day(st)
+    t0 = datetime(2026, 10, 9, 14, 5, tzinfo=TZ)
+    st.unplaced = [{"id": "u1", "startAt": _iso(t0), "endAt": _iso(t0 + timedelta(minutes=12)), "durationSeconds": 720},
+                   {"id": "u2", "startAt": _iso(t0 + timedelta(hours=1)), "endAt": _iso(t0 + timedelta(hours=1, minutes=30)), "title": "散步"}]
+
+
+def test_strip_shows_a_manual_timer_label_with_start_time_or_title(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, setup=_with_strip) as st:
+        assert st.page.locator(".st-strip").all_inner_texts() == ["手动计时 · 14:05 开始 · 12 分钟", "手动计时 · 散步 · 30 分钟"]
+        assert st.page.locator(".st-strip").first.evaluate("e => getComputedStyle(e).textOverflow") == "ellipsis"
+
+
+def test_clicking_a_strip_lists_projects_and_picking_one_places_the_strip(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, setup=_with_strip) as st:
+        x, y = st.center(".st-strip")
+        st.page.mouse.click(x, y)
+        pop = st.page.locator(".st-pop")
+        assert pop.count() == 1 and pop.locator(".st-pop-item").all_inner_texts() == ["数学", "钢琴", "录音棚"]
+        assert pop.locator(".st-pop-q").count() == 0 and st.posts == []
+        st.page.keyboard.press("Escape")
+        assert st.page.locator(".st-pop").count() == 0
+        st.page.mouse.click(x, y)
+        st.page.keyboard.press("ArrowDown")
+        st.page.keyboard.press("Enter")
+        st.settle()
+        assert st.posts == [("timer/unplaced/u1/place", {"projectId": "p_piano"})]
+        assert st.page.locator(".st-pop").count() == 0
+
+
+def test_pet_released_on_blank_before_lit_or_with_esc_leaves_no_ghost_and_sends_nothing(browser, base) -> None:  # noqa: F811
+    for sel in ('.st-pet.is-loose[data-run-id="r2"]', '.st-pet.is-work[data-run-id="r1"]'):
+        with open_stage(browser, base, width=1900, setup=_busy_day) as st:
+            _drag_chip_to_blank(st, sel)
+            st.page.clock.run_for(100)
+            st.page.mouse.up()
+            st.settle()
+            assert st.page.locator(".hex-sprout").count() == 0 and st.page.locator(".hex-newcard").count() == 0 and st.posts == [], sel
+            _drag_chip_to_blank(st, sel)
+            st.page.clock.run_for(600)
+            st.page.keyboard.press("Escape")
+            st.page.mouse.up()
+            st.settle()
+            assert st.page.locator(".hex-sprout").count() == 0 and st.page.locator(".hex-newcard").count() == 0 and st.posts == [], sel
+
+
+def test_strip_held_on_blank_creates_a_project_and_is_placed_there(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, width=1900, setup=_with_strip) as st:
+        _drag_chip_to_blank(st, ".st-strip")
+        st.page.clock.run_for(600)
+        st.page.mouse.up()
+        _create_and_check(st, ("timer/unplaced/u1/place", {"projectId": "p_new"}))
+
+
+def test_cell_pet_held_on_blank_waits_while_the_form_is_open_then_walks_back_on_cancel(browser, base) -> None:  # noqa: F811
+    sel = '.st-pet.is-work[data-run-id="r1"]'
+    with open_stage(browser, base, width=1900, setup=_busy_day) as st:
+        _drag_chip_to_blank(st, sel)
+        st.page.clock.run_for(600)
+        st.page.mouse.up()
+        st.page.locator(".hex-cell.is-expanded .hex-newcard").wait_for()
+        st.page.clock.run_for(1000)
+        pos = "e => e.style.left + ',' + e.style.top"      # 页面会因表单聚焦滚动，比层内坐标不比屏幕坐标
+        a = st.page.locator(sel).evaluate(pos)
+        st.page.clock.run_for(6000)
+        assert st.page.locator(sel).evaluate(pos) == a, "表单开着：原地等"
+        st.page.locator('.hex-newcard [data-hex-ui="close"]').click()
+        st.page.clock.run_for(8000)
+        assert st.page.locator(sel).evaluate(pos) != a, "取消后走回"
+        assert st.posts == []
+
+
+def test_cell_pet_held_on_blank_is_placed_after_the_form(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, width=1900, setup=_busy_day) as st:
+        _drag_chip_to_blank(st, '.st-pet.is-work[data-run-id="r1"]')
+        st.page.clock.run_for(600)
+        st.page.mouse.up()
+        _create_and_check(st, ("agents/r1/place", {"projectId": "p_new", "remember": True}))
+
+
+def test_strip_blank_create_then_place_fails_with_409_puts_the_strip_back_with_a_toast(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, width=1900, setup=_with_strip) as st:
+        st.replies["timer/unplaced/u1/place"] = (409, {})
+        st.replies["planner/projects"] = (200, {"id": "p_new", "name": "x", "zoneId": "z_a"})
+        _drag_chip_to_blank(st, ".st-strip")
+        st.page.clock.run_for(600)
+        st.page.mouse.up()
+        form = st.page.locator(".hex-cell.is-expanded .hex-newcard")
+        form.wait_for()
+        st.page.clock.run_for(600)
+        form.locator('input[name="name"]').fill("新项目")
+        form.locator('button[type="submit"]').click()
+        st.page.wait_for_timeout(600)
+        st.page.clock.run_for(600)
+        assert st.toast().startswith("失败")
+        assert st.page.locator(".st-strip").count() == 2 and st.page.locator(".st-strip").first.evaluate("e => e.style.translate") == ""
+
+
+def test_strip_popover_toggles_opens_from_keyboard_and_closes_when_its_strip_goes(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, setup=_with_strip) as st:
+        x, y = st.center(".st-strip")
+        st.page.mouse.click(x, y)
+        assert st.page.locator(".st-pop").count() == 1
+        st.page.mouse.click(x, y)
+        assert st.page.locator(".st-pop").count() == 0, "再点同一条 = 收起"
+        st.page.locator(".st-strip").first.focus()
+        st.page.keyboard.press("Enter")
+        assert st.page.locator(".st-pop").count() == 1
+        st.page.keyboard.press("Escape")
+        assert st.page.locator(".st-pop").count() == 0
+        assert st.page.evaluate("() => document.activeElement.className") == "st-strip", "Esc 把焦点还给白条"
+        st.page.locator(".st-strip").first.focus()
+        st.page.keyboard.press("Space")
+        assert st.page.locator(".st-pop").count() == 1
+        st.unplaced = [u for u in st.unplaced if u["id"] != "u1"]
+        st.poll()
+        assert st.page.locator(".st-pop").count() == 0, "白条没了，列表跟着收"
