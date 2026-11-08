@@ -164,6 +164,10 @@ class _Restart(_Strict):
     reason: _Reason | None = None  # 失败原因（枚举）；详细日志只在那台电脑上
 
 
+_SourceIssue = Literal["aw_down", "window_missing", "window_wayland", "afk_missing", "web_extension_missing",
+                       "titles_pseudonymized", "terminal_title_no_path"]
+
+
 class Health(_Strict):
     awState: Literal["ok", "unreachable", "no_window", "paused", "disabled"]
     restart: _Restart | None = None
@@ -172,6 +176,8 @@ class Health(_Strict):
     # v2.28：本机开关 awLogUpload 的状态（不报 = 老检测程序 = 按关处理）与脱敏后的启动日志尾巴（不可信文本）
     logUpload: StrictBool | None = None
     startLog: StrictStr | None = None
+    # v2.47：信息源体检（ai-detector.source-health.v1）：问题编码，[] = 全好，不报 = 没体检（老检测程序 / 暂停）
+    sourceIssues: Annotated[list[_SourceIssue], Field(max_length=16)] | None = None
 
     @field_validator("startLog")
     @classmethod
@@ -290,7 +296,8 @@ def put_health(device_id: str, body: bytes) -> dict:
     # 关了开关（或老检测程序不报）= 删掉存着的日志
     repo.set_health(user, device_id, {"awState": h.awState, "at": now, "autoStart": h.autoStart,
                                        "autoReason": h.autoReason, "logUpload": h.logUpload is True},
-                    start_log=h.startLog, clear_log=h.logUpload is not True)
+                    start_log=h.startLog, clear_log=h.logUpload is not True,
+                    source_issues=None if h.sourceIssues is None else sorted(set(h.sourceIssues)))
     r = (repo.get(user, device_id) or {}).get("restart") or {}
     if r.get("result") is None and r and not _fresh(r, now) and repo.mark_restart_expired(user, device_id, r["nonce"]):
         events.append(_ev("restart_expired", _aware(r["requestedAt"]) + RESTART_TTL))
@@ -364,7 +371,7 @@ def list_devices() -> dict:
     def row(dev: str) -> dict:
         return rows.setdefault(dev, {"deviceId": dev, "lastUploadAt": None, "lastFetchAt": None,
                                      "hasSettings": False, "settingsUpdatedAt": None,
-                                     "health": None, "restart": None})
+                                     "health": None, "restart": None, "sourceHealth": None})
 
     for dev, at in activity_service.last_uploads(user).items():
         row(dev)["lastUploadAt"] = _iso(at)
@@ -376,6 +383,8 @@ def list_devices() -> dict:
         if h := doc.get("health"):
             r["health"] = {"awState": h["awState"], "at": _iso(h["at"]), "autoStart": h.get("autoStart"),
                            "autoReason": h.get("autoReason"), "logUpload": h.get("logUpload") is True}
+        if sh := doc.get("sourceHealth"):
+            r["sourceHealth"] = {"issues": sh["issues"], "at": _iso(sh["at"])}
         if q := doc.get("restart"):
             r["restart"] = {"nonce": q["nonce"], "requestedAt": _iso(q["requestedAt"]),
                             "result": q.get("result"), "reason": q.get("reason"),

@@ -437,7 +437,7 @@ func TestServerDataNeverReachesArgvAndLocalTextNeverLeaves(t *testing.T) {
 	}
 	ck.mu.Lock()
 	defer ck.mu.Unlock()
-	allowed := map[string]bool{"awState": true, "autoStart": true, "autoReason": true, "restart": true, "logUpload": true}
+	allowed := map[string]bool{"awState": true, "autoStart": true, "autoReason": true, "restart": true, "logUpload": true, "sourceIssues": true}
 	for _, b := range ck.bodies {
 		raw, _ := json.Marshal(b)
 		if strings.Contains(string(raw), "SECRET") || strings.Contains(string(raw), "/opt/aw") {
