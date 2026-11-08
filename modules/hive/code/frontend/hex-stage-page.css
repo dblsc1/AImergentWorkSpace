@@ -81,9 +81,17 @@ video.st-art { position: absolute; max-width: none; max-height: none; height: 80
 .st-bucket-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .st-bucket-btn svg { width: 156px; height: 134px; display: block; overflow: visible; transition: transform var(--t-med), filter var(--t-med); }
 .st-bucket-btn:hover svg, .st-bucket-btn:focus-visible svg { transform: translateY(-3px); filter: drop-shadow(0 6px 8px color-mix(in srgb, var(--plan) 25%, transparent)); }
-.st-bucket-hexes polygon { opacity: 0; transform-box: fill-box; transform-origin: 50% 100%; transform: translateY(10px) scale(.85); transition: opacity var(--t-med), transform var(--t-med); }
-svg[data-level="1"] .h1, svg[data-level="2"] .h1, svg[data-level="2"] .h2, svg[data-level="3"] polygon { opacity: 1; transform: none; }
-.st-liquid { transition: y 500ms ease; }
+.st-hexchip { transform-box: fill-box; transform-origin: 50% 100%; }
+.st-hexchip.st-drop { animation: st-hex-drop 520ms both; }
+.st-hexchip.st-leave { animation: st-hex-leave 280ms ease-in both; }
+@keyframes st-hex-drop {
+  0% { transform: translateY(-96px); opacity: 0; animation-timing-function: cubic-bezier(.55, 0, 1, .55); }
+  15% { opacity: 1; }
+  62% { transform: translateY(0) scale(1.08, .88); animation-timing-function: ease-out; }
+  80% { transform: translateY(-5px); animation-timing-function: ease-in; }
+  100% { transform: translateY(0); }
+}
+@keyframes st-hex-leave { to { transform: scale(.4); opacity: 0; } }
 .st-bucket-label { font-weight: 600; font-size: var(--fs-sub); }
 .st-drawer { position: absolute; left: 24px; bottom: 176px; width: 300px; max-height: 360px; overflow: auto; padding: 4px 12px 12px; transform-origin: bottom left;
   transform: scale(.9); opacity: 0; pointer-events: none; transition: transform var(--t-med), opacity var(--t-med); z-index: 40; }
@@ -131,4 +139,6 @@ svg[data-level="1"] .h1, svg[data-level="2"] .h1, svg[data-level="2"] .h2, svg[d
   .st-pet.is-work, .st-pet.is-loose { transition: none; }
   .st-pet.st-squash .st-pet-in { animation: none; }
   .st-strip, .st-media, .st-face.swap { animation: none !important; }
+  .st-hexchip.st-drop { animation: none; }
+  .st-hexchip.st-leave { animation: none; display: none; }
 }
