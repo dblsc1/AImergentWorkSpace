@@ -81,6 +81,8 @@ class Stage:
             body = self.settings
         elif key == "timer/unplaced":
             body = {"items": self.unplaced}
+        elif key == "views/agent-time":
+            body = {"agents": [{"agent": "claude-code", "seconds": 7380, "runs": 3}]}
         elif key == "views/next-actions":
             body = {"today": "2026-10-09", "zones": []}
         elif key == "views/gantt":
@@ -1046,5 +1048,22 @@ def test_rename_in_the_card_puts_the_name_and_the_tag_updates(browser, base) -> 
 def test_bubble_body_click_opens_the_card(browser, base) -> None:  # noqa: F811
     with open_stage(browser, base, setup=_busy_day) as st:
         _drop_pet(st)
-        st.page.locator(".st-file-ring").click()
+        st.page.locator(".st-file-tx").click()
         assert st.page.locator(".st-detail").count() == 1
+        assert st.page.locator(".st-file-box").evaluate("e => e.checked") is False and len(st.posts) == 1
+        assert st.box(".st-file-box")["width"] >= 20
+
+
+def test_card_shows_week_time_and_stays_live_keeping_the_typed_name(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, setup=_named_run) as st:
+        x, y = st.center('.st-pet[data-run-id="r1"] .st-media')
+        st.page.mouse.click(x, y)
+        st.page.wait_for_timeout(250)
+        assert "本周 claude-code 共 2 小时 3 分" in st.page.locator(".st-detail").inner_text()
+        st.page.locator(".st-d-name").fill("半截")
+        st.lanes["agents"][0]["model"] = "sonnet"
+        st.poll()
+        text = st.page.locator(".st-detail").inner_text()
+        assert "claude-code · sonnet" in text and "本周 claude-code 共 2 小时 3 分" in text
+        assert st.page.locator(".st-d-name").input_value() == "半截"
+        assert st.page.evaluate("() => document.activeElement.className") == "st-d-name"
