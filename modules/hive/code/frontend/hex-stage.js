@@ -51,7 +51,7 @@
     return of.map(function (b) {
       var app = (b.apps || []).filter(function (a) { return b.blockKey.indexOf(a + " · ") === 0; })[0] || b.blockKey.split(" · ")[0];
       var title = b.blockKey.indexOf(app + " · ") === 0 ? b.blockKey.slice(app.length + 3) : "";
-      return { title: title || app, app: app, seconds: b.seconds, block: Object.assign({}, b, { displayName: title ? app + " · " + title : app }) };
+      return { title: title || app, hidden: /^(窗口名|路径)\d+$/.test(title), app: app, seconds: b.seconds, block: Object.assign({}, b, { displayName: title ? app + " · " + title : app }) };
     }).sort(function (a, b) { return b.seconds - a.seconds; });
   }
 

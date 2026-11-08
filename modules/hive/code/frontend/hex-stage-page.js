@@ -810,7 +810,8 @@
     row.members.forEach(function (m) {
       var d = document.createElement("div");
       d.className = "st-chip"; d.innerHTML = "<b></b><span></span>";
-      d.firstChild.textContent = m.title; d.firstChild.title = m.title; d.lastChild.textContent = dur(m.seconds);
+      var shown = m.hidden ? "标题已隐去" : m.title;
+      d.firstChild.textContent = shown; d.firstChild.title = shown; d.lastChild.textContent = dur(m.seconds);
       box.appendChild(d);
       drag(d, { el: d, item: function () { return { kind: "block", block: m.block }; } });
     });

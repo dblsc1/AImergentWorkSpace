@@ -4918,6 +4918,13 @@ MCP 侧见 `contracts/mcp.tools.v2`。
 - `views/lanes` 的 `agents[]` 追加 `humanName: 字符串|null`（人起的名字，优先于自动标题）与 `conversation: 字符串|null`（对话名：`label` 去控制 / 折叠空白后不是系统工具名就用它，否则 `match`（终端标题）同样处理，都不行为 null；系统工具名单只在 `timer/agent_name.py` 一处）。已结束的运行只存 `label`，其 `conversation` 只能由 `label` 得出。
 - 集合 `agent_name_rules` 进导出（`agentNameRules`，没有就不出这个键）/ 恢复。
 
+## v0.6：窗口块默认看得懂（v2.46，追加式）
+
+- `displayName` / `legible` 的算法（`activity/block_display.describe`）只放宽、不收紧：原来看得懂的块仍看得懂。
+- 内置数据只在 `activity/window_defaults.py` 一个文件里（只增）：`DEFAULT_DOMAINS`（约 200 个常见网站域名，各含子域名）、`SITE_NAMES`（标题末尾的站点名 → 域名，如「… - YouTube」「… - 知乎」「… | Notion」）、`APP_FAMILIES`（程序标识 → 程序家族名，大小写不分、去掉 `.exe`）。
+- 浏览器块：标题域名位在用户 `browserDomains` **或**内置域名里，或标题末两段（用「 - 」「 – 」「 — 」「 | 」分）里有已知站点名 → 看得懂。用户名单仍照常生效、与内置并用。
+- 其他程序：标题空或是代号时，认得的程序家族名当 `displayName`（`legible: true`）；编辑器（VS Code 系、Cursor、Windsurf、Zed、Sublime、JetBrains）的标题「文件 — 工作区 — 编辑器」取工作区名当 `displayName`（JetBrains「项目 – 文件」取项目）。终端规则不变（要有本地路径）。
+
 ## 变更记录
 
 见 `module_docs/contract-changelog.md`（从本文件拆出，只记历史不含规范）。
