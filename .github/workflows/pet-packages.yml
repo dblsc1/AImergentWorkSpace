@@ -1,10 +1,13 @@
 # 桌宠安装包（Windows / macOS / Linux）：不签名、不公证、不带宠物素材。
 #   - 手动跑（workflow_dispatch）：只构建并上传 artifact，不发版，用来不打标签就试；
-#   - release.yml 以 workflow_call 复用，tag 传发版标签。
+#   - release.yml 以 workflow_call 复用，tag 传发版标签；
+#   - 推 pet-packages-test/** 分支也跑（workflow_dispatch 只认默认分支上的工作流，开发分支上试包用它）。
 # 产物名固定：honeycomb-pet-<tag>-{win-x64,mac-arm64,mac-x64,linux-x64}.zip（安装器按此名下载）。
 name: pet-packages
 
 on:
+  push:
+    branches: ['pet-packages-test/**']
   workflow_dispatch:
     inputs:
       tag:
