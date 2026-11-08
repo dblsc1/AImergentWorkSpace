@@ -51,7 +51,7 @@ _COLLECTIONS = (
     # v2.39 秘书报告 / 问人（AI 的话，不是事实）。
     "activity_secretary_reports", "activity_questions",
     # v2.44 代理去向规则。
-    "agent_place_rules",
+    "agent_place_rules", "agent_name_rules",
 )
 
 

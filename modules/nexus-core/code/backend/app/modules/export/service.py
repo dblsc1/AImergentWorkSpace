@@ -48,6 +48,7 @@ def export_all() -> dict:
             "proj_daily_stats": daily_stats_projection.read_daily_stats(current_tenant()),
         },
         "agentPlaceRules": timer_service.export_place_rules(),  # v2.44
+        **({"agentNameRules": names} if (names := timer_service.export_name_rules()) else {}),
         "exportedAt": datetime.now(timezone.utc).isoformat(),
         **({"timerUnplaced": bars} if bars else {}),  # v2.44 白条；没有就不出这个键
         **({"activityAsked": asked} if asked else {}),

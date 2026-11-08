@@ -94,3 +94,4 @@
 | 2026-10-27 | 仓主批准 v0.5：置信度与高置信度阈值 | v2.42（追加式）：提议带 `confidencePercent`（0–100，可省）；账号设置追加 `highConfidenceThresholdPercent`（缺省 80，PUT 省了保留原值） |
 | 2026-10-27 | 仓主批准 v0.5：本机上报算已核实；Agent 运行翻页、按指令切段、等权限算交回 | v2.43（追加式）：`X-Nexus-Same-Host` 下的匿名上报 `unverified: false`；`views/history` `runsCursor` / `nextRunsCursor`、`runs[].turns`、`handoffs[].reason` |
 | 2026-11-07 | 仓主批准 v0.6：新手引导、蜂巢新布局、桌宠 | v2.44（追加式）：见「v0.6：新手引导、实时询问、补记、代理去向、无项目计时」节；规范在 `contracts/onboarding.v1`、`contracts/hive.stage.v1`、`contracts/desktop.pet.v1` |
+| 2026-11-08 | 仓主定：蜂巢代理名 = `<任务或项目名>·<对话名>`，人可改名且优先 | v2.45（追加式）：`PUT agents/{runId}/name`、集合 `agent_name_rules`、`views/lanes` 代理加 `humanName` / `conversation`。见「v0.6：代理名字」节 |

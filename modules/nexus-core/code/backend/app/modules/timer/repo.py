@@ -256,3 +256,38 @@ def delete_place_rule(user: str, agent: str) -> bool:
 def restore_place_rules(rules: list[dict]) -> None:
     if rules:
         _place_col().insert_many([dict(r) for r in rules])
+
+
+# ── 代理名字规则 agent_name_rules：(user, agent) 唯一，键同 agent_place_rules ──
+_NAME_RULES = "agent_name_rules"
+_name_rules_ready = False
+
+
+def _name_col():
+    global _name_rules_ready
+    col = get_db()[_NAME_RULES]
+    if not _name_rules_ready:
+        col.create_index([("user", 1), ("agent", 1)], unique=True, name="uniq_user_agent")
+        _name_rules_ready = True
+    return col
+
+
+def name_rules(user: str) -> list[dict]:
+    return list(_name_col().find({"user": user}, {"_id": 0}))
+
+
+def upsert_name_rule(user: str, agent: str, name: str) -> None:
+    key = {"user": user, "agent": agent}
+    try:
+        _name_col().update_one(key, {"$set": {"name": name}}, upsert=True)
+    except DuplicateKeyError:
+        _name_col().update_one(key, {"$set": {"name": name}})
+
+
+def delete_name_rule(user: str, agent: str) -> None:
+    _name_col().delete_one({"user": user, "agent": agent})
+
+
+def restore_name_rules(rules: list[dict]) -> None:
+    if rules:
+        _name_col().insert_many([dict(r) for r in rules])

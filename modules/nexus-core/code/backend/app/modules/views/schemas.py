@@ -485,6 +485,8 @@ class LaneAgent(_Strict):
     unverified: bool = False  #: v2.19：匿名开的运行（契约「调用方范围与匿名上报」）
     pinned: bool = False  #: v2.22：这个代理身份被置顶了
     manualOrder: int | None = None  #: v2.22：手动排位的 slot（只对还在跑的运行；没有为 null）
+    humanName: str | None = None  #: 人给这个代理起的名字（规则，优先于自动标题）
+    conversation: str | None = None  #: 对话名：label / 终端标题，去掉系统工具名；没有为 null
     rank: int = 0  #: v2.22：服务端排好的先后（0 = 最前）；agents 数组本身仍按开始时间
 
 

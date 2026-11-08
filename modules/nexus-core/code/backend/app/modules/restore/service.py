@@ -205,6 +205,10 @@ def restore(
         keep = ("id", "startAt", "endAt", "createdAt")
         timer_service.restore_unplaced([{k: bar[k] for k in keep} for bar in snapshot["timerUnplaced"]])
     timer_service.restore_place_rules(place_rules)
+    timer_service.restore_name_rules([
+        {"agent": r["agent"], "name": r["name"]} for r in snapshot.get("agentNameRules") or []
+        if isinstance(r, dict) and isinstance(r.get("agent"), str) and r["agent"]
+        and isinstance(r.get("name"), str) and 1 <= len(r["name"]) <= 64])
     if snapshot.get("activityAsked"):
         live_ask.restore_asked(snapshot["activityAsked"])
     return {"dryRun": False, "checksum": expected, "summary": summary, "rebuilt": rebuild()}

@@ -21,6 +21,7 @@ from ..planner.errors import UnprocessableError
 from ..prefs import service as prefs_service
 from ..projector.handlers import lanes as lanes_projection
 from ..timer import service as timer_service
+from ..timer.agent_name import conversation
 from .lane_active import split
 from .lane_cap import MAX_LIVE, cap, lane_key
 from .lane_order import arrange
@@ -85,6 +86,8 @@ def _run_item(run: dict, start: datetime, end: datetime) -> dict:
                                    "outcome", "elapsedSeconds", "overdue",
                                    "beatSource", "beatCount")},  # 后两个 v2.18：谁发的心跳、发了几下
         "unverified": bool(run.get("unverified")),  # v2.19：不带凭据的请求开的运行
+        # ponytail: 已结束的运行没存 match，只能由 label 清洗；要补终端标题得把它抄进落账事实
+        "conversation": conversation(run.get("label"), run.get("match")),
         "startAt": _iso(run["startTs"]),
         "endAt": _iso(run["endTs"]) if run["endTs"] is not None else None,
         # v2.18：失联与最后一次信号的时刻只对在跑的运行有意义；已结束的 false / null
@@ -210,6 +213,8 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
         truncated = truncated or over or bool(p["gone"])
         # v2.22：藏起来的代理不出现（时间照旧记在账上）；其余加 pinned / manualOrder / rank
         agents, hidden, hidden_waiting, stale_pinned, inactive, dropped, expired = _finish(p, runs)
+        names = timer_service.agent_name_rules(user)
+        agents = [{**a, "humanName": names.get(a["agent"])} for a in agents]
         if caller().scope == "report":  # 藏起来的摘要只给能读泳道的调用方（report / 匿名本来就读不到，这里再保一道）
             hidden, hidden_waiting, stale_pinned, dropped = [], 0, [], []
         shown = {a["runId"] for a in agents}
