@@ -521,17 +521,13 @@
   }
 
   // ── 左下角桶与抽屉 ───────────────────────────────────
-  var BUCKET = '<svg viewBox="0 0 190 150" aria-hidden="true"><defs><clipPath id="stBclip"><path d="M30 28 L160 28 L146 140 Q95 150 44 140 Z"/></clipPath></defs>' +
-    '<path d="M30 28 L160 28 L146 140 Q95 150 44 140 Z" fill="var(--panel-2)" stroke="var(--line)" stroke-width="3"/>' +
-    '<g clip-path="url(#stBclip)"><rect class="st-liquid" x="20" width="150" height="150" fill="var(--warn)" opacity=".55"/></g>' +
-    '<path d="M30 28 L160 28 L146 140 Q95 150 44 140 Z" fill="none" stroke="var(--ink-3)" stroke-width="3"/>' +
-    '<ellipse cx="95" cy="28" rx="65" ry="9" fill="none" stroke="var(--ink-3)" stroke-width="3"/>' +
-    '<path d="M30 28 Q95 -30 160 28" fill="none" stroke="var(--ink-3)" stroke-width="3"/></svg>';
+  var BUCKET = '<svg viewBox="0 0 140 120" aria-hidden="true"><defs><clipPath id="stBclip"><path d="M22 46 Q70 62 118 46 L107 104 Q70 112 33 104 Z"/></clipPath><linearGradient id="stBgrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--panel)"/><stop offset="1" stop-color="var(--panel-2)"/></linearGradient><pattern id="stBhex" width="18" height="31.2" patternUnits="userSpaceOnUse"><path d="M9 0 L18 5.2 L18 15.6 L9 20.8 L0 15.6 L0 5.2 Z M9 20.8 L9 31.2 M0 15.6 L-9 20.8 M18 15.6 L27 20.8" fill="none" stroke="var(--ink-3)" stroke-width="1"/></pattern></defs><ellipse cx="70" cy="46" rx="48" ry="8" fill="var(--ink-3)" fill-opacity=".45" stroke="var(--ink-3)" stroke-width="2.5"/><g class="st-bucket-hexes" stroke-linejoin="round" stroke-width="1.6"><polygon class="h1" points="53.1,34.4 64.6,37.7 67.5,49.3 58.9,57.6 47.4,54.3 44.5,42.7" fill="color-mix(in srgb, var(--plan) 32%, var(--panel))" stroke="var(--plan)"/><polygon class="h2" points="84.5,31.3 93.4,39.3 90.9,51.0 79.5,54.7 70.6,46.7 73.1,35.0" fill="color-mix(in srgb, var(--focus) 32%, var(--panel))" stroke="var(--focus)"/><polygon class="h3" points="72.8,23.1 79.0,32.2 74.2,42.1 63.2,42.9 57.0,33.8 61.8,23.9" fill="color-mix(in srgb, var(--warn) 32%, var(--panel))" stroke="var(--warn)"/></g><path d="M22 46 Q70 62 118 46 L107 104 Q70 112 33 104 Z" fill="url(#stBgrad)"/><g clip-path="url(#stBclip)"><rect width="140" height="120" fill="url(#stBhex)" opacity=".18"/><rect class="st-liquid" x="10" width="120" height="70" fill="var(--plan)" opacity=".3"/><path d="M30 50 L40 50 L46 106 L38 106 Z" fill="var(--panel)" opacity=".45"/></g><path d="M22 46 Q70 62 118 46 L107 104 Q70 112 33 104 Z" fill="none" stroke="var(--ink-3)" stroke-width="2.5" stroke-linejoin="round"/></svg>';
   function renderBucket() {
     var btn = $("stBucketBtn"), sec = stage.bucketSeconds();
     if (!btn.firstChild) btn.innerHTML = BUCKET;
     $("stBucketLabel").textContent = St.bucketText(sec);
-    btn.querySelector(".st-liquid").setAttribute("y", String(150 - Math.min(1, sec / 7200) * 115));
+    btn.querySelector(".st-liquid").setAttribute("y", String(sec > 0 ? 110 - Math.min(1, sec / 7200) * 52 : 120));
+    btn.firstChild.setAttribute("data-level", String(sec >= 5400 ? 3 : sec >= 1800 ? 2 : sec >= 60 ? 1 : 0));
     if ($("stDrawer").classList.contains("open")) renderDrawer();
   }
   var drawerSig = "";
@@ -672,6 +668,7 @@
     render();
   }
   window.addEventListener("resize", sizeToWindow);
+  new MutationObserver(function () { if ($("stClock").querySelector(".st-dial")) renderBubble(); }).observe(shell, { attributes: true, attributeFilter: ["hidden"], subtree: true });   // 决策栏出现 / 消失 → 时钟挪位，气泡立刻跟过去
 
   refresh().then(function () { sizeToWindow(); });
   setInterval(refresh, POLL_MS);

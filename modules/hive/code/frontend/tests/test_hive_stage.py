@@ -709,3 +709,21 @@ def test_grab_right_after_a_click_swaps_to_the_drag_clip_and_the_stay_shows_the_
         assert not st.page.locator(PET).evaluate("e => e.classList.contains('st-walking')")
         st.page.clock.run_for(2500)
         assert _src(st).endswith("/claude/k.webm")      # 走路段固定取 walk[0]
+
+
+def test_clock_card_stays_clear_of_the_collapsed_decide_bar(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, setup=_busy_day) as st:
+        st.page.evaluate("""() => { const p = document.querySelector('.hd-panel'); p.hidden = false; p.dataset.collapsed = '1';
+            p.innerHTML = '<button class="hd-head" type="button"><span class="hd-title">AI 决策</span><span class="hd-badge">3</span></button>'; }""")
+        st.page.wait_for_timeout(300)
+        bar, clock, strips = st.box(".hd-panel"), st.box("#stClock"), st.box("#stStrips")
+        assert clock["y"] >= bar["y"] + bar["height"], (bar, clock)
+        assert strips["y"] >= clock["y"] + clock["height"], (clock, strips)
+        dial, bub = st.box("#stClock .st-dial"), st.box("#stBubble")
+        bx, by = bub["x"] + bub["width"] / 2, bub["y"] + bub["height"] / 2
+        dx, dy = dial["x"] + dial["width"] / 2, dial["y"] + dial["height"] / 2
+        assert ((bx - dx) ** 2 + (by - dy) ** 2) ** 0.5 <= dial["width"] / 2, (dial, bub)     # 气泡跟着时钟，不悬在空档里
+        st.page.evaluate("() => { document.querySelector('.hd-panel').hidden = true; }")
+        st.page.wait_for_timeout(100)
+        dial, bub = st.box("#stClock .st-dial"), st.box("#stBubble")
+        assert abs(bub["x"] + bub["width"] / 2 - dial["x"] - dial["width"] / 2) < 2 and abs(bub["y"] + bub["height"] / 2 - dial["y"] - dial["height"] / 2) < 2
