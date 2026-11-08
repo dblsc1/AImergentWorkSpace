@@ -727,3 +727,22 @@ def test_clock_card_stays_clear_of_the_collapsed_decide_bar(browser, base) -> No
         st.page.wait_for_timeout(100)
         dial, bub = st.box("#stClock .st-dial"), st.box("#stBubble")
         assert abs(bub["x"] + bub["width"] / 2 - dial["x"] - dial["width"] / 2) < 2 and abs(bub["y"] + bub["height"] / 2 - dial["y"] - dial["height"] / 2) < 2
+
+
+def test_tray_gets_one_hex_chip_per_new_block_and_loses_one_when_filed(browser, base) -> None:  # noqa: F811  桶=托盘
+    def chips(st: Stage) -> dict[str, str]:
+        return st.page.evaluate("() => Object.fromEntries([...document.querySelectorAll('.st-tray-chip')].map((g, i) => [i, g.getAttribute('transform')]))")
+
+    with open_stage(browser, base, setup=_busy_day) as st:
+        before = chips(st)
+        assert len(before) == 2 and st.page.locator(".st-hexchip.st-drop").count() == 0     # 首屏不掉落
+        st.blocks = st.blocks + [{"blockKey": "new", "status": "pending", "seconds": 120, "seq": 1, "displayName": "新窗口", "legible": True, "kind": "browser"}]
+        st.page.clock.run_for(40000)
+        st.page.wait_for_timeout(200)
+        after = chips(st)
+        assert len(after) == 3 and {k: after[k] for k in before} == before                  # 只多一个，旧的不动
+        assert st.page.locator(".st-hexchip.st-drop").count() == 1
+        st.blocks = st.blocks[1:]
+        st.page.clock.run_for(40000)
+        st.page.clock.run_for(600)
+        assert len(chips(st)) == 2

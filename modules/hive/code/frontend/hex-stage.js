@@ -124,6 +124,7 @@
     return {
       setBucket: function (seconds, list) { bucket = seconds; blocks = list.slice(); },
       bucketSeconds: function () { return bucket; },
+      bucketKeys: function () { return blocks.map(function (b) { return b.blockKey; }); },
       drawer: function () { return drawerRows(blocks); },
       notice: function () { return note && deps.now() < note.until ? note.text : null; },
       petDock: function (runId) { return docks[runId] || null; },

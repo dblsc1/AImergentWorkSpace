@@ -521,13 +521,45 @@
   }
 
   // ── 左下角桶与抽屉 ───────────────────────────────────
-  var BUCKET = '<svg viewBox="0 0 140 120" aria-hidden="true"><defs><clipPath id="stBclip"><path d="M22 46 Q70 62 118 46 L107 104 Q70 112 33 104 Z"/></clipPath><linearGradient id="stBgrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--panel)"/><stop offset="1" stop-color="var(--panel-2)"/></linearGradient><pattern id="stBhex" width="18" height="31.2" patternUnits="userSpaceOnUse"><path d="M9 0 L18 5.2 L18 15.6 L9 20.8 L0 15.6 L0 5.2 Z M9 20.8 L9 31.2 M0 15.6 L-9 20.8 M18 15.6 L27 20.8" fill="none" stroke="var(--ink-3)" stroke-width="1"/></pattern></defs><ellipse cx="70" cy="46" rx="48" ry="8" fill="var(--ink-3)" fill-opacity=".45" stroke="var(--ink-3)" stroke-width="2.5"/><g class="st-bucket-hexes" stroke-linejoin="round" stroke-width="1.6"><polygon class="h1" points="53.1,34.4 64.6,37.7 67.5,49.3 58.9,57.6 47.4,54.3 44.5,42.7" fill="color-mix(in srgb, var(--plan) 32%, var(--panel))" stroke="var(--plan)"/><polygon class="h2" points="84.5,31.3 93.4,39.3 90.9,51.0 79.5,54.7 70.6,46.7 73.1,35.0" fill="color-mix(in srgb, var(--focus) 32%, var(--panel))" stroke="var(--focus)"/><polygon class="h3" points="72.8,23.1 79.0,32.2 74.2,42.1 63.2,42.9 57.0,33.8 61.8,23.9" fill="color-mix(in srgb, var(--warn) 32%, var(--panel))" stroke="var(--warn)"/></g><path d="M22 46 Q70 62 118 46 L107 104 Q70 112 33 104 Z" fill="url(#stBgrad)"/><g clip-path="url(#stBclip)"><rect width="140" height="120" fill="url(#stBhex)" opacity=".18"/><rect class="st-liquid" x="10" width="120" height="70" fill="var(--plan)" opacity=".3"/><path d="M30 50 L40 50 L46 106 L38 106 Z" fill="var(--panel)" opacity=".45"/></g><path d="M22 46 Q70 62 118 46 L107 104 Q70 112 33 104 Z" fill="none" stroke="var(--ink-3)" stroke-width="2.5" stroke-linejoin="round"/></svg>';
+  // 托盘图形：Phosphor「tray」duotone（MIT，见 third_party/phosphor-icons/LICENSE）
+  var BUCKET = '<svg viewBox="0 0 140 120" aria-hidden="true"><g class="st-tray-chips"></g><g transform="translate(6 -2) scale(.5)" style="color:var(--ink-3)"><path d="M216,48V160H179.31a8,8,0,0,0-5.66,2.34l-19.31,19.32a8,8,0,0,1-5.66,2.34H107.31a8,8,0,0,1-5.66-2.34L82.34,162.34A8,8,0,0,0,76.68,160H40V48a8,8,0,0,1,8-8H208A8,8,0,0,1,216,48Z" fill="var(--plan)" opacity="0.14"/><path fill="currentColor" d="M208,32H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32Zm0,16V152h-28.7A15.86,15.86,0,0,0,168,156.69L148.69,176H107.31L88,156.68A15.89,15.89,0,0,0,76.69,152H48V48Zm0,160H48V168H76.69L96,187.32A15.89,15.89,0,0,0,107.31,192h41.38A15.86,15.86,0,0,0,160,187.31L179.31,168H208v40Z"/></g></svg>';
+  // 12 个堆位：底行 5、中行 4、上行 3，位置固定，重画不跳
+  var TRAY_SLOTS = [[38, 64], [54, 64], [70, 64], [86, 64], [102, 64], [46, 50], [62, 50], [78, 50], [94, 50], [54, 36], [70, 36], [86, 36]];
+  var TRAY_HUES = ["--plan", "--focus", "--warn", "--fact"];
+  var HEX_PATH = "M0 -10 L8.66 -5 L8.66 5 L0 10 L-8.66 5 L-8.66 -5 Z", SVGNS = "http://www.w3.org/2000/svg";
+  var traySlot = {}, trayChips = {}, trayArmed = false, trayLoaded = false;   // blockKey → 堆位 / <g>
+  function trayChip(slot) {
+    var hue = "var(" + TRAY_HUES[slot % 4] + ")", g = document.createElementNS(SVGNS, "g"), p = document.createElementNS(SVGNS, "path"), inner = document.createElementNS(SVGNS, "g");
+    g.setAttribute("class", "st-tray-chip");
+    g.setAttribute("transform", "translate(" + TRAY_SLOTS[slot][0] + " " + TRAY_SLOTS[slot][1] + ") rotate(" + ((slot * 37) % 7 - 3) + ") scale(.85)");
+    p.setAttribute("d", HEX_PATH); p.setAttribute("fill", "color-mix(in srgb, " + hue + " 30%, var(--panel))");
+    p.setAttribute("stroke", hue); p.setAttribute("stroke-width", "1.5"); p.setAttribute("stroke-linejoin", "round");
+    inner.setAttribute("class", "st-hexchip"); inner.appendChild(p); g.appendChild(inner);
+    return g;
+  }
+  function renderTrayChips(keys) {
+    var host = $("stBucketBtn").querySelector(".st-tray-chips"), live = {}, used = {};
+    keys.forEach(function (k) { live[k] = 1; });
+    Object.keys(traySlot).forEach(function (k) {
+      if (live[k]) { used[traySlot[k]] = 1; return; }
+      var g = trayChips[k]; delete traySlot[k]; delete trayChips[k];
+      g.firstChild.classList.add("st-leave"); setTimeout(function () { g.remove(); }, 300);
+    });
+    keys.forEach(function (k) {
+      if (k in traySlot) return;
+      for (var i = 0; i < TRAY_SLOTS.length && used[i]; i++);
+      if (i === TRAY_SLOTS.length) return;
+      used[i] = 1; traySlot[k] = i; trayChips[k] = trayChip(i);
+      if (trayArmed) trayChips[k].firstChild.classList.add("st-drop");
+      host.appendChild(trayChips[k]);
+    });
+    trayArmed = trayLoaded;   // 首批数据那一次不掉落
+  }
   function renderBucket() {
     var btn = $("stBucketBtn"), sec = stage.bucketSeconds();
     if (!btn.firstChild) btn.innerHTML = BUCKET;
     $("stBucketLabel").textContent = St.bucketText(sec);
-    btn.querySelector(".st-liquid").setAttribute("y", String(sec > 0 ? 110 - Math.min(1, sec / 7200) * 52 : 120));
-    btn.firstChild.setAttribute("data-level", String(sec >= 5400 ? 3 : sec >= 1800 ? 2 : sec >= 60 ? 1 : 0));
+    renderTrayChips(stage.bucketKeys());
     if ($("stDrawer").classList.contains("open")) renderDrawer();
   }
   var drawerSig = "";
@@ -657,6 +689,7 @@
       if (r[1]) data.current = r[1];
       if (r[2]) data.tree = r[2];
       if (r[3]) data.blocks = r[3];
+      if (tiers) trayLoaded = true;
       data.unplaced = (r[4] && r[4].items) || [];
       applyData(); render();
     });
