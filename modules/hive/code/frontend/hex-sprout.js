@@ -144,7 +144,7 @@
   // 取消 / Esc = 收起这一格，什么都没建（表单本来的行为）。
   var pending = null;   // { cell, onCreated }
   function openCreate(o) {
-    if (!sprout || !sprout.drag) return false;
+    if (!sprout || !sprout.drag || !sprout.lit) return false;     // 没亮满就松手 = 不建
     var cell = sproutOpen();
     pending = { cell: cell, onCreated: o.onCreated };
     var input = ctx.state.camEl.querySelector('.hex-cell.is-expanded .hex-newcard input[name="name"]');
@@ -177,9 +177,12 @@
     sprout = { el: el, q: spot.q, r: spot.r, zone: spot.zone, timer: null, fired: false, drag: !hold };
     void el.offsetWidth;                              // 提交初态，否则没有过渡
     el.classList.add("is-growing");
+    var cur = sprout;
     if (hold) sprout.timer = window.setTimeout(function () {
       if (sprout) { sprout.timer = null; sproutOpen(); }
     }, HOLD_MS);
+    else if (ctx.reduceMotion()) cur.lit = true;
+    else cur.timer = window.setTimeout(function () { cur.timer = null; cur.lit = true; }, HOLD_MS);   // 拖着停满 HOLD_MS = 亮满，松手才建
     return el;
   }
 

@@ -41,11 +41,18 @@ body.stage-on .hex-cell:not(.is-expanded) .hex-close { display: none !important;
 .st-strips > * { pointer-events: auto; }
 .board-shell:has(.hd-panel:not([hidden])) .st-clock { top: 90px; }
 .board-shell:has(.hd-panel:not([hidden])) .st-strips { top: 188px; }
-.st-strip { min-width: 96px; padding: 4px 14px; border-radius: 999px; background: #fff; color: #17202E; border: 1px solid var(--line);
-  font-size: var(--fs-sub); font-weight: 600; text-align: center; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
+.st-strip { min-width: 96px; max-width: 100%; box-sizing: border-box; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 14px; border-radius: 999px; background: #fff; color: #17202E; border: 1px solid var(--line);
+  font-size: var(--fs-sub); font-weight: 600; text-align: left; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
   box-shadow: var(--shadow); animation: st-float 5s ease-in-out infinite; animation-delay: calc(var(--i, 0) * -1.1s); }
 .st-strip.st-dragging { animation: none; cursor: grabbing; z-index: 90; }
 .st-strip-more { font-size: var(--fs-sub); font-weight: 700; color: var(--ink-2); padding-right: 8px; }
+/* 白条项目列表 */
+.st-pop { position: fixed; z-index: 100; width: 220px; max-height: 320px; display: flex; flex-direction: column; gap: 6px; padding: 8px; outline: none; }
+.st-pop-q { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+.st-pop-list { overflow-y: auto; display: flex; flex-direction: column; }
+.st-pop-zone { font-size: var(--fs-sub); color: var(--ink-3); padding: 6px 6px 2px; }
+.st-pop-item { font: inherit; text-align: left; padding: 5px 8px; border: 0; border-radius: 6px; background: none; color: var(--ink); cursor: pointer; }
+.st-pop-item:hover, .st-pop-item.is-cur { background: var(--panel-2); }
 @keyframes st-float { 50% { transform: translateY(8px); } }
 
 /* 宠物 */

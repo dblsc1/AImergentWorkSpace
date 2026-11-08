@@ -146,7 +146,7 @@
       lx = dx / zoom(); ly = dy / zoom();
       o.el.style.translate = lx + "px " + ly + "px";
       lit(item.kind === "free" ? null : cellAt(ev.clientX, ev.clientY));   // 格子边宠物松手不改数据，不高亮
-      if (item.kind === "block" && Sp) sprout = blankSprout(ev.clientX, ev.clientY, sprout);
+      if (Sp && fileable(item)) sprout = blankSprout(ev.clientX, ev.clientY, sprout);
     });
     function onEsc(ev) { if (ev.key === "Escape" && id != null && moved) end({ pointerId: id }, true); }
     function end(ev, cancel) {
@@ -159,14 +159,16 @@
       if (!moved) { if (!cancel && o.onClick) o.onClick(); return; }
       var target = cancel ? null : cellAt(ev.clientX, ev.clientY);
       o.el.classList.remove("st-dragging"); dragging--;
-      if (o.onRelease) { var back = o.onRelease(target, cancel, lx, ly); if (back === "keep") return; }
-      var pid = target ? target.dataset.projectId : null;
-      // 拖块放在分区空白处 = 建新项目（同长按建项目的那一格与表单），建好后把块记进去
-      if (!pid && grown && !cancel && Sp.openCreate({ name: item.block.displayName || "", onCreated: function (p) {
+      // 时间元素停在分区空白处、那一格亮满后松手 = 建新项目（同长按建项目的表单），建好后把它记进去（hive.stage.v1「二」8）
+      var made = !target && !cancel && grown && fileable(item) && Sp.openCreate({ name: createName(item), onCreated: function (p) {
         busy++;
-        getJson("views/tree").then(function (t) { if (t) data.tree = t; return stage.drop(item, p.id); }).then(function (r) { busy--; render(); if (r && r.ok) refresh(); });
-      } })) { o.el.style.translate = ""; return; }
-      if (Sp && item.kind === "block") Sp.removeSprout();
+        getJson("views/tree").then(function (t) { if (t) data.tree = t; return stage.drop(item.kind === "free" ? { kind: "pet", runId: item.runId, agent: item.agent } : item, p.id); })
+          .then(function (r) { busy--; render(); if (r && r.ok) refresh(); });
+      } });
+      if (o.onRelease) { var back = o.onRelease(target, cancel, lx, ly); if (back === "keep" || made) return; }
+      if (made) { o.el.style.translate = ""; return; }
+      var pid = target ? target.dataset.projectId : null;
+      if (Sp && fileable(item)) Sp.removeSprout();
       busy++;
       stage.drop(item, pid).then(function (r) {
         o.el.style.translate = "";
@@ -179,6 +181,10 @@
     handle.addEventListener("pointerup", function (ev) { end(ev, false); });
     handle.addEventListener("pointercancel", function (ev) { end(ev, true); });
   }
+
+  // 能「拖到空白处建项目」的元素：块、宠物（含格子边的）、计时中的时钟 / 气泡、白条
+  function fileable(item) { return item.kind !== "clock" || stage.timerRunning(); }
+  function createName(item) { return item.kind === "block" ? item.block.displayName || "" : item.kind === "pet" || item.kind === "free" ? item.agent || "" : ""; }
 
   // 指针在分区空白处（不在格子、不在本层元素上，且在 #hive 里）：长出同长按建项目一样的那一格，并同样「升起」
   function blankSprout(x, y, prev) {
@@ -374,7 +380,7 @@
       item: function () {
         var r = e.__run;
         if (!r) return null;
-        return e.classList.contains("is-loose") ? { kind: "pet", runId: r.runId, agent: r.agent } : { kind: "free" };
+        return e.classList.contains("is-loose") ? { kind: "pet", runId: r.runId, agent: r.agent } : { kind: "free", runId: r.runId, agent: r.agent };
       },
       onClick: function () { poke(e); },
       onGrab: function () {
@@ -497,6 +503,51 @@
       if (u < 1) bub.raf = requestAnimationFrame(step); else bub.raf = 0;
     })(t0);
   }
+  // 白条标签：「手动计时 · [标题 | HH:MM 开始] · X 分钟」（hive.stage.v1「二」9）
+  function stripLabel(u) {
+    var a = new Date(ms(u.startAt)), title = u.title || u.name;
+    return "手动计时 · " + (title || pad(a.getHours()) + ":" + pad(a.getMinutes()) + " 开始") + " · " + Math.max(1, Math.round((ms(u.endAt) - ms(u.startAt)) / 60000)) + " 分钟";
+  }
+  // 点白条：在白条旁列出分区 → 项目；选中 = 同拖到那一格
+  var stripPop = null;
+  function closeStripList() { if (stripPop) { stripPop.remove(); stripPop = null; document.removeEventListener("pointerdown", onPopOutside, true); } }
+  function onPopOutside(ev) { if (stripPop && !stripPop.contains(ev.target)) closeStripList(); }
+  function openStripList(strip) {
+    closeStripList();
+    var id = strip.__u.id, zones = (data.tree && data.tree.zones) || [], pop = document.createElement("div"), r = strip.getBoundingClientRect();
+    pop.className = "st-pop st-card"; pop.tabIndex = -1; pop.setAttribute("role", "listbox"); pop.setAttribute("aria-label", "记到哪个项目");
+    pop.innerHTML = (projects().length > 8 ? '<input class="st-pop-q" type="search" placeholder="搜索项目" aria-label="搜索项目">' : "") + '<div class="st-pop-list"></div>';
+    var list = pop.querySelector(".st-pop-list"), q = pop.querySelector("input"), cur = -1;
+    function items() { return [].slice.call(list.querySelectorAll(".st-pop-item")); }
+    function mark(i) { var a = items(); if (!a.length) return; cur = (i + a.length) % a.length; a.forEach(function (x, k) { x.classList.toggle("is-cur", k === cur); }); a[cur].scrollIntoView({ block: "nearest" }); }
+    function pick(pid) {
+      closeStripList(); busy++;
+      stage.drop({ kind: "strip", id: id }, pid).then(function (res) { busy--; render(); if (res && res.ok) refresh(); });
+    }
+    function fill() {
+      var kw = q ? q.value.trim().toLowerCase() : "", html = "";
+      zones.concat([{ id: null, name: "其他" }]).forEach(function (z) {
+        var ps = projects().filter(function (p) { return (p.zoneId || null) === z.id && (!kw || p.name.toLowerCase().indexOf(kw) >= 0); });
+        if (ps.length) html += '<div class="st-pop-zone">' + esc(z.name) + "</div>" + ps.map(function (p) { return '<button type="button" class="st-pop-item" role="option" data-pid="' + esc(p.id) + '">' + esc(p.name) + "</button>"; }).join("");
+      });
+      list.innerHTML = html || '<div class="st-pop-zone">没有项目</div>'; cur = -1; mark(0);
+    }
+    pop.addEventListener("click", function (ev) { var b = ev.target.closest(".st-pop-item"); if (b) pick(b.dataset.pid); });
+    pop.addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape") { ev.stopPropagation(); closeStripList(); strip.focus && strip.focus(); }
+      else if (ev.key === "ArrowDown") { ev.preventDefault(); mark(cur + 1); }
+      else if (ev.key === "ArrowUp") { ev.preventDefault(); mark(cur - 1); }
+      else if (ev.key === "Enter") { ev.preventDefault(); var a = items()[cur]; if (a) pick(a.dataset.pid); }
+    });
+    if (q) q.addEventListener("input", fill);
+    fill();
+    document.body.appendChild(pop);
+    var w = pop.offsetWidth;
+    pop.style.left = Math.max(8, r.left - w - 8) + "px"; pop.style.top = Math.max(8, Math.min(r.top, window.innerHeight - pop.offsetHeight - 8)) + "px";
+    stripPop = pop;
+    document.addEventListener("pointerdown", onPopOutside, true);
+    (q || pop.querySelector(".st-pop-item") || pop).focus();
+  }
   var stripEls = {};
   function renderStrips() {
     var box = $("stStrips"), s = stage.strips(), keep = {};
@@ -506,10 +557,10 @@
         e = stripEls[u.id] = document.createElement("div");
         e.className = "st-strip"; e.dataset.id = u.id; e.style.setProperty("--i", i);
         e.__u = u;
-        drag(e, { el: e, item: function () { return { kind: "strip", id: e.__u.id }; } });
+        drag(e, { el: e, item: function () { return { kind: "strip", id: e.__u.id }; }, onClick: function () { openStripList(e); } });
       }
       keep[u.id] = 1; e.__u = u;
-      e.textContent = dur((ms(u.endAt) - ms(u.startAt)) / 1000);
+      e.textContent = stripLabel(u);
       box.appendChild(e);
     });
     Object.keys(stripEls).forEach(function (id) { if (!keep[id]) { stripEls[id].remove(); delete stripEls[id]; } });
