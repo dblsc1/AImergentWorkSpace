@@ -41,9 +41,18 @@
     var grey = [];
     GREY_ORDER.forEach(function (k) {
       var of = (blocks || []).filter(function (b) { return !b.legible && (GREY_NAMES[b.kind] ? b.kind : "other") === k; });
-      if (of.length) grey.push({ name: GREY_NAMES[k], seconds: of.reduce(function (s, b) { return s + b.seconds; }, 0), draggable: false, block: null });
+      if (of.length) grey.push({ name: GREY_NAMES[k], kind: k, seconds: of.reduce(function (s, b) { return s + b.seconds; }, 0), draggable: false, block: null, members: greyGroups(of) });
     });
     return legible.concat(grey);
+  }
+
+  // 灰行点开：块已是「程序 · 归一化标题」，一块 = 一组同名窗口；按秒降序，块带上标题当 displayName 以便拖放 / 提示沿用
+  function greyGroups(of) {
+    return of.map(function (b) {
+      var app = (b.apps || []).filter(function (a) { return b.blockKey.indexOf(a + " · ") === 0; })[0] || b.blockKey.split(" · ")[0];
+      var title = b.blockKey.indexOf(app + " · ") === 0 ? b.blockKey.slice(app.length + 3) : "";
+      return { title: title || app, app: app, seconds: b.seconds, block: Object.assign({}, b, { displayName: title ? app + " · " + title : app }) };
+    }).sort(function (a, b) { return b.seconds - a.seconds; });
   }
 
   function stripList(items) {
@@ -137,7 +146,7 @@
     };
   }
 
-  var api = { pickRing: pickRing, pickBubbleHost: pickBubbleHost, bucketText: bucketText, drawerRows: drawerRows, stripList: stripList, dropRequest: dropRequest, createStage: createStage };
+  var api = { pickRing: pickRing, pickBubbleHost: pickBubbleHost, bucketText: bucketText, drawerRows: drawerRows, greyGroups: greyGroups, stripList: stripList, dropRequest: dropRequest, createStage: createStage };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.NexusTableHexStage = api;
 })();

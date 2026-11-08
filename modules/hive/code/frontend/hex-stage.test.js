@@ -40,6 +40,12 @@ assert.deepStrictEqual(rows.map((r) => r.draggable), [true, true, false, false, 
 assert.strictEqual(rows[2].seconds, 50);
 assert.deepStrictEqual(S.drawerRows([B("c", 30, false, "terminal")]).map((r) => r.name), ["终端（未认出）"]);
 
+// 灰行点开：一块 = 一组同名窗口，按秒降序，块带标题当 displayName
+const G = (key, sec, apps) => ({ date: "2026-11-07", blockKey: key, seq: 2, displayName: null, seconds: sec, legible: false, kind: "terminal", apps });
+const grey = S.drawerRows([G("ptyxis · ~/work", 60, ["ptyxis"]), G("ptyxis · vim a.go", 300, ["ptyxis"]), G("ptyxis", 10, ["ptyxis"])])[0].members;
+assert.deepStrictEqual(grey.map((m) => [m.title, m.seconds]), [["vim a.go", 300], ["~/work", 60], ["ptyxis", 10]]);
+assert.strictEqual(grey[0].block.blockKey, "ptyxis · vim a.go"); assert.strictEqual(grey[0].block.displayName, "ptyxis · vim a.go");
+
 // 白条
 const ups = Array.from({ length: 7 }, (_, i) => ({ id: "u" + i, startAt: iso(i) }));
 const strips = S.stripList(ups.slice().reverse());

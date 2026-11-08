@@ -108,6 +108,12 @@ video.st-art { position: absolute; max-width: none; max-height: none; height: 80
 .st-chip b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .st-chip span { color: var(--ink-2); white-space: nowrap; }
 .st-chip.nodrag { cursor: not-allowed; color: var(--ink-3); background: var(--line-2); }
+.st-chip.nodrag.grey { cursor: pointer; }
+.st-greypop { position: absolute; left: 340px; bottom: 176px; width: 300px; max-height: 360px; overflow: auto; padding: 4px 12px 12px; transform-origin: bottom left;
+  transform: scale(.9); opacity: 0; pointer-events: none; transition: transform var(--t-med), opacity var(--t-med); z-index: 41; }
+.st-greypop.open { transform: none; opacity: 1; pointer-events: auto; }
+.st-greypop:has(.st-dragging), .st-drawer:has(.st-dragging) { overflow: visible; }
+.st-greypop-h { font-size: var(--fs-sub); color: var(--ink-3); padding-top: 6px; }
 .st-chip.nodrag span { color: var(--ink-3); }
 .st-chip.st-dragging { cursor: grabbing; z-index: 90; position: relative; box-shadow: var(--shadow); }
 
