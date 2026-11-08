@@ -211,6 +211,7 @@ Release 附件（连接脚本用的文件名）：`ai-detector-<tag>-<os>-<arch>
 | 2026-11-08 | v1（追加） | 对话框组件（「三·3」）、PetEvent `dialog`（「一」）、点宠物小菜单、桌宠新手引导（「三·4」） |
 | 2026-11-08 | v1（追加） | 桌宠安装包（「七」） |
 | 2026-11-08 | v1（追加） | 连接脚本一键安装：ai-detector、ActivityWatch 检测、Claude Code 钩子、桌宠的下载校验安装与自启，`--uninstall` 全撤回；选项与 `HONEYCOMB_ASSETS`；Release 附件文件名 |
+| 2026-11-08 | v1（追加） | 桌宠安装包 mac-arm64 改在 macos-15 runner 上打（macos-14 起不来） |
 
 ## 七、桌宠安装包
 
