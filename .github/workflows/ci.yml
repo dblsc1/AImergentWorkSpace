@@ -533,6 +533,70 @@ jobs:
           $c = [IO.File]::ReadAllText("$t\pet\config.json") | ConvertFrom-Json
           if ($c.PSObject.Properties['server'] -or $c.PSObject.Properties['deviceToken']) { throw 'pet config keys not removed' }
           'connect ok on ' + $PSVersionTable.PSVersion
+          # ---- one-click path: install from local fake assets (HONEYCOMB_ASSETS), idempotent, uninstall ----
+          $tag = 'v9.9.9'
+          $a = "$t\assets"; $ap = "$t\app"; $su = "$t\startup"; $cl = "$t\claude"; $hk = "$t\hookscfg"
+          New-Item -ItemType Directory -Force -Path $a, $su, $cl, "$t\petsrc" | Out-Null
+          $cmdexe = Join-Path $env:SystemRoot 'System32\cmd.exe'
+          Copy-Item $cmdexe "$a\ai-detector-$tag-windows-amd64.exe"
+          Copy-Item $cmdexe "$t\petsrc\HoneyComb Pet.exe"
+          Compress-Archive -Path "$t\petsrc\*" -DestinationPath "$a\honeycomb-pet-$tag-win-x64.zip"
+          foreach ($f in 'claude_hook.py', 'cockpit_client.py') { [IO.File]::WriteAllText("$a\agent-hooks-$f", "# fake`n", $utf8) }
+          function Write-Sums($out, $names) {
+            $l = foreach ($n in $names) { (Get-FileHash -Algorithm SHA256 "$a\$n").Hash.ToLower() + '  ' + $n }
+            [IO.File]::WriteAllText("$a\$out", (($l -join "`n") + "`n"), $utf8)
+          }
+          Write-Sums "ai-detector-$tag-SHA256SUMS.txt" @("ai-detector-$tag-windows-amd64.exe")
+          Write-Sums 'agent-hooks-SHA256SUMS.txt' @('agent-hooks-claude_hook.py', 'agent-hooks-cockpit_client.py')
+          Write-Sums "honeycomb-pet-$tag-SHA256SUMS.txt" @("honeycomb-pet-$tag-win-x64.zip")
+          $foreign = '{"permissions":{"allow":["Bash(ls)"]},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo mine"}]}]}}'
+          [IO.File]::WriteAllText("$cl\settings.json", $foreign, $utf8)
+          $env:HONEYCOMB_ASSETS = $a
+          $env:LOCALAPPDATA = $ap
+          $env:HONEYCOMB_STARTUP_DIR = $su
+          $env:HONEYCOMB_NO_START = '1'
+          $env:CLAUDE_CONFIG_DIR = $cl
+          $env:HONEYCOMB_AGENT_HOOKS_HOME = $hk
+          # the script under test is stamped with a tag like the release workflow does
+          $stamped = "$t\connect-stamped.ps1"
+          [IO.File]::WriteAllText($stamped, ((Get-Content -Raw release/honeycomb-connect.ps1) -replace '__TAG__', $tag), (New-Object System.Text.UTF8Encoding($true)))
+          function Run-Stamped($flags) {
+            $o = & powershell -NoProfile -ExecutionPolicy Bypass -File $stamped @flags 2>&1 | Out-String
+            if ($LASTEXITCODE -ne 0) { throw "stamped connect failed: $o" }
+            if ($o -match 'dev-token-SECRET') { throw 'token printed' }
+            return $o
+          }
+          $o = Run-Stamped @()
+          Write-Host $o
+          if ($o -match ('\[' + (-join [char[]](0x5931, 0x8D25)) + '\]')) { throw 'a step reported failure' }   # the 2 CJK chars of the failure marker
+          if (-not (Test-Path "$ap\HoneyComb\ai-detector.exe")) { throw 'detector not installed' }
+          if (-not (Test-Path "$su\honeycomb-ai-detector.vbs")) { throw 'detector autostart missing' }
+          if (-not (Test-Path "$ap\HoneyComb\agent-hooks\claude_hook.py")) { throw 'hook file missing' }
+          if (-not (Test-Path "$su\honeycomb-desktop-pet.vbs")) { throw 'pet autostart missing' }
+          $petExe = Get-ChildItem "$ap\HoneyComb\pet" -Recurse -Filter '*.exe' | Select-Object -First 1
+          if (-not $petExe) { throw 'pet exe missing' }
+          $d = [IO.File]::ReadAllText("$t\det\ai-detector.json") | ConvertFrom-Json
+          if ($d.deviceToken -ne 'dev-token-SECRET' -or $d.cockpitUrl -ne 'http://hc.example:8800' -or $d.pet.token -ne 'pettok123') { throw 'detector config wrong' }
+          $s = [IO.File]::ReadAllText("$cl\settings.json") | ConvertFrom-Json
+          if ($s.permissions.allow[0] -ne 'Bash(ls)' -or $s.hooks.Stop.Count -ne 2 -or $s.hooks.SessionStart.Count -ne 1 -or $s.hooks.SessionEnd[0].hooks[0].timeout -ne 5) { throw 'claude settings not merged' }
+          $snap = @{}; foreach ($f in "$cl\settings.json", "$t\det\ai-detector.json", "$t\pet\config.json", "$su\honeycomb-ai-detector.vbs", "$su\honeycomb-desktop-pet.vbs") { $snap[$f] = [IO.File]::ReadAllText($f) }
+          $null = Run-Stamped @()
+          foreach ($f in $snap.Keys) { if ([IO.File]::ReadAllText($f) -ne $snap[$f]) { throw "not idempotent: $f" } }
+          # tampered checksum is refused
+          [IO.File]::AppendAllText("$a\ai-detector-$tag-windows-amd64.exe", 'x')
+          Remove-Item "$ap\HoneyComb\ai-detector.exe"
+          $o = Run-Stamped @()
+          if (Test-Path "$ap\HoneyComb\ai-detector.exe") { throw 'tampered binary installed' }
+          Copy-Item $cmdexe "$a\ai-detector-$tag-windows-amd64.exe" -Force
+          $null = Run-Stamped @()
+          $null = Run-Stamped @('-Uninstall')
+          foreach ($f in "$ap\HoneyComb\ai-detector.exe", "$ap\HoneyComb\pet", "$ap\HoneyComb\agent-hooks", "$su\honeycomb-ai-detector.vbs", "$su\honeycomb-desktop-pet.vbs") { if (Test-Path $f) { throw "not removed: $f" } }
+          $s = [IO.File]::ReadAllText("$cl\settings.json") | ConvertFrom-Json
+          if ($s.hooks.Stop.Count -ne 1 -or $s.hooks.PSObject.Properties['SessionStart'] -or $s.permissions.allow[0] -ne 'Bash(ls)') { throw 'claude settings not restored' }
+          # flags
+          $null = Run-Stamped @('-NoDetector', '-NoHooks', '-NoPet', '-NoShell')
+          if ((Test-Path "$ap\HoneyComb\ai-detector.exe") -or (Test-Path "$ap\HoneyComb\pet")) { throw 'flags ignored' }
+          'oneclick ok on ' + $PSVersionTable.PSVersion
           exit 0
 
   gateway-contract:
