@@ -163,7 +163,7 @@ def open_stage(browser: Browser, base: str, *, width: int = 1280, height: int = 
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(base + "/index.html")
     page.wait_for_selector(CELL.format("p_math"))
-    page.wait_for_selector("#stRing .st-tk")
+    page.wait_for_selector("#stRing .st-tk", state="attached")
     page.wait_for_timeout(200)
     page.clock.pause_at(st.now() + timedelta(seconds=1))
     if tiers:

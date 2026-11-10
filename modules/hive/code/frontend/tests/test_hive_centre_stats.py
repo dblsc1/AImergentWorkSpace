@@ -35,7 +35,7 @@ def test_ring_ticker_rotates_every_four_seconds_and_keeps_totals_line(browser, b
         assert len(lines) >= 2 and any(x.startswith("你 ") and "\n代理 " in x for x in lines)
         seen = set()
         for _ in range(len(lines) + 1):
-            seen.add(st.page.locator("#stRing .st-tk").inner_text())
+            seen.add(st.page.locator("#stRing .st-tk").text_content())
             st.page.clock.run_for(4000)
         assert len(seen) >= 2
         rx, ry = st.center("#stRing")
@@ -106,7 +106,7 @@ def test_reduced_motion_skips_the_flight(browser, base) -> None:  # noqa: F811
     with open_stage(browser, base, setup=_setup) as st:
         st.page.emulate_media(reduced_motion="reduce")
         st.page.reload()
-        st.page.wait_for_selector("#stRing .st-tk")
+        st.page.wait_for_selector("#stRing .st-tk", state="attached")
         st.page.click("#stRing")
         st.page.locator(".cs-me").wait_for()
         assert st.page.locator(".st-fly").count() == 0
