@@ -911,7 +911,8 @@
   function closePanel() { panelPid = null; panelHtml = ""; $("stVeil").hidden = true; PP.reset(); }
   // 项目面板（任务条 + 人 / 代理时间标尺）在 hex-project-ruler.js；这里只接标题栏与重画
   var PP = Pr.createPanel({ tree: function () { return data.tree; }, getJson: getJson, dur: dur, open: openPanel, taskApi: function () { return window.NexusTableData; },
-    changed: function () { renderPanel(); } });
+    changed: function () { renderPanel(); },
+    cellColor: function (pid) { var c = cellEl(pid); return c ? getComputedStyle(c).getPropertyValue("--zone-raw").trim() : ""; } });
   function renderPanel() {
     if (!panelPid || PP.frozen()) return;
     var html = '<div class="st-hd"><h2>' + esc(projectName(panelPid)) + '</h2><button type="button" class="st-expand">展开</button><button type="button" class="st-x" aria-label="关闭">✕</button></div>' + PP.body(panelPid, Date.now());
