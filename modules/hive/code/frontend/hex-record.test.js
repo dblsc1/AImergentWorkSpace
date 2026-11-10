@@ -47,4 +47,20 @@ assert.strictEqual(live.timer.total, 600);
 assert.strictEqual(live.attend.total, 400 + 60);
 const byTask = R.projectRecord({ windowStart: iso(0), human: { running: { taskId: "t1", startAt: iso(36000 - 30) } } }, runs, "p1", (t) => (t === "t1" ? "p1" : null), NOW);
 assert.strictEqual(byTask.timer.total, 30);
+// 泳道横条：近 3 小时分段
+{
+  const N = T0 + 10 * 3600e3, H = 3600e3;
+  const lane = R.laneSegments({ startAt: iso(0), phases: [
+    { at: new Date(N - 4 * H).toISOString(), phase: "idle" }, { at: new Date(N - 2 * H).toISOString(), phase: "working" },
+    { at: new Date(N - H).toISOString(), phase: "waiting_input" }, { at: new Date(N - 0.5 * H).toISOString(), phase: "error" }] }, N, 3 * H);
+  assert.deepStrictEqual(lane.segments.map((s) => s.status), ["idle", "working", "waiting", "error"]);
+  assert.strictEqual(lane.segments[0].from, N - 3 * H);             // 裁到窗口左端
+  assert.strictEqual(lane.segments[3].to, N);                       // 最后一段到此刻
+  assert.strictEqual(lane.workingSeconds, 3600);
+  const late = R.laneSegments({ phases: [{ at: new Date(N - H).toISOString(), phase: "working" }] }, N, 3 * H);
+  assert.strictEqual(late.segments.length, 1); assert.strictEqual(late.segments[0].from, N - H);   // 第一条之前 = 空
+  const ended = R.laneSegments({ endAt: new Date(N - H).toISOString(), phases: [{ at: new Date(N - 2 * H).toISOString(), phase: "working" }] }, N, 3 * H);
+  assert.strictEqual(ended.segments[0].to, N - H);
+  assert.deepStrictEqual(R.laneSegments({ phases: [] }, N, 3 * H).segments, []);
+}
 console.log("hex-record.test.js ok");

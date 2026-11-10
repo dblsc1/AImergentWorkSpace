@@ -50,15 +50,40 @@ const inboxOpts = { projectOfTask: (id) => (id === "ti" ? "p_inbox" : "p1") };
 const mixed = [run("w", { projectId: "p1" }), run("x", { projectId: "p_inbox" }), run("y", { projectId: null, taskId: "ti" }), run("z", { projectId: null, taskId: "tp" })];
 assert.deepStrictEqual(P.pickWorkers(mixed, inboxOpts).pets.map((p) => p.runId).sort(), ["w", "z"]);
 assert.deepStrictEqual(P.pickIdle(mixed, inboxOpts).pets.map((p) => p.runId).sort(), ["x", "y"]);
-// HV-P17 走动 600 步不出区域，每步位移 ≤ 速度 × 时间
-let seed = 12345; const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
-const rect = { x: 0, y: 0, w: 200, h: 120 };
-let s = P.initWander(rect, rnd);
-for (let i = 0; i < 600; i++) {
-  const n = P.stepWander(s, rect, rnd, 50, 30);
-  assert.ok(n.x >= rect.x && n.x <= rect.x + rect.w && n.y >= rect.y && n.y <= rect.y + rect.h);
-  assert.ok(Math.hypot(n.x - s.x, n.y - s.y) <= 30 * 50 / 1000 + 1e-9);
-  s = n;
+// 固定位：稳定、不跳、新来的占最小空位
+{
+  const l = [{ runId: "b", startAt: "2026-11-10T10:00:00Z" }, { runId: "a", startAt: "2026-11-10T10:00:00Z" }, { runId: "c", startAt: "2026-11-10T09:00:00Z" }];
+  const s1 = P.assignSlots({}, l);
+  assert.deepStrictEqual(s1, { c: 0, a: 1, b: 2 });
+  assert.deepStrictEqual(P.assignSlots(s1, l.slice().reverse()), s1);                 // 重排不动
+  const s2 = P.assignSlots(s1, l.filter((r) => r.runId !== "c"));                      // c 走了，a b 不动
+  assert.deepStrictEqual(s2, { a: 1, b: 2 });
+  assert.strictEqual(P.assignSlots(s2, l.filter((r) => r.runId !== "c").concat([{ runId: "d", startAt: "2026-11-10T11:00:00Z" }])).d, 0);   // d 占空出来的 0 位
+  const rect = { x: 0, y: 0, w: 300, h: 100 };
+  assert.deepStrictEqual(P.slotPos(0, rect), { x: 50, y: 25 }); assert.deepStrictEqual(P.slotPos(4, rect), { x: 150, y: 75 });
+}
+// 动作节奏：15 秒 → 3 秒临时 → 15 秒新动作
+{
+  const mv = { moods: { working: ["w1", "w2", "w3"], idle: ["i1"], click: ["c1", "c2"], happy: ["h"] } }.moods;
+  const r0 = () => 0.5;
+  let s = P.rhythm(null, mv, "working", 1000, () => 0);      // 首次偏移 0
+  assert.strictEqual(s.step, "main"); assert.strictEqual(s.until, 1000); assert.ok(["w1", "w2", "w3"].includes(s.file));
+  s = P.rhythm(s, mv, "working", 1000, r0);                   // 到点 → 临时
+  assert.strictEqual(s.step, "temp"); assert.ok(["c1", "c2"].includes(s.file)); assert.strictEqual(s.until, 4000);
+  const prev = s.main;
+  assert.strictEqual(P.rhythm(s, mv, "working", 3999, r0), s);
+  for (let i = 0; i < 30; i++) {
+    const n = P.rhythm(s, mv, "working", 4000, Math.random);
+    assert.strictEqual(n.step, "main"); assert.notStrictEqual(n.file, prev); assert.strictEqual(n.until, 4000 + P.MAIN_MS);
+  }
+  const m = P.rhythm(P.rhythm(null, mv, "working", 0, r0), mv, "waiting", 500, r0);  // 换 mood 立刻换、无 waiting 用 idle
+  assert.strictEqual(m.file, "i1"); assert.strictEqual(m.until, 500 + P.MAIN_MS);
+  const hp = P.rhythm({ mood: "idle", step: "main", file: "i1", main: "i1", until: 0 }, { idle: ["i1"], happy: ["h"] }, "idle", 0, r0);
+  assert.strictEqual(hp.file, "h");                           // 没有 click 退到 happy
+  const nt = P.rhythm({ mood: "idle", step: "main", file: "i1", main: "i1", until: 0 }, { idle: ["i1"] }, "idle", 0, r0);
+  assert.strictEqual(nt.step, "main"); assert.strictEqual(nt.file, "i1");   // 没有临时动作：跳过
+  assert.strictEqual(P.rhythm(null, {}, "idle", 0, r0).file, null);          // 包没下完：空，之后补
+  assert.strictEqual(P.rhythm(P.rhythm(null, {}, "idle", 0, r0), { idle: ["z"] }, "idle", 1, r0).file, "z");
 }
 // 点 / 拖判定、挑点击、走回（hive.stage.v1「二」7）
 assert.strictEqual(P.pressKind(3, 3), "click"); assert.strictEqual(P.pressKind(5, 0), "drag"); assert.strictEqual(P.pressKind(0, 0), "click");

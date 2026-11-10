@@ -9,10 +9,11 @@
   var shell = document.querySelector(".board-shell");
   if (!St || !Rec || !Pk || !shell) return;
 
-  var POLL_MS = 5000, TICK_MS = 1000, PET_MS = 100, PET_SPEED = 18;
-  var WANDER = { x: 24, y: 70, w: 340, h: 170 };
+  var POLL_MS = 5000, TICK_MS = 1000, PET_MS = 100;
+  var SLOT_AREA = { x: 24, y: 70, w: 340, h: 170 };
   var DAY_FROM_H = 6, DAY_SPAN_H = 18;
-  var STATUS_TEXT = { working: "工作中", waiting: "等你", idle: "空闲" };
+  var STATUS_TEXT = { working: "工作中", waiting: "等你", idle: "空闲", error: "出错" };
+  var LANE_MS = 3 * 3600000;
 
   var layer = document.createElement("div");
   layer.className = "st-layer";
@@ -147,7 +148,7 @@
       }
       lx = dx / zoom(); ly = dy / zoom();
       o.el.style.translate = lx + "px " + ly + "px";
-      lit(item.kind === "free" ? null : cellAt(ev.clientX, ev.clientY));   // 格子边宠物松手不改数据，不高亮
+      lit(cellAt(ev.clientX, ev.clientY));
       if (Sp && fileable(item)) sprout = blankSprout(ev.clientX, ev.clientY, sprout);
     });
     function onEsc(ev) { if (ev.key === "Escape" && id != null && moved) end({ pointerId: id }, true); }
@@ -164,7 +165,7 @@
       // 时间元素停在分区空白处、那一格亮满后松手 = 建新项目（同长按建项目的表单），建好后把它记进去（hive.stage.v1「二」8）
       var made = !target && !cancel && grown && fileable(item) && Sp.openCreate({ name: createName(item), onCreated: function (p) {
         busy++;
-        getJson("views/tree").then(function (t) { if (t) data.tree = t; var it = item.kind === "free" ? { kind: "pet", runId: item.runId, agent: item.agent } : item; return stage.drop(it, p.id).then(function (r) { if (r && r.ok) fileBubble(it, p.id, r); return r; }); })
+        getJson("views/tree").then(function (t) { if (t) data.tree = t; return stage.drop(item, p.id); })
           .then(function (r) { busy--; render(); return Promise.resolve(r && r.ok ? refresh() : null).then(function () { if (o.afterCreate) o.afterCreate(); }); });
       }, onCancel: function () { if (o.afterCreate) o.afterCreate(); } });
       if (!made && Sp) Sp.removeSprout();
@@ -187,7 +188,7 @@
 
   // 能「拖到空白处建项目」的元素：块、宠物（含格子边的）、计时中的时钟 / 气泡、白条
   function fileable(item) { return item.kind !== "clock" || stage.timerRunning(); }
-  function createName(item) { return item.kind === "block" ? item.block.displayName || "" : item.kind === "pet" || item.kind === "free" ? item.agent || "" : ""; }
+  function createName(item) { return item.kind === "block" ? item.block.displayName || "" : item.kind === "pet" ? item.agent || "" : ""; }
 
   // 指针在分区空白处（不在格子、不在本层元素上，且在 #hive 里）：长出同长按建项目一样的那一格，并同样「升起」
   function blankSprout(x, y, prev) {
@@ -212,7 +213,8 @@
   }
   function filedUnder(run) {
     var t = run.taskId && taskOf(run.taskId), pid = run.projectId || (run.taskId && projectOfTask(run.taskId)) || stage.petDock(run.runId);
-    if (pid === "inbox") pid = null;
+    if (pid === "inbox" || pid === "p_inbox") pid = null;
+    if (t && projectOfTask(run.taskId) === "p_inbox") t = null;
     return { task: t ? t.name : null, project: pid ? projectName(pid) : null };
   }
   function titleOf(run) {
@@ -232,7 +234,7 @@
     if (card.__anchor && card.__anchor.contains(ev.target)) return;   // 点同一只宠物 = 由它的点击切换
     closeCard();
   }
-  function onCardKey(ev) { if (ev.key === "Escape") { ev.stopPropagation(); closeCard(); } }
+  function onCardKey(ev) { if (ev.key === "Escape") { ev.stopPropagation(); if (card && card.__cancelEdit && card.__cancelEdit()) return; closeCard(); } }
   function toggleCard(who, anchor) {
     if (card && card.__key === (who.runId || who.blockKey)) closeCard(); else openCard(who, anchor);
   }
@@ -241,6 +243,16 @@
     if (x + w > window.innerWidth - 8) x = a.left - w - 12;
     el.style.left = Math.max(8, x) + "px"; el.style.top = Math.max(8, Math.min(a.top - 10, window.innerHeight - el.offsetHeight - 8)) + "px";
   }
+  // 泳道横条：近 3 小时，按状态上色；悬停段 = 「HH:MM–HH:MM 状态」
+  function hm(t) { var d = new Date(t); return pad(d.getHours()) + ":" + pad(d.getMinutes()); }
+  function laneHtml(lane) {
+    var span = lane.to - lane.from;
+    var segs = lane.segments.map(function (g) {
+      return '<i class="is-' + g.status + '" style="left:' + (g.from - lane.from) / span * 100 + "%;width:" + (g.to - g.from) / span * 100 + '%" title="' + hm(g.from) + "–" + hm(g.to) + " " + STATUS_TEXT[g.status] + '"></i>';
+    }).join("");
+    var ticks = [0, 1, 2, 3].map(function (k) { return "<span>" + hm(lane.from + k * span / 3) + "</span>"; }).join("");
+    return '<div class="st-lane" aria-label="近 3 小时">' + segs + '</div><div class="st-lane-ticks">' + ticks + "</div>";
+  }
   function openCard(who, anchor) {
     closeCard();
     var el = document.createElement("div");
@@ -248,45 +260,45 @@
     var now = Date.now();
     if (who.runId) {
       if (!runById(who.runId)) return;
-      el.innerHTML = '<div class="st-d-body"></div><input class="st-d-name" maxlength="64" aria-label="改名字" placeholder="改名字，回车保存">';
-      var body = el.querySelector(".st-d-body"), week = null, named = false;
-      el.__fill = function () {       // 轮询后重画正文；改名框不动，输入和焦点都留着
+      el.innerHTML = '<h3 class="st-d-title" role="button" tabindex="0"></h3><div class="st-d-body"></div>';
+      var body = el.querySelector(".st-d-body"), ttl = el.querySelector(".st-d-title"), editing = false;
+      el.__cancelEdit = function () { if (!editing) return false; editing = false; ttl.textContent = titleOf(runById(who.runId) || {}); return true; };
+      el.__fill = function () {       // 轮询后重画正文与泳道；改名中的标题不动，输入和焦点都留着
         var run = runById(who.runId); if (!run) { closeCard(); return; }
-        var f = filedUnder(run), mood = Pk.moodOf(run.phase, run.lost), t = Date.now();
-        var hist = (run.phases || []).slice(-6).reverse().map(function (ph) {
-          var d = new Date(ms(ph.at));
-          return "<li><span>" + pad(d.getHours()) + ":" + pad(d.getMinutes()) + "</span>" + STATUS_TEXT[Pk.moodOf(ph.phase, false)] + "</li>";
-        }).join("");
-        var wk = week === null ? "" : "；本周 " + esc(run.agent) + " 共 " + dur(week(run.agent));
-        body.innerHTML = '<h3 class="st-d-title" title="' + esc(titleOf(run)) + '">' + esc(titleOf(run)) + "</h3>" +
-          '<div class="st-d-line st-d-tool">' + esc([run.tool || run.agent, run.model].filter(Boolean).join(" · ")) + "</div>" +
+        var f = filedUnder(run), mood = Pk.moodOf(run.phase, run.lost), t = Date.now(), lane = Rec.laneSegments(run, t, LANE_MS);
+        if (!editing) ttl.textContent = titleOf(run);
+        body.innerHTML = '<div class="st-d-line st-d-tool">' + esc([run.tool || run.agent, run.model].filter(Boolean).join(" · ")) + "</div>" +
           '<div class="st-d-line st-d-filed">' + (f.project ? "归在 " + esc((f.task ? f.project + " / " + f.task : f.project)) : "还没归到项目") + "</div>" +
-          '<div class="st-d-line st-d-phase">' + STATUS_TEXT[mood] + " · 今天工作 " + dur(Rec.workingSeconds(run, t)) + wk + "</div>" +
-          (hist ? '<ul class="st-d-hist">' + hist + "</ul>" : "") +
+          '<div class="st-d-line st-d-phase">' + STATUS_TEXT[mood] + " · 近 3 小时工作 " + dur(lane.workingSeconds) + "</div>" +
+          laneHtml(lane) +
           (run.match ? '<div class="st-d-line st-d-win">窗口：' + esc(run.match) + "</div>" : "");
-        if (!named) { named = true; el.querySelector(".st-d-name").value = run.humanName || ""; }
       };
       el.__fill();
-      var d0 = new Date(), mon = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate() - (d0.getDay() + 6) % 7), sun = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6);
-      var ymd = function (d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); };
-      getJson("views/agent-time?from=" + ymd(mon) + "&to=" + ymd(sun)).then(function (r) {
-        if (!r || card !== el) return;
-        var by = {}; (r.agents || []).forEach(function (x) { by[x.agent] = x.seconds; });
-        week = function (name) { return by[name] || 0; }; el.__fill();
-      });
-      var inp = el.querySelector(".st-d-name");
-      inp.addEventListener("keydown", function (ev) {
-        if (ev.key !== "Enter") return;
-        ev.preventDefault();
-        var v = inp.value.trim(), name = v === "" ? null : v;
-        send({ method: "PUT", path: "agents/" + encodeURIComponent(who.runId) + "/name", body: { name: name } }).then(function (res) {
-          if (res.status >= 200 && res.status < 300) {
-            var r0 = ((data.lanes && data.lanes.agents) || []).filter(function (x) { return x.runId === who.runId; })[0];
-            if (r0) r0.humanName = name;
-            render(); closeCard(); refresh();
-          } else inp.classList.add("is-bad");
+      var startEdit = function () {
+        var run = runById(who.runId); if (editing || !run) return;
+        editing = true;
+        var inp = document.createElement("input"), saving = false, orig = run.humanName || titleOf(run);
+        inp.className = "st-d-name"; inp.maxLength = 64; inp.setAttribute("aria-label", "改名字"); inp.value = orig;
+        ttl.textContent = ""; ttl.appendChild(inp); inp.focus(); inp.select();
+        inp.addEventListener("keydown", function (ev) {
+          if (ev.key !== "Enter") return;
+          ev.preventDefault();
+          var v = inp.value.trim(), name = v === "" ? null : v;
+          if (name === orig && !run.humanName) { el.__cancelEdit(); return; }
+          saving = true;
+          send({ method: "PUT", path: "agents/" + encodeURIComponent(who.runId) + "/name", body: { name: name } }).then(function (res) {
+            saving = false;
+            if (res.status >= 200 && res.status < 300) {
+              var r0 = ((data.lanes && data.lanes.agents) || []).filter(function (x) { return x.runId === who.runId; })[0];
+              if (r0) r0.humanName = name;
+              editing = false; render(); refresh();
+            } else inp.classList.add("is-bad");
+          }, function () { saving = false; inp.classList.add("is-bad"); });
         });
-      });
+        inp.addEventListener("blur", function () { if (!saving) el.__cancelEdit(); });
+      };
+      ttl.addEventListener("click", startEdit);
+      ttl.addEventListener("keydown", function (ev) { if ((ev.key === "Enter" || ev.key === " ") && ev.target === ttl) { ev.preventDefault(); startEdit(); } });
     } else {
       var b = who.block;
       el.innerHTML = '<h3 class="st-d-title" title="' + esc(b.displayName) + '">' + esc(b.displayName) + "</h3>" +
@@ -309,16 +321,16 @@
   var fileB = null;
   function closeFileBubble() { if (!fileB) return; clearInterval(fileB.timer); fileB.el.remove(); fileB = null; }
   function fileBubble(item, pid, res) {
-    if (item.kind !== "pet" && item.kind !== "block") return;
+    if (item.kind !== "block") return;
     closeFileBubble();
     var cell = cellEl(pid); if (!cell) return;
-    var c = rectCenter(cell), name = projectName(pid), isPet = item.kind === "pet";
+    var c = rectCenter(cell), name = projectName(pid);
     var el = document.createElement("div");
     el.className = "st-file st-card"; el.setAttribute("role", "status");
     el.innerHTML = '<svg class="st-file-ring" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="none" stroke="var(--panel-2)" stroke-width="3"/>' +
       '<circle class="st-file-arc" cx="12" cy="12" r="10" fill="none" stroke="var(--fact-s1)" stroke-width="3" stroke-linecap="round" transform="rotate(-90 12 12)" stroke-dasharray="' + RING_C + '" stroke-dashoffset="0"/></svg>' +
       '<input class="st-file-box" type="checkbox" aria-label="以后都算"><span class="st-file-tx"></span>';
-    el.querySelector(".st-file-tx").textContent = isPet ? "以后都算 " + name : "以后这个窗口都算 " + name;
+    el.querySelector(".st-file-tx").textContent = "以后这个窗口都算 " + name;
     layer.appendChild(el);
     place(el, { x: c.x + c.w * 0.1, y: c.y - c.h / 2 - 22 });
     var st = { el: el, left: FILE_MS, seq: res && res.seq, timer: 0 }, box = el.querySelector("input"), arc = el.querySelector(".st-file-arc"), still = reduced();
@@ -344,7 +356,7 @@
     });
     el.addEventListener("click", function (ev) {
       if (ev.target.closest(".st-file-box")) return;
-      if (isPet) toggleCard({ runId: item.runId }, petEls[item.runId] || el); else toggleCard({ blockKey: item.block.blockKey, block: item.block }, el);
+      toggleCard({ blockKey: item.block.blockKey, block: item.block }, el);
     });
   }
 
@@ -370,15 +382,14 @@
     '<circle cx="20" cy="27" r="3" fill="var(--panel)"/><circle cx="36" cy="27" r="3" fill="var(--panel)"/>' +
     '<circle cx="20.8" cy="27.4" r="1.4" fill="var(--ink)"/><circle cx="36.8" cy="27.4" r="1.4" fill="var(--ink)"/>' +
     '<path d="M23 36 q5 4 10 0" stroke="var(--ink)" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>';
-  function mediaFor(pet) {
-    var p = packs[pet.pack], list = p && p.moods && (p.moods[pet.mood] || p.moods.idle);
-    if (!list || !list.length) return { key: "svg", html: PLACEHOLDER };
-    var file = list[0], url = BASE + "hive/pets/" + encodeURIComponent(pet.pack) + "/" + file.split("/").map(encodeURIComponent).join("/");
+  function mediaFor(pet, file) {
+    if (!file) return { key: "svg", html: PLACEHOLDER };
+    var url = BASE + "hive/pets/" + encodeURIComponent(pet.pack) + "/" + file.split("/").map(encodeURIComponent).join("/");
     return { key: url, html: '<video class="st-art" src="' + esc(url) + '" autoplay loop muted playsinline></video>' };
   }
 
   // ── 干活的宠物（格子边）与左上角的宠物 ───────────────────
-  var petEls = {}, wander = {};
+  var petEls = {}, slotOf = {};
   function petEl(runId) {
     var e = petEls[runId];
     if (e) return e;
@@ -391,7 +402,9 @@
   }
   function fillPet(e, pet, run) {
     loadPack(pet.pack);
-    var m = mediaFor(pet), slot = e.querySelector(".st-media");
+    var pk = packs[pet.pack];
+    e.__rhythm = Pk.rhythm(e.__rhythm, pk && pk.moods, pet.mood, Date.now(), Math.random);   // 15 秒动作 → 3 秒临时动作 → 新动作
+    var m = mediaFor(pet, e.__rhythm.file), slot = e.querySelector(".st-media");
     var tg = e.querySelector(".st-tag"), ttl = run ? titleOf(run) : pet.name;
     if (tg.textContent !== ttl) { tg.textContent = ttl; tg.title = ttl; }
     e.dataset.mood = pet.mood;
@@ -502,19 +515,21 @@
         if (!ix[p.runId] || !ix[p.runId].mode) place(e, e.__home);
       });
     });
+    slotOf = Pk.assignSlots(slotOf, idle.pets.map(function (p) { var r = runById(p.runId); return { runId: p.runId, startAt: r && r.startAt }; }));
     idle.pets.forEach(function (p) {
       var e = petEl(p.runId); keep[p.runId] = 1;
-      var w = wander[p.runId] || (wander[p.runId] = Pk.initWander(WANDER, Math.random));
+      var home = Pk.slotPos(slotOf[p.runId], SLOT_AREA);
+      e.__home = home;
       if (!e.classList.contains("is-loose")) {
-        delete ix[p.runId]; e.classList.remove("is-work", "st-away", "flip"); e.classList.add("is-loose"); place(e, w);
+        delete ix[p.runId]; e.classList.remove("is-work", "st-away", "flip"); e.classList.add("is-loose"); place(e, home);
         var sl = e.querySelector(".st-media"); if (sl.dataset.over) { delete sl.dataset.over; sl.dataset.key = ""; }
-      }
+      } else if (!ix[p.runId] || !ix[p.runId].mode) place(e, home);
       fillPet(e, p, runById(p.runId));
     });
     Object.keys(petEls).forEach(function (id) {
       if (keep[id]) return;
       if (petEls[id].classList.contains("st-dragging")) dragging--;   // 拖着时被移除：收不到 pointerup
-      petEls[id].remove(); delete petEls[id]; delete wander[id]; delete ix[id];
+      petEls[id].remove(); delete petEls[id]; delete ix[id];
     });
     var more = $("stMore"), plus = work.plus;
     more.hidden = !plus; more.textContent = plus ? "+" + plus : "";
@@ -532,7 +547,7 @@
       item: function () {
         var r = e.__run;
         if (!r) return null;
-        return e.classList.contains("is-loose") ? { kind: "pet", runId: r.runId, agent: r.agent } : { kind: "free", runId: r.runId, agent: r.agent };
+        return { kind: "pet", runId: r.runId, agent: r.agent };
       },
       onClick: function () { poke(e); toggleCard({ runId: e.dataset.runId }, e); },
       onGrab: function () {
@@ -547,36 +562,78 @@
         var s = ixOf(e.dataset.runId), at = curPos(e);
         s.dragEnd = Date.now(); s.click = null;
         var from = { x: at.x + dx, y: at.y + dy };
-        if (!e.classList.contains("is-loose") && made) {    // 表单开着：原地等，取消 / 建完再走
+        var pid = target && !cancel ? target.dataset.projectId : null;
+        if (made) {                                          // 表单开着：原地等，取消 / 建完再走
           e.style.translate = ""; s.mode = "hold"; place(e, from); syncClip(e);
           return "keep";
         }
-        if (!e.classList.contains("is-loose")) {            // 格子边：不改数据，停 3 秒再走回
-          e.style.translate = ""; s.mode = null;
-          startBack(e, from, cancel ? STAY_MS : 0);
+        if (pid && pid !== e.__pet.projectId) {              // 落在另一个项目的格子上：问清楚再挂；宠物在原地等
+          e.style.translate = ""; s.mode = "hold"; place(e, from); syncClip(e);
+          openConfirm(e, pid);
           return "keep";
         }
-        s.mode = null; syncClip(e);
-        if (target) return;                                  // 落在格子上：照原样建去向规则
-        e.style.translate = "";
-        if (!cancel) {                                       // 空白处：从落点接着随机走动
-          var w = wander[e.dataset.runId], q = Pk.initWander(WANDER, Math.random);
-          if (w) wander[e.dataset.runId] = { x: Math.min(WANDER.x + WANDER.w, Math.max(WANDER.x, from.x)), y: Math.min(WANDER.y + WANDER.h, Math.max(WANDER.y, from.y)), tx: q.tx, ty: q.ty };
-          place(e, wander[e.dataset.runId]);
-        }
+        e.style.translate = ""; s.mode = null;               // 空白处 / 自己的格子 / 取消：不改数据，停 3 秒再走回
+        startBack(e, from, cancel ? STAY_MS : 0);
         return "keep";
       }
     });
   }
+  // 宠物拖到另一个项目：确认卡，一次落下一张、各答各的。同一格的卡在该格上方自上而下叠着（放不下就滚动），不同格的卡各在各的格子。
+  // 「之前的时间也算过去」= 整条运行；「只算以后的时间」= timeFrom "now"；勾「以后 X 都算」= remember。Esc 只取消最新一张，点卡外不取消
+  var confirms = [];
+  function onConfirmKey(ev) { if (ev.key === "Escape" && confirms.length) { ev.stopPropagation(); confirms[confirms.length - 1].__done(null); } }
+  function dropConfirm(el) {
+    var i = confirms.indexOf(el); if (i < 0) return;
+    confirms.splice(i, 1);
+    var stack = el.parentNode; el.remove();
+    if (stack && !stack.children.length) stack.remove();
+    if (!confirms.length) document.removeEventListener("keydown", onConfirmKey, true);
+  }
+  function confirmStack(pid, c) {
+    var st = [].slice.call(layer.querySelectorAll(".st-cf-stack")).filter(function (x) { return x.dataset.projectId === pid; })[0];
+    if (st) return st;
+    st = document.createElement("div"); st.className = "st-cf-stack"; st.dataset.projectId = pid;
+    layer.appendChild(st);
+    var top = Math.max(8, c.y - c.h / 2 - 22);
+    place(st, { x: c.x + c.w * 0.1, y: top });
+    st.style.maxHeight = Math.max(120, layer.clientHeight - top - 8) + "px";
+    return st;
+  }
+  function openConfirm(e, pid) {
+    closeFileBubble();
+    var cell = cellEl(pid), id = e.dataset.runId, run = runById(id);
+    if (!cell || !run) { backHome(id); return; }
+    confirms.filter(function (x) { return x.dataset.runId === id; }).forEach(dropConfirm);   // 同一只再拖一次：只留新的
+    var c = rectCenter(cell), name = projectName(pid), who = titleOf(run), el = document.createElement("div");
+    el.className = "st-confirm st-card"; el.setAttribute("role", "dialog"); el.dataset.runId = id;
+    el.innerHTML = '<button type="button" class="st-cf-x" aria-label="取消">✕</button><div class="st-cf-title"></div>' +
+      '<div class="st-cf-btns"><button type="button" data-from="start">之前的时间也算过去</button><button type="button" data-from="now">只算以后的时间</button></div>' +
+      '<label class="st-cf-rem"><input type="checkbox" class="st-cf-box"><span></span></label>';
+    el.querySelector(".st-cf-title").textContent = "把 " + who + " 挂到 " + name;
+    el.querySelector(".st-cf-rem span").textContent = "以后 " + who + " 都算 " + name;
+    confirmStack(pid, c).appendChild(el);
+    if (!confirms.length) document.addEventListener("keydown", onConfirmKey, true);
+    confirms.push(el);
+    el.__done = function (timeFrom) {
+      var remember = el.querySelector(".st-cf-box").checked;
+      dropConfirm(el);
+      if (!timeFrom) { backHome(id); return; }
+      busy++;
+      stage.drop({ kind: "pet", runId: id, agent: run.agent }, pid, { remember: remember, timeFrom: timeFrom }).then(function (r) {
+        busy--; render();
+        return Promise.resolve(r && r.ok ? refresh() : null).then(function () { backHome(id); });
+      });
+    };
+    el.querySelector(".st-cf-x").addEventListener("click", function () { el.__done(null); });
+    el.querySelector(".st-cf-btns").addEventListener("click", function (ev) { var b = ev.target.closest("button"); if (b) el.__done(b.dataset.from); });
+  }
+  function backHome(id) {            // 卡关了（取消 / 挂完 / 失败）：宠物从当前位置走回（新）家
+    var e = petEls[id], s = ix[id];
+    if (e && s && s.mode === "hold" && e.__home) startBack(e, curPos(e), STAY_MS);
+  }
   function stepPets() {
     stepBack(Date.now());
-    if (dragging) return;
-    Object.keys(wander).forEach(function (id) {
-      var e = petEls[id]; if (!e || !e.classList.contains("is-loose") || e.classList.contains("st-dragging")) return;
-      var w = wander[id] = Pk.stepWander(wander[id], WANDER, Math.random, PET_MS, PET_SPEED);
-      e.classList.toggle("flip", w.tx < w.x);
-      place(e, w);
-    });
+    Object.keys(petEls).forEach(function (id) { var e = petEls[id]; if (e.__pet) fillPet(e, e.__pet, e.__run); });   // 动作节奏到点就换
   }
 
   // ── 中心环 ────────────────────────────────────────────
