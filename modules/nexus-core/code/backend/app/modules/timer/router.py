@@ -267,6 +267,7 @@ class AgentPlaceIn(BaseModel):
     taskId: str | None = Field(default=None, min_length=1, max_length=128)
     projectId: str | None = Field(default=None, min_length=1, max_length=128)
     remember: StrictBool = True
+    timeFrom: Literal["start", "now"] = "start"  # v2.48
 
     @model_validator(mode="after")
     def _exactly_one(self) -> AgentPlaceIn:
@@ -277,7 +278,7 @@ class AgentPlaceIn(BaseModel):
 
 @agents_router.post("/{runId}/place", dependencies=[Depends(_human_only)])
 def agent_place(runId: str, body: AgentPlaceIn) -> dict:  # noqa: N803 —— 路径参数名即契约
-    return service.agent_place(runId, body.taskId, body.projectId, body.remember)
+    return service.agent_place(runId, body.taskId, body.projectId, body.remember, body.timeFrom)
 
 
 class AgentNameIn(BaseModel):

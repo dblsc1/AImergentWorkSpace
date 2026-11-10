@@ -72,6 +72,25 @@ def _rows(source, data: dict) -> list[tuple[str, int, int]]:
     return [(local_date(moment, settings.tz), int(seconds), 1)]
 
 
+def _target_rows(source, data: dict, default: tuple) -> list[tuple[tuple, str, int, int]]:
+    """一次运行 → [((项目, 任务), 本地日, 秒, runs)]。v2.48：带 ``segments`` 的运行每段各写各的目标（同目标同日并成一行），
+    runs=1 记在第一行；``segments`` 不合格（或全是 0 秒）就当整条运行算 ``default``。"""
+    segments = data.get("segments") if source == _OWN_SOURCE else None
+    if isinstance(segments, list) and 0 < len(segments) <= _MAX_DAY_ROWS:
+        acc: dict[tuple, int] = {}
+        for seg in segments:
+            if not (isinstance(seg, dict) and isinstance(seg.get("projectId"), str) and seg["projectId"]):
+                acc = {}
+                break
+            task = seg.get("taskId") if isinstance(seg.get("taskId"), str) else None
+            for date, seconds, _ in _rows(source, seg):
+                acc[((seg["projectId"], task), date)] = acc.get(((seg["projectId"], task), date), 0) + seconds
+        rows = [(target, date, seconds) for (target, date), seconds in acc.items() if seconds > 0]
+        if rows:
+            return [(target, date, seconds, 0 if i else 1) for i, (target, date, seconds) in enumerate(rows)]
+    return [(default, date, seconds, runs) for date, seconds, runs in _rows(source, data)]
+
+
 def handle(envelope: dict) -> None:
     subject = envelope.get("subject") or {}
     project_id = subject.get("project")
@@ -81,10 +100,9 @@ def handle(envelope: dict) -> None:
     agent = data.get("agent")
     if not project_id or not isinstance(agent, str):
         return
-    common = dict(user=envelope["user"], dedupe_key=applied_key(envelope), project_id=project_id,
-                  task_id=subject.get("task"), agent=agent)
-    for date, seconds, runs in _rows(envelope.get("source"), data):
-        repo.apply_agent_daily_stat(**common, date=date, seconds=seconds, runs=runs)
+    for (project, task), date, seconds, runs in _target_rows(envelope.get("source"), data, (project_id, subject.get("task"))):
+        repo.apply_agent_daily_stat(user=envelope["user"], dedupe_key=applied_key(envelope), project_id=project,
+                                    task_id=task, agent=agent, date=date, seconds=seconds, runs=runs)
 
 
 def handle_place(envelope: dict) -> None:
@@ -95,11 +113,15 @@ def handle_place(envelope: dict) -> None:
     if not isinstance(run, dict) or run.get("unverified") is True or not isinstance(run.get("agent"), str):
         return
     old, new = (data.get("fromProjectId"), data.get("fromTaskId")), (subject.get("project"), subject.get("task"))
-    if not new[0] or old == new:
+    if not new[0]:
         return
-    for date, seconds, runs in _rows(run.get("source"), run):  # 旧去向没有项目 = 这条运行从没进过本表，只加到新行
-        repo.move_agent_daily_stat(envelope["user"], applied_key(envelope), date, run["agent"], old if old[0] else None,
-                                   new, seconds, runs)
+    segmented = isinstance(run.get("segments"), list)
+    for target, date, seconds, runs in _target_rows(run.get("source"), run, old):
+        if target == new:
+            continue
+        # 旧去向没有项目 = 这条运行从没进过本表，只加到新行；分段运行每个旧去向各记一个搬运键（同一个新行会被几段加）
+        key = applied_key(envelope) + (json.dumps(target) if segmented else "")
+        repo.move_agent_daily_stat(envelope["user"], key, date, run["agent"], target if target[0] else None, new, seconds, runs)
 
 
 def read_agent_daily_stats(

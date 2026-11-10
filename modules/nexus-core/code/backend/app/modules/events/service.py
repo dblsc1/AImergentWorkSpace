@@ -261,8 +261,20 @@ def with_current_subjects(docs: list[dict]) -> list[dict]:
     指向台账里已经没有的段的 ``session.reassigned`` 自然不起作用。"""
     latest, voided = latest_reassignments(docs), voided_identities(docs)
     placed = latest_placements(docs)
-    return [{**d, "subject": cur} if (cur := _current_subject(d, latest) or _placed_subject(d, placed)) else d
+    return [{**d, "subject": cur, **_whole_move(d, placed)} if (cur := _current_subject(d, latest) or _placed_subject(d, placed)) else d
             for d in docs if not _is_voided(d, voided)]
+
+
+def _whole_move(doc: dict, placed: dict[tuple, dict]) -> dict:
+    """v2.48：运行最后一次去向是结束后的整条改挂（带 ``run`` 抄录）→ 事实里的 ``segments`` 作废，整条算到新去向。"""
+    dedupe = doc.get("dedupeKey")
+    if doc.get("type") != AGENT_RUN_TYPE or not isinstance(dedupe, str) or not isinstance(doc.get("data"), dict) \
+            or "segments" not in doc["data"]:
+        return {}
+    hit = placed.get((doc.get("user") or LOCAL_USER, dedupe.removeprefix("agent:")))
+    if hit is None or "run" not in (hit.get("data") or {}):
+        return {}
+    return {"data": {k: v for k, v in doc["data"].items() if k != "segments"}}
 
 
 def is_voided(session: dict) -> bool:

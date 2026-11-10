@@ -97,3 +97,4 @@
 | 2026-11-08 | 仓主定：蜂巢代理名 = `<任务或项目名>·<对话名>`，人可改名且优先 | v2.45（追加式）：`PUT agents/{runId}/name`、集合 `agent_name_rules`、`views/lanes` 代理加 `humanName` / `conversation`。见「v0.6：代理名字」节 |
 | 2026-11-08 | 仓主定：窗口块默认少灰 | v2.46（追加式）：内置网站域名 / 站点名 / 程序家族名单（`window_defaults.py`）与用户 `browserDomains` 并用；编辑器标题取工作区名 |
 | 2026-11-08 | 仓主定：信息源体检（蜂巢提示窗口信息缺哪些来源） | v2.47（追加式）：`PUT /detector/health` 追加可选 `sourceIssues`（枚举数组），设备文档存 `sourceHealth`，`GET /detector/devices` 每台追加 `sourceHealth`；无新端点、无新集合 |
+| 2026-11-10 | 仓主定：拖代理到别的项目时可选「之前的时间也算过去」或「只算以后的时间」 | v2.48（追加式）：`POST agents/{runId}/place` 追加可选 `timeFrom: "start"\|"now"`（缺省 start = 整条改挂，不变）；`now` 只许在跑的运行，已结束 `422`；活文档 `cuts`、事实 `data.segments`，投影按段分到各去向，总数不变。见「v0.6：代理只算以后的时间」节 |

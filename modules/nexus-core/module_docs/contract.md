@@ -4932,6 +4932,16 @@ MCP 侧见 `contracts/mcp.tools.v2`。
 - 存进设备文档的 `sourceHealth: {issues, at}`（`at` = 服务端收到的时刻，不收客户端时间）；`GET /detector/devices` 每台追加 `sourceHealth: {issues, at} | null`（从没报过 = `null`）。无新集合，导出 / 恢复不变。
 - 编码的含义与检测条件见 `modules/ai-detector/module_docs/contract.md`「信息源体检」；怎么修的文案在网页（`hive.stage.v1`「信息源体检」）。
 
+## v0.6：代理只算以后的时间（v2.48，追加式）
+
+- `POST agents/{runId}/place` 体追加可选 `timeFrom`：`"start"`（缺省）= v2.44 的整条运行改挂，行为不变；`"now"` = 运行在此刻之前的时间留在原去向（收件箱 / 没挂任务也算一个去向），此刻起的时间算新去向。其他值 `422`。`remember`、目标校验、回显同 v2.44。
+- `"now"` 只许正在跑的运行；已结束的运行（含刚好在这次调用里结束的）`422`，`detail` 为「「只算以后的时间」只能用于正在运行的代理；已结束的运行请选「之前的时间也算过去」」，什么都不写。`runId` 不变，之后的心跳 / 相位 / stop 照旧报给它。
+- 在跑的运行文档追加 `cuts: [{at, projectId, taskId?}]`（每条 = 那个去向算到 `at` 为止，按到达序）；目标没变的 `now` 不记切点；之后一次 `timeFrom:"start"` 的 place 清掉 `cuts`（整条改挂）。`agent.run.placed` 事件仍每次追加，`now` 的另带 `data.timeFrom: "now"`（只读记录，投影不看）。
+- 结束时事实 `agent.run.completed` 的 `data` 在有切点时追加 `segments: [{projectId, taskId?, startAt, endAt, durationSeconds, workingSeconds, days}]`：每段一个去向、首尾相接，最后一段 = 结束时的去向；没有切点（或只有一段有长度）不出现，`data` 与 v2.44 逐字节相同。`durationSeconds` / `workingSeconds` / `days` 等顶层字段仍是整条运行，`subject` = 最后去向，所以 `views/lanes`（一条运行一根条）仍显示当前去向。每段的干活秒数 / 按日切分各自取整，一次切分最多与整条差 1 秒。
+- 投影：`proj_agent_daily_stats` 按 `segments` 逐段写各自的 `(项目, 任务)` 行（同去向同日并成一行；`runs` 只记一次），所以 `views/agent-time` 的 `days` / `agents` / `tasks` 汇总总数不变、只是在切点处分开；`proj_lanes` 的运行行存 `segments`（去向与起止），`views/arrangements` 的 `spentThisRange.agentWorkingSeconds` 按段把干活秒数分给各任务（在跑的运行按 `cuts` 算）。重建与实时投影一致。
+- 已结束的带 `segments` 的运行再做 `timeFrom:"start"` 的 place（整条改挂）：每段的秒数都搬到新去向，`segments` 作废（事件里的 `run` 抄录带上 `segments`；重建时最后一条去向是这种整条改挂就丢弃 `segments`）。
+- 不新增端点 / 集合 / 错误码。
+
 ## 变更记录
 
 见 `module_docs/contract-changelog.md`（从本文件拆出，只记历史不含规范）。

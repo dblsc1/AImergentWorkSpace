@@ -76,6 +76,30 @@ def _merged(segs: list[tuple[datetime, datetime, str]]) -> list[tuple[datetime, 
     return [(a, b, ph) for a, b, ph in out]
 
 
+def _spans(run: dict, item: dict) -> list[tuple[datetime, datetime | None, str | None]]:
+    """v2.48：运行按去向分的时间段 ``[(起, 止|None=到现在, taskId)]``。已结束的看车道行的 ``segments``，
+    在跑的看活文档的 ``cuts``（每条 = 旧去向算到 at 为止）；没切过 = 整条一个去向。"""
+    if run.get("segments"):
+        return [(datetime.fromisoformat(s["startAt"]), datetime.fromisoformat(s["endAt"]), s.get("taskId")) for s in run["segments"]]
+    out, since = [], run["startTs"]
+    for cut in run.get("cuts") or []:
+        at = datetime.fromisoformat(cut["at"])
+        out.append((since, at, cut.get("taskId")))
+        since = at
+    return [*out, (since, None, item["taskId"])]
+
+
+def task_working(run: dict, start: datetime, end: datetime) -> dict[str, float]:
+    """这条运行在 [start, end) 里每个任务名下的干活秒数（只算挂在任务上的段）。"""
+    out: dict[str, float] = {}
+    for a, b, task in run["spans"]:
+        if task:
+            span = (a, b or datetime.max.replace(tzinfo=timezone.utc))
+            out[task] = out.get(task, 0.0) + sum(
+                seconds([c]) for x, y in working(run) if (w := clip(x, y, *span)) and (c := clip(*w, start, end)))
+    return out
+
+
 def load(start: datetime, end: datetime) -> tuple[datetime, list[dict], bool]:
     """与 [start, end) 有交集的运行 → ``(now, 条目, 是否因读取上限而不全)``。条目：
     ``{runId, agent, label, taskId, projectId, startAt, endAt|None, open, lost, segs（合并后的相位段，未钳）, attend（人在看，未钳）, replies}``。"""
@@ -99,6 +123,7 @@ def load(start: datetime, end: datetime) -> tuple[datetime, list[dict], bool]:
             "startAt": datetime.fromisoformat(item["startAt"]),
             "endAt": datetime.fromisoformat(item["endAt"]) if item["endAt"] else None,
             "open": bool(run.get("open")), "lost": item["lost"], "overdue": bool(item.get("overdue")),
+            "spans": _spans(run, item),
             "segs": _merged(segments(item, now)),
             "attend": _attends(run),
             "replies": sorted(datetime.fromisoformat(i["at"]) for i in run.get("interactions") or [] if i.get("kind") == "reply"),

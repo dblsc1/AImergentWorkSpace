@@ -73,10 +73,10 @@ def get_arrangements(range_: str, scope: str | None) -> dict:
     agent: dict[str, float] = {}
     live: dict[str, list[str]] = {}
     for run in runs:
+        for task, secs in cr.task_working(run, start, end).items():  # v2.48：只算以后的运行按段分到各任务
+            agent[task] = agent.get(task, 0.0) + secs
         if not run["taskId"]:
             continue
-        agent[run["taskId"]] = agent.get(run["taskId"], 0.0) + sum(
-            cr.seconds([c]) for a, b in cr.working(run) if (c := cr.clip(a, b, start, end)))
         if run["open"] and run["endAt"] is None and not run["lost"] and not run["overdue"]:
             live.setdefault(run["taskId"], []).append(run["runId"])
     mine = timer_service.get_running_state(user)
