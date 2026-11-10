@@ -659,6 +659,9 @@
   function renderRing(now) {
     var el = $("stRing"), hc = hiveCenter();
     place(el, hc);
+    // 蜂巢按屏幕缩小时中心计时器跟着缩（只缩不放：展开推镜时保持原大）
+    var cam = document.querySelector(".hive-cam"), m = cam && /scale\(([\d.]+)/.exec(cam.style.transform || ""), k = m ? Math.min(1, +m[1]) : 1;
+    el.style.transform = k < 1 ? "translate(-50%, -50%) scale(" + k.toFixed(3) + ")" : "";
     var lanes = data.lanes || {}, hit = St.pickRing(runsOf(), lanes.interactions, now, dayStart() || null);
     var run = hit && hit.agent !== undefined ? hit : null, sec = 0, name = "";
     if (run) {
