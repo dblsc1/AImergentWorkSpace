@@ -75,7 +75,20 @@ def _now() -> datetime:
 def get_running_state(user: str | None = None) -> dict | None:
     """views 的指定读路径（跨子边界只准调 service 公开函数）。"""
     user = user or current_tenant()  # v2.0：缺省取请求的租户
+    _close_if_due(user)
     return repo.get_running(user)
+
+
+def _deadline(state: dict | None) -> datetime | None:
+    d = state.get("deadlineAt") if state else None
+    return datetime.fromisoformat(d) if d else None
+
+
+def _close_if_due(user: str) -> None:
+    """v2.51 倒计时：过了 ``deadlineAt`` 的计时在任何一次读 / 停 / 开时按 ``deadlineAt`` 收尾，与普通 stop 同一条路。"""
+    dl = _deadline(repo.get_running(user))
+    if dl is not None and _now() >= dl:
+        stop(user)
 
 
 def _resolve_task_chain(task_id: str, *, action: str) -> tuple[dict, str, str]:
@@ -136,16 +149,18 @@ def stop(user: str | None = None) -> dict:
     """结束计时：组装 ``session.completed`` → 事件入口 → 清活状态。"""
     user = user or current_tenant()  # v2.0：缺省取请求的租户
     state = repo.get_running(user)
+    dl = _deadline(state)
+    end = dl if dl is not None and _now() >= dl else _now()  # v2.51：到点的倒计时止于 deadlineAt
     while state is not None and state.get("taskId") is None:  # v2.44：没记到项目的计时 → 白条，不进台账
         # 先抢到删除再存白条：并发的 place 刚把它记到项目时删不到，重读走有目标的正常流程
         if repo.clear_running_if(user, state["sessionId"], task_id=None):
             return {"running": False, "event": None,
-                    "unplacedId": unplaced_impl.save_bar(state, _now().isoformat(), user)}
+                    "unplacedId": unplaced_impl.save_bar(state, end.isoformat(), user)}
         state = repo.get_running(user)
     if state is None:
         return {"running": False, "event": None}  # S8：幂等，不报错
 
-    now = _now()
+    now = end
     started = datetime.fromisoformat(state["startAt"])
     duration = max(int((now - started).total_seconds()), 1)  # 秒级下限 1：起停同秒也算一段真实工作
 
@@ -186,16 +201,18 @@ def stop(user: str | None = None) -> dict:
     }
 
 
-def start_unplaced(request: Request) -> dict:
-    return unplaced_impl.start(_now, request)
+def start_unplaced(request: Request, countdown_seconds: int | None = None) -> dict:
+    _close_if_due(current_tenant())
+    return unplaced_impl.start(_now, request, countdown_seconds)
 
 
 def _timer_out(state: dict) -> dict:
     return {"running": True, "taskId": state["taskId"], "projectId": state["projectId"],
-            "startAt": state["startAt"], "mode": state.get("mode", DEFAULT_MODE)}
+            "startAt": state["startAt"], "mode": state.get("mode", DEFAULT_MODE), "deadlineAt": state.get("deadlineAt")}
 
 
 def place_running(task_id: str | None, project_id: str | None, request: Request) -> dict:
+    _close_if_due(current_tenant())
     return unplaced_impl.place_running(task_id, project_id, request, _resolve_task_chain, _timer_out)
 
 

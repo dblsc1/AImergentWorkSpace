@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from ...tenant import current as current_tenant
 from ..planner.errors import HasChildrenError, NotFoundError, UnprocessableError
@@ -27,15 +27,19 @@ def _duration(start_at: str, end_at: str) -> int:
     return max(int((datetime.fromisoformat(end_at) - datetime.fromisoformat(start_at)).total_seconds()), 1)
 
 
-def start(now: Callable[[], datetime], request) -> dict:
+def start(now: Callable[[], datetime], request, countdown_seconds: int | None = None) -> dict:
     check_human(request)
     user = current_tenant()
-    start_at = now().isoformat()
+    t0 = now()
+    start_at = t0.isoformat()
+    deadline = (t0 + timedelta(seconds=countdown_seconds)).isoformat() if countdown_seconds else None
     doc = {"user": user, "sessionId": f"sess_{uuid.uuid4().hex[:12]}", "taskId": None, "projectId": None,
            "zoneId": None, "startAt": start_at, "mode": backfill_impl.DEFAULT_MODE}
+    if deadline:
+        doc["deadlineAt"] = deadline
     if not repo.insert_running(doc):
         raise HasChildrenError("已经在计时：先停下或把它记到项目")
-    return {"running": True, "taskId": None, "projectId": None, "startAt": start_at, "mode": doc["mode"]}
+    return {"running": True, "taskId": None, "projectId": None, "startAt": start_at, "mode": doc["mode"], "deadlineAt": deadline}
 
 
 def save_bar(state: dict, end_at: str, user: str) -> str:

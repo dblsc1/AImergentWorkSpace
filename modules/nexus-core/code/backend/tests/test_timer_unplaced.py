@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -240,3 +240,30 @@ def test_restore_keeps_only_the_four_bar_keys(client):
     chk = client.post(url, json=snap, params={"dryRun": True}).json()["checksum"]
     assert client.post(url, json=snap, params={"dryRun": False, "checksum": chk}).status_code == 200
     assert "extra" not in _db()["timer_unplaced"].find_one({"id": "unp_k"})
+
+
+# ------------------------------------------------------------ v2.51 倒计时（countdownSeconds / deadlineAt）
+
+
+def test_countdown_range_and_deadline_echo(client):
+    for bad in (59, 86401, 1.5, "x"):
+        assert client.post(f"{TIMER}/start-unplaced", json={"countdownSeconds": bad}).status_code == 422
+    out = client.post(f"{TIMER}/start-unplaced", json={"countdownSeconds": 1500})
+    assert out.status_code == 200, out.text
+    b = out.json()
+    assert (datetime.fromisoformat(b["deadlineAt"]) - datetime.fromisoformat(b["startAt"])).total_seconds() == 1500
+    assert client.get(f"{API}/views/lanes").json()["human"]["running"]["deadlineAt"] == b["deadlineAt"]
+    assert client.post(f"{TIMER}/stop").json()["unplacedId"]  # 手动停照旧
+    assert client.post(f"{TIMER}/start-unplaced").json()["deadlineAt"] is None  # 正计时
+
+
+def test_countdown_past_deadline_closes_at_deadline_on_read(client):
+    assert client.post(f"{TIMER}/start-unplaced", json={"countdownSeconds": 60}).status_code == 200
+    start = _recent(10)
+    dl = (start + timedelta(minutes=5)).isoformat()
+    _db()["timer_state"].update_many({}, {"$set": {"startAt": start.isoformat(), "deadlineAt": dl}})
+    run = client.get(f"{API}/views/lanes").json()["human"]["running"]
+    assert run is None
+    bars = _bars(client)
+    assert len(bars) == 1 and bars[0]["endAt"] == dl and bars[0]["durationSeconds"] == 300
+    assert client.post(f"{TIMER}/stop").json() == {"running": False, "event": None}

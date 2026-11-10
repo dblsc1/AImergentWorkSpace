@@ -4957,6 +4957,14 @@ MCP 侧见 `contracts/mcp.tools.v2`。
 - 口径与 `views/project-time` 完全相同（同一段代码，只是不按项目过滤）：人 = 计时段 + 在计时的一段；代理 = working 相位区间，按 v2.48 去向切段；都裁到窗口且不晚于 `now`。
 - 既有端点、字段一个不改；不新增集合。
 
+## v0.6：倒计时（v2.51，追加式）
+
+- `POST /api/core/timer/start-unplaced` 追加**可选**体 `{"countdownSeconds": 60..86400}`（整数；体可整个不给，行为同 v2.44；越界 / 非整数 / 多余字段 `422`）。给了就在在跑文档上存 `deadlineAt = startAt + countdownSeconds`。
+- `TimerOut`（`timer/start-unplaced`、`timer/place` 的回应）与 `views/lanes` 的 `human.running` 追加 `deadlineAt: string | null`（倒计时的到点时刻；正计时 `null`）。
+- 到点自动收尾，**不靠页面开着**：任何一次读（`views/*` 里读在跑计时的端点）/ `timer/stop` / `timer/start-unplaced` / `timer/place` 发现 `now ≥ deadlineAt`，就**按 `deadlineAt`** 收尾，与一次普通 stop 同一条路——没记到项目 = 存一条白条（`endAt = deadlineAt`），已记到项目 = 写一条 `session.completed`（`time` 与时长都止于 `deadlineAt`）。之后在跑为空；到点后的 `timer/stop` 仍是幂等的 `running:false`。
+- 不新增端点 / 集合 / 错误码；`timer/start`（记到任务的开始）不带倒计时。
+- 桌宠提醒：桌宠由 ai-detector 每 10 秒读 `views/current` 推 PetEvent，`views/current` 里没有倒计时字段，本版不做；要做需 `views/current` 追加到点信号 + ai-detector 发 `dialog` PetEvent（`desktop.pet.v1`「一」已留类型）。
+
 ## 变更记录
 
 见 `module_docs/contract-changelog.md`（从本文件拆出，只记历史不含规范）。

@@ -1,0 +1,38 @@
+/* hive · 右上角时钟：短按菜单、长按气泡、倒计时、停靠左下（hive.stage.v1「九」） */
+.st-clock.has-issue::after { content: ""; position: absolute; right: 8px; top: 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--warn, #E08A00); }
+.st-clock { will-change: auto; }
+.st-clock-today.is-countdown { font-family: var(--font-mono, monospace); color: var(--pr-human); }
+
+/* 未分类窗口：时钟停到左下托盘右侧，窗口名在它右边 */
+#stageLayer #stClock.is-docked { right: auto; top: auto; left: 216px; bottom: 20px; }
+.st-clock-win { position: absolute; left: 486px; bottom: 34px; max-width: calc(100% - 520px); z-index: 20; padding: 6px 12px; border-radius: 999px;
+  background: var(--panel); border: 1px solid var(--line); color: var(--ink); font-size: var(--fs-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  opacity: 0; pointer-events: none; transition: opacity var(--t-med, 200ms); }
+.st-clock-win.show { opacity: 1; }
+
+/* 菜单面板 */
+.cm-panel { position: fixed; z-index: 70; width: 380px; max-height: min(70vh, 640px); overflow: auto; padding: 12px 14px 14px; box-sizing: border-box; }
+.cm-panel h3 { margin: 0 0 8px; font-size: 15px; }
+.cm-sec { padding: 6px 0 4px; }
+.cm-sec h4 { margin: 4px 0 6px; font-size: var(--fs-sub); color: var(--ink-3); font-weight: 600; }
+.cm-empty { color: var(--ink-3); font-size: var(--fs-sub); padding: 2px 0; }
+.cm-alloc { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 4px 0; }
+.cm-alloc b, .cm-win b { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cm-bar { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.cm-bar i { display: block; height: 100%; background: var(--pr-human); border-radius: 3px; }
+.cm-win { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; }
+.cm-win b { flex: 1; }
+.cm-dur { color: var(--ink-3); font-size: var(--fs-sub); flex: none; }
+.cm-at { font-family: var(--font-mono, monospace); color: var(--ink-3); font-size: var(--fs-sub); flex: none; }
+
+/* 长按气泡 */
+.cm-bubbles { position: fixed; z-index: 70; display: flex; flex-direction: column; gap: 8px; padding: 10px; width: 188px; box-sizing: border-box; }
+.cm-bubble { cursor: pointer; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2, var(--panel)); color: var(--ink); padding: 8px 16px; font: inherit; font-weight: 600; }
+.cm-bubble:hover, .cm-bubble:focus-visible { border-color: var(--pr-human); outline: none; }
+.cm-presets { display: flex; gap: 8px; }
+.cm-presets .cm-bubble { flex: 1; padding: 8px 4px; }
+.cm-custom { display: flex; gap: 8px; }
+.cm-custom input { flex: 1; min-width: 0; width: 60px; border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; background: var(--panel); color: var(--ink); font: inherit; }
+.cm-custom input.is-bad { border-color: var(--pr-human); }
+.cm-alert { position: fixed; z-index: 80; padding: 10px 16px; font-weight: 600; cursor: pointer; border-color: var(--pr-human); }
+@media (prefers-reduced-motion: reduce) { .st-clock-win { transition: none; } }

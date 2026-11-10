@@ -41,6 +41,7 @@ class Stage:
         self.blocks: list[dict[str, Any]] = []
         self.unplaced: list[dict[str, Any]] = []
         self.devices: list[dict[str, Any]] = []
+        self.records: list[dict[str, Any]] = []
         self.api: list[str] = []
         self.posts: list[tuple[str, Any]] = []
         self.replies: dict[str, tuple[int, Any]] = {}
@@ -78,6 +79,8 @@ class Stage:
             body = self.current
         elif key == "activity/blocks":
             body = {"date": self.lanes.get("today"), "items": self.blocks, "nextCursor": None}
+        elif key == "activity/blocks/records":
+            body = {"items": self.records, "truncated": False}
         elif key == "activity/settings":
             body = self.settings
         elif key == "timer/unplaced":
@@ -126,6 +129,15 @@ class Stage:
         """放手后等 drop 的请求回来（真时间）、再让页面画完。"""
         self.page.wait_for_timeout(250)
         self.page.clock.run_for(600)
+
+    def long_press(self, selector: str) -> None:
+        """按住不动满长按时长（假时钟推过去）再松手。"""
+        x, y = self.center(selector)
+        self.page.mouse.move(x, y)
+        self.page.mouse.down()
+        self.page.clock.run_for(700)
+        self.page.mouse.up()
+        self.page.clock.run_for(50)
 
     def toast(self) -> str:
         return self.page.locator("#stToast").inner_text()
@@ -446,8 +458,16 @@ def test_manual_timer_click_start_drag_to_cell_stop_then_drag_the_strip(browser,
         st.drag("#stClock", st.center(CELL.format("p_math")))
         st.settle()
         assert st.posts == []
-        # 点一下 = 立刻开始，不选项目
+        # 短按只开菜单，不开始计时
         st.page.click("#stClock")
+        st.settle()
+        assert st.posts == [] and st.page.locator(".cm-panel").is_visible()
+        st.page.keyboard.press("Escape")
+        assert st.page.locator(".cm-panel").count() == 0
+        # 长按 → 正计时气泡 → 立刻开始，不选项目
+        st.long_press("#stClock")
+        assert st.page.locator(".cm-bubble").all_inner_texts() == ["正计时", "倒计时"]
+        st.page.click(".cm-bubble >> text=正计时")
         st.settle()
         assert st.posts == [("timer/start-unplaced", None)]
         now = st.now().astimezone(TZ)
@@ -459,12 +479,14 @@ def test_manual_timer_click_start_drag_to_cell_stop_then_drag_the_strip(browser,
         st.drag("#stClock", st.center(CELL.format("p_piano")))
         st.settle()
         assert st.posts == [("timer/place", {"projectId": "p_piano"})]
-        # 再点 = 停；没记到项目的变白条
+        # 计时中长按 = 「停止」气泡；没记到项目的变白条
         st.posts.clear()
         st.replies["timer/stop"] = (200, {"unplacedId": "u1"})
         st.unplaced = [{"id": "u1", "startAt": _iso(now), "endAt": _iso(now + timedelta(minutes=12)), "durationSeconds": 720}]
         st.lanes["human"]["running"] = {"startAt": _iso(now), "taskId": None, "projectId": None}
-        st.page.click("#stClock")
+        st.long_press("#stClock")
+        assert st.page.locator(".cm-bubble").all_inner_texts() == ["停止"]
+        st.page.click(".cm-bubble")
         st.settle()
         assert st.posts == [("timer/stop", None)]
         st.lanes["human"]["running"] = None
@@ -660,7 +682,7 @@ def test_drag_the_bubble_while_timing_places_the_timer_like_the_clock(browser, b
         assert st.posts == [("timer/place", {"projectId": "p_piano"})]
 
 
-def test_click_the_bubble_on_the_clock_stops_the_timer(browser, base) -> None:  # noqa: F811  二·2
+def test_click_the_bubble_on_the_clock_opens_the_menu_not_stop(browser, base) -> None:  # noqa: F811  二·2（「九」起短按 = 菜单）
     with open_stage(browser, base, setup=_busy_day) as st:
         now = st.now().astimezone(TZ)
         st.lanes["human"]["running"] = {"startAt": _iso(now), "taskId": None, "projectId": None}
@@ -670,7 +692,7 @@ def test_click_the_bubble_on_the_clock_stops_the_timer(browser, base) -> None:  
         assert abs(bx - cx) < 3 and abs(by - cy) < 3        # 气泡压在表盘中心
         st.page.mouse.click(bx, by)
         st.settle()
-        assert st.posts == [("timer/stop", None)]
+        assert st.posts == [] and st.page.locator(".cm-panel").is_visible()
 
 
 def test_panel_keeps_focus_on_close_button_across_renders(browser, base) -> None:  # noqa: F811
@@ -1264,18 +1286,135 @@ def test_inbox_runs_are_treated_as_loose_everywhere(browser, base) -> None:  # n
         assert "还没归到项目" in text and "收件箱" not in text
 
 
-def test_source_health_hint_hidden_when_fine_and_lists_fixes_when_not(browser, base) -> None:  # noqa: F811  信息源体检
+def test_source_health_is_only_inside_the_clock_menu_with_a_dot_on_the_clock(browser, base) -> None:  # noqa: F811  信息源体检
     def broken(st: Stage) -> None:
         st.devices = [{"deviceId": "d1", "sourceHealth": {"issues": ["web_extension_missing", "window_wayland"], "at": "2026-11-08T10:00:00+00:00"}}]
-    for devices_setup, shown in ((lambda st: None, False), (lambda st: setattr(st, "devices", [{"deviceId": "d1", "sourceHealth": {"issues": [], "at": "2026-11-08T10:00:00+00:00"}}]), False), (broken, True)):
-        with open_stage(browser, base, setup=devices_setup) as st:
-            hint = st.page.locator("#stSrcHint")
-            assert hint.is_visible() is shown
+    for setup, shown in ((lambda st: None, False), (lambda st: setattr(st, "devices", [{"deviceId": "d1", "sourceHealth": {"issues": [], "at": "2026-11-08T10:00:00+00:00"}}]), False), (broken, True)):
+        with open_stage(browser, base, setup=setup) as st:
+            assert st.page.locator("#stSrcHint, #stSrcPop").count() == 0            # 页面上不再常驻提示
+            assert ("has-issue" in st.page.locator("#stClock").get_attribute("class")) is shown
+            assert "窗口信息不全" not in st.page.locator("#stageLayer").inner_text()
+            st.page.click("#stClock")
+            menu = st.page.locator(".cm-panel")
+            assert menu.is_visible()
+            assert ("窗口信息不全" in menu.inner_text()) is shown
             if shown:
-                assert hint.inner_text() == "窗口信息不全 · 2 项"
-                assert not st.page.locator("#stSrcPop").is_visible()
-                hint.click()
-                pop = st.page.locator("#stSrcPop")
-                assert pop.is_visible() and "awatcher" in pop.inner_text()
-                assert pop.locator("a[href*='addons.mozilla.org']").count() == 1
-                assert st.posts == []
+                assert "awatcher" in menu.inner_text()
+                assert menu.locator("a[href*='addons.mozilla.org']").count() == 1
+            assert st.posts == []
+
+
+# ── 右上角时钟（hive.stage.v1「九」）──
+
+
+def _focus(st: Stage, project: str | None, app: str = "firefox", title: str = "某文档", state: str = "present") -> None:
+    st.current = {"running": False, "focus": {"state": state, "app": app, "title": title, "since": _iso(st.now()), "projectId": project,
+                                              "projectName": None, "taskId": None, "taskName": None, "source": None}}
+
+
+def test_clock_short_press_menu_shows_allocation_windows_and_focus_timeline(browser, base) -> None:  # noqa: F811
+    def setup(st: Stage) -> None:
+        _busy_day(st)
+        now = st.now().astimezone(TZ)
+        st.blocks = [{"blockKey": "code · main.go", "apps": ["code"], "status": "assigned", "seconds": 1800, "seq": 1, "lastAt": _iso(now - timedelta(minutes=5))},
+                     {"blockKey": "chrome · 窗口名3", "apps": ["chrome"], "status": "pending", "seconds": 600, "seq": 1, "lastAt": _iso(now - timedelta(minutes=30))}]
+        st.records = [{"startAt": _iso(now - timedelta(minutes=40)), "endAt": _iso(now - timedelta(minutes=30)), "seconds": 600, "app": "chrome", "title": "窗口名3"},
+                      {"startAt": _iso(now - timedelta(minutes=25)), "endAt": _iso(now - timedelta(minutes=5)), "seconds": 1200, "app": "code", "title": "main.go"}]
+    with open_stage(browser, base, setup=setup) as st:
+        st.page.click("#stClock")
+        menu = st.page.locator(".cm-panel")
+        st.page.wait_for_function("() => document.querySelectorAll('.cm-panel .cm-win').length >= 4")
+        text = menu.inner_text()
+        assert "窗口记录 / 人用时汇总" in text and "数学" in text and "1 小时" in text           # 人用时（p_math 一小时）
+        assert "code · main.go" in text and "chrome · 标题已隐去" in text and "窗口名3" not in text
+        line = menu.locator(".cm-sec").nth(2).locator(".cm-win b").all_inner_texts()
+        assert line == ["code · main.go", "chrome · 标题已隐去"]                                    # 新的在前
+        assert menu.locator(".cm-bar i").count() >= 1
+        top = st.box(".cm-panel")
+        clock = st.box("#stClock")
+        assert top["y"] >= clock["y"] + clock["height"]                                          # 在时钟下方
+        st.page.mouse.click(300, 300)                                                           # 点外面收起
+        assert st.page.locator(".cm-panel").count() == 0
+        assert st.posts == []
+
+
+def test_clock_long_press_countdown_presets_custom_and_end_reminder(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, setup=_busy_day) as st:
+        st.long_press("#stClock")
+        st.page.click(".cm-bubble >> text=倒计时")
+        assert st.page.locator(".cm-presets .cm-bubble").all_inner_texts() == ["25 分", "45 分", "60 分"]
+        inp = st.page.locator(".cm-custom input")
+        inp.fill("0")
+        st.page.click(".cm-custom button")
+        assert "is-bad" in inp.get_attribute("class") and st.posts == []
+        inp.fill("7")
+        st.page.click(".cm-custom button")
+        st.settle()
+        assert st.posts == [("timer/start-unplaced", {"countdownSeconds": 420})]
+        # 服务端回读：在跑、带 deadlineAt → 时钟显示剩余
+        now = st.now().astimezone(TZ)
+        st.posts.clear()
+        st.lanes["human"]["running"] = {"startAt": _iso(now), "taskId": None, "projectId": None, "deadlineAt": _iso(now + timedelta(minutes=7))}
+        st.poll()
+        today = st.page.locator("#stClock .st-clock-today")
+        assert today.inner_text().startswith("06:") and "is-countdown" in today.get_attribute("class")
+        # 到点：页面提醒，并重读（服务端已记成白条）
+        st.page.clock.run_for(7 * 60 * 1000 - 3000)
+        st.lanes["human"]["running"] = None
+        st.unplaced = [{"id": "u1", "startAt": _iso(now), "endAt": _iso(now + timedelta(minutes=7)), "durationSeconds": 420}]
+        st.page.clock.run_for(4000)
+        assert st.page.locator("#cmAlert").inner_text() == "倒计时结束 · 7 分钟已记下"
+        st.poll()
+        assert "is-timing" not in st.page.locator("#stClock").get_attribute("class")
+        assert st.page.locator(".st-strip").count() == 1
+
+
+def test_clock_docks_bottom_left_on_unclassified_window_and_flies_back_with_one_tray_chip(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, setup=_busy_day) as st:
+        assert "is-docked" not in st.page.locator("#stClock").get_attribute("class")
+        chips = st.page.locator(".st-tray-chip").count()
+        _focus(st, None, "firefox", "某文档")
+        st.poll()
+        st.page.wait_for_timeout(700)
+        assert "is-docked" in st.page.locator("#stClock").get_attribute("class")
+        assert st.page.locator("#stClockWin").inner_text() == "firefox · 某文档"
+        clock, tray, win = st.box("#stClock"), st.box("#stBucketBtn"), st.box("#stClockWin")
+        assert clock["x"] >= tray["x"] + tray["width"] - 1 and clock["y"] > 600                  # 在托盘右边、左下
+        assert win["x"] >= clock["x"] + clock["width"] - 1                                         # 窗口名在时钟右侧
+        assert st.page.locator(".st-tray-chip").count() == chips
+        # 短按仍开菜单（菜单跑到时钟上面）、长按仍出气泡
+        st.page.click("#stClock")
+        assert st.box(".cm-panel")["y"] + st.box(".cm-panel")["height"] <= clock["y"]
+        st.page.keyboard.press("Escape")
+        st.long_press("#stClock")
+        assert st.page.locator(".cm-bubble").count() == 2
+        st.page.keyboard.press("Escape")
+        # 标题被隐去
+        _focus(st, None, "firefox", "窗口名3")
+        st.poll()
+        assert st.page.locator("#stClockWin").inner_text() == "firefox · 标题已隐去"
+        # 切到已分类窗口：飞回右上，托盘先掉一块（块还没读到）
+        _focus(st, "p_math")
+        st.poll()
+        st.page.wait_for_timeout(700)
+        assert "is-docked" not in st.page.locator("#stClock").get_attribute("class")
+        assert st.box("#stClock")["x"] > 1280 / 2 and st.box("#stClock")["y"] < 200
+        assert st.page.locator(".st-tray-chip").count() == chips + 1
+        assert st.page.locator(".st-tray-chip .st-drop").count() >= 1
+        # 真块到了：认领占位那一格，不出现第二块
+        st.blocks.append({"blockKey": "firefox · 某文档", "status": "pending", "seconds": 60, "seq": 1, "displayName": "firefox", "legible": True, "kind": "browser"})
+        st.poll()
+        st.page.wait_for_timeout(400)
+        assert st.page.locator(".st-tray-chip").count() == chips + 1
+
+
+def test_clock_does_not_dock_while_timer_runs_or_afk(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, setup=_busy_day) as st:
+        _focus(st, None, state="afk")
+        st.poll()
+        assert "is-docked" not in st.page.locator("#stClock").get_attribute("class")
+        now = st.now().astimezone(TZ)
+        st.lanes["human"]["running"] = {"startAt": _iso(now), "taskId": None, "projectId": None}
+        _focus(st, None)
+        st.poll()
+        assert "is-docked" not in st.page.locator("#stClock").get_attribute("class")

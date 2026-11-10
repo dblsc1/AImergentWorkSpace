@@ -423,6 +423,7 @@ class LaneRunning(_Strict):
     startAt: str
     taskId: str | None
     projectId: str | None
+    deadlineAt: str | None = None  # v2.51：倒计时到点时刻
 
 
 class LanePresence(_Strict):

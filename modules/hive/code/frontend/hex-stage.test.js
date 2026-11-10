@@ -137,6 +137,11 @@ function mkStage(replies) {
   k = mkStage([{ status: 200, body: {} }, { status: 200, body: {} }, { status: 200, body: { unplacedId: null } }]);
   await k.st.clickClock(); await k.st.drop({ kind: "clock" }, "p1"); await k.st.clickClock();
   assert.strictEqual(k.st.strips().items.length, 0);
+  // 倒计时：start-unplaced 带 countdownSeconds，计时状态带 deadlineAt；停仍走 timer/stop
+  k = mkStage([{ status: 200, body: {} }, { status: 200, body: { unplacedId: "u7" } }]);
+  await k.st.startClock(1500); assert.deepStrictEqual(k.sent[0].body, { countdownSeconds: 1500 });
+  assert.strictEqual(k.st.timerState().deadlineAt - k.st.timerState().startAt, 1500000);
+  await k.st.clickClock(); assert.strictEqual(k.sent[1].path, "timer/stop"); assert.strictEqual(k.st.timerRunning(), false);
   // 开始失败：状态不变，有提示
   k = mkStage([{ status: 409 }]); await k.st.clickClock(); assert.strictEqual(k.st.timerRunning(), false); assert.ok(k.st.notice());
   console.log("hex-stage tests ok");

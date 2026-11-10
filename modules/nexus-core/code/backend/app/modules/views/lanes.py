@@ -225,7 +225,7 @@ def get_lanes(day: str | None = None, date_from: str | None = None, date_to: str
         state = timer_service.get_running_state(user)
         if state is not None:
             running = {"startAt": state["startAt"], "taskId": state.get("taskId"),
-                       "projectId": state.get("projectId")}
+                       "projectId": state.get("projectId"), "deadlineAt": state.get("deadlineAt")}
         presence = [
             {**s, "from": _iso(s["from"]), "to": _iso(s["to"])}
             for s in activity_service.list_presence(user, now, start, end)
