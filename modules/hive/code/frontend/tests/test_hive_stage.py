@@ -692,6 +692,8 @@ TOUCH_PACK = {"kind": "claude", "name": "Claude", "license": "x", "credits": "x"
               "moods": {"working": ["w.webm"], "waiting": ["wait.webm"], "idle": ["i.webm"], "click": ["c1.webm", "c2.webm"],
                         "drag": ["d.webm"], "walk": ["k.webm", "k2.webm"]}}
 PET = ".st-pet.is-work"
+# 停着时按动作节奏可能正在 3 秒临时动作（click），所以 w 或 c1 / c2 都算对（二·11）
+STAY_CLIPS = ("w.webm", "c1.webm", "c2.webm")
 PET_ART = PET + " video.st-art"
 
 
@@ -737,7 +739,7 @@ def test_drag_a_cell_pet_away_it_waits_three_seconds_then_walks_home_without_wri
         st.page.mouse.up()
         st.page.clock.run_for(1500)
         away = st.box(PET + " .st-media")
-        assert abs(away["x"] + away["width"] / 2 - 900) < 30 and _src(st).endswith("/claude/w.webm")
+        assert abs(away["x"] + away["width"] / 2 - 900) < 30 and _src(st).split("/")[-1] in STAY_CLIPS
         st.page.clock.run_for(2500)      # 3 秒到了：换走路的片、开始动
         assert _src(st).endswith("/claude/k.webm")
         assert st.box(PET + " .st-media")["x"] < away["x"] - 5
@@ -749,7 +751,7 @@ def test_drag_a_cell_pet_away_it_waits_three_seconds_then_walks_home_without_wri
                 break
             st.page.wait_for_timeout(50)
         assert abs(back["x"] - home["x"]) < 3 and abs(back["y"] - home["y"]) < 3
-        assert _src(st).endswith("/claude/w.webm")
+        assert _src(st).split("/")[-1] in STAY_CLIPS
         assert st.posts == [] and not any("/place" in u for u in st.requests)
 
 
@@ -775,7 +777,7 @@ def test_grab_right_after_a_click_swaps_to_the_drag_clip_and_the_stay_shows_the_
         assert _src(st).endswith("/claude/d.webm")
         st.page.mouse.up()
         st.page.clock.run_for(1000)
-        assert _src(st).endswith("/claude/w.webm")
+        assert _src(st).split("/")[-1] in STAY_CLIPS
         assert not st.page.locator(PET).evaluate("e => e.classList.contains('st-walking')")
         st.page.clock.run_for(2500)
         assert _src(st).endswith("/claude/k.webm")      # 走路段固定取 walk[0]

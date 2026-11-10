@@ -89,6 +89,9 @@
 
     function project(pid) { return ((ctx.tree() || {}).projects || []).filter(function (p) { return p.id === pid; })[0] || null; }
     function colorOf(pid) {
+      // 蜂巢上实际显示的分区色（默认色的分区由页面自动配色，库里的 color 是灰的默认值）
+      var shown = ctx.cellColor && ctx.cellColor(pid);
+      if (shown) return shown;
       var p = project(pid), z = p && ((ctx.tree() || {}).zones || []).filter(function (x) { return x.id === p.zoneId; })[0];
       return (z && z.color) || "";
     }
