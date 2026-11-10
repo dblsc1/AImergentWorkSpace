@@ -84,6 +84,8 @@ class Stage:
             body = {"items": self.unplaced}
         elif key == "detector/devices":
             body = {"devices": self.devices, "now": _iso(self.now())}
+        elif key == "views/time-lanes":
+            body = getattr(self, "time_lanes", None) or {"today": "", "now": "", "windowStart": "", "windowEnd": "", "human": [], "agents": []}
         elif key == "views/agent-time":
             body = {"agents": [{"agent": "claude-code", "seconds": 7380, "runs": 3}]}
         elif key == "views/next-actions":
@@ -149,7 +151,7 @@ def open_stage(browser: Browser, base: str, *, width: int = 1280, height: int = 
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(base + "/index.html")
     page.wait_for_selector(CELL.format("p_math"))
-    page.wait_for_selector("#stRing .st-ring-time")
+    page.wait_for_selector("#stRing .st-tk")
     page.wait_for_timeout(200)
     page.clock.pause_at(st.now() + timedelta(seconds=1))
     if tiers:
@@ -181,8 +183,8 @@ def _busy_day(st: Stage) -> None:
 
 def test_layout_has_ring_clock_bucket_and_cells_only_name_the_project(browser, base) -> None:  # noqa: F811  HV-B01 / HV-S20
     with open_stage(browser, base, setup=_busy_day) as st:
-        assert st.page.locator("#stRing .st-ring-agent").inner_text() == "garden"
-        assert st.page.locator("#stRing .st-ring-time").inner_text().startswith("00:20:")
+        lines = json.loads(st.page.locator("#stRing").get_attribute("data-lines"))
+        assert any(x.startswith("garden\n00:20:") for x in lines)      # 人此刻在看的代理，是轮播里的一句
         assert "小时" in st.page.locator("#stClock .st-clock-today").inner_text()
         assert st.page.locator("#stBucketLabel").inner_text() == "未分类 · 今天 15 分"
         assert st.page.locator(CELL.format("p_math")).inner_text().strip() == "数学"
@@ -429,14 +431,13 @@ def test_bubble_follows_focus_between_cells_and_returns_to_the_clock_on_afk(brow
         assert st.page.locator("#stBubble").get_attribute("data-host") == "clock" and near("#stClock .st-dial")
 
 
-def test_ring_switches_to_the_run_the_human_attends(browser, base) -> None:  # noqa: F811  HV-B08
+def test_ring_ticker_line_follows_the_run_the_human_attends(browser, base) -> None:  # noqa: F811  HV-B08（环里轮播的一句）
     with open_stage(browser, base, setup=_busy_day) as st:
-        assert st.page.locator("#stRing").get_attribute("data-run-id") == "r1"
         now = st.now().astimezone(TZ)
         st.lanes["interactions"].append({"runId": "r2", "kind": "attend", "at": _iso(now), "until": _iso(now + timedelta(seconds=30))})
         st.poll()
-        assert st.page.locator("#stRing").get_attribute("data-run-id") == "r2"
-        assert st.page.locator("#stRing .st-ring-agent").inner_text() == "scratch"
+        lines = json.loads(st.page.locator("#stRing").get_attribute("data-lines"))
+        assert any(x.startswith("scratch\n") for x in lines) and not any(x.startswith("garden\n") for x in lines)
 
 
 def test_manual_timer_click_start_drag_to_cell_stop_then_drag_the_strip(browser, base) -> None:  # noqa: F811  HV-B09

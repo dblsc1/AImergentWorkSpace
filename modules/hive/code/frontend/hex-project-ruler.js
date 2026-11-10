@@ -24,6 +24,12 @@
     }
     return { from: days[0].start, to: days[PAST_DAYS].end, days: days };
   }
+  // 等宽刻度（单日 / 一周的统计页）：从 startMs 所在本地日起 n 天，每天 w = 1/n；形状同 layout，xOf / spanRect 通用
+  function linearScale(startMs, n) {
+    var days = [];
+    for (var i = 0; i < n; i++) days.push({ start: midnight(startMs, i), end: midnight(startMs, i + 1), today: false, x0: i / n, w: 1 / n });
+    return { from: days[0].start, to: days[n - 1].end, days: days };
+  }
   // 时间戳 → 0..1（窗口外钳到两头）。天与天的交界处连续，所以跨零点的段仍是一条
   function xOf(L, t) {
     t = Math.min(Math.max(t, L.from), L.to);
@@ -208,7 +214,7 @@
              dragOver: dragOver, dragEnd: dragEnd, dropAt: dropAt, overPanel: overPanel, awaitName: awaitName };
   }
 
-  var api = { layout: layout, xOf: xOf, spanRect: spanRect, rulerHtml: rulerHtml, lanesHtml: lanesHtml, createPanel: createPanel,
+  var api = { layout: layout, linearScale: linearScale, xOf: xOf, spanRect: spanRect, rulerHtml: rulerHtml, lanesHtml: lanesHtml, createPanel: createPanel,
               PAST_SHARE: PAST_SHARE, TODAY_SHARE: TODAY_SHARE };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.NexusTableHexProjectRuler = api;

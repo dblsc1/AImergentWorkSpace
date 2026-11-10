@@ -16,7 +16,7 @@ from ..timer import service as timer_service
 from ..timer.agent_working import working_intervals
 from . import lanes as lanes_view
 from .queries import _today
-from .schemas import ProjectTimeOut
+from .schemas import ProjectTimeOut, TimeLanesOut
 
 MAX_ROWS = 5000
 
@@ -39,29 +39,33 @@ def _pieces(run: dict, stop: datetime) -> list[tuple[datetime, datetime, str | N
     return [*out, (since, max(stop, since), run.get("projectId"), run.get("taskId"))]
 
 
-def get_project_time(project_id: str, date_from: str | None, date_to: str | None) -> ProjectTimeOut:
+def collect(project_id: str | None, date_from: str | None, date_to: str | None):
+    """人 / 代理的区间平铺（project-time 与 time-lanes 共用）。``project_id`` 给了只留该项目，``None`` = 全部（含没去向的）。
+    返回 ``(now, start, end, humans, agents)``：humans = ``[(项目, 任务, 起, 止)]``，
+    agents = ``[(项目, 任务, 名字, 代理键, runId, 起, 止)]``，都已裁到窗口且不晚于此刻。"""
     user = current_tenant()
     first, last, start, end = lanes_view._span(None, date_from, date_to)
     if first > last:
         raise UnprocessableError("from 晚于 to")
     now, open_runs = timer_service.list_lane_runs(user)
     names = timer_service.agent_name_rules(user)
-    rows: dict[str | None, dict] = {}
+    humans: list[tuple] = []
+    agents: list[tuple] = []
 
-    def row(task_id: str | None) -> dict:
-        return rows.setdefault(task_id, {"taskId": task_id, "human": [], "agent": []})
+    def want(pid: str | None) -> bool:
+        return project_id is None or pid == project_id
 
     def clip(a: datetime, b: datetime) -> tuple[datetime, datetime] | None:
         a, b = max(a, start), min(b, end, now)
         return (a, b) if b > a else None
 
     for s in lanes_projection.read_lanes(user, "session", start, end, MAX_ROWS):
-        if s.get("projectId") == project_id and (c := clip(s["startAt"], s["endAt"])):
-            row(s.get("taskId"))["human"].append({"start": _iso(c[0]), "end": _iso(c[1])})
+        if want(s.get("projectId")) and (c := clip(s["startAt"], s["endAt"])):
+            humans.append((s.get("projectId"), s.get("taskId"), *c))
     state = timer_service.get_running_state(user)
-    if state and state.get("projectId") == project_id:
+    if state and want(state.get("projectId")):
         if c := clip(datetime.fromisoformat(state["startAt"]), now):
-            row(state.get("taskId"))["human"].append({"start": _iso(c[0]), "end": _iso(c[1])})
+            humans.append((state.get("projectId"), state.get("taskId"), *c))
 
     runs = [{**r, "startTs": r["startAt"], "endTs": r["endAt"]} for r in lanes_projection.read_lanes(user, "run", start, end, MAX_ROWS)]
     seen = {r["runId"] for r in runs}
@@ -72,15 +76,41 @@ def get_project_time(project_id: str, date_from: str | None, date_to: str | None
         name = names.get(r.get("agent")) or r.get("label") or r.get("agent")
         work = working_intervals(r.get("phases"), r["startTs"], stop)
         for p_from, p_to, p_project, p_task in _pieces(r, stop):
-            if p_project != project_id:
+            if not want(p_project):
                 continue
             for a, b in work:
                 if (c := clip(max(a, p_from), min(b, p_to))):
-                    row(p_task)["agent"].append({"start": _iso(c[0]), "end": _iso(c[1]), "agent": name, "runId": r["runId"]})
+                    agents.append((p_project, p_task, name, r.get("agent"), r["runId"], *c))
+    return now, start, end, humans, agents
 
+
+def get_project_time(project_id: str, date_from: str | None, date_to: str | None) -> ProjectTimeOut:
+    now, start, end, humans, agents = collect(project_id, date_from, date_to)
+    rows: dict[str | None, dict] = {}
+
+    def row(task_id: str | None) -> dict:
+        return rows.setdefault(task_id, {"taskId": task_id, "human": [], "agent": []})
+
+    for _p, task, a, b in humans:
+        row(task)["human"].append({"start": _iso(a), "end": _iso(b)})
+    for _p, task, name, _key, run_id, a, b in agents:
+        row(task)["agent"].append({"start": _iso(a), "end": _iso(b), "agent": name, "runId": run_id})
     tasks = sorted(rows.values(), key=lambda t: (t["taskId"] is not None, t["taskId"] or ""))
     for t in tasks:
         t["human"].sort(key=lambda i: i["start"])
         t["agent"].sort(key=lambda i: i["start"])
     return ProjectTimeOut(today=_today(), now=_iso(now), windowStart=_iso(start), windowEnd=_iso(end),
                           projectId=project_id, tasks=tasks)
+
+
+def get_time_lanes(date_from: str | None, date_to: str | None) -> TimeLanesOut:
+    """``GET /api/core/views/time-lanes``（v2.50）：全部项目的人 / 代理区间，代理一条运行一道泳道。"""
+    now, start, end, humans, agents = collect(None, date_from, date_to)
+    runs: dict[str, dict] = {}
+    for pid, task, name, key, run_id, a, b in sorted(agents, key=lambda x: x[5]):
+        run = runs.setdefault(run_id, {"agent": key, "name": name, "runId": run_id, "segments": []})
+        run["segments"].append({"start": _iso(a), "end": _iso(b), "projectId": pid, "taskId": task})
+    return TimeLanesOut(today=_today(), now=_iso(now), windowStart=_iso(start), windowEnd=_iso(end),
+                        human=[{"start": _iso(a), "end": _iso(b), "projectId": pid, "taskId": task}
+                               for pid, task, a, b in sorted(humans, key=lambda x: x[2])],
+                        agents=sorted(runs.values(), key=lambda r: r["segments"][0]["start"]))

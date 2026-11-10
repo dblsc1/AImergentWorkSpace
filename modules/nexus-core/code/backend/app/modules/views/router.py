@@ -11,7 +11,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 
 from . import agent_time, arrangements, collab_history, lanes, next_actions, project_time, queries, review
-from .schemas import AgentTimeOut, CurrentOut, GanttOut, LanesOut, NextActionsOut, ProjectTimeOut, ReviewOut, TreeOut
+from .schemas import AgentTimeOut, CurrentOut, GanttOut, LanesOut, NextActionsOut, ProjectTimeOut, ReviewOut, TimeLanesOut, TreeOut
 
 _DATE = r"^\d{4}-\d{2}-\d{2}$"
 
@@ -87,6 +87,15 @@ def read_project_time(
 ) -> ProjectTimeOut:
     """v2.48 项目时间区间读端（人 + 代理，按任务）。**不写**。"""
     return project_time.get_project_time(project_id, from_, to)
+
+
+@router.get("/time-lanes", response_model=TimeLanesOut)
+def read_time_lanes(
+    from_: Annotated[str | None, Query(alias="from", pattern=_DATE, description="起始日期（含）")] = None,
+    to: Annotated[str | None, Query(pattern=_DATE, description="结束日期（含）；跨度至多 7 天")] = None,
+) -> TimeLanesOut:
+    """v2.50 全项目人 / 代理时间区间读端（蜂巢中心统计页）。**不写**。"""
+    return project_time.get_time_lanes(from_, to)
 
 
 @router.get("/history")
