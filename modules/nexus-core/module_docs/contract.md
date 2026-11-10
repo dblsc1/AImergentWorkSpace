@@ -4942,6 +4942,14 @@ MCP 侧见 `contracts/mcp.tools.v2`。
 - 已结束的带 `segments` 的运行再做 `timeFrom:"start"` 的 place（整条改挂）：每段的秒数都搬到新去向，`segments` 作废（事件里的 `run` 抄录带上 `segments`；重建时最后一条去向是这种整条改挂就丢弃 `segments`）。
 - 不新增端点 / 集合 / 错误码。
 
+## v0.6：项目时间区间读端（v2.49，追加式）
+
+- `GET /api/core/views/project-time?projectId=<项目 id>&from=YYYY-MM-DD&to=YYYY-MM-DD`，只读、不写、按租户隔离。`projectId` 必给；`from` / `to` 同 `views/lanes`（含两头、本地日、缺一头 = 就那一天、都缺 = 今天、`from` 晚于 `to` 或跨度超 7 天 → 422）。
+- 回 `{today, now, windowStart, windowEnd, projectId, tasks: [{taskId: 字符串|null, human: [{start, end}], agent: [{start, end, agent, runId}]}]}`；`taskId: null` = 挂在项目上、没挂任务；只列有区间的任务，`null` 在前、其余按 id 升序；各数组按 `start` 升序；时刻为 `NEXUS_TZ` 偏移的 ISO。
+- **区间，不是合计**，并裁到窗口且不晚于 `now`：人 = `proj_lanes` 里该项目的计时段（`session`），加正在计时的这一段（`startAt` → `now`）；代理 = 该项目下运行（含在跑的）的 **working 相位区间**，口径与 `timer/agent_working.working_intervals` 一致（`agent-time` 的干活口径：第一条相位前算干活，到下一条非 working 相位止；在跑的运行算到 起点 + `elapsedSeconds`，失联的止于最后一次信号，超上限的封顶在上限）。**只算以后（v2.48）**：一条运行按去向切段后，每段的区间只出现在那段的项目 / 任务名下——已结束的看事实 / 车道行的 `segments`，在跑的看 `cuts`（切点前算旧去向、之后算现去向）。并行的多条运行各出各的区间，不合并。
+- `agent` = 人起的名字（`PUT agents/{runId}/name`），否则运行 `label`，再否则代理键。藏起来的代理也列（这里是账，不是泳道显示）。
+- 既有端点、字段一个不改；不新增集合。
+
 ## 变更记录
 
 见 `module_docs/contract-changelog.md`（从本文件拆出，只记历史不含规范）。

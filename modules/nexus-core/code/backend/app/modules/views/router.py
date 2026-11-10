@@ -10,8 +10,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query
 
-from . import agent_time, arrangements, collab_history, lanes, next_actions, queries, review
-from .schemas import AgentTimeOut, CurrentOut, GanttOut, LanesOut, NextActionsOut, ReviewOut, TreeOut
+from . import agent_time, arrangements, collab_history, lanes, next_actions, project_time, queries, review
+from .schemas import AgentTimeOut, CurrentOut, GanttOut, LanesOut, NextActionsOut, ProjectTimeOut, ReviewOut, TreeOut
 
 _DATE = r"^\d{4}-\d{2}-\d{2}$"
 
@@ -77,6 +77,16 @@ def read_lanes(
 ) -> LanesOut:
     """v2.4 时间线读端。**不写**。互斥 / 跨度超 7 天 → 422（UnprocessableError，映射在 main.py）。"""
     return lanes.get_lanes(date, from_, to)
+
+
+@router.get("/project-time", response_model=ProjectTimeOut)
+def read_project_time(
+    project_id: Annotated[str, Query(alias="projectId", min_length=1, description="项目 id")],
+    from_: Annotated[str | None, Query(alias="from", pattern=_DATE, description="起始日期（含）")] = None,
+    to: Annotated[str | None, Query(pattern=_DATE, description="结束日期（含）；跨度至多 7 天")] = None,
+) -> ProjectTimeOut:
+    """v2.48 项目时间区间读端（人 + 代理，按任务）。**不写**。"""
+    return project_time.get_project_time(project_id, from_, to)
 
 
 @router.get("/history")

@@ -71,6 +71,11 @@ assert.strictEqual(S.petTitle({ label: null, agent: "codex" }, null), "codex");
 assert.deepStrictEqual(S.dropRequest({ kind: "strip", id: "u1" }, "p1"), { method: "POST", path: "timer/unplaced/u1/place", body: { projectId: "p1" } });
 assert.deepStrictEqual(S.dropRequest({ kind: "clock" }, "p1"), { method: "POST", path: "timer/place", body: { projectId: "p1" } });
 assert.strictEqual(S.dropRequest({ kind: "pet", runId: "r" }, null), null);
+// 拖到任务条：只给 taskId（nexus-core 要求 taskId / projectId 恰好一个）
+assert.deepStrictEqual(S.dropRequest({ kind: "pet", runId: "run_1" }, "p1", false, null, "t1").body, { taskId: "t1", remember: false });
+assert.deepStrictEqual(S.dropRequest({ kind: "strip", id: "u1" }, "p1", false, null, "t1").body, { taskId: "t1" });
+assert.deepStrictEqual(S.dropRequest({ kind: "clock" }, "p1", false, null, "t1").body, { taskId: "t1" });
+assert.deepStrictEqual(S.dropRequest({ kind: "block", block: { date: "2026-11-07", blockKey: "k", seq: 3 } }, "p1", false, null, "t1").body, { date: "2026-11-07", blockKey: "k", ifSeq: 3, taskId: "t1", remember: false });
 
 function mkStage(replies) {
   const sent = []; let t = 1000;

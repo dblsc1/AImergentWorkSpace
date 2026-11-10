@@ -567,3 +567,33 @@ class LanesOut(_Strict):
     hiddenWaiting: int = 0  #: v2.22：藏起来的在跑运行里正等你的个数（页面只给一个很小的提示）
     dropped: list[LaneDropped] = []  #: v2.23：封顶折叠掉的较早运行的汇总（藏起来的身份不列）
     stalePinned: list[LaneStalePinned] = []  #: v2.22：置顶着但没有在跑的运行对得上的身份（改名后留下的），可移除
+
+
+# -------------------------------------------------------- ProjectTimeOut（v2.48）
+
+
+class TimeSpan(_Strict):
+    start: str
+    end: str
+
+
+class AgentTimeSpan(TimeSpan):
+    agent: str | None
+    runId: str
+
+
+class ProjectTimeTask(_Strict):
+    taskId: str | None  #: null = 挂在项目上、没挂任务
+    human: list[TimeSpan]
+    agent: list[AgentTimeSpan]
+
+
+class ProjectTimeOut(_Strict):
+    """``GET /api/core/views/project-time``（契约 v2.48）：区间，不是合计。"""
+
+    today: str
+    now: str
+    windowStart: str
+    windowEnd: str
+    projectId: str
+    tasks: list[ProjectTimeTask]

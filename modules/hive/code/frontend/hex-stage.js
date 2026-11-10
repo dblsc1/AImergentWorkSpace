@@ -60,15 +60,17 @@
     return { items: sorted.slice(0, MAX_STRIPS), plus: Math.max(0, sorted.length - MAX_STRIPS) };
   }
 
+  // 记到任务 = 只给 taskId，否则只给 projectId（nexus-core 要求恰好一个）
+  function aim(projectId, taskId) { return taskId ? { taskId: taskId } : { projectId: projectId }; }
   // 拖放要发的请求；放到空白处（projectId 为空）= null，什么都不发。块与宠物默认 remember:false（只这一次），气泡里勾上才传 true（2026-11-08）
-  function dropRequest(item, projectId, remember, timeFrom) {
+  function dropRequest(item, projectId, remember, timeFrom, taskId) {
     if (!projectId) return null;
     var enc = encodeURIComponent;
     switch (item.kind) {
-      case "block": return { method: "POST", path: "activity/blocks/assign", body: { date: item.block.date, blockKey: item.block.blockKey, ifSeq: item.block.seq, projectId: projectId, remember: !!remember } };
-      case "pet": return { method: "POST", path: "agents/" + enc(item.runId) + "/place", body: timeFrom === "now" ? { projectId: projectId, remember: !!remember, timeFrom: "now" } : { projectId: projectId, remember: !!remember } };
-      case "strip": return { method: "POST", path: "timer/unplaced/" + enc(item.id) + "/place", body: { projectId: projectId } };
-      case "clock": return { method: "POST", path: "timer/place", body: { projectId: projectId } };
+      case "block": return { method: "POST", path: "activity/blocks/assign", body: Object.assign({ date: item.block.date, blockKey: item.block.blockKey, ifSeq: item.block.seq, remember: !!remember }, aim(projectId, taskId)) };
+      case "pet": return { method: "POST", path: "agents/" + enc(item.runId) + "/place", body: Object.assign({ remember: !!remember }, aim(projectId, taskId), timeFrom === "now" ? { timeFrom: "now" } : {}) };
+      case "strip": return { method: "POST", path: "timer/unplaced/" + enc(item.id) + "/place", body: aim(projectId, taskId) };
+      case "clock": return { method: "POST", path: "timer/place", body: aim(projectId, taskId) };
     }
     return null;
   }
@@ -96,8 +98,8 @@
     }
     function fail(out) { say("失败：" + out.why); return { ok: false, reverted: true, why: out.why }; }
 
-    async function drop(item, projectId, opts) {
-      var req = dropRequest(item, projectId, opts && opts.remember, opts && opts.timeFrom);
+    async function drop(item, projectId, opts) {   // opts: {remember, timeFrom, taskId}
+      var req = dropRequest(item, projectId, opts && opts.remember, opts && opts.timeFrom, opts && opts.taskId);
       if (!req) return { ok: false, reverted: true };
       if (item.kind === "clock" && !timer) return { ok: false, reverted: true };
       var out = await call(req);
