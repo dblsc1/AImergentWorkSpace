@@ -38,6 +38,7 @@ from ..planner import service as planner_service
 from ..planner.errors import InvalidInputError, NotFoundError
 from . import repo
 from .agent_liveness import AGENT_HEARTBEAT_SECONDS, mark_expired
+from .agent_segments import segments_of
 from .agent_working import working_days
 
 SOURCE = "agent-hook"
@@ -105,6 +106,8 @@ def snapshot_data(snap: dict) -> tuple[dict, datetime]:
         data["unverified"] = True
     if snap.get("anonymousOpened"):  # v2.43：内部标记，结束后匿名调用方认「自己的」运行靠它
         data["anonymousOpened"] = True
+    if snap.get("cuts") and (segments := segments_of(snap, started, ended, config.settings.tz)):  # v2.48
+        data["segments"] = segments
     phases = [p for p in snap.get("phases") or [] if ts(p["at"]) <= ended]
     if phases:
         data["phases"] = phases

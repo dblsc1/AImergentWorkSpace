@@ -57,6 +57,18 @@ def _clean_interactions(raw) -> list[dict]:
     return out
 
 
+def _clean_segments(raw) -> list[dict]:
+    """v2.48 ``segments``（只算以后）：每段一个去向与起止；有一段不合格就整份丢（按整条运行当一个去向）。"""
+    out = []
+    for item in raw if isinstance(raw, list) else []:
+        if not (isinstance(item, dict) and isinstance(item.get("projectId"), str) and item["projectId"]
+                and _moment(item.get("startAt")) and _moment(item.get("endAt"))):
+            return []
+        out.append({"projectId": item["projectId"], "taskId": item["taskId"] if isinstance(item.get("taskId"), str) else None,
+                    "startAt": item["startAt"], "endAt": item["endAt"]})
+    return out
+
+
 def handle(envelope: dict) -> None:
     subject = envelope.get("subject") or {}
     data = envelope.get("data") or {}
@@ -93,6 +105,7 @@ def handle(envelope: dict) -> None:
             beatCount=data["beatCount"] if type(data.get("beatCount")) is int else None,
             phases=_clean_phases(data.get("phases")),
             interactions=_clean_interactions(data.get("interactions")),
+            **({"segments": segments} if (segments := _clean_segments(data.get("segments"))) else {}),
             **({"unverified": True} if data.get("unverified") is True else {}),  # v2.19：匿名开的运行
         )
     repo.apply_lane(doc)

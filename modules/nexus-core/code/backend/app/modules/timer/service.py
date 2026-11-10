@@ -291,8 +291,9 @@ def anonymous_run_guard(request: Request) -> None:
         agents_impl.require_anonymous_opened(current_tenant(), run_id, c.same_host)
 
 
-def agent_place(run_id: str, task_id: str | None, project_id: str | None, remember: bool) -> dict:
-    return place_impl.place(run_id, task_id, project_id, remember, current_tenant(), resolve_chain=_resolve_task_chain, now=_now)
+def agent_place(run_id: str, task_id: str | None, project_id: str | None, remember: bool, time_from: str = "start") -> dict:
+    return place_impl.place(run_id, task_id, project_id, remember, current_tenant(), time_from=time_from,
+                            resolve_chain=_resolve_task_chain, now=_now)
 
 
 def agent_place_rules() -> list[dict]:

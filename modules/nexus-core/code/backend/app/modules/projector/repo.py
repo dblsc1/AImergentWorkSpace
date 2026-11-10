@@ -369,7 +369,7 @@ def read_lanes(user: str, kind: str, start, end, limit: int, *, fields: tuple | 
 
 def place_lane(user: str, key: str, task_id: str | None, project_id: str | None) -> None:
     """v2.44 place：换这条运行的去向（只动已有的 run 行）。"""
-    _lanes_col().update_one({"user": user, "key": key, "kind": "run"}, {"$set": {"taskId": task_id, "projectId": project_id}})
+    _lanes_col().update_one({"user": user, "key": key, "kind": "run"}, {"$set": {"taskId": task_id, "projectId": project_id}, "$unset": {"segments": ""}})  # v2.48：整条改挂，分段作废
 
 
 def delete_lane(user: str, key: str) -> None:

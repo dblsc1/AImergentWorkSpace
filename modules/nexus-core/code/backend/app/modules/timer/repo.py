@@ -204,10 +204,13 @@ def delete_agent_run(user: str, run_id: str) -> None:
     _agent_col().delete_one({"user": user, "runId": run_id})
 
 
-def set_open_run_subject(user: str, run_id: str, task_id: str | None, project_id: str, zone_id: str) -> bool:
-    """v2.44 place：还在跑（未打关闭标记）的运行改挂。False = 已不在跑。"""
-    res = _agent_col().update_one({"user": user, "runId": run_id, "closing": {"$exists": False}},
-                                  {"$set": {"taskId": task_id, "projectId": project_id, "zoneId": zone_id}})
+def set_open_run_subject(user: str, run_id: str, task_id: str | None, project_id: str, zone_id: str,
+                         cut: dict | None = None) -> bool:
+    """v2.44 place：还在跑（未打关闭标记）的运行改挂。False = 已不在跑。
+    v2.48：``cut`` 给了 = 「只算以后」，旧去向记一条切点；没给 = 整条改挂，清掉已有切点。"""
+    update = {"$set": {"taskId": task_id, "projectId": project_id, "zoneId": zone_id},
+              **({"$push": {"cuts": cut}} if cut else {"$unset": {"cuts": ""}})}
+    res = _agent_col().update_one({"user": user, "runId": run_id, "closing": {"$exists": False}}, update)
     return res.matched_count == 1
 
 
