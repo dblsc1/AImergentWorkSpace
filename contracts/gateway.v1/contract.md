@@ -286,3 +286,5 @@ auth.gate v1.4 让设备令牌带范围（`report` / `read` / `write`），并�
   定时经 MCP 的对内地址去取（`agent.chat.v1` 第十节、`mcp.tools.v1` v1.9），走的是既有的 agent → mcp → nexus-core 这一条，
   带的仍是租户头、不带用户凭据。没有新路由、新变量、新网络。
 - **2026-10-14 · 聊天后端可选，`AGENT_UPSTREAM` 缺省改为空（追加，v0.4）**：第二节表里 `AGENT_UPSTREAM` 的契约含义不变，只是开源版三份组装（手写、发布版、生成）的缺省值从 `agent:8030` 改为空；空值时 `api/agent/` 的 location 把上游改指必连不上的回环地址 `127.0.0.1:1`（用 `if` + `set`，改写阶段，在 `auth_request` 之前只改变量、不 `return`，所以未登录照旧 302），已登录回 502，全程不查 DNS。接口、路径、清头、缓冲、超时一字未改。
+- **2026-11-10 · 前端不再被浏览器启发式缓存（追加，v0.6）**：`inject.inc` 追加 `add_header Cache-Control "no-cache"`，
+  include 了它的前端 location（蜂巢、待批准、自动记录、计时）里所有文件都按 ETag 先确认再用。接口、路径不变。

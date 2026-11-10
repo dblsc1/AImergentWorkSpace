@@ -16,3 +16,7 @@ gzip off;
 sub_filter_once on;
 sub_filter '</head>' '<script>window.HONEYCOMB_BASE="$honeycomb_base";window.HONEYCOMB_NAV=$honeycomb_nav;</script><script>(function(){try{var d=document.documentElement,t=localStorage.getItem("cockpit-theme")||"auto";if(t==="auto")t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";d.setAttribute("data-theme",t);var a=localStorage.getItem("cockpit-accent");if(a)d.setAttribute("data-accent",a)}catch(e){}})();</script></head>';
 sub_filter '</body>' '<link rel="stylesheet" href="${honeycomb_base}__cockpit/tokens.css"><link rel="stylesheet" href="${honeycomb_base}__cockpit/navbar.css"><script src="${honeycomb_base}__cockpit/focus.js" defer></script><script src="${honeycomb_base}__cockpit/navbar.js" defer></script></body>';
+
+# 前端页面与它的 js / css 一律先问服务器有没有新版（带 ETag，没变回 304）。不加这行时浏览器按启发式缓存，
+# 升级后好一阵还在用旧文件（2026-11-10 仓主实测「改了看不到区别」）。
+add_header Cache-Control "no-cache";
