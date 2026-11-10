@@ -597,3 +597,26 @@ class ProjectTimeOut(_Strict):
     windowEnd: str
     projectId: str
     tasks: list[ProjectTimeTask]
+
+
+class TimeLanesSegment(TimeSpan):
+    projectId: str | None
+    taskId: str | None
+
+
+class TimeLanesAgent(_Strict):
+    agent: str | None
+    name: str | None
+    runId: str
+    segments: list[TimeLanesSegment]
+
+
+class TimeLanesOut(_Strict):
+    """``GET /api/core/views/time-lanes``（契约 v2.50）：全部项目的人 / 代理区间。"""
+
+    today: str
+    now: str
+    windowStart: str
+    windowEnd: str
+    human: list[TimeLanesSegment]
+    agents: list[TimeLanesAgent]

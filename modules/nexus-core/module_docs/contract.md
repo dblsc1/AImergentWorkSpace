@@ -4950,6 +4950,13 @@ MCP 侧见 `contracts/mcp.tools.v2`。
 - `agent` = 人起的名字（`PUT agents/{runId}/name`），否则运行 `label`，再否则代理键。藏起来的代理也列（这里是账，不是泳道显示）。
 - 既有端点、字段一个不改；不新增集合。
 
+## v0.6：全项目时间泳道读端（v2.50，追加式）
+
+- `GET /api/core/views/time-lanes?from=YYYY-MM-DD&to=YYYY-MM-DD`，只读、不写、按租户隔离；`from` / `to` 规则同 `views/project-time`（缺省今天、跨度至多 7 天，否则 422）。
+- 回 `{today, now, windowStart, windowEnd, human: [{start, end, projectId, taskId}], agents: [{agent, name, runId, segments: [{start, end, projectId, taskId}]}]}`；`projectId` / `taskId` 可为 `null`（没去向 / 没挂任务）。`human` 与各 `segments` 按 `start` 升序，`agents` 按首段 `start` 升序；一条运行一个元素，`name` = 人起的名字，否则 `label`，再否则代理键，`agent` = 代理键。
+- 口径与 `views/project-time` 完全相同（同一段代码，只是不按项目过滤）：人 = 计时段 + 在计时的一段；代理 = working 相位区间，按 v2.48 去向切段；都裁到窗口且不晚于 `now`。
+- 既有端点、字段一个不改；不新增集合。
+
 ## 变更记录
 
 见 `module_docs/contract-changelog.md`（从本文件拆出，只记历史不含规范）。

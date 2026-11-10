@@ -45,3 +45,11 @@ assert.ok(lh.includes('title="11/10 14:00–15:30 你"') && lh.includes('title="
 assert.ok(lh.indexOf("pr-lane pr-human") < lh.indexOf("pr-lane pr-agent") && lh.includes("--pr-agent:#35c9eb"));
 assert.ok(lh.includes('class="pr-seg pr-h"') && lh.includes('class="pr-seg pr-a"'));
 console.log("hex-project-ruler.test.js ok");
+
+// 等宽刻度：一天 / 一周
+const D = R.linearScale(t("2026-11-10T15:00:00"), 1), W = R.linearScale(t("2026-11-09T00:00:00"), 7);
+assert.strictEqual(D.from, t("2026-11-10T00:00:00")); assert.strictEqual(D.to, t("2026-11-11T00:00:00"));
+near(R.xOf(D, t("2026-11-10T06:00:00")), 0.25);
+assert.strictEqual(W.days.length, 7); assert.strictEqual(W.to, t("2026-11-16T00:00:00"));
+near(R.xOf(W, t("2026-11-11T12:00:00")), 2.5 / 7);
+near(R.spanRect(W, t("2026-11-09T12:00:00"), t("2026-11-10T12:00:00")).width, 1 / 7);

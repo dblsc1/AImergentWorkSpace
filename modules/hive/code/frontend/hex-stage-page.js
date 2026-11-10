@@ -5,12 +5,12 @@
   "use strict";
   var BASE = (typeof self !== "undefined" && self.HONEYCOMB_BASE) || "/";
   var API = BASE + "api/core/";
-  var St = window.NexusTableHexStage, Rec = window.NexusTableHexRecord, Pk = window.NexusTableHexPetPick, Pr = window.NexusTableHexProjectRuler;
+  var St = window.NexusTableHexStage, Rec = window.NexusTableHexRecord, Pk = window.NexusTableHexPetPick, Pr = window.NexusTableHexProjectRuler, CS = window.NexusTableHexCentreStats;
   var shell = document.querySelector(".board-shell");
-  if (!St || !Rec || !Pk || !Pr || !shell) return;
+  if (!St || !Rec || !Pk || !Pr || !CS || !shell) return;
 
   var POLL_MS = 5000, TICK_MS = 1000, PET_MS = 100;
-  var SLOT_AREA = { x: 24, y: 70, w: 340, h: 170 };
+  var SLOT_AREA = { x: 24, y: 118, w: 340, h: 170 };   // 左上角 y < 118 留给大肥鱼头像
   var DAY_FROM_H = 6, DAY_SPAN_H = 18;
   var STATUS_TEXT = { working: "工作中", waiting: "等你", idle: "空闲", error: "出错" };
   var LANE_MS = 3 * 3600000;
@@ -655,7 +655,23 @@
   }
 
   // ── 中心环 ────────────────────────────────────────────
-  var ringKey = null;
+  // 中心环 = 人 + 代理今天的总计时，内容与点开的统计页在 hex-centre-stats.js（hive.stage.v1「八」）
+  function ringSnapshot(now) {
+    var lanes = data.lanes || {}, human = lanes.human || {}, f = (data.current && data.current.focus) || human.focus, running = human.running, humanNow = null;
+    if (running) humanNow = "你在做 " + (running.projectId ? projectName(running.projectId) : "手动计时");
+    else if (f && f.state === "afk") humanNow = "你离开了";
+    else if (f && (f.projectName || f.projectId)) humanNow = "你在做 " + (f.projectName || projectName(f.projectId));
+    var hit = St.pickRing(runsOf(), lanes.interactions, now, dayStart() || null), run = hit && hit.agent !== undefined ? hit : null, focus = null;
+    if (run) {   // 人此刻在看的代理：一句轮播
+      var sec = run.endAt ? (ms(run.endAt) - ms(run.startAt)) / 1000 : (now - ms(run.startAt)) / 1000;
+      if (run.lost && run.lastSeenAt) sec = (ms(run.lastSeenAt) - ms(run.startAt)) / 1000;
+      focus = { name: run.label || run.agent, text: hms(sec) };
+    }
+    return { humanNow: humanNow, humanSec: humanTodaySeconds(now), focus: focus,
+      working: runsOf().filter(function (r) { return !r.endAt && !r.lost && Pk.moodOf(r.phase, r.lost) === "working"; }).length };
+  }
+  var centre = CS.mount({ layer: layer, ring: $("stRing"), clock: $("stClock"), getJson: getJson, snapshot: ringSnapshot, base: BASE, placeholder: PLACEHOLDER,
+    projectName: projectName, cellColor: function (pid) { var c = cellEl(pid); return c ? getComputedStyle(c).getPropertyValue("--zone-raw").trim() : ""; } });
   function renderRing(now) {
     var el = $("stRing"), hc = hiveCenter();
     place(el, hc);
@@ -665,30 +681,7 @@
     // 宠物跟蜂巢一起缩（蜂巢按屏幕等比缩小的倍数；只缩不放）
     var cam = document.querySelector(".hive-cam"), m = cam && /scale\(([\d.]+)/.exec(cam.style.transform || "");
     layer.style.setProperty("--pet-k", (m ? Math.min(1, +m[1]) : 1).toFixed(3));
-    var lanes = data.lanes || {}, hit = St.pickRing(runsOf(), lanes.interactions, now, dayStart() || null);
-    var run = hit && hit.agent !== undefined ? hit : null, sec = 0, name = "";
-    if (run) {
-      name = run.label || run.agent;
-      sec = run.endAt ? (ms(run.endAt) - ms(run.startAt)) / 1000 : (now - ms(run.startAt)) / 1000;
-      if (run.lost && run.lastSeenAt) sec = (ms(run.lastSeenAt) - ms(run.startAt)) / 1000;
-    }
-    var key = run ? run.runId : "";
-    if (!el.firstChild) {
-      el.innerHTML = '<svg viewBox="0 0 200 200" aria-hidden="true"><circle cx="100" cy="100" r="96" fill="var(--panel)"/>' +
-        '<circle cx="100" cy="100" r="86" fill="none" stroke="var(--panel-2)" stroke-width="12"/>' +
-        '<circle class="st-arc" cx="100" cy="100" r="86" fill="none" stroke="var(--fact-s1)" stroke-width="12" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 100 100)"/></svg>' +
-        '<div class="st-face"><div class="st-ring-agent"></div><div class="st-ring-time"></div></div>';
-      el.addEventListener("click", function () { if (el.dataset.runId) toggleCard({ runId: el.dataset.runId }, el); });   // 点中心 = 这个代理的详情卡
-    }
-    if (key !== ringKey) {
-      ringKey = key;
-      var face = el.querySelector(".st-face");
-      face.classList.remove("swap"); void face.offsetWidth; face.classList.add("swap");
-    }
-    el.dataset.runId = key;
-    el.querySelector(".st-ring-agent").textContent = name;
-    el.querySelector(".st-ring-time").textContent = run ? hms(sec) : "--:--:--";
-    el.querySelector(".st-arc").setAttribute("stroke-dasharray", (run ? (sec % 3600) / 36 : 0) + " 100");
+    centre.renderRing(now);
   }
 
   // ── 右上角：人的时钟、气泡、白条 ─────────────────────────

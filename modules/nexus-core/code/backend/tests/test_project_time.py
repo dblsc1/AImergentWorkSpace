@@ -104,3 +104,21 @@ def test_time_before_a_now_move_stays_under_the_old_target(client, monkeypatch):
             assert client.post(f"{API}/agents/{run}/stop", json={"outcome": "done"}).status_code == 200
         assert spans(p) == {None: [pytest.approx(600, abs=2)]}
         assert spans(q) == {t: [pytest.approx(1200, abs=2)]}
+
+
+def test_time_lanes_all_projects_one_lane_per_run(client, seeded):
+    task = next(iter(seeded["tasks"].values()))
+    pid, tid = task["projectId"], task["id"]
+    day = _today() - timedelta(days=1)
+    client.post(f"{API}/timer/backfill", json={"taskId": tid, "startAt": _at(day, 9).isoformat(),
+                                               "durationSeconds": 1800, "mode": "do"})
+    start = _at(day, 10)
+    _completed(1, pid, tid, start, 60, [(start + timedelta(minutes=20), "idle"), (start + timedelta(minutes=40), "working")])
+    _completed(2, "other_project", None, start, 30, [])
+    body = client.get(f"{API}/views/time-lanes", params={"from": day.isoformat(), "to": _today().isoformat()}).json()
+    assert [(h["projectId"], h["taskId"]) for h in body["human"]] == [(pid, tid)]
+    by = {a["runId"]: a for a in body["agents"]}
+    assert set(by) == {"r1", "r2"} and by["r1"]["name"] == "garden" and by["r1"]["agent"] == "cc"
+    assert [(s["projectId"], s["taskId"]) for s in by["r1"]["segments"]] == [(pid, tid)] * 2
+    assert by["r2"]["segments"][0]["projectId"] == "other_project"
+    assert client.get(f"{API}/views/time-lanes", params={"from": "2026-01-01", "to": "2026-01-09"}).status_code == 422
