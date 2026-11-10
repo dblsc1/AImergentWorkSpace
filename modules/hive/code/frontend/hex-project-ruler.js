@@ -33,7 +33,7 @@
     }
     return 1;
   }
-  // 一段 [a, b)（毫秒）→ {left, width}（0..1）；完全在窗口外 = null。最小可见宽度（1px）由样式 min-width 保证
+  // 一段 [a, b)（毫秒）→ {left, width}（0..1）；完全在窗口外 = null。最小可见宽度（3px）由样式 min-width 保证
   function spanRect(L, a, b) {
     if (!(b > a) || b <= L.from || a >= L.to) return null;
     var l = xOf(L, a);
@@ -111,9 +111,14 @@
       if (cur !== pid) { cur = pid; payload = null; loadedAt = 0; }
       if (!loading && now - loadedAt > 5000) load(pid, now);
       var L = layout(now), byTask = {};
-      ((payload && payload.tasks) || []).forEach(function (t) { byTask[t.taskId || ""] = t; });
       var p = project(pid), color = colorOf(pid);
       var rows = ((p && p.tasks) || []).map(function (t) { return { id: t.id, name: t.name }; }).concat([{ id: "", name: "没挂任务" }]);
+      var shown = {}; rows.forEach(function (r) { shown[r.id] = 1; });
+      // 列表里没有的任务（项目自带的隐藏「未分类」任务 t_unc_*、已删任务）并进「没挂任务」，时间不丢
+      ((payload && payload.tasks) || []).forEach(function (t) {
+        var k = shown[t.taskId || ""] ? (t.taskId || "") : "", d = byTask[k] || (byTask[k] = { human: [], agent: [] });
+        d.human = d.human.concat(t.human || []); d.agent = d.agent.concat(t.agent || []);
+      });
       var list = rows.map(function (r) {
         var d = byTask[r.id] || { human: [], agent: [] };
         return '<div class="pr-row"' + (color ? ' style="--pr-agent:' + esc(color) + '"' : "") + ' data-task="' + esc(r.id) + '" data-project="' + esc(pid) + '"><div class="pr-task"><b>' + esc(r.name) + "</b>" +
