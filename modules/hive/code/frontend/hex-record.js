@@ -48,7 +48,29 @@
     };
   }
 
-  var api = { projectRecord: projectRecord, workingSeconds: workingSeconds };
+  // 泳道横条：run.phases 在 [now - spanMs, now] 里的分段，段到下一条 phase 为止（最后一段到 endAt 或此刻）；第一条 phase 之前 = 空
+  // 返回 {from, to, segments: [{from, to, status}], workingSeconds}；status = working | waiting | idle | error
+  function statusOf(phase) {
+    if (phase === "working") return "working";
+    if (phase === "waiting_input" || phase === "waiting_permission") return "waiting";
+    if (phase === "error") return "error";
+    return "idle";
+  }
+  function laneSegments(run, now, spanMs) {
+    var from = now - spanMs, ph = (run.phases || []).slice().sort(function (a, b) { return ms(a.at) - ms(b.at); });
+    var end = run.endAt ? Math.min(now, ms(run.endAt)) : now;
+    if (!ph.length && run.startAt) ph = [{ at: run.startAt, phase: "idle" }];
+    var segs = [], work = 0;
+    ph.forEach(function (p, i) {
+      var a = Math.max(ms(p.at), from), b = Math.min(i + 1 < ph.length ? ms(ph[i + 1].at) : end, now);
+      if (b <= a) return;
+      segs.push({ from: a, to: b, status: statusOf(p.phase) });
+      if (p.phase === "working") work += b - a;
+    });
+    return { from: from, to: now, segments: segs, workingSeconds: Math.floor(work / 1000) };
+  }
+
+  var api = { projectRecord: projectRecord, workingSeconds: workingSeconds, laneSegments: laneSegments };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.NexusTableHexRecord = api;
 })();

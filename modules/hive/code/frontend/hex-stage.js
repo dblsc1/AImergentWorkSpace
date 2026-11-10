@@ -61,12 +61,12 @@
   }
 
   // 拖放要发的请求；放到空白处（projectId 为空）= null，什么都不发。块与宠物默认 remember:false（只这一次），气泡里勾上才传 true（2026-11-08）
-  function dropRequest(item, projectId, remember) {
+  function dropRequest(item, projectId, remember, timeFrom) {
     if (!projectId) return null;
     var enc = encodeURIComponent;
     switch (item.kind) {
       case "block": return { method: "POST", path: "activity/blocks/assign", body: { date: item.block.date, blockKey: item.block.blockKey, ifSeq: item.block.seq, projectId: projectId, remember: !!remember } };
-      case "pet": return { method: "POST", path: "agents/" + enc(item.runId) + "/place", body: { projectId: projectId, remember: !!remember } };
+      case "pet": return { method: "POST", path: "agents/" + enc(item.runId) + "/place", body: timeFrom === "now" ? { projectId: projectId, remember: !!remember, timeFrom: "now" } : { projectId: projectId, remember: !!remember } };
       case "strip": return { method: "POST", path: "timer/unplaced/" + enc(item.id) + "/place", body: { projectId: projectId } };
       case "clock": return { method: "POST", path: "timer/place", body: { projectId: projectId } };
     }
@@ -96,8 +96,8 @@
     }
     function fail(out) { say("失败：" + out.why); return { ok: false, reverted: true, why: out.why }; }
 
-    async function drop(item, projectId) {
-      var req = dropRequest(item, projectId);
+    async function drop(item, projectId, opts) {
+      var req = dropRequest(item, projectId, opts && opts.remember, opts && opts.timeFrom);
       if (!req) return { ok: false, reverted: true };
       if (item.kind === "clock" && !timer) return { ok: false, reverted: true };
       var out = await call(req);

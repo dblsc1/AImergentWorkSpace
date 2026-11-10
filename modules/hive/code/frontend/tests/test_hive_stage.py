@@ -236,34 +236,45 @@ def test_pet_art_comes_from_the_pack_and_falls_back_to_a_placeholder(browser, ba
         assert st.page.locator('.st-pet[data-run-id="r2"] svg.st-art').count() == 1
 
 
-def test_drag_loose_pet_into_a_cell_posts_place_once_and_says_what_was_remembered(browser, base) -> None:  # noqa: F811  HV-B02 / HV-S15
+def test_drag_loose_pet_into_a_cell_opens_a_confirm_card_and_places_only_after_a_button(browser, base) -> None:  # noqa: F811  二·11
     with open_stage(browser, base, setup=_busy_day) as st:
-        st.replies["agents/r2/place"] = (200, {"runId": "r2", "taskId": None, "projectId": "p_piano", "rule": {"agent": "codex", "projectId": "p_piano"}})
+        st.replies["agents/r2/place"] = (200, {"runId": "r2", "taskId": None, "projectId": "p_piano", "rule": None})
         pet = '.st-pet.is-loose[data-run-id="r2"]'
         assert st.page.locator(pet).count() == 1
         st.drag(pet, st.center(CELL.format("p_piano")), release=False)
         assert st.page.locator(CELL.format("p_piano")).evaluate("e => e.classList.contains('st-hot')")
         st.page.mouse.up()
         st.settle()
+        assert st.posts == []                                  # 先问，不直接挂
+        assert st.page.locator(".st-file").count() == 0        # 不再是 5 秒气泡
+        card = st.page.locator(".st-confirm")
+        assert card.count() == 1
+        assert card.locator(".st-cf-title").inner_text() == "把 scratch 挂到 钢琴"
+        assert [b.inner_text() for b in card.locator(".st-cf-btns button").all()] == ["之前的时间也算过去", "只算以后的时间"]
+        assert card.locator(".st-cf-rem").inner_text() == "以后 scratch 都算 钢琴"
+        assert card.locator(".st-cf-box").is_checked() is False
+        st.page.clock.run_for(20000)
+        assert st.page.locator(".st-confirm").count() == 1, "不会自己消失"
+        card.get_by_text("之前的时间也算过去").click()
+        st.settle()
         assert st.posts == [("agents/r2/place", {"projectId": "p_piano", "remember": False})]
-        assert st.toast() == ""        # 旧提示已换成气泡（二·10）
-        assert st.page.locator(".st-file").inner_text() == "以后都算 钢琴"
+        assert st.page.locator(".st-confirm").count() == 0
         assert st.page.locator('.st-pet.is-work[data-run-id="r2"]').count() == 1      # 飞到格子边
 
 
 def test_drop_on_blank_sends_nothing_and_pet_returns(browser, base) -> None:  # noqa: F811  HV-B03
     with open_stage(browser, base, setup=_busy_day) as st:
         pet = '.st-pet.is-loose[data-run-id="r2"]'
-        st.page.wait_for_timeout(300)      # 走动的位置过渡（真时间 100ms）走完
+        st.page.wait_for_timeout(300)
         before = st.box(pet)
         st.drag(pet, (640, 20))
         st.settle()
-        assert st.posts == []
+        assert st.posts == [] and st.page.locator(".st-confirm").count() == 0
+        st.page.clock.run_for(15000)                            # 停 3 秒再走回自己的位
         st.page.wait_for_timeout(300)
         after = st.box(pet)
         assert st.page.locator(pet).evaluate("e => e.style.translate") == ""
-        assert after["x"] > 300 and after["x"] < 640 and after["y"] < 450      # 从落点（夹进左上角区域）接着走动，不回原位
-        assert abs(after["x"] - before["x"]) > 20 or abs(after["y"] - before["y"]) > 20
+        assert abs(after["x"] - before["x"]) < 3 and abs(after["y"] - before["y"]) < 3
 
 
 def test_failed_drop_returns_the_pet_and_says_why(browser, base) -> None:  # noqa: F811  HV-S18
@@ -274,23 +285,56 @@ def test_failed_drop_returns_the_pet_and_says_why(browser, base) -> None:  # noq
         before = st.box(pet)
         st.drag(pet, st.center(CELL.format("p_piano")))
         st.settle()
+        st.page.locator(".st-confirm").get_by_text("之前的时间也算过去").click()
+        st.settle()
         assert "目标不存在" in st.toast()
+        st.page.clock.run_for(15000)
         st.page.wait_for_timeout(300)
         after = st.box(pet)
         assert st.page.locator(pet).evaluate("e => e.style.translate") == ""
-        assert abs(after["x"] - before["x"]) < 20 and abs(after["y"] - before["y"]) < 20      # 回原位（走动每秒 ≤ 18px）
+        assert abs(after["x"] - before["x"]) < 3 and abs(after["y"] - before["y"]) < 3
         assert st.page.locator('.st-pet.is-loose[data-run-id="r2"]').count() == 1
 
 
-def test_loose_pets_wander_inside_their_corner(browser, base) -> None:  # noqa: F811  HV-P17
+def test_loose_pet_keeps_one_fixed_slot_and_never_wanders(browser, base) -> None:  # noqa: F811  二·11 2
     with open_stage(browser, base, setup=_busy_day) as st:
         start = st.box('.st-pet.is-loose[data-run-id="r2"]')
         for _ in range(40):
             st.page.clock.run_for(500)
-            b = st.box('.st-pet.is-loose[data-run-id="r2"]')
-            assert b["x"] < 640 and b["y"] < 450
         end = st.box('.st-pet.is-loose[data-run-id="r2"]')
-        assert (start["x"], start["y"]) != (end["x"], end["y"])
+        assert (start["x"], start["y"]) == (end["x"], end["y"])
+        assert end["x"] < 640 and end["y"] < 450
+
+
+def test_loose_pet_slots_are_stable_when_others_come_and_go(browser, base) -> None:  # noqa: F811  二·11 2
+    def three(st: Stage) -> None:
+        now = st.now().astimezone(TZ)
+        st.set_lanes(agents=[_run(f"r{i}", "codex", label=f"l{i}", startAt=_iso(now - timedelta(seconds=900 - i * 100)), lastSeenAt=_iso(now)) for i in (1, 2, 3)])
+
+    with open_stage(browser, base, setup=three) as st:
+        pos = {i: st.box(f'.st-pet.is-loose[data-run-id="r{i}"]') for i in (1, 2, 3)}
+        assert len({(b["x"], b["y"]) for b in pos.values()}) == 3
+        st.lanes["agents"] = [a for a in st.lanes["agents"] if a["runId"] != "r1"]
+        st.poll()
+        for i in (2, 3):
+            assert st.box(f'.st-pet.is-loose[data-run-id="r{i}"]') == pos[i]
+
+
+def test_pet_clip_rhythm_main_then_temp_then_a_new_main(browser, base) -> None:  # noqa: F811  二·11 3
+    pack = {"kind": "gpt", "name": "G", "license": "x", "credits": "x", "source": "x",
+            "moods": {"idle": ["i1.webm", "i2.webm", "i3.webm"], "click": ["t.webm"]}}
+    with open_stage(browser, base, setup=_busy_day, pets={"gpt": pack}, hold_webm=True) as st:
+        seen: list[str] = []
+        for _ in range(60):
+            st.page.clock.run_for(1000)
+            src = st.page.locator('.st-pet.is-loose[data-run-id="r2"] video.st-art').get_attribute("src")
+            if src and (not seen or seen[-1] != src):
+                seen.append(src)
+        seen = [u.split("/")[-1] for u in seen]
+        assert "t.webm" in seen
+        mains = [f for f in seen if f != "t.webm"]
+        assert len(set(mains)) >= 2
+        assert all(a != b for a, b in zip(mains, mains[1:])), seen
 
 
 def test_bucket_drawer_drags_a_block_into_a_cell(browser, base) -> None:  # noqa: F811  HV-B04 / HV-B05 / HV-C12
@@ -461,6 +505,8 @@ def test_1100_wide_scales_the_same_layout_and_dragging_still_hits_cells(browser,
         assert clock["x"] + clock["width"] <= 1100
         st.replies["agents/r2/place"] = (200, {"rule": None})
         st.drag('.st-pet.is-loose[data-run-id="r2"]', st.center(CELL.format("p_math")))
+        st.settle()
+        st.page.locator(".st-confirm").get_by_text("之前的时间也算过去").click()
         st.settle()
         assert st.posts == [("agents/r2/place", {"projectId": "p_math", "remember": False})]
         assert st.toast() == ""
@@ -953,26 +999,114 @@ def _named_run(st: Stage) -> None:
     st.lanes["agents"][0]["phases"].append({"at": _iso(now - timedelta(seconds=300)), "phase": "waiting_input", "detail": None})
 
 
-def _drop_pet(st: Stage) -> None:
-    st.replies["agents/r2/place"] = (200, {"runId": "r2", "projectId": "p_piano", "rule": None})
-    st.drag('.st-pet.is-loose[data-run-id="r2"]', st.center(CELL.format("p_piano")))
+def _drop_pet(st: Stage, runid: str = "r2", cell: str = "p_piano") -> None:
+    st.replies[f"agents/{runid}/place"] = (200, {"runId": runid, "projectId": cell, "rule": None})
+    sel = f'.st-pet[data-run-id="{runid}"]'
+    st.drag(sel, st.center(CELL.format(cell)))
     st.settle()
     st.page.mouse.move(5, 5)
 
 
-def test_pet_drop_shows_a_bubble_ticking_it_sends_remember_true(browser, base) -> None:  # noqa: F811
+def test_confirm_card_buttons_send_the_right_body_and_the_checkbox_means_remember(browser, base) -> None:  # noqa: F811  二·11 6
     with open_stage(browser, base, setup=_busy_day) as st:
         _drop_pet(st)
-        assert st.page.locator(".st-file").count() == 1
-        assert st.posts == [("agents/r2/place", {"projectId": "p_piano", "remember": False})]
-        st.page.locator(".st-file input").check()
-        st.page.wait_for_timeout(250)
-        assert st.posts[1] == ("agents/r2/place", {"projectId": "p_piano", "remember": True})
+        st.page.locator(".st-confirm .st-cf-box").check()
+        st.page.locator(".st-confirm").get_by_text("只算以后的时间").click()
+        st.settle()
+        assert st.posts == [("agents/r2/place", {"projectId": "p_piano", "remember": True, "timeFrom": "now"})]
+
+
+def test_confirm_card_cancel_by_x_or_esc_sends_nothing_and_the_pet_walks_back(browser, base) -> None:  # noqa: F811  二·11 6
+    with open_stage(browser, base, setup=_busy_day) as st:
+        pet = '.st-pet.is-loose[data-run-id="r2"]'
+        st.page.wait_for_timeout(300)
+        before = st.box(pet)
+        _drop_pet(st)
+        assert st.page.locator(".st-confirm").count() == 1
+        st.page.locator(".st-cf-x").click()
+        assert st.page.locator(".st-confirm").count() == 0
+        _drop_pet(st)
+        st.page.keyboard.press("Escape")
+        assert st.page.locator(".st-confirm").count() == 0
+        st.page.clock.run_for(15000)
+        st.page.wait_for_timeout(300)
+        after = st.box(pet)
+        assert st.posts == []
+        assert abs(after["x"] - before["x"]) < 3 and abs(after["y"] - before["y"]) < 3
+
+
+def test_a_pet_sitting_in_a_cell_can_be_dragged_to_another_project_with_a_card(browser, base) -> None:  # noqa: F811  二·11 6
+    with open_stage(browser, base, setup=_busy_day) as st:
+        _drop_pet(st, "r1", "p_piano")
+        assert st.page.locator(".st-confirm .st-cf-title").inner_text() == "把 garden 挂到 钢琴"
+        st.page.locator(".st-confirm").get_by_text("之前的时间也算过去").click()
+        st.settle()
+        assert st.posts == [("agents/r1/place", {"projectId": "p_piano", "remember": False})]
+
+
+def test_dropping_on_the_pets_own_cell_asks_nothing(browser, base) -> None:  # noqa: F811  二·11 6
+    with open_stage(browser, base, setup=_busy_day) as st:
+        _drop_pet(st, "r1", "p_math")
+        assert st.page.locator(".st-confirm").count() == 0 and st.posts == []
+
+
+def test_two_pets_on_one_cell_stack_two_cards_answered_independently(browser, base) -> None:  # noqa: F811  二·11 6
+    with open_stage(browser, base, setup=_busy_day) as st:
+        _drop_pet(st, "r2", "p_piano")
+        _drop_pet(st, "r1", "p_piano")
+        cards = st.page.locator(".st-confirm")
+        assert cards.count() == 2
+        assert st.page.locator(".st-cf-stack").count() == 1
+        a, b = cards.nth(0).bounding_box(), cards.nth(1).bounding_box()
+        assert b["y"] >= a["y"] + a["height"] - 1 and abs(a["x"] - b["x"]) < 1        # 新的在下面
+        assert cards.nth(0).locator(".st-cf-rem").inner_text() == "以后 scratch 都算 钢琴"
+        assert cards.nth(1).locator(".st-cf-rem").inner_text() == "以后 garden 都算 钢琴"
+        cards.nth(1).get_by_text("只算以后的时间").click()
+        st.settle()
+        assert st.posts == [("agents/r1/place", {"projectId": "p_piano", "remember": False, "timeFrom": "now"})]
+        assert st.page.locator(".st-confirm").count() == 1
+        st.page.locator(".st-confirm").get_by_text("之前的时间也算过去").click()
+        st.settle()
+        assert st.posts[1] == ("agents/r2/place", {"projectId": "p_piano", "remember": False})
+        assert st.page.locator(".st-confirm").count() == 0
+
+
+def test_esc_cancels_only_the_newest_card_and_outside_click_cancels_none(browser, base) -> None:  # noqa: F811  二·11 6
+    with open_stage(browser, base, setup=_busy_day) as st:
+        _drop_pet(st, "r2", "p_piano")
+        _drop_pet(st, "r1", "p_studio")
+        assert st.page.locator(".st-confirm").count() == 2 and st.page.locator(".st-cf-stack").count() == 2
+        st.page.mouse.click(5, 5)
+        assert st.page.locator(".st-confirm").count() == 2
+        st.page.keyboard.press("Escape")
+        assert st.page.locator(".st-confirm").count() == 1
+        assert st.page.locator(".st-confirm .st-cf-title").inner_text() == "把 scratch 挂到 钢琴"
+        assert st.posts == []
+
+
+def test_422_from_an_old_server_shows_the_failure_and_keeps_the_pet(browser, base) -> None:  # noqa: F811  二·11 6
+    with open_stage(browser, base, setup=_busy_day) as st:
+        _drop_pet(st)
+        st.replies["agents/r2/place"] = (422, {"detail": "x"})
+        st.page.locator(".st-confirm").get_by_text("只算以后的时间").click()
+        st.settle()
+        assert "不能记到这里" in st.toast()
+        st.page.clock.run_for(15000)
+        assert st.page.locator('.st-pet.is-loose[data-run-id="r2"]').count() == 1
+
+
+def _drop_block(st: Stage) -> None:
+    st.page.click("#stBucketBtn")
+    st.page.clock.run_for(300)
+    st.replies["activity/blocks/assign"] = (200, {"seq": 4})
+    st.drag(".st-chip:not(.nodrag)", st.center(CELL.format("p_math")))
+    st.settle()
+    st.page.mouse.move(5, 5)
 
 
 def test_file_bubble_counts_down_five_seconds_and_hover_pauses_it(browser, base) -> None:  # noqa: F811
     with open_stage(browser, base, setup=_busy_day) as st:
-        _drop_pet(st)
+        _drop_block(st)
         st.page.clock.run_for(4000)
         assert st.page.locator(".st-file").count() == 1
         arc = st.page.locator(".st-file-arc").get_attribute("stroke-dashoffset")
@@ -1034,10 +1168,17 @@ def test_click_a_pet_opens_the_card_and_still_plays_the_reaction(browser, base) 
         assert st.page.locator(".st-detail").count() == 0
 
 
-def test_rename_in_the_card_puts_the_name_and_the_tag_updates(browser, base) -> None:  # noqa: F811
+def _open_card(st: Stage) -> None:
+    x, y = st.center('.st-pet[data-run-id="r1"] .st-media')
+    st.page.mouse.click(x, y)
+
+
+def test_rename_by_clicking_the_title_puts_the_name_and_the_tag_updates(browser, base) -> None:  # noqa: F811
     with open_stage(browser, base, setup=_named_run) as st:
-        x, y = st.center('.st-pet[data-run-id="r1"] .st-media')
-        st.page.mouse.click(x, y)
+        _open_card(st)
+        assert st.page.locator(".st-d-name").count() == 0, "没有单独的改名框"
+        st.page.locator(".st-d-title").click()
+        assert st.page.locator(".st-d-name").input_value() == "数学·改错题"      # 预填当前标题
         st.replies["agents/r1/name"] = (200, {})
         st.lanes["agents"][0]["humanName"] = "园丁"      # 桩替服务端记住
         st.page.locator(".st-d-name").fill("园丁")
@@ -1045,31 +1186,88 @@ def test_rename_in_the_card_puts_the_name_and_the_tag_updates(browser, base) -> 
         st.page.wait_for_timeout(250)
         assert st.posts == [("agents/r1/name", {"name": "园丁"})]
         assert st.page.locator('.st-pet[data-run-id="r1"] .st-tag').inner_text() == "园丁"
-        assert st.page.locator(".st-detail").count() == 0
+        assert st.page.locator(".st-detail").count() == 1 and st.page.locator(".st-d-title").inner_text() == "园丁"
+        assert st.page.locator(".st-d-name").count() == 0
+
+
+def test_rename_esc_cancels_blur_cancels_empty_clears_and_failure_marks(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, setup=_named_run) as st:
+        _open_card(st)
+        st.page.locator(".st-d-title").click()
+        st.page.locator(".st-d-name").fill("x")
+        st.page.keyboard.press("Escape")
+        assert st.page.locator(".st-detail").count() == 1 and st.page.locator(".st-d-name").count() == 0
+        assert st.page.locator(".st-d-title").inner_text() == "数学·改错题"
+        st.page.locator(".st-d-title").click()
+        st.page.locator(".st-detail .st-d-tool").click()                       # 失焦
+        assert st.page.locator(".st-d-name").count() == 0 and st.posts == []
+        st.lanes["agents"][0]["humanName"] = "旧名"
+        st.poll()
+        st.page.locator(".st-d-title").click()
+        st.page.locator(".st-d-name").fill("")
+        st.replies["agents/r1/name"] = (500, {})
+        st.page.locator(".st-d-name").press("Enter")
+        st.page.wait_for_timeout(250)
+        assert st.posts == [("agents/r1/name", {"name": None})]
+        assert "is-bad" in st.page.locator(".st-d-name").get_attribute("class")
+
+
+def test_card_title_shows_the_full_long_name(browser, base) -> None:  # noqa: F811
+    def setup(st: Stage) -> None:
+        _named_run(st)
+        st.lanes["agents"][0]["humanName"] = "这是一个非常非常长的代理名字用来确认卡片标题不会被截断成省略号" * 2
+    with open_stage(browser, base, setup=setup) as st:
+        _open_card(st)
+        t = st.page.locator(".st-d-title")
+        assert t.evaluate("e => e.scrollWidth <= e.clientWidth + 1 && e.scrollHeight <= e.clientHeight + 1")
+        assert t.evaluate("e => getComputedStyle(e).textOverflow") != "ellipsis"
+        assert t.inner_text() == st.lanes["agents"][0]["humanName"]
 
 
 def test_bubble_body_click_opens_the_card(browser, base) -> None:  # noqa: F811
     with open_stage(browser, base, setup=_busy_day) as st:
-        _drop_pet(st)
+        _drop_block(st)
         st.page.locator(".st-file-tx").click()
         assert st.page.locator(".st-detail").count() == 1
         assert st.page.locator(".st-file-box").evaluate("e => e.checked") is False and len(st.posts) == 1
         assert st.box(".st-file-box")["width"] >= 20
 
 
-def test_card_shows_week_time_and_stays_live_keeping_the_typed_name(browser, base) -> None:  # noqa: F811
+def test_card_shows_a_three_hour_lane_and_stays_live_keeping_the_typed_name(browser, base) -> None:  # noqa: F811
     with open_stage(browser, base, setup=_named_run) as st:
-        x, y = st.center('.st-pet[data-run-id="r1"] .st-media')
-        st.page.mouse.click(x, y)
+        st.api.clear()
+        _open_card(st)
         st.page.wait_for_timeout(250)
-        assert "本周 claude-code 共 2 小时 3 分" in st.page.locator(".st-detail").inner_text()
+        text = st.page.locator(".st-detail").inner_text()
+        assert "本周" not in text and "views/agent-time" not in st.api
+        assert "等你 · 近 3 小时工作 15 分" in text
+        assert st.page.locator(".st-d-hist").count() == 0
+        assert st.page.locator(".st-lane-ticks span").count() == 4
+        segs = st.page.locator(".st-lane i")
+        assert segs.count() == 2
+        assert segs.nth(0).get_attribute("class") == "is-working" and segs.nth(1).get_attribute("class") == "is-waiting"
+        import re
+        assert re.fullmatch(r"\d\d:\d\d–\d\d:\d\d 工作中", segs.nth(0).get_attribute("title"))
+        before = st.page.locator(".st-d-name").count()
+        st.page.locator(".st-d-title").click()
         st.page.locator(".st-d-name").fill("半截")
         st.lanes["agents"][0]["model"] = "sonnet"
         st.poll()
-        text = st.page.locator(".st-detail").inner_text()
-        assert "claude-code · sonnet" in text and "本周 claude-code 共 2 小时 3 分" in text
-        assert st.page.locator(".st-d-name").input_value() == "半截"
+        assert "claude-code · sonnet" in st.page.locator(".st-detail").inner_text()
+        assert st.page.locator(".st-d-name").input_value() == "半截" and before == 0
         assert st.page.evaluate("() => document.activeElement.className") == "st-d-name"
+
+
+def test_inbox_runs_are_treated_as_loose_everywhere(browser, base) -> None:  # noqa: F811  二·11 1
+    def setup(st: Stage) -> None:
+        _busy_day(st)
+        st.lanes["agents"][1].update(projectId="p_inbox", conversation="散活对话")
+    with open_stage(browser, base, setup=setup) as st:
+        pet = '.st-pet.is-loose[data-run-id="r2"]'
+        assert st.page.locator(pet + " .st-tag").inner_text() == "散活对话"
+        st.page.mouse.click(*st.center(pet + " .st-media"))
+        text = st.page.locator(".st-detail").inner_text()
+        assert "还没归到项目" in text and "收件箱" not in text
 
 
 def test_source_health_hint_hidden_when_fine_and_lists_fixes_when_not(browser, base) -> None:  # noqa: F811  信息源体检

@@ -59,6 +59,8 @@ assert.deepStrictEqual(S.dropRequest({ kind: "block", block: B("g", 60, true, "b
   { method: "POST", path: "activity/blocks/assign", body: { date: "2026-11-07", blockKey: "g", ifSeq: 3, projectId: "p1", remember: false } });
 assert.deepStrictEqual(S.dropRequest({ kind: "pet", runId: "run_1" }, "p1"), { method: "POST", path: "agents/run_1/place", body: { projectId: "p1", remember: false } });
 assert.strictEqual(S.dropRequest({ kind: "pet", runId: "run_1" }, "p1", true).body.remember, true);
+assert.deepStrictEqual(S.dropRequest({ kind: "pet", runId: "run_1" }, "p1", true, "now").body, { projectId: "p1", remember: true, timeFrom: "now" });
+assert.deepStrictEqual(S.dropRequest({ kind: "pet", runId: "run_1" }, "p1", false, "start").body, { projectId: "p1", remember: false });
 assert.strictEqual(S.dropRequest({ kind: "block", block: B("g", 60, true, "browser") }, "p1", true).body.remember, true);
 // 宠物名牌
 assert.strictEqual(S.petTitle({ humanName: "我的", conversation: "c", label: "l", agent: "a" }, "数学"), "我的");

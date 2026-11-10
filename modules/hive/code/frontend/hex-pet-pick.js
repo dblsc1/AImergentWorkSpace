@@ -1,5 +1,5 @@
 // hive · hex-pet-pick.js —— 蜂巢新布局的宠物挑选（hive.stage.v1「二」3、4）。纯逻辑，无 DOM。
-// 挑格子边至多 4 只 + +N、左上角无去向的代理、按 tool 查宠物包、phase → mood、左上角随机走动。
+// 挑格子边至多 4 只 + +N、左上角无去向的代理、按 tool 查宠物包、phase → mood、左上角固定位、动作节奏。
 (function () {
   "use strict";
 
@@ -58,21 +58,20 @@
     return top(loose, opts, function () { return null; });
   }
 
-  // 左上角随机走动：朝随机目标点走，每步位移 ≤ speed(px/s) × dt；位置始终在 rect 内
-  function pick(rect, rnd) { return { x: rect.x + rnd() * rect.w, y: rect.y + rnd() * rect.h }; }
-  function initWander(rect, rnd) { var p = pick(rect, rnd), t = pick(rect, rnd); return { x: p.x, y: p.y, tx: t.x, ty: t.y }; }
-  function stepWander(s, rect, rnd, dtMs, speed) {
-    var tx = s.tx, ty = s.ty, dx = tx - s.x, dy = ty - s.y, d = Math.hypot(dx, dy), step = speed * dtMs / 1000;
-    if (d <= step) {
-      var n = pick(rect, rnd);
-      return { x: tx, y: ty, tx: n.x, ty: n.y };
-    }
-    var x = s.x + dx / d * step, y = s.y + dy / d * step;
-    return {
-      x: Math.min(rect.x + rect.w, Math.max(rect.x, x)),
-      y: Math.min(rect.y + rect.h, Math.max(rect.y, y)),
-      tx: tx, ty: ty
-    };
+  // 左上角固定位：一只一个位，不走动。已有位的保持不动，新来的按 order（开始时间 → runId）占最小的空位
+  var SLOT_COLS = 3, SLOT_ROWS = 2;
+  function slotPos(i, rect) {
+    var cw = rect.w / SLOT_COLS, rh = rect.h / SLOT_ROWS;
+    return { x: rect.x + cw * (i % SLOT_COLS) + cw / 2, y: rect.y + rh * (Math.floor(i / SLOT_COLS) % SLOT_ROWS) + rh / 2 };
+  }
+  // prev: {runId: 位号}；list: [{runId, startAt}]；返回新的 {runId: 位号}
+  function assignSlots(prev, list) {
+    var out = {}, used = {};
+    list.forEach(function (r) { if (prev && prev[r.runId] != null && !used[prev[r.runId]]) { out[r.runId] = prev[r.runId]; used[prev[r.runId]] = 1; } });
+    list.filter(function (r) { return out[r.runId] == null; }).sort(function (a, b) {
+      return ms(a.startAt) - ms(b.startAt) || (a.runId < b.runId ? -1 : a.runId > b.runId ? 1 : 0);
+    }).forEach(function (r) { var i = 0; while (used[i]) i++; used[i] = 1; out[r.runId] = i; });
+    return out;
   }
 
   // 点宠物、拖宠物（hive.stage.v1「二」7）：判定、挑点击动画、走回
@@ -85,10 +84,30 @@
     var pool = list.length > 1 ? list.filter(function (f) { return f !== last; }) : list;
     return pool[Math.min(pool.length - 1, Math.floor(rnd() * pool.length))];
   }
-  function clickClip(pack, last, rnd) {
-    var m = (pack && pack.moods) || {};
-    return pickClip(m.click && m.click.length ? m.click : m.happy, last, rnd);
+  // 临时动作（点击动作）：pack 的 click，没有用 happy，都没有 = 空表
+  function tempList(pack) { var m = (pack && pack.moods) || {}; return m.click && m.click.length ? m.click : (m.happy || []); }
+  function clickClip(pack, last, rnd) { return pickClip(tempList(pack), last, rnd); }
+
+  // 动作节奏（仓主 2026-11-10 定）：当前 mood 的动作播 15 秒 → 3 秒临时动作 → 新动作（≠ 上一个）15 秒，循环。
+  // s 是上一次的状态（首次 null）；moods = pack.moods；返回新状态 {mood, step: "main"|"temp", file, main, until}。纯函数，rnd / now 可注入。
+  var MAIN_MS = 15000, TEMP_MS = 3000;
+  function moodList(moods, mood) { var m = moods || {}; return (m[mood] && m[mood].length ? m[mood] : m.idle) || []; }
+  function rhythm(s, moods, mood, now, rnd) {
+    var list = moodList(moods, mood);
+    if (!s) s = { mood: mood, step: "main", file: null, main: null, until: now + Math.floor(rnd() * MAIN_MS) };   // 首次随机错开，免得一起换
+    else if (s.mood !== mood) s = { mood: mood, step: "main", file: null, main: s.main, until: now + MAIN_MS };       // 换 mood：立刻换动作、重算周期
+    else if (now >= s.until) {
+      var tmp = s.step === "main" ? tempList({ moods: moods }) : [];
+      if (tmp.length) s = { mood: mood, step: "temp", file: pickClip(tmp, null, rnd), main: s.main, until: now + TEMP_MS };
+      else s = { mood: mood, step: "main", file: null, main: s.main, until: now + MAIN_MS };
+    } else if (s.step === "temp" || s.file) return s;
+    if (s.step === "main" && !s.file) {
+      var f = pickClip(list, s.main, rnd);
+      if (f) { s = { mood: s.mood, step: "main", file: f, main: f, until: s.until }; }
+    }
+    return s;
   }
+
   // 松手后 elapsedMs：先停 STAY_MS，再以 45px/s 走，单程至多 8 秒（远了加快）；往右走 = flip
   function walkBack(from, to, elapsedMs) {
     var dx = to.x - from.x, dy = to.y - from.y, d = Math.hypot(dx, dy), flip = dx > 0;
@@ -99,7 +118,7 @@
     return { x: from.x + dx * u, y: from.y + dy * u, phase: "walk", flip: flip };
   }
 
-  var api = { MAX_PETS: MAX_PETS, DEFAULT_PACK: DEFAULT_PACK, DEFAULT_PACKS_BY_TOOL: DEFAULT_PACKS_BY_TOOL, moodOf: moodOf, packOf: packOf, pickWorkers: pickWorkers, pickIdle: pickIdle, isLoose: isLoose, initWander: initWander, stepWander: stepWander,
+  var api = { MAX_PETS: MAX_PETS, DEFAULT_PACK: DEFAULT_PACK, DEFAULT_PACKS_BY_TOOL: DEFAULT_PACKS_BY_TOOL, moodOf: moodOf, packOf: packOf, pickWorkers: pickWorkers, pickIdle: pickIdle, isLoose: isLoose, slotPos: slotPos, assignSlots: assignSlots, rhythm: rhythm, tempList: tempList, MAIN_MS: MAIN_MS, TEMP_MS: TEMP_MS,
     CLICK_PX: CLICK_PX, STAY_MS: STAY_MS, pressKind: pressKind, clickCounts: clickCounts, pickClip: pickClip, clickClip: clickClip, walkBack: walkBack };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.NexusTableHexPetPick = api;

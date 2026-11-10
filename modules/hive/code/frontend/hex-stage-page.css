@@ -173,11 +173,27 @@ video.st-art { position: absolute; max-width: none; max-height: none; height: 80
 .st-file-box { width: 20px; height: 20px; margin: 0; flex: none; cursor: pointer; }
 .st-file-tx { white-space: nowrap; }
 .st-detail { position: fixed; z-index: 100; width: 260px; padding: 12px 14px; font-size: var(--fs-sub); }
-.st-d-title { margin: 0 0 4px; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-d-title { margin: 0 0 4px; font-size: 15px; white-space: normal; overflow-wrap: anywhere; cursor: text; }
 .st-d-line { color: var(--ink-2); margin-top: 3px; }
 .st-d-win { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-d-name { width: 100%; box-sizing: border-box; font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+.st-d-name.is-bad { border-color: var(--warn); }
 .st-d-hist { list-style: none; margin: 8px 0 0; padding: 0; max-height: 150px; overflow: auto; }
 .st-d-hist li { display: flex; gap: 8px; padding: 2px 0; border-top: 1px solid var(--line-2); }
 .st-d-hist span { font-family: var(--font-mono); color: var(--ink-3); flex: none; }
-.st-d-name { margin-top: 10px; width: 100%; box-sizing: border-box; font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
-.st-d-name.is-bad { border-color: var(--warn); }
+.st-lane { position: relative; height: 14px; margin-top: 8px; border-radius: 4px; background: var(--panel-2); overflow: hidden; }
+.st-lane i { position: absolute; top: 0; bottom: 0; background: var(--ink-3); }
+.st-lane i.is-working { background: var(--agent-work, var(--fact)); }
+.st-lane i.is-waiting { background: var(--agent-wait, var(--warn)); }
+.st-lane i.is-idle { background: var(--line); }
+.st-lane i.is-error { background: var(--danger); }
+.st-lane-ticks { display: flex; justify-content: space-between; margin-top: 2px; font: 10px var(--font-mono); color: var(--ink-3); }
+/* 挂到项目的确认卡：同一格的叠在一起 */
+.st-cf-stack { position: absolute; z-index: 60; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; overflow-y: auto; }
+.st-confirm { position: relative; flex: none; width: 250px; padding: 10px 12px; font-size: var(--fs-sub); }
+.st-cf-title { font-weight: 600; padding-right: 22px; overflow-wrap: anywhere; }
+.st-cf-x { position: absolute; top: 6px; right: 6px; border: 0; background: none; color: var(--ink-3); cursor: pointer; font-size: 13px; }
+.st-cf-btns { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.st-cf-btns button { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); cursor: pointer; }
+.st-cf-btns button:hover { border-color: var(--fact); }
+.st-cf-rem { display: flex; align-items: center; gap: 6px; margin-top: 8px; color: var(--ink-2); cursor: pointer; }
