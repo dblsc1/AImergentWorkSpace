@@ -24,41 +24,30 @@
     if (!best) return [];
     return best.issues.filter(function (c) { return ISSUES[c]; }).map(function (c) { return { code: c, text: ISSUES[c].text, fix: ISSUES[c].fix, links: ISSUES[c].links }; });
   }
-  function hintText(list) { return list.length ? "窗口信息不全 · " + list.length + " 项" : ""; }
 
-  var H = { problems: problems, hintText: hintText };
+  var H = { problems: problems };
   if (typeof module !== "undefined" && module.exports) { module.exports = H; return; }
   window.HexSourceHealth = H;
 
-  // ── DOM：render(list) 画小提示按钮与点开的清单 ──
+  // ── DOM ──
   function el(tag, cls, text) {
     var n = document.createElement(tag);
     if (cls) n.className = cls;
     if (text !== undefined) n.textContent = text;
     return n;
   }
-  H.mount = function (host) {
-    var btn = el("button", "st-srchint"), pop = el("div", "st-srcpop st-card");
-    btn.type = "button"; btn.id = "stSrcHint"; btn.hidden = true;
-    pop.id = "stSrcPop";
-    btn.addEventListener("click", function () { pop.classList.toggle("open"); });
-    host.appendChild(btn); host.appendChild(pop);
-    return function render(list) {
-      btn.hidden = !list.length;
-      if (!list.length) pop.classList.remove("open");
-      btn.textContent = hintText(list);
-      pop.textContent = "";
-      list.forEach(function (p) {
-        var row = el("div", "st-src-row");
-        row.appendChild(el("b", "", p.text));
-        row.appendChild(el("span", "", p.fix));
-        p.links.forEach(function (l) {
-          var a = el("a", "", l.label);
-          a.href = l.url; a.target = "_blank"; a.rel = "noopener noreferrer";
-          row.appendChild(a);
-        });
-        pop.appendChild(row);
+  // 把问题清单画进 box（时钟菜单里的一节）；页面上不再常驻提示
+  H.fill = function (box, list) {
+    list.forEach(function (p) {
+      var row = el("div", "st-src-row");
+      row.appendChild(el("b", "", p.text));
+      row.appendChild(el("span", "", p.fix));
+      p.links.forEach(function (l) {
+        var a = el("a", "", l.label);
+        a.href = l.url; a.target = "_blank"; a.rel = "noopener noreferrer";
+        row.appendChild(a);
       });
-    };
+      box.appendChild(row);
+    });
   };
 })();

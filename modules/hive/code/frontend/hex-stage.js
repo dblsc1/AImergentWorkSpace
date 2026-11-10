@@ -124,14 +124,16 @@
       return out.ok ? { ok: true } : fail(out);
     }
 
-    // 点时钟：没在计时 = 开始（不选项目）；在计时 = 停
+    // 开始计时（不选项目）；countdownSeconds = 倒计时（hive.stage.v1「九」，nexus-core v2.51），缺省 = 正计时
+    async function startClock(countdownSeconds) {
+      var s = await call({ method: "POST", path: "timer/start-unplaced", body: countdownSeconds ? { countdownSeconds: countdownSeconds } : undefined });
+      if (!s.ok) return fail(s);
+      timer = { projectId: null, startAt: deps.now(), deadlineAt: countdownSeconds ? deps.now() + countdownSeconds * 1000 : null };
+      return { ok: true };
+    }
+    // 停（或没在计时 = 开始，老行为；「九」起时钟的短按不再走这里）
     async function clickClock() {
-      if (!timer) {
-        var s = await call({ method: "POST", path: "timer/start-unplaced" });
-        if (!s.ok) return fail(s);
-        timer = { projectId: null, startAt: deps.now() };
-        return { ok: true };
-      }
+      if (!timer) return startClock();
       var out = await call({ method: "POST", path: "timer/stop" });
       if (!out.ok) return fail(out);
       if (out.body.unplacedId) unplaced.push({ id: out.body.unplacedId, startAt: new Date(timer.startAt).toISOString(), endAt: new Date(deps.now()).toISOString() });
@@ -149,10 +151,13 @@
       setStrips: function (list) { unplaced = list.slice(); },
       strips: function () { return stripList(unplaced); },
       timerRunning: function () { return !!timer; },
+      timerState: function () { return timer; },
       setTimer: function (t) { timer = t; },
       drop: drop,
       remember: remember,
-      clickClock: clickClock
+      clickClock: clickClock,
+      startClock: startClock,
+      say: say
     };
   }
 

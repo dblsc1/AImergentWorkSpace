@@ -42,6 +42,7 @@ class TimerOut(BaseModel):
     projectId: str | None = None
     startAt: str
     mode: Mode = "do"  # v2.1 回显
+    deadlineAt: str | None = None  # v2.51：倒计时的到点时刻；正计时 null
 
 
 class StopEvent(BaseModel):
@@ -126,9 +127,15 @@ class PlacedBarOut(BaseModel):
     projectId: str
 
 
+class StartUnplacedIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    countdownSeconds: int | None = Field(default=None, ge=60, le=86400)  # v2.51：倒计时秒数；不给 = 正计时
+
+
 @router.post("/start-unplaced", response_model=TimerOut)
-def start_unplaced(request: Request) -> dict:
-    out = service.start_unplaced(request)
+def start_unplaced(request: Request, body: StartUnplacedIn | None = None) -> dict:
+    out = service.start_unplaced(request, body.countdownSeconds if body else None)
     reconcile.kick()
     return out
 

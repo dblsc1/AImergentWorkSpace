@@ -5,9 +5,9 @@
   "use strict";
   var BASE = (typeof self !== "undefined" && self.HONEYCOMB_BASE) || "/";
   var API = BASE + "api/core/";
-  var St = window.NexusTableHexStage, Rec = window.NexusTableHexRecord, Pk = window.NexusTableHexPetPick, Pr = window.NexusTableHexProjectRuler, CS = window.NexusTableHexCentreStats;
+  var CM = window.HexClockMenu, St = window.NexusTableHexStage, Rec = window.NexusTableHexRecord, Pk = window.NexusTableHexPetPick, Pr = window.NexusTableHexProjectRuler, CS = window.NexusTableHexCentreStats;
   var shell = document.querySelector(".board-shell");
-  if (!St || !Rec || !Pk || !Pr || !CS || !shell) return;
+  if (!St || !Rec || !Pk || !Pr || !CS || !CM || !shell) return;
 
   var POLL_MS = 5000, TICK_MS = 1000, PET_MS = 100;
   var SLOT_AREA = { x: 24, y: 118, w: 340, h: 170 };   // 左上角 y < 118 留给大肥鱼头像
@@ -21,6 +21,7 @@
   layer.innerHTML =
     '<div class="st-ring" id="stRing"></div>' +
     '<div class="st-clock st-card" id="stClock" role="button" tabindex="0" aria-label="计时"></div>' +
+    '<div class="st-clock-win" id="stClockWin"></div>' +
     '<div class="st-strips" id="stStrips"></div>' +
     '<div class="st-bubble" id="stBubble" aria-hidden="true"></div>' +
     '<div class="st-more" id="stMore" hidden></div>' +
@@ -30,7 +31,6 @@
     '<div class="st-toast" id="stToast" role="status" aria-live="polite"></div>' +
     '<div class="st-veil" id="stVeil" hidden><div class="st-panel st-card" id="stPanel" role="dialog" aria-modal="true"></div></div>';
   shell.appendChild(layer);
-  var renderSourceHint = window.HexSourceHealth ? window.HexSourceHealth.mount(layer) : function () {};   // 信息源体检：没数据 / 全好时不显示
   document.body.appendChild(document.getElementById("stVeil"));   // 舞台层自带层级 5，面板要盖住整个蜂巢（含分区描边）
   document.body.classList.add("stage-on");
   var $ = function (id) { return document.getElementById(id); };
@@ -696,7 +696,13 @@
     }
     el.classList.toggle("is-timing", running);
     el.setAttribute("aria-pressed", running ? "true" : "false");
-    el.querySelector(".st-clock-today").textContent = dur(humanTodaySeconds(now));
+    var tm = stage.timerState(), today = el.querySelector(".st-clock-today");
+    if (tm && tm.deadlineAt) {
+      today.textContent = CM.formatRemaining(CM.remainingSeconds(tm.deadlineAt, now)); today.classList.add("is-countdown");
+      if (now >= tm.deadlineAt && countdownDone !== tm.startAt) {   // 页面开着时到点：先提醒，再读一次（服务端已按 deadlineAt 记下）
+        countdownDone = tm.startAt; clockMenu.remind(CM.endedText(tm.startAt, tm.deadlineAt)); stage.setTimer(null); refresh();
+      }
+    } else { today.textContent = dur(humanTodaySeconds(now)); today.classList.remove("is-countdown"); }
     var f = (data.current && data.current.focus) || human.focus, pid = hostProject(), name = "";
     if (human.running && human.running.projectId) name = projectName(human.running.projectId);
     else if (f && f.state !== "afk" && (f.projectName || f.projectId)) name = f.projectName || projectName(f.projectId);
@@ -717,7 +723,7 @@
   function bubbleTarget(pid) {
     var el = pid && cellEl(pid);
     if (el) { var c = rectCenter(el); return { x: c.x + c.w * 0.3, y: c.y - c.h * 0.36 }; }
-    var ck = $("stClock").querySelector(".st-dial").getBoundingClientRect(), p = toLayer(ck.left + ck.width / 2, ck.top + ck.height / 2);
+    var ck = ($("stClock").querySelector(".st-dial") || $("stClock")).getBoundingClientRect(), p = toLayer(ck.left + ck.width / 2, ck.top + ck.height / 2);
     return p;
   }
   function renderBubble() {
@@ -848,7 +854,7 @@
     var btn = $("stBucketBtn"), sec = stage.bucketSeconds();
     if (!btn.firstChild) btn.innerHTML = BUCKET;
     $("stBucketLabel").textContent = St.bucketText(sec);
-    renderTrayChips(stage.bucketKeys());
+    renderTrayChips(trayKeys(stage.bucketKeys()));
     if ($("stDrawer").classList.contains("open")) renderDrawer();
   }
   var drawerSig = "";
@@ -937,25 +943,69 @@
     openPanel(c.dataset.projectId);
   }, true);
 
-  // 点时钟：开始 / 停；拖时钟或气泡（计时中）到格子 = 记到该项目
+  // 时钟：短按 = 窗口记录 / 人用时汇总菜单，长按 = 计时气泡（正计时 / 倒计时 / 停止）；拖时钟或气泡（计时中）到格子 = 记到该项目
+  var clockMenu;
   (function () {
     var el = $("stClock");
     var clockItem = function () { return { kind: "clock" }; };
-    var clockClick = function () {
-      busy++;
-      stage.clickClock().then(function () { busy--; render(); refresh(); });
-    };
-    drag($("stBubble"), { el: $("stBubble"), item: function () { return stage.timerRunning() ? clockItem() : null; }, onClick: clockClick });   // 气泡 = 时钟的延伸：拖、点都同时钟
-    drag(el, { el: el, item: clockItem, onClick: clockClick });
+    var after = function (p) { busy++; return p.then(function () { busy--; render(); refresh(); }); };
+    clockMenu = CM.mount({
+      clock: el, now: Date.now, dayStart: dayStart, getLanes: function () { return data.lanes; }, projectName: projectName, getJson: getJson,
+      fillIssues: function (box, list) { window.HexSourceHealth.fill(box, list); }, timerRunning: function () { return stage.timerRunning(); },
+      startClock: function (sec) { after(stage.startClock(sec)); }, stopClock: function () { after(stage.clickClock()); }
+    });
+    var tap = function () { if (!clockMenu.consumedHold()) clockMenu.open(); };
+    drag($("stBubble"), { el: $("stBubble"), item: function () { return stage.timerRunning() ? clockItem() : null; }, onClick: tap });   // 气泡 = 时钟的延伸：拖、点都同时钟
+    drag(el, { el: el, item: clockItem, onClick: tap });
     el.addEventListener("keydown", function (ev) {
-      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); stage.clickClock().then(function () { render(); refresh(); }); }
+      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); clockMenu.open(); }
+      else if (ev.key === "ArrowDown") { ev.preventDefault(); clockMenu.showActions(); }
     });
   })();
+
+  // 未分类窗口：时钟停到左下托盘旁、右边写窗口名；离开时飞回右上，托盘掉进一块（FLIP，transform）
+  var dock = { docked: false, at: 0 }, ghost = null, ghostUntil = 0, countdownDone = null;
+  function flip(mutate) {
+    var el = $("stClock"), a = el.getBoundingClientRect();
+    mutate();
+    var b = el.getBoundingClientRect(), k = zoom();
+    if (!el.animate || (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) || (a.left === b.left && a.top === b.top)) return;
+    var a1 = el.animate([{ transform: "translate(" + (a.left - b.left) / k + "px," + (a.top - b.top) / k + "px)" }, { transform: "none" }], { duration: 500, easing: "cubic-bezier(.3,.7,.3,1)" });
+    a1.onfinish = function () { clockMenu.refresh(); };
+  }
+  function syncDock(now) {
+    var el = $("stClock"), win = $("stClockWin");
+    var f = CM.unclassifiedFocus((data.current && data.current.focus) || (data.lanes && data.lanes.human && data.lanes.human.focus), stage.timerRunning());
+    if (dragging || el.classList.contains("st-dragging")) return;
+    var step = CM.dockStep(dock, !!f, now);
+    if (step.moved) {
+      flip(function () { el.classList.toggle("is-docked", step.docked); });
+      if (!step.docked) { ghost = "\u0000pending:" + now; ghostUntil = now + 15000; }
+      clockMenu.close();
+      renderBucket();
+    }
+    dock = { docked: step.docked, at: step.at };
+    win.textContent = f ? f.label : win.textContent;
+    win.classList.toggle("show", dock.docked && !!f);
+  }
+  // 刚结束的窗口块还没被轮询带来时，先掉一块占位；真块到了就认领占位那一格，不会出两块
+  function trayKeys(keys) {
+    if (!ghost) return keys;
+    var fresh = keys.filter(function (k) { return !(k in traySlot); });
+    if (ghost in traySlot) {
+      if (fresh.length) {
+        traySlot[fresh[0]] = traySlot[ghost]; trayChips[fresh[0]] = trayChips[ghost];
+        delete traySlot[ghost]; delete trayChips[ghost]; ghost = null; return keys;
+      }
+    } else if (fresh.length) { ghost = null; return keys; }
+    if (Date.now() > ghostUntil) { ghost = null; return keys; }
+    return keys.concat(ghost);
+  }
 
   // ── 汇总 ───────────────────────────────────────────
   function render() {
     var now = Date.now();
-    renderRing(now); renderClock(now); renderBubble(); renderStrips(); renderBucket(); renderPets();
+    renderRing(now); syncDock(now); renderClock(now); renderBubble(); renderStrips(); renderBucket(); renderPets();
     [].forEach.call(layer.querySelectorAll(".st-pet"), bindPetDrag);
     renderToast();
     if (panelPid) renderPanel();
@@ -963,7 +1013,11 @@
   }
   function applyData() {
     var lanes = data.lanes, running = lanes && lanes.human && lanes.human.running;
-    stage.setTimer(running ? { projectId: running.projectId || null, startAt: ms(running.startAt) } : null);
+    var was = stage.timerState();   // 倒计时刚到点、服务端已收尾（轮询赶在秒表前读到）：同样提醒一次
+    if (was && was.deadlineAt && !running && Date.now() >= was.deadlineAt - 1500 && countdownDone !== was.startAt) {
+      countdownDone = was.startAt; clockMenu.remind(CM.endedText(was.startAt, was.deadlineAt));
+    }
+    stage.setTimer(running ? { projectId: running.projectId || null, startAt: ms(running.startAt), deadlineAt: ms(running.deadlineAt) || null } : null);
     var b = data.blocks, date = b && b.date, items = ((b && b.items) || []).filter(function (x) { return x.status ? x.status === "pending" : true; })
       .map(function (x) { return Object.assign({ date: date, legible: false, kind: "other" }, x); });
     stage.setBucket(items.reduce(function (s, x) { return s + (x.seconds || 0); }, 0), items);
@@ -990,7 +1044,7 @@
       if (r[3]) data.blocks = r[3];
       if (tiers) trayLoaded = true;
       data.unplaced = (r[4] && r[4].items) || [];
-      if (r[5] && window.HexSourceHealth) renderSourceHint(window.HexSourceHealth.problems(r[5].devices));
+      if (r[5] && window.HexSourceHealth) clockMenu.setIssues(window.HexSourceHealth.problems(r[5].devices));
       applyData(); render();
     });
   }
@@ -1005,7 +1059,7 @@
 
   refresh().then(function () { sizeToWindow(); });
   setInterval(refresh, POLL_MS);
-  setInterval(function () { var n = Date.now(); renderRing(n); renderClock(n); renderToast(); }, TICK_MS);
+  setInterval(function () { var n = Date.now(); renderRing(n); syncDock(n); renderClock(n); renderToast(); clockMenu.refresh(); }, TICK_MS);
   setInterval(stepPets, PET_MS);
   setInterval(function () { renderBubble(); renderPets(); }, 400);
 })();

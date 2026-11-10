@@ -101,11 +101,6 @@ video.st-art { position: absolute; max-width: none; max-height: none; height: 80
 }
 @keyframes st-hex-leave { to { transform: scale(.4); opacity: 0; } }
 .st-bucket-label { font-weight: 600; font-size: var(--fs-sub); }
-.st-srchint { position: absolute; left: 214px; bottom: 24px; z-index: 18; cursor: pointer; border: 1px solid var(--line, currentColor); border-radius: 999px; background: none; color: var(--ink-3); padding: 2px 10px; font: inherit; font-size: var(--fs-sub); }
-.st-srchint[hidden] { display: none; }
-.st-srchint:hover, .st-srchint:focus-visible { color: var(--ink-1, inherit); }
-.st-srcpop { position: absolute; left: 214px; bottom: 56px; width: 320px; max-height: 360px; overflow: auto; padding: 8px 12px; z-index: 40; display: none; }
-.st-srcpop.open { display: block; }
 .st-src-row { display: flex; flex-wrap: wrap; gap: 2px 8px; padding: 6px 0; }
 .st-src-row b { flex: 0 0 100%; }
 .st-src-row span { flex: 0 0 100%; color: var(--ink-3); }
