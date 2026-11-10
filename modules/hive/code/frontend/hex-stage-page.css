@@ -60,7 +60,7 @@ body.stage-on .hex-cell:not(.is-expanded) .hex-close { display: none !important;
 .st-pet { position: absolute; z-index: 12; width: 0; height: 0; touch-action: none; }
 .st-pet.is-work { transition: left 900ms cubic-bezier(.4, 0, .2, 1), top 900ms cubic-bezier(.4, 0, .2, 1); }
 .st-pet.is-loose { transition: left 100ms linear, top 100ms linear; }
-.st-pet-in { position: absolute; left: -30px; top: -33px; width: 60px; display: flex; flex-direction: column; align-items: center; }
+.st-pet-in { position: absolute; left: -30px; top: -33px; width: 60px; display: flex; flex-direction: column; align-items: center; zoom: var(--pet-k, 1); }
 .st-pet .st-pet-in { cursor: pointer; transform-origin: 50% 100%; }
 .st-pet.is-loose .st-pet-in { cursor: grab; }
 .st-pet.st-squash .st-pet-in { animation: st-squash 220ms ease-out; }
