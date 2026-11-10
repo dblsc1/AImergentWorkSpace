@@ -5,9 +5,9 @@
   "use strict";
   var BASE = (typeof self !== "undefined" && self.HONEYCOMB_BASE) || "/";
   var API = BASE + "api/core/";
-  var St = window.NexusTableHexStage, Rec = window.NexusTableHexRecord, Pk = window.NexusTableHexPetPick;
+  var St = window.NexusTableHexStage, Rec = window.NexusTableHexRecord, Pk = window.NexusTableHexPetPick, Pr = window.NexusTableHexProjectRuler;
   var shell = document.querySelector(".board-shell");
-  if (!St || !Rec || !Pk || !shell) return;
+  if (!St || !Rec || !Pk || !Pr || !shell) return;
 
   var POLL_MS = 5000, TICK_MS = 1000, PET_MS = 100;
   var SLOT_AREA = { x: 24, y: 70, w: 340, h: 170 };
@@ -148,7 +148,9 @@
       }
       lx = dx / zoom(); ly = dy / zoom();
       o.el.style.translate = lx + "px " + ly + "px";
-      lit(cellAt(ev.clientX, ev.clientY));
+      var cell = cellAt(ev.clientX, ev.clientY);
+      if (fileable(item) && PP.dragOver(ev.clientX, ev.clientY, cell)) cell = null;   // 项目面板（弹簧展开 / 任务条 / 空白新建）：指针在面板里，亮的是任务条，不是后面的格子
+      lit(cell);
       if (Sp && fileable(item)) sprout = blankSprout(ev.clientX, ev.clientY, sprout);
     });
     function onEsc(ev) { if (ev.key === "Escape" && id != null && moved) end({ pointerId: id }, true); }
@@ -160,7 +162,9 @@
       var grown = sprout; sprout = null;
       if (moved) { swallow = true; window.setTimeout(function () { swallow = false; }, 50); }   // 松手那下 click 不能落到空白处把刚开的表单收掉
       if (!moved) { if (!cancel && o.onClick) o.onClick(); return; }
-      var target = cancel ? null : cellAt(ev.clientX, ev.clientY);
+      var on = cancel ? null : PP.dropAt(ev.clientX, ev.clientY);   // 落在项目面板的任务条上 / 新建任务的输入上
+      var target = cancel ? null : on ? cellEl(on.projectId) : PP.overPanel(ev.clientX, ev.clientY) ? null : cellAt(ev.clientX, ev.clientY);
+      PP.dragEnd();
       o.el.classList.remove("st-dragging"); dragging--;
       // 时间元素停在分区空白处、那一格亮满后松手 = 建新项目（同长按建项目的表单），建好后把它记进去（hive.stage.v1「二」8）
       var made = !target && !cancel && grown && fileable(item) && Sp.openCreate({ name: createName(item), onCreated: function (p) {
@@ -169,18 +173,26 @@
           .then(function (r) { busy--; render(); return Promise.resolve(r && r.ok ? refresh() : null).then(function () { if (o.afterCreate) o.afterCreate(); }); });
       }, onCancel: function () { if (o.afterCreate) o.afterCreate(); } });
       if (!made && Sp) Sp.removeSprout();
-      if (o.onRelease) { var back = o.onRelease(target, cancel, lx, ly, made); if (back === "keep" || made) return; }
+      if (o.onRelease) { var back = o.onRelease(target, cancel, lx, ly, made, on); if (back === "keep" || made) return; }
       if (made) { o.el.style.translate = ""; return; }
-      var pid = target ? target.dataset.projectId : null;
-      busy++;
-      stage.drop(item, pid).then(function (r) {
-        o.el.style.translate = "";
-        if (r && r.reverted && pid) o.el.classList.add("st-bounce");
-        busy--;
-        if (r && r.ok) fileBubble(item, pid, r);
-        render();
-        if (r && r.ok) refresh();
-      });
+      var pid = on ? on.projectId : target ? target.dataset.projectId : null;
+      function file(taskId) {
+        busy++;
+        stage.drop(item, pid, { taskId: taskId }).then(function (r) {
+          o.el.style.translate = "";
+          if (r && r.reverted && pid) o.el.classList.add("st-bounce");
+          busy--;
+          if (r && r.ok && !taskId) fileBubble(item, pid, r);
+          if (r && r.ok) PP.invalidate();
+          render();
+          if (r && r.ok) refresh();
+        });
+      }
+      if (on && on.create) {   // 在面板空白处停够 1 秒长出了新任务输入：等人打名字，建好再把时间元素记进去
+        PP.awaitName(function (taskId) { getJson("views/tree").then(function (t) { if (t) data.tree = t; file(taskId); }); }, function () { o.el.style.translate = ""; });
+        return;
+      }
+      file(on && on.taskId);
     }
     handle.addEventListener("pointerup", function (ev) { end(ev, false); });
     handle.addEventListener("pointercancel", function (ev) { end(ev, true); });
@@ -558,7 +570,7 @@
         var s = ix[e.dataset.runId];
         if (s && s.mode === "hold" && e.__home) startBack(e, curPos(e), 0);
       },
-      onRelease: function (target, cancel, dx, dy, made) {
+      onRelease: function (target, cancel, dx, dy, made, on) {
         var s = ixOf(e.dataset.runId), at = curPos(e);
         s.dragEnd = Date.now(); s.click = null;
         var from = { x: at.x + dx, y: at.y + dy };
@@ -567,9 +579,15 @@
           e.style.translate = ""; s.mode = "hold"; place(e, from); syncClip(e);
           return "keep";
         }
-        if (pid && pid !== e.__pet.projectId) {              // 落在另一个项目的格子上：问清楚再挂；宠物在原地等
+        var tid = on && on.taskId || null, run = e.__run;
+        if (on && on.create) {                               // 项目面板空白处新建任务：宠物原地等，建好再问
           e.style.translate = ""; s.mode = "hold"; place(e, from); syncClip(e);
-          openConfirm(e, pid);
+          PP.awaitName(function (taskId) { getJson("views/tree").then(function (t) { if (t) data.tree = t; openConfirm(e, on.projectId, taskId); }); }, function () { backHome(e.dataset.runId); });
+          return "keep";
+        }
+        if (pid && (pid !== e.__pet.projectId || (tid && run && tid !== run.taskId))) {   // 落在另一个项目的格子 / 项目面板的任务条上：问清楚再挂；宠物在原地等
+          e.style.translate = ""; s.mode = "hold"; place(e, from); syncClip(e);
+          openConfirm(e, pid, tid);
           return "keep";
         }
         e.style.translate = ""; s.mode = null;               // 空白处 / 自己的格子 / 取消：不改数据，停 3 秒再走回
@@ -599,12 +617,12 @@
     st.style.maxHeight = Math.max(120, layer.clientHeight - top - 8) + "px";
     return st;
   }
-  function openConfirm(e, pid) {
+  function openConfirm(e, pid, taskId) {
     closeFileBubble();
     var cell = cellEl(pid), id = e.dataset.runId, run = runById(id);
     if (!cell || !run) { backHome(id); return; }
     confirms.filter(function (x) { return x.dataset.runId === id; }).forEach(dropConfirm);   // 同一只再拖一次：只留新的
-    var c = rectCenter(cell), name = projectName(pid), who = titleOf(run), el = document.createElement("div");
+    var c = rectCenter(cell), tk = taskId && taskOf(taskId), name = tk ? tk.name : projectName(pid), who = titleOf(run), el = document.createElement("div");
     el.className = "st-confirm st-card"; el.setAttribute("role", "dialog"); el.dataset.runId = id;
     el.innerHTML = '<button type="button" class="st-cf-x" aria-label="取消">✕</button><div class="st-cf-title"></div>' +
       '<div class="st-cf-btns"><button type="button" data-from="start">之前的时间也算过去</button><button type="button" data-from="now">只算以后的时间</button></div>' +
@@ -619,8 +637,8 @@
       dropConfirm(el);
       if (!timeFrom) { backHome(id); return; }
       busy++;
-      stage.drop({ kind: "pet", runId: id, agent: run.agent }, pid, { remember: remember, timeFrom: timeFrom }).then(function (r) {
-        busy--; render();
+      stage.drop({ kind: "pet", runId: id, agent: run.agent }, pid, { remember: remember, timeFrom: timeFrom, taskId: taskId }).then(function (r) {
+        busy--; if (r && r.ok) PP.invalidate(); render();
         return Promise.resolve(r && r.ok ? refresh() : null).then(function () { backHome(id); });
       });
     };
@@ -885,37 +903,18 @@
   }
 
   // ── 完成记录面板 ─────────────────────────────────────
-  function lineHtml(spans, color, from) {
-    var span = DAY_SPAN_H * 3600000, base = from + DAY_FROM_H * 3600000;
-    return spans.map(function (s) {
-      var a = Math.max(s.from, base), b = Math.min(s.to, base + span);
-      if (b <= a) return "";
-      return '<i style="left:' + (a - base) / span * 100 + "%;width:" + (b - a) / span * 100 + "%;background:" + color + '"></i>';
-    }).join("");
-  }
   function openPanel(pid) {
     panelPid = pid; renderPanel(); $("stVeil").hidden = false;
     var x = $("stPanel").querySelector(".st-x"); if (x) x.focus();
   }
   var panelHtml = "";
-  function closePanel() { panelPid = null; panelHtml = ""; $("stVeil").hidden = true; }
+  function closePanel() { panelPid = null; panelHtml = ""; $("stVeil").hidden = true; PP.reset(); }
+  // 项目面板（任务条 + 人 / 代理时间标尺）在 hex-project-ruler.js；这里只接标题栏与重画
+  var PP = Pr.createPanel({ tree: function () { return data.tree; }, getJson: getJson, dur: dur, open: openPanel, taskApi: function () { return window.NexusTableData; },
+    changed: function () { renderPanel(); } });
   function renderPanel() {
-    if (!panelPid) return;
-    var now = Date.now(), from = dayStart(), pid = panelPid;
-    var rec = Rec.projectRecord(data.lanes, runsOf(), pid, projectOfTask, now);
-    var timer = { html: lineHtml(rec.timer.spans, "var(--fact-s1)", from), total: rec.timer.total };
-    var talk = { html: lineHtml(rec.attend.spans, "var(--attn, var(--focus))", from), total: rec.attend.total };
-    var axis = '<div class="st-axis"><span>06</span><span>09</span><span>12</span><span>15</span><span>18</span><span>21</span><span>24</span></div>';
-    var rows = rec.runs.map(function (r) {
-      var mood = Pk.moodOf(r.phase, r.lost);
-      return '<div class="st-agrow"><b>' + esc(r.name) + '</b><span class="st-d">' + dur(r.workingSeconds) +
-        '</span><span class="st-st is-' + mood + '">' + STATUS_TEXT[mood] + "</span></div>";
-    }).join("");
-    var html = '<div class="st-hd"><h2>' + esc(projectName(pid)) + '</h2><button type="button" class="st-expand">展开</button><button type="button" class="st-x" aria-label="关闭">✕</button></div>' +
-      '<div class="st-cols"><div class="st-col-human"><h3>你</h3>' +
-      '<div class="st-kind" data-kind="timer"><div class="st-row"><b>计时</b><span>' + dur(timer.total) + '</span></div><div class="st-track">' + timer.html + "</div>" + axis + "</div>" +
-      '<div class="st-kind" data-kind="attend"><div class="st-row"><b>对话</b><span>' + dur(talk.total) + '</span></div><div class="st-track">' + talk.html + "</div>" + axis + "</div></div>" +
-      '<div class="st-col-agent"><h3>代理</h3>' + rows + '<div class="st-token"><b>token 花费</b><span>—</span></div></div></div>';
+    if (!panelPid || PP.frozen()) return;
+    var html = '<div class="st-hd"><h2>' + esc(projectName(panelPid)) + '</h2><button type="button" class="st-expand">展开</button><button type="button" class="st-x" aria-label="关闭">✕</button></div>' + PP.body(panelPid, Date.now());
     if (html !== panelHtml) { panelHtml = html; $("stPanel").innerHTML = html; }   // 没变就不重设，免得丢关闭按钮的焦点
   }
   $("stPanel").addEventListener("click", function (ev) {

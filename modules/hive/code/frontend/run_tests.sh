@@ -24,6 +24,7 @@ node hex-claim-card.test.js
 node hex-pet-pick.test.js
 node hex-stage.test.js
 node hex-record.test.js
+node hex-project-ruler.test.js
 node hex-mini.test.js
 node hex-onboard.test.js
 node hex-source-health.test.js
