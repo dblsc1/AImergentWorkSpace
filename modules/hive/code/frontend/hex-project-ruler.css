@@ -35,7 +35,7 @@ body.st-spring .st-layer { z-index: 210; }
 /* 泳道：上半人、下半代理（上下，不是左右） */
 .pr-lanes { position: relative; display: flex; flex-direction: column; gap: 2px; min-height: 36px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
 .pr-lane { position: relative; flex: 1; min-height: 16px; }
-.pr-seg { position: absolute; top: 2px; bottom: 2px; min-width: 1px; border-radius: 1px; cursor: default; }
+.pr-seg { position: absolute; top: 2px; bottom: 2px; min-width: 3px; border-radius: 1px; cursor: default; }
 .pr-seg.pr-h { background: var(--pr-human); }
 .pr-seg.pr-a { background: var(--pr-agent, var(--fact)); }
 .pr-seg:hover { outline: 1px solid var(--ink); z-index: 2; }
