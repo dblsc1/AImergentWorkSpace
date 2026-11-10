@@ -88,7 +88,12 @@
   // 字体加载完、窗口尺寸变了（@media 字号）都可能改宽度：换一代，缓存全部作废
   var labelGen = 0;
   if (document.fonts && document.fonts.addEventListener) document.fonts.addEventListener("loadingdone", function () { labelGen++; });
-  window.addEventListener("resize", function () { labelGen++; });
+  var fitTimer = null;
+  window.addEventListener("resize", function () {
+    labelGen++;
+    clearTimeout(fitTimer);
+    fitTimer = setTimeout(function () { if (state && !state.expandedId) applyLayout(false); }, 150);
+  });
   function labelSize(lb) {
     var key = labelGen + "\n" + lb.el.textContent, m = lb.__size;
     if (!m || m.key !== key || !m.w) m = lb.__size = { key: key, w: lb.el.offsetWidth || 0, h: lb.el.offsetHeight || 0 };
@@ -299,8 +304,8 @@
       moved.push(el);
     });
 
-    state.lastPlan = plan; state.lastCam = plan.cam || 1;
-    applyCamera(hive, camEl, plan, animate, wrapW);
+    state.lastPlan = plan;
+    state.lastCam = applyCamera(hive, camEl, plan, animate, wrapW);
 
     if (!moved.length) return;
     void hive.offsetWidth;                       // 强制提交反相态，否则下一帧不触发过渡
@@ -341,19 +346,21 @@
     var smooth = animate && !reduceMotion();
     camEl.style.transformOrigin = "0 0";
     camEl.style.transition = smooth ? "transform " + ANIM_MS + "ms " + EASE : "";
-    if (!wrap) return;
+    if (!wrap) return c;
 
     // 判据是「有没有展开」（plan.focus），不是「相机倍数是不是 1」。
     // 写成 c === 1 踩过一次：CAM 调成 1 之后整段被跳过，取景框没被钉住，
     // 页面被 2767px 高的内容整个撑开、可滚区域为 0，焦点永远滚不过去。
     if (!plan.focus) {
+      // 分区多了整张蜂巢会比屏幕高：没展开时等比缩到装得下（宽度和视口高度都看）
+      c = Math.min(c, wrapW ? (wrapW * 0.98) / plan.width : 1, Math.max(420, (window.innerHeight || 900) - 290) / plan.height);
       wrap.classList.remove("is-zoomed");
       wrap.style.height = "";
       hive.style.padding = "";
       hive.style.width = (plan.width * c) + "px";
       hive.style.height = (plan.height * c) + "px";
       camEl.style.transform = c === 1 ? "" : "scale(" + c + ")";
-      return;
+      return c;
     }
 
     // 取景框高度：至少装得下卡片 + 上下各露出邻居一截，否则"周围还有一片蜂巢"
@@ -406,6 +413,7 @@
     // （收起再展开时，上一次的 scrollTop 会让新的一帧从歪的地方起步）。
     // 拖拽中只在初次进入时归零（每次写都强制布局）；平时照旧每次归零——focus / scrollIntoView 能滚动 overflow:hidden 的盒子
     if (!wasZoomed || !document.body.classList.contains("hd-dragging")) { wrap.scrollLeft = 0; wrap.scrollTop = 0; }
+    return c;
   }
 
 
