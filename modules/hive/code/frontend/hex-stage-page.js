@@ -678,6 +678,7 @@
     // 计时环正好放进中心格（设计稿 140px，按中心格宽度等比缩放；展开推镜时中心格变大也不超过原大）
     var k = hc.w ? Math.min(1, hc.w / 140) : 1;
     el.style.transform = k < 1 ? "translate(-50%, -50%) scale(" + k.toFixed(3) + ")" : "";
+    el.dataset.k = k.toFixed(3);
     // 宠物跟蜂巢一起缩（蜂巢按屏幕等比缩小的倍数；只缩不放）
     var cam = document.querySelector(".hive-cam"), m = cam && /scale\(([\d.]+)/.exec(cam.style.transform || "");
     layer.style.setProperty("--pet-k", (m ? Math.min(1, +m[1]) : 1).toFixed(3));

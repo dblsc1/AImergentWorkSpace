@@ -79,6 +79,8 @@
     ring.addEventListener("click", openMixedFlying);
     ring.addEventListener("keydown", function (ev) { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openMixedFlying(); } });
     var tk = ring.querySelector(".st-tk"), tkText = null;
+    // 环缩得太小时轮播字看不清：挪到环下方的小条里（环里只留两段弧）
+    var cap = document.createElement("div"); cap.className = "st-tk-cap"; cap.hidden = true; ring.parentNode.appendChild(cap);
 
     function renderRing(now) {
       if (now - todayAt > 15000) {
@@ -89,6 +91,14 @@
       var lines = tickerLines({ humanNow: snap.humanNow, working: snap.working, humanSec: snap.humanSec, agentSec: agentSec, focus: snap.focus });
       var text = lines[Math.floor(now / TICK_MS) % lines.length];
       ring.dataset.lines = JSON.stringify(lines);
+      var k = +(ring.dataset.k || 1), small = k < 0.7;
+      tk.style.visibility = small ? "hidden" : "";
+      cap.hidden = !small;
+      if (small) {
+        cap.style.left = ring.style.left;
+        cap.style.top = (parseFloat(ring.style.top) || 0) + 70 * k + 4 + "px";
+        cap.textContent = String(text || "").replace(/\n/g, " · ");
+      }
       if (text !== tkText) {
         tkText = text; tk.textContent = text;
         if (!reduce) { tk.classList.remove("swap"); void tk.offsetWidth; tk.classList.add("swap"); }
