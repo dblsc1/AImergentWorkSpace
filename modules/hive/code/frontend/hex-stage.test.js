@@ -20,10 +20,17 @@ assert.strictEqual(S.pickRing(runs, [at("r1", -86400, -86000)], NOW, NOW - 3600e
 assert.strictEqual(S.pickRing(runs, [at("r1", -600, -15), at("r2", -700, -100)], NOW).runId, "r1");
 
 // HV-S05 / S06
-assert.deepStrictEqual(S.pickBubbleHost({ state: "active", projectId: "p1" }), { project: "p1" });
-assert.deepStrictEqual(S.pickBubbleHost({ state: "afk", projectId: "p1" }), { clock: true });
-assert.deepStrictEqual(S.pickBubbleHost(null), { clock: true });
-assert.deepStrictEqual(S.pickBubbleHost({ projectId: null }), { clock: true });
+assert.deepStrictEqual(S.eyeHost({ state: "present", projectId: "p1" }, null), { at: "project", project: "p1", by: "window" });
+assert.deepStrictEqual(S.eyeHost({ state: "afk", projectId: "p1" }, null), { at: "clock", closed: true });
+assert.deepStrictEqual(S.eyeHost(null, null), { at: "clock", closed: true });
+assert.deepStrictEqual(S.eyeHost({ state: "present", projectId: null }, null), { at: "tray", by: "window" });
+assert.deepStrictEqual(S.eyeHost({ state: "present", projectId: "p_inbox" }, null), { at: "tray", by: "window" });   // 收件箱不是格子
+// 手动计时优先于窗口：记到了项目跟项目，没记到停时钟（睁眼）
+assert.deepStrictEqual(S.eyeHost({ state: "present", projectId: "p1" }, { projectId: "p2" }), { at: "project", project: "p2", by: "timer" });
+assert.deepStrictEqual(S.eyeHost({ state: "afk" }, { projectId: null }), { at: "clock", by: "timer" });
+assert.strictEqual(S.focusLabel({ app: "firefox", title: "文档" }), "firefox · 文档");
+assert.strictEqual(S.focusLabel({ app: "firefox", title: "窗口名7" }), "firefox · 标题已隐去");
+assert.strictEqual(S.focusLabel({ app: "", title: "" }), "窗口 · —");
 
 // HV-S07 / S08
 assert.strictEqual(S.bucketText(3720), "未分类 · 今天 1 小时 2 分");

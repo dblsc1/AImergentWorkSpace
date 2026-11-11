@@ -1,14 +1,7 @@
-/* hive · 右上角时钟：短按菜单、长按气泡、倒计时、停靠左下（hive.stage.v1「九」） */
+/* hive · 右上角时钟：短按菜单、长按气泡、倒计时（hive.stage.v1「九」） */
 .st-clock.has-issue::after { content: ""; position: absolute; right: 8px; top: 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--warn, #E08A00); }
 .st-clock { will-change: auto; }
 .st-clock-today.is-countdown { font-family: var(--font-mono, monospace); color: var(--pr-human); }
-
-/* 未分类窗口：时钟停到左下托盘右侧，窗口名在它右边 */
-#stageLayer #stClock.is-docked { right: auto; top: auto; left: 216px; bottom: 20px; }
-.st-clock-win { position: absolute; left: 486px; bottom: 34px; max-width: calc(100% - 520px); z-index: 20; padding: 6px 12px; border-radius: 999px;
-  background: var(--panel); border: 1px solid var(--line); color: var(--ink); font-size: var(--fs-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  opacity: 0; pointer-events: none; transition: opacity var(--t-med, 200ms); }
-.st-clock-win.show { opacity: 1; }
 
 /* 菜单面板 */
 .cm-panel { position: fixed; z-index: 70; width: 380px; max-height: min(70vh, 640px); overflow: auto; padding: 12px 14px 14px; box-sizing: border-box; }
@@ -35,4 +28,3 @@
 .cm-custom input { flex: 1; min-width: 0; width: 60px; border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; background: var(--panel); color: var(--ink); font: inherit; }
 .cm-custom input.is-bad { border-color: var(--pr-human); }
 .cm-alert { position: fixed; z-index: 80; padding: 10px 16px; font-weight: 600; cursor: pointer; border-color: var(--pr-human); }
-@media (prefers-reduced-motion: reduce) { .st-clock-win { transition: none; } }

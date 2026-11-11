@@ -63,7 +63,8 @@ def test_present_without_switch_and_without_target(client, world, clock):
     clock(0)
     focus = _focus(client)
     assert focus == {"state": "present", "app": "code", "title": TITLE, "since": focus["since"],
-                     "dwellSeconds": 0, "displayName": "garden", **NO_TARGET}
+                     "dwellSeconds": 0, "displayName": "garden", "blockKey": focus["blockKey"], **NO_TARGET}
+    assert focus["blockKey"], "v2.52：在场时带出当前窗口的块名"
     assert _ts(focus["since"]) == t0
     body = client.get(f"{API}/views/current").json()
     assert (body["auto"], body["needsChoice"], body["aiThinking"]) == (None, None, None)
@@ -285,3 +286,29 @@ def test_reading_writes_nothing_and_history_is_looked_up_once_per_window(client,
 
     names = {i["name"] for i in get_db()["activity_suggestions"].list_indexes()}
     assert "user_status_app_decided" in names, "按以往的查找走这条索引"
+
+
+# ─────────────────────────────────────────── v2.52：窗口块今天的归类
+
+
+def test_block_assigned_today_is_the_target_and_beats_session_and_history(client, world, clock):
+    """人把这个窗口的块归到了项目 / 任务（蜂巢里拖眼睛）：focus 立刻认它，出处 ``block``；离开时不带块名。"""
+    from datetime import datetime as _dt  # noqa: PLC0415
+
+    from app import config  # noqa: PLC0415
+
+    clock(-30)
+    _beat(client)
+    clock(0)
+    key = _focus(client)["blockKey"]
+    today = _dt.now(config.settings.tz).date().isoformat()
+    blk = f"{API}/activity/blocks/assign"
+    out = _post(client, blk, {"date": today, "blockKey": key, "projectId": world["q"], "ifSeq": 0})
+    focus = _focus(client)
+    assert _target(focus) == {"projectId": world["q"], "projectName": "项目 Q", "taskId": None, "taskName": None, "source": "block"}
+    _post(client, blk, {"date": today, "blockKey": key, "taskId": world["a"], "ifSeq": out["seq"]})
+    focus = _focus(client)
+    assert (focus["projectId"], focus["taskId"], focus["taskName"], focus["source"]) == (world["p"], world["a"], "任务 a", "block")
+    _beat(client, afk=True)
+    away = _focus(client)
+    assert away["blockKey"] is None and _target(away) == NO_TARGET

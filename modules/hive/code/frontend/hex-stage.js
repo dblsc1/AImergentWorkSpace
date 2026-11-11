@@ -1,5 +1,5 @@
 // hive · hex-stage.js —— 蜂巢新布局的选择与计算（hive.stage.v1「一」「二」）。纯逻辑，无 DOM。
-// 中心环选哪条运行、气泡停哪、桶文案、抽屉行、拖放请求组装、白条、手动计时状态。
+// 中心环选哪条运行、眼睛停哪、桶文案、抽屉行、拖放请求组装、白条、手动计时状态。
 // 请求的 path 相对 api/core/，由接线层拼站点前缀。
 (function () {
   "use strict";
@@ -23,9 +23,20 @@
     return hit || { runId: last.runId };
   }
 
-  function pickBubbleHost(focus) {
-    if (focus && focus.state !== "afk" && focus.projectId) return { project: focus.projectId };
-    return { clock: true };
+  // 眼睛 = 人此刻的聚焦（hive.stage.v1「十」）。停哪：
+  // 手动计时记到了项目 → 那个项目；计时中还没记到项目 → 时钟角上（睁眼）；
+  // 没在计时：窗口认出项目 → 那个项目；在场但没认出（收件箱不算项目）→ 左下托盘旁；离开 / 没有心跳 → 时钟角上、闭眼
+  var INBOX = "p_inbox", HIDDEN_TITLE = /^(窗口名|路径)\d+$/;
+  function eyeHost(focus, running) {
+    if (running) return running.projectId && running.projectId !== INBOX ? { at: "project", project: running.projectId, by: "timer" } : { at: "clock", by: "timer" };
+    if (!focus || focus.state === "afk") return { at: "clock", closed: true };
+    if (focus.projectId && focus.projectId !== INBOX) return { at: "project", project: focus.projectId, by: "window" };
+    return { at: "tray", by: "window" };
+  }
+  // 窗口名：`程序 · 标题`；标题是代号（被隐去）的写「标题已隐去」
+  function focusLabel(focus) {
+    var title = (focus && focus.title) || "";
+    return ((focus && focus.app) || "窗口") + " · " + (HIDDEN_TITLE.test(title) ? "标题已隐去" : title || "—");
   }
 
   function bucketText(seconds) {
@@ -51,7 +62,7 @@
     return of.map(function (b) {
       var app = (b.apps || []).filter(function (a) { return b.blockKey.indexOf(a + " · ") === 0; })[0] || b.blockKey.split(" · ")[0];
       var title = b.blockKey.indexOf(app + " · ") === 0 ? b.blockKey.slice(app.length + 3) : "";
-      return { title: title || app, hidden: /^(窗口名|路径)\d+$/.test(title), app: app, seconds: b.seconds, block: Object.assign({}, b, { displayName: title ? app + " · " + title : app }) };
+      return { title: title || app, hidden: HIDDEN_TITLE.test(title), app: app, seconds: b.seconds, block: Object.assign({}, b, { displayName: title ? app + " · " + title : app }) };
     }).sort(function (a, b) { return b.seconds - a.seconds; });
   }
 
@@ -168,7 +179,7 @@
     return run.label || run.agent;
   }
 
-  var api = { petTitle: petTitle, pickRing: pickRing, pickBubbleHost: pickBubbleHost, bucketText: bucketText, drawerRows: drawerRows, greyGroups: greyGroups, stripList: stripList, dropRequest: dropRequest, createStage: createStage };
+  var api = { petTitle: petTitle, pickRing: pickRing, eyeHost: eyeHost, focusLabel: focusLabel, bucketText: bucketText, drawerRows: drawerRows, greyGroups: greyGroups, stripList: stripList, dropRequest: dropRequest, createStage: createStage };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.NexusTableHexStage = api;
 })();

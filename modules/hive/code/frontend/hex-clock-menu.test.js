@@ -53,18 +53,4 @@ assert.strictEqual(tl[0].hidden, true);
 assert.strictEqual(tl[1].to - tl[1].from, 20 * 60000);
 assert.strictEqual(C.focusTimeline(Array(50).fill(0).map((_, i) => rec(`2026-11-10T0${i % 9}:00:00Z`, `2026-11-10T0${i % 9}:00:09Z`, "a" + i, "t")), 5).length, 5);
 
-// 未分类焦点
-assert.strictEqual(C.unclassifiedFocus(null, false), null);
-assert.strictEqual(C.unclassifiedFocus({ state: "afk", app: "x", title: "y" }, false), null);
-assert.strictEqual(C.unclassifiedFocus({ state: "present", app: "x", title: "y", projectId: "p" }, false), null);
-assert.strictEqual(C.unclassifiedFocus({ state: "present", app: "x", title: "y", taskId: "t" }, false), null);
-assert.strictEqual(C.unclassifiedFocus({ state: "present", app: "x", title: "y" }, true), null);   // 手动计时中
-assert.strictEqual(C.unclassifiedFocus({ state: "present", app: "firefox", title: "文档" }, false).label, "firefox · 文档");
-assert.strictEqual(C.unclassifiedFocus({ state: "present", app: "firefox", title: "窗口名7" }, false).label, "firefox · 标题已隐去");
-
-// 停靠防抖：第一次立刻，之后 2.5 秒内不动
-let r = C.dockStep({ docked: false, at: 0 }, true, 1000); assert.deepStrictEqual(r, { docked: true, at: 1000, moved: true });
-r = C.dockStep(r, false, 2000); assert.strictEqual(r.moved, false); assert.strictEqual(r.docked, true);
-r = C.dockStep(r, false, 3600); assert.deepStrictEqual(r, { docked: false, at: 3600, moved: true });
-r = C.dockStep(r, false, 9000); assert.strictEqual(r.moved, false);
 console.log("hex-clock-menu ok");

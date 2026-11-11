@@ -4965,6 +4965,16 @@ MCP 侧见 `contracts/mcp.tools.v2`。
 - 不新增端点 / 集合 / 错误码；`timer/start`（记到任务的开始）不带倒计时。
 - 桌宠提醒：桌宠由 ai-detector 每 10 秒读 `views/current` 推 PetEvent，`views/current` 里没有倒计时字段，本版不做；要做需 `views/current` 追加到点信号 + ai-detector 发 `dialog` PetEvent（`desktop.pet.v1`「一」已留类型）。
 
+## v0.6：焦点认窗口块的归类（v2.52，追加式）
+
+仓主 2026-11-11：蜂巢里用一只「眼睛」表示人此刻的聚焦，拖眼睛到项目 = 把此刻这个窗口归过去（`hive.stage.v1`「十」）。为此 `focus`（`views/current` 顶层、`views/lanes` 的 `human.focus`、MCP `get_current_timer`）追加两处；与「此刻的焦点」节冲突处以本节为准，其余不变：
+
+- 追加键 `blockKey: string | null`：当前窗口所在的窗口块名（与 `GET activity/blocks` 的 `blockKey` 同一个算法：同设备 10 分钟内同程序同归一化标题的最新记录的块名，没有记录则按 `程序 · 标题` 的默认块名）。`state: "afk"` 时为 `null`。拿它可以直接 `POST activity/blocks/assign`。
+- 目标的认法在第 1 步（自动跟踪的目标）之后插一步：**窗口块今天的归类**——这个 `blockKey` 今天（NEXUS_TZ 本地日）的生效状态是 `assigned`（人分的，或第二级规则分的；判据同 `GET activity/blocks`）→ 用它的去向，`source: "block"`。拆成几段的取此刻落在的那一段；到任务 / 只到项目的规矩同「匹配历史」（任务完成了、删了、是桶 → 只到项目；项目已删 → 不认，接着走下一步）；归到收件箱的不算（接着走下一步）。之后才是窗口 ↔ 代理会话、匹配历史。
+- `source` 的取值因此多一个 `"block"`。
+- 仍然**只是显示**、不写任何东西；这一步只读一份分类文档与一条规则，不读当天的原始记录，不随轮询变贵；查不出（库出错）当没归类。
+- 不新增端点 / 集合 / 错误码。
+
 ## 变更记录
 
 见 `module_docs/contract-changelog.md`（从本文件拆出，只记历史不含规范）。

@@ -1,10 +1,10 @@
-// hive · hex-clock-menu.js —— 右上角时钟的短按菜单 / 长按计时气泡 / 未分类窗口停靠（hive.stage.v1「九」）。
+// hive · hex-clock-menu.js —— 右上角时钟的短按菜单 / 长按计时气泡（hive.stage.v1「九」；停靠左下已由「十」的眼睛取代）。
 // 上半是纯函数（给 hex-clock-menu.test.js 用），下半是 DOM（文字一律 textContent）。
 (function () {
   "use strict";
 
   var HOLD_MS = 520, HOLD_SLOP = 10;   // 与 hex-timer.js 的 LONGPRESS_MS / LONGPRESS_SLOP 同值（那边是计时页，不在本页加载）
-  var PRESETS = [25, 45, 60], MAX_MIN = 1440, DOCK_MIN_MS = 2500;
+  var PRESETS = [25, 45, 60], MAX_MIN = 1440;
   var HIDDEN_TITLE = /^(窗口名|路径)\d+$/;
   function ms(s) { var t = s ? Date.parse(s) : NaN; return isNaN(t) ? 0 : t; }
   function pad(n) { return n < 10 ? "0" + n : "" + n; }
@@ -70,20 +70,8 @@
     return out.reverse().slice(0, limit || 40);
   }
 
-  // 人此刻在看的窗口是「未分类」的：在场、没认出项目 / 任务，且没在手动计时。是 → {app, title, hidden, label}
-  function unclassifiedFocus(focus, timerRunning) {
-    if (!focus || focus.state !== "present" || timerRunning || focus.projectId || focus.taskId) return null;
-    var hidden = HIDDEN_TITLE.test(focus.title || ""), title = focus.title || "";
-    return { app: focus.app || "", title: hidden ? "" : title, hidden: hidden, label: (focus.app || "窗口") + " · " + (hidden ? "标题已隐去" : title || "—") };
-  }
-  // 停靠 / 回位别抖：状态变了也至少隔 DOCK_MIN_MS 才动；第一次立刻
-  function dockStep(st, want, now) {
-    if (want === st.docked || (st.at && now - st.at < DOCK_MIN_MS)) return { docked: st.docked, at: st.at, moved: false };
-    return { docked: want, at: now, moved: true };
-  }
-
   var H = { HOLD_MS: HOLD_MS, PRESETS: PRESETS, pressKind: pressKind, remainingSeconds: remainingSeconds, formatRemaining: formatRemaining, parseMinutes: parseMinutes,
-    endedText: endedText, allocation: allocation, windowRows: windowRows, focusTimeline: focusTimeline, unclassifiedFocus: unclassifiedFocus, dockStep: dockStep };
+    endedText: endedText, allocation: allocation, windowRows: windowRows, focusTimeline: focusTimeline };
   if (typeof module !== "undefined" && module.exports) { module.exports = H; return; }
   window.HexClockMenu = H;
 

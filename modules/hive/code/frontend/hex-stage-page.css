@@ -31,11 +31,28 @@ body.stage-on .hex-cell:not(.is-expanded) .hex-close { display: none !important;
 .st-clock-tx { min-width: 0; }
 .st-clock-today { font-weight: 700; font-size: 17px; margin: 2px 0 4px; }
 .st-clock-proj { font-size: var(--fs-sub); color: var(--ink-2); min-height: 1.4em; }
-.st-bubble { position: absolute; z-index: 30; width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%;
-  background: var(--attn, var(--focus)); color: var(--panel); display: grid; place-items: center; box-shadow: var(--shadow); pointer-events: none; }
-.st-bubble.is-timing { pointer-events: auto; cursor: grab; touch-action: none; }
-.st-bubble.st-dragging { cursor: grabbing; z-index: 90; }
-.st-bubble svg { width: 20px; height: 20px; }
+/* 眼睛：人此刻的聚焦（hive.stage.v1「十」） */
+.st-eye { position: absolute; z-index: 30; width: 38px; height: 38px; margin: -19px 0 0 -19px; border-radius: 50%; box-sizing: border-box;
+  background: var(--panel); border: 2px solid var(--pr-human); color: var(--ink); display: grid; place-items: center; box-shadow: var(--shadow);
+  cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none; }
+.st-eye.is-live { cursor: grab; }
+.st-eye.is-timing { border-color: var(--fact); }
+.st-eye.is-closed { border-color: var(--line); color: var(--ink-3); }
+.st-eye.st-dragging { cursor: grabbing; z-index: 90; }
+.st-eye svg { width: 26px; height: 26px; overflow: visible; }
+.st-eye-lid { fill: var(--panel); stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
+.st-eye-iris { fill: var(--pr-human); }
+.st-eye.is-timing .st-eye-iris { fill: var(--fact); }
+.st-eye-glint { fill: var(--panel); }
+.st-eye-shut { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; display: none; }
+.st-eye-open { transform-box: fill-box; transform-origin: center; animation: st-blink 5.5s infinite; }
+.st-eye.is-closed .st-eye-open { display: none; }
+.st-eye.is-closed .st-eye-shut { display: block; }
+@keyframes st-blink { 0%, 93%, 100% { transform: scaleY(1); } 96.5% { transform: scaleY(.08); } }
+.st-eye-win { position: absolute; left: calc(100% + 8px); top: 50%; transform: translateY(-50%); max-width: 360px; padding: 5px 12px; border-radius: 999px;
+  background: var(--panel); border: 1px solid var(--line); color: var(--ink); font-size: var(--fs-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.st-eye-win:empty { display: none; }
+@media (prefers-reduced-motion: reduce) { .st-eye-open { animation: none; } }
 
 /* 白条 */
 .st-strips { position: absolute; right: 24px; top: 118px; width: 260px; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; z-index: 19; pointer-events: none; }

@@ -110,12 +110,13 @@ class LaneFocus(_Strict):
     #: v2.17：时间线（最近 2 小时）里人在这同一个窗口上一共待了多少秒（含当前这一轮）；离开时为 null
     dwellSeconds: int | None = None
     displayName: str | None = None  #: onboarding.v1 二：与 ``GET activity/blocks`` 同一个函数算；离开 / 看不懂为 null
+    blockKey: str | None = None  #: v2.52：当前窗口所在的窗口块名（``GET activity/blocks`` 的 ``blockKey``）；离开为 null
     projectId: str | None = None
     projectName: str | None = None
     taskId: str | None = None
     taskName: str | None = None
     #: 目标是怎么认出来的：自动跟踪的三种出处 / 窗口 ↔ 代理会话 / 按以往确认过的
-    source: Literal["rules", "choice", "ai", "agent-session", "history"] | None = None
+    source: Literal["rules", "choice", "ai", "block", "agent-session", "history"] | None = None  #: v2.52 起多一个 "block"：窗口块今天的归类
 
 
 class CurrentOut(_Strict):
