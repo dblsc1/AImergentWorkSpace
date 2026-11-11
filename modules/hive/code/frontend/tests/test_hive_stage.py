@@ -416,31 +416,33 @@ def test_block_drop_conflict_keeps_the_block(browser, base) -> None:  # noqa: F8
         assert st.page.locator("#stBucketLabel").inner_text() == "未分类 · 今天 15 分"
 
 
-def test_bubble_follows_focus_between_cells_and_returns_to_the_clock_on_afk(browser, base) -> None:  # noqa: F811  HV-B06 / B07
+def test_eye_follows_focus_between_cells_and_returns_to_the_clock_closed_on_afk(browser, base) -> None:  # noqa: F811  HV-B06 / B07
     with open_stage(browser, base, setup=_busy_day) as st:
         def focus(state: str, pid: str | None) -> None:
             st.current = {"running": False, "focus": {"state": state, "app": "code", "title": "t", "since": _iso(st.now()), "projectId": pid,
                                                       "projectName": None, "taskId": None, "taskName": None, "source": "rules"}}
 
         def near(selector: str) -> bool:
-            bx, by = st.center("#stBubble")
+            bx, by = st.center("#stEye")
             b = st.box(selector)
             return b["x"] - 20 <= bx <= b["x"] + b["width"] + 20 and b["y"] - 20 <= by <= b["y"] + b["height"] + 20
 
         focus("present", "p_math")
         st.poll()
-        assert st.page.locator("#stBubble").get_attribute("data-host") == "p_math" and near(CELL.format("p_math"))
+        assert st.page.locator("#stEye").get_attribute("data-host") == "p_math" and near(CELL.format("p_math"))
+        assert "is-closed" not in st.page.locator("#stEye").get_attribute("class")
         focus("present", "p_piano")
         with st.page.expect_response("**/api/core/views/current"):
             st.page.clock.run_for(5000)
-        st.page.clock.run_for(400)           # 气泡的检查间隔
+        st.page.clock.run_for(400)           # 眼睛的检查间隔
         st.page.clock.run_for(600)           # 飞行 ≤ 600ms
-        assert st.page.locator("#stBubble").get_attribute("data-host") == "p_piano" and near(CELL.format("p_piano"))
+        assert st.page.locator("#stEye").get_attribute("data-host") == "p_piano" and near(CELL.format("p_piano"))
         focus("afk", "p_piano")
         with st.page.expect_response("**/api/core/views/current"):
             st.page.clock.run_for(5000)
         st.page.clock.run_for(1000)
-        assert st.page.locator("#stBubble").get_attribute("data-host") == "clock" and near("#stClock .st-dial")
+        assert st.page.locator("#stEye").get_attribute("data-host") == "clock" and near("#stClock")
+        assert "is-closed" in st.page.locator("#stEye").get_attribute("class")           # 离开：闭眼
 
 
 def test_ring_ticker_line_follows_the_run_the_human_attends(browser, base) -> None:  # noqa: F811  HV-B08（环里轮播的一句）
@@ -669,28 +671,37 @@ def test_panel_reads_only_known_endpoints_and_never_agent_usage(browser, base) -
             assert "usage" not in st.page.evaluate("(f) => fetch(f).then(r => r.text())", f)
 
 
-def test_drag_the_bubble_while_timing_places_the_timer_like_the_clock(browser, base) -> None:  # noqa: F811  二·2
+def _eye_on_clock_corner(st: Stage) -> bool:
+    (ex, ey), c = st.center("#stEye"), st.box("#stClock")
+    return abs(ex - c["x"]) < 6 and abs(ey - c["y"]) < 6
+
+
+def test_drag_the_eye_while_timing_asks_then_places_the_timer(browser, base) -> None:  # noqa: F811  十·3
     with open_stage(browser, base, setup=_busy_day) as st:
-        st.drag("#stBubble", st.center(CELL.format("p_piano")))      # 没在计时：拖不动
+        st.drag("#stEye", st.center(CELL.format("p_piano")))      # 没在计时、也没有窗口心跳：拖不动
         st.settle()
-        assert st.posts == [] and "st-dragging" not in (st.page.locator("#stBubble").get_attribute("class") or "")
+        assert st.posts == [] and "st-dragging" not in (st.page.locator("#stEye").get_attribute("class") or "")
         now = st.now().astimezone(TZ)
         st.lanes["human"]["running"] = {"startAt": _iso(now), "taskId": None, "projectId": None}
         st.poll()
-        st.drag("#stBubble", st.center(CELL.format("p_piano")))
+        assert _eye_on_clock_corner(st) and "is-timing" in st.page.locator("#stEye").get_attribute("class")
+        st.drag("#stEye", st.center(CELL.format("p_piano")))
         st.settle()
-        assert st.posts == [("timer/place", {"projectId": "p_piano"})]
+        card = st.page.locator(".st-confirm")
+        assert st.posts == [] and card.locator(".st-cf-title").inner_text() == "把这次计时记到 钢琴"
+        assert card.locator(".st-cf-box").count() == 0            # 计时没有「以后都算」
+        card.locator(".st-cf-ok").click()
+        st.settle()
+        assert st.posts == [("timer/place", {"projectId": "p_piano"})] and st.page.locator(".st-confirm").count() == 0
 
 
-def test_click_the_bubble_on_the_clock_opens_the_menu_not_stop(browser, base) -> None:  # noqa: F811  二·2（「九」起短按 = 菜单）
+def test_click_the_eye_on_the_clock_opens_the_menu_not_stop(browser, base) -> None:  # noqa: F811  十·1（点眼睛 = 点时钟）
     with open_stage(browser, base, setup=_busy_day) as st:
         now = st.now().astimezone(TZ)
         st.lanes["human"]["running"] = {"startAt": _iso(now), "taskId": None, "projectId": None}
         st.poll()
-        bx, by = st.center("#stBubble")
-        cx, cy = st.center("#stClock .st-dial")
-        assert abs(bx - cx) < 3 and abs(by - cy) < 3        # 气泡压在表盘中心
-        st.page.mouse.click(bx, by)
+        assert _eye_on_clock_corner(st)                     # 眼睛别在时钟卡的左上角
+        st.page.mouse.click(*st.center("#stEye"))
         st.settle()
         assert st.posts == [] and st.page.locator(".cm-panel").is_visible()
 
@@ -814,14 +825,10 @@ def test_clock_card_stays_clear_of_the_collapsed_decide_bar(browser, base) -> No
         bar, clock, strips = st.box(".hd-panel"), st.box("#stClock"), st.box("#stStrips")
         assert clock["y"] >= bar["y"] + bar["height"], (bar, clock)
         assert strips["y"] >= clock["y"] + clock["height"], (clock, strips)
-        dial, bub = st.box("#stClock .st-dial"), st.box("#stBubble")
-        bx, by = bub["x"] + bub["width"] / 2, bub["y"] + bub["height"] / 2
-        dx, dy = dial["x"] + dial["width"] / 2, dial["y"] + dial["height"] / 2
-        assert ((bx - dx) ** 2 + (by - dy) ** 2) ** 0.5 <= dial["width"] / 2, (dial, bub)     # 气泡跟着时钟，不悬在空档里
+        assert _eye_on_clock_corner(st), (st.box("#stClock"), st.box("#stEye"))     # 眼睛跟着时钟，不悬在空档里
         st.page.evaluate("() => { document.querySelector('.hd-panel').hidden = true; }")
         st.page.wait_for_timeout(100)
-        dial, bub = st.box("#stClock .st-dial"), st.box("#stBubble")
-        assert abs(bub["x"] + bub["width"] / 2 - dial["x"] - dial["width"] / 2) < 2 and abs(bub["y"] + bub["height"] / 2 - dial["y"] - dial["height"] / 2) < 2
+        assert _eye_on_clock_corner(st)
 
 
 def test_tray_gets_one_hex_chip_per_new_block_and_loses_one_when_filed(browser, base) -> None:  # noqa: F811  桶=托盘
@@ -880,7 +887,7 @@ def test_timing_clock_held_on_blank_retargets_the_running_timer_to_the_new_proje
     with open_stage(browser, base, width=1900, setup=_busy_day) as st:
         st.lanes["human"]["running"] = {"startAt": _iso(st.now().astimezone(TZ)), "taskId": None, "projectId": None}
         st.poll()
-        _drag_chip_to_blank(st, "#stBubble")
+        _drag_chip_to_blank(st, "#stEye")
         st.page.clock.run_for(600)
         st.page.mouse.up()
         _create_and_check(st, ("timer/place", {"projectId": "p_new"}))
@@ -1309,7 +1316,8 @@ def test_source_health_is_only_inside_the_clock_menu_with_a_dot_on_the_clock(bro
 
 def _focus(st: Stage, project: str | None, app: str = "firefox", title: str = "某文档", state: str = "present") -> None:
     st.current = {"running": False, "focus": {"state": state, "app": app, "title": title, "since": _iso(st.now()), "projectId": project,
-                                              "projectName": None, "taskId": None, "taskName": None, "source": None}}
+                                              "projectName": None, "taskId": None, "taskName": None, "source": None,
+                                              "displayName": title, "blockKey": None if state == "afk" else app + " · " + title}}
 
 
 def test_clock_short_press_menu_shows_allocation_windows_and_focus_timeline(browser, base) -> None:  # noqa: F811
@@ -1369,36 +1377,33 @@ def test_clock_long_press_countdown_presets_custom_and_end_reminder(browser, bas
         assert st.page.locator(".st-strip").count() == 1
 
 
-def test_clock_docks_bottom_left_on_unclassified_window_and_flies_back_with_one_tray_chip(browser, base) -> None:  # noqa: F811
+def _clock_top_right(st: Stage) -> bool:
+    c = st.box("#stClock")
+    return c["x"] > 1280 / 2 and c["y"] < 200
+
+
+def test_eye_sits_by_the_tray_on_unclassified_window_and_the_clock_never_moves(browser, base) -> None:  # noqa: F811  十·1 / 十·2
     with open_stage(browser, base, setup=_busy_day) as st:
-        assert "is-docked" not in st.page.locator("#stClock").get_attribute("class")
         chips = st.page.locator(".st-tray-chip").count()
         _focus(st, None, "firefox", "某文档")
         st.poll()
-        st.page.wait_for_timeout(700)
-        assert "is-docked" in st.page.locator("#stClock").get_attribute("class")
-        assert st.page.locator("#stClockWin").inner_text() == "firefox · 某文档"
-        clock, tray, win = st.box("#stClock"), st.box("#stBucketBtn"), st.box("#stClockWin")
-        assert clock["x"] >= tray["x"] + tray["width"] - 1 and clock["y"] > 600                  # 在托盘右边、左下
-        assert win["x"] >= clock["x"] + clock["width"] - 1                                         # 窗口名在时钟右侧
-        assert st.page.locator(".st-tray-chip").count() == chips
-        # 短按仍开菜单（菜单跑到时钟上面）、长按仍出气泡
-        st.page.click("#stClock")
-        assert st.box(".cm-panel")["y"] + st.box(".cm-panel")["height"] <= clock["y"]
-        st.page.keyboard.press("Escape")
-        st.long_press("#stClock")
-        assert st.page.locator(".cm-bubble").count() == 2
-        st.page.keyboard.press("Escape")
+        st.page.clock.run_for(1000)
+        eye, tray = st.box("#stEye"), st.box("#stBucketBtn")
+        assert st.page.locator("#stEye").get_attribute("data-host") == "tray"
+        assert eye["x"] >= tray["x"] + tray["width"] - 1 and eye["y"] > 600                      # 在托盘右边、左下
+        assert st.page.locator("#stEye .st-eye-win").inner_text() == "firefox · 某文档"
+        assert st.box("#stEye .st-eye-win")["x"] >= eye["x"] + eye["width"] - 1                  # 窗口名在眼睛右侧
+        assert _clock_top_right(st) and st.page.locator(".st-tray-chip").count() == chips
         # 标题被隐去
         _focus(st, None, "firefox", "窗口名3")
         st.poll()
-        assert st.page.locator("#stClockWin").inner_text() == "firefox · 标题已隐去"
-        # 切到已分类窗口：飞回右上，托盘先掉一块（块还没读到）
+        assert st.page.locator("#stEye .st-eye-win").inner_text() == "firefox · 标题已隐去"
+        # 切到已分类窗口：眼睛飞去那一格，托盘先掉一块（块还没读到）；窗口名收起
         _focus(st, "p_math")
         st.poll()
-        st.page.wait_for_timeout(700)
-        assert "is-docked" not in st.page.locator("#stClock").get_attribute("class")
-        assert st.box("#stClock")["x"] > 1280 / 2 and st.box("#stClock")["y"] < 200
+        st.page.clock.run_for(1000)
+        assert st.page.locator("#stEye").get_attribute("data-host") == "p_math" and st.page.locator("#stEye .st-eye-win").inner_text() == ""
+        assert _clock_top_right(st)
         assert st.page.locator(".st-tray-chip").count() == chips + 1
         assert st.page.locator(".st-tray-chip .st-drop").count() >= 1
         # 真块到了：认领占位那一格，不出现第二块
@@ -1408,13 +1413,54 @@ def test_clock_docks_bottom_left_on_unclassified_window_and_flies_back_with_one_
         assert st.page.locator(".st-tray-chip").count() == chips + 1
 
 
-def test_clock_does_not_dock_while_timer_runs_or_afk(browser, base) -> None:  # noqa: F811
+def test_eye_drag_from_tray_to_a_cell_asks_before_filing_the_window(browser, base) -> None:  # noqa: F811  十·3
+    with open_stage(browser, base, setup=_busy_day) as st:
+        st.blocks.append({"blockKey": "firefox · 某文档", "status": "pending", "seconds": 120, "seq": 5, "displayName": "某文档", "legible": True, "kind": "browser"})
+        _focus(st, None, "firefox", "某文档")
+        st.poll()
+        st.page.clock.run_for(1000)
+        chips = st.page.locator(".st-tray-chip").count()
+        today, cell = st.lanes["today"], st.center(CELL.format("p_piano"))
+        # 放空（不在格子上）：什么都不问、不发，飞回托盘
+        st.drag("#stEye", (cell[0], 30))
+        st.settle()
+        st.page.clock.run_for(800)
+        assert st.posts == [] and st.page.locator(".st-confirm").count() == 0
+        assert st.box("#stEye")["y"] > 600
+        # 拖到格子：弹确认卡，眼睛留在落点；取消 = 不发、飞回
+        st.drag("#stEye", cell)
+        st.settle()
+        card = st.page.locator(".st-confirm")
+        assert card.locator(".st-cf-title").inner_text() == "把 firefox · 某文档 算到 钢琴"
+        assert card.locator(".st-cf-rem").inner_text() == "以后这个窗口都算 钢琴" and card.locator(".st-cf-box").is_checked() is False
+        assert st.posts == [] and st.box("#stEye")["y"] < 600
+        st.page.keyboard.press("Escape")
+        st.page.clock.run_for(800)
+        assert st.posts == [] and st.page.locator(".st-confirm").count() == 0 and st.box("#stEye")["y"] > 600
+        # 确认（勾上「以后都算」）：按这个窗口今天的块发 assign；服务端随后认出项目，眼睛停在那一格，托盘不掉占位
+        st.replies["activity/blocks/assign"] = (200, {"seq": 6})
+        st.drag("#stEye", cell)
+        st.settle()
+        st.page.locator(".st-confirm .st-cf-box").check()
+        st.blocks[-1]["status"] = "assigned"          # 服务端：这个块归了类，下一次读就不在未分类里了
+        _focus(st, "p_piano", "firefox", "某文档")
+        st.page.locator(".st-confirm .st-cf-ok").click()
+        st.settle()
+        st.page.clock.run_for(1000)
+        assert st.posts == [("activity/blocks/assign", {"date": today, "blockKey": "firefox · 某文档", "ifSeq": 5, "remember": True, "projectId": "p_piano"})]
+        assert st.page.locator("#stEye").get_attribute("data-host") == "p_piano" and st.page.locator(".st-confirm").count() == 0
+        assert st.page.locator(".st-tray-chip").count() == chips - 1
+
+
+def test_eye_stays_on_the_clock_while_timer_runs_or_afk(browser, base) -> None:  # noqa: F811  十·2
     with open_stage(browser, base, setup=_busy_day) as st:
         _focus(st, None, state="afk")
         st.poll()
-        assert "is-docked" not in st.page.locator("#stClock").get_attribute("class")
+        assert _eye_on_clock_corner(st) and "is-closed" in st.page.locator("#stEye").get_attribute("class")
         now = st.now().astimezone(TZ)
         st.lanes["human"]["running"] = {"startAt": _iso(now), "taskId": None, "projectId": None}
         _focus(st, None)
         st.poll()
-        assert "is-docked" not in st.page.locator("#stClock").get_attribute("class")
+        cls = st.page.locator("#stEye").get_attribute("class")
+        assert _eye_on_clock_corner(st) and "is-closed" not in cls and "is-timing" in cls       # 计时中没记到项目：停时钟、睁眼
+        assert _clock_top_right(st)

@@ -6,7 +6,7 @@
 页面与 AI 客户端**不各自再认一遍项目 / 任务**。
 
 **只是显示**：本文件一行写都没有，不记时间、不改自动记录的任何行为；与 ``autoTrack`` 开关无关（开着时沿用它的目标）。
-目标按顺序认，先中先用：自动跟踪的目标 → 窗口 ↔ 代理会话（v2.13）→ 匹配历史（v2.12）。
+目标按顺序认，先中先用：自动跟踪的目标 → 窗口块今天的归类（v2.52）→ 窗口 ↔ 代理会话（v2.13）→ 匹配历史（v2.12）。
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from ..events import service as events_service
 from ..planner import service as planner_service
 from ..planner import unclassified
-from . import block_display, block_key, history, presence, records_repo, repo, session_link
+from . import block_display, block_key, block_rules, blocks, blocks_repo, history, presence, records_repo, repo, session_link
 from .auto import FRESH, window_key
 from .service import SOURCE
 
@@ -34,6 +34,9 @@ _HISTORY_CACHE_MAX = 512
 _history_cache: dict[tuple[str, str], tuple[datetime, list[tuple]]] = {}
 
 _NO_TARGET = {"projectId": None, "projectName": None, "taskId": None, "taskName": None, "source": None}
+_NO_BLOCK = {"blockKey": None, "displayName": None}
+#: v2.52：目标取自窗口块今天的归类
+BLOCK_SOURCE = "block"
 
 
 def _run_key(span: dict) -> tuple:
@@ -94,24 +97,55 @@ def _by_history(user: str, app: str, title: str, now: datetime) -> dict | None:
     if not title:  # 标题被隐私设置整个去掉了：只剩程序名，不够认
         return None
     for task_id, project_id in _history_refs(user, app, title, now):
-        task = planner_service.get_task(task_id)
-        project_id = task["projectId"] if task else project_id
-        found = _project_only(project_id, "history") if isinstance(project_id, str) else None
-        if found is None:
-            continue  # 项目已删：看更早的一次
-        if task and not unclassified.is_bucket(task) and not task.get("done"):
-            found.update(taskId=task["id"], taskName=task["name"])
-        return found
+        if found := _target(task_id, project_id, "history"):
+            return found  # 项目已删的跳过：看更早的一次
     return None
 
 
-def _display_name(user: str, now: datetime, device_id: str | None, app: str, title: str) -> str | None:
-    """当前窗口的 ``displayName``（onboarding.v1 二，与块同一个函数）；附带字段，查不到（库出错）给 None，不连累 focus。"""
-    try:
-        return _display_name_or_raise(user, now, device_id, app, title)
-    except Exception:  # noqa: BLE001
-        log.warning("focus displayName 没算出来", exc_info=True)
+def _target(task_id: str | None, project_id: str | None, source: str) -> dict | None:
+    """``(taskId, projectId)`` → 目标五键。任务还在、没完成、不是「未分类」桶 → 到任务；否则只到项目；项目已删 → None。"""
+    task = planner_service.get_task(task_id) if task_id else None
+    project_id = task["projectId"] if task else project_id
+    found = _project_only(project_id, source) if isinstance(project_id, str) else None
+    if found and task and not unclassified.is_bucket(task) and not task.get("done"):
+        found.update(taskId=task["id"], taskName=task["name"])
+    return found
+
+
+def _by_block(user: str, key: str | None, now: datetime) -> dict | None:
+    """v2.52：这个窗口的块今天已经归了类（人分的，或第二级规则分的）→ 用它的去向；拆成几段的取此刻落在的那一段。
+    只读一份分类文档、一条规则，不读当天的原始记录，所以不随轮询变贵。收件箱不算去向。查不出（库出错）当没归类。"""
+    if not key:
         return None
+    try:
+        day = blocks.today()
+        date = day.isoformat()
+        doc = blocks_repo.get_block(user, date, key)
+        since = blocks_repo.generic_since(user).get(key)
+        generic = since is not None and since <= date
+        rule_led = doc is None or doc.get("status") is None or doc.get("via") == "rule"
+        rule = block_rules.effective(user, [key]).get(key) if rule_led and not generic else None
+        status, _via, _rule_id, parts = blocks.resolve(day, doc, since, rule, True)
+        if status != "assigned":
+            return None
+        at = round(now.timestamp() * 1000)
+        for part in parts:
+            if (part.get("fromTs") is None or part["fromTs"] <= at) and (part.get("toTs") is None or at < part["toTs"]):
+                found = _target(part.get("taskId"), part.get("projectId"), BLOCK_SOURCE)
+                return found if found and found["projectId"] != planner_service.INBOX_PROJECT_ID else None
+    except Exception:  # noqa: BLE001
+        log.warning("focus 的窗口块归类没查出来", exc_info=True)
+    return None
+
+
+def _block_fields(user: str, now: datetime, device_id: str | None, app: str, title: str) -> dict:
+    """当前窗口的 ``blockKey``（v2.52）与 ``displayName``（onboarding.v1 二，与块同一个函数）；附带字段，查不到（库出错）给 None，不连累 focus。"""
+    try:
+        key, src, recs = current_block(user, now, device_id, app, title)
+        return {"blockKey": key, "displayName": block_display.describe(key, src, recs, block_display.domains(user))["displayName"]}
+    except Exception:  # noqa: BLE001
+        log.warning("focus 的窗口块没算出来", exc_info=True)
+        return dict(_NO_BLOCK)
 
 
 def current_block(user: str, now: datetime, device_id: str | None, app: str, title: str) -> tuple[str, str, list[dict]]:
@@ -123,11 +157,6 @@ def current_block(user: str, now: datetime, device_id: str | None, app: str, tit
     return block_key.default_key(app, title), "auto", [{"app": app, "title": title, "titleIsPseudonym": False, "seconds": 1}]
 
 
-def _display_name_or_raise(user: str, now: datetime, device_id: str | None, app: str, title: str) -> str | None:
-    key, src, recs = current_block(user, now, device_id, app, title)
-    return block_display.describe(key, src, recs, block_display.domains(user))["displayName"]
-
-
 def state(user: str, now: datetime, docs: list[dict], auto: dict | None) -> dict | None:
     """``focus``：最新心跳新鲜（≤ ``FRESH``）时非 null。``docs`` = 该租户的在场文档，``auto`` = 同一次读里算出的自动跟踪目标。"""
     fresh = [d for d in docs if now - d["lastAt"] <= FRESH and d.get("spans")]
@@ -136,13 +165,14 @@ def state(user: str, now: datetime, docs: list[dict], auto: dict | None) -> dict
     latest = max(fresh, key=lambda d: d["lastAt"])  # 只看最近报心跳的那台设备（同自动跟踪）
     spans = latest["spans"]
     cur = spans[-1]
+    block = dict(_NO_BLOCK) if cur["afk"] else _block_fields(user, now, latest.get("deviceId"), cur["app"], cur["title"])
     out = {"state": "afk" if cur["afk"] else "present", "app": cur["app"], "title": cur["title"],
-           "since": _since(spans), "dwellSeconds": None if cur["afk"] else _dwell(spans),
-           "displayName": None if cur["afk"] else _display_name(user, now, latest.get("deviceId"), cur["app"], cur["title"]), **_NO_TARGET}
+           "since": _since(spans), "dwellSeconds": None if cur["afk"] else _dwell(spans), **block, **_NO_TARGET}
     if cur["afk"]:
         return out
     if auto:
         target = {k: auto[k] for k in _NO_TARGET}
     else:
-        target = _by_session(user, cur["app"], cur["title"]) or _by_history(user, cur["app"], cur["title"], now)
+        target = (_by_block(user, block["blockKey"], now) or _by_session(user, cur["app"], cur["title"])
+                  or _by_history(user, cur["app"], cur["title"], now))
     return {**out, **(target or {})}

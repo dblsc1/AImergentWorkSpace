@@ -21,9 +21,8 @@
   layer.innerHTML =
     '<div class="st-ring" id="stRing"></div>' +
     '<div class="st-clock st-card" id="stClock" role="button" tabindex="0" aria-label="计时"></div>' +
-    '<div class="st-clock-win" id="stClockWin"></div>' +
     '<div class="st-strips" id="stStrips"></div>' +
-    '<div class="st-bubble" id="stBubble" aria-hidden="true"></div>' +
+    '<div class="st-eye" id="stEye" role="button" aria-label="你的聚焦"></div>' +
     '<div class="st-more" id="stMore" hidden></div>' +
     '<div class="st-drawer st-card" id="stDrawer"></div>' +
     '<div class="st-greypop st-card" id="stGreyPop"></div>' +
@@ -169,7 +168,7 @@
       // 时间元素停在分区空白处、那一格亮满后松手 = 建新项目（同长按建项目的表单），建好后把它记进去（hive.stage.v1「二」8）
       var made = !target && !cancel && grown && fileable(item) && Sp.openCreate({ name: createName(item), onCreated: function (p) {
         busy++;
-        getJson("views/tree").then(function (t) { if (t) data.tree = t; return stage.drop(item, p.id); })
+        getJson("views/tree").then(function (t) { if (t) data.tree = t; return dropItem(item, p.id); })
           .then(function (r) { busy--; render(); return Promise.resolve(r && r.ok ? refresh() : null).then(function () { if (o.afterCreate) o.afterCreate(); }); });
       }, onCancel: function () { if (o.afterCreate) o.afterCreate(); } });
       if (!made && Sp) Sp.removeSprout();
@@ -178,7 +177,7 @@
       var pid = on ? on.projectId : target ? target.dataset.projectId : null;
       function file(taskId) {
         busy++;
-        stage.drop(item, pid, { taskId: taskId }).then(function (r) {
+        dropItem(item, pid, { taskId: taskId }).then(function (r) {
           o.el.style.translate = "";
           if (r && r.reverted && pid) o.el.classList.add("st-bounce");
           busy--;
@@ -198,9 +197,18 @@
     handle.addEventListener("pointercancel", function (ev) { end(ev, true); });
   }
 
-  // 能「拖到空白处建项目」的元素：块、宠物（含格子边的）、计时中的时钟 / 气泡、白条
+  // 能「拖到空白处建项目」的元素：块、宠物（含格子边的）、计时中的时钟、眼睛、白条
   function fileable(item) { return item.kind !== "clock" || stage.timerRunning(); }
-  function createName(item) { return item.kind === "block" ? item.block.displayName || "" : item.kind === "pet" ? item.agent || "" : ""; }
+  function createName(item) { return item.kind === "block" ? item.block.displayName || "" : item.kind === "pet" ? item.agent || "" : item.kind === "focus" ? item.name : ""; }
+  // 眼睛拖的是「此刻这个窗口」（kind "focus"）：落定时才去读它今天的块（要 date 与 seq）；还没有记录的块按 seq 0 发
+  function dropItem(item, pid, opts) {
+    if (item.kind !== "focus") return stage.drop(item, pid, opts);
+    return getJson("activity/blocks?status=all&limit=1000").then(function (r) {
+      if (!r || !r.date) { stage.say("失败：读不到窗口记录"); return { ok: false, reverted: true }; }
+      var hit = (r.items || []).filter(function (b) { return b.blockKey === item.blockKey; })[0] || {};
+      return stage.drop({ kind: "block", block: { date: r.date, blockKey: item.blockKey, seq: hit.seq || 0, seconds: hit.status === "pending" ? hit.seconds || 0 : 0, displayName: item.name } }, pid, opts);
+    });
+  }
 
   // 指针在分区空白处（不在格子、不在本层元素上，且在 #hive 里）：长出同长按建项目一样的那一格，并同样「升起」
   function blankSprout(x, y, prev) {
@@ -714,36 +722,81 @@
     el.querySelector(".hm").setAttribute("transform", "rotate(" + (m * 6 + s / 10) + " 50 50)");
     el.querySelector(".hs").setAttribute("transform", "rotate(" + s * 6 + " 50 50)");
   }
-  function hostProject() {
-    var run = data.lanes && data.lanes.human && data.lanes.human.running;
-    if (run && run.projectId) return run.projectId;
-    var h = St.pickBubbleHost(data.current && data.current.focus);
-    return h.project || null;
+  // ── 眼睛：人此刻的聚焦（hive.stage.v1「十」）。时钟不动，飞来飞去的是它 ──
+  var EYE = '<svg viewBox="0 0 24 24" aria-hidden="true"><g class="st-eye-open"><path class="st-eye-lid" d="M2 12C5.4 6.8 8.7 5 12 5s6.6 1.8 10 7c-3.4 5.2-6.7 7-10 7s-6.6-1.8-10-7Z"/><circle class="st-eye-iris" cx="12" cy="12" r="3.9"/><circle class="st-eye-glint" cx="13.5" cy="10.6" r="1.1"/></g>' +
+    '<path class="st-eye-shut" d="M3 11.5c3.2 3.4 6.1 4.6 9 4.6s5.8-1.2 9-4.6M6.3 14.8l-1.3 2M12 16.2v2.4M17.7 14.8l1.3 2"/></svg><span class="st-eye-win"></span>';
+  function focusNow() { return (data.current && data.current.focus) || (data.lanes && data.lanes.human && data.lanes.human.focus) || null; }
+  function eyeNow() { return St.eyeHost(focusNow(), stage.timerState()); }
+  function hostProject() { var h = eyeNow(); return h.at === "project" ? h.project : null; }
+  // 拖眼睛拖的是什么：计时中 = 这次计时（同拖时钟）；否则 = 此刻这个窗口；离开 / 没有心跳 = 拖不动
+  function eyeItem() {
+    if (stage.timerRunning()) return { kind: "clock" };
+    var f = focusNow();
+    return f && f.state !== "afk" && f.blockKey ? { kind: "focus", blockKey: f.blockKey, label: St.focusLabel(f), name: f.displayName || "" } : null;
   }
-  var bub = { x: 0, y: 0, host: null, raf: 0 };
-  function bubbleTarget(pid) {
-    var el = pid && cellEl(pid);
+  var eye = { x: 0, y: 0, host: null, raf: 0, hold: false, back: false, filed: false };
+  function eyeTarget(h) {
+    var el = h.at === "project" && cellEl(h.project), k = zoom();
     if (el) { var c = rectCenter(el); return { x: c.x + c.w * 0.3, y: c.y - c.h * 0.36 }; }
-    var ck = ($("stClock").querySelector(".st-dial") || $("stClock")).getBoundingClientRect(), p = toLayer(ck.left + ck.width / 2, ck.top + ck.height / 2);
-    return p;
+    if (h.at === "tray") { var b = $("stBucketBtn").getBoundingClientRect(); return toLayer(b.right + 26 * k, b.top + b.height * 0.62); }
+    var ck = $("stClock").getBoundingClientRect();
+    return toLayer(ck.left + 2 * k, ck.top + 2 * k);   // 时钟卡左上角：像别在时钟上
   }
-  function renderBubble() {
-    var el = $("stBubble"), pid = hostProject(), t = bubbleTarget(pid), key = pid || "clock";
-    if (!el.firstChild) el.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
+  function renderEye() {
+    var el = $("stEye"), h = eyeNow(), key = h.at === "project" ? h.project : h.at, f = focusNow();
+    if (!el.firstChild) el.innerHTML = EYE;
     el.dataset.host = key;
-    el.classList.toggle("is-timing", stage.timerRunning());
-    if (bub.host === null) { bub.host = key; bub.x = t.x; bub.y = t.y; place(el, t); return; }
-    if (bub.host === key) { if (!bub.raf) { bub.x = t.x; bub.y = t.y; place(el, t); } return; }
-    bub.host = key;
-    var from = { x: bub.x, y: bub.y }, dx = t.x - from.x, dy = t.y - from.y, l = Math.hypot(dx, dy) || 1, k = Math.min(110, l * 0.35);
+    el.classList.toggle("is-closed", !!h.closed);
+    el.classList.toggle("is-timing", h.by === "timer");
+    el.classList.toggle("is-live", !!eyeItem());
+    el.querySelector(".st-eye-win").textContent = h.at === "tray" && f ? St.focusLabel(f) : "";
+    if (eye.hold || el.classList.contains("st-dragging")) return;   // 拖着 / 等确认卡：留在原地
+    var t = eyeTarget(h);
+    if (eye.host === null) { eye.host = key; eye.x = t.x; eye.y = t.y; place(el, t); return; }
+    if (eye.host === key && !eye.back) { if (!eye.raf) { eye.x = t.x; eye.y = t.y; place(el, t); } return; }
+    // 离开未分类窗口：托盘先掉一块占位（真块到了认领这一格）；刚把这个窗口归了类的不掉
+    if (eye.host === "tray" && key !== "tray" && !eye.filed) { ghost = "\u0000pending:" + Date.now(); ghostUntil = Date.now() + 15000; renderBucket(); }
+    eye.host = key; eye.back = eye.filed = false;
+    cancelAnimationFrame(eye.raf); eye.raf = 0;
+    if (reduced()) { eye.x = t.x; eye.y = t.y; place(el, t); return; }
+    var from = { x: eye.x, y: eye.y }, dx = t.x - from.x, dy = t.y - from.y, l = Math.hypot(dx, dy) || 1, k = Math.min(110, l * 0.35);
     var qx = (from.x + t.x) / 2 - dy / l * k, qy = (from.y + t.y) / 2 + dx / l * k - 20, t0 = performance.now(), DUR = 600;
-    cancelAnimationFrame(bub.raf);
     (function step(nowT) {
       var u = Math.min(1, (nowT - t0) / DUR), e = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2, a = (1 - e) * (1 - e), b = 2 * (1 - e) * e, c = e * e;
-      bub.x = a * from.x + b * qx + c * t.x; bub.y = a * from.y + b * qy + c * t.y;
-      place(el, bub);
-      if (u < 1) bub.raf = requestAnimationFrame(step); else bub.raf = 0;
+      eye.x = a * from.x + b * qx + c * t.x; eye.y = a * from.y + b * qy + c * t.y;
+      place(el, eye);
+      if (u < 1) eye.raf = requestAnimationFrame(step); else eye.raf = 0;
     })(t0);
+  }
+  function eyeRelease() { eye.hold = false; eye.back = true; renderEye(); }   // 确认卡关了 / 放空了：从落点飞回它该在的地方
+  // 拖眼睛到项目格 / 任务条：弹确认卡（同宠物那一叠，眼睛只留一张），确认了才改。窗口可勾「以后这个窗口都算」
+  function openEyeConfirm(item, pid, taskId) {
+    closeFileBubble();
+    var cell = cellEl(pid);
+    if (!cell) { eyeRelease(); return; }
+    confirms.filter(function (x) { return x.dataset.eye; }).forEach(dropConfirm);
+    var tk = taskId && taskOf(taskId), name = tk ? tk.name : projectName(pid), timing = item.kind === "clock", el = document.createElement("div");
+    el.className = "st-confirm st-card"; el.setAttribute("role", "dialog"); el.dataset.eye = "1";
+    el.innerHTML = '<button type="button" class="st-cf-x" aria-label="取消">✕</button><div class="st-cf-title"></div>' +
+      '<div class="st-cf-btns"><button type="button" class="st-cf-ok">确认</button></div>' +
+      (timing ? "" : '<label class="st-cf-rem"><input type="checkbox" class="st-cf-box"><span></span></label>');
+    el.querySelector(".st-cf-title").textContent = timing ? "把这次计时记到 " + name : "把 " + item.label + " 算到 " + name;
+    if (!timing) el.querySelector(".st-cf-rem span").textContent = "以后这个窗口都算 " + name;
+    confirmStack(pid, rectCenter(cell)).appendChild(el);
+    if (!confirms.length) document.addEventListener("keydown", onConfirmKey, true);
+    confirms.push(el);
+    el.__done = function (ok) {
+      var box = el.querySelector(".st-cf-box"), remember = !!(box && box.checked);
+      dropConfirm(el);
+      if (!ok) { eyeRelease(); return; }
+      busy++;
+      dropItem(item, pid, { remember: remember, taskId: taskId }).then(function (r) {
+        busy--; eye.filed = !!(r && r.ok); if (r && r.ok) PP.invalidate(); render();
+        return Promise.resolve(r && r.ok ? refresh() : null).then(eyeRelease);
+      });
+    };
+    el.querySelector(".st-cf-x").addEventListener("click", function () { el.__done(null); });
+    el.querySelector(".st-cf-ok").addEventListener("click", function () { el.__done(true); });
   }
   // 白条标签：「手动计时 · [标题 | HH:MM 开始] · X 分钟」（hive.stage.v1「二」9）
   function stripLabel(u) {
@@ -944,7 +997,7 @@
     openPanel(c.dataset.projectId);
   }, true);
 
-  // 时钟：短按 = 窗口记录 / 人用时汇总菜单，长按 = 计时气泡（正计时 / 倒计时 / 停止）；拖时钟或气泡（计时中）到格子 = 记到该项目
+  // 时钟：短按 = 窗口记录 / 人用时汇总菜单，长按 = 计时气泡（正计时 / 倒计时 / 停止）；计时中拖时钟到格子 = 记到该项目。时钟自己不挪位
   var clockMenu;
   (function () {
     var el = $("stClock");
@@ -956,7 +1009,20 @@
       startClock: function (sec) { after(stage.startClock(sec)); }, stopClock: function () { after(stage.clickClock()); }
     });
     var tap = function () { if (!clockMenu.consumedHold()) clockMenu.open(); };
-    drag($("stBubble"), { el: $("stBubble"), item: function () { return stage.timerRunning() ? clockItem() : null; }, onClick: tap });   // 气泡 = 时钟的延伸：拖、点都同时钟
+    // 眼睛：点 = 同点时钟；拖到项目格 / 任务条 = 弹确认卡再改；拖到空白处亮满 = 建项目（那张表单就是确认）；别处 = 飞回
+    drag($("stEye"), { el: $("stEye"), item: eyeItem, onClick: tap, afterCreate: eyeRelease,
+      onGrab: function () { cancelAnimationFrame(eye.raf); eye.raf = 0; },
+      onRelease: function (target, cancel, dx, dy, made, on) {
+        var e = $("stEye"), item = eyeItem(), h = eyeNow();
+        e.style.translate = ""; eye.x += dx; eye.y += dy; place(e, eye); eye.hold = true;
+        if (made) return "keep";
+        var pid = on ? on.projectId : target && !cancel ? target.dataset.projectId : null, tid = (on && on.taskId) || null;
+        if (item && on && on.create) {
+          PP.awaitName(function (taskId) { getJson("views/tree").then(function (t) { if (t) data.tree = t; openEyeConfirm(item, on.projectId, taskId); }); }, eyeRelease);
+        } else if (item && pid && (tid || h.at !== "project" || h.project !== pid)) openEyeConfirm(item, pid, tid);
+        else eyeRelease();
+        return "keep";
+      } });
     drag(el, { el: el, item: clockItem, onClick: tap });
     el.addEventListener("keydown", function (ev) {
       if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); clockMenu.open(); }
@@ -964,31 +1030,7 @@
     });
   })();
 
-  // 未分类窗口：时钟停到左下托盘旁、右边写窗口名；离开时飞回右上，托盘掉进一块（FLIP，transform）
-  var dock = { docked: false, at: 0 }, ghost = null, ghostUntil = 0, countdownDone = null;
-  function flip(mutate) {
-    var el = $("stClock"), a = el.getBoundingClientRect();
-    mutate();
-    var b = el.getBoundingClientRect(), k = zoom();
-    if (!el.animate || (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) || (a.left === b.left && a.top === b.top)) return;
-    var a1 = el.animate([{ transform: "translate(" + (a.left - b.left) / k + "px," + (a.top - b.top) / k + "px)" }, { transform: "none" }], { duration: 500, easing: "cubic-bezier(.3,.7,.3,1)" });
-    a1.onfinish = function () { clockMenu.refresh(); };
-  }
-  function syncDock(now) {
-    var el = $("stClock"), win = $("stClockWin");
-    var f = CM.unclassifiedFocus((data.current && data.current.focus) || (data.lanes && data.lanes.human && data.lanes.human.focus), stage.timerRunning());
-    if (dragging || el.classList.contains("st-dragging")) return;
-    var step = CM.dockStep(dock, !!f, now);
-    if (step.moved) {
-      flip(function () { el.classList.toggle("is-docked", step.docked); });
-      if (!step.docked) { ghost = "\u0000pending:" + now; ghostUntil = now + 15000; }
-      clockMenu.close();
-      renderBucket();
-    }
-    dock = { docked: step.docked, at: step.at };
-    win.textContent = f ? f.label : win.textContent;
-    win.classList.toggle("show", dock.docked && !!f);
-  }
+  var ghost = null, ghostUntil = 0, countdownDone = null;
   // 刚结束的窗口块还没被轮询带来时，先掉一块占位；真块到了就认领占位那一格，不会出两块
   function trayKeys(keys) {
     if (!ghost) return keys;
@@ -1006,7 +1048,7 @@
   // ── 汇总 ───────────────────────────────────────────
   function render() {
     var now = Date.now();
-    renderRing(now); syncDock(now); renderClock(now); renderBubble(); renderStrips(); renderBucket(); renderPets();
+    renderRing(now); renderClock(now); renderEye(); renderStrips(); renderBucket(); renderPets();
     [].forEach.call(layer.querySelectorAll(".st-pet"), bindPetDrag);
     renderToast();
     if (panelPid) renderPanel();
@@ -1056,11 +1098,11 @@
     render();
   }
   window.addEventListener("resize", sizeToWindow);
-  new MutationObserver(function () { if ($("stClock").querySelector(".st-dial")) renderBubble(); }).observe(shell, { attributes: true, attributeFilter: ["hidden"], subtree: true });   // 决策栏出现 / 消失 → 时钟挪位，气泡立刻跟过去
+  new MutationObserver(function () { if ($("stClock").querySelector(".st-dial")) renderEye(); }).observe(shell, { attributes: true, attributeFilter: ["hidden"], subtree: true });   // 决策栏出现 / 消失 → 时钟挪位，眼睛立刻跟过去
 
   refresh().then(function () { sizeToWindow(); });
   setInterval(refresh, POLL_MS);
-  setInterval(function () { var n = Date.now(); renderRing(n); syncDock(n); renderClock(n); renderToast(); clockMenu.refresh(); }, TICK_MS);
+  setInterval(function () { var n = Date.now(); renderRing(n); renderClock(n); renderToast(); clockMenu.refresh(); }, TICK_MS);
   setInterval(stepPets, PET_MS);
-  setInterval(function () { renderBubble(); renderPets(); }, 400);
+  setInterval(function () { renderEye(); renderPets(); }, 400);
 })();
