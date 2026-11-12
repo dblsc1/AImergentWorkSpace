@@ -77,7 +77,7 @@ def test_now_line_crosses_the_human_lane_and_every_agent_card_inside_the_today_c
         line, me, last = st.box("#cpNow"), st.box("#cpPage .ag-me"), st.page.locator("#cpPage .ag-card").last.bounding_box()
         assert line["y"] <= me["y"] + 1 and line["y"] + line["height"] >= last["y"] + last["height"] - 2
         lane = st.box("#cpPage .ag-me .ag-lane")
-        assert lane["x"] + lane["width"] * 0.7 < line["x"] + line["width"] / 2 < lane["x"] + lane["width"] - 3
+        assert lane["x"] + lane["width"] * 0.61 < line["x"] + line["width"] / 2 < lane["x"] + lane["width"] - 3   # 今天那一格从 61.6% 起
         assert re.fullmatch(r"\d\d:\d\d", st.page.locator("#cpNow span").inner_text())
 
 
