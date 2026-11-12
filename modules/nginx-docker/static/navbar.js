@@ -195,7 +195,8 @@
   // 录制胶囊
   var chip = el('a', 'ckpt-chip');
   // 点 = 打开人的页面（hive.stage.v1「二十七」4）：人的页面在蜂巢页里，别的页面带 #human 过去，蜂巢页读到就打开
-  chip.href = (NAV.timer || NAV.home || BASE) + '#human';
+  var HIVE_HREF = NAV.timer || NAV.home || BASE;   // 预览里「去蜂巢」那两个链接仍去蜂巢页本身
+  chip.href = HIVE_HREF + '#human';
   chip.setAttribute('data-ckpt-chip', '');
   chip.setAttribute('aria-label', '录制状态，点击打开人的页面');
   var chipDot = el('span', 'ckpt-dot');
@@ -505,7 +506,7 @@
     var popBody = el('div', 'ckpt-lanes-body');
     pop.appendChild(popBody);
     var popGo = el('a', 'ckpt-lanes-go', '去蜂巢');
-    popGo.href = chip.getAttribute('href');
+    popGo.href = HIVE_HREF;
     pop.appendChild(popGo);
     right.insertBefore(pop, chip.nextSibling);      // 紧跟芯片：Tab 从芯片直接走进预览
     chip.setAttribute('aria-controls', pop.id);
@@ -541,7 +542,7 @@
       var pick = L.pickPreview(lanesLast.agents, v0, 4);
       L.render(popBody, lanesLast, {
         viewStart: v0, viewEnd: now + HOUR_MS * 0.03, agents: pick.shown, compact: true, presence: true,
-        more: pick.more ? '还有 ' + pick.more + ' 个 → 蜂巢' : '', moreHref: chip.getAttribute('href'),
+        more: pick.more ? '还有 ' + pick.more + ' 个 → 蜂巢' : '', moreHref: HIVE_HREF,
         focusFallback: popGo
       });
     };
