@@ -169,7 +169,7 @@ def open_stage(browser: Browser, base: str, *, width: int = 1280, height: int = 
     if setup:
         setup(st)
     page.add_init_script(path=str(COCKPIT / "focus.js"))
-    page.add_init_script(path=str(COCKPIT / "clockface.js"))   # 网关随顶栏注入的共享件（时钟读数 / 悬停卡）
+    page.route("**/__cockpit/clockface.js", lambda r: r.fulfill(path=str(COCKPIT / "clockface.js"), content_type="application/javascript"))   # 共享件由 index.html 自己读（真环境里网关的注入排在页面脚本后面，不能指望它）
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(base + "/index.html")
