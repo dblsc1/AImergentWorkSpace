@@ -4,7 +4,10 @@
 .hp-figure:hover, .hp-figure:focus-visible { background: var(--panel-2, var(--panel)); outline: none; }
 .hp-figure-slot { display: grid; place-items: center; width: 100%; }
 .hp-figure-slot .st-art { display: block; width: 100%; height: auto; max-width: 100%; max-height: 320px; object-fit: contain; pointer-events: none; }
-.hp-figure-slot video { position: static; transform: none; }
+/* 动画包：宠物那套裁切（54×63 的框里放 80px 高的视频、上移 11px，hex-stage-page.css 的 .st-media:has(> video)）按立绘框等比放大。
+   以前这里把视频当图片按宽度缩成 152px 宽，视频四周留白多，人物就小了 */
+.hp-figure-slot:has(> video) { position: relative; aspect-ratio: 54 / 63; overflow: hidden; }
+.hp-figure-slot video.st-art { position: absolute; top: -17.46%; left: 50%; height: 126.98%; width: auto; max-width: none; max-height: none; transform: translateX(-50%); }
 .hp-cards { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
 .hp-card { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px 12px; background: var(--panel); }
 .hp-card h3 { margin: 0 0 8px; font-size: 15px; }
@@ -27,6 +30,7 @@
 .hp-seg-timer { background: var(--pr-human); }
 .hp-seg-win { background: var(--line); }
 .hp-seg-win.is-filed { background: var(--hp-c); }
+.hp-ruler { margin-top: 3px; }
 .hp-axis { position: relative; height: 16px; margin-top: 3px; font: var(--fs-sub)/16px var(--font-mono, monospace); color: var(--ink-3); }
 .hp-axis span { position: absolute; top: 0; white-space: nowrap; }
 
@@ -44,7 +48,8 @@
 
 /* 窗口记录 */
 .hp-wins { display: flex; flex-direction: column; gap: 6px; }
-.hp-win { display: flex; gap: 8px; align-items: baseline; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.hp-win { display: flex; gap: 8px; align-items: baseline; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); cursor: grab; touch-action: none; user-select: none; }
+.hp-win.st-dragging { z-index: 95; cursor: grabbing; box-shadow: var(--shadow); }
 .hp-win.is-filed { border-left: 4px solid var(--hp-c); background: color-mix(in srgb, var(--hp-c) 18%, var(--panel)); }
 .hp-win b { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hp-more { margin-top: 8px; cursor: pointer; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2, var(--panel)); color: var(--ink); padding: 4px 16px; font: inherit; font-size: var(--fs-sub); }

@@ -2,6 +2,7 @@
 // 上半是纯函数（给 hex-human-page.test.js 用），下半是 DOM（文字一律 textContent）。
 (function () {
   "use strict";
+  var Pr = typeof module !== "undefined" && module.exports ? require("./hex-project-ruler.js") : window.NexusTableHexProjectRuler;
 
   var HOUR = 3600000, DAY = 24 * HOUR, WEEK = 7 * DAY, DEFAULT_HOURS = 3, FOLD = 5, MAX_BLOCKS = 40, MERGE_GAP = 5000, POLL_MS = 30000;
   var HIDDEN_TITLE = /^(窗口名|路径)\d+$/;
@@ -13,7 +14,7 @@
   function hm(t) { var d = new Date(t); return pad(d.getHours()) + ":" + pad(d.getMinutes()); }
   function md(t) { var d = new Date(t); return pad(d.getMonth() + 1) + "/" + pad(d.getDate()); }
 
-  // ── 范围：滚动，往前倒推 ──
+  // ── 范围：默认 = 7 天不等宽标尺（hive.stage.v1「十六」）；日 / 周 / 最近 x 小时 = 滚动，往前倒推 ──
   function parseHours(text) {
     var t = String(text == null ? "" : text).trim();
     if (!/^\d{1,2}$/.test(t)) return null;
@@ -21,6 +22,7 @@
     return n >= 1 && n <= 24 ? n : null;
   }
   function rangeOf(kind, hours, now) {
+    if (!kind || kind === "default") { var L = Pr.layout(now); return { kind: "default", from: L.from, to: now, layout: L }; }
     var span = kind === "week" ? WEEK : kind === "day" ? DAY : (parseHours(hours) || DEFAULT_HOURS) * HOUR;
     return { kind: kind, from: now - span, to: now };
   }
@@ -34,14 +36,14 @@
     }
     return out;
   }
-  // 窗口块只读今天和昨天（范围起点在今天 0 点之前才要昨天）
-  function blockDates(range) {
-    var today = midnight(range.to), out = [{ date: ymd(today), start: today }];
-    if (range.from < today) out.push({ date: ymd(midnight(today, -1)), start: midnight(today, -1) });
-    return out;
-  }
+  // 点范围按钮：再点一次已选中的 = 回默认视图（null）
+  function nextKind(current, clicked) { return current === clicked ? null : clicked; }
+  // 窗口块按范围跨的本地日一次读（GET activity/blocks/range，至多 8 天）
+  function blockQuery(range) { return "from=" + ymd(midnight(range.from)) + "&to=" + ymd(midnight(range.to)); }
   function clip(range, a, b) { a = Math.max(a, range.from); b = Math.min(b, range.to); return b > a ? [a, b] : null; }
-  function pos(range, a, b) { var w = range.to - range.from, left = Math.min((a - range.from) / w * 100, 100); return { left: left, width: Math.max(0, Math.min((b - a) / w * 100, 100 - left)) }; }
+  function pos(range, a, b) {
+    if (range.layout) { var r = Pr.spanRect(range.layout, a, b); return r ? { left: r.left * 100, width: r.width * 100 } : { left: 0, width: 0 }; }   // 默认视图：不等宽标尺
+    var w = range.to - range.from, left = Math.min((a - range.from) / w * 100, 100); return { left: left, width: Math.max(0, Math.min((b - a) / w * 100, 100 - left)) }; }
   // 正在跑的这一段：画面的右端按分钟取整（range.to），但正在跑的计时算到真正的此刻（range.now），刚开始的计时不会因为取整而不见
   function runSpan(range, running) {
     var a = Math.max(ms(running.startAt), range.from), b = range.now || range.to;
@@ -128,7 +130,8 @@
       if (b.records) {
         b.records.forEach(function (r) { var c = clip(range, ms(r.startAt), ms(r.endAt)); if (c) { secs += (c[1] - c[0]) / 1000; last = Math.max(last, c[1]); } });
       } else if (ms(item.lastAt) >= range.from) { secs = item.seconds || 0; last = ms(item.lastAt); }
-      if (secs > 0) rows.push({ app: k.app, title: k.title, hidden: k.hidden, seconds: Math.floor(secs), lastAt: last, blockKey: item.blockKey, projectId: blockProject(item) });
+      if (secs > 0) rows.push({ app: k.app, title: k.title, hidden: k.hidden, seconds: Math.floor(secs), lastAt: last, blockKey: item.blockKey, projectId: blockProject(item),
+        date: b.date || null, seq: item.seq || 0, status: item.status, blockSeconds: item.seconds || 0, displayName: item.displayName || null });
     });
     return rows.sort(function (a, b) { return b.seconds - a.seconds; });
   }
@@ -162,9 +165,10 @@
     var m = Math.floor(Math.max(0, sec) / 60), h = Math.floor(m / 60);
     return h ? h + " 小时 " + (m % 60) + " 分钟" : m + " 分钟";
   }
-  function spanText(range, a, b) { return (range.kind === "week" ? md(a) + " " : "") + hm(a) + "–" + hm(b); }
+  function dated(range) { return range.kind === "week" || range.kind === "default"; }
+  function spanText(range, a, b) { return (dated(range) ? md(a) + " " : "") + hm(a) + "–" + hm(b); }
 
-  var P = { DEFAULT_HOURS: DEFAULT_HOURS, FOLD: FOLD, MAX_BLOCKS: MAX_BLOCKS, parseHours: parseHours, rangeOf: rangeOf, dateChunks: dateChunks, blockDates: blockDates,
+  var P = { DEFAULT_HOURS: DEFAULT_HOURS, FOLD: FOLD, MAX_BLOCKS: MAX_BLOCKS, parseHours: parseHours, rangeOf: rangeOf, dateChunks: dateChunks, blockQuery: blockQuery, dated: dated, nextKind: nextKind,
     mergeSessions: mergeSessions, totalSeconds: totalSeconds, taskCards: taskCards, splitKey: splitKey, windowLabel: windowLabel, blockProject: blockProject,
     recordProject: recordProject, focusSegments: focusSegments, windowRows: windowRows, foldRows: foldRows, laneOf: laneOf, durText: durText, spanText: spanText };
   if (typeof module !== "undefined" && module.exports) { module.exports = P; return; }
@@ -174,9 +178,9 @@
   function el(tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; }
 
   // o: {now(), getLanes(), getJson(path), projectName(id), projectColor(id), taskLabel(taskId, projectId, live), fillIssues(box, list),
-  //     fillFigure(slot), pickHuman(), openProject(pid), dragTimer(card), timerRunning()}
+  //     fillFigure(slot), pickHuman(), openProject(pid), dragTimer(card), dragBlock(card, block, done), timerRunning()}
   P.create = function (o) {
-    var state = { kind: "hours", hours: DEFAULT_HOURS, expanded: false }, issues = [], poll = 0, dead = false, seq = 0;
+    var state = { kind: null, hours: DEFAULT_HOURS, expanded: false }, issues = [], poll = 0, dead = false, seq = 0;
     var first = (o.getLanes() || {}).human;
     var data = { humans: first ? [first] : [], blocks: [], coverFrom: Infinity };
     var root = el("div", "hp"), figure = el("button", "hp-figure"), slot = el("span", "hp-figure-slot"), cards = el("div", "hp-cards");
@@ -188,21 +192,11 @@
     function tint(node, pid) { var c = colorOf(pid); if (c) node.style.setProperty("--hp-c", c); return !!c; }
 
     function loadBlocks(range) {
-      var dates = blockDates(range);
-      return Promise.all(dates.map(function (d) { return o.getJson("activity/blocks?date=" + d.date + "&status=all&limit=200"); })).then(function (rs) {
-        var seen = {}, picks = [], cover = Infinity;
-        rs.forEach(function (r, i) {
-          if (!r) return;
-          cover = Math.min(cover, dates[i].start);
-          (r.items || []).filter(function (b) { return !b.lastAt || ms(b.lastAt) >= range.from; }).slice(0, MAX_BLOCKS).forEach(function (b) {
-            var date = r.date || dates[i].date, k = date + "|" + b.blockKey;
-            if (!seen[k]) { seen[k] = 1; picks.push({ date: date, item: b }); }
-          });
-        });
-        return Promise.all(picks.map(function (p) {
-          return o.getJson("activity/blocks/records?date=" + encodeURIComponent(p.date) + "&blockKey=" + encodeURIComponent(p.item.blockKey))
-            .then(function (x) { return { item: p.item, records: x && x.items ? x.items : null }; });
-        })).then(function (blocks) { return { blocks: blocks, coverFrom: cover }; });
+      return o.getJson("activity/blocks/range?" + blockQuery(range)).then(function (r) {
+        if (!r) return { blocks: [], coverFrom: Infinity };
+        var blocks = (r.items || []).filter(function (b) { return !b.lastAt || ms(b.lastAt) >= range.from; })
+          .map(function (b) { return { date: b.date, item: b, records: b.records || null }; });
+        return { blocks: blocks, coverFrom: midnight(range.from) };
       });
     }
     function load() {
@@ -235,14 +229,17 @@
       var bar = el("div", "hp-range");
       function pick(kind, label) {
         var b = el("button", "hp-range-btn", label); b.type = "button"; b.dataset.range = kind; b.setAttribute("aria-pressed", state.kind === kind ? "true" : "false");
-        b.addEventListener("click", function () { state.kind = kind; load(); update(true); });
+        b.addEventListener("click", function () { state.kind = nextKind(state.kind, kind); load(); update(true); });   // 再点已选中的 = 回默认视图
         bar.appendChild(b);
       }
       pick("day", "日"); pick("week", "周");
       if (state.kind === "hours") {
         var g = el("span", "hp-range-btn hp-range-hours"), inp = el("input", "hp-hours");
+        function back() { state.kind = null; load(); update(true); }
         inp.type = "text"; inp.inputMode = "numeric"; inp.maxLength = 2; inp.setAttribute("value", String(state.hours)); inp.setAttribute("aria-label", "最近几小时");
-        g.setAttribute("aria-pressed", "true"); g.appendChild(el("span", "", "最近")); g.appendChild(inp); g.appendChild(el("span", "", "小时"));
+        g.setAttribute("aria-pressed", "true"); var w1 = el("span", "", "最近"), w2 = el("span", "", "小时");
+        w1.addEventListener("click", back); w2.addEventListener("click", back);
+        g.appendChild(w1); g.appendChild(inp); g.appendChild(w2);
         function commit() {
           var n = parseHours(inp.value);
           if (n == null) { inp.value = String(state.hours); return; }
@@ -269,8 +266,11 @@
       });
       laneEl.appendChild(up); laneEl.appendChild(down); c1.appendChild(laneEl);
       var axis = el("div", "hp-axis");
-      [0, 1 / 3, 2 / 3, 1].forEach(function (f) {
-        var t = range.from + (range.to - range.from) * f, s = el("span", "", (range.kind === "week" ? md(t) + " " : "") + hm(t));
+      if (range.layout) {   // 默认视图：不等宽标尺（周几 + 今天的钟点），格线画进泳道
+        axis.className = "hp-ruler"; axis.innerHTML = Pr.rulerHtml(range.layout);   // 只有固定文字与数字，没有接口来的字符串
+        range.layout.days.slice(1).forEach(function (d) { var i = el("i", "pr-div"); i.style.left = d.x0 * 100 + "%"; laneEl.appendChild(i); });
+      } else [0, 1 / 3, 2 / 3, 1].forEach(function (f) {
+        var t = range.from + (range.to - range.from) * f, s = el("span", "", (dated(range) ? md(t) + " " : "") + hm(t));
         s.style.left = f * 100 + "%"; if (f === 1) s.style.transform = "translateX(-100%)"; else if (f > 0) s.style.transform = "translateX(-50%)";
         axis.appendChild(s);
       });
@@ -303,6 +303,10 @@
         var row = el("div", "hp-win");
         row.appendChild(el("b", "", windowLabel(w.app, w.title, w.hidden))); row.appendChild(el("span", "hp-dur", durText(w.seconds)));
         if (w.projectId) { row.title = o.projectName(w.projectId); if (tint(row, w.projectId)) row.classList.add("is-filed"); }
+        if (w.date && w.blockKey) {   // 拖到蜂巢的项目格 / 任务泳道上归类（同未分类桶里的窗口块）；这些字段进 DOM 是为了变了就重画，拖的永远是最新的 seq
+          row.dataset.date = w.date; row.dataset.seq = String(w.seq); row.dataset.status = w.status || "";
+          o.dragBlock(row, { date: w.date, blockKey: w.blockKey, seq: w.seq, seconds: w.status === "pending" ? w.blockSeconds : 0, displayName: w.displayName }, function () { load(); });
+        }
         wl.appendChild(row);
       });
       c3.appendChild(wl);

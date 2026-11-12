@@ -6,6 +6,7 @@ const L = (y, mo, d, h = 0, mi = 0) => new Date(y, mo - 1, d, h, mi).getTime();
 const iso = (t) => new Date(t).toISOString();
 const now = L(2026, 11, 12, 15, 0);
 
+const Pr = require("./hex-project-ruler.js");
 const labelOf0 = () => ({ key: "k", name: "k", projectId: null });
 // 范围：滚动倒推
 assert.deepStrictEqual(P.rangeOf("day", 3, now), { kind: "day", from: now - 24 * 3600000, to: now });
@@ -15,14 +16,39 @@ assert.strictEqual(P.rangeOf("hours", "x", now).from, now - P.DEFAULT_HOURS * 36
 assert.strictEqual(P.DEFAULT_HOURS, 3);
 assert.deepStrictEqual(["1", " 24 ", "3", "0", "25", "", "x", "1.5", "-2", "123"].map(P.parseHours), [1, 24, 3, null, null, null, null, null, null, null]);
 
+// 默认视图（十六）：范围 = Pr.layout(now) 的 7 天（昨天往前 5 天 + 今天），到此刻为止；不传 kind / null 都是它
+const rd = P.rangeOf(null, 3, now), L7 = Pr.layout(now);
+assert.strictEqual(rd.kind, "default");
+assert.strictEqual(rd.from, L7.from);
+assert.strictEqual(rd.from, L(2026, 11, 6));
+assert.strictEqual(rd.to, now);
+assert.strictEqual(rd.layout.days.length, 7);
+assert.deepStrictEqual(P.rangeOf("default", 3, now).from, rd.from);
+assert.deepStrictEqual([P.nextKind(null, "day"), P.nextKind("day", "day"), P.nextKind("day", "week"), P.nextKind("hours", "hours")], ["day", null, "week", null]);   // 再点一次回默认
+// 默认视图的总用时 = 这 7 天里的计时段；7 天前的不算；正在跑的算到此刻
+const sd = (a, b) => ({ startAt: iso(a), endAt: iso(b), projectId: "p1", taskId: null, source: "timer-backend" });
+const week7 = [sd(L(2026, 11, 6, 9), L(2026, 11, 6, 10)), sd(L(2026, 11, 12, 9), L(2026, 11, 12, 9, 30)), sd(L(2026, 11, 5, 9), L(2026, 11, 5, 11))];
+assert.strictEqual(P.totalSeconds(rd, week7, null), 3600 + 1800);
+assert.strictEqual(P.totalSeconds(rd, week7, { startAt: iso(now - 600000) }), 3600 + 1800 + 600);
+// 默认视图的泳道用 7 天不等宽标尺：今天那一格最宽（30%），前 6 天各 70%/6
+const dl = P.laneOf(rd, { sessions: [sd(L(2026, 11, 12, 0), L(2026, 11, 12, 12)), sd(L(2026, 11, 8, 0), L(2026, 11, 9, 0))] });
+assert.ok(Math.abs(dl.timer[0].left - 70 / 6 * 2) < 1e-6 && Math.abs(dl.timer[0].width - 70 / 6) < 1e-6);   // 11/8 是第 3 格
+assert.ok(Math.abs(dl.timer[1].left - 70) < 1e-6 && Math.abs(dl.timer[1].width - 15) < 1e-6);                  // 今天 0–12 点 = 今天那格的一半
+assert.strictEqual(P.spanText(rd, L(2026, 11, 12, 9, 5), L(2026, 11, 12, 10, 30)), "11/12 09:05–10:30");
+assert.strictEqual(P.dated(rd) && P.dated(P.rangeOf("week", 3, now)), true);
+assert.strictEqual(P.dated(P.rangeOf("day", 3, now)) || P.dated(P.rangeOf("hours", 3, now)), false);
+
 // 分段读本地日：一周往前 7 天跨 8 个日历日 → 两段；3 小时在同一天 = 一段；跨零点 = 一段两天
 assert.deepStrictEqual(P.dateChunks(P.rangeOf("week", 3, now).from, now), [{ from: "2026-11-05", to: "2026-11-11" }, { from: "2026-11-12", to: "2026-11-12" }]);
 assert.deepStrictEqual(P.dateChunks(L(2026, 11, 12, 9), now), [{ from: "2026-11-12", to: "2026-11-12" }]);
 assert.deepStrictEqual(P.dateChunks(L(2026, 11, 11, 23), L(2026, 11, 12, 1)), [{ from: "2026-11-11", to: "2026-11-12" }]);
-// 窗口块只读今天 + 范围起点在今天以前时的昨天
-assert.deepStrictEqual(P.blockDates(P.rangeOf("hours", 3, now)).map((d) => d.date), ["2026-11-12"]);
-assert.deepStrictEqual(P.blockDates(P.rangeOf("hours", 24, now)).map((d) => d.date), ["2026-11-12", "2026-11-11"]);
-assert.deepStrictEqual(P.blockDates(P.rangeOf("week", 3, now)).map((d) => d.date), ["2026-11-12", "2026-11-11"]);
+// 窗口块一次读整个范围：from / to = 范围跨的第一天和最后一天（周档 8 天，默认 7 天，日 2 天，3 小时 1 天）
+const bq = (r) => P.blockQuery(r);
+assert.strictEqual(bq(P.rangeOf("hours", 3, now)), "from=2026-11-12&to=2026-11-12");
+assert.strictEqual(bq(P.rangeOf("hours", 24, now)), "from=2026-11-11&to=2026-11-12");
+assert.strictEqual(bq(P.rangeOf("day", 3, now)), "from=2026-11-11&to=2026-11-12");
+assert.strictEqual(bq(P.rangeOf("week", 3, now)), "from=2026-11-05&to=2026-11-12");
+assert.strictEqual(bq(rd), "from=2026-11-06&to=2026-11-12");
 
 // 计时段合并去重、总用时裁到范围
 const r3 = P.rangeOf("hours", 3, now);
@@ -87,6 +113,9 @@ const rows = P.windowRows(r3, blocks);
 assert.deepStrictEqual(rows.map((x) => [x.app, x.title, x.hidden, x.seconds, x.projectId]), [["code", "main.go", false, 1200 - 2, "pb"], ["chrome", null, true, 600, null]]);
 const noRec = P.windowRows(r3, [{ item: assigned, records: null }, { item: pending, records: null }]);
 assert.deepStrictEqual(noRec.map((x) => [x.app, x.seconds]), [["code", 1800]]);   // pending 的最后活动在范围外
+// 每行带归类要用的：所属日期、seq、状态、块总秒数、显示名
+const dated0 = P.windowRows(r3, [{ date: "2026-11-12", item: { ...pending, lastAt: iso(now - 60000), seq: 7, displayName: "x", seconds: 600 }, records: [rec(now - 60 * 60000, now - 50 * 60000, "chrome", "窗口名3")] }]);
+assert.deepStrictEqual([dated0[0].date, dated0[0].seq, dated0[0].status, dated0[0].blockSeconds, dated0[0].displayName], ["2026-11-12", 7, "pending", 600, "x"]);
 // 5 条折叠
 const many = Array.from({ length: 8 }, (_, i) => ({ seconds: 100 - i }));
 assert.strictEqual(P.foldRows(many, false).length, 5);

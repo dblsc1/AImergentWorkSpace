@@ -249,3 +249,33 @@ def test_generic_without_since_race_does_not_500(client, monkeypatch):
 
     monkeypatch.setattr(blocks_repo, "generic_since", lambda user: {})  # 并发取消：读回时已经没有了
     assert _post(client, "generic", blockKey=K, generic=True).json()["since"] == day(0)
+
+
+def test_range_blocks_spans_days_with_date_and_records_and_limits(client):  # v2.56
+    d0, d1, d2 = day(-3), day(-2), day(-1)
+    upload(client, [rec(d0, "09:00:00", "09:10:00", title="甲"), rec(d1, "10:00:00", "10:05:00", title="乙"),
+                    rec(d1, "11:00:00", "11:20:00", title="丙"), rec(d2, "09:00:00", "09:01:00", title="丁")])
+    r = client.get(f"{BLK}/range", params={"from": d0, "to": d2})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["from"] == d0 and body["to"] == d2
+    assert [(i["date"], i["blockKey"]) for i in body["items"]] == [(d0, "chrome · 甲"), (d1, "chrome · 丙"), (d1, "chrome · 乙"), (d2, "chrome · 丁")]  # 日期升序，同日秒数多的在前
+    first = body["items"][0]
+    assert first["status"] == "pending" and first["seconds"] == 600 and "seq" in first and first["parts"] == []
+    assert [(x["app"], x["title"], x["seconds"]) for x in first["records"]] == [("chrome", "甲", 600)]
+    assert first["records"][0]["startAt"].startswith(d0) and first["records"][0]["endAt"].startswith(d0)
+    one_day = client.get(f"{BLK}/range", params={"from": d1, "to": d1, "limit": 1}).json()["items"]
+    assert [i["blockKey"] for i in one_day] == ["chrome · 丙"]  # 每天只取 limit 个
+
+
+def test_range_blocks_reflects_assignment_and_rejects_bad_ranges(client, tid, pid):
+    upload(client, [rec(D, "09:00:00", "09:10:00", title="周报")])
+    blk = one(client, D, K)
+    assert _post(client, "assign", date=D, blockKey=K, taskId=tid, ifSeq=blk["seq"]).status_code == 200
+    got = client.get(f"{BLK}/range", params={"from": D, "to": D}).json()["items"][0]
+    assert got["status"] == "assigned" and got["parts"][0]["taskId"] == tid and got["seq"] > blk["seq"]
+    assert client.get(f"{BLK}/range", params={"from": day(-8), "to": day(-1)}).status_code == 200  # 恰好 8 天
+    for bad in ({"from": day(-8), "to": day(0)}, {"from": day(0), "to": day(-1)}, {"from": day(-1)}, {"from": "x", "to": day(0)},
+                {"from": day(-1), "to": day(0), "limit": 41}, {"from": day(-1), "to": day(0), "limit": 0}):
+        assert client.get(f"{BLK}/range", params=bad).status_code == 422, bad
+    assert client.get(f"{BLK}/range", params={"from": D, "to": D}, headers=BEARER).status_code == 403

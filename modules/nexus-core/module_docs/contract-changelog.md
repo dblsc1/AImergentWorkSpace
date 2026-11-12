@@ -104,3 +104,4 @@
 | 2026-11-11 | 仓主定：蜂巢用「眼睛」表示人此刻的聚焦，拖眼睛到项目 = 把此刻的窗口归过去（`hive.stage.v1`「十」） | v2.52（追加式）：`focus` 追加 `blockKey`；目标在自动跟踪之后先认「窗口块今天的归类」（`source: "block"`），再认代理会话与按以往；无新端点、无新集合 |
 | 2026-11-12 | 仓主定：代表人的眼睛改成人自己挑的形象（`hive.stage.v1`「十一」） | v2.53（追加式）：`activity/settings.pet` 追加可选 `humanPack`；见「v0.6：人自己的形象」节 |
 | 2026-11-12 | 仓主定：左上角 Agent 页一个 agent 一张卡、时间滚动、人的聚焦是卡内红条（`hive.stage.v1`「十三」） | v2.54（追加式）：`views/time-lanes` 追加可选 `since`（滚动窗口，至多 8 天）；`agents[]` 追加 `tool` / `laneKey` / `projectId` / `running` / `lost` / `phase` / `attend`；见「v0.6：时间泳道的滚动窗口与每条运行的身份」节 |
+| 2026-11-12 | 仓主定：人的页面窗口记录要覆盖周档 / 7 天视图的整个范围（`hive.stage.v1`「十六」） | v2.56（追加式）：新读端 `GET activity/blocks/range?from=&to=&limit=`（至多 8 天，每天取秒数最多的块，带所属日期与原始记录）；见「v0.6：窗口块按日期范围一次读」节 |
