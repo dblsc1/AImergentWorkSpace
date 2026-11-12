@@ -108,6 +108,20 @@
     return s;
   }
 
+  // 人看着某个 agent 时的互动（hive.stage.v1「二十一」）。动作名各包相同（mood-map.json 一份）：
+  // 人挥手（点击回应-元气挥手）、小人跃动（点击回应-开心跃动）；名字对不上取 happy 第一段，再取 click 第一段；都没有 = null（用 CSS 小跳）
+  var MEET_KEY = { human: /挥手/, pet: /跃动/ };
+  function meetClip(moods, role) {
+    var m = moods || {}, pool = (m.happy || []).concat(m.click || []);
+    return pool.filter(function (f) { return MEET_KEY[role] && MEET_KEY[role].test(f); })[0] || (m.happy && m.happy[0]) || (m.click && m.click[0]) || null;
+  }
+  // 人站在小人旁边：人来的那一侧，比名字牌低（名字牌最宽 110px，会伸到小人身体两侧）。petK = 小人此刻的个头倍数；
+  // 素材默认朝左：人在右边 → 人不翻、小人翻；人在左边反之
+  function meetSpot(petPos, eyePos, petK) {
+    var k = petK || 1, side = eyePos.x < petPos.x ? -1 : 1;
+    return { x: petPos.x + side * (30 * k + 33), y: petPos.y + 30 * k, side: side, eyeFlip: side < 0, petFlip: side > 0 };
+  }
+
   // 松手后 elapsedMs：先停 STAY_MS，再以 45px/s 走，单程至多 8 秒（远了加快）；往右走 = flip
   function walkBack(from, to, elapsedMs) {
     var dx = to.x - from.x, dy = to.y - from.y, d = Math.hypot(dx, dy), flip = dx > 0;
@@ -134,7 +148,7 @@
   }
 
   var api = { restSlot: restSlot, hexEdgeDistance: hexEdgeDistance, MAX_PETS: MAX_PETS, DEFAULT_PACK: DEFAULT_PACK, DEFAULT_PACKS_BY_TOOL: DEFAULT_PACKS_BY_TOOL, moodOf: moodOf, packOf: packOf, pickWorkers: pickWorkers, pickIdle: pickIdle, isLoose: isLoose, slotPos: slotPos, assignSlots: assignSlots, rhythm: rhythm, tempList: tempList, MAIN_MS: MAIN_MS, TEMP_MS: TEMP_MS,
-    CLICK_PX: CLICK_PX, STAY_MS: STAY_MS, pressKind: pressKind, clickCounts: clickCounts, pickClip: pickClip, clickClip: clickClip, walkBack: walkBack };
+    CLICK_PX: CLICK_PX, STAY_MS: STAY_MS, pressKind: pressKind, clickCounts: clickCounts, pickClip: pickClip, clickClip: clickClip, walkBack: walkBack, meetClip: meetClip, meetSpot: meetSpot };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.NexusTableHexPetPick = api;
 })();

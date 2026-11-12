@@ -112,6 +112,19 @@ assert.ok(Math.abs(P.hexEdgeDistance(W, -1, 0) - apothem) < 1e-9);
 assert.ok(Math.abs(P.hexEdgeDistance(W, 0, -1) - R6) < 1e-9);
 assert.ok(Math.abs(P.hexEdgeDistance(W, 0, 1) - R6) < 1e-9);
 assert.ok(Math.abs(P.hexEdgeDistance(W, Math.cos(Math.PI / 3), Math.sin(Math.PI / 3)) - apothem) < 1e-9);
+// 互动（hive.stage.v1「二十一」）：人挥手、小人跃动；对不上取 happy / click 第一段；都没有 = null
+const MM = { happy: ["a.webm", "点击回应-开心跃动.webm", "点击回应-元气挥手.webm"], click: ["点击回应-害羞惊讶.webm", "点击回应-元气挥手.webm"] };
+assert.strictEqual(P.meetClip(MM, "human"), "点击回应-元气挥手.webm");
+assert.strictEqual(P.meetClip(MM, "pet"), "点击回应-开心跃动.webm");
+assert.strictEqual(P.meetClip({ happy: ["x.webm"] }, "pet"), "x.webm");
+assert.strictEqual(P.meetClip({ click: ["c.webm"] }, "human"), "c.webm");
+assert.strictEqual(P.meetClip({ working: ["w.webm"] }, "human"), null);
+assert.strictEqual(P.meetClip(null, "pet"), null);
+const spotR = P.meetSpot({ x: 100, y: 100 }, { x: 300, y: 50 }, 1);        // 人从右边来：站右边、比小人低、人不翻小人翻
+assert.ok(spotR.x > 100 && spotR.y > 100 && spotR.side === 1 && !spotR.eyeFlip && spotR.petFlip);
+const spotL = P.meetSpot({ x: 100, y: 100 }, { x: 10, y: 50 }, 1);
+assert.ok(spotL.x < 100 && spotL.side === -1 && spotL.eyeFlip && !spotL.petFlip);
+assert.ok(Math.abs(P.meetSpot({ x: 0, y: 0 }, { x: 5, y: 0 }, 1.7).x) > Math.abs(spotR.x - 100));   // 小人变大，站得更远
 console.log("hex-pet-pick tests ok");
 
 // 干活的小人平时站在格子里：右上 → 右下 → 左下 → 左上，多的离格心一半（「二十二」1）

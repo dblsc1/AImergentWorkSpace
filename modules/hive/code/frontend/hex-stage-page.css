@@ -117,6 +117,12 @@ body.stage-on .is-done-card .hex-stamp { display: none; }
 .st-media:has(> video) { width: 54px; height: 63px; overflow: hidden; position: relative; display: block; }
 video.st-art { position: absolute; max-width: none; max-height: none; height: 80px; width: auto; top: -11px; left: 50%; transform: translateX(-50%); }
 .st-pet.flip video.st-art { transform: translateX(-50%) scaleX(-1); }
+.st-eye.flip .st-art { transform: scaleX(-1); }
+.st-eye.flip video.st-art { transform: translateX(-50%) scaleX(-1); }
+/* 人看着某个 agent（「二十一」）：没有互动动作的那边交替小跳；减少动态效果时上面 .st-media 的 animation:none 已一并关掉 */
+.st-pet.is-work.is-meeting.meet-css[data-mood] .st-media, .st-pet.is-loose.is-meeting.meet-css[data-mood] .st-media, .st-eye.meet-css .st-media { animation: st-meet-hop 1.6s ease-in-out infinite; }
+.st-eye.meet-css .st-media { animation-delay: -.8s; }
+@keyframes st-meet-hop { 50% { transform: translateY(-6px); } }
 .st-pet.is-work[data-mood="working"] .st-media { animation: st-bob 1.3s ease-in-out infinite; }
 .st-pet[data-mood="idle"] .st-media { animation: st-bob 2.6s ease-in-out infinite; }
 @keyframes st-bob { 50% { transform: translateY(-5px); } }
