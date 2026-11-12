@@ -1,23 +1,10 @@
-/* hive · 右上角时钟：短按菜单、长按气泡、倒计时（hive.stage.v1「九」） */
+/* hive · 右上角时钟：短按人的页面、长按气泡、倒计时（hive.stage.v1「九」「十四」） */
 .st-clock.has-issue::after { content: ""; position: absolute; right: 8px; top: 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--warn, #E08A00); }
 .st-clock { will-change: auto; }
 .st-clock-today.is-countdown { font-family: var(--font-mono, monospace); color: var(--pr-human); }
 
-/* 菜单面板 */
-.cm-panel { position: fixed; z-index: 70; width: 380px; max-height: min(70vh, 640px); overflow: auto; padding: 12px 14px 14px; box-sizing: border-box; }
-.cm-panel h3 { margin: 0 0 8px; font-size: 15px; }
-.cm-me { position: absolute; right: 12px; top: 8px; padding: 4px 12px; font-size: var(--fs-sub); }
-.cm-sec { padding: 6px 0 4px; }
-.cm-sec h4 { margin: 4px 0 6px; font-size: var(--fs-sub); color: var(--ink-3); font-weight: 600; }
-.cm-empty { color: var(--ink-3); font-size: var(--fs-sub); padding: 2px 0; }
-.cm-alloc { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 4px 0; }
-.cm-alloc b, .cm-win b { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cm-bar { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
-.cm-bar i { display: block; height: 100%; background: var(--pr-human); border-radius: 3px; }
-.cm-win { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; }
-.cm-win b { flex: 1; }
-.cm-dur { color: var(--ink-3); font-size: var(--fs-sub); flex: none; }
-.cm-at { font-family: var(--font-mono, monospace); color: var(--ink-3); font-size: var(--fs-sub); flex: none; }
+/* 人的页面的外框（内容样式在 hex-human-page.css） */
+.cm-panel { position: fixed; z-index: 70; width: min(780px, calc(100vw - 16px)); overflow: auto; padding: 14px; box-sizing: border-box; }
 
 /* 长按气泡 */
 .cm-bubbles { position: fixed; z-index: 70; display: flex; flex-direction: column; gap: 8px; padding: 10px; width: 188px; box-sizing: border-box; }

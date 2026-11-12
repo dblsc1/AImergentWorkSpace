@@ -294,18 +294,6 @@ button { cursor: pointer; font: inherit; }
 }
 .empty-board { min-height: 180px; margin: var(--sp-4); }
 
-/* ── 计时档案（R5-R10，只读展示，见 app.js renderArchive）───────────── */
-.archive-shell { position: relative; margin-top: var(--sp-4); border: 1px solid var(--line); border-radius: var(--r-3); background: var(--panel); box-shadow: var(--shadow); }
-.archive-list { margin: 0; padding: 0 var(--sp-4); list-style: none; max-height: 320px; overflow-y: auto; }
-.archive-entry {
-  padding: var(--sp-2) 0;
-  border-top: 1px solid var(--line-2);
-  color: var(--ink); font-size: var(--fs-sub);
-}
-.archive-entry:first-of-type { border-top: 0; }
-.archive-empty { padding: var(--sp-5) 0; color: var(--ink-3); font: var(--fs-sub)/1.8 var(--font-mono); text-align: center; list-style: none; }
-.archive-more { display: flex; min-height: var(--tap); margin: var(--sp-3) var(--sp-4) var(--sp-4); }
-
 /* ── 导出数据（只读，app.js exportData* 系列函数）───────────────────── */
 .export-shell { position: relative; margin-top: var(--sp-4); border: 1px solid var(--line); border-radius: var(--r-3); background: var(--panel); box-shadow: var(--shadow); }
 .export-status { margin: 0; padding: var(--sp-3) var(--sp-4); color: var(--ink-2); font-size: var(--fs-sub); }

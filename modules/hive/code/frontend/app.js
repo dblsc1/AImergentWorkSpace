@@ -2,7 +2,7 @@
 //
 // 派生自上游 NEXUS 控制台原型。本文件只负责**只读渲染**。
 //
-// 2026-09-14 起只剩三件事：离线状态条、顶部概览统计、计时档案。分区/项目/任务的
+// 2026-09-14 起只剩三件事：离线状态条、顶部概览统计（计时档案 2026-11-12 起去掉，见 contracts/hive.stage.v1「十四」）。分区/项目/任务的
 // 展示整块搬去了蜂巢（hex-app.js 自己拉、自己渲染、自己订 onTreeChange），旧的
 // 「经典列表」#zoneGrid 连同分页、项目卡双轨一起删掉（人类判：「经典列表问题
 // 有点多，直接去掉，以后搁置不开发了，只要这个蜂巢视图」）。数据来自 data.js
@@ -25,7 +25,6 @@
   var D = window.NexusTableData;
 
   var state = { tree: null, source: "none", error: null };
-  var archiveState = { rawItems: [], total: 0, offset: 0, error: null, loaded: false };
 
   var $ = function (selector) { return document.querySelector(selector); };
 
@@ -57,7 +56,7 @@
     // 2026-09-14：分区/项目/任务的渲染整块删掉 —— 旧的「经典列表」(#zoneGrid)
     // 连同它的分页一起去掉了，这一屏的分区展示只剩蜂巢（hex-app.js 自己渲染，
     // 自己订 onTreeChange）。本文件现在只留三件事：离线状态条、顶部概览统计、
-    // 计时档案。写路径见 crud.js（弹窗）和 hex-crud.js / hex-zone-plan.js（蜂巢）。
+    // （计时档案已去掉）。写路径见 crud.js（弹窗）和 hex-crud.js / hex-zone-plan.js（蜂巢）。
     var summary = D.computeSummary(tree);
     // v0.1 发布版的首页没有那一排指标卡（人类：「这一栏去掉」），
     // 所以这里按"元素不在就跳过"写 —— 开发版有卡片时照旧更新，两边共用同一段代码。
@@ -66,63 +65,6 @@
     if (mRatio) mRatio.textContent = summary.taskDone + "/" + summary.taskTotal;
     if (mProg) mProg.textContent = summary.avgProgress + "%";
 
-    renderArchive();
-  }
-
-  // ── 计时档案（R5-R10）──────────────────────────────────────────────
-  // 名字解析用 state.tree（可能比档案条目更新，也可能还没加载完——
-  // D.mapArchiveEvent 对 tree=null 或查不到都有兜底，见 data.js R7 注释）。
-  function renderArchive() {
-    var list = $("#archiveList");
-    var moreBtn = $("#archiveLoadMore");
-    if (!list || !moreBtn) return; // 防御：极端情况下 DOM 未就绪
-
-    if (!archiveState.loaded) {
-      // 首次请求还没返回：保留 HTML 里的初始占位文案，不提前判定成"空档案"。
-      list.innerHTML = '<li class="archive-empty">加载中…</li>';
-      moreBtn.hidden = true;
-      return;
-    }
-    if (archiveState.error) {
-      list.innerHTML = '<li class="archive-empty">⚠ 档案加载失败：' + escapeHtml(archiveState.error) + "</li>";
-      moreBtn.hidden = true;
-      return;
-    }
-    if (!archiveState.rawItems.length) {
-      // R9：空档案是友好空态，不是错误
-      list.innerHTML = '<li class="archive-empty">暂无计时档案，完成一段计时后会出现在这里。</li>';
-      moreBtn.hidden = true;
-      return;
-    }
-    list.innerHTML = archiveState.rawItems.map(function (event) {
-      var entry = D.mapArchiveEvent(event, state.tree);
-      return '<li class="archive-entry">' + escapeHtml(entry.summary) + "</li>";
-    }).join("");
-    moreBtn.hidden = archiveState.rawItems.length >= archiveState.total;
-  }
-
-  // reset=true：从头拉（初次加载/点刷新）；reset=false：追加下一页（R8 limit/offset）。
-  function loadArchive(reset) {
-    if (reset) {
-      archiveState.offset = 0;
-      archiveState.rawItems = [];
-      archiveState.total = 0;
-    }
-    return D.fetchArchive({ limit: D.ARCHIVE_DEFAULT_LIMIT, offset: archiveState.offset }).then(function (result) {
-      archiveState.loaded = true;
-      if (!result.ok) {
-        archiveState.error = result.message;
-        renderArchive();
-        return;
-      }
-      archiveState.error = null;
-      var payload = result.data || {};
-      var items = payload.items || [];
-      archiveState.rawItems = archiveState.rawItems.concat(items);
-      archiveState.total = payload.total || 0;
-      archiveState.offset += items.length;
-      renderArchive();
-    });
   }
 
   // ── 导出数据（顶栏「导出数据」按钮，只读，contract.md v1.3）─────────
@@ -270,8 +212,7 @@
   }
 
   document.addEventListener("DOMContentLoaded", function () {
-    $("#refreshTree").addEventListener("click", function () { load(); loadArchive(true); });
-    $("#archiveLoadMore").addEventListener("click", function () { loadArchive(false); });
+    $("#refreshTree").addEventListener("click", function () { load(); });
     $("#exportData").addEventListener("click", function () { loadExport(); });
     $("#importData").addEventListener("click", function () { $("#importFile").click(); });
     $("#importFile").addEventListener("change", function (ev) {
@@ -282,11 +223,9 @@
 
     updateClock();
     window.setInterval(updateClock, 1000);
-    // 先拉树再拉档案：mapArchiveEvent 现查任务/项目名字要用 state.tree（R7），
-    // 树先到位能让档案首次渲染就带上正确名字，不用等第二次 render() 才补上。
     // 双轨/gantt 不在这儿拉了：只有旧列表的项目卡用它，现在要看排期是在分区
     // 规划面板里（hex-zone-plan.js 打开时自己拉一次 views/gantt）。
-    load().then(function () { return loadArchive(true); });
+    load();
   });
 
   // crud.js 通过这个小接口接入：refresh() 供写操作成功后调用（C2），

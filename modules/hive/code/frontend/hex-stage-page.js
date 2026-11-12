@@ -7,7 +7,7 @@
   var API = BASE + "api/core/";
   var CM = window.HexClockMenu, St = window.NexusTableHexStage, Rec = window.NexusTableHexRecord, Pk = window.NexusTableHexPetPick, Pr = window.NexusTableHexProjectRuler, CS = window.NexusTableHexCentreStats, FP = window.HexFigurePick;
   var shell = document.querySelector(".board-shell");
-  if (!St || !Rec || !Pk || !Pr || !CS || !CM || !shell) return;
+  if (!St || !Rec || !Pk || !Pr || !CS || !CM || !window.HexHumanPage || !shell) return;
 
   var POLL_MS = 5000, TICK_MS = 1000, PET_MS = 100;
   var SLOT_AREA = { x: 24, y: 142, w: 340, h: 160 };   // 左上角 y < 142 留给 72px 的头像
@@ -163,7 +163,7 @@
         moved = true; dragging++; o.el.classList.add("st-dragging");
         if (o.onGrab) o.onGrab();
       }
-      lx = dx / zoom(); ly = dy / zoom();
+      lx = dx / (o.unzoomed ? 1 : zoom()); ly = dy / (o.unzoomed ? 1 : zoom());   // unzoomed：元素在 body 上（不在被缩放的 .board-shell 里）
       o.el.style.translate = lx + "px " + ly + "px";
       var cell = cellAt(ev.clientX, ev.clientY);
       if (fileable(item) && PP.dragOver(ev.clientX, ev.clientY, cell)) cell = null;   // 项目面板（弹簧展开 / 任务条 / 空白新建）：指针在面板里，亮的是任务条，不是后面的格子
@@ -831,10 +831,11 @@
   }
   function eyeRelease() { eye.hold = false; eye.back = true; renderEye(); }   // 确认卡关了 / 放空了：从落点飞回它该在的地方
   // 拖眼睛到项目格 / 任务条：弹确认卡（同宠物那一叠，眼睛只留一张），确认了才改。窗口可勾「以后这个窗口都算」
-  function openEyeConfirm(item, pid, taskId) {
+  function openEyeConfirm(item, pid, taskId, after) {
+    after = after || eyeRelease;   // 人的页面里拖计时卡也走这张确认卡，收尾各自管
     closeFileBubble();
     var cell = cellEl(pid);
-    if (!cell) { eyeRelease(); return; }
+    if (!cell) { after(); return; }
     confirms.filter(function (x) { return x.dataset.eye; }).forEach(dropConfirm);
     var tk = taskId && taskOf(taskId), name = tk ? tk.name : projectName(pid), timing = item.kind === "clock", el = document.createElement("div");
     el.className = "st-confirm st-card"; el.setAttribute("role", "dialog"); el.dataset.eye = "1";
@@ -849,11 +850,11 @@
     el.__done = function (ok) {
       var box = el.querySelector(".st-cf-box"), remember = !!(box && box.checked);
       dropConfirm(el);
-      if (!ok) { eyeRelease(); return; }
+      if (!ok) { after(); return; }
       busy++;
       dropItem(item, pid, { remember: remember, taskId: taskId }).then(function (r) {
         busy--; eye.filed = !!(r && r.ok); if (r && r.ok) PP.invalidate(); render();
-        return Promise.resolve(r && r.ok ? refresh() : null).then(eyeRelease);
+        return Promise.resolve(r && r.ok ? refresh() : null).then(after);
       });
     };
     el.querySelector(".st-cf-x").addEventListener("click", function () { el.__done(null); });
@@ -1058,14 +1059,60 @@
     openPanel(c.dataset.projectId);
   }, true);
 
-  // 时钟：短按 = 窗口记录 / 人用时汇总菜单，长按 = 计时气泡（正计时 / 倒计时 / 停止）；计时中拖时钟到格子 = 记到该项目。时钟自己不挪位
+  // 人的页面（「十四」）：逐任务那一张的名字与归并键；收件箱不算项目，未记到项目的计时叫「手动计时」
+  function timeLabelOf(taskId, projectId, live) {
+    var pid = projectId || (taskId && projectOfTask(taskId)) || null;
+    if (pid === "inbox" || pid === "p_inbox") pid = null;
+    var p = pid && projects().filter(function (x) { return x.id === pid; })[0], t = taskId && taskOf(taskId);
+    if (t && p && p.unclassifiedTaskId !== taskId) return { key: "t:" + taskId, name: t.name, projectId: pid };
+    if (pid) return { key: "p:" + pid, name: projectName(pid), projectId: pid };
+    return live ? { key: "running", name: "手动计时", projectId: null } : { key: "none", name: "未分类", projectId: null };
+  }
+  // 左边的大立绘：同眼睛，画 humanPack 的那个包（静态包 = 抠好底的图）
+  var humanFig = { pack: null, rhythm: null };
+  function fillHumanFigure(slot) {
+    var kind = humanPack();
+    loadPack(kind);
+    humanFig.rhythm = Pk.rhythm(humanFig.pack === kind ? humanFig.rhythm : null, packs[kind] && packs[kind].moods, "waiting", Date.now(), Math.random);
+    humanFig.pack = kind;
+    var m = mediaFor({ pack: kind }, humanFig.rhythm.file);
+    if (slot.dataset.key === m.key) return;
+    slot.dataset.key = m.key; slot.innerHTML = m.html;
+    var v = slot.querySelector("video");
+    if (v) v.addEventListener("error", function () { slot.dataset.key = "svg"; slot.innerHTML = PLACEHOLDER; });
+  }
+  // 逐任务那一张里正在跑的计时卡：拖到项目格 / 任务条 = 弹确认卡「把这次计时记到 …」；落在别处卡片回原位。拖着时离开原位置（fixed）免得被卡片栏裁掉
+  function dragTimerCard(card, pid) {
+    var hole = null;
+    function home() { ["position", "left", "top", "width", "height", "translate"].forEach(function (k) { card.style[k] = ""; }); if (hole) { hole.remove(); hole = null; } }
+    drag(card, { el: card, unzoomed: true, item: function () { return stage.timerRunning() ? { kind: "clock" } : null; },
+      onClick: function () { if (pid) { clockMenu.close(); openPanel(pid); } },
+      onGrab: function () {
+        var r = card.getBoundingClientRect();
+        hole = document.createElement("div"); hole.className = "hp-hole"; hole.style.height = r.height + "px"; card.before(hole);
+        card.style.position = "fixed"; card.style.left = r.left + "px"; card.style.top = r.top + "px"; card.style.width = r.width + "px"; card.style.height = r.height + "px";
+      },
+      afterCreate: home,
+      onRelease: function (target, cancel, dx, dy, made, on) {
+        if (made) { home(); return "keep"; }
+        var to = on ? on.projectId : target && !cancel ? target.dataset.projectId : null;
+        home();
+        if (to) openEyeConfirm({ kind: "clock" }, to, (on && on.taskId) || null, function () {});
+        return "keep";
+      } });
+  }
+
+  // 时钟：短按 = 人的页面（三张卡），长按 = 计时气泡（正计时 / 倒计时 / 停止）；计时中拖时钟到格子 = 记到该项目。时钟自己不挪位
   var clockMenu;
   (function () {
     var el = $("stClock");
     var clockItem = function () { return { kind: "clock" }; };
     var after = function (p) { busy++; return p.then(function () { busy--; render(); refresh(); }); };
     clockMenu = CM.mount({
-      clock: el, now: Date.now, dayStart: dayStart, getLanes: function () { return data.lanes; }, projectName: projectName, getJson: getJson,
+      clock: el, now: Date.now, getLanes: function () { return data.lanes; }, projectName: projectName, getJson: getJson,
+      projectColor: function (pid) { var c = cellEl(pid); return c ? getComputedStyle(c).getPropertyValue("--zone-raw").trim() : ""; },
+      taskLabel: timeLabelOf, fillFigure: fillHumanFigure, dragTimer: dragTimerCard,
+      openProject: function (pid) { clockMenu.close(); openPanel(pid); },
       fillIssues: function (box, list) { window.HexSourceHealth.fill(box, list); }, timerRunning: function () { return stage.timerRunning(); },
       startClock: function (sec) { after(stage.startClock(sec)); }, stopClock: function () { after(stage.clickClock()); },
       pickHuman: function () { pickFigure({ title: "我的形象", current: humanPack(), near: el, set: function (pet, kind) { pet.humanPack = kind; } }); }

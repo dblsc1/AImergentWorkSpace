@@ -23,6 +23,7 @@
   <link rel="stylesheet" href="hex-centre-stats.css">
   <link rel="stylesheet" href="hex-agent-page.css">
   <link rel="stylesheet" href="hex-clock-menu.css">
+  <link rel="stylesheet" href="hex-human-page.css">
   <link rel="stylesheet" href="review.css">
   <!-- 顶栏、设计 tokens、站点图标由网关注入（modules/nginx-docker），本页不自带。 -->
 </head>
@@ -72,16 +73,6 @@
       <div class="hive-wrap" id="hiveWrap">
         <div class="hive" id="hive"></div>
       </div>
-    </section>
-
-    <section class="archive-shell" aria-label="计时档案">
-      <header class="board-head">
-        <div class="board-title">计时档案 <small>TIMER ARCHIVE</small></div>
-      </header>
-      <ul class="archive-list" id="archiveList">
-        <li class="archive-empty">加载中…</li>
-      </ul>
-      <button type="button" class="btn archive-more" id="archiveLoadMore" hidden>加载更多</button>
     </section>
 
     <!-- 导出数据（只读）：点顶栏「导出数据」才拉取/展开，默认 hidden 不占地方。
@@ -261,6 +252,7 @@
   <script src="hex-agent-page.js"></script>
   <script src="hex-source-health.js"></script>
   <script src="hex-figure-pick.js"></script>
+  <script src="hex-human-page.js"></script>
   <script src="hex-clock-menu.js"></script>
   <script src="hex-stage-page.js"></script>
 </body>
