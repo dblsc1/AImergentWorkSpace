@@ -116,7 +116,7 @@ def test_hover_card_zooms_main_hive_and_restores(browser, base) -> None:  # noqa
         assert _state(hive, "s.expandedId") is None and hive.page.locator(".hm-frame").count() == 0, "移开后回到原来的视图"
         _hover(hive, "cd1")                                    # 删除任务：推近 + 红框
         assert _state(hive, "s.expandedId") == "p_math"
-        assert hive.page.locator("li.hm-del").get_attribute("data-task-id") == "t_p_math"
+        assert hive.page.locator(".hex-cell.is-expanded .hm-del").get_attribute("data-task-id") == "t_p_math"
         _hover(hive, "cm1")                                    # 移任务：推近目的项目、目的地虚线框、连回原任务
         assert _state(hive, "s.expandedId") == "p_piano"
         assert hive.page.locator(".hex-cell.is-expanded li.hm-frame").count() == 1

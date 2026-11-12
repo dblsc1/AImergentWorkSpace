@@ -53,19 +53,23 @@ def settle_zoom(st: Stage) -> None:
     st.page.clock.run_for(600)
 
 
-def test_click_expands_the_big_hexagon_with_ruler_tasks_group_and_recent_line_in_order(browser, base) -> None:  # noqa: F811  十二·1 3
+def test_click_expands_the_big_hexagon_with_task_lanes_then_a_folded_recent_line(browser, base) -> None:  # noqa: F811  十五·1 5（取代十二·1 的任务组）
     with open_stage(browser, base, setup=_setup) as st:
         _open(st)
         cell = st.page.locator(EXPANDED)
         assert cell.count() == 1 and cell.get_attribute("data-project-id") == "p_math"
         assert cell.locator(".hex-title").inner_text() == "数学"
         assert cell.locator(".hex-ruler-slot .pr-row").count() == 2 and cell.locator(".hex-ruler-slot .pr-ruler").count() == 1
-        titles = cell.locator(".hex-group-title").all_inner_texts()
-        assert titles == ["任务", "最近完成"] and "下一步" not in cell.inner_text()
-        # 从上到下：项目名 < 任务条 < 「任务」组 < 「最近完成」
-        ys = [cell.locator(s).first.bounding_box()["y"] for s in (".hex-title", ".hex-ruler-slot .pr-row", ".hex-group-title >> text=任务", ".hex-group-title >> text=最近完成")]
+        # 没有「任务」组、「全部待办」、「＋」；任务只以泳道行出现
+        assert cell.locator(".hex-group-title, .hex-add, .hex-all, .hex-next-list:not(:empty)").count() == 0
+        assert cell.locator(".pr-row b").all_inner_texts() == ["数学的任务", "未分配任务用时"]
+        # 从上到下：项目名 < 任务泳道 < 「＋ 新建任务」 < 「最近完成（1）」
+        ys = [cell.locator(s).first.bounding_box()["y"] for s in (".hex-title", ".hex-ruler-slot .pr-row", ".pr-newslot", ".pr-donehead")]
         assert ys == sorted(ys) and len(set(ys)) == 4
-        assert cell.locator(".hex-next-list li").first.inner_text().startswith("写大纲")
+        # 最近完成默认收起：只有一行标题，没有生成里面的行；点开才有（十五·5）
+        head = cell.locator(".pr-donehead")
+        assert head.inner_text() == "最近完成（1）" and cell.locator(".is-done-card").count() == 0
+        head.click()
         # 最近完成：<任务名> 完成 · 人花了 X 分钟 · agent 花了 Y 分钟
         line = cell.locator(".is-done-card").first
         line.locator(".hex-spent:not(:empty)").wait_for()
@@ -73,6 +77,8 @@ def test_click_expands_the_big_hexagon_with_ruler_tasks_group_and_recent_line_in
         assert text == "数学的任务 完成 · 人花了 3 分钟 · agent 花了 12 分钟", text
         if SHOT:
             st.page.screenshot(path=f"{SHOT}/bighex.png")
+        head.click()
+        assert cell.locator(".is-done-card").count() == 0 and head.get_attribute("aria-expanded") == "false"     # 再点收起
 
 
 def test_recent_line_says_under_a_minute_and_zero(browser, base) -> None:  # noqa: F811  十二·3
@@ -81,14 +87,16 @@ def test_recent_line_says_under_a_minute_and_zero(browser, base) -> None:  # noq
         _seed(st, human_s=20, agent_s=0)
     with open_stage(browser, base, setup=setup) as st:
         _open(st)
+        st.page.locator(EXPANDED + " .pr-donehead").click()
         line = st.page.locator(EXPANDED + " .is-done-card .hex-spent:not(:empty)")
         line.wait_for()
         assert line.inner_text() == "完成 · 人花了 不到 1 分钟 · agent 花了 0 分钟"
 
 
-def test_click_on_a_done_line_still_only_offers_undo(browser, base) -> None:  # noqa: F811  十二·3
+def test_click_on_a_done_line_still_only_offers_undo(browser, base) -> None:  # noqa: F811  十二·3 十五·5
     with open_stage(browser, base, setup=_setup) as st:
         _open(st)
+        st.page.locator(EXPANDED + " .pr-donehead").click()
         card = st.page.locator(EXPANDED + " .is-done-card").first
         card.click()
         assert [b.inner_text() for b in card.locator(".hex-mini").all()] == ["撤销"]

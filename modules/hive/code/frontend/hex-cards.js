@@ -137,80 +137,15 @@
       "</div>";
   }
 
-  // data：{ todos: 这个项目的待办数组, completions: 全量完成流水 }。
-  // 这一层不认识 state，要什么都从参数进来 —— 这正是它能被单测的原因。
-  function detailHtml(project, zoneName, data) {
-    data = data || {};
-    // 顺序不在前端排：后端 next-actions 已经按 plannedWeight 降序给好了
-    // （views/next_actions.py::_sort_key），前端再排一遍就是两个真相。
-    //
-    // 「下一步」和「全部待办」**是同一份列表切两段**：next-actions 返回的是
-    // 这个项目的**全部**未完成任务，前 3 条就是下一步，第 4 条起就是其余。
-    // 这么切自动满足人类那条「全部待办排除已有的下一步」，不用再做一次去重；
-    // 而且两栏共享同一个排序真相，拖动改了权重两栏一起动。
-    //
-    // ⚠️ 不从 `project.tasks` 筛：views/tree 的任务对象**没有 plannedWeight**
-    // （真机实测全是 undefined），那边既排不了序也读不回权重。
-    var all = H.topTodos(data.todos, 999);
-    var todos = all.slice(0, 3);
-    var rest = all.slice(3);
-    // 「最近已完成」取自审计流（带真实时间戳），不是 tasks 里的 done 标记 ——
-    // 后者只知道"完成了"，不知道"什么时候"，排不出"最近三条"。
-    var done = (data.completions || []).filter(function (c) {
-      return c.projectId === project.id;
-    }).slice(0, 3);
-
-    function emptyLine(text) { return '<div class="hex-line is-empty">' + esc(text) + "</div>"; }
-
+  // 展开卡内容（hive.stage.v1「十五」）：只有项目名下的面板槽——任务泳道、「＋ 新建任务」、「最近完成」都由舞台页填进 .hex-ruler-slot
+  // （旧的「任务」「全部待办」「最近完成」三组随「十二」「十五」去掉了）。
+  function detailHtml(project, zoneName) {
     return '<div class="hex-detail">' +
       '<div class="hex-sub">' + esc(zoneName) + "</div>" +
-      // 项目面板（任务条 + 人 / 代理时间标尺，hive.stage.v1「十二」）由舞台页往这里填
+      // pr-ghosts：AI 决策页（hex-decide / hex-minihive）往里放「新建任务」落点和 AI 建议的幽灵行；平时是空的、不占位。
+      // 同步生成（不等面板槽被填），它们展开的同一刻就要用
+      '<ul class="hex-list hex-next-list pr-ghosts"></ul>' +
       '<div class="hex-ruler-slot" data-project-id="' + esc(project.id) + '"></div>' +
-
-      // ① 任务（旧「下一步」）：标题行右端挂「＋」，点它原地向左延展成一张同款卡片
-      '<div class="hex-group">' +
-        '<div class="hex-group-head">' +
-          '<div class="hex-group-title">任务</div>' +
-          '<button type="button" class="hex-add" data-hex-ui="new-task"' +
-            ' aria-label="添加新任务" title="添加新任务">＋</button>' +
-        "</div>" +
-        '<form class="hex-newcard" data-hex-action="create-task" hidden>' +
-          '<span class="hex-todo-dot"></span>' +
-          '<input type="text" name="name" placeholder="新任务标题…" autocomplete="off">' +
-          '<span class="hex-tools is-shown">' +
-            '<button type="submit" class="hex-mini is-primary">增加</button>' +
-            '<button type="button" class="hex-mini is-danger" data-hex-ui="cancel-new">删除</button>' +
-          "</span>" +
-        "</form>" +
-        (todos.length
-          ? '<ul class="hex-list hex-next-list" data-reorder="1">' +
-            todos.map(function (t) { return taskCard(t); }).join("") + "</ul>"
-          : emptyLine(H.NO_TODO_TEXT)) +
-      "</div>" +
-
-      // ② 全部待办：可伸展。第一条放大，之后逐级缩小压暗（人类点名）。
-      // 「下一步」已经列全了就整组不出（v0.2.1：之前会显示「展开其余 0 条」）。
-      (rest.length ? '<div class="hex-group">' +
-        '<div class="hex-group-title">全部待办</div>' +
-        '<button type="button" class="hex-expander" data-hex-ui="toggle-all" aria-expanded="false">' +
-          '<span class="hex-chev" aria-hidden="true">▸</span>' +
-          "展开其余 <b>" + rest.length + "</b> 条" +
-        "</button>" +
-        '<ul class="hex-list hex-all" data-reorder="1" hidden>' +
-          rest.map(function (t) { return taskCard(t); }).join("") + "</ul>" +
-      "</div>" : "") +
-
-      // ③ 最近完成
-      '<div class="hex-group">' +
-        '<div class="hex-group-title">最近完成</div>' +
-        (done.length
-          ? '<ul class="hex-list">' + done.map(function (c) {
-              return taskCard({ id: c.taskId, name: c.taskName || c.path, done: true, canceled: !!c.canceled },
-                              { done: true, stamp: c.stamp, session: c.session });
-            }).join("") + "</ul>"
-          : emptyLine("暂无完成记录")) +
-      "</div>" +
-
       '<div class="hex-err" data-hex-error></div>' +
       "</div>";
   }

@@ -113,6 +113,8 @@ class TaskUpdate(_Strict):
     name: str | None = None
     projectId: str | None = None
     done: bool | None = None
+    #: v2.55：取消任务。true = 同时记 done=true / doneAt 并标 canceled；false = 撤销取消（回到未完成）
+    canceled: bool | None = None
     kind: str | None = None
     flags: list[str] | None = None
     plannedWeight: float | None = None
@@ -128,6 +130,7 @@ class TaskOut(_Out):
     name: str
     done: bool
     doneAt: str | None = None
+    canceled: bool = False
     kind: str
     flags: list[str] = Field(default_factory=list)
     plannedWeight: float

@@ -129,4 +129,19 @@ test("转发没断：hex-data.js 上的这批名字必须就是 hex-audit.js 的
   assert.strictEqual(H.HEAT_HALFLIFE_DAYS, A.HEAT_HALFLIFE_DAYS);
 });
 
+// 取消（nexus-core v2.55）：与完成同列、行带 canceled；撤销取消 / 撤销完成后不再出现；取消不算热度
+test("canceled 进最近完成并带标记，撤销取消后消失", function () {
+  var tree = { zones: [{ id: "z", name: "Z" }], projects: [{ id: "p", name: "P", zoneId: "z", tasks: [{ id: "t1", name: "甲" }, { id: "t2", name: "乙" }, { id: "t3", name: "丙" }] }] };
+  var items = [
+    { seq: 1, at: "2026-11-12T01:00:00+00:00", objectType: "tasks", objectId: "t1", changes: { canceled: true } },
+    { seq: 2, at: "2026-11-12T02:00:00+00:00", objectType: "tasks", objectId: "t2", changes: { done: true } },
+    { seq: 3, at: "2026-11-12T03:00:00+00:00", objectType: "tasks", objectId: "t3", changes: { canceled: true } },
+    { seq: 4, at: "2026-11-12T04:00:00+00:00", objectType: "tasks", objectId: "t3", changes: { canceled: false } }
+  ];
+  var rows = A.recentCompletions(items, tree);
+  assert.deepStrictEqual(rows.map(function (r) { return [r.taskId, r.canceled]; }), [["t2", false], ["t1", true]]);
+  var heat = A.completionHeat(items, tree, { now: Date.parse("2026-11-12T04:00:00+00:00") });
+  assert.ok(heat.p > 0.9 && heat.p < 1.01);   // 只有 t2 的完成算
+});
+
 console.log(passed + " passed");

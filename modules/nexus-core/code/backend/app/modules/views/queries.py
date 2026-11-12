@@ -164,6 +164,7 @@ def get_tree(include_ephemeral: bool = False) -> TreeOut:
                         "key": t["key"],
                         "name": t["name"],
                         "done": bool(t.get("done")),
+                        "canceled": bool(t.get("canceled")),
                         "kind": t.get("kind", "normal"),
                         "flags": t.get("flags", []),
                         # v1.2：只读附带，与 TaskOut/GanttTask 同形状；老文档缺字段时

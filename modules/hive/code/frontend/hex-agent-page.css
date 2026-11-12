@@ -35,7 +35,7 @@
 .ag-lane { position: relative; height: 32px; background: color-mix(in srgb, var(--panel) 70%, transparent); border-radius: 4px; }
 .ag-seg { position: absolute; top: 0; bottom: 0; min-width: 3px; border-radius: 3px; opacity: .92; }
 .ag-seg.ag-neutral { background: var(--ink-3); }
-.ag-focus { position: absolute; top: 0; height: 4px; min-width: 3px; background: var(--pr-human); border-radius: 2px; z-index: 2; pointer-events: auto; }
+.ag-focus { position: absolute; top: 0; height: 4px; min-width: 3px; background: var(--pr-human-bar); border-radius: 2px; z-index: 2; pointer-events: auto; }
 .ag-me { grid-template-columns: calc(72px + 10px + 132px) 1fr; }
 .ag-who { min-width: 0; }
 .ag-me .ag-name { color: var(--pr-human); }
@@ -43,6 +43,6 @@
 .ag-me .ag-lane { height: 40px; }
 .ag-me .ag-seg { top: 8px; }
 .ag-seg.ag-lite { background: var(--line); }
-.ag-timer { position: absolute; top: 0; height: 6px; min-width: 3px; background: var(--pr-human); border-radius: 2px; z-index: 2; }
+.ag-timer { position: absolute; top: 0; height: 6px; min-width: 3px; background: var(--pr-human-bar); border-radius: 2px; z-index: 2; }
 .ag-flyer { z-index: 300; pointer-events: none; transform-origin: 50% 50%; }
 @media (max-width: 760px) { .ag-page { --lane-left: 150px; } .ag-card { grid-template-columns: 56px 60px 1fr; } .ag-me { grid-template-columns: calc(56px + 10px + 60px) 1fr; } .ag-hd { flex-wrap: wrap; } }

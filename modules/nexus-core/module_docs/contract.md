@@ -4991,6 +4991,16 @@ MCP 侧见 `contracts/mcp.tools.v2`。
 - `agents[]` 每个元素追加：`tool`（运行的 `tool`，可为 `null`）、`laneKey`（代理身份键，同 `views/lanes` 的 `lane_key`：同一个 agent + 同一个 label（折叠空白、不分大小写）+ 同一类已验证 / 未验证 = 同一个代理）、`projectId`（这条运行**现在**的去向，可为 `null`）、`running`（未结束）、`lost`、`phase`（最近一条相位：`working` / `waiting_input` / `waiting_permission` / `idle` / `error`，没有相位 = `working`）、`attend: [{start, end}]`（人在看这条运行的区间，裁到窗口且不晚于 `now`，按 `start` 升序）。
 - 仍然只有窗口内有干活区间的运行才出现在 `agents` 里。既有字段、端点一个不改；不新增集合 / 错误码。
 
+## v0.6：任务「取消」（v2.55，追加式）
+
+仓主 2026-11-12：任务除了完成还要能「取消」，取消的进「最近完成」写「取消」，可撤销（`hive.stage.v1`「十五」）。`PATCH planner/tasks/{id}` 与统一入口 `planner/tasks` 的更新追加可选字段 `canceled`（bool）：
+
+- `canceled: true`：取消。任务记为已了结——`done: true`、`doneAt` 盖当前时刻，并带 `canceled: true`；同请求里给了 `done` 且不是 `true` → `400`。
+- `canceled: false`：撤销取消，回到未完成——`done: false`、`doneAt: null`、`canceled: false`。
+- 请求只给 `done`（完成 / 撤销完成）时 `canceled` 一并置 `false`：完成与取消互斥，最后一次动作为准。
+- `TaskOut` 与 `views/tree` 的任务追加 `canceled`（bool，旧文档缺省 `false`）；`views/next-actions` 因 `done: true` 不再列出取消的任务；任务上的计时记录、代理运行一概不动。
+- 审计流（`planner/audit`）的 `changes` 照旧是请求体，取消那一条是 `{canceled: true}`，撤销是 `{canceled: false}`。既有字段、端点一个不改；不新增集合 / 错误码。
+
 ## v0.6：窗口块按日期范围一次读（v2.56，追加式）
 
 仓主 2026-11-12：人的页面「周」档、默认 7 天视图里的窗口记录要覆盖整个范围，不能逐块逐日并发去读。
