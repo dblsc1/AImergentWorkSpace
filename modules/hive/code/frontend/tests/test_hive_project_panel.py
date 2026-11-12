@@ -21,7 +21,7 @@ ROW = '.pr-row[data-task="t_p_math"]'
 def _seed(st: Stage) -> None:
     """p_math 的任务 t_p_math 上有：人 2 段（一段今天、一段 2 天前的 1 分钟）、代理 2 段；没挂任务上有代理 1 段。"""
     now = st.now().astimezone(TZ)
-    day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    day = now - timedelta(hours=24)   # 「二十八」：标尺是此刻往前数的，夹具的「今天 x 点」也从 24 小时前起算，免得落在此刻之后画不出来
 
     def span(a, b, **extra: Any) -> dict[str, Any]:
         return {"start": _iso(a), "end": _iso(b), **extra}

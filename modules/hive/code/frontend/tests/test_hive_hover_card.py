@@ -98,18 +98,18 @@ def test_reads_only_when_the_cell_has_grown_and_not_again_within_30_seconds(brow
         st.page.wait_for_timeout(300)
         _hover(st, CELL.format("p_math"))
         st.page.wait_for_selector(".is-hover .hv-card .hv-sum")
-        assert len(st.reads) == 1 and "projectId=p_math" in st.reads[0]
+        assert len(st.reads) == 2 and "projectId=p_math" in st.reads[0]   # 一次读 = 两个请求（后 7 天 + 最早那一天，「二十八」6）
         st.page.mouse.move(3, 3)
         st.page.clock.run_for(700)
         _hover(st, CELL.format("p_math"))                  # 30 秒内再来：直接用上次的
         st.page.wait_for_selector(".is-hover .hv-card .hv-sum")
-        assert len(st.reads) == 1
+        assert len(st.reads) == 2
         st.page.mouse.move(3, 3)
         st.page.clock.run_for(31000)
         _hover(st, CELL.format("p_math"))
         st.page.wait_for_selector(".is-hover .hv-card .hv-sum")
         st.page.wait_for_timeout(200)
-        assert len(st.reads) == 2
+        assert len(st.reads) == 4
 
 
 def test_skeleton_ruler_is_drawn_before_the_data_arrives(browser, base) -> None:  # noqa: F811  二十五·2

@@ -21,7 +21,7 @@ SHOT = os.environ.get("HIVE_SHOTS")
 def _seed(st: Stage, *, human_s: int = 180, agent_s: int = 720, cancelled: bool = False) -> None:
     """p_math 的任务 t_p_math：今天人 human_s 秒、代理 agent_s 秒；审计流里它已完成；待办里有「写大纲」。"""
     now = st.now().astimezone(TZ)
-    day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    day = now - timedelta(hours=24)   # 「二十八」：标尺是此刻往前数的，夹具的「今天 x 点」也从 24 小时前起算，免得落在此刻之后画不出来
     a = day + timedelta(hours=1)
     tasks = [{"taskId": "t_p_math",
               "human": [{"start": _iso(a), "end": _iso(a + timedelta(seconds=human_s))}] if human_s else [],

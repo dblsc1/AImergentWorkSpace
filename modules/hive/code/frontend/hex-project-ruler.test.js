@@ -64,6 +64,21 @@ const lh = R.lanesHtml(L, [{ start: "2026-11-10T14:00:00+08:00", end: "2026-11-1
 assert.ok(lh.includes('title="11/10 14:00–15:30 你"') && lh.includes('title="11/09 09:05–09:40 garden"'));
 assert.ok(lh.indexOf("pr-lane pr-human") < lh.indexOf("pr-lane pr-agent") && lh.includes("--pr-agent:#35c9eb"));
 assert.ok(lh.includes('class="pr-seg pr-h"') && lh.includes('class="pr-seg pr-a"'));
+// 读数：尺子跨 8 个本地日，接口一次至多 7 天 —— 后 7 天一次、最早那天一次，按任务并起来（「二十八」6）
+{
+  const asked = [], seg = (a, b) => ({ start: a, end: b });
+  const main = { projectId: "p", now: "n", tasks: [{ taskId: "a", human: [seg("h2", "h3")], agent: [] }, { taskId: null, human: [], agent: [seg("x1", "x2")] }] };
+  const early = { projectId: "p", tasks: [{ taskId: "a", human: [seg("h0", "h1"), seg("h2", "h3")], agent: [seg("g0", "g1")] }, { taskId: "b", human: [seg("b0", "b1")], agent: [] }] };
+  const m = R.mergeProjectTime(main, early);
+  assert.deepStrictEqual(m.tasks.map((x) => x.taskId), ["a", null, "b"]); assert.strictEqual(m.now, "n");
+  assert.deepStrictEqual(m.tasks[0].human.map((x) => x.start), ["h0", "h2"]); assert.deepStrictEqual(m.tasks[0].agent.map((x) => x.start), ["g0"]);   // 起点相同的段只留一份
+  assert.strictEqual(main.tasks[0].human.length, 1);                                 // 不改入参
+  assert.strictEqual(R.mergeProjectTime(main, null), main); assert.strictEqual(R.mergeProjectTime(null, early), null);
+  R.readProjectTime((q) => { asked.push(q); return Promise.resolve(q.includes("to=2026-11-03") ? early : main); }, "p 1", L).then((res) => {
+    assert.deepStrictEqual(asked, ["views/project-time?projectId=p%201&from=2026-11-04&to=2026-11-10", "views/project-time?projectId=p%201&from=2026-11-03&to=2026-11-03"]);
+    assert.strictEqual(res.tasks.length, 3);
+  });
+}
 console.log("hex-project-ruler.test.js ok");
 
 // 等宽刻度：一天 / 一周

@@ -41,6 +41,28 @@
     }
     return { from: days[0].start, to: now, days: days, now: now };
   }
+  // 读这把尺子范围里一个项目的人 / 代理区间。views/project-time 一次至多 7 个本地日，而尺子是此刻往前 7 × 24 小时、跨 8 个本地日：
+  // 后 7 天一次读，最早那一天单读一次，再按任务并起来（两次都读到才并；最早那天没读到 = 只少最左边那一点）
+  function readProjectTime(getJson, pid, L) {
+    var q = "views/project-time?projectId=" + encodeURIComponent(pid) + "&from=";
+    return Promise.all([getJson(q + ymd(midnight(L.from, 1)) + "&to=" + ymd(L.to)), getJson(q + ymd(L.from) + "&to=" + ymd(L.from))])
+      .then(function (r) { return mergeProjectTime(r[0], r[1]); });
+  }
+  // early 的区间接到 main 同一任务的前面；起点相同的段只留一份（返回新对象，不改入参）
+  function mergeProjectTime(main, early) {
+    if (!main || !early) return main || null;
+    var by = {}, tasks = (main.tasks || []).map(function (t) { var c = Object.assign({}, t); by[String(t.taskId)] = c; return c; });
+    function join(a, b) {
+      var seen = {}; (b || []).forEach(function (s) { seen[s.start] = 1; });
+      return (a || []).filter(function (s) { return !seen[s.start]; }).concat(b || []);
+    }
+    (early.tasks || []).forEach(function (t) {
+      var c = by[String(t.taskId)];
+      if (!c) { tasks.push(Object.assign({}, t)); return; }
+      c.human = join(t.human, c.human); c.agent = join(t.agent, c.agent);
+    });
+    return Object.assign({}, main, { tasks: tasks });
+  }
   // 等宽刻度（单日 / 一周的统计页）：从 startMs 所在本地日起 n 天，每天 w = 1/n；形状同 layout，xOf / spanRect 通用
   function linearScale(startMs, n) {
     var days = [];
@@ -168,7 +190,7 @@
       if (loading) return;
       loading = true; loadedAt = now;
       var L = layout(now);
-      ctx.getJson("views/project-time?projectId=" + encodeURIComponent(pid) + "&from=" + ymd(L.from) + "&to=" + ymd(now)).then(function (res) {
+      readProjectTime(ctx.getJson, pid, L).then(function (res) {
         loading = false;
         if (cur !== pid) return;
         payload = res; if (ctx.changed) ctx.changed();
@@ -318,7 +340,7 @@
              dragOver: dragOver, dragEnd: dragEnd, dropAt: dropAt, overPanel: overPanel, awaitName: awaitName };
   }
 
-  var api = { nowPct: nowPct, minutesText: minutesText, spentText: spentText, taskOrder: taskOrder, lastActivity: lastActivity, layout: layout, linearScale: linearScale, rollingScale: rollingScale, xOf: xOf, spanRect: spanRect, rulerHtml: rulerHtml, lanesHtml: lanesHtml, createPanel: createPanel,
+  var api = { readProjectTime: readProjectTime, mergeProjectTime: mergeProjectTime, nowPct: nowPct, minutesText: minutesText, spentText: spentText, taskOrder: taskOrder, lastActivity: lastActivity, layout: layout, linearScale: linearScale, rollingScale: rollingScale, xOf: xOf, spanRect: spanRect, rulerHtml: rulerHtml, lanesHtml: lanesHtml, createPanel: createPanel,
               PAST_SHARE: PAST_SHARE, TODAY_SHARE: TODAY_SHARE };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.NexusTableHexProjectRuler = api;
