@@ -35,6 +35,8 @@ def _setup(st: Stage) -> None:
 
 def _hover(st: Stage, selector: str) -> None:
     st.page.mouse.move(3, 3)
+    st.page.clock.run_for(400)
+    st.page.wait_for_timeout(500)                       # 缩回的动画走真时间，没走完不接新的悬停（「十八」1）
     st.page.mouse.move(*st.center(selector))
     st.page.clock.run_for(400)
     st.page.wait_for_timeout(300)
