@@ -9,7 +9,7 @@
   var shell = document.querySelector(".board-shell");
   if (!St || !Rec || !Pk || !Pr || !CS || !CM || !window.HexHumanPage || !shell) return;
 
-  var POLL_MS = 5000, TICK_MS = 1000, PET_MS = 100;
+  var POLL_MS = 5000, TICK_MS = 1000;
   var SLOT_AREA = { x: 24, y: 142, w: 340, h: 160 };   // 左上角 y < 142 留给 72px 的头像
   var DAY_FROM_H = 6, DAY_SPAN_H = 18;
   var STATUS_TEXT = { working: "工作中", waiting: "等你", idle: "空闲", error: "出错" };
@@ -434,8 +434,33 @@
     if (still) return { key: still, html: '<img class="st-art st-still" alt="" src="' + esc(still) + '">' };
     if (!file) return { key: "svg", html: PLACEHOLDER };
     var url = BASE + "hive/pets/" + encodeURIComponent(pet.pack) + "/" + file.split("/").map(encodeURIComponent).join("/");
-    return { key: url, html: '<video class="st-art" src="' + esc(url) + '" autoplay loop muted playsinline></video>' };
+    return { key: url, video: url, loop: true, html: '<video class="st-art" src="' + esc(url) + '" autoplay loop muted playsinline></video>' };
   }
+  // 宠物的画面只经这里换。已有 <video> 就换它的 src，不重建元素；换成别的之前先把播放器放掉。
+  // 每换一段动作就新建一个 <video>，旧播放器要等回收才释放——开上几分钟越积越多，页面越来越卡（仓主 2026-11-12）。
+  function releaseVideos(root) {
+    [].forEach.call(root.querySelectorAll("video"), function (v) { try { v.pause(); v.removeAttribute("src"); v.load(); } catch (e) { /* 已经放掉了 */ } });
+  }
+  window.HexReleaseVideos = releaseVideos;
+  // m = {video, loop, html}（mediaFor 的结果，或只有 html）；onError / onEnded 记在槽上，换画面时一起换
+  function showMedia(slot, m, onError, onEnded) {
+    slot.__onError = onError || null; slot.__onEnded = onEnded || null;
+    var v = slot.firstElementChild;
+    if (m.video && v && v.tagName === "VIDEO") {
+      v.loop = m.loop !== false;
+      if (v.getAttribute("src") !== m.video) { v.setAttribute("src", m.video); v.load(); var p = v.play(); if (p && p.catch) p.catch(function () { /* 还没能播：autoplay 会接着试 */ }); }
+      return v;
+    }
+    releaseVideos(slot);
+    slot.innerHTML = m.html;
+    v = slot.querySelector("video");
+    if (v) {
+      v.addEventListener("error", function () { if (v.parentNode === slot && v.getAttribute("src") && slot.__onError) slot.__onError(); });
+      v.addEventListener("ended", function () { if (v.parentNode === slot && slot.__onEnded) slot.__onEnded(); });
+    }
+    return v;
+  }
+  function showPlaceholder(slot) { slot.dataset.key = "svg"; showMedia(slot, { html: PLACEHOLDER }); }
 
   // ── 干活的宠物（格子边）与左上角的宠物 ───────────────────
   var petEls = {}, slotOf = {};
@@ -459,9 +484,7 @@
     e.dataset.mood = pet.mood;
     e.__pet = pet;
     if (!slot.dataset.over && slot.dataset.key !== m.key) {
-      slot.dataset.key = m.key; slot.innerHTML = m.html;
-      var v = slot.querySelector("video");
-      if (v) v.addEventListener("error", function () { slot.dataset.key = "svg"; slot.innerHTML = PLACEHOLDER; });
+      slot.dataset.key = m.key; showMedia(slot, m, function () { showPlaceholder(slot); });
     }
     e.__run = run;
   }
@@ -490,13 +513,10 @@
     var key = "ix:" + (w.loop ? "L:" : "1:") + url;
     if (slot.dataset.key === key) return;
     slot.dataset.key = key; slot.dataset.over = "1";
-    slot.innerHTML = '<video class="st-art" src="' + esc(url) + '" autoplay ' + (w.loop ? "loop " : "") + "muted playsinline></video>";
-    var v = slot.querySelector("video"), s = ix[e.dataset.runId];
-    v.addEventListener("error", function () {
-      delete slot.dataset.over; slot.dataset.key = "svg"; slot.innerHTML = PLACEHOLDER;
-      if (s) s.click = null;
-    });
-    if (!w.loop) v.addEventListener("ended", function () { if (s) s.click = null; syncClip(e); });
+    var s = ix[e.dataset.runId];
+    showMedia(slot, { video: url, loop: !!w.loop, html: '<video class="st-art" src="' + esc(url) + '" autoplay ' + (w.loop ? "loop " : "") + "muted playsinline></video>" },
+      function () { delete slot.dataset.over; showPlaceholder(slot); if (s) s.click = null; },
+      w.loop ? null : function () { if (s) s.click = null; syncClip(e); });
   }
   function squash(e) {
     if (reduced()) return;
@@ -514,7 +534,7 @@
   function setFlip(e, f) { e.classList.toggle("flip", f); }
   function startBack(e, from, afterMs) {
     var s = ixOf(e.dataset.runId);
-    s.mode = "back"; s.from = from; s.to = e.__home; s.t0 = Date.now() - (afterMs || 0); s.walking = false;
+    s.mode = "back"; s.from = from; s.to = e.__home; s.t0 = Date.now() - (afterMs || 0); s.walking = false; kickWalk();
     s.walkClip = (packMoods(e).walk || [])[0] || null;
     e.classList.add("st-away"); place(e, from); syncClip(e);
   }
@@ -544,6 +564,7 @@
   var PET_BIG_K = 1.7;
   function layerPetK() { return parseFloat(layer.style.getPropertyValue("--pet-k")) || 1; }
   function renderPets() {
+    if (layoutBusy()) return;   // 放大 / 缩小动画里格子还在路上：量到的是半路的位置
     var runs = runsOf().map(function (r) {
       var dock = stage.petDock(r.runId);
       return dock && Pk.isLoose(r, { projectOfTask: projectOfTask }) ? Object.assign({}, r, { projectId: dock, taskId: null }) : r;
@@ -584,7 +605,7 @@
     Object.keys(petEls).forEach(function (id) {
       if (keep[id]) return;
       if (petEls[id].classList.contains("st-dragging")) dragging--;   // 拖着时被移除：收不到 pointerup
-      petEls[id].remove(); delete petEls[id]; delete ix[id];
+      releaseVideos(petEls[id]); petEls[id].remove(); delete petEls[id]; delete ix[id];
     });
     var more = $("stMore"), plus = work.plus;
     more.hidden = !plus; more.textContent = plus ? "+" + plus : "";
@@ -707,10 +728,16 @@
     var e = petEls[id], s = ix[id];
     if (e && s && s.mode === "hold" && e.__home) startBack(e, curPos(e), STAY_MS);
   }
-  function stepPets() {
-    stepBack(Date.now());
-    Object.keys(petEls).forEach(function (id) { var e = petEls[id]; if (e.__pet) fillPet(e, e.__pet, e.__run); });   // 动作节奏到点就换
+  function stepPets() {   // 动作节奏到点就换：每秒看一次就够（一段动作 15 秒 / 3 秒）
+    Object.keys(petEls).forEach(function (id) { var e = petEls[id]; if (e.__pet) fillPet(e, e.__pet, e.__run); });
   }
+  // 走回家：只在有宠物在走的时候逐帧推（以前每 100ms 挪一格，看着一顿一顿的）
+  var walkRaf = 0;
+  function walkFrame() {
+    stepBack(Date.now());
+    walkRaf = Object.keys(ix).some(function (id) { return ix[id].mode === "back"; }) ? requestAnimationFrame(walkFrame) : 0;
+  }
+  function kickWalk() { if (!walkRaf) walkRaf = requestAnimationFrame(walkFrame); }
 
   // ── 中心环 ────────────────────────────────────────────
   // 中心环 = 人 + 代理今天的总计时，内容与点开的统计页在 hex-centre-stats.js（hive.stage.v1「八」）
@@ -812,11 +839,9 @@
     eye.pack = kind;
     var m = mediaFor({ pack: kind }, eye.rhythm.file);
     if (slot.dataset.key !== m.key) {
-      slot.dataset.key = m.key; slot.innerHTML = m.html;
-      var v = slot.querySelector("video");
-      if (v) v.addEventListener("error", function () { slot.dataset.key = "svg"; slot.innerHTML = PLACEHOLDER; });
+      slot.dataset.key = m.key; showMedia(slot, m, function () { showPlaceholder(slot); });
     }
-    if (eye.hold || el.classList.contains("st-dragging")) return;   // 拖着 / 等确认卡：留在原地
+    if (eye.hold || el.classList.contains("st-dragging") || layoutBusy()) return;   // 拖着 / 等确认卡 / 格子还在动画里：留在原地
     var t = eyeTarget(h);
     if (eye.host === null) { eye.host = key; eye.x = t.x; eye.y = t.y; place(el, t); return; }
     if (eye.host === key && !eye.back) { if (!eye.raf) { eye.x = t.x; eye.y = t.y; place(el, t); } return; }
@@ -1088,9 +1113,7 @@
     humanFig.pack = kind;
     var m = mediaFor({ pack: kind }, humanFig.rhythm.file);
     if (slot.dataset.key === m.key) return;
-    slot.dataset.key = m.key; slot.innerHTML = m.html;
-    var v = slot.querySelector("video");
-    if (v) v.addEventListener("error", function () { slot.dataset.key = "svg"; slot.innerHTML = PLACEHOLDER; });
+    slot.dataset.key = m.key; showMedia(slot, m, function () { showPlaceholder(slot); });
   }
   // 人的页面里的卡片拖起来时离开原位置（fixed）免得被卡片栏裁掉，原处留一个同高的空位；home() 放回
   function liftCard(card) {
@@ -1235,9 +1258,29 @@
   window.addEventListener("resize", sizeToWindow);
   new MutationObserver(function () { if ($("stClock").querySelector(".st-dial")) renderEye(); }).observe(shell, { attributes: true, attributeFilter: ["hidden"], subtree: true });   // 决策栏出现 / 消失 → 时钟挪位，眼睛立刻跟过去
 
+  // 蜂巢放大 / 缩小（hex-layout 发 hexlayout 时格子已是终态、动画还没起）：
+  // 小人与人的形象按终态摆好，再从原位起一段同时长、同缓动的动画 —— 和格子、镜头同一条时间线
+  var following = false, followEnd = 0;
+  function layoutBusy() { var L = window.NexusTableHexLayout; return !following && !!(L && L.busy && L.busy()); }
+  document.addEventListener("hexlayout", function (ev) {
+    if (!data.lanes) return;
+    var els = [].slice.call(layer.querySelectorAll(".st-pet")).concat($("stEye"), $("stMore"));
+    var was = els.map(function (e) { return { x: parseFloat(e.style.left), y: parseFloat(e.style.top), big: e.classList.contains("is-big") }; });
+    // 干活的小人平时挪窝走 900ms 的 left/top 过渡：这一回关掉，改由下面那段同时长的动画带着走
+    layer.classList.add("st-following"); clearTimeout(followEnd);
+    followEnd = setTimeout(function () { layer.classList.remove("st-following"); }, ev.detail.ms + 60);
+    following = true;
+    try { renderEye(); renderPets(); } finally { following = false; }
+    els.forEach(function (e, i) {
+      var dx = was[i].x - parseFloat(e.style.left), dy = was[i].y - parseFloat(e.style.top);
+      var big = e.classList.contains("is-big"), k = big === was[i].big ? 1 : big ? 1 / PET_BIG_K : PET_BIG_K;   // 小人变大 / 变回：个头也在这条时间线上长
+      if (!e.isConnected || !e.animate || !isFinite(dx) || !isFinite(dy) || (k === 1 && Math.abs(dx) < 1 && Math.abs(dy) < 1)) return;
+      e.animate([{ translate: dx.toFixed(1) + "px " + dy.toFixed(1) + "px", scale: String(k) }, { translate: "0px 0px", scale: "1" }], { duration: ev.detail.ms, easing: ev.detail.ease });
+    });
+  });
+
   refresh().then(function () { sizeToWindow(); });
   setInterval(refresh, POLL_MS);
-  setInterval(function () { var n = Date.now(); renderRing(n); renderClock(n); renderToast(); clockMenu.refresh(); }, TICK_MS);
-  setInterval(stepPets, PET_MS);
+  setInterval(function () { var n = Date.now(); renderRing(n); renderClock(n); renderToast(); clockMenu.refresh(); stepPets(); }, TICK_MS);
   setInterval(function () { renderEye(); renderPets(); }, 400);
 })();

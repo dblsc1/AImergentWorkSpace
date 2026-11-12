@@ -100,7 +100,7 @@ body.stage-on .is-done-card .hex-stamp { display: none; }
 .st-pet.is-loose .st-pet-in { cursor: grab; }
 .st-pet.st-squash .st-pet-in { animation: st-squash 220ms ease-out; }
 @keyframes st-squash { 0% { transform: scaleY(1); } 40% { transform: scaleY(.55); } 100% { transform: scaleY(1); } }
-.st-pet.st-dragging, .st-pet.st-away { transition: none; }
+.st-pet.st-dragging, .st-pet.st-away, .st-following .st-pet { transition: none; }
 .st-pet.st-dragging { z-index: 80; }
 .st-pet.st-dragging .st-pet-in { cursor: grabbing; filter: drop-shadow(0 8px 10px rgba(0, 0, 0, .25)); }
 .st-tag { white-space: nowrap; max-width: 110px; overflow: hidden; text-overflow: ellipsis; font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 999px;

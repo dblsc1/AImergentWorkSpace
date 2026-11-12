@@ -229,3 +229,32 @@ def test_human_only_time_still_sits_on_top_with_the_lane_below_empty(browser, ba
         h = st.page.locator('.pr-row[data-task="t_p_math"] .pr-human .pr-seg').first.bounding_box()
         lanes = st.page.locator('.pr-row[data-task="t_p_math"] .pr-lanes').bounding_box()
         assert abs(h["y"] - lanes["y"]) < 1 and lanes["height"] >= 25
+
+
+ONE_CLOCK = """(how) => {
+  const q = s => document.querySelector(s), cell = q('.hex-cell[data-project-id="p_math"]');
+  const other = [...document.querySelectorAll('.hex-cell[data-project-id]')].filter(c => c !== cell).pop();
+  const c = e => { const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2, r.width].map(Math.round); };
+  const rects = () => [cell, other, q('.hex-borders path'), q('.st-pet.is-work[data-run-id="r1"]')].map(c);
+  const before = rects();
+  if (how === 'open') cell.click(); else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  const a = document.getAnimations().filter(x => x.constructor === Animation && x.effect && x.effect.target.closest('.hive, .st-pet'));   // 只看脚本起的位移动画，不算颜色淡入淡出的 CSS 过渡
+  a.forEach(x => { x.pause(); x.currentTime = 0; });
+  const at0 = rects();
+  a.forEach(x => x.finish());
+  return { before, at0, end: rects(), durations: [...new Set(a.map(x => x.effect.getTiming().duration))], who: [...new Set(a.map(x => x.effect.target.classList[0]))] };
+}"""
+
+
+def test_expand_and_collapse_run_cells_camera_borders_and_pets_on_one_timeline(browser, base) -> None:  # noqa: F811  十八·1 2 3
+    with open_stage(browser, base, setup=_setup) as st:
+        st.page.mouse.move(2, 2)
+        for how in ("open", "close"):
+            r = st.page.evaluate(ONE_CLOCK, how)
+            assert r["durations"] == [460], r                                        # 同一个时长
+            assert {"hex-cell", "hive-cam", "hex-borders", "st-pet"} <= set(r["who"]), r["who"]
+            for was, now in zip(r["before"], r["at0"]):                              # 起点 = 动之前屏幕上的样子
+                assert all(abs(x - y) <= 2 for x, y in zip(was, now)), r
+            assert r["end"][0] != r["before"][0] and r["end"][3] != r["before"][3], r   # 格子和小人都真的动了
+            st.page.clock.run_for(1000)
+            st.page.wait_for_timeout(300)

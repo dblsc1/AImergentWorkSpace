@@ -168,12 +168,13 @@
       cards[g.key] = c; c.__top = null;
       return c;
     }
+    function release(root) { if (window.HexReleaseVideos) window.HexReleaseVideos(root); }   // 视频播放器用完就放（hex-stage-page.js）
     function figure(c, g) {
       var f = ctx.figureOf(ctx.packOfTool(g.tool)), fig = c.firstChild;
       if (fig.__key === f.key) return;
-      fig.__key = f.key; fig.innerHTML = f.html;
+      fig.__key = f.key; release(fig); fig.innerHTML = f.html;
       var v = fig.querySelector("video");
-      if (v) v.addEventListener("error", function () { fig.innerHTML = ctx.placeholder; });
+      if (v) v.addEventListener("error", function () { if (v.getAttribute("src")) { release(fig); fig.innerHTML = ctx.placeholder; } });
     }
     function laneHtml(g, win, L) {
       var wide = win.hours > 24, tipDay = function (a) { return wide ? md(a) + " " : ""; }, html = "";
@@ -246,7 +247,7 @@
         if (lane.__html !== h) { lane.__html = h; lane.innerHTML = h; }
         if (stack.children[i + first] !== c) stack.insertBefore(c, stack.children[i + first] || null);
       });
-      Object.keys(cards).forEach(function (k) { if (!keep[k]) { cards[k].remove(); delete cards[k]; } });
+      Object.keys(cards).forEach(function (k) { if (!keep[k]) { release(cards[k]); cards[k].remove(); delete cards[k]; } });
       if (!reduced()) groups.forEach(function (g) {
         var c = cards[g.key], d = before[g.key] - c.offsetTop;
         if (before[g.key] != null && d && c.animate) c.animate([{ transform: "translateY(" + d + "px)" }, { transform: "none" }], { duration: SWAP_MS, easing: "ease-out" });
@@ -283,7 +284,7 @@
       var dx = to.left + to.width / 2 - from.left - from.width / 2, dy = to.top + to.height / 2 - from.top - from.height / 2, k = to.width / from.width || 1;
       flights++;
       var an = el.animate([{ transform: "none" }, { transform: "translate(" + dx + "px," + dy + "px) scale(" + k + ")" }], { duration: FLY_MS, easing: "cubic-bezier(.5,0,.2,1)", fill: "forwards" });
-      an.onfinish = function () { el.remove(); flights--; done(); };
+      an.onfinish = function () { release(el); el.remove(); flights--; done(); };
     }
     function petOf(g) {
       for (var i = g.runs.length - 1; i >= 0; i--) { var p = ctx.petEl(g.runs[i].runId); if (p && p.isConnected) return p; }
@@ -326,6 +327,11 @@
       if (!opened) return;
       opened = false; clearInterval(timer); seq++;
       flyBack(); veil.hidden = true;
+      // 页面关着时卡片里的小人不该还在后台播：飞回动画走完就把它们的播放器放掉，下次打开再建
+      setTimeout(function () {
+        if (opened) return;
+        Object.keys(cards).forEach(function (k) { var fig = cards[k].firstChild; release(fig); fig.innerHTML = ""; fig.__key = null; });
+      }, 900);
     }
     function setMode(m) { mode = m; syncControls(); load(); }
     page.addEventListener("click", function (ev) {
