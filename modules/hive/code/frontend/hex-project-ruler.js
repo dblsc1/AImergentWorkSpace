@@ -30,6 +30,10 @@
     for (var i = 0; i < n; i++) days.push({ start: midnight(startMs, i), end: midnight(startMs, i + 1), today: false, x0: i / n, w: 1 / n });
     return { from: days[0].start, to: days[n - 1].end, days: days };
   }
+  // 滚动窗口（Agent 页）：[fromMs, toMs] 一整段，不按天切；形状同 layout，xOf / spanRect 通用
+  function rollingScale(fromMs, toMs) {
+    return { from: fromMs, to: toMs, days: [{ start: fromMs, end: toMs, today: false, x0: 0, w: 1 }] };
+  }
   // 时间戳 → 0..1（窗口外钳到两头）。天与天的交界处连续，所以跨零点的段仍是一条
   function xOf(L, t) {
     t = Math.min(Math.max(t, L.from), L.to);
@@ -214,7 +218,7 @@
              dragOver: dragOver, dragEnd: dragEnd, dropAt: dropAt, overPanel: overPanel, awaitName: awaitName };
   }
 
-  var api = { layout: layout, linearScale: linearScale, xOf: xOf, spanRect: spanRect, rulerHtml: rulerHtml, lanesHtml: lanesHtml, createPanel: createPanel,
+  var api = { layout: layout, linearScale: linearScale, rollingScale: rollingScale, xOf: xOf, spanRect: spanRect, rulerHtml: rulerHtml, lanesHtml: lanesHtml, createPanel: createPanel,
               PAST_SHARE: PAST_SHARE, TODAY_SHARE: TODAY_SHARE };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.NexusTableHexProjectRuler = api;

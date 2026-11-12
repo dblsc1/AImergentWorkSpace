@@ -15,10 +15,13 @@ from ..projector.handlers import lanes as lanes_projection
 from ..timer import service as timer_service
 from ..timer.agent_working import working_intervals
 from . import lanes as lanes_view
+from .lane_cap import lane_key
+from .lane_order import phase_of
 from .queries import _today
 from .schemas import ProjectTimeOut, TimeLanesOut
 
 MAX_ROWS = 5000
+MAX_SINCE_DAYS = 8  #: ``since`` 到此刻至多这么久（滚动 7 天 + 零头）
 
 
 def _iso(moment: datetime) -> str:
@@ -39,15 +42,39 @@ def _pieces(run: dict, stop: datetime) -> list[tuple[datetime, datetime, str | N
     return [*out, (since, max(stop, since), run.get("projectId"), run.get("taskId"))]
 
 
-def collect(project_id: str | None, date_from: str | None, date_to: str | None):
+def _clip(a: datetime, b: datetime, start: datetime, end: datetime, now: datetime) -> tuple[datetime, datetime] | None:
+    a, b = max(a, start), min(b, end, now)
+    return (a, b) if b > a else None
+
+
+def _since_window(since: str, now: datetime) -> tuple[datetime, datetime]:
+    """v2.54 滚动窗口：``since``（带偏移的 ISO 时刻，不带偏移按 NEXUS_TZ）→ (起, 止)；止 = 此刻后一天（只是读库的上界，区间仍裁到此刻）。"""
+    try:
+        start = datetime.fromisoformat(since.replace("Z", "+00:00"))
+    except ValueError:
+        raise UnprocessableError(f"since 不是时刻：{since!r}") from None
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=settings.tz)
+    if now - start > timedelta(days=MAX_SINCE_DAYS):
+        raise UnprocessableError(f"since 距现在超过 {MAX_SINCE_DAYS} 天")
+    return start, now + timedelta(days=1)
+
+
+def collect(project_id: str | None, date_from: str | None, date_to: str | None, since: str | None = None):
     """人 / 代理的区间平铺（project-time 与 time-lanes 共用）。``project_id`` 给了只留该项目，``None`` = 全部（含没去向的）。
-    返回 ``(now, start, end, humans, agents)``：humans = ``[(项目, 任务, 起, 止)]``，
-    agents = ``[(项目, 任务, 名字, 代理键, runId, 起, 止)]``，都已裁到窗口且不晚于此刻。"""
+    返回 ``(now, start, end, humans, agents, runs)``：humans = ``[(项目, 任务, 起, 止)]``，
+    agents = ``[(项目, 任务, 名字, 代理键, runId, 起, 止)]``，都已裁到窗口且不晚于此刻；runs = ``{runId: 运行}``（time-lanes 要它的身份、相位与 attend）。
+    ``since`` 给了就用滚动窗口 [since, 此刻]，不能同时给 from / to。"""
     user = current_tenant()
-    first, last, start, end = lanes_view._span(None, date_from, date_to)
-    if first > last:
-        raise UnprocessableError("from 晚于 to")
     now, open_runs = timer_service.list_lane_runs(user)
+    if since:
+        if date_from or date_to:
+            raise UnprocessableError("since 不能与 from / to 同时给")
+        start, end = _since_window(since, now)
+    else:
+        first, last, start, end = lanes_view._span(None, date_from, date_to)
+        if first > last:
+            raise UnprocessableError("from 晚于 to")
     names = timer_service.agent_name_rules(user)
     humans: list[tuple] = []
     agents: list[tuple] = []
@@ -56,8 +83,7 @@ def collect(project_id: str | None, date_from: str | None, date_to: str | None):
         return project_id is None or pid == project_id
 
     def clip(a: datetime, b: datetime) -> tuple[datetime, datetime] | None:
-        a, b = max(a, start), min(b, end, now)
-        return (a, b) if b > a else None
+        return _clip(a, b, start, end, now)
 
     for s in lanes_projection.read_lanes(user, "session", start, end, MAX_ROWS):
         if want(s.get("projectId")) and (c := clip(s["startAt"], s["endAt"])):
@@ -81,11 +107,11 @@ def collect(project_id: str | None, date_from: str | None, date_to: str | None):
             for a, b in work:
                 if (c := clip(max(a, p_from), min(b, p_to))):
                     agents.append((p_project, p_task, name, r.get("agent"), r["runId"], *c))
-    return now, start, end, humans, agents
+    return now, start, end, humans, agents, {r["runId"]: r for r in runs}
 
 
 def get_project_time(project_id: str, date_from: str | None, date_to: str | None) -> ProjectTimeOut:
-    now, start, end, humans, agents = collect(project_id, date_from, date_to)
+    now, start, end, humans, agents, _runs = collect(project_id, date_from, date_to)
     rows: dict[str | None, dict] = {}
 
     def row(task_id: str | None) -> dict:
@@ -103,12 +129,18 @@ def get_project_time(project_id: str, date_from: str | None, date_to: str | None
                           projectId=project_id, tasks=tasks)
 
 
-def get_time_lanes(date_from: str | None, date_to: str | None) -> TimeLanesOut:
-    """``GET /api/core/views/time-lanes``（v2.50）：全部项目的人 / 代理区间，代理一条运行一道泳道。"""
-    now, start, end, humans, agents = collect(None, date_from, date_to)
+def get_time_lanes(date_from: str | None, date_to: str | None, since: str | None = None) -> TimeLanesOut:
+    """``GET /api/core/views/time-lanes``（v2.50）：全部项目的人 / 代理区间，代理一条运行一道泳道。v2.54 追加 ``since`` 与每条运行的身份 / 相位 / attend。"""
+    now, start, end, humans, agents, by_id = collect(None, date_from, date_to, since)
     runs: dict[str, dict] = {}
     for pid, task, name, key, run_id, a, b in sorted(agents, key=lambda x: x[5]):
-        run = runs.setdefault(run_id, {"agent": key, "name": name, "runId": run_id, "segments": []})
+        r = by_id[run_id]
+        run = runs.setdefault(run_id, {
+            "agent": key, "name": name, "runId": run_id, "segments": [],
+            "tool": r.get("tool"), "laneKey": lane_key(r), "projectId": r.get("projectId"),
+            "running": r["endTs"] is None, "lost": bool(r.get("lost")), "phase": phase_of({"phases": r.get("phases") or []}),
+            "attend": [{"start": _iso(c[0]), "end": _iso(c[1])} for i in r.get("interactions") or []
+                       if i.get("kind") == "attend" and (c := _clip(datetime.fromisoformat(i["at"]), datetime.fromisoformat(i["until"]), start, end, now))]})
         run["segments"].append({"start": _iso(a), "end": _iso(b), "projectId": pid, "taskId": task})
     return TimeLanesOut(today=_today(), now=_iso(now), windowStart=_iso(start), windowEnd=_iso(end),
                         human=[{"start": _iso(a), "end": _iso(b), "projectId": pid, "taskId": task}

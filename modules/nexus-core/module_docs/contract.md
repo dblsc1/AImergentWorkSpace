@@ -4983,6 +4983,14 @@ MCP 侧见 `contracts/mcp.tools.v2`。
 - `PUT` 里 `pet` 仍然整块替换：给了 `pet` 而没带 `humanPack` = 清掉。越界 / 类型不对 `422`。
 - 不新增端点 / 集合 / 错误码。
 
+## v0.6：时间泳道的滚动窗口与每条运行的身份（v2.54，追加式）
+
+仓主 2026-11-12：蜂巢左上角 Agent 页一个 agent 一张卡、时间范围往前滚动（`hive.stage.v1`「十三」）。`GET views/time-lanes` 追加：
+
+- 可选查询参数 `since`：滚动窗口起点（ISO 时刻，带偏移；不带偏移按 `NEXUS_TZ`），窗口 = `[since, 此刻]`，区间照旧裁到此刻。`since` 到此刻超过 8 天、不是时刻、或与 `from` / `to` 同时给 → `422`。不给 `since` 时行为不变。
+- `agents[]` 每个元素追加：`tool`（运行的 `tool`，可为 `null`）、`laneKey`（代理身份键，同 `views/lanes` 的 `lane_key`：同一个 agent + 同一个 label（折叠空白、不分大小写）+ 同一类已验证 / 未验证 = 同一个代理）、`projectId`（这条运行**现在**的去向，可为 `null`）、`running`（未结束）、`lost`、`phase`（最近一条相位：`working` / `waiting_input` / `waiting_permission` / `idle` / `error`，没有相位 = `working`）、`attend: [{start, end}]`（人在看这条运行的区间，裁到窗口且不晚于 `now`，按 `start` 升序）。
+- 仍然只有窗口内有干活区间的运行才出现在 `agents` 里。既有字段、端点一个不改；不新增集合 / 错误码。
+
 ## 变更记录
 
 见 `module_docs/contract-changelog.md`（从本文件拆出，只记历史不含规范）。

@@ -93,9 +93,10 @@ def read_project_time(
 def read_time_lanes(
     from_: Annotated[str | None, Query(alias="from", pattern=_DATE, description="起始日期（含）")] = None,
     to: Annotated[str | None, Query(pattern=_DATE, description="结束日期（含）；跨度至多 7 天")] = None,
+    since: Annotated[str | None, Query(description="滚动窗口起点（ISO 时刻），到此刻为止，至多 8 天；不能与 from / to 同给")] = None,
 ) -> TimeLanesOut:
     """v2.50 全项目人 / 代理时间区间读端（蜂巢中心统计页）。**不写**。"""
-    return project_time.get_time_lanes(from_, to)
+    return project_time.get_time_lanes(from_, to, since)
 
 
 @router.get("/history")

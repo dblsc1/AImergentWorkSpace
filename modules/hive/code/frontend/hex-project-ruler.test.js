@@ -53,3 +53,9 @@ near(R.xOf(D, t("2026-11-10T06:00:00")), 0.25);
 assert.strictEqual(W.days.length, 7); assert.strictEqual(W.to, t("2026-11-16T00:00:00"));
 near(R.xOf(W, t("2026-11-11T12:00:00")), 2.5 / 7);
 near(R.spanRect(W, t("2026-11-09T12:00:00"), t("2026-11-10T12:00:00")).width, 1 / 7);
+
+// 滚动窗口：一整段，不按天切（hive.stage.v1「十三」2）
+const RS = R.rollingScale(t("2026-11-10T09:00:00"), t("2026-11-10T12:00:00"));
+assert.strictEqual(R.xOf(RS, t("2026-11-10T10:30:00")), 0.5);
+assert.deepStrictEqual(R.spanRect(RS, t("2026-11-10T08:00:00"), t("2026-11-10T09:30:00")), { left: 0, width: 1 / 6 });
+assert.strictEqual(R.spanRect(RS, t("2026-11-10T12:00:00"), t("2026-11-10T13:00:00")), null);
