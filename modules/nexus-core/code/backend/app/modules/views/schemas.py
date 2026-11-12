@@ -621,6 +621,14 @@ class TimeLanesAgent(_Strict):
     lost: bool = False
     phase: str = "working"
     attend: list[TimeSpan] = []
+    # v2.58（追加，只读）：Agent 详情的活跃历史 / 信息来源 / 归属
+    taskId: str | None = None
+    startedAt: str | None = None
+    endedAt: str | None = None
+    outcome: str | None = None
+    beatSource: str | None = None
+    unverified: bool = False
+    retained: bool = True  #: v2.58：按 lane_active 的口径此刻仍留存
 
 
 class TimeLanesOut(_Strict):

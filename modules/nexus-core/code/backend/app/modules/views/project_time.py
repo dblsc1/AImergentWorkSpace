@@ -11,10 +11,12 @@ from datetime import datetime, timedelta
 from ...config import settings
 from ...tenant import current as current_tenant
 from ..planner.errors import UnprocessableError
+from ..prefs import service as prefs_service
 from ..projector.handlers import lanes as lanes_projection
 from ..timer import service as timer_service
 from ..timer.agent_working import working_intervals
 from . import lanes as lanes_view
+from .lane_active import split
 from .lane_cap import lane_key
 from .lane_order import phase_of
 from .queries import _today
@@ -130,7 +132,7 @@ def get_project_time(project_id: str, date_from: str | None, date_to: str | None
 
 
 def get_time_lanes(date_from: str | None, date_to: str | None, since: str | None = None) -> TimeLanesOut:
-    """``GET /api/core/views/time-lanes``（v2.50）：全部项目的人 / 代理区间，代理一条运行一道泳道。v2.54 追加 ``since`` 与每条运行的身份 / 相位 / attend。"""
+    """``GET /api/core/views/time-lanes``（v2.50）：全部项目的人 / 代理区间，代理一条运行一道泳道。v2.54 追加 ``since`` 与每条运行的身份 / 相位 / attend；v2.58 追加归属任务 / 起止 / 来源字段。"""
     now, start, end, humans, agents, by_id = collect(None, date_from, date_to, since)
     runs: dict[str, dict] = {}
 
@@ -140,6 +142,8 @@ def get_time_lanes(date_from: str | None, date_to: str | None, since: str | None
             "agent": key, "name": name, "runId": run_id, "segments": [],
             "tool": r.get("tool"), "laneKey": lane_key(r), "projectId": r.get("projectId"),
             "running": r["endTs"] is None, "lost": bool(r.get("lost")), "phase": phase_of({"phases": r.get("phases") or []}),
+            "taskId": r.get("taskId"), "startedAt": _iso(r["startTs"]), "endedAt": _iso(r["endTs"]) if r["endTs"] else None,
+            "outcome": r.get("outcome"), "beatSource": r.get("beatSource"), "unverified": bool(r.get("unverified")),
             "attend": [{"start": _iso(c[0]), "end": _iso(c[1])} for i in r.get("interactions") or []
                        if i.get("kind") == "attend" and (c := _clip(datetime.fromisoformat(i["at"]), datetime.fromisoformat(i["until"]), start, end, now))]})
 
@@ -151,6 +155,11 @@ def get_time_lanes(date_from: str | None, date_to: str | None, since: str | None
         if end > now and r["endTs"] is None and run_id not in runs and r["startTs"] <= now:
             lane_of(run_id, names.get(r.get("agent")) or r.get("label") or r.get("agent"), r.get("agent"))
     first = lambda r: r["segments"][0]["start"] if r["segments"] else _iso(by_id[r["runId"]]["startTs"])  # noqa: E731
+    # v2.58：``retained`` = 按 views/lanes 的「灵活留存」（lane_active.split，同一份纯函数）此刻这条运行所在的泳道还显示；窗口不含此刻的查询一律 true
+    kept = {r["runId"] for r in split([lanes_view._run_item(by_id[i], start, end) for i in runs], [], prefs_service.load(current_tenant()), now, start, end)[0]} \
+        if end > now else set(runs)
+    for run_id, lane in runs.items():
+        lane["retained"] = run_id in kept
     return TimeLanesOut(today=_today(), now=_iso(now), windowStart=_iso(start), windowEnd=_iso(end),
                         human=[{"start": _iso(a), "end": _iso(b), "projectId": pid, "taskId": task}
                                for pid, task, a, b in sorted(humans, key=lambda x: x[2])],

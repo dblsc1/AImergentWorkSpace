@@ -24,14 +24,14 @@ def _today():
     return datetime.now(_tz()).date()
 
 
-def _completed(n, project, task, start, minutes, phases, interactions=None):
+def _completed(n, project, task, start, minutes, phases, interactions=None, label="garden"):
     from app.modules.projector.handlers import lanes  # noqa: PLC0415
 
     subject = {"zone": "z", "project": project, **({"task": task} if task else {})}
     lanes.handle({"user": "u_local", "source": "ext", "dedupeKey": f"agent:r{n}", "type": "agent.run.completed",
                   "time": (start + timedelta(minutes=minutes)).isoformat(), "subject": subject,
                   "data": {"startAt": start.isoformat(), "durationSeconds": minutes * 60, "outcome": "done",
-                           "agent": "cc", "label": "garden", "taskId": task, "projectId": project,
+                           "agent": "cc", "label": label, "taskId": task, "projectId": project,
                            "phases": [{"at": a.isoformat(), "phase": p} for a, p in phases],
                            "interactions": interactions or []}})
 
@@ -142,6 +142,9 @@ def test_time_lanes_since_window_identity_phase_and_attend(client, seeded):
     assert a["running"] is False and a["phase"] == "working" and a["laneKey"] == "cc\ngarden" and a["projectId"] == pid
     assert [(datetime.fromisoformat(i["start"]), datetime.fromisoformat(i["end"])) for i in a["attend"]] == [
         (start + timedelta(minutes=10), start + timedelta(minutes=30))]   # 窗口外的那段被裁掉
+    # v2.58：归属任务 / 起止 / 来源（只读）
+    assert a["taskId"] == tid and a["endedAt"] is not None and a["outcome"] == "done" and a["unverified"] is False and a["beatSource"] is None
+    assert abs(datetime.fromisoformat(a["startedAt"]) - start) < timedelta(seconds=1) and abs(datetime.fromisoformat(a["endedAt"]) - start - timedelta(minutes=60)) < timedelta(seconds=1)   # 库存毫秒
     wide = client.get(f"{API}/views/time-lanes", params={"since": (now - timedelta(days=7)).isoformat()}).json()
     assert {x["runId"] for x in wide["agents"]} == {"r1", "r2"}
     assert client.get(f"{API}/views/time-lanes", params={"since": (now - timedelta(days=9)).isoformat()}).status_code == 422
@@ -168,3 +171,23 @@ def test_time_lanes_since_lists_every_running_working_run(client, monkeypatch):
     monkeypatch.setattr(service, "_now", lambda: real() + timedelta(hours=20))
     a = listed().get(run)
     assert a is not None and (a["running"], a["phase"]) == (True, "working") and a["segments"] == []
+
+
+def test_time_lanes_retained_follows_lane_active(client, seeded):
+    """v2.58：``retained`` = ``lane_active.split`` 的口径：在跑干活的留；刚结束且人看过（high 档）留 30 分钟；早已结束的不留；窗口不含此刻的全留。"""
+    task = next(iter(seeded["tasks"].values()))
+    pid, tid = task["projectId"], task["id"]
+    now = datetime.now(_tz())
+    att = lambda a, b: [{"kind": "attend", "at": a.isoformat(), "until": b.isoformat()}]  # noqa: E731
+    s1 = now - timedelta(minutes=40)
+    _completed(1, pid, tid, s1, 30, [], interactions=att(s1, s1 + timedelta(minutes=15)))     # 10 分钟前结束，注意力 15 分钟 = high
+    s2 = now - timedelta(hours=5)
+    _completed(2, pid, tid, s2, 60, [], label="old")                                         # 4 小时前结束，normal，留存 0
+    client.post(f"{API}/agents/start", json={"agent": "live", "tool": "x", "phase": "working"})
+    body = client.get(f"{API}/views/time-lanes", params={"since": (now - timedelta(hours=8)).isoformat()}).json()
+    by = {a["runId"]: a["retained"] for a in body["agents"]}
+    assert by["r1"] is True and by["r2"] is False
+    assert [v for k, v in by.items() if k not in ("r1", "r2")] == [True]
+    day = (now - timedelta(days=2)).date().isoformat()
+    past = client.get(f"{API}/views/time-lanes", params={"from": day, "to": day}).json()
+    assert all(a["retained"] for a in past["agents"])

@@ -107,3 +107,4 @@
 | 2026-11-12 | 仓主定：任务除完成外可「取消」，取消的进最近完成并写「取消」、可撤销（`hive.stage.v1`「十五」） | v2.55（追加式）：`PATCH planner/tasks/{id}` 追加可选 `canceled`（true = 取消并记 `done` / `doneAt`，false = 撤销取消）；`TaskOut` 与 `views/tree` 任务追加 `canceled`；见「v0.6：任务「取消」」节 |
 | 2026-11-12 | 仓主定：人的页面窗口记录要覆盖周档 / 7 天视图的整个范围（`hive.stage.v1`「十六」） | v2.56（追加式）：新读端 `GET activity/blocks/range?from=&to=&limit=`（至多 8 天，每天取秒数最多的块，带所属日期与原始记录）；见「v0.6：窗口块按日期范围一次读」节 |
 | 2026-11-12 | 仓主问：Agent 页「现在有 0 个正在工作」（`hive.stage.v1`「十七」） | v2.57（追加式）：`views/time-lanes` 在跑的运行一定出现在 `agents[]`（干活区间在窗口外的 `segments` 为 `[]`）；见「v0.6：时间泳道里在跑的运行一定列出」节 |
+| 2026-11-12 | 仓主定：Agent 卡片点开看详情（`hive.stage.v1`「二十」） | v2.58（追加式）：`views/time-lanes` 的 `agents[]` 追加只读 `taskId` / `startedAt` / `endedAt` / `outcome` / `beatSource` / `unverified` / `retained`（按 `lane_active` 口径的留存）；见「v0.6：时间泳道每条运行带归属与来源」 |
