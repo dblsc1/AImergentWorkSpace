@@ -1,7 +1,7 @@
 /* hive · Agent 页与中心混合页（hex-agent-page.js，hive.stage.v1「十三」「十七」）。红条 = 人聚焦（--pr-human，hex-project-ruler.css）；段 = 项目分区色。 */
 .ag-veil[hidden] { display: none; }
 .ag-veil { position: fixed; inset: 0; background: color-mix(in srgb, var(--bg) 62%, transparent); backdrop-filter: blur(2px); display: grid; place-items: center; z-index: 200; }
-.ag-page { --lane-left: 236px; --lane-right: 16px; width: min(1080px, 94vw); max-height: 84vh; display: flex; flex-direction: column; padding: 20px 22px; }
+.ag-page { position: relative; --lane-left: 236px; --lane-right: 16px; width: min(1080px, 94vw); max-height: 84vh; display: flex; flex-direction: column; padding: 20px 22px; }
 .ag-hd { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 12px; }
 .ag-title { flex: 1; min-width: 0; }
 .ag-h { margin: 0; font-size: var(--fs-h2); font-weight: 700; }
@@ -44,5 +44,33 @@
 .ag-me .ag-seg { top: 8px; }
 .ag-seg.ag-lite { background: var(--line); }
 .ag-timer { position: absolute; top: 0; height: 6px; min-width: 3px; background: var(--pr-human-bar); border-radius: 2px; z-index: 2; }
+.ag-stack > .ag-card:not(.ag-me) { cursor: pointer; }
 .ag-flyer { z-index: 300; pointer-events: none; transform-origin: 50% 50%; }
 @media (max-width: 760px) { .ag-page { --lane-left: 150px; } .ag-card { grid-template-columns: 56px 60px 1fr; } .ag-me { grid-template-columns: calc(56px + 10px + 60px) 1fr; } .ag-hd { flex-wrap: wrap; } }
+/* 卡片详情（hive.stage.v1「二十」）：盖住标尺与卡片栏，左大立绘（画法同人的页面 .hp-figure-slot）、右边每条运行一张小卡 */
+.ag-detail[hidden] { display: none; }
+.ag-detail { --ag-c: var(--ink-3); position: absolute; left: 22px; right: 22px; bottom: 20px; z-index: 10; display: flex; gap: 18px; padding: 14px 16px; border: 2px solid var(--ag-c);
+  border-radius: 12px; background: color-mix(in srgb, var(--ag-c) 12%, var(--panel)); }
+.ag-detail.ag-neutral { border-color: var(--line); background: var(--panel-2); }
+.ag-big { flex: none; width: 240px; align-self: flex-start; position: sticky; top: 0; }
+.ag-big-slot { display: grid; place-items: center; width: 100%; }
+.ag-big-slot .st-art { display: block; width: 100%; height: auto; max-width: 100%; max-height: 320px; object-fit: contain; pointer-events: none; }
+.ag-big-slot:has(> video) { position: relative; aspect-ratio: 54 / 63; overflow: hidden; }
+.ag-big-slot video.st-art { position: absolute; top: -17.46%; left: 50%; height: 126.98%; width: auto; max-width: none; max-height: none; transform: translateX(-50%); }
+.ag-dt { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.ag-dt-hd { display: flex; align-items: center; gap: 10px; }
+.ag-dt-title { flex: 1; min-width: 0; text-align: left; border: 0; background: none; color: var(--ink); font: inherit; font-size: var(--fs-h2); cursor: pointer; padding: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ag-dt-h { margin: 10px 0 6px; font-size: var(--fs-sub); font-weight: 600; color: var(--ink-2); }
+.ag-dt-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.ag-run { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.ag-run-top { display: flex; align-items: baseline; gap: 10px; }
+.ag-run-time { font-weight: 600; color: var(--ink); }
+.ag-run-dur { color: var(--ink-2); font-size: var(--fs-sub); flex: 1; }
+.ag-run-st { border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; font-size: 12px; color: var(--ink-2); background: var(--panel-2); }
+.ag-run-row { display: flex; align-items: center; gap: 8px; font-size: var(--fs-sub); color: var(--ink-2); min-width: 0; }
+.ag-run-k { flex: none; width: 60px; color: var(--ink-3); }
+.ag-run-v { min-width: 0; }
+.ag-run-row select { min-width: 0; max-width: 200px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--ink); font: inherit; padding: 3px 6px; }
+@media (max-width: 760px) { .ag-detail { flex-direction: column; overflow-y: auto; } .ag-big { width: 140px; position: static; } }
+.ag-more[hidden] { display: none; }
+.ag-more { align-self: flex-start; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--ink-2); padding: 4px 12px; cursor: pointer; font: inherit; font-size: var(--fs-sub); }

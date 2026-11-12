@@ -208,3 +208,148 @@ def test_running_working_agent_without_a_work_segment_in_the_window_still_counts
         _open(st)
         assert st.page.locator("#agSub").inner_text().endswith("现在有 2 个正在工作")
         assert st.page.locator(".ag-card").count() == 3
+
+
+# ── 卡片详情（hive.stage.v1「二十」）────────────────────────────────
+def _detail_setup(st: Stage) -> None:
+    _setup(st)
+    now = st.now().astimezone(TZ)
+    for r in st.time_lanes["agents"]:
+        if r["runId"] == "r1":
+            r.update(startedAt=_iso(now - timedelta(hours=2.7)), endedAt=None, taskId=None, beatSource="companion", unverified=False)
+        if r["runId"] == "r9":
+            r.update(startedAt=_iso(now - timedelta(hours=1.6)), endedAt=_iso(now - timedelta(hours=0.9)), taskId="t_p_math", outcome="done", projectId="p_math")
+
+
+def _open_detail(st: Stage, name: str = "garden") -> Any:
+    _open(st)
+    st.page.locator(f".ag-card:has(.ag-name:text-is('{name}'))").click()
+    d = st.page.locator("#agPage .ag-detail")
+    d.locator(".ag-run").first.wait_for()
+    return d
+
+
+def test_click_a_card_opens_a_detail_with_one_small_card_per_run_newest_first(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, setup=_detail_setup) as st:
+        d = _open_detail(st)
+        assert d.locator(".ag-dt-title").inner_text() == "garden"
+        assert d.locator(".ag-big-slot").count() == 1 and d.locator(".ag-big-slot .st-art").count() == 1   # 大立绘（没有素材时是占位形象）
+        runs = d.locator(".ag-run")
+        assert runs.count() == 2
+        assert runs.nth(0).get_attribute("data-run-id") == "r9" and runs.nth(1).get_attribute("data-run-id") == "r1"   # r9 开始得晚（1.6 小时前）
+        assert runs.nth(1).locator(".ag-run-st").inner_text() == "正在工作" and runs.nth(0).locator(".ag-run-st").inner_text() == "已结束"
+        now = st.now().astimezone(TZ)
+        a = now - timedelta(hours=2.7)
+        assert runs.nth(1).locator(".ag-run-time").inner_text() == f"{a:%m/%d} {a:%H:%M} – 现在"
+        assert runs.nth(1).locator(".ag-run-dur").inner_text() == "2 小时 42 分钟"
+        assert runs.nth(1).locator(".ag-run-v").inner_text() == "agent 钩子上报 · 伴随进程心跳 · 窗口识别"   # r1 有 attend 段
+        assert runs.nth(0).locator(".ag-run-v").inner_text() == "agent 钩子上报"
+        assert runs.nth(1).locator(".ag-sel-project").input_value() == "p_studio" and runs.nth(1).locator(".ag-sel-task").input_value() == ""
+        assert runs.nth(0).locator(".ag-sel-project").input_value() == "p_math" and runs.nth(0).locator(".ag-sel-task").input_value() == "t_p_math"
+        assert runs.nth(0).locator(".ag-sel-task option").all_inner_texts() == ["不挂任务", "数学的任务"]
+        assert st.posts == []
+        # 详情盖住别的卡，同时只开一张；缩回后点另一张，详情里是它的运行
+        st.page.keyboard.press("Escape")
+        d.wait_for(state="hidden")
+        st.page.locator(".ag-card:has(.ag-name:text-is('scratch'))").click()
+        d.locator(".ag-run-st").wait_for()
+        assert d.locator(".ag-dt-title").inner_text() == "scratch" and d.locator(".ag-run").count() == 1
+        assert d.locator(".ag-run-st").inner_text() == "等输入"
+
+
+def test_detail_closes_by_title_x_and_escape_and_escape_leaves_the_page_open(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, setup=_detail_setup) as st:
+        d = _open_detail(st)
+        st.page.keyboard.press("Escape")
+        d.wait_for(state="hidden"); assert st.page.locator("#agPage").is_visible()       # Esc 只关详情
+        st.page.locator(".ag-card:has(.ag-name:text-is('garden'))").click()
+        assert d.is_visible()
+        d.locator(".ag-dt-title").click()
+        d.wait_for(state="hidden")
+        st.page.locator(".ag-card:has(.ag-name:text-is('garden'))").click()
+        d.locator(".ag-dt-x").click()
+        d.wait_for(state="hidden"); assert st.page.locator("#agPage").is_visible()
+        st.page.locator(".ag-card:has(.ag-name:text-is('garden'))").click()
+        st.page.keyboard.press("Escape"); st.page.keyboard.press("Escape")
+        assert not st.page.locator("#agPage").is_visible()
+
+
+def test_change_project_then_task_posts_place_and_failure_puts_the_dropdown_back(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, setup=_detail_setup) as st:
+        d = _open_detail(st)
+        run = d.locator('.ag-run[data-run-id="r1"]')
+        st.replies["agents/r1/place"] = (200, {"runId": "r1", "taskId": None, "projectId": "p_math", "rule": None})
+        r1 = next(r for r in st.time_lanes["agents"] if r["runId"] == "r1")
+        r1["projectId"] = "p_math"                                      # 桩 = 服务端：改挂成功后重读读到新归属
+        run.locator(".ag-sel-project").select_option("p_math")
+        st.settle()
+        assert st.posts == [("agents/r1/place", {"projectId": "p_math", "remember": False})]
+        assert run.locator(".ag-sel-task option").all_inner_texts() == ["不挂任务", "数学的任务"]    # 任务随项目变
+        st.posts.clear()
+        r1["taskId"] = "t_p_math"
+        run.locator(".ag-sel-task").select_option("t_p_math")
+        st.settle()
+        assert st.posts == [("agents/r1/place", {"taskId": "t_p_math", "remember": False})]
+        st.posts.clear()
+        r1["taskId"] = None
+        run.locator(".ag-sel-task").select_option("")                  # 不挂任务 = 只记到项目
+        st.settle()
+        assert st.posts == [("agents/r1/place", {"projectId": "p_math", "remember": False})]
+        # 失败：下拉改回去，页面底部报错
+        st.replies["agents/r1/place"] = (404, {"detail": "x"})
+        before = run.locator(".ag-sel-project").input_value()
+        run.locator(".ag-sel-project").select_option("p_piano")
+        st.settle()
+        assert "目标不存在" in st.toast()
+        assert run.locator(".ag-sel-project").input_value() == before
+        # 已结束的运行也有下拉
+        assert d.locator('.ag-run[data-run-id="r9"] .ag-sel-project').count() == 1
+
+
+def test_periodic_reload_keeps_the_focused_dropdown_and_the_scroll_position(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, setup=_detail_setup) as st:
+        d = _open_detail(st)
+        sel = d.locator('.ag-run[data-run-id="r1"] .ag-sel-project')
+        sel.focus()
+        st.page.clock.run_for(15000)
+        st.page.wait_for_timeout(300)
+        assert sel.evaluate("e => e === document.activeElement") and sel.input_value() == "p_studio"
+        d.locator(".ag-dt-title").focus()                               # 失去焦点后补画
+        st.page.wait_for_timeout(100)
+        assert d.locator(".ag-run").count() == 2
+
+
+def test_reduced_motion_detail_opens_without_animation(browser, base) -> None:  # noqa: F811
+    with open_stage(browser, base, setup=_detail_setup) as st:
+        st.page.emulate_media(reduced_motion="reduce")
+        d = _open_detail(st)
+        assert d.evaluate("e => e.getAnimations().length") == 0
+        st.page.keyboard.press("Escape")
+        assert not d.is_visible()
+
+
+def test_runs_not_retained_fold_into_a_rest_row_that_toggles_and_the_header_counts_stay(browser, base) -> None:  # noqa: F811  二十·5
+    def setup(st: Stage) -> None:
+        _setup(st)
+        for r in st.time_lanes["agents"]:
+            r["retained"] = r["runId"] in ("r1", "r9", "r2")        # gemini 的 note 不留存
+    with open_stage(browser, base, setup=setup) as st:
+        _open(st)
+        page = st.page.locator("#agPage")
+        assert sorted(page.locator(".ag-card .ag-name").all_inner_texts()) == ["garden", "scratch"]
+        more = page.locator(".ag-more")
+        assert more.inner_text() == "其余 1 个"
+        assert page.locator(".ag-sub").inner_text() == "agent 最近 7 天工作了 3 小时 6 分钟，并行峰值 2，现在有 1 个正在工作"   # 页头仍算全部
+        more.click()
+        assert sorted(page.locator(".ag-card .ag-name").all_inner_texts()) == ["garden", "note", "scratch"]
+        assert more.inner_text() == "收起其余 1 个" and page.locator(".ag-stack > :last-child").get_attribute("class") == "ag-more"
+        st.page.clock.run_for(15000); st.page.wait_for_timeout(300)
+        assert page.locator(".ag-card").count() == 3                      # 重读后展开状态保持
+        more.click()
+        assert page.locator(".ag-card").count() == 2 and more.inner_text() == "其余 1 个"
+
+
+def test_all_retained_has_no_rest_row(browser, base) -> None:  # noqa: F811  二十·5
+    with open_stage(browser, base, setup=_setup) as st:
+        _open(st)
+        assert st.page.locator("#agPage .ag-more").is_hidden()

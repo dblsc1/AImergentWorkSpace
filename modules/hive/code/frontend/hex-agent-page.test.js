@@ -86,4 +86,38 @@ assert.strictEqual(A.summary(A.groupRuns([pr("a", "k1")]), [pr("a", "k1")]).sec,
 // 混合页小字：你 / 代理各自总用时、效率、峰值、正在工作
 assert.strictEqual(A.mixedSubtitle(3600, { sec: 3.2 * 3600, peak: 2, working: 2 }), "你 1 小时 · 代理 3.2 小时 · 你 1 小时，带出代理 3.2 小时的活 · 代理并行峰值 2 · 现在有 2 个正在工作");
 assert.strictEqual(A.mixedSubtitle(0, { sec: 0, peak: 0, working: 0 }), "你 0 分钟 · 代理 0 分钟 · 代理并行峰值 0 · 现在有 0 个正在工作");
+
+// 卡片详情（「二十」）：状态中文叫法
+const st = (o) => A.statusText(Object.assign({ running: true, lost: false, phase: "working" }, o));
+assert.strictEqual(st({}), "正在工作"); assert.strictEqual(st({ phase: "waiting_input" }), "等输入"); assert.strictEqual(st({ phase: "waiting_permission" }), "等授权");
+assert.strictEqual(st({ phase: "idle" }), "空闲"); assert.strictEqual(st({ phase: "error" }), "出错"); assert.strictEqual(st({ lost: true }), "失联"); assert.strictEqual(st({ running: false, lost: true }), "已结束");
+// 来源：恒有钩子上报；未验证、心跳标签、窗口识别按有无追加
+assert.strictEqual(A.sourceText({}), "agent 钩子上报");
+assert.strictEqual(A.sourceText({ unverified: true, beatSource: "wrapper", attend: [att("09:00:00", "09:10:00")] }), "agent 钩子上报（未验证） · 命令包装器心跳 · 窗口识别");
+assert.strictEqual(A.sourceText({ beatSource: "companion" }), "agent 钩子上报 · 伴随进程心跳"); assert.strictEqual(A.sourceText({ beatSource: "x1" }), "agent 钩子上报 · 心跳 x1");
+assert.strictEqual(A.durText(59), "0 分钟"); assert.strictEqual(A.durText(45 * 60), "45 分钟"); assert.strictEqual(A.durText(3600 + 5 * 60), "1 小时 5 分钟");
+// 活跃历史：新的在上；在跑的算到此刻；失联的算到最后一段干活终点；已结束取 endedAt，缺了取最后一段终点；项目缺了取最后一段的项目
+const hg = A.groupRuns([run("h1", "k", "n", [seg("09:00:00", "09:30:00", "p_a")], { startedAt: iso("08:50:00"), endedAt: iso("09:40:00"), running: false, taskId: "t1", projectId: "p_a" }),
+  run("h2", "k", "n", [seg("10:00:00", "10:30:00", "p_b")], { startedAt: iso("10:00:00"), running: true, lost: true }),
+  run("h3", "k", "n", [seg("11:00:00", "11:20:00", "p_c")], { startedAt: iso("11:00:00"), running: true }),
+  run("h0", "k", "n", [seg("07:00:00", "07:15:00", "p_z")], { running: false })])[0];
+const hist = A.historyOf(hg, now);
+assert.deepStrictEqual(hist.map((x) => x.runId), ["h3", "h2", "h1", "h0"]);
+assert.deepStrictEqual(hist.map((x) => x.sec), [3600, 1800, 3000, 900]);
+assert.deepStrictEqual(hist.map((x) => x.end), [null, null, t("09:40:00"), t("07:15:00")]);
+assert.deepStrictEqual(hist.map((x) => x.status), ["正在工作", "失联", "已结束", "已结束"]);
+assert.deepStrictEqual(hist.map((x) => x.projectId), ["p_c", "p_b", "p_a", "p_z"]); assert.deepStrictEqual(hist.map((x) => x.taskId), [null, null, "t1", null]);
+// 归属下拉：项目全列；任务不含未分类桶与已完成的，第一项「不挂任务」；当前任务已完成仍列出
+const pjs = [{ id: "p1", name: "数学", unclassifiedTaskId: "u1", tasks: [{ id: "u1", name: "未分类" }, { id: "a", name: "作业" }, { id: "b", name: "旧的", done: true }] }, { id: "p2", name: "钢琴", tasks: [] }];
+let po = A.placeOptions(pjs, "p1", "a");
+assert.deepStrictEqual(po.projects.map((x) => x.id), ["p1", "p2"]); assert.strictEqual(po.project, "p1");
+assert.deepStrictEqual(po.tasks, [{ id: "", name: "不挂任务" }, { id: "a", name: "作业" }]); assert.strictEqual(po.task, "a");
+po = A.placeOptions(pjs, "p1", "b"); assert.deepStrictEqual(po.tasks.map((x) => x.id), ["", "a", "b"]); assert.strictEqual(po.task, "b");
+po = A.placeOptions(pjs, "p2", null); assert.deepStrictEqual(po.tasks.map((x) => x.id), [""]); assert.strictEqual(po.task, "");
+po = A.placeOptions(pjs, "gone", "zz"); assert.strictEqual(po.projects[0].id, "gone"); assert.strictEqual(po.task, "");
+// 只列活跃的（「二十」5）：卡里有一条运行 retained（没写 = 留存）就列出；一条都不留存的进 rest；顺序不变
+const sr = A.splitRetained(A.groupRuns([run("a", "ka", "a", [], { retained: false }), run("b", "kb", "b", [], { retained: true }), run("c", "kc", "c", [], {}),
+  run("d1", "kd", "d", [], { retained: false }), run("d2", "kd", "d", [], { retained: true }), run("e", "ke", "e", [], { retained: false })]));
+assert.deepStrictEqual(sr.shown.map((g) => g.key), ["kb", "kc", "kd"]); assert.deepStrictEqual(sr.rest.map((g) => g.key), ["ka", "ke"]);
+assert.deepStrictEqual(A.splitRetained([]), { shown: [], rest: [] });
 console.log("hex-agent-page.test.js ok");

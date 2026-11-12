@@ -777,7 +777,21 @@
     var m = (packs[kind] && packs[kind].moods) || {}, f = (m.happy && m.happy[0]) || (m.click && m.click[0]) || (m.idle && m.idle[0]) || null, o = mediaFor({ pack: kind }, f);
     return { key: o.key, html: '<div class="st-media">' + o.html + "</div>" };
   }
+  // Agent 卡片详情的大立绘（「二十」）：同 fillHumanFigure 的画法，包按 tool、动作按运行状态
+  function fillPackFigure(slot, kind, phase, lost) {
+    loadPack(kind);
+    slot.__rhythm = Pk.rhythm(slot.__pack === kind ? slot.__rhythm : null, packs[kind] && packs[kind].moods, Pk.moodOf(phase, lost), Date.now(), Math.random);
+    slot.__pack = kind;
+    var m = mediaFor({ pack: kind }, slot.__rhythm.file);
+    if (slot.dataset.key === m.key) return;
+    slot.dataset.key = m.key; showMedia(slot, m, function () { showPlaceholder(slot); });
+  }
+  // Agent 详情里改归属：与拖宠物到格子同一条请求；失败的提示由 stage.drop 记，renderToast 显示
+  function placeRun(runId, agent, projectId, taskId) {
+    return stage.drop({ kind: "pet", runId: runId, agent: agent }, projectId, { remember: false, taskId: taskId }).then(function (r) { renderToast(); return !!(r && r.ok); });
+  }
   var centre = CS.mount({ packOfTool: function (tool) { return Pk.packOf({ tool: tool }, packsByTool()); }, figureOf: figureOf, petEl: function (id) { return petEls[id] || null; }, layer: layer, ring: $("stRing"), clock: $("stClock"), getJson: getJson, getLanes: function () { return data.lanes; }, snapshot: ringSnapshot, base: BASE, placeholder: PLACEHOLDER,
+    fillFigure: fillPackFigure, place: placeRun, projectChoices: function () { return projects().map(function (p) { return { id: p.id, name: p.name, unclassifiedTaskId: p.unclassifiedTaskId || null, tasks: (p.tasks || []).map(function (t) { return { id: t.id, name: t.name, done: !!t.done }; }) }; }); },
     projectName: projectName, cellColor: function (pid) { var c = cellEl(pid); return c ? getComputedStyle(c).getPropertyValue("--zone-raw").trim() : ""; } });
   function renderRing(now) {
     var el = $("stRing"), hc = hiveCenter();
