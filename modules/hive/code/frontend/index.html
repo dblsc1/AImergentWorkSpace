@@ -255,6 +255,9 @@
   <script src="hex-source-health.js"></script>
   <script src="hex-figure-pick.js"></script>
   <script src="hex-human-page.js"></script>
+  <!-- 时钟读数 / 悬停卡的共享件（网关的 __cockpit 目录，hive.stage.v1「二十七」）：网关是在页面末尾延后注入它的，
+       本页的 hex-stage-page.js 一加载就要用，所以这里先自己读一次（文件自己防重复定义）。 -->
+  <script src="../__cockpit/clockface.js"></script>
   <script src="hex-clock-menu.js"></script>
   <script src="hex-stage-page.js"></script>
 </body>
