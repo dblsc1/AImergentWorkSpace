@@ -124,6 +124,7 @@
     H.refresh = function () { if (view) view.update(); };
     H.setIssues = function (list) { issues = list || []; clock.classList.toggle("has-issue", issues.length > 0); if (view) view.setIssues(issues); };
     H.close = closeAll;
+    H.away = function (on) { if (panel) panel.classList.toggle("is-away", !!on); };   // 拖窗口卡 / 计时卡时让开，松手后重开（「二十三」1）
     H.consumedHold = function () { var f = hold.fired; hold.fired = false; return f; };
 
     // 倒计时到点的提醒卡：点一下收起，10 秒后自收

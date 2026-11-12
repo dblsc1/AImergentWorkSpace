@@ -1,5 +1,5 @@
 /* hive · 右上角「人」的页面：左边立绘 + 纵置三张卡（hive.stage.v1「十四」） */
-.hp { display: flex; gap: 16px; align-items: flex-start; }
+.hp { position: relative; display: flex; gap: 16px; align-items: flex-start; }
 .hp-figure { flex: none; position: sticky; top: 0; width: 168px; min-height: 200px; padding: 8px; border: 0; background: none; cursor: pointer; display: grid; place-items: center; border-radius: 14px; }
 .hp-figure:hover, .hp-figure:focus-visible { background: var(--panel-2, var(--panel)); outline: none; }
 .hp-figure-slot { display: grid; place-items: center; width: 100%; }
@@ -56,3 +56,12 @@
 .hp-more:hover, .hp-more:focus-visible { border-color: var(--pr-human); outline: none; }
 .hp-issues { margin-top: 10px; }
 .hp-issues h4 { margin: 0 0 6px; font-size: var(--fs-sub); color: var(--ink-3); font-weight: 600; }
+
+/* 泳道悬停：自家提示框 + 连到下面卡片的线（hive.stage.v1「二十三」）；都挂在 .hp 里，不接指针 */
+.hp-tip { position: absolute; z-index: 6; pointer-events: none; width: max-content; max-width: min(420px, 100%); box-sizing: border-box; padding: 4px 10px; border-radius: 8px; font-size: var(--fs-sub); color: var(--ink); }
+.hp-links { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 5; }
+.hp-link { fill: none; stroke-width: 2; stroke-linecap: round; }
+.hp-links.is-fresh > * { animation: hp-link-in .15s ease-out; }
+@keyframes hp-link-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .hp-links.is-fresh > * { animation: none; } }
+.hp-task.is-linked, .hp-win.is-linked { outline: 2px solid var(--hp-link); outline-offset: 1px; }

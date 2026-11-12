@@ -111,7 +111,7 @@ def test_lane_tooltips_name_where_the_focus_was_and_timer_sits_on_top(browser, b
     with open_stage(browser, base, width=1600, setup=_day) as st:
         _open(st)
         assert st.page.locator(".hp-lane-timer .hp-seg").count() == 3              # 手动计时 30 分 + 三天前那段 + 正在跑的
-        titles = st.page.locator(".hp-lane-win .hp-seg").evaluate_all("els => els.map(e => e.title)")
+        titles = st.page.locator(".hp-lane-win .hp-seg").evaluate_all("els => els.map(e => e.dataset.tip)")   # 二十三·2：提示不再用 title
         assert any(t.endswith("数学 / code · main.go") for t in titles), titles
         assert any(t.endswith("chrome · 标题已隐去") for t in titles) and not any("窗口名3" in t for t in titles)
         assert any(t.endswith(" kitty") for t in titles)                            # 没归类：只有窗口名
@@ -141,7 +141,7 @@ def test_running_task_card_drags_to_a_cell_and_asks_before_placing(browser, base
         st.settle()
         card = st.page.locator(".st-confirm")
         assert st.posts == [] and card.locator(".st-cf-title").inner_text() == "把这次计时记到 钢琴"
-        assert st.page.locator(".cm-panel").is_visible() and st.page.locator(".hp-task.is-running").count() == 1   # 卡片回原位
+        assert st.page.locator(".cm-panel").is_hidden() and st.page.locator(".hp-task.is-running").count() == 1   # 卡片回原位；确认卡开着时页面让开（二十三·1）
         assert st.page.locator(".hp-task.is-running").evaluate("e => e.style.position === '' && e.style.translate === ''")
         card.locator(".st-cf-ok").click()
         st.settle()
@@ -276,7 +276,7 @@ def test_three_day_old_window_records_show_in_the_default_view_and_week_but_not_
         _open(st)
         st.page.locator(".hp-more").click()
         assert "code · old.go" in st.page.locator(".hp-win b").all_inner_texts()
-        assert any("code · old.go" in t for t in st.page.locator(".hp-lane-win .hp-seg").evaluate_all("els => els.map(e => e.title)"))
+        assert any("code · old.go" in t for t in st.page.locator(".hp-lane-win .hp-seg").evaluate_all("els => els.map(e => e.dataset.tip)"))
         ranges = [u for u in st.requests if "/activity/blocks/range" in u]
         assert ranges and all("/activity/blocks/records" not in u for u in st.requests[st.requests.index(ranges[0]):])   # 一次读整个范围，不再逐块读
         st.page.click('.hp-range-btn[data-range="week"]')
@@ -287,3 +287,124 @@ def test_three_day_old_window_records_show_in_the_default_view_and_week_but_not_
         st.page.click('.hp-range-btn[data-range="hours"]')
         st.page.wait_for_function("() => document.querySelector('.hp-hours')")
         assert "code · old.go" not in st.page.locator(".hp-win b").all_inner_texts()
+
+
+# ── 「二十三」：泳道悬停提示 / 连线 / 窗口记录置顶、拖卡时页面让开 ──
+class _Seg:
+    """细段互相压着，真鼠标落点会落到邻居上：先真移到这一段中心（让浏览器认为指针在页面里，离开时才有 mouseleave），再给它发 mouseover（页面是委托监听）。"""
+    def __init__(self, page, loc) -> None:
+        self.page, self.loc = page, loc
+
+    def hover(self, **_: Any) -> None:
+        b = self.loc.bounding_box()
+        self.page.mouse.move(b["x"] + b["width"] / 2, b["y"] + b["height"] / 2)
+        self.loc.dispatch_event("mouseover")
+
+    def bounding_box(self):
+        return self.loc.bounding_box()
+
+
+def _seg(st: Stage, tip_end: str) -> _Seg:
+    return _Seg(st.page, st.page.locator(f'.hp-lane-win .hp-seg[data-tip$="{tip_end}"]').first)
+
+
+def test_lane_segments_have_no_title_and_hover_shows_our_own_tip_and_leaves_with_the_mouse(browser, base) -> None:  # noqa: F811  二十三·2
+    with open_stage(browser, base, width=1600, setup=_day) as st:
+        _open(st)
+        assert st.page.locator(".hp-seg[title]").count() == 0
+        assert st.page.locator(".hp-tip").is_hidden()
+        seg = _seg(st, "数学 / code · main.go")
+        seg.hover()
+        tip = st.page.locator(".hp-tip")
+        assert tip.is_visible() and tip.inner_text().endswith("数学 / code · main.go")
+        s, t = seg.bounding_box(), tip.bounding_box()
+        assert t["y"] + t["height"] <= s["y"] + 1 and t["x"] <= s["x"] + s["width"] and t["x"] + t["width"] >= s["x"]   # 在段的上方，水平对着段
+        st.page.mouse.move(5, 5)
+        assert tip.is_hidden() and st.page.locator(".hp-link").count() == 0 and st.page.locator(".is-linked").count() == 0
+
+
+def test_hovering_a_filed_window_segment_links_the_task_card_and_its_window_card_in_the_project_color(browser, base) -> None:  # noqa: F811  二十三·3
+    with open_stage(browser, base, width=1600, setup=_day) as st:
+        _open(st)
+        _seg(st, "数学 / code · main.go").hover()
+        assert st.page.locator(".hp-link").count() == 2                                  # 到逐任务卡、到窗口记录卡
+        assert st.page.locator(".hp-task.is-linked b").all_inner_texts() == ["数学的任务"]
+        assert st.page.locator(".hp-win.is-linked b").all_inner_texts() == ["code · main.go"]
+        color = st.page.locator(".hp-link").first.evaluate("e => getComputedStyle(e).stroke")
+        assert color.startswith("rgb(") and color == st.page.locator(".hp-task.is-linked").evaluate("e => getComputedStyle(e).outlineColor") == st.page.locator(".hp-win.is-linked").evaluate("e => getComputedStyle(e).outlineColor")   # 线与卡的描边同色
+        assert st.page.locator(".hp-links").evaluate("e => getComputedStyle(e).pointerEvents") == "none"
+        a, b = st.box(".hp-task.is-linked"), st.page.locator(".hp-links").bounding_box()
+        assert b["width"] > 300 and b["height"] > a["y"] - b["y"]                            # 这层 SVG 盖住整个人的页面
+        _seg(st, " kitty").hover()                                                       # 没归类的：中性色，连到「未分类」卡
+        assert st.page.locator(".hp-link").first.evaluate("e => e.style.stroke") == "var(--ink-3)"
+        assert st.page.locator(".hp-task.is-linked b").all_inner_texts() == ["未分类"] or st.page.locator(".hp-task.is-linked").count() == 0
+
+
+def test_hovering_a_window_segment_pins_its_window_card_first_even_when_folded_and_restores_after(browser, base) -> None:  # noqa: F811  二十三·4
+    with open_stage(browser, base, width=1600, setup=_day) as st:
+        _open(st)
+        before = st.page.locator(".hp-win b").all_inner_texts()
+        assert len(before) == 5 and "term · vim" not in before                           # 折叠只显示 5 行，它被收起了
+        lane = st.box(".hp-lane")
+        _seg(st, "term · vim").hover()
+        assert st.page.locator(".hp-win b").first.inner_text() == "term · vim" and st.page.locator(".hp-win").count() == 5
+        assert st.page.locator(".hp-win.is-linked").count() == 1 and st.box(".hp-lane") == lane   # 泳道不动
+        assert st.page.locator(".hp-tip").is_visible()                                   # 重排后鼠标下仍是这一段
+        st.page.mouse.move(5, 5)
+        assert st.page.locator(".hp-win b").all_inner_texts() == before
+
+
+def test_hovering_the_timer_segment_links_the_running_card_and_the_longest_focused_window(browser, base) -> None:  # noqa: F811  二十三·3、4
+    with open_stage(browser, base, width=1600, setup=_day) as st:
+        _open(st)
+        _Seg(st.page, st.page.locator(".hp-lane-timer .hp-seg").nth(2)).hover()               # 正在跑的那一段（最右）
+        assert st.page.locator(".hp-task.is-linked.is-running").count() == 1
+        assert st.page.locator(".hp-link").count() >= 1
+        assert st.page.locator(".hp-win.is-linked").count() == st.page.locator(".hp-win:first-child.is-linked").count()   # 有对应窗口块就是置顶的那一条，没有就不连
+
+
+def test_hover_survives_the_every_second_redraw_and_the_poll(browser, base) -> None:  # noqa: F811  二十三·5
+    with open_stage(browser, base, width=1600, setup=_day) as st:
+        _open(st)
+        _seg(st, "term · vim").hover()
+        st.page.clock.run_for(3000)
+        st.page.clock.run_for(31000)                                                     # 过一次 30 秒重读
+        st.page.wait_for_timeout(200)
+        # 过了分钟标尺会平移，静止的真鼠标可能落到邻段上；不论落在哪段，提示、置顶、连线要彼此一致地保持
+        assert st.page.locator(".hp-tip").is_visible() and st.page.locator(".hp-win b").first.inner_text() in st.page.locator(".hp-tip").inner_text()
+        assert st.page.locator(".hp-link").count() >= 1
+
+
+def test_dragging_a_window_card_hides_the_page_and_it_reopens_with_the_same_state_after_release(browser, base) -> None:  # noqa: F811  二十三·1
+    with open_stage(browser, base, width=1600, setup=_day) as st:
+        _open(st)
+        st.page.locator(".hp-more").click()
+        st.page.evaluate("() => { document.querySelector('.cm-panel').scrollTop = 40; }")
+        top = st.page.evaluate("() => document.querySelector('.cm-panel').scrollTop")
+        st.drag('.hp-win:has-text("kitty")', st.center(CELL.format("p_piano")), release=False)
+        assert st.page.locator(".cm-panel").evaluate("e => getComputedStyle(e).visibility") == "hidden"
+        assert st.page.locator('.hp-win:has-text("kitty")').evaluate("e => getComputedStyle(e).visibility") == "visible"   # 被拖的卡留在指针下
+        st.replies["activity/blocks/assign"] = (200, {"seq": 2})
+        st.page.mouse.up()
+        st.page.clock.run_for(50)
+        st.settle()
+        assert st.page.locator(".cm-panel").evaluate("e => getComputedStyle(e).visibility") == "visible"
+        assert st.page.locator(".hp-more").inner_text() == "收起" and st.page.evaluate("() => document.querySelector('.cm-panel').scrollTop") == top   # 展开状态、滚动位置不变
+        st.drag('.hp-win:has-text("kitty")', (40, 600))                                  # 放空也一样
+        st.settle()
+        assert st.page.locator(".cm-panel").evaluate("e => getComputedStyle(e).visibility") == "visible"
+
+
+def test_a_plain_click_on_a_card_does_not_hide_and_the_timer_card_reopens_only_after_the_confirm_closes(browser, base) -> None:  # noqa: F811  二十三·1
+    with open_stage(browser, base, width=1600, setup=_day) as st:
+        _open(st)
+        st.page.locator('.hp-win:has-text("kitty")').click() if st.page.locator('.hp-win:has-text("kitty")').count() else None
+        assert st.page.locator(".cm-panel").evaluate("e => getComputedStyle(e).visibility") == "visible"
+        st.drag(".hp-task.is-running", st.center(CELL.format("p_piano")))
+        st.settle()
+        assert st.page.locator(".st-confirm").count() == 1
+        assert st.page.locator(".cm-panel").evaluate("e => getComputedStyle(e).visibility") == "hidden"   # 确认卡还开着：页面仍让着
+        st.page.locator(".st-cf-x").click()
+        st.page.clock.run_for(100)
+        assert st.page.locator(".cm-panel").evaluate("e => getComputedStyle(e).visibility") == "visible"
+        assert st.posts == []

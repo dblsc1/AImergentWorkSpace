@@ -110,14 +110,14 @@
     (blocks || []).forEach(function (b) {
       (b.records || []).forEach(function (r) {
         var c = clip(range, ms(r.startAt), ms(r.endAt)), title = r.title || "";
-        if (c) rows.push({ from: c[0], to: c[1], app: r.app || "", title: title, hidden: HIDDEN_TITLE.test(title), projectId: recordProject(b.item, c[0]) });
+        if (c) rows.push({ from: c[0], to: c[1], app: r.app || "", title: title, hidden: HIDDEN_TITLE.test(title), projectId: recordProject(b.item, c[0]), blockKey: (b.item || {}).blockKey || null });
       });
     });
     rows.sort(function (a, b) { return a.from - b.from; });
     var out = [];
     rows.forEach(function (r) {
       var last = out[out.length - 1];
-      if (last && last.app === r.app && last.title === r.title && last.projectId === r.projectId && r.from - last.to <= MERGE_GAP) last.to = Math.max(last.to, r.to);
+      if (last && last.app === r.app && last.title === r.title && last.projectId === r.projectId && last.blockKey === r.blockKey && r.from - last.to <= MERGE_GAP) last.to = Math.max(last.to, r.to);
       else out.push(r);
     });
     return out;
@@ -144,19 +144,19 @@
     (o.sessions || []).forEach(function (s) {
       if (isTimerSession(s)) {
         var c = clip(range, ms(s.startAt), ms(s.endAt));
-        if (c) timer.push(Object.assign({ a: c[0], b: c[1], projectId: s.projectId || null }, pos(range, c[0], c[1])));
+        if (c) timer.push(Object.assign({ a: c[0], b: c[1], projectId: s.projectId || null, taskId: s.taskId || null, timer: true }, pos(range, c[0], c[1])));
       } else {
         // 有原始记录的时段由记录画（带窗口名）；更早的只能用台账里的段
         var w = clip(range, ms(s.startAt), Math.min(ms(s.endAt), o.coverFrom == null ? Infinity : o.coverFrom));
-        if (w) wins.push(Object.assign({ a: w[0], b: w[1], projectId: s.projectId || null, label: null }, pos(range, w[0], w[1])));
+        if (w) wins.push(Object.assign({ a: w[0], b: w[1], projectId: s.projectId || null, taskId: s.taskId || null, label: null }, pos(range, w[0], w[1])));
       }
     });
     if (o.running) {
       var r = runSpan(range, o.running);
-      if (r) timer.push(Object.assign({ a: r[0], b: r[1], projectId: o.running.projectId || null, live: true }, pos(range, r[0], r[1])));
+      if (r) timer.push(Object.assign({ a: r[0], b: r[1], projectId: o.running.projectId || null, taskId: o.running.taskId || null, timer: true, live: true }, pos(range, r[0], r[1])));
     }
     (o.segments || []).forEach(function (s) {
-      wins.push(Object.assign({ a: s.from, b: s.to, projectId: s.projectId, label: windowLabel(s.app, s.title, s.hidden) }, pos(range, s.from, s.to)));
+      wins.push(Object.assign({ a: s.from, b: s.to, projectId: s.projectId, blockKey: s.blockKey || null, label: windowLabel(s.app, s.title, s.hidden) }, pos(range, s.from, s.to)));
     });
     function byStart(x, y) { return x.a - y.a; }
     return { timer: timer.sort(byStart), windows: wins.sort(byStart) };
@@ -167,6 +167,35 @@
   }
   function dated(range) { return range.kind === "week" || range.kind === "default"; }
   function spanText(range, a, b) { return (dated(range) ? md(a) + " " : "") + hm(a) + "–" + hm(b); }
+
+  // ── 泳道悬停（hive.stage.v1「二十三」）──
+  // 段的标识：同一段重画后还认得；正在跑的那段右端每秒在涨，不用它
+  function segId(s) { return (s.timer ? "t" : "w") + ":" + s.a + ":" + (s.live ? "live" : s.b); }
+  // 段所属的逐任务卡：同归并键的卡，没有就取同项目的第一张，再没有 = null
+  function taskCardFor(tasks, key, projectId) {
+    var list = tasks || [];
+    return list.filter(function (t) { return t.key === key; })[0] || (projectId ? list.filter(function (t) { return t.projectId === projectId; })[0] : null) || null;
+  }
+  // [a, b] 里聚焦最久的窗口块（按原始记录重叠的秒数）；没有记录 = null
+  function dominantBlock(blocks, a, b) {
+    var best = null, bestMs = 0;
+    (blocks || []).forEach(function (blk) {
+      var sum = 0;
+      (blk.records || []).forEach(function (r) { sum += Math.max(0, Math.min(ms(r.endAt), b) - Math.max(ms(r.startAt), a)); });
+      if (sum > bestMs && blk.item && blk.item.blockKey) { bestMs = sum; best = blk.item.blockKey; }
+    });
+    return best;
+  }
+  // 悬停一段 → 要连到的逐任务卡的键、窗口块的键（都可能为 null）
+  function hoverTargets(seg, tasks, blocks, labelOf) {
+    var card = taskCardFor(tasks, labelOf(seg.taskId || null, seg.projectId || null, !!seg.live).key, seg.projectId);
+    return { taskKey: card ? card.key : null, blockKey: seg.blockKey || (seg.timer ? dominantBlock(blocks, seg.a, seg.b) : null) };
+  }
+  // 窗口记录置顶：对应那一行排第一，其余保持原顺序
+  function pinRows(rows, blockKey) {
+    var i = blockKey ? rows.map(function (r) { return r.blockKey; }).indexOf(blockKey) : -1;
+    return i <= 0 ? rows : [rows[i]].concat(rows.slice(0, i), rows.slice(i + 1));
+  }
 
   // 读范围里的窗口块及各块原始记录（人的页面与中心页共用，「十六」4：一次读 activity/blocks/range）；getJson(path) → Promise
   function loadBlocks(getJson, range) {
@@ -180,7 +209,7 @@
 
   var P = { DEFAULT_HOURS: DEFAULT_HOURS, FOLD: FOLD, MAX_BLOCKS: MAX_BLOCKS, parseHours: parseHours, rangeOf: rangeOf, dateChunks: dateChunks, blockQuery: blockQuery, dated: dated, nextKind: nextKind,
     mergeSessions: mergeSessions, totalSeconds: totalSeconds, taskCards: taskCards, splitKey: splitKey, windowLabel: windowLabel, blockProject: blockProject,
-    recordProject: recordProject, loadBlocks: loadBlocks, focusSegments: focusSegments, windowRows: windowRows, foldRows: foldRows, laneOf: laneOf, durText: durText, spanText: spanText };
+    recordProject: recordProject, loadBlocks: loadBlocks, focusSegments: focusSegments, windowRows: windowRows, foldRows: foldRows, laneOf: laneOf, segId: segId, taskCardFor: taskCardFor, dominantBlock: dominantBlock, hoverTargets: hoverTargets, pinRows: pinRows, durText: durText, spanText: spanText };
   if (typeof module !== "undefined" && module.exports) { module.exports = P; return; }
   window.HexHumanPage = P;
 
@@ -190,13 +219,15 @@
   // o: {now(), getLanes(), getJson(path), projectName(id), projectColor(id), taskLabel(taskId, projectId, live), fillIssues(box, list),
   //     fillFigure(slot), pickHuman(), openProject(pid), dragTimer(card), dragBlock(card, block, done), timerRunning()}
   P.create = function (o) {
-    var state = { kind: null, hours: DEFAULT_HOURS, expanded: false }, issues = [], poll = 0, dead = false, seq = 0;
+    var state = { kind: null, hours: DEFAULT_HOURS, expanded: false, hover: null }, lit = null, drawnFor = null, issues = [], poll = 0, dead = false, seq = 0;
     var first = (o.getLanes() || {}).human;
     var data = { humans: first ? [first] : [], blocks: [], coverFrom: Infinity };
     var root = el("div", "hp"), figure = el("button", "hp-figure"), slot = el("span", "hp-figure-slot"), cards = el("div", "hp-cards");
     figure.type = "button"; figure.setAttribute("aria-label", "更换我的形象"); figure.appendChild(slot);
     figure.addEventListener("click", function () { o.pickHuman(); });
-    root.appendChild(figure); root.appendChild(cards);
+    var tip = el("div", "hp-tip st-card"), links = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    tip.hidden = true; tip.setAttribute("role", "tooltip"); links.setAttribute("class", "hp-links"); links.setAttribute("aria-hidden", "true");
+    root.appendChild(figure); root.appendChild(cards); root.appendChild(links); root.appendChild(tip);
 
     function colorOf(pid) { return (pid && o.projectColor(pid)) || ""; }
     function tint(node, pid) { var c = colorOf(pid); if (c) node.style.setProperty("--hp-c", c); return !!c; }
@@ -215,11 +246,12 @@
       });
     }
 
-    function seg(cls, s, tip) {
+    function seg(cls, s, text) {
       var n = el("i", "hp-seg " + cls);
-      n.style.left = s.left + "%"; n.style.width = s.width + "%"; n.title = tip;
+      n.style.left = s.left + "%"; n.style.width = s.width + "%"; n.dataset.tip = text; n.dataset.hid = segId(s);   // 提示用自家的框，不用 title
       return n;
     }
+    function link(node) { node.classList.add("is-linked"); node.style.setProperty("--hp-link", (lit && lit.color) || "var(--ink-3)"); }
     function build() {
       var now = Math.floor(o.now() / 60000) * 60000, range = rangeOf(state.kind, state.hours, now);
       range.now = o.now();
@@ -268,10 +300,16 @@
         down.appendChild(n);
       });
       laneEl.appendChild(up); laneEl.appendChild(down); c1.appendChild(laneEl);
+      // 悬停着的那一段（每秒重画也认得）：要连的卡、置顶的窗口块、线的颜色
+      var tasks = taskCards(range, sessions, running, o.taskLabel), hs = state.hover && lane.timer.concat(lane.windows).filter(function (x) { return segId(x) === state.hover; })[0];
+      if (!hs) state.hover = null;
+      lit = hs ? Object.assign(hoverTargets(hs, tasks, data.blocks, o.taskLabel), { color: colorOf(hs.projectId) }) : null;
       var axis = el("div", "hp-axis");
       if (range.layout) {   // 默认视图：不等宽标尺（周几 + 今天的钟点），格线画进泳道
         axis.className = "hp-ruler"; axis.innerHTML = Pr.rulerHtml(range.layout);   // 只有固定文字与数字，没有接口来的字符串
         range.layout.days.slice(1).forEach(function (d) { var i = el("i", "pr-div"); i.style.left = d.x0 * 100 + "%"; laneEl.appendChild(i); });
+        laneEl.appendChild(el("i", "pr-now"));   // 此刻的细白线（「二十四」1）：标尺和泳道各一截，位置走 --pr-now
+        var np = Pr.nowPct(range.layout); axis.style.setProperty("--pr-now", np); laneEl.style.setProperty("--pr-now", np);
       } else [0, 1 / 3, 2 / 3, 1].forEach(function (f) {
         var t = range.from + (range.to - range.from) * f, s = el("span", "", (dated(range) ? md(t) + " " : "") + hm(t));
         s.style.left = f * 100 + "%"; if (f === 1) s.style.transform = "translateX(-100%)"; else if (f > 0) s.style.transform = "translateX(-50%)";
@@ -282,13 +320,14 @@
 
       // 第二张：逐任务用时
       var c2 = el("section", "hp-card"); c2.dataset.card = "tasks"; c2.appendChild(el("h3", "", "逐任务用时"));
-      var tasks = taskCards(range, sessions, running, o.taskLabel), list = el("div", "hp-tasks");
+      var list = el("div", "hp-tasks");
       if (!tasks.length) list.appendChild(el("div", "hp-empty", "这段时间没有记录"));
       tasks.forEach(function (t) {
         var card = el("button", "hp-task" + (t.running ? " is-running" : ""));
         card.type = "button"; card.dataset.key = t.key; card.title = t.name;
         card.appendChild(el("b", "", t.name)); card.appendChild(el("span", "hp-dur", durText(t.seconds)));
         tint(card, t.projectId);
+        if (lit && lit.taskKey === t.key) link(card);
         if (t.running) {
           o.dragTimer(card, t.projectId);
           card.addEventListener("keydown", function (ev) { if ((ev.key === "Enter" || ev.key === " ") && t.projectId) { ev.preventDefault(); o.openProject(t.projectId); } });
@@ -300,7 +339,7 @@
 
       // 第三张：窗口记录
       var c3 = el("section", "hp-card"); c3.dataset.card = "windows"; c3.appendChild(el("h3", "", "窗口记录"));
-      var rows = windowRows(range, data.blocks), wl = el("div", "hp-wins");
+      var rows = pinRows(windowRows(range, data.blocks), lit && lit.blockKey), wl = el("div", "hp-wins");
       if (!rows.length) wl.appendChild(el("div", "hp-empty", "没有记录"));
       foldRows(rows, state.expanded).forEach(function (w) {
         var row = el("div", "hp-win");
@@ -310,6 +349,7 @@
           row.dataset.date = w.date; row.dataset.seq = String(w.seq); row.dataset.status = w.status || "";
           o.dragBlock(row, { date: w.date, blockKey: w.blockKey, seq: w.seq, seconds: w.status === "pending" ? w.blockSeconds : 0, displayName: w.displayName }, function () { load(); });
         }
+        if (lit && lit.blockKey === w.blockKey) link(row);
         wl.appendChild(row);
       });
       c3.appendChild(wl);
@@ -329,11 +369,40 @@
       o.fillFigure(slot);
       var typing = cards.querySelector(".hp-hours") === document.activeElement;
       if (cards.querySelector(".st-dragging") || (typing && !force)) return;
-      var next = build();
-      if (next.innerHTML === cards.innerHTML) return;
-      cards.textContent = "";
-      while (next.firstChild) cards.appendChild(next.firstChild);
-      if (keepFocus || typing) { var i = cards.querySelector(".hp-hours"); if (i) { i.focus(); i.select(); } }
+      var next = build(), swapped = false;
+      if (next.children.length !== cards.children.length) { cards.textContent = ""; while (next.firstChild) cards.appendChild(next.firstChild); swapped = true; }
+      else Array.prototype.slice.call(next.children).forEach(function (c, i) {   // 一张一张比：悬停造成的重排只动窗口记录那张，泳道不被换掉
+        if (c.innerHTML !== cards.children[i].innerHTML) { cards.replaceChild(c, cards.children[i]); swapped = true; }
+      });
+      if (swapped && (keepFocus || typing)) { var i = cards.querySelector(".hp-hours"); if (i) { i.focus(); i.select(); } }
+      drawHover();
+    }
+    function setHover(id) { if (id !== state.hover) { state.hover = id; update(true); } }
+    cards.addEventListener("mouseover", function (ev) { var s = ev.target.closest && ev.target.closest(".hp-seg[data-hid]"); setHover(s ? s.dataset.hid : null); });
+    root.addEventListener("mouseleave", function () { setHover(null); });
+    // 提示框与连线都挂在 root 里（不随卡片重画被换掉），用 root 内坐标；root 跟着窗口滚动，所以线与卡一起走
+    function drawHover() {
+      var segEl = state.hover ? cards.querySelector('.hp-seg[data-hid="' + state.hover + '"]') : null, fresh = drawnFor !== state.hover;
+      drawnFor = segEl ? state.hover : null;
+      links.textContent = "";
+      if (!segEl) { tip.hidden = true; return; }
+      var rr = root.getBoundingClientRect(), r = segEl.getBoundingClientRect(), cx = r.left + r.width / 2 - rr.left;
+      tip.textContent = segEl.dataset.tip; tip.hidden = false;
+      var w = tip.offsetWidth, h = tip.offsetHeight, ty = r.top - rr.top - h - 6;
+      tip.style.left = Math.max(0, Math.min(cx - w / 2, rr.width - w)) + "px"; tip.style.top = (ty >= 0 ? ty : r.bottom - rr.top + 6) + "px";
+      links.classList.toggle("is-fresh", fresh);
+      var color = (lit && lit.color) || "var(--ink-3)", sy = r.bottom - rr.top;
+      Array.prototype.forEach.call(cards.querySelectorAll(".hp-task.is-linked, .hp-win.is-linked"), function (t) {
+        var tr = t.getBoundingClientRect(), ex = Math.max(tr.left + 10, Math.min(cx + rr.left, tr.right - 10)) - rr.left, ey = tr.top - rr.top, d = Math.max(12, (ey - sy) / 2);
+        var path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("class", "hp-link"); path.setAttribute("d", "M" + cx + " " + sy + " C" + cx + " " + (sy + d) + " " + ex + " " + (ey - d) + " " + ex + " " + ey); path.style.stroke = color;
+        links.appendChild(path);
+        [[cx, sy], [ex, ey]].forEach(function (p) {
+          var dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          dot.setAttribute("class", "hp-link-dot"); dot.setAttribute("cx", p[0]); dot.setAttribute("cy", p[1]); dot.setAttribute("r", 3); dot.style.fill = color;
+          links.appendChild(dot);
+        });
+      });
     }
     update(true);
     return {

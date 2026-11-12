@@ -137,4 +137,38 @@ assert.ok(last.left > 0 && last.left + last.width <= 100 + 1e-9);
 assert.strictEqual(P.spanText(r3, L(2026, 11, 12, 9, 5), L(2026, 11, 12, 10, 30)), "09:05–10:30");
 assert.strictEqual(P.spanText(P.rangeOf("week", 3, now), L(2026, 11, 12, 9, 5), L(2026, 11, 12, 10, 30)), "11/12 09:05–10:30");
 
+
+// 泳道悬停（二十三）：段 → 逐任务卡 / 窗口块、置顶顺序
+{
+  const labelOf = (t, p, live) => t ? { key: "t:" + t, name: t, projectId: p } : p ? { key: "p:" + p, name: p, projectId: p } : live ? { key: "running", name: "手动计时", projectId: null } : { key: "none", name: "未分类", projectId: null };
+  const tasks = [{ key: "running", projectId: null }, { key: "t:t1", projectId: "pa" }, { key: "none", projectId: null }];
+  assert.strictEqual(P.taskCardFor(tasks, "t:t1", "pa").key, "t:t1");
+  assert.strictEqual(P.taskCardFor(tasks, "p:pa", "pa").key, "t:t1");      // 同键没有卡 → 同项目的第一张
+  assert.strictEqual(P.taskCardFor(tasks, "p:pz", "pz"), null);
+  assert.strictEqual(P.taskCardFor(tasks, "none", null).key, "none");
+  const blocks = [
+    { item: { blockKey: "a · 1" }, records: [{ startAt: iso(now), endAt: iso(now + 60000) }] },
+    { item: { blockKey: "b · 2" }, records: [{ startAt: iso(now + 60000), endAt: iso(now + 600000) }, { startAt: iso(now - 9e5), endAt: iso(now - 8e5) }] },
+    { item: { blockKey: "c · 3" }, records: null }];
+  assert.strictEqual(P.dominantBlock(blocks, now, now + 600000), "b · 2");                 // 重叠最久
+  assert.strictEqual(P.dominantBlock(blocks, now, now + 30000), "a · 1");
+  assert.strictEqual(P.dominantBlock(blocks, now + 9e6, now + 9.1e6), null);
+  const timerSeg = { timer: true, a: now, b: now + 600000, projectId: null, taskId: null, live: true };
+  assert.deepStrictEqual(P.hoverTargets(timerSeg, tasks, blocks, labelOf), { taskKey: "running", blockKey: "b · 2" });   // 手动计时段 → 计时卡 + 聚焦最久的块
+  const winSeg = { a: now, b: now + 1, projectId: "pa", blockKey: "a · 1" };
+  assert.deepStrictEqual(P.hoverTargets(winSeg, tasks, blocks, labelOf), { taskKey: "t:t1", blockKey: "a · 1" });
+  assert.deepStrictEqual(P.hoverTargets({ a: now, b: now + 1, projectId: null, blockKey: null }, tasks, blocks, labelOf), { taskKey: "none", blockKey: null });   // 台账里的段没有窗口块
+  assert.notStrictEqual(P.segId({ a: 1, b: 2 }), P.segId({ a: 1, b: 2, timer: true }));
+  assert.strictEqual(P.segId({ timer: true, a: 1, b: 5, live: true }), P.segId({ timer: true, a: 1, b: 9, live: true }));   // 正在跑的不随右端变
+  const rows = ["x", "y", "z", "w"].map((k) => ({ blockKey: k }));
+  assert.deepStrictEqual(P.pinRows(rows, "z").map((r) => r.blockKey), ["z", "x", "y", "w"]);   // 其余顺序不变
+  assert.strictEqual(P.pinRows(rows, "x"), rows);
+  assert.strictEqual(P.pinRows(rows, null), rows);
+  assert.strictEqual(P.pinRows(rows, "nope"), rows);
+  assert.deepStrictEqual(P.foldRows(P.pinRows(["a", "b", "c", "d", "e", "f", "g"].map((k) => ({ blockKey: k })), "g"), false).map((r) => r.blockKey), ["g", "a", "b", "c", "d"]);   // 折叠时被藏起的也露出来
+  // focusSegments 带块键；不同块不并
+  const fs = P.focusSegments(P.rangeOf("day", 3, now), [{ item: { blockKey: "a · 1", status: "pending" }, records: [{ startAt: iso(now - 3e5), endAt: iso(now - 2e5), app: "a", title: "1" }] },
+    { item: { blockKey: "a · 1x", status: "pending" }, records: [{ startAt: iso(now - 2e5), endAt: iso(now - 1e5), app: "a", title: "1" }] }]);
+  assert.deepStrictEqual(fs.map((x) => x.blockKey), ["a · 1", "a · 1x"]);
+}
 console.log("hex-human-page ok");
