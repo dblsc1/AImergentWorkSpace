@@ -102,7 +102,7 @@
   }
   // 默认标尺的刻度：每天一格（今天写「今天」，其余写周几），x / w 取自标尺
   function dayTicks(L) {
-    return L.days.map(function (d) { return { x: d.x0, w: d.w, label: d.today ? "今天" : "周" + WEEK[new Date(d.start).getDay()] }; });
+    return L.days.map(function (d) { return { x: d.x0, w: d.w, label: d.today ? "今天" : "周" + WEEK[new Date((d.start + d.end) / 2).getDay()] }; });
   }
   function summary(groups, runs) {
     var tt = Cs.totals({ agents: runs });

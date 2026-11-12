@@ -70,8 +70,8 @@ assert.deepStrictEqual(A.dayTicks(DL).map((x) => x.x), DL.days.map((d) => d.x0))
 const sw = A.scaleOf(A.windowOf("day", 3, now)); assert.strictEqual(sw.days.length, 1); assert.strictEqual(sw.days[0].w, 1);
 assert.strictEqual(A.pickRange("default", "day"), "day"); assert.strictEqual(A.pickRange("hours", "week"), "week");
 assert.strictEqual(A.pickRange("day", "day"), "default"); assert.strictEqual(A.pickRange("week", "week"), "default");
-// 现在线：默认标尺里在今天那一格内（不在最右）；滚动窗口里在最右
-const xn = Pr.xOf(DL, now); assert.ok(xn > today.x0 && xn < 1);
+// 现在线：默认标尺（「二十八」起今天 = 往前 24 小时）和滚动窗口里都在最右
+assert.strictEqual(Pr.xOf(DL, now), 1);
 assert.strictEqual(Pr.xOf(A.scaleOf(A.windowOf("hours", 3, now)), now), 1);
 
 // 正在工作的数：只要一个 agent 有一条运行在跑、没失联、相位 working 就算 1 个；窗口里没有干活区间（segments 为空）的在跑运行照算
