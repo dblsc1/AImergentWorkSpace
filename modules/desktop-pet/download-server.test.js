@@ -14,7 +14,7 @@ const manifest = {
   roles: { gpt: { name: 'GPT', dir: 'd', license: 'L', credits: 'C', source: 'S', files: [{ name: 'a.webm', size: body.length, sha256: crypto.createHash('sha256').update(body).digest('hex') }] } },
 };
 
-const stills = { commit: 's', roles: { qwen: { name: '千问娘', dir: 'c', license: 'L', credits: 'C', source: 'S', files: [{ name: 'q.png', size: body.length, sha256: manifest.roles.gpt.files[0].sha256 }] } } };
+const stills = { commit: 's', roles: { qwen: { name: '千问娘', dir: 'c', backdrop: 'gradient', license: 'L', credits: 'C', source: 'S', files: [{ name: 'q.png', size: body.length, sha256: manifest.roles.gpt.files[0].sha256 }] } } };
 
 test('run 下到目录、生成 pack.json；再跑不重复请求', async () => {
   let hits = 0;
@@ -26,8 +26,8 @@ test('run 下到目录、生成 pack.json；再跑不重复请求', async () => 
     assert.deepEqual(await run({ destDir: dir, baseUrl, stillsBaseUrl: baseUrl, manifest, stills, moodMap, log: () => {} }), []);
     assert.deepEqual(fs.readFileSync(path.join(dir, 'gpt', 'a.webm')), body);
     assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'gpt', 'pack.json'), 'utf8')).kind, 'gpt');
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'qwen', 'pack.json'), 'utf8')), { kind: 'qwen', name: '千问娘', image: 'q.png', moods: {}, license: 'L', credits: 'C', source: 'S' });
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8')).packs, [{ kind: 'gpt', name: 'GPT', cover: 'a.webm' }, { kind: 'qwen', name: '千问娘', image: 'q.png' }]);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'qwen', 'pack.json'), 'utf8')), { kind: 'qwen', name: '千问娘', image: 'q.png', backdrop: 'gradient', moods: {}, license: 'L', credits: 'C', source: 'S' });
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8')).packs, [{ kind: 'gpt', name: 'GPT', cover: 'a.webm' }, { kind: 'qwen', name: '千问娘', image: 'q.png', backdrop: 'gradient' }]);
     assert.equal(hits, 2);
     await run({ destDir: dir, baseUrl, stillsBaseUrl: baseUrl, manifest, stills, moodMap, log: () => {} });
     assert.equal(hits, 2);
