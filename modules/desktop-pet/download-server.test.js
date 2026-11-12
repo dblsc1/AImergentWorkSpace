@@ -41,3 +41,15 @@ test('下不动时返回失败清单、不抛', async () => {
     assert.deepEqual(failed, ['gpt/a.webm', 'qwen/q.png']);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('主地址连不上时换镜像', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-'));
+  const seen = [];
+  const fetchFn = async url => { seen.push(url); if (url.startsWith('http://main/')) throw new Error('fetch failed'); return new Response(body, { status: 200 }); };
+  try {
+    const failed = await run({ destDir: dir, manifest: { commit: 'abc', roles: {} }, stills: { ...stills, base: 'http://main', mirror: 'http://mirror/s' }, moodMap, fetch: fetchFn, log: () => {} });
+    assert.deepEqual(failed, []);
+    assert.deepEqual(seen, ['http://main/s/c/q.png', 'http://mirror/s/c/q.png']);
+    assert.deepEqual(fs.readFileSync(path.join(dir, 'qwen', 'q.png')), body);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

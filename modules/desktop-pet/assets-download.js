@@ -57,19 +57,24 @@ async function fetchTo(url, part, spec, fetchFn) {
   await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(part, { flags: append ? 'a' : 'w' }));
 }
 
-async function fetchOne(role, spec, dir, url, fetchFn) {
+// urls：主地址在前，镜像在后；一共试两次，第二次换镜像（没有镜像就还是主地址）。连不上也算一次。
+async function fetchOne(role, spec, dir, urls, fetchFn) {
   const file = path.join(dir, spec.name), part = file + '.part';
   if (fs.existsSync(file) && fs.statSync(file).size === spec.size) return;
+  let last = new Error('校验失败');
   for (let attempt = 0; attempt < 2; attempt++) {
-    await fetchTo(url, part, spec, fetchFn);
-    if (await verify(part, spec)) return fs.renameSync(part, file);
+    try {
+      await fetchTo(urls[attempt % urls.length], part, spec, fetchFn);
+      if (await verify(part, spec)) return fs.renameSync(part, file);
+      last = new Error('校验失败');
+    } catch (e) { last = e; if (urls.length < 2) throw e; }
     fs.rmSync(part, { force: true });
   }
-  throw new Error('校验失败');
+  throw last;
 }
 
 // 返回 {failed: ['<kind>/<name>', ...]}；某个文件失败不影响其他文件。
-async function downloadAll({ manifest, moodMap, destDir, baseUrl = manifest.base || DEFAULT_BASE, fetch: fetchFn = fetch, onProgress = () => {}, onRoleDone = () => {} }) {
+async function downloadAll({ manifest, moodMap, destDir, baseUrl = manifest.base || DEFAULT_BASE, mirrorUrl = baseUrl === manifest.base ? manifest.mirror : null, fetch: fetchFn = fetch, onProgress = () => {}, onRoleDone = () => {} }) {
   const failed = [];
   for (const [kind, role] of Object.entries(manifest.roles)) {
     const dir = path.join(destDir, kind);
@@ -78,8 +83,9 @@ async function downloadAll({ manifest, moodMap, destDir, baseUrl = manifest.base
     for (const spec of role.files) {
       const id = `${kind}/${spec.name}`;
       if (/[\\/]|^\.+$/.test(spec.name)) { failed.push(id); continue; }
-      const url = `${baseUrl}/${manifest.commit}/${role.dir}/${encodeURIComponent(spec.name)}`;
-      try { await fetchOne(role, spec, dir, url, fetchFn); okNames.add(spec.name); onProgress(id); }
+      const tail = `${role.dir}/${encodeURIComponent(spec.name)}`;
+      const urls = [`${baseUrl}/${manifest.commit}/${tail}`].concat(mirrorUrl ? [`${mirrorUrl}/${tail}`] : []);
+      try { await fetchOne(role, spec, dir, urls, fetchFn); okNames.add(spec.name); onProgress(id); }
       catch (e) { failed.push(id); onProgress(id, e); }
     }
     const pack = moodMap ? buildPack(kind, { ...role, files: role.files.filter(f => okNames.has(f.name)) }, moodMap)
