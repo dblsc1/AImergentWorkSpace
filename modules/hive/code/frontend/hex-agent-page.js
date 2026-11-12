@@ -187,7 +187,7 @@
     var q = function (k) { return page.querySelector("#" + ID + k); };
     var page = veil.firstChild, sub = q("Sub"), range = q("Hours"), out = q("HoursOut"), ruler = q("Ruler"), stack = q("Stack"), plot = q("Plot"), nowEl = q("Now"), me = null, first = mixed ? 2 : 1;
     range.value = String(hours);
-    var moreOpen = false, moreEl = document.createElement("button");
+    var moreOpen = false, wantRun = null, moreEl = document.createElement("button");
     moreEl.type = "button"; moreEl.className = "ag-more"; moreEl.hidden = true;
     stack.appendChild(moreEl);
 
@@ -275,7 +275,10 @@
       nowEl.firstChild.textContent = hm(now);
       var before = {};
       Object.keys(cards).forEach(function (k) { if (cards[k].isConnected) before[k] = cards[k].offsetTop; });
-      var keep = {}, sp = splitRetained(groups), drawn = sp.shown.concat(moreOpen ? sp.rest : []);
+      var keep = {}, sp = splitRetained(groups);
+      var hasRun = function (g) { return g.runs.some(function (r) { return r.runId === wantRun; }); };
+      if (wantRun && sp.rest.some(hasRun)) moreOpen = true;
+      var drawn = sp.shown.concat(moreOpen ? sp.rest : []);
       if (detailKey && !drawn.some(function (g) { return g.key === detailKey; })) drawn = drawn.concat(groups.filter(function (g) { return g.key === detailKey; }));   // 开着详情的卡不因折叠而消失
       moreEl.hidden = !sp.rest.length; moreEl.textContent = (moreOpen ? "收起其余 " : "其余 ") + sp.rest.length + " 个"; moreEl.setAttribute("aria-expanded", moreOpen ? "true" : "false");
       stack.appendChild(moreEl);
@@ -292,6 +295,8 @@
       });
       Object.keys(cards).forEach(function (k) { if (!keep[k]) { release(cards[k]); cards[k].remove(); delete cards[k]; } });
       if (detailKey) paintDetail();
+      var want = wantRun && res ? drawn.filter(hasRun)[0] : null;
+      if (want) { wantRun = null; if (detailKey !== want.key) openDetail(cards[want.key]); }
       if (!reduced()) drawn.forEach(function (g) {
         var c = cards[g.key], d = before[g.key] - c.offsetTop;
         if (before[g.key] != null && d && c.animate) c.animate([{ transform: "translateY(" + d + "px)" }, { transform: "none" }], { duration: SWAP_MS, easing: "ease-out" });
@@ -305,12 +310,15 @@
     function mk(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
     function buildDetail() {
       detailEl = mk("div", "ag-detail"); detailEl.hidden = true;
-      var big = mk("div", "ag-big"), slot = mk("span", "ag-big-slot"), right = mk("div", "ag-dt"), hd = mk("div", "ag-dt-hd"), title = mk("button", "ag-dt-title"), x = mk("button", "st-x ag-dt-x", "✕");
+      var big = mk("button", "ag-big"), slot = mk("span", "ag-big-slot"), right = mk("div", "ag-dt"), hd = mk("div", "ag-dt-hd"), title = mk("button", "ag-dt-title"), x = mk("button", "st-x ag-dt-x", "✕");
       title.type = "button"; title.appendChild(mk("b")); x.type = "button"; x.setAttribute("aria-label", "收起");
       hd.appendChild(title); hd.appendChild(x);
       big.appendChild(slot); right.appendChild(hd); right.appendChild(mk("h3", "ag-dt-h", "活跃历史")); right.appendChild(mk("div", "ag-dt-list"));
       detailEl.appendChild(big); detailEl.appendChild(right); page.appendChild(detailEl);
       title.addEventListener("click", function () { closeDetail(); }); x.addEventListener("click", function () { closeDetail(); });
+      // 点大立绘 = 换这个 agent 的形象（「二十六」2；长按小人不再换形象）
+      big.type = "button"; big.setAttribute("aria-label", "更换形象");
+      big.addEventListener("click", function () { var g = cards[detailKey] && cards[detailKey].__group; if (g && ctx.pickFigure) ctx.pickFigure(g.tool || null, big); });
       // 下拉获得焦点期间不重画，失去焦点后补画
       detailEl.addEventListener("focusout", function () { setTimeout(function () { if (dirty && detailKey && !selecting()) paintDetail(); }, 0); });
       detailEl.addEventListener("change", function (ev) { var sel = ev.target.closest("select"); if (sel) onPlace(sel.closest(".ag-run"), sel.classList.contains("ag-sel-project")); });
@@ -462,7 +470,7 @@
     }
     function close() {
       if (!opened) return;
-      opened = false; clearInterval(timer); seq++;
+      opened = false; wantRun = null; clearInterval(timer); seq++;
       closeDetail(true);
       flyBack(); veil.hidden = true;
       // 页面关着时卡片里的小人不该还在后台播：飞回动画走完就把它们的播放器放掉，下次打开再建
@@ -485,7 +493,9 @@
     veil.addEventListener("pointerdown", function (ev) { if (ev.target === veil) close(); });
     page.addEventListener("keydown", function (ev) { var card = ev.target.closest && ev.target.closest(".ag-stack > .ag-card"); if (card && ev.target === card && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); openDetail(card); } });
     document.addEventListener("keydown", function (ev) { if (ev.key === "Escape" && opened) { if (detailKey != null) closeDetail(); else close(); } });
-    return { open: open, close: close, isOpen: function () { return opened; }, redraw: function () { if (opened && last.res) render(last.res, last.now, last.human); } };
+    // 打开页面并直接放大某条运行所在的那张卡（长按台上的小人，「二十六」2）：卡被收在「其余 N 个」里的先展开
+    function openRun(runId) { wantRun = runId; open(); if (last.res) render(last.res, last.now, last.human); }
+    return { open: open, openRun: openRun, close: close, isOpen: function () { return opened; }, redraw: function () { if (opened && last.res) render(last.res, last.now, last.human); } };
   }
   api.mount = mount;
   if (typeof module !== "undefined" && module.exports) module.exports = api;

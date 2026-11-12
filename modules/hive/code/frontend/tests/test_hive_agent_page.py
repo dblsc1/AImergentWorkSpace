@@ -92,7 +92,7 @@ def test_now_line_runs_through_all_lanes_and_the_slider_only_reloads_on_release(
         line, lane = st.box("#agNow"), st.box("#agPage .ag-card .ag-lane")
         last = st.page.locator("#agPage .ag-card").last.bounding_box()
         assert line["height"] >= last["y"] + last["height"] - st.box("#agPage .ag-card")["y"] - 2
-        assert lane["x"] + lane["width"] * 0.7 < line["x"] + line["width"] / 2 < lane["x"] + lane["width"] - 3   # 十七·5：默认标尺里现在线在今天那一格里，不在最右
+        assert lane["x"] + lane["width"] * 0.61 < line["x"] + line["width"] / 2 < lane["x"] + lane["width"] - 3   # 十七·5：默认标尺里现在线在今天那一格里（今天从 61.6% 起，午夜刚过时线就在格子开头），不在最右
         assert re.fullmatch(r"\d\d:\d\d", st.page.locator("#agNow span").inner_text())
         st.page.get_by_role("button", name="日").click()
         st.page.wait_for_timeout(200)
@@ -192,8 +192,9 @@ def test_default_range_has_no_button_selected_and_uneven_day_ruler(browser, base
         assert widths[6] == max(widths) and widths[6] > widths[0] * 1.5
         st.page.get_by_role("button", name="周").click()
         st.page.wait_for_timeout(200)
-        widths = [st.page.locator("#agRuler .ag-tick").nth(i).bounding_box()["width"] for i in range(7)]
-        assert len({round(w) for w in widths}) == 1                                                    # 周：等宽
+        xs = [st.page.locator("#agRuler .ag-tick").nth(i).bounding_box()["x"] for i in range(7)]
+        gaps = [b - a for a, b in zip(xs, xs[1:])]
+        assert max(gaps) - min(gaps) < 14, gaps                                                        # 周：刻度等距（字宽不同，只比间距）
         st.page.get_by_role("button", name="周").click()
         st.page.wait_for_timeout(200)
         assert st.page.locator("#agPage [data-mode].on").count() == 0 and st.page.locator("#agRuler .ag-tick").last.inner_text() == "今天"

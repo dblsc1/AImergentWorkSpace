@@ -344,21 +344,25 @@ def test_loose_pet_slots_are_stable_when_others_come_and_go(browser, base) -> No
             assert st.box(f'.st-pet.is-loose[data-run-id="r{i}"]') == pos[i]
 
 
-def test_pet_clip_rhythm_main_then_temp_then_a_new_main(browser, base) -> None:  # noqa: F811  二·11 3
+def test_pet_clip_rhythm_main_then_temp_then_back_to_the_same_main_and_a_new_one_after_five_minutes(browser, base) -> None:  # noqa: F811  二十六·2
     pack = {"kind": "gpt", "name": "G", "license": "x", "credits": "x", "source": "x",
             "moods": {"idle": ["i1.webm", "i2.webm", "i3.webm"], "click": ["t.webm"]}}
     with open_stage(browser, base, setup=_busy_day, pets={"gpt": pack}, hold_webm=True) as st:
-        seen: list[str] = []
-        for _ in range(60):
-            st.page.clock.run_for(1000)
-            src = st.page.locator('.st-pet.is-loose[data-run-id="r2"] video.st-art').get_attribute("src")
-            if src and (not seen or seen[-1] != src):
-                seen.append(src)
-        seen = [u.split("/")[-1] for u in seen]
-        assert "t.webm" in seen
-        mains = [f for f in seen if f != "t.webm"]
-        assert len(set(mains)) >= 2
-        assert all(a != b for a, b in zip(mains, mains[1:])), seen
+        def watch(seconds: int) -> list[str]:
+            seen: list[str] = []
+            for _ in range(seconds):
+                st.page.clock.run_for(1000)
+                src = st.page.locator('.st-pet.is-loose[data-run-id="r2"] video.st-art').get_attribute("src")
+                if src and (not seen or seen[-1] != src):
+                    seen.append(src)
+            return [u.split("/")[-1] for u in seen]
+        seen = watch(60)
+        assert "t.webm" in seen                                                # 15 秒主动作后插 3 秒临时动作
+        mains = {f for f in seen if f != "t.webm"}
+        assert len(mains) == 1, seen                                           # 临时动作完回到原来那个主动作
+        st.page.clock.run_for(300000)                                          # 满 5 分钟
+        later = {f for f in watch(40) if f != "t.webm"}
+        assert later and later != mains, (seen, later)                         # 换了一个主动作
 
 
 def test_bucket_drawer_drags_a_block_into_a_cell(browser, base) -> None:  # noqa: F811  HV-B04 / HV-B05 / HV-C12

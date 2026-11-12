@@ -249,8 +249,10 @@ ONE_CLOCK = """(how) => {
   const a = document.getAnimations().filter(x => x.constructor === Animation && x.effect && x.effect.target.closest('.hive, .st-pet'));   // 只看脚本起的位移动画，不算颜色淡入淡出的 CSS 过渡
   a.forEach(x => { x.pause(); x.currentTime = 0; });
   const at0 = rects();
+  a.forEach(x => { x.currentTime = 230; });
+  const mid = rects();
   a.forEach(x => x.finish());
-  return { before, at0, end: rects(), durations: [...new Set(a.map(x => x.effect.getTiming().duration))], who: [...new Set(a.map(x => x.effect.target.classList[0]))] };
+  return { before, at0, mid, end: rects(), cells: a.filter(x => x.effect.target.classList.contains('hex-cell')).length, durations: [...new Set(a.map(x => x.effect.getTiming().duration))], who: [...new Set(a.map(x => x.effect.target.classList[0]))] };
 }"""
 
 
@@ -260,10 +262,13 @@ def test_expand_and_collapse_run_cells_camera_borders_and_pets_on_one_timeline(b
         for how in ("open", "close"):
             r = st.page.evaluate(ONE_CLOCK, how)
             assert r["durations"] == [460], r                                        # 同一个时长
-            assert {"hex-cell", "hive-cam", "hex-borders", "st-pet"} <= set(r["who"]), r["who"]
+            assert {"hex-cell", "hive-cam", "st-pet"} <= set(r["who"]) and "hex-borders" not in r["who"], r["who"]   # 分区线没有自己的动画：跟着镜头走
+            assert r["cells"] == 1, r["cells"]                                       # 晶格上的格子也只跟镜头走，单独动的只有点开 / 收起的那一格
             for was, now in zip(r["before"], r["at0"]):                              # 起点 = 动之前屏幕上的样子
                 assert all(abs(x - y) <= 2 for x, y in zip(was, now)), r
             assert r["end"][0] != r["before"][0] and r["end"][3] != r["before"][3], r   # 格子和小人都真的动了
+            for was, mid, end in zip(r["before"][:3], r["mid"][:3], r["end"][:3]):         # 中途在起点和终点之间：路线是直的，不先甩出去再回来
+                assert all(min(x, z) - 2 <= y <= max(x, z) + 2 for x, y, z in zip(was, mid, end)), r
             st.page.clock.run_for(1000)
             st.page.wait_for_timeout(300)
 

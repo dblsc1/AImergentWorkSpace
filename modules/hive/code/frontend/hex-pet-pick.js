@@ -88,24 +88,24 @@
   function tempList(pack) { var m = (pack && pack.moods) || {}; return m.click && m.click.length ? m.click : (m.happy || []); }
   function clickClip(pack, last, rnd) { return pickClip(tempList(pack), last, rnd); }
 
-  // 动作节奏（仓主 2026-11-10 定）：当前 mood 的动作播 15 秒 → 3 秒临时动作 → 新动作（≠ 上一个）15 秒，循环。
-  // s 是上一次的状态（首次 null）；moods = pack.moods；返回新状态 {mood, step: "main"|"temp", file, main, until}。纯函数，rnd / now 可注入。
-  var MAIN_MS = 15000, TEMP_MS = 3000;
+  // 动作节奏（仓主 2026-11-12 改，hive.stage.v1「二十六」）：当前 mood 的动作里随机挑一个当「主动作」播 15 秒 → 3 秒随机临时动作 →
+  // **回到原来那个主动作** 15 秒，如此循环；主动作每 5 分钟换一个（≠ 上一个），换 mood 立刻换。
+  // s 是上一次的状态（首次 null）；moods = pack.moods；返回新状态 {mood, step: "main"|"temp", file, main, until, keepUntil}。纯函数，rnd / now 可注入。
+  var MAIN_MS = 15000, TEMP_MS = 3000, KEEP_MS = 300000;
   function moodList(moods, mood) { var m = moods || {}; return (m[mood] && m[mood].length ? m[mood] : m.idle) || []; }
   function rhythm(s, moods, mood, now, rnd) {
     var list = moodList(moods, mood);
-    if (!s) s = { mood: mood, step: "main", file: null, main: null, until: now + Math.floor(rnd() * MAIN_MS) };   // 首次随机错开，免得一起换
-    else if (s.mood !== mood) s = { mood: mood, step: "main", file: null, main: s.main, until: now + MAIN_MS };       // 换 mood：立刻换动作、重算周期
-    else if (now >= s.until) {
-      var tmp = s.step === "main" ? tempList({ moods: moods }) : [];
-      if (tmp.length) s = { mood: mood, step: "temp", file: pickClip(tmp, null, rnd), main: s.main, until: now + TEMP_MS };
-      else s = { mood: mood, step: "main", file: null, main: s.main, until: now + MAIN_MS };
-    } else if (s.step === "temp" || s.file) return s;
-    if (s.step === "main" && !s.file) {
-      var f = pickClip(list, s.main, rnd);
-      if (f) { s = { mood: s.mood, step: "main", file: f, main: f, until: s.until }; }
+    function fresh(last, until) { var f = pickClip(list, last, rnd); return { mood: mood, step: "main", file: f, main: f || last, until: until, keepUntil: now + KEEP_MS }; }
+    if (!s) return fresh(null, now + Math.floor(rnd() * MAIN_MS));   // 首次随机错开，免得一起换
+    if (s.mood !== mood) return fresh(s.main, now + MAIN_MS);          // 换 mood：立刻换动作、重算周期
+    if (s.step === "main" && !s.file) { var f0 = pickClip(list, s.main, rnd); return f0 ? { mood: mood, step: "main", file: f0, main: f0, until: s.until, keepUntil: now + KEEP_MS } : s; }   // 包刚下完：补上
+    if (now < s.until) return s;
+    if (s.step === "main") {
+      var tmp = tempList({ moods: moods });
+      if (tmp.length) return { mood: mood, step: "temp", file: pickClip(tmp, null, rnd), main: s.main, until: now + TEMP_MS, keepUntil: s.keepUntil };
     }
-    return s;
+    if (now >= (s.keepUntil || 0)) return fresh(s.main, now + MAIN_MS);   // 满 5 分钟：换一个主动作
+    return { mood: mood, step: "main", file: s.main, main: s.main, until: now + MAIN_MS, keepUntil: s.keepUntil };   // 回到原来的主动作
   }
 
   // 人看着某个 agent 时的互动（hive.stage.v1「二十一」）。动作名各包相同（mood-map.json 一份）：
@@ -147,7 +147,7 @@
     return { x: s[0] * w * k, y: s[1] * h * k };
   }
 
-  var api = { restSlot: restSlot, hexEdgeDistance: hexEdgeDistance, MAX_PETS: MAX_PETS, DEFAULT_PACK: DEFAULT_PACK, DEFAULT_PACKS_BY_TOOL: DEFAULT_PACKS_BY_TOOL, moodOf: moodOf, packOf: packOf, pickWorkers: pickWorkers, pickIdle: pickIdle, isLoose: isLoose, slotPos: slotPos, assignSlots: assignSlots, rhythm: rhythm, tempList: tempList, MAIN_MS: MAIN_MS, TEMP_MS: TEMP_MS,
+  var api = { restSlot: restSlot, hexEdgeDistance: hexEdgeDistance, MAX_PETS: MAX_PETS, DEFAULT_PACK: DEFAULT_PACK, DEFAULT_PACKS_BY_TOOL: DEFAULT_PACKS_BY_TOOL, moodOf: moodOf, packOf: packOf, pickWorkers: pickWorkers, pickIdle: pickIdle, isLoose: isLoose, slotPos: slotPos, assignSlots: assignSlots, rhythm: rhythm, tempList: tempList, MAIN_MS: MAIN_MS, KEEP_MS: KEEP_MS, TEMP_MS: TEMP_MS,
     CLICK_PX: CLICK_PX, STAY_MS: STAY_MS, pressKind: pressKind, clickCounts: clickCounts, pickClip: pickClip, clickClip: clickClip, walkBack: walkBack, meetClip: meetClip, meetSpot: meetSpot };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.NexusTableHexPetPick = api;

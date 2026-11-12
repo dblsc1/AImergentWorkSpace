@@ -118,7 +118,7 @@
 
     var centrePage = AP().mount(ctx, { mixed: true });
 
-    return { renderRing: renderRing, close: function () { agentPage.close(); centrePage.close(); }, redraw: function () { agentPage.redraw(); centrePage.redraw(); } };
+    return { renderRing: renderRing, openAgent: function (runId) { centrePage.close(); agentPage.openRun(runId); }, close: function () { agentPage.close(); centrePage.close(); }, redraw: function () { agentPage.redraw(); centrePage.redraw(); } };
   }
   api.mount = mount;
   if (typeof module !== "undefined" && module.exports) module.exports = api;

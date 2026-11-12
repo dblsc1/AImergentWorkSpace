@@ -294,6 +294,11 @@
     camEl.style.height = plan.height + "px";
     B.paint(state.borderLayer, plan, String(state.expandedId || ""));
 
+    // 新旧两张布局之间，晶格是一个相似变换（倍数 mag、原点 ox/oy）：这一部分**整个折进镜头的起点**，
+    // 格子和分区线都是镜头的孩子，只跟着镜头这一段动画走——天然同步（人类 2026-11-12：
+    // 「分区边框和项目蜂巢还是不能同步放大缩小」，此前格子各有一段动画、分区线另一段）。
+    // 只有不随晶格走的东西才单独动：展开 / 收起的那一格（比晶格位大一圈）、悬停长大的格、标签（不随倍数变大）。
+    var k = old ? (plan.mag || 1) / (old.mag || 1) : 1, ox0 = old ? old.ox : plan.ox, oy0 = old ? old.oy : plan.oy;
     var moved = [];
     plan.items.forEach(function (it) {
       var el = it.el, prev = el.__geom;
@@ -304,13 +309,16 @@
       el.style.transform = el.__base;
       if (!it.isLabel) el.classList.toggle("is-mate", !!it.mate);
       if (!flip || !prev || !prev.w || !it.w) return;
-      var dx = (prev.left + prev.w / 2) - (it.left + it.w / 2);
-      var dy = (prev.top + prev.h / 2) - (it.top + it.h / 2);
-      var sx = prev.w / it.w, sy = prev.h / it.h;
-      if (Math.abs(dx) < .5 && Math.abs(dy) < .5 &&
-          Math.abs(sx - 1) < .005 && Math.abs(sy - 1) < .005) return;
-      moved.push({ el: el, from: el.__base + " translate3d(" + dx.toFixed(2) + "px," + dy.toFixed(2) + "px,0)" +
-        " scale(" + sx.toFixed(4) + "," + sy.toFixed(4) + ")", inner: "scale(" + (1 / sx).toFixed(4) + "," + (1 / sy).toFixed(4) + ")" });
+      // 旧几何搬到新坐标系里再比：晶格上的格子差为 0，不用动
+      var dx = plan.ox + (prev.left + prev.w / 2 - ox0) * k - (it.left + it.w / 2);
+      var dy = plan.oy + (prev.top + prev.h / 2 - oy0) * k - (it.top + it.h / 2);
+      var sx = prev.w * k / it.w, sy = prev.h * k / it.h;
+      var still = Math.abs(dx) < .5 && Math.abs(dy) < .5 && Math.abs(sx - 1) < .005 && Math.abs(sy - 1) < .005;
+      // 格内内容保持终态的字号（不跟着镜头一起缩放）：反向缩放 = 镜头那一份 k 除以格子自己的那一份
+      var ix = k / sx, iy = k / sy, inner = it.isLabel || (Math.abs(ix - 1) < .005 && Math.abs(iy - 1) < .005) ? null : "scale(" + ix.toFixed(4) + "," + iy.toFixed(4) + ")";
+      if (still && !inner) return;
+      moved.push({ el: el, from: still ? null : el.__base + " translate3d(" + dx.toFixed(2) + "px," + dy.toFixed(2) + "px,0)" +
+        " scale(" + sx.toFixed(4) + "," + sy.toFixed(4) + ")", inner: inner });
     });
 
     state.lastPlan = plan;
@@ -319,7 +327,7 @@
 
     // Last：全场只量这一次。外框（margin:auto 居中、尺寸直接变）挪了多少，折进镜头的起点
     var box1 = hive.getBoundingClientRect(), shell = hive.closest(".board-shell");
-    var k = parseFloat(shell && shell.style.zoom) || 1;
+    var zoomK = parseFloat(shell && shell.style.zoom) || 1;
     busyUntil = performance.now() + ms;
     if (!durationMs) zoomUntil = busyUntil;
     document.dispatchEvent(new CustomEvent("hexlayout", { detail: { ms: ms, ease: EASE } }));
@@ -327,23 +335,17 @@
     // 过渡里**只有 transform**：clip-path 是百分比多边形，尺寸一变形状
     // 自动跟着缩放，插值它等于每帧重算裁剪路径 + 重绘。
     moved.forEach(function (m) {
-      play(m.el, [{ transform: m.from }, { transform: m.el.__base }], ms);
-      var inner = m.el.querySelector(".hex-inner");
+      if (m.from) play(m.el, [{ transform: m.from }, { transform: m.el.__base }], ms);
+      var inner = m.inner && m.el.querySelector(".hex-inner");
       if (inner) play(inner, [{ transform: m.inner }, { transform: "none" }], ms);
     });
-    var bx = (box0.left - box1.left) / k, by = (box0.top - box1.top) / k;
-    play(camEl, [{ transform: "translate(" + bx.toFixed(2) + "px," + by.toFixed(2) + "px) " + (cam0 === "none" ? "" : cam0) },
-      { transform: camEl.style.transform || "none" }], ms);
-    // 分区线：整张 svg 从旧的原点与倍数走到新的（和格子同一个相似变换）
-    var svg = state.borderLayer && state.borderLayer.svg;
-    if (svg && old) {
-      var r = (old.mag || 1) / (plan.mag || 1);
-      if (Math.abs(r - 1) > .001 || Math.abs(old.ox - plan.ox) > .5 || Math.abs(old.oy - plan.oy) > .5) {
-        svg.style.transformOrigin = "0 0";
-        play(svg, [{ transform: "translate(" + (old.ox - r * plan.ox).toFixed(2) + "px," + (old.oy - r * plan.oy).toFixed(2) + "px) scale(" + r.toFixed(4) + ")" },
-          { transform: "none" }], ms);
-      }
-    }
+    // 镜头的起点 = 外框挪动 · 旧镜头 · 把新坐标搬回旧坐标（原点 o1 → o0、倍数 1/k）。
+    // 起点和终点都**乘成一个矩阵**再交给动画：写成一串 translate / scale 的话，终点是 none 时浏览器会逐项各插各的，
+    // 合起来的路线是弯的（收起时整张蜂巢先甩出去再回来）；单个矩阵之间插值 = 平移和倍数各走直线
+    var bx = (box0.left - box1.left) / zoomK, by = (box0.top - box1.top) / zoomK;
+    var from = new DOMMatrix().translate(bx, by).multiply(new DOMMatrix(cam0 === "none" ? "" : cam0)).translate(ox0, oy0).scale(1 / k).translate(-plan.ox, -plan.oy);
+    var to = new DOMMatrix(camEl.style.transform || "");
+    play(camEl, [{ transform: from.toString() }, { transform: to.toString() }], ms);
   }
   function busy() { return performance.now() < busyUntil; }
   function zooming() { return performance.now() < zoomUntil; }   // 展开 / 收起那一段（不含悬停的短动画）
