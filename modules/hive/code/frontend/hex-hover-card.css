@@ -1,0 +1,15 @@
+/* hive · 项目格悬停档的内容（hex-hover-card.js，hive.stage.v1「二十五」）。
+   悬停档是 2.2 倍的六边形（约 190×220）：padding 26% 12% 13% 之后可用约 144px 宽；下半收口，越往下越要内收 */
+.hex-cell.is-hover .hex-next.hv-card { font-size: 10px; line-height: 1.2; color: var(--ink-2); margin-top: 4px; }
+.hv-card .pr-ruler { height: 12px; }
+.hv-card .pr-ticks { display: none; }
+.hv-card .pr-day { font-size: 8px; overflow: hidden; white-space: nowrap; line-height: 12px; }
+.hv-card .pr-day:nth-of-type(-n+4) { visibility: hidden; }   /* 更早 4 天各 5.7% 宽（约 8px），写不下周几 */
+.hv-card .pr-lanes { min-height: 18px; margin-top: 2px; }
+.hv-card .pr-seg { top: 4px; bottom: 2px; }
+.hv-card .hv-task { margin-top: 5px; padding: 0 6%; font-size: 10.5px; color: var(--ink); text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hv-card .hv-sum { display: flex; align-items: center; justify-content: center; gap: 3px; margin-top: 3px; font-family: var(--font-mono); font-size: 9.5px; color: var(--ink-3); white-space: nowrap; }
+.hv-card .hv-sum b { font-weight: 500; margin-right: 2px; font-family: inherit; }
+.hv-card .hv-sum .pr-k { margin-left: 3px; width: 7px; height: 7px; }
+.hv-card .hv-sum + .hv-sum { margin-top: 2px; }
+.hv-card .hv-sum:last-child { padding: 0 8%; }

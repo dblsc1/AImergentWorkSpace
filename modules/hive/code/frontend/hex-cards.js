@@ -22,10 +22,8 @@
       .replace(/"/g, "&quot;");
   }
 
-  // 悬停要显示的那条待办**建 DOM 时就填好**，不等鼠标到了再查。数据早就在
-  // state.todos 里；现填只会在 hover 那一帧多插一次 innerHTML 重写 —— 正好是
-  // 要保 60fps 的那一帧。静置态 .hex-next 是 display:none，不占位、读屏也跳过。
-  // todos：这一格项目的待办（调用方从 state.todos 里取好了递进来）。
+  // 静置态 .hex-next 是 display:none，不占位、读屏也跳过；悬停档的空壳建 DOM 时就在，不在 hover 那一帧插节点。
+  // todos：不再用（「二十五」），签名不动免得改调用方。
   function cellInnerHtml(cell, body, todos) {
     var title = cell.project ? cell.project.name : "（空）";
     var next = "";
@@ -35,20 +33,9 @@
       next = '<p class="hex-next is-none">长按新建项目</p>';
     }
     if (cell.project) {
-      // 悬停档给**三条**待办（人类：放大之后"有点空旷"）。取数口径与展开档
-      // 完全一致（H.topTodos，后端已排好序，前端不重排），所以悬停看到的三条
-      // 就是点开之后「下一步」那三条 —— 两个档次显示的东西不许对不上。
-      var top3 = H.topTodos(todos, 3);
-      next = top3.length
-        ? '<ul class="hex-next">' + top3.map(function (t) {
-            // data-task-id 是长按计时的抓手：长按这一条 = 直接对这条任务计时，
-            // 不再建新的（人类：「长按子任务也自动开始计时」）。
-            return '<li class="hex-todo-card' + (t.state === "waiting" ? " is-waiting" : "") +
-                   '" data-task-id="' + esc(t.id) + '">' +
-                   '<span class="hex-todo-dot"></span>' +
-                   '<span class="hex-todo-name">' + esc(t.name) + "</span></li>";
-          }).join("") + "</ul>"
-        : '<p class="hex-next is-none">' + esc(H.NO_TODO_TEXT) + "</p>";
+      // 悬停档的内容（hive.stage.v1「二十五」）：空壳，鼠标停住、格子长到悬停档后由 hex-hover-card.js 填
+      // 标尺 / 泳道 / 正在进行的任务 / 本周本日用时。取代此前的最近三条待办卡片。
+      next = '<div class="hex-next hv-card"></div>';
     }
     // 标题独占一行、右边挂「＋」（人类 2026-09-08：「把添加新任务做成一个按钮，
     // 放在标题右边，点击自动伸展为一块卡片」）。按钮静置/悬停档都是 display:none，
