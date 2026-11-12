@@ -2,7 +2,7 @@
 body.stage-on .board-shell { min-height: 780px; }
 body.stage-on .hex-center { pointer-events: none; }
 body.stage-on .hex-center .hex-inner { visibility: hidden; }
-body.stage-on .hex-cell:not(.is-expanded) .hex-next,
+body.stage-on .hex-cell:not(.is-expanded) .hex-next:not(.hv-card),
 body.stage-on .hex-cell:not(.is-expanded) .hex-close { display: none !important; }
 .hex-cell.st-hot { filter: brightness(1.12) saturate(1.3); outline: 3px solid var(--accent); outline-offset: -3px; }
 

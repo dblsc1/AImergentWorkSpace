@@ -231,8 +231,6 @@ body {
 /* 六边形下半是**收口**的，一排等宽的卡片走到底下必然被斜边切角。
    所以三张卡逐层内收 —— 内收量按那一行离中心的距离算：离中心 t 处可用半宽
    = (W/2)·(H/2−t)/(H/4)。这不是"看着调的"，改 HOVER_SCALE 就得跟着重算。 */
-.hex-cell.is-hover .hex-next li:nth-child(2) { margin-inline: 4%; }
-.hex-cell.is-hover .hex-next li:nth-child(3) { margin-inline: 11%; }
 .hex-cell.is-hover .hex-next.is-none { color: var(--ink-3); text-align: center; }
 
 /* ── 待办卡片：悬停面板与展开卡「下一步」共用一套 ────────────────

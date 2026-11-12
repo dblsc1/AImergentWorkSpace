@@ -1156,6 +1156,10 @@
     },
     created: function () { getJson("views/tree").then(function (t) { if (t) data.tree = t; PP.invalidate(); render(); }); },
     cellColor: function (pid) { var c = cellEl(pid); return c ? getComputedStyle(c).getPropertyValue("--zone-raw").trim() : ""; } });
+  // 项目格悬停档的内容（「二十五」）：格子长到悬停档才读 views/project-time
+  if (window.NexusTableHexHoverCard) window.NexusTableHexHoverCard.mount({ hive: document.getElementById("hive"), getJson: getJson, dur: dur, now: Date.now,
+    tree: function () { var A = window.NexusTableHexApp, st = A && A.getState && A.getState(); return (st && st.tree) || data.tree; },
+    cellColor: function (pid) { var c = cellEl(pid); return c ? getComputedStyle(c).getPropertyValue("--zone-raw").trim() : ""; } });
   function recentOf(pid) {   // 这个项目最近完成 / 取消的任务（hex-app 读来的流水），最多 10 条
     var App = window.NexusTableHexApp, st = App && App.getState && App.getState();
     return ((st && st.completions) || []).filter(function (c) { return c.projectId === pid; }).slice(0, 10);
