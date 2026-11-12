@@ -23,7 +23,7 @@ function buildPack(kind, role, moodMap) {
 
 // 静态形象包（desktop.pet.v1「三·5」）：一张图，没有动画；moods 全空，只认 moods 的读方当它没有动作。
 function buildStillPack(kind, role) {
-  return { kind, name: role.name, image: role.files[0].name, moods: {}, license: role.license, credits: role.credits, source: role.source };
+  return { kind, name: role.name, image: role.files[0].name, ...(role.backdrop && { backdrop: role.backdrop }), moods: {}, license: role.license, credits: role.credits, source: role.source };
 }
 
 // pets/index.json：这台机器上有哪些宠物包（蜂巢页的形象挑选读它）。以后用户上传的形象 = 多一个包目录，这里多一行。
@@ -33,7 +33,7 @@ function writeIndex(destDir) {
     let p;
     try { p = JSON.parse(fs.readFileSync(path.join(destDir, kind, 'pack.json'), 'utf8')); } catch { continue; }
     const idle = (p.moods && p.moods.idle) || [];
-    packs.push({ kind, name: p.name || kind, ...(p.image ? { image: p.image } : { cover: idle[0] || null }) });
+    packs.push({ kind, name: p.name || kind, ...(p.image ? { image: p.image, ...(p.backdrop && { backdrop: p.backdrop }) } : { cover: idle[0] || null }) });
   }
   fs.writeFileSync(path.join(destDir, 'index.json'), JSON.stringify({ packs }, null, 1) + '\n');
   return packs;

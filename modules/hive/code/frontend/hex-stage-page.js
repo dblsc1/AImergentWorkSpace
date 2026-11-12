@@ -410,7 +410,7 @@
         var ok = function (f) { return typeof f === "string" && f !== "" && f.split("/").every(function (seg) { return seg !== "" && seg !== "." && seg !== ".."; }); };
         var moods = {};
         Object.keys(p.moods).forEach(function (m) { moods[m] = Array.isArray(p.moods[m]) ? p.moods[m].filter(ok) : []; });
-        packs[kind] = { moods: moods, image: ok(p.image) ? p.image : null }; renderPets(); renderEye();
+        packs[kind] = { moods: moods, image: ok(p.image) ? p.image : null, backdrop: p.backdrop }; renderPets(); renderEye();
       }
     }).catch(function () { /* 素材还没下：占位形象 */ });
   }
@@ -425,7 +425,7 @@
   function stillOf(kind) {
     if (kind in stills) return stills[kind];
     stills[kind] = null;
-    FP.cutout(BASE + "hive/pets/" + encodeURIComponent(kind) + "/" + packs[kind].image.split("/").map(encodeURIComponent).join("/")).then(function (u) {
+    FP.cutout(BASE + "hive/pets/" + encodeURIComponent(kind) + "/" + packs[kind].image.split("/").map(encodeURIComponent).join("/"), packs[kind].backdrop).then(function (u) {
       if (u) { stills[kind] = u; renderPets(); renderEye(); } else delete stills[kind];
     });
     return null;

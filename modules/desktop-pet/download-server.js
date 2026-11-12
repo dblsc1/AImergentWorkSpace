@@ -4,8 +4,9 @@ const { downloadAll, writeIndex } = require('./assets-download');
 
 async function run({ destDir, baseUrl, stillsBaseUrl, manifest = require('./manifest.json'), stills = require('./manifest-stills.json'), moodMap = require('./mood-map.json'), fetch: fetchFn = fetch, log = console.log }) {
   const onProgress = (id, err) => err && log(`失败 ${id}: ${err.message}`);
-  const failed = (await downloadAll({ manifest, moodMap, destDir, fetch: fetchFn, ...(baseUrl && { baseUrl }), onProgress })).failed
-    .concat((await downloadAll({ manifest: stills, destDir, fetch: fetchFn, ...(stillsBaseUrl && { baseUrl: stillsBaseUrl }), onProgress })).failed);   // 静态形象（「三·5」）
+  const failed = (await downloadAll({ manifest, moodMap, destDir, fetch: fetchFn, ...(baseUrl && { baseUrl }), onProgress })).failed;
+  for (const one of [].concat(stills))   // 静态形象（「三·5」）：清单是一组来源，每个来源一个仓库的固定提交
+    failed.push(...(await downloadAll({ manifest: one, destDir, fetch: fetchFn, ...(stillsBaseUrl && { baseUrl: stillsBaseUrl }), onProgress })).failed);
   writeIndex(destDir);
   log(failed.length ? `宠物素材：${failed.length} 个文件没下完，下次 up 续` : '宠物素材：已齐');
   return failed;

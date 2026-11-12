@@ -213,6 +213,7 @@ Release 附件（连接脚本用的文件名）：`ai-detector-<tag>-<os>-<arch>
 | 2026-11-08 | v1（追加） | 连接脚本一键安装：ai-detector、ActivityWatch 检测、Claude Code 钩子、桌宠的下载校验安装与自启，`--uninstall` 全撤回；选项与 `HONEYCOMB_ASSETS`；Release 附件文件名 |
 | 2026-11-08 | v1（追加） | 桌宠安装包 mac-arm64 改在 macos-15 runner 上打（macos-14 起不来） |
 | 2026-11-12 | v1（追加） | 静态形象包与包清单 `index.json`（「三·5」）；ZipZipPipe 另外 6 个角色的立绘 |
+| 2026-11-12 | v1（追加） | 静态形象清单可有多个来源；`pack.json` / `index.json` 追加 `backdrop`；MiniMax 换成 ApprenTice 的 Q 版（「三·5」追加） |
 
 ## 七、桌宠安装包
 
@@ -239,3 +240,9 @@ Release 附件（连接脚本用的文件名）：`ai-detector-<tag>-<os>-<arch>
 - 许可：上游 `NOTICE.md` 记的是「作者声明开放分享、允许再创作」，没有核实到统一的许可证条文；按非商用对待，`pack.json` 的 `license` 照此写。任何收费产品、收费服务的页面与宣传里不用。署名 ZipZipPipe。
 - **包清单** `pets/index.json`：`pets-download` 每次跑完重写，`{ "packs": [ { "kind", "name", "cover": "<idle 的第一段>" | "image": "<文件名>" } ] }`，按 `kind` 排序，只列有 `pack.json` 的目录。蜂巢页的形象挑选表读它（`hive.stage.v1`「十一」）。
 - 老安装升级后要再跑一次 `pets-download` 才有清单和新形象；没跑之前挑选表显示「形象素材还没下好」，已有的宠物照常。
+
+2026-11-12 追加（仓主：「其他的有 q 版就拉进来」）：
+
+- `manifest-stills.json` 是一组来源，每个来源一个仓库的固定提交（各自的主地址与镜像）。
+- 第二个来源：<https://github.com/Apprentice-Geo/AI-Fanworks> `80d0cd91dc188a6950243e901b45dc5f5d26f029` 的 `ApprenTice/AI-Girls-and-Chibis/MiniMax-Chibi.png`，CC BY-NC-SA 4.0，署名 ApprenTice、原作 ZipZipPipe。`minimax` 改用这张 Q 版，不再用立绘。Mistral、Llama、混元、Seed 没找到 Q 版，仍是立绘。
+- 静态形象包的 `pack.json` 与 `index.json` 的那一行追加可选 `backdrop`：缺省 = 纯色底；`"gradient"` = 渐变底（页面换一种抠法，`hive.stage.v1`「十一」6）。

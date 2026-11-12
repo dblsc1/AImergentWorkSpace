@@ -1,92 +1,103 @@
-{
- "commit": "dcd69f5f4f2dff1a9c0031e82deb49e0fe949c76",
- "repo": "shuaizenge/ai-girls",
- "base": "https://raw.githubusercontent.com/shuaizenge/ai-girls",
- "mirror": "https://cdn.jsdelivr.net/gh/shuaizenge/ai-girls@dcd69f5f4f2dff1a9c0031e82deb49e0fe949c76",
- "roles": {
-  "qwen": {
-   "name": "千问娘",
-   "dir": "characters/qwen/chibi",
-   "license": "作者声明开放分享、允许再创作，非商用；统一许可证未核实",
-   "credits": "ZipZipPipe",
-   "source": "https://github.com/shuaizenge/ai-girls",
-   "files": [
-    {
-     "name": "zipzippipe-BV1tE9XBbErS-53s.png",
-     "size": 997530,
-     "sha256": "4f59aee4d8d4fa341a40b68f33d9593708f7eecfcb19c96ad8aa44d9bb844cb9"
-    }
-   ]
-  },
-  "mistral": {
-   "name": "Mistral 娘",
-   "dir": "characters/mistral/adult",
-   "license": "作者声明开放分享、允许再创作，非商用；统一许可证未核实",
-   "credits": "ZipZipPipe",
-   "source": "https://github.com/shuaizenge/ai-girls",
-   "files": [
-    {
-     "name": "zipzippipe-pixiv-148186519-p09.jpg",
-     "size": 1740561,
-     "sha256": "133844aca2cd82401125a2783207a902b6449f7c759b25905f3b0239cb775d80"
-    }
-   ]
-  },
-  "hunyuan": {
-   "name": "混元娘",
-   "dir": "characters/hunyuan/adult",
-   "license": "作者声明开放分享、允许再创作，非商用；统一许可证未核实",
-   "credits": "ZipZipPipe",
-   "source": "https://github.com/shuaizenge/ai-girls",
-   "files": [
-    {
-     "name": "zipzippipe-pixiv-150718881-p03.jpg",
-     "size": 1777100,
-     "sha256": "795b61234e6b7f6d315aaf784e1cbd97c9d4eb2d572d1dba46d23601f2485679"
-    }
-   ]
-  },
-  "llama": {
-   "name": "Llama 娘",
-   "dir": "characters/llama/adult",
-   "license": "作者声明开放分享、允许再创作，非商用；统一许可证未核实",
-   "credits": "ZipZipPipe",
-   "source": "https://github.com/shuaizenge/ai-girls",
-   "files": [
-    {
-     "name": "zipzippipe-pixiv-148186519-p13.jpg",
-     "size": 7841142,
-     "sha256": "efe928d775e432353cd9067a54f4fe4cf5a5bf7a9dd3611b27fb9f2b3867a120"
-    }
-   ]
-  },
-  "minimax": {
-   "name": "MiniMax 娘",
-   "dir": "characters/minimax/adult",
-   "license": "作者声明开放分享、允许再创作，非商用；统一许可证未核实",
-   "credits": "ZipZipPipe",
-   "source": "https://github.com/shuaizenge/ai-girls",
-   "files": [
-    {
-     "name": "zipzippipe-pixiv-148186519-p15.jpg",
-     "size": 8499425,
-     "sha256": "04febfc86453a5668d20cf2f2bc8ec5e80c5baeb4260df52f705a7926f9001a5"
-    }
-   ]
-  },
-  "seed": {
-   "name": "Seed 娘（豆包）",
-   "dir": "characters/seed/adult",
-   "license": "作者声明开放分享、允许再创作，非商用；统一许可证未核实",
-   "credits": "ZipZipPipe",
-   "source": "https://github.com/shuaizenge/ai-girls",
-   "files": [
-    {
-     "name": "zipzippipe-bilibili-1236803362705375305-p00.jpg",
-     "size": 5673986,
-     "sha256": "81b76f71e19ed9f926e32c70f1710b7551e60efdfa858b46a4ee099d16e47847"
-    }
-   ]
+[
+ {
+  "commit": "dcd69f5f4f2dff1a9c0031e82deb49e0fe949c76",
+  "repo": "shuaizenge/ai-girls",
+  "base": "https://raw.githubusercontent.com/shuaizenge/ai-girls",
+  "mirror": "https://cdn.jsdelivr.net/gh/shuaizenge/ai-girls@dcd69f5f4f2dff1a9c0031e82deb49e0fe949c76",
+  "roles": {
+   "qwen": {
+    "name": "千问娘",
+    "dir": "characters/qwen/chibi",
+    "license": "作者声明开放分享、允许再创作，非商用；统一许可证未核实",
+    "credits": "ZipZipPipe",
+    "source": "https://github.com/shuaizenge/ai-girls",
+    "files": [
+     {
+      "name": "zipzippipe-BV1tE9XBbErS-53s.png",
+      "size": 997530,
+      "sha256": "4f59aee4d8d4fa341a40b68f33d9593708f7eecfcb19c96ad8aa44d9bb844cb9"
+     }
+    ]
+   },
+   "mistral": {
+    "name": "Mistral 娘",
+    "dir": "characters/mistral/adult",
+    "license": "作者声明开放分享、允许再创作，非商用；统一许可证未核实",
+    "credits": "ZipZipPipe",
+    "source": "https://github.com/shuaizenge/ai-girls",
+    "files": [
+     {
+      "name": "zipzippipe-pixiv-148186519-p09.jpg",
+      "size": 1740561,
+      "sha256": "133844aca2cd82401125a2783207a902b6449f7c759b25905f3b0239cb775d80"
+     }
+    ]
+   },
+   "hunyuan": {
+    "name": "混元娘",
+    "dir": "characters/hunyuan/adult",
+    "license": "作者声明开放分享、允许再创作，非商用；统一许可证未核实",
+    "credits": "ZipZipPipe",
+    "source": "https://github.com/shuaizenge/ai-girls",
+    "files": [
+     {
+      "name": "zipzippipe-pixiv-150718881-p03.jpg",
+      "size": 1777100,
+      "sha256": "795b61234e6b7f6d315aaf784e1cbd97c9d4eb2d572d1dba46d23601f2485679"
+     }
+    ]
+   },
+   "llama": {
+    "name": "Llama 娘",
+    "dir": "characters/llama/adult",
+    "license": "作者声明开放分享、允许再创作，非商用；统一许可证未核实",
+    "credits": "ZipZipPipe",
+    "source": "https://github.com/shuaizenge/ai-girls",
+    "files": [
+     {
+      "name": "zipzippipe-pixiv-148186519-p13.jpg",
+      "size": 7841142,
+      "sha256": "efe928d775e432353cd9067a54f4fe4cf5a5bf7a9dd3611b27fb9f2b3867a120"
+     }
+    ]
+   },
+   "seed": {
+    "name": "Seed 娘（豆包）",
+    "dir": "characters/seed/adult",
+    "license": "作者声明开放分享、允许再创作，非商用；统一许可证未核实",
+    "credits": "ZipZipPipe",
+    "source": "https://github.com/shuaizenge/ai-girls",
+    "files": [
+     {
+      "name": "zipzippipe-bilibili-1236803362705375305-p00.jpg",
+      "size": 5673986,
+      "sha256": "81b76f71e19ed9f926e32c70f1710b7551e60efdfa858b46a4ee099d16e47847"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "commit": "80d0cd91dc188a6950243e901b45dc5f5d26f029",
+  "repo": "Apprentice-Geo/AI-Fanworks",
+  "base": "https://raw.githubusercontent.com/Apprentice-Geo/AI-Fanworks",
+  "mirror": "https://cdn.jsdelivr.net/gh/Apprentice-Geo/AI-Fanworks@80d0cd91dc188a6950243e901b45dc5f5d26f029",
+  "roles": {
+   "minimax": {
+    "name": "MiniMax 娘",
+    "dir": "ApprenTice/AI-Girls-and-Chibis",
+    "backdrop": "gradient",
+    "license": "CC BY-NC-SA 4.0",
+    "credits": "ApprenTice；原作 ZipZipPipe《大 AI 与小 AI 们》",
+    "source": "https://github.com/Apprentice-Geo/AI-Fanworks/tree/main/ApprenTice/AI-Girls-and-Chibis",
+    "files": [
+     {
+      "name": "MiniMax-Chibi.png",
+      "size": 1795012,
+      "sha256": "e49537c73e22e713bb67cac2ccbee965a1dee6a25cd804f3593230b83eb110b2"
+     }
+    ]
+   }
   }
  }
-}
+]
