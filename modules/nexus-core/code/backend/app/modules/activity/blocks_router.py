@@ -46,6 +46,12 @@ def block_records(date: Date, blockKey: Annotated[str, Query(min_length=1, max_l
     return blocks.block_records(date, blockKey)
 
 
+@router.get("/blocks/range", dependencies=[Depends(no_bearer)])
+def range_blocks(from_: Annotated[Date, Query(alias="from")], to: Date,
+                 limit: Annotated[int, Query(ge=1, le=blocks.RANGE_BLOCKS)] = blocks.RANGE_BLOCKS) -> dict:
+    return blocks.range_blocks(from_, to, limit)
+
+
 # ── 窗口块写 ──
 
 

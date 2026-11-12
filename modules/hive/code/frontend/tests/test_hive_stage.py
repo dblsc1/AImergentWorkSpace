@@ -84,6 +84,12 @@ class Stage:
         elif key == "activity/blocks/records":
             block = parse_qs(urlsplit(req.url).query).get("blockKey", [""])[0]
             body = {"items": self.records_by_block.get(block, self.records), "truncated": False}
+        elif key == "activity/blocks/range":      # nexus-core v2.56：一段日期里每天的块，带所属日期与原始记录
+            q = parse_qs(urlsplit(req.url).query)
+            lo, hi = q.get("from", [""])[0], q.get("to", [""])[0]
+            items = [{**b, "date": b.get("date") or (datetime.fromisoformat(b["lastAt"]).astimezone(TZ).date().isoformat() if b.get("lastAt") else self.lanes.get("today")),
+                      "records": self.records_by_block.get(b["blockKey"], self.records)} for b in self.blocks]
+            body = {"from": lo, "to": hi, "items": [b for b in items if lo <= b["date"] <= hi]}
         elif key == "activity/settings":
             body = self.settings
         elif key == "timer/unplaced":

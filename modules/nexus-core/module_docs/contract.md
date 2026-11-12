@@ -4991,6 +4991,15 @@ MCP 侧见 `contracts/mcp.tools.v2`。
 - `agents[]` 每个元素追加：`tool`（运行的 `tool`，可为 `null`）、`laneKey`（代理身份键，同 `views/lanes` 的 `lane_key`：同一个 agent + 同一个 label（折叠空白、不分大小写）+ 同一类已验证 / 未验证 = 同一个代理）、`projectId`（这条运行**现在**的去向，可为 `null`）、`running`（未结束）、`lost`、`phase`（最近一条相位：`working` / `waiting_input` / `waiting_permission` / `idle` / `error`，没有相位 = `working`）、`attend: [{start, end}]`（人在看这条运行的区间，裁到窗口且不晚于 `now`，按 `start` 升序）。
 - 仍然只有窗口内有干活区间的运行才出现在 `agents` 里。既有字段、端点一个不改；不新增集合 / 错误码。
 
+## v0.6：窗口块按日期范围一次读（v2.56，追加式）
+
+仓主 2026-11-12：人的页面「周」档、默认 7 天视图里的窗口记录要覆盖整个范围，不能逐块逐日并发去读。
+
+- `GET activity/blocks/range?from=YYYY-MM-DD&to=YYYY-MM-DD[&limit=n]`（只读；只许人，带 Bearer 的 `403`，同 `activity/blocks`）：`from`、`to` 为本地日（含两端），至多 8 天，`to` 早于 `from` 或超过 8 天 → `422`。
+- `limit`：每天取秒数最多的块数，缺省 40，范围 1–40（超界 `422`）。
+- 返回 `{from, to, items}`，`items` 按日期升序、同一天按 `seconds` 降序；每项是 `activity/blocks` 的块（同字段）再追加 `date`（所属本地日）与 `records: [{startAt, endAt, seconds, app, title}]`（同 `activity/blocks/records` 的字段，按开始时间升序，每块至多 5000 条）。
+- 不改 `activity/blocks`、`activity/blocks/records`；不新增集合 / 错误码。
+
 ## 变更记录
 
 见 `module_docs/contract-changelog.md`（从本文件拆出，只记历史不含规范）。

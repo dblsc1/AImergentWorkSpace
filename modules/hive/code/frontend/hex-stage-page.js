@@ -199,6 +199,7 @@
           busy--;
           if (r && r.ok && !taskId) fileBubble(item, pid, r);
           if (r && r.ok) PP.invalidate();
+          if (r && r.ok && o.afterFile) o.afterFile();
           render();
           if (r && r.ok) refresh();
         });
@@ -1091,25 +1092,39 @@
     var v = slot.querySelector("video");
     if (v) v.addEventListener("error", function () { slot.dataset.key = "svg"; slot.innerHTML = PLACEHOLDER; });
   }
-  // 逐任务那一张里正在跑的计时卡：拖到项目格 / 任务条 = 弹确认卡「把这次计时记到 …」；落在别处卡片回原位。拖着时离开原位置（fixed）免得被卡片栏裁掉
-  function dragTimerCard(card, pid) {
+  // 人的页面里的卡片拖起来时离开原位置（fixed）免得被卡片栏裁掉，原处留一个同高的空位；home() 放回
+  function liftCard(card) {
     var hole = null;
-    function home() { ["position", "left", "top", "width", "height", "translate"].forEach(function (k) { card.style[k] = ""; }); if (hole) { hole.remove(); hole = null; } }
-    drag(card, { el: card, unzoomed: true, item: function () { return stage.timerRunning() ? { kind: "clock" } : null; },
-      onClick: function () { if (pid) { clockMenu.close(); openPanel(pid); } },
-      onGrab: function () {
+    return {
+      grab: function () {
         var r = card.getBoundingClientRect();
         hole = document.createElement("div"); hole.className = "hp-hole"; hole.style.height = r.height + "px"; card.before(hole);
         card.style.position = "fixed"; card.style.left = r.left + "px"; card.style.top = r.top + "px"; card.style.width = r.width + "px"; card.style.height = r.height + "px";
       },
-      afterCreate: home,
+      home: function () { ["position", "left", "top", "width", "height", "translate"].forEach(function (k) { card.style[k] = ""; }); if (hole) { hole.remove(); hole = null; } }
+    };
+  }
+  // 逐任务那一张里正在跑的计时卡：拖到项目格 / 任务条 = 弹确认卡「把这次计时记到 …」；落在别处卡片回原位
+  function dragTimerCard(card, pid) {
+    var lift = liftCard(card);
+    drag(card, { el: card, unzoomed: true, item: function () { return stage.timerRunning() ? { kind: "clock" } : null; },
+      onClick: function () { if (pid) { clockMenu.close(); openPanel(pid); } },
+      onGrab: lift.grab,
+      afterCreate: lift.home,
       onRelease: function (target, cancel, dx, dy, made, on) {
-        if (made) { home(); return "keep"; }
+        if (made) { lift.home(); return "keep"; }
         var to = on ? on.projectId : target && !cancel ? target.dataset.projectId : null;
-        home();
+        lift.home();
         if (to) openEyeConfirm({ kind: "clock" }, to, (on && on.taskId) || null, function () {});
         return "keep";
       } });
+  }
+  // 窗口记录里的卡片：同未分类桶里的窗口块，拖到项目格 / 任务泳道 = 归类（含改归）；落在别处回原位不发请求。归完 done() 让卡片重读颜色
+  function dragBlockCard(card, block, done) {
+    var lift = liftCard(card);
+    drag(card, { el: card, unzoomed: true, item: function () { return { kind: "block", block: block }; },
+      onGrab: lift.grab, afterCreate: done, afterFile: done,
+      onRelease: function (target, cancel, dx, dy, made) { lift.home(); return made ? "keep" : undefined; } });
   }
 
   // 时钟：短按 = 人的页面（三张卡），长按 = 计时气泡（正计时 / 倒计时 / 停止）；计时中拖时钟到格子 = 记到该项目。时钟自己不挪位
@@ -1121,7 +1136,7 @@
     clockMenu = CM.mount({
       clock: el, now: Date.now, getLanes: function () { return data.lanes; }, projectName: projectName, getJson: getJson,
       projectColor: function (pid) { var c = cellEl(pid); return c ? getComputedStyle(c).getPropertyValue("--zone-raw").trim() : ""; },
-      taskLabel: timeLabelOf, fillFigure: fillHumanFigure, dragTimer: dragTimerCard,
+      taskLabel: timeLabelOf, fillFigure: fillHumanFigure, dragTimer: dragTimerCard, dragBlock: dragBlockCard,
       openProject: function (pid) { clockMenu.close(); openPanel(pid); },
       fillIssues: function (box, list) { window.HexSourceHealth.fill(box, list); }, timerRunning: function () { return stage.timerRunning(); },
       startClock: function (sec) { after(stage.startClock(sec)); }, stopClock: function () { after(stage.clickClock()); },

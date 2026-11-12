@@ -165,3 +165,27 @@ def block_records(d: Date, key: str) -> dict:
     rows = records_repo.block_records(user, d.isoformat(), key, MAX_RECORDS + 1)
     return {"items": [{k: r[k] for k in ("startAt", "endAt", "seconds", "app", "title", "deviceId")} for r in rows[:MAX_RECORDS]],
             "truncated": len(rows) > MAX_RECORDS}
+
+
+RANGE_DAYS, RANGE_BLOCKS = 8, 40
+
+
+def range_blocks(d_from: Date, d_to: Date, per_day: int) -> dict:
+    """v2.56：一段本地日（至多 ``RANGE_DAYS`` 天）里每天秒数最多的 ``per_day`` 个块，带所属日期与原始记录；一次读完，免得逐块逐日去读。"""
+    days = (d_to - d_from).days + 1
+    if days < 1 or days > RANGE_DAYS:
+        raise UnprocessableError(f"from / to 必须是 1 到 {RANGE_DAYS} 天的日期范围")
+    user, tz, out = current_tenant(), config.settings.tz, []
+    housekeeping(user)
+    for i in range(days):
+        d = d_from + timedelta(days=i)
+        recs = records_repo.day_records(user, d.isoformat())
+        by: dict[str, list[dict]] = {}
+        for r in sorted(recs, key=lambda r: r["startTs"]):
+            by.setdefault(r["blockKey"], []).append(r)
+        for it in sorted(_items(user, d, recs=recs), key=lambda i: (-i["seconds"], i["blockKey"]))[:per_day]:
+            rows = by.get(it["blockKey"], [])[:MAX_RECORDS]
+            out.append({**it, "date": d.isoformat(), "records": [
+                {"startAt": r["startTs"].astimezone(tz).isoformat(), "endAt": r["endTs"].astimezone(tz).isoformat(),
+                 "seconds": r["seconds"], "app": r["app"], "title": r["title"]} for r in rows]})
+    return {"from": d_from.isoformat(), "to": d_to.isoformat(), "items": out}
