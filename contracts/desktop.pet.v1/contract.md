@@ -212,6 +212,7 @@ Release 附件（连接脚本用的文件名）：`ai-detector-<tag>-<os>-<arch>
 | 2026-11-08 | v1（追加） | 桌宠安装包（「七」） |
 | 2026-11-08 | v1（追加） | 连接脚本一键安装：ai-detector、ActivityWatch 检测、Claude Code 钩子、桌宠的下载校验安装与自启，`--uninstall` 全撤回；选项与 `HONEYCOMB_ASSETS`；Release 附件文件名 |
 | 2026-11-08 | v1（追加） | 桌宠安装包 mac-arm64 改在 macos-15 runner 上打（macos-14 起不来） |
+| 2026-11-12 | v1（追加） | 静态形象包与包清单 `index.json`（「三·5」）；ZipZipPipe 另外 6 个角色的立绘 |
 
 ## 七、桌宠安装包
 
@@ -229,3 +230,12 @@ Release 附件（连接脚本用的文件名）：`ai-detector-<tag>-<os>-<arch>
 - 不签名、不公证：系统会弹安全提示，属预期。
 - 不含宠物素材，首次启动照旧下载。
 - 以上文件名是对安装器的接口，只增不改。
+
+## 三·5 静态形象包与包清单（规范性，2026-11-12 追加，仓主：「把这些新素材也弄进来」）
+
+- **静态形象包** = `pets/<种类>/pack.json` 加一张图：`{ "kind", "name", "image": "<文件名>", "moods": {}, "license", "credits", "source" }`。没有动画；只认 `moods` 的读方（桌宠程序）当它没有动作，本版桌宠程序不下载也不使用它们。
+- 来源固定到一个提交：<https://github.com/shuaizenge/ai-girls> `dcd69f5f4f2dff1a9c0031e82deb49e0fe949c76`，ZipZipPipe 的 6 个角色各一张原图：千问（`qwen`，Q 版）、Mistral（`mistral`）、混元（`hunyuan`）、Llama（`llama`）、MiniMax（`minimax`）、Seed / 豆包（`seed`）。清单 `modules/desktop-pet/manifest-stills.json`（大小 + SHA-256）。换提交 / 加角色 = 改清单并在这里追加一行。
+- 同「三·2」：**不进本仓 git、不进发布包**，只由服务端 `pets-download` 下到 `/hive/pets/` 的卷；原图原样保存，抠底在页面上做，不另存改过的图。
+- 许可：上游 `NOTICE.md` 记的是「作者声明开放分享、允许再创作」，没有核实到统一的许可证条文；按非商用对待，`pack.json` 的 `license` 照此写。任何收费产品、收费服务的页面与宣传里不用。署名 ZipZipPipe。
+- **包清单** `pets/index.json`：`pets-download` 每次跑完重写，`{ "packs": [ { "kind", "name", "cover": "<idle 的第一段>" | "image": "<文件名>" } ] }`，按 `kind` 排序，只列有 `pack.json` 的目录。蜂巢页的形象挑选表读它（`hive.stage.v1`「十一」）。
+- 老安装升级后要再跑一次 `pets-download` 才有清单和新形象；没跑之前挑选表显示「形象素材还没下好」，已有的宠物照常。

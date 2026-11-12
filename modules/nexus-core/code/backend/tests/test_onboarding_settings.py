@@ -88,6 +88,13 @@ def test_pet_put(old):
         assert _put(old, 1, pet=bad).status_code == 422
 
 
+def test_pet_human_pack(old):  # v2.53：人自己的形象
+    assert _put(old, 0, pet={"packsByTool": {"codex": "x"}, "humanPack": "kimi"}).json()["pet"] == {"packsByTool": {"codex": "x"}, "humanPack": "kimi"}
+    assert _put(old, 1, pet={"packsByTool": {"codex": "x"}}).json()["pet"] == {"packsByTool": {"codex": "x"}}   # pet 整块替换；省了 = 没选
+    for bad in ("", 1, "x" * 65):
+        assert _put(old, 2, pet={"packsByTool": {}, "humanPack": bad}).status_code == 422
+
+
 def test_s12_if_match(old):
     assert old.put(SET, json={"tiers": False, "agentDirect": OFF}).status_code == 428
     assert _put(old, 7).status_code == 412

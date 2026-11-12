@@ -191,7 +191,7 @@ def test_tiers_off_keeps_old_panel(browser, base) -> None:  # noqa: F811
             assert hive.page.locator(".hd-cols .hd-col-pend").count() == 1 and hive.page.locator(".ht-body").count() == 0
             assert hive.page.locator(".hd-panel").get_attribute("data-tiers") is None
             assert not any(p.startswith("activity/blocks") for _, p, _ in hive.reqs), "关着时一个块端点都不读"
-            assert [p for _, p, _ in hive.reqs].count("activity/settings") == 1
+            assert [p for _, p, _ in hive.reqs].count("activity/settings") == 2   # 决策栏一次 + 蜂巢页启动读形象一次
 
 
 def test_sections_order_and_counts(browser, base) -> None:  # noqa: F811

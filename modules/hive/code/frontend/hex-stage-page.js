@@ -5,7 +5,7 @@
   "use strict";
   var BASE = (typeof self !== "undefined" && self.HONEYCOMB_BASE) || "/";
   var API = BASE + "api/core/";
-  var CM = window.HexClockMenu, St = window.NexusTableHexStage, Rec = window.NexusTableHexRecord, Pk = window.NexusTableHexPetPick, Pr = window.NexusTableHexProjectRuler, CS = window.NexusTableHexCentreStats;
+  var CM = window.HexClockMenu, St = window.NexusTableHexStage, Rec = window.NexusTableHexRecord, Pk = window.NexusTableHexPetPick, Pr = window.NexusTableHexProjectRuler, CS = window.NexusTableHexCentreStats, FP = window.HexFigurePick;
   var shell = document.querySelector(".board-shell");
   if (!St || !Rec || !Pk || !Pr || !CS || !CM || !shell) return;
 
@@ -69,6 +69,24 @@
   function packsByTool() {
     var p = data.settings && data.settings.pet && data.settings.pet.packsByTool;
     return p || Pk.DEFAULT_PACKS_BY_TOOL;
+  }
+  // 人自己的形象用哪个包（hive.stage.v1「十一」）；没选过用缺省
+  var HUMAN_PACK = "kimi";
+  function humanPack() { var p = data.settings && data.settings.pet; return (p && p.humanPack) || HUMAN_PACK; }
+  // 改形象：读最新的账号设置，改 pet 这一块，带版本号写回
+  function savePet(change) {
+    return getJson("activity/settings").then(function (set) {
+      if (!set) return null;
+      var pet = Object.assign({}, set.pet); pet.packsByTool = Object.assign({}, pet.packsByTool || Pk.DEFAULT_PACKS_BY_TOOL); change(pet);
+      return fetch(API + "activity/settings", { method: "PUT", headers: { "Content-Type": "application/json", "If-Match": '"' + set.version + '"' },
+        body: JSON.stringify({ tiers: set.tiers, agentDirect: set.agentDirect, pet: pet }) }).then(function (r) { return r.ok ? r.json() : null; });
+    }).catch(function () { return null; }).then(function (set) {
+      if (set) data.settings = set; else stage.say("失败：形象没存上");
+      render();
+    });
+  }
+  function pickFigure(o) {
+    FP.open({ title: o.title, base: BASE + "hive/pets/", current: o.current, near: o.near, placeholder: PLACEHOLDER, onPick: function (kind) { savePet(function (pet) { o.set(pet, kind); }); } });
   }
   // lanes 的运行没有 phase 键：当前相位 = phases 的最后一条
   function runsOf() {
@@ -392,7 +410,7 @@
         var ok = function (f) { return typeof f === "string" && f !== "" && f.split("/").every(function (seg) { return seg !== "" && seg !== "." && seg !== ".."; }); };
         var moods = {};
         Object.keys(p.moods).forEach(function (m) { moods[m] = Array.isArray(p.moods[m]) ? p.moods[m].filter(ok) : []; });
-        packs[kind] = { moods: moods }; renderPets();
+        packs[kind] = { moods: moods, image: ok(p.image) ? p.image : null }; renderPets(); renderEye();
       }
     }).catch(function () { /* 素材还没下：占位形象 */ });
   }
@@ -402,7 +420,19 @@
     '<circle cx="20" cy="27" r="3" fill="var(--panel)"/><circle cx="36" cy="27" r="3" fill="var(--panel)"/>' +
     '<circle cx="20.8" cy="27.4" r="1.4" fill="var(--ink)"/><circle cx="36.8" cy="27.4" r="1.4" fill="var(--ink)"/>' +
     '<path d="M23 36 q5 4 10 0" stroke="var(--ink)" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>';
+  // 静态形象包（pack.json 的 image）：抠好底的图，没好之前先用占位
+  var stills = {};
+  function stillOf(kind) {
+    if (kind in stills) return stills[kind];
+    stills[kind] = null;
+    FP.cutout(BASE + "hive/pets/" + encodeURIComponent(kind) + "/" + packs[kind].image.split("/").map(encodeURIComponent).join("/")).then(function (u) {
+      if (u) { stills[kind] = u; renderPets(); renderEye(); } else delete stills[kind];
+    });
+    return null;
+  }
   function mediaFor(pet, file) {
+    var still = !file && packs[pet.pack] && packs[pet.pack].image && stillOf(pet.pack);
+    if (still) return { key: still, html: '<img class="st-art st-still" alt="" src="' + esc(still) + '">' };
     if (!file) return { key: "svg", html: PLACEHOLDER };
     var url = BASE + "hive/pets/" + encodeURIComponent(pet.pack) + "/" + file.split("/").map(encodeURIComponent).join("/");
     return { key: url, html: '<video class="st-art" src="' + esc(url) + '" autoplay loop muted playsinline></video>' };
@@ -562,6 +592,21 @@
   function runById(id) { return runsOf().filter(function (r) { return r.runId === id; })[0] || null; }
   function bindPetDrag(e) {
     if (e.__bound) return; e.__bound = 1;
+    // 长按（不挪）= 挑这个 AI 的形象：按它的 tool 记进宠物包对照；随后那下松手不算点击
+    var hold = { t: 0, x: 0, y: 0, fired: false };
+    function unhold() { clearTimeout(hold.t); }
+    e.addEventListener("pointerdown", function (ev) {
+      if (ev.button > 0) return;
+      unhold(); hold.fired = false; hold.x = ev.clientX; hold.y = ev.clientY;
+      hold.t = setTimeout(function () {
+        var r = e.__run; if (!r || e.classList.contains("st-dragging")) return;
+        hold.fired = true;
+        var key = r.tool || "*";
+        pickFigure({ title: (r.tool || r.agent || "AI") + " 的形象", current: e.__pet.pack, near: e.querySelector(".st-pet-in"), set: function (pet, kind) { pet.packsByTool[key] = kind; } });
+      }, CM.HOLD_MS);
+    });
+    e.addEventListener("pointermove", function (ev) { if (Pk.pressKind(ev.clientX - hold.x, ev.clientY - hold.y) !== "click") unhold(); });
+    e.addEventListener("pointerup", unhold); e.addEventListener("pointercancel", unhold);
     drag(e, {
       el: e,
       item: function () {
@@ -569,7 +614,7 @@
         if (!r) return null;
         return { kind: "pet", runId: r.runId, agent: r.agent };
       },
-      onClick: function () { poke(e); toggleCard({ runId: e.dataset.runId }, e); },
+      onClick: function () { if (hold.fired) { hold.fired = false; return; } poke(e); toggleCard({ runId: e.dataset.runId }, e); },
       onGrab: function () {
         var s = ixOf(e.dataset.runId); s.mode = "drag"; s.walking = false; s.click = null;
         e.classList.remove("st-away"); syncClip(e);
@@ -723,8 +768,8 @@
     el.querySelector(".hs").setAttribute("transform", "rotate(" + s * 6 + " 50 50)");
   }
   // ── 眼睛：人此刻的聚焦（hive.stage.v1「十」）。时钟不动，飞来飞去的是它 ──
-  var EYE = '<svg viewBox="0 0 24 24" aria-hidden="true"><g class="st-eye-open"><path class="st-eye-lid" d="M2 12C5.4 6.8 8.7 5 12 5s6.6 1.8 10 7c-3.4 5.2-6.7 7-10 7s-6.6-1.8-10-7Z"/><circle class="st-eye-iris" cx="12" cy="12" r="3.9"/><circle class="st-eye-glint" cx="13.5" cy="10.6" r="1.1"/></g>' +
-    '<path class="st-eye-shut" d="M3 11.5c3.2 3.4 6.1 4.6 9 4.6s5.8-1.2 9-4.6M6.3 14.8l-1.3 2M12 16.2v2.4M17.7 14.8l1.3 2"/></svg><span class="st-eye-win"></span>';
+  // 形象：人自己挑的那个宠物包，右上角一滴汗 = 这是人
+  var EYE = '<div class="st-media"></div><svg class="st-eye-drop" viewBox="0 0 12 16" aria-hidden="true"><path d="M6 1C8.6 5 10.5 7.6 10.5 10.2a4.5 4.5 0 0 1-9 0C1.5 7.6 3.4 5 6 1Z"/></svg><span class="st-eye-win"></span>';
   function focusNow() { return (data.current && data.current.focus) || (data.lanes && data.lanes.human && data.lanes.human.focus) || null; }
   function eyeNow() { return St.eyeHost(focusNow(), stage.timerState()); }
   function hostProject() { var h = eyeNow(); return h.at === "project" ? h.project : null; }
@@ -750,6 +795,16 @@
     el.classList.toggle("is-timing", h.by === "timer");
     el.classList.toggle("is-live", !!eyeItem());
     el.querySelector(".st-eye-win").textContent = h.at === "tray" && f ? St.focusLabel(f) : "";
+    var kind = humanPack(), slot = el.querySelector(".st-media");
+    loadPack(kind);
+    eye.rhythm = Pk.rhythm(eye.pack === kind ? eye.rhythm : null, packs[kind] && packs[kind].moods, h.closed ? "idle" : h.by === "timer" ? "working" : "waiting", Date.now(), Math.random);
+    eye.pack = kind;
+    var m = mediaFor({ pack: kind }, eye.rhythm.file);
+    if (slot.dataset.key !== m.key) {
+      slot.dataset.key = m.key; slot.innerHTML = m.html;
+      var v = slot.querySelector("video");
+      if (v) v.addEventListener("error", function () { slot.dataset.key = "svg"; slot.innerHTML = PLACEHOLDER; });
+    }
     if (eye.hold || el.classList.contains("st-dragging")) return;   // 拖着 / 等确认卡：留在原地
     var t = eyeTarget(h);
     if (eye.host === null) { eye.host = key; eye.x = t.x; eye.y = t.y; place(el, t); return; }
@@ -1006,7 +1061,8 @@
     clockMenu = CM.mount({
       clock: el, now: Date.now, dayStart: dayStart, getLanes: function () { return data.lanes; }, projectName: projectName, getJson: getJson,
       fillIssues: function (box, list) { window.HexSourceHealth.fill(box, list); }, timerRunning: function () { return stage.timerRunning(); },
-      startClock: function (sec) { after(stage.startClock(sec)); }, stopClock: function () { after(stage.clickClock()); }
+      startClock: function (sec) { after(stage.startClock(sec)); }, stopClock: function () { after(stage.clickClock()); },
+      pickHuman: function () { pickFigure({ title: "我的形象", current: humanPack(), near: el, set: function (pet, kind) { pet.humanPack = kind; } }); }
     });
     var tap = function () { if (!clockMenu.consumedHold()) clockMenu.open(); };
     // 眼睛：点 = 同点时钟；拖到项目格 / 任务条 = 弹确认卡再改；拖到空白处亮满 = 建项目（那张表单就是确认）；别处 = 飞回
@@ -1072,7 +1128,8 @@
     var slow = polls++ % 6 === 0;
     // 三级分类关着时不读窗口块、也不多读账号设置（决策栏启动后会在 .hd-panel 上挂 data-tiers）
     var tiers = !!document.querySelector(".hd-panel[data-tiers]");
-    return (tiers && (slow || !data.settings) ? getJson("activity/settings") : Promise.resolve(null)).then(function (set) {
+    // 账号设置：启动读一次（形象要用）；之后慢轮询只在三级分类开着、或还没读到时
+    return (slow && (tiers || !data.settings) ? getJson("activity/settings") : Promise.resolve(null)).then(function (set) {
       if (set) data.settings = set;
       return Promise.all([
         getJson("views/lanes"), getJson("views/current"), slow ? getJson("views/tree") : null,

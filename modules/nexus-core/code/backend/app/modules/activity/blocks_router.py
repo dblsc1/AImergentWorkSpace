@@ -215,6 +215,7 @@ class _Pet(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     packsByTool: Annotated[dict[Annotated[StrictStr, Field(min_length=1, max_length=64)], Annotated[StrictStr, Field(min_length=1, max_length=64)]], Field(max_length=64)]
+    humanPack: Annotated[StrictStr, Field(min_length=1, max_length=64)] | None = None  # 人自己的形象用哪个宠物包（v2.53）；省 = 没选
 
 
 class SettingsIn(BaseModel):
@@ -252,7 +253,7 @@ async def put_settings(request: Request, response: Response) -> dict:
     b = await _human(request, SettingsIn, "改账号设置")
     return _etag(response, await run_in_threadpool(activity_settings.put, request.headers.get("if-match"),
                                                    b.tiers, b.agentDirect.model_dump(), b.highConfidenceThresholdPercent,
-                                                   {k: (v.model_dump() if k == "pet" else v) for k in _NEW_KEYS
+                                                   {k: (v.model_dump(exclude_none=True) if k == "pet" else v) for k in _NEW_KEYS
                                                     if k in b.model_fields_set and (v := getattr(b, k)) is not None}))
 
 

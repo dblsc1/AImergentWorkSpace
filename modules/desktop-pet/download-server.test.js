@@ -14,6 +14,8 @@ const manifest = {
   roles: { gpt: { name: 'GPT', dir: 'd', license: 'L', credits: 'C', source: 'S', files: [{ name: 'a.webm', size: body.length, sha256: crypto.createHash('sha256').update(body).digest('hex') }] } },
 };
 
+const stills = { commit: 's', roles: { qwen: { name: '千问娘', dir: 'c', license: 'L', credits: 'C', source: 'S', files: [{ name: 'q.png', size: body.length, sha256: manifest.roles.gpt.files[0].sha256 }] } } };
+
 test('run 下到目录、生成 pack.json；再跑不重复请求', async () => {
   let hits = 0;
   const srv = http.createServer((_, res) => { hits++; res.writeHead(200); res.end(body); });
@@ -21,19 +23,21 @@ test('run 下到目录、生成 pack.json；再跑不重复请求', async () => 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-'));
   const baseUrl = `http://127.0.0.1:${srv.address().port}`;
   try {
-    assert.deepEqual(await run({ destDir: dir, baseUrl, manifest, moodMap, log: () => {} }), []);
+    assert.deepEqual(await run({ destDir: dir, baseUrl, stillsBaseUrl: baseUrl, manifest, stills, moodMap, log: () => {} }), []);
     assert.deepEqual(fs.readFileSync(path.join(dir, 'gpt', 'a.webm')), body);
     assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'gpt', 'pack.json'), 'utf8')).kind, 'gpt');
-    assert.equal(hits, 1);
-    await run({ destDir: dir, baseUrl, manifest, moodMap, log: () => {} });
-    assert.equal(hits, 1);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'qwen', 'pack.json'), 'utf8')), { kind: 'qwen', name: '千问娘', image: 'q.png', moods: {}, license: 'L', credits: 'C', source: 'S' });
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8')).packs, [{ kind: 'gpt', name: 'GPT', cover: 'a.webm' }, { kind: 'qwen', name: '千问娘', image: 'q.png' }]);
+    assert.equal(hits, 2);
+    await run({ destDir: dir, baseUrl, stillsBaseUrl: baseUrl, manifest, stills, moodMap, log: () => {} });
+    assert.equal(hits, 2);
   } finally { srv.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('下不动时返回失败清单、不抛', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-'));
   try {
-    const failed = await run({ destDir: dir, baseUrl: 'http://127.0.0.1:1', manifest, moodMap, log: () => {} });
-    assert.deepEqual(failed, ['gpt/a.webm']);
+    const failed = await run({ destDir: dir, baseUrl: 'http://127.0.0.1:1', stillsBaseUrl: 'http://127.0.0.1:1', manifest, stills, moodMap, log: () => {} });
+    assert.deepEqual(failed, ['gpt/a.webm', 'qwen/q.png']);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

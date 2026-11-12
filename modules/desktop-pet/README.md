@@ -33,5 +33,6 @@ Linux 本版只支持 X11 / XWayland。macOS 不抢焦点、无 Dock 图标。
 素材不进仓库：第一次启动从 [Houraiji9/ai-pet-7in1](https://github.com/Houraiji9/ai-pet-7in1) 固定提交 `08f2c6f3b2771f2c65ff4d6c14c8dfecba9647bc` 下载到数据目录 `pets/`（`manifest.json` 记了每个文件的大小与 SHA-256，断了下次续）。没下完用内置占位形象。
 
 - 角色素材：CC BY-NC-SA 4.0。原作 ZipZipPipe《大 AI 与小 AI 们》，改编参考图 ApprenTice。
+- 蜂巢页另用 6 张静态立绘（千问、Mistral、混元、Llama、MiniMax、Seed）：原作 ZipZipPipe，取自 [shuaizenge/ai-girls](https://github.com/shuaizenge/ai-girls) 固定提交，同样不进仓库；作者声明开放分享、允许再创作，按非商用对待。
 - DeepSeek 娘动画来自 [dsh-pet](https://github.com/PC2005-cloud/dsh-pet)，**禁止商用**。
 - 任何收费产品、收费服务不得使用这些素材。

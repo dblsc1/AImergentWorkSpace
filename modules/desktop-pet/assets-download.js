@@ -20,6 +20,24 @@ function buildPack(kind, role, moodMap) {
   return { kind, name: role.name, moods, license: role.license, credits: role.credits, source: role.source };
 }
 
+// 静态形象包（desktop.pet.v1「三·5」）：一张图，没有动画；moods 全空，只认 moods 的读方当它没有动作。
+function buildStillPack(kind, role) {
+  return { kind, name: role.name, image: role.files[0].name, moods: {}, license: role.license, credits: role.credits, source: role.source };
+}
+
+// pets/index.json：这台机器上有哪些宠物包（蜂巢页的形象挑选读它）。以后用户上传的形象 = 多一个包目录，这里多一行。
+function writeIndex(destDir) {
+  const packs = [];
+  for (const kind of fs.readdirSync(destDir).sort()) {
+    let p;
+    try { p = JSON.parse(fs.readFileSync(path.join(destDir, kind, 'pack.json'), 'utf8')); } catch { continue; }
+    const idle = (p.moods && p.moods.idle) || [];
+    packs.push({ kind, name: p.name || kind, ...(p.image ? { image: p.image } : { cover: idle[0] || null }) });
+  }
+  fs.writeFileSync(path.join(destDir, 'index.json'), JSON.stringify({ packs }, null, 1) + '\n');
+  return packs;
+}
+
 const sha256File = f => new Promise((ok, no) => {
   const h = crypto.createHash('sha256');
   fs.createReadStream(f).on('data', d => h.update(d)).on('end', () => ok(h.digest('hex'))).on('error', no);
@@ -51,7 +69,7 @@ async function fetchOne(role, spec, dir, url, fetchFn) {
 }
 
 // 返回 {failed: ['<kind>/<name>', ...]}；某个文件失败不影响其他文件。
-async function downloadAll({ manifest, moodMap, destDir, baseUrl = DEFAULT_BASE, fetch: fetchFn = fetch, onProgress = () => {}, onRoleDone = () => {} }) {
+async function downloadAll({ manifest, moodMap, destDir, baseUrl = manifest.base || DEFAULT_BASE, fetch: fetchFn = fetch, onProgress = () => {}, onRoleDone = () => {} }) {
   const failed = [];
   for (const [kind, role] of Object.entries(manifest.roles)) {
     const dir = path.join(destDir, kind);
@@ -64,7 +82,8 @@ async function downloadAll({ manifest, moodMap, destDir, baseUrl = DEFAULT_BASE,
       try { await fetchOne(role, spec, dir, url, fetchFn); okNames.add(spec.name); onProgress(id); }
       catch (e) { failed.push(id); onProgress(id, e); }
     }
-    const pack = buildPack(kind, { ...role, files: role.files.filter(f => okNames.has(f.name)) }, moodMap);
+    const pack = moodMap ? buildPack(kind, { ...role, files: role.files.filter(f => okNames.has(f.name)) }, moodMap)
+      : okNames.size ? buildStillPack(kind, role) : null;   // 没给 moodMap = 静态形象清单
     if (pack && !role.files.some(f => !okNames.has(f.name))) {
       fs.writeFileSync(path.join(dir, 'pack.json'), JSON.stringify(pack, null, 1) + '\n');
       onRoleDone(kind);
@@ -73,4 +92,4 @@ async function downloadAll({ manifest, moodMap, destDir, baseUrl = DEFAULT_BASE,
   return { failed };
 }
 
-module.exports = { downloadAll, buildPack, DEFAULT_BASE };
+module.exports = { downloadAll, buildPack, buildStillPack, writeIndex, DEFAULT_BASE };

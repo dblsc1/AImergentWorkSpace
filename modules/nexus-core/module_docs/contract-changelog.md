@@ -102,3 +102,4 @@
 | 2026-11-10 | 仓主定：蜂巢中心环 = 人 + 代理总计时，点开统计页（`hive.stage.v1`「八」） | v2.50（追加式）：`GET views/time-lanes`（全部项目的人区间、代理按运行分泳道）；见「v0.6：全项目时间泳道读端」节 |
 | 2026-11-10 | 仓主定：右上角时钟长按出「正计时 / 倒计时」，倒计时到点自动停并记下（`hive.stage.v1`「九」） | v2.51（追加式）：`timer/start-unplaced` 追加可选体 `countdownSeconds`（60..86400），在跑文档存 `deadlineAt`；`TimerOut` 与 `views/lanes` 的 `human.running` 追加 `deadlineAt`；到点后任何读 / 停 / 开按 `deadlineAt` 收尾（白条或 `session.completed`）；无新端点、无新集合 |
 | 2026-11-11 | 仓主定：蜂巢用「眼睛」表示人此刻的聚焦，拖眼睛到项目 = 把此刻的窗口归过去（`hive.stage.v1`「十」） | v2.52（追加式）：`focus` 追加 `blockKey`；目标在自动跟踪之后先认「窗口块今天的归类」（`source: "block"`），再认代理会话与按以往；无新端点、无新集合 |
+| 2026-11-12 | 仓主定：代表人的眼睛改成人自己挑的形象（`hive.stage.v1`「十一」） | v2.53（追加式）：`activity/settings.pet` 追加可选 `humanPack`；见「v0.6：人自己的形象」节 |
