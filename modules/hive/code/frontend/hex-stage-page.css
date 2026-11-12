@@ -95,6 +95,7 @@ body.stage-on .is-done-card .hex-stamp { display: none; }
 .st-pet { position: absolute; z-index: 12; width: 0; height: 0; touch-action: none; }
 .st-pet.is-work { transition: left 900ms cubic-bezier(.4, 0, .2, 1), top 900ms cubic-bezier(.4, 0, .2, 1); }
 .st-pet.is-loose { transition: left 100ms linear, top 100ms linear; }
+.st-pet.is-work.is-in:not(.st-away), .st-pet.is-work.is-in:not(.st-away) * { pointer-events: none !important; }   /* 站在格子里时不接指针，不挡点格子（「二十二」1） */
 .st-pet-in { position: absolute; left: -30px; top: -33px; width: 60px; display: flex; flex-direction: column; align-items: center; zoom: var(--pet-k, 1); }
 .st-pet .st-pet-in { cursor: pointer; transform-origin: 50% 100%; }
 .st-pet.is-loose .st-pet-in { cursor: grab; }

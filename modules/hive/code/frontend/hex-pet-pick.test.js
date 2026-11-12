@@ -113,3 +113,8 @@ assert.ok(Math.abs(P.hexEdgeDistance(W, 0, -1) - R6) < 1e-9);
 assert.ok(Math.abs(P.hexEdgeDistance(W, 0, 1) - R6) < 1e-9);
 assert.ok(Math.abs(P.hexEdgeDistance(W, Math.cos(Math.PI / 3), Math.sin(Math.PI / 3)) - apothem) < 1e-9);
 console.log("hex-pet-pick tests ok");
+
+// 干活的小人平时站在格子里：右上 → 右下 → 左下 → 左上，多的离格心一半（「二十二」1）
+assert.deepStrictEqual([0, 1, 2, 3].map((i) => { const s = P.restSlot(i, 100, 100); return [Math.sign(s.x), Math.sign(s.y)]; }), [[1, -1], [1, 1], [-1, 1], [-1, -1]]);
+assert.deepStrictEqual(P.restSlot(0, 100, 200), { x: 20, y: -40 });
+assert.deepStrictEqual(P.restSlot(4, 100, 200), { x: 10, y: -20 });

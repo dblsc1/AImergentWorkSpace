@@ -562,6 +562,16 @@
     });
   }
   var PET_BIG_K = 1.7;
+  // 鼠标在哪个项目格（或它的小人）上：那一格的小人飞到格子旁边，离开 0.5 秒飞回格子里（「二十二」2）
+  var outPid = null, outTimer = 0;
+  document.addEventListener("pointerover", function (ev) {
+    if (dragging || !ev.target.closest) return;
+    var pet = ev.target.closest(".st-pet.is-work"), cell = pet ? null : ev.target.closest(".hex-cell[data-project-id]");
+    var pid = pet ? pet.dataset.cell : cell ? cell.dataset.projectId : null;
+    clearTimeout(outTimer);
+    if (pid) { if (pid !== outPid) { outPid = pid; renderPets(); } }
+    else if (outPid) outTimer = setTimeout(function () { outPid = null; renderPets(); }, 500);
+  });
   function layerPetK() { return parseFloat(layer.style.getPropertyValue("--pet-k")) || 1; }
   function renderPets() {
     if (layoutBusy()) return;   // 放大 / 缩小动画里格子还在路上：量到的是半路的位置
@@ -581,13 +591,13 @@
       var n = byCell[pid].length, bigK = big ? PET_BIG_K : 1;
       var r = big ? Pk.hexEdgeDistance(c.w, ux, uy) + 26 * bigK : Math.max(c.w, c.h) / 2 * 0.9 + 26;
       byCell[pid].forEach(function (p, i) {
-        var o = (i - (n - 1) / 2) * 58 * bigK, e = petEl(p.runId);
-        e.classList.toggle("is-big", big);
+        var o = (i - (n - 1) / 2) * 58 * bigK, e = petEl(p.runId), out = big || outPid === pid, rest = Pk.restSlot(i, c.w, c.h);
+        e.classList.toggle("is-big", big); e.classList.toggle("is-in", !out); e.dataset.cell = pid;
         e.style.setProperty("--pet-k", big ? (layerPetK() * PET_BIG_K).toFixed(3) : "");   // 空 = 回到舞台层的值
         keep[p.runId] = 1;
         if (!e.classList.contains("is-work")) { e.classList.remove("is-loose"); e.classList.add("is-work"); }
         fillPet(e, p, runById(p.runId));
-        e.__home = { x: c.x + ux * r - uy * o, y: c.y + uy * r + ux * o };
+        e.__home = out ? { x: c.x + ux * r - uy * o, y: c.y + uy * r + ux * o } : { x: c.x + rest.x, y: c.y + rest.y };
         if (!ix[p.runId] || !ix[p.runId].mode) place(e, e.__home);
       });
     });
@@ -597,7 +607,7 @@
       var home = Pk.slotPos(slotOf[p.runId], SLOT_AREA);
       e.__home = home; e.style.removeProperty("--pet-k"); e.classList.remove("is-big");
       if (!e.classList.contains("is-loose")) {
-        delete ix[p.runId]; e.classList.remove("is-work", "st-away", "flip"); e.classList.add("is-loose"); place(e, home);
+        delete ix[p.runId]; e.classList.remove("is-work", "is-in", "st-away", "flip"); e.classList.add("is-loose"); place(e, home);
         var sl = e.querySelector(".st-media"); if (sl.dataset.over) { delete sl.dataset.over; sl.dataset.key = ""; }
       } else if (!ix[p.runId] || !ix[p.runId].mode) place(e, home);
       fillPet(e, p, runById(p.runId));

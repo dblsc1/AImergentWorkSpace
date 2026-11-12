@@ -125,7 +125,15 @@
     return (w / 2) / Math.cos(fold * Math.PI / 180);
   }
 
-  var api = { hexEdgeDistance: hexEdgeDistance, MAX_PETS: MAX_PETS, DEFAULT_PACK: DEFAULT_PACK, DEFAULT_PACKS_BY_TOOL: DEFAULT_PACKS_BY_TOOL, moodOf: moodOf, packOf: packOf, pickWorkers: pickWorkers, pickIdle: pickIdle, isLoose: isLoose, slotPos: slotPos, assignSlots: assignSlots, rhythm: rhythm, tempList: tempList, MAIN_MS: MAIN_MS, TEMP_MS: TEMP_MS,
+  // 干活的小人平时站在格子里：围着格心一圈，右上 → 右下 → 左下 → 左上；多于 4 个的接着同样四个方位、离格心一半距离
+  // （hive.stage.v1「二十二」1）。返回相对格心的偏移
+  var REST_SIDES = [[1, -1], [1, 1], [-1, 1], [-1, -1]];
+  function restSlot(i, w, h) {
+    var s = REST_SIDES[i % 4], k = i < 4 ? 0.2 : 0.1;
+    return { x: s[0] * w * k, y: s[1] * h * k };
+  }
+
+  var api = { restSlot: restSlot, hexEdgeDistance: hexEdgeDistance, MAX_PETS: MAX_PETS, DEFAULT_PACK: DEFAULT_PACK, DEFAULT_PACKS_BY_TOOL: DEFAULT_PACKS_BY_TOOL, moodOf: moodOf, packOf: packOf, pickWorkers: pickWorkers, pickIdle: pickIdle, isLoose: isLoose, slotPos: slotPos, assignSlots: assignSlots, rhythm: rhythm, tempList: tempList, MAIN_MS: MAIN_MS, TEMP_MS: TEMP_MS,
     CLICK_PX: CLICK_PX, STAY_MS: STAY_MS, pressKind: pressKind, clickCounts: clickCounts, pickClip: pickClip, clickClip: clickClip, walkBack: walkBack };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.NexusTableHexPetPick = api;

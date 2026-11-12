@@ -267,7 +267,7 @@
   // 格子、格内反向缩放、镜头、分区线、舞台层在**同一个任务里**各起一段 Web Animation，
   // 时长与缓动相同，起点 = 写之前屏幕上的样子。以前格子等下一帧才起、镜头走 CSS 过渡、
   // 分区线与外框尺寸直接跳、小人 400ms 量一次，四条时间轴各走各的。
-  var flips = [], busyUntil = 0;
+  var flips = [], busyUntil = 0, zoomUntil = 0;
   function stopFlips() { flips.forEach(function (a) { try { a.cancel(); } catch (e) {} }); flips = []; }
   function play(el, frames, ms) { flips.push(el.animate(frames, { duration: ms, easing: EASE })); }
   function applyLayout(animate, durationMs) {
@@ -277,10 +277,12 @@
     var wrapW = hive.parentNode ? hive.parentNode.clientWidth : 0;
     var ms = durationMs || ANIM_MS;
     var flip = animate && !reduceMotion() && !!camEl.animate;
-    // First：镜头此刻的样子（上一段还在走也照此刻的算）与外框位置，都在写之前读
+    // 上一段还没走完就又来一次：各物一律从上一段的**终点**起步。格子的起点只有上一次布局的终态可用（__geom），
+    // 镜头若按半路的样子接着走，就和格子对不上——整张蜂巢会从左上角飞进来一次（人类 2026-11-12 报）
+    stopFlips();
+    // First：镜头与外框的位置，都在写之前读
     var cam0 = flip ? getComputedStyle(camEl).transform : "", box0 = flip ? hive.getBoundingClientRect() : null;
     var old = state.lastPlan;
-    stopFlips();
     state.fullCard = fullCard(hive, wrapW);
     var plan = computeItems(state.expandedId);
 
@@ -319,6 +321,7 @@
     var box1 = hive.getBoundingClientRect(), shell = hive.closest(".board-shell");
     var k = parseFloat(shell && shell.style.zoom) || 1;
     busyUntil = performance.now() + ms;
+    if (!durationMs) zoomUntil = busyUntil;
     document.dispatchEvent(new CustomEvent("hexlayout", { detail: { ms: ms, ease: EASE } }));
 
     // 过渡里**只有 transform**：clip-path 是百分比多边形，尺寸一变形状
@@ -343,6 +346,7 @@
     }
   }
   function busy() { return performance.now() < busyUntil; }
+  function zooming() { return performance.now() < zoomUntil; }   // 展开 / 收起那一段（不含悬停的短动画）
   // 「展开全部」时大六边形的尺寸：从取景框上沿到视口下沿装得下的最大正六边形，宽也不超出取景框；
   // 比平时的展开卡还小（矮屏）就不变（返回 null，照平时的规矩走）
   function fullCard(hive, wrapW) {
@@ -446,6 +450,6 @@
     ANIM_MS: ANIM_MS, HOVER_MS: HOVER_MS, EASE: EASE,
     compute: computeItems,
     apply: applyLayout,
-    busy: busy
+    busy: busy, zooming: zooming
   };
 })();
