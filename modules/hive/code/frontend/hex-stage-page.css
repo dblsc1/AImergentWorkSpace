@@ -19,7 +19,8 @@ body.stage-on .hex-cell:not(.is-expanded) .hex-close { display: none !important;
 .st-face { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .st-face.swap { animation: st-swap 360ms ease-out; }
 @keyframes st-swap { from { opacity: 0; } to { opacity: 1; } }
-.st-tk { font-size: 12px; font-weight: 600; color: var(--ink); max-width: 94px; text-align: center; line-height: 1.25; white-space: pre-line; overflow-wrap: anywhere; }
+/* 环跟着中心格缩小（--ring-k < 1）时字按倒数放大：屏幕上不小于 11px，宽度占满环内圈，最多 4 行 */
+.st-tk { font-size: max(12px, calc(11px / var(--ring-k, 1))); font-weight: 600; color: var(--ink); max-width: 100px; max-height: 108px; text-align: center; line-height: 1.2; white-space: pre-line; overflow-wrap: anywhere; overflow: hidden; }
 .st-tk.swap { animation: st-swap 360ms ease-out; }
 
 /* 人的时钟 */
@@ -53,6 +54,9 @@ body.stage-on .hex-cell:not(.is-expanded) .hex-close { display: none !important;
 .st-eye-drop path { fill: #8fd3f7; stroke: #2f7fb3; stroke-width: 1.2; stroke-linejoin: round; }
 img.st-still { max-width: 54px; max-height: 63px; }
 .st-media:has(> img.st-still) { width: 54px; height: 63px; }
+/* 全身立绘：比 Q 版（63px）高一点 */
+img.st-still.st-tall { max-height: 78px; }
+.st-media:has(> img.st-tall) { height: 78px; }
 .st-eye-win { position: absolute; left: calc(100% + 8px); top: 50%; transform: translateY(-50%); max-width: 360px; padding: 5px 12px; border-radius: 999px;
   background: var(--panel); border: 1px solid var(--line); color: var(--ink); font-size: var(--fs-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
 .st-eye-win:empty { display: none; }
@@ -120,7 +124,8 @@ video.st-art { position: absolute; max-width: none; max-height: none; height: 80
   border: 1px solid var(--line); display: grid; place-items: center; font-size: 12px; font-weight: 700; color: var(--ink-2); }
 
 /* 左下角桶与抽屉 */
-.st-bucket { position: absolute; left: 24px; bottom: 20px; width: 180px; display: flex; flex-direction: column; align-items: center; gap: 2px; z-index: 18; }
+/* 未分类桶浮在屏幕左下角（「二十四」）：桶、抽屉、灰行弹窗都钉在视口上，页面滚动不跟着走 */
+.st-bucket { position: fixed; left: 24px; bottom: 20px; width: 180px; display: flex; flex-direction: column; align-items: center; gap: 2px; z-index: 18; }
 .st-bucket-btn { cursor: pointer; background: none; border: 0; padding: 0; }
 .st-bucket-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .st-bucket-btn svg { width: 156px; height: 134px; display: block; overflow: visible; transition: transform var(--t-med), filter var(--t-med); }
@@ -140,16 +145,18 @@ video.st-art { position: absolute; max-width: none; max-height: none; height: 80
 .st-src-row { display: flex; flex-wrap: wrap; gap: 2px 8px; padding: 6px 0; }
 .st-src-row b { flex: 0 0 100%; }
 .st-src-row span { flex: 0 0 100%; color: var(--ink-3); }
-.st-drawer { position: absolute; left: 24px; bottom: 176px; width: 300px; max-height: 360px; overflow: auto; padding: 4px 12px 12px; transform-origin: bottom left;
+.st-drawer { position: fixed; left: 24px; bottom: 176px; width: 300px; max-height: 360px; overflow: auto; padding: 4px 12px 12px; transform-origin: bottom left;
   transform: scale(.9); opacity: 0; pointer-events: none; transition: transform var(--t-med), opacity var(--t-med); z-index: 40; }
 .st-drawer.open { transform: none; opacity: 1; pointer-events: auto; }
+.st-d-filter { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: var(--fs-sub); color: var(--ink-2); }
+.st-d-filter input { width: 52px; padding: 2px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); font: inherit; }
 .st-chip { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 12px; margin-top: 8px; border-radius: 10px;
   background: var(--panel-2); border: 1px solid var(--line); font-size: var(--fs-sub); cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
 .st-chip b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .st-chip span { color: var(--ink-2); white-space: nowrap; }
 .st-chip.nodrag { cursor: not-allowed; color: var(--ink-3); background: var(--line-2); }
 .st-chip.nodrag.grey { cursor: pointer; }
-.st-greypop { position: absolute; left: 340px; bottom: 176px; width: 300px; max-height: 360px; overflow: auto; padding: 4px 12px 12px; transform-origin: bottom left;
+.st-greypop { position: fixed; left: 340px; bottom: 176px; width: 300px; max-height: 360px; overflow: auto; padding: 4px 12px 12px; transform-origin: bottom left;
   transform: scale(.9); opacity: 0; pointer-events: none; transition: transform var(--t-med), opacity var(--t-med); z-index: 41; }
 .st-greypop.open { transform: none; opacity: 1; pointer-events: auto; }
 .st-greypop:has(.st-dragging), .st-drawer:has(.st-dragging) { overflow: visible; }

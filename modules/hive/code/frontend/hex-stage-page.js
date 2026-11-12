@@ -425,13 +425,18 @@
     if (kind in stills) return stills[kind];
     stills[kind] = null;
     FP.cutout(BASE + "hive/pets/" + encodeURIComponent(kind) + "/" + packs[kind].image.split("/").map(encodeURIComponent).join("/"), packs[kind].backdrop).then(function (u) {
-      if (u) { stills[kind] = u; renderPets(); renderEye(); if (centre) centre.redraw(); } else delete stills[kind];
+      if (!u) { delete stills[kind]; return; }
+      // 全身立绘（抠完底又高又窄）比 Q 版高一点（「二十四」）：量一次图的高宽比
+      var im = new Image();
+      im.onload = im.onerror = function () { stillTall[kind] = im.naturalHeight > im.naturalWidth * 1.5; stills[kind] = u; renderPets(); renderEye(); if (centre) centre.redraw(); };
+      im.src = u;
     });
     return null;
   }
+  var stillTall = {};
   function mediaFor(pet, file) {
     var still = !file && packs[pet.pack] && packs[pet.pack].image && stillOf(pet.pack);
-    if (still) return { key: still, html: '<img class="st-art st-still" alt="" src="' + esc(still) + '">' };
+    if (still) return { key: still, html: '<img class="st-art st-still' + (stillTall[pet.pack] ? " st-tall" : "") + '" alt="" src="' + esc(still) + '">' };
     if (!file) return { key: "svg", html: PLACEHOLDER };
     var url = BASE + "hive/pets/" + encodeURIComponent(pet.pack) + "/" + file.split("/").map(encodeURIComponent).join("/");
     return { key: url, video: url, loop: true, html: '<video class="st-art" src="' + esc(url) + '" autoplay loop muted playsinline></video>' };
@@ -1014,12 +1019,23 @@
     if ($("stDrawer").classList.contains("open")) renderDrawer();
   }
   var drawerSig = "";
+  var BUCKET_MIN_KEY = "hive.unclassifiedMinMinutes";
+  function bucketMin() { var v = null; try { v = localStorage.getItem(BUCKET_MIN_KEY); } catch (e) {} return St.bucketMinutes(v); }
   function renderDrawer() {
     var box = $("stDrawer"), rows = stage.drawer(), sig = JSON.stringify(rows.map(function (r) { return [r.name, r.seconds, r.draggable]; }));
     renderGreyPop(rows);
-    if (sig === drawerSig && box.firstChild) return;
+    if ((sig === drawerSig && box.firstChild) || box.contains(document.activeElement)) return;   // 正在改过滤器的数：不重画
     drawerSig = sig;
     box.innerHTML = "";
+    // 过滤器：满 x 分钟的窗口才进入（记在这台设备上）
+    var f = document.createElement("label"); f.className = "st-d-filter";
+    f.innerHTML = '满 <input type="number" min="0" max="120" step="1" inputmode="numeric" aria-label="满几分钟的窗口才进入未分类"> 分钟的窗口才进入';
+    f.firstElementChild.value = bucketMin();
+    f.firstElementChild.addEventListener("change", function () {
+      try { localStorage.setItem(BUCKET_MIN_KEY, String(St.bucketMinutes(this.value))); } catch (e) {}
+      drawerSig = ""; applyData(); render();
+    });
+    box.appendChild(f);
     rows.forEach(function (r) {
       var d = document.createElement("div");
       d.className = "st-chip" + (r.draggable ? "" : " nodrag");
@@ -1262,6 +1278,7 @@
     stage.setTimer(running ? { projectId: running.projectId || null, startAt: ms(running.startAt), deadlineAt: ms(running.deadlineAt) || null } : null);
     var b = data.blocks, date = b && b.date, items = ((b && b.items) || []).filter(function (x) { return x.status ? x.status === "pending" : true; })
       .map(function (x) { return Object.assign({ date: date, legible: false, kind: "other" }, x); });
+    items = St.bucketFilter(items, bucketMin());
     stage.setBucket(items.reduce(function (s, x) { return s + (x.seconds || 0); }, 0), items);
     stage.setStrips(data.unplaced || []);
   }
@@ -1298,6 +1315,9 @@
     render();
   }
   window.addEventListener("resize", sizeToWindow);
+  // 未分类桶钉在视口上：页面一滚，停在桶边的人的形象要跟着重新落位
+  var scrollRaf = 0;
+  window.addEventListener("scroll", function () { if (!scrollRaf) scrollRaf = requestAnimationFrame(function () { scrollRaf = 0; if ($("stEye").dataset.host === "tray") renderEye(); }); }, { passive: true });
   new MutationObserver(function () { if ($("stClock").querySelector(".st-dial")) renderEye(); }).observe(shell, { attributes: true, attributeFilter: ["hidden"], subtree: true });   // 决策栏出现 / 消失 → 时钟挪位，眼睛立刻跟过去
 
   // 蜂巢放大 / 缩小（hex-layout 发 hexlayout 时格子已是终态、动画还没起）：
