@@ -56,9 +56,8 @@ class Stub:
         route.fulfill(status=status, content_type="application/json", body=json.dumps(body))
 
     def create_task(self) -> None:
-        # 入口：点项目格 → 完成记录面板 → 「展开」→ 格子里的新建任务表单（这里用一个同形的表单代替真表单）
+        # 入口：点项目格 → 大六边形（hive.stage.v1「十二」）→ 格子里的新建任务表单（这里用一个同形的表单代替真表单）
         self.hive.page.click(".hex-cell[data-project-id=p_math]")
-        self.hive.page.click(".st-expand")
         self.hive.page.wait_for_selector(".hex-cell.is-expanded[data-project-id=p_math]")
         self.hive.page.evaluate("""() => {
             const cell = document.querySelector('.hex-cell[data-project-id=p_math]');

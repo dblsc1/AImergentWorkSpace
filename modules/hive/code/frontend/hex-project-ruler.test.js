@@ -59,3 +59,9 @@ const RS = R.rollingScale(t("2026-11-10T09:00:00"), t("2026-11-10T12:00:00"));
 assert.strictEqual(R.xOf(RS, t("2026-11-10T10:30:00")), 0.5);
 assert.deepStrictEqual(R.spanRect(RS, t("2026-11-10T08:00:00"), t("2026-11-10T09:30:00")), { left: 0, width: 1 / 6 });
 assert.strictEqual(R.spanRect(RS, t("2026-11-10T12:00:00"), t("2026-11-10T13:00:00")), null);
+// 最近完成一行里的时长（hive.stage.v1「十二」3）
+assert.strictEqual(R.minutesText(0), "0 分钟");
+assert.strictEqual(R.minutesText(20), "不到 1 分钟");
+assert.strictEqual(R.minutesText(89), "1 分钟"); assert.strictEqual(R.minutesText(180), "3 分钟");
+assert.strictEqual(R.spentText(false, 180, 720), "完成 · 人花了 3 分钟 · agent 花了 12 分钟");
+assert.strictEqual(R.spentText(true, 0, 30), "取消 · 人花了 0 分钟 · agent 花了 不到 1 分钟");

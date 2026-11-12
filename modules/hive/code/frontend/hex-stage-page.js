@@ -27,10 +27,8 @@
     '<div class="st-drawer st-card" id="stDrawer"></div>' +
     '<div class="st-greypop st-card" id="stGreyPop"></div>' +
     '<div class="st-bucket" id="stBucket"><button type="button" class="st-bucket-btn" id="stBucketBtn" aria-label="未分类"></button><div class="st-bucket-label" id="stBucketLabel"></div></div>' +
-    '<div class="st-toast" id="stToast" role="status" aria-live="polite"></div>' +
-    '<div class="st-veil" id="stVeil" hidden><div class="st-panel st-card" id="stPanel" role="dialog" aria-modal="true"></div></div>';
+    '<div class="st-toast" id="stToast" role="status" aria-live="polite"></div>';
   shell.appendChild(layer);
-  document.body.appendChild(document.getElementById("stVeil"));   // 舞台层自带层级 5，面板要盖住整个蜂巢（含分区描边）
   document.body.classList.add("stage-on");
   var $ = function (id) { return document.getElementById(id); };
 
@@ -542,6 +540,8 @@
       if (walking) { place(e, w); setFlip(e, w.flip); }
     });
   }
+  var PET_BIG_K = 1.7;
+  function layerPetK() { return parseFloat(layer.style.getPropertyValue("--pet-k")) || 1; }
   function renderPets() {
     var runs = runsOf().map(function (r) {
       var dock = stage.petDock(r.runId);
@@ -555,9 +555,13 @@
       var el = cellEl(pid); if (!el) return;
       var c = rectCenter(el), dx = c.x - hc.x, dy = c.y - hc.y, l = Math.hypot(dx, dy) || 1, ux = dx / l, uy = dy / l;
       if (l === 1 && !dx && !dy) { ux = 0; uy = -1; }
-      var n = byCell[pid].length, r = Math.max(c.w, c.h) / 2 * 0.9 + 26;
+      var big = el.classList.contains("is-expanded");   // 展开成大六边形：小人放大、站到斜边外侧（「十二」4）
+      var n = byCell[pid].length, bigK = big ? PET_BIG_K : 1;
+      var r = big ? Pk.hexEdgeDistance(c.w, ux, uy) + 26 * bigK : Math.max(c.w, c.h) / 2 * 0.9 + 26;
       byCell[pid].forEach(function (p, i) {
-        var o = (i - (n - 1) / 2) * 58, e = petEl(p.runId);
+        var o = (i - (n - 1) / 2) * 58 * bigK, e = petEl(p.runId);
+        e.classList.toggle("is-big", big);
+        e.style.setProperty("--pet-k", big ? (layerPetK() * PET_BIG_K).toFixed(3) : "");   // 空 = 回到舞台层的值
         keep[p.runId] = 1;
         if (!e.classList.contains("is-work")) { e.classList.remove("is-loose"); e.classList.add("is-work"); }
         fillPet(e, p, runById(p.runId));
@@ -569,7 +573,7 @@
     idle.pets.forEach(function (p) {
       var e = petEl(p.runId); keep[p.runId] = 1;
       var home = Pk.slotPos(slotOf[p.runId], SLOT_AREA);
-      e.__home = home;
+      e.__home = home; e.style.removeProperty("--pet-k"); e.classList.remove("is-big");
       if (!e.classList.contains("is-loose")) {
         delete ix[p.runId]; e.classList.remove("is-work", "st-away", "flip"); e.classList.add("is-loose"); place(e, home);
         var sl = e.querySelector(".st-media"); if (sl.dataset.over) { delete sl.dataset.over; sl.dataset.key = ""; }
@@ -1024,40 +1028,46 @@
     t.textContent = n || ""; t.classList.toggle("show", !!n);
   }
 
-  // ── 完成记录面板 ─────────────────────────────────────
-  function openPanel(pid) {
-    panelPid = pid; renderPanel(); $("stVeil").hidden = false;
-    var x = $("stPanel").querySelector(".st-x"); if (x) x.focus();
+  // ── 项目大六边形里的面板（hive.stage.v1「十二」）──────────
+  // 点项目格 = hex-app 的老展开；面板（任务条 + 人 / 代理时间标尺）填进展开格里的 .hex-ruler-slot。
+  // panelPid = 当前展开的项目；hex-app 重写格子内容（刷新、改名）后槽是空的，由观察器补回。
+  function openPanel(pid) {   // 拖着东西在格子上停满 1 秒：展开这一格
+    var App = window.NexusTableHexApp;
+    if (App && pid) App.expand(pid);
+    syncPanel();
   }
   var panelHtml = "";
-  function closePanel() { panelPid = null; panelHtml = ""; $("stVeil").hidden = true; PP.reset(); }
-  // 项目面板（任务条 + 人 / 代理时间标尺）在 hex-project-ruler.js；这里只接标题栏与重画
   var PP = Pr.createPanel({ tree: function () { return data.tree; }, getJson: getJson, dur: dur, open: openPanel, taskApi: function () { return window.NexusTableData; },
     changed: function () { renderPanel(); },
+    created: function () { getJson("views/tree").then(function (t) { if (t) data.tree = t; PP.invalidate(); render(); }); },
     cellColor: function (pid) { var c = cellEl(pid); return c ? getComputedStyle(c).getPropertyValue("--zone-raw").trim() : ""; } });
+  function expandedCell() { return document.querySelector(".hex-cell.is-expanded[data-project-id]"); }
+  function syncPanel() {
+    var c = expandedCell(), pid = c ? c.dataset.projectId : null;
+    if (pid !== panelPid) { panelPid = pid; panelHtml = ""; PP.reset(); }
+    if (pid) renderPanel();
+    renderPets();   // 展开 / 收起：干活的小人跟着放大 / 缩回
+  }
   function renderPanel() {
     if (!panelPid || PP.frozen()) return;
-    var html = '<div class="st-hd"><h2>' + esc(projectName(panelPid)) + '</h2><button type="button" class="st-expand">展开</button><button type="button" class="st-x" aria-label="关闭">✕</button></div>' + PP.body(panelPid, Date.now());
-    if (html !== panelHtml) { panelHtml = html; $("stPanel").innerHTML = html; }   // 没变就不重设，免得丢关闭按钮的焦点
+    var slot = document.querySelector(".hex-cell.is-expanded .hex-ruler-slot");
+    if (!slot) return;
+    var html = PP.body(panelPid, Date.now());
+    if (html !== panelHtml || !slot.firstChild) { panelHtml = html; slot.innerHTML = html; }
+    [].forEach.call(document.querySelectorAll(".hex-cell.is-expanded .hex-spent"), function (el) {
+      var sp = PP.spent(el.dataset.taskId);
+      var tx = sp && Pr.spentText(el.dataset.canceled === "1", sp.human, sp.agent);
+      if (tx && el.textContent !== tx) el.textContent = tx;
+    });
   }
-  $("stPanel").addEventListener("click", function (ev) {
-    if (ev.target.closest(".st-x")) closePanel();
-    else if (ev.target.closest(".st-expand")) {   // 老的格子展开（新建任务、改任务都在里面）
-      var pid = panelPid, App = window.NexusTableHexApp;
-      ev.stopPropagation();   // 不让 hex-app 的「点空白处收起」把刚展开的格子当场收掉
-      closePanel();
-      if (App && pid) App.expand(pid);
-    }
+  document.addEventListener("click", function (ev) {   // 点「＋ 新建任务」（「十二」）
+    if (ev.target.closest && ev.target.closest(".hex-ruler-slot .pr-newslot")) PP.startCreate();
   });
-  $("stVeil").addEventListener("pointerdown", function (ev) { if (ev.target === $("stVeil")) closePanel(); });
-  document.addEventListener("keydown", function (ev) { if (ev.key === "Escape" && panelPid) closePanel(); });
-  // 点格子 = 完成记录（拦在老的「展开格子」之前；占位格与已展开的格子不拦）
-  document.addEventListener("click", function (ev) {
-    var c = ev.target.closest && ev.target.closest(".hex-cell[data-project-id]");
-    if (!c || c.classList.contains("is-expanded") || c.classList.contains("hex-center") || ev.target.closest("#stageLayer")) return;
-    ev.stopPropagation(); ev.preventDefault();
-    openPanel(c.dataset.projectId);
-  }, true);
+  new MutationObserver(function () {
+    var c = expandedCell(), slot = c && c.querySelector(".hex-ruler-slot");
+    if (c ? c.dataset.projectId === panelPid && slot && slot.firstChild : !panelPid) return;   // 没变：不重画
+    syncPanel();
+  }).observe(document.getElementById("hive") || document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["class"] });
 
   // 人的页面（「十四」）：逐任务那一张的名字与归并键；收件箱不算项目，未记到项目的计时叫「手动计时」
   function timeLabelOf(taskId, projectId, live) {

@@ -105,4 +105,11 @@ const far = { x: 0, y: 1000 };                                                  
 assert.strictEqual(P.walkBack(A, far, 3000 + 7999).phase, "walk"); assert.strictEqual(P.walkBack(A, far, 3000 + 8000).phase, "done");
 assert.ok(Math.abs(P.walkBack(A, far, 3000 + 4000).y - 500) < 1e-9);
 assert.strictEqual(P.walkBack(A, A, 0).phase, "done");
+// 大六边形边界距离（hive.stage.v1「十二」4）：正左右 = 边心距，正上下 = 外接圆半径，斜 30° 处介于两者之间
+const W = 400, apothem = 200, R6 = 200 / (Math.sqrt(3) / 2);
+assert.ok(Math.abs(P.hexEdgeDistance(W, 1, 0) - apothem) < 1e-9);
+assert.ok(Math.abs(P.hexEdgeDistance(W, -1, 0) - apothem) < 1e-9);
+assert.ok(Math.abs(P.hexEdgeDistance(W, 0, -1) - R6) < 1e-9);
+assert.ok(Math.abs(P.hexEdgeDistance(W, 0, 1) - R6) < 1e-9);
+assert.ok(Math.abs(P.hexEdgeDistance(W, Math.cos(Math.PI / 3), Math.sin(Math.PI / 3)) - apothem) < 1e-9);
 console.log("hex-pet-pick tests ok");

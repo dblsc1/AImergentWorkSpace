@@ -91,6 +91,15 @@
     return list.reduce(function (n, s) { return n + Math.max(0, Date.parse(s.end) - Date.parse(s.start)); }, 0) / 1000;
   }
 
+  // 「最近完成」一行里的时长（hive.stage.v1「十二」3）：0 写「0 分钟」，大于 0 不足 1 分钟写「不到 1 分钟」
+  function minutesText(sec) {
+    return sec >= 60 ? Math.round(sec / 60) + " 分钟" : sec > 0 ? "不到 1 分钟" : "0 分钟";
+  }
+  // 「完成 · 人花了 X 分钟 · agent 花了 Y 分钟」（任务名由卡片自己写在前面）；取消的写「取消」
+  function spentText(canceled, humanSec, agentSec) {
+    return (canceled ? "取消" : "完成") + " · 人花了 " + minutesText(humanSec) + " · agent 花了 " + minutesText(agentSec);
+  }
+
   // ── 面板 ────────────────────────────────────────────
   // ctx: { tree() → views/tree, getJson(path), dur(sec), now(), open(pid), taskApi() → NexusTableData }
   function createPanel(ctx) {
@@ -116,7 +125,12 @@
       });
     }
 
-    // 面板主体的 HTML（页面的 renderPanel 把它接在标题栏后面）；顺带按需重读
+    // 这个任务上人 / 代理在已读到的窗口里各多少秒（没读到 = null）
+    function spent(taskId) {
+      var t = ((payload && payload.tasks) || []).filter(function (x) { return (x.taskId || "") === taskId; })[0];
+      return payload ? { human: sumSec((t && t.human) || []), agent: sumSec((t && t.agent) || []) } : null;
+    }
+    // 面板主体的 HTML（页面的 renderPanel 把它填进大六边形里的 .hex-ruler-slot）；顺带按需重读
     function body(pid, now) {
       if (cur !== pid) { cur = pid; payload = null; loadedAt = 0; }
       if (!loading && now - loadedAt > 5000) load(pid, now);
@@ -135,18 +149,20 @@
           '<span class="pr-sum"><i class="pr-k pr-h"></i>' + ctx.dur(sumSec(d.human)) + ' <i class="pr-k pr-a"></i>' + ctx.dur(sumSec(d.agent)) + "</span></div>" +
           lanesHtml(L, d.human, d.agent, color) + "</div>";
       }).join("");
-      return '<div class="pr-head"><div></div>' + rulerHtml(L) + '</div><div class="pr-list">' + list + "</div>";
+      // 末尾固定一格「＋ 新建任务」：拖着东西松在它上面 = 新建任务并记进去；点它 = 新建任务（hive.stage.v1「十二」）
+      return '<div class="pr-head"><div></div>' + rulerHtml(L) + '</div><div class="pr-list">' + list +
+        '<button type="button" class="pr-newslot" data-project="' + esc(pid) + '">＋ 新建任务</button></div>';
     }
     function frozen() { return !!creating; }   // 新建输入开着时不重画，免得输入框被换掉
     function invalidate() { loadedAt = 0; }
     function reset() { cancelHold(); clearLit(); creating = null; document.body.classList.remove("st-spring"); cur = null; payload = null; }
 
     // ── 拖动：弹簧展开、任务条落点、空白处新建 ──
-    var veil = function () { return document.getElementById("stVeil"); };
-    function panelOpen() { var v = veil(); return !!cur && !!v && !v.hidden; }
+    function panelOpen() { return !!cur && !!document.querySelector(".hex-cell.is-expanded .hex-ruler-slot"); }
     function hits(x, y) { return document.elementsFromPoint(x, y); }
-    function inPanel(x, y) { return hits(x, y).some(function (e) { return e.id === "stPanel"; }); }
+    function inPanel(x, y) { return hits(x, y).some(function (e) { return e.classList && e.classList.contains("hex-ruler-slot"); }); }
     function rowAt(x, y) { var h = hits(x, y), i; for (i = 0; i < h.length; i++) if (h[i].classList && h[i].classList.contains("pr-row")) return h[i]; return null; }
+    function slotAt(x, y) { var h = hits(x, y), i; for (i = 0; i < h.length; i++) if (h[i].classList && h[i].classList.contains("pr-newslot")) return h[i]; return null; }
     function listAt(x, y) { var h = hits(x, y), i; for (i = 0; i < h.length; i++) if (h[i].classList && h[i].classList.contains("pr-list")) return h[i]; return null; }
     function clearLit() { if (lit) { lit.classList.remove("is-drop"); lit = null; } }
     function cancelHold() { if (hold.timer) clearTimeout(hold.timer); hold.timer = null; hold.key = null; }
@@ -155,22 +171,23 @@
       if (creating || !list) return;
       var box = document.createElement("div");
       box.className = "pr-new"; box.innerHTML = '<input class="pr-new-name" maxlength="64" aria-label="新任务名" placeholder="新任务名，回车建立">';
-      list.appendChild(box); box.scrollIntoView({ block: "nearest" });
+      list.insertBefore(box, list.querySelector(".pr-newslot")); box.scrollIntoView({ block: "nearest" });
       creating = { box: box, input: box.firstChild, pid: cur };
     }
     function fire(kind, arg) {
       hold.timer = null;
       if (kind === "cell") ctx.open(arg);
-      else if (kind === "blank") openCreate(document.querySelector("#stPanel .pr-list"));
+      else if (kind === "blank") openCreate(document.querySelector(".hex-ruler-slot .pr-list"));
     }
     // 拖动中每次指针移动都来一下：cell = 指针下的项目格（没有 = null）
     function dragOver(x, y, cell) {
       var open = panelOpen(), over = open && inPanel(x, y), row = over ? rowAt(x, y) : null, kind = null, arg = null, key = null;
+      var slot = over && !row ? slotAt(x, y) : null, target = row || slot;
       document.body.classList.toggle("st-spring", open);
-      if (row !== lit) { clearLit(); lit = row; if (row) row.classList.add("is-drop"); }
+      if (target !== lit) { clearLit(); lit = target; if (target) target.classList.add("is-drop"); }
       if (over) {
         var list = listAt(x, y);
-        if (!row && list && !creating) { kind = "blank"; arg = list; key = "blank:" + cur; }
+        if (!row && !slot && list && !creating) { kind = "blank"; arg = list; key = "blank:" + cur; }
       } else if (cell) { kind = "cell"; arg = cell.dataset.projectId; key = "cell:" + arg; }
       if (kind === "cell" && open && arg === cur) { kind = null; key = null; }   // 本来就开着这一个
       if (key !== hold.key || Math.abs(x - hold.x) > HOLD_SLOP || Math.abs(y - hold.y) > HOLD_SLOP) {
@@ -185,6 +202,7 @@
       if (!panelOpen() || !inPanel(x, y)) return null;
       var row = rowAt(x, y);
       if (row) return { projectId: row.dataset.project, taskId: row.dataset.task || null };
+      if (slotAt(x, y)) { openCreate(document.querySelector(".hex-ruler-slot .pr-list")); creating.waiting = true; return { projectId: creating.pid, create: true }; }
       if (creating && (listAt(x, y) || creating.box.contains(document.elementFromPoint(x, y)))) { creating.waiting = true; return { projectId: creating.pid, create: true }; }
       return null;
     }
@@ -214,11 +232,16 @@
       c.input.addEventListener("blur", function () { if (!c.input.value.trim() && !c.input.disabled) { finish(); cancel(); } });
     }
 
-    return { body: body, frozen: frozen, invalidate: invalidate, reset: reset,
+    // 点「＋ 新建任务」：长出名字输入，回车建任务（没有要记进去的东西）
+    function startCreate() {
+      openCreate(document.querySelector(".hex-ruler-slot .pr-list"));
+      if (creating) awaitName(function () { if (ctx.created) ctx.created(); }, function () {});
+    }
+    return { startCreate: startCreate, body: body, spent: spent, frozen: frozen, invalidate: invalidate, reset: reset,
              dragOver: dragOver, dragEnd: dragEnd, dropAt: dropAt, overPanel: overPanel, awaitName: awaitName };
   }
 
-  var api = { layout: layout, linearScale: linearScale, rollingScale: rollingScale, xOf: xOf, spanRect: spanRect, rulerHtml: rulerHtml, lanesHtml: lanesHtml, createPanel: createPanel,
+  var api = { minutesText: minutesText, spentText: spentText, layout: layout, linearScale: linearScale, rollingScale: rollingScale, xOf: xOf, spanRect: spanRect, rulerHtml: rulerHtml, lanesHtml: lanesHtml, createPanel: createPanel,
               PAST_SHARE: PAST_SHARE, TODAY_SHARE: TODAY_SHARE };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.NexusTableHexProjectRuler = api;

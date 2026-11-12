@@ -112,7 +112,8 @@ def test_per_task_cards_running_one_first_then_most_recent_and_click_opens_the_p
         assert st.page.locator(".hp-task .hp-dur").all_inner_texts() == ["10 分钟", "20 分钟", "30 分钟"]
         st.page.locator(".hp-task", has_text="钢琴").click()
         assert st.page.locator(".cm-panel").count() == 0
-        assert st.page.locator("#stPanel h2").inner_text() == "钢琴"
+        st.page.clock.run_for(900)
+        assert st.page.locator('.hex-cell.is-expanded[data-project-id="p_piano"]').count() == 1   # 打开的是项目大六边形（「十二」1）
         assert st.posts == []
 
 

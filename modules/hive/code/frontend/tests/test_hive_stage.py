@@ -507,16 +507,16 @@ def test_manual_timer_click_start_drag_to_cell_stop_then_drag_the_strip(browser,
         assert st.page.locator(".st-strip").count() == 0
 
 
-def test_click_cell_opens_the_completion_panel_and_close_removes_it(browser, base) -> None:  # noqa: F811  HV-B13
+def test_click_cell_expands_the_big_hexagon_with_the_panel_inside(browser, base) -> None:  # noqa: F811  HV-B13；hive.stage.v1「十二」取代原「点格子弹出面板」
     with open_stage(browser, base, setup=_busy_day) as st:
         st.page.click(CELL.format("p_math"))
-        panel = st.page.locator("#stPanel")
-        assert panel.is_visible()
-        assert panel.locator("h2").inner_text() == "数学"
+        cell = st.page.locator(".hex-cell.is-expanded")
+        cell.wait_for()
+        assert cell.locator(".hex-title").inner_text() == "数学" and st.page.locator("#stVeil").count() == 0
+        panel = cell.locator(".hex-ruler-slot")
         assert panel.locator(".pr-row").count() == 2 and panel.locator(".pr-ruler").count() == 1   # 任务条 + 没挂任务；标尺在 test_hive_project_panel.py
-        assert st.page.locator(".hex-cell.is-expanded").count() == 0      # 没有触发老的展开
-        panel.locator(".st-x").click()
-        assert not st.page.locator("#stVeil").is_visible()
+        st.page.keyboard.press("Escape")
+        assert st.page.locator(".hex-cell.is-expanded").count() == 0
         assert st.posts == []
 
 
@@ -634,29 +634,30 @@ def test_tiers_off_reads_no_blocks_and_no_extra_settings(browser, base) -> None:
         assert st.page.locator("#stBucketLabel").inner_text() == "未分类 · 今天 0 分"
 
 
-def test_panel_esc_closes(browser, base) -> None:  # noqa: F811  HV-B13
+def test_panel_esc_closes(browser, base) -> None:  # noqa: F811  HV-B13；「十二」：关闭 = 收起大六边形
     with open_stage(browser, base, setup=_busy_day) as st:
         st.page.click(CELL.format("p_math"))
-        assert st.page.locator("#stVeil").is_visible()
+        st.page.wait_for_selector(".hex-cell.is-expanded .pr-row")
         st.page.keyboard.press("Escape")
-        assert not st.page.locator("#stVeil").is_visible()
+        assert st.page.locator(".hex-cell.is-expanded").count() == 0
+        assert st.page.locator(".hex-ruler-slot").count() == 0 or not st.page.locator(".hex-ruler-slot").first.is_visible()
 
 
-def test_panel_covers_the_whole_hive_including_zone_outlines(browser, base) -> None:  # noqa: F811  HV-B13
+def test_expanded_hexagon_is_on_top_of_zone_outlines(browser, base) -> None:  # noqa: F811  HV-B13；「十二」：盖住蜂巢的是大六边形本身
     with open_stage(browser, base, setup=_busy_day) as st:
         st.page.click(CELL.format("p_math"))
+        st.page.wait_for_selector(".hex-cell.is-expanded .pr-row")
+        st.page.clock.run_for(1000)
+        st.page.wait_for_timeout(500)
+        st.page.clock.run_for(600)
         on_top = st.page.evaluate("""() => {
-          const r = document.getElementById('stPanel').getBoundingClientRect(), out = [];
-          const pill = document.querySelector('.hex-zone-label');   // 分区名牌层级高于舞台层：挪到面板正中
+          const cell = document.querySelector('.hex-cell.is-expanded'), r = cell.getBoundingClientRect(), out = [];
+          const pill = document.querySelector('.hex-zone-label');   // 分区名牌层级高于舞台层：挪到六边形正中
           if (!pill) return 'no zone label';
           const pr = pill.getBoundingClientRect();
           pill.style.translate = (r.left + r.width / 2 - pr.left - pr.width / 2) + 'px ' + (r.top + r.height / 2 - pr.top - pr.height / 2) + 'px';
           const c = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-          out.push(!!(c && c.closest('#stPanel')));
-          for (let i = 1; i < 10; i++) for (let j = 1; j < 6; j++) {
-            const e = document.elementFromPoint(r.left + r.width * i / 10, r.top + r.height * j / 6);
-            out.push(!!(e && e.closest('#stPanel')));
-          }
+          out.push(!!(c && c.closest('.hex-cell.is-expanded')));
           return out.every(Boolean);
         }""")
         assert on_top is True
@@ -709,20 +710,22 @@ def test_click_the_eye_on_the_clock_opens_the_menu_not_stop(browser, base) -> No
         assert st.posts == [] and st.page.locator(".cm-panel").is_visible()
 
 
-def test_panel_keeps_focus_on_close_button_across_renders(browser, base) -> None:  # noqa: F811
+def test_panel_is_not_rebuilt_by_polling_and_survives_cell_refill(browser, base) -> None:  # noqa: F811  「十二」
     with open_stage(browser, base, setup=_busy_day) as st:
         st.page.click(CELL.format("p_math"))
-        assert st.page.evaluate("() => document.activeElement.className") == "st-x"
+        st.page.wait_for_selector(".hex-cell.is-expanded .pr-row")
+        st.page.evaluate("() => document.querySelector('.hex-ruler-slot .pr-ruler').dataset.mark = '1'")
         st.poll()
-        assert st.page.evaluate("() => document.activeElement.className") == "st-x"
+        assert st.page.locator(".hex-ruler-slot .pr-ruler[data-mark='1']").count() == 1   # 没变就不重画
+        st.page.evaluate("() => document.querySelector('.hex-ruler-slot').innerHTML = ''")   # 格子被 hex-app 重写内容时槽会变空
+        st.page.wait_for_selector(".hex-ruler-slot .pr-row")
 
 
-def test_panel_expand_button_closes_it_and_expands_the_cell(browser, base) -> None:  # noqa: F811
+def test_there_is_no_separate_panel_or_expand_button(browser, base) -> None:  # noqa: F811  「十二」取代原「展开」按钮
     with open_stage(browser, base, setup=_busy_day) as st:
         st.page.click(CELL.format("p_math"))
-        st.page.click(".st-expand")
-        assert not st.page.locator("#stVeil").is_visible()
         st.page.wait_for_selector(".hex-cell.is-expanded[data-project-id=p_math]")
+        assert st.page.locator(".st-expand, #stVeil, #stPanel").count() == 0
 
 
 TOUCH_PACK = {"kind": "claude", "name": "Claude", "license": "x", "credits": "x", "source": "x",
