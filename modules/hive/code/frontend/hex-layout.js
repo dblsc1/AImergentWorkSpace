@@ -339,11 +339,13 @@
       var inner = m.inner && m.el.querySelector(".hex-inner");
       if (inner) play(inner, [{ transform: m.inner }, { transform: "none" }], ms);
     });
-    // 镜头的起点 = 外框挪动 · 旧镜头 · 把新坐标搬回旧坐标（原点 o1 → o0、倍数 1/k）
+    // 镜头的起点 = 外框挪动 · 旧镜头 · 把新坐标搬回旧坐标（原点 o1 → o0、倍数 1/k）。
+    // 起点和终点都**乘成一个矩阵**再交给动画：写成一串 translate / scale 的话，终点是 none 时浏览器会逐项各插各的，
+    // 合起来的路线是弯的（收起时整张蜂巢先甩出去再回来）；单个矩阵之间插值 = 平移和倍数各走直线
     var bx = (box0.left - box1.left) / zoomK, by = (box0.top - box1.top) / zoomK;
-    play(camEl, [{ transform: "translate(" + bx.toFixed(2) + "px," + by.toFixed(2) + "px) " + (cam0 === "none" ? "" : cam0) +
-        " translate(" + ox0.toFixed(2) + "px," + oy0.toFixed(2) + "px) scale(" + (1 / k).toFixed(5) + ") translate(" + (-plan.ox).toFixed(2) + "px," + (-plan.oy).toFixed(2) + "px)" },
-      { transform: camEl.style.transform || "none" }], ms);
+    var from = new DOMMatrix().translate(bx, by).multiply(new DOMMatrix(cam0 === "none" ? "" : cam0)).translate(ox0, oy0).scale(1 / k).translate(-plan.ox, -plan.oy);
+    var to = new DOMMatrix(camEl.style.transform || "");
+    play(camEl, [{ transform: from.toString() }, { transform: to.toString() }], ms);
   }
   function busy() { return performance.now() < busyUntil; }
   function zooming() { return performance.now() < zoomUntil; }   // 展开 / 收起那一段（不含悬停的短动画）
