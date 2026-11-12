@@ -1260,12 +1260,15 @@
 
   // 蜂巢放大 / 缩小（hex-layout 发 hexlayout 时格子已是终态、动画还没起）：
   // 小人与人的形象按终态摆好，再从原位起一段同时长、同缓动的动画 —— 和格子、镜头同一条时间线
-  var following = false;
+  var following = false, followEnd = 0;
   function layoutBusy() { var L = window.NexusTableHexLayout; return !following && !!(L && L.busy && L.busy()); }
   document.addEventListener("hexlayout", function (ev) {
     if (!data.lanes) return;
     var els = [].slice.call(layer.querySelectorAll(".st-pet")).concat($("stEye"), $("stMore"));
     var was = els.map(function (e) { return { x: parseFloat(e.style.left), y: parseFloat(e.style.top) }; });
+    // 干活的小人平时挪窝走 900ms 的 left/top 过渡：这一回关掉，改由下面那段同时长的动画带着走
+    layer.classList.add("st-following"); clearTimeout(followEnd);
+    followEnd = setTimeout(function () { layer.classList.remove("st-following"); }, ev.detail.ms + 60);
     following = true;
     try { renderEye(); renderPets(); } finally { following = false; }
     els.forEach(function (e, i) {
