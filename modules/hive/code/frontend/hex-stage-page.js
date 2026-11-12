@@ -1024,7 +1024,7 @@
   function renderDrawer() {
     var box = $("stDrawer"), rows = stage.drawer(), sig = JSON.stringify(rows.map(function (r) { return [r.name, r.seconds, r.draggable]; }));
     renderGreyPop(rows);
-    if ((sig === drawerSig && box.firstChild) || box.contains(document.activeElement)) return;   // 正在改过滤器的数：不重画
+    if ((sig === drawerSig && box.firstChild) || (document.activeElement && document.activeElement.closest(".st-d-filter"))) return;   // 正在改过滤器的数：不重画
     drawerSig = sig;
     box.innerHTML = "";
     // 过滤器：满 x 分钟的窗口才进入（记在这台设备上）
@@ -1131,6 +1131,7 @@
     var slot = document.querySelector(".hex-cell.is-expanded .hex-ruler-slot");
     if (!slot) return;
     var html = PP.body(panelPid, Date.now());
+    slot.style.setProperty("--pr-now", Pr.nowPct(Pr.layout(Date.now())));   // 此刻的细白线跟着走，不重建面板
     if (html !== panelHtml || !slot.firstChild) { panelHtml = html; slot.innerHTML = html; }
     [].forEach.call(document.querySelectorAll(".hex-cell.is-expanded .hex-spent"), function (el) {
       var sp = PP.spent(el.dataset.taskId);

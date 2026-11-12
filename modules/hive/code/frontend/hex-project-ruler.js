@@ -75,8 +75,10 @@
   function dividers(L) {
     return L.days.slice(1).map(function (d) { return '<i class="pr-div" style="left:' + pct(d.x0) + '"></i>'; }).join("");
   }
-  // 此刻的细白线（hive.stage.v1「二十四」）：只有 layout(now) 的尺子带 now；标尺和每条泳道各画一截，上下对齐成一根
-  function nowLine(L) { return L.now == null ? "" : '<i class="pr-now" style="left:' + pct(xOf(L, L.now)) + '"></i>'; }
+  // 此刻的细白线（hive.stage.v1「二十四」）：只有 layout(now) 的尺子带 now；标尺和每条泳道各画一截，上下对齐成一根。
+  // 位置不写进 HTML（每秒都在变，写进去 = 整块每秒重建）：宿主把 nowPct(L) 设到容器的 --pr-now 上
+  function nowLine(L) { return L.now == null ? "" : '<i class="pr-now"></i>'; }
+  function nowPct(L) { return L.now == null ? "" : pct(xOf(L, L.now)); }
   function dayName(d) { return d.ago === 0 ? "今天" : d.ago === 1 ? "昨天" : "周" + WEEK[new Date(d.start).getDay()]; }
   // 标尺：上排每天一格（今天 / 昨天，更早写周几），下排是钟点刻度（thin = 细线，带数字的 = pr-tick）；日界线比小时线重
   function rulerHtml(L) {
@@ -310,7 +312,7 @@
              dragOver: dragOver, dragEnd: dragEnd, dropAt: dropAt, overPanel: overPanel, awaitName: awaitName };
   }
 
-  var api = { minutesText: minutesText, spentText: spentText, taskOrder: taskOrder, lastActivity: lastActivity, layout: layout, linearScale: linearScale, rollingScale: rollingScale, xOf: xOf, spanRect: spanRect, rulerHtml: rulerHtml, lanesHtml: lanesHtml, createPanel: createPanel,
+  var api = { nowPct: nowPct, minutesText: minutesText, spentText: spentText, taskOrder: taskOrder, lastActivity: lastActivity, layout: layout, linearScale: linearScale, rollingScale: rollingScale, xOf: xOf, spanRect: spanRect, rulerHtml: rulerHtml, lanesHtml: lanesHtml, createPanel: createPanel,
               PAST_SHARE: PAST_SHARE, TODAY_SHARE: TODAY_SHARE };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.NexusTableHexProjectRuler = api;
