@@ -506,6 +506,7 @@
     if (s.click) return { file: s.click, loop: false };
     if (s.mode === "drag" && m.drag && m.drag.length) return { file: m.drag[0], loop: true };
     if (s.mode === "back" && s.walking && s.walkClip) return { file: s.walkClip, loop: true };
+    if (s.meet) return { file: s.meet, loop: true };   // 人在看这个 agent：互动动作（「二十一」）
     return null;
   }
   function syncClip(e) {
@@ -840,14 +841,20 @@
     var ck = $("stClock").getBoundingClientRect();
     return toLayer(ck.left + 2 * k, ck.top + 2 * k);   // 时钟卡左上角：像别在时钟上
   }
-  function renderEye() {
-    var el = $("stEye"), h = eyeNow(), key = h.at === "project" ? h.project : h.at, f = focusNow();
-    if (!el.firstChild) el.innerHTML = EYE;
-    el.dataset.host = key;
-    el.classList.toggle("is-closed", !!h.closed);
-    el.classList.toggle("is-timing", h.by === "timer");
-    el.classList.toggle("is-live", !!eyeItem());
-    el.querySelector(".st-eye-win").textContent = h.at === "tray" && f ? St.focusLabel(f) : "";
+  function renderEye() { var m = meetTarget(); eyeStep(m); meetApply(m); }
+  // 人正在看某个 agent 时站到它的小人旁边（「二十一」）。从小人的 __home 算，不假设它在格子外沿
+  function meetTarget() {
+    var h = eyeNow(), el = $("stEye");
+    if (h.closed || h.by === "timer" || eye.hold || el.classList.contains("st-dragging") || layoutBusy() || document.querySelector(".ag-veil:not([hidden])")) return eye.meetId = null;
+    var run = St.watchedRun(runsOf(), data.lanes && data.lanes.interactions, Date.now(), dayStart() || null);
+    var pe = run && !run.endAt && !run.lost ? petEls[run.runId] : null, s = run && ix[run.runId];
+    if (!pe || !pe.__home || !pe.isConnected || pe.style.visibility === "hidden" || pe.classList.contains("st-dragging") || (s && s.mode)) return eye.meetId = null;
+    if (eye.meetId !== run.runId) { eye.meetId = run.runId; eye.meetSide = eye.x < pe.__home.x ? -1 : 1; }   // 站哪一侧：来时定下，之后不换
+    var k = pe.classList.contains("is-big") ? layerPetK() * PET_BIG_K : (parseFloat(pe.style.getPropertyValue("--pet-k")) || layerPetK());
+    var spot = Pk.meetSpot(pe.__home, { x: pe.__home.x + eye.meetSide }, k);
+    return { id: run.runId, pet: pe, spot: spot };
+  }
+  function eyeMedia(el, h) {
     var kind = humanPack(), slot = el.querySelector(".st-media");
     loadPack(kind);
     eye.rhythm = Pk.rhythm(eye.pack === kind ? eye.rhythm : null, packs[kind] && packs[kind].moods, h.closed ? "idle" : h.by === "timer" ? "working" : "waiting", Date.now(), Math.random);
@@ -856,8 +863,42 @@
     if (slot.dataset.key !== m.key) {
       slot.dataset.key = m.key; showMedia(slot, m, function () { showPlaceholder(slot); });
     }
+  }
+  // 人的形象到了小人旁边才开演：两边各播一个互动动作，没有动作（静态包 / 包里没有）的那边用 CSS 小跳
+  function meetApply(m) {
+    var el = $("stEye"), ok = !!m && eye.host === "meet:" + m.id && !eye.raf && !eye.back, pe = ok ? m.pet : null;
+    if (eye.meetPet && eye.meetPet !== pe) {
+      var old = eye.meetPet, so = ix[old.dataset.runId];
+      eye.meetPet = null;
+      if (so) { so.meet = null; syncClip(old); }
+      old.classList.remove("is-meeting", "meet-css"); setFlip(old, false);
+    }
+    if (!pe) {
+      if (eye.meeting) { eye.meeting = false; el.classList.remove("flip", "meet-css"); eyeMedia(el, eyeNow()); }
+      return;
+    }
+    var kind = humanPack(), hClip = Pk.meetClip(packs[kind] && packs[kind].moods, "human"), pClip = Pk.meetClip(packMoods(pe), "pet");
+    eye.meeting = true; eye.meetPet = pe;
+    el.classList.toggle("flip", m.spot.eyeFlip); el.classList.toggle("meet-css", !hClip);
+    pe.classList.add("is-meeting"); pe.classList.toggle("meet-css", !pClip); setFlip(pe, m.spot.petFlip);
+    if (hClip) {
+      var slot = el.querySelector(".st-media"), mm = mediaFor({ pack: kind }, hClip);
+      if (slot.dataset.key !== mm.key) { slot.dataset.key = mm.key; showMedia(slot, mm, function () { showPlaceholder(slot); }); }
+    }
+    ixOf(pe.dataset.runId).meet = pClip; syncClip(pe);
+  }
+  function eyeStep(meet) {
+    var el = $("stEye"), h = eyeNow(), key = h.at === "project" ? h.project : h.at, f = focusNow();
+    if (!el.firstChild) el.innerHTML = EYE;
+    el.dataset.host = key;
+    el.classList.toggle("is-closed", !!h.closed);
+    el.classList.toggle("is-timing", h.by === "timer");
+    el.classList.toggle("is-live", !!eyeItem());
+    el.querySelector(".st-eye-win").textContent = h.at === "tray" && f ? St.focusLabel(f) : "";
+    if (!eye.meeting) eyeMedia(el, h);
     if (eye.hold || el.classList.contains("st-dragging") || layoutBusy()) return;   // 拖着 / 等确认卡 / 格子还在动画里：留在原地
-    var t = eyeTarget(h);
+    var t = meet ? meet.spot : eyeTarget(h);
+    if (meet) key = "meet:" + meet.id;
     if (eye.host === null) { eye.host = key; eye.x = t.x; eye.y = t.y; place(el, t); return; }
     if (eye.host === key && !eye.back) { if (!eye.raf) { eye.x = t.x; eye.y = t.y; place(el, t); } return; }
     // 离开未分类窗口：托盘先掉一块占位（真块到了认领这一格）；刚把这个窗口归了类的不掉
@@ -1335,7 +1376,7 @@
     layer.classList.add("st-following"); clearTimeout(followEnd);
     followEnd = setTimeout(function () { layer.classList.remove("st-following"); }, ev.detail.ms + 60);
     following = true;
-    try { renderEye(); renderPets(); } finally { following = false; }
+    try { renderPets(); renderEye(); } finally { following = false; }   // 先摆小人再摆人的形象：互动时人站在小人旁边，要用小人的新位置
     els.forEach(function (e, i) {
       var dx = was[i].x - parseFloat(e.style.left), dy = was[i].y - parseFloat(e.style.top);
       var big = e.classList.contains("is-big"), k = big === was[i].big ? 1 : big ? 1 / PET_BIG_K : PET_BIG_K;   // 小人变大 / 变回：个头也在这条时间线上长
@@ -1347,5 +1388,5 @@
   refresh().then(function () { sizeToWindow(); });
   setInterval(refresh, POLL_MS);
   setInterval(function () { var n = Date.now(); renderRing(n); renderClock(n); renderToast(); clockMenu.refresh(); stepPets(); }, TICK_MS);
-  setInterval(function () { renderEye(); renderPets(); }, 400);
+  setInterval(function () { renderPets(); renderEye(); }, 400);
 })();

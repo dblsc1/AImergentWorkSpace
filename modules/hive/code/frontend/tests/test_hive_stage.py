@@ -426,8 +426,14 @@ def test_block_drop_conflict_keeps_the_block(browser, base) -> None:  # noqa: F8
         assert st.page.locator("#stBucketLabel").inner_text() == "未分类 · 今天 15 分"
 
 
+def _busy_day_unwatched(st: Stage) -> None:
+    """_busy_day 里人正看着 r1（带 attend）；「二十一」起这时人的形象会站到 r1 的小人旁边，眼睛停靠位置的用例去掉这条。"""
+    _busy_day(st)
+    st.lanes["interactions"] = []
+
+
 def test_eye_follows_focus_between_cells_and_returns_to_the_clock_closed_on_afk(browser, base) -> None:  # noqa: F811  HV-B06 / B07
-    with open_stage(browser, base, setup=_busy_day) as st:
+    with open_stage(browser, base, setup=_busy_day_unwatched) as st:
         def focus(state: str, pid: str | None) -> None:
             st.current = {"running": False, "focus": {"state": state, "app": "code", "title": "t", "since": _iso(st.now()), "projectId": pid,
                                                       "projectName": None, "taskId": None, "taskName": None, "source": "rules"}}
@@ -1385,7 +1391,7 @@ def _clock_top_right(st: Stage) -> bool:
 
 
 def test_eye_sits_by_the_tray_on_unclassified_window_and_the_clock_never_moves(browser, base) -> None:  # noqa: F811  十·1 / 十·2
-    with open_stage(browser, base, setup=_busy_day) as st:
+    with open_stage(browser, base, setup=_busy_day_unwatched) as st:
         chips = st.page.locator(".st-tray-chip").count()
         _focus(st, None, "firefox", "某文档")
         st.poll()

@@ -18,6 +18,14 @@ assert.strictEqual(S.pickRing(runs, [at("r1", -600, -20), at("r2", -20, -10)], N
 assert.strictEqual(S.pickRing(runs, [at("r1", -86400, -86000)], NOW, NOW - 3600e3), null);
 // 最后一条 until 刚好在 15 秒前也算此刻在看
 assert.strictEqual(S.pickRing(runs, [at("r1", -600, -15), at("r2", -700, -100)], NOW).runId, "r1");
+// 「二十一」：看着的那条运行，最后一条 attend 的 until 不早于此刻 − 15 秒才算；没找到运行 / 太久以前 = null
+const ra = [{ runId: "r1", agent: "a" }, { runId: "r2", agent: "b" }];
+assert.strictEqual(S.watchedRun(ra, [at("r1", -600, -5)], NOW).runId, "r1");
+assert.strictEqual(S.watchedRun(ra, [at("r1", -600, -14)], NOW).runId, "r1");
+assert.strictEqual(S.watchedRun(ra, [at("r1", -600, -16)], NOW), null);
+assert.strictEqual(S.watchedRun(ra, [at("r1", -600, -5), at("r2", -600, -300)], NOW).runId, "r1");   // 以 until 最晚的那条为准
+assert.strictEqual(S.watchedRun(ra, [at("r9", -60, -5)], NOW), null);
+assert.strictEqual(S.watchedRun(ra, [], NOW), null);
 
 // HV-S05 / S06
 assert.deepStrictEqual(S.eyeHost({ state: "present", projectId: "p1" }, null), { at: "project", project: "p1", by: "window" });

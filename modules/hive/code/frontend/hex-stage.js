@@ -23,6 +23,16 @@
     return hit || { runId: last.runId };
   }
 
+  // 人此刻在看的那条运行（hive.stage.v1「二十一」）：pickRing 命中，且它最后一条 attend 的 until 不早于此刻 − 15 秒；没有 = null
+  var WATCH_MS = 15000;
+  function watchedRun(runs, attend, now, dayStartMs) {
+    var hit = pickRing(runs, attend, now, dayStartMs);
+    if (!hit || hit.agent === undefined) return null;
+    var last = (attend || []).filter(function (a) { return a.kind === "attend" && a.runId === hit.runId; })
+      .reduce(function (m, a) { return Math.max(m, ms(a.until)); }, 0);
+    return last >= now - WATCH_MS ? hit : null;
+  }
+
   // 眼睛 = 人此刻的聚焦（hive.stage.v1「十」）。停哪：
   // 手动计时记到了项目 → 那个项目；计时中还没记到项目 → 时钟角上（睁眼）；
   // 没在计时：窗口认出项目 → 那个项目；在场但没认出（收件箱不算项目）→ 左下托盘旁；离开 / 没有心跳 → 时钟角上、闭眼
@@ -186,7 +196,7 @@
     return run.label || run.agent;
   }
 
-  var api = { petTitle: petTitle, pickRing: pickRing, eyeHost: eyeHost, focusLabel: focusLabel, bucketMinutes: bucketMinutes, bucketFilter: bucketFilter, bucketText: bucketText, drawerRows: drawerRows, greyGroups: greyGroups, stripList: stripList, dropRequest: dropRequest, createStage: createStage };
+  var api = { petTitle: petTitle, pickRing: pickRing, watchedRun: watchedRun, eyeHost: eyeHost, focusLabel: focusLabel, bucketMinutes: bucketMinutes, bucketFilter: bucketFilter, bucketText: bucketText, drawerRows: drawerRows, greyGroups: greyGroups, stripList: stripList, dropRequest: dropRequest, createStage: createStage };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.NexusTableHexStage = api;
 })();
