@@ -12,6 +12,7 @@ import contextlib
 from datetime import datetime, timedelta, timezone
 import json
 from typing import Any, Iterator
+from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
 
 from test_hive_focus import COCKPIT, TREE, base, browser  # noqa: F401  (fixtures)
@@ -42,6 +43,7 @@ class Stage:
         self.unplaced: list[dict[str, Any]] = []
         self.devices: list[dict[str, Any]] = []
         self.records: list[dict[str, Any]] = []
+        self.records_by_block: dict[str, list[dict[str, Any]]] = {}      # 按块名给原始记录；没给的块用 self.records
         self.api: list[str] = []
         self.posts: list[tuple[str, Any]] = []
         self.replies: dict[str, tuple[int, Any]] = {}
@@ -80,7 +82,8 @@ class Stage:
         elif key == "activity/blocks":
             body = {"date": self.lanes.get("today"), "items": self.blocks, "nextCursor": None}
         elif key == "activity/blocks/records":
-            body = {"items": self.records, "truncated": False}
+            block = parse_qs(urlsplit(req.url).query).get("blockKey", [""])[0]
+            body = {"items": self.records_by_block.get(block, self.records), "truncated": False}
         elif key == "activity/settings":
             body = self.settings
         elif key == "timer/unplaced":
@@ -1320,27 +1323,16 @@ def _focus(st: Stage, project: str | None, app: str = "firefox", title: str = "�
                                               "displayName": title, "blockKey": None if state == "afk" else app + " · " + title}}
 
 
-def test_clock_short_press_menu_shows_allocation_windows_and_focus_timeline(browser, base) -> None:  # noqa: F811
-    def setup(st: Stage) -> None:
-        _busy_day(st)
-        now = st.now().astimezone(TZ)
-        st.blocks = [{"blockKey": "code · main.go", "apps": ["code"], "status": "assigned", "seconds": 1800, "seq": 1, "lastAt": _iso(now - timedelta(minutes=5))},
-                     {"blockKey": "chrome · 窗口名3", "apps": ["chrome"], "status": "pending", "seconds": 600, "seq": 1, "lastAt": _iso(now - timedelta(minutes=30))}]
-        st.records = [{"startAt": _iso(now - timedelta(minutes=40)), "endAt": _iso(now - timedelta(minutes=30)), "seconds": 600, "app": "chrome", "title": "窗口名3"},
-                      {"startAt": _iso(now - timedelta(minutes=25)), "endAt": _iso(now - timedelta(minutes=5)), "seconds": 1200, "app": "code", "title": "main.go"}]
-    with open_stage(browser, base, setup=setup) as st:
+def test_clock_short_press_opens_the_human_page_below_the_clock_and_closes_on_outside_click(browser, base) -> None:  # noqa: F811  十四·1（取代「九」2 的菜单内容；三张卡的细节见 test_hive_human_page.py）
+    with open_stage(browser, base, setup=_busy_day) as st:
         st.page.click("#stClock")
         menu = st.page.locator(".cm-panel")
-        st.page.wait_for_function("() => document.querySelectorAll('.cm-panel .cm-win').length >= 4")
-        text = menu.inner_text()
-        assert "窗口记录 / 人用时汇总" in text and "数学" in text and "1 小时" in text           # 人用时（p_math 一小时）
-        assert "code · main.go" in text and "chrome · 标题已隐去" in text and "窗口名3" not in text
-        line = menu.locator(".cm-sec").nth(2).locator(".cm-win b").all_inner_texts()
-        assert line == ["code · main.go", "chrome · 标题已隐去"]                                    # 新的在前
-        assert menu.locator(".cm-bar i").count() >= 1
+        assert menu.is_visible()
+        assert st.page.locator(".cm-panel .hp-card h3").all_inner_texts() == ["用时", "逐任务用时", "窗口记录"]
         top = st.box(".cm-panel")
         clock = st.box("#stClock")
         assert top["y"] >= clock["y"] + clock["height"]                                          # 在时钟下方
+        assert "数学" in menu.inner_text() and ("1 小时" in menu.inner_text() or "59 分钟" in menu.inner_text())   # 逐任务：p_math 一小时（夹具时刻早于页面几秒，开头会被范围起点裁掉一点）
         st.page.mouse.click(300, 300)                                                           # 点外面收起
         assert st.page.locator(".cm-panel").count() == 0
         assert st.posts == []

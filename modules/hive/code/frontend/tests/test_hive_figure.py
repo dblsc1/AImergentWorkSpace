@@ -29,10 +29,10 @@ def test_the_human_is_drawn_as_their_pack_with_a_sweat_drop(browser, base) -> No
         assert st.page.locator("#stEye video.st-art").get_attribute("src").endswith("/hive/pets/kimi/ki.webm")   # 没有心跳 = 离开：idle 的动作
 
 
-def test_clock_menu_opens_my_figure_and_picking_saves_it(browser, base) -> None:  # noqa: F811
+def test_human_page_figure_opens_my_figure_picker_and_picking_saves_it(browser, base) -> None:  # noqa: F811
     with open_stage(browser, base, setup=_setup, pets={"claude": TOUCH_PACK, "kimi": KIMI}, hold_webm=True) as st:
         st.page.mouse.click(*st.center("#stClock"))
-        st.page.locator(".cm-me").click()
+        st.page.locator(".hp-figure").click()          # 十四·2：左边的立绘，点它 = 我的形象
         st.page.wait_for_selector(".fp-tile")
         assert st.page.locator(".fp-panel h3").inner_text() == "我的形象" and st.page.locator(".cm-panel").count() == 0
         assert st.page.locator(".fp-tile").evaluate_all("els => els.map(e => e.dataset.kind)") == ["claude", "kimi", "qwen"]
