@@ -36,21 +36,59 @@
     return { humanSec: secOf(lanes && lanes.human), agentSec: agent, peak: peakParallel(lanes && lanes.agents) };
   }
   // 中心环里轮播的短句：s = {humanNow, working, humanSec, agentSec, focus:{name, text}|null}
-  function tickerLines(s) {
+  // 每句带它的种类（环上画什么弧跟着它走，「二十七」B）：human / parallel / efficiency / totals / agent
+  function tickerEntries(s) {
     var out = [], eff = efficiencyLine(s.humanSec, s.agentSec);
-    if (s.humanNow) out.push(s.humanNow);
-    if (s.working > 0) out.push(s.working + " 个代理并行");
-    if (eff) out.push(eff.line);
-    out.push("你 " + fmtHours(s.humanSec) + "\n代理 " + fmtHours(s.agentSec));
-    if (s.focus) out.push(s.focus.name + "\n" + s.focus.text);
+    if (s.humanNow) out.push({ kind: "human", text: s.humanNow });
+    if (s.working > 0) out.push({ kind: "parallel", text: s.working + " 个代理并行" });
+    if (eff) out.push({ kind: "efficiency", text: eff.line });
+    out.push({ kind: "totals", text: "你 " + fmtHours(s.humanSec) + "\n代理 " + fmtHours(s.agentSec) });
+    if (s.focus) out.push({ kind: "agent", text: s.focus.name + "\n" + s.focus.text });
     return out;
   }
-  var api = { fmtHours: fmtHours, efficiencyLine: efficiencyLine, peakParallel: peakParallel, totals: totals, tickerLines: tickerLines, TICK_MS: TICK_MS };
+  function tickerLines(s) { return tickerEntries(s).map(function (e) { return e.text; }); }
+
+  // 环上的弧（「二十七」B）：按轮播到的那一句画。s = {humanSec, agentSec, agents:[{sec, color}], workers:[{color}], focusColor}；
+  // 返回 [{color, share}]，share 为占整圈的比例（总和 ≤ 1）。没有颜色的用中性色
+  var HUMAN_COLOR = "var(--pr-human)", AGENT_COLOR = "var(--accent)", NEUTRAL_COLOR = "var(--ink-3)", MAX_AGENT_ARCS = 6;
+  function ringArcs(kind, s) {
+    var out = [], sum;
+    if (kind === "totals") {
+      var ag = (s.agents || []).filter(function (a) { return a.sec > 0; }).sort(function (a, b) { return b.sec - a.sec; });
+      sum = s.humanSec + ag.reduce(function (n, a) { return n + a.sec; }, 0);
+      if (!(sum > 0)) return [];
+      if (s.humanSec > 0) out.push({ color: HUMAN_COLOR, share: s.humanSec / sum });
+      var keep = ag.length > MAX_AGENT_ARCS ? ag.slice(0, MAX_AGENT_ARCS - 1) : ag, rest = ag.slice(keep.length);
+      keep.forEach(function (a) { out.push({ color: a.color || NEUTRAL_COLOR, share: a.sec / sum }); });
+      if (rest.length) out.push({ color: NEUTRAL_COLOR, share: rest.reduce(function (n, a) { return n + a.sec; }, 0) / sum });
+      return out;
+    }
+    if (kind === "parallel") return (s.workers || []).slice(0, 12).map(function (w, _, all) { return { color: w.color || NEUTRAL_COLOR, share: 1 / all.length }; });
+    if (kind === "agent") return [{ color: s.focusColor || NEUTRAL_COLOR, share: 1 }];
+    sum = s.humanSec + s.agentSec;
+    if (!(sum > 0)) return [];
+    return [{ color: HUMAN_COLOR, share: s.humanSec / sum }, { color: AGENT_COLOR, share: s.agentSec / sum }];
+  }
+  // 环卡的行（「二十七」7）：s = {humanSec, agentSec, workers:[{name, project}], waiting, peak}
+  function ringCardLines(s) {
+    var C = (typeof window !== "undefined" && window.HoneycombClock) || require("../../../nginx-docker/static/clockface.js"), dur = C.dur;
+    var out = [{ text: "今天：你 " + dur(s.humanSec) + " · 代理 " + dur(s.agentSec) }], w = s.workers || [];
+    if (!w.length) out.push({ text: "现在没有 agent 在干活" });
+    else {
+      out.push({ text: "现在 " + w.length + " 个 agent 在干活" });
+      w.slice(0, 3).forEach(function (x) { out.push({ text: [x.name, x.project].filter(Boolean).join(" · ") }); });
+      if (w.length > 3) out.push({ text: "+" + (w.length - 3) });
+    }
+    if (s.waiting > 0) out.push({ text: s.waiting + " 个在等你" });
+    if (s.peak > 0) out.push({ text: "今天代理并行峰值 " + s.peak });
+    return out;
+  }
+  var api = { fmtHours: fmtHours, efficiencyLine: efficiencyLine, peakParallel: peakParallel, totals: totals, tickerLines: tickerLines, tickerEntries: tickerEntries, ringArcs: ringArcs, ringCardLines: ringCardLines, TICK_MS: TICK_MS };
 
   // ── 接线 ─────────────────────────────────────────────
   // ctx: { layer, ring, clock, getJson, snapshot(now) → {humanNow, working, humanSec, focus}, projectName, cellColor, placeholder, base }
   function mount(ctx) {
-    var today = null, todayAt = 0, todayAgentSec = 0;
+    var today = null, todayAt = 0, todayAgentSec = 0, todayPeak = 0, todayAgents = [];
     var reduce = !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
 
     function fetchLanes(from, to) { return ctx.getJson("views/time-lanes?from=" + ymd(from) + "&to=" + ymd(to)); }
@@ -59,33 +97,60 @@
     var ring = ctx.ring;
     ring.innerHTML = '<svg viewBox="0 0 200 200" aria-hidden="true"><circle cx="100" cy="100" r="96" fill="var(--panel)"/>' +
       '<circle cx="100" cy="100" r="86" fill="none" stroke="var(--panel-2)" stroke-width="12"/>' +
-      '<circle class="st-arc st-arc-h" cx="100" cy="100" r="86" fill="none" stroke="var(--pr-human)" stroke-width="12" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 100 100)"/>' +
-      '<circle class="st-arc st-arc-a" cx="100" cy="100" r="86" fill="none" stroke="var(--accent)" stroke-width="12" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 100 100)"/></svg>' +
+      '</svg>' +
       '<div class="st-face"><div class="st-tk"></div></div>';
     ring.setAttribute("role", "button"); ring.setAttribute("tabindex", "0"); ring.setAttribute("aria-label", "统计");
     ring.addEventListener("click", function () { centrePage.open(); });
     ring.addEventListener("keydown", function (ev) { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); centrePage.open(); } });
-    var tk = ring.querySelector(".st-tk"), tkText = null;
+    var tk = ring.querySelector(".st-tk"), tkText = null, lastSnap = null;
+    // 悬停环出粗略信息（「二十七」7）：中心页 / Agent 页开着时不出
+    var ringHover = window.HoneycombClock && window.HoneycombClock.attach(ring, { side: "beside",
+      blocked: function () { return agentPage.isOpen() || centrePage.isOpen(); },
+      lines: function () { return ringCardLines({ humanSec: lastSnap.humanSec, agentSec: todayAgentSec, workers: lastSnap.workers, waiting: lastSnap.waiting, peak: todayPeak }); } });
 
+    // 一条代理今天的用时与它最近所在的项目（环上的弧取这个项目的颜色，同 Agent 页卡片的 --ag-c）
+    function agentToday(a) {
+      var segs = a.segments || [], pid = null;
+      segs.forEach(function (s) { if (s.projectId) pid = s.projectId; });
+      return { sec: secOf(segs), pid: pid };
+    }
+    function colorOf(pid) { return (pid && ctx.cellColor(pid)) || ""; }
+    var arcEls = [];
+    for (var ai = 0; ai < 14; ai++) {
+      var arcEl = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      arcEl.setAttribute("class", "st-arc"); arcEl.setAttribute("cx", "100"); arcEl.setAttribute("cy", "100"); arcEl.setAttribute("r", "86"); arcEl.setAttribute("fill", "none");
+      arcEl.setAttribute("stroke-width", "12"); arcEl.setAttribute("pathLength", "100"); arcEl.setAttribute("stroke-dasharray", "0 100"); arcEl.setAttribute("transform", "rotate(-90 100 100)");
+      ring.querySelector("svg").appendChild(arcEl); arcEls.push(arcEl);
+    }
+    function paintArcs(arcs) {
+      var at = 0;
+      arcEls.forEach(function (c, i) {
+        var a = arcs[i];
+        if (!a) { c.setAttribute("stroke-dasharray", "0 100"); return; }
+        var len = Math.max(0, a.share * 100 - (arcs.length > 1 ? 0.6 : 0));
+        c.setAttribute("stroke", a.color); c.setAttribute("stroke-dasharray", len + " 100"); c.setAttribute("stroke-dashoffset", String(-at));
+        at += a.share * 100;
+      });
+      ring.dataset.arcs = JSON.stringify(arcs);
+    }
     function renderRing(now) {
       if (now - todayAt > 15000) {
         todayAt = now;
-        fetchLanes(now, now).then(function (r) { if (r && r.agents) { today = r; todayAgentSec = totals(r).agentSec; renderRing(Date.now()); } });
+        fetchLanes(now, now).then(function (r) { if (r && r.agents) { today = r; var tt = totals(r); todayAgentSec = tt.agentSec; todayPeak = tt.peak; todayAgents = (r.agents || []).map(agentToday); renderRing(Date.now()); } });
       }
       refreshFish(now);
-      var snap = ctx.snapshot(now), agentSec = todayAgentSec;   // 合计只在读到新数据时算一次：每秒重算（逐段 Date.parse）是空闲时的大头
-      var lines = tickerLines({ humanNow: snap.humanNow, working: snap.working, humanSec: snap.humanSec, agentSec: agentSec, focus: snap.focus });
-      var text = lines[Math.floor(now / TICK_MS) % lines.length];
+      var snap = lastSnap = ctx.snapshot(now), agentSec = todayAgentSec;   // 合计只在读到新数据时算一次：每秒重算（逐段 Date.parse）是空闲时的大头
+      var entries = tickerEntries({ humanNow: snap.humanNow, working: snap.working, humanSec: snap.humanSec, agentSec: agentSec, focus: snap.focus });
+      var lines = entries.map(function (e) { return e.text; }), cur = entries[Math.floor(now / TICK_MS) % entries.length], text = cur.text;
       ring.dataset.lines = JSON.stringify(lines);
       ring.style.setProperty("--ring-k", ring.dataset.k || "1");   // 环缩小时字按倒数放大，始终在环正中看得清（「二十四」）
       if (text !== tkText) {
         tkText = text; tk.textContent = text;
         if (!reduce) { tk.classList.remove("swap"); void tk.offsetWidth; tk.classList.add("swap"); }
       }
-      var sum = snap.humanSec + agentSec, h = sum ? snap.humanSec / sum * 100 : 0;
-      ring.querySelector(".st-arc-h").setAttribute("stroke-dasharray", h + " 100");
-      var a = ring.querySelector(".st-arc-a");
-      a.setAttribute("stroke-dasharray", (sum ? 100 - h : 0) + " 100"); a.setAttribute("stroke-dashoffset", String(-h));
+      paintArcs(ringArcs(cur.kind, { humanSec: snap.humanSec, agentSec: agentSec, agents: todayAgents.map(function (a) { return { sec: a.sec, color: colorOf(a.pid) }; }),
+        workers: (snap.workers || []).map(function (w) { return { color: colorOf(w.projectId) }; }), focusColor: snap.focus && colorOf(snap.focus.projectId) }));
+      if (ringHover) ringHover.update();
     }
 
     // 左上角头像：最近 7 天干活最久的那个 tool 的宠物包（没有数据用缺省包），idle 第一段视频停在第一帧、放大后只露头；没有包用占位形象

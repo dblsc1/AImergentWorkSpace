@@ -211,6 +211,21 @@
   chip.appendChild(needDot);
   right.appendChild(chip);
 
+  // 计时胶囊长成右上角时钟的样子（hive.stage.v1「二十七」4）：小钟面（含计时的红弧）+ 大字（读数）+ 小字（任务 / 状态）。
+  // 共享件 clockface.js 没来（老网关）就照旧；蜂巢页的 hex-stage-page.js 经 window.HoneycombNavChip 接管内容与点按。
+  var HC = window.HoneycombClock, dialNode = null, taken = false;
+  if (HC) {
+    chip.classList.add('ckpt-chip-clock');
+    dialNode = el('span', 'ckpt-dial');
+    dialNode.setAttribute('aria-hidden', 'true');
+    dialNode.appendChild(document.importNode(new DOMParser().parseFromString(HC.DIAL.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" '), 'image/svg+xml').documentElement, true));
+    chip.insertBefore(dialNode, chip.firstChild);
+    var chipText = el('span', 'ckpt-ct');
+    chipText.appendChild(elapsedNode);
+    chipText.appendChild(liveWord);
+    chip.insertBefore(chipText, needDot);
+  }
+
   // 主题按钮 + 面板
   var themeWrap = el('span');
   themeWrap.style.position = 'relative';
@@ -340,12 +355,14 @@
 
   var paint = function () {
     nav.setAttribute('data-ckpt-timer', state);
+    if (taken) { return; }   // 蜂巢页接管了字与钟面（见 HoneycombNavChip）
     nav.removeAttribute('data-ckpt-paused');
     nav.removeAttribute('data-ckpt-auto');
     nav.removeAttribute('data-ckpt-focus');
     var asking = state === IDLE && needsChoice;
     if (asking) { nav.setAttribute('data-ckpt-choice', ''); } else { nav.removeAttribute('data-ckpt-choice'); }
     chip.setAttribute('aria-label', CHIP_LABEL + (asking ? '；' + HINT_CHOICE : ''));
+    if (dialNode) { HC.paintDial(dialNode, Date.now(), state === RUNNING && startMs ? ((Date.now() - startMs) / 1000 % 3600) / 36 : 0, false); }
     if (state === DEGRADED) {
       liveWord.textContent = WORD_DEGRADED;
       chip.title = HINT_DEGRADED;
@@ -383,6 +400,19 @@
     var carrySec = (carry && carry.taskId === taskId) ? secsOf(carry.carriedSeconds) : 0;
     elapsedNode.textContent = fmt(Math.floor((Date.now() - startMs) / 1000) + carrySec);
   };
+
+  // 蜂巢页接管：set 每秒给一次 {now, arc, countdown, big, small}；接管后顶栏自己的泳道预览不再开（悬停出的是时钟那张信息卡）
+  if (HC) {
+    window.HoneycombNavChip = {
+      chip: chip,
+      takeOver: function () { taken = true; chip.removeAttribute('title'); },
+      set: function (f) {
+        elapsedNode.textContent = f.big; liveWord.textContent = f.small;
+        HC.paintDial(dialNode, f.now, f.arc, f.countdown);
+      }
+    };
+    window.dispatchEvent(new CustomEvent('honeycomb:navchip', { detail: window.HoneycombNavChip }));
+  }
 
   var degrade = function () { startMs = null; focus = null; needsChoice = false; state = DEGRADED; paint(); };
 
@@ -452,6 +482,13 @@
    * 悬停 / 聚焦 / 触屏点一下计时芯片，弹出人一条线 + 至多 4 条代理线的最近 1 小时。
    * 计时页上不弹（那一页画了全部泳道）。画图交给共享的 lanes.js（计时页同一份），
    * 第一次打开时才加载。非 2xx（含 404 老后端、401）→ 不弹，芯片照旧，不跳登录页。 */
+  if (HC && location.pathname.indexOf(BASE + 'ring/') === 0) {
+    // 计时页没有泳道预览：悬停出粗略信息卡（用顶栏自己读到的数据能写几行写几行，不含今天的用时）
+    HC.attach(chip, { side: 'below', blocked: function () { return taken; }, lines: function () {
+      var f = focus && state === IDLE ? { afk: focus.state === 'afk', project: focus.target, window: focus.window } : null;
+      return HC.clockCardLines({ timer: state === RUNNING ? { startAt: startMs } : null, now: Date.now(), projectName: taskNode || '', todaySec: null, focus: f, top: [] });
+    } });
+  }
   if (location.pathname.indexOf(BASE + 'ring/') !== 0) {   // /ring/ 页自己画全部泳道
     var LANES_URL = BASE + 'api/core/views/lanes';
     var LANES_JS = BASE + '__cockpit/lanes.js';
@@ -539,7 +576,7 @@
       s.addEventListener('load', cb);
     };
     var openPreview = function () {
-      if (want || lanesGone) { return; }
+      if (want || lanesGone || taken) { return; }
       want = true;
       withLib(function () {
         if (!want || lanesPoll) { return; }

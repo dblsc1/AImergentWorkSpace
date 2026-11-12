@@ -128,6 +128,14 @@ html { scroll-padding-top: var(--ckpt-h, 52px); }
   transition: border-color var(--t-fast, 150ms ease), color var(--t-fast, 150ms ease);
 }
 .ckpt-chip:hover { background: var(--panel-2); }
+/* 计时胶囊长成右上角时钟的样子（hive.stage.v1「二十七」4）：左小钟面（含红弧），右大字 + 小字 */
+.ckpt-chip-clock { gap: var(--sp-2, 8px); padding: 0 var(--sp-3, 12px) 0 var(--sp-2, 8px); border-radius: 14px; }
+.ckpt-chip-clock .ckpt-dial { flex: none; display: inline-flex; width: 32px; height: 32px; }
+.ckpt-chip-clock .ckpt-dial svg { width: 100%; height: 100%; }
+.ckpt-chip-clock .ckpt-dot, .ckpt-chip-clock .ckpt-sep { display: none; }
+.ckpt-chip-clock .ckpt-ct { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.ckpt-chip-clock .ckpt-elapsed { font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; }
+.ckpt-chip-clock .ckpt-live-word { font-size: 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
 
 .ckpt-dot {
   flex: none;

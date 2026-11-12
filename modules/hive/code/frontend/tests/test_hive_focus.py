@@ -133,6 +133,7 @@ def open_hive(browser: Browser, base: str, *, width: int = 1280, height: int = 9
         setup(hive)   # 页面加载前就要桩好的端点（比如启动时读一次的 activity/settings）
     if helper:
         page.add_init_script(path=str(COCKPIT / "focus.js"))
+        page.add_init_script(path=str(COCKPIT / "clockface.js"))
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(base + "/index.html")
