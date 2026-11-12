@@ -50,7 +50,7 @@
   // ── 接线 ─────────────────────────────────────────────
   // ctx: { layer, ring, clock, getJson, snapshot(now) → {humanNow, working, humanSec, focus}, projectName, cellColor, placeholder, base }
   function mount(ctx) {
-    var today = null, todayAt = 0;
+    var today = null, todayAt = 0, todayAgentSec = 0;
     var reduce = !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
 
     function fetchLanes(from, to) { return ctx.getJson("views/time-lanes?from=" + ymd(from) + "&to=" + ymd(to)); }
@@ -72,10 +72,10 @@
     function renderRing(now) {
       if (now - todayAt > 15000) {
         todayAt = now;
-        fetchLanes(now, now).then(function (r) { if (r && r.agents) { today = r; renderRing(Date.now()); } });
+        fetchLanes(now, now).then(function (r) { if (r && r.agents) { today = r; todayAgentSec = totals(r).agentSec; renderRing(Date.now()); } });
       }
       refreshFish(now);
-      var snap = ctx.snapshot(now), agentSec = today ? totals(today).agentSec : 0;
+      var snap = ctx.snapshot(now), agentSec = todayAgentSec;   // 合计只在读到新数据时算一次：每秒重算（逐段 Date.parse）是空闲时的大头
       var lines = tickerLines({ humanNow: snap.humanNow, working: snap.working, humanSec: snap.humanSec, agentSec: agentSec, focus: snap.focus });
       var text = lines[Math.floor(now / TICK_MS) % lines.length];
       ring.dataset.lines = JSON.stringify(lines);
@@ -102,7 +102,7 @@
     fish.type = "button"; fish.className = "st-fish"; fish.id = "stFish"; fish.setAttribute("aria-label", "Agent");
     fish.innerHTML = ctx.placeholder;
     ctx.layer.appendChild(fish);
-    var weekRuns = null, weekAt = 0;
+    var weekRuns = null, weekAt = 0, weekTool = null;
     function paintFish(kind) {
       fish.dataset.pack = kind; fish.innerHTML = ctx.placeholder;
       fetch(ctx.base + "hive/pets/" + encodeURIComponent(kind) + "/pack.json").then(function (r) { return r.ok ? r.json() : null; }).then(function (p) {
@@ -117,9 +117,9 @@
     function refreshFish(now) {
       if (now - weekAt > FISH_REFRESH_MS) {
         weekAt = now;
-        ctx.getJson("views/time-lanes?since=" + encodeURIComponent(new Date(now - WEEK_MS).toISOString())).then(function (r) { if (r && r.agents) weekRuns = r.agents; });
+        ctx.getJson("views/time-lanes?since=" + encodeURIComponent(new Date(now - WEEK_MS).toISOString())).then(function (r) { if (r && r.agents) { weekRuns = r.agents; weekTool = AP().topTool(weekRuns); } });
       }
-      var tool = AP().topTool(weekRuns), kind = tool ? ctx.packOfTool(tool) : FISH_PACK;
+      var kind = weekTool ? ctx.packOfTool(weekTool) : FISH_PACK;   // 最常用的 tool 只在读到新数据时算一次
       if (fish.dataset.pack !== kind) paintFish(kind);
     }
     fish.addEventListener("click", function () { agentPage.open(); });
