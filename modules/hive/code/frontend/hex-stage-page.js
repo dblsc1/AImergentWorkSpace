@@ -564,6 +564,7 @@
   var PET_BIG_K = 1.7;
   function layerPetK() { return parseFloat(layer.style.getPropertyValue("--pet-k")) || 1; }
   function renderPets() {
+    if (layoutBusy()) return;   // 放大 / 缩小动画里格子还在路上：量到的是半路的位置
     var runs = runsOf().map(function (r) {
       var dock = stage.petDock(r.runId);
       return dock && Pk.isLoose(r, { projectOfTask: projectOfTask }) ? Object.assign({}, r, { projectId: dock, taskId: null }) : r;
@@ -840,7 +841,7 @@
     if (slot.dataset.key !== m.key) {
       slot.dataset.key = m.key; showMedia(slot, m, function () { showPlaceholder(slot); });
     }
-    if (eye.hold || el.classList.contains("st-dragging")) return;   // 拖着 / 等确认卡：留在原地
+    if (eye.hold || el.classList.contains("st-dragging") || layoutBusy()) return;   // 拖着 / 等确认卡 / 格子还在动画里：留在原地
     var t = eyeTarget(h);
     if (eye.host === null) { eye.host = key; eye.x = t.x; eye.y = t.y; place(el, t); return; }
     if (eye.host === key && !eye.back) { if (!eye.raf) { eye.x = t.x; eye.y = t.y; place(el, t); } return; }
@@ -1256,6 +1257,23 @@
   }
   window.addEventListener("resize", sizeToWindow);
   new MutationObserver(function () { if ($("stClock").querySelector(".st-dial")) renderEye(); }).observe(shell, { attributes: true, attributeFilter: ["hidden"], subtree: true });   // 决策栏出现 / 消失 → 时钟挪位，眼睛立刻跟过去
+
+  // 蜂巢放大 / 缩小（hex-layout 发 hexlayout 时格子已是终态、动画还没起）：
+  // 小人与人的形象按终态摆好，再从原位起一段同时长、同缓动的动画 —— 和格子、镜头同一条时间线
+  var following = false;
+  function layoutBusy() { var L = window.NexusTableHexLayout; return !following && !!(L && L.busy && L.busy()); }
+  document.addEventListener("hexlayout", function (ev) {
+    if (!data.lanes) return;
+    var els = [].slice.call(layer.querySelectorAll(".st-pet")).concat($("stEye"), $("stMore"));
+    var was = els.map(function (e) { return { x: parseFloat(e.style.left), y: parseFloat(e.style.top) }; });
+    following = true;
+    try { renderEye(); renderPets(); } finally { following = false; }
+    els.forEach(function (e, i) {
+      var dx = was[i].x - parseFloat(e.style.left), dy = was[i].y - parseFloat(e.style.top);
+      if (!e.isConnected || !e.animate || !isFinite(dx) || !isFinite(dy) || (Math.abs(dx) < 1 && Math.abs(dy) < 1)) return;
+      e.animate([{ translate: dx.toFixed(1) + "px " + dy.toFixed(1) + "px" }, { translate: "0px 0px" }], { duration: ev.detail.ms, easing: ev.detail.ease });
+    });
+  });
 
   refresh().then(function () { sizeToWindow(); });
   setInterval(refresh, POLL_MS);

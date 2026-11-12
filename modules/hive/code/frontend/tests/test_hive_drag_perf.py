@@ -124,7 +124,7 @@ def test_sweep_over_cells_expands_none_until_dwell(browser, base) -> None:  # no
         st = page.evaluate("() => window.__perf")
         assert st["expand"] == 1, "停下后只展开停住的那一格"
         assert st["efp"] <= 6, st
-        assert page.evaluate("() => document.querySelector('.hive-cam').style.transition") == "", "拖拽中的展开不做推镜过渡"
+        assert page.evaluate("() => document.querySelector('.hive-cam').getAnimations().length") == 0, "拖拽中的展开不做推镜过渡"
         assert page.evaluate("() => getComputedStyle(document.querySelector('.hex-borders')).display") == "none", "拖拽中不画界线层"
         page.mouse.move(5, 500)
         page.mouse.up()

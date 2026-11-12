@@ -261,14 +261,26 @@
   //      展开动画第一帧上）。
   // 代价：新挂上来的元素没有 __geom，第一次不做动画。这是对的 —— 它本来
   // 就没有"从哪来"。
+  // 一条时间线（人类 2026-11-12：「放大缩小不同步……要一个统一的时钟」）：
+  // 先把**终态**样式一次写完 → 量一次 → 发 hexlayout 让舞台层（小人、人的形象）按终态摆好 →
+  // 格子、格内反向缩放、镜头、分区线、舞台层在**同一个任务里**各起一段 Web Animation，
+  // 时长与缓动相同，起点 = 写之前屏幕上的样子。以前格子等下一帧才起、镜头走 CSS 过渡、
+  // 分区线与外框尺寸直接跳、小人 400ms 量一次，四条时间轴各走各的。
+  var flips = [], busyUntil = 0;
+  function stopFlips() { flips.forEach(function (a) { try { a.cancel(); } catch (e) {} }); flips = []; }
+  function play(el, frames, ms) { flips.push(el.animate(frames, { duration: ms, easing: EASE })); }
   function applyLayout(animate, durationMs) {
     var hive = $("#hive"), camEl = state.camEl;
     if (!hive || !camEl) return;
     // 取景框宽度趁还没写任何样式时读：applyCamera 里在改完全部格子尺寸之后再读 = 强制把整张蜂巢重新布局一遍
     var wrapW = hive.parentNode ? hive.parentNode.clientWidth : 0;
     var ms = durationMs || ANIM_MS;
+    var flip = animate && !reduceMotion() && !!camEl.animate;
+    // First：镜头此刻的样子（上一段还在走也照此刻的算）与外框位置，都在写之前读
+    var cam0 = flip ? getComputedStyle(camEl).transform : "", box0 = flip ? hive.getBoundingClientRect() : null;
+    var old = state.lastPlan;
+    stopFlips();
     var plan = computeItems(state.expandedId);
-    var flip = animate && !reduceMotion();
 
     // 取景框尺寸 = **没展开时**的蜂巢尺寸。展开后 plan 会因为大卡片变大，
     // 拿那个当取景框就等于"框跟着内容长"，推镜的感觉当场消失。
@@ -293,45 +305,42 @@
       var sx = prev.w / it.w, sy = prev.h / it.h;
       if (Math.abs(dx) < .5 && Math.abs(dy) < .5 &&
           Math.abs(sx - 1) < .005 && Math.abs(sy - 1) < .005) return;
-      el.style.transition = "none";
-      el.style.transform = el.__base + " translate3d(" + dx.toFixed(2) + "px," + dy.toFixed(2) + "px,0)" +
-        " scale(" + sx.toFixed(4) + "," + sy.toFixed(4) + ")";
-      var inner = el.querySelector(".hex-inner");
-      if (inner) {
-        inner.style.transition = "none";
-        inner.style.transform = "scale(" + (1 / sx).toFixed(4) + "," + (1 / sy).toFixed(4) + ")";
-      }
-      moved.push(el);
+      moved.push({ el: el, from: el.__base + " translate3d(" + dx.toFixed(2) + "px," + dy.toFixed(2) + "px,0)" +
+        " scale(" + sx.toFixed(4) + "," + sy.toFixed(4) + ")", inner: "scale(" + (1 / sx).toFixed(4) + "," + (1 / sy).toFixed(4) + ")" });
     });
 
     state.lastPlan = plan;
-    state.lastCam = applyCamera(hive, camEl, plan, animate, wrapW);
+    state.lastCam = applyCamera(hive, camEl, plan, wrapW);
+    if (!flip) return;
 
-    if (!moved.length) return;
-    void hive.offsetWidth;                       // 强制提交反相态，否则下一帧不触发过渡
-    // will-change **只在这一段动画期间挂**，动完就摘。常驻在 CSS 里等于让
-    // 21 个格子一直占着合成层；真正在动的每次只有几格（2026-09-08 性能回合）。
-    moved.forEach(function (el) { el.style.willChange = "transform"; });
-    if (layoutSettle) clearTimeout(layoutSettle);
-    layoutSettle = setTimeout(function () {
-      layoutSettle = null;
-      moved.forEach(function (el) { el.style.willChange = ""; });
-    }, ms + 60);
-    requestAnimationFrame(function () {
-      moved.forEach(function (el) {
-        // 过渡里**只有 transform**：clip-path 是百分比多边形，尺寸一变形状
-        // 自动跟着缩放，插值它等于每帧重算裁剪路径 + 重绘。
-        el.style.transition = "transform " + ms + "ms " + EASE;
-        el.style.transform = el.__base;
-        var inner = el.querySelector(".hex-inner");
-        if (inner) {
-          inner.style.transition = "transform " + ms + "ms " + EASE;
-          inner.style.transform = "";
-        }
-      });
+    // Last：全场只量这一次。外框（margin:auto 居中、尺寸直接变）挪了多少，折进镜头的起点
+    var box1 = hive.getBoundingClientRect(), shell = hive.closest(".board-shell");
+    var k = parseFloat(shell && shell.style.zoom) || 1;
+    busyUntil = performance.now() + ms;
+    document.dispatchEvent(new CustomEvent("hexlayout", { detail: { ms: ms, ease: EASE } }));
+
+    // 过渡里**只有 transform**：clip-path 是百分比多边形，尺寸一变形状
+    // 自动跟着缩放，插值它等于每帧重算裁剪路径 + 重绘。
+    moved.forEach(function (m) {
+      play(m.el, [{ transform: m.from }, { transform: m.el.__base }], ms);
+      var inner = m.el.querySelector(".hex-inner");
+      if (inner) play(inner, [{ transform: m.inner }, { transform: "none" }], ms);
     });
+    var bx = (box0.left - box1.left) / k, by = (box0.top - box1.top) / k;
+    play(camEl, [{ transform: "translate(" + bx.toFixed(2) + "px," + by.toFixed(2) + "px) " + (cam0 === "none" ? "" : cam0) },
+      { transform: camEl.style.transform || "none" }], ms);
+    // 分区线：整张 svg 从旧的原点与倍数走到新的（和格子同一个相似变换）
+    var svg = state.borderLayer && state.borderLayer.svg;
+    if (svg && old) {
+      var r = (old.mag || 1) / (plan.mag || 1);
+      if (Math.abs(r - 1) > .001 || Math.abs(old.ox - plan.ox) > .5 || Math.abs(old.oy - plan.oy) > .5) {
+        svg.style.transformOrigin = "0 0";
+        play(svg, [{ transform: "translate(" + (old.ox - r * plan.ox).toFixed(2) + "px," + (old.oy - r * plan.oy).toFixed(2) + "px) scale(" + r.toFixed(4) + ")" },
+          { transform: "none" }], ms);
+      }
+    }
   }
-  var layoutSettle = null;
+  function busy() { return performance.now() < busyUntil; }
 
   // ── 推镜：展开时整张蜂巢放大，并把焦点滚到取景框中心 ──────────
   //
@@ -340,12 +349,11 @@
   //   · #hive 占位 = plan 尺寸 × cam（滚动区跟着变，放大出去的部分够得着）
   //   · .hive-wrap 高度钉在**未展开时**的高度（它变成取景框，而不是跟着长高）
   // 收起时三件事全部还原，一个不留。
-  function applyCamera(hive, camEl, plan, animate, wrapW) {
+  function applyCamera(hive, camEl, plan, wrapW) {
     var wrap = hive.parentNode;
     var c = plan.cam || 1;
-    var smooth = animate && !reduceMotion();
     camEl.style.transformOrigin = "0 0";
-    camEl.style.transition = smooth ? "transform " + ANIM_MS + "ms " + EASE : "";
+    camEl.style.transition = "";
     if (!wrap) return c;
 
     // 判据是「有没有展开」（plan.focus），不是「相机倍数是不是 1」。
@@ -425,6 +433,7 @@
     CARD_W: CARD_W, CARD_H: CARD_H, CARD_OVER: CARD_OVER,
     ANIM_MS: ANIM_MS, HOVER_MS: HOVER_MS, EASE: EASE,
     compute: computeItems,
-    apply: applyLayout
+    apply: applyLayout,
+    busy: busy
   };
 })();
