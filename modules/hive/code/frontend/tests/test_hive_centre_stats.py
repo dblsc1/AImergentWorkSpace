@@ -1,10 +1,9 @@
-"""中心环（人 + 代理总计时）、左上角大肥鱼头像、统计页（hive.stage.v1「八」）。夹具沿用 test_hive_stage.py。"""
+"""中心环（人 + 代理总计时）、左上角大肥鱼头像（hive.stage.v1「八」；点环的页面见「十七」）。夹具沿用 test_hive_stage.py。"""
 
 from __future__ import annotations
 
 from datetime import timedelta
 import json
-import re
 from typing import Any
 
 from test_hive_focus import base, browser  # noqa: F401  (fixtures)
@@ -72,40 +71,23 @@ def test_fish_opens_the_agent_page(browser, base) -> None:  # noqa: F811  新契
         assert not st.page.locator("#agVeil").is_visible()
 
 
-def test_ring_click_flies_clock_and_fish_then_opens_the_mixed_page(browser, base) -> None:  # noqa: F811
+def test_ring_click_opens_the_mixed_page_without_flying_clock_and_fish(browser, base) -> None:  # noqa: F811  新契约：「十七」（取代「八」的飞入统计页；细节见 test_hive_centre_page.py）
     with open_stage(browser, base, setup=_setup) as st:
         st.page.click("#stRing")
-        assert st.page.locator(".st-fly").count() == 2                    # 时钟与头像的副本；原件不动
+        page = st.page.locator("#cpPage")
+        page.locator(".ag-me").wait_for()
+        assert st.page.locator(".st-fly").count() == 0 and st.page.locator("#csVeil").count() == 0
         assert st.page.locator("#stClock").is_visible() and st.page.locator("#stFish").is_visible()
-        page = st.page.locator("#csPage")
-        page.locator(".cs-me").wait_for()
-        assert st.page.locator(".st-fly").count() == 0
-        sum_text = page.locator(".cs-sum").inner_text()
-        assert sum_text.startswith("你 1.5 小时 · 代理 2.8 小时") and "你 1 小时，带出代理 1.9 小时的活" in sum_text and sum_text.endswith("代理并行峰值 2")
-        assert page.locator(".cs-who").all_inner_texts() == ["", "你", "garden", "scratch"]
-        human = page.locator(".cs-me .cs-seg").first
-        assert human.get_attribute("title") == "00:30–01:30 你 数学"
-        agent = page.locator(".cs-row:not(.cs-me) .cs-seg").first
-        assert agent.get_attribute("title") == "00:36–01:24 garden 数学"
-        assert agent.evaluate("e => getComputedStyle(e).backgroundColor") != human.evaluate("e => getComputedStyle(e).backgroundColor")
-        # 共用一条时间轴：人 00:30 与 garden 00:36 的左边只差 6 分钟的宽度
-        lane = page.locator(".cs-me .cs-lane").bounding_box()
-        assert lane
-        dx = agent.bounding_box()["x"] - human.bounding_box()["x"]
-        assert abs(dx / lane["width"] - 6 / 1440) < 0.003
-        # 本周：重读，按周几排 7 格
-        with st.page.expect_request(re.compile(r"views/time-lanes\?from=\d{4}-\d\d-\d\d&to=")):
-            page.get_by_role("button", name="本周").click()
-        assert page.locator(".cs-day").count() == 7
-        st.page.locator("#csPage .cs-x").click()
-        assert not st.page.locator("#csVeil").is_visible()
+        assert page.locator(".ag-name").all_inner_texts() == ["你", "scratch", "garden"] or sorted(page.locator(".ag-name").all_inner_texts()) == ["garden", "scratch", "你"]
+        st.page.locator("#cpPage .ag-x").click()
+        assert not st.page.locator("#cpVeil").is_visible()
 
 
-def test_reduced_motion_skips_the_flight(browser, base) -> None:  # noqa: F811
+def test_ring_click_with_reduced_motion_opens_the_mixed_page(browser, base) -> None:  # noqa: F811
     with open_stage(browser, base, setup=_setup) as st:
         st.page.emulate_media(reduced_motion="reduce")
         st.page.reload()
         st.page.wait_for_selector("#stRing .st-tk", state="attached")
         st.page.click("#stRing")
-        st.page.locator(".cs-me").wait_for()
-        assert st.page.locator(".st-fly").count() == 0
+        st.page.locator("#cpPage .ag-me").wait_for()
+        assert st.page.locator(".st-fly, .ag-flyer").count() == 0

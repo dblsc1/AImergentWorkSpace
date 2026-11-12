@@ -1,4 +1,4 @@
-/* hive · Agent 页（hex-agent-page.js，hive.stage.v1「十三」）。红条 = 人聚焦（--pr-human，hex-project-ruler.css）；段 = 项目分区色。 */
+/* hive · Agent 页与中心混合页（hex-agent-page.js，hive.stage.v1「十三」「十七」）。红条 = 人聚焦（--pr-human，hex-project-ruler.css）；段 = 项目分区色。 */
 .ag-veil[hidden] { display: none; }
 .ag-veil { position: fixed; inset: 0; background: color-mix(in srgb, var(--bg) 62%, transparent); backdrop-filter: blur(2px); display: grid; place-items: center; z-index: 200; }
 .ag-page { --lane-left: 236px; --lane-right: 16px; width: min(1080px, 94vw); max-height: 84vh; display: flex; flex-direction: column; padding: 20px 22px; }
@@ -14,6 +14,8 @@
 .ag-hours.on { border-color: var(--accent); color: var(--ink); }
 .ag-hours input { width: 110px; accent-color: var(--accent); }
 .ag-hours output { min-width: 72px; }
+.ag-tick.ag-day { transform: none; text-align: center; }
+.ag-hours.on output { cursor: pointer; }
 .ag-axis { padding-left: var(--lane-left); padding-right: var(--lane-right); }
 .ag-ruler { position: relative; height: 16px; border-bottom: 1px solid var(--line); }
 .ag-tick { position: absolute; top: 0; transform: translateX(-50%); font-size: 11px; color: var(--ink-3); }
@@ -34,5 +36,13 @@
 .ag-seg { position: absolute; top: 0; bottom: 0; min-width: 3px; border-radius: 3px; opacity: .92; }
 .ag-seg.ag-neutral { background: var(--ink-3); }
 .ag-focus { position: absolute; top: 0; height: 4px; min-width: 3px; background: var(--pr-human); border-radius: 2px; z-index: 2; pointer-events: auto; }
+.ag-me { grid-template-columns: calc(72px + 10px + 132px) 1fr; }
+.ag-who { min-width: 0; }
+.ag-me .ag-name { color: var(--pr-human); }
+.ag-dur { font-size: var(--fs-sub); color: var(--ink-2); }
+.ag-me .ag-lane { height: 40px; }
+.ag-me .ag-seg { top: 8px; }
+.ag-seg.ag-lite { background: var(--line); }
+.ag-timer { position: absolute; top: 0; height: 6px; min-width: 3px; background: var(--pr-human); border-radius: 2px; z-index: 2; }
 .ag-flyer { z-index: 300; pointer-events: none; transform-origin: 50% 50%; }
-@media (max-width: 760px) { .ag-page { --lane-left: 150px; } .ag-card { grid-template-columns: 56px 60px 1fr; } .ag-hd { flex-wrap: wrap; } }
+@media (max-width: 760px) { .ag-page { --lane-left: 150px; } .ag-card { grid-template-columns: 56px 60px 1fr; } .ag-me { grid-template-columns: calc(56px + 10px + 60px) 1fr; } .ag-hd { flex-wrap: wrap; } }

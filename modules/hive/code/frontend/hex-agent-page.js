@@ -1,6 +1,7 @@
-// hive · hex-agent-page.js —— 左上角 Agent 页：一个 agent 一张卡（hive.stage.v1「十三」）。
-// 纯函数（node 里测）：windowOf / groupRuns / segmentsOf / focusSpans / currentProject / rankGroups / ticks / summary / subtitle / topTool；
-// 接线：mount(ctx) 建页面、读 views/time-lanes?since=、画卡片、换位过渡、飞入飞回。
+// hive · hex-agent-page.js —— 左上角 Agent 页：一个 agent 一张卡（hive.stage.v1「十三」）；
+// mount(ctx, {mixed: true}) = 点中心环打开的「人 + agent 混合泳道」页：同一套卡片，最上面多一条人的泳道（「十七」）。
+// 纯函数（node 里测）：windowOf / scaleOf / pickRange / groupRuns / segmentsOf / focusSpans / currentProject / rankGroups / ticks / dayTicks / summary / subtitle / mixedSubtitle / topTool；
+// 接线：mount(ctx, opts) 建页面、读 views/time-lanes?since=、画卡片、换位过渡、飞入飞回。
 (function () {
   "use strict";
   var Pr = (typeof window !== "undefined" && window.NexusTableHexProjectRuler) || (typeof require !== "undefined" ? require("./hex-project-ruler.js") : null);
@@ -16,11 +17,16 @@
   function ms(s) { return Date.parse(s); }
 
   // ── 纯函数 ───────────────────────────────────────────
-  // 滚动窗口 [now − 范围, now]：日 24 小时，周 7×24 小时，拖动条 1–24 小时
+  // 范围（「十七」2）：默认 = 7 天不等宽标尺 Pr.layout(now)，日 / 周 / 最近 x 小时都不选中；
+  // 日 / 周 / 拖动条 = 滚动窗口 [now − 范围, now]（等宽）：日 24 小时，周 7×24 小时，拖动条 1–24 小时
   function windowOf(mode, hours, now) {
+    if (mode === "default") { var L = Pr.layout(now); return { mode: mode, hours: (L.to - L.from) / HOUR, from: L.from, to: L.to, now: now, label: "最近 7 天" }; }
     var h = mode === "day" ? 24 : mode === "week" ? 168 : Math.min(24, Math.max(1, Math.round(hours) || DEFAULT_HOURS));
-    return { mode: mode, hours: h, from: now - h * HOUR, to: now, label: mode === "day" ? "今天" : mode === "week" ? "最近 7 天" : "最近 " + h + " 小时" };
+    return { mode: mode, hours: h, from: now - h * HOUR, to: now, label: mode === "day" ? "今天" : mode === "week" ? "最近 7 天" : "最近 " + h + " 小时", now: now };
   }
+  function scaleOf(win) { return win.mode === "default" ? Pr.layout(win.now) : Pr.rollingScale(win.from, win.to); }
+  // 点了一个范围按钮：已选中的再点一次 = 回默认
+  function pickRange(cur, clicked) { return clicked === cur ? "default" : clicked; }
   function firstStart(r) { return r.segments && r.segments.length ? ms(r.segments[0].start) : 0; }
   function lastEnd(r) { return (r.segments || []).reduce(function (m, s) { return Math.max(m, ms(s.end)); }, 0); }
   // 同一个代理身份（laneKey，沿用 views/lanes 的泳道分组）的运行并成一组；组里的运行按开始先后
@@ -94,12 +100,21 @@
       if (c.getHours() % step === 0) out.push({ t: c.getTime(), label: pad(c.getHours()) });
     return out;
   }
+  // 默认标尺的刻度：每天一格（今天写「今天」，其余写周几），x / w 取自标尺
+  function dayTicks(L) {
+    return L.days.map(function (d) { return { x: d.x0, w: d.w, label: d.today ? "今天" : "周" + WEEK[new Date(d.start).getDay()] }; });
+  }
   function summary(groups, runs) {
     var tt = Cs.totals({ agents: runs });
     return { sec: tt.agentSec, peak: tt.peak, working: groups.filter(function (g) { return g.runs.some(function (r) { return live(r) && r.phase === "working"; }); }).length };
   }
   function fmtHm(sec) { var m = Math.round(Math.max(0, sec) / 60); return Math.floor(m / 60) + " 小时 " + m % 60 + " 分钟"; }
   function subtitle(win, s) { return "agent " + win.label + "工作了 " + fmtHm(s.sec) + "，并行峰值 " + s.peak + "，现在有 " + s.working + " 个正在工作"; }
+  // 混合页小字（「十七」1）：你 x · 代理 y [· 效率] · 代理并行峰值 n · 现在有 m 个正在工作
+  function mixedSubtitle(humanSec, s) {
+    var eff = Cs.efficiencyLine(humanSec, s.sec);
+    return "你 " + Cs.fmtHours(humanSec) + " · 代理 " + Cs.fmtHours(s.sec) + (eff ? " · " + eff.line : "") + " · 代理并行峰值 " + s.peak + " · 现在有 " + s.working + " 个正在工作";
+  }
   // 窗口里干活最久的 tool（左上角头像用）；没有 = null
   function topTool(runs) {
     var by = {}, best = null;
@@ -111,26 +126,29 @@
     return best;
   }
 
-  var api = { windowOf: windowOf, groupRuns: groupRuns, segmentsOf: segmentsOf, focusSpans: focusSpans, currentProject: currentProject, rankGroups: rankGroups,
+  var api = { windowOf: windowOf, scaleOf: scaleOf, pickRange: pickRange, dayTicks: dayTicks, mixedSubtitle: mixedSubtitle, groupRuns: groupRuns, segmentsOf: segmentsOf, focusSpans: focusSpans, currentProject: currentProject, rankGroups: rankGroups,
     ticks: ticks, summary: summary, subtitle: subtitle, topTool: topTool, fmtHm: fmtHm, DEFAULT_HOURS: DEFAULT_HOURS, REFRESH_MS: REFRESH_MS };
 
   // ── 接线 ─────────────────────────────────────────────
-  // ctx: { getJson, cellColor(pid), projectName(pid), packOfTool(tool), figureOf(pack) → {key, html}, petEl(runId) → .st-pet | null, placeholder }
-  function mount(ctx) {
-    var mode = "hours", hours = DEFAULT_HOURS, opened = false, timer = 0, seq = 0, cards = {}, flights = 0, hidden = [], flyPending = false;
+  // ctx: { getJson, cellColor(pid), projectName(pid), packOfTool(tool), figureOf(pack) → {key, html}, petEl(runId) → .st-pet | null, placeholder, getLanes()（混合页要正在跑的计时） }
+  // opts.mixed：中心页（「十七」），页首多一条人的泳道；ids 前缀 cp，Agent 页前缀 ag
+  function mount(ctx, opts) {
+    var mixed = !!(opts && opts.mixed), ID = mixed ? "cp" : "ag", HP = function () { return window.HexHumanPage; };
+    var mode = "default", hours = DEFAULT_HOURS, opened = false, timer = 0, seq = 0, cards = {}, flights = 0, hidden = [], flyPending = false;
     var reduced = function () { return !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches); };
     var veil = document.createElement("div");
-    veil.className = "ag-veil"; veil.id = "agVeil"; veil.hidden = true;
-    veil.innerHTML = '<div class="ag-page st-card" id="agPage" role="dialog" aria-modal="true" aria-label="Agent">' +
-      '<div class="ag-hd"><div class="ag-title"><h2 class="ag-h"><b>Agent</b></h2><div class="ag-sub" id="agSub"></div></div>' +
+    veil.className = "ag-veil"; veil.id = ID + "Veil"; veil.hidden = true;
+    var title = mixed ? "你 + 代理" : "Agent";
+    veil.innerHTML = '<div class="ag-page st-card" id="' + ID + 'Page" role="dialog" aria-modal="true" aria-label="' + title + '">' +
+      '<div class="ag-hd"><div class="ag-title"><h2 class="ag-h"><b>' + title + '</b></h2><div class="ag-sub" id="' + ID + 'Sub"></div></div>' +
       '<div class="ag-range" role="group"><button type="button" data-mode="day">日</button><button type="button" data-mode="week">周</button>' +
-      '<label class="ag-hours"><input type="range" id="agHours" min="1" max="24" step="1" aria-label="最近几小时"><output id="agHoursOut"></output></label></div>' +
+      '<label class="ag-hours"><input type="range" id="' + ID + 'Hours" min="1" max="24" step="1" aria-label="最近几小时"><output id="' + ID + 'HoursOut"></output></label></div>' +
       '<button type="button" class="st-x ag-x" aria-label="关闭">✕</button></div>' +
-      '<div class="ag-axis"><div class="ag-ruler" id="agRuler"></div></div>' +
-      '<div class="ag-scroll"><div class="ag-stack" id="agStack"><div class="ag-plot" id="agPlot"><div class="ag-now" id="agNow"><span></span></div></div></div></div></div>';
+      '<div class="ag-axis"><div class="ag-ruler" id="' + ID + 'Ruler"></div></div>' +
+      '<div class="ag-scroll"><div class="ag-stack" id="' + ID + 'Stack"><div class="ag-plot" id="' + ID + 'Plot"><div class="ag-now" id="' + ID + 'Now"><span></span></div></div></div></div></div>';
     document.body.appendChild(veil);
-    var page = veil.firstChild, sub = page.querySelector("#agSub"), range = page.querySelector("#agHours"), out = page.querySelector("#agHoursOut"),
-        ruler = page.querySelector("#agRuler"), stack = page.querySelector("#agStack"), plot = page.querySelector("#agPlot"), nowEl = page.querySelector("#agNow");
+    var q = function (k) { return page.querySelector("#" + ID + k); };
+    var page = veil.firstChild, sub = q("Sub"), range = q("Hours"), out = q("HoursOut"), ruler = q("Ruler"), stack = q("Stack"), plot = q("Plot"), nowEl = q("Now"), me = null, first = mixed ? 2 : 1;
     range.value = String(hours);
 
     function syncControls() {
@@ -172,15 +190,47 @@
       });
       return html;
     }
+    // 混合页第一张卡：人的泳道。手动计时段贴上沿，窗口聚焦段在下（数据与分段都用 hex-human-page.js 的纯函数）
+    function humanRange(win, now) { return { from: win.from, to: Math.min(win.to, now), now: now }; }
+    function humanLane(h, win, L, now) {
+      var hp = HP(), range = humanRange(win, now), live = (ctx.getLanes && ctx.getLanes() || {}).human, running = (live && live.running) || null;
+      var lane = hp.laneOf(range, { sessions: h.sessions, running: running, coverFrom: h.coverFrom, segments: hp.focusSegments(range, h.blocks) });
+      var wide = win.hours > 24, day = function (a) { return wide ? md(a) + " " : ""; }, html = "";
+      lane.timer.forEach(function (x) {
+        var r = Pr.spanRect(L, x.a, x.b);
+        if (r) html += '<i class="ag-timer" style="left:' + pct(r.left) + ";width:" + pct(r.width) + '" title="' + esc(day(x.a) + hm(x.a) + "–" + hm(x.b) + " 手动计时" + (x.projectId ? " / " + ctx.projectName(x.projectId) : "")) + '"></i>';
+      });
+      lane.windows.forEach(function (x) {
+        var r = Pr.spanRect(L, x.a, x.b), col = zoneColor(x.projectId);
+        if (r) html += '<i class="ag-seg' + (col ? "" : " ag-lite") + '" style="left:' + pct(r.left) + ";width:" + pct(r.width) + (col ? ";background:" + esc(col) : "") +
+          '" title="' + esc(day(x.a) + hm(x.a) + "–" + hm(x.b) + " 聚焦在 " + [x.projectId ? ctx.projectName(x.projectId) : null, x.label].filter(Boolean).join(" / ")) + '"></i>';
+      });
+      return { html: html, sec: hp.totalSeconds(range, h.sessions, running), dur: hp.durText };
+    }
+    function paintMe(h, win, L, now) {
+      if (!me) {
+        me = document.createElement("div");
+        me.className = "ag-card ag-me ag-neutral";
+        me.innerHTML = '<div class="ag-who"><div class="ag-name">你</div><div class="ag-dur"></div></div><div class="ag-lane"></div>';
+        stack.insertBefore(me, stack.children[1] || null);
+      }
+      var m = h ? humanLane(h, win, L, now) : { html: "", sec: 0, dur: HP().durText };
+      me.querySelector(".ag-dur").textContent = h ? m.dur(m.sec) : "";
+      var lane = me.querySelector(".ag-lane");
+      if (lane.__html !== m.html) { lane.__html = m.html; lane.innerHTML = m.html; }
+      return m.sec;
+    }
     // 画：卡片按键保留（视频不重放），按排序重排，换位走位移过渡
-    function render(res, now) {
-      var win = windowOf(mode, hours, now), L = Pr.rollingScale(win.from, win.to), runs = (res && res.agents) || [];
+    function render(res, now, human) {
+      var win = windowOf(mode, hours, now), L = scaleOf(win), runs = (res && res.agents) || [];
       var groups = rankGroups(groupRuns(runs), now), s = summary(groups, runs);
-      sub.textContent = subtitle(win, s); sub.style.visibility = res ? "" : "hidden";
-      var tk = ticks(win.from, win.to);
-      ruler.innerHTML = tk.map(function (t) { return '<span class="ag-tick" style="left:' + pct(Pr.xOf(L, t.t)) + '">' + esc(t.label) + "</span>"; }).join("");
+      var humanSec = mixed ? paintMe(human, win, L, now) : 0;
+      sub.textContent = mixed ? mixedSubtitle(humanSec, s) : subtitle(win, s); sub.style.visibility = res ? "" : "hidden";
+      var tk = win.mode === "default" ? dayTicks(L) : ticks(win.from, win.to).map(function (t) { return { x: Pr.xOf(L, t.t), label: t.label }; });
+      ruler.innerHTML = tk.map(function (t) { return '<span class="ag-tick' + (t.w ? " ag-day" : "") + '" style="left:' + pct(t.x) + (t.w ? ";width:" + pct(t.w) : "") + '">' + esc(t.label) + "</span>"; }).join("");
       plot.querySelectorAll(".ag-tickline").forEach(function (e) { e.remove(); });
-      tk.forEach(function (t) { var i = document.createElement("i"); i.className = "ag-tickline"; i.style.left = pct(Pr.xOf(L, t.t)); plot.insertBefore(i, nowEl); });
+      tk.slice(win.mode === "default" ? 1 : 0).forEach(function (t) { var i = document.createElement("i"); i.className = "ag-tickline"; i.style.left = pct(t.x); plot.insertBefore(i, nowEl); });
+      nowEl.style.left = pct(Pr.xOf(L, now));   // 默认标尺的右端是明天零点，现在线不在最右
       nowEl.firstChild.textContent = hm(now);
       var before = {};
       Object.keys(cards).forEach(function (k) { if (cards[k].isConnected) before[k] = cards[k].offsetTop; });
@@ -194,7 +244,7 @@
         c.__group = g; figure(c, g);
         var h = laneHtml(g, win, L), lane = c.querySelector(".ag-lane");
         if (lane.__html !== h) { lane.__html = h; lane.innerHTML = h; }
-        if (stack.children[i + 1] !== c) stack.insertBefore(c, stack.children[i + 1] || null);
+        if (stack.children[i + first] !== c) stack.insertBefore(c, stack.children[i + first] || null);
       });
       Object.keys(cards).forEach(function (k) { if (!keep[k]) { cards[k].remove(); delete cards[k]; } });
       if (!reduced()) groups.forEach(function (g) {
@@ -203,12 +253,23 @@
       });
     }
 
-    var last = { res: null, now: Date.now() };
+    var last = { res: null, now: Date.now(), human: null };
+    // 人的数据：views/lanes 的计时段（按 7 天分段读）+ 今天昨天的窗口块与原始记录；读不到不挡 agent 卡片
+    function loadHuman(win, now) {
+      var hp = HP(), range = humanRange(win, now);
+      return Promise.all([
+        Promise.all(hp.dateChunks(range.from, now).map(function (c) { return ctx.getJson("views/lanes?from=" + c.from + "&to=" + c.to); })),
+        hp.loadBlocks(ctx.getJson, range)
+      ]).then(function (r) {
+        return { sessions: hp.mergeSessions(r[0].filter(Boolean).map(function (l) { return l.human && l.human.sessions; })), blocks: r[1].blocks, coverFrom: r[1].coverFrom };
+      }).catch(function () { return null; });
+    }
     function load() {
       var now = Date.now(), win = windowOf(mode, hours, now), my = ++seq;
-      ctx.getJson("views/time-lanes?since=" + encodeURIComponent(new Date(win.from).toISOString())).then(function (res) {
+      Promise.all([ctx.getJson("views/time-lanes?since=" + encodeURIComponent(new Date(win.from).toISOString())), mixed ? loadHuman(win, now) : null]).then(function (r) {
+        var res = r[0];
         if (!opened || my !== seq || !res || !res.agents) return;
-        last = { res: res, now: now }; render(res, now);
+        last = { res: res, now: now, human: r[1] }; render(res, now, r[1]);
         if (flyPending) { flyPending = false; flyIn(); }
       });
     }
@@ -255,7 +316,7 @@
     function open() {
       if (opened) return;
       opened = true; syncControls();
-      veil.hidden = false; render(last.res, Date.now());   // 上次的卡片先摆着，新数据到了再换
+      veil.hidden = false; render(last.res, Date.now(), last.human);   // 上次的卡片先摆着，新数据到了再换
       flyPending = true; load();
       if (Object.keys(cards).length) { flyPending = false; flyIn(); }
       timer = setInterval(load, REFRESH_MS);
@@ -269,14 +330,15 @@
     function setMode(m) { mode = m; syncControls(); load(); }
     page.addEventListener("click", function (ev) {
       if (ev.target.closest(".ag-x")) close();
-      var b = ev.target.closest("[data-mode]"); if (b) setMode(b.dataset.mode);
+      var b = ev.target.closest("[data-mode]"); if (b) setMode(pickRange(mode, b.dataset.mode));
+      if (ev.target === out && mode === "hours") setMode("default");
     });
     // 拖动时只改数字，松手才重读重画
     range.addEventListener("input", function () { hours = +range.value; out.textContent = "最近 " + hours + " 小时"; });
     range.addEventListener("change", function () { hours = +range.value; setMode("hours"); });
     veil.addEventListener("pointerdown", function (ev) { if (ev.target === veil) close(); });
     document.addEventListener("keydown", function (ev) { if (ev.key === "Escape" && opened) close(); });
-    return { open: open, close: close, isOpen: function () { return opened; }, redraw: function () { if (opened && last.res) render(last.res, last.now); } };
+    return { open: open, close: close, isOpen: function () { return opened; }, redraw: function () { if (opened && last.res) render(last.res, last.now, last.human); } };
   }
   api.mount = mount;
   if (typeof module !== "undefined" && module.exports) module.exports = api;

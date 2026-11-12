@@ -147,3 +147,24 @@ def test_time_lanes_since_window_identity_phase_and_attend(client, seeded):
     assert client.get(f"{API}/views/time-lanes", params={"since": (now - timedelta(days=9)).isoformat()}).status_code == 422
     assert client.get(f"{API}/views/time-lanes", params={"since": since, "from": "2026-01-01"}).status_code == 422
     assert client.get(f"{API}/views/time-lanes", params={"since": "昨天"}).status_code == 422
+
+
+def test_time_lanes_since_lists_every_running_working_run(client, monkeypatch):
+    """v2.57：在跑、没失联、相位 working 的运行一定在 ``agents[]`` 里（带 running / phase），不论它的干活区间落不落在窗口里。"""
+    from app.modules.timer import service  # noqa: PLC0415
+
+    real = service._now
+    run = client.post(f"{API}/agents/start", json={"agent": "garden", "tool": "x", "phase": "working"}).json()["runId"]
+
+    def listed():
+        since = (service._now() - timedelta(hours=3)).isoformat()
+        body = client.get(f"{API}/views/time-lanes", params={"since": since}).json()
+        return {a["runId"]: a for a in body["agents"]}
+
+    monkeypatch.setattr(service, "_now", lambda: real() + timedelta(seconds=600))
+    a = listed()[run]
+    assert (a["running"], a["lost"], a["phase"]) == (True, False, "working")
+    # 超过遗忘上限（12 小时）的在跑运行：干活区间止于上限、早已出了 3 小时窗口，运行仍要列出（segments 为空）
+    monkeypatch.setattr(service, "_now", lambda: real() + timedelta(hours=20))
+    a = listed().get(run)
+    assert a is not None and (a["running"], a["phase"]) == (True, "working") and a["segments"] == []

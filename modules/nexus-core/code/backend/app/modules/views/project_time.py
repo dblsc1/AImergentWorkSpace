@@ -133,16 +133,25 @@ def get_time_lanes(date_from: str | None, date_to: str | None, since: str | None
     """``GET /api/core/views/time-lanes``（v2.50）：全部项目的人 / 代理区间，代理一条运行一道泳道。v2.54 追加 ``since`` 与每条运行的身份 / 相位 / attend。"""
     now, start, end, humans, agents, by_id = collect(None, date_from, date_to, since)
     runs: dict[str, dict] = {}
-    for pid, task, name, key, run_id, a, b in sorted(agents, key=lambda x: x[5]):
+
+    def lane_of(run_id: str, name: str | None, key: str | None) -> dict:
         r = by_id[run_id]
-        run = runs.setdefault(run_id, {
+        return runs.setdefault(run_id, {
             "agent": key, "name": name, "runId": run_id, "segments": [],
             "tool": r.get("tool"), "laneKey": lane_key(r), "projectId": r.get("projectId"),
             "running": r["endTs"] is None, "lost": bool(r.get("lost")), "phase": phase_of({"phases": r.get("phases") or []}),
             "attend": [{"start": _iso(c[0]), "end": _iso(c[1])} for i in r.get("interactions") or []
                        if i.get("kind") == "attend" and (c := _clip(datetime.fromisoformat(i["at"]), datetime.fromisoformat(i["until"]), start, end, now))]})
-        run["segments"].append({"start": _iso(a), "end": _iso(b), "projectId": pid, "taskId": task})
+
+    for pid, task, name, key, run_id, a, b in sorted(agents, key=lambda x: x[5]):
+        lane_of(run_id, name, key)["segments"].append({"start": _iso(a), "end": _iso(b), "projectId": pid, "taskId": task})
+    # v2.57：在跑的运行一定列出：干活区间落在窗口外的（超过遗忘上限的、窗口里一直空闲的）segments 为空
+    names = timer_service.agent_name_rules(current_tenant())
+    for run_id, r in by_id.items():
+        if end > now and r["endTs"] is None and run_id not in runs and r["startTs"] <= now:
+            lane_of(run_id, names.get(r.get("agent")) or r.get("label") or r.get("agent"), r.get("agent"))
+    first = lambda r: r["segments"][0]["start"] if r["segments"] else _iso(by_id[r["runId"]]["startTs"])  # noqa: E731
     return TimeLanesOut(today=_today(), now=_iso(now), windowStart=_iso(start), windowEnd=_iso(end),
                         human=[{"start": _iso(a), "end": _iso(b), "projectId": pid, "taskId": task}
                                for pid, task, a, b in sorted(humans, key=lambda x: x[2])],
-                        agents=sorted(runs.values(), key=lambda r: r["segments"][0]["start"]))
+                        agents=sorted(runs.values(), key=first))

@@ -1,4 +1,4 @@
-"""左上角 Agent 页：一个 agent 一张卡（hive.stage.v1「十三」）。夹具沿用 test_hive_stage.py。"""
+"""左上角 Agent 页：一个 agent 一张卡（hive.stage.v1「十三」；默认范围按「十七」5：7 天不等宽标尺）。夹具沿用 test_hive_stage.py。"""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def test_header_title_subtitle_and_one_card_per_agent(browser, base) -> None:  #
         assert page.locator(".ag-h b").evaluate("e => getComputedStyle(e).fontWeight") in ("700", "bold")
         sub = page.locator(".ag-sub").inner_text()
         # 干活 = 0.6 + 0.7 + 0.5 + 0.9 + 0.4 小时 = 3 小时 6 分；r1 / r9 并成一张卡，所以 3 张卡；r9 与 r2 重叠，峰值 2
-        assert sub == "agent 最近 3 小时工作了 3 小时 6 分钟，并行峰值 2，现在有 1 个正在工作", sub
+        assert sub == "agent 最近 7 天工作了 3 小时 6 分钟，并行峰值 2，现在有 1 个正在工作", sub   # 十七·5：默认 = 7 天标尺
         assert page.locator(".ag-card").count() == 3
         names = page.locator(".ag-card .ag-name").all_inner_texts()
         assert sorted(names) == ["garden", "note", "scratch"]
@@ -61,7 +61,7 @@ def test_segments_take_the_colour_of_their_own_project_and_the_card_the_current_
         segs = card.locator(".ag-seg")
         bg = [segs.nth(i).evaluate("e => getComputedStyle(e).backgroundColor") for i in range(3)]
         titles = [segs.nth(i).get_attribute("title") for i in range(3)]
-        assert [x.split(" ", 1)[1] for x in titles] == ["garden 数学", "garden 数学", "garden 录音棚"], titles
+        assert [x.split(" ", 2)[2] for x in titles] == ["garden 数学", "garden 数学", "garden 录音棚"], titles   # 默认标尺跨 7 天，前面带 MM/DD
         assert bg[0] == bg[1] and bg[0] != bg[2]
         neutral = st.page.locator(".ag-card:has(.ag-name:text-is('scratch')) .ag-seg").first
         assert "ag-neutral" in neutral.get_attribute("class")
@@ -76,7 +76,7 @@ def test_focus_strip_is_a_short_red_bar_on_top_of_the_lane_with_a_time_tooltip(b
         assert strips.count() == 2
         now = st.now().astimezone(TZ)
         a, b = now - timedelta(hours=2.5), now - timedelta(hours=2.2)
-        assert strips.first.get_attribute("title") == f"{a:%H:%M}–{b:%H:%M} 聚焦"
+        assert strips.first.get_attribute("title") == f"{a:%m/%d} {a:%H:%M}–{b:%H:%M} 聚焦"   # 十七·3：超过 24 小时的范围前面带 MM/DD
         lane, strip = card.locator(".ag-lane").bounding_box(), strips.first.bounding_box()
         assert lane and strip and strip["height"] <= lane["height"] / 3 and strip["height"] >= 2
         assert abs(strip["y"] - lane["y"]) < 1.5                                         # 贴在泳道上沿
@@ -89,11 +89,17 @@ def test_focus_strip_is_a_short_red_bar_on_top_of_the_lane_with_a_time_tooltip(b
 def test_now_line_runs_through_all_lanes_and_the_slider_only_reloads_on_release(browser, base) -> None:  # noqa: F811
     with open_stage(browser, base, setup=_setup) as st:
         _open(st)
-        line, lane = st.box("#agNow"), st.box(".ag-card .ag-lane")
-        last = st.page.locator(".ag-card").last.bounding_box()
-        assert line["height"] >= last["y"] + last["height"] - st.box(".ag-card")["y"] - 2
-        assert abs(line["x"] + line["width"] / 2 - (lane["x"] + lane["width"])) < 3
+        line, lane = st.box("#agNow"), st.box("#agPage .ag-card .ag-lane")
+        last = st.page.locator("#agPage .ag-card").last.bounding_box()
+        assert line["height"] >= last["y"] + last["height"] - st.box("#agPage .ag-card")["y"] - 2
+        assert lane["x"] + lane["width"] * 0.7 < line["x"] + line["width"] / 2 < lane["x"] + lane["width"] - 3   # 十七·5：默认标尺里现在线在今天那一格里，不在最右
         assert re.fullmatch(r"\d\d:\d\d", st.page.locator("#agNow span").inner_text())
+        st.page.get_by_role("button", name="日").click()
+        st.page.wait_for_timeout(200)
+        line, lane = st.box("#agNow"), st.box("#agPage .ag-card .ag-lane")
+        assert abs(line["x"] + line["width"] / 2 - (lane["x"] + lane["width"])) < 3                    # 滚动窗口：现在线在最右
+        st.page.get_by_role("button", name="日").click()                                               # 再点一次 = 回默认
+        st.page.wait_for_timeout(200)
         n = len([u for u in st.requests if "since=" in u])
         slider = st.page.locator("#agHours")
         slider.evaluate("e => { e.value = '8'; e.dispatchEvent(new Event('input', { bubbles: true })); }")
@@ -102,10 +108,11 @@ def test_now_line_runs_through_all_lanes_and_the_slider_only_reloads_on_release(
         slider.evaluate("e => e.dispatchEvent(new Event('change', { bubbles: true }))")
         st.page.wait_for_timeout(200)
         assert len([u for u in st.requests if "since=" in u]) == n + 1
-        assert st.page.locator(".ag-sub").inner_text().startswith("agent 最近 8 小时工作了")
+        assert st.page.locator("#agSub").inner_text().startswith("agent 最近 8 小时工作了")
         st.page.get_by_role("button", name="周").click()
         st.page.wait_for_timeout(200)
-        assert st.page.locator(".ag-sub").inner_text().startswith("agent 最近 7 天工作了")
+        assert st.page.locator("#agSub").inner_text().startswith("agent 最近 7 天工作了")
+        assert st.page.locator("#agPage [data-mode].on").inner_text() == "周"
         assert st.page.locator("#agRuler .ag-tick").count() == 7
 
 
@@ -173,3 +180,31 @@ def test_screenshot(browser, base) -> None:  # noqa: F811
         st.page.locator(".ag-card").first.wait_for()
         st.page.wait_for_timeout(900)
         st.page.screenshot(path=SHOT)
+
+
+def test_default_range_has_no_button_selected_and_uneven_day_ruler(browser, base) -> None:  # noqa: F811  十七·5
+    with open_stage(browser, base, setup=_setup) as st:
+        _open(st)
+        assert st.page.locator("#agPage [data-mode].on").count() == 0 and "on" not in st.page.locator("#agPage .ag-hours").get_attribute("class")
+        days = st.page.locator("#agRuler .ag-tick")
+        assert days.count() == 7 and days.last.inner_text() == "今天"
+        widths = [days.nth(i).bounding_box()["width"] for i in range(7)]
+        assert widths[6] == max(widths) and widths[6] > widths[0] * 1.5
+        st.page.get_by_role("button", name="周").click()
+        st.page.wait_for_timeout(200)
+        widths = [st.page.locator("#agRuler .ag-tick").nth(i).bounding_box()["width"] for i in range(7)]
+        assert len({round(w) for w in widths}) == 1                                                    # 周：等宽
+        st.page.get_by_role("button", name="周").click()
+        st.page.wait_for_timeout(200)
+        assert st.page.locator("#agPage [data-mode].on").count() == 0 and st.page.locator("#agRuler .ag-tick").last.inner_text() == "今天"
+
+
+def test_running_working_agent_without_a_work_segment_in_the_window_still_counts(browser, base) -> None:  # noqa: F811  十七·4
+    def setup(st: Stage) -> None:
+        _setup(st)
+        st.time_lanes["agents"] = [_agent(st, "x1", "cc\nlong", "long", [], phase="working"), _agent(st, "x2", "codex\nlong2", "long2", [], tool="codex", phase="working"),
+                                   _agent(st, "x3", "cc\ngone", "gone", [], running=False)]
+    with open_stage(browser, base, setup=setup) as st:
+        _open(st)
+        assert st.page.locator("#agSub").inner_text().endswith("现在有 2 个正在工作")
+        assert st.page.locator(".ag-card").count() == 3

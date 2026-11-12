@@ -2,7 +2,7 @@
 "use strict";
 process.env.TZ = "Asia/Shanghai";
 const assert = require("assert");
-const A = require("./hex-agent-page.js");
+const A = require("./hex-agent-page.js"), Pr = require("./hex-project-ruler.js");
 const t = (s) => Date.parse("2026-11-12T" + s + "+08:00"), iso = (s) => "2026-11-12T" + s + "+08:00";
 const now = t("12:00:00");
 const seg = (a, b, p) => ({ start: iso(a), end: iso(b), projectId: p || null, taskId: null });
@@ -57,4 +57,33 @@ assert.strictEqual(A.subtitle(A.windowOf("day", 3, now), { sec: 3900, peak: 0, w
 // 最常用的 tool = 干活最久的
 assert.strictEqual(A.topTool([run("a", "k", "n", [seg("09:00:00", "10:00:00")], { tool: "codex" }), run("b", "k2", "n", [seg("09:00:00", "09:30:00")], { tool: "claude-code" })]), "codex");
 assert.strictEqual(A.topTool([]), null);
+// 默认范围（「十七」2）：7 天不等宽标尺，今天一格最宽；日 / 周 / 小时都不选中（mode 是 default）
+const dw = A.windowOf("default", 3, now), DL = A.scaleOf(dw);
+assert.strictEqual(dw.mode, "default"); assert.strictEqual(DL.days.length, 7); assert.strictEqual(dw.from, DL.from); assert.strictEqual(dw.label, "最近 7 天");
+assert.ok(dw.hours > 24);   // 悬停提示带日期
+const wid = DL.days.map((d) => d.w), today = DL.days[6];
+assert.ok(today.today && today.w === Math.max(...wid) && wid.slice(0, 6).every((w) => w < today.w));
+assert.ok(Math.abs(wid.reduce((a, b) => a + b, 0) - 1) < 1e-9);
+assert.strictEqual(A.dayTicks(DL)[6].label, "今天"); assert.ok(A.dayTicks(DL).slice(0, 6).every((x) => /^周[日一二三四五六]$/.test(x.label)));
+assert.deepStrictEqual(A.dayTicks(DL).map((x) => x.x), DL.days.map((d) => d.x0));
+// 切换：点日 / 周 / 小时 = 等宽滚动窗口（一整格）；已选中的再点 = 回默认
+const sw = A.scaleOf(A.windowOf("day", 3, now)); assert.strictEqual(sw.days.length, 1); assert.strictEqual(sw.days[0].w, 1);
+assert.strictEqual(A.pickRange("default", "day"), "day"); assert.strictEqual(A.pickRange("hours", "week"), "week");
+assert.strictEqual(A.pickRange("day", "day"), "default"); assert.strictEqual(A.pickRange("week", "week"), "default");
+// 现在线：默认标尺里在今天那一格内（不在最右）；滚动窗口里在最右
+const xn = Pr.xOf(DL, now); assert.ok(xn > today.x0 && xn < 1);
+assert.strictEqual(Pr.xOf(A.scaleOf(A.windowOf("hours", 3, now)), now), 1);
+
+// 正在工作的数：只要一个 agent 有一条运行在跑、没失联、相位 working 就算 1 个；窗口里没有干活区间（segments 为空）的在跑运行照算
+const pr = (id, key, o) => run(id, key, key, [], Object.assign({ running: true }, o));
+const cnt = (runs) => A.summary(A.groupRuns(runs), runs).working;
+assert.strictEqual(cnt([pr("a", "k1"), pr("b", "k2")]), 2);                                   // 两个 agent 各一条在跑 working，窗口里都没有区间
+assert.strictEqual(cnt([pr("a", "k1"), pr("b", "k1")]), 1);                                   // 同一个 agent 两条运行只算 1 个
+assert.strictEqual(cnt([pr("a", "k1"), pr("b", "k1", { running: false }), pr("c", "k1", { lost: true, phase: "idle" })]), 1);
+assert.strictEqual(cnt([pr("a", "k1", { lost: true }), pr("b", "k2", { phase: "idle" }), pr("c", "k3", { phase: "waiting_input" }), pr("d", "k4", { running: false })]), 0);
+assert.strictEqual(cnt([pr("a", "k1", { running: false }), pr("b", "k1")]), 1);                // 老的已结束、新的在跑
+assert.strictEqual(A.summary(A.groupRuns([pr("a", "k1")]), [pr("a", "k1")]).sec, 0);
+// 混合页小字：你 / 代理各自总用时、效率、峰值、正在工作
+assert.strictEqual(A.mixedSubtitle(3600, { sec: 3.2 * 3600, peak: 2, working: 2 }), "你 1 小时 · 代理 3.2 小时 · 你 1 小时，带出代理 3.2 小时的活 · 代理并行峰值 2 · 现在有 2 个正在工作");
+assert.strictEqual(A.mixedSubtitle(0, { sec: 0, peak: 0, working: 0 }), "你 0 分钟 · 代理 0 分钟 · 代理并行峰值 0 · 现在有 0 个正在工作");
 console.log("hex-agent-page.test.js ok");

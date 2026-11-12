@@ -5000,6 +5000,13 @@ MCP 侧见 `contracts/mcp.tools.v2`。
 - 返回 `{from, to, items}`，`items` 按日期升序、同一天按 `seconds` 降序；每项是 `activity/blocks` 的块（同字段）再追加 `date`（所属本地日）与 `records: [{startAt, endAt, seconds, app, title}]`（同 `activity/blocks/records` 的字段，按开始时间升序，每块至多 5000 条）。
 - 不改 `activity/blocks`、`activity/blocks/records`；不新增集合 / 错误码。
 
+## v0.6：时间泳道里在跑的运行一定列出（v2.57，追加式）
+
+仓主 2026-11-12：Agent 页写「现在有 0 个正在工作」，实际有两条在跑、相位 `working`、没失联的运行。原因：`views/time-lanes` 只列窗口内有干活区间的运行，在跑运行的干活区间止于「起点 + 已跑秒数」（超过遗忘上限的封顶在上限处），落在窗口外的就整条不出现。`GET views/time-lanes` 追加：
+
+- 取代 v2.54 的「仍然只有窗口内有干活区间的运行才出现在 `agents` 里」：此刻在跑（`running` 为真）的运行**一定**出现在 `agents` 里，窗口内没有干活区间的 `segments` 为 `[]`（`attend` 照旧裁到窗口）。窗口终点不晚于此刻的查询（`from` / `to` 都在过去）不加这类运行。
+- 已结束的运行规则不变（窗口内有干活区间才出现）。`agents` 仍按第一段起点升序，`segments` 为空的按运行起点排。既有字段、端点一个不改；不新增集合 / 错误码。
+
 ## 变更记录
 
 见 `module_docs/contract-changelog.md`（从本文件拆出，只记历史不含规范）。

@@ -105,3 +105,4 @@
 | 2026-11-12 | 仓主定：代表人的眼睛改成人自己挑的形象（`hive.stage.v1`「十一」） | v2.53（追加式）：`activity/settings.pet` 追加可选 `humanPack`；见「v0.6：人自己的形象」节 |
 | 2026-11-12 | 仓主定：左上角 Agent 页一个 agent 一张卡、时间滚动、人的聚焦是卡内红条（`hive.stage.v1`「十三」） | v2.54（追加式）：`views/time-lanes` 追加可选 `since`（滚动窗口，至多 8 天）；`agents[]` 追加 `tool` / `laneKey` / `projectId` / `running` / `lost` / `phase` / `attend`；见「v0.6：时间泳道的滚动窗口与每条运行的身份」节 |
 | 2026-11-12 | 仓主定：人的页面窗口记录要覆盖周档 / 7 天视图的整个范围（`hive.stage.v1`「十六」） | v2.56（追加式）：新读端 `GET activity/blocks/range?from=&to=&limit=`（至多 8 天，每天取秒数最多的块，带所属日期与原始记录）；见「v0.6：窗口块按日期范围一次读」节 |
+| 2026-11-12 | 仓主问：Agent 页「现在有 0 个正在工作」（`hive.stage.v1`「十七」） | v2.57（追加式）：`views/time-lanes` 在跑的运行一定出现在 `agents[]`（干活区间在窗口外的 `segments` 为 `[]`）；见「v0.6：时间泳道里在跑的运行一定列出」节 |
