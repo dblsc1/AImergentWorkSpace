@@ -194,9 +194,10 @@
 
   // 录制胶囊
   var chip = el('a', 'ckpt-chip');
-  chip.href = NAV.timer || NAV.home || BASE;
+  // 点 = 打开人的页面（hive.stage.v1「二十七」4）：人的页面在蜂巢页里，别的页面带 #human 过去，蜂巢页读到就打开
+  chip.href = (NAV.timer || NAV.home || BASE) + '#human';
   chip.setAttribute('data-ckpt-chip', '');
-  chip.setAttribute('aria-label', '录制状态，点击前往蜂巢');
+  chip.setAttribute('aria-label', '录制状态，点击打开人的页面');
   var chipDot = el('span', 'ckpt-dot');
   chipDot.setAttribute('aria-hidden', 'true');
   chip.appendChild(chipDot);

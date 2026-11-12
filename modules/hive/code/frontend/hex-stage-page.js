@@ -1428,7 +1428,10 @@
     });
   });
 
-  refresh().then(function () { sizeToWindow(); });
+  // 地址带 #human（别的页面点顶栏计时胶囊过来，「二十七」4）：打开人的页面，并把它从地址里去掉
+  function openFromHash() { if (location.hash !== "#human") return; history.replaceState(null, "", location.pathname + location.search); clockMenu.open(); }
+  window.addEventListener("hashchange", openFromHash);
+  refresh().then(function () { sizeToWindow(); openFromHash(); });
   setInterval(refresh, POLL_MS);
   setInterval(function () { var n = Date.now(); renderRing(n); renderClock(n); if (clockHover) clockHover.update(); renderToast(); clockMenu.refresh(); stepPets(); }, TICK_MS);
   setInterval(function () { renderPets(); renderEye(); }, 400);

@@ -463,7 +463,7 @@ def test_needs_choice_dot_on_chip(browser) -> None:
         assert page.get_attribute(NAV_SEL, "data-ckpt-choice") == ""
         assert page.get_attribute("[data-ckpt-chip]", "title") == "有个窗口不知道记到哪 —— 去蜂巢选"
         assert page.get_attribute("[data-ckpt-chip]", "aria-label") == label + "；有个窗口不知道记到哪 —— 去蜂巢选"
-        assert page.get_attribute("[data-ckpt-chip]", "href") == "/hive/"
+        assert page.get_attribute("[data-ckpt-chip]", "href") == "/hive/#human"   # hive.stage.v1「二十七」4：点 = 打开人的页面
         # 可以和 auto 同时有（等人选的不一定是前台窗口）
         site.current = {"running": False, "auto": _auto(page, 5), "needsChoice": need}
         _poll(page)

@@ -197,6 +197,14 @@ def test_nav_chip_is_driven_like_the_clock_set_every_second_click_opens_the_huma
         assert st.page.evaluate("() => location.hash") == "", "点胶囊不跳走"
 
 
+
+def test_arriving_with_hash_human_opens_the_human_page_and_drops_the_hash(browser, base) -> None:  # noqa: F811  二十七·4（别的页面点胶囊过来）
+    with open_stage(browser, base, setup=_busy_day) as st:
+        assert st.page.locator(".cm-panel").count() == 0
+        st.page.evaluate("() => { location.hash = '#human' }")
+        st.page.wait_for_selector(".cm-panel")
+        assert st.page.evaluate("() => location.hash") == ""
+
 def test_ring_arcs_follow_the_ticker_line_shown(browser, base) -> None:  # noqa: F811  二十七·B
     with open_stage(browser, base, setup=_setup_today) as st:
         seen: dict[str, list[dict[str, Any]]] = {}
