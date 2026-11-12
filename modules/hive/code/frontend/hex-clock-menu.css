@@ -16,3 +16,7 @@
 .cm-custom input { flex: 1; min-width: 0; width: 60px; border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; background: var(--panel); color: var(--ink); font: inherit; }
 .cm-custom input.is-bad { border-color: var(--pr-human); }
 .cm-alert { position: fixed; z-index: 80; padding: 10px 16px; font-weight: 600; cursor: pointer; border-color: var(--pr-human); }
+
+/* 拖卡时人的页面让开（hive.stage.v1「二十三」1）：整页不可见不接指针，被拖的那张卡留在指针下 */
+.cm-panel.is-away { visibility: hidden; }
+.cm-panel.is-away .st-dragging { visibility: visible; }

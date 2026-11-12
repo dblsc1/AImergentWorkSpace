@@ -1191,13 +1191,14 @@
     var lift = liftCard(card);
     drag(card, { el: card, unzoomed: true, item: function () { return stage.timerRunning() ? { kind: "clock" } : null; },
       onClick: function () { if (pid) { clockMenu.close(); openPanel(pid); } },
-      onGrab: lift.grab,
-      afterCreate: lift.home,
+      onGrab: function () { lift.grab(); clockMenu.away(true); },   // 拖起来后人的页面让开（「二十三」1）；确认卡关掉 / 放空 / 表单收掉再重开
+      afterCreate: function () { lift.home(); clockMenu.away(false); },
       onRelease: function (target, cancel, dx, dy, made, on) {
         if (made) { lift.home(); return "keep"; }
         var to = on ? on.projectId : target && !cancel ? target.dataset.projectId : null;
         lift.home();
-        if (to) openEyeConfirm({ kind: "clock" }, to, (on && on.taskId) || null, function () {});
+        if (to) openEyeConfirm({ kind: "clock" }, to, (on && on.taskId) || null, function () { clockMenu.away(false); });
+        else clockMenu.away(false);
         return "keep";
       } });
   }
@@ -1205,8 +1206,9 @@
   function dragBlockCard(card, block, done) {
     var lift = liftCard(card);
     drag(card, { el: card, unzoomed: true, item: function () { return { kind: "block", block: block }; },
-      onGrab: lift.grab, afterCreate: done, afterFile: done,
-      onRelease: function (target, cancel, dx, dy, made) { lift.home(); return made ? "keep" : undefined; } });
+      onGrab: function () { lift.grab(); clockMenu.away(true); },
+      afterCreate: function () { done(); clockMenu.away(false); }, afterFile: done,
+      onRelease: function (target, cancel, dx, dy, made) { lift.home(); if (!made) clockMenu.away(false); return made ? "keep" : undefined; } });
   }
 
   // 时钟：短按 = 人的页面（三张卡），长按 = 计时气泡（正计时 / 倒计时 / 停止）；计时中拖时钟到格子 = 记到该项目。时钟自己不挪位
