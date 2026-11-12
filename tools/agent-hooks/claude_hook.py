@@ -1191,6 +1191,18 @@ def _read_stdin() -> str | None:
         chunks.append(chunk)
 
 
+# 别的程序在后台替人起的一次性会话（不是人在用，也不是人派出去干活的 agent）：整个会话钩子什么都不做——不开 run、不报相位、不收尾。
+# 只认起会话那一方给的**明确标记**，不看会话长短（agent.lane.v1「后台一次性会话」）：
+#   - COCKPIT_NO_RUN=1：起会话的程序自己声明；
+#   - SECURITY_GUIDANCE_DISABLE=1 且入口是 SDK：官方插件 security-guidance 每次 git commit / push 之后自动起的安全审查会话
+#     （它给内层会话固定设这个变量防套娃）。人自己为了关插件设了这个变量、但会话是正常启动的（入口 cli），照常记。
+def _background_helper_session(env=None) -> bool:
+    env = os.environ if env is None else env
+    if env.get("COCKPIT_NO_RUN") == "1":
+        return True
+    return env.get("SECURITY_GUIDANCE_DISABLE") == "1" and env.get("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk")
+
+
 def main(start: float | None = None) -> int:
     global _deadline
     if "--doctor" in sys.argv[1:]:
@@ -1200,6 +1212,8 @@ def main(start: float | None = None) -> int:
             _beat_main(sys.argv[1:])
         except BaseException:  # noqa: BLE001 — 含 argparse 的 SystemExit：没人看它的输出，出错就是这个会话没有心跳
             pass
+        return 0
+    if _background_helper_session():
         return 0
     now = time.monotonic()
     _deadline = max((now if start is None else start) + HOOK_BUDGET, now + HOOK_MIN_WORK)  # 总预算从进程启动起算，但启动之后至少留 HOOK_MIN_WORK（只有钩子路径设；心跳进程是长命的）
