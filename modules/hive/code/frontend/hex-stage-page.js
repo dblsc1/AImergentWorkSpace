@@ -1265,7 +1265,7 @@
   document.addEventListener("hexlayout", function (ev) {
     if (!data.lanes) return;
     var els = [].slice.call(layer.querySelectorAll(".st-pet")).concat($("stEye"), $("stMore"));
-    var was = els.map(function (e) { return { x: parseFloat(e.style.left), y: parseFloat(e.style.top) }; });
+    var was = els.map(function (e) { return { x: parseFloat(e.style.left), y: parseFloat(e.style.top), big: e.classList.contains("is-big") }; });
     // 干活的小人平时挪窝走 900ms 的 left/top 过渡：这一回关掉，改由下面那段同时长的动画带着走
     layer.classList.add("st-following"); clearTimeout(followEnd);
     followEnd = setTimeout(function () { layer.classList.remove("st-following"); }, ev.detail.ms + 60);
@@ -1273,8 +1273,9 @@
     try { renderEye(); renderPets(); } finally { following = false; }
     els.forEach(function (e, i) {
       var dx = was[i].x - parseFloat(e.style.left), dy = was[i].y - parseFloat(e.style.top);
-      if (!e.isConnected || !e.animate || !isFinite(dx) || !isFinite(dy) || (Math.abs(dx) < 1 && Math.abs(dy) < 1)) return;
-      e.animate([{ translate: dx.toFixed(1) + "px " + dy.toFixed(1) + "px" }, { translate: "0px 0px" }], { duration: ev.detail.ms, easing: ev.detail.ease });
+      var big = e.classList.contains("is-big"), k = big === was[i].big ? 1 : big ? 1 / PET_BIG_K : PET_BIG_K;   // 小人变大 / 变回：个头也在这条时间线上长
+      if (!e.isConnected || !e.animate || !isFinite(dx) || !isFinite(dy) || (k === 1 && Math.abs(dx) < 1 && Math.abs(dy) < 1)) return;
+      e.animate([{ translate: dx.toFixed(1) + "px " + dy.toFixed(1) + "px", scale: String(k) }, { translate: "0px 0px", scale: "1" }], { duration: ev.detail.ms, easing: ev.detail.ease });
     });
   });
 
