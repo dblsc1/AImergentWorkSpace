@@ -308,6 +308,8 @@
       if (range.layout) {   // 默认视图：不等宽标尺（周几 + 今天的钟点），格线画进泳道
         axis.className = "hp-ruler"; axis.innerHTML = Pr.rulerHtml(range.layout);   // 只有固定文字与数字，没有接口来的字符串
         range.layout.days.slice(1).forEach(function (d) { var i = el("i", "pr-div"); i.style.left = d.x0 * 100 + "%"; laneEl.appendChild(i); });
+        laneEl.appendChild(el("i", "pr-now"));   // 此刻的细白线（「二十四」1）：标尺和泳道各一截，位置走 --pr-now
+        var np = Pr.nowPct(range.layout); axis.style.setProperty("--pr-now", np); laneEl.style.setProperty("--pr-now", np);
       } else [0, 1 / 3, 2 / 3, 1].forEach(function (f) {
         var t = range.from + (range.to - range.from) * f, s = el("span", "", (dated(range) ? md(t) + " " : "") + hm(t));
         s.style.left = f * 100 + "%"; if (f === 1) s.style.transform = "translateX(-100%)"; else if (f > 0) s.style.transform = "translateX(-50%)";
