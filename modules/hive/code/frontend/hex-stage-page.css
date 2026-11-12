@@ -203,7 +203,7 @@ video.st-art { position: absolute; max-width: none; max-height: none; height: 80
 .st-cf-rem { display: flex; align-items: center; gap: 6px; margin-top: 8px; color: var(--ink-2); cursor: pointer; }
 
 /* 形象挑选（「十一」） */
-.fp-panel { position: fixed; z-index: 95; width: 392px; max-height: min(76vh, 560px); overflow: auto; padding: 12px 14px 14px; box-sizing: border-box; }
+.fp-panel { position: fixed; z-index: 95; width: 392px; max-height: min(86vh, 640px); overflow: auto; padding: 12px 14px 14px; box-sizing: border-box; }
 .fp-panel h3 { margin: 0 0 10px; font-size: 15px; }
 .fp-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .fp-tile { min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 4px 6px; border: 1px solid var(--line); border-radius: 12px;
