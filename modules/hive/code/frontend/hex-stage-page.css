@@ -37,9 +37,10 @@ body.stage-on .hex-cell:not(.is-expanded) .hex-close { display: none !important;
 .st-eye.is-live { cursor: grab; }
 .st-eye.is-closed .st-media { filter: grayscale(.6); opacity: .7; }
 .st-eye.st-dragging { cursor: grabbing; z-index: 90; filter: drop-shadow(0 8px 10px rgba(0, 0, 0, .25)); }
-/* 汗：每 3 秒从头顶右上甩出一滴，向上翻着划一个小半圆后消失（「十一」7）。转轴在汗滴右边 8px，转半圈 = 划半圆 */
-.st-eye-drop { position: absolute; right: 8px; top: 0; width: 11px; height: 15px; pointer-events: none;
-  transform-origin: calc(50% + 8px) 50%; opacity: 0; animation: st-sweat 3s linear infinite; }
+/* 汗：每 3 秒从头顶右上甩出一滴，向上翻着划一个小半圆后消失（「十一」7）。转轴在汗滴右边 5px，转半圈 = 划半圆；圆头朝前飞 */
+.st-eye-drop { position: absolute; right: 5px; top: 0; width: 11px; height: 15px; pointer-events: none;
+  transform-origin: calc(50% + 5px) 50%; opacity: 0; animation: st-sweat 3s linear infinite; }
+.st-eye-drop path { transform-box: fill-box; transform-origin: center; transform: rotate(180deg); }
 @keyframes st-sweat {
   0% { opacity: 0; transform: rotate(0deg) scale(.5); }
   4% { opacity: 1; transform: rotate(10deg) scale(1); }
@@ -48,6 +49,7 @@ body.stage-on .hex-cell:not(.is-expanded) .hex-close { display: none !important;
   100% { opacity: 0; transform: rotate(180deg) scale(.8); }
 }
 @media (prefers-reduced-motion: reduce) { .st-eye-drop { animation: none; opacity: 1; right: -2px; top: 2px; } }
+@media (prefers-reduced-motion: reduce) { .st-eye-drop path { transform: none; } }
 .st-eye-drop path { fill: #8fd3f7; stroke: #2f7fb3; stroke-width: 1.2; stroke-linejoin: round; }
 img.st-still { max-width: 54px; max-height: 63px; }
 .st-media:has(> img.st-still) { width: 54px; height: 63px; }
