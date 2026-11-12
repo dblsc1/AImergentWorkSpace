@@ -643,8 +643,7 @@
       hold.t = setTimeout(function () {
         var r = e.__run; if (!r || e.classList.contains("st-dragging")) return;
         hold.fired = true;
-        var key = r.tool || "*";
-        pickFigure({ title: (r.tool || r.agent || "AI") + " 的形象", current: e.__pet.pack, near: e.querySelector(".st-pet-in"), set: function (pet, kind) { pet.packsByTool[key] = kind; } });
+        centre.openAgent(r.runId);   // 长按小人 = 放大看这个 agent 的详情（「二十六」2）；换形象改到详情里点大立绘
       }, CM.HOLD_MS);
     });
     e.addEventListener("pointermove", function (ev) { if (Pk.pressKind(ev.clientX - hold.x, ev.clientY - hold.y) !== "click") unhold(); });
@@ -791,7 +790,8 @@
     return stage.drop({ kind: "pet", runId: runId, agent: agent }, projectId, { remember: false, taskId: taskId }).then(function (r) { renderToast(); return !!(r && r.ok); });
   }
   var centre = CS.mount({ packOfTool: function (tool) { return Pk.packOf({ tool: tool }, packsByTool()); }, figureOf: figureOf, petEl: function (id) { return petEls[id] || null; }, layer: layer, ring: $("stRing"), clock: $("stClock"), getJson: getJson, getLanes: function () { return data.lanes; }, snapshot: ringSnapshot, base: BASE, placeholder: PLACEHOLDER,
-    fillFigure: fillPackFigure, place: placeRun, projectChoices: function () { return projects().map(function (p) { return { id: p.id, name: p.name, unclassifiedTaskId: p.unclassifiedTaskId || null, tasks: (p.tasks || []).map(function (t) { return { id: t.id, name: t.name, done: !!t.done }; }) }; }); },
+    fillFigure: fillPackFigure, place: placeRun,
+    pickFigure: function (tool, near) { var key = tool || "*"; pickFigure({ title: (tool || "AI") + " 的形象", current: Pk.packOf({ tool: tool }, packsByTool()), near: near, set: function (pet, kind) { pet.packsByTool[key] = kind; } }); }, projectChoices: function () { return projects().map(function (p) { return { id: p.id, name: p.name, unclassifiedTaskId: p.unclassifiedTaskId || null, tasks: (p.tasks || []).map(function (t) { return { id: t.id, name: t.name, done: !!t.done }; }) }; }); },
     projectName: projectName, cellColor: function (pid) { var c = cellEl(pid); return c ? getComputedStyle(c).getPropertyValue("--zone-raw").trim() : ""; } });
   function renderRing(now) {
     var el = $("stRing"), hc = hiveCenter();

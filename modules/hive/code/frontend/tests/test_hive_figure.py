@@ -1,4 +1,4 @@
-"""形象挑选（hive.stage.v1「十一」）：人自己的形象、长按 AI 改它的形象。"""
+"""形象挑选（hive.stage.v1「十一」「二十六」）：人自己的形象；长按 AI = 看它的详情，在详情里点大立绘改它的形象。"""
 from __future__ import annotations
 
 import json
@@ -47,13 +47,23 @@ def test_human_page_figure_opens_my_figure_picker_and_picking_saves_it(browser, 
         assert "/hive/pets/claude/" in st.page.locator("#stEye video.st-art").get_attribute("src")
 
 
-def test_long_press_an_ai_picks_its_figure_by_tool(browser, base) -> None:  # noqa: F811
-    with open_stage(browser, base, setup=_setup, pets={"claude": TOUCH_PACK, "kimi": KIMI}, hold_webm=True) as st:
+def test_long_press_an_ai_opens_its_detail_and_the_big_figure_picks_its_figure_by_tool(browser, base) -> None:  # noqa: F811  二十六·2
+    def setup(st) -> None:
+        _setup(st)
+        now = st.now().isoformat()
+        st.time_lanes = {"today": now[:10], "now": now, "windowStart": now, "windowEnd": now, "human": [], "agents": [
+            {"agent": "claude-code", "tool": "claude-code", "name": "g", "runId": "r1", "laneKey": "cc\ng", "projectId": "p_math", "running": True, "lost": False,
+             "phase": "working", "segments": [], "attend": [], "retained": False}]}                    # 不留存的卡收在「其余 N 个」里：照样点开
+    with open_stage(browser, base, setup=setup, pets={"claude": TOUCH_PACK, "kimi": KIMI}, hold_webm=True) as st:
         st.page.clock.run_for(600)
         st.long_press(PET + " .st-media")
+        detail = st.page.locator("#agPage .ag-detail")
+        detail.locator(".ag-dt-title").wait_for()                                                     # 长按小人 = 放大看这个 agent 的详情
+        assert detail.locator(".ag-dt-title").inner_text() == "g" and st.page.locator(".fp-panel").count() == 0
+        assert st.page.locator(".st-detail").count() == 0                                             # 长按后的松手不算点击
+        detail.locator(".ag-big").click()                                                             # 点大立绘 = 换这个 agent 的形象
         st.page.wait_for_selector(".fp-tile")
         assert st.page.locator(".fp-panel h3").inner_text() == "claude-code 的形象"
-        assert st.page.locator(".st-detail").count() == 0                                             # 长按后的松手不算点击
         assert st.page.locator('.fp-tile[aria-pressed="true"]').get_attribute("data-kind") == "claude"
         st.replies["activity/settings"] = (200, {**SETTINGS, "version": 4, "pet": {"packsByTool": {"claude-code": "kimi", "*": "deepseek"}}})
         with st.page.expect_response(lambda r: r.request.method == "PUT" and r.url.endswith("activity/settings")):
