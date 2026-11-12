@@ -77,6 +77,35 @@ class _HookProcMixin(_IsolatedHomeMixin):
         return proc, time.monotonic() - t0
 
 
+# ── 0：后台一次性会话不开 run（agent.lane.v1「后台一次性会话」）────────────────────────────────────
+@POSIX
+class BackgroundHelperSessionTests(_HookProcMixin, unittest.TestCase):
+    START = {"hook_event_name": "SessionStart", "session_id": "s1", "cwd": "/home/u/garden"}
+
+    def _requests(self, events, **env):
+        server, thread, log = _start_server(expect_token=None)
+        self.addCleanup(_stop_server, server, thread)
+        for event in events:
+            proc, _ = self._run_hook(event, COCKPIT_URL=f"http://127.0.0.1:{server.server_address[1]}", COCKPIT_BEAT="monitor", **env)
+            self.assertEqual(proc.returncode, 0)
+        return log.requests
+
+    def test_security_guidance_review_session_sends_nothing_for_any_event(self):
+        events = [self.START, {"hook_event_name": "UserPromptSubmit", "session_id": "s1", "cwd": "/home/u/garden"},
+                  {"hook_event_name": "SessionEnd", "session_id": "s1", "reason": "other"}]
+        self.assertEqual(self._requests(events, SECURITY_GUIDANCE_DISABLE="1", CLAUDE_CODE_ENTRYPOINT="sdk-py"), [])
+        self.assertFalse(claude_hook._state_file("s1").exists())
+
+    def test_explicit_no_run_mark_sends_nothing(self):
+        self.assertEqual(self._requests([self.START], COCKPIT_NO_RUN="1"), [])
+
+    def test_plugin_switched_off_by_the_person_in_a_normal_session_is_still_recorded(self):
+        self.assertEqual(len(self._requests([self.START], SECURITY_GUIDANCE_DISABLE="1", CLAUDE_CODE_ENTRYPOINT="cli")), 1)
+
+    def test_sdk_session_without_a_mark_is_still_recorded(self):
+        self.assertEqual(len(self._requests([self.START], CLAUDE_CODE_ENTRYPOINT="sdk-py")), 1)
+
+
 # ── 1：锁或者什么都不做 ─────────────────────────────────────────────────────────────────────────
 @POSIX
 class LockOrNothingProcessTests(_HookProcMixin, unittest.TestCase):
