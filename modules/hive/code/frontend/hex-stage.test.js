@@ -30,7 +30,15 @@ assert.deepStrictEqual(S.eyeHost({ state: "present", projectId: "p1" }, { projec
 assert.deepStrictEqual(S.eyeHost({ state: "afk" }, { projectId: null }), { at: "clock", by: "timer" });
 assert.strictEqual(S.focusLabel({ app: "firefox", title: "文档" }), "firefox · 文档");
 assert.strictEqual(S.focusLabel({ app: "firefox", title: "窗口名7" }), "firefox · 标题已隐去");
-assert.strictEqual(S.focusLabel({ app: "", title: "" }), "窗口 · —");
+assert.strictEqual(S.focusLabel({ app: "", title: "" }), "窗口");
+// 未分类桶的过滤器：默认 2 分钟；满的才进
+assert.deepStrictEqual([S.bucketMinutes(null), S.bucketMinutes("5"), S.bucketMinutes("0"), S.bucketMinutes("-1"), S.bucketMinutes("x")], [2, 5, 0, 2, 2]);
+assert.deepStrictEqual(S.bucketFilter([{ seconds: 119 }, { seconds: 120 }, { seconds: 600 }], 2).map((x) => x.seconds), [120, 600]);
+assert.strictEqual(S.focusLabel({ app: "chrome", title: "" }), "chrome");                                     // 读不到标题：不写「· —」（「二十四」）
+assert.strictEqual(S.focusLabel({ app: "chrome", title: "", displayName: "chrome · HoneyComb" }), "chrome · HoneyComb");
+assert.strictEqual(S.focusLabel({ app: "chrome", title: "", displayName: "chrome · 窗口名3" }), "chrome · 标题已隐去");
+assert.strictEqual(S.focusLabel({ app: "chrome", title: "", displayName: "github.com" }), "chrome · github.com");
+assert.strictEqual(S.focusLabel({ app: "chrome", title: "", displayName: "Chrome" }), "chrome");
 
 // HV-S07 / S08
 assert.strictEqual(S.bucketText(3720), "未分类 · 今天 1 小时 2 分");

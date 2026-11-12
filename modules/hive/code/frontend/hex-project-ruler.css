@@ -43,6 +43,8 @@ html { --pr-human-bar: color-mix(in srgb, var(--pr-human) 62%, #8a8a8a); }
 .pr-tick:last-child { transform: translateX(-100%); }
 .pr-tick:first-child { transform: none; }
 .pr-hr { position: absolute; top: 12px; width: 1px; height: 4px; background: var(--line); pointer-events: none; }   /* 今天每小时一条细线 */
+/* 此刻：一根细白线（仓主 2026-11-12 定白色），外面带一圈极淡的深色，浅底上也看得见 */
+.pr-now { position: absolute; left: var(--pr-now, -9999px); top: 0; bottom: 0; width: 1px; background: #fff; box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--ink) 40%, transparent); z-index: 3; pointer-events: none; }
 .pr-div { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--line); pointer-events: none; }   /* 日界线比小时线重 */
 
 /* 泳道：代理占整条的高；人是贴在它上沿的一条矮矮的红细条（4px），与标尺对齐 */

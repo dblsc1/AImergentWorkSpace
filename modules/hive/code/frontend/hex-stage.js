@@ -35,9 +35,16 @@
   }
   // 窗口名：`程序 · 标题`；标题是代号（被隐去）的写「标题已隐去」
   function focusLabel(focus) {
-    var title = (focus && focus.title) || "";
-    return ((focus && focus.app) || "窗口") + " · " + (HIDDEN_TITLE.test(title) ? "标题已隐去" : title || "—");
+    var app = (focus && focus.app) || "窗口", title = (focus && focus.title) || "";
+    // 此刻读不到标题（浏览器没装扩展、标签页对不上等）：用这个窗口所在块的名字（`程序 · 归一化标题`）的标题部分；也没有就只写程序名
+    if (!title) { var dn = (focus && focus.displayName) || "", cut = dn.indexOf(" · "); title = cut >= 0 ? dn.slice(cut + 3) : dn.toLowerCase() === app.toLowerCase() ? "" : dn; }
+    return !title ? app : app + " · " + (HIDDEN_TITLE.test(title) ? "标题已隐去" : title);
   }
+
+  // 未分类桶的过滤器（「二十四」）：今天累计满 minMinutes 分钟的窗口块才进桶；不满的不显示、不计入桶上的时间
+  var BUCKET_MIN_MINUTES = 2;
+  function bucketMinutes(raw) { var n = parseInt(raw, 10); return isFinite(n) && n >= 0 && n <= 120 ? n : BUCKET_MIN_MINUTES; }
+  function bucketFilter(items, minMinutes) { return (items || []).filter(function (x) { return (x.seconds || 0) >= minMinutes * 60; }); }
 
   function bucketText(seconds) {
     var m = Math.floor(Math.max(0, seconds) / 60), h = Math.floor(m / 60);
@@ -179,7 +186,7 @@
     return run.label || run.agent;
   }
 
-  var api = { petTitle: petTitle, pickRing: pickRing, eyeHost: eyeHost, focusLabel: focusLabel, bucketText: bucketText, drawerRows: drawerRows, greyGroups: greyGroups, stripList: stripList, dropRequest: dropRequest, createStage: createStage };
+  var api = { petTitle: petTitle, pickRing: pickRing, eyeHost: eyeHost, focusLabel: focusLabel, bucketMinutes: bucketMinutes, bucketFilter: bucketFilter, bucketText: bucketText, drawerRows: drawerRows, greyGroups: greyGroups, stripList: stripList, dropRequest: dropRequest, createStage: createStage };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.NexusTableHexStage = api;
 })();

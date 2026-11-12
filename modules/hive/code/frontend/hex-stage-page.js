@@ -425,13 +425,18 @@
     if (kind in stills) return stills[kind];
     stills[kind] = null;
     FP.cutout(BASE + "hive/pets/" + encodeURIComponent(kind) + "/" + packs[kind].image.split("/").map(encodeURIComponent).join("/"), packs[kind].backdrop).then(function (u) {
-      if (u) { stills[kind] = u; renderPets(); renderEye(); if (centre) centre.redraw(); } else delete stills[kind];
+      if (!u) { delete stills[kind]; return; }
+      // 全身立绘（抠完底又高又窄）比 Q 版高一点（「二十四」）：量一次图的高宽比
+      var im = new Image();
+      im.onload = im.onerror = function () { stillTall[kind] = im.naturalHeight > im.naturalWidth * 1.5; stills[kind] = u; renderPets(); renderEye(); if (centre) centre.redraw(); };
+      im.src = u;
     });
     return null;
   }
+  var stillTall = {};
   function mediaFor(pet, file) {
     var still = !file && packs[pet.pack] && packs[pet.pack].image && stillOf(pet.pack);
-    if (still) return { key: still, html: '<img class="st-art st-still" alt="" src="' + esc(still) + '">' };
+    if (still) return { key: still, html: '<img class="st-art st-still' + (stillTall[pet.pack] ? " st-tall" : "") + '" alt="" src="' + esc(still) + '">' };
     if (!file) return { key: "svg", html: PLACEHOLDER };
     var url = BASE + "hive/pets/" + encodeURIComponent(pet.pack) + "/" + file.split("/").map(encodeURIComponent).join("/");
     return { key: url, video: url, loop: true, html: '<video class="st-art" src="' + esc(url) + '" autoplay loop muted playsinline></video>' };
@@ -562,6 +567,16 @@
     });
   }
   var PET_BIG_K = 1.7;
+  // 鼠标在哪个项目格（或它的小人）上：那一格的小人飞到格子旁边，离开 0.5 秒飞回格子里（「二十二」2）
+  var outPid = null, outTimer = 0;
+  document.addEventListener("pointerover", function (ev) {
+    if (dragging || !ev.target.closest) return;
+    var pet = ev.target.closest(".st-pet.is-work"), cell = pet ? null : ev.target.closest(".hex-cell[data-project-id]");
+    var pid = pet ? pet.dataset.cell : cell ? cell.dataset.projectId : null;
+    clearTimeout(outTimer);
+    if (pid) { if (pid !== outPid) { outPid = pid; renderPets(); } }
+    else if (outPid) outTimer = setTimeout(function () { outPid = null; renderPets(); }, 500);
+  });
   function layerPetK() { return parseFloat(layer.style.getPropertyValue("--pet-k")) || 1; }
   function renderPets() {
     if (layoutBusy()) return;   // 放大 / 缩小动画里格子还在路上：量到的是半路的位置
@@ -581,13 +596,13 @@
       var n = byCell[pid].length, bigK = big ? PET_BIG_K : 1;
       var r = big ? Pk.hexEdgeDistance(c.w, ux, uy) + 26 * bigK : Math.max(c.w, c.h) / 2 * 0.9 + 26;
       byCell[pid].forEach(function (p, i) {
-        var o = (i - (n - 1) / 2) * 58 * bigK, e = petEl(p.runId);
-        e.classList.toggle("is-big", big);
+        var o = (i - (n - 1) / 2) * 58 * bigK, e = petEl(p.runId), out = big || outPid === pid, rest = Pk.restSlot(i, c.w, c.h);
+        e.classList.toggle("is-big", big); e.classList.toggle("is-in", !out); e.dataset.cell = pid;
         e.style.setProperty("--pet-k", big ? (layerPetK() * PET_BIG_K).toFixed(3) : "");   // 空 = 回到舞台层的值
         keep[p.runId] = 1;
         if (!e.classList.contains("is-work")) { e.classList.remove("is-loose"); e.classList.add("is-work"); }
         fillPet(e, p, runById(p.runId));
-        e.__home = { x: c.x + ux * r - uy * o, y: c.y + uy * r + ux * o };
+        e.__home = out ? { x: c.x + ux * r - uy * o, y: c.y + uy * r + ux * o } : { x: c.x + rest.x, y: c.y + rest.y };
         if (!ix[p.runId] || !ix[p.runId].mode) place(e, e.__home);
       });
     });
@@ -597,7 +612,7 @@
       var home = Pk.slotPos(slotOf[p.runId], SLOT_AREA);
       e.__home = home; e.style.removeProperty("--pet-k"); e.classList.remove("is-big");
       if (!e.classList.contains("is-loose")) {
-        delete ix[p.runId]; e.classList.remove("is-work", "st-away", "flip"); e.classList.add("is-loose"); place(e, home);
+        delete ix[p.runId]; e.classList.remove("is-work", "is-in", "st-away", "flip"); e.classList.add("is-loose"); place(e, home);
         var sl = e.querySelector(".st-media"); if (sl.dataset.over) { delete sl.dataset.over; sl.dataset.key = ""; }
       } else if (!ix[p.runId] || !ix[p.runId].mode) place(e, home);
       fillPet(e, p, runById(p.runId));
@@ -1004,12 +1019,23 @@
     if ($("stDrawer").classList.contains("open")) renderDrawer();
   }
   var drawerSig = "";
+  var BUCKET_MIN_KEY = "hive.unclassifiedMinMinutes";
+  function bucketMin() { var v = null; try { v = localStorage.getItem(BUCKET_MIN_KEY); } catch (e) {} return St.bucketMinutes(v); }
   function renderDrawer() {
     var box = $("stDrawer"), rows = stage.drawer(), sig = JSON.stringify(rows.map(function (r) { return [r.name, r.seconds, r.draggable]; }));
     renderGreyPop(rows);
-    if (sig === drawerSig && box.firstChild) return;
+    if ((sig === drawerSig && box.firstChild) || (document.activeElement && document.activeElement.closest(".st-d-filter"))) return;   // 正在改过滤器的数：不重画
     drawerSig = sig;
     box.innerHTML = "";
+    // 过滤器：满 x 分钟的窗口才进入（记在这台设备上）
+    var f = document.createElement("label"); f.className = "st-d-filter";
+    f.innerHTML = '满 <input type="number" min="0" max="120" step="1" inputmode="numeric" aria-label="满几分钟的窗口才进入未分类"> 分钟的窗口才进入';
+    f.firstElementChild.value = bucketMin();
+    f.firstElementChild.addEventListener("change", function () {
+      try { localStorage.setItem(BUCKET_MIN_KEY, String(St.bucketMinutes(this.value))); } catch (e) {}
+      drawerSig = ""; applyData(); render();
+    });
+    box.appendChild(f);
     rows.forEach(function (r) {
       var d = document.createElement("div");
       d.className = "st-chip" + (r.draggable ? "" : " nodrag");
@@ -1105,6 +1131,7 @@
     var slot = document.querySelector(".hex-cell.is-expanded .hex-ruler-slot");
     if (!slot) return;
     var html = PP.body(panelPid, Date.now());
+    slot.style.setProperty("--pr-now", Pr.nowPct(Pr.layout(Date.now())));   // 此刻的细白线跟着走，不重建面板
     if (html !== panelHtml || !slot.firstChild) { panelHtml = html; slot.innerHTML = html; }
     [].forEach.call(document.querySelectorAll(".hex-cell.is-expanded .hex-spent"), function (el) {
       var sp = PP.spent(el.dataset.taskId);
@@ -1252,6 +1279,7 @@
     stage.setTimer(running ? { projectId: running.projectId || null, startAt: ms(running.startAt), deadlineAt: ms(running.deadlineAt) || null } : null);
     var b = data.blocks, date = b && b.date, items = ((b && b.items) || []).filter(function (x) { return x.status ? x.status === "pending" : true; })
       .map(function (x) { return Object.assign({ date: date, legible: false, kind: "other" }, x); });
+    items = St.bucketFilter(items, bucketMin());
     stage.setBucket(items.reduce(function (s, x) { return s + (x.seconds || 0); }, 0), items);
     stage.setStrips(data.unplaced || []);
   }
@@ -1288,6 +1316,9 @@
     render();
   }
   window.addEventListener("resize", sizeToWindow);
+  // 未分类桶钉在视口上：页面一滚，停在桶边的人的形象要跟着重新落位
+  var scrollRaf = 0;
+  window.addEventListener("scroll", function () { if (!scrollRaf) scrollRaf = requestAnimationFrame(function () { scrollRaf = 0; if ($("stEye").dataset.host === "tray") renderEye(); }); }, { passive: true });
   new MutationObserver(function () { if ($("stClock").querySelector(".st-dial")) renderEye(); }).observe(shell, { attributes: true, attributeFilter: ["hidden"], subtree: true });   // 决策栏出现 / 消失 → 时钟挪位，眼睛立刻跟过去
 
   // 蜂巢放大 / 缩小（hex-layout 发 hexlayout 时格子已是终态、动画还没起）：

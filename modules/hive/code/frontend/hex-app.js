@@ -485,7 +485,14 @@
   // "悬停不重排"能成立的前提，不是运气。
   var hoverTimer = null;
   function DRAGGING() { return document.body.classList.contains("hd-dragging"); }
+  var hoverWant = null, hoverWait = null;
   function setHover(item) {
+    // 展开 / 收起的动画还在走：等它走完再长大 / 缩回，不打断它（打断 = 格子先跳到位再动，hive.stage.v1「十八」）
+    if (L.zooming && L.zooming()) {
+      hoverWant = item || null;
+      if (!hoverWait) hoverWait = setTimeout(function () { hoverWait = null; setHover(hoverWant && !state.expandedId ? hoverWant : null); }, 60);
+      return;
+    }
     if (state.hoverItem === item) return;
     // 悬停一变，格子就开始长大 / 缩回。鼠标不动时浏览器也会因为格子从指针下
     // 扫过而补发 mouseover；不拦的话，指针停在"小中心格之外、大中心格之内"
@@ -522,7 +529,7 @@
     if (!state.hoverItem) return;
     if (silent) {
       state.hoverItem.el.classList.remove("is-hover");
-      state.hoverItem = null;
+      state.hoverItem = null; hoverWant = null;
       return;
     }
     setHover(null);

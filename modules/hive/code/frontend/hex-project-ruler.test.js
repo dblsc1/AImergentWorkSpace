@@ -90,3 +90,12 @@ assert.strictEqual(tasks[0].id, "a");   // 不改原数组
 assert.deepStrictEqual(R.taskOrder(null, null), []);
 const act = R.lastActivity([{ taskId: "a", human: [{ start: "2026-11-10T09:00:00+08:00", end: "2026-11-10T10:00:00+08:00" }], agent: [{ start: "2026-11-10T11:00:00+08:00", end: "2026-11-10T12:00:00+08:00" }] }, { taskId: null, human: [], agent: [] }]);
 assert.strictEqual(act.a, t("2026-11-10T12:00:00")); assert.strictEqual(act[""], undefined);
+
+// 此刻的细白线：layout(now) 的标尺和泳道都带一截，位置 = 此刻；滚动 / 等宽刻度不带（「二十四」）
+{
+  const n = new Date(2026, 10, 12, 12, 0, 0).getTime(), LL = R.layout(n), today = LL.days[6];
+  assert.strictEqual(R.nowPct(LL), Math.round((today.x0 + today.w / 2) * 100000) / 1000 + "%");
+  assert.ok(R.rulerHtml(LL).includes('class="pr-now"') && R.lanesHtml(LL, [], [], "").includes('class="pr-now"'));
+  assert.strictEqual(R.rulerHtml(LL), R.rulerHtml(R.layout(n + 60000)));   // 位置不进 HTML：过一分钟标尺的 HTML 不变
+  assert.ok(!R.rulerHtml(R.linearScale(n, 7)).includes("pr-now"));
+}

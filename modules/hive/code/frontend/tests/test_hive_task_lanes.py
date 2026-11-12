@@ -175,9 +175,10 @@ def test_show_all_grows_the_hexagon_to_fill_the_hive_without_leaving_the_viewpor
         st.page.locator(EXPANDED + " .pr-expand").click()                            # 收起 = 回平时的大小
         settle_zoom(st)
         assert abs(box()["height"] - small["height"]) < 2
-    with open_stage(browser, base, width=1280, height=800, setup=_setup) as st:      # 矮屏装不下更大的：不变
+    with open_stage(browser, base, width=1280, height=800, setup=_setup) as st:      # 矮屏：不缩小、不出视口下沿（页面滚过一截时可以略长大）
         _open(st)
         small = st.page.locator(EXPANDED).bounding_box()
         st.page.locator(EXPANDED + " .pr-expand").click()
         settle_zoom(st)
-        assert abs(st.page.locator(EXPANDED).bounding_box()["height"] - small["height"]) < 2
+        big = st.page.locator(EXPANDED).bounding_box()
+        assert big["height"] >= small["height"] - 2 and big["y"] + big["height"] <= 800 + 1, (small, big)

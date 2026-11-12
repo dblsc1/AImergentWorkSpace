@@ -266,3 +266,46 @@ def test_expand_and_collapse_run_cells_camera_borders_and_pets_on_one_timeline(b
             assert r["end"][0] != r["before"][0] and r["end"][3] != r["before"][3], r   # 格子和小人都真的动了
             st.page.clock.run_for(1000)
             st.page.wait_for_timeout(300)
+
+
+INTERRUPT = """() => {
+  const q = s => document.querySelector(s), cell = q('.hex-cell[data-project-id="p_math"]');
+  const other = [...document.querySelectorAll('.hex-cell[data-project-id]')].filter(c => c !== cell).pop();
+  const c = e => { const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2, r.width].map(Math.round); };
+  const rects = () => [cell, other, q('.hex-borders path')].map(c);
+  const moving = () => document.getAnimations().filter(x => x.constructor === Animation && x.effect && x.effect.target.closest('.hive'));
+  const esc = () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  cell.click(); moving().forEach(x => x.finish());
+  const opened = rects();
+  esc(); moving().forEach(x => x.finish());
+  cell.click();                                  // 展开的动画刚起步……
+  esc();                                         // ……就收起
+  const a = moving(); a.forEach(x => { x.pause(); x.currentTime = 0; });
+  const at0 = rects();
+  a.forEach(x => x.finish());
+  return { opened, at0 };
+}"""
+
+
+def test_collapse_that_interrupts_an_expand_starts_from_the_expanded_layout_not_from_the_corner(browser, base) -> None:  # noqa: F811  十八·1
+    with open_stage(browser, base, setup=_setup) as st:
+        st.page.mouse.move(2, 2)
+        r = st.page.evaluate(INTERRUPT)
+        for was, now in zip(r["opened"], r["at0"]):                                  # 各物都从上一段的终点起步，没有谁对不上
+            assert all(abs(x - y) <= 2 for x, y in zip(was, now)), r
+
+
+def test_hover_waits_for_the_collapse_animation_instead_of_cutting_it(browser, base) -> None:  # noqa: F811  十八·1
+    with open_stage(browser, base, setup=_setup) as st:
+        _open(st)
+        st.page.clock.run_for(1000)
+        st.page.wait_for_timeout(600)
+        st.page.mouse.move(3, 3)
+        st.page.keyboard.press("Escape")
+        over = "e => e.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))"   # 收起的动画里鼠标扫到一格
+        st.page.locator(CELL.format("p_math")).evaluate(over)
+        st.page.clock.run_for(300)
+        assert st.page.locator(".hex-cell.is-hover").count() == 0                    # 收起还没走完：不长大
+        st.page.clock.run_for(600)
+        st.page.wait_for_timeout(300)
+        assert st.page.locator(CELL.format("p_math") + ".is-hover").count() == 1     # 走完了：照常长大
