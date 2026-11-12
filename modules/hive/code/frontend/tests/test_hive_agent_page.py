@@ -92,7 +92,7 @@ def test_now_line_runs_through_all_lanes_and_the_slider_only_reloads_on_release(
         line, lane = st.box("#agNow"), st.box("#agPage .ag-card .ag-lane")
         last = st.page.locator("#agPage .ag-card").last.bounding_box()
         assert line["height"] >= last["y"] + last["height"] - st.box("#agPage .ag-card")["y"] - 2
-        assert lane["x"] + lane["width"] * 0.61 < line["x"] + line["width"] / 2 < lane["x"] + lane["width"] - 3   # 十七·5：默认标尺里现在线在今天那一格里（今天从 61.6% 起，午夜刚过时线就在格子开头），不在最右
+        assert abs(line["x"] + line["width"] / 2 - (lane["x"] + lane["width"])) < 3   # 「二十八」：今天 = 往前 24 小时，现在线在最右
         assert re.fullmatch(r"\d\d:\d\d", st.page.locator("#agNow span").inner_text())
         st.page.get_by_role("button", name="日").click()
         st.page.wait_for_timeout(200)

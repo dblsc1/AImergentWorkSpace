@@ -70,7 +70,7 @@ def test_three_cards_in_order_default_is_the_seven_day_uneven_ruler_and_esc_clos
         assert days.count() == 7 and days.last.inner_text() == "今天"                # 周几标注 + 今天
         widths = days.evaluate_all("els => els.map(e => e.getBoundingClientRect().width)")
         assert max(widths) == widths[-1] and all(abs(w / sum(widths) - p) < 0.005 for w, p in zip(widths, [0.05725] * 4 + [0.15, 0.237, 0.384]))   # 各天宽度同项目面板的标尺（「十五」9）
-        assert st.page.locator(".hp-ruler .pr-tick").count() == 14                   # 带数字的钟点刻度：前天 1、昨天 4、今天 9（「十五」9）
+        assert st.page.locator(".hp-ruler .pr-tick").count() == 13                   # 带数字的钟点刻度：前天 1、昨天 4、今天 8（「二十八」）
         if SHOT:
             st.page.screenshot(path=SHOT)
         st.page.keyboard.press("Escape")

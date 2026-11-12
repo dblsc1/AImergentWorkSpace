@@ -30,7 +30,7 @@ def _setup(st: Stage) -> None:
     math["tasks"] = [_task(t, n) for t, n in NAMES.items()] + [_task("t_cx", "已取消的", done=True, canceled=True), _task("t_dn", "做完的", done=True)]
     st.tree = tree
     now = st.now().astimezone(TZ)
-    day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    day = now - timedelta(hours=24)   # 「二十八」：标尺是此刻往前数的，夹具的「今天 x 点」也从 24 小时前起算，免得落在此刻之后画不出来
 
     def span(h: int, m: int = 0, minutes: int = 20, **extra: Any) -> dict[str, Any]:
         a = day + timedelta(hours=h, minutes=m)

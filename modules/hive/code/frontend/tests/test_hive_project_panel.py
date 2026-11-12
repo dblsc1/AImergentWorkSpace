@@ -21,7 +21,7 @@ ROW = '.pr-row[data-task="t_p_math"]'
 def _seed(st: Stage) -> None:
     """p_math 的任务 t_p_math 上有：人 2 段（一段今天、一段 2 天前的 1 分钟）、代理 2 段；没挂任务上有代理 1 段。"""
     now = st.now().astimezone(TZ)
-    day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    day = now - timedelta(hours=24)   # 「二十八」：标尺是此刻往前数的，夹具的「今天 x 点」也从 24 小时前起算，免得落在此刻之后画不出来
 
     def span(a, b, **extra: Any) -> dict[str, Any]:
         return {"start": _iso(a), "end": _iso(b), **extra}
@@ -92,8 +92,9 @@ def test_rows_ruler_golden_split_and_lanes_top_human_bottom_agent(browser, base)
         assert colors[1] == "rgb(53, 201, 235)" and colors[0] != colors[1] and colors[2].startswith("#")
         assert re.fullmatch(r"\d\d/\d\d \d\d:\d\d–\d\d:\d\d 你", panel.locator(ROW + " .pr-human .pr-seg").nth(2).get_attribute("title"))
         assert re.fullmatch(r"\d\d/\d\d \d\d:\d\d–\d\d:\d\d garden", panel.locator(ROW + " .pr-agent .pr-seg").nth(1).get_attribute("title"))
-        # 标尺刻度线（「十五」9）：今天每 3 小时带数字（9 个）+ 每小时细线 16 条；昨天 0 / 6 / 12 / 18；前天 12
-        assert panel.locator(".pr-tick").all_inner_texts() == ["12"] + ["00", "06", "12", "18"] + ["00", "03", "06", "09", "12", "15", "18", "21", "24"]
+        # 标尺刻度线（「二十八」）：最近 24 小时里钟点是 3 的倍数的带数字（8 个，从哪个钟点起随此刻）+ 其余整点细线 16 条；再往前一段 0 / 6 / 12 / 18；再往前 12
+        ticks = panel.locator(".pr-tick").all_inner_texts()
+        assert ticks[0] == "12" and sorted(ticks[1:5]) == ["00", "06", "12", "18"] and sorted(ticks[5:]) == ["00", "03", "06", "09", "12", "15", "18", "21"]
         assert panel.locator(".pr-hr").count() == 16
         # 日界线比小时线重
         heavy = st.page.evaluate("() => [getComputedStyle(document.querySelector('.pr-div')).width, getComputedStyle(document.querySelector('.pr-hr')).width]")

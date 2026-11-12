@@ -78,7 +78,7 @@
       if (c.pending || now - c.at < FRESH_MS) return;
       c.pending = true;
       var L = Pr.layout(now);
-      Promise.resolve(ctx.getJson("views/project-time?projectId=" + encodeURIComponent(pid) + "&from=" + ymd(L.from) + "&to=" + ymd(now))).then(function (res) {
+      Pr.readProjectTime(ctx.getJson, pid, L).then(function (res) {
         c.pending = false;
         if (!res) return;   // 读失败：留着骨架 / 上一次的数
         c.payload = res; c.at = ctx.now();

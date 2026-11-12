@@ -10,31 +10,58 @@
   var PAST_DAYS = 6, DAY_SHARES = [0.05725, 0.05725, 0.05725, 0.05725, 0.15, 0.237, 0.384], TODAY_SHARE = 0.384, PAST_SHARE = 1 - TODAY_SHARE;
   var HOLD_MS = 1000, EXPAND_HOLD_MS = 600, HOLD_SLOP = 10, FOLDED_TASKS = 3, RECENT_DONE_MAX = 10;
   var WEEK = ["日", "一", "二", "三", "四", "五", "六"];
+  var HOUR_MS = 3600000, DAY_MS = 24 * HOUR_MS;
 
   // ── 标尺：纯函数 ────────────────────────────────────
   function midnight(ms, plusDays) {
     var d = new Date(ms);
     return new Date(d.getFullYear(), d.getMonth(), d.getDate() + (plusDays || 0)).getTime();
   }
-  // 刻度线（只在 layout 的天里有）：今天每小时一条、每 3 小时带数字；昨天每 6 小时带数字；前天只有 12 点；更早的没有（只有日界线）。
-  // 钟点 h 取 0..24；今天的 24 = 右端，写数字；昨天 / 前天的 24 是下一天的 0 点，不重复
-  function ticksOf(ago) {
-    var out = [], h;
-    if (ago === 0) for (h = 0; h <= 24; h++) out.push({ h: h, label: h % 3 === 0 });
-    else if (ago === 1) for (h = 0; h < 24; h += 6) out.push({ h: h, label: true });
-    else if (ago === 2) out.push({ h: 12, label: true });
+  // 刻度线（只在 layout 的前三段里有），都落在整点上：最近 24 小时每小时一条、钟点是 3 的倍数带数字；再往前 24 小时只有 0 / 6 / 12 / 18 点带数字；
+  // 再往前只有 12 点；更早的没有（只有段与段的分界线）。[start, end) 里的整点，h = 本地钟点 0..23，t = 那个整点的时刻
+  function ticksOf(ago, start, end) {
+    var out = [], d = new Date(start); d.setMinutes(0, 0, 0);
+    for (var t = d.getTime() < start ? d.getTime() + HOUR_MS : d.getTime(); t < end && ago <= 2; t += HOUR_MS) {
+      var h = new Date(t).getHours();
+      if (ago === 0) out.push({ h: h, t: t, label: h % 3 === 0 });
+      else if (ago === 1 ? h % 6 === 0 : h === 12) out.push({ h: h, t: t, label: true });
+    }
     return out;
   }
-  // now → 7 天（本地日）；days[i].x0 / w 是这一天在整条尺子上的起点与宽度（0..1），今天最后一天；ago = 几天前；ticks[i] = {h, x（整条尺子上 0..1）, label}
+  // now → 7 段，每段 24 小时，从此刻往回数（hive.stage.v1「二十八」）：最后一段「今天」= [now − 24 小时, now]，不按 0 点切；
+  // days[i].x0 / w 是这一段在整条尺子上的起点与宽度（0..1）；ago = 往回第几段；ticks[i] = {h, x（整条尺子上 0..1）, label}
   function layout(now) {
+    now = Math.ceil(now / 60000) * 60000;   // 取到整分：同一分钟里刻度和段的位置不变，画出来的 HTML 也不变（宿主靠这个少重建）
     var days = [], x = 0;
     for (var i = -PAST_DAYS; i <= 0; i++) {
-      var k = i + PAST_DAYS, w = DAY_SHARES[k];
-      days.push({ start: midnight(now, i), end: midnight(now, i + 1), today: i === 0, ago: 0 - i || 0, x0: x, w: w,
-        ticks: ticksOf(-i).map(function (t) { return { h: t.h, x: x + w * t.h / 24, label: t.label }; }) });
+      var k = i + PAST_DAYS, w = DAY_SHARES[k], start = now + (i - 1) * DAY_MS;
+      days.push({ start: start, end: start + DAY_MS, today: i === 0, ago: 0 - i || 0, x0: x, w: w,
+        ticks: ticksOf(-i, start, start + DAY_MS).map(function (t) { return { h: t.h, x: x + w * (t.t - start) / DAY_MS, label: t.label }; }) });
       x += w;
     }
-    return { from: days[0].start, to: days[PAST_DAYS].end, days: days, now: now };
+    return { from: days[0].start, to: now, days: days, now: now };
+  }
+  // 读这把尺子范围里一个项目的人 / 代理区间。views/project-time 一次至多 7 个本地日，而尺子是此刻往前 7 × 24 小时、跨 8 个本地日：
+  // 后 7 天一次读，最早那一天单读一次，再按任务并起来（两次都读到才并；最早那天没读到 = 只少最左边那一点）
+  function readProjectTime(getJson, pid, L) {
+    var q = "views/project-time?projectId=" + encodeURIComponent(pid) + "&from=";
+    return Promise.all([getJson(q + ymd(midnight(L.from, 1)) + "&to=" + ymd(L.to)), getJson(q + ymd(L.from) + "&to=" + ymd(L.from))])
+      .then(function (r) { return mergeProjectTime(r[0], r[1]); });
+  }
+  // early 的区间接到 main 同一任务的前面；起点相同的段只留一份（返回新对象，不改入参）
+  function mergeProjectTime(main, early) {
+    if (!main || !early) return main || null;
+    var by = {}, tasks = (main.tasks || []).map(function (t) { var c = Object.assign({}, t); by[String(t.taskId)] = c; return c; });
+    function join(a, b) {
+      var seen = {}; (b || []).forEach(function (s) { seen[s.start] = 1; });
+      return (a || []).filter(function (s) { return !seen[s.start]; }).concat(b || []);
+    }
+    (early.tasks || []).forEach(function (t) {
+      var c = by[String(t.taskId)];
+      if (!c) { tasks.push(Object.assign({}, t)); return; }
+      c.human = join(t.human, c.human); c.agent = join(t.agent, c.agent);
+    });
+    return Object.assign({}, main, { tasks: tasks });
   }
   // 等宽刻度（单日 / 一周的统计页）：从 startMs 所在本地日起 n 天，每天 w = 1/n；形状同 layout，xOf / spanRect 通用
   function linearScale(startMs, n) {
@@ -79,7 +106,8 @@
   // 位置不写进 HTML（每秒都在变，写进去 = 整块每秒重建）：宿主把 nowPct(L) 设到容器的 --pr-now 上
   function nowLine(L) { return L.now == null ? "" : '<i class="pr-now"></i>'; }
   function nowPct(L) { return L.now == null ? "" : pct(xOf(L, L.now)); }
-  function dayName(d) { return d.ago === 0 ? "今天" : d.ago === 1 ? "昨天" : "周" + WEEK[new Date(d.start).getDay()]; }
+  // 更早的段写周几：取这一段正中那一刻是周几（一段 24 小时跨两个日历日，占多的那天）
+  function dayName(d) { return d.ago === 0 ? "今天" : d.ago === 1 ? "昨天" : "周" + WEEK[new Date((d.start + d.end) / 2).getDay()]; }
   // 标尺：上排每天一格（今天 / 昨天，更早写周几），下排是钟点刻度（thin = 细线，带数字的 = pr-tick）；日界线比小时线重
   function rulerHtml(L) {
     var top = L.days.map(function (d) {
@@ -162,7 +190,7 @@
       if (loading) return;
       loading = true; loadedAt = now;
       var L = layout(now);
-      ctx.getJson("views/project-time?projectId=" + encodeURIComponent(pid) + "&from=" + ymd(L.from) + "&to=" + ymd(now)).then(function (res) {
+      readProjectTime(ctx.getJson, pid, L).then(function (res) {
         loading = false;
         if (cur !== pid) return;
         payload = res; if (ctx.changed) ctx.changed();
@@ -312,7 +340,7 @@
              dragOver: dragOver, dragEnd: dragEnd, dropAt: dropAt, overPanel: overPanel, awaitName: awaitName };
   }
 
-  var api = { nowPct: nowPct, minutesText: minutesText, spentText: spentText, taskOrder: taskOrder, lastActivity: lastActivity, layout: layout, linearScale: linearScale, rollingScale: rollingScale, xOf: xOf, spanRect: spanRect, rulerHtml: rulerHtml, lanesHtml: lanesHtml, createPanel: createPanel,
+  var api = { readProjectTime: readProjectTime, mergeProjectTime: mergeProjectTime, nowPct: nowPct, minutesText: minutesText, spentText: spentText, taskOrder: taskOrder, lastActivity: lastActivity, layout: layout, linearScale: linearScale, rollingScale: rollingScale, xOf: xOf, spanRect: spanRect, rulerHtml: rulerHtml, lanesHtml: lanesHtml, createPanel: createPanel,
               PAST_SHARE: PAST_SHARE, TODAY_SHARE: TODAY_SHARE };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.NexusTableHexProjectRuler = api;

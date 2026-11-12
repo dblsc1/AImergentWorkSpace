@@ -16,16 +16,16 @@ assert.strictEqual(P.rangeOf("hours", "x", now).from, now - P.DEFAULT_HOURS * 36
 assert.strictEqual(P.DEFAULT_HOURS, 3);
 assert.deepStrictEqual(["1", " 24 ", "3", "0", "25", "", "x", "1.5", "-2", "123"].map(P.parseHours), [1, 24, 3, null, null, null, null, null, null, null]);
 
-// 默认视图（十六）：范围 = Pr.layout(now) 的 7 天（昨天往前 5 天 + 今天），到此刻为止；不传 kind / null 都是它
+// 默认视图（十六、二十八）：范围 = Pr.layout(now) 的 7 段（从此刻往回 7 × 24 小时），到此刻为止；不传 kind / null 都是它
 const rd = P.rangeOf(null, 3, now), L7 = Pr.layout(now);
 assert.strictEqual(rd.kind, "default");
 assert.strictEqual(rd.from, L7.from);
-assert.strictEqual(rd.from, L(2026, 11, 6));
+assert.strictEqual(rd.from, L(2026, 11, 5, 15, 0));
 assert.strictEqual(rd.to, now);
 assert.strictEqual(rd.layout.days.length, 7);
 assert.deepStrictEqual(P.rangeOf("default", 3, now).from, rd.from);
 assert.deepStrictEqual([P.nextKind(null, "day"), P.nextKind("day", "day"), P.nextKind("day", "week"), P.nextKind("hours", "hours")], ["day", null, "week", null]);   // 再点一次回默认
-// 默认视图的总用时 = 这 7 天里的计时段；7 天前的不算；正在跑的算到此刻
+// 默认视图的总用时 = 这 7 × 24 小时里的计时段；更早的不算；正在跑的算到此刻
 const sd = (a, b) => ({ startAt: iso(a), endAt: iso(b), projectId: "p1", taskId: null, source: "timer-backend" });
 const week7 = [sd(L(2026, 11, 6, 9), L(2026, 11, 6, 10)), sd(L(2026, 11, 12, 9), L(2026, 11, 12, 9, 30)), sd(L(2026, 11, 5, 9), L(2026, 11, 5, 11))];
 assert.strictEqual(P.totalSeconds(rd, week7, null), 3600 + 1800);
@@ -33,8 +33,8 @@ assert.strictEqual(P.totalSeconds(rd, week7, { startAt: iso(now - 600000) }), 36
 // 默认视图的泳道用项目面板那把 7 天不等宽标尺（各天宽度见「十五」9）
 const dl = P.laneOf(rd, { sessions: [sd(L(2026, 11, 12, 0), L(2026, 11, 12, 12)), sd(L(2026, 11, 8, 0), L(2026, 11, 9, 0))] });
 const dd = Pr.layout(now).days, near = (x, y) => Math.abs(x - y) < 1e-6;
-assert.ok(near(dl.timer[0].left, dd[2].x0 * 100) && near(dl.timer[0].width, dd[2].w * 100));        // 11/8 是第 3 格
-assert.ok(near(dl.timer[1].left, dd[6].x0 * 100) && near(dl.timer[1].width, dd[6].w * 100 / 2));    // 今天 0–12 点 = 今天那格的一半
+assert.ok(near(dl.timer[0].left, (dd[2].x0 + dd[2].w * 9 / 24) * 100) && near(dl.timer[0].width, (dd[2].w * 15 / 24 + dd[3].w * 9 / 24) * 100));   // 11/8 整天：第 3 段的后 15 小时 + 第 4 段的前 9 小时（段从 15 点起）
+assert.ok(near(dl.timer[1].left, (dd[6].x0 + dd[6].w * 9 / 24) * 100) && near(dl.timer[1].width, dd[6].w * 100 / 2));    // 今天 0–12 点 = 最近 24 小时那格的一半，从第 9 小时起
 assert.strictEqual(P.spanText(rd, L(2026, 11, 12, 9, 5), L(2026, 11, 12, 10, 30)), "11/12 09:05–10:30");
 assert.strictEqual(P.dated(rd) && P.dated(P.rangeOf("week", 3, now)), true);
 assert.strictEqual(P.dated(P.rangeOf("day", 3, now)) || P.dated(P.rangeOf("hours", 3, now)), false);
@@ -43,13 +43,13 @@ assert.strictEqual(P.dated(P.rangeOf("day", 3, now)) || P.dated(P.rangeOf("hours
 assert.deepStrictEqual(P.dateChunks(P.rangeOf("week", 3, now).from, now), [{ from: "2026-11-05", to: "2026-11-11" }, { from: "2026-11-12", to: "2026-11-12" }]);
 assert.deepStrictEqual(P.dateChunks(L(2026, 11, 12, 9), now), [{ from: "2026-11-12", to: "2026-11-12" }]);
 assert.deepStrictEqual(P.dateChunks(L(2026, 11, 11, 23), L(2026, 11, 12, 1)), [{ from: "2026-11-11", to: "2026-11-12" }]);
-// 窗口块一次读整个范围：from / to = 范围跨的第一天和最后一天（周档 8 天，默认 7 天，日 2 天，3 小时 1 天）
+// 窗口块一次读整个范围：from / to = 范围跨的第一天和最后一天（周档与默认 8 天，日 2 天，3 小时 1 天）
 const bq = (r) => P.blockQuery(r);
 assert.strictEqual(bq(P.rangeOf("hours", 3, now)), "from=2026-11-12&to=2026-11-12");
 assert.strictEqual(bq(P.rangeOf("hours", 24, now)), "from=2026-11-11&to=2026-11-12");
 assert.strictEqual(bq(P.rangeOf("day", 3, now)), "from=2026-11-11&to=2026-11-12");
 assert.strictEqual(bq(P.rangeOf("week", 3, now)), "from=2026-11-05&to=2026-11-12");
-assert.strictEqual(bq(rd), "from=2026-11-06&to=2026-11-12");
+assert.strictEqual(bq(rd), "from=2026-11-05&to=2026-11-12");
 
 // 计时段合并去重、总用时裁到范围
 const r3 = P.rangeOf("hours", 3, now);

@@ -795,7 +795,14 @@
       if (!mouse || state.pointerMoved === false) return;
       queueHover(hoverItemFor(ev.target.closest(".hex-cell")));
     });
-    hive.addEventListener("mouseleave", function () { clearHover(); });
+    // 小人画在 #stageLayer 里、叠在蜂巢上面：指针落到小人身上不算离开蜂巢（格子里休息的小人正好在指针下时，
+    // 原先这一下就把刚排上的悬停取消了，鼠标不再动就一直不放大）。从小人身上再移到蜂巢外面才算离开。
+    function onPet(n) { return !!(n && n.closest && n.closest(".st-pet")); }
+    hive.addEventListener("mouseleave", function (ev) { if (!onPet(ev.relatedTarget)) clearHover(); });
+    document.addEventListener("mouseout", function (ev) {
+      var to = ev.relatedTarget;
+      if (onPet(ev.target) && !onPet(to) && !(to && hive.contains(to))) clearHover();
+    });
     // ⚠️ 真 bug（2026-09-07 真机联调测出，纸面审不出来）：展开时
     // fillCell() 会重写那一格的 innerHTML，于是**刚才被点中的那个
     // .hex-title 已经从文档树上掉下来了**——等这个冒泡到 document 的

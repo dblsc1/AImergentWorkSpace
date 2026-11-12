@@ -98,18 +98,18 @@ def test_reads_only_when_the_cell_has_grown_and_not_again_within_30_seconds(brow
         st.page.wait_for_timeout(300)
         _hover(st, CELL.format("p_math"))
         st.page.wait_for_selector(".is-hover .hv-card .hv-sum")
-        assert len(st.reads) == 1 and "projectId=p_math" in st.reads[0]
+        assert len(st.reads) == 2 and "projectId=p_math" in st.reads[0]   # 一次读 = 两个请求（后 7 天 + 最早那一天，「二十八」6）
         st.page.mouse.move(3, 3)
         st.page.clock.run_for(700)
         _hover(st, CELL.format("p_math"))                  # 30 秒内再来：直接用上次的
         st.page.wait_for_selector(".is-hover .hv-card .hv-sum")
-        assert len(st.reads) == 1
+        assert len(st.reads) == 2
         st.page.mouse.move(3, 3)
         st.page.clock.run_for(31000)
         _hover(st, CELL.format("p_math"))
         st.page.wait_for_selector(".is-hover .hv-card .hv-sum")
         st.page.wait_for_timeout(200)
-        assert len(st.reads) == 2
+        assert len(st.reads) == 4
 
 
 def test_skeleton_ruler_is_drawn_before_the_data_arrives(browser, base) -> None:  # noqa: F811  二十五·2
@@ -137,3 +137,19 @@ def test_center_and_placeholder_and_expanded_cells_get_no_card(browser, base) ->
         assert st.page.locator(".hex-cell.is-expanded").count() == 1
         assert st.page.locator(".hex-cell.is-expanded.is-hover").count() == 0
         assert st.page.locator(".hex-cell.is-expanded .hv-card").evaluate("e => getComputedStyle(e).display") == "none"
+
+
+def test_pointer_landing_on_a_pet_resting_inside_the_cell_still_grows_the_cell(browser, base) -> None:  # noqa: F811  二十五·1 + 二十二·2
+    with open_stage(browser, base, setup=_setup) as st:
+        st.page.wait_for_selector(".st-pet.is-in.is-work", state="attached")
+        pid = st.page.get_attribute(".st-pet.is-in.is-work", "data-cell")
+        box = st.page.evaluate("() => { var r = document.querySelector('.st-pet.is-in.is-work .st-pet-in').getBoundingClientRect(); return {x: r.x, y: r.y, width: r.width, height: r.height} }")
+        assert box["width"] > 0
+        st.page.mouse.move(3, 3)
+        st.page.clock.run_for(400)
+        st.page.wait_for_timeout(500)
+        st.page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, steps=5)   # 指针正落在小人身上
+        st.page.clock.run_for(400)
+        st.page.wait_for_timeout(300)
+        st.page.clock.run_for(400)
+        st.page.wait_for_selector(CELL.format(pid) + ".is-hover")
