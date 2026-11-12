@@ -274,7 +274,7 @@ def test_drag_history_expands_cell_and_drop_on_task_reassigns(browser, base) -> 
         assert hive.page.locator(".hex-cell.is-expanded").get_attribute("data-project-id") == "p_math", "拖过去格子自动展开"
         assert hive.page.locator(".hex-cell.is-expanded .hd-newtask").inner_text() == "＋ 新建任务", "拖拽时才有新建行"
         hive.page.clock.run_for(600); hive.page.wait_for_timeout(400)   # 展开的 FLIP 动画
-        li = hive.page.locator('.hex-cell.is-expanded .hex-detail li[data-task-id=t_p_math]')
+        li = hive.page.locator('.hex-cell.is-expanded .hex-detail .pr-row[data-task-id=t_p_math]')
         _onto(hive.page, li)
         assert li.get_attribute("class").find("hd-over") >= 0
         hive.page.mouse.up()
@@ -295,7 +295,7 @@ def test_drop_on_cell_reassigns_project_and_elsewhere_cancels(browser, base) -> 
         bodies: list[str] = []
         hive.page.on("request", lambda r: bodies.append(r.post_data or "") if "/sessions/" in r.url else None)
         _drag_to(hive.page, 1, hive.page.locator('.hex-cell[data-project-id=p_math]'))
-        _onto(hive.page, hive.page.locator(".hex-cell.is-expanded .hex-group-head").first)   # 格子里不是任务行的地方
+        _onto(hive.page, hive.page.locator(".hex-cell.is-expanded .hex-sub").first)   # 格子里不是任务行的地方（十五：「任务」组已去掉）
         pid = hive.page.locator(".hex-cell.is-expanded").get_attribute("data-project-id")   # 路上经过的格子也会展开：放在哪个就是哪个
         hive.page.mouse.up()
         _until(hive.page, lambda: len(hive.writes) >= 1)

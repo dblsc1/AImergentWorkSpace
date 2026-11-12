@@ -27,7 +27,7 @@
 .hp-lane-timer { height: 7px; border-bottom: 1px solid var(--line-2, var(--line)); }
 .hp-lane-win { height: 26px; }
 .hp-seg { position: absolute; top: 0; bottom: 0; min-width: 3px; box-sizing: border-box; }
-.hp-seg-timer { background: var(--pr-human); }
+.hp-seg-timer { background: var(--pr-human-bar); border-radius: 2px; }
 .hp-seg-win { background: var(--line); }
 .hp-seg-win.is-filed { background: var(--hp-c); }
 .hp-ruler { margin-top: 3px; }

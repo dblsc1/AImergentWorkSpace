@@ -55,19 +55,22 @@ def _box(loc) -> dict[str, float]:
     return b
 
 
-def test_rows_ruler_70_30_and_lanes_top_human_bottom_agent(browser, base) -> None:  # noqa: F811
+def test_rows_ruler_golden_split_and_lanes_top_human_bottom_agent(browser, base) -> None:  # noqa: F811
     with open_stage(browser, base, setup=_busy_day) as st:
         _seed(st)
         _open(st)
         panel = st.page.locator(".hex-cell.is-expanded .hex-ruler-slot")
-        assert panel.locator(".pr-row").count() == 2 and panel.locator(".pr-row b").all_inner_texts() == ["数学的任务", "没挂任务"]
+        assert panel.locator(".pr-row").count() == 2 and panel.locator(".pr-row b").all_inner_texts() == ["数学的任务", "未分配任务用时"]   # 「十五」2
         assert "projectId=p_math" in st.project_time_requests[0] and re.search(r"from=\d{4}-\d\d-\d\d&to=", st.project_time_requests[0])
-        # 标尺：一条，今天占 30%，前 6 天共 70%；每行的泳道与它对齐
+        # 标尺（「十五」9）：一条，今天 38.4%、昨天 23.7%、前天 15%、更早 4 天各 5.725%；每行的泳道与它对齐
         ruler = _box(panel.locator(".pr-ruler"))
         today = _box(panel.locator(".pr-day.is-today"))
-        assert panel.locator(".pr-day").count() == 7 and panel.locator(".pr-day.is-today").inner_text() == "今天"
-        assert abs(today["width"] / ruler["width"] - 0.3) < 0.003
-        assert abs((today["x"] - ruler["x"]) / ruler["width"] - 0.7) < 0.003
+        days = panel.locator(".pr-day")
+        assert days.count() == 7 and panel.locator(".pr-day.is-today").inner_text() == "今天" and days.nth(5).inner_text() == "昨天"
+        widths = [days.nth(i).bounding_box()["width"] / ruler["width"] for i in range(7)]
+        for got, want in zip(widths, [0.05725] * 4 + [0.15, 0.237, 0.384]):
+            assert abs(got - want) < 0.003, widths
+        assert abs((today["x"] - ruler["x"]) / ruler["width"] - 0.616) < 0.003
         for lanes in panel.locator(".pr-lanes").all():
             b = lanes.bounding_box()
             assert abs(b["x"] - ruler["x"]) < 1 and abs(b["width"] - ruler["width"]) < 1
@@ -89,8 +92,16 @@ def test_rows_ruler_70_30_and_lanes_top_human_bottom_agent(browser, base) -> Non
         assert colors[1] == "rgb(53, 201, 235)" and colors[0] != colors[1] and colors[2].startswith("#")
         assert re.fullmatch(r"\d\d/\d\d \d\d:\d\d–\d\d:\d\d 你", panel.locator(ROW + " .pr-human .pr-seg").nth(2).get_attribute("title"))
         assert re.fullmatch(r"\d\d/\d\d \d\d:\d\d–\d\d:\d\d garden", panel.locator(ROW + " .pr-agent .pr-seg").nth(1).get_attribute("title"))
-        # 标尺里有今天的钟点刻度
-        assert panel.locator(".pr-tick").all_inner_texts() == ["00", "06", "12", "18", "24"]
+        # 标尺刻度线（「十五」9）：今天每 3 小时带数字（9 个）+ 每小时细线 16 条；昨天 0 / 6 / 12 / 18；前天 12
+        assert panel.locator(".pr-tick").all_inner_texts() == ["12"] + ["00", "06", "12", "18"] + ["00", "03", "06", "09", "12", "15", "18", "21", "24"]
+        assert panel.locator(".pr-hr").count() == 16
+        # 日界线比小时线重
+        heavy = st.page.evaluate("() => [getComputedStyle(document.querySelector('.pr-div')).width, getComputedStyle(document.querySelector('.pr-hr')).width]")
+        assert float(heavy[0][:-2]) > float(heavy[1][:-2])
+        # 人的红条：四角圆、颜色比 --pr-human 淡（「十五」8）
+        bar = st.page.evaluate("""() => { const e = document.querySelector('.pr-human .pr-seg'); return [getComputedStyle(e).borderTopLeftRadius, getComputedStyle(e).borderBottomRightRadius, getComputedStyle(e).backgroundColor,
+          getComputedStyle(document.documentElement).getPropertyValue('--pr-human-bar').trim()]; }""")
+        assert float(bar[0][:-2]) > 0 and float(bar[1][:-2]) > 0 and bar[3].startswith("color-mix"), bar
         st.page.keyboard.press("Escape")
         assert st.page.locator(".hex-cell.is-expanded").count() == 0
 

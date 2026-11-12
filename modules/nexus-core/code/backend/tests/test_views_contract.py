@@ -112,7 +112,7 @@ def test_p3_tree_shape_matches_contract_with_keys(client, seeded):
         "address", "unclassifiedAddress",  # v2.39
     }
     assert set(project["tasks"][0]) == {
-        "id", "key", "name", "done", "kind", "flags", "plan", "dependsOn", "address",
+        "id", "key", "name", "done", "canceled", "kind", "flags", "plan", "dependsOn", "address",   # v2.55 canceled
     }  # plan/dependsOn 是 v1.2 补的集成缝（只读附带，与 TaskOut 同形状）
     # key 是真值不是占位：与库里系统生成的一致
     zone = seeded["zones"]["示例分区二"]

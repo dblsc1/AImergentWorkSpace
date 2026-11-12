@@ -47,6 +47,7 @@ class Stage:
         self.api: list[str] = []
         self.posts: list[tuple[str, Any]] = []
         self.replies: dict[str, tuple[int, Any]] = {}
+        self.tree: Any = TREE                                            # views/tree 的桩；用例要多任务 / 已取消时换它
         self.requests: list[str] = []
         page.on("request", lambda r: self.requests.append(r.url))
 
@@ -74,7 +75,7 @@ class Stage:
             return
         self.api.append(key)
         if key == "views/tree":
-            body: Any = TREE
+            body: Any = self.tree
         elif key == "views/lanes":
             body = self.lanes
         elif key == "views/current":

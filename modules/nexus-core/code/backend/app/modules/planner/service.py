@@ -264,6 +264,15 @@ def update_task(task_id: str, fields: dict) -> dict:
         )
     if "plannedWeight" in updates:
         updates["plannedWeight"] = _check_weight(updates["plannedWeight"], "任务")
+    if "canceled" in updates:  # v2.55：取消 = 已了结（done）+ canceled 标记；撤销取消 = 回到未完成
+        if updates.get("canceled") is None:
+            del updates["canceled"]
+        else:
+            if updates.get("done") is not None and updates["done"] != updates["canceled"]:
+                raise InvalidInputError("canceled 与 done 同时给时必须一致")
+            updates["done"] = updates["canceled"]
+    elif "done" in updates:  # 直接改完成状态：canceled 标记随之清掉（完成 / 撤销完成都不是取消）
+        updates["canceled"] = False
     if "done" in updates:  # done→doneAt 联动：完成盖时间戳，取消完成清掉
         updates["doneAt"] = _now_iso() if updates["done"] else None
     if "plan" in updates:  # 任务自己的排期（契约 v1.1）；plan=null 合法，是清空

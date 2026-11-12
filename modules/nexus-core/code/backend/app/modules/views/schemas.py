@@ -167,6 +167,8 @@ class Task(_Strict):
     key: str
     name: str
     done: bool
+    #: v2.55：取消的任务 ``done`` 也是 true，这里分辨
+    canceled: bool = False
     #: ``normal`` | ``ephemeral``。契约未穷举取值，故不用 Literal 收死。
     kind: str
     #: 前端只读不解释——贴纸决定数据性质，代码决定系统行为。

@@ -1,12 +1,14 @@
 // hive · hex-project-ruler.js —— 项目面板：任务条 + 人 / 代理时间标尺（hive.stage.v1「七」）。
 // 两层：
-//   1) 标尺（纯函数，无 DOM，可复用）：layout(now) 定 7 天的绝对刻度（前 6 天各占 70%/6，今天占 30%），
+//   1) 标尺（纯函数，无 DOM，可复用）：layout(now) 定 7 天的绝对刻度（今天 38.4%、昨天 23.7%、前天 15%、更早 4 天各 5.725%，hive.stage.v1「十五」），
 //      xOf / spanRect 把时间戳换成 0..1 的横向位置；rulerHtml / lanesHtml 画出来。别处要画「人 / 代理时间标尺表」就用这几个。
-//   2) 面板（接线）：createPanel(ctx) —— 每个任务一条长条（左：任务，右：上半人、下半代理两条泳道），
+//   2) 面板（接线）：createPanel(ctx) —— 每个未完成任务一行（上：任务名与合计，下：人红细条 + 代理泳道），默认前 3 行，最底「最近完成」，
 //      拖动时的弹簧展开（在格子上停 1 秒 = 点开）、任务条落点、在空白处停 1 秒 = 新建任务。
 (function () {
   "use strict";
-  var PAST_DAYS = 6, PAST_SHARE = 0.7, TODAY_SHARE = 0.3, HOLD_MS = 1000, HOLD_SLOP = 10;
+  // 七天的宽度（从最早到今天）：今天 0.384（黄金分割）、昨天 0.237（0.616×0.384）、前天 0.15，剩下 0.229 四天平分
+  var PAST_DAYS = 6, DAY_SHARES = [0.05725, 0.05725, 0.05725, 0.05725, 0.15, 0.237, 0.384], TODAY_SHARE = 0.384, PAST_SHARE = 1 - TODAY_SHARE;
+  var HOLD_MS = 1000, EXPAND_HOLD_MS = 600, HOLD_SLOP = 10, FOLDED_TASKS = 3, RECENT_DONE_MAX = 10;
   var WEEK = ["日", "一", "二", "三", "四", "五", "六"];
 
   // ── 标尺：纯函数 ────────────────────────────────────
@@ -14,13 +16,23 @@
     var d = new Date(ms);
     return new Date(d.getFullYear(), d.getMonth(), d.getDate() + (plusDays || 0)).getTime();
   }
-  // now → 7 天（本地日）；days[i].x0 / w 是这一天在整条尺子上的起点与宽度（0..1），今天最后一天
+  // 刻度线（只在 layout 的天里有）：今天每小时一条、每 3 小时带数字；昨天每 6 小时带数字；前天只有 12 点；更早的没有（只有日界线）。
+  // 钟点 h 取 0..24；今天的 24 = 右端，写数字；昨天 / 前天的 24 是下一天的 0 点，不重复
+  function ticksOf(ago) {
+    var out = [], h;
+    if (ago === 0) for (h = 0; h <= 24; h++) out.push({ h: h, label: h % 3 === 0 });
+    else if (ago === 1) for (h = 0; h < 24; h += 6) out.push({ h: h, label: true });
+    else if (ago === 2) out.push({ h: 12, label: true });
+    return out;
+  }
+  // now → 7 天（本地日）；days[i].x0 / w 是这一天在整条尺子上的起点与宽度（0..1），今天最后一天；ago = 几天前；ticks[i] = {h, x（整条尺子上 0..1）, label}
   function layout(now) {
-    var days = [];
+    var days = [], x = 0;
     for (var i = -PAST_DAYS; i <= 0; i++) {
-      var past = i < 0, k = i + PAST_DAYS;
-      days.push({ start: midnight(now, i), end: midnight(now, i + 1), today: !past,
-        x0: past ? k * PAST_SHARE / PAST_DAYS : PAST_SHARE, w: past ? PAST_SHARE / PAST_DAYS : TODAY_SHARE });
+      var k = i + PAST_DAYS, w = DAY_SHARES[k];
+      days.push({ start: midnight(now, i), end: midnight(now, i + 1), today: i === 0, ago: 0 - i || 0, x0: x, w: w,
+        ticks: ticksOf(-i).map(function (t) { return { h: t.h, x: x + w * t.h / 24, label: t.label }; }) });
+      x += w;
     }
     return { from: days[0].start, to: days[PAST_DAYS].end, days: days };
   }
@@ -63,14 +75,16 @@
   function dividers(L) {
     return L.days.slice(1).map(function (d) { return '<i class="pr-div" style="left:' + pct(d.x0) + '"></i>'; }).join("");
   }
-  // 标尺：上排每天一格（过去几天写周几，今天写「今天」），下排是今天里的钟点刻度
+  function dayName(d) { return d.ago === 0 ? "今天" : d.ago === 1 ? "昨天" : "周" + WEEK[new Date(d.start).getDay()]; }
+  // 标尺：上排每天一格（今天 / 昨天，更早写周几），下排是钟点刻度（thin = 细线，带数字的 = pr-tick）；日界线比小时线重
   function rulerHtml(L) {
     var top = L.days.map(function (d) {
-      return '<span class="pr-day' + (d.today ? " is-today" : "") + '" style="left:' + pct(d.x0) + ";width:" + pct(d.w) + '">' +
-        (d.today ? "今天" : "周" + WEEK[new Date(d.start).getDay()]) + "</span>";
+      return '<span class="pr-day' + (d.today ? " is-today" : "") + '" style="left:' + pct(d.x0) + ";width:" + pct(d.w) + '">' + dayName(d) + "</span>";
     }).join("");
-    var t = L.days[PAST_DAYS], ticks = [0, 6, 12, 18, 24].map(function (h) {
-      return '<span class="pr-tick" style="left:' + pct(t.x0 + t.w * h / 24) + '">' + pad(h) + "</span>";
+    var ticks = L.days.map(function (d) {
+      return (d.ticks || []).map(function (t) {
+        return t.label ? '<span class="pr-tick" style="left:' + pct(t.x) + '">' + pad(t.h) + "</span>" : '<i class="pr-hr" style="left:' + pct(t.x) + '"></i>';
+      }).join("");
     }).join("");
     return '<div class="pr-ruler">' + dividers(L) + top + '<div class="pr-ticks">' + ticks + "</div></div>";
   }
@@ -87,6 +101,30 @@
       '<div class="pr-lane pr-agent">' + segs(L, agent || [], function (s) { return s.agent || "代理"; }, "pr-a") + "</div></div>";
   }
 
+  // 任务泳道的排序（优先级接口，hive.stage.v1「十五」）：priority（数字，小的在前；缺 = 全部并列，本版没有地方能改它）→
+  // 最近活动（activity[taskId] = 人或 agent 在这个任务上最近一段的结束时刻，毫秒；新的在前）→ 名字。返回新数组
+  function taskOrder(tasks, activity) {
+    function pri(t) { return typeof t.priority === "number" && isFinite(t.priority) ? t.priority : Infinity; }
+    return (tasks || []).slice().sort(function (a, b) {
+      var pa = pri(a), pb = pri(b);
+      if (pa !== pb) return pa < pb ? -1 : 1;
+      var aa = (activity && activity[a.id]) || 0, ab = (activity && activity[b.id]) || 0;
+      if (aa !== ab) return ab - aa;
+      return String(a.name).localeCompare(String(b.name), "zh");
+    });
+  }
+  // 每个任务最近一段（人或 agent）的结束时刻
+  function lastActivity(tasks) {
+    var out = {};
+    (tasks || []).forEach(function (t) {
+      (t.human || []).concat(t.agent || []).forEach(function (s) {
+        var e = Date.parse(s.end), k = t.taskId || "";
+        if (e > (out[k] || 0)) out[k] = e;
+      });
+    });
+    return out;
+  }
+
   function sumSec(list) {
     return list.reduce(function (n, s) { return n + Math.max(0, Date.parse(s.end) - Date.parse(s.start)); }, 0) / 1000;
   }
@@ -101,9 +139,11 @@
   }
 
   // ── 面板 ────────────────────────────────────────────
-  // ctx: { tree() → views/tree, getJson(path), dur(sec), now(), open(pid), taskApi() → NexusTableData }
+  // ctx: { tree() → views/tree, getJson(path), dur(sec), now(), open(pid), taskApi() → NexusTableData,
+  //        recentHtml(pid) → 「最近完成」展开后的行（页面按 hex-cards 的卡片生成）, recentCount(pid) }
   function createPanel(ctx) {
     var cur = null, payload = null, loadedAt = 0, loading = false, creating = null;
+    var expanded = false, doneOpen = false, menuTask = null;   // 「展开全部」/「最近完成」/ 点开了操作的任务；换项目、关闭时复位
     var hold = { key: null, x: 0, y: 0, timer: null }, lit = null;
 
     function project(pid) { return ((ctx.tree() || {}).projects || []).filter(function (p) { return p.id === pid; })[0] || null; }
@@ -131,31 +171,55 @@
       return payload ? { human: sumSec((t && t.human) || []), agent: sumSec((t && t.agent) || []) } : null;
     }
     // 面板主体的 HTML（页面的 renderPanel 把它填进大六边形里的 .hex-ruler-slot）；顺带按需重读
+    function rowHtml(L, pid, color, r, d) {
+      var open = r.id && menuTask === r.id;
+      return '<div class="pr-row' + (open ? " is-open" : "") + '"' + (color ? ' style="--pr-agent:' + esc(color) + '"' : "") + ' data-task="' + esc(r.id) + '" data-project="' + esc(pid) + '"' +
+        (r.id ? ' data-task-id="' + esc(r.id) + '"' : "") + (r.priority != null ? ' data-priority="' + esc(r.priority) + '"' : "") + '><div class="pr-task"><b' + (r.id ? ' class="hex-task-name pr-name"' : "") + ">" + esc(r.name) + "</b>" +
+        '<span class="pr-sum"><i class="pr-k pr-h"></i>' + ctx.dur(sumSec(d.human)) + ' <i class="pr-k pr-a"></i>' + ctx.dur(sumSec(d.agent)) + "</span></div>" +
+        (open ? '<div class="pr-menu"><button type="button" class="hex-mini" data-hex-action="toggle-task">完成</button>' +
+          '<button type="button" class="hex-mini" data-hex-action="rename-task">改名</button>' +
+          '<button type="button" class="hex-mini" data-hex-action="cancel-task">取消</button>' +
+          '<button type="button" class="hex-mini is-danger" data-hex-action="delete-task">删</button></div>' : "") +
+        lanesHtml(L, d.human, d.agent, color) + "</div>";
+    }
     function body(pid, now) {
-      if (cur !== pid) { cur = pid; payload = null; loadedAt = 0; }
+      if (cur !== pid) { cur = pid; payload = null; loadedAt = 0; expanded = false; doneOpen = false; menuTask = null; }
       if (!loading && now - loadedAt > 5000) load(pid, now);
       var L = layout(now), byTask = {};
       var p = project(pid), color = colorOf(pid);
-      var rows = ((p && p.tasks) || []).map(function (t) { return { id: t.id, name: t.name }; }).concat([{ id: "", name: "没挂任务" }]);
-      var shown = {}; rows.forEach(function (r) { shown[r.id] = 1; });
-      // 列表里没有的任务（项目自带的隐藏「未分类」任务 t_unc_*、已删任务）并进「没挂任务」，时间不丢
+      var all = (p && p.tasks) || [], known = {}, hidden = {};
+      all.forEach(function (t) { known[t.id] = 1; if (t.done) hidden[t.id] = 1; });
+      // 未完成的任务：一行一个（本版没有 priority，全部并列 → 最近活动在前）
+      var open = taskOrder(all.filter(function (t) { return !t.done; }), lastActivity((payload && payload.tasks) || []));
+      // 列表里没有的任务（项目自带的隐藏「未分类」任务 t_unc_*、已删任务）并进「未分配任务用时」，时间不丢；已完成 / 取消的任务不画行也不并进来
       ((payload && payload.tasks) || []).forEach(function (t) {
-        var k = shown[t.taskId || ""] ? (t.taskId || "") : "", d = byTask[k] || (byTask[k] = { human: [], agent: [] });
+        var id = t.taskId || "";
+        if (hidden[id]) return;
+        var k = known[id] ? id : "", d = byTask[k] || (byTask[k] = { human: [], agent: [] });
         d.human = d.human.concat(t.human || []); d.agent = d.agent.concat(t.agent || []);
       });
-      var list = rows.map(function (r) {
-        var d = byTask[r.id] || { human: [], agent: [] };
-        return '<div class="pr-row"' + (color ? ' style="--pr-agent:' + esc(color) + '"' : "") + ' data-task="' + esc(r.id) + '" data-project="' + esc(pid) + '"><div class="pr-task"><b>' + esc(r.name) + "</b>" +
-          '<span class="pr-sum"><i class="pr-k pr-h"></i>' + ctx.dur(sumSec(d.human)) + ' <i class="pr-k pr-a"></i>' + ctx.dur(sumSec(d.agent)) + "</span></div>" +
-          lanesHtml(L, d.human, d.agent, color) + "</div>";
-      }).join("");
-      // 末尾固定一格「＋ 新建任务」：拖着东西松在它上面 = 新建任务并记进去；点它 = 新建任务（hive.stage.v1「十二」）
+      var empty = { human: [], agent: [] };
+      var shown = expanded ? open : open.slice(0, FOLDED_TASKS);
+      var list = shown.map(function (t) { return rowHtml(L, pid, color, t, byTask[t.id] || empty); }).join("") +
+        (open.length > FOLDED_TASKS ? '<button type="button" class="pr-expand" aria-expanded="' + expanded + '">' + (expanded ? "收起" : "展开全部（" + open.length + "）") + "</button>" : "") +
+        rowHtml(L, pid, color, { id: "", name: "未分配任务用时" }, byTask[""] || empty);
+      // 末尾固定一格「＋ 新建任务」：拖着东西松在它上面 = 新建任务并记进去；点它 = 新建任务（hive.stage.v1「十二」6）
+      // 再往下是「最近完成」：默认只有一行标题，点开才生成里面的行（「十五」）
+      var n = ctx.recentCount ? ctx.recentCount(pid) : 0;
       return '<div class="pr-head"><div></div>' + rulerHtml(L) + '</div><div class="pr-list">' + list +
-        '<button type="button" class="pr-newslot" data-project="' + esc(pid) + '">＋ 新建任务</button></div>';
+        '<button type="button" class="pr-newslot" data-project="' + esc(pid) + '">＋ 新建任务</button></div>' +
+        '<div class="pr-recent"><button type="button" class="pr-donehead" aria-expanded="' + doneOpen + '">最近完成（' + n + "）</button>" +
+        (doneOpen && ctx.recentHtml ? '<ul class="hex-list pr-donelist">' + ctx.recentHtml(pid) + "</ul>" : "") + "</div>";
     }
-    function frozen() { return !!creating; }   // 新建输入开着时不重画，免得输入框被换掉
+    // 点任务名 = 开 / 合那一行的操作（完成 / 改名 / 取消 / 删）；点「展开全部」/「最近完成」
+    function toggleMenu(id) { menuTask = menuTask === id ? null : id; if (ctx.changed) ctx.changed(); }
+    function toggleExpand() { expanded = !expanded; if (ctx.changed) ctx.changed(); }
+    function expandAll() { if (!expanded) { expanded = true; if (ctx.changed) ctx.changed(); } }
+    function toggleDone() { doneOpen = !doneOpen; if (ctx.changed) ctx.changed(); }
+    // 新建输入 / 改名输入开着时不重画，免得输入框被换掉
+    function frozen() { return !!creating || !!document.querySelector(".hex-ruler-slot input.hex-rename"); }
     function invalidate() { loadedAt = 0; }
-    function reset() { cancelHold(); clearLit(); creating = null; document.body.classList.remove("st-spring"); cur = null; payload = null; }
+    function reset() { cancelHold(); clearLit(); creating = null; expanded = false; doneOpen = false; menuTask = null; document.body.classList.remove("st-spring"); cur = null; payload = null; }
 
     // ── 拖动：弹簧展开、任务条落点、空白处新建 ──
     function panelOpen() { return !!cur && !!document.querySelector(".hex-cell.is-expanded .hex-ruler-slot"); }
@@ -163,6 +227,7 @@
     function inPanel(x, y) { return hits(x, y).some(function (e) { return e.classList && e.classList.contains("hex-ruler-slot"); }); }
     function rowAt(x, y) { var h = hits(x, y), i; for (i = 0; i < h.length; i++) if (h[i].classList && h[i].classList.contains("pr-row")) return h[i]; return null; }
     function slotAt(x, y) { var h = hits(x, y), i; for (i = 0; i < h.length; i++) if (h[i].classList && h[i].classList.contains("pr-newslot")) return h[i]; return null; }
+    function expandAt(x, y) { var h = hits(x, y), i; for (i = 0; i < h.length; i++) if (h[i].classList && h[i].classList.contains("pr-expand")) return h[i]; return null; }
     function listAt(x, y) { var h = hits(x, y), i; for (i = 0; i < h.length; i++) if (h[i].classList && h[i].classList.contains("pr-list")) return h[i]; return null; }
     function clearLit() { if (lit) { lit.classList.remove("is-drop"); lit = null; } }
     function cancelHold() { if (hold.timer) clearTimeout(hold.timer); hold.timer = null; hold.key = null; }
@@ -178,6 +243,7 @@
       hold.timer = null;
       if (kind === "cell") ctx.open(arg);
       else if (kind === "blank") openCreate(document.querySelector(".hex-ruler-slot .pr-list"));
+      else if (kind === "expand" && !expanded) toggleExpand();   // 拖着东西在「展开全部」上停 0.6 秒：展开，好放到后面的任务上
     }
     // 拖动中每次指针移动都来一下：cell = 指针下的项目格（没有 = null）
     function dragOver(x, y, cell) {
@@ -186,13 +252,14 @@
       document.body.classList.toggle("st-spring", open);
       if (target !== lit) { clearLit(); lit = target; if (target) target.classList.add("is-drop"); }
       if (over) {
-        var list = listAt(x, y);
-        if (!row && !slot && list && !creating) { kind = "blank"; arg = list; key = "blank:" + cur; }
+        var list = listAt(x, y), more = !row && !slot && !expanded ? expandAt(x, y) : null;
+        if (more) { kind = "expand"; key = "expand:" + cur; }
+        else if (!row && !slot && list && !creating) { kind = "blank"; arg = list; key = "blank:" + cur; }
       } else if (cell) { kind = "cell"; arg = cell.dataset.projectId; key = "cell:" + arg; }
       if (kind === "cell" && open && arg === cur) { kind = null; key = null; }   // 本来就开着这一个
       if (key !== hold.key || Math.abs(x - hold.x) > HOLD_SLOP || Math.abs(y - hold.y) > HOLD_SLOP) {
         cancelHold(); hold.key = key; hold.x = x; hold.y = y;
-        if (kind) hold.timer = setTimeout(function () { fire(kind, arg); }, HOLD_MS);
+        if (kind) hold.timer = setTimeout(function () { fire(kind, arg); }, kind === "expand" ? EXPAND_HOLD_MS : HOLD_MS);
       }
       return over;
     }
@@ -237,11 +304,11 @@
       openCreate(document.querySelector(".hex-ruler-slot .pr-list"));
       if (creating) awaitName(function () { if (ctx.created) ctx.created(); }, function () {});
     }
-    return { startCreate: startCreate, body: body, spent: spent, frozen: frozen, invalidate: invalidate, reset: reset,
+    return { startCreate: startCreate, body: body, toggleMenu: toggleMenu, toggleExpand: toggleExpand, expandAll: expandAll, expandedAll: function () { return expanded; }, toggleDone: toggleDone, spent: spent, frozen: frozen, invalidate: invalidate, reset: reset,
              dragOver: dragOver, dragEnd: dragEnd, dropAt: dropAt, overPanel: overPanel, awaitName: awaitName };
   }
 
-  var api = { minutesText: minutesText, spentText: spentText, layout: layout, linearScale: linearScale, rollingScale: rollingScale, xOf: xOf, spanRect: spanRect, rulerHtml: rulerHtml, lanesHtml: lanesHtml, createPanel: createPanel,
+  var api = { minutesText: minutesText, spentText: spentText, taskOrder: taskOrder, lastActivity: lastActivity, layout: layout, linearScale: linearScale, rollingScale: rollingScale, xOf: xOf, spanRect: spanRect, rulerHtml: rulerHtml, lanesHtml: lanesHtml, createPanel: createPanel,
               PAST_SHARE: PAST_SHARE, TODAY_SHARE: TODAY_SHARE };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.NexusTableHexProjectRuler = api;

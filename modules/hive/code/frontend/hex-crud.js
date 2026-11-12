@@ -131,6 +131,11 @@
       var task = findTask(id);
       if (!task) return;
       D.toggleTaskDone(id, !task.done).then(function (r) { afterWrite(btn, r); });
+    } else if (action === "cancel-task") {   // 取消 = 后端 canceled（v2.55），进「最近完成」写「取消」
+      ev.preventDefault();
+      var cid = taskIdOf(btn);
+      if (!cid) return;
+      D.cancelTask(cid, true).then(function (r) { afterWrite(btn, r); });
     } else if (action === "rename-project") {
       ev.preventDefault();
       startProjectRename(btn);

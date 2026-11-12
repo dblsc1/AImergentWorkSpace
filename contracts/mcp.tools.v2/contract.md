@@ -462,3 +462,4 @@ v1 的 23 个工具名不出现在 `tools/list`，但仍能调：**不调下游�
 - `Get_Blocks_Match_History` 返回带 `truncated`：结果超过 20 条被截断时为 `true`。
 - 一级没收 = 没被第一级规则收的待处理块（含标成通用窗口、还没拆分的）；被规则收了但没定去向（含通用窗口未拆分的）算二级没定。
 
+- 任务状态（nexus-core v2.55 追加）：被「取消」的任务在读端与完成的任务同样表现为 `done: true`（`Get_View` 的 `hiddenDone` 也计入）；取消与否只在 `views/tree` 任务的 `canceled` 与审计流里分辨，MCP 工具本版不新增写取消的入口。

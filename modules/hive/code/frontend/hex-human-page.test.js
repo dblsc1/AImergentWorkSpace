@@ -30,10 +30,11 @@ const sd = (a, b) => ({ startAt: iso(a), endAt: iso(b), projectId: "p1", taskId:
 const week7 = [sd(L(2026, 11, 6, 9), L(2026, 11, 6, 10)), sd(L(2026, 11, 12, 9), L(2026, 11, 12, 9, 30)), sd(L(2026, 11, 5, 9), L(2026, 11, 5, 11))];
 assert.strictEqual(P.totalSeconds(rd, week7, null), 3600 + 1800);
 assert.strictEqual(P.totalSeconds(rd, week7, { startAt: iso(now - 600000) }), 3600 + 1800 + 600);
-// 默认视图的泳道用 7 天不等宽标尺：今天那一格最宽（30%），前 6 天各 70%/6
+// 默认视图的泳道用项目面板那把 7 天不等宽标尺（各天宽度见「十五」9）
 const dl = P.laneOf(rd, { sessions: [sd(L(2026, 11, 12, 0), L(2026, 11, 12, 12)), sd(L(2026, 11, 8, 0), L(2026, 11, 9, 0))] });
-assert.ok(Math.abs(dl.timer[0].left - 70 / 6 * 2) < 1e-6 && Math.abs(dl.timer[0].width - 70 / 6) < 1e-6);   // 11/8 是第 3 格
-assert.ok(Math.abs(dl.timer[1].left - 70) < 1e-6 && Math.abs(dl.timer[1].width - 15) < 1e-6);                  // 今天 0–12 点 = 今天那格的一半
+const dd = Pr.layout(now).days, near = (x, y) => Math.abs(x - y) < 1e-6;
+assert.ok(near(dl.timer[0].left, dd[2].x0 * 100) && near(dl.timer[0].width, dd[2].w * 100));        // 11/8 是第 3 格
+assert.ok(near(dl.timer[1].left, dd[6].x0 * 100) && near(dl.timer[1].width, dd[6].w * 100 / 2));    // 今天 0–12 点 = 今天那格的一半
 assert.strictEqual(P.spanText(rd, L(2026, 11, 12, 9, 5), L(2026, 11, 12, 10, 30)), "11/12 09:05–10:30");
 assert.strictEqual(P.dated(rd) && P.dated(P.rangeOf("week", 3, now)), true);
 assert.strictEqual(P.dated(P.rangeOf("day", 3, now)) || P.dated(P.rangeOf("hours", 3, now)), false);

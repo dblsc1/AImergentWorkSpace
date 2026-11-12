@@ -244,7 +244,8 @@
   // 没展开的格子里也有同 id 的待办行（藏着的）：只认看得见的；展开的格子里被折起来的行（.hex-all[hidden]）另算，由 reveal 摊开
   function liEl(tid) {
     if (!tid) return null;
-    var all = document.querySelectorAll('.hex-cell li[data-task-id="' + (window.CSS && CSS.escape ? CSS.escape(tid) : tid) + '"]');
+    if (window.HexProjectPanel) window.HexProjectPanel.reveal(tid);
+    var all = document.querySelectorAll('.hex-cell [data-task-id="' + (window.CSS && CSS.escape ? CSS.escape(tid) : tid) + '"]');
     return [].filter.call(all, function (n) { return n.closest(".hex-cell.is-expanded") && (n.offsetWidth || n.closest(".hex-all[hidden]")); })[0] || null;
   }
   function levelEl(st, lv) {

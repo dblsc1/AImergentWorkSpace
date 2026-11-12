@@ -580,7 +580,7 @@
     }).catch(function () { return "连不上服务"; });
   }
   function flash(taskId) {
-    var q = taskId && document.querySelector('.hex-cell li[data-task-id="' + (window.CSS && CSS.escape ? CSS.escape(taskId) : taskId) + '"]');
+    var q = taskId && document.querySelector('.hex-cell [data-task-id="' + (window.CSS && CSS.escape ? CSS.escape(taskId) : taskId) + '"]');
     if (!q) return;
     var all = q.closest(".hex-all"); if (all) all.hidden = false;
     q.classList.add("hd-flash");
@@ -779,7 +779,7 @@
         }
         if (!cell || !cell.classList.contains("is-expanded")) return;
         newRow = hit.closest(".hd-newtask");
-        row = !newRow && hit.closest("li[data-task-id]");
+        row = !newRow && hit.closest("li[data-task-id], .pr-row[data-task-id]");
         var t = newRow || row;
         if (t !== target) { if (target) target.classList.remove("hd-over"); target = t; if (t) t.classList.add("hd-over"); }
       }
@@ -881,6 +881,7 @@
       ul.insertAdjacentHTML("afterbegin", ghostLi(c.obj || c.name));
       ul.firstChild.scrollIntoView({ block: "nearest" });
     } else if (c.taskId) {
+      if (window.HexProjectPanel) window.HexProjectPanel.reveal(c.taskId);
       var li = el.querySelector('[data-task-id="' + (window.CSS && CSS.escape ? CSS.escape(c.taskId) : c.taskId) + '"]');
       if (!li) return;
       var all = li.closest(".hex-all"); if (all) all.hidden = false;

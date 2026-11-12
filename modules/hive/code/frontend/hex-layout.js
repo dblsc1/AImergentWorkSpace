@@ -172,7 +172,8 @@
       // 第二步：展开的那一格换成大卡片。**位置已经在放大后的晶格位上了**，
       // 上面那一趟包含了它 —— 顺序不能反：同伴是绕 hit.cx/cy 排的，
       // 先排同伴再挪 hit，整圈同伴就会留在旧位置上。
-      hit.w = CARD_W * CARD_OVER; hit.h = CARD_H * CARD_OVER;
+      // 「展开全部」开着（.is-full）：这一格长到占满取景框（hive.stage.v1「十九」），尺寸在 applyLayout 里按视口算好
+      hit.w = state.fullCard ? state.fullCard.w : CARD_W * CARD_OVER; hit.h = state.fullCard ? state.fullCard.h : CARD_H * CARD_OVER;
       hit.mate = false;
 
       // ── 同分区标记 ────────────────────────────────────────────
@@ -244,7 +245,7 @@
     return {
       items: items, borders: borders, extensions: extensions, ox: ox, oy: oy,
       gradR: gradR,
-      cam: hit ? CAM : 1, focus: focus, mag: hit ? EXPAND_MAG : 1,
+      cam: hit ? CAM : 1, focus: focus, mag: hit ? EXPAND_MAG : 1, card: hit ? { w: hit.w, h: hit.h } : null,
       width: (maxX - minX) + PAD * 2, height: (maxY - minY) + PAD * 2
     };
   }
@@ -280,6 +281,7 @@
     var cam0 = flip ? getComputedStyle(camEl).transform : "", box0 = flip ? hive.getBoundingClientRect() : null;
     var old = state.lastPlan;
     stopFlips();
+    state.fullCard = fullCard(hive, wrapW);
     var plan = computeItems(state.expandedId);
 
     // 取景框尺寸 = **没展开时**的蜂巢尺寸。展开后 plan 会因为大卡片变大，
@@ -341,6 +343,16 @@
     }
   }
   function busy() { return performance.now() < busyUntil; }
+  // 「展开全部」时大六边形的尺寸：从取景框上沿到视口下沿装得下的最大正六边形，宽也不超出取景框；
+  // 比平时的展开卡还小（矮屏）就不变（返回 null，照平时的规矩走）
+  function fullCard(hive, wrapW) {
+    var it = state.expandedId ? state.byId[state.expandedId] : null, wrap = hive.parentNode;
+    if (!it || !wrap || !it.el.classList.contains("is-full")) return null;
+    var shell = hive.closest(".board-shell"), k = parseFloat(shell && shell.style.zoom) || 1;
+    var room = ((window.innerHeight || 900) - Math.max(0, wrap.getBoundingClientRect().top)) / k - 12;
+    var h = Math.min(room * 0.96, wrapW * 0.94 * 2 / Math.sqrt(3));
+    return h > CARD_H * CARD_OVER + 1 ? { w: h * Math.sqrt(3) / 2, h: h, room: room } : null;
+  }
 
   // ── 推镜：展开时整张蜂巢放大，并把焦点滚到取景框中心 ──────────
   //
@@ -377,7 +389,7 @@
     // （人类 2026-09-08 报的「视角移动到不知道哪里去」，窄屏最明显）。
     var vhWant = CARD_H * CARD_OVER + CELL_H * EXPAND_MAG * 0.5;
     var vhMax = (window.innerHeight || 900) * 0.86;
-    var vh = Math.max(240, Math.min(vhWant, vhMax));
+    var vh = state.fullCard ? state.fullCard.room : Math.max(240, Math.min(vhWant, vhMax));
     wrap.style.height = vh + "px";
 
     // ⚠️ **窄屏要把相机拉远**，否则 600×693 的卡片根本装不进 390px 的手机屏
@@ -385,8 +397,8 @@
     // 这才是相机该干的活：格子的**布局尺寸**不动（EXPAND_MAG 那套咬合关系
     // 一个字节都不能改），装不下就整体缩，和"推近"是同一个旋钮的两个方向。
     // 0.94 / 0.96 留一点边，免得卡片顶着取景框边缘。
-    var fitW = (wrapW * 0.94) / (CARD_W * CARD_OVER);
-    var fitH = (vh * 0.96) / (CARD_H * CARD_OVER);
+    var fitW = (wrapW * 0.94) / plan.card.w;
+    var fitH = (vh * 0.96) / plan.card.h;
     c = Math.min(c, fitW, fitH);
     var wasZoomed = wrap.classList.contains("is-zoomed");
     wrap.classList.add("is-zoomed");

@@ -1,6 +1,8 @@
 /* hive · 项目面板的任务条与人 / 代理时间标尺（hex-project-ruler.js）。红 = 人；代理 = 项目色（--pr-agent，由脚本按分区色给）。 */
 html { --pr-human: #D6303A; }
 html[data-theme="dark"] { --pr-human: #FF6B72; }
+/* 人的红条（泳道上的细条）：饱和度低一点，四个角圆（hive.stage.v1「十五」）；项目面板、Agent 页、统计页、人的页面共用这一个 */
+html { --pr-human-bar: color-mix(in srgb, var(--pr-human) 62%, #8a8a8a); }
 
 /* 拖到项目格上：变深（落点） */
 .hex-cell.st-hot { filter: brightness(0.78) saturate(1.35); }
@@ -28,18 +30,20 @@ html[data-theme="dark"] { --pr-human: #FF6B72; }
 .pr-sum { font-size: 11px; color: var(--ink-3); font-family: var(--font-mono); display: flex; align-items: center; gap: 4px; }
 .pr-k { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-left: 6px; }
 .pr-k:first-child { margin-left: 0; }
-.pr-k.pr-h { background: var(--pr-human); }
+.pr-k.pr-h { background: var(--pr-human-bar); border-radius: 4px; }
 .pr-k.pr-a { background: var(--pr-agent, var(--fact)); }
 
 /* 标尺：右半最上，所有行共用同一个横向刻度 */
 .pr-ruler { position: relative; height: 34px; }
-.pr-day { position: absolute; top: 0; text-align: center; font-size: 10px; color: var(--ink-3); box-sizing: border-box; overflow: hidden; white-space: nowrap; }
+.pr-day { position: absolute; top: 0; text-align: center; font-size: 9px; color: var(--ink-3); box-sizing: border-box; overflow: visible; white-space: nowrap; }
+.pr-day.is-today { font-size: 10px; }
 .pr-day.is-today { color: var(--ink); font-weight: 700; }
 .pr-ticks { position: absolute; left: 0; right: 0; top: 16px; }
 .pr-tick { position: absolute; transform: translateX(-50%); font-size: 10px; color: var(--ink-3); font-family: var(--font-mono); }
 .pr-tick:last-child { transform: translateX(-100%); }
 .pr-tick:first-child { transform: none; }
-.pr-div { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line-2); pointer-events: none; }
+.pr-hr { position: absolute; top: 12px; width: 1px; height: 4px; background: var(--line); pointer-events: none; }   /* 今天每小时一条细线 */
+.pr-div { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--line); pointer-events: none; }   /* 日界线比小时线重 */
 
 /* 泳道：代理占整条的高；人是贴在它上沿的一条矮矮的红细条（4px），与标尺对齐 */
 .pr-lanes { position: relative; min-height: 34px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
@@ -48,9 +52,24 @@ html[data-theme="dark"] { --pr-human: #FF6B72; }
 .pr-lane.pr-human { top: 0; height: 4px; z-index: 1; }
 .pr-seg { position: absolute; top: 5px; bottom: 3px; min-width: 3px; border-radius: 1px; cursor: default; }
 .pr-lane.pr-human .pr-seg { top: 0; bottom: 0; border-radius: 0; }
-.pr-seg.pr-h { background: var(--pr-human); }
+.pr-seg.pr-h { background: var(--pr-human-bar); }
+.pr-lane.pr-human .pr-seg.pr-h { border-radius: 2px; }
 .pr-seg.pr-a { background: var(--pr-agent, var(--fact)); }
 .pr-seg:hover { outline: 1px solid var(--ink); z-index: 2; }
+
+/* 点任务名露出的操作 */
+.pr-ghosts:empty { display: none; }
+.pr-ghosts { margin: 0; padding: 0; list-style: none; }
+.pr-name { cursor: pointer; }
+.pr-name:hover { text-decoration: underline; }
+.pr-menu { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 0; }
+.pr-row.is-open { background: var(--panel-2); }
+
+/* 默认只列 3 行：其余收在「展开全部（N）」里；「最近完成」是最底下一行标题，点开才有行 */
+.pr-expand, .pr-donehead { display: block; width: 100%; box-sizing: border-box; margin: 4px 0 0; padding: 5px 10px; font: inherit; font-size: var(--fs-sub); color: var(--ink-2); text-align: left; cursor: pointer; background: none; border: 0; border-radius: 6px; }
+.pr-expand:hover, .pr-donehead:hover { background: var(--panel-2); }
+.pr-donehead { font-weight: 600; border-top: 1px solid var(--line-2); border-radius: 0; margin-top: 8px; }
+.pr-donelist { margin: 0; padding: 0; list-style: none; }
 
 .pr-new { padding: 8px 6px; }
 .pr-new-name { width: 50%; box-sizing: border-box; font: inherit; padding: 6px 10px; border: 1.5px solid var(--accent); border-radius: 6px; background: var(--panel); color: var(--ink); }

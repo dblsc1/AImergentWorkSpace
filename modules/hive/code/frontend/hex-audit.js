@@ -28,7 +28,7 @@
   // 一个没做完的任务当成"刚完成"报给人类——假成绩比没有成绩糟得多。
   function isDoneChange(item) {
     return !!(item && item.objectType === "tasks" && item.changes &&
-      Object.prototype.hasOwnProperty.call(item.changes, "done"));
+      (Object.prototype.hasOwnProperty.call(item.changes, "done") || Object.prototype.hasOwnProperty.call(item.changes, "canceled")));
   }
 
   // 排序键：优先用后端单调递增的 seq，缺了才退回时间戳。
@@ -46,7 +46,7 @@
     var last = {};
     sorted.forEach(function (item) { last[item.objectId] = item; });
     return Object.keys(last).map(function (k) { return last[k]; })
-      .filter(function (item) { return item.changes.done === true; })
+      .filter(function (item) { return item.changes.done === true || item.changes.canceled === true; })   // 取消（v2.55）与完成同列，行上带 canceled
       .sort(function (a, b) { return auditOrder(b) - auditOrder(a); });
   }
 
@@ -98,7 +98,7 @@
     var out = {};
     lastDoneActions(auditItems).forEach(function (item) {
       var hit = idx[item.objectId];
-      if (!hit || !hit.projectId) return;          // 已删除的任务不计热度
+      if (!hit || !hit.projectId || item.changes.canceled === true) return;   // 已删除的、取消的任务不计热度
       var t = Date.parse(item.at);
       var w = 1;
       if (!isNaN(t)) {
@@ -120,6 +120,7 @@
         taskId: item.objectId,
         at: item.at,
         stamp: formatStamp(item.at, options.offsetMinutes),
+        canceled: item.changes.canceled === true,
         taskName: hit ? hit.taskName : null,
         projectId: hit ? hit.projectId : null,
         projectName: hit ? hit.projectName : null,

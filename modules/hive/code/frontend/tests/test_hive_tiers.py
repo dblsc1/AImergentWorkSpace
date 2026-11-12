@@ -301,7 +301,7 @@ def test_history_card_dragged_onto_a_task_reassigns(browser, base) -> None:  # n
         cell = hive.page.locator("[data-project-id=p_math].hex-cell")
         _drag_to(hive.page, 0, cell)
         hive.page.clock.run_for(600); hive.page.wait_for_timeout(400)
-        li = hive.page.locator(".hex-cell.is-expanded .hex-detail li[data-task-id=t_p_math]")
+        li = hive.page.locator(".hex-cell.is-expanded .hex-detail .pr-row[data-task-id=t_p_math]")
         _onto(hive.page, li)
         hive.page.mouse.up()
         _until(hive.page, lambda: len(_posts(hive, "activity/blocks/assign")) == 1)

@@ -260,6 +260,10 @@
   function toggleTaskDone(id, done, options) {
     return request(resolveFetch(options), "PATCH", taskPath(id), { done: !!done });
   }
+  // 取消任务（nexus-core v2.55）：canceled=true 取消，false 撤销取消
+  function cancelTask(id, canceled, options) {
+    return request(resolveFetch(options), "PATCH", taskPath(id), { canceled: !!canceled });
+  }
   function deleteTask(id, options) {
     return request(resolveFetch(options), "DELETE", taskPath(id));
   }
@@ -533,6 +537,7 @@
     renameTask: renameTask,
     moveTask: moveTask,
     toggleTaskDone: toggleTaskDone,
+    cancelTask: cancelTask,
     deleteTask: deleteTask,
     updateTaskPlan: updateTaskPlan,
     updateTaskDependsOn: updateTaskDependsOn,
