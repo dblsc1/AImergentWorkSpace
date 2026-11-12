@@ -82,6 +82,9 @@ img.st-still { max-width: 54px; max-height: 63px; }
 body:has(.hex-cell.is-expanded) .st-layer { z-index: auto; }
 body:has(.hex-cell.is-expanded) .hive-cam { z-index: 20; }
 .st-pet.is-big { z-index: 40; }
+/* 确认卡要盖过人的页面（.cm-panel，70）：没展开时整个舞台层抬上去；展开时舞台层不成层，确认卡那一叠自己抬 */
+body:has(.st-confirm):not(:has(.hex-cell.is-expanded)) .st-layer { z-index: 210; }
+body:has(.hex-cell.is-expanded) .st-cf-stack { z-index: 210; }
 /* 拖着的东西所在的容器自己也是一层（z-index），要整个抬到六边形（蜂巢 20）之上，不然拖着的东西钻到六边形下面去 */
 .st-strips:has(.st-dragging), .st-bucket:has(.st-dragging), .st-drawer:has(.st-dragging), .st-greypop:has(.st-dragging), .st-clock.st-dragging { z-index: 90; }
 /* 最近完成：每条一行「任务名 完成 · 人花了 X 分钟 · agent 花了 Y 分钟」，时间戳让位给它 */
