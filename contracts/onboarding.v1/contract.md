@@ -124,6 +124,7 @@ provides:
 | `browserDomains` | 字符串数组，≤ 200 条 | `[]` | 网页分类规则（「六」） |
 | `onboardingDoneAt` | ISO 时刻或 `null` | `null` | 新手引导走完的时刻（「七」）；只由 `POST activity/onboarding/done` 写；`PUT` 里值不合格 `422`，合格但给了就忽略 |
 | `pet` | 对象 `{packsByTool: {…}}`，值为字符串 | `{packsByTool: {"claude-code": "claude", "codex": "gpt", "gemini-cli": "gemini", "*": "deepseek"}}` | 宠物包对照（`desktop.pet.v1`「三」）；不合格 `422` |
+| `pet.humanPack`（2026-11-12 追加） | 字符串 1–64，可省 | 没有 | 人自己的形象用哪个宠物包（`hive.stage.v1`「十一」）；`pet` 整块替换，省了 = 没选 |
 
 `PUT` 里可省，省了保留原值；给了就校验（越界 / 类型不对 `422`）。
 
@@ -243,3 +244,4 @@ provides:
 | 2026-11-07 | v1 草案三 | 按 TDD 澄清（G-01–G-30）补齐边界；手动计时改为先计时后拖放 |
 | 2026-11-07 | v1 | 仓主批准 |
 | 2026-11-08 | v1（追加） | 新手引导改为非阻断的角落卡片（「七」），取代全屏模态；桌宠侧的引导见 `desktop.pet.v1`「三·4」 |
+| 2026-11-12 | v1（追加） | `pet` 追加可选 `humanPack`：人自己的形象（`hive.stage.v1`「十一」） |

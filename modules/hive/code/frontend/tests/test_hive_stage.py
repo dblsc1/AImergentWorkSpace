@@ -627,7 +627,7 @@ def test_tiers_off_reads_no_blocks_and_no_extra_settings(browser, base) -> None:
 
     with open_stage(browser, base, setup=off, tiers=False) as st:
         st.poll()
-        assert "activity/blocks" not in st.api and st.api.count("activity/settings") == 1   # 那一次是决策栏自己的
+        assert "activity/blocks" not in st.api and st.api.count("activity/settings") == 2   # 决策栏自己的一次 + 蜂巢页启动读形象的一次，之后不再读
         assert st.page.locator("#stBucketLabel").inner_text() == "未分类 · 今天 0 分"
 
 

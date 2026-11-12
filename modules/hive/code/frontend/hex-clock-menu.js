@@ -81,7 +81,7 @@
   function dur(sec) { var m = Math.floor(Math.max(0, sec) / 60), h = Math.floor(m / 60); return h ? h + " 小时 " + (m % 60) + " 分" : m + " 分"; }
   function winLabel(w) { return w.hidden ? w.app + " · 标题已隐去" : w.title ? w.app + " · " + w.title : w.app; }
 
-  // o: {clock, getLanes(), dayStart(), now(), projectName(id), getJson(path), fillIssues(box, list), timerRunning(), startClock(sec), stopClock()}
+  // o: {clock, getLanes(), dayStart(), now(), projectName(id), getJson(path), fillIssues(box, list), timerRunning(), startClock(sec), stopClock(), pickHuman()}
   H.mount = function (o) {
     var clock = o.clock, panel = null, bubbles = null, issues = [], hold = { id: null, x: 0, y: 0, t: 0, fired: false }, poll = 0, loaded = { rows: [], line: [] };
 
@@ -192,7 +192,13 @@
       if (panel) { closeAll(); return; }
       closeAll();
       panel = el("div", "cm-panel st-card"); panel.setAttribute("role", "dialog"); panel.setAttribute("aria-label", "窗口记录 / 人用时汇总");
-      panel.appendChild(el("h3", "", "窗口记录 / 人用时汇总")); panel.appendChild(el("div", "cm-body"));
+      panel.appendChild(el("h3", "", "窗口记录 / 人用时汇总"));
+      if (o.pickHuman) {
+        var me = el("button", "cm-bubble cm-me", "我的形象"); me.type = "button";
+        me.addEventListener("click", function () { closeAll(); o.pickHuman(); });
+        panel.appendChild(me);
+      }
+      panel.appendChild(el("div", "cm-body"));
       document.body.appendChild(panel); fillPanel(); anchor(panel); arm(); load();
       poll = setInterval(function () { load(); }, 15000);
     };

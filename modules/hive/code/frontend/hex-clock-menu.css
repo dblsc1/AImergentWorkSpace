@@ -6,6 +6,7 @@
 /* 菜单面板 */
 .cm-panel { position: fixed; z-index: 70; width: 380px; max-height: min(70vh, 640px); overflow: auto; padding: 12px 14px 14px; box-sizing: border-box; }
 .cm-panel h3 { margin: 0 0 8px; font-size: 15px; }
+.cm-me { position: absolute; right: 12px; top: 8px; padding: 4px 12px; font-size: var(--fs-sub); }
 .cm-sec { padding: 6px 0 4px; }
 .cm-sec h4 { margin: 4px 0 6px; font-size: var(--fs-sub); color: var(--ink-3); font-weight: 600; }
 .cm-empty { color: var(--ink-3); font-size: var(--fs-sub); padding: 2px 0; }
