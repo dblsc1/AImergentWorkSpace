@@ -137,3 +137,18 @@ def test_center_and_placeholder_and_expanded_cells_get_no_card(browser, base) ->
         assert st.page.locator(".hex-cell.is-expanded").count() == 1
         assert st.page.locator(".hex-cell.is-expanded.is-hover").count() == 0
         assert st.page.locator(".hex-cell.is-expanded .hv-card").evaluate("e => getComputedStyle(e).display") == "none"
+
+
+def test_pointer_landing_on_a_pet_resting_inside_the_cell_still_grows_the_cell(browser, base) -> None:  # noqa: F811  二十五·1 + 二十二·2
+    with open_stage(browser, base, setup=_setup) as st:
+        st.page.wait_for_selector(".st-pet.is-in.is-work")
+        pid = st.page.get_attribute(".st-pet.is-in.is-work", "data-cell")
+        box = st.box(".st-pet.is-in.is-work")
+        st.page.mouse.move(3, 3)
+        st.page.clock.run_for(400)
+        st.page.wait_for_timeout(500)
+        st.page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, steps=5)   # 指针正落在小人身上
+        st.page.clock.run_for(400)
+        st.page.wait_for_timeout(300)
+        st.page.clock.run_for(400)
+        st.page.wait_for_selector(CELL.format(pid) + ".is-hover")
