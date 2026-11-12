@@ -26,6 +26,7 @@ node hex-stage.test.js
 node hex-record.test.js
 node hex-project-ruler.test.js
 node hex-centre-stats.test.js
+node hex-agent-page.test.js
 node hex-mini.test.js
 node hex-onboard.test.js
 node hex-source-health.test.js

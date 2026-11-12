@@ -10,7 +10,7 @@
   if (!St || !Rec || !Pk || !Pr || !CS || !CM || !shell) return;
 
   var POLL_MS = 5000, TICK_MS = 1000, PET_MS = 100;
-  var SLOT_AREA = { x: 24, y: 118, w: 340, h: 170 };   // 左上角 y < 118 留给大肥鱼头像
+  var SLOT_AREA = { x: 24, y: 142, w: 340, h: 160 };   // 左上角 y < 142 留给 72px 的头像
   var DAY_FROM_H = 6, DAY_SPAN_H = 18;
   var STATUS_TEXT = { working: "工作中", waiting: "等你", idle: "空闲", error: "出错" };
   var LANE_MS = 3 * 3600000;
@@ -410,7 +410,7 @@
         var ok = function (f) { return typeof f === "string" && f !== "" && f.split("/").every(function (seg) { return seg !== "" && seg !== "." && seg !== ".."; }); };
         var moods = {};
         Object.keys(p.moods).forEach(function (m) { moods[m] = Array.isArray(p.moods[m]) ? p.moods[m].filter(ok) : []; });
-        packs[kind] = { moods: moods, image: ok(p.image) ? p.image : null, backdrop: p.backdrop }; renderPets(); renderEye();
+        packs[kind] = { moods: moods, image: ok(p.image) ? p.image : null, backdrop: p.backdrop }; renderPets(); renderEye(); if (centre) centre.redraw();
       }
     }).catch(function () { /* 素材还没下：占位形象 */ });
   }
@@ -426,7 +426,7 @@
     if (kind in stills) return stills[kind];
     stills[kind] = null;
     FP.cutout(BASE + "hive/pets/" + encodeURIComponent(kind) + "/" + packs[kind].image.split("/").map(encodeURIComponent).join("/"), packs[kind].backdrop).then(function (u) {
-      if (u) { stills[kind] = u; renderPets(); renderEye(); } else delete stills[kind];
+      if (u) { stills[kind] = u; renderPets(); renderEye(); if (centre) centre.redraw(); } else delete stills[kind];
     });
     return null;
   }
@@ -723,7 +723,13 @@
     return { humanNow: humanNow, humanSec: humanTodaySeconds(now), focus: focus,
       working: runsOf().filter(function (r) { return !r.endAt && !r.lost && Pk.moodOf(r.phase, r.lost) === "working"; }).length };
   }
-  var centre = CS.mount({ layer: layer, ring: $("stRing"), clock: $("stClock"), getJson: getJson, snapshot: ringSnapshot, base: BASE, placeholder: PLACEHOLDER,
+  // Agent 页卡片里的小人：打招呼（happy）→ 点击（click）→ 待机（idle）的第一段
+  function figureOf(kind) {
+    loadPack(kind);
+    var m = (packs[kind] && packs[kind].moods) || {}, f = (m.happy && m.happy[0]) || (m.click && m.click[0]) || (m.idle && m.idle[0]) || null, o = mediaFor({ pack: kind }, f);
+    return { key: o.key, html: '<div class="st-media">' + o.html + "</div>" };
+  }
+  var centre = CS.mount({ packOfTool: function (tool) { return Pk.packOf({ tool: tool }, packsByTool()); }, figureOf: figureOf, petEl: function (id) { return petEls[id] || null; }, layer: layer, ring: $("stRing"), clock: $("stClock"), getJson: getJson, snapshot: ringSnapshot, base: BASE, placeholder: PLACEHOLDER,
     projectName: projectName, cellColor: function (pid) { var c = cellEl(pid); return c ? getComputedStyle(c).getPropertyValue("--zone-raw").trim() : ""; } });
   function renderRing(now) {
     var el = $("stRing"), hc = hiveCenter();

@@ -20,8 +20,8 @@ def _lanes(st: Stage) -> None:
 
     st.time_lanes = {"today": day.date().isoformat(), "now": _iso(now), "windowStart": _iso(day), "windowEnd": _iso(day + timedelta(days=1)),
                      "human": [seg(0.5, 1.5, "p_math"), seg(2, 2.5, "p_piano")],
-                     "agents": [{"agent": "claude-code", "name": "garden", "runId": "r1", "segments": [seg(0.6, 1.4, "p_math"), seg(3, 4, "p_studio")]},
-                                {"agent": "codex", "name": "scratch", "runId": "r2", "segments": [seg(1, 2, None)]}]}
+                     "agents": [{"agent": "claude-code", "tool": "claude-code", "name": "garden", "runId": "r1", "segments": [seg(0.6, 1.4, "p_math"), seg(3, 4, "p_studio")]},
+                                {"agent": "codex", "tool": "codex", "name": "scratch", "runId": "r2", "segments": [seg(1, 2, None)]}]}
 
 
 def _setup(st: Stage) -> None:
@@ -44,13 +44,13 @@ def test_ring_ticker_rotates_every_four_seconds_and_keeps_totals_line(browser, b
 
 
 def test_fish_avatar_sits_above_the_loose_agent_slots(browser, base) -> None:  # noqa: F811
-    pack = {"deepseek": {"moods": {"idle": ["i/a.webm"], "working": ["w/a.webm"]}}}
+    pack = {"claude": {"moods": {"idle": ["i/a.webm"], "working": ["w/a.webm"]}}}   # 新契约「十三」8：最近 7 天干活最久的 tool（夹具里是 claude-code）对应的包
     with open_stage(browser, base, setup=_setup, pets=pack, hold_webm=True) as st:
         st.page.wait_for_selector("#stFish video")
-        assert st.page.locator("#stFish video").get_attribute("src").endswith("/hive/pets/deepseek/i/a.webm#t=0.1")
+        assert st.page.locator("#stFish video").get_attribute("src").endswith("/hive/pets/claude/i/a.webm#t=0.1")
         fish = st.box("#stFish")
         shell = st.box(".board-shell")
-        assert fish["x"] - shell["x"] < 120 and fish["y"] - shell["y"] < 130 and abs(fish["width"] - fish["height"]) < 1
+        assert fish["x"] - shell["x"] < 120 and fish["y"] - shell["y"] < 130 and abs(fish["width"] - fish["height"]) < 1 and fish["width"] >= 70
         for pet in st.page.locator(".st-pet.is-loose .st-pet-in").all():
             b = pet.bounding_box()
             assert b and (b["y"] >= fish["y"] + fish["height"] or b["x"] >= fish["x"] + fish["width"]), (b, fish)
@@ -61,16 +61,15 @@ def test_fish_without_a_pack_falls_back_to_the_placeholder(browser, base) -> Non
         assert st.page.locator("#stFish svg").count() == 1 and st.page.locator("#stFish video").count() == 0
 
 
-def test_fish_opens_the_agent_only_page(browser, base) -> None:  # noqa: F811
+def test_fish_opens_the_agent_page(browser, base) -> None:  # noqa: F811  新契约：hive.stage.v1「十三」（卡片化的 Agent 页，细节见 test_hive_agent_page.py）
     with open_stage(browser, base, setup=_setup) as st:
         st.page.click("#stFish")
-        page = st.page.locator("#csPage")
-        page.locator(".cs-row .cs-who", has_text="garden").wait_for()
-        assert page.locator(".cs-who").all_inner_texts() == ["", "garden", "scratch"]
-        assert page.locator(".cs-me").count() == 0
-        assert "你 " not in page.locator(".cs-sum").inner_text() and "代理并行峰值 2" in page.locator(".cs-sum").inner_text()
+        page = st.page.locator("#agPage")
+        page.locator(".ag-card").first.wait_for()
+        assert page.locator(".ag-h").inner_text() == "Agent" and page.locator(".ag-card .ag-name").count() == 2
+        assert st.page.locator("#csVeil").is_hidden()
         st.page.keyboard.press("Escape")
-        assert not st.page.locator("#csVeil").is_visible()
+        assert not st.page.locator("#agVeil").is_visible()
 
 
 def test_ring_click_flies_clock_and_fish_then_opens_the_mixed_page(browser, base) -> None:  # noqa: F811

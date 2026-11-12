@@ -611,6 +611,14 @@ class TimeLanesAgent(_Strict):
     name: str | None
     runId: str
     segments: list[TimeLanesSegment]
+    # v2.54（追加）
+    tool: str | None = None
+    laneKey: str = ""
+    projectId: str | None = None
+    running: bool = False
+    lost: bool = False
+    phase: str = "working"
+    attend: list[TimeSpan] = []
 
 
 class TimeLanesOut(_Strict):

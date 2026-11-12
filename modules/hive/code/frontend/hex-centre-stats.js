@@ -1,10 +1,11 @@
 // hive · hex-centre-stats.js —— 中心环（人 + 代理总计时）、左上角大肥鱼头像、统计页（hive.stage.v1「八」）。
 // 纯函数（可在 node 里测）：fmtHours / efficiencyLine / peakParallel / totals / tickerLines / weekStart / rangeOf；
-// 接线：mount(ctx) 画环、头像、飞入动画与统计页。
+// 接线：mount(ctx) 画环、头像（点开 Agent 页，「十三」）、飞入动画与「你 + 代理」统计页。
 (function () {
   "use strict";
   var Pr = (typeof window !== "undefined" && window.NexusTableHexProjectRuler) || (typeof require !== "undefined" ? require("./hex-project-ruler.js") : null);
-  var TICK_MS = 4000, FLY_MS = 500, FISH_PACK = "deepseek";
+  var AP = function () { return window.NexusTableHexAgentPage; };   // 点头像开的 Agent 页（hex-agent-page.js，「十三」）
+  var TICK_MS = 4000, FLY_MS = 500, FISH_PACK = "deepseek", WEEK_MS = 7 * 24 * 3600000, FISH_REFRESH_MS = 300000;
 
   function pad(n) { return n < 10 ? "0" + n : "" + n; }
   function hm(t) { var d = new Date(t); return pad(d.getHours()) + ":" + pad(d.getMinutes()); }
@@ -87,6 +88,7 @@
         todayAt = now;
         fetchLanes(now, now).then(function (r) { if (r && r.agents) { today = r; renderRing(Date.now()); } });
       }
+      refreshFish(now);
       var snap = ctx.snapshot(now), agentSec = today ? totals(today).agentSec : 0;
       var lines = tickerLines({ humanNow: snap.humanNow, working: snap.working, humanSec: snap.humanSec, agentSec: agentSec, focus: snap.focus });
       var text = lines[Math.floor(now / TICK_MS) % lines.length];
@@ -109,18 +111,33 @@
       a.setAttribute("stroke-dasharray", (sum ? 100 - h : 0) + " 100"); a.setAttribute("stroke-dashoffset", String(-h));
     }
 
-    // 左上角大肥鱼头像：宠物包里 idle 的第一段视频停在第一帧；没有包就用占位形象
+    // 左上角头像：最近 7 天干活最久的那个 tool 的宠物包（没有数据用缺省包），idle 第一段视频停在第一帧、放大后只露头；没有包用占位形象
     var fish = document.createElement("button");
-    fish.type = "button"; fish.className = "st-fish"; fish.id = "stFish"; fish.setAttribute("aria-label", "代理记录");
+    fish.type = "button"; fish.className = "st-fish"; fish.id = "stFish"; fish.setAttribute("aria-label", "Agent");
     fish.innerHTML = ctx.placeholder;
     ctx.layer.appendChild(fish);
-    fetch(ctx.base + "hive/pets/" + FISH_PACK + "/pack.json").then(function (r) { return r.ok ? r.json() : null; }).then(function (p) {
-      var moods = (p && p.moods) || {};
-      var list = moods.idle && moods.idle.length ? moods.idle : [].concat.apply([], Object.keys(moods).map(function (k) { return moods[k]; }));
-      var f = list.filter(function (x) { return typeof x === "string" && x.split("/").every(function (g) { return g && g !== "." && g !== ".."; }); })[0];
-      if (f) fish.innerHTML = '<video src="' + esc(ctx.base + "hive/pets/" + FISH_PACK + "/" + f.split("/").map(encodeURIComponent).join("/")) + '#t=0.1" muted playsinline preload="metadata" aria-hidden="true"></video>';
-    }).catch(function () { /* 没有素材：占位 */ });
-    fish.addEventListener("click", function () { openPage("agents"); });
+    var weekRuns = null, weekAt = 0;
+    function paintFish(kind) {
+      fish.dataset.pack = kind; fish.innerHTML = ctx.placeholder;
+      fetch(ctx.base + "hive/pets/" + encodeURIComponent(kind) + "/pack.json").then(function (r) { return r.ok ? r.json() : null; }).then(function (p) {
+        if (fish.dataset.pack !== kind) return;
+        var moods = (p && p.moods) || {}, ok = function (x) { return typeof x === "string" && x.split("/").every(function (g) { return g && g !== "." && g !== ".."; }); };
+        var list = moods.idle && moods.idle.length ? moods.idle : [].concat.apply([], Object.keys(moods).map(function (k) { return moods[k]; }));
+        var f = list.filter(ok)[0], base = ctx.base + "hive/pets/" + encodeURIComponent(kind) + "/";
+        if (f) fish.innerHTML = '<video src="' + esc(base + f.split("/").map(encodeURIComponent).join("/")) + '#t=0.1" muted playsinline preload="metadata" aria-hidden="true"></video>';
+        else if (p && ok(p.image)) fish.innerHTML = '<img alt="" src="' + esc(base + p.image.split("/").map(encodeURIComponent).join("/")) + '">';
+      }).catch(function () { /* 没有素材：占位 */ });
+    }
+    function refreshFish(now) {
+      if (now - weekAt > FISH_REFRESH_MS) {
+        weekAt = now;
+        ctx.getJson("views/time-lanes?since=" + encodeURIComponent(new Date(now - WEEK_MS).toISOString())).then(function (r) { if (r && r.agents) weekRuns = r.agents; });
+      }
+      var tool = AP().topTool(weekRuns), kind = tool ? ctx.packOfTool(tool) : FISH_PACK;
+      if (fish.dataset.pack !== kind) paintFish(kind);
+    }
+    fish.addEventListener("click", function () { agentPage.open(); });
+    var agentPage = AP().mount(ctx);
 
     // 飞入：时钟与头像的副本飞到中心合并（原件不动），再开统计页
     function openMixedFlying() {
@@ -200,7 +217,7 @@
     veil.addEventListener("pointerdown", function (ev) { if (ev.target === veil) close(); });
     document.addEventListener("keydown", function (ev) { if (ev.key === "Escape" && mode) close(); });
 
-    return { renderRing: renderRing, close: close };
+    return { renderRing: renderRing, close: close, redraw: agentPage.redraw };
   }
   api.mount = mount;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
