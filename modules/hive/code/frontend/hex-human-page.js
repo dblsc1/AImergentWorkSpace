@@ -168,9 +168,19 @@
   function dated(range) { return range.kind === "week" || range.kind === "default"; }
   function spanText(range, a, b) { return (dated(range) ? md(a) + " " : "") + hm(a) + "–" + hm(b); }
 
+  // 读范围里的窗口块及各块原始记录（人的页面与中心页共用，「十六」4：一次读 activity/blocks/range）；getJson(path) → Promise
+  function loadBlocks(getJson, range) {
+    return getJson("activity/blocks/range?" + blockQuery(range)).then(function (r) {
+      if (!r) return { blocks: [], coverFrom: Infinity };
+      var blocks = (r.items || []).filter(function (b) { return !b.lastAt || ms(b.lastAt) >= range.from; })
+        .map(function (b) { return { date: b.date, item: b, records: b.records || null }; });
+      return { blocks: blocks, coverFrom: midnight(range.from) };
+    });
+  }
+
   var P = { DEFAULT_HOURS: DEFAULT_HOURS, FOLD: FOLD, MAX_BLOCKS: MAX_BLOCKS, parseHours: parseHours, rangeOf: rangeOf, dateChunks: dateChunks, blockQuery: blockQuery, dated: dated, nextKind: nextKind,
     mergeSessions: mergeSessions, totalSeconds: totalSeconds, taskCards: taskCards, splitKey: splitKey, windowLabel: windowLabel, blockProject: blockProject,
-    recordProject: recordProject, focusSegments: focusSegments, windowRows: windowRows, foldRows: foldRows, laneOf: laneOf, durText: durText, spanText: spanText };
+    recordProject: recordProject, loadBlocks: loadBlocks, focusSegments: focusSegments, windowRows: windowRows, foldRows: foldRows, laneOf: laneOf, durText: durText, spanText: spanText };
   if (typeof module !== "undefined" && module.exports) { module.exports = P; return; }
   window.HexHumanPage = P;
 
@@ -191,14 +201,7 @@
     function colorOf(pid) { return (pid && o.projectColor(pid)) || ""; }
     function tint(node, pid) { var c = colorOf(pid); if (c) node.style.setProperty("--hp-c", c); return !!c; }
 
-    function loadBlocks(range) {
-      return o.getJson("activity/blocks/range?" + blockQuery(range)).then(function (r) {
-        if (!r) return { blocks: [], coverFrom: Infinity };
-        var blocks = (r.items || []).filter(function (b) { return !b.lastAt || ms(b.lastAt) >= range.from; })
-          .map(function (b) { return { date: b.date, item: b, records: b.records || null }; });
-        return { blocks: blocks, coverFrom: midnight(range.from) };
-      });
-    }
+    function loadBlocks(range) { return P.loadBlocks(o.getJson, range); }
     function load() {
       var now = o.now(), range = rangeOf(state.kind, state.hours, now), mine = ++seq;
       Promise.all([

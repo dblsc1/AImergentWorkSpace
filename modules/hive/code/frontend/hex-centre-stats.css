@@ -1,4 +1,4 @@
-/* hive · 中心环轮播、左上角大肥鱼头像、统计页（hex-centre-stats.js）。人 = --pr-human（hex-project-ruler.css）；代理 = 项目分区色。 */
+/* hive · 中心环轮播、左上角大肥鱼头像（hex-centre-stats.js）。人 = --pr-human（hex-project-ruler.css）；代理 = 项目分区色。 */
 .st-fish { position: absolute; left: 24px; top: 62px; width: 72px; height: 72px; padding: 0; border-radius: 50%; overflow: hidden; border: 2px solid var(--line); background: var(--panel); box-shadow: var(--shadow); cursor: pointer; z-index: 7;
   transform: scale(max(var(--pet-k, 1), .7)); transform-origin: 0 0; }   /* 位置不跟着缩（避开顶上的分区数一行），大小最多缩到 0.7 */
 .st-tk-cap { position: absolute; transform: translateX(-50%); z-index: 6; pointer-events: none; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -8,26 +8,4 @@
 .st-fish video, .st-fish svg, .st-fish img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 15%; display: block; pointer-events: none; }
 .st-fish video, .st-fish img { transform: scale(1.7); transform-origin: 50% 20%; }   /* 放大后裁在头部（十三·8） */
 .st-fish svg { padding: 6px; box-sizing: border-box; }
-.st-fly { z-index: 300; pointer-events: none; transform-origin: 50% 50%; }
-
-.cs-veil[hidden] { display: none; }
-.cs-veil { position: fixed; inset: 0; background: color-mix(in srgb, var(--bg) 62%, transparent); backdrop-filter: blur(2px); display: grid; place-items: center; z-index: 200; }
-.cs-page { width: min(1080px, 94vw); max-height: 80vh; overflow: auto; padding: 22px 24px; }
-.cs-from-centre .cs-page { animation: cs-in 320ms cubic-bezier(.2, .8, .2, 1); }
-@keyframes cs-in { from { opacity: 0; transform: scale(.4); } to { opacity: 1; transform: none; } }
-.cs-hd { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
-.cs-hd h2 { margin: 0; font-size: var(--fs-h2); flex: 1; }
-.cs-range { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-.cs-range button { border: 0; background: var(--panel-2); color: var(--ink-2); padding: 5px 12px; cursor: pointer; font: inherit; font-size: var(--fs-sub); }
-.cs-range button.on { background: var(--accent); color: var(--accent-ink); }
-.cs-sum { font-size: var(--fs-sub); color: var(--ink); margin-bottom: 14px; }
-.cs-row { display: grid; grid-template-columns: 150px 1fr; gap: 10px; align-items: center; margin-top: 6px; }
-.cs-who { font-size: var(--fs-sub); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
-.cs-me .cs-who { color: var(--pr-human); font-weight: 600; }
-.cs-ruler { position: relative; height: 18px; border-bottom: 1px solid var(--line); }
-.cs-tick { position: absolute; top: 0; font-size: 11px; color: var(--ink-3); transform: translateX(-50%); }
-.cs-tick.cs-day { transform: none; text-align: center; }
-.cs-lane { position: relative; height: 22px; background: var(--panel-2); border-radius: 4px; }
-.cs-grid { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line); }
-.cs-seg { position: absolute; top: 3px; bottom: 3px; min-width: 3px; border-radius: 2px; }
-@media (prefers-reduced-motion: reduce) { .cs-from-centre .cs-page, .st-tk.swap { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .st-tk.swap { animation: none; } }

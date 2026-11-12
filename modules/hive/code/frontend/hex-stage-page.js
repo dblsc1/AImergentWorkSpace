@@ -734,7 +734,7 @@
     var m = (packs[kind] && packs[kind].moods) || {}, f = (m.happy && m.happy[0]) || (m.click && m.click[0]) || (m.idle && m.idle[0]) || null, o = mediaFor({ pack: kind }, f);
     return { key: o.key, html: '<div class="st-media">' + o.html + "</div>" };
   }
-  var centre = CS.mount({ packOfTool: function (tool) { return Pk.packOf({ tool: tool }, packsByTool()); }, figureOf: figureOf, petEl: function (id) { return petEls[id] || null; }, layer: layer, ring: $("stRing"), clock: $("stClock"), getJson: getJson, snapshot: ringSnapshot, base: BASE, placeholder: PLACEHOLDER,
+  var centre = CS.mount({ packOfTool: function (tool) { return Pk.packOf({ tool: tool }, packsByTool()); }, figureOf: figureOf, petEl: function (id) { return petEls[id] || null; }, layer: layer, ring: $("stRing"), clock: $("stClock"), getJson: getJson, getLanes: function () { return data.lanes; }, snapshot: ringSnapshot, base: BASE, placeholder: PLACEHOLDER,
     projectName: projectName, cellColor: function (pid) { var c = cellEl(pid); return c ? getComputedStyle(c).getPropertyValue("--zone-raw").trim() : ""; } });
   function renderRing(now) {
     var el = $("stRing"), hc = hiveCenter();

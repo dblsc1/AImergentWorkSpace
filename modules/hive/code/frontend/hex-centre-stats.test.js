@@ -1,4 +1,4 @@
-// hex-centre-stats.js 纯逻辑：效率、并行峰值、轮播短句、周范围。node hex-centre-stats.test.js
+// hex-centre-stats.js 纯逻辑：效率、并行峰值、轮播短句。node hex-centre-stats.test.js
 "use strict";
 process.env.TZ = "Asia/Shanghai";
 const assert = require("assert");
@@ -31,9 +31,4 @@ assert.deepStrictEqual(C.tickerLines({ humanNow: null, working: 0, humanSec: 0, 
 assert.deepStrictEqual(C.tickerLines({ humanNow: "你在做 数学", working: 2, humanSec: 3600, agentSec: 7200, focus: { name: "garden", text: "00:20:00" } }),
   ["你在做 数学", "2 个代理并行", "你 1 小时，带出代理 2 小时的活", "你 1 小时\n代理 2 小时", "garden\n00:20:00"]);
 
-// 周范围：周一起，周日当天也在本周
-assert.strictEqual(C.weekStart(Date.parse(t("15:00:00"))), Date.parse("2026-11-09T00:00:00+08:00"));
-assert.strictEqual(C.weekStart(Date.parse("2026-11-15T23:00:00+08:00")), Date.parse("2026-11-09T00:00:00+08:00"));
-assert.strictEqual(C.rangeOf("week", Date.parse(t("15:00:00"))).scale.days.length, 7);
-assert.strictEqual(C.rangeOf("day", Date.parse(t("15:00:00"))).scale.days.length, 1);
 console.log("hex-centre-stats ok");
