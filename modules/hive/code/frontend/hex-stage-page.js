@@ -5,9 +5,9 @@
   "use strict";
   var BASE = (typeof self !== "undefined" && self.HONEYCOMB_BASE) || "/";
   var API = BASE + "api/core/";
-  var CM = window.HexClockMenu, St = window.NexusTableHexStage, Rec = window.NexusTableHexRecord, Pk = window.NexusTableHexPetPick, Pr = window.NexusTableHexProjectRuler, CS = window.NexusTableHexCentreStats, FP = window.HexFigurePick;
+  var HC = window.HoneycombClock, CM = window.HexClockMenu, St = window.NexusTableHexStage, Rec = window.NexusTableHexRecord, Pk = window.NexusTableHexPetPick, Pr = window.NexusTableHexProjectRuler, CS = window.NexusTableHexCentreStats, FP = window.HexFigurePick;
   var shell = document.querySelector(".board-shell");
-  if (!St || !Rec || !Pk || !Pr || !CS || !CM || !window.HexHumanPage || !shell) return;
+  if (!St || !Rec || !Pk || !Pr || !CS || !CM || !HC || !window.HexHumanPage || !shell) return;
 
   var POLL_MS = 5000, TICK_MS = 1000;
   var SLOT_AREA = { x: 24, y: 142, w: 340, h: 160 };   // 左上角 y < 142 留给 72px 的头像
@@ -253,6 +253,10 @@
     if (pid === "inbox" || pid === "p_inbox") pid = null;
     if (t && projectOfTask(run.taskId) === "p_inbox") t = null;
     return { task: t ? t.name : null, project: pid ? projectName(pid) : null };
+  }
+  function runProject(run) {   // 同 filedUnder 的取法，只要项目号（环上的弧取它的颜色）
+    var pid = run.projectId || (run.taskId && projectOfTask(run.taskId)) || stage.petDock(run.runId);
+    return pid === "inbox" || pid === "p_inbox" ? null : pid || null;
   }
   function titleOf(run) {
     var f = filedUnder(run);
@@ -765,10 +769,12 @@
     if (run) {   // 人此刻在看的代理：一句轮播
       var sec = run.endAt ? (ms(run.endAt) - ms(run.startAt)) / 1000 : (now - ms(run.startAt)) / 1000;
       if (run.lost && run.lastSeenAt) sec = (ms(run.lastSeenAt) - ms(run.startAt)) / 1000;
-      focus = { name: run.label || run.agent, text: hms(sec) };
+      focus = { name: run.label || run.agent, text: hms(sec), projectId: runProject(run) };
     }
-    return { humanNow: humanNow, humanSec: humanTodaySeconds(now), focus: focus,
-      working: runsOf().filter(function (r) { return !r.endAt && !r.lost && Pk.moodOf(r.phase, r.lost) === "working"; }).length };
+    var live = runsOf().filter(function (r) { return !r.endAt && !r.lost; }), workers = live.filter(function (r) { return Pk.moodOf(r.phase, r.lost) === "working"; });
+    return { humanNow: humanNow, humanSec: humanTodaySeconds(now), focus: focus, working: workers.length,
+      workers: workers.map(function (r) { return { name: r.label || r.agent, project: filedUnder(r).project, projectId: runProject(r) }; }),   // 悬停环卡（「二十七」7）
+      waiting: live.filter(function (r) { return Pk.moodOf(r.phase, r.lost) === "waiting"; }).length };
   }
   // Agent 页卡片里的小人：打招呼（happy）→ 点击（click）→ 待机（idle）的第一段
   function figureOf(kind) {
@@ -807,10 +813,7 @@
   }
 
   // ── 右上角：人的时钟、气泡、白条 ─────────────────────────
-  var CLOCK_FACE = '<svg viewBox="0 0 100 100" class="st-dial" aria-hidden="true"><circle cx="50" cy="50" r="46" fill="var(--panel-2)" stroke="var(--line)" stroke-width="3"/>' +
-    '<line class="hh" x1="50" y1="50" x2="50" y2="28" stroke="var(--ink)" stroke-width="4" stroke-linecap="round"/>' +
-    '<line class="hm" x1="50" y1="50" x2="50" y2="16" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/>' +
-    '<line class="hs" x1="50" y1="56" x2="50" y2="14" stroke="var(--fact)" stroke-width="1.5"/><circle cx="50" cy="50" r="3" fill="var(--fact)"/></svg>';
+  var CLOCK_FACE = HC.DIAL;   // 小钟面与红弧：共享件 clockface.js，顶栏计时胶囊用同一份
   function renderClock(now) {
     var el = $("stClock"), human = (data.lanes && data.lanes.human) || {}, running = stage.timerRunning();
     if (!el.firstChild) {
@@ -818,22 +821,24 @@
     }
     el.classList.toggle("is-timing", running);
     el.setAttribute("aria-pressed", running ? "true" : "false");
-    var tm = stage.timerState(), today = el.querySelector(".st-clock-today");
-    if (tm && tm.deadlineAt) {
-      today.textContent = CM.formatRemaining(CM.remainingSeconds(tm.deadlineAt, now)); today.classList.add("is-countdown");
-      if (now >= tm.deadlineAt && countdownDone !== tm.startAt) {   // 页面开着时到点：先提醒，再读一次（服务端已按 deadlineAt 记下）
-        countdownDone = tm.startAt; clockMenu.remind(CM.endedText(tm.startAt, tm.deadlineAt)); stage.setTimer(null); refresh();
-      }
-    } else { today.textContent = dur(humanTodaySeconds(now)); today.classList.remove("is-countdown"); }
-    var f = (data.current && data.current.focus) || human.focus, pid = hostProject(), name = "";
-    if (human.running && human.running.projectId) name = projectName(human.running.projectId);
-    else if (f && f.state !== "afk" && (f.projectName || f.projectId)) name = f.projectName || projectName(f.projectId);
-    else if (pid) name = projectName(pid);
-    el.querySelector(".st-clock-proj").textContent = name;
-    var d = new Date(now), h = d.getHours() % 12, m = d.getMinutes(), s = d.getSeconds();
-    el.querySelector(".hh").setAttribute("transform", "rotate(" + (h + m / 60) * 30 + " 50 50)");
-    el.querySelector(".hm").setAttribute("transform", "rotate(" + (m * 6 + s / 10) + " 50 50)");
-    el.querySelector(".hs").setAttribute("transform", "rotate(" + s * 6 + " 50 50)");
+    var tm = stage.timerState(), today = el.querySelector(".st-clock-today"), todaySec = humanTodaySeconds(now);
+    var tpid = tm && ((tm.projectId) || (human.running && human.running.projectId)), face = HC.clockFace({ timer: tm, now: now, projectName: tpid ? projectName(tpid) : "", todaySec: todaySec });
+    var arcNow = face ? face.arc : 0;
+    if (tm && tm.deadlineAt && now >= tm.deadlineAt && countdownDone !== tm.startAt) {   // 页面开着时到点：先提醒，再读一次（服务端已按 deadlineAt 记下）
+      countdownDone = tm.startAt; clockMenu.remind(CM.endedText(tm.startAt, tm.deadlineAt)); stage.setTimer(null); refresh();
+    }
+    today.classList.toggle("is-countdown", !!(tm && tm.deadlineAt));
+    if (face) { today.textContent = face.big; el.querySelector(".st-clock-proj").textContent = face.small; }
+    else {
+      today.textContent = dur(todaySec);
+      var f = (data.current && data.current.focus) || human.focus, pid = hostProject(), name = "";
+      if (human.running && human.running.projectId) name = projectName(human.running.projectId);
+      else if (f && f.state !== "afk" && (f.projectName || f.projectId)) name = f.projectName || projectName(f.projectId);
+      else if (pid) name = projectName(pid);
+      el.querySelector(".st-clock-proj").textContent = name;
+    }
+    HC.paintDial(el, now, arcNow, !!(tm && tm.deadlineAt));
+    if (chipApi) chipApi.set({ now: now, arc: arcNow, countdown: !!(tm && tm.deadlineAt), big: today.textContent, small: el.querySelector(".st-clock-proj").textContent });   // 顶栏计时胶囊与时钟一致（「二十七」4）
   }
   // ── 眼睛：人此刻的聚焦（hive.stage.v1「十」）。时钟不动，飞来飞去的是它 ──
   // 形象：人自己挑的那个宠物包，右上角一滴汗 = 这是人
@@ -1270,22 +1275,42 @@
       onRelease: function (target, cancel, dx, dy, made) { lift.home(); if (!made) clockMenu.away(false); return made ? "keep" : undefined; } });
   }
 
+  function projectColor(pid) { var c = cellEl(pid); return c ? getComputedStyle(c).getPropertyValue("--zone-raw").trim() : ""; }
   // 时钟：短按 = 人的页面（三张卡），长按 = 计时气泡（正计时 / 倒计时 / 停止）；计时中拖时钟到格子 = 记到该项目。时钟自己不挪位
-  var clockMenu;
+  var clockMenu, clockHover, chipApi = null;
   (function () {
     var el = $("stClock");
     var clockItem = function () { return { kind: "clock" }; };
     var after = function (p) { busy++; return p.then(function () { busy--; render(); refresh(); }); };
-    clockMenu = CM.mount({
+    var menuOpts = {
       clock: el, now: Date.now, getLanes: function () { return data.lanes; }, projectName: projectName, getJson: getJson,
-      projectColor: function (pid) { var c = cellEl(pid); return c ? getComputedStyle(c).getPropertyValue("--zone-raw").trim() : ""; },
+      projectColor: projectColor,
       taskLabel: timeLabelOf, fillFigure: fillHumanFigure, dragTimer: dragTimerCard, dragBlock: dragBlockCard,
       openProject: function (pid) { clockMenu.close(); openPanel(pid); },
       fillIssues: function (box, list) { window.HexSourceHealth.fill(box, list); }, timerRunning: function () { return stage.timerRunning(); },
       startClock: function (sec) { after(stage.startClock(sec)); }, stopClock: function () { after(stage.clickClock()); },
       pickHuman: function () { pickFigure({ title: "我的形象", current: humanPack(), near: el, set: function (pet, kind) { pet.humanPack = kind; } }); }
-    });
+    };
+    clockMenu = CM.mount(menuOpts);
     var tap = function () { if (!clockMenu.consumedHold()) clockMenu.open(); };
+    // 悬停时钟出粗略信息（「二十七」6）；人的页面 / 计时气泡开着不出
+    function cardLines() {
+      var now = Date.now(), human = (data.lanes && data.lanes.human) || {}, tm = stage.timerState(), f = focusNow(), tpid = tm && (tm.projectId || (human.running && human.running.projectId)), focus = null;
+      if (f) { var fp = f.projectId && f.projectId !== "inbox" && f.projectId !== "p_inbox" ? f.projectName || projectName(f.projectId) : ""; focus = { afk: f.state === "afk", project: fp, window: St.focusLabel(f) }; }
+      var top = HC.topProjects(human.sessions, human.running, dayStart(), now, 99).filter(function (p) { return p.projectId !== "inbox" && p.projectId !== "p_inbox"; }).slice(0, 3).map(function (p) { return { name: projectName(p.projectId), color: projectColor(p.projectId), sec: p.sec }; });
+      return HC.clockCardLines({ timer: tm, now: now, projectName: tpid ? projectName(tpid) : "", todaySec: humanTodaySeconds(now), focus: focus, top: top });
+    }
+    clockHover = HC.attach(el, { side: "below", blocked: function () { return clockMenu.isOpen() || dragging > 0; }, lines: cardLines });
+    // 顶栏的计时胶囊（navbar.js 挂 window.HoneycombNavChip）：点 / 长按 / 悬停与时钟做同样的事
+    function bindChip(api) {
+      if (chipApi) return;
+      chipApi = api; api.takeOver();
+      var chipMenu = CM.mount(Object.assign({}, menuOpts, { clock: api.chip }));
+      api.chip.addEventListener("click", function (ev) { ev.preventDefault(); if (!chipMenu.consumedHold()) chipMenu.open(); });
+      HC.attach(api.chip, { side: "below", blocked: function () { return chipMenu.isOpen() || clockMenu.isOpen() || dragging > 0; }, lines: cardLines });
+    }
+    if (window.HoneycombNavChip) bindChip(window.HoneycombNavChip);
+    else window.addEventListener("honeycomb:navchip", function (ev) { bindChip(ev.detail); });
     // 眼睛：点 = 同点时钟；拖到项目格 / 任务条 = 弹确认卡再改；拖到空白处亮满 = 建项目（那张表单就是确认）；别处 = 飞回
     drag($("stEye"), { el: $("stEye"), item: eyeItem, onClick: tap, afterCreate: eyeRelease,
       onGrab: function () { cancelAnimationFrame(eye.raf); eye.raf = 0; },
@@ -1325,7 +1350,7 @@
   // ── 汇总 ───────────────────────────────────────────
   function render() {
     var now = Date.now();
-    renderRing(now); renderClock(now); renderEye(); renderStrips(); renderBucket(); renderPets();
+    renderRing(now); renderClock(now); if (clockHover) clockHover.update(); renderEye(); renderStrips(); renderBucket(); renderPets();
     [].forEach.call(layer.querySelectorAll(".st-pet"), bindPetDrag);
     renderToast();
     if (panelPid) renderPanel();
@@ -1403,8 +1428,11 @@
     });
   });
 
-  refresh().then(function () { sizeToWindow(); });
+  // 地址带 #human（别的页面点顶栏计时胶囊过来，「二十七」4）：打开人的页面，并把它从地址里去掉
+  function openFromHash() { if (location.hash !== "#human") return; history.replaceState(null, "", location.pathname + location.search); clockMenu.open(); }
+  window.addEventListener("hashchange", openFromHash);
+  refresh().then(function () { sizeToWindow(); openFromHash(); });
   setInterval(refresh, POLL_MS);
-  setInterval(function () { var n = Date.now(); renderRing(n); renderClock(n); renderToast(); clockMenu.refresh(); stepPets(); }, TICK_MS);
+  setInterval(function () { var n = Date.now(); renderRing(n); renderClock(n); if (clockHover) clockHover.update(); renderToast(); clockMenu.refresh(); stepPets(); }, TICK_MS);
   setInterval(function () { renderPets(); renderEye(); }, 400);
 })();

@@ -35,7 +35,7 @@ PAGE = """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <script>%s</script></head>
 <body><main style="padding:16px"><h1>页面</h1><button id="other">别的按钮</button></main>
 <link rel="stylesheet" href="/__cockpit/tokens.css"><link rel="stylesheet" href="/__cockpit/navbar.css">
-<script src="/__cockpit/focus.js" defer></script><script src="/__cockpit/navbar.js" defer></script></body></html>"""
+<script src="/__cockpit/focus.js" defer></script><script src="/__cockpit/clockface.js" defer></script><script src="/__cockpit/navbar.js" defer></script></body></html>"""
 
 
 class Site:
@@ -463,7 +463,7 @@ def test_needs_choice_dot_on_chip(browser) -> None:
         assert page.get_attribute(NAV_SEL, "data-ckpt-choice") == ""
         assert page.get_attribute("[data-ckpt-chip]", "title") == "有个窗口不知道记到哪 —— 去蜂巢选"
         assert page.get_attribute("[data-ckpt-chip]", "aria-label") == label + "；有个窗口不知道记到哪 —— 去蜂巢选"
-        assert page.get_attribute("[data-ckpt-chip]", "href") == "/hive/"
+        assert page.get_attribute("[data-ckpt-chip]", "href") == "/hive/#human"   # hive.stage.v1「二十七」4：点 = 打开人的页面
         # 可以和 auto 同时有（等人选的不一定是前台窗口）
         site.current = {"running": False, "auto": _auto(page, 5), "needsChoice": need}
         _poll(page)
@@ -680,3 +680,52 @@ def test_chip_tooltip_carries_the_dwell_line(browser) -> None:
               "正在：code · plot.gd — <i>garden</i>")
         assert page.text_content(".ckpt-elapsed") == "00:03"
         assert page.get_attribute("[data-ckpt-chip]", "title").endswith("（近 2 小时在这上面 12 分）")
+
+
+# ------------------------------------------------------------------ 计时胶囊长成时钟的样子（hive.stage.v1「二十七」4）
+
+
+def _running(page: Page, seconds_ago: int) -> dict[str, Any]:
+    since = datetime.fromtimestamp(page.evaluate("() => Date.now()") / 1000 - seconds_ago, timezone.utc).isoformat()
+    return {"running": True, "sessionStartAt": since, "task": {"id": "t1", "name": "做题"}, "project": {"name": "数学"}}
+
+
+def test_chip_looks_like_the_clock_a_dial_with_a_red_arc_big_reading_and_small_line(browser) -> None:
+    with open_site(browser) as (page, site):
+        assert page.locator("[data-ckpt-chip] .ckpt-dial svg .hs").count() == 1
+        assert page.get_attribute("[data-ckpt-chip] .st-arc-timer", "stroke-dasharray") == "0 100"
+        site.current = _running(page, 15 * 60)                      # 15 分钟 = 1/4 圈
+        _poll(page)
+        page.wait_for_function("() => document.querySelector('.ckpt-live-word').textContent === '做题'")
+        settle(page, 1000)
+        arc = float(page.get_attribute("[data-ckpt-chip] .st-arc-timer", "stroke-dasharray").split()[0])
+        assert 25 <= arc < 26 and page.text_content(".ckpt-elapsed").startswith("15:")
+        box = page.locator("[data-ckpt-chip]").bounding_box()
+        assert box and box["height"] <= 60 and page.is_visible("[data-ckpt-chip] .ckpt-dial")
+
+
+def test_hive_page_can_take_over_the_chip_text_and_the_lanes_preview_stays_shut(browser) -> None:
+    with open_site(browser) as (page, site):
+        page.evaluate("() => window.HoneycombNavChip.takeOver()")
+        page.evaluate("() => window.HoneycombNavChip.set({now: Date.now(), arc: 40, countdown: true, big: '12:34', small: '数学 · 今天 1 小时 2 分'})")
+        assert page.text_content(".ckpt-elapsed") == "12:34" and page.text_content(".ckpt-live-word") == "数学 · 今天 1 小时 2 分"
+        assert page.get_attribute("[data-ckpt-chip] .st-arc-timer", "stroke-dasharray") == "40 100"
+        settle(page, 2000)                                          # 顶栏自己的每秒重画不覆盖接管后的字
+        assert page.text_content(".ckpt-elapsed") == "12:34"
+        page.hover("[data-ckpt-chip]")
+        settle(page, 600)
+        assert not is_open(page) and site.lanes_urls == []
+
+
+def test_timer_page_hover_shows_a_rough_card_from_what_the_nav_knows(browser) -> None:
+    with open_site(browser, path="/ring/") as (page, site):
+        site.current = _running(page, 125)
+        _poll(page)
+        page.wait_for_function("() => document.querySelector('.ckpt-live-word').textContent === '做题'")
+        page.hover("[data-ckpt-chip]")
+        settle(page, 350)
+        rows = page.eval_on_selector_all(".st-hover-card .st-hc-row", "ns => ns.map(n => n.textContent)")
+        assert rows == ["正在计时 · 做题 · 02:05"] or rows[0].startswith("正在计时 · 做题 · 02:"), rows
+        page.mouse.move(400, 600)
+        settle(page, 50)
+        assert page.locator(".st-hover-card").count() == 0

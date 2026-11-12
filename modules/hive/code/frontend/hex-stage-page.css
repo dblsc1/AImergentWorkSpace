@@ -15,7 +15,8 @@ body.stage-on .hex-cell:not(.is-expanded) .hex-close { display: none !important;
 .st-ring { position: absolute; width: 140px; height: 140px; transform: translate(-50%, -50%); z-index: 6; cursor: pointer; border-radius: 50%; }
 .st-ring:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .st-ring svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-.st-arc { transition: stroke-dasharray 350ms ease-out; }
+.st-arc { transition: stroke-dasharray 350ms ease-out, stroke-dashoffset 350ms ease-out, stroke 350ms ease-out; }
+@media (prefers-reduced-motion: reduce) { .st-arc { transition: none; } }
 .st-face { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .st-face.swap { animation: st-swap 360ms ease-out; }
 @keyframes st-swap { from { opacity: 0; } to { opacity: 1; } }
