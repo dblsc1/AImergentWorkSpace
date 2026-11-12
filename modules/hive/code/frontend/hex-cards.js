@@ -105,6 +105,7 @@
       '<span class="hex-task-name">' + esc(t.name) + "</span>" +
       (flags.length ? '<span class="hex-flag">' + esc(flags.join(" · ")) + "</span>" : "") +
       (opts.stamp ? '<span class="hex-stamp">' + esc(opts.stamp) + "</span>" : "") +
+      (opts.done && !opts.session ? '<span class="hex-spent" data-task-id="' + esc(t.id) + '"' + (t.canceled ? ' data-canceled="1"' : "") + "></span>" : "") +
       (opts.done
         ? '<span class="hex-tools"><button type="button" class="hex-mini" data-hex-action="toggle-task">撤销</button></span>'
         : '<span class="hex-tools">' +
@@ -163,11 +164,13 @@
 
     return '<div class="hex-detail">' +
       '<div class="hex-sub">' + esc(zoneName) + "</div>" +
+      // 项目面板（任务条 + 人 / 代理时间标尺，hive.stage.v1「十二」）由舞台页往这里填
+      '<div class="hex-ruler-slot" data-project-id="' + esc(project.id) + '"></div>' +
 
-      // ① 下一步：标题行右端挂「＋」，点它原地向左延展成一张同款卡片
+      // ① 任务（旧「下一步」）：标题行右端挂「＋」，点它原地向左延展成一张同款卡片
       '<div class="hex-group">' +
         '<div class="hex-group-head">' +
-          '<div class="hex-group-title">下一步</div>' +
+          '<div class="hex-group-title">任务</div>' +
           '<button type="button" class="hex-add" data-hex-ui="new-task"' +
             ' aria-label="添加新任务" title="添加新任务">＋</button>' +
         "</div>" +
@@ -202,7 +205,7 @@
         '<div class="hex-group-title">最近完成</div>' +
         (done.length
           ? '<ul class="hex-list">' + done.map(function (c) {
-              return taskCard({ id: c.taskId, name: c.taskName || c.path, done: true },
+              return taskCard({ id: c.taskId, name: c.taskName || c.path, done: true, canceled: !!c.canceled },
                               { done: true, stamp: c.stamp, session: c.session });
             }).join("") + "</ul>"
           : emptyLine("暂无完成记录")) +

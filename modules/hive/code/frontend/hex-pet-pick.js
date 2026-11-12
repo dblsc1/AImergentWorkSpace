@@ -118,7 +118,14 @@
     return { x: from.x + dx * u, y: from.y + dy * u, phase: "walk", flip: flip };
   }
 
-  var api = { MAX_PETS: MAX_PETS, DEFAULT_PACK: DEFAULT_PACK, DEFAULT_PACKS_BY_TOOL: DEFAULT_PACKS_BY_TOOL, moodOf: moodOf, packOf: packOf, pickWorkers: pickWorkers, pickIdle: pickIdle, isLoose: isLoose, slotPos: slotPos, assignSlots: assignSlots, rhythm: rhythm, tempList: tempList, MAIN_MS: MAIN_MS, TEMP_MS: TEMP_MS,
+  // 大六边形（尖顶，宽 w）的中心沿单位方向 (ux, uy) 到边界的距离：六条边的法线在 0° / ±60° / ±120°，
+  // d = 边心距 ÷ cos(与最近法线的夹角)。展开时干活的小人站在这个距离再往外 reach 处（hive.stage.v1「十二」4）
+  function hexEdgeDistance(w, ux, uy) {
+    var fold = ((Math.atan2(uy, ux) * 180 / Math.PI) % 60 + 90) % 60 - 30;
+    return (w / 2) / Math.cos(fold * Math.PI / 180);
+  }
+
+  var api = { hexEdgeDistance: hexEdgeDistance, MAX_PETS: MAX_PETS, DEFAULT_PACK: DEFAULT_PACK, DEFAULT_PACKS_BY_TOOL: DEFAULT_PACKS_BY_TOOL, moodOf: moodOf, packOf: packOf, pickWorkers: pickWorkers, pickIdle: pickIdle, isLoose: isLoose, slotPos: slotPos, assignSlots: assignSlots, rhythm: rhythm, tempList: tempList, MAIN_MS: MAIN_MS, TEMP_MS: TEMP_MS,
     CLICK_PX: CLICK_PX, STAY_MS: STAY_MS, pressKind: pressKind, clickCounts: clickCounts, pickClip: pickClip, clickClip: clickClip, walkBack: walkBack };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.NexusTableHexPetPick = api;

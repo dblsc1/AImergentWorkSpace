@@ -4,10 +4,19 @@ html[data-theme="dark"] { --pr-human: #FF6B72; }
 
 /* 拖到项目格上：变深（落点） */
 .hex-cell.st-hot { filter: brightness(0.78) saturate(1.35); }
-/* 拖着东西弹簧展开面板时，舞台层（宠物 / 白条等）要浮在面板上头，才看得见拖到哪 */
-body.st-spring .st-layer { z-index: 210; }
 
-.st-panel { width: min(1080px, 94vw); }
+/* 大六边形里的面板（hive.stage.v1「十二」）：六边形里只有约 290px 宽，任务名在上、泳道在下，不并排 */
+.hex-ruler-slot { margin: 8px 0 4px; }
+.hex-ruler-slot:empty { display: none; }
+.hex-ruler-slot .pr-head, .hex-ruler-slot .pr-row { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+.hex-ruler-slot .pr-head { position: static; background: none; padding: 0 4px 4px; }
+.hex-ruler-slot .pr-head > div:empty { display: none; }
+.hex-ruler-slot .pr-list { min-height: 0; padding-bottom: 26px; }   /* 末尾「＋ 新建任务」之下留一段空白：在这里停 1 秒 = 长出新任务输入 */
+.hex-ruler-slot .pr-row { padding: 5px 4px; }
+.hex-ruler-slot .pr-lanes { min-height: 26px; }
+.hex-ruler-slot .pr-task { flex-direction: row; align-items: baseline; justify-content: space-between; gap: 8px; }
+.hex-ruler-slot .pr-sum { flex: none; }
+.hex-ruler-slot .pr-new-name { width: 100%; }
 .pr-head, .pr-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: stretch; }
 .pr-head { position: sticky; top: 0; z-index: 3; background: var(--panel); padding: 0 6px 6px; border-bottom: 1px solid var(--line); }
 .pr-list { display: flex; flex-direction: column; min-height: 120px; padding-bottom: 40px; }
@@ -32,10 +41,13 @@ body.st-spring .st-layer { z-index: 210; }
 .pr-tick:first-child { transform: none; }
 .pr-div { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line-2); pointer-events: none; }
 
-/* 泳道：上半人、下半代理（上下，不是左右） */
-.pr-lanes { position: relative; display: flex; flex-direction: column; gap: 2px; min-height: 36px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
-.pr-lane { position: relative; flex: 1; min-height: 16px; }
-.pr-seg { position: absolute; top: 2px; bottom: 2px; min-width: 3px; border-radius: 1px; cursor: default; }
+/* 泳道：代理占整条的高；人是贴在它上沿的一条矮矮的红细条（4px），与标尺对齐 */
+.pr-lanes { position: relative; min-height: 34px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
+.pr-lane { position: absolute; left: 0; right: 0; }
+.pr-lane.pr-agent { top: 0; bottom: 0; }
+.pr-lane.pr-human { top: 0; height: 4px; z-index: 1; }
+.pr-seg { position: absolute; top: 5px; bottom: 3px; min-width: 3px; border-radius: 1px; cursor: default; }
+.pr-lane.pr-human .pr-seg { top: 0; bottom: 0; border-radius: 0; }
 .pr-seg.pr-h { background: var(--pr-human); }
 .pr-seg.pr-a { background: var(--pr-agent, var(--fact)); }
 .pr-seg:hover { outline: 1px solid var(--ink); z-index: 2; }
@@ -43,5 +55,9 @@ body.st-spring .st-layer { z-index: 210; }
 .pr-new { padding: 8px 6px; }
 .pr-new-name { width: 50%; box-sizing: border-box; font: inherit; padding: 6px 10px; border: 1.5px solid var(--accent); border-radius: 6px; background: var(--panel); color: var(--ink); }
 .pr-new-name.is-bad { border-color: var(--warn); }
-/* 确认卡开着时舞台层也要浮在项目面板之上 */
-body:has(.st-cf-stack) .st-layer { z-index: 210; }
+
+/* 末尾固定的「＋ 新建任务」落点 */
+.pr-newslot { margin: 6px 6px 0; padding: 6px 10px; font: inherit; font-size: var(--fs-sub); color: var(--ink-2); text-align: left; cursor: pointer;
+  background: none; border: 1px dashed var(--line); border-radius: 6px; }
+.pr-newslot:hover { background: var(--panel-2); }
+.pr-newslot.is-drop { background: color-mix(in srgb, var(--ink) 14%, var(--panel)); outline: 2px solid var(--accent); outline-offset: -2px; }

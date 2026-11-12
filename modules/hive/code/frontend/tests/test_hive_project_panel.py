@@ -13,6 +13,7 @@ from typing import Any
 
 from test_hive_focus import base, browser  # noqa: F401  (fixtures)
 from test_hive_stage import CELL, TZ, Stage, _busy_day, _iso, open_stage
+from test_hive_big_hex import settle_zoom
 
 ROW = '.pr-row[data-task="t_p_math"]'
 
@@ -45,6 +46,7 @@ def _open(st: Stage, pid: str = "p_math") -> None:
     st.page.click(CELL.format(pid))
     st.page.wait_for_selector(".pr-row")
     st.page.wait_for_selector(ROW + " .pr-seg")
+    settle_zoom(st)      # 展开动画靠假时钟推
 
 
 def _box(loc) -> dict[str, float]:
@@ -57,7 +59,7 @@ def test_rows_ruler_70_30_and_lanes_top_human_bottom_agent(browser, base) -> Non
     with open_stage(browser, base, setup=_busy_day) as st:
         _seed(st)
         _open(st)
-        panel = st.page.locator("#stPanel")
+        panel = st.page.locator(".hex-cell.is-expanded .hex-ruler-slot")
         assert panel.locator(".pr-row").count() == 2 and panel.locator(".pr-row b").all_inner_texts() == ["数学的任务", "没挂任务"]
         assert "projectId=p_math" in st.project_time_requests[0] and re.search(r"from=\d{4}-\d\d-\d\d&to=", st.project_time_requests[0])
         # 标尺：一条，今天占 30%，前 6 天共 70%；每行的泳道与它对齐
@@ -69,11 +71,13 @@ def test_rows_ruler_70_30_and_lanes_top_human_bottom_agent(browser, base) -> Non
         for lanes in panel.locator(".pr-lanes").all():
             b = lanes.bounding_box()
             assert abs(b["x"] - ruler["x"]) < 1 and abs(b["width"] - ruler["width"]) < 1
-        # 左半任务、右半泳道；泳道上半人、下半代理
+        # 大六边形里（hive.stage.v1「十二」）：任务在上、泳道在下；泳道上半人、下半代理
         task, lanes = _box(panel.locator(ROW + " .pr-task")), _box(panel.locator(ROW + " .pr-lanes"))
-        assert task["x"] + task["width"] <= lanes["x"] + 1
+        assert task["y"] + task["height"] <= lanes["y"] + 1
+        # 「十二」7：代理占整条泳道的高，人是贴在上沿约 4px 的红细条
         human, agent = _box(panel.locator(ROW + " .pr-human")), _box(panel.locator(ROW + " .pr-agent"))
-        assert human["y"] + human["height"] <= agent["y"] + 1 and abs(human["x"] - agent["x"]) < 1
+        assert abs(human["y"] - lanes["y"]) < 1 and 3 <= human["height"] <= 5 and abs(human["x"] - agent["x"]) < 1
+        assert abs(agent["height"] - lanes["height"]) < 1
         assert panel.locator(ROW + " .pr-human .pr-seg").count() == 3 and panel.locator(ROW + " .pr-agent .pr-seg").count() == 2
         assert panel.locator('.pr-row[data-task=""] .pr-agent .pr-seg').count() == 1
         # 段：过去的 1 分钟也至少 1px；颜色 = 人红 / 项目（分区）色；提示
@@ -87,12 +91,12 @@ def test_rows_ruler_70_30_and_lanes_top_human_bottom_agent(browser, base) -> Non
         assert re.fullmatch(r"\d\d/\d\d \d\d:\d\d–\d\d:\d\d garden", panel.locator(ROW + " .pr-agent .pr-seg").nth(1).get_attribute("title"))
         # 标尺里有今天的钟点刻度
         assert panel.locator(".pr-tick").all_inner_texts() == ["00", "06", "12", "18", "24"]
-        panel.locator(".st-x").click()
-        assert not st.page.locator("#stVeil").is_visible()
+        st.page.keyboard.press("Escape")
+        assert st.page.locator(".hex-cell.is-expanded").count() == 0
 
 
 def test_panel_opens_in_both_themes(browser, base) -> None:  # noqa: F811
-    """设了 HIVE_SHOTS=<目录> 时顺手存两张图（看效果用）。"""
+    """设了 HIVE_SHOTS=<目录> 时顺手存两张图（看效果用）。大六边形里的面板见 hive.stage.v1「十二」。"""
     shots = os.environ.get("HIVE_SHOTS")
     for theme in ("light", "dark"):
         with open_stage(browser, base, width=1440, height=900, setup=_busy_day) as st:
@@ -128,9 +132,11 @@ def test_drag_over_cell_darkens_it_then_hold_one_second_opens_the_panel(browser,
         _grab_and_hold(st, ".st-strip", st.center(CELL.format("p_math")))
         assert "brightness(0.78)" in brightness()                 # 变深
         st.page.clock.run_for(900)
-        assert not st.page.locator("#stVeil").is_visible()         # 还没满 1 秒
+        assert st.page.locator(".hex-cell.is-expanded").count() == 0         # 还没满 1 秒
         st.page.clock.run_for(150)
-        assert st.page.locator("#stVeil").is_visible() and st.page.locator("#stPanel h2").inner_text() == "数学"
+        st.page.wait_for_selector(".hex-cell.is-expanded .pr-row")           # 十二：展开的是大六边形
+        assert st.page.locator(".hex-cell.is-expanded .hex-title").inner_text() == "数学"
+        settle_zoom(st)
         # 面板开着时拖到任务条上：条变深（is-drop），松手 = 记到这个任务
         st.page.mouse.move(*st.center(ROW), steps=6)
         assert "is-drop" in st.page.locator(ROW).get_attribute("class")
@@ -147,9 +153,10 @@ def test_moving_before_one_second_restarts_the_hold(browser, base) -> None:  # n
         st.page.clock.run_for(700)
         st.page.mouse.move(*st.center(CELL.format("p_piano")), steps=6)    # 换到别的格子：重新数
         st.page.clock.run_for(700)
-        assert not st.page.locator("#stVeil").is_visible()
+        assert st.page.locator(".hex-cell.is-expanded").count() == 0
         st.page.clock.run_for(400)
-        assert st.page.locator("#stPanel h2").inner_text() == "钢琴"
+        st.page.wait_for_selector(".hex-cell.is-expanded .pr-row")
+        assert st.page.locator(".hex-cell.is-expanded .hex-title").inner_text() == "钢琴"
         st.page.mouse.up()
         st.settle()
 
@@ -160,7 +167,8 @@ def test_agent_pet_dropped_on_task_row_places_to_the_task(browser, base) -> None
         st.replies["agents/r2/place"] = (200, {"rule": None})
         _grab_and_hold(st, '.st-pet.is-loose[data-run-id="r2"]', st.center(CELL.format("p_math")))
         st.page.clock.run_for(1100)
-        assert st.page.locator("#stVeil").is_visible()
+        st.page.wait_for_selector(".hex-cell.is-expanded .pr-row")
+        settle_zoom(st)                                                     # 展开动画走完，任务条才到位
         st.page.mouse.move(*st.center(ROW), steps=6)
         st.page.mouse.up()
         st.settle()
@@ -182,6 +190,8 @@ def test_drop_on_the_no_task_row_files_to_the_project(browser, base) -> None:  #
         _strip(st)
         _grab_and_hold(st, ".st-strip", st.center(CELL.format("p_math")))
         st.page.clock.run_for(1100)
+        st.page.wait_for_selector(".hex-cell.is-expanded .pr-row")
+        settle_zoom(st)
         st.page.mouse.move(*st.center('.pr-row[data-task=""]'), steps=6)
         st.page.mouse.up()
         st.settle()
@@ -195,8 +205,10 @@ def test_hold_one_second_on_blank_of_task_list_creates_a_task_then_files_into_it
         st.replies["planner/tasks"] = (201, {"id": "t_new", "name": "新任务"})
         _grab_and_hold(st, ".st-strip", st.center(CELL.format("p_math")))
         st.page.clock.run_for(1100)
-        last = _box(st.page.locator(".pr-row").last)
-        blank = (last["x"] + last["width"] / 2, last["y"] + last["height"] + 20)
+        st.page.wait_for_selector(".hex-cell.is-expanded .pr-row")
+        settle_zoom(st)
+        last = _box(st.page.locator(".pr-newslot"))      # 「十二」6：末尾固定「＋ 新建任务」，空白在它之下
+        blank = (last["x"] + last["width"] / 2, last["y"] + last["height"] + 12)
         st.page.mouse.move(*blank, steps=6)
         st.page.clock.run_for(900)
         assert st.page.locator(".pr-new-name").count() == 0
@@ -216,8 +228,10 @@ def test_blank_hold_input_is_dropped_when_released_elsewhere(browser, base) -> N
         _strip(st)
         _grab_and_hold(st, ".st-strip", st.center(CELL.format("p_math")))
         st.page.clock.run_for(1100)
-        last = _box(st.page.locator(".pr-row").last)
-        st.page.mouse.move(last["x"] + 50, last["y"] + last["height"] + 20, steps=6)
+        st.page.wait_for_selector(".hex-cell.is-expanded .pr-row")
+        settle_zoom(st)
+        last = _box(st.page.locator(".pr-newslot"))
+        st.page.mouse.move(last["x"] + 50, last["y"] + last["height"] + 12, steps=6)
         st.page.clock.run_for(1100)
         assert st.page.locator(".pr-new-name").count() == 1
         st.page.mouse.move(*st.center(".pr-head"), steps=6)               # 移到标题栏上松手：不新建
