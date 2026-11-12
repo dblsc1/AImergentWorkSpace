@@ -304,7 +304,7 @@
       openCreate(document.querySelector(".hex-ruler-slot .pr-list"));
       if (creating) awaitName(function () { if (ctx.created) ctx.created(); }, function () {});
     }
-    return { startCreate: startCreate, body: body, toggleMenu: toggleMenu, toggleExpand: toggleExpand, expandAll: expandAll, toggleDone: toggleDone, spent: spent, frozen: frozen, invalidate: invalidate, reset: reset,
+    return { startCreate: startCreate, body: body, toggleMenu: toggleMenu, toggleExpand: toggleExpand, expandAll: expandAll, expandedAll: function () { return expanded; }, toggleDone: toggleDone, spent: spent, frozen: frozen, invalidate: invalidate, reset: reset,
              dragOver: dragOver, dragEnd: dragEnd, dropAt: dropAt, overPanel: overPanel, awaitName: awaitName };
   }
 

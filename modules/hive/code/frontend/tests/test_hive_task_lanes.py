@@ -157,3 +157,27 @@ def test_task_name_menu_is_not_offered_on_the_unassigned_row(browser, base) -> N
         _open(st)
         st.page.locator(EXPANDED + ' .pr-row[data-task=""] b').click()
         assert st.page.locator(EXPANDED + " .pr-menu").count() == 0
+
+
+def test_show_all_grows_the_hexagon_to_fill_the_hive_without_leaving_the_viewport(browser, base) -> None:  # noqa: F811  十九
+    with open_stage(browser, base, width=1440, height=1300, setup=_setup) as st:
+        _open(st)
+        box = lambda: st.page.locator(EXPANDED).bounding_box()  # noqa: E731
+        small = box()
+        st.page.locator(EXPANDED + " .pr-expand").click()
+        settle_zoom(st)
+        big, wrap = box(), st.page.locator(".hive-wrap").bounding_box()
+        assert big["height"] > small["height"] * 1.15, (small, big)                  # 长大了
+        assert big["y"] >= wrap["y"] - 1 and big["y"] + big["height"] <= 1300 + 1, (big, wrap)   # 不出取景框上沿、不出视口下沿
+        assert big["x"] >= wrap["x"] - 1 and big["x"] + big["width"] <= wrap["x"] + wrap["width"] + 1
+        if SHOT:
+            st.page.screenshot(path=os.path.join(SHOT, "bighex-full.png"))
+        st.page.locator(EXPANDED + " .pr-expand").click()                            # 收起 = 回平时的大小
+        settle_zoom(st)
+        assert abs(box()["height"] - small["height"]) < 2
+    with open_stage(browser, base, width=1280, height=800, setup=_setup) as st:      # 矮屏装不下更大的：不变
+        _open(st)
+        small = st.page.locator(EXPANDED).bounding_box()
+        st.page.locator(EXPANDED + " .pr-expand").click()
+        settle_zoom(st)
+        assert abs(st.page.locator(EXPANDED).bounding_box()["height"] - small["height"]) < 2

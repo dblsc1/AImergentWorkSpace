@@ -1065,7 +1065,7 @@
   var panelHtml = "";
   // tree 取 hex-app 重读的那棵：完成 / 取消 / 改名 / 删之后它最新
   var PP = Pr.createPanel({ tree: function () { var A = window.NexusTableHexApp, st = A && A.getState && A.getState(); return (st && st.tree) || data.tree; }, getJson: getJson, dur: dur, open: openPanel, taskApi: function () { return window.NexusTableData; },
-    changed: function () { renderPanel(); },
+    changed: function () { renderPanel(); syncFull(); },
     recentCount: function (pid) { return recentOf(pid).length; },
     recentHtml: function (pid) {   // 「最近完成」点开才生成：每条沿用 hex-cards 的卡片（点开只给「撤销」）
       var Cd = window.NexusTableHexCards;
@@ -1079,11 +1079,19 @@
     var App = window.NexusTableHexApp, st = App && App.getState && App.getState();
     return ((st && st.completions) || []).filter(function (c) { return c.projectId === pid; }).slice(0, 10);
   }
+  // 「展开全部」开着：大六边形占满蜂巢（「十九」）；收起、换项目、关掉就回平时的大小
+  function syncFull() {
+    var c = expandedCell(), on = !!c && PP.expandedAll(), L = window.NexusTableHexLayout, resize = false;
+    [].forEach.call(document.querySelectorAll(".hex-cell.is-full"), function (el) { if (el !== c || !on) { el.classList.remove("is-full"); resize = resize || el === c; } });
+    if (on && !c.classList.contains("is-full")) { c.classList.add("is-full"); resize = true; }
+    if (resize && L) L.apply(true);
+  }
   function expandedCell() { return document.querySelector(".hex-cell.is-expanded[data-project-id]"); }
   function syncPanel() {
     var c = expandedCell(), pid = c ? c.dataset.projectId : null;
     if (pid !== panelPid) { panelPid = pid; panelHtml = ""; PP.reset(); }
     if (pid) renderPanel();
+    syncFull();
     renderPets();   // 展开 / 收起：干活的小人跟着放大 / 缩回
   }
   // AI 决策页（hex-decide / hex-minihive）刚展开项目就要找任务行：面板同步画好；任务被收在「展开全部」里的话先展开
