@@ -843,7 +843,14 @@
   // ── 眼睛：人此刻的聚焦（hive.stage.v1「十」）。时钟不动，飞来飞去的是它 ──
   // 形象：人自己挑的那个宠物包，右上角一滴汗 = 这是人
   var EYE = '<div class="st-media"></div><svg class="st-eye-drop" viewBox="0 0 12 16" aria-hidden="true"><path d="M6 1C8.6 5 10.5 7.6 10.5 10.2a4.5 4.5 0 0 1-9 0C1.5 7.6 3.4 5 6 1Z"/></svg><span class="st-eye-win"></span>';
-  function focusNow() { return (data.current && data.current.focus) || (data.lanes && data.lanes.human && data.lanes.human.focus) || null; }
+  // 此刻的焦点。蜂巢页自己在最前面（document.hasFocus()）时，后端报的焦点说的就是这个浏览器标签页：不跟，停在页面最后一次
+  // 不在最前面时看到的那个窗口，眼睛不动、拖眼睛拖的也是那个窗口（hive.stage.v1「三十一」）；离开照常显示离开
+  var awayFocus = null;
+  function focusNow() {
+    var f = (data.current && data.current.focus) || (data.lanes && data.lanes.human && data.lanes.human.focus) || null;
+    if (!document.hasFocus()) { awayFocus = f; return f; }
+    return f && f.state === "afk" ? f : awayFocus || f;
+  }
   function eyeNow() { return St.eyeHost(focusNow(), stage.timerState()); }
   function hostProject() { var h = eyeNow(); return h.at === "project" ? h.project : null; }
   // 拖眼睛拖的是什么：计时中 = 这次计时（同拖时钟）；否则 = 此刻这个窗口；离开 / 没有心跳 = 拖不动

@@ -136,6 +136,7 @@ def open_hive(browser: Browser, base: str, *, width: int = 1280, height: int = 9
         page.route("**/__cockpit/clockface.js", lambda r: r.fulfill(path=str(COCKPIT / "clockface.js"), content_type="application/javascript"))
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
+    page.add_init_script("document.hasFocus = () => !!window.__pageInFront")   # 无头浏览器里恒为真；默认当页面不在最前面（「三十一」）
     page.goto(base + "/index.html")
     page.wait_for_selector(CENTER)
     page.wait_for_selector(".hex-cell[data-project-id=p_math]")

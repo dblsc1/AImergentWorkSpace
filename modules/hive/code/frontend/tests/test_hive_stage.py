@@ -172,6 +172,7 @@ def open_stage(browser: Browser, base: str, *, width: int = 1280, height: int = 
     page.route("**/__cockpit/clockface.js", lambda r: r.fulfill(path=str(COCKPIT / "clockface.js"), content_type="application/javascript"))   # 共享件由 index.html 自己读（真环境里网关的注入排在页面脚本后面，不能指望它）
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
+    page.add_init_script("document.hasFocus = () => !!window.__pageInFront")   # 无头浏览器里恒为真；默认当页面不在最前面（「三十一」）
     page.goto(base + "/index.html")
     page.wait_for_selector(CELL.format("p_math"))
     page.wait_for_selector("#stRing .st-tk", state="attached")
@@ -1477,3 +1478,26 @@ def test_eye_stays_on_the_clock_while_timer_runs_or_afk(browser, base) -> None: 
         cls = st.page.locator("#stEye").get_attribute("class")
         assert _eye_on_clock_corner(st) and "is-closed" not in cls and "is-timing" in cls       # 计时中没记到项目：停时钟、睁眼
         assert _clock_top_right(st)
+
+
+def test_eye_stays_put_while_the_hive_page_itself_is_in_front(browser, base) -> None:  # noqa: F811  三十一
+    with open_stage(browser, base, setup=_busy_day_unwatched) as st:
+        _focus(st, "p_math", app="code", title="plot.gd")
+        st.poll()
+        st.page.clock.run_for(1500)
+        assert st.page.locator("#stEye").get_attribute("data-host") == "p_math"
+        st.page.evaluate("() => { window.__pageInFront = true }")            # 人切到蜂巢页
+        _focus(st, None, app="google-chrome", title="")                     # 后端报的焦点 = 这个浏览器
+        st.poll()
+        st.page.clock.run_for(1500)
+        assert st.page.locator("#stEye").get_attribute("data-host") == "p_math", "页面在最前面：眼睛不动"
+        _focus(st, None, state="afk")
+        st.poll()
+        st.page.clock.run_for(1500)
+        assert st.page.locator("#stEye").get_attribute("data-host") != "p_math", "离开照常显示离开"
+        st.page.evaluate("() => { window.__pageInFront = false }")
+        _focus(st, None, app="google-chrome", title="新闻")
+        st.poll()
+        st.page.clock.run_for(1500)
+        assert st.page.locator("#stEye").get_attribute("data-host") == "tray", "页面不在最前面：照常跟"
+
