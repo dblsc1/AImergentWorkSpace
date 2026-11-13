@@ -1,7 +1,7 @@
-/* 泳道渲染（nexus-core.views.lanes.v1）—— 计时页的全部泳道与顶栏芯片的精简预览共用这一份。
+/* 泳道渲染（nexus-core.views.lanes.v1）—— 计时页的全部泳道用这一份。
  *
  * 网关把它和 navbar.js 放在同一个目录（<前缀>__cockpit/lanes.js，不设门、不含数据）：
- * 顶栏在预览第一次打开时才加载它；计时页（ring-lanes.js）同样按 HONEYCOMB_BASE 加载。
+ * 计时页（ring-lanes.js）按 HONEYCOMB_BASE 加载。
  * 本文件只画，不发请求；配套样式 lanes.css 由本文件在加载时自己挂上（同目录）。
  *
  * 对外只挂 window.HoneycombLanes：
