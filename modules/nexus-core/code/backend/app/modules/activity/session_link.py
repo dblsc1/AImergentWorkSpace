@@ -55,6 +55,14 @@ def watched(rows: list[dict], app: str, title: str) -> str | None:
     return hits[0] if len(hits) == 1 else None
 
 
+def watched_agent(user: str, app: str, title: str) -> str | None:
+    """v2.59：这个窗口此刻就是哪条在跑运行（同 ``watched``）→ 那条运行的 ``agent``（入库时终端记录连上运行用的块名后半截）；对不上 / 没有 agent → None。"""
+    rows = timer_service.list_lane_runs(user)[1]
+    run_id = watched(rows, app, title)
+    run = next((r for r in rows if r["runId"] == run_id), None) if run_id else None
+    return (run or {}).get("agent") or None
+
+
 def contained(rows: list[dict], title: str) -> list[str]:
     """不带 ``spans`` 的老心跳仍按 v2.4 认（契约只增不改）：标题不分大小写**包含**在跑运行的 ``match``，命中几条算几条。"""
     haystack = title.casefold()

@@ -312,3 +312,27 @@ def test_block_assigned_today_is_the_target_and_beats_session_and_history(client
     _beat(client, afk=True)
     away = _focus(client)
     assert away["blockKey"] is None and _target(away) == NO_TARGET
+
+
+def test_terminal_without_records_yet_uses_the_agent_key_like_upload_does(client, world, clock):
+    """v2.59：终端窗口的记录还没传上来时，focus 的块名与入库时连上运行的一样（``app · agent``），
+    不先撞上 ``app · 标题`` 那个旧块的归类（真机：teacher1 的终端先飞到旧规则的项目，几分钟后记录到了才回来）。"""
+    from datetime import datetime as _dt  # noqa: PLC0415
+
+    from app import config  # noqa: PLC0415
+
+    clock(-30)
+    _beat(client, title="✳ teacher1", app="ptyxis")
+    clock(0)
+    old = _focus(client)["blockKey"]
+    assert old == "ptyxis · teacher1"
+    today = _dt.now(config.settings.tz).date().isoformat()
+    _post(client, f"{API}/activity/blocks/assign", {"date": today, "blockKey": old, "projectId": world["p"], "ifSeq": 0})   # 以前的去向
+    assert _target(_focus(client))["projectId"] == world["p"]
+    run = _start(client, projectId=world["q"], label="teacher1", agent="SherpaV0.3")
+    focus = _focus(client)
+    assert focus["blockKey"] == "ptyxis · SherpaV0.3"
+    assert _target(focus) == {**NO_TARGET, "projectId": world["q"], "projectName": "项目 Q", "source": "agent-session"}
+    _post(client, f"{API}/agents/{run['runId']}/stop", {"outcome": "done"})
+    assert _focus(client)["blockKey"] == old and _target(_focus(client))["projectId"] == world["p"], "运行结束：回到 app · 标题"
+
