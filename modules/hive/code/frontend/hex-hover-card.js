@@ -1,5 +1,5 @@
 // hive · hex-hover-card.js —— 项目格悬停档里的内容（hive.stage.v1「二十五」）。
-// 纯函数（可在 node 里测）：weekStart / totals / pickCurrentTask / cardHtml；
+// 纯函数（可在 node 里测）：totals / pickCurrentTask / cardHtml；
 // 接线：mount(ctx) 盯着蜂巢里的 .is-hover，格子真的长到悬停档才读 views/project-time（同一项目 30 秒内不重读）。
 (function () {
   "use strict";
@@ -10,9 +10,7 @@
   function pad(n) { return n < 10 ? "0" + n : "" + n; }
   function ymd(t) { var d = new Date(t); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
 
-  function dayStart(now) { var d = new Date(now); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); }
-  // 本周一 0 点（周日算上周的第 7 天），同「八」统计页的「本周」
-  function weekStart(now) { var d = new Date(dayStart(now)); return new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() + 6) % 7)).getTime(); }
+  var DAY_MS = 86400000;
 
   // 一串区间 {start, end} 落在 [from, to) 里的秒数
   function secWithin(list, from, to) {
@@ -24,9 +22,9 @@
   function flat(payload, who) {
     return [].concat.apply([], ((payload && payload.tasks) || []).map(function (t) { return t[who] || []; }));
   }
-  // 本周 / 本日 × 人 / agent（秒），算到 now；agent 并行各自累加
+  // 本周 / 本日 × 人 / agent（秒）：与上面那把尺子同一口径（「二十九」）—— 本日 = 此刻往前 24 小时，本周 = 往前 7 × 24 小时；agent 并行各自累加
   function totals(payload, now) {
-    var h = flat(payload, "human"), a = flat(payload, "agent"), w = weekStart(now), d = dayStart(now);
+    var h = flat(payload, "human"), a = flat(payload, "agent"), w = now - 7 * DAY_MS, d = now - DAY_MS;
     return { week: { human: secWithin(h, w, now), agent: secWithin(a, w, now) }, day: { human: secWithin(h, d, now), agent: secWithin(a, d, now) } };
   }
 
@@ -97,7 +95,7 @@
     return { check: check };
   }
 
-  var api = { weekStart: weekStart, dayStart: dayStart, totals: totals, pickCurrentTask: pickCurrentTask, cardHtml: cardHtml, mount: mount };
+  var api = { totals: totals, pickCurrentTask: pickCurrentTask, cardHtml: cardHtml, mount: mount };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.NexusTableHexHoverCard = api;
 })();

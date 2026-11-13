@@ -1427,7 +1427,7 @@ def test_eye_sits_by_the_tray_on_unclassified_window_and_the_clock_never_moves(b
 
 
 def test_eye_drag_from_tray_to_a_cell_asks_before_filing_the_window(browser, base) -> None:  # noqa: F811  十·3
-    with open_stage(browser, base, setup=_busy_day) as st:
+    with open_stage(browser, base, setup=_busy_day_unwatched) as st:   # 人看着 r1 时形象会站到小人旁边（「二十一」），松手是回那里不是回托盘
         st.blocks.append({"blockKey": "firefox · 某文档", "status": "pending", "seconds": 120, "seq": 5, "displayName": "某文档", "legible": True, "kind": "browser"})
         _focus(st, None, "firefox", "某文档")
         st.poll()
