@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta
 
 from ..events import service as events_service
@@ -163,6 +164,19 @@ def current_block(user: str, now: datetime, device_id: str | None, app: str, tit
     return block_key.default_key(app, title), "auto", recs
 
 
+#: v2.60：HoneyComb 自己的页面（蜂巢页 / 小窗）的标签页标题，归一化后比。人切过去拖眼睛、分类时，focus 停在上一个窗口
+OWN_PAGE_TITLES = frozenset({"honeycomb timemanagement", "honeycomb"})
+_BROWSER_TAIL = re.compile(r"\s[—–-]\s(?:google chrome|chromium|mozilla firefox|firefox|microsoft edge|edge)$", re.IGNORECASE)
+
+
+def own_page(span: dict) -> bool:
+    """这一段是不是浏览器里的 HoneyComb 页面：标题去掉开头的「主机 · 」和结尾的「 - 浏览器名」后正好是 ``OWN_PAGE_TITLES`` 之一。"""
+    if span.get("afk") or block_display.kind_of(span.get("app")) != "browser":
+        return False
+    title = _BROWSER_TAIL.sub("", (span.get("title") or "").rsplit(block_key.SEP, 1)[-1]).strip()
+    return title.casefold() in OWN_PAGE_TITLES
+
+
 def state(user: str, now: datetime, docs: list[dict], auto: dict | None) -> dict | None:
     """``focus``：最新心跳新鲜（≤ ``FRESH``）时非 null。``docs`` = 该租户的在场文档，``auto`` = 同一次读里算出的自动跟踪目标。"""
     fresh = [d for d in docs if now - d["lastAt"] <= FRESH and d.get("spans")]
@@ -170,13 +184,19 @@ def state(user: str, now: datetime, docs: list[dict], auto: dict | None) -> dict
         return None
     latest = max(fresh, key=lambda d: d["lastAt"])  # 只看最近报心跳的那台设备（同自动跟踪）
     spans = latest["spans"]
+    keep = len(spans)
+    while keep > 0 and own_page(spans[keep - 1]):
+        keep -= 1
+    held = 0 < keep < len(spans)  # 末尾是 HoneyComb 自己的页面、前面还有别的：按前一个窗口算（全是它就照常）
+    if held:
+        spans = spans[:keep]
     cur = spans[-1]
     block = dict(_NO_BLOCK) if cur["afk"] else _block_fields(user, now, latest.get("deviceId"), cur["app"], cur["title"])
     out = {"state": "afk" if cur["afk"] else "present", "app": cur["app"], "title": cur["title"],
            "since": _since(spans), "dwellSeconds": None if cur["afk"] else _dwell(spans), **block, **_NO_TARGET}
     if cur["afk"]:
         return out
-    if auto:
+    if auto and not held:  # 自动跟踪的目标说的是此刻那个窗口（HoneyComb 页面），停住时不用它
         target = {k: auto[k] for k in _NO_TARGET}
     else:
         target = (_by_block(user, block["blockKey"], now) or _by_session(user, cur["app"], cur["title"])

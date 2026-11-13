@@ -109,3 +109,4 @@
 | 2026-11-12 | 仓主问：Agent 页「现在有 0 个正在工作」（`hive.stage.v1`「十七」） | v2.57（追加式）：`views/time-lanes` 在跑的运行一定出现在 `agents[]`（干活区间在窗口外的 `segments` 为 `[]`）；见「v0.6：时间泳道里在跑的运行一定列出」节 |
 | 2026-11-12 | 仓主定：Agent 卡片点开看详情（`hive.stage.v1`「二十」） | v2.58（追加式）：`views/time-lanes` 的 `agents[]` 追加只读 `taskId` / `startedAt` / `endedAt` / `outcome` / `beatSource` / `unverified` / `retained`（按 `lane_active` 口径的留存）；见「v0.6：时间泳道每条运行带归属与来源」 |
 | 2026-11-13 | 仓主报：注意力小人不飞到 Sherpa，飞到未分类和 ShareGPU | v2.59（追加式）：`focus` / `live-ask` 认当前终端窗口的块名时，近期记录还没传上来而窗口就是某条在跑运行 → `app · agent`（与入库一致），不再先撞 `app · 标题` 的旧归类；见「v0.6：此刻的焦点认终端窗口时与入库同一个块名」节 |
+| 2026-11-13 | 仓主定：人在 HoneyComb 页面上（拖眼睛、分类）时聚焦不动 | v2.60（追加式）：`focus` 的时间线末尾是浏览器里的 HoneyComb 页面（蜂巢页 / 小窗标题）时按上一个窗口算，不用自动跟踪的目标；只影响 `focus`；见「v0.6：人在 HoneyComb 页面上时焦点停在上一个窗口」节 |

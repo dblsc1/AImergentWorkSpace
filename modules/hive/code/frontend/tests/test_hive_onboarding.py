@@ -94,6 +94,7 @@ def open_onboarding(browser: Any, base: str, tree: dict = EMPTY, done_at: Any = 
     page.route("**/api/core/**", stub.route)
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
+    page.add_init_script("document.hasFocus = () => !!window.__pageInFront")   # 无头浏览器里恒为真；默认当页面不在最前面（「三十一」）
     page.goto(base + "/index.html")
     try:
         yield stub

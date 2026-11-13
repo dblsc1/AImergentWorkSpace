@@ -336,3 +336,32 @@ def test_terminal_without_records_yet_uses_the_agent_key_like_upload_does(client
     _post(client, f"{API}/agents/{run['runId']}/stop", {"outcome": "done"})
     assert _focus(client)["blockKey"] == old and _target(_focus(client))["projectId"] == world["p"], "运行结束：回到 app · 标题"
 
+
+def test_switching_to_the_honeycomb_page_keeps_the_focus_on_the_previous_window(client, world, clock):
+    """v2.60：人切到浏览器里的蜂巢页去拖眼睛 / 分类，focus 不跟过去，仍是上一个窗口（连同它的目标、起点）；
+    切到别的网页照常跟；只开过蜂巢页（前面没有别的窗口）就照常是它。"""
+    from app.modules.activity import focus as focus_mod  # noqa: PLC0415
+
+    assert focus_mod.own_page({"afk": False, "app": "google-chrome", "title": "本机IP1 · HoneyComb TimeManagement"})
+    assert focus_mod.own_page({"afk": False, "app": "firefox", "title": "HoneyComb TimeManagement — Mozilla Firefox"})
+    assert not focus_mod.own_page({"afk": False, "app": "google-chrome", "title": "HoneyComb 设计稿 - Google Docs"})
+    assert not focus_mod.own_page({"afk": False, "app": "code", "title": "HoneyComb"})
+
+    clock(-90)
+    _beat(client, title="HoneyComb TimeManagement", app="google-chrome")
+    clock(-60)
+    alone = _focus(client)
+    assert alone["app"] == "google-chrome", "前面没有别的窗口：照常"
+    _beat(client, title="⠂ CFO_agent", app="ptyxis")
+    _start(client, projectId=world["q"], label="CFO_agent")
+    clock(-30)
+    before = _focus(client)
+    assert before["app"] == "ptyxis" and before["projectId"] == world["q"]
+    _beat(client, title="本机IP1 · HoneyComb TimeManagement", app="google-chrome")
+    clock(0)
+    held = _focus(client)
+    assert (held["app"], held["title"], held["projectId"], held["source"], held["since"]) == \
+        (before["app"], before["title"], before["projectId"], before["source"], before["since"])
+    _beat(client, title="新闻 - Google Chrome", app="google-chrome")
+    assert _focus(client)["app"] == "google-chrome" and _focus(client)["title"] == "新闻 - Google Chrome"
+
