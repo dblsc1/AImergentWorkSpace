@@ -258,3 +258,7 @@ class 加 `hcl-card hcl-lead`），同一个节点跨重画搬过来（表单状
 
 `scripts/check-contrast.py` 按 `contracts/design-tokens-v1.md` 的对比度矩阵机械核对
 `static/tokens.css`。测试：`python -m pytest -q modules/nginx-docker/tests`（CI 的「安装器」任务里跑）。
+
+## 被 hive.stage.v1「三十」取代：顶栏泳道预览
+
+计时芯片悬停 / 聚焦不再弹泳道预览（含按需加载 `lanes.js`、约 15 秒一拉 `views/lanes`、触屏第一下切换预览、预览里「去蜂巢」链接），一律改出与右上角时钟同款的信息卡，规定见 `contracts/hive.stage.v1/contract.md`「三十」。`static/lanes.js` / `lanes.css` 仍由计时页使用，不变。

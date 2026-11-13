@@ -1,4 +1,4 @@
-/* 泳道（lanes.js 配套，计时页全部泳道 + 顶栏精简预览共用）。
+/* 泳道（lanes.js 配套，计时页全部泳道用）。
  * 颜色只取 tokens.css 的语义色（design-tokens-v1 §3.2）：人 = 事实青族（按模式深浅），
  * 代理 working = --agent-work、waiting_* = --agent-wait、idle = --ink-3、error = --danger。
  * 连线 reply = --ink-2；「你在看」（人的注意力在这条代理上，v2.17）= --attn 蓝。禁裸 hex。 */

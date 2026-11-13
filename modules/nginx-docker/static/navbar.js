@@ -10,8 +10,7 @@
  *   · 此刻的焦点（nexus-core v2.16）：没在计时、没有 auto、同一份响应带 focus 时芯片显示「正在：项目或窗口」+ 走秒
  *     （data-ckpt-focus="present"），离开时「离开」（"afk"）。字出自共享件 focus.js（网关先于本文件注入），
  *     与 auto 是同一段代码；不多发请求；
- *   · 泳道预览（v0.3，契约「泳道预览」节）：只在预览打开、页面可见时约 15s GET 一次
- *     api/core/views/lanes，并在第一次打开时加载同目录的 lanes.js（计时页上整段不启用）；
+ *   · 悬停 / 聚焦芯片出信息卡（hive.stage.v1「三十」，取代泳道预览）：只用上面已读到的数据，不发请求；
  *   · 顶栏自己的网络失败不写 console.error——这条由网关侧 /__cockpit/current
  *     的恒 200 兑现，不是靠这里的 .catch()（见 contract.md「HTML 响应体注入」节）。
  *
@@ -195,7 +194,7 @@
   // 录制胶囊
   var chip = el('a', 'ckpt-chip');
   // 点 = 打开人的页面（hive.stage.v1「二十七」4）：人的页面在蜂巢页里，别的页面带 #human 过去，蜂巢页读到就打开
-  var HIVE_HREF = NAV.timer || NAV.home || BASE;   // 预览里「去蜂巢」那两个链接仍去蜂巢页本身
+  var HIVE_HREF = NAV.timer || NAV.home || BASE;
   chip.href = HIVE_HREF + '#human';
   chip.setAttribute('data-ckpt-chip', '');
   chip.setAttribute('aria-label', '录制状态，点击打开人的页面');
@@ -403,7 +402,7 @@
     elapsedNode.textContent = fmt(Math.floor((Date.now() - startMs) / 1000) + carrySec);
   };
 
-  // 蜂巢页接管：set 每秒给一次 {now, arc, countdown, big, small}；接管后顶栏自己的泳道预览不再开（悬停出的是时钟那张信息卡）
+  // 蜂巢页接管：set 每秒给一次 {now, arc, countdown, big, small}；接管后顶栏不再自己挂信息卡（由蜂巢页挂）
   if (HC) {
     window.HoneycombNavChip = {
       chip: chip,
@@ -480,172 +479,13 @@
       .then(function () { location.assign(LOGIN_URL); });
   });
 
-  /* ── 泳道预览（v0.3，nexus-core views.lanes.v1；契约「泳道预览」节）────────────
-   * 悬停 / 聚焦 / 触屏点一下计时芯片，弹出人一条线 + 至多 4 条代理线的最近 1 小时。
-   * 计时页上不弹（那一页画了全部泳道）。画图交给共享的 lanes.js（计时页同一份），
-   * 第一次打开时才加载。非 2xx（含 404 老后端、401）→ 不弹，芯片照旧，不跳登录页。 */
-  if (HC && location.pathname.indexOf(BASE + 'ring/') === 0) {
-    // 计时页没有泳道预览：悬停出粗略信息卡（用顶栏自己读到的数据能写几行写几行，不含今天的用时）
+  /* ── 信息卡（hive.stage.v1「三十」）────────────────────────────────
+   * 悬停 / 聚焦计时胶囊出和右上角时钟同款的信息卡（clockface.js 的 HC.attach）。
+   * 只用顶栏已读到的数据，不含今天的用时、不发任何新请求。蜂巢页接管后由蜂巢页自己挂卡。 */
+  if (HC) {
     HC.attach(chip, { side: 'below', blocked: function () { return taken; }, lines: function () {
       var f = focus && state === IDLE ? { afk: focus.state === 'afk', project: focus.target, window: focus.window } : null;
       return HC.clockCardLines({ timer: state === RUNNING ? { startAt: startMs } : null, now: Date.now(), projectName: taskNode || '', todaySec: null, focus: f, top: [] });
     } });
-  }
-  if (location.pathname.indexOf(BASE + 'ring/') !== 0) {   // /ring/ 页自己画全部泳道
-    var LANES_URL = BASE + 'api/core/views/lanes';
-    var LANES_JS = BASE + '__cockpit/lanes.js';
-    var LANES_POLL_MS = 15000;
-    var HOUR_MS = 3600000;
-
-    var pop = el('div', 'ckpt-lanes-pop');
-    pop.id = 'ckpt-lanes-pop';
-    pop.setAttribute('data-ckpt-lanes', '');
-    pop.setAttribute('role', 'region');
-    pop.setAttribute('aria-label', '泳道预览');
-    pop.appendChild(el('div', 'ckpt-lanes-head', '最近 1 小时'));
-    var popBody = el('div', 'ckpt-lanes-body');
-    pop.appendChild(popBody);
-    var popGo = el('a', 'ckpt-lanes-go', '去蜂巢');
-    popGo.href = HIVE_HREF;
-    pop.appendChild(popGo);
-    right.insertBefore(pop, chip.nextSibling);      // 紧跟芯片：Tab 从芯片直接走进预览
-    chip.setAttribute('aria-controls', pop.id);
-    chip.setAttribute('aria-expanded', 'false');
-
-    var want = false, lanesPoll = null, lanesLast = null, lanesGone = false;
-    var gen = 0;   // 每发一次、每关一次都加一：只认最新那次请求的回应（Codex 审核）
-    var openT = null, closeT = null, lastTouch = 0, quietFocus = false;
-
-    var placePop = function () {
-      var vw = document.documentElement.clientWidth;
-      var w = Math.min(360, vw - 32);
-      var r = chip.getBoundingClientRect();
-      pop.style.width = w + 'px';
-      pop.style.left = Math.min(Math.max(r.right - w, 16), vw - 16 - w) + 'px';
-    };
-    var showPop = function () {
-      placePop();
-      pop.classList.add('ckpt-open');
-      chip.setAttribute('aria-expanded', 'true');
-    };
-    var closePreview = function () {
-      want = false;
-      gen += 1;
-      clearTimeout(openT);
-      clearInterval(lanesPoll);
-      lanesPoll = null;
-      pop.classList.remove('ckpt-open');
-      chip.setAttribute('aria-expanded', 'false');
-    };
-    var paintLanes = function () {
-      var L = window.HoneycombLanes, now = Date.parse(lanesLast.now), v0 = now - HOUR_MS;
-      var pick = L.pickPreview(lanesLast.agents, v0, 4);
-      L.render(popBody, lanesLast, {
-        viewStart: v0, viewEnd: now + HOUR_MS * 0.03, agents: pick.shown, compact: true, presence: true,
-        more: pick.more ? '还有 ' + pick.more + ' 个 → 蜂巢' : '', moreHref: HIVE_HREF,
-        focusFallback: popGo
-      });
-    };
-    var fetchLanes = function () {
-      if (!want || document.visibilityState === 'hidden') { return; }
-      var q = window.HoneycombLanes.query(lanesLast, 1), mine = ++gen;
-      fetch(LANES_URL + q, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
-        .then(function (r) {
-          if (r.status === 404) { lanesGone = true; }
-          if (!r.ok) { throw new Error('HTTP ' + r.status); }
-          return r.json();
-        })
-        .then(function (d) {
-          if (mine !== gen) { return; }
-          if (!d || !d.now) { throw new Error('bad body'); }
-          lanesLast = d;
-          var next = window.HoneycombLanes.query(d, 1);   // 1 小时跨了零点：补拉昨天 + 今天
-          if (next !== q && next.indexOf('from=') !== -1) { fetchLanes(); return; }
-          paintLanes();
-          showPop();
-        })
-        .catch(function () { if (mine === gen) { closePreview(); } });
-    };
-    var withLib = function (cb) {
-      if (window.HoneycombLanes) { cb(); return; }
-      var s = document.querySelector('script[data-ckpt-lanes-js]');
-      if (!s) {
-        s = document.createElement('script');
-        s.src = LANES_JS;
-        s.setAttribute('data-ckpt-lanes-js', '');
-        document.head.appendChild(s);
-      }
-      s.addEventListener('load', cb);
-    };
-    var openPreview = function () {
-      if (want || lanesGone || taken) { return; }
-      want = true;
-      withLib(function () {
-        if (!want || lanesPoll) { return; }
-        fetchLanes();
-        lanesPoll = setInterval(fetchLanes, LANES_POLL_MS);
-      });
-    };
-
-    // 鼠标：停 150 ms 才开，离开芯片与预览 300 ms 才关（防闪）；点芯片照旧去计时页。
-    var hoverIn = function (e) {
-      if (e.pointerType !== 'mouse') { return; }
-      clearTimeout(closeT);
-      if (!want) { clearTimeout(openT); openT = setTimeout(openPreview, 150); }
-    };
-    var hoverOut = function (e) {
-      if (e.pointerType !== 'mouse') { return; }
-      clearTimeout(openT);
-      closeT = setTimeout(function () {
-        // 焦点还在芯片或预览里（键盘打开的）就不因鼠标离开而关
-        var a = document.activeElement;
-        if (a && (chip.contains(a) || pop.contains(a))) { return; }
-        closePreview();
-      }, 300);
-    };
-    [chip, pop].forEach(function (n) {
-      n.addEventListener('pointerenter', hoverIn);
-      n.addEventListener('pointerleave', hoverOut);
-    });
-
-    // 键盘：芯片获得焦点即开；焦点离开芯片与预览就关；Esc 关并把焦点留在芯片。
-    chip.addEventListener('focus', function () {
-      clearTimeout(closeT);
-      if (quietFocus || Date.now() - lastTouch < 1000) { return; }
-      openPreview();
-    });
-    var focusOut = function (e) {
-      // 只在焦点真的走到别的控件上时关；点到空白处（relatedTarget 为空）交给下面的「点外面」
-      var to = e.relatedTarget;
-      if (!to || chip.contains(to) || pop.contains(to)) { return; }
-      closePreview();
-    };
-    chip.addEventListener('blur', focusOut);
-    pop.addEventListener('focusout', focusOut);
-    document.addEventListener('keydown', function (e) {
-      if (e.key !== 'Escape' || !want) { return; }
-      closePreview();
-      quietFocus = true;
-      chip.focus();
-      quietFocus = false;
-    });
-
-    // 触屏（没有悬停）：第一下点芯片只切换预览，预览里的「去计时页」才走；点外面关。
-    document.addEventListener('pointerdown', function (e) {
-      if (e.pointerType === 'touch' || e.pointerType === 'pen') { lastTouch = Date.now(); }
-    }, true);
-    chip.addEventListener('click', function (e) {
-      if (Date.now() - lastTouch > 1000) { return; }
-      e.preventDefault();
-      if (want) { closePreview(); } else { openPreview(); }
-    });
-    document.addEventListener('click', function (e) {
-      if (want && !chip.contains(e.target) && !pop.contains(e.target)) { closePreview(); }
-    });
-
-    document.addEventListener('visibilitychange', function () {
-      if (document.visibilityState === 'visible') { fetchLanes(); }   // 关着时 fetchLanes 直接返回
-    });
-    window.addEventListener('resize', function () { if (want) { placePop(); } });
   }
 })();
