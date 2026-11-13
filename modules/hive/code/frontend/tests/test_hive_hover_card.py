@@ -54,12 +54,9 @@ def test_hovering_a_project_cell_shows_ruler_lane_current_task_and_week_day_tota
         assert card.locator(".pr-lanes .pr-agent .pr-seg").count() == 1 and card.locator(".pr-now").count() == 2
         assert card.locator(".hv-task").inner_text() == "数学的任务"
         sums = card.locator(".hv-sum").all_inner_texts()
-        # 午夜前后跑也成立：本日按本地 0 点裁剪；本周按周一 0 点（周一凌晨也只会更少），这里只验本日与本周的分钟数
-        now = st.now().astimezone(TZ)
-        since = int((now - now.replace(hour=0, minute=0, second=0, microsecond=0)).total_seconds() // 60)
-        day_h, day_a = min(30, since), max(0, min(20, since - 60))
+        # 「二十九」：本日 = 此刻往前 24 小时、本周 = 往前 7 × 24 小时，夹具里的 30 / 20 分钟都在两个窗口内
         assert len(sums) == 2 and "本周" in sums[0] and "本日" in sums[1]
-        assert sums[1].split("\n")[1:] == [f"{day_h} 分", f"{day_a} 分"], sums
+        assert sums[0].split("\n")[1:] == ["30 分", "20 分"] and sums[1].split("\n")[1:] == ["30 分", "20 分"], sums
         assert cell.locator(".hex-todo-card").count() == 0           # 取代原来的三条待办卡片
         assert cell.locator(".hex-title").inner_text() == "数学"
         os.makedirs(os.path.dirname(SHOT), exist_ok=True)
