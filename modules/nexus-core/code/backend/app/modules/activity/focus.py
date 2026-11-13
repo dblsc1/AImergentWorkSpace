@@ -149,12 +149,18 @@ def _block_fields(user: str, now: datetime, device_id: str | None, app: str, tit
 
 
 def current_block(user: str, now: datetime, device_id: str | None, app: str, title: str) -> tuple[str, str, list[dict]]:
-    """当前窗口的块 ``(blockKey, keySource, 记录)``：同设备 10 分钟内同程序同归一化标题的最新记录，没有就当 ``app · 标题``。"""
+    """当前窗口的块 ``(blockKey, keySource, 记录)``：同设备 10 分钟内同程序同归一化标题的最新记录；没有（记录还没传上来）时，
+    终端窗口此刻就是某条在跑运行 → ``app · 那条运行的 agent``（v2.59，与入库时终端记录连运行同一个块名，不再先撞上 ``app · 标题`` 的旧规则）；
+    都不是就当 ``app · 标题``。"""
     norm = history.norm_title(title)
     near = [r for r in records_repo.recent_window(user, device_id, app, now - timedelta(minutes=10)) if history.norm_title(r["title"]) == norm] if device_id else []
     if near:
         return near[0]["blockKey"], near[0]["keySource"], near[:1]
-    return block_key.default_key(app, title), "auto", [{"app": app, "title": title, "titleIsPseudonym": False, "seconds": 1}]
+    recs = [{"app": app, "title": title, "titleIsPseudonym": False, "seconds": 1}]
+    agent = session_link.watched_agent(user, app, title) if block_display.kind_of(app) == "terminal" else None
+    if agent:
+        return f"{app}{block_key.SEP}{agent}", "agent", recs
+    return block_key.default_key(app, title), "auto", recs
 
 
 def state(user: str, now: datetime, docs: list[dict], auto: dict | None) -> dict | None:
