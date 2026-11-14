@@ -454,22 +454,13 @@ def lane_names(cwd: str | None = None, title: str | None = None) -> tuple[str, s
 
 
 TITLE_TAIL_BYTES = 256 * 1024
+#: 会话开头 / 重开时（每个会话一两次）末尾找不到才往前多找的两档：恢复的会话（--resume）末尾常是大段输出或压缩摘要，
+#: 名字在 256 KB 之外，只看末尾就会按目录名开运行，窗口标题（会话名）对不上，人在打字的注意力一段都认不出来。
+TITLE_DEEP_BYTES = (4 * 1024 * 1024, 32 * 1024 * 1024)
 
 
-def session_title(transcript_path: Any) -> str | None:
-    """Claude Code 会话的名字：transcript（JSONL）里**最后一条** `{"type":"custom-title","customTitle":…}`
-    （用户 `/rename` 起的，终端标签页显示的就是它）。没有 / 读不了 → None，调用方退回目录名。
-
-    只读文件末尾 `TITLE_TAIL_BYTES`、从后往前找：transcript 动辄几十 MB，钩子每个事件都跑；Claude Code 会把
-    标题记录在文件里反复重写，末尾找得到。截断的第一行、坏 JSON、别的记录一律跳过。不读 `ai-title`
-    （自动标题：改过名的标签页不显示它）。**只取这一个字段**，对话内容不读、不上报。
-    """
-    if not isinstance(transcript_path, str) or not transcript_path:
-        return None
-    try:
-        data, cut = read_regular(transcript_path, TITLE_TAIL_BYTES, tail=True)  # 不阻塞（FIFO）、不跟链接、只读普通文件
-    except OSError:
-        return None
+def _title_in(data: bytes, cut: bool) -> tuple[bool, str | None]:
+    """`(找到没有, 名字)`：从后往前第一条 custom-title 记录；找到了但名字是空的 = `(True, None)`（清空了名字）。"""
     lines = data.split(b"\n")
     if cut:
         lines = lines[1:]  # 从行中间切进来的那半行
@@ -484,8 +475,35 @@ def session_title(transcript_path: Any) -> str | None:
             title = record.get("customTitle")
             # 标题会当泳道名上报：控制 / 格式字符（Cc / Cf，含 ESC、换行、零宽、双向控制）先去掉
             title = " ".join("".join(" " if unicodedata.category(c) in ("Cc", "Cf") else c for c in title).split()) if isinstance(title, str) else ""
-            return title or None  # 最后一条为准：清空了名字 = 没有名字
-    return None
+            return True, title or None  # 最后一条为准：清空了名字 = 没有名字
+    return False, None
+
+
+def title_lookup(transcript_path: Any, deep: bool = False) -> tuple[bool, str | None]:
+    """`(transcript 里有没有 custom-title 记录, 名字)`。先读末尾 `TITLE_TAIL_BYTES`；`deep` 时末尾没有再按 `TITLE_DEEP_BYTES`
+    往前多读（只在会话开头 / 重开时用：每个事件都跑的地方不许这么读）。读不了 → `(False, None)`。"""
+    if not isinstance(transcript_path, str) or not transcript_path:
+        return False, None
+    for size in (TITLE_TAIL_BYTES, *TITLE_DEEP_BYTES) if deep else (TITLE_TAIL_BYTES,):
+        try:
+            data, cut = read_regular(transcript_path, size, tail=True)  # 不阻塞（FIFO）、不跟链接、只读普通文件
+        except OSError:
+            return False, None
+        found = _title_in(data, cut)
+        if found[0] or not cut:
+            return found
+    return False, None
+
+
+def session_title(transcript_path: Any, deep: bool = False) -> str | None:
+    """Claude Code 会话的名字：transcript（JSONL）里**最后一条** `{"type":"custom-title","customTitle":…}`
+    （用户 `/rename` 起的，终端标签页显示的就是它）。没有 / 读不了 → None，调用方退回目录名。
+
+    缺省只读文件末尾 `TITLE_TAIL_BYTES`、从后往前找：transcript 动辄几十 MB，钩子每个事件都跑；Claude Code 会把
+    标题记录在文件里反复重写，平时末尾找得到。`deep` 见 `title_lookup`。截断的第一行、坏 JSON、别的记录一律跳过。不读 `ai-title`
+    （自动标题：改过名的标签页不显示它）。**只取这一个字段**，对话内容不读、不上报。
+    """
+    return title_lookup(transcript_path, deep)[1]
 
 
 def phase_run(

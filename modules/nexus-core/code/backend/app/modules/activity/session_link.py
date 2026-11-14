@@ -27,13 +27,18 @@ _LEAD = re.compile(r"^(?:\(\d+\)|[\W_])+")
 _SEP = re.compile(r"\s[—–|-]\s")
 
 
+#: v2.61：终端在标签页标题后面挂的正在跑的命令（「沙箱建筑工 — claude --resume <会话号>」），开头是这些代理命令就去掉
+_AGENT_COMMANDS = ("claude", "codex", "gemini", "opencode", "aider", "hermes")
+
+
 def norm(text: str, app: str = "") -> str:
-    """标题与 label / match 共用的归一化（契约「归一化」）。``app`` 给了才去结尾的「 - 程序名」。"""
+    """标题与 label / match 共用的归一化（契约「归一化」）。``app`` 给了才去结尾的「 - 程序名」，以及（v2.61）
+    结尾的「 — 代理命令 …」（终端把正在跑的命令挂在标签页标题后面）。"""
     text = " ".join(text.split())
     seps = list(_SEP.finditer(text))
     if app and seps:
         tail = text[seps[-1].end():].strip().casefold()
-        if len(tail) >= _MIN_LEN and tail in app.casefold():
+        if (len(tail) >= _MIN_LEN and tail in app.casefold()) or tail.split(" ", 1)[0] in _AGENT_COMMANDS:
             text = text[:seps[-1].start()]
     return _LEAD.sub("", text).strip().casefold()
 
