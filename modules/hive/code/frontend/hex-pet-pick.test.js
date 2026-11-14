@@ -150,28 +150,28 @@ assert.ok(Math.abs(P.meetSpot({ x: 0, y: 0 }, { x: 5, y: 0 }, 1.7).x) > Math.abs
   assert.strictEqual(st(mk2("waiting_permission", [[0, "working"], [1, "waiting_permission"]]), 1).mood, "worried");
   assert.strictEqual(P.stateOf(mk2("working", [[0, "working"]], { lost: true }), T0, null).mood, "idle");   // 失联照旧 idle
   // 对话中：压过干活 / 等人 / 空闲，不压出问题；只认被看着的那条
-  assert.strictEqual(st(mk2("working", [[0, "working"]]), 1, "s").mood, "talk");
-  assert.strictEqual(st(mk2("waiting_input", [[0, "working"], [1, "waiting_input"]]), 5, "s").mood, "talk");
-  assert.strictEqual(st(mk2("idle", [[0, "working"], [1, "idle"]]), 90, "s").mood, "talk");
+  assert.strictEqual(st(mk2("working", [[0, "working"]]), 1, "s").mood, "chatting");
+  assert.strictEqual(st(mk2("waiting_input", [[0, "working"], [1, "waiting_input"]]), 5, "s").mood, "chatting");
+  assert.strictEqual(st(mk2("idle", [[0, "working"], [1, "idle"]]), 90, "s").mood, "chatting");
   assert.strictEqual(st(mk2("idle", [[0, "working"], [1, "idle"]]), 90, "s").home, false);                // 被叫醒：不再飞回
   assert.strictEqual(st(mk2("error", [[0, "error"]]), 1, "s").mood, "worried");
   assert.strictEqual(st(mk2("working", [[0, "working"]]), 1, "other").mood, "working");
   // 空闲分档：从最后一次干活结束（第 1 分钟）算起 <1 / 1–5 / 5–30 / 30–60 / ≥60 分钟
   const idleRun = mk2("idle", [[0, "working"], [1, "idle"]]);
-  [[1.5, "idle", false], [1.99, "idle", false], [2, "bored", false], [5.99, "bored", false], [6, "slack", false], [30.99, "slack", false], [31, "sleep", false],
-    [60.99, "sleep", false], [61, "sleep", true], [600, "sleep", true]].forEach(([min, mood, home]) => {
+  [[1.5, "idle", false], [1.99, "idle", false], [2, "idle-bored", false], [5.99, "idle-bored", false], [6, "idle-slacking", false], [30.99, "idle-slacking", false], [31, "idle-sleeping", false],
+    [60.99, "idle-sleeping", false], [61, "idle-sleeping", true], [600, "idle-sleeping", true]].forEach(([min, mood, home]) => {
     const r = st(idleRun, min);
     assert.strictEqual(r.mood, mood, "min " + min); assert.strictEqual(r.home, home, "home " + min);
   });
   // 没干过活：从运行开始算（开始在 600 分钟前 → 睡着在家）
-  assert.deepStrictEqual([st(mk2("idle", []), 0.5).mood, st(mk2("idle", []), 0.5).home], ["sleep", true]);
+  assert.deepStrictEqual([st(mk2("idle", []), 0.5).mood, st(mk2("idle", []), 0.5).home], ["idle-sleeping", true]);
   assert.strictEqual(st(mk2("idle", [], { startAt: iso(T0 - 30 * 1000) }), 0).mood, "idle");
   // 满 1 小时的从格子里走掉、进左上角那一排；没满的留在格子里
   const sleeper = mk2("idle", [[0, "working"], [1, "idle"]], { projectId: "p1" }), napper = Object.assign({}, sleeper, { runId: "n", phases: ph([[0, "working"], [40, "idle"]]) });
   const o = { now: T0 + 70 * MIN };
-  assert.deepStrictEqual(P.pickWorkers([sleeper, napper], o).pets.map((p) => [p.runId, p.mood]), [["n", "sleep"]]);
-  assert.deepStrictEqual(P.pickIdle([sleeper, napper], o).pets.map((p) => [p.runId, p.mood]), [["s", "sleep"]]);
-  assert.deepStrictEqual(P.pickWorkers([sleeper], { now: T0 + 70 * MIN, watchedId: "s" }).pets.map((p) => p.mood), ["talk"]);   // 对话中不在家
+  assert.deepStrictEqual(P.pickWorkers([sleeper, napper], o).pets.map((p) => [p.runId, p.mood]), [["n", "idle-sleeping"]]);
+  assert.deepStrictEqual(P.pickIdle([sleeper, napper], o).pets.map((p) => [p.runId, p.mood]), [["s", "idle-sleeping"]]);
+  assert.deepStrictEqual(P.pickWorkers([sleeper], { now: T0 + 70 * MIN, watchedId: "s" }).pets.map((p) => p.mood), ["chatting"]);   // 对话中不在家
   assert.strictEqual(P.pickWorkers([sleeper]).pets[0].mood, "idle");                                    // 不带 now = 旧口径
   // 折叠掉的在跑运行补回来：按 agent + label 取最后干活时刻；已在 lanes 里的不重复
   const cur = [{ runId: "s", agent: "codex", tool: "codex", label: "a", taskId: null, startedAt: iso(T0), phase: "idle" },
@@ -188,24 +188,24 @@ assert.ok(Math.abs(P.meetSpot({ x: 0, y: 0 }, { x: 5, y: 0 }, 1.7).x) > Math.abs
   assert.strictEqual(P.withCurrentRuns([], [{ runId: "z", agent: "a", startedAt: iso(T0) }], [])[0].phase, "idle");
   // 包里没有新键的回退
   const old = { working: ["w"], waiting: ["wt"], idle: ["i1", "原地小憩沉眠.webm"], happy: ["h"], click: ["c"] };
-  assert.deepStrictEqual(P.moodList(old, "talk"), ["h"]);
-  assert.deepStrictEqual(P.moodList({ idle: ["i"], click: ["c"] }, "talk"), ["c"]);
-  assert.deepStrictEqual(P.moodList(old, "bored"), ["wt"]);
-  assert.deepStrictEqual(P.moodList(old, "slack"), ["i1", "原地小憩沉眠.webm"]);
-  assert.deepStrictEqual(P.moodList(old, "sleep"), ["原地小憩沉眠.webm"]);
-  assert.deepStrictEqual(P.moodList({ idle: ["i"] }, "sleep"), ["i"]);
+  assert.deepStrictEqual(P.moodList(old, "chatting"), ["h"]);
+  assert.deepStrictEqual(P.moodList({ idle: ["i"], click: ["c"] }, "chatting"), ["c"]);
+  assert.deepStrictEqual(P.moodList(old, "idle-bored"), ["wt"]);
+  assert.deepStrictEqual(P.moodList(old, "idle-slacking"), ["i1", "原地小憩沉眠.webm"]);
+  assert.deepStrictEqual(P.moodList(old, "idle-sleeping"), ["原地小憩沉眠.webm"]);
+  assert.deepStrictEqual(P.moodList({ idle: ["i"] }, "idle-sleeping"), ["i"]);
   assert.deepStrictEqual(P.moodList({ idle: ["i"] }, "worried"), ["i"]);
-  assert.deepStrictEqual(P.moodList(Object.assign({ bored: ["b"], sleep: ["z"] }, old), "bored"), ["b"]);       // 有键用键
-  assert.deepStrictEqual(P.moodList({}, "talk"), []);
+  assert.deepStrictEqual(P.moodList(Object.assign({ "idle-bored": ["b"], "idle-sleeping": ["z"] }, old), "idle-bored"), ["b"]);       // 有键用键
+  assert.deepStrictEqual(P.moodList({}, "chatting"), []);
   // 睡着不插临时动作；其他 mood 照旧
-  const sm = { sleep: ["z"], idle: ["i"], click: ["c"] };
-  let sl = P.rhythm(null, sm, "sleep", 0, () => 0);
-  for (let t = 1000; t < 120000; t += 1000) { sl = P.rhythm(sl, sm, "sleep", t, () => 0); assert.strictEqual(sl.file, "z"); assert.strictEqual(sl.step, "main"); }
-  let aw = P.rhythm(null, sm, "bored", 0, () => 0), sawTemp = false;
-  for (let t = 1000; t < 60000; t += 1000) { aw = P.rhythm(aw, sm, "bored", t, () => 0); if (aw.step === "temp") sawTemp = true; }
+  const sm = { "idle-sleeping": ["z"], idle: ["i"], click: ["c"] };
+  let sl = P.rhythm(null, sm, "idle-sleeping", 0, () => 0);
+  for (let t = 1000; t < 120000; t += 1000) { sl = P.rhythm(sl, sm, "idle-sleeping", t, () => 0); assert.strictEqual(sl.file, "z"); assert.strictEqual(sl.step, "main"); }
+  let aw = P.rhythm(null, sm, "idle-bored", 0, () => 0), sawTemp = false;
+  for (let t = 1000; t < 60000; t += 1000) { aw = P.rhythm(aw, sm, "idle-bored", t, () => 0); if (aw.step === "temp") sawTemp = true; }
   assert.ok(sawTemp);
   // 换状态立刻换动作
-  assert.strictEqual(P.rhythm(P.rhythm(null, { working: ["w"], sleep: ["z"], idle: ["i"] }, "working", 0, () => 0), { working: ["w"], sleep: ["z"], idle: ["i"] }, "sleep", 10, () => 0).file, "z");
+  assert.strictEqual(P.rhythm(P.rhythm(null, { working: ["w"], "idle-sleeping": ["z"], idle: ["i"] }, "working", 0, () => 0), { working: ["w"], "idle-sleeping": ["z"], idle: ["i"] }, "idle-sleeping", 10, () => 0).file, "z");
 }
 console.log("hex-pet-pick tests ok");
 

@@ -95,7 +95,7 @@
   }
   // 在页面上有小人的运行 = lanes 的 agents ∪ views/current 里被留存折叠掉的在跑运行（hive.stage.v1「三十二」2）
   function petRunsOf() { return Pk.withCurrentRuns(runsOf(), data.current && data.current.agents, data.lanes && data.lanes.inactiveAgents); }
-  // 人此刻正看着 / 正在跟它对话的那条运行（同「二十一」的判据）：它的小人进 talk 状态
+  // 人此刻正看着 / 正在跟它对话的那条运行（同「二十一」的判据）：它的小人进 chatting 状态
   function watchedId() {
     var r = St.watchedRun(runsOf(), data.lanes && data.lanes.interactions, Date.now(), dayStart() || null);
     return r && !r.endAt && !r.lost ? r.runId : null;

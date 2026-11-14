@@ -46,18 +46,18 @@
   "原地左转走路.webm",
   "原地左转奔跑.webm"
  ],
- "talk": [
+ "chatting": [
   "原地敲击桌面互动.webm",
   "碎碎念-对屏碎碎念.webm",
   "点击回应-元气挥手.webm"
  ],
- "bored": [
+ "idle-bored": [
   "碎碎念-发呆碎碎念.webm",
   "哈欠连天.webm",
   "超大伸懒腰.webm",
   "东张西望.webm"
  ],
- "slack": [
+ "idle-slacking": [
   "原地专心玩魔方.webm",
   "大口吃零食.webm",
   "下五子棋.webm",
@@ -65,7 +65,7 @@
   "吹气球.webm",
   "原地蹲下玩玩具汽车.webm"
  ],
- "sleep": [
+ "idle-sleeping": [
   "原地小憩沉眠.webm"
  ]
 }

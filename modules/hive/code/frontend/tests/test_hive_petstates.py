@@ -16,13 +16,13 @@ WAVE = "点击回应-元气挥手.webm"
 def _pack(extra: dict[str, list[str]] | None = None) -> dict[str, Any]:
     # 没有 click / happy 以外的临时动作：每个 mood 就一段，src 不会被 3 秒临时动作换掉
     moods = {"working": ["w.webm"], "waiting": ["wait.webm"], "idle": ["i.webm"], "worried": ["worry.webm"], "happy": [WAVE],
-             "talk": ["talk.webm"], "bored": ["bored.webm"], "slack": ["slack.webm"], "sleep": ["sleep.webm"], "drag": ["d.webm"], "walk": ["k.webm"]}
+             "chatting": ["chatting.webm"], "idle-bored": ["idle-bored.webm"], "idle-slacking": ["idle-slacking.webm"], "idle-sleeping": ["idle-sleeping.webm"], "drag": ["d.webm"], "walk": ["k.webm"]}
     moods.update(extra or {})
     return {"kind": "claude", "name": "Claude", "license": "x", "credits": "x", "source": "x", "moods": moods}
 
 
 PACKS = {"claude": _pack()}
-MOOD_OF_CLIP = {"w": "working", "wait": "waiting", "i": "idle", "worry": "worried", "talk": "talk", "bored": "bored", "slack": "slack", "sleep": "sleep"}
+MOOD_OF_CLIP = {"w": "working", "wait": "waiting", "i": "idle", "worry": "worried", "chatting": "chatting", "idle-bored": "idle-bored", "idle-slacking": "idle-slacking", "idle-sleeping": "idle-sleeping"}
 
 
 def _agent(st: Stage, rid: str = "r1", *, phase: str, worked_min: float | None, ago_min: float = 0, project: str | None = "p_math", **over: Any) -> dict[str, Any]:
@@ -61,7 +61,7 @@ def _show(st: Stage, rid: str = "r1") -> None:
 
 def test_each_state_plays_its_own_clip(browser, base) -> None:  # noqa: F811  三十二·1
     cases = [("working", None, "w"), ("waiting_input", 1, "wait"), ("error", 3, "worry"), ("waiting_permission", 3, "worry"), ("idle", 0.5, "i"),
-             ("idle", 2, "bored"), ("idle", 10, "slack"), ("idle", 40, "sleep")]
+             ("idle", 2, "idle-bored"), ("idle", 10, "idle-slacking"), ("idle", 40, "idle-sleeping")]
     with open_stage(browser, base, pets=PACKS, hold_webm=True) as st:
         for phase, worked, want in cases:
             _lanes(st, _agent(st, phase=phase, worked_min=1 if worked is None else worked))
@@ -78,13 +78,13 @@ def test_idle_tiers_follow_the_fake_clock_from_the_last_work_ending(browser, bas
         for _ in range(14):                               # 约 70 秒：离最后一次干活结束满 1 分钟
             st.poll()
             seen.append(_clip(st))
-        assert seen[0] == "i" and seen[-1] == "bored", seen
+        assert seen[0] == "i" and seen[-1] == "idle-bored", seen
         for _ in range(60):                               # 再约 5 分钟：满 5 分钟
             st.poll()
-        assert _clip(st) == "slack"
+        assert _clip(st) == "idle-slacking"
         for _ in range(300):                              # 再约 25 分钟：满 30 分钟
             st.poll()
-        assert _clip(st) == "sleep" and "is-work" in st.page.locator(".st-pet").get_attribute("class")
+        assert _clip(st) == "idle-sleeping" and "is-work" in st.page.locator(".st-pet").get_attribute("class")
 
 
 def test_never_worked_counts_from_the_run_start(browser, base) -> None:  # noqa: F811  三十二·1
@@ -92,7 +92,7 @@ def test_never_worked_counts_from_the_run_start(browser, base) -> None:  # noqa:
         now = st.now().astimezone(TZ)
         _lanes(st, _run("r1", "claude-code", label="g", projectId="p_math", startAt=_iso(now - timedelta(minutes=7)), lastSeenAt=_iso(now)))
         _show(st)
-        assert _mood(st) == "slack"
+        assert _mood(st) == "idle-slacking"
 
 
 def test_a_pet_with_a_person_talking_to_it_plays_the_talk_clip_even_when_working(browser, base) -> None:  # noqa: F811  三十二·1
@@ -101,7 +101,7 @@ def test_a_pet_with_a_person_talking_to_it_plays_the_talk_clip_even_when_working
         _lanes(st, _agent(st, phase="working", worked_min=1),
                interactions=[{"runId": "r1", "kind": "attend", "at": _iso(now), "until": _iso(now + timedelta(seconds=30))}])
         _show(st)
-        assert (_mood(st), _clip(st)) == ("talk", "talk")
+        assert (_mood(st), _clip(st)) == ("chatting", "chatting")
         _lanes(st, _agent(st, phase="error", worked_min=1),
                interactions=[{"runId": "r1", "kind": "attend", "at": _iso(now), "until": _iso(now + timedelta(seconds=60))}])
         _show(st)
@@ -109,12 +109,12 @@ def test_a_pet_with_a_person_talking_to_it_plays_the_talk_clip_even_when_working
         _lanes(st, _agent(st, phase="idle", worked_min=1))
         for _ in range(4):
             st.poll()
-        assert _mood(st) != "talk"                        # 人不看了：回到状态动作
+        assert _mood(st) != "chatting"                        # 人不看了：回到状态动作
 
 
 def test_packs_without_the_new_keys_fall_back(browser, base) -> None:  # noqa: F811  三十二·1
-    old = {"claude": _pack({"talk": [], "bored": [], "slack": [], "sleep": [], "idle": ["i.webm", "原地小憩沉眠.webm"], "waiting": ["wait.webm"]})}
-    for key in ("talk", "bored", "slack", "sleep"):
+    old = {"claude": _pack({"chatting": [], "idle-bored": [], "idle-slacking": [], "idle-sleeping": [], "idle": ["i.webm", "原地小憩沉眠.webm"], "waiting": ["wait.webm"]})}
+    for key in ("chatting", "idle-bored", "idle-slacking", "idle-sleeping"):
         old["claude"]["moods"].pop(key, None)
     with open_stage(browser, base, pets=old, hold_webm=True) as st:
         for worked, want in ((2, "wait"), (40, "原地小憩沉眠")):
@@ -130,7 +130,7 @@ def test_after_an_hour_the_sleeper_walks_back_to_the_top_left_and_sleeps_there(b
     with open_stage(browser, base, pets=PACKS, hold_webm=True) as st:
         _lanes(st, _agent(st, phase="idle", worked_min=50))
         _show(st)
-        assert "is-work" in st.page.locator(".st-pet").get_attribute("class") and _clip(st) == "sleep"
+        assert "is-work" in st.page.locator(".st-pet").get_attribute("class") and _clip(st) == "idle-sleeping"
         _lanes(st, _agent(st, phase="idle", worked_min=61))
         st.poll()
         cls = st.page.locator(".st-pet").get_attribute("class")
@@ -141,7 +141,7 @@ def test_after_an_hour_the_sleeper_walks_back_to_the_top_left_and_sleeps_there(b
         home = st.page.evaluate("() => { const e = document.querySelector('.st-pet'); return {home: e.__home, x: parseFloat(e.style.left), y: parseFloat(e.style.top)} }")
         assert 24 <= home["home"]["x"] <= 24 + 340 and 142 <= home["home"]["y"] <= 142 + 160, home      # 同没有去向的那排位置
         assert abs(home["x"] - home["home"]["x"]) < 0.01 and abs(home["y"] - home["home"]["y"]) < 0.01, home
-        assert "st-away" not in st.page.locator(".st-pet").get_attribute("class") and _clip(st) == "sleep"
+        assert "st-away" not in st.page.locator(".st-pet").get_attribute("class") and _clip(st) == "idle-sleeping"
 
 
 def test_reduced_motion_sleeper_goes_straight_home(browser, base) -> None:  # noqa: F811  三十二·5
@@ -161,7 +161,7 @@ def test_a_new_page_with_an_old_sleeper_puts_it_at_the_top_left_without_a_walk(b
     with open_stage(browser, base, setup=setup, pets=PACKS, hold_webm=True) as st:
         _show(st)
         cls = st.page.locator(".st-pet").get_attribute("class")
-        assert "is-loose" in cls and "st-away" not in cls and _clip(st) == "sleep", cls
+        assert "is-loose" in cls and "st-away" not in cls and _clip(st) == "idle-sleeping", cls
 
 
 def test_running_agents_folded_by_the_lane_retention_still_get_a_pet(browser, base) -> None:  # noqa: F811  三十二·2
@@ -179,8 +179,8 @@ def test_running_agents_folded_by_the_lane_retention_still_get_a_pet(browser, ba
     with open_stage(browser, base, setup=setup, pets=PACKS, hold_webm=True) as st:
         _show(st)
         assert st.page.locator(".st-pet").count() == 4
-        assert (_mood(st, "r2"), "is-loose" in st.page.locator('.st-pet[data-run-id="r2"]').get_attribute("class")) == ("sleep", True)   # 90 分钟前就不干了：在左上角睡
-        assert (_mood(st, "r3"), "is-work" in st.page.locator('.st-pet[data-run-id="r3"]').get_attribute("class")) == ("slack", True)     # 12 分钟：在它的项目格里开小差
+        assert (_mood(st, "r2"), "is-loose" in st.page.locator('.st-pet[data-run-id="r2"]').get_attribute("class")) == ("idle-sleeping", True)   # 90 分钟前就不干了：在左上角睡
+        assert (_mood(st, "r3"), "is-work" in st.page.locator('.st-pet[data-run-id="r3"]').get_attribute("class")) == ("idle-slacking", True)     # 12 分钟：在它的项目格里开小差
         assert _mood(st, "r4") == "worried"
         # 失联 / 已结束的照旧不出
         now = st.now().astimezone(TZ)
@@ -311,7 +311,7 @@ def test_big_figure_greets_once_then_follows_the_state_and_stays_inside_the_card
         _lanes(st, _agent(st, phase="idle", worked_min=40))
         st.poll()
         st.page.clock.run_for(16000)                       # Agent 页每 15 秒自己重读重画
-        assert _big_main(st) == "sleep" and _big_src(st) == "sleep"
+        assert _big_main(st) == "idle-sleeping" and _big_src(st) == "idle-sleeping"
         # 关掉再点开：再问候一次
         st.page.keyboard.press("Escape")
         st.page.wait_for_timeout(450)
