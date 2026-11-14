@@ -99,14 +99,15 @@
   // 记到任务 = 只给 taskId，否则只给 projectId（nexus-core 要求恰好一个）
   function aim(projectId, taskId) { return taskId ? { taskId: taskId } : { projectId: projectId }; }
   // 拖放要发的请求；放到空白处（projectId 为空）= null，什么都不发。块与宠物默认 remember:false（只这一次），气泡里勾上才传 true（2026-11-08）
-  function dropRequest(item, projectId, remember, timeFrom, taskId) {
+  // 计时（白条 / 在跑的）另带 windowRecords：ignore 忽略记录 / both 我全都要 / fill 填充空隙（nexus-core v2.62）；不给 = 后端缺省 both
+  function dropRequest(item, projectId, remember, timeFrom, taskId, windowRecords) {
     if (!projectId) return null;
     var enc = encodeURIComponent;
     switch (item.kind) {
       case "block": return { method: "POST", path: "activity/blocks/assign", body: Object.assign({ date: item.block.date, blockKey: item.block.blockKey, ifSeq: item.block.seq, remember: !!remember }, aim(projectId, taskId)) };
       case "pet": return { method: "POST", path: "agents/" + enc(item.runId) + "/place", body: Object.assign({ remember: !!remember }, aim(projectId, taskId), timeFrom === "now" ? { timeFrom: "now" } : {}) };
-      case "strip": return { method: "POST", path: "timer/unplaced/" + enc(item.id) + "/place", body: aim(projectId, taskId) };
-      case "clock": return { method: "POST", path: "timer/place", body: aim(projectId, taskId) };
+      case "strip": return { method: "POST", path: "timer/unplaced/" + enc(item.id) + "/place", body: Object.assign(aim(projectId, taskId), windowRecords ? { windowRecords: windowRecords } : {}) };
+      case "clock": return { method: "POST", path: "timer/place", body: Object.assign(aim(projectId, taskId), windowRecords ? { windowRecords: windowRecords } : {}) };
     }
     return null;
   }
@@ -134,8 +135,8 @@
     }
     function fail(out) { say("失败：" + out.why); return { ok: false, reverted: true, why: out.why }; }
 
-    async function drop(item, projectId, opts) {   // opts: {remember, timeFrom, taskId}
-      var req = dropRequest(item, projectId, opts && opts.remember, opts && opts.timeFrom, opts && opts.taskId);
+    async function drop(item, projectId, opts) {   // opts: {remember, timeFrom, taskId, windowRecords}
+      var req = dropRequest(item, projectId, opts && opts.remember, opts && opts.timeFrom, opts && opts.taskId, opts && opts.windowRecords);
       if (!req) return { ok: false, reverted: true };
       if (item.kind === "clock" && !timer) return { ok: false, reverted: true };
       var out = await call(req);
@@ -158,6 +159,17 @@
       if (item.kind === "block") req.body.ifSeq = typeof seq === "number" ? seq : item.block.seq + 1;
       var out = await call(req);
       return out.ok ? { ok: true } : fail(out);
+    }
+
+    // 拖进垃圾桶：白条 = DELETE timer/unplaced/{id}；在跑的计时 = POST timer/cancel（hive.stage.v1「三十四」）
+    async function discard(item) {
+      var req = item.kind === "strip" ? { method: "DELETE", path: "timer/unplaced/" + encodeURIComponent(item.id) }
+        : item.kind === "clock" && timer ? { method: "POST", path: "timer/cancel" } : null;
+      if (!req) return { ok: false };
+      var out = await call(req);
+      if (!out.ok) return fail(out);
+      if (item.kind === "strip") unplaced = unplaced.filter(function (u) { return u.id !== item.id; }); else timer = null;
+      return { ok: true };
     }
 
     // 开始计时（不选项目）；countdownSeconds = 倒计时（hive.stage.v1「九」，nexus-core v2.51），缺省 = 正计时
@@ -190,6 +202,7 @@
       timerState: function () { return timer; },
       setTimer: function (t) { timer = t; },
       drop: drop,
+      discard: discard,
       remember: remember,
       clickClock: clickClock,
       startClock: startClock,

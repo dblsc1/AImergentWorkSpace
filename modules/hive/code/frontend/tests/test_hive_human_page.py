@@ -143,9 +143,9 @@ def test_running_task_card_drags_to_a_cell_and_asks_before_placing(browser, base
         assert st.posts == [] and card.locator(".st-cf-title").inner_text() == "把这次计时记到 钢琴"
         assert st.page.locator(".cm-panel").is_hidden() and st.page.locator(".hp-task.is-running").count() == 1   # 卡片回原位；确认卡开着时页面让开（二十三·1）
         assert st.page.locator(".hp-task.is-running").evaluate("e => e.style.position === '' && e.style.translate === ''")
-        card.locator(".st-cf-ok").click()
+        card.locator("[data-wr=both]").click()
         st.settle()
-        assert st.posts == [("timer/place", {"projectId": "p_piano"})]
+        assert st.posts == [("timer/place", {"projectId": "p_piano", "windowRecords": "both"})]
 
 
 def test_running_task_card_dropped_on_nothing_goes_back_and_sends_nothing(browser, base) -> None:  # noqa: F811  十四·6

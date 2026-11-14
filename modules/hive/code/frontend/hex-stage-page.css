@@ -251,3 +251,10 @@ video.st-art { position: absolute; max-width: none; max-height: none; height: 80
 .fp-art img { max-width: 72px; max-height: 84px; }
 .fp-name { font-size: var(--fs-sub); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fp-empty { grid-column: 1 / -1; color: var(--ink-3); font-size: var(--fs-sub); }
+
+/* 垃圾桶（「三十四」）：拖手动计时时在右下角 */
+.st-trash { position: fixed; right: 24px; bottom: 24px; z-index: 300; width: 64px; height: 64px; border-radius: 50%; display: none; place-items: center;
+  background: var(--panel); color: var(--ink-2); border: 1px solid var(--line); box-shadow: 0 4px 14px rgba(0, 0, 0, .18); transition: transform .12s, background .12s, color .12s; }
+.st-trash.is-on { display: grid; }
+.st-trash.st-hot { transform: scale(1.18); background: var(--danger); color: #fff; border-color: var(--danger); }
+.st-cf-wr .is-default { border-color: var(--fact); font-weight: 600; }

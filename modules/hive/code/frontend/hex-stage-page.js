@@ -140,8 +140,20 @@
   document.addEventListener("click", function (ev) { if (swallow) { swallow = false; ev.stopPropagation(); ev.preventDefault(); } }, true);
 
   // ── 拖动（Pointer Events）。item() 返回 null = 不可拖，什么都不发生 ──
+  // 垃圾桶（「三十四」）：拖手动计时（白条 / 在跑的计时）时出现在右下角，拖进去 = 扔掉
+  var bin = null;
+  function trashable(item) { return item.kind === "strip" || (item.kind === "clock" && stage.timerRunning()); }
+  function binShow(on) {
+    if (!bin) {
+      bin = document.createElement("div"); bin.className = "st-trash"; bin.setAttribute("aria-label", "扔掉");
+      bin.innerHTML = '<svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>';
+      document.body.appendChild(bin);
+    }
+    bin.classList.toggle("is-on", on); if (!on) bin.classList.remove("st-hot");
+  }
+  function overBin(x, y) { var r = bin && bin.classList.contains("is-on") && bin.getBoundingClientRect(); return !!r && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; }
   function drag(handle, o) {
-    var id = null, sx = 0, sy = 0, moved = false, hot = null, item = null, sprout = null, lx = 0, ly = 0;
+    var id = null, sx = 0, sy = 0, moved = false, hot = null, item = null, sprout = null, lx = 0, ly = 0, binned = false;
     var Sp = window.NexusTableHexSprout;
     function lit(c) { if (c !== hot) { if (hot) hot.classList.remove("st-hot"); hot = c; if (hot) hot.classList.add("st-hot"); } }
     handle.addEventListener("pointerdown", function (ev) {
@@ -159,14 +171,17 @@
       if (!moved) {
         if (Pk.pressKind(dx, dy) === "click") return;
         moved = true; dragging++; o.el.classList.add("st-dragging");
+        if (trashable(item)) binShow(true);
         if (o.onGrab) o.onGrab();
       }
       lx = dx / (o.unzoomed ? 1 : zoom()); ly = dy / (o.unzoomed ? 1 : zoom());   // unzoomed：元素在 body 上（不在被缩放的 .board-shell 里）
       o.el.style.translate = lx + "px " + ly + "px";
-      var cell = cellAt(ev.clientX, ev.clientY);
-      if (fileable(item) && PP.dragOver(ev.clientX, ev.clientY, cell)) cell = null;   // 项目面板（弹簧展开 / 任务条 / 空白新建）：指针在面板里，亮的是任务条，不是后面的格子
+      binned = trashable(item) && overBin(ev.clientX, ev.clientY);
+      if (bin) bin.classList.toggle("st-hot", binned);
+      var cell = binned ? null : cellAt(ev.clientX, ev.clientY);
+      if (!binned && fileable(item) && PP.dragOver(ev.clientX, ev.clientY, cell)) cell = null;   // 项目面板（弹簧展开 / 任务条 / 空白新建）：指针在面板里，亮的是任务条，不是后面的格子
       lit(cell);
-      if (Sp && fileable(item)) sprout = blankSprout(ev.clientX, ev.clientY, sprout);
+      if (Sp && fileable(item)) sprout = binned ? (Sp.removeSprout(), null) : blankSprout(ev.clientX, ev.clientY, sprout);
     });
     function onEsc(ev) { if (ev.key === "Escape" && id != null && moved) end({ pointerId: id }, true); }
     function end(ev, cancel) {
@@ -177,6 +192,16 @@
       var grown = sprout; sprout = null;
       if (moved) { swallow = true; window.setTimeout(function () { swallow = false; }, 50); }   // 松手那下 click 不能落到空白处把刚开的表单收掉
       if (!moved) { if (!cancel && o.onClick) o.onClick(); return; }
+      binShow(false);
+      if (binned && !cancel) {   // 扔进垃圾桶：元素按「取消」回原处，再发删除
+        binned = false; PP.dragEnd(); if (Sp) Sp.removeSprout();
+        o.el.classList.remove("st-dragging"); dragging--;
+        if (o.onRelease) o.onRelease(null, true, lx, ly, false, null); else o.el.style.translate = "";
+        busy++;
+        stage.discard(item).then(function (r) { busy--; render(); if (r && r.ok) refresh(); });
+        return;
+      }
+      binned = false;
       var on = cancel ? null : PP.dropAt(ev.clientX, ev.clientY);   // 落在项目面板的任务条上 / 新建任务的输入上
       var target = cancel ? null : on ? cellEl(on.projectId) : PP.overPanel(ev.clientX, ev.clientY) ? null : cellAt(ev.clientX, ev.clientY);
       PP.dragEnd();
@@ -949,28 +974,45 @@
     var cell = cellEl(pid);
     if (!cell) { after(); return; }
     confirms.filter(function (x) { return x.dataset.eye; }).forEach(dropConfirm);
-    var tk = taskId && taskOf(taskId), name = tk ? tk.name : projectName(pid), timing = item.kind === "clock", el = document.createElement("div");
+    var tk = taskId && taskOf(taskId), name = tk ? tk.name : projectName(pid), timing = item.kind === "clock" || item.kind === "strip", el = document.createElement("div");
     el.className = "st-confirm st-card"; el.setAttribute("role", "dialog"); el.dataset.eye = "1";
+    // 计时：三选一怎么对待这段时间里的窗口聚焦记录（「三十四」，nexus-core v2.62），缺省我全都要
     el.innerHTML = '<button type="button" class="st-cf-x" aria-label="取消">✕</button><div class="st-cf-title"></div>' +
-      '<div class="st-cf-btns"><button type="button" class="st-cf-ok">确认</button></div>' +
-      (timing ? "" : '<label class="st-cf-rem"><input type="checkbox" class="st-cf-box"><span></span></label>');
-    el.querySelector(".st-cf-title").textContent = timing ? "把这次计时记到 " + name : "把 " + item.label + " 算到 " + name;
+      (timing ? '<div class="st-cf-btns st-cf-wr"><button type="button" data-wr="ignore">忽略记录</button><button type="button" data-wr="both" class="is-default">我全都要</button><button type="button" data-wr="fill">填充空隙</button></div>'
+        : '<div class="st-cf-btns"><button type="button" class="st-cf-ok">确认</button></div><label class="st-cf-rem"><input type="checkbox" class="st-cf-box"><span></span></label>');
+    el.querySelector(".st-cf-title").textContent = timing ? (item.kind === "strip" ? "把这段计时记到 " : "把这次计时记到 ") + name : "把 " + item.label + " 算到 " + name;
     if (!timing) el.querySelector(".st-cf-rem span").textContent = "以后这个窗口都算 " + name;
     confirmStack(pid, rectCenter(cell)).appendChild(el);
     if (!confirms.length) document.addEventListener("keydown", onConfirmKey, true);
     confirms.push(el);
-    el.__done = function (ok) {
+    el.__done = function (ok) {   // ok：true / 计时的 windowRecords；null = 取消
       var box = el.querySelector(".st-cf-box"), remember = !!(box && box.checked);
       dropConfirm(el);
       if (!ok) { after(); return; }
       busy++;
-      dropItem(item, pid, { remember: remember, taskId: taskId }).then(function (r) {
+      dropItem(item, pid, { remember: remember, taskId: taskId, windowRecords: typeof ok === "string" ? ok : undefined }).then(function (r) {
         busy--; eye.filed = !!(r && r.ok); if (r && r.ok) PP.invalidate(); render();
         return Promise.resolve(r && r.ok ? refresh() : null).then(after);
       });
     };
     el.querySelector(".st-cf-x").addEventListener("click", function () { el.__done(null); });
-    el.querySelector(".st-cf-ok").addEventListener("click", function () { el.__done(true); });
+    if (timing) {
+      el.querySelectorAll("[data-wr]").forEach(function (b) { b.addEventListener("click", function () { el.__done(b.dataset.wr); }); });
+      el.querySelector(".is-default").focus({ preventScroll: true });
+    } else el.querySelector(".st-cf-ok").addEventListener("click", function () { el.__done(true); });
+  }
+  // 白条、时钟落到项目格 / 任务条：先弹三选一再记（「三十四」）；落在别处回原位
+  function timerRelease(el, itemOf) {
+    var none = function () {};
+    return function (target, cancel, dx, dy, made, on) {
+      el.style.translate = "";
+      if (made) return "keep";
+      var item = itemOf(), pid = on ? on.projectId : target && !cancel ? target.dataset.projectId : null;
+      if (!item || !pid) return "keep";
+      if (on && on.create) PP.awaitName(function (taskId) { getJson("views/tree").then(function (t) { if (t) data.tree = t; openEyeConfirm(item, pid, taskId, none); }); }, none);
+      else openEyeConfirm(item, pid, (on && on.taskId) || null, none);
+      return "keep";
+    };
   }
   // 白条标签：「手动计时 · [标题 | HH:MM 开始] · X 分钟」（hive.stage.v1「二」9）
   function stripLabel(u) {
@@ -990,10 +1032,7 @@
     var list = pop.querySelector(".st-pop-list"), q = pop.querySelector("input"), cur = -1;
     function items() { return [].slice.call(list.querySelectorAll(".st-pop-item")); }
     function mark(i) { var a = items(); if (!a.length) return; cur = (i + a.length) % a.length; a.forEach(function (x, k) { x.classList.toggle("is-cur", k === cur); }); a[cur].scrollIntoView({ block: "nearest" }); }
-    function pick(pid) {
-      closeStripList(); busy++;
-      stage.drop({ kind: "strip", id: id }, pid).then(function (res) { busy--; render(); if (res && res.ok) refresh(); });
-    }
+    function pick(pid) { closeStripList(); openEyeConfirm({ kind: "strip", id: id }, pid, null, function () {}); }
     function fill() {
       var kw = q ? q.value.trim().toLowerCase() : "", html = "";
       zones.concat([{ id: null, name: "其他" }]).forEach(function (z) {
@@ -1027,7 +1066,8 @@
         e = stripEls[u.id] = document.createElement("div");
         e.className = "st-strip"; e.tabIndex = 0; e.setAttribute("role", "button"); e.dataset.id = u.id; e.style.setProperty("--i", i);
         e.__u = u;
-        drag(e, { el: e, item: function () { return { kind: "strip", id: e.__u.id }; }, onClick: function () { openStripList(e); } });
+        var stripItem = function () { return { kind: "strip", id: e.__u.id }; };
+        drag(e, { el: e, item: stripItem, onClick: function () { openStripList(e); }, onRelease: timerRelease(e, stripItem) });
         e.addEventListener("keydown", function (ev) { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openStripList(e); } });
       }
       keep[u.id] = 1; e.__u = u;
@@ -1332,7 +1372,7 @@
         else eyeRelease();
         return "keep";
       } });
-    drag(el, { el: el, item: clockItem, onClick: tap });
+    drag(el, { el: el, item: clockItem, onClick: tap, onRelease: timerRelease(el, function () { return stage.timerRunning() ? { kind: "clock" } : null; }) });
     el.addEventListener("keydown", function (ev) {
       if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); clockMenu.open(); }
       else if (ev.key === "ArrowDown") { ev.preventDefault(); clockMenu.showActions(); }
