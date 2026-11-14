@@ -102,7 +102,7 @@ def test_every_ticker_line_stays_inside_the_centre_cell_and_looks_like_a_project
         _setup(st)
         st.lanes["agents"][1]["label"] = "一个特别特别长的代理名字ecsagent-cfo-sandbox-builder"
         now = st.now().astimezone(TZ)
-        st.lanes["interactions"].append({"runId": "r2", "kind": "attend", "at": _iso(now), "until": _iso(now + timedelta(seconds=30))})
+        st.lanes["interactions"].append({"runId": "r2", "kind": "attend", "at": _iso(now), "until": _iso(now + timedelta(seconds=300))})   # 轮播 8 秒一句，整圈要近一分钟：人看着 r2 要覆盖整圈
         _focus(st, "p_math")
 
     with open_stage(browser, base, width=width, height=height, setup=long_names) as st:
