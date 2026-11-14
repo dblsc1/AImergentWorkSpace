@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import threading
 from contextlib import contextmanager
@@ -60,6 +61,15 @@ def _ms(t: datetime) -> int:
     return round(t.timestamp() * 1000)
 
 
+def _both(key: str) -> bool:
+    """投影行键 = ``[source, dedupeKey]``（JSON）；防重键以 ``timer-both:`` 开头的是「我全都要」的计时段。"""
+    try:
+        source, dedupe = json.loads(key)
+    except (TypeError, ValueError):
+        return False
+    return source == "timer-backend" and isinstance(dedupe, str) and dedupe.startswith("timer-both:")
+
+
 def _load_others(user: str, since: datetime) -> list | None:
     """别的来源已记 / 正在跑的时间（已 merge）。来源在查询里过滤、分页取全；取不全（页数用尽 / 翻不动）→ None，调用方本轮放弃，不拿截断的数据算。"""
     end, start, seen, ivs = _now() + timedelta(days=1), since - timedelta(days=1), set(), []
@@ -68,6 +78,8 @@ def _load_others(user: str, since: datetime) -> list | None:
         for r in rows:
             if r["key"] not in seen:
                 seen.add(r["key"])
+                if _both(r["key"]):
+                    continue  # v2.62「我全都要」：计时整段照记，期间的窗口块也照记，不扣
                 ivs.append((_ms(r["startAt"]), _ms(r["endAt"])))
         if len(rows) < _PAGE:
             break
@@ -78,7 +90,7 @@ def _load_others(user: str, since: datetime) -> list | None:
     else:
         return None
     running = timer_service.get_running_state(user)
-    if running:
+    if running and running.get("windowRecords") not in ("both", "fill"):  # v2.62：这两种记法停下时才知道扣哪些，跑着时不扣
         ivs.append((_ms(datetime.fromisoformat(running["startAt"])), rc.FOREVER))
     return rc.merge(ivs)
 

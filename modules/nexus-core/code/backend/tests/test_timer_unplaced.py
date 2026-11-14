@@ -142,7 +142,7 @@ def test_place_bar_writes_session_with_bar_times_and_deletes_it(client):
     w = _world(client)
     bar = _bar(30, 600, "unp_one")
     out = _post(client, f"{TIMER}/unplaced/unp_one/place", {"taskId": w["a"]})
-    assert out == {"recorded": True, "taskId": w["a"], "projectId": w["p"]}
+    assert out == {"recorded": True, "taskId": w["a"], "projectId": w["p"], "windowRecords": "both"}   # v2.62 缺省「我全都要」
     ev = _events(type="session.completed")
     assert len(ev) == 1 and ev[0]["source"] == "timer-backend" and ev[0]["subject"]["task"] == w["a"]
     assert ev[0]["data"]["startAt"] == bar["startAt"] and ev[0]["data"]["durationSeconds"] == 600
@@ -267,3 +267,72 @@ def test_countdown_past_deadline_closes_at_deadline_on_read(client):
     bars = _bars(client)
     assert len(bars) == 1 and bars[0]["endAt"] == dl and bars[0]["durationSeconds"] == 300
     assert client.post(f"{TIMER}/stop").json() == {"running": False, "event": None}
+
+
+# ------------------------------------------------------------ v2.62：窗口聚焦记录的三种记法、垃圾桶
+
+
+def test_place_bar_keys_mark_the_three_ways(client):
+    w = _world(client)
+    _bar(40, 600, "unp_i")
+    _bar(40, 600, "unp_b")
+    _post(client, f"{TIMER}/unplaced/unp_i/place", {"taskId": w["a"], "windowRecords": "ignore"})
+    _post(client, f"{TIMER}/unplaced/unp_b/place", {"taskId": w["a"]})
+    keys = sorted(e["dedupeKey"] for e in _events(type="session.completed"))
+    assert keys == ["timer-both:unp_b", "timer-unplaced:unp_i"]
+    assert client.post(f"{TIMER}/unplaced/unp_b/place", json={"taskId": w["a"], "windowRecords": "x"}).status_code == 422
+
+
+def test_fill_records_only_the_gaps_between_classified_window_time(client):
+    w = _world(client)
+    bar = _bar(40, 600, "unp_f")
+    start = datetime.fromisoformat(bar["startAt"])
+    from app.modules.timer import backfill  # noqa: PLC0415
+
+    sub = _events(type="session.completed")
+    assert sub == []
+    # 窗口块在 [+100, +200) 与 [+150, +300) 已入账（重叠的并起来）→ 计时只记 [0, 100) 与 [300, 600)
+    for i, (a, n) in enumerate(((100, 100), (150, 150))):
+        backfill.record_session("u_local", {"zone": w["zone"], "project": w["q"], "task": w["c"]},
+                                (start + timedelta(seconds=a)).isoformat(), (start + timedelta(seconds=a + n)).isoformat(), n,
+                                source="activity-block", dedupe_key=f"blk:{i}")
+    _post(client, f"{TIMER}/unplaced/unp_f/place", {"taskId": w["a"], "windowRecords": "fill"})
+    mine = sorted((e["data"]["startAt"], e["data"]["durationSeconds"]) for e in _events(type="session.completed", source="timer-backend"))
+    assert mine == [(start.isoformat(), 100), ((start + timedelta(seconds=300)).isoformat(), 300)]
+    assert _bars(client) == []
+
+
+def test_running_timer_placed_with_a_way_is_recorded_that_way_on_stop(client):
+    w = _world(client)
+    client.post(f"{TIMER}/start-unplaced")
+    _post(client, f"{TIMER}/place", {"taskId": w["a"], "windowRecords": "both"})
+    stop = client.post(f"{TIMER}/stop").json()
+    assert stop["running"] is False and stop["unplacedId"] is None
+    ev = _events(type="session.completed")
+    assert len(ev) == 1 and ev[0]["dedupeKey"].startswith("timer-both:sess_") and ev[0]["subject"]["task"] == w["a"]
+
+
+def test_discard_bar_deletes_it_without_a_fact(client):
+    _bar(30, 60, "unp_d")
+    assert client.delete(f"{TIMER}/unplaced/unp_d").status_code == 204
+    assert _bars(client) == [] and _events(type="session.completed") == []
+    assert client.delete(f"{TIMER}/unplaced/unp_d").status_code == 404
+
+
+def test_discard_bar_is_human_only(client, ai_token):  # noqa: F811
+    _bar(30, 60, "unp_h")
+    assert client.delete(f"{TIMER}/unplaced/unp_h", headers=AI_HEAD).status_code == 403
+    assert len(_bars(client)) == 1
+
+
+def test_reconcile_skips_only_keep_both_timer_spans():
+    import json as _json  # noqa: PLC0415
+
+    from app.modules.activity.reconcile import _both  # noqa: PLC0415
+
+    assert _both(_json.dumps(["timer-backend", "timer-both:unp_1"]))
+    assert not _both(_json.dumps(["timer-backend", "timer:sess_1"]))
+    assert not _both(_json.dumps(["timer-backend", "timer-fill:unp_1:1"]))
+    assert not _both(_json.dumps(["manual-backfill", "timer-both:x"]))
+    assert not _both("bad")
+

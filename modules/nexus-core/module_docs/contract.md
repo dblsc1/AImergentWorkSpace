@@ -5054,6 +5054,17 @@ MCP 侧见 `contracts/mcp.tools.v2`。
 
 v2.13「窗口 ↔ 代理会话」的「归一化」对**窗口标题**（给了程序名时）追加一条（label / match 不变）：结尾那段分隔（「 - 」「 — 」「 – 」「 | 」）后面，第一个词正好是 `claude` / `codex` / `gemini` / `opencode` / `aider` / `hermes`（不分大小写）时去掉这段。用到这条归一化的地方（注意力 attend、`focus` 的代理会话目标、建议里的代理会话）一起生效；端点、字段、错误码不变。
 
+## v0.6：手动计时记到项目时窗口聚焦记录的三种记法、白条扔掉（v2.62，追加式）
+
+仓主 2026-11-15：手动计时不作为第三个事实源，暂定「计时的记录 = 全程集中注意力在对应项目 / 任务上」；拖进项目时可选怎么对待这段时间里的窗口聚焦记录，三个选项「忽略记录」「我全都要」「填充空隙」，缺省「我全都要」；计时期间没分类的窗口算计时的。拖手动计时气泡时右下角有垃圾桶，拖进去扔掉。
+
+1. **`POST timer/place`、`POST timer/unplaced/{barId}/place` 的体追加可选 `windowRecords`**：`"ignore"`（忽略记录）/ `"both"`（我全都要，缺省）/ `"fill"`（填充空隙）；别的值 `422`。`timer/unplaced/{barId}/place` 的回应追加 `windowRecords`。
+   - `ignore`：整段写一条 `session.completed`（`source: timer-backend`），同 v2.44；窗口块对账照旧扣掉与它重叠的时间（「三级分类」四·3）。
+   - `both`：整段写一条 `session.completed`（`source: timer-backend`，防重键以 `timer-both:` 开头）；窗口块对账**不扣**这一段，期间已分类的窗口块照记各自的去向（两边时间允许重叠）；期间没分类的窗口不另记，由这段计时覆盖。
+   - `fill`：只写这段计时里**已入账的窗口块时间**（`source: activity-block`，按写入那一刻台账里的为准）之外的空隙，每个 ≥ 1 秒的空隙一条 `session.completed`（`source: timer-backend`，防重键 `timer-fill:<id>:<空隙起点毫秒>`）；空隙里没分类的窗口时间算计时的（对账照旧扣掉与这些段重叠的部分）。写入之后才分类的窗口不回头改这段计时。这段里窗口记录超过 5000 段 → `422`，什么都不写。
+2. **在跑的计时**：`timer/place` 选的记法存在在跑文档上，`timer/stop`（含倒计时到点收尾）按它写：`both` / `fill` 的回应是 `{running: false, event: null, unplacedId: null}`；`ignore` 与没经 `timer/place` 的计时（直接对任务开的）照旧。在跑时选了 `both` / `fill` 的，对账不再把「此刻在跑的计时」当成已占用的时间扣窗口块（停下才知道该扣哪些）。
+3. **`DELETE timer/unplaced/{barId}`**（只许人，同 `timer/unplaced/{barId}/place` 的门）：白条删掉、不进台账，`204`；不存在 `404`。在跑的计时扔掉仍用 `POST timer/cancel`。
+
 ## 变更记录
 
 见 `module_docs/contract-changelog.md`（从本文件拆出，只记历史不含规范）。

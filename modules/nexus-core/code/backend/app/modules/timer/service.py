@@ -163,6 +163,12 @@ def stop(user: str | None = None) -> dict:
     now = end
     started = datetime.fromisoformat(state["startAt"])
     duration = max(int((now - started).total_seconds()), 1)  # 秒级下限 1：起停同秒也算一段真实工作
+    window_records = state.get("windowRecords")  # v2.62：拖进项目时选的记法；没有（直接对任务开的计时）= 照旧
+    if window_records in ("both", "fill"):
+        unplaced_impl.record_with(user, {"zone": state["zoneId"], "project": state["projectId"], "task": state["taskId"]},
+                                  state["startAt"], now.isoformat(), state["sessionId"], window_records, state.get("mode", DEFAULT_MODE))
+        repo.clear_running(user)
+        return {"running": False, "event": None, "unplacedId": None}
 
     envelope = {
         "spec": SPEC,
@@ -211,17 +217,22 @@ def _timer_out(state: dict) -> dict:
             "startAt": state["startAt"], "mode": state.get("mode", DEFAULT_MODE), "deadlineAt": state.get("deadlineAt")}
 
 
-def place_running(task_id: str | None, project_id: str | None, request: Request) -> dict:
+def place_running(task_id: str | None, project_id: str | None, request: Request, window_records: str = unplaced_impl.DEFAULT_WINDOW_RECORDS) -> dict:
     _close_if_due(current_tenant())
-    return unplaced_impl.place_running(task_id, project_id, request, _resolve_task_chain, _timer_out)
+    return unplaced_impl.place_running(task_id, project_id, request, _resolve_task_chain, _timer_out, window_records)
 
 
 def list_unplaced(request: Request) -> dict:
     return unplaced_impl.list_bars(request)
 
 
-def place_unplaced(bar_id: str, task_id: str | None, project_id: str | None, request: Request) -> dict:
-    return unplaced_impl.place_bar(bar_id, task_id, project_id, request, _resolve_task_chain)
+def place_unplaced(bar_id: str, task_id: str | None, project_id: str | None, request: Request,
+                   window_records: str = unplaced_impl.DEFAULT_WINDOW_RECORDS) -> dict:
+    return unplaced_impl.place_bar(bar_id, task_id, project_id, request, _resolve_task_chain, window_records)
+
+
+def discard_unplaced(bar_id: str, request: Request) -> None:
+    unplaced_impl.discard_bar(bar_id, request)
 
 
 def export_unplaced() -> list[dict]:

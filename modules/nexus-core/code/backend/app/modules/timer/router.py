@@ -108,6 +108,8 @@ class PlaceIn(BaseModel):
 
     taskId: str | None = Field(default=None, min_length=1, max_length=128)
     projectId: str | None = Field(default=None, min_length=1, max_length=128)
+    # v2.62：这段时间里的窗口聚焦记录怎么对待（ignore 忽略记录 / both 我全都要 / fill 填充空隙），缺省「我全都要」
+    windowRecords: Literal["ignore", "both", "fill"] = "both"
 
 
 class UnplacedBarOut(BaseModel):
@@ -125,6 +127,7 @@ class PlacedBarOut(BaseModel):
     recorded: bool
     taskId: str
     projectId: str
+    windowRecords: str = "both"  # v2.62
 
 
 class StartUnplacedIn(BaseModel):
@@ -142,7 +145,7 @@ def start_unplaced(request: Request, body: StartUnplacedIn | None = None) -> dic
 
 @router.post("/place", response_model=TimerOut)
 def place(body: PlaceIn, request: Request) -> dict:
-    return service.place_running(body.taskId, body.projectId, request)
+    return service.place_running(body.taskId, body.projectId, request, body.windowRecords)
 
 
 @router.get("/unplaced", response_model=UnplacedListOut)
@@ -152,9 +155,16 @@ def list_unplaced(request: Request) -> dict:
 
 @router.post("/unplaced/{barId}/place", response_model=PlacedBarOut)
 def place_unplaced(barId: str, body: PlaceIn, request: Request) -> dict:  # noqa: N803 —— 路径参数名即契约
-    out = service.place_unplaced(barId, body.taskId, body.projectId, request)
+    out = service.place_unplaced(barId, body.taskId, body.projectId, request, body.windowRecords)
     reconcile.kick()
     return out
+
+
+@router.delete("/unplaced/{barId}", status_code=204)
+def discard_unplaced(barId: str, request: Request) -> Response:  # noqa: N803 —— 路径参数名即契约
+    """v2.62：白条扔进垃圾桶 = 删掉，不进台账。"""
+    service.discard_unplaced(barId, request)
+    return Response(status_code=204)
 
 
 class BackfillIn(BaseModel):
