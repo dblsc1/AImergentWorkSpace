@@ -136,16 +136,22 @@ def test_center_and_placeholder_and_expanded_cells_get_no_card(browser, base) ->
         assert st.page.locator(".hex-cell.is-expanded .hv-card").evaluate("e => getComputedStyle(e).display") == "none"
 
 
-def test_pointer_landing_on_a_pet_resting_inside_the_cell_still_grows_the_cell(browser, base) -> None:  # noqa: F811  二十五·1 + 二十二·2
+def test_pointer_landing_on_a_pet_resting_inside_the_cell_shows_the_pet_card_and_the_cell_grows_once_the_pointer_moves_on(browser, base) -> None:  # noqa: F811  三十二·3（取代原 二十五·1 + 二十二·2 的「落在小人身上也放大格子」）
     with open_stage(browser, base, setup=_setup) as st:
         st.page.wait_for_selector(".st-pet.is-in.is-work", state="attached")
         pid = st.page.get_attribute(".st-pet.is-in.is-work", "data-cell")
-        box = st.page.evaluate("() => { var r = document.querySelector('.st-pet.is-in.is-work .st-pet-in').getBoundingClientRect(); return {x: r.x, y: r.y, width: r.width, height: r.height} }")
+        box = st.page.evaluate("() => { var r = document.querySelector('.st-pet.is-in.is-work .st-media').getBoundingClientRect(); return {x: r.x, y: r.y, width: r.width, height: r.height} }")
         assert box["width"] > 0
         st.page.mouse.move(3, 3)
         st.page.clock.run_for(400)
         st.page.wait_for_timeout(500)
-        st.page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, steps=5)   # 指针正落在小人身上
+        st.page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)   # 指针直接落在小人身上
+        st.page.clock.run_for(400)
+        st.page.wait_for_timeout(300)
+        assert st.page.locator(".st-detail").count() == 1, "出小人信息卡"
+        assert st.page.locator(CELL.format(pid) + ".is-hover").count() == 0, "格子不因此放大"
+        cell = st.page.locator(CELL.format(pid)).bounding_box()
+        st.page.mouse.move(cell["x"] + cell["width"] * 0.2, cell["y"] + cell["height"] * 0.5, steps=4)   # 移到格子身上：照常放大
         st.page.clock.run_for(400)
         st.page.wait_for_timeout(300)
         st.page.clock.run_for(400)

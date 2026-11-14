@@ -1,4 +1,4 @@
-"""形象挑选（hive.stage.v1「十一」「二十六」）：人自己的形象；长按 AI = 看它的详情，在详情里点大立绘改它的形象。"""
+"""形象挑选（hive.stage.v1「十一」「二十六」「三十二」）：人自己的形象；点击 AI 小人 = 看它的详情，在详情里点大立绘改它的形象。"""
 from __future__ import annotations
 
 import json
@@ -47,7 +47,7 @@ def test_human_page_figure_opens_my_figure_picker_and_picking_saves_it(browser, 
         assert "/hive/pets/claude/" in st.page.locator("#stEye video.st-art").get_attribute("src")
 
 
-def test_long_press_an_ai_opens_its_detail_and_the_big_figure_picks_its_figure_by_tool(browser, base) -> None:  # noqa: F811  二十六·2
+def test_click_an_ai_opens_its_detail_and_the_big_figure_picks_its_figure_by_tool(browser, base) -> None:  # noqa: F811  二十六·2，三十二·3（长按改点击）
     def setup(st) -> None:
         _setup(st)
         now = st.now().isoformat()
@@ -56,11 +56,12 @@ def test_long_press_an_ai_opens_its_detail_and_the_big_figure_picks_its_figure_b
              "phase": "working", "segments": [], "attend": [], "retained": False}]}                    # 不留存的卡收在「其余 N 个」里：照样点开
     with open_stage(browser, base, setup=setup, pets={"claude": TOUCH_PACK, "kimi": KIMI}, hold_webm=True) as st:
         st.page.clock.run_for(600)
-        st.long_press(PET + " .st-media")
+        st.page.mouse.click(*st.center(PET + " .st-media"))                                          # 点击小人（三十二·3：原长按）
+        st.page.clock.run_for(400)
         detail = st.page.locator("#agPage .ag-detail")
-        detail.locator(".ag-dt-title").wait_for()                                                     # 长按小人 = 放大看这个 agent 的详情
+        detail.locator(".ag-dt-title").wait_for()                                                     # 点击小人 = 放大看这个 agent 的详情
         assert detail.locator(".ag-dt-title").inner_text() == "g" and st.page.locator(".fp-panel").count() == 0
-        assert st.page.locator(".st-detail").count() == 0                                             # 长按后的松手不算点击
+        assert st.page.locator(".st-detail").count() == 0                                             # 没有小人信息卡
         detail.locator(".ag-big").click()                                                             # 点大立绘 = 换这个 agent 的形象
         st.page.wait_for_selector(".fp-tile")
         assert st.page.locator(".fp-panel h3").inner_text() == "claude-code 的形象"
@@ -70,5 +71,9 @@ def test_long_press_an_ai_opens_its_detail_and_the_big_figure_picks_its_figure_b
             st.page.locator('.fp-tile[data-kind="kimi"]').click()
         assert _puts(st)[0]["pet"] == {"packsByTool": {"claude-code": "kimi", "*": "deepseek"}}
         st.settle()
-        assert "/hive/pets/kimi/" in st.page.locator(PET + " video.st-art").get_attribute("src")
         st.page.keyboard.press("Escape")
+        st.page.wait_for_timeout(450)
+        st.page.keyboard.press("Escape")
+        st.page.wait_for_timeout(450)
+        st.page.locator(PET + " video.st-art").dispatch_event("ended")                                 # 点击时的点击动作播完（假视频不会自己结束）
+        assert "/hive/pets/kimi/" in st.page.locator(PET + " video.st-art").get_attribute("src")

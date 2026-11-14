@@ -101,7 +101,9 @@ body.stage-on .is-done-card .hex-stamp { display: none; }
 .st-pet { position: absolute; z-index: 12; width: 0; height: 0; touch-action: none; }
 .st-pet.is-work { transition: left 900ms cubic-bezier(.4, 0, .2, 1), top 900ms cubic-bezier(.4, 0, .2, 1); }
 .st-pet.is-loose { transition: left 100ms linear, top 100ms linear; }
-.st-pet.is-work.is-in:not(.st-away), .st-pet.is-work.is-in:not(.st-away) * { pointer-events: none !important; }   /* 站在格子里时不接指针，不挡点格子（「二十二」1） */
+/* 站在格子里时只有小人身子（动画那一块）接指针：能直接悬停 / 点 / 拖；名牌和周围不接，不挡点格子（「二十二」1，「三十二」3 修订） */
+.st-pet.is-work.is-in:not(.st-away), .st-pet.is-work.is-in:not(.st-away) .st-pet-in, .st-pet.is-work.is-in:not(.st-away) .st-tag { pointer-events: none !important; }
+.st-pet.is-work.is-in:not(.st-away) .st-media { pointer-events: auto !important; cursor: pointer; clip-path: inset(0 calc(50% - 15px)); }   /* 接指针的只有身子正中 30px 宽：小格子里也不盖住格心 */
 .st-pet-in { position: absolute; left: -30px; top: -33px; width: 60px; display: flex; flex-direction: column; align-items: center; zoom: var(--pet-k, 1); }
 .st-pet .st-pet-in { cursor: pointer; transform-origin: 50% 100%; }
 .st-pet.is-loose .st-pet-in { cursor: grab; }
