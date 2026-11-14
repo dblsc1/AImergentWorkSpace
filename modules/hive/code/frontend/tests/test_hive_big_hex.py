@@ -149,7 +149,9 @@ def test_drag_to_a_task_row_inside_the_big_hexagon_files_to_the_task(browser, ba
         assert "is-drop" in st.page.locator(row).get_attribute("class")
         st.page.mouse.up()
         st.settle()
-        assert st.posts == [("timer/unplaced/u1/place", {"taskId": "t_p_math"})]
+        st.page.locator(".st-confirm [data-wr=both]").click()   # 三十四：三选一
+        st.settle()
+        assert st.posts == [("timer/unplaced/u1/place", {"taskId": "t_p_math", "windowRecords": "both"})]
 
 
 def _hover_open(st: Stage) -> None:
@@ -201,7 +203,9 @@ def test_new_task_slot_is_last_and_a_drag_released_on_it_asks_for_a_name_then_fi
         st.page.locator(".pr-new-name").fill("新任务")
         st.page.keyboard.press("Enter")
         st.settle()
-        assert st.posts == [("planner/tasks", {"projectId": "p_math", "name": "新任务"}), ("timer/unplaced/u1/place", {"taskId": "t_new"})]
+        st.page.locator(".st-confirm [data-wr=both]").click()
+        st.settle()
+        assert st.posts == [("planner/tasks", {"projectId": "p_math", "name": "新任务"}), ("timer/unplaced/u1/place", {"taskId": "t_new", "windowRecords": "both"})]
 
 
 def test_click_on_the_new_task_slot_creates_a_task_without_filing_anything(browser, base) -> None:  # noqa: F811  十二·6

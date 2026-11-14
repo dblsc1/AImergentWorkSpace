@@ -518,11 +518,15 @@ def test_manual_timer_click_start_drag_to_cell_stop_then_drag_the_strip(browser,
         st.lanes["human"]["running"] = {"startAt": _iso(now), "taskId": None, "projectId": None}
         st.poll()
         assert "is-timing" in st.page.locator("#stClock").get_attribute("class")
-        # 计时中拖到格子 = 记到该项目
+        # 计时中拖到格子 = 三选一后记到该项目（三十四）
         st.posts.clear()
         st.drag("#stClock", st.center(CELL.format("p_piano")))
         st.settle()
-        assert st.posts == [("timer/place", {"projectId": "p_piano"})]
+        card = st.page.locator(".st-confirm")
+        assert st.posts == [] and card.locator("[data-wr]").all_inner_texts() == ["忽略记录", "我全都要", "填充空隙"]
+        card.locator("[data-wr=ignore]").click()
+        st.settle()
+        assert st.posts == [("timer/place", {"projectId": "p_piano", "windowRecords": "ignore"})]
         # 计时中长按 = 「停止」气泡；没记到项目的变白条
         st.posts.clear()
         st.replies["timer/stop"] = (200, {"unplacedId": "u1"})
@@ -542,7 +546,10 @@ def test_manual_timer_click_start_drag_to_cell_stop_then_drag_the_strip(browser,
         st.unplaced = []
         st.drag(".st-strip", st.center(CELL.format("p_studio")))
         st.settle()
-        assert st.posts == [("timer/unplaced/u1/place", {"projectId": "p_studio"})]
+        assert st.posts == [] and st.page.locator(".st-confirm .st-cf-title").inner_text() == "把这段计时记到 录音棚"
+        st.page.keyboard.press("Enter")                            # 缺省「我全都要」带着焦点
+        st.settle()
+        assert st.posts == [("timer/unplaced/u1/place", {"projectId": "p_studio", "windowRecords": "both"})]
         assert st.page.locator(".st-strip").count() == 0
 
 
@@ -719,6 +726,38 @@ def _eye_on_clock_corner(st: Stage) -> bool:
     return abs(ex - c["x"]) < 6 and abs(ey - c["y"]) < 6
 
 
+def test_dragging_a_timer_shows_a_bin_bottom_right_and_dropping_in_it_throws_it_away(browser, base) -> None:  # noqa: F811  三十四
+    with open_stage(browser, base, setup=_busy_day) as st:
+        st.drag('.st-pet.is-loose[data-run-id="r2"]', st.center(CELL.format("p_piano")), release=False)   # 别的东西拖起来：没有垃圾桶
+        assert st.page.locator(".st-trash.is-on").count() == 0
+        st.page.keyboard.press("Escape")
+        st.page.mouse.up()
+        now = st.now().astimezone(TZ)
+        st.unplaced = [{"id": "u1", "startAt": _iso(now), "endAt": _iso(now + timedelta(minutes=12)), "durationSeconds": 720}]
+        st.poll()
+        st.posts.clear()
+        st.drag(".st-strip", st.center(CELL.format("p_piano")), release=False)
+        bin_ = st.page.locator(".st-trash.is-on")
+        b, vw, vh = st.box(".st-trash.is-on"), st.page.viewport_size["width"], st.page.viewport_size["height"]
+        assert vw - (b["x"] + b["width"]) < 40 and vh - (b["y"] + b["height"]) < 40
+        st.page.mouse.move(*st.center(".st-trash"), steps=6)
+        assert "st-hot" in bin_.get_attribute("class") and st.page.locator(".st-hot.hex-cell").count() == 0
+        st.unplaced = []
+        st.page.mouse.up()
+        st.settle()
+        assert st.posts == [("timer/unplaced/u1", None)] and st.page.locator(".st-confirm").count() == 0
+        st.page.clock.run_for(600)
+        assert st.page.locator(".st-strip").count() == 0 and st.page.locator(".st-trash.is-on").count() == 0
+        # 在跑的计时（眼睛跟着时钟）拖进去 = 取消计时
+        st.lanes["human"]["running"] = {"startAt": _iso(now), "taskId": None, "projectId": None}
+        st.poll()
+        st.drag("#stEye", st.center(CELL.format("p_piano")), release=False)
+        st.page.mouse.move(*st.center(".st-trash"), steps=6)
+        st.page.mouse.up()
+        st.settle()
+        assert st.posts[-1] == ("timer/cancel", None) and st.page.locator(".st-confirm").count() == 0
+
+
 def test_drag_the_eye_while_timing_asks_then_places_the_timer(browser, base) -> None:  # noqa: F811  十·3
     with open_stage(browser, base, setup=_busy_day) as st:
         st.drag("#stEye", st.center(CELL.format("p_piano")))      # 没在计时、也没有窗口心跳：拖不动
@@ -733,9 +772,9 @@ def test_drag_the_eye_while_timing_asks_then_places_the_timer(browser, base) -> 
         card = st.page.locator(".st-confirm")
         assert st.posts == [] and card.locator(".st-cf-title").inner_text() == "把这次计时记到 钢琴"
         assert card.locator(".st-cf-box").count() == 0            # 计时没有「以后都算」
-        card.locator(".st-cf-ok").click()
+        card.locator("[data-wr=fill]").click()
         st.settle()
-        assert st.posts == [("timer/place", {"projectId": "p_piano"})] and st.page.locator(".st-confirm").count() == 0
+        assert st.posts == [("timer/place", {"projectId": "p_piano", "windowRecords": "fill"})] and st.page.locator(".st-confirm").count() == 0
 
 
 def test_click_the_eye_on_the_clock_opens_the_menu_not_stop(browser, base) -> None:  # noqa: F811  十·1（点眼睛 = 点时钟）
@@ -964,8 +1003,10 @@ def test_clicking_a_strip_lists_projects_and_picking_one_places_the_strip(browse
         st.page.keyboard.press("ArrowDown")
         st.page.keyboard.press("Enter")
         st.settle()
-        assert st.posts == [("timer/unplaced/u1/place", {"projectId": "p_piano"})]
-        assert st.page.locator(".st-pop").count() == 0
+        assert st.posts == [] and st.page.locator(".st-pop").count() == 0   # 三十四：选了项目也先三选一
+        st.page.locator(".st-confirm [data-wr=ignore]").click()
+        st.settle()
+        assert st.posts == [("timer/unplaced/u1/place", {"projectId": "p_piano", "windowRecords": "ignore"})]
 
 
 def test_pet_released_on_blank_before_lit_or_with_esc_leaves_no_ghost_and_sends_nothing(browser, base) -> None:  # noqa: F811
@@ -1213,7 +1254,9 @@ def test_strip_drop_shows_no_bubble(browser, base) -> None:  # noqa: F811
         st.poll()
         st.drag(".st-strip", st.center(CELL.format("p_math")))
         st.settle()
-        assert st.posts == [("timer/unplaced/u1/place", {"projectId": "p_math"})]
+        st.page.locator(".st-confirm [data-wr=both]").click()
+        st.settle()
+        assert st.posts == [("timer/unplaced/u1/place", {"projectId": "p_math", "windowRecords": "both"})]
         assert st.page.locator(".st-file").count() == 0
 
 

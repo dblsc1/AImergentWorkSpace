@@ -129,6 +129,12 @@ def _grab_and_hold(st: Stage, selector: str, over: tuple[float, float]) -> None:
     m.move(over[0], over[1], steps=6)
 
 
+def _pick(st: Stage, wr: str = "both") -> None:
+    """计时落到项目后的三选一（hive.stage.v1「三十四」）。"""
+    st.page.locator(f".st-confirm [data-wr={wr}]").click()
+    st.settle()
+
+
 def _strip(st: Stage) -> None:
     t0 = st.now().astimezone(TZ)
     st.unplaced = [{"id": "u1", "startAt": _iso(t0), "endAt": _iso(t0 + timedelta(minutes=12)), "durationSeconds": 720}]
@@ -154,7 +160,8 @@ def test_drag_over_cell_darkens_it_then_hold_one_second_opens_the_panel(browser,
         assert "is-drop" in st.page.locator(ROW).get_attribute("class")
         st.page.mouse.up()
         st.settle()
-        assert st.posts == [("timer/unplaced/u1/place", {"taskId": "t_p_math"})]
+        _pick(st)
+        assert st.posts == [("timer/unplaced/u1/place", {"taskId": "t_p_math", "windowRecords": "both"})]
 
 
 def test_moving_before_one_second_restarts_the_hold(browser, base) -> None:  # noqa: F811
@@ -207,7 +214,8 @@ def test_drop_on_the_no_task_row_files_to_the_project(browser, base) -> None:  #
         st.page.mouse.move(*st.center('.pr-row[data-task=""]'), steps=6)
         st.page.mouse.up()
         st.settle()
-        assert st.posts == [("timer/unplaced/u1/place", {"projectId": "p_math"})]
+        _pick(st)
+        assert st.posts == [("timer/unplaced/u1/place", {"projectId": "p_math", "windowRecords": "both"})]
 
 
 def test_hold_one_second_on_blank_of_task_list_creates_a_task_then_files_into_it(browser, base) -> None:  # noqa: F811
@@ -230,7 +238,8 @@ def test_hold_one_second_on_blank_of_task_list_creates_a_task_then_files_into_it
         st.page.locator(".pr-new-name").fill("新任务")
         st.page.keyboard.press("Enter")
         st.settle()
-        assert st.posts == [("planner/tasks", {"projectId": "p_math", "name": "新任务"}), ("timer/unplaced/u1/place", {"taskId": "t_new"})]
+        _pick(st)
+        assert st.posts == [("planner/tasks", {"projectId": "p_math", "name": "新任务"}), ("timer/unplaced/u1/place", {"taskId": "t_new", "windowRecords": "both"})]
         assert st.page.locator(".pr-new-name").count() == 0
 
 

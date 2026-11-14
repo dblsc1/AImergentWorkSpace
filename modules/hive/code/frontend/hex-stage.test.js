@@ -174,5 +174,17 @@ function mkStage(replies) {
   await k.st.clickClock(); assert.strictEqual(k.sent[1].path, "timer/stop"); assert.strictEqual(k.st.timerRunning(), false);
   // 开始失败：状态不变，有提示
   k = mkStage([{ status: 409 }]); await k.st.clickClock(); assert.strictEqual(k.st.timerRunning(), false); assert.ok(k.st.notice());
+  // 三十四：计时带 windowRecords；垃圾桶 = 白条 DELETE、在跑的 timer/cancel
+  k = mkStage([{ status: 200, body: {} }, { status: 200, body: {} }]);
+  k.st.setStrips([{ id: "u1", startAt: "2026-11-15T01:00:00Z", endAt: "2026-11-15T02:00:00Z" }]);
+  await k.st.drop({ kind: "strip", id: "u1" }, "p1", { windowRecords: "fill" });
+  assert.deepStrictEqual(k.sent[0], { method: "POST", path: "timer/unplaced/u1/place", body: { projectId: "p1", windowRecords: "fill" } });
+  k.st.setStrips([{ id: "u2", startAt: "2026-11-15T01:00:00Z", endAt: "2026-11-15T02:00:00Z" }]);
+  assert.deepStrictEqual(await k.st.discard({ kind: "strip", id: "u2" }), { ok: true });
+  assert.deepStrictEqual(k.sent[1], { method: "DELETE", path: "timer/unplaced/u2" }); assert.strictEqual(k.st.strips().items.length, 0);
+  k = mkStage([{ status: 200, body: {} }, { status: 200, body: {} }]);
+  assert.deepStrictEqual(await k.st.discard({ kind: "clock" }), { ok: false }); assert.strictEqual(k.sent.length, 0);
+  await k.st.clickClock(); await k.st.discard({ kind: "clock" });
+  assert.strictEqual(k.sent[1].path, "timer/cancel"); assert.strictEqual(k.st.timerRunning(), false);
   console.log("hex-stage tests ok");
 })().catch((e) => { console.error(e); process.exit(1); });
