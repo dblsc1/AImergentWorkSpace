@@ -372,7 +372,7 @@ def handle_session_start(payload: dict) -> None:
     if problem:
         _warn(problem)
         return
-    title = cc.session_title(payload.get("transcript_path"))  # 恢复的会话（--resume）transcript 里已经有名字
+    title = cc.session_title(payload.get("transcript_path"), deep=True)  # 恢复的会话（--resume）transcript 里已经有名字，可能不在末尾
     probe = _cli_probe()  # CLI 祖先每次调用只查一次
     # 一个临界区：读状态 → /start → 落状态 → 落不下来就 /stop 这条 run，**全在锁内**。SessionEnd / 发心跳进程的收尾拿同一把锁，
     # 所以不会有「刚落下来的 run 被另一个进程的补偿 stop 停掉」。拿不到锁：不发 /start、不写状态。
@@ -558,7 +558,7 @@ def handle_phase(payload: dict, at: str) -> None:
     _spawn_beat(session_id, state, probe=probe)  # 没人在发心跳（到了寿命 / 被杀 / 钩子升级前开的会话）就补一个伴随进程
     if _phase_for(payload, "waiting_input") is None:
         return  # 与上次相位无关就不报的事件（只有 PostToolUse 看 lastPhase）：不用拿锁
-    title = cc.session_title(payload.get("transcript_path"))
+    named, title = cc.title_lookup(payload.get("transcript_path"))
     with _session_lock(session_id) as held:
         cur = _fresh(session_id, state) if held else None  # SessionEnd 已收尾 / 换了会话 / 没拿到锁：不写、不发
         if not cur or not _ours(cur, probe):
@@ -586,7 +586,10 @@ def handle_phase(payload: dict, at: str) -> None:
             _warn(f"{payload.get('hook_event_name')} 相位上报失败（{category}）")
         # 会话改名（/rename）不触发任何钩子：趁这次本来就要发请求，看一眼 transcript 末尾，名字变了才多发一次 start。
         # 比的是「有效名字」（标题，没有就是目录名）：标题被清空时要退回目录名。没改名时零额外请求。
-        if closed or cc.lane_names(payload.get("cwd"), title)[0] != cur.get("label"):
+        # 末尾一条名字记录都没有 = 不知道（不是改回了目录名）：不动现在的名字；要重开时才往前多找一次。
+        if closed and not named:
+            title = cc.session_title(payload.get("transcript_path"), deep=True)
+        if closed or (named and cc.lane_names(payload.get("cwd"), title)[0] != cur.get("label")):
             _relabel_locked(payload, session_id, title, cur)
 
 
@@ -891,7 +894,7 @@ def _beat_once(session_id: str, state: dict, source: str) -> float | None:
         payload = {"cwd": state["cwd"], "transcript_path": state.get("transcript")}
         with _session_lock(session_id) as held:  # 重开要持锁（拿不到就留给下一圈 / 下一个钩子事件）；相位取锁内状态里的 lastPhase
             if held:
-                _relabel_locked(payload, session_id, cc.session_title(state.get("transcript")), state)
+                _relabel_locked(payload, session_id, cc.session_title(state.get("transcript"), deep=True), state)
                 if cc.stuck_requests():  # 任何还活着的工作线程都算（不比前后数量：别的请求恰好结束会掩盖新卡住的）
                     raise _MutationStuck  # /start 超时而线程还活着：它可能在锁放掉之后才到服务端，进程不许接着正常干活
         # 重开成了：新的那条还没声明心跳，下一轮就发。没成：closed 过一会儿再试；服务端不认这个运行（404，

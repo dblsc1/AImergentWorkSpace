@@ -150,6 +150,20 @@ class HookTitleTests(_TranscriptMixin, unittest.TestCase):
         claude_hook.handle_phase(self._event("Stop", transcript_path=path), self.AT)
         self.assertEqual(claude_hook._read_state("s1")["label"], "X-company Coder1")
 
+    def test_name_beyond_the_tail_is_found_at_session_start_and_kept_on_later_events(self):
+        filler = (json.dumps({"type": "assistant", "message": "x" * 1000}) + "\n").encode()
+        path = self._transcript(raw=_title("Cockpit-Pub-Coder1").encode() + b"\n" + filler * 600)   # ~600 KB 之后才到末尾
+        self.assertIsNone(cc.session_title(path))
+        self.assertEqual(cc.title_lookup(path), (False, None))
+        self.assertEqual(cc.session_title(path, deep=True), "Cockpit-Pub-Coder1")
+        event = {"session_id": "s1", "cwd": "/home/u/AImergentWorkspace", "transcript_path": path}
+        claude_hook.handle_session_start({**event, "hook_event_name": "SessionStart", "source": "resume"})
+        self.assertEqual(self._starts()[-1]["label"], "Cockpit-Pub-Coder1")
+        claude_hook.handle_phase({**event, "hook_event_name": "UserPromptSubmit"}, self.AT)
+        claude_hook.handle_phase({**event, "hook_event_name": "Stop"}, self.AT)
+        self.assertEqual(len(self._starts()), 1, "末尾看不到名字：不改回目录名，不多发 start")
+        self.assertEqual(claude_hook._read_state("s1")["label"], "Cockpit-Pub-Coder1")
+
     def _stops(self):
         return [r for r in self.log.requests if r["path"].endswith("/stop")]
 

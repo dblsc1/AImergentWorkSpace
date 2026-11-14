@@ -99,6 +99,8 @@ def test_project_id_is_tenant_scoped(client, seeded):
     ("⠋ CFO_agent - Ptyxis", "ptyxis"),
     ("(3) ✳  cfo_AGENT — Ptyxis", "org.gnome.Ptyxis"),
     ("* CFO_agent | ptyxis", "ptyxis"),
+    ("✳ CFO_agent — claude --resume bdaaddb4-bba9-45ea-8f0c-fc444d9192a2", "org.gnome.Ptyxis"),   # v2.61：终端挂的代理命令
+    ("CFO_agent - codex", "ptyxis"),
 ])
 def test_norm_strips_glyphs_counters_and_app_suffix(title, app):
     from app.modules.activity.session_link import norm  # noqa: PLC0415
@@ -112,6 +114,8 @@ def test_norm_keeps_what_is_not_noise():
     assert norm("CFO_agent - notes", "ptyxis") == "cfo_agent - notes"  # 结尾不是程序名：不去
     assert norm("CFO_agent - Ptyxis") == "cfo_agent - ptyxis"  # label / match 不去后缀
     assert norm("✳ ") == ""
+    assert norm("CFO_agent — claude-notes", "ptyxis") == "cfo_agent — claude-notes"  # 只认整词的代理命令
+    assert norm("CFO_agent — claude --resume x") == "cfo_agent — claude --resume x"  # 不给 app（label / match）不去
 
 
 # ─────────────────────────────────────────── 连线
