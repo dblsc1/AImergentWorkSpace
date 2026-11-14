@@ -130,6 +130,83 @@ assert.ok(spotR.x > 100 && spotR.y > 100 && spotR.side === 1 && !spotR.eyeFlip &
 const spotL = P.meetSpot({ x: 100, y: 100 }, { x: 10, y: 50 }, 1);
 assert.ok(spotL.x < 100 && spotL.side === -1 && spotL.eyeFlip && !spotL.petFlip);
 assert.ok(Math.abs(P.meetSpot({ x: 0, y: 0 }, { x: 5, y: 0 }, 1.7).x) > Math.abs(spotR.x - 100));   // 小人变大，站得更远
+// ── 状态 → 动作（hive.stage.v1「三十二」1）─────────────────────
+{
+  const T0 = Date.parse("2026-11-15T10:00:00+08:00"), iso = (ms) => new Date(ms).toISOString(), MIN = 60000;
+  const ph = (list) => list.map(([min, phase]) => ({ at: iso(T0 + min * MIN), phase, detail: null }));
+  const mk2 = (phase, phases, extra) => run("s", Object.assign({ phase, phases: ph(phases), startAt: iso(T0 - 600 * MIN) }, extra));
+  // 最后干活结束时刻：最后一个 working 之后第一个相位；还在干 = null；没干过 = 开始时刻；折叠行的 lastWorkAt 优先于开始
+  assert.strictEqual(P.lastWorkedAt(mk2("idle", [[0, "working"], [5, "idle"]])), T0 + 5 * MIN);
+  assert.strictEqual(P.lastWorkedAt(mk2("idle", [[0, "working"], [5, "waiting_input"], [6, "working"], [9, "idle"], [12, "idle"]])), T0 + 9 * MIN);
+  assert.strictEqual(P.lastWorkedAt(mk2("working", [[0, "idle"], [5, "working"]])), null);
+  assert.strictEqual(P.lastWorkedAt(mk2("idle", [[3, "idle"]])), T0 - 600 * MIN);
+  assert.strictEqual(P.lastWorkedAt(mk2("idle", [], { lastWorkAt: iso(T0 - 7 * MIN) })), T0 - 7 * MIN);
+  assert.strictEqual(P.lastWorkedAt(mk2("idle", [[5, "idle"], [0, "working"]])), T0 + 5 * MIN);          // 乱序也按时刻排
+  // 干活 / 等人 / 出问题
+  const st = (r, min, watched) => P.stateOf(r, T0 + min * MIN, watched);
+  assert.strictEqual(st(mk2("working", [[0, "working"]]), 99).mood, "working");
+  assert.strictEqual(st(mk2("waiting_input", [[0, "working"], [1, "waiting_input"]]), 99).mood, "waiting");
+  assert.strictEqual(st(mk2("error", [[0, "working"], [1, "error"]]), 1).mood, "worried");
+  assert.strictEqual(st(mk2("waiting_permission", [[0, "working"], [1, "waiting_permission"]]), 1).mood, "worried");
+  assert.strictEqual(P.stateOf(mk2("working", [[0, "working"]], { lost: true }), T0, null).mood, "idle");   // 失联照旧 idle
+  // 对话中：压过干活 / 等人 / 空闲，不压出问题；只认被看着的那条
+  assert.strictEqual(st(mk2("working", [[0, "working"]]), 1, "s").mood, "chatting");
+  assert.strictEqual(st(mk2("waiting_input", [[0, "working"], [1, "waiting_input"]]), 5, "s").mood, "chatting");
+  assert.strictEqual(st(mk2("idle", [[0, "working"], [1, "idle"]]), 90, "s").mood, "chatting");
+  assert.strictEqual(st(mk2("idle", [[0, "working"], [1, "idle"]]), 90, "s").home, false);                // 被叫醒：不再飞回
+  assert.strictEqual(st(mk2("error", [[0, "error"]]), 1, "s").mood, "worried");
+  assert.strictEqual(st(mk2("working", [[0, "working"]]), 1, "other").mood, "working");
+  // 空闲分档：从最后一次干活结束（第 1 分钟）算起 <1 / 1–5 / 5–30 / 30–60 / ≥60 分钟
+  const idleRun = mk2("idle", [[0, "working"], [1, "idle"]]);
+  [[1.5, "idle", false], [1.99, "idle", false], [2, "idle-bored", false], [5.99, "idle-bored", false], [6, "idle-slacking", false], [30.99, "idle-slacking", false], [31, "idle-sleeping", false],
+    [60.99, "idle-sleeping", false], [61, "idle-sleeping", true], [600, "idle-sleeping", true]].forEach(([min, mood, home]) => {
+    const r = st(idleRun, min);
+    assert.strictEqual(r.mood, mood, "min " + min); assert.strictEqual(r.home, home, "home " + min);
+  });
+  // 没干过活：从运行开始算（开始在 600 分钟前 → 睡着在家）
+  assert.deepStrictEqual([st(mk2("idle", []), 0.5).mood, st(mk2("idle", []), 0.5).home], ["idle-sleeping", true]);
+  assert.strictEqual(st(mk2("idle", [], { startAt: iso(T0 - 30 * 1000) }), 0).mood, "idle");
+  // 满 1 小时的从格子里走掉、进左上角那一排；没满的留在格子里
+  const sleeper = mk2("idle", [[0, "working"], [1, "idle"]], { projectId: "p1" }), napper = Object.assign({}, sleeper, { runId: "n", phases: ph([[0, "working"], [40, "idle"]]) });
+  const o = { now: T0 + 70 * MIN };
+  assert.deepStrictEqual(P.pickWorkers([sleeper, napper], o).pets.map((p) => [p.runId, p.mood]), [["n", "idle-sleeping"]]);
+  assert.deepStrictEqual(P.pickIdle([sleeper, napper], o).pets.map((p) => [p.runId, p.mood]), [["s", "idle-sleeping"]]);
+  assert.deepStrictEqual(P.pickWorkers([sleeper], { now: T0 + 70 * MIN, watchedId: "s" }).pets.map((p) => p.mood), ["chatting"]);   // 对话中不在家
+  assert.strictEqual(P.pickWorkers([sleeper]).pets[0].mood, "idle");                                    // 不带 now = 旧口径
+  // 折叠掉的在跑运行补回来：按 agent + label 取最后干活时刻；已在 lanes 里的不重复
+  const cur = [{ runId: "s", agent: "codex", tool: "codex", label: "a", taskId: null, startedAt: iso(T0), phase: "idle" },
+    { runId: "f", agent: "codex", tool: "codex", model: null, label: "b", taskId: "t1", startedAt: iso(T0 - 300 * MIN), phase: "idle", elapsedSeconds: 9 },
+    { runId: "g", agent: "claude-code", tool: "claude-code", label: null, taskId: null, startedAt: iso(T0 - 100 * MIN), phase: "error" }];
+  const inactive = [{ agent: "codex", label: "b", reason: "idle", lastWorkAt: iso(T0 - 90 * MIN) }, { agent: "codex", label: "a", reason: "idle", lastWorkAt: iso(T0 - 1 * MIN) }];
+  const all = P.withCurrentRuns([sleeper], cur, inactive);
+  assert.deepStrictEqual(all.map((r) => r.runId), ["s", "f", "g"]);
+  assert.strictEqual(all[1].taskId, "t1"); assert.strictEqual(all[1].lastWorkAt, iso(T0 - 90 * MIN));
+  assert.strictEqual(all[2].lastWorkAt, null); assert.strictEqual(all[2].phase, "error");
+  assert.strictEqual(P.stateOf(all[1], T0, null).home, true);                                              // 折叠行说它 90 分钟前就不干了
+  assert.strictEqual(P.stateOf(all[2], T0, null).mood, "worried");
+  assert.deepStrictEqual(P.withCurrentRuns(null, null, null), []);
+  assert.strictEqual(P.withCurrentRuns([], [{ runId: "z", agent: "a", startedAt: iso(T0) }], [])[0].phase, "idle");
+  // 包里没有新键的回退
+  const old = { working: ["w"], waiting: ["wt"], idle: ["i1", "原地小憩沉眠.webm"], happy: ["h"], click: ["c"] };
+  assert.deepStrictEqual(P.moodList(old, "chatting"), ["h"]);
+  assert.deepStrictEqual(P.moodList({ idle: ["i"], click: ["c"] }, "chatting"), ["c"]);
+  assert.deepStrictEqual(P.moodList(old, "idle-bored"), ["wt"]);
+  assert.deepStrictEqual(P.moodList(old, "idle-slacking"), ["i1", "原地小憩沉眠.webm"]);
+  assert.deepStrictEqual(P.moodList(old, "idle-sleeping"), ["原地小憩沉眠.webm"]);
+  assert.deepStrictEqual(P.moodList({ idle: ["i"] }, "idle-sleeping"), ["i"]);
+  assert.deepStrictEqual(P.moodList({ idle: ["i"] }, "worried"), ["i"]);
+  assert.deepStrictEqual(P.moodList(Object.assign({ "idle-bored": ["b"], "idle-sleeping": ["z"] }, old), "idle-bored"), ["b"]);       // 有键用键
+  assert.deepStrictEqual(P.moodList({}, "chatting"), []);
+  // 睡着不插临时动作；其他 mood 照旧
+  const sm = { "idle-sleeping": ["z"], idle: ["i"], click: ["c"] };
+  let sl = P.rhythm(null, sm, "idle-sleeping", 0, () => 0);
+  for (let t = 1000; t < 120000; t += 1000) { sl = P.rhythm(sl, sm, "idle-sleeping", t, () => 0); assert.strictEqual(sl.file, "z"); assert.strictEqual(sl.step, "main"); }
+  let aw = P.rhythm(null, sm, "idle-bored", 0, () => 0), sawTemp = false;
+  for (let t = 1000; t < 60000; t += 1000) { aw = P.rhythm(aw, sm, "idle-bored", t, () => 0); if (aw.step === "temp") sawTemp = true; }
+  assert.ok(sawTemp);
+  // 换状态立刻换动作
+  assert.strictEqual(P.rhythm(P.rhythm(null, { working: ["w"], "idle-sleeping": ["z"], idle: ["i"] }, "working", 0, () => 0), { working: ["w"], "idle-sleeping": ["z"], idle: ["i"] }, "idle-sleeping", 10, () => 0).file, "z");
+}
 console.log("hex-pet-pick tests ok");
 
 // 干活的小人平时站在格子里：右上 → 右下 → 左下 → 左上，多的离格心一半（「二十二」1）

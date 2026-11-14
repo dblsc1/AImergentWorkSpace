@@ -128,6 +128,7 @@ provides:
 
   上游动画名到 mood 的对照表随程序发布（`modules/desktop-pet/mood-map.json`），每个 mood 至少一段。
   2026-11-08 追加：`moods` 里另有三组交互动作 `click`（点击回应）、`drag`（被拖起）、`walk`（走路），上游缺的段不列，可以为空数组；只认五个 mood 的读方忽略它们。
+  2026-11-15 追加：再加四组状态动作 `chatting`（人在对话）、`idle-bored`（空闲 1–5 分钟）、`idle-slacking`（5–30 分钟）、`idle-sleeping`（30 分钟起），都不是必需 mood，可为空数组，读方没有时按 `hive.stage.v1`「三十二」回退。
 - 蜂巢页（`hive.stage.v1`）读服务端同样的 `pack.json`。
 - **宠物包对照**（服务端账号设置 `activity/settings.pet.packsByTool`，`onboarding.v1`「四」）：缺省 `{ "claude-code": "claude", "codex": "gpt", "gemini-cli": "gemini", "*": "deepseek" }`；按运行的 `tool` 选包，查不到用 `*`。
 - 每个宠物包的 `license` / `credits` / `source` 必须填（许可不明写 `unknown`）。

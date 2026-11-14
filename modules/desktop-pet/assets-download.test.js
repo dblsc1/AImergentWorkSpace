@@ -118,3 +118,12 @@ test('随程序发布的 manifest / mood-map：每个角色每个 mood 都有片
     assert.ok(r.license && r.credits && r.source);
   }
 });
+
+test('mood-map 的状态动作（hive.stage.v1「三十二」）：chatting / idle-bored / idle-slacking / idle-sleeping 各有片，七个角色的包里都带上', () => {
+  const mf = require('./manifest.json'); const mm = require('./mood-map.json');
+  for (const k of ['chatting', 'idle-bored', 'idle-slacking', 'idle-sleeping']) assert.ok(mm[k].length >= 1, k);
+  for (const [kind, r] of Object.entries(mf.roles)) {
+    const p = buildPack(kind, r, mm);
+    for (const k of ['chatting', 'idle-bored', 'idle-slacking', 'idle-sleeping']) assert.deepEqual(p.moods[k], mm[k], kind + '/' + k);
+  }
+});

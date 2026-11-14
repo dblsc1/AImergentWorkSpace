@@ -99,7 +99,9 @@ def test_hovering_the_expand_button_while_dragging_for_06s_expands_all(browser, 
         st.page.mouse.move(*st.center(EXPANDED + ' .pr-row[data-task="t2"]'), steps=6)
         st.page.mouse.up()
         st.settle()
-        assert st.posts == [("timer/unplaced/u1/place", {"taskId": "t2"})]                     # 放到了后面的任务上
+        st.page.locator(".st-confirm [data-wr=fill]").click()   # 三十四：三选一
+        st.settle()
+        assert st.posts == [("timer/unplaced/u1/place", {"taskId": "t2", "windowRecords": "fill"})]   # 放到了后面的任务上
 
 
 def test_click_task_name_offers_cancel_which_files_it_under_recent_as_canceled_and_undo_brings_it_back(browser, base) -> None:  # noqa: F811  十五·6

@@ -825,7 +825,7 @@ def _src(st: Stage) -> str:
     return st.page.locator(PET_ART).get_attribute("src") or ""
 
 
-def test_click_a_pet_plays_a_click_clip_once_with_a_squash_then_returns(browser, base) -> None:  # noqa: F811  hive.stage.v1「二」7
+def test_click_a_pet_plays_a_click_clip_once_with_a_squash_then_returns(browser, base) -> None:  # noqa: F811  hive.stage.v1「二」7，「三十二」3（点击同时打开 Agent 页）
     with open_stage(browser, base, setup=_one_worker, pets={"claude": TOUCH_PACK}, hold_webm=True) as st:
         st.page.clock.run_for(600)
         assert _src(st).endswith("/claude/w.webm")
@@ -840,7 +840,7 @@ def test_click_a_pet_plays_a_click_clip_once_with_a_squash_then_returns(browser,
         st.page.clock.run_for(6000)
         assert _src(st).split("/")[-1] in ("c1.webm", "c2.webm")
         st.page.locator(PET_ART).dispatch_event("ended")
-        assert _src(st).endswith("/claude/w.webm")
+        assert _src(st).split("/")[-1] in STAY_CLIPS      # 回到状态动作（节奏里 3 秒临时动作也可能正好在播）
         assert st.posts == []
 
 
@@ -884,12 +884,14 @@ def test_esc_cancels_a_pet_drag_and_it_walks_home_at_once(browser, base) -> None
         assert st.posts == []
 
 
-def test_grab_right_after_a_click_swaps_to_the_drag_clip_and_the_stay_shows_the_normal_clip(browser, base) -> None:  # noqa: F811  hive.stage.v1「二」7
+def test_grab_right_after_a_click_swaps_to_the_drag_clip_and_the_stay_shows_the_normal_clip(browser, base) -> None:  # noqa: F811  hive.stage.v1「二」7，「三十二」3
     with open_stage(browser, base, setup=_one_worker, pets={"claude": TOUCH_PACK}, hold_webm=True) as st:
         st.page.clock.run_for(600)
         x, y = st.center(PET + " .st-media")
         st.page.mouse.click(x, y)
         assert _src(st).split("/")[-1] in ("c1.webm", "c2.webm")
+        st.page.keyboard.press("Escape")                 # 点击同时打开了 Agent 页：关掉再拖
+        st.page.wait_for_timeout(450)
         st.page.clock.run_for(300)
         st.drag(PET + " .st-media", (900, 120), release=False)
         assert _src(st).endswith("/claude/d.webm")
@@ -1260,12 +1262,15 @@ def test_strip_drop_shows_no_bubble(browser, base) -> None:  # noqa: F811
         assert st.page.locator(".st-file").count() == 0
 
 
-def test_click_a_pet_opens_the_card_and_still_plays_the_reaction(browser, base) -> None:  # noqa: F811
+def test_hover_a_pet_opens_the_card_after_300ms(browser, base) -> None:  # noqa: F811  三十二·3（原「点击小人出卡」）
     with open_stage(browser, base, setup=_named_run, pets={"claude": TOUCH_PACK}, hold_webm=True) as st:
         st.page.clock.run_for(600)
         x, y = st.center('.st-pet[data-run-id="r1"] .st-media')
-        st.page.mouse.click(x, y)
-        assert st.page.locator('.st-pet[data-run-id="r1"] video.st-art').get_attribute("src").split("/")[-1] in ("c1.webm", "c2.webm")
+        st.page.mouse.move(3, 3)
+        st.page.mouse.move(x, y)
+        st.page.clock.run_for(250)
+        assert st.page.locator(".st-detail").count() == 0
+        st.page.clock.run_for(100)
         card = st.page.locator(".st-detail")
         assert card.count() == 1
         text = card.inner_text()
@@ -1273,15 +1278,21 @@ def test_click_a_pet_opens_the_card_and_still_plays_the_reaction(browser, base) 
         assert st.page.locator('.st-pet[data-run-id="r1"] .st-tag').inner_text() == "数学·改错题"
         st.page.keyboard.press("Escape")
         assert st.page.locator(".st-detail").count() == 0
-        st.page.mouse.click(x, y)
+        st.page.mouse.move(3, 3)
+        st.page.clock.run_for(100)
+        st.page.mouse.move(x, y)
+        st.page.clock.run_for(350)
         assert st.page.locator(".st-detail").count() == 1
-        st.page.mouse.click(5, 5)
+        st.page.mouse.move(5, 5, steps=3)
+        st.page.clock.run_for(400)
         assert st.page.locator(".st-detail").count() == 0
 
 
 def _open_card(st: Stage) -> None:
     x, y = st.center('.st-pet[data-run-id="r1"] .st-media')
-    st.page.mouse.click(x, y)
+    st.page.mouse.move(3, 3)
+    st.page.mouse.move(x, y)
+    st.page.clock.run_for(350)
 
 
 def test_rename_by_clicking_the_title_puts_the_name_and_the_tag_updates(browser, base) -> None:  # noqa: F811
@@ -1376,7 +1387,8 @@ def test_inbox_runs_are_treated_as_loose_everywhere(browser, base) -> None:  # n
     with open_stage(browser, base, setup=setup) as st:
         pet = '.st-pet.is-loose[data-run-id="r2"]'
         assert st.page.locator(pet + " .st-tag").inner_text() == "散活对话"
-        st.page.mouse.click(*st.center(pet + " .st-media"))
+        st.page.mouse.move(*st.center(pet + " .st-media"))
+        st.page.clock.run_for(350)
         text = st.page.locator(".st-detail").inner_text()
         assert "还没归到项目" in text and "收件箱" not in text
 

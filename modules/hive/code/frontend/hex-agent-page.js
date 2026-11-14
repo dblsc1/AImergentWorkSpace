@@ -167,7 +167,7 @@
 
   // ── 接线 ─────────────────────────────────────────────
   // ctx: { getJson, cellColor(pid), projectName(pid), packOfTool(tool), figureOf(pack) → {key, html}, petEl(runId) → .st-pet | null, placeholder, getLanes()（混合页要正在跑的计时）,
-  //        projectChoices() → [{id, name, unclassifiedTaskId, tasks:[{id, name, done}]}], place(runId, agent, projectId, taskId) → Promise<boolean>（失败页面自己提示）, fillFigure(slot, pack, phase, lost)（大立绘） }
+  //        projectChoices() → [{id, name, unclassifiedTaskId, tasks:[{id, name, done}]}], place(runId, agent, projectId, taskId) → Promise<boolean>（失败页面自己提示）, fillFigure(slot, pack, phase, lost, runId, fresh)（大立绘；fresh = 刚点开，打一次招呼） }
   // opts.mixed：中心页（「十七」），页首多一条人的泳道；ids 前缀 cp，Agent 页前缀 ag
   function mount(ctx, opts) {
     var mixed = !!(opts && opts.mixed), ID = mixed ? "cp" : "ag", HP = function () { return window.HexHumanPage; };
@@ -306,7 +306,7 @@
     var last = { res: null, now: Date.now(), human: null };
 
     // ── 卡片详情（「二十」）：卡片放大成一块盖住标尺与卡片栏的面板，左大立绘，右边每条运行一张小卡 ──
-    var detailKey = null, detailEl = null, dirty = false, lastDetailKey = "";
+    var detailKey = null, detailEl = null, dirty = false, lastDetailKey = "", greetOnce = false;
     function mk(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
     function buildDetail() {
       detailEl = mk("div", "ag-detail"); detailEl.hidden = true;
@@ -354,7 +354,8 @@
       detailEl.style.setProperty("--ag-c", c.style.getPropertyValue("--ag-c"));
       detailEl.classList.toggle("ag-neutral", c.classList.contains("ag-neutral"));
       detailEl.querySelector(".ag-dt-title b").textContent = g.name;
-      ctx.fillFigure(detailEl.querySelector(".ag-big-slot"), ctx.packOfTool(g.tool), newest.running ? newest.phase : "idle", !!newest.lost);
+      var fresh = greetOnce; greetOnce = false;   // 点开详情那一下才打招呼（「三十二」4）
+      ctx.fillFigure(detailEl.querySelector(".ag-big-slot"), ctx.packOfTool(g.tool), newest.running ? newest.phase : "idle", !!newest.lost, newest.runId, fresh);
       var list = detailEl.querySelector(".ag-dt-list"), top = list.scrollTop, sig = JSON.stringify([hs, ctx.projectChoices ? ctx.projectChoices() : []]);
       if (sig === lastDetailKey) return;
       lastDetailKey = sig;
@@ -377,7 +378,7 @@
       if (detailKey === card.dataset.key) { closeDetail(); return; }
       if (!detailEl) buildDetail();
       var instant = detailKey != null;
-      detailKey = card.dataset.key; lastDetailKey = ""; dirty = false;
+      detailKey = card.dataset.key; lastDetailKey = ""; dirty = false; greetOnce = true;
       detailEl.hidden = false;
       detailEl.style.top = page.querySelector(".ag-axis").offsetTop + "px";
       detailEl.getAnimations().forEach(function (a) { a.cancel(); });
@@ -393,7 +394,7 @@
       if (detailKey == null) return;
       var card = cards[detailKey], el = detailEl;
       detailKey = null;
-      var done = function () { if (detailKey == null) { release(el); el.hidden = true; el.querySelector(".ag-big-slot").textContent = ""; delete el.querySelector(".ag-big-slot").dataset.key; el.querySelector(".ag-dt-list").textContent = ""; lastDetailKey = ""; } };
+      var done = function () { if (detailKey == null) { release(el); el.hidden = true; el.querySelector(".ag-big-slot").textContent = ""; delete el.querySelector(".ag-big-slot").dataset.key; el.querySelector(".ag-big-slot").__greetUntil = 0; el.querySelector(".ag-dt-list").textContent = ""; lastDetailKey = ""; } };
       if (instant || reduced() || !el.animate || !card || !card.isConnected) { done(); return; }
       var from = card.getBoundingClientRect(), to = el.getBoundingClientRect();
       el.animate([{ clipPath: "inset(0px round 12px)", opacity: 1 }, { clipPath: "inset(" + [from.top - to.top, to.right - from.right, to.bottom - from.bottom, from.left - to.left].map(function (v) { return Math.round(v) + "px"; }).join(" ") + " round 12px)", opacity: 0.3 }],

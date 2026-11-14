@@ -93,6 +93,13 @@
       return r.phase || !ph.length ? r : Object.assign({}, r, { phase: ph[ph.length - 1].phase });
     });
   }
+  // 在页面上有小人的运行 = lanes 的 agents ∪ views/current 里被留存折叠掉的在跑运行（hive.stage.v1「三十二」2）
+  function petRunsOf() { return Pk.withCurrentRuns(runsOf(), data.current && data.current.agents, data.lanes && data.lanes.inactiveAgents); }
+  // 人此刻正看着 / 正在跟它对话的那条运行（同「二十一」的判据）：它的小人进 chatting 状态
+  function watchedId() {
+    var r = St.watchedRun(runsOf(), data.lanes && data.lanes.interactions, Date.now(), dayStart() || null);
+    return r && !r.endAt && !r.lost ? r.runId : null;
+  }
   function ms(s) { var t = s ? Date.parse(s) : NaN; return isNaN(t) ? 0 : t; }
   function dayStart() { return ms(data.lanes && data.lanes.windowStart); }
   function pad(n) { return n < 10 ? "0" + n : "" + n; }
@@ -328,6 +335,7 @@
       if (!runById(who.runId)) return;
       el.innerHTML = '<h3 class="st-d-title" role="button" tabindex="0"></h3><div class="st-d-body"></div>';
       var body = el.querySelector(".st-d-body"), ttl = el.querySelector(".st-d-title"), editing = false;
+      el.__editing = function () { return editing; };
       el.__cancelEdit = function () { if (!editing) return false; editing = false; ttl.textContent = titleOf(runById(who.runId) || {}); return true; };
       el.__fill = function () {       // 轮询后重画正文与泳道；改名中的标题不动，输入和焦点都留着
         var run = runById(who.runId); if (!run) { closeCard(); return; }
@@ -601,7 +609,7 @@
   var outPid = null, outTimer = 0;
   document.addEventListener("pointerover", function (ev) {
     if (dragging || !ev.target.closest) return;
-    var pet = ev.target.closest(".st-pet.is-work"), cell = pet ? null : ev.target.closest(".hex-cell[data-project-id]");
+    var pet = ev.target.closest(".st-pet.is-work:not(.is-in)"), cell = pet ? null : ev.target.closest(".hex-cell[data-project-id]");
     var pid = pet ? pet.dataset.cell : cell ? cell.dataset.projectId : null;
     clearTimeout(outTimer);
     if (pid) { if (pid !== outPid) { outPid = pid; renderPets(); } }
@@ -610,11 +618,11 @@
   function layerPetK() { return parseFloat(layer.style.getPropertyValue("--pet-k")) || 1; }
   function renderPets() {
     if (layoutBusy()) return;   // 放大 / 缩小动画里格子还在路上：量到的是半路的位置
-    var runs = runsOf().map(function (r) {
+    var runs = petRunsOf().map(function (r) {
       var dock = stage.petDock(r.runId);
       return dock && Pk.isLoose(r, { projectOfTask: projectOfTask }) ? Object.assign({}, r, { projectId: dock, taskId: null }) : r;
     });
-    var opts = { packsByTool: packsByTool(), projectOfTask: projectOfTask };
+    var opts = { packsByTool: packsByTool(), projectOfTask: projectOfTask, now: Date.now(), watchedId: watchedId() };
     var work = Pk.pickWorkers(runs, opts), idle = Pk.pickIdle(runs, opts), keep = {};
     var hc = hiveCenter(), byCell = {};
     work.pets.forEach(function (p) { (byCell[p.projectId] = byCell[p.projectId] || []).push(p); });
@@ -642,8 +650,10 @@
       var home = Pk.slotPos(slotOf[p.runId], SLOT_AREA);
       e.__home = home; e.style.removeProperty("--pet-k"); e.classList.remove("is-big");
       if (!e.classList.contains("is-loose")) {
+        var from = e.classList.contains("is-work") && !reduced() ? curPos(e) : null;   // 满 1 小时的睡觉小人从格子里走回左上角（「三十二」1）
         delete ix[p.runId]; e.classList.remove("is-work", "is-in", "st-away", "flip"); e.classList.add("is-loose"); place(e, home);
         var sl = e.querySelector(".st-media"); if (sl.dataset.over) { delete sl.dataset.over; sl.dataset.key = ""; }
+        if (from) startBack(e, from, STAY_MS);
       } else if (!ix[p.runId] || !ix[p.runId].mode) place(e, home);
       fillPet(e, p, runById(p.runId));
     });
@@ -660,23 +670,27 @@
       place(more, { x: maxX + 14, y: maxY });
     }
   }
-  function runById(id) { return runsOf().filter(function (r) { return r.runId === id; })[0] || null; }
+  function runById(id) { return petRunsOf().filter(function (r) { return r.runId === id; })[0] || null; }
+  // 悬停 300 毫秒出小人信息卡，移开消失（指针在卡上不收，改名时不收）；点击 = 打开 Agent 页放大它的详情（「三十二」3，取代「二十六」3 的长按）
+  var HOVER_CARD_MS = 300, CARD_LEAVE_MS = 250, hoverCard = { pet: null, card: false, timer: 0, leave: 0 };
+  function cardShouldStay() { var c = card; return !!(c && c.__hover && (hoverCard.card || (hoverCard.pet && c.__key === hoverCard.pet.dataset.runId) || (c.__editing && c.__editing()))); }
+  function leaveCardSoon() { clearTimeout(hoverCard.leave); hoverCard.leave = setTimeout(function () { if (card && card.__hover && !cardShouldStay()) closeCard(); }, CARD_LEAVE_MS); }
   function bindPetDrag(e) {
     if (e.__bound) return; e.__bound = 1;
-    // 长按（不挪）= 挑这个 AI 的形象：按它的 tool 记进宠物包对照；随后那下松手不算点击
-    var hold = { t: 0, x: 0, y: 0, fired: false };
-    function unhold() { clearTimeout(hold.t); }
-    e.addEventListener("pointerdown", function (ev) {
-      if (ev.button > 0) return;
-      unhold(); hold.fired = false; hold.x = ev.clientX; hold.y = ev.clientY;
-      hold.t = setTimeout(function () {
-        var r = e.__run; if (!r || e.classList.contains("st-dragging")) return;
-        hold.fired = true;
-        centre.openAgent(r.runId);   // 长按小人 = 放大看这个 agent 的详情（「二十六」2）；换形象改到详情里点大立绘
-      }, CM.HOLD_MS);
+    e.addEventListener("pointerenter", function (ev) {
+      if (ev.pointerType === "touch") return;
+      hoverCard.pet = e; clearTimeout(hoverCard.leave); clearTimeout(hoverCard.timer);
+      if (card && card.__key === e.dataset.runId) return;
+      hoverCard.timer = setTimeout(function () {
+        if (hoverCard.pet !== e || dragging || !e.isConnected || e.classList.contains("st-dragging") || document.querySelector(".ag-veil:not([hidden])")) return;
+        hoverCard.card = false; openCard({ runId: e.dataset.runId }, e);
+        if (!card) return;
+        card.__hover = true;
+        card.addEventListener("pointerenter", function () { hoverCard.card = true; clearTimeout(hoverCard.leave); });
+        card.addEventListener("pointerleave", function () { hoverCard.card = false; leaveCardSoon(); });
+      }, HOVER_CARD_MS);
     });
-    e.addEventListener("pointermove", function (ev) { if (Pk.pressKind(ev.clientX - hold.x, ev.clientY - hold.y) !== "click") unhold(); });
-    e.addEventListener("pointerup", unhold); e.addEventListener("pointercancel", unhold);
+    e.addEventListener("pointerleave", function () { if (hoverCard.pet === e) hoverCard.pet = null; clearTimeout(hoverCard.timer); leaveCardSoon(); });
     drag(e, {
       el: e,
       item: function () {
@@ -684,8 +698,9 @@
         if (!r) return null;
         return { kind: "pet", runId: r.runId, agent: r.agent };
       },
-      onClick: function () { if (hold.fired) { hold.fired = false; return; } poke(e); toggleCard({ runId: e.dataset.runId }, e); },
+      onClick: function () { poke(e); closeCard(); if (e.__run) centre.openAgent(e.__run.runId); },
       onGrab: function () {
+        closeCard(); clearTimeout(hoverCard.timer);
         var s = ixOf(e.dataset.runId); s.mode = "drag"; s.walking = false; s.click = null;
         e.classList.remove("st-away"); syncClip(e);
       },
@@ -807,10 +822,34 @@
     var m = (packs[kind] && packs[kind].moods) || {}, f = (m.happy && m.happy[0]) || (m.click && m.click[0]) || (m.idle && m.idle[0]) || null, o = mediaFor({ pack: kind }, f);
     return { key: o.key, html: '<div class="st-media">' + o.html + "</div>" };
   }
-  // Agent 卡片详情的大立绘（「二十」）：同 fillHumanFigure 的画法，包按 tool、动作按运行状态
-  function fillPackFigure(slot, kind, phase, lost) {
+  // Agent 卡片详情的大立绘（「二十」「三十二」4）：包按 tool、动作按这条运行此刻的状态（同蜂巢上的小人）；
+  // fresh = 刚点开详情：先打一次招呼（元气挥手 之类，播完或最多 GREET_MS）再回到状态动作，之后不再招呼
+  var GREET_MS = 4000;
+  function fillPackFigure(slot, kind, phase, lost, runId, fresh) {
     loadPack(kind);
-    slot.__rhythm = Pk.rhythm(slot.__pack === kind ? slot.__rhythm : null, packs[kind] && packs[kind].moods, Pk.moodOf(phase, lost), Date.now(), Math.random);
+    var run = runId && runById(runId), moods = packs[kind] && packs[kind].moods, now = Date.now();
+    var mood = run ? Pk.stateOf(run, now, watchedId()).mood : Pk.moodOf(phase, lost);
+    if (fresh) slot.__greetPending = true;
+    if (slot.__greetPending && packs[kind]) {            // 包读到了才打招呼（之前读不到就等下一次重画）
+      slot.__greetPending = false;
+      var hi = Pk.meetClip(moods, "human");
+      if (hi && !reduced()) {
+        var url = BASE + "hive/pets/" + encodeURIComponent(kind) + "/" + hi.split("/").map(encodeURIComponent).join("/");
+        slot.__greetUntil = now + GREET_MS; slot.__greetKey = url;
+      }
+    }
+    if (slot.__greetUntil > now && slot.__greetKey) {
+      var key = "greet:" + slot.__greetKey;
+      if (slot.dataset.key !== key) {
+        slot.dataset.key = key;
+        var again = function () { slot.__greetUntil = 0; slot.dataset.key = ""; fillPackFigure(slot, kind, phase, lost, runId, false); };
+        showMedia(slot, { video: slot.__greetKey, loop: false, html: '<video class="st-art" src="' + esc(slot.__greetKey) + '" autoplay muted playsinline></video>' }, again, again);
+        setTimeout(function () { if (slot.dataset.key === key) again(); }, GREET_MS + 50);   // 视频没播完 / 读不到时也按时回到状态动作
+      }
+      slot.__pack = kind;
+      return;
+    }
+    slot.__rhythm = Pk.rhythm(slot.__pack === kind ? slot.__rhythm : null, moods, mood, now, Math.random);
     slot.__pack = kind;
     var m = mediaFor({ pack: kind }, slot.__rhythm.file);
     if (slot.dataset.key === m.key) return;

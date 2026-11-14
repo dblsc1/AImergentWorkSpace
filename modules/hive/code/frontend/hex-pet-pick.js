@@ -19,6 +19,45 @@
     return "idle";
   }
 
+  // 状态 → 动作（hive.stage.v1「三十二」1）。mood 键：working / chatting / worried / waiting / idle / idle-bored / idle-slacking / idle-sleeping
+  //   chatting = 人此刻正跟它对话；worried = 出错或等授权；idle 按「从最后一次干活结束算起」分档：
+  //   < 1 分钟 idle；1–5 分钟 idle-bored（扶额等待）；5–30 分钟 idle-slacking（开小差）；30 分钟起 idle-sleeping；满 1 小时 home = 飞回左上角睡
+  var BORED_MS = 60000, SLACK_MS = 300000, SLEEP_MS = 1800000, HOME_MS = 3600000;
+  function byAt(a, b) { return ms(a.at) - ms(b.at); }
+  // 最后一次干活的结束时刻（ms）：最后一个 working 相位之后第一个相位的时刻；最后一相还是 working = null（正在干）；
+  // 没干过 = run.lastWorkAt（views/lanes 折叠行给的），再没有 = 运行开始
+  function lastWorkedAt(run) {
+    var ph = (run.phases || []).slice().sort(byAt), i = ph.length - 1;
+    while (i >= 0 && ph[i].phase !== "working") i--;
+    if (i < 0) return ms(run.lastWorkAt) || ms(run.startAt || run.startedAt);
+    return i + 1 < ph.length ? ms(ph[i + 1].at) : null;
+  }
+  // 这一拍的状态 {mood, home, idleMs}。watchedId = 人此刻正看着的那条运行的 runId（hive.stage.v1「二十一」的判据）
+  function stateOf(run, now, watchedId) {
+    var ph = run.phase;
+    if (run.lost) return { mood: "idle", home: false, idleMs: 0 };
+    if (ph === "error" || ph === "waiting_permission") return { mood: "worried", home: false, idleMs: 0 };
+    if (watchedId && run.runId === watchedId) return { mood: "chatting", home: false, idleMs: 0 };
+    if (ph === "working") return { mood: "working", home: false, idleMs: 0 };
+    if (ph === "waiting_input") return { mood: "waiting", home: false, idleMs: 0 };
+    var since = lastWorkedAt(run), idle = since == null ? 0 : Math.max(0, now - since);
+    return { mood: idle >= SLEEP_MS ? "idle-sleeping" : idle >= SLACK_MS ? "idle-slacking" : idle >= BORED_MS ? "idle-bored" : "idle", home: idle >= HOME_MS, idleMs: idle };
+  }
+  // views/lanes 把空闲久了 / 出错的折叠进 inactiveAgents（没有 runId）；views/current 的 agents 仍列着所有在跑的。
+  // 把 lanes 里没有的在跑运行补上，最后干活时刻按 agent + label 从折叠行取
+  function withCurrentRuns(runs, currentAgents, inactiveAgents) {
+    var seen = {};
+    (runs || []).forEach(function (r) { seen[r.runId] = 1; });
+    var extra = (currentAgents || []).filter(function (a) { return a && !seen[a.runId]; }).map(function (a) {
+      var row = (inactiveAgents || []).filter(function (x) { return x.agent === a.agent && (x.label || null) === (a.label || null); })[0];
+      return { runId: a.runId, agent: a.agent, tool: a.tool, model: a.model, label: a.label, taskId: a.taskId, projectId: null, startAt: a.startedAt, endAt: null,
+        lost: false, phase: a.phase || "idle", phases: [], attention: [], elapsedSeconds: a.elapsedSeconds, lastWorkAt: row ? row.lastWorkAt : null, lastSeenAt: row ? row.lastWorkAt : null };
+    });
+    return (runs || []).concat(extra);
+  }
+  // 满 1 小时的睡觉小人不再站格子里：飞回左上角（同没有去向的那排位置）
+  function stateFor(r, opts) { return opts && opts.now != null ? stateOf(r, opts.now, opts.watchedId) : { mood: moodOf(r.phase, r.lost), home: false }; }
+
   function packOf(run, packsByTool) {
     var m = packsByTool || DEFAULT_PACKS_BY_TOOL;
     return m[run.tool] || m["*"] || DEFAULT_PACK;
@@ -31,7 +70,7 @@
     });
     return {
       pets: sorted.slice(0, MAX_PETS).map(function (r) {
-        return { runId: r.runId, name: r.label || r.agent, mood: moodOf(r.phase, r.lost), pack: packOf(r, opts && opts.packsByTool), projectId: projectOf(r) };
+        return { runId: r.runId, name: r.label || r.agent, mood: stateFor(r, opts).mood, pack: packOf(r, opts && opts.packsByTool), projectId: projectOf(r) };
       }),
       plus: Math.max(0, sorted.length - MAX_PETS)
     };
@@ -48,13 +87,13 @@
 
   // 格子边：在跑、挂了任务或项目（任务能解出项目）的运行
   function pickWorkers(runs, opts) {
-    var hosted = (runs || []).filter(function (r) { return isRunning(r) && projectOfRun(r, opts); });
+    var hosted = (runs || []).filter(function (r) { return isRunning(r) && projectOfRun(r, opts) && !stateFor(r, opts).home; });
     return top(hosted, opts, function (r) { return projectOfRun(r, opts); });
   }
 
   // 左上角：在跑、没有任务也没有项目（或只挂在收件箱）
   function pickIdle(runs, opts) {
-    var loose = (runs || []).filter(function (r) { return isRunning(r) && isLoose(r, opts); });
+    var loose = (runs || []).filter(function (r) { return isRunning(r) && (isLoose(r, opts) || stateFor(r, opts).home); });
     return top(loose, opts, function () { return null; });
   }
 
@@ -92,7 +131,17 @@
   // **回到原来那个主动作** 15 秒，如此循环；主动作每 5 分钟换一个（≠ 上一个），换 mood 立刻换。
   // s 是上一次的状态（首次 null）；moods = pack.moods；返回新状态 {mood, step: "main"|"temp", file, main, until, keepUntil}。纯函数，rnd / now 可注入。
   var MAIN_MS = 15000, TEMP_MS = 3000, KEEP_MS = 300000;
-  function moodList(moods, mood) { var m = moods || {}; return (m[mood] && m[mood].length ? m[mood] : m.idle) || []; }
+  // 包里没有这个 mood 键时的回退（「三十二」1）：chatting → happy / click，idle-bored → waiting，idle-slacking → idle，idle-sleeping → idle 里文件名含 小憩 / 沉眠 / 睡 的，最后都回 idle
+  var MOOD_FALLBACK = { "chatting": ["happy", "click"], "idle-bored": ["waiting"], "idle-slacking": ["idle"], "idle-sleeping": ["idle"], worried: ["waiting"] };
+  var SLEEP_FILE = /小憩|沉眠|睡/;
+  function moodList(moods, mood) {
+    var m = moods || {};
+    if (m[mood] && m[mood].length) return m[mood];
+    var chain = MOOD_FALLBACK[mood] || [];
+    if (mood === "idle-sleeping") { var z = (m.idle || []).filter(function (f) { return SLEEP_FILE.test(f); }); if (z.length) return z; }
+    for (var i = 0; i < chain.length; i++) if (m[chain[i]] && m[chain[i]].length) return m[chain[i]];
+    return m.idle || [];
+  }
   function rhythm(s, moods, mood, now, rnd) {
     var list = moodList(moods, mood);
     function fresh(last, until) { var f = pickClip(list, last, rnd); return { mood: mood, step: "main", file: f, main: f || last, until: until, keepUntil: now + KEEP_MS }; }
@@ -100,7 +149,7 @@
     if (s.mood !== mood) return fresh(s.main, now + MAIN_MS);          // 换 mood：立刻换动作、重算周期
     if (s.step === "main" && !s.file) { var f0 = pickClip(list, s.main, rnd); return f0 ? { mood: mood, step: "main", file: f0, main: f0, until: s.until, keepUntil: now + KEEP_MS } : s; }   // 包刚下完：补上
     if (now < s.until) return s;
-    if (s.step === "main") {
+    if (s.step === "main" && mood !== "idle-sleeping") {   // 睡着了不插点击动作
       var tmp = tempList({ moods: moods });
       if (tmp.length) return { mood: mood, step: "temp", file: pickClip(tmp, null, rnd), main: s.main, until: now + TEMP_MS, keepUntil: s.keepUntil };
     }
@@ -147,7 +196,7 @@
     return { x: s[0] * w * k, y: s[1] * h * k };
   }
 
-  var api = { restSlot: restSlot, hexEdgeDistance: hexEdgeDistance, MAX_PETS: MAX_PETS, DEFAULT_PACK: DEFAULT_PACK, DEFAULT_PACKS_BY_TOOL: DEFAULT_PACKS_BY_TOOL, moodOf: moodOf, packOf: packOf, pickWorkers: pickWorkers, pickIdle: pickIdle, isLoose: isLoose, slotPos: slotPos, assignSlots: assignSlots, rhythm: rhythm, tempList: tempList, MAIN_MS: MAIN_MS, KEEP_MS: KEEP_MS, TEMP_MS: TEMP_MS,
+  var api = { stateOf: stateOf, lastWorkedAt: lastWorkedAt, withCurrentRuns: withCurrentRuns, moodList: moodList, BORED_MS: BORED_MS, SLACK_MS: SLACK_MS, SLEEP_MS: SLEEP_MS, HOME_MS: HOME_MS, restSlot: restSlot, hexEdgeDistance: hexEdgeDistance, MAX_PETS: MAX_PETS, DEFAULT_PACK: DEFAULT_PACK, DEFAULT_PACKS_BY_TOOL: DEFAULT_PACKS_BY_TOOL, moodOf: moodOf, packOf: packOf, pickWorkers: pickWorkers, pickIdle: pickIdle, isLoose: isLoose, slotPos: slotPos, assignSlots: assignSlots, rhythm: rhythm, tempList: tempList, MAIN_MS: MAIN_MS, KEEP_MS: KEEP_MS, TEMP_MS: TEMP_MS,
     CLICK_PX: CLICK_PX, STAY_MS: STAY_MS, pressKind: pressKind, clickCounts: clickCounts, pickClip: pickClip, clickClip: clickClip, walkBack: walkBack, meetClip: meetClip, meetSpot: meetSpot };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.NexusTableHexPetPick = api;
