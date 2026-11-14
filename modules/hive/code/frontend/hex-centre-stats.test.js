@@ -27,9 +27,10 @@ const tt = C.totals({ human: [{ start: t("09:00:00"), end: t("10:00:00") }], age
 assert.strictEqual(tt.humanSec, 3600); assert.strictEqual(tt.agentSec, 7200 + 3600 + 600); assert.strictEqual(tt.peak, 3);
 
 // 轮播短句：有就列，没有就跳过，总计一定有
-assert.deepStrictEqual(C.tickerLines({ humanNow: null, working: 0, humanSec: 0, agentSec: 0, focus: null }), ["你 0 分钟\n代理 0 分钟"]);
+assert.deepStrictEqual(C.tickerLines({ humanNow: null, working: 0, humanSec: 0, agentSec: 0, focus: null }), ["你 0m\n代理 0m"]);
 assert.deepStrictEqual(C.tickerLines({ humanNow: "你在做 数学", working: 2, humanSec: 3600, agentSec: 7200, focus: { name: "garden", text: "00:20:00" } }),
-  ["你在做 数学", "2 个代理并行", "你 1 小时，带出代理 2 小时的活", "你 1 小时\n代理 2 小时", "garden\n00:20:00"]);
+  ["你在做 数学", "2 个代理并行", "效率 ×2", "你 1h\n代理 2h", "garden\n00:20:00"]);
+assert.deepStrictEqual([C.fmtShort(0), C.fmtShort(25 * 60), C.fmtShort(3600), C.fmtShort(3.2 * 3600)], ["0m", "25m", "1h", "3.2h"]);
 
 console.log("hex-centre-stats ok");
 

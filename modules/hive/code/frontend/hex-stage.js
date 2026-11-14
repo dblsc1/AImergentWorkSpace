@@ -61,14 +61,22 @@
     return "未分类 · 今天 " + (h ? h + " 小时 " + (m % 60) + " 分" : m + " 分");
   }
 
-  // 可拖行按秒降序；看不懂的按 kind 合成灰行
+  // 可拖行按秒降序；看不懂的按 kind 合成灰行。例外（「三十三」）：看不懂的窗口块（终端未认出、浏览器其他网站、其他）今天累计满 5 分钟的，
+  // 各自一行、可拖，名字用它的窗口名，和认出来的窗口一起按秒排在灰行前面；不满的照旧进灰行
+  var LOUD_SECONDS = 300;
+  function loudTerminal(b) { return !b.legible && b.seconds >= LOUD_SECONDS; }
   function drawerRows(blocks) {
+    var loud = (blocks || []).filter(loudTerminal).map(function (b) {
+      var g = greyGroups([b])[0];
+      return { name: g.hidden ? g.app + " · 标题已隐去" : g.block.displayName, seconds: b.seconds, draggable: true, block: g.block };
+    });
     var legible = (blocks || []).filter(function (b) { return b.legible; })
-      .sort(function (a, b) { return b.seconds - a.seconds; })
-      .map(function (b) { return { name: b.displayName, seconds: b.seconds, draggable: true, block: b }; });
+      .map(function (b) { return { name: b.displayName, seconds: b.seconds, draggable: true, block: b }; })
+      .concat(loud).sort(function (a, b) { return b.seconds - a.seconds; });
+    blocks = (blocks || []).filter(function (b) { return !loudTerminal(b); });
     var grey = [];
     GREY_ORDER.forEach(function (k) {
-      var of = (blocks || []).filter(function (b) { return !b.legible && (GREY_NAMES[b.kind] ? b.kind : "other") === k; });
+      var of = blocks.filter(function (b) { return !b.legible && (GREY_NAMES[b.kind] ? b.kind : "other") === k; });
       if (of.length) grey.push({ name: GREY_NAMES[k], kind: k, seconds: of.reduce(function (s, b) { return s + b.seconds; }, 0), draggable: false, block: null, members: greyGroups(of) });
     });
     return legible.concat(grey);

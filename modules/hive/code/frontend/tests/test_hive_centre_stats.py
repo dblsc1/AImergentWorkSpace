@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from datetime import timedelta
 import json
+import re
 from typing import Any
 
+import pytest
+
 from test_hive_focus import base, browser  # noqa: F401  (fixtures)
-from test_hive_stage import TZ, Stage, _busy_day, _iso, open_stage
+from test_hive_stage import TZ, Stage, _busy_day, _focus, _iso, open_stage
 
 
 def _lanes(st: Stage) -> None:
@@ -35,7 +38,7 @@ def test_ring_ticker_rotates_every_four_seconds_and_keeps_totals_line(browser, b
         seen = set()
         for _ in range(len(lines) + 1):
             seen.add(st.page.locator("#stRing .st-tk").text_content())
-            st.page.clock.run_for(4000)
+            st.page.clock.run_for(8000)
         assert len(seen) >= 2
         rx, ry = st.center("#stRing")
         cx, cy = st.center(".hex-cell.hex-center")
@@ -91,3 +94,40 @@ def test_ring_click_with_reduced_motion_opens_the_mixed_page(browser, base) -> N
         st.page.click("#stRing")
         st.page.locator("#cpPage .ag-me").wait_for()
         assert st.page.locator(".st-fly, .ag-flyer").count() == 0
+
+
+@pytest.mark.parametrize("width,height", [(390, 844), (768, 600), (1280, 800)])
+def test_every_ticker_line_stays_inside_the_centre_cell_and_looks_like_a_project_name(browser, base, width, height) -> None:  # noqa: F811  三十三
+    def long_names(st: Stage) -> None:
+        _setup(st)
+        st.lanes["agents"][1]["label"] = "一个特别特别长的代理名字ecsagent-cfo-sandbox-builder"
+        now = st.now().astimezone(TZ)
+        st.lanes["interactions"].append({"runId": "r2", "kind": "attend", "at": _iso(now), "until": _iso(now + timedelta(seconds=30))})
+        _focus(st, "p_math")
+
+    with open_stage(browser, base, width=width, height=height, setup=long_names) as st:
+        lines = json.loads(st.page.locator("#stRing").get_attribute("data-lines"))
+        assert len(lines) >= 5
+        box = st.page.evaluate("""() => {
+            const r = e => { const b = e.getBoundingClientRect(); return [b.left, b.top, b.right, b.bottom]; };
+            return { ring: r(document.querySelector('#stRing')), cell: r(document.querySelector('.hex-cell.hex-center')) };
+        }""")
+        seen = set()
+        for _ in range(len(lines) + 2):   # 多转两格：起点不一定对齐 8 秒
+            st.page.clock.run_for(8000)
+            glyphs = st.page.evaluate("""() => {
+                const tk = document.querySelector('#stRing .st-tk'), rg = document.createRange(); rg.selectNodeContents(tk);
+                const b = rg.getBoundingClientRect(), t = tk.getBoundingClientRect(), cs = getComputedStyle(tk);
+                return { content: tk.textContent, text: [b.left, b.top, b.right, b.bottom], box: [t.left, t.top, t.right, t.bottom], weight: cs.fontWeight, color: cs.color,
+                         title: (() => { const h = document.querySelector('.hex-cell[data-project-id] .hex-title'); const c = getComputedStyle(h); return { weight: c.fontWeight, color: c.color }; })() };
+            }""")
+            seen.add(re.sub(r"\d+m", "Nm", glyphs["content"]))
+            for name in ("box",) if "特别" in glyphs["content"] else ("text", "box"):   # 超长名字被省略号裁掉的部分不算：只量元素外框
+                g = glyphs[name]
+                for outer in (box["ring"], box["cell"]):
+                    assert g[0] >= outer[0] - 0.5 and g[1] >= outer[1] - 0.5 and g[2] <= outer[2] + 0.5 and g[3] <= outer[3] + 0.5, (name, g, outer, seen)
+            ring, b = box["ring"], glyphs["box"]   # 外框的四个角都在环的内圈（环宽 140 里 r = 80 / 100 处，即色弧的内沿）之内
+            cx, cy, r = (ring[0] + ring[2]) / 2, (ring[1] + ring[3]) / 2, (ring[2] - ring[0]) / 2 * 0.8
+            assert all((x - cx) ** 2 + (y - cy) ** 2 <= (r + 0.5) ** 2 for x in (b[0], b[2]) for y in (b[1], b[3])), (b, ring)
+            assert glyphs["weight"] == glyphs["title"]["weight"] and glyphs["color"] == glyphs["title"]["color"]
+        assert seen == {re.sub(r"\d+m", "Nm", x) for x in lines}

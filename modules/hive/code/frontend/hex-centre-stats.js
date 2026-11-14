@@ -4,7 +4,7 @@
 (function () {
   "use strict";
   var AP = function () { return window.NexusTableHexAgentPage; };   // 点头像开的 Agent 页（hex-agent-page.js，「十三」）
-  var TICK_MS = 4000, FISH_PACK = "deepseek", WEEK_MS = 7 * 24 * 3600000, FISH_REFRESH_MS = 300000;
+  var TICK_MS = 8000,   /* 仓主 2026-11-15：轮播太快，4 秒 → 8 秒（「三十三」4）*/  FISH_PACK = "deepseek", WEEK_MS = 7 * 24 * 3600000, FISH_REFRESH_MS = 300000;
 
   function pad(n) { return n < 10 ? "0" + n : "" + n; }
   function ymd(t) { var d = new Date(t); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
@@ -15,6 +15,11 @@
     var m = Math.round(Math.max(0, sec) / 60);
     if (m < 60) return m + " 分钟";
     return Math.round(m / 6) / 10 + " 小时";
+  }
+  // 环里的短写法（「三十三」）：不满 1 小时写「25m」，满了写「2.8h」
+  function fmtShort(sec) {
+    var m = Math.round(Math.max(0, sec) / 60);
+    return m < 60 ? m + "m" : Math.round(m / 6) / 10 + "h";
   }
   // 效率 = 今天代理干活时间 ÷ 你专注的时间，写成「你 1 小时，带出代理 3.2 小时的活」；没有可比的数据 = null
   function efficiencyLine(humanSec, agentSec) {
@@ -41,8 +46,8 @@
     var out = [], eff = efficiencyLine(s.humanSec, s.agentSec);
     if (s.humanNow) out.push({ kind: "human", text: s.humanNow });
     if (s.working > 0) out.push({ kind: "parallel", text: s.working + " 个代理并行" });
-    if (eff) out.push({ kind: "efficiency", text: eff.line });
-    out.push({ kind: "totals", text: "你 " + fmtHours(s.humanSec) + "\n代理 " + fmtHours(s.agentSec) });
+    if (eff) out.push({ kind: "efficiency", text: "效率 ×" + Math.round(eff.ratio * 10) / 10 });
+    out.push({ kind: "totals", text: "你 " + fmtShort(s.humanSec) + "\n代理 " + fmtShort(s.agentSec) });
     if (s.focus) out.push({ kind: "agent", text: s.focus.name + "\n" + s.focus.text });
     return out;
   }
@@ -83,7 +88,7 @@
     if (s.peak > 0) out.push({ text: "今天代理并行峰值 " + s.peak });
     return out;
   }
-  var api = { fmtHours: fmtHours, efficiencyLine: efficiencyLine, peakParallel: peakParallel, totals: totals, tickerLines: tickerLines, tickerEntries: tickerEntries, ringArcs: ringArcs, ringCardLines: ringCardLines, TICK_MS: TICK_MS };
+  var api = { fmtHours: fmtHours, fmtShort: fmtShort, efficiencyLine: efficiencyLine, peakParallel: peakParallel, totals: totals, tickerLines: tickerLines, tickerEntries: tickerEntries, ringArcs: ringArcs, ringCardLines: ringCardLines, TICK_MS: TICK_MS };
 
   // ── 接线 ─────────────────────────────────────────────
   // ctx: { layer, ring, clock, getJson, snapshot(now) → {humanNow, working, humanSec, focus}, projectName, cellColor, placeholder, base }
@@ -143,7 +148,6 @@
       var entries = tickerEntries({ humanNow: snap.humanNow, working: snap.working, humanSec: snap.humanSec, agentSec: agentSec, focus: snap.focus });
       var lines = entries.map(function (e) { return e.text; }), cur = entries[Math.floor(now / TICK_MS) % entries.length], text = cur.text;
       ring.dataset.lines = JSON.stringify(lines);
-      ring.style.setProperty("--ring-k", ring.dataset.k || "1");   // 环缩小时字按倒数放大，始终在环正中看得清（「二十四」）
       if (text !== tkText) {
         tkText = text; tk.textContent = text;
         if (!reduce) { tk.classList.remove("swap"); void tk.offsetWidth; tk.classList.add("swap"); }
