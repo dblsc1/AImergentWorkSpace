@@ -201,16 +201,16 @@ def _busy_day(st: Stage) -> None:
         interactions=[{"runId": "r1", "kind": "attend", "at": _iso(now - timedelta(seconds=60)), "until": _iso(now)}])
     st.blocks = [
         {"blockKey": "gh", "status": "pending", "seconds": 600, "seq": 3, "displayName": "github.com", "legible": True, "kind": "browser"},
-        {"blockKey": "ptyxis · x", "status": "pending", "seconds": 300, "seq": 1, "displayName": "终端（未认出）", "legible": False, "kind": "terminal"},
+        {"blockKey": "ptyxis · x", "status": "pending", "seconds": 240, "seq": 1, "displayName": "终端（未认出）", "legible": False, "kind": "terminal"},
     ]
 
 
 def test_layout_has_ring_clock_bucket_and_cells_only_name_the_project(browser, base) -> None:  # noqa: F811  HV-B01 / HV-S20
     with open_stage(browser, base, setup=_busy_day) as st:
         lines = json.loads(st.page.locator("#stRing").get_attribute("data-lines"))
-        assert any(x.startswith("garden\n00:20:") for x in lines)      # 人此刻在看的代理，是轮播里的一句
+        assert any(x.startswith("garden\n20m") for x in lines)      # 人此刻在看的代理，是轮播里的一句
         assert "小时" in st.page.locator("#stClock .st-clock-today").inner_text()
-        assert st.page.locator("#stBucketLabel").inner_text() == "未分类 · 今天 15 分"
+        assert st.page.locator("#stBucketLabel").inner_text() == "未分类 · 今天 14 分"
         assert st.page.locator(CELL.format("p_math")).inner_text().strip() == "数学"
         # 环正好在蜂巢正中心的格子上；时钟在右上角
         rx, ry = st.center("#stRing")
@@ -372,7 +372,7 @@ def test_bucket_drawer_drags_a_block_into_a_cell(browser, base) -> None:  # noqa
         st.page.click("#stBucketBtn")
         st.page.clock.run_for(300)
         chips = st.page.locator(".st-chip")
-        assert chips.all_inner_texts() == ["github.com\n10 分", "终端（未认出）\n5 分"]
+        assert chips.all_inner_texts() == ["github.com\n10 分", "终端（未认出）\n4 分"]
         assert "ptyxis" not in st.page.locator("#stDrawer").inner_text()
         # 灰行：不进入拖动状态，无请求
         x, y = st.center(".st-chip.nodrag")
@@ -390,7 +390,7 @@ def test_bucket_drawer_drags_a_block_into_a_cell(browser, base) -> None:  # noqa
         today = st.lanes["today"]
         assert st.posts == [("activity/blocks/assign", {"date": today, "blockKey": "gh", "ifSeq": 3, "projectId": "p_math", "remember": False})]
         assert st.toast() == ""
-        assert st.page.locator("#stBucketLabel").inner_text() == "未分类 · 今天 5 分"
+        assert st.page.locator("#stBucketLabel").inner_text() == "未分类 · 今天 4 分"
         assert st.page.locator(".st-chip").count() == 1
 
 
@@ -398,7 +398,7 @@ def test_grey_row_opens_a_popover_of_same_title_groups_and_a_group_drags_into_a_
     def grey(st: Stage) -> None:
         _busy_day(st)
         st.blocks = [{"blockKey": f"ptyxis · {t}", "status": "pending", "seconds": s, "seq": i, "displayName": None, "legible": False,
-                      "kind": "terminal", "apps": ["ptyxis"]} for i, (t, s) in enumerate([("~/work", 120), ("vim a.go", 600)], 1)]
+                      "kind": "terminal", "apps": ["ptyxis"]} for i, (t, s) in enumerate([("~/work", 120), ("vim a.go", 240)], 1)]
 
     with open_stage(browser, base, setup=grey) as st:
         st.page.click("#stBucketBtn")
@@ -406,7 +406,7 @@ def test_grey_row_opens_a_popover_of_same_title_groups_and_a_group_drags_into_a_
         st.page.click(".st-chip.grey")
         st.page.clock.run_for(300)
         pop = st.page.locator("#stGreyPop .st-chip")
-        assert pop.all_inner_texts() == ["vim a.go\n10 分", "~/work\n2 分"]
+        assert pop.all_inner_texts() == ["vim a.go\n4 分", "~/work\n2 分"]
         st.replies["activity/blocks/assign"] = (200, {})
         st.blocks = st.blocks[:1]
         st.drag("#stGreyPop .st-chip", st.center(CELL.format("p_math")))
@@ -420,6 +420,26 @@ def test_grey_row_opens_a_popover_of_same_title_groups_and_a_group_drags_into_a_
         assert st.page.locator("#stGreyPop .st-chip").all_inner_texts() == ["~/work\n2 分"]
 
 
+def test_unrecognised_terminal_of_five_minutes_gets_its_own_loud_card_and_a_short_one_stays_folded(browser, base) -> None:  # noqa: F811  三十三
+    def terms(st: Stage) -> None:
+        _busy_day(st)
+        st.blocks = [{"blockKey": f"ptyxis · {t}", "status": "pending", "seconds": s, "seq": i, "displayName": None, "legible": False,
+                      "kind": "terminal", "apps": ["ptyxis"]} for i, (t, s) in enumerate([("ecsagent", 360), ("cfo", 120)], 1)]
+
+    with open_stage(browser, base, setup=terms) as st:
+        st.page.click("#stBucketBtn")
+        st.page.clock.run_for(300)
+        assert st.page.locator("#stDrawer .st-chip").all_inner_texts() == ["ptyxis · ecsagent\n6 分", "终端（未认出）\n2 分"]
+        assert st.page.locator(".st-chip.grey").count() == 1 and st.page.locator(".st-chip:not(.nodrag)").count() == 1
+        st.page.click(".st-chip.grey")
+        st.page.clock.run_for(300)
+        assert st.page.locator("#stGreyPop .st-chip").all_inner_texts() == ["cfo\n2 分"]
+        st.replies["activity/blocks/assign"] = (200, {})
+        st.drag(".st-chip:not(.nodrag)", st.center(CELL.format("p_math")))
+        st.settle()
+        assert st.posts == [("activity/blocks/assign", {"date": st.lanes["today"], "blockKey": "ptyxis · ecsagent", "ifSeq": 1, "projectId": "p_math", "remember": False})]
+
+
 def test_block_drop_conflict_keeps_the_block(browser, base) -> None:  # noqa: F811  HV-S13
     with open_stage(browser, base, setup=_busy_day) as st:
         st.replies["activity/blocks/assign"] = (409, {})
@@ -429,7 +449,7 @@ def test_block_drop_conflict_keeps_the_block(browser, base) -> None:  # noqa: F8
         st.settle()
         assert "数据已变化" in st.toast()
         assert st.page.locator(".st-chip").count() == 2
-        assert st.page.locator("#stBucketLabel").inner_text() == "未分类 · 今天 15 分"
+        assert st.page.locator("#stBucketLabel").inner_text() == "未分类 · 今天 14 分"
 
 
 def _busy_day_unwatched(st: Stage) -> None:

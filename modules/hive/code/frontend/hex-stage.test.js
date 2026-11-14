@@ -65,11 +65,18 @@ assert.deepStrictEqual(S.drawerRows([B("c", 30, false, "terminal")]).map((r) => 
 
 // 灰行点开：一块 = 一组同名窗口，按秒降序，块带标题当 displayName
 const G = (key, sec, apps) => ({ date: "2026-11-07", blockKey: key, seq: 2, displayName: null, seconds: sec, legible: false, kind: "terminal", apps });
-const grey = S.drawerRows([G("ptyxis · ~/work", 60, ["ptyxis"]), G("ptyxis · vim a.go", 300, ["ptyxis"]), G("ptyxis", 10, ["ptyxis"])])[0].members;
-assert.deepStrictEqual(grey.map((m) => [m.title, m.seconds]), [["vim a.go", 300], ["~/work", 60], ["ptyxis", 10]]);
+const grey = S.drawerRows([G("ptyxis · ~/work", 60, ["ptyxis"]), G("ptyxis · vim a.go", 290, ["ptyxis"]), G("ptyxis", 10, ["ptyxis"])])[0].members;
+assert.deepStrictEqual(grey.map((m) => [m.title, m.seconds]), [["vim a.go", 290], ["~/work", 60], ["ptyxis", 10]]);
 assert.strictEqual(grey[0].block.blockKey, "ptyxis · vim a.go"); assert.strictEqual(grey[0].block.displayName, "ptyxis · vim a.go");
 const hid = S.drawerRows([G("ptyxis · 窗口名12", 5, ["ptyxis"]), G("ptyxis · 路径3", 4, ["ptyxis"]), G("ptyxis · 窗口名x", 3, ["ptyxis"])])[0].members;
 assert.deepStrictEqual(hid.map((m) => m.hidden), [true, true, false]); assert.strictEqual(grey[0].hidden, false);
+
+// 「三十三」：看不懂的窗口块（终端未认出 / 浏览器其他网站 / 其他）满 5 分钟的各自一行（可拖、按窗口名、排在灰行前），不满的照旧折进灰行
+const loud = S.drawerRows([G("ptyxis · vim a.go", 360, ["ptyxis"]), G("ptyxis · ~/work", 299, ["ptyxis"]), G("ptyxis · 窗口名3", 300, ["ptyxis"]), B("gh", 100, true, "browser")]);
+assert.deepStrictEqual(loud.map((r) => [r.name, r.draggable]), [["ptyxis · vim a.go", true], ["ptyxis · 标题已隐去", true], ["gh", true], ["终端（未认出）", false]]);
+assert.strictEqual(loud[0].block.displayName, "ptyxis · vim a.go"); assert.strictEqual(loud[0].block.blockKey, "ptyxis · vim a.go");
+assert.deepStrictEqual(loud[3].members.map((m) => m.title), ["~/work"]);
+assert.deepStrictEqual(S.drawerRows([B("x", 600, false, "browser"), B("y", 200, false, "browser")]).map((r) => r.draggable), [true, false]);   // 浏览器其他网站同样：满 5 分钟单独一行
 
 // 白条
 const ups = Array.from({ length: 7 }, (_, i) => ({ id: "u" + i, startAt: iso(i) }));

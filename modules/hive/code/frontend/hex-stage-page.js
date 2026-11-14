@@ -762,14 +762,14 @@
   // 中心环 = 人 + 代理今天的总计时，内容与点开的统计页在 hex-centre-stats.js（hive.stage.v1「八」）
   function ringSnapshot(now) {
     var lanes = data.lanes || {}, human = lanes.human || {}, f = (data.current && data.current.focus) || human.focus, running = human.running, humanNow = null;
-    if (running) humanNow = "你在做 " + (running.projectId ? projectName(running.projectId) : "手动计时");
+    if (running) humanNow = "你在做\n" + (running.projectId ? projectName(running.projectId) : "手动计时");
     else if (f && f.state === "afk") humanNow = "你离开了";
-    else if (f && (f.projectName || f.projectId)) humanNow = "你在做 " + (f.projectName || projectName(f.projectId));
+    else if (f && (f.projectName || f.projectId)) humanNow = "你在做\n" + (f.projectName || projectName(f.projectId));
     var hit = St.pickRing(runsOf(), lanes.interactions, now, dayStart() || null), run = hit && hit.agent !== undefined ? hit : null, focus = null;
     if (run) {   // 人此刻在看的代理：一句轮播
       var sec = run.endAt ? (ms(run.endAt) - ms(run.startAt)) / 1000 : (now - ms(run.startAt)) / 1000;
       if (run.lost && run.lastSeenAt) sec = (ms(run.lastSeenAt) - ms(run.startAt)) / 1000;
-      focus = { name: run.label || run.agent, text: hms(sec), projectId: runProject(run) };
+      focus = { name: run.label || run.agent, text: CS.fmtShort(sec), projectId: runProject(run) };
     }
     var live = runsOf().filter(function (r) { return !r.endAt && !r.lost; }), workers = live.filter(function (r) { return Pk.moodOf(r.phase, r.lost) === "working"; });
     return { humanNow: humanNow, humanSec: humanTodaySeconds(now), focus: focus, working: workers.length,

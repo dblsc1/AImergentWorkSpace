@@ -20,8 +20,9 @@ body.stage-on .hex-cell:not(.is-expanded) .hex-close { display: none !important;
 .st-face { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .st-face.swap { animation: st-swap 360ms ease-out; }
 @keyframes st-swap { from { opacity: 0; } to { opacity: 1; } }
-/* 环跟着中心格缩小（--ring-k < 1）时字按倒数放大：屏幕上不小于 11px，宽度占满环内圈，最多 4 行 */
-.st-tk { font-size: max(12px, calc(11px / var(--ring-k, 1))); font-weight: 600; color: var(--ink); max-width: 100px; max-height: 108px; text-align: center; line-height: 1.2; white-space: pre-line; overflow-wrap: anywhere; overflow: hidden; }
+/* 环里的字和项目格的项目名同一套（.hex-title：600、--ink、12.5px 随蜂巢缩放）：环设计宽 140、格宽 86.6，字号 = 12.5 × 140 ÷ 86.6，环整体 scale 时字跟着缩；最多 3 行，超出省略 */
+.st-tk { font-size: 20.2px; font-weight: 600; color: var(--ink); width: 84px; text-align: center; line-height: 1.2; white-space: pre-line; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .st-tk.swap { animation: st-swap 360ms ease-out; }
 
 /* 人的时钟 */
