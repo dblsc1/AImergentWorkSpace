@@ -511,7 +511,7 @@
     if (e) return e;
     e = document.createElement("div");
     e.className = "st-pet"; e.dataset.runId = runId;
-    e.innerHTML = '<div class="st-pet-in"><div class="st-tag"></div><div class="st-media"></div></div>';
+    e.innerHTML = '<div class="st-pet-in"><div class="st-tag"></div><div class="st-media"></div><i class="st-lamp" aria-hidden="true"></i></div>';
     layer.appendChild(e);
     petEls[runId] = e;
     return e;
@@ -519,11 +519,12 @@
   function fillPet(e, pet, run) {
     loadPack(pet.pack);
     var pk = packs[pet.pack];
-    e.__rhythm = Pk.rhythm(e.__rhythm, pk && pk.moods, pet.mood, Date.now(), Math.random);   // 15 秒动作 → 3 秒临时动作 → 新动作
+    e.__rhythm = Pk.rhythm(e.__rhythm, pk && pk.moods, pet.mood, Date.now(), Math.random);   // 每 10 秒换一段（「三十五」2）
     var m = mediaFor(pet, e.__rhythm.file), slot = e.querySelector(".st-media");
     var tg = e.querySelector(".st-tag"), ttl = run ? titleOf(run) : pet.name;
     if (tg.textContent !== ttl) { tg.textContent = ttl; tg.title = ttl; }
     e.dataset.mood = pet.mood;
+    e.dataset.lamp = Pk.lampOf(run) || "";
     e.__pet = pet;
     if (!slot.dataset.over && slot.dataset.key !== m.key) {
       slot.dataset.key = m.key; showMedia(slot, m, function () { showPlaceholder(slot); });

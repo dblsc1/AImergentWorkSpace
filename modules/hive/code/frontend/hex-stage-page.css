@@ -130,6 +130,15 @@ video.st-art { position: absolute; max-width: none; max-height: none; height: 80
 .st-pet.is-work[data-mood="working"] .st-media { animation: st-bob 1.3s ease-in-out infinite; }
 .st-pet[data-mood="idle"] .st-media { animation: st-bob 2.6s ease-in-out infinite; }
 @keyframes st-bob { 50% { transform: translateY(-5px); } }
+/* 小人右上角的灯（「三十五」3）：出错 / 等授权 = 红色感叹号放大缩小；干活 = 绿灯闪；干完 = 绿灯常亮 */
+.st-lamp { display: none; position: absolute; right: 1px; top: 18px; width: 9px; height: 9px; border-radius: 50%; pointer-events: none; z-index: 1; }
+.st-pet[data-lamp="busy"] .st-lamp, .st-pet[data-lamp="done"] .st-lamp { display: block; background: #22B35E; box-shadow: 0 0 0 1.5px var(--panel), 0 0 6px #22B35E; }
+.st-pet[data-lamp="busy"] .st-lamp { animation: st-lamp-blink 1s steps(1, end) infinite; }
+@keyframes st-lamp-blink { 50% { opacity: .15; box-shadow: none; } }
+.st-pet[data-lamp="alert"] .st-lamp { display: grid; place-items: center; width: 15px; height: 15px; right: -2px; top: 15px; background: var(--danger); color: #fff;
+  box-shadow: 0 0 0 1.5px var(--panel); animation: st-lamp-pulse 1s ease-in-out infinite; }
+.st-pet[data-lamp="alert"] .st-lamp::before { content: "!"; font: 800 11px/1 system-ui, sans-serif; font-style: normal; }
+@keyframes st-lamp-pulse { 50% { transform: scale(1.45); } }
 .st-more { position: absolute; z-index: 12; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%; background: var(--panel-2);
   border: 1px solid var(--line); display: grid; place-items: center; font-size: 12px; font-weight: 700; color: var(--ink-2); }
 
@@ -201,6 +210,7 @@ video.st-art { position: absolute; max-width: none; max-height: none; height: 80
   .st-pet.is-work, .st-pet.is-loose { transition: none; }
   .st-pet.st-squash .st-pet-in { animation: none; }
   .st-strip, .st-media, .st-face.swap { animation: none !important; }
+  .st-pet[data-lamp] .st-lamp { animation: none; }
   .st-file { transition: none; }
   .st-hexchip.st-drop { animation: none; }
   .st-hexchip.st-leave { animation: none; display: none; }
