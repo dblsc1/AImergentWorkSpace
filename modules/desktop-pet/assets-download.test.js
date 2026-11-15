@@ -124,6 +124,9 @@ test('mood-map 的状态动作（hive.stage.v1「三十二」）：chatting / id
   for (const k of ['chatting', 'idle-bored', 'idle-slacking', 'idle-sleeping']) assert.ok(mm[k].length >= 1, k);
   for (const [kind, r] of Object.entries(mf.roles)) {
     const p = buildPack(kind, r, mm);
-    for (const k of ['chatting', 'idle-bored', 'idle-slacking', 'idle-sleeping']) assert.deepEqual(p.moods[k], mm[k], kind + '/' + k);
+    for (const k of ['chatting', 'idle-bored', 'idle-slacking', 'idle-sleeping']) {   // 包里没有的片（专属动作、个别角色缺的）不进（「三十五」1）
+      assert.ok(p.moods[k].length >= 1, kind + '/' + k);
+      assert.deepEqual(p.moods[k], mm[k].filter((f) => p.moods[k].includes(f)), kind + '/' + k);
+    }
   }
 });

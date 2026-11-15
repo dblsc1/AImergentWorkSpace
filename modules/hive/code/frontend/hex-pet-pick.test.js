@@ -62,34 +62,32 @@ assert.deepStrictEqual(P.pickIdle(mixed, inboxOpts).pets.map((p) => p.runId).sor
   const rect = { x: 0, y: 0, w: 300, h: 100 };
   assert.deepStrictEqual(P.slotPos(0, rect), { x: 50, y: 25 }); assert.deepStrictEqual(P.slotPos(4, rect), { x: 150, y: 75 });
 }
-// 动作节奏（「二十六」）：15 秒主动作 → 3 秒临时 → 回到原来的主动作；主动作满 5 分钟才换
+// 动作节奏（「三十五」2）：每 10 秒换一段（≠ 上一段），不插临时动作；换 mood 立刻换
 {
-  const mv = { moods: { working: ["w1", "w2", "w3"], idle: ["i1"], click: ["c1", "c2"], happy: ["h"] } }.moods;
+  const mv = { working: ["w1", "w2", "w3"], idle: ["i1"], click: ["c1", "c2"], happy: ["h"] };
   const r0 = () => 0.5;
   let s = P.rhythm(null, mv, "working", 1000, () => 0);      // 首次偏移 0
   assert.strictEqual(s.step, "main"); assert.strictEqual(s.until, 1000); assert.ok(["w1", "w2", "w3"].includes(s.file));
-  const first = s.file;
-  s = P.rhythm(s, mv, "working", 1000, r0);                   // 到点 → 临时
-  assert.strictEqual(s.step, "temp"); assert.ok(["c1", "c2"].includes(s.file)); assert.strictEqual(s.until, 4000);
-  assert.strictEqual(P.rhythm(s, mv, "working", 3999, r0), s);
-  for (let i = 0; i < 30; i++) {                               // 临时动作完：回到原来的主动作
-    const n = P.rhythm(s, mv, "working", 4000, Math.random);
-    assert.strictEqual(n.step, "main"); assert.strictEqual(n.file, first); assert.strictEqual(n.until, 4000 + P.MAIN_MS);
+  assert.strictEqual(P.rhythm(s, mv, "working", 999, r0), s);
+  for (let t = 1000, i = 0; i < 60; i++, t += P.CYCLE_MS) {    // 每 10 秒换一段，都在 working 里、不重复上一段、没有临时动作
+    const n = P.rhythm(s, mv, "working", t, Math.random);
+    assert.strictEqual(n.step, "main"); assert.ok(["w1", "w2", "w3"].includes(n.file)); assert.notStrictEqual(n.file, s.file); assert.strictEqual(n.until, t + P.CYCLE_MS);
+    assert.strictEqual(P.rhythm(n, mv, "working", t + P.CYCLE_MS - 1, r0), n);
+    s = n;
   }
-  let t = 1000, seen = new Set();                              // 走满 5 分钟：一直是同一个主动作，之后换成别的
-  while (t < 1000 + P.KEEP_MS) { s = P.rhythm(s, mv, "working", t, r0); if (s.step === "main") seen.add(s.file); t += 1000; }
-  assert.deepStrictEqual([...seen], [first]);
-  while (s.step !== "main" || s.file === first) { s = P.rhythm(s, mv, "working", t, Math.random); t += 1000; assert.ok(t < 1000 + P.KEEP_MS + 40000); }
-  assert.notStrictEqual(s.file, first);
+  assert.strictEqual(P.CYCLE_MS, 10000);
   const m = P.rhythm(P.rhythm(null, mv, "working", 0, r0), mv, "waiting", 500, r0);  // 换 mood 立刻换、无 waiting 用 idle
-  assert.strictEqual(m.file, "i1"); assert.strictEqual(m.until, 500 + P.MAIN_MS);
-  const hp = P.rhythm({ mood: "working", step: "main", file: "i1", main: "i1", until: 0, keepUntil: 9e9 }, { working: ["i1"], happy: ["h"] }, "working", 0, r0);
-  assert.strictEqual(hp.file, "h");                           // 没有 click 退到 happy
-  const nt = P.rhythm({ mood: "working", step: "main", file: "i1", main: "i1", until: 0, keepUntil: 9e9 }, { working: ["i1"] }, "working", 0, r0);
-  assert.strictEqual(nt.step, "main"); assert.strictEqual(nt.file, "i1");   // 没有临时动作：跳过
+  assert.strictEqual(m.file, "i1"); assert.strictEqual(m.until, 500 + P.CYCLE_MS);
+  const one = P.rhythm({ mood: "idle", step: "main", file: "i1", main: "i1", until: 0 }, mv, "idle", 0, r0);
+  assert.strictEqual(one.file, "i1");                          // 只有一段：一直是它
   assert.strictEqual(P.rhythm(null, {}, "idle", 0, r0).file, null);          // 包没下完：空，之后补
   assert.strictEqual(P.rhythm(P.rhythm(null, {}, "idle", 0, r0), { idle: ["z"] }, "idle", 1, r0).file, "z");
 }
+// 右上角的灯（「三十五」3）
+assert.strictEqual(P.lampOf({ phase: "error" }), "alert"); assert.strictEqual(P.lampOf({ phase: "waiting_permission" }), "alert");
+assert.strictEqual(P.lampOf({ phase: "working" }), "busy");
+assert.strictEqual(P.lampOf({ phase: "waiting_input" }), "done"); assert.strictEqual(P.lampOf({ phase: "idle" }), "done");
+assert.strictEqual(P.lampOf({ phase: "working", lost: true }), null); assert.strictEqual(P.lampOf(null), null);
 // 点 / 拖判定、挑点击、走回（hive.stage.v1「二」7）
 assert.strictEqual(P.pressKind(3, 3), "click"); assert.strictEqual(P.pressKind(5, 0), "drag"); assert.strictEqual(P.pressKind(0, 0), "click");
 assert.strictEqual(P.clickCounts(99), false); assert.strictEqual(P.clickCounts(100), true); assert.strictEqual(P.clickCounts(-1), true); assert.strictEqual(P.clickCounts(Infinity), true);
@@ -197,15 +195,10 @@ assert.ok(Math.abs(P.meetSpot({ x: 0, y: 0 }, { x: 5, y: 0 }, 1.7).x) > Math.abs
   assert.deepStrictEqual(P.moodList({ idle: ["i"] }, "worried"), ["i"]);
   assert.deepStrictEqual(P.moodList(Object.assign({ "idle-bored": ["b"], "idle-sleeping": ["z"] }, old), "idle-bored"), ["b"]);       // 有键用键
   assert.deepStrictEqual(P.moodList({}, "chatting"), []);
-  // 空闲各档不插临时动作（「三十二」6）；其他 mood 照旧
+  // 睡着的只在睡觉动作里换（「三十五」1）
   const sm = { "idle-sleeping": ["z"], idle: ["i"], click: ["c"], working: ["w"] };
-  for (const md of ["idle", "idle-bored", "idle-slacking", "idle-sleeping"]) {
-    let sl = P.rhythm(null, sm, md, 0, () => 0);
-    for (let t = 1000; t < 120000; t += 1000) { sl = P.rhythm(sl, sm, md, t, () => 0); assert.strictEqual(sl.step, "main", md); assert.strictEqual(sl.file, md === "idle-sleeping" ? "z" : "i", md); }
-  }
-  let aw = P.rhythm(null, sm, "working", 0, () => 0), sawTemp = false;
-  for (let t = 1000; t < 60000; t += 1000) { aw = P.rhythm(aw, sm, "working", t, () => 0); if (aw.step === "temp") sawTemp = true; }
-  assert.ok(sawTemp);
+  let sl = P.rhythm(null, sm, "idle-sleeping", 0, () => 0);
+  for (let t = 1000; t < 120000; t += 1000) { sl = P.rhythm(sl, sm, "idle-sleeping", t, () => 0); assert.strictEqual(sl.file, "z"); }
   // 换状态立刻换动作
   assert.strictEqual(P.rhythm(P.rhythm(null, { working: ["w"], "idle-sleeping": ["z"], idle: ["i"] }, "working", 0, () => 0), { working: ["w"], "idle-sleeping": ["z"], idle: ["i"] }, "idle-sleeping", 10, () => 0).file, "z");
 }

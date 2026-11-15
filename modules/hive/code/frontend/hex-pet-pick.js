@@ -127,10 +127,10 @@
   function tempList(pack) { var m = (pack && pack.moods) || {}; return m.click && m.click.length ? m.click : (m.happy || []); }
   function clickClip(pack, last, rnd) { return pickClip(tempList(pack), last, rnd); }
 
-  // 动作节奏（仓主 2026-11-12 改，hive.stage.v1「二十六」）：当前 mood 的动作里随机挑一个当「主动作」播 15 秒 → 3 秒随机临时动作 →
-  // **回到原来那个主动作** 15 秒，如此循环；主动作每 5 分钟换一个（≠ 上一个），换 mood 立刻换。
-  // s 是上一次的状态（首次 null）；moods = pack.moods；返回新状态 {mood, step: "main"|"temp", file, main, until, keepUntil}。纯函数，rnd / now 可注入。
-  var MAIN_MS = 15000, TEMP_MS = 3000, KEEP_MS = 300000;
+  // 动作节奏（仓主 2026-11-15 改，hive.stage.v1「三十五」2，取代「二十六」2 与「三十二」6）：当前 mood 的动作里随机挑一段，
+  // 每 10 秒换一段（≠ 上一段），换 mood 立刻换。不再插临时动作。
+  // s 是上一次的状态（首次 null）；moods = pack.moods；返回新状态 {mood, step: "main", file, main, until}。纯函数，rnd / now 可注入。
+  var CYCLE_MS = 10000;
   // 包里没有这个 mood 键时的回退（「三十二」1）：chatting → happy / click，idle-bored → waiting，idle-slacking → idle，idle-sleeping → idle 里文件名含 小憩 / 沉眠 / 睡 的，最后都回 idle
   var MOOD_FALLBACK = { "chatting": ["happy", "click"], "idle-bored": ["waiting"], "idle-slacking": ["idle"], "idle-sleeping": ["idle"], worried: ["waiting"] };
   var SLEEP_FILE = /小憩|沉眠|睡/;
@@ -144,17 +144,18 @@
   }
   function rhythm(s, moods, mood, now, rnd) {
     var list = moodList(moods, mood);
-    function fresh(last, until) { var f = pickClip(list, last, rnd); return { mood: mood, step: "main", file: f, main: f || last, until: until, keepUntil: now + KEEP_MS }; }
-    if (!s) return fresh(null, now + Math.floor(rnd() * MAIN_MS));   // 首次随机错开，免得一起换
-    if (s.mood !== mood) return fresh(s.main, now + MAIN_MS);          // 换 mood：立刻换动作、重算周期
-    if (s.step === "main" && !s.file) { var f0 = pickClip(list, s.main, rnd); return f0 ? { mood: mood, step: "main", file: f0, main: f0, until: s.until, keepUntil: now + KEEP_MS } : s; }   // 包刚下完：补上
+    function fresh(last, until) { var f = pickClip(list, last, rnd); return { mood: mood, step: "main", file: f, main: f || last, until: until }; }
+    if (!s) return fresh(null, now + Math.floor(rnd() * CYCLE_MS));   // 首次随机错开，免得一起换
+    if (s.mood !== mood) return fresh(s.main, now + CYCLE_MS);          // 换 mood：立刻换动作、重算周期
+    if (!s.file) { var f0 = pickClip(list, s.main, rnd); return f0 ? { mood: mood, step: "main", file: f0, main: f0, until: s.until } : s; }   // 包刚下完：补上
     if (now < s.until) return s;
-    if (s.step === "main" && mood.indexOf("idle") !== 0) {   // 空闲各档（idle / idle-bored / idle-slacking / idle-sleeping）一直循环主动作，不插点击动作（「三十二」6）
-      var tmp = tempList({ moods: moods });
-      if (tmp.length) return { mood: mood, step: "temp", file: pickClip(tmp, null, rnd), main: s.main, until: now + TEMP_MS, keepUntil: s.keepUntil };
-    }
-    if (now >= (s.keepUntil || 0)) return fresh(s.main, now + MAIN_MS);   // 满 5 分钟：换一个主动作
-    return { mood: mood, step: "main", file: s.main, main: s.main, until: now + MAIN_MS, keepUntil: s.keepUntil };   // 回到原来的主动作
+    return fresh(s.main, now + CYCLE_MS);
+  }
+  // 小人右上角的灯（「三十五」3）：出错 / 等授权 = alert（红色感叹号放大缩小）；干活 = busy（绿灯闪）；其余在跑的 = done（绿灯常亮）；失联 = 不亮
+  function lampOf(run) {
+    if (!run || run.lost) return null;
+    if (run.phase === "error" || run.phase === "waiting_permission") return "alert";
+    return run.phase === "working" ? "busy" : "done";
   }
 
   // 人看着某个 agent 时的互动（hive.stage.v1「二十一」）。动作名各包相同（mood-map.json 一份）：
@@ -196,7 +197,7 @@
     return { x: s[0] * w * k, y: s[1] * h * k };
   }
 
-  var api = { stateOf: stateOf, lastWorkedAt: lastWorkedAt, withCurrentRuns: withCurrentRuns, moodList: moodList, BORED_MS: BORED_MS, SLACK_MS: SLACK_MS, SLEEP_MS: SLEEP_MS, HOME_MS: HOME_MS, restSlot: restSlot, hexEdgeDistance: hexEdgeDistance, MAX_PETS: MAX_PETS, DEFAULT_PACK: DEFAULT_PACK, DEFAULT_PACKS_BY_TOOL: DEFAULT_PACKS_BY_TOOL, moodOf: moodOf, packOf: packOf, pickWorkers: pickWorkers, pickIdle: pickIdle, isLoose: isLoose, slotPos: slotPos, assignSlots: assignSlots, rhythm: rhythm, tempList: tempList, MAIN_MS: MAIN_MS, KEEP_MS: KEEP_MS, TEMP_MS: TEMP_MS,
+  var api = { stateOf: stateOf, lastWorkedAt: lastWorkedAt, withCurrentRuns: withCurrentRuns, moodList: moodList, BORED_MS: BORED_MS, SLACK_MS: SLACK_MS, SLEEP_MS: SLEEP_MS, HOME_MS: HOME_MS, restSlot: restSlot, hexEdgeDistance: hexEdgeDistance, MAX_PETS: MAX_PETS, DEFAULT_PACK: DEFAULT_PACK, DEFAULT_PACKS_BY_TOOL: DEFAULT_PACKS_BY_TOOL, moodOf: moodOf, packOf: packOf, pickWorkers: pickWorkers, pickIdle: pickIdle, isLoose: isLoose, slotPos: slotPos, assignSlots: assignSlots, rhythm: rhythm, lampOf: lampOf, tempList: tempList, CYCLE_MS: CYCLE_MS,
     CLICK_PX: CLICK_PX, STAY_MS: STAY_MS, pressKind: pressKind, clickCounts: clickCounts, pickClip: pickClip, clickClip: clickClip, walkBack: walkBack, meetClip: meetClip, meetSpot: meetSpot };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else window.NexusTableHexPetPick = api;

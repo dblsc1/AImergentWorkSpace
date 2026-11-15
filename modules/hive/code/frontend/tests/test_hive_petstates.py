@@ -42,7 +42,7 @@ def _lanes(st: Stage, *agents: dict[str, Any], interactions: list[dict[str, Any]
 
 
 def _clip(st: Stage, rid: str = "r1") -> str:
-    """这只小人此刻的主动作（节奏里的 main；3 秒临时动作不算，它每 15 秒插一下）。"""
+    """这只小人此刻的动作（节奏里的 main，每 10 秒换一段）。"""
     return (st.page.evaluate("id => document.querySelector(`.st-pet[data-run-id=\"${id}\"]`).__rhythm.main", rid) or "").removesuffix(".webm")
 
 
