@@ -83,9 +83,9 @@ assert.deepStrictEqual(P.pickIdle(mixed, inboxOpts).pets.map((p) => p.runId).sor
   assert.notStrictEqual(s.file, first);
   const m = P.rhythm(P.rhythm(null, mv, "working", 0, r0), mv, "waiting", 500, r0);  // 换 mood 立刻换、无 waiting 用 idle
   assert.strictEqual(m.file, "i1"); assert.strictEqual(m.until, 500 + P.MAIN_MS);
-  const hp = P.rhythm({ mood: "idle", step: "main", file: "i1", main: "i1", until: 0, keepUntil: 9e9 }, { idle: ["i1"], happy: ["h"] }, "idle", 0, r0);
+  const hp = P.rhythm({ mood: "working", step: "main", file: "i1", main: "i1", until: 0, keepUntil: 9e9 }, { working: ["i1"], happy: ["h"] }, "working", 0, r0);
   assert.strictEqual(hp.file, "h");                           // 没有 click 退到 happy
-  const nt = P.rhythm({ mood: "idle", step: "main", file: "i1", main: "i1", until: 0, keepUntil: 9e9 }, { idle: ["i1"] }, "idle", 0, r0);
+  const nt = P.rhythm({ mood: "working", step: "main", file: "i1", main: "i1", until: 0, keepUntil: 9e9 }, { working: ["i1"] }, "working", 0, r0);
   assert.strictEqual(nt.step, "main"); assert.strictEqual(nt.file, "i1");   // 没有临时动作：跳过
   assert.strictEqual(P.rhythm(null, {}, "idle", 0, r0).file, null);          // 包没下完：空，之后补
   assert.strictEqual(P.rhythm(P.rhythm(null, {}, "idle", 0, r0), { idle: ["z"] }, "idle", 1, r0).file, "z");
@@ -197,12 +197,14 @@ assert.ok(Math.abs(P.meetSpot({ x: 0, y: 0 }, { x: 5, y: 0 }, 1.7).x) > Math.abs
   assert.deepStrictEqual(P.moodList({ idle: ["i"] }, "worried"), ["i"]);
   assert.deepStrictEqual(P.moodList(Object.assign({ "idle-bored": ["b"], "idle-sleeping": ["z"] }, old), "idle-bored"), ["b"]);       // 有键用键
   assert.deepStrictEqual(P.moodList({}, "chatting"), []);
-  // 睡着不插临时动作；其他 mood 照旧
-  const sm = { "idle-sleeping": ["z"], idle: ["i"], click: ["c"] };
-  let sl = P.rhythm(null, sm, "idle-sleeping", 0, () => 0);
-  for (let t = 1000; t < 120000; t += 1000) { sl = P.rhythm(sl, sm, "idle-sleeping", t, () => 0); assert.strictEqual(sl.file, "z"); assert.strictEqual(sl.step, "main"); }
-  let aw = P.rhythm(null, sm, "idle-bored", 0, () => 0), sawTemp = false;
-  for (let t = 1000; t < 60000; t += 1000) { aw = P.rhythm(aw, sm, "idle-bored", t, () => 0); if (aw.step === "temp") sawTemp = true; }
+  // 空闲各档不插临时动作（「三十二」6）；其他 mood 照旧
+  const sm = { "idle-sleeping": ["z"], idle: ["i"], click: ["c"], working: ["w"] };
+  for (const md of ["idle", "idle-bored", "idle-slacking", "idle-sleeping"]) {
+    let sl = P.rhythm(null, sm, md, 0, () => 0);
+    for (let t = 1000; t < 120000; t += 1000) { sl = P.rhythm(sl, sm, md, t, () => 0); assert.strictEqual(sl.step, "main", md); assert.strictEqual(sl.file, md === "idle-sleeping" ? "z" : "i", md); }
+  }
+  let aw = P.rhythm(null, sm, "working", 0, () => 0), sawTemp = false;
+  for (let t = 1000; t < 60000; t += 1000) { aw = P.rhythm(aw, sm, "working", t, () => 0); if (aw.step === "temp") sawTemp = true; }
   assert.ok(sawTemp);
   // 换状态立刻换动作
   assert.strictEqual(P.rhythm(P.rhythm(null, { working: ["w"], "idle-sleeping": ["z"], idle: ["i"] }, "working", 0, () => 0), { working: ["w"], "idle-sleeping": ["z"], idle: ["i"] }, "idle-sleeping", 10, () => 0).file, "z");
