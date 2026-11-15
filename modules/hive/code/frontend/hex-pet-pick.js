@@ -149,7 +149,7 @@
     if (s.mood !== mood) return fresh(s.main, now + MAIN_MS);          // 换 mood：立刻换动作、重算周期
     if (s.step === "main" && !s.file) { var f0 = pickClip(list, s.main, rnd); return f0 ? { mood: mood, step: "main", file: f0, main: f0, until: s.until, keepUntil: now + KEEP_MS } : s; }   // 包刚下完：补上
     if (now < s.until) return s;
-    if (s.step === "main" && mood !== "idle-sleeping") {   // 睡着了不插点击动作
+    if (s.step === "main" && mood.indexOf("idle") !== 0) {   // 空闲各档（idle / idle-bored / idle-slacking / idle-sleeping）一直循环主动作，不插点击动作（「三十二」6）
       var tmp = tempList({ moods: moods });
       if (tmp.length) return { mood: mood, step: "temp", file: pickClip(tmp, null, rnd), main: s.main, until: now + TEMP_MS, keepUntil: s.keepUntil };
     }

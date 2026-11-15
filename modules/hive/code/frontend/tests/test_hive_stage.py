@@ -348,8 +348,13 @@ def test_loose_pet_slots_are_stable_when_others_come_and_go(browser, base) -> No
 
 def test_pet_clip_rhythm_main_then_temp_then_back_to_the_same_main_and_a_new_one_after_five_minutes(browser, base) -> None:  # noqa: F811  二十六·2
     pack = {"kind": "gpt", "name": "G", "license": "x", "credits": "x", "source": "x",
-            "moods": {"idle": ["i1.webm", "i2.webm", "i3.webm"], "click": ["t.webm"]}}
-    with open_stage(browser, base, setup=_busy_day, pets={"gpt": pack}, hold_webm=True) as st:
+            "moods": {"working": ["i1.webm", "i2.webm", "i3.webm"], "click": ["t.webm"]}}
+
+    def working(st: Stage) -> None:   # 「三十二」6：空闲不插临时动作，节奏用干活的小人看
+        _busy_day(st)
+        st.lanes["agents"][1]["phase"] = "working"
+
+    with open_stage(browser, base, setup=working, pets={"gpt": pack}, hold_webm=True) as st:
         def watch(seconds: int) -> list[str]:
             seen: list[str] = []
             for _ in range(seconds):
